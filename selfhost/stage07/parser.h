@@ -1443,6 +1443,18 @@ static int classify_gnu_asm(char *tmpl) {
         ps_str_contains(tmpl, "blr x2")) {
         return ASM_A64_DBT_TRAMPOLINE;
     }
+    if (ps_str_contains(tmpl, "dc cvau")) {
+        return ASM_A64_DC_CVAU;
+    }
+    if (ps_str_contains(tmpl, "ic ivau")) {
+        return ASM_A64_IC_IVAU;
+    }
+    if (ps_str_contains(tmpl, "dsb ish")) {
+        return ASM_A64_DSB_ISH;
+    }
+    if (ps_str_contains(tmpl, "isb")) {
+        return ASM_A64_ISB;
+    }
     return ASM_GENERIC;
 }
 
@@ -1672,7 +1684,9 @@ static Node *parse_primary(void) {
             return n;
         }
 
-        /* __builtin___clear_cache(begin, end) — no-op on x86-64 */
+        /* __builtin___clear_cache(begin, end) — no-op in the portable
+         * frontend.  AArch64 code that really needs cache maintenance uses
+         * the supported inline-asm subset above. */
         if (strcmp(nm, "__builtin___clear_cache") == 0) {
             expect(TK_LPAREN);
             parse_assign();  /* discard begin */

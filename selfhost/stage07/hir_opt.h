@@ -920,7 +920,8 @@ static int ho_dse_pass(void) {
             jk = h_kind[j];
             if (jk == HI_NOP) { j = j + 1; continue; }
             /* If any LOAD/CALL/CALLP, the stored value might be observed */
-            if (jk == HI_LOAD || jk == HI_CALL || jk == HI_CALLP || jk == HI_A64_DBT_TRAMPOLINE) {
+            if (jk == HI_LOAD || jk == HI_CALL || jk == HI_CALLP ||
+                jk == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(jk)) {
                 alive = 0;
             }
             /* Found another STORE to same address — first store is dead */
@@ -1044,7 +1045,8 @@ static int ho_mem_fwd(void) {
                     ho_mem_set(addr, i, h_ty[i]);
                 }
             }
-            else if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) {
+            else if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+                     hi_is_a64_cache_asm(k)) {
                 /* Calls may write to any memory — invalidate all */
                 ho_mem_clear();
             }
@@ -1106,7 +1108,8 @@ static int ho_promote_single_store_alloca(void) {
     while (i < h_ninst) {
         int k;
         k = h_kind[i];
-        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) {
+        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+            hi_is_a64_cache_asm(k)) {
             fn_has_call = 1; break;
         }
         i = i + 1;
@@ -1154,7 +1157,8 @@ static int ho_promote_single_store_alloca(void) {
                     if (s1 == i) has_bad = 1;
                     if (s2 == i && ho_src2_is_ref(k)) has_bad = 1;
                     if (k == HI_CALL || k == HI_CALLP
-                            || k == HI_A64_DBT_TRAMPOLINE) {
+                            || k == HI_A64_DBT_TRAMPOLINE
+                            || hi_is_a64_cache_asm(k)) {
                         int base; int cnt; int kk;
                         base = h_cbase[j];
                         cnt = h_val[j];

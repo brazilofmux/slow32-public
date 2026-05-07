@@ -123,6 +123,10 @@ static void bg_init(void) {
     bg_add_pat(BG_REG,   HI_PARAM,  -1, -1, 0);  /* 0: already in register from regalloc */
     bg_add_pat(BG_REG,   HI_GETFP,  -1, -1, 1);
     bg_add_pat(BG_REG,   HI_A64_MRS_CNTVCT, -1, -1, 1);
+    bg_add_pat(BG_STMT,  HI_A64_DC_CVAU, BG_REG, -1, 1);
+    bg_add_pat(BG_STMT,  HI_A64_IC_IVAU, BG_REG, -1, 1);
+    bg_add_pat(BG_STMT,  HI_A64_DSB_ISH, -1, -1, 1);
+    bg_add_pat(BG_STMT,  HI_A64_ISB, -1, -1, 1);
 
     /* Addressing: LOAD */
     bg_add_pat(BG_REG,  HI_LOAD, BG_MEM,   -1, 1);  /* ldr r, [Xn + #disp] */

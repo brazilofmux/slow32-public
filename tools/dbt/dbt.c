@@ -546,6 +546,61 @@ static void dbt_trace_block_regs(dbt_cpu_state_t *cpu, translated_block_t *block
     trace_block_regs_budget--;
 }
 
+static void dbt_trace_stage1_block_regs(dbt_cpu_state_t *cpu, uint32_t block_pc) {
+    if (!trace_block_regs_enabled || !cpu) return;
+    if (trace_block_regs_budget == 0) return;
+    if (trace_block_regs_pc != 0 && block_pc != trace_block_regs_pc) return;
+
+    fprintf(stderr,
+            "dbt-stage1-regs block_pc=0x%08X pc=0x%08X reason=%u info=0x%08X\n",
+            block_pc, cpu->pc, cpu->exit_reason, cpu->exit_info);
+    fprintf(stderr,
+            "dbt-stage1-regs-a r1=%08X r3=%08X r4=%08X r5=%08X\n",
+            cpu->regs[1], cpu->regs[3], cpu->regs[4], cpu->regs[5]);
+    fprintf(stderr,
+            "dbt-stage1-regs-b r6=%08X r7=%08X sp=%08X lr=%08X\n",
+            cpu->regs[6], cpu->regs[7], cpu->regs[29], cpu->regs[31]);
+    if (trace_block_store_preview_enabled &&
+        trace_block_store_pc != 0 &&
+        trace_block_store_pc + 4 <= cpu->code_limit) {
+        uint32_t raw = *(uint32_t *)(cpu->mem_base + trace_block_store_pc);
+        decoded_inst_t d = decode_instruction(raw);
+        if (d.opcode == OP_STB || d.opcode == OP_STH || d.opcode == OP_STW) {
+            uint32_t base = cpu->regs[d.rs1];
+            uint32_t src = cpu->regs[d.rs2];
+            uint32_t addr = base + (uint32_t)d.imm;
+            uint32_t val = src;
+            uint32_t size = 4;
+            if (d.opcode == OP_STB) {
+                val &= 0xFFu;
+                size = 1;
+            } else if (d.opcode == OP_STH) {
+                val &= 0xFFFFu;
+                size = 2;
+            }
+            fprintf(stderr,
+                    "dbt-stage1-store block_pc=0x%08X store_pc=0x%08X op=0x%02X imm=%d\n",
+                    block_pc, trace_block_store_pc, d.opcode, d.imm);
+            fprintf(stderr,
+                    "dbt-stage1-store-a rs1=%u base=0x%08X rs2=%u src=0x%08X\n",
+                    d.rs1, base, d.rs2, src);
+            fprintf(stderr,
+                    "dbt-stage1-store-b addr=0x%08X size=%u value=0x%08X\n",
+                    addr, size, val);
+        }
+    }
+    trace_block_regs_budget--;
+}
+
+static void dbt_trace_stage1_dispatch(uint32_t block_pc, uint32_t pc, const char *phase) {
+    if (!trace_block_regs_enabled) return;
+    if (trace_block_regs_budget == 0) return;
+    if (trace_block_regs_pc != 0 && block_pc != trace_block_regs_pc) return;
+
+    fprintf(stderr, "dbt-stage1-%s block_pc=0x%08X pc=0x%08X\n",
+            phase, block_pc, pc);
+}
+
 // Async-signal-safe hex printer: writes "0xNNNNNNNN" to buf, returns length
 static int probe_hex32(char *buf, uint32_t val) {
     static const char hex[] = "0123456789ABCDEF";
@@ -1280,6 +1335,8 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
     while (!cpu->halted) {
         // Translate block at current PC
         translated_block_fn block;
+        uint32_t block_pc = cpu->pc;
+        dbt_trace_stage1_dispatch(block_pc, cpu->pc, "before-translate");
         if (profile_timing) {
 #if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
@@ -1296,6 +1353,7 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
         } else {
             block = translate_block(&ctx);
         }
+        dbt_trace_stage1_dispatch(block_pc, cpu->pc, "after-translate");
 
         // Execute translated code
         if (profile_timing) {
@@ -1314,6 +1372,8 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
         } else {
             execute_translated(cpu, block);
         }
+
+        dbt_trace_stage1_block_regs(cpu, block_pc);
 
         dispatch_iter++;
 
@@ -1926,8 +1986,10 @@ int main(int argc, char **argv) {
         align_traps_enabled = true;
     }
     uint32_t emit_trace_pc = 0;
+    bool emit_trace_pc_has_filter = false;
     if (trace_pc_env && trace_pc_env[0] != '\0') {
         emit_trace_pc = (uint32_t)strtoul(trace_pc_env, NULL, 0);
+        emit_trace_pc_has_filter = true;
     }
 
     // Pre-scan for --paranoid and --allow/--deny (strip before single-char parser)
@@ -2110,8 +2172,9 @@ int main(int argc, char **argv) {
 
     if (emit_trace && emit_trace_pc == 0 && dump_pc != 0) {
         emit_trace_pc = dump_pc;
+        emit_trace_pc_has_filter = true;
     }
-    dbt_set_emit_trace(emit_trace, emit_trace_pc);
+    dbt_set_emit_trace(emit_trace, emit_trace_pc_has_filter, emit_trace_pc);
     dbt_init_branch_trace_from_env();
 
     // Initialize CPU
@@ -2200,8 +2263,7 @@ int main(int argc, char **argv) {
 #ifdef __aarch64__
             dbt_jit_writable_begin();
             *(uint32_t *)cache.native_dispatcher = 0xD65F03C0;  // RET
-            __builtin___clear_cache((char *)cache.native_dispatcher,
-                                    (char *)cache.native_dispatcher + 4);
+            dbt_clear_icache(cache.native_dispatcher, cache.native_dispatcher + 4);
             dbt_jit_writable_end();
 #else
             cache.native_dispatcher[0] = 0xC3;  // RET

@@ -65,6 +65,13 @@ typedef struct {
     bool force_full_flush;
 } deferred_exit_t;
 
+typedef struct {
+    uint8_t guest_reg;    // Which guest register
+    host_reg_t host_reg;  // Which host reg holds the value (RAX/W0)
+    bool valid;           // Is there a pending write?
+    bool can_skip_store;  // Level 2: true if store can be skipped entirely
+} pending_write_t;
+
 // Translation context
 typedef struct {
     dbt_cpu_state_t *cpu;
@@ -129,12 +136,7 @@ typedef struct {
     bool backedge_snapshot_valid;
 
     // Dead temporary elimination: pending write tracker (AArch64 only)
-    struct {
-        uint8_t guest_reg;    // Which guest register
-        host_reg_t host_reg;  // Which host reg holds the value (RAX/W0)
-        bool valid;            // Is there a pending write?
-        bool can_skip_store;   // Level 2: true if store can be skipped entirely
-    } pending_write;
+    pending_write_t pending_write;
 
     // Prescan liveness (AArch64 only)
     bool dead_temp_skip[MAX_BLOCK_INSTS];
@@ -446,7 +448,7 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, host_reg_t sr
 void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm);
 
 // Emit trace control (for mapping codegen to host bytes)
-void dbt_set_emit_trace(bool enabled, uint32_t pc);
+void dbt_set_emit_trace(bool enabled, bool has_pc_filter, uint32_t pc);
 
 // Emit exit sequence (set exit_reason and return)
 void emit_exit(translate_ctx_t *ctx, exit_reason_t reason, uint32_t next_pc);

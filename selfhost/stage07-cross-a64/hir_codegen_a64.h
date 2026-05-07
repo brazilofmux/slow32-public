@@ -901,32 +901,37 @@ static void hx_count_post_fusion_uses(void) {
     }
 }
 
-static int hx_addi_base_safe_at_use(int add_inst, int base_inst, int use_inst) {
-    int base_reg;
-    int add_reg;
+static int hx_fold_src_safe_at_use(int folded_inst, int src_inst, int use_inst) {
+    int src_reg;
+    int folded_reg;
     int use_pos;
 
-    if (base_inst < 0 || use_inst < 0) return 0;
-    if (h_kind[base_inst] == HI_NOP) return 0;
-    if (ra_reg[base_inst] < 0) return 0;
+    if (src_inst < 0 || use_inst < 0) return 0;
+    if (h_kind[src_inst] == HI_NOP) return 0;
+    if (ra_reg[src_inst] < 0) return 0;
 
     use_pos = ra_pos[use_inst];
     /* No linearised position means the use is dead/skipped (NOPed comparison,
      * remat-only def, etc.) — declining to fold is the safe answer; regalloc
-     * decisions about base liveness aren't meaningful at a position regalloc
+     * decisions about source liveness aren't meaningful at a position regalloc
      * doesn't index. */
     if (use_pos < 0) return 0;
 
-    /* If the original base is live here, regalloc protects its register. */
-    if (ra_iend[base_inst] >= use_pos) return 1;
+    /* If the original source is live here, regalloc protects its register. */
+    if (ra_iend[src_inst] >= use_pos) return 1;
 
-    /* Otherwise the fold is still safe when IRC coalesced ADDI onto the
-     * base register: the ADDI interval protects the same physical register,
-     * and suppressing the ADDI leaves the original base value there. */
-    if (ra_reg[add_inst] < 0) return 0;
-    base_reg = hx_slot_reg(ra_reg[base_inst]);
-    add_reg = hx_slot_reg(ra_reg[add_inst]);
-    return base_reg == add_reg;
+    /* Otherwise the fold is still safe when IRC coalesced the folded
+     * instruction onto the source register: the folded interval protects
+     * the same physical register, and suppressing the instruction leaves
+     * the original source value there. */
+    if (folded_inst < 0 || ra_reg[folded_inst] < 0) return 0;
+    src_reg = hx_slot_reg(ra_reg[src_inst]);
+    folded_reg = hx_slot_reg(ra_reg[folded_inst]);
+    return src_reg == folded_reg;
+}
+
+static int hx_addi_base_safe_at_use(int add_inst, int base_inst, int use_inst) {
+    return hx_fold_src_safe_at_use(add_inst, base_inst, use_inst);
 }
 
 static void hx_fold_single_use_addi_addr_pre_ra(void) {
@@ -1099,10 +1104,25 @@ static void hx_fold_indexed_addr(void) {
          * case anyway. */
         if (ra_reg[base_inst] < 0) { i = i + 1; continue; }
         if (ra_reg[idx_inst]  < 0) { i = i + 1; continue; }
+        if (!hx_fold_src_safe_at_use(add_inst, base_inst, i)) {
+            i = i + 1; continue;
+        }
+        if (!hx_fold_src_safe_at_use(sll_inst, idx_inst, i)) {
+            i = i + 1; continue;
+        }
+        if (hx_slot_reg(ra_reg[base_inst]) == hx_slot_reg(ra_reg[idx_inst])) {
+            i = i + 1; continue;
+        }
         if (h_kind[i] == HI_STORE) {
             int v_inst;
             v_inst = h_src2[i];
             if (v_inst < 0 || ra_reg[v_inst] < 0) { i = i + 1; continue; }
+            if (hx_slot_reg(ra_reg[base_inst]) == hx_slot_reg(ra_reg[v_inst])) {
+                i = i + 1; continue;
+            }
+            if (hx_slot_reg(ra_reg[idx_inst]) == hx_slot_reg(ra_reg[v_inst])) {
+                i = i + 1; continue;
+            }
         }
 
         /* Commit the fold. */
@@ -1852,7 +1872,9 @@ static void hx_cleanup_redundant_moves(void) {
  *   - Partner must also be on the offset-disp-fold path, same width,
  *     same base instruction, integer type. */
 static int hx_pair_mem_barrier(int kind) {
-    return kind == HI_CALL || kind == HI_CALLP || kind == HI_A64_DBT_TRAMPOLINE;
+    return kind == HI_CALL || kind == HI_CALLP || kind == HI_A64_DBT_TRAMPOLINE ||
+           kind == HI_A64_DC_CVAU || kind == HI_A64_IC_IVAU ||
+           kind == HI_A64_DSB_ISH || kind == HI_A64_ISB;
 }
 
 static int hx_pairable_int_offset_mem(int idx, int kind, int wide) {
@@ -2068,6 +2090,24 @@ static void hx_emit_inst(int idx) {
     if (k == HI_A64_MRS_CNTVCT) {
         a64_mrs_cntvct_el0(dst);
         hx_spill(idx, dst);
+        return;
+    }
+    if (k == HI_A64_DC_CVAU) {
+        hx_mat(s1, HX_SCRATCH1);
+        a64_dc_cvau(HX_SCRATCH1);
+        return;
+    }
+    if (k == HI_A64_IC_IVAU) {
+        hx_mat(s1, HX_SCRATCH1);
+        a64_ic_ivau(HX_SCRATCH1);
+        return;
+    }
+    if (k == HI_A64_DSB_ISH) {
+        a64_dsb_ish();
+        return;
+    }
+    if (k == HI_A64_ISB) {
+        a64_isb();
         return;
     }
     if (k == HI_PARAM) {

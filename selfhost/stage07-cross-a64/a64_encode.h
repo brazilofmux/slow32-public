@@ -1599,6 +1599,16 @@ static void a64_nop(void)        { a64_inst(0xD503201F); }
 static void a64_brk(int imm16)   { a64_inst(0xD4200000 | ((imm16 & 0xFFFF) << 5)); }
 static void a64_svc(int imm16)   { a64_inst(0xD4000001 | ((imm16 & 0xFFFF) << 5)); }
 static void a64_dmb_ishst(void)  { a64_inst(0xD5033ABF); }
+static void a64_dsb_ish(void)    { a64_inst(0xD5033B9F); }
+static void a64_isb(void)        { a64_inst(0xD5033FDF); }
+
+static void a64_dc_cvau(int rt) {
+    a64_inst(0xD50B7B20 | (rt & 0x1F));
+}
+
+static void a64_ic_ivau(int rt) {
+    a64_inst(0xD50B7520 | (rt & 0x1F));
+}
 
 /* MRS Xt, CNTVCT_EL0. */
 static void a64_mrs_cntvct_el0(int rt) {

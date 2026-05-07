@@ -3629,10 +3629,12 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
 }
 
 static bool emit_trace_enabled = false;
+static bool emit_trace_pc_has_filter = false;
 static uint32_t emit_trace_pc = 0;
 
-void dbt_set_emit_trace(bool enabled, uint32_t pc) {
+void dbt_set_emit_trace(bool enabled, bool has_pc_filter, uint32_t pc) {
     emit_trace_enabled = enabled;
+    emit_trace_pc_has_filter = has_pc_filter;
     emit_trace_pc = pc;
 }
 
@@ -6187,7 +6189,7 @@ retry_translate:
     // Initialize emitter to write into cache code buffer
     emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
     e->trace_enabled = emit_trace_enabled &&
-                       (emit_trace_pc == 0 || emit_trace_pc == guest_pc);
+                       (!emit_trace_pc_has_filter || emit_trace_pc == guest_pc);
     e->trace_tag = NULL;
 
     // Reset block metadata before translation

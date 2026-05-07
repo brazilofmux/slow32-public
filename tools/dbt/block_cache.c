@@ -19,6 +19,24 @@ static bool cache_exit_validate_enabled(void) {
     return false;
 }
 
+__attribute__((noinline))
+static void cache_target_snapshot(translated_block_t *target,
+                                  uint32_t *guest_pc,
+                                  uint8_t **host_code) {
+    *guest_pc = target->guest_pc;
+    *host_code = target->host_code;
+}
+
+__attribute__((noinline))
+static int32_t cache_pending_head_get(block_cache_t *cache, uint32_t hash) {
+    return cache->chain_pending_head[hash];
+}
+
+__attribute__((noinline))
+static void cache_pending_head_set(block_cache_t *cache, uint32_t hash, int32_t value) {
+    cache->chain_pending_head[hash] = value;
+}
+
 // Maximum number of blocks we can store
 #define MAX_BLOCKS 131072
 
@@ -211,8 +229,7 @@ bool cache_init(block_cache_t *cache) {
     }
 
     // Flush I-cache for all stubs
-    __builtin___clear_cache((char *)cache->code_buffer,
-                            (char *)cache->code_buffer + cache->code_buffer_used);
+    dbt_clear_icache(cache->code_buffer, cache->code_buffer + cache->code_buffer_used);
     dbt_jit_writable_end();
 
 #else  // x86-64
@@ -550,8 +567,8 @@ void cache_commit_code(block_cache_t *cache, uint32_t size) {
     cache->code_buffer_used = aligned_offset + size;
 #ifdef __aarch64__
     // Flush I-cache for newly committed code
-    __builtin___clear_cache((char *)(cache->code_buffer + aligned_offset),
-                            (char *)(cache->code_buffer + aligned_offset + size));
+    dbt_clear_icache(cache->code_buffer + aligned_offset,
+                     cache->code_buffer + aligned_offset + size);
 #endif
 }
 
@@ -638,15 +655,17 @@ void cache_record_pending_chain(block_cache_t *cache, translated_block_t *block,
     cache->chain_pending_entries[entry_idx].target_pc = target_pc;
     cache->chain_pending_entries[entry_idx].block_idx = block_idx;
     cache->chain_pending_entries[entry_idx].exit_idx = (uint8_t)exit_idx;
-    cache->chain_pending_entries[entry_idx].next = cache->chain_pending_head[hash];
-    cache->chain_pending_head[hash] = (int32_t)entry_idx;
+    cache->chain_pending_entries[entry_idx].next = cache_pending_head_get(cache, hash);
+    cache_pending_head_set(cache, hash, (int32_t)entry_idx);
 }
 
 void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
-    uint32_t target_pc = target->guest_pc;
+    uint32_t target_pc;
+    uint8_t *target_host_code;
+    cache_target_snapshot(target, &target_pc, &target_host_code);
     uint32_t hash = cache_hash(target_pc);
     int32_t prev = -1;
-    int32_t idx = cache->chain_pending_head[hash];
+    int32_t idx = cache_pending_head_get(cache, hash);
 
     while (idx >= 0) {
         int32_t next = cache->chain_pending_entries[idx].next;
@@ -665,7 +684,7 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
                 if (prev >= 0) {
                     cache->chain_pending_entries[prev].next = next;
                 } else {
-                    cache->chain_pending_head[hash] = next;
+                    cache_pending_head_set(cache, hash, next);
                 }
                 idx = next;
                 continue;
@@ -688,7 +707,7 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
                 b->exits[exit_idx].patch_site != NULL &&
                 b->exits[exit_idx].target_pc == target_pc) {
 
-                cache_patch_jmp(cache, b->exits[exit_idx].patch_site, target->host_code);
+                cache_patch_jmp(cache, b->exits[exit_idx].patch_site, target_host_code);
                 b->exits[exit_idx].chained = true;
                 cache->chain_count++;
             }
@@ -697,7 +716,7 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
             if (prev >= 0) {
                 cache->chain_pending_entries[prev].next = next;
             } else {
-                cache->chain_pending_head[hash] = next;
+                cache_pending_head_set(cache, hash, next);
             }
             // Don't update prev - it stays the same since we removed current
         } else {
@@ -741,7 +760,7 @@ void cache_patch_jmp(block_cache_t *cache, uint8_t *patch_site, uint8_t *target)
     *p = inst;
 
     // Flush I-cache for the patched instruction
-    __builtin___clear_cache((char *)patch_site, (char *)(patch_site + 4));
+        dbt_clear_icache(patch_site, patch_site + 4);
     dbt_jit_writable_end();
 #else
     // x86-64: patch_site points to the rel32 offset of a jmp or jcc instruction

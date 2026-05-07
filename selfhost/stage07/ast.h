@@ -184,6 +184,10 @@ static int ty_is_unsigned(int ty) {
 #define ASM_GENERIC             0
 #define ASM_A64_MRS_CNTVCT      1
 #define ASM_A64_DBT_TRAMPOLINE  2
+#define ASM_A64_DC_CVAU         3
+#define ASM_A64_IC_IVAU         4
+#define ASM_A64_DSB_ISH         5
+#define ASM_A64_ISB             6
 
 /* --- AST node --- */
 struct Node {

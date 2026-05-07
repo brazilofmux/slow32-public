@@ -29,6 +29,28 @@ static inline void dbt_jit_writable_begin(void) { }
 static inline void dbt_jit_writable_end(void)   { }
 #endif
 
+static inline void dbt_clear_icache(void *begin, void *end) {
+#if defined(__aarch64__)
+    char *p = (char *)begin;
+    char *finish = (char *)end;
+
+    for (; p < finish; p += 16) {
+        __asm__ __volatile__("dc cvau, %0" :: "r"(p) : "memory");
+    }
+    __asm__ __volatile__("dsb ish" ::: "memory");
+    for (p = (char *)begin; p < finish; p += 16) {
+        __asm__ __volatile__("ic ivau, %0" :: "r"(p) : "memory");
+    }
+    __asm__ __volatile__("dsb ish" ::: "memory");
+    __asm__ __volatile__("isb" ::: "memory");
+#elif defined(__GNUC__)
+    __builtin___clear_cache((char *)begin, (char *)end);
+#else
+    (void)begin;
+    (void)end;
+#endif
+}
+
 // Forward declaration
 typedef struct translated_block translated_block_t;
 

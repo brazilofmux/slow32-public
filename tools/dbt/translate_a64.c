@@ -30,6 +30,15 @@ uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 uint32_t native_stub_count = 0;       // Native intrinsic stub counter
 uint32_t stage5_emit_side_exits = 0;
 
+static bool a64_emit_trace_enabled = false;
+static bool a64_emit_trace_pc_has_filter = false;
+static uint32_t a64_emit_trace_pc = 0;
+
+static bool a64_emit_trace_matches_pc(uint32_t pc) {
+    if (!a64_emit_trace_enabled) return false;
+    return !a64_emit_trace_pc_has_filter || pc == a64_emit_trace_pc;
+}
+
 // ============================================================================
 // Instruction decoding (shared with x86-64 translator)
 // ============================================================================
@@ -205,10 +214,11 @@ static inline a64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg) 
 // Mark a cached guest register as written (dirty).
 // Used when the translate function writes directly into the cached host register.
 static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg) {
+    pending_write_t *pw = &ctx->pending_write;
     ctx->reg_constants[guest_reg].valid = false;
     bounds_elim_invalidate(ctx, guest_reg);
-    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
-        ctx->pending_write.valid = false;
+    if (pw->valid && pw->guest_reg == guest_reg) {
+        pw->valid = false;
         ctx->emit.rax_pending = false;
     }
     ctx->reg_cache_hits++;
@@ -269,19 +279,9 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         // Stop at block-ending instructions
         bool is_block_end = false;
         switch (inst.opcode) {
-            case OP_JAL: {
-                uint32_t jal_target = pc + inst.imm;
-                if (inst.rd == 0 &&
-                    jal_target > pc &&
-                    jal_target < ctx->cpu->code_limit &&
-                    inst_count < MAX_BLOCK_INSTS - 4) {
-                    inst_count++;
-                    pc = jal_target;
-                    continue;
-                }
+            case OP_JAL:
                 is_block_end = true;
                 break;
-            }
             case OP_JALR:
             case OP_HALT: case OP_DEBUG: case OP_YIELD:
                 is_block_end = true;
@@ -597,11 +597,12 @@ static bool try_pending_flags_fusion(translate_ctx_t *ctx, uint8_t rs1, uint8_t 
 // ============================================================================
 
 static inline void flush_pending_write(translate_ctx_t *ctx) {
-    if (!ctx->pending_write.valid) return;
+    pending_write_t *pw = &ctx->pending_write;
+    if (!pw->valid) return;
     // STR Wd, [X20, #offset]
-    emit_str_w32_imm(&ctx->emit, ctx->pending_write.host_reg,
-                     W20, GUEST_REG_OFFSET(ctx->pending_write.guest_reg));
-    ctx->pending_write.valid = false;
+    emit_str_w32_imm(&ctx->emit, pw->host_reg,
+                     W20, GUEST_REG_OFFSET(pw->guest_reg));
+    pw->valid = false;
     ctx->emit.rax_pending = false;
 }
 
@@ -736,10 +737,23 @@ static void flush_cached_host_regs(translate_ctx_t *ctx, a64_reg_t r1, a64_reg_t
     }
 }
 
-// Emit trace control (stub — tracing infrastructure unchanged)
-void dbt_set_emit_trace(bool enabled, uint32_t pc) {
-    (void)enabled;
-    (void)pc;
+void dbt_set_emit_trace(bool enabled, bool has_pc_filter, uint32_t pc) {
+    a64_emit_trace_enabled = enabled;
+    a64_emit_trace_pc_has_filter = has_pc_filter;
+    a64_emit_trace_pc = pc;
+}
+
+static void a64_dump_emitted_block(translate_ctx_t *ctx, void *entry) {
+    if (!a64_emit_trace_enabled) return;
+    if (a64_emit_trace_pc_has_filter && ctx->block_start_pc != a64_emit_trace_pc) return;
+
+    uint32_t *words = (uint32_t *)entry;
+    int count = (int)(ctx->emit.offset / 4);
+    fprintf(stderr, "A64 emit block pc=0x%08X bytes=%d\n",
+            ctx->block_start_pc, (int)ctx->emit.offset);
+    for (int i = 0; i < count; i++) {
+        fprintf(stderr, "  %04X: %08X\n", i * 4, words[i]);
+    }
 }
 
 // ============================================================================
@@ -749,10 +763,11 @@ void dbt_set_emit_trace(bool enabled, uint32_t pc) {
 // Load guest register into AArch64 register (handles r0 = 0)
 void emit_load_guest_reg(translate_ctx_t *ctx, a64_reg_t dst, uint8_t guest_reg) {
     emit_ctx_t *e = &ctx->emit;
+    pending_write_t *pw = &ctx->pending_write;
 
     if (guest_reg == 0) {
         // r0 is always 0
-        if (ctx->pending_write.valid && dst == ctx->pending_write.host_reg) {
+        if (pw->valid && dst == pw->host_reg) {
             flush_pending_write(ctx);
         }
         // MOVZ Wd, #0
@@ -761,15 +776,15 @@ void emit_load_guest_reg(translate_ctx_t *ctx, a64_reg_t dst, uint8_t guest_reg)
     }
 
     // Dead temporary elimination: check pending write
-    if (ctx->pending_write.valid) {
-        if (guest_reg == ctx->pending_write.guest_reg) {
+    if (pw->valid) {
+        if (guest_reg == pw->guest_reg) {
             // Value is already in pending.host_reg
-            a64_reg_t preg = ctx->pending_write.host_reg;
-            if (!ctx->pending_write.can_skip_store) {
+            a64_reg_t preg = pw->host_reg;
+            if (!pw->can_skip_store) {
                 // Level 1: still need memory store for later reads
                 emit_str_w32_imm(e, preg, W20, GUEST_REG_OFFSET(guest_reg));
             }
-            ctx->pending_write.valid = false;
+            pw->valid = false;
             ctx->emit.rax_pending = false;
             if (dst != preg) {
                 emit_mov_w32_w32(e, dst, preg);
@@ -777,7 +792,7 @@ void emit_load_guest_reg(translate_ctx_t *ctx, a64_reg_t dst, uint8_t guest_reg)
             ctx->reg_cache_hits++;
             return;
         }
-        if (dst == ctx->pending_write.host_reg) {
+        if (dst == pw->host_reg) {
             // About to clobber the pending register — flush first
             flush_pending_write(ctx);
         }
@@ -804,6 +819,7 @@ void emit_load_guest_reg(translate_ctx_t *ctx, a64_reg_t dst, uint8_t guest_reg)
 // Store AArch64 register to guest register (handles r0 = discard)
 void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t src) {
     emit_ctx_t *e = &ctx->emit;
+    pending_write_t *pw = &ctx->pending_write;
     if (guest_reg == 0) return;
 
     // Constant propagation: non-constant write invalidates known value
@@ -811,8 +827,8 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t src
     bounds_elim_invalidate(ctx, guest_reg);
 
     // Discard pending write for same register
-    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
-        ctx->pending_write.valid = false;
+    if (pw->valid && pw->guest_reg == guest_reg) {
+        pw->valid = false;
         ctx->emit.rax_pending = false;
     }
 
@@ -833,11 +849,11 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t src
     // Dead temporary elimination: defer W0 stores as pending writes
     if (src == W0) {
         flush_pending_write(ctx);
-        ctx->pending_write.guest_reg = guest_reg;
-        ctx->pending_write.host_reg = W0;
-        ctx->pending_write.valid = true;
+        pw->guest_reg = guest_reg;
+        pw->host_reg = W0;
+        pw->valid = true;
         ctx->emit.rax_pending = true;
-        ctx->pending_write.can_skip_store = ctx->dead_temp_skip[ctx->current_inst_idx];
+        pw->can_skip_store = ctx->dead_temp_skip[ctx->current_inst_idx];
         return;
     }
 
@@ -849,14 +865,15 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t src
 // Store immediate to guest register
 void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm) {
     emit_ctx_t *e = &ctx->emit;
+    pending_write_t *pw = &ctx->pending_write;
     if (guest_reg == 0) return;
 
     ctx->reg_constants[guest_reg].valid = true;
     ctx->reg_constants[guest_reg].value = imm;
     bounds_elim_invalidate(ctx, guest_reg);
 
-    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
-        ctx->pending_write.valid = false;
+    if (pw->valid && pw->guest_reg == guest_reg) {
+        pw->valid = false;
         ctx->emit.rax_pending = false;
     }
 
@@ -1313,8 +1330,6 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
     // Collect patch sites for B.cond instructions.
     size_t fault_patches[8];
     int fault_count = 0;
-    size_t ok_patches[8];
-    int ok_count = 0;
 
     if (cpu->mem_size < access_size) {
         emit_exit_with_info_reg(ctx, reason, ctx->guest_pc, addr_reg);
@@ -1341,17 +1356,16 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
 
         // 3. MMIO disabled check
         if (!cpu->mmio_enabled && cpu->mmio_base != 0) {
-            // if addr < mmio_base -> ok (skip MMIO check)
+            // Fault only for addr in [mmio_base, mmio_base + 64 KiB).
+            // Use an unsigned delta check so this path only contributes a
+            // fault branch; cc-a64 has miscompiled the older "ok branch"
+            // patch list by targeting the fault stub instead of ok_offset.
             emit_mov_w32_imm32(e, W3, cpu->mmio_base);
-            emit_cmp_w32_w32(e, addr_reg, W3);
-            ok_patches[ok_count++] = emit_offset(e);
-            emit_b_cond(e, COND_LO, 0);  // addr < mmio_base -> ok
-
-            // if addr < mmio_base + 0x10000 -> fault (in MMIO window)
-            emit_mov_w32_imm32(e, W3, cpu->mmio_base + 0x10000);
-            emit_cmp_w32_w32(e, addr_reg, W3);
+            emit_sub_w32(e, W3, addr_reg, W3);
+            emit_mov_w32_imm32(e, W4, 0xFFFF);
+            emit_cmp_w32_w32(e, W3, W4);
             fault_patches[fault_count++] = emit_offset(e);
-            emit_b_cond(e, COND_LO, 0);  // addr < mmio_end -> fault
+            emit_b_cond(e, COND_LS, 0);  // delta <= 0xFFFF -> fault
         }
     }
 
@@ -1366,7 +1380,7 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
         }
     }
 
-    if (fault_count == 0 && ok_count == 0) {
+    if (fault_count == 0) {
         if (!skip_bounds) {
             bounds_elim_record(ctx, base_guest_reg, offset, access_size, is_store);
         } else if (is_store) {
@@ -1405,15 +1419,6 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
         *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
 
-    // Patch ok branches (B.cond)
-    for (int i = 0; i < ok_count; i++) {
-        size_t patch = ok_patches[i];
-        int32_t rel = (int32_t)(ok_offset - patch);
-        uint32_t *inst = (uint32_t *)(e->buf + patch);
-        int32_t imm19 = rel >> 2;
-        *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
-    }
-
     // Record validated range
     if (!skip_bounds) {
         bounds_elim_record(ctx, base_guest_reg, offset, access_size, is_store);
@@ -1430,13 +1435,14 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
 // ============================================================================
 
 static inline a64_reg_t resolve_src(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t scratch) {
+    pending_write_t *pw = &ctx->pending_write;
     a64_reg_t h = guest_host_reg(ctx, guest_reg);
     if (h != A64_NOREG) {
         // If caller plans to use `scratch` as a destination and we currently
         // have a deferred pending write in that same host register, flush now.
         // Otherwise a following MOV scratch, h can clobber the pending value.
-        if (ctx->pending_write.valid &&
-            ctx->pending_write.host_reg == scratch &&
+        if (pw->valid &&
+            pw->host_reg == scratch &&
             h != scratch) {
             flush_pending_write(ctx);
         }
@@ -2512,7 +2518,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         }
     }
 
-    // ---- Superblock extension: inline fall-through, defer taken path ----
+    // ---- Superblock extension: inline the hot path, defer the cold path ----
     {
         bool can_extend = ctx->superblock_enabled &&
                           ctx->superblock_depth < MAX_SUPERBLOCK_DEPTH &&
@@ -2523,6 +2529,26 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
 
         if (can_extend) {
             int de_idx = ctx->deferred_exit_count;
+            uint32_t inline_pc = fall_pc;
+            uint32_t side_exit_pc = taken_pc;
+            a64_cond_t side_cond = cond;
+            bool side_cbz_is_nz = cbz_is_nz;
+
+            if (fall_pc < ctx->cpu->code_limit && (ctx->cpu->code_limit - fall_pc) >= 4) {
+                uint32_t fall_raw = *(uint32_t *)(ctx->cpu->mem_base + fall_pc);
+                decoded_inst_t fall_inst = decode_instruction(fall_raw);
+                if (fall_inst.opcode == OP_JAL && fall_inst.rd == 0) {
+                    // Common jump-over shape:
+                    //   b<cond> body
+                    //   jal     exit
+                    // body:
+                    // Inline the body and make the cold exit be the jump target.
+                    inline_pc = taken_pc;
+                    side_exit_pc = fall_pc + fall_inst.imm;
+                    side_cond = invert_cond(cond);
+                    side_cbz_is_nz = !cbz_is_nz;
+                }
+            }
 
             // Flush pending write before snapshot so cold stub doesn't need it
             flush_pending_write(ctx);
@@ -2530,10 +2556,10 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             // Emit B.cond/CBZ/CBNZ to cold stub (placeholder, patched in emit_deferred_side_exits)
             size_t bcond_patch = emit_offset(e);
             if (cbz_reg != A64_NOREG) {
-                if (cbz_is_nz) emit_cbnz_w32(e, cbz_reg, 0);
-                else            emit_cbz_w32(e, cbz_reg, 0);
+                if (side_cbz_is_nz) emit_cbnz_w32(e, cbz_reg, 0);
+                else                emit_cbz_w32(e, cbz_reg, 0);
             } else {
-                emit_b_cond(e, cond, 0);  // imm19=0 placeholder
+                emit_b_cond(e, side_cond, 0);  // imm19=0 placeholder
             }
 
             // Snapshot register allocation state for the deferred cold exit.
@@ -2545,7 +2571,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             // (offset 64) on the first iteration.
             deferred_exit_t *de = &ctx->deferred_exits[de_idx];
             de->jmp_patch_offset = bcond_patch;
-            de->target_pc = taken_pc;
+            de->target_pc = side_exit_pc;
             de->exit_idx = ctx->exit_idx++;
             de->branch_pc = ctx->guest_pc;
             de->pending_write_valid = false;
@@ -2565,10 +2591,11 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             ctx->side_exit_emitted++;
             ctx->deferred_exit_count++;
 
-            // Continue translating fall-through (not-taken) path
+            // Let the outer loop's normal increment advance to the selected
+            // inline PC.  Keeping advancement in one place avoids skipping the
+            // first instruction of the inline path in cc-a64-built dbt-a64.
             ctx->superblock_depth++;
-            ctx->guest_pc = fall_pc;
-            ctx->inst_count++;
+            ctx->guest_pc = inline_pc - 4;
             return false;  // Block continues (superblock extension)
         }
     }
@@ -3038,11 +3065,23 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     const_prop_reset(ctx);
     bounds_elim_reset(ctx);
 
+    if (a64_emit_trace_matches_pc(cpu->pc)) {
+        fprintf(stderr, "A64 prescan begin pc=0x%08X\n", cpu->pc);
+    }
+
     // Prescan for dead temporary elimination
     reg_alloc_prescan(ctx, cpu->pc);
 
+    if (a64_emit_trace_matches_pc(cpu->pc)) {
+        fprintf(stderr, "A64 prescan end pc=0x%08X\n", cpu->pc);
+    }
+
     if (DBT_TRACE) {
         fprintf(stderr, "DBT: Translating block at PC=0x%08X (AArch64)\n", cpu->pc);
+    }
+
+    if (a64_emit_trace_matches_pc(cpu->pc)) {
+        fprintf(stderr, "A64 translate begin pc=0x%08X\n", cpu->pc);
     }
 
     while (ctx->inst_count < MAX_BLOCK_INSTS) {
@@ -3078,6 +3117,11 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             fprintf(stderr, "  [%d] PC=0x%08X: raw=0x%08X op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",
                     ctx->inst_count, ctx->guest_pc, raw, inst.opcode,
                     inst.rd, inst.rs1, inst.rs2, inst.imm);
+        }
+
+        if (a64_emit_trace_matches_pc(ctx->block_start_pc)) {
+            fprintf(stderr, "A64 translate inst idx=%d pc=0x%08X raw=0x%08X op=0x%02X imm=%d\n",
+                    ctx->inst_count, ctx->guest_pc, raw, inst.opcode, inst.imm);
         }
 
         ctx->current_inst_idx = ctx->inst_count;
@@ -3154,20 +3198,9 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_STB:  translate_stb(ctx, inst.rs1, inst.rs2, inst.imm); break;
 
             // Control flow (block-ending)
-            case OP_JAL: {
-                uint32_t target_pc = ctx->guest_pc + inst.imm;
-                if (inst.rd == 0 &&
-                    target_pc > ctx->guest_pc &&
-                    target_pc < cpu->code_limit &&
-                    ctx->inst_count < MAX_BLOCK_INSTS - 4) {
-                    flush_pending_write(ctx);
-                    ctx->guest_pc = target_pc;
-                    ctx->inst_count++;
-                    continue;
-                }
+            case OP_JAL:
                 translate_jal(ctx, inst.rd, inst.imm);
                 goto block_done;
-            }
 
             case OP_JALR:
                 translate_jalr(ctx, inst.rd, inst.rs1, inst.imm);
@@ -3176,32 +3209,32 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_BEQ:
                 if (translate_beq(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                break;
 
             case OP_BNE:
                 if (translate_bne(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                break;
 
             case OP_BLT:
                 if (translate_blt(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                break;
 
             case OP_BGE:
                 if (translate_bge(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                break;
 
             case OP_BLTU:
                 if (translate_bltu(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                break;
 
             case OP_BGEU:
                 if (translate_bgeu(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                break;
 
             // Special (block-ending)
             case OP_HALT:
@@ -3244,10 +3277,11 @@ block_done:
         ctx->block->reg_cache_misses = ctx->reg_cache_misses;
     }
     cpu->code_buffer_used = emit_offset(e);
+    a64_dump_emitted_block(ctx, entry);
 
 #ifdef __aarch64__
     // ARM I-cache is not coherent with D-cache — must flush after writing code
-    __builtin___clear_cache((char *)entry, (char *)entry + cpu->code_buffer_used);
+    dbt_clear_icache(entry, (uint8_t *)entry + cpu->code_buffer_used);
 #endif
 
     dbt_jit_writable_end();
@@ -4099,6 +4133,7 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
         fprintf(stderr, "DBT: Emitted intrinsic stub '%s' at PC=0x%08X (%u bytes)\n",
                 name, guest_pc, block->host_size);
     }
+    a64_dump_emitted_block(ctx, code_start);
     cache_commit_code(cache, block->host_size);
     cache_insert(cache, block);
     cache_chain_incoming(cache, block);
@@ -4201,6 +4236,11 @@ retry_translate:
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
 
+        if (a64_emit_trace_matches_pc(ctx->block_start_pc)) {
+            fprintf(stderr, "A64 translate cached inst idx=%d pc=0x%08X raw=0x%08X op=0x%02X imm=%d\n",
+                    ctx->inst_count, ctx->guest_pc, raw, inst.opcode, inst.imm);
+        }
+
         ctx->current_inst_idx = ctx->inst_count;
 
         switch (inst.opcode) {
@@ -4245,24 +4285,15 @@ retry_translate:
             case OP_STW:  translate_stw(ctx, inst.rs1, inst.rs2, inst.imm); break;
             case OP_STH:  translate_sth(ctx, inst.rs1, inst.rs2, inst.imm); break;
             case OP_STB:  translate_stb(ctx, inst.rs1, inst.rs2, inst.imm); break;
-            case OP_JAL: {
-                uint32_t target_pc = ctx->guest_pc + inst.imm;
-                if (inst.rd == 0 && target_pc > ctx->guest_pc &&
-                    target_pc < cpu->code_limit && ctx->inst_count < MAX_BLOCK_INSTS - 4) {
-                    flush_pending_write(ctx);
-                    ctx->guest_pc = target_pc;
-                    ctx->inst_count++;
-                    continue;
-                }
+            case OP_JAL:
                 translate_jal(ctx, inst.rd, inst.imm); goto cached_done;
-            }
             case OP_JALR: translate_jalr(ctx, inst.rd, inst.rs1, inst.imm); goto cached_done;
-            case OP_BEQ:  if (translate_beq(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
-            case OP_BNE:  if (translate_bne(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
-            case OP_BLT:  if (translate_blt(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
-            case OP_BGE:  if (translate_bge(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
-            case OP_BLTU: if (translate_bltu(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
-            case OP_BGEU: if (translate_bgeu(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
+            case OP_BEQ:  if (translate_beq(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; break;
+            case OP_BNE:  if (translate_bne(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; break;
+            case OP_BLT:  if (translate_blt(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; break;
+            case OP_BGE:  if (translate_bge(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; break;
+            case OP_BLTU: if (translate_bltu(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; break;
+            case OP_BGEU: if (translate_bgeu(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; break;
             case OP_HALT:  translate_halt(ctx); goto cached_done;
             case OP_DEBUG: translate_debug(ctx, inst.rs1); goto cached_done;
             case OP_YIELD: translate_yield(ctx); goto cached_done;
@@ -4326,6 +4357,7 @@ cached_done:
         }
     }
 
+    a64_dump_emitted_block(ctx, entry);
     cache_commit_code(cache, block->host_size);
 
     // Update superblock metadata

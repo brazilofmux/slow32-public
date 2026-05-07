@@ -77,11 +77,15 @@
 /* AArch64 inline-asm subset needed by tools/dbt. */
 #define HI_A64_MRS_CNTVCT     61  /* mrs Xt, cntvct_el0 */
 #define HI_A64_DBT_TRAMPOLINE 62  /* execute translated block trampoline; args in h_carg */
+#define HI_A64_DC_CVAU        63  /* dc cvau, Xt */
+#define HI_A64_IC_IVAU        64  /* ic ivau, Xt */
+#define HI_A64_DSB_ISH        65  /* dsb ish */
+#define HI_A64_ISB            66  /* isb */
 
 /* Floating-point square root.  Single-source FP op; ty selects S/D form.
  * Recognised by the lower from __builtin_sqrt / __builtin_sqrtf source
  * patterns and lowered directly to FSQRT on backends that support it. */
-#define HI_FSQRT    63
+#define HI_FSQRT    67
 
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
@@ -181,6 +185,10 @@ static int hi_has_value(int kind) {
     if (kind == HI_BRC) return 0;
     if (kind == HI_RET) return 0;
     if (kind == HI_A64_DBT_TRAMPOLINE) return 0;
+    if (kind == HI_A64_DC_CVAU) return 0;
+    if (kind == HI_A64_IC_IVAU) return 0;
+    if (kind == HI_A64_DSB_ISH) return 0;
+    if (kind == HI_A64_ISB) return 0;
     return 1;
 }
 
@@ -193,6 +201,11 @@ static int hi_is_remat(int kind) {
     if (kind == HI_FADDR) return 1;
     if (kind == HI_GETFP) return 1;
     return 0;
+}
+
+static int hi_is_a64_cache_asm(int kind) {
+    return kind == HI_A64_DC_CVAU || kind == HI_A64_IC_IVAU ||
+           kind == HI_A64_DSB_ISH || kind == HI_A64_ISB;
 }
 
 /* Is this instruction kind safe to hoist/CSE? Pure, non-faulting. */

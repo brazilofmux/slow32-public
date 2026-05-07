@@ -413,6 +413,19 @@ static int hl_expr(Node *n) {
             h_cbase[val] = base;
             return val;
         }
+        if (n->val == ASM_A64_DC_CVAU || n->val == ASM_A64_IC_IVAU) {
+            if (!n->args) p_error("cache maintenance asm needs one operand");
+            val = hl_expr(n->args);
+            if (n->val == ASM_A64_DC_CVAU)
+                return hi_emit(HI_A64_DC_CVAU, TY_INT, val, -1, 0, NULL);
+            return hi_emit(HI_A64_IC_IVAU, TY_INT, val, -1, 0, NULL);
+        }
+        if (n->val == ASM_A64_DSB_ISH) {
+            return hi_emit(HI_A64_DSB_ISH, TY_INT, -1, -1, 0, NULL);
+        }
+        if (n->val == ASM_A64_ISB) {
+            return hi_emit(HI_A64_ISB, TY_INT, -1, -1, 0, NULL);
+        }
         p_error("unsupported inline asm");
         return -1;
     }
