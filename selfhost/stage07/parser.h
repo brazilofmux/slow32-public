@@ -417,6 +417,7 @@ static int add_struct(char *name) {
     st_nfields[idx] = 0;
     st_first[idx] = stm_count;
     st_size[idx] = 0;
+    st_align[idx] = 1;
     st_is_union[idx] = 0;
     st_count = st_count + 1;
     return idx;
@@ -589,6 +590,7 @@ static int parse_type(void) {
         }
         if (lex_tok == TK_LBRACE) {
             /* Struct definition: struct Name { ... } */
+            int max_align;
             next();
             if (si < 0) {
                 si = add_struct(nm);
@@ -596,6 +598,7 @@ static int parse_type(void) {
                 st_first[si] = stm_count;
             }
             off = 0;
+            max_align = 1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
                 first_decl = 1;
@@ -612,16 +615,13 @@ static int parse_type(void) {
                         while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
                     }
                     if (lex_tok == TK_COLON) {
+                        int balign;
                         next();
                         arr_count = parse_const_int();
                         require_complete_type(dty, "incomplete bit-field type");
-                        if ((dty & TY_BASE_MASK) == TY_CHAR) {
-                            /* 1-byte aligned */
-                        } else if ((dty & TY_BASE_MASK) == TY_SHORT) {
-                            off = ((off + 1) / 2) * 2;
-                        } else {
-                            off = ((off + 3) / 4) * 4;
-                        }
+                        balign = ty_align(dty);
+                        if (balign > 1) off = ((off + balign - 1) / balign) * balign;
+                        if (balign > max_align) max_align = balign;
                         if (arr_count > 0) off = off + ty_size(dty);
                         break;
                     }
@@ -641,13 +641,17 @@ static int parse_type(void) {
                         p_error("expected member name");
                         return TY_INT;
                     }
-                    /* Align offset: char=1, short=2, else=4 */
-                    if ((member_ty & TY_BASE_MASK) == TY_CHAR) {
-                        /* 1-byte aligned */
-                    } else if ((member_ty & TY_BASE_MASK) == TY_SHORT) {
-                        off = ((off + 1) / 2) * 2;
-                    } else {
-                        off = ((off + 3) / 4) * 4;
+                    /* Align offset to the member's natural alignment.
+                     * On 64-bit hosts (cc-x64, cc-a64) pointer/llong/double
+                     * fields require 8-byte alignment so that JIT-emitted
+                     * LDR X / STR X loads (scaled offsets) hit the right
+                     * bytes; on SLOW-32 native ty_align() collapses to the
+                     * old 1/2/4 behaviour. */
+                    {
+                        int malign = ty_align(member_ty);
+                        if (malign > 1)
+                            off = ((off + malign - 1) / malign) * malign;
+                        if (malign > max_align) max_align = malign;
                     }
                     if (stm_count >= ST_MAX_MEMBERS) {
                         p_error("too many struct members");
@@ -701,8 +705,12 @@ static int parse_type(void) {
                 expect(TK_SEMI);
             }
             expect(TK_RBRACE);
-            /* Round total size to multiple of 4 */
-            st_size[si] = ((off + 3) / 4) * 4;
+            /* Round total size up to the struct's alignment so that arrays
+             * of struct keep each element naturally aligned.  The historical
+             * "round to 4" rule is a special case of this when max_align <= 4. */
+            st_align[si] = max_align;
+            if (max_align < 4) max_align = 4;
+            st_size[si] = ((off + max_align - 1) / max_align) * max_align;
         } else {
             /* Forward declaration or reference: struct Name (no brace) */
             if (si < 0) {
@@ -726,6 +734,7 @@ static int parse_type(void) {
         }
         if (lex_tok == TK_LBRACE) {
             /* Union definition: union Name { ... } */
+            int max_align;
             next();
             if (si < 0) {
                 si = add_struct(nm);
@@ -734,6 +743,7 @@ static int parse_type(void) {
             }
             st_is_union[si] = 1;
             max_sz = 0;
+            max_align = 1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
                 first_decl = 1;
@@ -800,6 +810,7 @@ static int parse_type(void) {
                     }
                     skip_gnu_decl_suffixes();
                     if (arr_count > 0) {
+                        int malign;
                         require_complete_type(member_ty, "incomplete union member");
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty + TY_PTR;
@@ -807,7 +818,10 @@ static int parse_type(void) {
                         stm_arr_size[stm_count] = ty_size(member_ty) * arr_count;
                         stm_off[stm_count] = 0;
                         if (ty_size(member_ty) * arr_count > max_sz) max_sz = ty_size(member_ty) * arr_count;
+                        malign = ty_align(member_ty);
+                        if (malign > max_align) max_align = malign;
                     } else {
+                        int malign;
                         require_complete_type(member_ty, "incomplete union member");
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty;
@@ -815,6 +829,8 @@ static int parse_type(void) {
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = 0;
                         if (ty_size(member_ty) > max_sz) max_sz = ty_size(member_ty);
+                        malign = ty_align(member_ty);
+                        if (malign > max_align) max_align = malign;
                     }
                     stm_count = stm_count + 1;
                     st_nfields[si] = st_nfields[si] + 1;
@@ -824,8 +840,11 @@ static int parse_type(void) {
                 expect(TK_SEMI);
             }
             expect(TK_RBRACE);
-            /* Round total size to multiple of 4 */
-            st_size[si] = ((max_sz + 3) / 4) * 4;
+            /* Round total size up to the union's alignment so that arrays
+             * of union keep each element naturally aligned. */
+            st_align[si] = max_align;
+            if (max_align < 4) max_align = 4;
+            st_size[si] = ((max_sz + max_align - 1) / max_align) * max_align;
         } else {
             /* Forward declaration or reference: union Name (no brace) */
             if (si < 0) {

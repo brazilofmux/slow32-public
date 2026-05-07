@@ -92,6 +92,7 @@ static int ty_is_incomplete_struct(int ty) {
 /* Target pointer size: 4 for SLOW-32, 8 for x86-64.
  * Set by driver before compilation. Default 4 for backward compat. */
 static int ty_ptr_size = 4;
+static int st_align[ST_MAX_STRUCTS];   /* alignment of each struct (max member align) */
 
 static int ty_size(int ty) {
     if (ty & TY_PTR_MASK) return ty_ptr_size;
@@ -104,6 +105,27 @@ static int ty_size(int ty) {
     if ((ty & TY_BASE_MASK) == TY_CHAR) return 1;
     if ((ty & TY_BASE_MASK) == TY_SHORT) return 2;
     if ((ty & TY_BASE_MASK) == TY_VOID) return 1;
+    return 4;
+}
+
+/* Natural alignment of a type.  Pointer types align to the host pointer
+ * size (4 on SLOW-32 native, 8 on cc-x64 / cc-a64).  This must match
+ * what the JIT emitter and any external (gcc-built) consumer expects:
+ * cpu_state_t in dbt has pointer fields whose offsets are computed via
+ * offsetof() at compile time and embedded into JIT-emitted LDR X
+ * instructions, which require 8-aligned scaled offsets. */
+static int ty_align(int ty) {
+    int base;
+    if (ty & TY_PTR_MASK) return ty_ptr_size;
+    base = ty & TY_BASE_MASK;
+    if (base >= TY_STRUCT_BASE) return st_align[base - TY_STRUCT_BASE];
+    if (base == TY_I128) return 16;
+    if (base == TY_DOUBLE) return 8;
+    if (base == TY_LLONG) return 8;
+    if (base == TY_FLOAT) return 4;
+    if (base == TY_CHAR) return 1;
+    if (base == TY_SHORT) return 2;
+    if (base == TY_VOID) return 1;
     return 4;
 }
 
