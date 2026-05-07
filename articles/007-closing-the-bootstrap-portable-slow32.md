@@ -2,7 +2,7 @@
 
 **A 933-line C interpreter is the only piece of the system that the host has to compile. From there, SLOW-32 builds its own toolchain, generates its own native code on AArch64 and x86-64, and runs guest binaries at near-native speed without ever calling out to the host compiler again. ARM64 is closed today. AMD64 is days away.**
 
-*Five months ago the headline number was speed: roughly six billion guest instructions per second on a Ryzen, beating QEMU on real workloads. That was a property of the JIT. This piece is about a different property — closure. The system has stopped needing to ask the host for help. I'm writing it down because it's the engineering result I'm proudest of in the project so far, and because it changes what you get to ask a small ISA to do.*
+*Five months ago the headline number was speed: roughly six billion guest instructions per second on a Ryzen, beating QEMU on real workloads. That was a property of the JIT. This piece is about closure — and a new personal best of **7.2 billion instructions per second** on my Mac Book Pro. The system no longer needs to ask the host for anything after the first 933 lines.*
 
 ---
 
@@ -142,6 +142,8 @@ make                       # produces out/cc-a64 and the AArch64 fast emulator
 ## Why This Matters
 
 When I started SLOW-32 I thought of it as an educational ISA with a pleasant property — clean enough to JIT well. The 6 BIPS milestone made it an interesting performance artifact. Closing the bootstrap loop is what turns it into something else: a small, portable execution environment that owns its own toolchain.
+
+This is the moment the physical chip’s ISA stopped mattering much. Someone still has to fabricate silicon, but whether that silicon speaks ARM or x86 is now almost cosmetic. It’s just a fast FPGA whose LUTs happen to implement someone else’s architecture. My orthogonal 32-bit RISC has become the real machine the software experiences. The hardware is emulating *my* virtual machine, not the other way around.
 
 What I want from a 32-bit hobby ISA, in the end, is the property that a binary I produce today will still run at full speed on a machine I haven't bought yet, without depending on the continued existence and stability of any specific host compiler. With the AArch64 leg closed and the AMD64 leg closing, that's the property I have. The interpreter is the contract. Everything else is just code.
 
