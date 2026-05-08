@@ -393,7 +393,57 @@ Validation: targeted stage02 test returns expected value for mixed init/cond/ste
 
 ### 31. [OPEN] stage07 fixed-point fails — regalloc bug from compare-and-branch fusion
 
-**Status as of 2026-05-08**: Codex's commit `bd04478f` adds a hand-written
+**Status as of 2026-05-08 (later)**: Codex's `bd04478f` lex_next dodge
+has been reverted (`50b468f3`) so the symptom now surfaces honestly:
+gen1 builds, fp-gen2 builds, but `fp-gen2.s32x` errors out with
+`s12cc:176: expected token 51 got 0` (rc=10) when asked to compile
+`s12cc.c` for fp-gen3 — the gen3 compile never produces output, so
+the gen2==gen3 byte comparison is never reached.  The bug is **not**
+"gen2 ≠ gen3 by N lines"; it's "gen2's compiler is internally
+miscompiled and can't lex its own source."
+
+**Diagnostic harness landed in `68dd34a6`**: `selfhost/stage07/diff-corpus.sh`
++ a 10-file corpus reproduces the smoking gun in ~1.5 s.  Smallest
+signal: `01_return_const.c` (`int main(void){return 0;}`) — fp-gen2's
+output drops the `addi r1, r0, 0` that `cc.s32x` and `gen1_cc.s32x`
+both emit (they're byte-identical for this input).  The bug is purely
+in fp-gen2 (gen1_cc's compile of s12cc.c miscompiles some function
+inside s12cc.c that fp-gen2 then runs incorrectly).
+
+**Don't-NOP probe (2026-05-08)**: patched `ra_extend_fused_cmp` to
+keep the live-range extension but skip the `h_kind[cmp] = HI_NOP`
+and intermediate-COPY-NOP lines.  Re-ran `--fixed-point`: same
+symptom, same `expected token 51 got 0`, same 10/10 DIFFER on the
+corpus, same 10-line missing-`addi r1, r0, 0` on `01_return_const`.
+**The bug is not in the NOPing logic.**  Combined with the earlier
+"force `hcg_identify_fusions` to early-return" experiment also
+failing to restore the gate, this confirms ISSUES.md's hint:
+**something between `7b9e1405` and HEAD compounds with (or
+independently triggers) the same surface.**
+
+Next bisect target: between `7b9e1405` (the fusion commit, where
+the symptom first surfaces) and `be1514b4` (last commit to rebuild
+the checked-in `cc.s32x` reference).  Likely suspects in that range
+that touch HIR/regalloc/codegen:
+- `e92607d4` HIR-codegen global-init byte/element semantics
+- `f5cde4d3` register compiler-generated temp allocas with hl_ainst
+- `83fc86ab` mem2reg false-rejection for allocas + verifier
+- `3b865b34` hir_opt: promote single-store allocas (trivial mem2reg)
+
+**Caveat about the cc.s32x reference**: `selfhost/stage07/cc.s32x`
+is a checked-in binary last rebuilt at `be1514b4`.  Many commits
+since then have changed `s12cc.c` and the compiler internals, so
+cc.s32x is an *older version* of the compiler — not a fresh
+host-LLVM build.  It's still useful as a reference (it predates
+the bug), but it disagrees with `gen1_cc.s32x` on more complex
+corpus inputs (5/10 in our corpus) for benign reasons (different
+versions of the same source), not the gen2 miscompilation.
+
+---
+
+**Original session notes follow.**
+
+Codex's commit `bd04478f` adds a hand-written
 fast path in `lex_next` (whitespace + string/char literals) so gen2 now
 **builds** — the visible "expected token 56 got 0" error from the prior
 session is gone.  The fixed-point gate still fails (47/48): gen2 ≠ gen3.
