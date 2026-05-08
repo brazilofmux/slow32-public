@@ -1910,6 +1910,80 @@ static void ra_verify(char *fn_name) {
         i = i + 1;
     }
 
+    /* (3a) PHI/CFG consistency: every PHI's pred list (h_pblk[]) must
+     * exactly match the block's current predecessor set (ssa_pred[]).
+     * If a PHI lists a pred that isn't in ssa_pred[], the parallel-copy
+     * for that edge will be emitted with arg=-1 -> hx_mat zeroes the
+     * scratch register and the PHI's spill slot gets 0 from a phantom
+     * edge.  If a PHI is missing a pred that DOES exist, the pred's
+     * branch will emit a copy that finds no slot to write to, leaving
+     * the PHI's slot uninitialised on that edge. */
+    {
+        int p_inst;
+        int p_blk;
+        int p_base;
+        int p_cnt;
+        int pred_idx;
+        int pred_blk;
+        int phi_pred_blk;
+        int found;
+        p_inst = 0;
+        while (p_inst < h_ninst) {
+            if (h_kind[p_inst] == HI_PHI) {
+                p_blk = h_blk[p_inst];
+                p_base = h_pbase[p_inst];
+                p_cnt = h_pcnt[p_inst];
+                /* Every actual predecessor of the block must appear in PHI's list. */
+                pred_idx = 0;
+                while (pred_idx < ssa_npred[p_blk]) {
+                    pred_blk = ssa_pred[ssa_pbase[p_blk] + pred_idx];
+                    found = 0;
+                    j = 0;
+                    while (j < p_cnt) {
+                        phi_pred_blk = h_pblk[p_base + j];
+                        if (phi_pred_blk == pred_blk) { found = 1; break; }
+                        j = j + 1;
+                    }
+                    if (!found) {
+                        fdputs("RA_VERIFY: PHI missing pred in ", 2);
+                        fdputs(fn_name, 2);
+                        fdputs(": phi=", 2); fdputuint(2, p_inst);
+                        fdputs(" blk=", 2); fdputuint(2, p_blk);
+                        fdputs(" missing pred_blk=", 2); fdputuint(2, pred_blk);
+                        fdputs(" (cfg has ", 2); fdputuint(2, ssa_npred[p_blk]);
+                        fdputs(" preds, phi has ", 2); fdputuint(2, p_cnt);
+                        fdputs(")\n", 2);
+                        err = err + 1;
+                    }
+                    pred_idx = pred_idx + 1;
+                }
+                /* Every PHI-listed pred must exist in current CFG (no stale entries). */
+                j = 0;
+                while (j < p_cnt) {
+                    phi_pred_blk = h_pblk[p_base + j];
+                    found = 0;
+                    pred_idx = 0;
+                    while (pred_idx < ssa_npred[p_blk]) {
+                        pred_blk = ssa_pred[ssa_pbase[p_blk] + pred_idx];
+                        if (pred_blk == phi_pred_blk) { found = 1; break; }
+                        pred_idx = pred_idx + 1;
+                    }
+                    if (!found) {
+                        fdputs("RA_VERIFY: PHI stale pred in ", 2);
+                        fdputs(fn_name, 2);
+                        fdputs(": phi=", 2); fdputuint(2, p_inst);
+                        fdputs(" blk=", 2); fdputuint(2, p_blk);
+                        fdputs(" stale pred_blk=", 2); fdputuint(2, phi_pred_blk);
+                        fdputs("\n", 2);
+                        err = err + 1;
+                    }
+                    j = j + 1;
+                }
+            }
+            p_inst = p_inst + 1;
+        }
+    }
+
     /* (3) Spill-slot collision: two distinct value-producing insts
      * sharing the same negative-fp offset.  Today this should never
      * happen because ra_assign_spills hands out a fresh slot per inst,

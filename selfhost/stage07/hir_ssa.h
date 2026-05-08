@@ -412,8 +412,14 @@ static void ssa_find_promo(void) {
                 }
             }
         }
-        /* src2: any alloca as src2 means address-taken (STORE val) */
-        if (h_src2[i] >= 0 && h_kind[h_src2[i]] == HI_ALLOCA) {
+        /* src2: any alloca as src2 means address-taken (STORE val).
+         * Only check when src2 is actually an inst reference -- for
+         * HI_BR/HI_BRC, src2 is a block index that can coincidentally
+         * match an alloca's inst index, which would falsely reject the
+         * alloca.  Inlined to avoid a forward dep on hir_opt.h. */
+        if (h_src2[i] >= 0 && k != HI_BR && k != HI_BRC &&
+            k != HI_PHI && k != HI_NOP &&
+            h_kind[h_src2[i]] == HI_ALLOCA) {
             j = 0;
             while (j < hl_nalloca) {
                 if (hl_ainst[j] == h_src2[i]) { ok[j] = 0; }
@@ -437,6 +443,39 @@ static void ssa_find_promo(void) {
             }
         }
         i = i + 1;
+    }
+
+    /* Diagnostic: dump rejection reasons when CC_X64_PROMO_DEBUG is set.
+     * Prints each non-promotable alloca with its inst index plus the
+     * first instruction that rejected it.  Correlate with --hir-dump. */
+    if (getenv("CC_X64_PROMO_DEBUG")) {
+        i = 0;
+        while (i < hl_nalloca) {
+            if (!ok[i]) {
+                int reason_inst = -1;
+                int xi = 0;
+                while (xi < h_ninst) {
+                    int xk = h_kind[xi];
+                    if (h_src1[xi] == hl_ainst[i] && xk != HI_LOAD && xk != HI_STORE) {
+                        reason_inst = xi; break;
+                    }
+                    if (h_src2[xi] == hl_ainst[i]) { reason_inst = xi; break; }
+                    xi = xi + 1;
+                }
+                fdputs("PROMO_REJECT: alloca i", 2);
+                fdputuint(2, hl_ainst[i]);
+                fdputs(" off=", 2); fdputuint(2, hl_aoff[i]);
+                fdputs(" rejected by inst ", 2);
+                if (reason_inst >= 0) {
+                    fdputuint(2, reason_inst);
+                    fdputs(" k=", 2); fdputuint(2, h_kind[reason_inst]);
+                } else {
+                    fdputs("(?)", 2);
+                }
+                fdputs("\n", 2);
+            }
+            i = i + 1;
+        }
     }
 
     /* Collect promotable ALLOCAs */
