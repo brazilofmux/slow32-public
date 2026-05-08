@@ -208,6 +208,76 @@ static void ra_backprop(int val, int use_blk) {
     }
 }
 
+static int ra_is_i12(int v) {
+    return (v >= -2048 && v <= 2047);
+}
+
+static int ra_codegen_fold_base(int inst, int *base_out) {
+    int k;
+    int s1;
+    int pat;
+    int lnt;
+    int chain;
+    int ck;
+    int chlim;
+    int off;
+
+    k = h_kind[inst];
+    s1 = h_src1[inst];
+    pat = bg_sel[inst];
+    lnt = -1;
+    if (pat >= 0) {
+        lnt = bg_plnt[pat];
+    } else if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
+        lnt = BG_FADDR;
+    }
+
+    if (k == HI_LOAD || k == HI_STORE) {
+        if (lnt == BG_FADDR || lnt == BG_SADDR) return 0;
+
+        chain = s1;
+        off = 0;
+        chlim = 0;
+        while (chain >= 0 && chlim < 64) {
+            ck = h_kind[chain];
+            if (ck == HI_COPY) {
+                chain = h_src1[chain];
+                chlim = chlim + 1;
+                continue;
+            }
+            if (ck == HI_ADDI) {
+                off = off + h_val[chain];
+                chain = h_src1[chain];
+                chlim = chlim + 1;
+                continue;
+            }
+            break;
+        }
+        if (chain >= 0 && chain != s1 && ra_is_i12(off)) {
+            *base_out = chain;
+            return 1;
+        }
+        return 0;
+    }
+
+    if (k == HI_ADDI) {
+        if (lnt == BG_FADDR) return 0;
+
+        chain = s1;
+        chlim = 0;
+        while (chain >= 0 && h_kind[chain] == HI_ADDI && chlim < 64) {
+            chain = h_src1[chain];
+            chlim = chlim + 1;
+        }
+        if (chain >= 0 && chain != s1) {
+            *base_out = chain;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static void ra_compute_ends(void) {
     int i;
     int j;
@@ -258,31 +328,16 @@ static void ra_compute_ends(void) {
             ra_extend(h_src2[inst], p);
         }
 
-        /* Codegen fold-through:  hcg_addr_base_off walks ADDI/COPY
-         * chains from s1 and emits the load/store/addi using the
-         * chain's deepest base register, not s1's register.  Extend
-         * the base's live interval to this instruction's position
-         * so its register stays alive through the folded use.
+        /* Codegen fold-through: codegen may emit a load/store/addi
+         * using a folded chain's base register rather than s1's
+         * register.  Extend exactly the base that codegen will read.
          *
          * Without this, n's interval (the deepest base) ends at its
          * last *direct* use, but a later folded LOAD that reaches
          * through an ADDI(n,52) still emits `ldw rd, r_n, 52` —
          * reading a clobbered register.  See Issue #31. */
-        if (k == HI_LOAD || k == HI_STORE || k == HI_ADDI) {
-            int chain;
-            int ck;
-            int chlim;
-            chain = h_src1[inst];
-            chlim = 0;
-            while (chain >= 0 && chlim < 64) {
-                ck = h_kind[chain];
-                if (ck != HI_ADDI && ck != HI_COPY) break;
-                chain = h_src1[chain];
-                chlim = chlim + 1;
-            }
-            if (chain >= 0 && chain != h_src1[inst]) {
-                ra_extend(chain, p);
-            }
+        if (ra_codegen_fold_base(inst, &src)) {
+            ra_extend(src, p);
         }
 
         /* Call arguments */
@@ -342,25 +397,10 @@ static void ra_compute_ends(void) {
             }
         }
 
-        /* Codegen fold-through:  walk ADDI/COPY chain on src1 and
-         * cross-block backprop the chain's base.  Mirror of the
-         * forward extend above — both must run together. */
-        if (k == HI_LOAD || k == HI_STORE || k == HI_ADDI) {
-            int chain;
-            int ck;
-            int chlim;
-            chain = h_src1[inst];
-            chlim = 0;
-            while (chain >= 0 && chlim < 64) {
-                ck = h_kind[chain];
-                if (ck != HI_ADDI && ck != HI_COPY) break;
-                chain = h_src1[chain];
-                chlim = chlim + 1;
-            }
-            if (chain >= 0 && chain != h_src1[inst] && ra_pos[chain] >= 0 &&
-                h_blk[chain] != h_blk[inst]) {
-                ra_backprop(chain, h_blk[inst]);
-            }
+        /* Codegen fold-through: mirror the forward extend above. */
+        if (ra_codegen_fold_base(inst, &src) && ra_pos[src] >= 0 &&
+            h_blk[src] != h_blk[inst]) {
+            ra_backprop(src, h_blk[inst]);
         }
 
         /* Call arguments */

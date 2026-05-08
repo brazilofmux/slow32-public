@@ -2045,6 +2045,11 @@ static void hl_stmt(Node *n) {
     if (n->kind == ND_BLOCK) {
         s = n->body;
         while (s) {
+            if (hl_terminated() && s->kind != ND_LABEL &&
+                s->kind != ND_CASE && s->kind != ND_DEFAULT) {
+                s = s->next;
+                continue;
+            }
             hl_stmt(s);
             s = s->next;
         }
