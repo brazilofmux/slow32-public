@@ -389,6 +389,78 @@ clause slots (init/cond/step). This enables idioms like:
 
 Validation: targeted stage02 test returns expected value for mixed init/cond/step lists.
 
+### Stage 13: Stage 07 (`selfhost/stage07/`)
+
+### 31. [OPEN] gen2 self-compile fails on TK_STRING — fixed-point gate stuck
+
+After the heap-cap, parser-feature, and HIR-codegen byte-count fixes
+landed (commits `1140dc92`..`fafd57f1`), `selfhost/stage07/run-tests.sh
+--fixed-point` reaches Step 3d with 47/48 passing.  The remaining
+failure is the gen3 step: gen2 (built by gen1) self-compiles s12cc.c
+and exits with `s12cc:N: expected token 51 got 0` (or `54 got 1` on
+slightly different inputs) — the parent parser sees TK_EOF before its
+expected `)` / `{`.
+
+**Trigger**: gen2 fails on *any* program containing a string literal —
+`int main(void) { "hello"; return 0; }` is enough.  Programs without
+strings (including elaborate loops with calls and 64-element local
+arrays) compile cleanly.
+
+**Localization**: parse_string_literal in fp-gen2.s has its loop carry
+in registers rather than memory:
+
+```
+add  r17, r11, r15      # r17 = total + lex_str_len[lex_val]   (new total)
+addi r15, r12, 1        # r15 = nidx + 1                        (new nidx)
+jal  r31, next          # call (must preserve r15, r17 in r11-r28 ABI)
+addi r11, r17, 0        # r11 = r17    (new total — assumes r17 preserved)
+addi r12, r15, 0        # r12 = r15    (new nidx — assumes r15 preserved)
+jal  r0,  .L4984        # back-edge
+```
+
+If r15 or r17 is silently clobbered by next() or one of its transitive
+callees, parse_string_literal's loop counter / accumulator becomes
+garbage, the loop runs to EOF, and the caller sees an unexpected EOF.
+
+In contrast, gen1 (= stage06's compile of the same source) spills
+`total` to the stack at fp-272 and only carries `nidx` in r15→r11
+across next().  Stage06's regalloc was conservative enough to dodge
+the trigger entirely.
+
+**What I checked (and ruled out)**:
+- Every non-leaf function in fp-gen2.s saves the r14-r28 it touches
+  (verified by AWK pass).  No "writes rN without saving" hits for
+  r15 or r17.
+- next() itself only uses r11-r13.
+- The r11-r28 callee-saved convention is documented in
+  hir_regalloc.h ("18 callee-saved registers") and hir_codegen.h.
+- Same shape (loop with carries across a call, 64-element local
+  array) without strings compiles cleanly — so it's not a generic
+  regalloc spill bug.
+
+**Prime suspect**: a stage07 hir_regalloc / HIR-lowering issue
+specific to string-literal handling.  Possibilities to chase next:
+- The `int idxs[64]` alloca interacting with regalloc when the
+  function also has loop-carried scratch in callee-saved regs.
+- A liveness-analysis miss where r15/r17 are considered dead at the
+  call point even though they're read after.
+- A PHI-deconstruction issue at the loop back-edge (the `addi r11,
+  r17, 0; addi r12, r15, 0` pair *is* the lowered PHI write).
+
+**Reproducer** (with `tools/dbt/slow32-dbt` available):
+
+```bash
+selfhost/stage07/run-tests.sh --emu tools/dbt/slow32-dbt \
+    --fixed-point --keep-artifacts
+WD=$(ls -dt /tmp/selfhost-v2-stage07.* | head -1)
+echo 'int main(void) { "x"; return 0; }' > /tmp/s.c
+tools/dbt/slow32-dbt $WD/fp-gen2.s32x /tmp/s.c /tmp/s.s
+# → s12cc:1: expected token 56 got 0
+```
+
+For comparison: `tools/dbt/slow32-dbt $WD/gen1_cc.s32x /tmp/s.c /tmp/s.s`
+succeeds.
+
 ---
 
 ## Section C: Missing Language / ABI Surface (Feature Backlog)
