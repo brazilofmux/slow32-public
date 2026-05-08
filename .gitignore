@@ -145,3 +145,19 @@ stringutil.h
 # dBase test artifacts
 dbase/*.DBF
 dbase/src/*.s
+
+# Auto-memory / agent state (Claude Code)
+.claude/
+
+# Selfhost build-stamp markers
+selfhost/stage*/.cc-built.stamp
+selfhost/stage*/.tools-built.stamp
+
+# Debug probe / bisection dumps from cross-compiler bringup
+tools/dbt/.bc*.c
+tools/dbt/.block_cache_*.c
+tools/dbt/.block_cache_*.h
+tools/dbt/.probe_*.c
+
+# Generated article HTML (markdown is the source of truth)
+articles/*.html
