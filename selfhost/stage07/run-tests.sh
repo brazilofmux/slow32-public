@@ -506,8 +506,8 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
         else
             run_exe "$LD_EXE" "$WORKDIR/fp-gen2-link.log" \
                 -o "$WORKDIR/fp-gen2.s32x" --mmio 64K \
-                "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$STAGE6_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-                $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $STAGE6_LIBC_OBJS
+                "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
             if [[ ! -s "$WORKDIR/fp-gen2.s32x" ]]; then
                 printf "  %-30s FAIL (link)\n" "fixed-point:"
                 FAIL=$((FAIL + 1))
@@ -528,8 +528,8 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
                     else
                         run_exe "$LD_EXE" "$WORKDIR/fp-gen3-link.log" \
                             -o "$WORKDIR/fp-gen3.s32x" --mmio 64K \
-                            "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$STAGE6_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-                            $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $STAGE6_LIBC_OBJS
+                            "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                            $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
                         if [[ ! -s "$WORKDIR/fp-gen3.s32x" ]]; then
                             printf "  %-30s FAIL (gen3 link)\n" "fixed-point:"
                             FAIL=$((FAIL + 1))

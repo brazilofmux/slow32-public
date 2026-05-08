@@ -720,6 +720,8 @@ void lex_next(void) {
     char *te;
     int cs;
     int act;
+    int q;
+    int c;
 
     p = lex_rp;
     pe = lex_rpe;
@@ -732,6 +734,47 @@ void lex_next(void) {
     lex_tok = TK_EOF;
 
     if (p >= pe) return;
+
+    while (p < pe) {
+        c = *p & 255;
+        if (c == 32 || c == 9 || c == 11 || c == 12 || c == 13) {
+            p = p + 1;
+            continue;
+        }
+        if (c == 10) {
+            p = p + 1;
+            lex_line = lex_line + 1;
+            lex_col = 1;
+            continue;
+        }
+        break;
+    }
+    if (p >= pe) {
+        lex_rp = p;
+        return;
+    }
+
+    if (*p == 34 || *p == 39) {
+        q = *p;
+        te = p + 1;
+        while (te < pe) {
+            c = *te & 255;
+            if (c == 92 && te + 1 < pe) {
+                te = te + 2;
+                continue;
+            }
+            te = te + 1;
+            if (c == q) break;
+        }
+        lex_rp = te;
+        lex_rcs = c_lexer_start;
+        lex_ract = 0;
+        lex_rts = 0;
+        lex_rte = 0;
+        if (q == 34) lex_parse_str(p, te);
+        else lex_parse_chr(p, te);
+        return;
+    }
 
     
 #line 715 "c_lexer_gen.c"
