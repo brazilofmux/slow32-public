@@ -3348,6 +3348,9 @@ static void hx_gen_func(Node *fn) {
     /* Run regalloc.  This sets ra_reg[], ra_spill_off[], and writes
      * the callee-saved set into ra_csave_*. */
     hir_regalloc();
+    if (getenv("CC_A64_VERIFY")) {
+        ra_verify(fn->name ? fn->name : (char *)"<anon>");
+    }
 
     /* Fold ADD(base, SLL(idx, k)) chains feeding LOAD/STORE into the
      * AArch64 register-indexed addressing mode.  Must run after

@@ -2289,6 +2289,334 @@ static void ra_extend_fused_cmp(void) {
     }
 }
 
+
+/* =================================================================
+ * Invariant checks
+ *
+ * These run after regalloc with CC_A64_VERIFY=1 in the environment.
+ * They catch the bug classes that have caused recent silent miscompiles
+ * on cc-a64:
+ *   - use-before-def in linearized order (LICM ordering, scheduler)
+ *   - register-class collision: an interference edge with same physical
+ *     register on both endpoints (silent IRC graph dropout, the
+ *     gc_drop_phi_edges over-aggressive coalescing class)
+ *   - PHI/CFG inconsistency: PHI's pred list out of sync with ssa_pred
+ *   - duplicate spill slot for distinct, simultaneously-live SSA values
+ * On any failure they print a diagnostic to stderr and exit(1) -- it's
+ * better to fail loudly at compile time than silently miscompile.
+ *
+ * Mirrors the cc-x64 ra_verify (CC_X64_VERIFY) introduced in 5647d971.
+ * Adapted for a64: HI_A64_DBT_TRAMPOLINE replaces HI_X64_DBT_TRAMPOLINE
+ * in the call-arg use-before-def scan.
+ * ================================================================= */
+
+static void ra_verify(char *fn_name) {
+    int i;
+    int j;
+    int inst;
+    int p;
+    int s;
+    int err;
+    int k;
+
+    err = 0;
+
+    /* (1) Use-before-def: every operand reference must have been
+     * linearized at a position strictly less than this instruction's,
+     * unless it's a PHI (live at block start), a PARAM (live at function
+     * entry), or a rematerializable value (regenerated on demand). */
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        p = ra_pos[inst];
+        k = h_kind[inst];
+
+        s = h_src1[inst];
+        if (s >= 0 && ra_pos[s] >= 0 && h_kind[s] != HI_PHI &&
+            h_kind[s] != HI_PARAM &&
+            !hi_is_remat(h_kind[s]) && ra_pos[s] >= p) {
+            fdputs("RA_VERIFY: use-before-def in ", 2);
+            fdputs(fn_name, 2);
+            fdputs(": inst=", 2); fdputuint(2, inst);
+            fdputs(" k=", 2); fdputuint(2, k);
+            fdputs(" blk=", 2); fdputuint(2, h_blk[inst]);
+            fdputs(" pos=", 2); fdputuint(2, p);
+            fdputs(" src1=", 2); fdputuint(2, s);
+            fdputs(" src1_k=", 2); fdputuint(2, h_kind[s]);
+            fdputs(" src1_blk=", 2); fdputuint(2, h_blk[s]);
+            fdputs(" src1_pos=", 2); fdputuint(2, ra_pos[s]);
+            fdputs("\n", 2);
+            err = err + 1;
+        }
+        if (h_src2[inst] >= 0 && (ho_src2_is_ref(k) || k == HI_LOAD)) {
+            s = h_src2[inst];
+            if (s >= 0 && ra_pos[s] >= 0 && h_kind[s] != HI_PHI &&
+                h_kind[s] != HI_PARAM &&
+                !hi_is_remat(h_kind[s]) && ra_pos[s] >= p) {
+                fdputs("RA_VERIFY: src2 use-before-def in ", 2);
+                fdputs(fn_name, 2);
+                fdputs(": inst=", 2); fdputuint(2, inst);
+                fdputs(" pos=", 2); fdputuint(2, p);
+                fdputs(" src2=", 2); fdputuint(2, s);
+                fdputs(" src2_pos=", 2); fdputuint(2, ra_pos[s]);
+                fdputs("\n", 2);
+                err = err + 1;
+            }
+        }
+        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) {
+            if (h_cbase[inst] >= 0) {
+                j = 0;
+                while (j < h_val[inst]) {
+                    s = h_carg[h_cbase[inst] + j];
+                    if (s >= 0 && ra_pos[s] >= 0 && h_kind[s] != HI_PHI &&
+                        h_kind[s] != HI_PARAM &&
+                        !hi_is_remat(h_kind[s]) && ra_pos[s] >= p) {
+                        fdputs("RA_VERIFY: carg use-before-def in ", 2);
+                        fdputs(fn_name, 2);
+                        fdputs(": call=", 2); fdputuint(2, inst);
+                        fdputs(" pos=", 2); fdputuint(2, p);
+                        fdputs(" carg[", 2); fdputuint(2, j);
+                        fdputs("]=", 2); fdputuint(2, s);
+                        fdputs(" pos=", 2); fdputuint(2, ra_pos[s]);
+                        fdputs("\n", 2);
+                        err = err + 1;
+                    }
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    /* (2) Same-color interfering pair: two values with an interference
+     * edge that nevertheless share a physical register.  This catches
+     * the IRC-edge-overflow / over-aggressive-coalesce class of bug at
+     * its source -- including the gc_drop_phi_edges regression that
+     * previously corrupted strtok_r when a phi-arg with non-PHI uses
+     * was coalesced with its phi-result. */
+    i = 0;
+    while (i < gc_nnode) {
+        int e = gc_adj_head[i];
+        int my_color = gc_color[gc_get_alias(i)];
+        int my_inst = gc_inst[i];
+        int my_reg = my_inst >= 0 ? ra_reg[my_inst] : -1;
+        if (my_reg >= 0) {
+            while (e >= 0) {
+                int peer = gc_adj_peer[e];
+                int pa = gc_get_alias(peer);
+                int peer_inst = gc_inst[pa];
+                int peer_reg = peer_inst >= 0 ? ra_reg[peer_inst] : -1;
+                if (peer_reg == my_reg && peer != i) {
+                    fdputs("RA_VERIFY: interfering pair shares reg in ", 2);
+                    fdputs(fn_name, 2);
+                    fdputs(": node=", 2); fdputuint(2, i);
+                    fdputs(" peer=", 2); fdputuint(2, peer);
+                    fdputs(" reg=", 2); fdputuint(2, my_reg);
+                    fdputs(" my_color=", 2);
+                    if (my_color >= 0) fdputuint(2, my_color); else fdputs("-", 2);
+                    fdputs("\n", 2);
+                    err = err + 1;
+                    break;  /* one diagnostic per node is enough */
+                }
+                e = gc_adj_next[e];
+            }
+        }
+        i = i + 1;
+    }
+
+    /* (3a) PHI/CFG consistency: every PHI's pred list (h_pblk[]) must
+     * exactly match the block's current predecessor set (ssa_pred[]).
+     * If a PHI lists a pred that isn't in ssa_pred[], the parallel-copy
+     * for that edge will be emitted with arg=-1 -> hx_mat zeroes the
+     * scratch register and the PHI's spill slot gets 0 from a phantom
+     * edge.  If a PHI is missing a pred that DOES exist, the pred's
+     * branch will emit a copy that finds no slot to write to, leaving
+     * the PHI's slot uninitialised on that edge. */
+    {
+        int p_inst;
+        int p_blk;
+        int p_base;
+        int p_cnt;
+        int pred_idx;
+        int pred_blk;
+        int phi_pred_blk;
+        int found;
+        p_inst = 0;
+        while (p_inst < h_ninst) {
+            if (h_kind[p_inst] == HI_PHI) {
+                p_blk = h_blk[p_inst];
+                p_base = h_pbase[p_inst];
+                p_cnt = h_pcnt[p_inst];
+                /* Every actual predecessor of the block must appear in PHI's list. */
+                pred_idx = 0;
+                while (pred_idx < ssa_npred[p_blk]) {
+                    pred_blk = ssa_pred[ssa_pbase[p_blk] + pred_idx];
+                    found = 0;
+                    j = 0;
+                    while (j < p_cnt) {
+                        phi_pred_blk = h_pblk[p_base + j];
+                        if (phi_pred_blk == pred_blk) { found = 1; break; }
+                        j = j + 1;
+                    }
+                    if (!found) {
+                        fdputs("RA_VERIFY: PHI missing pred in ", 2);
+                        fdputs(fn_name, 2);
+                        fdputs(": phi=", 2); fdputuint(2, p_inst);
+                        fdputs(" blk=", 2); fdputuint(2, p_blk);
+                        fdputs(" missing pred_blk=", 2); fdputuint(2, pred_blk);
+                        fdputs(" (cfg has ", 2); fdputuint(2, ssa_npred[p_blk]);
+                        fdputs(" preds, phi has ", 2); fdputuint(2, p_cnt);
+                        fdputs(")\n", 2);
+                        err = err + 1;
+                    }
+                    pred_idx = pred_idx + 1;
+                }
+                /* Every PHI-listed pred must exist in current CFG (no stale entries). */
+                j = 0;
+                while (j < p_cnt) {
+                    phi_pred_blk = h_pblk[p_base + j];
+                    found = 0;
+                    pred_idx = 0;
+                    while (pred_idx < ssa_npred[p_blk]) {
+                        pred_blk = ssa_pred[ssa_pbase[p_blk] + pred_idx];
+                        if (pred_blk == phi_pred_blk) { found = 1; break; }
+                        pred_idx = pred_idx + 1;
+                    }
+                    if (!found) {
+                        fdputs("RA_VERIFY: PHI stale pred in ", 2);
+                        fdputs(fn_name, 2);
+                        fdputs(": phi=", 2); fdputuint(2, p_inst);
+                        fdputs(" blk=", 2); fdputuint(2, p_blk);
+                        fdputs(" stale pred_blk=", 2); fdputuint(2, phi_pred_blk);
+                        fdputs("\n", 2);
+                        err = err + 1;
+                    }
+                    j = j + 1;
+                }
+            }
+            p_inst = p_inst + 1;
+        }
+    }
+
+    /* (2b) PHI-coalesce soundness: gc_drop_phi_edges removes the
+     * interference edge between a phi-result and each phi-arg before
+     * regalloc runs, so by the time check (2) above looks at the IG,
+     * the over-aggressive-drop class of bug has already vanished from
+     * the graph.  Catch it directly: for every PHI whose result was
+     * coalesced with a phi-arg (same physical register), assert the
+     * arg has no non-PHI use at a position >= the phi-result's def.
+     * Such a use would keep the arg live past the implicit copy at
+     * the predecessor terminator, so coalescing the two corrupts the
+     * post-phi reads -- exactly the strtok_r-class bug. */
+    {
+        int p_inst;
+        int phi_reg;
+        int phi_pos;
+        int arg;
+        int xi;
+        int xk;
+        int unsafe;
+        p_inst = 0;
+        while (p_inst < h_ninst) {
+            if (h_kind[p_inst] == HI_PHI && h_pbase[p_inst] >= 0 &&
+                ra_reg[p_inst] >= 0) {
+                phi_reg = ra_reg[p_inst];
+                phi_pos = ra_pos[p_inst];
+                j = 0;
+                while (j < h_pcnt[p_inst]) {
+                    arg = h_pval[h_pbase[p_inst] + j];
+                    /* Skip back-edge args: those whose def follows the
+                     * phi in linearized order live entirely inside the
+                     * loop body and can legitimately share the phi's
+                     * register (their uses are all on the path back to
+                     * the phi via the back-edge).  Only forward args
+                     * (arg defined before phi) risk the strtok_r-class
+                     * miscompile. */
+                    if (arg >= 0 && arg != p_inst && ra_reg[arg] == phi_reg &&
+                        ra_pos[arg] >= 0 && ra_pos[arg] < phi_pos) {
+                        /* Coalesced.  Walk all insts looking for a
+                         * non-PHI user of `arg` at position >= phi_pos. */
+                        unsafe = -1;
+                        xi = 0;
+                        while (xi < h_ninst) {
+                            xk = h_kind[xi];
+                            if (xk == HI_PHI || xk == HI_NOP || ra_pos[xi] < phi_pos) {
+                                xi = xi + 1; continue;
+                            }
+                            if (h_src1[xi] == arg) { unsafe = xi; break; }
+                            if (h_src2[xi] == arg &&
+                                (ho_src2_is_ref(xk) || xk == HI_LOAD)) {
+                                unsafe = xi; break;
+                            }
+                            if ((xk == HI_CALL || xk == HI_CALLP ||
+                                 xk == HI_A64_DBT_TRAMPOLINE) &&
+                                h_cbase[xi] >= 0) {
+                                int ai = 0;
+                                int matched = 0;
+                                while (ai < h_val[xi]) {
+                                    if (h_carg[h_cbase[xi] + ai] == arg) {
+                                        matched = 1; break;
+                                    }
+                                    ai = ai + 1;
+                                }
+                                if (matched) { unsafe = xi; break; }
+                            }
+                            xi = xi + 1;
+                        }
+                        if (unsafe >= 0) {
+                            fdputs("RA_VERIFY: unsafe phi coalesce in ", 2);
+                            fdputs(fn_name, 2);
+                            fdputs(": phi=", 2); fdputuint(2, p_inst);
+                            fdputs(" arg=", 2); fdputuint(2, arg);
+                            fdputs(" reg=", 2); fdputuint(2, phi_reg);
+                            fdputs(" use_inst=", 2); fdputuint(2, unsafe);
+                            fdputs(" use_pos=", 2); fdputuint(2, ra_pos[unsafe]);
+                            fdputs(" phi_pos=", 2); fdputuint(2, phi_pos);
+                            fdputs("\n", 2);
+                            err = err + 1;
+                        }
+                    }
+                    j = j + 1;
+                }
+            }
+            p_inst = p_inst + 1;
+        }
+    }
+
+    /* (3) Spill-slot collision: two distinct value-producing insts
+     * sharing the same negative-fp offset.  Today this should never
+     * happen because ra_assign_spills hands out a fresh slot per inst,
+     * but assert it -- if a future change adds slot reuse, it must
+     * preserve non-overlapping intervals. */
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_spill_off[i] != 0) {
+            j = i + 1;
+            while (j < h_ninst) {
+                if (ra_spill_off[j] == ra_spill_off[i]) {
+                    fdputs("RA_VERIFY: spill-slot collision in ", 2);
+                    fdputs(fn_name, 2);
+                    fdputs(": inst=", 2); fdputuint(2, i);
+                    fdputs(" inst2=", 2); fdputuint(2, j);
+                    fdputs(" off=(neg)\n", 2);
+                    err = err + 1;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    if (err > 0) {
+        fdputs("RA_VERIFY: ", 2);
+        fdputuint(2, err);
+        fdputs(" failure(s) in ", 2);
+        fdputs(fn_name, 2);
+        fdputs(" -- aborting compile\n", 2);
+        exit(1);
+    }
+}
+
 /* =================================================================
  * Main entry point
  * ================================================================= */
