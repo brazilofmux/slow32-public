@@ -430,6 +430,66 @@ that touch HIR/regalloc/codegen:
 - `83fc86ab` mem2reg false-rejection for allocas + verifier
 - `3b865b34` hir_opt: promote single-store allocas (trivial mem2reg)
 
+**Bisect attempt (2026-05-08, third)**: ran
+`git bisect run /tmp/bisect-step.sh --disable-fusion` over the range
+`cc06e0a98..df24ca02` (54 commits). First-bad: **`874483ff`** "Extend
+stage07 aggregate init and PP support". But the failure mode at
+`874483ff` is *different* from HEAD's symptom:
+
+| commit | mode | observation |
+| --- | --- | --- |
+| `cc06e0a98` (good) | — | fp-gen2 builds, `addi r1, r0, 0` present |
+| `874483ff` (first-bad) | gen1_cc parser crash | `s12cc:138: expected token 54 got 1` building fp-gen2 |
+| `e92607d4` | gen1_cc PHI overflow | `s12cc: too many phi args` building fp-gen2 |
+| `fafd57f1` (HIR_MAX_PARG bump) | emission bug | fp-gen2 builds, **but missing `addi r1, r0, 0`** |
+| `df24ca02` (HEAD) | emission bug | same as fafd57f1 |
+
+So `874483ff` is the first commit where the bisect script's BAD
+predicate fires, but several distinct regressions are stacked in
+this range:
+1. **`874483ff`** changed `ps_ginit_count` semantics (element-count
+   → byte-count) and `ps_ginit_pool` (element-stride → one byte per
+   slot).  It updated `codegen.h:gen_data` but missed
+   `hir_codegen.h:gen_data` — fixed at `e92607d4`.  However, the
+   commit also touched `parser.h` (+293 lines) and `pp.h` (+94
+   lines); the gen1_cc parser-crash *might* live in those rather
+   than the byte-semantic miss.
+2. **`e92607d4`** fixed the byte/element issue in `hir_codegen.h`
+   but was masked by a `HIR_MAX_PARG=8192` overflow when self-compiling.
+3. **`fafd57f1`** bumped `HIR_MAX_PARG` to 32768, unmasking the
+   *emission bug* — the gen1_cc miscompilation of s12cc.c that drops
+   `addi r1, r0, 0` from fp-gen2's `main`.
+
+The emission bug is therefore *not* introduced at `fafd57f1` — that
+commit is just numeric.  It's latent in earlier code (probably
+something in the `874483ff..e92607d4` range or earlier still) and
+only became observable once gen1_cc could finish self-compilation.
+
+**Why the coarse bisect can't find it**: the BAD predicate
+("fp-gen2 not built OR fp-gen2 missing addi") fires for both crash
+and emission failures.  Across `874483ff..e92607d4`, gen1_cc cannot
+build fp-gen2 (different reasons — parser limits, phi overflow), so
+the emission bug is unobservable.
+
+**Next angle**: instead of bisecting, do a *differential code path*
+analysis on gen1_cc compiling some single function from s12cc.c.
+- Identify which function (or functions) gen1_cc miscompiles by
+  diffing fp-gen2.s against the cc.s32x-built reference.
+- The session log noted `hl_stmt` lost a parameter spill — that's a
+  good first target.  Ditto for whichever function emits `addi
+  rN, r0, 0` for `return 0;` (likely `cg_iconst` or `gen_return`
+  inside `s12cc.c` — find by grep).
+- With the suspect function isolated, build a minimal C program
+  that exercises only that function's pattern, and compare gen1_cc's
+  output to cc.s32x's.  If gen1_cc miscompiles even a stripped-down
+  version, you have a reproducer that doesn't need self-hosting.
+
+**Reusable helper**: `/tmp/bisect-step.sh` (and the in-repo
+`selfhost/stage07/bisect-step.sh` it was copied from at this commit)
+is now `BISECT_ROOT`-aware so it survives `git checkout` to commits
+that don't have it on disk.  Updated comment block documents the
+crash-vs-emit caveat.
+
 **Caveat about the cc.s32x reference**: `selfhost/stage07/cc.s32x`
 is a checked-in binary last rebuilt at `be1514b4`.  Many commits
 since then have changed `s12cc.c` and the compiler internals, so

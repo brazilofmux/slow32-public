@@ -28,24 +28,33 @@
 #   selfhost/stage07/bisect-step.sh --disable-fusion ; echo "exit=$?"
 #   # Should be GOOD (0) — pre-fusion code, no bug to disable.
 #
-#   # Drive the actual bisect:
+#   # Drive the actual bisect:  copy this script outside the worktree
+#   # first, since older commits don't have it on disk.
+#   cp selfhost/stage07/bisect-step.sh /tmp/bisect-step.sh
 #   git checkout main
 #   git bisect start
 #   git bisect bad HEAD
 #   git bisect good 7b9e1405^
-#   git bisect run selfhost/stage07/bisect-step.sh --disable-fusion
+#   BISECT_ROOT=$PWD git bisect run /tmp/bisect-step.sh --disable-fusion
 #
 # Without `--disable-fusion` the script tests the raw symptom (does
 # fp-gen2 work?) which is BAD across the whole 7b9e1405..HEAD range,
 # so won't bisect anywhere useful — keep the flag on.
 #
+# Caveat: the BAD predicate fires both for "fp-gen2 not built" (gen1_cc
+# crash, hit phi/parser limit, etc.) and "fp-gen2 emits wrong code".
+# Bisect can land on a commit that introduced the *crash* mode rather
+# than the *wrong-code* mode you started with.  Verify the failure
+# mode at the identified commit matches the original symptom.
+#
 # Env knobs:
+#   BISECT_ROOT     — slow-32 working tree root (defaults to script's grandparent)
 #   BISECT_TIMEOUT  — seconds to wait for run-tests.sh (default 600)
 
 set -uo pipefail   # not -e: we manage every exit explicitly
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT_DIR="${BISECT_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 cd "$ROOT_DIR"
 
 DISABLE_FUSION=0
@@ -98,14 +107,15 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [[ "$DISABLE_FUSION" -eq 1 ]]; then
-    if [[ ! -f "$BURG_FILE" ]]; then
-        echo "BISECT-SKIP: hir_burg.h missing at this commit" >&2
-        exit 125
+    if [[ ! -f "$BURG_FILE" ]] || \
+       ! grep -q "^static void hcg_identify_fusions(void) {" "$BURG_FILE"; then
+        # Fusion didn't exist yet at this commit — nothing to disable.
+        # Run the test as-is so the bisect can still classify it.
+        echo "BISECT-INFO: no fusion at this commit, running unpatched" >&2
+        DISABLE_FUSION=0
     fi
-    if ! grep -q "^static void hcg_identify_fusions(void) {" "$BURG_FILE"; then
-        echo "BISECT-SKIP: hcg_identify_fusions not present at this commit" >&2
-        exit 125
-    fi
+fi
+if [[ "$DISABLE_FUSION" -eq 1 ]]; then
     PATCH_BACKUP="$(mktemp /tmp/bisect-step.bak.XXXXXX)"
     cp "$BURG_FILE" "$PATCH_BACKUP"
     # Insert `return;` immediately after the opening brace of the
