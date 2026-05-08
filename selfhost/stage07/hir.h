@@ -96,7 +96,7 @@
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
 #define HIR_MAX_CARG   4096
-#define HIR_MAX_PARG   8192
+#define HIR_MAX_PARG   32768
 
 /* --- Instruction parallel arrays --- */
 static int   h_kind[HIR_MAX_INST];
