@@ -1320,17 +1320,30 @@ static void parse_global_init_struct(int ty, int gidx) {
     int arr_elem_ty;
     int arr_count;
     int struct_start;
+    int has_brace;
     char dnm[256];
 
     si = ty_struct_idx(ty);
     nf = st_nfields[si];
     struct_start = ps_ginit_cur_off(gidx);
-    expect(TK_LBRACE);
+    /* Brace is optional for nested struct fields inside a flat-form parent
+     * initializer (e.g. `struct Rect gr = {10, 20, 30, 40}`).  When called
+     * at top-level the caller has already verified TK_LBRACE is present. */
+    has_brace = (lex_tok == TK_LBRACE);
+    if (has_brace) next();
     i = 0;
-    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF && i < nf) {
+    while (lex_tok != TK_EOF && i < nf) {
+        if (has_brace && lex_tok == TK_RBRACE) break;
         if (i > 0) {
-            expect(TK_COMMA);
-            if (lex_tok == TK_RBRACE) break;
+            if (has_brace) {
+                expect(TK_COMMA);
+                if (lex_tok == TK_RBRACE) break;
+            } else {
+                /* No outer brace: the parent's loop will consume the trailing
+                 * comma after we return.  Stop if there isn't one. */
+                if (lex_tok != TK_COMMA) break;
+                expect(TK_COMMA);
+            }
         }
         if (lex_tok == TK_DOT) {
             next();
@@ -1355,8 +1368,10 @@ static void parse_global_init_struct(int ty, int gidx) {
         }
         i = i + 1;
     }
-    if (lex_tok == TK_COMMA) next();
-    expect(TK_RBRACE);
+    if (has_brace) {
+        if (lex_tok == TK_COMMA) next();
+        expect(TK_RBRACE);
+    }
     while (ps_ginit_cur_off(gidx) < struct_start + ty_size(ty)) {
         ps_ginit_emit_byte(0);
     }
