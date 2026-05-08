@@ -701,11 +701,7 @@ Once the self-hosted full C compiler exists (Stage 13+), the same frontend can b
 - `selfhost/stage07-cross/` — C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `crt0.o`, `s32fast-hir` (the SLOW-32 fast emulator), and `dbt-x64` (the SLOW-32 dynamic binary translator).
 - `selfhost/stage07-cross-a64/` — C → AArch64 ELF. AArch64 sibling, sharing the frontend (lex/parse/sema/HIR/optimize) via symlinks into `../stage07/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
 
-Both bootstrap the same way: host gcc compiles `cc-{x64,a64}.c` once (single translation unit; the rest of the compiler is `#include`d). After that, `cc-{x64,a64} --hir` builds the libc, crt0, the fast emulator, and the DBT.
-
-Caveats (small remaining host-gcc dependencies, all in libc-extras):
-- `libc_x64/fpu_ops.c` and `libc_x64/math_stubs.c` are host-gcc-built (SSE intrinsics / `<math.h>`).
-- `libc_a64/math_stubs.c` is host-gcc-built (`__builtin_sqrt[f]`); replacing those with `HI_FSQRT` would close the gap.
+Both bootstrap the same way: host gcc compiles `cc-{x64,a64}.c`, `ld-{x64,a64}.c`, and `ar-{x64,a64}.c` once each (each is a single translation unit; the rest of the compiler is `#include`d). After that, `cc-{x64,a64} --hir` builds the libc, crt0, the fast emulator, and the DBT, and the in-tree `ld-{x64,a64}` performs the final link. Both `libc_x64.a` and `libc_a64.a` are 100% cc-built — `fpu_ops.c` uses scalar SSE2 / NEON via the cross-compiler's float codegen, and `math_stubs.c`'s `__builtin_sqrt[f]` is intercepted by `HI_FSQRT`.
 
 **What this means for Stage 0.** The host-built DBT that `selfhost/stage00/Makefile` prefers as a speed-only symlink is itself the output of `stage07-cross/dbt-x64` (or `-a64`). The trust boundary is unchanged — the Stage 0 source build remains the canonical seed — but the speed path is now buildable from auditable SLOW-32 sources rather than only from the in-tree host C in `tools/dbt/`.
 
