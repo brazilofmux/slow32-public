@@ -490,6 +490,79 @@ is now `BISECT_ROOT`-aware so it survives `git checkout` to commits
 that don't have it on disk.  Updated comment block documents the
 crash-vs-emit caveat.
 
+**Localization (2026-05-08, post-bisect)**: differential analysis on
+`hl_stmt` confirms the original session's diagnosis verbatim — the
+bug is in regalloc, not in the byte/element mismatch from `874483ff`.
+
+Side-by-side dump of `hl_stmt`'s prologue, both compiles of the
+identical `s12cc.c@HEAD`:
+
+```
+# cc.s32x compiled (REFERENCE — the spill survives)        # gen1_cc compiled (fp-gen2 — n is clobbered)
+hl_stmt:                                                   hl_stmt:
+    addi r29, r29, -216                                        addi r29, r29, -204
+    ... callee-saves ...                                       ... callee-saves ...
+.L8171:                                                    .L8171:
+    addi r11, r3, 0          # r11 = n                         addi r11, r3, 0          # r11 = n
+    stw r30, r11, -12        # SPILL n -> fp-12                seq r12, r11, r0         # !n test (no spill emitted)
+    ldw r11, r30, -12        # reload                          ...
+.L8174:                                                    .L8176:
+    ldw r16, r30, -12        # n always reloaded              lui r1, %hi(hl_struct_ret)
+    addi r15, r16, 52                                          ldw r17, r1, %lo(hl_struct_ret)
+                                                               xori r11, r17, 0         # r11 CLOBBERED — was n
+                                                               sne r11, r11, r0
+```
+
+The reference codegen spills `n` to fp-12 immediately and reloads on
+every use, so the `&&`-chain intermediate (the `xori …` materializing
+`hl_struct_ret`) freely overwrites r11 without losing `n`.  fp-gen2
+keeps `n` only in r11, then assigns `xori`'s result to r11 inside the
+&&-chain, clobbering `n`.  When the `else if (n->lhs)` arm runs, it
+reads `n->lhs` from a corrupt r11 — sees 0 — falls through to the
+no-value `else` arm and emits `HI_RET, src1=-1`, producing fp-gen2's
+empty `main` (no `addi r1, r0, 0`).
+
+So the `iconst_use: total=0` symptom is not lowering dropping the
+ICONST — it's the ND_RETURN path emitting a *void* RET because the
+n-corruption sends control down the wrong if/else arm.
+
+**The miscompilation is gen1_cc's compilation of hir_regalloc.h**
+(or a function it calls).  Specifically, gen1_cc must miscompile
+either `ra_compute_ends` (live-range scan + `ra_extend` + cross-block
+`ra_backprop`) or `ra_linear_scan`, in such a way that `n`'s live
+interval is *too short* — short enough that linear-scan releases
+r11 mid-function and reuses it for the &&-chain intermediate.  cc.s32x's
+copy of the same source computes the long interval correctly.
+
+**Why fusion-disable didn't help**: `ra_extend_fused_cmp` reads
+`hcg_brc_fuse[]` and is a real no-op when the array is empty (the
+fusion-disable patch confirmed via `BISECT-INFO` that it cleared the
+array).  But the bug isn't in `ra_extend_fused_cmp`; it's in the
+*regular* live-range path that runs unconditionally.  The fact that
+`hl_stmt` has no fused compares in this trace (line `seq r12, r11,
+r0; beq r12, r0, .L8292` — separate seq+beq, not a fused beq) makes
+this concrete: fusion isn't even firing here, yet the bug is.
+
+**Next angle**: instead of bisecting compiler commits, instrument
+gen1_cc and the reference cc.s32x to dump live-interval `[start..end]`
+for each value in `hl_stmt`.  Diff the dumps; the values whose
+intervals differ are the ones whose regalloc decision changed.
+Then walk back to whichever ra_* function computed those intervals —
+if `ra_extend` saw fewer uses in fp-gen2, the bug is in the source-of-uses
+scan (likely how operand references are walked); if `ra_extend` saw
+the same uses but `ra_iend` ended up smaller, the bug is in `ra_extend`
+itself.
+
+A `--dump-intervals` flag on s12cc would localize this in one run
+without re-bisecting.
+
+Alternative low-cost workaround: emit an unconditional spill+reload of
+every parameter at function entry (matching what cc.s32x's codegen
+does today).  This makes the regalloc bug invisible because params
+always go through stack.  Cost: one stw + one ldw per param at entry,
+plus one ldw per use.  Acceptable as a stop-gap if root-causing the
+regalloc bug stays expensive.
+
 **Caveat about the cc.s32x reference**: `selfhost/stage07/cc.s32x`
 is a checked-in binary last rebuilt at `be1514b4`.  Many commits
 since then have changed `s12cc.c` and the compiler internals, so
