@@ -1499,6 +1499,14 @@ static void ra_assign_spills(void) {
             hl_temp_stack = hl_temp_stack + 8;
             ra_spill_off[i] = 0 - hl_temp_stack;
             ra_stat_spills = ra_stat_spills + 1;
+            if (getenv("RA_DUMP_SPILLS")) {
+                fdputs("SPILL ", 2);
+                fdputuint(2, i);
+                fdputs(" k=", 2); fdputuint(2, h_kind[i]);
+                fdputs(" blk=", 2); fdputuint(2, h_blk[i]);
+                fdputs(" off=-", 2); fdputuint(2, hl_temp_stack);
+                fdputs("\n", 2);
+            }
         }
         i = i + 1;
     }
