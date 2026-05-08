@@ -27,7 +27,7 @@ EMU_DEFAULT="$(choose_default_emu)"
 EMU="$EMU_DEFAULT"
 
 FROM="stage00"
-TO="stage06"
+TO="stage07"
 SKIP_SELFHOST_KERNEL=0
 SKIP_PURITY_GUARD=0
 QUICK=0
@@ -37,17 +37,17 @@ LOG_DIR="$(mktemp -d /tmp/selfhost-stage-walk.XXXXXX)"
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage06] [--emu <path>] [--skip-selfhost-kernel] [--skip-purity-guard] [--quick] [--keep-logs]
+Usage: $0 [--from stage00] [--to stage07] [--emu <path>] [--skip-selfhost-kernel] [--skip-purity-guard] [--quick] [--keep-logs]
 
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05 -> stage06
+  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05 -> stage06 -> stage07
 
 Options:
-  --from stageNN   Start stage (stage00..stage06)
-  --to stageNN     End stage (stage00..stage06)
-  --emu path       Emulator for stage01..stage06 (default: slow32-fast, then stage00 s32-emu, then slow32)
+  --from stageNN   Start stage (stage00..stage07)
+  --to stageNN     End stage (stage00..stage07)
+  --emu path       Emulator for stage01..stage07 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
                    Skip stage01 selfhost-kernel regeneration/boot gate (dev fast-path)
   --skip-purity-guard
@@ -139,6 +139,7 @@ stage_num() {
         stage04) echo 4 ;;
         stage05) echo 5 ;;
         stage06) echo 6 ;;
+        stage07) echo 7 ;;
         *) return 1 ;;
     esac
 }
@@ -154,9 +155,9 @@ for req in "$ROOT_DIR/forth/kernel.s32x" "$ROOT_DIR/forth/prelude.fth"; do
     [[ -f "$req" ]] || { echo "Missing required file: $req" >&2; exit 1; }
 done
 
-if (( TO_N >= 0 && FROM_N <= 6 )); then
+if (( TO_N >= 0 && FROM_N <= 7 )); then
     if [[ "$SKIP_PURITY_GUARD" -eq 0 ]]; then
-        echo "[guard] bootstrap purity (stage00..03)"
+        echo "[guard] bootstrap purity (stage00..04)"
         "$ROOT_DIR/selfhost/check-bootstrap-purity.sh"
     else
         echo "[guard] skipping bootstrap purity check (--skip-purity-guard)"
@@ -285,7 +286,16 @@ run_stage06() {
         "$ROOT_DIR/selfhost/stage06/run-abi-conformance.sh" --emu "$EMU"
 }
 
-for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06; do
+run_stage07() {
+    echo "[stage07] compiler tests"
+    run_logged "stage07 tests" "$LOG_DIR/stage07.log" \
+        env SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/stage07/run-tests.sh"
+    echo "[stage07] ABI conformance"
+    run_logged "stage07 abi" "$LOG_DIR/stage07-abi.log" \
+        "$ROOT_DIR/selfhost/stage07/run-abi-conformance.sh" --emu "$EMU"
+}
+
+for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

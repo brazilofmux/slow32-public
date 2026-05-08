@@ -29,7 +29,7 @@ For a clean checkout sanity pass:
 selfhost/run-stages.sh
 ```
 
-`run-stages.sh` currently walks `stage00` → `stage06` (use `--from`/`--to` to scope, e.g. `--to stage04`). `stage07` and the cross-compiler trees have their own entry points (below). For faster local loops, you can skip the selfhost-kernel regen gate:
+`run-stages.sh` walks `stage00` → `stage07` (use `--from`/`--to` to scope, e.g. `--to stage04`). The cross-compiler trees have their own entry points (below). For faster local loops, you can skip the selfhost-kernel regen gate:
 
 ```bash
 selfhost/run-stages.sh --skip-selfhost-kernel
