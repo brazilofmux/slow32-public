@@ -445,6 +445,18 @@ static void ssa_find_promo(void) {
         i = i + 1;
     }
 
+    /* Diagnostic: print summary so the caller can see find_promo
+     * running for every function. */
+    if (getenv("CC_X64_PROMO_DEBUG")) {
+        int n_rejected = 0;
+        int xi = 0;
+        while (xi < hl_nalloca) { if (!ok[xi]) n_rejected = n_rejected + 1; xi = xi + 1; }
+        fdputs("PROMO_SUMMARY: ninst=", 2); fdputuint(2, h_ninst);
+        fdputs(" hl_nalloca=", 2); fdputuint(2, hl_nalloca);
+        fdputs(" rejected=", 2); fdputuint(2, n_rejected);
+        fdputs("\n", 2);
+    }
+
     /* Diagnostic: dump rejection reasons when CC_X64_PROMO_DEBUG is set.
      * Prints each non-promotable alloca with its inst index plus the
      * first instruction that rejected it.  Correlate with --hir-dump. */
@@ -453,24 +465,45 @@ static void ssa_find_promo(void) {
         while (i < hl_nalloca) {
             if (!ok[i]) {
                 int reason_inst = -1;
+                int reason_kind = 0;
+                char *reason_why = "(?)";
                 int xi = 0;
                 while (xi < h_ninst) {
                     int xk = h_kind[xi];
                     if (h_src1[xi] == hl_ainst[i] && xk != HI_LOAD && xk != HI_STORE) {
-                        reason_inst = xi; break;
+                        reason_inst = xi; reason_kind = xk;
+                        reason_why = "src1-non-load-store"; break;
                     }
-                    if (h_src2[xi] == hl_ainst[i]) { reason_inst = xi; break; }
+                    if (h_src2[xi] == hl_ainst[i] &&
+                        xk != HI_BR && xk != HI_BRC &&
+                        xk != HI_PHI && xk != HI_NOP) {
+                        reason_inst = xi; reason_kind = xk;
+                        reason_why = "src2"; break;
+                    }
+                    if ((xk == HI_CALL || xk == HI_CALLP ||
+                         xk == HI_A64_DBT_TRAMPOLINE ||
+                         xk == HI_X64_DBT_TRAMPOLINE) &&
+                        h_cbase[xi] >= 0) {
+                        int cj = 0;
+                        while (cj < h_val[xi]) {
+                            if (h_carg[h_cbase[xi] + cj] == hl_ainst[i]) {
+                                reason_inst = xi; reason_kind = xk;
+                                reason_why = "call-arg"; break;
+                            }
+                            cj = cj + 1;
+                        }
+                        if (reason_inst >= 0) break;
+                    }
                     xi = xi + 1;
                 }
-                fdputs("PROMO_REJECT: alloca i", 2);
+                fdputs("PROMO_REJECT: ninst=", 2); fdputuint(2, h_ninst);
+                fdputs(" alloca i", 2);
                 fdputuint(2, hl_ainst[i]);
                 fdputs(" off=", 2); fdputuint(2, hl_aoff[i]);
-                fdputs(" rejected by inst ", 2);
+                fdputs(" reason=", 2); fdputs(reason_why, 2);
                 if (reason_inst >= 0) {
-                    fdputuint(2, reason_inst);
-                    fdputs(" k=", 2); fdputuint(2, h_kind[reason_inst]);
-                } else {
-                    fdputs("(?)", 2);
+                    fdputs(" inst=", 2); fdputuint(2, reason_inst);
+                    fdputs(" k=", 2); fdputuint(2, reason_kind);
                 }
                 fdputs("\n", 2);
             }

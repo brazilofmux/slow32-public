@@ -94,6 +94,25 @@ static int hl_alloc_temp(void) {
     return 0 - hl_temp_stack;
 }
 
+/* Emit a fresh HI_ALLOCA for a compiler-generated temp (&&/||, ternary,
+ * struct return slot, f64 split, etc.) AND register it in hl_ainst so
+ * SSA's mem2reg pass can promote it.  Without registration, the alloca
+ * was created but invisible to find_promo, leaving every LOAD/STORE on
+ * the temp slot unconverted -- the alloca's spill slot then read stack
+ * garbage on entry edges where the parallel-copy never fired.
+ *
+ * Use this everywhere a non-source-level local needs an HI_ALLOCA. */
+static int hl_emit_temp_alloca(int ty, int offset) {
+    int inst;
+    inst = hi_emit(HI_ALLOCA, ty, -1, -1, offset, NULL);
+    if (hl_nalloca < HL_MAX_ALLOCA) {
+        hl_aoff[hl_nalloca] = offset;
+        hl_ainst[hl_nalloca] = inst;
+        hl_nalloca = hl_nalloca + 1;
+    }
+    return inst;
+}
+
 /* Type to use for an HIR address expression (pointer arithmetic, alloca
  * results, struct member offsets, etc.).  On 64-bit hosts this MUST be
  * a wide type so the codegen emits 64-bit ADD/SPILL/RELOAD; otherwise
@@ -352,8 +371,7 @@ static int hl_expr(Node *n) {
             int fhi;
             int addr4;
             hl_temp_stack = hl_temp_stack + 8;
-            tmp_alloca = hi_emit(HI_ALLOCA, TY_DOUBLE, -1, -1,
-                                 0 - hl_temp_stack, NULL);
+            tmp_alloca = hl_emit_temp_alloca(TY_DOUBLE, 0 - hl_temp_stack);
             flo = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val, NULL);
             fhi = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val_hi, NULL);
             hi_emit(HI_STORE, TY_INT, tmp_alloca, flo, 0, NULL);
@@ -698,7 +716,7 @@ static int hl_expr(Node *n) {
         /* Short-circuit && */
         if (n->op == TK_LAND) {
             tmp_off = hl_alloc_temp();
-            tmp = hi_emit(HI_ALLOCA, TY_INT, -1, -1, tmp_off, NULL);
+            tmp = hl_emit_temp_alloca(TY_INT, tmp_off);
             lv = hl_expr(n->lhs);
             rhs_blk = hir_new_block();
             else_blk = hir_new_block();
@@ -724,7 +742,7 @@ static int hl_expr(Node *n) {
         /* Short-circuit || */
         if (n->op == TK_LOR) {
             tmp_off = hl_alloc_temp();
-            tmp = hi_emit(HI_ALLOCA, TY_INT, -1, -1, tmp_off, NULL);
+            tmp = hl_emit_temp_alloca(TY_INT, tmp_off);
             lv = hl_expr(n->lhs);
             rhs_blk = hir_new_block();
             then_blk = hir_new_block();
@@ -1303,7 +1321,7 @@ static int hl_expr(Node *n) {
     /* Ternary c ? a : b */
     if (n->kind == ND_TERNARY) {
         tmp_off = hl_alloc_temp();
-        tmp = hi_emit(HI_ALLOCA, n->ty, -1, -1, tmp_off, NULL);
+        tmp = hl_emit_temp_alloca(n->ty, tmp_off);
         cv = hl_expr(n->cond);
         then_blk = hir_new_block();
         else_blk = hir_new_block();
@@ -1621,7 +1639,7 @@ static int hl_expr(Node *n) {
             tmp_sz = ty_size(ret_ty);
             tmp_sz = ((tmp_sz + 3) / 4) * 4;
             hl_temp_stack = hl_temp_stack + tmp_sz;
-            tmp_alloca = hi_emit(HI_ALLOCA, HL_ADDR_TY, -1, -1, 0 - hl_temp_stack, NULL);
+            tmp_alloca = hl_emit_temp_alloca(HL_ADDR_TY, 0 - hl_temp_stack);
             /* Shift existing cargs right by 1 to make room for hidden first arg */
             i = h_ncarg;
             while (i > carg_base) {
