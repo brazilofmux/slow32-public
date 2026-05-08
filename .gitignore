@@ -85,6 +85,9 @@ examples/math_shootout.s
 # Generated assembly from C sources in sbasic/
 sbasic/src/*.s
 
+# Generated assembly from C sources in nano/
+nano/src/*.s
+
 # Temporary LLVM files
 *.ll.tmp
 
@@ -145,6 +148,7 @@ stringutil.h
 # dBase test artifacts
 dbase/*.DBF
 dbase/src/*.s
+dbase/tests/RESULT*.TXT
 
 # Auto-memory / agent state (Claude Code)
 .claude/
