@@ -3119,14 +3119,28 @@ static Node *parse_top_decl(void) {
         if (lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok == TK_STRING) {
-                /* String array init: char s[N] = "str" or char s[] = "str" */
+                /* String array init: char s[N] = "str" or char s[] = "str"
+                 * (with adjacent-string concatenation via parse_string_literal). */
                 sp_idx = parse_string_literal();
                 slen = lex_str_len[sp_idx];
                 if (count < 0) count = slen + 1;
                 require_complete_type(ty, "incomplete element type");
                 idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
                 ps_ginit_begin(idx);
-                parse_global_init_array_fixed(ty, count, idx);
+                /* parse_string_literal already consumed the literal, so emit
+                 * its bytes directly rather than calling
+                 * parse_global_init_array_fixed (which would try to re-parse
+                 * a string that's no longer at the lexer cursor). */
+                sp = lex_strpool + lex_str_off[sp_idx];
+                i = 0;
+                while (i < slen && i < count) {
+                    ps_ginit_emit_byte(sp[i] & 255);
+                    i = i + 1;
+                }
+                while (i < count) {
+                    ps_ginit_emit_byte(0);
+                    i = i + 1;
+                }
                 ps_ginit_finish(idx);
             } else if (lex_tok == TK_LBRACE) {
                 gi = 0;
