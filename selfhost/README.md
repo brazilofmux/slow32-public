@@ -1,39 +1,35 @@
-# Selfhost V2 Workspace
+# Selfhost Workspace
 
-This tree tracks the multi-cycle bootstrap plan captured in `selfhost/stage-status.md` (derived from `selfhost/docs/BOOTSTRAP.md`).
+This tree implements the multi-cycle bootstrap plan documented in [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md). Each `stage*/` directory is one rebuild iteration that produces an entire toolchain (assembler + archiver + linker + compiler + libc) using the previous stage's outputs.
 
-Current policy:
-- Keep existing `selfhost/stage*` paths working while migration is in progress.
-- Move one stage at a time with compatibility wrappers/symlinks where needed.
-- Update tests/CI scripts in lockstep with each stage move.
-
-Stage directories:
-- `stage00` through `stage06` map to the current V2 stage numbers.
-
-Stage cycles at a glance:
-- `stage00`: standalone ~800 line emulator that every other stage relies on.
+Stage directories at a glance:
+- `stage00`: standalone ~800 line emulator (the trust root). Builds via `make` with host `cc`. Optionally runtime-symlinks to `tools/dbt/slow32-dbt` for speed.
 - `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
-- `stage02`: the same four tools (assembler, archiver, linker, compiler) now authored in Subset C but still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
-- `stage03`: first canonical `cc.s32x` compiler stage + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min.
-- `stage04`: canonical `cc.s32x` compiler stage with Ragel lexer + recursive-descent parser + tools + libc/runtime. Compiled by stage03.
-- `stage05`: code quality stage using canonical `cc.s32x` compiler naming + AS/AR/LD/libc. Compiled by stage04.
-- `stage06`: next selfhost cycle seeded from stage05 and bootstrapped by stage05 tools.
+- `stage02`: the same four tools (assembler, archiver, linker, compiler) re-authored in Subset C, still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
+- `stage03`: first canonical `cc.s32x` compiler + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min.
+- `stage04`: canonical `cc.s32x` compiler with Ragel lexer + recursive-descent parser + tools + libc/runtime. Compiled by stage03.
+- `stage05`: code-quality cycle introducing HIR/SSA, BURG instruction selection, and graph-coloring register allocation. Compiled by stage04.
+- `stage06`: next selfhost cycle seeded from stage05; supports a `--fixed-point` gate that enforces gen2 == gen3.
+- `stage07`: same toolchain shape as stage06 plus richer headers (`assert.h`, `math.h`, `signal.h`, `stdio.h`, `time.h`, `ucontext.h`, `sys/*`) so non-trivial SLOW-32 programs (DBT, full emulator) build inside SLOW-32.
 
-Primary tracking docs:
-- `selfhost/V2-REORG-PLAN.md`
-- `selfhost/V2-MIGRATION-MAP.tsv`
-- `selfhost/stage-status.md`
-- `selfhost/TOOL-NAMING.md`
+Sibling cross-compiler trees (independent of the numbered cycle):
+- `stage07-cross`: C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `s32fast-hir` (SLOW-32 fast emulator), and `dbt-x64` (SLOW-32 dynamic binary translator).
+- `stage07-cross-a64`: C → AArch64 ELF. Frontend shared with `stage07-cross` via symlinks into `../stage07/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
+
+Reference docs:
+- [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap (V2 stages 0–16, sibling cross-compiler track, trust model).
+- [`TOOL-NAMING.md`](TOOL-NAMING.md) — tool-name conventions across the stages.
+- [`ISSUES.md`](ISSUES.md) — code-review findings (closed and active) across the toolchain.
 
 ## Ordered Stage Walk
 
-For a clean checkout sanity pass (stage00 -> stage06):
+For a clean checkout sanity pass:
 
 ```bash
 selfhost/run-stages.sh
 ```
 
-For faster local loops, you can skip the selfhost-kernel regen gate:
+`run-stages.sh` currently walks `stage00` → `stage06` (use `--from`/`--to` to scope, e.g. `--to stage04`). `stage07` and the cross-compiler trees have their own entry points (below). For faster local loops, you can skip the selfhost-kernel regen gate:
 
 ```bash
 selfhost/run-stages.sh --skip-selfhost-kernel
@@ -53,11 +49,15 @@ Manual per-stage entry points:
 - `stage03` (compiler `cc.s32x`): `selfhost/stage03/run-spike.sh --emu ./tools/emulator/slow32-fast`
 - `stage04` (compiler `cc.s32x`): `selfhost/stage04/run-tests.sh --emu ./tools/emulator/slow32-fast`
 - `stage05` (optimized toolchain): `selfhost/stage05/run-tests.sh --emu ./tools/emulator/slow32-fast`
-- `stage06` (next-cycle toolchain): `selfhost/stage06/run-tests.sh --emu ./tools/emulator/slow32-fast`
+- `stage06` (next-cycle toolchain): `selfhost/stage06/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
+- `stage07` (full-libc toolchain): `selfhost/stage07/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
+- `stage07-cross` (x86-64 cross): `make -C selfhost/stage07-cross && make -C selfhost/stage07-cross test` (then `make bench` to time `s32fast-hir`)
+- `stage07-cross-a64` (AArch64 cross): `make -C selfhost/stage07-cross-a64 && make -C selfhost/stage07-cross-a64 test`
 
 ABI conformance entry points:
-- all supported stages: `selfhost/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
+- all supported stages: `selfhost/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt` (currently scoped to stages 03–06)
 - stage03 only: `selfhost/stage03/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage04 only: `selfhost/stage04/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage05 only: `selfhost/stage05/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage06 only: `selfhost/stage06/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
+- stage07 only: `selfhost/stage07/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`

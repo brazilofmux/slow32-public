@@ -764,32 +764,22 @@ An alternative approach is to build ALL C tools using the Forth toolchain and th
 
 ## Directory Mapping
 
-The V2 stage numbers differ from the current source directory layout (which still reflects older V1 naming). Directory restructuring is intentionally deferred until the V2 stage boundaries are stable in code, tests, and CI scripts.
+V2 stage numbers (from the Stage Summary above) describe the bootstrap *cycle*. The on-disk directories under `selfhost/` group multiple V2 stages per directory — each directory is one rebuild iteration that produces an entire toolchain (assembler + archiver + linker + compiler + libc), not one V2 stage.
 
-Execution artifacts for the reorg are tracked in:
+| Directory | V2 Stages | What it contains |
+|-----------|-----------|------------------|
+| `selfhost/stage00/` | 0 | Trust-root emulator (`s32-emu.c`, ~780 LOC). Runtime-only speedup symlink to `tools/dbt/slow32-dbt` if present. |
+| `selfhost/stage01/` | 1–4 | Forth toolchain (`asm.fth`, `ar.fth`, `link.fth`, `cc.fth`) hosted by `forth/kernel.s32x`. |
+| `selfhost/stage02/` | 5–8 (+9 verification) | Subset-C tools (`s32-as.c`, `s32-ar.c`, `s32-ld.c`, `cc-min.c`) compiled by stage01's Forth tools. End of this stage retires Forth from the pipeline. |
+| `selfhost/stage03/` | 10–12 (+ start of 13) | First canonical `cc.s32x` (`s32cc.c`) + matching `s32-as`/`s32-ar`/`s32-ld` + libc. Compiled by stage02 `cc-min`. |
+| `selfhost/stage04/` | 13 (Layer 1 enhancements) | Ragel lexer + recursive-descent parser; `cc.s32x` + tools + libc. Compiled by stage03. |
+| `selfhost/stage05/` | 13–14 (HIR/optimizer) | HIR/SSA-based compiler (`hir_*.h`, BURG instruction selector, IRC graph-coloring regalloc). Compiled by stage04. |
+| `selfhost/stage06/` | 14–15 (rebuild) | Next-cycle rebuild seeded by stage05; `run-tests.sh --fixed-point` enforces gen2 == gen3. Compiled by stage05. |
+| `selfhost/stage07/` | 15–16 (full-libc rebuild) | Same toolchain shape as stage06 plus richer headers under `include/` (`assert.h`, `math.h`, `signal.h`, `stdio.h`, `time.h`, `ucontext.h`, `sys/`) so non-trivial programs (DBT, full SLOW-32 emulator) build inside SLOW-32. Same `--fixed-point` gate. Compiled by stage06. |
+| `selfhost/stage07-cross/` | sibling track | C → x86-64 ELF cross-compiler (`cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `crt0.o`). Outputs include `s32fast-hir` (SLOW-32 fast emulator) and `dbt-x64` (SLOW-32 DBT). See "Sibling Track: Native Cross-Compilers" above. |
+| `selfhost/stage07-cross-a64/` | sibling track | AArch64 sibling of `stage07-cross/`. Frontend symlinked from `../stage07/`. Outputs `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, `dbt-a64`. |
 
-- `selfhost/V2-REORG-PLAN.md`
-- `selfhost/V2-MIGRATION-MAP.tsv`
-- `selfhost/` (target stage directories)
-
-| V2 Stage | Current Directory | Key Files | Status |
-|----------|-------------------|-----------|--------|
-| 0 | `selfhost/stage00/` | `s32-emu.c` | Done |
-| 1 | `selfhost/stage01/` | `asm.fth` | Done |
-| 2 | `selfhost/stage01/` | `ar.fth` (merged) | Done |
-| 3 | `selfhost/stage01/` | `link.fth` (merged) | Done |
-| 4 | `selfhost/stage01/` | `cc.fth` (merged) | Done (regression passing) |
-| 5 | `selfhost/stage02/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
-| 6 | `selfhost/stage02/` | `s32-ar.c` (merged) | Spike started; replacement hardening in progress |
-| 7 | `selfhost/stage02/` | `s32-ld.c` (planned) | Not started |
-| 8 | `selfhost/stage02/` | `cc-min.c` (merged) | Done (regression passing) |
-| 9-16 | — | — | Not started |
-
-**Current Stage 0-4 checkpoint (2026-02-15):**
-- Forth bootstrap chain is stable: `asm.fth`, `ar.fth`, and `link.fth` produce runnable outputs.
-- Stage 4 `cc.fth` passes `selfhost/stage01/run-regression-cc.sh` on full emulator (`slow32-fast`).
-- Stage 5 assembler spike is functional: stage4-built `s32-as.c` compiles, links, runs, and emits `.s32o`.
-- Stage 6 archiver spike exists (`s32-ar.c`), but is not yet the default replacement in the bootstrap pipeline.
+The numbered V2 stages map onto the directories rather than vice-versa: each directory hosts one or more V2 stages, and a single rebuild iteration (build the toolchain, run regressions, optionally run the fixed-point gate) covers all the V2 stages it owns.
 
 
 ---
