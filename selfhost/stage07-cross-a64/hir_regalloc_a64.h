@@ -936,6 +936,58 @@ static void gc_remove_edge(int u, int v) {
     if (gc_degree[v] > 0) gc_degree[v] = gc_degree[v] - 1;
 }
 
+/* Per-inst flag: 1 if the inst's value is consumed by any non-PHI
+ * user (src1/src2 of an ALU/LOAD/STORE/cmp/etc., a call arg, or a
+ * SIB-index slot).  PHI-arg uses are not counted — those become
+ * implicit copies at the predecessor terminator after out-of-SSA, so
+ * they're consistent with phi-result/phi-arg coalescing. */
+static int gc_has_nonphi_user[HIR_MAX_INST];
+
+static void gc_compute_nonphi_users(void) {
+    int i;
+    int j;
+    int inst;
+    int k;
+    int s;
+
+    i = 0;
+    while (i < h_ninst) { gc_has_nonphi_user[i] = 0; i = i + 1; }
+
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        if (k == HI_PHI) { i = i + 1; continue; }
+
+        s = h_src1[inst];
+        if (s >= 0) gc_has_nonphi_user[s] = 1;
+
+        s = h_src2[inst];
+        if (s >= 0 && (ho_src2_is_ref(k) || k == HI_LOAD)) {
+            gc_has_nonphi_user[s] = 1;
+        }
+
+        if ((k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) &&
+            h_cbase[inst] >= 0) {
+            j = 0;
+            while (j < h_val[inst]) {
+                s = h_carg[h_cbase[inst] + j];
+                if (s >= 0) gc_has_nonphi_user[s] = 1;
+                j = j + 1;
+            }
+        }
+
+        if (k == HI_STORE && hx_sib_index[inst] >= 0) {
+            gc_has_nonphi_user[hx_sib_index[inst]] = 1;
+        }
+        if (hx_alu_sib_idx[inst] >= 0) {
+            gc_has_nonphi_user[hx_alu_sib_idx[inst]] = 1;
+        }
+
+        i = i + 1;
+    }
+}
+
 static void gc_drop_phi_edges(void) {
     int i;
     int j;
@@ -943,6 +995,8 @@ static void gc_drop_phi_edges(void) {
     int phi_n;
     int arg;
     int arg_n;
+
+    gc_compute_nonphi_users();
 
     i = 0;
     while (i < ra_norder) {
@@ -964,6 +1018,18 @@ static void gc_drop_phi_edges(void) {
                          * problem (e.g., PARAM 0 placed in X1 clobbers
                          * PARAM 1's incoming value before it's read). */
                         if (h_kind[arg] == HI_PARAM) { j = j + 1; continue; }
+                        /* Don't drop edges to phi-args that have a
+                         * non-PHI user.  Those uses keep `arg` live
+                         * past the implicit-copy point at the
+                         * predecessor terminator, so `arg` and the
+                         * phi-result genuinely interfere — coalescing
+                         * them would fold a still-live value into the
+                         * phi-result's storage and corrupt later reads.
+                         * (Bug found via strtok_r in libc_a64: `start =
+                         * s; while (...) s = s + 1; return start;`
+                         * coalesced `start`'s value with the loop
+                         * phi.) */
+                        if (gc_has_nonphi_user[arg]) { j = j + 1; continue; }
                         arg_n = gc_node[arg];
                         if (arg_n >= 0) gc_remove_edge(phi_n, arg_n);
                     }
