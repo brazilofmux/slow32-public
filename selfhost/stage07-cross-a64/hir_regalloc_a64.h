@@ -305,11 +305,24 @@ static void ra_compute_pos(void) {
             i = i - 1;
         }
 
-        /* LICM-hoisted instructions are emitted at block top by hx_gen_func(),
-         * so linearization must match that order. */
+        /* LICM-hoisted clones split: those with no body-local dep go
+         * at block top (so the body can use them); those that reference
+         * a value defined in this block's body go just before the
+         * terminator (so they see the body's defs).  Mirrors the x64
+         * fix in b6f0832 -- this split must match hx_gen_func()'s
+         * emission order exactly. */
         i = licm_head[b];
         while (i >= 0) {
-            if (h_kind[i] != HI_NOP) {
+            int s1 = h_src1[i];
+            int s2 = h_src2[i];
+            int dep_local = 0;
+            if (s1 >= 0 && h_blk[s1] == b &&
+                h_kind[s1] != HI_PARAM && h_kind[s1] != HI_PHI &&
+                !hi_is_remat(h_kind[s1])) dep_local = 1;
+            if (s2 >= 0 && ho_src2_is_ref(h_kind[i]) && h_blk[s2] == b &&
+                h_kind[s2] != HI_PARAM && h_kind[s2] != HI_PHI &&
+                !hi_is_remat(h_kind[s2])) dep_local = 1;
+            if (!dep_local && h_kind[i] != HI_NOP) {
                 ra_pos[i] = pos;
                 ra_order[ra_norder] = i;
                 ra_norder = ra_norder + 1;
@@ -318,7 +331,7 @@ static void ra_compute_pos(void) {
             i = licm_next[i];
         }
 
-        /* Regular instructions up to (not including) the terminator */
+        /* Regular block body up to (not including) the terminator */
         i = bb_start[b];
         while (i < bb_end[b]) {
             if (i == term) break;
@@ -329,6 +342,27 @@ static void ra_compute_pos(void) {
                 pos = pos + 1;
             }
             i = i + 1;
+        }
+
+        /* Body-dep hoisted clones, between body and terminator */
+        i = licm_head[b];
+        while (i >= 0) {
+            int s1 = h_src1[i];
+            int s2 = h_src2[i];
+            int dep_local = 0;
+            if (s1 >= 0 && h_blk[s1] == b &&
+                h_kind[s1] != HI_PARAM && h_kind[s1] != HI_PHI &&
+                !hi_is_remat(h_kind[s1])) dep_local = 1;
+            if (s2 >= 0 && ho_src2_is_ref(h_kind[i]) && h_blk[s2] == b &&
+                h_kind[s2] != HI_PARAM && h_kind[s2] != HI_PHI &&
+                !hi_is_remat(h_kind[s2])) dep_local = 1;
+            if (dep_local && h_kind[i] != HI_NOP) {
+                ra_pos[i] = pos;
+                ra_order[ra_norder] = i;
+                ra_norder = ra_norder + 1;
+                pos = pos + 1;
+            }
+            i = licm_next[i];
         }
 
         /* The terminator itself */

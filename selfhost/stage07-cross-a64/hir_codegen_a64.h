@@ -3808,19 +3808,93 @@ static void hx_gen_func(Node *fn) {
              * at the end of this block can be elided. */
             if (rpo_idx + 1 < ssa_rpo_cnt) hx_next_blk = ssa_rpo[rpo_idx + 1];
             else                            hx_next_blk = -1;
-            /* Emit LICM-hoisted instructions (live at block-top). */
-            i = licm_head[b];
-            while (i >= 0) { hx_emit_inst(i); i = licm_next[i]; }
-            /* Emit non-PHI / non-NOP instructions in original order.
-             * Skip any inst that LDP/STP lookahead consumed at an earlier
-             * position (hx_skip_emit). */
-            hx_cur_blk_end = bb_end[b];
-            i = bb_start[b];
-            while (i < bb_end[b]) {
-                if (!hx_skip_emit[i]
-                        && h_kind[i] != HI_NOP && h_kind[i] != HI_PHI)
-                    hx_emit_inst(i);
-                i = i + 1;
+
+            /* Find the terminator (last BR/BRC/RET in the block).
+             * Body-dep hoisted clones must be emitted just before it so
+             * the body's defs are visible to them. */
+            {
+                int term;
+                int tk;
+                int top_first;
+                int top_last;
+                int bot_first;
+                int bot_last;
+                int h;
+                int next_h;
+                int dep_local;
+                int s1;
+                int s2;
+                int j;
+
+                term = -1;
+                i = bb_end[b] - 1;
+                while (i >= bb_start[b]) {
+                    tk = h_kind[i];
+                    if (tk == HI_BR || tk == HI_BRC || tk == HI_RET) {
+                        term = i; break;
+                    }
+                    if (tk != HI_NOP) break;
+                    i = i - 1;
+                }
+
+                /* Split licm_head into top (no body dep) and bot (body
+                 * dep) lists.  Mirrors b6f0832 on the x64 side -- the
+                 * classification heuristic must match ra_compute_pos. */
+                top_first = -1; top_last = -1;
+                bot_first = -1; bot_last = -1;
+                h = licm_head[b];
+                while (h >= 0) {
+                    next_h = licm_next[h];
+                    s1 = h_src1[h];
+                    s2 = h_src2[h];
+                    dep_local = 0;
+                    if (s1 >= 0 && h_blk[s1] == b &&
+                        h_kind[s1] != HI_PARAM && h_kind[s1] != HI_PHI &&
+                        !hi_is_remat(h_kind[s1])) dep_local = 1;
+                    if (s2 >= 0 && ho_src2_is_ref(h_kind[h]) && h_blk[s2] == b &&
+                        h_kind[s2] != HI_PARAM && h_kind[s2] != HI_PHI &&
+                        !hi_is_remat(h_kind[s2])) dep_local = 1;
+                    if (!dep_local) {
+                        licm_next[h] = -1;
+                        if (top_last >= 0) licm_next[top_last] = h;
+                        else                top_first = h;
+                        top_last = h;
+                    } else {
+                        licm_next[h] = -1;
+                        if (bot_last >= 0) licm_next[bot_last] = h;
+                        else                bot_first = h;
+                        bot_last = h;
+                    }
+                    h = next_h;
+                }
+
+                /* Top-hoisted (no body deps) at block top. */
+                j = top_first;
+                while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
+
+                /* Body, with bot-hoisted inserted before the terminator. */
+                hx_cur_blk_end = bb_end[b];
+                i = bb_start[b];
+                while (i < bb_end[b]) {
+                    if (i == term) {
+                        j = bot_first;
+                        while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
+                        bot_first = -1;
+                        if (!hx_skip_emit[i]
+                                && h_kind[i] != HI_NOP && h_kind[i] != HI_PHI)
+                            hx_emit_inst(i);
+                    } else if (!hx_skip_emit[i]
+                            && h_kind[i] != HI_NOP && h_kind[i] != HI_PHI) {
+                        hx_emit_inst(i);
+                    }
+                    i = i + 1;
+                }
+                /* If no terminator was found (rare -- straight-line block
+                 * falling into the next), emit bot-hoisted at the end. */
+                if (bot_first >= 0) {
+                    j = bot_first;
+                    while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
+                }
             }
             rpo_idx = rpo_idx + 1;
         }
