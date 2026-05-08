@@ -2562,26 +2562,17 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                 emit_b_cond(e, side_cond, 0);  // imm19=0 placeholder
             }
 
-            // Snapshot register allocation state for the deferred cold exit.
-            // Hoist the deferred_exits[de_idx] base AND the snapshot subarray
-            // into local pointers — cc-a64's CSE/codegen has a latent bug
-            // where the chained `[de_idx].snapshot[i].field` member path
-            // collides with the result of a nearby emit_offset(e) call,
-            // emitting an absurd base computation that clobbers ctx->cache
-            // (offset 64) on the first iteration.
-            deferred_exit_t *de = &ctx->deferred_exits[de_idx];
-            de->jmp_patch_offset = bcond_patch;
-            de->target_pc = side_exit_pc;
-            de->exit_idx = ctx->exit_idx++;
-            de->branch_pc = ctx->guest_pc;
-            de->pending_write_valid = false;
+            // Snapshot register allocation state for the deferred cold exit
+            ctx->deferred_exits[de_idx].jmp_patch_offset = bcond_patch;
+            ctx->deferred_exits[de_idx].target_pc = side_exit_pc;
+            ctx->deferred_exits[de_idx].exit_idx = ctx->exit_idx++;
+            ctx->deferred_exits[de_idx].branch_pc = ctx->guest_pc;
+            ctx->deferred_exits[de_idx].pending_write_valid = false;
 
-            reg_alloc_slot_t *snap = de->snapshot;
-            reg_alloc_slot_t *src = ctx->reg_alloc;
             for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-                snap[i].guest_reg = src[i].guest_reg;
-                snap[i].dirty = src[i].dirty;
-                snap[i].last_use = src[i].last_use;
+                ctx->deferred_exits[de_idx].snapshot[i].guest_reg = ctx->reg_alloc[i].guest_reg;
+                ctx->deferred_exits[de_idx].snapshot[i].dirty = ctx->reg_alloc[i].dirty;
+                ctx->deferred_exits[de_idx].snapshot[i].last_use = ctx->reg_alloc[i].last_use;
             }
 
             // Record side exit PC for profiling
