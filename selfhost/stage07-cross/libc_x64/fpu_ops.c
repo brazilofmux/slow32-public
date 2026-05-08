@@ -1,7 +1,7 @@
 /* fpu_ops.c — Float/double operations for the cross-compiled emulator.
  *
- * Compiled by the HOST compiler (GCC/Clang), not cc-x64, because cc-x64
- * has no SSE support. The resulting .o links with our ld-x64 linker.
+ * Compiled by cc-x64 --hir (which emits SSE2 scalar instructions for
+ * float/double arithmetic).  The resulting .o links with our ld-x64.
  *
  * All functions use unsigned int for f32 bit patterns and
  * unsigned int lo/hi pairs for f64 bit patterns, avoiding float/double

@@ -49,29 +49,20 @@ $(OUT)/crt0.o: $(OUT)/cc-x64
 	$(OUT)/cc-x64 --crt0 -o $@
 
 # --- libc_x64.a ---
-# Most libc objects compile through cc-x64 --hir.  fpu_ops.c is host-gcc-
-# built because it uses SSE intrinsics that cc-x64 cannot yet emit (see
-# the comment at the top of libc_x64/fpu_ops.c).
+# All libc objects compile through cc-x64 --hir, including fpu_ops.c
+# (which uses cc-x64's SSE2 codegen) and math_stubs.c (whose
+# __builtin_sqrt[f] is intercepted by cc-x64 as HI_FSQRT).
 
 LIBC_X64_HIR_SRCS = libc_x64/syscalls.c libc_x64/string.c libc_x64/stdio.c \
                     libc_x64/malloc.c libc_x64/misc.c libc_x64/mmio_ring_x64.c \
-                    libc_x64/extras.c
+                    libc_x64/extras.c libc_x64/fpu_ops.c libc_x64/math_stubs.c
 LIBC_X64_HIR_OBJS = $(patsubst libc_x64/%.c,$(OUT)/libc_x64_%.o,$(LIBC_X64_HIR_SRCS))
 
 $(OUT)/libc_x64_%.o: libc_x64/%.c $(OUT)/cc-x64
 	$(OUT)/cc-x64 --hir -c $< -o $@
 
-# fpu_ops.o, math_stubs.o — host-gcc-built (use <math.h> / __builtin_sqrt)
-$(OUT)/libc_x64_fpu_ops.o: libc_x64/fpu_ops.c | $(OUT)
-	gcc -O2 -fno-builtin -fno-stack-protector -w -c $< -o $@
-
-$(OUT)/libc_x64_math_stubs.o: libc_x64/math_stubs.c | $(OUT)
-	gcc -O2 -fno-builtin -fno-stack-protector -w -c $< -o $@
-
-LIBC_X64_HOST_OBJS = $(OUT)/libc_x64_fpu_ops.o $(OUT)/libc_x64_math_stubs.o
-
-$(OUT)/libc_x64.a: $(LIBC_X64_HIR_OBJS) $(LIBC_X64_HOST_OBJS)
-	ar rcs $@ $(LIBC_X64_HIR_OBJS) $(LIBC_X64_HOST_OBJS)
+$(OUT)/libc_x64.a: $(LIBC_X64_HIR_OBJS) $(OUT)/ar-x64
+	$(OUT)/ar-x64 rcs $@ $(LIBC_X64_HIR_OBJS)
 
 libc: $(OUT)/libc_x64.a $(OUT)/crt0.o
 
@@ -80,8 +71,8 @@ libc: $(OUT)/libc_x64.a $(OUT)/crt0.o
 $(OUT)/s32fast-hir.o: s32-fast-x64.c $(OUT)/cc-x64
 	$(OUT)/cc-x64 --hir -c $< -o $@
 
-$(OUT)/s32fast-hir: $(OUT)/s32fast-hir.o $(OUT)/crt0.o $(OUT)/libc_x64.a
-	$(CC) $(LDFLAGS) -o $@ $(OUT)/crt0.o $< $(OUT)/libc_x64.a
+$(OUT)/s32fast-hir: $(OUT)/s32fast-hir.o $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
+	$(OUT)/ld-x64 -o $@ $(OUT)/crt0.o $< $(OUT)/libc_x64.a
 
 # --- dbt-x64 — SLOW-32 dynamic binary translator, compiled by cc-x64 --hir ---
 # x86-64-relevant subset of tools/dbt/.  emit_a64.c and translate_a64.c are
@@ -100,8 +91,8 @@ DBT_OBJS = $(patsubst $(DBT_DIR)/%.c,$(OUT)/dbt_%.o,$(DBT_SRCS))
 $(OUT)/dbt_%.o: $(DBT_DIR)/%.c $(OUT)/cc-x64
 	$(OUT)/cc-x64 --hir -c $< -o $@
 
-$(OUT)/dbt-x64: $(DBT_OBJS) $(OUT)/crt0.o $(OUT)/libc_x64.a
-	$(CC) $(LDFLAGS) -o $@ $(OUT)/crt0.o $(DBT_OBJS) $(OUT)/libc_x64.a
+$(OUT)/dbt-x64: $(DBT_OBJS) $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
+	$(OUT)/ld-x64 -o $@ $(OUT)/crt0.o $(DBT_OBJS) $(OUT)/libc_x64.a
 
 dbt: $(OUT)/dbt-x64
 
@@ -114,9 +105,9 @@ TEST_SKIP = tests/test_libc.c tests/test_x0_x1.c
 TEST_SRCS = $(filter-out $(TEST_SKIP),$(wildcard tests/test_*.c))
 TEST_BINS = $(patsubst tests/%.c,$(OUT)/%,$(TEST_SRCS))
 
-$(OUT)/test_%: tests/test_%.c $(OUT)/cc-x64 $(OUT)/crt0.o $(OUT)/libc_x64.a
+$(OUT)/test_%: tests/test_%.c $(OUT)/cc-x64 $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
 	$(OUT)/cc-x64 --hir -I . -c $< -o $(OUT)/$*.o
-	$(CC) $(LDFLAGS) -o $@ $(OUT)/crt0.o $(OUT)/$*.o $(OUT)/libc_x64.a
+	$(OUT)/ld-x64 -o $@ $(OUT)/crt0.o $(OUT)/$*.o $(OUT)/libc_x64.a
 
 test: $(TEST_BINS)
 	@echo "--- Running tests ---"
