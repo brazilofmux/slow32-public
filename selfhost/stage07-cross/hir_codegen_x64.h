@@ -1139,7 +1139,21 @@ static void hx_emit_inst(int idx) {
                 if (br == X64_RCX) sib_scratch = X64_RDX;
                 if (sib_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
                 ir = hx_src(h_src2[idx], sib_scratch);
-                if (wide) {
+                /* Load width is determined by ty.  Without these byte/short
+                 * specializations the SIB path would emit a 32-bit `mov`
+                 * for an int8_t/int16_t field, reading 3-4 garbage bytes
+                 * past the field. */
+                if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+                    if (ty & TY_UNSIGNED)
+                        x64_movzx_rm8_sib(dr, br, ir, hx_sib_scale[idx], 0);
+                    else
+                        x64_movsx_rm8_sib(dr, br, ir, hx_sib_scale[idx], 0);
+                } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+                    if (ty & TY_UNSIGNED)
+                        x64_movzx_rm16_sib(dr, br, ir, hx_sib_scale[idx], 0);
+                    else
+                        x64_movsx_rm16_sib(dr, br, ir, hx_sib_scale[idx], 0);
+                } else if (wide) {
                     x64_mov_rm64_sib(dr, br, ir, hx_sib_scale[idx], 0);
                 } else {
                     x64_mov_rm_sib(dr, br, ir, hx_sib_scale[idx], 0);
@@ -1236,7 +1250,15 @@ static void hx_emit_inst(int idx) {
                 }
                 if (idx_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
                 ir = hx_src(hx_sib_index[idx], idx_scratch);
-                if (wide) {
+                /* Store width is determined by ty.  Without these byte/short
+                 * specializations the SIB path would emit a 32-bit `mov`
+                 * for an int8_t/int16_t store, clobbering 3-4 bytes past
+                 * the field. */
+                if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+                    x64_mov_mr8_sib(br, ir, hx_sib_scale[idx], 0, vr);
+                } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+                    x64_mov_mr16_sib(br, ir, hx_sib_scale[idx], 0, vr);
+                } else if (wide) {
                     x64_mov_mr64_sib(br, ir, hx_sib_scale[idx], 0, vr);
                 } else {
                     x64_mov_mr_sib(br, ir, hx_sib_scale[idx], 0, vr);

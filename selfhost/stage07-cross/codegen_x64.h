@@ -45,9 +45,10 @@ static int  cg_str_pool_used;
 
 static char *cg_glob_name[CG_MAX_GLOBALS];
 static int   cg_glob_size[CG_MAX_GLOBALS];
-static int   cg_glob_init[CG_MAX_GLOBALS]; /* initial value (or 0) */
-static int   cg_glob_has_init[CG_MAX_GLOBALS]; /* 1 if initialized */
+static int   cg_glob_init[CG_MAX_GLOBALS]; /* scalar initial value, or string-pool idx if has_init==2 */
+static int   cg_glob_has_init[CG_MAX_GLOBALS]; /* 0=BSS, 1=scalar, 2=string ptr, 3=array/struct (bytes from ps_ginit_pool) */
 static int   cg_glob_is_local[CG_MAX_GLOBALS]; /* 1 if `static` (file-local) */
+static int   cg_glob_psidx[CG_MAX_GLOBALS]; /* back-pointer to parser global index for ps_ginit_pool/ps_girel_* lookup */
 static int   cg_nglobals;
 
 /* --- Function symbol table (for call resolution) --- */
@@ -1521,6 +1522,56 @@ static void gen_data_sections(Node *prog) {
                 cg_data_len = cg_data_len + 1;
                 j = j + 1;
             }
+        } else if (cg_glob_has_init[i] == 3) {
+            /* Array/struct initializer: copy bytes from ps_ginit_pool,
+             * splicing in relocations for any pointer slots (string or
+             * global address).  The ginit_pool has placeholder zero bytes
+             * at reloc offsets; we overwrite those by emitting the
+             * relocation and then advancing past the slot. */
+            int psi = cg_glob_psidx[i];
+            int pool_start = ps_ginit_start[psi];
+            int pool_count = ps_ginit_count[psi];
+            int reli = ps_girel_start[psi];
+            int relend = reli + ps_girel_count[psi];
+            int off = 0;
+            while (off < pool_count) {
+                if (reli < relend && ps_girel_off[reli] == off) {
+                    int rsz = ps_girel_size[reli];
+                    if (ps_girel_kind[reli] == GIRELOC_STRING) {
+                        cg_dreloc_off[cg_ndrelocs] = -(cg_data_len + 1);
+                        cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
+                        cg_dreloc_idx[cg_ndrelocs] = ps_girel_idx[reli];
+                        cg_ndrelocs = cg_ndrelocs + 1;
+                    } else {
+                        /* GIRELOC_GLOBAL or GIRELOC_SYMBOL — emit a
+                         * pointer slot to another global symbol. */
+                        cg_dreloc_off[cg_ndrelocs] = -(cg_data_len + 1);
+                        cg_dreloc_kind[cg_ndrelocs] = DRELOC_GLOBAL;
+                        cg_dreloc_idx[cg_ndrelocs] = ps_girel_idx[reli];
+                        cg_ndrelocs = cg_ndrelocs + 1;
+                    }
+                    j = 0;
+                    while (j < rsz) {
+                        if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
+                        cg_data_len = cg_data_len + 1;
+                        j = j + 1;
+                    }
+                    off = off + rsz;
+                    reli = reli + 1;
+                } else {
+                    if (cg_data_len < 65536)
+                        cg_data[cg_data_len] = ps_ginit_pool[pool_start + off];
+                    cg_data_len = cg_data_len + 1;
+                    off = off + 1;
+                }
+            }
+            /* Zero-fill remainder if the declared size is larger than
+             * the initializer (e.g. `int a[10] = {1,2}`). */
+            while (off < cg_glob_size[i]) {
+                if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
+                cg_data_len = cg_data_len + 1;
+                off = off + 1;
+            }
         } else {
             /* Scalar with initial value */
             j = 0;
@@ -1722,10 +1773,14 @@ static void collect_globals(Node *prog) {
         }
         cg_glob_size[cg_nglobals] = sz;
 
+        cg_glob_psidx[cg_nglobals] = i;
+
         /* Initialized? */
         if (ps_ginit_start[i] >= 0) {
-            /* Has initializer list (array/struct) — handled in gen_data_sections */
-            cg_glob_has_init[cg_nglobals] = 1;
+            /* Array/struct initializer (bytes in ps_ginit_pool, possibly
+             * with relocations in ps_girel_*).  Handled in
+             * gen_data_sections via the parser-index back-pointer. */
+            cg_glob_has_init[cg_nglobals] = 3;
             cg_glob_init[cg_nglobals] = 0;
         } else if (ps_gstr[i] >= 0) {
             /* String-initialized (char *name = "...") */

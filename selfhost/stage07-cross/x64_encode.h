@@ -216,6 +216,57 @@ static void x64_mov_mr64_sib(int base, int index, int scale, int disp, int src) 
     x64_modrm_sib(src, base, index, scale, disp);
 }
 
+// movsx r32, byte ptr [base + index*scale + disp]   (sign-extend i8 -> i32)
+static void x64_movsx_rm8_sib(int dst, int base, int index, int scale, int disp) {
+    x64_rex_emit(x64_rex_sib(dst, base, index, 0));
+    x64_byte(0x0F);
+    x64_byte(0xBE);
+    x64_modrm_sib(dst, base, index, scale, disp);
+}
+
+// movzx r32, byte ptr [base + index*scale + disp]   (zero-extend u8 -> u32)
+static void x64_movzx_rm8_sib(int dst, int base, int index, int scale, int disp) {
+    x64_rex_emit(x64_rex_sib(dst, base, index, 0));
+    x64_byte(0x0F);
+    x64_byte(0xB6);
+    x64_modrm_sib(dst, base, index, scale, disp);
+}
+
+// movsx r32, word ptr [base + index*scale + disp]   (sign-extend i16 -> i32)
+static void x64_movsx_rm16_sib(int dst, int base, int index, int scale, int disp) {
+    x64_rex_emit(x64_rex_sib(dst, base, index, 0));
+    x64_byte(0x0F);
+    x64_byte(0xBF);
+    x64_modrm_sib(dst, base, index, scale, disp);
+}
+
+// movzx r32, word ptr [base + index*scale + disp]   (zero-extend u16 -> u32)
+static void x64_movzx_rm16_sib(int dst, int base, int index, int scale, int disp) {
+    x64_rex_emit(x64_rex_sib(dst, base, index, 0));
+    x64_byte(0x0F);
+    x64_byte(0xB7);
+    x64_modrm_sib(dst, base, index, scale, disp);
+}
+
+// mov [base + index*scale + disp], r8L          (1-byte store)
+static void x64_mov_mr8_sib(int base, int index, int scale, int disp, int src) {
+    /* For r8 source, REX is required to access SPL/BPL/SIL/DIL even
+     * when the upper-bit and base/index don't already need it. */
+    int rex = x64_rex_sib(src, base, index, 0);
+    if (src >= 4) rex = rex | REX_BASE;
+    x64_rex_emit(rex);
+    x64_byte(0x88);
+    x64_modrm_sib(src, base, index, scale, disp);
+}
+
+// mov [base + index*scale + disp], r16          (2-byte store; 0x66 prefix)
+static void x64_mov_mr16_sib(int base, int index, int scale, int disp, int src) {
+    x64_byte(0x66);
+    x64_rex_emit(x64_rex_sib(src, base, index, 0));
+    x64_byte(0x89);
+    x64_modrm_sib(src, base, index, scale, disp);
+}
+
 // add dword [base + disp], imm32
 static void x64_add_mi(int base, int disp, int imm) {
     int use_imm8;
