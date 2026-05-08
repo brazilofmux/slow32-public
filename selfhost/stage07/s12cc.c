@@ -181,6 +181,9 @@ int main(int argc, char **argv) {
                 argi = argi + 1;
                 pp_add_idir(argv[argi]);
             }
+        } else if (argv[argi][0] == 45 && argv[argi][1] == 100 && argv[argi][2] == 0) {
+            /* "-d" — dump regalloc intervals to stderr (Issue #31 diagnostic) */
+            s12cc_dump_intervals = 1;
         } else if (infile == 0) {
             infile = argv[argi];
         } else if (outfile == 0) {

@@ -258,6 +258,33 @@ static void ra_compute_ends(void) {
             ra_extend(h_src2[inst], p);
         }
 
+        /* Codegen fold-through:  hcg_addr_base_off walks ADDI/COPY
+         * chains from s1 and emits the load/store/addi using the
+         * chain's deepest base register, not s1's register.  Extend
+         * the base's live interval to this instruction's position
+         * so its register stays alive through the folded use.
+         *
+         * Without this, n's interval (the deepest base) ends at its
+         * last *direct* use, but a later folded LOAD that reaches
+         * through an ADDI(n,52) still emits `ldw rd, r_n, 52` —
+         * reading a clobbered register.  See Issue #31. */
+        if (k == HI_LOAD || k == HI_STORE || k == HI_ADDI) {
+            int chain;
+            int ck;
+            int chlim;
+            chain = h_src1[inst];
+            chlim = 0;
+            while (chain >= 0 && chlim < 64) {
+                ck = h_kind[chain];
+                if (ck != HI_ADDI && ck != HI_COPY) break;
+                chain = h_src1[chain];
+                chlim = chlim + 1;
+            }
+            if (chain >= 0 && chain != h_src1[inst]) {
+                ra_extend(chain, p);
+            }
+        }
+
         /* Call arguments */
         if ((k == HI_CALL || k == HI_CALLP) && h_cbase[inst] >= 0) {
             j = 0;
@@ -312,6 +339,27 @@ static void ra_compute_ends(void) {
             src = h_src2[inst];
             if (ra_pos[src] >= 0 && h_blk[src] != h_blk[inst]) {
                 ra_backprop(src, h_blk[inst]);
+            }
+        }
+
+        /* Codegen fold-through:  walk ADDI/COPY chain on src1 and
+         * cross-block backprop the chain's base.  Mirror of the
+         * forward extend above — both must run together. */
+        if (k == HI_LOAD || k == HI_STORE || k == HI_ADDI) {
+            int chain;
+            int ck;
+            int chlim;
+            chain = h_src1[inst];
+            chlim = 0;
+            while (chain >= 0 && chlim < 64) {
+                ck = h_kind[chain];
+                if (ck != HI_ADDI && ck != HI_COPY) break;
+                chain = h_src1[chain];
+                chlim = chlim + 1;
+            }
+            if (chain >= 0 && chain != h_src1[inst] && ra_pos[chain] >= 0 &&
+                h_blk[chain] != h_blk[inst]) {
+                ra_backprop(chain, h_blk[inst]);
             }
         }
 
@@ -567,4 +615,59 @@ static void hir_regalloc(void) {
     ra_extend_fused_cmp();
     ra_linear_scan();
     ra_assign_spills();
+}
+
+/* =================================================================
+ * Diagnostic dump — enabled by `-d` on the s12cc command line.
+ * Emits one line per non-NOP HIR instruction (after regalloc) so two
+ * compiler binaries running on the same source can be diff'd to find
+ * which inst's live interval / register assignment diverges.
+ * ================================================================= */
+
+static void ra_dump_signed(int v) {
+    if (v < 0) {
+        fdputc(45, 2);   /* '-' */
+        fdputuint(2, 0 - v);
+    } else {
+        fdputuint(2, v);
+    }
+}
+
+static void ra_dump_intervals(char *fname) {
+    int i;
+
+    fdputs("DUMP fn=", 2);
+    fdputs(fname, 2);
+    fdputs(" ninst=", 2);
+    fdputuint(2, h_ninst);
+    fdputs(" norder=", 2);
+    fdputuint(2, ra_norder);
+    fdputc(10, 2);
+
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_NOP) { i = i + 1; continue; }
+        fdputs("DUMP i=", 2);
+        fdputuint(2, i);
+        fdputs(" k=", 2);
+        fdputs(bg_op_name(h_kind[i]), 2);
+        fdputs(" b=", 2);
+        ra_dump_signed(h_blk[i]);
+        fdputs(" p=", 2);
+        ra_dump_signed(ra_pos[i]);
+        fdputs(" e=", 2);
+        ra_dump_signed(ra_iend[i]);
+        fdputs(" r=", 2);
+        ra_dump_signed(ra_reg[i]);
+        fdputs(" s=", 2);
+        ra_dump_signed(ra_spill_off[i]);
+        fdputs(" v=", 2);
+        ra_dump_signed(h_val[i]);
+        fdputs(" s1=", 2);
+        ra_dump_signed(h_src1[i]);
+        fdputs(" s2=", 2);
+        ra_dump_signed(h_src2[i]);
+        fdputc(10, 2);
+        i = i + 1;
+    }
 }

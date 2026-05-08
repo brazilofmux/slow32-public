@@ -98,6 +98,9 @@
 #define HIR_MAX_CARG   4096
 #define HIR_MAX_PARG   32768
 
+/* --- Diagnostic flags --- */
+static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
+
 /* --- Instruction parallel arrays --- */
 static int   h_kind[HIR_MAX_INST];
 static int   h_ty[HIR_MAX_INST];

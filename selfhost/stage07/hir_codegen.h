@@ -2031,6 +2031,11 @@ static void hcg_func(Node *fn) {
      * callee-save info, and updates hl_temp_stack */
     hir_regalloc();
 
+    /* Optional per-function regalloc dump (Issue #31 diagnostic) */
+    if (s12cc_dump_intervals) {
+        ra_dump_intervals(fn->name);
+    }
+
     /* Compute frame size (hl_temp_stack now includes spills + callee-saves) */
     fs = hl_temp_stack;
     fs = ((fs + 3) / 4) * 4;
