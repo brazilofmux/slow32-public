@@ -667,8 +667,11 @@ A full sweep on the Lenovo ARM box rebuilt stages 01..07 under each of
 `dbt-a64`, comparing SHA256 of every output `.s32x` against
 `selfhost/sha256sums.md`. Only `slow32-dbt` passed end-to-end. The other
 three exposed independent bugs documented below as #41/#42/#43. Verifier
-script preserved at `/tmp/verify-emu-sums.sh`; per-emulator logs at
+script committed at `selfhost/verify-emu-sums.sh`; per-emulator logs at
 `/tmp/verify-emu-sums-<label>/`.
+
+Status as of 2026-05-09 (later): #41 fixed (slow32 getopt). #42 fixed
+(slow32-fast cap removed). #43 still open (dbt-a64 stat).
 
 ### 41. [FIXED] `slow32` getopt permutation consumes program flags
 
@@ -699,29 +702,35 @@ cd selfhost/stage02 && make clean
 SELFHOST_EMU=$PWD/../../tools/emulator/slow32 make 2>&1 | tail -20
 ```
 
-### 42. [OPEN] `slow32-fast` produces empty `.s32o` for stage05 Phase-1 `s12cc.s`
+### 42. [FIXED] `slow32-fast` produces empty `.s32o` for stage05 Phase-1 `s12cc.s`
 
-**Status**: open as of 2026-05-09. Found by cross-emulator sum
-verification on Lenovo ARM.
+**Status**: fixed 2026-05-09 in `tools/emulator/slow32-fast.c`. Default
+instruction cap was hard-coded to `10000000000` ("10B instruction limit
+for debugging") with no flag to override; assembling stage05's
+2.2 MB `s12cc.s` consumes ~32 billion instructions, so the assembler
+hit the cap and exited with `rc=24` (1054488 mod 256) before writing
+any output. Resolution: default to unlimited (`max_instructions == 0`),
+add a `-c <N>` flag to opt back into a cap (matching slow32's
+convention). Verified: `s12cc.s32o` produced under fixed slow32-fast is
+bit-identical to the slow32-dbt reference (130 s, 32 B instructions).
 
-**Symptom**: with `SELFHOST_EMU=tools/emulator/slow32-fast`, stages 01..04
-produce bit-identical artifacts (matching `sha256sums.md`), but stage05
-fails during `[3/4] Compile compiler` with
+**Original symptom**: with `SELFHOST_EMU=tools/emulator/slow32-fast`,
+stages 01..04 produced bit-identical artifacts but stage05 failed
+during `[3/4] Compile compiler` with
 `assemble produced no output: /tmp/stage05-build.XXX/s12cc.s`. The
-assembler (`stage04/s32-as.s32x` running under slow32-fast) exits with
-`rc=0` (or `96`) but writes a zero-byte `.s32o`. Every other assemble in
-the same run succeeds; only the s12cc.s pass-1 output is empty.
+assembler ran for ~40 s, printed
+`WARNING: Execution limit reached (10000000000 instructions)`, then
+emitted a 0-byte `.s32o`. The build script's exit-code check
+(`rc != 0 && rc != 96`) caught the failure but the message
+("assemble produced no output") obscured the real cause.
 
-**Suspected cause**: a slow32-fast-specific bug or threshold reached on
-the larger `s12cc.s` input — not a determinism gap in the toolchain
-itself. Worth running the same input under `slow32` (basic interp) and
-under `slow32-dbt` against an instrumented assembler to localize.
-
-**Reproducer**:
+**Reproducer (pre-fix)**:
 ```bash
 cd selfhost/stage05 && make clean
 SELFHOST_EMU=$PWD/../../tools/emulator/slow32-fast \
   SELFHOST_TIMEOUT=2400 make 2>&1 | tail -20
+# WARNING: Execution limit reached (10000000000 instructions)
+# assemble produced no output: /tmp/stage05-build.XXX/s12cc.s
 ```
 
 ### 43. [OPEN] `dbt-a64` (cc-a64 cross-compiled DBT) cannot stat absolute paths from Forth kernel

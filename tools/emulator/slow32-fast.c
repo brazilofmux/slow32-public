@@ -1480,6 +1480,7 @@ static void print_usage(const char *progname) {
     fprintf(stderr, "Usage: %s [options] <binary> [-- <args...>]\n", progname);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -h, --help       Show this help message\n");
+    fprintf(stderr, "  -c <N>           Cap execution at N instructions (default: unlimited)\n");
     fprintf(stderr, "  -p, --probe [N]  Periodic probe: sample PC every N seconds (default 1)\n");
     fprintf(stderr, "  --allow <list>   Only allow these services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>    Deny these services (comma-separated)\n");
@@ -1508,12 +1509,20 @@ int main(int argc, char **argv) {
     probe.probe_interval_sec = 1;
     probe.full_dump_interval = 10;
 
-    // Pre-scan for --help/--allow/--deny/-p/--probe
+    // Pre-scan for --help/--allow/--deny/-p/--probe/-c
+    uint64_t max_instructions = 0;  // 0 == unlimited (default)
     svc_policy_t policy = { .default_allow = true };
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
+        }
+        if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            max_instructions = strtoull(argv[i + 1], NULL, 0);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+            continue;
         }
         if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--probe") == 0) {
             probe.enabled = true;
@@ -1675,8 +1684,8 @@ int main(int argc, char **argv) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    uint64_t max_instructions = 10000000000;  // 10B instruction limit for debugging
-    while (!cpu.halted && cpu.inst_count < max_instructions) {
+    // max_instructions == 0 means unlimited; SIGINT or HALT exits cleanly.
+    while (!cpu.halted && (max_instructions == 0 || cpu.inst_count < max_instructions)) {
         cpu_step_fast(&cpu);
         if (__builtin_expect(probe.flag, 0)) {
             process_probe(&probe, &cpu, &g_symtab);
@@ -1694,7 +1703,7 @@ int main(int argc, char **argv) {
         dump_registers(stderr, &cpu, &g_symtab);
     }
 
-    if (cpu.inst_count >= max_instructions) {
+    if (max_instructions != 0 && cpu.inst_count >= max_instructions) {
         printf("WARNING: Execution limit reached (%" PRIu64 " instructions)\n", max_instructions);
         cpu.halted = true;
     }
