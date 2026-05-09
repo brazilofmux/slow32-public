@@ -13,6 +13,8 @@ All platforms and emulators produce bit-identical artifacts.
 | slow32-dbt (stage 4) | Raspberry Pi 4 |
 | slow32-dbt (stage 5) | Intel(R) Celeron(R) N4500 @ 1.10GHz |
 | slow32-dbt (stage 5) | Lenovo ARM Cortex-A720/Cortex-X4 |
+| slow32-dbt (stage 6) | Lenovo ARM Cortex-A720/Cortex-X4 |
+| slow32-dbt (stage 7) | Lenovo ARM Cortex-A720/Cortex-X4 |
 
 ## Stage 01
 
@@ -52,8 +54,17 @@ All platforms and emulators produce bit-identical artifacts.
 ## Stage 06 (fixed-point proven)
 
 - 161e64e61846a0a7eb0473794807cac081cc55657266c1535dd54667867cd873  cc.s32x
-- 3a0458fc54522bf237130716ec6c5220c473b0be5cdd3e4fa606632576d85de0  s32-ld.s32x
 - 4d4289a4be0981ac94747b6e1f2367d1299792e8b942608888f77465dcc5a71b  slow32dis.s32x
 - 6145e162904dfd7708ac80dd8a2e50bc4f3a16695978e3c130798018cec178cf  s32-ar.s32x
 - 8672a3b8e44e71bb7675652ae4df90374fc93349fd3b3d4ec36c03b82d70b7f3  s32-as.s32x
+- 8cab38cb9a77ca5fc140cba589eacf07103e6406671bb2c53614ba3a0cb1a657  s32-ld.s32x
 - e67b2f1f6519ce643bc81ff3ba202cc064dfeba74fbce6e0945e1937cb237f20  slow32dump.s32x
+
+## Stage 07
+
+- 0bba4a871518bf20c62b6661ff8cdf31feb7af23ababf599a6e137426fb0e369  s32-as.s32x
+- 8274704a7b33ad21bade61d564aefd21b07a7317d8915844b84df7e91879a9ca  cc.s32x
+- 8bf82cf422aa55662bf0b004797aa5cd9301c815a083ba7116a948a9c9f68878  slow32dump.s32x
+- a73f8673f628a427ee2c23e5c1ce9bf6cccdfe80f0391600a3cb4862263a8bbd  slow32dis.s32x
+- bfdaf67b543f0bb0a29065dece1a00d5d1026cb76e3f2105f266c2dab198516b  s32-ar.s32x
+- e1b2cc3a441ab9a560756f332115f49842133476647025fcd24fe6386904415c  s32-ld.s32x
