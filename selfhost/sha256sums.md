@@ -21,6 +21,7 @@ All platforms and emulators produce bit-identical artifacts.
 | slow32 | Apple M5 Max (MacBook Pro) |
 | slow32-fast | Apple M5 Max (MacBook Pro) |
 | slow32-dbt | Apple M5 Max (MacBook Pro) |
+| s32fast-hir-a64 (cc-a64 cross-compiled) | Lenovo ARM Cortex-A720/Cortex-X4 |
 
 ## Stage 01
 
@@ -69,7 +70,7 @@ All platforms and emulators produce bit-identical artifacts.
 ## Stage 07
 
 - 0bba4a871518bf20c62b6661ff8cdf31feb7af23ababf599a6e137426fb0e369  s32-as.s32x
-- 87767d2dc55628fe8cee94ea94484e838c31bfbbea96e1593178476ea02e7044  cc.s32x
+- b10c1dfaac45fc42995f0418123508f472a35cdbe65465b65254fd1ef0175eab  cc.s32x
 - 8bf82cf422aa55662bf0b004797aa5cd9301c815a083ba7116a948a9c9f68878  slow32dump.s32x
 - a73f8673f628a427ee2c23e5c1ce9bf6cccdfe80f0391600a3cb4862263a8bbd  slow32dis.s32x
 - bfdaf67b543f0bb0a29065dece1a00d5d1026cb76e3f2105f266c2dab198516b  s32-ar.s32x
