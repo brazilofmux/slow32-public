@@ -674,6 +674,13 @@ Status as of 2026-05-09 (later): #41 fixed (slow32 getopt). #42 fixed
 (slow32-fast cap removed). #43 partial (3 MMIO ops added to dbt-a64
 cross libc); #44 opened for the remaining s32-as.s32x startup hang.
 
+**`s32fast-hir` (cc-x64 cross-compiled emulator) sweep — done.**
+Stage 7 artifacts produced under `selfhost/stage07-cross/out/s32fast-hir`
+on AWS Xeon Platinum 8259CL match the canonical Stage 7 SHA-256s; row
+added to `selfhost/sha256sums.md` in commit `30fef05e`. No outstanding
+work on the s32fast-hir verification path — future sessions should not
+re-run this unless the codegen or libc changes invalidate the hashes.
+
 ### 41. [FIXED] `slow32` getopt permutation consumes program flags
 
 **Status**: fixed 2026-05-09 in `tools/emulator/slow32.c:1096` by prefixing
