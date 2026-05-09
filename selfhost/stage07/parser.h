@@ -2700,6 +2700,21 @@ static Node *parse_stmt(void) {
                         a = a->next;
                         ci = ci + 1;
                     }
+                    /* Zero-fill remaining elements not explicitly initialized.
+                     * C semantics: `T arr[N] = {x};` zeros elements x..N-1.
+                     * Without this, those slots read uninitialized stack memory. */
+                    while (ci < count) {
+                        n = nd_var(nm, off, ty + TY_PTR);
+                        n->is_local = 1;
+                        n->is_array = 1;
+                        t = nd_binop(TK_PLUS, n, nd_num(ci));
+                        t = nd_unary(TK_STAR, t);
+                        t = nd_assign(t, nd_num(0));
+                        t = nd_expr_stmt(t);
+                        if (head == NULL) { head = t; tail = t; }
+                        else { tail->next = t; tail = t; }
+                        ci = ci + 1;
+                    }
                 } else {
                     p_error("expected string or { in array init");
                     return nd_num(0);
@@ -2785,6 +2800,48 @@ static Node *parse_stmt(void) {
                 }
                 if (lex_tok == TK_COMMA) next();
                 expect(TK_RBRACE);
+                /* Zero-fill remaining fields not explicitly initialized.
+                 * C semantics: `struct S s = {a};` zeros all fields not given
+                 * an explicit initializer. Without this, fields that are only
+                 * conditionally assigned later read uninitialized stack data
+                 * (or leak via the multi-register struct return ABI). */
+                while (ci < nf) {
+                    mi = struct_field_nth_idx(si, ci);
+                    if (mi >= 0) {
+                        if (ty_is_struct(stm_type[mi])) {
+                            /* Nested struct: zero each leaf field */
+                            nsi = ty_struct_idx(stm_type[mi]);
+                            nnf = st_nfields[nsi];
+                            nj = 0;
+                            while (nj < nnf) {
+                                base = struct_field_nth_idx(nsi, nj);
+                                if (base >= 0 && !ty_is_struct(stm_type[base])) {
+                                    mi_off = stm_off[mi] + stm_off[base];
+                                    mi_ty = stm_type[base];
+                                    n = nd_var(nm, off, ty);
+                                    n->is_local = 1;
+                                    a = nd_member(n, mi_off, mi_ty, 0, 0);
+                                    a = nd_assign(a, nd_num(0));
+                                    a = nd_expr_stmt(a);
+                                    if (head == NULL) { head = a; tail = a; }
+                                    else { tail->next = a; tail = a; }
+                                }
+                                nj = nj + 1;
+                            }
+                        } else {
+                            mi_off = stm_off[mi];
+                            mi_ty = stm_type[mi];
+                            n = nd_var(nm, off, ty);
+                            n->is_local = 1;
+                            a = nd_member(n, mi_off, mi_ty, 0, 0);
+                            a = nd_assign(a, nd_num(0));
+                            a = nd_expr_stmt(a);
+                            if (head == NULL) { head = a; tail = a; }
+                            else { tail->next = a; tail = a; }
+                        }
+                    }
+                    ci = ci + 1;
+                }
                 expect(TK_SEMI);
                 if (head != NULL) return nd_block(head);
                 return nd_block(NULL);
