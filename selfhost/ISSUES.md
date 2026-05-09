@@ -391,7 +391,23 @@ Validation: targeted stage02 test returns expected value for mixed init/cond/ste
 
 ### Stage 13: Stage 07 (`selfhost/stage07/`)
 
-### 31. [OPEN] stage07 fixed-point fails — regalloc bug from compare-and-branch fusion
+### 31. [FIXED] stage07 fixed-point fails — regalloc bug from compare-and-branch fusion
+
+**Status as of 2026-05-09**: `selfhost/stage07/run-tests.sh --fixed-point` passes
+48/48, including the gen2 == gen3 byte-identical compare. The 2026-05-08 analysis
+below correctly localized the surface symptom (gen1_cc miscompiles s12cc.c such
+that `n` in `hl_stmt` has too short a live interval), but the root cause turned
+out to be upstream of regalloc: parser local `{0}` initializers were leaving
+unwritten fields uninitialized in locals (see commit `300f5833`, "zero-fill unset
+fields in local {0} initializers"). Whichever struct inside the live-range path
+relied on `{0}` was getting stale stack bytes, which then perturbed the live
+interval scan. With `{0}` now zero-filling, the previously-corrupt path computes
+`n`'s interval correctly and the spill survives.
+
+The historical bisect notes are retained below for future reference — they
+identify the *visible* miscompilation but not the actual upstream cause.
+
+---
 
 **Status as of 2026-05-08 (later)**: Codex's `bd04478f` lex_next dodge
 has been reverted (`50b468f3`) so the symptom now surfaces honestly:
