@@ -337,6 +337,16 @@ static int find_func_type(char *name) {
     return TY_INT;  /* default to int if not found */
 }
 
+static int is_known_func(char *name) {
+    int i;
+    i = ps_nfuncs - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_fname[i]) == 0) return 1;
+        i = i - 1;
+    }
+    return 0;
+}
+
 static void add_func_type(char *name, int ty) {
     int i;
     /* Update existing entry if already registered */
@@ -1755,8 +1765,18 @@ static Node *parse_primary(void) {
             return n;
         }
 
-        /* Bare function name: load address (for function pointers) */
-        return nd_func_ref(nm);
+        /* Bare function name: load address (for function pointers).
+         * Require a prior declaration — otherwise a typo'd local/global
+         * silently emits an unresolved relocation. */
+        if (is_known_func(nm)) {
+            return nd_func_ref(nm);
+        }
+        fdputs("s12cc:", 2);
+        fdputuint(2, lex_line);
+        fdputs(": error: undeclared identifier '", 2);
+        fdputs(nm, 2);
+        fdputs("'\n", 2);
+        exit(1);
     }
 
     /* Parenthesized expression or type cast */
