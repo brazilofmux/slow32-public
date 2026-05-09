@@ -660,6 +660,117 @@ but `fp-gen2.s32x` (gen1's compile of s12cc.c) drops the `addi r1, r0, 0`.
 `run-tests.sh --fixed-point` with a 600 s timeout and grepping
 `fixed-point:` for PASS/FAIL.
 
+### Cross-Emulator Sum Verification (2026-05-09)
+
+A full sweep on the Lenovo ARM box rebuilt stages 01..07 under each of
+`slow32`, `slow32-fast`, `slow32-dbt`, and the cc-a64-cross-compiled
+`dbt-a64`, comparing SHA256 of every output `.s32x` against
+`selfhost/sha256sums.md`. Only `slow32-dbt` passed end-to-end. The other
+three exposed independent bugs documented below as #41/#42/#43. Verifier
+script preserved at `/tmp/verify-emu-sums.sh`; per-emulator logs at
+`/tmp/verify-emu-sums-<label>/`.
+
+### 41. [FIXED] `slow32` getopt permutation consumes program flags
+
+**Status**: fixed 2026-05-09 in `tools/emulator/slow32.c:1096` by prefixing
+the optstring with `+` (`"+hstrc:b:w:"`), which switches getopt to
+POSIX-style first-non-option-stops parsing. Verified by re-running the
+verifier on stage02: build under `slow32` now succeeds and produces
+bit-identical artifacts (s32-as, s32-ar, s32-ld, cc-min) in 99 s.
+
+**Original symptom**: rebuilding stages with
+`SELFHOST_EMU=tools/emulator/slow32` failed at stage02 cc-min link with
+cascading `invalid option -- '-'` / `-- 'm'` / `-- 'o'` errors, then
+`error: cannot open .../cc-min.s32x` because the linker's
+`-o cc-min.s32x` was eaten as host-side options and the output path was
+reinterpreted as the s32x to load.
+
+**Root cause**: getopt's default GNU mode *permutes* `argv` to scan past
+positional arguments looking for more options — so any `-X`/`--X` token
+meant for the guest s32x program (here: `--mmio 64K` and
+`-o cc-min.s32x` passed to `s32-ld.s32x`) was consumed by the host loop.
+`slow32-fast` (`slow32-fast.c:1513+`) and `slow32-dbt` parse argv
+manually and forward unknown flags to the guest, which is why they
+don't hit this.
+
+**Reproducer (pre-fix)**:
+```bash
+cd selfhost/stage02 && make clean
+SELFHOST_EMU=$PWD/../../tools/emulator/slow32 make 2>&1 | tail -20
+```
+
+### 42. [OPEN] `slow32-fast` produces empty `.s32o` for stage05 Phase-1 `s12cc.s`
+
+**Status**: open as of 2026-05-09. Found by cross-emulator sum
+verification on Lenovo ARM.
+
+**Symptom**: with `SELFHOST_EMU=tools/emulator/slow32-fast`, stages 01..04
+produce bit-identical artifacts (matching `sha256sums.md`), but stage05
+fails during `[3/4] Compile compiler` with
+`assemble produced no output: /tmp/stage05-build.XXX/s12cc.s`. The
+assembler (`stage04/s32-as.s32x` running under slow32-fast) exits with
+`rc=0` (or `96`) but writes a zero-byte `.s32o`. Every other assemble in
+the same run succeeds; only the s12cc.s pass-1 output is empty.
+
+**Suspected cause**: a slow32-fast-specific bug or threshold reached on
+the larger `s12cc.s` input — not a determinism gap in the toolchain
+itself. Worth running the same input under `slow32` (basic interp) and
+under `slow32-dbt` against an instrumented assembler to localize.
+
+**Reproducer**:
+```bash
+cd selfhost/stage05 && make clean
+SELFHOST_EMU=$PWD/../../tools/emulator/slow32-fast \
+  SELFHOST_TIMEOUT=2400 make 2>&1 | tail -20
+```
+
+### 43. [OPEN] `dbt-a64` (cc-a64 cross-compiled DBT) cannot stat absolute paths from Forth kernel
+
+**Status**: open as of 2026-05-09. Found by cross-emulator sum
+verification on Lenovo ARM.
+
+**Symptom**: with `SELFHOST_EMU=selfhost/stage07-cross-a64/out/dbt-a64`,
+stage02 `[1/4] Assemble runtime` fails immediately:
+```
+Error line 0 : cannot stat input file
+Pass 1: text=0 data=0 bss=0 syms=0
+FAILED: 1 errors
+```
+Same input under gcc-built `tools/dbt/slow32-dbt` succeeds: assembles
+crt0.s to a 356-byte .s32o (`text=48 data=0 bss=0 syms=2`).
+
+**Significance**: `stage07-cross-a64` unit tests pass against `dbt-a64`,
+but those tests don't exercise the Forth kernel path. Running the
+selfhost stage02 pipeline (Forth kernel reads guest paths via MMIO
+`stat`/`open` syscalls) is a stronger functional gate than the existing
+suite.
+
+**Suspected cause**: bug in `selfhost/stage07-cross-a64/libc_a64`
+syscall wrappers — likely `stat`/`open` interaction with absolute
+paths or with the way the guest hands path bytes to the host through
+MMIO. The path is a long absolute path
+(`/home/sdennis/slow-32/selfhost/stage02/crt0.s`); buffer-size or
+length-handling regressions are plausible.
+
+**Reproducer**:
+```bash
+cat forth/prelude.fth selfhost/stage01/asm.fth - <<'FTH' \
+  | timeout 60 selfhost/stage07-cross-a64/out/dbt-a64 forth/kernel.s32x
+S" /absolute/path/to/selfhost/stage02/crt0.s" S" /tmp/crt0.s32o" ASSEMBLE
+BYE
+FTH
+# rc=96, "cannot stat input file"; same input under tools/dbt/slow32-dbt rc=96 with text=48
+```
+
+### Verifier script (`verify-emu-sums.sh`)
+
+Reusable harness for the above. Per-emulator: `make clean && make` each
+stage, sha256sum every `*.s32x`, compare against `sha256sums.md`. Caveat:
+`.s32x` files are gitignored, so a cascaded build failure leaves the
+tree partial — don't rely on `git checkout` to restore. Either back up
+artifacts before `make clean` or rebuild with a known-good emulator
+afterwards. Live copy: `/tmp/verify-emu-sums.sh` (Lenovo box, 2026-05-09).
+
 ---
 
 ## Section C: Missing Language / ABI Surface (Feature Backlog)

@@ -1093,7 +1093,7 @@ int main(int argc, char *argv[]) {
 
     // Parse command line options
     int opt;
-    while ((opt = getopt(argc, argv, "hstrc:b:w:")) != -1) {
+    while ((opt = getopt(argc, argv, "+hstrc:b:w:")) != -1) {
         switch (opt) {
             case 'h':
                 print_usage(argv[0]);
