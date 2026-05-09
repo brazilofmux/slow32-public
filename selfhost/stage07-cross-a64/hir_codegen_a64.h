@@ -3805,11 +3805,11 @@ static void hx_gen_func(Node *fn) {
         int rpo_idx;
         rpo_idx = 0;
         while (rpo_idx < ssa_rpo_cnt) {
-            b = ssa_rpo[rpo_idx];
+            b = ssa_rpo_ord[rpo_idx];
             hx_define_block(b);
             /* Tell BR/BRC which block lays down next, so a `b next_blk`
              * at the end of this block can be elided. */
-            if (rpo_idx + 1 < ssa_rpo_cnt) hx_next_blk = ssa_rpo[rpo_idx + 1];
+            if (rpo_idx + 1 < ssa_rpo_cnt) hx_next_blk = ssa_rpo_ord[rpo_idx + 1];
             else                            hx_next_blk = -1;
 
             /* Find the terminator (last BR/BRC/RET in the block).
