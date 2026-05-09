@@ -920,6 +920,59 @@ to change. The work item, if/when forced, is making the regalloc spill
 less aggressively and/or reducing parser recursion depth in s12cc
 itself.
 
+### 48. [WORKAROUND] cc-a64 regalloc clobbers `r_status` in mmio_process SEEK path
+
+**Status**: workaround landed in `s32-fast-x64.c:OP_MMIO_SEEK`
+(`fflush(0)` after the assignment); root cause is in cc-a64's regalloc.
+Discovered 2026-05-09 while sweeping cc-a64-cross-compiled `s32fast-hir`
+across stages 1-7 (stage02 step 2 hung running stage02's freshly-built
+`s32-as.s32x`).
+
+**Symptom**: under cc-a64-built `s32fast-hir` only, stage02 `s32-as.s32x`
+goes into an infinite loop in the alignment-pad write at
+`s32-as.c:909` (`while (((uint32_t)ftell(g_out) & 3u) != 0) fputc(0,
+g_out)`). The output file grows unbounded (~250KB-7MB) with valid
+header bytes followed by an infinite zero-fill. gcc-built `slow32-fast`,
+gcc-built `slow32-dbt`, and `tools/emulator/slow32` all run the same
+`s32-as.s32x` correctly.
+
+**Root cause** (verified by host-side debug printfs in `mmio_process`):
+the OP_MMIO_SEEK handler computes `r_status = (unsigned int)pos`
+correctly (`pos` is the lseek return, e.g. 0x68 = 104), but the value
+the host writes to `ra+12` (`mem_write32(ra+12, r_status, ...)`) is
+`0x1` — the value of `next_head = (resp_head + 1) % MMIO_RING_ENTRIES`
+on the first iteration. cc-a64's regalloc is reusing `r_status`'s
+register/slot for `next_head` despite `r_status` still being live
+across the long opcode-dispatch chain that separates the SEEK
+assignment from the response-write block.
+
+The bug shape matches `feedback_a64_rpo_walk.md` (commit `e743c098`,
+ssa_rpo[i] vs ssa_rpo_ord[i]) — both are SSA/regalloc bugs in cc-a64
+that only surface with long, branchy functions. `mmio_process` is one
+of the longest in `s32-fast-x64.c`.
+
+**Workaround**: a single `fflush(0)` after `r_status = (unsigned int)pos`
+forces cc-a64 to spill the value to stack, sidestepping the regalloc
+bug. Verified byte-identical output for both small (108-byte) and
+large (356-byte+) assembler outputs.
+
+**Real fix**: needed in cc-a64. Likely candidates: live-range
+computation across the multi-arm `else if` chain that constitutes the
+opcode dispatcher; cross-block use tracking after a value is set
+inside a deeply-nested if/else.
+
+**Reproducer**:
+```bash
+cd ~/slow-32 && cd selfhost/stage07-cross-a64 && make s32fast
+cd ~/slow-32 && rm -f /tmp/min.s32o
+echo -e '.text\n.global _start\n_start:\n    halt' > /tmp/min.s
+timeout 1 selfhost/stage07-cross-a64/out/s32fast-hir \
+    selfhost/stage02/s32-as.s32x /tmp/min.s /tmp/min.s32o
+# Without the fflush(0) workaround: rc=124 (timeout), output grows
+#   to >100KB.  With workaround: rc=0, output is byte-identical to
+#   slow32-dbt's 108-byte output.
+```
+
 ---
 
 ## Section C: Missing Language / ABI Surface (Feature Backlog)
