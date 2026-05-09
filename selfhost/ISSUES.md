@@ -671,7 +671,8 @@ script committed at `selfhost/verify-emu-sums.sh`; per-emulator logs at
 `/tmp/verify-emu-sums-<label>/`.
 
 Status as of 2026-05-09 (later): #41 fixed (slow32 getopt). #42 fixed
-(slow32-fast cap removed). #43 still open (dbt-a64 stat).
+(slow32-fast cap removed). #43 partial (3 MMIO ops added to dbt-a64
+cross libc); #44 opened for the remaining s32-as.s32x startup hang.
 
 ### 41. [FIXED] `slow32` getopt permutation consumes program flags
 
@@ -733,42 +734,92 @@ SELFHOST_EMU=$PWD/../../tools/emulator/slow32-fast \
 # assemble produced no output: /tmp/stage05-build.XXX/s12cc.s
 ```
 
-### 43. [OPEN] `dbt-a64` (cc-a64 cross-compiled DBT) cannot stat absolute paths from Forth kernel
+### 43. [PARTIAL] `dbt-a64` (cc-a64 cross-compiled DBT) MMIO gap chain
 
-**Status**: open as of 2026-05-09. Found by cross-emulator sum
-verification on Lenovo ARM.
+**Status**: three MMIO operations added to `libc_a64/mmio_ring_a64.c`
+on 2026-05-09 — root-cause was a deliberately stripped MMIO ring stub,
+not a syscall bug. Each fix uncovered the next layer.  See #44 for
+the remaining issue (s32-as.s32x hangs at startup under dbt-a64).
 
-**Symptom**: with `SELFHOST_EMU=selfhost/stage07-cross-a64/out/dbt-a64`,
-stage02 `[1/4] Assemble runtime` fails immediately:
-```
-Error line 0 : cannot stat input file
-Pass 1: text=0 data=0 bss=0 syms=0
-FAILED: 1 errors
-```
-Same input under gcc-built `tools/dbt/slow32-dbt` succeeds: assembles
-crt0.s to a 356-byte .s32o (`text=48 data=0 bss=0 syms=2`).
+**Layer 1 — STAT [FIXED]**: original symptom on Forth kernel +
+selfhost stage02 was `Error line 0 : cannot stat input file`. Cross
+libc's stub returned `S32_MMIO_STATUS_ERR` for STAT. Added handler
+that calls `stat`/`fstat` (via newfstatat / fstat syscalls) and
+repacks the AArch64 asm-generic `struct stat` (128 bytes) into the
+`s32_mmio_stat_result_t` layout.
 
-**Significance**: `stage07-cross-a64` unit tests pass against `dbt-a64`,
-but those tests don't exercise the Forth kernel path. Running the
-selfhost stage02 pipeline (Forth kernel reads guest paths via MMIO
-`stat`/`open` syscalls) is a stronger functional gate than the existing
-suite.
+**Layer 2 — OPEN flag translation [FIXED]**: stat succeeded, then
+got `Error line 0 : read error`. OPEN handler was passing
+`req->status` (SLOW-32 flags: 0x01 read, 0x02 write, 0x04 append,
+0x08 create, 0x10 trunc) directly to Linux `openat` as the flags
+arg. SLOW-32 read=0x01 collided with Linux `O_WRONLY=1`, so files
+opened "for read" were actually write-only. Added flag translation.
 
-**Suspected cause**: bug in `selfhost/stage07-cross-a64/libc_a64`
-syscall wrappers — likely `stat`/`open` interaction with absolute
-paths or with the way the guest hands path bytes to the host through
-MMIO. The path is a long absolute path
-(`/home/sdennis/slow-32/selfhost/stage02/crt0.s`); buffer-size or
-length-handling regressions are plausible.
+**Layer 3 — SEEK [FIXED]**: open/read worked, but the linker (Forth
++ link.fth, used to link libc archive) failed at `Loading archive:
+libc.s32a / Error: cannot read archive header`. Cross libc had SEEK
+in its stripped-out set. `AR-READ-AT` in `selfhost/stage01/ar.fth`
+calls `REPOSITION-FILE` (Forth seek) before each archive read, so
+without SEEK the linker silently dropped libc and emitted hundreds
+of `Error: unresolved reloc symbol: strcmp/strtol/strncmp/strchr`
+lines, then wrote a malformed `s32-as.s32x`. Added SEEK handler that
+calls `lseek`. Bisect was clean: per-file diff against the gcc-dbt
+workdir showed all `.s`/`.s32o`/`.s32a` outputs byte-identical except
+`link.log` (gcc=6390 bytes vs a64=21103 bytes).
 
-**Reproducer**:
+**Cumulative effect**: dbt-a64 now produces canonical s32-as.s32x
+(83832 bytes, sha 065f0dc9…) on stage02 step 1. Stage01 already
+passed; later stages still fail because of a separate hang documented
+as #44.
+
+**Reproducer (now passes)**:
 ```bash
 cat forth/prelude.fth selfhost/stage01/asm.fth - <<'FTH' \
   | timeout 60 selfhost/stage07-cross-a64/out/dbt-a64 forth/kernel.s32x
 S" /absolute/path/to/selfhost/stage02/crt0.s" S" /tmp/crt0.s32o" ASSEMBLE
 BYE
 FTH
-# rc=96, "cannot stat input file"; same input under tools/dbt/slow32-dbt rc=96 with text=48
+# rc=96, no error, /tmp/crt0.s32o is 356 bytes (text=48 data=0 bss=0 syms=2)
+```
+
+### 44. [OPEN] `dbt-a64` hangs at startup running `stage02/s32-as.s32x`
+
+**Status**: open as of 2026-05-09. Surfaces after #43 layers 1-3 are
+fixed.
+
+**Symptom**: small s32x programs run fine under dbt-a64
+(hello_minimal.s32x, test1.s32x, cc-min.s32x all complete cleanly).
+But `selfhost/stage02/s32-as.s32x` (the canonical 83832-byte C
+assembler) hangs at startup — even invoked with no args, it never
+prints "Usage:", `dbt-a64 -v` shows the load info but no further
+output. Same binary under `tools/dbt/slow32-dbt` runs the no-args
+path in 28 ms. Effect: stage02 builds s32-as.s32x correctly, but the
+freshly-built C assembler can't be used to bootstrap s32-ar.s32x.
+
+**Why it matters**: blocks dbt-a64 from completing the selfhost
+sweep. Stage01 verifies but stage02 fails at step 2.
+
+**Suspected cause**: not an MMIO gap (s32-as.s32x doesn't print
+anything before main, so the hang is before any I/O syscall). More
+likely a dbt-a64 codegen bug — some SLOW-32 instruction or block
+shape that only this larger binary exercises. The translator is
+lazy; the failure could be in a translate-to-a64 path that rarely
+fires. Worth running with `-v -s` to see whether translation events
+stop, and instrumenting `dbt-a64`'s own translator to log the last
+SLOW-32 PC before the hang.
+
+**Reproducer**:
+```bash
+timeout 5 selfhost/stage07-cross-a64/out/dbt-a64 -v \
+  selfhost/stage02/s32-as.s32x 2>&1 | head -10
+# Loaded: ...s32-as.s32x
+#   Code limit:  0x00100000
+#   ...
+# (then nothing — hangs until SIGTERM)
+#
+# Reference (works in 28 ms):
+timeout 5 tools/dbt/slow32-dbt selfhost/stage02/s32-as.s32x
+# → "Usage: s32-as <input.s> <output.s32o>"
 ```
 
 ### Verifier script (`verify-emu-sums.sh`)
