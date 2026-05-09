@@ -829,6 +829,32 @@ timeout 5 tools/dbt/slow32-dbt selfhost/stage02/s32-as.s32x
 # → "Usage: s32-as <input.s> <output.s32o>"
 ```
 
+### 45. [FIXED] `dbt-x64` (cc-x64 cross-compiled) stage-4 reg-cache hang
+
+**Status**: fixed by `a9e65701` ("Fix HIR lowering after terminators",
+2026-05-08), verified 2026-05-09. Freshly rebuilding `out/dbt-x64`
+under the current cc-x64 and running `./out/dbt-x64
+../stage01/hello_minimal.s32x` (default flags = stage 4 + reg cache)
+prints `!` and exits 0; previously this configuration spun in a CPU-
+bound infinite loop. All other configurations (`-2`, `-3`, `-4 -R`,
+`--paranoid`) also pass.
+
+**Root cause**: `hir_lower.h`'s block walker kept lowering non-label
+statements after an unconditional terminator (`goto`/`return`/`break`/
+`continue`). Ragel-generated state machines emit unreachable
+statements after `goto _out`, so cc-x64 produced bogus HIR for
+`tools/dbt/translate.c` etc., which only manifested as runaway loops
+once the stage-4 register cache extended liveness through back-edge
+prewarms. Fix: in `hl_stmt`'s ND_BLOCK loop, skip statements whose
+kind is not `ND_LABEL`/`ND_CASE`/`ND_DEFAULT` while
+`hl_terminated()` is true (`selfhost/stage07-cross/hir_lower.h:2048`).
+
+**Reproducer (now passes)**:
+```bash
+cd selfhost/stage07-cross && make dbt
+./out/dbt-x64 ../stage01/hello_minimal.s32x  # → "!", exit 0
+```
+
 ### Verifier script (`verify-emu-sums.sh`)
 
 Reusable harness for the above. Per-emulator: `make clean && make` each
