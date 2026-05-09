@@ -18,6 +18,9 @@ All platforms and emulators produce bit-identical artifacts.
 | slow32-fast (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 | slow32-dbt (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 | s32fast-hir (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
+| slow32 | Apple M5 Max (MacBook Pro) |
+| slow32-fast | Apple M5 Max (MacBook Pro) |
+| slow32-dbt | Apple M5 Max (MacBook Pro) |
 
 ## Stage 01
 
