@@ -880,6 +880,46 @@ tree partial — don't rely on `git checkout` to restore. Either back up
 artifacts before `make clean` or rebuild with a known-good emulator
 afterwards. Live copy: `/tmp/verify-emu-sums.sh` (Lenovo box, 2026-05-09).
 
+### 46. [LIMITATION] stage07 / cc-x64 stack-frame and recursion caveats
+
+**Status**: open / awareness item, 2026-05-09. Not pressing — current
+selfhost workloads (s12cc compiling itself, dbt-x64 compiling tools/dbt/)
+fit comfortably. Captured here because larger third-party C codebases
+(TCC, Lua, etc.) will likely brush against these limits.
+
+**Frame-size scaffolding**: SLOW-32's `addi` immediate is 12-bit signed
+(±2047). Stage07 codegen emits `lui+add` scaffolding for prologue /
+epilogue / spill-slot offsets above 2047. Confirmed working, but it is
+the path that historically misbehaves first when a regression bloats
+frames. Watch points:
+- `selfhost/stage07/hir_codegen.h` prologue/epilogue offset emission
+- spill-slot allocation in `selfhost/stage07/hir_regalloc.h`
+
+**Spill heuristics × frame size**: an earlier regalloc bug spilled
+nearly everything, multiplying frame sizes 3–5× (`parse_stmt` went from
+592 → 1968 bytes). The deep recursion in s12cc's parser then exhausted
+the 256 KB heap-allocated user stack. The bug is fixed, but the
+combination is fragile: any change that increases spilling on a
+recursive function can re-introduce a "hang" that's actually a stack
+overflow. `slow32-dbt` historically masked this (silent corruption);
+`slow32-fast` catches it as a clean crash — prefer the latter when
+chasing recursion-depth issues.
+
+**256 KB user stack**: the runtime allocates a fixed 256 KB stack at
+load time. Deep recursion (TCC's parser, Lua's parser, anything with
+heavy AST nesting) can hit it. Recovery: bump the runtime stack size
+(linker `--stack-size`) or refactor the offending pass to be iterative.
+
+**Output buffer**: `CG_MAX_OUT` was bumped to 4 MB (stage04) to unblock
+stage05; stage07 inherits this. Programs that produce > 4 MB of asm in
+a single TU will silently truncate. Not a current concern but worth
+noting.
+
+**Not in scope here**: the hardware ISA's 12-bit immediate isn't going
+to change. The work item, if/when forced, is making the regalloc spill
+less aggressively and/or reducing parser recursion depth in s12cc
+itself.
+
 ---
 
 ## Section C: Missing Language / ABI Surface (Feature Backlog)
@@ -907,6 +947,55 @@ Stage05/Stage06 `parser.h` already parse full expressions (including comma opera
 for `for` init/cond/step slots via `parse_expr()`.
 
 Issue #23 tracked the remaining Stage02 gap and is now fixed there as well.
+
+### 47. [MISSING] stage07 / cc-x64 third-party C dialect gaps
+
+**Status**: backlog, captured 2026-05-09. Surfaced by a probe-only
+attempt to compile TCC (`https://repo.or.cz/tinycc.git`) with cc-x64
+— see "TCC stress-test probe" notes below. Not pressing for selfhost,
+but each gap blocks third-party C codebases of any size.
+
+**Confirmed first gap (with minimal repro)**:
+
+- **Anonymous struct/union members** (C11) — parser rejects
+  ```c
+  union {
+      struct { int a, b; };   /* error: expected member name */
+      int c;
+  };
+  ```
+  Heavy use in TCC (~40 sites; ~11 in `tcc.h` alone, including the
+  load-bearing `SValue` type). Implementation work: parser flattens
+  nested member names into the outer scope; codegen tracks offset
+  within the nested aggregate.
+
+**Surveyed but not yet hit (counts from TCC source)**:
+
+| Feature | TCC use sites | Implementation notes |
+|---|---|---|
+| Designated initializers `{.foo = 1}` | Heavy — opcode tables in `i386-asm.c` (29×), `arm*-asm.c`, etc. | Parser builds offset-keyed init list; codegen emits in slot order |
+| Compound literals `(Type){…}` | Moderate, mostly in arch backends | Lower as anonymous local + address-of |
+| Flexible array members `int data[];` | 3 sites | Tiny sema special case |
+| Bitfields | 1 site in `tcc.h` | Real codegen work — masks + shifts |
+| Statement expressions `({ …; expr; })` | 1 site | GNU extension; nontrivial parser work |
+| `_Atomic` / `typeof` / `__attribute__` / `inline` (with body) | Scattered | Most can be parsed-and-discarded |
+
+**Header-set gaps** (would need to be added to
+`selfhost/stage07/include/`): `stdarg.h`, `errno.h`, `setjmp.h`,
+`fcntl.h`, `sys/time.h`, `dlfcn.h`. cc-x64 already handles `va_start`
+/ `va_arg` / `va_end` as parser intrinsics, so `stdarg.h` is just
+`typedef char *va_list;`.
+
+**TCC stress-test probe (2026-05-09)**: cloned TCC into `/tmp/tcc-src`,
+ran `./configure --cpu=x86_64 && make tccdefs_.h` to seed the predefs,
+then `cc-x64 --hir -c tcc.c` against `selfhost/stage07/include` plus
+shim headers in `/tmp/tcc-shim/`. First non-header failure was the
+anonymous struct/union case above. Tree intentionally not committed —
+this was an evaluation, not a port.
+
+**Recommendation**: address only when forced by a real customer.
+Anonymous struct/union is the most generally useful one; designated
+initializers next.
 
 ---
 
