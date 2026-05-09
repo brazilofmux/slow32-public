@@ -15,6 +15,8 @@ All platforms and emulators produce bit-identical artifacts.
 | slow32-dbt (stage 5) | Lenovo ARM Cortex-A720/Cortex-X4 |
 | slow32-dbt (stage 6) | Lenovo ARM Cortex-A720/Cortex-X4 |
 | slow32-dbt (stage 7) | Lenovo ARM Cortex-A720/Cortex-X4 |
+| slow32-fast (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
+| slow32-dbt (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 
 ## Stage 01
 
@@ -63,7 +65,7 @@ All platforms and emulators produce bit-identical artifacts.
 ## Stage 07
 
 - 0bba4a871518bf20c62b6661ff8cdf31feb7af23ababf599a6e137426fb0e369  s32-as.s32x
-- 8274704a7b33ad21bade61d564aefd21b07a7317d8915844b84df7e91879a9ca  cc.s32x
+- 87767d2dc55628fe8cee94ea94484e838c31bfbbea96e1593178476ea02e7044  cc.s32x
 - 8bf82cf422aa55662bf0b004797aa5cd9301c815a083ba7116a948a9c9f68878  slow32dump.s32x
 - a73f8673f628a427ee2c23e5c1ce9bf6cccdfe80f0391600a3cb4862263a8bbd  slow32dis.s32x
 - bfdaf67b543f0bb0a29065dece1a00d5d1026cb76e3f2105f266c2dab198516b  s32-ar.s32x
