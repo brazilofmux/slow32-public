@@ -17,6 +17,7 @@ All platforms and emulators produce bit-identical artifacts.
 | slow32-dbt (stage 7) | Lenovo ARM Cortex-A720/Cortex-X4 |
 | slow32-fast (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 | slow32-dbt (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
+| s32fast-hir (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 
 ## Stage 01
 
