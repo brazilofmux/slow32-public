@@ -18,6 +18,15 @@
 #define STDERR_FILENO 2
 
 /* External functions (provided by libc_x64.a) */
+struct _file;
+extern struct _file *stdin;
+extern struct _file *stdout;
+extern struct _file *stderr;
+int fgetc(struct _file *f);
+int fputc(int c, struct _file *f);
+int fflush(struct _file *f);
+int putchar(int c);
+
 int write(int fd, char *buf, int len);
 int read(int fd, char *buf, int len);
 int open(char *path, int flags, int mode);
