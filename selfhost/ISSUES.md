@@ -1021,12 +1021,16 @@ but each gap blocks third-party C codebases of any size.
   load-bearing `SValue` type). Stage07 now keeps an unnamed aggregate
   member for layout/initialization and adds lookup aliases for nested
   member names. Covered by `selfhost/stage07/tests/test_phase27.c`.
+- **Designated initializers** — global and static-local aggregate
+  initializers now support sparse array indexes, nested field/index
+  chains such as `[2].op = 7` and `.nums[2] = 12`, string initialization
+  of char arrays, and pointer/string relocations at designated offsets.
+  Covered by `selfhost/stage07/tests/test_phase28.c`.
 
 **Surveyed but not yet hit (counts from TCC source)**:
 
 | Feature | TCC use sites | Implementation notes |
 |---|---|---|
-| Designated initializers `{.foo = 1}` | Heavy — opcode tables in `i386-asm.c` (29×), `arm*-asm.c`, etc. | Parser builds offset-keyed init list; codegen emits in slot order |
 | Compound literals `(Type){…}` | Moderate, mostly in arch backends | Lower as anonymous local + address-of |
 | Flexible array members `int data[];` | 3 sites | Tiny sema special case |
 | Bitfields | 1 site in `tcc.h` | Real codegen work — masks + shifts |
@@ -1047,8 +1051,7 @@ anonymous struct/union case above. Tree intentionally not committed —
 this was an evaluation, not a port.
 
 **Recommendation**: address only when forced by a real customer.
-Anonymous struct/union is the most generally useful one; designated
-initializers next.
+Compound literals are the next most likely C dialect blocker.
 
 ---
 

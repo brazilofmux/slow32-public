@@ -504,6 +504,39 @@ static int struct_field_nth_idx(int si, int nth) {
     return -1;
 }
 
+static int struct_member_extent(int mi) {
+    if (stm_is_arr[mi]) return stm_arr_size[mi];
+    return ty_size(stm_type[mi]);
+}
+
+static int struct_member_array_count(int mi) {
+    int elem_ty;
+    if (!stm_is_arr[mi]) return 0;
+    elem_ty = ty_deref(stm_type[mi]);
+    return stm_arr_size[mi] / ty_size(elem_ty);
+}
+
+static int struct_member_nth_for_idx(int si, int mi) {
+    int i;
+    int seen;
+    int off;
+    int end;
+
+    i = 0;
+    seen = 0;
+    while (i < stm_count) {
+        if (stm_owner[i] == si && !stm_synth[i]) {
+            if (i == mi) return seen;
+            off = stm_off[i];
+            end = off + struct_member_extent(i);
+            if (stm_off[mi] >= off && stm_off[mi] < end) return seen;
+            seen = seen + 1;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
 static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int base_off) {
     int nsi;
     int i;
@@ -1240,20 +1273,23 @@ static void ps_ginit_emit_byte(int v) {
     ps_ginit_pool_len = ps_ginit_pool_len + 1;
 }
 
-static void ps_ginit_emit_zeroes(int n) {
-    int i;
-    i = 0;
-    while (i < n) {
-        ps_ginit_emit_byte(0);
-        i = i + 1;
-    }
+static void ps_ginit_ensure_len(int gidx, int len) {
+    while (ps_ginit_cur_off(gidx) < len) ps_ginit_emit_byte(0);
 }
 
-static void ps_ginit_emit_int(int v, int sz) {
+static void ps_ginit_store_byte_at(int gidx, int rel_off, int v) {
+    int abs_off;
+    if (rel_off < 0) p_error("negative initializer offset");
+    ps_ginit_ensure_len(gidx, rel_off + 1);
+    abs_off = ps_ginit_start[gidx] + rel_off;
+    ps_ginit_pool[abs_off] = v & 255;
+}
+
+static void ps_ginit_store_int_at(int gidx, int rel_off, int v, int sz) {
     int i;
     i = 0;
     while (i < sz) {
-        ps_ginit_emit_byte((v >> (i * 8)) & 255);
+        ps_ginit_store_byte_at(gidx, rel_off + i, (v >> (i * 8)) & 255);
         i = i + 1;
     }
 }
@@ -1270,26 +1306,40 @@ static void ps_ginit_finish(int gidx) {
     ps_girel_count[gidx] = ps_ngirelocs - ps_girel_start[gidx];
 }
 
-static void ps_ginit_add_reloc(int gidx, int kind, int idx, int sz) {
+static void ps_ginit_insert_reloc_at(int gidx, int rel_off, int kind,
+                                     int idx, char *name, int sz) {
+    int pos;
+    int i;
+
+    if (rel_off < 0) p_error("negative initializer offset");
     if (ps_ngirelocs >= PS_MAX_INIT_RELOCS) p_error("too many init relocs");
-    ps_girel_off[ps_ngirelocs] = ps_ginit_cur_off(gidx);
-    ps_girel_kind[ps_ngirelocs] = kind;
-    ps_girel_idx[ps_ngirelocs] = idx;
-    ps_girel_size[ps_ngirelocs] = sz;
-    ps_girel_name[ps_ngirelocs] = NULL;
+    ps_ginit_ensure_len(gidx, rel_off + sz);
+    pos = ps_girel_start[gidx];
+    while (pos < ps_ngirelocs && ps_girel_off[pos] <= rel_off) pos = pos + 1;
+    i = ps_ngirelocs;
+    while (i > pos) {
+        ps_girel_off[i] = ps_girel_off[i - 1];
+        ps_girel_kind[i] = ps_girel_kind[i - 1];
+        ps_girel_idx[i] = ps_girel_idx[i - 1];
+        ps_girel_size[i] = ps_girel_size[i - 1];
+        ps_girel_name[i] = ps_girel_name[i - 1];
+        i = i - 1;
+    }
+    ps_girel_off[pos] = rel_off;
+    ps_girel_kind[pos] = kind;
+    ps_girel_idx[pos] = idx;
+    ps_girel_size[pos] = sz;
+    if (name) ps_girel_name[pos] = strdup(name);
+    else ps_girel_name[pos] = NULL;
     ps_ngirelocs = ps_ngirelocs + 1;
-    ps_ginit_emit_zeroes(sz);
 }
 
-static void ps_ginit_add_sym_reloc(int gidx, char *name, int sz) {
-    if (ps_ngirelocs >= PS_MAX_INIT_RELOCS) p_error("too many init relocs");
-    ps_girel_off[ps_ngirelocs] = ps_ginit_cur_off(gidx);
-    ps_girel_kind[ps_ngirelocs] = GIRELOC_SYMBOL;
-    ps_girel_idx[ps_ngirelocs] = 0;
-    ps_girel_size[ps_ngirelocs] = sz;
-    ps_girel_name[ps_ngirelocs] = strdup(name);
-    ps_ngirelocs = ps_ngirelocs + 1;
-    ps_ginit_emit_zeroes(sz);
+static void ps_ginit_add_reloc_at(int gidx, int rel_off, int kind, int idx, int sz) {
+    ps_ginit_insert_reloc_at(gidx, rel_off, kind, idx, NULL, sz);
+}
+
+static void ps_ginit_add_sym_reloc_at(int gidx, int rel_off, char *name, int sz) {
+    ps_ginit_insert_reloc_at(gidx, rel_off, GIRELOC_SYMBOL, 0, name, sz);
 }
 
 static int try_consume_type_cast(void) {
@@ -1326,7 +1376,7 @@ static int try_consume_type_cast(void) {
     return 1;
 }
 
-static int parse_global_init_symbol_reloc(int gidx, int sz) {
+static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     char nm[256];
     int ci;
 
@@ -1337,149 +1387,213 @@ static int parse_global_init_symbol_reloc(int gidx, int sz) {
     if (ci >= 0) return 0;
     memcpy(nm, lex_str, lex_slen + 1);
     next();
-    ps_ginit_add_sym_reloc(gidx, nm, sz);
+    ps_ginit_add_sym_reloc_at(gidx, rel_off, nm, sz);
     return 1;
 }
 
 static void parse_global_init_value(int ty, int gidx);
+static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_off);
+static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base_rel);
+static void parse_global_init_struct_at(int ty, int gidx, int base_rel);
 
-static void parse_global_init_array_fixed(int elem_ty, int count, int gidx) {
+static void parse_global_init_designator(int base_ty, int base_arr_count,
+                                         int *rel_out, int *ty_out,
+                                         int *arr_count_out, int *root_out) {
+    int ty;
+    int arr_count;
+    int rel;
+    int idx;
+    int elem_ty;
+    int mi;
+    int si;
+    char dnm[256];
+
+    ty = base_ty;
+    arr_count = base_arr_count;
+    rel = 0;
+    *root_out = -1;
+    while (lex_tok == TK_LBRACK || lex_tok == TK_DOT) {
+        if (lex_tok == TK_LBRACK) {
+            next();
+            idx = parse_const_int();
+            if (idx < 0) p_error("negative array designator");
+            expect(TK_RBRACK);
+            if (!ty_is_ptr(ty) || arr_count == 0)
+                p_error("array designator on non-array");
+            if (arr_count > 0 && idx >= arr_count) p_error("array designator out of range");
+            elem_ty = ty_deref(ty);
+            rel = rel + (idx * ty_size(elem_ty));
+            ty = elem_ty;
+            arr_count = 0;
+            if (*root_out < 0) *root_out = idx;
+        } else {
+            next();
+            if (lex_tok != TK_IDENT) p_error("expected field name in initializer");
+            memcpy(dnm, lex_str, lex_slen + 1);
+            next();
+            if (!ty_is_struct(ty)) p_error("field designator on non-struct");
+            si = ty_struct_idx(ty);
+            mi = find_member(ty, dnm);
+            if (mi < 0) p_error("unknown field in initializer");
+            rel = rel + stm_off[mi];
+            ty = stm_type[mi];
+            arr_count = struct_member_array_count(mi);
+            if (*root_out < 0) *root_out = struct_member_nth_for_idx(si, mi);
+        }
+    }
+    *rel_out = rel;
+    *ty_out = ty;
+    *arr_count_out = arr_count;
+}
+
+static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base_rel) {
     int i;
+    int max_i;
     int elem_sz;
     int sp_idx;
     int slen;
     char *sp;
-    int start;
+    int rel;
+    int target_ty;
+    int target_arr_count;
+    int root;
 
     elem_sz = ty_size(elem_ty);
-    start = ps_ginit_cur_off(gidx);
     if ((elem_ty & TY_BASE_MASK) == TY_CHAR && lex_tok == TK_STRING) {
         sp_idx = parse_string_literal();
         slen = lex_str_len[sp_idx];
+        if (count < 0) count = slen + 1;
         sp = lex_strpool + lex_str_off[sp_idx];
         i = 0;
-        while (i < slen && i < count) {
-            ps_ginit_emit_byte(sp[i] & 255);
-            i = i + 1;
-        }
-        if (i < count) {
-            ps_ginit_emit_byte(0);
-            i = i + 1;
-        }
         while (i < count) {
-            ps_ginit_emit_zeroes(elem_sz);
+            if (i < slen) ps_ginit_store_byte_at(gidx, base_rel + i, sp[i] & 255);
+            else ps_ginit_store_byte_at(gidx, base_rel + i, 0);
             i = i + 1;
         }
-        return;
+        return count;
     }
     if (lex_tok != TK_LBRACE) {
         p_error("expected { in aggregate initializer");
-        return;
+        return count;
     }
     next();
     i = 0;
+    max_i = 0;
     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
         if (i > 0) {
             expect(TK_COMMA);
             if (lex_tok == TK_RBRACE) break;
         }
-        if (i >= count) p_error("too many initializers");
-        parse_global_init_value(elem_ty, gidx);
-        i = i + 1;
+        if (lex_tok == TK_LBRACK) {
+            parse_global_init_designator(elem_ty + TY_PTR, count, &rel,
+                                         &target_ty, &target_arr_count, &root);
+            expect(TK_ASSIGN);
+            parse_global_init_value_at(target_ty, target_arr_count, gidx, base_rel + rel);
+            if (root >= 0) {
+                i = root + 1;
+                if (i > max_i) max_i = i;
+            }
+        } else {
+            if (count >= 0 && i >= count) p_error("too many initializers");
+            parse_global_init_value_at(elem_ty, 0, gidx, base_rel + (i * elem_sz));
+            i = i + 1;
+            if (i > max_i) max_i = i;
+        }
     }
     if (lex_tok == TK_COMMA) next();
     expect(TK_RBRACE);
-    while (ps_ginit_cur_off(gidx) < start + (count * elem_sz)) {
-        ps_ginit_emit_byte(0);
-    }
+    if (count < 0) count = max_i;
+    ps_ginit_ensure_len(gidx, base_rel + (count * elem_sz));
+    return count;
 }
 
-static void parse_global_init_struct(int ty, int gidx) {
+static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
     int si;
     int nf;
     int i;
     int mi;
-    int field_start;
     int field_ty;
-    int arr_elem_ty;
     int arr_count;
-    int struct_start;
     int has_brace;
-    char dnm[256];
+    int rel;
+    int target_ty;
+    int target_arr_count;
+    int root;
 
     si = ty_struct_idx(ty);
     nf = st_nfields[si];
-    struct_start = ps_ginit_cur_off(gidx);
     /* Brace is optional for nested struct fields inside a flat-form parent
-     * initializer (e.g. `struct Rect gr = {10, 20, 30, 40}`).  When called
-     * at top-level the caller has already verified TK_LBRACE is present. */
+     * initializer (e.g. `struct Rect gr = {10, 20, 30, 40}`). */
     has_brace = (lex_tok == TK_LBRACE);
     if (has_brace) next();
     i = 0;
-    while (lex_tok != TK_EOF && i < nf) {
+    while (lex_tok != TK_EOF) {
         if (has_brace && lex_tok == TK_RBRACE) break;
+        if (!has_brace && i >= nf) break;
         if (i > 0) {
             if (has_brace) {
                 expect(TK_COMMA);
                 if (lex_tok == TK_RBRACE) break;
             } else {
-                /* No outer brace: the parent's loop will consume the trailing
-                 * comma after we return.  Stop if there isn't one. */
                 if (lex_tok != TK_COMMA) break;
                 expect(TK_COMMA);
             }
         }
         if (lex_tok == TK_DOT) {
-            next();
-            if (lex_tok != TK_IDENT) p_error("expected field name in initializer");
-            memcpy(dnm, lex_str, lex_slen + 1);
-            next();
+            parse_global_init_designator(ty, 0, &rel, &target_ty,
+                                         &target_arr_count, &root);
             expect(TK_ASSIGN);
-            mi = find_member(ty, dnm);
+            parse_global_init_value_at(target_ty, target_arr_count, gidx, base_rel + rel);
+            if (root >= 0) i = root + 1;
+            else i = i + 1;
         } else {
+            if (i >= nf) p_error("too many initializers");
             mi = struct_field_nth_idx(si, i);
+            if (mi < 0) p_error("missing struct field");
+            field_ty = stm_type[mi];
+            arr_count = struct_member_array_count(mi);
+            parse_global_init_value_at(field_ty, arr_count, gidx, base_rel + stm_off[mi]);
+            i = i + 1;
         }
-        if (mi < 0) p_error("missing struct field");
-        field_start = struct_start + stm_off[mi];
-        while (ps_ginit_cur_off(gidx) < field_start) ps_ginit_emit_byte(0);
-        field_ty = stm_type[mi];
-        if (stm_is_arr[mi]) {
-            arr_elem_ty = ty_deref(field_ty);
-            arr_count = stm_arr_size[mi] / ty_size(arr_elem_ty);
-            parse_global_init_array_fixed(arr_elem_ty, arr_count, gidx);
-        } else {
-            parse_global_init_value(field_ty, gidx);
-        }
-        i = i + 1;
         if (st_is_union[si]) break;
     }
     if (has_brace) {
         if (lex_tok == TK_COMMA) next();
         expect(TK_RBRACE);
     }
-    while (ps_ginit_cur_off(gidx) < struct_start + ty_size(ty)) {
-        ps_ginit_emit_byte(0);
-    }
+    ps_ginit_ensure_len(gidx, base_rel + ty_size(ty));
 }
 
-static void parse_global_init_value(int ty, int gidx) {
+static void parse_global_init_struct(int ty, int gidx) {
+    parse_global_init_struct_at(ty, gidx, ps_ginit_cur_off(gidx));
+}
+
+static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_off) {
     int v;
     int sp_idx;
 
+    if (arr_count != 0 && ty_is_ptr(ty)) {
+        parse_global_init_array_at(ty_deref(ty), arr_count, gidx, rel_off);
+        return;
+    }
     if (ty_is_struct(ty)) {
-        parse_global_init_struct(ty, gidx);
+        parse_global_init_struct_at(ty, gidx, rel_off);
         return;
     }
     if (ty_is_ptr(ty) && lex_tok == TK_STRING) {
         sp_idx = parse_string_literal();
-        ps_ginit_add_reloc(gidx, GIRELOC_STRING, sp_idx, ty_size(ty));
+        ps_ginit_add_reloc_at(gidx, rel_off, GIRELOC_STRING, sp_idx, ty_size(ty));
         return;
     }
-    if (ty_is_ptr(ty) && parse_global_init_symbol_reloc(gidx, ty_size(ty))) {
+    if (ty_is_ptr(ty) && parse_global_init_symbol_reloc_at(gidx, rel_off, ty_size(ty))) {
         return;
     }
     v = parse_const_int();
-    ps_ginit_emit_int(v, ty_size(ty));
+    ps_ginit_store_int_at(gidx, rel_off, v, ty_size(ty));
+}
+
+static void parse_global_init_value(int ty, int gidx) {
+    parse_global_init_value_at(ty, 0, gidx, ps_ginit_cur_off(gidx));
 }
 
 static int parse_string_literal(void) {
@@ -2689,24 +2803,9 @@ static Node *parse_stmt(void) {
                     ps_ginit_finish(sl_gi);
                 } else if (neg) {
                     ps_ginit_begin(sl_gi);
-                    ci = 0;
-                    expect(TK_LBRACE);
-                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                        if (ci > 0) {
-                            expect(TK_COMMA);
-                            if (lex_tok == TK_RBRACE) break;
-                        }
-                        if (count >= 0 && ci >= count) p_error("too many initializers");
-                        parse_global_init_value(ty, sl_gi);
-                        ci = ci + 1;
-                    }
-                    if (lex_tok == TK_COMMA) next();
-                    expect(TK_RBRACE);
-                    if (count < 0) count = ci;
+                    count = parse_global_init_array_at(ty, count, sl_gi, 0);
                     ps_gsize[sl_gi] = ty_size(ty) * count;
-                    while (ps_ginit_cur_off(sl_gi) < ps_gsize[sl_gi]) {
-                        ps_ginit_emit_byte(0);
-                    }
+                    ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
                     ps_ginit_finish(sl_gi);
                 }
                 expect(TK_SEMI);
@@ -3051,7 +3150,6 @@ static Node *parse_top_decl(void) {
     int count;
     int neg;
     int idx;
-    int gi;
     int si;
     int base;
     int nf;
@@ -3281,9 +3379,9 @@ static Node *parse_top_decl(void) {
                 idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
                 ps_ginit_begin(idx);
                 /* parse_string_literal already consumed the literal, so emit
-                 * its bytes directly rather than calling
-                 * parse_global_init_array_fixed (which would try to re-parse
-                 * a string that's no longer at the lexer cursor). */
+                 * its bytes directly rather than calling the aggregate
+                 * initializer parser (which would try to re-parse a string
+                 * that's no longer at the lexer cursor). */
                 sp = lex_strpool + lex_str_off[sp_idx];
                 i = 0;
                 while (i < slen && i < count) {
@@ -3296,25 +3394,12 @@ static Node *parse_top_decl(void) {
                 }
                 ps_ginit_finish(idx);
             } else if (lex_tok == TK_LBRACE) {
-                gi = 0;
                 idx = add_defined_global(nm, ty + TY_PTR, 0);
                 ps_ginit_begin(idx);
-                expect(TK_LBRACE);
-                while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                    if (gi > 0) {
-                        expect(TK_COMMA);
-                        if (lex_tok == TK_RBRACE) break;
-                    }
-                    if (count >= 0 && gi >= count) p_error("too many initializers");
-                    parse_global_init_value(ty, idx);
-                    gi = gi + 1;
-                }
-                if (lex_tok == TK_COMMA) next();
-                expect(TK_RBRACE);
-                if (count < 0) count = gi;
+                count = parse_global_init_array_at(ty, count, idx, 0);
                 require_complete_type(ty, "incomplete element type");
                 ps_gsize[idx] = ty_size(ty) * count;
-                while (ps_ginit_cur_off(idx) < ps_gsize[idx]) ps_ginit_emit_byte(0);
+                ps_ginit_ensure_len(idx, ps_gsize[idx]);
                 ps_ginit_finish(idx);
             } else {
                 p_error("expected string or { in array init");
