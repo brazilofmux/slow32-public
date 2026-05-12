@@ -1008,19 +1008,19 @@ attempt to compile TCC (`https://repo.or.cz/tinycc.git`) with cc-x64
 — see "TCC stress-test probe" notes below. Not pressing for selfhost,
 but each gap blocks third-party C codebases of any size.
 
-**Confirmed first gap (with minimal repro)**:
+**Recently addressed**:
 
-- **Anonymous struct/union members** (C11) — parser rejects
+- **Anonymous struct/union members** (C11) — parser used to reject
   ```c
   union {
-      struct { int a, b; };   /* error: expected member name */
+      struct { int a, b; };
       int c;
   };
   ```
   Heavy use in TCC (~40 sites; ~11 in `tcc.h` alone, including the
-  load-bearing `SValue` type). Implementation work: parser flattens
-  nested member names into the outer scope; codegen tracks offset
-  within the nested aggregate.
+  load-bearing `SValue` type). Stage07 now keeps an unnamed aggregate
+  member for layout/initialization and adds lookup aliases for nested
+  member names. Covered by `selfhost/stage07/tests/test_phase27.c`.
 
 **Surveyed but not yet hit (counts from TCC source)**:
 

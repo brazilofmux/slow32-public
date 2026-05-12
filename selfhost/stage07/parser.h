@@ -482,7 +482,8 @@ static int find_member(int sty, char *name) {
     si = ty_struct_idx(sty);
     i = 0;
     while (i < stm_count) {
-        if (stm_owner[i] == si && strcmp(name, stm_name[i]) == 0) return i;
+        if (stm_owner[i] == si && stm_name[i][0] != 0 &&
+            strcmp(name, stm_name[i]) == 0) return i;
         i = i + 1;
     }
     return -1;
@@ -494,13 +495,60 @@ static int struct_field_nth_idx(int si, int nth) {
     i = 0;
     seen = 0;
     while (i < stm_count) {
-        if (stm_owner[i] == si) {
+        if (stm_owner[i] == si && !stm_synth[i]) {
             if (seen == nth) return i;
             seen = seen + 1;
         }
         i = i + 1;
     }
     return -1;
+}
+
+static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int base_off) {
+    int nsi;
+    int i;
+    int limit;
+
+    require_complete_type(nested_ty, "incomplete anonymous aggregate member");
+    if (!ty_is_struct(nested_ty)) {
+        p_error("anonymous aggregate member must be struct or union");
+        return;
+    }
+    if (stm_count >= ST_MAX_MEMBERS) {
+        p_error("too many struct members");
+        return;
+    }
+
+    stm_name[stm_count] = strdup("");
+    stm_type[stm_count] = nested_ty;
+    stm_off[stm_count] = base_off;
+    stm_is_arr[stm_count] = 0;
+    stm_arr_size[stm_count] = 0;
+    stm_owner[stm_count] = owner_si;
+    stm_synth[stm_count] = 0;
+    stm_count = stm_count + 1;
+    st_nfields[owner_si] = st_nfields[owner_si] + 1;
+
+    nsi = ty_struct_idx(nested_ty);
+    limit = stm_count;
+    i = 0;
+    while (i < limit) {
+        if (stm_owner[i] == nsi && stm_name[i][0] != 0) {
+            if (stm_count >= ST_MAX_MEMBERS) {
+                p_error("too many struct members");
+                return;
+            }
+            stm_name[stm_count] = strdup(stm_name[i]);
+            stm_type[stm_count] = stm_type[i];
+            stm_off[stm_count] = base_off + stm_off[i];
+            stm_is_arr[stm_count] = stm_is_arr[i];
+            stm_arr_size[stm_count] = stm_arr_size[i];
+            stm_owner[stm_count] = owner_si;
+            stm_synth[stm_count] = 1;
+            stm_count = stm_count + 1;
+        }
+        i = i + 1;
+    }
 }
 
 /* Parse a type: int, char, void, struct, with optional pointer stars */
@@ -646,6 +694,18 @@ static int parse_type(void) {
                     }
                     is_fn_ptr_member = 0;
                     member_ty = dty;
+                    skip_gnu_decl_suffixes();
+                    if (lex_tok == TK_SEMI && ty_is_struct(member_ty)) {
+                        int malign;
+                        require_complete_type(member_ty, "incomplete anonymous struct member");
+                        malign = ty_align(member_ty);
+                        if (malign > 1)
+                            off = ((off + malign - 1) / malign) * malign;
+                        if (malign > max_align) max_align = malign;
+                        add_anonymous_aggregate_members(si, member_ty, off);
+                        off = off + ty_size(member_ty);
+                        break;
+                    }
                     if (lex_tok == TK_LPAREN) {
                         next();
                         if (lex_tok == TK_STAR) next();
@@ -706,6 +766,7 @@ static int parse_type(void) {
                         stm_is_arr[stm_count] = 1;
                         stm_arr_size[stm_count] = ty_size(member_ty) * arr_count;
                         stm_off[stm_count] = off;
+                        stm_synth[stm_count] = 0;
                         off = off + ty_size(member_ty) * arr_count;
                     } else {
                         require_complete_type(member_ty, "incomplete struct member");
@@ -714,6 +775,7 @@ static int parse_type(void) {
                         stm_is_arr[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = off;
+                        stm_synth[stm_count] = 0;
                         off = off + ty_size(member_ty);
                     }
                     stm_count = stm_count + 1;
@@ -787,6 +849,16 @@ static int parse_type(void) {
                     }
                     is_fn_ptr_member = 0;
                     member_ty = dty;
+                    skip_gnu_decl_suffixes();
+                    if (lex_tok == TK_SEMI && ty_is_struct(member_ty)) {
+                        int malign;
+                        require_complete_type(member_ty, "incomplete anonymous union member");
+                        add_anonymous_aggregate_members(si, member_ty, 0);
+                        if (ty_size(member_ty) > max_sz) max_sz = ty_size(member_ty);
+                        malign = ty_align(member_ty);
+                        if (malign > max_align) max_align = malign;
+                        break;
+                    }
                     if (lex_tok == TK_LPAREN) {
                         next();
                         if (lex_tok == TK_STAR) next();
@@ -836,6 +908,7 @@ static int parse_type(void) {
                         stm_is_arr[stm_count] = 1;
                         stm_arr_size[stm_count] = ty_size(member_ty) * arr_count;
                         stm_off[stm_count] = 0;
+                        stm_synth[stm_count] = 0;
                         if (ty_size(member_ty) * arr_count > max_sz) max_sz = ty_size(member_ty) * arr_count;
                         malign = ty_align(member_ty);
                         if (malign > max_align) max_align = malign;
@@ -847,6 +920,7 @@ static int parse_type(void) {
                         stm_is_arr[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = 0;
+                        stm_synth[stm_count] = 0;
                         if (ty_size(member_ty) > max_sz) max_sz = ty_size(member_ty);
                         malign = ty_align(member_ty);
                         if (malign > max_align) max_align = malign;
@@ -1377,6 +1451,7 @@ static void parse_global_init_struct(int ty, int gidx) {
             parse_global_init_value(field_ty, gidx);
         }
         i = i + 1;
+        if (st_is_union[si]) break;
     }
     if (has_brace) {
         if (lex_tok == TK_COMMA) next();
@@ -2803,6 +2878,7 @@ static Node *parse_stmt(void) {
                             if (head == NULL) { head = a; tail = a; }
                             else { tail->next = a; tail = a; }
                             nj = nj + 1;
+                            if (st_is_union[nsi]) break;
                         }
                         if (neg) expect(TK_RBRACE);
                     } else {
