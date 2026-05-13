@@ -1458,6 +1458,7 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
     int target_ty;
     int target_arr_count;
     int root;
+    int has_brace;
 
     elem_sz = ty_size(elem_ty);
     if ((elem_ty & TY_BASE_MASK) == TY_CHAR && lex_tok == TK_STRING) {
@@ -1473,17 +1474,25 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
         }
         return count;
     }
-    if (lex_tok != TK_LBRACE) {
-        p_error("expected { in aggregate initializer");
-        return count;
-    }
-    next();
+    /* C99 6.7.8 ¶22 brace elision: a flat-form parent initializer may
+     * omit the braces around an array sub-aggregate, in which case we
+     * consume tokens from the parent's brace list until we are full or
+     * the parent's `}` appears.  has_brace=0 is that mode. */
+    has_brace = (lex_tok == TK_LBRACE);
+    if (has_brace) next();
     i = 0;
     max_i = 0;
-    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+    while (lex_tok != TK_EOF) {
+        if (lex_tok == TK_RBRACE) break;
+        if (!has_brace && count >= 0 && i >= count) break;
         if (i > 0) {
-            expect(TK_COMMA);
-            if (lex_tok == TK_RBRACE) break;
+            if (has_brace) {
+                expect(TK_COMMA);
+                if (lex_tok == TK_RBRACE) break;
+            } else {
+                if (lex_tok != TK_COMMA) break;
+                expect(TK_COMMA);
+            }
         }
         if (lex_tok == TK_LBRACK) {
             parse_global_init_designator(elem_ty + TY_PTR, count, &rel,
@@ -1495,14 +1504,16 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
                 if (i > max_i) max_i = i;
             }
         } else {
-            if (count >= 0 && i >= count) p_error("too many initializers");
+            if (has_brace && count >= 0 && i >= count) p_error("too many initializers");
             parse_global_init_value_at(elem_ty, 0, gidx, base_rel + (i * elem_sz));
             i = i + 1;
             if (i > max_i) max_i = i;
         }
     }
-    if (lex_tok == TK_COMMA) next();
-    expect(TK_RBRACE);
+    if (has_brace) {
+        if (lex_tok == TK_COMMA) next();
+        expect(TK_RBRACE);
+    }
     if (count < 0) count = max_i;
     ps_ginit_ensure_len(gidx, base_rel + (count * elem_sz));
     return count;
@@ -2543,6 +2554,7 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
     int target_ty;
     int target_arr_count;
     int root;
+    int has_brace;
 
     elem_sz = ty_size(elem_ty);
     if ((elem_ty & TY_BASE_MASK) == TY_CHAR && lex_tok == TK_STRING) {
@@ -2557,17 +2569,22 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
         }
         return count;
     }
-    if (lex_tok != TK_LBRACE) {
-        p_error("expected { in aggregate initializer");
-        return count;
-    }
-    next();
+    /* See parse_global_init_array_at for the brace-elision rule. */
+    has_brace = (lex_tok == TK_LBRACE);
+    if (has_brace) next();
     i = 0;
     max_i = 0;
-    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+    while (lex_tok != TK_EOF) {
+        if (lex_tok == TK_RBRACE) break;
+        if (!has_brace && count >= 0 && i >= count) break;
         if (i > 0) {
-            expect(TK_COMMA);
-            if (lex_tok == TK_RBRACE) break;
+            if (has_brace) {
+                expect(TK_COMMA);
+                if (lex_tok == TK_RBRACE) break;
+            } else {
+                if (lex_tok != TK_COMMA) break;
+                expect(TK_COMMA);
+            }
         }
         if (lex_tok == TK_LBRACK) {
             parse_global_init_designator(elem_ty + TY_PTR, count, &rel,
@@ -2579,14 +2596,16 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
                 if (i > max_i) max_i = i;
             }
         } else {
-            if (count >= 0 && i >= count) p_error("too many initializers");
+            if (has_brace && count >= 0 && i >= count) p_error("too many initializers");
             parse_local_init_value_at(elem_ty, 0, rel_off + (i * elem_sz));
             i = i + 1;
             if (i > max_i) max_i = i;
         }
     }
-    if (lex_tok == TK_COMMA) next();
-    expect(TK_RBRACE);
+    if (has_brace) {
+        if (lex_tok == TK_COMMA) next();
+        expect(TK_RBRACE);
+    }
     if (count < 0) count = max_i;
     return count;
 }
