@@ -1021,17 +1021,21 @@ but each gap blocks third-party C codebases of any size.
   load-bearing `SValue` type). Stage07 now keeps an unnamed aggregate
   member for layout/initialization and adds lookup aliases for nested
   member names. Covered by `selfhost/stage07/tests/test_phase27.c`.
-- **Designated initializers** — global and static-local aggregate
-  initializers now support sparse array indexes, nested field/index
+- **Designated initializers** — global, static-local, and automatic-local
+  aggregate initializers now support sparse array indexes, nested field/index
   chains such as `[2].op = 7` and `.nums[2] = 12`, string initialization
-  of char arrays, and pointer/string relocations at designated offsets.
-  Covered by `selfhost/stage07/tests/test_phase28.c`.
+  of char arrays, and pointer/string relocations at designated offsets for
+  static storage. Covered by `selfhost/stage07/tests/test_phase28.c` and
+  `selfhost/stage07/tests/test_phase29.c`.
+- **Block-scope compound literals** — scalar, struct, nested struct, and
+  array compound literals now lower to hidden automatic locals with ordered
+  initialization side effects. Address-taking and member access work through
+  comma-expression lvalues. Covered by `selfhost/stage07/tests/test_phase30.c`.
 
 **Surveyed but not yet hit (counts from TCC source)**:
 
 | Feature | TCC use sites | Implementation notes |
 |---|---|---|
-| Compound literals `(Type){…}` | Moderate, mostly in arch backends | Lower as anonymous local + address-of |
 | Flexible array members `int data[];` | 3 sites | Tiny sema special case |
 | Bitfields | 1 site in `tcc.h` | Real codegen work — masks + shifts |
 | Statement expressions `({ …; expr; })` | 1 site | GNU extension; nontrivial parser work |

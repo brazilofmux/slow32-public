@@ -314,10 +314,14 @@ static int hl_addr(Node *n) {
      * it as a 32-bit int (would truncate the address). */
     if (n->kind == ND_MEMBER) {
         addr = hl_addr(n->lhs);
-        if (n->val != 0) {
-            addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, n->val, NULL);
-        }
-        return addr;
+        /* Keep field-zero aggregate accesses distinct from plain scalar
+         * allocas; mem2reg is allowed to promote scalars, not subobjects. */
+        return hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, n->val, NULL);
+    }
+
+    if (n->kind == ND_COMMA) {
+        hl_expr(n->lhs);
+        return hl_addr(n->rhs);
     }
 
     p_error("not an lvalue (hir)");

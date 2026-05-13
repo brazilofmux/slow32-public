@@ -300,6 +300,12 @@ static void gen_addr(Node *n) {
         return;
     }
 
+    if (n->kind == ND_COMMA) {
+        gen_expr(n->lhs);
+        gen_addr(n->rhs);
+        return;
+    }
+
     p_error("not an lvalue");
 }
 

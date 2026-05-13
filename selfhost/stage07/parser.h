@@ -145,6 +145,7 @@ static int   ps_nparams;              /* params in current func */
 static int   ps_is_varargs;           /* 1 if current func has ... */
 static int   ps_struct_ret;           /* 1 if current func returns struct via hidden ptr */
 static int   ps_retptr_off;           /* stack offset of hidden __retptr param */
+static int   ps_comp_lit_id;          /* unique hidden locals for compound literals */
 
 static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
@@ -1787,10 +1788,14 @@ static Node *parse_gnu_asm_stmt(void) {
 
 /* --- Expression parser (operator precedence climbing) --- */
 
+static Node *parse_compound_literal_expr(int ty, int arr_count);
+
 static Node *parse_primary(void) {
     Node *n;
     int v;
     int ty;
+    int arr_count;
+    int count2;
     char nm[256];
     Node *head;
     Node *tail;
@@ -1973,7 +1978,24 @@ static Node *parse_primary(void) {
         next();
         if (is_type()) {
             ty = parse_type();
+            arr_count = 0;
+            while (lex_tok == TK_LBRACK) {
+                next();
+                count2 = -1;
+                if (lex_tok != TK_RBRACK) count2 = parse_const_int();
+                expect(TK_RBRACK);
+                if (arr_count == 0) arr_count = count2;
+                else {
+                    if (arr_count < 0 || count2 < 0)
+                        p_error("array size required in compound literal type");
+                    arr_count = arr_count * count2;
+                }
+            }
             expect(TK_RPAREN);
+            if (lex_tok == TK_LBRACE) {
+                return parse_compound_literal_expr(ty, arr_count);
+            }
+            if (arr_count != 0) p_error("array cast unsupported");
             n = parse_unary();
             return nd_cast(n, ty);
         }
@@ -2363,6 +2385,340 @@ static Node *parse_expr(void) {
     return n;
 }
 
+static char *ps_li_name;
+static int ps_li_off;
+static int ps_li_base_ty;
+static int ps_li_base_is_array;
+static Node *ps_li_head;
+static Node *ps_li_tail;
+
+static void local_init_begin(char *nm, int off, int base_ty, int base_is_array) {
+    ps_li_name = nm;
+    ps_li_off = off;
+    ps_li_base_ty = base_ty;
+    ps_li_base_is_array = base_is_array;
+    ps_li_head = NULL;
+    ps_li_tail = NULL;
+}
+
+static void ps_make_compound_literal_name(char *buf) {
+    int i;
+    int v;
+    int d;
+    char digits[12];
+
+    buf[0] = '_';
+    buf[1] = '_';
+    buf[2] = 'c';
+    buf[3] = 'l';
+    buf[4] = 'i';
+    buf[5] = 't';
+    buf[6] = '.';
+    i = 7;
+    v = ps_comp_lit_id;
+    ps_comp_lit_id = ps_comp_lit_id + 1;
+    if (v == 0) {
+        buf[i] = '0';
+        i = i + 1;
+    } else {
+        d = 0;
+        while (v > 0) {
+            digits[d] = '0' + (v % 10);
+            d = d + 1;
+            v = v / 10;
+        }
+        while (d > 0) {
+            d = d - 1;
+            buf[i] = digits[d];
+            i = i + 1;
+        }
+    }
+    buf[i] = 0;
+}
+
+static void local_init_append(Node *stmt) {
+    if (ps_li_head == NULL) {
+        ps_li_head = stmt;
+        ps_li_tail = stmt;
+    } else {
+        ps_li_tail->next = stmt;
+        ps_li_tail = stmt;
+    }
+}
+
+static Node *local_init_base(void) {
+    Node *n;
+    n = nd_var(ps_li_name, ps_li_off, ps_li_base_ty);
+    n->is_local = 1;
+    n->is_array = ps_li_base_is_array;
+    return n;
+}
+
+static Node *local_init_lvalue(int rel_off, int target_ty, int target_arr_count) {
+    Node *n;
+    int arr_sz;
+    arr_sz = 0;
+    if (rel_off == 0 && !ps_li_base_is_array && !ty_is_struct(ps_li_base_ty))
+        return local_init_base();
+    if (target_arr_count != 0 && ty_is_ptr(target_ty))
+        arr_sz = target_arr_count * ty_size(ty_deref(target_ty));
+    n = local_init_base();
+    return nd_member(n, rel_off, target_ty, target_arr_count != 0, arr_sz);
+}
+
+static void local_init_emit_assign(int rel_off, int target_ty, Node *rhs) {
+    Node *a;
+    a = local_init_lvalue(rel_off, target_ty, 0);
+    a = nd_assign(a, rhs);
+    a = nd_expr_stmt(a);
+    local_init_append(a);
+}
+
+static void local_init_zero_at(int ty, int arr_count, int rel_off) {
+    int i;
+    int elem_ty;
+    int si;
+    int nf;
+    int mi;
+    int field_ty;
+    int field_arr_count;
+
+    if (arr_count != 0 && ty_is_ptr(ty)) {
+        elem_ty = ty_deref(ty);
+        i = 0;
+        while (i < arr_count) {
+            local_init_zero_at(elem_ty, 0, rel_off + (i * ty_size(elem_ty)));
+            i = i + 1;
+        }
+        return;
+    }
+    if (ty_is_struct(ty)) {
+        si = ty_struct_idx(ty);
+        nf = st_nfields[si];
+        i = 0;
+        while (i < nf) {
+            mi = struct_field_nth_idx(si, i);
+            if (mi >= 0) {
+                field_ty = stm_type[mi];
+                field_arr_count = struct_member_array_count(mi);
+                local_init_zero_at(field_ty, field_arr_count, rel_off + stm_off[mi]);
+            }
+            i = i + 1;
+            if (st_is_union[si]) break;
+        }
+        return;
+    }
+    local_init_emit_assign(rel_off, ty, nd_num(0));
+}
+
+static void local_init_patch_offsets(Node *n, char *nm, int off) {
+    if (n == NULL) return;
+    if (n->kind == ND_VAR && n->is_local && n->offset == 0 &&
+        strcmp(n->name, nm) == 0) {
+        n->offset = off;
+    }
+    local_init_patch_offsets(n->lhs, nm, off);
+    local_init_patch_offsets(n->rhs, nm, off);
+    local_init_patch_offsets(n->cond, nm, off);
+    local_init_patch_offsets(n->body, nm, off);
+    local_init_patch_offsets(n->init, nm, off);
+    local_init_patch_offsets(n->step, nm, off);
+    local_init_patch_offsets(n->els, nm, off);
+    local_init_patch_offsets(n->args, nm, off);
+    local_init_patch_offsets(n->next, nm, off);
+}
+
+static void parse_local_init_value_at(int ty, int arr_count, int rel_off);
+static int parse_local_init_array_at(int elem_ty, int count, int rel_off);
+static void parse_local_init_struct_at(int ty, int rel_off);
+
+static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
+    int i;
+    int max_i;
+    int elem_sz;
+    int sp_idx;
+    int slen;
+    char *sp;
+    int rel;
+    int target_ty;
+    int target_arr_count;
+    int root;
+
+    elem_sz = ty_size(elem_ty);
+    if ((elem_ty & TY_BASE_MASK) == TY_CHAR && lex_tok == TK_STRING) {
+        sp_idx = parse_string_literal();
+        slen = lex_str_len[sp_idx];
+        if (count < 0) count = slen + 1;
+        sp = lex_strpool + lex_str_off[sp_idx];
+        i = 0;
+        while (i < slen && i < count) {
+            local_init_emit_assign(rel_off + i, elem_ty, nd_num(sp[i] & 255));
+            i = i + 1;
+        }
+        return count;
+    }
+    if (lex_tok != TK_LBRACE) {
+        p_error("expected { in aggregate initializer");
+        return count;
+    }
+    next();
+    i = 0;
+    max_i = 0;
+    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+        if (i > 0) {
+            expect(TK_COMMA);
+            if (lex_tok == TK_RBRACE) break;
+        }
+        if (lex_tok == TK_LBRACK) {
+            parse_global_init_designator(elem_ty + TY_PTR, count, &rel,
+                                         &target_ty, &target_arr_count, &root);
+            expect(TK_ASSIGN);
+            parse_local_init_value_at(target_ty, target_arr_count, rel_off + rel);
+            if (root >= 0) {
+                i = root + 1;
+                if (i > max_i) max_i = i;
+            }
+        } else {
+            if (count >= 0 && i >= count) p_error("too many initializers");
+            parse_local_init_value_at(elem_ty, 0, rel_off + (i * elem_sz));
+            i = i + 1;
+            if (i > max_i) max_i = i;
+        }
+    }
+    if (lex_tok == TK_COMMA) next();
+    expect(TK_RBRACE);
+    if (count < 0) count = max_i;
+    return count;
+}
+
+static void parse_local_init_struct_at(int ty, int rel_off) {
+    int si;
+    int nf;
+    int i;
+    int mi;
+    int field_ty;
+    int field_arr_count;
+    int has_brace;
+    int rel;
+    int target_ty;
+    int target_arr_count;
+    int root;
+
+    si = ty_struct_idx(ty);
+    nf = st_nfields[si];
+    has_brace = (lex_tok == TK_LBRACE);
+    if (has_brace) next();
+    i = 0;
+    while (lex_tok != TK_EOF) {
+        if (has_brace && lex_tok == TK_RBRACE) break;
+        if (!has_brace && i >= nf) break;
+        if (i > 0) {
+            if (has_brace) {
+                expect(TK_COMMA);
+                if (lex_tok == TK_RBRACE) break;
+            } else {
+                if (lex_tok != TK_COMMA) break;
+                expect(TK_COMMA);
+            }
+        }
+        if (lex_tok == TK_DOT) {
+            parse_global_init_designator(ty, 0, &rel, &target_ty,
+                                         &target_arr_count, &root);
+            expect(TK_ASSIGN);
+            parse_local_init_value_at(target_ty, target_arr_count, rel_off + rel);
+            if (root >= 0) i = root + 1;
+            else i = i + 1;
+        } else {
+            if (i >= nf) p_error("too many initializers");
+            mi = struct_field_nth_idx(si, i);
+            if (mi < 0) p_error("missing struct field");
+            field_ty = stm_type[mi];
+            field_arr_count = struct_member_array_count(mi);
+            parse_local_init_value_at(field_ty, field_arr_count, rel_off + stm_off[mi]);
+            i = i + 1;
+        }
+        if (st_is_union[si]) break;
+    }
+    if (has_brace) {
+        if (lex_tok == TK_COMMA) next();
+        expect(TK_RBRACE);
+    }
+}
+
+static void parse_local_init_value_at(int ty, int arr_count, int rel_off) {
+    if (arr_count != 0 && ty_is_ptr(ty)) {
+        parse_local_init_array_at(ty_deref(ty), arr_count, rel_off);
+        return;
+    }
+    if (ty_is_struct(ty)) {
+        parse_local_init_struct_at(ty, rel_off);
+        return;
+    }
+    local_init_emit_assign(rel_off, ty, parse_assign());
+}
+
+static Node *local_init_list_expr(Node *stmts, Node *result) {
+    Node *s;
+    Node *expr;
+
+    if (stmts == NULL) return result;
+    expr = stmts->lhs;
+    s = stmts->next;
+    while (s != NULL) {
+        expr = nd_comma(expr, s->lhs);
+        s = s->next;
+    }
+    return nd_comma(expr, result);
+}
+
+static Node *parse_compound_literal_expr(int ty, int arr_count) {
+    char nm[256];
+    int off;
+    Node *head;
+    Node *zhead;
+    Node *ztail;
+    Node *result;
+
+    ps_make_compound_literal_name(nm);
+    if (arr_count != 0) {
+        local_init_begin(nm, 0, ty + TY_PTR, 1);
+        arr_count = parse_local_init_array_at(ty, arr_count, 0);
+        head = ps_li_head;
+        off = add_local_array(nm, ty, arr_count);
+        local_init_patch_offsets(head, nm, off);
+
+        local_init_begin(nm, off, ty + TY_PTR, 1);
+        local_init_zero_at(ty + TY_PTR, arr_count, 0);
+        zhead = ps_li_head;
+        ztail = ps_li_tail;
+        if (zhead != NULL) {
+            ztail->next = head;
+            head = zhead;
+        }
+        result = nd_var(nm, off, ty + TY_PTR);
+        result->is_local = 1;
+        result->is_array = 1;
+        return local_init_list_expr(head, result);
+    }
+
+    off = add_local(nm, ty);
+    local_init_begin(nm, off, ty, 0);
+    local_init_zero_at(ty, 0, 0);
+    if (ty_is_struct(ty)) {
+        parse_local_init_struct_at(ty, 0);
+    } else {
+        expect(TK_LBRACE);
+        if (lex_tok != TK_RBRACE) {
+            parse_local_init_value_at(ty, 0, 0);
+            if (lex_tok == TK_COMMA) next();
+        }
+        expect(TK_RBRACE);
+    }
+    result = nd_var(nm, off, ty);
+    result->is_local = 1;
+    return local_init_list_expr(ps_li_head, result);
+}
+
 /* --- Statement parser --- */
 
 static Node *parse_block(void);
@@ -2375,6 +2731,8 @@ static Node *parse_stmt(void) {
     Node *head;
     Node *tail;
     Node *a;
+    Node *zhead;
+    Node *ztail;
     int ty;
     int off;
     int count;
@@ -2857,57 +3215,24 @@ static Node *parse_stmt(void) {
                         else { tail->next = a; tail = a; }
                     }
                 } else if (lex_tok == TK_LBRACE) {
-                    next();
-                    tail = NULL;
-                    ci = 0;
-                    /* First pass: parse expressions, count them */
-                    /* Store expr nodes temporarily in the block list */
-                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                        if (ci > 0) expect(TK_COMMA);
-                        if (count >= 0 && ci >= count) {
-                            p_error("too many initializers"); break;
-                        }
-                        /* Store parsed expr as ND_EXPR_STMT placeholder */
-                        a = nd_expr_stmt(parse_assign());
-                        if (head == NULL) { head = a; tail = a; }
-                        else { tail->next = a; tail = a; }
-                        ci = ci + 1;
-                    }
-                    expect(TK_RBRACE);
-                    if (count < 0) count = ci;
+                    local_init_begin(nm, 0, ty + TY_PTR, 1);
+                    count = parse_local_init_array_at(ty, count, 0);
+                    head = ps_li_head;
+                    tail = ps_li_tail;
                     off = add_local_array(nm, ty, count);
-                    /* Second pass: wrap each expr into *(arr+i) = expr */
-                    a = head;
-                    head = NULL;
-                    tail = NULL;
-                    ci = 0;
-                    while (a != NULL) {
-                        n = nd_var(nm, off, ty + TY_PTR);
-                        n->is_local = 1;
-                        n->is_array = 1;
-                        t = nd_binop(TK_PLUS, n, nd_num(ci));
-                        t = nd_unary(TK_STAR, t);
-                        t = nd_assign(t, a->lhs);
-                        t = nd_expr_stmt(t);
-                        if (head == NULL) { head = t; tail = t; }
-                        else { tail->next = t; tail = t; }
-                        a = a->next;
-                        ci = ci + 1;
-                    }
-                    /* Zero-fill remaining elements not explicitly initialized.
-                     * C semantics: `T arr[N] = {x};` zeros elements x..N-1.
-                     * Without this, those slots read uninitialized stack memory. */
-                    while (ci < count) {
-                        n = nd_var(nm, off, ty + TY_PTR);
-                        n->is_local = 1;
-                        n->is_array = 1;
-                        t = nd_binop(TK_PLUS, n, nd_num(ci));
-                        t = nd_unary(TK_STAR, t);
-                        t = nd_assign(t, nd_num(0));
-                        t = nd_expr_stmt(t);
-                        if (head == NULL) { head = t; tail = t; }
-                        else { tail->next = t; tail = t; }
-                        ci = ci + 1;
+                    local_init_patch_offsets(head, nm, off);
+                    local_init_begin(nm, off, ty + TY_PTR, 1);
+                    local_init_zero_at(ty + TY_PTR, count, 0);
+                    zhead = ps_li_head;
+                    ztail = ps_li_tail;
+                    if (zhead != NULL) {
+                        if (ztail == NULL) {
+                            ztail = zhead;
+                            while (ztail->next != NULL) ztail = ztail->next;
+                        }
+                        ztail->next = head;
+                        head = zhead;
+                        if (tail == NULL) tail = ztail;
                     }
                 } else {
                     p_error("expected string or { in array init");
@@ -2932,111 +3257,11 @@ static Node *parse_stmt(void) {
         if (lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
-                /* Local struct initializer: struct S s = {v1, v2, ...}; */
-                next();
-                si = ty_struct_idx(ty);
-                nf = st_nfields[si];
-                ci = 0;  /* field index */
-                while (ci < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                    if (ci > 0) {
-                        expect(TK_COMMA);
-                        if (lex_tok == TK_RBRACE) break;
-                    }
-                    if (lex_tok == TK_DOT) {
-                        next();
-                        if (lex_tok != TK_IDENT) p_error("expected field name in initializer");
-                        memcpy(dnm, lex_str, lex_slen + 1);
-                        next();
-                        expect(TK_ASSIGN);
-                        mi = find_member(ty, dnm);
-                    } else {
-                        mi = struct_field_nth_idx(si, ci);
-                    }
-                    if (mi < 0) p_error("missing struct field");
-                    if (ty_is_struct(stm_type[mi])) {
-                        /* Nested struct: flatten */
-                        neg = 0;
-                        nsi = ty_struct_idx(stm_type[mi]);
-                        nnf = st_nfields[nsi];
-                        nj = 0;
-                        if (lex_tok == TK_LBRACE) {
-                            neg = 1;
-                            next();
-                        }
-                        while (nj < nnf && lex_tok != TK_RBRACE) {
-                            if (nj > 0) expect(TK_COMMA);
-                            base = struct_field_nth_idx(nsi, nj);
-                            if (base < 0) p_error("missing nested struct field");
-                            mi_off = stm_off[mi] + stm_off[base];
-                            mi_ty = stm_type[base];
-                            n = nd_var(nm, off, ty);
-                            n->is_local = 1;
-                            a = nd_member(n, mi_off, mi_ty, 0, 0);
-                            a = nd_assign(a, parse_assign());
-                            a = nd_expr_stmt(a);
-                            if (head == NULL) { head = a; tail = a; }
-                            else { tail->next = a; tail = a; }
-                            nj = nj + 1;
-                            if (st_is_union[nsi]) break;
-                        }
-                        if (neg) expect(TK_RBRACE);
-                    } else {
-                        mi_off = stm_off[mi];
-                        mi_ty = stm_type[mi];
-                        n = nd_var(nm, off, ty);
-                        n->is_local = 1;
-                        a = nd_member(n, mi_off, mi_ty, 0, 0);
-                        a = nd_assign(a, parse_assign());
-                        a = nd_expr_stmt(a);
-                        if (head == NULL) { head = a; tail = a; }
-                        else { tail->next = a; tail = a; }
-                    }
-                    ci = ci + 1;
-                }
-                if (lex_tok == TK_COMMA) next();
-                expect(TK_RBRACE);
-                /* Zero-fill remaining fields not explicitly initialized.
-                 * C semantics: `struct S s = {a};` zeros all fields not given
-                 * an explicit initializer. Without this, fields that are only
-                 * conditionally assigned later read uninitialized stack data
-                 * (or leak via the multi-register struct return ABI). */
-                while (ci < nf) {
-                    mi = struct_field_nth_idx(si, ci);
-                    if (mi >= 0) {
-                        if (ty_is_struct(stm_type[mi])) {
-                            /* Nested struct: zero each leaf field */
-                            nsi = ty_struct_idx(stm_type[mi]);
-                            nnf = st_nfields[nsi];
-                            nj = 0;
-                            while (nj < nnf) {
-                                base = struct_field_nth_idx(nsi, nj);
-                                if (base >= 0 && !ty_is_struct(stm_type[base])) {
-                                    mi_off = stm_off[mi] + stm_off[base];
-                                    mi_ty = stm_type[base];
-                                    n = nd_var(nm, off, ty);
-                                    n->is_local = 1;
-                                    a = nd_member(n, mi_off, mi_ty, 0, 0);
-                                    a = nd_assign(a, nd_num(0));
-                                    a = nd_expr_stmt(a);
-                                    if (head == NULL) { head = a; tail = a; }
-                                    else { tail->next = a; tail = a; }
-                                }
-                                nj = nj + 1;
-                            }
-                        } else {
-                            mi_off = stm_off[mi];
-                            mi_ty = stm_type[mi];
-                            n = nd_var(nm, off, ty);
-                            n->is_local = 1;
-                            a = nd_member(n, mi_off, mi_ty, 0, 0);
-                            a = nd_assign(a, nd_num(0));
-                            a = nd_expr_stmt(a);
-                            if (head == NULL) { head = a; tail = a; }
-                            else { tail->next = a; tail = a; }
-                        }
-                    }
-                    ci = ci + 1;
-                }
+                local_init_begin(nm, off, ty, 0);
+                local_init_zero_at(ty, 0, 0);
+                parse_local_init_struct_at(ty, 0);
+                head = ps_li_head;
+                tail = ps_li_tail;
                 expect(TK_SEMI);
                 if (head != NULL) return nd_block(head);
                 return nd_block(NULL);
@@ -3640,6 +3865,7 @@ static Node *parse_program(void) {
     ps_nglobals = 0;
     ps_ginit_pool_len = 0;
     ps_ngirelocs = 0;
+    ps_comp_lit_id = 0;
 #ifdef S12CC_TARGET_A64
     pp_add("__aarch64__", 1);
     pp_add("__LP64__", 1);
