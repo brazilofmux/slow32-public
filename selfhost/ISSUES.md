@@ -686,9 +686,12 @@ three exposed independent bugs documented below as #41/#42/#43. Verifier
 script committed at `selfhost/verify-emu-sums.sh`; per-emulator logs at
 `/tmp/verify-emu-sums-<label>/`.
 
-Status as of 2026-05-09 (later): #41 fixed (slow32 getopt). #42 fixed
-(slow32-fast cap removed). #43 partial (3 MMIO ops added to dbt-a64
-cross libc); #44 opened for the remaining s32-as.s32x startup hang.
+Status as of 2026-05-14: #41 fixed (slow32 getopt). #42 fixed
+(slow32-fast cap removed). #43 fixed (3 MMIO ops added to dbt-a64
+cross libc, 2026-05-09). #44 fixed (cc-a64 continue-in-switch
+miscompile, shared with cc-x64 Bug B, 2026-05-14) — dbt-a64 now
+runs the stage02 path end-to-end with byte-identical output to
+the native emulator.
 
 **`s32fast-hir` (cc-x64 cross-compiled emulator) sweep — done.**
 Stage 7 artifacts produced under `selfhost/stage07-cross/out/s32fast-hir`
@@ -757,14 +760,16 @@ SELFHOST_EMU=$PWD/../../tools/emulator/slow32-fast \
 # assemble produced no output: /tmp/stage05-build.XXX/s12cc.s
 ```
 
-### 43. [PARTIAL] `dbt-a64` (cc-a64 cross-compiled DBT) MMIO gap chain
+### 43. [FIXED] `dbt-a64` (cc-a64 cross-compiled DBT) MMIO gap chain
 
 **Status**: three MMIO operations added to `libc_a64/mmio_ring_a64.c`
 on 2026-05-09 — root-cause was a deliberately stripped MMIO ring stub,
 not a syscall bug. Each fix uncovered the next layer.  The follow-up
-`s32-as.s32x` startup hang was tracked as #44 (now FIXED, 2026-05-14)
-and was unrelated to MMIO — a shared cc-a64/cc-x64 codegen bug, not
-another shim gap.
+`s32-as.s32x` startup hang (tracked separately as #44) was unrelated
+to MMIO — a shared cc-a64/cc-x64 codegen bug, not another shim gap.
+With #44 also FIXED 2026-05-14, the end-to-end stage02 path under
+dbt-a64 produces byte-identical output to the native slow32 emulator,
+so this entry is closed.
 
 **Layer 1 — STAT [FIXED]**: original symptom on Forth kernel +
 selfhost stage02 was `Error line 0 : cannot stat input file`. Cross
@@ -792,10 +797,11 @@ calls `lseek`. Bisect was clean: per-file diff against the gcc-dbt
 workdir showed all `.s`/`.s32o`/`.s32a` outputs byte-identical except
 `link.log` (gcc=6390 bytes vs a64=21103 bytes).
 
-**Cumulative effect**: dbt-a64 now produces canonical s32-as.s32x
-(83832 bytes, sha 065f0dc9…) on stage02 step 1. Stage01 already
-passed; later stages still fail because of a separate hang documented
-as #44.
+**Cumulative effect**: dbt-a64 produces canonical s32-as.s32x
+(83832 bytes, sha 065f0dc9…) on stage02 step 1.  The follow-up
+hang on running the freshly-built s32-as.s32x was #44, since
+fixed; the full stage02 path now runs end-to-end and matches the
+native emulator byte-for-byte.
 
 **Reproducer (now passes)**:
 ```bash
