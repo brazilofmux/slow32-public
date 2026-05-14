@@ -973,24 +973,54 @@ timeout 1 selfhost/stage07-cross-a64/out/s32fast-hir \
 #   slow32-dbt's 108-byte output.
 ```
 
-### 49. [PARTIAL] `dbt-x64` (cc-x64 cross-compiled) stage02 — `-2` fixed, `-3/-4/-5` still crash
+### 49. [PARTIAL] `dbt-x64` (cc-x64 cross-compiled) stage02 — `-1/-2/-3` fixed, `-4/-5` need feature opt-outs
 
-**Status as of 2026-05-14 (later)**: split into two unrelated bugs
-once investigated; one fixed, one open. Original framing as a
-"silent JIT miscompile" was wrong — the `-2` mode was correct;
-the host-side MMIO shim was returning errors for STAT/SEEK and was
-passing through SLOW-32 OPEN flags to Linux verbatim.
+**Status as of 2026-05-14 (later 2)**: original "silent JIT miscompile"
+framing was wrong; investigation has so far split #49 into four
+distinct cc-x64 / shim issues, two fixed, two open:
 
-**Mode-by-mode after fixes (40ef705f MMIO + 8884f7a3 `continue`
-workaround)**:
+  - Bug A: MMIO shim gaps (STAT/SEEK/OPEN flags). FIXED in 40ef705f.
+  - Bug B: cc-x64 miscompiles `continue` inside `case` inside `switch`
+    inside `while`. WORKED-AROUND in 8884f7a3 (reg_alloc_prescan) and
+    extended in f124c661 to the main translation switches of
+    `translate_block` and `translate_block_cached` (7 sites each).
+  - Bug C: `superblock_enabled = true` triggers a separate cc-x64
+    miscompile. OPEN. Likely in `translate_branch_common` (the
+    superblock-extension code path) or downstream of it.
+  - Bug D: `peephole_enabled = true` triggers another independent
+    cc-x64 miscompile. OPEN. Likely in `peephole_optimize_x64`'s
+    11-`continue` pattern matcher (different `continue`-shape from
+    Bug B — these are `if (pattern) { ... continue; }` chains inside
+    a `while`, no enclosing `switch`).
+
+**Mode-by-mode after Bug A + Bug B fixes**:
 
 | dbt-x64 mode | guest input          | rc  | output                                         |
 | ---          | ---                  | --- | ---                                            |
-| `-2`         | stage02/crt0.s       | 96  | **356 bytes ✓ (fixed)**                        |
-| `-1`         | stage02/crt0.s       | 1   | `DBT: Memory fault at PC=0x7280, addr=0x38` (no longer SIGSEGV) |
-| `-3` / `-4` / `-5` | stage02/crt0.s | 139 | none — SIGSEGV in `translate_block_cached`     |
+| `-2`         | stage02/crt0.s       | 96  | 356 bytes ✓                                    |
+| `-3`         | stage02/crt0.s       | 96  | **356 bytes ✓ (fixed by f124c661)**            |
+| `-1`         | stage02/crt0.s       | 0   | `DBT: Memory fault at PC=0x7280, addr=0x48` (clean) |
+| `-4` / `-5`  | stage02/crt0.s       | 139 | none — SIGSEGV (Bug C and/or Bug D)            |
+| `-4 -P -S`   | stage02/crt0.s       | 96  | **356 bytes ✓ (workable stage-4)**             |
 | `default`    | stage01/crt0_minimal.s | 96 | 356 bytes ✓                                   |
 | gcc `slow32-dbt` | stage02/crt0.s   | 96  | 356 bytes ✓ (reference)                        |
+
+**Feature bisection for `-4` crash**:
+
+| flags relative to `-4` default | superblock | reg_cache | peephole | result |
+| --- | --- | --- | --- | --- |
+| (default)            | on  | on  | on  | SIGSEGV |
+| `-S`                 | off | on  | on  | SIGSEGV |
+| `-R`                 | on  | off | on  | SIGSEGV |
+| `-P`                 | on  | on  | off | SIGSEGV |
+| `-P -R`              | on  | off | off | SIGSEGV |
+| `-P -S`              | off | on  | off | **WORKS** |
+| `-P -R -S`           | off | off | off | **WORKS** |
+| `-R -S`              | off | off | on  | SIGSEGV |
+
+→ Bug C (superblock) and Bug D (peephole) are independent. Either
+one alone is sufficient to crash; turning both off makes `-4` work
+regardless of reg_cache.
 
 **Bug A — MMIO shim gaps in `selfhost/stage07-cross/libc_x64/mmio_ring_x64.c`** (FIXED, 40ef705f):
 the x64 MMIO shim was the dbt-a64 #43 fix's missing twin. Three problems:
@@ -1048,12 +1078,19 @@ FTH
 ```
 
 **Remaining work**:
-- Bisect the `-3/-4/-5` SIGSEGV: it's in the back-edge snapshot copy
-  in `translate_block_cached`. The corrupted loop/local index points
-  at another cc-x64 control-flow miscompile in `tools/dbt/translate.c`
-  rather than the Forth assembler or guest DBT logic.
+- Bug C (superblock crash): localise the cc-x64 miscompile in
+  `translate_branch_common`'s `can_extend` path (translate.c:3266+),
+  or somewhere downstream of it that only runs when superblocks are
+  emitted. Likely another `continue`-style or for-loop iteration
+  miscompile.
+- Bug D (peephole crash): localise the miscompile in
+  `peephole_optimize_x64` (translate.c:3917..4292). 11 `continue`
+  sites inside `if`-chains inside `while`. Either turn the pattern
+  matcher into a switch-free goto chain, or build a minimal cc-x64
+  reproducer for `if (...) { ... continue; } else if (...) {
+  ... continue; }` inside `while`, then patch cc-x64.
 - Underlying cc-x64 codegen bug for `continue` (in switch/while and
-  in chained-early-out for-loops) remains latent — Bug B is a
+  in chained-early-out loops) remains latent — Bug B is a
   workaround at the use site, not a fix in the compiler.
 
 ---
