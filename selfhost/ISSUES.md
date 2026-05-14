@@ -981,12 +981,23 @@ distinct cc-x64 / shim issues, two fixed, two open:
 
   - Bug A: MMIO shim gaps (STAT/SEEK/OPEN flags). FIXED in 40ef705f.
   - Bug B: cc-x64 miscompiles `continue` inside `case` inside `switch`
-    inside `while`. WORKED-AROUND in 8884f7a3 (reg_alloc_prescan) and
-    extended in f124c661 to the main translation switches of
-    `translate_block` and `translate_block_cached` (7 sites each).
+    inside `while`. ROOT-CAUSED and FIXED in b94598cf
+    (`selfhost/stage07/hir_lower.h`).  The `ND_SWITCH` lowering was
+    bumping `hl_loop_depth` (to make `break` work) without setting
+    `hl_cont_blk[]` at the new depth, so `continue` read whichever
+    stale value was at that index — often the function entry block.
+    Fix inherits the enclosing loop's continue target on switch entry
+    and hardens the ND_CONTINUE check to fail loudly instead of
+    branching to a garbage block when there is no enclosing loop.
+    Validated by a minimal C reproducer that infinite-loops pre-fix
+    and prints "OK" post-fix. Earlier use-site workarounds (8884f7a3,
+    f124c661) are now redundant for this shape but left in place; they
+    will be removed once the dust settles.
   - Bug C: `superblock_enabled = true` triggers a separate cc-x64
     miscompile. OPEN. Likely in `translate_branch_common` (the
-    superblock-extension code path) or downstream of it.
+    superblock-extension code path) or downstream of it. Not the
+    same `continue`-in-switch shape — Bug B's fix did NOT unblock
+    `-4 -P -R` (peephole off, reg_cache off, superblock on).
   - Bug D: `peephole_enabled = true` triggers another independent
     cc-x64 miscompile. OPEN. Likely in `peephole_optimize_x64`'s
     11-`continue` pattern matcher (different `continue`-shape from
