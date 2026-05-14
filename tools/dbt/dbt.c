@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <time.h>
 #include <inttypes.h>
 #include <math.h>
@@ -1952,13 +1953,40 @@ static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME],
 }
 
 int main(int argc, char **argv) {
-    /* Endianness check: SLOW-32 is Little-Endian and this emulator 
+    /* Endianness check: SLOW-32 is Little-Endian and this emulator
      * relies on host endianness for code translation performance. */
     {
         uint32_t test = 1;
         if (*(uint8_t *)&test != 1) {
             fprintf(stderr, "Error: This emulator only supports Little-Endian host platforms.\n");
             return 1;
+        }
+    }
+
+    /* Raise RLIMIT_STACK if the inherited soft limit is below what we
+     * need.  The cc-x64-built dbt-x64 (selfhost/stage07-cross) uses
+     * ~20 MB of host stack on the Forth/stage02 self-host workload —
+     * its register allocator spills more than gcc and tail-call
+     * folding only kicks in for direct same-block returns.  gcc-built
+     * slow32-dbt peaks at ~136 KB so a hard-coded 64 MB ask is
+     * harmless for the standard build and unblocks the self-hosted
+     * one on systems where the default ulimit is 8–12 MB. */
+    {
+        struct rlimit rl;
+        unsigned long want = 64UL * 1024 * 1024;
+        if (getrlimit(RLIMIT_STACK, &rl) == 0 &&
+            (unsigned long)rl.rlim_cur < want) {
+            if (rl.rlim_max != RLIM_INFINITY &&
+                want > (unsigned long)rl.rlim_max) {
+                want = (unsigned long)rl.rlim_max;
+            }
+            rl.rlim_cur = want;
+            (void)setrlimit(RLIMIT_STACK, &rl);
+            /* Best-effort: ignore failure.  Without root we can't raise
+             * past rlim_max; some sandboxes may forbid setrlimit
+             * altogether.  Either way the program will simply crash
+             * later if the stack truly is too small, which is the
+             * pre-existing behavior. */
         }
     }
 
