@@ -4383,19 +4383,31 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
 
             int64_t block_base = (int64_t)(intptr_t)code;
             int64_t block_end = block_base + (int64_t)scanned_end;
+            /* Workaround for a cc-x64 (selfhost/stage07-cross) miscompile:
+             * the inline expression `old_disp + (int32_t)shift[pos]`
+             * comes out wildly wrong when `shift` is `uint16_t *` and the
+             * cast is nested in the add, evidently because cc-x64 widens
+             * the uint16_t load to 32 bits in a way that picks up
+             * neighbouring bytes from the array.  Forcing the cast through
+             * a local int32_t variable produces the right result on both
+             * cc-x64 and gcc. */
+            int32_t shift_pos = (int32_t)shift[pos];
             if (old_target_abs >= block_base && old_target_abs <= block_end) {
                 // Intra-block: both source and target shift
                 size_t old_target = (size_t)(old_target_abs - block_base);
-                new_disp = old_disp + (int32_t)shift[pos] - (int32_t)shift[old_target];
+                int32_t shift_tgt = (int32_t)shift[old_target];
+                new_disp = old_disp + shift_pos - shift_tgt;
             } else {
                 // Extra-block: only source shifts
-                new_disp = old_disp + (int32_t)shift[pos];
+                new_disp = old_disp + shift_pos;
             }
-
             if (disp_size == 1) {
                 // Check rel8 overflow
-                if (new_disp < -128 || new_disp > 127)
-                    return len;  // Abort compaction
+                if (new_disp < -128 || new_disp > 127) {
+                    // Restore code we may have partially modified above.
+                    memcpy(code, original, len);
+                    return len;
+                }
                 code[pos + disp_off] = (uint8_t)(int8_t)new_disp;
             } else {
                 code[pos + disp_off + 0] = (uint8_t)(new_disp & 0xFF);
@@ -4419,7 +4431,16 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
         code[new_len++] = code[j];
     }
 
-    // Phase 5: Adjust patch_site pointers in block exits
+    // Phase 5: Adjust patch_site pointers in block exits.
+    // Save the originals first — Phase 7 may revert the code below if the
+    // compacted layout is invalid, and we need to roll the patch_sites
+    // back too or chain patching will later write into the wrong byte
+    // of the (restored) original code.  MAX_BLOCK_EXITS is small (8 on
+    // x86-64) so the stack save is cheap.
+    uint8_t *saved_patch_sites[MAX_BLOCK_EXITS];
+    for (uint8_t i = 0; i < block->exit_count && i < MAX_BLOCK_EXITS; i++) {
+        saved_patch_sites[i] = block->exits[i].patch_site;
+    }
     for (uint8_t i = 0; i < block->exit_count; i++) {
         size_t old_off = (size_t)(block->exits[i].patch_site - code);
         if (old_off < scanned_end) {
@@ -4441,6 +4462,8 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
         int ilen = x64_insn_length(code, pos, new_len);
         if (ilen <= 0) {
             memcpy(code, original, len);
+            for (uint8_t i = 0; i < block->exit_count && i < MAX_BLOCK_EXITS; i++)
+                block->exits[i].patch_site = saved_patch_sites[i];
             return len;
         }
         pos += ilen;
@@ -4452,6 +4475,8 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
         int ilen = x64_insn_length(code, pos, new_len);
         if (ilen <= 0) {
             memcpy(code, original, len);
+            for (uint8_t i = 0; i < block->exit_count && i < MAX_BLOCK_EXITS; i++)
+                block->exits[i].patch_site = saved_patch_sites[i];
             return len;
         }
 
@@ -4481,6 +4506,8 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
             if (target >= 0 && (size_t)target <= new_len) {
                 if (!is_start[(size_t)target]) {
                     memcpy(code, original, len);
+                    for (uint8_t i = 0; i < block->exit_count && i < MAX_BLOCK_EXITS; i++)
+                        block->exits[i].patch_site = saved_patch_sites[i];
                     return len;
                 }
             }
