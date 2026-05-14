@@ -1710,13 +1710,47 @@ static int hx_traces_to_alloca(int v, int depth) {
     return 0;
 }
 
+/* HI_CALLP TCE only: returns 1 if hx_emit_teardown is guaranteed not to
+ * clobber HX_SCRATCH2 (x17) while restoring callee-saves.  We park the
+ * indirect-call target in x17 between marshal_args and `br x17`; if
+ * teardown's csave restore would fall through to hx_emit_load_to_reg's
+ * out-of-range path (which uses x17 to compute the load address), x17
+ * gets overwritten and the branch jumps to garbage.
+ *
+ * Safe paths (no x17 use):
+ *   - LDP fast path: i+1's offset in [-512, 504] and 8-aligned
+ *   - LDUR fast path: single offset in [-256, 255]
+ * Csave offsets are always negative (FP-relative below FP), so the
+ * scaled-LDR positive path doesn't apply here. */
+static int hx_csave_restore_safe_for_x17(void) {
+    int i;
+    i = 0;
+    while (i < ra_ncsave) {
+        int b;
+        if (i + 1 < ra_ncsave && ra_csave_off[i + 1] == ra_csave_off[i] - 4) {
+            b = cg_a64_offset(ra_csave_off[i + 1]);
+            if (b >= -512 && b <= 504 && (b & 7) == 0) {
+                i = i + 2;
+                continue;
+            }
+        }
+        b = cg_a64_offset(ra_csave_off[i]);
+        if (b >= -256 && b <= 255) { i = i + 1; continue; }
+        return 0;                 /* out-of-range fallback would touch x17 */
+    }
+    return 1;
+}
+
 /* ----- TCE identification -----
  * Set hx_tce_call[c]/hx_tce_ret[r] for each block that ends:
- *     ... CALL ... (NOP/PHI/CALLHI/COPY)* RET
+ *     ... CALL|CALLP ... (NOP/PHI/CALLHI/COPY)* RET
  * with RET's value (chased through COPYs) equal to the call result.
- * Restricted to direct calls (HI_CALL), nargs <= 8, non-__syscall, no
- * arg-derived-from-HI_ALLOCA (frame-local ptr would dangle), no varargs
- * caller, no DBT trampoline. */
+ * Common restrictions: nargs <= 8, no arg-derived-from-HI_ALLOCA
+ * (frame-local ptr would dangle), no varargs caller, no DBT trampoline.
+ * Direct calls additionally exclude the __syscall builtin (different ABI:
+ * x8 = nr).  Indirect calls additionally require the callee value not to
+ * trace to HI_ALLOCA and the csave-restore portion of teardown to leave
+ * HX_SCRATCH2 (x17, the parked branch target) untouched. */
 static void hx_identify_tce(Node *fn) {
     int i; int b;
     int has_alloca; int has_dbt;
@@ -1773,14 +1807,16 @@ static void hx_identify_tce(Node *fn) {
                 i = i - 1;
                 continue;
             }
-            if (k == HI_CALL) call_idx = i;
+            if (k == HI_CALL || k == HI_CALLP) call_idx = i;
             break;
         }
         if (call_idx >= 0) {
             int ok;
+            int call_kind;
             char *nm;
             int v;
             ok = 1;
+            call_kind = h_kind[call_idx];
 
             /* RET's value (if any) must be — possibly via HI_COPY chain —
              * the call result. */
@@ -1793,7 +1829,9 @@ static void hx_identify_tce(Node *fn) {
             /* No stack args. */
             if (h_val[call_idx] > 8) ok = 0;
 
-            /* Skip __syscall builtin (different ABI: x8 = nr). */
+            /* Skip __syscall builtin (different ABI: x8 = nr).  Only
+             * applies to HI_CALL — HI_CALLP has no h_name and reaches
+             * this guard with nm == 0. */
             nm = h_name[call_idx];
             if (nm != 0
              && nm[0] == '_' && nm[1] == '_'
@@ -1818,6 +1856,16 @@ static void hx_identify_tce(Node *fn) {
                         j = j + 1;
                     }
                 }
+            }
+
+            /* Indirect-call extras: the callee value itself must not be
+             * frame-derived (would dangle after teardown — pathological
+             * but cheap to guard), and teardown must not need x17 as a
+             * csave-restore address scratch (we'll park the callee in
+             * x17 across teardown). */
+            if (ok && call_kind == HI_CALLP) {
+                if (hx_traces_to_alloca(h_src1[call_idx], 0)) ok = 0;
+                else if (!hx_csave_restore_safe_for_x17()) ok = 0;
             }
 
             if (ok) {
@@ -3022,16 +3070,32 @@ static void hx_emit_inst(int idx) {
         }
 
         /* Tail-call elimination: marshal args, tear down our frame,
-         * then `b target`.  hx_identify_tce has verified preconditions
-         * (direct call, nargs <= 8, no alloca/varargs/DBT, RET follows). */
-        if (k == HI_CALL && hx_tce_call[idx]) {
+         * then `b target` (direct) or `br x17` (indirect).
+         * hx_identify_tce has verified preconditions (nargs <= 8, no
+         * alloca/varargs/DBT/syscall, RET follows; for HI_CALLP also
+         * that the callee value doesn't trace to alloca and that
+         * teardown leaves x17 untouched). */
+        if ((k == HI_CALL || k == HI_CALLP) && hx_tce_call[idx]) {
             int base; int nargs;
             base = h_cbase[idx];
             nargs = h_val[idx];
             hx_marshal_call_args(base, nargs);
+            if (k == HI_CALLP) {
+                /* Park the callee in HX_SCRATCH2 (x17) for the post-
+                 * teardown branch.  Must come AFTER marshal_args (which
+                 * may transiently use x17 as a spill-load address
+                 * scratch) but BEFORE teardown (s1 may live in a
+                 * callee-saved reg or an FP-relative spill — both are
+                 * about to be lost). */
+                hx_mat(s1, HX_SCRATCH2);
+            }
             hx_emit_teardown();
-            cg_cpatch_add(h_name[idx], a64_off, A64K_JUMP26, 0);
-            a64_b(0);
+            if (k == HI_CALL) {
+                cg_cpatch_add(h_name[idx], a64_off, A64K_JUMP26, 0);
+                a64_b(0);
+            } else {
+                a64_br(HX_SCRATCH2);
+            }
             /* No hx_spill: the trailing HI_RET (which would consume the
              * call's value) is NOPed via hx_tce_ret[]. */
             return;
