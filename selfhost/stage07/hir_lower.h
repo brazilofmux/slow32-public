@@ -358,6 +358,38 @@ static int hl_expr(Node *n) {
 
     /* Integer literal */
     if (n->kind == ND_NUM) {
+        if (ty_is_llong(n->ty)) {
+            /* 64-bit literal — HIR's h_val is only 32 bits, so a single
+             * HI_ICONST can't carry the full value.  Materialise it the
+             * same way ND_FNUM does for native doubles: alloca 8 bytes,
+             * store lo at +0 and hi at +4, then LOAD as TY_LLONG.  On
+             * 64-bit hosts (cc-x64 / cc-a64) the codegen's spill-load
+             * collapse makes the alloca virtual when the value is used
+             * in registers; on slow32 native the alloca / store / load
+             * fall out as regular memory ops, which is the only way to
+             * stage a 64-bit constant on that target. */
+            int ilo;
+            int ihi;
+#ifdef S12CC_X64_HOST
+            int tmp_alloca;
+            int addr4;
+            hl_temp_stack = hl_temp_stack + 8;
+            tmp_alloca = hl_emit_temp_alloca(TY_LLONG, 0 - hl_temp_stack);
+            ilo = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val, NULL);
+            ihi = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val_hi, NULL);
+            hi_emit(HI_STORE, TY_INT, tmp_alloca, ilo, 0, NULL);
+            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, tmp_alloca, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, addr4, ihi, 0, NULL);
+            return hi_emit(HI_LOAD, n->ty, tmp_alloca, -1, 0, NULL);
+#else
+            /* slow32 native: TY_LLONG is two 32-bit halves, passed via
+             * the hl_hi side channel. */
+            ilo = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val, NULL);
+            ihi = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val_hi, NULL);
+            hl_hi = ihi;
+            return ilo;
+#endif
+        }
         return hi_emit(HI_ICONST, n->ty, -1, -1, n->val, NULL);
     }
 

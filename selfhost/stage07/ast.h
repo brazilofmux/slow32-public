@@ -241,6 +241,18 @@ static Node *nd_num(int v) {
     return n;
 }
 
+/* 64-bit integer literal: val=lo bits, val_hi=hi bits, ty must carry
+ * TY_LLONG (plus TY_UNSIGNED as needed).  Used when the lexer sees an
+ * LL/ULL suffix or a value whose high 32 bits aren't all zero/sign. */
+static Node *nd_num64(int lo, int hi, int ty) {
+    Node *n;
+    n = nd_new(ND_NUM);
+    n->val = lo;
+    n->val_hi = hi;
+    n->ty = ty;
+    return n;
+}
+
 static Node *nd_fnum(int lo, int hi, int ty) {
     Node *n;
     n = nd_new(ND_FNUM);

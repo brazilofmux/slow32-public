@@ -1177,41 +1177,59 @@ FTH
   in chained-early-out loops) remains latent — Bug B is a
   workaround at the use site, not a fix in the compiler.
 
-### 50. [OPEN] cc-a64 (and likely cc-x64) truncates 64-bit integer literals
+### 50. [FIXED] cc-a64 (and cc-x64) truncated 64-bit integer literals
 
-**Status**: surfaced 2026-05-14 while testing the snp_core %llu mirror
-in `6a27fbef`.  Runtime-built 64-bit values format correctly through
-the patched `fmt_int64` / `snp_emit_int64`, but bare literals are
-silently lost in the front end.
+**Status**: fixed 2026-05-14.  The bug was where suspected — the
+shared lexer accumulated digits into a 32-bit `int val` in
+`lex_parse_num` (c_lexer_gen.c).  ULL/LL suffix parsing didn't
+exist at all; the type stamp on ND_NUM was always `TY_INT`.
 
-**Symptom**:
-```c
-snprintf(buf, sz, "%llu", 12345678901234ULL);  /* prints 1942892530 */
-snprintf(buf, sz, "%llx", 0xDEADBEEFCAFELL);  /* prints beefcafe   */
+**Fix** (single commit, touches the shared frontend so it applies to
+cc-a64, cc-x64, and the SLOW-32 native s12cc):
+
+  - Lexer: widen `val` accumulator to `long long`; add `lex_val_hi`,
+    `lex_val_ll`, `lex_val_u` globals; parse trailing
+    `L`/`l`/`U`/`u` suffix bytes after the digit loop and set
+    `lex_val_ll` when at least two `L`s appear (loose-order
+    acceptance: `LLU`, `ULL`, `LuL`, etc. all valid).
+  - Parser TK_NUM site: when the lexer reports either `LL` suffix or
+    a nonzero hi word, build the node via a new `nd_num64(lo, hi,
+    ty)` with `ty = TY_LLONG (+ TY_UNSIGNED)`.  Otherwise plain
+    `nd_num(lo)` with TY_INT — keeps every existing call site
+    unaffected.
+  - pp's TK_NUM emit path (`#define X 123` expansion): explicit
+    `lex_val_hi = lex_val_ll = lex_val_u = 0` so stale state from a
+    prior 64-bit literal doesn't bleed in.
+  - HIR lowering for ND_NUM with TY_LLONG: mirror the ND_FNUM
+    native-f64 pattern — alloca 8 bytes, store lo at +0 and hi at +4,
+    load as TY_LLONG.  On 64-bit hosts (cc-x64 / cc-a64) the
+    codegen's spill-load collapse makes the alloca virtual when the
+    value lands in a register.  On slow32 native (no S12CC_X64_HOST)
+    the lo/hi pair flows through the existing `hl_hi` side channel.
+
+**Verification**: probe with five literal shapes prints all
+correctly:
+```
+dec=12345678901234   (decimal, > 2^32)
+hex=deadbeefcafe     (hex, > 2^32)
+neg=-9223372036854775808   (signed min 64-bit, was previously 0)
+mask=7fffffffffffffff      (was previously ffffffff)
+small=42                    (plain int, regression check)
 ```
 
-Both lose the high 32 bits.  Building the same value via runtime
-arithmetic (`((u64)0xABCD << 32) | 0x12345678ULL`) and printing with
-`%llu` / `%llx` works correctly (`188897262065272` / `abcd12345678`).
-So the truncation happens in the literal-parsing path, not in 64-bit
-arithmetic or in fmt_core.
+Full cc-a64 test suite (encoder, ELF/obj/crt0 writers, all cc_*
+tests, test-toolchain, test-archive) passes in Ubuntu 22.04 ARM64.
+cc-x64 compiles cleanly with the shared changes.  dbt-a64 stage02
+step 2 byte-match (sha 530b91ba…) preserved.
 
-**Why it matters**: low-priority for dbt-a64 — its 64-bit values
-come from runtime counters incremented in memory, not literals.  But
-any code with constants > 2^32 (timestamps, large hash seeds,
-masks, magic numbers) silently miscompiles.
-
-**Likely location**: shared lexer (`selfhost/stage07/c_lexer.rl`) or
-the integer-literal node in the shared parser (`stage07/parser.h`,
-symlinked into both cc-x64 and cc-a64 trees).  The ULL / LL suffix
-parsing exists (cc-a64 handles it as a TY_LLONG annotation) but the
-numeric value appears to be accumulated as 32-bit `int` somewhere
-before the type is stamped on.
-
-**Recommendation**: trace `HI_ICONST` emission for a literal like
-`0xDEADBEEFCAFELL` and confirm whether the high bits are lost in
-lex_int / nd_iconst.  Fix is likely a single field-widening in the
-lexer's accumulator.
+**Side effect / latent x64 bug now closed**: `tools/dbt/translate.c`
+has two 64-bit literals — `0x8000000000000000ull` (sign-bit toggle
+in OP_FNEG_D) and `0x7FFFFFFFFFFFFFFFull` (sign-bit mask in
+OP_FABS_D).  With the pre-fix lexer, cc-x64 truncated the first to
+0 (so `bits ^= 0` was a no-op — OP_FNEG_D returned its input
+unchanged) and the second to 0xFFFFFFFF (so OP_FABS_D zeroed the
+high half of the double, mangling any double whose magnitude
+exceeded ~2^32).  Both now compile correctly.
 
 ---
 

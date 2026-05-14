@@ -242,6 +242,11 @@ static void next(void) {
                 }
                 lex_tok = TK_NUM;
                 lex_val = pp_dval[di];
+                /* #define values are 32-bit int; clear the 64-bit state
+                 * so a preceding 64-bit literal's flags don't bleed in. */
+                lex_val_hi = 0;
+                lex_val_ll = 0;
+                lex_val_u = 0;
                 return;
             }
         }
@@ -1818,8 +1823,26 @@ static Node *parse_primary(void) {
 
     /* Number literal */
     if (lex_tok == TK_NUM) {
-        v = lex_val;
+        int v_hi;
+        int v_ll;
+        int v_u;
+        v    = lex_val;
+        v_hi = lex_val_hi;
+        v_ll = lex_val_ll;
+        v_u  = lex_val_u;
         next();
+        /* Promote to long long when the literal had an LL/LLU suffix or
+         * its high 32 bits aren't zero — otherwise treat as int (and let
+         * downstream usual-arithmetic-conversions handle widening).  An
+         * unsigned-only suffix on a value < 2^31 stays a 32-bit int; the
+         * subset doesn't distinguish unsigned int from int at the ND_NUM
+         * level. */
+        if (v_ll || v_hi != 0) {
+            int t;
+            t = TY_LLONG;
+            if (v_u) t = t | TY_UNSIGNED;
+            return nd_num64(v, v_hi, t);
+        }
         return nd_num(v);
     }
 

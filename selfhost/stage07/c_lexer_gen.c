@@ -134,6 +134,9 @@ static int  lex_line;
 static int  lex_col;
 static int  lex_tok;
 static int  lex_val;
+static int  lex_val_hi;    /* high 32 bits for 64-bit integer literals */
+static int  lex_val_ll;    /* 1 if the literal had an LL/ll suffix */
+static int  lex_val_u;     /* 1 if the literal had a U/u suffix */
 static int  lex_fval_hi;   /* high 32 bits for double literals */
 static int  lex_fty;       /* TY_FLOAT or TY_DOUBLE for float literals */
 static char lex_str[LEX_STR_SZ];
@@ -326,9 +329,10 @@ static void lex_count_nl(char *from, char *to) {
 /* === Helper: parse number from ts..te range === */
 
 static void lex_parse_num(char *ts, char *te) {
-    int val;
+    long long val;     /* 64-bit accumulator — preserves literals > 2^32 */
     int ch;
     char *np;
+    int n_l;
     val = 0;
     np = ts;
     ch = *np & 255;
@@ -363,8 +367,21 @@ static void lex_parse_num(char *ts, char *te) {
             np = np + 1;
         }
     }
+    /* Suffix: count L's (need 2 for llong) and any U for unsigned.  Order
+     * is loose — `LLU`, `ULL`, `LUL`, `lLu` all accepted. */
+    n_l = 0;
+    lex_val_u = 0;
+    while (np < te) {
+        ch = *np & 255;
+        if (ch == 'L' || ch == 'l') n_l = n_l + 1;
+        else if (ch == 'U' || ch == 'u') lex_val_u = 1;
+        else break;
+        np = np + 1;
+    }
     lex_tok = TK_NUM;
-    lex_val = val;
+    lex_val = (int)val;
+    lex_val_hi = (int)(val >> 32);
+    lex_val_ll = (n_l >= 2) ? 1 : 0;
 }
 
 /* === Helper: decimal to IEEE 754 binary32 (32-bit int only) === */
