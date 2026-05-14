@@ -761,8 +761,10 @@ SELFHOST_EMU=$PWD/../../tools/emulator/slow32-fast \
 
 **Status**: three MMIO operations added to `libc_a64/mmio_ring_a64.c`
 on 2026-05-09 — root-cause was a deliberately stripped MMIO ring stub,
-not a syscall bug. Each fix uncovered the next layer.  See #44 for
-the remaining issue (s32-as.s32x hangs at startup under dbt-a64).
+not a syscall bug. Each fix uncovered the next layer.  The follow-up
+`s32-as.s32x` startup hang was tracked as #44 (now FIXED, 2026-05-14)
+and was unrelated to MMIO — a shared cc-a64/cc-x64 codegen bug, not
+another shim gap.
 
 **Layer 1 — STAT [FIXED]**: original symptom on Forth kernel +
 selfhost stage02 was `Error line 0 : cannot stat input file`. Cross
@@ -805,45 +807,71 @@ FTH
 # rc=96, no error, /tmp/crt0.s32o is 356 bytes (text=48 data=0 bss=0 syms=2)
 ```
 
-### 44. [OPEN] `dbt-a64` hangs at startup running `stage02/s32-as.s32x`
+### 44. [FIXED] `dbt-a64` hangs at startup running `stage02/s32-as.s32x`
 
-**Status**: open as of 2026-05-09. Surfaces after #43 layers 1-3 are
-fixed.
+**Status**: fixed by `b94598cf` ("inherit continue target across switch",
+2026-05-14, originally landed as a cc-x64 self-host fix), verified
+on macOS / Apple Silicon 2026-05-14 by rebuilding `dbt-a64` with the
+current cc-a64 and running both the original hang reproducer and the
+stage02-step-2 bootstrap workflow in a Linux ARM64 container.
 
-**Symptom**: small s32x programs run fine under dbt-a64
-(hello_minimal.s32x, test1.s32x, cc-min.s32x all complete cleanly).
-But `selfhost/stage02/s32-as.s32x` (the canonical 83832-byte C
-assembler) hangs at startup — even invoked with no args, it never
-prints "Usage:", `dbt-a64 -v` shows the load info but no further
-output. Same binary under `tools/dbt/slow32-dbt` runs the no-args
-path in 28 ms. Effect: stage02 builds s32-as.s32x correctly, but the
-freshly-built C assembler can't be used to bootstrap s32-ar.s32x.
+**Root cause**: same cc-x64/cc-a64 codegen bug as Bug B in #49.
+`selfhost/stage07/hir_lower.h` (symlinked into both
+`stage07-cross/` and `stage07-cross-a64/`) was lowering `continue`
+inside a `case` inside a `while` to a branch targeting whichever
+stale value happened to sit in `hl_cont_blk[hl_loop_depth - 1]` —
+typically the function entry block.  `tools/dbt/translate.c` has
+several `while (...) switch (...) case OP_X: ... continue;` shapes,
+and cc-a64's miscompile of those was producing JIT prologue
+re-entry loops on translation paths that only large guests
+(stage02/s32-as.s32x) exercise.  Small inputs
+(hello_minimal/test1) translate enough blocks via the simple
+non-`continue` paths to make progress before any miscompiled site
+fires, which is why they ran fine.
 
-**Why it matters**: blocks dbt-a64 from completing the selfhost
-sweep. Stage01 verifies but stage02 fails at step 2.
+**Fix**: ND_SWITCH lowering now inherits the parent's continue
+target on switch entry, and ND_CONTINUE fails loudly instead of
+branching to a garbage block when there is no enclosing loop.
+Validated by a minimal C reproducer that infinite-loops pre-fix and
+prints "OK" post-fix.  Because `hir_lower.h` is symlinked into the
+a64 cross-compiler tree, the cc-x64-side fix flowed straight in.
 
-**Suspected cause**: not an MMIO gap (s32-as.s32x doesn't print
-anything before main, so the hang is before any I/O syscall). More
-likely a dbt-a64 codegen bug — some SLOW-32 instruction or block
-shape that only this larger binary exercises. The translator is
-lazy; the failure could be in a translate-to-a64 path that rarely
-fires. Worth running with `-v -s` to see whether translation events
-stop, and instrumenting `dbt-a64`'s own translator to log the last
-SLOW-32 PC before the hang.
+**Verification on macOS**:
+- `dbt-a64 -v selfhost/stage02/s32-as.s32x` now translates 50
+  blocks, reaches `main`, and prints `Usage: s32-as <input.s>
+  <output.s32o>` (exit 1) instead of hanging at startup.
+- `dbt-a64 selfhost/stage02/s32-as.s32x selfhost/stage02/crt0.s
+  /tmp/crt0.s32o` produces a 356-byte object whose sha256 matches
+  the native `slow32` emulator byte-for-byte
+  (`530b91bafec90932caba5027bf328129f261efb73d3035fa0240adb0caf702db`).
+- `hello_minimal.s32x` and `test1.s32x` still run correctly — no
+  regression on the previously-working small inputs.
 
-**Reproducer**:
+Two small Mac-only portability gaps were also fixed alongside the
+verification: `3b2f0df4` declared `getenv` in `cc-a64.c` for
+strict-host compilers (Apple clang), and `db130a75` added
+`getrlimit`/`setrlimit` wrappers via `prlimit64` to `libc_a64`
+(AArch64's asm-generic syscall table has no legacy variants;
+`dbt.c`'s `RLIMIT_STACK` raise from `469f8486` needs them).  Neither
+was the root-cause fix; both unblocked the rebuild.
+
+**Reproducer (now passes)**:
 ```bash
-timeout 5 selfhost/stage07-cross-a64/out/dbt-a64 -v \
-  selfhost/stage02/s32-as.s32x 2>&1 | head -10
-# Loaded: ...s32-as.s32x
-#   Code limit:  0x00100000
-#   ...
-# (then nothing — hangs until SIGTERM)
-#
-# Reference (works in 28 ms):
-timeout 5 tools/dbt/slow32-dbt selfhost/stage02/s32-as.s32x
-# → "Usage: s32-as <input.s> <output.s32o>"
+cd selfhost/stage07-cross-a64 && make dbt
+# Linux ARM64 container (e.g. podman/docker):
+./out/dbt-a64 -v selfhost/stage02/s32-as.s32x
+# → "Usage: s32-as <input.s> <output.s32o>", exit 1
+
+./out/dbt-a64 selfhost/stage02/s32-as.s32x \
+              selfhost/stage02/crt0.s /tmp/crt0.s32o
+# → 356-byte /tmp/crt0.s32o, sha256 530b91ba…
 ```
+
+**Followup (separate issue)**: dbt-a64's `-s` stats output prints
+some format strings verbatim (`Time: %.3f seconds`, `Cache
+lookups: %lu`, etc.) — integer `%d`/`%u` work but `%f` and `%lu`
+don't.  Looks like a libc_a64 `printf` gap, not a JIT correctness
+issue.
 
 ### 45. [FIXED] `dbt-x64` (cc-x64 cross-compiled) stage-4 reg-cache hang
 
@@ -1105,8 +1133,13 @@ snapshot, with a corrupted loop/local index — same cc-x64 codegen
 family (likely another `continue`-shaped or for-loop iteration bug),
 distinct surface.
 
-**Comparison to #44**: still strictly more progress than `dbt-a64`,
-which hangs at startup on `stage02/s32-as.s32x` with no I/O signal.
+**Comparison to #44**: as of 2026-05-14 dbt-a64 has overtaken
+dbt-x64 on the stage02 path — once cc-a64 picked up the shared
+`hir_lower.h` Bug B fix (continue-in-switch), dbt-a64 runs
+`s32-as.s32x` end-to-end and produces byte-identical output to the
+native emulator (#44 FIXED).  dbt-x64 still SIGSEGVs at `-4`/`-5`
+due to Bugs C and D, which surface on cc-x64 codegen paths the
+a64 backend doesn't share.
 
 **Reproducer** (unchanged from original):
 ```bash
