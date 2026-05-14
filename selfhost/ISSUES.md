@@ -1177,6 +1177,42 @@ FTH
   in chained-early-out loops) remains latent — Bug B is a
   workaround at the use site, not a fix in the compiler.
 
+### 50. [OPEN] cc-a64 (and likely cc-x64) truncates 64-bit integer literals
+
+**Status**: surfaced 2026-05-14 while testing the snp_core %llu mirror
+in `6a27fbef`.  Runtime-built 64-bit values format correctly through
+the patched `fmt_int64` / `snp_emit_int64`, but bare literals are
+silently lost in the front end.
+
+**Symptom**:
+```c
+snprintf(buf, sz, "%llu", 12345678901234ULL);  /* prints 1942892530 */
+snprintf(buf, sz, "%llx", 0xDEADBEEFCAFELL);  /* prints beefcafe   */
+```
+
+Both lose the high 32 bits.  Building the same value via runtime
+arithmetic (`((u64)0xABCD << 32) | 0x12345678ULL`) and printing with
+`%llu` / `%llx` works correctly (`188897262065272` / `abcd12345678`).
+So the truncation happens in the literal-parsing path, not in 64-bit
+arithmetic or in fmt_core.
+
+**Why it matters**: low-priority for dbt-a64 — its 64-bit values
+come from runtime counters incremented in memory, not literals.  But
+any code with constants > 2^32 (timestamps, large hash seeds,
+masks, magic numbers) silently miscompiles.
+
+**Likely location**: shared lexer (`selfhost/stage07/c_lexer.rl`) or
+the integer-literal node in the shared parser (`stage07/parser.h`,
+symlinked into both cc-x64 and cc-a64 trees).  The ULL / LL suffix
+parsing exists (cc-a64 handles it as a TY_LLONG annotation) but the
+numeric value appears to be accumulated as 32-bit `int` somewhere
+before the type is stamped on.
+
+**Recommendation**: trace `HI_ICONST` emission for a literal like
+`0xDEADBEEFCAFELL` and confirm whether the high bits are lost in
+lex_int / nd_iconst.  Fix is likely a single field-widening in the
+lexer's accumulator.
+
 ---
 
 ## Section C: Missing Language / ABI Surface (Feature Backlog)
@@ -1260,6 +1296,64 @@ this was an evaluation, not a port.
 
 **Recommendation**: address only when forced by a real customer.
 Compound literals are the next most likely C dialect blocker.
+
+### 48. [DEFERRED] cc-a64 callee-side variadic functions
+
+**Status**: deferred 2026-05-14.  The caller-side ABI works — cc-a64
+correctly lowers `fprintf(f, "%d %f", i, x)` per AAPCS64 (int in
+X-class via NGRN, double in V-class via NSRN, independent counters).
+What's missing is the *callee* side: a function declared with `...`
+can't access its variadic args because `HI_VA_START` / `HI_VA_ARG` /
+`HI_VA_NEXT` aren't implemented in `hir_codegen_a64.h` (cc-x64
+implements all three; see `hir_codegen_x64.h:1955..2050`).  The
+prologue stub at `hir_codegen_a64.h:3446` is the placeholder
+(`+ 16 if varargs (TBD)`).
+
+**Workaround in use today**: libc's `fprintf` / `printf` / `snprintf`
+are declared variadic in the header (`stdio.h`) but defined
+fixed-arity with eight `char *` slots (`stdio.c`, `libc_extra.c`).
+Integer / pointer args route through correctly; doubles land in V0..V7
+where the fixed-arity callee can't see them.  Hence the `?` placeholder
+for `%f` added in commits `9789a448` (fmt_core) and `6a27fbef`
+(snp_core).
+
+**Why it's deferred**: cc-a64's primary mission is compiling dbt-a64
+so that dbt-a64 can execute `.s32x` code on ARM64.  No current
+in-tree code needs to *write* a variadic function in C compiled by
+cc-a64; everything variadic-shaped goes through the libc shim above.
+Eventually wanted, just not blocking anything.
+
+**Recommendation when picked up**:
+- Mirror cc-x64's HI_VA_* lowering in `hir_codegen_a64.h`.
+- Generate the AAPCS64 register save area at function entry (16 GPRs
+  × 8 bytes + 16 V regs × 16 bytes = 384 bytes worst case, less if
+  fewer named-arg slots remain).
+- `va_arg` reads from the gp / vr save area until exhausted, then
+  the overflow stack area — same as the AAPCS64 reference.
+
+### 49. [DEFERRED] libc printf `%f` / `%g` / `%e` (full float formatting)
+
+**Status**: deferred 2026-05-14.  Blocked by #48 (no callee-side
+variadic → can't read doubles from V regs).  Once #48 lands, replace
+the `?` placeholder in `fmt_core` / `snp_core` with a real
+float-to-string routine.
+
+**Implementation sketch**: `runtime/printf_enhanced.c` already has a
+TinyMUX-derived implementation using David Gay's dtoa
+(`runtime/dtoa.c`, 6250 lines) for accurate float-to-string.  Too
+heavy for the cc-a64 libc.  Sufficient alternatives:
+
+  - Plain `%.Nf` only: multiply by 10^N, round to nearest, split
+    integer and fractional halves, format each as int.  Loses
+    precision for very large or very small values but covers the
+    dbt-style stats use cases (`Time: 0.054 seconds`,
+    `Performance: 178.4 MIPS`).
+  - For `%g` / `%e`: still need an exponent-extraction step.  Defer
+    until needed.
+
+**Why it's deferred**: same as #48 — not on the dbt-a64 critical
+path.  The current `?` placeholder is informative enough that the
+stats output is readable.  Eventually wanted, just not today.
 
 ---
 
