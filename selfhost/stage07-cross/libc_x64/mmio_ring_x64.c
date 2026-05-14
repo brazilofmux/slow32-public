@@ -7,11 +7,12 @@
  *
  *   - PUTCHAR / WRITE / FLUSH      → host stdout/stderr/fd
  *   - GETCHAR / READ               → host fd
- *   - OPEN / CLOSE                 → openat/close (paths only — no flags translation)
+ *   - OPEN / CLOSE / SEEK          → host file operations
+ *   - STAT                         → stat/fstat metadata, repacked for guest
  *   - EXIT                         → halts the guest
  *   - ARGS_INFO/DATA, ENVP_INFO/DATA, GETENV
  *
- * Everything else (stat, seek, dirent, time, sockets, services) responds
+ * Everything else (seek, dirent, time, sockets, services) responds
  * with S32_MMIO_STATUS_ERR.  The struct layout matches mmio_ring.h exactly
  * so dbt's direct field access (req_ring/resp_ring/data_buffer/base_addr)
  * keeps working.
@@ -103,6 +104,9 @@ int   write(int fd, char *buf, int len);
 int   read(int fd, char *buf, int len);
 int   open(char *path, int flags, int mode);
 int   close(int fd);
+int   lseek(int fd, int offset, int whence);
+int   stat(char *path, char *buf);
+int   fstat(int fd, char *buf);
 int   strlen(char *s);
 int   strcmp(char *a, char *b);
 int   strncmp(char *a, char *b, int n);
@@ -282,6 +286,14 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
     char namebuf[256];
     char *envp_p;
     uint32_t consumed;
+    int rc_stat;
+    char stat_buf[144];
+    s32_mmio_stat_result_t stat_result;
+    int s32_flags;
+    int linux_flags;
+    int whence;
+    int distance;
+    int new_pos;
 
     resp.opcode = req->opcode;
     resp.length = 0;
@@ -321,15 +333,24 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
         if (rc == 1) { resp.length = 1; resp.status = S32_MMIO_STATUS_OK; }
         else if (rc == 0) resp.status = S32_MMIO_STATUS_EOF;
     } else if (req->opcode == S32_MMIO_OP_OPEN) {
-        /* Path is a NUL-terminated string at data_buffer+off; status carries
-         * the open(2) flags as an int. Mode hardcoded to 0644 since cc-a64's
-         * open() is openat(AT_FDCWD, ...). */
+        /* Path is a NUL-terminated string at data_buffer+off; req->status is
+         * SLOW-32 open flags (0x01 read, 0x02 write, 0x04 append, 0x08 create,
+         * 0x10 trunc), not Linux open(2) flags. */
         if (len <= 256) {
+            s32_flags = (int)req->status;
+            linux_flags = 0;
+            if ((s32_flags & 0x02) != 0) {
+                if ((s32_flags & 0x01) != 0) linux_flags = 2;  /* O_RDWR */
+                else linux_flags = 1;                          /* O_WRONLY */
+            }
+            if ((s32_flags & 0x04) != 0) linux_flags = linux_flags | 0x400;  /* O_APPEND */
+            if ((s32_flags & 0x08) != 0) linux_flags = linux_flags | 0x40;   /* O_CREAT */
+            if ((s32_flags & 0x10) != 0) linux_flags = linux_flags | 0x200;  /* O_TRUNC */
             for (i = 0; i < len && i < 255; i = i + 1) {
                 namebuf[i] = (char)mmio->data_buffer[(off + i) % S32_MMIO_DATA_CAPACITY];
             }
             namebuf[i] = 0;
-            host_fd = open(namebuf, (int)req->status, 0644);
+            host_fd = open(namebuf, linux_flags, 0644);
             if (host_fd >= 0) {
                 guest_fd = alloc_guest_fd(mmio, host_fd);
                 if (guest_fd >= 0) {
@@ -352,6 +373,59 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
             resp.status = S32_MMIO_STATUS_OK;
         } else if (guest_fd >= 0 && guest_fd < 3) {
             /* don't actually close stdin/stdout/stderr */
+            resp.status = S32_MMIO_STATUS_OK;
+        }
+    } else if (req->opcode == S32_MMIO_OP_SEEK) {
+        if (len >= 8 && off + 8 <= S32_MMIO_DATA_CAPACITY) {
+            host_fd = host_fd_for(mmio, req->status);
+            if (host_fd >= 0) {
+                whence = (int)mmio->data_buffer[off];
+                distance = 0;
+                memcpy((char *)&distance, (char *)(mmio->data_buffer + off + 4), 4);
+                new_pos = lseek(host_fd, distance, whence);
+                if (new_pos >= 0) resp.status = (uint32_t)new_pos;
+            }
+        }
+    } else if (req->opcode == S32_MMIO_OP_STAT) {
+        rc_stat = -1;
+        if (req->status == S32_MMIO_STAT_PATH_SENTINEL) {
+            if (len > 0 && len <= 256) {
+                for (i = 0; i < len && i < 255; i = i + 1) {
+                    namebuf[i] = (char)mmio->data_buffer[(off + i) % S32_MMIO_DATA_CAPACITY];
+                }
+                namebuf[i] = 0;
+                rc_stat = stat(namebuf, stat_buf);
+            }
+        } else {
+            host_fd = host_fd_for(mmio, req->status);
+            if (host_fd >= 0) rc_stat = fstat(host_fd, stat_buf);
+        }
+        if (rc_stat == 0 && off + sizeof(stat_result) <= S32_MMIO_DATA_CAPACITY) {
+            memset((char *)&stat_result, 0, sizeof(stat_result));
+            /* Linux x86-64 kernel struct stat raw byte layout:
+             * dev@0, ino@8, nlink@16, mode@24, uid@28, gid@32,
+             * rdev@40, size@48, blksize@56, blocks@64,
+             * atime@72/nsec@80, mtime@88/nsec@96, ctime@104/nsec@112.
+             */
+            memcpy((char *)&stat_result.st_dev,        stat_buf + 0,   8);
+            memcpy((char *)&stat_result.st_ino,        stat_buf + 8,   8);
+            memcpy((char *)&stat_result.st_mode,       stat_buf + 24,  4);
+            memcpy((char *)&stat_result.st_nlink,      stat_buf + 16,  4);
+            memcpy((char *)&stat_result.st_uid,        stat_buf + 28,  4);
+            memcpy((char *)&stat_result.st_gid,        stat_buf + 32,  4);
+            memcpy((char *)&stat_result.st_rdev,       stat_buf + 40,  8);
+            memcpy((char *)&stat_result.st_size,       stat_buf + 48,  8);
+            memcpy((char *)&stat_result.st_blksize,    stat_buf + 56,  8);
+            memcpy((char *)&stat_result.st_blocks,     stat_buf + 64,  8);
+            memcpy((char *)&stat_result.st_atime_sec,  stat_buf + 72,  8);
+            memcpy((char *)&stat_result.st_atime_nsec, stat_buf + 80,  4);
+            memcpy((char *)&stat_result.st_mtime_sec,  stat_buf + 88,  8);
+            memcpy((char *)&stat_result.st_mtime_nsec, stat_buf + 96,  4);
+            memcpy((char *)&stat_result.st_ctime_sec,  stat_buf + 104, 8);
+            memcpy((char *)&stat_result.st_ctime_nsec, stat_buf + 112, 4);
+            memcpy((char *)(mmio->data_buffer + off), (char *)&stat_result,
+                   sizeof(stat_result));
+            resp.length = sizeof(stat_result);
             resp.status = S32_MMIO_STATUS_OK;
         }
     } else if (req->opcode == S32_MMIO_OP_FLUSH) {
