@@ -1004,6 +1004,40 @@ distinct cc-x64 / shim issues, two fixed, two open:
     Bug B — these are `if (pattern) { ... continue; }` chains inside
     a `while`, no enclosing `switch`).
 
+**Bug C/D investigation findings (2026-05-14, deeper repro)**:
+
+  - Smaller reproducer found: `dbt-x64 -4
+    selfhost/stage01/test1.s32x` SIGSEGVs (without any Forth pipeline).
+    The trigger on this workload is `reg_cache_enabled` alone:
+    `-4 -R` succeeds and prints "Hello, World!"; `-4` alone crashes.
+    On `stage02/crt0.s` the trigger was `superblock_enabled` or
+    `peephole_enabled`; on test1 it's `reg_cache_enabled`. So
+    multiple independent cc-x64 codegen bugs surface on different
+    code shapes.
+  - Crash site narrowed: translating guest pc=0xBC of test1.s32x
+    (main's prologue), specifically during `translate_jalr` (op=0x41,
+    `jalr lr, r2, 48`, the call to `print_str`).
+  - **Heisenbug**: adding any `fprintf` call inside `translate_jalr`
+    eliminates the crash. Adding only `volatile int probe1 = 0` or a
+    64-byte stack array does NOT eliminate it. This points to either
+    register-state corruption (the function call save/restore mask
+    fixes things) or a stack/heap layout sensitivity that small
+    fprintf side effects perturb.
+  - The bug is NOT in JIT-emitted code (crash host PC is in dbt-x64's
+    own `.text` segment, around 0x458240 / 0x4769f1, well below the
+    JIT mmap region at 0x1000040+). So it's cc-x64 miscompiling
+    something in `translate.c` itself — not generated x86-64.
+
+Further investigation paths (deferred): (1) build dbt-x64 with all
+its translation-unit objects compiled by gcc except one at a time,
+to identify which cc-x64-built `.o` exhibits the bug; (2) look for
+cc-x64 codegen patterns in `translate_jalr`'s region that diverge
+from gcc — especially around the `bool is_return = (rd == 0 && rs1
+== REG_LR && imm == 0)` boolean expression, since cc-x64 had a
+`sizeof(bool) == 4` bug fixed in `f09e7140` and a regression here
+is plausible; (3) instrument with AddressSanitizer (requires gcc
+build of the same .o set first).
+
 **Mode-by-mode after Bug A + Bug B fixes**:
 
 | dbt-x64 mode | guest input          | rc  | output                                         |
