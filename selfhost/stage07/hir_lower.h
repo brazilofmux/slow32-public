@@ -1959,8 +1959,18 @@ static void hl_stmt(Node *n) {
             def_blk = brk_blk;
         }
 
-        /* Push break target */
+        /* Push break target. A switch only provides `break`, not
+         * `continue` — `continue` must skip past the switch and reach
+         * the enclosing loop. Inherit the parent's continue target
+         * (or -1 if there is no enclosing loop) so that `continue`
+         * inside a `case` body doesn't read stale hl_cont_blk[] data.
+         */
         hl_break_blk[hl_loop_depth] = brk_blk;
+        if (hl_loop_depth > 0) {
+            hl_cont_blk[hl_loop_depth] = hl_cont_blk[hl_loop_depth - 1];
+        } else {
+            hl_cont_blk[hl_loop_depth] = -1;
+        }
         hl_loop_depth = hl_loop_depth + 1;
 
         /* Evaluate switch expression */
@@ -2024,7 +2034,8 @@ static void hl_stmt(Node *n) {
 
     /* Continue */
     if (n->kind == ND_CONTINUE) {
-        if (hl_loop_depth < 1) p_error("continue outside loop");
+        if (hl_loop_depth < 1 || hl_cont_blk[hl_loop_depth - 1] < 0)
+            p_error("continue outside loop");
         hi_emit(HI_BR, 0, -1, -1, hl_cont_blk[hl_loop_depth - 1], NULL);
         return;
     }
