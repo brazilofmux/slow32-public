@@ -608,6 +608,117 @@ static void hx_param_to_spill(int spill_off, int param_inst, int param_idx, int 
 }
 
 /* ============================================================================
+ * Tail call detection + inline epilogue
+ *
+ * Mirrors hcg_is_tailcall() / hcg_emit_epilogue_inline() in hir_codegen.h.
+ * Without TCO, every `return foo(...)` consumes a host stack frame.  In
+ * dbt-x64 this caused unbounded stack growth on chained dispatch paths
+ * (translate_branch_common → translate_jalr → ...), eventually exhausting
+ * even a 256 MB ulimit on the Forth/stage02 self-host workload.
+ * ============================================================================ */
+
+/* Returns 1 if `inst`'s value is statically derivable from the current
+ * frame (i.e., is or contains an HI_ALLOCA address).  Such values become
+ * dangling pointers across a tail call — passing them as an arg would let
+ * the callee read/write our destroyed locals.  Stops the walk at HI_LOAD /
+ * HI_CALL / HI_PHI, where the value is no longer statically known to be
+ * frame-derived. */
+static int hx_expr_points_to_frame(int inst, int depth) {
+    int k;
+    if (inst < 0) return 0;
+    if (depth > 8) return 1;                  /* be conservative on giveup */
+    k = h_kind[inst];
+    if (k == HI_ALLOCA) return 1;
+    if (k == HI_LOAD) return 0;               /* loaded value: unknown */
+    if (k == HI_CALL || k == HI_CALLP) return 0;
+    if (k == HI_PHI) return 0;
+    if (hx_expr_points_to_frame(h_src1[inst], depth + 1)) return 1;
+    if (hx_expr_points_to_frame(h_src2[inst], depth + 1)) return 1;
+    return 0;
+}
+
+/* Returns 1 if the CALL at idx is immediately followed by RET(CALL_result)
+ * in the same basic block, with no CALLHI and no stack-spilled args. */
+static int hx_is_tailcall(int idx) {
+    int blk;
+    int end;
+    int j;
+    int jk;
+    int nargs;
+    int base;
+    int ai;
+
+    /* Conservative guards */
+    if (hx_is_varargs) return 0;             /* varargs caller — leave alone */
+    nargs = h_val[idx];
+    if (nargs > 6) return 0;                  /* stack args — too complex to TCO */
+
+    /* If any arg points into our local frame (e.g., `&local`, a local
+     * array, `&local.field`), we cannot tail-call: tearing down our frame
+     * before the jump leaves the callee dereferencing freed stack.
+     * Concrete case observed: fprintf does
+     *   return fmt_core(fmt, args, fmt_putc_file, &ctx);
+     * where `args` is a local char*[8] and `&ctx` is a local pointer. */
+    base = h_cbase[idx];
+    ai = 0;
+    while (ai < nargs) {
+        if (hx_expr_points_to_frame(h_carg[base + ai], 0)) return 0;
+        ai = ai + 1;
+    }
+
+    /* No tail call from a frameless function: there's nothing to undo,
+     * and emitting an inline epilogue when hx_no_frame is set would emit
+     * a pop %rbp that was never pushed.  A direct `jmp` works either
+     * way; let the normal call+ret path handle frameless callers (it's
+     * already optimal for them — RAX returns via the trailing ret). */
+    /* Actually frameless is still fine for TCO: just emit jmp and skip
+     * the epilogue.  But the no_frame fast path in the CALL emitter
+     * doesn't push/save anything, so jmp directly preserves correctness. */
+
+    blk = h_blk[idx];
+    end = bb_end[blk];
+
+    /* Scan forward for next non-NOP instruction */
+    j = idx + 1;
+    while (j < end && h_kind[j] == HI_NOP) j = j + 1;
+    if (j >= end) return 0;
+    jk = h_kind[j];
+
+    /* CALLHI follows = 64-bit return needed; can't tail-call (caller
+     * expects to read RDX too).  On x86-64 the full 64-bit return is in
+     * RAX anyway, but the HIR layer still emits a CALLHI; keep the guard
+     * for ABI parity with the SLOW-32 backend. */
+    if (jk == HI_CALLHI) return 0;
+
+    /* Must be RET whose value is exactly this CALL's result. */
+    if (jk != HI_RET) return 0;
+    if (h_src1[j] != idx) return 0;
+    if (h_src2[j] >= 0) return 0;             /* 64-bit hi-word return */
+
+    return 1;
+}
+
+/* Emit the in-line epilogue used by tail calls.  Same as the function's
+ * normal epilogue but without the trailing RET — the caller's RET (or, for
+ * a tail call, the callee's eventual RET) takes care of returning. */
+static void hx_emit_epilogue_inline(void) {
+    int i;
+
+    if (hx_no_frame) return;                  /* nothing to restore */
+
+    /* Restore callee-saved registers in the same order the epilogue uses. */
+    i = 0;
+    while (i < ra_ncsave) {
+        x64_mov_rm64(ra_csave_reg[i], X64_RBP, ra_csave_off[i]);
+        i = i + 1;
+    }
+
+    /* Tear down frame: rsp ← rbp; pop rbp. */
+    x64_mov_rr64(X64_RSP, X64_RBP);
+    x64_pop(X64_RBP);
+}
+
+/* ============================================================================
  * Instruction emission
  * ============================================================================ */
 
@@ -1525,7 +1636,9 @@ static void hx_emit_inst(int idx) {
     if (k == HI_CALL || k == HI_CALLP) {
         int temp_bytes;
         int pad;
+        int is_tail;
         nargs = h_val[idx];
+        is_tail = hx_is_tailcall(idx);
 
         /* For indirect call, save callee address first.
          * Use hx_src to avoid clobbering allocatable registers. */
@@ -1588,6 +1701,46 @@ static void hx_emit_inst(int idx) {
                     j = j + 1;
                 }
             }
+        }
+
+        /* --- Tail call: skip ret, jump straight to callee ---
+         * Stack invariant at this point:
+         *   Fast path: args already in arg regs, nothing pushed.
+         *   Slow path (nstack==0): nargs*8 + pad bytes of temp data on
+         *   stack (the args we just pushed and reloaded), plus 8 bytes
+         *   above that for CALLP's saved callee.
+         * For the tail jmp we must: (a) get the callee into a scratch
+         * register if indirect, (b) pop the temp area, (c) restore
+         * callee-saves + frame, (d) jmp.  No `add rsp, cleanup` after
+         * because we never come back. */
+        if (is_tail) {
+            /* For CALLP, recover the callee address before we pop. */
+            if (k == HI_CALLP) {
+                x64_mov_rm64(X64_RAX, X64_RSP, outgoing + nargs * 8);
+            }
+            /* Drop slow-path temp area (mirrors normal cleanup but pre-jump). */
+            if (nstack > 0 || k == HI_CALLP) {
+                int cleanup;
+                cleanup = nargs * 8 + outgoing;
+                if (k == HI_CALLP) cleanup = cleanup + 8;
+                if (cleanup > 0) x64_add_ri64(X64_RSP, cleanup);
+            }
+            /* Inline epilogue: restore callee-saves and tear down frame. */
+            hx_emit_epilogue_inline();
+            /* Jump in place of call. */
+            if (k == HI_CALLP) {
+                x64_jmp_r(X64_RAX);
+            } else {
+                /* Direct jmp rel32 — same R_X86_64_PC32 patch shape as
+                 * the call below (both have a 4-byte displacement at off+1
+                 * relative to off+5). */
+                x64_byte(0xE9);
+                cg_cpatch_name[cg_ncpatches] = h_name[idx];
+                cg_cpatch_off[cg_ncpatches] = x64_off;
+                cg_ncpatches = cg_ncpatches + 1;
+                x64_dword(0);
+            }
+            return;
         }
 
         /* Emit the call */
