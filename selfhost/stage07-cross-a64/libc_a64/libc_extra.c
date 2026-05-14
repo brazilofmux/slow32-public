@@ -249,11 +249,56 @@ static void snp_emit_hex(unsigned int val, int width, int zero_pad, int upper,
     while (i > 0) { i = i - 1; snp_putc(buf[i], ctx); }
 }
 
+/* 64-bit integer emit — mirrors fmt_int64 in stdio.c.  Single base
+ * parameter (10 or 16); upper selects hex case (ignored for decimal). */
+static void snp_emit_int64(long long val, int is_unsigned, int base,
+                           int width, int zero_pad, int upper, char **ctx) {
+    char buf[24];
+    int i; int neg;
+    unsigned long long uval;
+    int len; int pad; int d;
+    char *digits;
+
+    digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    neg = 0;
+    if (!is_unsigned && val < 0) {
+        neg = 1;
+        uval = (unsigned long long)(0 - val);
+    } else {
+        uval = (unsigned long long)val;
+    }
+    i = 0;
+    if (uval == 0) { buf[i] = '0'; i = i + 1; }
+    else {
+        while (uval > 0) {
+            d = (int)(uval % (unsigned long long)base);
+            buf[i] = digits[d];
+            uval = uval / (unsigned long long)base;
+            i = i + 1;
+        }
+    }
+    len = i;
+    if (neg) len = len + 1;
+    pad = width - len;
+    if (pad < 0) pad = 0;
+    if (!zero_pad) while (pad > 0) { snp_putc(' ', ctx); pad = pad - 1; }
+    if (neg) snp_putc('-', ctx);
+    if (zero_pad) while (pad > 0) { snp_putc('0', ctx); pad = pad - 1; }
+    while (i > 0) { i = i - 1; snp_putc(buf[i], ctx); }
+}
+
+/* Sibling of stdio.c's fmt_core.  See the comment there for the rules
+ * on `ll`, `.N`, and the `%f` placeholder — same logic, same caveats
+ * (variadic doubles live in V regs and never reach the X-class args[]
+ * array, so `%f` prints '?' without consuming an arg). */
 static int snp_core(char *fmt, char **args, char *buf, int size) {
     char *ctx[2];
     int written;
     int ai;
     int width; int zero_pad;
+    int is_ll;
+    int precision;
+    int has_prec;
     char *cur_start;
 
     if (size <= 0) return 0;
@@ -281,22 +326,49 @@ static int snp_core(char *fmt, char **args, char *buf, int size) {
             width = width * 10 + (*fmt - '0');
             fmt = fmt + 1;
         }
-        if (*fmt == 'l') fmt = fmt + 1;
+        /* Optional .N precision — parsed but only consumed by the %f
+         * placeholder, which doesn't currently use it. */
+        precision = 0;
+        has_prec = 0;
+        if (*fmt == '.') {
+            has_prec = 1;
+            fmt = fmt + 1;
+            while (*fmt >= '0' && *fmt <= '9') {
+                precision = precision * 10 + (*fmt - '0');
+                fmt = fmt + 1;
+            }
+        }
+        (void)precision;
+        (void)has_prec;
+        /* Length modifier: ll for 64-bit; bare l treated as no-modifier
+         * (long == int on the s12cc subset).  z/j/t skipped as size_t /
+         * intmax_t / ptrdiff_t are 32-bit here. */
+        is_ll = 0;
+        if (*fmt == 'l') {
+            fmt = fmt + 1;
+            if (*fmt == 'l') { is_ll = 1; fmt = fmt + 1; }
+        } else if (*fmt == 'z' || *fmt == 'j' || *fmt == 't') {
+            fmt = fmt + 1;
+        }
         if (*fmt == 'd' || *fmt == 'i') {
-            snp_emit_int((int)(long)args[ai], 0, 10, width, zero_pad, ctx);
+            if (is_ll) snp_emit_int64((long long)args[ai], 0, 10, width, zero_pad, 0, ctx);
+            else       snp_emit_int((int)(long)args[ai], 0, 10, width, zero_pad, ctx);
             ai = ai + 1;
         } else if (*fmt == 'u') {
-            snp_emit_int((int)(long)args[ai], 1, 10, width, zero_pad, ctx);
+            if (is_ll) snp_emit_int64((long long)args[ai], 1, 10, width, zero_pad, 0, ctx);
+            else       snp_emit_int((int)(long)args[ai], 1, 10, width, zero_pad, ctx);
             ai = ai + 1;
         } else if (*fmt == 'x') {
-            snp_emit_hex((unsigned int)(long)args[ai], width, zero_pad, 0, ctx);
+            if (is_ll) snp_emit_int64((long long)args[ai], 1, 16, width, zero_pad, 0, ctx);
+            else       snp_emit_hex((unsigned int)(long)args[ai], width, zero_pad, 0, ctx);
             ai = ai + 1;
         } else if (*fmt == 'X') {
-            snp_emit_hex((unsigned int)(long)args[ai], width, zero_pad, 1, ctx);
+            if (is_ll) snp_emit_int64((long long)args[ai], 1, 16, width, zero_pad, 1, ctx);
+            else       snp_emit_hex((unsigned int)(long)args[ai], width, zero_pad, 1, ctx);
             ai = ai + 1;
         } else if (*fmt == 'p') {
             snp_putc('0', ctx); snp_putc('x', ctx);
-            snp_emit_hex((unsigned int)(long)args[ai], 0, 0, 0, ctx);
+            snp_emit_int64((long long)args[ai], 1, 16, 0, 0, 0, ctx);
             ai = ai + 1;
         } else if (*fmt == 'c') {
             snp_putc((int)(long)args[ai], ctx);
@@ -306,6 +378,14 @@ static int snp_core(char *fmt, char **args, char *buf, int size) {
             if (!s) s = "(null)";
             while (*s) { snp_putc(*s, ctx); s = s + 1; }
             ai = ai + 1;
+        } else if (*fmt == 'f' || *fmt == 'F' ||
+                   *fmt == 'g' || *fmt == 'G' ||
+                   *fmt == 'e' || *fmt == 'E') {
+            /* FP placeholder — see fmt_core for the rationale.  Doubles
+             * pass in V regs and never enter the X-class args[] array,
+             * so we can't read the value; print '?' and don't advance
+             * the arg index. */
+            snp_putc('?', ctx);
         } else {
             snp_putc('%', ctx);
             snp_putc(*fmt, ctx);
