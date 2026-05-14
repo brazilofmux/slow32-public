@@ -1089,6 +1089,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
 
         // Stop at block-ending instructions
         bool is_block_end = false;
+        bool pc_already_advanced = false;
         switch (inst.opcode) {
             case OP_JAL: {
                 // Inline forward unconditional jumps (JAL r0) in prescan
@@ -1100,7 +1101,8 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                     inst_count < MAX_BLOCK_INSTS - 4) {
                     inst_count++;
                     pc = jal_target;
-                    continue;
+                    pc_already_advanced = true;
+                    break;
                 }
                 is_block_end = true;
                 break;
@@ -1172,8 +1174,10 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
             break;
         }
 
-        pc += 4;
-        inst_count++;
+        if (!pc_already_advanced) {
+            pc += 4;
+            inst_count++;
+        }
     }
 }
 
@@ -5000,16 +5004,18 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                 }
                 uint32_t warm = loop_regs;
                 for (int r = 1; r < 32 && warm; r++) {
-                    if (!(warm & (1u << r))) continue;
-                    warm &= ~(1u << r);
-                    if (rc_find(ctx, r) >= 0) continue; // already cached
-                    int slot = rc_alloc(ctx);
-                    ctx->reg_alloc[slot].guest_reg = (int8_t)r;
-                    ctx->reg_alloc[slot].dirty = false;
-                    ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
-                    ctx->reg_alloc_map[r] = (int8_t)slot;
-                    emit_mov_r32_m32(e, reg_alloc_hosts[slot], RBP,
-                                     GUEST_REG_OFFSET(r));
+                    if (warm & (1u << r)) {
+                        warm &= ~(1u << r);
+                        if (rc_find(ctx, r) < 0) {
+                            int slot = rc_alloc(ctx);
+                            ctx->reg_alloc[slot].guest_reg = (int8_t)r;
+                            ctx->reg_alloc[slot].dirty = false;
+                            ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+                            ctx->reg_alloc_map[r] = (int8_t)slot;
+                            emit_mov_r32_m32(e, reg_alloc_hosts[slot], RBP,
+                                             GUEST_REG_OFFSET(r));
+                        }
+                    }
                 }
 
                 // Snapshot AFTER pre-warm: all loop regs occupied + clean
@@ -6297,16 +6303,18 @@ retry_translate:
                 }
                 uint32_t warm = loop_regs;
                 for (int r = 1; r < 32 && warm; r++) {
-                    if (!(warm & (1u << r))) continue;
-                    warm &= ~(1u << r);
-                    if (rc_find(ctx, r) >= 0) continue;
-                    int slot = rc_alloc(ctx);
-                    ctx->reg_alloc[slot].guest_reg = (int8_t)r;
-                    ctx->reg_alloc[slot].dirty = false;
-                    ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
-                    ctx->reg_alloc_map[r] = (int8_t)slot;
-                    emit_mov_r32_m32(e, reg_alloc_hosts[slot], RBP,
-                                     GUEST_REG_OFFSET(r));
+                    if (warm & (1u << r)) {
+                        warm &= ~(1u << r);
+                        if (rc_find(ctx, r) < 0) {
+                            int slot = rc_alloc(ctx);
+                            ctx->reg_alloc[slot].guest_reg = (int8_t)r;
+                            ctx->reg_alloc[slot].dirty = false;
+                            ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+                            ctx->reg_alloc_map[r] = (int8_t)slot;
+                            emit_mov_r32_m32(e, reg_alloc_hosts[slot], RBP,
+                                             GUEST_REG_OFFSET(r));
+                        }
+                    }
                 }
 
                 for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
