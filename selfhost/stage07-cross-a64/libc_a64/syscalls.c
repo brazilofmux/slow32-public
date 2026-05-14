@@ -11,6 +11,8 @@
  * (the asm-generic table) — different from x86-64.
  */
 
+#include <sys/resource.h>
+
 long __syscall();
 
 int write(int fd, char *buf, int len) {
@@ -52,4 +54,20 @@ char *sys_brk(char *addr) {
 
 void exit(int code) {
     __syscall(93, code, 0, 0, 0, 0, 0);
+}
+
+/* AArch64's asm-generic table has no legacy getrlimit/setrlimit — only
+ * prlimit64 (261).  Wrap it so dbt.c's portable RLIMIT_STACK raise works.
+ * struct rlimit on this target is two unsigned longs (cur, max) — the same
+ * layout as the kernel's struct rlimit64 on 64-bit hosts, so we can pass
+ * `rlim` straight through. */
+
+int getrlimit(int resource, struct rlimit *rlim) {
+    /* prlimit64(0, resource, NULL, rlim) */
+    return __syscall(261, 0, resource, 0, rlim, 0, 0);
+}
+
+int setrlimit(int resource, struct rlimit *rlim) {
+    /* prlimit64(0, resource, rlim, NULL) */
+    return __syscall(261, 0, resource, rlim, 0, 0, 0);
 }
