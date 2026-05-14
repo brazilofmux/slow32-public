@@ -973,6 +973,69 @@ timeout 1 selfhost/stage07-cross-a64/out/s32fast-hir \
 #   slow32-dbt's 108-byte output.
 ```
 
+### 49. [OPEN] `dbt-x64` (cc-x64 cross-compiled) miscompiles `forth/kernel.s32x` on stage02 inputs
+
+**Status**: open as of 2026-05-14. Surfaces after #45 was fixed
+(a9e65701, "Fix HIR lowering after terminators"). `dbt-x64` passes
+stage01 of `selfhost/verify-emu-sums.sh` byte-identically — including
+running `forth/kernel.s32x` under stage01's smaller `asm.fth`
+workloads — but fails immediately at stage02 step `[1/4] Assemble
+runtime`.
+
+**Symptom**: assembling `selfhost/stage02/crt0.s` via
+`forth/kernel.s32x + stage01/asm.fth` through `dbt-x64` segfaults the
+host (rc=139). gcc-built `slow32-dbt` returns rc=96 (Forth BYE) and
+writes a 356-byte object file on the same input. Stage01's
+`crt0_minimal.s` — 36 lines vs stage02's 34, ~95% identical aside
+from comment text — does **not** trigger the bug. So the trigger is
+content-specific in the lexer path of `asm.fth`, not program size.
+
+**Two distinct failure modes on the same input**:
+
+| dbt-x64 mode | guest input | rc | output |
+| --- | --- | --- | --- |
+| default (stage 4 + reg cache) | stage02/crt0.s | **139 (SIGSEGV)** | none |
+| `-2` (block dispatch only)    | stage02/crt0.s | 96 (BYE) | **none — silent miscompile** |
+| default                       | stage01/crt0_minimal.s | 96 (BYE) | 356 bytes ✓ |
+| gcc `slow32-dbt`              | stage02/crt0.s | 96 (BYE) | 356 bytes ✓ |
+
+The `-2` silent-miscompile (BYE reached but the FORTH `ASSEMBLE` word
+produced no file) points to a JIT-translator codegen bug, not a host
+memory error; the stage 4 SIGSEGV likely follows the same bad
+translation once superblocks / reg cache extend liveness through it.
+
+**Comparison to #44**: `dbt-a64` hangs at startup on a much larger
+guest (`stage02/s32-as.s32x`, 83KB) with no I/O signal — `dbt-x64`
+gets further (full stage01 runs, including the Forth kernel) and
+gives an actionable reproducer.
+
+**Reproducer**:
+```bash
+cd ~/slow-32 && cd selfhost/stage07-cross && make dbt && cd ../..
+WORK=$(mktemp -d)
+cat forth/prelude.fth selfhost/stage01/asm.fth - <<FTH \
+    | timeout 60 selfhost/stage07-cross/out/dbt-x64 forth/kernel.s32x \
+        > "$WORK/log" 2>&1
+S" selfhost/stage02/crt0.s" S" $WORK/crt0.s32o" ASSEMBLE
+BYE
+FTH
+# default mode: rc=139 (SIGSEGV), no output
+# add `-2` after `dbt-x64`: rc=96, still no output (silent miscompile)
+# gcc-built slow32-dbt on the same input: rc=96, 356-byte output
+```
+
+**Next-step suggestions**:
+- Run with `dbt-x64 -2 --paranoid` to localise the first SLOW-32 PC
+  where shadow-interp diverges from the JIT — that's the
+  miscompiled block.
+- Once a guest PC is known, `slow32dis forth/kernel.s32x <pc> <pc+N>`
+  identifies the SLOW-32 instruction or block shape the translator
+  is botching.
+- Likely candidates: an instruction pattern that fires in the lexer's
+  character-class table but not in the simpler stage01 path; or a
+  superblock-extension fold that's incorrect under cc-x64's regalloc
+  but correct under gcc's.
+
 ---
 
 ## Section C: Missing Language / ABI Surface (Feature Backlog)
