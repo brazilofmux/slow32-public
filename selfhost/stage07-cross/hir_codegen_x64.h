@@ -1241,7 +1241,17 @@ static void hx_emit_inst(int idx) {
                 }
                 val_scratch = X64_RDX;
                 idx_scratch = X64_RCX;
-                hx_save_dx();
+                /* If the index is allocated to val_scratch (RDX),
+                 * materializing the value into RDX would clobber the
+                 * index — and hx_src(index, ...) below would then return
+                 * RDX (per ra_reg[]) pointing at the value, not the index.
+                 * Swap scratches so the index stays in its register. */
+                if (hx_sib_index[idx] >= 0 &&
+                    ra_reg[hx_sib_index[idx]] == X64_RDX) {
+                    val_scratch = X64_RCX;
+                    idx_scratch = X64_RDX;
+                }
+                if (val_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
                 vr = hx_src(h_src2[idx], val_scratch);
                 /* If value ended up in the index scratch reg, swap scratches */
                 if (vr == idx_scratch) {
