@@ -973,68 +973,88 @@ timeout 1 selfhost/stage07-cross-a64/out/s32fast-hir \
 #   slow32-dbt's 108-byte output.
 ```
 
-### 49. [OPEN] `dbt-x64` (cc-x64 cross-compiled) miscompiles `forth/kernel.s32x` on stage02 inputs
+### 49. [PARTIAL] `dbt-x64` (cc-x64 cross-compiled) stage02 — `-2` fixed, `-3/-4/-5` still crash
 
-**Status**: open as of 2026-05-14. Surfaces after #45 was fixed
-(a9e65701, "Fix HIR lowering after terminators"). `dbt-x64` passes
-stage01 of `selfhost/verify-emu-sums.sh` byte-identically — including
-running `forth/kernel.s32x` under stage01's smaller `asm.fth`
-workloads — but fails immediately at stage02 step `[1/4] Assemble
-runtime`.
+**Status as of 2026-05-14 (later)**: split into two unrelated bugs
+once investigated; one fixed, one open. Original framing as a
+"silent JIT miscompile" was wrong — the `-2` mode was correct;
+the host-side MMIO shim was returning errors for STAT/SEEK and was
+passing through SLOW-32 OPEN flags to Linux verbatim.
 
-**Symptom**: assembling `selfhost/stage02/crt0.s` via
-`forth/kernel.s32x + stage01/asm.fth` through `dbt-x64` segfaults the
-host (rc=139). gcc-built `slow32-dbt` returns rc=96 (Forth BYE) and
-writes a 356-byte object file on the same input. Stage01's
-`crt0_minimal.s` — 36 lines vs stage02's 34, ~95% identical aside
-from comment text — does **not** trigger the bug. So the trigger is
-content-specific in the lexer path of `asm.fth`, not program size.
+**Mode-by-mode after fixes (40ef705f MMIO + 8884f7a3 `continue`
+workaround)**:
 
-**Two distinct failure modes on the same input**:
+| dbt-x64 mode | guest input          | rc  | output                                         |
+| ---          | ---                  | --- | ---                                            |
+| `-2`         | stage02/crt0.s       | 96  | **356 bytes ✓ (fixed)**                        |
+| `-1`         | stage02/crt0.s       | 1   | `DBT: Memory fault at PC=0x7280, addr=0x38` (no longer SIGSEGV) |
+| `-3` / `-4` / `-5` | stage02/crt0.s | 139 | none — SIGSEGV in `translate_block_cached`     |
+| `default`    | stage01/crt0_minimal.s | 96 | 356 bytes ✓                                   |
+| gcc `slow32-dbt` | stage02/crt0.s   | 96  | 356 bytes ✓ (reference)                        |
 
-| dbt-x64 mode | guest input | rc | output |
-| --- | --- | --- | --- |
-| default (stage 4 + reg cache) | stage02/crt0.s | **139 (SIGSEGV)** | none |
-| `-2` (block dispatch only)    | stage02/crt0.s | 96 (BYE) | **none — silent miscompile** |
-| default                       | stage01/crt0_minimal.s | 96 (BYE) | 356 bytes ✓ |
-| gcc `slow32-dbt`              | stage02/crt0.s | 96 (BYE) | 356 bytes ✓ |
+**Bug A — MMIO shim gaps in `selfhost/stage07-cross/libc_x64/mmio_ring_x64.c`** (FIXED, 40ef705f):
+the x64 MMIO shim was the dbt-a64 #43 fix's missing twin. Three problems:
+  - `OP_MMIO_STAT` returned ERR for both path and fd variants — added
+    `stat`/`fstat` calls and repacking of the Linux x86-64 kernel
+    `struct stat` byte layout into `s32_mmio_stat_result_t`.
+  - `OP_MMIO_SEEK` was unimplemented — wired up to `lseek` with the
+    guest-supplied whence/distance.
+  - `OP_MMIO_OPEN` passed `req->status` (SLOW-32 flags: 0x01 read /
+    0x02 write / 0x04 append / 0x08 create / 0x10 trunc) directly to
+    Linux `open(2)` — a guest R/O open became Linux `O_WRONLY`.
+    Translation table added.
 
-The `-2` silent-miscompile (BYE reached but the FORTH `ASSEMBLE` word
-produced no file) points to a JIT-translator codegen bug, not a host
-memory error; the stage 4 SIGSEGV likely follows the same bad
-translation once superblocks / reg cache extend liveness through it.
+After Bug A's fix the `-2` mode produces the expected 356-byte
+output, so the original "silent miscompile" framing was a host-I/O
+failure, not a JIT correctness bug.
 
-**Comparison to #44**: `dbt-a64` hangs at startup on a much larger
-guest (`stage02/s32-as.s32x`, 83KB) with no I/O signal — `dbt-x64`
-gets further (full stage01 runs, including the Forth kernel) and
-gives an actionable reproducer.
+**Bug B — cc-x64 miscompiles `continue` in `tools/dbt/translate.c`** (WORKED-AROUND, 8884f7a3):
+three sites where `continue` produced wrong control flow under cc-x64:
+  - `reg_alloc_prescan`: `continue` inside `case OP_JAL` of a `switch`
+    inside a `while` jumped back into the function init block
+    (re-running prologue with scratch regs already reused), instead
+    of restarting the while iteration. Reworked to a
+    `pc_already_advanced` flag + `break` out of the switch, gating
+    the post-switch `pc += 4` increment.
+  - Back-edge prewarm in `translate_block` and the `retry_translate`
+    copy: the `if (!(warm & (1u<<r))) continue;` chain miscompiled
+    into reusing the same reg-cache slot index across iterations,
+    corrupting the loop_regs snapshot. Inverted into nested
+    `if (warm & (1u<<r)) { ... }` so the control flow is
+    straight-line.
 
-**Reproducer**:
+After Bug B's workaround, `-1` no longer SIGSEGVs (now clean
+memory-fault diagnostic). The `-3/-4/-5` SIGSEGV remains: crashes
+in `translate_block_cached` while copying the back-edge register-cache
+snapshot, with a corrupted loop/local index — same cc-x64 codegen
+family (likely another `continue`-shaped or for-loop iteration bug),
+distinct surface.
+
+**Comparison to #44**: still strictly more progress than `dbt-a64`,
+which hangs at startup on `stage02/s32-as.s32x` with no I/O signal.
+
+**Reproducer** (unchanged from original):
 ```bash
 cd ~/slow-32 && cd selfhost/stage07-cross && make dbt && cd ../..
 WORK=$(mktemp -d)
 cat forth/prelude.fth selfhost/stage01/asm.fth - <<FTH \
-    | timeout 60 selfhost/stage07-cross/out/dbt-x64 forth/kernel.s32x \
+    | timeout 60 selfhost/stage07-cross/out/dbt-x64 -2 forth/kernel.s32x \
         > "$WORK/log" 2>&1
 S" selfhost/stage02/crt0.s" S" $WORK/crt0.s32o" ASSEMBLE
 BYE
 FTH
-# default mode: rc=139 (SIGSEGV), no output
-# add `-2` after `dbt-x64`: rc=96, still no output (silent miscompile)
-# gcc-built slow32-dbt on the same input: rc=96, 356-byte output
+# -2 now: rc=96, /tmp/.../crt0.s32o is 356 bytes
+# default (or -3/-4/-5): rc=139, SIGSEGV in translate_block_cached
 ```
 
-**Next-step suggestions**:
-- Run with `dbt-x64 -2 --paranoid` to localise the first SLOW-32 PC
-  where shadow-interp diverges from the JIT — that's the
-  miscompiled block.
-- Once a guest PC is known, `slow32dis forth/kernel.s32x <pc> <pc+N>`
-  identifies the SLOW-32 instruction or block shape the translator
-  is botching.
-- Likely candidates: an instruction pattern that fires in the lexer's
-  character-class table but not in the simpler stage01 path; or a
-  superblock-extension fold that's incorrect under cc-x64's regalloc
-  but correct under gcc's.
+**Remaining work**:
+- Bisect the `-3/-4/-5` SIGSEGV: it's in the back-edge snapshot copy
+  in `translate_block_cached`. The corrupted loop/local index points
+  at another cc-x64 control-flow miscompile in `tools/dbt/translate.c`
+  rather than the Forth assembler or guest DBT logic.
+- Underlying cc-x64 codegen bug for `continue` (in switch/while and
+  in chained-early-out for-loops) remains latent — Bug B is a
+  workaround at the use site, not a fix in the compiler.
 
 ---
 
