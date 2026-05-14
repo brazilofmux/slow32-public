@@ -268,6 +268,61 @@ static void fmt_puts(char *s, void (*putfn)(), char **ctx) {
     }
 }
 
+/* 64-bit integer formatter used for %lld / %llu / %llx / %llX.  Same
+ * shape as fmt_int but takes long long and a base; upper picks hex
+ * case.  Decimal output ignores upper. */
+static void fmt_int64(long long val, int is_unsigned, int base,
+                      int width, int zero_pad, int upper,
+                      void (*putfn)(), char **ctx) {
+    char buf[24];
+    int i;
+    int neg;
+    unsigned long long uval;
+    int len;
+    int pad;
+    int d;
+    char *digits;
+
+    digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+
+    neg = 0;
+    if (!is_unsigned && val < 0) {
+        neg = 1;
+        uval = (unsigned long long)(0 - val);
+    } else {
+        uval = (unsigned long long)val;
+    }
+
+    i = 0;
+    if (uval == 0) {
+        buf[i] = '0';
+        i = i + 1;
+    } else {
+        while (uval > 0) {
+            d = (int)(uval % (unsigned long long)base);
+            buf[i] = digits[d];
+            uval = uval / (unsigned long long)base;
+            i = i + 1;
+        }
+    }
+    len = i;
+    if (neg) len = len + 1;
+    pad = width - len;
+    if (pad < 0) pad = 0;
+
+    if (!zero_pad) {
+        while (pad > 0) { putfn(' ', ctx); pad = pad - 1; }
+    }
+    if (neg) putfn('-', ctx);
+    if (zero_pad) {
+        while (pad > 0) { putfn('0', ctx); pad = pad - 1; }
+    }
+    while (i > 0) {
+        i = i - 1;
+        putfn(buf[i], ctx);
+    }
+}
+
 static void fmt_int(int val, int is_unsigned, int base, int width, int zero_pad,
                      void (*putfn)(), char **ctx) {
     char buf[24];
@@ -359,12 +414,21 @@ static void fmt_hex(int val, int width, int zero_pad, int upper,
 
 /* fmt_core: args is pointer-width array (char**) so both int and pointer
  * values survive the 32/64-bit boundary. For %d/%u/%x, cast to int.
- * For %s/%p, use as pointer directly. */
+ * For %lld/%llu/%llx, cast each slot to long long (each arg occupies one
+ * pointer-width slot on the 64-bit hosts this libc targets).  For %s/%p,
+ * use as pointer directly.  For %f/%g/%e: print '?' placeholder and DO
+ * NOT advance ai — variadic doubles land in V/XMM regs and never reach
+ * the X-class args[] array.  Precision (.N) is parsed but ignored
+ * (since the only specifier that would consume it is %f, which is a
+ * placeholder anyway). */
 static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
     int count;
     int ai;
     int width;
     int zero_pad;
+    int is_ll;
+    int precision;
+    int has_prec;
 
     count = 0;
     ai = 0;
@@ -397,24 +461,57 @@ static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
             fmt = fmt + 1;
         }
 
-        /* skip 'l' length modifier */
-        if (*fmt == 'l') fmt = fmt + 1;
+        /* Optional precision: .N (we parse but currently only float
+         * specifiers would use it — those are placeholders so the
+         * precision value is dropped). */
+        precision = 0;
+        has_prec = 0;
+        if (*fmt == '.') {
+            has_prec = 1;
+            fmt = fmt + 1;
+            while (*fmt >= '0' && *fmt <= '9') {
+                precision = precision * 10 + (*fmt - '0');
+                fmt = fmt + 1;
+            }
+        }
+        (void)precision;
+        (void)has_prec;
+
+        /* Length modifier: l (long) or ll (long long).  We track only
+         * the ll case — single 'l' is treated identically to no-l for
+         * int-class specifiers since long == int on the s12cc subset. */
+        is_ll = 0;
+        if (*fmt == 'l') {
+            fmt = fmt + 1;
+            if (*fmt == 'l') {
+                is_ll = 1;
+                fmt = fmt + 1;
+            }
+        } else if (*fmt == 'z' || *fmt == 'j' || *fmt == 't') {
+            /* Treat size_t / intmax_t / ptrdiff_t as their underlying
+             * type on this build (32-bit int).  Skip the modifier. */
+            fmt = fmt + 1;
+        }
 
         if (*fmt == 'd' || *fmt == 'i') {
-            fmt_int((int)args[ai], 0, 10, width, zero_pad, putfn, ctx);
+            if (is_ll) fmt_int64((long long)args[ai], 0, 10, width, zero_pad, 0, putfn, ctx);
+            else       fmt_int((int)args[ai], 0, 10, width, zero_pad, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'u') {
-            fmt_int((int)args[ai], 1, 10, width, zero_pad, putfn, ctx);
+            if (is_ll) fmt_int64((long long)args[ai], 1, 10, width, zero_pad, 0, putfn, ctx);
+            else       fmt_int((int)args[ai], 1, 10, width, zero_pad, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'x') {
-            fmt_hex((int)args[ai], width, zero_pad, 0, putfn, ctx);
+            if (is_ll) fmt_int64((long long)args[ai], 1, 16, width, zero_pad, 0, putfn, ctx);
+            else       fmt_hex((int)args[ai], width, zero_pad, 0, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'X') {
-            fmt_hex((int)args[ai], width, zero_pad, 1, putfn, ctx);
+            if (is_ll) fmt_int64((long long)args[ai], 1, 16, width, zero_pad, 1, putfn, ctx);
+            else       fmt_hex((int)args[ai], width, zero_pad, 1, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'p') {
             fmt_puts("0x", putfn, ctx);
-            fmt_hex((int)args[ai], 0, 0, 0, putfn, ctx);
+            fmt_int64((long long)args[ai], 1, 16, 0, 0, 0, putfn, ctx);
             ai = ai + 1;
             count = count + 2;
         } else if (*fmt == 'c') {
@@ -442,6 +539,16 @@ static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
                 count = count + 6;
             }
             ai = ai + 1;
+        } else if (*fmt == 'f' || *fmt == 'F' ||
+                   *fmt == 'g' || *fmt == 'G' ||
+                   *fmt == 'e' || *fmt == 'E') {
+            /* FP placeholder — variadic doubles land in V/XMM regs and
+             * never reach the args[] X-class array, so we can't read the
+             * value.  Print '?' so callers see the gap without losing
+             * the surrounding text's alignment, and do NOT advance ai
+             * (no X-arg was consumed by this slot). */
+            putfn('?', ctx);
+            count = count + 1;
         } else {
             putfn('%', ctx);
             putfn(*fmt, ctx);
