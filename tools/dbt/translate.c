@@ -5060,6 +5060,10 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         // Track instruction index for dead temporary elimination
         ctx->current_inst_idx = ctx->inst_count;
 
+        // cc-x64 miscompiles `continue` inside `case` inside `switch` inside
+        // `while`; use a flag + `break` out of the switch instead.
+        bool pc_already_advanced = false;
+
         // Translate based on opcode
         switch (inst.opcode) {
             // Arithmetic
@@ -5167,10 +5171,11 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                     target_pc < cpu->code_limit &&
                     ctx->inst_count < MAX_BLOCK_INSTS - 4) {
                     // Flush any pending state before redirecting
-                
+
                     ctx->guest_pc = target_pc;
                     ctx->inst_count++;
-                    continue;
+                    pc_already_advanced = true;
+                    break;
                 }
                 translate_jal(ctx, inst.rd, inst.imm);
                 goto block_done;
@@ -5183,32 +5188,38 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_BEQ:
                 if (translate_beq(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;  // Superblock extended - skip increment (already done)
+                pc_already_advanced = true;  // superblock extended
+                break;
 
             case OP_BNE:
                 if (translate_bne(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BLT:
                 if (translate_blt(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BGE:
                 if (translate_bge(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BLTU:
                 if (translate_bltu(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BGEU:
                 if (translate_bgeu(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             // Special (block-ending)
             case OP_HALT:
@@ -5240,8 +5251,10 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                 goto block_done;
         }
 
-        ctx->guest_pc += 4;
-        ctx->inst_count++;
+        if (!pc_already_advanced) {
+            ctx->guest_pc += 4;
+            ctx->inst_count++;
+        }
     }
 
     // Reached max instructions - exit with block end
@@ -6357,6 +6370,11 @@ retry_translate:
         // Track instruction index for dead temporary elimination
         ctx->current_inst_idx = ctx->inst_count;
 
+        // cc-x64 miscompiles `continue` inside `case` inside `switch` inside
+        // `while` (jumps back into function init).  Use a flag + `break` out
+        // of the switch instead; gate the post-switch increment.
+        bool pc_already_advanced = false;
+
         // Translate based on opcode
         switch (inst.opcode) {
             // Arithmetic
@@ -6461,10 +6479,11 @@ retry_translate:
                     target_pc > ctx->guest_pc &&
                     target_pc < cpu->code_limit &&
                     ctx->inst_count < MAX_BLOCK_INSTS - 4) {
-                
+
                     ctx->guest_pc = target_pc;
                     ctx->inst_count++;
-                    continue;
+                    pc_already_advanced = true;
+                    break;
                 }
                 translate_jal(ctx, inst.rd, inst.imm);
                 goto cached_block_done;
@@ -6477,32 +6496,38 @@ retry_translate:
             case OP_BEQ:
                 if (translate_beq(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto cached_block_done;
-                continue;  // Superblock extended - skip increment (already done)
+                pc_already_advanced = true;  // superblock extended
+                break;
 
             case OP_BNE:
                 if (translate_bne(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto cached_block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BLT:
                 if (translate_blt(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto cached_block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BGE:
                 if (translate_bge(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto cached_block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BLTU:
                 if (translate_bltu(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto cached_block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             case OP_BGEU:
                 if (translate_bgeu(ctx, inst.rs1, inst.rs2, inst.imm))
                     goto cached_block_done;
-                continue;
+                pc_already_advanced = true;
+                break;
 
             // Special (block-ending)
             case OP_HALT:
@@ -6534,8 +6559,10 @@ retry_translate:
                 goto cached_block_done;
         }
 
-        ctx->guest_pc += 4;
-        ctx->inst_count++;
+        if (!pc_already_advanced) {
+            ctx->guest_pc += 4;
+            ctx->inst_count++;
+        }
     }
 
     // Reached max instructions - exit with block end
