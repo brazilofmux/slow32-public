@@ -1348,9 +1348,20 @@ static int hl_expr(Node *n) {
 
     /* Type cast */
     if (n->kind == ND_CAST) {
+        int src_is_native64;
+        int dst_is_native64;
         lv = hl_expr(n->lhs);
+        /* On 64-bit hosts (cc-x64 / cc-a64) pointers are already 64-bit
+         * register values.  A `(long long)ptr` or `(uintptr_t)ptr` cast
+         * must NOT sign- or zero-extend from 32 bits — it's a no-op.
+         * Same in reverse: `(char *)long_long_value` must not truncate
+         * to 32 bits. */
+        src_is_native64 = ty_is_llong(n->lhs->ty) ||
+                          (ty_is_ptr(n->lhs->ty) && ty_ptr_size == 8);
+        dst_is_native64 = ty_is_llong(n->ty) ||
+                          (ty_is_ptr(n->ty) && ty_ptr_size == 8);
 #ifdef S12CC_X64_HOST
-        if (ty_is_llong(n->ty) && !ty_is_llong(n->lhs->ty) && !ty_is_double(n->lhs->ty)) {
+        if (dst_is_native64 && !src_is_native64 && !ty_is_double(n->lhs->ty)) {
             /* x64: explicit widening via SEXT32/ZEXT32 (optimizer won't fold) */
             if (n->lhs->ty & TY_UNSIGNED)
                 return hi_emit(HI_ZEXT32, TY_LLONG, lv, -1, 0, NULL);
@@ -1358,13 +1369,18 @@ static int hl_expr(Node *n) {
                 return hi_emit(HI_SEXT32, TY_LLONG, lv, -1, 0, NULL);
         }
 #endif
-        if (ty_is_llong(n->ty) && !ty_is_llong(n->lhs->ty) && !ty_is_double(n->lhs->ty)) {
+        if (dst_is_native64 && !src_is_native64 && !ty_is_double(n->lhs->ty)) {
             /* Widen 32->64 */
             hl_widen64(lv, n->lhs->ty, &lv, &hl_hi);
             return lv;
         }
-        if (!ty_is_llong(n->ty) && !ty_is_double(n->ty) && ty_is_llong(n->lhs->ty)) {
+        if (!dst_is_native64 && !ty_is_double(n->ty) && src_is_native64) {
             /* Truncate 64->32: just use lo word */
+            return lv;
+        }
+        if (dst_is_native64 && src_is_native64) {
+            /* Both 64-bit (pointer ↔ long long, or pointer ↔ pointer):
+             * the value is already a 64-bit register, no conversion. */
             return lv;
         }
         /* int → float */
