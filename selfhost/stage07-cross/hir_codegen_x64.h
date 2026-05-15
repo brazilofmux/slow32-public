@@ -1004,8 +1004,30 @@ static void hx_emit_inst(int idx) {
             if (dr == s2r && dr != s1r) {
                 if (commute) { tmp = s1r; s1r = s2r; s2r = tmp; }
                 else {
+                    /* Non-commutative (HI_SUB): need a temp to hold s2,
+                     * then emit `mov dr, s1r; sub dr, tmp_r`.  Critical:
+                     * tmp_r must NOT be s1r — moving s2 into s1's
+                     * register would destroy s1 before the mov-to-dr
+                     * uses it (silent miscompile, no crash).
+                     *
+                     * The natural choice is the OPPOSITE of s2_scratch
+                     * (RCX↔RDX), but s2_scratch was already chosen to
+                     * avoid s1r when s1r was RCX, leaving the opposite
+                     * (RCX) as the conflict.  Symmetric for s1r=RDX.
+                     * Fall back to RAX in either case — the regalloc
+                     * never assigns RAX as a value-holding slot, so
+                     * clobbering it is always safe and no save is
+                     * needed.
+                     *
+                     * Found via diff-test d08_struct_passing: signed
+                     * char RMW `p->sb = (char)(p->sb - 1)` lowered to
+                     * SUB(load_sb_in_RCX, const_1).  dr was RDX, s2_
+                     * scratch RCX, original tmp_r was RCX = s1r → s1
+                     * silently overwritten with `1`, computing 1-1=0
+                     * instead of sb-1. */
                     int tmp_r;
                     tmp_r = (s2_scratch == X64_RCX) ? X64_RDX : X64_RCX;
+                    if (tmp_r == s1r) tmp_r = X64_RAX;
                     if (tmp_r == X64_RCX && !saved_cx) { hx_save_cx(); saved_cx = 1; }
                     if (tmp_r == X64_RDX && !saved_dx) { hx_save_dx(); saved_dx = 1; }
                     x64_mov_rr64(tmp_r, s2r); s2r = tmp_r;
