@@ -2272,14 +2272,25 @@ static void hx_gen_func(Node *fn) {
             s1 = h_src1[i];
             s2 = h_src2[i];
             ld = -1; reg_src = -1;
-            /* Check src2 is a SIB load with 1 use */
+            /* Check src2 is a SIB load with 1 use.  Refuse to fuse narrow
+             * (char/short) loads: the memory-operand ALU form emits a
+             * 32-bit `add reg, [base+idx*scale]` which would read 32 bits
+             * from a 1- or 2-byte-element array, picking up adjacent
+             * elements as garbage high bits.  These have to go through a
+             * separate movzx/movsx via the regular SIB load path. */
             if (s2 >= 0 && h_kind[s2] == HI_LOAD && hx_sib_flag[s2] &&
-                bg_uses[s2] == 1 && h_blk[s2] == h_blk[i]) {
+                bg_uses[s2] == 1 && h_blk[s2] == h_blk[i] &&
+                !(!ty_is_ptr(h_ty[s2]) &&
+                  (((h_ty[s2] & TY_BASE_MASK) == TY_CHAR) ||
+                   ((h_ty[s2] & TY_BASE_MASK) == TY_SHORT)))) {
                 ld = s2; reg_src = s1;
             }
             /* Commutative: also check src1 */
             if (ld < 0 && s1 >= 0 && h_kind[s1] == HI_LOAD && hx_sib_flag[s1] &&
-                bg_uses[s1] == 1 && h_blk[s1] == h_blk[i]) {
+                bg_uses[s1] == 1 && h_blk[s1] == h_blk[i] &&
+                !(!ty_is_ptr(h_ty[s1]) &&
+                  (((h_ty[s1] & TY_BASE_MASK) == TY_CHAR) ||
+                   ((h_ty[s1] & TY_BASE_MASK) == TY_SHORT)))) {
                 ld = s1; reg_src = s2;
             }
             if (ld >= 0 && reg_src >= 0) {
