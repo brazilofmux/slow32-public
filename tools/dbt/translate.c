@@ -4383,23 +4383,13 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
 
             int64_t block_base = (int64_t)(intptr_t)code;
             int64_t block_end = block_base + (int64_t)scanned_end;
-            /* Workaround for a cc-x64 (selfhost/stage07-cross) miscompile:
-             * the inline expression `old_disp + (int32_t)shift[pos]`
-             * comes out wildly wrong when `shift` is `uint16_t *` and the
-             * cast is nested in the add, evidently because cc-x64 widens
-             * the uint16_t load to 32 bits in a way that picks up
-             * neighbouring bytes from the array.  Forcing the cast through
-             * a local int32_t variable produces the right result on both
-             * cc-x64 and gcc. */
-            int32_t shift_pos = (int32_t)shift[pos];
             if (old_target_abs >= block_base && old_target_abs <= block_end) {
                 // Intra-block: both source and target shift
                 size_t old_target = (size_t)(old_target_abs - block_base);
-                int32_t shift_tgt = (int32_t)shift[old_target];
-                new_disp = old_disp + shift_pos - shift_tgt;
+                new_disp = old_disp + (int32_t)shift[pos] - (int32_t)shift[old_target];
             } else {
                 // Extra-block: only source shifts
-                new_disp = old_disp + shift_pos;
+                new_disp = old_disp + (int32_t)shift[pos];
             }
             if (disp_size == 1) {
                 // Check rel8 overflow

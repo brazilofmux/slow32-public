@@ -1007,11 +1007,10 @@ timeout 1 selfhost/stage07-cross-a64/out/s32fast-hir \
 #   slow32-dbt's 108-byte output.
 ```
 
-### 49. [PARTIAL] `dbt-x64` (cc-x64 cross-compiled) stage02 — `-1/-2/-3` fixed, `-4/-5` need feature opt-outs
+### 49. [PARTIAL] `dbt-x64` (cc-x64 cross-compiled) stage02 — `-1/-2/-3/-4 -S` fixed, `-4` (superblock) still open
 
-**Status as of 2026-05-14 (later 2)**: original "silent JIT miscompile"
-framing was wrong; investigation has so far split #49 into four
-distinct cc-x64 / shim issues, two fixed, two open:
+**Status as of 2026-05-14 (later 3)**: investigation split #49 into
+four distinct cc-x64 / shim issues, three fixed, one open:
 
   - Bug A: MMIO shim gaps (STAT/SEEK/OPEN flags). FIXED in 40ef705f.
   - Bug B: cc-x64 miscompiles `continue` inside `case` inside `switch`
@@ -1032,11 +1031,24 @@ distinct cc-x64 / shim issues, two fixed, two open:
     superblock-extension code path) or downstream of it. Not the
     same `continue`-in-switch shape — Bug B's fix did NOT unblock
     `-4 -P -R` (peephole off, reg_cache off, superblock on).
-  - Bug D: `peephole_enabled = true` triggers another independent
-    cc-x64 miscompile. OPEN. Likely in `peephole_optimize_x64`'s
-    11-`continue` pattern matcher (different `continue`-shape from
-    Bug B — these are `if (pattern) { ... continue; }` chains inside
-    a `while`, no enclosing `switch`).
+  - Bug D: `peephole_enabled = true` triggered an independent cc-x64
+    miscompile in `nop_compact_x64`'s displacement fix-up.  ROOT-CAUSED
+    and FIXED in f7f7725f (`selfhost/stage07-cross/hir_codegen_x64.h`):
+    the SIB+ALU fold pass fused single-use SIB-form HI_LOADs into a
+    32-bit memory-operand `add reg, [base+idx*scale]` regardless of
+    the load's element width.  For `(int32_t)uint16_t_array[i]` that
+    produced a 4-byte dword load — which read the next uint16 entry
+    as garbage high bits and, on the nop_compact_x64 hot path,
+    corrupted JIT cache displacements by ≈ +0x60000.  Fix mirrors
+    the narrow-load guard already present at the frame-relative
+    fold site (line 970-972) onto the SIB+ALU fold (line 2266+):
+    char/short loads now decline to fuse and route through the
+    regular SIB load path which emits `movzx_rm{8,16}_sib` /
+    `movsx_rm{8,16}_sib` correctly.  Use-site workaround in
+    `tools/dbt/translate.c` nop_compact_x64 (887414ea patch 3) is now
+    redundant and removed in the same revert commit; the other two
+    patches in 887414ea (Phase 3 rel8 restore, Phase 5 patch_site
+    save) are real correctness fixes and stay.
 
 **Bug C/D investigation findings (2026-05-14, deeper repro)**:
 
@@ -1072,34 +1084,35 @@ from gcc — especially around the `bool is_return = (rd == 0 && rs1
 is plausible; (3) instrument with AddressSanitizer (requires gcc
 build of the same .o set first).
 
-**Mode-by-mode after Bug A + Bug B fixes**:
+**Mode-by-mode after Bug A + B + D fixes**:
 
 | dbt-x64 mode | guest input          | rc  | output                                         |
 | ---          | ---                  | --- | ---                                            |
 | `-2`         | stage02/crt0.s       | 96  | 356 bytes ✓                                    |
 | `-3`         | stage02/crt0.s       | 96  | **356 bytes ✓ (fixed by f124c661)**            |
 | `-1`         | stage02/crt0.s       | 0   | `DBT: Memory fault at PC=0x7280, addr=0x48` (clean) |
-| `-4` / `-5`  | stage02/crt0.s       | 139 | none — SIGSEGV (Bug C and/or Bug D)            |
-| `-4 -P -S`   | stage02/crt0.s       | 96  | **356 bytes ✓ (workable stage-4)**             |
+| `-4` / `-5`  | stage02/crt0.s       | 139 | none — SIGSEGV (Bug C: superblock)             |
+| `-4 -S`      | stage02/crt0.s       | 96  | **356 bytes ✓ (Bug D fixed in f7f7725f)**      |
+| `-4 -P -S`   | stage02/crt0.s       | 96  | **356 bytes ✓**                                |
 | `default`    | stage01/crt0_minimal.s | 96 | 356 bytes ✓                                   |
 | gcc `slow32-dbt` | stage02/crt0.s   | 96  | 356 bytes ✓ (reference)                        |
 
-**Feature bisection for `-4` crash**:
+**Feature bisection for `-4` crash** (after Bug D fix in f7f7725f):
 
 | flags relative to `-4` default | superblock | reg_cache | peephole | result |
 | --- | --- | --- | --- | --- |
-| (default)            | on  | on  | on  | SIGSEGV |
-| `-S`                 | off | on  | on  | SIGSEGV |
-| `-R`                 | on  | off | on  | SIGSEGV |
-| `-P`                 | on  | on  | off | SIGSEGV |
-| `-P -R`              | on  | off | off | SIGSEGV |
-| `-P -S`              | off | on  | off | **WORKS** |
-| `-P -R -S`           | off | off | off | **WORKS** |
-| `-R -S`              | off | off | on  | SIGSEGV |
+| (default)            | on  | on  | on  | SIGSEGV (Bug C) |
+| `-S`                 | off | on  | on  | **WORKS** (was Bug D, fixed) |
+| `-R`                 | on  | off | on  | SIGSEGV (Bug C) |
+| `-P`                 | on  | on  | off | SIGSEGV (Bug C) |
+| `-P -R`              | on  | off | off | SIGSEGV (Bug C) |
+| `-P -S`              | off | on  | off | WORKS |
+| `-P -R -S`           | off | off | off | WORKS |
+| `-R -S`              | off | off | on  | **WORKS** (was Bug D, fixed) |
 
-→ Bug C (superblock) and Bug D (peephole) are independent. Either
-one alone is sufficient to crash; turning both off makes `-4` work
-regardless of reg_cache.
+→ Bug D fixed: Every `-S` (superblock-off) row now passes; matches
+the earlier `-P -S` baseline.  Bug C (superblock) still SEGVs in
+every `superblock=on` row regardless of peephole/reg_cache state.
 
 **Bug A — MMIO shim gaps in `selfhost/stage07-cross/libc_x64/mmio_ring_x64.c`** (FIXED, 40ef705f):
 the x64 MMIO shim was the dbt-a64 #43 fix's missing twin. Three problems:
