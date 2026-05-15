@@ -10,7 +10,7 @@ CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast bench clean
+.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast bench clean diff-test
 
 all: $(OUT)/cc-a64 $(OUT)/ld-a64 $(OUT)/ar-a64 \
      test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive
@@ -255,7 +255,27 @@ test-archive: $(OUT)/cc_dup_foo_exe
 		if [ $$rc -eq 1 ]; then echo "test-archive: ok (exit=1)"; \
 		else echo "test-archive: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 
-test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive
+test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive diff-test
+
+# --- Differential testing vs host gcc ---
+#
+# Compiles each .c in diff-test/corpus/ with both cc-a64 --hir and host
+# gcc -O2 -static, runs both natively, and compares exit code + stdout.
+# The corpus is symlinked from ../stage07-cross/diff-test/corpus — it's
+# portable C designed for differential comparison and identical between
+# targets.
+#
+# Skipped (not failed) when host arch isn't aarch64 (the script gates on
+# `uname -m`) — running cc-a64's aarch64 ELF outputs requires either a
+# native aarch64 host or qemu-aarch64, and even then the gcc-side
+# comparison binary wouldn't be aarch64.  On x86_64 hosts use the cc-x64
+# sibling target instead.
+
+diff-test: $(OUT)/cc-a64 $(OUT)/crt0.o $(OUT)/libc_a64.a $(OUT)/ld-a64
+	@echo ""
+	@echo "--- diff-test (cc-a64 vs gcc) ---"
+	@diff-test/run.sh; rc=$$?; \
+	 if [ $$rc = 2 ]; then exit 0; else exit $$rc; fi
 
 # --- libc_a64.a — runtime library for cc-a64 outputs ---
 # Most files are symlinks into ../stage07-cross/libc_x64/ since they're
