@@ -3334,6 +3334,117 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
+    /* ---------- Varargs ----------
+     *
+     * Mirrors cc-x64's tagged-pointer scheme: a single va_list value
+     * carries both the next-slot address (aligned, in the top bits)
+     * and the count of register slots still remaining (in the bottom
+     * 3 tag bits).  When the tag is zero, the pointer is in the
+     * caller's stack overflow area at FP+16 onwards (8-byte stride).
+     *
+     * AAPCS64 reserves 8 GP arg slots (X0..X7), so the maximum count
+     * is 8.  The 3-bit tag holds values 0..7, which covers nparams
+     * >= 1 (always true in valid C — va_start requires a named arg).
+     * For nparams == 0 the count would have to be 8 and would silently
+     * truncate to 0, so we'd lose the first reg vararg — but that
+     * declaration shape isn't legal anyway.
+     *
+     * Floating-point varargs are not handled — there's no V-reg save
+     * area in the prologue and va_arg's load path only reads from X
+     * registers.  Once a64 float codegen lands, the save area can be
+     * extended to include V0..V7 and the tag scheme grown to a struct. */
+
+    if (k == HI_VA_START) {
+        int nparams_va;
+        nparams_va = h_val[idx];
+        if (nparams_va < 8) {
+            /* dst = FP + va_save_off + nparams * 8 */
+            hx_emit_frame_addr_bytes(dst, hx_va_save_off + nparams_va * 8);
+            /* Tag with remaining count (8 - nparams).  Always > 0 here
+             * since nparams_va < 8 ensures count >= 1. */
+            a64_mov_w_imm(HX_SCRATCH2, 8 - nparams_va);
+            a64_orr_x(dst, dst, HX_SCRATCH2);
+        } else {
+            /* No regs left; point at the stack overflow area.
+             * Stack args start at FP+16 (above saved FP/LR), 8-byte
+             * stride per AAPCS64. */
+            hx_emit_frame_addr_bytes(dst, 16 + (nparams_va - 8) * 8);
+        }
+        hx_spill(idx, dst);
+        return;
+    }
+
+    if (k == HI_VA_ARG) {
+        /* h_src1 = current va_list (tagged); h_ty = type to load.
+         * Mask off tag bits to get the slot address, then load
+         * according to type.  Narrow int types (char/short) are
+         * promoted to int by default-argument-promotion before they
+         * reach the callee, but we handle them defensively to match
+         * cc-x64. */
+        int sr;
+        int va_ty;
+        sr = hx_get_src(s1, HX_SCRATCH1);
+        /* HX_SCRATCH1 holds slot_addr; sign-/zero-extension of the
+         * loaded value goes into dst. */
+        a64_and_x_imm(HX_SCRATCH1, sr, -8);
+        va_ty = h_ty[idx];
+        if (hx_is_wide(va_ty)) {
+            a64_ldr_x_imm(dst, HX_SCRATCH1, 0);
+        } else if ((va_ty & TY_BASE_MASK) == TY_CHAR && !(va_ty & TY_PTR_MASK)) {
+            if (va_ty & TY_UNSIGNED) a64_ldrb_imm(dst, HX_SCRATCH1, 0);
+            else                     a64_ldrsb_w_imm(dst, HX_SCRATCH1, 0);
+        } else if ((va_ty & TY_BASE_MASK) == TY_SHORT && !(va_ty & TY_PTR_MASK)) {
+            if (va_ty & TY_UNSIGNED) a64_ldrh_imm(dst, HX_SCRATCH1, 0);
+            else                     a64_ldrsh_w_imm(dst, HX_SCRATCH1, 0);
+        } else {
+            a64_ldr_w_imm(dst, HX_SCRATCH1, 0);
+        }
+        hx_spill(idx, dst);
+        return;
+    }
+
+    if (k == HI_VA_NEXT) {
+        /* h_src1 = current va_list (tagged); produces the advanced
+         * va_list.  Two paths: stack mode (tag == 0) just bumps the
+         * pointer by 8; register mode bumps by 8 and decrements the
+         * tag, transitioning to FP+16 when the count drops to zero. */
+        int sr;
+        int site_reg_path;
+        int site_transition;
+        int site_done_from_reg;
+        int site_done_from_stack;
+        sr = hx_get_src(s1, HX_SCRATCH1);
+        /* Decode: tag in HX_SCRATCH2, slot_addr in dst. */
+        a64_and_x_imm(HX_SCRATCH2, sr, 7);
+        a64_and_x_imm(dst, sr, -8);
+        /* if (tag != 0) goto REG_PATH else fall through to stack path */
+        site_reg_path = a64_pos();
+        a64_cbnz_x(HX_SCRATCH2, 0);
+        /* --- Stack path: just bump addr by 8 --- */
+        a64_add_x_imm(dst, dst, 8);
+        site_done_from_stack = a64_pos();
+        a64_b(0);
+        /* --- REG_PATH: addr += 8, tag -= 1.  If new tag == 0,
+         *     transition to FP+16; else re-tag.  --- */
+        a64_patch_cond(site_reg_path, a64_pos());
+        a64_add_x_imm(dst, dst, 8);
+        a64_sub_x_imm(HX_SCRATCH2, HX_SCRATCH2, 1);
+        site_transition = a64_pos();
+        a64_cbz_x(HX_SCRATCH2, 0);
+        /* Re-tag and fall through to done. */
+        a64_orr_x(dst, dst, HX_SCRATCH2);
+        site_done_from_reg = a64_pos();
+        a64_b(0);
+        /* TRANSITION: dst = FP + 16 (stack overflow area). */
+        a64_patch_cond(site_transition, a64_pos());
+        hx_emit_frame_addr_bytes(dst, 16);
+        /* DONE */
+        a64_patch_b(site_done_from_stack, a64_pos());
+        a64_patch_b(site_done_from_reg, a64_pos());
+        hx_spill(idx, dst);
+        return;
+    }
+
     /* Unhandled */
     hx_die("hx_emit_inst: unhandled kind", idx);
 }
@@ -3443,7 +3554,7 @@ static void hx_gen_func(Node *fn) {
      *   16 (FP/LR)
      * + 2 * fn->locals_size  (frontend-scaled)
      * + ra_ncsave * 8        (callee-save spill slots)
-     * + 16 if varargs (TBD)
+     * + 64 if varargs        (X0..X7 save area, 8 slots × 8 bytes)
      * Round up to 16-byte alignment.
      */
     /* hl_temp_stack now spans locals + lowered ALLOCA temps + regalloc spills
@@ -3451,6 +3562,11 @@ static void hx_gen_func(Node *fn) {
      * doubles to AArch64 byte offsets, so frame-byte usage = 2 * hl_temp_stack
      * plus 16 for FP/LR. */
     (void)spill_slots; (void)callee_save_bytes;
+    /* Varargs save area: 8 slots × 8 bytes = 64 a64 bytes = 32 slow32 units. */
+    if (hx_is_varargs) {
+        hl_temp_stack = hl_temp_stack + 32;
+        hx_va_save_off = cg_a64_offset(0 - hl_temp_stack);
+    }
     fs = 16 + 2 * hl_temp_stack;
     fs = (fs + 15) & ~15;
     if (fs < 16) fs = 16;        /* always at least save FP/LR */
@@ -3466,7 +3582,7 @@ static void hx_gen_func(Node *fn) {
      *     PARAM nodes — confirms nothing in the body stores to the frame)
      * Param-to-reg MOVs in the prologue still run; they never touch FP. */
     hx_no_frame = 0;
-    if (ra_ncsave == 0) {
+    if (ra_ncsave == 0 && !hx_is_varargs) {
         int can_nf;
         int i_;
         can_nf = 1;
@@ -3536,6 +3652,28 @@ static void hx_gen_func(Node *fn) {
         }
         hx_emit_store_from_reg(ra_csave_reg[i], ra_csave_off[i], 1);
         i = i + 1;
+    }
+
+    /* Varargs: save X0..X7 to the save area so va_arg can read them
+     * later.  Done BEFORE the param-mover redistributes them.  Slot i
+     * is at FP + hx_va_save_off + i*8. */
+    if (hx_is_varargs) {
+        int va_i;
+        va_i = 0;
+        while (va_i < 8) {
+            int boff;
+            boff = hx_va_save_off + va_i * 8;
+            if (boff >= -256 && boff <= 248) {
+                a64_stur_x_imm(hx_arg_reg[va_i], A64_X29, boff);
+            } else if (boff >= 0 && boff <= 32760 && (boff & 7) == 0) {
+                a64_str_x_imm(hx_arg_reg[va_i], A64_X29, boff);
+            } else {
+                /* Large negative offset: compute address into scratch. */
+                hx_emit_frame_addr_bytes(HX_SCRATCH2, boff);
+                a64_str_x_imm(hx_arg_reg[va_i], HX_SCRATCH2, 0);
+            }
+            va_i = va_i + 1;
+        }
     }
 
     /* Save register-passed args to their assigned spill slots OR move

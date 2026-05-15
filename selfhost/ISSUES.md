@@ -1420,39 +1420,55 @@ this was an evaluation, not a port.
 **Recommendation**: address only when forced by a real customer.
 Compound literals are the next most likely C dialect blocker.
 
-### 48. [DEFERRED] cc-a64 callee-side variadic functions
+### 48. [FIXED-GP-ONLY] cc-a64 callee-side variadic functions (integer/pointer args)
 
-**Status**: deferred 2026-05-14.  The caller-side ABI works — cc-a64
-correctly lowers `fprintf(f, "%d %f", i, x)` per AAPCS64 (int in
-X-class via NGRN, double in V-class via NSRN, independent counters).
-What's missing is the *callee* side: a function declared with `...`
-can't access its variadic args because `HI_VA_START` / `HI_VA_ARG` /
-`HI_VA_NEXT` aren't implemented in `hir_codegen_a64.h` (cc-x64
-implements all three; see `hir_codegen_x64.h:1955..2050`).  The
-prologue stub at `hir_codegen_a64.h:3446` is the placeholder
-(`+ 16 if varargs (TBD)`).
+**Status**: fixed for integer / pointer / long-long varargs on
+2026-05-15.  Floating-point varargs (V-register save area) remain
+unimplemented — see #49 for the downstream `%f` consequence.
 
-**Workaround in use today**: libc's `fprintf` / `printf` / `snprintf`
-are declared variadic in the header (`stdio.h`) but defined
-fixed-arity with eight `char *` slots (`stdio.c`, `libc_extra.c`).
-Integer / pointer args route through correctly; doubles land in V0..V7
-where the fixed-arity callee can't see them.  Hence the `?` placeholder
-for `%f` added in commits `9789a448` (fmt_core) and `6a27fbef`
-(snp_core).
+**What works now**:
+- `va_start(ap, last)` / `va_arg(ap, T)` / `va_end(ap)` for integer,
+  pointer, and `long long` argument types, including the boundary
+  where varargs spill from registers (X0..X7) to the caller's stack
+  overflow area at FP+16.
+- Functions with up to 8 named GP params followed by `...`; named
+  params consuming X-class registers correctly leave the right
+  remaining save-area slots for varargs.
 
-**Why it's deferred**: cc-a64's primary mission is compiling dbt-a64
-so that dbt-a64 can execute `.s32x` code on ARM64.  No current
-in-tree code needs to *write* a variadic function in C compiled by
-cc-a64; everything variadic-shaped goes through the libc shim above.
-Eventually wanted, just not blocking anything.
+**What still doesn't work**:
+- `va_arg(ap, double)` / `va_arg(ap, float)`.  The prologue does not
+  save V0..V7, and `va_arg`'s load path reads only from the X save
+  area.  Picking these up requires (a) an FP regalloc class (a64
+  codegen menu item 5, multi-session) and (b) extending the va_list
+  tagged-pointer scheme to thread a separate FP cursor.
 
-**Recommendation when picked up**:
-- Mirror cc-x64's HI_VA_* lowering in `hir_codegen_a64.h`.
-- Generate the AAPCS64 register save area at function entry (16 GPRs
-  × 8 bytes + 16 V regs × 16 bytes = 384 bytes worst case, less if
-  fewer named-arg slots remain).
-- `va_arg` reads from the gp / vr save area until exhausted, then
-  the overflow stack area — same as the AAPCS64 reference.
+**Implementation**: mirrors cc-x64's tagged-pointer va_list scheme
+(`hir_codegen_x64.h:1977..2102`) with constants adjusted for AAPCS64:
+8 GP arg slots instead of 6, save area 64 bytes (8×8) instead of 48
+(6×8), tag bits 0..7 instead of 0..6.  The 3-bit tag still suffices
+because valid C always has `nparams >= 1` (va_start requires a
+named-arg reference), so the maximum count value 8 - 1 = 7 fits.
+Three new HI_VA_* codegen cases in `hir_codegen_a64.h`, plus a
+prologue save loop (X0..X7 → save area) and frame-allocation bump
+of 32 slow32 units = 64 a64 bytes.  No-frame-leaf optimization
+disabled when `hx_is_varargs` (the save loop needs valid FP).
+
+**Tests**: `selfhost/stage07-cross/diff-test/corpus/d32_varargs.c`
+covers 1 / 5 / 7 / 8 / 12-arg variadic int sums (spanning the
+reg→stack boundary), `long long` varargs, pointer varargs, and the
+nine-named-param case where one named arg already spills to stack.
+All match gcc on both cc-a64 (native aarch64) and cc-x64
+(qemu-x86_64); 32/32 diff-test PASS on each target.
+
+**stdarg.h shim**: `selfhost/stage07/include/stdarg.h` added with
+just `typedef char *va_list;` so source can use the portable
+`#include <stdarg.h>` and still compile under cc-{x64,a64}.
+
+**Future libc opportunity**: `libc_a64.a`'s `fprintf` / `printf` /
+`snprintf` are still implemented fixed-arity with `char *` slots
+(`stdio.c`, `libc_extra.c`).  They could now be switched to true
+variadic — integer / pointer / `long long` would flow through —
+but `%f` / `%g` / `%e` would still print `?` until #49 lands.
 
 ### 49. [DEFERRED] libc printf `%f` / `%g` / `%e` (full float formatting)
 
