@@ -8,14 +8,18 @@ set -e
 # Paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SLOW32_BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
-LLVM_BIN="$HOME/llvm-project/build/bin"
+
+# Tool locations are env-overridable so the suite can be driven from the
+# slow32:toolchain Docker image (or any other layout) without editing this
+# script.  Defaults match a developer build with a local LLVM checkout.
+LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
 
 # Tools
-CLANG="$LLVM_BIN/clang"
-LLC="$LLVM_BIN/llc"
-ASSEMBLER="$SLOW32_BASE/tools/assembler/slow32asm"
-LINKER="$SLOW32_BASE/tools/linker/s32-ld"
-EMULATOR="$SLOW32_BASE/tools/emulator/slow32"
+CLANG="${CLANG:-$LLVM_BIN/clang}"
+LLC="${LLC:-$LLVM_BIN/llc}"
+ASSEMBLER="${ASSEMBLER:-$SLOW32_BASE/tools/assembler/slow32asm}"
+LINKER="${LINKER:-$SLOW32_BASE/tools/linker/s32-ld}"
+EMULATOR="${EMULATOR:-$SLOW32_BASE/tools/emulator/slow32}"
 
 # Runtime components
 CRT0="$SLOW32_BASE/runtime/crt0.s32o"
