@@ -117,6 +117,7 @@ assembler_reloc_patch.txt
 *.s32x
 *.s32a
 !runtime/*.s32a
+!runtime/crt0.s32o
 !forth/kernel.s32x
 
 # Editor files
