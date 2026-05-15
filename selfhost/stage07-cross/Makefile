@@ -24,7 +24,7 @@ CC_DEPS = cc-x64.c hir_regalloc_x64.h hir_codegen_x64.h hir_burg_x64.h \
           ../stage07/parser.h ../stage07/ast.h ../stage07/sema.h \
           ../stage07/optimize.h ../stage07/pp.h c_lexer_gen.c
 
-.PHONY: all test bench clean libc
+.PHONY: all test bench clean libc diff-test
 
 all: $(OUT)/cc-x64 $(OUT)/s32fast-hir
 
@@ -116,6 +116,28 @@ test: $(TEST_BINS)
 		$$t >/dev/null 2>&1; rc=$$?; \
 		echo "  $$name: exit=$$rc"; \
 	done
+	@$(MAKE) --no-print-directory diff-test
+
+# --- Differential testing vs x86_64-linux-gnu-gcc ---
+#
+# Compiles each .c in diff-test/corpus/ with both cc-x64 --hir and
+# x86_64-linux-gnu-gcc, runs both under qemu-x86_64-static, and compares
+# exit code + stdout.  Skipped (not failed) when the host lacks the
+# cross gcc or qemu — so this stays out of the way for developers
+# without those installed, while still running for anyone who has them.
+
+DIFF_GCC  := $(shell command -v x86_64-linux-gnu-gcc 2>/dev/null)
+DIFF_QEMU := $(shell command -v qemu-x86_64-static 2>/dev/null)
+
+diff-test: $(OUT)/cc-x64 $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
+	@echo ""
+	@echo "--- diff-test (cc-x64 vs gcc) ---"
+	@if [ -z "$(DIFF_GCC)" ] || [ -z "$(DIFF_QEMU)" ]; then \
+		echo "  [skip] need x86_64-linux-gnu-gcc and qemu-x86_64-static (install"; \
+		echo "         binutils-x86-64-linux-gnu + gcc-x86-64-linux-gnu + qemu-user-static)"; \
+	else \
+		diff-test/run.sh; \
+	fi
 
 # --- Benchmark ---
 
