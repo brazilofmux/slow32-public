@@ -2309,7 +2309,13 @@ static void hx_gen_func(Node *fn) {
 
     /* --- Fold read-modify-write: STORE addr, ADD(LOAD(addr), ICONST) ---
      * Emits addl $imm, disp(%base) for patterns like e->pc += 4.
-     * NOPs the LOAD and ADD; rewrites STORE src2 to -1. */
+     * NOPs the LOAD and ADD; rewrites STORE src2 to -1.
+     *
+     * Refuse to fold for char/short STOREs: x64_add_mi emits a 32-bit
+     * `addl r/m32, imm` which would write 4 bytes to a 1- or 2-byte
+     * location, silently clobbering adjacent struct fields.  The
+     * unfolded path correctly emits a typed STORE through the
+     * narrow-write helpers. */
     i = 0;
     while (i < h_ninst) {
         hx_rmw_flag[i] = 0;
@@ -2318,7 +2324,10 @@ static void hx_gen_func(Node *fn) {
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
-        if (k == HI_STORE && !hx_sib_flag[i] && !hx_is_wide(h_ty[i])) {
+        if (k == HI_STORE && !hx_sib_flag[i] && !hx_is_wide(h_ty[i]) &&
+            !(!ty_is_ptr(h_ty[i]) &&
+              (((h_ty[i] & TY_BASE_MASK) == TY_CHAR) ||
+               ((h_ty[i] & TY_BASE_MASK) == TY_SHORT)))) {
             int val;
             int st_addr;
             val = h_src2[i];

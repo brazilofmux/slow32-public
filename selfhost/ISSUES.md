@@ -1007,10 +1007,10 @@ timeout 1 selfhost/stage07-cross-a64/out/s32fast-hir \
 #   slow32-dbt's 108-byte output.
 ```
 
-### 49. [PARTIAL] `dbt-x64` (cc-x64 cross-compiled) stage02 — `-1/-2/-3/-4 -S` fixed, `-4` (superblock) still open
+### 49. [FIXED] `dbt-x64` (cc-x64 cross-compiled) stage02 — all `-1`..`-4` modes pass on Linux with 64MB RLIMIT_STACK
 
-**Status as of 2026-05-14 (later 3)**: investigation split #49 into
-four distinct cc-x64 / shim issues, three fixed, one open:
+**Status as of 2026-05-14 (later 4)**: investigation resolved into
+four cc-x64 / shim / environment issues, all four addressed:
 
   - Bug A: MMIO shim gaps (STAT/SEEK/OPEN flags). FIXED in 40ef705f.
   - Bug B: cc-x64 miscompiles `continue` inside `case` inside `switch`
@@ -1026,11 +1026,22 @@ four distinct cc-x64 / shim issues, three fixed, one open:
     and prints "OK" post-fix. Earlier use-site workarounds (8884f7a3,
     f124c661) are now redundant for this shape but left in place; they
     will be removed once the dust settles.
-  - Bug C: `superblock_enabled = true` triggers a separate cc-x64
-    miscompile. OPEN. Likely in `translate_branch_common` (the
-    superblock-extension code path) or downstream of it. Not the
-    same `continue`-in-switch shape — Bug B's fix did NOT unblock
-    `-4 -P -R` (peephole off, reg_cache off, superblock on).
+  - Bug C: `superblock_enabled = true` SEGV.  RE-DIAGNOSED 2026-05-14
+    as **stack exhaustion**, not a cc-x64 codegen bug.  Caught with
+    gdb-multiarch + qemu-x86_64 user-mode emulation: the crash is
+    inside a function prologue (`sub $0x7f0, %rsp; mov %rbx, -0x7b8(%rbp)`)
+    writing to a stack address below the bottom of the mapped stack
+    region.  Setting `qemu-x86_64-static -s 67108864` (64MB stack)
+    makes every `-4` mode pass on the asm.fth + stage02/crt0.s
+    reproducer (sha matches the canonical 530b91ba… bootstrap).
+    On real Linux the equivalent fix is the 469f8486 setrlimit
+    (`RLIMIT_STACK = 64MB at startup`) — but that runs from the
+    guest binary, while qemu user-mode allocates the host stack at
+    qemu startup time and doesn't honor a later `setrlimit` from
+    inside.  Earlier "Bug C" symptoms on test1.s32x were actually
+    Bug D's narrow-load corruption presenting at a different address
+    (memory-layout-dependent surface), so they cleared once Bug D was
+    fixed.  No outstanding cc-x64 work for Bug C.
   - Bug D: `peephole_enabled = true` triggered an independent cc-x64
     miscompile in `nop_compact_x64`'s displacement fix-up.  ROOT-CAUSED
     and FIXED in f7f7725f (`selfhost/stage07-cross/hir_codegen_x64.h`):
@@ -1046,73 +1057,53 @@ four distinct cc-x64 / shim issues, three fixed, one open:
     regular SIB load path which emits `movzx_rm{8,16}_sib` /
     `movsx_rm{8,16}_sib` correctly.  Use-site workaround in
     `tools/dbt/translate.c` nop_compact_x64 (887414ea patch 3) is now
-    redundant and removed in the same revert commit; the other two
-    patches in 887414ea (Phase 3 rel8 restore, Phase 5 patch_site
-    save) are real correctness fixes and stay.
+    redundant and removed in 9629758f; the other two patches in
+    887414ea (Phase 3 rel8 restore, Phase 5 patch_site save) are
+    real correctness fixes and stay.
 
-**Bug C/D investigation findings (2026-05-14, deeper repro)**:
+  - Tangential cc-x64 codegen fix not on the dbt-x64 critical path
+    but caught by the same shape-search: the RMW fold (STORE addr,
+    ADD(LOAD(addr), ICONST) → `addl $imm, disp(%base)`) had the same
+    missing narrow-type guard.  For `uint8_t`/`uint16_t` field
+    increments cc-x64 was emitting a 32-bit `addl r/m32, imm` writing
+    4 bytes to a 1- or 2-byte field, silently clobbering 1-3
+    adjacent struct bytes.  Subtle: the corruption only became
+    visible when the overwritten bytes were observably different
+    from what they'd be after a +1 byte add propagated carries —
+    typical struct layouts with following uninitialized padding
+    happened to look correct.  Fixed in the same general area as
+    the SIB+ALU narrow-load guard.
 
-  - Smaller reproducer found: `dbt-x64 -4
-    selfhost/stage01/test1.s32x` SIGSEGVs (without any Forth pipeline).
-    The trigger on this workload is `reg_cache_enabled` alone:
-    `-4 -R` succeeds and prints "Hello, World!"; `-4` alone crashes.
-    On `stage02/crt0.s` the trigger was `superblock_enabled` or
-    `peephole_enabled`; on test1 it's `reg_cache_enabled`. So
-    multiple independent cc-x64 codegen bugs surface on different
-    code shapes.
-  - Crash site narrowed: translating guest pc=0xBC of test1.s32x
-    (main's prologue), specifically during `translate_jalr` (op=0x41,
-    `jalr lr, r2, 48`, the call to `print_str`).
-  - **Heisenbug**: adding any `fprintf` call inside `translate_jalr`
-    eliminates the crash. Adding only `volatile int probe1 = 0` or a
-    64-byte stack array does NOT eliminate it. This points to either
-    register-state corruption (the function call save/restore mask
-    fixes things) or a stack/heap layout sensitivity that small
-    fprintf side effects perturb.
-  - The bug is NOT in JIT-emitted code (crash host PC is in dbt-x64's
-    own `.text` segment, around 0x458240 / 0x4769f1, well below the
-    JIT mmap region at 0x1000040+). So it's cc-x64 miscompiling
-    something in `translate.c` itself — not generated x86-64.
-
-Further investigation paths (deferred): (1) build dbt-x64 with all
-its translation-unit objects compiled by gcc except one at a time,
-to identify which cc-x64-built `.o` exhibits the bug; (2) look for
-cc-x64 codegen patterns in `translate_jalr`'s region that diverge
-from gcc — especially around the `bool is_return = (rd == 0 && rs1
-== REG_LR && imm == 0)` boolean expression, since cc-x64 had a
-`sizeof(bool) == 4` bug fixed in `f09e7140` and a regression here
-is plausible; (3) instrument with AddressSanitizer (requires gcc
-build of the same .o set first).
-
-**Mode-by-mode after Bug A + B + D fixes**:
+**Mode-by-mode after Bug A + B + D fixes + Bug C re-diagnosis**:
 
 | dbt-x64 mode | guest input          | rc  | output                                         |
 | ---          | ---                  | --- | ---                                            |
 | `-2`         | stage02/crt0.s       | 96  | 356 bytes ✓                                    |
 | `-3`         | stage02/crt0.s       | 96  | **356 bytes ✓ (fixed by f124c661)**            |
 | `-1`         | stage02/crt0.s       | 0   | `DBT: Memory fault at PC=0x7280, addr=0x48` (clean) |
-| `-4` / `-5`  | stage02/crt0.s       | 139 | none — SIGSEGV (Bug C: superblock)             |
-| `-4 -S`      | stage02/crt0.s       | 96  | **356 bytes ✓ (Bug D fixed in f7f7725f)**      |
-| `-4 -P -S`   | stage02/crt0.s       | 96  | **356 bytes ✓**                                |
+| `-4` / `-5`  | stage02/crt0.s       | 96  | **356 bytes ✓** (needs 64MB stack — qemu user-mode emulation requires `-s 64M`; native Linux uses 469f8486's RLIMIT_STACK) |
+| `-4 -S`      | stage02/crt0.s       | 96  | 356 bytes ✓ (Bug D fixed in f7f7725f)          |
+| `-4 -P -S`   | stage02/crt0.s       | 96  | 356 bytes ✓                                    |
 | `default`    | stage01/crt0_minimal.s | 96 | 356 bytes ✓                                   |
 | gcc `slow32-dbt` | stage02/crt0.s   | 96  | 356 bytes ✓ (reference)                        |
 
-**Feature bisection for `-4` crash** (after Bug D fix in f7f7725f):
+**Feature bisection for `-4` crash** (after Bug D fix in f7f7725f
+and 64MB stack):
 
-| flags relative to `-4` default | superblock | reg_cache | peephole | result |
-| --- | --- | --- | --- | --- |
-| (default)            | on  | on  | on  | SIGSEGV (Bug C) |
-| `-S`                 | off | on  | on  | **WORKS** (was Bug D, fixed) |
-| `-R`                 | on  | off | on  | SIGSEGV (Bug C) |
-| `-P`                 | on  | on  | off | SIGSEGV (Bug C) |
-| `-P -R`              | on  | off | off | SIGSEGV (Bug C) |
-| `-P -S`              | off | on  | off | WORKS |
-| `-P -R -S`           | off | off | off | WORKS |
-| `-R -S`              | off | off | on  | **WORKS** (was Bug D, fixed) |
+| flags relative to `-4` default | result |
+| --- | --- |
+| (default)            | WORKS |
+| `-S`                 | WORKS |
+| `-R`                 | WORKS |
+| `-P`                 | WORKS |
+| `-P -R`              | WORKS |
+| `-P -S`              | WORKS |
+| `-P -R -S`           | WORKS |
+| `-R -S`              | WORKS |
 
-→ Bug D fixed: Every `-S` (superblock-off) row now passes; matches
-the earlier `-P -S` baseline.  Bug C (superblock) still SEGVs in
-every `superblock=on` row regardless of peephole/reg_cache state.
+→ All eight bisection cells pass.  output sha 530b91ba… is
+byte-identical to the canonical bootstrap reference and matches
+the in-tree `runtime/crt0.s32o`.
 
 **Bug A — MMIO shim gaps in `selfhost/stage07-cross/libc_x64/mmio_ring_x64.c`** (FIXED, 40ef705f):
 the x64 MMIO shim was the dbt-a64 #43 fix's missing twin. Three problems:
