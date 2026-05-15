@@ -957,15 +957,51 @@ static void gc_combine(int u, int v) {
         e = gc_nmlist_next[e];
     }
 
-    /* Add edges: for each neighbor t of v, add edge(t, u) */
+    /* Add edges: for each neighbor t of v, add edge(t, u).
+     *
+     * Always transfer the edge — even when t is on the select stack —
+     * because t's color is consulted later via u's adjacency when u
+     * itself is colored.  Without the transfer u's adj loses the
+     * "must not pick t's color" constraint and can clash with t.
+     *
+     * Latent under traditional reverse-of-push pop order (high index
+     * first, so u colors before t): the asymmetric edge still on t's
+     * side via the alias was sufficient.  Two-pass select that colors
+     * PARAMs first inverts that ordering and surfaces the bug. */
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
-        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED) {
+        if (gc_wl[t] != GC_WL_COALESCED) {
             gc_add_edge(t, u);
-            gc_dec_degree(t);
+            if (gc_wl[t] != GC_WL_SELECT) {
+                gc_dec_degree(t);
+            }
         }
         e = gc_adj_next[e];
+    }
+
+    /* Propagate per-instruction clobber-crossing constraints from v to u.
+     *
+     * The select-time constraint check at gc_select reads
+     * ra_crosses_cx_clobber[gc_inst[n]] (the survivor's instruction).
+     * If v's value crosses a CX/DX clobber but u's doesn't, the merged
+     * node must inherit v's constraint or the regalloc may park it in
+     * RCX/RDX and have its register clobbered by the shift / div in v's
+     * live range.
+     *
+     * Found via sign_extend_u32 in s32-fast-x64.c after the edge-fix
+     * shifted some color choices: i0 (PARAM v, crosses CX via the
+     * `1 << (bits-1)` shift) was coalesced into the b3 PHI i36 (does
+     * not cross CX), and the merged node took RCX because i36's
+     * constraint said RCX was fine.  Result: the variable shift in b0
+     * clobbered v before its PHI use in b3. */
+    {
+        int u_inst = gc_inst[u];
+        int v_inst = gc_inst[v];
+        if (u_inst >= 0 && v_inst >= 0) {
+            if (ra_crosses_cx_clobber[v_inst]) ra_crosses_cx_clobber[u_inst] = 1;
+            if (ra_crosses_dx_clobber[v_inst]) ra_crosses_dx_clobber[u_inst] = 1;
+        }
     }
 
     /* If u's degree now >= K and it was in freeze, move to spill */
