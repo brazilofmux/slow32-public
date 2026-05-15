@@ -1235,6 +1235,114 @@ unchanged) and the second to 0xFFFFFFFF (so OP_FABS_D zeroed the
 high half of the double, mangling any double whose magnitude
 exceeded ~2^32).  Both now compile correctly.
 
+### 51. [BUG] Struct-by-value parameter passing miscompiles on cc-x64 and cc-a64
+
+**Status**: open, surfaced 2026-05-15 while extending the diff-test
+corpus (d25_compound_literal_scalar.c) against gcc on aarch64 and
+x86_64-linux-gnu.  Self-contained repro:
+
+```c
+struct pair { int a; int b; };
+static int sum(struct pair p) { return p.a * 3 + p.b * 5; }
+int main(void) {
+    struct pair p;
+    p.a = 2; p.b = 3;
+    return sum(p) & 0xff;     /* expected: 21 */
+}
+```
+
+Results:
+  - gcc (any target, any -O level): 21 (correct)
+  - cc-a64 --hir: 176; cc-a64 (tree-walk, no --hir): 96
+  - cc-x64 --hir: 144
+
+Each compiler produces a *different* wrong value, so the bug is
+neither a shared frontend miscompile (which would give matching wrong
+values on both targets) nor a single ABI bit (which would give a
+consistent shift).  The pattern is: small ≤16-byte struct passed as
+a function parameter by value reads stale / partly-uninit register
+state in the callee.
+
+**Why no existing test caught it**: every selfhost test that
+exercises structs passes them through `struct foo *` (see
+`hir_test7.c` `add_point`, `d08_struct_passing.c` `churn`,
+phase30 `sum_pair`).  The struct-by-value param shape was never
+tested end-to-end.  Section C #38 (`[MISSING] struct by value`) flagged
+that stage06 didn't support it, but the gap was never reverified
+after stage07 added struct-typed parameters.
+
+**Workaround in the diff-test corpus**: d25 routes everything through
+`struct pair *` pointers; a comment explains the omission.
+
+**Recommendation when picked up**:
+  - Check cc-a64 `hir_codegen_a64.h` HI_PARAM body codegen for
+    struct-typed parameter slot recovery (the 2026-05-06 fix around
+    `hx_spill(idx, X0)` already adjusted this area).
+  - Check cc-x64 `hir_codegen_x64.h` HI_CALL marshal for struct-typed
+    arguments — likely passing the pointer to the struct rather than
+    copying the bytes into a System V "in-register" pair (RDI/RSI by
+    field) per ABI rules.
+  - Add a positive selfhost test (`tests/cc_struct_byval.c` on each
+    cross) exercising:
+      * 2-int struct param + return
+      * 4-byte struct param (single register)
+      * 16-byte struct param (two-register split on a64 / two-register
+        on x64 SysV)
+      * struct-returning function whose return is struct-passed.
+
+### 52. [BUG] Static struct initializer rejects `char` literal in char-array brace-list
+
+**Status**: open, surfaced 2026-05-15 alongside #51.  Self-contained
+repro:
+
+```c
+struct entry { int id; char tag[8]; };
+static struct entry one = {
+    .id = 2,
+    .tag = { 'b','e','t','a', 0, 0, 0, 0 }
+};
+```
+
+Both cc-x64 and cc-a64 fail with:
+
+```
+s12cc:3: error: expected constant integer
+```
+
+The same data initialized as `.tag = "beta"` works fine, and a
+brace-list with integer literals (`.tag = { 98,101,116,97, 0,0,0,0 }`)
+also works.  Local-scope (automatic) structs accept char literals in
+brace lists.  Brace-list with char literals fails only at *static*
+storage scope, and only when the target slot is a char array.
+
+**Triggers found while reducing**:
+  - `.c = 'a'` for a scalar char field nested inside an element of a
+    static array-of-structs: same error.
+  - `.x = 'a'` for an int field nested inside an element of a static
+    array-of-structs: same error.
+
+So the broader pattern may be "static aggregate initializer
+evaluator does not constant-fold char literals at all on the
+designated-init path."  The string-literal designator works because
+it has a separate byte-array fast path.
+
+**Why no existing test caught it**: phase28/phase29 tests use
+`.tag = "abc"` (string form) and integer literals; none use char
+literals in static designated init.  test_phase30 uses char literals
+in *compound literals* (`(char[4]){ [2] = 'z' }`), which has a
+different evaluator path.
+
+**Workaround in the diff-test corpus**: d30 uses string-literal form
+for static char-array members; char literal designators are exercised
+only at automatic scope (`local.short_tag = { [3] = 'Z', [0] = 'A' }`,
+which works).
+
+**Recommendation when picked up**: locate the "expected constant
+integer" diagnostic in `selfhost/stage07/parser.h` (the const-eval
+loop used by the static aggregate initializer); teach it that a
+TK_CHARLIT node is a constant integer.  Likely a one-line addition
+to the dispatcher.
+
 ---
 
 ## Section C: Missing Language / ABI Surface (Feature Backlog)
