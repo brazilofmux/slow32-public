@@ -2174,7 +2174,42 @@ static void hl_func(Node *fn) {
 
         pp = fn->args;
         while (pp) {
-            if (ty_is_llong(pp->ty)) {
+            if (ty_is_struct(pp->ty)) {
+                /* Struct parameter (pass-by-value semantics): caller
+                 * passes a pointer to the source struct in one arg
+                 * register; we copy its bytes into the local slot at
+                 * pp->offset so subsequent references to pp work via
+                 * the usual fp + pp->offset + member_offset path, and
+                 * callee mutations stay local.  Mirrors the inline
+                 * byte-copy loop used on the struct-return path. */
+                int param_ptr;
+                int local_addr;
+                int copy_i;
+                int copy_sz;
+                int src_off;
+                int dst_off;
+                int tmp;
+
+                param_ptr = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, phys_idx, NULL);
+                local_addr = hl_get_alloca(pp->offset, pp->ty);
+                copy_sz = ty_size(pp->ty);
+                copy_i = 0;
+                while (copy_i + 4 <= copy_sz) {
+                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, param_ptr, -1, copy_i, NULL);
+                    tmp = hi_emit(HI_LOAD, TY_INT, src_off, -1, 0, NULL);
+                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, local_addr, -1, copy_i, NULL);
+                    hi_emit(HI_STORE, TY_INT, dst_off, tmp, 0, NULL);
+                    copy_i = copy_i + 4;
+                }
+                while (copy_i < copy_sz) {
+                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, param_ptr, -1, copy_i, NULL);
+                    tmp = hi_emit(HI_LOAD, TY_CHAR, src_off, -1, 0, NULL);
+                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, local_addr, -1, copy_i, NULL);
+                    hi_emit(HI_STORE, TY_CHAR, dst_off, tmp, 0, NULL);
+                    copy_i = copy_i + 1;
+                }
+                phys_idx = phys_idx + 1;
+            } else if (ty_is_llong(pp->ty)) {
 #ifdef S12CC_X64_HOST
                 param_inst = hi_emit(HI_PARAM, TY_LLONG, -1, -1, phys_idx, NULL);
                 param_alloca = hl_get_alloca(pp->offset, TY_LLONG);

@@ -1235,60 +1235,62 @@ unchanged) and the second to 0xFFFFFFFF (so OP_FABS_D zeroed the
 high half of the double, mangling any double whose magnitude
 exceeded ~2^32).  Both now compile correctly.
 
-### 51. [BUG] Struct-by-value parameter passing miscompiles on cc-x64 and cc-a64
+### 51. [FIXED] Struct-by-value parameter passing miscompiled on cc-x64 and cc-a64
 
-**Status**: open, surfaced 2026-05-15 while extending the diff-test
-corpus (d25_compound_literal_scalar.c) against gcc on aarch64 and
-x86_64-linux-gnu.  Self-contained repro:
+**Status**: fixed 2026-05-15.  Originally surfaced 2026-05-15 while
+extending the diff-test corpus (d25_compound_literal_scalar.c)
+against gcc on aarch64 and x86_64-linux-gnu.
+
+**Root cause**: callee-side HIR lowering in
+`selfhost/stage07/hir_lower.h` `hl_func_lower` didn't have a branch
+for struct-typed parameters.  Caller-side already passed the source
+struct's address in the arg register (the standard "struct ND_VAR
+returns its address" path).  Callee emitted `HI_PARAM(ty=pp->ty, ...)`
+with the struct type and a single `HI_STORE(pp->ty, slot, param_reg)`,
+which codegen lowered to a 4-byte spill of the *low half of the arg
+register* — interpreting the caller's pointer as the first int field
+and reading the "second field" from uninitialized stack.  Each
+target had different downstream codegen for the truncated value, so
+the wrong-value shape differed across cc-a64 (--hir 176, tree-walk
+96), cc-x64 (--hir 144), where gcc returns 21.
+
+**Why no existing test caught it**: every prior selfhost struct test
+passed structs through `struct foo *` (`hir_test7.c` `add_point`,
+`d08_struct_passing.c` `churn`, `test_phase30` `sum_pair`).  The
+struct-by-value param shape was never end-to-end tested.
+
+**Fix**: chosen ABI is "caller passes source struct's address in one
+arg register; callee copies bytes into the local slot at `pp->offset`
+on entry."  The copy mirrors the inline byte-copy loop already used
+on the struct-return path (4-byte chunks then 1-byte tail).  Single
+new branch in `hl_func_lower`'s param-emit loop:
 
 ```c
-struct pair { int a; int b; };
-static int sum(struct pair p) { return p.a * 3 + p.b * 5; }
-int main(void) {
-    struct pair p;
-    p.a = 2; p.b = 3;
-    return sum(p) & 0xff;     /* expected: 21 */
+if (ty_is_struct(pp->ty)) {
+    param_ptr  = hi_emit(HI_PARAM, HL_ADDR_TY, ..., phys_idx, NULL);
+    local_addr = hl_get_alloca(pp->offset, pp->ty);
+    /* copy ty_size(pp->ty) bytes from [param_ptr] to local_addr */
+    phys_idx = phys_idx + 1;
 }
 ```
 
-Results:
-  - gcc (any target, any -O level): 21 (correct)
-  - cc-a64 --hir: 176; cc-a64 (tree-walk, no --hir): 96
-  - cc-x64 --hir: 144
+References to `pp` in the body still resolve via the existing
+`fp + pp->offset + member_offset` path, so callee mutations stay local
+and pass-by-value semantics hold.  No codegen changes — both
+HI_PARAM(HL_ADDR_TY) and HI_LOAD/HI_STORE(TY_INT) already work.
 
-Each compiler produces a *different* wrong value, so the bug is
-neither a shared frontend miscompile (which would give matching wrong
-values on both targets) nor a single ABI bit (which would give a
-consistent shift).  The pattern is: small ≤16-byte struct passed as
-a function parameter by value reads stale / partly-uninit register
-state in the callee.
+**Regression coverage**:
+`selfhost/stage07-cross/diff-test/corpus/d31_struct_byval.c` exercises
+8 patterns: 2-int struct, 4-int struct, mixed scalar+struct args,
+struct with char fields and padding, callee-side mutation isolated
+from caller, `swap(p)` struct-return composed with struct-param,
+and `swap(swap(p)) == p` nested calls.  All match gcc on both
+cc-x64 (qemu-x86_64) and cc-a64 (native aarch64); 31/31 diff-test
+entries PASS on each target.
 
-**Why no existing test caught it**: every selfhost test that
-exercises structs passes them through `struct foo *` (see
-`hir_test7.c` `add_point`, `d08_struct_passing.c` `churn`,
-phase30 `sum_pair`).  The struct-by-value param shape was never
-tested end-to-end.  Section C #38 (`[MISSING] struct by value`) flagged
-that stage06 didn't support it, but the gap was never reverified
-after stage07 added struct-typed parameters.
-
-**Workaround in the diff-test corpus**: d25 routes everything through
-`struct pair *` pointers; a comment explains the omission.
-
-**Recommendation when picked up**:
-  - Check cc-a64 `hir_codegen_a64.h` HI_PARAM body codegen for
-    struct-typed parameter slot recovery (the 2026-05-06 fix around
-    `hx_spill(idx, X0)` already adjusted this area).
-  - Check cc-x64 `hir_codegen_x64.h` HI_CALL marshal for struct-typed
-    arguments — likely passing the pointer to the struct rather than
-    copying the bytes into a System V "in-register" pair (RDI/RSI by
-    field) per ABI rules.
-  - Add a positive selfhost test (`tests/cc_struct_byval.c` on each
-    cross) exercising:
-      * 2-int struct param + return
-      * 4-byte struct param (single register)
-      * 16-byte struct param (two-register split on a64 / two-register
-        on x64 SysV)
-      * struct-returning function whose return is struct-passed.
+**Implications for Section C #38**: still applies to stage06
+(`s12cc.c`); stage07 now supports struct-by-value through the
+private caller-pointer ABI on cc-x64 and cc-a64.
 
 ### 52. [FIXED] Static struct initializer rejected `char` literal in char-array brace-list
 
