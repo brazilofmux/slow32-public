@@ -1293,15 +1293,25 @@ but each gap blocks third-party C codebases of any size.
   array compound literals now lower to hidden automatic locals with ordered
   initialization side effects. Address-taking and member access work through
   comma-expression lvalues. Covered by `selfhost/stage07/tests/test_phase30.c`.
+- **Flexible array members** — final unsized struct members such as
+  `char data[];` now get an aligned zero-byte tail offset, do not contribute
+  to `sizeof(struct)`, and still behave as array addresses for `p->data[i]`.
+  Covered by `selfhost/stage07-cross/tests/test_flex_array.c` and
+  `selfhost/stage07-cross-a64/tests/cc_flex_array.c`.
+- **GNU/C11 declaration noise** — `_Atomic` is accepted as an unqualified
+  underlying type, `typeof(...)` / `__typeof__(...)` resolve to the parsed type
+  or expression type, and `__attribute__((...))` is skipped in prefix, infix,
+  suffix, and parameter positions. Covered by
+  `selfhost/stage07-cross/tests/test_decl_dialect.c` and
+  `selfhost/stage07-cross-a64/tests/cc_decl_dialect.c`.
 
 **Surveyed but not yet hit (counts from TCC source)**:
 
 | Feature | TCC use sites | Implementation notes |
 |---|---|---|
-| Flexible array members `int data[];` | 3 sites | Tiny sema special case |
 | Bitfields | 1 site in `tcc.h` | Real codegen work — masks + shifts |
 | Statement expressions `({ …; expr; })` | 1 site | GNU extension; nontrivial parser work |
-| `_Atomic` / `typeof` / `__attribute__` / `inline` (with body) | Scattered | Most can be parsed-and-discarded |
+| `inline` (with C99 external-inline semantics) | Scattered | Parser accepts inline as a no-op; full external-inline semantics remain unsupported |
 
 **Header-set gaps** (would need to be added to
 `selfhost/stage07/include/`): `stdarg.h`, `errno.h`, `setjmp.h`,

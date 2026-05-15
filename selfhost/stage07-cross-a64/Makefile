@@ -159,6 +159,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_local_static_assert_exe $(OUT)/cc_fwd_struct_offsetof_exe \
          $(OUT)/cc_macro_paren_obj_exe $(OUT)/cc_macro_line_cont_exe \
          $(OUT)/cc_anon_nested_struct_exe \
+         $(OUT)/cc_flex_array_exe \
+         $(OUT)/cc_decl_dialect_exe \
          $(OUT)/cc_multi_include_exe \
          $(OUT)/cc_inline_asm_a64_exe \
          $(OUT)/cc_dbt_c_forms_exe \
@@ -188,6 +190,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_macro_paren_obj_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_macro_paren_obj: ok (exit=1)"; else echo "cc_macro_paren_obj: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_macro_line_cont_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_macro_line_cont: ok (exit=1)"; else echo "cc_macro_line_cont: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_anon_nested_struct_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_anon_nested_struct: ok (exit=1)"; else echo "cc_anon_nested_struct: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_flex_array_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_flex_array: ok (exit=1)"; else echo "cc_flex_array: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_decl_dialect_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_decl_dialect: ok (exit=1)"; else echo "cc_decl_dialect: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_multi_include_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_multi_include: ok (exit=1)"; else echo "cc_multi_include: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_inline_asm_a64_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_inline_asm_a64: ok (exit=1)"; else echo "cc_inline_asm_a64: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_dbt_c_forms_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_dbt_c_forms: ok (exit=1)"; else echo "cc_dbt_c_forms: FAIL (exit=$$rc, expected 1)"; exit 1; fi

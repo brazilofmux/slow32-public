@@ -11,6 +11,7 @@ static Node *parse_unary(void);
 static int parse_string_literal(void);
 static int parse_const_int(void);
 static void next(void);
+static void skip_gnu_attributes(void);
 
 static int is_gnu_qual_ident(void) {
     if (lex_tok != TK_IDENT) return 0;
@@ -44,11 +45,42 @@ static int is_gnu_extension_ident(void) {
     return 0;
 }
 
+static int is_c11_atomic_ident(void) {
+    if (lex_tok != TK_IDENT) return 0;
+    if (strcmp(lex_str, "_Atomic") == 0) return 1;
+    return 0;
+}
+
 static int is_gnu_inline_ident(void) {
     if (lex_tok != TK_IDENT) return 0;
     if (strcmp(lex_str, "__inline") == 0) return 1;
     if (strcmp(lex_str, "__inline__") == 0) return 1;
     return 0;
+}
+
+static int is_gnu_typeof_ident(void) {
+    if (lex_tok != TK_IDENT) return 0;
+    if (strcmp(lex_str, "typeof") == 0) return 1;
+    if (strcmp(lex_str, "__typeof") == 0) return 1;
+    if (strcmp(lex_str, "__typeof__") == 0) return 1;
+    return 0;
+}
+
+static void skip_balanced_parens(void) {
+    int depth;
+
+    if (lex_tok != TK_LPAREN) return;
+    depth = 0;
+    while (lex_tok != TK_EOF) {
+        if (lex_tok == TK_LPAREN) depth = depth + 1;
+        else if (lex_tok == TK_RPAREN) {
+            depth = depth - 1;
+            next();
+            if (depth <= 0) break;
+            continue;
+        }
+        next();
+    }
 }
 
 static int gnu_float_ident_ty(void) {
@@ -63,9 +95,25 @@ static int gnu_float_ident_ty(void) {
 }
 
 static void skip_decl_qualifiers(void) {
-    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
-           lex_tok == TK_RESTRICT || is_gnu_qual_ident() ||
-           is_gnu_extension_ident()) next();
+    while (1) {
+        if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
+            lex_tok == TK_RESTRICT || lex_tok == TK_INLINE ||
+            is_gnu_qual_ident() || is_gnu_extension_ident() ||
+            is_gnu_inline_ident()) {
+            next();
+            continue;
+        }
+        if (is_c11_atomic_ident()) {
+            next();
+            if (lex_tok == TK_LPAREN) skip_balanced_parens();
+            continue;
+        }
+        if (is_gnu_attr_ident()) {
+            skip_gnu_attributes();
+            continue;
+        }
+        break;
+    }
 }
 
 static void skip_gnu_attributes(void) {
@@ -292,8 +340,11 @@ static int is_type(void) {
     if (lex_tok == TK_CONST) return 1;
     if (lex_tok == TK_VOLATILE) return 1;
     if (gnu_float_ident_ty() >= 0) return 1;
+    if (is_c11_atomic_ident()) return 1;
     if (is_gnu_extension_ident()) return 1;
     if (is_gnu_qual_ident()) return 1;
+    if (is_gnu_attr_ident()) return 1;
+    if (is_gnu_typeof_ident()) return 1;
     if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) return 1;
     return 0;
 }
@@ -522,6 +573,10 @@ static int struct_member_array_count(int mi) {
     return stm_arr_size[mi] / ty_size(elem_ty);
 }
 
+static int struct_member_is_flexible_array(int mi) {
+    return stm_is_arr[mi] && stm_arr_size[mi] == 0;
+}
+
 static int struct_member_nth_for_idx(int si, int mi) {
     int i;
     int seen;
@@ -600,12 +655,35 @@ static int parse_type(void) {
     int max_sz;
     int arr_count;
     int val;
+    int flex_member;
     int first_decl;
     char nm[256];
     /* Skip const/volatile/signed/restrict qualifiers */
-    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
-           lex_tok == TK_SIGNED || lex_tok == TK_RESTRICT ||
-           is_gnu_qual_ident() || is_gnu_extension_ident()) next();
+    while (1) {
+        if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
+            lex_tok == TK_SIGNED || lex_tok == TK_RESTRICT ||
+            is_gnu_qual_ident() || is_gnu_extension_ident() ||
+            is_gnu_inline_ident()) {
+            next();
+            continue;
+        }
+        if (is_gnu_attr_ident()) {
+            skip_gnu_attributes();
+            continue;
+        }
+        break;
+    }
+    if (is_c11_atomic_ident()) {
+        next();
+        if (lex_tok == TK_LPAREN) {
+            next();
+            ty = parse_type();
+            expect(TK_RPAREN);
+            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
+            return ty;
+        }
+        return parse_type();
+    }
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
     else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
@@ -656,6 +734,18 @@ static int parse_type(void) {
     else if (gnu_float_ident_ty() >= 0) {
         ty = gnu_float_ident_ty();
         next();
+    }
+    else if (is_gnu_typeof_ident()) {
+        Node *tn;
+        next();
+        expect(TK_LPAREN);
+        if (is_type()) {
+            ty = parse_type();
+        } else {
+            tn = parse_expr();
+            ty = tn->ty;
+        }
+        expect(TK_RPAREN);
     }
     else if (lex_tok == TK_ENUM) {
         next();
@@ -708,6 +798,7 @@ static int parse_type(void) {
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
                 first_decl = 1;
+                flex_member = 0;
                 while (1) {
                     int is_fn_ptr_member;
                     int member_ty;
@@ -785,13 +876,26 @@ static int parse_type(void) {
                             expect(TK_RPAREN);
                         }
                     }
-                    /* Check for array member: type name[N][M]...; */
+                    /* Check for array member: type name[N][M]...;  A final
+                     * unsized member is a C99 flexible array member: it has
+                     * array-address semantics but contributes zero bytes to
+                     * sizeof(struct). */
                     arr_count = 0;
                     while (lex_tok == TK_LBRACK) {
                         next();
                         if (lex_tok == TK_RBRACK) {
-                            p_error("array size required in struct member");
-                            return TY_INT;
+                            if (arr_count != 0 || flex_member) {
+                                p_error("invalid flexible array member");
+                                return TY_INT;
+                            }
+                            flex_member = 1;
+                            arr_count = 1;
+                            next();
+                            if (lex_tok == TK_LBRACK) {
+                                p_error("invalid flexible array member");
+                                return TY_INT;
+                            }
+                            break;
                         }
                         if (arr_count == 0) arr_count = 1;
                         arr_count = arr_count * parse_const_int();
@@ -800,13 +904,23 @@ static int parse_type(void) {
                     skip_gnu_decl_suffixes();
                     if (arr_count > 0) {
                         require_complete_type(member_ty, "incomplete struct member");
+                        if (flex_member) {
+                            if (st_nfields[si] == 0) {
+                                p_error("flexible array member requires previous member");
+                                return TY_INT;
+                            }
+                            if (lex_tok != TK_SEMI) {
+                                p_error("flexible array member must be last");
+                                return TY_INT;
+                            }
+                        }
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty + TY_PTR;
                         stm_is_arr[stm_count] = 1;
-                        stm_arr_size[stm_count] = ty_size(member_ty) * arr_count;
+                        stm_arr_size[stm_count] = flex_member ? 0 : ty_size(member_ty) * arr_count;
                         stm_off[stm_count] = off;
                         stm_synth[stm_count] = 0;
-                        off = off + ty_size(member_ty) * arr_count;
+                        if (!flex_member) off = off + ty_size(member_ty) * arr_count;
                     } else {
                         require_complete_type(member_ty, "incomplete struct member");
                         stm_owner[stm_count] = si;
@@ -823,6 +937,10 @@ static int parse_type(void) {
                     next();
                 }
                 expect(TK_SEMI);
+                if (flex_member && lex_tok != TK_RBRACE) {
+                    p_error("flexible array member must be last");
+                    return TY_INT;
+                }
             }
             expect(TK_RBRACE);
             /* Round total size up to the struct's alignment so that arrays
@@ -1441,6 +1559,8 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
             si = ty_struct_idx(ty);
             mi = find_member(ty, dnm);
             if (mi < 0) p_error("unknown field in initializer");
+            if (struct_member_is_flexible_array(mi))
+                p_error("flexible array initializer unsupported");
             rel = rel + stm_off[mi];
             ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
@@ -1567,6 +1687,8 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
             if (i >= nf) p_error("too many initializers");
             mi = struct_field_nth_idx(si, i);
             if (mi < 0) p_error("missing struct field");
+            if (struct_member_is_flexible_array(mi))
+                p_error("flexible array initializer unsupported");
             field_ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
             parse_global_init_value_at(field_ty, arr_count, gidx, base_rel + stm_off[mi]);
@@ -2533,9 +2655,11 @@ static void local_init_zero_at(int ty, int arr_count, int rel_off) {
         while (i < nf) {
             mi = struct_field_nth_idx(si, i);
             if (mi >= 0) {
-                field_ty = stm_type[mi];
-                field_arr_count = struct_member_array_count(mi);
-                local_init_zero_at(field_ty, field_arr_count, rel_off + stm_off[mi]);
+                if (!struct_member_is_flexible_array(mi)) {
+                    field_ty = stm_type[mi];
+                    field_arr_count = struct_member_array_count(mi);
+                    local_init_zero_at(field_ty, field_arr_count, rel_off + stm_off[mi]);
+                }
             }
             i = i + 1;
             if (st_is_union[si]) break;
@@ -2674,6 +2798,8 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
             if (i >= nf) p_error("too many initializers");
             mi = struct_field_nth_idx(si, i);
             if (mi < 0) p_error("missing struct field");
+            if (struct_member_is_flexible_array(mi))
+                p_error("flexible array initializer unsupported");
             field_ty = stm_type[mi];
             field_arr_count = struct_member_array_count(mi);
             parse_local_init_value_at(field_ty, field_arr_count, rel_off + stm_off[mi]);
@@ -3786,6 +3912,7 @@ static Node *parse_top_decl(void) {
             p = nd_var(pnm, off, pty);
             p->is_local = 1;
         }
+        skip_gnu_decl_suffixes();
         ps_nparams = 1;
         phead = p;
         ptail = p;
@@ -3854,6 +3981,7 @@ static Node *parse_top_decl(void) {
                 p = nd_var(pnm, off, pty);
                 p->is_local = 1;
             }
+            skip_gnu_decl_suffixes();
             if (phead == NULL) {
                 phead = p;
                 ptail = p;
