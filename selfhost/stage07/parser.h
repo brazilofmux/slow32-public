@@ -1288,7 +1288,7 @@ static int parse_const_primary(void) {
         expect(TK_RPAREN);
         return ty_size(ty);
     }
-    if (lex_tok == TK_NUM) {
+    if (lex_tok == TK_NUM || lex_tok == TK_CHARLIT) {
         ci = lex_val;
         next();
         return ci;

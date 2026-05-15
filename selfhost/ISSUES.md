@@ -1290,58 +1290,39 @@ after stage07 added struct-typed parameters.
         on x64 SysV)
       * struct-returning function whose return is struct-passed.
 
-### 52. [BUG] Static struct initializer rejects `char` literal in char-array brace-list
+### 52. [FIXED] Static struct initializer rejected `char` literal in char-array brace-list
 
-**Status**: open, surfaced 2026-05-15 alongside #51.  Self-contained
-repro:
+**Status**: fixed 2026-05-15.  Originally surfaced 2026-05-15
+alongside #51 while extending the diff-test corpus.
+
+**Root cause**: `parse_const_primary` in `selfhost/stage07/parser.h`
+accepted `TK_NUM` but not `TK_CHARLIT` on the static const-eval
+path.  Char literals are integer constants in C, and the parser's
+case-label evaluator already treated them as equivalent
+(`lex_tok == TK_NUM || lex_tok == TK_CHARLIT`); the static
+initializer evaluator just hadn't been updated.
+
+**Fix** (one line):
 
 ```c
-struct entry { int id; char tag[8]; };
-static struct entry one = {
-    .id = 2,
-    .tag = { 'b','e','t','a', 0, 0, 0, 0 }
-};
+-    if (lex_tok == TK_NUM) {
++    if (lex_tok == TK_NUM || lex_tok == TK_CHARLIT) {
+         ci = lex_val;
+         next();
+         return ci;
+     }
 ```
 
-Both cc-x64 and cc-a64 fail with:
+(The lexer stores the resolved char value in `lex_val` for
+`TK_CHARLIT`, same as for `TK_NUM`.)
 
-```
-s12cc:3: error: expected constant integer
-```
-
-The same data initialized as `.tag = "beta"` works fine, and a
-brace-list with integer literals (`.tag = { 98,101,116,97, 0,0,0,0 }`)
-also works.  Local-scope (automatic) structs accept char literals in
-brace lists.  Brace-list with char literals fails only at *static*
-storage scope, and only when the target slot is a char array.
-
-**Triggers found while reducing**:
-  - `.c = 'a'` for a scalar char field nested inside an element of a
-    static array-of-structs: same error.
-  - `.x = 'a'` for an int field nested inside an element of a static
-    array-of-structs: same error.
-
-So the broader pattern may be "static aggregate initializer
-evaluator does not constant-fold char literals at all on the
-designated-init path."  The string-literal designator works because
-it has a separate byte-array fast path.
-
-**Why no existing test caught it**: phase28/phase29 tests use
-`.tag = "abc"` (string form) and integer literals; none use char
-literals in static designated init.  test_phase30 uses char literals
-in *compound literals* (`(char[4]){ [2] = 'z' }`), which has a
-different evaluator path.
-
-**Workaround in the diff-test corpus**: d30 uses string-literal form
-for static char-array members; char literal designators are exercised
-only at automatic scope (`local.short_tag = { [3] = 'Z', [0] = 'A' }`,
-which works).
-
-**Recommendation when picked up**: locate the "expected constant
-integer" diagnostic in `selfhost/stage07/parser.h` (the const-eval
-loop used by the static aggregate initializer); teach it that a
-TK_CHARLIT node is a constant integer.  Likely a one-line addition
-to the dispatcher.
+**Regression coverage**:
+`selfhost/stage07-cross/diff-test/corpus/d30_designated_strings.c`
+exercises every previously-broken form -- `.tag = { 'b','e','t','a', 0, 0, 0, 0 }`,
+`.tag = { [0]='g', [2]='m', [4]='a', [6]='!' }`, and nested char
+designators inside array-of-structs entries -- at file scope, in
+both cc-x64 and cc-a64 (corpus is symlinked).  All 30/30 diff-test
+entries PASS on both targets.
 
 ---
 
