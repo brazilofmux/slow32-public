@@ -1163,12 +1163,35 @@ static void gc_select(void) {
 
     ra_init_arg_regs();
 
+    /* Two-pass color: PARAMs first, then everything else.
+     *
+     * Why: gc_simplify pushes nodes in gc_node-INDEX order (low index
+     * first), so the select-stack pops them with high index first and
+     * low index last.  PARAM nodes are typically created early (low
+     * gc_node index) and therefore pop LAST under the natural order —
+     * by which point intermediate values have already taken slots
+     * RSI/RDI, forcing each PARAM into a non-ABI register and tripping
+     * the prologue's need_temp path (which homes all 6 incoming arg
+     * regs and demotes every PARAM to a spill slot).
+     *
+     * Fix: walk the stack twice.  First pass colors only PARAMs; second
+     * pass colors only non-PARAMs.  Pre-coloring the PARAMs into their
+     * ABI homes seeds `used` for the intermediate pass so non-PARAM
+     * colorings naturally avoid clobbering PARAM-held registers.
+     * Pop direction is unchanged within each pass (high index first). */
+    int pass;
+    pass = 0;
+    while (pass < 2) {
+
     /* Pop select stack in reverse */
     i = gc_nsel - 1;
     while (i >= 0) {
         n = gc_sel_stk[i];
         inst = gc_inst[n];
         k = gc_k(n);
+
+        if (pass == 0 && h_kind[inst] != HI_PARAM) { i = i - 1; continue; }
+        if (pass == 1 && h_kind[inst] == HI_PARAM) { i = i - 1; continue; }
 
         /* Mark colors used by live neighbors */
         c = 0;
@@ -1364,6 +1387,9 @@ static void gc_select(void) {
         i = i - 1;
     }
 
+    pass = pass + 1;
+    } /* end two-pass color */
+
     /* Propagate colors to coalesced nodes */
     i = 0;
     while (i < gc_nnode) {
@@ -1374,7 +1400,13 @@ static void gc_select(void) {
     }
 
     /* Post-coloring PARAM fix-up: if a PARAM didn't get its ABI register,
-     * and no neighbor has that color, take it to avoid prologue moves. */
+     * and no neighbor has that color, take it to avoid prologue moves.
+     *
+     * Iterate until no progress: a PARAM blocked by another PARAM may
+     * become unblocked once that other PARAM moves to its own want.
+     * Without iteration, h_add-shaped functions (p0 holds R8/wants RDI,
+     * p1 holds RDI/wants RSI) cannot reach their natural homes in a
+     * single visiting order — the chain has to unwind tail-first. */
     {
         int n;
         int inst;
@@ -1385,8 +1417,60 @@ static void gc_select(void) {
         int ei;
         int peer;
         int pa;
+        int moved;
+        int passes;
 
         ra_init_arg_regs();
+        passes = 0;
+        moved = 1;
+        while (moved && passes < 8) {
+            moved = 0;
+            passes = passes + 1;
+            n = 0;
+            while (n < gc_nnode) {
+                inst = gc_inst[n];
+                if (h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
+                    pidx = h_val[inst];
+                    if (pidx >= 0 && pidx < 6) {
+                        want = ra_x64_slot[ra_arg_regs[pidx]];
+                        old_c = gc_color[n];
+                        if (want >= 0 && old_c != want) {
+                            conflict = 0;
+                            ei = gc_adj_head[n];
+                            while (ei >= 0) {
+                                peer = gc_adj_peer[ei];
+                                pa = gc_get_alias(peer);
+                                if (gc_color[pa] == want) {
+                                    conflict = 1;
+                                    break;
+                                }
+                                ei = gc_adj_next[ei];
+                            }
+                            if (!conflict) {
+                                gc_color[n] = want;
+                                moved = 1;
+                            }
+                        }
+                    }
+                }
+                n = n + 1;
+            }
+        }
+
+        /* Second pass: 2-cycle swap.  After the single-pass placement,
+         * a PARAM may still be off-home because its want is held by
+         * another PARAM whose own want is OUR current color (e.g.,
+         * h_add: p0 holds R8/etc and p1 holds RDI; p0 wants RDI and
+         * p1 wants RSI).  Detect such cycles and swap colors directly
+         * — both sides' "other" neighbors are safe by construction:
+         * - n's non-peer neighbors don't have `want` (else conflict=1
+         *   would have included one of them, blocking the peer test).
+         * - peer's non-n neighbors don't have `old_c` (else peer's
+         *   own original coloring would have rejected old_c).
+         * Without this, every 2-arg function whose params get
+         * cross-assigned by IRC drops into the need_temp prologue
+         * path, which homes all 6 incoming arg regs and demotes
+         * every PARAM to a spill slot. */
         n = 0;
         while (n < gc_nnode) {
             inst = gc_inst[n];
@@ -1396,19 +1480,56 @@ static void gc_select(void) {
                     want = ra_x64_slot[ra_arg_regs[pidx]];
                     old_c = gc_color[n];
                     if (want >= 0 && old_c != want) {
-                        conflict = 0;
+                        /* Find the (single) neighbor holding `want`.
+                         * For a clean swap we need exactly one blocker,
+                         * and that blocker must be a PARAM whose want
+                         * is our `old_c`. */
+                        int blocker_n;
+                        int blocker_inst;
+                        int blocker_pidx;
+                        int blocker_want;
+                        int n_other_blockers;
+                        int peer_other_blockers;
+                        n_other_blockers = 0;
+                        blocker_n = -1;
                         ei = gc_adj_head[n];
                         while (ei >= 0) {
                             peer = gc_adj_peer[ei];
                             pa = gc_get_alias(peer);
                             if (gc_color[pa] == want) {
-                                conflict = 1;
-                                break;
+                                if (blocker_n < 0) blocker_n = pa;
+                                else n_other_blockers = 1;
                             }
                             ei = gc_adj_next[ei];
                         }
-                        if (!conflict) {
-                            gc_color[n] = want;
+                        if (blocker_n >= 0 && !n_other_blockers) {
+                            blocker_inst = gc_inst[blocker_n];
+                            if (h_kind[blocker_inst] == HI_PARAM &&
+                                !ra_crosses_call[blocker_inst]) {
+                                blocker_pidx = h_val[blocker_inst];
+                                if (blocker_pidx >= 0 && blocker_pidx < 6) {
+                                    blocker_want = ra_x64_slot[ra_arg_regs[blocker_pidx]];
+                                    if (blocker_want == old_c) {
+                                        /* Verify swap-safety from peer's side:
+                                         * peer's non-n neighbors must not hold old_c. */
+                                        peer_other_blockers = 0;
+                                        ei = gc_adj_head[blocker_n];
+                                        while (ei >= 0) {
+                                            peer = gc_adj_peer[ei];
+                                            pa = gc_get_alias(peer);
+                                            if (pa != n && gc_color[pa] == old_c) {
+                                                peer_other_blockers = 1;
+                                                break;
+                                            }
+                                            ei = gc_adj_next[ei];
+                                        }
+                                        if (!peer_other_blockers) {
+                                            gc_color[n] = want;
+                                            gc_color[blocker_n] = old_c;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
