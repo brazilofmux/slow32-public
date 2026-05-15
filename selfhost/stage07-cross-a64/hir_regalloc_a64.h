@@ -1371,13 +1371,30 @@ static void gc_combine(int u, int v) {
         e = gc_nmlist_next[e];
     }
 
-    /* Add edges: for each neighbor t of v, add edge(t, u) */
+    /* Add edges: for each neighbor t of v, add edge(t, u).
+     *
+     * Always transfer the edge — even when t is already on the select
+     * stack — because t's color will be looked up later via u's adj
+     * list when u is colored.  Without the transfer, u's adj loses the
+     * constraint that "u must not pick t's color" and u may pick a
+     * color identical to t's.
+     *
+     * Latent in original IRC: traditional select order pops u BEFORE
+     * t (high-index first), so u's color was already decided when t
+     * was colored, and the asymmetric edge (still on t's side)
+     * sufficed.  Surfaced once two-pass select started coloring some
+     * nodes (PARAMs) before u.
+     *
+     * Degree update is still gated on t being in the active graph —
+     * select/coalesced nodes have no live degree to manage. */
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
-        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED) {
+        if (gc_wl[t] != GC_WL_COALESCED) {
             gc_add_edge(t, u);
-            gc_dec_degree(t);
+            if (gc_wl[t] != GC_WL_SELECT) {
+                gc_dec_degree(t);
+            }
         }
         e = gc_adj_next[e];
     }
@@ -1577,6 +1594,30 @@ static void gc_select(void) {
 
     ra_init_arg_regs();
 
+    /* Two-pass color: PARAMs first, then everything else.
+     *
+     * Why: gc_simplify pushes nodes in gc_node-INDEX order (low index
+     * first), so the select-stack pops them with high index first and
+     * low index last.  PARAM nodes are typically created early (low
+     * gc_node index) and therefore pop LAST under the natural order —
+     * by which point intermediate values have already taken slots
+     * X0/X1/..., forcing each PARAM into a non-ABI register and adding
+     * cross-MOV instructions in the prologue's parallel-copy phase.
+     *
+     * Fix: walk the stack twice.  First pass colors only PARAMs (via
+     * the existing PARAM-hint code, which now finds X0/X1/... free);
+     * second pass colors everything else, with `used` pre-seeded by
+     * PARAM colors so intermediates naturally avoid clobbering them.
+     * Pop direction within each pass is unchanged (high index first).
+     *
+     * a64 doesn't have x64's need_temp / 8-reg-homing cascade — the
+     * prologue already does proper parallel-copy with cycle handling —
+     * so the win here is just eliminating the wasted MOV pairs, not a
+     * structural overhaul.  Same fix shape, smaller magnitude. */
+    int pass;
+    pass = 0;
+    while (pass < 2) {
+
     /* Pop select stack in reverse */
     i = gc_nsel - 1;
     while (i >= 0) {
@@ -1589,6 +1630,9 @@ static void gc_select(void) {
         inst = gc_inst[n];
         k = gc_k(n);
         cls = gc_class[n];
+
+        if (pass == 0 && h_kind[inst] != HI_PARAM) { i = i - 1; continue; }
+        if (pass == 1 && h_kind[inst] == HI_PARAM) { i = i - 1; continue; }
 
         /* Per-class allocation bounds. */
         if (cls == RA_CLASS_V) {
@@ -1766,6 +1810,9 @@ static void gc_select(void) {
         i = i - 1;
     }
 
+    pass = pass + 1;
+    } /* end two-pass color */
+
     /* Propagate colors to coalesced nodes */
     i = 0;
     while (i < gc_nnode) {
@@ -1776,7 +1823,13 @@ static void gc_select(void) {
     }
 
     /* Post-coloring PARAM fix-up: if a PARAM didn't get its ABI register,
-     * and no neighbor has that color, take it to avoid prologue moves. */
+     * and no neighbor has that color, take it to avoid prologue moves.
+     *
+     * Iterate until no progress: a PARAM blocked by another PARAM may
+     * become unblocked once that other PARAM moves to its own want.
+     * Without iteration, h_add-shaped functions (p0 holds X9/wants X0,
+     * p1 holds X0/wants X1) cannot reach their natural homes in a
+     * single visiting order — the chain has to unwind tail-first. */
     {
         int n;
         int inst;
@@ -1787,38 +1840,47 @@ static void gc_select(void) {
         int ei;
         int peer;
         int pa;
+        int moved;
+        int passes;
 
         ra_init_arg_regs();
-        n = 0;
-        while (n < gc_nnode) {
-            inst = gc_inst[n];
-            if (h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
-                pidx = h_val[inst];
-                if (pidx >= 0 && pidx < RA_NARG_REGS) {
-                    if (gc_class[n] == RA_CLASS_V)
-                        want = ra_a64_slot_v[ra_v_arg_regs[pidx]];
-                    else
-                        want = ra_a64_slot[ra_arg_regs[pidx]];
-                    old_c = gc_color[n];
-                    if (want >= 0 && old_c != want) {
-                        conflict = 0;
-                        ei = gc_adj_head[n];
-                        while (ei >= 0) {
-                            peer = gc_adj_peer[ei];
-                            pa = gc_get_alias(peer);
-                            if (gc_color[pa] == want) {
-                                conflict = 1;
-                                break;
+        passes = 0;
+        moved = 1;
+        while (moved && passes < 8) {
+            moved = 0;
+            passes = passes + 1;
+            n = 0;
+            while (n < gc_nnode) {
+                inst = gc_inst[n];
+                if (h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
+                    pidx = h_val[inst];
+                    if (pidx >= 0 && pidx < RA_NARG_REGS) {
+                        if (gc_class[n] == RA_CLASS_V)
+                            want = ra_a64_slot_v[ra_v_arg_regs[pidx]];
+                        else
+                            want = ra_a64_slot[ra_arg_regs[pidx]];
+                        old_c = gc_color[n];
+                        if (want >= 0 && old_c != want) {
+                            conflict = 0;
+                            ei = gc_adj_head[n];
+                            while (ei >= 0) {
+                                peer = gc_adj_peer[ei];
+                                pa = gc_get_alias(peer);
+                                if (gc_color[pa] == want) {
+                                    conflict = 1;
+                                    break;
+                                }
+                                ei = gc_adj_next[ei];
                             }
-                            ei = gc_adj_next[ei];
-                        }
-                        if (!conflict) {
-                            gc_color[n] = want;
+                            if (!conflict) {
+                                gc_color[n] = want;
+                                moved = 1;
+                            }
                         }
                     }
                 }
+                n = n + 1;
             }
-            n = n + 1;
         }
     }
 }
