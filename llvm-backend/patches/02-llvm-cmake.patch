@@ -1,8 +1,8 @@
 diff --git a/llvm/CMakeLists.txt b/llvm/CMakeLists.txt
-index 6dbe47600..b3422edec 100644
+index 6001928f92..97f95942c4 100644
 --- a/llvm/CMakeLists.txt
 +++ b/llvm/CMakeLists.txt
-@@ -556,6 +556,7 @@ set(LLVM_ALL_EXPERIMENTAL_TARGETS
+@@ -596,6 +596,7 @@ set(LLVM_ALL_EXPERIMENTAL_TARGETS
    CSKY
    DirectX
    M68k

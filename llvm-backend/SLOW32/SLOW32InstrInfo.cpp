@@ -29,7 +29,7 @@
 using namespace llvm;
 
 namespace {
-bool isConditionalBranch(unsigned Opcode) {
+[[maybe_unused]] bool isConditionalBranch(unsigned Opcode) {
   switch (Opcode) {
   case SLOW32::BEQ_pat:
   case SLOW32::BNE_pat:
@@ -774,7 +774,7 @@ unsigned SLOW32InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
       Opcode == TargetOpcode::INLINEASM_BR) {
     const MachineFunction &MF = *MI.getParent()->getParent();
     return getInlineAsmLength(MI.getOperand(0).getSymbolName(),
-                              *MF.getTarget().getMCAsmInfo());
+                              MF.getTarget().getMCAsmInfo());
   }
 
   if (Opcode == TargetOpcode::BUNDLE) {

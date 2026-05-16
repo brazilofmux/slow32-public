@@ -16,7 +16,7 @@ class Triple;
 
 class SLOW32MCAsmInfo : public MCAsmInfoELF {
 public:
-  explicit SLOW32MCAsmInfo(const Triple &TT);
+  explicit SLOW32MCAsmInfo(const Triple &TT, const MCTargetOptions &Options);
 };
 
 } // end namespace llvm

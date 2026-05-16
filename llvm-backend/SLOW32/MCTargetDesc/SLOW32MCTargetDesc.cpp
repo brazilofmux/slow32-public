@@ -50,7 +50,7 @@ static MCSubtargetInfo *createSLOW32MCSubtargetInfo(const Triple &TT,
 static MCAsmInfo *createSLOW32MCAsmInfo(const MCRegisterInfo &MRI,
                                          const Triple &TT,
                                          const MCTargetOptions &Options) {
-  MCAsmInfo *MAI = new SLOW32MCAsmInfo(TT);
+  MCAsmInfo *MAI = new SLOW32MCAsmInfo(TT, Options);
   return MAI;
 }
 

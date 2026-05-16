@@ -6,7 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCHES_DIR="$(dirname "$SCRIPT_DIR")/patches"
-LLVM_DIR="/ztank/secret/sdennis/llvm-project"
+LLVM_DIR="${LLVM_DIR:-$HOME/llvm-project}"
 
 echo "Generating SLOW32 integration patches against upstream LLVM..."
 echo "=============================================================="
