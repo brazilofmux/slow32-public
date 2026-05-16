@@ -954,57 +954,69 @@ to change. The work item, if/when forced, is making the regalloc spill
 less aggressively and/or reducing parser recursion depth in s12cc
 itself.
 
-### 48. [WORKAROUND] cc-a64 regalloc clobbers `r_status` in mmio_process SEEK path
+### 48. [FIXED] cc-a64 PHI codegen clobbered `r_status` in mmio_process SEEK path
 
-**Status**: workaround landed in `s32-fast-x64.c:OP_MMIO_SEEK`
-(`fflush(0)` after the assignment); root cause is in cc-a64's regalloc.
-Discovered 2026-05-09 while sweeping cc-a64-cross-compiled `s32fast-hir`
-across stages 1-7 (stage02 step 2 hung running stage02's freshly-built
-`s32-as.s32x`).
+**Status**: fixed 2026-05-15 in `hir_codegen_a64.h:hx_phi_copies` by
+skipping dead PHIs (those whose `ra_iend[i] <= ra_pos[i]`).  The
+`fflush(0)` workaround in `s32-fast-x64.c:OP_MMIO_SEEK` has been
+removed.  Originally surfaced 2026-05-09 while sweeping
+cc-a64-cross-compiled `s32fast-hir` across stages 1-7 (stage02 step 2
+hung running stage02's freshly-built `s32-as.s32x`).
 
 **Symptom**: under cc-a64-built `s32fast-hir` only, stage02 `s32-as.s32x`
-goes into an infinite loop in the alignment-pad write at
-`s32-as.c:909` (`while (((uint32_t)ftell(g_out) & 3u) != 0) fputc(0,
-g_out)`). The output file grows unbounded (~250KB-7MB) with valid
-header bytes followed by an infinite zero-fill. gcc-built `slow32-fast`,
-gcc-built `slow32-dbt`, and `tools/emulator/slow32` all run the same
+went into an infinite loop in the alignment-pad write at `s32-as.c:909`
+(`while (((uint32_t)ftell(g_out) & 3u) != 0) fputc(0, g_out)`). The
+output file grew unbounded (~250KB-7MB) with valid header bytes
+followed by an infinite zero-fill. gcc-built `slow32-fast`, gcc-built
+`slow32-dbt`, and `tools/emulator/slow32` all ran the same
 `s32-as.s32x` correctly.
 
-**Root cause** (verified by host-side debug printfs in `mmio_process`):
-the OP_MMIO_SEEK handler computes `r_status = (unsigned int)pos`
-correctly (`pos` is the lseek return, e.g. 0x68 = 104), but the value
-the host writes to `ra+12` (`mem_write32(ra+12, r_status, ...)`) is
-`0x1` — the value of `next_head = (resp_head + 1) % MMIO_RING_ENTRIES`
-on the first iteration. cc-a64's regalloc is reusing `r_status`'s
-register/slot for `next_head` despite `r_status` still being live
-across the long opcode-dispatch chain that separates the SEEK
-assignment from the response-write block.
+**Root cause**: not actually regalloc — the regalloc was correct.
+Standard SSA construction (Cytron-style placement at iterated
+dominance frontiers) introduces PHIs for every variable stored on any
+incoming edge, regardless of whether the joined value is ever read.
+In `mmio_process`, the SEEK arm stores to locals like `pos`, `whence`,
+`dist` that are never read after the inner `if (pos == -1)` join, so
+the post-join block gets dead PHIs for those locals.
 
-The bug shape matches `feedback_a64_rpo_walk.md` (commit `e743c098`,
-ssa_rpo[i] vs ssa_rpo_ord[i]) — both are SSA/regalloc bugs in cc-a64
-that only surface with long, branchy functions. `mmio_process` is one
-of the longest in `s32-fast-x64.c`.
+The regalloc correctly sees these PHIs as dead (`ra_iend == ra_pos`)
+and reuses their dst registers for other live values.  But
+`hx_phi_copies` still emitted parallel-copies for them anyway,
+writing each dead PHI's incoming value into the shared dst register
+— which clobbers the live value the regalloc placed there.
 
-**Workaround**: a single `fflush(0)` after `r_status = (unsigned int)pos`
-forces cc-a64 to spill the value to stack, sidestepping the regalloc
-bug. Verified byte-identical output for both small (108-byte) and
-large (356-byte+) assembler outputs.
+For the SEEK path specifically: a dead PHI for `whence` and one for
+the lseek raw return both share register `W0` with the live r_status
+PHI chain.  At the inner `if (pos == -1)` join, the codegen emitted
+`mov w0, w1` (dead-PHI for `pos` raw) and `mov w0, w21` (dead-PHI for
+`whence`) right after the live r_status PHI's copy, overwriting it
+with `whence`.  Several PHI levels later that corrupted value reached
+the response-write block; on the first iteration it happened to read
+back as `1` (matching `next_head` only by coincidence — the bug isn't
+register-aliasing with `next_head`, it's `whence == 1` for `SEEK_CUR`,
+which is what the assembler uses).
 
-**Real fix**: needed in cc-a64. Likely candidates: live-range
-computation across the multi-arm `else if` chain that constitutes the
-opcode dispatcher; cross-block use tracking after a value is set
-inside a deeply-nested if/else.
+**Fix** (`hir_codegen_a64.h:1295` and surrounding): in the parallel-copy
+collection loop, skip PHIs where `ra_iend[i] <= ra_pos[i]`.  The
+regalloc has already proven these have no users, so their move is
+pure dead code with a register-clobber side effect.  Skipping makes
+the codegen consistent with the regalloc's view.
 
-**Reproducer**:
+cc-x64's sibling `hx_phi_copies` doesn't have this bug because it
+materializes through a stack push/pop sequence rather than direct
+reg-to-reg moves — the dead-PHI dst is still written but the live
+value's storage isn't shared (it's pushed first, popped to the live
+dst last).  The a64 codegen's greedy reg-to-reg fast path is what
+exposed the issue.
+
+**Reproducer (confirms fix)**:
 ```bash
-cd ~/slow-32 && cd selfhost/stage07-cross-a64 && make s32fast
-cd ~/slow-32 && rm -f /tmp/min.s32o
-echo -e '.text\n.global _start\n_start:\n    halt' > /tmp/min.s
-timeout 1 selfhost/stage07-cross-a64/out/s32fast-hir \
+cd ~/slow-32/selfhost/stage07-cross-a64 && make s32fast
+cd ~/slow-32 && echo -e '.text\n.global _start\n_start:\n    halt' > /tmp/min.s
+selfhost/stage07-cross-a64/out/s32fast-hir \
     selfhost/stage02/s32-as.s32x /tmp/min.s /tmp/min.s32o
-# Without the fflush(0) workaround: rc=124 (timeout), output grows
-#   to >100KB.  With workaround: rc=0, output is byte-identical to
-#   slow32-dbt's 108-byte output.
+# Now: rc=0, 108-byte output, byte-identical to gcc-built slow32 reference
+# (sha256 b5a9b2e7271f9a0b1dcd68a17e5f4cc93c83e1dfada2f2f1d9bdfd965734274b).
 ```
 
 ### 49. [FIXED] `dbt-x64` (cc-x64 cross-compiled) stage02 — all `-1`..`-4` modes pass on Linux with 64MB RLIMIT_STACK

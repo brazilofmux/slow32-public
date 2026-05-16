@@ -772,11 +772,6 @@ static void mmio_process(struct emu *e) {
                     } else {
                         r_status = (unsigned int)pos;
                     }
-                    /* cc-a64 regalloc workaround: without an external
-                     * function call after the assignment, r_status gets
-                     * clobbered by `next_head = ... + 1` below before
-                     * mem_write32 reads it.  fflush(0) is a defined no-op. */
-                    fflush(0);
                 }
             }
         } else if (opcode == OP_MMIO_EXIT) {

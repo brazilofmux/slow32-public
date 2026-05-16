@@ -1292,11 +1292,24 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     int tmp_bytes;
     int tmp_slot;
 
-    /* Collect all (PHI_dst, incoming_value) pairs for moves. */
+    /* Collect all (PHI_dst, incoming_value) pairs for moves.
+     *
+     * Skip dead PHIs (ra_iend[i] <= ra_pos[i] — no users past the def).
+     * Standard SSA construction places PHIs at iterated dominance
+     * frontiers based on stores, regardless of whether the value is
+     * ever read.  Locals like `whence` / `pos` that are written in a
+     * branch but never used after the join produce dead PHIs.  Emitting
+     * a parallel-copy for a dead PHI clobbers its dst register, which
+     * is fine for the dead PHI itself but corrupts any live value the
+     * regalloc placed in that same register (the regalloc correctly
+     * lets dead values share registers with live ones — the codegen
+     * just shouldn't write to them).  Surfaced as ISSUES.md #48
+     * (cc-a64 `mmio_process` r_status clobber via dead-PHI move for
+     * `whence`). */
     hx_phi_n = 0;
     i = ssa_phi_head[to_blk];
     while (i >= 0) {
-        if (h_kind[i] != HI_NOP) {
+        if (h_kind[i] != HI_NOP && ra_pos[i] >= 0 && ra_iend[i] > ra_pos[i]) {
             /* Find the entry in h_pblk/h_pval matching from_blk. */
             int base; int n; int found;
             base = h_pbase[i];

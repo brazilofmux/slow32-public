@@ -33,6 +33,7 @@ int strncmp(char *a, char *b, int n);
 int strlen(char *s);
 char *strdup(char *s);
 char *calloc(int n, int size);
+char *getenv(char *name);
 void exit(int status);
 #define NULL 0
 
