@@ -16,7 +16,7 @@
 
 { SLOW-32 register mapping:
   r31=lr, r30=fp, r11-r28=s0-s17, r29=sp
-  a0=r3 (first argument / return value)
+  r3-r10 = a0..a7 (arguments); r1-r2 = return registers (FPC ABI uses r1).
   No FPU registers to save. }
 
 function fpc_setjmp(var S : jmp_buf) : longint;[Public, alias : 'FPC_SETJMP'];compilerproc;assembler;nostackframe;
@@ -42,7 +42,7 @@ function fpc_setjmp(var S : jmp_buf) : longint;[Public, alias : 'FPC_SETJMP'];co
     stw r3, r27, 72    { s16 }
     stw r3, r28, 76    { s17 }
     stw r3, r29, 80    { sp }
-    addi r3, r0, 0     { return 0 }
+    addi r1, r0, 0     { return 0 in FPC's result register r1 }
 end;
 
 
@@ -70,10 +70,10 @@ procedure fpc_longjmp(var S : jmp_buf;value : longint);[Public, alias : 'FPC_LON
     ldw r28, r3, 76    { s17 }
     ldw r29, r3, 80    { sp }
 
-    { if value == 0, return 1; else return value }
+    { if value == 0, return 1; else return value (in FPC's r1) }
     bne r4, r0, .Lret
     addi r4, r0, 1
   .Lret:
-    addi r3, r4, 0
+    addi r1, r4, 0
     jalr r0, r31, 0
   end;
