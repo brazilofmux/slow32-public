@@ -1395,13 +1395,18 @@ but each gap blocks third-party C codebases of any size.
   suffix, and parameter positions. Covered by
   `selfhost/stage07-cross/tests/test_decl_dialect.c` and
   `selfhost/stage07-cross-a64/tests/cc_decl_dialect.c`.
+- **GNU statement expressions** `({ stmts; final_expr; })` — the
+  parenthesized form parses a regular block (so locals are scoped),
+  detaches the trailing expression-statement, and lowers as
+  side-effects-then-expression.  Nests freely; valid as initializer,
+  function argument, or in any other expression context.  Covered by
+  `selfhost/stage07-cross/diff-test/corpus/d34_stmt_expr.c`.
 
 **Surveyed but not yet hit (counts from TCC source)**:
 
 | Feature | TCC use sites | Implementation notes |
 |---|---|---|
 | Bitfields | 1 site in `tcc.h` | Real codegen work — masks + shifts |
-| Statement expressions `({ …; expr; })` | 1 site | GNU extension; nontrivial parser work |
 | `inline` (with C99 external-inline semantics) | Scattered | Parser accepts inline as a no-op; full external-inline semantics remain unsupported |
 
 **Header-set gaps** (would need to be added to

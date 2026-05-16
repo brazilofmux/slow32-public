@@ -1545,6 +1545,15 @@ static int hl_expr(Node *n) {
         return hl_expr(n->rhs);
     }
 
+    /* GNU statement expression: lower the body's side effects, then
+     * return the value of the trailing expression.  The block was
+     * parsed in its own scope so locals declared inside don't leak;
+     * their stack offsets are already baked into the captured lhs. */
+    if (n->kind == ND_STMT_EXPR) {
+        if (n->body) hl_stmt(n->body);
+        return hl_expr(n->lhs);
+    }
+
     /* Member access */
     if (n->kind == ND_MEMBER) {
         addr = hl_addr(n);

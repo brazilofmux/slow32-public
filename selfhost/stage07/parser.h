@@ -259,6 +259,7 @@ static Node *parse_stmt(void);
 static Node *parse_assign(void);
 static Node *parse_postfix(void);
 static Node *parse_gnu_asm_stmt(void);
+static Node *parse_block(void);
 
 /* --- Utilities --- */
 
@@ -2129,9 +2130,45 @@ static Node *parse_primary(void) {
         exit(1);
     }
 
-    /* Parenthesized expression or type cast */
+    /* Parenthesized expression, type cast, or GNU statement expression */
     if (lex_tok == TK_LPAREN) {
         next();
+        /* GNU statement expression: ( { stmts; final_expr; } )
+         * The body is parsed as a regular block (which scopes its
+         * locals via saved_nlocals); the trailing expression-stmt is
+         * detached and stored as `lhs` so hl_expr can return its value
+         * without re-evaluating it.  parse_block leaves us positioned
+         * on the token after `}`, where we then expect `)`. */
+        if (lex_tok == TK_LBRACE) {
+            Node *blk;
+            Node *prev;
+            Node *last;
+            Node *se;
+            blk = parse_block();
+            if (blk->body == NULL) {
+                p_error("empty statement expression");
+                expect(TK_RPAREN);
+                return nd_num(0);
+            }
+            /* Find the final statement; unlink it from the body. */
+            prev = NULL;
+            last = blk->body;
+            while (last->next != NULL) { prev = last; last = last->next; }
+            if (last->kind != ND_EXPR_STMT || last->lhs == NULL) {
+                p_error("statement expression must end with an expression statement");
+                expect(TK_RPAREN);
+                return nd_num(0);
+            }
+            if (prev) prev->next = NULL;
+            else      blk->body  = NULL;
+            se = nd_num(0);
+            se->kind = ND_STMT_EXPR;
+            se->body = blk;
+            se->lhs  = last->lhs;
+            se->ty   = last->lhs->ty;
+            expect(TK_RPAREN);
+            return se;
+        }
         if (is_type()) {
             ty = parse_type();
             arr_count = 0;

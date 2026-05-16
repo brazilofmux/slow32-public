@@ -180,6 +180,11 @@ static int ty_is_unsigned(int ty) {
 #define ND_VA_ARG   34   /* va_arg:   lhs = ap variable, ty = requested type */
 #define ND_FNUM     35   /* float/double literal: val=lo bits, val_hi=hi bits (f64) */
 #define ND_ASM      36   /* GNU inline asm subset: name=template, lhs=outputs, args=inputs */
+#define ND_STMT_EXPR 37  /* GNU statement expression ({ stmts; expr; }):
+                          * body = ND_BLOCK of all but the final expr stmt,
+                          * lhs  = the final expression (its value is the
+                          *        value of the whole construct),
+                          * ty   = lhs->ty */
 
 /* Inline asm templates recognized by the AArch64 / x86-64 backends. */
 #define ASM_GENERIC             0
