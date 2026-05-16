@@ -2,17 +2,17 @@
 
 #define MAX_LINE 65536
 #define MAX_TOK 8
-#define MAX_LBL 16384
-#define MAX_REL 32768
-#define MAX_SYM 16384
+#define MAX_LBL 32768
+#define MAX_REL 65536
+#define MAX_SYM 32768
 #define MAX_TEXT 1048576
 #define MAX_RODATA 1048576
 #define MAX_DATA 1048576
 #define MAX_INIT_ARRAY 262144
 #define MAX_BSS 16777216
 #define MAX_STR 131072
-#define LBL_POOL_SZ 262144
-#define MAX_DIFF 8192
+#define LBL_POOL_SZ 524288
+#define MAX_DIFF 16384
 
 #define SEC_TEXT 0
 #define SEC_RODATA 1
@@ -20,22 +20,22 @@
 #define SEC_INIT_ARRAY 3
 #define SEC_BSS  4
 
-static char g_lbl_name_pool[262144];
-static int g_lbl_name_off[16384];
+static char g_lbl_name_pool[524288];
+static int g_lbl_name_off[32768];
 static int g_lbl_name_ptr;
-static int g_lbl_sec[16384];
-static int g_lbl_val[16384];
-static char g_lbl_defd[16384];
-static char g_lbl_glob[16384];
-static char g_lbl_refd[16384];
-static char g_lbl_abs[16384];
+static int g_lbl_sec[32768];
+static int g_lbl_val[32768];
+static char g_lbl_defd[32768];
+static char g_lbl_glob[32768];
+static char g_lbl_refd[32768];
+static char g_lbl_abs[32768];
 static int g_nlbl;
 
-static int g_rel_sec[32768];
-static int g_rel_off[32768];
-static int g_rel_typ[32768];
-static int g_rel_sym[32768];
-static int g_rel_add[32768];
+static int g_rel_sec[65536];
+static int g_rel_off[65536];
+static int g_rel_typ[65536];
+static int g_rel_sym[65536];
+static int g_rel_add[65536];
 static int g_nrel;
 
 static int g_diff_sec[16384];
@@ -57,13 +57,13 @@ static int g_isz;
 static int g_bsz;
 static int g_sec;
 
-static int g_lbl_to_sym[16384];
+static int g_lbl_to_sym[32768];
 static int g_nsym;
-static int g_sym_lbl[16384];
-static int g_sym_name[16384];
-static int g_sym_val[16384];
-static int g_sym_sec[16384];
-static char g_sym_bind[16384];
+static int g_sym_lbl[32768];
+static int g_sym_name[32768];
+static int g_sym_val[32768];
+static int g_sym_sec[32768];
+static char g_sym_bind[32768];
 
 static char g_str[131072];
 static char g_line[1024];
