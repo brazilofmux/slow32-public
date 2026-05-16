@@ -111,11 +111,18 @@ RUN /opt/fpc/bin/ppc-host -dslow32 -Fuslow32 -Fusystems -Fislow32 \
       -Fu/opt/fpc/units/host/rtl -oppcs32 pp.pas
 
 # Build system unit (RTL)
+# Use the slow32-specific system.pp and the explicit feature set defined
+# in rtl/embedded/system.cfg's CPUSLOW32 block (passed inline because
+# this direct ppcs32 invocation bypasses the Makefile/system.cfg path).
 RUN mkdir -p /opt/fpc/slow32-rtl && \
     ./ppcs32 -Tembedded -Us -s -n -Sg \
+      -Sf- -SfTEXTIO -SfFILEIO -SfHEAP -SfEXITCODE \
+      -SfSOFTFPU -SfCONSOLEIO -SfCOMMANDARGS -SfRANDOM \
+      -SfRTTI -SfEXCEPTIONS -SfCLASSES \
+      -SfANSISTRINGS -SfWIDESTRINGS -SfDYNARRAYS -SfOBJECTS \
       -Fi../rtl/embedded -Fi../rtl/embedded/slow32 -Fi../rtl/inc \
       -Fi../rtl/inc/innr -Fi../rtl/slow32 -Fu../rtl/inc \
-      -FE/opt/fpc/slow32-rtl ../rtl/embedded/system.pp
+      -FE/opt/fpc/slow32-rtl ../rtl/slow32/system.pp
 
 # Stage 3: Build SLOW-32 native tools and create final image
 FROM alpine:3.19

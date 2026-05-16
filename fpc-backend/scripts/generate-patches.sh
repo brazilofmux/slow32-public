@@ -78,9 +78,9 @@ else
     echo "   No changes"
 fi
 
-# 6. RTL build system (rtl/Makefile, rtl/embedded/Makefile, rtl/embedded/Makefile.fpc)
+# 6. RTL build system (rtl/Makefile, rtl/embedded/Makefile, rtl/embedded/Makefile.fpc, rtl/embedded/system.cfg)
 echo "6. Generating RTL build system patch..."
-git diff $BASE -- rtl/Makefile rtl/embedded/Makefile rtl/embedded/Makefile.fpc > "$PATCHES_DIR/06-rtl-build.patch" 2>/dev/null || true
+git diff $BASE -- rtl/Makefile rtl/embedded/Makefile rtl/embedded/Makefile.fpc rtl/embedded/system.cfg > "$PATCHES_DIR/06-rtl-build.patch" 2>/dev/null || true
 if [ -s "$PATCHES_DIR/06-rtl-build.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/06-rtl-build.patch")
     echo "   Created: 06-rtl-build.patch ($lines lines)"

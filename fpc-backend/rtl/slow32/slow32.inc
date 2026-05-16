@@ -298,6 +298,42 @@ end;
 
 
 {****************************************************************************
+                       Command-line argument support
+****************************************************************************}
+
+{$ifdef FPC_HAS_FEATURE_COMMANDARGS}
+{ libc helpers provided by libc_mmio.s32a / runtime/args_mmio.c /
+  runtime/envp_mmio.c. Args are fetched on demand from the host via
+  the SLOW-32 MMIO ring buffers. }
+function __slow32_fetch_args(argc_out: plongint; argv_out: ppointer): longint;
+  cdecl; external name '__slow32_fetch_args';
+function __slow32_get_environ: PPAnsiChar; cdecl; external name '__slow32_get_environ';
+
+procedure Slow32InitCmdLine;
+var
+  fetched_argv: pointer;
+  fetched_argc: longint;
+begin
+  fetched_argc := 0;
+  fetched_argv := nil;
+  if __slow32_fetch_args(@fetched_argc, @fetched_argv) = 0 then
+    begin
+      argc := fetched_argc;
+      argv := PPAnsiChar(fetched_argv);
+    end
+  else
+    begin
+      argc := 0;
+      argv := nil;
+    end;
+
+  envp := __slow32_get_environ;
+  cmdline := nil;
+end;
+{$endif FPC_HAS_FEATURE_COMMANDARGS}
+
+
+{****************************************************************************
                        Console I/O support
 ****************************************************************************}
 

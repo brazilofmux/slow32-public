@@ -100,3 +100,31 @@ index e83cd4eabb..f3ca421b20 100644
  ifeq ($(ARCH),xtensa)
  ifeq ($(SUBARCH),lx106)
  CPU_UNITS=$(ESP8266UNIT)
+diff --git a/rtl/embedded/system.cfg b/rtl/embedded/system.cfg
+index 66570dc3de..233a64ffa1 100644
+--- a/rtl/embedded/system.cfg
++++ b/rtl/embedded/system.cfg
+@@ -310,3 +310,23 @@
+ -SfRANDOM
+ -SfRESOURCES
+ #endif CPUWASM32
++
++# SLOW-32 is a soft-float 32-bit RISC target hosted via libc_mmio.
++# Console/file I/O and args/env are delegated to the host through
++# the MMIO ring buffers, so most non-threaded features are usable.
++# WIDESTRINGS is on because ANSISTRINGS unconditionally references
++# widestringmanager.Unicode2AnsiMoveProc; CLASSES/RTTI/EXCEPTIONS are
++# required by the compiler to materialise TObject/TVMT.
++#ifdef CPUSLOW32
++-SfSOFTFPU
++-SfCONSOLEIO
++-SfCOMMANDARGS
++-SfRANDOM
++-SfRTTI
++-SfEXCEPTIONS
++-SfCLASSES
++-SfANSISTRINGS
++-SfWIDESTRINGS
++-SfDYNARRAYS
++-SfOBJECTS
++#endif CPUSLOW32
