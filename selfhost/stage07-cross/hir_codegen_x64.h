@@ -2080,9 +2080,13 @@ static void hx_emit_inst(int idx) {
         x64_or_rr64(X64_RAX, X64_RCX);
         patch_after = x64_jmp_placeholder();
 
-        /* Register→stack transition */
+        /* Register→stack transition: RAX currently points at slot 6
+         * of the save area (where the prologue stored the
+         * stack-overflow base address).  Load it so the result is
+         * correct even when va_next runs in a callee that received
+         * the va_list (RBP would be wrong in that case). */
         x64_patch_rel32(patch_stack_transition, x64_off);
-        x64_lea(X64_RAX, X64_RBP, 16);
+        x64_mov_rm64(X64_RAX, X64_RAX, 0);
         {
         int patch_after2;
         patch_after2 = x64_jmp_placeholder();
@@ -2515,9 +2519,14 @@ static void hx_gen_func(Node *fn) {
     }
     }
 
-    /* --- Varargs save area (48 bytes for 6 register args) --- */
+    /* --- Varargs save area (6 register args × 8 bytes + 1 slot for
+     * the stack-overflow base address used by va_next when the
+     * register save slots are exhausted) = 56 bytes.  Storing the
+     * stack base in the save area instead of recomputing it from RBP
+     * at va_next time lets va_arg/va_next work correctly when called
+     * from a callee that received the va_list. --- */
     if (hx_is_varargs) {
-        hl_temp_stack = hl_temp_stack + 48;
+        hl_temp_stack = hl_temp_stack + 56;
         hx_va_save_off = 0 - hl_temp_stack;
     }
 
@@ -2568,14 +2577,22 @@ static void hx_gen_func(Node *fn) {
         i = i + 1;
     }
 
-    /* For varargs functions, save all 6 register args to the save area.
-     * va_start/va_arg will read from this area. */
+    /* For varargs functions, save all 6 register args to the save
+     * area, then write the stack-overflow base address to slot 6 (the
+     * trailing extra slot).  va_next at register→stack transition
+     * loads that slot rather than computing RBP+16, so the result
+     * stays correct across callee handoff of the va_list. */
     if (hx_is_varargs) {
+        int nrn;
         i = 0;
         while (i < 6) {
             x64_mov_mr64(X64_RBP, hx_va_save_off + i * 8, hx_arg_reg[i]);
             i = i + 1;
         }
+        nrn = hx_fn_nparams - 6;
+        if (nrn < 0) nrn = 0;
+        x64_lea(X64_RAX, X64_RBP, 16 + nrn * 8);
+        x64_mov_mr64(X64_RBP, hx_va_save_off + 48, X64_RAX);
     }
 
     /* Store incoming args to their allocated register or spill slot. */

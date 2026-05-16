@@ -288,13 +288,14 @@ static void snp_emit_int64(long long val, int is_unsigned, int base,
 }
 
 /* Sibling of stdio.c's fmt_core.  See the comment there for the rules
- * on `ll`, `.N`, and the `%f` placeholder — same logic, same caveats
- * (variadic doubles live in V regs and never reach the X-class args[]
- * array, so `%f` prints '?' without consuming an arg). */
-static int snp_core(char *fmt, char **args, char *buf, int size) {
+ * on `ll`, `.N`, and the `%f` placeholder.  Walks variadic args via
+ * va_arg now that cc-a64's callee-side va_* lowering is in place
+ * (ISSUES.md #48). */
+typedef char *va_list;
+
+static int snp_core(char *fmt, va_list ap, char *buf, int size) {
     char *ctx[2];
     int written;
-    int ai;
     int width; int zero_pad;
     int is_ll;
     int precision;
@@ -305,7 +306,6 @@ static int snp_core(char *fmt, char **args, char *buf, int size) {
     cur_start = buf;
     ctx[0] = buf;
     ctx[1] = buf + size - 1;  /* leave room for terminator */
-    ai = 0;
 
     while (*fmt) {
         if (*fmt != '%') {
@@ -351,40 +351,32 @@ static int snp_core(char *fmt, char **args, char *buf, int size) {
             fmt = fmt + 1;
         }
         if (*fmt == 'd' || *fmt == 'i') {
-            if (is_ll) snp_emit_int64((long long)args[ai], 0, 10, width, zero_pad, 0, ctx);
-            else       snp_emit_int((int)(long)args[ai], 0, 10, width, zero_pad, ctx);
-            ai = ai + 1;
+            if (is_ll) snp_emit_int64(va_arg(ap, long long), 0, 10, width, zero_pad, 0, ctx);
+            else       snp_emit_int(va_arg(ap, int),         0, 10, width, zero_pad, ctx);
         } else if (*fmt == 'u') {
-            if (is_ll) snp_emit_int64((long long)args[ai], 1, 10, width, zero_pad, 0, ctx);
-            else       snp_emit_int((int)(long)args[ai], 1, 10, width, zero_pad, ctx);
-            ai = ai + 1;
+            if (is_ll) snp_emit_int64(va_arg(ap, long long), 1, 10, width, zero_pad, 0, ctx);
+            else       snp_emit_int(va_arg(ap, int),         1, 10, width, zero_pad, ctx);
         } else if (*fmt == 'x') {
-            if (is_ll) snp_emit_int64((long long)args[ai], 1, 16, width, zero_pad, 0, ctx);
-            else       snp_emit_hex((unsigned int)(long)args[ai], width, zero_pad, 0, ctx);
-            ai = ai + 1;
+            if (is_ll) snp_emit_int64(va_arg(ap, long long), 1, 16, width, zero_pad, 0, ctx);
+            else       snp_emit_hex(va_arg(ap, unsigned int), width, zero_pad, 0, ctx);
         } else if (*fmt == 'X') {
-            if (is_ll) snp_emit_int64((long long)args[ai], 1, 16, width, zero_pad, 1, ctx);
-            else       snp_emit_hex((unsigned int)(long)args[ai], width, zero_pad, 1, ctx);
-            ai = ai + 1;
+            if (is_ll) snp_emit_int64(va_arg(ap, long long), 1, 16, width, zero_pad, 1, ctx);
+            else       snp_emit_hex(va_arg(ap, unsigned int), width, zero_pad, 1, ctx);
         } else if (*fmt == 'p') {
             snp_putc('0', ctx); snp_putc('x', ctx);
-            snp_emit_int64((long long)args[ai], 1, 16, 0, 0, 0, ctx);
-            ai = ai + 1;
+            snp_emit_int64((long long)va_arg(ap, char *), 1, 16, 0, 0, 0, ctx);
         } else if (*fmt == 'c') {
-            snp_putc((int)(long)args[ai], ctx);
-            ai = ai + 1;
+            snp_putc(va_arg(ap, int), ctx);
         } else if (*fmt == 's') {
-            char *s; s = args[ai];
+            char *s; s = va_arg(ap, char *);
             if (!s) s = "(null)";
             while (*s) { snp_putc(*s, ctx); s = s + 1; }
-            ai = ai + 1;
         } else if (*fmt == 'f' || *fmt == 'F' ||
                    *fmt == 'g' || *fmt == 'G' ||
                    *fmt == 'e' || *fmt == 'E') {
-            /* FP placeholder — see fmt_core for the rationale.  Doubles
-             * pass in V regs and never enter the X-class args[] array,
-             * so we can't read the value; print '?' and don't advance
-             * the arg index. */
+            /* FP placeholder — see fmt_core for the rationale.  GP-only
+             * va_list path can't see variadic doubles (#49); print '?'
+             * and do NOT va_arg (no GP slot was consumed). */
             snp_putc('?', ctx);
         } else {
             snp_putc('%', ctx);
@@ -397,12 +389,13 @@ static int snp_core(char *fmt, char **args, char *buf, int size) {
     return written;
 }
 
-int snprintf(char *buf, int size, char *fmt, char *a0, char *a1, char *a2,
-             char *a3, char *a4, char *a5, char *a6, char *a7) {
-    char *args[8];
-    args[0] = a0; args[1] = a1; args[2] = a2; args[3] = a3;
-    args[4] = a4; args[5] = a5; args[6] = a6; args[7] = a7;
-    return snp_core(fmt, args, buf, size);
+int snprintf(char *buf, int size, char *fmt, ...) {
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = snp_core(fmt, ap, buf, size);
+    va_end(ap);
+    return n;
 }
 
 /* ============================================================================

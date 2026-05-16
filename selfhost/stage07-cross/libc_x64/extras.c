@@ -328,7 +328,8 @@ static int sn_emit(char *buf, int sz, int pos, int c) {
 static int sn_putuint(char *buf, int sz, int pos, unsigned int v,
                       int base, int width, int zero, int upper) {
     char tmp[16];
-    int n; int i;
+    int n;
+    int npad;
     char *digits;
     digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
     n = 0;
@@ -338,10 +339,10 @@ static int sn_putuint(char *buf, int sz, int pos, unsigned int v,
         v = v / base;
         n = n + 1;
     }
-    while (n < width) {
+    npad = width - n;
+    while (npad > 0) {
         pos = sn_emit(buf, sz, pos, zero ? '0' : ' ');
-        n = n + 1;
-        width = width - 1;
+        npad = npad - 1;
     }
     while (n > 0) {
         n = n - 1;
@@ -368,6 +369,7 @@ static int sn_putu64(char *buf, int sz, int pos, unsigned long long v,
                      int width, int zero) {
     char tmp[24];
     int n;
+    int npad;
     n = 0;
     if (v == 0) { tmp[0] = '0'; n = 1; }
     while (v != 0 && n < 24) {
@@ -375,10 +377,10 @@ static int sn_putu64(char *buf, int sz, int pos, unsigned long long v,
         v = v / 10ULL;
         n = n + 1;
     }
-    while (n < width) {
+    npad = width - n;
+    while (npad > 0) {
         pos = sn_emit(buf, sz, pos, zero ? '0' : ' ');
-        n = n + 1;
-        width = width - 1;
+        npad = npad - 1;
     }
     while (n > 0) {
         n = n - 1;
@@ -400,29 +402,25 @@ static int sn_putl64(char *buf, int sz, int pos, long long v,
     return sn_putu64(buf, sz, pos, u, width, zero);
 }
 
-int vsnprintf(char *buf, int sz, char *fmt, char *ap);
+typedef char *va_list;
+
+int vsnprintf(char *buf, int sz, char *fmt, va_list ap);
 
 int snprintf(char *buf, int sz, char *fmt, ...) {
-    char *ap;
+    va_list ap;
     int r;
-    /* SysV varargs: skip the four named args (buf, sz, fmt) — args after
-     * fmt start at ap = &fmt + 1.  cc-x64 lays variadics out so &fmt + 1
-     * gives a contiguous spill area. */
-    ap = (char *)(&fmt) + 8;
+    va_start(ap, fmt);
     r = vsnprintf(buf, sz, fmt, ap);
+    va_end(ap);
     return r;
 }
 
-int vsnprintf(char *buf, int sz, char *fmt, char *ap) {
+int vsnprintf(char *buf, int sz, char *fmt, va_list ap) {
     int pos;
     int i;
     int width;
     int zero;
     int is_ll;
-    int v;
-    unsigned int uv;
-    long long lv;
-    unsigned long long ulv;
     char *s;
 
     pos = 0;
@@ -449,51 +447,29 @@ int vsnprintf(char *buf, int sz, char *fmt, char *ap) {
             i = i + 1;  /* size_t — same width as int on this build */
         }
         if (fmt[i] == 'd' || fmt[i] == 'i') {
-            if (is_ll) {
-                lv = *(long long *)ap;
-                ap = ap + 8;
-                pos = sn_putl64(buf, sz, pos, lv, width, zero);
-            } else {
-                v = *(int *)ap;
-                ap = ap + 8;
-                pos = sn_putint(buf, sz, pos, v, width, zero);
-            }
+            if (is_ll) pos = sn_putl64(buf, sz, pos, va_arg(ap, long long), width, zero);
+            else       pos = sn_putint(buf, sz, pos, va_arg(ap, int),       width, zero);
         } else if (fmt[i] == 'u') {
-            if (is_ll) {
-                ulv = *(unsigned long long *)ap;
-                ap = ap + 8;
-                pos = sn_putu64(buf, sz, pos, ulv, width, zero);
-            } else {
-                uv = *(unsigned int *)ap;
-                ap = ap + 8;
-                pos = sn_putuint(buf, sz, pos, uv, 10, width, zero, 0);
-            }
+            if (is_ll) pos = sn_putu64 (buf, sz, pos, va_arg(ap, unsigned long long), width, zero);
+            else       pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 10, width, zero, 0);
         } else if (fmt[i] == 'x') {
-            uv = *(unsigned int *)ap;
-            ap = ap + 8;
-            pos = sn_putuint(buf, sz, pos, uv, 16, width, zero, 0);
+            pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 0);
         } else if (fmt[i] == 'X') {
-            uv = *(unsigned int *)ap;
-            ap = ap + 8;
-            pos = sn_putuint(buf, sz, pos, uv, 16, width, zero, 1);
+            pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 1);
         } else if (fmt[i] == 's') {
-            s = *(char **)ap;
-            ap = ap + 8;
+            s = va_arg(ap, char *);
             if (s == 0) s = "(null)";
             while (*s) {
                 pos = sn_emit(buf, sz, pos, *s);
                 s = s + 1;
             }
         } else if (fmt[i] == 'c') {
-            v = *(int *)ap;
-            ap = ap + 8;
-            pos = sn_emit(buf, sz, pos, v);
+            pos = sn_emit(buf, sz, pos, va_arg(ap, int));
         } else if (fmt[i] == 'p') {
-            ulv = *(unsigned long long *)ap;
-            ap = ap + 8;
             pos = sn_emit(buf, sz, pos, '0');
             pos = sn_emit(buf, sz, pos, 'x');
-            pos = sn_putu64(buf, sz, pos, ulv, 0, 0);
+            pos = sn_putu64(buf, sz, pos,
+                            (unsigned long long)va_arg(ap, char *), 0, 0);
         } else if (fmt[i] == '%') {
             pos = sn_emit(buf, sz, pos, '%');
         } else {

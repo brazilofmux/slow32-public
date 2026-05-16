@@ -3435,9 +3435,14 @@ static void hx_emit_inst(int idx) {
         a64_orr_x(dst, dst, HX_SCRATCH2);
         site_done_from_reg = a64_pos();
         a64_b(0);
-        /* TRANSITION: dst = FP + 16 (stack overflow area). */
+        /* TRANSITION: dst currently points at save_area[8] (the slot
+         * past the last reg slot, after the +8 above).  Load the
+         * stack-overflow base address that the prologue stashed
+         * there.  This keeps the result correct even when va_next is
+         * called from a callee that received the va_list — we never
+         * recompute it from the current FP. */
         a64_patch_cond(site_transition, a64_pos());
-        hx_emit_frame_addr_bytes(dst, 16);
+        a64_ldr_x_imm(dst, dst, 0);
         /* DONE */
         a64_patch_b(site_done_from_stack, a64_pos());
         a64_patch_b(site_done_from_reg, a64_pos());
@@ -3562,9 +3567,15 @@ static void hx_gen_func(Node *fn) {
      * doubles to AArch64 byte offsets, so frame-byte usage = 2 * hl_temp_stack
      * plus 16 for FP/LR. */
     (void)spill_slots; (void)callee_save_bytes;
-    /* Varargs save area: 8 slots × 8 bytes = 64 a64 bytes = 32 slow32 units. */
+    /* Varargs save area: 8 slots for X0..X7 + 1 slot for the stack
+     * overflow base address (used by va_next when transitioning out
+     * of the register save area).  Total 9 × 8 = 72 a64 bytes = 36
+     * slow32 units.  The extra slot lets va_arg/va_next work
+     * correctly when called from a callee that received the va_list
+     * — the stack base is encoded in the save area instead of being
+     * computed from FP at va_next time. */
     if (hx_is_varargs) {
-        hl_temp_stack = hl_temp_stack + 32;
+        hl_temp_stack = hl_temp_stack + 36;
         hx_va_save_off = cg_a64_offset(0 - hl_temp_stack);
     }
     fs = 16 + 2 * hl_temp_stack;
@@ -3656,9 +3667,14 @@ static void hx_gen_func(Node *fn) {
 
     /* Varargs: save X0..X7 to the save area so va_arg can read them
      * later.  Done BEFORE the param-mover redistributes them.  Slot i
-     * is at FP + hx_va_save_off + i*8. */
+     * (0..7) holds X{i}; slot 8 (the trailing extra slot) holds the
+     * stack-overflow base address used by va_next when the register
+     * slots are exhausted. */
     if (hx_is_varargs) {
         int va_i;
+        int stack_base_off;
+        int nrn;
+
         va_i = 0;
         while (va_i < 8) {
             int boff;
@@ -3673,6 +3689,26 @@ static void hx_gen_func(Node *fn) {
                 a64_str_x_imm(hx_arg_reg[va_i], HX_SCRATCH2, 0);
             }
             va_i = va_i + 1;
+        }
+
+        /* Slot 8: stack-overflow base address.  Stack args (named or
+         * variadic) start at FP+16, with the first nrn = max(0,
+         * nparams - 8) named slots reserved for named args that
+         * spilled past X7.  Varargs continue from there. */
+        nrn = hx_fn_nparams - 8;
+        if (nrn < 0) nrn = 0;
+        hx_emit_frame_addr_bytes(HX_SCRATCH1, 16 + nrn * 8);
+        {
+            int slot8_off;
+            slot8_off = hx_va_save_off + 8 * 8;
+            if (slot8_off >= -256 && slot8_off <= 248) {
+                a64_stur_x_imm(HX_SCRATCH1, A64_X29, slot8_off);
+            } else if (slot8_off >= 0 && slot8_off <= 32760 && (slot8_off & 7) == 0) {
+                a64_str_x_imm(HX_SCRATCH1, A64_X29, slot8_off);
+            } else {
+                hx_emit_frame_addr_bytes(HX_SCRATCH2, slot8_off);
+                a64_str_x_imm(HX_SCRATCH1, HX_SCRATCH2, 0);
+            }
         }
     }
 

@@ -38,9 +38,9 @@ int   fseek(FILE *f, int offset, int whence);
 int   ftell(FILE *f);
 int   putchar(int c);
 
-/* The libc's printf/fprintf use a fixed-args + varargs idiom.  Callers
- * write `fprintf(f, "fmt", a, b)` normally; cc-a64's varargs lowering
- * handles the rest. */
+/* True variadic on cc-x64 and cc-a64 via the callee-side va_*
+ * lowering (ISSUES.md #48).  Floating-point args still print as '?'
+ * (#49 — no V-reg save area in the GP-only va_list path). */
 int   printf(char *fmt, ...);
 int   fprintf(FILE *f, char *fmt, ...);
 int   snprintf(char *buf, int size, char *fmt, ...);

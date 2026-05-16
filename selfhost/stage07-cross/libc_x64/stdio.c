@@ -412,18 +412,18 @@ static void fmt_hex(int val, int width, int zero_pad, int upper,
     }
 }
 
-/* fmt_core: args is pointer-width array (char**) so both int and pointer
- * values survive the 32/64-bit boundary. For %d/%u/%x, cast to int.
- * For %lld/%llu/%llx, cast each slot to long long (each arg occupies one
- * pointer-width slot on the 64-bit hosts this libc targets).  For %s/%p,
- * use as pointer directly.  For %f/%g/%e: print '?' placeholder and DO
- * NOT advance ai — variadic doubles land in V/XMM regs and never reach
- * the X-class args[] array.  Precision (.N) is parsed but ignored
- * (since the only specifier that would consume it is %f, which is a
- * placeholder anyway). */
-static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
+/* fmt_core: walks the format string consuming variadic args via va_arg
+ * for each specifier.  For %d/%u/%x/%X read int (or long long with ll
+ * modifier); for %s/%p read pointer; for %c read int (default arg
+ * promotion); for %f/%g/%e print '?' placeholder and DO NOT va_arg
+ * (variadic doubles land in V/XMM regs and aren't covered by the
+ * GP-only va_list path on either target — see ISSUES.md #49).
+ * Precision (.N) is parsed but ignored (only %f would consume it, and
+ * %f is a placeholder anyway). */
+typedef char *va_list;
+
+static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
     int count;
-    int ai;
     int width;
     int zero_pad;
     int is_ll;
@@ -431,7 +431,6 @@ static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
     int has_prec;
 
     count = 0;
-    ai = 0;
 
     while (*fmt) {
         if (*fmt != '%') {
@@ -494,36 +493,30 @@ static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
         }
 
         if (*fmt == 'd' || *fmt == 'i') {
-            if (is_ll) fmt_int64((long long)args[ai], 0, 10, width, zero_pad, 0, putfn, ctx);
-            else       fmt_int((int)args[ai], 0, 10, width, zero_pad, putfn, ctx);
-            ai = ai + 1;
+            if (is_ll) fmt_int64(va_arg(ap, long long), 0, 10, width, zero_pad, 0, putfn, ctx);
+            else       fmt_int(va_arg(ap, int), 0, 10, width, zero_pad, putfn, ctx);
         } else if (*fmt == 'u') {
-            if (is_ll) fmt_int64((long long)args[ai], 1, 10, width, zero_pad, 0, putfn, ctx);
-            else       fmt_int((int)args[ai], 1, 10, width, zero_pad, putfn, ctx);
-            ai = ai + 1;
+            if (is_ll) fmt_int64(va_arg(ap, long long), 1, 10, width, zero_pad, 0, putfn, ctx);
+            else       fmt_int(va_arg(ap, int), 1, 10, width, zero_pad, putfn, ctx);
         } else if (*fmt == 'x') {
-            if (is_ll) fmt_int64((long long)args[ai], 1, 16, width, zero_pad, 0, putfn, ctx);
-            else       fmt_hex((int)args[ai], width, zero_pad, 0, putfn, ctx);
-            ai = ai + 1;
+            if (is_ll) fmt_int64(va_arg(ap, long long), 1, 16, width, zero_pad, 0, putfn, ctx);
+            else       fmt_hex(va_arg(ap, int), width, zero_pad, 0, putfn, ctx);
         } else if (*fmt == 'X') {
-            if (is_ll) fmt_int64((long long)args[ai], 1, 16, width, zero_pad, 1, putfn, ctx);
-            else       fmt_hex((int)args[ai], width, zero_pad, 1, putfn, ctx);
-            ai = ai + 1;
+            if (is_ll) fmt_int64(va_arg(ap, long long), 1, 16, width, zero_pad, 1, putfn, ctx);
+            else       fmt_hex(va_arg(ap, int), width, zero_pad, 1, putfn, ctx);
         } else if (*fmt == 'p') {
             fmt_puts("0x", putfn, ctx);
-            fmt_int64((long long)args[ai], 1, 16, 0, 0, 0, putfn, ctx);
-            ai = ai + 1;
+            fmt_int64((long long)va_arg(ap, char *), 1, 16, 0, 0, 0, putfn, ctx);
             count = count + 2;
         } else if (*fmt == 'c') {
-            putfn((int)args[ai], ctx);
-            ai = ai + 1;
+            putfn(va_arg(ap, int), ctx);
             count = count + 1;
         } else if (*fmt == 's') {
-            if (args[ai]) {
-                char *s;
+            char *s;
+            s = va_arg(ap, char *);
+            if (s) {
                 int slen;
                 int spad;
-                s = args[ai];
                 if (width > 0) {
                     slen = strlen(s);
                     spad = width - slen;
@@ -538,15 +531,14 @@ static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
                 fmt_puts("(null)", putfn, ctx);
                 count = count + 6;
             }
-            ai = ai + 1;
         } else if (*fmt == 'f' || *fmt == 'F' ||
                    *fmt == 'g' || *fmt == 'G' ||
                    *fmt == 'e' || *fmt == 'E') {
             /* FP placeholder — variadic doubles land in V/XMM regs and
-             * never reach the args[] X-class array, so we can't read the
-             * value.  Print '?' so callers see the gap without losing
-             * the surrounding text's alignment, and do NOT advance ai
-             * (no X-arg was consumed by this slot). */
+             * are NOT covered by the GP-only va_list path on either
+             * target (see ISSUES.md #49).  Print '?' so callers see
+             * the gap without losing surrounding alignment, and do
+             * NOT va_arg (no GP slot was consumed). */
             putfn('?', ctx);
             count = count + 1;
         } else {
@@ -559,29 +551,32 @@ static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
     return count;
 }
 
-/* fprintf/printf: args declared as char* (pointer-width) so both int and
- * pointer values are preserved across the call boundary on x86-64. */
-int fprintf(FILE *f, char *fmt, char *a0, char *a1, char *a2, char *a3,
-            char *a4, char *a5, char *a6, char *a7) {
-    char *args[8];
+/* True variadic now that both cc-x64 and cc-a64 implement callee-side
+ * va_start / va_arg / va_end for GP types (int / long long / pointer).
+ * Floating-point args still bypass the GP save area and print as '?'
+ * via the placeholder in fmt_core — see ISSUES.md #49. */
+int fprintf(FILE *f, char *fmt, ...) {
+    va_list ap;
     char *ctx;
+    int n;
     file_sys_init();
-    args[0] = a0;
-    args[1] = a1;
-    args[2] = a2;
-    args[3] = a3;
-    args[4] = a4;
-    args[5] = a5;
-    args[6] = a6;
-    args[7] = a7;
+    va_start(ap, fmt);
     ctx = (char *)f;
-    return fmt_core(fmt, args, fmt_putc_file, &ctx);
+    n = fmt_core(fmt, ap, fmt_putc_file, &ctx);
+    va_end(ap);
+    return n;
 }
 
-int printf(char *fmt, char *a0, char *a1, char *a2, char *a3,
-           char *a4, char *a5, char *a6, char *a7) {
+int printf(char *fmt, ...) {
+    va_list ap;
+    char *ctx;
+    int n;
     file_sys_init();
-    return fprintf(stdout, fmt, a0, a1, a2, a3, a4, a5, a6, a7);
+    va_start(ap, fmt);
+    ctx = (char *)stdout;
+    n = fmt_core(fmt, ap, fmt_putc_file, &ctx);
+    va_end(ap);
+    return n;
 }
 
 void perror(char *s) {
