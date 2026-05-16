@@ -88,7 +88,7 @@ index 8ec19c5e88..797c97837d 100644
  end.
  
 diff --git a/compiler/systems/t_embed.pas b/compiler/systems/t_embed.pas
-index adaaa90e0a..93c405b1e6 100644
+index 361ae82bf0..b3b1c084bb 100644
 --- a/compiler/systems/t_embed.pas
 +++ b/compiler/systems/t_embed.pas
 @@ -2379,4 +2379,9 @@ initialization

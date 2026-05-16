@@ -55,6 +55,7 @@ Const
    { target cpu string (used by compiler options) }
    target_cpu_string = 'slow32';
 
+var
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
@@ -65,6 +66,7 @@ Const
      pocall_mwpascal
    ];
 
+const
    cputypestr : array[tcputype] of string[24] = ('',
      'SLOW32'
    );
@@ -83,7 +85,7 @@ Const
    level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches;
    level4optimizerswitches = genericlevel4optimizerswitches + level3optimizerswitches + [cs_opt_stackframe];
 
- const
+ var
    cpu_capabilities : array[tcputype] of set of tcpuflags =
      ( { cpu_none      } [],
        { cpu_slow32    } [CPUS32_HAS_MUL]

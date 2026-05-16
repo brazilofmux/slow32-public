@@ -1,8 +1,8 @@
 diff --git a/compiler/dbgdwarf.pas b/compiler/dbgdwarf.pas
-index 7dd185ee4f..d0d521cdbb 100644
+index c5b25e17de..6c84f6defe 100644
 --- a/compiler/dbgdwarf.pas
 +++ b/compiler/dbgdwarf.pas
-@@ -3690,7 +3690,7 @@       TFileIndexItem = class(TFPHashObject)
+@@ -3747,7 +3747,7 @@       TFileIndexItem = class(TFPHashObject)
  
                         (target_info.system in systems_darwin+[system_riscv32_linux,system_riscv64_linux,
                                                                system_riscv32_embedded,system_riscv64_embedded,
@@ -59,7 +59,7 @@ index 687f658f53..37f31f8fdc 100644
  
    function SplitPath(Const HStr:String):String;
 diff --git a/compiler/utils/ppuutils/ppudump.pp b/compiler/utils/ppuutils/ppudump.pp
-index 1532a44435..0b6323aed5 100644
+index cd14beca48..96d52ede0b 100644
 --- a/compiler/utils/ppuutils/ppudump.pp
 +++ b/compiler/utils/ppuutils/ppudump.pp
 @@ -90,7 +90,8 @@
@@ -92,7 +92,7 @@ index 1532a44435..0b6323aed5 100644
    );
  
  const
-@@ -475,6 +478,8 @@   tcpu_type = record
+@@ -477,6 +480,8 @@   tcpu_type = record
            (cpu_riscv32 : tcpu_riscv32;);
         cpu_riscv64:                 { 20 }
            (cpu_riscv64 : tcpu_riscv64;);

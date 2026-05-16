@@ -1,5 +1,5 @@
 diff --git a/compiler/Makefile b/compiler/Makefile
-index 2868f2be73..6ca204ccbd 100644
+index 160bd59e64..74f026ffe8 100644
 --- a/compiler/Makefile
 +++ b/compiler/Makefile
 @@ -2,7 +2,7 @@
@@ -45,7 +45,7 @@ index 2868f2be73..6ca204ccbd 100644
  NOCPUDEF=1
  MSGFILE=msg/error$(FPCLANG).msg
  PPUDUMPPROG:=$(firstword $(strip $(wildcard $(addsuffix /ppudump$(SRCEXEEXT),$(SEARCHPATH)))))
-@@ -720,6 +726,9 @@ endif
+@@ -717,6 +723,9 @@ endif
  ifeq ($(PPC_TARGET),loongarch64)
  override LOCALOPT+=-Fuloongarch64
  endif
@@ -55,7 +55,7 @@ index 2868f2be73..6ca204ccbd 100644
  OPTWPOCOLLECT=-OWdevirtcalls,optvmts -FW$(BASEDIR)/pp1.wpo
  OPTWPOPERFORM=-Owdevirtcalls,optvmts -Fw$(BASEDIR)/pp1.wpo
  ifneq ($(findstring $(OS_TARGET),darwin linux dragonfly freebsd solaris),)
-@@ -1081,6 +1090,9 @@ endif
+@@ -1078,6 +1087,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  override TARGET_DIRS+=utils
  endif
@@ -65,7 +65,7 @@ index 2868f2be73..6ca204ccbd 100644
  ifeq ($(CPU_OS_TARGET),i386-linux)
  override TARGET_PROGRAMS+=pp
  endif
-@@ -1432,6 +1444,9 @@ endif
+@@ -1429,6 +1441,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  override TARGET_PROGRAMS+=pp
  endif
@@ -75,7 +75,7 @@ index 2868f2be73..6ca204ccbd 100644
  override INSTALL_FPCPACKAGE=y
  ifeq ($(CPU_OS_TARGET),i386-linux)
  override COMPILER_INCLUDEDIR+=$(CPC_TARGET)
-@@ -1784,6 +1799,9 @@ endif
+@@ -1781,6 +1796,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  override COMPILER_INCLUDEDIR+=$(CPC_TARGET)
  endif
@@ -85,7 +85,7 @@ index 2868f2be73..6ca204ccbd 100644
  ifeq ($(CPU_OS_TARGET),i386-linux)
  override COMPILER_UNITDIR+=$(COMPILERSOURCEDIR)
  endif
-@@ -2135,6 +2153,9 @@ endif
+@@ -2132,6 +2150,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  override COMPILER_UNITDIR+=$(COMPILERSOURCEDIR)
  endif
@@ -95,7 +95,7 @@ index 2868f2be73..6ca204ccbd 100644
  ifeq ($(CPU_OS_TARGET),i386-linux)
  override COMPILER_TARGETDIR+=$(CPU_UNITDIR)/bin/$(FULL_TARGET)
  endif
-@@ -2486,6 +2507,9 @@ endif
+@@ -2483,6 +2504,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  override COMPILER_TARGETDIR+=$(CPU_UNITDIR)/bin/$(FULL_TARGET)
  endif
@@ -105,7 +105,7 @@ index 2868f2be73..6ca204ccbd 100644
  ifeq ($(CPU_OS_TARGET),i386-linux)
  override COMPILER_UNITTARGETDIR+=$(CPU_UNITDIR)/units/$(FULL_TARGET)
  endif
-@@ -2837,6 +2861,9 @@ endif
+@@ -2834,6 +2858,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  override COMPILER_UNITTARGETDIR+=$(CPU_UNITDIR)/units/$(FULL_TARGET)
  endif
@@ -115,7 +115,7 @@ index 2868f2be73..6ca204ccbd 100644
  ifdef REQUIRE_UNITSDIR
  override UNITSDIR+=$(REQUIRE_UNITSDIR)
  endif
-@@ -3989,6 +4016,9 @@ endif
+@@ -3986,6 +4013,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  REQUIRE_PACKAGES_RTL=1
  endif
@@ -125,7 +125,7 @@ index 2868f2be73..6ca204ccbd 100644
  ifdef REQUIRE_PACKAGES_RTL
  PACKAGEDIR_RTL:=$(firstword $(subst /Makefile.fpc,,$(strip $(wildcard $(addsuffix /rtl/Makefile.fpc,$(PACKAGESDIR))))))
  ifeq ($(PACKAGEDIR_RTL),)
-@@ -5027,6 +5057,9 @@ endif
+@@ -5024,6 +5054,9 @@ endif
  ifeq ($(CPU_OS_TARGET),loongarch64-linux)
  TARGET_DIRS_UTILS=1
  endif
@@ -135,7 +135,7 @@ index 2868f2be73..6ca204ccbd 100644
  ifdef TARGET_DIRS_UTILS
  utils_all:
  	$(MAKE) -C utils all
-@@ -5240,8 +5273,8 @@ endif
+@@ -5237,8 +5270,8 @@ endif
  ifdef TEMPWPONAME2PREFIX
  	$(MAKE) g$(TEMPWPONAME2) COMPILERTEMPNAME=$(TEMPWPONAME2)
  endif
@@ -146,7 +146,7 @@ index 2868f2be73..6ca204ccbd 100644
  INSTALL_TARGETS=$(addsuffix _exe_install,$(sort $(CYCLETARGETS) $(PPC_TARGETS)))
  CLEAN_TARGETS=$(addsuffix _clean,$(sort $(CYCLETARGETS) $(PPC_TARGETS)))
  SYMLINKINSTALL_TARGETS=$(addsuffix _symlink_install,$(sort $(CYCLETARGETS) $(PPC_TARGETS)))
-@@ -5560,7 +5593,7 @@ ifeq ($(findstring -dFPC_SOFT_FPUX80,$(LOCALOPT)),)
+@@ -5557,7 +5590,7 @@ ifeq ($(findstring -dFPC_SOFT_FPUX80,$(LOCALOPT)),)
  ifeq ($(OS_SOURCE),win64)
    EXCLUDE_80BIT_TARGETS=1
  endif
@@ -156,7 +156,7 @@ index 2868f2be73..6ca204ccbd 100644
  endif
  endif
 diff --git a/compiler/Makefile.fpc b/compiler/Makefile.fpc
-index 756a8a7806..98825a2339 100644
+index 167412acad..85bf2dd18f 100644
 --- a/compiler/Makefile.fpc
 +++ b/compiler/Makefile.fpc
 @@ -32,7 +32,7 @@ fpcdir=..
@@ -197,7 +197,7 @@ index 756a8a7806..98825a2339 100644
  
  # Do not define the default -d$(CPU_TARGET) because that
  # will conflict with our -d$(CPC_TARGET)
-@@ -493,6 +499,11 @@ ifeq ($(PPC_TARGET),loongarch64)
+@@ -494,6 +500,11 @@ ifeq ($(PPC_TARGET),loongarch64)
  override LOCALOPT+=-Fuloongarch64
  endif
  
@@ -209,7 +209,7 @@ index 756a8a7806..98825a2339 100644
  OPTWPOCOLLECT=-OWdevirtcalls,optvmts -FW$(BASEDIR)/pp1.wpo
  OPTWPOPERFORM=-Owdevirtcalls,optvmts -Fw$(BASEDIR)/pp1.wpo
  # symbol liveness WPO requires nm, smart linking and no stripping (the latter
-@@ -696,8 +707,8 @@ endif
+@@ -697,8 +708,8 @@ endif
  # cpu targets
  #####################################################################
  
@@ -220,7 +220,7 @@ index 756a8a7806..98825a2339 100644
  INSTALL_TARGETS=$(addsuffix _exe_install,$(sort $(CYCLETARGETS) $(PPC_TARGETS)))
  CLEAN_TARGETS=$(addsuffix _clean,$(sort $(CYCLETARGETS) $(PPC_TARGETS)))
  SYMLINKINSTALL_TARGETS=$(addsuffix _symlink_install,$(sort $(CYCLETARGETS) $(PPC_TARGETS)))
-@@ -1162,7 +1173,7 @@ ifeq ($(OS_SOURCE),win64)
+@@ -1163,7 +1174,7 @@ ifeq ($(OS_SOURCE),win64)
    EXCLUDE_80BIT_TARGETS=1
  endif
  

@@ -1,5 +1,5 @@
 diff --git a/compiler/entfile.pas b/compiler/entfile.pas
-index de4238e0cb..7fca928aa3 100644
+index 337a2e4c61..59aa04da74 100644
 --- a/compiler/entfile.pas
 +++ b/compiler/entfile.pas
 @@ -168,7 +168,8 @@ interface
@@ -23,7 +23,7 @@ index de4238e0cb..7fca928aa3 100644
  {$endif generic_cpu}
  
 diff --git a/compiler/systems.inc b/compiler/systems.inc
-index 86e5772820..2a067ebec7 100644
+index 1e156fee42..7f806317f8 100644
 --- a/compiler/systems.inc
 +++ b/compiler/systems.inc
 @@ -59,7 +59,8 @@

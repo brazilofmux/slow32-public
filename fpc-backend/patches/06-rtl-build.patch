@@ -32,7 +32,7 @@ index b7fd07602b..8af8c54afb 100644
  linux_all:
  	$(MAKE) -C linux all
 diff --git a/rtl/embedded/Makefile b/rtl/embedded/Makefile
-index 7644b47149..3e8ee5658b 100644
+index ad3eb879db..c4e61e7249 100644
 --- a/rtl/embedded/Makefile
 +++ b/rtl/embedded/Makefile
 @@ -2,7 +2,7 @@
@@ -85,7 +85,7 @@ index 7644b47149..3e8ee5658b 100644
  override UNITSDIR+=$(REQUIRE_UNITSDIR)
  endif
 diff --git a/rtl/embedded/Makefile.fpc b/rtl/embedded/Makefile.fpc
-index 4979b58025..88cd292b29 100644
+index e83cd4eabb..f3ca421b20 100644
 --- a/rtl/embedded/Makefile.fpc
 +++ b/rtl/embedded/Makefile.fpc
 @@ -296,6 +296,11 @@ $(error No CPUs enabled for given SUBARCH, pass either a SUBARCH or set CPU_UNIT
