@@ -47,11 +47,17 @@ COPY qemu-backend/configs/targets/slow32-softmmu.mak /build/qemu/configs/targets
 COPY qemu-backend/configs/devices/slow32-softmmu /build/qemu/configs/devices/slow32-softmmu
 COPY qemu-backend/patches /build/patches
 
-# Apply integration patches to QEMU
+# Apply integration patches to QEMU.
+# generate-patches.sh leaves a 1-byte placeholder for slots whose upstream
+# file currently has no diff, so skip anything without a real diff header.
 RUN cd /build/qemu && \
     for patch in /build/patches/*.patch; do \
-        echo "Applying $patch..."; \
-        patch -p1 < "$patch" || exit 1; \
+        if grep -q '^diff --git' "$patch"; then \
+            echo "Applying $patch..."; \
+            patch -p1 < "$patch" || exit 1; \
+        else \
+            echo "Skipping $patch (no diff)"; \
+        fi; \
     done
 
 # Configure and build QEMU (non-debug, optimized)
