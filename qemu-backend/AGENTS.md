@@ -1,7 +1,7 @@
 # AGENTS.md — QEMU + SLOW-32 Integration Guide
 
 ## 1. Repository Context
-- Upstream QEMU tree plus a private copy of the `slow-32/` toolchain lives side-by-side in this workspace (`/ztank/secret/sdennis/qemu`). The immediate goal is to grow a `slow32-tcg` emulator by teaching QEMU’s Tiny Code Generator how to execute SLOW-32 binaries.
+- Upstream QEMU tree plus a private copy of the `slow-32/` toolchain lives side-by-side in this workspace (`~/qemu`). The immediate goal is to grow a `slow32-tcg` emulator by teaching QEMU’s Tiny Code Generator how to execute SLOW-32 binaries.
 - `slow-32/tools/emulator/slow32-fast` already reaches ~385 MIPS; it exists as a behavioral reference whose ISA, loader, and MMIO semantics must match whatever the TCG backend produces.
 - The LLVM SLOW-32 backend is already built under `~/llvm-project` (see `slow-32/LLVM_BACKEND_WORK_NEEDED.md` for the current status). Inline assembly and the full C toolchain are available, so you can generate fresh `.s32x` workloads without touching host compilers.
 

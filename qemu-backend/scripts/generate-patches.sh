@@ -6,7 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCHES_DIR="$(dirname "$SCRIPT_DIR")/patches"
-QEMU_DIR="/ztank/secret/sdennis/qemu"
+QEMU_DIR="${QEMU_DIR:-$HOME/qemu}"
 
 echo "Generating SLOW-32 integration patches against upstream QEMU..."
 echo "=============================================================="

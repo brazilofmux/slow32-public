@@ -922,7 +922,7 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
         ctx.next_pc = ctx.pc + 4;
         ctx.base.pc_next = ctx.next_pc;
 
-        uint32_t raw = cpu_ldl_code(env, ctx.pc);
+        uint32_t raw = translator_ldl(env, &ctx.base, ctx.pc);
         bool collapse_branch = slow32_is_cmp_branch_pair(&ctx, raw);
 
         tcg_gen_insn_start(ctx.pc, ctx.next_pc, 0);
@@ -960,7 +960,7 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
         bool keep_pending = false;
         if (ctx.pending_cmp.valid && ctx.is_jmp == DISAS_NEXT &&
             ctx.insn_count < limit) {
-            uint32_t lookahead = cpu_ldl_code(env, ctx.next_pc);
+            uint32_t lookahead = translator_ldl(env, &ctx.base, ctx.next_pc);
             keep_pending = slow32_is_cmp_branch_pair(&ctx, lookahead);
         }
 
