@@ -110,19 +110,35 @@ RUN /opt/fpc/bin/ppc-host -Fu/opt/fpc/units/host/rtl \
 RUN /opt/fpc/bin/ppc-host -dslow32 -Fuslow32 -Fusystems -Fislow32 \
       -Fu/opt/fpc/units/host/rtl -oppcs32 pp.pas
 
-# Build system unit (RTL)
-# Use the slow32-specific system.pp and the explicit feature set defined
-# in rtl/embedded/system.cfg's CPUSLOW32 block (passed inline because
-# this direct ppcs32 invocation bypasses the Makefile/system.cfg path).
+# Build the embedded RTL via the upstream Makefile-driven path.
+# Feature set comes from rtl/embedded/system.cfg's CPUSLOW32 block;
+# `-s` keeps the build emitting .s files for slow32asm instead of
+# looking for a GNU `slow32-embedded-as`.
+#
+# Skipped slots (each needs a follow-up before re-enabling):
+#   ISO7185UNIT — triggers a ppcs32 EAccessViolation on iso7185.pp.
+#   SYSCONSTUNIT — needs TResourceStringRecord in the slow32 system unit.
+#   CPU_SPECIFIC_COMMON_UNITS — defaults to the arm-style sysutils/math/
+#     classes/etc. list (slow32's Makefile.fpc block leaves it alone);
+#     blanking it stops the build pulling in sysutils, which depends on
+#     sysconst.  Once sysconst builds, this can shrink to just the
+#     individual problem units instead of a wholesale blank.
+# Overlay our slow32-specific system.pp onto rtl/embedded/system.pp.
+# The Makefile has no hook to redirect SYSTEMUNIT to the CPU-specific
+# fork, but it compiles `system.pp` relative to rtl/embedded/, so the
+# overlay is enough — the slow32 fork wires in SysInitMemoryManager,
+# SysInitStdIO and Slow32InitCmdLine, without which WriteLn silently
+# discards output.
+RUN cp /fpc-src/rtl/slow32/system.pp /fpc-src/rtl/embedded/system.pp
+RUN cd /fpc-src/rtl/embedded && \
+    make all \
+        FPC=/fpc-src/compiler/ppcs32 PP=/fpc-src/compiler/ppcs32 \
+        CPU_TARGET=slow32 OS_TARGET=embedded \
+        FPCOPT='-s -n' \
+        ISO7185UNIT= SYSCONSTUNIT= CPU_SPECIFIC_COMMON_UNITS=
 RUN mkdir -p /opt/fpc/slow32-rtl && \
-    ./ppcs32 -Tembedded -Us -s -n -Sg \
-      -Sf- -SfTEXTIO -SfFILEIO -SfHEAP -SfEXITCODE \
-      -SfSOFTFPU -SfCONSOLEIO -SfCOMMANDARGS -SfRANDOM \
-      -SfRTTI -SfEXCEPTIONS -SfCLASSES \
-      -SfANSISTRINGS -SfWIDESTRINGS -SfDYNARRAYS -SfOBJECTS \
-      -Fi../rtl/embedded -Fi../rtl/embedded/slow32 -Fi../rtl/inc \
-      -Fi../rtl/inc/innr -Fi../rtl/slow32 -Fu../rtl/inc \
-      -FE/opt/fpc/slow32-rtl ../rtl/slow32/system.pp
+    cp /fpc-src/rtl/units/slow32-embedded/*.ppu /opt/fpc/slow32-rtl/ && \
+    cp /fpc-src/rtl/units/slow32-embedded/*.s   /opt/fpc/slow32-rtl/
 
 # Stage 3: Build SLOW-32 native tools and create final image
 FROM alpine:3.19
@@ -176,9 +192,19 @@ RUN cp runtime/*.s32o /opt/slow32/lib/ && \
 # Install FPC cross-compiler and RTL
 RUN mkdir -p /opt/slow32/lib/fpc
 COPY --from=fpc-builder /fpc-src/compiler/ppcs32 /opt/slow32/bin/
-COPY --from=fpc-builder /opt/fpc/slow32-rtl/system.ppu /opt/slow32/lib/fpc/
-COPY --from=fpc-builder /opt/fpc/slow32-rtl/system.s /opt/slow32/lib/fpc/
+COPY --from=fpc-builder /opt/fpc/slow32-rtl/ /opt/slow32/lib/fpc/
 COPY fpc-backend/runtime/fpc_startup.s /opt/slow32/lib/fpc/
+
+# Pre-assemble every RTL unit's .s into .s32o and bundle the lot into
+# librtl.s32a so s32pc can pull `uses X` units on demand via archive
+# selection.  fpc_startup.s32o stays out of the archive — the linker
+# always wants it as an explicit object.
+RUN cd /opt/slow32/lib/fpc && \
+    for s in *.s; do \
+        /opt/slow32/bin/slow32asm "$s" "${s%.s}.s32o" || exit 1; \
+    done && \
+    /opt/slow32/bin/s32-ar rcs librtl.s32a $(ls *.s32o | grep -v '^fpc_startup\.s32o$') && \
+    rm -f $(ls *.s32o | grep -v '^fpc_startup\.s32o$')
 
 # Set up environment
 ENV PATH="/opt/llvm/bin:/opt/slow32/bin:${PATH}"
@@ -282,16 +308,16 @@ ppcs32 -Tembedded -s -n -Fu"$FPCRTL" -FE"$TMPDIR" "$INPUT" || exit 1\n\
 # Assemble program\n\
 slow32asm "$TMPDIR/${BASE}.s" "$TMPDIR/${BASE}.s32o" || exit 1\n\
 \n\
-# Assemble system unit and startup shim (cached)\n\
-[ -f /tmp/s32pc_system.s32o ] || slow32asm "$FPCRTL/system.s" /tmp/s32pc_system.s32o || exit 1\n\
+# Assemble FPC startup shim (cached)\n\
 [ -f /tmp/s32pc_startup.s32o ] || slow32asm "$FPCRTL/fpc_startup.s" /tmp/s32pc_startup.s32o || exit 1\n\
 \n\
-# Link\n\
+# Link.  librtl.s32a carries system + every other RTL unit; the linker\n\
+# pulls in only what the program uses.\n\
 s32-ld --mmio 64K -o "$OUTPUT" \\\n\
     ${SLOW32_LIB}/crt0.s32o \\\n\
     /tmp/s32pc_startup.s32o \\\n\
-    /tmp/s32pc_system.s32o \\\n\
     "$TMPDIR/${BASE}.s32o" \\\n\
+    ${FPCRTL}/librtl.s32a \\\n\
     ${SLOW32_LIB}/libc_mmio.s32a \\\n\
     ${SLOW32_LIB}/libs32.s32a || exit 1\n\
 \n\
