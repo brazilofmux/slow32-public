@@ -74,7 +74,7 @@ checked `gsym-kind = 1` (definition only), falling through to the global-variabl
 path (lui+addi+ldw) instead of the function-call path (lui+jalr or call). This caused
 the second call to load instruction bytes as data and jump to a garbage address.
 
-**Tracked repro:** `selfhost/stage01/tests/subset-known-gaps/subset_gap01_implicit_repeat_call.c`
+**Tracked repro:** `selfhost/stage01/tests/conformance/known-gaps/subset_gap01_implicit_repeat_call.c`
 
 **Verification:** stage02 cc-min now calls fopen/fclose/fgetc/fputc/fputs directly
 (no io_* wrappers needed); all 29 tests pass.

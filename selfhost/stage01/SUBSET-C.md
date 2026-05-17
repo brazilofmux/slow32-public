@@ -17,10 +17,10 @@ Non-goals in this contract:
 - advanced/complex C library surface
 
 Conformance gate:
-- Test corpus: `selfhost/stage01/tests/subset/`
+- Test corpus: `selfhost/stage01/tests/conformance/subset/`
 - Manifest: `selfhost/stage01/tests/manifests/subset.lst`
 - Runner: `selfhost/stage01/run-subset-conformance.sh`
-- Stage2 idiom corpus: `selfhost/stage01/tests/subset-idioms/`
+- Stage2 idiom corpus: `selfhost/stage01/tests/conformance/subset-idioms/`
 - Stage2 idiom manifest: `selfhost/stage01/tests/manifests/subset-stage2-idioms.lst`
 
 Policy:
@@ -38,5 +38,5 @@ Known-gap tracking:
 
 Long-branch debug helper:
 - Script: `selfhost/stage01/run-cc-long-branch-debug.sh`
-- Usage: `selfhost/stage01/run-cc-long-branch-debug.sh --src selfhost/stage01/tests/subset/subset13_long_branch.c`
+- Usage: `selfhost/stage01/run-cc-long-branch-debug.sh --src selfhost/stage01/tests/conformance/subset/subset13_long_branch.c`
 - Purpose: compile a single source with a temporary `DBG-LONG-BRANCH=1` compiler copy and print `[CC] Long branches lowered: <n>`.
