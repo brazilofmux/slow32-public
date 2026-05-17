@@ -103,3 +103,7 @@ selfhost/stage01/run-regression-ld.sh test3
 selfhost/stage01/run-regression-ld.sh kernel
 selfhost/stage01/run-regression-ld.sh archive
 ```
+
+See `tests/README.md` for the reorganized test layout (conformance vs historical-debug)
+and `TEACHING.md` for a guided overview aimed at readers who want to understand the
+Stage01 layer in a classroom or self-study setting.

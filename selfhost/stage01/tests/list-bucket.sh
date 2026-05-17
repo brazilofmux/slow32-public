@@ -9,14 +9,14 @@ case "$BUCKET" in
   subset) MAN="$SCRIPT_DIR/manifests/subset.lst" ;;
   subset-idioms) MAN="$SCRIPT_DIR/manifests/subset-stage2-idioms.lst" ;;
   subset-known-gaps) MAN="$SCRIPT_DIR/manifests/subset-known-gaps.lst" ;;
-  as-bisect) MAN="$SCRIPT_DIR/manifests/as-bisect.lst" ;;
-  ar-bisect) MAN="$SCRIPT_DIR/manifests/ar-bisect.lst" ;;
-  reloc-bisect) MAN="$SCRIPT_DIR/manifests/reloc-bisect.lst" ;;
-  reloc-bisect-lo12) MAN="$SCRIPT_DIR/manifests/reloc-bisect-lo12.lst" ;;
-  reloc-bisect-lo12-pack) MAN="$SCRIPT_DIR/manifests/reloc-bisect-lo12-pack.lst" ;;
-  reloc-bisect-lo12-rdwr) MAN="$SCRIPT_DIR/manifests/reloc-bisect-lo12-rdwr.lst" ;;
+  as-bisect) MAN="$SCRIPT_DIR/historical-debug/manifests/as-bisect.lst" ;;
+  ar-bisect) MAN="$SCRIPT_DIR/historical-debug/manifests/ar-bisect.lst" ;;
+  reloc-bisect) MAN="$SCRIPT_DIR/historical-debug/manifests/reloc-bisect.lst" ;;
+  reloc-bisect-lo12) MAN="$SCRIPT_DIR/historical-debug/manifests/reloc-bisect-lo12.lst" ;;
+  reloc-bisect-lo12-pack) MAN="$SCRIPT_DIR/historical-debug/manifests/reloc-bisect-lo12-pack.lst" ;;
+  reloc-bisect-lo12-rdwr) MAN="$SCRIPT_DIR/historical-debug/manifests/reloc-bisect-lo12-rdwr.lst" ;;
   *)
-    echo "Usage: $0 {baseline|subset|subset-idioms|subset-known-gaps|as-bisect|ar-bisect|reloc-bisect|reloc-bisect-lo12|reloc-bisect-lo12-pack|reloc-bisect-lo12-rdwr}" >&2
+    echo "Usage: $0 {baseline|subset|subset-idioms|subset-known-gaps|as-bisect|ar-bisect|reloc-bisect|reloc-bisect-lo12|reloc-bisect-lo12-pack|reloc-bisect-lo12-rdwr}  (bisect buckets live under historical-debug/)" >&2
     exit 2
     ;;
 esac

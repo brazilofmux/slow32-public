@@ -1,27 +1,51 @@
-# Stage04 Test Buckets (V2)
+# Stage01 Test Organization
 
-This directory defines stable Stage04 test buckets in the canonical V2 layout.
+This directory holds the test corpus for the Stage01 Forth-hosted toolchain
+(assembler `asm.fth`, archiver `ar.fth`, linker `link.fth`, and C compiler `cc.fth`).
 
-Buckets:
-- `baseline`: canonical stage4 regression cases (`test1.c`..`test9.c`)
-- `subset`: Stage4 Subset-C conformance litmus corpus (`tests/subset/subset*.c`)
-- `subset-idioms`: Stage2 utility idioms proven as standalone subset-C litmus tests
-- `subset-known-gaps`: tracked non-gating subset idioms (currently empty)
-- `subset-stage2-as-known-gaps`: tracked non-gating idioms that fail only on Stage2 assembler path
-- `as-bisect`: assembler spike bisect/repro corpus (`as_bisect*.c`)
-- `ar-bisect`: archiver spike bisect/repro corpus (`ar_bisect*.c`)
-- `reloc-bisect`: stage02 relocation-linker source bisect corpus (`reloc_bisect*.c`)
-- `reloc-bisect-lo12`: focused LO12 sub-bisect corpus (`reloc_bisect03[a-c].c`)
-- `reloc-bisect-lo12-pack`: focused LO12 pack-shape corpus (`reloc_bisect03a[1-3].c`)
-- `reloc-bisect-lo12-rdwr`: LO12 minimal read/write-shape corpus (`reloc_bisect03a{00,9,...}.c`)
+## Conformance Surface (primary teaching + validation material)
 
-Current narrow boundary in `reloc-bisect-lo12-rdwr`:
-- `reloc_bisect03a00.c` passes
-- `reloc_bisect03a9.c` fails when the LO12 branch includes
-  a block-local temp with self-add using `0u`
-  (`out_inst = out_inst + 0u;`) even though this variant is
-  semantics-preserving (`patched -> out_inst -> patched`).
+These are the files exercised by normal regression and conformance gates
+(`run-stages.sh`, `run-subset-conformance.sh`, `run-regression-*.sh`).
 
-The full bisect corpus is tracked as fixtures in this directory.
+- `conformance/baseline/` — small canonical regression cases (`test1.c` … `test9.c`)
+- `conformance/subset/` — the core Subset-C litmus tests (13 files). This is the
+  minimum contract that `cc.fth` must satisfy.
+- `conformance/subset-idioms/` — 62 focused, high-value tests distilled from real
+  problems encountered while building later stages (pointer arithmetic shapes,
+  preprocessor edge cases, relocation packing, long-branch lowering, archive
+  member handling, short-circuit evaluation, etc.). These are the best "why this
+  was hard" examples in the entire tree.
+- `conformance/known-gaps/` — tracked cases that are intentionally not yet gating
+  (currently contains only one implicit-repeat-call repro).
 
-Use `manifests/*.lst` to consume bucket membership from scripts.
+Manifests for these live in `../manifests/` (top-level) so the main runners do not
+need path changes.
+
+## Historical Debug / Porting Artifacts
+
+- `historical-debug/` — all the `_bisect*.c` files and the various
+  `reloc_bisect*` families that were created while debugging the V2 relocation
+  port, long branches, archive shapes, etc.
+
+These are retained for archaeology and to protect against regressions in obscure
+corner cases, but they are **not** part of the primary teaching or conformance
+surface.
+
+Their manifests live in `historical-debug/manifests/`. The helper
+`list-bucket.sh` knows how to find them.
+
+## Running Tests
+
+Normal validation (what must stay green):
+- `../run-regression-as.sh test1`
+- `../run-regression-ar.sh test3`
+- `../run-regression-ld.sh test3`
+- `../run-regression-ld.sh archive`
+- `../run-subset-conformance.sh`  (uses subset + subset-idioms manifests)
+
+Debug / archaeology:
+- `../run-subset-gap-scan.sh`
+- `./list-bucket.sh as-bisect | head`
+
+See the top-level `selfhost/stage01/README.md` and `TEACHING.md` for more context.
