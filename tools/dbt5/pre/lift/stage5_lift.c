@@ -1041,3 +1041,49 @@ const char *stage5_lift_reason_str(stage5_lift_reason_t reason) {
             return "unknown";
     }
 }
+
+// D3: extract one CFG block's IR slice from an already-lifted parent region
+// so we never have to re-decode guest instructions for blocks the lifter
+// already walked.
+bool stage5_lift_extract_cfg_block_region(const stage5_lift_region_t *parent,
+                                          uint32_t block_idx,
+                                          stage5_lift_region_t *out)
+{
+    if (!parent || !out || block_idx >= parent->cfg_block_count)
+        return false;
+
+    const stage5_cfg_block_t *blk = &parent->cfg_blocks[block_idx];
+    uint32_t first = blk->first_inst;
+    uint32_t count = blk->inst_count;
+
+    if (first + count > parent->ir_count || count == 0)
+        return false;
+
+    stage5_lift_region_init(out, blk->start_pc);
+    out->end_pc = blk->end_pc;
+    out->guest_inst_count = count;
+
+    // Copy the exact slice of already-lifted IR nodes for this block
+    if (count > STAGE5_MAX_IR_NODES)
+        count = STAGE5_MAX_IR_NODES;
+
+    for (uint32_t k = 0; k < count; k++) {
+        out->ir[k] = parent->ir[first + k];
+    }
+    out->ir_count = count;
+    out->node_count = count;
+
+    // Propagate useful info from the block
+    out->cfg_block_count = 1;
+    out->cfg_valid = true;
+    out->cfg_max_live = (uint32_t)__builtin_popcount(blk->live_in_mask | blk->live_out_mask);
+    out->cfg_spill_likely = (out->cfg_max_live > 8u);
+
+    // Single-block region: the block itself is block 0
+    out->cfg_blocks[0] = *blk;
+    out->cfg_blocks[0].first_inst = 0;   // now relative to the new region's ir[]
+    // succ_block indices will be invalid in the slice (they referred to the
+    // parent), but diagnostics and per-block emission don't rely on them.
+
+    return true;
+}

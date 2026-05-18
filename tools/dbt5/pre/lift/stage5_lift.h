@@ -144,4 +144,11 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
                             uint32_t max_guest_insts);
 const char *stage5_lift_reason_str(stage5_lift_reason_t reason);
 
+// Extract a single CFG block that the lifter already discovered inside a parent
+// region.  This lets us run the full SSA→MIR→BURG→RA pipeline on just that
+// block's IR slice without going back to guest memory (D3 fix).
+bool stage5_lift_extract_cfg_block_region(const stage5_lift_region_t *parent,
+                                          uint32_t block_idx,
+                                          stage5_lift_region_t *out);
+
 #endif  // DBT_STAGE5_LIFT_H

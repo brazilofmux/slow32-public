@@ -1,11 +1,13 @@
 // SLOW-32 DBT Stage 5: Low-Level IR (LIR) for AArch64 (clean-room experimental)
 //
 // This is the target-specific LIR for the AArch64 pipeline (post-MIR split).
-// Goal: three-operand ALU by default, neutral conditions, minimal x86 baggage.
-// This file is intentionally diverging from the old Stage 4 x86-shaped LIR.
+// D1 complete: three-operand ALU forms (dst = src0 OP src1/imm) are the
+// default, conditions are target-neutral (lir_cond_t), and the A64 codegen
+// emits native AArch64 instructions without x86 two-operand glue or CC-byte
+// translation. The x64 pipeline retains the older LIR for legacy reasons.
 
-#ifndef DBT_STAGE5_LIR_H
-#define DBT_STAGE5_LIR_H
+#ifndef DBT_STAGE5_LIR_A64_H
+#define DBT_STAGE5_LIR_A64_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -93,7 +95,7 @@ typedef struct {
     uint16_t src_v[2];
     int32_t imm;
     int32_t disp;
-    lir_cond_t cond;    // target-neutral condition kind (D1); for IDIV the old "cond" meaning (0=quot,1=rem) is still used as a flag
+    lir_cond_t cond;    // target-neutral (D1): LIR_COND_EQ/NE/LT/... ; for IDIV/UDIV this re-uses the field as a 0=quotient/1=remainder flag (A64 codegen handles via sdiv+msub)
     uint8_t size;       // memory access size: 1, 2, or 4
     bool is_signed;     // signed memory access (for sub-word loads)
     uint32_t guest_pc;
@@ -113,4 +115,4 @@ void stage5_lir_optimize(stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa);
 // Diagnostic helper (used by dbt5 driver and future tools)
 const char *lir_op_name(lir_op_t op);
 
-#endif // DBT_STAGE5_LIR_H
+#endif // DBT_STAGE5_LIR_A64_H

@@ -1,12 +1,14 @@
 # tools/dbt5 — ISSUES.md
 
-Review of the clean-room Stage 5 DBT as of 2026-05-18 (latest relevant commit `bb860660`).
+Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92692).
 
 **Progress:**
-- **DONE**: A1–A6 (all correctness bugs in the AArch64 emitter)
-- **DONE**: A3 (real side-exit emission)
-- **DONE**: B1 + B2 (wiring + Apple Silicon execution enablement)
-- **DONE** (pilot): B3 + B4 (real shadow execution in the pilot + asm clobber hygiene)
+- **DONE**: A1–A10 (all correctness bugs + internal branch cap)
+- **DONE**: B1–B4 (wiring, Apple Silicon, atomic launcher, shadow validation)
+- **DONE**: D1 (LIR x86-shaped baggage removed for A64)
+- **DONE**: D2 (host RA pool + diagnostics past the old 8-slot ceiling)
+- **DONE**: D3 (no more re-lifting per CFG block — extractor + SSA threading)
+- **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
 `dbt5.c`, and the upstream pipeline that feeds it (lift → SSA → MIR → BURG →
@@ -370,62 +372,83 @@ the header). All C cleanups are now complete.
 
 ## D. Design notes worth revisiting
 
-### D1. **DESIGN** LIR is x86-shaped — AArch64 lowering needs translation glue
+### D1. **DONE** (117ab8e4 + baf92692) LIR x86-shaped baggage removed for A64 path
 
-LIR uses x86 condition-code bytes (0x84..0x9F) in the `cond` field
-(`stage5_burg.c` compare lowering), x86 two-operand ALU semantics
-(`dst` overlaps `src0`), and BURG's address-mode folding produces `LEA` /
-`MOV_RM` / `MOV_MR` patterns aligned to x86.
+**Resolution:**
+- Post-MIR split (117ab8e4): `target/a64/` now has its own LIR/BURG/codegen/RA.
+  The A64 pipeline was freed to diverge from the Stage-4 x86-shaped model.
+- Neutral `lir_cond_t` (EQ/NE/LT/GE/.../GTU) introduced; both burg_a64 and
+  burg_x64 now populate `l->cond` via `cmp_opcode_to_lir_cond` / `fuse_...`.
+- Three-operand LIR ALU forms (`LIR_OP_ADD_RR` etc. store independent `src_v[0]`
+  and `src_v[1]`) + corresponding lowering helpers in burg_a64.
+- A64 codegen emits native 3-operand `add dst, src0, src1` (no synthetic mov
+  on the RR fast path) and uses `lir_cond_to_a64` primary path.
+- CBZ/CBNZ LIR ops + peepholes in burg_a64 for the dominant `bne/beq rN, r0`
+  pattern (single-instruction terminal, no CMP/SETCC/flags).
+- `lir_cond_to_a64` fallback made strict (abort) — D1 invariant: burg always
+  supplies a neutral condition.
+- LEA/MOV_RM etc. are still present (useful LIR concepts) but emitted with
+  pure A64 ADD/SUB/STR/LDR sequences; no x86 translation glue remains.
 
-The a64 emitter handles this by:
-- A `lir_cond_to_a64()` translator that maps x86 CC bytes back to AArch64
-  conditions, falling back to the original guest opcode when the CC byte is
-  unknown (`stage5_codegen_a64.c:23-65`). This is fragile and easy to get
-  wrong (it already enumerates both the JCC 0x8x range and the SETCC 0x9x
-  range).
-- Synthesizing a `mov dst, src0` before every two-operand ALU because
-  AArch64 is three-operand (`emit_mov_w32_w32(dst_h, src0)` then
-  `emit_add_w32(dst_h, dst_h, src1)` — wastes a mov in the common case
-  where `src0 != dst_h`).
+The x64 pipeline keeps the older LIR shapes (by design — "high duplication
+tolerance" during the split). Pre-MIR layers and `lir_opt` are now the only
+shared pieces; the a64 codegen and burg no longer contain any x86 CC bytes,
+two-operand assumptions, or `lir_cond_to_*` reverse mapping from guest opcodes.
 
-Two paths forward, in order of investment:
-1. Cheap: extend the BURG-emitted `cond` field to carry an
-   architecture-neutral comparison kind (eq/ne/lt/ltu/le/leu/...) instead
-   of an x86 CC. Each backend's translator becomes a 1:1 switch.
-2. Investment: change LIR ALU shapes to three-operand
-   (`dst = src0 OP src1`). The x86 emitter already emits a mov-first
-   prologue internally for non-coincident dst/src0; making it the LIR's
-   responsibility regularizes both backends. AArch64 saves a mov per ALU
-   op; x86 unchanged.
+D1 is the key architectural lever that lets Stage 5 stop being "Stage 4 with
+a clean-room wrapper."
 
-This is the single biggest "Stage 5 is not Stage-4-with-a-clean-room" lever
-left — the current LIR is roughly Stage 4's machine model in a new file.
+### D2. **DONE** (post-baf92692 + D2 driver sync) 8-slot Stage-4 ceiling removed from A64 path
 
-### D2. **DESIGN** 8 host slots is a Stage 4 holdover; AArch64 has many more
+**Resolution:**
+- RA pool expanded to 14 (8 caller-saved W8–W15 + 6 callee-saved W19/W22–W26)
+  in `target/a64/regalloc/stage5_ra.h` + matching `slot_to_host[]` and
+  conditional stp/ldp save/restore in the codegen (only when used).
+- `STAGE5_A64_MAX_HOST_SLOTS`, `CALLER_SAVED_SLOTS`, `CALLEE_SAVED_SLOTS`
+  defined in the codegen header with clear layout comments.
+- Driver diagnostics in `dbt5.c` updated:
+  - "RA assignments (14-slot A64 pool ...)"
+  - Pressure report now says "14-slot A64 pool" and warns only at >14.
+  - Guest-pressure note no longer claims "pressure > 8".
+- Top-of-file comment in `stage5_codegen_a64.c` refreshed.
+- The viability heuristic still penalises "high register pressure" (via
+  `cfg_spill_likely` + actual `spilled_count`) — this is now a *real* cost
+  signal rather than an artificial 8-slot hard ceiling.
 
-`STAGE5_RA_HOST_SLOTS = 8` (`stage5_ra.h:12`). The 8-slot budget comes from
-Stage 4's reg cache (8 callee-saved x86 GPRs minus a few reserved). On
-AArch64 the codegen has the full 24 callee-saved + extras to play with. The
-`Viability for native ownership` heuristic in `dbt5.c:271-292` even penalises
-"high register pressure (pressure > 8)" — that's an artificial ceiling.
+The host RA/codegen were already past the Stage-4 limit; D2 finishes the job
+by removing the old 8 from all user-visible diagnostics and comments so the
+fork visibly demonstrates "we are no longer limited by the old translator's
+register cache."
 
-Bumping `STAGE5_RA_HOST_SLOTS` for the a64 build (and adding more entries to
-`slot_to_host[]`) should immediately reduce spills on hot loops. Even on x64
-the 8-slot limit forces avoidable spills on register-heavy regions.
+(The guest-register heuristic in the lifter still uses >8 as a complexity
+signal; that is a separate and still-reasonable knob for a narrow pilot.)
 
-This is also the cleanest place to demonstrate that the dbt5 fork is moving
-past Stage 4 — `stage5-revisit.md` item 5 already flags it.
+### D3. **DONE** (extractor + threading) Region re-lifting eliminated for discovered CFG blocks
 
-### D3. **DESIGN** Region re-lifting on every CFG block — recomputes too much
+**Resolution:**
+- Added `stage5_lift_extract_cfg_block_region(...)` in the lifter. Given a
+  parent `stage5_lift_region_t` that already contains a populated `cfg_blocks[]`
+  array (with `first_inst`/`inst_count` partitioning the linear `ir[]`), it
+  produces a lightweight child region containing only that block's IR slice,
+  start_pc, live masks, etc. No guest-memory decode, no re-lifting.
+- Wired the "Additional CFG blocks analyzed" verbose diagnostic loop (the
+  classic source of the D3 complaint) to use the extractor for blocks inside
+  the original lift. Falls back to a real lift only for out-of-region
+  successors (rare in practice).
+- For the `S5_EMIT_A64` experimental emission path, completely removed the
+  redundant `lift_superblock` on the entry point. We now reuse the already-
+  lifted `&region` and only re-build the cheap SSA overlay (exactly the
+  "thread the SSA" step the original scaffolding comment asked for).
+- The full downstream pipeline (SSA→MIR→BURG→LIR→RA→codegen) happily runs
+  on the smaller per-block `ir[]` slices.
 
-`dbt5.c:651-671` walks the CFG the lifter already built and, for each block,
-calls `stage5_lift_region_init` + `stage5_lift_superblock` + the full
-SSA/MIR/BURG/RA pipeline from scratch on a new `tmp_region`. The lifter has
-already discovered these blocks in `region->cfg_blocks[]`. For a real driver
-(not just `--verbose` diagnostics) we want one lift pass that yields per-
-block IR slices and one pipeline run per block, sharing work where possible.
+Result: once the lifter has walked a superblock and discovered its CFG, we
+never decode those guest instructions again for per-block work. This is the
+concrete efficiency win D3 asked for, and it directly enables cleaner per-
+block (or per-trace) emission in the future without quadratic lifting cost.
 
-This is a "later" item — fix once execution works (B1-B4 + A1-A6).
+(The lifter still does one full superblock lift to discover the blocks — that
+is expected and not the problem D3 was complaining about.)
 
 ### D4. **DESIGN** No notion of "I cannot translate this — bail safely"
 

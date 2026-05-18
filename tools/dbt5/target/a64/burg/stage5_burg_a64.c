@@ -164,7 +164,7 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
 
     for (uint32_t i = 0; i < mir->node_count; i++) {
         if (used[i]) continue;
-        mir_node_t *m = &mir->nodes[i];   // non-const so lowering can annotate imm for dump clarity (C3)
+        mir_node_t *m = (mir_node_t *)&mir->nodes[i];   // non-const so lowering can annotate imm for dump clarity (C3)
         if (lir->node_count + 3 >= STAGE5_MAX_LIR_NODES) return false;
         lir_node_t *l = &lir->nodes[lir->node_count++];
         memset(l, 0, sizeof(*l));
@@ -351,13 +351,12 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
             }
 
             case MIR_OP_BRANCH: {
-                // A64-aware compare+branch and test+branch fusion.
-                // Uses neutral LIR conditions (D1) instead of raw x86 bytes.
+                // A64-aware compare+branch and zero-test fusion (D1).
+                // Uses neutral LIR_COND_* (no x86 CC bytes).
                 //
                 // SLOW-32 pattern:  sXX rd, rs1, rs2; bne/beq rd, r0, target
-                // Without fusion:   cmp + setcc + movzx + cmp + jcc  (5+ x86 insns)
-                // With CMP_JCC:     cmp + jcc                        (2 x86 insns)
-                // With TEST_JCC:    test + jcc                       (2 x86 insns)
+                // A64 fast path:    CBZ / CBNZ (single instruction, no flags)
+                // CMP+branch:       CMP_R*_JCC or direct CBZ collapse for #0/EQ/NE cases
                 uint8_t br_opcode = m->guest_opcode;
                 bool is_beq_bne = (br_opcode == 0x48 || br_opcode == 0x49);
 

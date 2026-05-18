@@ -222,8 +222,13 @@ static void run_full_stage5_analysis(const stage5_lift_region_t *region,
 
         // RA assignment summary
         if (ra.interval_count > 0) {
-            fprintf(stderr, "    RA assignments (8 host slots, %u intervals, %u spills):\n",
-                    ra.interval_count, ra.spilled_count);
+#if defined(__aarch64__)
+            int host_slot_budget = STAGE5_A64_MAX_HOST_SLOTS;  // 14
+#else
+            int host_slot_budget = 8;
+#endif
+            fprintf(stderr, "    RA assignments (%d-slot pool, %u intervals, %u spills):\n",
+                    host_slot_budget, ra.interval_count, ra.spilled_count);
 
             int shown = 0;
             for (uint32_t i = 0; i < ra.interval_count && shown < 10; i++) {
@@ -260,9 +265,16 @@ static void run_full_stage5_analysis(const stage5_lift_region_t *region,
                     if (s < 32) pressure_points[s] = p;
                 }
 
-                fprintf(stderr, "    Register pressure (from RA live ranges, 8-slot budget): max=%u\n", max_p);
-                if (max_p > 8) {
-                    fprintf(stderr, "      WARNING: peak pressure %u > 8 host slots — real spills likely\n", max_p);
+#if defined(__aarch64__)
+                int host_slot_budget = STAGE5_A64_MAX_HOST_SLOTS;  // 14
+#else
+                int host_slot_budget = 8;
+#endif
+                fprintf(stderr, "    Register pressure (from RA live ranges, %d-slot pool): max=%u\n",
+                        host_slot_budget, max_p);
+                if (max_p > (uint32_t)host_slot_budget) {
+                    fprintf(stderr, "      WARNING: peak pressure %u > %d host slots — real spills likely\n",
+                            max_p, host_slot_budget);
                 }
 
                 // Simple ASCII sparkline
@@ -303,7 +315,7 @@ static void run_full_stage5_analysis(const stage5_lift_region_t *region,
                 printed++;
             }
             if (region->cfg_spill_likely) {
-                fprintf(stderr, "    Note: cfg_max_live=%u  → spill_likely=true (pressure > 8)\n",
+                fprintf(stderr, "    Note: cfg_max_live=%u  → spill_likely=true (high guest reg pressure)\n",
                         region->cfg_max_live);
             }
         }
@@ -427,7 +439,7 @@ int main(int argc, char **argv) {
             g_a64_experimental_cache = NULL;
         } else {
             g_a64_experimental_cache = &experimental_cache;
-            fprintf(stderr, "  [A64-CACHE] experimental cache ready (pool=%u blocks, code_buf=%zu)\n",
+            fprintf(stderr, "  [A64-CACHE] experimental cache ready (pool=%u blocks, code_buf=%u)\n",
                     experimental_cache.block_pool_size, experimental_cache.code_buffer_size);
         }
     }
@@ -462,25 +474,24 @@ int main(int argc, char **argv) {
             stage5_cg_a64_ctx_t a64_cg;
             stage5_cg_a64_init(&a64_cg, a64_code, sizeof(a64_code));
 
-            // We need the SSA that was built inside run_full...
-            // For the very first experiments we re-lift + re-run the early parts here.
-            // (Later we will thread the SSA out of the analysis function.)
+            // D3: reuse the region the lifter already produced for the entry point.
+            // No need to go back to guest memory and re-decode. We just build a
+            // fresh SSA overlay over the existing IR (cheap) and feed the same
+            // region to the emitter. This eliminates the temporary re-lift that
+            // the original scaffolding comment promised we would remove.
             stage5_ssa_overlay_t ssa_for_emit;
-            stage5_lift_region_t tmp_region;
-            stage5_lift_region_init(&tmp_region, load_res.entry_point);
-            if (stage5_lift_superblock(&tmp_region, cpu.mem_base, cpu.code_limit, STAGE5_LIFT_BUDGET) &&
-                stage5_ssa_build_overlay(&tmp_region, &ssa_for_emit))
+            if (stage5_ssa_build_overlay(&region, &ssa_for_emit))
             {
                 stage5_lir_t tmp_lir;
                 stage5_mir_t tmp_mir;
                 stage5_ra_plan_t tmp_ra;
 
-                stage5_mir_build(&tmp_region, &ssa_for_emit, &tmp_mir);
+                stage5_mir_build(&region, &ssa_for_emit, &tmp_mir);
                 if (stage5_burg_lower(&tmp_mir, &ssa_for_emit, &tmp_lir)) {
                     stage5_lir_optimize(&tmp_lir, &ssa_for_emit);
                     stage5_ra_build_plan_lir(&tmp_lir, &ssa_for_emit, &tmp_ra);
 
-                    bool emitted = stage5_codegen_a64(&a64_cg, &tmp_region, &ssa_for_emit, &tmp_lir, &tmp_ra);
+                    bool emitted = stage5_codegen_a64(&a64_cg, &region, &ssa_for_emit, &tmp_lir, &tmp_ra);
                     fprintf(stderr, "  [A64-EMIT] clean emitter %s (%zu bytes emitted)\n",
                             emitted ? "succeeded" : "failed (stub)", emit_offset(&a64_cg.emit));
 
@@ -511,7 +522,7 @@ int main(int argc, char **argv) {
                                 if (blk) {
                                     blk->host_code  = exec_code;
                                     blk->host_size  = code_len;
-                                    blk->guest_size = tmp_region.guest_inst_count * 4;
+                                    blk->guest_size = region.guest_inst_count * 4;
                                     blk->exit_count = a64_cg.exit_count;
 
                                     for (uint32_t e = 0; e < a64_cg.exit_count && e < MAX_BLOCK_EXITS; e++) {
@@ -636,13 +647,24 @@ int main(int argc, char **argv) {
                 if (pc == 0 || pc == region.start_pc) continue;
 
                 stage5_lift_region_t extra_region;
-                stage5_lift_region_init(&extra_region, pc);
-
-                if (stage5_lift_superblock(&extra_region, cpu.mem_base, cpu.code_limit, STAGE5_LIFT_BUDGET)) {
+                // D3: slice from the already-lifted parent instead of re-decoding
+                // guest memory. This is the core of the "no more re-lifting per
+                // CFG block" fix.
+                if (stage5_lift_extract_cfg_block_region(&region, b, &extra_region)) {
                     char tag[32];
                     snprintf(tag, sizeof(tag), "blk%u", b);
                     run_full_stage5_analysis(&extra_region, tag, true);
                     extra++;
+                } else {
+                    // Fallback for blocks that are successors outside the
+                    // original lifted superblock (rare in the current pilot).
+                    stage5_lift_region_init(&extra_region, pc);
+                    if (stage5_lift_superblock(&extra_region, cpu.mem_base, cpu.code_limit, STAGE5_LIFT_BUDGET)) {
+                        char tag[32];
+                        snprintf(tag, sizeof(tag), "blk%u", b);
+                        run_full_stage5_analysis(&extra_region, tag, true);
+                        extra++;
+                    }
                 }
             }
             if (extra == 0) {

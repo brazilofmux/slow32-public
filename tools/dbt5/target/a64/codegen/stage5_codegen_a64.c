@@ -6,20 +6,23 @@
 // design of stage5_cg_a64_ctx_t.
 //
 // The first concrete work will be to implement a narrow owning path
-// (probably starting with pure ALU + simple loads/stores that fit in the
-// 8 host slots provided by the RA plan) using only emit_* calls from
-// emit_a64.c.
+// (starting with ALU + simple loads/stores that fit in the 14 host slots
+// provided by the RA plan: 8 caller-saved W8-W15 + 6 callee-saved) using
+// only emit_* calls from emit_a64.c.
 //
 // Nothing in this file may ever reach for the old Stage 4 machinery.
 
 #include "stage5_codegen_a64.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 uint32_t stage5_codegen_a64_attempted = 0;
 uint32_t stage5_codegen_a64_success   = 0;
 
-// Map a target-neutral LIR condition to an AArch64 condition code.
-// Falls back to the original guest opcode when needed.
+// Map a target-neutral LIR condition (D1) to an AArch64 condition code.
+// After D1, the burg always supplies a proper LIR_COND_*; the guest_opcode
+// parameter is retained only for diagnostics if the invariant is violated.
 static a64_cond_t lir_cond_to_a64(lir_cond_t lir_cond, uint8_t guest_opcode)
 {
     // Primary path: neutral LIR condition (D1)
@@ -38,21 +41,13 @@ static a64_cond_t lir_cond_to_a64(lir_cond_t lir_cond, uint8_t guest_opcode)
             break;
     }
 
-    // Fallback: derive from the original SLOW-32 guest opcode (still needed
-    // for some legacy paths and until all BURG sites are updated).
-    switch (guest_opcode) {
-        case 0x0E: return COND_EQ;   // SEQ
-        case 0x0F: return COND_NE;   // SNE
-        case 0x08: return COND_LT;   // SLT
-        case 0x09: return COND_LO;   // SLTU
-        case 0x18: return COND_GT;   // SGT
-        case 0x19: return COND_HI;   // SGTU
-        case 0x1A: return COND_LE;   // SLE
-        case 0x1B: return COND_LS;   // SLEU
-        case 0x1C: return COND_GE;   // SGE
-        case 0x1D: return COND_HS;   // SGEU
-        default:   return COND_EQ;
-    }
+    // D1 finished: burg_a64 (and x64) now always produce neutral LIR_COND_* for
+    // compare/branch nodes. Reaching here means a burg site forgot to set l->cond.
+    fprintf(stderr,
+            "FATAL (D1): lir_cond_to_a64 called with LIR_COND_NONE and guest_opcode=0x%02X\n"
+            "            burg lowering did not set a neutral condition kind.\n",
+            guest_opcode);
+    abort();
 }
 
 // Invert an AArch64 condition for "skip the cold path" style side-exit emission.
