@@ -591,22 +591,17 @@ int main(int argc, char **argv) {
                             fprintf(stderr, "  [SHADOW-EXEC] returned. pc=0x%08X exit_reason=%u (steps=%u)\n",
                                     shadow_pc, shadow_exit, shadow_steps);
 
-                            // Simple comparison
+                            // Live register comparison foundation (pre/post snapshots will be wired in the next micro-edit)
                             if (emitted_pc == shadow_pc && emitted_exit == shadow_exit) {
-                                fprintf(stderr, "  [VALIDATION] PASS: emitted and shadow results match\n");
+                                fprintf(stderr, "  [VALIDATION] PASS (pc + exit_reason)  [live register diff coming next]\n");
                             } else {
-                                fprintf(stderr, "  [VALIDATION] FAIL: mismatch!\n");
-                                fprintf(stderr, "                 emitted: pc=0x%08X exit=%u\n", emitted_pc, emitted_exit);
-                                fprintf(stderr, "                 shadow : pc=0x%08X exit=%u\n", shadow_pc, shadow_exit);
+                                fprintf(stderr, "  [VALIDATION] FAIL\n");
+                                if (emitted_pc != shadow_pc)
+                                    fprintf(stderr, "                 pc mismatch: emitted=0x%08X shadow=0x%08X\n", emitted_pc, shadow_pc);
+                                if (emitted_exit != shadow_exit)
+                                    fprintf(stderr, "                 exit mismatch: emitted=%u shadow=%u\n", emitted_exit, shadow_exit);
                             }
 
-                            
-                            // Live register values after shadow run (foundation for full comparison)
-                            fprintf(stderr, "  [DEBUG] live-in registers after shadow (for future diff):\n");
-                            for (int s = 0; s < 8; s++) {
-                                uint8_t gpr = entry_gpr_for_slot[s];
-                                if (gpr != 0) fprintf(stderr, "    r%-2u = 0x%08X\n", gpr, cpu.regs[gpr]);
-                            }
                             munmap(exec_mem, 64*1024);
                         }
                     }
