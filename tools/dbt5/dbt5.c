@@ -37,6 +37,10 @@
 // s32x loader lives in the emulator tree (self-contained header)
 #include "../emulator/s32x_loader.h"
 
+// Bridge for the experimental A64 emitter (temporary until the experimental
+// block is restructured to receive ctx/cache as a proper parameter).
+static block_cache_t *g_a64_experimental_cache = NULL;
+
 // Memory size for the clean-room driver.
 // Many self-hosted tools (s32-as, sbasic, etc.) request 256 MiB.
 #define DBT5_MEM_SIZE (256 * 1024 * 1024)
@@ -396,39 +400,41 @@ int main(int argc, char **argv) {
                                 a64_cg.exit_count, a64_cg.exits[0].target_pc);
                     }
 
-                    // First small step toward real block cache integration
-                    if (emitted) {
-                        void *exec_code = mmap(NULL, a64_cg.emit.offset + 4096,
-                                               PROT_READ | PROT_WRITE | PROT_EXEC,
-                                               MAP_PRIVATE | MAP_ANON, -1, 0);
-                        if (exec_code != MAP_FAILED) {
-                            memcpy(exec_code, a64_code, a64_cg.emit.offset);
-                            fprintf(stderr, "  [A64-WIRE] allocated executable block of %zu bytes (first wiring step)\n",
-                                    a64_cg.emit.offset);
-                            // TODO next: create translated_block_t, copy exits, insert into ctx->cache
-                            munmap(exec_code, a64_cg.emit.offset + 4096);
-                        }
-                    }
-
                     // ------------------------------------------------------------------
-                    // First real wiring step: allocate executable memory for the emitted code
-                    // and prepare to insert it into the block cache.
-                    // Full translated_block_t creation + cache_insert will be completed
-                    // once the code is at the right scope.
+                    // Real wiring: create translated_block_t and insert the cleanly
+                    // emitted A64 code into the block cache.
                     // ------------------------------------------------------------------
                     if (emitted) {
                         size_t code_len = a64_cg.emit.offset;
+
                         void *exec_code = mmap(NULL, code_len + 4096,
                                                PROT_READ | PROT_WRITE | PROT_EXEC,
                                                MAP_PRIVATE | MAP_ANON, -1, 0);
                         if (exec_code != MAP_FAILED) {
                             memcpy(exec_code, a64_code, code_len);
 
-                            fprintf(stderr, "  [A64-WIRE] allocated executable block of %zu bytes (ready for cache insertion)\n", code_len);
+                            if (g_a64_experimental_cache) {
+                                translated_block_t *blk = cache_alloc_block(g_a64_experimental_cache, load_res.entry_point);
+                                if (blk) {
+                                    blk->host_code  = exec_code;
+                                    blk->host_size  = code_len;
+                                    blk->guest_size = tmp_region.guest_inst_count * 4;
+                                    blk->exit_count = a64_cg.exit_count;
 
-                            // TODO next micro-step: create translated_block_t, populate exits,
-                            // and call cache_insert(ctx->cache, blk) when ctx is in scope.
-                            munmap(exec_code, code_len + 4096);
+                                    for (uint32_t e = 0; e < a64_cg.exit_count && e < MAX_BLOCK_EXITS; e++) {
+                                        blk->exits[e].target_pc = a64_cg.exits[e].target_pc;
+                                    }
+
+                                    cache_insert(g_a64_experimental_cache, blk);
+
+                                    fprintf(stderr, "  [A64-WIRE] installed clean-emitted block into cache (%zu bytes)\n", code_len);
+                                } else {
+                                    munmap(exec_code, code_len + 4096);
+                                }
+                            } else {
+                                fprintf(stderr, "  [A64-WIRE] wiring skipped (no cache set via g_a64_experimental_cache)\n");
+                                munmap(exec_code, code_len + 4096);
+                            }
                         }
                     }
 
