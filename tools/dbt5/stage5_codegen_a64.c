@@ -18,6 +18,52 @@
 uint32_t stage5_codegen_a64_attempted = 0;
 uint32_t stage5_codegen_a64_success   = 0;
 
+// Map LIR condition (usually x86 CC from the BURG lowering) + guest opcode
+// into a usable AArch64 condition code.
+static a64_cond_t lir_cond_to_a64(uint8_t lir_cond, uint8_t guest_opcode)
+{
+    // First try the LIR cond field (most common path)
+    switch (lir_cond) {
+        case 0x84: return COND_EQ;   // JE
+        case 0x85: return COND_NE;   // JNE
+        case 0x8C: return COND_LT;   // JL
+        case 0x8D: return COND_GE;   // JGE
+        case 0x8E: return COND_LE;   // JLE
+        case 0x8F: return COND_GT;   // JG
+        case 0x82: return COND_LO;   // JB
+        case 0x83: return COND_HS;   // JAE
+        case 0x86: return COND_LS;   // JBE
+        case 0x87: return COND_HI;   // JA
+        case 0x88: return COND_MI;   // JS
+        case 0x89: return COND_PL;   // JNS
+        case 0x92: return COND_LO;   // JB (setcc)
+        case 0x93: return COND_HS;   // JAE
+        case 0x94: return COND_EQ;   // JE (setcc)
+        case 0x95: return COND_NE;   // JNE
+        case 0x96: return COND_LS;   // JBE
+        case 0x97: return COND_HI;   // JA
+        case 0x9C: return COND_LT;   // JL
+        case 0x9D: return COND_GE;   // JGE
+        case 0x9E: return COND_LE;   // JLE
+        case 0x9F: return COND_GT;   // JG
+    }
+
+    // Fallback: derive from the original SLOW-32 guest opcode.
+    switch (guest_opcode) {
+        case 0x0E: return COND_EQ;   // SEQ
+        case 0x0F: return COND_NE;   // SNE
+        case 0x08: return COND_LT;   // SLT
+        case 0x09: return COND_LO;   // SLTU
+        case 0x18: return COND_GT;   // SGT
+        case 0x19: return COND_HI;   // SGTU
+        case 0x1A: return COND_LE;   // SLE
+        case 0x1B: return COND_LS;   // SLEU
+        case 0x1C: return COND_GE;   // SGE
+        case 0x1D: return COND_HS;   // SGEU
+        default:   return COND_EQ;
+    }
+}
+
 void stage5_cg_a64_init(stage5_cg_a64_ctx_t *cg, uint8_t *code_buf, size_t capacity)
 {
     if (!cg) return;
@@ -248,22 +294,8 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         emit_cmp_w32_w32(&cg->emit, src0, src1);
                 }
 
-                // Map guest opcode to AArch64 condition
-                a64_cond_t a64cond = COND_EQ;
-                switch (n->guest_opcode) {
-                    case 0x0E: /* SEQ  */ a64cond = COND_EQ;  break;
-                    case 0x0F: /* SNE  */ a64cond = COND_NE;  break;
-                    case 0x08: /* SLT  */ a64cond = COND_LT;  break;
-                    case 0x09: /* SLTU */ a64cond = COND_LO;  break;
-                    case 0x18: /* SGT  */ a64cond = COND_GT;  break;
-                    case 0x19: /* SGTU */ a64cond = COND_HI;  break;
-                    case 0x1A: /* SLE  */ a64cond = COND_LE;  break;
-                    case 0x1B: /* SLEU */ a64cond = COND_LS;  break;
-                    case 0x1C: /* SGE  */ a64cond = COND_GE;  break;
-                    case 0x1D: /* SGEU */ a64cond = COND_HS;  break;
-                    default:   a64cond = COND_EQ;  break;
-                }
-
+                // Use the shared mapping (LIR cond first, then guest opcode fallback)
+                a64_cond_t a64cond = lir_cond_to_a64(n->cond, n->guest_opcode);
                 emit_cset_w32(&cg->emit, dst_h, a64cond);
 
                 // Mark destination dirty
@@ -440,19 +472,11 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     // Record fixup for post-pass patching
                     size_t patch_off = emit_offset(&cg->emit);
 
-                    // Best-effort mapping from LIR cond to AArch64 cond
-                    a64_cond_t a64c = COND_EQ;
-                    switch (n->cond) {
-                        case 0x84: a64c = COND_EQ;  break; // JE
-                        case 0x85: a64c = COND_NE;  break; // JNE
-                        case 0x8C: a64c = COND_LT;  break; // JL
-                        case 0x8D: a64c = COND_GE;  break; // JGE
-                        case 0x8E: a64c = COND_LE;  break; // JLE
-                        case 0x8F: a64c = COND_GT;  break; // JG
-                        case 0x82: a64c = COND_LO;  break; // JB
-                        case 0x83: a64c = COND_HS;  break; // JAE
-                        default:   a64c = COND_EQ;  break;
-                    }
+                    // Map LIR condition to AArch64 condition.
+                    // We first try the LIR cond field (x86-style CC from BURG).
+                    // If that is unknown/zero, we fall back to the guest opcode
+                    // (which we already handle well in the comparison emission path).
+                    a64_cond_t a64c = lir_cond_to_a64(n->cond, n->guest_opcode);
 
                     emit_b_cond(&cg->emit, a64c, 0);
 
