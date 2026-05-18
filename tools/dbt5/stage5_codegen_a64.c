@@ -64,6 +64,13 @@ static a64_cond_t lir_cond_to_a64(uint8_t lir_cond, uint8_t guest_opcode)
     }
 }
 
+// Invert an AArch64 condition for "skip the cold path" style side-exit emission.
+// Works for the common paired conditions (EQ/NE, LT/GE, LO/HS, etc.).
+static a64_cond_t invert_a64_cond(a64_cond_t c)
+{
+    return (a64_cond_t)(c ^ 1U);
+}
+
 void stage5_cg_a64_init(stage5_cg_a64_ctx_t *cg, uint8_t *code_buf, size_t capacity)
 {
     if (!cg) return;
@@ -540,10 +547,44 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         cg->internal_branches[idx].target_pc    = tgt;
                     }
                 } else {
-                    // Side-exit or out-of-region conditional branch.
-                    // For the narrow path we currently just emit a placeholder.
-                    // Proper side-exit support comes in a later slice.
-                    emit_b_cond(&cg->emit, COND_EQ, 0);
+                    // Real side-exit (or out-of-region) conditional branch.
+                    // Emit:   b.<inverse_cond>  skip_stub
+                    //         <side-exit stub: write target_pc + exit_reason + ret>
+                    //         <fallthrough continues here>
+                    // This puts the (rare) exit cost on the cold path and uses the
+                    // correct condition instead of the previous hard-coded COND_EQ + #0 no-op.
+                    a64_cond_t take_cond = lir_cond_to_a64(n->cond, n->guest_opcode);
+                    a64_cond_t skip_cond = invert_a64_cond(take_cond);
+
+                    size_t skip_patch_off = emit_offset(&cg->emit);
+                    emit_b_cond(&cg->emit, skip_cond, 0);   // placeholder displacement
+
+                    // Record for the driver / translated_block (target_pc is what matters most)
+                    if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
+                        int ex = cg->exit_count++;
+                        cg->exits[ex].target_pc    = tgt;
+                        cg->exits[ex].patch_offset = skip_patch_off;
+                        cg->exits[ex].is_side_exit = true;
+                    }
+
+                    // Emit the side-exit stub (cold path)
+                    emit_mov_w32_imm32(&cg->emit, W0, tgt);
+                    emit_str_w32_imm(&cg->emit, W0, W20, 0x80);     // cpu->pc = target
+                    emit_mov_w32_imm32(&cg->emit, W0, 2);           // EXIT_BRANCH style reason
+                    emit_str_w32_imm(&cg->emit, W0, W20, 0x84);     // cpu->exit_reason
+                    emit_ret_lr(&cg->emit);
+
+                    // Patch the skip branch displacement (word offset)
+                    size_t after_stub = emit_offset(&cg->emit);
+                    int32_t byte_disp = (int32_t)(after_stub - (skip_patch_off + 4));
+                    if ((byte_disp % 4) == 0) {
+                        int32_t word_disp = byte_disp / 4;
+                        uint32_t *p = (uint32_t *)(cg->emit.buf + skip_patch_off);
+                        uint32_t inst = *p;
+                        inst &= ~0x00FFFFE0U;
+                        inst |= ((uint32_t)word_disp & 0x7FFFFU) << 5;
+                        *p = inst;
+                    }
                 }
                 break;
             }
