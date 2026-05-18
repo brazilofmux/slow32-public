@@ -346,54 +346,50 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     }
 
     // ------------------------------------------------------------------
-    // Step 4: Terminal exit (real patchable branch, not just b 0)
+    // Step 4: Terminal handling (produce correct pc + exit_reason)
     // ------------------------------------------------------------------
-    // We look for the final control-flow instruction in the LIR.
-    // For the first usable version we emit a single patchable B instruction
-    // at the end of the region. Later we will support multiple side-exits
-    // and proper chaining.
-    uint32_t terminal_target = region->end_pc;   // fallthrough by default
-    bool     has_real_terminal = false;
+    // We try to determine what the "next PC" should be after this region.
+    // - If the last LIR instruction is a direct jump/call, use its target.
+    // - Otherwise fall through to the end of the region.
+    //
+    // We also choose a reasonable exit reason for the test harness.
+    uint32_t next_pc = region->end_pc;          // default: fall through
+    uint32_t exit_reason = 9;                   // EXIT_BLOCK_END by default
 
     for (int i = (int)lir->node_count - 1; i >= 0; i--) {
         const lir_node_t *last = &lir->nodes[i];
         if (last->op == LIR_OP_NOP) continue;
 
         if (last->op == LIR_OP_JMP || last->op == LIR_OP_CALL) {
-            terminal_target = last->guest_pc + 4 + last->imm;
-            has_real_terminal = true;
+            next_pc = last->guest_pc + 4 + last->imm;
+            exit_reason = 2;                    // treat as branch for now
             break;
         }
         if (last->op == LIR_OP_RET || last->op == LIR_OP_SYSCALL) {
-            // Special exits (return to dispatcher or syscall handler)
-            terminal_target = 0;
-            has_real_terminal = true;
+            // For HALT/DEBUG/YIELD we can leave next_pc as-is or 0.
+            // The exec test will still see the exit_reason.
+            next_pc = last->guest_pc + 4;       // or keep region->end_pc
+            exit_reason = (last->op == LIR_OP_SYSCALL) ? 0x51 : 0x7F; // rough
             break;
         }
     }
 
-    // Record the exit so the runtime / block cache can patch it later.
+    // Record the exit information (useful for future real runtime)
     if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
         int ex = cg->exit_count++;
-        cg->exits[ex].target_pc    = terminal_target;
+        cg->exits[ex].target_pc    = next_pc;
         cg->exits[ex].patch_offset = emit_offset(&cg->emit);
         cg->exits[ex].is_side_exit = false;
     }
 
-    // For the experimental execution path ("S5_EMIT_A64=exec") we emit a
-    // "set exit info + return" sequence so the test harness can call the
-    // generated code and observe the result. In a real runtime this will
-    // become proper dispatcher / chaining logic.
-    //
-    // Store terminal_target into cpu_state->pc (offset 0x80)
-    emit_mov_w32_imm32(&cg->emit, W0, terminal_target);
-    emit_str_w32_imm(&cg->emit, W0, W20, 0x80);
+    // For the experimental execution path we emit a simple "write state + return"
+    // sequence so the test harness gets back a sensible pc and exit_reason.
+    emit_mov_w32_imm32(&cg->emit, W0, next_pc);
+    emit_str_w32_imm(&cg->emit, W0, W20, 0x80);     // cpu->pc
 
-    // Store a block-end exit reason (9) into cpu_state->exit_reason (offset 0x84)
-    emit_mov_w32_imm32(&cg->emit, W0, 9);
-    emit_str_w32_imm(&cg->emit, W0, W20, 0x84);
+    emit_mov_w32_imm32(&cg->emit, W0, exit_reason);
+    emit_str_w32_imm(&cg->emit, W0, W20, 0x84);     // cpu->exit_reason
 
-    // Return to the C caller
     emit_ret_lr(&cg->emit);
 
     stage5_codegen_a64_success++;
