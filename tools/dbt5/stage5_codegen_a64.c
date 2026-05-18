@@ -373,22 +373,28 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     }
 
     // Record the exit so the runtime / block cache can patch it later.
-    size_t branch_patch_offset = 0;
     if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
         int ex = cg->exit_count++;
         cg->exits[ex].target_pc    = terminal_target;
-        cg->exits[ex].patch_offset = emit_offset(&cg->emit);  // will be the branch itself
+        cg->exits[ex].patch_offset = emit_offset(&cg->emit);
         cg->exits[ex].is_side_exit = false;
-        branch_patch_offset = cg->exits[ex].patch_offset;
     }
 
-    // Emit a patchable unconditional branch (B imm26).
-    // Displacement is currently 0 — the runtime will overwrite the immediate.
-    emit_b(&cg->emit, 0);
+    // For the experimental execution path ("S5_EMIT_A64=exec") we emit a
+    // "set exit info + return" sequence so the test harness can call the
+    // generated code and observe the result. In a real runtime this will
+    // become proper dispatcher / chaining logic.
+    //
+    // Store terminal_target into cpu_state->pc (offset 0x80)
+    emit_mov_w32_imm32(&cg->emit, W0, terminal_target);
+    emit_str_w32_imm(&cg->emit, W0, W20, 0x80);
 
-    // For debugging / future patching, also record the exact offset of the
-    // branch instruction we just emitted.
-    (void)branch_patch_offset;   // will be used when we implement real patching
+    // Store a block-end exit reason (9) into cpu_state->exit_reason (offset 0x84)
+    emit_mov_w32_imm32(&cg->emit, W0, 9);
+    emit_str_w32_imm(&cg->emit, W0, W20, 0x84);
+
+    // Return to the C caller
+    emit_ret_lr(&cg->emit);
 
     stage5_codegen_a64_success++;
     return true;
