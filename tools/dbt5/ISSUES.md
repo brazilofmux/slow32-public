@@ -518,6 +518,13 @@ micro-optimizations if desired. E1 is in good shape.
   to be spilled inside hot regions.
 - All a64 call sites now pass the region; x64 side accepts the parameter
   for compatibility (bias is A64-only for now).
+- Cost computation is factored into `ra_victim_cost(iv, ssa, region)`
+  and the victim-selection seed is `ra_victim_cost(cur, …)` (not `-1`),
+  which preserves the standard LSRA invariant: we only displace an active
+  interval when it is *strictly* more spill-preferred than `cur` itself.
+  In the no-region / no-carrier path this is exactly the old
+  `max_end = cur->end_idx` rule; the carrier bias applies uniformly to
+  both sides of the comparison.
 
 Combined with D2 (14 slots) + E1 (precise prologue), this makes the
 "re-load live-ins on every iteration" problem largely disappear for

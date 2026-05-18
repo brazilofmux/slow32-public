@@ -12,6 +12,24 @@ static int cmp_interval_start(const void *a, const void *b) {
     return ia->end_idx - ib->end_idx;
 }
 
+// E3 victim-selection cost. Higher cost = more preferred as spill target.
+// Base cost is end_idx (LSRA's "spill the longest-lived" rule). Loop-carried
+// live-ins get a large negative bias so we keep them in registers across
+// back-edges. Returned as int (not uint16_t) so the biased value can go
+// negative without wrapping.
+static int ra_victim_cost(const stage5_ra_interval_t *iv,
+                          const stage5_ssa_overlay_t *ssa,
+                          const stage5_lift_region_t *region) {
+    int cost = iv->end_idx;
+    if (region && iv->value_id < STAGE5_SSA_MAX_VALUES) {
+        uint8_t gpr = ssa->value_to_reg[iv->value_id];
+        if (gpr != 0 && gpr < 32 && region->reg_flow[gpr].live_across_edge) {
+            cost -= 10000;
+        }
+    }
+    return cost;
+}
+
 bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa,
                               stage5_ra_plan_t *plan, const stage5_lift_region_t *region) {
     if (!lir || !ssa || !plan) return false;
@@ -79,29 +97,20 @@ bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_
         if (slot >= 0) {
             cur->assigned_slot = (int8_t)slot;
         } else {
-            // Spill the one that ends furthest.
-            // E3: bias against spilling intervals that carry live-across-edge
-            // guest registers (loop invariants / hot carriers). These are much
-            // more painful to reload on every back-edge.
+            // LSRA: spill whichever has the highest "cost" (longest-lived
+            // by default; loop carriers strongly demoted — see ra_victim_cost).
+            // Seed with cur's own cost so we only displace an active if it
+            // is *strictly* more spill-preferred than cur itself. Otherwise
+            // cur spills. This preserves the standard LSRA invariant in the
+            // no-region / no-carrier paths.
             int victim = -1;
-            uint16_t max_end = cur->end_idx;
-            int best_cost = -1;
+            int best_cost = ra_victim_cost(cur, ssa, region);
 
             for (uint16_t k = 0; k < active_count; k++) {
                 stage5_ra_interval_t *a = &plan->intervals[active[k]];
                 if (a->spilled) continue;
 
-                int cost = a->end_idx;
-
-                if (region) {
-                    uint8_t gpr = (a->value_id < STAGE5_SSA_MAX_VALUES)
-                                  ? ssa->value_to_reg[a->value_id] : 0;
-                    if (gpr != 0 && gpr < 32 &&
-                        region->reg_flow[gpr].live_across_edge) {
-                        cost -= 10000; // strongly prefer not to spill loop carriers
-                    }
-                }
-
+                int cost = ra_victim_cost(a, ssa, region);
                 if (cost > best_cost) {
                     best_cost = cost;
                     victim = k;
