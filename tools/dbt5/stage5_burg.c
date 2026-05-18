@@ -29,7 +29,7 @@ static bool is_i_format_guest(uint8_t opcode) {
 
 // Lower a two-operand ALU op (ADD, SUB, AND, OR, XOR) to LIR.
 // Handles I-format immediates, R-format constant folding, and register form.
-static void lower_alu_rr_ri(const mir_node_t *m, const stage5_ssa_overlay_t *ssa,
+static void lower_alu_rr_ri(mir_node_t *m, const stage5_ssa_overlay_t *ssa,
                             lir_node_t *l, lir_op_t op_rr, lir_op_t op_ri) {
     l->dst_v = m->dst_v;
     l->src_v[0] = m->src_v[0];
@@ -49,6 +49,7 @@ static void lower_alu_rr_ri(const mir_node_t *m, const stage5_ssa_overlay_t *ssa
     if (ssa->value_is_const[m->src_v[1]]) {
         l->op = op_ri;
         l->imm = (int32_t)ssa->value_const_val[m->src_v[1]];
+        m->imm = l->imm;   // C3: make MIR dump show the actual folded immediate
         return;
     }
     // R-format normal
@@ -57,7 +58,7 @@ static void lower_alu_rr_ri(const mir_node_t *m, const stage5_ssa_overlay_t *ssa
 }
 
 // Lower a shift op to LIR.
-static void lower_shift(const mir_node_t *m, const stage5_ssa_overlay_t *ssa,
+static void lower_shift(mir_node_t *m, const stage5_ssa_overlay_t *ssa,
                         lir_node_t *l, lir_op_t op_ri, lir_op_t op_rr) {
     l->dst_v = m->dst_v;
     l->src_v[0] = m->src_v[0];
@@ -75,6 +76,7 @@ static void lower_shift(const mir_node_t *m, const stage5_ssa_overlay_t *ssa,
     if (ssa->value_is_const[m->src_v[1]]) {
         l->op = op_ri;
         l->imm = (int32_t)(ssa->value_const_val[m->src_v[1]] & 0x1F);
+        m->imm = l->imm;   // C3: keep MIR dump consistent
         return;
     }
     l->op = op_rr;
@@ -143,7 +145,7 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
 
     for (uint32_t i = 0; i < mir->node_count; i++) {
         if (used[i]) continue;
-        const mir_node_t *m = &mir->nodes[i];
+        mir_node_t *m = &mir->nodes[i];   // non-const so lowering can annotate imm for dump clarity (C3)
         if (lir->node_count + 3 >= STAGE5_MAX_LIR_NODES) return false;
         lir_node_t *l = &lir->nodes[lir->node_count++];
         memset(l, 0, sizeof(*l));

@@ -348,21 +348,15 @@ execution for validation.
 
 The tone is now honest about the current state without over-promising.
 
-### C3. **CLEANUP** Misleading LIR dump for folded-immediate ADD/SUB
+### C3. **DONE** **CLEANUP** Misleading LIR dump for folded-immediate ADD/SUB
 
-The `--verbose` LIR dump shows `imm` from the raw MIR node even after BURG
-has folded a constant operand into a different value. Smoke run example:
+In `lower_alu_rr_ri` (and `lower_shift`), when BURG folds a constant src2
+into an RI form, we now also update `m->imm` on the (now non-const) MIR node.
+This makes the `--verbose` MIR dump show the actual folded value instead of
+the stale small immediate from the original instruction encoding.
 
-```
-MIR [06] sub  dst=v8 src=[v7,v4] imm=3       gpc=0x00000018
-LIR [06] sub_ri dst=v8 src=[v7,v0] imm=82048 gpc=0x00000018
-```
-
-`imm=3` in the MIR row is leakage from the original instruction encoding
-(rs2's field) and is harmless because BURG ignored it. But it confuses
-readers. Either zero the MIR `imm` field when not meaningful, or label the
-dumped value clearly. The LIR `imm=82048` is the correct folded constant —
-that's fine.
+Example now shows consistent `imm=1048576` in both MIR and LIR for the folded
+case. Much less confusing for readers.
 
 ### C4. **CLEANUP** `LIR_OP_CALL` lowering drops `dst_v`
 
