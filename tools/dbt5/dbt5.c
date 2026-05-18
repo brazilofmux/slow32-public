@@ -381,13 +381,14 @@ int main(int argc, char **argv) {
     //   - Immediate execution for testing
     if (getenv("S5_EMIT_A64")) {
         static block_cache_t experimental_cache = {0};
-        static uint8_t experimental_code[4 * 1024 * 1024]; // 4 MB
-
-        experimental_cache.code_buffer      = experimental_code;
-        experimental_cache.code_buffer_size = sizeof(experimental_code);
-        // Other fields (block pool, etc.) can stay zero for the first version.
-
-        g_a64_experimental_cache = &experimental_cache;
+        if (!cache_init(&experimental_cache)) {
+            fprintf(stderr, "  [A64-CACHE] cache_init failed\n");
+            g_a64_experimental_cache = NULL;
+        } else {
+            g_a64_experimental_cache = &experimental_cache;
+            fprintf(stderr, "  [A64-CACHE] experimental cache ready (pool=%u blocks, code_buf=%zu)\n",
+                    experimental_cache.block_pool_size, experimental_cache.code_buffer_size);
+        }
     }
 #endif
     stage5_lift_region_t region;
@@ -454,11 +455,15 @@ int main(int argc, char **argv) {
                     if (emitted) {
                         size_t code_len = a64_cg.emit.offset;
 
+                        // Use portable JIT mmap flags + write-protect bracketing (fixes B2 on Apple Silicon)
                         void *exec_code = mmap(NULL, code_len + 4096,
                                                PROT_READ | PROT_WRITE | PROT_EXEC,
-                                               MAP_PRIVATE | MAP_ANON, -1, 0);
+                                               DBT_JIT_MMAP_FLAGS, -1, 0);
                         if (exec_code != MAP_FAILED) {
+                            dbt_jit_writable_begin();
                             memcpy(exec_code, a64_code, code_len);
+                            dbt_clear_icache(exec_code, (char *)exec_code + code_len);
+                            dbt_jit_writable_end();
 
                             if (g_a64_experimental_cache) {
                                 translated_block_t *blk = cache_alloc_block(g_a64_experimental_cache, load_res.entry_point);
@@ -492,13 +497,16 @@ int main(int argc, char **argv) {
                     // Execute the emitted code immediately when the experimental flag is set.
                     // (We can later make this conditional on =exec if someone wants wiring-only.)
                     if (emitted && getenv("S5_EMIT_A64")) {
-                        // Make a copy in an executable mapping
+                        // Make a copy in an executable mapping (portable JIT version)
                         void *exec_mem = mmap(NULL, 64*1024, PROT_READ | PROT_WRITE | PROT_EXEC,
-                                              MAP_PRIVATE | MAP_ANON, -1, 0);
+                                              DBT_JIT_MMAP_FLAGS, -1, 0);
                         if (exec_mem == MAP_FAILED) {
                             perror("mmap exec");
                         } else {
+                            dbt_jit_writable_begin();
                             memcpy(exec_mem, a64_code, a64_cg.emit.offset);
+                            dbt_clear_icache(exec_mem, (char *)exec_mem + a64_cg.emit.offset);
+                            dbt_jit_writable_end();
 
                             cpu.pc = load_res.entry_point;
 
