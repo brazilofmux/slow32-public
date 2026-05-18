@@ -54,6 +54,24 @@ The highest-leverage thing to do inside this tree is to design and implement the
 
 All of that work belongs here, not in the production `dbt` tree.
 
+## x86-64 Migration Plan (Placeholders Added)
+
+The original working x86-64 Stage 5 emitter lives in the legacy
+`stage5_codegen.c` (still coupled to the old translator runtime).
+
+As of this commit we have added:
+
+- `stage5_codegen_x64.h` + `stage5_codegen_x64.c` (clean-room target)
+- These are currently stubs with clear migration comments.
+
+The intent is that when someone is on an x86-64 host (or an x86-64 agent
+is working), they can finish the real independent port into these new
+files.  Once that is solid, the old coupled code can be removed from the
+production `./tools/dbt` tree.
+
+This keeps the clean-room boundary while still making the migration path
+visible in the repository.
+
 ## Relationship to the old "narrow owning" pilot
 
 The old pilot code that lived in `translate_a64.c` (the `stage5_replay_narrow_*`, `narrow_ownership_enabled` flag, lifter-driven prologue seeding, etc.) has been left behind in the production tree. It was a hybrid that ultimately still drove the Stage 4 helpers. The real experiment continues here without that scaffolding.

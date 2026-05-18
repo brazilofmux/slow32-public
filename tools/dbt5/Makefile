@@ -39,11 +39,13 @@ endif
 ifeq ($(UNAME_M),aarch64)
     EMIT_SRCS = emit_a64.c
     # No A64 codegen backend yet — this is the whole point of the fork.
-    # We will add stage5_codegen_a64.c here when we write the real one.
+    # We will add stage5_codegen_a64.c (or equivalent) when we write the real one.
     STAGE5_ARCH_SRCS =
 else
     EMIT_SRCS = emit_x64.c
-    STAGE5_ARCH_SRCS = stage5_codegen.c
+    # Legacy coupled codegen (being migrated).  We also compile the new
+    # clean placeholder so an x86-64 agent has a visible target.
+    STAGE5_ARCH_SRCS = stage5_codegen.c stage5_codegen_x64.c
 endif
 
 # Stage 5 compiler pipeline (the actual experiment)
