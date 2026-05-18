@@ -35,6 +35,18 @@ If you feel the temptation to call `translate_add`, `translate_ldw`, `reg_alloc_
 - On x86-64 hosts the existing `stage5_codegen.c` (LIR → native x86-64) can be used.
 - On AArch64 (the primary development host at the time of the fork) there is **no native codegen yet**. `dbt5` can run the complete analysis pipeline and fall back to the shadow interpreter for execution. This is the correct place to write `stage5_codegen_a64.c` (and its supporting thin runtime context) from scratch.
 
+## AArch64 Emission Work Has Begun (May 2026)
+
+As of this commit we have added the first skeleton:
+
+- `stage5_codegen_a64.h` — defines the clean `stage5_cg_a64_ctx_t`
+  and the entry point `stage5_codegen_a64(...)`.
+- `stage5_codegen_a64.c` — initial stub (always returns false for now).
+
+The first narrow owning path (ALU + simple memory that fits in the 8
+RA-assigned host slots, using only raw `emit_a64` calls) will be grown
+here.  This is the actual experiment the fork was created to protect.
+
 ## Building
 
 ```bash

@@ -38,9 +38,9 @@ endif
 
 ifeq ($(UNAME_M),aarch64)
     EMIT_SRCS = emit_a64.c
-    # No A64 codegen backend yet — this is the whole point of the fork.
-    # We will add stage5_codegen_a64.c (or equivalent) when we write the real one.
-    STAGE5_ARCH_SRCS =
+    # First skeleton of the clean independent A64 backend.
+    # This is the real work that was previously blocked by the gravity well.
+    STAGE5_ARCH_SRCS = stage5_codegen_a64.c
 else
     EMIT_SRCS = emit_x64.c
     # Legacy coupled codegen (being migrated).  We also compile the new
