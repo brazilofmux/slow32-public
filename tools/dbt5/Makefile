@@ -43,9 +43,10 @@ ifeq ($(UNAME_M),aarch64)
     STAGE5_ARCH_SRCS = stage5_codegen_a64.c
 else
     EMIT_SRCS = emit_x64.c
-    # Legacy coupled codegen (being migrated).  We also compile the new
-    # clean placeholder so an x86-64 agent has a visible target.
-    STAGE5_ARCH_SRCS = stage5_codegen.c stage5_codegen_x64.c
+    # Clean-room x86-64 backend + its FP helper.  The legacy translate_ctx_t
+    # coupling has been excised; the only public entry point is
+    # stage5_codegen_x64() in stage5_codegen_x64.h.
+    STAGE5_ARCH_SRCS = stage5_codegen_x64.c dbt5_fp_helper.c
 endif
 
 # Stage 5 compiler pipeline (the actual experiment)

@@ -27,7 +27,11 @@
 #include "stage5_burg.h"
 #include "stage5_lir.h"
 #include "stage5_ra.h"
+#if defined(__aarch64__)
 #include "stage5_codegen_a64.h"   // experimental clean A64 emitter
+#elif defined(__x86_64__)
+#include "stage5_codegen_x64.h"   // clean x86-64 emitter
+#endif
 
 // s32x loader lives in the emulator tree (self-contained header)
 #include "../emulator/s32x_loader.h"
@@ -353,14 +357,18 @@ int main(int argc, char **argv) {
         run_full_stage5_analysis(&region, "entry", verbose);
 
         // ------------------------------------------------------------------
-        // Experimental: try the new clean A64 emitter (very early)
+        // Experimental: try the host-arch native emitter (very early).
+        // Gated by env vars so default behavior is still the shadow-interp
+        // path.  Each backend has its own gate so the two can evolve
+        // independently.
         // ------------------------------------------------------------------
+#if defined(__aarch64__)
         if (getenv("S5_EMIT_A64")) {
             static uint8_t a64_code[64 * 1024];
             stage5_cg_a64_ctx_t a64_cg;
             stage5_cg_a64_init(&a64_cg, a64_code, sizeof(a64_code));
 
-            // We need the SSA that was built inside run_full... 
+            // We need the SSA that was built inside run_full...
             // For the very first experiments we re-lift + re-run the early parts here.
             // (Later we will thread the SSA out of the analysis function.)
             stage5_ssa_overlay_t ssa_for_emit;
@@ -389,6 +397,21 @@ int main(int argc, char **argv) {
                 }
             }
         }
+#elif defined(__x86_64__)
+        if (getenv("S5_EMIT_X64")) {
+            static uint8_t x64_code[64 * 1024];
+            stage5_cg_x64_ctx_t x64_cg = {0};
+            x64_cg.cpu = &cpu;
+            emit_init(&x64_cg.emit, x64_code, sizeof(x64_code));
+            // No block_cache wired up at the dbt5 driver level yet; the
+            // emitter tolerates cache == NULL (RET-based exits instead of
+            // chained JMPs).  This is enough for a compile-and-emit smoke.
+
+            bool emitted = stage5_codegen_x64(&x64_cg, &region, region.start_pc);
+            fprintf(stderr, "  [X64-EMIT] clean emitter %s (%zu bytes emitted)\n",
+                    emitted ? "succeeded" : "failed", emit_offset(&x64_cg.emit));
+        }
+#endif
 
         // === Additional regions from the CFG the lifter discovered ===
         if (region.cfg_valid && region.cfg_block_count > 1 && verbose) {

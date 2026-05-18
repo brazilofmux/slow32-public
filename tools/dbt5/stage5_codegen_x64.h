@@ -1,75 +1,80 @@
-// SLOW-32 DBT5 — Clean x86-64 Native Codegen (Target for Migration)
+// SLOW-32 DBT5 — Clean x86-64 Native Codegen
 //
-// This is the intended home for the *independent* x86-64 Stage 5 backend.
+// This is the dbt5 (clean-room) home for the x86-64 Stage 5 backend.
 //
-// GOAL
-// ----
-// Eventually this file (and its .c) will contain a full native x86-64
-// emitter that works only with:
+// Compared to the legacy dbt/stage5_codegen.{c,h} (which still pulls
+// translate_ctx_t from the production Stage 1-4 runtime), this module
+// is independent: it operates on a small, codegen-only context.
 //
-//   - The lifted region + LIR produced by the clean pipeline
-//   - The RA plan from stage5_ra
-//   - A thin dbt5-native codegen context (no translate_ctx_t, no reg cache,
-//     no Stage 1-4 fusion/peephole state)
+// Allowed dependencies:
+//   - emit_x64.* primitives
+//   - block_cache.h (chained-exit recording)
+//   - cpu_state.h  (CPU offsets, exit reasons)
+//   - dbt_limits.h (MAX_BLOCK_EXITS, etc.)
+//   - the clean Stage 5 pipeline (lift -> SSA -> MIR -> BURG -> LIR -> RA)
 //
-// CURRENT STATE
-// -------------
-// This is currently a placeholder / migration target.
+// What is intentionally NOT here:
+//   - translate_ctx_t and the Stage 4 reg-cache / fusion / peephole state
+//   - register-cache snapshots in deferred exits (Stage 5 reconstructs from RA)
+//   - any AArch64-only pending_write / shifted-fold scaffolding
 //
-// The real implementation that exists today lives in the legacy file
-// stage5_codegen.c, which is still coupled to the old translate_ctx_t and
-// the production Stage 1-4 runtime.  That code will be gradually ported
-// (or rewritten) into this new clean interface.
-//
-// When the port is complete, we expect to be able to delete or heavily
-// deprecate the old stage5_codegen.c from the production ./tools/dbt tree.
-//
-// DO NOT extend the legacy stage5_codegen.c with new features.
-// New x86-64 work should go here (or in supporting files under a
-// stage5_cg_x64_* naming convention).
+// Used only on x86-64 hosts (see tools/dbt5/Makefile).
 
 #ifndef DBT5_STAGE5_CODEGEN_X64_H
 #define DBT5_STAGE5_CODEGEN_X64_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
+#include "emit_x64.h"
+#include "block_cache.h"
+#include "cpu_state.h"
+#include "dbt_limits.h"
 #include "stage5_lift.h"
 #include "stage5_lir.h"
 #include "stage5_ra.h"
 
-// ============================================================================
-// Thin codegen context (to be designed properly during the real port)
+// Minimal deferred-exit record for Stage 5 side-exits.
 //
-// For now this is just a sketch so the interface can be discussed.
-// A real x86-64 agent should replace this with whatever minimal state
-// the emitter actually needs (emit buffer, exit records, host slot
-// mapping from the RA plan, etc.).
-// ============================================================================
-
+// Stage 4 carries a full register-cache snapshot per deferred exit; Stage 5
+// does not need that — the RA plan is immutable and the codegen tracks
+// per-exit slot_value / spilled_def_for_gpr snapshots itself in its own
+// state (next to the cg pipeline), not in this public struct.
 typedef struct {
-    // Placeholder — real fields will be added during the port
-    uint8_t *code_buffer;
-    size_t   code_capacity;
-    size_t   code_size;
+    size_t   jmp_patch_offset;  // offset of rel32 inside the inline JCC
+    uint32_t target_pc;         // guest PC the side exit jumps to
+    int      exit_idx;          // exit index for chaining
+    uint32_t branch_pc;         // guest PC of the originating branch
+    bool     force_full_flush;  // reserved for future use
+} stage5_cg_x64_deferred_exit_t;
 
-    // Future: reference to the RA-assigned host slots, exit table, etc.
+// Thin codegen context — everything the x86-64 emitter actually needs.
+typedef struct {
+    dbt_cpu_state_t    *cpu;    // guest CPU state (for offset computation)
+    emit_ctx_t          emit;   // host code emit buffer (raw x64)
+    block_cache_t      *cache;  // block cache (for chaining)
+    translated_block_t *block;  // current block (for exit recording)
+
+    int   exit_idx;             // running exit index for chaining
+    int   deferred_exit_count;
+    stage5_cg_x64_deferred_exit_t deferred_exits[MAX_BLOCK_EXITS];
 } stage5_cg_x64_ctx_t;
 
-// ============================================================================
-// Entry point (placeholder)
+// Run the full clean-room pipeline (SSA -> MIR -> BURG -> LIR -> RA -> emit)
+// against `region`, writing native x86-64 into ctx->emit.
 //
-// This is the function that will eventually own a whole region natively
-// on x86-64 using only the clean Stage 5 pipeline output.
-// ============================================================================
-
-bool stage5_codegen_x64(stage5_cg_x64_ctx_t *cg,
+// Returns true on success.  On failure the emit buffer state is undefined
+// and the caller must NOT execute it.  There is no Stage 4 fallback —
+// dbt5 has no Stage 1-4 code to fall back to.
+bool stage5_codegen_x64(stage5_cg_x64_ctx_t *ctx,
                         const stage5_lift_region_t *region,
-                        const stage5_lir_t *lir,
-                        const stage5_ra_plan_t *ra_plan);
+                        uint32_t guest_pc);
 
-// Telemetry (stubs for now)
+// Telemetry
 extern uint32_t stage5_codegen_x64_attempted;
 extern uint32_t stage5_codegen_x64_success;
+extern uint32_t stage5_codegen_x64_fallback;
+extern uint32_t stage5_codegen_x64_fallback_emit_node;
 
 #endif // DBT5_STAGE5_CODEGEN_X64_H

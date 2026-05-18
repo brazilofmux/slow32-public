@@ -1,37 +1,1293 @@
-// SLOW-32 DBT5 — x86-64 Codegen Implementation (Placeholder)
+// SLOW-32 DBT5 — x86-64 Native Codegen (clean-room)
 //
-// This file is intentionally a skeleton.
-//
-// See stage5_codegen_x64.h for the migration plan and rationale.
-//
-// The actual working (but coupled) x86-64 emitter currently lives in
-// the legacy stage5_codegen.c.  The long-term goal is to move all
-// independent x86-64 emission logic into this file and its supporting
-// modules, using only:
-//
-//   - emit_x64.* primitives
-//   - block_cache
-//   - the clean LIR + RA output from the Stage 5 pipeline
-//
-// Until a real port happens, everything here is a no-op stub.
+// Self-contained compiler pipeline: LIFT -> SSA -> MIR -> BURG -> LIR -> RA -> EMIT.
+// Operates only on the dbt5-local stage5_cg_x64_ctx_t — no stage5_cg_x64_ctx_t,
+// no Stage 1-4 reg cache, no fusion/peephole state.
 
 #include "stage5_codegen_x64.h"
+#include "stage5_mir.h"
+#include "stage5_burg.h"
+#include "stage5_ssa.h"
+#include "shadow_interp.h"   // for paranoid_mode
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-uint32_t stage5_codegen_x64_attempted = 0;
-uint32_t stage5_codegen_x64_success   = 0;
+// Telemetry
+uint32_t stage5_codegen_x64_attempted;
+uint32_t stage5_codegen_x64_success;
+uint32_t stage5_codegen_x64_fallback;
+uint32_t stage5_codegen_x64_fallback_emit_node;
 
-bool stage5_codegen_x64(stage5_cg_x64_ctx_t *cg,
+typedef struct stage5_cg_x64_state_s {
+    stage5_cg_x64_ctx_t *ctx;
+    emit_ctx_t *e;
+    const stage5_lift_region_t *region;
+    const stage5_ssa_overlay_t *ssa;
+    const stage5_ra_plan_t *ra_plan;
+    const stage5_lir_t *lir;
+
+    int8_t ssa_value_slot[STAGE5_SSA_MAX_VALUES];
+    uint16_t ssa_slot_value[STAGE5_RA_HOST_SLOTS];
+
+    // Precomputed from LIR: RA-plan-driven flush support
+    bool is_block_defined[STAGE5_SSA_MAX_VALUES];
+    uint16_t value_def_lir_idx[STAGE5_SSA_MAX_VALUES];
+    uint16_t spilled_def_for_gpr[32];
+
+    // Deferred exit snapshots (slot_value + spilled state at each side exit)
+    struct {
+        uint16_t slot_value[STAGE5_RA_HOST_SLOTS];
+        uint16_t spilled_gpr[32];
+    } exit_snapshot[MAX_BLOCK_EXITS];
+
+    // Self-loop back-edge support
+    size_t loop_body_offset;        // Host offset right after prologue loads
+    int8_t entry_gpr_for_slot[STAGE5_RA_HOST_SLOTS]; // Slot -> guest reg at entry (-1 = empty)
+} stage5_cg_x64_state_t;
+
+// Standard x86-64 calling convention for FP helper
+extern void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode, uint32_t rd, uint32_t rs1, uint32_t rs2);
+
+static const x64_reg_t ra_hosts[STAGE5_RA_HOST_SLOTS] = {
+    RBX, R12, R15, RSI, RDI, R11, R8, R9
+};
+
+// ============================================================================
+// Native Runtime Helpers
+// ============================================================================
+
+// RA-plan-driven flush: walks slots, finds the latest block-defined value per
+// guest register, emits store.  Reads only immutable/stable state — can be
+// called multiple times with identical results (no mutable dirty bits).
+static void cg_flush_exit(stage5_cg_x64_state_t *cg) {
+    int8_t latest_slot[32];
+    uint16_t latest_def_idx[32];
+    memset(latest_slot, -1, sizeof(latest_slot));
+    memset(latest_def_idx, 0, sizeof(latest_def_idx));
+
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        uint16_t v = cg->ssa_slot_value[s];
+        if (v == 0 || !cg->is_block_defined[v]) continue;
+        uint8_t gpr = cg->ssa->value_to_reg[v];
+        if (gpr == 0) continue;
+        uint16_t def_idx = cg->value_def_lir_idx[v];
+        if (latest_slot[gpr] < 0 || def_idx > latest_def_idx[gpr]) {
+            latest_slot[gpr] = (int8_t)s;
+            latest_def_idx[gpr] = def_idx;
+        }
+    }
+
+    // Suppress flush if a later spill already wrote to guest memory
+    for (int g = 1; g < 32; g++) {
+        if (latest_slot[g] >= 0 && cg->spilled_def_for_gpr[g] > latest_def_idx[g])
+            latest_slot[g] = -1;
+    }
+
+    for (int g = 1; g < 32; g++) {
+        if (latest_slot[g] >= 0)
+            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(g), ra_hosts[latest_slot[g]]);
+    }
+}
+
+// RET-based exit: returns to C dispatcher. Used for HALT/DEBUG/YIELD.
+static void cg_exit_native(stage5_cg_x64_state_t *cg, uint32_t next_pc, uint32_t reason) {
+    cg_flush_exit(cg);
+    emit_mov_m32_imm32(cg->e, RBP, CPU_PC_OFFSET, next_pc);
+    emit_mov_m32_imm32(cg->e, RBP, CPU_EXIT_REASON_OFFSET, reason);
+    emit_ret(cg->e);
+}
+
+// JMP-based exit: chains directly to target block or shared dispatcher.
+static void cg_exit_chained(stage5_cg_x64_state_t *cg, uint32_t target_pc) {
+    stage5_cg_x64_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+
+    cg_flush_exit(cg);
+    emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
+
+    // Record patch site BEFORE emitting the JMP
+    uint8_t *patch_site = emit_ptr(e) + 1; // points to rel32 within JMP
+
+    // Try to chain directly to already-translated target
+    translated_block_t *target = (ctx->cache && !paranoid_mode)
+                                     ? cache_lookup(ctx->cache, target_pc) : NULL;
+    if (target && target->host_code) {
+        int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
+        if (rel >= INT32_MIN && rel <= INT32_MAX) {
+            emit_jmp_rel32(e, (int32_t)rel);
+        } else {
+            // Too far for rel32 — use shared exit
+            if (ctx->cache && ctx->cache->shared_branch_exit) {
+                int64_t srel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+                emit_jmp_rel32(e, (int32_t)srel);
+            } else {
+                emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+                emit_ret(e);
+                return;
+            }
+        }
+    } else if (ctx->cache && ctx->cache->shared_branch_exit) {
+        // Not yet translated — jump to shared dispatcher stub
+        int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+        emit_jmp_rel32(e, (int32_t)rel);
+    } else {
+        // No cache — RET-based exit
+        emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+        emit_ret(e);
+        return;
+    }
+
+    // Record exit for future chaining
+    int exit_idx = ctx->exit_idx++;
+    if (exit_idx < MAX_BLOCK_EXITS && ctx->block) {
+        cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+        if (!target || !target->host_code) {
+            cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+        }
+    }
+}
+
+// Resolve an SSA value to an x86-64 host register.
+// If the value is currently in its assigned slot, returns that host register.
+// If the slot was repurposed (RA reuse), falls through to load from memory.
+static x64_reg_t cg_resolve_val(stage5_cg_x64_state_t *cg, uint16_t v, x64_reg_t scratch) {
+    if (v == 0) { emit_xor_r32_r32(cg->e, scratch, scratch); return scratch; }
+    int8_t slot = cg->ssa_value_slot[v];
+    // Only use the slot if it currently holds THIS value (handles RA slot reuse)
+    if (slot >= 0 && cg->ssa_slot_value[slot] == v) return ra_hosts[slot];
+
+    uint8_t gpr = cg->ssa->value_to_reg[v];
+    if (gpr != 0) emit_mov_r32_m32(cg->e, scratch, RBP, GUEST_REG_OFFSET(gpr));
+    else emit_xor_r32_r32(cg->e, scratch, scratch);
+    return scratch;
+}
+
+// Mark destination after writing.  Update ssa_slot_value.
+// Slot contents are NOT cleared for stale same-GPR aliases — cg_resolve_val
+// needs them, and the pre-flush + cg_flush_exit use latest-def resolution
+// to avoid writing stale values over newer ones.
+static void cg_mark_dst(stage5_cg_x64_state_t *cg, const lir_node_t *l, x64_reg_t dst_h, int8_t dst_slot, uint32_t lir_idx) {
+    if (l->dst_v == 0) return;
+    uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
+    if (dst_slot >= 0) {
+        cg->ssa_slot_value[dst_slot] = l->dst_v;
+    } else {
+        // Spilled: write to guest memory, record for supersession
+        if (gpr != 0) {
+            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(gpr), dst_h);
+            cg->spilled_def_for_gpr[gpr] = lir_idx;
+        }
+    }
+}
+
+// ============================================================================
+// LIR Emission (Native x86-64, ZERO Stage 4 dependencies)
+// ============================================================================
+
+// Invert an x86 JCC condition code (0x84 JE → 0x85 JNE, etc.)
+static uint8_t invert_x86_cc(uint8_t cc) {
+    return cc ^ 1; // x86 condition codes: even/odd pairs are inverses
+}
+
+// Self-loop back-edge: when the terminal branch targets the block's own
+// start PC, emit a direct jmp back to the loop body (skipping the prologue
+// reload).  Emits a register shuffle sequence if needed to move values
+// to their expected entry slots.  Returns true if emitted, false to fall back.
+static bool cg_emit_self_loop_branch(stage5_cg_x64_state_t *cg, const lir_node_t *l,
+                                      uint32_t lir_idx, uint8_t cc) {
+    emit_ctx_t *e = cg->e;
+    uint32_t fall_pc = l->guest_pc + 4;
+
+    // --- Compute end-of-block latest slot per gpr (block-defined values only) ---
+    int8_t latest_slot[32];
+    uint16_t latest_def_idx[32];
+    memset(latest_slot, -1, sizeof(latest_slot));
+    memset(latest_def_idx, 0, sizeof(latest_def_idx));
+
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        uint16_t v = cg->ssa_slot_value[s];
+        if (v == 0 || !cg->is_block_defined[v]) continue;
+        uint8_t gpr = cg->ssa->value_to_reg[v];
+        if (gpr == 0) continue;
+        uint16_t def_idx = cg->value_def_lir_idx[v];
+        if (latest_slot[gpr] < 0 || def_idx > latest_def_idx[gpr]) {
+            latest_slot[gpr] = (int8_t)s;
+            latest_def_idx[gpr] = def_idx;
+        }
+    }
+    for (int g = 1; g < 32; g++) {
+        if (latest_slot[g] >= 0 && cg->spilled_def_for_gpr[g] > latest_def_idx[g])
+            latest_slot[g] = -1;
+    }
+
+    // --- Build shuffle plan per entry slot ---
+    // shuffle_src[s]: -2 = no-op, -1 = reload from memory, 0-7 = copy from slot
+    int8_t shuffle_src[STAGE5_RA_HOST_SLOTS];
+    uint8_t shuffle_gpr[STAGE5_RA_HOST_SLOTS];
+    int shuffle_count = 0;
+
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        shuffle_src[s] = -2;
+        shuffle_gpr[s] = 0;
+        int8_t g = cg->entry_gpr_for_slot[s];
+        if (g <= 0) continue;
+
+        if (latest_slot[g] >= 0) {
+            // Block-defined output lives in a slot
+            if (latest_slot[g] == s) {
+                // Already in the right place
+            } else {
+                shuffle_src[s] = latest_slot[g];
+                shuffle_gpr[s] = (uint8_t)g;
+                shuffle_count++;
+            }
+        } else {
+            // No block-defined output in a slot.  Check if gpr was modified
+            // at all — if a block-defined value for this gpr was spilled to
+            // memory (pre-flushed), the live-in in the slot is stale.
+            if (cg->spilled_def_for_gpr[(uint8_t)g] > 0) {
+                // Modified and spilled to memory — must reload
+                shuffle_src[s] = -1;
+                shuffle_gpr[s] = (uint8_t)g;
+                shuffle_count++;
+            } else {
+                uint16_t v = cg->ssa_slot_value[s];
+                if (v != 0 && cg->ssa->value_to_reg[v] == (uint8_t)g &&
+                    !cg->is_block_defined[v]) {
+                    // Slot still holds the original live-in value — no move
+                } else {
+                    // Slot was repurposed — reload
+                    shuffle_src[s] = -1;
+                    shuffle_gpr[s] = (uint8_t)g;
+                    shuffle_count++;
+                }
+            }
+        }
+    }
+
+    // Bail if too many shuffles (diminishing returns vs flush+reload)
+    if (shuffle_count > 6) return false;
+
+    // Bail if the loop body uses more distinct guest registers than we have
+    // host slots.  When this happens, the RA evicts and repurposes slots
+    // mid-block, and the shuffle plan cannot reliably reconstruct the entry
+    // mapping from the diverged end-of-block state.  (Ported from RV32IM fix.)
+    {
+        bool gpr_used[32] = {false};
+        // Entry-mapped GPRs
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            int8_t g = cg->entry_gpr_for_slot[s];
+            if (g > 0) gpr_used[g] = true;
+        }
+        // Block-defined GPRs (includes those evicted from slots and spilled)
+        for (uint16_t i = 0; i < cg->lir->node_count; i++) {
+            uint16_t v = cg->lir->nodes[i].dst_v;
+            if (v != 0) {
+                uint8_t g = cg->ssa->value_to_reg[v];
+                if (g != 0) gpr_used[g] = true;
+            }
+        }
+        int nused = 0;
+        for (int r = 1; r < 32; r++)
+            if (gpr_used[r]) nused++;
+        if (nused > STAGE5_RA_HOST_SLOTS) return false;
+    }
+
+    static bool s5_trace = false;
+    static int s5_trace_init = 0;
+    if (!s5_trace_init) { s5_trace = getenv("S5_TRACE") != NULL; s5_trace_init = 1; }
+    if (s5_trace) {
+        fprintf(stderr, "[S5-LOOP] self-loop back-edge at gpc=0x%08X -> 0x%08X, "
+                "shuffles=%d, %d deferred exits\n",
+                l->guest_pc, cg->region->start_pc, shuffle_count,
+                cg->ctx->deferred_exit_count);
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            int8_t eg = cg->entry_gpr_for_slot[s];
+            uint16_t ev = cg->ssa_slot_value[s];
+            uint8_t eg2 = ev ? cg->ssa->value_to_reg[ev] : 0;
+            fprintf(stderr, "  slot[%d] entry_gpr=%d  end_val=%u(gpr=%u,bd=%d)  latest_slot[%d]=%d  spilled[%d]=%u  shuffle=%d\n",
+                    s, eg, ev, eg2, ev ? cg->is_block_defined[ev] : 0,
+                    eg > 0 ? eg : 0, eg > 0 ? latest_slot[eg] : -99,
+                    eg > 0 ? eg : 0, eg > 0 ? (unsigned)cg->spilled_def_for_gpr[eg] : 0,
+                    shuffle_src[s]);
+        }
+    }
+
+    // --- Emit branch ---
+    size_t jcc_patch = emit_offset(e);
+    emit_byte(e, 0x0F);
+    emit_byte(e, cc);
+    emit_dword(e, 0);
+
+    // Fall-through: normal loop-exit (flush + chained exit)
+    cg_exit_chained(cg, fall_pc);
+
+    // Taken path: shuffle registers then jump back to loop body
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch + 2, taken_offset);
+
+    // Phase 1: register-to-register copies in dependency order.
+    // Must happen BEFORE memory reloads because a reload can clobber a slot
+    // that is a copy source (e.g., slot 2 holds new r4, gets reloaded with
+    // r3 from memory, but slot 4 needs the old slot 2 value).
+    // Use RAX as scratch for breaking cycles.
+    bool done[STAGE5_RA_HOST_SLOTS];
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++)
+        done[s] = (shuffle_src[s] < 0);
+
+    for (;;) {
+        bool any_pending = false;
+        bool progress = false;
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            if (done[s]) continue;
+            any_pending = true;
+            // Safe to write to s if no other pending move reads from s
+            bool s_is_source = false;
+            for (int j = 0; j < STAGE5_RA_HOST_SLOTS; j++) {
+                if (!done[j] && j != s && shuffle_src[j] == s) {
+                    s_is_source = true;
+                    break;
+                }
+            }
+            if (!s_is_source) {
+                emit_mov_r32_r32(e, ra_hosts[s], ra_hosts[shuffle_src[s]]);
+                done[s] = true;
+                progress = true;
+            }
+        }
+        if (!any_pending) break;
+        if (!progress) {
+            // Cycle: save one slot to scratch and unwind the chain
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                if (done[s]) continue;
+                emit_mov_r32_r32(e, RAX, ra_hosts[s]);
+                int cur = s;
+                while (!done[cur]) {
+                    int src = shuffle_src[cur];
+                    if (src == s) {
+                        // Last in cycle: get saved value from scratch
+                        emit_mov_r32_r32(e, ra_hosts[cur], RAX);
+                    } else {
+                        emit_mov_r32_r32(e, ra_hosts[cur], ra_hosts[src]);
+                    }
+                    done[cur] = true;
+                    if (src == s) break;
+                    cur = src;
+                }
+                break; // restart outer loop to find more cycles/moves
+            }
+        }
+    }
+
+    // Phase 2: memory reloads (after reg-reg copies so we don't clobber sources)
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        if (shuffle_src[s] == -1) {
+            emit_mov_r32_m32(e, ra_hosts[s], RBP, GUEST_REG_OFFSET(shuffle_gpr[s]));
+        }
+    }
+
+    // Jump back to loop body (after prologue)
+    int32_t rel = (int32_t)cg->loop_body_offset - (int32_t)(emit_offset(e) + 5);
+    emit_jmp_rel32(e, rel);
+
+    return true;
+}
+
+// Shared branch emission: emits JCC with side-exit or terminal handling.
+// Called after the comparison/test instruction has already been emitted.
+// cc is the x86 JCC opcode byte (0x84=JE, 0x85=JNE, 0x8C=JL, etc.)
+static bool cg_emit_conditional_branch(stage5_cg_x64_state_t *cg, const lir_node_t *l,
+                                        uint32_t lir_idx, uint8_t cc) {
+    emit_ctx_t *e = cg->e;
+    uint32_t taken_pc = l->guest_pc + 4 + l->imm;
+    uint32_t fall_pc = l->guest_pc + 4;
+
+    if (l->is_side_exit) {
+        uint32_t side_exit_pc = taken_pc;
+        uint8_t side_cc = cc;
+
+        const stage5_lir_t *lir = cg->lir;
+        if (lir_idx + 1 < lir->node_count &&
+            lir->nodes[lir_idx + 1].guest_pc == taken_pc) {
+            side_cc = invert_x86_cc(cc);
+            side_exit_pc = fall_pc;
+        }
+
+        size_t jcc_patch = emit_offset(e);
+        emit_byte(e, 0x0F);
+        emit_byte(e, side_cc);
+        emit_dword(e, 0);
+
+        stage5_cg_x64_ctx_t *ctx = cg->ctx;
+        if (ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
+            int di = ctx->deferred_exit_count++;
+            ctx->deferred_exits[di].jmp_patch_offset = jcc_patch + 2;
+            ctx->deferred_exits[di].target_pc = side_exit_pc;
+            ctx->deferred_exits[di].exit_idx = ctx->exit_idx++;
+            ctx->deferred_exits[di].branch_pc = l->guest_pc;
+            ctx->deferred_exits[di].force_full_flush = false;
+
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++)
+                cg->exit_snapshot[di].slot_value[s] = cg->ssa_slot_value[s];
+            memcpy(cg->exit_snapshot[di].spilled_gpr,
+                   cg->spilled_def_for_gpr, sizeof(cg->spilled_def_for_gpr));
+
+            if (getenv("S5_TRACE")) {
+                fprintf(stderr, "[S5-SNAP] side_exit gpc=0x%08X target=0x%08X di=%d\n",
+                        l->guest_pc, side_exit_pc, di);
+                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                    uint16_t v = cg->exit_snapshot[di].slot_value[s];
+                    if (v != 0 && cg->is_block_defined[v]) {
+                        fprintf(stderr, "  snap[%d] val=%u gpr=%u\n",
+                                s, v, cg->ssa->value_to_reg[v]);
+                    }
+                }
+            }
+        }
+    } else {
+        // Self-loop detection: if taken target is the block's own start PC,
+        // try to emit a direct back-edge (skip flush+reload)
+        if (taken_pc == cg->region->start_pc) {
+            if (cg_emit_self_loop_branch(cg, l, lir_idx, cc))
+                return true;
+            if (getenv("S5_TRACE"))
+                fprintf(stderr, "[S5-LOOP-FAIL] gpc=0x%08X taken=0x%08X start=0x%08X\n",
+                        l->guest_pc, taken_pc, cg->region->start_pc);
+        }
+
+        size_t jcc_patch = emit_offset(e);
+        emit_byte(e, 0x0F);
+        emit_byte(e, cc);
+        emit_dword(e, 0);
+        cg_exit_chained(cg, fall_pc);
+        size_t taken_start = emit_offset(e);
+        cg_exit_chained(cg, taken_pc);
+        emit_patch_rel32(e, jcc_patch + 2, taken_start);
+    }
+    return true;
+}
+
+static bool cg_emit_lir_node(stage5_cg_x64_state_t *cg, const lir_node_t *l, uint32_t lir_idx) {
+    emit_ctx_t *e = cg->e;
+    x64_reg_t dst_h = X64_NOREG;
+    int8_t dst_slot = (l->dst_v != 0) ? cg->ssa_value_slot[l->dst_v] : -1;
+    if (dst_slot >= 0) dst_h = ra_hosts[dst_slot];
+    else if (l->dst_v != 0) dst_h = RAX;
+
+    // Pre-flush: if destination slot holds a different block-defined value,
+    // flush it BEFORE the instruction overwrites the host register.
+    // We must only flush if this is the LATEST definition for that GPR —
+    // a newer definition may exist in another slot or already be written
+    // to guest memory (spill / earlier pre-flush).
+    if (l->dst_v != 0 && dst_slot >= 0 &&
+        cg->ssa_slot_value[dst_slot] != 0 &&
+        cg->ssa_slot_value[dst_slot] != l->dst_v) {
+        uint16_t old_v = cg->ssa_slot_value[dst_slot];
+        if (cg->is_block_defined[old_v]) {
+            uint8_t old_gpr = cg->ssa->value_to_reg[old_v];
+            uint16_t old_def = cg->value_def_lir_idx[old_v];
+            bool is_latest = (old_gpr != 0);
+            // Check if a newer block-defined value for same GPR is in another slot
+            if (is_latest) {
+                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                    if (s == dst_slot) continue;
+                    uint16_t sv = cg->ssa_slot_value[s];
+                    if (sv != 0 && cg->is_block_defined[sv] &&
+                        cg->ssa->value_to_reg[sv] == old_gpr &&
+                        cg->value_def_lir_idx[sv] > old_def) {
+                        is_latest = false;
+                        break;
+                    }
+                }
+            }
+            // Check if a newer def was already written to guest memory
+            if (is_latest && cg->spilled_def_for_gpr[old_gpr] > old_def)
+                is_latest = false;
+            if (is_latest) {
+                emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(old_gpr), ra_hosts[dst_slot]);
+                // Record so later pre-flushes of older defs for same GPR are skipped
+                cg->spilled_def_for_gpr[old_gpr] = old_def;
+            }
+        }
+    }
+
+    switch (l->op) {
+        case LIR_OP_NOP:
+            return true;
+
+        case LIR_OP_MOV_RI:
+            if (dst_h != X64_NOREG) {
+                if (l->imm == 0) emit_xor_r32_r32(e, dst_h, dst_h);
+                else emit_mov_r32_imm32(e, dst_h, (uint32_t)l->imm);
+            }
+            break;
+
+        case LIR_OP_MOV_RR: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], RCX);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            break;
+        }
+
+        // ---- Arithmetic ----
+
+        case LIR_OP_ADD_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG && l->imm != 0) emit_add_r32_imm32(e, dst_h, l->imm);
+            break;
+        }
+        case LIR_OP_ADD_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_add_r32_r32(e, dst_h, src1);
+            break;
+        }
+
+        case LIR_OP_SUB_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG) emit_sub_r32_imm32(e, dst_h, l->imm);
+            break;
+        }
+        case LIR_OP_SUB_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_sub_r32_r32(e, dst_h, src1);
+            break;
+        }
+
+        case LIR_OP_AND_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG) emit_and_r32_imm32(e, dst_h, l->imm);
+            break;
+        }
+        case LIR_OP_AND_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_and_r32_r32(e, dst_h, src1);
+            break;
+        }
+
+        case LIR_OP_OR_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG) emit_or_r32_imm32(e, dst_h, l->imm);
+            break;
+        }
+        case LIR_OP_OR_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_or_r32_r32(e, dst_h, src1);
+            break;
+        }
+
+        case LIR_OP_XOR_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG) emit_xor_r32_imm32(e, dst_h, l->imm);
+            break;
+        }
+        case LIR_OP_XOR_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_xor_r32_r32(e, dst_h, src1);
+            break;
+        }
+
+        // ---- Shifts ----
+
+        case LIR_OP_SHL_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG) emit_shl_r32_imm8(e, dst_h, (uint8_t)(l->imm & 0x1F));
+            break;
+        }
+        case LIR_OP_SHR_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG) emit_shr_r32_imm8(e, dst_h, (uint8_t)(l->imm & 0x1F));
+            break;
+        }
+        case LIR_OP_SAR_RI: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != src && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src);
+            if (dst_h != X64_NOREG) emit_sar_r32_imm8(e, dst_h, (uint8_t)(l->imm & 0x1F));
+            break;
+        }
+
+        case LIR_OP_SHL_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (src1 != RCX) emit_mov_r32_r32(e, RCX, src1);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_shl_r32_cl(e, dst_h);
+            break;
+        }
+        case LIR_OP_SHR_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (src1 != RCX) emit_mov_r32_r32(e, RCX, src1);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_shr_r32_cl(e, dst_h);
+            break;
+        }
+        case LIR_OP_SAR_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (src1 != RCX) emit_mov_r32_r32(e, RCX, src1);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_sar_r32_cl(e, dst_h);
+            break;
+        }
+
+        // ---- Multiply ----
+
+        case LIR_OP_IMUL_RR: {
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], dst_h);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (dst_h != src0 && dst_h != X64_NOREG) emit_mov_r32_r32(e, dst_h, src0);
+            if (dst_h != X64_NOREG) emit_imul_r32_r32(e, dst_h, src1);
+            break;
+        }
+
+        case LIR_OP_MULH_RR: {
+            // Signed high multiply: IMUL_one src → result in EDX:EAX, want EDX
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (src0 != RAX) emit_mov_r32_r32(e, RAX, src0);
+            emit_imul_one_r32(e, src1);  // EDX:EAX = EAX * src1 (signed)
+            if (dst_h != X64_NOREG && dst_h != RDX) emit_mov_r32_r32(e, dst_h, RDX);
+            // If dst_h is RDX, result is already there
+            if (dst_h == X64_NOREG) break; // spilled — handled by cg_mark_dst
+            if (dst_h != RDX) break; // already moved
+            break;
+        }
+
+        case LIR_OP_MULHU_RR: {
+            // Unsigned high multiply: MUL src → result in EDX:EAX, want EDX
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (src0 != RAX) emit_mov_r32_r32(e, RAX, src0);
+            emit_mul_r32(e, src1);  // EDX:EAX = EAX * src1 (unsigned)
+            if (dst_h != X64_NOREG && dst_h != RDX) emit_mov_r32_r32(e, dst_h, RDX);
+            break;
+        }
+
+        // ---- Division ----
+
+        case LIR_OP_IDIV: {
+            // Signed divide: CDQ + IDIV. cond=0→quotient(EAX), cond=1→remainder(EDX)
+            // Guard: INT32_MIN / -1 overflow → return INT32_MIN (SLOW-32 convention)
+            x64_reg_t src0 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t src1 = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (src0 != RAX) emit_mov_r32_r32(e, RAX, src0);
+            if (src1 != RCX) emit_mov_r32_r32(e, RCX, src1);
+
+            // Guard: divisor == 0 → result = 0 (avoid SIGFPE)
+            emit_test_r32_r32(e, RCX, RCX);
+            size_t jnz_patch = emit_offset(e);
+            emit_byte(e, 0x0F); emit_byte(e, 0x85); emit_dword(e, 0); // JNE over
+            // divisor is zero: result = 0
+            emit_xor_r32_r32(e, RAX, RAX);
+            emit_xor_r32_r32(e, RDX, RDX);
+            size_t jmp_done_patch = emit_offset(e) + 1;
+            emit_jmp_rel32(e, 0); // JMP to done
+            // divisor != 0
+            emit_patch_rel32(e, jnz_patch + 2, emit_offset(e));
+
+            // Guard: INT32_MIN / -1 overflow
+            emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000u);
+            size_t jne_ov = emit_offset(e);
+            emit_byte(e, 0x0F); emit_byte(e, 0x85); emit_dword(e, 0); // JNE
+            emit_cmp_r32_imm32(e, RCX, -1);
+            size_t jne_ov2 = emit_offset(e);
+            emit_byte(e, 0x0F); emit_byte(e, 0x85); emit_dword(e, 0); // JNE
+            // overflow: quotient = INT32_MIN, remainder = 0
+            emit_mov_r32_imm32(e, RAX, 0x80000000u);
+            emit_xor_r32_r32(e, RDX, RDX);
+            size_t jmp_done2 = emit_offset(e) + 1;
+            emit_jmp_rel32(e, 0);
+
+            emit_patch_rel32(e, jne_ov + 2, emit_offset(e));
+            emit_patch_rel32(e, jne_ov2 + 2, emit_offset(e));
+
+            // Normal path
+            emit_cdq(e);
+            emit_idiv_r32(e, RCX);
+
+            emit_patch_rel32(e, jmp_done_patch, emit_offset(e));
+            emit_patch_rel32(e, jmp_done2, emit_offset(e));
+
+            // cond=0: quotient in EAX, cond=1: remainder in EDX
+            x64_reg_t result_reg = (l->cond == 1) ? RDX : RAX;
+            if (dst_h != X64_NOREG && dst_h != result_reg) {
+                emit_mov_r32_r32(e, dst_h, result_reg);
+            } else if (dst_h == X64_NOREG) {
+                // Spilled — store from result_reg directly to guest memory
+                uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
+                if (gpr != 0) {
+                    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(gpr), result_reg);
+                    cg->spilled_def_for_gpr[gpr] = lir_idx;
+                }
+                return true; // skip cg_mark_dst
+            }
+            break;
+        }
+
+        // ---- Comparison ----
+
+        case LIR_OP_CMP_RR: {
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t h2 = cg_resolve_val(cg, l->src_v[1], RCX);
+            emit_cmp_r32_r32(e, h1, h2);
+            return true; // CMP sets flags, no dst to mark
+        }
+
+        case LIR_OP_CMP_RI: {
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            emit_cmp_r32_imm32(e, h1, l->imm);
+            return true; // CMP sets flags, no dst to mark
+        }
+
+        case LIR_OP_SETCC: {
+            // SETcc based on condition code in l->cond
+            // The cond field holds the full setcc opcode byte (0x94=SETE, etc.)
+            // For the emitter, we need to call the right emit_set* function.
+            x64_reg_t out = (dst_h != X64_NOREG) ? dst_h : RAX;
+            switch (l->cond) {
+                case 0x94: emit_sete(e, out); break;   // EQ
+                case 0x95: emit_setne(e, out); break;  // NE
+                case 0x9C: emit_setl(e, out); break;   // LT (signed)
+                case 0x92: emit_setb(e, out); break;   // LTU (unsigned below)
+                case 0x9F: emit_setg(e, out); break;   // GT (signed)
+                case 0x97: emit_seta(e, out); break;   // GTU (unsigned above)
+                case 0x9E: emit_setle(e, out); break;  // LE (signed)
+                case 0x96: emit_setbe(e, out); break;  // LEU (unsigned below-or-equal)
+                case 0x9D: emit_setge(e, out); break;  // GE (signed)
+                case 0x93: emit_setae(e, out); break;  // GEU (unsigned above-or-equal)
+                default:
+                    fprintf(stderr,
+                            "FATAL: stage5_codegen_x64: unsupported SETCC condition 0x%02X at pc=0x%08X\n",
+                            l->cond, l->guest_pc);
+                    abort();
+            }
+            emit_movzx_r32_r8(e, out, out);
+            if (dst_h == X64_NOREG) {
+                // Spilled — store directly to guest memory
+                uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
+                if (gpr != 0) {
+                    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(gpr), out);
+                    cg->spilled_def_for_gpr[gpr] = lir_idx;
+                }
+                return true;
+            }
+            break;
+        }
+
+        // ---- Memory Access (sub-word aware) ----
+
+        case LIR_OP_MOV_RM: {
+            // Load: dst = [R14 + addr + disp]
+            x64_reg_t base = cg_resolve_val(cg, l->src_v[0], RAX);
+            if (base != RAX) emit_mov_r32_r32(e, RAX, base);
+            if (l->disp != 0) emit_add_r32_imm32(e, RAX, l->disp);
+            if (dst_h == X64_NOREG) dst_h = RCX; // need somewhere to load into
+            switch (l->size) {
+                case 1:
+                    if (l->is_signed) emit_movsx_r32_m8_idx(e, dst_h, R14, RAX);
+                    else emit_movzx_r32_m8_idx(e, dst_h, R14, RAX);
+                    break;
+                case 2:
+                    if (l->is_signed) emit_movsx_r32_m16_idx(e, dst_h, R14, RAX);
+                    else emit_movzx_r32_m16_idx(e, dst_h, R14, RAX);
+                    break;
+                default: // 4
+                    emit_mov_r32_m32_idx(e, dst_h, R14, RAX);
+                    break;
+            }
+            break;
+        }
+
+        case LIR_OP_MOV_MR: {
+            // Store: [R14 + addr + disp] = val
+            x64_reg_t base = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t val = cg_resolve_val(cg, l->src_v[1], RCX);
+            if (base != RAX) {
+                // If value currently lives in RAX, preserve it before clobbering
+                // RAX with the address base.
+                if (val == RAX) {
+                    emit_mov_r32_r32(e, RCX, RAX);
+                    val = RCX;
+                }
+                emit_mov_r32_r32(e, RAX, base);
+            }
+            if (l->disp != 0) emit_add_r32_imm32(e, RAX, l->disp);
+            switch (l->size) {
+                case 1: emit_mov_m8_r8_idx(e, R14, RAX, val); break;
+                case 2: emit_mov_m16_r16_idx(e, R14, RAX, val); break;
+                default: emit_mov_m32_r32_idx(e, R14, RAX, val); break;
+            }
+            return true; // stores have no dst to mark
+        }
+
+        // ---- Conditional Branch ----
+
+        case LIR_OP_JCC: {
+            // Plain branch: compare two operands, then branch based on guest opcode
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t h2 = cg_resolve_val(cg, l->src_v[1], RCX);
+            emit_cmp_r32_r32(e, h1, h2);
+
+            uint8_t cc = 0;
+            switch (l->guest_opcode) {
+                case 0x48: cc = 0x84; break; // BEQ -> JE
+                case 0x49: cc = 0x85; break; // BNE -> JNE
+                case 0x4A: cc = 0x8C; break; // BLT -> JL
+                case 0x4B: cc = 0x8D; break; // BGE -> JGE
+                case 0x4C: cc = 0x82; break; // BLTU -> JB
+                case 0x4D: cc = 0x83; break; // BGEU -> JAE
+                default: return false;
+            }
+            return cg_emit_conditional_branch(cg, l, lir_idx, cc);
+        }
+
+        case LIR_OP_CMP_JCC: {
+            // Fused compare+branch: cmp src0, src1; jcc
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t h2 = cg_resolve_val(cg, l->src_v[1], RCX);
+            emit_cmp_r32_r32(e, h1, h2);
+            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+        }
+
+        case LIR_OP_CMP_RI_JCC: {
+            // Fused compare-immediate+branch: cmp src0, imm; jcc
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            emit_cmp_r32_imm32(e, h1, l->disp);
+            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+        }
+
+        case LIR_OP_TEST_JCC: {
+            // Fused test+branch: test src0, src0; jnz/jz
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            emit_test_r32_r32(e, h1, h1);
+            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+        }
+
+        // ---- JAL (Direct Call/Jump) ----
+
+        case LIR_OP_CALL: {
+            uint32_t return_pc = l->guest_pc + 4;
+            uint32_t target_pc = l->guest_pc + l->imm;
+
+            // Flush all block-defined values first, then write link register
+            cg_flush_exit(cg);
+
+            if (l->rd != 0) {
+                // Write return address to link register (AFTER flush)
+                emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(l->rd), return_pc);
+
+                // Push to RAS for return prediction
+                // ras_top = (ras_top + 1) & RAS_MASK
+                emit_mov_r32_m32(e, RCX, RBP, CPU_RAS_TOP_OFFSET);
+                emit_add_r32_imm32(e, RCX, 1);
+                emit_and_r32_imm32(e, RCX, RAS_MASK);
+                emit_mov_m32_r32(e, RBP, CPU_RAS_TOP_OFFSET, RCX);
+                // ras_stack[ras_top] = return_pc
+                // Address: RBP + RAS_STACK_OFFSET + RCX*4
+                emit_mov_m32_imm32_sib(e, RBP, RCX, 2, CPU_RAS_STACK_OFFSET, return_pc);
+            }
+
+            // Emit chained exit to target
+            emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
+
+            uint8_t *patch_site = emit_ptr(e) + 1;
+            stage5_cg_x64_ctx_t *ctx = cg->ctx;
+            translated_block_t *target = (ctx->cache && !paranoid_mode)
+                                             ? cache_lookup(ctx->cache, target_pc) : NULL;
+
+            if (target && target->host_code) {
+                int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
+                emit_jmp_rel32(e, (int32_t)rel);
+            } else if (ctx->cache && ctx->cache->shared_branch_exit) {
+                int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+                emit_jmp_rel32(e, (int32_t)rel);
+            } else {
+                emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+                emit_ret(e);
+                return true;
+            }
+
+            int exit_idx = ctx->exit_idx++;
+            if (exit_idx < MAX_BLOCK_EXITS && ctx->block) {
+                cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+                if (!target || !target->host_code)
+                    cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+            }
+            return true;
+        }
+
+        // ---- JALR (Indirect Call/Jump/Return) ----
+
+        case LIR_OP_RET: {
+            uint32_t return_pc = l->guest_pc + 4;
+
+            // Compute target: (rs1 + imm) & ~1
+            x64_reg_t rs1_h = cg_resolve_val(cg, l->src_v[0], RAX);
+            if (rs1_h != RAX) emit_mov_r32_r32(e, RAX, rs1_h);
+            if (l->imm != 0) emit_add_r32_imm32(e, RAX, l->imm);
+            emit_and_r32_imm32(e, RAX, (int32_t)~1u);
+
+            if (l->rd != 0) {
+                // Save target, flush, write return address
+                emit_mov_r32_r32(e, RCX, RAX);
+                cg_flush_exit(cg);
+                // Write link register (AFTER flush)
+                emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(l->rd), return_pc);
+
+                // Push to RAS
+                emit_push_r64(e, RCX); // save target across RAS update
+                emit_mov_r32_m32(e, RDX, RBP, CPU_RAS_TOP_OFFSET);
+                emit_add_r32_imm32(e, RDX, 1);
+                emit_and_r32_imm32(e, RDX, RAS_MASK);
+                emit_mov_m32_r32(e, RBP, CPU_RAS_TOP_OFFSET, RDX);
+                emit_mov_m32_imm32_sib(e, RBP, RDX, 2, CPU_RAS_STACK_OFFSET, return_pc);
+                emit_pop_r64(e, RAX); // restore target
+            } else {
+                cg_flush_exit(cg);
+            }
+
+            // Set PC and exit reason
+            emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+            emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+            emit_ret(e);
+            return true;
+        }
+
+        // ---- SYSCALL (HALT/DEBUG/YIELD) ----
+
+        case LIR_OP_SYSCALL: {
+            uint32_t next_pc = l->guest_pc + 4;
+
+            if (l->imm == 0x52) {
+                // DEBUG: output character from rs1
+                x64_reg_t val = cg_resolve_val(cg, l->src_v[0], RAX);
+                if (val != RAX) emit_mov_r32_r32(e, RAX, val);
+                cg_flush_exit(cg);
+                emit_mov_m32_r32(e, RBP, CPU_EXIT_INFO_OFFSET, RAX);
+                emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, next_pc);
+                emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_DEBUG);
+                emit_ret(e);
+            } else if (l->imm == 0x51) {
+                // YIELD
+                cg_exit_native(cg, next_pc, EXIT_YIELD);
+            } else {
+                // HALT (0x7F)
+                cg_flush_exit(cg);
+                emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, l->guest_pc);
+                emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_HALT);
+                emit_ret(e);
+            }
+            return true;
+        }
+
+        // ---- FP Helper (call out to C function) ----
+
+        case LIR_OP_FP_HELPER: {
+            // Flush all registers, call C helper, reload
+            cg_flush_exit(cg);
+
+            // x86-64 SysV ABI: rdi=cpu, esi=opcode, edx=rd, ecx=rs1, r8d=rs2
+            emit_mov_r64_r64(e, RDI, RBP);  // cpu
+            emit_mov_r32_imm32(e, RSI, (uint32_t)l->guest_opcode);
+            emit_mov_r32_imm32(e, RDX, (uint32_t)l->rd);
+            emit_mov_r32_imm32(e, RCX, (uint32_t)l->rs1);
+            emit_mov_r32_imm32(e, R8, (uint32_t)l->rs2);
+
+            // call dbt_fp_helper
+            emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)dbt_fp_helper);
+            emit_call_r64(e, RAX);
+
+            // Reload all occupied slots from guest memory (C call may have clobbered)
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                uint16_t v = cg->ssa_slot_value[s];
+                if (v == 0) continue;
+                uint8_t gpr = cg->ssa->value_to_reg[v];
+                if (gpr != 0)
+                    emit_mov_r32_m32(e, ra_hosts[s], RBP, GUEST_REG_OFFSET(gpr));
+            }
+            return true; // FP helper writes directly to cpu state
+        }
+
+        case LIR_OP_LEA: {
+            x64_reg_t src = cg_resolve_val(cg, l->src_v[0], dst_h);
+            if (dst_h != X64_NOREG) {
+                emit_lea_r32_r32_disp(e, dst_h, src, l->disp);
+            }
+            break;
+        }
+
+        case LIR_OP_TEST_RR: {
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t h2 = cg_resolve_val(cg, l->src_v[1], RCX);
+            emit_test_r32_r32(e, h1, h2);
+            return true;
+        }
+
+        case LIR_OP_JMP:
+            cg_exit_chained(cg, l->guest_pc + l->imm);
+            return true;
+
+        default:
+            fprintf(stderr, "stage5-codegen: unhandled LIR op %d at pc=0x%08X\n",
+                    l->op, l->guest_pc);
+            stage5_codegen_x64_fallback_emit_node++;
+            return false;
+    }
+
+    // Mark destination
+    cg_mark_dst(cg, l, dst_h, dst_slot, lir_idx);
+    return true;
+}
+
+// Emit deferred side-exit stubs (cold paths placed after hot code).
+// Uses per-exit snapshot of ssa_slot_value + spilled_def_for_gpr to derive
+// the flush set from immutable RA plan data (same algorithm as cg_flush_exit).
+static void cg_emit_deferred_exits(stage5_cg_x64_state_t *cg) {
+    stage5_cg_x64_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+
+    for (int di = 0; di < ctx->deferred_exit_count; di++) {
+        size_t stub_start = emit_offset(e);
+        emit_patch_rel32(e, ctx->deferred_exits[di].jmp_patch_offset, stub_start);
+
+        uint32_t target_pc = ctx->deferred_exits[di].target_pc;
+
+        // Flush using snapshot — same latest-def algorithm as cg_flush_exit
+        int8_t latest_slot[32];
+        uint16_t latest_def_idx[32];
+        memset(latest_slot, -1, sizeof(latest_slot));
+        memset(latest_def_idx, 0, sizeof(latest_def_idx));
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            uint16_t v = cg->exit_snapshot[di].slot_value[s];
+            if (v == 0 || !cg->is_block_defined[v]) continue;
+            uint8_t gpr = cg->ssa->value_to_reg[v];
+            if (gpr == 0) continue;
+            uint16_t def_idx = cg->value_def_lir_idx[v];
+            if (latest_slot[gpr] < 0 || def_idx > latest_def_idx[gpr]) {
+                latest_slot[gpr] = (int8_t)s;
+                latest_def_idx[gpr] = def_idx;
+            }
+        }
+        for (int g = 1; g < 32; g++) {
+            if (latest_slot[g] >= 0 && cg->exit_snapshot[di].spilled_gpr[g] > latest_def_idx[g])
+                latest_slot[g] = -1;
+        }
+        for (int g = 1; g < 32; g++) {
+            if (latest_slot[g] >= 0)
+                emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(g), ra_hosts[latest_slot[g]]);
+        }
+
+        // Emit chained exit (PC store + JMP, no sync)
+        emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
+
+        uint8_t *patch_site = emit_ptr(e) + 1;
+        translated_block_t *target = (ctx->cache && !paranoid_mode)
+                                         ? cache_lookup(ctx->cache, target_pc) : NULL;
+
+        if (target && target->host_code) {
+            int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
+            if (rel >= INT32_MIN && rel <= INT32_MAX) {
+                emit_jmp_rel32(e, (int32_t)rel);
+            } else if (ctx->cache && ctx->cache->shared_branch_exit) {
+                int64_t srel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+                emit_jmp_rel32(e, (int32_t)srel);
+            } else {
+                emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+                emit_ret(e);
+                continue;
+            }
+        } else if (ctx->cache && ctx->cache->shared_branch_exit) {
+            int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+            emit_jmp_rel32(e, (int32_t)rel);
+        } else {
+            emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+            emit_ret(e);
+            continue;
+        }
+
+        // Record exit for future chaining
+        int exit_idx = ctx->deferred_exits[di].exit_idx;
+        if (exit_idx < MAX_BLOCK_EXITS && ctx->block) {
+            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+            if (!target || !target->host_code)
+                cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+        }
+    }
+}
+
+// ============================================================================
+// Pipeline Driver
+// ============================================================================
+
+extern void stage5_lir_optimize(stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa);
+
+bool stage5_codegen_x64(stage5_cg_x64_ctx_t *ctx,
                         const stage5_lift_region_t *region,
-                        const stage5_lir_t *lir,
-                        const stage5_ra_plan_t *ra_plan)
-{
-    (void)cg;
-    (void)region;
-    (void)lir;
-    (void)ra_plan;
+                        uint32_t guest_pc) {
+    stage5_codegen_x64_attempted++;
+    stage5_cg_x64_state_t cg = {0};
+    cg.ctx = ctx; cg.e = &ctx->emit; cg.region = region;
+    memset(cg.ssa_value_slot, -1, sizeof(cg.ssa_value_slot));
 
-    // Placeholder — real implementation will go here during the x86-64 port.
-    // An x86-64 agent should replace this body with a clean emitter that
-    // walks the LIR using the RA plan and emits only via emit_x64.h.
-    return false;
+    // Reset deferred exit count for this block
+    ctx->deferred_exit_count = 0;
+
+    // 1. SSA overlay
+    stage5_ssa_overlay_t ssa;
+    if (!stage5_ssa_build_overlay(region, &ssa)) {
+        stage5_codegen_x64_fallback++;
+        return false;
+    }
+    cg.ssa = &ssa;
+
+    // 2. MIR
+    stage5_mir_t mir;
+    stage5_mir_build(region, &ssa, &mir);
+
+    // 3. BURG lowering (MIR → LIR)
+    stage5_lir_t lir;
+    if (!stage5_burg_lower(&mir, &ssa, &lir)) {
+        stage5_codegen_x64_fallback++;
+        return false;
+    }
+    cg.lir = &lir;
+
+    // 4. LIR optimization
+    stage5_lir_optimize(&lir, &ssa);
+
+    // 5. Register allocation
+    stage5_ra_plan_t ra_plan;
+    if (!stage5_ra_build_plan_lir(&lir, &ssa, &ra_plan)) {
+        stage5_codegen_x64_fallback++;
+        return false;
+    }
+    cg.ra_plan = &ra_plan;
+
+    // Map SSA values to host slots
+    for (uint16_t i = 0; i < ra_plan.interval_count; i++) {
+        if (!ra_plan.intervals[i].spilled) {
+            cg.ssa_value_slot[ra_plan.intervals[i].value_id] = ra_plan.intervals[i].assigned_slot;
+        }
+    }
+
+    // 6. Precompute block-defined flags and def indices from LIR
+    memset(cg.is_block_defined, 0, sizeof(cg.is_block_defined));
+    memset(cg.value_def_lir_idx, 0, sizeof(cg.value_def_lir_idx));
+    memset(cg.spilled_def_for_gpr, 0, sizeof(cg.spilled_def_for_gpr));
+    for (uint32_t i = 0; i < lir.node_count; i++) {
+        uint16_t v = lir.nodes[i].dst_v;
+        if (v != 0) {
+            cg.is_block_defined[v] = true;
+            cg.value_def_lir_idx[v] = (uint16_t)i;
+        }
+    }
+
+    // 7. Load live-ins from guest memory
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        for (uint16_t i = 0; i < ra_plan.interval_count; i++) {
+            if (ra_plan.intervals[i].assigned_slot == s && ra_plan.intervals[i].start_idx == 0) {
+                uint16_t v = ra_plan.intervals[i].value_id;
+                uint8_t gpr = ssa.value_to_reg[v];
+                if (gpr != 0) {
+                    emit_mov_r32_m32(cg.e, ra_hosts[s], RBP, GUEST_REG_OFFSET(gpr));
+                    cg.ssa_slot_value[s] = v;
+                }
+                break;
+            }
+        }
+    }
+
+    // 7b. Record entry mapping for self-loop back-edge optimization
+    cg.loop_body_offset = emit_offset(cg.e);
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        cg.entry_gpr_for_slot[s] = -1;
+        uint16_t v = cg.ssa_slot_value[s];
+        if (v != 0) {
+            uint8_t gpr = ssa.value_to_reg[v];
+            if (gpr != 0)
+                cg.entry_gpr_for_slot[s] = (int8_t)gpr;
+        }
+    }
+
+    // 8. Emit LIR nodes
+    static bool s5_trace = false;
+    static int s5_trace_init = 0;
+    if (!s5_trace_init) { s5_trace = getenv("S5_TRACE") != NULL; s5_trace_init = 1; }
+    if (s5_trace) {
+        fprintf(stderr, "[S5] block pc=0x%08X insts=%u lir=%u ra_intervals=%u spilled=%u\n",
+                guest_pc, region->guest_inst_count, lir.node_count,
+                ra_plan.interval_count, ra_plan.spilled_count);
+        for (uint32_t i = 0; i < lir.node_count; i++) {
+            lir_node_t *l = &lir.nodes[i];
+            fprintf(stderr, "  [%u] op=%d gpc=0x%X dst_v=%u src0=%u src1=%u imm=%d disp=%d sz=%u rd=%u rs1=%u rs2=%u side=%d\n",
+                    i, l->op, l->guest_pc, l->dst_v, l->src_v[0], l->src_v[1],
+                    l->imm, l->disp, l->size, l->rd, l->rs1, l->rs2, l->is_side_exit);
+        }
+        for (uint16_t i = 0; i < ra_plan.interval_count; i++) {
+            fprintf(stderr, "  ra[%u] v=%u slot=%d start=%u end=%u spilled=%d gpr=%u\n",
+                    i, ra_plan.intervals[i].value_id, ra_plan.intervals[i].assigned_slot,
+                    ra_plan.intervals[i].start_idx, ra_plan.intervals[i].end_idx,
+                    ra_plan.intervals[i].spilled, ssa.value_to_reg[ra_plan.intervals[i].value_id]);
+        }
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            if (cg.ssa_slot_value[s]) {
+                uint16_t v = cg.ssa_slot_value[s];
+                fprintf(stderr, "  slot[%d] val=%u gpr=%u block_def=%d\n",
+                        s, v, ssa.value_to_reg[v], cg.is_block_defined[v]);
+            }
+        }
+    }
+    bool ended = false;
+    for (uint32_t i = 0; i < lir.node_count; i++) {
+        if (!cg_emit_lir_node(&cg, &lir.nodes[i], i)) {
+            stage5_codegen_x64_fallback++;
+            return false;
+        }
+        lir_op_t op = lir.nodes[i].op;
+        if (!lir.nodes[i].is_side_exit &&
+            (op == LIR_OP_JCC || op == LIR_OP_CMP_JCC ||
+             op == LIR_OP_CMP_RI_JCC || op == LIR_OP_TEST_JCC ||
+             op == LIR_OP_SYSCALL ||
+             op == LIR_OP_RET || op == LIR_OP_CALL || op == LIR_OP_JMP)) {
+            ended = true;
+            break;
+        }
+    }
+
+    // 9. Synthesize block-end exit if no explicit terminal
+    if (!ended) {
+        uint32_t end_pc = guest_pc + region->guest_inst_count * 4;
+        cg_exit_chained(&cg, end_pc);
+    }
+
+    // 10. Emit deferred side-exit stubs (cold code after hot path)
+    cg_emit_deferred_exits(&cg);
+
+    // Mark block as Stage 5 and set guest size directly.
+    // Stage 5 owns its own block finalization — there is no Stage 1-4
+    // path in dbt5, so this is the only post-processing the block gets.
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_STAGE5 | BLOCK_FLAG_DIRECT;
+        ctx->block->guest_size = region->guest_inst_count * 4;
+    }
+
+    stage5_codegen_x64_success++;
+    return true;
 }
