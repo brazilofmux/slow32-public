@@ -396,6 +396,36 @@ int main(int argc, char **argv) {
                                 a64_cg.exit_count, a64_cg.exits[0].target_pc);
                     }
 
+                    // First small step toward real block cache integration
+                    if (emitted) {
+                        void *exec_code = mmap(NULL, a64_cg.emit.offset + 4096,
+                                               PROT_READ | PROT_WRITE | PROT_EXEC,
+                                               MAP_PRIVATE | MAP_ANON, -1, 0);
+                        if (exec_code != MAP_FAILED) {
+                            memcpy(exec_code, a64_code, a64_cg.emit.offset);
+                            fprintf(stderr, "  [A64-WIRE] allocated executable block of %zu bytes (first wiring step)\n",
+                                    a64_cg.emit.offset);
+                            // TODO next: create translated_block_t, copy exits, insert into ctx->cache
+                            munmap(exec_code, a64_cg.emit.offset + 4096);
+                        }
+                    }
+
+                    // ------------------------------------------------------------------
+                    // First small wiring step: allocate executable memory for the emitted code
+                    // Real insertion into the block cache will be done in the next slice.
+                    // ------------------------------------------------------------------
+                    if (emitted) {
+                        void *exec_code = mmap(NULL, a64_cg.emit.offset + 4096,
+                                               PROT_READ | PROT_WRITE | PROT_EXEC,
+                                               MAP_PRIVATE | MAP_ANON, -1, 0);
+                        if (exec_code != MAP_FAILED) {
+                            memcpy(exec_code, a64_code, a64_cg.emit.offset);
+                            fprintf(stderr, "  [A64-WIRE] allocated executable block of %zu bytes (first wiring step)\n",
+                                    a64_cg.emit.offset);
+                            munmap(exec_code, a64_cg.emit.offset + 4096);
+                        }
+                    }
+
                     // ------------------------------------------------------------------
                     // Experimental: actually try to execute the emitted A64 code
                     // (very early, gated by S5_EMIT_A64=exec)
