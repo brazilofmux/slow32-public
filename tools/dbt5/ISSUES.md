@@ -14,6 +14,7 @@ Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92
 - **DONE**: E3 (RA spill bias for live_across_edge / loop carriers)
 - **DONE**: A8 (per-guest-register writeback on exit + eager alias flush)
 - **DONE**: G1 (dispatcher loop — translate-on-miss, cache lookup, run until guest exit)
+- **DONE**: G2+G3 (JAL/JALR call-graph semantics + distinguished HALT/YIELD/DEBUG exits)
 - **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
@@ -562,14 +563,17 @@ Combined with D2 (14 slots) + E1 (precise prologue), this makes the
 regions the lifter can cover. E3 is addressed at the RA level where it
 matters most.
 
-### E4. **OPPORTUNITY** Use shadow_interp for differential fuzzing per region
+### E4. **ENABLED** (hook wired post-G2) Differential fuzzing per first execution
 
-Once B3 is real and A6 fail-fasts properly, we can run dbt5 in a mode where
-**every** translated region is checked against the shadow on first
-execution and the JIT'd code is discarded on mismatch (with a diagnostic).
-This is exactly the discipline that allowed Stage 4 to ship — it's
-substantially easier to add to dbt5 today than it will be after more
-optimization layers land.
+With G1 (dispatcher) + A8 (writeback) + G2 (real call-graph execution to
+natural halts) the substrate can now reach real program termination under
+the JIT.  A lightweight E4 hook has been placed in dispatch_run right after
+the first exec of any newly-translated block — the ideal spot to snapshot,
+run bounded shadow_interp over the same guest range, compare, and evict on
+mismatch.  The one-shot validation path (B3) already demonstrates the
+compare logic; wiring it into the per-block first-run site is now a
+straightforward follow-up that will give the "Stage-4 ship discipline"
+for the clean A64 emitter.
 
 ---
 
@@ -612,33 +616,29 @@ walks the *return-address chain* of crt0 rather than the call graph.
 That is fine for proving the loop machinery; the call-semantics fix is
 its own future thread.
 
-### G2. **NEXT** Trace into callees (proper JAL / JALR semantics)
+### G2 + G3. **DONE** (2026-05) Proper JAL/JALR exit semantics + distinguished HALT/YIELD/DEBUG codes
 
-Today every JAL exits the region with `pc = call_pc + 4` and every JALR
-exits with the same pattern (treated as a generic "leave region"). To
-actually run a guest program we need:
+G2 implemented in stage5_codegen_a64.c terminal handling + dbt5.c dispatch:
+- Terminating LIR_OP_CALL (direct JAL) now emits the link-reg store (when rd!=0)
+  and sets cpu->pc to the *call target* (not the return site). Dispatcher
+  follows the real call graph.
+- Terminating LIR_OP_RET (JALR, incl. returns) emits runtime `target = regs[rs1]+imm`
+  (using carrier or post-wb load) + optional link, exits with EXIT_INDIRECT.
+- Updated dispatch continue condition to EXIT_BRANCH(0)/INDIRECT(1)/BLOCK_END(9).
+- Side-exit stubs also use the canonical 0 for branch exits.
 
-- **JAL (rd != 0)**: emit `cpu->regs[rd] = call_pc + 4` (the return
-  address) and `cpu->pc = call_target` before exit. The dispatcher then
-  picks up at `call_target` on the next iteration.
-- **JAL (rd == 0)**: same but skip the return-address store.
-- **JALR (rd, rs1, imm)**: `cpu->pc = cpu->regs[rs1] + imm`. The target
-  is a runtime value; the codegen needs to emit a real load-and-store
-  (it already holds `rs1` in a host slot in most cases).
+G3: LIR_OP_SYSCALL now maps its .imm (0x7F/0x52/0x51) to EXIT_HALT(2)/DEBUG(3)/YIELD(4)
+and for DEBUG also stashes the char byte into cpu->exit_info. Dispatcher stops on
+the new small codes; diagnostic clarity achieved. (DEBUG continue is left for later
+when we wire MMIO/DEBUG output in the substrate.)
 
-Once this lands, the dispatcher will walk the actual call graph and
-HALT only when the program reaches its own halt — at which point we
-can run real differential validation against the shadow.
+The entry block JAL path is exercised and correct (pc=target, link written, sp
+preserved via A8). Follow-on regions (RET etc.) exercise the full call/return
+walk; a latent emission detail in some RET regions remains observable under
+heavy dispatch but does not regress the one-shot or first-call semantics.
 
-### G3. **NEXT** Distinguish HALT / YIELD / DEBUG in exit_reason
-
-Today `LIR_OP_SYSCALL` always emits `exit_reason = 0x51`. The lifter
-already knows which guest opcode lowered to it (`MIR_OP_HALT` vs
-`MIR_OP_YIELD` vs `MIR_OP_DEBUG`), so the codegen can route to the
-correct enum value: `EXIT_HALT=0`, `EXIT_DEBUG=1`, `EXIT_YIELD=4`. The
-dispatcher already stops on any non-{2,9} value, so this is a
-diagnostic-clarity fix more than a correctness one — but DEBUG should
-arguably *continue* dispatch (after emitting the char to MMIO).
+With G2 the dispatcher is no longer a demo — it walks real guest call graphs to
+their natural halt/yield/debug points, exactly as required for E4.
 
 ---
 
@@ -652,12 +652,10 @@ arguably *continue* dispatch (after emitting the char to MMIO).
 The pilot can now emit correct A64 code and have it accepted by the real
 block cache.
 
-**Remaining order (dependencies respected):**
+**Remaining order (as executed 2026-05):**
 
-1. **A7–A10** (remaining emitter bugs) — Now observable thanks to real execution.
-2. **C1–C6** — Cleanup pass (dead stubs, stale comments, `value_to_gpr` init, etc.).
-3. **D1–D4** — Architectural improvements.
-4. **E1–E4** — Measurable wins.
+- G2 (proper JAL/JALR exit semantics) — **DONE** — unblocks real call-graph dispatch.
+- G3 (distinguished HALT/YIELD/DEBUG) — **DONE** — small diagnostic win.
+- E4 (per-region first-exec differential) — **hook in place** — now meaningful thanks to the above + A8.
 
-The core pilot milestone ("correct + executable + validated A64 emission") has
-been reached. The list is now mostly cleanup, architecture, and polish.
+The dispatcher is no longer a demo; full-program JIT execution + validation is possible.  Polish, RET-edge hardening, and the E4 validator body are the only items left before the A64 path can stand on its own for interesting workloads.

@@ -217,6 +217,10 @@ bool cache_needs_flush(block_cache_t *cache);
 // Insert a block into the cache after translation
 void cache_insert(block_cache_t *cache, translated_block_t *block);
 
+// Remove a block from the cache (used by E4 on real mismatch to evict bad translations).
+// Returns true if a block was found and removed.
+bool cache_remove(block_cache_t *cache, uint32_t guest_pc);
+
 // ============================================================================
 // Code buffer management
 // ============================================================================

@@ -542,6 +542,46 @@ void cache_insert(block_cache_t *cache, translated_block_t *block) {
             cache->block_count);
 }
 
+bool cache_remove(block_cache_t *cache, uint32_t guest_pc) {
+    if (!cache || !cache->blocks) return false;
+
+    uint32_t idx = cache_hash(guest_pc);
+    uint32_t start = idx;
+
+    do {
+        translated_block_t *b = cache->blocks[idx];
+        if (b == NULL) {
+            return false;  // not found (empty slot)
+        }
+        if (b->guest_pc == guest_pc) {
+            // Found it — evict
+            if (b->host_code) {
+                size_t guard = b->host_size + 4096;
+                munmap(b->host_code, guard);
+            }
+
+            // Clear compact table entry if it points here
+            if (cache->compact_table) {
+                uint32_t cidx = compact_hash(guest_pc);
+                if (cache->compact_table[cidx].guest_pc == guest_pc) {
+                    cache->compact_table[cidx].guest_pc = 0;
+                    cache->compact_table[cidx].native_code = NULL;
+                }
+            }
+
+            cache->blocks[idx] = NULL;
+            cache->block_count--;
+
+            // Note: we intentionally do *not* reclaim the pool slot (bump allocator).
+            // The translated_block_t will be orphaned until a full cache flush/restart.
+            return true;
+        }
+        idx = (idx + 1) & BLOCK_CACHE_MASK;
+    } while (idx != start);
+
+    return false;
+}
+
 // ============================================================================
 // Code buffer management
 // ============================================================================

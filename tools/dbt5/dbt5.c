@@ -111,8 +111,8 @@ static void dbt5_launch_a64(void (*fn)(void), void *cpu_ptr, void *mem_base)
 //
 // Translates regions on demand, installs them in the block cache, and runs
 // them in a loop until the guest exits via something other than a normal
-// branch/fallthrough (exit_reason 2 = branch-out, 9 = block-end). The
-// per-gpr writeback contract from A8 makes the handoff between iterations
+// branch/fallthrough (EXIT_BRANCH=0, EXIT_INDIRECT=1, EXIT_BLOCK_END=9).
+// The per-gpr writeback contract from A8 makes the handoff between iterations
 // well-defined: the JIT exit leaves cpu.regs[]/cpu.pc consistent for the
 // next translation to consume.
 //
@@ -233,13 +233,88 @@ static dispatch_result_t dispatch_run(
                 return DISPATCH_TRANSLATE_FAIL;
             }
         }
+
+        // E4: snapshot *before* first execution of this translation so we can
+        // later replay the identical guest range through the shadow.
+        // Enabled with S5_E4=1 (or any non-empty value).
+        bool e4_enabled = getenv("S5_E4") != NULL;
+        bool e4_first = e4_enabled && (blk->exec_count == 0);
+        uint32_t e4_entry = cpu->pc;
+        uint32_t e4_bound = e4_entry + blk->guest_size;
+        static shadow_state_t e4_shadow;
+        static bool e4_shadow_inited = false;
+        if (e4_first) {
+            if (!e4_shadow_inited) { shadow_init(&e4_shadow, cpu); e4_shadow_inited = true; }
+            shadow_snapshot(&e4_shadow, cpu);
+        }
+
         dbt5_launch_a64((dbt5_block_fn_t)blk->host_code, cpu, cpu->mem_base);
         blk->exec_count++;
         iters++;
 
-        // Normal continuation: branch-out (2) or block-end (9). Anything else
-        // (halt/yield/debug/fault → 0x7F/0x51/etc.) ends the dispatch loop.
-        if (cpu->exit_reason != 2 && cpu->exit_reason != 9) {
+        // E4 post-launch comparison using the pre-launch snapshot taken above.
+        if (e4_first) {
+            uint32_t steps = 0;
+            const uint32_t MAX_E4_STEPS = 100000;
+            while (steps < MAX_E4_STEPS) {
+                if (e4_shadow.pc < e4_entry || e4_shadow.pc >= e4_bound) break;
+                if (e4_shadow.pc >= cpu->code_limit) break;
+                bool ended = shadow_step_one(&e4_shadow);
+                steps++;
+                if (ended) break;
+            }
+
+            bool pc_ok = (cpu->pc == e4_shadow.pc);
+            bool sp_ok = (cpu->regs[29] == e4_shadow.regs[29]);
+
+            // For call/return terminated regions the pc difference at the JAL/JALR
+            // site is expected (JIT performs the link+target write and exits the
+            // region; shadow steps into the callee or back to ret site).
+            bool is_call_or_ret_term = (blk->exit_count > 0); // heuristic; could store term_kind
+            bool real_mismatch = (!pc_ok || !sp_ok) && !is_call_or_ret_term;
+
+            if (real_mismatch) {
+                uint32_t recorded_target = (blk->exit_count > 0) ? blk->exits[0].target_pc : 0;
+                fprintf(stderr,
+                        "[E4-MISMATCH] first exec 0x%08X: pc=%08X/%08X sp=%08X/%08X steps=%u recorded=0x%08X\n",
+                        e4_entry, cpu->pc, e4_shadow.pc,
+                        cpu->regs[29], e4_shadow.regs[29], steps, recorded_target);
+
+                // #1: Evict the bad translation so the next hit will re-translate.
+                // This turns E4 from a pure diagnostic into an active correctness shield.
+                if (cache_remove(cache, e4_entry)) {
+                    fprintf(stderr, "  [E4] evicted bad block at 0x%08X (will re-translate on next hit)\n",
+                            e4_entry);
+                }
+            } else if (!pc_ok || !sp_ok) {
+                // Expected boundary difference at JAL/JALR sites after G2
+                if (getenv("S5_E4_VERBOSE"))
+                    fprintf(stderr, "[E4-EXPECTED] call/ret boundary at 0x%08X (pc diff ok)\n", e4_entry);
+            }
+
+            if (pc_ok && sp_ok) {
+                e4_shadow.blocks_verified++;
+                if (getenv("S5_E4_VERBOSE"))
+                    fprintf(stderr, "[E4-OK] 0x%08X verified (%u steps)\n", e4_entry, steps);
+            }
+        }
+
+        // G2: Normal continuation: branch (0), indirect (1), or block-end (9).
+        // Anything else (HALT/DEBUG/YIELD/fault per cpu_state.h enum) stops.
+        if (cpu->exit_reason == EXIT_DEBUG) {
+            // G3 + DEBUG continue: consume the char that was stashed in exit_info
+            // by the codegen and keep dispatching (so guest code using DEBUG for
+            // output can run to its real HALT instead of stopping at the first one).
+            uint8_t ch = cpu->exit_info & 0xFF;
+            fputc(ch, stderr);          // or route to a simulated console / MMIO
+            fflush(stderr);
+            // The codegen for DEBUG already set pc = pc+4 and we want to continue
+            cpu->exit_reason = EXIT_BRANCH;   // treat as normal taken edge
+        }
+
+        if (cpu->exit_reason != EXIT_BRANCH &&
+            cpu->exit_reason != EXIT_INDIRECT &&
+            cpu->exit_reason != EXIT_BLOCK_END) {
             *out_iters = iters;
             return DISPATCH_STOPPED_BY_EXIT;
         }

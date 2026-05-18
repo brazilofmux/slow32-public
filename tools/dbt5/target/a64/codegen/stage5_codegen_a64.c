@@ -17,6 +17,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// G2/G3: use the canonical exit reason enum (defined in cpu_state.h for the
+// dispatcher and launch contract). The numeric values are stable.
+#include "../../../cpu_state.h"
+
 // D4 helper: ensure we never leave a partially-emitted buffer on failure.
 // The driver only installs/executes when the function returns true, but
 // resetting the offset makes the contract bullet-proof.
@@ -641,7 +645,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     cg_emit_writeback(cg);
                     emit_mov_w32_imm32(&cg->emit, W0, tgt);
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x80);
-                    emit_mov_w32_imm32(&cg->emit, W0, 2);
+                    emit_mov_w32_imm32(&cg->emit, W0, EXIT_BRANCH);  // 0
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x84);
                     cg_emit_callee_saved_restore(cg);
                     emit_ret_lr(&cg->emit);
@@ -718,7 +722,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     cg_emit_writeback(cg);
                     emit_mov_w32_imm32(&cg->emit, W0, tgt);
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x80);     // cpu->pc = target
-                    emit_mov_w32_imm32(&cg->emit, W0, 2);           // EXIT_BRANCH style reason
+                    emit_mov_w32_imm32(&cg->emit, W0, EXIT_BRANCH); // 0
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x84);     // cpu->exit_reason
                     cg_emit_callee_saved_restore(cg);
                     emit_ret_lr(&cg->emit);
@@ -815,8 +819,9 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             }
 
             case LIR_OP_CALL: {
-                // Basic call support inside the region (narrow path).
-                // We only handle the register-indirect form for now (blr).
+                // Intra-region call (rare in current lifter — JALs terminate).
+                // Only indirect (blr) supported here; direct JALs are handled as
+                // region terminals in G2 (link + pc=target, dispatcher enters callee).
                 if (n->src_v[0] != 0) {
                     a64_reg_t target_reg = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                            ? value_to_host[n->src_v[0]] : A64_NOREG;
@@ -824,8 +829,6 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         emit_blr(&cg->emit, target_reg);
                     }
                 }
-                // If the call produces a return value in dst_v, we currently do
-                // nothing (the next use will cause a reload from memory).
                 break;
             }
 
@@ -834,12 +837,11 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             // from the trailing LIR node and emits the writeback + pc/exit_reason
             // store + ret. Suppressing them here lets cg_bail() stay reserved for
             // ops we genuinely cannot translate.
-            //   JMP     — direct unconditional jump out of the region.
-            //   RET     — JALR-return (jalr zero, lr, 0). Terminal handler treats
-            //             it as a generic "leave region" today; correct PC-from-LR
-            //             modelling is a future dispatcher improvement.
-            //   SYSCALL — HALT / YIELD / DEBUG. Terminal handler sets a halt-ish
-            //             exit_reason so the dispatcher stops the run.
+            //   JMP     — direct unconditional jump out of the region (EXIT_BRANCH).
+            //   RET     — any JALR (incl. returns). G2 emits runtime target =
+            //             regs[rs1]+imm and optional link-reg write; exits with
+            //             EXIT_INDIRECT so dispatcher can follow.
+            //   SYSCALL — HALT / YIELD / DEBUG (see G3 for precise codes).
             case LIR_OP_JMP:
             case LIR_OP_RET:
             case LIR_OP_SYSCALL:
@@ -892,11 +894,16 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
         int32_t word_disp = byte_disp / 4;
 
-        // Patch the B.cond at patch_off
+        // Patch the B.cond / CBZ / CBNZ at patch_off.
+        // Must mask *while signed* so that negative (backward) displacements
+        // keep their sign bits; casting after the & on a uint32_t of a negative
+        // value was zeroing the sign extension and producing huge positive jumps.
+        uint32_t uimm = (uint32_t)(word_disp & 0x7FFFF);
+
         uint32_t *p = (uint32_t *)(cg->emit.buf + patch_off);
         uint32_t inst = *p;
         inst &= ~0x00FFFFE0U;
-        inst |= ((uint32_t)word_disp & 0x7FFFFU) << 5;
+        inst |= (uimm << 5) & 0x00FFFFE0U;
         *p = inst;
     }
 
@@ -904,12 +911,25 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     // Step 4: Terminal handling (produce correct pc + exit_reason)
     // ------------------------------------------------------------------
     // We try to determine what the "next PC" should be after this region.
-    // - If the last LIR instruction is a direct jump/call, use its target.
-    // - Otherwise fall through to the end of the region.
+    // - JMP / direct JAL (CALL): target of the transfer (for JAL this is the
+    //   *callee* entry, not the return site — G2 proper call semantics).
+    // - JALR (RET): runtime computed, so we emit a load-and-add sequence.
+    // - SYSCALL / others: stop the dispatcher.
     //
-    // We also choose a reasonable exit reason for the test harness.
+    // The final emission after writeback now performs the guest-visible side
+    // effects for terminating JAL/JALR (link reg write + correct target pc).
     uint32_t next_pc = region->end_pc;          // default: fall through
-    uint32_t exit_reason = 9;                   // EXIT_BLOCK_END by default
+    uint32_t exit_reason = EXIT_BLOCK_END;      // 9
+
+    // G2 state for link-register + target emission on JAL/JALR terminals
+    bool     emit_link     = false;
+    uint8_t  link_rd       = 0;
+    uint32_t link_value    = 0;
+    uint32_t direct_target = 0;   // for JAL (const) or JMP
+    bool     is_indirect   = false;
+    uint8_t  jalr_rs1      = 0;
+    int32_t  jalr_imm      = 0;
+    a64_reg_t jalr_base_h  = A64_NOREG;
 
     for (int i = (int)lir->node_count - 1; i >= 0; i--) {
         const lir_node_t *last = &lir->nodes[i];
@@ -917,27 +937,83 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
         if (last->op == LIR_OP_JMP) {
             next_pc = last->guest_pc + 4 + last->imm;
-            exit_reason = 2;
+            exit_reason = EXIT_BRANCH;  // 0
+            direct_target = next_pc;
             break;
         }
         if (last->op == LIR_OP_CALL) {
-            // For CALL the "next PC" the dispatcher should resume at is the
-            // return site (call_pc + 4), with the link address in guest r31.
-            // The imm field holds the call *target*, not the return offset.
-            next_pc = last->guest_pc + 4;
-            exit_reason = 2;
+            // G2: JAL terminates the region. We emit the link write (if rd!=0)
+            // and set pc to the *call target* so the dispatcher walks into the
+            // callee on the next iteration instead of faking a return.
+            uint32_t call_pc = last->guest_pc;
+            uint32_t ret_addr = call_pc + 4;
+            uint32_t tgt      = call_pc + 4 + (uint32_t)last->imm;
+            uint8_t  rd       = last->rd;
+
+            next_pc = tgt;                 // dispatcher will resume at callee
+            exit_reason = EXIT_BRANCH;     // 0
+            direct_target = tgt;
+            if (rd != 0) {
+                emit_link  = true;
+                link_rd    = rd;
+                link_value = ret_addr;
+            }
             break;
         }
-        if (last->op == LIR_OP_RET || last->op == LIR_OP_SYSCALL) {
-            // For HALT/DEBUG/YIELD we can leave next_pc as-is or 0.
-            // The exec test will still see the exit_reason.
-            next_pc = last->guest_pc + 4;       // or keep region->end_pc
-            exit_reason = (last->op == LIR_OP_SYSCALL) ? 0x51 : 0x7F; // rough
+        if (last->op == LIR_OP_RET) {
+            // G2: JALR (including returns). Target is dynamic: regs[rs1] + imm.
+            // Emit runtime computation of target pc and optional link store.
+            uint32_t ret_site = last->guest_pc + 4;
+            uint8_t  rd       = last->rd;
+            uint8_t  rs       = last->rs1;
+            int32_t  im       = last->imm;
+
+            next_pc = ret_site;            // actual target written at runtime
+            exit_reason = EXIT_INDIRECT;   // 1
+            is_indirect = true;
+            jalr_rs1 = rs;
+            jalr_imm = im;
+            if (rd != 0) {
+                emit_link  = true;
+                link_rd    = rd;
+                link_value = ret_site;
+            }
+            // Prefer the SSA value carrier for rs1 if present (most cases);
+            // fall back to any gpr_to_host[rs] recorded by A8.
+            if (last->src_v[0] != 0 && last->src_v[0] < STAGE5_SSA_MAX_VALUES) {
+                jalr_base_h = value_to_host[last->src_v[0]];
+            } else if (rs < 32) {
+                jalr_base_h = cg->gpr_to_host[rs];
+            }
+            break;
+        }
+        if (last->op == LIR_OP_SYSCALL) {
+            // G3: map the MIR/LIR imm (original guest opcode payload) to the
+            // canonical exit codes so the dispatcher and validators see
+            // EXIT_HALT / EXIT_DEBUG / EXIT_YIELD distinctly.
+            uint32_t imm = (uint32_t)last->imm;
+            next_pc = last->guest_pc + 4;
+            if (imm == 0x7F)      exit_reason = EXIT_HALT;   // 2
+            else if (imm == 0x52) exit_reason = EXIT_DEBUG;  // 3
+            else if (imm == 0x51) exit_reason = EXIT_YIELD;  // 4
+            else                  exit_reason = EXIT_HALT;
+            // For DEBUG we also want the char in cpu->exit_info (0x88) for the
+            // host to consume (future: MMIO ring or printf). The LIR node
+            // carries src_v[0] for the char value if it was in an SSA reg.
+            if (imm == 0x52 && last->src_v[0] != 0 &&
+                last->src_v[0] < STAGE5_SSA_MAX_VALUES) {
+                a64_reg_t ch_h = value_to_host[last->src_v[0]];
+                if (ch_h != A64_NOREG) {
+                    // Stash the low byte into exit_info right here (before wb
+                    // and final stores).  The writeback itself won't touch it.
+                    emit_strb_imm(&cg->emit, ch_h, W20, 0x88);  // exit_info
+                }
+            }
             break;
         }
     }
 
-    // Record the exit information (useful for future real runtime)
+    // Record the exit information (useful for future real runtime / chaining)
     if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
         int ex = cg->exit_count++;
         cg->exits[ex].target_pc    = next_pc;
@@ -951,10 +1027,33 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     // SP mismatch on every fib/prime smoke run.
     cg_emit_writeback(cg);
 
-    // For the experimental execution path we emit a simple "write state + return"
-    // sequence so the test harness gets back a sensible pc and exit_reason.
-    emit_mov_w32_imm32(&cg->emit, W0, next_pc);
-    emit_str_w32_imm(&cg->emit, W0, W20, 0x80);     // cpu->pc
+    // G2: emit link-register update (for JAL/JALR that write rd) and the
+    // correct target PC. For indirect JALR we emit a small load/add sequence
+    // using any live carrier or falling back to the just-flushed cpu->regs[].
+    if (emit_link && link_rd != 0) {
+        emit_mov_w32_imm32(&cg->emit, W0, link_value);
+        emit_str_w32_imm(&cg->emit, W0, W20, (uint32_t)link_rd * 4U);
+    }
+
+    if (is_indirect) {
+        // runtime: target = (base from carrier or load) + imm; store to cpu->pc
+        a64_reg_t base = jalr_base_h;
+        if (base == A64_NOREG) {
+            emit_ldr_w32_imm(&cg->emit, W1, W20, (uint32_t)jalr_rs1 * 4U);
+            base = W1;
+        }
+        if (jalr_imm != 0) {
+            emit_mov_w32_imm32(&cg->emit, W0, (uint32_t)jalr_imm);
+            emit_add_w32(&cg->emit, W1, base, W0);
+            base = W1;
+        }
+        emit_str_w32_imm(&cg->emit, base, W20, 0x80);  // cpu->pc = target
+    } else {
+        // const target (JMP, direct JAL/CALL, or fallthrough)
+        uint32_t tgt = (direct_target != 0 ? direct_target : next_pc);
+        emit_mov_w32_imm32(&cg->emit, W0, tgt);
+        emit_str_w32_imm(&cg->emit, W0, W20, 0x80);    // cpu->pc
+    }
 
     emit_mov_w32_imm32(&cg->emit, W0, exit_reason);
     emit_str_w32_imm(&cg->emit, W0, W20, 0x84);     // cpu->exit_reason
