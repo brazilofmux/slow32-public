@@ -8,6 +8,7 @@ Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92
 - **DONE**: D1 (LIR x86-shaped baggage removed for A64)
 - **DONE**: D2 (host RA pool + diagnostics past the old 8-slot ceiling)
 - **DONE**: D3 (no more re-lifting per CFG block — extractor + SSA threading)
+- **DONE**: D4 (explicit safe bail-to-shadow contract via cg_bail + driver guard)
 - **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
@@ -450,15 +451,24 @@ block (or per-trace) emission in the future without quadratic lifting cost.
 (The lifter still does one full superblock lift to discover the blocks — that
 is expected and not the problem D3 was complaining about.)
 
-### D4. **DESIGN** No notion of "I cannot translate this — bail safely"
+### D4. **DONE** Safe "bail to shadow" contract now explicit
 
-The driver assumes the codegen succeeds. There's no path to say "skip this
-region, fall back to shadow." `stage5_codegen_a64` only returns false on
-NULL args today. The `bool` return is the right signal — but A6's silent
-default makes it lie. Combined with B3's broken validation, we have no way
-to be confident the emitter is correct on any region. Fixing A6 plus
-hooking up real shadow validation (B3) gives us a paranoid mode that can
-shrink the failure set over time.
+- Added `cg_bail()` helper in the A64 codegen. Every late failure path
+  (`return cg_bail(cg)`) now resets `emit.offset = 0`, guaranteeing the
+  driver never sees partial instructions on a failed translation.
+- The `bool` return of `stage5_codegen_a64` is now a trustworthy
+  "I can own this region" / "I cannot — fall back to shadow" signal.
+  Early NULL checks stay as plain `return false`; everything after we
+  have started emitting goes through the bail helper.
+- Driver log improved: on bail we now print a clear message
+  "codegen bailed — this region will run under shadow interpreter"
+  instead of the vague "failed (stub)".
+- Because A6 was already fixed (unsupported ops loudly return false)
+  and the S5_EMIT_A64 path already guarded installation/execution behind
+  the `emitted` boolean, we now have a complete, safe bail path.
+
+Future paranoid mode can simply treat `!emitted` as "never try native
+for this region again" (or feed it to a validator). D4 is satisfied.
 
 ---
 

@@ -492,8 +492,12 @@ int main(int argc, char **argv) {
                     stage5_ra_build_plan_lir(&tmp_lir, &ssa_for_emit, &tmp_ra);
 
                     bool emitted = stage5_codegen_a64(&a64_cg, &region, &ssa_for_emit, &tmp_lir, &tmp_ra);
-                    fprintf(stderr, "  [A64-EMIT] clean emitter %s (%zu bytes emitted)\n",
-                            emitted ? "succeeded" : "failed (stub)", emit_offset(&a64_cg.emit));
+                    if (emitted) {
+                        fprintf(stderr, "  [A64-EMIT] clean emitter succeeded (%zu bytes)\n",
+                                emit_offset(&a64_cg.emit));
+                    } else {
+                        fprintf(stderr, "  [A64-EMIT] codegen bailed — this region will run under shadow interpreter\n");
+                    }
 
                     if (emitted && a64_cg.exit_count > 0) {
                         fprintf(stderr, "           recorded %u exit(s), first target=0x%08X\n",

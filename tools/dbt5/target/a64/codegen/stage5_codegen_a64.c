@@ -17,6 +17,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// D4 helper: ensure we never leave a partially-emitted buffer on failure.
+// The driver only installs/executes when the function returns true, but
+// resetting the offset makes the contract bullet-proof.
+static bool cg_bail(stage5_cg_a64_ctx_t *cg) {
+    if (cg) cg->emit.offset = 0;
+    return false;
+}
+
 uint32_t stage5_codegen_a64_attempted = 0;
 uint32_t stage5_codegen_a64_success   = 0;
 
@@ -545,7 +553,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 a64_reg_t src = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
                 if (src == A64_NOREG)
-                    return false; // can't zero-test a value we don't hold in a host reg
+                    return cg_bail(cg); // can't zero-test a value we don't hold in a host reg
 
                 uint32_t tgt = n->guest_pc + 4 + n->imm;
                 bool is_internal = !n->is_side_exit &&
@@ -564,7 +572,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         cg->internal_branches[idx].patch_offset = patch_off;
                         cg->internal_branches[idx].target_pc    = tgt;
                     } else {
-                        return false;
+                        return cg_bail(cg);
                     }
                 } else {
                     // Side-exit: emit the *inverse* zero-test so the JIT skips
@@ -637,7 +645,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         cg->internal_branches[idx].target_pc    = tgt;
                     } else {
                         // A10: too many internal branches for the narrow path — fail cleanly
-                        return false;
+                        return cg_bail(cg);
                     }
                 } else {
                     // Real side-exit (or out-of-region) conditional branch.
@@ -780,7 +788,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 // Unsupported op for the current A64 emitter.
                 // Return false so the driver knows we did not produce a complete translation
                 // (and success counter is not incremented). This makes A6 failures loud.
-                return false;
+                return cg_bail(cg);
         }
 
         // (A8) Dirty tracking removed — never read. The epilogue always does
