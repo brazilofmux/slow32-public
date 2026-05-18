@@ -9,6 +9,7 @@ Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92
 - **DONE**: D2 (host RA pool + diagnostics past the old 8-slot ceiling)
 - **DONE**: D3 (no more re-lifting per CFG block — extractor + SSA threading)
 - **DONE**: D4 (explicit safe bail-to-shadow contract via cg_bail + driver guard)
+- **DONE**: E1 (precise prologue loads from lifter live_in_mask + RA)
 - **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
@@ -474,13 +475,22 @@ for this region again" (or feed it to a validator). D4 is satisfied.
 
 ## E. Opportunities once the above is unblocked
 
-### E1. **OPPORTUNITY** Real prologue from RA + lifter live-in mask
+### E1. **DONE** (core) Real prologue from RA + lifter live_in_mask
 
-The lifter computes `region->cfg_blocks[0].live_in_mask` and per-reg flow
-info (`region->reg_flow[]`). Pair that with the RA plan: for every live-in
-guest reg, the unique interval whose `start_idx == first reference` is the
-one whose slot needs the prologue load. This replaces both A7 and the dbt5.c
-loop B1, and gives a fast (no-mov) entry to slot mapping.
+- The codegen now consults `region->cfg_blocks[0].live_in_mask` (the
+  authoritative guest-register liveness computed by the lifter's CFG
+  dataflow) when deciding which slots need a prologue load from
+  `cpu->regs[gpr]`.
+- Falls back to the previous RA `start_idx==0` heuristic only when the
+  lifter didn't produce CFG info.
+- This is exactly the pairing E1 asked for and directly improves the
+  quality of the emitted prologue (fewer unnecessary loads, and correct
+  for regions with internal control flow).
+
+The `reg_flow[]` data is still available for future refinements (e.g.
+detecting values that are defined before first use inside the region). The
+main win — using the lifter's live-in mask instead of a pure RA proxy — is
+landed.
 
 ### E2. **OPPORTUNITY** Constant materialization peephole
 

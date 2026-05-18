@@ -146,18 +146,34 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 value_to_gpr [iv->value_id] = gpr;
             }
 
-            // A7 fix: only load live-ins in the prologue.
-            // Intervals with start_idx==0 are the ones live at entry.
-            if (iv->start_idx == 0) {
+            // E1: precise live-in prologue loads.
+            // Use the lifter's authoritative live_in_mask for the entry block
+            // (computed via proper CFG dataflow) when available. Fall back to
+            // the RA interval heuristic (start_idx == 0) otherwise.
+            bool needs_prologue_load = false;
+
+            if (region->cfg_valid && region->cfg_block_count > 0) {
+                uint32_t entry_live = region->cfg_blocks[0].live_in_mask;
+                if (gpr != 0 && (entry_live & (1u << gpr))) {
+                    needs_prologue_load = true;
+                }
+            } else if (iv->start_idx == 0) {
+                needs_prologue_load = true;
+            }
+
+            if (needs_prologue_load) {
                 cg->guest_in_slot[slot] = gpr;
             }
         }
     }
 
     // ------------------------------------------------------------------
-    // Step 2: Prologue.
+    // Step 2: Prologue (E1).
     //   (a) Save callee-saved regs we plan to clobber (only if used).
-    //   (b) Load live-in guest values from cpu.regs[gpr] into their host slots.
+    //   (b) Load *only* the guest registers that the lifter marked live-in
+    //       on entry to the region (cfg_blocks[0].live_in_mask), using the
+    //       precise mapping from RA intervals. This replaces the old A7
+    //       heuristic and the loose dbt5.c B1 loop.
     // ------------------------------------------------------------------
     cg_emit_callee_saved_save(cg);
 
