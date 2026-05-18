@@ -349,7 +349,77 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
-            // More ops coming (branches, calls, FP, shifts, MUL/DIV, etc.)
+            // Shifts (very common)
+            case LIR_OP_SHL_RI:
+                if (dst_h != A64_NOREG) {
+                    a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                      ? value_to_host[n->src_v[0]] : dst_h;
+                    if (src_h != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src_h);
+                    emit_lsl_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)n->imm);
+                }
+                break;
+
+            case LIR_OP_SHR_RI:
+                if (dst_h != A64_NOREG) {
+                    a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                      ? value_to_host[n->src_v[0]] : dst_h;
+                    if (src_h != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src_h);
+                    emit_lsr_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)n->imm);
+                }
+                break;
+
+            case LIR_OP_SAR_RI:
+                if (dst_h != A64_NOREG) {
+                    a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                      ? value_to_host[n->src_v[0]] : dst_h;
+                    if (src_h != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src_h);
+                    emit_asr_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)n->imm);
+                }
+                break;
+
+            case LIR_OP_SHL_RR: {
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    if (src0 != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
+                    emit_lslv_w32(&cg->emit, dst_h, dst_h, src1);
+                }
+                break;
+            }
+
+            case LIR_OP_SHR_RR: {
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    if (src0 != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
+                    emit_lsrv_w32(&cg->emit, dst_h, dst_h, src1);
+                }
+                break;
+            }
+
+            case LIR_OP_SAR_RR: {
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    if (src0 != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
+                    emit_asrv_w32(&cg->emit, dst_h, dst_h, src1);
+                }
+                break;
+            }
+
+            // More ops coming (branches, calls, FP, MUL/DIV, etc.)
 
             default:
                 // For now we silently skip unsupported ops in this narrow path.
