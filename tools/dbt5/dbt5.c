@@ -588,10 +588,18 @@ int main(int argc, char **argv) {
                             fprintf(stderr, "  [A64-EXEC] returned. pc=0x%08X exit_reason=%u\n",
                                     emitted_pc, emitted_exit);
 
-                            // Real shadow execution (B3) — run from the pre-snapshot
+                            // Real shadow execution (B3) — run from the pre-snapshot.
+                            // Bound shadow by the region's pc range: the JIT owns
+                            // exactly the guest code in [start_pc, end_pc). When
+                            // shadow leaves that range it has reached the same
+                            // "exited the region" boundary the JIT did, and the
+                            // states should agree. Stepping further would have
+                            // shadow execute callees the JIT never owned (e.g.
+                            // memset from crt0) and produce a spurious mismatch.
                             uint32_t shadow_steps = 0;
                             const uint32_t MAX_TEST_STEPS = 10000;
                             while (shadow_steps < MAX_TEST_STEPS) {
+                                if (sh.pc < region.start_pc || sh.pc >= region.end_pc) break;
                                 if (sh.pc >= cpu.code_limit) break;
                                 bool ended = shadow_step_one(&sh);
                                 shadow_steps++;

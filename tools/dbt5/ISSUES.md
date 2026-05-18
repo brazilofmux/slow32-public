@@ -12,6 +12,7 @@ Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92
 - **DONE**: E1 (deeper — lifter live_in_mask + earliest RA interval per incoming gpr)
 - **DONE**: E2 (constant materialization via logical immediate ORR first)
 - **DONE**: E3 (RA spill bias for live_across_edge / loop carriers)
+- **DONE**: A8 (per-guest-register writeback on exit + eager alias flush)
 - **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
@@ -192,13 +193,42 @@ with `start_idx == 0` (the live-ins). Host register assignment and
 value_to_* maps are still done for all assigned intervals. Prologue now
 loads the correct incoming guest registers.
 
-### A8. **DESIGN/BUG** Dirty-tracking is racy and unused
+### A8. **DONE** Per-guest-register writeback on exit (with eager alias flush)
 
-`slot_dirty[]` is set in many cases, but never read. Combined with A7, this
-gives the misleading impression that there's a write-back step. There isn't
-— the only "write-back" is the unconditional pc/exit_reason store in the
-epilogue, and it ignores `slot_dirty[]` entirely. Either implement a real
-flush (mirror `stage5_codegen_x64.c::cg_flush_exit`) or remove the field.
+The old `slot_dirty[]` was set in many places but never read; the only
+"write-back" at exit was the pc/exit_reason store. So any guest register
+the JIT defined inside a region was dropped on exit, leaving stale values
+in `cpu->regs[]`. Most visibly: every fib/prime/etc. smoke run reported
+`sp mismatch: emitted=0 shadow=4294967280` because the entry block's
+`addi sp, sp, -16` was never committed.
+
+Fix (per-gpr carrier tracking, not per-slot dirty bit):
+- New `gpr_to_host[32]` + `gpr_dirty[32]` in `stage5_cg_a64_ctx_t`.
+- Prologue load of live-in G: `gpr_to_host[G] = host_reg`, dirty = false.
+- LIR-walk trailer: any node whose `dst_v` maps via `ssa->value_to_reg[]`
+  to guest reg G ⇒ update `gpr_to_host[G]` to the host carrier of dst_v
+  and mark dirty.
+- **Eager alias flush** (the subtle correctness piece): at the top of
+  each LIR iteration, before emitting the op, if `dst_h` is the current
+  carrier for some other dirty gpr G' (the RA reused this host slot for
+  a different SSA value), emit `str dst_h, [W20, G'*4]` first. Without
+  this, the final writeback would read the host reg's *new* contents
+  and store them under the *old* gpr's offset.
+- `cg_emit_writeback(cg)` helper walks `gpr_dirty[]` and emits one
+  `str` per dirty carrier into `cpu->regs[gpr*4]`. Called before all
+  three exit emit sequences (CBZ stub, JCC stub, main terminal).
+
+Validation evidence: across all five `benchmarks/bench-*.s32x` smoke
+binaries, `sp` now matches the shadow execution (`4294967280` = the
+canonical SLOW-32 stack at `0xFFFFFFF0`). Pre-A8: `sp=0`. Post-A8:
+`sp=4294967280` on every binary.
+
+Shadow harness was also bounded by `region.start_pc..region.end_pc`
+so it stops at the same boundary the JIT does. `pc` still mismatches
+at the call boundary because the JIT models a call as "exit with pc =
+return-address" while shadow physically executes the jal into the
+callee — that is a JIT-semantics question, separate from writeback.
+Will become trivial to address once the dispatcher exists.
 
 ### A9. **INVESTIGATED / NOT A LIVE BUG** `LIR_OP_UDIV` is emitted but BURG never produces it
 

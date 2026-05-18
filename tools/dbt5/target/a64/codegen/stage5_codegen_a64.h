@@ -70,9 +70,16 @@ typedef struct {
     // stubs save and restore the callee-saved pair set.
     bool callee_saved_used;
 
-    // (A8) slot_dirty[] was written in many places but never read.
-    // The only write-back is the unconditional pc/exit_reason store
-    // in the final epilogue. We removed the dead field.
+    // A8: per-guest-register writeback tracking.
+    //   gpr_to_host[g] = the host register that currently holds the latest
+    //                    value of guest reg g (A64_NOREG if none).
+    //   gpr_dirty[g]   = true iff that value has been modified relative to
+    //                    cpu->regs[g] (i.e. needs to be stored back on exit).
+    // Updated by the prologue (live-in load → not dirty) and by every LIR
+    // node whose dst_v maps back to a guest reg (definition → dirty).
+    // Consumed by cg_emit_writeback() before each exit / side-exit stub.
+    a64_reg_t gpr_to_host[32];
+    bool      gpr_dirty[32];
 
     // Code emission buffer (we write A64 instructions here)
     emit_ctx_t emit;

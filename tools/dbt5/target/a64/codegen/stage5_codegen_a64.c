@@ -87,6 +87,24 @@ static void cg_emit_callee_saved_restore(stage5_cg_a64_ctx_t *cg)
     emit_ldp_post_x64(&cg->emit, W19, W22, 16);
 }
 
+// A8: write dirty guest registers from their host slots back to cpu->regs[].
+// Emitted before every exit (main terminal + every side-exit stub) so that
+// the guest's register file is consistent when the JIT hands control back
+// to the dispatcher / shadow validator. r0 is never written (always zero
+// by SLOW-32 convention). After emission, marks the registers clean so a
+// subsequent exit in the same emission pass does not re-emit redundant
+// stores (this matters because side-exit stubs are emitted inline during
+// the LIR walk, but in practice the cold paths don't redefine registers).
+static void cg_emit_writeback(stage5_cg_a64_ctx_t *cg)
+{
+    for (uint32_t g = 1; g < 32; g++) {
+        if (!cg->gpr_dirty[g]) continue;
+        a64_reg_t h = cg->gpr_to_host[g];
+        if (h == A64_NOREG) continue;
+        emit_str_w32_imm(&cg->emit, h, W20, g * 4);
+    }
+}
+
 void stage5_cg_a64_init(stage5_cg_a64_ctx_t *cg, uint8_t *code_buf, size_t capacity)
 {
     if (!cg) return;
@@ -113,6 +131,10 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     memset(cg->host_regs, 0, sizeof(cg->host_regs));
     memset(cg->guest_in_slot, 0, sizeof(cg->guest_in_slot));
     cg->callee_saved_used = false;
+
+    // A8: per-guest-register writeback tracking starts empty/clean.
+    for (int g = 0; g < 32; g++) cg->gpr_to_host[g] = A64_NOREG;
+    memset(cg->gpr_dirty, 0, sizeof(cg->gpr_dirty));
 
     // Build a quick lookup: SSA value_id → host register (for values the RA assigned)
     a64_reg_t value_to_host[STAGE5_SSA_MAX_VALUES];
@@ -192,6 +214,11 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             continue;
 
         emit_ldr_w32_imm(&cg->emit, hreg, W20, (uint32_t)(gpr * 4));
+
+        // A8: this guest reg's current host carrier is now `hreg`, and the
+        // in-register value matches cpu->regs[gpr] (just loaded), so clean.
+        cg->gpr_to_host[gpr] = hreg;
+        cg->gpr_dirty[gpr]   = false;
     }
 
     // ------------------------------------------------------------------
@@ -210,14 +237,25 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
         // For v1 we only handle ops where the destination (if any) is in one of our 8 slots.
         a64_reg_t dst_h = (n->dst_v < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->dst_v] : A64_NOREG;
 
+        // A8: if dst_h currently holds the live, dirty value of some earlier
+        // guest register (the RA reused this host slot), flush that value to
+        // cpu->regs[] before we overwrite it. Without this the final
+        // cg_emit_writeback() at exit would read the host reg's *new* contents
+        // and store them under the *old* gpr's offset — corrupting state.
+        if (dst_h != A64_NOREG) {
+            for (uint32_t g = 1; g < 32; g++) {
+                if (cg->gpr_dirty[g] && cg->gpr_to_host[g] == dst_h) {
+                    emit_str_w32_imm(&cg->emit, dst_h, W20, g * 4);
+                    cg->gpr_dirty[g]   = false;
+                    cg->gpr_to_host[g] = A64_NOREG;
+                }
+            }
+        }
+
         switch (n->op) {
             case LIR_OP_MOV_RI:
                 if (dst_h != A64_NOREG) {
                     emit_mov_w32_imm32(&cg->emit, dst_h, (uint32_t)n->imm);
-                    // mark dirty (simplified)
-                    for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
-                        if (cg->host_regs[s] == dst_h) { /* (A8) slot_dirty removed */ break; }
-                    }
                 }
                 break;
 
@@ -397,11 +435,6 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
                 a64_cond_t a64cond = lir_cond_to_a64(n->cond, n->guest_opcode);
                 emit_cset_w32(&cg->emit, dst_h, a64cond);
-
-                // Mark destination dirty (same pattern as old CMP cset)
-                for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
-                    if (cg->host_regs[s] == dst_h) { /* (A8) slot_dirty removed */ break; }
-                }
                 break;
             }
 
@@ -433,14 +466,6 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     default:
                         emit_ldr_w32_imm(&cg->emit, dst_h, base_h, n->disp);
                         break;
-                }
-
-                // Destination is now live and dirty in its slot
-                for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
-                    if (cg->host_regs[s] == dst_h) {
-                        /* (A8) slot_dirty removed */
-                        break;
-                    }
                 }
                 break;
             }
@@ -482,14 +507,6 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     }
                 } else if (base_h != dst_h) {
                     emit_mov_w32_w32(&cg->emit, dst_h, base_h);
-                }
-
-                // mark dst dirty
-                for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
-                    if (cg->host_regs[s] == dst_h) {
-                        /* (A8) slot_dirty removed */
-                        break;
-                    }
                 }
                 break;
             }
@@ -617,7 +634,11 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         cg->exits[ex].is_side_exit = true;
                     }
 
-                    // Cold side-exit stub: write pc + exit_reason and ret
+                    // Cold side-exit stub: flush dirty guest regs, then write
+                    // pc + exit_reason and ret. cg_emit_writeback uses W20 as
+                    // the cpu base — same as the prologue loads — so the
+                    // round-trip is consistent.
+                    cg_emit_writeback(cg);
                     emit_mov_w32_imm32(&cg->emit, W0, tgt);
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x80);
                     emit_mov_w32_imm32(&cg->emit, W0, 2);
@@ -692,7 +713,9 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         cg->exits[ex].is_side_exit = true;
                     }
 
-                    // Emit the side-exit stub (cold path)
+                    // Emit the side-exit stub (cold path): flush dirty guest
+                    // regs, then write pc + exit_reason and ret.
+                    cg_emit_writeback(cg);
                     emit_mov_w32_imm32(&cg->emit, W0, tgt);
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x80);     // cpu->pc = target
                     emit_mov_w32_imm32(&cg->emit, W0, 2);           // EXIT_BRANCH style reason
@@ -815,8 +838,20 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 return cg_bail(cg);
         }
 
-        // (A8) Dirty tracking removed — never read. The epilogue always does
-        // an unconditional write of pc + exit_reason.
+        // A8: if this LIR node defined a value that maps to a guest register,
+        // the host reg holding that value is now the live carrier for that
+        // guest reg, and the value differs from cpu->regs[g] until the next
+        // writeback. Track it so the exit stubs can flush correctly.
+        if (n->dst_v != 0 && n->dst_v < STAGE5_SSA_MAX_VALUES) {
+            a64_reg_t def_h = value_to_host[n->dst_v];
+            if (def_h != A64_NOREG) {
+                uint8_t def_gpr = ssa->value_to_reg[n->dst_v];
+                if (def_gpr != 0 && def_gpr < 32) {
+                    cg->gpr_to_host[def_gpr] = def_h;
+                    cg->gpr_dirty[def_gpr]   = true;
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -893,6 +928,12 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
         cg->exits[ex].patch_offset = emit_offset(&cg->emit);
         cg->exits[ex].is_side_exit = false;
     }
+
+    // A8: flush dirty guest registers from their host carriers back into
+    // cpu->regs[] before writing pc/exit_reason. Without this, validators
+    // (and the future dispatcher) see stale guest state — most visibly the
+    // SP mismatch on every fib/prime smoke run.
+    cg_emit_writeback(cg);
 
     // For the experimental execution path we emit a simple "write state + return"
     // sequence so the test harness gets back a sensible pc and exit_reason.
