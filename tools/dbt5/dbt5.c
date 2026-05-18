@@ -409,18 +409,48 @@ int main(int argc, char **argv) {
                         } else {
                             memcpy(exec_mem, a64_code, a64_cg.emit.offset);
 
-                            // Very rough state setup for the test
-                            // (In a real path we would use the RA live-in info properly)
                             cpu.pc = load_res.entry_point;
 
-                            // Call the emitted code as if it were a translated block
-                            // The emitted code is expected to eventually return via the
-                            // exit mechanism (for now it may just run the prologue + terminal).
-                            typedef void (*block_fn_t)(void);
-                            block_fn_t fn = (block_fn_t)exec_mem;
+                            // ----------------------------------------------------------------
+                            // Proper live-in setup using the RA plan (first real step toward
+                            // reliable execution testing)
+                            // ----------------------------------------------------------------
+                            a64_reg_t slot_to_host[8] = { W8, W9, W10, W11, W12, W13, W14, W15 };
+                            uint8_t entry_gpr_for_slot[8] = {0};
 
-                            // Minimal register setup the prologue expects
-                            // (this will evolve as the emitter gets smarter)
+                            for (uint16_t i = 0; i < tmp_ra.interval_count; i++) {
+                                const stage5_ra_interval_t *iv = &tmp_ra.intervals[i];
+                                if (iv->value_id == 0 || iv->spilled || iv->assigned_slot < 0)
+                                    continue;
+                                if (iv->start_idx > 2)   // only values live at entry
+                                    continue;
+
+                                uint8_t gpr = ssa_for_emit.value_to_reg[iv->value_id];
+                                if (gpr != 0 && iv->assigned_slot < 8) {
+                                    entry_gpr_for_slot[iv->assigned_slot] = gpr;
+                                }
+                            }
+
+                            // Load the live-in guest registers into the host registers
+                            // the emitter expects.
+                            for (int s = 0; s < 8; s++) {
+                                uint8_t gpr = entry_gpr_for_slot[s];
+                                if (gpr == 0) continue;
+
+                                uint32_t val = cpu.regs[gpr];
+                                switch (s) {
+                                    case 0: __asm__ volatile("mov w8, %w0" : : "r"(val)); break;
+                                    case 1: __asm__ volatile("mov w9, %w0" : : "r"(val)); break;
+                                    case 2: __asm__ volatile("mov w10, %w0" : : "r"(val)); break;
+                                    case 3: __asm__ volatile("mov w11, %w0" : : "r"(val)); break;
+                                    case 4: __asm__ volatile("mov w12, %w0" : : "r"(val)); break;
+                                    case 5: __asm__ volatile("mov w13, %w0" : : "r"(val)); break;
+                                    case 6: __asm__ volatile("mov w14, %w0" : : "r"(val)); break;
+                                    case 7: __asm__ volatile("mov w15, %w0" : : "r"(val)); break;
+                                }
+                            }
+
+                            // Set up the two special registers the prologue relies on
                             __asm__ volatile (
                                 "mov x20, %0\n"     // cpu_state
                                 "mov x21, %1\n"     // mem_base
@@ -428,6 +458,9 @@ int main(int argc, char **argv) {
                                 : "r" (&cpu), "r" (cpu.mem_base)
                                 : "x20", "x21"
                             );
+
+                            typedef void (*block_fn_t)(void);
+                            block_fn_t fn = (block_fn_t)exec_mem;
 
                             fprintf(stderr, "  [A64-EXEC] jumping to emitted code @ %p (len=%zu)...\n",
                                     exec_mem, a64_cg.emit.offset);
