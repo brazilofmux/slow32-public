@@ -395,6 +395,7 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
 
             case MIR_OP_CALL:
                 l->op = LIR_OP_CALL;
+                l->dst_v = m->dst_v;   // C4: preserve the call's return-value SSA name
                 l->rd = m->rd;
                 l->imm = m->imm;
                 break;

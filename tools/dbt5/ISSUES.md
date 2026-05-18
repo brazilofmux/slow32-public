@@ -358,22 +358,12 @@ the stale small immediate from the original instruction encoding.
 Example now shows consistent `imm=1048576` in both MIR and LIR for the folded
 case. Much less confusing for readers.
 
-### C4. **CLEANUP** `LIR_OP_CALL` lowering drops `dst_v`
+### C4. **DONE** **CLEANUP** `LIR_OP_CALL` lowering drops `dst_v`
 
-`stage5_burg.c:394-398`:
-
-```c
-case MIR_OP_CALL:
-    l->op = LIR_OP_CALL;
-    l->rd = m->rd;
-    l->imm = m->imm;
-    break;
-```
-
-`l->dst_v` is left at 0, so the call's return-value SSA name is lost. The
-RA happily produces zero intervals for blocks dominated by a CALL — visible
-in the smoke run's `[blk1] ... RA_intervals=0`. Either set `l->dst_v =
-m->dst_v` here or document that calls never carry an SSA result.
+Added the missing `l->dst_v = m->dst_v;` line in the `MIR_OP_CALL` case
+in `stage5_burg.c`. Calls now preserve their return-value SSA name, so the
+RA sees the definition when the result is live. (In tiny regions where the
+call result is dead at the end, zero intervals are still expected and correct.)
 
 ### C5. **CLEANUP** `shadow_interp.c` warning about unused `reg_mismatch_count`
 
