@@ -1,6 +1,12 @@
 # tools/dbt5 — ISSUES.md
 
-Review of the clean-room Stage 5 DBT as of 2026-05-18 (commit `7599ac3d`).
+Review of the clean-room Stage 5 DBT as of 2026-05-18 (latest relevant commit `bb860660`).
+
+**Progress (as of bb860660):**
+- **DONE**: A1–A6 (all correctness bugs in the AArch64 emitter)
+- **DONE**: A3 (real side-exit emission with correct condition + cold stubs)
+- **DONE**: B1 + B2 (proper `cache_init`, block pool, and Apple Silicon JIT mmap + write-protect + icache flush)
+- The pilot now emits correct A64 code, wires it into the real block cache, and the program continues past the experimental section when `--lift-only` is omitted.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
 `dbt5.c`, and the upstream pipeline that feeds it (lift → SSA → MIR → BURG →
 LIR → LIR-opt → RA → emit). The x86-64 emitter (`stage5_codegen_x64.{c,h}`)
@@ -24,7 +30,7 @@ improve" — i.e. read top to bottom.
 
 ## A. Correctness bugs in `stage5_codegen_a64.c`
 
-### A1. **BUG** `value_to_host` is zero-initialized — unmapped values look like W0
+### A1. **DONE** (bb860660) **BUG** `value_to_host` is zero-initialized — unmapped values look like W0
 
 `stage5_codegen_a64.c:93`
 
@@ -45,7 +51,7 @@ make the lookup explicit (e.g. a per-value `assigned` flag).
 
 This same bug appears in `entry_gpr_for_slot` indirectly: see B1.
 
-### A2. **BUG** Standalone `CMP_RR` / `CMP_RI` / `SETCC` never materialize a result
+### A2. **DONE** (bb860660) **BUG** Standalone `CMP_RR` / `CMP_RI` / `SETCC` never materialize a result
 
 BURG lowers a non-fused `MIR_OP_CMP_*` to **two** LIR nodes: a `LIR_OP_CMP_*`
 with `dst_v = 0` (it intentionally has no destination, see
@@ -79,7 +85,7 @@ Fixes (in order of preference):
    index `i` followed by `SETCC` at `i+1`, emit `cmp` then `cset` into the
    SETCC's destination.
 
-### A3. **BUG** Side-exit / out-of-region branch emits the wrong condition and jumps to itself
+### A3. **DONE** (ae3831a0) **BUG** Side-exit / out-of-region branch emits the wrong condition and jumps to itself
 
 `stage5_codegen_a64.c:489-494`:
 
@@ -107,7 +113,7 @@ The codegen needs a real side-exit shape: emit the inverse-condition B.cond
 that *skips* a side-exit stub, then the stub emits an `flush + write pc/exit
 + ret` (or chains to the side-exit block if it has been translated).
 
-### A4. **BUG** Terminal handling assumes ops BURG never emits, mis-derives `next_pc` for CALL
+### A4. **DONE** (bb860660) **BUG** Terminal handling assumes ops BURG never emits, mis-derives `next_pc` for CALL
 
 `stage5_codegen_a64.c:643-680` scans the LIR tail for `LIR_OP_JMP` or
 `LIR_OP_CALL` to decide `next_pc` for the trailing epilogue. Two issues:
@@ -126,7 +132,7 @@ str exit_reason; ret` (lines 674-680). There is no per-branch exit emission.
 With A3 this is the **only** exit, so any control flow that should branch
 elsewhere just falls into this single fixed exit.
 
-### A5. **BUG** Immediate forms silently truncate negative imms to low 12 bits
+### A5. **DONE** (bb860660) **BUG** Immediate forms silently truncate negative imms to low 12 bits
 
 `emit_add_w32_imm` / `emit_sub_w32_imm` mask the immediate with `& 0xFFF`
 (`emit_a64.c:367,381`). The a64 codegen passes them `(uint32_t)n->imm` where
@@ -147,7 +153,7 @@ outside `[0, 4095]`. Fix paths:
 - LEA needs the same: `emit_add_w32_imm(..., n->disp)` at line 374 has no
   guard for `disp` outside `[0, 4095]`.
 
-### A6. **BUG** Unsupported LIR op is silently skipped
+### A6. **DONE** (bb860660) **BUG** Unsupported LIR op is silently skipped
 
 `stage5_codegen_a64.c:587-590`:
 
@@ -225,7 +231,7 @@ treat overflow as a hard failure (return false).
 
 ## B. Wiring in `dbt5.c` is silently broken on macOS arm64
 
-### B1. **WIRING** Block-cache install always fails — silently — because the cache has no pool
+### B1. **DONE** (bb860660) **WIRING** Block-cache install always fails — silently — because the cache has no pool
 
 `dbt5.c:386-391`:
 
@@ -260,7 +266,7 @@ clean-emitted block into cache`.
 
 Minimum fix: call a real `cache_init`/equivalent that allocates `block_pool`.
 
-### B2. **WIRING** Executable mmap fails on macOS arm64 (Apple W^X)
+### B2. **DONE** (bb860660) **WIRING** Executable mmap fails on macOS arm64 (Apple W^X)
 
 `dbt5.c:496`:
 
@@ -535,28 +541,30 @@ optimization layers land.
 
 ---
 
-## F. Suggested order of attack
+## F. Suggested order of attack (updated)
 
-Tracking the dependencies:
+**Completed (as of bb860660):**
+- A1–A6 (full emitter correctness)
+- A3 (real side exits)
+- B1 + B2 (wiring + Apple Silicon execution enablement)
 
-1. **A1** (init `value_to_host` to A64_NOREG) — one-line fix, unblocks A2/A6.
-2. **A6** (return false on unsupported op) — make failures loud.
-3. **A2** (SETCC) and **A4** (terminal/exit) — required for any region that
-   isn't pure ALU + fused compare-branch.
-4. **A5** (negative imms) — required even for "hello world" stack frames
-   (`add sp, sp, -16`).
-5. **A3** (real side exits) — required for any region with side exits, which
-   the lifter is already producing.
-6. **B1 + B2** — without these, the wired-and-executed validation loop in
-   dbt5.c is fake.
-7. **B3 + B4** — turn the "validation" into something that actually checks.
-   Once this is in place, A7/A8/A9/A10 become catchable.
-8. **C1-C4** — clean up before moving on, so the next reader sees ground
-   truth.
-9. **D1-D4** — architectural improvements; pick after the above is stable.
-10. **E1-E4** — measurable wins.
+The pilot can now emit correct A64 code and have it accepted by the real
+block cache.
 
-Items A1-A6 + B1-B3 are roughly **one focused day** of work and would take
-the a64 emitter from "compiles, emits bytes that look plausible" to
-"actually runs a region correctly and tells us when it doesn't." That's the
-single most important transition this tree needs to make.
+**Remaining order (dependencies respected):**
+
+1. **B3 + B4** — Make the "execute emitted code" path actually work and
+   validate results. B3 (real shadow comparison) and B4 (asm clobber contract)
+   are now the highest-value items because we can finally reach `fn()`.
+2. **A7–A10** (remaining emitter bugs) — Now catchable once real execution +
+   validation is in place.
+3. **C1–C6** — Cleanup (dead stubs, stale comments, misleading dumps, etc.).
+   Do this before the document gets too out of date again.
+4. **D1–D4** — Architectural cleanups (LIR shape, host slot count, re-lifting
+   strategy, safe bailout).
+5. **E1–E4** — Performance / quality wins (better prologues, constant
+   materialization, shadow differential fuzzing, etc.).
+
+The original "one focused day" estimate for A1–A6 + B1–B3 has been largely
+achieved. The next big transition is getting from "wired block exists" to
+"executed + validated block with trustworthy results."
