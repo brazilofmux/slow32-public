@@ -99,6 +99,21 @@ static void run_full_stage5_analysis(const stage5_lift_region_t *region,
             "  [%s] FULL PIPELINE OK  MIR=%u  LIR=%u  RA_intervals=%u  spills=%u\n",
             tag, mir.node_count, lir.node_count, ra.interval_count, ra.spilled_count);
 
+    // Basic SSA stats (always shown, cheap and useful)
+    fprintf(stderr, "    SSA: values=%u", region->value_count);
+    if (verbose) {
+        // Count constants from the overlay
+        uint32_t const_count = 0;
+        uint32_t total_uses = 0;
+        for (uint16_t v = 0; v < ssa.value_count; v++) {
+            if (ssa.value_is_const[v]) const_count++;
+            total_uses += ssa.value_use_count[v];
+        }
+        double avg_uses = ssa.value_count ? (double)total_uses / ssa.value_count : 0.0;
+        fprintf(stderr, "  consts=%u  avg_uses=%.1f", const_count, avg_uses);
+    }
+    fprintf(stderr, "\n");
+
     if (verbose) {
         // MIR dump (architecture-neutral layer)
         uint32_t mir_dump = mir.node_count < 12 ? mir.node_count : 12;
@@ -217,6 +232,32 @@ static void run_full_stage5_analysis(const stage5_lift_region_t *region,
             }
         }
 
+        if (verbose) {
+            // Quick "would we want to own this natively?" summary
+            int viability = 100;
+            const char *reasons[4] = {0};
+            int rcount = 0;
+
+            if (ra.spilled_count > 0) { viability -= 30; reasons[rcount++] = "spills present"; }
+            if (region->cfg_spill_likely) { viability -= 25; reasons[rcount++] = "high register pressure"; }
+            if (region->side_exit_count > 2) { viability -= 15; reasons[rcount++] = "many side exits"; }
+            if (region->cfg_block_count > 8) { viability -= 10; reasons[rcount++] = "complex CFG"; }
+
+            if (viability < 0) viability = 0;
+
+            fprintf(stderr, "    Viability for native ownership: %d/100", viability);
+            if (rcount > 0) {
+                fprintf(stderr, " (");
+                for (int i = 0; i < rcount; i++) {
+                    if (i > 0) fprintf(stderr, ", ");
+                    fprintf(stderr, "%s", reasons[i]);
+                }
+                fprintf(stderr, ")");
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+
         // Per-CFG-block breakdown (when the lifter built CFG)
         if (region->cfg_valid && region->cfg_block_count > 1) {
             fprintf(stderr, "    CFG blocks (%u):\n", region->cfg_block_count);
@@ -230,7 +271,6 @@ static void run_full_stage5_analysis(const stage5_lift_region_t *region,
             if (region->cfg_block_count > 6)
                 fprintf(stderr, "      ... (%u more blocks)\n", region->cfg_block_count - 6);
         }
-    }
 
     (void)stage5_burg_select; // silence unused warning for now (scaffolding)
 }
