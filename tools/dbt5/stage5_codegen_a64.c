@@ -495,7 +495,20 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
-            // More ops coming (calls, FP, MUL/DIV, full internal CF, etc.)
+            case LIR_OP_IMUL_RR: {
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    if (src0 != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
+                    emit_mul_w32(&cg->emit, dst_h, dst_h, src1);
+                }
+                break;
+            }
+
+            // More ops coming (TEST is already partially handled above, MULH/MULHU, DIV/REM, FP, calls, etc.)
 
             default:
                 // For now we silently skip unsupported ops in this narrow path.
