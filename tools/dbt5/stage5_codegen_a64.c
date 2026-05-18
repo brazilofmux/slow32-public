@@ -86,10 +86,15 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     // ------------------------------------------------------------------
     // Step 3: Walk the LIR and emit real instructions (narrow ALU first)
     // ------------------------------------------------------------------
+    size_t lir_emit_off[STAGE5_MAX_LIR_NODES];
+    memset(lir_emit_off, 0, sizeof(lir_emit_off));
+
     for (uint32_t i = 0; i < lir->node_count; i++) {
         const lir_node_t *n = &lir->nodes[i];
         if (n->op == LIR_OP_NOP)
             continue;
+
+        lir_emit_off[i] = emit_offset(&cg->emit);
 
         // For v1 we only handle ops where the destination (if any) is in one of our 8 slots.
         a64_reg_t dst_h = (n->dst_v < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->dst_v] : A64_NOREG;
@@ -419,7 +424,56 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
-            // More ops coming (branches, calls, FP, MUL/DIV, etc.)
+            // ------------------------------------------------------------------
+            // Internal forward branches (first control-flow support inside regions)
+            // ------------------------------------------------------------------
+            case LIR_OP_JCC:
+            case LIR_OP_CMP_JCC:
+            case LIR_OP_CMP_RI_JCC:
+            case LIR_OP_TEST_JCC: {
+                uint32_t tgt = n->guest_pc + 4 + n->imm;
+                bool is_internal = !n->is_side_exit &&
+                                   tgt >= region->start_pc &&
+                                   tgt < region->end_pc;
+
+                if (is_internal) {
+                    // Record fixup for post-pass patching
+                    size_t patch_off = emit_offset(&cg->emit);
+
+                    // Best-effort mapping from LIR cond to AArch64 cond
+                    a64_cond_t a64c = COND_EQ;
+                    switch (n->cond) {
+                        case 0x84: a64c = COND_EQ;  break; // JE
+                        case 0x85: a64c = COND_NE;  break; // JNE
+                        case 0x8C: a64c = COND_LT;  break; // JL
+                        case 0x8D: a64c = COND_GE;  break; // JGE
+                        case 0x8E: a64c = COND_LE;  break; // JLE
+                        case 0x8F: a64c = COND_GT;  break; // JG
+                        case 0x82: a64c = COND_LO;  break; // JB
+                        case 0x83: a64c = COND_HS;  break; // JAE
+                        default:   a64c = COND_EQ;  break;
+                    }
+
+                    emit_b_cond(&cg->emit, a64c, 0);
+
+                    // Record in the exits array for now (we'll distinguish
+                    // internal vs side-exit by target range later if needed).
+                    if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
+                        int ex = cg->exit_count++;
+                        cg->exits[ex].target_pc    = tgt;
+                        cg->exits[ex].patch_offset = patch_off;
+                        cg->exits[ex].is_side_exit = false; // internal forward branch
+                    }
+                } else {
+                    // Side-exit or out-of-region conditional branch.
+                    // For the narrow path we currently just emit a placeholder.
+                    // Proper side-exit support comes in a later slice.
+                    emit_b_cond(&cg->emit, COND_EQ, 0);
+                }
+                break;
+            }
+
+            // More ops coming (calls, FP, MUL/DIV, full internal CF, etc.)
 
             default:
                 // For now we silently skip unsupported ops in this narrow path.
@@ -437,6 +491,38 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Post-pass: patch internal forward branches
+    // ------------------------------------------------------------------
+    for (uint32_t f = 0; f < cg->exit_count; f++) {
+        if (cg->exits[f].is_side_exit) continue;
+
+        uint32_t tgt_pc = cg->exits[f].target_pc;
+        size_t patch_off = cg->exits[f].patch_offset;
+
+        // Find the first LIR node at or after the target PC
+        size_t target_emit_off = (size_t)-1;
+        for (uint32_t j = 0; j < lir->node_count; j++) {
+            if (lir->nodes[j].guest_pc >= tgt_pc) {
+                target_emit_off = lir_emit_off[j];
+                break;
+            }
+        }
+        if (target_emit_off == (size_t)-1) continue;
+
+        int32_t byte_disp = (int32_t)(target_emit_off - patch_off);
+        if (byte_disp % 4 != 0) continue; // must be instruction aligned
+
+        int32_t word_disp = byte_disp / 4;
+
+        // Patch the B.cond at patch_off (imm19 field is bits 23:5)
+        uint32_t *p = (uint32_t *)(cg->emit.buf + patch_off);
+        uint32_t inst = *p;
+        inst &= ~0x00FFFFE0U;                    // clear 19-bit immediate
+        inst |= ((uint32_t)word_disp & 0x7FFFFU) << 5;
+        *p = inst;
     }
 
     // ------------------------------------------------------------------
