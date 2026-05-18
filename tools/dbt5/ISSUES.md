@@ -13,6 +13,7 @@ Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92
 - **DONE**: E2 (constant materialization via logical immediate ORR first)
 - **DONE**: E3 (RA spill bias for live_across_edge / loop carriers)
 - **DONE**: A8 (per-guest-register writeback on exit + eager alias flush)
+- **DONE**: G1 (dispatcher loop — translate-on-miss, cache lookup, run until guest exit)
 - **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
@@ -569,6 +570,75 @@ execution and the JIT'd code is discarded on mismatch (with a diagnostic).
 This is exactly the discipline that allowed Stage 4 to ship — it's
 substantially easier to add to dbt5 today than it will be after more
 optimization layers land.
+
+---
+
+## G. Runtime — dispatcher
+
+### G1. **DONE** Translate-on-miss dispatcher loop
+
+The pilot can now run more than one region per invocation. `dispatch_run`
+in `dbt5.c` does the classic JIT loop:
+
+  1. `cache_lookup(cache, cpu->pc)` — does a translation exist for this pc?
+  2. On miss: `dispatch_translate_at` runs the full pipeline
+     (lift → ssa → mir → burg → lir_opt → ra → codegen), mmap-and-copies
+     the staging buffer into a MAP_JIT executable mapping, allocates a
+     `translated_block_t`, fills its metadata, and inserts into the cache.
+  3. Calls the block via `dbt5_launch_a64`. The block exits via the A8
+     writeback path, so `cpu->pc`, `cpu->exit_reason`, and `cpu->regs[]`
+     are consistent on return.
+  4. Continues while `cpu->exit_reason ∈ {2, 9}` (branch-out, block-end);
+     stops on halt/yield/debug/fault/translate-fail/iter limit.
+
+Activation: `S5_DISPATCH=N` env var (`N` = max iterations, default 100).
+The existing `S5_EMIT_A64` one-shot validation path is untouched.
+
+Codegen support: added inline no-op cases for `LIR_OP_JMP`, `LIR_OP_RET`,
+and `LIR_OP_SYSCALL` so the LIR walk doesn't `cg_bail()` when a region
+ends in those terminators. The existing terminal handler at the bottom
+of `stage5_codegen_a64` already produces correct `pc`/`exit_reason`
+stores for these ops — the inline cases just keep the walk going.
+
+Evidence: all five `bench-*.s32x` smoke binaries now execute three
+dispatcher iterations (entry → main-start → halt), stopping cleanly:
+
+  [DISPATCH] stopped after 3 iter(s): guest exit.
+             pc=0x00000030 exit_reason=81 sp=4294967280
+
+Three iterations because the JIT models a call as "exit with pc =
+call_pc + 4" rather than tracing into the callee, so the dispatcher
+walks the *return-address chain* of crt0 rather than the call graph.
+That is fine for proving the loop machinery; the call-semantics fix is
+its own future thread.
+
+### G2. **NEXT** Trace into callees (proper JAL / JALR semantics)
+
+Today every JAL exits the region with `pc = call_pc + 4` and every JALR
+exits with the same pattern (treated as a generic "leave region"). To
+actually run a guest program we need:
+
+- **JAL (rd != 0)**: emit `cpu->regs[rd] = call_pc + 4` (the return
+  address) and `cpu->pc = call_target` before exit. The dispatcher then
+  picks up at `call_target` on the next iteration.
+- **JAL (rd == 0)**: same but skip the return-address store.
+- **JALR (rd, rs1, imm)**: `cpu->pc = cpu->regs[rs1] + imm`. The target
+  is a runtime value; the codegen needs to emit a real load-and-store
+  (it already holds `rs1` in a host slot in most cases).
+
+Once this lands, the dispatcher will walk the actual call graph and
+HALT only when the program reaches its own halt — at which point we
+can run real differential validation against the shadow.
+
+### G3. **NEXT** Distinguish HALT / YIELD / DEBUG in exit_reason
+
+Today `LIR_OP_SYSCALL` always emits `exit_reason = 0x51`. The lifter
+already knows which guest opcode lowered to it (`MIR_OP_HALT` vs
+`MIR_OP_YIELD` vs `MIR_OP_DEBUG`), so the codegen can route to the
+correct enum value: `EXIT_HALT=0`, `EXIT_DEBUG=1`, `EXIT_YIELD=4`. The
+dispatcher already stops on any non-{2,9} value, so this is a
+diagnostic-clarity fix more than a correctness one — but DEBUG should
+arguably *continue* dispatch (after emitting the char to MMIO).
 
 ---
 

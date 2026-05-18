@@ -105,6 +105,148 @@ static void dbt5_launch_a64(void (*fn)(void), void *cpu_ptr, void *mem_base)
           "memory", "cc"
     );
 }
+
+// =========================================================================
+// Dispatcher loop (pilot scope)
+//
+// Translates regions on demand, installs them in the block cache, and runs
+// them in a loop until the guest exits via something other than a normal
+// branch/fallthrough (exit_reason 2 = branch-out, 9 = block-end). The
+// per-gpr writeback contract from A8 makes the handoff between iterations
+// well-defined: the JIT exit leaves cpu.regs[]/cpu.pc consistent for the
+// next translation to consume.
+//
+// Known semantic limitation: the codegen still models calls as "exit with
+// pc = call_pc + 4" rather than tracing into the callee. So the dispatcher
+// walks the *return-address chain* of a program, not its actual call graph.
+// It will reach HALT eventually on small programs (because crt0 is mostly
+// linear with a few calls that all return) — that is the goal of this
+// first cut: prove the loop machinery itself.
+// =========================================================================
+
+typedef void (*dbt5_block_fn_t)(void);
+
+// Translate one region starting at `pc` and install it in `cache`. Returns
+// the installed block on success, NULL on lift/codegen/mmap/install failure.
+// `staging` is a scratch byte buffer reused across calls; the emitter writes
+// here first, then we mmap an executable page and copy.
+static translated_block_t *dispatch_translate_at(
+    block_cache_t *cache,
+    dbt_cpu_state_t *cpu,
+    uint32_t pc,
+    uint8_t *staging,
+    size_t staging_cap)
+{
+    stage5_lift_region_t region;
+    stage5_lift_region_init(&region, pc);
+    if (!stage5_lift_superblock(&region, cpu->mem_base, cpu->code_limit, STAGE5_LIFT_BUDGET)) {
+        fprintf(stderr, "[DISPATCH] lift FAILED at pc=0x%08X reason=%d\n", pc, region.reason);
+        return NULL;
+    }
+
+    stage5_ssa_overlay_t ssa;
+    if (!stage5_ssa_build_overlay(&region, &ssa)) {
+        fprintf(stderr, "[DISPATCH] ssa-build FAILED at pc=0x%08X\n", pc);
+        return NULL;
+    }
+
+    stage5_mir_t mir;
+    stage5_mir_build(&region, &ssa, &mir);
+
+    stage5_lir_t lir;
+    if (!stage5_burg_lower(&mir, &ssa, &lir)) {
+        fprintf(stderr, "[DISPATCH] burg FAILED at pc=0x%08X\n", pc);
+        return NULL;
+    }
+
+    stage5_lir_optimize(&lir, &ssa);
+
+    stage5_ra_plan_t ra;
+    if (!stage5_ra_build_plan_lir(&lir, &ssa, &ra, &region)) {
+        fprintf(stderr, "[DISPATCH] ra FAILED at pc=0x%08X\n", pc);
+        return NULL;
+    }
+
+    stage5_cg_a64_ctx_t cg;
+    stage5_cg_a64_init(&cg, staging, staging_cap);
+    if (!stage5_codegen_a64(&cg, &region, &ssa, &lir, &ra)) {
+        fprintf(stderr, "[DISPATCH] codegen bailed at pc=0x%08X\n", pc);
+        return NULL;
+    }
+
+    size_t code_len = cg.emit.offset;
+    if (code_len == 0)
+        return NULL;
+
+    void *exec = mmap(NULL, code_len + 4096,
+                      PROT_READ | PROT_WRITE | PROT_EXEC,
+                      DBT_JIT_MMAP_FLAGS, -1, 0);
+    if (exec == MAP_FAILED)
+        return NULL;
+
+    dbt_jit_writable_begin();
+    memcpy(exec, staging, code_len);
+    dbt_clear_icache(exec, (char *)exec + code_len);
+    dbt_jit_writable_end();
+
+    translated_block_t *blk = cache_alloc_block(cache, pc);
+    if (!blk) {
+        munmap(exec, code_len + 4096);
+        return NULL;
+    }
+    blk->host_code  = exec;
+    blk->host_size  = code_len;
+    blk->guest_size = region.guest_inst_count * 4;
+    blk->exit_count = cg.exit_count;
+    for (uint32_t e = 0; e < cg.exit_count && e < MAX_BLOCK_EXITS; e++) {
+        blk->exits[e].target_pc = cg.exits[e].target_pc;
+    }
+    cache_insert(cache, blk);
+    return blk;
+}
+
+typedef enum {
+    DISPATCH_STOPPED_BY_EXIT,     // guest hit halt/yield/debug/fault
+    DISPATCH_STOPPED_BY_LIMIT,    // hit max_iters
+    DISPATCH_TRANSLATE_FAIL,      // could not translate region at cpu->pc
+} dispatch_result_t;
+
+// Run the dispatcher loop. Returns when the guest exits via something other
+// than a normal branch/fallthrough, when translation fails, or when
+// `max_iters` is reached. On exit, cpu->pc and cpu->exit_reason reflect the
+// last JIT exit state.
+static dispatch_result_t dispatch_run(
+    dbt_cpu_state_t *cpu,
+    block_cache_t *cache,
+    uint8_t *staging,
+    size_t staging_cap,
+    uint64_t max_iters,
+    uint64_t *out_iters)
+{
+    uint64_t iters = 0;
+    while (iters < max_iters) {
+        translated_block_t *blk = cache_lookup(cache, cpu->pc);
+        if (!blk) {
+            blk = dispatch_translate_at(cache, cpu, cpu->pc, staging, staging_cap);
+            if (!blk) {
+                *out_iters = iters;
+                return DISPATCH_TRANSLATE_FAIL;
+            }
+        }
+        dbt5_launch_a64((dbt5_block_fn_t)blk->host_code, cpu, cpu->mem_base);
+        blk->exec_count++;
+        iters++;
+
+        // Normal continuation: branch-out (2) or block-end (9). Anything else
+        // (halt/yield/debug/fault → 0x7F/0x51/etc.) ends the dispatch loop.
+        if (cpu->exit_reason != 2 && cpu->exit_reason != 9) {
+            *out_iters = iters;
+            return DISPATCH_STOPPED_BY_EXIT;
+        }
+    }
+    *out_iters = iters;
+    return DISPATCH_STOPPED_BY_LIMIT;
+}
 #endif
 
 // Memory size for the clean-room driver.
@@ -693,6 +835,58 @@ int main(int argc, char **argv) {
         free(mem);
         return 0;
     }
+
+#if defined(__aarch64__)
+    // Dispatcher mode: S5_DISPATCH=N runs the translate-on-miss loop from
+    // load_res.entry_point for up to N iterations (0 or unset → 100). Uses
+    // the same cache the S5_EMIT_A64 path sets up; if S5_EMIT_A64 was not
+    // requested we initialize a private cache here.
+    {
+        const char *dispatch_env = getenv("S5_DISPATCH");
+        if (dispatch_env) {
+            uint64_t max_iters = strtoull(dispatch_env, NULL, 10);
+            if (max_iters == 0) max_iters = 100;
+
+            static block_cache_t dispatch_cache_storage = {0};
+            block_cache_t *cache = g_a64_experimental_cache;
+            if (!cache) {
+                if (!cache_init(&dispatch_cache_storage)) {
+                    fprintf(stderr, "[DISPATCH] cache_init failed; aborting dispatcher\n");
+                    free(mem);
+                    return 1;
+                }
+                cache = &dispatch_cache_storage;
+            }
+
+            static uint8_t dispatch_staging[64 * 1024];
+            cpu.pc = load_res.entry_point;
+
+            fprintf(stderr,
+                    "[DISPATCH] starting at pc=0x%08X (max_iters=%llu)\n",
+                    cpu.pc, (unsigned long long)max_iters);
+
+            uint64_t iters = 0;
+            dispatch_result_t res = dispatch_run(&cpu, cache,
+                                                 dispatch_staging,
+                                                 sizeof(dispatch_staging),
+                                                 max_iters, &iters);
+
+            const char *reason =
+                (res == DISPATCH_STOPPED_BY_EXIT)    ? "guest exit" :
+                (res == DISPATCH_STOPPED_BY_LIMIT)   ? "iter limit" :
+                (res == DISPATCH_TRANSLATE_FAIL)     ? "translate fail" :
+                                                       "unknown";
+            fprintf(stderr,
+                    "[DISPATCH] stopped after %llu iter(s): %s. "
+                    "pc=0x%08X exit_reason=%u sp=%u\n",
+                    (unsigned long long)iters, reason,
+                    cpu.pc, cpu.exit_reason, cpu.regs[29]);
+
+            free(mem);
+            return (res == DISPATCH_TRANSLATE_FAIL) ? 2 : 0;
+        }
+    }
+#endif
 
     // Real execution still falls back to shadow interpreter for now
     // (until we grow native A64 emission inside this clean tree).

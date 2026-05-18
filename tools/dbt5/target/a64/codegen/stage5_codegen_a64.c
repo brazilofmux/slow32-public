@@ -829,6 +829,22 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
+            // Region terminators (JMP / RET / SYSCALL): nothing to emit inline.
+            // The terminal-handling step below derives next_pc and exit_reason
+            // from the trailing LIR node and emits the writeback + pc/exit_reason
+            // store + ret. Suppressing them here lets cg_bail() stay reserved for
+            // ops we genuinely cannot translate.
+            //   JMP     — direct unconditional jump out of the region.
+            //   RET     — JALR-return (jalr zero, lr, 0). Terminal handler treats
+            //             it as a generic "leave region" today; correct PC-from-LR
+            //             modelling is a future dispatcher improvement.
+            //   SYSCALL — HALT / YIELD / DEBUG. Terminal handler sets a halt-ish
+            //             exit_reason so the dispatcher stops the run.
+            case LIR_OP_JMP:
+            case LIR_OP_RET:
+            case LIR_OP_SYSCALL:
+                break;
+
             // More ops coming (FP, more call/return variants, complex addressing, etc.)
 
             default:
