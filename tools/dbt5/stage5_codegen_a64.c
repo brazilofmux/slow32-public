@@ -508,6 +508,33 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
+            case LIR_OP_MULH_RR: {
+                // signed high 32 bits of 32x32 multiply
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    // Use W16 as 64-bit temp (X16)
+                    emit_smull(&cg->emit, W16, src0, src1);
+                    emit_lsr_w32_imm(&cg->emit, dst_h, W16, 32);
+                }
+                break;
+            }
+
+            case LIR_OP_MULHU_RR: {
+                // unsigned high 32 bits of 32x32 multiply
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    emit_umull(&cg->emit, W16, src0, src1);
+                    emit_lsr_w32_imm(&cg->emit, dst_h, W16, 32);
+                }
+                break;
+            }
+
             // More ops coming (TEST is already partially handled above, MULH/MULHU, DIV/REM, FP, calls, etc.)
 
             default:
