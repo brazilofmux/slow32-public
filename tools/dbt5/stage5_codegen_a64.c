@@ -456,13 +456,11 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
                     emit_b_cond(&cg->emit, a64c, 0);
 
-                    // Record in the exits array for now (we'll distinguish
-                    // internal vs side-exit by target range later if needed).
-                    if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
-                        int ex = cg->exit_count++;
-                        cg->exits[ex].target_pc    = tgt;
-                        cg->exits[ex].patch_offset = patch_off;
-                        cg->exits[ex].is_side_exit = false; // internal forward branch
+                    // Record in the dedicated internal branch fixup array
+                    if (cg->internal_branch_count < 16) {
+                        int idx = cg->internal_branch_count++;
+                        cg->internal_branches[idx].patch_offset = patch_off;
+                        cg->internal_branches[idx].target_pc    = tgt;
                     }
                 } else {
                     // Side-exit or out-of-region conditional branch.
@@ -496,11 +494,9 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     // ------------------------------------------------------------------
     // Post-pass: patch internal forward branches
     // ------------------------------------------------------------------
-    for (uint32_t f = 0; f < cg->exit_count; f++) {
-        if (cg->exits[f].is_side_exit) continue;
-
-        uint32_t tgt_pc = cg->exits[f].target_pc;
-        size_t patch_off = cg->exits[f].patch_offset;
+    for (uint32_t f = 0; f < cg->internal_branch_count; f++) {
+        uint32_t tgt_pc   = cg->internal_branches[f].target_pc;
+        size_t   patch_off = cg->internal_branches[f].patch_offset;
 
         // Find the first LIR node at or after the target PC
         size_t target_emit_off = (size_t)-1;
@@ -513,14 +509,14 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
         if (target_emit_off == (size_t)-1) continue;
 
         int32_t byte_disp = (int32_t)(target_emit_off - patch_off);
-        if (byte_disp % 4 != 0) continue; // must be instruction aligned
+        if (byte_disp % 4 != 0) continue;
 
         int32_t word_disp = byte_disp / 4;
 
-        // Patch the B.cond at patch_off (imm19 field is bits 23:5)
+        // Patch the B.cond at patch_off
         uint32_t *p = (uint32_t *)(cg->emit.buf + patch_off);
         uint32_t inst = *p;
-        inst &= ~0x00FFFFE0U;                    // clear 19-bit immediate
+        inst &= ~0x00FFFFE0U;
         inst |= ((uint32_t)word_disp & 0x7FFFFU) << 5;
         *p = inst;
     }

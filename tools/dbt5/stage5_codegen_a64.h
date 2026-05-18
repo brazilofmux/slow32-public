@@ -71,6 +71,13 @@ typedef struct {
         bool     is_side_exit;
     } exits[STAGE5_A64_MAX_EXITS];
 
+    // Internal forward branch fixups (for control flow that stays inside the region)
+    uint32_t internal_branch_count;
+    struct {
+        size_t   patch_offset;
+        uint32_t target_pc;
+    } internal_branches[16];   // small fixed size is fine for the narrow path
+
     // Bookkeeping
     uint32_t guest_pc;           // current guest PC being emitted
     bool     side_exits_enabled;
