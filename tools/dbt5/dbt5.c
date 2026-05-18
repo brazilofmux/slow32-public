@@ -349,11 +349,11 @@ int main(int argc, char **argv) {
     // ========================================================================
 
 #if defined(__aarch64__)
-    // Activation for the experimental A64 path (Option 1 wiring complete).
-    // Setting S5_EMIT_A64 (any value) now does:
+    // Activation for the experimental A64 pilot path (clean-room driver).
+    // Setting S5_EMIT_A64 enables:
     //   - Clean emission via stage5_codegen_a64
-    //   - Real block cache installation (translated_block_t + cache_insert)
-    //   - Immediate execution for testing
+    //   - Real block cache installation (cache_init + cache_alloc_block + cache_insert)
+    //   - Optional direct execution of the emitted code for testing/validation
     if (getenv("S5_EMIT_A64")) {
         static block_cache_t experimental_cache = {0};
         if (!cache_init(&experimental_cache)) {
@@ -381,12 +381,12 @@ int main(int argc, char **argv) {
         run_full_stage5_analysis(&region, "entry", verbose);
 
         // ------------------------------------------------------------------
-        // Experimental A64 emitter path (Option 1 wiring complete).
+        // Experimental A64 emitter path (pilot in clean-room driver).
         //
-        // Setting S5_EMIT_A64 (any non-empty value) now does the full thing:
-        //   - Emit using the clean independent backend
-        //   - Install the result into the real block cache
-        //   - Immediately execute the region for quick validation
+        // Setting S5_EMIT_A64 enables the clean independent backend to:
+        //   - Emit using stage5_codegen_a64
+        //   - Wire the result into the real block cache
+        //   - (When not using --lift-only) attempt direct execution for validation
         //
         // The global bridge g_a64_experimental_cache is populated automatically.
         // ------------------------------------------------------------------

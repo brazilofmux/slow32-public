@@ -339,14 +339,14 @@ Deleted the two never-called stubs (and their surrounding comments) in
 abandoned refactor scaffolding. The real logic remains inlined under the
 S5_EMIT_A64 path (as it has been for a long time).
 
-### C2. **CLEANUP** Stale comments overstate completeness
+### C2. **DONE** **CLEANUP** Stale comments overstate completeness
 
-Several "wiring complete" / "Option 1 wiring complete" comments in `dbt5.c`
-(lines 377-380, 408-416) claim the experimental path now does cache install
-+ execute, but B1/B2/B3/B4 show none of that works end-to-end. The README
-("Hybrid (AArch64) Progress" in `stage5-revisit.md:29`) is more accurate.
-Adjust the comments to match reality so the next reader doesn't have to
-discover B1-B4 the hard way.
+Updated the two main comments in `dbt5.c` that used "Option 1 wiring complete"
+language. They now accurately describe the pilot as "experimental A64 pilot
+path" that does clean emission + real block cache wiring + optional direct
+execution for validation.
+
+The tone is now honest about the current state without over-promising.
 
 ### C3. **CLEANUP** Misleading LIR dump for folded-immediate ADD/SUB
 
