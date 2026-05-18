@@ -43,63 +43,131 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     memset(cg->guest_in_slot, 0, sizeof(cg->guest_in_slot));
     memset(cg->slot_dirty, 0, sizeof(cg->slot_dirty));
 
-    // The RA plan tells us which values got which slots.
-    // For the prologue we only care about values that are live at entry
-    // (their live range starts at or near the beginning of the LIR).
+    // Build a quick lookup: SSA value_id → host register (for values the RA assigned)
+    a64_reg_t value_to_host[STAGE5_SSA_MAX_VALUES] = {0};
+    uint8_t   value_to_gpr [STAGE5_SSA_MAX_VALUES] = {0};
+
     for (uint16_t i = 0; i < ra_plan->interval_count; i++) {
         const stage5_ra_interval_t *iv = &ra_plan->intervals[i];
         if (iv->value_id == 0 || iv->spilled || iv->assigned_slot < 0)
             continue;
 
-        // Only consider values live at the very start of the region
-        if (iv->start_idx > 2)   // allow a tiny fudge for constants
-            continue;
-
-        uint8_t gpr = ssa->value_to_reg[iv->value_id];
-        if (gpr == 0)
-            continue;  // r0 is always zero, nothing to load
-
         int slot = iv->assigned_slot;
         if (slot >= 0 && slot < STAGE5_A64_MAX_HOST_SLOTS) {
-            // Map the canonical AArch64 register for this slot.
-            // We use a simple fixed set: W19, W20, W21, W22, W23, W24, W25, W26
-            // (avoiding the ones already used by the runtime: W20=cpu, W21=mem, etc.)
             static const a64_reg_t slot_to_host[8] = {
                 W8, W9, W10, W11, W12, W13, W14, W15
             };
-            cg->host_regs[slot]     = slot_to_host[slot];
+            a64_reg_t hreg = slot_to_host[slot];
+            uint8_t gpr = ssa->value_to_reg[iv->value_id];
+
+            cg->host_regs[slot]     = hreg;
             cg->guest_in_slot[slot] = gpr;
             cg->slot_dirty[slot]    = false;
+
+            if (iv->value_id < STAGE5_SSA_MAX_VALUES) {
+                value_to_host[iv->value_id] = hreg;
+                value_to_gpr [iv->value_id] = gpr;
+            }
         }
     }
 
     // ------------------------------------------------------------------
-    // Step 2: Emit a minimal prologue (load live-ins)
+    // Step 2: Emit a minimal prologue (load live-ins that are in registers)
     // ------------------------------------------------------------------
-    // For now we just emit the loads.  A real version will also handle
-    // constants that the RA decided to keep in registers.
     for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
         a64_reg_t hreg = cg->host_regs[s];
         uint8_t   gpr  = cg->guest_in_slot[s];
         if (hreg == A64_NOREG || gpr == 0)
             continue;
 
-        // ldr Wd, [X20, #offset_of_guest_reg(gpr)]
         emit_ldr_w32_imm(&cg->emit, hreg, W20, (uint32_t)(gpr * 4));
     }
 
     // ------------------------------------------------------------------
-    // Step 3: Handle the final terminal with proper exit recording
+    // Step 3: Walk the LIR and emit real instructions (narrow ALU first)
     // ------------------------------------------------------------------
-    // Find the last meaningful LIR node and treat it as the block terminal.
-    // For the first real version we only support direct terminals.
-    uint32_t terminal_target = region->end_pc;  // conservative default
+    for (uint32_t i = 0; i < lir->node_count; i++) {
+        const lir_node_t *n = &lir->nodes[i];
+        if (n->op == LIR_OP_NOP)
+            continue;
+
+        // For v1 we only handle ops where the destination (if any) is in one of our 8 slots.
+        a64_reg_t dst_h = (n->dst_v < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->dst_v] : A64_NOREG;
+
+        switch (n->op) {
+            case LIR_OP_MOV_RI:
+                if (dst_h != A64_NOREG) {
+                    emit_mov_w32_imm32(&cg->emit, dst_h, (uint32_t)n->imm);
+                    // mark dirty (simplified)
+                    for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
+                        if (cg->host_regs[s] == dst_h) { cg->slot_dirty[s] = true; break; }
+                    }
+                }
+                break;
+
+            case LIR_OP_MOV_RR: {
+                a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src_h != A64_NOREG) {
+                    emit_mov_w32_w32(&cg->emit, dst_h, src_h);
+                } else if (dst_h != A64_NOREG) {
+                    // Fallback: load from memory (very conservative)
+                    uint8_t gpr = value_to_gpr[n->src_v[0]];
+                    if (gpr != 0)
+                        emit_ldr_w32_imm(&cg->emit, dst_h, W20, gpr * 4);
+                }
+                break;
+            }
+
+            case LIR_OP_ADD_RI:
+                if (dst_h != A64_NOREG) {
+                    a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : dst_h;
+                    if (src_h != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src_h);
+                    if (n->imm != 0)
+                        emit_add_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)n->imm);
+                }
+                break;
+
+            case LIR_OP_ADD_RR: {
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    if (src0 != dst_h)
+                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
+                    emit_add_w32(&cg->emit, dst_h, dst_h, src1);
+                }
+                break;
+            }
+
+            // More ops will be added in the next slices (SUB, AND, loads, etc.)
+
+            default:
+                // For now we silently skip unsupported ops in this narrow path.
+                // A real version will return false or fall back when it hits something it can't handle.
+                break;
+        }
+
+        // Very rough dirty tracking for the dest
+        if (n->dst_v != 0 && dst_h != A64_NOREG) {
+            // find which slot this dst_h lives in (slow but fine for early version)
+            for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
+                if (cg->host_regs[s] == dst_h) {
+                    cg->slot_dirty[s] = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Step 4: Terminal (same as before, with exit recording)
+    // ------------------------------------------------------------------
+    uint32_t terminal_target = region->end_pc;
     bool     has_terminal    = false;
 
     for (int i = (int)lir->node_count - 1; i >= 0; i--) {
         const lir_node_t *last = &lir->nodes[i];
-        if (last->op == LIR_OP_NOP)
-            continue;
+        if (last->op == LIR_OP_NOP) continue;
 
         if (last->op == LIR_OP_JMP || last->op == LIR_OP_CALL) {
             terminal_target = last->guest_pc + 4 + last->imm;
@@ -107,27 +175,21 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             break;
         }
         if (last->op == LIR_OP_RET || last->op == LIR_OP_SYSCALL) {
-            // These are special (return to dispatcher or syscall)
-            terminal_target = 0;   // special marker for now
+            terminal_target = 0;
             has_terminal = true;
             break;
         }
     }
 
-    // Record the exit so the runtime can patch it later.
     if (has_terminal && cg->exit_count < STAGE5_A64_MAX_EXITS) {
         int ex = cg->exit_count++;
-        cg->exits[ex].target_pc   = terminal_target;
+        cg->exits[ex].target_pc    = terminal_target;
         cg->exits[ex].patch_offset = emit_offset(&cg->emit);
         cg->exits[ex].is_side_exit = false;
     }
 
-    // Emit a placeholder branch (displacement 0 for now).
-    // A real implementation will either:
-    //   - emit a direct relative branch if the target is known and close, or
-    //   - emit a branch to a shared dispatcher stub.
-    emit_b(&cg->emit, 0);   // placeholder — will be patched by the runtime
+    emit_b(&cg->emit, 0);   // placeholder branch
 
     stage5_codegen_a64_success++;
-    return true;   // We emitted something real with exit recording!
+    return true;
 }
