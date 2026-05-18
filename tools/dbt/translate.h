@@ -101,8 +101,6 @@ typedef struct {
     bool avoid_backedge_extend;  // Study-only guard: don't extend across back-edges
     bool peephole_enabled;       // Peephole optimize emitted host code
     bool strict_carry;           // Guardrail: disable carry-sensitive fusion paths
-    bool stage5_burg_enabled;    // Stage 5 hook toggle (disabled by default)
-    bool stage5_emit_enabled;    // Stage 5 pilot emission toggle (disabled by default)
 
     // Stage 5: Per-block register allocation (8-slot LRU demand-driven)
     bool reg_cache_enabled;

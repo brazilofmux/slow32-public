@@ -8,7 +8,6 @@
 #include "shadow_interp.h"
 #include "stage5_lift.h"
 #include "stage5_burg.h"
-#include "stage5_codegen.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,27 +62,6 @@ static stage5_side_exit_mode_t stage5_side_exit_mode(void) { return STAGE5_SIDE_
 static stage5_side_exit_unsigned_mode_t stage5_side_exit_unsigned_mode(void) { return STAGE5_SIDE_EXIT_UNSIGNED_BOTH; }
 
 static inline bool stage5_side_exit_opcode_supported(uint8_t opcode);
-
-static bool stage5_side_exit_trace_enabled(void) { return false; }
-
-static int stage5_side_exit_trace_budget(void) { return 0; }
-
-static void stage5_side_exit_trace_emit(uint8_t opcode,
-                                        uint8_t rs1,
-                                        uint8_t rs2,
-                                        int32_t imm,
-                                        uint32_t branch_pc,
-                                        uint32_t fall_pc,
-                                        uint32_t taken_pc) {
-    static int emitted = 0;
-    if (!stage5_side_exit_trace_enabled()) return;
-    int budget = stage5_side_exit_trace_budget();
-    if (emitted >= budget) return;
-    emitted++;
-    fprintf(stderr,
-            "stage5-side-exit pc=0x%08X op=0x%02X rs1=%u rs2=%u imm=%d fall=0x%08X taken=0x%08X\n",
-            branch_pc, opcode, rs1, rs2, imm, fall_pc, taken_pc);
-}
 
 static void stage5_trace_deferred_exit(const char *phase,
                                        const translate_ctx_t *ctx,
@@ -185,18 +163,6 @@ static inline bool stage5_side_exit_opcode_supported(uint8_t opcode) {
     return false;
 }
 
-static bool stage5_region_side_exits_supported(const stage5_lift_region_t *region) {
-    if (!region || region->side_exit_count == 0) return true;
-    uint32_t seen = 0;
-    for (uint32_t i = 0; i < region->ir_count; i++) {
-        const stage5_ir_node_t *n = &region->ir[i];
-        if (!n->is_side_exit) continue;
-        if (!stage5_side_exit_supported(n)) return false;
-        seen++;
-    }
-    return seen == region->side_exit_count;
-}
-
 static inline uint64_t stage5_now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -257,208 +223,7 @@ static inline bool stage5_emit_single_terminal(translate_ctx_t *ctx,
 }
 
 
-// Match BEQ/BNE x,r0 (or r0,x) to a prior non-synthetic compare producing x,
-// with no intervening clobber of x.
-static int stage5_find_cmp_branch_zero_cmp_idx(const stage5_lift_region_t *region,
-                                               int branch_idx) {
-    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) {
-        return -1;
-    }
-    const stage5_ir_node_t *b = &region->ir[branch_idx];
-    if (b->kind != STAGE5_IR_BRANCH) return -1;
-    if (b->opcode != OP_BEQ && b->opcode != OP_BNE) return -1;
 
-    uint8_t cmp_rd = 0;
-    if (b->rs1 == 0 && b->rs2 != 0) cmp_rd = b->rs2;
-    else if (b->rs2 == 0 && b->rs1 != 0) cmp_rd = b->rs1;
-    else return -1;
-
-    for (int i = branch_idx - 1; i >= 0; i--) {
-        const stage5_ir_node_t *n = &region->ir[i];
-        if (n->synthetic) continue;
-        // Do not fuse across an intervening control-flow boundary.
-        if (n->kind == STAGE5_IR_BRANCH) return -1;
-        if (n->rd == cmp_rd &&
-            n->kind == STAGE5_IR_CMP &&
-            (n->opcode == OP_SLT || n->opcode == OP_SLTU || n->opcode == OP_SEQ ||
-             n->opcode == OP_SNE || n->opcode == OP_SGT || n->opcode == OP_SGTU ||
-             n->opcode == OP_SLE || n->opcode == OP_SLEU || n->opcode == OP_SGE ||
-             n->opcode == OP_SGEU || n->opcode == OP_SLTI || n->opcode == OP_SLTIU)) {
-            return i;
-        }
-        if (n->rd == cmp_rd) return -1;
-    }
-    return -1;
-}
-
-static bool stage5_reg_is_const01_before(const stage5_lift_region_t *region,
-                                         int use_idx, uint8_t reg, int want) {
-    if (reg == 0) return want == 0;
-    for (int i = use_idx - 1; i >= 0; i--) {
-        const stage5_ir_node_t *n = &region->ir[i];
-        if (n->synthetic) continue;
-        if (n->rd != reg) continue;
-        if (n->opcode == OP_ADDI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) return n->imm == want;
-        if (n->opcode == OP_ORI  && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) return n->imm == want;
-        if (n->opcode == OP_XORI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) return n->imm == want;
-        if (n->opcode == OP_LUI  && n->imm == 0) return want == 0;
-        return false;
-    }
-    return false;
-}
-
-static int stage5_find_cmp_branch_const01_cmp_idx(const stage5_lift_region_t *region,
-                                                  int branch_idx,
-                                                  uint8_t *branch_opcode_out) {
-    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) return -1;
-    const stage5_ir_node_t *b = &region->ir[branch_idx];
-    if (b->kind != STAGE5_IR_BRANCH) return -1;
-    if (b->opcode != OP_BEQ && b->opcode != OP_BNE) return -1;
-    if (branch_opcode_out) *branch_opcode_out = b->opcode;
-
-    int k1 = -1, k2 = -1;
-    bool rs1_const = stage5_reg_is_const01_before(region, branch_idx, b->rs1, 0) ||
-                     stage5_reg_is_const01_before(region, branch_idx, b->rs1, 1);
-    bool rs2_const = stage5_reg_is_const01_before(region, branch_idx, b->rs2, 0) ||
-                     stage5_reg_is_const01_before(region, branch_idx, b->rs2, 1);
-    if (rs1_const) {
-        if (stage5_reg_is_const01_before(region, branch_idx, b->rs1, 0)) k1 = 0;
-        else if (stage5_reg_is_const01_before(region, branch_idx, b->rs1, 1)) k1 = 1;
-    }
-    if (rs2_const) {
-        if (stage5_reg_is_const01_before(region, branch_idx, b->rs2, 0)) k2 = 0;
-        else if (stage5_reg_is_const01_before(region, branch_idx, b->rs2, 1)) k2 = 1;
-    }
-
-    uint8_t cmp_rd = 0;
-    int const_k = -1;
-    if ((k1 == 0 || k1 == 1) && b->rs2 != 0) { cmp_rd = b->rs2; const_k = k1; }
-    else if ((k2 == 0 || k2 == 1) && b->rs1 != 0) { cmp_rd = b->rs1; const_k = k2; }
-    else return -1;
-    if (cmp_rd == 0) return -1;
-
-    for (int i = branch_idx - 1; i >= 0; i--) {
-        const stage5_ir_node_t *n = &region->ir[i];
-        if (n->synthetic) continue;
-        if (n->kind == STAGE5_IR_BRANCH) return -1;
-        if (n->rd == cmp_rd &&
-            n->kind == STAGE5_IR_CMP &&
-            (n->opcode == OP_SLT || n->opcode == OP_SLTU || n->opcode == OP_SEQ ||
-             n->opcode == OP_SNE || n->opcode == OP_SGT || n->opcode == OP_SGTU ||
-             n->opcode == OP_SLE || n->opcode == OP_SLEU || n->opcode == OP_SGE ||
-             n->opcode == OP_SGEU || n->opcode == OP_SLTI || n->opcode == OP_SLTIU)) {
-            if (branch_opcode_out && const_k == 1) {
-                *branch_opcode_out = (b->opcode == OP_BEQ) ? OP_BNE : OP_BEQ;
-            }
-            return i;
-        }
-        if (n->rd == cmp_rd) return -1;
-    }
-    return -1;
-}
-
-static int stage5_find_cmp_branch_xor1_cmp_idx(const stage5_lift_region_t *region,
-                                               int branch_idx,
-                                               uint8_t *branch_opcode_out,
-                                               int *extra_skip_idx_out) {
-    if (!region || branch_idx <= 1 || branch_idx >= (int)region->ir_count) return -1;
-    const stage5_ir_node_t *b = &region->ir[branch_idx];
-    if (b->kind != STAGE5_IR_BRANCH) return -1;
-    if (b->opcode != OP_BEQ && b->opcode != OP_BNE) return -1;
-    if (branch_opcode_out) *branch_opcode_out = b->opcode;
-    if (extra_skip_idx_out) *extra_skip_idx_out = -1;
-
-    uint8_t pred_rd = 0;
-    if (b->rs1 == 0 && b->rs2 != 0) pred_rd = b->rs2;
-    else if (b->rs2 == 0 && b->rs1 != 0) pred_rd = b->rs1;
-    else return -1;
-
-    int xor_idx = -1;
-    for (int i = branch_idx - 1; i >= 0; i--) {
-        const stage5_ir_node_t *n = &region->ir[i];
-        if (n->synthetic) continue;
-        if (n->kind == STAGE5_IR_BRANCH) return -1;
-        if (n->rd == pred_rd) {
-            if (n->opcode == OP_XOR) xor_idx = i;
-            break;
-        }
-    }
-    if (xor_idx < 0) return -1;
-    const stage5_ir_node_t *x = &region->ir[xor_idx];
-    if (x->rs1 == 0 || x->rs2 == 0) return -1;
-
-    uint8_t cmp_rd = 0;
-    if (stage5_reg_is_const01_before(region, xor_idx, x->rs1, 1)) cmp_rd = x->rs2;
-    else if (stage5_reg_is_const01_before(region, xor_idx, x->rs2, 1)) cmp_rd = x->rs1;
-    else return -1;
-
-    int cmp_idx = -1;
-    for (int i = xor_idx - 1; i >= 0; i--) {
-        const stage5_ir_node_t *n = &region->ir[i];
-        if (n->synthetic) continue;
-        if (n->kind == STAGE5_IR_BRANCH) return -1;
-        if (n->rd == cmp_rd) {
-            if (n->kind == STAGE5_IR_CMP &&
-                (n->opcode == OP_SLT || n->opcode == OP_SLTU || n->opcode == OP_SEQ ||
-                 n->opcode == OP_SNE || n->opcode == OP_SGT || n->opcode == OP_SGTU ||
-                 n->opcode == OP_SLE || n->opcode == OP_SLEU || n->opcode == OP_SGE ||
-                 n->opcode == OP_SGEU || n->opcode == OP_SLTI || n->opcode == OP_SLTIU)) {
-                cmp_idx = i;
-            }
-            break;
-        }
-    }
-    if (cmp_idx < 0) return -1;
-    if (branch_opcode_out) {
-        *branch_opcode_out = (b->opcode == OP_BEQ) ? OP_BNE : OP_BEQ;
-    }
-    if (extra_skip_idx_out) *extra_skip_idx_out = xor_idx;
-    return cmp_idx;
-}
-
-static int stage5_find_cmp_branch_fused_info(const stage5_lift_region_t *region,
-                                             int branch_idx,
-                                             stage5_burg_pattern_t pattern,
-                                             uint8_t *branch_opcode_out,
-                                             int *extra_skip_idx_out) {
-    if (branch_opcode_out && region && branch_idx >= 0 && branch_idx < (int)region->ir_count) {
-        *branch_opcode_out = region->ir[branch_idx].opcode;
-    }
-    if (extra_skip_idx_out) *extra_skip_idx_out = -1;
-    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
-        return stage5_find_cmp_branch_zero_cmp_idx(region, branch_idx);
-    }
-    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01) {
-        return stage5_find_cmp_branch_const01_cmp_idx(region, branch_idx, branch_opcode_out);
-    }
-    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
-        return stage5_find_cmp_branch_xor1_cmp_idx(region, branch_idx, branch_opcode_out, extra_skip_idx_out);
-    }
-    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR) {
-        return -1;  // branch emitted via terminal path (no fused cmp node)
-    }
-    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP) {
-        return -1;  // branch emitted via terminal path (no fused cmp node)
-    }
-    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
-        return -1;  // branch emitted via terminal path (no fused cmp node)
-    }
-    return -1;
-}
-
-// Map SLOW-32 branch opcode to x86 inverted condition code (for side-exit skip).
-// The inverted CC means: skip trampoline when branch is NOT taken.
-static uint8_t stage5_branch_inv_cc(uint8_t opcode) {
-    switch (opcode) {
-        case 0x48: return 0x05;  // BEQ → inv JNE (skip if !=)
-        case 0x49: return 0x04;  // BNE → inv JE  (skip if ==)
-        case 0x4A: return 0x0D;  // BLT → inv JGE (skip if >=)
-        case 0x4B: return 0x0C;  // BGE → inv JL  (skip if <)
-        case 0x4C: return 0x03;  // BLTU → inv JAE (skip if >=u)
-        case 0x4D: return 0x02;  // BGEU → inv JB  (skip if <u)
-        default:   return 0xFF;
-    }
-}
 
 // Pick two scratch GPRs for compare materialization, preferring regs that
 // won't clobber an active pending write.
@@ -676,133 +441,6 @@ static inline bool stage5_translate_beq_compact(translate_ctx_t *ctx,
     return true;
 }
 
-// BURG-native fused compare+branch emitter.
-// Emits CMP + Jcc directly without materializing the 0/1 intermediate into rd.
-// Handles: SLT/SLTU/SEQ/SNE/SGT/SGTU/SLE/SLEU/SGE/SGEU + BEQ/BNE rd,r0
-//          SLTI/SLTIU + BEQ/BNE rd,r0
-//
-// The compare rd is dead (only consumed by the branch); we skip SETcc+MOVZX+store.
-// If rd is live (used later), the caller must NOT use this path.
-static bool stage5_emit_cmp_branch_fused(translate_ctx_t *ctx,
-                                         uint8_t cmp_opcode,
-                                         uint8_t cmp_rs1, uint8_t cmp_rs2,
-                                         int32_t cmp_imm, bool cmp_is_imm,
-                                         uint8_t branch_opcode,
-                                         int32_t branch_imm,
-                                         uint32_t branch_pc) {
-    emit_ctx_t *e = &ctx->emit;
-    uint32_t fall_pc = branch_pc + 4;
-    uint32_t taken_pc = fall_pc + branch_imm;
-
-    if (ctx->block) {
-        ctx->block->flags |= BLOCK_FLAG_DIRECT;
-    }
-
-    if (ctx->pending_cond.valid) {
-        flush_pending_cond(ctx);
-    }
-
-    // 1. Emit the comparison operand loads + CMP.
-    if (ctx->reg_cache_enabled) {
-        if (cmp_is_imm) {
-            x64_reg_t h1 = rc_read(ctx, cmp_rs1);
-            emit_cmp_r32_imm32(e, h1, cmp_imm);
-        } else {
-            x64_reg_t h1 = rc_read(ctx, cmp_rs1);
-            x64_reg_t h2 = rc_read(ctx, cmp_rs2);
-            emit_cmp_r32_r32(e, h1, h2);
-        }
-    } else if (cmp_is_imm) {
-        // SLTI/SLTIU: compare rs1 against immediate
-        emit_load_guest_reg(ctx, RAX, cmp_rs1);
-        emit_cmp_r32_imm32(e, RAX, cmp_imm);
-    } else {
-        // Register-register compare
-        emit_load_guest_reg(ctx, RAX, cmp_rs1);
-        emit_load_guest_reg(ctx, RCX, cmp_rs2);
-        emit_cmp_r32_r32(e, RAX, RCX);
-    }
-
-    // 2. Map cmp_opcode + branch_condition → x86 Jcc.
-    //    SLT + BNE(rd,r0) → "if (rs1 < rs2) jump" → JL
-    //    SLT + BEQ(rd,r0) → "if !(rs1 < rs2) jump" → JGE
-    bool is_bne = (branch_opcode == OP_BNE);
-    uint8_t taken_cc = 0, fall_cc = 0;
-
-    switch (cmp_opcode) {
-        case OP_SLT:  case OP_SLTI:
-            taken_cc = is_bne ? 0x8C : 0x8D;  // JL : JGE
-            fall_cc  = is_bne ? 0x8D : 0x8C;
-            break;
-        case OP_SLTU: case OP_SLTIU:
-            taken_cc = is_bne ? 0x82 : 0x83;  // JB : JAE
-            fall_cc  = is_bne ? 0x83 : 0x82;
-            break;
-        case OP_SEQ:
-            taken_cc = is_bne ? 0x84 : 0x85;  // JE : JNE
-            fall_cc  = is_bne ? 0x85 : 0x84;
-            break;
-        case OP_SNE:
-            taken_cc = is_bne ? 0x85 : 0x84;  // JNE : JE
-            fall_cc  = is_bne ? 0x84 : 0x85;
-            break;
-        case OP_SGT:
-            taken_cc = is_bne ? 0x8F : 0x8E;  // JG : JLE
-            fall_cc  = is_bne ? 0x8E : 0x8F;
-            break;
-        case OP_SGTU:
-            taken_cc = is_bne ? 0x87 : 0x86;  // JA : JBE
-            fall_cc  = is_bne ? 0x86 : 0x87;
-            break;
-        case OP_SLE:
-            taken_cc = is_bne ? 0x8E : 0x8F;  // JLE : JG
-            fall_cc  = is_bne ? 0x8F : 0x8E;
-            break;
-        case OP_SLEU:
-            taken_cc = is_bne ? 0x86 : 0x87;  // JBE : JA
-            fall_cc  = is_bne ? 0x87 : 0x86;
-            break;
-        case OP_SGE:
-            taken_cc = is_bne ? 0x8D : 0x8C;  // JGE : JL
-            fall_cc  = is_bne ? 0x8C : 0x8D;
-            break;
-        case OP_SGEU:
-            taken_cc = is_bne ? 0x83 : 0x82;  // JAE : JB
-            fall_cc  = is_bne ? 0x82 : 0x83;
-            break;
-        default:
-            return false;
-    }
-
-    void (*emit_jcc_taken)(emit_ctx_t *, int32_t) =
-        (emit_jcc_fn_t)emit_jcc_rel32_from_cc(taken_cc);
-    if (!emit_jcc_taken) return false;
-
-    // 3. Emit branch exits.
-    //    Layout: Jcc taken → fall-through exit → taken exit
-    size_t jcc_patch = emit_offset(e) + 2;  // After 0F XX
-    emit_jcc_taken(e, 0);  // Placeholder
-
-    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
-        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
-    }
-    emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
-
-    size_t taken_offset = emit_offset(e);
-    emit_patch_rel32(e, jcc_patch, taken_offset);
-    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
-        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
-    }
-    emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
-
-    (void)fall_cc;  // reserved for future inv_cc usage
-    return true;
-}
-
-// ============================================================================
-// Bridge functions for stage5_codegen.c
-// Expose static functions needed by the native codegen.
-// ============================================================================
 
 // Forward declarations (defined below)
 static void emit_exit_with_info_reg(translate_ctx_t *ctx, exit_reason_t reason,
@@ -811,9 +449,6 @@ static void reg_cache_flush(translate_ctx_t *ctx);
 static void flush_cached_host_regs(translate_ctx_t *ctx, x64_reg_t r1, x64_reg_t r2);
 static void emit_indirect_lookup(translate_ctx_t *ctx, x64_reg_t target_reg);
 static void emit_ras_predict(translate_ctx_t *ctx, x64_reg_t target_reg);
-
-// Stage 5 bridge functions removed — Stage 5 codegen is now fully self-contained.
-// All x86-64 emission uses emit_x64.h + block_cache.h directly.
 
 // ============================================================================
 // Instruction decoding
@@ -950,98 +585,6 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
     ctx->block = NULL;
 }
 
-static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
-    if (!ctx->stage5_burg_enabled || !ctx->stage5_emit_enabled) {
-        return false;
-    }
-
-    // Lift region
-    stage5_lift_region_t region;
-    stage5_lift_region_init(&region, guest_pc);
-    if (!stage5_lift_superblock(&region, ctx->cpu->mem_base, ctx->cpu->code_limit,
-                                STAGE5_LIFT_BUDGET)) {
-        fprintf(stderr,
-                "stage5-fail pc=0x%08X step=lift reason=%s insts=%u nodes=%u unsupported=0x%02X\n",
-                guest_pc, stage5_lift_reason_str(region.reason),
-                region.guest_inst_count, region.node_count, region.unsupported_opcode);
-        return false;
-    }
-
-    // BURG pattern selection
-    stage5_burg_result_t result;
-    stage5_burg_result_init(&result);
-    if (!stage5_burg_select(&region, &result) || !result.selected) {
-        fprintf(stderr,
-                "stage5-fail pc=0x%08X step=burg reason=%s insts=%u nodes=%u terminal=%u budget_end=%u\n",
-                guest_pc, stage5_burg_reason_str(result.reason),
-                region.guest_inst_count, region.node_count,
-                region.has_terminal_branch ? 1u : 0u,
-                region.ended_by_budget ? 1u : 0u);
-        return false;
-    }
-
-    stage5_burg_pattern_t emitted_pattern = result.pattern;
-    bool synth_block_end = (result.pattern == STAGE5_BURG_PATTERN_BLOCK_END);
-
-    if ((!region.has_terminal_branch && !synth_block_end) || region.guest_inst_count == 0) {
-        fprintf(stderr,
-                "stage5-fail pc=0x%08X step=cover pattern=%s terminal=%u synth=%u insts=%u\n",
-                guest_pc, stage5_burg_pattern_str(result.pattern),
-                region.has_terminal_branch ? 1u : 0u,
-                synth_block_end ? 1u : 0u, region.guest_inst_count);
-        return false;
-    }
-
-    // Find terminal instruction and fuse candidate
-    int terminal_idx = -1;
-    for (int i = (int)region.ir_count - 1; i >= 0; i--) {
-        if (region.ir[i].synthetic) continue;
-        switch (region.ir[i].opcode) {
-            case OP_JAL: case OP_JALR: case OP_HALT: case OP_DEBUG: case OP_YIELD:
-            case OP_BEQ: case OP_BNE: case OP_BLT: case OP_BGE: case OP_BLTU: case OP_BGEU:
-                terminal_idx = i;
-                i = -1;
-                break;
-            default:
-                break;
-        }
-    }
-
-    uint8_t fuse_branch_opcode = 0;
-    int fuse_extra_skip_idx = -1;
-    int fuse_cmp_idx = stage5_find_cmp_branch_fused_info(&region, terminal_idx,
-                                                         emitted_pattern,
-                                                         &fuse_branch_opcode,
-                                                         &fuse_extra_skip_idx);
-
-    // Side-exit policy
-    bool side_exit_enabled = stage5_region_side_exits_supported(&region);
-
-    // Stage 5 codegen: SSA → RA → native x86-64 emission.
-    // On failure, the caller treats this as fatal in Stage 5 mode.
-    if (getenv("S5_REGDUMP")) {
-        fprintf(stderr, "[S5-LIFT] pc=0x%08X insts=%u ir=%u term_idx=%d fuse_cmp=%d pattern=%s side_exits=%u\n",
-                guest_pc, region.guest_inst_count, region.ir_count,
-                terminal_idx, fuse_cmp_idx, stage5_burg_pattern_str(emitted_pattern),
-                region.side_exit_count);
-        for (unsigned i = 0; i < region.ir_count; i++) {
-            fprintf(stderr, "  ir[%u] pc=0x%04X op=0x%02X rd=%u rs1=%u rs2=%u imm=%d%s\n",
-                    i, region.ir[i].pc, region.ir[i].opcode,
-                    region.ir[i].rd, region.ir[i].rs1, region.ir[i].rs2,
-                    region.ir[i].imm, region.ir[i].synthetic ? " (synth)" : "");
-        }
-    }
-    if (!stage5_codegen(ctx, &region, guest_pc,
-                        terminal_idx, fuse_cmp_idx, emitted_pattern,
-                        synth_block_end, side_exit_enabled)) {
-        fprintf(stderr,
-                "stage5-fail pc=0x%08X step=codegen pattern=%s term_idx=%d fuse_cmp=%d side_exits=%u\n",
-                guest_pc, stage5_burg_pattern_str(emitted_pattern),
-                terminal_idx, fuse_cmp_idx, region.side_exit_count);
-        return false;
-    }
-    return true;
-}
 
 // ============================================================================
 // Stage 5: Per-block register allocation (8-slot fully-associative)
@@ -6229,46 +5772,6 @@ retry_translate:
     translate_reset_for_block(ctx, guest_pc);
     ctx->block = block;
     ctx->exit_idx = 0;
-
-    // ================================================================
-    // Stage 5: completely separate codegen path.
-    // Stage 5 has its own SSA/RA/LIR pipeline and its own live-in
-    // loading, deferred exit stubs, and block finalization.
-    // It MUST NOT flow through any Stage 4 code (reg_alloc, peephole,
-    // nop-compact, deferred_side_exits, back-edge retry, etc.).
-    // ================================================================
-    bool s5_fast_skip = false;
-    if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
-        // Fast-path skip: don't even try Stage 5 for tiny blocks (1 inst).
-        // These are usually JALR returns or simple jump stubs.
-        uint32_t first_raw = *(uint32_t *)(cpu->mem_base + guest_pc);
-        uint8_t first_op = first_raw & 0x7F;
-        bool single_inst = false;
-        if (first_op == OP_JAL || first_op == OP_JALR || 
-            first_op == OP_HALT || first_op == OP_DEBUG || first_op == OP_YIELD) {
-            single_inst = true;
-        }
-        
-        if (!single_inst) {
-            uint64_t t0 = stage5_now_ns();
-            bool stage5_emitted = stage5_try_emit_pilot(ctx, guest_pc);
-            uint64_t dt = stage5_now_ns() - t0;
-            if (stage5_emitted) {
-                // Stage 5 finalization — completely separate from Stage 4.
-                // block->flags and block->guest_size already set by stage5_codegen.
-                block->host_size = emit_offset(e);
-                stage5_trace_translated_block(ctx, block);
-                stage5_trace_translated_block_guest_words(ctx, block);
-                stage5_trace_translated_block_host_bytes(ctx, block);
-                cache_commit_code(cache, block->host_size);
-                cache_insert(cache, block);
-                cache_chain_incoming(cache, block);
-                ctx->block = NULL;
-                ctx->superblock_enabled = saved_superblock_enabled;
-                return block;
-            }
-        }
-    }
 
     // ================================================================
     // Stage 4: reg-alloc prologue and instruction-by-instruction translation

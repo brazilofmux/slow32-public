@@ -25,31 +25,6 @@
 #include "cpu_state.h"
 #include "translate.h"
 #include "block_cache.h"
-#include "stage5_burg.h"
-#include "stage5_ssa.h"
-#include "stage5_ra.h"
-#if defined(__aarch64__)
-uint32_t stage5_codegen_attempted = 0;
-uint32_t stage5_codegen_success = 0;
-uint32_t stage5_codegen_fallback = 0;
-uint32_t stage5_codegen_fallback_emit_node = 0;
-uint32_t stage5_lift_attempted_a64 = 0;
-uint32_t stage5_lift_success_a64 = 0;
-uint32_t stage5_lift_too_large_a64 = 0;
-uint32_t stage5_lift_unsupported_a64 = 0;
-uint32_t stage5_backedges_seeded_a64 = 0;  // Hybrid Option A: lifter gave us extra/more-accurate back-edges than heuristic prescan
-uint32_t stage5_a64_pilot_attempted = 0;
-uint32_t stage5_a64_pilot_would_own = 0;
-uint32_t stage5_a64_pilot_fallback = 0;
-uint32_t stage5_a64_real_owned = 0;   // blocks actually emitted by the real Stage 5 A64 path (narrow owning)
-uint32_t stage5_a64_internal_branches_patched = 0;  // real B.cond internal jumps emitted via fixup patching
-
-// Narrow rejection histogram (defined in translate_a64.c)
-void stage5_narrow_maybe_print_rejection_histogram(void);
-
-#else
-#include "stage5_codegen.h"
-#endif
 
 // Reuse components from the emulator
 #include "../emulator/s32x_loader.h"
@@ -74,8 +49,6 @@ static bool peephole_enabled = true;
 static bool superblock_enabled = true;
 static bool reg_cache_enabled = true;
 static bool strict_carry_enabled = false;
-static bool stage5_burg_hook_enabled = false;
-static bool stage5_emit_hook_enabled = false;
 static bool align_traps_enabled = false;
 static bool intrinsics_disabled = false;
 static bool bounds_checks_disabled = false;
@@ -1715,9 +1688,8 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     }
 }
 
-// Stage 4/5 dispatcher (with superblock extension)
-static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
-                               bool strict_carry, bool stage5_mode) {
+// Stage 4 dispatcher (with superblock extension)
+static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
     ctx.inline_lookup_enabled = !(paranoid_mode || dbt_no_chain);
@@ -1728,9 +1700,7 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
     ctx.avoid_backedge_extend = avoid_backedge_extend;
     ctx.peephole_enabled = paranoid_mode ? false : peephole_enabled;
     ctx.reg_cache_enabled = paranoid_mode ? false : reg_cache_enabled;
-    ctx.strict_carry = strict_carry;
-    ctx.stage5_burg_enabled = stage5_mode && stage5_burg_hook_enabled;
-    ctx.stage5_emit_enabled = stage5_mode && stage5_emit_hook_enabled;
+    ctx.strict_carry = strict_carry_enabled;
     uint64_t dispatch_iter = 0;
 
     while (!cpu->halted) {
@@ -1897,15 +1867,6 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
     }
 }
 
-static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
-    run_dbt_stage4plus(cpu, cache, strict_carry_enabled, false);
-}
-
-static void run_dbt_stage5(dbt_cpu_state_t *cpu, block_cache_t *cache) {
-    // Stage 5 starts from Stage 4 pipeline with strict carry-flag guardrails.
-    run_dbt_stage4plus(cpu, cache, true, true);
-}
-
 // ============================================================================
 // Main
 // ============================================================================
@@ -1924,7 +1885,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -S        Toggle superblock expansion (default: on)\n");
     fprintf(stderr, "  -R        Toggle fixed register cache (default: on)\n");
     fprintf(stderr, "  -C        Enable strict carry guardrails (disable unsigned cmp-branch fusion)\n");
-    fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4/5 only)\n");
+    fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4 only)\n");
     fprintf(stderr, "  -M <n>    Min samples before using side-exit rate\n");
     fprintf(stderr, "  -T <pct>  Max taken %% to allow superblock extension\n");
     fprintf(stderr, "  -d [N]    Dump top N hot blocks with guest+host disassembly (default 5)\n");
@@ -1938,7 +1899,6 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
     fprintf(stderr, "  -4        Use Stage 4 mode (superblock extension, default)\n");
-    fprintf(stderr, "  -5        Use Stage 5 mode (SSA/BURG/RA compiler backend)\n");
     fprintf(stderr, "  --allow <list>  Only allow these MMIO services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>   Deny these MMIO services (comma-separated)\n");
     fprintf(stderr, "  --paranoid            Lockstep shadow interpreter (verify every block)\n");
@@ -2108,12 +2068,6 @@ int main(int argc, char **argv) {
                 case 'C':
                     strict_carry_enabled = true;
                     break;
-                case 'G':
-                    stage5_burg_hook_enabled = true;
-                    break;
-                case 'W':
-                    stage5_emit_hook_enabled = true;
-                    break;
                 case 'I':
                     intrinsics_disabled = true;
                     break;
@@ -2182,9 +2136,6 @@ int main(int argc, char **argv) {
                 case '4':
                     stage = 4;
                     break;
-                case '5':
-                    stage = 5;
-                    break;
                 default:
                     fprintf(stderr, "Unknown option: %s\n", argv[i]);
                     usage(argv[0]);
@@ -2203,13 +2154,6 @@ int main(int argc, char **argv) {
     if (!filename) {
         usage(argv[0]);
         return 1;
-    }
-
-    // Derive Stage 5 sub-options from stage selection.
-    if (stage >= 5) {
-        strict_carry_enabled = true;
-        stage5_burg_hook_enabled = true;
-        stage5_emit_hook_enabled = true;
     }
 
     if (emit_trace && emit_trace_pc == 0 && dump_pc != 0) {
@@ -2249,7 +2193,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "  Stage:        %d\n", stage);
         if (stage >= 4 || strict_carry_enabled) {
             fprintf(stderr, "  Strict carry: %s\n",
-                    (stage == 5 || strict_carry_enabled) ? "enabled" : "disabled");
+                    strict_carry_enabled ? "enabled" : "disabled");
         }
         if (cpu.intrinsics_enabled) {
             fprintf(stderr, "  Intrinsics:   enabled\n");
@@ -2337,11 +2281,7 @@ int main(int argc, char **argv) {
         bool saved_profile = profile_timing;
         profile_timing = false;
         profile_side_exits = true;
-        if (stage == 5) {
-            run_dbt_stage5(&cpu, &cache);
-        } else {
-            run_dbt_stage4(&cpu, &cache);
-        }
+        run_dbt_stage4(&cpu, &cache);
         profile_side_exits = false;
         profile_timing = saved_profile;
         if (verbose) {
@@ -2429,8 +2369,6 @@ int main(int argc, char **argv) {
         run_dbt_stage2(&cpu, &cache);
     } else if (stage == 3) {
         run_dbt_stage3(&cpu, &cache);
-    } else if (stage == 5) {
-        run_dbt_stage5(&cpu, &cache);
     } else {
         run_dbt_stage4(&cpu, &cache);
     }
@@ -2523,42 +2461,6 @@ int main(int argc, char **argv) {
         if (native_stub_count > 0) {
             fprintf(stderr, "Native intrinsic stubs: %" PRIu32 "\n", native_stub_count);
         }
-
-        if (stage5_codegen_attempted > 0 || stage5_codegen_success > 0) {
-            fprintf(stderr, "Stage5 codegen attempted: %" PRIu32 "\n", stage5_codegen_attempted);
-            fprintf(stderr, "Stage5 codegen success:   %" PRIu32 "\n", stage5_codegen_success);
-            fprintf(stderr, "Stage5 codegen fallback:  %" PRIu32 "\n", stage5_codegen_fallback);
-            if (stage5_codegen_fallback_emit_node > 0) {
-                fprintf(stderr, "  codegen emit_node:      %" PRIu32 "\n",
-                        stage5_codegen_fallback_emit_node);
-            }
-        }
-
-#if defined(__aarch64__)
-        if (stage5_lift_attempted_a64 > 0) {
-            fprintf(stderr, "Stage5 A64 lift attempted: %" PRIu32 "\n", stage5_lift_attempted_a64);
-            fprintf(stderr, "Stage5 A64 lift success:   %" PRIu32 "\n", stage5_lift_success_a64);
-            fprintf(stderr, "Stage5 A64 lift too-large: %" PRIu32 "  unsupported-op: %" PRIu32 "\n",
-                    stage5_lift_too_large_a64, stage5_lift_unsupported_a64);
-            if (stage5_backedges_seeded_a64 > 0) {
-                fprintf(stderr, "Stage5 A64 back-edges seeded from lifter: %" PRIu32 "\n",
-                        stage5_backedges_seeded_a64);
-            }
-            if (stage5_a64_pilot_attempted > 0) {
-                fprintf(stderr, "Stage5 A64 pilot attempted: %" PRIu32 "  would-own: %" PRIu32 "  fallback: %" PRIu32 "\n",
-                        stage5_a64_pilot_attempted, stage5_a64_pilot_would_own, stage5_a64_pilot_fallback);
-            }
-            if (stage5_a64_real_owned > 0) {
-                fprintf(stderr, "Stage5 A64 real owned blocks: %" PRIu32 "\n", stage5_a64_real_owned);
-            }
-            if (stage5_a64_internal_branches_patched > 0) {
-                fprintf(stderr, "Stage5 A64 internal branches patched: %" PRIu32 "\n",
-                        stage5_a64_internal_branches_patched);
-            }
-
-            stage5_narrow_maybe_print_rejection_histogram();
-        }
-#endif
 
         if (stage >= 2) {
             cache_print_stats(&cache);
