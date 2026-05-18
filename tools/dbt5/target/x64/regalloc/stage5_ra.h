@@ -25,7 +25,8 @@ typedef struct {
     stage5_ra_interval_t intervals[STAGE5_RA_MAX_INTERVALS];
 } stage5_ra_plan_t;
 
-bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan);
+bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa,
+                              stage5_ra_plan_t *plan, const stage5_lift_region_t *region /* may be NULL */);
 bool stage5_ra_enabled(void);
 
 #endif // DBT_STAGE5_RA_H

@@ -9,7 +9,9 @@ Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92
 - **DONE**: D2 (host RA pool + diagnostics past the old 8-slot ceiling)
 - **DONE**: D3 (no more re-lifting per CFG block — extractor + SSA threading)
 - **DONE**: D4 (explicit safe bail-to-shadow contract via cg_bail + driver guard)
-- **DONE**: E1 (precise prologue loads from lifter live_in_mask + RA)
+- **DONE**: E1 (deeper — lifter live_in_mask + earliest RA interval per incoming gpr)
+- **DONE**: E2 (constant materialization via logical immediate ORR first)
+- **DONE**: E3 (RA spill bias for live_across_edge / loop carriers)
 - **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
@@ -475,40 +477,52 @@ for this region again" (or feed it to a validator). D4 is satisfied.
 
 ## E. Opportunities once the above is unblocked
 
-### E1. **DONE** (core) Real prologue from RA + lifter live_in_mask
+### E1. **DONE** (deeper) Real prologue from RA + lifter live_in_mask
 
 - The codegen now consults `region->cfg_blocks[0].live_in_mask` (the
-  authoritative guest-register liveness computed by the lifter's CFG
-  dataflow) when deciding which slots need a prologue load from
-  `cpu->regs[gpr]`.
-- Falls back to the previous RA `start_idx==0` heuristic only when the
-  lifter didn't produce CFG info.
-- This is exactly the pairing E1 asked for and directly improves the
-  quality of the emitted prologue (fewer unnecessary loads, and correct
-  for regions with internal control flow).
+  authoritative guest-register liveness from the lifter's CFG dataflow)
+  as the primary source for deciding prologue loads.
+- For each live-in guest reg, we select exactly one RA interval — the
+  one with the earliest start among those whose SSA value maps back to
+  that register. This implements the "unique interval whose start_idx
+  corresponds to first reference of the live-in" described in the
+  original E1 note.
+- The old pure-RA `start_idx == 0` rule is now only a fallback when the
+  lifter did not produce CFG liveness.
+- Added `gpr_has_prologue_load[]` tracking to guarantee each incoming
+  guest register is loaded exactly once (no duplicate ldr for the same
+  logical value).
 
-The `reg_flow[]` data is still available for future refinements (e.g.
-detecting values that are defined before first use inside the region). The
-main win — using the lifter's live-in mask instead of a pure RA proxy — is
-landed.
+This is a clear improvement over the initial A7-era heuristic and removes
+the need for the loose old B1-era prologue logic. `reg_flow[]` (with
+`first_use`, `live_across_edge`, etc.) is still available for future
+micro-optimizations if desired. E1 is in good shape.
 
-### E2. **OPPORTUNITY** Constant materialization peephole
+### E2. **DONE** Constant materialization peephole (logical immediates)
 
-`emit_mov_w32_imm32` always emits MOVZ+MOVK. For constants where the upper
-16 bits are 0 (or the lower 16 are 0), a single MOVZ suffices. For values
-representable as a logical immediate, `ORR Wd, WZR, #imm` is one inst.
-Stage-5-typical loads of guest immediates are dominated by small positives
-and `LUI` results (lower 16 bits zero). A peephole here cuts code size
-~10-20% on typical regions.
+- Enhanced `emit_mov_w32_imm32` (in `emit_a64.c`) to first attempt
+  `ORR Wd, WZR, #logical_imm` using the existing encoder.
+- Falls back to the (already partially smart) MOVZ/MOVK sequence only
+  when the constant is not encodable as a logical immediate.
+- All existing call sites (MOV_RI, large immediates in ALU/CMP/LEA,
+  side-exit stubs, terminal writes, etc.) benefit automatically.
+- This delivers the main code-size win described in E2 for the common
+  constants seen in lifted SLOW-32 code.
 
-### E3. **OPPORTUNITY** Hoist live-in loads out of fast-path loops
+### E3. **DONE** (RA bias) Hoist live-in loads / protect loop carriers
 
-Today the prologue loads live-ins once per region entry, then the loop body
-re-reads them on every iteration if the RA spilled them. With more host
-slots (D2) and a region big enough to cover a hot loop (lifter already
-trace-stitches through forward branches and JAL with `imm > 0`), most loop
-carriers stay in registers without spills. The remaining hot reload is
-`mem_base` (x21) which is already set up by the trampoline.
+- Extended `stage5_ra_build_plan_lir` to accept the region (nullable).
+- When choosing a victim to spill, intervals whose guest register has
+  `reg_flow[gpr].live_across_edge` set are given a very large negative
+  cost bias. True loop-carried live-ins are therefore much less likely
+  to be spilled inside hot regions.
+- All a64 call sites now pass the region; x64 side accepts the parameter
+  for compatibility (bias is A64-only for now).
+
+Combined with D2 (14 slots) + E1 (precise prologue), this makes the
+"re-load live-ins on every iteration" problem largely disappear for
+regions the lifter can cover. E3 is addressed at the RA level where it
+matters most.
 
 ### E4. **OPPORTUNITY** Use shadow_interp for differential fuzzing per region
 

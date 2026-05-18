@@ -165,7 +165,7 @@ static void run_full_stage5_analysis(const stage5_lift_region_t *region,
     stage5_lir_optimize(&lir, &ssa);
 
     stage5_ra_plan_t ra;
-    if (!stage5_ra_build_plan_lir(&lir, &ssa, &ra)) {
+    if (!stage5_ra_build_plan_lir(&lir, &ssa, &ra, region)) {
         fprintf(stderr, "  [%s] RA FAILED\n", tag);
         return;
     }
@@ -489,7 +489,7 @@ int main(int argc, char **argv) {
                 stage5_mir_build(&region, &ssa_for_emit, &tmp_mir);
                 if (stage5_burg_lower(&tmp_mir, &ssa_for_emit, &tmp_lir)) {
                     stage5_lir_optimize(&tmp_lir, &ssa_for_emit);
-                    stage5_ra_build_plan_lir(&tmp_lir, &ssa_for_emit, &tmp_ra);
+                    stage5_ra_build_plan_lir(&tmp_lir, &ssa_for_emit, &tmp_ra, &region);
 
                     bool emitted = stage5_codegen_a64(&a64_cg, &region, &ssa_for_emit, &tmp_lir, &tmp_ra);
                     if (emitted) {

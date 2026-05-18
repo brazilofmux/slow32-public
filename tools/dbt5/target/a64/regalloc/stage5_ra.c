@@ -12,7 +12,8 @@ static int cmp_interval_start(const void *a, const void *b) {
     return ia->end_idx - ib->end_idx;
 }
 
-bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan) {
+bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa,
+                              stage5_ra_plan_t *plan, const stage5_lift_region_t *region) {
     if (!lir || !ssa || !plan) return false;
     memset(plan, 0, sizeof(*plan));
 
@@ -78,12 +79,33 @@ bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_
         if (slot >= 0) {
             cur->assigned_slot = (int8_t)slot;
         } else {
-            // Spill the one that ends furthest
+            // Spill the one that ends furthest.
+            // E3: bias against spilling intervals that carry live-across-edge
+            // guest registers (loop invariants / hot carriers). These are much
+            // more painful to reload on every back-edge.
             int victim = -1;
             uint16_t max_end = cur->end_idx;
+            int best_cost = -1;
+
             for (uint16_t k = 0; k < active_count; k++) {
                 stage5_ra_interval_t *a = &plan->intervals[active[k]];
-                if (!a->spilled && a->end_idx > max_end) { max_end = a->end_idx; victim = k; }
+                if (a->spilled) continue;
+
+                int cost = a->end_idx;
+
+                if (region) {
+                    uint8_t gpr = (a->value_id < STAGE5_SSA_MAX_VALUES)
+                                  ? ssa->value_to_reg[a->value_id] : 0;
+                    if (gpr != 0 && gpr < 32 &&
+                        region->reg_flow[gpr].live_across_edge) {
+                        cost -= 10000; // strongly prefer not to spill loop carriers
+                    }
+                }
+
+                if (cost > best_cost) {
+                    best_cost = cost;
+                    victim = k;
+                }
             }
 
             if (victim >= 0) {
@@ -104,4 +126,4 @@ bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_
 }
 
 bool stage5_ra_enabled(void) { return true; }
-bool stage5_ra_build_plan(const stage5_lift_region_t *region, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan) { return false; }
+bool stage5_ra_build_plan(const stage5_lift_region_t *region, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan) { (void)region; (void)ssa; (void)plan; return false; }

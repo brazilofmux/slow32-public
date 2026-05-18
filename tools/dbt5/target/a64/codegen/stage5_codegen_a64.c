@@ -127,6 +127,17 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
         W19, W22, W23, W24, W25, W26,
     };
 
+    // E1 (deeper): Build precise prologue loads.
+    //
+    // For each guest register that the lifter says is live-in on entry
+    // (cfg_blocks[0].live_in_mask), we want to load it exactly once — into
+    // the host slot that holds the "incoming" SSA value for that register
+    // (the interval with the earliest start among those derived from it).
+    //
+    // This is the "unique interval whose start_idx corresponds to first
+    // reference of the live-in" that the original E1 description asked for.
+    bool gpr_has_prologue_load[32] = {0};
+
     for (uint16_t i = 0; i < ra_plan->interval_count; i++) {
         const stage5_ra_interval_t *iv = &ra_plan->intervals[i];
         if (iv->value_id == 0 || iv->spilled || iv->assigned_slot < 0)
@@ -146,34 +157,31 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 value_to_gpr [iv->value_id] = gpr;
             }
 
-            // E1: precise live-in prologue loads.
-            // Use the lifter's authoritative live_in_mask for the entry block
-            // (computed via proper CFG dataflow) when available. Fall back to
-            // the RA interval heuristic (start_idx == 0) otherwise.
-            bool needs_prologue_load = false;
-
+            // Decide if this interval's value needs to be loaded in the prologue.
+            bool is_live_in_gpr = false;
             if (region->cfg_valid && region->cfg_block_count > 0) {
                 uint32_t entry_live = region->cfg_blocks[0].live_in_mask;
                 if (gpr != 0 && (entry_live & (1u << gpr))) {
-                    needs_prologue_load = true;
+                    is_live_in_gpr = true;
                 }
             } else if (iv->start_idx == 0) {
-                needs_prologue_load = true;
+                is_live_in_gpr = true;
             }
 
-            if (needs_prologue_load) {
+            if (is_live_in_gpr && !gpr_has_prologue_load[gpr]) {
                 cg->guest_in_slot[slot] = gpr;
+                gpr_has_prologue_load[gpr] = true;
             }
         }
     }
 
     // ------------------------------------------------------------------
-    // Step 2: Prologue (E1).
+    // Step 2: Prologue (E1 deeper).
     //   (a) Save callee-saved regs we plan to clobber (only if used).
-    //   (b) Load *only* the guest registers that the lifter marked live-in
-    //       on entry to the region (cfg_blocks[0].live_in_mask), using the
-    //       precise mapping from RA intervals. This replaces the old A7
-    //       heuristic and the loose dbt5.c B1 loop.
+    //   (b) For every guest reg in the lifter's entry live_in_mask, load it
+    //       exactly once into the earliest RA interval that carries its
+    //       incoming value. This is the "unique first-reference interval"
+    //       mapping described in the original E1 note.
     // ------------------------------------------------------------------
     cg_emit_callee_saved_save(cg);
 

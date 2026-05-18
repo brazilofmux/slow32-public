@@ -12,7 +12,9 @@ static int cmp_interval_start(const void *a, const void *b) {
     return ia->end_idx - ib->end_idx;
 }
 
-bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan) {
+bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa,
+                              stage5_ra_plan_t *plan, const stage5_lift_region_t *region) {
+    (void)region; // E3 bias only implemented on A64 side for now
     if (!lir || !ssa || !plan) return false;
     memset(plan, 0, sizeof(*plan));
 

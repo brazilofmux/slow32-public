@@ -1192,7 +1192,7 @@ bool stage5_codegen_x64(stage5_cg_x64_ctx_t *ctx,
 
     // 5. Register allocation
     stage5_ra_plan_t ra_plan;
-    if (!stage5_ra_build_plan_lir(&lir, &ssa, &ra_plan)) {
+    if (!stage5_ra_build_plan_lir(&lir, &ssa, &ra_plan, NULL)) {
         stage5_codegen_x64_fallback++;
         return false;
     }

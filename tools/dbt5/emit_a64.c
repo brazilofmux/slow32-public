@@ -119,19 +119,26 @@ void emit_movk_w32(emit_ctx_t *ctx, a64_reg_t rd, uint16_t imm16, int shift) {
     emit_inst(ctx, inst);
 }
 
-// MOV Wd, #imm32 — uses MOVZ + optional MOVK
+// MOV Wd, #imm32 — best single-instruction form when possible.
+//
+// E2: Tries logical immediate first (ORR Wd, WZR, #imm) which covers many
+// common Stage-5 constants (small masks, LUI results, bit patterns).
+// Falls back to the MOVZ/MOVK sequence otherwise.
 void emit_mov_w32_imm32(emit_ctx_t *ctx, a64_reg_t rd, uint32_t imm) {
+    // First try logical immediate (one instruction when encodable)
+    if (emit_orr_w32_imm(ctx, rd, WZR, imm)) {
+        return;
+    }
+
+    // Fall back to MOVZ + optional MOVK
     uint16_t lo = (uint16_t)(imm & 0xFFFF);
     uint16_t hi = (uint16_t)(imm >> 16);
 
     if (hi == 0) {
-        // Single MOVZ suffices
         emit_movz_w32(ctx, rd, lo, 0);
     } else if (lo == 0) {
-        // Single MOVZ with shift
         emit_movz_w32(ctx, rd, hi, 16);
     } else {
-        // MOVZ low half + MOVK high half
         emit_movz_w32(ctx, rd, lo, 0);
         emit_movk_w32(ctx, rd, hi, 16);
     }
