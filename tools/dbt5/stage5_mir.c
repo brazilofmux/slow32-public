@@ -80,3 +80,40 @@ void stage5_mir_build(const stage5_lift_region_t *region, const stage5_ssa_overl
         }
     }
 }
+
+// Human-readable names for MIR opcodes (diagnostics)
+const char *mir_op_name(mir_op_t op) {
+    switch (op) {
+        case MIR_OP_NOP:    return "nop";
+        case MIR_OP_CONST:  return "const";
+        case MIR_OP_ADD:    return "add";
+        case MIR_OP_SUB:    return "sub";
+        case MIR_OP_AND:    return "and";
+        case MIR_OP_OR:     return "or";
+        case MIR_OP_XOR:    return "xor";
+        case MIR_OP_SLL:    return "sll";
+        case MIR_OP_SRL:    return "srl";
+        case MIR_OP_SRA:    return "sra";
+        case MIR_OP_MUL:    return "mul";
+        case MIR_OP_MULH:   return "mulh";
+        case MIR_OP_MULHU:  return "mulhu";
+        case MIR_OP_DIV:    return "div";
+        case MIR_OP_REM:    return "rem";
+        case MIR_OP_CMP_EQ: return "cmp_eq";
+        case MIR_OP_CMP_NE: return "cmp_ne";
+        case MIR_OP_CMP_LT: return "cmp_lt";
+        case MIR_OP_CMP_LTU:return "cmp_ltu";
+        case MIR_OP_CMP_LE: return "cmp_le";
+        case MIR_OP_CMP_LEU:return "cmp_leu";
+        case MIR_OP_LOAD:   return "load";
+        case MIR_OP_STORE:  return "store";
+        case MIR_OP_BRANCH: return "branch";
+        case MIR_OP_CALL:   return "call";
+        case MIR_OP_RET:    return "ret";
+        case MIR_OP_HALT:   return "halt";
+        case MIR_OP_YIELD:  return "yield";
+        case MIR_OP_DEBUG:  return "debug";
+        case MIR_OP_FP:     return "fp";
+        default:            return "???";
+    }
+}

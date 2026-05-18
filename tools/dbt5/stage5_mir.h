@@ -66,4 +66,7 @@ void stage5_mir_build(const stage5_lift_region_t *region,
                       const stage5_ssa_overlay_t *ssa,
                       stage5_mir_t *mir);
 
+// Diagnostic helper
+const char *mir_op_name(mir_op_t op);
+
 #endif // DBT_STAGE5_MIR_H

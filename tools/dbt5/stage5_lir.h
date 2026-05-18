@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "stage5_lift.h"
+#include "stage5_ssa.h"   // for stage5_ssa_overlay_t in lir_optimize declaration
 
 typedef enum {
     LIR_OP_NOP = 0,
@@ -72,5 +73,10 @@ typedef struct {
     uint32_t node_count;
     lir_node_t nodes[STAGE5_MAX_LIR_NODES];
 } stage5_lir_t;
+
+void stage5_lir_optimize(stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa);
+
+// Diagnostic helper (used by dbt5 driver and future tools)
+const char *lir_op_name(lir_op_t op);
 
 #endif // DBT_STAGE5_LIR_H
