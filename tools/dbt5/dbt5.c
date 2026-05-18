@@ -27,6 +27,7 @@
 #include "stage5_burg.h"
 #include "stage5_lir.h"
 #include "stage5_ra.h"
+#include "stage5_codegen_a64.h"   // experimental clean A64 emitter
 
 // s32x loader lives in the emulator tree (self-contained header)
 #include "../emulator/s32x_loader.h"
@@ -350,6 +351,39 @@ int main(int argc, char **argv) {
 
         // This is the key call — full independent Stage 5 analysis
         run_full_stage5_analysis(&region, "entry", verbose);
+
+        // ------------------------------------------------------------------
+        // Experimental: try the new clean A64 emitter (very early)
+        // ------------------------------------------------------------------
+        if (getenv("S5_EMIT_A64")) {
+            static uint8_t a64_code[64 * 1024];
+            stage5_cg_a64_ctx_t a64_cg;
+            stage5_cg_a64_init(&a64_cg, a64_code, sizeof(a64_code));
+
+            // We need the SSA that was built inside run_full... 
+            // For the very first experiments we re-lift + re-run the early parts here.
+            // (Later we will thread the SSA out of the analysis function.)
+            stage5_ssa_overlay_t ssa_for_emit;
+            stage5_lift_region_t tmp_region;
+            stage5_lift_region_init(&tmp_region, load_res.entry_point);
+            if (stage5_lift_superblock(&tmp_region, cpu.mem_base, cpu.code_limit, STAGE5_LIFT_BUDGET) &&
+                stage5_ssa_build_overlay(&tmp_region, &ssa_for_emit))
+            {
+                stage5_lir_t tmp_lir;
+                stage5_mir_t tmp_mir;
+                stage5_ra_plan_t tmp_ra;
+
+                stage5_mir_build(&tmp_region, &ssa_for_emit, &tmp_mir);
+                if (stage5_burg_lower(&tmp_mir, &ssa_for_emit, &tmp_lir)) {
+                    stage5_lir_optimize(&tmp_lir, &ssa_for_emit);
+                    stage5_ra_build_plan_lir(&tmp_lir, &ssa_for_emit, &tmp_ra);
+
+                    bool emitted = stage5_codegen_a64(&a64_cg, &tmp_region, &ssa_for_emit, &tmp_lir, &tmp_ra);
+                    fprintf(stderr, "  [A64-EMIT] clean emitter %s (%zu bytes emitted)\n",
+                            emitted ? "succeeded" : "failed (stub)", emit_offset(&a64_cg.emit));
+                }
+            }
+        }
 
         // === Additional regions from the CFG the lifter discovered ===
         if (region.cfg_valid && region.cfg_block_count > 1 && verbose) {

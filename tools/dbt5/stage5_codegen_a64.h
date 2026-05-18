@@ -35,6 +35,7 @@
 #include "stage5_lift.h"
 #include "stage5_lir.h"
 #include "stage5_ra.h"
+#include "stage5_ssa.h"
 #include "emit_a64.h"   // raw emission only
 
 // ============================================================================
@@ -83,10 +84,18 @@ typedef struct {
 // On failure: returns false (caller should not try to use the emitted code).
 // ============================================================================
 
+// Note: We pass the SSA overlay because the emitter needs to know
+// which guest register each SSA value_id originally came from
+// (for prologue loads and later spill/reload decisions).
 bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         const stage5_lift_region_t *region,
+                        const stage5_ssa_overlay_t *ssa,
                         const stage5_lir_t *lir,
                         const stage5_ra_plan_t *ra_plan);
+
+// Initialize a codegen context with a code buffer.
+// Must be called before stage5_codegen_a64.
+void stage5_cg_a64_init(stage5_cg_a64_ctx_t *cg, uint8_t *code_buf, size_t capacity);
 
 // Telemetry (stubs for now)
 extern uint32_t stage5_codegen_a64_attempted;
