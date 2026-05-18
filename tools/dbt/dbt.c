@@ -43,6 +43,10 @@ uint32_t stage5_a64_pilot_would_own = 0;
 uint32_t stage5_a64_pilot_fallback = 0;
 uint32_t stage5_a64_real_owned = 0;   // blocks actually emitted by the real Stage 5 A64 path (narrow owning)
 uint32_t stage5_a64_internal_branches_patched = 0;  // real B.cond internal jumps emitted via fixup patching
+
+// Narrow rejection histogram (defined in translate_a64.c)
+void stage5_narrow_maybe_print_rejection_histogram(void);
+
 #else
 #include "stage5_codegen.h"
 #endif
@@ -2551,6 +2555,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Stage5 A64 internal branches patched: %" PRIu32 "\n",
                         stage5_a64_internal_branches_patched);
             }
+
+            stage5_narrow_maybe_print_rejection_histogram();
         }
 #endif
 

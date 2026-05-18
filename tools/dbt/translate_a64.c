@@ -154,6 +154,30 @@ void stage5_narrow_maybe_print_rejection_histogram(void) {
     stage5_narrow_print_rejection_histogram();
 }
 
+// Helper used by the new narrow-path analysis code to avoid
+// out-of-bounds accesses on guest register arrays (size 32).
+static inline bool reg_valid(uint8_t r) {
+    return r < 32;
+}
+
+// Loud debug helper – only fires when SLOW32_NARROW_VERBOSE is set.
+static inline void check_reg(const stage5_ir_node_t *n, const char *where) {
+    if (!getenv("SLOW32_NARROW_VERBOSE"))
+        return;
+    if (n->rd >= 32) {
+        fprintf(stderr, "NARROW-BUG: bad rd=%u at pc=0x%08X in %s\n",
+                n->rd, n->pc, where);
+    }
+    if (n->rs1 >= 32) {
+        fprintf(stderr, "NARROW-BUG: bad rs1=%u at pc=0x%08X in %s\n",
+                n->rs1, n->pc, where);
+    }
+    if (n->rs2 >= 32) {
+        fprintf(stderr, "NARROW-BUG: bad rs2=%u at pc=0x%08X in %s\n",
+                n->rs2, n->pc, where);
+    }
+}
+
 
 
 // Count "logical" live-ins at region entry, collapsing common
@@ -176,6 +200,13 @@ static int count_logical_live_ins(const stage5_lift_region_t *region, int *out_s
         const stage5_ir_node_t *b = &region->ir[i + 1];
 
         if (a->synthetic || b->synthetic) continue;
+        check_reg(a, "pair_detection/a");
+        check_reg(b, "pair_detection/b");
+
+        // Guard against bad register numbers from the lifter (can happen
+        // with synthetic nodes or certain FP/special cases).
+        if (!reg_valid(a->rd) || !reg_valid(b->rd) || !reg_valid(b->rs1))
+            continue;
 
         bool is_mat = (a->opcode == OP_LUI) &&
                       (b->opcode == OP_ADDI || b->opcode == OP_ORI) &&
@@ -201,13 +232,18 @@ static int count_logical_live_ins(const stage5_lift_region_t *region, int *out_s
 // Returns true if 'reg' is the final destination of a materialize or call pair
 // somewhere in the region. Useful for biasing prologue assignment.
 static bool is_final_of_materialize_pair(const stage5_lift_region_t *region, uint8_t reg) {
-    if (!region) return false;
+    if (!region || !reg_valid(reg)) return false;
 
     for (uint32_t i = 0; i + 1 < region->ir_count; i++) {
         const stage5_ir_node_t *a = &region->ir[i];
         const stage5_ir_node_t *b = &region->ir[i + 1];
 
         if (a->synthetic || b->synthetic) continue;
+        check_reg(a, "pair_detection/a");
+        check_reg(b, "pair_detection/b");
+
+        if (!reg_valid(a->rd) || !reg_valid(b->rd) || !reg_valid(b->rs1))
+            continue;
 
         bool is_mat = (a->opcode == OP_LUI) &&
                       (b->opcode == OP_ADDI || b->opcode == OP_ORI) &&
@@ -280,6 +316,7 @@ static bool stage5_region_is_narrow_supported(const stage5_lift_region_t *region
     for (uint32_t i = 0; i < region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
         if (n->synthetic) continue;
+        check_reg(n, "predicate");
 
         // Size guard for the narrow owning path.
         // We are gradually raising this as the supported opcode set and
@@ -4890,58 +4927,61 @@ retry_translate:
                 narrow_pairs_collapsed += saved_here;
 
                 reg_alloc_reset(ctx);
+
+                uint32_t live_in = 0;
+                if (early_region.cfg_valid && early_region.cfg_block_count > 0) {
+                    live_in = early_region.cfg_blocks[0].live_in_mask;
+                }
+
+                int order[32];
+                int nlive = 0;
+                for (int r = 1; r < 32 && nlive < REG_ALLOC_SLOTS; r++) {
+                    if (live_in & (1u << r)) order[nlive++] = r;
+                }
+
+                // Prefer high-use registers (from reg_flow).
+                // Additionally boost registers that are the *final* result of a
+                // common materialize/call pair (lui+addi, auipc+jalr, etc.).
+                // Keeping the result of "la", "li", "call", etc. in a host register
+                // is disproportionately valuable for the rest of the region.
+                for (int i = 0; i < nlive; i++) {
+                    for (int j = i+1; j < nlive; j++) {
+                        int score_i = early_region.reg_flow[order[i]].use_count +
+                                      (is_final_of_materialize_pair(&early_region, order[i]) ? 1000 : 0);
+                        int score_j = early_region.reg_flow[order[j]].use_count +
+                                      (is_final_of_materialize_pair(&early_region, order[j]) ? 1000 : 0);
+                        if (score_j > score_i) {
+                            int t = order[i]; order[i] = order[j]; order[j] = t;
+                        }
+                    }
+                }
+
+                int slot = 0;
+                for (int i = 0; i < nlive && slot < REG_ALLOC_SLOTS-1; i++) {
+                    int r = order[i];
+                    a64_reg_t hd = reg_alloc_hosts[slot];
+
+                    // Emit the LDR *before* registering the cache mapping. If we
+                    // set reg_alloc_map[r]=slot first and then call
+                    // emit_load_guest_reg(), it would see the mapping as a cache
+                    // hit and elide the actual load — leaving the host register
+                    // with whatever stale value it inherited from the prior block.
+                    if (hd != A64_NOREG) {
+                        emit_ldr_w32_imm(e, hd, W20, GUEST_REG_OFFSET(r));
+                    }
+
+                    ctx->reg_alloc[slot].guest_reg = r;
+                    ctx->reg_alloc[slot].dirty = false;
+                    ctx->reg_alloc[slot].last_use = 0;
+                    ctx->reg_alloc_map[r] = slot;
+                    slot++;
+                }
             } else {
                 // Analysis-only mode: we still ran the lift and predicate,
                 // so rejection logging + histogram will have been populated.
-            }
-
-            uint32_t live_in = 0;
-            if (early_region.cfg_valid && early_region.cfg_block_count > 0) {
-                live_in = early_region.cfg_blocks[0].live_in_mask;
-            }
-
-            int order[32];
-            int nlive = 0;
-            for (int r = 1; r < 32 && nlive < REG_ALLOC_SLOTS; r++) {
-                if (live_in & (1u << r)) order[nlive++] = r;
-            }
-
-            // Prefer high-use registers (from reg_flow).
-            // Additionally boost registers that are the *final* result of a
-            // common materialize/call pair (lui+addi, auipc+jalr, etc.).
-            // Keeping the result of "la", "li", "call", etc. in a host register
-            // is disproportionately valuable for the rest of the region.
-            for (int i = 0; i < nlive; i++) {
-                for (int j = i+1; j < nlive; j++) {
-                    int score_i = early_region.reg_flow[order[i]].use_count +
-                                  (is_final_of_materialize_pair(&early_region, order[i]) ? 1000 : 0);
-                    int score_j = early_region.reg_flow[order[j]].use_count +
-                                  (is_final_of_materialize_pair(&early_region, order[j]) ? 1000 : 0);
-                    if (score_j > score_i) {
-                        int t = order[i]; order[i] = order[j]; order[j] = t;
-                    }
-                }
-            }
-
-            int slot = 0;
-            for (int i = 0; i < nlive && slot < REG_ALLOC_SLOTS-1; i++) {
-                int r = order[i];
-                a64_reg_t hd = reg_alloc_hosts[slot];
-
-                // Emit the LDR *before* registering the cache mapping. If we
-                // set reg_alloc_map[r]=slot first and then call
-                // emit_load_guest_reg(), it would see the mapping as a cache
-                // hit and elide the actual load — leaving the host register
-                // with whatever stale value it inherited from the prior block.
-                if (hd != A64_NOREG) {
-                    emit_ldr_w32_imm(e, hd, W20, GUEST_REG_OFFSET(r));
-                }
-
-                ctx->reg_alloc[slot].guest_reg = r;
-                ctx->reg_alloc[slot].dirty = false;
-                ctx->reg_alloc[slot].last_use = 0;
-                ctx->reg_alloc_map[r] = slot;
-                slot++;
+                // We deliberately do NOT touch the reg cache or emit any
+                // prologue loads here, to avoid corrupting state for the
+                // normal Stage 4 path.
             }
         }
     }
