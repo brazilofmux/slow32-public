@@ -530,8 +530,26 @@ int main(int argc, char **argv) {
                                 }
                             }
 
+                            typedef void (*block_fn_t)(void);
+                            block_fn_t fn = (block_fn_t)exec_mem;
+
+                            // Print *before* register setup so the compiler cannot trash
+                            // the live values we are about to put in w8-w15 / x20 / x21.
+                            fprintf(stderr, "  [A64-EXEC] jumping to emitted code @ %p (len=%zu)...\n",
+                                    exec_mem, a64_cg.emit.offset);
+
+                            // Set up the two special registers the prologue relies on.
+                            // IMPORTANT: no clobber list for x20/x21 — we need the values
+                            // to survive into the call to the emitted code (fixes B4).
+                            __asm__ volatile (
+                                "mov x20, %0\n"     // cpu_state
+                                "mov x21, %1\n"     // mem_base
+                                :
+                                : "r" (&cpu), "r" (cpu.mem_base)
+                            );
+
                             // Load the live-in guest registers into the host registers
-                            // the emitter expects.
+                            // the emitter expects.  Do this immediately before the call.
                             for (int s = 0; s < 8; s++) {
                                 uint8_t gpr = entry_gpr_for_slot[s];
                                 if (gpr == 0) continue;
@@ -548,21 +566,6 @@ int main(int argc, char **argv) {
                                     case 7: __asm__ volatile("mov w15, %w0" : : "r"(val)); break;
                                 }
                             }
-
-                            // Set up the two special registers the prologue relies on
-                            __asm__ volatile (
-                                "mov x20, %0\n"     // cpu_state
-                                "mov x21, %1\n"     // mem_base
-                                :
-                                : "r" (&cpu), "r" (cpu.mem_base)
-                                : "x20", "x21"
-                            );
-
-                            typedef void (*block_fn_t)(void);
-                            block_fn_t fn = (block_fn_t)exec_mem;
-
-                            fprintf(stderr, "  [A64-EXEC] jumping to emitted code @ %p (len=%zu)...\n",
-                                    exec_mem, a64_cg.emit.offset);
 
                             fn();
 
@@ -602,24 +605,23 @@ int main(int argc, char **argv) {
                                 : "x20", "x21"
                             );
 
-                            // Run the same region through shadow (very simple loop for the test)
+                            // Real shadow execution (B3): actually dispatch instructions
+                            // through the shadow interpreter instead of a dumb decode loop.
+                            shadow_state_t sh;
+                            shadow_init(&sh, &cpu);
+                            shadow_snapshot(&sh, &cpu);
+
                             uint32_t shadow_steps = 0;
                             const uint32_t MAX_TEST_STEPS = 10000;
                             while (shadow_steps < MAX_TEST_STEPS) {
-                                if (cpu.pc >= cpu.code_limit) break;
-                                uint32_t raw = *(uint32_t *)(cpu.mem_base + cpu.pc);
-                                decoded_inst_t inst = decode_instruction(raw);
-
-                                if (inst.opcode == OP_HALT || inst.opcode == OP_YIELD ||
-                                    inst.opcode == OP_DEBUG) {
-                                    break;
-                                }
-                                cpu.pc += 4;
+                                if (sh.pc >= cpu.code_limit) break;
+                                bool ended = shadow_step_one(&sh);
                                 shadow_steps++;
+                                if (ended) break;
                             }
 
-                            uint32_t shadow_pc = cpu.pc;
-                            uint32_t shadow_exit = cpu.exit_reason;
+                            uint32_t shadow_pc = sh.pc;
+                            uint32_t shadow_exit = cpu.exit_reason;  // exit reason is written by the epilogue or last op
 
                             fprintf(stderr, "  [SHADOW-EXEC] returned. pc=0x%08X exit_reason=%u (steps=%u)\n",
                                     shadow_pc, shadow_exit, shadow_steps);

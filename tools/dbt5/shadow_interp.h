@@ -86,6 +86,10 @@ extern bool dbt_no_chain;
 // Initialize the shadow state.  Call after dbt_cpu_init + dbt_load_s32x.
 void shadow_init(shadow_state_t *s, dbt_cpu_state_t *cpu);
 
+// Single-step the shadow interpreter (public wrapper for pilot / tests).
+// Returns true if the instruction ended the block (branch, halt, yield, debug, etc.).
+bool shadow_step_one(shadow_state_t *s);
+
 // Snapshot current CPU state before block execution.
 void shadow_snapshot(shadow_state_t *s, dbt_cpu_state_t *cpu);
 

@@ -567,6 +567,10 @@ static bool shadow_step(shadow_state_t *s) {
 //      a. If new PC remains inside [block_start, block_end) → continue
 //      b. Otherwise → block exit, stop
 //   3. HALT/DEBUG/YIELD → stop immediately
+bool shadow_step_one(shadow_state_t *s) {
+    return shadow_step(s);
+}
+
 static void shadow_execute_block(shadow_state_t *s, uint32_t block_start,
                                  uint32_t block_size) {
     uint32_t block_end = block_start + block_size;
