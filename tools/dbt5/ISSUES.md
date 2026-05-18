@@ -371,12 +371,12 @@ Added `(void)reg_mismatch_count;` to silence `-Wunused-but-set-variable`.
 The count is computed but not yet used in the decision logic (shadow infra
 is still "good enough for pilot" after B3). Low-risk suppression for now.
 
-### C6. **CLEANUP** Loader helpers in `s32x_loader.h` warn unused
+### C6. **DONE** **CLEANUP** Loader helpers in `s32x_loader.h` warn unused
 
-`load_s32x_header`, `load_s32x_symtab`, `s32x_symtab_lookup`, `s32x_symtab_free`
-are all `static` in a header included only by `dbt5.c`. dbt5.c uses
-`load_s32x_file` only. Either drop the unused helpers from the dbt5 build
-(via inclusion guards or a smaller header) or `(void)` them. Cosmetic.
+Wrapped the `#include "../emulator/s32x_loader.h"` in dbt5.c with
+`#pragma GCC diagnostic push/pop` to ignore `-Wunused-function` locally.
+This is the least invasive fix (the helpers are useful for other users of
+the header). All C cleanups are now complete.
 
 ---
 

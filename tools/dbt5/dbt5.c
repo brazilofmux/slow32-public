@@ -34,8 +34,14 @@
 #include "stage5_codegen_x64.h"   // clean x86-64 emitter
 #endif
 
-// s32x loader lives in the emulator tree (self-contained header)
+// s32x loader lives in the emulator tree (self-contained header).
+// The header contains several static helper functions that dbt5.c does not
+// use (C6 cleanup). We suppress the resulting -Wunused-function warnings
+// locally so we don't have to touch the shared header.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include "../emulator/s32x_loader.h"
+#pragma GCC diagnostic pop
 
 // Bridge for the experimental A64 emitter (temporary until the experimental
 // block is restructured to receive ctx/cache as a proper parameter).
