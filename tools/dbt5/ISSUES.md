@@ -332,17 +332,12 @@ A more general architectural fix can be done when this code graduates beyond the
 
 ## C. Cleanup / refactor debt
 
-### C1. **CLEANUP** `try_clean_a64_emission` / `do_experimental_a64_emission` are dead stubs
+### C1. **DONE** **CLEANUP** `try_clean_a64_emission` / `do_experimental_a64_emission` are dead stubs
 
-`dbt5.c:47-66` define two static helpers that both `return NULL` and are
-never called. The commit log shows a planned-but-stalled refactor ("First
-step of the clean helper refactor for A64 emission + wiring (file-scope
-definition)" — `e3001aa9`). The real emission + wiring logic is still
-inlined in `main()` at `dbt5.c:418-630` (200+ lines).
-
-Either finish the refactor (move the body into `try_clean_a64_emission` and
-call it from main) or delete the stubs. Today they only emit
-`-Wunused-function` warnings.
+Deleted the two never-called stubs (and their surrounding comments) in
+`dbt5.c`. This eliminates the `-Wunused-function` warnings and removes
+abandoned refactor scaffolding. The real logic remains inlined under the
+S5_EMIT_A64 path (as it has been for a long time).
 
 ### C2. **CLEANUP** Stale comments overstate completeness
 

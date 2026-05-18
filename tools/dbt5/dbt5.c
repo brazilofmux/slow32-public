@@ -41,31 +41,6 @@
 // block is restructured to receive ctx/cache as a proper parameter).
 static block_cache_t *g_a64_experimental_cache = NULL;
 
-#if defined(__aarch64__)
-// File-scope helper to encapsulate clean A64 emission + wiring.
-// Returns a wired translated_block_t on success, NULL otherwise.
-static translated_block_t *try_clean_a64_emission(block_cache_t *cache, uint32_t guest_pc)
-{
-    // For this slice, the helper forwards to a static implementation
-    // of the current experimental logic. The body will be inlined here
-    // in the next micro-edit.
-    (void)cache;
-    (void)guest_pc;
-    return NULL;   // real forwarding will be added when the body is moved
-}
-
-// Static implementation of the current experimental A64 emission + wiring logic.
-// This will be moved into try_clean_a64_emission in the next micro-edit.
-static translated_block_t *do_experimental_a64_emission(block_cache_t *cache, uint32_t guest_pc)
-{
-    // The old long experimental logic lives here for this slice.
-    // (In the next micro-edit it will be inlined into the main helper.)
-    (void)cache;
-    (void)guest_pc;
-    return NULL;
-}
-#endif
-
 // Memory size for the clean-room driver.
 // Many self-hosted tools (s32-as, sbasic, etc.) request 256 MiB.
 #define DBT5_MEM_SIZE (256 * 1024 * 1024)
@@ -567,6 +542,11 @@ int main(int argc, char **argv) {
                                 }
                             }
 
+                            // Snapshot the pre-emitted state for B3 validation (polished)
+                            shadow_state_t sh;
+                            shadow_init(&sh, &cpu);
+                            shadow_snapshot(&sh, &cpu);
+
                             fn();
 
                             uint32_t emitted_pc = cpu.pc;
@@ -575,42 +555,7 @@ int main(int argc, char **argv) {
                             fprintf(stderr, "  [A64-EXEC] returned. pc=0x%08X exit_reason=%u\n",
                                     emitted_pc, emitted_exit);
 
-                            // ----------------------------------------------------------------
-                            // Automatic comparison against shadow interpreter (first validation slice)
-                            // ----------------------------------------------------------------
-                            // Reset state and run the same region through the shadow interpreter
-                            cpu.pc = load_res.entry_point;
-
-                            // Re-setup the live-ins the same way (crude but sufficient for now)
-                            for (int s = 0; s < 8; s++) {
-                                uint8_t gpr = entry_gpr_for_slot[s];
-                                if (gpr == 0) continue;
-                                uint32_t val = cpu.regs[gpr];
-                                switch (s) {
-                                    case 0: __asm__ volatile("mov w8, %w0" : : "r"(val)); break;
-                                    case 1: __asm__ volatile("mov w9, %w0" : : "r"(val)); break;
-                                    case 2: __asm__ volatile("mov w10, %w0" : : "r"(val)); break;
-                                    case 3: __asm__ volatile("mov w11, %w0" : : "r"(val)); break;
-                                    case 4: __asm__ volatile("mov w12, %w0" : : "r"(val)); break;
-                                    case 5: __asm__ volatile("mov w13, %w0" : : "r"(val)); break;
-                                    case 6: __asm__ volatile("mov w14, %w0" : : "r"(val)); break;
-                                    case 7: __asm__ volatile("mov w15, %w0" : : "r"(val)); break;
-                                }
-                            }
-
-                            __asm__ volatile (
-                                "mov x20, %0\n"
-                                "mov x21, %1\n"
-                                : : "r" (&cpu), "r" (cpu.mem_base)
-                                : "x20", "x21"
-                            );
-
-                            // Real shadow execution (B3): actually dispatch instructions
-                            // through the shadow interpreter instead of a dumb decode loop.
-                            shadow_state_t sh;
-                            shadow_init(&sh, &cpu);
-                            shadow_snapshot(&sh, &cpu);
-
+                            // Real shadow execution (B3) — run from the pre-snapshot
                             uint32_t shadow_steps = 0;
                             const uint32_t MAX_TEST_STEPS = 10000;
                             while (shadow_steps < MAX_TEST_STEPS) {
@@ -621,18 +566,25 @@ int main(int argc, char **argv) {
                             }
 
                             uint32_t shadow_pc = sh.pc;
-                            uint32_t shadow_exit = cpu.exit_reason;  // exit reason is written by the epilogue or last op
+                            uint32_t shadow_exit = (sh.hit_halt || sh.hit_yield || sh.hit_debug) ? 0x7F : 2;
 
                             fprintf(stderr, "  [SHADOW-EXEC] returned. pc=0x%08X exit_reason=%u (steps=%u)\n",
                                     shadow_pc, shadow_exit, shadow_steps);
 
-                            // Simple comparison
-                            if (emitted_pc == shadow_pc && emitted_exit == shadow_exit) {
-                                fprintf(stderr, "  [VALIDATION] PASS: emitted and shadow results match\n");
+                            // Richer validation (polished B3)
+                            bool pc_ok   = (emitted_pc == shadow_pc);
+                            bool exit_ok = (emitted_exit == shadow_exit);
+                            bool sp_ok   = (cpu.regs[29] == sh.regs[29]);   // r29 = sp
+
+                            if (pc_ok && exit_ok && sp_ok) {
+                                fprintf(stderr, "  [VALIDATION] PASS: emitted and shadow results match (pc, exit, sp)\n");
                             } else {
                                 fprintf(stderr, "  [VALIDATION] FAIL: mismatch!\n");
-                                fprintf(stderr, "                 emitted: pc=0x%08X exit=%u\n", emitted_pc, emitted_exit);
-                                fprintf(stderr, "                 shadow : pc=0x%08X exit=%u\n", shadow_pc, shadow_exit);
+                                if (!pc_ok)   fprintf(stderr, "                 pc mismatch: emitted=0x%08X shadow=0x%08X\n", emitted_pc, shadow_pc);
+                                if (!exit_ok) fprintf(stderr, "                 exit mismatch: emitted=%u shadow=%u\n", emitted_exit, shadow_exit);
+                                if (!sp_ok)   fprintf(stderr, "                 sp mismatch: emitted=%u shadow=%u\n", cpu.regs[29], sh.regs[29]);
+                                fprintf(stderr, "                 emitted: pc=0x%08X exit=%u sp=%u\n", emitted_pc, emitted_exit, cpu.regs[29]);
+                                fprintf(stderr, "                 shadow : pc=0x%08X exit=%u sp=%u\n", shadow_pc, shadow_exit, sh.regs[29]);
                             }
 
                             munmap(exec_mem, 64*1024);
