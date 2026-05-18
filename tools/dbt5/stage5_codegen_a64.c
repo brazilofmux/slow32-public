@@ -346,10 +346,14 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     }
 
     // ------------------------------------------------------------------
-    // Step 4: Terminal (same as before, with exit recording)
+    // Step 4: Terminal exit (real patchable branch, not just b 0)
     // ------------------------------------------------------------------
-    uint32_t terminal_target = region->end_pc;
-    bool     has_terminal    = false;
+    // We look for the final control-flow instruction in the LIR.
+    // For the first usable version we emit a single patchable B instruction
+    // at the end of the region. Later we will support multiple side-exits
+    // and proper chaining.
+    uint32_t terminal_target = region->end_pc;   // fallthrough by default
+    bool     has_real_terminal = false;
 
     for (int i = (int)lir->node_count - 1; i >= 0; i--) {
         const lir_node_t *last = &lir->nodes[i];
@@ -357,24 +361,34 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
         if (last->op == LIR_OP_JMP || last->op == LIR_OP_CALL) {
             terminal_target = last->guest_pc + 4 + last->imm;
-            has_terminal = true;
+            has_real_terminal = true;
             break;
         }
         if (last->op == LIR_OP_RET || last->op == LIR_OP_SYSCALL) {
+            // Special exits (return to dispatcher or syscall handler)
             terminal_target = 0;
-            has_terminal = true;
+            has_real_terminal = true;
             break;
         }
     }
 
-    if (has_terminal && cg->exit_count < STAGE5_A64_MAX_EXITS) {
+    // Record the exit so the runtime / block cache can patch it later.
+    size_t branch_patch_offset = 0;
+    if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
         int ex = cg->exit_count++;
         cg->exits[ex].target_pc    = terminal_target;
-        cg->exits[ex].patch_offset = emit_offset(&cg->emit);
+        cg->exits[ex].patch_offset = emit_offset(&cg->emit);  // will be the branch itself
         cg->exits[ex].is_side_exit = false;
+        branch_patch_offset = cg->exits[ex].patch_offset;
     }
 
-    emit_b(&cg->emit, 0);   // placeholder branch
+    // Emit a patchable unconditional branch (B imm26).
+    // Displacement is currently 0 — the runtime will overwrite the immediate.
+    emit_b(&cg->emit, 0);
+
+    // For debugging / future patching, also record the exact offset of the
+    // branch instruction we just emitted.
+    (void)branch_patch_offset;   // will be used when we implement real patching
 
     stage5_codegen_a64_success++;
     return true;
