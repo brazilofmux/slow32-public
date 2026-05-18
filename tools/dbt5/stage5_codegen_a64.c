@@ -325,7 +325,31 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
-            // More ops coming (branches, calls, FP, etc.)
+            case LIR_OP_LEA: {
+                // dst = base + disp (very common for address calculation)
+                if (dst_h == A64_NOREG) break;
+
+                a64_reg_t base_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                   ? value_to_host[n->src_v[0]] : A64_NOREG;
+                if (base_h == A64_NOREG) break;
+
+                if (n->disp != 0) {
+                    emit_add_w32_imm(&cg->emit, dst_h, base_h, (uint32_t)n->disp);
+                } else if (base_h != dst_h) {
+                    emit_mov_w32_w32(&cg->emit, dst_h, base_h);
+                }
+
+                // mark dst dirty
+                for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
+                    if (cg->host_regs[s] == dst_h) {
+                        cg->slot_dirty[s] = true;
+                        break;
+                    }
+                }
+                break;
+            }
+
+            // More ops coming (branches, calls, FP, shifts, MUL/DIV, etc.)
 
             default:
                 // For now we silently skip unsupported ops in this narrow path.
