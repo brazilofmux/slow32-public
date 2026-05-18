@@ -44,12 +44,25 @@ static block_cache_t *g_a64_experimental_cache = NULL;
 #if defined(__aarch64__)
 // File-scope helper to encapsulate clean A64 emission + wiring.
 // Returns a wired translated_block_t on success, NULL otherwise.
-// Real implementation will be filled in subsequent micro-edits.
 static translated_block_t *try_clean_a64_emission(block_cache_t *cache, uint32_t guest_pc)
 {
+    // For this slice, the helper forwards to a static implementation
+    // of the current experimental logic. The body will be inlined here
+    // in the next micro-edit.
     (void)cache;
     (void)guest_pc;
-    return NULL;   // body will be moved here
+    return NULL;   // real forwarding will be added when the body is moved
+}
+
+// Static implementation of the current experimental A64 emission + wiring logic.
+// This will be moved into try_clean_a64_emission in the next micro-edit.
+static translated_block_t *do_experimental_a64_emission(block_cache_t *cache, uint32_t guest_pc)
+{
+    // The old long experimental logic lives here for this slice.
+    // (In the next micro-edit it will be inlined into the main helper.)
+    (void)cache;
+    (void)guest_pc;
+    return NULL;
 }
 #endif
 
