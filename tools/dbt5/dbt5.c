@@ -347,6 +347,22 @@ int main(int argc, char **argv) {
     // ========================================================================
     // Run the FULL Stage 5 pipeline in the clean room (the point of this tree)
     // ========================================================================
+
+#if defined(__aarch64__)
+    // One-line activation for the experimental A64 wiring path.
+    // When S5_EMIT_A64 is set, we create a minimal cache so the clean
+    // emitter can install blocks via g_a64_experimental_cache.
+    if (getenv("S5_EMIT_A64")) {
+        static block_cache_t experimental_cache = {0};
+        static uint8_t experimental_code[4 * 1024 * 1024]; // 4 MB
+
+        experimental_cache.code_buffer      = experimental_code;
+        experimental_cache.code_buffer_size = sizeof(experimental_code);
+        // Other fields (block pool, etc.) can stay zero for the first version.
+
+        g_a64_experimental_cache = &experimental_cache;
+    }
+#endif
     stage5_lift_region_t region;
     stage5_lift_region_init(&region, load_res.entry_point);
 
