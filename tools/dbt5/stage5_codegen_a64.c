@@ -268,7 +268,64 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
-            // More ops coming (loads/stores, branches, calls, etc.)
+            // ------------------------------------------------------------------
+            // Loads and Stores (narrow path)
+            // Assumes the address base is already in a host register.
+            // ------------------------------------------------------------------
+            case LIR_OP_MOV_RM: {  // dst = [base + disp]
+                if (dst_h == A64_NOREG) break;
+
+                a64_reg_t base_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                   ? value_to_host[n->src_v[0]] : A64_NOREG;
+                if (base_h == A64_NOREG) break;
+
+                switch (n->size) {
+                    case 1:
+                        if (n->is_signed)
+                            emit_ldrsb_w32_imm(&cg->emit, dst_h, base_h, n->disp);
+                        else
+                            emit_ldrb_imm(&cg->emit, dst_h, base_h, n->disp);
+                        break;
+                    case 2:
+                        if (n->is_signed)
+                            emit_ldrsh_w32_imm(&cg->emit, dst_h, base_h, n->disp);
+                        else
+                            emit_ldrh_imm(&cg->emit, dst_h, base_h, n->disp);
+                        break;
+                    case 4:
+                    default:
+                        emit_ldr_w32_imm(&cg->emit, dst_h, base_h, n->disp);
+                        break;
+                }
+
+                // Destination is now live and dirty in its slot
+                for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
+                    if (cg->host_regs[s] == dst_h) {
+                        cg->slot_dirty[s] = true;
+                        break;
+                    }
+                }
+                break;
+            }
+
+            case LIR_OP_MOV_MR: {  // [base + disp] = src1
+                a64_reg_t base_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                   ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t data_h = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                   ? value_to_host[n->src_v[1]] : A64_NOREG;
+
+                if (base_h == A64_NOREG || data_h == A64_NOREG) break;
+
+                switch (n->size) {
+                    case 1:  emit_strb_imm(&cg->emit, data_h, base_h, n->disp); break;
+                    case 2:  emit_strh_imm(&cg->emit, data_h, base_h, n->disp); break;
+                    case 4:
+                    default: emit_str_w32_imm(&cg->emit, data_h, base_h, n->disp); break;
+                }
+                break;
+            }
+
+            // More ops coming (branches, calls, FP, etc.)
 
             default:
                 // For now we silently skip unsupported ops in this narrow path.
