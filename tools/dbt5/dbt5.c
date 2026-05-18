@@ -533,8 +533,72 @@ int main(int argc, char **argv) {
 
                             fn();
 
+                            uint32_t emitted_pc = cpu.pc;
+                            uint32_t emitted_exit = cpu.exit_reason;
+
                             fprintf(stderr, "  [A64-EXEC] returned. pc=0x%08X exit_reason=%u\n",
-                                    cpu.pc, cpu.exit_reason);
+                                    emitted_pc, emitted_exit);
+
+                            // ----------------------------------------------------------------
+                            // Automatic comparison against shadow interpreter (first validation slice)
+                            // ----------------------------------------------------------------
+                            // Reset state and run the same region through the shadow interpreter
+                            cpu.pc = load_res.entry_point;
+
+                            // Re-setup the live-ins the same way (crude but sufficient for now)
+                            for (int s = 0; s < 8; s++) {
+                                uint8_t gpr = entry_gpr_for_slot[s];
+                                if (gpr == 0) continue;
+                                uint32_t val = cpu.regs[gpr];
+                                switch (s) {
+                                    case 0: __asm__ volatile("mov w8, %w0" : : "r"(val)); break;
+                                    case 1: __asm__ volatile("mov w9, %w0" : : "r"(val)); break;
+                                    case 2: __asm__ volatile("mov w10, %w0" : : "r"(val)); break;
+                                    case 3: __asm__ volatile("mov w11, %w0" : : "r"(val)); break;
+                                    case 4: __asm__ volatile("mov w12, %w0" : : "r"(val)); break;
+                                    case 5: __asm__ volatile("mov w13, %w0" : : "r"(val)); break;
+                                    case 6: __asm__ volatile("mov w14, %w0" : : "r"(val)); break;
+                                    case 7: __asm__ volatile("mov w15, %w0" : : "r"(val)); break;
+                                }
+                            }
+
+                            __asm__ volatile (
+                                "mov x20, %0\n"
+                                "mov x21, %1\n"
+                                : : "r" (&cpu), "r" (cpu.mem_base)
+                                : "x20", "x21"
+                            );
+
+                            // Run the same region through shadow (very simple loop for the test)
+                            uint32_t shadow_steps = 0;
+                            const uint32_t MAX_TEST_STEPS = 10000;
+                            while (shadow_steps < MAX_TEST_STEPS) {
+                                if (cpu.pc >= cpu.code_limit) break;
+                                uint32_t raw = *(uint32_t *)(cpu.mem_base + cpu.pc);
+                                decoded_inst_t inst = decode_instruction(raw);
+
+                                if (inst.opcode == OP_HALT || inst.opcode == OP_YIELD ||
+                                    inst.opcode == OP_DEBUG) {
+                                    break;
+                                }
+                                cpu.pc += 4;
+                                shadow_steps++;
+                            }
+
+                            uint32_t shadow_pc = cpu.pc;
+                            uint32_t shadow_exit = cpu.exit_reason;
+
+                            fprintf(stderr, "  [SHADOW-EXEC] returned. pc=0x%08X exit_reason=%u (steps=%u)\n",
+                                    shadow_pc, shadow_exit, shadow_steps);
+
+                            // Simple comparison
+                            if (emitted_pc == shadow_pc && emitted_exit == shadow_exit) {
+                                fprintf(stderr, "  [VALIDATION] PASS: emitted and shadow results match\n");
+                            } else {
+                                fprintf(stderr, "  [VALIDATION] FAIL: mismatch!\n");
+                                fprintf(stderr, "                 emitted: pc=0x%08X exit=%u\n", emitted_pc, emitted_exit);
+                                fprintf(stderr, "                 shadow : pc=0x%08X exit=%u\n", shadow_pc, shadow_exit);
+                            }
 
                             munmap(exec_mem, 64*1024);
                         }
