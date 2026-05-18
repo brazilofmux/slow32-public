@@ -71,30 +71,28 @@ static void translate_fp_cvt(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, u
 
 static bool stage5_region_is_narrow_supported(const stage5_lift_region_t *region) {
     if (!region) return false;
-    // Widened (side exits now supported in narrow path):
-    // Accept regions whose *final* node is a single terminal branch/JAL/JALR,
-    // and which may contain forward branches that the lifter promoted to
-    // side exits. All other nodes must still be narrow ALU/CMP.
-    // (Side-exit nodes are handled specially in the replay below.)
+    // Narrow owning filter — we accept regions that are "small enough" and
+    // composed of opcodes we can currently emit well.
+    // The lifter's own signals (cfg_spill_likely, cfg_block_count) are respected.
 
-    bool saw_terminal = false;
+    // Early-out using the lifter's own analysis
+    if (region->cfg_spill_likely) {
+        fprintf(stderr, "narrow-reject pc=0x%08X reason=cfg_spill_likely (lifter says high reg pressure)\n",
+                region->start_pc);
+        return false;
+    }
+
     for (uint32_t i = 0; i < region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
         if (n->synthetic) continue;
 
-        bool is_cf = (n->opcode == OP_JAL || n->opcode == OP_JALR ||
-                      n->opcode == OP_BEQ || n->opcode == OP_BNE ||
-                      n->opcode == OP_BLT || n->opcode == OP_BGE ||
-                      n->opcode == OP_BLTU || n->opcode == OP_BGEU ||
-                      n->opcode == OP_HALT || n->opcode == OP_DEBUG ||
-                      n->opcode == OP_YIELD);
-
-        if (is_cf) {
-            // Allow multiple basic blocks / internal branches for short
-            // straight-line segments, as long as the region isn't too big.
-            // We still want to keep the region "narrow".
-            if (region->cfg_block_count > 8) return false;
-            // continue;  // allow internal CF
+        // Size guard for the narrow owning path.
+        // Raised from 8 → 16 after we gained decent support for internal
+        // control flow, side exits, and lifter-driven prologue.
+        if (region->cfg_block_count > 16) {
+            fprintf(stderr, "narrow-reject pc=0x%08X reason=too_many_cfg_blocks (%u)\n",
+                    region->start_pc, region->cfg_block_count);
+            return false;
         }
 
         switch (n->opcode) {
@@ -131,9 +129,19 @@ static bool stage5_region_is_narrow_supported(const stage5_lift_region_t *region
             case OP_FNEG_D: case OP_FABS_D:
             case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
             case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            // Conditional branches — now allowed as internal control flow
+            // (the replay only stops the straight-line for side-exits or the final terminal)
+            case OP_BEQ: case OP_BNE:
+            case OP_BLT: case OP_BGE:
+            case OP_BLTU: case OP_BGEU:
+            // Terminating control flow (allowed as the final node)
+            case OP_JAL: case OP_JALR:
+            case OP_HALT: case OP_DEBUG: case OP_YIELD:
                 break;
             default:
-                return false;  // complex intrinsics, etc. — not yet
+                fprintf(stderr, "narrow-reject pc=0x%08X reason=unsupported_opcode 0x%02X\n",
+                        n->pc, n->opcode);
+                return false;  // not yet supported in narrow owning path
         }
     }
     return true;
@@ -315,7 +323,9 @@ static bool stage5_replay_narrow_alu_region_a64(translate_ctx_t *ctx,
             case OP_YIELD: translate_yield(ctx); cf_ended_block = true; break;
 
             default:
-                return false;   // should be impossible due to predicate
+                fprintf(stderr, "narrow-replay-fail pc=0x%08X reason=unsupported_in_replay 0x%02X\n",
+                        n->pc, n->opcode);
+                return false;
         }
 
         ctx->inst_count++;
@@ -4773,6 +4783,14 @@ retry_translate:
                     }
                 }
                 stage5_a64_internal_branches_patched += internal_patched;
+
+                // Patch deferred side-exit B.cond placeholders and emit
+                // their cold stubs. Without this the placeholders sit at
+                // imm19=0 (a branch-to-self), so the first side-exit firing
+                // would spin forever on AArch64.
+                if (ctx->deferred_exit_count > 0) {
+                    emit_deferred_side_exits(ctx);
+                }
 
                 // Apply any internal branch fixup recorded during replay
                 // (real B.cond instead of exit)
