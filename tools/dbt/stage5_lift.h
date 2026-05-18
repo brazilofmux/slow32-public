@@ -53,6 +53,10 @@ typedef struct {
 // regions. Emission ownership stays gated separately in translate.c.
 #define STAGE5_MAX_SIDE_EXITS 4
 
+// Default lift budget (number of guest instructions to consider for a superblock region).
+// Shared between x86 (translate.c) and AArch64 (translate_a64.c) Hybrid paths.
+#define STAGE5_LIFT_BUDGET 64
+
 typedef enum {
     STAGE5_CFG_TERM_FALLTHROUGH = 0,
     STAGE5_CFG_TERM_BRANCH_COND,

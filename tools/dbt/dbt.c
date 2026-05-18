@@ -33,6 +33,16 @@ uint32_t stage5_codegen_attempted = 0;
 uint32_t stage5_codegen_success = 0;
 uint32_t stage5_codegen_fallback = 0;
 uint32_t stage5_codegen_fallback_emit_node = 0;
+uint32_t stage5_lift_attempted_a64 = 0;
+uint32_t stage5_lift_success_a64 = 0;
+uint32_t stage5_lift_too_large_a64 = 0;
+uint32_t stage5_lift_unsupported_a64 = 0;
+uint32_t stage5_backedges_seeded_a64 = 0;  // Hybrid Option A: lifter gave us extra/more-accurate back-edges than heuristic prescan
+uint32_t stage5_a64_pilot_attempted = 0;
+uint32_t stage5_a64_pilot_would_own = 0;
+uint32_t stage5_a64_pilot_fallback = 0;
+uint32_t stage5_a64_real_owned = 0;   // blocks actually emitted by the real Stage 5 A64 path (narrow owning)
+uint32_t stage5_a64_internal_branches_patched = 0;  // real B.cond internal jumps emitted via fixup patching
 #else
 #include "stage5_codegen.h"
 #endif
@@ -2519,6 +2529,30 @@ int main(int argc, char **argv) {
                         stage5_codegen_fallback_emit_node);
             }
         }
+
+#if defined(__aarch64__)
+        if (stage5_lift_attempted_a64 > 0) {
+            fprintf(stderr, "Stage5 A64 lift attempted: %" PRIu32 "\n", stage5_lift_attempted_a64);
+            fprintf(stderr, "Stage5 A64 lift success:   %" PRIu32 "\n", stage5_lift_success_a64);
+            fprintf(stderr, "Stage5 A64 lift too-large: %" PRIu32 "  unsupported-op: %" PRIu32 "\n",
+                    stage5_lift_too_large_a64, stage5_lift_unsupported_a64);
+            if (stage5_backedges_seeded_a64 > 0) {
+                fprintf(stderr, "Stage5 A64 back-edges seeded from lifter: %" PRIu32 "\n",
+                        stage5_backedges_seeded_a64);
+            }
+            if (stage5_a64_pilot_attempted > 0) {
+                fprintf(stderr, "Stage5 A64 pilot attempted: %" PRIu32 "  would-own: %" PRIu32 "  fallback: %" PRIu32 "\n",
+                        stage5_a64_pilot_attempted, stage5_a64_pilot_would_own, stage5_a64_pilot_fallback);
+            }
+            if (stage5_a64_real_owned > 0) {
+                fprintf(stderr, "Stage5 A64 real owned blocks: %" PRIu32 "\n", stage5_a64_real_owned);
+            }
+            if (stage5_a64_internal_branches_patched > 0) {
+                fprintf(stderr, "Stage5 A64 internal branches patched: %" PRIu32 "\n",
+                        stage5_a64_internal_branches_patched);
+            }
+        }
+#endif
 
         if (stage >= 2) {
             cache_print_stats(&cache);

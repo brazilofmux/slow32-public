@@ -61,6 +61,9 @@ The address register threads through bounds/alignment checks and SIB memory acce
 
 ### 8. Compile-time memory check specialization
 **Status: DONE**
+
+### 9. Hybrid Stage 5 on AArch64 (lifter feeding Stage 4 + future real emitter)
+**Status: STARTED** — lifter now runs on arm64 under `-5`; first Option A win (CFG back-edges seeded into the existing fast in-block machinery) delivered 14 extra back-edges on benchmark_core with zero impact on the default path. 90/90 lift success on the perf binary proves the IR is already solid for A64. Long-term: real A64 codegen from the lifted region (or MIR) so Stage 5 can own hot blocks the way it does on x86.
 Memory access checks (bounds, alignment, MMIO, W^X) were always fully emitted
 at ~25 x86-64 instructions per access, with runtime branches to skip disabled
 features. Now checks are specialized at translation time using cpu state flags

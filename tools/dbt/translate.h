@@ -202,6 +202,13 @@ typedef struct {
     // Out-of-line side exit stubs (deferred to end of block)
     int deferred_exit_count;
     deferred_exit_t deferred_exits[MAX_BLOCK_EXITS];
+
+    // Temporary state used only by the narrow Stage 5 AArch64 owning path
+    // when turning internal (non-side-exit) branches into real in-block jumps.
+    bool     force_internal_branch;
+    uint32_t internal_branch_target;       // guest PC we want to jump to
+    size_t   last_internal_fixup_offset;   // byte offset of the placeholder B.cond we emitted
+    uint32_t last_internal_fixup_target;   // guest PC of the target (captured when we emit the placeholder)
 } translate_ctx_t;
 
 // Translated block function signature

@@ -41,9 +41,7 @@ static inline void flush_pending_cond(translate_ctx_t *ctx);
  * this file) does not parse. */
 typedef void (*emit_jcc_fn_t)(emit_ctx_t *, int32_t);
 
-#define STAGE5_LIFT_BUDGET 64
-
-// Side-exit emission is always enabled.
+// Side-exit emission is always enabled. (STAGE5_LIFT_BUDGET is now in stage5_lift.h for sharing with AArch64 Hybrid path)
 
 static bool dbt_nop_compact_enabled(void) { return true; }
 static bool dbt_peephole_jcc_fold_enabled(void) { return true; }

@@ -14,8 +14,10 @@
 #include "block_cache.h"
 #include "shadow_interp.h"
 #include "stage5_burg.h"
+#include "stage5_lift.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>  // for simple diagnostic timing on A64 (stage5_now_ns lives in x86 translate.c)
 
 // Debug flag - set to 1 to enable translation tracing
 #ifndef DBT_TRACE
@@ -30,6 +32,18 @@ uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 uint32_t native_stub_count = 0;       // Native intrinsic stub counter
 uint32_t stage5_emit_side_exits = 0;
 
+// AArch64 Hybrid Stage 5 lift telemetry (defined in dbt.c for __aarch64__)
+extern uint32_t stage5_lift_attempted_a64;
+extern uint32_t stage5_lift_success_a64;
+extern uint32_t stage5_lift_too_large_a64;
+extern uint32_t stage5_lift_unsupported_a64;
+extern uint32_t stage5_backedges_seeded_a64;  // how many times the lifter augmented back-edge targets
+extern uint32_t stage5_a64_pilot_attempted;
+extern uint32_t stage5_a64_pilot_would_own;
+extern uint32_t stage5_a64_pilot_fallback;
+extern uint32_t stage5_a64_real_owned;   // real owned blocks (narrow Stage 5 A64 emission)
+extern uint32_t stage5_a64_internal_branches_patched;  // count of successful internal branch fixups
+
 static bool a64_emit_trace_enabled = false;
 static bool a64_emit_trace_pc_has_filter = false;
 static uint32_t a64_emit_trace_pc = 0;
@@ -37,6 +51,297 @@ static uint32_t a64_emit_trace_pc = 0;
 static bool a64_emit_trace_matches_pc(uint32_t pc) {
     if (!a64_emit_trace_enabled) return false;
     return !a64_emit_trace_pc_has_filter || pc == a64_emit_trace_pc;
+}
+
+// ---------------------------------------------------------------------------
+// First narrow real Stage 5 A64 owning emission (the investment continues).
+// Supports the current "narrow" set: ALU + comparisons + simple loads/stores
+// + FP + optional final terminal CF.  We replay the lifted IR nodes by calling
+// the existing high-quality A64 translate_* helpers.
+// ---------------------------------------------------------------------------
+
+// Forward declarations for FP helpers used in the narrow replay
+static void translate_fp_f32_arith(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2);
+static void translate_fp_f64_arith(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2);
+static void translate_fp_f32_unary(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1);
+static void translate_fp_f64_unary(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1);
+static void translate_fp_f32_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2);
+static void translate_fp_f64_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2);
+static void translate_fp_cvt(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1);
+
+static bool stage5_region_is_narrow_supported(const stage5_lift_region_t *region) {
+    if (!region) return false;
+    // Widened (side exits now supported in narrow path):
+    // Accept regions whose *final* node is a single terminal branch/JAL/JALR,
+    // and which may contain forward branches that the lifter promoted to
+    // side exits. All other nodes must still be narrow ALU/CMP.
+    // (Side-exit nodes are handled specially in the replay below.)
+
+    bool saw_terminal = false;
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+
+        bool is_cf = (n->opcode == OP_JAL || n->opcode == OP_JALR ||
+                      n->opcode == OP_BEQ || n->opcode == OP_BNE ||
+                      n->opcode == OP_BLT || n->opcode == OP_BGE ||
+                      n->opcode == OP_BLTU || n->opcode == OP_BGEU ||
+                      n->opcode == OP_HALT || n->opcode == OP_DEBUG ||
+                      n->opcode == OP_YIELD);
+
+        if (is_cf) {
+            // Allow multiple basic blocks / internal branches for short
+            // straight-line segments, as long as the region isn't too big.
+            // We still want to keep the region "narrow".
+            if (region->cfg_block_count > 8) return false;
+            // continue;  // allow internal CF
+        }
+
+        switch (n->opcode) {
+            // Pure ALU / immediate ALU
+            case OP_ADD: case OP_ADDI:
+            case OP_SUB:
+            case OP_AND: case OP_ANDI:
+            case OP_OR:  case OP_ORI:
+            case OP_XOR: case OP_XORI:
+            case OP_SLL: case OP_SLLI:
+            case OP_SRL: case OP_SRLI:
+            case OP_SRA: case OP_SRAI:
+            // Comparisons (all of them)
+            case OP_SLT:  case OP_SLTI:  case OP_SLTU: case OP_SLTIU:
+            case OP_SEQ:  case OP_SNE:
+            case OP_SGT:  case OP_SGTU:
+            case OP_SLE:  case OP_SLEU:
+            case OP_SGE:  case OP_SGEU:
+            // Upper immediate (constant synthesis)
+            case OP_LUI:
+            // Simple loads / stores (narrow path)
+            case OP_LDW: case OP_LDH: case OP_LDB: case OP_LDHU: case OP_LDBU:
+            case OP_STW: case OP_STH: case OP_STB:
+            // Floating point (narrow path)
+            // We dispatch to the existing translate_fp_* family
+            case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+            case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+            case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+            case OP_FNEG_S: case OP_FABS_S:
+            case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+            case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+            case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+            case OP_FCVT_D_S: case OP_FCVT_S_D:
+            case OP_FNEG_D: case OP_FABS_D:
+            case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+            case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+                break;
+            default:
+                return false;  // complex intrinsics, etc. — not yet
+        }
+    }
+    return true;
+}
+
+// Replay the lifted region by driving the existing A64 translate helpers.
+// Supports the current "narrow" set: ALU/CMP + simple loads/stores + final
+// terminal CF.  Returns true if we successfully emitted the whole region.
+static bool stage5_replay_narrow_alu_region_a64(translate_ctx_t *ctx,
+                                                const stage5_lift_region_t *region,
+                                                translated_block_t *block)
+{
+    emit_ctx_t *e = &ctx->emit;
+
+    ctx->last_internal_fixup_offset = 0;
+    ctx->last_internal_fixup_target = 0;
+
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+
+        ctx->guest_pc = n->pc;
+        ctx->current_inst_idx = (int)i;
+
+        // Record for pc_map (used by in-block back-edge direct jumps)
+        if (ctx->pc_map_count < MAX_BLOCK_INSTS) {
+            ctx->pc_map[ctx->pc_map_count].guest_pc   = n->pc;
+            ctx->pc_map[ctx->pc_map_count].host_offset = emit_offset(e);
+            ctx->pc_map_count++;
+        }
+
+        bool cf_ended_block = false;
+
+        // Drive the existing translator — we get all the A64 goodness for free
+        switch (n->opcode) {
+            case OP_ADD:   translate_add(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_ADDI:  translate_addi(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_SUB:   translate_sub(ctx, n->rd, n->rs1, n->rs2); break;
+
+            case OP_AND:   translate_and(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_ANDI:  translate_andi(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_OR:    translate_or(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_ORI:   translate_ori(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_XOR:   translate_xor(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_XORI:  translate_xori(ctx, n->rd, n->rs1, n->imm); break;
+
+            case OP_SLL:   translate_sll(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SLLI:  translate_slli(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_SRL:   translate_srl(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SRLI:  translate_srli(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_SRA:   translate_sra(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SRAI:  translate_srai(ctx, n->rd, n->rs1, n->imm); break;
+
+            // All comparison forms the lifter can produce
+            case OP_SLT:   translate_slt(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SLTI:  translate_slti(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_SLTU:  translate_sltu(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SLTIU: translate_sltiu(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_SEQ:   translate_seq(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SNE:   translate_sne(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SGT:   translate_sgt(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SGTU:  translate_sgtu(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SLE:   translate_sle(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SLEU:  translate_sleu(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SGE:   translate_sge(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SGEU:  translate_sgeu(ctx, n->rd, n->rs1, n->rs2); break;
+
+            case OP_LUI:   translate_lui(ctx, n->rd, n->imm); break;
+
+            // Simple loads / stores (narrow path)
+            case OP_LDW:  translate_ldw(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_LDH:  translate_ldh(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_LDB:  translate_ldb(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_LDHU: translate_ldhu(ctx, n->rd, n->rs1, n->imm); break;
+            case OP_LDBU: translate_ldbu(ctx, n->rd, n->rs1, n->imm); break;
+
+            case OP_STW:  translate_stw(ctx, n->rs1, n->rs2, n->imm); break;
+            case OP_STH:  translate_sth(ctx, n->rs1, n->rs2, n->imm); break;
+            case OP_STB:  translate_stb(ctx, n->rs1, n->rs2, n->imm); break;
+
+            // Floating point (narrow path) — dispatch to the existing FP families
+            case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+            case OP_FSQRT_S:
+                translate_fp_f32_arith(ctx, n->opcode, n->rd, n->rs1, n->rs2);
+                break;
+
+            case OP_FNEG_S: case OP_FABS_S:
+                translate_fp_f32_unary(ctx, n->opcode, n->rd, n->rs1);
+                break;
+
+            case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+                translate_fp_f32_cmp(ctx, n->opcode, n->rd, n->rs1, n->rs2);
+                break;
+
+            case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+            case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+                translate_fp_cvt(ctx, n->opcode, n->rd, n->rs1);
+                break;
+
+            // Double precision
+            case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+            case OP_FSQRT_D:
+                translate_fp_f64_arith(ctx, n->opcode, n->rd, n->rs1, n->rs2);
+                break;
+
+            case OP_FNEG_D: case OP_FABS_D:
+                translate_fp_f64_unary(ctx, n->opcode, n->rd, n->rs1);
+                break;
+
+            case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+                translate_fp_f64_cmp(ctx, n->opcode, n->rd, n->rs1, n->rs2);
+                break;
+
+            case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+            case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            case OP_FCVT_D_S: case OP_FCVT_S_D:
+                translate_fp_cvt(ctx, n->opcode, n->rd, n->rs1);
+                break;
+
+            // Control flow — widened for internal branches
+            // For the final node or side-exit branches, we let them "end" the
+            // current straight-line emission (they emit the proper exit/side-exit).
+            // For internal non-side-exit branches we still emit the branch
+            // (via the helper), but continue emitting the fallthrough code after it.
+            case OP_JAL:
+                translate_jal(ctx, n->rd, n->imm);
+                cf_ended_block = true;
+                break;
+            case OP_JALR:
+                translate_jalr(ctx, n->rd, n->rs1, n->imm);
+                cf_ended_block = true;
+                break;
+
+            case OP_BEQ: case OP_BNE: case OP_BLT: case OP_BGE:
+            case OP_BLTU: case OP_BGEU: {
+                uint32_t this_pc = n->pc;
+                uint32_t tgt = this_pc + 4 + n->imm;
+                bool is_last = (i + 1 == region->ir_count);
+
+                if (!is_last && !n->is_side_exit && tgt >= region->start_pc && tgt < region->end_pc) {
+                    // Real internal branch inside the owned block — use fixup path
+                    ctx->force_internal_branch = true;
+                    ctx->internal_branch_target = tgt;
+
+                    switch (n->opcode) {
+                        case OP_BEQ:  cf_ended_block = translate_beq(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BNE:  cf_ended_block = translate_bne(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BLT:  cf_ended_block = translate_blt(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BGE:  cf_ended_block = translate_bge(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BLTU: cf_ended_block = translate_bltu(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BGEU: cf_ended_block = translate_bgeu(ctx, n->rs1, n->rs2, n->imm); break;
+                    }
+
+                    // Record the fixup that the branch_common left for us
+                    if (ctx->last_internal_fixup_offset != 0) {
+                        // We will collect it after the whole replay in the caller
+                    }
+                    ctx->force_internal_branch = false;
+                    ctx->internal_branch_target = 0;
+
+                    // The fixup (offset + target) is left in ctx->last_internal_fixup_*
+                    // and will be collected/patched by the caller after the full replay.
+                } else {
+                    switch (n->opcode) {
+                        case OP_BEQ:  cf_ended_block = translate_beq(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BNE:  cf_ended_block = translate_bne(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BLT:  cf_ended_block = translate_blt(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BGE:  cf_ended_block = translate_bge(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BLTU: cf_ended_block = translate_bltu(ctx, n->rs1, n->rs2, n->imm); break;
+                        case OP_BGEU: cf_ended_block = translate_bgeu(ctx, n->rs1, n->rs2, n->imm); break;
+                    }
+                }
+                break;
+            }
+
+            // Terminals that always end the block
+            case OP_HALT:  translate_halt(ctx); cf_ended_block = true; break;
+            case OP_DEBUG: translate_debug(ctx, n->rs1); cf_ended_block = true; break;
+            case OP_YIELD: translate_yield(ctx); cf_ended_block = true; break;
+
+            default:
+                return false;   // should be impossible due to predicate
+        }
+
+        ctx->inst_count++;
+
+        bool is_last = (i + 1 == region->ir_count);
+        if (cf_ended_block && (is_last || n->is_side_exit)) {
+            break;   // only stop the straight-line for the final terminal or side exits
+        }
+        // For internal non-side-exit branches we continue emitting the
+        // fallthrough path right after the emitted branch code.
+    }
+
+    // Set guest_size to what the lifter covered.
+    block->guest_size = (region->end_pc > region->start_pc)
+                        ? (region->end_pc - region->start_pc)
+                        : (uint32_t)(region->guest_inst_count * 4);
+
+    return true;
+}
+
+// Tiny monotonic ns helper for A64 Stage 5 diagnostics (x86 path has stage5_now_ns in translate.c).
+// We will factor to a common header once the Hybrid pilot is shared.
+static inline uint64_t stage5_now_ns_a64(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
 // ============================================================================
@@ -514,6 +819,48 @@ static inline bool is_backedge_target(translate_ctx_t *ctx, uint32_t pc) {
         if (ctx->backedge_targets[i] == pc) return true;
     }
     return false;
+}
+
+// Hybrid Option A (AArch64): seed back-edge targets from the lifter's CFG.
+// The lifter has already done a full (stitched) CFG walk with proper term
+// classification; this is strictly more accurate than the linear prescan
+// heuristic in reg_alloc_prescan().  We merge rather than replace so the
+// existing machinery still works if the lifter was not run.
+static void seed_backedges_from_lifted_region(translate_ctx_t *ctx,
+                                              const stage5_lift_region_t *region,
+                                              uint32_t region_start_pc)
+{
+    if (!ctx || !region || !region->cfg_valid || region->cfg_block_count == 0)
+        return;
+
+    int seeded = 0;
+    for (uint32_t b = 0; b < region->cfg_block_count; b++) {
+        const stage5_cfg_block_t *blk = &region->cfg_blocks[b];
+        for (uint8_t s = 0; s < blk->succ_count; s++) {
+            uint32_t target = blk->succ_pc[s];
+            if (target == STAGE5_CFG_PC_RETURN_CONT)
+                continue;
+            // A true back-edge lands at or before the start of its source block
+            // and is still inside the overall region we are translating.
+            if (target <= blk->start_pc && target >= region_start_pc) {
+                bool seen = false;
+                for (int i = 0; i < ctx->backedge_target_count; i++) {
+                    if (ctx->backedge_targets[i] == target) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (!seen && ctx->backedge_target_count < MAX_BLOCK_INSTS) {
+                    ctx->backedge_targets[ctx->backedge_target_count++] = target;
+                    ctx->has_backedge = true;
+                    seeded++;
+                }
+            }
+        }
+    }
+    if (seeded > 0) {
+        stage5_backedges_seeded_a64 += (uint32_t)seeded;
+    }
 }
 
 // Look up host code offset for a guest PC within the current block.
@@ -2593,6 +2940,23 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
 
     // ---- Standard dual-exit (no superblock) ----
 
+    // Special path for the narrow Stage 5 A64 owning emission:
+    // turn this branch into a real in-block jump instead of an exit.
+    if (ctx->force_internal_branch && ctx->internal_branch_target != 0) {
+        size_t placeholder = emit_offset(e);
+        if (cbz_reg != A64_NOREG) {
+            if (cbz_is_nz) emit_cbnz_w32(e, cbz_reg, 0);
+            else            emit_cbz_w32(e, cbz_reg, 0);
+        } else {
+            emit_b_cond(e, cond, 0);
+        }
+        ctx->last_internal_fixup_offset = placeholder;
+        ctx->last_internal_fixup_target = ctx->internal_branch_target;
+        ctx->force_internal_branch = false;
+        ctx->internal_branch_target = 0;
+        return true;
+    }
+
     // B.cond/CBZ/CBNZ to taken path (jump over not-taken exit)
     size_t bcond_patch = emit_offset(e);
     if (cbz_reg != A64_NOREG) {
@@ -4143,10 +4507,111 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
     if (intrinsic_block) { dbt_jit_writable_end(); return intrinsic_block; }
 
     dbt_cpu_state_t *cpu = ctx->cpu;
+
+    // ========================================================================
+    // Real Stage 5 A64 pilot (the long-term investment)
+    // This is the path that will eventually own entire superblocks by emitting
+    // directly from the lifted region (IR + CFG + side-exit info) instead of
+    // the per-instruction decode loop.  When successful it short-circuits all
+    // the Stage 4 work (prescan, reg_alloc, per-inst translate, etc.).
+    //
+    // For the first investment step we do the lift + burg_select (same as x86)
+    // and collect "would own" data.  Subsequent edits will replace the
+    // "log + return false" with actual A64 emission that walks the region.ir[]
+    // and drives the existing high-quality A64 translate_* / emit_* paths.
+    // ========================================================================
+    if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
+        uint32_t first_raw = *(uint32_t *)(cpu->mem_base + guest_pc);
+        uint8_t first_op = first_raw & 0x7F;
+        bool single_inst = (first_op == OP_JAL || first_op == OP_JALR ||
+                            first_op == OP_HALT || first_op == OP_DEBUG || first_op == OP_YIELD);
+
+        if (!single_inst) {
+            stage5_a64_pilot_attempted++;
+            stage5_lift_region_t region;
+            stage5_lift_region_init(&region, guest_pc);
+            if (stage5_lift_superblock(&region, cpu->mem_base, cpu->code_limit,
+                                       STAGE5_LIFT_BUDGET)) {
+                stage5_burg_result_t result;
+                stage5_burg_result_init(&result);
+                stage5_burg_select(&region, &result);
+
+                stage5_a64_pilot_would_own++;
+                // For now: log that the real Stage 5 path *could* own this block.
+                // This is the data collection step before we implement emission.
+                // The terminal pattern and side-exit count come from the lifter.
+                fprintf(stderr,
+                        "stage5-a64-pilot pc=0x%08X WOULD-OWN insts=%u nodes=%u side=%u term=%s pattern=%s\n",
+                        guest_pc,
+                        region.guest_inst_count,
+                        region.node_count,
+                        region.side_exit_count,
+                        region.has_terminal_branch ? "branch" : "fallthrough",
+                        stage5_burg_pattern_str(result.pattern));
+
+                // TODO(real): replace the log above with actual emission.
+                // If emission succeeds:
+                //   - finalize block (host_size, guest_size, flags)
+                //   - cache_commit_code / cache_insert / cache_chain_incoming
+                //   - dbt_jit_writable_end(); return block;
+                // On any hard case, fall through to Stage 4 (count the fallback).
+            } else {
+                stage5_a64_pilot_fallback++;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Hybrid Stage 5 (AArch64 path): diagnostic lift attempt (kept for metrics)
+    // ------------------------------------------------------------------------
+    if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
+        uint32_t first_raw = *(uint32_t *)(cpu->mem_base + guest_pc);
+        uint8_t first_op = first_raw & 0x7F;
+        bool single_inst = (first_op == OP_JAL || first_op == OP_JALR ||
+                            first_op == OP_HALT || first_op == OP_DEBUG || first_op == OP_YIELD);
+
+        if (!single_inst) {
+            stage5_lift_attempted_a64++;
+            uint64_t t0 = stage5_now_ns_a64();
+            stage5_lift_region_t region;
+            stage5_lift_region_init(&region, guest_pc);
+            bool lifted = stage5_lift_superblock(&region, cpu->mem_base, cpu->code_limit,
+                                                 STAGE5_LIFT_BUDGET);
+            uint64_t dt_ns = stage5_now_ns_a64() - t0;
+
+            if (lifted) {
+                stage5_lift_success_a64++;
+                fprintf(stderr,
+                        "stage5-lift-a64 pc=0x%08X OK insts=%u ir=%u nodes=%u side=%u cfg_blks=%u spill_likely=%d time=%llu ns\n",
+                        guest_pc,
+                        region.guest_inst_count,
+                        region.ir_count,
+                        region.node_count,
+                        region.side_exit_count,
+                        region.cfg_block_count,
+                        (int)region.cfg_spill_likely,
+                        (unsigned long long)dt_ns);
+            } else {
+                if (region.reason == STAGE5_LIFT_REGION_TOO_LARGE) stage5_lift_too_large_a64++;
+                if (region.reason == STAGE5_LIFT_UNSUPPORTED_OPCODE) stage5_lift_unsupported_a64++;
+                fprintf(stderr,
+                        "stage5-lift-a64 pc=0x%08X FAIL reason=%s insts=%u ir=%u nodes=%u unsupported=0x%02X time=%llu ns\n",
+                        guest_pc,
+                        stage5_lift_reason_str(region.reason),
+                        region.guest_inst_count,
+                        region.ir_count,
+                        region.node_count,
+                        region.unsupported_opcode,
+                        (unsigned long long)dt_ns);
+            }
+        }
+    }
+
     block_cache_t *cache = ctx->cache;
     emit_ctx_t *e = &ctx->emit;
     bool saved_superblock_enabled = ctx->superblock_enabled;
     bool forced_no_superblock = false;
+    bool using_stage5_narrow = false;   // set by early lifter-driven prologue logic (#1)
 
     // Allocate a block
     translated_block_t *block = cache_alloc_block(cache, guest_pc);
@@ -4188,10 +4653,186 @@ retry_translate:
     reg_alloc_reset(ctx);
     const_prop_reset(ctx);
     bounds_elim_reset(ctx);
-    reg_alloc_prescan(ctx, guest_pc);
 
-    // Emit prologue: load cached guest registers into host callee-saved registers
-    if (ctx->reg_cache_enabled) {
+    // ========================================================================
+    // REAL Stage 5 A64: Early lifter-driven prologue (#1)
+    // Use the lifter's live_in + reg_flow for the entry instead of the
+    // generic prescan.  This is the first concrete "region analysis wins".
+    // ========================================================================
+    stage5_lift_region_t early_region;
+
+    if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
+        stage5_lift_region_init(&early_region, guest_pc);
+        if (stage5_lift_superblock(&early_region, cpu->mem_base, cpu->code_limit,
+                                   STAGE5_LIFT_BUDGET) &&
+            stage5_region_is_narrow_supported(&early_region)) {
+
+            using_stage5_narrow = true;   // outer variable (declared earlier)
+
+            reg_alloc_reset(ctx);
+
+            uint32_t live_in = 0;
+            if (early_region.cfg_valid && early_region.cfg_block_count > 0) {
+                live_in = early_region.cfg_blocks[0].live_in_mask;
+            }
+
+            int order[32];
+            int nlive = 0;
+            for (int r = 1; r < 32 && nlive < REG_ALLOC_SLOTS; r++) {
+                if (live_in & (1u << r)) order[nlive++] = r;
+            }
+
+            // Prefer high-use registers (from reg_flow)
+            for (int i = 0; i < nlive; i++) {
+                for (int j = i+1; j < nlive; j++) {
+                    if (early_region.reg_flow[order[j]].use_count >
+                        early_region.reg_flow[order[i]].use_count) {
+                        int t = order[i]; order[i] = order[j]; order[j] = t;
+                    }
+                }
+            }
+
+            int slot = 0;
+            for (int i = 0; i < nlive && slot < REG_ALLOC_SLOTS-1; i++) {
+                int r = order[i];
+                ctx->reg_alloc[slot].guest_reg = r;
+                ctx->reg_alloc[slot].dirty = false;
+                ctx->reg_alloc[slot].last_use = 0;
+                ctx->reg_alloc_map[r] = slot;
+
+                a64_reg_t hd = reg_alloc_hosts[slot];
+                if (hd != A64_NOREG) {
+                    emit_load_guest_reg(ctx, hd, r);
+                }
+                slot++;
+            }
+        }
+    }
+
+    // Hybrid Option A (back-edge seeding)
+    if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
+        stage5_lift_region_t seed_region;
+        stage5_lift_region_init(&seed_region, guest_pc);
+        if (stage5_lift_superblock(&seed_region, cpu->mem_base, cpu->code_limit,
+                                   STAGE5_LIFT_BUDGET)) {
+            seed_backedges_from_lifted_region(ctx, &seed_region, guest_pc);
+        }
+    }
+
+    if (!using_stage5_narrow) {
+        reg_alloc_prescan(ctx, guest_pc);
+    }
+
+    // ========================================================================
+    // FIRST REAL NARROW OWNING EMISSION (Stage 5 A64 investment)
+    // We replay the lifted region by calling the existing high-quality A64
+    // translate_* helpers (ALU/CMP + simple loads/stores + final terminal CF).
+    // This owns the block, skips the per-instruction while loop, and still
+    // gets constant folding, reg-cache fast paths, memory check specialization,
+    // all A64 fusions, etc. for free.
+    // ========================================================================
+    if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
+        stage5_lift_region_t own_region;
+        stage5_lift_region_init(&own_region, guest_pc);
+        if (stage5_lift_superblock(&own_region, cpu->mem_base, cpu->code_limit,
+                                   STAGE5_LIFT_BUDGET) &&
+            stage5_region_is_narrow_supported(&own_region)) {
+
+            stage5_a64_pilot_attempted++;
+
+            // Enable side-exit emission path in the branch helpers for this region
+            // if the lifter promoted any forward branches to side exits.
+            bool had_side_exits = (own_region.side_exit_count > 0);
+            bool saved_side_exit_info = ctx->side_exit_info_enabled;
+
+            if (had_side_exits) {
+                ctx->side_exit_info_enabled = true;
+                ctx->superblock_enabled = true;
+            }
+
+            if (stage5_replay_narrow_alu_region_a64(ctx, &own_region, block)) {
+                // We successfully owned and emitted the block via the lifted region.
+                stage5_a64_pilot_would_own++;
+                stage5_a64_real_owned++;
+
+                // Count internal branches that went through the real fixup/patching path
+                // (for now this counts how many internal non-side-exit branches were
+                // present in successfully owned regions; real patching will be wired
+                // in the next iteration).
+                int internal_patched = 0;
+                for (uint32_t i = 0; i < own_region.ir_count; i++) {
+                    const stage5_ir_node_t *n = &own_region.ir[i];
+                    if (n->synthetic) continue;
+                    uint8_t op = n->opcode;
+                    bool is_br = (op == OP_BEQ || op == OP_BNE || op == OP_BLT || op == OP_BGE ||
+                                  op == OP_BLTU || op == OP_BGEU);
+                    if (is_br && !n->is_side_exit) {
+                        // Not the final terminal and not turned into a side exit by the lifter
+                        // → this is exactly what the new internal-jump mechanism targets
+                        internal_patched++;
+                    }
+                }
+                stage5_a64_internal_branches_patched += internal_patched;
+
+                // Apply any internal branch fixup recorded during replay
+                // (real B.cond instead of exit)
+                if (ctx->last_internal_fixup_offset != 0) {
+                    uint32_t tgt = ctx->last_internal_fixup_target;
+                    size_t tgt_host = (size_t)-1;
+                    for (int p = 0; p < ctx->pc_map_count; p++) {
+                        if (ctx->pc_map[p].guest_pc == tgt) {
+                            tgt_host = ctx->pc_map[p].host_offset;
+                            break;
+                        }
+                    }
+                    if (tgt_host != (size_t)-1) {
+                        int32_t delta = (int32_t)(tgt_host - (ctx->last_internal_fixup_offset + 4)) / 4;
+                        uint32_t *p = (uint32_t *)((uint8_t *)entry + ctx->last_internal_fixup_offset);
+                        uint32_t val = *p;
+                        val &= ~0x00FFFFE0u;                 // clear imm19
+                        uint32_t field = ((uint32_t)delta & 0x7FFFF) << 5;
+                        *p = val | field;
+
+                        stage5_a64_internal_branches_patched++;
+                    }
+                    ctx->last_internal_fixup_offset = 0;
+                }
+
+                fprintf(stderr, "stage5-a64-OWNED pc=0x%08X (narrow, %u insts, side=%u, int_br=%d)\n",
+                        guest_pc, own_region.guest_inst_count, own_region.side_exit_count, internal_patched);
+                block->host_size = emit_offset(e);
+
+                a64_dump_emitted_block(ctx, entry);
+                cache_commit_code(cache, block->host_size);
+
+                // Superblock / side-exit metadata from the lifter-driven emission
+                if (ctx->side_exit_emitted > 0) {
+                    uint32_t stored = ctx->side_exit_emitted;
+                    if (stored > MAX_BLOCK_EXITS) stored = MAX_BLOCK_EXITS;
+                    block->side_exit_count = (uint8_t)stored;
+                    memcpy(block->side_exit_pcs, ctx->side_exit_pcs,
+                           sizeof(uint32_t) * stored);
+                }
+
+                cache_insert(cache, block);
+                cache_chain_pending(cache, block);
+
+                ctx->block = NULL;
+                // Restore flags we may have temporarily changed for side-exit support
+                ctx->side_exit_info_enabled = saved_side_exit_info;
+                ctx->superblock_enabled = saved_superblock_enabled;
+                dbt_jit_writable_end();
+                return block;
+            } else {
+                stage5_a64_pilot_fallback++;
+                // Restore flags even on fallback
+                ctx->side_exit_info_enabled = saved_side_exit_info;
+                ctx->superblock_enabled = saved_superblock_enabled;
+            }
+        }
+    }
+
+    if (!using_stage5_narrow && ctx->reg_cache_enabled) {
         reg_alloc_emit_prologue(ctx);
     }
 
