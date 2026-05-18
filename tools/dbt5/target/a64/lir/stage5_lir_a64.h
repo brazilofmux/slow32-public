@@ -50,6 +50,13 @@ typedef enum {
     LIR_OP_CMP_JCC,     // fused: cmp src0, src1; jcc (cond in l->cond)
     LIR_OP_CMP_RI_JCC,  // fused: cmp src0, disp; jcc (cond in l->cond)
     LIR_OP_TEST_JCC,    // fused: test src0, src0; jcc (cond in l->cond)
+    // A64-native compare-against-zero shapes. Single-instruction terminals:
+    //   CBZ  Wt, target   — branch if src0 == 0
+    //   CBNZ Wt, target   — branch if src0 != 0
+    // No CMP needed, no flags consumed. Replaces the cmp+b.cond pair on the
+    // dominant `bne/beq rd, r0, target` SLOW-32 pattern.
+    LIR_OP_CBZ,         // if (src0 == 0) jump imm
+    LIR_OP_CBNZ,        // if (src0 != 0) jump imm
     LIR_OP_JMP,         // jump imm
     LIR_OP_CALL,
     LIR_OP_RET,

@@ -46,17 +46,29 @@
 // real Stage 5 emitter on AArch64 needs.
 // ============================================================================
 
-#define STAGE5_A64_MAX_HOST_SLOTS  8
+// A64 slot layout (D2 — past the Stage-4 8-slot ceiling):
+//   slots [0 .. STAGE5_A64_CALLER_SAVED_SLOTS):       W8 .. W15  (caller-saved)
+//   slots [STAGE5_A64_CALLER_SAVED_SLOTS .. MAX):     W19, W22..W26 (callee-saved)
+// The codegen emits stp triples in the prologue (and the matching ldp triples
+// before each ret) only when at least one callee-saved slot is in use.
+#define STAGE5_A64_CALLER_SAVED_SLOTS  8
+#define STAGE5_A64_CALLEE_SAVED_SLOTS  6
+#define STAGE5_A64_MAX_HOST_SLOTS      (STAGE5_A64_CALLER_SAVED_SLOTS + STAGE5_A64_CALLEE_SAVED_SLOTS)
 #define STAGE5_A64_MAX_EXITS       16
 
 typedef struct {
-    // The 8 host registers the RA decided to use for this region.
+    // The host registers the RA decided to use for this region.
     // Value 0 in the slot means "not used / reload from memory".
     a64_reg_t host_regs[STAGE5_A64_MAX_HOST_SLOTS];
 
     // Which guest register (if any) is currently live in each host slot.
     // This is maintained by the emitter during code generation.
     uint8_t   guest_in_slot[STAGE5_A64_MAX_HOST_SLOTS];
+
+    // Set to true iff any callee-saved slot (>= STAGE5_A64_CALLER_SAVED_SLOTS)
+    // is in use for this region. Drives whether the prologue/epilogue/side-exit
+    // stubs save and restore the callee-saved pair set.
+    bool callee_saved_used;
 
     // (A8) slot_dirty[] was written in many places but never read.
     // The only write-back is the unconditional pc/exit_reason store

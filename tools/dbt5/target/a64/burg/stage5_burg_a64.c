@@ -402,12 +402,24 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
                     l->cond = fuse_cmp_branch_to_lir_cond(cm->guest_opcode, br_opcode);
                     l->imm = m->imm;
                     used[cmp_mir_idx] = true;
+
+                    // A64-native peephole: CMP_RI_JCC against #0 with EQ/NE
+                    // collapses to a single CBZ/CBNZ — no compare, no flags.
+                    if (l->op == LIR_OP_CMP_RI_JCC && l->disp == 0 &&
+                        (l->cond == LIR_COND_EQ || l->cond == LIR_COND_NE)) {
+                        l->op = (l->cond == LIR_COND_NE) ? LIR_OP_CBNZ : LIR_OP_CBZ;
+                        l->src_v[1] = 0;
+                        l->disp = 0;
+                    }
                 } else if (cond_v != 0) {
-                    // TEST+branch: one operand is r0 but CMP not fusable
-                    // test reg, reg; jnz/jz — avoids materializing zero
-                    l->op = LIR_OP_TEST_JCC;
+                    // A64-native: `bne/beq rd, r0, target` is exactly CBNZ/CBZ.
+                    // No flag-setting compare needed; one instruction in the
+                    // pipeline. This is the dominant terminal shape in lifted
+                    // SLOW-32 code.
+                    bool branch_on_nz = (br_opcode == 0x49); // BNE → branch if non-zero
+                    l->op = branch_on_nz ? LIR_OP_CBNZ : LIR_OP_CBZ;
                     l->src_v[0] = cond_v;
-                    l->cond = (br_opcode == 0x49) ? LIR_COND_NE : LIR_COND_EQ; // JNZ : JZ on zero test
+                    l->cond = branch_on_nz ? LIR_COND_NE : LIR_COND_EQ;
                     l->imm = m->imm;
                 } else {
                     // Plain branch (BLT/BGE/BLTU/BGEU, or BEQ/BNE without r0)

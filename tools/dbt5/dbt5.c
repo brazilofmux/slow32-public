@@ -46,6 +46,67 @@
 // block is restructured to receive ctx/cache as a proper parameter).
 static block_cache_t *g_a64_experimental_cache = NULL;
 
+#if defined(__aarch64__)
+// Atomic launcher for an emitted A64 block.
+//
+// All register setup (x20=&cpu, x21=mem_base) AND the call to the JIT block
+// happen inside a single __asm__ volatile so the C compiler cannot reorder,
+// spill across, or otherwise touch x20/x21 between setup and call. This is
+// what the previous open-coded inline-asm preamble in the driver got wrong:
+// without a unified block + clobber list, GCC was free to save/restore x20
+// across the surrounding shadow_init / shadow_snapshot calls, undoing the
+// `mov x20, &cpu` before the JIT got to use it.
+//
+// Guest live-in registers are NOT loaded here; the JIT block's prologue
+// already emits `ldr wN, [x20, #gpr*4]` for every live-in slot. All this
+// trampoline needs to guarantee is that x20 and x21 hold &cpu and mem_base
+// when control transfers into the emitted code.
+__attribute__((noinline))
+static void dbt5_launch_a64(void (*fn)(void), void *cpu_ptr, void *mem_base)
+{
+    __asm__ volatile (
+        // IMPORTANT: stage all three operand values into known-safe scratch
+        // registers BEFORE we touch x20/x21. The "r" constraint lets GCC
+        // pick any register for each input — and on AArch64 it happily
+        // picks callee-saved x19/x20/x21 because they survive intervening
+        // C code. If we then do `mov x21, %[mem]` while GCC has put `fn`
+        // in x21, we overwrite fn's register before we BLR to it (and end
+        // up branching to mem_base, which segfaults). Staging into x9/x10/x11
+        // (listed below as clobbers so GCC won't pick them for the operands)
+        // breaks that dependency.
+        "mov x9,  %[fn]\n"
+        "mov x10, %[cpu]\n"
+        "mov x11, %[mem]\n"
+
+        // Frame: save FP/LR (BLR clobbers LR) and the two callee-saved regs
+        // we are about to repurpose as the JIT's ABI bridge.
+        "stp x29, x30, [sp, #-16]!\n"
+        "stp x20, x21, [sp, #-16]!\n"
+        "mov x29, sp\n"
+
+        // Hand the JIT its two ABI bridge registers.
+        "mov x20, x10\n"
+        "mov x21, x11\n"
+
+        // Transfer to the emitted code. The block writes cpu->pc and
+        // cpu->exit_reason via x20 before its own ret.
+        "blr x9\n"
+
+        // Restore everything we touched. SP returns balanced.
+        "ldp x20, x21, [sp], #16\n"
+        "ldp x29, x30, [sp], #16\n"
+        :
+        : [fn]"r"(fn), [cpu]"r"(cpu_ptr), [mem]"r"(mem_base)
+        : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+          "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+          "x16", "x17",
+          // NOTE: x18 deliberately omitted — Apple Silicon reserves it as the
+          // platform register and clobber-listing it is an error.
+          "memory", "cc"
+    );
+}
+#endif
+
 // Memory size for the clean-room driver.
 // Many self-hosted tools (s32-as, sbasic, etc.) request 256 MiB.
 #define DBT5_MEM_SIZE (256 * 1024 * 1024)
@@ -490,69 +551,21 @@ int main(int argc, char **argv) {
 
                             cpu.pc = load_res.entry_point;
 
-                            // ----------------------------------------------------------------
-                            // Proper live-in setup using the RA plan (first real step toward
-                            // reliable execution testing)
-                            // ----------------------------------------------------------------
-                            a64_reg_t slot_to_host[8] = { W8, W9, W10, W11, W12, W13, W14, W15 };
-                            uint8_t entry_gpr_for_slot[8] = {0};
-
-                            for (uint16_t i = 0; i < tmp_ra.interval_count; i++) {
-                                const stage5_ra_interval_t *iv = &tmp_ra.intervals[i];
-                                if (iv->value_id == 0 || iv->spilled || iv->assigned_slot < 0)
-                                    continue;
-                                if (iv->start_idx != 0)   // only live-ins at entry (A7 pilot-side fix)
-                                    continue;
-
-                                uint8_t gpr = ssa_for_emit.value_to_reg[iv->value_id];
-                                if (gpr != 0 && iv->assigned_slot < 8) {
-                                    entry_gpr_for_slot[iv->assigned_slot] = gpr;
-                                }
-                            }
-
                             typedef void (*block_fn_t)(void);
                             block_fn_t fn = (block_fn_t)exec_mem;
 
-                            // Print *before* register setup so the compiler cannot trash
-                            // the live values we are about to put in w8-w15 / x20 / x21.
                             fprintf(stderr, "  [A64-EXEC] jumping to emitted code @ %p (len=%zu)...\n",
                                     exec_mem, a64_cg.emit.offset);
 
-                            // Set up the two special registers the prologue relies on.
-                            // IMPORTANT: no clobber list for x20/x21 — we need the values
-                            // to survive into the call to the emitted code (fixes B4).
-                            __asm__ volatile (
-                                "mov x20, %0\n"     // cpu_state
-                                "mov x21, %1\n"     // mem_base
-                                :
-                                : "r" (&cpu), "r" (cpu.mem_base)
-                            );
-
-                            // Load the live-in guest registers into the host registers
-                            // the emitter expects.  Do this immediately before the call.
-                            for (int s = 0; s < 8; s++) {
-                                uint8_t gpr = entry_gpr_for_slot[s];
-                                if (gpr == 0) continue;
-
-                                uint32_t val = cpu.regs[gpr];
-                                switch (s) {
-                                    case 0: __asm__ volatile("mov w8, %w0" : : "r"(val)); break;
-                                    case 1: __asm__ volatile("mov w9, %w0" : : "r"(val)); break;
-                                    case 2: __asm__ volatile("mov w10, %w0" : : "r"(val)); break;
-                                    case 3: __asm__ volatile("mov w11, %w0" : : "r"(val)); break;
-                                    case 4: __asm__ volatile("mov w12, %w0" : : "r"(val)); break;
-                                    case 5: __asm__ volatile("mov w13, %w0" : : "r"(val)); break;
-                                    case 6: __asm__ volatile("mov w14, %w0" : : "r"(val)); break;
-                                    case 7: __asm__ volatile("mov w15, %w0" : : "r"(val)); break;
-                                }
-                            }
-
-                            // Snapshot the pre-emitted state for B3 validation (polished)
+                            // Snapshot pre-emit CPU state for B3 validation. This must
+                            // happen BEFORE the launcher so that the snapshot reflects
+                            // what the shadow interpreter will start from.
                             shadow_state_t sh;
                             shadow_init(&sh, &cpu);
                             shadow_snapshot(&sh, &cpu);
 
-                            fn();
+                            // Atomic launch — see dbt5_launch_a64() above.
+                            dbt5_launch_a64(fn, &cpu, cpu.mem_base);
 
                             uint32_t emitted_pc = cpu.pc;
                             uint32_t emitted_exit = cpu.exit_reason;

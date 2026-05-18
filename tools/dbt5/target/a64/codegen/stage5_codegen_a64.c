@@ -62,6 +62,28 @@ static a64_cond_t invert_a64_cond(a64_cond_t c)
     return (a64_cond_t)(c ^ 1U);
 }
 
+// Save the 6 callee-saved registers we may use for slots 8..13. Called once
+// at the very top of the JIT prologue, only when at least one such slot is
+// actually live in the RA plan. Pairs match the slot ordering in
+// slot_to_host[] below: (W19,W22), (W23,W24), (W25,W26).
+static void cg_emit_callee_saved_save(stage5_cg_a64_ctx_t *cg)
+{
+    if (!cg->callee_saved_used) return;
+    emit_stp_pre_x64(&cg->emit, W19, W22, -16);
+    emit_stp_pre_x64(&cg->emit, W23, W24, -16);
+    emit_stp_pre_x64(&cg->emit, W25, W26, -16);
+}
+
+// Restore the callee-saved set in LIFO order. Called before every emitted
+// `ret` instruction (the final region epilogue AND every side-exit stub).
+static void cg_emit_callee_saved_restore(stage5_cg_a64_ctx_t *cg)
+{
+    if (!cg->callee_saved_used) return;
+    emit_ldp_post_x64(&cg->emit, W25, W26, 16);
+    emit_ldp_post_x64(&cg->emit, W23, W24, 16);
+    emit_ldp_post_x64(&cg->emit, W19, W22, 16);
+}
+
 void stage5_cg_a64_init(stage5_cg_a64_ctx_t *cg, uint8_t *code_buf, size_t capacity)
 {
     if (!cg) return;
@@ -81,17 +103,26 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     stage5_codegen_a64_attempted++;
 
     // ------------------------------------------------------------------
-    // Step 1: Initialize the 8 host slots from the RA plan
+    // Step 1: Initialize the host slots from the RA plan.
+    // Slots 0..7  → caller-saved W8..W15 (free in the JIT body).
+    // Slots 8..13 → callee-saved W19, W22..W26 (require save/restore).
     // ------------------------------------------------------------------
     memset(cg->host_regs, 0, sizeof(cg->host_regs));
     memset(cg->guest_in_slot, 0, sizeof(cg->guest_in_slot));
-    // (A8) slot_dirty removed — never read, only unconditional write-back in epilogue
+    cg->callee_saved_used = false;
 
     // Build a quick lookup: SSA value_id → host register (for values the RA assigned)
     a64_reg_t value_to_host[STAGE5_SSA_MAX_VALUES];
     uint8_t   value_to_gpr [STAGE5_SSA_MAX_VALUES];
     memset(value_to_host, 0xFF, sizeof(value_to_host));  // A64_NOREG sentinel (all bytes 0xFF => -1)
     memset(value_to_gpr,  0,    sizeof(value_to_gpr));   // 0 = no original guest GPR known (r0 is valid but rare here)
+
+    static const a64_reg_t slot_to_host[STAGE5_A64_MAX_HOST_SLOTS] = {
+        // caller-saved (free during the JIT body)
+        W8,  W9,  W10, W11, W12, W13, W14, W15,
+        // callee-saved (must be paired with stp/ldp around the body)
+        W19, W22, W23, W24, W25, W26,
+    };
 
     for (uint16_t i = 0; i < ra_plan->interval_count; i++) {
         const stage5_ra_interval_t *iv = &ra_plan->intervals[i];
@@ -100,14 +131,12 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
         int slot = iv->assigned_slot;
         if (slot >= 0 && slot < STAGE5_A64_MAX_HOST_SLOTS) {
-            static const a64_reg_t slot_to_host[8] = {
-                W8, W9, W10, W11, W12, W13, W14, W15
-            };
             a64_reg_t hreg = slot_to_host[slot];
             uint8_t gpr = ssa->value_to_reg[iv->value_id];
 
             cg->host_regs[slot] = hreg;
-            // (A8) no longer tracking slot_dirty here
+            if (slot >= STAGE5_A64_CALLER_SAVED_SLOTS)
+                cg->callee_saved_used = true;
 
             if (iv->value_id < STAGE5_SSA_MAX_VALUES) {
                 value_to_host[iv->value_id] = hreg;
@@ -123,8 +152,12 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     }
 
     // ------------------------------------------------------------------
-    // Step 2: Emit a minimal prologue (load live-ins that are in registers)
+    // Step 2: Prologue.
+    //   (a) Save callee-saved regs we plan to clobber (only if used).
+    //   (b) Load live-in guest values from cpu.regs[gpr] into their host slots.
     // ------------------------------------------------------------------
+    cg_emit_callee_saved_save(cg);
+
     for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
         a64_reg_t hreg = cg->host_regs[s];
         uint8_t   gpr  = cg->guest_in_slot[s];
@@ -507,6 +540,80 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             }
 
             // ------------------------------------------------------------------
+            // A64-native compare-against-zero terminals (CBZ / CBNZ).
+            // CBZ/CBNZ share the same imm19 encoding as B.cond, so the patch
+            // logic (mask 0x00FFFFE0 << 5) is bit-identical and the post-pass
+            // patcher needs no changes.
+            // ------------------------------------------------------------------
+            case LIR_OP_CBZ:
+            case LIR_OP_CBNZ: {
+                a64_reg_t src = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                ? value_to_host[n->src_v[0]] : A64_NOREG;
+                if (src == A64_NOREG)
+                    return false; // can't zero-test a value we don't hold in a host reg
+
+                uint32_t tgt = n->guest_pc + 4 + n->imm;
+                bool is_internal = !n->is_side_exit &&
+                                   tgt >= region->start_pc &&
+                                   tgt < region->end_pc;
+
+                if (is_internal) {
+                    size_t patch_off = emit_offset(&cg->emit);
+                    if (n->op == LIR_OP_CBZ)
+                        emit_cbz_w32(&cg->emit, src, 0);
+                    else
+                        emit_cbnz_w32(&cg->emit, src, 0);
+
+                    if (cg->internal_branch_count < 32) {
+                        int idx = cg->internal_branch_count++;
+                        cg->internal_branches[idx].patch_offset = patch_off;
+                        cg->internal_branches[idx].target_pc    = tgt;
+                    } else {
+                        return false;
+                    }
+                } else {
+                    // Side-exit: emit the *inverse* zero-test so the JIT skips
+                    // the cold-path stub when the original condition is false.
+                    size_t skip_off = emit_offset(&cg->emit);
+                    if (n->op == LIR_OP_CBZ) {
+                        // Original: branch if zero. Skip stub if non-zero.
+                        emit_cbnz_w32(&cg->emit, src, 0);
+                    } else {
+                        // Original: branch if non-zero. Skip stub if zero.
+                        emit_cbz_w32(&cg->emit, src, 0);
+                    }
+
+                    if (cg->exit_count < STAGE5_A64_MAX_EXITS) {
+                        int ex = cg->exit_count++;
+                        cg->exits[ex].target_pc    = tgt;
+                        cg->exits[ex].patch_offset = skip_off;
+                        cg->exits[ex].is_side_exit = true;
+                    }
+
+                    // Cold side-exit stub: write pc + exit_reason and ret
+                    emit_mov_w32_imm32(&cg->emit, W0, tgt);
+                    emit_str_w32_imm(&cg->emit, W0, W20, 0x80);
+                    emit_mov_w32_imm32(&cg->emit, W0, 2);
+                    emit_str_w32_imm(&cg->emit, W0, W20, 0x84);
+                    cg_emit_callee_saved_restore(cg);
+                    emit_ret_lr(&cg->emit);
+
+                    // Patch the skip branch to land past the stub.
+                    size_t after_stub = emit_offset(&cg->emit);
+                    int32_t byte_disp = (int32_t)(after_stub - skip_off);
+                    if ((byte_disp % 4) == 0) {
+                        int32_t word_disp = byte_disp / 4;
+                        uint32_t *p = (uint32_t *)(cg->emit.buf + skip_off);
+                        uint32_t inst = *p;
+                        inst &= ~0x00FFFFE0U;
+                        inst |= ((uint32_t)word_disp & 0x7FFFFU) << 5;
+                        *p = inst;
+                    }
+                }
+                break;
+            }
+
+            // ------------------------------------------------------------------
             // Fused and plain conditional branches (JCC family) — A64 experimental path
             // Uses neutral LIR conditions and the skip-stub side-exit strategy.
             // ------------------------------------------------------------------
@@ -563,6 +670,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x80);     // cpu->pc = target
                     emit_mov_w32_imm32(&cg->emit, W0, 2);           // EXIT_BRANCH style reason
                     emit_str_w32_imm(&cg->emit, W0, W20, 0x84);     // cpu->exit_reason
+                    cg_emit_callee_saved_restore(cg);
                     emit_ret_lr(&cg->emit);
 
                     // Patch the skip branch displacement (word offset)
@@ -767,6 +875,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     emit_mov_w32_imm32(&cg->emit, W0, exit_reason);
     emit_str_w32_imm(&cg->emit, W0, W20, 0x84);     // cpu->exit_reason
 
+    cg_emit_callee_saved_restore(cg);
     emit_ret_lr(&cg->emit);
 
     stage5_codegen_a64_success++;

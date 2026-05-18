@@ -81,6 +81,8 @@ const char *lir_op_name(lir_op_t op) {
         case LIR_OP_CMP_JCC:        return "cmp_jcc";
         case LIR_OP_CMP_RI_JCC:     return "cmp_ri_jcc";
         case LIR_OP_TEST_JCC:       return "test_jcc";
+        case LIR_OP_CBZ:            return "cbz";
+        case LIR_OP_CBNZ:           return "cbnz";
         case LIR_OP_JMP:            return "jmp";
         case LIR_OP_CALL:           return "call";
         case LIR_OP_RET:            return "ret";

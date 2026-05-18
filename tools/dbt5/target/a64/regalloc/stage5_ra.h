@@ -9,7 +9,14 @@
 #include "pre/ssa/stage5_ssa.h"
 
 #define STAGE5_RA_MAX_INTERVALS 1024
-#define STAGE5_RA_HOST_SLOTS 8
+
+// A64 grows the slot pool beyond the Stage-4 reg-cache ceiling (8).
+// Slots 0–7 are caller-saved (W8–W15), free for the JIT body.
+// Slots 8–13 are callee-saved (W19, W22–W26); the codegen saves/restores
+// them in the JIT prologue/epilogue when any of them are used. The cost
+// is a stp triple at entry and an ldp triple before each exit — paid only
+// when register pressure actually demands the extra slots.
+#define STAGE5_RA_HOST_SLOTS 14
 
 typedef struct {
     uint16_t value_id;
