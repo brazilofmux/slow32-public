@@ -350,6 +350,29 @@ int main(int argc, char **argv) {
 
         // This is the key call — full independent Stage 5 analysis
         run_full_stage5_analysis(&region, "entry", verbose);
+
+        // === Additional regions from the CFG the lifter discovered ===
+        if (region.cfg_valid && region.cfg_block_count > 1 && verbose) {
+            fprintf(stderr, "\n  --- Additional CFG blocks analyzed ---\n");
+            int extra = 0;
+            for (uint32_t b = 1; b < region.cfg_block_count && extra < 3; b++) {
+                uint32_t pc = region.cfg_blocks[b].start_pc;
+                if (pc == 0 || pc == region.start_pc) continue;
+
+                stage5_lift_region_t extra_region;
+                stage5_lift_region_init(&extra_region, pc);
+
+                if (stage5_lift_superblock(&extra_region, cpu.mem_base, cpu.code_limit, STAGE5_LIFT_BUDGET)) {
+                    char tag[32];
+                    snprintf(tag, sizeof(tag), "blk%u", b);
+                    run_full_stage5_analysis(&extra_region, tag, true);
+                    extra++;
+                }
+            }
+            if (extra == 0) {
+                fprintf(stderr, "  (no additional liftable blocks in this region)\n");
+            }
+        }
     } else {
         fprintf(stderr, "Stage5 lift: FAILED  reason=%d at pc=0x%08X\n",
                 region.reason, region.start_pc);
