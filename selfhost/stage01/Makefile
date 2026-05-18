@@ -17,7 +17,7 @@ HELLO_OBJ = hello_minimal.s32o
 HELLO_EXE = hello_minimal.s32x
 
 # C compiler test artifacts
-TEST_SRC = tests/test1.c
+TEST_SRC = tests/conformance/baseline/test1.c
 TEST_ASM = test1.s
 TEST_OBJ = test1.s32o
 TEST_EXE = test1.s32x
