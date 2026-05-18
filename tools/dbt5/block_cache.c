@@ -1,0 +1,1441 @@
+// SLOW-32 DBT: Block Cache Implementation
+// Stage 2 - Cache translated blocks and support direct chaining
+
+#include "block_cache.h"
+#include "cpu_state.h"
+#include "shadow_interp.h"  // paranoid_mode (disables chaining)
+#ifdef __aarch64__
+#include "emit_a64.h"
+#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <inttypes.h>
+// NOTE: No translate.h on purpose — this is the dbt5 clean-room tree.
+// translated_block_t is defined in block_cache.h; exit_reason_t in cpu_state.h.
+#include <stddef.h>
+#include <sys/mman.h>
+
+static bool cache_exit_validate_enabled(void) {
+    return false;
+}
+
+__attribute__((noinline))
+static void cache_target_snapshot(translated_block_t *target,
+                                  uint32_t *guest_pc,
+                                  uint8_t **host_code) {
+    *guest_pc = target->guest_pc;
+    *host_code = target->host_code;
+}
+
+__attribute__((noinline))
+static int32_t cache_pending_head_get(block_cache_t *cache, uint32_t hash) {
+    return cache->chain_pending_head[hash];
+}
+
+__attribute__((noinline))
+static void cache_pending_head_set(block_cache_t *cache, uint32_t hash, int32_t value) {
+    cache->chain_pending_head[hash] = value;
+}
+
+// Maximum number of blocks we can store
+#define MAX_BLOCKS 131072
+
+// ============================================================================
+// Cache management
+// ============================================================================
+
+bool cache_init(block_cache_t *cache) {
+    // Keep native dispatcher field offsets in sync with translated_block_t layout.
+    _Static_assert(offsetof(translated_block_t, guest_pc) == 0,
+                   "translated_block_t layout changed: guest_pc offset");
+    _Static_assert(offsetof(translated_block_t, host_code) == 8,
+                   "translated_block_t layout changed: host_code offset");
+    _Static_assert(offsetof(translated_block_t, exec_count) == 24,
+                   "translated_block_t layout changed: exec_count offset");
+
+    memset(cache, 0, sizeof(*cache));
+
+    // Allocate block metadata pool
+    cache->block_pool = calloc(MAX_BLOCKS, sizeof(translated_block_t));
+    if (!cache->block_pool) {
+        return false;
+    }
+    cache->block_pool_size = MAX_BLOCKS;
+    cache->block_pool_used = 0;
+
+    // Allocate compact direct-mapped lookup table (64K entries × 16 bytes = 1 MB)
+    cache->compact_table = calloc(COMPACT_TABLE_SIZE, sizeof(compact_entry_t));
+    if (!cache->compact_table) {
+        free(cache->block_pool);
+        cache->block_pool = NULL;
+        return false;
+    }
+
+    // Allocate executable code buffer
+    cache->code_buffer = mmap(NULL, CODE_BUFFER_SIZE,
+                              PROT_READ | PROT_WRITE | PROT_EXEC,
+                              DBT_JIT_MMAP_FLAGS, -1, 0);
+    if (cache->code_buffer == MAP_FAILED) {
+        free(cache->compact_table);
+        cache->compact_table = NULL;
+        free(cache->block_pool);
+        cache->block_pool = NULL;
+        return false;
+    }
+    cache->code_buffer_size = CODE_BUFFER_SIZE;
+    cache->code_buffer_used = 0;
+
+#ifdef __aarch64__
+    dbt_jit_writable_begin();
+    // AArch64 dispatcher stub: just RET (return to execute_translated)
+    cache->dispatcher_stub = cache->code_buffer;
+    {
+        uint32_t *p = (uint32_t *)cache->code_buffer;
+        *p = 0xD65F03C0;  // RET
+    }
+    cache->code_buffer_used = 16;  // Align next code
+
+    // Shared branch exit stub:
+    //   MOVZ W0, #EXIT_BRANCH              (4 bytes)
+    //   STR W0, [X20, #CPU_EXIT_REASON_OFFSET]  (4 bytes)
+    //   B native_dispatcher                 (4 bytes)
+    // Total: 12 bytes
+    {
+        uint32_t *p = (uint32_t *)(cache->code_buffer + cache->code_buffer_used);
+        cache->shared_branch_exit = (uint8_t *)p;
+        uint32_t reason = EXIT_BRANCH;
+        // MOVZ W0, #reason
+        p[0] = 0x52800000 | ((reason & 0xFFFF) << 5) | 0;  // W0
+        // STR W0, [X20, #offset]  — unsigned offset scaled by 4
+        uint32_t scaled = (uint32_t)CPU_EXIT_REASON_OFFSET / 4;
+        p[1] = 0xB9000000 | ((scaled & 0xFFF) << 10) | (20 << 5) | 0;  // STR W0, [X20, #off]
+        // B native_dispatcher — placeholder, patched below
+        p[2] = 0x14000000;  // B +0 (placeholder)
+        cache->code_buffer_used += 12;
+    }
+
+    // Native dispatcher trampoline (AArch64):
+    // Uses X20=cpu, X22=compact_table (preserved), scratch: W0-W6
+    // Loads lookup_table from cpu_state into X6 (scratch)
+    {
+        uint32_t *p = (uint32_t *)(cache->code_buffer + cache->code_buffer_used);
+        cache->native_dispatcher = (uint8_t *)p;
+
+        // Patch B in shared_branch_exit to jump here
+        {
+            uint32_t *b_site = (uint32_t *)(cache->shared_branch_exit + 8);
+            int32_t diff = (int32_t)((uint8_t *)p - (uint8_t *)b_site);
+            *b_site = 0x14000000 | ((diff >> 2) & 0x03FFFFFF);
+        }
+
+        int n = 0;
+        uint32_t pc_off = (uint32_t)CPU_PC_OFFSET;
+        uint32_t mask_off = (uint32_t)CPU_LOOKUP_MASK_OFFSET;
+        uint32_t lt_off = (uint32_t)CPU_LOOKUP_TABLE_OFFSET;
+
+        // LDR X6, [X20, #lt_off]             ; X6 = cpu->lookup_table (scratch)
+        p[n++] = 0xF9400000 | (((lt_off / 8) & 0xFFF) << 10) | (20 << 5) | 6;
+
+        // LDR W1, [X20, #pc_off]             ; W1 = cpu->pc
+        p[n++] = 0xB9400000 | (((pc_off / 4) & 0xFFF) << 10) | (20 << 5) | 1;
+
+        // LSR W2, W1, #2                     ; W2 = pc >> 2
+        p[n++] = 0x53000000 | (2 << 16) | (31 << 10) | (1 << 5) | 2;  // UBFM W2, W1, #2, #31
+
+        // LSR W3, W1, #12                    ; W3 = pc >> 12
+        p[n++] = 0x53000000 | (12 << 16) | (31 << 10) | (1 << 5) | 3;  // UBFM W3, W1, #12, #31
+
+        // EOR W2, W2, W3                     ; W2 = hash
+        p[n++] = 0x4A000000 | (3 << 16) | (2 << 5) | 2;
+
+        // LDR W4, [X20, #mask_off]           ; W4 = BLOCK_CACHE_MASK
+        p[n++] = 0xB9400000 | (((mask_off / 4) & 0xFFF) << 10) | (20 << 5) | 4;
+
+        // AND W2, W2, W4                     ; hash &= mask
+        p[n++] = 0x0A000000 | (4 << 16) | (2 << 5) | 2;
+
+        // MOV W5, W2                         ; W5 = start index
+        p[n++] = 0x2A0003E0 | (2 << 16) | 5;  // ORR W5, WZR, W2
+
+        // .probe:
+        int probe_idx = n;
+
+        // LDR X3, [X6, W2, UXTW #3]         ; X3 = blocks[hash] (pointer, scaled by 8)
+        // Load register (extended): LDR Xt, [Xn, Wm, UXTW #3]
+        // 11 111 0 00 0 11 Rm 010 S 10 Rn Rt
+        // option=010 (UXTW) at bits[15:13], S=1 at bit[12] for <<3 scaling
+        p[n++] = 0xF8605800 | (2 << 16) | (6 << 5) | 3;
+
+        // CBZ X3, .miss
+        int cbz_miss_idx = n;
+        p[n++] = 0xB4000000 | 3;  // placeholder, patched below
+
+        // LDR W0, [X3, #0]                  ; W0 = block->guest_pc
+        p[n++] = 0xB9400000 | (3 << 5) | 0;
+
+        // CMP W0, W1                        ; guest_pc == target?
+        p[n++] = 0x6B00001F | (1 << 16) | (0 << 5);
+
+        // B.EQ .hit
+        int beq_hit_idx = n;
+        p[n++] = 0x54000000 | COND_EQ;  // placeholder
+
+        // ADD W2, W2, #1
+        p[n++] = 0x11000400 | (2 << 5) | 2;
+
+        // AND W2, W2, W4                    ; wrap around
+        p[n++] = 0x0A000000 | (4 << 16) | (2 << 5) | 2;
+
+        // CMP W2, W5                        ; full circle?
+        p[n++] = 0x6B00001F | (5 << 16) | (2 << 5);
+
+        // B.NE .probe
+        int32_t probe_diff = (probe_idx - n) * 4;
+        p[n++] = 0x54000000 | (((probe_diff >> 2) & 0x7FFFF) << 5) | COND_NE;
+
+        // .miss:
+        {
+            int32_t diff = (n - cbz_miss_idx) * 4;
+            p[cbz_miss_idx] = 0xB4000000 | (((diff >> 2) & 0x7FFFF) << 5) | 3;
+        }
+
+        // RET                               ; return to C dispatcher
+        p[n++] = 0xD65F03C0;
+
+        // .hit:
+        {
+            int32_t diff = (n - beq_hit_idx) * 4;
+            p[beq_hit_idx] = 0x54000000 | (((diff >> 2) & 0x7FFFF) << 5) | COND_EQ;
+        }
+
+        // LDR W0, [X3, #24]                ; W0 = exec_count
+        p[n++] = 0xB9400000 | ((24 / 4) << 10) | (3 << 5) | 0;
+
+        // ADD W0, W0, #1
+        p[n++] = 0x11000400 | (0 << 5) | 0;
+
+        // STR W0, [X3, #24]                ; exec_count++
+        p[n++] = 0xB9000000 | ((24 / 4) << 10) | (3 << 5) | 0;
+
+        // LDR X0, [X3, #8]                 ; X0 = block->host_code
+        p[n++] = 0xF9400000 | ((8 / 8) << 10) | (3 << 5) | 0;
+
+        // BR X0                             ; jump to translated block
+        p[n++] = 0xD61F0000 | (0 << 5);
+
+        cache->code_buffer_used += (uint32_t)(n * 4);
+        // Align to 16 bytes
+        cache->code_buffer_used = (cache->code_buffer_used + 15) & ~15;
+    }
+
+    // Flush I-cache for all stubs
+    dbt_clear_icache(cache->code_buffer, cache->code_buffer + cache->code_buffer_used);
+    dbt_jit_writable_end();
+
+#else  // x86-64
+
+    // Emit dispatcher stub at start of code buffer
+    // This is where unchained exits jump to - just 'ret' to C dispatcher
+    cache->dispatcher_stub = cache->code_buffer;
+    cache->code_buffer[0] = 0xC3;  // ret
+    cache->code_buffer_used = 16;  // Align next code
+
+    // Emit shared branch exit stub:
+    //   mov dword [rbp + CPU_EXIT_REASON_OFFSET], EXIT_BRANCH  (10 bytes)
+    //   jmp native_dispatcher                                   (5 bytes)
+    // Total: 15 bytes
+    {
+        uint8_t *p = cache->code_buffer + cache->code_buffer_used;
+        cache->shared_branch_exit = p;
+        int32_t disp = (int32_t)CPU_EXIT_REASON_OFFSET;
+        // mov dword [rbp + disp32], imm32
+        // C7 85 <disp32> <imm32>
+        *p++ = 0xC7;
+        *p++ = 0x85;
+        *p++ = (disp >> 0) & 0xFF;
+        *p++ = (disp >> 8) & 0xFF;
+        *p++ = (disp >> 16) & 0xFF;
+        *p++ = (disp >> 24) & 0xFF;
+        uint32_t reason = EXIT_BRANCH;
+        *p++ = (reason >> 0) & 0xFF;
+        *p++ = (reason >> 8) & 0xFF;
+        *p++ = (reason >> 16) & 0xFF;
+        *p++ = (reason >> 24) & 0xFF;
+        // jmp rel32 (placeholder — patched after native_dispatcher is emitted)
+        uint8_t *jmp_patch = p;
+        *p++ = 0xE9;
+        *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; *p++ = 0x00;
+        cache->code_buffer_used += (uint32_t)(p - cache->shared_branch_exit);
+    }
+
+    // Emit native dispatcher trampoline
+    // Stays in generated code — does full linear-probe cache lookup.
+    // On hit: jumps to block->host_code (keeps return address on stack).
+    // On miss: ret to C dispatcher (execute_translated).
+    //
+    // Register usage (all free at any exit path):
+    //   RBP = &cpu (preserved), R14 = mem_base (preserved), R13 = compact_table (preserved)
+    //   R15 = scratch (loaded from cpu->lookup_table each time)
+    //   RAX, RCX, RDX, R8, R10, R11 = scratch
+    {
+        uint8_t *p = cache->code_buffer + cache->code_buffer_used;
+        cache->native_dispatcher = p;
+
+        // Patch the jmp in shared_branch_exit to point here
+        {
+            uint8_t *jmp_site = cache->shared_branch_exit + 10; // after mov dword
+            int32_t rel = (int32_t)(p - (jmp_site + 5));
+            jmp_site[1] = (rel >> 0) & 0xFF;
+            jmp_site[2] = (rel >> 8) & 0xFF;
+            jmp_site[3] = (rel >> 16) & 0xFF;
+            jmp_site[4] = (rel >> 24) & 0xFF;
+        }
+
+        int32_t pc_off = (int32_t)CPU_PC_OFFSET;
+        int32_t mask_off = (int32_t)CPU_LOOKUP_MASK_OFFSET;
+        int32_t lt_off = (int32_t)CPU_LOOKUP_TABLE_OFFSET;
+
+        // Load lookup_table base from cpu_state (R15 is now a reg cache slot)
+        // mov r15, [rbp + lookup_table_off] ; r15 = cpu->lookup_table (scratch)
+        *p++ = 0x4C; *p++ = 0x8B; *p++ = 0xBD;
+        *p++ = (lt_off >> 0) & 0xFF; *p++ = (lt_off >> 8) & 0xFF;
+        *p++ = (lt_off >> 16) & 0xFF; *p++ = (lt_off >> 24) & 0xFF;
+
+        // mov ecx, [rbp + pc_off]          ; ecx = cpu->pc
+        *p++ = 0x8B; *p++ = 0x8D;
+        *p++ = (pc_off >> 0) & 0xFF; *p++ = (pc_off >> 8) & 0xFF;
+        *p++ = (pc_off >> 16) & 0xFF; *p++ = (pc_off >> 24) & 0xFF;
+
+        // mov eax, ecx                     ; eax = pc
+        *p++ = 0x89; *p++ = 0xC8;
+
+        // shr eax, 2                       ; eax = pc >> 2
+        *p++ = 0xC1; *p++ = 0xE8; *p++ = 0x02;
+
+        // mov r11d, ecx                    ; r11d = pc
+        *p++ = 0x44; *p++ = 0x89; *p++ = 0xCB;
+
+        // shr r11d, 12                     ; r11d = pc >> 12
+        *p++ = 0x41; *p++ = 0xC1; *p++ = 0xEB; *p++ = 0x0C;
+
+        // xor eax, r11d                    ; eax ^= r11d
+        *p++ = 0x44; *p++ = 0x31; *p++ = 0xD8;
+
+        // mov r10d, [rbp + mask_off]       ; r10d = BLOCK_CACHE_MASK
+        *p++ = 0x44; *p++ = 0x8B; *p++ = 0x95;
+        *p++ = (mask_off >> 0) & 0xFF; *p++ = (mask_off >> 8) & 0xFF;
+        *p++ = (mask_off >> 16) & 0xFF; *p++ = (mask_off >> 24) & 0xFF;
+
+        // and eax, r10d                    ; hash &= mask
+        *p++ = 0x44; *p++ = 0x21; *p++ = 0xD0;
+
+        // mov r8d, eax                     ; r8d = start index
+        *p++ = 0x41; *p++ = 0x89; *p++ = 0xC0;
+
+        // .probe:
+        uint8_t *probe_label = p;
+
+        // mov rdx, [r15 + rax*8]           ; rdx = blocks[hash]
+        *p++ = 0x49; *p++ = 0x8B; *p++ = 0x14; *p++ = 0xC7;
+
+        // test rdx, rdx                    ; NULL check
+        *p++ = 0x48; *p++ = 0x85; *p++ = 0xD2;
+
+        // jz .miss (rel32)
+        *p++ = 0x0F; *p++ = 0x84;
+        uint8_t *jz_miss_patch = p;
+        *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; // placeholder
+
+        // cmp [rdx], ecx                   ; block->guest_pc == target?
+        *p++ = 0x39; *p++ = 0x0A;
+
+        // je .hit (rel32)
+        *p++ = 0x0F; *p++ = 0x84;
+        uint8_t *je_hit_patch = p;
+        *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; // placeholder
+
+        // inc eax
+        *p++ = 0xFF; *p++ = 0xC0;
+
+        // and eax, r10d                    ; wrap around
+        *p++ = 0x44; *p++ = 0x21; *p++ = 0xD0;
+
+        // cmp eax, r8d                     ; full circle?
+        *p++ = 0x44; *p++ = 0x39; *p++ = 0xC0;
+
+        // jne .probe
+        *p++ = 0x75;
+        *p = (uint8_t)(probe_label - (p + 1));
+        p++;
+
+        // .miss:
+        {
+            int32_t rel = (int32_t)(p - (jz_miss_patch + 4));
+            jz_miss_patch[0] = (rel >> 0) & 0xFF;
+            jz_miss_patch[1] = (rel >> 8) & 0xFF;
+            jz_miss_patch[2] = (rel >> 16) & 0xFF;
+            jz_miss_patch[3] = (rel >> 24) & 0xFF;
+        }
+
+        // ret                               ; return to C dispatcher
+        *p++ = 0xC3;
+
+        // .hit:
+        {
+            int32_t rel = (int32_t)(p - (je_hit_patch + 4));
+            je_hit_patch[0] = (rel >> 0) & 0xFF;
+            je_hit_patch[1] = (rel >> 8) & 0xFF;
+            je_hit_patch[2] = (rel >> 16) & 0xFF;
+            je_hit_patch[3] = (rel >> 24) & 0xFF;
+        }
+
+        // inc dword [rdx + 24]             ; exec_count++ (offset 24 in translated_block_t)
+        *p++ = 0xFF; *p++ = 0x42; *p++ = 0x18;
+
+        // jmp [rdx + 8]                    ; jmp block->host_code (offset 8)
+        *p++ = 0xFF; *p++ = 0x62; *p++ = 0x08;
+
+        cache->code_buffer_used += (uint32_t)(p - cache->native_dispatcher);
+        // Align
+        cache->code_buffer_used = (cache->code_buffer_used + 15) & ~15;
+    }
+#endif // __aarch64__
+
+    // Record where stubs end (for cache_flush)
+    cache->stubs_end = cache->code_buffer_used;
+
+    // Initialize chain pending index
+    memset(cache->chain_pending_head, -1, sizeof(cache->chain_pending_head));
+    cache->chain_pending_used = 0;
+
+    return true;
+}
+
+void cache_destroy(block_cache_t *cache) {
+    if (cache->code_buffer && cache->code_buffer != MAP_FAILED) {
+        munmap(cache->code_buffer, cache->code_buffer_size);
+    }
+    if (cache->block_pool) {
+        free(cache->block_pool);
+    }
+    if (cache->compact_table) {
+        free(cache->compact_table);
+    }
+    memset(cache, 0, sizeof(*cache));
+}
+
+void cache_flush(block_cache_t *cache) {
+    // Clear hash table
+    memset(cache->blocks, 0, sizeof(cache->blocks));
+    cache->block_count = 0;
+
+    // Reset block pool
+    memset(cache->block_pool, 0, cache->block_pool_used * sizeof(translated_block_t));
+    cache->block_pool_used = 0;
+
+    // Reset compact lookup table
+    memset(cache->compact_table, 0, COMPACT_TABLE_SIZE * sizeof(compact_entry_t));
+
+    // Reset code buffer - keep dispatcher stub, shared_branch_exit, and native_dispatcher
+    cache->code_buffer_used = cache->stubs_end;
+
+    // Reset chain pending index
+    memset(cache->chain_pending_head, -1, sizeof(cache->chain_pending_head));
+    cache->chain_pending_used = 0;
+
+    cache->flush_count++;
+}
+
+// ============================================================================
+// Side-exit profiling
+// ============================================================================
+
+uint32_t cache_side_exit_taken_count(block_cache_t *cache, uint32_t branch_pc) {
+    uint32_t idx = cache_hash(branch_pc);
+    return cache->side_exit_taken_profile[idx];
+}
+
+uint32_t cache_side_exit_total_count(block_cache_t *cache, uint32_t branch_pc) {
+    uint32_t idx = cache_hash(branch_pc);
+    return cache->side_exit_total_profile[idx];
+}
+
+// ============================================================================
+// Block lookup and insertion
+// ============================================================================
+
+translated_block_t *cache_lookup(block_cache_t *cache, uint32_t guest_pc) {
+    cache->lookup_count++;
+
+    uint32_t idx = cache_hash(guest_pc);
+    uint32_t start = idx;
+
+    do {
+        translated_block_t *b = cache->blocks[idx];
+
+        if (b == NULL) {
+            // Empty slot - block not in cache
+            return NULL;
+        }
+
+        if (b->guest_pc == guest_pc) {
+            // Found it
+            cache->lookup_hit_count++;
+            b->exec_count++;
+            return b;
+        }
+
+        // Linear probe to next slot
+        idx = (idx + 1) & BLOCK_CACHE_MASK;
+    } while (idx != start);
+
+    // Table full and not found (shouldn't happen with proper sizing)
+    return NULL;
+}
+
+translated_block_t *cache_alloc_block(block_cache_t *cache, uint32_t guest_pc) {
+    // Check if pool is full
+    if (cache->block_pool_used >= cache->block_pool_size) {
+        return NULL;  // Caller should flush
+    }
+
+    // Allocate from pool
+    translated_block_t *block = &cache->block_pool[cache->block_pool_used++];
+    memset(block, 0, sizeof(*block));
+    block->guest_pc = guest_pc;
+
+    return block;
+}
+
+bool cache_needs_flush(block_cache_t *cache) {
+    // Flush when hash table exceeds 75% load factor to prevent
+    // infinite loop in linear probing
+    return cache->block_count >= (BLOCK_CACHE_SIZE * 3 / 4);
+}
+
+void cache_insert(block_cache_t *cache, translated_block_t *block) {
+    uint32_t idx = cache_hash(block->guest_pc);
+    uint32_t start = idx;
+
+    // Find empty slot (linear probe)
+    do {
+        if (cache->blocks[idx] == NULL) {
+            cache->blocks[idx] = block;
+            cache->block_count++;
+
+            // Also populate compact direct-mapped table (last-writer-wins)
+            if (cache->compact_table && block->host_code) {
+                uint32_t cidx = compact_hash(block->guest_pc);
+                cache->compact_table[cidx].guest_pc = block->guest_pc;
+                cache->compact_table[cidx].native_code = block->host_code;
+            }
+
+            return;
+        }
+        idx = (idx + 1) & BLOCK_CACHE_MASK;
+    } while (idx != start);
+
+    // Table completely full — this should not happen if caller
+    // checks cache_needs_flush() before translating
+    fprintf(stderr, "DBT: cache_insert: hash table full! block_count=%u\n",
+            cache->block_count);
+}
+
+// ============================================================================
+// Code buffer management
+// ============================================================================
+
+uint8_t *cache_alloc_code(block_cache_t *cache, uint32_t size) {
+    // Align to 16 bytes for performance
+    uint32_t aligned_offset = (cache->code_buffer_used + 15) & ~15;
+
+    if (aligned_offset + size > cache->code_buffer_size) {
+        return NULL;  // Caller should flush
+    }
+
+    return cache->code_buffer + aligned_offset;
+}
+
+uint8_t *cache_get_code_ptr(block_cache_t *cache) {
+    // Return next aligned position
+    uint32_t aligned_offset = (cache->code_buffer_used + 15) & ~15;
+    return cache->code_buffer + aligned_offset;
+}
+
+void cache_commit_code(block_cache_t *cache, uint32_t size) {
+    uint32_t aligned_offset = (cache->code_buffer_used + 15) & ~15;
+    cache->code_buffer_used = aligned_offset + size;
+#ifdef __aarch64__
+    // Flush I-cache for newly committed code
+    dbt_clear_icache(cache->code_buffer + aligned_offset,
+                     cache->code_buffer + aligned_offset + size);
+#endif
+}
+
+// ============================================================================
+// Direct chaining
+// ============================================================================
+
+void cache_record_exit(block_cache_t *cache, translated_block_t *block,
+                       int exit_idx, uint32_t target_pc, uint8_t *patch_site) {
+    if (!block || exit_idx < 0 || exit_idx >= MAX_BLOCK_EXITS) {
+        return;  // Shouldn't happen
+    }
+    if (cache) {
+        uint8_t *base = cache->code_buffer;
+        uint8_t *limit = cache->code_buffer + cache->code_buffer_size;
+        if (patch_site < base || patch_site + 4 > limit) {
+            cache->patch_oob_count++;
+            fprintf(stderr,
+                    "DBT: cache_record_exit patch_site OOB block=0x%08X exit=%d target=0x%08X patch=%p range=[%p,%p)\n",
+                    block ? block->guest_pc : 0, exit_idx, target_pc,
+                    (void *)patch_site, (void *)base, (void *)limit);
+        }
+        if (cache_exit_validate_enabled()) {
+            block_exit_t *slot = &block->exits[exit_idx];
+            bool slot_used = (slot->patch_site != NULL) || (slot->target_pc != 0);
+            if (slot_used &&
+                (slot->target_pc != target_pc || slot->patch_site != patch_site)) {
+                cache->exit_overwrite_count++;
+                fprintf(stderr,
+                        "DBT: exit slot overwrite block=0x%08X exit=%d prev_target=0x%08X prev_patch=%p new_target=0x%08X new_patch=%p\n",
+                        block->guest_pc, exit_idx,
+                        slot->target_pc, (void *)slot->patch_site,
+                        target_pc, (void *)patch_site);
+            }
+        }
+    }
+
+    block->exits[exit_idx].target_pc = target_pc;
+    block->exits[exit_idx].patch_site = patch_site;
+    block->exits[exit_idx].chained = false;
+    // Preserve branch_pc if already set by the translator.
+
+    if (exit_idx >= block->exit_count) {
+        block->exit_count = exit_idx + 1;
+    }
+}
+
+void cache_chain_incoming(block_cache_t *cache, translated_block_t *target) {
+    // Paranoid mode: disable chaining so every block returns to dispatcher
+    if (paranoid_mode) return;
+    // Use the O(1) pending chain index if available
+    cache_chain_pending(cache, target);
+}
+
+void cache_record_pending_chain(block_cache_t *cache, translated_block_t *block,
+                                int exit_idx, uint32_t target_pc) {
+    if (!cache || !block || exit_idx < 0 || exit_idx >= MAX_BLOCK_EXITS) {
+        if (cache && cache_exit_validate_enabled()) {
+            cache->pending_invalid_ref_count++;
+            fprintf(stderr,
+                    "DBT: invalid pending-chain record block=%p exit=%d target=0x%08X\n",
+                    (void *)block, exit_idx, target_pc);
+        }
+        return;
+    }
+    if (block < cache->block_pool ||
+        block >= (cache->block_pool + cache->block_pool_size)) {
+        if (cache_exit_validate_enabled()) {
+            cache->pending_invalid_ref_count++;
+            fprintf(stderr,
+                    "DBT: pending-chain block outside pool block=%p pool=[%p,%p)\n",
+                    (void *)block, (void *)cache->block_pool,
+                    (void *)(cache->block_pool + cache->block_pool_size));
+        }
+        return;
+    }
+    if (cache->chain_pending_used >= CHAIN_PENDING_POOL_SIZE) {
+        return;  // Pool exhausted
+    }
+    uint32_t hash = cache_hash(target_pc);
+    uint32_t entry_idx = cache->chain_pending_used++;
+    uint32_t block_idx = (uint32_t)(block - cache->block_pool);
+
+    cache->chain_pending_entries[entry_idx].target_pc = target_pc;
+    cache->chain_pending_entries[entry_idx].block_idx = block_idx;
+    cache->chain_pending_entries[entry_idx].exit_idx = (uint8_t)exit_idx;
+    cache->chain_pending_entries[entry_idx].next = cache_pending_head_get(cache, hash);
+    cache_pending_head_set(cache, hash, (int32_t)entry_idx);
+}
+
+void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
+    uint32_t target_pc;
+    uint8_t *target_host_code;
+    cache_target_snapshot(target, &target_pc, &target_host_code);
+    uint32_t hash = cache_hash(target_pc);
+    int32_t prev = -1;
+    int32_t idx = cache_pending_head_get(cache, hash);
+
+    while (idx >= 0) {
+        int32_t next = cache->chain_pending_entries[idx].next;
+
+        if (cache->chain_pending_entries[idx].target_pc == target_pc) {
+            uint32_t block_idx = cache->chain_pending_entries[idx].block_idx;
+            uint8_t exit_idx = cache->chain_pending_entries[idx].exit_idx;
+            if (block_idx >= cache->block_pool_used || exit_idx >= MAX_BLOCK_EXITS) {
+                cache->pending_invalid_ref_count++;
+                if (cache_exit_validate_enabled()) {
+                    fprintf(stderr,
+                            "DBT: pending-chain invalid ref target=0x%08X block_idx=%u pool_used=%u exit_idx=%u\n",
+                            target_pc, block_idx, cache->block_pool_used, exit_idx);
+                }
+                // Remove invalid entry from list.
+                if (prev >= 0) {
+                    cache->chain_pending_entries[prev].next = next;
+                } else {
+                    cache_pending_head_set(cache, hash, next);
+                }
+                idx = next;
+                continue;
+            }
+            translated_block_t *b = &cache->block_pool[block_idx];
+
+            if (cache_exit_validate_enabled()) {
+                block_exit_t *ex = &b->exits[exit_idx];
+                if (ex->target_pc != target_pc) {
+                    cache->pending_mismatch_count++;
+                    fprintf(stderr,
+                            "DBT: pending-chain mismatch block=0x%08X exit=%u pending_target=0x%08X slot_target=0x%08X\n",
+                            b->guest_pc, exit_idx, target_pc, ex->target_pc);
+                }
+            }
+
+            if (b->host_code != NULL &&
+                exit_idx < b->exit_count &&
+                !b->exits[exit_idx].chained &&
+                b->exits[exit_idx].patch_site != NULL &&
+                b->exits[exit_idx].target_pc == target_pc) {
+
+                cache_patch_jmp(cache, b->exits[exit_idx].patch_site, target_host_code);
+                b->exits[exit_idx].chained = true;
+                cache->chain_count++;
+            }
+
+            // Remove from list
+            if (prev >= 0) {
+                cache->chain_pending_entries[prev].next = next;
+            } else {
+                cache_pending_head_set(cache, hash, next);
+            }
+            // Don't update prev - it stays the same since we removed current
+        } else {
+            prev = idx;
+        }
+
+        idx = next;
+    }
+}
+
+void cache_patch_jmp(block_cache_t *cache, uint8_t *patch_site, uint8_t *target) {
+    if (cache) {
+        cache->patch_attempt_count++;
+        uint8_t *base = cache->code_buffer;
+        uint8_t *limit = cache->code_buffer + cache->code_buffer_used;
+        if (patch_site < base || patch_site + 4 > limit ||
+            target < base || target >= limit) {
+            cache->patch_oob_count++;
+            fprintf(stderr,
+                    "DBT: cache_patch_jmp OOB patch=%p target=%p range=[%p,%p)\n",
+                    (void *)patch_site, (void *)target, (void *)base, (void *)limit);
+            return;
+        }
+    }
+#ifdef __aarch64__
+    // On AArch64, patch_site points to the B instruction itself (4 bytes).
+    // Rewrite the entire instruction with the correct offset.
+    int64_t diff = (int64_t)(target - patch_site);
+    int32_t imm26 = (int32_t)(diff >> 2);
+
+    // Check 26-bit signed range (+-128MB)
+    if (imm26 < -(1 << 25) || imm26 >= (1 << 25)) {
+        if (cache) cache->patch_rel_oob_count++;
+        fprintf(stderr, "cache_patch_jmp: AArch64 B offset out of range!\n");
+        return;
+    }
+
+    uint32_t inst = 0x14000000 | (imm26 & 0x03FFFFFF);
+    uint32_t *p = (uint32_t *)patch_site;
+    dbt_jit_writable_begin();
+    *p = inst;
+
+    // Flush I-cache for the patched instruction
+        dbt_clear_icache(patch_site, patch_site + 4);
+    dbt_jit_writable_end();
+#else
+    // x86-64: patch_site points to the rel32 offset of a jmp or jcc instruction
+    // Calculate the relative offset from end of instruction
+    // jmp rel32: opcode(1) + rel32(4) = 5 bytes total, so rel = target - (patch_site + 4)
+    // jcc rel32: 0F opcode(2) + rel32(4) = 6 bytes, but patch_site is after opcode
+    //            so rel = target - (patch_site + 4)
+
+    int64_t rel = (int64_t)(target - (patch_site + 4));
+
+    // Check if offset fits in 32 bits (should always be true with our buffer sizes)
+    if (rel < INT32_MIN || rel > INT32_MAX) {
+        if (cache) cache->patch_rel_oob_count++;
+        fprintf(stderr, "cache_patch_jmp: offset out of range!\n");
+        return;
+    }
+
+    // Write the new offset (little-endian)
+    int32_t rel32 = (int32_t)rel;
+    patch_site[0] = (rel32 >> 0) & 0xFF;
+    patch_site[1] = (rel32 >> 8) & 0xFF;
+    patch_site[2] = (rel32 >> 16) & 0xFF;
+    patch_site[3] = (rel32 >> 24) & 0xFF;
+#endif
+}
+
+// ============================================================================
+// Statistics
+// ============================================================================
+
+void cache_print_stats(block_cache_t *cache) {
+    fprintf(stderr, "\n=== Block Cache Statistics ===\n");
+    fprintf(stderr, "Blocks cached: %u\n", cache->block_count);
+    fprintf(stderr, "Code buffer:   %u / %u bytes (%.1f%%)\n",
+            cache->code_buffer_used, cache->code_buffer_size,
+            100.0 * cache->code_buffer_used / cache->code_buffer_size);
+    fprintf(stderr, "Block pool:    %u / %u (%.1f%%)\n",
+            cache->block_pool_used, cache->block_pool_size,
+            100.0 * cache->block_pool_used / cache->block_pool_size);
+
+    if (cache->lookup_count > 0) {
+        fprintf(stderr, "Cache lookups: %" PRIu64 " (%.1f%% hit rate)\n",
+                cache->lookup_count,
+                100.0 * cache->lookup_hit_count / cache->lookup_count);
+    }
+
+    fprintf(stderr, "Chains made:   %" PRIu64 "\n", cache->chain_count);
+    if (cache->patch_attempt_count > 0 || cache->patch_oob_count > 0 ||
+        cache->patch_rel_oob_count > 0 ||
+        cache->exit_overwrite_count > 0 ||
+        cache->pending_invalid_ref_count > 0 ||
+        cache->pending_mismatch_count > 0) {
+        fprintf(stderr,
+                "Patch stats:   attempts=%" PRIu64 " oob=%" PRIu64
+                " rel_oob=%" PRIu64 " exit_overwrite=%" PRIu64
+                " pending_invalid=%" PRIu64 " pending_mismatch=%" PRIu64 "\n",
+                cache->patch_attempt_count,
+                cache->patch_oob_count,
+                cache->patch_rel_oob_count,
+                cache->exit_overwrite_count,
+                cache->pending_invalid_ref_count,
+                cache->pending_mismatch_count);
+    }
+    fprintf(stderr, "Cache flushes: %" PRIu64 "\n", cache->flush_count);
+
+    // Stage 3 inline lookup stats
+    if (cache->inline_miss_count > 0) {
+        fprintf(stderr, "Inline lookup misses: %" PRIu64 "\n", cache->inline_miss_count);
+    }
+
+    if (cache->superblock_count > 0) {
+        fprintf(stderr, "Superblocks:   %" PRIu64 " (side exits emitted: %" PRIu64 ")\n",
+                cache->superblock_count, cache->side_exit_emitted);
+        double avg_insts = (double)cache->superblock_inst_total /
+                           (double)cache->superblock_count;
+        double avg_exits = (double)cache->side_exit_emitted /
+                           (double)cache->superblock_count;
+        double host_bytes_per_inst = 0.0;
+        if (cache->superblock_inst_total > 0) {
+            host_bytes_per_inst =
+                (double)cache->superblock_host_bytes_total /
+                (double)cache->superblock_inst_total;
+        }
+        fprintf(stderr, "Superblock avg: insts=%.1f exits=%.2f hostB/inst=%.2f\n",
+                avg_insts, avg_exits, host_bytes_per_inst);
+        fprintf(stderr, "Superblock diagnostics:\n");
+        for (uint32_t i = 0; i < cache->block_pool_used; i++) {
+            translated_block_t *b = &cache->block_pool[i];
+            if (b->host_code == NULL || b->side_exit_count == 0) {
+                continue;
+            }
+            const char *avoid_note = "";
+            uint32_t back_edges = 0;
+            uint32_t max_taken = 0;
+            uint32_t max_total = 0;
+            uint32_t max_pc = 0;
+            for (uint32_t e = 0; e < b->exit_count; e++) {
+                block_exit_t *ex = &b->exits[e];
+                if (ex->branch_pc == 0) {
+                    continue;
+                }
+                if (ex->target_pc < ex->branch_pc) {
+                    back_edges++;
+                }
+                uint32_t idx = cache_hash(ex->branch_pc);
+                uint32_t total = cache->side_exit_total_profile[idx];
+                uint32_t taken = cache->side_exit_taken_profile[idx];
+                if (total > 0 && taken >= max_taken) {
+                    max_taken = taken;
+                    max_total = total;
+                    max_pc = ex->branch_pc;
+                }
+            }
+            uint32_t end_pc = b->guest_pc + b->guest_size - 4;
+            if (back_edges > 0 && b->exec_count > 1000) {
+                avoid_note = " avoid(back_edge+hot)";
+            }
+            if (max_total > 0) {
+                if (max_taken <= max_total) {
+                    double pct = (double)max_taken * 100.0 / (double)max_total;
+                    fprintf(stderr,
+                            "  SB 0x%08X-0x%08X exits=%u back_edges=%u max_taken=%.2f%% (pc 0x%08X t=%u/%u) execs=%u%s\n",
+                            b->guest_pc, end_pc, b->side_exit_count, back_edges,
+                            pct, max_pc, max_taken, max_total, b->exec_count, avoid_note);
+                } else {
+                    fprintf(stderr,
+                            "  SB 0x%08X-0x%08X exits=%u back_edges=%u max_taken=na (pc 0x%08X t=%u/%u) execs=%u%s\n",
+                            b->guest_pc, end_pc, b->side_exit_count, back_edges,
+                            max_pc, max_taken, max_total, b->exec_count, avoid_note);
+                }
+            } else {
+                fprintf(stderr,
+                        "  SB 0x%08X-0x%08X exits=%u back_edges=%u max_taken=n/a execs=%u%s\n",
+                        b->guest_pc, end_pc, b->side_exit_count, back_edges,
+                        b->exec_count, avoid_note);
+            }
+        }
+    }
+    if (cache->peephole_hits > 0) {
+        fprintf(stderr, "Peephole rewrites: %" PRIu64 "\n", cache->peephole_hits);
+    }
+
+    // Side-exit profile summary (debug)
+    uint32_t max_total = 0;
+    uint32_t max_taken = 0;
+    for (uint32_t i = 0; i < BLOCK_CACHE_SIZE; i++) {
+        if (cache->side_exit_total_profile[i] > max_total) {
+            max_total = cache->side_exit_total_profile[i];
+        }
+        if (cache->side_exit_taken_profile[i] > max_taken) {
+            max_taken = cache->side_exit_taken_profile[i];
+        }
+    }
+    if (max_total > 0 || max_taken > 0) {
+        fprintf(stderr, "Side-exit profile max: total=%u taken=%u\n",
+                max_total, max_taken);
+        fprintf(stderr, "Top side-exit offenders (by taken rate):\n");
+
+        struct {
+            uint32_t pc;
+            uint32_t total;
+            uint32_t taken;
+        } top[5] = {0};
+
+        if (cache->side_exit_pc_count > 0) {
+            for (uint32_t i = 0; i < cache->side_exit_pc_count; i++) {
+                uint32_t pc = cache->side_exit_pc_list[i];
+                uint32_t idx = cache_hash(pc);
+                uint32_t total = cache->side_exit_total_profile[idx];
+                uint32_t taken = cache->side_exit_taken_profile[idx];
+                if (total == 0) {
+                    continue;
+                }
+                for (int j = 0; j < 5; j++) {
+                    uint32_t top_total = top[j].total;
+                    uint32_t top_taken = top[j].taken;
+                    uint32_t lhs = taken * (top_total ? top_total : 1);
+                    uint32_t rhs = top_taken * total;
+                    if (top[j].total == 0 || lhs > rhs) {
+                        for (int k = 4; k > j; k--) {
+                            top[k] = top[k - 1];
+                        }
+                        top[j].pc = pc;
+                        top[j].total = total;
+                        top[j].taken = taken;
+                        break;
+                    }
+                }
+            }
+        } else {
+            for (uint32_t i = 0; i < BLOCK_CACHE_SIZE; i++) {
+                uint32_t total = cache->side_exit_total_profile[i];
+                uint32_t taken = cache->side_exit_taken_profile[i];
+                uint32_t pc = cache->side_exit_pc_hint[i];
+                if (total == 0 || pc == 0) {
+                    continue;
+                }
+                for (int j = 0; j < 5; j++) {
+                    uint32_t top_total = top[j].total;
+                    uint32_t top_taken = top[j].taken;
+                    uint32_t lhs = taken * (top_total ? top_total : 1);
+                    uint32_t rhs = top_taken * total;
+                    if (top[j].total == 0 || lhs > rhs) {
+                        for (int k = 4; k > j; k--) {
+                            top[k] = top[k - 1];
+                        }
+                        top[j].pc = pc;
+                        top[j].total = total;
+                        top[j].taken = taken;
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < 5 && top[i].total > 0; i++) {
+            uint32_t pct = (top[i].taken * 100) / top[i].total;
+            fprintf(stderr, "  0x%08X: taken=%u total=%u (%u%%)\n",
+                    top[i].pc, top[i].taken, top[i].total, pct);
+        }
+    }
+
+    // Find hottest blocks
+    fprintf(stderr, "\nTop 5 hottest blocks:\n");
+    translated_block_t *hot[5] = {0};
+
+    for (uint32_t i = 0; i < cache->block_pool_used; i++) {
+        translated_block_t *b = &cache->block_pool[i];
+        if (b->host_code == NULL) continue;
+
+        // Insert into sorted hot list
+        for (int j = 0; j < 5; j++) {
+            if (hot[j] == NULL || b->exec_count > hot[j]->exec_count) {
+                // Shift others down
+                for (int k = 4; k > j; k--) {
+                    hot[k] = hot[k-1];
+                }
+                hot[j] = b;
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < 5 && hot[i]; i++) {
+        if (hot[i]->reg_cache_hits > 0 || hot[i]->reg_cache_misses > 0) {
+            uint32_t total = hot[i]->reg_cache_hits + hot[i]->reg_cache_misses;
+            uint32_t pct = total ? (hot[i]->reg_cache_hits * 100) / total : 0;
+            fprintf(stderr,
+                    "  0x%08X%s: %u executions, %u bytes host code, regcache=%u/%u (%u%%)\n",
+                    hot[i]->guest_pc,
+                    (hot[i]->flags & BLOCK_FLAG_STAGE5) ? " [s5]" : "",
+                    hot[i]->exec_count, hot[i]->host_size,
+                    hot[i]->reg_cache_hits, total, pct);
+        } else {
+            fprintf(stderr, "  0x%08X%s: %u executions, %u bytes host code\n",
+                    hot[i]->guest_pc,
+                    (hot[i]->flags & BLOCK_FLAG_STAGE5) ? " [s5]" : "",
+                    hot[i]->exec_count, hot[i]->host_size);
+        }
+    }
+
+    uint64_t exec_total = 0;
+    uint64_t exec_stage5 = 0;
+    uint64_t weighted_host_total = 0;
+    uint64_t weighted_host_stage5 = 0;
+    for (uint32_t i = 0; i < cache->block_pool_used; i++) {
+        translated_block_t *b = &cache->block_pool[i];
+        if (b->host_code == NULL) continue;
+        exec_total += b->exec_count;
+        weighted_host_total += (uint64_t)b->exec_count * (uint64_t)b->host_size;
+        if (b->flags & BLOCK_FLAG_STAGE5) {
+            exec_stage5 += b->exec_count;
+            weighted_host_stage5 += (uint64_t)b->exec_count * (uint64_t)b->host_size;
+        }
+    }
+    if (exec_total > 0) {
+        double pct_exec = 100.0 * (double)exec_stage5 / (double)exec_total;
+        fprintf(stderr, "Stage5 hot coverage: exec=%" PRIu64 "/%" PRIu64 " (%.1f%%)\n",
+                exec_stage5, exec_total, pct_exec);
+        if (weighted_host_total > 0) {
+            double pct_whost = 100.0 * (double)weighted_host_stage5 / (double)weighted_host_total;
+            fprintf(stderr, "Stage5 weighted host-byte share: %.1f%%\n", pct_whost);
+        }
+    }
+}
+
+void cache_reset_stats(block_cache_t *cache) {
+    cache->lookup_count = 0;
+    cache->lookup_hit_count = 0;
+    cache->chain_count = 0;
+    cache->flush_count = 0;
+    cache->indirect_count = 0;
+    cache->inline_hit_count = 0;
+    cache->inline_miss_count = 0;
+    cache->ras_push_count = 0;
+    cache->ras_hit_count = 0;
+    cache->ras_miss_count = 0;
+    cache->superblock_count = 0;
+    cache->side_exit_emitted = 0;
+    cache->superblock_inst_total = 0;
+    cache->superblock_guest_bytes_total = 0;
+    cache->superblock_host_bytes_total = 0;
+    cache->peephole_hits = 0;
+    cache->side_exit_pc_count = 0;
+    cache->patch_attempt_count = 0;
+    cache->patch_oob_count = 0;
+    cache->patch_rel_oob_count = 0;
+}
+
+static void dump_objdump(const uint8_t *data, uint32_t len, uint32_t pc);
+
+// ============================================================================
+// Inline SLOW-32 disassembler (extracted from tools/utilities/slow32dis.c)
+// ============================================================================
+
+typedef enum {
+    S32_FMT_R, S32_FMT_I, S32_FMT_S, S32_FMT_B, S32_FMT_U, S32_FMT_J, S32_FMT_UNKNOWN
+} s32_fmt_t;
+
+typedef struct {
+    const char *mnemonic;
+    uint32_t opcode;
+    s32_fmt_t format;
+} s32_inst_info_t;
+
+static s32_inst_info_t s32_instructions[] = {
+    {"add",   0x00, S32_FMT_R}, {"sub",   0x01, S32_FMT_R},
+    {"xor",   0x02, S32_FMT_R}, {"or",    0x03, S32_FMT_R},
+    {"and",   0x04, S32_FMT_R}, {"sll",   0x05, S32_FMT_R},
+    {"srl",   0x06, S32_FMT_R}, {"sra",   0x07, S32_FMT_R},
+    {"slt",   0x08, S32_FMT_R}, {"sltu",  0x09, S32_FMT_R},
+    {"mul",   0x0A, S32_FMT_R}, {"mulh",  0x0B, S32_FMT_R},
+    {"div",   0x0C, S32_FMT_R}, {"rem",   0x0D, S32_FMT_R},
+    {"seq",   0x0E, S32_FMT_R}, {"sne",   0x0F, S32_FMT_R},
+    {"addi",  0x10, S32_FMT_I}, {"ori",   0x11, S32_FMT_I},
+    {"andi",  0x12, S32_FMT_I}, {"slli",  0x13, S32_FMT_I},
+    {"srli",  0x14, S32_FMT_I}, {"srai",  0x15, S32_FMT_I},
+    {"slti",  0x16, S32_FMT_I}, {"sltiu", 0x17, S32_FMT_I},
+    {"sgt",   0x18, S32_FMT_R}, {"sgtu",  0x19, S32_FMT_R},
+    {"sle",   0x1A, S32_FMT_R}, {"sleu",  0x1B, S32_FMT_R},
+    {"sge",   0x1C, S32_FMT_R}, {"sgeu",  0x1D, S32_FMT_R},
+    {"xori",  0x1E, S32_FMT_I}, {"mulhu", 0x1F, S32_FMT_R},
+    {"lui",   0x20, S32_FMT_U},
+    {"ldb",   0x30, S32_FMT_I}, {"ldh",   0x31, S32_FMT_I},
+    {"ldw",   0x32, S32_FMT_I}, {"ldbu",  0x33, S32_FMT_I},
+    {"ldhu",  0x34, S32_FMT_I},
+    {"stb",   0x38, S32_FMT_S}, {"sth",   0x39, S32_FMT_S},
+    {"stw",   0x3A, S32_FMT_S},
+    {"assert_eq", 0x3F, S32_FMT_R},
+    {"jal",   0x40, S32_FMT_J}, {"jalr",  0x41, S32_FMT_I},
+    {"beq",   0x48, S32_FMT_B}, {"bne",   0x49, S32_FMT_B},
+    {"blt",   0x4A, S32_FMT_B}, {"bge",   0x4B, S32_FMT_B},
+    {"bltu",  0x4C, S32_FMT_B}, {"bgeu",  0x4D, S32_FMT_B},
+    {"nop",   0x50, S32_FMT_R}, {"yield", 0x51, S32_FMT_R},
+    {"debug", 0x52, S32_FMT_I},
+    {"fadd.s", 0x53, S32_FMT_R}, {"fsub.s", 0x54, S32_FMT_R},
+    {"fmul.s", 0x55, S32_FMT_R}, {"fdiv.s", 0x56, S32_FMT_R},
+    {"fsqrt.s", 0x57, S32_FMT_R}, {"feq.s", 0x58, S32_FMT_R},
+    {"flt.s", 0x59, S32_FMT_R}, {"fle.s", 0x5A, S32_FMT_R},
+    {"fcvt.w.s", 0x5B, S32_FMT_R}, {"fcvt.wu.s", 0x5C, S32_FMT_R},
+    {"fcvt.s.w", 0x5D, S32_FMT_R}, {"fcvt.s.wu", 0x5E, S32_FMT_R},
+    {"fneg.s", 0x5F, S32_FMT_R}, {"fabs.s", 0x60, S32_FMT_R},
+    {"fadd.d", 0x61, S32_FMT_R}, {"fsub.d", 0x62, S32_FMT_R},
+    {"fmul.d", 0x63, S32_FMT_R}, {"fdiv.d", 0x64, S32_FMT_R},
+    {"fsqrt.d", 0x65, S32_FMT_R}, {"feq.d", 0x66, S32_FMT_R},
+    {"flt.d", 0x67, S32_FMT_R}, {"fle.d", 0x68, S32_FMT_R},
+    {"fcvt.w.d", 0x69, S32_FMT_R}, {"fcvt.wu.d", 0x6A, S32_FMT_R},
+    {"fcvt.d.w", 0x6B, S32_FMT_R}, {"fcvt.d.wu", 0x6C, S32_FMT_R},
+    {"fcvt.d.s", 0x6D, S32_FMT_R}, {"fcvt.s.d", 0x6E, S32_FMT_R},
+    {"fneg.d", 0x6F, S32_FMT_R}, {"fabs.d", 0x70, S32_FMT_R},
+    {"fcvt.l.s", 0x71, S32_FMT_R}, {"fcvt.lu.s", 0x72, S32_FMT_R},
+    {"fcvt.s.l", 0x73, S32_FMT_R}, {"fcvt.s.lu", 0x74, S32_FMT_R},
+    {"fcvt.l.d", 0x75, S32_FMT_R}, {"fcvt.lu.d", 0x76, S32_FMT_R},
+    {"fcvt.d.l", 0x77, S32_FMT_R}, {"fcvt.d.lu", 0x78, S32_FMT_R},
+    {"halt",  0x7F, S32_FMT_R},
+    {NULL, 0, S32_FMT_UNKNOWN}
+};
+
+static inline uint32_t s32_extract_opcode(uint32_t inst)  { return inst & 0x7F; }
+static inline int      s32_extract_rd(uint32_t inst)       { return (inst >> 7) & 0x1F; }
+static inline int      s32_extract_rs1(uint32_t inst)      { return (inst >> 15) & 0x1F; }
+static inline int      s32_extract_rs2(uint32_t inst)      { return (inst >> 20) & 0x1F; }
+static inline int      s32_extract_imm_i(uint32_t inst)    { return (int32_t)inst >> 20; }
+static inline int      s32_extract_imm_s(uint32_t inst) {
+    return ((inst >> 7) & 0x1F) | (((int32_t)inst >> 25) << 5);
+}
+static inline int      s32_extract_imm_b(uint32_t inst) {
+    return (((inst >> 8) & 0xF) << 1) | (((inst >> 25) & 0x3F) << 5) |
+           (((inst >> 7) & 0x1) << 11) | (((int32_t)inst >> 31) << 12);
+}
+static inline int      s32_extract_imm_u(uint32_t inst)    { return inst & 0xFFFFF000; }
+static inline int      s32_extract_imm_j(uint32_t inst) {
+    uint32_t imm20 = (inst >> 31) & 0x1;
+    uint32_t imm10_1 = (inst >> 21) & 0x3FF;
+    uint32_t imm11 = (inst >> 20) & 0x1;
+    uint32_t imm19_12 = (inst >> 12) & 0xFF;
+    int32_t imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
+    if (imm & 0x100000) imm |= 0xFFE00000;
+    return imm;
+}
+
+static s32_inst_info_t *s32_find_instruction(uint32_t opcode) {
+    for (int i = 0; s32_instructions[i].mnemonic; i++) {
+        if (s32_instructions[i].opcode == opcode) return &s32_instructions[i];
+    }
+    return NULL;
+}
+
+static const char *s32_reg_name(int reg) {
+    static char bufs[4][16];
+    static int idx = 0;
+    if (reg == 0) return "zero";
+    if (reg == 29) return "sp";
+    if (reg == 30) return "fp";
+    if (reg == 31) return "lr";
+    char *buf = bufs[idx]; idx = (idx + 1) % 4;
+    snprintf(buf, 16, "r%d", reg);
+    return buf;
+}
+
+static void s32_disasm_one(uint32_t addr, uint32_t inst) {
+    uint32_t opcode = s32_extract_opcode(inst);
+    s32_inst_info_t *info = s32_find_instruction(opcode);
+
+    fprintf(stderr, "    0x%08x: %08x  ", addr, inst);
+    if (!info) { fprintf(stderr, "unknown 0x%02x\n", opcode); return; }
+
+    fprintf(stderr, "%-10s", info->mnemonic);
+    if (opcode == 0x7F) { fputc('\n', stderr); return; }
+    if (opcode == 0x52) { fprintf(stderr, "%s\n", s32_reg_name(s32_extract_rs1(inst))); return; }
+
+    switch (info->format) {
+    case S32_FMT_R:
+        fprintf(stderr, "%s, %s, %s\n", s32_reg_name(s32_extract_rd(inst)),
+                s32_reg_name(s32_extract_rs1(inst)), s32_reg_name(s32_extract_rs2(inst)));
+        break;
+    case S32_FMT_I: {
+        int rd = s32_extract_rd(inst), rs1 = s32_extract_rs1(inst), imm = s32_extract_imm_i(inst);
+        if (opcode >= 0x30 && opcode <= 0x34)
+            fprintf(stderr, "%s, %s+%d\n", s32_reg_name(rd), s32_reg_name(rs1), imm);
+        else
+            fprintf(stderr, "%s, %s, %d\n", s32_reg_name(rd), s32_reg_name(rs1), imm);
+        break;
+    }
+    case S32_FMT_S:
+        fprintf(stderr, "%s+%d, %s\n", s32_reg_name(s32_extract_rs1(inst)),
+                s32_extract_imm_s(inst), s32_reg_name(s32_extract_rs2(inst)));
+        break;
+    case S32_FMT_B:
+        fprintf(stderr, "%s, %s, 0x%x\n", s32_reg_name(s32_extract_rs1(inst)),
+                s32_reg_name(s32_extract_rs2(inst)), addr + 4 + s32_extract_imm_b(inst));
+        break;
+    case S32_FMT_U:
+        fprintf(stderr, "%s, 0x%x\n", s32_reg_name(s32_extract_rd(inst)),
+                (uint32_t)s32_extract_imm_u(inst) >> 12);
+        break;
+    case S32_FMT_J: {
+        int rd = s32_extract_rd(inst), imm = s32_extract_imm_j(inst);
+        uint32_t target = addr + imm;
+        if (rd == 0)
+            fprintf(stderr, "0x%x\n", target);
+        else
+            fprintf(stderr, "%s, 0x%x\n", s32_reg_name(rd), target);
+        break;
+    }
+    default:
+        fputc('\n', stderr);
+        break;
+    }
+}
+
+// ============================================================================
+// Hot block dump
+// ============================================================================
+
+void cache_dump_hot_blocks(block_cache_t *cache, uint8_t *mem_base,
+                           int count, bool host_disasm) {
+    if (count <= 0) return;
+    if (count > 64) count = 64;
+
+    // Allocate top-N array on stack (bounded by 64)
+    translated_block_t **hot = calloc(count, sizeof(translated_block_t *));
+    if (!hot) return;
+
+    for (uint32_t i = 0; i < cache->block_pool_used; i++) {
+        translated_block_t *b = &cache->block_pool[i];
+        if (b->host_code == NULL) continue;
+
+        for (int j = 0; j < count; j++) {
+            if (hot[j] == NULL || b->exec_count > hot[j]->exec_count) {
+                for (int k = count - 1; k > j; k--)
+                    hot[k] = hot[k - 1];
+                hot[j] = b;
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < count && hot[i]; i++) {
+        translated_block_t *b = hot[i];
+        uint32_t guest_insts = b->guest_size / 4;
+
+        fprintf(stderr,
+                "\n=== Block 0x%08X%s — %u guest insts, %u host bytes, %u executions ===\n",
+                b->guest_pc,
+                (b->flags & BLOCK_FLAG_STAGE5) ? " [s5]" : "",
+                guest_insts, b->host_size, b->exec_count);
+
+        // Guest disassembly
+        fprintf(stderr, "  Guest:\n");
+        for (uint32_t j = 0; j < guest_insts; j++) {
+            uint32_t addr = b->guest_pc + j * 4;
+            uint32_t inst;
+            memcpy(&inst, mem_base + addr, 4);
+            s32_disasm_one(addr, inst);
+        }
+
+        // Host disassembly
+        if (host_disasm) {
+            fprintf(stderr, "  Host:\n");
+            dump_objdump(b->host_code, b->host_size, b->guest_pc);
+        }
+    }
+
+    free(hot);
+}
+
+static void dump_bytes(const uint8_t *data, uint32_t len, uint32_t max_len) {
+    uint32_t n = len < max_len ? len : max_len;
+    for (uint32_t i = 0; i < n; i++) {
+        fprintf(stderr, "%02X", data[i]);
+        if (i + 1 < n) {
+            fputc(' ', stderr);
+        }
+    }
+    if (len > max_len) {
+        fprintf(stderr, " ...");
+    }
+    fputc('\n', stderr);
+}
+
+static void dump_objdump(const uint8_t *data, uint32_t len, uint32_t pc) {
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/slow32-dbt-host-0x%08X.bin", pc);
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "  objdump: failed to open %s\n", path);
+        return;
+    }
+    fwrite(data, 1, len, f);
+    fclose(f);
+
+    char cmd[512];
+#ifdef __aarch64__
+    snprintf(cmd, sizeof(cmd),
+             "objdump -D -b binary -m aarch64 %s 2>/dev/null",
+             path);
+#else
+    snprintf(cmd, sizeof(cmd),
+             "objdump -D -b binary -m i386:x86-64 %s 2>/dev/null",
+             path);
+#endif
+    int rc = system(cmd);
+    if (rc != 0) {
+        fprintf(stderr, "  objdump: failed for %s\n", path);
+    }
+}
+
+void cache_dump_block_for_pc(block_cache_t *cache, uint8_t *mem_base, uint32_t pc,
+                             bool disassemble) {
+    translated_block_t *owner = NULL;
+    for (uint32_t b = 0; b < cache->block_pool_used; b++) {
+        translated_block_t *blk = &cache->block_pool[b];
+        if (!blk->host_code) {
+            continue;
+        }
+        uint32_t start = blk->guest_pc;
+        uint32_t end = blk->guest_pc + blk->guest_size;
+        if (pc >= start && pc < end) {
+            owner = blk;
+            break;
+        }
+    }
+
+    if (!owner) {
+        fprintf(stderr, "No owning block found for 0x%08X.\n", pc);
+        return;
+    }
+
+    fprintf(stderr, "\n=== Block Dump for 0x%08X ===\n", pc);
+    fprintf(stderr, "  Block guest: 0x%08X (size %u bytes), host size %u bytes\n",
+            owner->guest_pc, owner->guest_size, owner->host_size);
+    fprintf(stderr, "  Guest bytes: ");
+    dump_bytes(mem_base + owner->guest_pc, owner->guest_size, 64);
+    fprintf(stderr, "  Host bytes:  ");
+    dump_bytes(owner->host_code, owner->host_size, 128);
+    if (disassemble) {
+        fprintf(stderr, "  Host disassembly:\n");
+        dump_objdump(owner->host_code, owner->host_size, owner->guest_pc);
+    }
+}
+
+void cache_dump_offender_blocks(block_cache_t *cache, uint8_t *mem_base, bool disassemble) {
+    struct {
+        uint32_t pc;
+        uint32_t total;
+        uint32_t taken;
+    } top[5] = {0};
+
+    if (cache->side_exit_pc_count == 0) {
+        fprintf(stderr, "No side-exit offenders recorded.\n");
+        return;
+    }
+
+    for (uint32_t i = 0; i < cache->side_exit_pc_count; i++) {
+        uint32_t pc = cache->side_exit_pc_list[i];
+        uint32_t idx = cache_hash(pc);
+        uint32_t total = cache->side_exit_total_profile[idx];
+        uint32_t taken = cache->side_exit_taken_profile[idx];
+        if (total == 0) {
+            continue;
+        }
+        for (int j = 0; j < 5; j++) {
+            uint32_t top_total = top[j].total;
+            uint32_t top_taken = top[j].taken;
+            uint32_t lhs = taken * (top_total ? top_total : 1);
+            uint32_t rhs = top_taken * total;
+            if (top[j].total == 0 || lhs > rhs) {
+                for (int k = 4; k > j; k--) {
+                    top[k] = top[k - 1];
+                }
+                top[j].pc = pc;
+                top[j].total = total;
+                top[j].taken = taken;
+                break;
+            }
+        }
+    }
+
+    fprintf(stderr, "\n=== Offender Block Dump ===\n");
+    for (int i = 0; i < 5 && top[i].total > 0; i++) {
+        uint32_t pc = top[i].pc;
+        uint32_t pct = (top[i].taken * 100) / top[i].total;
+        fprintf(stderr, "Offender %d: 0x%08X (taken=%u total=%u %u%%)\n",
+                i + 1, pc, top[i].taken, top[i].total, pct);
+
+        translated_block_t *owner = NULL;
+        for (uint32_t b = 0; b < cache->block_pool_used; b++) {
+            translated_block_t *blk = &cache->block_pool[b];
+            if (!blk->host_code) {
+                continue;
+            }
+            uint32_t start = blk->guest_pc;
+            uint32_t end = blk->guest_pc + blk->guest_size;
+            if (pc >= start && pc < end) {
+                owner = blk;
+                break;
+            }
+        }
+
+        if (!owner) {
+            fprintf(stderr, "  No owning block found.\n");
+            continue;
+        }
+
+        fprintf(stderr, "  Block guest: 0x%08X (size %u bytes), host size %u bytes\n",
+                owner->guest_pc, owner->guest_size, owner->host_size);
+        fprintf(stderr, "  Guest bytes: ");
+        dump_bytes(mem_base + owner->guest_pc, owner->guest_size, 64);
+        fprintf(stderr, "  Host bytes:  ");
+        dump_bytes(owner->host_code, owner->host_size, 128);
+        if (disassemble) {
+            fprintf(stderr, "  Host disassembly:\n");
+            dump_objdump(owner->host_code, owner->host_size, owner->guest_pc);
+        }
+    }
+}

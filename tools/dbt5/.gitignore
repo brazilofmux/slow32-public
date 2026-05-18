@@ -1,0 +1,13 @@
+# Build artifacts for the Stage 5 clean-room tree
+*.o
+slow32-dbt5
+slow32-dbt5.exe
+*.dSYM/
+*.gcda
+*.gcno
+
+# Editor / IDE noise
+.vscode/
+.idea/
+*~
+*.swp
