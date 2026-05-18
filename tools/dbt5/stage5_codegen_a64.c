@@ -85,17 +85,49 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             continue;
 
         // ldr Wd, [X20, #offset_of_guest_reg(gpr)]
-        // GUEST_REG_OFFSET is defined in cpu_state.h as (gpr * 4)
         emit_ldr_w32_imm(&cg->emit, hreg, W20, (uint32_t)(gpr * 4));
     }
 
     // ------------------------------------------------------------------
-    // Step 3: Placeholder terminal (we will replace this with real exits)
+    // Step 3: Handle the final terminal with proper exit recording
     // ------------------------------------------------------------------
-    // For the absolute first milestone we just emit a return.
-    // Later this will become proper exit recording + patching.
-    emit_ret_lr(&cg->emit);
+    // Find the last meaningful LIR node and treat it as the block terminal.
+    // For the first real version we only support direct terminals.
+    uint32_t terminal_target = region->end_pc;  // conservative default
+    bool     has_terminal    = false;
+
+    for (int i = (int)lir->node_count - 1; i >= 0; i--) {
+        const lir_node_t *last = &lir->nodes[i];
+        if (last->op == LIR_OP_NOP)
+            continue;
+
+        if (last->op == LIR_OP_JMP || last->op == LIR_OP_CALL) {
+            terminal_target = last->guest_pc + 4 + last->imm;
+            has_terminal = true;
+            break;
+        }
+        if (last->op == LIR_OP_RET || last->op == LIR_OP_SYSCALL) {
+            // These are special (return to dispatcher or syscall)
+            terminal_target = 0;   // special marker for now
+            has_terminal = true;
+            break;
+        }
+    }
+
+    // Record the exit so the runtime can patch it later.
+    if (has_terminal && cg->exit_count < STAGE5_A64_MAX_EXITS) {
+        int ex = cg->exit_count++;
+        cg->exits[ex].target_pc   = terminal_target;
+        cg->exits[ex].patch_offset = emit_offset(&cg->emit);
+        cg->exits[ex].is_side_exit = false;
+    }
+
+    // Emit a placeholder branch (displacement 0 for now).
+    // A real implementation will either:
+    //   - emit a direct relative branch if the target is known and close, or
+    //   - emit a branch to a shared dispatcher stub.
+    emit_b(&cg->emit, 0);   // placeholder — will be patched by the runtime
 
     stage5_codegen_a64_success++;
-    return true;   // We emitted something real!
+    return true;   // We emitted something real with exit recording!
 }
