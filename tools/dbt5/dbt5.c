@@ -411,18 +411,24 @@ int main(int argc, char **argv) {
                     }
 
                     // ------------------------------------------------------------------
-                    // First small wiring step: allocate executable memory for the emitted code
-                    // Real insertion into the block cache will be done in the next slice.
+                    // First real wiring step: allocate executable memory for the emitted code
+                    // and prepare to insert it into the block cache.
+                    // Full translated_block_t creation + cache_insert will be completed
+                    // once the code is at the right scope.
                     // ------------------------------------------------------------------
                     if (emitted) {
-                        void *exec_code = mmap(NULL, a64_cg.emit.offset + 4096,
+                        size_t code_len = a64_cg.emit.offset;
+                        void *exec_code = mmap(NULL, code_len + 4096,
                                                PROT_READ | PROT_WRITE | PROT_EXEC,
                                                MAP_PRIVATE | MAP_ANON, -1, 0);
                         if (exec_code != MAP_FAILED) {
-                            memcpy(exec_code, a64_code, a64_cg.emit.offset);
-                            fprintf(stderr, "  [A64-WIRE] allocated executable block of %zu bytes (first wiring step)\n",
-                                    a64_cg.emit.offset);
-                            munmap(exec_code, a64_cg.emit.offset + 4096);
+                            memcpy(exec_code, a64_code, code_len);
+
+                            fprintf(stderr, "  [A64-WIRE] allocated executable block of %zu bytes (ready for cache insertion)\n", code_len);
+
+                            // TODO next micro-step: create translated_block_t, populate exits,
+                            // and call cache_insert(ctx->cache, blk) when ctx is in scope.
+                            munmap(exec_code, code_len + 4096);
                         }
                     }
 
