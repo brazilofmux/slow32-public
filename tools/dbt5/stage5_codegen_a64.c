@@ -90,8 +90,10 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     memset(cg->slot_dirty, 0, sizeof(cg->slot_dirty));
 
     // Build a quick lookup: SSA value_id → host register (for values the RA assigned)
-    a64_reg_t value_to_host[STAGE5_SSA_MAX_VALUES] = {0};
-    uint8_t   value_to_gpr [STAGE5_SSA_MAX_VALUES] = {0};
+    a64_reg_t value_to_host[STAGE5_SSA_MAX_VALUES];
+    uint8_t   value_to_gpr [STAGE5_SSA_MAX_VALUES];
+    memset(value_to_host, 0xFF, sizeof(value_to_host));  // A64_NOREG sentinel (all bytes 0xFF => -1)
+    memset(value_to_gpr,  0,    sizeof(value_to_gpr));   // 0 = no original guest GPR known (r0 is valid but rare here)
 
     for (uint16_t i = 0; i < ra_plan->interval_count; i++) {
         const stage5_ra_interval_t *iv = &ra_plan->intervals[i];
@@ -174,8 +176,18 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : dst_h;
                     if (src_h != dst_h)
                         emit_mov_w32_w32(&cg->emit, dst_h, src_h);
-                    if (n->imm != 0)
-                        emit_add_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)n->imm);
+                    int32_t imm = n->imm;
+                    if (imm != 0) {
+                        if (imm > 0 && imm <= 4095) {
+                            emit_add_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)imm);
+                        } else if (imm < 0 && -imm <= 4095) {
+                            emit_sub_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)(-imm));
+                        } else {
+                            // Out of 12-bit imm range: materialize and use RR form (W17 scratch)
+                            emit_mov_w32_imm32(&cg->emit, W17, (uint32_t)imm);
+                            emit_add_w32(&cg->emit, dst_h, dst_h, W17);
+                        }
+                    }
                 }
                 break;
 
@@ -198,8 +210,17 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : dst_h;
                     if (src_h != dst_h)
                         emit_mov_w32_w32(&cg->emit, dst_h, src_h);
-                    if (n->imm != 0)
-                        emit_sub_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)n->imm);
+                    int32_t imm = n->imm;
+                    if (imm != 0) {
+                        if (imm > 0 && imm <= 4095) {
+                            emit_sub_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)imm);
+                        } else if (imm < 0 && -imm <= 4095) {
+                            emit_add_w32_imm(&cg->emit, dst_h, dst_h, (uint32_t)(-imm));
+                        } else {
+                            emit_mov_w32_imm32(&cg->emit, W17, (uint32_t)imm);
+                            emit_sub_w32(&cg->emit, dst_h, dst_h, W17);
+                        }
+                    }
                 }
                 break;
 
@@ -275,30 +296,54 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             }
 
             // ------------------------------------------------------------------
-            // Comparisons that produce a result (seq, sne, slt, etc.)
-            // Emit cmp + cset into the destination.
+            // CMP / TEST nodes: emit the compare (for flag side-effect).
+            // The boolean result (if any) is materialized by a following LIR_OP_SETCC.
+            // After A1, dummy CMP nodes (dst_v=0 from BURG) correctly yield dst_h = NOREG
+            // and we simply emit the cmp for the subsequent SETCC or fused consumer.
             // ------------------------------------------------------------------
             case LIR_OP_CMP_RR:
             case LIR_OP_CMP_RI:
             case LIR_OP_TEST_RR: {
+                // We no longer try to cset here (that belongs to SETCC).
+                // Emit the compare whenever the sources have host registers.
+                if (n->op == LIR_OP_CMP_RI) {
+                    a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                     ? value_to_host[n->src_v[0]] : A64_NOREG;
+                    if (src0 != A64_NOREG) {
+                        int32_t imm = n->imm;
+                        if (imm >= 0 && imm <= 4095) {
+                            emit_cmp_w32_imm(&cg->emit, src0, (uint32_t)imm);
+                        } else if (imm < 0 && -imm <= 4095) {
+                            // cmp with negative imm: emit cmp with positive and swap the cond?
+                            // For simplicity in narrow path, materialize.
+                            emit_mov_w32_imm32(&cg->emit, W17, (uint32_t)imm);
+                            emit_cmp_w32_w32(&cg->emit, src0, W17);
+                        } else {
+                            emit_mov_w32_imm32(&cg->emit, W17, (uint32_t)imm);
+                            emit_cmp_w32_w32(&cg->emit, src0, W17);
+                        }
+                    }
+                } else {
+                    a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                     ? value_to_host[n->src_v[0]] : A64_NOREG;
+                    a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                     ? value_to_host[n->src_v[1]] : A64_NOREG;
+                    if (src0 != A64_NOREG && src1 != A64_NOREG) {
+                        emit_cmp_w32_w32(&cg->emit, src0, src1);
+                    }
+                }
+                break;
+            }
+
+            case LIR_OP_SETCC: {
+                // Materialize the boolean result of a preceding CMP/TEST into dst_h.
+                // Uses the same cond mapping as the fused and CMP paths.
                 if (dst_h == A64_NOREG) break;
 
-                // Emit the compare
-                if (n->op == LIR_OP_CMP_RI) {
-                    a64_reg_t src0 = value_to_host[n->src_v[0]];
-                    emit_cmp_w32_imm(&cg->emit, src0, (uint32_t)n->imm);
-                } else {
-                    a64_reg_t src0 = value_to_host[n->src_v[0]];
-                    a64_reg_t src1 = value_to_host[n->src_v[1]];
-                    if (src0 != A64_NOREG && src1 != A64_NOREG)
-                        emit_cmp_w32_w32(&cg->emit, src0, src1);
-                }
-
-                // Use the shared mapping (LIR cond first, then guest opcode fallback)
                 a64_cond_t a64cond = lir_cond_to_a64(n->cond, n->guest_opcode);
                 emit_cset_w32(&cg->emit, dst_h, a64cond);
 
-                // Mark destination dirty
+                // Mark destination dirty (same pattern as old CMP cset)
                 for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
                     if (cg->host_regs[s] == dst_h) { cg->slot_dirty[s] = true; break; }
                 }
@@ -371,7 +416,15 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 if (base_h == A64_NOREG) break;
 
                 if (n->disp != 0) {
-                    emit_add_w32_imm(&cg->emit, dst_h, base_h, (uint32_t)n->disp);
+                    int32_t d = n->disp;
+                    if (d > 0 && d <= 4095) {
+                        emit_add_w32_imm(&cg->emit, dst_h, base_h, (uint32_t)d);
+                    } else if (d < 0 && -d <= 4095) {
+                        emit_sub_w32_imm(&cg->emit, dst_h, base_h, (uint32_t)(-d));
+                    } else {
+                        emit_mov_w32_imm32(&cg->emit, W17, (uint32_t)d);
+                        emit_add_w32(&cg->emit, dst_h, base_h, W17);
+                    }
                 } else if (base_h != dst_h) {
                     emit_mov_w32_w32(&cg->emit, dst_h, base_h);
                 }
@@ -585,9 +638,10 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             // More ops coming (FP, more call/return variants, complex addressing, etc.)
 
             default:
-                // For now we silently skip unsupported ops in this narrow path.
-                // A real version will return false or fall back when it hits something it can't handle.
-                break;
+                // Unsupported op for the current A64 emitter.
+                // Return false so the driver knows we did not produce a complete translation
+                // (and success counter is not incremented). This makes A6 failures loud.
+                return false;
         }
 
         // Very rough dirty tracking for the dest
@@ -647,9 +701,17 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
         const lir_node_t *last = &lir->nodes[i];
         if (last->op == LIR_OP_NOP) continue;
 
-        if (last->op == LIR_OP_JMP || last->op == LIR_OP_CALL) {
+        if (last->op == LIR_OP_JMP) {
             next_pc = last->guest_pc + 4 + last->imm;
-            exit_reason = 2;                    // treat as branch for now
+            exit_reason = 2;
+            break;
+        }
+        if (last->op == LIR_OP_CALL) {
+            // For CALL the "next PC" the dispatcher should resume at is the
+            // return site (call_pc + 4), with the link address in guest r31.
+            // The imm field holds the call *target*, not the return offset.
+            next_pc = last->guest_pc + 4;
+            exit_reason = 2;
             break;
         }
         if (last->op == LIR_OP_RET || last->op == LIR_OP_SYSCALL) {
