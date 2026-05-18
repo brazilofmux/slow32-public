@@ -223,7 +223,52 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
-            // More ops coming (loads/stores, comparisons, etc.)
+            // ------------------------------------------------------------------
+            // Comparisons that produce a result (seq, sne, slt, etc.)
+            // Emit cmp + cset into the destination.
+            // ------------------------------------------------------------------
+            case LIR_OP_CMP_RR:
+            case LIR_OP_CMP_RI:
+            case LIR_OP_TEST_RR: {
+                if (dst_h == A64_NOREG) break;
+
+                // Emit the compare
+                if (n->op == LIR_OP_CMP_RI) {
+                    a64_reg_t src0 = value_to_host[n->src_v[0]];
+                    emit_cmp_w32_imm(&cg->emit, src0, (uint32_t)n->imm);
+                } else {
+                    a64_reg_t src0 = value_to_host[n->src_v[0]];
+                    a64_reg_t src1 = value_to_host[n->src_v[1]];
+                    if (src0 != A64_NOREG && src1 != A64_NOREG)
+                        emit_cmp_w32_w32(&cg->emit, src0, src1);
+                }
+
+                // Map guest opcode to AArch64 condition
+                a64_cond_t a64cond = COND_EQ;
+                switch (n->guest_opcode) {
+                    case 0x0E: /* SEQ  */ a64cond = COND_EQ;  break;
+                    case 0x0F: /* SNE  */ a64cond = COND_NE;  break;
+                    case 0x08: /* SLT  */ a64cond = COND_LT;  break;
+                    case 0x09: /* SLTU */ a64cond = COND_LO;  break;
+                    case 0x18: /* SGT  */ a64cond = COND_GT;  break;
+                    case 0x19: /* SGTU */ a64cond = COND_HI;  break;
+                    case 0x1A: /* SLE  */ a64cond = COND_LE;  break;
+                    case 0x1B: /* SLEU */ a64cond = COND_LS;  break;
+                    case 0x1C: /* SGE  */ a64cond = COND_GE;  break;
+                    case 0x1D: /* SGEU */ a64cond = COND_HS;  break;
+                    default:   a64cond = COND_EQ;  break;
+                }
+
+                emit_cset_w32(&cg->emit, dst_h, a64cond);
+
+                // Mark destination dirty
+                for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
+                    if (cg->host_regs[s] == dst_h) { cg->slot_dirty[s] = true; break; }
+                }
+                break;
+            }
+
+            // More ops coming (loads/stores, branches, calls, etc.)
 
             default:
                 // For now we silently skip unsupported ops in this narrow path.
