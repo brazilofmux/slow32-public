@@ -349,9 +349,11 @@ int main(int argc, char **argv) {
     // ========================================================================
 
 #if defined(__aarch64__)
-    // One-line activation for the experimental A64 wiring path.
-    // When S5_EMIT_A64 is set, we create a minimal cache so the clean
-    // emitter can install blocks via g_a64_experimental_cache.
+    // Activation for the experimental A64 path (Option 1 wiring complete).
+    // Setting S5_EMIT_A64 (any value) now does:
+    //   - Clean emission via stage5_codegen_a64
+    //   - Real block cache installation (translated_block_t + cache_insert)
+    //   - Immediate execution for testing
     if (getenv("S5_EMIT_A64")) {
         static block_cache_t experimental_cache = {0};
         static uint8_t experimental_code[4 * 1024 * 1024]; // 4 MB
@@ -378,10 +380,14 @@ int main(int argc, char **argv) {
         run_full_stage5_analysis(&region, "entry", verbose);
 
         // ------------------------------------------------------------------
-        // Experimental: try the host-arch native emitter (very early).
-        // Gated by env vars so default behavior is still the shadow-interp
-        // path.  Each backend has its own gate so the two can evolve
-        // independently.
+        // Experimental A64 emitter path (Option 1 wiring complete).
+        //
+        // Setting S5_EMIT_A64 (any non-empty value) now does the full thing:
+        //   - Emit using the clean independent backend
+        //   - Install the result into the real block cache
+        //   - Immediately execute the region for quick validation
+        //
+        // The global bridge g_a64_experimental_cache is populated automatically.
         // ------------------------------------------------------------------
 #if defined(__aarch64__)
         if (getenv("S5_EMIT_A64")) {
@@ -458,7 +464,9 @@ int main(int argc, char **argv) {
                     // Experimental: actually try to execute the emitted A64 code
                     // (very early, gated by S5_EMIT_A64=exec)
                     // ------------------------------------------------------------------
-                    if (emitted && getenv("S5_EMIT_A64") && strcmp(getenv("S5_EMIT_A64"), "exec") == 0) {
+                    // Execute the emitted code immediately when the experimental flag is set.
+                    // (We can later make this conditional on =exec if someone wants wiring-only.)
+                    if (emitted && getenv("S5_EMIT_A64")) {
                         // Make a copy in an executable mapping
                         void *exec_mem = mmap(NULL, 64*1024, PROT_READ | PROT_WRITE | PROT_EXEC,
                                               MAP_PRIVATE | MAP_ANON, -1, 0);
