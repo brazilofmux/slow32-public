@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/mman.h>   // for the experimental A64 execution test path
 
 #include "cpu_state.h"
 #include "block_cache.h"
@@ -393,6 +394,51 @@ int main(int argc, char **argv) {
                     if (emitted && a64_cg.exit_count > 0) {
                         fprintf(stderr, "           recorded %u exit(s), first target=0x%08X\n",
                                 a64_cg.exit_count, a64_cg.exits[0].target_pc);
+                    }
+
+                    // ------------------------------------------------------------------
+                    // Experimental: actually try to execute the emitted A64 code
+                    // (very early, gated by S5_EMIT_A64=exec)
+                    // ------------------------------------------------------------------
+                    if (emitted && getenv("S5_EMIT_A64") && strcmp(getenv("S5_EMIT_A64"), "exec") == 0) {
+                        // Make a copy in an executable mapping
+                        void *exec_mem = mmap(NULL, 64*1024, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                              MAP_PRIVATE | MAP_ANON, -1, 0);
+                        if (exec_mem == MAP_FAILED) {
+                            perror("mmap exec");
+                        } else {
+                            memcpy(exec_mem, a64_code, a64_cg.emit.offset);
+
+                            // Very rough state setup for the test
+                            // (In a real path we would use the RA live-in info properly)
+                            cpu.pc = load_res.entry_point;
+
+                            // Call the emitted code as if it were a translated block
+                            // The emitted code is expected to eventually return via the
+                            // exit mechanism (for now it may just run the prologue + terminal).
+                            typedef void (*block_fn_t)(void);
+                            block_fn_t fn = (block_fn_t)exec_mem;
+
+                            // Minimal register setup the prologue expects
+                            // (this will evolve as the emitter gets smarter)
+                            __asm__ volatile (
+                                "mov x20, %0\n"     // cpu_state
+                                "mov x21, %1\n"     // mem_base
+                                :
+                                : "r" (&cpu), "r" (cpu.mem_base)
+                                : "x20", "x21"
+                            );
+
+                            fprintf(stderr, "  [A64-EXEC] jumping to emitted code @ %p (len=%zu)...\n",
+                                    exec_mem, a64_cg.emit.offset);
+
+                            fn();
+
+                            fprintf(stderr, "  [A64-EXEC] returned. pc=0x%08X exit_reason=%u\n",
+                                    cpu.pc, cpu.exit_reason);
+
+                            munmap(exec_mem, 64*1024);
+                        }
                     }
                 }
             }
