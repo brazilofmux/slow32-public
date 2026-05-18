@@ -833,6 +833,7 @@ bool shadow_verify(shadow_state_t *s, dbt_cpu_state_t *cpu,
             reg_mismatch_count++;
         }
     }
+    (void)reg_mismatch_count;   // C5: currently unused (shadow infra still maturing post-B3)
 
     // Hard divergence: PC or memory mismatch → abort
     // Soft divergence: register-only → DBT dead-temp optimization; skip

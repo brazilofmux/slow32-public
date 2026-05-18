@@ -365,11 +365,11 @@ in `stage5_burg.c`. Calls now preserve their return-value SSA name, so the
 RA sees the definition when the result is live. (In tiny regions where the
 call result is dead at the end, zero intervals are still expected and correct.)
 
-### C5. **CLEANUP** `shadow_interp.c` warning about unused `reg_mismatch_count`
+### C5. **DONE** **CLEANUP** `shadow_interp.c` warning about unused `reg_mismatch_count`
 
-`shadow_interp.c:825` triggers `-Wunused-but-set-variable`. Low-stakes but
-indicative — the shadow comparison infrastructure has bit-rotted along with
-B3. Worth a once-over.
+Added `(void)reg_mismatch_count;` to silence `-Wunused-but-set-variable`.
+The count is computed but not yet used in the decision logic (shadow infra
+is still "good enough for pilot" after B3). Low-risk suppression for now.
 
 ### C6. **CLEANUP** Loader helpers in `s32x_loader.h` warn unused
 
