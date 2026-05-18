@@ -17,12 +17,20 @@
 #include "stage5_lift.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>  // for getenv
 #include <time.h>  // for simple diagnostic timing on A64 (stage5_now_ns lives in x86 translate.c)
 
 // Debug flag - set to 1 to enable translation tracing
 #ifndef DBT_TRACE
 #define DBT_TRACE 0
 #endif
+
+// Temporary safety switch for the narrow owning path (AArch64 Stage 5).
+// When false (current default), we still run the full lifter + analysis
+// (rejection logging, pair collapsing, histogram, would-own diagnostics, etc.)
+// but we *never* actually take ownership of blocks. This keeps -5 safe
+// while we continue developing and measuring the path.
+static bool narrow_ownership_enabled = false;
 
 uint32_t superblock_profile_min_samples = SUPERBLOCK_PROFILE_MIN_SAMPLES;
 uint32_t superblock_taken_pct_threshold = SUPERBLOCK_TAKEN_PCT_THRESHOLD;
@@ -69,17 +77,204 @@ static void translate_fp_f32_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t r
 static void translate_fp_f64_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2);
 static void translate_fp_cvt(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1);
 
+
+// ============================================================================
+// Narrow owning path rejection histogram (AArch64 Stage 5)
+// ============================================================================
+
+static uint32_t narrow_reject_by_opcode[256];
+static uint32_t narrow_reject_high_pressure;
+static uint32_t narrow_reject_too_many_blocks;
+static uint32_t narrow_reject_replay_fail;
+static uint32_t narrow_reject_other;
+
+// Total number of materialize/call pairs the pair-awareness logic collapsed
+// across the entire run (both for rejected and for owned narrow regions).
+static uint32_t narrow_pairs_collapsed;
+
+static void narrow_record_opcode_reject(uint8_t opcode) {
+    narrow_reject_by_opcode[opcode]++;
+}
+
+static void narrow_record_reason_reject(const char *reason) {
+    if (strcmp(reason, "high_register_pressure") == 0) narrow_reject_high_pressure++;
+    else if (strcmp(reason, "too_many_cfg_blocks") == 0) narrow_reject_too_many_blocks++;
+    else if (strcmp(reason, "replay_fail") == 0) narrow_reject_replay_fail++;
+    else narrow_reject_other++;
+}
+
+static void stage5_narrow_print_rejection_histogram(void) {
+    uint32_t total = narrow_reject_high_pressure +
+                     narrow_reject_too_many_blocks +
+                     narrow_reject_replay_fail +
+                     narrow_reject_other;
+
+    uint32_t opcode_total = 0;
+    for (int i = 0; i < 256; i++) opcode_total += narrow_reject_by_opcode[i];
+
+    if (total == 0 && opcode_total == 0 && narrow_pairs_collapsed == 0) return;
+
+    fprintf(stderr, "\n=== Narrow owning rejection histogram ===\n");
+    if (narrow_reject_high_pressure)
+        fprintf(stderr, "  high_register_pressure: %u\n", narrow_reject_high_pressure);
+    if (narrow_reject_too_many_blocks)
+        fprintf(stderr, "  too_many_cfg_blocks:    %u\n", narrow_reject_too_many_blocks);
+    if (narrow_reject_replay_fail)
+        fprintf(stderr, "  replay_fail:            %u\n", narrow_reject_replay_fail);
+    if (narrow_reject_other)
+        fprintf(stderr, "  other:                  %u\n", narrow_reject_other);
+
+    if (narrow_pairs_collapsed > 0) {
+        fprintf(stderr, "  materialize/call pairs collapsed by pair-awareness: %u\n",
+                narrow_pairs_collapsed);
+    }
+
+    if (opcode_total > 0) {
+        fprintf(stderr, "\n  Unsupported opcodes (top offenders):\n");
+        uint32_t temp[256];
+        memcpy(temp, narrow_reject_by_opcode, sizeof(temp));
+        for (int pass = 0; pass < 10; pass++) {
+            int best_op = -1;
+            uint32_t best_cnt = 0;
+            for (int op = 0; op < 256; op++) {
+                if (temp[op] > best_cnt) {
+                    best_cnt = temp[op];
+                    best_op = op;
+                }
+            }
+            if (best_cnt == 0) break;
+            fprintf(stderr, "    0x%02X: %u\n", best_op, best_cnt);
+            temp[best_op] = 0;
+        }
+    }
+    fprintf(stderr, "==========================================\n");
+}
+
+void stage5_narrow_maybe_print_rejection_histogram(void) {
+    stage5_narrow_print_rejection_histogram();
+}
+
+
+
+// Count "logical" live-ins at region entry, collapsing common
+// two-instruction materialization pairs (lui+addi for la/li,
+// auipc+jalr for call, etc.) into a single logical value.
+// This lets the narrow path be less conservative on regions that
+// only look spilly because of address/constant materialization.
+static int count_logical_live_ins(const stage5_lift_region_t *region, int *out_saved_pairs) {
+    if (!region || !region->cfg_valid || region->cfg_block_count == 0) {
+        if (out_saved_pairs) *out_saved_pairs = 0;
+        return region ? region->cfg_max_live : 0;
+    }
+
+    uint32_t live = region->cfg_blocks[0].live_in_mask;
+    int raw = __builtin_popcount(live & ~1u);
+    int saved = 0;
+
+    for (uint32_t i = 0; i + 1 < region->ir_count; i++) {
+        const stage5_ir_node_t *a = &region->ir[i];
+        const stage5_ir_node_t *b = &region->ir[i + 1];
+
+        if (a->synthetic || b->synthetic) continue;
+
+        bool is_mat = (a->opcode == OP_LUI) &&
+                      (b->opcode == OP_ADDI || b->opcode == OP_ORI) &&
+                      (b->rs1 == a->rd) &&
+                      (b->rd == a->rd);
+
+        bool is_call = (a->opcode == 0x17 /* AUIPC in lifted IR */) &&
+                       (b->opcode == OP_JALR) &&
+                       (b->rs1 == a->rd);
+
+        if ((is_mat || is_call) && (live & (1u << b->rd))) {
+            saved++;
+        }
+    }
+
+    if (out_saved_pairs) *out_saved_pairs = saved;
+
+    int logical = raw - saved;
+    if (logical < 0) logical = 0;
+    return logical;
+}
+
+// Returns true if 'reg' is the final destination of a materialize or call pair
+// somewhere in the region. Useful for biasing prologue assignment.
+static bool is_final_of_materialize_pair(const stage5_lift_region_t *region, uint8_t reg) {
+    if (!region) return false;
+
+    for (uint32_t i = 0; i + 1 < region->ir_count; i++) {
+        const stage5_ir_node_t *a = &region->ir[i];
+        const stage5_ir_node_t *b = &region->ir[i + 1];
+
+        if (a->synthetic || b->synthetic) continue;
+
+        bool is_mat = (a->opcode == OP_LUI) &&
+                      (b->opcode == OP_ADDI || b->opcode == OP_ORI) &&
+                      (b->rd == reg) && (b->rs1 == a->rd);
+
+        bool is_call = (a->opcode == 0x17) &&
+                       (b->opcode == OP_JALR) &&
+                       (b->rd == reg) && (b->rs1 == a->rd);
+
+        if (is_mat || is_call) return true;
+    }
+    return false;
+}
+
+
+
 static bool stage5_region_is_narrow_supported(const stage5_lift_region_t *region) {
     if (!region) return false;
-    // Narrow owning filter — we accept regions that are "small enough" and
-    // composed of opcodes we can currently emit well.
-    // The lifter's own signals (cfg_spill_likely, cfg_block_count) are respected.
+    // Narrow owning filter.
+    // We accept regions that:
+    //   - are not too big (≤ 32 basic blocks)
+    //   - do not have excessive register pressure (max_live ≤ 12)
+    //   - only use opcodes we currently know how to emit well
+    //
+    // The thresholds are intentionally conservative while the narrow path
+    // still uses the old 7-slot reg cache. They will be relaxed as we
+    // improve the path (better prologue, real RA, etc.).
 
-    // Early-out using the lifter's own analysis
-    if (region->cfg_spill_likely) {
-        fprintf(stderr, "narrow-reject pc=0x%08X reason=cfg_spill_likely (lifter says high reg pressure)\n",
-                region->start_pc);
+    // Early-out using the lifter's own analysis, but with awareness of
+    // common two-instruction pseudo expansions (lui+addi for la/li,
+    // auipc+jalr for call, etc.). These are often a single logical value.
+    int saved_pairs = 0;
+    int logical_live = count_logical_live_ins(region, &saved_pairs);
+    narrow_pairs_collapsed += saved_pairs;
+
+    if (logical_live > 12) {
+        if (getenv("SLOW32_NARROW_VERBOSE")) {
+            fprintf(stderr, "narrow-reject pc=0x%08X reason=high_register_pressure "
+                            "(logical_live=%d (saved %d pairs), raw=%u)\n",
+                    region->start_pc, logical_live, saved_pairs, region->cfg_max_live);
+        }
+        narrow_record_reason_reject("high_register_pressure");
         return false;
+    }
+
+    // Reject regions that contain a back-edge. The narrow replay path doesn't
+    // implement loop-aware const-prop / pending-write invalidation, so loops
+    // would get folded against their pre-loop initial values (including the
+    // loop counter), producing infinite execution. Until the narrow path
+    // properly resets state at back-edge targets, defer back-edge blocks to
+    // the per-instruction Stage 4 path, which handles them correctly.
+    if (region->cfg_valid) {
+        for (uint32_t b = 0; b < region->cfg_block_count; b++) {
+            const stage5_cfg_block_t *blk = &region->cfg_blocks[b];
+            for (uint8_t s = 0; s < blk->succ_count; s++) {
+                uint32_t target = blk->succ_pc[s];
+                if (target == STAGE5_CFG_PC_RETURN_CONT) continue;
+                if (target <= blk->start_pc && target >= region->start_pc) {
+                    if (getenv("SLOW32_NARROW_VERBOSE")) {
+                        fprintf(stderr, "narrow-reject pc=0x%08X reason=has_backedge (target=0x%08X)\n",
+                                region->start_pc, target);
+                    }
+                    narrow_record_reason_reject("has_backedge");
+                    return false;
+                }
+            }
+        }
     }
 
     for (uint32_t i = 0; i < region->ir_count; i++) {
@@ -87,11 +282,14 @@ static bool stage5_region_is_narrow_supported(const stage5_lift_region_t *region
         if (n->synthetic) continue;
 
         // Size guard for the narrow owning path.
-        // Raised from 8 → 16 after we gained decent support for internal
-        // control flow, side exits, and lifter-driven prologue.
-        if (region->cfg_block_count > 16) {
-            fprintf(stderr, "narrow-reject pc=0x%08X reason=too_many_cfg_blocks (%u)\n",
-                    region->start_pc, region->cfg_block_count);
+        // We are gradually raising this as the supported opcode set and
+        // control-flow handling improve.
+        if (region->cfg_block_count > 32) {
+            if (getenv("SLOW32_NARROW_VERBOSE")) {
+                fprintf(stderr, "narrow-reject pc=0x%08X reason=too_many_cfg_blocks (%u)\n",
+                        region->start_pc, region->cfg_block_count);
+            }
+            narrow_record_reason_reject("too_many_cfg_blocks");
             return false;
         }
 
@@ -139,8 +337,11 @@ static bool stage5_region_is_narrow_supported(const stage5_lift_region_t *region
             case OP_HALT: case OP_DEBUG: case OP_YIELD:
                 break;
             default:
-                fprintf(stderr, "narrow-reject pc=0x%08X reason=unsupported_opcode 0x%02X\n",
-                        n->pc, n->opcode);
+                if (getenv("SLOW32_NARROW_VERBOSE")) {
+                    fprintf(stderr, "narrow-reject pc=0x%08X reason=unsupported_opcode 0x%02X\n",
+                            n->pc, n->opcode);
+                }
+                narrow_record_opcode_reject(n->opcode);
                 return false;  // not yet supported in narrow owning path
         }
     }
@@ -207,7 +408,7 @@ static bool stage5_replay_narrow_alu_region_a64(translate_ctx_t *ctx,
             case OP_SLE:   translate_sle(ctx, n->rd, n->rs1, n->rs2); break;
             case OP_SLEU:  translate_sleu(ctx, n->rd, n->rs1, n->rs2); break;
             case OP_SGE:   translate_sge(ctx, n->rd, n->rs1, n->rs2); break;
-            case OP_SGEU:  translate_sgeu(ctx, n->rd, n->rs1, n->rs2); break;
+            case OP_SGEU:  translate_sgeu(ctx, n->rd, n->rs1, n->rs2); break;  // 0x1C == OP_SGE (assembler fallback for sge)
 
             case OP_LUI:   translate_lui(ctx, n->rd, n->imm); break;
 
@@ -323,8 +524,11 @@ static bool stage5_replay_narrow_alu_region_a64(translate_ctx_t *ctx,
             case OP_YIELD: translate_yield(ctx); cf_ended_block = true; break;
 
             default:
-                fprintf(stderr, "narrow-replay-fail pc=0x%08X reason=unsupported_in_replay 0x%02X\n",
-                        n->pc, n->opcode);
+                if (getenv("SLOW32_NARROW_VERBOSE")) {
+                    fprintf(stderr, "narrow-replay-fail pc=0x%08X reason=unsupported_in_replay 0x%02X\n",
+                            n->pc, n->opcode);
+                }
+                narrow_record_reason_reject("replay_fail");
                 return false;
         }
 
@@ -4677,9 +4881,19 @@ retry_translate:
                                    STAGE5_LIFT_BUDGET) &&
             stage5_region_is_narrow_supported(&early_region)) {
 
-            using_stage5_narrow = true;   // outer variable (declared earlier)
+            if (narrow_ownership_enabled) {
+                using_stage5_narrow = true;   // outer variable (declared earlier)
 
-            reg_alloc_reset(ctx);
+                // Accumulate pair savings for owned regions too (not just rejections)
+                int saved_here = 0;
+                (void)count_logical_live_ins(&early_region, &saved_here);
+                narrow_pairs_collapsed += saved_here;
+
+                reg_alloc_reset(ctx);
+            } else {
+                // Analysis-only mode: we still ran the lift and predicate,
+                // so rejection logging + histogram will have been populated.
+            }
 
             uint32_t live_in = 0;
             if (early_region.cfg_valid && early_region.cfg_block_count > 0) {
@@ -4692,11 +4906,18 @@ retry_translate:
                 if (live_in & (1u << r)) order[nlive++] = r;
             }
 
-            // Prefer high-use registers (from reg_flow)
+            // Prefer high-use registers (from reg_flow).
+            // Additionally boost registers that are the *final* result of a
+            // common materialize/call pair (lui+addi, auipc+jalr, etc.).
+            // Keeping the result of "la", "li", "call", etc. in a host register
+            // is disproportionately valuable for the rest of the region.
             for (int i = 0; i < nlive; i++) {
                 for (int j = i+1; j < nlive; j++) {
-                    if (early_region.reg_flow[order[j]].use_count >
-                        early_region.reg_flow[order[i]].use_count) {
+                    int score_i = early_region.reg_flow[order[i]].use_count +
+                                  (is_final_of_materialize_pair(&early_region, order[i]) ? 1000 : 0);
+                    int score_j = early_region.reg_flow[order[j]].use_count +
+                                  (is_final_of_materialize_pair(&early_region, order[j]) ? 1000 : 0);
+                    if (score_j > score_i) {
                         int t = order[i]; order[i] = order[j]; order[j] = t;
                     }
                 }
@@ -4705,15 +4926,21 @@ retry_translate:
             int slot = 0;
             for (int i = 0; i < nlive && slot < REG_ALLOC_SLOTS-1; i++) {
                 int r = order[i];
+                a64_reg_t hd = reg_alloc_hosts[slot];
+
+                // Emit the LDR *before* registering the cache mapping. If we
+                // set reg_alloc_map[r]=slot first and then call
+                // emit_load_guest_reg(), it would see the mapping as a cache
+                // hit and elide the actual load — leaving the host register
+                // with whatever stale value it inherited from the prior block.
+                if (hd != A64_NOREG) {
+                    emit_ldr_w32_imm(e, hd, W20, GUEST_REG_OFFSET(r));
+                }
+
                 ctx->reg_alloc[slot].guest_reg = r;
                 ctx->reg_alloc[slot].dirty = false;
                 ctx->reg_alloc[slot].last_use = 0;
                 ctx->reg_alloc_map[r] = slot;
-
-                a64_reg_t hd = reg_alloc_hosts[slot];
-                if (hd != A64_NOREG) {
-                    emit_load_guest_reg(ctx, hd, r);
-                }
                 slot++;
             }
         }
@@ -4750,20 +4977,23 @@ retry_translate:
 
             stage5_a64_pilot_attempted++;
 
-            // Enable side-exit emission path in the branch helpers for this region
-            // if the lifter promoted any forward branches to side exits.
-            bool had_side_exits = (own_region.side_exit_count > 0);
-            bool saved_side_exit_info = ctx->side_exit_info_enabled;
+            if (narrow_ownership_enabled) {
+                // Enable side-exit emission path in the branch helpers for this region
+                // if the lifter promoted any forward branches to side exits.
+                bool had_side_exits = (own_region.side_exit_count > 0);
+                bool saved_side_exit_info = ctx->side_exit_info_enabled;
 
-            if (had_side_exits) {
-                ctx->side_exit_info_enabled = true;
-                ctx->superblock_enabled = true;
-            }
+                if (had_side_exits) {
+                    ctx->side_exit_info_enabled = true;
+                    ctx->superblock_enabled = true;
+                }
 
-            if (stage5_replay_narrow_alu_region_a64(ctx, &own_region, block)) {
-                // We successfully owned and emitted the block via the lifted region.
-                stage5_a64_pilot_would_own++;
-                stage5_a64_real_owned++;
+                bool did_own = false;
+                if (narrow_ownership_enabled && stage5_replay_narrow_alu_region_a64(ctx, &own_region, block)) {
+                    // We successfully owned and emitted the block via the lifted region.
+                    stage5_a64_pilot_would_own++;
+                    stage5_a64_real_owned++;
+                    did_own = true;
 
                 // Count internal branches that went through the real fixup/patching path
                 // (for now this counts how many internal non-side-exit branches were
@@ -4804,8 +5034,12 @@ retry_translate:
                         }
                     }
                     if (tgt_host != (size_t)-1) {
-                        int32_t delta = (int32_t)(tgt_host - (ctx->last_internal_fixup_offset + 4)) / 4;
-                        uint32_t *p = (uint32_t *)((uint8_t *)entry + ctx->last_internal_fixup_offset);
+                        // AArch64 B.cond imm19 is (target - PC) >> 2 (no +4).
+                        // The hardware computes target = PC + (imm19 << 2).
+                        size_t br_off = ctx->last_internal_fixup_offset;
+                        int32_t delta = (int32_t)(tgt_host - br_off) / 4;
+
+                        uint32_t *p = (uint32_t *)((uint8_t *)entry + br_off);
                         uint32_t val = *p;
                         val &= ~0x00FFFFE0u;                 // clear imm19
                         uint32_t field = ((uint32_t)delta & 0x7FFFF) << 5;
@@ -4840,7 +5074,16 @@ retry_translate:
                 ctx->side_exit_info_enabled = saved_side_exit_info;
                 ctx->superblock_enabled = saved_superblock_enabled;
                 dbt_jit_writable_end();
+
+                if (!narrow_ownership_enabled) {
+                    // Option A safety: do the analysis (lift + predicate + logging + histogram)
+                    // but do not actually take ownership until the path is stable.
+                    goto narrow_fallback;
+                }
+
                 return block;
+
+            narrow_fallback:
             } else {
                 stage5_a64_pilot_fallback++;
                 // Restore flags even on fallback
@@ -4850,6 +5093,7 @@ retry_translate:
         }
     }
 
+    } // close narrow_ownership_enabled block (Option A safety)
     if (!using_stage5_narrow && ctx->reg_cache_enabled) {
         reg_alloc_emit_prologue(ctx);
     }
