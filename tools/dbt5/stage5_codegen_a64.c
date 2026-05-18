@@ -508,6 +508,38 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
+            case LIR_OP_IDIV: {
+                // Signed div/rem: cond==0 → quotient, cond==1 → remainder
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    if (n->cond == 0) {
+                        // quotient
+                        emit_sdiv_w32(&cg->emit, dst_h, src0, src1);
+                    } else {
+                        // remainder = dividend - (quotient * divisor)
+                        emit_sdiv_w32(&cg->emit, W16, src0, src1);
+                        emit_msub_w32(&cg->emit, dst_h, W16, src1, src0);
+                    }
+                }
+                break;
+            }
+
+            case LIR_OP_UDIV: {
+                // unsigned division (quotient only for now)
+                a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[0]] : A64_NOREG;
+                a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
+                                 ? value_to_host[n->src_v[1]] : A64_NOREG;
+                if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
+                    emit_udiv_w32(&cg->emit, dst_h, src0, src1);
+                }
+                break;
+            }
+
             case LIR_OP_MULH_RR: {
                 // signed high 32 bits of 32x32 multiply
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
