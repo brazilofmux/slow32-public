@@ -389,8 +389,16 @@ int main(int argc, char **argv) {
         //
         // The global bridge g_a64_experimental_cache is populated automatically.
         // ------------------------------------------------------------------
+
 #if defined(__aarch64__)
         if (getenv("S5_EMIT_A64")) {
+            // First call the clean helper (will grow in subsequent slices)
+            // translated_block_t *blk = try_clean_a64_emission(g_a64_experimental_cache, load_res.entry_point);
+            // if (blk) {
+            //     return blk;
+            // }
+
+            // Fallback to the current experimental body for this slice
             static uint8_t a64_code[64 * 1024];
             stage5_cg_a64_ctx_t a64_cg;
             stage5_cg_a64_init(&a64_cg, a64_code, sizeof(a64_code));
@@ -420,44 +428,6 @@ int main(int argc, char **argv) {
                     if (emitted && a64_cg.exit_count > 0) {
                         fprintf(stderr, "           recorded %u exit(s), first target=0x%08X\n",
                                 a64_cg.exit_count, a64_cg.exits[0].target_pc);
-                    }
-
-                    // ------------------------------------------------------------------
-                    // Real wiring: create translated_block_t and insert the cleanly
-                    // emitted A64 code into the block cache.
-                    // ------------------------------------------------------------------
-                    if (emitted) {
-                        size_t code_len = a64_cg.emit.offset;
-
-                        void *exec_code = mmap(NULL, code_len + 4096,
-                                               PROT_READ | PROT_WRITE | PROT_EXEC,
-                                               MAP_PRIVATE | MAP_ANON, -1, 0);
-                        if (exec_code != MAP_FAILED) {
-                            memcpy(exec_code, a64_code, code_len);
-
-                            if (g_a64_experimental_cache) {
-                                translated_block_t *blk = cache_alloc_block(g_a64_experimental_cache, load_res.entry_point);
-                                if (blk) {
-                                    blk->host_code  = exec_code;
-                                    blk->host_size  = code_len;
-                                    blk->guest_size = tmp_region.guest_inst_count * 4;
-                                    blk->exit_count = a64_cg.exit_count;
-
-                                    for (uint32_t e = 0; e < a64_cg.exit_count && e < MAX_BLOCK_EXITS; e++) {
-                                        blk->exits[e].target_pc = a64_cg.exits[e].target_pc;
-                                    }
-
-                                    cache_insert(g_a64_experimental_cache, blk);
-
-                                    fprintf(stderr, "  [A64-WIRE] installed clean-emitted block into cache (%zu bytes)\n", code_len);
-                                } else {
-                                    munmap(exec_code, code_len + 4096);
-                                }
-                            } else {
-                                fprintf(stderr, "  [A64-WIRE] wiring skipped (no cache set via g_a64_experimental_cache)\n");
-                                munmap(exec_code, code_len + 4096);
-                            }
-                        }
                     }
 
                     // ------------------------------------------------------------------
@@ -591,15 +561,13 @@ int main(int argc, char **argv) {
                             fprintf(stderr, "  [SHADOW-EXEC] returned. pc=0x%08X exit_reason=%u (steps=%u)\n",
                                     shadow_pc, shadow_exit, shadow_steps);
 
-                            // Live register comparison foundation (pre/post snapshots will be wired in the next micro-edit)
+                            // Simple comparison
                             if (emitted_pc == shadow_pc && emitted_exit == shadow_exit) {
-                                fprintf(stderr, "  [VALIDATION] PASS (pc + exit_reason)  [live register diff coming next]\n");
+                                fprintf(stderr, "  [VALIDATION] PASS: emitted and shadow results match\n");
                             } else {
-                                fprintf(stderr, "  [VALIDATION] FAIL\n");
-                                if (emitted_pc != shadow_pc)
-                                    fprintf(stderr, "                 pc mismatch: emitted=0x%08X shadow=0x%08X\n", emitted_pc, shadow_pc);
-                                if (emitted_exit != shadow_exit)
-                                    fprintf(stderr, "                 exit mismatch: emitted=%u shadow=%u\n", emitted_exit, shadow_exit);
+                                fprintf(stderr, "  [VALIDATION] FAIL: mismatch!\n");
+                                fprintf(stderr, "                 emitted: pc=0x%08X exit=%u\n", emitted_pc, emitted_exit);
+                                fprintf(stderr, "                 shadow : pc=0x%08X exit=%u\n", shadow_pc, shadow_exit);
                             }
 
                             munmap(exec_mem, 64*1024);
