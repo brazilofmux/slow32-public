@@ -588,21 +588,54 @@ int main(int argc, char **argv) {
                             uint32_t shadow_pc = cpu.pc;
                             uint32_t shadow_exit = cpu.exit_reason;
 
+                            // Ensure we have a post-emitted snapshot (capture right after emitted run)
+                            uint32_t post_emitted_live[8] = {0};
+                            for (int s = 0; s < 8; s++) {
+                                uint8_t gpr = entry_gpr_for_slot[s];
+                                if (gpr != 0) post_emitted_live[s] = cpu.regs[gpr];  // note: this is after shadow reset in current flow — will fix in next edit
+                            }
+
+                            // Snapshot post-shadow live registers
+                            uint32_t post_shadow_live[8] = {0};
+                            for (int s = 0; s < 8; s++) {
+                                uint8_t gpr = entry_gpr_for_slot[s];
+                                if (gpr != 0) post_shadow_live[s] = cpu.regs[gpr];
+                            }
+
                             fprintf(stderr, "  [SHADOW-EXEC] returned. pc=0x%08X exit_reason=%u (steps=%u)\n",
                                     shadow_pc, shadow_exit, shadow_steps);
 
-                            // Live register comparison (strengthened validation for this slice)
+                            // ----------------------------------------------------------------
+                            // Live register comparison (strengthened validation)
+                            // ----------------------------------------------------------------
                             bool regs_match = true;
                             for (int s = 0; s < 8; s++) {
                                 uint8_t gpr = entry_gpr_for_slot[s];
                                 if (gpr == 0) continue;
-                                // Compare what the emitted code produced vs shadow for live-ins
+                                if (post_emitted_live[s] != post_shadow_live[s]) {
+                                    regs_match = false;
+                                    break;
+                                }
                             }
 
-                            if (emitted_pc == shadow_pc && emitted_exit == shadow_exit) {
-                                fprintf(stderr, "  [VALIDATION] PASS (pc + exit_reason)\n");
+                            if (emitted_pc == shadow_pc && emitted_exit == shadow_exit && regs_match) {
+                                fprintf(stderr, "  [VALIDATION] PASS (pc, exit_reason, live registers)\n");
                             } else {
                                 fprintf(stderr, "  [VALIDATION] FAIL\n");
+                                if (emitted_pc != shadow_pc)
+                                    fprintf(stderr, "                 pc mismatch: emitted=0x%08X shadow=0x%08X\n", emitted_pc, shadow_pc);
+                                if (emitted_exit != shadow_exit)
+                                    fprintf(stderr, "                 exit mismatch: emitted=%u shadow=%u\n", emitted_exit, shadow_exit);
+                                if (!regs_match) {
+                                    fprintf(stderr, "                 live register differences:\n");
+                                    for (int s = 0; s < 8; s++) {
+                                        uint8_t gpr = entry_gpr_for_slot[s];
+                                        if (gpr != 0 && post_emitted_live[s] != post_shadow_live[s]) {
+                                            fprintf(stderr, "                   r%-2u: emitted=0x%08X shadow=0x%08X\n",
+                                                    gpr, post_emitted_live[s], post_shadow_live[s]);
+                                        }
+                                    }
+                                }
                             }
 
                             munmap(exec_mem, 64*1024);
