@@ -567,7 +567,22 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
             }
 
-            // More ops coming (TEST is already partially handled above, MULH/MULHU, DIV/REM, FP, calls, etc.)
+            case LIR_OP_CALL: {
+                // Basic call support inside the region (narrow path).
+                // We only handle the register-indirect form for now (blr).
+                if (n->src_v[0] != 0) {
+                    a64_reg_t target_reg = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
+                                           ? value_to_host[n->src_v[0]] : A64_NOREG;
+                    if (target_reg != A64_NOREG) {
+                        emit_blr(&cg->emit, target_reg);
+                    }
+                }
+                // If the call produces a return value in dst_v, we currently do
+                // nothing (the next use will cause a reload from memory).
+                break;
+            }
+
+            // More ops coming (FP, more call/return variants, complex addressing, etc.)
 
             default:
                 // For now we silently skip unsupported ops in this narrow path.
