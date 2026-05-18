@@ -22,16 +22,15 @@
 #include "shadow_interp.h"
 #include "slow32_inst.h"
 
-#include "stage5_lift.h"
-#include "stage5_ssa.h"
-#include "stage5_mir.h"
-#include "stage5_burg.h"
-#include "stage5_lir.h"
-#include "stage5_ra.h"
+#include "pre/lift/stage5_lift.h"
+#include "pre/ssa/stage5_ssa.h"
+#include "pre/mir/stage5_mir.h"
+
+// Target-specific includes (post-MIR split)
 #if defined(__aarch64__)
-#include "stage5_codegen_a64.h"   // experimental clean A64 emitter
+#include "target/a64/codegen/stage5_codegen_a64.h"
 #elif defined(__x86_64__)
-#include "stage5_codegen_x64.h"   // clean x86-64 emitter
+#include "target/x64/codegen/stage5_codegen_x64.h"
 #endif
 
 // s32x loader lives in the emulator tree (self-contained header).
@@ -502,7 +501,7 @@ int main(int argc, char **argv) {
                                 const stage5_ra_interval_t *iv = &tmp_ra.intervals[i];
                                 if (iv->value_id == 0 || iv->spilled || iv->assigned_slot < 0)
                                     continue;
-                                if (iv->start_idx > 2)   // only values live at entry
+                                if (iv->start_idx != 0)   // only live-ins at entry (A7 pilot-side fix)
                                     continue;
 
                                 uint8_t gpr = ssa_for_emit.value_to_reg[iv->value_id];

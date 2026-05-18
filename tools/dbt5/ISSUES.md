@@ -179,17 +179,12 @@ Ops currently missing in the a64 switch but produced by BURG:
 Without these the emitter can never own a region that calls printf, exits via
 HALT, or does FP — i.e. anything non-trivial.
 
-### A7. **BUG** Prologue picks the wrong guest reg per slot
+### A7. **DONE** **BUG** Prologue picks the wrong guest reg per slot
 
-`stage5_codegen_a64.c:96-118` walks **all** RA intervals and overwrites
-`cg->guest_in_slot[slot]` for every interval that lands on that slot. Because
-slots are reused over time (linear-scan), `guest_in_slot[s]` ends up holding
-the *last* interval's guest reg — not the live-in. The prologue then loads
-that wrong guest reg into the slot.
-
-The correct prologue should iterate intervals whose `start_idx == 0` (or are
-live-in per the lifter's CFG) and load `guest_reg → assigned_slot` only once
-per slot. (See B1 for the same bug repeated in `dbt5.c`.)
+Fixed in stage5_codegen_a64.c: only set `guest_in_slot[slot]` for intervals
+with `start_idx == 0` (the live-ins). Host register assignment and
+value_to_* maps are still done for all assigned intervals. Prologue now
+loads the correct incoming guest registers.
 
 ### A8. **DESIGN/BUG** Dirty-tracking is racy and unused
 
@@ -199,34 +194,27 @@ gives the misleading impression that there's a write-back step. There isn't
 epilogue, and it ignores `slot_dirty[]` entirely. Either implement a real
 flush (mirror `stage5_codegen_x64.c::cg_flush_exit`) or remove the field.
 
-### A9. **BUG** `LIR_OP_UDIV` is emitted but BURG never produces it
+### A9. **INVESTIGATED / NOT A LIVE BUG** `LIR_OP_UDIV` is emitted but BURG never produces it
 
-`stage5_codegen_a64.c:531` handles `LIR_OP_UDIV` by emitting `UDIV` —
-correct, but dead code: `stage5_burg.c` lowers `MIR_OP_DIV/REM` to
-`LIR_OP_IDIV` with a `cond` bit and **never** emits `LIR_OP_UDIV`. So
-unsigned `DIVU`/`REMU` from the guest end up emitting `SDIV` (signed)
-through the IDIV path. This silently miscompiles unsigned division of values
-with the high bit set.
+The A64 emitter has a `LIR_OP_UDIV` case (currently only for quotient).
 
-Fix in BURG: distinguish signed vs unsigned at lowering and emit
-`LIR_OP_UDIV` (and a `LIR_OP_UREM` you'd need to add) for the unsigned guest
-opcodes. The a64 emitter already has half the support.
+However, in the current SLOW-32 ISA definition used by this tree, there are
+**no separate unsigned division opcodes** (only `OP_DIV` 0x0C and `OP_REM`
+0x0D). The production translator even has a comment confirming "DIVU not
+defined as a separate opcode in SLOW-32".
 
-### A10. **BUG** Internal-branch fixup array is hard-capped at 16
+Therefore `MIR_OP_DIVU/REMU` do not exist, BURG always emits `LIR_OP_IDIV`,
+and the unsigned path is dead code / future-proofing rather than a current
+miscompilation.
 
-`stage5_codegen_a64.h:79`:
+We left an updated comment in the emitter. If unsigned division is ever
+added to the guest ISA, the BURG change will be straightforward.
 
-```c
-struct {
-    size_t   patch_offset;
-    uint32_t target_pc;
-} internal_branches[16];   // small fixed size is fine for the narrow path
-```
+### A10. **DONE** **BUG** Internal-branch fixup array is hard-capped at 16
 
-`stage5_codegen_a64.c:484` silently drops fixups when `internal_branch_count
->= 16`. A region with more than 16 forward branches will emit half-patched
-branches that jump to offset 0 (relative). Either grow the cap or, better,
-treat overflow as a hard failure (return false).
+Raised the array from 16 to 32 entries. Overflow now causes the emitter to
+return false (clean failure) instead of silently dropping fixups. The
+post-pass still handles all recorded branches.
 
 ---
 
@@ -385,7 +373,7 @@ the header). All C cleanups are now complete.
 ### D1. **DESIGN** LIR is x86-shaped — AArch64 lowering needs translation glue
 
 LIR uses x86 condition-code bytes (0x84..0x9F) in the `cond` field
-(`stage5_burg.c:cmp_opcode_to_x86_cc`), x86 two-operand ALU semantics
+(`stage5_burg.c` compare lowering), x86 two-operand ALU semantics
 (`dst` overlaps `src0`), and BURG's address-mode folding produces `LEA` /
 `MOV_RM` / `MOV_MR` patterns aligned to x86.
 

@@ -31,9 +31,10 @@
 #include "block_cache.h"
 #include "cpu_state.h"
 #include "dbt_limits.h"
-#include "stage5_lift.h"
-#include "stage5_lir.h"
-#include "stage5_ra.h"
+#include "pre/lift/stage5_lift.h"
+#include "target/x64/lir/stage5_lir_x64.h"
+#include "target/x64/regalloc/stage5_ra.h"
+#include "target/x64/burg/stage5_burg.h"
 
 // Minimal deferred-exit record for Stage 5 side-exits.
 //

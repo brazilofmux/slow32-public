@@ -32,10 +32,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "stage5_lift.h"
-#include "stage5_lir.h"
-#include "stage5_ra.h"
-#include "stage5_ssa.h"
+#include "pre/lift/stage5_lift.h"
+#include "target/a64/lir/stage5_lir_a64.h"
+#include "target/a64/regalloc/stage5_ra.h"
+#include "pre/ssa/stage5_ssa.h"
+#include "target/a64/burg/stage5_burg.h"
 #include "emit_a64.h"   // raw emission only
 
 // ============================================================================
@@ -57,8 +58,9 @@ typedef struct {
     // This is maintained by the emitter during code generation.
     uint8_t   guest_in_slot[STAGE5_A64_MAX_HOST_SLOTS];
 
-    // Whether the value in the slot is dirty relative to guest memory.
-    bool      slot_dirty[STAGE5_A64_MAX_HOST_SLOTS];
+    // (A8) slot_dirty[] was written in many places but never read.
+    // The only write-back is the unconditional pc/exit_reason store
+    // in the final epilogue. We removed the dead field.
 
     // Code emission buffer (we write A64 instructions here)
     emit_ctx_t emit;
@@ -76,7 +78,7 @@ typedef struct {
     struct {
         size_t   patch_offset;
         uint32_t target_pc;
-    } internal_branches[16];   // small fixed size is fine for the narrow path
+    } internal_branches[32];   // increased from 16 (A10) — still small for narrow path
 
     // Bookkeeping
     uint32_t guest_pc;           // current guest PC being emitted

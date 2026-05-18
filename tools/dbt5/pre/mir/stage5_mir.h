@@ -6,8 +6,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "stage5_lift.h"
-#include "stage5_ssa.h"
+#include "pre/lift/stage5_lift.h"
+#include "pre/ssa/stage5_ssa.h"
 
 typedef enum {
     MIR_OP_NOP = 0,

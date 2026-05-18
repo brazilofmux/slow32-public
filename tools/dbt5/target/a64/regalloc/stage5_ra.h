@@ -5,8 +5,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "stage5_lir.h"
-#include "stage5_ssa.h"
+#include "target/a64/lir/stage5_lir_a64.h"
+#include "pre/ssa/stage5_ssa.h"
 
 #define STAGE5_RA_MAX_INTERVALS 1024
 #define STAGE5_RA_HOST_SLOTS 8

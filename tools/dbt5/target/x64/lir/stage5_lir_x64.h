@@ -6,8 +6,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "stage5_lift.h"
-#include "stage5_ssa.h"   // for stage5_ssa_overlay_t in lir_optimize declaration
+#include "pre/lift/stage5_lift.h"
+#include "pre/ssa/stage5_ssa.h"   // for stage5_ssa_overlay_t in lir_optimize declaration
 
 typedef enum {
     LIR_OP_NOP = 0,
@@ -52,6 +52,29 @@ typedef enum {
     LIR_OP_FP_HELPER    // call fp helper
 } lir_op_t;
 
+/* Architecture-neutral condition codes for LIR.
+   These replace the previous raw x86 CC bytes (0x84–0x9F) to make the
+   intermediate representation less tied to any one target (D1).
+*/
+typedef enum {
+    LIR_COND_NONE = 0,
+
+    LIR_COND_EQ,
+    LIR_COND_NE,
+
+    /* Signed comparisons */
+    LIR_COND_LT,
+    LIR_COND_GE,
+    LIR_COND_LE,
+    LIR_COND_GT,
+
+    /* Unsigned comparisons */
+    LIR_COND_LTU,
+    LIR_COND_GEU,
+    LIR_COND_LEU,
+    LIR_COND_GTU,
+} lir_cond_t;
+
 typedef struct {
     lir_op_t op;
     uint8_t guest_opcode;
@@ -59,7 +82,7 @@ typedef struct {
     uint16_t src_v[2];
     int32_t imm;
     int32_t disp;
-    uint8_t cond;       // x86 CC (or remainder flag for DIV)
+    lir_cond_t cond;    // target-neutral condition kind (D1); for IDIV the old "cond" meaning (0=quot,1=rem) is still used as a flag
     uint8_t size;       // memory access size: 1, 2, or 4
     bool is_signed;     // signed memory access (for sub-word loads)
     uint32_t guest_pc;

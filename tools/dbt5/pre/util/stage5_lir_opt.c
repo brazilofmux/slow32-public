@@ -1,7 +1,7 @@
 // SLOW-32 DBT Stage 5: LIR Optimizer
 // Peephole and simple machine-independent optimizations on LIR.
 
-#include "stage5_lir.h"
+#include "target/a64/lir/stage5_lir_a64.h"  // temporary during aggressive split; will be cleaned
 #include "stage5_ssa.h"
 #include <string.h>
 

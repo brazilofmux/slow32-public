@@ -6,10 +6,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "stage5_lift.h"
-#include "stage5_mir.h"
-#include "stage5_lir.h"
-#include "stage5_ssa.h"
+#include "pre/lift/stage5_lift.h"
+#include "pre/mir/stage5_mir.h"
+#include "target/a64/lir/stage5_lir_a64.h"
+#include "pre/ssa/stage5_ssa.h"
 
 typedef enum {
     STAGE5_BURG_OK = 0,

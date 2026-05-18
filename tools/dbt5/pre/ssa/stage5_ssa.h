@@ -6,7 +6,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "stage5_lift.h"
+#include "pre/lift/stage5_lift.h"
 
 #define STAGE5_SSA_MAX_VALUES (STAGE5_MAX_IR_NODES * 3 + 64)
 

@@ -1,5 +1,12 @@
 # SLOW-32 DBT5 — Stage 5 only (clean-room experimental compiler)
 #
+# Post-MIR split (D1): two parallel experimental pipelines under target/
+#   - target/x64/  — legacy path (Stage 4 x86-shaped, to be replaced)
+#   - target/a64/  — new AArch64 experimental path (three-operand preferred)
+#
+# Pre-MIR (lift → SSA → MIR) lives under pre/ and is the last relatively
+# target-agnostic layer.
+#
 # This tree is deliberately separated from the production ./tools/dbt (Stages 1-4).
 # Rule: NO FILE IN THIS DIRECTORY MAY INCLUDE OR CALL ANYTHING FROM
 #       ../dbt/translate*.c or ../dbt/translate.h.
@@ -18,7 +25,10 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -g -std=c11
 CFLAGS += -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
-CFLAGS += -I.                    # local headers (slow32_inst.h, stage5_*.h, etc.)
+CFLAGS += -I.                    # local headers
+CFLAGS += -Ipre/lift -Ipre/ssa -Ipre/mir
+CFLAGS += -Itarget/x64/burg -Itarget/x64/lir -Itarget/x64/regalloc -Itarget/x64/codegen
+CFLAGS += -Itarget/a64/burg -Itarget/a64/lir -Itarget/a64/regalloc -Itarget/a64/codegen
 CFLAGS += -I../../common         # s32_formats.h
 CFLAGS += -I../../emulator       # s32x_loader.h
 
@@ -38,20 +48,29 @@ endif
 
 ifeq ($(UNAME_M),aarch64)
     EMIT_SRCS = emit_a64.c
-    # First skeleton of the clean independent A64 backend.
-    # This is the real work that was previously blocked by the gravity well.
-    STAGE5_ARCH_SRCS = stage5_codegen_a64.c
+    # New experimental A64 pipeline (post-MIR split)
+    TARGET_BURG = target/a64/burg/stage5_burg_a64.c
+    TARGET_LIR  = target/a64/lir/stage5_lir_a64.h
+    TARGET_RA   = target/a64/regalloc/stage5_ra.c
+    TARGET_CODEGEN = target/a64/codegen/stage5_codegen_a64.c
 else
     EMIT_SRCS = emit_x64.c
-    # Clean-room x86-64 backend + its FP helper.  The legacy translate_ctx_t
-    # coupling has been excised; the only public entry point is
-    # stage5_codegen_x64() in stage5_codegen_x64.h.
-    STAGE5_ARCH_SRCS = stage5_codegen_x64.c dbt5_fp_helper.c
+    # Legacy x86-64 pipeline (will be replaced later)
+    TARGET_BURG = target/x64/burg/stage5_burg_x64.c
+    TARGET_LIR  = target/x64/lir/stage5_lir_x64.h
+    TARGET_RA   = target/x64/regalloc/stage5_ra.c
+    TARGET_CODEGEN = target/x64/codegen/stage5_codegen_x64.c dbt5_fp_helper.c
 endif
 
 # Stage 5 compiler pipeline (the actual experiment)
-STAGE5_SRCS = stage5_lift.c stage5_burg.c stage5_ssa.c stage5_ra.c \
-              stage5_mir.c stage5_lir_opt.c $(STAGE5_ARCH_SRCS)
+# Split after MIR: pre/ is shared, target/ is per-pipeline
+STAGE5_SRCS = pre/lift/stage5_lift.c \
+              $(TARGET_BURG) \
+              pre/ssa/stage5_ssa.c \
+              $(TARGET_RA) \
+              pre/mir/stage5_mir.c \
+              pre/util/stage5_lir_opt.c \
+              $(TARGET_CODEGEN)
 
 # Core runtime pieces we still need (block cache, shadow interp fallback, emitters)
 CORE_SRCS = dbt5.c block_cache.c shadow_interp.c slow32_inst.c $(EMIT_SRCS)

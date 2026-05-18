@@ -18,37 +18,28 @@
 uint32_t stage5_codegen_a64_attempted = 0;
 uint32_t stage5_codegen_a64_success   = 0;
 
-// Map LIR condition (usually x86 CC from the BURG lowering) + guest opcode
-// into a usable AArch64 condition code.
-static a64_cond_t lir_cond_to_a64(uint8_t lir_cond, uint8_t guest_opcode)
+// Map a target-neutral LIR condition to an AArch64 condition code.
+// Falls back to the original guest opcode when needed.
+static a64_cond_t lir_cond_to_a64(lir_cond_t lir_cond, uint8_t guest_opcode)
 {
-    // First try the LIR cond field (most common path)
+    // Primary path: neutral LIR condition (D1)
     switch (lir_cond) {
-        case 0x84: return COND_EQ;   // JE
-        case 0x85: return COND_NE;   // JNE
-        case 0x8C: return COND_LT;   // JL
-        case 0x8D: return COND_GE;   // JGE
-        case 0x8E: return COND_LE;   // JLE
-        case 0x8F: return COND_GT;   // JG
-        case 0x82: return COND_LO;   // JB
-        case 0x83: return COND_HS;   // JAE
-        case 0x86: return COND_LS;   // JBE
-        case 0x87: return COND_HI;   // JA
-        case 0x88: return COND_MI;   // JS
-        case 0x89: return COND_PL;   // JNS
-        case 0x92: return COND_LO;   // JB (setcc)
-        case 0x93: return COND_HS;   // JAE
-        case 0x94: return COND_EQ;   // JE (setcc)
-        case 0x95: return COND_NE;   // JNE
-        case 0x96: return COND_LS;   // JBE
-        case 0x97: return COND_HI;   // JA
-        case 0x9C: return COND_LT;   // JL
-        case 0x9D: return COND_GE;   // JGE
-        case 0x9E: return COND_LE;   // JLE
-        case 0x9F: return COND_GT;   // JG
+        case LIR_COND_EQ:   return COND_EQ;
+        case LIR_COND_NE:   return COND_NE;
+        case LIR_COND_LT:   return COND_LT;   // signed
+        case LIR_COND_GE:   return COND_GE;
+        case LIR_COND_LE:   return COND_LE;
+        case LIR_COND_GT:   return COND_GT;
+        case LIR_COND_LTU:  return COND_LO;   // unsigned
+        case LIR_COND_GEU:  return COND_HS;
+        case LIR_COND_LEU:  return COND_LS;
+        case LIR_COND_GTU:  return COND_HI;
+        case LIR_COND_NONE:
+            break;
     }
 
-    // Fallback: derive from the original SLOW-32 guest opcode.
+    // Fallback: derive from the original SLOW-32 guest opcode (still needed
+    // for some legacy paths and until all BURG sites are updated).
     switch (guest_opcode) {
         case 0x0E: return COND_EQ;   // SEQ
         case 0x0F: return COND_NE;   // SNE
@@ -94,7 +85,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
     // ------------------------------------------------------------------
     memset(cg->host_regs, 0, sizeof(cg->host_regs));
     memset(cg->guest_in_slot, 0, sizeof(cg->guest_in_slot));
-    memset(cg->slot_dirty, 0, sizeof(cg->slot_dirty));
+    // (A8) slot_dirty removed — never read, only unconditional write-back in epilogue
 
     // Build a quick lookup: SSA value_id → host register (for values the RA assigned)
     a64_reg_t value_to_host[STAGE5_SSA_MAX_VALUES];
@@ -115,13 +106,18 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             a64_reg_t hreg = slot_to_host[slot];
             uint8_t gpr = ssa->value_to_reg[iv->value_id];
 
-            cg->host_regs[slot]     = hreg;
-            cg->guest_in_slot[slot] = gpr;
-            cg->slot_dirty[slot]    = false;
+            cg->host_regs[slot] = hreg;
+            // (A8) no longer tracking slot_dirty here
 
             if (iv->value_id < STAGE5_SSA_MAX_VALUES) {
                 value_to_host[iv->value_id] = hreg;
                 value_to_gpr [iv->value_id] = gpr;
+            }
+
+            // A7 fix: only load live-ins in the prologue.
+            // Intervals with start_idx==0 are the ones live at entry.
+            if (iv->start_idx == 0) {
+                cg->guest_in_slot[slot] = gpr;
             }
         }
     }
@@ -160,7 +156,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     emit_mov_w32_imm32(&cg->emit, dst_h, (uint32_t)n->imm);
                     // mark dirty (simplified)
                     for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
-                        if (cg->host_regs[s] == dst_h) { cg->slot_dirty[s] = true; break; }
+                        if (cg->host_regs[s] == dst_h) { /* (A8) slot_dirty removed */ break; }
                     }
                 }
                 break;
@@ -199,12 +195,11 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
 
             case LIR_OP_ADD_RR: {
+                // Three-operand form (D1 reshape for A64)
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_add_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_add_w32(&cg->emit, dst_h, src0, src1);   // native three-operand
                 }
                 break;
             }
@@ -232,12 +227,11 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
 
             case LIR_OP_SUB_RR: {
+                // Three-operand form (D1 reshape)
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_sub_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_sub_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
@@ -255,9 +249,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_and_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_and_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
@@ -275,9 +267,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_orr_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_orr_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
@@ -295,9 +285,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES) ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_eor_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_eor_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
@@ -352,7 +340,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
                 // Mark destination dirty (same pattern as old CMP cset)
                 for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
-                    if (cg->host_regs[s] == dst_h) { cg->slot_dirty[s] = true; break; }
+                    if (cg->host_regs[s] == dst_h) { /* (A8) slot_dirty removed */ break; }
                 }
                 break;
             }
@@ -390,7 +378,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 // Destination is now live and dirty in its slot
                 for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
                     if (cg->host_regs[s] == dst_h) {
-                        cg->slot_dirty[s] = true;
+                        /* (A8) slot_dirty removed */
                         break;
                     }
                 }
@@ -439,7 +427,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 // mark dst dirty
                 for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
                     if (cg->host_regs[s] == dst_h) {
-                        cg->slot_dirty[s] = true;
+                        /* (A8) slot_dirty removed */
                         break;
                     }
                 }
@@ -448,6 +436,9 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
 
             // Shifts (very common)
             case LIR_OP_SHL_RI:
+                // Three-operand form (A64).
+                // For immediate shifts we still often need the mov because
+                // the immediate may not fit the 12-bit encoding.
                 if (dst_h != A64_NOREG) {
                     a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                       ? value_to_host[n->src_v[0]] : dst_h;
@@ -458,6 +449,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
 
             case LIR_OP_SHR_RI:
+                // Three-operand form (A64)
                 if (dst_h != A64_NOREG) {
                     a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                       ? value_to_host[n->src_v[0]] : dst_h;
@@ -468,6 +460,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
 
             case LIR_OP_SAR_RI:
+                // Three-operand form (A64)
                 if (dst_h != A64_NOREG) {
                     a64_reg_t src_h = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                       ? value_to_host[n->src_v[0]] : dst_h;
@@ -478,46 +471,44 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 break;
 
             case LIR_OP_SHL_RR: {
+                // Three-operand form
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_lslv_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_lslv_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
 
             case LIR_OP_SHR_RR: {
+                // Three-operand form
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_lsrv_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_lsrv_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
 
             case LIR_OP_SAR_RR: {
+                // Three-operand form
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_asrv_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_asrv_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
 
             // ------------------------------------------------------------------
-            // Internal forward branches (first control-flow support inside regions)
+            // Fused and plain conditional branches (JCC family) — A64 experimental path
+            // Uses neutral LIR conditions and the skip-stub side-exit strategy.
             // ------------------------------------------------------------------
             case LIR_OP_JCC:
             case LIR_OP_CMP_JCC:
@@ -532,19 +523,19 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                     // Record fixup for post-pass patching
                     size_t patch_off = emit_offset(&cg->emit);
 
-                    // Map LIR condition to AArch64 condition.
-                    // We first try the LIR cond field (x86-style CC from BURG).
-                    // If that is unknown/zero, we fall back to the guest opcode
-                    // (which we already handle well in the comparison emission path).
+                    // Use the neutral LIR condition we received from the A64 BURG.
                     a64_cond_t a64c = lir_cond_to_a64(n->cond, n->guest_opcode);
 
                     emit_b_cond(&cg->emit, a64c, 0);
 
                     // Record in the dedicated internal branch fixup array
-                    if (cg->internal_branch_count < 16) {
+                    if (cg->internal_branch_count < 32) {
                         int idx = cg->internal_branch_count++;
                         cg->internal_branches[idx].patch_offset = patch_off;
                         cg->internal_branches[idx].target_pc    = tgt;
+                    } else {
+                        // A10: too many internal branches for the narrow path — fail cleanly
+                        return false;
                     }
                 } else {
                     // Real side-exit (or out-of-region) conditional branch.
@@ -590,14 +581,13 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             }
 
             case LIR_OP_IMUL_RR: {
+                // Three-operand form
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[1]] : A64_NOREG;
                 if (dst_h != A64_NOREG && src0 != A64_NOREG && src1 != A64_NOREG) {
-                    if (src0 != dst_h)
-                        emit_mov_w32_w32(&cg->emit, dst_h, src0);
-                    emit_mul_w32(&cg->emit, dst_h, dst_h, src1);
+                    emit_mul_w32(&cg->emit, dst_h, src0, src1);
                 }
                 break;
             }
@@ -614,7 +604,7 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                         // quotient
                         emit_sdiv_w32(&cg->emit, dst_h, src0, src1);
                     } else {
-                        // remainder = dividend - (quotient * divisor)
+                        // remainder = dividend - (quotient * divisor)  — three-operand style
                         emit_sdiv_w32(&cg->emit, W16, src0, src1);
                         emit_msub_w32(&cg->emit, dst_h, W16, src1, src0);
                     }
@@ -623,7 +613,12 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
             }
 
             case LIR_OP_UDIV: {
-                // unsigned division (quotient only for now)
+                // Unsigned division (quotient).
+                // Note (A9): In the current SLOW-32 ISA there are no separate
+                // unsigned division opcodes (only OP_DIV / OP_REM). This path
+                // is currently dead / future-proofing. When/ if unsigned div
+                // is added to the guest ISA or through software lowering, this
+                // will be used.
                 a64_reg_t src0 = (n->src_v[0] < STAGE5_SSA_MAX_VALUES)
                                  ? value_to_host[n->src_v[0]] : A64_NOREG;
                 a64_reg_t src1 = (n->src_v[1] < STAGE5_SSA_MAX_VALUES)
@@ -685,16 +680,8 @@ bool stage5_codegen_a64(stage5_cg_a64_ctx_t *cg,
                 return false;
         }
 
-        // Very rough dirty tracking for the dest
-        if (n->dst_v != 0 && dst_h != A64_NOREG) {
-            // find which slot this dst_h lives in (slow but fine for early version)
-            for (int s = 0; s < STAGE5_A64_MAX_HOST_SLOTS; s++) {
-                if (cg->host_regs[s] == dst_h) {
-                    cg->slot_dirty[s] = true;
-                    break;
-                }
-            }
-        }
+        // (A8) Dirty tracking removed — never read. The epilogue always does
+        // an unconditional write of pc + exit_reason.
     }
 
     // ------------------------------------------------------------------

@@ -190,6 +190,25 @@ static uint8_t invert_x86_cc(uint8_t cc) {
     return cc ^ 1; // x86 condition codes: even/odd pairs are inverses
 }
 
+// Map our target-neutral LIR condition to the corresponding x86 SETcc/Jcc byte.
+// This is the x86-side counterpart to lir_cond_to_a64 (D1 cleanup).
+static uint8_t lir_cond_to_x86_cc(lir_cond_t c) {
+    switch (c) {
+        case LIR_COND_EQ:   return 0x94; // SETE / JE
+        case LIR_COND_NE:   return 0x95; // SETNE / JNE
+        case LIR_COND_LT:   return 0x9C; // SETL / JL   (signed)
+        case LIR_COND_GE:   return 0x9D; // SETGE / JGE
+        case LIR_COND_LE:   return 0x9E; // SETLE / JLE
+        case LIR_COND_GT:   return 0x9F; // SETG / JG
+        case LIR_COND_LTU:  return 0x92; // SETB / JB   (unsigned below)
+        case LIR_COND_GEU:  return 0x93; // SETAE / JAE
+        case LIR_COND_LEU:  return 0x96; // SETBE / JBE
+        case LIR_COND_GTU:  return 0x97; // SETA / JA
+        default:
+            return 0x94; // safe default (EQ)
+    }
+}
+
 // Self-loop back-edge: when the terminal branch targets the block's own
 // start PC, emit a direct jmp back to the loop body (skipping the prologue
 // reload).  Emits a register shuffle sequence if needed to move values
@@ -757,11 +776,10 @@ static bool cg_emit_lir_node(stage5_cg_x64_state_t *cg, const lir_node_t *l, uin
         }
 
         case LIR_OP_SETCC: {
-            // SETcc based on condition code in l->cond
-            // The cond field holds the full setcc opcode byte (0x94=SETE, etc.)
-            // For the emitter, we need to call the right emit_set* function.
+            // SETcc based on neutral LIR condition (D1)
             x64_reg_t out = (dst_h != X64_NOREG) ? dst_h : RAX;
-            switch (l->cond) {
+            uint8_t x86cc = lir_cond_to_x86_cc(l->cond);
+            switch (x86cc) {
                 case 0x94: emit_sete(e, out); break;   // EQ
                 case 0x95: emit_setne(e, out); break;  // NE
                 case 0x9C: emit_setl(e, out); break;   // LT (signed)
@@ -775,7 +793,7 @@ static bool cg_emit_lir_node(stage5_cg_x64_state_t *cg, const lir_node_t *l, uin
                 default:
                     fprintf(stderr,
                             "FATAL: stage5_codegen_x64: unsupported SETCC condition 0x%02X at pc=0x%08X\n",
-                            l->cond, l->guest_pc);
+                            x86cc, l->guest_pc);
                     abort();
             }
             emit_movzx_r32_r8(e, out, out);
@@ -863,21 +881,21 @@ static bool cg_emit_lir_node(stage5_cg_x64_state_t *cg, const lir_node_t *l, uin
             x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
             x64_reg_t h2 = cg_resolve_val(cg, l->src_v[1], RCX);
             emit_cmp_r32_r32(e, h1, h2);
-            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+            return cg_emit_conditional_branch(cg, l, lir_idx, lir_cond_to_x86_cc(l->cond));
         }
 
         case LIR_OP_CMP_RI_JCC: {
             // Fused compare-immediate+branch: cmp src0, imm; jcc
             x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
             emit_cmp_r32_imm32(e, h1, l->disp);
-            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+            return cg_emit_conditional_branch(cg, l, lir_idx, lir_cond_to_x86_cc(l->cond));
         }
 
         case LIR_OP_TEST_JCC: {
             // Fused test+branch: test src0, src0; jnz/jz
             x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
             emit_test_r32_r32(e, h1, h1);
-            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+            return cg_emit_conditional_branch(cg, l, lir_idx, lir_cond_to_x86_cc(l->cond));
         }
 
         // ---- JAL (Direct Call/Jump) ----
