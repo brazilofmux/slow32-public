@@ -5,13 +5,12 @@
  * Compiled by stage03 s32-cc (no block-scoped vars, no unions).
  */
 
-/* --- Additional libc prototypes --- */
-/* void* works correctly — ty_size(TY_VOID) returns 1 (GCC extension) */
-char *strdup(char *s);
-char *malloc(int size);
-char *calloc(int n, int size);
-void free(char *p);
-char *memcpy(char *dst, char *src, int n);
+/* --- Additional libc prototypes ---
+ * Removed the old manual declarations (strdup, malloc, calloc, free, memcpy).
+ * They conflicted with modern libc headers (musl in slow32:toolchain, recent glibc).
+ * The real declarations are provided by the system headers pulled in via other
+ * includes in the single-TU build. This improves portability.
+ */
 
 /* --- Type encoding --- */
 #define TY_INT    0

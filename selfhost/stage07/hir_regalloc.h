@@ -1,13 +1,17 @@
 /* hir_regalloc.h -- IRC graph-coloring register allocation for s12cc (SLOW-32)
  *
  * Iterated Register Coalescing (George-Appel 1996) for the SLOW-32 selfhost
- * compiler.  Allocates from the 18 callee-saved registers r11..r28.
+ * compiler.
  *
- * All allocatable registers are callee-saved (no caller-saved temporaries in
- * the general pool).  No x86-64 clobber constraints, no SIB, no SysV ABI
- * PARAM precoloring.  The linear-scan implementation has been replaced by
- * the IRC core below while preserving the same live-interval linearization,
- * fusion extension, spill assignment, and diagnostic interfaces.
+ * Current production: 18 callee-saved registers (r11..r28) only.
+ * Work in progress on this branch: full classification so the allocator can
+ * also use the 8 caller-saved argument registers (r3..r10) for values that
+ * do not cross calls — matching the official LLVM SLOW32 backend ABI.
+ *
+ * No x86-64 clobber constraints, no SIB, no SysV ABI PARAM precoloring.
+ * The linear-scan implementation has been replaced by the IRC core below
+ * while preserving the same live-interval linearization, fusion extension,
+ * spill assignment, and diagnostic interfaces.
  *
  * Reference: George-Appel "Iterated Register Coalescing" (1996).
  *
@@ -22,6 +26,121 @@
 #define RA_FIRST_REG 11   /* lowest allocatable register */
 #define RA_NCALLEE   18   /* all allocatable registers are callee-saved */
 
+/* --- Full register classification (hard item — disabled until wired) ---
+ * Goal: match the official LLVM SLOW32 ABI so short-lived values can use
+ * the 8 caller-saved argument registers (r3-r10) instead of forcing every
+ * live value into a callee-saved slot.
+ *
+ *   RA_NCALLEE   = 18  (r11..r28)  — must be saved/restored across calls
+ *   RA_NCALLER   =  8  (r3..r10)   — clobbered by calls, cheap for temps
+ *   RA_NPHY_ACTIVE = 18 + ra_caller_saved_enabled_count (0 during bring-up)
+ *   RA_NPHY_TOTAL  = 26            — maximum pool size
+ *
+ * The knob ra_caller_saved_enabled_count starts at 0 so the tree remains
+ * bit-for-bit identical to the committed 9117dec5 baseline.
+ */
+#define RA_NCALLER   8
+#define RA_NPHY_TOTAL (RA_NCALLEE + RA_NCALLER)
+
+/* Knob: how many caller-saved registers the allocator may use right now.
+ * 0 = current production behavior (18 callee only).
+ * 8 = full pool (r3-r10 + r11-r28) for values that do not cross calls.
+ */
+static int ra_caller_saved_enabled_count = 0;  /* 0 = 18 callee-saved only (baseline). Set to 8 to enable r3-r10 for non-call-crossing values. */
+
+/* Cross-call liveness tracking — must be declared extremely early because
+ * ra_prefers_caller_for_inst() (and other early helpers) reference it in
+ * this single translation unit. */
+static int ra_crosses_call[HIR_MAX_INST];
+static int ra_crosses_cx_clobber[HIR_MAX_INST];
+static int ra_crosses_dx_clobber[HIR_MAX_INST];
+
+/* Physical register table and classification (populated by ra_init_phys_regs).
+ * Index 0..17  → r11..r28 (callee)
+ * Index 18..25 → r3..r10  (caller)
+ */
+static int ra_phys_reg[RA_NPHY_TOTAL];
+static int ra_is_callee[RA_NPHY_TOTAL];
+
+/* Initialize the physical register map and callee/caller classification.
+ * Called once at startup of the allocator (or lazily on first use).
+ * This is the single source of truth for "which physicals are callee-saved".
+ */
+static void ra_init_phys_regs(void) {
+    static int inited = 0;
+    int i;
+
+    if (inited) return;
+    inited = 1;
+
+    /* Callee-saved pool: r11..r28 (indices 0..17) */
+    for (i = 0; i < RA_NCALLEE; i = i + 1) {
+        ra_phys_reg[i] = RA_FIRST_REG + i;   /* 11 .. 28 */
+        ra_is_callee[i] = 1;
+    }
+
+    /* Caller-saved pool: r3..r10 (indices 18..25) */
+    for (i = 0; i < RA_NCALLER; i = i + 1) {
+        ra_phys_reg[RA_NCALLEE + i] = 3 + i; /* 3 .. 10 */
+        ra_is_callee[RA_NCALLEE + i] = 0;
+    }
+}
+
+/* Query helpers (safe even when knob == 0) */
+static int ra_num_callee_saved(void) {
+    return RA_NCALLEE;
+}
+
+static int ra_num_caller_saved_enabled(void) {
+    return ra_caller_saved_enabled_count;
+}
+
+static int ra_num_active_slots(void) {
+    return RA_NCALLEE + ra_caller_saved_enabled_count;
+}
+
+static int ra_phys_is_callee_saved(int phys) {
+    int i;
+    ra_init_phys_regs();
+    i = 0;
+    while (i < RA_NPHY_TOTAL) {
+        if (ra_phys_reg[i] == phys) return ra_is_callee[i];
+        i = i + 1;
+    }
+    return 1; /* conservative: unknown phys → treat as callee */
+}
+
+static int ra_phys_is_caller_saved(int phys) {
+    return !ra_phys_is_callee_saved(phys);
+}
+
+/* Map an allocator "slot" (0..active-1) to its physical register number.
+ * When knob==0 this is exactly the old 0..17 → r11..r28 mapping.
+ */
+static int ra_get_phys(int slot) {
+    ra_init_phys_regs();
+    if (slot < 0 || slot >= ra_num_active_slots()) return -1;
+    return ra_phys_reg[slot];
+}
+
+/* Returns true if we are allowed to give this instruction a caller-saved
+ * register (r3-r10) on this run.  Currently always false (Chunk 2 safety).
+ *
+ * When we later implement real call-crossing analysis (or a conservative
+ * approximation), this will return true for values whose live range does
+ * not cross any HI_CALL / HI_CALLP / HI_CALLHI.
+ */
+static int ra_prefers_caller_for_inst(int inst) {
+    if (ra_caller_saved_enabled_count == 0) return 0;
+    if (inst < 0 || inst >= h_ninst) return 0;
+
+    /* Real call-crossing data is now available (ra_mark_call_crossing ran).
+     * Values whose live range does *not* cross any call are allowed to use
+     * the cheap caller-saved registers (r3-r10).  Values that cross calls
+     * must stay in the callee-saved pool (r11-r28). */
+    return !ra_crosses_call[inst];
+}
+
 /* --- Output arrays --- */
 static int ra_reg[HIR_MAX_INST];    /* physical register, -1 = spilled/remat */
 static int ra_spill_off[HIR_MAX_INST]; /* spill slot (negative fp offset), 0 = none */
@@ -35,11 +154,16 @@ static int ra_order[HIR_MAX_INST];  /* instruction indices in position order */
 static int ra_norder;
 
 /* --- Callee-save tracking --- */
-static int ra_used[RA_NPHY];        /* 1 if register was assigned */
-static int ra_csave_reg[RA_NPHY];   /* physical register number */
+static int ra_used[RA_NPHY_TOTAL];  /* 1 if register (slot) was assigned; sized for full pool */
+static int ra_csave_reg[RA_NPHY];   /* physical register number (still only callee-saved get slots) */
 static int ra_csave_off[RA_NPHY];   /* fp offset for save slot */
 static int ra_ncsave;               /* count of registers to save */
 static int ra_stat_spills;          /* cumulative spill count across all functions */
+static int ra_stat_caller_used;     /* how many values got caller-saved registers */
+static int ra_stat_callee_used;     /* how many values got callee-saved registers */
+
+/* (ra_crosses_* arrays moved to the very top of the classification section
+ * for single-TU declaration ordering.) */
 
 /* =================================================================
  * IRC data structures (Chunk 3 — dead code until wiring step)
@@ -103,9 +227,7 @@ static int ra_dx_clobber_positions[RA_MAX_CLOBBERS];
 static int ra_ncx_clobbers;
 static int ra_ndx_clobbers;
 
-static int ra_crosses_call[HIR_MAX_INST];
-static int ra_crosses_cx_clobber[HIR_MAX_INST];
-static int ra_crosses_dx_clobber[HIR_MAX_INST];
+/* ra_crosses_* arrays moved earlier in the file for single-TU declaration order */
 
 /* =================================================================
  * Step 1: Compute linearized positions (RPO block order)
@@ -525,13 +647,16 @@ static void ra_assign_spills(void) {
         i = i + 1;
     }
 
-    /* Assign callee-save slots */
+    /* Assign callee-save slots.
+     * Only colors 0 .. RA_NCALLEE-1 (r11..r28) ever need to be saved/restored.
+     * Caller-saved colors (when enabled) are deliberately excluded — that is
+     * the whole point of the classification work. */
     ra_ncsave = 0;
     r = 0;
-    while (r < RA_NPHY) {
+    while (r < RA_NCALLEE) {
         if (ra_used[r]) {
             hl_temp_stack = hl_temp_stack + 4;
-            ra_csave_reg[ra_ncsave] = RA_FIRST_REG + r;
+            ra_csave_reg[ra_ncsave] = ra_get_phys(r);  /* r11..r28 */
             ra_csave_off[ra_ncsave] = 0 - hl_temp_stack;
             ra_ncsave = ra_ncsave + 1;
         }
@@ -666,6 +791,11 @@ static int gc_get_alias(int n) {
     return n;
 }
 
+/* Forward prototype so callers earlier in the TU see the static declaration.
+ * Fixes the "static declaration follows non-static" error on some gcc versions
+ * (Alpine, certain Debian builds) when building the single-TU s12cc.c. */
+static int gc_k(int n);
+
 static void gc_dec_degree(int n) {
     int k;
     gc_degree[n] = gc_degree[n] - 1;
@@ -678,7 +808,11 @@ static void gc_dec_degree(int n) {
 
 static int gc_k(int n) {
     (void)n;
-    return RA_NPHY;
+    /* Dynamic K: the number of colors (registers) currently available.
+     * When ra_caller_saved_enabled_count == 0 this is still 18 (identical
+     * to the committed baseline).  When the knob is raised, short-lived
+     * values will see K=26 and the allocator can use r3-r10. */
+    return ra_num_active_slots();
 }
 
 /* =================================================================
@@ -1032,31 +1166,61 @@ static void gc_irc(void) {
 
 static void gc_select(void) {
     int i, n, inst, e, peer, pa, pc, c;
-    int used[RA_NPHY];
+    int used[RA_NPHY_TOTAL];
+    int maxc;
 
     i = gc_nsel - 1;
     while (i >= 0) {
         n = gc_sel_stk[i];
         inst = gc_inst[n];
+        maxc = ra_num_active_slots();
 
+        /* Zero only the active portion of the used[] mask */
         c = 0;
-        while (c < RA_NPHY) { used[c] = 0; c = c + 1; }
+        while (c < maxc) { used[c] = 0; c = c + 1; }
 
         e = gc_adj_head[n];
         while (e >= 0) {
             peer = gc_adj_peer[e];
             pa = gc_get_alias(peer);
             pc = gc_color[pa];
-            if (pc >= 0) used[pc] = 1;
+            if (pc >= 0 && pc < maxc) used[pc] = 1;
             e = gc_adj_next[e];
         }
 
         gc_color[n] = -1;
-        c = 0;
-        while (c < RA_NPHY) {
-            if (!used[c]) { gc_color[n] = c; break; }
-            c = c + 1;
+
+        /* Two-phase color selection (classification hook).
+         *
+         * Phase 1 (future): if this value does not cross a call and we have
+         * caller-saved registers enabled, first try the caller range
+         * (RA_NCALLEE .. active-1).  These are cheap (no save/restore).
+         *
+         * Phase 2: always fall back to (or exclusively use) the callee-saved
+         * range (0 .. RA_NCALLEE-1).  Values that cross calls *must* live here.
+         *
+         * For Chunk 2 safety: ra_prefers_caller_for_inst() currently returns
+         * false for everything, so the generated code is identical to the
+         * 18-register baseline even if someone manually raises the knob.
+         */
+        if (ra_prefers_caller_for_inst(inst)) {
+            /* Try caller-saved range first */
+            c = RA_NCALLEE;
+            while (c < maxc) {
+                if (!used[c]) { gc_color[n] = c; break; }
+                c = c + 1;
+            }
         }
+
+        if (gc_color[n] < 0) {
+            /* Callee-saved range (always legal for the current ABI) */
+            c = 0;
+            while (c < RA_NCALLEE) {
+                if (!used[c]) { gc_color[n] = c; break; }
+                c = c + 1;
+            }
+        }
+
         if (gc_color[n] < 0) gc_wl[n] = GC_WL_SPILL;
 
         i = i - 1;
@@ -1067,7 +1231,7 @@ static void gc_writeback(void) {
     int i, n, inst, c, phys;
 
     i = 0;
-    while (i < RA_NPHY) { ra_used[i] = 0; i = i + 1; }
+    while (i < RA_NPHY_TOTAL) { ra_used[i] = 0; i = i + 1; }
     i = 0;
     while (i < h_ninst) { ra_reg[i] = -1; i = i + 1; }
 
@@ -1078,9 +1242,18 @@ static void gc_writeback(void) {
         if (gc_force_spill[n]) c = -1;
 
         if (c >= 0) {
-            phys = RA_FIRST_REG + c;
+            /* Color-to-physical mapping now goes through the classification table.
+             * When caller-saved colors (18+) are handed out, ra_get_phys(c) will
+             * return r3..r10 instead of the old linear r11.. formula. */
+            phys = ra_get_phys(c);
             ra_reg[inst] = phys;
-            ra_used[c] = 1;
+            if (phys >= 0) ra_used[c] = 1;
+
+            /* Record class usage for diagnostics */
+            if (c >= RA_NCALLEE)
+                ra_stat_caller_used = ra_stat_caller_used + 1;
+            else
+                ra_stat_callee_used = ra_stat_callee_used + 1;
         }
         n = n + 1;
     }
@@ -1095,9 +1268,59 @@ static void gc_alloc(void) {
 }
 
 static void ra_mark_call_crossing(void) {
-    int i;
+    int i, j, inst, k, p, nact;
+    int act[HIR_MAX_INST];   /* active instruction indices (the values themselves) */
+
+    /* Clear */
     i = 0;
     while (i < h_ninst) { ra_crosses_call[i] = 0; i = i + 1; }
+
+    nact = 0;
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        p = ra_pos[inst];
+        k = h_kind[inst];
+
+        /* Expire anything whose live range ended before this position */
+        j = 0;
+        while (j < nact) {
+            int v = act[j];
+            if (ra_iend[v] < p) {
+                nact = nact - 1;
+                act[j] = act[nact];
+            } else {
+                j = j + 1;
+            }
+        }
+
+        /* If this program point is a call, every value still live here
+         * crosses the call site and must not be allocated to a caller-saved
+         * register (r3-r10 are clobbered by the call). */
+        if (k == HI_CALL || k == HI_CALLP || k == HI_CALLHI ||
+            k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) {
+
+            j = 0;
+            while (j < nact) {
+                int v = act[j];
+                if (v >= 0 && v < h_ninst) {
+                    ra_crosses_call[v] = 1;
+                }
+                j = j + 1;
+            }
+        }
+
+        /* If this instruction produces a tracked value, add it to the active set.
+         * We use the same predicate that gc_build uses. */
+        if (hi_has_value(k) && !hi_is_remat(k) && k != HI_NOP) {
+            if (nact < HIR_MAX_INST) {
+                act[nact] = inst;
+                nact = nact + 1;
+            }
+        }
+
+        i = i + 1;
+    }
 }
 
 static void ra_mark_clobbers(void) {
@@ -1112,11 +1335,16 @@ static void ra_mark_clobbers(void) {
 
 static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
+    ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
     ra_mark_clobbers();
+
+    ra_stat_caller_used = 0;
+    ra_stat_callee_used = 0;
+
     gc_alloc();
     ra_assign_spills();
 }

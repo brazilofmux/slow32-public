@@ -310,6 +310,10 @@ int main(int argc, char **argv) {
     fdputuint(2, bg_stat_burg_skipped);
     fdputs(" spills=", 2);
     fdputuint(2, ra_stat_spills);
+    fdputs(" caller=", 2);
+    fdputuint(2, ra_stat_caller_used);
+    fdputs(" callee=", 2);
+    fdputuint(2, ra_stat_callee_used);
     fdputs("\n", 2);
     fdputs("hir_imm_sel: add ", 2);
     fdputuint(2, hcg_stat_imm_hit_add);

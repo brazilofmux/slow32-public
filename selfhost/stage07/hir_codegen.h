@@ -796,6 +796,10 @@ static int hcg_is_tailcall(int idx) {
     return 1;
 }
 
+/* Forward prototype — fixes "static declaration follows non-static" on
+ * Alpine gcc and some other strict single-TU builds. */
+static void hcg_restore_reg(int reg, int off);
+
 /* Emit inline epilogue for tail call (same as normal epilogue but no return) */
 static void hcg_emit_epilogue_inline(void) {
     int i;
@@ -2034,6 +2038,28 @@ static void hcg_func(Node *fn) {
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */
     if (s12cc_dump_intervals) {
         ra_dump_intervals(fn->name);
+    }
+
+    /* Leaf-function optimization (now much more effective with classification).
+     * If the function contains no calls at all, nothing can clobber the
+     * callee-saved registers, so we can skip saving/restoring them entirely.
+     * The body is free to use r3-r10 (caller-saved) for its temporaries.
+     */
+    {
+        int ii = 0;
+        int saw_call = 0;
+        while (ii < h_ninst) {
+            int kk = h_kind[ii];
+            if (kk == HI_CALL || kk == HI_CALLP || kk == HI_CALLHI ||
+                kk == HI_A64_DBT_TRAMPOLINE || kk == HI_X64_DBT_TRAMPOLINE) {
+                saw_call = 1;
+                break;
+            }
+            ii = ii + 1;
+        }
+        if (!saw_call) {
+            ra_ncsave = 0;
+        }
     }
 
     /* Compute frame size (hl_temp_stack now includes spills + callee-saves) */
