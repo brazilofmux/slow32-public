@@ -10,8 +10,11 @@
  *
  * No x86-64 clobber constraints, no SIB, no SysV ABI PARAM precoloring.
  * The linear-scan implementation has been replaced by the IRC core below
- * while preserving the same live-interval linearization, fusion extension,
- * spill assignment, and diagnostic interfaces.
+ * (including the edge-transfer fix, GC_MAX_EDGE overflow guard with force_spill,
+ * call-crossing divergence blocking in coalesce, and non-crossing spill bias
+ * from the x64/a64 robustness work — e4681a1d / b6f0832f and siblings).
+ * Same live-interval linearization, fusion extension, spill assignment, and
+ * diagnostic interfaces are preserved.
  *
  * Reference: George-Appel "Iterated Register Coalescing" (1996).
  *
@@ -56,8 +59,6 @@ static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved 
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
-static int ra_crosses_cx_clobber[HIR_MAX_INST];
-static int ra_crosses_dx_clobber[HIR_MAX_INST];
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
  * Index 0..17  → r11..r28 (callee)
@@ -220,18 +221,9 @@ static int gc_alias[GC_MAX_NODE];
 static int gc_color[GC_MAX_NODE];
 static int gc_force_spill[GC_MAX_NODE];
 
-/* Call/clobber tracking (SLOW-32: always 0) */
-#define RA_MAX_CALLS    512
-static int ra_call_positions[RA_MAX_CALLS];
-static int ra_ncalls;
-
-#define RA_MAX_CLOBBERS 1024
-static int ra_cx_clobber_positions[RA_MAX_CLOBBERS];
-static int ra_dx_clobber_positions[RA_MAX_CLOBBERS];
-static int ra_ncx_clobbers;
-static int ra_ndx_clobbers;
-
-/* ra_crosses_* arrays moved earlier in the file for single-TU declaration order */
+/* ra_crosses_call is the only live cross tracking for SLOW-32 (caller-saved classification).
+ * The x64 clobber-position lists and ra_mark_clobbers were dead after the IRC port and have
+ * been removed.  See gc_add_edge for the GC_MAX_EDGE overflow guard (force_spill). */
 
 /* =================================================================
  * Step 1: Compute linearized positions (RPO block order)
@@ -743,6 +735,12 @@ static void gc_add_edge(int u, int v) {
     if (u == v) return;
     if (gc_has_edge(u, v)) return;
     if (gc_nedge + 2 > GC_MAX_EDGE) {
+        /* Can't record this interference — mark both nodes as force-spill
+         * so they get spill slots instead of potentially sharing a color
+         * with the unrecorded interferer.  Without this guard a silent drop
+         * here can cause multiple call arguments (or other live values) to
+         * be assigned the same physical register, leading to corruption
+         * before the call.  See b6f0832f (IRC graph-edge overflow fix). */
         if (u >= 0 && u < GC_MAX_NODE) gc_force_spill[u] = 1;
         if (v >= 0 && v < GC_MAX_NODE) gc_force_spill[v] = 1;
         return;
@@ -1025,6 +1023,18 @@ static void gc_combine(int u, int v) {
         e = gc_nmlist_next[e];
     }
 
+    /* Add edges: for each neighbor t of v, add edge(t, u).
+     *
+     * Always transfer the edge — even when t is on the select stack —
+     * because t's color is consulted later via u's adjacency when u
+     * itself is colored.  Without the transfer u's adj loses the
+     * "must not pick t's color" constraint and can clash with t.
+     *
+     * Latent under traditional reverse-of-push pop order (high index
+     * first, so u colors before t): the asymmetric edge still on t's
+     * side via the alias was sufficient.  The two-pass select that
+     * colors PARAMs first (or any ordering change) surfaces the bug.
+     * This fix (e4681a1d) was ported into the SLOW-32 selfhost IRC. */
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
@@ -1122,6 +1132,11 @@ static int gc_select_spill(void) {
     while (n < gc_nnode) {
         if (gc_wl[n] == GC_WL_SPILL) {
             inst = gc_inst[n];
+            /* cost = uses * 100 / (degree + 1).  Lower = cheaper to spill.
+             * Non-call-crossing values get a +50 penalty in the cost (making
+             * them *less* likely to be chosen for spill) because they have
+             * access to the larger color pool (caller + callee when knob=8)
+             * and are therefore easier to color successfully if left in simplify. */
             cost = (bg_uses[inst] * 100) / (gc_degree[n] + 1);
             if (!ra_crosses_call[inst]) cost = cost + 50;
             if (cost < best_cost) {
@@ -1133,6 +1148,9 @@ static int gc_select_spill(void) {
     }
     if (best < 0) return 0;
 
+    /* Optimistic spill: move the chosen node back to simplify and let the
+     * main IRC loop try to color it later (after more coalescing/simplification).
+     * Its moves are frozen so we stop trying to coalesce them. */
     gc_wl[best] = GC_WL_SIMPLIFY;
 
     {
@@ -1166,6 +1184,9 @@ static void gc_irc(void) {
         if (gc_freeze())   { progress = 1; continue; }
         if (gc_select_spill()) { progress = 1; continue; }
     }
+    /* When the loop terminates we have either colored everything or
+     * the remaining spill worklist nodes will be forced to spill in
+     * gc_select / gc_writeback via gc_force_spill or degree >= K. */
 }
 
 static void gc_select(void) {
@@ -1327,16 +1348,6 @@ static void ra_mark_call_crossing(void) {
     }
 }
 
-static void ra_mark_clobbers(void) {
-    int i;
-    i = 0;
-    while (i < h_ninst) {
-        ra_crosses_cx_clobber[i] = 0;
-        ra_crosses_dx_clobber[i] = 0;
-        i = i + 1;
-    }
-}
-
 static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
@@ -1344,7 +1355,7 @@ static void hir_regalloc(void) {
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
-    ra_mark_clobbers();
+    /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 
     ra_stat_caller_used = 0;
     ra_stat_callee_used = 0;

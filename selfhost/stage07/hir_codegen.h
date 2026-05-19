@@ -2044,6 +2044,7 @@ static void hcg_func(Node *fn) {
      * If the function contains no calls at all, nothing can clobber the
      * callee-saved registers, so we can skip saving/restoring them entirely.
      * The body is free to use r3-r10 (caller-saved) for its temporaries.
+     * We also reclaim the frame space that ra_assign_spills() reserved for them.
      */
     {
         int ii = 0;
@@ -2058,11 +2059,17 @@ static void hcg_func(Node *fn) {
             ii = ii + 1;
         }
         if (!saw_call) {
+            /* Reclaim the stack space reserved for callee-saved registers.
+             * ra_assign_spills() always charges for used[0..17] callee colors;
+             * for a pure leaf we emit no save/restore but can still shrink the frame.
+             * The csave slots are the tail of hl_temp_stack (added after spills). */
+            int saved = ra_ncsave;
             ra_ncsave = 0;
+            if (saved > 0) hl_temp_stack -= saved * 4;
         }
     }
 
-    /* Compute frame size (hl_temp_stack now includes spills + callee-saves) */
+    /* Compute frame size (hl_temp_stack now includes spills + (possibly reclaimed) callee-saves) */
     fs = hl_temp_stack;
     fs = ((fs + 3) / 4) * 4;
     hcg_locals = fn->locals_size;
