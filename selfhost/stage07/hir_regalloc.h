@@ -129,11 +129,12 @@ static int ra_get_phys(int slot) {
 }
 
 /* Returns true if we are allowed to give this instruction a caller-saved
- * register (r3-r10) on this run.  Currently always false (Chunk 2 safety).
+ * register (r3-r10) on this run.
  *
- * When we later implement real call-crossing analysis (or a conservative
- * approximation), this will return true for values whose live range does
- * not cross any HI_CALL / HI_CALLP / HI_CALLHI.
+ * With ra_caller_saved_enabled_count=8 (the default), this returns true for
+ * values whose live range does not cross any call (computed by the active-set
+ * walk in ra_mark_call_crossing).  Such values may be allocated from the
+ * cheap r3-r10 pool instead of forcing everything into r11-r28.
  */
 static int ra_prefers_caller_for_inst(int inst) {
     if (ra_caller_saved_enabled_count == 0) return 0;
@@ -144,6 +145,44 @@ static int ra_prefers_caller_for_inst(int inst) {
      * the cheap caller-saved registers (r3-r10).  Values that cross calls
      * must stay in the callee-saved pool (r11-r28). */
     return !ra_crosses_call[inst];
+}
+
+/* Returns the allocator color (slot 0..active-1) whose physical register
+ * matches the ABI incoming register for this HI_PARAM (i.e. r3 + h_val[inst]),
+ * if that register is currently part of the enabled pool *and* the value is
+ * allowed to live there under the current crossing classification.
+ *
+ * When gc_select takes this color, the HI_PARAM emission in hir_codegen
+ * produces `addi rd, rd, 0`, which hcg_mov already elides.  Net effect:
+ * zero-copy parameter entry for the common non-call-crossing / leaf case.
+ *
+ * Crossing params will normally not get their preferred (caller) reg because
+ * they are forced into the callee range; they pay the expected move into a
+ * callee-saved register. */
+static int ra_param_preferred_color(int inst) {
+    int phys, slot, nactive;
+
+    if (inst < 0 || inst >= h_ninst) return -1;
+    if (h_kind[inst] != HI_PARAM) return -1;
+
+    phys = 3 + h_val[inst];
+    ra_init_phys_regs();
+    nactive = ra_num_active_slots();
+
+    slot = 0;
+    while (slot < nactive) {
+        if (ra_phys_reg[slot] == phys) {
+            if (ra_is_callee[slot]) {
+                /* Callee slot — always legal for any value */
+                return slot;
+            }
+            /* Caller slot — only if this value is allowed in the caller pool */
+            if (ra_prefers_caller_for_inst(inst)) return slot;
+            return -1;
+        }
+        slot = slot + 1;
+    }
+    return -1;
 }
 
 /* --- Output arrays --- */
@@ -166,6 +205,7 @@ static int ra_ncsave;               /* count of registers to save */
 static int ra_stat_spills;          /* cumulative spill count across all functions */
 static int ra_stat_caller_used;     /* how many values got caller-saved registers */
 static int ra_stat_callee_used;     /* how many values got callee-saved registers */
+static int ra_stat_param_preferred; /* how many HI_PARAM nodes got their ABI incoming reg as color (zero-copy entry) */
 
 /* (ra_crosses_* arrays moved to the very top of the classification section
  * for single-TU declaration ordering.) */
@@ -1217,32 +1257,51 @@ static void gc_select(void) {
 
         /* Two-phase color selection (classification hook).
          *
-         * Phase 1 (future): if this value does not cross a call and we have
-         * caller-saved registers enabled, first try the caller range
-         * (RA_NCALLEE .. active-1).  These are cheap (no save/restore).
+         * Phase 1: if this value does not cross a call and the knob is raised,
+         * first try the caller range (RA_NCALLEE .. active-1).  These are
+         * cheap (no save/restore).  We also try a PARAM-specific preferred
+         * color first inside this range so incoming arguments can often land
+         * in their exact ABI register (r3+N) and produce a zero-cost copy.
          *
          * Phase 2: always fall back to (or exclusively use) the callee-saved
          * range (0 .. RA_NCALLEE-1).  Values that cross calls *must* live here.
-         *
-         * For Chunk 2 safety: ra_prefers_caller_for_inst() currently returns
-         * false for everything, so the generated code is identical to the
-         * 18-register baseline even if someone manually raises the knob.
          */
         if (ra_prefers_caller_for_inst(inst)) {
-            /* Try caller-saved range first */
-            c = RA_NCALLEE;
-            while (c < maxc) {
-                if (!used[c]) { gc_color[n] = c; break; }
-                c = c + 1;
+            /* PARAM-specific hint: if this is an incoming argument and its
+             * exact ABI register (r3+N) is in the caller pool and free,
+             * take it.  This produces a zero-cost entry copy (elided by
+             * hcg_mov / the addi0 path) for the very common case of
+             * non-call-crossing parameters in leaves and early in functions. */
+            int pref = ra_param_preferred_color(inst);
+            if (pref >= RA_NCALLEE && pref < maxc && !used[pref]) {
+                gc_color[n] = pref;
+                ra_stat_param_preferred = ra_stat_param_preferred + 1;
+            } else {
+                /* Generic first-free in the caller range */
+                c = RA_NCALLEE;
+                while (c < maxc) {
+                    if (!used[c]) { gc_color[n] = c; break; }
+                    c = c + 1;
+                }
             }
         }
 
         if (gc_color[n] < 0) {
-            /* Callee-saved range (always legal for the current ABI) */
-            c = 0;
-            while (c < RA_NCALLEE) {
-                if (!used[c]) { gc_color[n] = c; break; }
-                c = c + 1;
+            /* Callee-saved range (always legal for the current ABI).
+             * Also try a PARAM hint here — on SLOW-32 the arg registers are
+             * caller-saved, so this rarely fires, but the helper is general
+             * and future classification changes could make a preferred reg
+             * land in the callee pool. */
+            int pref = ra_param_preferred_color(inst);
+            if (pref >= 0 && pref < RA_NCALLEE && !used[pref]) {
+                gc_color[n] = pref;
+                ra_stat_param_preferred = ra_stat_param_preferred + 1;
+            } else {
+                c = 0;
+                while (c < RA_NCALLEE) {
+                    if (!used[c]) { gc_color[n] = c; break; }
+                    c = c + 1;
+                }
             }
         }
 
@@ -1359,6 +1418,7 @@ static void hir_regalloc(void) {
 
     ra_stat_caller_used = 0;
     ra_stat_callee_used = 0;
+    ra_stat_param_preferred = 0;
 
     gc_alloc();
     ra_assign_spills();
