@@ -144,6 +144,22 @@ static int hcg_hir_frame_base(Node *fn) {
     return base;
 }
 
+/* Returns 1 if the current HIR contains any call (CALL, CALLP, or CALLHI).
+ * Used for leaf-function optimization: pure leaves do not need to
+ * preserve callee-saved registers. */
+static int hcg_hir_has_call(void) {
+    int i;
+    i = 0;
+    while (i < h_ninst) {
+        int k = h_kind[i];
+        if (k == HI_CALL || k == HI_CALLP || k == HI_CALLHI) {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
     int hi;
@@ -195,14 +211,13 @@ static void hcg_into(int reg, int inst) {
     int off;
 
     if (inst < 0) {
-        cg_rri("addi", reg, 0, 0);
+        hcg_mov(reg, 0);
         return;
     }
 
     /* Check register allocation first */
     if (ra_reg[inst] >= 0) {
-        if (reg == ra_reg[inst]) return;
-        cg_rri("addi", reg, ra_reg[inst], 0);
+        hcg_mov(reg, ra_reg[inst]);
         return;
     }
 
@@ -381,6 +396,16 @@ static void hcg_maybe_spill(int idx) {
         hcg_li(2, off);
         cg_rrr("add", 2, 30, 2);
         cg_s("    stw r2, r1, 0\n");
+    }
+}
+
+/* Emit a register move (or elide the no-op). Updates copy/addi0 stats. */
+static void hcg_mov(int rd, int rs) {
+    if (rd != rs) {
+        cg_rri("addi", rd, rs, 0);
+        hcg_stat_copy_emit = hcg_stat_copy_emit + 1;
+    } else {
+        hcg_stat_addi0_elide = hcg_stat_addi0_elide + 1;
     }
 }
 
@@ -615,7 +640,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                         else hcg_li(dst, c);
                     } else {
                         src = hcg_phi_src_reg[j];
-                        if (dst != src) cg_rri("addi", dst, src, 0);
+                        hcg_mov(dst, src);
                     }
                     hcg_phi_active[j] = 0;
                     rem = rem - 1;
@@ -1912,10 +1937,7 @@ static void hcg_inst(int idx) {
             return;
         }
         rs1 = hcg_src(s1, 1);
-        if (rd != rs1) {
-            cg_rri("addi", rd, rs1, 0);
-            hcg_stat_copy_emit = hcg_stat_copy_emit + 1;
-        }
+        hcg_mov(rd, rs1);
         hcg_maybe_spill(idx);
         return;
     }
@@ -2030,6 +2052,15 @@ static void hcg_func(Node *fn) {
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
     hir_regalloc();
+
+    /* Leaf function optimization */
+    if (!hcg_hir_has_call()) {
+        int saved_csave = ra_ncsave;
+        ra_ncsave = 0;
+        /* Reclaim the stack slots that were allocated for the callee-saved
+         * registers we will never actually save/restore. */
+        hl_temp_stack -= saved_csave * 4;
+    }
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */
     if (s12cc_dump_intervals) {
