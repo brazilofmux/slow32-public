@@ -206,6 +206,7 @@ static int ra_stat_spills;          /* cumulative spill count across all functio
 static int ra_stat_caller_used;     /* how many values got caller-saved registers */
 static int ra_stat_callee_used;     /* how many values got callee-saved registers */
 static int ra_stat_param_preferred; /* how many HI_PARAM nodes got their ABI incoming reg as color (zero-copy entry) */
+static int ra_stat_src1_reuse;      /* binary ops that reused src1's physical register (reduces copies) */
 
 /* (ra_crosses_* arrays moved to the very top of the classification section
  * for single-TU declaration ordering.) */
@@ -1284,6 +1285,29 @@ static void gc_select(void) {
 
             gc_color[n] = -1;
 
+            /* Src1 reuse for destructive binary ops.
+             * For ADD, SUB, AND, OR, XOR, shifts, etc. the result can
+             * usually live in the same physical register as the first
+             * operand.  Trying src1's color first (if free) reduces
+             * unnecessary copies in expressions.
+             */
+            if (gc_color[n] < 0) {
+                int k = h_kind[inst];
+                if (k >= HI_ADD && k <= HI_SRL) {
+                    int s1 = h_src1[inst];
+                    if (s1 >= 0) {
+                        int s1_node = gc_node[s1];
+                        if (s1_node >= 0) {
+                            int col = gc_color[s1_node];
+                            if (col >= 0 && col < maxc && !used[col]) {
+                                gc_color[n] = col;
+                                ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                            }
+                        }
+                    }
+                }
+            }
+
             /* Two-phase color selection (classification hook) + PARAM bias.
              *
              * Because of the outer two-pass, when we reach a non-PARAM
@@ -1434,6 +1458,7 @@ static void hir_regalloc(void) {
     ra_stat_caller_used = 0;
     ra_stat_callee_used = 0;
     ra_stat_param_preferred = 0;
+    ra_stat_src1_reuse = 0;
 
     gc_alloc();
     ra_assign_spills();

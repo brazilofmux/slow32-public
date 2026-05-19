@@ -316,6 +316,8 @@ int main(int argc, char **argv) {
     fdputuint(2, ra_stat_callee_used);
     fdputs(" param_pref=", 2);
     fdputuint(2, ra_stat_param_preferred);
+    fdputs(" src1_reuse=", 2);
+    fdputuint(2, ra_stat_src1_reuse);
     fdputs("\n", 2);
     fdputs("hir_imm_sel: add ", 2);
     fdputuint(2, hcg_stat_imm_hit_add);
