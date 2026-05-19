@@ -50,7 +50,7 @@
  * 0 = current production behavior (18 callee only).
  * 8 = full pool (r3-r10 + r11-r28) for values that do not cross calls.
  */
-static int ra_caller_saved_enabled_count = 0;  /* 0 = 18 callee-saved only (baseline). Set to 8 to enable r3-r10 for non-call-crossing values. */
+static int ra_caller_saved_enabled_count = 0;  /* 0 = baseline (18 callee-saved only). Set to 8 to enable r3-r10 for non-call-crossing values. */
 
 /* Cross-call liveness tracking — must be declared extremely early because
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
