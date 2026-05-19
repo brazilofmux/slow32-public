@@ -318,6 +318,12 @@ int main(int argc, char **argv) {
     fdputuint(2, ra_stat_param_preferred);
     fdputs(" src1_reuse=", 2);
     fdputuint(2, ra_stat_src1_reuse);
+    fdputs(" src2_reuse=", 2);
+    fdputuint(2, ra_stat_src2_reuse);
+    fdputs(" secondary=", 2);
+    fdputuint(2, ra_stat_secondary_reuse);
+    fdputs(" imm_base=", 2);
+    fdputuint(2, ra_stat_imm_base_reuse);
     fdputs("\n", 2);
     fdputs("hir_imm_sel: add ", 2);
     fdputuint(2, hcg_stat_imm_hit_add);

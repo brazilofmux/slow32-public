@@ -128,6 +128,14 @@ static int ra_get_phys(int slot) {
     return ra_phys_reg[slot];
 }
 
+/* Returns true if the given HIR opcode can usefully reuse the color of
+ * its src1 operand for the result.  Covers the main destructive integer
+ * ops plus the dominant immediate form (ADDI).
+ */
+static int ra_can_reuse_src1(int k) {
+    return (k >= HI_ADD && k <= HI_SRL) || k == HI_ADDI;
+}
+
 /* Returns true if we are allowed to give this instruction a caller-saved
  * register (r3-r10) on this run.
  *
@@ -207,6 +215,9 @@ static int ra_stat_caller_used;     /* how many values got caller-saved register
 static int ra_stat_callee_used;     /* how many values got callee-saved registers */
 static int ra_stat_param_preferred; /* how many HI_PARAM nodes got their ABI incoming reg as color (zero-copy entry) */
 static int ra_stat_src1_reuse;      /* binary ops that reused src1's physical register (reduces copies) */
+static int ra_stat_src2_reuse;      /* commutative ops that reused src2's physical register */
+static int ra_stat_secondary_reuse; /* times the secondary/smart operand choice actually supplied the color */
+static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base register's color */
 
 /* (ra_crosses_* arrays moved to the very top of the classification section
  * for single-TU declaration ordering.) */
@@ -1266,6 +1277,8 @@ static void gc_select(void) {
             inst = gc_inst[n];
             maxc = ra_num_active_slots();
 
+            int k = h_kind[inst];
+
             /* Skip nodes that do not belong in this pass */
             if (pass == 0 && h_kind[inst] != HI_PARAM) { i = i - 1; continue; }
             if (pass == 1 && h_kind[inst] == HI_PARAM) { i = i - 1; continue; }
@@ -1292,8 +1305,7 @@ static void gc_select(void) {
              * unnecessary copies in expressions.
              */
             if (gc_color[n] < 0) {
-                int k = h_kind[inst];
-                if (k >= HI_ADD && k <= HI_SRL) {
+                if (ra_can_reuse_src1(k)) {
                     int s1 = h_src1[inst];
                     if (s1 >= 0) {
                         int s1_node = gc_node[s1];
@@ -1302,8 +1314,63 @@ static void gc_select(void) {
                             if (col >= 0 && col < maxc && !used[col]) {
                                 gc_color[n] = col;
                                 ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                                if (k == HI_ADDI) {
+                                    ra_stat_imm_base_reuse = ra_stat_imm_base_reuse + 1;
+                                }
                             }
                         }
+                    }
+                }
+
+                /* Secondary operand preference for commutative ops.
+                 * Consider both src1 and src2 and pick the one with the
+                 * lowest physical register number (cheap tie-breaker that
+                 * tends to keep lower caller registers free).
+                 * This runs for all values, not just caller-saved.
+                 */
+                if (gc_color[n] < 0 &&
+                    (k == HI_ADD || k == HI_AND || k == HI_OR || k == HI_XOR))
+                {
+                    int best_col = -1;
+                    int best_phys = 999;
+
+                    // consider src1
+                    int s1 = h_src1[inst];
+                    if (s1 >= 0) {
+                        int s1_node = gc_node[s1];
+                        if (s1_node >= 0) {
+                            int col = gc_color[s1_node];
+                            if (col >= 0 && col < maxc && !used[col]) {
+                                int phys = ra_get_phys(col);
+                                if (phys < best_phys) {
+                                    best_col = col;
+                                    best_phys = phys;
+                                }
+                            }
+                        }
+                    }
+
+                    // consider src2
+                    int s2 = h_src2[inst];
+                    if (s2 >= 0) {
+                        int s2_node = gc_node[s2];
+                        if (s2_node >= 0) {
+                            int col = gc_color[s2_node];
+                            if (col >= 0 && col < maxc && !used[col]) {
+                                int phys = ra_get_phys(col);
+                                if (phys < best_phys) {
+                                    best_col = col;
+                                    best_phys = phys;
+                                }
+                            }
+                        }
+                    }
+
+                    if (best_col != -1) {
+                        gc_color[n] = best_col;
+                        ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                        ra_stat_src2_reuse = ra_stat_src2_reuse + 1;
+                        ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     }
                 }
             }
@@ -1315,15 +1382,119 @@ static void gc_select(void) {
              * marked used, so temporaries naturally avoid stealing them.
              */
             if (ra_prefers_caller_for_inst(inst)) {
-                int pref = ra_param_preferred_color(inst);
-                if (pref >= RA_NCALLEE && pref < maxc && !used[pref]) {
-                    gc_color[n] = pref;
-                    ra_stat_param_preferred = ra_stat_param_preferred + 1;
-                } else {
-                    c = RA_NCALLEE;
-                    while (c < maxc) {
-                        if (!used[c]) { gc_color[n] = c; break; }
-                        c = c + 1;
+                /* Give operand reuse (src1/src2) higher priority in the cheap
+                 * caller-saved pool.  When a value is allowed to live in r3-r10,
+                 * we first try to keep it there by reusing an operand (with the
+                 * lowest-physical bias).  Only if that fails do we fall back to
+                 * the PARAM ABI preference.
+                 */
+                int best_col = -1;
+                int best_phys = 999;
+
+                if (ra_can_reuse_src1(k)) {
+                    int s1 = h_src1[inst];
+                    if (s1 >= 0) {
+                        int s1_node = gc_node[s1];
+                        if (s1_node >= 0) {
+                            int col = gc_color[s1_node];
+                            if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                int phys = ra_get_phys(col);
+                                if (phys < best_phys) {
+                                    best_col = col;
+                                    best_phys = phys;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if ((k == HI_ADD || k == HI_AND || k == HI_OR || k == HI_XOR)) {
+                    int s2 = h_src2[inst];
+                    if (s2 >= 0) {
+                        int s2_node = gc_node[s2];
+                        if (s2_node >= 0) {
+                            int col = gc_color[s2_node];
+                            if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                int phys = ra_get_phys(col);
+                                if (phys < best_phys) {
+                                    best_col = col;
+                                    best_phys = phys;
+                                    ra_stat_src2_reuse = ra_stat_src2_reuse + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (best_col != -1) {
+                    gc_color[n] = best_col;
+                    ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                    ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
+                    if (k == HI_ADDI) {
+                        ra_stat_imm_base_reuse = ra_stat_imm_base_reuse + 1;
+                    }
+                }
+
+                /* If operand reuse didn't find anything, fall back to PARAM
+                 * preferred color (still in the cheap pool).
+                 */
+                if (gc_color[n] < 0) {
+                    int pref = ra_param_preferred_color(inst);
+                    if (pref >= RA_NCALLEE && pref < maxc && !used[pref]) {
+                        gc_color[n] = pref;
+                        ra_stat_param_preferred = ra_stat_param_preferred + 1;
+                    }
+                }
+
+                /* Final fallback: generic first-free in caller range,
+                 * but with a bias toward operand colors when possible.
+                 * This gives the hints one last chance even if the early
+                 * strong attempts didn't find a completely free slot.
+                 */
+                if (gc_color[n] < 0) {
+                    /* First, try to pick a free caller color that belongs to
+                     * an operand we can reuse (src1, and src2 for commutative).
+                     * This is the "biased selection" pass.
+                     */
+                    int biased = -1;
+                    if (ra_can_reuse_src1(k)) {
+                        int s1 = h_src1[inst];
+                        if (s1 >= 0) {
+                            int s1_node = gc_node[s1];
+                            if (s1_node >= 0) {
+                                int col = gc_color[s1_node];
+                                if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                    biased = col;
+                                }
+                            }
+                        }
+                    }
+                    if (biased < 0 &&
+                        (k == HI_ADD || k == HI_AND || k == HI_OR || k == HI_XOR))
+                    {
+                        int s2 = h_src2[inst];
+                        if (s2 >= 0) {
+                            int s2_node = gc_node[s2];
+                            if (s2_node >= 0) {
+                                int col = gc_color[s2_node];
+                                if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                    biased = col;
+                                }
+                            }
+                        }
+                    }
+
+                    if (biased >= 0) {
+                        gc_color[n] = biased;
+                        ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                        ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
+                    } else {
+                        /* No biased color available — fall back to plain first-free */
+                        c = RA_NCALLEE;
+                        while (c < maxc) {
+                            if (!used[c]) { gc_color[n] = c; break; }
+                            c = c + 1;
+                        }
                     }
                 }
             }
@@ -1459,6 +1630,9 @@ static void hir_regalloc(void) {
     ra_stat_callee_used = 0;
     ra_stat_param_preferred = 0;
     ra_stat_src1_reuse = 0;
+    ra_stat_src2_reuse = 0;
+    ra_stat_secondary_reuse = 0;
+    ra_stat_imm_base_reuse = 0;
 
     gc_alloc();
     ra_assign_spills();
