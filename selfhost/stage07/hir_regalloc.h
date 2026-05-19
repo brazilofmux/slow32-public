@@ -1,20 +1,26 @@
-/* hir_regalloc.h -- Linear scan register allocation for s12cc
+/* hir_regalloc.h -- IRC graph-coloring register allocation for s12cc (SLOW-32)
  *
- * Allocates physical registers r11-r28 (18 callee-saved registers)
- * for HIR value-producing instructions.  Values that don't fit get
- * spill slots on the stack.
+ * Iterated Register Coalescing (George-Appel 1996) for the SLOW-32 selfhost
+ * compiler.  Allocates from the 18 callee-saved registers r11..r28.
  *
- * Reference: Poletto-Sarkar "Linear Scan Register Allocation" (1999).
+ * All allocatable registers are callee-saved (no caller-saved temporaries in
+ * the general pool).  No x86-64 clobber constraints, no SIB, no SysV ABI
+ * PARAM precoloring.  The linear-scan implementation has been replaced by
+ * the IRC core below while preserving the same live-interval linearization,
+ * fusion extension, spill assignment, and diagnostic interfaces.
  *
- * Input:  HIR after SSA construction and optimization.
- * Output: ra_reg[]   — physical register per inst (-1 = spilled/remat)
- *         ra_spill[] — stack offset per inst (negative from fp, 0 = none)
+ * Reference: George-Appel "Iterated Register Coalescing" (1996).
+ *
+ * Input:  HIR after SSA construction, optimization, and LICM.
+ * Output: ra_reg[]   — physical register (r11..r28) per inst, -1 = spilled/remat
+ *         ra_spill_off[] — stack offset per inst (negative from fp, 0 = none)
  *         ra_ncsave/ra_csave_reg[]/ra_csave_off[] — callee-save info
  */
 
-/* --- Configuration --- */
+/* --- Configuration (SLOW-32) --- */
 #define RA_NPHY      18   /* r11..r28 */
 #define RA_FIRST_REG 11   /* lowest allocatable register */
+#define RA_NCALLEE   18   /* all allocatable registers are callee-saved */
 
 /* --- Output arrays --- */
 static int ra_reg[HIR_MAX_INST];    /* physical register, -1 = spilled/remat */
@@ -28,20 +34,78 @@ static int ra_iend[HIR_MAX_INST];   /* last use position (end of live interval) 
 static int ra_order[HIR_MAX_INST];  /* instruction indices in position order */
 static int ra_norder;
 
-/* --- Active set (intervals currently occupying registers) --- */
-static int ra_act[RA_NPHY];         /* inst index for each active slot */
-static int ra_nact;
-
-/* --- Free register stack --- */
-static int ra_fstk[RA_NPHY];        /* stack of free register numbers */
-static int ra_nfree;
-
 /* --- Callee-save tracking --- */
 static int ra_used[RA_NPHY];        /* 1 if register was assigned */
 static int ra_csave_reg[RA_NPHY];   /* physical register number */
 static int ra_csave_off[RA_NPHY];   /* fp offset for save slot */
 static int ra_ncsave;               /* count of registers to save */
 static int ra_stat_spills;          /* cumulative spill count across all functions */
+
+/* =================================================================
+ * IRC data structures (Chunk 3 — dead code until wiring step)
+ * ================================================================= */
+
+#define GC_MAX_NODE  4096
+#define GC_MAX_EDGE  262144   /* lowered for selfhost toolchain (BSS + assembler limits) */
+#define GC_MAX_MOVE  8192
+
+static int gc_nnode;
+static int gc_inst[GC_MAX_NODE];
+static int gc_node[HIR_MAX_INST];
+
+static int gc_adj_head[GC_MAX_NODE];
+static int gc_adj_peer[GC_MAX_EDGE];
+static int gc_adj_next[GC_MAX_EDGE];
+static int gc_nedge;
+
+static int gc_degree[GC_MAX_NODE];
+
+static int gc_mv_a[GC_MAX_MOVE];
+static int gc_mv_b[GC_MAX_MOVE];
+static int gc_nmove;
+
+#define GC_MV_WORKLIST    0
+#define GC_MV_ACTIVE      1
+#define GC_MV_COALESCED   2
+#define GC_MV_FROZEN      3
+#define GC_MV_CONSTRAINED 4
+static int gc_mv_status[GC_MAX_MOVE];
+
+#define GC_MAX_NMLIST 16384   /* lowered for selfhost */
+static int gc_nmlist_mv[GC_MAX_NMLIST];
+static int gc_nmlist_next[GC_MAX_NMLIST];
+static int gc_nmlist_head[GC_MAX_NODE];
+static int gc_nnmlist;
+
+#define GC_WL_SIMPLIFY  0
+#define GC_WL_FREEZE    1
+#define GC_WL_SPILL     2
+#define GC_WL_COALESCED 3
+#define GC_WL_SELECT    4
+#define GC_WL_COLORED   5
+static int gc_wl[GC_MAX_NODE];
+
+static int gc_sel_stk[GC_MAX_NODE];
+static int gc_nsel;
+
+static int gc_alias[GC_MAX_NODE];
+static int gc_color[GC_MAX_NODE];
+static int gc_force_spill[GC_MAX_NODE];
+
+/* Call/clobber tracking (SLOW-32: always 0) */
+#define RA_MAX_CALLS    512
+static int ra_call_positions[RA_MAX_CALLS];
+static int ra_ncalls;
+
+#define RA_MAX_CLOBBERS 1024
+static int ra_cx_clobber_positions[RA_MAX_CLOBBERS];
+static int ra_dx_clobber_positions[RA_MAX_CLOBBERS];
+static int ra_ncx_clobbers;
+static int ra_ndx_clobbers;
+
+static int ra_crosses_call[HIR_MAX_INST];
+static int ra_crosses_cx_clobber[HIR_MAX_INST];
+static int ra_crosses_dx_clobber[HIR_MAX_INST];
 
 /* =================================================================
  * Step 1: Compute linearized positions (RPO block order)
@@ -434,126 +498,8 @@ static void ra_compute_ends(void) {
 }
 
 /* =================================================================
- * Step 3: Linear scan allocation
- * ================================================================= */
-
-/* Expire intervals that ended before position p */
-static void ra_expire(int p) {
-    int i;
-    int j;
-    int inst;
-    int reg;
-
-    i = 0;
-    while (i < ra_nact) {
-        inst = ra_act[i];
-        if (ra_iend[inst] < p) {
-            /* Free this register */
-            reg = ra_reg[inst];
-            ra_fstk[ra_nfree] = reg;
-            ra_nfree = ra_nfree + 1;
-            /* Remove from active (shift down) */
-            j = i;
-            while (j < ra_nact - 1) {
-                ra_act[j] = ra_act[j + 1];
-                j = j + 1;
-            }
-            ra_nact = ra_nact - 1;
-            /* Don't increment i — retry at same index */
-        } else {
-            i = i + 1;
-        }
-    }
-}
-
-static void ra_linear_scan(void) {
-    int i;
-    int inst;
-    int k;
-    int reg;
-    int best;
-    int best_end;
-    int spill_inst;
-    int j;
-
-    /* Initialize free register pool (r11 at top for first allocation) */
-    ra_nfree = RA_NPHY;
-    i = 0;
-    while (i < RA_NPHY) {
-        ra_fstk[i] = RA_FIRST_REG + (RA_NPHY - 1 - i);
-        i = i + 1;
-    }
-    ra_nact = 0;
-
-    /* Clear used tracking */
-    i = 0;
-    while (i < RA_NPHY) {
-        ra_used[i] = 0;
-        i = i + 1;
-    }
-
-    /* Init all to unallocated */
-    i = 0;
-    while (i < h_ninst) {
-        ra_reg[i] = -1;
-        i = i + 1;
-    }
-
-    /* Process instructions in linear order */
-    i = 0;
-    while (i < ra_norder) {
-        inst = ra_order[i];
-        k = h_kind[inst];
-
-        /* Skip non-value-producing and rematerializable */
-        if (!hi_has_value(k) || hi_is_remat(k) || k == HI_NOP) {
-            i = i + 1;
-            continue;
-        }
-
-        /* Expire dead intervals */
-        ra_expire(ra_pos[inst]);
-
-        /* Try to allocate a free register */
-        if (ra_nfree > 0) {
-            ra_nfree = ra_nfree - 1;
-            reg = ra_fstk[ra_nfree];
-            ra_reg[inst] = reg;
-            ra_used[reg - RA_FIRST_REG] = 1;
-            /* Add to active set */
-            ra_act[ra_nact] = inst;
-            ra_nact = ra_nact + 1;
-        } else {
-            /* No free register — find active interval with furthest end */
-            best = 0;
-            best_end = ra_iend[ra_act[0]];
-            j = 1;
-            while (j < ra_nact) {
-                if (ra_iend[ra_act[j]] > best_end) {
-                    best = j;
-                    best_end = ra_iend[ra_act[j]];
-                }
-                j = j + 1;
-            }
-
-            if (best_end > ra_iend[inst]) {
-                /* Spill the active interval with furthest end, give its reg to us */
-                spill_inst = ra_act[best];
-                reg = ra_reg[spill_inst];
-                ra_reg[spill_inst] = -1;
-                ra_reg[inst] = reg;
-                /* Replace in active set */
-                ra_act[best] = inst;
-            }
-            /* else: spill current interval (ra_reg[inst] stays -1) */
-        }
-
-        i = i + 1;
-    }
-}
-
-/* =================================================================
- * Step 4: Assign spill slots and callee-save slots
+ * Step 3: Spill / callee-save slot assignment
+ * (Used by the IRC allocator)
  * ================================================================= */
 
 static void ra_assign_spills(void) {
@@ -649,11 +595,529 @@ static void ra_extend_fused_cmp(void) {
  * Main entry point
  * ================================================================= */
 
+/* =================================================================
+ * IRC small helpers (Chunk 3 — dead code)
+ * ================================================================= */
+
+static int gc_has_edge(int u, int v) {
+    int e;
+    e = gc_adj_head[u];
+    while (e >= 0) {
+        if (gc_adj_peer[e] == v) return 1;
+        e = gc_adj_next[e];
+    }
+    return 0;
+}
+
+static void gc_add_edge(int u, int v) {
+    int e1, e2;
+    if (u == v) return;
+    if (gc_has_edge(u, v)) return;
+    if (gc_nedge + 2 > GC_MAX_EDGE) {
+        if (u >= 0 && u < GC_MAX_NODE) gc_force_spill[u] = 1;
+        if (v >= 0 && v < GC_MAX_NODE) gc_force_spill[v] = 1;
+        return;
+    }
+    e1 = gc_nedge;
+    gc_adj_peer[e1] = v;
+    gc_adj_next[e1] = gc_adj_head[u];
+    gc_adj_head[u] = e1;
+    gc_nedge = gc_nedge + 1;
+
+    e2 = gc_nedge;
+    gc_adj_peer[e2] = u;
+    gc_adj_next[e2] = gc_adj_head[v];
+    gc_adj_head[v] = e2;
+    gc_nedge = gc_nedge + 1;
+
+    gc_degree[u] = gc_degree[u] + 1;
+    gc_degree[v] = gc_degree[v] + 1;
+}
+
+static void gc_add_node_move(int node, int mv) {
+    int idx;
+    if (gc_nnmlist >= GC_MAX_NMLIST) return;
+    idx = gc_nnmlist;
+    gc_nnmlist = gc_nnmlist + 1;
+    gc_nmlist_mv[idx] = mv;
+    gc_nmlist_next[idx] = gc_nmlist_head[node];
+    gc_nmlist_head[node] = idx;
+}
+
+static int gc_move_related(int n) {
+    int e, mv, st;
+    e = gc_nmlist_head[n];
+    while (e >= 0) {
+        mv = gc_nmlist_mv[e];
+        st = gc_mv_status[mv];
+        if (st == GC_MV_WORKLIST || st == GC_MV_ACTIVE) return 1;
+        e = gc_nmlist_next[e];
+    }
+    return 0;
+}
+
+static int gc_get_alias(int n) {
+    int lim;
+    lim = 0;
+    while (gc_alias[n] != n && lim < GC_MAX_NODE) {
+        n = gc_alias[n];
+        lim = lim + 1;
+    }
+    return n;
+}
+
+static void gc_dec_degree(int n) {
+    int k;
+    gc_degree[n] = gc_degree[n] - 1;
+    k = gc_k(n);
+    if (gc_degree[n] == k - 1) {
+        if (gc_move_related(n)) gc_wl[n] = GC_WL_FREEZE;
+        else gc_wl[n] = GC_WL_SIMPLIFY;
+    }
+}
+
+static int gc_k(int n) {
+    (void)n;
+    return RA_NPHY;
+}
+
+/* =================================================================
+ * IRC algorithmic core (Chunk 3 — dead code, C89 declaration style)
+ * ================================================================= */
+
+static void gc_add_move(int a, int b) {
+    int mv;
+    if (gc_nmove >= GC_MAX_MOVE) return;
+    mv = gc_nmove;
+    gc_mv_a[mv] = a;
+    gc_mv_b[mv] = b;
+    gc_mv_status[mv] = GC_MV_WORKLIST;
+    gc_nmove = gc_nmove + 1;
+    gc_add_node_move(a, mv);
+    gc_add_node_move(b, mv);
+}
+
+static void gc_build(void) {
+    int i, j, inst, k, n, ni, aj, nact, p;
+    int act[GC_MAX_NODE];
+
+    gc_nnode = 0;
+    gc_nedge = 0;
+    gc_nmove = 0;
+    gc_nnmlist = 0;
+    gc_nsel = 0;
+
+    i = 0;
+    while (i < h_ninst) { gc_node[i] = -1; i = i + 1; }
+    i = 0;
+    while (i < GC_MAX_NODE) { gc_force_spill[i] = 0; i = i + 1; }
+
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        if (hi_has_value(k) && !hi_is_remat(k) && k != HI_NOP) {
+            if (gc_nnode < GC_MAX_NODE) {
+                n = gc_nnode;
+                gc_inst[n] = inst;
+                gc_node[inst] = n;
+                gc_adj_head[n] = -1;
+                gc_degree[n] = 0;
+                gc_alias[n] = n;
+                gc_color[n] = -1;
+                gc_nmlist_head[n] = -1;
+                gc_nnode = gc_nnode + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    nact = 0;
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        p = ra_pos[inst];
+        ni = gc_node[inst];
+
+        j = 0;
+        while (j < nact) {
+            aj = act[j];
+            if (ra_iend[gc_inst[aj]] < p) {
+                nact = nact - 1;
+                act[j] = act[nact];
+            } else {
+                j = j + 1;
+            }
+        }
+
+        if (ni >= 0) {
+            j = 0;
+            while (j < nact) {
+                gc_add_edge(ni, act[j]);
+                j = j + 1;
+            }
+            act[nact] = ni;
+            nact = nact + 1;
+        }
+        i = i + 1;
+    }
+}
+
+static void gc_find_moves(void) {
+    int i, inst, k, s1, nd, ns1, j, a, na;
+
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        nd = gc_node[inst];
+        if (nd < 0) { i = i + 1; continue; }
+
+        if (k == HI_COPY) {
+            s1 = h_src1[inst];
+            if (s1 >= 0) {
+                ns1 = gc_node[s1];
+                if (ns1 >= 0) gc_add_move(nd, ns1);
+            }
+        }
+        if (k >= HI_ADD && k <= HI_SRL) {
+            s1 = h_src1[inst];
+            if (s1 >= 0) {
+                ns1 = gc_node[s1];
+                if (ns1 >= 0) gc_add_move(nd, ns1);
+            }
+        }
+        if (k == HI_PHI && h_pbase[inst] >= 0) {
+            j = 0;
+            while (j < h_pcnt[inst]) {
+                a = h_pval[h_pbase[inst] + j];
+                if (a >= 0) {
+                    na = gc_node[a];
+                    if (na >= 0) gc_add_move(nd, na);
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+static void gc_make_worklists(void) {
+    int n, k;
+    n = 0;
+    while (n < gc_nnode) {
+        k = gc_k(n);
+        if (gc_degree[n] >= k) gc_wl[n] = GC_WL_SPILL;
+        else if (gc_move_related(n)) gc_wl[n] = GC_WL_FREEZE;
+        else gc_wl[n] = GC_WL_SIMPLIFY;
+        n = n + 1;
+    }
+}
+
+static int gc_simplify(void) {
+    int n, e, peer;
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_wl[n] == GC_WL_SIMPLIFY) {
+            gc_wl[n] = GC_WL_SELECT;
+            gc_sel_stk[gc_nsel] = n;
+            gc_nsel = gc_nsel + 1;
+            e = gc_adj_head[n];
+            while (e >= 0) {
+                peer = gc_adj_peer[e];
+                if (gc_wl[peer] != GC_WL_SELECT && gc_wl[peer] != GC_WL_COALESCED) {
+                    gc_dec_degree(peer);
+                }
+                e = gc_adj_next[e];
+            }
+            return 1;
+        }
+        n = n + 1;
+    }
+    return 0;
+}
+
+static int gc_george(int u, int v) {
+    int e, t, kk;
+    e = gc_adj_head[v];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED) {
+            kk = gc_k(t);
+            if (gc_degree[t] >= kk && !gc_has_edge(t, u)) return 0;
+        }
+        e = gc_adj_next[e];
+    }
+    return 1;
+}
+
+static int gc_briggs(int u, int v) {
+    int count, kk, e, t;
+    count = 0;
+    kk = gc_k(u);
+    if (gc_k(v) < kk) kk = gc_k(v);
+
+    e = gc_adj_head[u];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED && t != v) {
+            if (gc_degree[t] >= kk) count = count + 1;
+        }
+        e = gc_adj_next[e];
+    }
+    e = gc_adj_head[v];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED && t != u) {
+            if (gc_degree[t] >= kk && !gc_has_edge(t, u)) count = count + 1;
+        }
+        e = gc_adj_next[e];
+    }
+    return count < kk;
+}
+
+static void gc_combine(int u, int v) {
+    int e, t;
+    gc_wl[v] = GC_WL_COALESCED;
+    gc_alias[v] = u;
+
+    e = gc_nmlist_head[v];
+    while (e >= 0) {
+        gc_add_node_move(u, gc_nmlist_mv[e]);
+        e = gc_nmlist_next[e];
+    }
+
+    e = gc_adj_head[v];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_COALESCED) {
+            gc_add_edge(t, u);
+            if (gc_wl[t] != GC_WL_SELECT) gc_dec_degree(t);
+        }
+        e = gc_adj_next[e];
+    }
+
+    if (gc_degree[u] >= gc_k(u) && gc_wl[u] == GC_WL_FREEZE) {
+        gc_wl[u] = GC_WL_SPILL;
+    }
+}
+
+static int gc_coalesce(void) {
+    int mv, u, v, tmp;
+    mv = 0;
+    while (mv < gc_nmove) {
+        if (gc_mv_status[mv] != GC_MV_WORKLIST) { mv = mv + 1; continue; }
+
+        u = gc_get_alias(gc_mv_a[mv]);
+        v = gc_get_alias(gc_mv_b[mv]);
+
+        if (ra_crosses_call[gc_inst[v]] && !ra_crosses_call[gc_inst[u]]) {
+            tmp = u; u = v; v = tmp;
+        }
+
+        if (u == v) {
+            gc_mv_status[mv] = GC_MV_COALESCED;
+            if (!gc_move_related(u) && gc_degree[u] < gc_k(u) && gc_wl[u] == GC_WL_FREEZE) {
+                gc_wl[u] = GC_WL_SIMPLIFY;
+            }
+            return 1;
+        }
+        if (gc_has_edge(u, v)) {
+            gc_mv_status[mv] = GC_MV_CONSTRAINED;
+            if (!gc_move_related(u) && gc_degree[u] < gc_k(u) && gc_wl[u] == GC_WL_FREEZE)
+                gc_wl[u] = GC_WL_SIMPLIFY;
+            if (!gc_move_related(v) && gc_degree[v] < gc_k(v) && gc_wl[v] == GC_WL_FREEZE)
+                gc_wl[v] = GC_WL_SIMPLIFY;
+            return 1;
+        }
+        if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]]) {
+            gc_mv_status[mv] = GC_MV_CONSTRAINED;
+            return 1;
+        }
+        if (gc_george(u, v) || gc_briggs(u, v)) {
+            gc_mv_status[mv] = GC_MV_COALESCED;
+            gc_combine(u, v);
+            if (!gc_move_related(u) && gc_degree[u] < gc_k(u)) {
+                if (gc_wl[u] == GC_WL_FREEZE) gc_wl[u] = GC_WL_SIMPLIFY;
+            }
+            return 1;
+        }
+        gc_mv_status[mv] = GC_MV_ACTIVE;
+        return 1;
+    }
+    return 0;
+}
+
+static int gc_freeze(void) {
+    int n, e, mv, other;
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_wl[n] == GC_WL_FREEZE) {
+            gc_wl[n] = GC_WL_SIMPLIFY;
+            e = gc_nmlist_head[n];
+            while (e >= 0) {
+                mv = gc_nmlist_mv[e];
+                if (gc_mv_status[mv] == GC_MV_WORKLIST || gc_mv_status[mv] == GC_MV_ACTIVE) {
+                    gc_mv_status[mv] = GC_MV_FROZEN;
+                    other = gc_get_alias(gc_mv_a[mv]);
+                    if (other == n) other = gc_get_alias(gc_mv_b[mv]);
+                    if (!gc_move_related(other) && gc_degree[other] < gc_k(other) &&
+                        gc_wl[other] == GC_WL_FREEZE) {
+                        gc_wl[other] = GC_WL_SIMPLIFY;
+                    }
+                }
+                e = gc_nmlist_next[e];
+            }
+            return 1;
+        }
+        n = n + 1;
+    }
+    return 0;
+}
+
+static int gc_select_spill(void) {
+    int n, best, best_cost, cost, inst;
+    best = -1;
+    best_cost = 0x7FFFFFFF;
+
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_wl[n] == GC_WL_SPILL) {
+            inst = gc_inst[n];
+            cost = (bg_uses[inst] * 100) / (gc_degree[n] + 1);
+            if (!ra_crosses_call[inst]) cost = cost + 50;
+            if (cost < best_cost) {
+                best_cost = cost;
+                best = n;
+            }
+        }
+        n = n + 1;
+    }
+    if (best < 0) return 0;
+
+    gc_wl[best] = GC_WL_SIMPLIFY;
+
+    {
+        int e, mv, other;
+        e = gc_nmlist_head[best];
+        while (e >= 0) {
+            mv = gc_nmlist_mv[e];
+            if (gc_mv_status[mv] == GC_MV_WORKLIST || gc_mv_status[mv] == GC_MV_ACTIVE) {
+                gc_mv_status[mv] = GC_MV_FROZEN;
+                other = gc_get_alias(gc_mv_a[mv]);
+                if (other == best) other = gc_get_alias(gc_mv_b[mv]);
+                if (!gc_move_related(other) && gc_degree[other] < gc_k(other) &&
+                    gc_wl[other] == GC_WL_FREEZE) {
+                    gc_wl[other] = GC_WL_SIMPLIFY;
+                }
+            }
+            e = gc_nmlist_next[e];
+        }
+    }
+    return 1;
+}
+
+static void gc_irc(void) {
+    int progress;
+    gc_make_worklists();
+    progress = 1;
+    while (progress) {
+        progress = 0;
+        if (gc_simplify()) { progress = 1; continue; }
+        if (gc_coalesce()) { progress = 1; continue; }
+        if (gc_freeze())   { progress = 1; continue; }
+        if (gc_select_spill()) { progress = 1; continue; }
+    }
+}
+
+static void gc_select(void) {
+    int i, n, inst, e, peer, pa, pc, c;
+    int used[RA_NPHY];
+
+    i = gc_nsel - 1;
+    while (i >= 0) {
+        n = gc_sel_stk[i];
+        inst = gc_inst[n];
+
+        c = 0;
+        while (c < RA_NPHY) { used[c] = 0; c = c + 1; }
+
+        e = gc_adj_head[n];
+        while (e >= 0) {
+            peer = gc_adj_peer[e];
+            pa = gc_get_alias(peer);
+            pc = gc_color[pa];
+            if (pc >= 0) used[pc] = 1;
+            e = gc_adj_next[e];
+        }
+
+        gc_color[n] = -1;
+        c = 0;
+        while (c < RA_NPHY) {
+            if (!used[c]) { gc_color[n] = c; break; }
+            c = c + 1;
+        }
+        if (gc_color[n] < 0) gc_wl[n] = GC_WL_SPILL;
+
+        i = i - 1;
+    }
+}
+
+static void gc_writeback(void) {
+    int i, n, inst, c, phys;
+
+    i = 0;
+    while (i < RA_NPHY) { ra_used[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) { ra_reg[i] = -1; i = i + 1; }
+
+    n = 0;
+    while (n < gc_nnode) {
+        inst = gc_inst[n];
+        c = gc_color[n];
+        if (gc_force_spill[n]) c = -1;
+
+        if (c >= 0) {
+            phys = RA_FIRST_REG + c;
+            ra_reg[inst] = phys;
+            ra_used[c] = 1;
+        }
+        n = n + 1;
+    }
+}
+
+static void gc_alloc(void) {
+    gc_build();
+    gc_find_moves();
+    gc_irc();
+    gc_select();
+    gc_writeback();
+}
+
+static void ra_mark_call_crossing(void) {
+    int i;
+    i = 0;
+    while (i < h_ninst) { ra_crosses_call[i] = 0; i = i + 1; }
+}
+
+static void ra_mark_clobbers(void) {
+    int i;
+    i = 0;
+    while (i < h_ninst) {
+        ra_crosses_cx_clobber[i] = 0;
+        ra_crosses_dx_clobber[i] = 0;
+        i = i + 1;
+    }
+}
+
 static void hir_regalloc(void) {
+    /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();
-    ra_linear_scan();
+    ra_mark_call_crossing();
+    ra_mark_clobbers();
+    gc_alloc();
     ra_assign_spills();
 }
 
