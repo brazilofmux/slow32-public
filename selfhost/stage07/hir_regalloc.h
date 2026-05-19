@@ -40,7 +40,11 @@
  * bit-for-bit identical to the committed 9117dec5 baseline.
  */
 #define RA_NCALLER   8
-#define RA_NPHY_TOTAL (RA_NCALLEE + RA_NCALLER)
+/* Stage06 selfhost parser only accepts a bare integer literal as an array
+ * dimension (parser.h:1496/1918 — no parenthesized expressions).  Hard-code
+ * the sum so `static int ra_phys_reg[RA_NPHY_TOTAL]` below parses under the
+ * bootstrap compiler.  Keep in sync with RA_NCALLEE + RA_NCALLER above. */
+#define RA_NPHY_TOTAL 26   /* RA_NCALLEE (18) + RA_NCALLER (8) */
 
 /* Knob: how many caller-saved registers the allocator may use right now.
  * 0 = current production behavior (18 callee only).
