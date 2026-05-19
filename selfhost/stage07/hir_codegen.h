@@ -878,7 +878,13 @@ static void hcg_inst(int idx) {
 
     if (k == HI_PARAM) {
         rd = hcg_dst(idx);
-        cg_rri("addi", rd, 3 + h_val[idx], 0);
+        int src = 3 + h_val[idx];
+        if (rd != src) {
+            cg_rri("addi", rd, src, 0);
+            hcg_stat_copy_emit = hcg_stat_copy_emit + 1;
+        } else {
+            hcg_stat_addi0_elide = hcg_stat_addi0_elide + 1;
+        }
         hcg_maybe_spill(idx);
         return;
     }
