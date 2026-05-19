@@ -1233,81 +1233,96 @@ static void gc_select(void) {
     int i, n, inst, e, peer, pa, pc, c;
     int used[RA_NPHY_TOTAL];
     int maxc;
+    int pass;
 
-    i = gc_nsel - 1;
-    while (i >= 0) {
-        n = gc_sel_stk[i];
-        inst = gc_inst[n];
-        maxc = ra_num_active_slots();
+    /* Two-pass color: PARAMs first, then everything else.
+     *
+     * Why: gc_simplify pushes nodes in gc_node-INDEX order (low index
+     * first), so the select-stack pops them with high index first and
+     * low index last.  PARAM nodes are typically created early (low
+     * gc_node index) in hir_lower and therefore pop LAST under the
+     * natural single-pass order — by which point temporaries have
+     * already taken slots in the cheap r3-r10 caller pool.
+     *
+     * This defeats the PARAM preferred-color bias we just added.
+     *
+     * Fix: walk the select stack twice.  First pass colors only
+     * HI_PARAM nodes (seeding their exact ABI registers r3+N when
+     * possible).  Second pass colors the rest.  The used[] mask from
+     * the first pass naturally protects the preferred registers for
+     * the second pass.
+     *
+     * Pop direction (high index first) is unchanged within each pass.
+     * This is the same technique used in the x64 and a64 backends
+     * after the edge-transfer robustness work.
+     */
+    pass = 0;
+    while (pass < 2) {
 
-        /* Zero only the active portion of the used[] mask */
-        c = 0;
-        while (c < maxc) { used[c] = 0; c = c + 1; }
+        i = gc_nsel - 1;
+        while (i >= 0) {
+            n = gc_sel_stk[i];
+            inst = gc_inst[n];
+            maxc = ra_num_active_slots();
 
-        e = gc_adj_head[n];
-        while (e >= 0) {
-            peer = gc_adj_peer[e];
-            pa = gc_get_alias(peer);
-            pc = gc_color[pa];
-            if (pc >= 0 && pc < maxc) used[pc] = 1;
-            e = gc_adj_next[e];
-        }
+            /* Skip nodes that do not belong in this pass */
+            if (pass == 0 && h_kind[inst] != HI_PARAM) { i = i - 1; continue; }
+            if (pass == 1 && h_kind[inst] == HI_PARAM) { i = i - 1; continue; }
 
-        gc_color[n] = -1;
+            /* Zero only the active portion of the used[] mask */
+            c = 0;
+            while (c < maxc) { used[c] = 0; c = c + 1; }
 
-        /* Two-phase color selection (classification hook).
-         *
-         * Phase 1: if this value does not cross a call and the knob is raised,
-         * first try the caller range (RA_NCALLEE .. active-1).  These are
-         * cheap (no save/restore).  We also try a PARAM-specific preferred
-         * color first inside this range so incoming arguments can often land
-         * in their exact ABI register (r3+N) and produce a zero-cost copy.
-         *
-         * Phase 2: always fall back to (or exclusively use) the callee-saved
-         * range (0 .. RA_NCALLEE-1).  Values that cross calls *must* live here.
-         */
-        if (ra_prefers_caller_for_inst(inst)) {
-            /* PARAM-specific hint: if this is an incoming argument and its
-             * exact ABI register (r3+N) is in the caller pool and free,
-             * take it.  This produces a zero-cost entry copy (elided by
-             * hcg_mov / the addi0 path) for the very common case of
-             * non-call-crossing parameters in leaves and early in functions. */
-            int pref = ra_param_preferred_color(inst);
-            if (pref >= RA_NCALLEE && pref < maxc && !used[pref]) {
-                gc_color[n] = pref;
-                ra_stat_param_preferred = ra_stat_param_preferred + 1;
-            } else {
-                /* Generic first-free in the caller range */
-                c = RA_NCALLEE;
-                while (c < maxc) {
-                    if (!used[c]) { gc_color[n] = c; break; }
-                    c = c + 1;
+            e = gc_adj_head[n];
+            while (e >= 0) {
+                peer = gc_adj_peer[e];
+                pa = gc_get_alias(peer);
+                pc = gc_color[pa];
+                if (pc >= 0 && pc < maxc) used[pc] = 1;
+                e = gc_adj_next[e];
+            }
+
+            gc_color[n] = -1;
+
+            /* Two-phase color selection (classification hook) + PARAM bias.
+             *
+             * Because of the outer two-pass, when we reach a non-PARAM
+             * in pass 1 the preferred ABI registers for PARAMs are already
+             * marked used, so temporaries naturally avoid stealing them.
+             */
+            if (ra_prefers_caller_for_inst(inst)) {
+                int pref = ra_param_preferred_color(inst);
+                if (pref >= RA_NCALLEE && pref < maxc && !used[pref]) {
+                    gc_color[n] = pref;
+                    ra_stat_param_preferred = ra_stat_param_preferred + 1;
+                } else {
+                    c = RA_NCALLEE;
+                    while (c < maxc) {
+                        if (!used[c]) { gc_color[n] = c; break; }
+                        c = c + 1;
+                    }
                 }
             }
-        }
 
-        if (gc_color[n] < 0) {
-            /* Callee-saved range (always legal for the current ABI).
-             * Also try a PARAM hint here — on SLOW-32 the arg registers are
-             * caller-saved, so this rarely fires, but the helper is general
-             * and future classification changes could make a preferred reg
-             * land in the callee pool. */
-            int pref = ra_param_preferred_color(inst);
-            if (pref >= 0 && pref < RA_NCALLEE && !used[pref]) {
-                gc_color[n] = pref;
-                ra_stat_param_preferred = ra_stat_param_preferred + 1;
-            } else {
-                c = 0;
-                while (c < RA_NCALLEE) {
-                    if (!used[c]) { gc_color[n] = c; break; }
-                    c = c + 1;
+            if (gc_color[n] < 0) {
+                int pref = ra_param_preferred_color(inst);
+                if (pref >= 0 && pref < RA_NCALLEE && !used[pref]) {
+                    gc_color[n] = pref;
+                    ra_stat_param_preferred = ra_stat_param_preferred + 1;
+                } else {
+                    c = 0;
+                    while (c < RA_NCALLEE) {
+                        if (!used[c]) { gc_color[n] = c; break; }
+                        c = c + 1;
+                    }
                 }
             }
+
+            if (gc_color[n] < 0) gc_wl[n] = GC_WL_SPILL;
+
+            i = i - 1;
         }
-
-        if (gc_color[n] < 0) gc_wl[n] = GC_WL_SPILL;
-
-        i = i - 1;
+        pass = pass + 1;
     }
 }
 
