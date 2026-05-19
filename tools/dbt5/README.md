@@ -29,23 +29,43 @@ The only allowed shared pieces are the obvious infrastructure:
 
 If you feel the temptation to call `translate_add`, `translate_ldw`, `reg_alloc_*`, or any of the fusion/peephole logic from the old translator — stop. That is exactly the gravity well this directory exists to escape.
 
-## Current status (as of the fork)
+## Current status (2026-05-18)
 
-- Full lifter + CFG + SSA + MIR + BURG + LIR + RA pipeline is present and compiles.
-- On x86-64 hosts the existing `stage5_codegen.c` (LIR → native x86-64) can be used.
-- On AArch64 (the primary development host at the time of the fork) there is **no native codegen yet**. `dbt5` can run the complete analysis pipeline and fall back to the shadow interpreter for execution. This is the correct place to write `stage5_codegen_a64.c` (and its supporting thin runtime context) from scratch.
+The full lifter + CFG + SSA + MIR + BURG + LIR + RA pipeline is wired
+into a working AArch64 emission path with a translate-on-miss
+dispatcher and first-execution differential validation. See
+`ISSUES.md` for the live tracker; commit messages reference its IDs
+directly (e.g. `A8`, `G2+G3`, `E4`).
 
-## AArch64 Emission Work Has Begun (May 2026)
+Done so far (categories from `ISSUES.md`):
 
-As of this commit we have added the first skeleton:
+- **A1–A10** — all known correctness bugs in `stage5_codegen_a64.c`
+  (value_to_host init, CMP/SETCC materialization, side-exit cond +
+  target, terminal handling, negative immediates, silent default skip,
+  prologue per-slot guest-reg selection, per-guest-reg writeback +
+  alias flush, CBZ/CBNZ + 14-slot RA pool, internal-branch fixup cap).
+- **B1–B4** — wiring (cache_init pool, `DBT_JIT_MMAP_FLAGS` for Apple
+  W^X, real shadow execution, asm clobber hygiene).
+- **C1–C6** — cleanup pass (dead stubs, stale comments, LIR dump,
+  `LIR_OP_CALL` dst_v, unused-warning hygiene).
+- **D1–D4** — LIR x86-shaped baggage removed for the a64 path, 14-slot
+  host RA pool replaces the old 8-slot Stage-4 ceiling, CFG extractor +
+  SSA threading (no more re-lifting per block), explicit `cg_bail`
+  contract for safe shadow fallback.
+- **E1–E4** — precise prologue from lifter `live_in_mask` + earliest
+  RA interval per incoming gpr, logical-immediate constant
+  materialization, RA spill bias for live-across-edge / loop carriers,
+  first-execution shadow differential validation with eviction via
+  `cache_remove()` (`S5_E4=1`).
+- **G1–G3** — translate-on-miss dispatcher loop, JAL/JALR call-graph
+  exit semantics, distinguished HALT/YIELD/DEBUG exits.
 
-- `stage5_codegen_a64.h` — defines the clean `stage5_cg_a64_ctx_t`
-  and the entry point `stage5_codegen_a64(...)`.
-- `stage5_codegen_a64.c` — initial stub (always returns false for now).
+On x86-64 hosts the existing `stage5_codegen.c` (LIR → native x86-64)
+still works; the clean-room x86-64 port (`stage5_codegen_x64.{c,h}`)
+remains a placeholder for future Intel-hardware work — see below.
 
-The first narrow owning path (ALU + simple memory that fits in the 8
-RA-assigned host slots, using only raw `emit_a64` calls) will be grown
-here.  This is the actual experiment the fork was created to protect.
+This is **not** wired into the production `slow32-dbt` — Stage 4 in
+`../dbt/` remains the production translator. dbt5 is the experiment.
 
 ## Building
 
@@ -53,18 +73,22 @@ here.  This is the actual experiment the fork was created to protect.
 cd tools/dbt5
 make
 ./slow32-dbt5 some.s32x --lift-only     # analysis only
-./slow32-dbt5 some.s32x                 # run via shadow fallback (AArch64)
+./slow32-dbt5 some.s32x                 # run via shadow fallback (default)
+S5_EMIT_A64=1 ./slow32-dbt5 some.s32x   # try native a64 emit on the dispatcher path
+S5_E4=1 S5_EMIT_A64=1 ./slow32-dbt5 some.s32x  # + first-exec differential w/ eviction
 ```
 
 ## Next real work
 
-The highest-leverage thing to do inside this tree is to design and implement the missing AArch64 native emission path:
+`ISSUES.md` is the live punch list. Roughly:
 
-1. Define a small `stage5_cg_a64_ctx_t` (or reuse/extend the concepts from the x86 codegen) that only contains what a pure code generator needs.
-2. Write `stage5_codegen_a64.c` that walks LIR (or even the lifted region for a narrow pilot) and emits using only `emit_*` primitives from `emit_a64.c`.
-3. Wire a simple execution loop that installs the emitted code into a block cache and runs it.
-
-All of that work belongs here, not in the production `dbt` tree.
+- Pilot scope is done — emit, wire, execute, validate are all in place.
+- Remaining items are mostly **OPPORTUNITY** / **DESIGN**: widening the
+  fast path, broadening lowering coverage past the pilot's surface,
+  and eventually weighing whether dbt5 graduates into a production
+  path or stays an experiment.
+- See ISSUES.md section F ("Suggested order of attack") for the
+  current next-step recommendation.
 
 ## x86-64 Migration Plan (Placeholders Added)
 
