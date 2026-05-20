@@ -534,7 +534,7 @@ Compile cc-x64.c itself into a native binary. Then use that native binary to com
 ### New Files
 
 ```
-selfhost/stage07-cross/
+selfhost/stage08-cross-x64/
   obj_writer.h        — ELF64 relocatable object writer
   ld-x64.c            — Linker driver
   ar-x64.c            — Archiver
@@ -553,7 +553,7 @@ selfhost/stage07-cross/
 ### Modified Files
 
 ```
-selfhost/stage07-cross/
+selfhost/stage08-cross-x64/
   cc-x64.c             — Add -c flag handling
   codegen_x64.h        — Add emit_object_file(), keep emit_executable() for reference
   elf_writer.h         — Minor: extract shared ELF constants to elf_common.h

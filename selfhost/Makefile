@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08
 
-all: stage07
+all: stage08
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -67,6 +67,13 @@ stage07: stage06
 	@echo "--- Building Stage 07: Selfhost Toolchain ---"
 	$(MAKE) -C stage07
 
+# Stage 08: Fork of stage07 for continued evolution (bitfields, etc.)
+# Prerequisites: Stage 07 compiler, Stage 07 assembler + linker
+# Initially identical to stage07; will diverge as new features land.
+stage08: stage07
+	@echo "--- Building Stage 08: Selfhost Toolchain (fork of stage07) ---"
+	$(MAKE) -C stage08
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
@@ -76,3 +83,4 @@ clean:
 	$(MAKE) -C stage05 clean
 	$(MAKE) -C stage06 clean
 	$(MAKE) -C stage07 clean
+	$(MAKE) -C stage08 clean

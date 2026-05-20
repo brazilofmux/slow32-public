@@ -30,10 +30,10 @@ scan_no_match() {
     fi
 }
 
-# Restrict checks to stage00..stage07 orchestration/build files (the main
+# Restrict checks to stage00..stage08 orchestration/build files (the main
 # selfhost build path driven by run-stages.sh). Optional comparison /
 # cross-compilation scaffolding that intentionally invokes host gcc/clang
-# (stage07-cross{,-a64}, stage06+stage07 compare-llvm-selfhost.sh,
+# (stage08-cross-{x64,a64}, stage06+stage07 compare-llvm-selfhost.sh,
 # verify-emu-sums.sh) is deliberately excluded.
 SCAN_PATHS=(
     "$SELFHOST_DIR/run-stages.sh"
@@ -45,6 +45,7 @@ SCAN_PATHS=(
     "$SELFHOST_DIR/stage05"
     "$SELFHOST_DIR/stage06"
     "$SELFHOST_DIR/stage07"
+    "$SELFHOST_DIR/stage08"
 )
 
 BASE_GLOBS=(
@@ -53,7 +54,7 @@ BASE_GLOBS=(
     --glob 'Makefile'
 )
 
-# 1) No active references to prebuilt runtime blobs in stage00..07 flow.
+# 1) No active references to prebuilt runtime blobs in stage00..08 flow.
 # Ignore comment lines in shell (# ...) and Forth (\ ...).
 scan_no_match \
     "active reference to runtime/*.s32o or runtime/*.s32a" \
@@ -62,12 +63,12 @@ scan_no_match \
     --glob '!compare-llvm-selfhost.sh' \
     "${SCAN_PATHS[@]}"
 
-# 2) No direct host compiler invocations in stage01..07 scripts.
+# 2) No direct host compiler invocations in stage01..08 scripts.
 # (stage00 Makefile is the accepted seed toolchain root.
 #  compare-llvm-selfhost.sh is an optional comparison harness that is
 #  not invoked by run-stages.sh and is allowed to call clang directly.)
 scan_no_match \
-    "direct host compiler command in stage01..07 scripts" \
+    "direct host compiler command in stage01..08 scripts" \
     '^(?!\s*[#\\]).*(^|[;&|()[:space:]])(cc|gcc|clang)[[:space:]]' \
     --glob '*.sh' \
     --glob '!compare-llvm-selfhost.sh' \
@@ -77,7 +78,8 @@ scan_no_match \
     "$SELFHOST_DIR/stage04" \
     "$SELFHOST_DIR/stage05" \
     "$SELFHOST_DIR/stage06" \
-    "$SELFHOST_DIR/stage07"
+    "$SELFHOST_DIR/stage07" \
+    "$SELFHOST_DIR/stage08"
 
 if [[ "$fail" -ne 0 ]]; then
     echo "Bootstrap purity check FAILED." >&2
@@ -85,4 +87,4 @@ if [[ "$fail" -ne 0 ]]; then
     exit 1
 fi
 
-echo "Bootstrap purity check passed (stage00..07)."
+echo "Bootstrap purity check passed (stage00..08)."

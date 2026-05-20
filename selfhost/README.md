@@ -11,10 +11,11 @@ Stage directories at a glance:
 - `stage05`: code-quality cycle introducing HIR/SSA, BURG instruction selection, and graph-coloring register allocation. Compiled by stage04.
 - `stage06`: next selfhost cycle seeded from stage05; supports a `--fixed-point` gate that enforces gen2 == gen3.
 - `stage07`: same toolchain shape as stage06 plus richer headers (`assert.h`, `math.h`, `signal.h`, `stdio.h`, `time.h`, `ucontext.h`, `sys/*`) so non-trivial SLOW-32 programs (DBT, full emulator) build inside SLOW-32.
+- `stage08`: fork of stage07; the active head for new language features (e.g. bitfields) and future evolution. Cross-compilers now pull their frontend from here.
 
 Sibling cross-compiler trees (independent of the numbered cycle):
-- `stage07-cross`: C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `s32fast-hir` (SLOW-32 fast emulator), and `dbt-x64` (SLOW-32 dynamic binary translator).
-- `stage07-cross-a64`: C → AArch64 ELF. Frontend shared with `stage07-cross` via symlinks into `../stage07/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
+- `stage08-cross-x64`: C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `s32fast-hir` (SLOW-32 fast emulator), and `dbt-x64` (SLOW-32 dynamic binary translator). Frontend symlinked from `../stage08/`.
+- `stage08-cross-a64`: C → AArch64 ELF. AArch64 sibling; frontend symlinked from `../stage08/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
 
 Reference docs:
 - [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap (V2 stages 0–16, sibling cross-compiler track, trust model).
@@ -29,7 +30,7 @@ For a clean checkout sanity pass:
 selfhost/run-stages.sh
 ```
 
-`run-stages.sh` walks `stage00` → `stage07` (use `--from`/`--to` to scope, e.g. `--to stage04`). The cross-compiler trees have their own entry points (below). For faster local loops, you can skip the selfhost-kernel regen gate:
+`run-stages.sh` walks `stage00` → `stage08` (use `--from`/`--to` to scope, e.g. `--to stage04`). The cross-compiler trees have their own entry points (below). For faster local loops, you can skip the selfhost-kernel regen gate:
 
 ```bash
 selfhost/run-stages.sh --skip-selfhost-kernel
@@ -51,8 +52,9 @@ Manual per-stage entry points:
 - `stage05` (optimized toolchain): `selfhost/stage05/run-tests.sh --emu ./tools/emulator/slow32-fast`
 - `stage06` (next-cycle toolchain): `selfhost/stage06/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
 - `stage07` (full-libc toolchain): `selfhost/stage07/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
-- `stage07-cross` (x86-64 cross): `make -C selfhost/stage07-cross && make -C selfhost/stage07-cross test` (then `make bench` to time `s32fast-hir`)
-- `stage07-cross-a64` (AArch64 cross): `make -C selfhost/stage07-cross-a64 && make -C selfhost/stage07-cross-a64 test`
+- `stage08` (active head, fork of stage07): `selfhost/stage08/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
+- `stage08-cross-x64` (x86-64 cross): `make -C selfhost/stage08-cross-x64 && make -C selfhost/stage08-cross-x64 test` (then `make bench` to time `s32fast-hir`)
+- `stage08-cross-a64` (AArch64 cross): `make -C selfhost/stage08-cross-a64 && make -C selfhost/stage08-cross-a64 test`
 
 ABI conformance entry points:
 - all supported stages: `selfhost/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt` (currently scoped to stages 03–06)
@@ -61,3 +63,4 @@ ABI conformance entry points:
 - stage05 only: `selfhost/stage05/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage06 only: `selfhost/stage06/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage07 only: `selfhost/stage07/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
+- stage08 only: `selfhost/stage08/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`

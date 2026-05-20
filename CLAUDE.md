@@ -148,13 +148,14 @@ docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace/reg
 docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include test.c -o test.ll && llc -mtriple=slow32-unknown-none test.ll -o test.s"
 ```
 
-## Cross-Compiler (stage07-cross) — Build, Test, Benchmark
+## Cross-Compiler (stage08-cross-x64) — Build, Test, Benchmark
 
-The cross-compiler (`selfhost/stage07-cross/`) compiles C to native x86-64 ELF.
+The cross-compiler (`selfhost/stage08-cross-x64/`) compiles C to native x86-64 ELF.
+It pulls its C frontend (parser/sema/HIR/etc.) via symlinks from `../stage08/`.
 It has its own Makefile. **Always use `--hir` when compiling with cc-x64** (the Makefile does this).
 
 ```bash
-cd selfhost/stage07-cross
+cd selfhost/stage08-cross-x64
 
 # Build everything: cc-x64 (compiler) + s32fast-hir (emulator compiled by cc-x64)
 make

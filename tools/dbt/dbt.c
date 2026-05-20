@@ -1938,7 +1938,7 @@ int main(int argc, char **argv) {
     }
 
     /* Raise RLIMIT_STACK if the inherited soft limit is below what we
-     * need.  The cc-x64-built dbt-x64 (selfhost/stage07-cross) uses
+     * need.  The cc-x64-built dbt-x64 (selfhost/stage08-cross-x64) uses
      * ~20 MB of host stack on the Forth/stage02 self-host workload —
      * its register allocator spills more than gcc and tail-call
      * folding only kicks in for direct same-block returns.  gcc-built

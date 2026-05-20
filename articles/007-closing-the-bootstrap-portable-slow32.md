@@ -127,7 +127,7 @@ cc -O2 -o s32-emu selfhost/stage00/s32-emu.c
 
 # 2. Build the cross-compiler. cc-a64 on ARM64; cc-x64 on x86-64.
 #    On ARM64:
-cd selfhost/stage07-cross-a64 && make
+cd selfhost/stage08-cross-a64 && make
 
 # 3. Use the cross-compiler to build the runtime and the high-speed emulator.
 make libc

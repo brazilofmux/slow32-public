@@ -36,7 +36,7 @@ static inline void flush_pending_cond(translate_ctx_t *ctx);
 /* Function-pointer type for `emit_jcc_*_rel32` emitters.  Named so that
  * cast sites can use `(emit_jcc_fn_t)` instead of the bare function-
  * pointer cast syntax `(void (*)(emit_ctx_t *, int32_t))`, which the
- * self-hosted s12cc front-end (used by selfhost/stage07-cross to compile
+ * self-hosted s12cc front-end (used by selfhost/stage08-cross-x64 to compile
  * this file) does not parse. */
 typedef void (*emit_jcc_fn_t)(emit_ctx_t *, int32_t);
 

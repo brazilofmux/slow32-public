@@ -698,12 +698,12 @@ Every component above Stage 0 is built from source you can read. The fixed-point
 
 Once the self-hosted full C compiler exists (Stage 13+), the same frontend can be retargeted at host architectures instead of SLOW-32. Two cross-compiler trees exercise this:
 
-- `selfhost/stage07-cross/` — C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `crt0.o`, `s32fast-hir` (the SLOW-32 fast emulator), and `dbt-x64` (the SLOW-32 dynamic binary translator).
-- `selfhost/stage07-cross-a64/` — C → AArch64 ELF. AArch64 sibling, sharing the frontend (lex/parse/sema/HIR/optimize) via symlinks into `../stage07/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
+- `selfhost/stage08-cross-x64/` — C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `crt0.o`, `s32fast-hir` (the SLOW-32 fast emulator), and `dbt-x64` (the SLOW-32 dynamic binary translator). Frontend pulled from `../stage08/`.
+- `selfhost/stage08-cross-a64/` — C → AArch64 ELF. AArch64 sibling, sharing the frontend (lex/parse/sema/HIR/optimize) via symlinks into `../stage08/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
 
 Both bootstrap the same way: host gcc compiles `cc-{x64,a64}.c`, `ld-{x64,a64}.c`, and `ar-{x64,a64}.c` once each (each is a single translation unit; the rest of the compiler is `#include`d). After that, `cc-{x64,a64} --hir` builds the libc, crt0, the fast emulator, and the DBT, and the in-tree `ld-{x64,a64}` performs the final link. Both `libc_x64.a` and `libc_a64.a` are 100% cc-built — `fpu_ops.c` uses scalar SSE2 / NEON via the cross-compiler's float codegen, and `math_stubs.c`'s `__builtin_sqrt[f]` is intercepted by `HI_FSQRT`.
 
-**What this means for Stage 0.** The host-built DBT that `selfhost/stage00/Makefile` prefers as a speed-only symlink is itself the output of `stage07-cross/dbt-x64` (or `-a64`). The trust boundary is unchanged — the Stage 0 source build remains the canonical seed — but the speed path is now buildable from auditable SLOW-32 sources rather than only from the in-tree host C in `tools/dbt/`.
+**What this means for Stage 0.** The host-built DBT that `selfhost/stage00/Makefile` prefers as a speed-only symlink is itself the output of `stage08-cross-x64/dbt-x64` (or `-a64`). The trust boundary is unchanged — the Stage 0 source build remains the canonical seed — but the speed path is now buildable from auditable SLOW-32 sources rather than only from the in-tree host C in `tools/dbt/`.
 
 **What this means for verification.** The cross-built DBT is exercised against the same `.s32x` binaries the in-SLOW-32 stages use. Divergence between `dbt-x64`/`dbt-a64` and `slow32-fast` on benchmark or stage-walk output is a direct correctness signal for both backends.
 
@@ -772,8 +772,9 @@ V2 stage numbers (from the Stage Summary above) describe the bootstrap *cycle*. 
 | `selfhost/stage05/` | 13–14 (HIR/optimizer) | HIR/SSA-based compiler (`hir_*.h`, BURG instruction selector, IRC graph-coloring regalloc). Compiled by stage04. |
 | `selfhost/stage06/` | 14–15 (rebuild) | Next-cycle rebuild seeded by stage05; `run-tests.sh --fixed-point` enforces gen2 == gen3. Compiled by stage05. |
 | `selfhost/stage07/` | 15–16 (full-libc rebuild) | Same toolchain shape as stage06 plus richer headers under `include/` (`assert.h`, `math.h`, `signal.h`, `stdio.h`, `time.h`, `ucontext.h`, `sys/`) so non-trivial programs (DBT, full SLOW-32 emulator) build inside SLOW-32. Same `--fixed-point` gate. Compiled by stage06. |
-| `selfhost/stage07-cross/` | sibling track | C → x86-64 ELF cross-compiler (`cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `crt0.o`). Outputs include `s32fast-hir` (SLOW-32 fast emulator) and `dbt-x64` (SLOW-32 DBT). See "Sibling Track: Native Cross-Compilers" above. |
-| `selfhost/stage07-cross-a64/` | sibling track | AArch64 sibling of `stage07-cross/`. Frontend symlinked from `../stage07/`. Outputs `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, `dbt-a64`. |
+| `selfhost/stage08/` | 15–16 (full-libc rebuild) | Fork of stage07; active development head for new C features (bitfields etc.). Cross-compilers now consume its frontend. Same shape and gates as stage07. Compiled by stage07. |
+| `selfhost/stage08-cross-x64/` | sibling track | C → x86-64 ELF cross-compiler (`cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `crt0.o`). Outputs include `s32fast-hir` (SLOW-32 fast emulator) and `dbt-x64` (SLOW-32 DBT). Frontend from `../stage08/`. See "Sibling Track: Native Cross-Compilers" above. |
+| `selfhost/stage08-cross-a64/` | sibling track | AArch64 sibling of `stage08-cross-x64/`. Frontend symlinked from `../stage08/`. Outputs `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, `dbt-a64`. |
 
 The numbered V2 stages map onto the directories rather than vice-versa: each directory hosts one or more V2 stages, and a single rebuild iteration (build the toolchain, run regressions, optionally run the fixed-point gate) covers all the V2 stages it owns.
 
@@ -800,7 +801,7 @@ The Stage 0 emulator is deliberately austere — enough for Forth and the subset
 
 The simplest path is enhancing `s32-emu.c` on the host. It grows from ~780 to ~1,500 lines but remains auditable. The ambitious path is building a SLOW-32 emulator in C, compiled by the self-hosted toolchain, running on Stage 0 (metacircular emulation). Slow, but it proves the toolchain handles non-trivial code. And if the full C toolchain can compile a DBT (dynamic binary translator) — SLOW-32 translating SLOW-32 blocks to... SLOW-32 blocks with optimized dispatch — that's a serious validation of the compiler's capability, even if the performance story is ironic.
 
-In practice the cross-compiler track ("Sibling Track: Native Cross-Compilers" above) landed before metacircular emulation: `stage07-cross{,-a64}` produces native x86-64 / AArch64 ELF, and the `dbt-x64` / `dbt-a64` binaries translate SLOW-32 blocks to native host code. This is a stronger validation than the metacircular variant and explains why the Stage-0 speed path is now buildable from SLOW-32 sources.
+In practice the cross-compiler track ("Sibling Track: Native Cross-Compilers" above) landed before metacircular emulation: `stage08-cross-x64{,-a64}` produces native x86-64 / AArch64 ELF (frontend now from the stage08 fork), and the `dbt-x64` / `dbt-a64` binaries translate SLOW-32 blocks to native host code. This is a stronger validation than the metacircular variant and explains why the Stage-0 speed path is now buildable from SLOW-32 sources.
 
 ### On Three vs. Two Self-Hosting Layers
 

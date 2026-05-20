@@ -694,7 +694,7 @@ runs the stage02 path end-to-end with byte-identical output to
 the native emulator.
 
 **`s32fast-hir` (cc-x64 cross-compiled emulator) sweep — done.**
-Stage 7 artifacts produced under `selfhost/stage07-cross/out/s32fast-hir`
+Stage 7 artifacts produced under `selfhost/stage08-cross-x64/out/s32fast-hir`
 on AWS Xeon Platinum 8259CL match the canonical Stage 7 SHA-256s; row
 added to `selfhost/sha256sums.md` in commit `30fef05e`. No outstanding
 work on the s32fast-hir verification path — future sessions should not
@@ -806,7 +806,7 @@ native emulator byte-for-byte.
 **Reproducer (now passes)**:
 ```bash
 cat forth/prelude.fth selfhost/stage01/asm.fth - <<'FTH' \
-  | timeout 60 selfhost/stage07-cross-a64/out/dbt-a64 forth/kernel.s32x
+  | timeout 60 selfhost/stage08-cross-a64/out/dbt-a64 forth/kernel.s32x
 S" /absolute/path/to/selfhost/stage02/crt0.s" S" /tmp/crt0.s32o" ASSEMBLE
 BYE
 FTH
@@ -823,7 +823,7 @@ stage02-step-2 bootstrap workflow in a Linux ARM64 container.
 
 **Root cause**: same cc-x64/cc-a64 codegen bug as Bug B in #49.
 `selfhost/stage07/hir_lower.h` (symlinked into both
-`stage07-cross/` and `stage07-cross-a64/`) was lowering `continue`
+`stage08-cross-x64/` and `stage08-cross-a64/`) was lowering `continue`
 inside a `case` inside a `while` to a branch targeting whichever
 stale value happened to sit in `hl_cont_blk[hl_loop_depth - 1]` —
 typically the function entry block.  `tools/dbt/translate.c` has
@@ -863,7 +863,7 @@ was the root-cause fix; both unblocked the rebuild.
 
 **Reproducer (now passes)**:
 ```bash
-cd selfhost/stage07-cross-a64 && make dbt
+cd selfhost/stage08-cross-a64 && make dbt
 # Linux ARM64 container (e.g. podman/docker):
 ./out/dbt-a64 -v selfhost/stage02/s32-as.s32x
 # → "Usage: s32-as <input.s> <output.s32o>", exit 1
@@ -897,11 +897,11 @@ statements after `goto _out`, so cc-x64 produced bogus HIR for
 once the stage-4 register cache extended liveness through back-edge
 prewarms. Fix: in `hl_stmt`'s ND_BLOCK loop, skip statements whose
 kind is not `ND_LABEL`/`ND_CASE`/`ND_DEFAULT` while
-`hl_terminated()` is true (`selfhost/stage07-cross/hir_lower.h:2048`).
+`hl_terminated()` is true (`selfhost/stage08-cross-x64/hir_lower.h:2048`).
 
 **Reproducer (now passes)**:
 ```bash
-cd selfhost/stage07-cross && make dbt
+cd selfhost/stage08-cross-x64 && make dbt
 ./out/dbt-x64 ../stage01/hello_minimal.s32x  # → "!", exit 0
 ```
 
@@ -1011,9 +1011,9 @@ exposed the issue.
 
 **Reproducer (confirms fix)**:
 ```bash
-cd ~/slow-32/selfhost/stage07-cross-a64 && make s32fast
+cd ~/slow-32/selfhost/stage08-cross-a64 && make s32fast
 cd ~/slow-32 && echo -e '.text\n.global _start\n_start:\n    halt' > /tmp/min.s
-selfhost/stage07-cross-a64/out/s32fast-hir \
+selfhost/stage08-cross-a64/out/s32fast-hir \
     selfhost/stage02/s32-as.s32x /tmp/min.s /tmp/min.s32o
 # Now: rc=0, 108-byte output, byte-identical to gcc-built slow32 reference
 # (sha256 b5a9b2e7271f9a0b1dcd68a17e5f4cc93c83e1dfada2f2f1d9bdfd965734274b).
@@ -1056,7 +1056,7 @@ four cc-x64 / shim / environment issues, all four addressed:
     fixed.  No outstanding cc-x64 work for Bug C.
   - Bug D: `peephole_enabled = true` triggered an independent cc-x64
     miscompile in `nop_compact_x64`'s displacement fix-up.  ROOT-CAUSED
-    and FIXED in f7f7725f (`selfhost/stage07-cross/hir_codegen_x64.h`):
+    and FIXED in f7f7725f (`selfhost/stage08-cross-x64/hir_codegen_x64.h`):
     the SIB+ALU fold pass fused single-use SIB-form HI_LOADs into a
     32-bit memory-operand `add reg, [base+idx*scale]` regardless of
     the load's element width.  For `(int32_t)uint16_t_array[i]` that
@@ -1117,7 +1117,7 @@ and 64MB stack):
 byte-identical to the canonical bootstrap reference and matches
 the in-tree `runtime/crt0.s32o`.
 
-**Bug A — MMIO shim gaps in `selfhost/stage07-cross/libc_x64/mmio_ring_x64.c`** (FIXED, 40ef705f):
+**Bug A — MMIO shim gaps in `selfhost/stage08-cross-x64/libc_x64/mmio_ring_x64.c`** (FIXED, 40ef705f):
 the x64 MMIO shim was the dbt-a64 #43 fix's missing twin. Three problems:
   - `OP_MMIO_STAT` returned ERR for both path and fd variants — added
     `stat`/`fstat` calls and repacking of the Linux x86-64 kernel
@@ -1165,10 +1165,10 @@ a64 backend doesn't share.
 
 **Reproducer** (unchanged from original):
 ```bash
-cd ~/slow-32 && cd selfhost/stage07-cross && make dbt && cd ../..
+cd ~/slow-32 && cd selfhost/stage08-cross-x64 && make dbt && cd ../..
 WORK=$(mktemp -d)
 cat forth/prelude.fth selfhost/stage01/asm.fth - <<FTH \
-    | timeout 60 selfhost/stage07-cross/out/dbt-x64 -2 forth/kernel.s32x \
+    | timeout 60 selfhost/stage08-cross-x64/out/dbt-x64 -2 forth/kernel.s32x \
         > "$WORK/log" 2>&1
 S" selfhost/stage02/crt0.s" S" $WORK/crt0.s32o" ASSEMBLE
 BYE
@@ -1292,7 +1292,7 @@ and pass-by-value semantics hold.  No codegen changes — both
 HI_PARAM(HL_ADDR_TY) and HI_LOAD/HI_STORE(TY_INT) already work.
 
 **Regression coverage**:
-`selfhost/stage07-cross/diff-test/corpus/d31_struct_byval.c` exercises
+`selfhost/stage08-cross-x64/diff-test/corpus/d31_struct_byval.c` exercises
 8 patterns: 2-int struct, 4-int struct, mixed scalar+struct args,
 struct with char fields and padding, callee-side mutation isolated
 from caller, `swap(p)` struct-return composed with struct-param,
@@ -1331,7 +1331,7 @@ initializer evaluator just hadn't been updated.
 `TK_CHARLIT`, same as for `TK_NUM`.)
 
 **Regression coverage**:
-`selfhost/stage07-cross/diff-test/corpus/d30_designated_strings.c`
+`selfhost/stage08-cross-x64/diff-test/corpus/d30_designated_strings.c`
 exercises every previously-broken form -- `.tag = { 'b','e','t','a', 0, 0, 0, 0 }`,
 `.tag = { [0]='g', [2]='m', [4]='a', [6]='!' }`, and nested char
 designators inside array-of-structs entries -- at file scope, in
@@ -1399,20 +1399,20 @@ but each gap blocks third-party C codebases of any size.
 - **Flexible array members** — final unsized struct members such as
   `char data[];` now get an aligned zero-byte tail offset, do not contribute
   to `sizeof(struct)`, and still behave as array addresses for `p->data[i]`.
-  Covered by `selfhost/stage07-cross/tests/test_flex_array.c` and
-  `selfhost/stage07-cross-a64/tests/cc_flex_array.c`.
+  Covered by `selfhost/stage08-cross-x64/tests/test_flex_array.c` and
+  `selfhost/stage08-cross-a64/tests/cc_flex_array.c`.
 - **GNU/C11 declaration noise** — `_Atomic` is accepted as an unqualified
   underlying type, `typeof(...)` / `__typeof__(...)` resolve to the parsed type
   or expression type, and `__attribute__((...))` is skipped in prefix, infix,
   suffix, and parameter positions. Covered by
-  `selfhost/stage07-cross/tests/test_decl_dialect.c` and
-  `selfhost/stage07-cross-a64/tests/cc_decl_dialect.c`.
+  `selfhost/stage08-cross-x64/tests/test_decl_dialect.c` and
+  `selfhost/stage08-cross-a64/tests/cc_decl_dialect.c`.
 - **GNU statement expressions** `({ stmts; final_expr; })` — the
   parenthesized form parses a regular block (so locals are scoped),
   detaches the trailing expression-statement, and lowers as
   side-effects-then-expression.  Nests freely; valid as initializer,
   function argument, or in any other expression context.  Covered by
-  `selfhost/stage07-cross/diff-test/corpus/d34_stmt_expr.c`.
+  `selfhost/stage08-cross-x64/diff-test/corpus/d34_stmt_expr.c`.
 
 **Surveyed but not yet hit (counts from TCC source)**:
 
@@ -1470,7 +1470,7 @@ prologue save loop (X0..X7 → save area) and frame-allocation bump
 of 32 slow32 units = 64 a64 bytes.  No-frame-leaf optimization
 disabled when `hx_is_varargs` (the save loop needs valid FP).
 
-**Tests**: `selfhost/stage07-cross/diff-test/corpus/d32_varargs.c`
+**Tests**: `selfhost/stage08-cross-x64/diff-test/corpus/d32_varargs.c`
 covers 1 / 5 / 7 / 8 / 12-arg variadic int sums (spanning the
 reg→stack boundary), `long long` varargs, pointer varargs, and the
 nine-named-param case where one named arg already spills to stack.

@@ -1,1 +1,0 @@
-../../stage07-cross/libc_x64/stdio.c
