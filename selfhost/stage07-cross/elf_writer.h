@@ -22,6 +22,17 @@
 #ifndef ELF_WRITER_H
 #define ELF_WRITER_H
 
+/* open(2) flag values vary by OS — Linux and macOS disagree on the bit
+ * layout, so we can't hardcode a single numeric literal.  We need
+ * O_WRONLY|O_CREAT|O_TRUNC so subsequent writes overwrite an existing
+ * file instead of partially clobbering (on macOS, 0x241 actually means
+ * O_WRONLY|O_SHLOCK|O_CREAT — wrong flag set entirely). */
+#if defined(__APPLE__)
+#  define ELFW_OPEN_FLAGS 0x601
+#else
+#  define ELFW_OPEN_FLAGS 0x241
+#endif
+
 // ============================================================================
 // ELF64 constants
 // ============================================================================
@@ -328,7 +339,7 @@ static int elf_write_file(char *filename) {
 
     elf_build();
 
-    fd = open(filename, 0x241, 0755);  // O_WRONLY|O_CREAT|O_TRUNC, rwxr-xr-x
+    fd = open(filename, ELFW_OPEN_FLAGS, 0755);  // mode rwxr-xr-x
     if (fd < 0) return -1;
 
     total = 0;

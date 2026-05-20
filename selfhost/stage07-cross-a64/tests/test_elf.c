@@ -11,8 +11,16 @@
  */
 
 /* host libc shims — declare what we need without dragging in headers that
- * might collide with elf_writer.h's bare open()/write()/close() prototypes. */
-int open(char *path, int flags, int mode);
+ * might collide with elf_writer.h's bare open()/write()/close() prototypes.
+ *
+ * open() MUST be declared variadic.  On Apple Silicon, Apple's deviation
+ * from the AArch64 PCS passes variadic args on the stack while fixed args
+ * go in registers.  Declaring `int open(char *, int, int)` as a fixed-arg
+ * function would put `mode` in x2, but libSystem reads mode via va_arg
+ * from the stack — so it gets garbage, and the new file lands with
+ * essentially random permission bits (we observed mode 0001).
+ * On Linux either form happens to work; macOS forces our hand. */
+int open(char *path, int flags, ...);
 int close(int fd);
 int write(int fd, char *buf, int len);
 

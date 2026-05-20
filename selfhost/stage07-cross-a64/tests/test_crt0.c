@@ -8,7 +8,8 @@
  * code matches argc.
  */
 
-int open(char *path, int flags, int mode);
+/* open() MUST be variadic — see test_elf.c for the Apple AArch64 PCS rationale. */
+int open(char *path, int flags, ...);
 int close(int fd);
 int read(int fd, char *buf, int len);
 int write(int fd, char *buf, int len);

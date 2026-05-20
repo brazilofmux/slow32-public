@@ -33,6 +33,18 @@
 #define PF_W          2
 #define PF_R          4
 
+/* open(2) flag values vary by OS — Linux and macOS disagree on the bit
+ * layout, so we can't hardcode a single numeric literal.  We need
+ * O_WRONLY|O_CREAT|O_TRUNC so the second-and-subsequent writes overwrite
+ * any existing file instead of partially clobbering or (on macOS, where
+ * 0x241 actually means O_WRONLY|O_SHLOCK|O_CREAT) acquiring an advisory
+ * lock and skipping truncation. */
+#if defined(__APPLE__)
+#  define ELFW_OPEN_FLAGS  0x601  /* O_WRONLY|O_CREAT|O_TRUNC on Darwin */
+#else
+#  define ELFW_OPEN_FLAGS  0x241  /* O_WRONLY|O_CREAT|O_TRUNC on Linux  */
+#endif
+
 /* Linux loads static AArch64 executables at 0x400000 (same as x86-64). */
 #define ELF_BASE_ADDR 0x400000
 #define ELF_PAGE_SIZE 0x1000
@@ -216,7 +228,7 @@ static int elf_build(void) {
 static int elf_write_file(char *filename) {
     int fd; int total; int n; int written;
     elf_build();
-    fd = open(filename, 0x241, 0755);   /* O_WRONLY|O_CREAT|O_TRUNC, rwxr-xr-x */
+    fd = open(filename, ELFW_OPEN_FLAGS, 0755);   /* mode rwxr-xr-x */
     if (fd < 0) return -1;
     total = 0;
     while (total < elf_out_len) {

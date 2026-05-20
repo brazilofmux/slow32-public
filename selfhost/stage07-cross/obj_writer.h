@@ -13,6 +13,14 @@
 #ifndef OBJ_WRITER_H
 #define OBJ_WRITER_H
 
+/* open(2) flag values: see the long comment in elf_writer.h.  Linux 0x241
+ * = O_WRONLY|O_CREAT|O_TRUNC; macOS spells the same intent as 0x601. */
+#if defined(__APPLE__)
+#  define OBJW_OPEN_FLAGS 0x601
+#else
+#  define OBJW_OPEN_FLAGS 0x241
+#endif
+
 /* ============================================================================
  * ELF64 constants for relocatable objects
  * ============================================================================ */
@@ -488,7 +496,7 @@ static int obj_write_file(char *filename) {
     /* ================================================================
      * Step 5: Open file and write
      * ================================================================ */
-    obj_fd = open(filename, 577, 420);  /* O_WRONLY|O_CREAT|O_TRUNC, 0644 */
+    obj_fd = open(filename, OBJW_OPEN_FLAGS, 420);  /* mode 0644 */
     if (obj_fd < 0) return -1;
 
     obj_pos = 0;
