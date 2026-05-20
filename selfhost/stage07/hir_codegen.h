@@ -2066,12 +2066,16 @@ static void hcg_func(Node *fn) {
         }
         if (!saw_call) {
             /* Reclaim the stack space reserved for callee-saved registers.
-             * ra_assign_spills() always charges for used[0..17] callee colors;
-             * for a pure leaf we emit no save/restore but can still shrink the frame.
-             * The csave slots are the tail of hl_temp_stack (added after spills). */
-            int saved = ra_ncsave;
+             * ra_assign_spills() charges ra_csave_bytes of frame for the
+             * csave block (always the strict tail of hl_temp_stack); for a
+             * pure leaf we emit no save/restore and can shrink the frame
+             * by exactly that amount.  Reading the named accessor keeps
+             * the layout contract local to ra_assign_spills instead of
+             * an inline ra_ncsave*4 assumption here that silently breaks
+             * if the layout ever changes. */
             ra_ncsave = 0;
-            if (saved > 0) hl_temp_stack -= saved * 4;
+            hl_temp_stack -= ra_csave_bytes;
+            ra_csave_bytes = 0;
         }
     }
 

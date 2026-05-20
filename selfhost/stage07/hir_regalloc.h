@@ -210,12 +210,17 @@ static int ra_used[RA_NPHY_TOTAL];  /* 1 if register (slot) was assigned; sized 
 static int ra_csave_reg[RA_NPHY];   /* physical register number (still only callee-saved get slots) */
 static int ra_csave_off[RA_NPHY];   /* fp offset for save slot */
 static int ra_ncsave;               /* count of registers to save */
+static int ra_csave_bytes;          /* bytes of frame charged for csave slots; tail of hl_temp_stack
+                                     * after ra_assign_spills.  Read by leaf-frame reclaim in
+                                     * hir_codegen instead of recomputing ra_ncsave*4 inline. */
 static int ra_stat_spills;          /* cumulative spill count across all functions */
 static int ra_stat_caller_used;     /* how many values got caller-saved registers */
 static int ra_stat_callee_used;     /* how many values got callee-saved registers */
 static int ra_stat_param_preferred; /* how many HI_PARAM nodes got their ABI incoming reg as color (zero-copy entry) */
-static int ra_stat_src1_reuse;      /* binary ops that reused src1's physical register (reduces copies) */
-static int ra_stat_src2_reuse;      /* commutative ops that reused src2's physical register */
+static int ra_stat_operand_reuse;   /* binary ops whose result reused an operand's physical register
+                                     * (src1 for destructive ops, or src1/src2 for commutative ops) */
+static int ra_stat_src2_reuse;      /* subset of operand_reuse where src2 was the winning operand
+                                     * (only meaningful for commutative ops where reordering paid off) */
 static int ra_stat_secondary_reuse; /* times the secondary/smart operand choice actually supplied the color */
 static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base register's color */
 
@@ -698,12 +703,18 @@ static void ra_assign_spills(void) {
     /* Assign callee-save slots.
      * Only colors 0 .. RA_NCALLEE-1 (r11..r28) ever need to be saved/restored.
      * Caller-saved colors (when enabled) are deliberately excluded — that is
-     * the whole point of the classification work. */
+     * the whole point of the classification work.
+     *
+     * Track the bytes we charge here in ra_csave_bytes so the leaf-frame
+     * reclaim in hir_codegen can subtract them by name instead of assuming
+     * the layout (csave block is the strict tail of hl_temp_stack here). */
     ra_ncsave = 0;
+    ra_csave_bytes = 0;
     r = 0;
     while (r < RA_NCALLEE) {
         if (ra_used[r]) {
             hl_temp_stack = hl_temp_stack + 4;
+            ra_csave_bytes = ra_csave_bytes + 4;
             ra_csave_reg[ra_ncsave] = ra_get_phys(r);  /* r11..r28 */
             ra_csave_off[ra_ncsave] = 0 - hl_temp_stack;
             ra_ncsave = ra_ncsave + 1;
@@ -1313,7 +1324,7 @@ static void gc_select(void) {
                             int col = gc_color[s1_node];
                             if (col >= 0 && col < maxc && !used[col]) {
                                 gc_color[n] = col;
-                                ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                                ra_stat_operand_reuse = ra_stat_operand_reuse + 1;
                                 if (k == HI_ADDI) {
                                     ra_stat_imm_base_reuse = ra_stat_imm_base_reuse + 1;
                                 }
@@ -1333,6 +1344,7 @@ static void gc_select(void) {
                 {
                     int best_col = -1;
                     int best_phys = 999;
+                    int best_is_src2 = 0;
 
                     // consider src1
                     int s1 = h_src1[inst];
@@ -1345,12 +1357,13 @@ static void gc_select(void) {
                                 if (phys < best_phys) {
                                     best_col = col;
                                     best_phys = phys;
+                                    best_is_src2 = 0;
                                 }
                             }
                         }
                     }
 
-                    // consider src2
+                    // consider src2 (may displace src1 if its phys is lower)
                     int s2 = h_src2[inst];
                     if (s2 >= 0) {
                         int s2_node = gc_node[s2];
@@ -1361,6 +1374,7 @@ static void gc_select(void) {
                                 if (phys < best_phys) {
                                     best_col = col;
                                     best_phys = phys;
+                                    best_is_src2 = 1;
                                 }
                             }
                         }
@@ -1368,8 +1382,10 @@ static void gc_select(void) {
 
                     if (best_col != -1) {
                         gc_color[n] = best_col;
-                        ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
-                        ra_stat_src2_reuse = ra_stat_src2_reuse + 1;
+                        ra_stat_operand_reuse = ra_stat_operand_reuse + 1;
+                        if (best_is_src2) {
+                            ra_stat_src2_reuse = ra_stat_src2_reuse + 1;
+                        }
                         ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     }
                 }
@@ -1390,6 +1406,7 @@ static void gc_select(void) {
                  */
                 int best_col = -1;
                 int best_phys = 999;
+                int best_is_src2 = 0;
 
                 if (ra_can_reuse_src1(k)) {
                     int s1 = h_src1[inst];
@@ -1402,6 +1419,7 @@ static void gc_select(void) {
                                 if (phys < best_phys) {
                                     best_col = col;
                                     best_phys = phys;
+                                    best_is_src2 = 0;
                                 }
                             }
                         }
@@ -1419,7 +1437,7 @@ static void gc_select(void) {
                                 if (phys < best_phys) {
                                     best_col = col;
                                     best_phys = phys;
-                                    ra_stat_src2_reuse = ra_stat_src2_reuse + 1;
+                                    best_is_src2 = 1;
                                 }
                             }
                         }
@@ -1428,9 +1446,14 @@ static void gc_select(void) {
 
                 if (best_col != -1) {
                     gc_color[n] = best_col;
-                    ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                    ra_stat_operand_reuse = ra_stat_operand_reuse + 1;
+                    if (best_is_src2) {
+                        ra_stat_src2_reuse = ra_stat_src2_reuse + 1;
+                    }
                     ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     if (k == HI_ADDI) {
+                        /* ADDI is non-commutative — best_is_src2 is always 0 here,
+                         * so this fires iff the ADDI base register was actually reused. */
                         ra_stat_imm_base_reuse = ra_stat_imm_base_reuse + 1;
                     }
                 }
@@ -1457,6 +1480,7 @@ static void gc_select(void) {
                      * This is the "biased selection" pass.
                      */
                     int biased = -1;
+                    int biased_is_src2 = 0;
                     if (ra_can_reuse_src1(k)) {
                         int s1 = h_src1[inst];
                         if (s1 >= 0) {
@@ -1465,6 +1489,7 @@ static void gc_select(void) {
                                 int col = gc_color[s1_node];
                                 if (col >= RA_NCALLEE && col < maxc && !used[col]) {
                                     biased = col;
+                                    biased_is_src2 = 0;
                                 }
                             }
                         }
@@ -1479,6 +1504,7 @@ static void gc_select(void) {
                                 int col = gc_color[s2_node];
                                 if (col >= RA_NCALLEE && col < maxc && !used[col]) {
                                     biased = col;
+                                    biased_is_src2 = 1;
                                 }
                             }
                         }
@@ -1486,7 +1512,10 @@ static void gc_select(void) {
 
                     if (biased >= 0) {
                         gc_color[n] = biased;
-                        ra_stat_src1_reuse = ra_stat_src1_reuse + 1;
+                        ra_stat_operand_reuse = ra_stat_operand_reuse + 1;
+                        if (biased_is_src2) {
+                            ra_stat_src2_reuse = ra_stat_src2_reuse + 1;
+                        }
                         ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     } else {
                         /* No biased color available — fall back to plain first-free */
@@ -1629,7 +1658,7 @@ static void hir_regalloc(void) {
     ra_stat_caller_used = 0;
     ra_stat_callee_used = 0;
     ra_stat_param_preferred = 0;
-    ra_stat_src1_reuse = 0;
+    ra_stat_operand_reuse = 0;
     ra_stat_src2_reuse = 0;
     ra_stat_secondary_reuse = 0;
     ra_stat_imm_base_reuse = 0;

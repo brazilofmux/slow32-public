@@ -316,10 +316,11 @@ int main(int argc, char **argv) {
     fdputuint(2, ra_stat_callee_used);
     fdputs(" param_pref=", 2);
     fdputuint(2, ra_stat_param_preferred);
-    fdputs(" src1_reuse=", 2);
-    fdputuint(2, ra_stat_src1_reuse);
-    fdputs(" src2_reuse=", 2);
+    fdputs(" op_reuse=", 2);
+    fdputuint(2, ra_stat_operand_reuse);
+    fdputs(" (src2=", 2);
     fdputuint(2, ra_stat_src2_reuse);
+    fdputs(")", 2);
     fdputs(" secondary=", 2);
     fdputuint(2, ra_stat_secondary_reuse);
     fdputs(" imm_base=", 2);
