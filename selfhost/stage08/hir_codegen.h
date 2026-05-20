@@ -2046,40 +2046,19 @@ static void hcg_func(Node *fn) {
         ra_dump_intervals(fn->name);
     }
 
-    /* Leaf-function optimization (now much more effective with classification).
-     * If the function contains no calls at all, nothing can clobber the
-     * callee-saved registers, so we can skip saving/restoring them entirely.
-     * The body is free to use r3-r10 (caller-saved) for its temporaries.
-     * We also reclaim the frame space that ra_assign_spills() reserved for them.
-     */
-    {
-        int ii = 0;
-        int saw_call = 0;
-        while (ii < h_ninst) {
-            int kk = h_kind[ii];
-            if (kk == HI_CALL || kk == HI_CALLP || kk == HI_CALLHI ||
-                kk == HI_A64_DBT_TRAMPOLINE || kk == HI_X64_DBT_TRAMPOLINE) {
-                saw_call = 1;
-                break;
-            }
-            ii = ii + 1;
-        }
-        if (!saw_call) {
-            /* Reclaim the stack space reserved for callee-saved registers.
-             * ra_assign_spills() charges ra_csave_bytes of frame for the
-             * csave block (always the strict tail of hl_temp_stack); for a
-             * pure leaf we emit no save/restore and can shrink the frame
-             * by exactly that amount.  Reading the named accessor keeps
-             * the layout contract local to ra_assign_spills instead of
-             * an inline ra_ncsave*4 assumption here that silently breaks
-             * if the layout ever changes. */
-            ra_ncsave = 0;
-            hl_temp_stack -= ra_csave_bytes;
-            ra_csave_bytes = 0;
-        }
-    }
+    /* Note: there is no separate "leaf function" save-elision here.  The
+     * allocator-side caller-saved feature (hir_regalloc.h:
+     * ra_caller_saved_enabled_count, ra_mark_call_crossing, two-phase
+     * gc_select) already gives leaf functions exactly that win: any value
+     * whose live range does not cross a call is colored from r3-r10, so
+     * ra_used[0..RA_NCALLEE-1] stays 0 and ra_assign_spills naturally
+     * leaves ra_ncsave = 0.  An older codegen-side `if (!saw_call)`
+     * shortcut here also force-zeroed ra_ncsave, which silently clobbered
+     * the caller's r11..r28 whenever a leaf with >8 simultaneously-live
+     * values still had to spill into the callee pool. */
 
-    /* Compute frame size (hl_temp_stack now includes spills + (possibly reclaimed) callee-saves) */
+    /* Compute frame size (hl_temp_stack includes spills + any callee-saves
+     * the allocator could not avoid). */
     fs = hl_temp_stack;
     fs = ((fs + 3) / 4) * 4;
     hcg_locals = fn->locals_size;
