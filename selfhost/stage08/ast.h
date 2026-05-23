@@ -46,6 +46,13 @@ static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load)
 static int   stm_arr_size[ST_MAX_MEMBERS]; /* total byte size for array members */
 static int   stm_owner[ST_MAX_MEMBERS]; /* owning struct index for this member */
 static int   stm_synth[ST_MAX_MEMBERS]; /* 1 = lookup alias from anonymous aggregate */
+/* Bit-field metadata.  stm_bit_width[mi]==0 means "not a bit-field" — the
+ * common case, and the default since these arrays sit in BSS.  For bit-
+ * fields, stm_off[mi] is the byte offset of the containing storage unit,
+ * stm_type[mi] is the declared base type (carries signedness), and
+ * stm_bit_off is the bit position within that unit (LSB=0). */
+static int   stm_bit_off[ST_MAX_MEMBERS];
+static int   stm_bit_width[ST_MAX_MEMBERS];
 static int   stm_count;
 
 /* --- Type helpers --- */
@@ -167,7 +174,7 @@ static int ty_is_unsigned(int ty) {
 #define ND_TERNARY  22   /* ternary ?: */
 #define ND_CAST     23   /* type cast */
 #define ND_COMMA    24   /* comma operator */
-#define ND_MEMBER   25   /* struct member access: lhs=struct expr, val=offset, ty=member type */
+#define ND_MEMBER   25   /* struct member access: lhs=struct expr, val=byte offset of storage unit, ty=member type, bit_width!=0 ⇒ bit-field */
 #define ND_SWITCH   26   /* switch: cond=expr, body=block */
 #define ND_CASE     27   /* case label: val=constant value */
 #define ND_DEFAULT  28   /* default label (no data) */
@@ -211,6 +218,8 @@ struct Node {
     int is_varargs;   /* FUNC: 1 if variadic (...) */
     int is_static;    /* FUNC: 1 if `static` storage class — emit STB_LOCAL */
     int locals_size;  /* FUNC: total local stack bytes */
+    int bit_off;      /* MEMBER: bit offset within storage unit (bit-fields) */
+    int bit_width;    /* MEMBER: bit-field width in bits; 0 = not a bit-field */
     struct Node *lhs; /* BINOP/ASSIGN/UNARY: left/operand */
     struct Node *rhs; /* BINOP/ASSIGN: right */
     struct Node *cond;/* IF/WHILE: condition */
@@ -446,7 +455,8 @@ static Node *nd_comma(Node *l, Node *r) {
     return n;
 }
 
-static Node *nd_member(Node *lhs, int offset, int mty, int is_arr, int arr_size) {
+static Node *nd_member(Node *lhs, int offset, int mty, int is_arr, int arr_size,
+                       int bit_off, int bit_width) {
     Node *n;
     n = nd_new(ND_MEMBER);
     n->lhs = lhs;
@@ -454,6 +464,8 @@ static Node *nd_member(Node *lhs, int offset, int mty, int is_arr, int arr_size)
     n->ty = mty;
     n->is_array = is_arr;
     n->val_hi = arr_size;
+    n->bit_off = bit_off;
+    n->bit_width = bit_width;
     return n;
 }
 

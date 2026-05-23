@@ -640,10 +640,92 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
             stm_arr_size[stm_count] = stm_arr_size[i];
             stm_owner[stm_count] = owner_si;
             stm_synth[stm_count] = 1;
+            stm_bit_off[stm_count] = stm_bit_off[i];
+            stm_bit_width[stm_count] = stm_bit_width[i];
             stm_count = stm_count + 1;
         }
         i = i + 1;
     }
+}
+
+/* --- Bit-field allocation (C99 6.7.2.1) ---
+ *
+ * State is per-struct: kept in a 3-int array (bs[0]=uoff, bs[1]=usize,
+ * bs[2]=ubits) so nested struct definitions don't clobber each other.
+ * uoff = -1 means no active storage unit.  Packing is LSB-first
+ * (little-endian), matching gcc/clang on slow-32 / x64 / aarch64; no
+ * straddling across units.
+ *
+ * Subsequent bit-fields of the same base type pack into the same unit
+ * until either the next field won't fit or the base type's size changes,
+ * at which point a fresh unit is opened at the aligned byte cursor.
+ *
+ * Bundling the unit state keeps every helper's parameter list at or
+ * below 7 — the selfhost compiler's stack-arg handling is unreliable
+ * past 8 register args, so we stay well clear.
+ */
+#define BF_UOFF  0
+#define BF_USIZE 1
+#define BF_UBITS 2
+
+static void bf_alloc(int dty, int width,
+                     int *cur_off, int *max_align, int *bs,
+                     int *byte_off_out, int *bit_off_out) {
+    int u_size;
+    int u_align;
+    int need_new;
+    int aligned;
+    u_size = ty_size(dty);
+    u_align = ty_align(dty);
+    need_new = (bs[BF_UOFF] < 0) || (bs[BF_USIZE] != u_size) ||
+               (bs[BF_UBITS] + width > u_size * 8);
+    if (need_new) {
+        aligned = ((*cur_off + u_align - 1) / u_align) * u_align;
+        bs[BF_UOFF]  = aligned;
+        bs[BF_USIZE] = u_size;
+        bs[BF_UBITS] = 0;
+        *cur_off = aligned + u_size;
+    }
+    if (u_align > *max_align) *max_align = u_align;
+    *byte_off_out = bs[BF_UOFF];
+    *bit_off_out  = bs[BF_UBITS];
+    bs[BF_UBITS]  = bs[BF_UBITS] + width;
+}
+
+/* :0 — flush the current unit so the next bit-field starts fresh, and
+ * align the byte cursor to dty's alignment if no unit is active. */
+static void bf_flush_for_zero(int dty, int *cur_off, int *max_align, int *bs) {
+    int u_align;
+    int aligned;
+    u_align = ty_align(dty);
+    if (bs[BF_UOFF] < 0) {
+        aligned = ((*cur_off + u_align - 1) / u_align) * u_align;
+        *cur_off = aligned;
+    }
+    if (u_align > *max_align) *max_align = u_align;
+    bs[BF_UOFF]  = -1;
+    bs[BF_USIZE] = 0;
+    bs[BF_UBITS] = 0;
+}
+
+/* Close any open unit before a non-bit-field member; cur_off was already
+ * advanced past the unit when it was opened, so just reset state. */
+static void bf_close(int *bs) {
+    bs[BF_UOFF]  = -1;
+    bs[BF_USIZE] = 0;
+    bs[BF_UBITS] = 0;
+}
+
+/* Bit-fields are restricted to integer base types no wider than 32 bits.
+ * C99 6.7.2.1p9 names _Bool/signed int/unsigned int and "some other
+ * implementation-defined type"; char and short are the common extensions.
+ * Wider types (long long, __int128, pointers, floats, struct) need an
+ * 8+ byte RMW path the lowering pass doesn't have. */
+static int bf_is_valid_type(int dty) {
+    int base;
+    if (ty_is_ptr(dty)) return 0;
+    base = dty & TY_BASE_MASK;
+    return base == TY_CHAR || base == TY_SHORT || base == TY_INT;
 }
 
 /* Parse a type: int, char, void, struct, with optional pointer stars */
@@ -788,6 +870,7 @@ static int parse_type(void) {
         if (lex_tok == TK_LBRACE) {
             /* Struct definition: struct Name { ... } */
             int max_align;
+            int bs[3];      /* bit-field storage-unit state; see bf_alloc */
             next();
             if (si < 0) {
                 si = add_struct(nm);
@@ -796,6 +879,9 @@ static int parse_type(void) {
             }
             off = 0;
             max_align = 1;
+            bs[BF_UOFF]  = -1;
+            bs[BF_USIZE] = 0;
+            bs[BF_UBITS] = 0;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
                 first_decl = 1;
@@ -803,6 +889,9 @@ static int parse_type(void) {
                 while (1) {
                     int is_fn_ptr_member;
                     int member_ty;
+                    int bf_width;
+                    int bf_byte_off;
+                    int bf_bit_off;
 
                     if (first_decl) {
                         dty = mty;
@@ -812,16 +901,31 @@ static int parse_type(void) {
                         while (ty_is_ptr(dty)) dty = ty_deref(dty);
                         while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
                     }
+                    /* Anonymous bit-field: 'type :W;' — reserves bits, no
+                     * member entry; ':0' flushes the current storage unit. */
                     if (lex_tok == TK_COLON) {
-                        int balign;
                         next();
-                        arr_count = parse_const_int();
+                        bf_width = parse_const_int();
                         require_complete_type(dty, "incomplete bit-field type");
-                        balign = ty_align(dty);
-                        if (balign > 1) off = ((off + balign - 1) / balign) * balign;
-                        if (balign > max_align) max_align = balign;
-                        if (arr_count > 0) off = off + ty_size(dty);
-                        break;
+                        if (!bf_is_valid_type(dty)) {
+                            p_error("bit-field must have char/short/int base type");
+                            return TY_INT;
+                        }
+                        if (bf_width < 0) {
+                            p_error("negative bit-field width");
+                            return TY_INT;
+                        }
+                        if (bf_width > ty_size(dty) * 8) {
+                            p_error("bit-field width exceeds type size");
+                            return TY_INT;
+                        }
+                        if (bf_width == 0) {
+                            bf_flush_for_zero(dty, &off, &max_align, bs);
+                        } else {
+                            bf_alloc(dty, bf_width, &off, &max_align, bs,
+                                     &bf_byte_off, &bf_bit_off);
+                        }
+                        goto struct_comma_check;
                     }
                     is_fn_ptr_member = 0;
                     member_ty = dty;
@@ -829,6 +933,7 @@ static int parse_type(void) {
                     if (lex_tok == TK_SEMI && ty_is_struct(member_ty)) {
                         int malign;
                         require_complete_type(member_ty, "incomplete anonymous struct member");
+                        bf_close(bs);
                         malign = ty_align(member_ty);
                         if (malign > 1)
                             off = ((off + malign - 1) / malign) * malign;
@@ -851,18 +956,6 @@ static int parse_type(void) {
                         p_error("expected member name");
                         return TY_INT;
                     }
-                    /* Align offset to the member's natural alignment.
-                     * On 64-bit hosts (cc-x64, cc-a64) pointer/llong/double
-                     * fields require 8-byte alignment so that JIT-emitted
-                     * LDR X / STR X loads (scaled offsets) hit the right
-                     * bytes; on SLOW-32 native ty_align() collapses to the
-                     * old 1/2/4 behaviour. */
-                    {
-                        int malign = ty_align(member_ty);
-                        if (malign > 1)
-                            off = ((off + malign - 1) / malign) * malign;
-                        if (malign > max_align) max_align = malign;
-                    }
                     if (stm_count >= ST_MAX_MEMBERS) {
                         p_error("too many struct members");
                         return TY_INT;
@@ -876,6 +969,52 @@ static int parse_type(void) {
                             while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                             expect(TK_RPAREN);
                         }
+                    }
+                    /* Named bit-field: 'type name :W;'.  Must run BEFORE the
+                     * non-bit-field bf_close/alignment block below — otherwise
+                     * each named bit-field would clear the storage-unit state
+                     * and start a fresh unit instead of packing. */
+                    if (!is_fn_ptr_member && lex_tok == TK_COLON) {
+                        next();
+                        bf_width = parse_const_int();
+                        require_complete_type(dty, "incomplete bit-field type");
+                        if (!bf_is_valid_type(dty)) {
+                            p_error("bit-field must have char/short/int base type");
+                            return TY_INT;
+                        }
+                        if (bf_width <= 0) {
+                            p_error("named bit-field must have positive width");
+                            return TY_INT;
+                        }
+                        if (bf_width > ty_size(dty) * 8) {
+                            p_error("bit-field width exceeds type size");
+                            return TY_INT;
+                        }
+                        bf_alloc(dty, bf_width, &off, &max_align, bs,
+                                 &bf_byte_off, &bf_bit_off);
+                        stm_owner[stm_count] = si;
+                        stm_type[stm_count] = dty;
+                        stm_is_arr[stm_count] = 0;
+                        stm_arr_size[stm_count] = 0;
+                        stm_off[stm_count] = bf_byte_off;
+                        stm_synth[stm_count] = 0;
+                        stm_bit_off[stm_count] = bf_bit_off;
+                        stm_bit_width[stm_count] = bf_width;
+                        stm_count = stm_count + 1;
+                        st_nfields[si] = st_nfields[si] + 1;
+                        skip_gnu_decl_suffixes();
+                        goto struct_comma_check;
+                    }
+                    /* Past the bit-field check: this is a regular member.
+                     * End any open bit-field unit (cur_off was already
+                     * advanced past it) and align off to the member's
+                     * natural alignment. */
+                    bf_close(bs);
+                    {
+                        int malign = ty_align(member_ty);
+                        if (malign > 1)
+                            off = ((off + malign - 1) / malign) * malign;
+                        if (malign > max_align) max_align = malign;
                     }
                     /* Check for array member: type name[N][M]...;  A final
                      * unsized member is a C99 flexible array member: it has
@@ -934,6 +1073,7 @@ static int parse_type(void) {
                     }
                     stm_count = stm_count + 1;
                     st_nfields[si] = st_nfields[si] + 1;
+                struct_comma_check:
                     if (lex_tok != TK_COMMA) break;
                     next();
                 }
@@ -944,6 +1084,9 @@ static int parse_type(void) {
                 }
             }
             expect(TK_RBRACE);
+            /* Any trailing bit-field unit is implicitly closed here.  The
+             * byte cursor `off` is already past it (bf_alloc advances
+             * cur_off when opening the unit), so sizeof is correct. */
             /* Round total size up to the struct's alignment so that arrays
              * of struct keep each element naturally aligned.  The historical
              * "round to 4" rule is a special case of this when max_align <= 4. */
@@ -989,6 +1132,7 @@ static int parse_type(void) {
                 while (1) {
                     int is_fn_ptr_member;
                     int member_ty;
+                    int bf_width;
 
                     if (first_decl) {
                         dty = mty;
@@ -998,12 +1142,32 @@ static int parse_type(void) {
                         while (ty_is_ptr(dty)) dty = ty_deref(dty);
                         while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
                     }
+                    /* Anonymous bit-field in union: 'type :W;' — affects
+                     * sizeof / alignment only.  Unions don't pack, so
+                     * there's no unit cursor to track. */
                     if (lex_tok == TK_COLON) {
                         next();
-                        arr_count = parse_const_int();
+                        bf_width = parse_const_int();
                         require_complete_type(dty, "incomplete bit-field type");
-                        if (arr_count > 0 && ty_size(dty) > max_sz) max_sz = ty_size(dty);
-                        break;
+                        if (!bf_is_valid_type(dty)) {
+                            p_error("bit-field must have char/short/int base type");
+                            return TY_INT;
+                        }
+                        if (bf_width < 0) {
+                            p_error("negative bit-field width");
+                            return TY_INT;
+                        }
+                        if (bf_width > ty_size(dty) * 8) {
+                            p_error("bit-field width exceeds type size");
+                            return TY_INT;
+                        }
+                        if (bf_width > 0) {
+                            int malign;
+                            if (ty_size(dty) > max_sz) max_sz = ty_size(dty);
+                            malign = ty_align(dty);
+                            if (malign > max_align) max_align = malign;
+                        }
+                        goto union_comma_check;
                     }
                     is_fn_ptr_member = 0;
                     member_ty = dty;
@@ -1045,6 +1209,41 @@ static int parse_type(void) {
                             expect(TK_RPAREN);
                         }
                     }
+                    /* Named bit-field in union: each occupies bits 0..W-1
+                     * at offset 0 (no packing across members). */
+                    if (!is_fn_ptr_member && lex_tok == TK_COLON) {
+                        int malign;
+                        next();
+                        bf_width = parse_const_int();
+                        require_complete_type(dty, "incomplete bit-field type");
+                        if (!bf_is_valid_type(dty)) {
+                            p_error("bit-field must have char/short/int base type");
+                            return TY_INT;
+                        }
+                        if (bf_width <= 0) {
+                            p_error("named bit-field must have positive width");
+                            return TY_INT;
+                        }
+                        if (bf_width > ty_size(dty) * 8) {
+                            p_error("bit-field width exceeds type size");
+                            return TY_INT;
+                        }
+                        stm_owner[stm_count] = si;
+                        stm_type[stm_count] = dty;
+                        stm_is_arr[stm_count] = 0;
+                        stm_arr_size[stm_count] = 0;
+                        stm_off[stm_count] = 0;
+                        stm_synth[stm_count] = 0;
+                        stm_bit_off[stm_count] = 0;
+                        stm_bit_width[stm_count] = bf_width;
+                        stm_count = stm_count + 1;
+                        st_nfields[si] = st_nfields[si] + 1;
+                        if (ty_size(dty) > max_sz) max_sz = ty_size(dty);
+                        malign = ty_align(dty);
+                        if (malign > max_align) max_align = malign;
+                        skip_gnu_decl_suffixes();
+                        goto union_comma_check;
+                    }
                     /* Check for array member: type name[N][M]...; */
                     arr_count = 0;
                     while (lex_tok == TK_LBRACK) {
@@ -1085,6 +1284,7 @@ static int parse_type(void) {
                     }
                     stm_count = stm_count + 1;
                     st_nfields[si] = st_nfields[si] + 1;
+                union_comma_check:
                     if (lex_tok != TK_COMMA) break;
                     next();
                 }
@@ -1562,6 +1762,8 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
             if (mi < 0) p_error("unknown field in initializer");
             if (struct_member_is_flexible_array(mi))
                 p_error("flexible array initializer unsupported");
+            if (stm_bit_width[mi] > 0)
+                p_error("bit-field in struct initializer unsupported");
             rel = rel + stm_off[mi];
             ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
@@ -1690,6 +1892,8 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
             if (mi < 0) p_error("missing struct field");
             if (struct_member_is_flexible_array(mi))
                 p_error("flexible array initializer unsupported");
+            if (stm_bit_width[mi] > 0)
+                p_error("bit-field in struct initializer unsupported");
             field_ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
             parse_global_init_value_at(field_ty, arr_count, gidx, base_rel + stm_off[mi]);
@@ -2221,6 +2425,10 @@ static Node *parse_primary(void) {
             p_error("unknown member in offsetof");
             return nd_num(0);
         }
+        if (stm_bit_width[omi] > 0) {
+            p_error("offsetof of bit-field is not allowed");
+            return nd_num(0);
+        }
         v = stm_off[omi];
         expect(TK_RPAREN);
         return nd_num(v);
@@ -2317,7 +2525,8 @@ static Node *parse_postfix(void) {
             if (mi < 0) {
                 p_error("undefined struct member");
             }
-            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi]);
+            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
+                          stm_bit_off[mi], stm_bit_width[mi]);
         } else if (lex_tok == TK_ARROW) {
             next();
             if (lex_tok != TK_IDENT) {
@@ -2339,7 +2548,8 @@ static Node *parse_postfix(void) {
             if (mi < 0) {
                 p_error("undefined struct member");
             }
-            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi]);
+            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
+                          stm_bit_off[mi], stm_bit_width[mi]);
         } else if (lex_tok == TK_INC) {
             next();
             pi = nd_new(ND_POST_INC);
@@ -2398,6 +2608,9 @@ static Node *parse_unary(void) {
     if (lex_tok == TK_AMP) {
         next();
         n = parse_unary();
+        if (n->kind == ND_MEMBER && n->bit_width > 0) {
+            p_error("cannot take address of bit-field");
+        }
         return nd_unary(TK_AMP, n);
     }
     return parse_postfix();
@@ -2656,7 +2869,7 @@ static Node *local_init_lvalue(int rel_off, int target_ty, int target_arr_count)
     if (target_arr_count != 0 && ty_is_ptr(target_ty))
         arr_sz = target_arr_count * ty_size(ty_deref(target_ty));
     n = local_init_base();
-    return nd_member(n, rel_off, target_ty, target_arr_count != 0, arr_sz);
+    return nd_member(n, rel_off, target_ty, target_arr_count != 0, arr_sz, 0, 0);
 }
 
 static void local_init_emit_assign(int rel_off, int target_ty, Node *rhs) {
@@ -2837,6 +3050,8 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
             if (mi < 0) p_error("missing struct field");
             if (struct_member_is_flexible_array(mi))
                 p_error("flexible array initializer unsupported");
+            if (stm_bit_width[mi] > 0)
+                p_error("bit-field in struct initializer unsupported");
             field_ty = stm_type[mi];
             field_arr_count = struct_member_array_count(mi);
             parse_local_init_value_at(field_ty, field_arr_count, rel_off + stm_off[mi]);

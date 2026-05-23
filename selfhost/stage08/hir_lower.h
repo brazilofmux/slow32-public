@@ -291,6 +291,97 @@ static int hl_binop_kind(int op, int ty) {
     return HI_ADD;
 }
 
+/* --- Bit-field load/store helpers ---
+ *
+ * Storage units are 1/2/4 bytes (char/short/int base type, enforced by
+ * the parser).  Load extracts via SLL/SRA-or-SRL: shift the bit-field's
+ * MSB to bit 31, then shift right with the right arithmetic to fill
+ * the high bits (sign-extend for signed, zero-extend for unsigned).
+ * Store is read-modify-write at the storage-unit granularity. */
+static int hl_bf_extract(int unit_val, int width, int boff, int is_unsigned) {
+    int left_shift;
+    int right_shift;
+    int sl_imm;
+    int sr_imm;
+    int shifted;
+    int op;
+    left_shift = 32 - width - boff;
+    right_shift = 32 - width;
+    if (left_shift != 0) {
+        sl_imm = hi_emit(HI_ICONST, TY_INT, -1, -1, left_shift, NULL);
+        shifted = hi_emit(HI_SLL, TY_INT, unit_val, sl_imm, 0, NULL);
+    } else {
+        shifted = unit_val;
+    }
+    if (right_shift == 0) return shifted;
+    op = is_unsigned ? HI_SRL : HI_SRA;
+    sr_imm = hi_emit(HI_ICONST, TY_INT, -1, -1, right_shift, NULL);
+    return hi_emit(op, TY_INT, shifted, sr_imm, 0, NULL);
+}
+
+static int hl_bf_load(int base_addr, int unit_ty, int width, int boff,
+                      int is_unsigned) {
+    int unit_val;
+    unit_val = hi_emit(HI_LOAD, unit_ty, base_addr, -1, 0, NULL);
+    return hl_bf_extract(unit_val, width, boff, is_unsigned);
+}
+
+/* Store the low `width` bits of new_bits into the storage unit at base_addr,
+ * preserving the surrounding bits.  Returns the post-truncation low-`width`
+ * value (useful for chained assignment results). */
+static int hl_bf_store(int base_addr, int unit_ty, int width, int boff,
+                       int new_bits) {
+    int mask;
+    int shifted_mask;
+    int inv_mask;
+    int mask_const;
+    int inv_const;
+    int boff_const;
+    int new_masked;
+    int new_shifted;
+    int old_val;
+    int cleared;
+    int new_unit;
+    /* Use unsigned shift so width==32 yields 0 (not undefined).  In C the
+     * stage07 compiler uses int, so (1<<32) is UB; we guard width==32. */
+    if (width == 32) {
+        mask = -1;
+    } else {
+        mask = (1 << width) - 1;
+    }
+    shifted_mask = mask << boff;
+    inv_mask = ~shifted_mask;
+    mask_const = hi_emit(HI_ICONST, TY_INT, -1, -1, mask, NULL);
+    new_masked = hi_emit(HI_AND, TY_INT, new_bits, mask_const, 0, NULL);
+    if (boff != 0) {
+        boff_const = hi_emit(HI_ICONST, TY_INT, -1, -1, boff, NULL);
+        new_shifted = hi_emit(HI_SLL, TY_INT, new_masked, boff_const, 0, NULL);
+    } else {
+        new_shifted = new_masked;
+    }
+    inv_const = hi_emit(HI_ICONST, TY_INT, -1, -1, inv_mask, NULL);
+    old_val = hi_emit(HI_LOAD, unit_ty, base_addr, -1, 0, NULL);
+    cleared = hi_emit(HI_AND, TY_INT, old_val, inv_const, 0, NULL);
+    new_unit = hi_emit(HI_OR, TY_INT, cleared, new_shifted, 0, NULL);
+    hi_emit(HI_STORE, unit_ty, base_addr, new_unit, 0, NULL);
+    return new_masked;
+}
+
+/* Compute the address of a bit-field's storage unit (the base struct
+ * address plus the unit's byte offset). */
+static int hl_bf_unit_addr(Node *member) {
+    int addr;
+    addr = hl_addr(member->lhs);
+    return hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, member->val, NULL);
+}
+
+/* Storage-unit load type for a bit-field's declared base type.  Use the
+ * UNSIGNED form so the load zero-extends; the extract step adds the
+ * correct sign bits. */
+static int hl_bf_unit_ty(int member_ty) {
+    return (member_ty & TY_BASE_MASK) | TY_UNSIGNED;
+}
+
 /* --- Address computation (lvalue → HIR addr instruction) --- */
 
 static int hl_addr(Node *n) {
@@ -313,6 +404,10 @@ static int hl_addr(Node *n) {
      * on a64) so the codegen treats the result as wide and doesn't spill
      * it as a 32-bit int (would truncate the address). */
     if (n->kind == ND_MEMBER) {
+        if (n->bit_width > 0) {
+            p_error("cannot take address of bit-field (hir)");
+            return -1;
+        }
         addr = hl_addr(n->lhs);
         /* Keep field-zero aggregate accesses distinct from plain scalar
          * allocas; mem2reg is allowed to promote scalars, not subobjects. */
@@ -545,6 +640,21 @@ static int hl_expr(Node *n) {
 
     /* Assignment */
     if (n->kind == ND_ASSIGN) {
+        /* Bit-field LHS: RMW the storage unit; return rhs as the
+         * assignment-expression value (C99 says the converted value, but
+         * truncation is only observable on overflow, which most callers
+         * don't depend on). */
+        if (n->lhs->kind == ND_MEMBER && n->lhs->bit_width > 0) {
+            int base_addr;
+            int rhs_val;
+            int unit_ty;
+            base_addr = hl_bf_unit_addr(n->lhs);
+            unit_ty = hl_bf_unit_ty(n->lhs->ty);
+            rhs_val = hl_expr(n->rhs);
+            hl_bf_store(base_addr, unit_ty, n->lhs->bit_width,
+                        n->lhs->bit_off, rhs_val);
+            return rhs_val;
+        }
         if (ty_is_struct(n->ty)) {
             /* Struct assignment: word-by-word copy */
             int sa;
@@ -1279,6 +1389,28 @@ static int hl_expr(Node *n) {
 
     /* Compound assignment (+=, -=, etc.) */
     if (n->kind == ND_COMP_ASSIGN) {
+        /* Bit-field LHS: extract old, apply op, RMW the unit. */
+        if (n->lhs->kind == ND_MEMBER && n->lhs->bit_width > 0) {
+            int base_addr;
+            int unit_ty;
+            int unsigned_bf;
+            int unit_val;
+            int rhs_val;
+            int new_val;
+            int kop;
+            base_addr = hl_bf_unit_addr(n->lhs);
+            unit_ty = hl_bf_unit_ty(n->lhs->ty);
+            unsigned_bf = (n->lhs->ty & TY_UNSIGNED) != 0;
+            unit_val = hi_emit(HI_LOAD, unit_ty, base_addr, -1, 0, NULL);
+            old_val = hl_bf_extract(unit_val, n->lhs->bit_width,
+                                    n->lhs->bit_off, unsigned_bf);
+            rhs_val = hl_expr(n->rhs);
+            kop = hl_binop_kind(n->op, n->lhs->ty);
+            new_val = hi_emit(kop, TY_INT, old_val, rhs_val, 0, NULL);
+            hl_bf_store(base_addr, unit_ty, n->lhs->bit_width,
+                        n->lhs->bit_off, new_val);
+            return new_val;
+        }
         addr = hl_addr(n->lhs);
         old_val = hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
         rv = hl_expr(n->rhs);
@@ -1321,6 +1453,30 @@ static int hl_expr(Node *n) {
 
     /* Postfix ++ / -- */
     if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
+        /* Bit-field LHS: extract old, +/-1, RMW unit, return old. */
+        if (n->lhs->kind == ND_MEMBER && n->lhs->bit_width > 0) {
+            int base_addr;
+            int unit_ty;
+            int unsigned_bf;
+            int unit_val;
+            int one;
+            int new_val;
+            base_addr = hl_bf_unit_addr(n->lhs);
+            unit_ty = hl_bf_unit_ty(n->lhs->ty);
+            unsigned_bf = (n->lhs->ty & TY_UNSIGNED) != 0;
+            unit_val = hi_emit(HI_LOAD, unit_ty, base_addr, -1, 0, NULL);
+            old_val = hl_bf_extract(unit_val, n->lhs->bit_width,
+                                    n->lhs->bit_off, unsigned_bf);
+            one = hi_emit(HI_ICONST, TY_INT, -1, -1, 1, NULL);
+            if (n->kind == ND_POST_INC) {
+                new_val = hi_emit(HI_ADD, TY_INT, old_val, one, 0, NULL);
+            } else {
+                new_val = hi_emit(HI_SUB, TY_INT, old_val, one, 0, NULL);
+            }
+            hl_bf_store(base_addr, unit_ty, n->lhs->bit_width,
+                        n->lhs->bit_off, new_val);
+            return old_val;
+        }
         addr = hl_addr(n->lhs);
         old_val = hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
         /* Float / double: scale is a 1.0 of the right FP type, op is
@@ -1556,6 +1712,16 @@ static int hl_expr(Node *n) {
 
     /* Member access */
     if (n->kind == ND_MEMBER) {
+        if (n->bit_width > 0) {
+            int base_addr;
+            int unit_ty;
+            int unsigned_bf;
+            base_addr = hl_bf_unit_addr(n);
+            unit_ty = hl_bf_unit_ty(n->ty);
+            unsigned_bf = (n->ty & TY_UNSIGNED) != 0;
+            return hl_bf_load(base_addr, unit_ty, n->bit_width, n->bit_off,
+                              unsigned_bf);
+        }
         addr = hl_addr(n);
         if (ty_is_struct(n->ty) || n->is_array) return addr;
 #ifdef S12CC_X64_HOST
