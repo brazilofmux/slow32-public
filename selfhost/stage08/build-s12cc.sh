@@ -45,7 +45,11 @@ for f in "$EMU" "$STAGE7_CC" "$STAGE7_AS" "$STAGE7_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
          "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" "$SCRIPT_DIR/sema.h" \
-         "$SCRIPT_DIR/optimize.h" "$SCRIPT_DIR/codegen.h" "$SCRIPT_DIR/pp.h"; do
+         "$SCRIPT_DIR/optimize.h" "$SCRIPT_DIR/pp.h" \
+         "$SCRIPT_DIR/hir.h" "$SCRIPT_DIR/hir_lower.h" "$SCRIPT_DIR/hir_ssa.h" \
+         "$SCRIPT_DIR/hir_opt.h" "$SCRIPT_DIR/hir_licm.h" \
+         "$SCRIPT_DIR/hir_burg.h" "$SCRIPT_DIR/hir_regalloc.h" \
+         "$SCRIPT_DIR/hir_codegen.h"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
