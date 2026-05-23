@@ -172,6 +172,10 @@ static int ra_param_preferred_color(int inst) {
 
     if (inst < 0 || inst >= h_ninst) return -1;
     if (h_kind[inst] != HI_PARAM) return -1;
+    /* Stack-passed args (phys_idx >= 8) have no incoming register: the
+     * codegen materialises them with a fp-relative LOAD, so the param
+     * can be placed in any free color the allocator chooses. */
+    if (h_val[inst] >= 8) return -1;
 
     phys = 3 + h_val[inst];
     ra_init_phys_regs();

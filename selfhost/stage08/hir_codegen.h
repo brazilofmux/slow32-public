@@ -877,13 +877,21 @@ static void hcg_inst(int idx) {
     }
 
     if (k == HI_PARAM) {
+        int phys_idx;
         rd = hcg_dst(idx);
-        int src = 3 + h_val[idx];
-        if (rd != src) {
-            cg_rri("addi", rd, src, 0);
-            hcg_stat_copy_emit = hcg_stat_copy_emit + 1;
+        phys_idx = h_val[idx];
+        if (phys_idx < 8) {
+            int src = 3 + phys_idx;
+            if (rd != src) {
+                cg_rri("addi", rd, src, 0);
+                hcg_stat_copy_emit = hcg_stat_copy_emit + 1;
+            } else {
+                hcg_stat_addi0_elide = hcg_stat_addi0_elide + 1;
+            }
         } else {
-            hcg_stat_addi0_elide = hcg_stat_addi0_elide + 1;
+            /* Stack-passed argument: the caller pushed it just before
+             * the call, so it lives at fp + (phys_idx - 8) * 4.  fp = r30. */
+            cg_rri("ldw", rd, 30, (phys_idx - 8) * 4);
         }
         hcg_maybe_spill(idx);
         return;
