@@ -31,8 +31,6 @@
 #define DISAS_BRANCH 1
 #define DISAS_EXIT   2
 
-#define SLOW32_TB_MAX_INSNS 128
-
 typedef struct Slow32PendingCmp {
     bool valid;
     bool rhs_is_imm;
@@ -891,118 +889,116 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
     return true;
 }
 
+/*
+ * Translation is driven by the standard translator_loop(), which owns the TCG
+ * prologue/epilogue: it seeds db->host_addr (so translator_ldl can fetch guest
+ * code), gen_tb_start/gen_tb_end, plugin and icount handling, tb->size/icount,
+ * and the per-insn count limit. We only supply the five TranslatorOps hooks.
+ *
+ * ctx->is_jmp keeps the backend's own DISAS_{NEXT,BRANCH,EXIT} states for the
+ * decode helpers; at the end of each insn we map it onto the framework's
+ * db->is_jmp (DISAS_NORETURN once we've emitted our own exit). Note the
+ * backend's DISAS_BRANCH/EXIT macro values collide with DISAS_TOO_MANY/
+ * DISAS_NORETURN, so the two fields must be kept distinct.
+ */
+static void slow32_tr_init_disas_context(DisasContextBase *db, CPUState *cs)
+{
+    DisasContext *ctx = container_of(db, DisasContext, base);
+
+    ctx->env = cpu_env(cs);
+    ctx->pc = db->pc_first;
+    ctx->next_pc = db->pc_first;
+    ctx->is_jmp = DISAS_NEXT;
+    ctx->insn_count = 0;
+    ctx->pending_cmp.valid = false;
+}
+
+static void slow32_tr_tb_start(DisasContextBase *db, CPUState *cs)
+{
+}
+
+static void slow32_tr_insn_start(DisasContextBase *db, CPUState *cs)
+{
+    /* Three insn-start words preserve the legacy layout (pc, next_pc, flags). */
+    tcg_gen_insn_start(db->pc_next, db->pc_next + 4, 0);
+}
+
+static void slow32_tr_translate_insn(DisasContextBase *db, CPUState *cs)
+{
+    DisasContext *ctx = container_of(db, DisasContext, base);
+    CPUSlow32State *env = ctx->env;
+
+    ctx->pc = db->pc_next;
+    ctx->next_pc = ctx->pc + 4;
+
+    uint32_t raw = translator_ldl(env, db, ctx->pc);
+    bool collapse_branch = slow32_is_cmp_branch_pair(ctx, raw);
+
+    ctx->insn_count++;
+
+    if (try_emit_intrinsic(ctx, env)) {
+        goto done;
+    }
+
+    if (collapse_branch) {
+        slow32_do_collapse_cmp_branch(ctx, raw);
+        goto done;
+    }
+
+    if (!translate_one(ctx, raw)) {
+        goto done;
+    }
+
+    /*
+     * Keep a queued compare alive only when the immediately following
+     * instruction is the branch that fuses with it; otherwise materialize it
+     * now. Mirrors the single-instruction lookahead of the original loop.
+     */
+    if (ctx->pending_cmp.valid && ctx->is_jmp == DISAS_NEXT &&
+        db->num_insns < db->max_insns) {
+        uint32_t lookahead = translator_ldl(env, db, ctx->next_pc);
+        if (slow32_is_cmp_branch_pair(ctx, lookahead)) {
+            goto done;  /* keep pending; the next insn collapses it */
+        }
+    }
+    slow32_flush_pending_cmp(ctx);
+
+done:
+    db->pc_next = ctx->next_pc;
+    if (ctx->is_jmp != DISAS_NEXT) {
+        /* We've emitted our own branch/exit; do not let the loop fall through. */
+        db->is_jmp = DISAS_NORETURN;
+    }
+}
+
+static void slow32_tr_tb_stop(DisasContextBase *db, CPUState *cs)
+{
+    DisasContext *ctx = container_of(db, DisasContext, base);
+
+    /* A compare kept pending for fusion but never consumed (e.g. insn cap). */
+    slow32_flush_pending_cmp(ctx);
+
+    if (db->is_jmp == DISAS_TOO_MANY) {
+        /* Ran off the instruction cap mid-stream: chain to the next TB. */
+        gen_goto_tb(ctx, 0, db->pc_next);
+    }
+}
+
+static const TranslatorOps slow32_tr_ops = {
+    .init_disas_context = slow32_tr_init_disas_context,
+    .tb_start           = slow32_tr_tb_start,
+    .insn_start         = slow32_tr_insn_start,
+    .translate_insn     = slow32_tr_translate_insn,
+    .tb_stop            = slow32_tr_tb_stop,
+};
+
 void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
                            vaddr pc, void *host_pc)
 {
-    CPUSlow32State *env = cpu_env(cs);
-    /* Aim for bigger TBs to reduce dispatch overhead. */
-    int limit = SLOW32_TB_MAX_INSNS;
-    *max_insns = limit;
-    DisasContext ctx = {
-        .base = {
-            .tb = tb,
-            .pc_first = pc,
-            .pc_next = pc,
-            .is_jmp = DISAS_NEXT,
-            .max_insns = limit,
-        },
-        .env = env,
-        .pc = pc,
-        .next_pc = pc,
-        .is_jmp = DISAS_NEXT,
-        .insn_count = 0,
-    };
+    DisasContext ctx;
 
-    /*
-     * translator_ldl() reads guest code through db->host_addr, which upstream's
-     * translator_loop() seeds from host_pc. This backend hand-rolls its decode
-     * loop instead of calling translator_loop(), so seed it ourselves or the
-     * first fetch dereferences a NULL host pointer. code_mmuidx backs the
-     * page-crossing slow path (unused for 4-byte-aligned fetches, set anyway).
-     */
-    ctx.base.host_addr[0] = host_pc;
-    ctx.base.host_addr[1] = NULL;
-    ctx.base.code_mmuidx = cpu_mmu_index(cs, true);
-
-    /* TB chaining hook: start - enables plugin instrumentation and chaining */
-    bool plugin_enabled = plugin_gen_tb_start(cs, &ctx.base);
-
-    while (ctx.insn_count < limit) {
-        ctx.pc = ctx.next_pc;
-        ctx.next_pc = ctx.pc + 4;
-        ctx.base.pc_next = ctx.next_pc;
-
-        uint32_t raw = translator_ldl(env, &ctx.base, ctx.pc);
-        bool collapse_branch = slow32_is_cmp_branch_pair(&ctx, raw);
-
-        tcg_gen_insn_start(ctx.pc, ctx.next_pc, 0);
-
-        /* TB chaining hook: per-instruction start */
-        if (plugin_enabled) {
-            plugin_gen_insn_start(cs, &ctx.base);
-        }
-
-        ctx.insn_count++;
-        ctx.base.num_insns = ctx.insn_count;
-
-        if (try_emit_intrinsic(&ctx, env)) {
-            if (plugin_enabled) {
-                plugin_gen_insn_end();
-            }
-            break;
-        }
-
-        if (collapse_branch) {
-            slow32_do_collapse_cmp_branch(&ctx, raw);
-            if (plugin_enabled) {
-                plugin_gen_insn_end();
-            }
-            break;
-        }
-
-        if (!translate_one(&ctx, raw)) {
-            if (plugin_enabled) {
-                plugin_gen_insn_end();
-            }
-            break;
-        }
-
-        bool keep_pending = false;
-        if (ctx.pending_cmp.valid && ctx.is_jmp == DISAS_NEXT &&
-            ctx.insn_count < limit) {
-            uint32_t lookahead = translator_ldl(env, &ctx.base, ctx.next_pc);
-            keep_pending = slow32_is_cmp_branch_pair(&ctx, lookahead);
-        }
-
-        if (!keep_pending) {
-            slow32_flush_pending_cmp(&ctx);
-        }
-
-        /* TB chaining hook: per-instruction end */
-        if (plugin_enabled) {
-            plugin_gen_insn_end();
-        }
-
-        if (ctx.is_jmp != DISAS_NEXT) {
-            break;
-        }
-    }
-
-    slow32_flush_pending_cmp(&ctx);
-
-    if (ctx.is_jmp == DISAS_NEXT) {
-        slow32_count_insns(&ctx);
-        gen_goto_tb(&ctx, 0, ctx.next_pc);
-    }
-
-    /* TB chaining hook: end (only if plugins were enabled) */
-    if (plugin_enabled) {
-        plugin_gen_tb_end(cs, ctx.insn_count);
-    }
-
-    tb->size = ctx.next_pc - pc;
-    tb->icount = ctx.insn_count;
-    *max_insns = ctx.insn_count;
+    translator_loop(cs, tb, max_insns, pc, host_pc,
+                    &slow32_tr_ops, &ctx.base, TCG_TYPE_VA);
 }
 
 void slow32_translate_init(void)

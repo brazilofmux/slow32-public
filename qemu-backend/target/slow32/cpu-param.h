@@ -11,6 +11,7 @@
 #define TARGET_PHYS_ADDR_SPACE_BITS 32
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
 
-#define TARGET_DEFAULT_MAX_INSNS 64
+/* Aim for larger TBs to reduce dispatch overhead (previously forced in translate.c). */
+#define TARGET_DEFAULT_MAX_INSNS 128
 
 #endif
