@@ -898,7 +898,6 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
     /* Aim for bigger TBs to reduce dispatch overhead. */
     int limit = SLOW32_TB_MAX_INSNS;
     *max_insns = limit;
-    (void)host_pc;
     DisasContext ctx = {
         .base = {
             .tb = tb,
@@ -913,6 +912,17 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
         .is_jmp = DISAS_NEXT,
         .insn_count = 0,
     };
+
+    /*
+     * translator_ldl() reads guest code through db->host_addr, which upstream's
+     * translator_loop() seeds from host_pc. This backend hand-rolls its decode
+     * loop instead of calling translator_loop(), so seed it ourselves or the
+     * first fetch dereferences a NULL host pointer. code_mmuidx backs the
+     * page-crossing slow path (unused for 4-byte-aligned fetches, set anyway).
+     */
+    ctx.base.host_addr[0] = host_pc;
+    ctx.base.host_addr[1] = NULL;
+    ctx.base.code_mmuidx = cpu_mmu_index(cs, true);
 
     /* TB chaining hook: start - enables plugin instrumentation and chaining */
     bool plugin_enabled = plugin_gen_tb_start(cs, &ctx.base);
