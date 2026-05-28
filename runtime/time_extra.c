@@ -71,19 +71,52 @@ static struct tm *gmtime_r(const time_t *timer, struct tm *result) {
     int wday = (int)((total_days + 4) % 7);
     if (wday < 0) wday += 7;
     result->tm_wday = wday;
-    
+
+    result->tm_gmtoff = 0;
+    result->tm_zone = "UTC";
+
     return result;
 }
 
 static struct tm static_tm;
+static char localtime_zone[8];
+
+// __s32_query_tz is resolved from the linked libc variant: the real MMIO
+// implementation in time_mmio.c (libc_mmio) or the UTC stub in time_tz_stub.c
+// (libc_debug). Referencing it here pulls whichever object the archive provides.
 
 struct tm *gmtime(const time_t *timer) {
     return gmtime_r(timer, &static_tm);
 }
 
 struct tm *localtime(const time_t *timer) {
-    // No timezone support, same as gmtime
-    return gmtime(timer);
+    long gmtoff = 0;
+    int isdst = 0;
+    char abbrev[8] = {0};
+
+    if (__s32_query_tz(*timer, &gmtoff, &isdst, abbrev) != 0) {
+        // No timezone service available: behave as UTC.
+        return gmtime_r(timer, &static_tm);
+    }
+
+    // Local wall-clock = gmtime(UTC + offset). Compute via signed math so a
+    // westward (negative) offset is applied correctly to the unsigned time_t.
+    time_t local = (time_t)((long long)*timer + (long long)gmtoff);
+    gmtime_r(&local, &static_tm);
+
+    static_tm.tm_isdst = isdst;
+    static_tm.tm_gmtoff = gmtoff;
+    if (abbrev[0] != '\0') {
+        int i = 0;
+        for (; i < (int)sizeof(localtime_zone) - 1 && abbrev[i] != '\0'; i++) {
+            localtime_zone[i] = abbrev[i];
+        }
+        localtime_zone[i] = '\0';
+        static_tm.tm_zone = localtime_zone;
+    } else {
+        static_tm.tm_zone = "UTC";
+    }
+    return &static_tm;
 }
 
 time_t mktime(struct tm *tm) {

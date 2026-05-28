@@ -79,6 +79,7 @@ enum s32_mmio_opcode {
     // 0x30 - 0x3F : Time & event services
     S32_MMIO_OP_GETTIME     = 0x30,  // Returns wall-clock time (64-bit seconds + nanos)
     S32_MMIO_OP_SLEEP       = 0x31,  // nanosleep() + remainder reporting (64-bit seconds)
+    S32_MMIO_OP_GETTZ       = 0x35,  // Returns host timezone info for a queried UTC time
     S32_MMIO_OP_TIMER_START = 0x32,  // Arm timer, host completes on HP ring (future)
     S32_MMIO_OP_TIMER_CANCEL= 0x33,  // Cancel timer (future)
     S32_MMIO_OP_POLL        = 0x34,  // poll()/select()-style wait (future)
@@ -115,6 +116,19 @@ typedef struct s32_mmio_timepair64 {
     uint32_t reserved;     // align to 16 bytes / future flags
 } s32_mmio_timepair64_t;
 
+#pragma pack(pop)
+
+// S32_MMIO_OP_GETTZ payload. The guest writes a s32_mmio_timepair64_t holding
+// the UTC time it wants to convert into the data buffer at req->offset; the host
+// resolves that instant against its local timezone and overwrites the same
+// region with this struct. Both structs are 16 bytes, so a single buffer slot
+// serves request and response.
+#pragma pack(push, 1)
+typedef struct s32_mmio_tzinfo {
+    int32_t  gmtoff_sec;   // seconds east of UTC (negative = west) for the queried time
+    uint32_t is_dst;       // 1 if daylight saving is in effect, else 0
+    char     abbrev[8];    // timezone abbreviation, NUL-terminated (e.g. "UTC","PST")
+} s32_mmio_tzinfo_t;
 #pragma pack(pop)
 
 // Packed stat payload shared between guest and host

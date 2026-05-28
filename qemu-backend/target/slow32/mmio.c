@@ -77,6 +77,7 @@
 
 #define S32_MMIO_OP_GETTIME   0x30
 #define S32_MMIO_OP_SLEEP     0x31
+#define S32_MMIO_OP_GETTZ     0x35
 
 #define S32_MMIO_OP_ARGS_INFO 0x60
 #define S32_MMIO_OP_ARGS_DATA 0x61
@@ -134,6 +135,12 @@ typedef struct s32_mmio_timepair64 {
     uint32_t nanoseconds;
     uint32_t reserved;
 } s32_mmio_timepair64_t;
+
+typedef struct s32_mmio_tzinfo {
+    int32_t  gmtoff_sec;
+    uint32_t is_dst;
+    char     abbrev[8];
+} s32_mmio_tzinfo_t;
 
 typedef struct s32_mmio_args_info {
     uint32_t argc;
@@ -1464,6 +1471,41 @@ static void slow32_mmio_handle_sleep(const CPUSlow32State *env,
     resp->status = S32_MMIO_STATUS_EINTR;
 }
 
+static void slow32_mmio_handle_gettz(const CPUSlow32State *env,
+                                     const Slow32MMIODesc *req,
+                                     Slow32MMIODesc *resp)
+{
+    if (req->length < sizeof(s32_mmio_tzinfo_t)) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    s32_mmio_timepair64_t query = {0};
+    slow32_mmio_copy_from_guest(env, req->offset,
+                                (uint8_t *)&query, sizeof(query));
+    uint64_t qsecs = ((uint64_t)query.seconds_hi << 32) | query.seconds_lo;
+    time_t when = (time_t)qsecs;
+
+    struct tm local_tm;
+    s32_mmio_tzinfo_t info = {0};
+    if (localtime_r(&when, &local_tm) != NULL) {
+        info.gmtoff_sec = (int32_t)local_tm.tm_gmtoff;
+        info.is_dst = (local_tm.tm_isdst > 0) ? 1u : 0u;
+        if (local_tm.tm_zone != NULL) {
+            strncpy(info.abbrev, local_tm.tm_zone, sizeof(info.abbrev) - 1);
+        }
+    }
+    if (info.abbrev[0] == '\0') {
+        strncpy(info.abbrev, "UTC", sizeof(info.abbrev) - 1);
+    }
+
+    slow32_mmio_copy_to_guest(env, req->offset,
+                              (const uint8_t *)&info, sizeof(info));
+    resp->length = sizeof(info);
+    resp->status = S32_MMIO_STATUS_OK;
+}
+
 static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
                                  const Slow32MMIODesc *req,
                                  Slow32MMIODesc *resp)
@@ -1802,6 +1844,10 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
     case S32_MMIO_OP_SLEEP:
         slow32_mmio_handle_sleep(env, req, resp);
+        break;
+
+    case S32_MMIO_OP_GETTZ:
+        slow32_mmio_handle_gettz(env, req, resp);
         break;
 
     case S32_MMIO_OP_ENVP_INFO:

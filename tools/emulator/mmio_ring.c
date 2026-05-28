@@ -1476,6 +1476,44 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             break;
         }
 
+        case S32_MMIO_OP_GETTZ: {
+            if (req->length < sizeof(s32_mmio_tzinfo_t)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_tzinfo_t))) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            s32_mmio_timepair64_t query = {0u, 0u, 0u, 0u};
+            memcpy(&query, mmio->data_buffer + offset, sizeof(query));
+            uint64_t qsecs = ((uint64_t)query.seconds_hi << 32) | query.seconds_lo;
+            time_t when = (time_t)qsecs;
+
+            struct tm local_tm;
+            s32_mmio_tzinfo_t info = {0, 0u, {0}};
+            if (localtime_r(&when, &local_tm) != NULL) {
+                info.gmtoff_sec = (int32_t)local_tm.tm_gmtoff;
+                info.is_dst = (local_tm.tm_isdst > 0) ? 1u : 0u;
+                if (local_tm.tm_zone != NULL) {
+                    strncpy(info.abbrev, local_tm.tm_zone, sizeof(info.abbrev) - 1);
+                }
+            }
+            if (info.abbrev[0] == '\0') {
+                strncpy(info.abbrev, "UTC", sizeof(info.abbrev) - 1);
+            }
+
+            memcpy(mmio->data_buffer + offset, &info, sizeof(info));
+            resp.length = sizeof(s32_mmio_tzinfo_t);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
         case S32_MMIO_OP_ARGS_INFO: {
             if (req->length < sizeof(s32_mmio_args_info_t)) {
                 resp.status = S32_MMIO_STATUS_ERR;

@@ -79,6 +79,44 @@ int clock_gettime(int clock_id, struct timespec *ts) {
     return 0;
 }
 
+int __s32_query_tz(time_t when, long *gmtoff_sec, int *is_dst, char abbrev[8]) {
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+
+    s32_mmio_timepair64_t query = {
+        .seconds_lo = (uint32_t)((uint64_t)when & 0xFFFFFFFFu),
+        .seconds_hi = (uint32_t)((uint64_t)when >> 32),
+        .nanoseconds = 0u,
+        .reserved = 0u,
+    };
+    memcpy((void *)data_buffer, &query, sizeof(query));
+
+    unsigned int status = (unsigned int)s32_mmio_request(S32_MMIO_OP_GETTZ,
+                                                         sizeof(s32_mmio_tzinfo_t),
+                                                         0u,
+                                                         0u);
+    if (status == S32_MMIO_STATUS_ERR) {
+        return -1;
+    }
+
+    s32_mmio_tzinfo_t info;
+    memcpy(&info, (const void *)data_buffer, sizeof(info));
+
+    if (gmtoff_sec) {
+        *gmtoff_sec = (long)info.gmtoff_sec;
+    }
+    if (is_dst) {
+        *is_dst = (int)info.is_dst;
+    }
+    if (abbrev) {
+        unsigned int i = 0;
+        for (; i < sizeof(info.abbrev) - 1 && info.abbrev[i] != '\0'; i++) {
+            abbrev[i] = info.abbrev[i];
+        }
+        abbrev[i] = '\0';
+    }
+    return 0;
+}
+
 time_t time(time_t *t) {
     uint64_t seconds = 0;
     uint32_t nanos = 0;

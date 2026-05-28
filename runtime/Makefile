@@ -46,7 +46,7 @@ LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
 # Debug-only extras (fallback stubs)
 LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \
                         envp_stub.s32o fs_stub.s32o dirent_stub.s32o \
-                        term_stub.s32o
+                        term_stub.s32o time_tz_stub.s32o
 
 # Math library: math_hw + math_soft in COMPILER_RT_OBJS (replaces float_intrinsics.s32o)
 # Real soft-float implementations in math_soft.c replace the old HALT stubs.
@@ -67,7 +67,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
             stat_mmio.c stat_stub.c start.c args_mmio.c args_stub.c \
             exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c \
-            cxxabi.c time_extra.c time_stubs.c math_int.c dtoa.c errno.c \
+            cxxabi.c time_extra.c time_stubs.c time_tz_stub.c math_int.c dtoa.c errno.c \
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c \
             term_mmio.c term_stub.c \
             math_hw.c math_soft.c math_cordic.c \

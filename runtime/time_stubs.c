@@ -195,9 +195,19 @@ size_t strftime(char *s, size_t maxsize, const char *format, const struct tm *tm
         case 'y': /* 2-digit year */
             len = fmt_2d(buf, (tm->tm_year + 1900) % 100);
             break;
-        case 'Z': /* timezone name (not available) */
-            src = "UTC";
-            len = 3;
+        case 'Z': /* timezone abbreviation */
+            src = tm->tm_zone ? tm->tm_zone : "UTC";
+            len = strlen(src);
+            break;
+        case 'z': /* UTC offset as +hhmm / -hhmm */
+            { long off = tm->tm_gmtoff;
+              int i = 0;
+              buf[i++] = (off < 0) ? '-' : '+';
+              if (off < 0) off = -off;
+              int mins = (int)(off / 60);
+              i += fmt_2d(buf + i, mins / 60);
+              i += fmt_2d(buf + i, mins % 60);
+              len = i; }
             break;
         case '%': /* literal % */
             buf[0] = '%';
