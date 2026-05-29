@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Verify that stages 1..7 rebuild to bit-identical .s32x artifacts under a
+# Verify that stages 1..8 rebuild to bit-identical .s32x artifacts under a
 # named emulator, by comparing SHA256 against selfhost/sha256sums.md.
 #
 # Usage: verify-emu-sums.sh <emu-label> <emu-path> [stage_lo] [stage_hi]
 #   emu-label: short tag for logs (e.g. slow32, slow32-fast)
 #   emu-path:  absolute path to the emulator binary
 #   stage_lo:  first stage number to test (default 1)
-#   stage_hi:  last stage number to test (default 7)
+#   stage_hi:  last stage number to test (default 8)
 #
 # Logs land in /tmp/verify-emu-sums-<label>/.  Per-stage logs are <label>/stageNN.log;
 # a SUMMARY.txt records OK/FAIL lines for each artifact.
@@ -32,7 +32,7 @@ SUMS_FILE="$ROOT/selfhost/sha256sums.md"
 LABEL="${1:?emu label required}"
 EMU="${2:?emu path required}"
 STAGE_LO="${3:-1}"
-STAGE_HI="${4:-7}"
+STAGE_HI="${4:-8}"
 
 [[ -x "$EMU" ]] || { echo "ERR: emu not executable: $EMU" >&2; exit 3; }
 [[ -f "$SUMS_FILE" ]] || { echo "ERR: missing $SUMS_FILE" >&2; exit 3; }
