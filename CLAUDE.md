@@ -165,7 +165,7 @@ make test
 
 # Benchmark: compare cross-compiled emulator vs GCC-compiled emulator
 make bench                    # runs s32fast-hir on benchmark_core.s32x
-time tools/emulator/slow32-fast ~/slow-32/benchmark_core.s32x   # GCC baseline
+time tools/emulator/slow32-fast ~/s32x/benchmark_core.s32x   # GCC baseline
 
 # Rebuild after changing hir_regalloc_x64.h or hir_codegen_x64.h:
 # (Makefile tracks deps — just `make` rebuilds cc-x64 then recompiles s32fast)
@@ -176,12 +176,15 @@ out/cc-x64 --hir -c somefile.c -o somefile.o     # compile to .o
 gcc -nostdlib -static -o binary out/crt0.o somefile.o out/libc_x64.a  # link
 
 # Compare codegen quality (inspect hot function):
-objdump -d out/s32fast-hir | sed -n '/<h_add>:/,/ret/p'      # our code
+# NOTE: disassemble the .o — the linked out/s32fast-hir has no section headers
+objdump -d out/s32fast-hir.o | sed -n '/<h_add>:/,/ret/p'    # our code
 objdump -d tools/emulator/slow32-fast | sed -n '/<op_add>:/,/ret/p'  # gcc code
 
-# Key benchmark: ~/slow-32/benchmark_core.s32x (reduced iteration count)
+# Key benchmark: ~/s32x/benchmark_core.s32x (full 10M iters, 285M instructions)
 # Expected checksum: 0x8d70b2b
-# GCC slow32-fast: ~0.80s, our s32fast-hir: ~1.63s (2.0x gap as of Apr 2026)
+# GCC slow32-fast: ~1.08s, our s32fast-hir: ~1.50s (~1.39x gap as of Jun 2026,
+#   Xeon 8259CL). Was 2.06x before the RCX/RDX-scratch + fallthrough-elision fix.
+#   Next target: two-address coalescing in the IRC (~22% of insns are mov src1->dst).
 ```
 
 **Bootstrap chain**: host GCC compiles `cc-x64.c` → `out/cc-x64` (the cross-compiler binary).
