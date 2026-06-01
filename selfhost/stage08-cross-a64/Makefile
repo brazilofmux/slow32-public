@@ -284,10 +284,14 @@ diff-test: $(OUT)/cc-a64 $(OUT)/crt0.o $(OUT)/libc_a64.a $(OUT)/ld-a64
 # --- libc_a64.a — runtime library for cc-a64 outputs ---
 # Most files are symlinks into ../stage08-cross-x64/libc_x64/ since they're
 # host-independent C.  syscalls.c is a64-specific.  Both fpu_ops_a64.c
-# (f32) and fpu_ops_d_a64.c (f64) are now cc-a64 --hir-built thanks
-# to S12CC_NATIVE_F64 in cc-a64.c.  The only remaining host-gcc step
-# is math_stubs.c (sqrt/sqrtf via __builtin_sqrt[f]); replacing those
-# with HI_FSQRT would let the host-gcc dependency disappear.
+# (f32) and fpu_ops_d_a64.c (f64) are cc-a64 --hir-built thanks
+# to S12CC_NATIVE_F64 in cc-a64.c.  math_stubs.c (sqrt/sqrtf) is also
+# cc-a64 --hir-built: the HIR lowerer recognises __builtin_sqrt[f] and
+# emits HI_FSQRT, which the a64 backend lowers to a hardware FSQRT
+# (a64_fsqrt_d/s) — no libm, no host gcc.  So every object in libc_a64.a
+# is produced by cc-a64; the only host-gcc steps left in this Makefile
+# are the bootstrap tools (cc/ld/ar-a64) and the host-side test harnesses,
+# not the target runtime.
 
 LIBC_A64_HIR_SRCS = libc_a64/syscalls.c libc_a64/string.c libc_a64/malloc.c \
                    libc_a64/misc.c libc_a64/stdio.c \
