@@ -1830,7 +1830,6 @@ static void ra_mark_clobbers(void) {
 static int hx_brc_fuse[HIR_MAX_INST];   /* BRC idx → fused comparison idx, -1 = none */
 static int hx_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC */
 static int hx_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
-static int hx_use_count[HIR_MAX_INST];  /* use count per instruction */
 
 static int hx_is_cmp(int k) {
     return (k >= HI_SEQ && k <= HI_SGEU);

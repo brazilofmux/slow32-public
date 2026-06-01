@@ -93,10 +93,6 @@ static int ra_class_of(int inst);
 /* Call-crossing flag: 1 if value's live interval spans a CALL. */
 static int ra_crosses_call[HIR_MAX_INST];
 
-/* Always-zero on AArch64 — kept so the shared IRC code can read them. */
-static int ra_crosses_cx_clobber[HIR_MAX_INST];
-static int ra_crosses_dx_clobber[HIR_MAX_INST];
-
 static void ra_init_a64_regs(void) {
     int i;
     /* Callee-saved (slots 0..9): X19..X28 */
@@ -1201,7 +1197,6 @@ static int ra_class_of(int inst) {
  * gc_k=0 and is forced to spill — see RA_NCALLEE_V comment. */
 static int gc_k(int n) {
     int inst;
-    int k;
     int cls;
     inst = gc_inst[n];
     cls = gc_class[n];
@@ -1210,10 +1205,7 @@ static int gc_k(int n) {
         return RA_NPHY_V;
     }
     if (ra_crosses_call[inst]) return RA_NCALLEE;
-    k = RA_NPHY;
-    if (ra_crosses_cx_clobber[inst]) k = k - 1;
-    if (ra_crosses_dx_clobber[inst]) k = k - 1;
-    return k;
+    return RA_NPHY;
 }
 
 static void gc_make_worklists(void) {
@@ -2144,36 +2136,6 @@ static void ra_mark_call_crossing(void) {
 }
 
 /* =================================================================
- * CX/DX clobber detection
- *
- * Mark values whose live intervals span an instruction that
- * architecturally clobbers RCX (variable shifts, DIV/REM) or
- * RDX (DIV/REM).  These values cannot be allocated to the
- * corresponding register.
- * ================================================================= */
-
-#define RA_MAX_CLOBBERS 1024
-static int ra_cx_clobber_positions[RA_MAX_CLOBBERS];
-static int ra_dx_clobber_positions[RA_MAX_CLOBBERS];
-static int ra_ncx_clobbers;
-static int ra_ndx_clobbers;
-
-static void ra_mark_clobbers(void) {
-    int i;
-    /* AArch64 has no architectural register clobbers from variable shifts
-     * or DIV/REM (UDIV/SDIV and LSLV/LSRV/ASRV all use general regs).  The
-     * arrays are kept for IRC algorithm compatibility but are always zero. */
-    ra_ncx_clobbers = 0;
-    ra_ndx_clobbers = 0;
-    i = 0;
-    while (i < h_ninst) {
-        ra_crosses_cx_clobber[i] = 0;
-        ra_crosses_dx_clobber[i] = 0;
-        i = i + 1;
-    }
-}
-
-/* =================================================================
  * Compare-branch fusion
  *
  * Identifies BRC instructions whose condition is a single-use
@@ -2185,7 +2147,6 @@ static void ra_mark_clobbers(void) {
 static int hx_brc_fuse[HIR_MAX_INST];   /* BRC idx → fused comparison idx, -1 = none */
 static int hx_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC */
 static int hx_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
-static int hx_use_count[HIR_MAX_INST];  /* use count per instruction */
 
 /* BIC / ORN / EON peephole.  When set, the AND/OR/XOR at this index
  * had one operand of the form HI_BNOT(y) with single use; the codegen
@@ -2704,7 +2665,6 @@ static void hir_regalloc(void) {
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
-    ra_mark_clobbers();
     gc_alloc();
     ra_assign_spills();
 }
