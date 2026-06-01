@@ -1521,9 +1521,37 @@ stats output is readable.  Eventually wanted, just not today.
 `ND_SWITCH` is lowered in `hir_lower.h` to a linear chain of `HI_SEQ` + `HI_BRC`. For switches with many cases, this is O(N) at runtime.
 **Recommendation**: Implement jump tables for dense case ranges and binary search for sparse ranges.
 
-### 36. [OPPORTUNITY] Register Allocation: Caller-Saved Registers
-`hir_regalloc.h` only uses callee-saved registers (`r11-r28`). This forces every function to save/restore registers in the prologue/epilogue even if it has very few locals or short live intervals.
-**Recommendation**: Use `r3-r10` (caller-saved arguments) for short-lived values and arguments to minimize save/restore overhead.
+### 36. [IMPLEMENTED] Register Allocation: Caller-Saved Registers
+The original gap: `hir_regalloc.h` only allocated callee-saved registers (`r11-r28`),
+forcing every function to save/restore in the prologue/epilogue even for short live
+intervals.
+
+**Status (2026-06-01): implemented and enabled by default.** The IRC allocator now
+uses a 26-register pool — 18 callee-saved (`r11-r28`, colors 0..17) plus 8 caller-saved
+(`r3-r10`, colors 18..25). Values whose live range does *not* cross a call may be colored
+into the cheap caller-saved pool; values that cross a call are kept in the callee-saved
+range. Key pieces in `selfhost/stage07/hir_regalloc.h` (and the identical stage08 fork):
+- `ra_caller_saved_enabled_count = 8` knob (set `0` to revert to callee-only).
+- `ra_crosses_call[]` / `ra_mark_call_crossing()` — the live-cross classification.
+- `ra_prefers_caller_for_inst()` — gates caller-pool eligibility.
+- `gc_select()` — two-pass coloring (HI_PARAMs first so they seed their ABI registers
+  `r3+N` for zero-copy entry), then operand-reuse bias and a caller-range-first fallback.
+
+Landed in `963f7277` (infrastructure) → `db94abcc` / `6a97f2f3` (enable, knob=8) →
+`1a92d5f9` (hints + visibility), bootstrap-verified end-to-end. Measured ~73% of colored
+values landing in the caller pool when the compiler compiles itself. Spot-check
+(2026-06-01): a pure-leaf 4-temp function compiles to `r3-r8` only with no callee-save
+prologue; a value held across a `jal` is correctly placed in a saved `r11`.
+
+**Remaining sub-opportunities (minor):**
+- A handful of identity self-moves (`addi rN, rN, 0`) still survive — ~7 across ~3800
+  instructions of libc (~0.2%). Every explicit copy path already guards `dst != src`, so
+  these originate in spill/scratch interactions, not the copy emitters.
+- In call-heavy functions, some non-call-crossing values still land in the callee-saved
+  range (the caller-range-first fallback can be pre-empted by the `used[]` mask once the
+  call's argument/return registers are live). Squeezing these is a tuning exercise on
+  `gc_select`; treat with care (see Issue #31 / the a64 regalloc-hazard notes — gc_select
+  changes can pass the test suite yet regress real workloads).
 
 ### 37. [OPPORTUNITY] SSA Optimization: Memory SSA & GVN
 Current SSA optimizations are mostly local or simple algebraic folds. Promotion to SSA is limited to scalar locals.
