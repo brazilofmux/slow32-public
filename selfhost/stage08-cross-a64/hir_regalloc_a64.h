@@ -456,10 +456,25 @@ static void ra_compute_ends(void) {
     int src;
     int b;
 
-    /* Initialize end = start (def point) */
+    /* Initialize end = start (def point).
+     *
+     * Also reset the SIB-index side arrays to -1.  AArch64 has no SIB
+     * addressing so they are never written, but the use-scan and
+     * interference code below test them with `>= 0` and, when set, treat
+     * the stored value as an operand instruction.  Left at their static 0,
+     * every instruction spuriously references value 0 (the first param /
+     * value), inflating its live range across the whole function.  That
+     * made the first parameter interfere with the returned value (both want
+     * the ABI return register), forcing a redundant fixup MOV on essentially
+     * every computed return — `add w1,w0,w1; mov x0,x1` instead of
+     * `add w0,w0,w1`.  Initializing to -1 makes the `>= 0` tests correctly
+     * false, eliminating the bogus references (an x86->a64 port oversight:
+     * the x64 sibling sets these for real SIB folds). */
     i = 0;
     while (i < h_ninst) {
         ra_iend[i] = ra_pos[i];
+        hx_sib_index[i] = -1;
+        hx_alu_sib_idx[i] = -1;
         i = i + 1;
     }
 
