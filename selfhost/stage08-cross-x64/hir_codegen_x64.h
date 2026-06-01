@@ -438,6 +438,21 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     }
 }
 
+/* Does the edge from_blk -> to_blk carry any PHI copies?  A PHI in to_blk
+ * produces a copy on every incoming edge, so the presence of any PHI node in
+ * to_blk means this edge is non-empty.  Used by the BRC fallthrough optimizer
+ * to decide whether the not-taken edge can be branched to directly (without a
+ * staged phi-copy block). */
+static int hx_edge_has_phi(int from_blk, int to_blk) {
+    int i;
+    i = ssa_phi_head[to_blk];
+    while (i >= 0) {
+        if (h_kind[i] == HI_PHI) return 1;
+        i = ssa_phi_next[i];
+    }
+    return 0;
+}
+
 /* ============================================================================
  * Register-aware helpers: hx_src / hx_dst / hx_maybe_spill
  *
@@ -1445,10 +1460,20 @@ static void hx_emit_inst(int idx) {
         int inv_cc;
         int cmp_idx;
         int false_patch;
+        int direct_false;
 
         cur_blk = h_blk[idx];
         true_blk = h_src2[idx];    /* target if condition is TRUE */
         false_blk = h_val[idx];    /* target if condition is FALSE */
+
+        /* Fallthrough optimization: when the TRUE block is the next block in
+         * layout and the FALSE edge carries no phi copies, emit Jcc(inv)
+         * straight to false_blk and fall through into the true-edge phi copies
+         * and then into true_blk.  This drops the unconditional `jmp true_blk`
+         * the staged layout would otherwise emit.  (Mirrors the a64 sibling's
+         * direct_notaken path.) */
+        direct_false = (true_blk == cur_blk + 1 &&
+                        !hx_edge_has_phi(cur_blk, false_blk));
 
         cmp_idx = hx_brc_fuse[idx];
         if (cmp_idx >= 0) {
@@ -1515,6 +1540,15 @@ static void hx_emit_inst(int idx) {
             inv_cc = X64_CC_E;
         }
 
+        if (direct_false) {
+            /* Jcc(inv) -> false_blk directly; the false edge has no phi (gated
+             * above), so no false-path staging is needed.  Fall through into
+             * the true-edge phi copies and then into true_blk (= next block). */
+            hx_jcc_to_block(inv_cc, false_blk);
+            hx_phi_copies(cur_blk, true_blk);
+            return;
+        }
+
         /* Jump to false path when condition is FALSE */
         false_patch = x64_jcc_placeholder(inv_cc);
 
@@ -1538,6 +1572,11 @@ static void hx_emit_inst(int idx) {
         if (hx_no_frame) {
             /* Frameless: emit ret directly, no epilogue needed */
             x64_ret();
+        } else if (h_blk[idx] == bb_nblk - 1) {
+            /* This RET terminates the last block in layout order; the epilogue
+             * is emitted immediately after the block loop, so fall straight
+             * into it instead of emitting `jmp epilogue` (return value is
+             * already in RAX). */
         } else {
             /* Jump to epilog */
             x64_jmp_rel32(0);

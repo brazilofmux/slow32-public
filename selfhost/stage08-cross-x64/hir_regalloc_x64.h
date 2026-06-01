@@ -781,9 +781,11 @@ static int gc_k(int n) {
     int k;
     inst = gc_inst[n];
     if (ra_crosses_call[inst]) return RA_NCALLEE;
-    k = RA_NPHY;
-    if (ra_crosses_cx_clobber[inst]) k = k - 1;
-    if (ra_crosses_dx_clobber[inst]) k = k - 1;
+    /* RCX/RDX (slots 7,8) are reserved as dedicated codegen scratch and are
+     * never allocatable, so only RA_NPHY-2 colors are pickable.  The spill
+     * threshold must reflect that or the IRC under-spills and select runs out
+     * of colors.  The old per-node cx/dx clobber subtractions are subsumed. */
+    k = RA_NPHY - 2;
     return k;
 }
 
@@ -1247,24 +1249,19 @@ static void gc_select(void) {
             e = gc_adj_next[e];
         }
 
-        /* Also mark CX/DX clobber-constrained slots as used */
-        if (ra_crosses_cx_clobber[inst]) used[RA_SLOT_RCX] = 1;
-        if (ra_crosses_dx_clobber[inst]) used[RA_SLOT_RDX] = 1;
-        /* Folded ALU+SIB uses RCX/RDX as address/load temporaries in codegen,
-         * so the destination cannot live in either register. */
-        if (hx_alu_sib_idx[inst] >= 0 &&
-            (h_kind[inst] == HI_ADD || h_kind[inst] == HI_AND ||
-             h_kind[inst] == HI_OR  || h_kind[inst] == HI_XOR)) {
-            used[RA_SLOT_RCX] = 1;
-            used[RA_SLOT_RDX] = 1;
-        }
-        /* Variable shifts consume CL for the count, so the result cannot
-         * be allocated to RCX. Immediate shifts are fine. */
-        if ((h_kind[inst] == HI_SLL || h_kind[inst] == HI_SRA ||
-             h_kind[inst] == HI_SRL) &&
-            (h_src2[inst] < 0 || h_kind[h_src2[inst]] != HI_ICONST)) {
-            used[RA_SLOT_RCX] = 1;
-        }
+        /* RCX/RDX are reserved as dedicated codegen scratch and are never
+         * allocated to a live value.  They serve the codegen's hardware roles
+         * (variable-shift count in CL, DIV/REM clobber of RDX:RAX) and act as
+         * SIB-addressing / CMP / store temporaries.  Because no SSA value ever
+         * lives in CX/DX, the codegen can clobber them freely: the old
+         * per-instruction clobber constraints (ra_crosses_cx/dx_clobber, the
+         * ALU+SIB and variable-shift exclusions) and the conservative
+         * save/restore machinery in hir_codegen_x64.h all become moot
+         * (hx_has_cx/dx_alloc stay 0, so every hx_save/restore call no-ops and
+         * the CALL fast path is taken unconditionally).  Cost: 11 allocatable
+         * GP registers instead of 13. */
+        used[RA_SLOT_RCX] = 1;
+        used[RA_SLOT_RDX] = 1;
 
         /* Constraint: call-crossing → must use callee-saved (slots 0-4) */
         if (ra_crosses_call[inst]) {
@@ -1469,6 +1466,11 @@ static void gc_select(void) {
                     pidx = h_val[inst];
                     if (pidx >= 0 && pidx < 6) {
                         want = ra_x64_slot[ra_arg_regs[pidx]];
+                        /* Params 3,4 home to RDX,RCX in the SysV ABI, but those
+                         * are reserved scratch and never allocatable.  Don't pull
+                         * the PARAM there — the PARAM codegen moves it out of the
+                         * arg reg into its allocatable color at entry. */
+                        if (want == RA_SLOT_RCX || want == RA_SLOT_RDX) want = -1;
                         old_c = gc_color[n];
                         if (want >= 0 && old_c != want) {
                             conflict = 0;
@@ -1514,6 +1516,9 @@ static void gc_select(void) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < 6) {
                     want = ra_x64_slot[ra_arg_regs[pidx]];
+                    /* RDX/RCX are reserved scratch — never home a PARAM there
+                     * (see first-pass note above). */
+                    if (want == RA_SLOT_RCX || want == RA_SLOT_RDX) want = -1;
                     old_c = gc_color[n];
                     if (want >= 0 && old_c != want) {
                         /* Find the (single) neighbor holding `want`.
