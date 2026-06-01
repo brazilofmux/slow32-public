@@ -684,11 +684,30 @@ static void gc_build(void) {
                 }
             }
 
-            /* Add interference edges between new node and all active */
+            /* Add interference edges between new node and all active.
+             *
+             * Two-address exception: a destructive ALU op's result does NOT
+             * interfere with its src1 when src1 dies at this op.  The codegen
+             * lowers `d = op(s1,s2)` as `mov s1->d; op s2,d`, so d may reuse
+             * s1's register.  src1's live interval ends exactly at this op's
+             * position p (its last use), but the strict `< p` expiry above
+             * keeps it active here, which would otherwise force a spurious
+             * d<->s1 edge and block the coalescer (see gc_find_moves).  We
+             * suppress only that one edge.  We must NOT suppress d<->s2: the
+             * `mov s1->d` would clobber s2 if d and s2 shared a register. */
             if (ni >= 0) {
+                int skip_node;
+                skip_node = -1;
+                if (h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) {
+                    int two_s1;
+                    two_s1 = h_src1[inst];
+                    if (two_s1 >= 0 && ra_iend[two_s1] <= p)
+                        skip_node = gc_node[two_s1];
+                }
                 j = 0;
                 while (j < nact) {
-                    gc_add_edge(ni, act[j]);
+                    if (act[j] != skip_node)
+                        gc_add_edge(ni, act[j]);
                     j = j + 1;
                 }
                 act[nact] = ni;
@@ -1637,6 +1656,29 @@ static void gc_alloc(void) {
     gc_irc();
     gc_select();
     gc_writeback();
+
+    if (getenv("RA_DUMP_2ADDR")) {
+        int i; int co; int no; int sp;
+        co = 0; no = 0; sp = 0;
+        i = 0;
+        while (i < h_ninst) {
+            int k; int s1;
+            k = h_kind[i];
+            if (k >= HI_ADD && k <= HI_SRL) {
+                s1 = h_src1[i];
+                if (s1 >= 0) {
+                    if (ra_reg[i] < 0 || ra_reg[s1] < 0) sp = sp + 1;
+                    else if (ra_reg[i] == ra_reg[s1]) co = co + 1;
+                    else no = no + 1;
+                }
+            }
+            i = i + 1;
+        }
+        fdputs("2ADDR coalesced=", 2); fdputuint(2, co);
+        fdputs(" not=", 2); fdputuint(2, no);
+        fdputs(" spilled=", 2); fdputuint(2, sp);
+        fdputs("\n", 2);
+    }
 }
 
 /* =================================================================
