@@ -1698,6 +1698,7 @@ static void hx_emit_inst(int idx) {
         int temp_bytes;
         int pad;
         int is_tail;
+        int fast;
         nargs = h_val[idx];
         is_tail = hx_is_tailcall(idx);
 
@@ -1711,24 +1712,29 @@ static void hx_emit_inst(int idx) {
 
         nreg = nargs < 6 ? nargs : 6;
         nstack = nargs > 6 ? nargs - 6 : 0;
+        fast = (nstack == 0);
 
-        if (nstack == 0 && k != HI_CALLP && !hx_has_cx_alloc && !hx_has_dx_alloc) {
-            /* Fast path: ≤6 args, direct call, no CX/DX allocation.
-             * Load args right-to-left into arg registers to avoid
-             * clobbering sources (later args in higher-numbered regs).
-             * Disabled when CX/DX are allocatable because a source
-             * value in RCX could be clobbered by loading arg3 first. */
+        if (fast) {
+            /* Fast path: ≤6 args (direct OR indirect call).  Load args
+             * right-to-left directly into arg registers to avoid clobbering
+             * sources (later args in higher-numbered regs).  RCX/RDX are
+             * reserved scratch (never allocated), so no source can be
+             * clobbered by arg materialization.  For an indirect call the
+             * callee was already pushed above; it is popped into RAX right
+             * before the call (which also re-aligns RSP), so we avoid the
+             * slow push-all-args-and-reload dance entirely — this is the
+             * hot path for the emulator's threaded-dispatch `di->handler()`
+             * indirect call. */
             j = nreg - 1;
             while (j >= 0) {
                 arg_idx = h_carg[h_cbase[idx] + j];
                 hx_mat(arg_idx, hx_arg_reg[j]);
                 j = j - 1;
             }
-            /* Ensure 16-byte stack alignment for the call.
-             * RSP after push RBP is 16-byte aligned. Frame (if any) is
-             * 16-byte aligned. So RSP is 16-byte aligned here, and the
-             * CALL pushes 8 bytes → RSP mod 16 == 8, which is correct
-             * (callee sees RSP+8 aligned to 16). No adjustment needed. */
+            /* Alignment: in the function body RSP is 16-byte aligned.
+             * Direct call: nothing pushed → RSP%16==0 at the CALL (correct).
+             * Indirect call: the callee push made RSP%16==8, but we pop it
+             * back before the CALL (see emission below), restoring %16==0. */
         } else {
             /* Slow path: >6 args or indirect call.
              * Push all args to stack, reload into arg registers. */
@@ -1775,12 +1781,20 @@ static void hx_emit_inst(int idx) {
          * callee-saves + frame, (d) jmp.  No `add rsp, cleanup` after
          * because we never come back. */
         if (is_tail) {
-            /* For CALLP, recover the callee address before we pop. */
+            /* For CALLP, recover the callee address before we pop.  In the
+             * fast path no args were pushed, so the callee sits at [RSP]. */
             if (k == HI_CALLP) {
-                x64_mov_rm64(X64_RAX, X64_RSP, outgoing + nargs * 8);
+                if (fast) x64_mov_rm64(X64_RAX, X64_RSP, 0);
+                else x64_mov_rm64(X64_RAX, X64_RSP, outgoing + nargs * 8);
             }
-            /* Drop slow-path temp area (mirrors normal cleanup but pre-jump). */
-            if (nstack > 0 || k == HI_CALLP) {
+            /* Drop temp area (mirrors normal cleanup but pre-jump).  In the
+             * fast path only the indirect-call callee (8 bytes) is on the
+             * stack; in the slow path it is the pushed args + outgoing + the
+             * CALLP callee.  This matters for frameless tail calls, where the
+             * inline epilogue does NOT reset RSP. */
+            if (fast) {
+                if (k == HI_CALLP) x64_add_ri64(X64_RSP, 8);
+            } else if (nstack > 0 || k == HI_CALLP) {
                 int cleanup;
                 cleanup = nargs * 8 + outgoing;
                 if (k == HI_CALLP) cleanup = cleanup + 8;
@@ -1806,9 +1820,17 @@ static void hx_emit_inst(int idx) {
 
         /* Emit the call */
         if (k == HI_CALLP) {
-            /* Callee was pushed before args; recover into RAX and call */
-            x64_mov_rm64(X64_RAX, X64_RSP, outgoing + nargs * 8);
-            x64_call_r(X64_RAX);
+            if (fast) {
+                /* Fast path: callee is at [RSP] (only thing pushed).  Pop it
+                 * into RAX — this both recovers the address and re-aligns RSP
+                 * to 16 for the CALL.  No post-call cleanup needed. */
+                x64_pop(X64_RAX);
+                x64_call_r(X64_RAX);
+            } else {
+                /* Slow path: callee sits above the pushed args / outgoing. */
+                x64_mov_rm64(X64_RAX, X64_RSP, outgoing + nargs * 8);
+                x64_call_r(X64_RAX);
+            }
         } else {
             /* Direct call */
             x64_byte(0xE8);
@@ -1818,8 +1840,9 @@ static void hx_emit_inst(int idx) {
             x64_dword(0);
         }
 
-        /* Clean up stack (slow path only — fast path doesn't push) */
-        if (nstack > 0 || k == HI_CALLP) {
+        /* Clean up stack.  Fast path pushed nothing (direct) or already
+         * popped the callee (indirect), so only the slow path cleans up. */
+        if (!fast && (nstack > 0 || k == HI_CALLP)) {
             int cleanup;
             cleanup = nargs * 8 + outgoing;
             if (k == HI_CALLP) cleanup = cleanup + 8;
