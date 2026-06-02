@@ -2339,11 +2339,20 @@ static void hl_stmt(Node *n) {
          *   3. otherwise                        -> linear comparison chain
          * The jump table needs single-predecessor case blocks, so it is
          * only attempted when no case falls through (see
-         * hl_switch_has_fallthrough). */
+         * hl_switch_has_fallthrough).
+         *
+         * HI_JMPTAB codegen exists for the native SLOW-32 target (hir_codegen.h)
+         * and the x64 cross backend (hir_codegen_x64.h).  The a64 cross backend
+         * (hir_codegen_a64.h) has no HI_JMPTAB handler yet, so emitting a JMPTAB
+         * there would silently produce no dispatch and miscompile dense
+         * switches; gate it off for a64 (it falls back to the binary-search /
+         * comparison-chain paths below, which are correct). */
         use_jt = 0;
+#ifndef S12CC_TARGET_A64
         if (sw_n >= 5 && !hl_switch_has_fallthrough(n->body)) {
             use_jt = hl_sw_emit_jumptable(lv, def_blk, sw_b, sw_n);
         }
+#endif
         if (!use_jt) {
             use_bs = (sw_n >= 6);
             if (use_bs) {

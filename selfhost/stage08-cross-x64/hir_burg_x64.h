@@ -188,6 +188,7 @@ static void bg_init(void) {
     bg_add_pat(BG_STMT, HI_BR,  -1, -1, 1);
     bg_add_pat(BG_STMT, HI_BRC, BG_REG, -1, 1);
     bg_add_pat(BG_STMT, HI_RET, -1, -1, 1);
+    bg_add_pat(BG_STMT, HI_JMPTAB, BG_REG, -1, 1);  /* src1 = index in a reg */
 
     /* Calls */
     bg_add_pat(BG_REG, HI_CALL,  -1, -1, 3);

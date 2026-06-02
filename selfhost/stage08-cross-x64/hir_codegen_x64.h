@@ -34,6 +34,15 @@ static int hx_bpatch_blk[HX_MAX_BPATCH];
 static int hx_bpatch_off[HX_MAX_BPATCH];  /* offset of rel32 in x64_buf */
 static int hx_nbpatch;
 
+/* Jump-table entry patches (HI_JMPTAB).  Each table entry is a 4-byte
+ * PC-relative offset (target_block_off - table_base_off) written into the
+ * .text stream; resolved after block layout when all hx_blk_off[] are final. */
+#define HX_MAX_JTENT 8192
+static int hx_jtent_off[HX_MAX_JTENT];   /* offset of the 4-byte entry in x64_buf */
+static int hx_jtent_blk[HX_MAX_JTENT];   /* target block for this entry */
+static int hx_jtent_base[HX_MAX_JTENT];  /* table base offset (the entry is rel to this) */
+static int hx_njtent;
+
 /* ADDI folding: hx_addi_folded_flag[i]=1 if load/store i has a folded ADDI,
  * hx_addi_folded_disp[i] = the displacement to use in [base+disp] form. */
 static int hx_addi_folded_flag[HIR_MAX_INST];
@@ -1565,6 +1574,63 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
+    /* Jump-table dispatch (issue #32).  src1 = index, already normalised to
+     * [0,span) and bounds-checked by the preceding BRC, so the table lookup
+     * always lands on a valid entry.  No phi copies: the lowering routes every
+     * JMPTAB edge to a single-predecessor block.
+     *
+     * We emit a PC-relative jump table inline right after the indirect jump
+     * (the jmp is unconditional, so control never falls into the table data).
+     * Each 4-byte entry holds (target_block_off - table_base_off); combined
+     * with the RIP-relative table address this gives a position-independent
+     * dispatch needing no relocations.  RCX/RDX/RAX are reserved scratch
+     * (never allocated post the scratch-reservation fix), so we use them
+     * freely.  Entries are patched after block layout (hx_blk_off final). */
+    if (k == HI_JMPTAB) {
+        int jt_base;
+        int span;
+        int t;
+        int idx_r;
+        int lea_disp_off;
+        int table_off;
+
+        jt_base = hjt_base[idx];
+        span = hjt_span[idx];
+
+        /* index -> ECX (32-bit move zero-extends, so the full RCX index used
+         * by the SIB below has clean upper bits even for an in-register src). */
+        idx_r = hx_src(h_src1[idx], X64_RCX);
+        x64_mov_rr(X64_RCX, idx_r);
+
+        /* lea rdx, [rip+disp]   (disp patched to the table below) */
+        x64_byte(0x48); x64_byte(0x8D); x64_byte(0x15);
+        lea_disp_off = x64_off;
+        x64_dword(0);
+        /* movslq rax, [rdx + rcx*4]   (rax = signed 32-bit table entry) */
+        x64_byte(0x48); x64_byte(0x63); x64_byte(0x04); x64_byte(0x8A);
+        /* add rax, rdx   (rax = table_base + entry = target address) */
+        x64_byte(0x48); x64_byte(0x01); x64_byte(0xD0);
+        /* jmp *rax */
+        x64_byte(0xFF); x64_byte(0xE0);
+
+        /* Table base is here; fix the lea's RIP-relative displacement. */
+        table_off = x64_off;
+        x64_patch_rel32(lea_disp_off, table_off);
+
+        /* Emit span placeholder entries; record each for post-layout patching. */
+        t = 0;
+        while (t < span) {
+            if (hx_njtent >= HX_MAX_JTENT) hx_die("too many jump-table entries", idx);
+            hx_jtent_off[hx_njtent] = x64_off;
+            hx_jtent_blk[hx_njtent] = hjt_target[jt_base + t];
+            hx_jtent_base[hx_njtent] = table_off;
+            hx_njtent = hx_njtent + 1;
+            x64_dword(0);
+            t = t + 1;
+        }
+        return;
+    }
+
     if (k == HI_RET) {
         if (h_src1[idx] >= 0) {
             hx_mat(h_src1[idx], X64_RAX);
@@ -2619,6 +2685,7 @@ static void hx_gen_func(Node *fn) {
 
     /* --- Init block offsets --- */
     hx_nbpatch = 0;
+    hx_njtent = 0;
     b = 0;
     while (b < bb_nblk) {
         hx_blk_off[b] = -1;
@@ -2716,7 +2783,7 @@ static void hx_gen_func(Node *fn) {
         i = bb_end[b] - 1;
         while (i >= bb_start[b]) {
             int tk = h_kind[i];
-            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET) {
+            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET || tk == HI_JMPTAB) {
                 term = i;
                 break;
             }
@@ -2832,6 +2899,21 @@ static void hx_gen_func(Node *fn) {
         } else {
             i = i + 1;
         }
+    }
+
+    /* Resolve jump-table entries: each entry = target_block_off - table_base
+     * (all hx_blk_off[] are final now).  Written little-endian into .text. */
+    i = 0;
+    while (i < hx_njtent) {
+        int v;
+        int eo;
+        v = hx_blk_off[hx_jtent_blk[i]] - hx_jtent_base[i];
+        eo = hx_jtent_off[i];
+        x64_buf[eo]     = v & 0xFF;
+        x64_buf[eo + 1] = (v >> 8) & 0xFF;
+        x64_buf[eo + 2] = (v >> 16) & 0xFF;
+        x64_buf[eo + 3] = (v >> 24) & 0xFF;
+        i = i + 1;
     }
     }
 }
