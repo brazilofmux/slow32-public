@@ -42,11 +42,12 @@ static int ra_x64_slot[RA_X64_REVERSE_SIZE];
 /* Call-crossing flag: 1 if value's live interval spans a CALL */
 static int ra_crosses_call[HIR_MAX_INST];
 
-/* Clobber flags: 1 if value's live interval spans an instruction that
- * architecturally clobbers RCX (variable shifts, DIV/REM) or RDX (DIV/REM).
- * Values with these flags cannot be allocated to the corresponding register. */
-static int ra_crosses_cx_clobber[HIR_MAX_INST];
-static int ra_crosses_dx_clobber[HIR_MAX_INST];
+/* NOTE: there is deliberately no per-value CX/DX clobber tracking.  RCX and
+ * RDX (RA_SLOT_RCX/RDX) are permanently reserved as codegen scratch and are
+ * never allocated to any SSA value (see gc_select), so no live value can ever
+ * sit in a register that a variable shift or DIV/REM clobbers.  The old
+ * ra_crosses_cx/dx_clobber arrays + ra_mark_clobbers pass became dead once the
+ * reservation landed and have been removed. */
 
 static void ra_init_x64_regs(void) {
     int i;
@@ -694,7 +695,13 @@ static void gc_build(void) {
              * keeps it active here, which would otherwise force a spurious
              * d<->s1 edge and block the coalescer (see gc_find_moves).  We
              * suppress only that one edge.  We must NOT suppress d<->s2: the
-             * `mov s1->d` would clobber s2 if d and s2 shared a register. */
+             * `mov s1->d` would clobber s2 if d and s2 shared a register.
+             *
+             * The range HI_ADD..HI_SRL also covers HI_DIV/HI_REM, whose
+             * lowering differs (mov s1->RAX; idiv s2; mov RAX/RDX->d) — but
+             * the same exception is still safe there: s1 is copied into RAX
+             * before d is written, and d (never RAX/RDX, which aren't
+             * allocatable) only takes s1's freed register afterward. */
             if (ni >= 0) {
                 int skip_node;
                 skip_node = -1;
@@ -1001,29 +1008,9 @@ static void gc_combine(int u, int v) {
         e = gc_adj_next[e];
     }
 
-    /* Propagate per-instruction clobber-crossing constraints from v to u.
-     *
-     * The select-time constraint check at gc_select reads
-     * ra_crosses_cx_clobber[gc_inst[n]] (the survivor's instruction).
-     * If v's value crosses a CX/DX clobber but u's doesn't, the merged
-     * node must inherit v's constraint or the regalloc may park it in
-     * RCX/RDX and have its register clobbered by the shift / div in v's
-     * live range.
-     *
-     * Found via sign_extend_u32 in s32-fast-x64.c after the edge-fix
-     * shifted some color choices: i0 (PARAM v, crosses CX via the
-     * `1 << (bits-1)` shift) was coalesced into the b3 PHI i36 (does
-     * not cross CX), and the merged node took RCX because i36's
-     * constraint said RCX was fine.  Result: the variable shift in b0
-     * clobbered v before its PHI use in b3. */
-    {
-        int u_inst = gc_inst[u];
-        int v_inst = gc_inst[v];
-        if (u_inst >= 0 && v_inst >= 0) {
-            if (ra_crosses_cx_clobber[v_inst]) ra_crosses_cx_clobber[u_inst] = 1;
-            if (ra_crosses_dx_clobber[v_inst]) ra_crosses_dx_clobber[u_inst] = 1;
-        }
-    }
+    /* (No CX/DX clobber-constraint propagation across coalesced nodes: RCX/RDX
+     * are reserved scratch and never hold a value, so there is no per-node
+     * clobber constraint to inherit.) */
 
     /* If u's degree now >= K and it was in freeze, move to spill */
     if (gc_degree[u] >= gc_k(u) && gc_wl[u] == GC_WL_FREEZE) {
@@ -1781,89 +1768,9 @@ static void ra_mark_call_crossing(void) {
     }
 }
 
-/* =================================================================
- * CX/DX clobber detection
- *
- * Mark values whose live intervals span an instruction that
- * architecturally clobbers RCX (variable shifts, DIV/REM) or
- * RDX (DIV/REM).  These values cannot be allocated to the
- * corresponding register.
- * ================================================================= */
-
-#define RA_MAX_CLOBBERS 1024
-static int ra_cx_clobber_positions[RA_MAX_CLOBBERS];
-static int ra_dx_clobber_positions[RA_MAX_CLOBBERS];
-static int ra_ncx_clobbers;
-static int ra_ndx_clobbers;
-
-static void ra_mark_clobbers(void) {
-    int i;
-    int inst;
-    int k;
-    int j;
-    int cp;
-    int s2_inst;
-
-    /* Collect clobber positions */
-    ra_ncx_clobbers = 0;
-    ra_ndx_clobbers = 0;
-    i = 0;
-    while (i < ra_norder) {
-        inst = ra_order[i];
-        k = h_kind[inst];
-        /* DIV/REM clobbers both RCX (divisor) and RDX (remainder/sign-ext) */
-        if (k == HI_DIV || k == HI_REM) {
-            if (ra_ncx_clobbers < RA_MAX_CLOBBERS) {
-                ra_cx_clobber_positions[ra_ncx_clobbers] = ra_pos[inst];
-                ra_ncx_clobbers = ra_ncx_clobbers + 1;
-            }
-            if (ra_ndx_clobbers < RA_MAX_CLOBBERS) {
-                ra_dx_clobber_positions[ra_ndx_clobbers] = ra_pos[inst];
-                ra_ndx_clobbers = ra_ndx_clobbers + 1;
-            }
-        }
-        /* Variable shifts clobber RCX (shift count in CL) */
-        if (k == HI_SLL || k == HI_SRA || k == HI_SRL) {
-            s2_inst = h_src2[inst];
-            /* Only variable shifts (not immediate) clobber CL */
-            if (s2_inst < 0 || h_kind[s2_inst] != HI_ICONST) {
-                if (ra_ncx_clobbers < RA_MAX_CLOBBERS) {
-                    ra_cx_clobber_positions[ra_ncx_clobbers] = ra_pos[inst];
-                    ra_ncx_clobbers = ra_ncx_clobbers + 1;
-                }
-            }
-        }
-        i = i + 1;
-    }
-
-    /* For each value, check if any CX clobber falls within its live interval */
-    i = 0;
-    while (i < h_ninst) {
-        ra_crosses_cx_clobber[i] = 0;
-        ra_crosses_dx_clobber[i] = 0;
-        if (ra_pos[i] >= 0 && ra_iend[i] > ra_pos[i]) {
-            j = 0;
-            while (j < ra_ncx_clobbers) {
-                cp = ra_cx_clobber_positions[j];
-                if (cp > ra_pos[i] && cp < ra_iend[i]) {
-                    ra_crosses_cx_clobber[i] = 1;
-                    break;
-                }
-                j = j + 1;
-            }
-            j = 0;
-            while (j < ra_ndx_clobbers) {
-                cp = ra_dx_clobber_positions[j];
-                if (cp > ra_pos[i] && cp < ra_iend[i]) {
-                    ra_crosses_dx_clobber[i] = 1;
-                    break;
-                }
-                j = j + 1;
-            }
-        }
-        i = i + 1;
-    }
-}
+/* CX/DX clobber detection was removed: RCX/RDX are reserved scratch and never
+ * allocated, so no value can be clobbered by a variable shift or DIV/REM.  See
+ * the note by ra_crosses_call and the reservation in gc_select. */
 
 /* =================================================================
  * Compare-branch fusion
@@ -2241,7 +2148,6 @@ static void hir_regalloc(void) {
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
-    ra_mark_clobbers();
     gc_alloc();
     ra_assign_spills();
 }

@@ -308,6 +308,7 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n) {
     int dtramp;
     int hole_tgt;
     int has_holes;
+    unsigned urange;
 
     lo = hl_sw_val[sw_b];
     hi = lo;
@@ -318,9 +319,18 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n) {
         if (v > hi) hi = v;
         i = i + 1;
     }
-    span = hi - lo + 1;
-    if (span < 1 || span > HL_JT_MAX_SPAN) return 0;  /* overflow / too big */
-    if (span > 4 * sw_n) return 0;                    /* too sparse */
+    /* Compute span (hi-lo+1) via unsigned subtraction.  hi >= lo always, so
+     * the unsigned difference is the exact mathematical range with no overflow.
+     * The signed `hi - lo + 1` is undefined behaviour when the case values
+     * straddle the full int range (e.g. both INT_MIN and INT_MAX present);
+     * it happens to wrap to <=0 or >HL_JT_MAX_SPAN and so was caught by the old
+     * guards, but that relied on two's-complement wrap.  Bailing once urange
+     * reaches HL_JT_MAX_SPAN keeps span a small positive int, which also keeps
+     * every `hl_jt_tgt[caseval - lo]` index below in [0,span). */
+    urange = (unsigned)hi - (unsigned)lo;
+    if (urange >= (unsigned)HL_JT_MAX_SPAN) return 0;  /* too big */
+    span = (int)urange + 1;
+    if (span > 4 * sw_n) return 0;                     /* too sparse */
 
     has_holes = (span > sw_n);
     dtramp = -1;

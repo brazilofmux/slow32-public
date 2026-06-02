@@ -9,8 +9,14 @@
  * ssa_succ[ssa_soff[b] .. ssa_soff[b] + ssa_nsucc[b]).  ssa_soff[] is
  * assigned by a running cursor in ssa_build_cfg.  This supports an
  * arbitrary number of successors per block (e.g. jump-table dispatch),
- * not just the BR/BRC max of 2. */
-#define SSA_SUCC_SZ 4096
+ * not just the BR/BRC max of 2.
+ *
+ * Sized for total CFG edges in a function, not 2*blocks: a single dense
+ * switch contributes up to its distinct-target count (bounded by case
+ * count / HL_JT_MAX_SPAN).  4096 (the old 2-per-block bound) could be
+ * exhausted by one large switch plus ordinary control flow, so allow ample
+ * headroom; ssa_build_cfg still range-checks and aborts cleanly on overflow. */
+#define SSA_SUCC_SZ 16384
 static int ssa_succ[SSA_SUCC_SZ];
 static int ssa_nsucc[HIR_MAX_BLOCK];
 static int ssa_soff[HIR_MAX_BLOCK];
