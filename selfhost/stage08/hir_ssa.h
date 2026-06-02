@@ -5,9 +5,15 @@
  */
 
 /* --- CFG arrays --- */
+/* Successor lists use a CSR-style layout: each block b owns the slots
+ * ssa_succ[ssa_soff[b] .. ssa_soff[b] + ssa_nsucc[b]).  ssa_soff[] is
+ * assigned by a running cursor in ssa_build_cfg.  This supports an
+ * arbitrary number of successors per block (e.g. jump-table dispatch),
+ * not just the BR/BRC max of 2. */
 #define SSA_SUCC_SZ 4096
 static int ssa_succ[SSA_SUCC_SZ];
 static int ssa_nsucc[HIR_MAX_BLOCK];
+static int ssa_soff[HIR_MAX_BLOCK];
 
 #define SSA_MAX_PRED 8192
 static int ssa_pred[SSA_MAX_PRED];
@@ -115,6 +121,7 @@ static void ssa_build_cfg(void) {
     int i;
     int s;
     int pb;
+    int cursor;
 
     b = 0;
     while (b < bb_nblk) {
@@ -126,9 +133,15 @@ static void ssa_build_cfg(void) {
     /* Build successors from terminators.
        Find the FIRST terminator in each block (dead code after
        goto/break/return may leave non-terminator instructions at
-       the end of a block). */
+       the end of a block).
+
+       ssa_soff[b] is the cursor position where block b's successor
+       slots begin in the flat ssa_succ[] pool; cursor advances by the
+       number of successors emitted for each block. */
+    cursor = 0;
     b = 0;
     while (b < bb_nblk) {
+        ssa_soff[b] = cursor;
         if (bb_start[b] >= bb_end[b]) { b = b + 1; continue; }
         term = bb_start[b];
         while (term < bb_end[b]) {
@@ -139,14 +152,23 @@ static void ssa_build_cfg(void) {
         if (term < bb_end[b]) {
             k = h_kind[term];
             if (k == HI_BR) {
-                ssa_succ[b * 2] = h_val[term];
+                if (cursor + 1 > SSA_SUCC_SZ) {
+                    fdputs("s12cc: too many CFG successor edges\n", 2);
+                    exit(1);
+                }
+                ssa_succ[cursor] = h_val[term];
                 ssa_nsucc[b] = 1;
             } else if (k == HI_BRC) {
-                ssa_succ[b * 2] = h_src2[term];
-                ssa_succ[b * 2 + 1] = h_val[term];
+                if (cursor + 2 > SSA_SUCC_SZ) {
+                    fdputs("s12cc: too many CFG successor edges\n", 2);
+                    exit(1);
+                }
+                ssa_succ[cursor] = h_src2[term];
+                ssa_succ[cursor + 1] = h_val[term];
                 ssa_nsucc[b] = 2;
             }
         }
+        cursor = cursor + ssa_nsucc[b];
         b = b + 1;
     }
 
@@ -155,14 +177,14 @@ static void ssa_build_cfg(void) {
     while (b < bb_nblk) {
         i = 0;
         while (i < ssa_nsucc[b]) {
-            s = ssa_succ[b * 2 + i];
+            s = ssa_succ[ssa_soff[b] + i];
             if (s >= 0 && s < bb_nblk) {
                 ssa_npred[s] = ssa_npred[s] + 1;
                 i = i + 1;
             } else {
                 /* Invalid target — remove this edge by shifting second edge if it exists */
                 if (i == 0 && ssa_nsucc[b] == 2) {
-                    ssa_succ[b * 2] = ssa_succ[b * 2 + 1];
+                    ssa_succ[ssa_soff[b]] = ssa_succ[ssa_soff[b] + 1];
                 }
                 ssa_nsucc[b] = ssa_nsucc[b] - 1;
                 /* Don't increment i — retry current slot which now has the next edge */
@@ -190,7 +212,7 @@ static void ssa_build_cfg(void) {
     while (b < bb_nblk) {
         i = 0;
         while (i < ssa_nsucc[b]) {
-            s = ssa_succ[b * 2 + i];
+            s = ssa_succ[ssa_soff[b] + i];
             if (s >= 0 && s < bb_nblk) {
                 pb = ssa_pbase[s] + ssa_npred[s];
                 ssa_pred[pb] = b;
@@ -231,7 +253,7 @@ static void ssa_compute_rpo(void) {
         i = ssa_rci[top];
         if (i < ssa_nsucc[b]) {
             ssa_rci[top] = i + 1;
-            s = ssa_succ[b * 2 + i];
+            s = ssa_succ[ssa_soff[b] + i];
             if (!ssa_vis[s]) {
                 ssa_vis[s] = 1;
                 top = top + 1;
@@ -766,7 +788,7 @@ static void ssa_rename(void) {
             /* Fill phi args in successors */
             si = 0;
             while (si < ssa_nsucc[b]) {
-                s = ssa_succ[b * 2 + si];
+                s = ssa_succ[ssa_soff[b] + si];
                 i = ssa_phi_head[s];
                 while (i >= 0) {
                     phi_v = h_val[i];

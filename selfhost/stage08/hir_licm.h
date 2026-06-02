@@ -350,7 +350,7 @@ static void hir_licm(void) {
         /* Check each successor */
         si = 0;
         while (si < ssa_nsucc[b]) {
-            s = ssa_succ[b * 2 + si];
+            s = ssa_succ[ssa_soff[b] + si];
             if (s >= 0 && s < bb_nblk && licm_dominates(s, b)) {
                 /* Back-edge: b -> s, s is loop header */
                 body_count = licm_find_body(s, b);
