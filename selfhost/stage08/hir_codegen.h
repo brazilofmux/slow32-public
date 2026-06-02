@@ -97,6 +97,22 @@ static int hcg_va_save_size; /* varargs register save area size */
 /* Block labels */
 static int hcg_blk_lbl[HIR_MAX_BLOCK];
 
+/* Deferred jump-table emission (issue #32).  HI_JMPTAB dispatch is emitted
+ * inline in .text, but the table of target addresses must live in a
+ * readable section (.text is execute-only under W^X), so it is collected
+ * here during codegen and emitted in gen_data().  Entries store globally
+ * unique block-label numbers (hcg_blk_lbl values), which stay valid after
+ * the per-function hcg_blk_lbl[] array is overwritten because cg_lbl is
+ * monotonic. */
+#define CG_MAX_JT      512
+#define CG_MAX_JT_ENT  32768
+static int cg_jt_id[CG_MAX_JT];      /* .LJT label number */
+static int cg_jt_base[CG_MAX_JT];    /* base into cg_jt_ent */
+static int cg_jt_span[CG_MAX_JT];    /* entry count */
+static int cg_jt_ent[CG_MAX_JT_ENT]; /* target block-label numbers */
+static int cg_njt;
+static int cg_njt_ent;
+
 /* Immediate-selection telemetry */
 static int hcg_stat_imm_opp_add;
 static int hcg_stat_imm_hit_add;
@@ -1787,6 +1803,47 @@ static void hcg_inst(int idx) {
         return;
     }
 
+    /* Jump-table dispatch (issue #32).  src1 = index, already normalised to
+     * [0,span) and bounds-checked by the preceding BRC, so the table lookup
+     * always lands on a valid entry.  No phi copies: the lowering routes every
+     * JMPTAB edge to a single-predecessor block.  r1/r2 are never allocated to
+     * values (the allocatable pool is r3-r28), so they are free scratch. */
+    if (k == HI_JMPTAB) {
+        int jtid;
+        int base;
+        int span;
+        int t;
+        base = hjt_base[idx];
+        span = hjt_span[idx];
+        if (cg_njt >= CG_MAX_JT || cg_njt_ent + span > CG_MAX_JT_ENT) {
+            fdputs("s12cc: too many jump-table entries\n", 2);
+            exit(1);
+        }
+        jtid = cg_label();
+        cg_jt_id[cg_njt] = jtid;
+        cg_jt_base[cg_njt] = cg_njt_ent;
+        cg_jt_span[cg_njt] = span;
+        t = 0;
+        while (t < span) {
+            cg_jt_ent[cg_njt_ent] = hcg_blk_lbl[hjt_target[base + t]];
+            cg_njt_ent = cg_njt_ent + 1;
+            t = t + 1;
+        }
+        cg_njt = cg_njt + 1;
+
+        hcg_into(1, s1);            /* r1 = index */
+        cg_rri("slli", 1, 1, 2);    /* r1 = index * 4 */
+        cg_s("    lui r2, %hi(.LJT");
+        cg_n(jtid);
+        cg_s(")\n    addi r2, r2, %lo(.LJT");
+        cg_n(jtid);
+        cg_s(")\n");
+        cg_rrr("add", 1, 2, 1);     /* r1 = &table[index] */
+        cg_rri("ldw", 1, 1, 0);     /* r1 = table[index] (target address) */
+        cg_s("    jalr r0, r1, 0\n");
+        return;
+    }
+
     /* Direct call */
     if (k == HI_CALL) {
         int has_callhi;
@@ -2182,6 +2239,27 @@ static void gen_data(void) {
 
     cg_s(".data\n");
 
+    /* Jump tables (issue #32).  Emitted first, 4-byte aligned, so the
+     * `ldw` in the dispatch reads aligned words.  Entries are absolute
+     * .word relocations to code-block labels (resolved by the linker). */
+    if (cg_njt > 0) {
+        cg_s(".align 2\n");
+        i = 0;
+        while (i < cg_njt) {
+            cg_s(".LJT");
+            cg_n(cg_jt_id[i]);
+            cg_s(":\n");
+            j = 0;
+            while (j < cg_jt_span[i]) {
+                cg_s("    .word .L");
+                cg_n(cg_jt_ent[cg_jt_base[i] + j]);
+                cg_c(10);
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+    }
+
     /* String literals */
     i = 0;
     while (i < lex_str_count) {
@@ -2300,6 +2378,8 @@ static void gen_data(void) {
 static void gen_program(Node *prog) {
     Node *fn;
 
+    cg_njt = 0;
+    cg_njt_ent = 0;
     cg_s(".text\n\n");
     fn = prog->body;
     while (fn) {

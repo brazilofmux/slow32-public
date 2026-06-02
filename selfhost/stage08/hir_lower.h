@@ -32,6 +32,13 @@ static int hl_sw_cur[HL_MAX_SW_DEPTH];
 static int hl_sw_depth;
 static int hl_sw_ord[HL_MAX_CASE];
 
+/* --- Jump-table lowering (issue #32) --- */
+/* Max span (case-value range hi-lo+1) we will materialise as a jump table.
+ * Bounds the .data table size (HL_JT_MAX_SPAN * 4 bytes) and the build
+ * buffer below. */
+#define HL_JT_MAX_SPAN 1024
+static int hl_jt_tgt[HL_JT_MAX_SPAN];   /* per-index target block (build buffer) */
+
 /* --- Goto label map --- */
 #define HL_MAX_GOTO 512
 static int hl_goto_id[HL_MAX_GOTO];
@@ -141,6 +148,43 @@ static int hl_label_block(int label_id) {
     return hl_goto_blk[hl_ngoto - 1];
 }
 
+/* A statement that unconditionally transfers control, so the next case
+ * label is NOT reached by fall-through from it. */
+static int hl_stmt_terminates(Node *s) {
+    if (!s) return 0;
+    if (s->kind == ND_RETURN) return 1;
+    if (s->kind == ND_BREAK) return 1;
+    if (s->kind == ND_CONTINUE) return 1;
+    if (s->kind == ND_GOTO) return 1;
+    return 0;
+}
+
+/* Conservatively report whether any case in the switch body falls through
+ * into the next case/default label.  Jump tables target case blocks
+ * directly, so a fall-through (which gives a case block a second
+ * predecessor and thus a possible phi) would need a phi copy on the
+ * un-splittable jump-table edge.  When this returns true we decline the
+ * jump table and use the comparison tree, whose per-edge BRCs carry phi
+ * copies normally. */
+static int hl_switch_has_fallthrough(Node *body) {
+    Node *s;
+    Node *prev;
+    int seen_label;
+    if (!body || body->kind != ND_BLOCK) return 1;  /* unknown shape: be safe */
+    prev = NULL;
+    seen_label = 0;
+    s = body->body;
+    while (s) {
+        if (s->kind == ND_CASE || s->kind == ND_DEFAULT) {
+            if (seen_label && !hl_stmt_terminates(prev)) return 1;
+            seen_label = 1;
+        }
+        prev = s;
+        s = s->next;
+    }
+    return 0;
+}
+
 static int hl_sw_less_val(int a, int b, int is_unsigned) {
     if (is_unsigned) return ((unsigned)a) < ((unsigned)b);
     return a < b;
@@ -235,6 +279,91 @@ static void hl_sw_emit_bsearch(int lv, int def_blk, int lt_kind, int lo, int hi)
 
     hl_switch_block(right_blk);
     hl_sw_emit_bsearch(lv, def_blk, lt_kind, mid + 1, hi);
+}
+
+/* Try to lower the switch as an O(1) jump table.  Returns 1 if emitted,
+ * 0 if it declined (caller falls back to the comparison tree).
+ *
+ * Requires the caller to have already verified there is no fall-through
+ * (so every case block has the dispatch as its sole predecessor and thus
+ * no phi from the jump-table edge).  Table holes route through one
+ * trampoline (BR default), itself single-predecessor.  The bounds-check
+ * BRC reaches the default via a normal edge that carries any phi copies.
+ *
+ * Emits in the CURRENT block:
+ *     idx = lv - lo                  (skipped when lo == 0)
+ *     if ((unsigned)idx < span) -> jt_blk else -> def_blk
+ *   jt_blk:  JMPTAB idx -> table[idx]
+ *   dtramp:  BR def_blk              (only when there are holes) */
+static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n) {
+    int i;
+    int lo;
+    int hi;
+    int v;
+    int span;
+    int idx;
+    int span_c;
+    int cmp;
+    int jt_blk;
+    int dtramp;
+    int hole_tgt;
+    int has_holes;
+
+    lo = hl_sw_val[sw_b];
+    hi = lo;
+    i = 1;
+    while (i < sw_n) {
+        v = hl_sw_val[sw_b + i];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+        i = i + 1;
+    }
+    span = hi - lo + 1;
+    if (span < 1 || span > HL_JT_MAX_SPAN) return 0;  /* overflow / too big */
+    if (span > 4 * sw_n) return 0;                    /* too sparse */
+
+    has_holes = (span > sw_n);
+    dtramp = -1;
+    hole_tgt = def_blk;
+    if (has_holes) {
+        dtramp = hir_new_block();
+        hole_tgt = dtramp;
+    }
+
+    /* Build the per-index target table: holes -> trampoline, cases -> block. */
+    i = 0;
+    while (i < span) { hl_jt_tgt[i] = hole_tgt; i = i + 1; }
+    i = 0;
+    while (i < sw_n) {
+        hl_jt_tgt[hl_sw_val[sw_b + i] - lo] = hl_sw_blk[sw_b + i];
+        i = i + 1;
+    }
+
+    /* idx = lv - lo */
+    if (lo == 0) {
+        idx = lv;
+    } else {
+        v = hi_emit(HI_ICONST, TY_INT, -1, -1, lo, NULL);
+        idx = hi_emit(HI_SUB, TY_INT, lv, v, 0, NULL);
+    }
+
+    /* Bounds check, unsigned: idx in [0,span) ? jt_blk : def_blk. */
+    span_c = hi_emit(HI_ICONST, TY_INT, -1, -1, span, NULL);
+    cmp = hi_emit(HI_SLTU, TY_INT, idx, span_c, 0, NULL);
+    jt_blk = hir_new_block();
+    hi_emit(HI_BRC, 0, cmp, jt_blk, def_blk, NULL);
+
+    /* Dispatch.  Pass def = -1: all successors come from the table (holes
+     * already point at the trampoline), so the JMPTAB adds no spurious
+     * edge to def_blk. */
+    hl_switch_block(jt_blk);
+    hi_emit_jmptab(idx, -1, hl_jt_tgt, span);
+
+    if (has_holes) {
+        hl_switch_block(dtramp);
+        hi_emit(HI_BR, 0, -1, -1, def_blk, NULL);
+    }
+    return 1;
 }
 
 /* Promote a 32-bit value (int or float) to f64 twin pair via helper call.
@@ -1981,6 +2110,7 @@ static void hl_stmt(Node *n) {
     int zero_inst;
     int lt_kind;
     int use_bs;
+    int use_jt;
     Node *s;
     Node *cs;
 
@@ -2203,15 +2333,25 @@ static void hl_stmt(Node *n) {
         if (n->cond && (n->cond->ty & TY_UNSIGNED)) lt_kind = HI_SLTU;
         else lt_kind = HI_SLT;
 
-        /* First slice for issue #32:
-           keep tiny switches as linear chain; lower larger ones to a
-           balanced binary decision tree by case value. */
-        use_bs = (sw_n >= 6);
-        if (use_bs) {
-            hl_sw_sort_cases(sw_b, sw_n, (lt_kind == HI_SLTU));
-            hl_sw_emit_bsearch(lv, def_blk, lt_kind, sw_b, sw_b + sw_n - 1);
-        } else {
-            hl_sw_emit_chain(lv, def_blk, sw_b, sw_n);
+        /* Issue #32 dispatch selection:
+         *   1. dense, non-fall-through switch  -> O(1) jump table
+         *   2. >= 6 cases                       -> balanced binary tree
+         *   3. otherwise                        -> linear comparison chain
+         * The jump table needs single-predecessor case blocks, so it is
+         * only attempted when no case falls through (see
+         * hl_switch_has_fallthrough). */
+        use_jt = 0;
+        if (sw_n >= 5 && !hl_switch_has_fallthrough(n->body)) {
+            use_jt = hl_sw_emit_jumptable(lv, def_blk, sw_b, sw_n);
+        }
+        if (!use_jt) {
+            use_bs = (sw_n >= 6);
+            if (use_bs) {
+                hl_sw_sort_cases(sw_b, sw_n, (lt_kind == HI_SLTU));
+                hl_sw_emit_bsearch(lv, def_blk, lt_kind, sw_b, sw_b + sw_n - 1);
+            } else {
+                hl_sw_emit_chain(lv, def_blk, sw_b, sw_n);
+            }
         }
 
         /* Generate body with case cursor */
