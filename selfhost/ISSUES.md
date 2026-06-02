@@ -1517,9 +1517,34 @@ stats output is readable.  Eventually wanted, just not today.
 
 ### Stage 6: Subset C Compiler (`s12cc.c`)
 
-### 32. [OPPORTUNITY] `switch` Comparison Chain
-`ND_SWITCH` is lowered in `hir_lower.h` to a linear chain of `HI_SEQ` + `HI_BRC`. For switches with many cases, this is O(N) at runtime.
-**Recommendation**: Implement jump tables for dense case ranges and binary search for sparse ranges.
+### 32. [IMPLEMENTED] `switch` Comparison Chain → tree + jump table
+Originally `ND_SWITCH` lowered to a linear `HI_SEQ`+`HI_BRC` chain (O(N)).
+
+**Status (2026-06-01): implemented.** `hir_lower.h` now selects, in order:
+1. **Dense, non-fall-through switch → O(1) jump table** (`HI_JMPTAB`). Used when
+   `sw_n >= 5`, span `<= 4*sw_n`, span `<= 1024`, and no case falls through.
+2. **>= 6 cases → balanced binary search tree** (`hl_sw_emit_bsearch`, O(log N)).
+3. **otherwise → linear chain** (`hl_sw_emit_chain`).
+
+Jump-table mechanics (stage08 only):
+- `HI_JMPTAB` terminator with a dedicated `hjt_target[]`/`hjt_base[]`/`hjt_span[]`
+  side table (kept out of `h_carg`); wired through CFG successor enumeration
+  (deduped), the dead-block reachability walk, terminator scans, and liveness.
+- The CFG successor representation was generalized from a fixed 2-per-block layout
+  to a CSR-style flat pool (`ssa_soff[]`) to allow N successors.
+- Critical-edge safety: the lowering routes every jump-table edge to a
+  single-predecessor block (case blocks under the no-fall-through guard; one
+  trampoline `BR default` for table holes), so the un-splittable dispatch edge
+  never needs a phi copy. The default's phi copies ride the bounds-check BRC.
+- Codegen: `slli/lui+addi(%hi/%lo)/add/ldw/jalr` dispatch + a 4-byte-aligned
+  `.LJTn: .word .Lblk...` table in `.data` (absolute reloc; `.text` is execute-only).
+
+Landed across four commits (CFG N-successors → `HI_JMPTAB` infra → lowering+codegen).
+Validated via host build of `s12cc`: libc byte-identical (no qualifying switches),
+the ragel lexer in `s12cc.c` yields 2 jump tables and compiles cleanly, and an
+execution test with holes + out-of-range inputs matches the comparison-tree build
+(exit 172) in fewer instructions. Authoritative SLOW-32 bootstrap + perf
+measurement (Stage 5) pending on the x86-64 side.
 
 ### 36. [IMPLEMENTED] Register Allocation: Caller-Saved Registers
 The original gap: `hir_regalloc.h` only allocated callee-saved registers (`r11-r28`),
