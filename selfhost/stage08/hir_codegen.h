@@ -1953,7 +1953,7 @@ static void hcg_block(int b) {
     i = bb_end[b] - 1;
     while (i >= bb_start[b]) {
         k = h_kind[i];
-        if (k == HI_BR || k == HI_BRC || k == HI_RET) {
+        if (k == HI_BR || k == HI_BRC || k == HI_RET || k == HI_JMPTAB) {
             term = i;
             break;
         }

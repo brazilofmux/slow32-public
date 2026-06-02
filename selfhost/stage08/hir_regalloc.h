@@ -331,7 +331,7 @@ static void ra_compute_pos(void) {
         i = bb_end[b] - 1;
         while (i >= bb_start[b]) {
             tk = h_kind[i];
-            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET) {
+            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET || tk == HI_JMPTAB) {
                 term = i;
                 break;
             }

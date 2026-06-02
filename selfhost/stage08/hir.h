@@ -92,6 +92,14 @@
 #define HI_X64_RDTSC          68  /* lfence;rdtsc → store eax to src1, edx to src2 */
 #define HI_X64_DBT_TRAMPOLINE 69  /* execute translated block trampoline; args in h_carg */
 
+/* Jump-table dispatch terminator (issue #32).  Used for dense switches.
+ * src1 = index value, already normalised to [0,span) and bounds-checked by
+ * a preceding BRC to the default block.  h_val = default block (taken for
+ * table holes).  The per-index target block list lives in hjt_target[]
+ * (hjt_base[]/hjt_span[]), NOT h_carg — h_carg entries are value
+ * instructions that several passes rewrite, but these are block numbers. */
+#define HI_JMPTAB   70
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
@@ -116,6 +124,16 @@ static int   h_carg[HIR_MAX_CARG];
 static int   h_cbase[HIR_MAX_INST];
 static int   h_ncarg;
 
+/* Jump-table targets (flat pool; per-HI_JMPTAB-instruction slice).
+ * hjt_target[hjt_base[i] .. hjt_base[i]+hjt_span[i]) are the destination
+ * block numbers for index 0..span-1.  Kept separate from h_carg because
+ * these are block numbers, not value instructions. */
+#define HIR_MAX_JT  8192
+static int   hjt_target[HIR_MAX_JT];
+static int   hjt_base[HIR_MAX_INST];
+static int   hjt_span[HIR_MAX_INST];
+static int   hjt_n;
+
 /* Phi arguments (Phase B) */
 static int   h_pblk[HIR_MAX_PARG];
 static int   h_pval[HIR_MAX_PARG];
@@ -137,6 +155,7 @@ static void hir_reset(void) {
     h_ninst = 0;
     h_ncarg = 0;
     h_nparg = 0;
+    hjt_n = 0;
     bb_nblk = 0;
     hl_cur_blk = -1;
 }
@@ -199,6 +218,7 @@ static int hi_has_value(int kind) {
     if (kind == HI_A64_ISB) return 0;
     if (kind == HI_X64_RDTSC) return 0;
     if (kind == HI_X64_DBT_TRAMPOLINE) return 0;
+    if (kind == HI_JMPTAB) return 0;
     return 1;
 }
 
@@ -250,5 +270,28 @@ static int hl_terminated(void) {
     if (h_kind[last] == HI_BR) return 1;
     if (h_kind[last] == HI_BRC) return 1;
     if (h_kind[last] == HI_RET) return 1;
+    if (h_kind[last] == HI_JMPTAB) return 1;
     return 0;
+}
+
+/* Emit a HI_JMPTAB terminator dispatching `index_val` (already in [0,span)
+ * and bounds-checked) through a table of `span` destination blocks.  Holes
+ * in the table should be filled with `def_blk` by the caller. */
+static int hi_emit_jmptab(int index_val, int def_blk, int *targets, int span) {
+    int idx;
+    int j;
+    if (hjt_n + span > HIR_MAX_JT) {
+        fdputs("s12cc: jump-table target pool overflow\n", 2);
+        exit(1);
+    }
+    idx = hi_emit(HI_JMPTAB, 0, index_val, -1, def_blk, NULL);
+    hjt_base[idx] = hjt_n;
+    hjt_span[idx] = span;
+    j = 0;
+    while (j < span) {
+        hjt_target[hjt_n] = targets[j];
+        hjt_n = hjt_n + 1;
+        j = j + 1;
+    }
+    return idx;
 }

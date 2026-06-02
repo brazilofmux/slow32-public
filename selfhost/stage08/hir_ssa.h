@@ -146,7 +146,7 @@ static void ssa_build_cfg(void) {
         term = bb_start[b];
         while (term < bb_end[b]) {
             k = h_kind[term];
-            if (k == HI_BR || k == HI_BRC || k == HI_RET) break;
+            if (k == HI_BR || k == HI_BRC || k == HI_RET || k == HI_JMPTAB) break;
             term = term + 1;
         }
         if (term < bb_end[b]) {
@@ -166,6 +166,43 @@ static void ssa_build_cfg(void) {
                 ssa_succ[cursor] = h_src2[term];
                 ssa_succ[cursor + 1] = h_val[term];
                 ssa_nsucc[b] = 2;
+            } else if (k == HI_JMPTAB) {
+                /* Successors = the DISTINCT destination blocks among the
+                 * default and every table entry.  Dedup so each edge is
+                 * listed once (duplicates would inflate predecessor counts
+                 * and break per-predecessor phi-arg matching). */
+                int base; int span; int t; int u; int seen; int n;
+                base = hjt_base[term];
+                span = hjt_span[term];
+                n = 0;
+                /* default first */
+                if (cursor + 1 > SSA_SUCC_SZ) {
+                    fdputs("s12cc: too many CFG successor edges\n", 2);
+                    exit(1);
+                }
+                ssa_succ[cursor] = h_val[term];
+                n = 1;
+                t = 0;
+                while (t < span) {
+                    int tgt;
+                    tgt = hjt_target[base + t];
+                    seen = 0;
+                    u = 0;
+                    while (u < n) {
+                        if (ssa_succ[cursor + u] == tgt) { seen = 1; break; }
+                        u = u + 1;
+                    }
+                    if (!seen) {
+                        if (cursor + n + 1 > SSA_SUCC_SZ) {
+                            fdputs("s12cc: too many CFG successor edges\n", 2);
+                            exit(1);
+                        }
+                        ssa_succ[cursor + n] = tgt;
+                        n = n + 1;
+                    }
+                    t = t + 1;
+                }
+                ssa_nsucc[b] = n;
             }
         }
         cursor = cursor + ssa_nsucc[b];
@@ -182,12 +219,12 @@ static void ssa_build_cfg(void) {
                 ssa_npred[s] = ssa_npred[s] + 1;
                 i = i + 1;
             } else {
-                /* Invalid target — remove this edge by shifting second edge if it exists */
-                if (i == 0 && ssa_nsucc[b] == 2) {
-                    ssa_succ[ssa_soff[b]] = ssa_succ[ssa_soff[b] + 1];
-                }
+                /* Invalid target — swap-remove: move the last edge into this
+                 * slot and shrink.  Correct for any successor count (1, 2, or
+                 * the N of a jump table); order is irrelevant to all readers. */
+                ssa_succ[ssa_soff[b] + i] = ssa_succ[ssa_soff[b] + ssa_nsucc[b] - 1];
                 ssa_nsucc[b] = ssa_nsucc[b] - 1;
-                /* Don't increment i — retry current slot which now has the next edge */
+                /* Don't increment i — retry current slot which now has the moved edge */
             }
         }
         b = b + 1;

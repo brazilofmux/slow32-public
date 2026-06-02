@@ -667,6 +667,27 @@ static int ho_dead_blocks(void) {
                     sp = sp + 1;
                 }
             }
+            if (k == HI_JMPTAB) {
+                int jb; int js; int jj;
+                t = h_val[i];   /* default block */
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+                jb = hjt_base[i];
+                js = hjt_span[i];
+                jj = 0;
+                while (jj < js) {
+                    t = hjt_target[jb + jj];
+                    if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                        ho_use[t] = 1;
+                        ho_use[sp] = t;
+                        sp = sp + 1;
+                    }
+                    jj = jj + 1;
+                }
+            }
             i = i + 1;
         }
     }
