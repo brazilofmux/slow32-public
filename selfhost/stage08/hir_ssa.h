@@ -152,7 +152,7 @@ static void ssa_build_cfg(void) {
         term = bb_start[b];
         while (term < bb_end[b]) {
             k = h_kind[term];
-            if (k == HI_BR || k == HI_BRC || k == HI_RET || k == HI_JMPTAB) break;
+            if (hi_is_terminator(k)) break;
             term = term + 1;
         }
         if (term < bb_end[b]) {
@@ -821,7 +821,7 @@ static void ssa_rename(void) {
                         h_kind[i] = HI_NOP;
                     }
                 }
-                if (k == HI_BR || k == HI_BRC || k == HI_RET) {
+                if (hi_is_terminator(k)) {
                     i = i + 1;
                     break;
                 }

@@ -2783,7 +2783,7 @@ static void hx_gen_func(Node *fn) {
         i = bb_end[b] - 1;
         while (i >= bb_start[b]) {
             int tk = h_kind[i];
-            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET || tk == HI_JMPTAB) {
+            if (hi_is_terminator(tk)) {
                 term = i;
                 break;
             }

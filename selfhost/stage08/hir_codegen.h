@@ -2005,12 +2005,12 @@ static void hcg_block(int b) {
     hcg_cur_blk = b;
     cg_ldef(hcg_blk_lbl[b]);
 
-    /* Find the terminator (last non-NOP: BR/BRC/RET) */
+    /* Find the terminator (last non-NOP: BR/BRC/RET/JMPTAB) */
     term = -1;
     i = bb_end[b] - 1;
     while (i >= bb_start[b]) {
         k = h_kind[i];
-        if (k == HI_BR || k == HI_BRC || k == HI_RET || k == HI_JMPTAB) {
+        if (hi_is_terminator(k)) {
             term = i;
             break;
         }

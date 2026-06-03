@@ -326,12 +326,12 @@ static void ra_compute_pos(void) {
             phi = ssa_phi_next[phi];
         }
 
-        /* Find terminator (last BR/BRC/RET) in this block */
+        /* Find terminator (last BR/BRC/RET/JMPTAB) in this block */
         term = -1;
         i = bb_end[b] - 1;
         while (i >= bb_start[b]) {
             tk = h_kind[i];
-            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET || tk == HI_JMPTAB) {
+            if (hi_is_terminator(tk)) {
                 term = i;
                 break;
             }

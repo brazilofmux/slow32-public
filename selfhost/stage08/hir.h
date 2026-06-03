@@ -261,16 +261,23 @@ static int hi_is_pure(int k) {
     return 0;
 }
 
+/* Control-flow terminators that end a basic block (define its CFG successors).
+ * BR/BRC/RET/JMPTAB. (Calls are regular value-producing instructions here.) */
+static int hi_is_terminator(int kind) {
+    if (kind == HI_BR) return 1;
+    if (kind == HI_BRC) return 1;
+    if (kind == HI_RET) return 1;
+    if (kind == HI_JMPTAB) return 1;
+    return 0;
+}
+
 /* Is the current block terminated? */
 static int hl_terminated(void) {
     int last;
     if (hl_cur_blk < 0) return 1;
     if (bb_start[hl_cur_blk] >= bb_end[hl_cur_blk]) return 0;
     last = bb_end[hl_cur_blk] - 1;
-    if (h_kind[last] == HI_BR) return 1;
-    if (h_kind[last] == HI_BRC) return 1;
-    if (h_kind[last] == HI_RET) return 1;
-    if (h_kind[last] == HI_JMPTAB) return 1;
+    if (hi_is_terminator(h_kind[last])) return 1;
     return 0;
 }
 

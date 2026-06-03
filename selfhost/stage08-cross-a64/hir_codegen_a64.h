@@ -4063,7 +4063,7 @@ static void hx_gen_func(Node *fn) {
             if (rpo_idx + 1 < ssa_rpo_cnt) hx_next_blk = ssa_rpo_ord[rpo_idx + 1];
             else                            hx_next_blk = -1;
 
-            /* Find the terminator (last BR/BRC/RET in the block).
+            /* Find the terminator (last BR/BRC/RET/JMPTAB in the block).
              * Body-dep hoisted clones must be emitted just before it so
              * the body's defs are visible to them. */
             {
@@ -4084,7 +4084,7 @@ static void hx_gen_func(Node *fn) {
                 i = bb_end[b] - 1;
                 while (i >= bb_start[b]) {
                     tk = h_kind[i];
-                    if (tk == HI_BR || tk == HI_BRC || tk == HI_RET) {
+                    if (hi_is_terminator(tk)) {
                         term = i; break;
                     }
                     if (tk != HI_NOP) break;
