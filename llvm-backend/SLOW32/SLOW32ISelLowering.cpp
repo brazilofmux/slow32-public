@@ -306,11 +306,6 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8, Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16, Expand);
 
-  // SLOW32 doesn't have native rotate instructions
-  // Expand to (SHL | SRL) or custom lower if needed
-  setOperationAction(ISD::ROTL, MVT::i32, Custom);
-  setOperationAction(ISD::ROTR, MVT::i32, Custom);
-
   // SLOW32 doesn't have bit counting instructions
   setOperationAction(ISD::CTPOP, MVT::i32, Expand);
   setOperationAction(ISD::CTLZ, MVT::i32, Expand);
@@ -318,6 +313,8 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::CTLZ_ZERO_POISON, MVT::i32, Expand);
   setOperationAction(ISD::CTTZ_ZERO_POISON, MVT::i32, Expand);
   setOperationAction(ISD::BSWAP, MVT::i32, Expand);
+
+  // SLOW32 has no native rotate instructions; expand to (SHL | SRL).
   setOperationAction(ISD::ROTL, MVT::i32, Expand);
   setOperationAction(ISD::ROTR, MVT::i32, Expand);
 
@@ -480,8 +477,6 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::BR_CC:          return LowerBR_CC(Op, DAG);
     case ISD::FCOPYSIGN:      return LowerFCOPYSIGN(Op, DAG);
     case ISD::SELECT:         return LowerSELECT(Op, DAG);
-    case ISD::ROTL:           return LowerROTL(Op, DAG);
-    case ISD::ROTR:           return LowerROTR(Op, DAG);
     case ISD::SHL_PARTS:      return LowerSHL_PARTS(Op, DAG);
     case ISD::SRA_PARTS:      return LowerSRA_PARTS(Op, DAG);
     case ISD::SRL_PARTS:      return LowerSRL_PARTS(Op, DAG);
@@ -590,14 +585,17 @@ SDValue SLOW32TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
     SDValue Chain = Load->getChain();
     MachinePointerInfo MPI = Load->getPointerInfo();
 
+    // Carry the original access flags (volatile/atomic/non-temporal) onto both
+    // halves so a volatile f64 load is not CSE'd or eliminated.
+    MachineMemOperand::Flags Flags = Load->getMemOperand()->getFlags();
     Align BaseAlign = Load->getAlign();
-    SDValue Lo = DAG.getLoad(MVT::i32, DL, Chain, Addr, MPI, BaseAlign);
+    SDValue Lo = DAG.getLoad(MVT::i32, DL, Chain, Addr, MPI, BaseAlign, Flags);
     Chain = Lo.getValue(1);
     SDValue AddrHi = DAG.getNode(ISD::ADD, DL, PtrVT, Addr,
                                  DAG.getConstant(4, DL, PtrVT));
     SDValue Hi = DAG.getLoad(MVT::i32, DL, Chain, AddrHi,
                              MPI.getWithOffset(4),
-                             commonAlignment(BaseAlign, 4));
+                             commonAlignment(BaseAlign, 4), Flags);
     Chain = Hi.getValue(1);
 
     SDValue Val = DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64, Lo, Hi);
@@ -634,13 +632,16 @@ SDValue SLOW32TargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
     SDValue Lo = Split.getValue(0);
     SDValue Hi = Split.getValue(1);
 
+    // Carry the original access flags (volatile/atomic/non-temporal) onto both
+    // halves so a volatile f64 store is not CSE'd or eliminated.
+    MachineMemOperand::Flags Flags = Store->getMemOperand()->getFlags();
     Align BaseAlign = Store->getAlign();
-    SDValue StoreLo = DAG.getStore(Chain, DL, Lo, Addr, MPI, BaseAlign);
+    SDValue StoreLo = DAG.getStore(Chain, DL, Lo, Addr, MPI, BaseAlign, Flags);
     SDValue AddrHi = DAG.getNode(ISD::ADD, DL, PtrVT, Addr,
                                  DAG.getConstant(4, DL, PtrVT));
     SDValue StoreHi = DAG.getStore(StoreLo, DL, Hi, AddrHi,
                                    MPI.getWithOffset(4),
-                                   commonAlignment(BaseAlign, 4));
+                                   commonAlignment(BaseAlign, 4), Flags);
     return StoreHi;
   }
 
@@ -827,19 +828,24 @@ SDValue SLOW32TargetLowering::LowerSHL_PARTS(SDValue Op, SelectionDAG &DAG) cons
 
   // Handle both cases: shift < 32 and shift >= 32
   SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue One = DAG.getConstant(1, DL, VT);
   SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
   SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
-  
+
   // Check if shift >= 32
   SDValue IsGE32 = DAG.getSetCC(DL, MVT::i32, Shamt, ThirtyOne, ISD::SETUGT);
-  
+
   // Case 1: shift < 32
   // NewLo = Lo << Shamt
-  // NewHi = (Hi << Shamt) | (Lo >> (32 - Shamt))
+  // NewHi = (Hi << Shamt) | ((Lo >> 1) >> (Shamt ^ 31))
+  // The (Lo >> 1) >> (Shamt ^ 31) form keeps both shift amounts in [0, 31]:
+  // hardware masks shift amounts to 5 bits, so the naive Lo >> (32 - Shamt)
+  // becomes Lo >> 0 when Shamt == 0 and corrupts the high word.
   SDValue LoShl = DAG.getNode(ISD::SHL, DL, VT, Lo, Shamt);
   SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, Hi, Shamt);
-  SDValue InvShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Shamt);
-  SDValue LoShr = DAG.getNode(ISD::SRL, DL, VT, Lo, InvShamt);
+  SDValue InvShamt = DAG.getNode(ISD::XOR, DL, VT, Shamt, ThirtyOne);
+  SDValue LoShr1 = DAG.getNode(ISD::SRL, DL, VT, Lo, One);
+  SDValue LoShr = DAG.getNode(ISD::SRL, DL, VT, LoShr1, InvShamt);
   SDValue HiLess32 = DAG.getNode(ISD::OR, DL, VT, HiShl, LoShr);
   
   // Case 2: shift >= 32
@@ -865,19 +871,24 @@ SDValue SLOW32TargetLowering::LowerSRL_PARTS(SDValue Op, SelectionDAG &DAG) cons
 
   // Handle both cases: shift < 32 and shift >= 32
   SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue One = DAG.getConstant(1, DL, VT);
   SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
   SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
-  
+
   // Check if shift >= 32
   SDValue IsGE32 = DAG.getSetCC(DL, MVT::i32, Shamt, ThirtyOne, ISD::SETUGT);
-  
+
   // Case 1: shift < 32
-  // NewLo = (Lo >> Shamt) | (Hi << (32 - Shamt))
+  // NewLo = (Lo >> Shamt) | ((Hi << 1) << (Shamt ^ 31))
   // NewHi = Hi >> Shamt
+  // The (Hi << 1) << (Shamt ^ 31) form keeps both shift amounts in [0, 31]:
+  // hardware masks shift amounts to 5 bits, so the naive Hi << (32 - Shamt)
+  // becomes Hi << 0 when Shamt == 0 and corrupts the low word.
   SDValue LoShr = DAG.getNode(ISD::SRL, DL, VT, Lo, Shamt);
   SDValue HiShr = DAG.getNode(ISD::SRL, DL, VT, Hi, Shamt);
-  SDValue InvShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Shamt);
-  SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, Hi, InvShamt);
+  SDValue InvShamt = DAG.getNode(ISD::XOR, DL, VT, Shamt, ThirtyOne);
+  SDValue HiShl1 = DAG.getNode(ISD::SHL, DL, VT, Hi, One);
+  SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, HiShl1, InvShamt);
   SDValue LoLess32 = DAG.getNode(ISD::OR, DL, VT, LoShr, HiShl);
   
   // Case 2: shift >= 32
@@ -902,19 +913,22 @@ SDValue SLOW32TargetLowering::LowerSRA_PARTS(SDValue Op, SelectionDAG &DAG) cons
   EVT VT = Lo.getValueType();
 
   // Handle both cases: shift < 32 and shift >= 32
+  SDValue One = DAG.getConstant(1, DL, VT);
   SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
   SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
-  
+
   // Check if shift >= 32
   SDValue IsGE32 = DAG.getSetCC(DL, MVT::i32, Shamt, ThirtyOne, ISD::SETUGT);
-  
+
   // Case 1: shift < 32
-  // NewLo = (Lo >> Shamt) | (Hi << (32 - Shamt))
+  // NewLo = (Lo >> Shamt) | ((Hi << 1) << (Shamt ^ 31))
   // NewHi = Hi >> Shamt (arithmetic)
+  // See LowerSRL_PARTS for why the (Hi << 1) << (Shamt ^ 31) form is needed.
   SDValue LoShr = DAG.getNode(ISD::SRL, DL, VT, Lo, Shamt);
   SDValue HiSra = DAG.getNode(ISD::SRA, DL, VT, Hi, Shamt);
-  SDValue InvShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Shamt);
-  SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, Hi, InvShamt);
+  SDValue InvShamt = DAG.getNode(ISD::XOR, DL, VT, Shamt, ThirtyOne);
+  SDValue HiShl1 = DAG.getNode(ISD::SHL, DL, VT, Hi, One);
+  SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, HiShl1, InvShamt);
   SDValue LoLess32 = DAG.getNode(ISD::OR, DL, VT, LoShr, HiShl);
   
   // Case 2: shift >= 32
@@ -1031,9 +1045,10 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
                                isVarArg ? CC_SLOW32_VarArg : CC_SLOW32);
 
   SmallVector<SDValue, 8> Chains;
-  SmallVector<SDValue, 8> ArgValues(ArgLocs.size());
-  assert(ArgLocs.size() == Ins.size() &&
-         "Unexpected argument assignment mismatch");
+  // Index results by ValNo (the Ins index), not by ArgLoc index: a varargs f64
+  // that straddles the register/stack boundary produces two ArgLocs (reg + mem)
+  // for a single Ins entry, so the two are not always 1:1.
+  SmallVector<SDValue, 8> ArgValues(Ins.size());
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
 
   for (unsigned I = 0, E = ArgLocs.size(); I != E;) {
@@ -1077,15 +1092,44 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
       SDValue HiCopy = DAG.getCopyFromReg(Chain, dl, HiVReg, MVT::i32);
       Chains.push_back(HiCopy.getValue(1));
 
-      ArgValues[Index] = convertLocToValVT(DAG, LoCopy, LoVA, dl);
+      ArgValues[LoVA.getValNo()] = convertLocToValVT(DAG, LoCopy, LoVA, dl);
       CCValAssign HiAsReg = CCValAssign::getReg(HiVA.getValNo(), HiVA.getValVT(),
                                                HiPhys, MVT::i32,
                                                HiVA.getLocInfo());
-      ArgValues[Index + 1] = convertLocToValVT(DAG, HiCopy, HiAsReg, dl);
+      ArgValues[HiVA.getValNo()] = convertLocToValVT(DAG, HiCopy, HiAsReg, dl);
       return true;
     };
 
     if (HandleSplitI64(I)) {
+      I += 2;
+      continue;
+    }
+
+    // Custom varargs f64 split: lo half in a register, hi half on the stack.
+    // Mirror the caller side (LowerCall / CC_SLOW32_VarArg_F64).
+    if (VA.needsCustom() && VA.getValVT() == MVT::f64) {
+      assert(I + 1 < E && "Missing second half of varargs f64 split");
+      const CCValAssign &HiVA = ArgLocs[I + 1];
+      assert(HiVA.needsCustom() && HiVA.getValNo() == VA.getValNo() &&
+             VA.isRegLoc() && HiVA.isMemLoc() &&
+             "Unexpected varargs f64 split layout");
+
+      Register LoPhys = VA.getLocReg();
+      if (!EntryMBB.isLiveIn(LoPhys))
+        EntryMBB.addLiveIn(LoPhys);
+      Register LoVReg = RegInfo.createVirtualRegister(&SLOW32::GPRRegClass);
+      RegInfo.addLiveIn(LoPhys, LoVReg);
+      SDValue LoCopy = DAG.getCopyFromReg(Chain, dl, LoVReg, MVT::i32);
+      Chains.push_back(LoCopy.getValue(1));
+
+      int HiFI = MFI.CreateFixedObject(4, HiVA.getLocMemOffset(), true);
+      SDValue HiFIN = DAG.getFrameIndex(HiFI, PtrVT);
+      SDValue HiLoad = DAG.getLoad(MVT::i32, dl, Chain, HiFIN,
+                                   MachinePointerInfo::getFixedStack(MF, HiFI));
+      Chains.push_back(HiLoad.getValue(1));
+
+      ArgValues[VA.getValNo()] =
+          DAG.getNode(SLOW32ISD::BuildPairF64, dl, MVT::f64, LoCopy, HiLoad);
       I += 2;
       continue;
     }
@@ -1134,7 +1178,7 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
       ArgValue = Load;
     }
 
-    ArgValues[I] = convertLocToValVT(DAG, ArgValue, VA, dl);
+    ArgValues[VA.getValNo()] = convertLocToValVT(DAG, ArgValue, VA, dl);
     ++I;
   }
 
@@ -1202,6 +1246,45 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
   }
 
   return Chain;
+}
+
+bool SLOW32TargetLowering::CanLowerReturn(
+    CallingConv::ID CallConv, MachineFunction &MF, bool IsVarArg,
+    const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context,
+    const Type *RetTy) const {
+  // Return values are only passed in registers (R1, plus R2 for the high half
+  // of a 64-bit value). Anything that does not fit must be returned indirectly
+  // via an sret pointer; report that here so SelectionDAG demotes it instead of
+  // falling through to a stack assignment that neither side agrees on.
+  //
+  // This must mirror LowerReturn exactly: a 64-bit value is split into two i32
+  // pieces before CC analysis and the high piece is placed in the shadow
+  // register (R2) rather than the stack location RetCC_SLOW32 would assign it,
+  // so a split i64/f64 whose low half lands in a register still fits.
+  SmallVector<CCValAssign, 16> RVLocs;
+  CCState CCInfo(CallConv, IsVarArg, MF, RVLocs, Context);
+  CCInfo.AnalyzeReturn(Outs, RetCC_SLOW32);
+
+  for (unsigned I = 0, E = RVLocs.size(); I != E;) {
+    const CCValAssign &VA = RVLocs[I];
+
+    // Recognize the low/high pair of a split 64-bit return value.
+    bool IsSplitI64Lo =
+        Outs[I].ArgVT == MVT::i64 && Outs[I].VT == MVT::i32 &&
+        I + 1 < E && Outs[I + 1].ArgVT == MVT::i64 &&
+        Outs[I + 1].VT == MVT::i32 &&
+        Outs[I].OrigArgIndex == Outs[I + 1].OrigArgIndex;
+    if (IsSplitI64Lo && VA.isRegLoc() && getShadowFor64Bit(VA.getLocReg())) {
+      I += 2;
+      continue;
+    }
+
+    // Any value the CC could not keep in a register is returned indirectly.
+    if (!VA.isRegLoc())
+      return false;
+    ++I;
+  }
+  return true;
 }
 
 SDValue SLOW32TargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CC,
@@ -1679,70 +1762,6 @@ bool SLOW32TargetLowering::isLegalAddressingMode(const DataLayout &DL,
   return true;
 }
 
-SDValue SLOW32TargetLowering::LowerROTL(SDValue Op, SelectionDAG &DAG) const {
-  // Rotate left: ROTL(x, n) = (x << n) | (x >> (32 - n))
-  SDLoc DL(Op);
-  SDValue Val = Op.getOperand(0);
-  SDValue Amt = Op.getOperand(1);
-  EVT VT = Op.getValueType();
-
-  // Handle constant rotation amounts
-  if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Amt)) {
-    unsigned RotAmt = C->getZExtValue() & 31;  // Mask to 5 bits
-    if (RotAmt == 0)
-      return Val;
-
-    SDValue ShlAmt = DAG.getConstant(RotAmt, DL, VT);
-    SDValue ShrAmt = DAG.getConstant(32 - RotAmt, DL, VT);
-
-    SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, Val, ShlAmt);
-    SDValue Shr = DAG.getNode(ISD::SRL, DL, VT, Val, ShrAmt);
-    return DAG.getNode(ISD::OR, DL, VT, Shl, Shr);
-  }
-
-  // For variable rotation amounts
-  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
-  SDValue NegAmt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Amt);
-
-  SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, Val, Amt);
-  SDValue Shr = DAG.getNode(ISD::SRL, DL, VT, Val, NegAmt);
-  return DAG.getNode(ISD::OR, DL, VT, Shl, Shr);
-}
-
-SDValue SLOW32TargetLowering::LowerConstant(SDValue Op, SelectionDAG &DAG) const {
-  return Op;
-}
-
-SDValue SLOW32TargetLowering::LowerROTR(SDValue Op, SelectionDAG &DAG) const {
-  // Rotate right: ROTR(x, n) = (x >> n) | (x << (32 - n))
-  SDLoc DL(Op);
-  SDValue Val = Op.getOperand(0);
-  SDValue Amt = Op.getOperand(1);
-  EVT VT = Op.getValueType();
-
-  // Handle constant rotation amounts
-  if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Amt)) {
-    unsigned RotAmt = C->getZExtValue() & 31;  // Mask to 5 bits
-    if (RotAmt == 0)
-      return Val;
-
-    SDValue ShrAmt = DAG.getConstant(RotAmt, DL, VT);
-    SDValue ShlAmt = DAG.getConstant(32 - RotAmt, DL, VT);
-
-    SDValue Shr = DAG.getNode(ISD::SRL, DL, VT, Val, ShrAmt);
-    SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, Val, ShlAmt);
-    return DAG.getNode(ISD::OR, DL, VT, Shr, Shl);
-  }
-
-  // For variable rotation amounts
-  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
-  SDValue NegAmt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Amt);
-
-  SDValue Shr = DAG.getNode(ISD::SRL, DL, VT, Val, Amt);
-  SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, Val, NegAmt);
-  return DAG.getNode(ISD::OR, DL, VT, Shr, Shl);
-}
-
 void SLOW32TargetLowering::ReplaceNodeResults(SDNode *N,
                                               SmallVectorImpl<SDValue> &Results,
                                               SelectionDAG &DAG) const {
@@ -1884,117 +1903,6 @@ bool SLOW32TargetLowering::allowsMisalignedMemoryAccesses(
   
   // Conservative for other types
   return false;
-}
-
-// Lower ADDC - Add with Carry output
-// ADDC produces two results: sum and carry
-// Since SLOW32 has no carry flag, compute carry by: carry = (sum < a) for unsigned
-SDValue SLOW32TargetLowering::LowerADDC(SDValue Op, SelectionDAG &DAG) const {
-  SDLoc DL(Op);
-  SDValue LHS = Op.getOperand(0);
-  SDValue RHS = Op.getOperand(1);
-  EVT VT = Op.getValueType();
-
-  // Compute the sum
-  SDValue Sum = DAG.getNode(ISD::ADD, DL, VT, LHS, RHS);
-
-  // Compute carry: carry = (sum < lhs) - unsigned overflow occurred if sum < either input
-  SDValue Carry = DAG.getSetCC(DL, MVT::i1, Sum, LHS, ISD::SETULT);
-
-  // Return both sum and carry (carry as i32 since that's what ADDC expects)
-  SDValue CarryOut = DAG.getZExtOrTrunc(Carry, DL, VT);
-  return DAG.getMergeValues({Sum, CarryOut}, DL);
-}
-
-// Lower ADDE - Add with Carry input
-// ADDE adds two values plus a carry input and produces sum and carry output
-SDValue SLOW32TargetLowering::LowerADDE(SDValue Op, SelectionDAG &DAG) const {
-  SDLoc DL(Op);
-  SDValue LHS = Op.getOperand(0);
-  SDValue RHS = Op.getOperand(1);
-  SDValue CarryIn = Op.getOperand(2);
-  EVT VT = Op.getValueType();
-
-  // First add LHS + RHS
-  SDValue Sum1 = DAG.getNode(ISD::ADD, DL, VT, LHS, RHS);
-  // Compute first carry
-  SDValue Carry1 = DAG.getSetCC(DL, MVT::i1, Sum1, LHS, ISD::SETULT);
-
-  // Add the carry input (ensure it's the right type)
-  // CarryIn is usually i32 from previous ADDC/SUBC
-  SDValue CarryInExt;
-  if (CarryIn.getValueType().isInteger()) {
-    CarryInExt = DAG.getZExtOrTrunc(CarryIn, DL, VT);
-  } else {
-    // This shouldn't happen - ADDE expects integer carry
-    assert(false && "ADDE: CarryIn must be an integer type");
-    CarryInExt = DAG.getConstant(0, DL, VT);
-  }
-  SDValue Sum2 = DAG.getNode(ISD::ADD, DL, VT, Sum1, CarryInExt);
-  // Compute second carry
-  SDValue Carry2 = DAG.getSetCC(DL, MVT::i1, Sum2, Sum1, ISD::SETULT);
-
-  // Final carry is OR of both carries (can't have both)
-  SDValue CarryBit = DAG.getNode(ISD::OR, DL, MVT::i1, Carry1, Carry2);
-  SDValue CarryOut = DAG.getZExtOrTrunc(CarryBit, DL, VT);
-
-  // Return both sum and carry
-  return DAG.getMergeValues({Sum2, CarryOut}, DL);
-}
-
-// Lower SUBC - Subtract with Borrow output
-// SUBC produces two results: difference and borrow
-// Borrow = (lhs < rhs) for unsigned
-SDValue SLOW32TargetLowering::LowerSUBC(SDValue Op, SelectionDAG &DAG) const {
-  SDLoc DL(Op);
-  SDValue LHS = Op.getOperand(0);
-  SDValue RHS = Op.getOperand(1);
-  EVT VT = Op.getValueType();
-
-  // Compute the difference
-  SDValue Diff = DAG.getNode(ISD::SUB, DL, VT, LHS, RHS);
-
-  // Compute borrow: borrow = (lhs < rhs)
-  SDValue Borrow = DAG.getSetCC(DL, MVT::i1, LHS, RHS, ISD::SETULT);
-  SDValue BorrowOut = DAG.getZExtOrTrunc(Borrow, DL, VT);
-
-  // Return both difference and borrow
-  return DAG.getMergeValues({Diff, BorrowOut}, DL);
-}
-
-// Lower SUBE - Subtract with Borrow input
-// SUBE subtracts RHS and borrow from LHS
-SDValue SLOW32TargetLowering::LowerSUBE(SDValue Op, SelectionDAG &DAG) const {
-  SDLoc DL(Op);
-  SDValue LHS = Op.getOperand(0);
-  SDValue RHS = Op.getOperand(1);
-  SDValue BorrowIn = Op.getOperand(2);
-  EVT VT = Op.getValueType();
-
-  // First subtract LHS - RHS
-  SDValue Diff1 = DAG.getNode(ISD::SUB, DL, VT, LHS, RHS);
-  // Compute first borrow
-  SDValue Borrow1 = DAG.getSetCC(DL, MVT::i1, LHS, RHS, ISD::SETULT);
-
-  // Subtract the borrow input (ensure it's the right type)
-  SDValue BorrowInExt;
-  if (BorrowIn.getValueType().isInteger()) {
-    BorrowInExt = DAG.getZExtOrTrunc(BorrowIn, DL, VT);
-  } else {
-    // This shouldn't happen - SUBE expects integer borrow
-    assert(false && "SUBE: BorrowIn must be an integer type");
-    BorrowInExt = DAG.getConstant(0, DL, VT);
-  }
-  SDValue Diff2 = DAG.getNode(ISD::SUB, DL, VT, Diff1, BorrowInExt);
-  // Compute second borrow
-  SDValue Borrow2 = DAG.getSetCC(DL, MVT::i1, Diff1, BorrowInExt, ISD::SETULT);
-
-  // Final borrow is OR of both borrows
-  SDValue BorrowBit = DAG.getNode(ISD::OR, DL, MVT::i1, Borrow1, Borrow2);
-  SDValue BorrowOut = DAG.getZExtOrTrunc(BorrowBit, DL, VT);
-
-  // Return both difference and borrow
-  return DAG.getMergeValues({Diff2, BorrowOut}, DL);
 }
 
 // x + y ⇒ {sum, cout}

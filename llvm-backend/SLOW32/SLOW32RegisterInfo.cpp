@@ -77,13 +77,19 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // prologue/epilogue. Just account for them here so we keep consistent offsets.
   Offset += SPAdj;
 
-  // GPRPair spills/reloads append an extra immediate (+0 or +4) after the
-  // frame index to select the lo/hi half.  Fold it in and remove it so the
-  // instruction has the correct operand count.
-  if (FIOperandNum + 1 < MI.getNumOperands() &&
-      MI.getOperand(FIOperandNum + 1).isImm()) {
+  // The GPRPair spill pseudos (STW_FI/LDW_FI) carry an extra half-offset
+  // immediate (+0 or +4) after the frame index to select the lo/hi half. Fold
+  // it in, drop the operand, and rewrite the pseudo to the real LDW/STW so the
+  // instruction reaches the encoder with the correct opcode and operand count.
+  unsigned Opc = MI.getOpcode();
+  if (Opc == SLOW32::STW_FI || Opc == SLOW32::LDW_FI) {
+    assert(FIOperandNum + 1 < MI.getNumOperands() &&
+           MI.getOperand(FIOperandNum + 1).isImm() &&
+           "STW_FI/LDW_FI must carry a half-offset immediate");
     Offset += MI.getOperand(FIOperandNum + 1).getImm();
     MI.removeOperand(FIOperandNum + 1);
+    Opc = (Opc == SLOW32::STW_FI) ? SLOW32::STW : SLOW32::LDW;
+    MI.setDesc(TII->get(Opc));
   }
 
   // Determine the base register operand.
@@ -91,7 +97,6 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   //   op0=base(rs1), op1=value(rs2), op2=offset/FI  →  base at FIOperandNum-2
   // Load and other instructions have a def:
   //   op0=def(rd), op1=base(rs1), op2=offset/FI     →  base at FIOperandNum-1
-  unsigned Opc = MI.getOpcode();
   unsigned BaseOpIdx;
   if (Opc == SLOW32::STW || Opc == SLOW32::STH || Opc == SLOW32::STB) {
     BaseOpIdx = FIOperandNum - 2;

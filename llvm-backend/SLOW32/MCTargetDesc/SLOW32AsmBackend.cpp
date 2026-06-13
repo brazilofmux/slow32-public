@@ -59,7 +59,10 @@ static uint64_t adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
   case SLOW32::fixup_slow32_lo12:
     return Value & 0xFFF;
   case SLOW32::fixup_slow32_branch: {
-    int64_t Signed = static_cast<int64_t>(Value);
+    // Conditional branches are PC+4 relative: the hardware computes
+    // next_pc = PC + 4 + imm, so the encoded displacement is target - (PC + 4).
+    // MC hands us Value = target - PC for a PCRel fixup, hence the -4.
+    int64_t Signed = static_cast<int64_t>(Value) - 4;
     if (!isInt<13>(Signed))
       Ctx.reportError(Fixup.getLoc(), "branch target out of range");
     if (Signed & 0x1)
@@ -156,7 +159,9 @@ public:
     int64_t Offset = static_cast<int64_t>(Value);
     switch (Fixup.getKind()) {
     case SLOW32::fixup_slow32_branch:
-      return isOutOfRangeBranchOffset(Offset);
+      // The encoded displacement is target - (PC + 4); check that, not the raw
+      // target - PC, so the range matches what adjustFixupValue will encode.
+      return isOutOfRangeBranchOffset(Offset - 4);
     case SLOW32::fixup_slow32_jal:
       return isOutOfRangeJumpOffset(Offset);
     default:
@@ -216,9 +221,10 @@ public:
     if (mc::isRelocation(Fixup.getKind()))
       return;
 
-    if (!Value)
-      return;
-
+    // Note: do not early-out when Value == 0. A conditional branch to itself
+    // (target == PC) has Value 0 but must still encode the PC+4 displacement of
+    // -4; adjustFixupValue handles that. Absolute fixups that resolve to 0 fall
+    // out at the post-adjust check below.
     MCContext &Ctx = getContext();
     Value = adjustFixupValue(Fixup, Value, Ctx);
 

@@ -164,11 +164,25 @@ let hasSideEffects = 0, mayLoad = 1, mayStore = 0 in {
   def LDW  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "ldw $rd, $rs1+$imm">;
 }
 
-// Store instructions 
+// Store instructions
 let hasSideEffects = 0, mayLoad = 0, mayStore = 1 in {
   def STB  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, simm12:$imm), "stb $rs1+$imm, $rs2">;
   def STH  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, simm12:$imm), "sth $rs1+$imm, $rs2">;
   def STW  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, simm12:$imm), "stw $rs1+$imm, $rs2">;
+}
+
+// Frame-index spill helpers for GPRPair (i64/f64) values. The two halves share
+// one 8-byte stack slot, so each access needs a half-offset (0 or 4) on top of
+// the frame index. These pseudos carry that extra immediate legally; frame
+// index elimination folds it into the displacement and rewrites them to plain
+// LDW/STW before instruction emission, so they never reach the encoder.
+let isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0 in {
+  let mayLoad = 1, mayStore = 0 in
+  def LDW_FI : Pseudo<(outs GPR:$rd), (ins GPR:$rs1, i32imm:$fi, i32imm:$off),
+                      "# LDW_FI $rd, $rs1+$fi+$off", []>;
+  let mayLoad = 0, mayStore = 1 in
+  def STW_FI : Pseudo<(outs), (ins GPR:$rs1, GPR:$rs2, i32imm:$fi, i32imm:$off),
+                      "# STW_FI $rs1+$fi+$off, $rs2", []>;
 }
 
 // Branch instructions
@@ -427,26 +441,11 @@ def : Pat<(and (i32 GPR:$a), uimm12:$b), (ANDI (i32 GPR:$a), uimm12:$b)>;
 def : Pat<(or  (i32 GPR:$a), uimm12:$b), (ORI  (i32 GPR:$a), uimm12:$b)>;
 def : Pat<(xor (i32 GPR:$a), uimm12:$b), (XORI (i32 GPR:$a), uimm12:$b)>;
 
-// For large constants that don't fit in 16 bits, materialize them in a register first
-// This will be handled by the constant materialization patterns below
-
-// Helper transforms to extract high and low parts of constants
-def HI16 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant((N->getZExtValue() >> 16) & 0xFFFF, SDLoc(N), MVT::i32);
-}]>;
-def LO16 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getZExtValue() & 0xFFFF, SDLoc(N), MVT::i32);
-}]>;
-
-// Patterns for materializing constants
-// Small constants that fit in 16 bits (signed)
+// Patterns for materializing constants.
+// Small signed constants that fit in a 12-bit immediate go through ADDI; larger
+// constants are materialized by the custom ISD::Constant handler in
+// SLOW32ISelDAGToDAG.cpp, which emits the correct LUI (imm << 12) + ADDI split.
 def : Pat<(i32 simm12:$imm), (ADDI (i32 R0), simm12:$imm)>;
-
-// Constants that need LUI only (upper 16 bits, lower 16 bits are 0)
-def HI16_ONLY : PatLeaf<(imm), [{
-  return (N->getZExtValue() & 0xFFFF) == 0 && (N->getZExtValue() >> 16) != 0;
-}]>;
-def : Pat<(i32 HI16_ONLY:$imm), (LUI (HI16 $imm))>;
 
 // Patterns for shift operations
 // Register-register shifts

@@ -44,8 +44,11 @@ SLOW32TargetLowering::getRegForInlineAsmConstraint(
   if (Constraint.size() == 1) {
     switch (Constraint[0]) {
     case 'r':
-      // General purpose register for any integer type
-      if (GPRRC && (VT.isInteger() || VT == MVT::Other))
+      // General purpose register. f32 lives in a single GPR on this target
+      // (soft float in integer registers), so accept it alongside integer
+      // types. f64 occupies a register pair that the InstPrinter cannot render
+      // as an inline-asm operand, so leave it to the default error path.
+      if (GPRRC && (VT.isInteger() || VT == MVT::f32 || VT == MVT::Other))
         return std::make_pair(0U, GPRRC);
       break;
     default:

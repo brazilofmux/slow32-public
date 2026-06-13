@@ -25,8 +25,11 @@ def CC_SLOW32 : CallingConv<[
 // remaining registers into a contiguous save area and va_arg walks it.
 def CC_SLOW32_VarArg : CallingConv<[
   CCIfByVal<CCPassByVal<4, 4>>,
-  CCIfType<[f64], CCAssignToRegWithShadow<[R3, R4, R5, R6, R7, R8, R9],
-                                          [R4, R5, R6, R7, R8, R9, R10]>>,
+  // Use the same custom f64 handler as the caller (CC_SLOW32_VarArgCall) so both
+  // sides agree on a fixed f64 that straddles the register/stack boundary
+  // (lo in the last register, hi on the stack). LowerFormalArguments handles the
+  // resulting needsCustom reg+mem split.
+  CCIfType<[f64], CCCustom<"CC_SLOW32_VarArg_F64">>,
   CCIfType<[f32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
   CCIfType<[i32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
   CCIfType<[f64], CCAssignToStack<8, 4>>,

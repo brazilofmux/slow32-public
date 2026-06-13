@@ -50,6 +50,7 @@ public:
 private:
   unsigned getRegEncoding(const MCOperand &MO) const;
   uint32_t encodeRType(uint32_t Opcode, const MCInst &MI) const;
+  uint32_t encodeRTypeUnary(uint32_t Opcode, const MCInst &MI) const;
   uint32_t encodeIType(uint32_t Opcode, const MCInst &MI, unsigned RdIdx,
                        unsigned Rs1Idx, unsigned ImmIdx,
                        SmallVectorImpl<MCFixup> &Fixups) const;
@@ -231,6 +232,15 @@ uint32_t SLOW32MCCodeEmitter::encodeRType(uint32_t Opcode,
   return Opcode | (Rd << 7) | (Rs1 << 15) | (Rs2 << 20);
 }
 
+// R-type encoding for single-source operations (rd, rs1); rs2 is ignored by the
+// hardware and encoded as 0. Used by FSQRT/FNEG/FABS and the FCVT conversions.
+uint32_t SLOW32MCCodeEmitter::encodeRTypeUnary(uint32_t Opcode,
+                                               const MCInst &MI) const {
+  unsigned Rd = getRegEncoding(MI.getOperand(0));
+  unsigned Rs1 = getRegEncoding(MI.getOperand(1));
+  return Opcode | (Rd << 7) | (Rs1 << 15);
+}
+
 uint32_t SLOW32MCCodeEmitter::encodeIType(uint32_t Opcode, const MCInst &MI,
                                           unsigned RdIdx, unsigned Rs1Idx,
                                           unsigned ImmIdx,
@@ -401,6 +411,18 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
   uint32_t Binary = 0;
   unsigned Opc = MI.getOpcode();
 
+  // addFixup records fixups at offset 0 (the start of the word being encoded).
+  // When this instruction is emitted into a CB that already holds earlier words
+  // of a multi-instruction expansion, rebase those fixups to the byte offset of
+  // this word so they land on the right instruction. The expansion helpers
+  // recurse through encodeInstruction, so each word rebases its own fixups.
+  size_t FirstFixup = Fixups.size();
+  size_t WordOffset = CB.size();
+  auto RebaseFixups = [&] {
+    for (size_t I = FirstFixup, E = Fixups.size(); I != E; ++I)
+      Fixups[I].setOffset(Fixups[I].getOffset() + WordOffset);
+  };
+
   switch (Opc) {
   default:
     llvm_unreachable("Unhandled SLOW32 opcode");
@@ -453,6 +475,12 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
     break;
   case SLOW32::MUL:
     Binary = encodeRType(0x0A, MI);
+    break;
+  case SLOW32::MULH:
+    Binary = encodeRType(0x0B, MI);
+    break;
+  case SLOW32::MULHU_INST:
+    Binary = encodeRType(0x1F, MI);
     break;
   case SLOW32::DIV:
     Binary = encodeRType(0x0C, MI);
@@ -549,6 +577,135 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
   case SLOW32::JALR_CALLR:
     Binary = encodeJalr(0x41, MI, Fixups);
     break;
+  case SLOW32::BRIND_JALR:
+    // Indirect branch: jalr r0, rs1, 0 (discard the return address).
+    Binary = encodeRetLike(0x41, 0, getRegEncoding(MI.getOperand(0)), 0);
+    break;
+  case SLOW32::LI:
+    // Load immediate, materialized as ori rd, r0, imm.
+    Binary = 0x11 | (getRegEncoding(MI.getOperand(0)) << 7) |
+             (0u << 15) | encodeIImmediate(MI.getOperand(1).getImm());
+    break;
+
+  // Single-precision floating point (two source registers).
+  case SLOW32::FADD_S:
+    Binary = encodeRType(0x53, MI);
+    break;
+  case SLOW32::FSUB_S:
+    Binary = encodeRType(0x54, MI);
+    break;
+  case SLOW32::FMUL_S:
+    Binary = encodeRType(0x55, MI);
+    break;
+  case SLOW32::FDIV_S:
+    Binary = encodeRType(0x56, MI);
+    break;
+  case SLOW32::FSQRT_S:
+    Binary = encodeRTypeUnary(0x57, MI);
+    break;
+  case SLOW32::FEQ_S:
+    Binary = encodeRType(0x58, MI);
+    break;
+  case SLOW32::FLT_S:
+    Binary = encodeRType(0x59, MI);
+    break;
+  case SLOW32::FLE_S:
+    Binary = encodeRType(0x5A, MI);
+    break;
+  case SLOW32::FCVT_W_S:
+    Binary = encodeRTypeUnary(0x5B, MI);
+    break;
+  case SLOW32::FCVT_WU_S:
+    Binary = encodeRTypeUnary(0x5C, MI);
+    break;
+  case SLOW32::FCVT_S_W:
+    Binary = encodeRTypeUnary(0x5D, MI);
+    break;
+  case SLOW32::FCVT_S_WU:
+    Binary = encodeRTypeUnary(0x5E, MI);
+    break;
+  case SLOW32::FNEG_S:
+    Binary = encodeRTypeUnary(0x5F, MI);
+    break;
+  case SLOW32::FABS_S:
+    Binary = encodeRTypeUnary(0x60, MI);
+    break;
+
+  // Double-precision floating point (register pairs).
+  case SLOW32::FADD_D:
+    Binary = encodeRType(0x61, MI);
+    break;
+  case SLOW32::FSUB_D:
+    Binary = encodeRType(0x62, MI);
+    break;
+  case SLOW32::FMUL_D:
+    Binary = encodeRType(0x63, MI);
+    break;
+  case SLOW32::FDIV_D:
+    Binary = encodeRType(0x64, MI);
+    break;
+  case SLOW32::FSQRT_D:
+    Binary = encodeRTypeUnary(0x65, MI);
+    break;
+  case SLOW32::FEQ_D:
+    Binary = encodeRType(0x66, MI);
+    break;
+  case SLOW32::FLT_D:
+    Binary = encodeRType(0x67, MI);
+    break;
+  case SLOW32::FLE_D:
+    Binary = encodeRType(0x68, MI);
+    break;
+  case SLOW32::FCVT_W_D:
+    Binary = encodeRTypeUnary(0x69, MI);
+    break;
+  case SLOW32::FCVT_WU_D:
+    Binary = encodeRTypeUnary(0x6A, MI);
+    break;
+  case SLOW32::FCVT_D_W:
+    Binary = encodeRTypeUnary(0x6B, MI);
+    break;
+  case SLOW32::FCVT_D_WU:
+    Binary = encodeRTypeUnary(0x6C, MI);
+    break;
+  case SLOW32::FCVT_D_S:
+    Binary = encodeRTypeUnary(0x6D, MI);
+    break;
+  case SLOW32::FCVT_S_D:
+    Binary = encodeRTypeUnary(0x6E, MI);
+    break;
+  case SLOW32::FNEG_D:
+    Binary = encodeRTypeUnary(0x6F, MI);
+    break;
+  case SLOW32::FABS_D:
+    Binary = encodeRTypeUnary(0x70, MI);
+    break;
+
+  // 64-bit integer <-> floating point conversions.
+  case SLOW32::FCVT_L_S:
+    Binary = encodeRTypeUnary(0x71, MI);
+    break;
+  case SLOW32::FCVT_LU_S:
+    Binary = encodeRTypeUnary(0x72, MI);
+    break;
+  case SLOW32::FCVT_S_L:
+    Binary = encodeRTypeUnary(0x73, MI);
+    break;
+  case SLOW32::FCVT_S_LU:
+    Binary = encodeRTypeUnary(0x74, MI);
+    break;
+  case SLOW32::FCVT_L_D:
+    Binary = encodeRTypeUnary(0x75, MI);
+    break;
+  case SLOW32::FCVT_LU_D:
+    Binary = encodeRTypeUnary(0x76, MI);
+    break;
+  case SLOW32::FCVT_D_L:
+    Binary = encodeRTypeUnary(0x77, MI);
+    break;
+  case SLOW32::FCVT_D_LU:
+    Binary = encodeRTypeUnary(0x78, MI);
+    break;
   case SLOW32::RET:
     Binary = encodeRetLike(0x41, 0, 31, 0);
     break;
@@ -590,5 +747,6 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
     break;
   }
 
+  RebaseFixups();
   support::endian::write<uint32_t>(CB, Binary, llvm::endianness::little);
 }

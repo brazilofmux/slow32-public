@@ -119,6 +119,12 @@ SDValue SLOW32TargetLowering::performANDCombine(SDNode *N,
 
   uint64_t AndMask = C->getZExtValue();
 
+  // Only valid for i32: (and (srl x, 16), 0xFFFF) == (srl x, 16) requires the
+  // srl to leave exactly bits 0-15. This combine also runs before type
+  // legalization, where dropping the mask from an i64 AND keeps bits 16-63.
+  if (N->getValueType(0) != MVT::i32)
+    return SDValue();
+
   if (AndMask == 0xFFFF && N->getOperand(0).getOpcode() == ISD::SRL) {
     if (auto *ShC = dyn_cast<ConstantSDNode>(N->getOperand(0).getOperand(1)))
       if (ShC->getZExtValue() == 16)

@@ -53,16 +53,9 @@ public:
   SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerROTL(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerROTR(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSHL_PARTS(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSRL_PARTS(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSRA_PARTS(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerADDC(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerADDE(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerSUBC(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerSUBE(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerConstant(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUADDO       (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUADDO_CARRY (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUSUBO       (SDValue Op, SelectionDAG &DAG) const;
@@ -77,6 +70,11 @@ public:
                                const SmallVectorImpl<ISD::InputArg> &Ins,
                                const SDLoc &dl, SelectionDAG &DAG,
                                SmallVectorImpl<SDValue> &InVals) const override;
+
+  bool CanLowerReturn(CallingConv::ID CallConv, MachineFunction &MF,
+                      bool isVarArg,
+                      const SmallVectorImpl<ISD::OutputArg> &Outs,
+                      LLVMContext &Context, const Type *RetTy) const override;
 
   SDValue LowerReturn(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
                      const SmallVectorImpl<ISD::OutputArg> &Outs,
