@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 07: Full toolchain tests
+# Stage 08: Full toolchain tests
 #
 # Tests:
-#   1. Build gen1_cc using stage07's s12cc (compiler bootstrap)
+#   1. Build gen1_cc using stage07's cc.s32x (compiler bootstrap)
 #   2. Run compiler tests with gen1_cc
-#   3. Build tools (s32-as, s32-ar, s32-ld) using stage07's s12cc
+#   3. Build tools (s32-as, s32-ar, s32-ld) using stage07's cc.s32x
 #   4. End-to-end: gen1_cc + stage08 tools compile/assemble/link/run a program
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

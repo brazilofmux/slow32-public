@@ -1,4 +1,9 @@
-# stage08-cross-x64 Makefile — Cross-compiler: C → x86-64 ELF (frontend from stage08)
+# stage08-cross-x64 Makefile — Cross-compiler: C → x86-64 ELF (frontend from src/)
+#
+# The shared compiler frontend and common HIR live in ../src/ (symlinked).
+# This avoids duplicating the large common sources across stage08/ and the
+# cross trees during development. Historical stageNN/ dirs retain full source
+# copies for bootstrap reproducibility.
 #
 # Bootstrap: cc-x64 is compiled directly by host GCC against host libc
 # (mirrors the cc-a64 build). cc-x64 then emits crt0.o and compiles
@@ -19,10 +24,10 @@ OUT = out
 # Source headers that trigger cc-x64 recompilation
 CC_DEPS = cc-x64.c hir_regalloc_x64.h hir_codegen_x64.h hir_burg_x64.h \
           x64_encode.h elf_writer.h obj_writer.h codegen_x64.h libc_x64.h \
-          ../stage08/hir.h ../stage08/hir_lower.h ../stage08/hir_ssa.h \
-          ../stage08/hir_opt.h ../stage08/hir_licm.h ../stage08/hir_burg.h \
-          ../stage08/parser.h ../stage08/ast.h ../stage08/sema.h \
-          ../stage08/optimize.h ../stage08/pp.h c_lexer_gen.c
+          ../src/hir.h ../src/hir_lower.h ../src/hir_ssa.h \
+          ../src/hir_opt.h ../src/hir_licm.h ../src/hir_burg.h \
+          ../src/parser.h ../src/ast.h ../src/sema.h \
+          ../src/optimize.h ../src/pp.h c_lexer_gen.c ../src/c_lexer_gen.c ../src/c_lexer.rl
 
 .PHONY: all test bench clean libc diff-test
 
@@ -154,7 +159,8 @@ bench: $(OUT)/s32fast-hir
 # --- Clean ---
 
 clean:
-	rm -f $(OUT)/cc-x64 $(OUT)/ld-x64 $(OUT)/ld-x64.o $(OUT)/ar-x64
+	rm -f $(OUT)/cc-x64 $(OUT)/ld-x64 $(OUT)/ar-x64
 	rm -f $(OUT)/crt0.o $(OUT)/libc_x64.a $(LIBC_X64_HIR_OBJS)
 	rm -f $(OUT)/s32fast-hir.o $(OUT)/s32fast-hir
+	rm -f $(OUT)/dbt-x64 $(OUT)/dbt_*.o
 	rm -f $(patsubst tests/%.c,$(OUT)/%.o,$(TEST_SRCS)) $(TEST_BINS)

@@ -1,1 +1,1 @@
-../stage08/c_lexer_gen.c
+../src/c_lexer_gen.c

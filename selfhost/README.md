@@ -11,11 +11,12 @@ Stage directories at a glance:
 - `stage05`: code-quality cycle introducing HIR/SSA, BURG instruction selection, and graph-coloring register allocation. Compiled by stage04.
 - `stage06`: next selfhost cycle seeded from stage05; supports a `--fixed-point` gate that enforces gen2 == gen3.
 - `stage07`: same toolchain shape as stage06 plus richer headers (`assert.h`, `math.h`, `signal.h`, `stdio.h`, `time.h`, `ucontext.h`, `sys/*`) so non-trivial SLOW-32 programs (DBT, full emulator) build inside SLOW-32.
-- `stage08`: fork of stage07; the active head for new language features (e.g. bitfields) and future evolution. Cross-compilers now pull their frontend from here.
+- `stage08`: fork of stage07; the active head for new language features (e.g. bitfields) and future evolution.
+- `src/`: canonical live sources for the shared frontend/HIR (lex, parser, sema, common HIR/SSA pieces). The active trees (stage08 + cross compilers) reference it via symlinks to avoid duplication while developing. Historical stage03–stage07 keep full source snapshots for reproducibility.
 
 Sibling cross-compiler trees (independent of the numbered cycle):
-- `stage08-cross-x64`: C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `s32fast-hir` (SLOW-32 fast emulator), and `dbt-x64` (SLOW-32 dynamic binary translator). Frontend symlinked from `../stage08/`.
-- `stage08-cross-a64`: C → AArch64 ELF. AArch64 sibling; frontend symlinked from `../stage08/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
+- `stage08-cross-x64`: C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `s32fast-hir`, and `dbt-x64`. Frontend symlinked from `../src/`.
+- `stage08-cross-a64`: C → AArch64 ELF. AArch64 sibling. Frontend symlinked from `../src/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
 
 Reference docs:
 - [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap (V2 stages 0–16, sibling cross-compiler track, trust model).

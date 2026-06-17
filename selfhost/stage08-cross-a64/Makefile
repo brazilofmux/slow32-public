@@ -1,30 +1,30 @@
 # stage08-cross-a64 Makefile — Cross-compiler: C → AArch64 ELF
 #
 # This is the AArch64 sibling of stage08-cross-x64. The frontend (lex/parse/
-# sema/HIR/optimize) is shared via symlinks into ../stage08; only the
-# backend (encoder, codegen, BURG, regalloc, writers) and the libc/crt0
-# differ from the x86-64 cross-compiler.
+# sema/HIR/optimize) is shared via symlinks into ../src (the canonical live
+# sources); only the backend (encoder, codegen, BURG, regalloc, writers) and
+# the libc/crt0 differ from the x86-64 cross-compiler.
 
 CC = gcc
 CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast bench clean diff-test
+.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast dbt bench clean diff-test
 
 all: $(OUT)/cc-a64 $(OUT)/ld-a64 $(OUT)/ar-a64 \
      test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive
 
 # --- The cross-compiler itself ---
-# Built by host gcc against the shared frontend (symlinked from ../stage08).
+# Built by host gcc against the shared frontend (symlinked from ../src).
 
 CC_DEPS = cc-a64.c codegen_a64.h crt0_emit.h elf_writer.h obj_writer.h \
           a64_encode.h a64_reloc_kinds.h \
           hir_codegen_a64.h hir_burg_a64.h hir_regalloc_a64.h \
-          ../stage08/parser.h ../stage08/ast.h ../stage08/sema.h \
-          ../stage08/optimize.h ../stage08/pp.h ../stage08/c_lexer_gen.c \
-          ../stage08/hir.h ../stage08/hir_lower.h ../stage08/hir_ssa.h \
-          ../stage08/hir_opt.h ../stage08/hir_licm.h
+          ../src/parser.h ../src/ast.h ../src/sema.h \
+          ../src/optimize.h ../src/pp.h ../src/c_lexer_gen.c \
+          ../src/hir.h ../src/hir_lower.h ../src/hir_ssa.h \
+          ../src/hir_opt.h ../src/hir_licm.h ../src/c_lexer.rl
 
 $(OUT)/cc-a64: $(CC_DEPS)
 	$(CC) $(CFLAGS) -o $@ cc-a64.c
@@ -386,3 +386,6 @@ clean:
 	      $(OUT)/cc_dup_foo_a.o $(OUT)/cc_dup_foo_b.o \
 	      $(OUT)/cc_dup_foo_main.o $(OUT)/libdup.a $(OUT)/cc_dup_foo_exe \
 	      tests/ref.o tests/ref.bin
+	rm -f $(OUT)/libc_a64.a $(OUT)/libc_a64_*.o
+	rm -f $(OUT)/s32fast.o $(OUT)/s32fast-hir
+	rm -f $(OUT)/dbt-a64 $(OUT)/dbt_*.o

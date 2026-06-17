@@ -1,1 +1,1 @@
-../stage08/hir_burg.h
+../src/hir_burg.h
