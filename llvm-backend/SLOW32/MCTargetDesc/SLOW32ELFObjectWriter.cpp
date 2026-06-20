@@ -8,6 +8,7 @@
 
 #include "MCTargetDesc/SLOW32FixupKinds.h"
 #include "MCTargetDesc/SLOW32MCTargetDesc.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCFixup.h"
 #include "llvm/MC/MCObjectWriter.h"

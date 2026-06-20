@@ -1,5 +1,5 @@
 diff --git a/llvm/include/llvm/TargetParser/Triple.h b/llvm/include/llvm/TargetParser/Triple.h
-index 7b24db1218..1e89cfdb45 100644
+index 7b24db121818..1e89cfdb45fc 100644
 --- a/llvm/include/llvm/TargetParser/Triple.h
 +++ b/llvm/include/llvm/TargetParser/Triple.h
 @@ -79,6 +79,7 @@ public:
@@ -21,7 +21,7 @@ index 7b24db1218..1e89cfdb45 100644
    bool isSPARC32() const {
      return getArch() == Triple::sparc || getArch() == Triple::sparcel;
 diff --git a/llvm/lib/TargetParser/Triple.cpp b/llvm/lib/TargetParser/Triple.cpp
-index c6515425b7..cb4ffd682f 100644
+index c6515425b7eb..cb4ffd682f7b 100644
 --- a/llvm/lib/TargetParser/Triple.cpp
 +++ b/llvm/lib/TargetParser/Triple.cpp
 @@ -108,6 +108,8 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
