@@ -1,0 +1,21 @@
+d uge: 1
+d ugt: 1
+d ule: 1
+d ult: 1
+d one: 0
+d ueq: 1
+d olt: 0
+d oeq: 0
+d une: 1
+f uge: 1
+f ugt: 1
+f ule: 1
+f ult: 1
+f one: 0
+f ueq: 1
+f olt: 0
+f oeq: 0
+f une: 1
+d ord lt: 0
+d ord eq: 1
+f ord le: 1
