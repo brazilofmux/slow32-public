@@ -260,8 +260,11 @@ def : Pat<(setne (f32 GPR:$a), (f32 GPR:$b)),
           (XORI (FEQ_S (f32 GPR:$a), (f32 GPR:$b)), 1)>;
 // Ordered f32 comparisons
 def : Pat<(setoeq (f32 GPR:$a), (f32 GPR:$b)), (FEQ_S (f32 GPR:$a), (f32 GPR:$b))>;
+// setone is ORDERED not-equal: must be 0 when either operand is NaN.
+// (a<b) || (a>b) — both FLT_S return 0 on NaN, so the result is 0 on NaN.
 def : Pat<(setone (f32 GPR:$a), (f32 GPR:$b)),
-          (XORI (FEQ_S (f32 GPR:$a), (f32 GPR:$b)), 1)>;
+          (OR (FLT_S (f32 GPR:$a), (f32 GPR:$b)),
+              (FLT_S (f32 GPR:$b), (f32 GPR:$a)))>;
 def : Pat<(setolt (f32 GPR:$a), (f32 GPR:$b)), (FLT_S (f32 GPR:$a), (f32 GPR:$b))>;
 def : Pat<(setole (f32 GPR:$a), (f32 GPR:$b)), (FLE_S (f32 GPR:$a), (f32 GPR:$b))>;
 def : Pat<(setogt (f32 GPR:$a), (f32 GPR:$b)), (FLT_S (f32 GPR:$b), (f32 GPR:$a))>;
@@ -273,14 +276,19 @@ def : Pat<(seto (f32 GPR:$a), (f32 GPR:$b)),
 def : Pat<(setuo (f32 GPR:$a), (f32 GPR:$b)),
           (XORI (AND (FEQ_S (f32 GPR:$a), (f32 GPR:$a)),
                      (FEQ_S (f32 GPR:$b), (f32 GPR:$b))), 1)>;
-// Unordered f32 comparisons (same instructions — NaN handling is architectural)
-def : Pat<(setueq (f32 GPR:$a), (f32 GPR:$b)), (FEQ_S (f32 GPR:$a), (f32 GPR:$b))>;
+// Unordered f32 comparisons — must return 1 when either operand is NaN.
+// FLT_S/FLE_S return 0 on NaN, so each unordered relational predicate is the
+// complement (XORI ...,1) of the OPPOSITE ordered compare; setueq is the
+// complement of ordered not-equal. setune (= !ordered-equal) is already correct.
+def : Pat<(setueq (f32 GPR:$a), (f32 GPR:$b)),
+          (XORI (OR (FLT_S (f32 GPR:$a), (f32 GPR:$b)),
+                    (FLT_S (f32 GPR:$b), (f32 GPR:$a))), 1)>;
 def : Pat<(setune (f32 GPR:$a), (f32 GPR:$b)),
           (XORI (FEQ_S (f32 GPR:$a), (f32 GPR:$b)), 1)>;
-def : Pat<(setult (f32 GPR:$a), (f32 GPR:$b)), (FLT_S (f32 GPR:$a), (f32 GPR:$b))>;
-def : Pat<(setule (f32 GPR:$a), (f32 GPR:$b)), (FLE_S (f32 GPR:$a), (f32 GPR:$b))>;
-def : Pat<(setugt (f32 GPR:$a), (f32 GPR:$b)), (FLT_S (f32 GPR:$b), (f32 GPR:$a))>;
-def : Pat<(setuge (f32 GPR:$a), (f32 GPR:$b)), (FLE_S (f32 GPR:$b), (f32 GPR:$a))>;
+def : Pat<(setult (f32 GPR:$a), (f32 GPR:$b)), (XORI (FLE_S (f32 GPR:$b), (f32 GPR:$a)), 1)>;
+def : Pat<(setule (f32 GPR:$a), (f32 GPR:$b)), (XORI (FLT_S (f32 GPR:$b), (f32 GPR:$a)), 1)>;
+def : Pat<(setugt (f32 GPR:$a), (f32 GPR:$b)), (XORI (FLE_S (f32 GPR:$a), (f32 GPR:$b)), 1)>;
+def : Pat<(setuge (f32 GPR:$a), (f32 GPR:$b)), (XORI (FLT_S (f32 GPR:$a), (f32 GPR:$b)), 1)>;
 def : Pat<(i32 (fp_to_sint (f32 GPR:$a))), (FCVT_W_S (f32 GPR:$a))>;
 def : Pat<(i32 (fp_to_uint (f32 GPR:$a))), (FCVT_WU_S (f32 GPR:$a))>;
 def : Pat<(f32 (sint_to_fp (i32 GPR:$a))), (FCVT_S_W (i32 GPR:$a))>;
@@ -310,8 +318,10 @@ def : Pat<(setne (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
 // Ordered f64 comparisons
 def : Pat<(setoeq (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
           (FEQ_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b))>;
+// setone is ORDERED not-equal: 0 when either operand is NaN.
 def : Pat<(setone (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
-          (XORI (FEQ_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)), 1)>;
+          (OR (FLT_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
+              (FLT_D (f64 GPRPairOp:$b), (f64 GPRPairOp:$a)))>;
 def : Pat<(setolt (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
           (FLT_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b))>;
 def : Pat<(setole (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
@@ -327,19 +337,21 @@ def : Pat<(seto (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
 def : Pat<(setuo (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
           (XORI (AND (FEQ_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$a)),
                      (FEQ_D (f64 GPRPairOp:$b), (f64 GPRPairOp:$b))), 1)>;
-// Unordered f64 comparisons
+// Unordered f64 comparisons — must return 1 when either operand is NaN
+// (same construction as the f32 unordered patterns above).
 def : Pat<(setueq (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
-          (FEQ_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b))>;
+          (XORI (OR (FLT_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
+                    (FLT_D (f64 GPRPairOp:$b), (f64 GPRPairOp:$a))), 1)>;
 def : Pat<(setune (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
           (XORI (FEQ_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)), 1)>;
 def : Pat<(setult (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
-          (FLT_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b))>;
+          (XORI (FLE_D (f64 GPRPairOp:$b), (f64 GPRPairOp:$a)), 1)>;
 def : Pat<(setule (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
-          (FLE_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b))>;
+          (XORI (FLT_D (f64 GPRPairOp:$b), (f64 GPRPairOp:$a)), 1)>;
 def : Pat<(setugt (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
-          (FLT_D (f64 GPRPairOp:$b), (f64 GPRPairOp:$a))>;
+          (XORI (FLE_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)), 1)>;
 def : Pat<(setuge (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)),
-          (FLE_D (f64 GPRPairOp:$b), (f64 GPRPairOp:$a))>;
+          (XORI (FLT_D (f64 GPRPairOp:$a), (f64 GPRPairOp:$b)), 1)>;
 def : Pat<(i32 (fp_to_sint GPRPairOp:$a)), (FCVT_W_D GPRPairOp:$a)>;
 def : Pat<(i32 (fp_to_uint GPRPairOp:$a)), (FCVT_WU_D GPRPairOp:$a)>;
 def : Pat<(f64 (sint_to_fp (i32 GPR:$a))), (FCVT_D_W (i32 GPR:$a))>;
