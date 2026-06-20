@@ -24,7 +24,7 @@ typedef struct {
     uint8_t value_use_count[STAGE5_SSA_MAX_VALUES];
     bool value_is_const[STAGE5_SSA_MAX_VALUES];
     uint32_t value_const_val[STAGE5_SSA_MAX_VALUES];
-    uint16_t value_def_node[STAGE5_MAX_IR_NODES]; // Index into region->ir
+    uint16_t value_def_node[STAGE5_SSA_MAX_VALUES]; // Index into region->ir (one per SSA value id)
 } stage5_ssa_overlay_t;
 
 // PHI elimination plan (kept simple for regions)
