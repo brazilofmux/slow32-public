@@ -1105,6 +1105,12 @@ static inline void emit_setp(emit_ctx_t *ctx, x64_reg_t dst)  { emit_setcc(ctx, 
 // ============================================================================
 
 static inline void emit_patch_rel32(emit_ctx_t *ctx, size_t patch_offset, size_t target_offset) {
+    // The patch site can lie past the buffer once the emitter has overflowed
+    // (offset keeps advancing past capacity). Never write out of bounds.
+    if (patch_offset + 4 > ctx->capacity) {
+        ctx->overflow = true;
+        return;
+    }
     int32_t rel = (int32_t)(target_offset - (patch_offset + 4));
     memcpy(ctx->buf + patch_offset, &rel, 4);
 }

@@ -514,48 +514,89 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
         return false;
     }
     
+    // Determine the actual file size so untrusted header fields (offsets, counts)
+    // can be range-checked before they drive any allocation or fread.
+    if (fseek(inf->file, 0, SEEK_END) != 0) {
+        fprintf(stderr, "Error: Cannot seek '%s'\n", filename);
+        fclose(inf->file);
+        return false;
+    }
+    long fsize_signed = ftell(inf->file);
+    if (fsize_signed < 0) {
+        fprintf(stderr, "Error: Cannot determine size of '%s'\n", filename);
+        fclose(inf->file);
+        return false;
+    }
+    uint64_t fsize = (uint64_t)fsize_signed;
+
+    // Validate section/symbol/string-table extents in 64-bit math so that a
+    // crafted offset+count cannot wrap a 32-bit sum past the file end.
+    if ((uint64_t)inf->header.sec_offset + (uint64_t)inf->header.nsections * sizeof(s32o_section_t) > fsize ||
+        (uint64_t)inf->header.sym_offset + (uint64_t)inf->header.nsymbols * sizeof(s32o_symbol_t) > fsize ||
+        (uint64_t)inf->header.str_offset + (uint64_t)inf->header.str_size > fsize) {
+        fprintf(stderr, "Error: '%s' has an out-of-range section/symbol/string table\n", filename);
+        fclose(inf->file);
+        return false;
+    }
+
     // Allocate and read sections
     inf->sections = calloc(inf->header.nsections, sizeof(s32o_section_t));
+    inf->section_base = calloc(inf->header.nsections, sizeof(uint32_t));
+    inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
+    inf->string_table = malloc(inf->header.str_size);
+    if ((inf->header.nsections && (!inf->sections || !inf->section_base)) ||
+        (inf->header.nsymbols && !inf->symbols) ||
+        (inf->header.str_size && !inf->string_table)) {
+        fprintf(stderr, "Error: Out of memory loading '%s'\n", filename);
+        fclose(inf->file);
+        return false;
+    }
     fseek(inf->file, inf->header.sec_offset, SEEK_SET);
     if (fread(inf->sections, sizeof(s32o_section_t), inf->header.nsections, inf->file) != inf->header.nsections) {
         fprintf(stderr, "Error: Failed to read sections from %s\n", filename);
         return false;
     }
 
-    // Allocate section_base array (sized to this file's sections)
-    inf->section_base = calloc(inf->header.nsections, sizeof(uint32_t));
-
-    // Allocate and read symbols
-    inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
+    // Read symbols
     fseek(inf->file, inf->header.sym_offset, SEEK_SET);
     if (fread(inf->symbols, sizeof(s32o_symbol_t), inf->header.nsymbols, inf->file) != inf->header.nsymbols) {
         fprintf(stderr, "Error: Failed to read symbols from %s\n", filename);
         return false;
     }
-    
+
     // Read string table
-    inf->string_table = malloc(inf->header.str_size);
     fseek(inf->file, inf->header.str_offset, SEEK_SET);
     if (fread(inf->string_table, 1, inf->header.str_size, inf->file) != inf->header.str_size) {
         fprintf(stderr, "Error: Failed to read string table from %s\n", filename);
         return false;
     }
-    
+
     // For regular files, section data is read on demand
     inf->section_data = NULL;
-    
-    // Count total relocations and allocate
-    uint32_t total_relocs = 0;
+
+    // Count total relocations and allocate. Accumulate in 64-bit and validate
+    // each section's reloc extent against the file so the sum cannot wrap a
+    // 32-bit counter and under-allocate the destination buffer.
+    uint64_t total_relocs = 0;
     for (uint32_t i = 0; i < inf->header.nsections; i++) {
+        if ((uint64_t)inf->sections[i].reloc_offset +
+            (uint64_t)inf->sections[i].nrelocs * sizeof(s32o_reloc_t) > fsize) {
+            fprintf(stderr, "Error: '%s' has out-of-range relocations\n", filename);
+            return false;
+        }
         total_relocs += inf->sections[i].nrelocs;
     }
     if (total_relocs > 0) {
         inf->relocations = calloc(total_relocs, sizeof(s32o_reloc_t));
-        uint32_t reloc_idx = 0;
+        if (!inf->relocations) {
+            fprintf(stderr, "Error: Out of memory loading relocations from '%s'\n", filename);
+            return false;
+        }
+        uint64_t reloc_idx = 0;
         for (uint32_t i = 0; i < inf->header.nsections; i++) {
             if (inf->sections[i].nrelocs > 0) {
                 fseek(inf->file, inf->sections[i].reloc_offset, SEEK_SET);
-                if (fread(&inf->relocations[reloc_idx], sizeof(s32o_reloc_t), 
+                if (fread(&inf->relocations[reloc_idx], sizeof(s32o_reloc_t),
                           inf->sections[i].nrelocs, inf->file) != inf->sections[i].nrelocs) {
                     fprintf(stderr, "Error: Failed to read relocations from %s\n", filename);
                     return false;

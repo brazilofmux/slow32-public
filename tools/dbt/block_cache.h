@@ -72,6 +72,12 @@ _Static_assert(sizeof(compact_entry_t) == 16, "compact_entry_t must be 16 bytes"
 // Code buffer size for translated code
 #define CODE_BUFFER_SIZE (4 * 1024 * 1024)  // 4MB
 
+// Conservative upper bound on the host bytes one translated block can emit
+// (<= MAX_BLOCK_INSTS guest insts plus deferred side-exit stubs). When fewer
+// than this remain in the code buffer, flush before translating so a block
+// cannot overflow the emitter near the end of the buffer.
+#define DBT_MAX_BLOCK_HOST_BYTES (256 * 1024)
+
 // Block flags
 #define BLOCK_FLAG_DIRECT    0x01   // All exits are direct (can be chained)
 #define BLOCK_FLAG_INDIRECT  0x02   // Has indirect exit (JALR)

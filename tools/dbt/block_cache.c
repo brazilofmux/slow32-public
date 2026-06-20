@@ -564,6 +564,14 @@ uint8_t *cache_get_code_ptr(block_cache_t *cache) {
 
 void cache_commit_code(block_cache_t *cache, uint32_t size) {
     uint32_t aligned_offset = (cache->code_buffer_used + 15) & ~15;
+    // Defensive clamp: if a block overshot the buffer, never advance past the
+    // end. Otherwise code_buffer_used > code_buffer_size and the next block's
+    // emit_init capacity (size - used) underflows to ~4GB, defeating every
+    // emit bounds check and turning emits into unbounded OOB writes.
+    if ((uint64_t)aligned_offset + size > cache->code_buffer_size) {
+        cache->code_buffer_used = cache->code_buffer_size;  // forces a flush next time
+        return;
+    }
     cache->code_buffer_used = aligned_offset + size;
 #ifdef __aarch64__
     // Flush I-cache for newly committed code

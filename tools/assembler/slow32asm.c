@@ -108,20 +108,26 @@ static void scanner_next(scanner_t *s) {
         case ']': s->curr.type = TOK_BRACKET_R; return;
         case ',': s->curr.type = TOK_COMMA; return;
         case '%': s->curr.type = TOK_PERCENT; return;
-        case '"':
+        case '"': {
             s->curr.type = TOK_STRING;
             int i = 0;
-            s->curr.sval[i++] = '"';
+            const int svcap = (int)sizeof(s->curr.sval);  /* leave svcap-1 for the NUL */
+            if (i < svcap - 1) s->curr.sval[i++] = '"';
             while (*s->p && *s->p != '"') {
                 if (*s->p == '\\' && *(s->p+1)) {
-                    s->curr.sval[i++] = *s->p++;
+                    if (i < svcap - 1) s->curr.sval[i++] = *s->p++;
+                    else s->p++;
                 }
-                if (i < 254) s->curr.sval[i++] = *s->p++;
+                if (i < svcap - 1) s->curr.sval[i++] = *s->p++;
                 else s->p++;
             }
-            if (*s->p == '"') s->curr.sval[i++] = *s->p++;
+            if (*s->p == '"') {
+                if (i < svcap - 1) s->curr.sval[i++] = *s->p;
+                s->p++;
+            }
             s->curr.sval[i] = '\0';
             return;
+        }
         default:
             if (isdigit(c)) {
                 s->curr.type = TOK_NUMBER;
