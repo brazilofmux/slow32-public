@@ -143,6 +143,11 @@ static bool add_or_replace_member(archive_state_t *state, const char *filename) 
     }
     
     uint8_t *data = malloc(st.st_size);
+    if (!data) {
+        fclose(f);
+        fprintf(stderr, "Error: Out of memory reading '%s'\n", filename);
+        return false;
+    }
     if (!read_fully(data, st.st_size, f)) {
         fclose(f);
         free(data);
@@ -241,18 +246,24 @@ static bool load_archive_members(const char *filename, archive_state_t *state) {
         return false;
     }
     
-    if (hdr.str_offset + hdr.str_size > (uint32_t)archive_size) {
+    // Extent checks in 64-bit so a crafted offset+size cannot wrap past the file.
+    if ((uint64_t)hdr.str_offset + (uint64_t)hdr.str_size > (uint64_t)archive_size) {
         fclose(f);
         fprintf(stderr, "Error: Archive string table out of bounds\n");
         return false;
     }
-    if (hdr.mem_offset + hdr.nmembers * sizeof(s32a_member_t) > (uint32_t)archive_size) {
+    if ((uint64_t)hdr.mem_offset + (uint64_t)hdr.nmembers * sizeof(s32a_member_t) > (uint64_t)archive_size) {
         fclose(f);
         fprintf(stderr, "Error: Archive member table out of bounds\n");
         return false;
     }
-    
-    char *strings = malloc(hdr.str_size);
+
+    char *strings = malloc((size_t)hdr.str_size + 1);  // +1 for forced NUL
+    if (!strings) {
+        fclose(f);
+        fprintf(stderr, "Error: Out of memory reading archive\n");
+        return false;
+    }
     fseek(f, hdr.str_offset, SEEK_SET);
     if (!read_fully(strings, hdr.str_size, f)) {
         free(strings);
@@ -260,6 +271,7 @@ static bool load_archive_members(const char *filename, archive_state_t *state) {
         fprintf(stderr, "Error: Cannot read archive string table\n");
         return false;
     }
+    strings[hdr.str_size] = '\0';  // member names used as C strings (basename_simple)
     
     fseek(f, hdr.mem_offset, SEEK_SET);
     for (uint32_t i = 0; i < hdr.nmembers; i++) {
@@ -276,14 +288,20 @@ static bool load_archive_members(const char *filename, archive_state_t *state) {
             fprintf(stderr, "Error: Invalid member name offset\n");
             return false;
         }
-        if (mem.offset + mem.size > (uint32_t)archive_size) {
+        if ((uint64_t)mem.offset + (uint64_t)mem.size > (uint64_t)archive_size) {
             free(strings);
             fclose(f);
             fprintf(stderr, "Error: Archive member data out of bounds\n");
             return false;
         }
-        
-        uint8_t *data = malloc(mem.size);
+
+        uint8_t *data = malloc(mem.size ? mem.size : 1);
+        if (!data) {
+            free(strings);
+            fclose(f);
+            fprintf(stderr, "Error: Out of memory reading archive member\n");
+            return false;
+        }
         long saved_pos = ftell(f);
         fseek(f, mem.offset, SEEK_SET);
         if (!read_fully(data, mem.size, f)) {
@@ -455,15 +473,20 @@ static void list_archive(const char *filename) {
         return;
     }
     
-    if (hdr.str_offset + hdr.str_size > (uint32_t)archive_size ||
-        hdr.mem_offset + hdr.nmembers * sizeof(s32a_member_t) > (uint32_t)archive_size) {
+    if ((uint64_t)hdr.str_offset + (uint64_t)hdr.str_size > (uint64_t)archive_size ||
+        (uint64_t)hdr.mem_offset + (uint64_t)hdr.nmembers * sizeof(s32a_member_t) > (uint64_t)archive_size) {
         fprintf(stderr, "Error: Archive table out of bounds\n");
         fclose(f);
         return;
     }
 
-    // Read string table
-    char *strings = malloc(hdr.str_size);
+    // Read string table (+1 forced NUL; member names are printed as C strings)
+    char *strings = malloc((size_t)hdr.str_size + 1);
+    if (!strings) {
+        fprintf(stderr, "Error: Out of memory reading archive\n");
+        fclose(f);
+        return;
+    }
     fseek(f, hdr.str_offset, SEEK_SET);
     if (!read_fully(strings, hdr.str_size, f)) {
         fprintf(stderr, "Error: Cannot read archive string table\n");
@@ -471,7 +494,8 @@ static void list_archive(const char *filename) {
         fclose(f);
         return;
     }
-    
+    strings[hdr.str_size] = '\0';
+
     // Read and display members
     fseek(f, hdr.mem_offset, SEEK_SET);
     for (uint32_t i = 0; i < hdr.nmembers; i++) {
@@ -483,7 +507,7 @@ static void list_archive(const char *filename) {
             return;
         }
         if (mem.name_offset >= hdr.str_size ||
-            mem.offset + mem.size > (uint32_t)archive_size) {
+            (uint64_t)mem.offset + (uint64_t)mem.size > (uint64_t)archive_size) {
             fprintf(stderr, "Error: Archive member out of bounds\n");
             free(strings);
             fclose(f);
@@ -537,15 +561,20 @@ static void extract_archive(const char *archive, const char *member_name) {
         return;
     }
     
-    if (hdr.str_offset + hdr.str_size > (uint32_t)archive_size ||
-        hdr.mem_offset + hdr.nmembers * sizeof(s32a_member_t) > (uint32_t)archive_size) {
+    if ((uint64_t)hdr.str_offset + (uint64_t)hdr.str_size > (uint64_t)archive_size ||
+        (uint64_t)hdr.mem_offset + (uint64_t)hdr.nmembers * sizeof(s32a_member_t) > (uint64_t)archive_size) {
         fprintf(stderr, "Error: Archive table out of bounds\n");
         fclose(f);
         return;
     }
 
-    // Read string table
-    char *strings = malloc(hdr.str_size);
+    // Read string table (+1 forced NUL; member names are used as C strings)
+    char *strings = malloc((size_t)hdr.str_size + 1);
+    if (!strings) {
+        fprintf(stderr, "Error: Out of memory reading archive\n");
+        fclose(f);
+        return;
+    }
     fseek(f, hdr.str_offset, SEEK_SET);
     if (!read_fully(strings, hdr.str_size, f)) {
         fprintf(stderr, "Error: Cannot read archive string table\n");
@@ -553,11 +582,12 @@ static void extract_archive(const char *archive, const char *member_name) {
         fclose(f);
         return;
     }
-    
+    strings[hdr.str_size] = '\0';
+
     // Find and extract member(s)
     fseek(f, hdr.mem_offset, SEEK_SET);
     int found = 0;
-    
+
     for (uint32_t i = 0; i < hdr.nmembers; i++) {
         s32a_member_t mem;
         if (!read_fully(&mem, sizeof(mem), f)) {
@@ -566,9 +596,9 @@ static void extract_archive(const char *archive, const char *member_name) {
             fclose(f);
             return;
         }
-        
+
         if (mem.name_offset >= hdr.str_size ||
-            mem.offset + mem.size > (uint32_t)archive_size) {
+            (uint64_t)mem.offset + (uint64_t)mem.size > (uint64_t)archive_size) {
             fprintf(stderr, "Error: Archive member out of bounds\n");
             free(strings);
             fclose(f);
@@ -587,7 +617,12 @@ static void extract_archive(const char *archive, const char *member_name) {
             }
             
             // Read and write member data
-            uint8_t *data = malloc(mem.size);
+            uint8_t *data = malloc(mem.size ? mem.size : 1);
+            if (!data) {
+                fprintf(stderr, "Error: Out of memory extracting member\n");
+                fclose(out);
+                continue;
+            }
             long saved_pos = ftell(f);
             fseek(f, mem.offset, SEEK_SET);
             if (!read_fully(data, mem.size, f)) {

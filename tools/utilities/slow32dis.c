@@ -379,14 +379,15 @@ static void load_symbols_s32x(FILE *f, s32x_header_t *header) {
 
     if (!symtab_offset || !sym_strtab_size) return;
 
-    // Read sym_strtab
-    char *sym_strings = malloc(sym_strtab_size);
+    // Read sym_strtab (+1 forced NUL so strdup() cannot over-read)
+    char *sym_strings = malloc((size_t)sym_strtab_size + 1);
     if (!sym_strings) return;
     fseek(f, sym_strtab_offset, SEEK_SET);
     if (fread(sym_strings, 1, sym_strtab_size, f) != sym_strtab_size) {
         free(sym_strings);
         return;
     }
+    sym_strings[sym_strtab_size] = '\0';
 
     // Read symbol entries
     int nsyms = symtab_size / sizeof(s32o_symbol_t);
@@ -430,8 +431,8 @@ static void load_symbols_s32o(FILE *f, s32o_header_t *header) {
         return;
     }
 
-    // Read string table
-    char *strings = malloc(header->str_size);
+    // Read string table (+1 forced NUL so strdup() cannot over-read)
+    char *strings = malloc((size_t)header->str_size + 1);
     if (!strings) { free(sects); return; }
     fseek(f, header->str_offset, SEEK_SET);
     if (fread(strings, 1, header->str_size, f) != header->str_size) {
@@ -439,6 +440,7 @@ static void load_symbols_s32o(FILE *f, s32o_header_t *header) {
         free(sects);
         return;
     }
+    strings[header->str_size] = '\0';
 
     // Read symbols
     s32o_symbol_t *syms = malloc(header->nsymbols * sizeof(s32o_symbol_t));
@@ -586,11 +588,15 @@ int main(int argc, char *argv[]) {
         printf("Stack base:  0x%08x\n", header.stack_base);
         printf("\n");
 
-        // Read section string table
-        char *strtab = malloc(header.str_size);
+        // Read section string table (+1 forced NUL, checked read)
+        char *strtab = malloc((size_t)header.str_size + 1);
         if (!strtab) { fclose(f); return 1; }
         fseek(f, header.str_offset, SEEK_SET);
-        fread(strtab, 1, header.str_size, f);
+        if (fread(strtab, 1, header.str_size, f) != header.str_size) {
+            fprintf(stderr, "Cannot read string table\n");
+            free(strtab); fclose(f); return 1;
+        }
+        strtab[header.str_size] = '\0';
 
         // Load symbols from SYMTAB section
         load_symbols_s32x(f, &header);
@@ -606,7 +612,7 @@ int main(int argc, char *argv[]) {
 
             if (sect.type == S32_SEC_CODE) {
                 long pos = ftell(f);
-                const char *name = &strtab[sect.name_offset];
+                const char *name = (sect.name_offset < header.str_size) ? &strtab[sect.name_offset] : "<invalid>";
                 disassemble_section(f, name, sect.vaddr, sect.offset, sect.size,
                                     start_addr, end_addr, have_range);
                 fseek(f, pos, SEEK_SET);
@@ -628,11 +634,15 @@ int main(int argc, char *argv[]) {
         printf("Sections: %d, Symbols: %d\n", header.nsections, header.nsymbols);
         printf("\n");
 
-        // Read string table
-        char *strtab = malloc(header.str_size);
+        // Read string table (+1 forced NUL, checked read)
+        char *strtab = malloc((size_t)header.str_size + 1);
         if (!strtab) { fclose(f); return 1; }
         fseek(f, header.str_offset, SEEK_SET);
-        fread(strtab, 1, header.str_size, f);
+        if (fread(strtab, 1, header.str_size, f) != header.str_size) {
+            fprintf(stderr, "Cannot read string table\n");
+            free(strtab); fclose(f); return 1;
+        }
+        strtab[header.str_size] = '\0';
 
         // Load symbols
         load_symbols_s32o(f, &header);
@@ -644,11 +654,14 @@ int main(int argc, char *argv[]) {
         s32o_section_t *sects = malloc(header.nsections * sizeof(s32o_section_t));
         if (!sects) { free(strtab); fclose(f); return 1; }
         fseek(f, header.sec_offset, SEEK_SET);
-        fread(sects, sizeof(s32o_section_t), header.nsections, f);
+        if (fread(sects, sizeof(s32o_section_t), header.nsections, f) != header.nsections) {
+            fprintf(stderr, "Cannot read section table\n");
+            free(sects); free(strtab); fclose(f); return 1;
+        }
 
         for (uint32_t i = 0; i < header.nsections; i++) {
             if (sects[i].type == S32_SEC_CODE && sects[i].size > 0) {
-                const char *name = &strtab[sects[i].name_offset];
+                const char *name = (sects[i].name_offset < header.str_size) ? &strtab[sects[i].name_offset] : "<invalid>";
                 disassemble_section(f, name, 0, sects[i].offset, sects[i].size,
                                     start_addr, end_addr, have_range);
             }

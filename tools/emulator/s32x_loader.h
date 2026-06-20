@@ -177,24 +177,26 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
         return result;
     }
     
-    // Read string table
-    char *strtab = malloc(header.str_size);
+    // Read string table (+1 byte forced to NUL so a table without a trailing
+    // terminator cannot drive an over-read when section names are printed).
+    char *strtab = malloc((size_t)header.str_size + 1);
     if (!strtab) {
-        snprintf(result.error_msg, sizeof(result.error_msg), 
+        snprintf(result.error_msg, sizeof(result.error_msg),
                  "Out of memory for string table");
         fclose(f);
         return result;
     }
-    
+
     if (fseek(f, header.str_offset, SEEK_SET) != 0 ||
         fread(strtab, 1, header.str_size, f) != header.str_size) {
-        snprintf(result.error_msg, sizeof(result.error_msg), 
+        snprintf(result.error_msg, sizeof(result.error_msg),
                  "Cannot read string table");
         free(strtab);
         fclose(f);
         return result;
     }
-    
+    strtab[header.str_size] = '\0';
+
     // Read and load sections
     if (fseek(f, header.sec_offset, SEEK_SET) != 0) {
         snprintf(result.error_msg, sizeof(result.error_msg), 
@@ -419,8 +421,9 @@ static s32x_symtab_result_t load_s32x_symtab(const char *filename) {
         return result;
     }
 
-    // Read symbol string table
-    char *sym_str = malloc(sym_strtab_size);
+    // Read symbol string table (+1 forced NUL: symbol names flow into printf
+    // "%s" sinks, so a table without a trailing terminator must not over-read).
+    char *sym_str = malloc((size_t)sym_strtab_size + 1);
     if (!sym_str) { fclose(f); return result; }
     fseek(f, sym_strtab_offset, SEEK_SET);
     if (fread(sym_str, 1, sym_strtab_size, f) != sym_strtab_size) {
@@ -428,6 +431,7 @@ static s32x_symtab_result_t load_s32x_symtab(const char *filename) {
         fclose(f);
         return result;
     }
+    sym_str[sym_strtab_size] = '\0';
 
     // Read symbol table entries
     uint32_t nsyms = symtab_size / sizeof(s32o_symbol_t);

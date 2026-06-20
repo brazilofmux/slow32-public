@@ -799,7 +799,15 @@ static void build_symbol_table(linker_state_t *ld) {
         for (uint32_t s = 0; s < inf->header.nsymbols; s++) {
             s32o_symbol_t *isym = &inf->symbols[s];
             const char *name = safe_string(inf, isym->name_offset);
-            
+
+            // A defined symbol's 16-bit section field is used as
+            // section_base[section-1]; reject an out-of-range index before use.
+            if (isym->section != 0 && isym->section > inf->header.nsections) {
+                fprintf(stderr, "Error: symbol '%s' in '%s' has invalid section index %u (nsections=%u)\n",
+                        name, inf->filename, isym->section, inf->header.nsections);
+                exit(1);
+            }
+
             // Keep LOCAL symbols if they are referenced by any relocation, even with -s
             if (isym->binding == S32O_BIND_LOCAL && ld->strip_symbols) {
                 if (!symbol_referenced_in_file(inf, s)) {
@@ -1472,6 +1480,11 @@ static void collect_relocations(linker_state_t *ld) {
                                 s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
                         }
                         s32o_symbol_t *isym = &inf->symbols[irel->symbol];
+                        if (isym->section > inf->header.nsections) {
+                            fprintf(stderr, "Error: relocation symbol in '%s' has invalid section index %u (nsections=%u)\n",
+                                    inf->filename, isym->section, inf->header.nsections);
+                            exit(1);
+                        }
                         symbol_entry_t *nsym = &ld->symbols[ld->num_symbols];
                         snprintf(nsym->name, sizeof(nsym->name), "%s@%d", sym_name, f);
                         nsym->binding = isym->binding;   // likely LOCAL

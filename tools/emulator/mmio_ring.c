@@ -928,7 +928,7 @@ uint32_t mmio_ring_read(mmio_ring_state_t *mmio, uint32_t addr, int size) {
                 return ((uint32_t*)mmio->resp_ring)[offset];
             }
             if (rel >= S32_MMIO_DATA_BUFFER_OFFSET &&
-                rel < S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
+                rel + 4 <= S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
                 uint32_t offset = rel - S32_MMIO_DATA_BUFFER_OFFSET;
                 uint32_t value = 0;
                 memcpy(&value, mmio->data_buffer + offset, 4);
@@ -979,7 +979,7 @@ void mmio_ring_write(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, uint32_t ad
                 ((uint32_t*)mmio->resp_ring)[offset] = value;
             }
             else if (rel >= S32_MMIO_DATA_BUFFER_OFFSET &&
-                     rel < S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
+                     rel + 4 <= S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
                 uint32_t offset = rel - S32_MMIO_DATA_BUFFER_OFFSET;
                 memcpy(mmio->data_buffer + offset, &value, 4);
             }

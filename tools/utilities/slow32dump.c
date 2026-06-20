@@ -127,7 +127,7 @@ static bool dump_s32o(const char *filename, FILE *f, long file_size, options_t *
 
     s32o_section_t *sections = calloc(header.nsections, sizeof(s32o_section_t));
     s32o_symbol_t *symbols = calloc(header.nsymbols, sizeof(s32o_symbol_t));
-    char *strtab = malloc(header.str_size);
+    char *strtab = malloc((size_t)header.str_size + 1);  // +1 for forced NUL
     if (!sections || !symbols || !strtab) {
         fprintf(stderr, "Error: Out of memory\n");
         free(sections);
@@ -162,6 +162,7 @@ static bool dump_s32o(const char *filename, FILE *f, long file_size, options_t *
         free(strtab);
         return false;
     }
+    strtab[header.str_size] = '\0';  // guarantee NUL termination before %s use
 
     printf("\n%s:     file format s32o-slow32\n", filename);
 
@@ -308,7 +309,7 @@ static bool dump_s32x(const char *filename, FILE *f, long file_size, options_t *
         return false;
     }
 
-    char *strtab = malloc(header.str_size);
+    char *strtab = malloc((size_t)header.str_size + 1);  // +1 for forced NUL
     if (!strtab) {
         fprintf(stderr, "Error: Out of memory\n");
         return false;
@@ -319,6 +320,7 @@ static bool dump_s32x(const char *filename, FILE *f, long file_size, options_t *
         free(strtab);
         return false;
     }
+    strtab[header.str_size] = '\0';  // guarantee NUL termination before %s use
 
     printf("\n%s:     file format s32x-slow32\n", filename);
 

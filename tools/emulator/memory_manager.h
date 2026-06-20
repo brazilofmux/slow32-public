@@ -136,6 +136,14 @@ __attribute__((unused)) static int mm_setup_from_s32x(memory_manager_t *mm,
                               uint32_t stack_end,
                               uint32_t mmio_base,
                               uint32_t mmio_size) {
+    // Validate the (untrusted) memory-layout fields before they drive region
+    // sizing, so a crafted header cannot wrap an offset/length computation
+    // (e.g. stack_base + 0x10) into a huge or negative size.
+    if (rodata_limit < code_limit || data_limit < rodata_limit ||
+        stack_base < stack_end || stack_base > 0xFFFFFFEFu) {
+        return -1;
+    }
+
     // Code segment: initially read+write for loading, will become read-only
     if (code_limit > 0) {
         if (!mm_allocate_region(mm, 0, code_limit, PROT_READ | PROT_WRITE)) {

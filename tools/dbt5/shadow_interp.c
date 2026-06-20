@@ -185,6 +185,15 @@ static bool shadow_step(shadow_state_t *s) {
     uint32_t *r = s->regs;
     bool block_end = false;
 
+    // f64 opcodes (0x61-0x78) operate on register pairs (reg, reg+1). A base
+    // register of 31 would access regs[32] — one past the 32-entry array. The
+    // reference emulator faults on this; the shadow checker skips it safely.
+    if (op >= 0x61 && op <= 0x78 && (rd == 31 || rs1 == 31 || rs2 == 31)) {
+        r[0] = 0;
+        s->pc = next_pc;
+        return false;
+    }
+
     switch (op) {
     // R-type arithmetic (0x00-0x0F)
     case 0x00: r[rd] = r[rs1] + r[rs2]; break;                         // ADD
