@@ -663,29 +663,32 @@ def : Pat<(brcond (i32 (setule (i32 GPR:$a), (i32 GPR:$b))), bb:$target),
 
 // Additional patterns for immediate comparisons with branches
 // brcond (setlt a, imm), target => load imm to temp, then blt
-def : Pat<(brcond (i32 (setlt (i32 GPR:$a), imm:$b)), bb:$target),
-          (BLT (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+// Constrained to uimm12: LI materializes via zero-extended ORI, so it can only
+// faithfully represent [0,4095]. Out-of-range constants fall back to the
+// sign-correct ISD::Constant lowering instead of being truncated by LI.
+def : Pat<(brcond (i32 (setlt (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BLT (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
-def : Pat<(brcond (i32 (setge (i32 GPR:$a), imm:$b)), bb:$target),
-          (BGE (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+def : Pat<(brcond (i32 (setge (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BGE (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
-def : Pat<(brcond (i32 (setgt (i32 GPR:$a), imm:$b)), bb:$target),
-          (BGT (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+def : Pat<(brcond (i32 (setgt (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BGT (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
-def : Pat<(brcond (i32 (setle (i32 GPR:$a), imm:$b)), bb:$target),
-          (BLE (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+def : Pat<(brcond (i32 (setle (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BLE (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
-def : Pat<(brcond (i32 (setult (i32 GPR:$a), imm:$b)), bb:$target),
-          (BLTU (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+def : Pat<(brcond (i32 (setult (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BLTU (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
-def : Pat<(brcond (i32 (setuge (i32 GPR:$a), imm:$b)), bb:$target),
-          (BGEU (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+def : Pat<(brcond (i32 (setuge (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BGEU (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
-def : Pat<(brcond (i32 (setugt (i32 GPR:$a), imm:$b)), bb:$target),
-          (BGTU (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+def : Pat<(brcond (i32 (setugt (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BGTU (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
-def : Pat<(brcond (i32 (setule (i32 GPR:$a), imm:$b)), bb:$target),
-          (BLEU (i32 GPR:$a), (LI imm:$b), bb:$target)>;
+def : Pat<(brcond (i32 (setule (i32 GPR:$a), uimm12:$b)), bb:$target),
+          (BLEU (i32 GPR:$a), (LI uimm12:$b), bb:$target)>;
 
 // For comparisons with zero (common in switch lowering)
 // brcond reg, target => bne reg, r0, target (branch if reg != 0)

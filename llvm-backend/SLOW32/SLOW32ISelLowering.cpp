@@ -1749,8 +1749,11 @@ bool SLOW32TargetLowering::isLegalAddressingMode(const DataLayout &DL,
   // SLOW32 supports [base + simm12] addressing mode
   // No scaled index, no complex addressing
 
-  // Check if offset fits in 16-bit signed immediate
-  if (AM.BaseOffs < -32768 || AM.BaseOffs > 32767)
+  // The load/store displacement operand is simm12 (isInt<12>, -2048..2047),
+  // matching the encoding (SLOW32InstrInfo.td) and the isInt<12> fold guard in
+  // SelectAddr (SLOW32ISelDAGToDAG.cpp). An over-range offset is materialized
+  // as a separate ADD, so reporting it legal only mismodels LSR/CGP cost.
+  if (AM.BaseOffs < -2048 || AM.BaseOffs > 2047)
     return false;
 
   // No scaled indexing

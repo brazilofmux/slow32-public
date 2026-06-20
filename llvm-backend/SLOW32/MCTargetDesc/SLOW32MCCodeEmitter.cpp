@@ -19,6 +19,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 
 using namespace llvm;
 
@@ -581,11 +582,19 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
     // Indirect branch: jalr r0, rs1, 0 (discard the return address).
     Binary = encodeRetLike(0x41, 0, getRegEncoding(MI.getOperand(0)), 0);
     break;
-  case SLOW32::LI:
-    // Load immediate, materialized as ori rd, r0, imm.
+  case SLOW32::LI: {
+    // Load immediate, materialized as ori rd, r0, imm. ORI is zero-extended, so
+    // only uimm12 values survive encoding; encodeIImmediate masks to 12 bits.
+    // Tripwire: any out-of-range value would be silently truncated. The live
+    // path never reaches here with such a value (the dead (LI imm) brcond
+    // patterns are constrained to uimm12, and constants are otherwise built via
+    // the sign-correct ISD::Constant lowering), so this asserts the invariant.
+    int64_t Imm = MI.getOperand(1).getImm();
+    assert(isUInt<12>(Imm) && "LI immediate out of uimm12 range; would truncate");
     Binary = 0x11 | (getRegEncoding(MI.getOperand(0)) << 7) |
-             (0u << 15) | encodeIImmediate(MI.getOperand(1).getImm());
+             (0u << 15) | encodeIImmediate(Imm);
     break;
+  }
 
   // Single-precision floating point (two source registers).
   case SLOW32::FADD_S:

@@ -145,6 +145,8 @@ The trigger is narrow (the standard ABI uses distinct link/target registers, e.g
 
 **Fix.** Tighten the bound to `if (AM.BaseOffs < -2048 || AM.BaseOffs > 2047) return false;` and fix the misleading comment.
 
+**Status: FIXED.** Bound tightened to simm12 (`±2048`) and comment corrected in `SLOW32ISelLowering.cpp`. Build clean, regression 61/61.
+
 ---
 
 #### Finding 9 — `LI`/`ORI` materialization silently zero-truncates immediates to 12 bits
@@ -153,6 +155,8 @@ The trigger is narrow (the standard ABI uses distinct link/target registers, e.g
 **Wrong vs correct.** The `SLOW32::LI` case encodes `ori rd, r0, imm` via `encodeIImmediate`, which masks to `imm & 0xFFF` (zero-extended). So `LI rd, -1` produces `4095` and `LI rd, 5000` produces `904` — upper/sign bits dropped, with no range check. A branch-compare constant must be materialized with its full signed 32-bit value (the `ISD::Constant` path at `SLOW32ISelDAGToDAG.cpp:204-246` does this correctly via ADDI/LUI+ADDI). **Latent, not live today:** `ISD::BRCOND` is Custom-lowered (`SLOW32ISelLowering.cpp:226`) via `emitBranchForCond` into BR_* nodes that take **GPR** operands, so the constant RHS flows through the sign-correct `ISD::Constant` path. The unconstrained `(LI imm:$b)` brcond patterns at `SLOW32InstrInfo.td:654-676` are dead/shadowed; the grep showed no other live consumer of `LI` with an out-of-`[0,4095]` value. (One verifier marked the live-miscompile counterexample *refuted* on this basis; the underlying encoder/pattern weakness is real but inactive.)
 
 **Fix.** Constrain the `LI` brcond patterns (`:654-676`) to a `uimm12` ImmLeaf so they fire only for in-range constants, and harden the encoder with `assert(isUInt<12>(imm))` in the `LI` case so any out-of-range value fails loudly instead of truncating silently.
+
+**Status: FIXED.** Both halves applied: the eight `(LI imm:$b)` brcond patterns are now `uimm12:$b` (so they fire only for `[0,4095]`; out-of-range constants fall back to the sign-correct `ISD::Constant` lowering), and the `LI` case in `SLOW32MCCodeEmitter.cpp` now `assert(isUInt<12>(...))` as a tripwire (active in asserts-enabled builds). Build clean, regression 61/61.
 
 ---
 
