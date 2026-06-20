@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <getopt.h>
+#include <limits.h>
 #include "../../common/s32_formats.h"
 #include "../../common/s32_hashtable.h"
 
@@ -1004,7 +1005,15 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
 // Ensure there is room for at least `additional` more instructions/data bytes
 static void ensure_instruction_capacity(assembler_t *as, int additional) {
     if (additional < 0) additional = 0;
-    int needed = as->num_instructions + additional;
+    // Compute the requirement in 64-bit and bound it so a hostile count (e.g.
+    // a huge .space/.align padding) cannot overflow the int math below and slip
+    // past the capacity check, leaving the buffer un-grown for an OOB write.
+    long long needed_ll = (long long)as->num_instructions + (long long)additional;
+    if (needed_ll > (long long)(INT_MAX / (int)sizeof(instruction_t))) {
+        fprintf(stderr, "Instruction buffer size overflow\n");
+        exit(1);
+    }
+    int needed = (int)needed_ll;
     if (needed <= as->instructions_capacity) return;
 
     int new_cap = as->instructions_capacity > 0 ? as->instructions_capacity : INITIAL_INSTRUCTION_CAPACITY;
@@ -1604,6 +1613,13 @@ static bool assemble_line(assembler_t *as, char *line) {
             if (num_tokens > 1) {
                 align_bytes = parse_immediate(tokens[1]);
             }
+            // Require a sane power-of-two byte count; a huge or negative value
+            // yields a bogus mask and multi-GB padding.
+            if (align_bytes <= 0 || align_bytes > 4096 ||
+                (align_bytes & (align_bytes - 1)) != 0) {
+                fprintf(stderr, "Error: .balign %d must be a power of two in 1-4096\n", align_bytes);
+                return false;
+            }
             int fill_byte = 0;
             if (num_tokens > 2) {
                 fill_byte = parse_immediate(tokens[2]);
@@ -1633,6 +1649,12 @@ static bool assemble_line(assembler_t *as, char *line) {
             int align_power = 2;  // Default to word alignment
             if (num_tokens > 1) {
                 align_power = parse_immediate(tokens[1]);
+            }
+            // Bound the shift: 1 << align_power is undefined for power >= 31 or
+            // negative, and a large power yields multi-GB padding.
+            if (align_power < 0 || align_power > 12) {
+                fprintf(stderr, "Error: .align power %d out of range (0-12)\n", align_power);
+                return false;
             }
             int align_bytes = 1 << align_power;
             int align_mask = align_bytes - 1;

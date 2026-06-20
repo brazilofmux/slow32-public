@@ -181,19 +181,30 @@ static symbol_entry_t *build_symbol_index(archive_state_t *state, size_t *out_co
         if (!member->data || member->size < sizeof(s32o_header_t)) continue;
         s32o_header_t *hdr = (s32o_header_t *)member->data;
         if (hdr->magic != S32O_MAGIC) continue;
-        if (hdr->sym_offset + hdr->nsymbols * sizeof(s32o_symbol_t) > member->size) continue;
-        if (hdr->str_offset + hdr->str_size > member->size) continue;
-        
+        if ((uint64_t)hdr->sym_offset + (uint64_t)hdr->nsymbols * sizeof(s32o_symbol_t) > member->size) continue;
+        if ((uint64_t)hdr->str_offset + (uint64_t)hdr->str_size > member->size) continue;
+
         s32o_symbol_t *symbols_in = (s32o_symbol_t *)(member->data + hdr->sym_offset);
         char *obj_strings = (char *)(member->data + hdr->str_offset);
-        
+
         for (uint32_t i = 0; i < hdr->nsymbols; i++) {
             if (symbols_in[i].binding == S32O_BIND_GLOBAL && symbols_in[i].section != 0) {
+                // name_offset is untrusted and the string table is not guaranteed
+                // to be NUL-terminated; bound the read to the table extent so a
+                // crafted offset cannot make strdup() over-read past the member.
+                if (symbols_in[i].name_offset >= hdr->str_size) continue;
+                const char *nm = obj_strings + symbols_in[i].name_offset;
+                size_t maxlen = (size_t)hdr->str_size - symbols_in[i].name_offset;
+                size_t nlen = 0;
+                while (nlen < maxlen && nm[nlen] != '\0') nlen++;
                 if (count >= cap) {
                     cap = cap * 2 + 1;
                     symbols = realloc(symbols, cap * sizeof(symbol_entry_t));
                 }
-                symbols[count].name = strdup(obj_strings + symbols_in[i].name_offset);
+                char *namecopy = malloc(nlen + 1);
+                memcpy(namecopy, nm, nlen);
+                namecopy[nlen] = '\0';
+                symbols[count].name = namecopy;
                 symbols[count].member_idx = (uint32_t)m;
                 count++;
             }

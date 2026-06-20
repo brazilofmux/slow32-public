@@ -228,61 +228,70 @@ static bool load_object_from_memory(linker_state_t *ld, const char *filename,
         return false;
     }
     
-    // Validate header offsets against member size
-    uint32_t sec_end = inf->header.sec_offset + inf->header.nsections * sizeof(s32o_section_t);
-    uint32_t sym_end = inf->header.sym_offset + inf->header.nsymbols * sizeof(s32o_symbol_t);
-    uint32_t str_end = inf->header.str_offset + inf->header.str_size;
-    if (sec_end > size || sym_end > size || str_end > size) {
+    // Validate header offsets against member size. All extent math is done in
+    // 64-bit so a crafted offset+count cannot wrap a 32-bit sum past the member
+    // end and slip through the bounds check.
+    if ((uint64_t)inf->header.sec_offset + (uint64_t)inf->header.nsections * sizeof(s32o_section_t) > size ||
+        (uint64_t)inf->header.sym_offset + (uint64_t)inf->header.nsymbols * sizeof(s32o_symbol_t) > size ||
+        (uint64_t)inf->header.str_offset + (uint64_t)inf->header.str_size > size) {
         fprintf(stderr, "Error: Archive member '%s' has out-of-bounds header offsets\n", filename);
         return false;
     }
 
-    // Allocate and copy sections
+    // Allocate sections, section_base, symbols, string table, section-data table.
     inf->sections = calloc(inf->header.nsections, sizeof(s32o_section_t));
+    inf->section_base = calloc(inf->header.nsections, sizeof(uint32_t));
+    inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
+    inf->string_table = malloc((size_t)inf->header.str_size + 1);  // +1 for NUL terminator
+    inf->section_data = calloc(inf->header.nsections, sizeof(uint8_t*));
+    if ((inf->header.nsections && (!inf->sections || !inf->section_base || !inf->section_data)) ||
+        (inf->header.nsymbols && !inf->symbols) || !inf->string_table) {
+        fprintf(stderr, "Error: Out of memory loading archive member '%s'\n", filename);
+        return false;
+    }
     memcpy(inf->sections, data + inf->header.sec_offset,
            inf->header.nsections * sizeof(s32o_section_t));
-
-    // Allocate section_base array (sized to this file's sections)
-    inf->section_base = calloc(inf->header.nsections, sizeof(uint32_t));
-
-    // Allocate and copy symbols
-    inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
     memcpy(inf->symbols, data + inf->header.sym_offset,
            inf->header.nsymbols * sizeof(s32o_symbol_t));
-
-    // Copy string table
-    inf->string_table = malloc(inf->header.str_size);
     memcpy(inf->string_table, data + inf->header.str_offset, inf->header.str_size);
+    inf->string_table[inf->header.str_size] = '\0';  // guarantee NUL termination (safe_string)
 
-    // Store section data for archive members
-    inf->section_data = calloc(inf->header.nsections, sizeof(uint8_t*));
+    // Copy per-section data for archive members
     for (uint32_t i = 0; i < inf->header.nsections; i++) {
         if (inf->sections[i].size > 0 && inf->sections[i].offset > 0) {
-            if (inf->sections[i].offset + inf->sections[i].size > size) {
+            if ((uint64_t)inf->sections[i].offset + (uint64_t)inf->sections[i].size > size) {
                 fprintf(stderr, "Error: Archive member '%s' section %u data out of bounds\n", filename, i);
                 return false;
             }
             inf->section_data[i] = malloc(inf->sections[i].size);
+            if (!inf->section_data[i]) {
+                fprintf(stderr, "Error: Out of memory loading archive member '%s'\n", filename);
+                return false;
+            }
             memcpy(inf->section_data[i], data + inf->sections[i].offset, inf->sections[i].size);
         }
     }
 
-    // Count and copy relocations
-    uint32_t total_relocs = 0;
+    // Count and copy relocations. Validate each section's reloc extent in 64-bit
+    // and accumulate in 64-bit so the total cannot wrap and under-allocate.
+    uint64_t total_relocs = 0;
     for (uint32_t i = 0; i < inf->header.nsections; i++) {
+        if ((uint64_t)inf->sections[i].reloc_offset +
+            (uint64_t)inf->sections[i].nrelocs * sizeof(s32o_reloc_t) > size) {
+            fprintf(stderr, "Error: Archive member '%s' section %u relocations out of bounds\n", filename, i);
+            return false;
+        }
         total_relocs += inf->sections[i].nrelocs;
     }
     if (total_relocs > 0) {
         inf->relocations = calloc(total_relocs, sizeof(s32o_reloc_t));
-        uint32_t reloc_idx = 0;
+        if (!inf->relocations) {
+            fprintf(stderr, "Error: Out of memory loading archive member '%s'\n", filename);
+            return false;
+        }
+        uint64_t reloc_idx = 0;
         for (uint32_t i = 0; i < inf->header.nsections; i++) {
             if (inf->sections[i].nrelocs > 0) {
-                uint32_t reloc_end = inf->sections[i].reloc_offset +
-                                     inf->sections[i].nrelocs * sizeof(s32o_reloc_t);
-                if (reloc_end > size) {
-                    fprintf(stderr, "Error: Archive member '%s' section %u relocations out of bounds\n", filename, i);
-                    return false;
-                }
                 memcpy(&inf->relocations[reloc_idx],
                        data + inf->sections[i].reloc_offset,
                        inf->sections[i].nrelocs * sizeof(s32o_reloc_t));
@@ -410,81 +419,130 @@ static bool load_archive_file(linker_state_t *ld, const char *filename) {
                filename, hdr.nmembers, hdr.nsymbols);
     }
     
-    // Read string table
-    char *strings = malloc(hdr.str_size);
-    fseek(f, hdr.str_offset, SEEK_SET);
-    fread(strings, 1, hdr.str_size, f);
-    
+    // Determine the archive size so the untrusted string/symbol/member table
+    // offsets and counts can be range-checked in 64-bit math before use.
+    uint64_t arsize = 0;
+    if (fseek(f, 0, SEEK_END) == 0) {
+        long s = ftell(f);
+        if (s >= 0) arsize = (uint64_t)s;
+    }
+    if ((uint64_t)hdr.str_offset + (uint64_t)hdr.str_size > arsize ||
+        (uint64_t)hdr.sym_offset + (uint64_t)hdr.nsymbols * sizeof(s32a_symbol_t) > arsize ||
+        (uint64_t)hdr.mem_offset + (uint64_t)hdr.nmembers * sizeof(s32a_member_t) > arsize) {
+        fprintf(stderr, "Error: Archive '%s' has out-of-range tables\n", filename);
+        fclose(f);
+        return false;
+    }
+
+    // Read string table (NUL-terminated so a missing trailing NUL cannot drive
+    // an over-read when member/symbol names are used as C strings).
+    char *strings = malloc((size_t)hdr.str_size + 1);
     // Read symbol index
-    s32a_symbol_t *symbols = malloc(hdr.nsymbols * sizeof(s32a_symbol_t));
-    fseek(f, hdr.sym_offset, SEEK_SET);
-    fread(symbols, sizeof(s32a_symbol_t), hdr.nsymbols, f);
-    
+    s32a_symbol_t *symbols = malloc((size_t)hdr.nsymbols * sizeof(s32a_symbol_t));
     // Read member table
-    s32a_member_t *members = malloc(hdr.nmembers * sizeof(s32a_member_t));
-    fseek(f, hdr.mem_offset, SEEK_SET);
-    fread(members, sizeof(s32a_member_t), hdr.nmembers, f);
-    
+    s32a_member_t *members = malloc((size_t)hdr.nmembers * sizeof(s32a_member_t));
     // Track which members we've loaded
-    bool *loaded = calloc(hdr.nmembers, sizeof(bool));
-    
+    bool *loaded = calloc(hdr.nmembers ? hdr.nmembers : 1, sizeof(bool));
+    if (!strings || (hdr.nsymbols && !symbols) || (hdr.nmembers && !members) || !loaded) {
+        fprintf(stderr, "Error: Out of memory loading archive '%s'\n", filename);
+        goto fail;
+    }
+    fseek(f, hdr.str_offset, SEEK_SET);
+    if (fread(strings, 1, hdr.str_size, f) != hdr.str_size) {
+        fprintf(stderr, "Error: Failed to read archive string table from '%s'\n", filename);
+        goto fail;
+    }
+    strings[hdr.str_size] = '\0';
+    fseek(f, hdr.sym_offset, SEEK_SET);
+    if (fread(symbols, sizeof(s32a_symbol_t), hdr.nsymbols, f) != hdr.nsymbols) {
+        fprintf(stderr, "Error: Failed to read archive symbol index from '%s'\n", filename);
+        goto fail;
+    }
+    fseek(f, hdr.mem_offset, SEEK_SET);
+    if (fread(members, sizeof(s32a_member_t), hdr.nmembers, f) != hdr.nmembers) {
+        fprintf(stderr, "Error: Failed to read archive member table from '%s'\n", filename);
+        goto fail;
+    }
+
     // Iteratively load members that resolve undefined symbols
     bool added_any;
     do {
         added_any = false;
-        
+
         // Check each symbol in the index
         for (uint32_t i = 0; i < hdr.nsymbols; i++) {
+            // Validate untrusted index fields before they drive any access.
+            if (symbols[i].name_offset >= hdr.str_size ||
+                symbols[i].member_index >= hdr.nmembers) {
+                fprintf(stderr, "Error: Archive '%s' has a corrupt symbol index entry\n", filename);
+                goto fail;
+            }
             const char *sym_name = strings + symbols[i].name_offset;
             uint32_t member_idx = symbols[i].member_index;
-            
+
             // Skip if we've already loaded this member
             if (loaded[member_idx]) continue;
-            
+
             // Check if this symbol is undefined
             if (is_symbol_undefined(ld, sym_name)) {
                 // Load this member
                 s32a_member_t *member = &members[member_idx];
+                if (member->name_offset >= hdr.str_size ||
+                    (uint64_t)member->offset + (uint64_t)member->size > arsize) {
+                    fprintf(stderr, "Error: Archive '%s' has a corrupt member entry\n", filename);
+                    goto fail;
+                }
                 const char *member_name = strings + member->name_offset;
-                
+
                 if (ld->verbose) {
-                    printf("  Loading member '%s' for symbol '%s'\n", 
+                    printf("  Loading member '%s' for symbol '%s'\n",
                            member_name, sym_name);
                 }
-                
+
                 // Read member data
                 uint8_t *data = malloc(member->size);
+                if (!data) {
+                    fprintf(stderr, "Error: Out of memory loading archive '%s'\n", filename);
+                    goto fail;
+                }
                 fseek(f, member->offset, SEEK_SET);
-                fread(data, 1, member->size, f);
-                
+                if (fread(data, 1, member->size, f) != member->size) {
+                    fprintf(stderr, "Error: Failed to read archive member from '%s'\n", filename);
+                    free(data);
+                    goto fail;
+                }
+
                 // Load the object
                 char full_name[256];
                 snprintf(full_name, sizeof(full_name), "%s(%s)", filename, member_name);
                 if (!load_object_from_memory(ld, full_name, data, member->size)) {
                     free(data);
-                    free(loaded);
-                    free(members);
-                    free(symbols);
-                    free(strings);
-                    fclose(f);
-                    return false;
+                    goto fail;
                 }
-                
+
                 free(data);
                 loaded[member_idx] = true;
                 added_any = true;
             }
         }
     } while (added_any);  // Keep going until no new members added
-    
+
     // Cleanup
     free(loaded);
     free(members);
     free(symbols);
     free(strings);
     fclose(f);
-    
+
     return true;
+
+fail:
+    free(loaded);
+    free(members);
+    free(symbols);
+    free(strings);
+    fclose(f);
+    return false;
 }
 
 // Load a single object file
@@ -543,10 +601,10 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
     inf->sections = calloc(inf->header.nsections, sizeof(s32o_section_t));
     inf->section_base = calloc(inf->header.nsections, sizeof(uint32_t));
     inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
-    inf->string_table = malloc(inf->header.str_size);
+    inf->string_table = malloc((size_t)inf->header.str_size + 1);  // +1 for NUL terminator
     if ((inf->header.nsections && (!inf->sections || !inf->section_base)) ||
         (inf->header.nsymbols && !inf->symbols) ||
-        (inf->header.str_size && !inf->string_table)) {
+        !inf->string_table) {
         fprintf(stderr, "Error: Out of memory loading '%s'\n", filename);
         fclose(inf->file);
         return false;
@@ -570,6 +628,7 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
         fprintf(stderr, "Error: Failed to read string table from %s\n", filename);
         return false;
     }
+    inf->string_table[inf->header.str_size] = '\0';  // guarantee NUL termination (safe_string)
 
     // For regular files, section data is read on demand
     inf->section_data = NULL;
