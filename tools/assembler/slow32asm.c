@@ -1315,6 +1315,20 @@ static uint32_t encode_s(uint32_t op, int rs1, int rs2, int imm) {
     return op | (imm_4_0 << 7) | (rs1 << 15) | (rs2 << 20) | (imm_11_5 << 25);
 }
 
+// %hi/%pcrel_hi produce a 20-bit upper value that only fits the U-type LUI/AUIPC
+// immediate; on a 12-bit I/S-type operand there is no relocation that patches
+// just the immediate, so the emitter would silently fall back to REL_32 and the
+// linker would overwrite the entire instruction word. Reject it explicitly.
+static bool reject_hi_on_imm12(const expr_result_t *res, const char *mnemonic) {
+    if (res->is_hi || res->is_pcrel_hi) {
+        fprintf(stderr,
+                "Error: %%hi/%%pcrel_hi does not fit a 12-bit immediate (use %%lo, or LUI/AUIPC) in '%s'\n",
+                mnemonic);
+        return true;
+    }
+    return false;
+}
+
 static uint32_t encode_b(uint32_t op, int rs1, int rs2, int imm) {
     int imm_12 = (imm >> 12) & 1;
     int imm_11 = (imm >> 11) & 1;
@@ -2152,7 +2166,11 @@ static bool assemble_line(assembler_t *as, char *line) {
         bump_size(as, as->current_section, 4);
         return true;
     } else if (strcmp(tokens[0], "not") == 0) {
-        // not rd, rs - bitwise NOT (xori rd, rs, -1)
+        // not rd, rs - bitwise NOT. XORI is zero-extended on SLOW-32, so
+        // `xori rd, rs, -1` would only invert the low 12 bits. Use the
+        // two's-complement identity ~rs == -rs - 1, materialized with only rd:
+        //   sub  rd, r0, rs   ; rd = -rs = ~rs + 1
+        //   addi rd, rd, -1   ; rd = ~rs   (ADDI is sign-extended)
         scanner_t s_op = { .p = line };
         scanner_next(&s_op); // skip 'not'
         scanner_next(&s_op);
@@ -2160,13 +2178,22 @@ static bool assemble_line(assembler_t *as, char *line) {
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         int rs = parse_register_scanner(&s_op);
         if (!check_register(rd, "not") || !check_register(rs, "not")) return false;
-        
-        ensure_instruction_capacity(as, 1);
+
+        ensure_instruction_capacity(as, 2);
         instruction_t *inst = &as->instructions[as->num_instructions];
-        inst->opcode = 0x1E;  // XORI
+        inst->opcode = 0x01;  // SUB
         inst->address = as->current_addr;
         inst->section = as->current_section;
-        inst->instruction = encode_i(0x1E, rd, rs, -1);
+        inst->instruction = encode_r(0x01, rd, 0, rs);
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+
+        inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x10;  // ADDI
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_i(0x10, rd, rd, -1);
         as->num_instructions++;
         as->current_addr += 4;
         bump_size(as, as->current_section, 4);
@@ -2373,6 +2400,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
                         copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                        if (reject_hi_on_imm12(&res, tokens[0])) return false;
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                         inst->symbol_addend = res.val;
@@ -2387,6 +2415,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
                         copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                        if (reject_hi_on_imm12(&res, tokens[0])) return false;
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                         inst->symbol_addend = res.val;
@@ -2423,6 +2452,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 if (res.has_symbol) {
                     inst->has_symbol_ref = true;
                     copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                    if (reject_hi_on_imm12(&res, tokens[0])) return false;
                     inst->symbol_is_lo = res.is_lo;
                     inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                     inst->symbol_addend = res.val;
@@ -2446,6 +2476,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                         if (res.has_symbol) {
                             inst->has_symbol_ref = true;
                             copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                            if (reject_hi_on_imm12(&res, tokens[0])) return false;
                             inst->symbol_is_lo = res.is_lo;
                             inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                             inst->symbol_addend = res.val;
@@ -2461,6 +2492,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
                         copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                        if (reject_hi_on_imm12(&res, tokens[0])) return false;
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                         inst->symbol_addend = res.val;

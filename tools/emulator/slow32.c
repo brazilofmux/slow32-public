@@ -640,10 +640,15 @@ void cpu_step(cpu_state_t *cpu) {
             cpu->regs[inst.rd] = cpu->pc + 4;
             next_pc = cpu->pc + inst.imm;
             break;
-        case OP_JALR:
+        case OP_JALR: {
+            // Compute the target from rs1 BEFORE writing the link register, so
+            // that a JALR reusing one register for both (rd == rs1) jumps to the
+            // original rs1 value rather than the just-written return address.
+            uint32_t target = (cpu->regs[inst.rs1] + inst.imm) & ~1u;
             cpu->regs[inst.rd] = cpu->pc + 4;
-            next_pc = (cpu->regs[inst.rs1] + inst.imm) & ~1;
+            next_pc = target;
             break;
+        }
             
         // U-type
         case OP_LUI:

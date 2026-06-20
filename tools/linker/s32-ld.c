@@ -1498,9 +1498,17 @@ static void collect_relocations(linker_state_t *ld) {
                             nsym->section_idx = -1;
                         } else {
                             nsym->defined_in_file = f;
-                            nsym->value = isym->value + inf->section_base[isym->section - 1];
-                            const char *sec_nm = safe_string(inf, inf->sections[isym->section - 1].name_offset);
-                            nsym->section_idx = s32_hashmap_get(&ld->section_map, sec_nm);
+                            // collect_relocations() runs AFTER update_symbol_values(),
+                            // so this synthesized symbol must be made ABSOLUTE here
+                            // rather than left section-relative (it would never get the
+                            // section vaddr added). Match build_symbol_table()'s use of
+                            // the canonical section name so subsections resolve.
+                            const char *sec_nm = canonical_section_name(
+                                safe_string(inf, inf->sections[isym->section - 1].name_offset));
+                            int cs = s32_hashmap_get(&ld->section_map, sec_nm);
+                            nsym->section_idx = cs;
+                            uint32_t rel_val = inf->section_base[isym->section - 1] + isym->value;
+                            nsym->value = (cs >= 0) ? ld->sections[cs].vaddr + rel_val : rel_val;
                         }
                         s32_hashmap_put(&ld->symbol_map, nsym->name, ld->num_symbols);
                         rel->symbol_idx = ld->num_symbols++;
