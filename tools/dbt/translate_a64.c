@@ -40,18 +40,6 @@ uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 uint32_t native_stub_count = 0;       // Native intrinsic stub counter
 uint32_t stage5_emit_side_exits = 0;
 
-// AArch64 Hybrid Stage 5 lift telemetry (defined in dbt.c for __aarch64__)
-extern uint32_t stage5_lift_attempted_a64;
-extern uint32_t stage5_lift_success_a64;
-extern uint32_t stage5_lift_too_large_a64;
-extern uint32_t stage5_lift_unsupported_a64;
-extern uint32_t stage5_backedges_seeded_a64;  // how many times the lifter augmented back-edge targets
-extern uint32_t stage5_a64_pilot_attempted;
-extern uint32_t stage5_a64_pilot_would_own;
-extern uint32_t stage5_a64_pilot_fallback;
-extern uint32_t stage5_a64_real_owned;   // real owned blocks (narrow Stage 5 A64 emission)
-extern uint32_t stage5_a64_internal_branches_patched;  // count of successful internal branch fixups
-
 static bool a64_emit_trace_enabled = false;
 static bool a64_emit_trace_pc_has_filter = false;
 static uint32_t a64_emit_trace_pc = 0;
@@ -1084,7 +1072,6 @@ static void seed_backedges_from_lifted_region(translate_ctx_t *ctx,
     if (!ctx || !region || !region->cfg_valid || region->cfg_block_count == 0)
         return;
 
-    int seeded = 0;
     for (uint32_t b = 0; b < region->cfg_block_count; b++) {
         const stage5_cfg_block_t *blk = &region->cfg_blocks[b];
         for (uint8_t s = 0; s < blk->succ_count; s++) {
@@ -1104,13 +1091,9 @@ static void seed_backedges_from_lifted_region(translate_ctx_t *ctx,
                 if (!seen && ctx->backedge_target_count < MAX_BLOCK_INSTS) {
                     ctx->backedge_targets[ctx->backedge_target_count++] = target;
                     ctx->has_backedge = true;
-                    seeded++;
                 }
             }
         }
-    }
-    if (seeded > 0) {
-        stage5_backedges_seeded_a64 += (uint32_t)seeded;
     }
 }
 
