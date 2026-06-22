@@ -1875,6 +1875,16 @@ void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
 
+    // Guard: divide by zero. SLOW-32 defines x / 0 = 0xFFFFFFFF (no host trap),
+    // but native idiv with a zero divisor raises SIGFPE -- so handle it here.
+    emit_cmp_r32_imm32(e, RCX, 0);
+    emit_jne_rel32(e, 0);
+    size_t patch_not_zero = e->offset - 4;
+    emit_mov_r32_imm32(e, RAX, 0xFFFFFFFF);
+    emit_jmp_rel32(e, 0);
+    size_t patch_zero_done = e->offset - 4;
+    emit_patch_rel32(e, patch_not_zero, e->offset);
+
     // Guard: INT32_MIN / -1 would crash the host (x86 SIGFPE)
     emit_cmp_r32_imm32(e, RCX, -1);
     emit_jne_rel32(e, 0);
@@ -1893,6 +1903,7 @@ void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_idiv_r32(e, RCX);
 
     emit_patch_rel32(e, patch_skip_idiv, e->offset);
+    emit_patch_rel32(e, patch_zero_done, e->offset);
     emit_store_guest_reg(ctx, rd, RAX);
 }
 
@@ -1902,6 +1913,15 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
+
+    // Guard: remainder by zero. SLOW-32 defines x % 0 = x (the dividend, already
+    // in RAX); native idiv with a zero divisor would raise SIGFPE.
+    emit_cmp_r32_imm32(e, RCX, 0);
+    emit_jne_rel32(e, 0);
+    size_t patch_not_zero = e->offset - 4;
+    emit_jmp_rel32(e, 0);               // result = rs1, already in RAX
+    size_t patch_zero_done = e->offset - 4;
+    emit_patch_rel32(e, patch_not_zero, e->offset);
 
     // Guard: INT32_MIN % -1 would crash the host (x86 SIGFPE)
     emit_cmp_r32_imm32(e, RCX, -1);
@@ -1922,6 +1942,7 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_mov_r32_r32(e, RAX, RDX);
 
     emit_patch_rel32(e, patch_skip_idiv, e->offset);
+    emit_patch_rel32(e, patch_zero_done, e->offset);
     emit_store_guest_reg(ctx, rd, RAX);
 }
 
