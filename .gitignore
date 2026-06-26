@@ -1,0 +1,19 @@
+# Downloaded raw source data (large, reproducible via build/download.py)
+/data/
+
+# Python venv
+/.venv/
+
+# Build artifacts
+*.o
+*.a
+/build_out/
+__pycache__/
+*.pyc
+/tz
+/tests/test_tzlookup
+
+# Generated, reproducible. The shippable C table (gen/tz_data.h) IS tracked;
+# these intermediates are not.
+/gen/tz.sqlite
+/gen/resolved.json

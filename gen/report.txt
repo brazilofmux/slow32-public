@@ -1,0 +1,124 @@
+zones in use: 105
+    1  Africa/Cairo
+    2  Africa/Casablanca
+    3  Africa/Khartoum
+    4  Africa/Kinshasa
+    5  Africa/Monrovia
+    6  Africa/Nairobi
+    7  America/Adak
+    8  America/Anchorage
+    9  America/Antigua
+   10  America/Argentina/Buenos_Aires
+   11  America/Asuncion
+   12  America/Bogota
+   13  America/Boise
+   14  America/Caracas
+   15  America/Chicago
+   16  America/Costa_Rica
+   17  America/Denver
+   18  America/Detroit
+   19  America/El_Salvador
+   20  America/Guatemala
+   21  America/Guayaquil
+   22  America/Halifax
+   23  America/Indiana/Indianapolis
+   24  America/Indiana/Knox
+   25  America/Indiana/Marengo
+   26  America/Indiana/Petersburg
+   27  America/Indiana/Tell_City
+   28  America/Indiana/Vevay
+   29  America/Indiana/Vincennes
+   30  America/Indiana/Winamac
+   31  America/Juneau
+   32  America/Kentucky/Louisville
+   33  America/Kentucky/Monticello
+   34  America/La_Paz
+   35  America/Lima
+   36  America/Los_Angeles
+   37  America/Managua
+   38  America/Menominee
+   39  America/Metlakatla
+   40  America/Montevideo
+   41  America/Nassau
+   42  America/New_York
+   43  America/Nome
+   44  America/North_Dakota/Beulah
+   45  America/North_Dakota/Center
+   46  America/North_Dakota/New_Salem
+   47  America/Nuuk
+   48  America/Panama
+   49  America/Phoenix
+   50  America/Puerto_Rico
+   51  America/Santiago
+   52  America/Santo_Domingo
+   53  America/Sao_Paulo
+   54  America/Sitka
+   55  America/St_Johns
+   56  America/St_Thomas
+   57  America/Tegucigalpa
+   58  America/Thule
+   59  America/Toronto
+   60  America/Yakutat
+   61  Antarctica/McMurdo
+   62  Asia/Amman
+   63  Asia/Bahrain
+   64  Asia/Bangkok
+   65  Asia/Famagusta
+   66  Asia/Hong_Kong
+   67  Asia/Jakarta
+   68  Asia/Jerusalem
+   69  Asia/Karachi
+   70  Asia/Manila
+   71  Asia/Riyadh
+   72  Asia/Seoul
+   73  Asia/Singapore
+   74  Asia/Tokyo
+   75  Atlantic/Azores
+   76  Atlantic/Bermuda
+   77  Atlantic/Reykjavik
+   78  Australia/Adelaide
+   79  Australia/Darwin
+   80  Australia/Melbourne
+   81  Australia/Perth
+   82  Australia/Sydney
+   83  Europe/Amsterdam
+   84  Europe/Athens
+   85  Europe/Berlin
+   86  Europe/Brussels
+   87  Europe/Copenhagen
+   88  Europe/Helsinki
+   89  Europe/Istanbul
+   90  Europe/Lisbon
+   91  Europe/London
+   92  Europe/Madrid
+   93  Europe/Oslo
+   94  Europe/Paris
+   95  Europe/Rome
+   96  Indian/Mahe
+   97  Pacific/Auckland
+   98  Pacific/Guam
+   99  Pacific/Honolulu
+  100  Pacific/Kwajalein
+  101  Pacific/Majuro
+  102  Pacific/Midway
+  103  Pacific/Pago_Pago
+  104  Pacific/Saipan
+  105  Pacific/Wake
+
+ZIPs: 41706 unique
+multi-zone ZIPs (centroid voted): 0
+
+area codes: 298
+spanning area codes: 10
+  208  {'America/Boise': 7, 'America/Los_Angeles': 3}
+  270  {'America/Chicago': 5, 'America/New_York': 2}
+  334  {'America/Chicago': 7, 'America/New_York': 1}
+  364  {'America/Chicago': 5, 'America/New_York': 2}
+  502  {'America/New_York': 1, 'America/Kentucky/Louisville': 1}
+  605  {'America/Chicago': 4, 'America/Denver': 1}
+  812  {'America/Indiana/Indianapolis': 3, 'America/Kentucky/Louisville': 3, 'America/Chicago': 1}
+  850  {'America/Chicago': 8, 'America/New_York': 1}
+  907  {'America/Anchorage': 3, 'America/Juneau': 1, 'America/Sitka': 2}
+  930  {'America/Indiana/Indianapolis': 3, 'America/Kentucky/Louisville': 3, 'America/Chicago': 1}
+
+nearest-polygon fallbacks: 0
