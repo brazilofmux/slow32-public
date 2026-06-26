@@ -1749,7 +1749,20 @@ static void ra_mark_call_crossing(void) {
         i = i + 1;
     }
 
-    /* For each value, check if any call falls within its live interval */
+    /* For each value, check if any call falls within its live interval.
+     *
+     * A value "crosses" a call only if it is live *after* the call returns,
+     * i.e. it has a use at some position strictly greater than the call.
+     * The test is therefore `cp < ra_iend[i]`, NOT `cp <= ra_iend[i]`:
+     * a value whose last use IS this call (it's an argument — see ra_extend
+     * of h_carg[] to the call position above, or a CALLP function pointer)
+     * dies AT the call and is dead afterward, so the call clobbering
+     * caller-saved registers can't hurt it.  Marking such argument-only
+     * values as call-crossing needlessly forced them into callee-saved
+     * registers, costing a prologue/epilogue save+restore and an entry
+     * copy.  A value that genuinely crosses an *earlier* call still has
+     * that earlier cp strictly below its (later) ra_iend, so it stays
+     * correctly marked. */
     i = 0;
     while (i < h_ninst) {
         ra_crosses_call[i] = 0;
@@ -1757,7 +1770,7 @@ static void ra_mark_call_crossing(void) {
             j = 0;
             while (j < ra_ncalls) {
                 cp = ra_call_positions[j];
-                if (cp > ra_pos[i] && cp <= ra_iend[i]) {
+                if (cp > ra_pos[i] && cp < ra_iend[i]) {
                     ra_crosses_call[i] = 1;
                     break;
                 }

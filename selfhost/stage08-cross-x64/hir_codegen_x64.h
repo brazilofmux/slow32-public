@@ -1781,21 +1781,95 @@ static void hx_emit_inst(int idx) {
         fast = (nstack == 0);
 
         if (fast) {
-            /* Fast path: ≤6 args (direct OR indirect call).  Load args
-             * right-to-left directly into arg registers to avoid clobbering
-             * sources (later args in higher-numbered regs).  RCX/RDX are
-             * reserved scratch (never allocated), so no source can be
-             * clobbered by arg materialization.  For an indirect call the
-             * callee was already pushed above; it is popped into RAX right
-             * before the call (which also re-aligns RSP), so we avoid the
-             * slow push-all-args-and-reload dance entirely — this is the
-             * hot path for the emulator's threaded-dispatch `di->handler()`
-             * indirect call. */
-            j = nreg - 1;
-            while (j >= 0) {
-                arg_idx = h_carg[h_cbase[idx] + j];
-                hx_mat(arg_idx, hx_arg_reg[j]);
-                j = j - 1;
+            /* Fast path: ≤6 args (direct OR indirect call).  Marshal each
+             * arg value into its ABI register.
+             *
+             * A fixed-direction pass is NOT safe in general: a source value
+             * can itself live in an ABI arg register (this happens once
+             * values whose last use is a call argument are allowed into
+             * caller-saved registers), so writing one arg's target may
+             * clobber another arg's source.  Emit the moves in dependency
+             * order instead — a move is "ready" when its destination
+             * register is not still needed as some other pending move's
+             * source.  Any remaining strongly-connected (cyclic) moves are
+             * register→register (immediate/spill sources are never blocked)
+             * and are realized with a balanced push/pop permutation: all
+             * sources are read (pushed) before any target is written
+             * (popped), which needs no scratch register and leaves RSP
+             * 16-byte aligned at the CALL.  The common no-conflict case —
+             * including the emulator's threaded-dispatch `di->handler()`
+             * indirect call — still emits exactly one MOV per arg. */
+            int mc_tgt[6];
+            int mc_src[6];   /* arg value's phys reg, or -1 if not in a reg */
+            int mc_arg[6];
+            int mc_done[6];
+            int mc_left;
+            int mc_prog;
+            int ai;
+            int bi;
+            mc_left = nreg;
+            ai = 0;
+            while (ai < nreg) {
+                mc_arg[ai] = h_carg[h_cbase[idx] + ai];
+                mc_tgt[ai] = hx_arg_reg[ai];
+                mc_src[ai] = (mc_arg[ai] >= 0) ? ra_reg[mc_arg[ai]] : -1;
+                mc_done[ai] = 0;
+                ai = ai + 1;
+            }
+            mc_prog = 1;
+            while (mc_left > 0 && mc_prog) {
+                mc_prog = 0;
+                ai = 0;
+                while (ai < nreg) {
+                    if (!mc_done[ai]) {
+                        int blocked;
+                        blocked = 0;
+                        bi = 0;
+                        while (bi < nreg) {
+                            if (bi != ai && !mc_done[bi] && mc_src[bi] >= 0 &&
+                                mc_src[bi] == mc_tgt[ai]) {
+                                blocked = 1;
+                            }
+                            bi = bi + 1;
+                        }
+                        if (!blocked) {
+                            hx_mat(mc_arg[ai], mc_tgt[ai]);
+                            mc_done[ai] = 1;
+                            mc_left = mc_left - 1;
+                            mc_prog = 1;
+                        }
+                    }
+                    ai = ai + 1;
+                }
+            }
+            if (mc_left > 0) {
+                /* Break register cycles: push all pending register sources
+                 * (reads), then pop into targets in mirror order (writes). */
+                ai = 0;
+                while (ai < nreg) {
+                    if (!mc_done[ai] && mc_src[ai] >= 0) x64_push(mc_src[ai]);
+                    ai = ai + 1;
+                }
+                ai = nreg - 1;
+                while (ai >= 0) {
+                    if (!mc_done[ai] && mc_src[ai] >= 0) {
+                        x64_pop(mc_tgt[ai]);
+                        mc_done[ai] = 1;
+                        mc_left = mc_left - 1;
+                    }
+                    ai = ai - 1;
+                }
+                /* Any leftover moves now have non-register sources and are
+                 * unblocked; emit them directly. */
+                ai = 0;
+                while (ai < nreg) {
+                    if (!mc_done[ai]) {
+                        hx_mat(mc_arg[ai], mc_tgt[ai]);
+                        mc_done[ai] = 1;
+                        mc_left = mc_left - 1;
+                    }
+                    ai = ai + 1;
+                }
             }
             /* Alignment: in the function body RSP is 16-byte aligned.
              * Direct call: nothing pushed → RSP%16==0 at the CALL (correct).
