@@ -1637,6 +1637,11 @@ head_semicolon:
 xt_semicolon:
     .word semicolon_word
 semicolon_word:
+    # CF: every opened control structure must be resolved before ';'
+    lui r1, %hi(var_cf_sp)
+    addi r1, r1, %lo(var_cf_sp)
+    ldw r1, r1, 0
+    bne r1, r0, cf_error      # dangling IF/BEGIN/WHILE -> abort
     # Compile EXIT
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
@@ -1795,6 +1800,11 @@ colon_header_done:
     addi r14, r0, 1
     stw r13, r14, 0
 
+    # CF: reset control-flow validation stack for the new definition
+    lui r13, %hi(var_cf_sp)
+    addi r13, r13, %lo(var_cf_sp)
+    stw r13, r0, 0
+
 colon_done:
     jal r0, next
 colon_overflow:
@@ -1815,6 +1825,8 @@ if_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, if_done
+    addi r3, r0, 1            # CF: push ORIG (IF opens a forward branch)
+    jal r31, cf_push
     # HERE
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
@@ -1850,6 +1862,10 @@ else_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, else_done
+    addi r3, r0, 1            # CF: ELSE consumes the IF's ORIG ...
+    jal r31, cf_pop_expect
+    addi r3, r0, 1            # ... and opens a new ORIG
+    jal r31, cf_push
     ldw r4, r28, 0     # old patch addr
     addi r28, r28, 4
 
@@ -1895,6 +1911,8 @@ then_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, then_done
+    addi r3, r0, 1            # CF: THEN resolves an ORIG (IF/ELSE/WHILE)
+    jal r31, cf_pop_expect
     ldw r4, r28, 0     # patch addr
     addi r28, r28, 4
     lui r1, %hi(var_here)
@@ -1921,6 +1939,8 @@ begin_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, begin_done
+    addi r3, r0, 2            # CF: push DEST (BEGIN is a backward target)
+    jal r31, cf_push
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0
@@ -1944,6 +1964,8 @@ again_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, again_done
+    addi r3, r0, 2            # CF: AGAIN closes a BEGIN (DEST)
+    jal r31, cf_pop_expect
     ldw r4, r28, 0     # target addr (begin)
     addi r28, r28, 4
     lui r1, %hi(var_here)
@@ -1977,6 +1999,8 @@ until_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, until_done
+    addi r3, r0, 2            # CF: UNTIL closes a BEGIN (DEST)
+    jal r31, cf_pop_expect
     ldw r4, r28, 0     # begin addr
     addi r28, r28, 4
     lui r1, %hi(var_here)
@@ -2009,6 +2033,12 @@ while_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, while_done
+    addi r3, r0, 2            # CF: WHILE consumes the BEGIN's DEST ...
+    jal r31, cf_pop_expect
+    addi r3, r0, 2            # ... re-pushes DEST (begin) ...
+    jal r31, cf_push
+    addi r3, r0, 1            # ... and pushes ORIG (forward exit patch)
+    jal r31, cf_push
     ldw r4, r28, 0     # begin addr
     addi r28, r28, 4   # pop begin
     lui r1, %hi(var_here)
@@ -2045,6 +2075,10 @@ repeat_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, repeat_done
+    addi r3, r0, 1            # CF: REPEAT resolves the WHILE's ORIG ...
+    jal r31, cf_pop_expect
+    addi r3, r0, 2            # ... and closes the BEGIN's DEST
+    jal r31, cf_pop_expect
     ldw r5, r28, 0     # patch addr
     ldw r4, r28, 4     # begin addr
     addi r28, r28, 8
@@ -2067,6 +2101,60 @@ repeat_word:
     stw r5, r7, 0
 repeat_done:
     jal r0, next
+
+# ----------------------------------------------------------------------
+# Control-flow balance validation (compile-time)
+# A parallel typed stack kept in lockstep with the data-stack address
+# passing used by IF/ELSE/THEN/BEGIN/AGAIN/UNTIL/WHILE/REPEAT. Tags:
+#   1 = ORIG  (unresolved forward branch: IF / ELSE / WHILE patch)
+#   2 = DEST  (backward target: BEGIN / WHILE begin)
+# Consumers verify the tag; ':' resets depth, ';' requires it back to 0.
+# On any imbalance: print a message and ABORT (matching gforth strictness).
+# Call with jal r31; clobbers r3-r7. r3 = tag for push/pop-expect.
+# ----------------------------------------------------------------------
+cf_push:
+    lui  r4, %hi(var_cf_sp)
+    addi r4, r4, %lo(var_cf_sp)
+    ldw  r5, r4, 0            # sp
+    addi r6, r0, 64
+    bge  r5, r6, cf_error     # too deeply nested
+    lui  r6, %hi(cf_stack)
+    addi r6, r6, %lo(cf_stack)
+    add  r6, r6, r5
+    stb  r6, r3, 0            # cf_stack[sp] = tag
+    addi r5, r5, 1
+    stw  r4, r5, 0            # cf_sp = sp + 1
+    jalr r0, r31, 0
+
+cf_pop_expect:
+    lui  r4, %hi(var_cf_sp)
+    addi r4, r4, %lo(var_cf_sp)
+    ldw  r5, r4, 0            # sp
+    beq  r5, r0, cf_error     # underflow: closer without opener
+    addi r5, r5, -1
+    stw  r4, r5, 0            # cf_sp = sp - 1
+    lui  r6, %hi(cf_stack)
+    addi r6, r6, %lo(cf_stack)
+    add  r6, r6, r5
+    ldbu r7, r6, 0            # tag
+    bne  r7, r3, cf_error     # wrong construct type
+    jalr r0, r31, 0
+
+cf_error:
+    # Reset the validation stack, print the message, and abort.
+    lui  r4, %hi(var_cf_sp)
+    addi r4, r4, %lo(var_cf_sp)
+    stw  r4, r0, 0            # cf_sp = 0
+    lui  r1, %hi(cf_err_msg)
+    addi r1, r1, %lo(cf_err_msg)
+cf_error_loop:
+    ldbu r2, r1, 0
+    beq  r2, r0, cf_error_done
+    debug r2
+    addi r1, r1, 1
+    jal  r0, cf_error_loop
+cf_error_done:
+    jal  r0, abort_word
 
 # Word: XOR ( a b -- a^b )
 .text
@@ -3900,6 +3988,9 @@ abort_word:
     lui r1, %hi(var_catch_frame)
     addi r1, r1, %lo(var_catch_frame)
     stw r1, r0, 0              # var_catch_frame = 0
+    lui r1, %hi(var_cf_sp)
+    addi r1, r1, %lo(var_cf_sp)
+    stw r1, r0, 0              # control-flow validation depth = 0
     # Reset search order to defaults
     lui r1, %hi(var_latest)
     addi r1, r1, %lo(var_latest)
@@ -5358,6 +5449,10 @@ var_leave_list:     .word 0        # compile-time leave-list head for DO...LOOP
 var_hld:            .word 0            # Pictured numeric output pointer into PAD
 var_catch_frame:    .word 0            # Exception frame pointer (0 = none)
 var_compilation_wid: .word var_latest   # Current compilation wordlist (initially FORTH-WORDLIST)
+var_cf_sp:          .word 0            # Control-flow validation stack depth (compile-time)
+cf_err_msg:         .ascii "\n? unbalanced control structure\n"
+                    .byte 0
+    .align 2
 search_order_count: .word 1            # Number of active search order entries
 search_order:       .word var_latest   # Search order slot 0 (FORTH-WORDLIST)
                     .word 0            # Search order slot 1
@@ -5392,6 +5487,7 @@ file_stat_buf:   .space 128        # struct stat scratch buffer
 squote_ibuf0:    .space 256        # S" interpret-mode transient buffer 0
 squote_ibuf1:    .space 256        # S" interpret-mode transient buffer 1
 squote_iwhich:   .space 4          # Toggle: which transient buffer to use next
+cf_stack:        .space 64         # Control-flow validation stack (one tag byte per open construct)
 
 
 # ----------------------------------------------------------------------
