@@ -1,0 +1,7 @@
+# Reproducible SLOW-32 build artifacts.
+*.ll
+*.s
+*.s.raw
+*.s32o
+*.s32x
+__pycache__/
