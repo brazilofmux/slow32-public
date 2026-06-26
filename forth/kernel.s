@@ -322,6 +322,7 @@ xt_bye:
     .word bye_word
 
 bye_word:
+    addi r1, r0, 0     # deterministic clean exit code (0); r1 is the halt exit value
     halt
 
 # Word: ACCEPT ( c-addr +n -- +n' )
