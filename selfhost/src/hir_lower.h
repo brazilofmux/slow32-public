@@ -1651,6 +1651,40 @@ static int hl_expr(Node *n) {
 
     /* Ternary c ? a : b */
     if (n->kind == ND_TERNARY) {
+        /* Peephole: when both arms are the integer constants {0,1} and the
+         * condition is a plain 32-bit integer, the result is just a
+         * normalized boolean of the condition.  Building the control-flow
+         * diamond + phi (below) for this turns a single SETcc/CSET into a
+         * branch plus a redundant store/load/phi.  The SLOW-32 emulator's
+         * comparison handlers (h_slt / h_seq / h_sgt / ... are all
+         * `cond ? 1 : 0`) are the hot case.  Evaluate the condition once —
+         * exactly as the diamond would — and fold:
+         *     c ? 1 : 0  ==  (c != 0)   [== c itself when c is a compare]
+         *     c ? 0 : 1  ==  (c == 0)
+         * A comparison result has type TY_INT, so it satisfies the
+         * "simple integer condition" guard; pointer / long long / fp
+         * conditions fall through to the diamond unchanged.  This lives in
+         * the shared lowering, so x64 / a64 / slow32 all benefit. */
+        if (n->lhs->kind == ND_NUM && n->rhs->kind == ND_NUM &&
+            n->lhs->val_hi == 0 && n->rhs->val_hi == 0 &&
+            ((n->lhs->val == 1 && n->rhs->val == 0) ||
+             (n->lhs->val == 0 && n->rhs->val == 1)) &&
+            !ty_is_llong(n->cond->ty) && !ty_is_fp(n->cond->ty) &&
+            !ty_is_ptr(n->cond->ty)) {
+            int ck;
+            int zero;
+            cv = hl_expr(n->cond);
+            ck = h_kind[cv];
+            if (n->lhs->val == 1) {
+                /* c ? 1 : 0 */
+                if (ck >= HI_SEQ && ck <= HI_SGEU) return cv;
+                zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+                return hi_emit(HI_SNE, TY_INT, cv, zero, 0, NULL);
+            }
+            /* c ? 0 : 1 — logical NOT of the condition */
+            zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+            return hi_emit(HI_SEQ, TY_INT, cv, zero, 0, NULL);
+        }
         tmp_off = hl_alloc_temp();
         tmp = hl_emit_temp_alloca(n->ty, tmp_off);
         cv = hl_expr(n->cond);
