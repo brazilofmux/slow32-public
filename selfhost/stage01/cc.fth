@@ -3881,7 +3881,7 @@ VARIABLE decl-name-len
                     ELSE
                         EMIT-INDENT S" .word 0" OUT-STR OUT-NL
                         CC-TOKEN
-                    THEN THEN THEN THEN
+                    THEN THEN THEN THEN THEN
                 REPEAT
             ELSE tok-type @ TK-NUM = IF
                 EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
