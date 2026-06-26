@@ -1246,9 +1246,12 @@ static void hx_emit_inst(int idx) {
         else if (k == HI_SLEU) x64_setbe(X64_RAX);
         else if (k == HI_SGEU) x64_setae(X64_RAX);
 
-        x64_movzx_rr8(X64_RAX, X64_RAX);
+        /* Zero-extend the SETcc byte (AL) straight into the destination,
+         * rather than movzx into RAX and then MOV to dst.  When the result
+         * is spilled, hx_dst returns RAX so hx_maybe_spill still finds it
+         * there. */
         dr = hx_dst(idx);
-        hx_mov_if_needed(dr, X64_RAX);
+        x64_movzx_rr8(dr, X64_RAX);
         hx_maybe_spill(idx);
         return;
     }
