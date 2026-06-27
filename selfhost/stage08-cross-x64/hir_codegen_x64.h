@@ -27,6 +27,7 @@ static int hx_no_frame;             /* 1 if function needs no frame (no spills, 
 
 /* Block code offsets for jump patching */
 static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
+static int hx_loop_head[HIR_MAX_BLOCK]; /* 1 if block is a back-edge target (loop header) */
 
 /* Forward jump patches: jump at patch_off targets block patch_blk */
 #define HX_MAX_BPATCH 8192
@@ -2843,11 +2844,45 @@ static void hx_gen_func(Node *fn) {
         }
     }
 
+    /* --- Identify loop headers (back-edge targets) for alignment ---
+     * Blocks are laid out in index order, so a branch from block s to a
+     * target t with t <= s is a back-edge and t is a loop header.  GCC
+     * aligns loop heads (-falign-loops); cc-x64 previously aligned only
+     * function entries, leaving the hot dispatch loop's top wherever it
+     * fell.  Aligning the branch target to 16 bytes improves fetch
+     * throughput at the (hot) back-edge landing. */
+    b = 0;
+    while (b < bb_nblk) {
+        hx_loop_head[b] = 0;
+        b = b + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        int sk = h_kind[i];
+        if (sk == HI_BR || sk == HI_BRC) {
+            int sb = h_blk[i];
+            int t = h_val[i];                 /* BR target / BRC false edge */
+            if (t >= 0 && t <= sb) hx_loop_head[t] = 1;
+            if (sk == HI_BRC) {
+                t = h_src2[i];                /* BRC true edge */
+                if (t >= 0 && t <= sb) hx_loop_head[t] = 1;
+            }
+        }
+        i = i + 1;
+    }
+
     /* --- Emit blocks --- */
     b = 0;
     while (b < bb_nblk) {
         int term;
         int j;
+
+        /* Align loop headers to 16 bytes (executable NOP padding, since the
+         * header may also be reached by fall-through from the prior block on
+         * loop entry).  Skip block 0 — the function entry is already aligned. */
+        if (b > 0 && hx_loop_head[b]) {
+            x64_align(16);
+        }
 
         hx_define_block(b);
 
