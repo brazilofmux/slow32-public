@@ -2127,73 +2127,6 @@ static int hl_expr(Node *n) {
     return -1;
 }
 
-/* --- if-conversion helpers (branchless select for if/else assigning the
- *     same lvalue) ---
- *
- * Conservatively recognises
- *     if (c) lval = A; else lval = B;
- * where A and B are side-effect-free and lval is the same plain scalar in
- * both arms, and rewrites it to a branchless select.  This removes the
- * conditional branch — valuable for the SLOW-32 emulator's data-dependent
- * branch handlers (h_beq/h_bne/...), whose internal jne mispredicts.  The
- * select is built from existing integer ops (no new opcode / no cmov), so
- * every backend lowers it: sel = b ^ ((a ^ b) & (0 - c)). */
-
-/* Side-effect-free expression?  Conservative whitelist: only node kinds
- * that cannot write memory, call, or inc/dec.  Anything unrecognised is
- * treated as impure (keeps the diamond). */
-static int hl_pure_expr(Node *n) {
-    if (!n) return 1;
-    if (n->kind == ND_NUM) return 1;
-    if (n->kind == ND_VAR) return 1;
-    /* ND_UNARY is always a pure op here (* & - ! ~); prefix ++/-- desugar
-     * to ND_ASSIGN and postfix to ND_POST_INC, both excluded below. */
-    if (n->kind == ND_UNARY)  return hl_pure_expr(n->lhs);
-    if (n->kind == ND_MEMBER) return hl_pure_expr(n->lhs);
-    if (n->kind == ND_CAST)   return hl_pure_expr(n->lhs);
-    if (n->kind == ND_BINOP)
-        return hl_pure_expr(n->lhs) && hl_pure_expr(n->rhs);
-    return 0;
-}
-
-/* Structural equality over the pure node kinds — used to confirm both
- * if-arms assign the identical lvalue (so the same address is written).
- * Conservative: any unrecognised kind → not-equal. */
-static int hl_same_lval(Node *a, Node *b) {
-    if (a == b) return 1;
-    if (!a || !b) return 0;
-    if (a->kind != b->kind) return 0;
-    if (a->kind == ND_NUM)
-        return a->val == b->val && a->val_hi == b->val_hi;
-    if (a->kind == ND_VAR)
-        return a->is_local == b->is_local && a->offset == b->offset &&
-               a->name && b->name && strcmp(a->name, b->name) == 0;
-    if (a->kind == ND_MEMBER)
-        return a->val == b->val && a->bit_width == b->bit_width &&
-               a->bit_off == b->bit_off && hl_same_lval(a->lhs, b->lhs);
-    if (a->kind == ND_UNARY)
-        return a->op == b->op && hl_same_lval(a->lhs, b->lhs);
-    if (a->kind == ND_CAST)
-        return a->ty == b->ty && hl_same_lval(a->lhs, b->lhs);
-    if (a->kind == ND_BINOP)
-        return a->op == b->op && hl_same_lval(a->lhs, b->lhs) &&
-               hl_same_lval(a->rhs, b->rhs);
-    return 0;
-}
-
-/* Unwrap a statement to a single plain scalar assignment, else NULL.
- * Sees through a one-statement block and an expression statement. */
-static Node *hl_single_assign(Node *s) {
-    if (!s) return 0;
-    if (s->kind == ND_BLOCK) {
-        if (s->body && !s->body->next) return hl_single_assign(s->body);
-        return 0;
-    }
-    if (s->kind == ND_EXPR_STMT) s = s->lhs;
-    if (s && s->kind == ND_ASSIGN) return s;
-    return 0;
-}
-
 /* --- Statement lowering --- */
 
 static void hl_stmt(Node *n) {
@@ -2280,51 +2213,6 @@ static void hl_stmt(Node *n) {
     if (n->kind == ND_IF) {
         cv = hl_expr(n->cond);
         if (n->els) {
-#ifdef S12CC_X64_HOST
-            /* Branchless if-conversion (64-bit hosts only; slow32-native
-             * keeps the diamond).  if (c) lv=A; else lv=B  with pure A/B and
-             * the same plain 32-bit scalar lv  ->  store the select
-             * sel = b ^ ((a ^ b) & (0 - c)).  c is already in cv. */
-            {
-                Node *ta;
-                Node *ea;
-                ta = hl_single_assign(n->body);
-                ea = hl_single_assign(n->els);
-                if (ta && ea && hl_same_lval(ta->lhs, ea->lhs) &&
-                    !ty_is_llong(ta->ty) && !ty_is_fp(ta->ty) &&
-                    !ty_is_struct(ta->ty) && !ty_is_ptr(ta->ty) &&
-                    ta->lhs->bit_width == 0 &&
-                    hl_pure_expr(ta->lhs) &&
-                    hl_pure_expr(ta->rhs) && hl_pure_expr(ea->rhs)) {
-                    int c01;
-                    int ck;
-                    int zero;
-                    int msk;
-                    int av;
-                    int bv;
-                    int diff;
-                    int masked;
-                    int sel;
-                    int saddr;
-                    c01 = cv;
-                    ck = h_kind[c01];
-                    if (ck < HI_SEQ || ck > HI_SGEU) {
-                        zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
-                        c01 = hi_emit(HI_SNE, TY_INT, c01, zero, 0, NULL);
-                    }
-                    zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
-                    msk = hi_emit(HI_SUB, TY_INT, zero, c01, 0, NULL);
-                    av = hl_expr(ta->rhs);
-                    bv = hl_expr(ea->rhs);
-                    diff = hi_emit(HI_XOR, TY_INT, av, bv, 0, NULL);
-                    masked = hi_emit(HI_AND, TY_INT, diff, msk, 0, NULL);
-                    sel = hi_emit(HI_XOR, TY_INT, bv, masked, 0, NULL);
-                    saddr = hl_addr(ta->lhs);
-                    hi_emit(HI_STORE, ta->ty, saddr, sel, 0, NULL);
-                    return;
-                }
-            }
-#endif
             then_blk = hir_new_block();
             else_blk = hir_new_block();
             end_blk = hir_new_block();
