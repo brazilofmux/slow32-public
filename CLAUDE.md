@@ -182,9 +182,27 @@ objdump -d tools/emulator/slow32-fast | sed -n '/<op_add>:/,/ret/p'  # gcc code
 
 # Key benchmark: ~/s32x/benchmark_core.s32x (full 10M iters, 285M instructions)
 # Expected checksum: 0x8d70b2b
-# GCC slow32-fast: ~1.08s, our s32fast-hir: ~1.50s (~1.39x gap as of Jun 2026,
-#   Xeon 8259CL). Was 2.06x before the RCX/RDX-scratch + fallthrough-elision fix.
-#   Next target: two-address coalescing in the IRC (~22% of insns are mov src1->dst).
+#
+# HEADLINE FINDING (Jun 2026, Xeon 8259CL / Cascade Lake): the historical
+# "~1.4x gap" to gcc is dominated by code ALIGNMENT, not codegen quality. A
+# layout sweep (tools/layout-sweep.sh) showed the benchmark swings 20%
+# (1.08s..1.30s) purely with .text alignment, and at its best phase (pad ≡48
+# mod 64) s32fast-hir hits 1.08s == the gcc slow32-fast baseline build. So
+# cc-x64 CAN match gcc's time. (Caveat: that compares our sweep's BEST to
+# gcc's SINGLE build — to claim we match gcc's *distribution*, sweep gcc too,
+# i.e. is gcc robustly well-aligned [clever] or did its one build roll well
+# [lucky]? OPEN — see docs/IMPROVEMENTS.md.)
+# Mechanism: DSB (µop-cache) packing of the hot di->handler() dispatch loop;
+# not the Jcc erratum, not dispatch (both emulators share identical indirect
+# dispatch). Layout-to-run-noise ratio ~25:1, so:
+#   ALWAYS measure codegen changes with layout-sweep.sh and compare the MEDIAN
+#   across offsets — a single-build A/B is dominated by layout luck and worthless.
+# Durable real wins landed: branchless boolean ternary (18a172fc, the one
+# layout-independent speedup) + a latent arg-marshalling miscompile fix.
+# QUEUED (separate project, not started): a post-link BOLT-style layout pass is
+# now the single biggest lever (~20%) and the only thing that captures it
+# robustly instead of by alignment luck. Hand-emitting alignment in cc-x64 is a
+# dead end (proven: loop-align +16B and branch if-conversion both reverted).
 ```
 
 **Bootstrap chain**: host GCC compiles `cc-x64.c` → `out/cc-x64` (the cross-compiler binary).

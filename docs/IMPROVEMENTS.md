@@ -37,7 +37,39 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 
 ## Open Items
 
-None at this time.
+### Cross-compiler (cc-x64) — code layout / alignment (QUEUED, not started)
+
+Established Jun 2026 (Cascade Lake): cc-x64's *codegen* already matches gcc on
+`benchmark_core` — at its best `.text` alignment phase it hits 1.08s == the gcc
+slow32-fast baseline. The residual benchmark difference is an **alignment-phase
+lottery worth ~20%** (1.08s..1.30s across offsets; layout:noise ≈ 25:1),
+mechanism = DSB (µop-cache) packing of the hot `di->handler()` dispatch loop.
+Measure anything in this area with `selfhost/tools/layout-sweep.sh` and compare
+MEDIANS across offsets — single-build A/B is dominated by layout luck. Three
+data points prove hand-emitting alignment in cc-x64 is a dead end (16B
+loop-align and branch if-conversion both measured net-negative and were
+reverted).
+
+1. **Is gcc clever or lucky? (cheap, do first)** The "we match gcc" claim
+   compares our sweep BEST to gcc's SINGLE build. Sweep gcc's slow32-fast too
+   (pad its `.text`, e.g. via a linker offset) and compare gcc's spread/median
+   to ours. If gcc's spread ≈ ours (~20%), gcc just rolled well and we genuinely
+   match; if gcc's spread is small, gcc has real alignment robustness to learn
+   from — most likely from `-falign-functions`/`-falign-loops` + the GNU
+   assembler's **Jcc-erratum mitigation** (pad so branches don't straddle 32B
+   boundaries; `-mbranches-within-32B-boundaries`). cc-x64 does neither beyond
+   16B function alignment.
+
+2. **Jcc-erratum-aware branch padding (mid effort, if #1 says gcc is robust).**
+   A *targeted* transform — pad individual branches off 32B boundaries — is
+   bounded and principled, unlike the blanket loop-top padding that failed.
+   Potentially most of the win for far less than a full layout pass.
+
+3. **Post-link BOLT-style layout pass (large, the robust answer).** The only
+   thing that captures the ~20% deterministically instead of by alignment luck,
+   and "stops the dice" for all future codegen work. Now the single biggest
+   lever on the benchmark. The `layout-sweep.sh` harness already validates such
+   work.
 
 ## Testing Recommendations
 
