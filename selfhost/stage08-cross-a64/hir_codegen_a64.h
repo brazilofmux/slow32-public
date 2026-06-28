@@ -4213,6 +4213,30 @@ static void hx_gen_program(Node *prog, int compile_only) {
     a64_off      = 0;
     cg_object_mode = compile_only;
 
+    /* Layout-perturbation knob (measurement only) — see the x64 sibling.
+     * S32_TEXT_PAD = byte count; emitted as NOP words (rounded down to a
+     * 4-byte multiple, since A64 instructions are fixed-width) at the start
+     * of .text to shift this object uniformly.  Unset → no-op. */
+    if (compile_only) {
+        char *s32_pad;
+        s32_pad = getenv("S32_TEXT_PAD");
+        if (s32_pad) {
+            int npad;
+            int pi;
+            npad = 0;
+            pi = 0;
+            while (s32_pad[pi] >= '0' && s32_pad[pi] <= '9') {
+                npad = npad * 10 + (s32_pad[pi] - '0');
+                pi = pi + 1;
+            }
+            pi = 0;
+            while (pi + 4 <= npad) {
+                a64_nop();
+                pi = pi + 4;
+            }
+        }
+    }
+
     collect_globals(prog);
 
     if (!compile_only) {

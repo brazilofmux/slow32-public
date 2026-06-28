@@ -3023,6 +3023,36 @@ static void hx_gen_program(Node *prog, int compile_only) {
     x64_off = 0;
     cg_object_mode = compile_only;
 
+    /* Layout-perturbation knob (measurement only).  When the environment
+     * variable S32_TEXT_PAD is set to a byte count, emit that many dead
+     * padding bytes at the very start of .text so every function in this
+     * object shifts uniformly.  A benchmark harness sweeps this to vary the
+     * hot code's absolute alignment (mod 16/32/64) while keeping relative
+     * layout and behavior fixed — separating a change's true dynamic effect
+     * from layout luck.  Unset (all normal builds) → 0 → no-op.  The pad is
+     * never executed (it precedes the first function; symbols are recorded
+     * after it).  Only emitted in object mode so the executable _start path
+     * is untouched. */
+    if (compile_only) {
+        char *s32_pad;
+        s32_pad = getenv("S32_TEXT_PAD");
+        if (s32_pad) {
+            int npad;
+            int pi;
+            npad = 0;
+            pi = 0;
+            while (s32_pad[pi] >= '0' && s32_pad[pi] <= '9') {
+                npad = npad * 10 + (s32_pad[pi] - '0');
+                pi = pi + 1;
+            }
+            pi = 0;
+            while (pi < npad) {
+                x64_byte(0xCC);
+                pi = pi + 1;
+            }
+        }
+    }
+
     /* Collect globals from parser */
     collect_globals(prog);
 
