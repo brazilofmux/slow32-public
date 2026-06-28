@@ -63,11 +63,16 @@ time_run() {
         printf "%d.%03d\n" $((min/1000000000)) $(((min/1000000)%1000))'
     rm -f out/_bench.s32x
   else
-    local min=999 d
+    local min=999 d tf
+    tf=$(mktemp)
     for _ in $(seq "$REPS"); do
-      d=$( { /usr/bin/time -f %e taskset -c 1 "./$BIN" "$BENCH" >/dev/null 2>/dev/null; } 2>&1 )
-      awk "BEGIN{exit !($d < $min)}" && min=$d
+      # -o writes %e to $tf so the binary's own stdout+stderr can be discarded
+      # without swallowing /usr/bin/time's measurement (it prints to stderr).
+      /usr/bin/time -f %e -o "$tf" taskset -c 1 "./$BIN" "$BENCH" >/dev/null 2>&1
+      d=$(cat "$tf")
+      [ -n "$d" ] && awk "BEGIN{exit !($d < $min)}" && min=$d
     done
+    rm -f "$tf"
     echo "$min"
   fi
 }
