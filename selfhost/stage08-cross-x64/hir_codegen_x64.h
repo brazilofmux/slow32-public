@@ -27,6 +27,8 @@ static int hx_no_frame;             /* 1 if function needs no frame (no spills, 
 
 /* Block code offsets for jump patching */
 static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
+static int hx_loop_head[HIR_MAX_BLOCK]; /* 1 if block is a back-edge target (loop header) */
+static int hx_loop_align = 0;           /* loop-header alignment in bytes (S32_LOOP_ALIGN), 0=off */
 
 /* Forward jump patches: jump at patch_off targets block patch_blk */
 #define HX_MAX_BPATCH 8192
@@ -2843,11 +2845,43 @@ static void hx_gen_func(Node *fn) {
         }
     }
 
+    /* --- Identify loop headers (back-edge targets) for alignment ---
+     * Blocks are laid out in index order, so a branch from block s to a
+     * target t with t <= s is a back-edge and t is a loop header (gcc's
+     * -falign-loops target). Only computed when the knob is on. */
+    if (hx_loop_align > 0) {
+        b = 0;
+        while (b < bb_nblk) { hx_loop_head[b] = 0; b = b + 1; }
+        i = 0;
+        while (i < h_ninst) {
+            int sk = h_kind[i];
+            if (sk == HI_BR || sk == HI_BRC) {
+                int sb = h_blk[i];
+                int t = h_val[i];                 /* BR target / BRC false edge */
+                if (t >= 0 && t <= sb) hx_loop_head[t] = 1;
+                if (sk == HI_BRC) {
+                    t = h_src2[i];                /* BRC true edge */
+                    if (t >= 0 && t <= sb) hx_loop_head[t] = 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
     /* --- Emit blocks --- */
     b = 0;
     while (b < bb_nblk) {
         int term;
         int j;
+
+        /* Align loop headers to the S32_LOOP_ALIGN boundary (executable NOP
+         * padding — a header may also be reached by fall-through on entry).
+         * Skip block 0 (function entry is already 16B-aligned). This pins the
+         * hot loop's absolute alignment so its DSB packing is invariant under
+         * .text shifts, the gcc-style robustness lever (sweep-validate N). */
+        if (hx_loop_align > 0 && b > 0 && hx_loop_head[b]) {
+            x64_align(hx_loop_align);
+        }
 
         hx_define_block(b);
 
@@ -3050,6 +3084,30 @@ static void hx_gen_program(Node *prog, int compile_only) {
                 x64_byte(0xCC);
                 pi = pi + 1;
             }
+        }
+    }
+
+    /* Hot-loop alignment knob.  S32_LOOP_ALIGN=N aligns loop-header blocks
+     * (back-edge targets) to an N-byte boundary, the gcc -falign-loops
+     * analogue.  gcc gets a 1.0% layout spread this way vs cc-x64's ~20%
+     * (no loop alignment); pinning the hot dispatch loop's start makes its
+     * DSB packing invariant under .text shifts.  Which N (16/32/64) collapses
+     * the spread AND lands a good median is empirical — sweep it with
+     * layout-sweep.sh.  0 (default) = off / no change. */
+    hx_loop_align = 0;
+    {
+        char *s32_la;
+        s32_la = getenv("S32_LOOP_ALIGN");
+        if (s32_la) {
+            int v;
+            int li;
+            v = 0;
+            li = 0;
+            while (s32_la[li] >= '0' && s32_la[li] <= '9') {
+                v = v * 10 + (s32_la[li] - '0');
+                li = li + 1;
+            }
+            hx_loop_align = v;
         }
     }
 
