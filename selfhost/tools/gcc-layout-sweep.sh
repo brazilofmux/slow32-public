@@ -46,9 +46,19 @@ CFLAGS="-Wall -Wextra -O3 -fomit-frame-pointer -g"
 # build_padded <N> <outbin>: gcc-build slow32-fast with N bytes prepended to .text
 build_padded() {
   local n="$1" out="$2"
-  printf '\t.text\n\t.globl __s32_layout_pad\n__s32_layout_pad:\n\t.space %d\n' "$n" > "$WORK/pad.s"
+  # CRITICAL: the pad must go in .text.startup, NOT plain .text. gcc -O3
+  # -freorder-functions splits code into .text.startup (incl. main) / .text.hot
+  # / plain .text. A plain-.text pad lands AFTER main (~0x4c59) and shifts only
+  # the trailing handlers — main and the INLINED hot dispatch loop never move,
+  # so the sweep only proves handler robustness, not loop robustness (it read
+  # ~2.9% that way). The dispatch loop (cpu_step_fast inlined into main) is the
+  # DSB-packing-sensitive code our knob perturbs. .text.startup leads that
+  # bucket, so the pad shifts main+loop AND the trailing handlers — the true
+  # whole-blob analogue of cc-x64's S32_TEXT_PAD. (Verified: main moves
+  # 0x24b0→0x25a0 across pads; spread collapses to 1.0% = gcc is robust.)
+  printf '\t.section .text.startup,"ax",@progbits\n\t.globl __s32_layout_pad\n__s32_layout_pad:\n\t.space %d\n' "$n" > "$WORK/pad.s"
   "$CC" -c "$WORK/pad.s" -o "$WORK/pad.o" 2>/dev/null || return 1
-  # pad.o first → its .text leads → slow32-fast's functions shift by ~N.
+  # pad.o first → its .text.startup leads → main + everything after shift by ~N.
   "$CC" $CFLAGS -o "$out" "$WORK/pad.o" "$EMU/slow32-fast.c" "$EMU/mmio_ring.c" \
     -I"$EMU" -lm 2>/dev/null
 }
