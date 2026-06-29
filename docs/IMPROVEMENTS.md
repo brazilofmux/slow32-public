@@ -37,39 +37,45 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 
 ## Open Items
 
-### Cross-compiler (cc-x64) — code layout / alignment (QUEUED, not started)
+### Cross-compiler (cc-x64) — code layout / alignment robustness
 
-Established Jun 2026 (Cascade Lake): cc-x64's *codegen* already matches gcc on
-`benchmark_core` — at its best `.text` alignment phase it hits 1.08s == the gcc
-slow32-fast baseline. The residual benchmark difference is an **alignment-phase
-lottery worth ~20%** (1.08s..1.30s across offsets; layout:noise ≈ 25:1),
-mechanism = DSB (µop-cache) packing of the hot `di->handler()` dispatch loop.
-Measure anything in this area with `selfhost/tools/layout-sweep.sh` and compare
-MEDIANS across offsets — single-build A/B is dominated by layout luck. Three
-data points prove hand-emitting alignment in cc-x64 is a dead end (16B
-loop-align and branch if-conversion both measured net-negative and were
-reverted).
+**#1 ANSWERED (Jun 2026, Cascade Lake): gcc is CLEVER, not lucky.** Two sweeps
+at REPS=15 (`selfhost/tools/{layout-sweep.sh,gcc-layout-sweep.sh}`):
 
-1. **Is gcc clever or lucky? (cheap, do first)** The "we match gcc" claim
-   compares our sweep BEST to gcc's SINGLE build. Sweep gcc's slow32-fast too
-   (pad its `.text`, e.g. via a linker offset) and compare gcc's spread/median
-   to ours. If gcc's spread ≈ ours (~20%), gcc just rolled well and we genuinely
-   match; if gcc's spread is small, gcc has real alignment robustness to learn
-   from — most likely from `-falign-functions`/`-falign-loops` + the GNU
-   assembler's **Jcc-erratum mitigation** (pad so branches don't straddle 32B
-   boundaries; `-mbranches-within-32B-boundaries`). cc-x64 does neither beyond
-   16B function alignment.
+| build              | spread | range / median        |
+|--------------------|--------|-----------------------|
+| cc-x64 s32fast-hir | 19.6%  | 1.07–1.28s, med ~1.23 |
+| gcc slow32-fast    |  1.0%  | 1.05–1.06s, med ~1.06 |
 
-2. **Jcc-erratum-aware branch padding (mid effort, if #1 says gcc is robust).**
-   A *targeted* transform — pad individual branches off 32B boundaries — is
-   bounded and principled, unlike the blanket loop-top padding that failed.
-   Potentially most of the win for far less than a full layout pass.
+Walked through all 16 alignment phases, gcc stays ~1.06s — robustly well-packed.
+cc-x64 swings 20% and only equals gcc at its lucky phases (pad ≡48 mod 64 →
+1.08s). So cc-x64's instruction *selection* can match gcc, but it lacks gcc's
+alignment *robustness*; the real median gap (~1.23 vs ~1.06) is alignment.
+Mechanism: DSB (µop-cache) packing of the hot `di->handler()` dispatch loop;
+gcc's `-falign-functions/-loops/-jumps` (default at -O2/O3) keep it well-packed
+regardless of `.text` base, cc-x64 emits no such padding.
+(Harness note: gcc -O3 -freorder-functions puts `main` + the inlined loop in
+`.text.startup`; gcc-layout-sweep.sh pads that section so the loop actually
+moves. Always measure layout changes by the sweep MEDIAN, never one build.)
 
-3. **Post-link BOLT-style layout pass (large, the robust answer).** The only
-   thing that captures the ~20% deterministically instead of by alignment luck,
-   and "stops the dice" for all future codegen work. Now the single biggest
-   lever on the benchmark. The `layout-sweep.sh` harness already validates such
-   work.
+**RETRACTED:** the earlier "hand-emitting alignment in cc-x64 is a dead end"
+(loop-align +16B and branch if-conversion reverts) was judged by SINGLE-BUILD
+A/B — the exact contaminated measurement the sweep exists to replace. gcc's 1.0%
+spread proves alignment works; the verdict is void until re-tested via sweep.
+
+1. **Function / hot-loop alignment in cc-x64 (do first — now the primary lever).**
+   Replicate gcc's `-falign-*`: align hot-loop heads / function entries so the
+   dispatch loop lands in a good DSB phase deterministically. Validate by running
+   `layout-sweep.sh stage08-cross-x64` on the aligned build and checking the
+   MEDIAN drops toward gcc's ~1.06 and the spread collapses toward ~1% — NOT by a
+   single build (that's what mis-killed it before). Cheap if it works; bounded.
+
+2. **Jcc-erratum-aware branch padding (if #1 underperforms).** Targeted: pad
+   individual branches off 32B boundaries (`-mbranches-within-32B-boundaries`
+   analogue). gcc's assembler does this on affected -march.
+
+3. **Post-link BOLT-style layout pass (large, fully-robust fallback).** Captures
+   placement deterministically for all future codegen work; heavier than #1/#2.
 
 ## Testing Recommendations
 

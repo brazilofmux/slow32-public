@@ -184,25 +184,28 @@ objdump -d tools/emulator/slow32-fast | sed -n '/<op_add>:/,/ret/p'  # gcc code
 # Expected checksum: 0x8d70b2b
 #
 # HEADLINE FINDING (Jun 2026, Xeon 8259CL / Cascade Lake): the historical
-# "~1.4x gap" to gcc is dominated by code ALIGNMENT, not codegen quality. A
-# layout sweep (tools/layout-sweep.sh) showed the benchmark swings 20%
-# (1.08s..1.30s) purely with .text alignment, and at its best phase (pad ≡48
-# mod 64) s32fast-hir hits 1.08s == the gcc slow32-fast baseline build. So
-# cc-x64 CAN match gcc's time. (Caveat: that compares our sweep's BEST to
-# gcc's SINGLE build — to claim we match gcc's *distribution*, sweep gcc too,
-# i.e. is gcc robustly well-aligned [clever] or did its one build roll well
-# [lucky]? OPEN — see docs/IMPROVEMENTS.md.)
-# Mechanism: DSB (µop-cache) packing of the hot di->handler() dispatch loop;
-# not the Jcc erratum, not dispatch (both emulators share identical indirect
-# dispatch). Layout-to-run-noise ratio ~25:1, so:
-#   ALWAYS measure codegen changes with layout-sweep.sh and compare the MEDIAN
-#   across offsets — a single-build A/B is dominated by layout luck and worthless.
-# Durable real wins landed: branchless boolean ternary (18a172fc, the one
-# layout-independent speedup) + a latent arg-marshalling miscompile fix.
-# QUEUED (separate project, not started): a post-link BOLT-style layout pass is
-# now the single biggest lever (~20%) and the only thing that captures it
-# robustly instead of by alignment luck. Hand-emitting alignment in cc-x64 is a
-# dead end (proven: loop-align +16B and branch if-conversion both reverted).
+# "~1.4x gap" to gcc is code ALIGNMENT ROBUSTNESS, not instruction-selection
+# quality. Two sweeps (tools/{layout-sweep.sh,gcc-layout-sweep.sh}), REPS=15:
+#   cc-x64 s32fast-hir : spread 19.6% (1.07-1.28s, median ~1.23)
+#   gcc   slow32-fast  : spread  1.0% (1.05-1.06s, median ~1.06)  <-- robust
+# So gcc is CLEVER, not lucky: walked through all 16 alignment phases it stays
+# ~1.06s. cc-x64 emits NO function/loop alignment, so its hot di->handler()
+# dispatch loop's DSB (µop-cache) packing is phase-sensitive — it only equals
+# gcc at its lucky phases (pad ≡48 mod 64 -> 1.08s). The real median gap
+# (~1.23 vs ~1.06) is alignment, capturable by alignment.
+# (Not the Jcc erratum; not dispatch — both emulators share identical indirect
+# dispatch. Layout:run-noise ~25:1, so ALWAYS measure layout-area changes by
+# the layout-sweep MEDIAN across offsets — a single-build A/B is worthless.)
+# Durable codegen wins landed: branchless boolean ternary (18a172fc) + a latent
+# arg-marshalling miscompile fix.
+# NEXT LEVER (re-opened — see docs/IMPROVEMENTS.md): give cc-x64 gcc-style
+# function/hot-loop alignment (-falign-* analogue) so it lands in a good phase
+# deterministically; target dropping our median toward gcc's ~1.06 + collapsing
+# the spread. RETRACTED: the earlier "hand-emitting alignment is a dead end"
+# (loop-align +16B / branch if-conversion reverts) was judged by SINGLE-BUILD
+# A/B — the exact contaminated measurement the sweep replaces. gcc's 1.0% spread
+# PROVES alignment works; re-test alignment via the sweep median, not one build.
+# (A post-link BOLT-style pass remains the heavier, fully-robust alternative.)
 ```
 
 **Bootstrap chain**: host GCC compiles `cc-x64.c` → `out/cc-x64` (the cross-compiler binary).
