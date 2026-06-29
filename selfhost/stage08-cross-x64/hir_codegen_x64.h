@@ -3091,10 +3091,16 @@ static void hx_gen_program(Node *prog, int compile_only) {
      * (back-edge targets) to an N-byte boundary, the gcc -falign-loops
      * analogue.  gcc gets a 1.0% layout spread this way vs cc-x64's ~20%
      * (no loop alignment); pinning the hot dispatch loop's start makes its
-     * DSB packing invariant under .text shifts.  Which N (16/32/64) collapses
-     * the spread AND lands a good median is empirical — sweep it with
-     * layout-sweep.sh.  0 (default) = off / no change. */
-    hx_loop_align = 0;
+     * DSB packing invariant under .text shifts.
+     * DEFAULT 32 — Kagura sweep (Xeon 8259CL, REPS=15, 2026-06-29) over
+     * S32_LOOP_ALIGN x layout pad: N=32 collapses the layout spread
+     * 20.4%->2.7% (gcc-like) and drops the MEDIAN 1.25->1.13s. N=16 is worse
+     * (30.4%, bimodal — sensitive granularity is 32B, not 16B); N=64 ties N=32
+     * but wastes more padding. The stable phase (~1.13) is still above
+     * cc-x64's lucky-best 1.08 and gcc's 1.06 (mod-32=0 isn't the optimal DSB
+     * phase — that was ~48-mod-64); closing that needs align-to-64-plus-offset,
+     * a follow-up. Set S32_LOOP_ALIGN=0 to disable (e.g. to sweep). */
+    hx_loop_align = 32;
     {
         char *s32_la;
         s32_la = getenv("S32_LOOP_ALIGN");
