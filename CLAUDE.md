@@ -183,29 +183,31 @@ objdump -d tools/emulator/slow32-fast | sed -n '/<op_add>:/,/ret/p'  # gcc code
 # Key benchmark: ~/s32x/benchmark_core.s32x (full 10M iters, 285M instructions)
 # Expected checksum: 0x8d70b2b
 #
-# HEADLINE FINDING (Jun 2026, Xeon 8259CL / Cascade Lake): the historical
-# "~1.4x gap" to gcc is code ALIGNMENT ROBUSTNESS, not instruction-selection
-# quality. Two sweeps (tools/{layout-sweep.sh,gcc-layout-sweep.sh}), REPS=15:
-#   cc-x64 s32fast-hir : spread 19.6% (1.07-1.28s, median ~1.23)
-#   gcc   slow32-fast  : spread  1.0% (1.05-1.06s, median ~1.06)  <-- robust
-# So gcc is CLEVER, not lucky: walked through all 16 alignment phases it stays
-# ~1.06s. cc-x64 emits NO function/loop alignment, so its hot di->handler()
-# dispatch loop's DSB (µop-cache) packing is phase-sensitive — it only equals
-# gcc at its lucky phases (pad ≡48 mod 64 -> 1.08s). The real median gap
-# (~1.23 vs ~1.06) is alignment, capturable by alignment.
-# (Not the Jcc erratum; not dispatch — both emulators share identical indirect
-# dispatch. Layout:run-noise ~25:1, so ALWAYS measure layout-area changes by
-# the layout-sweep MEDIAN across offsets — a single-build A/B is worthless.)
-# Durable codegen wins landed: branchless boolean ternary (18a172fc) + a latent
-# arg-marshalling miscompile fix.
-# NEXT LEVER (re-opened — see docs/IMPROVEMENTS.md): give cc-x64 gcc-style
-# function/hot-loop alignment (-falign-* analogue) so it lands in a good phase
-# deterministically; target dropping our median toward gcc's ~1.06 + collapsing
-# the spread. RETRACTED: the earlier "hand-emitting alignment is a dead end"
-# (loop-align +16B / branch if-conversion reverts) was judged by SINGLE-BUILD
-# A/B — the exact contaminated measurement the sweep replaces. gcc's 1.0% spread
-# PROVES alignment works; re-test alignment via the sweep median, not one build.
-# (A post-link BOLT-style pass remains the heavier, fully-robust alternative.)
+# HEADLINE (Jun 2026, Xeon 8259CL / Cascade Lake): cc-x64 now reaches GCC
+# PARITY on benchmark_core — median 1.07s vs gcc's 1.06s (was 1.39x at the
+# start of this whole effort). The gap was code LAYOUT, not instruction
+# selection, and it is now CLOSED in-compiler. Two effects, both gcc does:
+#   (1) DSB µop-cache packing of the hot di->handler() loop  -> loop-head
+#       alignment (S32_LOOP_ALIGN, default 32).
+#   (2) Jcc erratum: a branch whose bytes cross a 32B line is evicted from the
+#       DSB -> branch-straddle NOP padding (S32_BRANCH32, default on; gcc's
+#       -mbranches-within-32B-boundaries analogue). x64_branch_pad() in
+#       x64_encode.h, applied at jump/jcc/indirect-call choke points.
+# Sweep (REPS=15, pad sweep = layout robustness):
+#   baseline off               spread 20.4%  median 1.25
+#   ALIGN=32 only              spread  2.7%  median 1.13
+#   BRANCH32 + ALIGN=32 (NOW)  spread  4.7%  median 1.07  == gcc 1.06 (parity)
+#   gcc reference              spread  1.0%  median 1.06
+# Source-robust (fixes every straddling branch, not one loop's lucky phase);
+# behavior-neutral (27 tests byte-identical, checksum 0x8d70b2b); +3% .text NOPs.
+# Disable per-knob: S32_BRANCH32=0 / S32_LOOP_ALIGN=0.
+# RULE THAT GOT US HERE: layout:run-noise ~25:1, so ALWAYS measure layout-area
+# changes by the layout-sweep MEDIAN across offsets — a single-build A/B is
+# worthless (it mis-killed loop-align once; verdict retracted, then this shipped).
+# CORRECTION: an earlier note here said "not the Jcc erratum" — that was wrong,
+# undercalled from too few branches/phases; the erratum was central.
+# Durable codegen wins also landed: branchless boolean ternary (18a172fc) + a
+# latent arg-marshalling miscompile fix. Heavier BOLT-style pass not needed.
 ```
 
 **Bootstrap chain**: host GCC compiles `cc-x64.c` → `out/cc-x64` (the cross-compiler binary).

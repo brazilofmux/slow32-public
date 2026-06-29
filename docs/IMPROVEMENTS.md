@@ -35,47 +35,47 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 1. **String-float conversions** ✅ — dtoa/strtod implemented.
 2. **Math library transcendentals** ✅ — sin, cos, exp, log, etc. implemented via DBT/QEMU runtime interception.
 
+## Resolved — code layout / GCC parity (Jun 2026, Cascade Lake)
+
+**cc-x64 reached GCC parity on `benchmark_core`: median 1.07s vs gcc 1.06s**
+(it began this effort at 1.39x). The gap was code LAYOUT, not instruction
+selection, and it was closed in-compiler by replicating the two things gcc does.
+
+The diagnosis came from a layout *sweep* — `selfhost/tools/layout-sweep.sh`
+(ours) + `gcc-layout-sweep.sh` (gcc), which pad `.text` across offsets and
+compare the MEDIAN, defeating the ~25:1 layout:run-noise that makes any single
+build A/B worthless. It showed gcc is *robust* (1.0% spread) where cc-x64 swung
+20% — gcc is clever, not lucky. Two mechanisms, both now in cc-x64:
+
+1. **Loop-head alignment** (`S32_LOOP_ALIGN`, default 32) — pins the hot
+   `di->handler()` dispatch loop so its DSB (µop-cache) packing is invariant
+   under `.text` shifts. gcc's `-falign-loops` analogue.
+2. **Branch-straddle padding** (`S32_BRANCH32`, default on) — the Jcc erratum
+   evicts any branch crossing a 32B line from the DSB; `x64_branch_pad()`
+   (`x64_encode.h`) emits 1-byte NOPs so branches don't straddle. gcc's
+   `-mbranches-within-32B-boundaries` analogue.
+
+| build (pad sweep, REPS=15)   | spread | median |
+|------------------------------|--------|--------|
+| baseline off                 | 20.4%  | 1.25   |
+| ALIGN=32 only                |  2.7%  | 1.13   |
+| **BRANCH32 + ALIGN=32 (default)** | **4.7%** | **1.07** |
+| gcc reference                |  1.0%  | 1.06   |
+
+Source-robust (fixes every straddling branch, not one loop's lucky phase — an
+overfit ALIGN=64/OFFSET=8 hit 1.08 and was deliberately NOT shipped);
+behavior-neutral (27 cross-x64 tests byte-identical, checksum 0x8d70b2b);
+cost +3% static `.text` NOPs (like gcc's). Disable: `S32_BRANCH32=0` /
+`S32_LOOP_ALIGN=0`.
+
+Possible refinements (not needed for parity): pad fused cmp+jcc as a unit
+(gcc does; current pass pads the jcc alone); a64 loop alignment (needs
+RPO-order back-edge detection); a post-link BOLT-style pass (heavier, robust
+for all future codegen). None blocking — parity is reached.
+
 ## Open Items
 
-### Cross-compiler (cc-x64) — code layout / alignment robustness
-
-**#1 ANSWERED (Jun 2026, Cascade Lake): gcc is CLEVER, not lucky.** Two sweeps
-at REPS=15 (`selfhost/tools/{layout-sweep.sh,gcc-layout-sweep.sh}`):
-
-| build              | spread | range / median        |
-|--------------------|--------|-----------------------|
-| cc-x64 s32fast-hir | 19.6%  | 1.07–1.28s, med ~1.23 |
-| gcc slow32-fast    |  1.0%  | 1.05–1.06s, med ~1.06 |
-
-Walked through all 16 alignment phases, gcc stays ~1.06s — robustly well-packed.
-cc-x64 swings 20% and only equals gcc at its lucky phases (pad ≡48 mod 64 →
-1.08s). So cc-x64's instruction *selection* can match gcc, but it lacks gcc's
-alignment *robustness*; the real median gap (~1.23 vs ~1.06) is alignment.
-Mechanism: DSB (µop-cache) packing of the hot `di->handler()` dispatch loop;
-gcc's `-falign-functions/-loops/-jumps` (default at -O2/O3) keep it well-packed
-regardless of `.text` base, cc-x64 emits no such padding.
-(Harness note: gcc -O3 -freorder-functions puts `main` + the inlined loop in
-`.text.startup`; gcc-layout-sweep.sh pads that section so the loop actually
-moves. Always measure layout changes by the sweep MEDIAN, never one build.)
-
-**RETRACTED:** the earlier "hand-emitting alignment in cc-x64 is a dead end"
-(loop-align +16B and branch if-conversion reverts) was judged by SINGLE-BUILD
-A/B — the exact contaminated measurement the sweep exists to replace. gcc's 1.0%
-spread proves alignment works; the verdict is void until re-tested via sweep.
-
-1. **Function / hot-loop alignment in cc-x64 (do first — now the primary lever).**
-   Replicate gcc's `-falign-*`: align hot-loop heads / function entries so the
-   dispatch loop lands in a good DSB phase deterministically. Validate by running
-   `layout-sweep.sh stage08-cross-x64` on the aligned build and checking the
-   MEDIAN drops toward gcc's ~1.06 and the spread collapses toward ~1% — NOT by a
-   single build (that's what mis-killed it before). Cheap if it works; bounded.
-
-2. **Jcc-erratum-aware branch padding (if #1 underperforms).** Targeted: pad
-   individual branches off 32B boundaries (`-mbranches-within-32B-boundaries`
-   analogue). gcc's assembler does this on affected -march.
-
-3. **Post-link BOLT-style layout pass (large, fully-robust fallback).** Captures
-   placement deterministically for all future codegen work; heavier than #1/#2.
+None at this time.
 
 ## Testing Recommendations
 
