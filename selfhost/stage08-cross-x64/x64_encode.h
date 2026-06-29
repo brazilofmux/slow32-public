@@ -19,6 +19,11 @@
 static unsigned char x64_buf[X64_BUF_SIZE];
 static int x64_off;     // current write position
 
+/* Branch-straddle (Jcc-erratum/DSB) mitigation knob + helper — declared early
+ * because the indirect branch emitters above x64_nop call x64_branch_pad. */
+static int x64_branch32 = 0;
+static void x64_branch_pad(int len);
+
 // ============================================================================
 // Register encoding
 // ============================================================================
@@ -854,6 +859,7 @@ static void x64_jmp_rel32(int offset) {
 static void x64_jmp_r(int target) {
     int rex = 0;
     if (target >= 8) rex = rex | REX_B;
+    x64_branch_pad(target >= 8 ? 3 : 2);
     x64_rex_emit(rex);
     x64_byte(0xFF);
     x64_byte(MODRM(MOD_DIRECT, 4, target));
@@ -887,6 +893,7 @@ static void x64_call_rel32(int offset) {
 static void x64_call_r(int target) {
     int rex = 0;
     if (target >= 8) rex = rex | REX_B;
+    x64_branch_pad(target >= 8 ? 3 : 2);
     x64_rex_emit(rex);
     x64_byte(0xFF);
     x64_byte(MODRM(MOD_DIRECT, 2, target));
@@ -919,6 +926,21 @@ static void x64_pop(int reg) {
 
 // nop  (90)
 static void x64_nop(void) { x64_byte(0x90); }
+
+/* Jcc-erratum / DSB branch-straddle mitigation (S32_BRANCH32).  On Skylake/
+ * Cascade Lake a branch whose bytes cross a 32-byte boundary is not cached in
+ * the µop cache (DSB) and falls back to legacy decode.  gcc's
+ * -mbranches-within-32B-boundaries pads so no branch straddles a 32B line;
+ * this is the source-robust analogue of the S32_LOOP_OFFSET phase hack.
+ * When enabled, if the branch [x64_off, x64_off+len) would cross a 32B
+ * boundary, pad to the next boundary with 1-byte NOPs so it doesn't.  Off (0)
+ * = exact no-op.  Call BEFORE emitting (or before computing a backward rel). */
+static void x64_branch_pad(int len) {
+    if (!x64_branch32) return;
+    if (((x64_off + len - 1) >> 5) != (x64_off >> 5)) {
+        while (x64_off & 31) x64_nop();
+    }
+}
 
 // int3  (CC)
 static void x64_int3(void) { x64_byte(0xCC); }
@@ -1115,6 +1137,7 @@ static void x64_patch_rel32(int patch_off, int target_off) {
 //   x64_patch_rel32(patch, x64_pos());
 static int x64_jmp_placeholder(void) {
     int patch;
+    x64_branch_pad(5);
     x64_byte(0xE9);
     patch = x64_off;
     x64_dword(0);
@@ -1123,6 +1146,7 @@ static int x64_jmp_placeholder(void) {
 
 static int x64_jcc_placeholder(int cc) {
     int patch;
+    x64_branch_pad(6);
     x64_byte(0x0F);
     x64_byte(cc);
     patch = x64_off;

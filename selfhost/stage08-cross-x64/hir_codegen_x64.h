@@ -360,6 +360,10 @@ static void hx_spill(int inst, int reg) {
 /* Record a forward jump to a block.  The rel32 at patch_off will be
  * resolved when the block's code offset is known. */
 static void hx_jump_to_block(int blk) {
+    /* Branch-straddle mitigation: pad BEFORE computing the backward rel (and
+     * before the forward placeholder) so x64_off is final when the rel is
+     * derived.  No-op unless S32_BRANCH32 is set. */
+    x64_branch_pad(5);
     if (hx_blk_off[blk] >= 0) {
         /* Backward: block already emitted, compute displacement */
         x64_jmp_rel32(hx_blk_off[blk] - (x64_off + 5));
@@ -375,6 +379,7 @@ static void hx_jump_to_block(int blk) {
 
 /* Emit conditional jump (cc) to a block. */
 static void hx_jcc_to_block(int cc, int blk) {
+    x64_branch_pad(6);
     if (hx_blk_off[blk] >= 0) {
         x64_jcc_rel32(cc, hx_blk_off[blk] - (x64_off + 6));
     } else {
@@ -3144,6 +3149,22 @@ static void hx_gen_program(Node *prog, int compile_only) {
                 li = li + 1;
             }
             hx_loop_offset = v;
+        }
+    }
+    /* S32_BRANCH32: pad so no branch crosses a 32-byte boundary (Jcc-erratum /
+     * DSB mitigation, gcc -mbranches-within-32B-boundaries analogue).
+     * DEFAULT ON — Kagura sweep (Xeon 8259CL, REPS=15, 2026-06-29): combined
+     * with ALIGN=32 it gives median ~1.07s (== gcc's 1.06) at spread 4.7%,
+     * vs ALIGN=32 alone 1.13/2.7% — a ~5% gap-close to gcc parity. Crucially
+     * it is SOURCE-ROBUST: it fixes every straddling branch everywhere, unlike
+     * the S32_LOOP_OFFSET phase hack which is overfit to one loop's layout.
+     * Set S32_BRANCH32=0 to disable (e.g. to sweep/measure). */
+    x64_branch32 = 1;
+    {
+        char *s32_b32;
+        s32_b32 = getenv("S32_BRANCH32");
+        if (s32_b32) {
+            x64_branch32 = (s32_b32[0] != '0');
         }
     }
 
