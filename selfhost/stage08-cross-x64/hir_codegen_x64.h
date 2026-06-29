@@ -29,6 +29,7 @@ static int hx_no_frame;             /* 1 if function needs no frame (no spills, 
 static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
 static int hx_loop_head[HIR_MAX_BLOCK]; /* 1 if block is a back-edge target (loop header) */
 static int hx_loop_align = 0;           /* loop-header alignment in bytes (S32_LOOP_ALIGN), 0=off */
+static int hx_loop_offset = 0;          /* extra NOP bytes after align, lands loop head at mod-align=offset (S32_LOOP_OFFSET) */
 
 /* Forward jump patches: jump at patch_off targets block patch_blk */
 #define HX_MAX_BPATCH 8192
@@ -2881,6 +2882,17 @@ static void hx_gen_func(Node *fn) {
          * .text shifts, the gcc-style robustness lever (sweep-validate N). */
         if (hx_loop_align > 0 && b > 0 && hx_loop_head[b]) {
             x64_align(hx_loop_align);
+            /* Optional phase offset: after aligning to mod-align=0, emit
+             * hx_loop_offset more 1-byte NOPs so the loop head lands at
+             * mod-align=offset. These precede the block label, so the hot
+             * back-edge target is after them (zero per-iteration cost); they
+             * execute once on fall-through entry. mod-N=0 is often a mediocre
+             * DSB phase (sweep showed ~48-mod-64 is the fast one); this lets
+             * the optimal phase be dialed in. */
+            {
+                int koff = hx_loop_offset;
+                while (koff > 0) { x64_nop(); koff = koff - 1; }
+            }
         }
 
         hx_define_block(b);
@@ -3114,6 +3126,24 @@ static void hx_gen_program(Node *prog, int compile_only) {
                 li = li + 1;
             }
             hx_loop_align = v;
+        }
+    }
+    /* S32_LOOP_OFFSET=K: land the loop head at mod-(align)=K instead of 0.
+     * Default 0 until the optimal phase is swept in (mod-N=0 is mediocre). */
+    hx_loop_offset = 0;
+    {
+        char *s32_lo;
+        s32_lo = getenv("S32_LOOP_OFFSET");
+        if (s32_lo) {
+            int v;
+            int li;
+            v = 0;
+            li = 0;
+            while (s32_lo[li] >= '0' && s32_lo[li] <= '9') {
+                v = v * 10 + (s32_lo[li] - '0');
+                li = li + 1;
+            }
+            hx_loop_offset = v;
         }
     }
 
