@@ -140,6 +140,26 @@ RUN mkdir -p /opt/fpc/slow32-rtl && \
     cp /fpc-src/rtl/units/slow32-embedded/*.ppu /opt/fpc/slow32-rtl/ && \
     cp /fpc-src/rtl/units/slow32-embedded/*.s   /opt/fpc/slow32-rtl/
 
+# Stage 2.6: Build the self-hosted SLOW-32 cross-compilers
+# cc-x64 (C -> x86-64 ELF) and cc-a64 (C -> arm64 ELF). These are HOST-native
+# tools — they need no emulator — built by host gcc from the shared stage08
+# frontend. (The slow-32-hosted self-host compiler, cc.s32x, is itself a .s32x
+# and so lives with the emulator, not here.) The selfhost tree builds in <1min.
+FROM alpine:3.19 AS selfhost-builder
+RUN apk add --no-cache build-base bash
+WORKDIR /build
+# selfhost/ and common/ must stay siblings: the cross libc includes
+# ../../../common/mmio_ring_layout.h.
+COPY selfhost /build/selfhost
+COPY common  /build/common
+# rm -rf out: drop any dev-host out/ artifacts (Mach-O on the Mac) so make
+# rebuilds fresh for this image's arch+libc. mkdir out: the a64 cc-a64 target
+# lacks the order-only `| $(OUT)` mkdir guard the x64 one has.
+RUN cd /build/selfhost/stage08-cross-x64 && rm -rf out && mkdir -p out && \
+    make out/cc-x64 out/ld-x64 out/ar-x64 libc
+RUN cd /build/selfhost/stage08-cross-a64 && rm -rf out && mkdir -p out && \
+    make out/cc-a64 out/ld-a64 out/ar-a64 out/crt0.o libc
+
 # Stage 3: Build SLOW-32 native tools and create final image
 FROM alpine:3.19
 
@@ -205,6 +225,27 @@ RUN cd /opt/slow32/lib/fpc && \
     done && \
     /opt/slow32/bin/s32-ar rcs librtl.s32a $(ls *.s32o | grep -v '^fpc_startup\.s32o$') && \
     rm -f $(ls *.s32o | grep -v '^fpc_startup\.s32o$')
+
+# Install the self-hosted cross-compilers (C -> native x86-64 / arm64 ELF).
+# Raw per-target tools live under /opt/slow32/{x64,a64}; thin wrappers (cc-x64,
+# cc-a64) go on PATH and default their tool dir there.  Output is a native ELF,
+# NOT a .s32x — run it on a matching-arch host (or under qemu / the emulator
+# image for the non-host arch).
+RUN mkdir -p /opt/slow32/x64 /opt/slow32/a64
+COPY --from=selfhost-builder \
+     /build/selfhost/stage08-cross-x64/out/cc-x64 \
+     /build/selfhost/stage08-cross-x64/out/ld-x64 \
+     /build/selfhost/stage08-cross-x64/out/crt0.o \
+     /build/selfhost/stage08-cross-x64/out/libc_x64.a \
+     /opt/slow32/x64/
+COPY --from=selfhost-builder \
+     /build/selfhost/stage08-cross-a64/out/cc-a64 \
+     /build/selfhost/stage08-cross-a64/out/ld-a64 \
+     /build/selfhost/stage08-cross-a64/out/crt0.o \
+     /build/selfhost/stage08-cross-a64/out/libc_a64.a \
+     /opt/slow32/a64/
+COPY docker/bin/cc-x64 docker/bin/cc-a64 /opt/slow32/bin/
+RUN chmod +x /opt/slow32/bin/cc-x64 /opt/slow32/bin/cc-a64
 
 # Set up environment
 ENV PATH="/opt/llvm/bin:/opt/slow32/bin:${PATH}"

@@ -1,0 +1,16 @@
+#!/bin/bash
+# cc-x64 — compile a C file to a native x86-64 Linux ELF using the self-hosted
+# SLOW-32 cross-compiler (cc-x64 + ld-x64 + libc_x64). The output is an
+# x86-64 binary (runs on an x86-64 host or under qemu), NOT a .s32x.
+#
+# Usage: cc-x64 <input.c> [output]   (output defaults to input basename, no ext)
+set -e
+TOOLS="${SLOW32_X64_TOOLS:-/opt/slow32/x64}"
+[ $# -ge 1 ] || { echo "Usage: cc-x64 <input.c> [output]"; exit 1; }
+IN="$1"
+OUT="${2:-$(basename "${IN%.c}")}"
+OBJ="$(mktemp)"
+trap 'rm -f "$OBJ"' EXIT
+"$TOOLS/cc-x64" --hir -c "$IN" -o "$OBJ"
+"$TOOLS/ld-x64" -o "$OUT" "$TOOLS/crt0.o" "$OBJ" "$TOOLS/libc_x64.a"
+echo "cc-x64: wrote $OUT (x86-64 ELF)"

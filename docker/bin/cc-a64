@@ -1,0 +1,16 @@
+#!/bin/bash
+# cc-a64 — compile a C file to a native arm64 Linux ELF using the self-hosted
+# SLOW-32 cross-compiler (cc-a64 + ld-a64 + libc_a64). The output is an
+# arm64 binary (runs on an arm64 host or under qemu), NOT a .s32x.
+#
+# Usage: cc-a64 <input.c> [output]   (output defaults to input basename, no ext)
+set -e
+TOOLS="${SLOW32_A64_TOOLS:-/opt/slow32/a64}"
+[ $# -ge 1 ] || { echo "Usage: cc-a64 <input.c> [output]"; exit 1; }
+IN="$1"
+OUT="${2:-$(basename "${IN%.c}")}"
+OBJ="$(mktemp)"
+trap 'rm -f "$OBJ"' EXIT
+"$TOOLS/cc-a64" --hir -c "$IN" -o "$OBJ"
+"$TOOLS/ld-a64" -o "$OUT" "$TOOLS/crt0.o" "$OBJ" "$TOOLS/libc_a64.a"
+echo "cc-a64: wrote $OUT (arm64 ELF)"

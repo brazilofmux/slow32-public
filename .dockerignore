@@ -23,6 +23,10 @@
 !runtime/
 !Makefile
 
+# Self-hosted cross-compilers need (shared frontend tree + container wrappers):
+!selfhost/
+!docker/
+
 # Emulator build needs:
 !tools/emulator/
 !tools/dbt/
@@ -54,3 +58,8 @@ tools/dbt/slow32-dbt
 runtime/*.s32o
 runtime/*.s32a
 runtime/*.llc.s
+
+# Self-host build outputs (rebuilt fresh in-container for musl/Alpine)
+selfhost/stage08-cross-x64/out/
+selfhost/stage08-cross-a64/out/
+selfhost/stage08/out/
