@@ -57,8 +57,12 @@ fi
 # Ensure runtime libraries are rebuilt with any local changes. [Let's not do this. It's out of control.]
 # make -C "$SLOW32_BASE/runtime" libc_debug.s32a libs32.s32a >/dev/null
 
-# Clean results directory
-rm -rf "$RESULTS_DIR"
+# Clean results directory — but only for full-suite runs; a single-test
+# invocation must not destroy the other tests' artifacts (run-differential.sh
+# relies on them).
+if [ $# -eq 0 ]; then
+    rm -rf "$RESULTS_DIR"
+fi
 mkdir -p "$RESULTS_DIR"
 
 echo "SLOW-32 Regression Tests (Modern Linker Version)"
@@ -252,10 +256,16 @@ run_test() {
     fi
 }
 
-# Run all tests
-for test in $(ls "$TEST_DIR" | sort); do
-    run_test "$test"
-done
+# Run all tests, or just the ones named on the command line
+if [ $# -gt 0 ]; then
+    for test in "$@"; do
+        run_test "$test"
+    done
+else
+    for test in $(ls "$TEST_DIR" | sort); do
+        run_test "$test"
+    done
+fi
 
 echo ""
 echo "================================================="
