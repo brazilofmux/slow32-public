@@ -3068,9 +3068,17 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     // Check for in-block back-edge: if the taken target is within this block,
     // we can emit a direct jmp back to the loop body, skipping the register
     // flush and prologue reload entirely. This is a major win for tight loops.
+    //
+    // Only sound if the target was a KNOWN back-edge target when its code was
+    // emitted (is_backedge_target => cache flush + const-prop/bounds reset at
+    // the target). A back-edge discovered mid-extension (e.g. via a jump-over
+    // inline looping to earlier code in the same superblock) points at code
+    // specialized on first-iteration constants — wrong on iteration >= 2.
+    // Fall back to the normal side exit in that case.
     size_t backedge_host_offset = (size_t)-1;
     if (imm < 0 && ctx->reg_cache_enabled &&
-        taken_pc >= ctx->block_start_pc) {
+        taken_pc >= ctx->block_start_pc &&
+        is_backedge_target(ctx, taken_pc)) {
         backedge_host_offset = pc_map_lookup(ctx, taken_pc);
     }
 

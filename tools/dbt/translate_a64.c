@@ -2404,7 +2404,12 @@ void translate_sra(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 // drops off the dependency chain).
 static inline void set_pending_shift(translate_ctx_t *ctx, uint8_t dst,
                                      uint8_t src, uint8_t kind, uint8_t imm) {
-    if (imm == 0 || guest_host_reg(ctx, src) == A64_NOREG) {
+    // In-place shifts (dst == src) destroy the source: the fold would
+    // recompute the shift from the ALREADY-shifted register and apply it
+    // twice (e.g. `srli r1,r1,8; xor r1,r3,r1` emitted LSR w23 followed by
+    // EOR wd, wn, w23, LSR #8). Only offer the fold when the source value
+    // survives the standalone shift.
+    if (imm == 0 || dst == src || guest_host_reg(ctx, src) == A64_NOREG) {
         ctx->pending_shift.valid = false;
         return;
     }
@@ -3058,8 +3063,18 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     // skip the side-exit's flush + inline-lookup + chain entirely.
     {
         size_t backedge_host_offset = (size_t)-1;
+        // The fast path is only sound if the target was a KNOWN back-edge
+        // target when its code was emitted: the emitter flushes the cache and
+        // resets const-prop/bounds-elim state there (is_backedge_target check
+        // in the main loop). A back-edge discovered mid-extension (e.g. via a
+        // jump-over inline that loops to code emitted earlier in the same
+        // superblock) points at code specialized on first-iteration constants
+        // — branching to it executes wrong code on iteration >= 2. Fall back
+        // to the normal side exit in that case; the dispatcher re-enters via
+        // a fresh block with correct state.
         if (imm < 0 && ctx->reg_cache_enabled &&
-            taken_pc >= ctx->block_start_pc) {
+            taken_pc >= ctx->block_start_pc &&
+            is_backedge_target(ctx, taken_pc)) {
             backedge_host_offset = pc_map_lookup(ctx, taken_pc);
         }
 
@@ -3078,6 +3093,12 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                     }
                 }
             }
+
+            // A deferred pending write must be materialized before looping:
+            // the loop body was emitted assuming guest slots/cached regs are
+            // current, and the STR would never execute on the loop-back path.
+            // STR does not affect flags, so this is safe after the CMP above.
+            flush_pending_write(ctx);
 
             // Emit conditional branch directly to loop body (taken case).
             size_t bcond_offset = emit_offset(e);
@@ -3107,6 +3128,19 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                           ctx->exit_idx < MAX_SUPERBLOCK_EXITS - 1 &&
                           ctx->deferred_exit_count < MAX_BLOCK_EXITS;
         if (ctx->avoid_backedge_extend && imm < 0) can_extend = false;
+
+        // Debug bisection: only extend blocks whose start PC is below the
+        // given limit (SLOW32_DBT_SB_PC_BELOW=0xNNN). Lets a wrong-code run
+        // be binary-searched down to the guilty superblock.
+        {
+            static long sb_pc_below = -2;
+            if (sb_pc_below == -2) {
+                const char *env = getenv("SLOW32_DBT_SB_PC_BELOW");
+                sb_pc_below = env ? (long)strtoul(env, NULL, 0) : -1;
+            }
+            if (sb_pc_below >= 0 && ctx->block_start_pc >= (uint32_t)sb_pc_below)
+                can_extend = false;
+        }
 
         if (can_extend) {
             int de_idx = ctx->deferred_exit_count;

@@ -66,6 +66,14 @@ typedef struct {
     uint64_t skip_count;    // skip first N blocks before checking
     uint64_t skip_remaining;
 
+    // Follow taken backward conditional branches whose target lies inside the
+    // block, mirroring the translator's in-block back-edge fast path (emitted
+    // only when the register cache is enabled). Without this the shadow does
+    // one linear pass while the DBT runs the whole loop in-block, and every
+    // loop block reports a false PC/register divergence.
+    bool follow_backedges;
+    bool chase_abort;       // step budget exhausted mid-loop; skip this verify
+
     // Intrinsic addresses to skip (copied from cpu state)
     uint32_t intrinsic_memcpy;
     uint32_t intrinsic_memset;

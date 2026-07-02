@@ -580,11 +580,15 @@ static void shadow_execute_block(shadow_state_t *s, uint32_t block_start,
                                  uint32_t block_size) {
     uint32_t block_end = block_start + block_size;
     // In paranoid mode, some transforms still keep control flow within the same
-    // translated block (for example in-block forward JAL r0 inlining). Match
+    // translated block (for example in-block forward JAL r0 inlining, and —
+    // when the register cache is enabled — direct back-edge loops). Match
     // DBT behavior by continuing while the PC stays inside this block range.
-    int max_steps = block_size / 4 + 1;
+    long max_steps = s->follow_backedges ? (16L * 1024 * 1024)
+                                         : (long)(block_size / 4 + 1);
+    s->chase_abort = false;
 
-    for (int i = 0; i < max_steps; i++) {
+    long i;
+    for (i = 0; i < max_steps; i++) {
         if (s->pc < block_start || s->pc >= block_end) {
             break;
         }
@@ -601,10 +605,20 @@ static void shadow_execute_block(shadow_state_t *s, uint32_t block_start,
                 (op == 0x40) && (rd == 0) &&
                 (s->pc > pc_before) &&
                 (s->pc >= block_start && s->pc < block_end);
-            if (!inblock_forward_jal) {
+            // Taken conditional branch to inside the block: backward for the
+            // back-edge fast path (loops stay in-block), forward for
+            // superblock jump-over inlining.
+            bool inblock_backedge =
+                s->follow_backedges &&
+                (op >= 0x48 && op <= 0x4D) &&
+                (s->pc >= block_start && s->pc < block_end);
+            if (!inblock_forward_jal && !inblock_backedge) {
                 break;
             }
         }
+    }
+    if (i >= max_steps && s->pc >= block_start && s->pc < block_end) {
+        s->chase_abort = true;  // still looping; caller must skip the compare
     }
 }
 
@@ -809,6 +823,12 @@ bool shadow_verify(shadow_state_t *s, dbt_cpu_state_t *cpu,
         return true;
     }
 
+    // Back-edge chase ran out of step budget mid-loop — can't compare.
+    if (s->chase_abort) {
+        s->blocks_skipped++;
+        return true;
+    }
+
     // Shadow was already executed in shadow_pre_execute() — just compare
 
     // Compare PC (hard error)
@@ -841,7 +861,16 @@ bool shadow_verify(shadow_state_t *s, dbt_cpu_state_t *cpu,
 
     // Hard divergence: PC or memory mismatch → abort
     // Soft divergence: register-only → DBT dead-temp optimization; skip
-    bool hard_mismatch = pc_mismatch || mem_mismatches > 0;
+    // SLOW32_SHADOW_REG_HARD=1 escalates register mismatches to hard errors
+    // (noisy: dead temps legitimately differ, but catches live corruption at
+    // the block that caused it instead of wherever it finally hits memory).
+    static int reg_hard = -1;
+    if (reg_hard < 0) {
+        const char *env = getenv("SLOW32_SHADOW_REG_HARD");
+        reg_hard = (env && atoi(env) != 0) ? 1 : 0;
+    }
+    bool hard_mismatch = pc_mismatch || mem_mismatches > 0 ||
+                         (reg_hard && reg_mismatch_count > 0);
 
     if (hard_mismatch) {
         fprintf(stderr,

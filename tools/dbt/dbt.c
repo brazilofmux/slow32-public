@@ -1694,12 +1694,25 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     translate_init_cached(&ctx, cpu, cache);
     ctx.inline_lookup_enabled = !(paranoid_mode || dbt_no_chain);
     ctx.ras_enabled = !(paranoid_mode || dbt_no_chain);
-    ctx.superblock_enabled = paranoid_mode ? false : superblock_enabled;
+    // SLOW32_PARANOID_SB=1 keeps superblocks on under paranoid — the shadow
+    // chases in-block control flow, so superblocks verify like-for-like.
+    {
+        static int paranoid_sb = -1;
+        if (paranoid_sb < 0) {
+            const char *env = getenv("SLOW32_PARANOID_SB");
+            paranoid_sb = (env && atoi(env) != 0) ? 1 : 0;
+        }
+        ctx.superblock_enabled = (paranoid_mode && !paranoid_sb) ? false : superblock_enabled;
+    }
     ctx.profile_side_exits = profile_side_exits;
     ctx.side_exit_info_enabled = profile_side_exits;   // Study-only diagnostics
     ctx.avoid_backedge_extend = avoid_backedge_extend;
     ctx.peephole_enabled = paranoid_mode ? false : peephole_enabled;
-    ctx.reg_cache_enabled = paranoid_mode ? false : reg_cache_enabled;
+    // Keep the register cache ON under paranoid (honoring -R): the cache must
+    // flush to the canonical register file at every block exit, which is
+    // exactly the contract the lockstep shadow verifies. Forcing it off here
+    // made reg-cache miscompiles invisible to --paranoid.
+    ctx.reg_cache_enabled = reg_cache_enabled;
     ctx.strict_carry = strict_carry_enabled;
     uint64_t dispatch_iter = 0;
 
@@ -2225,6 +2238,9 @@ int main(int argc, char **argv) {
         paranoid_shadow.pc_filter = paranoid_pc_filter;
         paranoid_shadow.skip_count = paranoid_skip;
         paranoid_shadow.skip_remaining = paranoid_skip;
+        // With the register cache on, the translator emits in-block back-edge
+        // loops; the shadow must follow them to compare like-for-like.
+        paranoid_shadow.follow_backedges = reg_cache_enabled;
     }
 
     // Initialize block cache for Stage 2 and 3
