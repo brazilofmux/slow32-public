@@ -255,6 +255,24 @@ static int parse_immediate(const char *str) {
     return res.val;
 }
 
+// For data directives with no matching relocation size (.byte/.half): a
+// symbol operand cannot be resolved later, so reject it instead of silently
+// emitting the addend (usually 0).
+static bool parse_data_immediate(const char *str, const char *directive, int *out) {
+    expr_result_t res;
+    if (!parse_expression_all(str, &res)) {
+        fprintf(stderr, "%s: failed to parse expression '%s'\n", directive, str);
+        return false;
+    }
+    if (res.has_symbol || res.has_minus_symbol) {
+        fprintf(stderr, "%s: symbol reference '%s' not supported (no %s-sized relocation); use .word\n",
+                directive, str, directive);
+        return false;
+    }
+    *out = res.val;
+    return true;
+}
+
 static int parse_register(const char *str) {
     if (str[0] == 'r' || str[0] == 'R') {
         int reg = atoi(str + 1);
@@ -1601,7 +1619,9 @@ static bool assemble_line(assembler_t *as, char *line) {
         } else if ((strcmp(tokens[0], ".half") == 0 || strcmp(tokens[0], ".short") == 0) && num_tokens > 1) {
             // .half - emit 16-bit halfwords
             for (int i = 1; i < num_tokens; i++) {
-                uint16_t value = parse_immediate(tokens[i]) & 0xFFFF;
+                int hval;
+                if (!parse_data_immediate(tokens[i], ".half", &hval)) return false;
+                uint16_t value = (uint16_t)hval;
                 // Store as two bytes in little-endian order
                 ensure_instruction_capacity(as, 2);
                 as->instructions[as->num_instructions].instruction = (value & 0xFF) | 0x80000000;
@@ -1703,7 +1723,9 @@ static bool assemble_line(assembler_t *as, char *line) {
                     }
                 } else {
                     // Process numeric byte
-                    uint8_t byte = parse_immediate(tokens[i]) & 0xFF;
+                    int bval;
+                    if (!parse_data_immediate(tokens[i], ".byte", &bval)) return false;
+                    uint8_t byte = (uint8_t)bval;
                     ensure_instruction_capacity(as, 1);
                     as->instructions[as->num_instructions].instruction = byte | 0x80000000;
                     as->instructions[as->num_instructions].address = as->current_addr;

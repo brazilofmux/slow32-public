@@ -1,0 +1,10 @@
+d nan,1   lt=0 le=0 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=1 uge=1 one=0 ueq=1 uno=1
+d 1,nan   lt=0 le=0 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=1 uge=1 one=0 ueq=1 uno=1
+d nan,nan lt=0 le=0 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=1 uge=1 one=0 ueq=1 uno=1
+d 1,2     lt=1 le=1 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=0 uge=0 one=1 ueq=0 uno=0
+d 2,2     lt=0 le=1 gt=0 ge=1 eq=1 ne=0 ult=0 ule=1 ugt=0 uge=1 one=0 ueq=1 uno=0
+f nan,1   lt=0 le=0 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=1 uge=1 one=0 ueq=1 uno=1
+f 1,nan   lt=0 le=0 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=1 uge=1 one=0 ueq=1 uno=1
+f nan,nan lt=0 le=0 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=1 uge=1 one=0 ueq=1 uno=1
+f 1,2     lt=1 le=1 gt=0 ge=0 eq=0 ne=1 ult=1 ule=1 ugt=0 uge=0 one=1 ueq=0 uno=0
+f 2,2     lt=0 le=1 gt=0 ge=1 eq=1 ne=0 ult=0 ule=1 ugt=0 uge=1 one=0 ueq=1 uno=0

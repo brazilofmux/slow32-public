@@ -118,9 +118,9 @@ static bool dump_s32o(const char *filename, FILE *f, long file_size, options_t *
         return false;
     }
 
-    if (header.sec_offset + header.nsections * sizeof(s32o_section_t) > (uint32_t)file_size ||
-        header.sym_offset + header.nsymbols * sizeof(s32o_symbol_t) > (uint32_t)file_size ||
-        header.str_offset + header.str_size > (uint32_t)file_size) {
+    if ((uint64_t)header.sec_offset + (uint64_t)header.nsections * sizeof(s32o_section_t) > (uint64_t)file_size ||
+        (uint64_t)header.sym_offset + (uint64_t)header.nsymbols * sizeof(s32o_symbol_t) > (uint64_t)file_size ||
+        (uint64_t)header.str_offset + header.str_size > (uint64_t)file_size) {
         fprintf(stderr, "Error: Object file tables out of bounds\n");
         return false;
     }
@@ -231,7 +231,7 @@ static bool dump_s32o(const char *filename, FILE *f, long file_size, options_t *
         for (uint32_t i = 0; i < header.nsections; i++) {
             s32o_section_t *sec = &sections[i];
             if (sec->nrelocs == 0) continue;
-            if (sec->reloc_offset + sec->nrelocs * sizeof(s32o_reloc_t) > (uint32_t)file_size) {
+            if ((uint64_t)sec->reloc_offset + (uint64_t)sec->nrelocs * sizeof(s32o_reloc_t) > (uint64_t)file_size) {
                 fprintf(stderr, "Error: Relocation table out of bounds\n");
                 break;
             }
@@ -264,7 +264,7 @@ static bool dump_s32o(const char *filename, FILE *f, long file_size, options_t *
             s32o_section_t *sec = &sections[i];
             const char *name = (sec->name_offset < header.str_size) ? &strtab[sec->name_offset] : "<invalid>";
             if (sec->size == 0 || sec->type == S32_SEC_BSS) continue;
-            if (sec->offset + sec->size > (uint32_t)file_size) {
+            if ((uint64_t)sec->offset + sec->size > (uint64_t)file_size) {
                 fprintf(stderr, "Error: Section data out of bounds\n");
                 break;
             }
@@ -303,8 +303,8 @@ static bool dump_s32x(const char *filename, FILE *f, long file_size, options_t *
         return false;
     }
 
-    if (header.sec_offset + header.nsections * sizeof(s32x_section_t) > (uint32_t)file_size ||
-        header.str_offset + header.str_size > (uint32_t)file_size) {
+    if ((uint64_t)header.sec_offset + (uint64_t)header.nsections * sizeof(s32x_section_t) > (uint64_t)file_size ||
+        (uint64_t)header.str_offset + header.str_size > (uint64_t)file_size) {
         fprintf(stderr, "Error: Executable tables out of bounds\n");
         return false;
     }

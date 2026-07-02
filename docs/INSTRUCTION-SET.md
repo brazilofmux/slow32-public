@@ -261,7 +261,7 @@ The SLOW-32 assembler supports several pseudo-instructions that expand into one 
 | li rd, imm | addi or lui+ori | Load 32-bit immediate |
 | la rd, sym | lui + ori | Load address of symbol |
 | mv rd, rs  | add rd, rs, r0 | Move register |
-| not rd, rs | xori rd, rs, -1 | Bitwise NOT |
+| not rd, rs | sub rd, r0, rs; addi rd, rd, -1 | Bitwise NOT (~rs = -rs - 1; XORI zero-extends, so `xori rs, -1` would invert only the low 12 bits) |
 | neg rd, rs | sub rd, r0, rs | Negate |
 | seqz rd, rs| seq rd, rs, r0 | Set if equal to zero |
 | snez rd, rs| sne rd, rs, r0 | Set if not equal to zero |

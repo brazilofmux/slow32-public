@@ -1766,6 +1766,7 @@ static bool find_pcrel_hi_pc(linker_state_t *ld, relocation_entry_t *rel, uint32
 
 static void apply_relocations(linker_state_t *ld) {
     int unresolved = 0;
+    int reloc_errors = 0;
 
     for (int i = 0; i < ld->num_relocations; i++) {
         relocation_entry_t *rel = &ld->relocations[i];
@@ -1847,6 +1848,7 @@ static void apply_relocations(linker_state_t *ld) {
                         if (sval < -2048 || sval > 2047) {
                             fprintf(stderr, "Error: LO12 relocation appears unpaired and value 0x%08X out of ±2048 at PC=0x%08X\n",
                                     value, pc);
+                            reloc_errors++;
                             continue;
                         }
                     }
@@ -1876,10 +1878,12 @@ static void apply_relocations(linker_state_t *ld) {
                     int32_t off = value - (pc + 4);  // Branches are PC+4
                     if (off & 1) {
                         fprintf(stderr, "Error: Branch target misaligned (odd offset) at 0x%08X\n", pc);
+                        reloc_errors++;
                         continue;
                     }
                     if (off < -4096 || off > 4094) { // even offsets only (LSB dropped)
                         fprintf(stderr, "Error: Branch offset out of range at 0x%08X\n", pc);
+                        reloc_errors++;
                         continue;
                     }
                     // B-format bit packing: imm[12|10:5] at 31:25, imm[4:1|11] at 11:7
@@ -1902,10 +1906,12 @@ static void apply_relocations(linker_state_t *ld) {
                     int32_t off = value - pc;  // JAL is PC-relative (not PC+4)
                     if (off & 1) {
                         fprintf(stderr, "Error: JAL target misaligned (odd offset) at 0x%08X\n", pc);
+                        reloc_errors++;
                         continue;
                     }
                     if (off < -1048576 || off > 1048574) { // even offsets only
                         fprintf(stderr, "Error: JAL offset out of range at 0x%08X\n", pc);
+                        reloc_errors++;
                         continue;
                     }
                     // J-format bit packing: imm[20|10:1|11|19:12] at 31:12
@@ -1929,10 +1935,12 @@ static void apply_relocations(linker_state_t *ld) {
                     int32_t off = value - pc;
                     if (off & 1) {
                         fprintf(stderr, "Error: CALL target misaligned (odd offset) at 0x%08X\n", pc);
+                        reloc_errors++;
                         continue;
                     }
                     if (off < -1048576 || off > 1048574) {
                         fprintf(stderr, "Error: CALL offset out of range at 0x%08X (use HI20/LO12+JALR sequence)\n", pc);
+                        reloc_errors++;
                         continue;
                     }
                     uint32_t imm20    = (off >> 20) & 1;
@@ -2017,10 +2025,12 @@ static void apply_relocations(linker_state_t *ld) {
         }
     }
     
-    if (unresolved > 0) {
+    if (unresolved > 0)
         fprintf(stderr, "Error: %d unresolved symbols\n", unresolved);
+    if (reloc_errors > 0)
+        fprintf(stderr, "Error: %d relocation errors\n", reloc_errors);
+    if (unresolved > 0 || reloc_errors > 0)
         exit(1);
-    }
 }
 
 // Find entry point

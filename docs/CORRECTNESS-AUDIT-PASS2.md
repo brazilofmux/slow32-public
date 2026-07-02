@@ -1,5 +1,11 @@
 # Pass 2 (CORRECTNESS) Audit Report — SLOW-32 Toolchain
 
+> **Status update (Jul 2026): all nine findings are FIXED.** Findings 1–7
+> were fixed after this report was written but their status lines were not
+> updated at the time (only 8–9 were). Per-finding status notes below record
+> where each fix landed. NaN comparison coverage now exists as
+> `regression/tests/float-nan-compare`.
+
 ## 1. Executive Summary
 
 Pass 2 confirmed **11 distinct correctness defects** that survived two-lens verification (spec/cross-implementation plus a concrete counterexample). The damage clusters overwhelmingly in **floating-point comparison lowering** in the LLVM backend: six of the eleven findings are NaN-handling bugs in `SLOW32InstrInfo.td` where unordered/ordered FP predicates are lowered to bare hardware compares, silently miscompiling any comparison whose operands can be NaN. The remaining defects are spread across the assembler (`not` pseudo-instruction and `%hi` relocations on I/S-type operands), the linker (synthesized fallback symbols missing their section base address), the interpreter (a `JALR` ordering bug for `rd == rs1`), and one cost-model inaccuracy. As a stability baseline, the **four emulators (interp, slow32-fast, slow32-dbt, QEMU) agree on all non-interactive prebuilt programs**; the only emulator divergence found is the interpreter-only `JALR` bug, which does not arise from normal compiler output.
@@ -39,6 +45,8 @@ Note: findings #1–#3 and #6 each pair a verified f32 and f64 (or near-identica
 
 **Fix.** Rewrite the four unordered relational f32/f64 patterns as the `XORI`-with-1 complement of the opposite ordered compare (e.g. `setuge(a,b) → (XORI (FLT a,b) 1)`), matching the existing `setune` style, **or** call `setCondCodeAction(ISD::SETULT/SETULE/SETUGT/SETUGE, MVT::f32/f64, Expand)`.
 
+**Status: FIXED.** All four unordered relationals are now the XORI-complement of the opposite ordered compare (`SLOW32InstrInfo.td:288-291` f32, `:347-354` f64). Verified at runtime by `regression/tests/float-nan-compare`.
+
 ---
 
 #### Finding 2 — `setueq` (unordered-equal) returns FALSE on NaN (f32 & f64)
@@ -51,6 +59,8 @@ Note: findings #1–#3 and #6 each pair a verified f32 and f64 (or near-identica
 **Evidence.** Emulator `FEQ_S/FEQ_D` use C `==` (`slow32.c:736`, `:854`), false for any NaN. `SETCC` Legal (`:382,405`) with no condition-code expansion, so this pattern is the sole lowering of `FCMP_UEQ`. The adjacent `seto/setuo` patterns (`:270-275`, `:324-329`) already use the FEQ self-equality NaN idiom, proving the technique was available; the line-276 comment "NaN handling is architectural" is the mistaken rationale. Note `setune` (`:278/:333`) `= XORI(FEQ,1)` is correctly the unordered inverse and is **not** affected.
 
 **Fix.** Lower `setueq` as `(XORI (OR (FLT a,b) (FLT b,a)) 1)` for f32/f64, or `setCondCodeAction(ISD::SETUEQ, MVT::f32/f64, Expand)`.
+
+**Status: FIXED.** `setueq` now lowers as `(XORI (OR (FLT a,b) (FLT b,a)) 1)` (`SLOW32InstrInfo.td:283-285` f32, `:342-344` f64). Verified by `regression/tests/float-nan-compare`.
 
 ---
 
@@ -65,6 +75,8 @@ Note: findings #1–#3 and #6 each pair a verified f32 and f64 (or near-identica
 
 **Fix.** Lower `setone(a,b)` as `(OR (FLT a,b) (FLT b,a))` for f32/f64, or `setCondCodeAction(ISD::SETONE, MVT::f32/f64, Expand)`.
 
+**Status: FIXED.** `setone` now lowers as `(OR (FLT a,b) (FLT b,a))` (`SLOW32InstrInfo.td:265-267` f32, `:322-324` f64). Verified by `regression/tests/float-nan-compare`.
+
 ---
 
 #### Finding 4 — `not rd, rs` pseudo miscompiles to `rs ^ 0xFFF`
@@ -77,6 +89,8 @@ Note: findings #1–#3 and #6 each pair a verified f32 and f64 (or near-identica
 **Evidence.** `docs/INSTRUCTION-SET.md:264` defines the pseudo as `xori rd, rs, -1`, but line 79 defines XORI as zero-extended `rd = rs1 ^ imm`, so the documented expansion is itself unsound. The disassembler sign-extends I-type immediates (`slow32dis.c:188`), so it misleadingly prints `xori r4, r3, -1`, masking the bug — a disassembler/CPU disagreement. The project's own `MEMORY.md` already records "xori with -1 immediate broken … use addi+xor instead."
 
 **Fix.** Do not expand `not` to `xori rd, rs, -1`. Use the two's-complement identity (`sub rd, r0, rs; addi rd, rd, -1`, both sign-correct), or load `-1` into a scratch via a sign-extended `addi` and use register `xor`. Also correct the spec table at line 264.
+
+**Status: FIXED.** `not` now expands to `sub rd, r0, rs; addi rd, rd, -1` (`slow32asm.c`, `"not"` pseudo handler) and the spec table row in `docs/INSTRUCTION-SET.md` documents the new expansion.
 
 ---
 
@@ -100,6 +114,8 @@ case OP_JALR: {
 ```
 The trigger is narrow (the standard ABI uses distinct link/target registers, e.g. `jalr r31, r2, 0`), so normal compiler output is unaffected — but hand-written asm reusing one register for both link and target silently mis-executes on the reference/debug emulator.
 
+**Status: FIXED.** The interpreter now snapshots the target before writing the link register (`slow32.c` `OP_JALR` case), restoring agreement with slow32-fast and the DBT.
+
 ---
 
 ### MEDIUM
@@ -117,6 +133,8 @@ The trigger is narrow (the standard ABI uses distinct link/target registers, e.g
 
 **Fix.** In the FMT_I and FMT_S symbol branches, also copy `inst->symbol_is_hi = res.is_hi;` and `inst->symbol_is_pcrel_hi = res.is_pcrel_hi;` (mirroring FMT_U). Alternatively, detect `res.is_hi || res.is_pcrel_hi` in I/S context and emit an explicit error instead of degrading to REL_32.
 
+**Status: FIXED.** The explicit-error alternative was taken: `reject_hi_on_imm12()` (`slow32asm.c:1322`) rejects `%hi`/`%pcrel_hi` in all FMT_I and FMT_S symbol branches.
+
 ---
 
 #### Finding 7 — Synthesized fallback symbol gets section-relative value (missing section vaddr)
@@ -129,6 +147,8 @@ The trigger is narrow (the standard ABI uses distinct link/target registers, e.g
 **Evidence.** `build_symbol_table()` sets section-relative value (`:844/:895`) and `update_symbol_values()` (`:1720: sym->value = sec->vaddr + sym->value`) converts to absolute; the synth path duplicates only the relative half and runs too late. `apply_relocations()` (`:1790`) uses `sym->value` verbatim. `build_symbol_table` uses `canonical_section_name()` (`:899`) where the synth path uses the raw name (`:1502`). **Reachability caveat:** verifiers found the fallback fires **zero times** across the regression suite and across strip-linking all 60 in-repo `.s32o` files, because `build_symbol_table` retains any relocation-referenced local even under `-s`. The bug is latent/defense-in-depth — it would manifest only under a future invariant change or a foreign object producer.
 
 **Fix.** In the synth path, look up the combined section via `canonical_section_name(sec_nm)`; if found (`cs>=0`), set `nsym->section_idx = cs` and `nsym->value = ld->sections[cs].vaddr + inf->section_base[isym->section-1] + isym->value`.
+
+**Status: FIXED.** The synth path now resolves the combined section via `canonical_section_name()` and makes the value absolute with the section vaddr (`s32-ld.c:1500-1511`).
 
 ---
 
