@@ -2,6 +2,11 @@
 
 This document tracks bugs, architectural limitations, and potential improvements identified during the code review of the SLOW-32 utility tools (`s32-ar`, `slow32dis`, and `slow32dump`).
 
+> **Note (Jul 2026)**: this file is largely a historical review log; several
+> items below were fixed after it was written (64-bit bounds math in
+> slow32dump, forced NUL-terminated string tables). Verify against the code
+> before acting on any item.
+
 ## Critical Bugs & Safety Issues
 
 ### 1. `s32-ar` Memory Leaks

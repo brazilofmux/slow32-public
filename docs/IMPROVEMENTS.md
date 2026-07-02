@@ -75,7 +75,20 @@ for all future codegen). None blocking — parity is reached.
 
 ## Open Items
 
-None at this time.
+- **DBT intrinsic-stub fault reporting**: on an out-of-bounds intrinsic access
+  (e.g. `memswap` on unmapped memory) slow32-dbt faults correctly but reports
+  a wrong fault address (`bug-dbt-intrinsic-bounds*` differential divergence).
+- **QEMU fault reporting**: qemu-system-slow32 exits silently on the same
+  out-of-bounds intrinsic accesses instead of reporting a fault.
+- **QEMU guest exit codes**: qemu-system-slow32 does not propagate the guest
+  exit code (run-differential.sh compares its output only).
+- **x64 DBT back-edge fix validation**: the superblock back-edge guard
+  (`is_backedge_target` in `translate.c`) was applied to the x86-64 backend by
+  inspection; it needs a Linux build+test pass.
+- Negative-input tests for the toolchain (malformed objects/archives/
+  relocations) — the linker's hardened paths have no test coverage.
+- See `docs/issues/` and the per-tool `ISSUES.md` files for older, lower
+  priority items.
 
 ## Testing Recommendations
 

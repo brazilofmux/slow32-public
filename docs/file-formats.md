@@ -22,9 +22,9 @@ The `.s32x` format is the final executable format loaded by the emulator.
 
 ```
 +-------------------+
-| Header            | 32 bytes
+| Header            | 64 bytes
 +-------------------+
-| Section Table     | Variable (nsections * 16 bytes)
+| Section Table     | Variable (nsections * 28 bytes)
 +-------------------+
 | String Table      | Variable (aligned to 4 bytes)
 +-------------------+
@@ -53,7 +53,7 @@ typedef struct {
     uint32_t stack_base;   // 0x2C: Initial stack pointer (e.g., 0x0FFFFFF0)
     uint32_t mem_size;     // 0x30: Total memory to allocate (0 = use data_limit)
     uint32_t heap_base;    // 0x34: Start of heap (0 = no heap)
-    uint32_t checksum;     // 0x38: CRC32 of all sections (0 = no checksum)
+    uint32_t stack_end;    // 0x38: Bottom of stack (stack grows down to here)
     uint32_t mmio_base;    // 0x3C: MMIO region base (if S32X_FLAG_MMIO set)
 } s32x_header_t;
 ```
@@ -89,6 +89,8 @@ map within constraints. The emulator enforces these boundaries for protection.
 
 **Note on Checksum**:
 
+- Only the object format (.s32o) carries a checksum field (at offset 0x24);
+  the executable header has `stack_end` at 0x38 instead
 - CRC32 checksum covers all section data (not headers)
 - Checksum=0 means no integrity checking
 - Computed after compression (if any)
@@ -114,7 +116,7 @@ map within constraints. The emulator enforces these boundaries for protection.
 #define S32X_FLAG_MMIO       0x0080  // Has MMIO region enabled
 ```
 
-### Section Entry (20 bytes)
+### Section Entry (28 bytes)
 
 ```c
 typedef struct {
@@ -361,7 +363,7 @@ The `.s32o` format is used for relocatable object files that can be linked toget
 
 ```
 +-------------------+
-| Header            | 32 bytes
+| Header            | 40 bytes
 +-------------------+
 | Section Table     | Variable
 +-------------------+

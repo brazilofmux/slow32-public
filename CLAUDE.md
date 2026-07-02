@@ -67,7 +67,7 @@ make
 ✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
-✅ Regression tests: ALL 23/23 PASSING
+✅ Regression tests: ALL 62/62 PASSING (plus cross-engine differential harness)
 ✅ Runtime libraries built as archives: libs32.s32a (6KB), libc_debug.s32a (44KB), libc_mmio.s32a (72KB)
 ✅ Optimization passes fixed - no more LLC hangs
 ✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol
@@ -233,6 +233,11 @@ cd ~/slow-32/regression && ./run-tests.sh
 
 # Run specific regression test
 cd ~/slow-32/regression && ./run-tests.sh feature-arithmetic
+
+# Cross-engine differential harness: every test under slow32, slow32-fast,
+# slow32-dbt, and qemu, outputs diffed against the reference interpreter.
+# Run after ANY emulator/DBT change.
+cd ~/slow-32/regression && ./run-differential.sh
 
 # Analyze binaries
 ./tools/utilities/slow32dump file.s32o    # Dump object file

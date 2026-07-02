@@ -121,7 +121,7 @@ typedef struct {
 #define S32X_FLAG_COMPRESSED 0x0040  // Section data is compressed
 #define S32X_FLAG_MMIO       0x0080  // Has MMIO region enabled
 
-// Section entry (20 bytes)
+// Section entry (28 bytes)
 typedef struct {
     uint32_t name_offset;  // Offset into string table
     uint32_t type;         // Section type

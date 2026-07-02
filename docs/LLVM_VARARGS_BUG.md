@@ -1,5 +1,9 @@
 # SLOW-32 LLVM Backend Bug: Incorrect Vararg Register Spill Address Calculation
 
+## Status: FIXED — `SLOW32ISelDAGToDAG.cpp` rescues disjoint-OR with a 12-bit
+constant to `ADDI`, and frame spills use ADDI chains. Regression coverage:
+`bug-varargs-ori`. The analysis below is retained for reference.
+
 ## Summary
 
 The SLOW-32 LLVM backend incorrectly uses `ORI` (bitwise OR) instead of `ADDI` (add immediate) when computing consecutive stack slot addresses for spilling vararg registers. This causes data corruption when the base address has certain bit patterns.

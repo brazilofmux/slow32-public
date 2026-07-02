@@ -52,8 +52,10 @@ support is not currently a bootstrap target.
 - **W^X memory protection** - code segment is execute-only
 - **Single-ported memory** (deliberately slow!)
 - **DEBUG instruction** for character output; **MMIO ring buffers** for full I/O
+- **Native floating point**: f32/f64 arithmetic on GPRs (f64 in even register pairs)
 - **Sparse memory allocation** - Only allocates touched pages (99.4% memory savings!)
-- **Performance**: ~45 MIPS (slow32), ~220 MIPS (slow32-fast)
+- **Performance**: ~240 MIPS interpreted up to ~9.5 BIPS under the dynamic
+  binary translator — see [docs/EMULATORS.md](docs/EMULATORS.md)
 
 ### Register Convention
 
@@ -137,7 +139,7 @@ The linker automatically detects small programs and creates ultra-compact layout
 |--------------|------|-------------|
 | 0x00000000 - 0x000FFFFF | 1MB | Code segment (execute-only) |
 | 0x00100000 - 0x0FFFFFFF | 255MB | Data segment (read/write) |
-| 0x10000000+ | - | MMIO region (future) |
+| 0x10000000+ | - | MMIO region (link with `--mmio SIZE`, access via `__mmio_base`) |
 | Stack: 0x0FFFFFF0 | - | Grows downward |
 
 ## Performance Characteristics
@@ -157,12 +159,14 @@ slow-32/
 │   ├── assembler/    # Two-pass assembler with relocation support
 │   ├── linker/       # Linker with symbol resolution
 │   ├── utilities/    # Binary analysis tools (slow32dump, slow32dis, s32-ar)
-│   └── dbt/          # Dynamic binary translator (x86-64 JIT)
+│   └── dbt/          # Dynamic binary translator (x86-64 and AArch64 JIT)
 ├── runtime/          # C runtime (crt0), intrinsics, and standard library
 │   └── include/      # C standard library headers
 ├── llvm-backend/     # LLVM backend for native clang/llc support
+├── selfhost/         # Self-hosting bootstrap chain (stage00..stage08 +
+│                     #   cross-compilers targeting x86-64 and AArch64)
 ├── common/           # Shared format definitions (.s32o, .s32x)
-├── regression/       # Regression test suite
+├── regression/       # Regression test suite + cross-engine differential harness
 ├── scripts/          # Helper scripts (compile.sh, test-quick.sh)
 └── docs/             # Documentation
     ├── INSTRUCTION-SET.md    # Complete ISA reference
@@ -212,19 +216,27 @@ int main() {
 - ✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
 - ✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
 - ✅ **All optimization levels** - -O0, -O1, -O2 fully working
-- ✅ **CPU emulator** - ~350M instructions/second with W^X protection
+- ✅ **Emulators** - interpreters (~240 MIPS), QEMU TCG target, and a DBT
+  reaching ~6-9.5 BIPS depending on host — see `docs/EMULATORS.md`
 - ✅ **Assembler** - Two-pass with labels, relocations, standard directives
 - ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
-- ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
-- ✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
-- ✅ **Regression tests** - All 23/23 passing
-- ✅ **Tools** - objdump for object files, exedump for executables
+- ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit
+  integers, native f32/f64, computed goto, C++ exceptions
+- ✅ **Runtime** - crt0, buffered stdio, malloc, dual DEBUG/MMIO libc builds,
+  64-bit builtins, CORDIC transcendentals, C++ EH runtime
+- ✅ **Self-hosting** - `selfhost/` bootstraps from an 800-line emulator to a
+  near-C99 compiler that rebuilds itself byte-identically, plus cross-compilers
+  (x86-64, AArch64) that compile the project's own DBT
+- ✅ **Applications** - SQLite, Lua, a Z-machine, dBase III clone, editor,
+  BASIC, Forth, Lisp, Prolog ports/originals under their own directories
+- ✅ **Regression tests** - 62/62 passing, plus `regression/run-differential.sh`
+  which diffs every test across all execution engines
 
 ## Known Limitations
 
-- No floating point support (soft-float not implemented)
 - No scanf/sscanf (declared but not implemented)
-- See `docs/IMPROVEMENTS.md` for detailed issues and fixes
+- `ungetc` is a stub; `strftime` is minimal
+- See `docs/IMPROVEMENTS.md` for open items and fixes
 
 ## Building from Source
 

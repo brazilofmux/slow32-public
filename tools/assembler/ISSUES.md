@@ -2,6 +2,11 @@
 
 This document tracks bugs, architectural limitations, and potential improvements identified during the code review of the SLOW-32 assembler (`slow32asm.c`).
 
+> **Note (Jul 2026)**: this file is largely a historical review log; several
+> items below were fixed after it was written (dynamic tables, `%hi`-on-imm12
+> rejection, `.byte`/`.half` symbol rejection). Verify against the code before
+> acting on any item.
+
 ## Critical Bugs & Safety Issues
 
 ### 1. Buffer Overflows in Symbol and Relocation Tables (Resolved)

@@ -1,6 +1,8 @@
 # LLVM BlockAddress / Computed Goto Bug
 
-## Status: OPEN — workaround in place, fix needed
+## Status: FIXED — `LowerBlockAddress` is implemented in `SLOW32ISelLowering.cpp`
+(custom-lowered alongside the other addressing nodes); computed goto works.
+The analysis below is retained for reference.
 
 ## Summary
 

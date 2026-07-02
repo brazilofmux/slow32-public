@@ -2,16 +2,19 @@
 
 This document tracks bugs, architectural limitations, and potential improvements identified during the code review of the SLOW-32 linker (`s32-ld.c`).
 
+> **Note (Jul 2026)**: this file is largely a historical review log. The code
+> has moved on — symbol/relocation storage is dynamic (`DARR_PUSH`), lookups
+> use hash maps (`s32_hashtable.h`), untrusted-input extent math is 64-bit,
+> and relocation range errors now fail the link. Verify against the code
+> before acting on any item below.
+
 ## Critical Bugs & Safety Issues
 
-### 1. Buffer Overflows in Global Tables
-The linker uses multiple fixed-size arrays for its core data structures:
-- `input_files[MAX_INPUT_FILES]` (100)
-- `sections[MAX_SECTIONS]` (1000)
-- `symbols[MAX_SYMBOLS]` (32000)
-- `relocations[MAX_RELOCATIONS]` (32000)
-- **Problem**: There are insufficient bounds checks when adding to these tables (especially in `load_object_file`, `merge_sections`, and `build_symbol_table`). Exceeding these limits will cause memory corruption or crashes.
-- **Recommendation**: Switch to dynamically allocated arrays that grow as needed, or at a minimum, add strict `if (count >= MAX) { error(); }` checks to every insertion point.
+### 1. Buffer Overflows in Global Tables (Resolved)
+The linker used multiple fixed-size arrays for its core data structures.
+- **Status**: Fixed. Symbols, relocations, and related tables are now dynamic
+  arrays (`DARR_PUSH`) with hash-map indexes (`s32_hashmap_*`); insertion
+  rehashes on growth.
 
 ### 2. `strncpy` and `strcpy` Safety (Resolved)
 Multiple call sites used `strncpy` or `strcpy` into fixed-size buffers.

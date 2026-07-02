@@ -119,6 +119,11 @@ if (ld->mmio_size > 0) {
 
 ## Issue 3: LLC Crashes at -O1
 
+**Status (Jul 2026): appears FIXED** — `-O1` clang+llc compiles current
+regression-suite sources cleanly, and CLAUDE.md documents -O1 as a supported
+level (the runtime builds some files at -O1). Not re-verified against the
+original regal csv.c reproducer.
+
 ### Summary
 Attempting to compile with `-O1` instead of `-O2` causes LLC to crash.
 

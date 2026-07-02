@@ -1344,13 +1344,17 @@ entries PASS on both targets.
 
 ### Stage 6: Subset C Compiler (`s12cc.c`)
 
-### 33. [MISSING] `long long` (64-bit) Support
-`is_type` recognizes `long`, but `parse_type` and the rest of the toolchain treat it as a 32-bit `TY_INT`. There is no support for true 64-bit integers.
-**Recommendation**: Add `TY_LONG_LONG` and implement 64-bit lowering (pair of 32-bit registers/stack slots) and arithmetic/logical expansion.
+### 33. [IMPLEMENTED] `long long` (64-bit) Support
+Originally missing in the Stage 6 subset compiler. Now implemented: `TY_LLONG`
+is threaded through the lexer, parser, sema (full `double > float > long long
+> int` promotion ladder in `src/sema.h`), and HIR lowering; runtime support in
+`stage08/builtins64.s`.
 
-### 34. [MISSING] Floating Point Support
-`float` and `double` are completely missing.
-**Recommendation**: Add type support and either implement soft-float library calls or MMIO-based FPU interface.
+### 34. [IMPLEMENTED] Floating Point Support
+Originally missing in the Stage 6 subset compiler. Now implemented: `TY_FLOAT`
+and `TY_DOUBLE` are supported across the shared frontend and HIR, with runtime
+support in `stage08/builtins_fp64.s`. The cross-compilers lower FP through
+SSE2 (x64) and the AArch64 FP unit (a64).
 
 ### 35. [LIMITATION] Preprocessor Gaps
 `pp.h` lacks function-like macros, `#if` expression evaluation, `#undef`, and predefined macros like `__FILE__`/`__LINE__`.

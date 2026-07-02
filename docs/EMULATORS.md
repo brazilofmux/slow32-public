@@ -10,7 +10,7 @@ Five emulators exist with different trade-offs between capability, speed, and po
 | slow32 | Interpreter | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | slow32-fast | Pre-decoded | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | qemu-system-slow32 | TCG JIT | ~1 BIPS | Yes | Yes | Yes | `~/qemu` (separate repo) |
-| slow32-dbt | DBT JIT | ~6 BIPS | Yes | Yes | Yes | `tools/dbt/` |
+| slow32-dbt | DBT JIT | ~6 BIPS (Apple Silicon) / ~9.5 BIPS (x86-64) | Yes | Yes | Yes | `tools/dbt/` |
 
 ## s32-emu (Selfhost Bootstrap Emulator)
 
@@ -75,11 +75,14 @@ Architecture support:
 | Host Arch | Status | Notes |
 |-----------|--------|-------|
 | x86-64 | Solid | Full feature set, well-tested |
-| AArch64 | Initial | Works, but superblocks have a known bug |
+| AArch64 | Solid | Two wrong-code bugs (shifted-EOR fold, superblock back-edge) found by the differential harness and fixed Jul 2026 |
 
 - **Build**: `make dbt` (gcc, auto-detects host architecture)
 - **Run**: `./tools/dbt/slow32-dbt program.s32x`
-- **Performance**: ~6 BIPS, approximately 68% of native performance
+- **Performance**: ~6 BIPS on Apple Silicon, ~9.5 BIPS on x86-64 (roughly 2.3 host instructions per guest instruction)
+- **Verification**: `--paranoid` lockstep shadow interpreter (verifies the
+  register cache and in-block loops); `regression/run-differential.sh` diffs
+  all engines on the full regression corpus
 
 See `docs/dbt/` for design documents and stage specifications.
 
