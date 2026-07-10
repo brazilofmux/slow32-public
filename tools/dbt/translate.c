@@ -2801,8 +2801,18 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     else if (ctx->inline_lookup_enabled && ctx->cache) {
         emit_indirect_lookup(ctx, RAX);
     } else {
-        // Stage 2 fallback: return to dispatcher
-        emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+        // Stage 2 fallback: return to dispatcher.
+        // MUST flush the register cache — the RAS/inline-lookup paths do
+        // this inside emit_ras_predict/emit_indirect_lookup, but this path
+        // returns directly; without it, dirty cached guest registers never
+        // reach cpu->regs (found by --paranoid-lite: __slow32_fetch_args'
+        // r1=0 return value was lost under no-chain, and the caller then
+        // took the wrong branch). Park the target in R8 first: pending-cond
+        // materialization inside reg_cache_flush clobbers RAX/RCX. R8 was
+        // evicted from the cache above, so it is free scratch here.
+        emit_mov_r64_r64(e, R8, RAX);
+        reg_cache_flush(ctx);
+        emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, R8);
         emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
         emit_ret(e);
     }
