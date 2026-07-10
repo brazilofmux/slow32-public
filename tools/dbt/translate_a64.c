@@ -2394,11 +2394,11 @@ void translate_sra(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 // drops off the dependency chain).
 static inline void set_pending_shift(translate_ctx_t *ctx, uint8_t dst,
                                      uint8_t src, uint8_t kind, uint8_t imm) {
-    // In-place shifts (dst == src) destroy the source: the fold would
-    // recompute the shift from the ALREADY-shifted register and apply it
-    // twice (e.g. `srli r1,r1,8; xor r1,r3,r1` emitted LSR w23 followed by
-    // EOR wd, wn, w23, LSR #8). Only offer the fold when the source value
-    // survives the standalone shift.
+    // In-place shifts (dst == src) are NOT fold candidates: the emitted
+    // shift already overwrote the source register, so a consumer folding
+    // "src, LSL #imm" would apply the shift a second time. Found by
+    // --paranoid-lite on lua's branchless min/max (slli r1,r1,1; xor ...):
+    // luaD_growstack silently computed 4*size instead of 2*size.
     if (imm == 0 || dst == src || guest_host_reg(ctx, src) == A64_NOREG) {
         ctx->pending_shift.valid = false;
         return;
