@@ -91,6 +91,7 @@ normalize_output() {
         -e 's/\r$//' \
         -e 's/^Memory fault: Failed to .* bytes at \(0x[0-9A-Fa-f]*\).*/FAULT addr=\1/' \
         -e 's/^Error: .* out of bounds at \(0x[0-9A-Fa-f]*\).*/FAULT addr=\1/' \
+        -e 's/^Error: .* out of bounds or to protected memory at \(0x[0-9A-Fa-f]*\).*/FAULT addr=\1/' \
         -e 's/^DBT: Memory fault at PC=[0-9xA-Fa-f]*, addr=\(0x[0-9A-Fa-f]*\).*/FAULT addr=\1/' \
         -e '/^Starting execution/d' \
         -e '/^MMIO enabled/d' \
@@ -107,6 +108,9 @@ normalize_output() {
         -e '/^  mem[a-z]*:  *0x[0-9a-f]*$/d' \
         -e '/^  strlen:  *0x[0-9a-f]*$/d' \
     | awk '
+        # Engines print fault addresses in mixed hex case; fold canonicalized
+        # fault lines to lowercase so 0x2000000F and 0x2000000f agree.
+        /^FAULT addr=/ { $0 = tolower($0) }
         { lines[NR] = $0; if ($0 ~ /[^[:space:]]/) last = NR }
         END { for (i = 1; i <= last; i++) print lines[i] }
     '
