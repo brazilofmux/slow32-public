@@ -3063,15 +3063,16 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     // skip the side-exit's flush + inline-lookup + chain entirely.
     {
         size_t backedge_host_offset = (size_t)-1;
-        // The fast path is only sound if the target was a KNOWN back-edge
-        // target when its code was emitted: the emitter flushes the cache and
-        // resets const-prop/bounds-elim state there (is_backedge_target check
-        // in the main loop). A back-edge discovered mid-extension (e.g. via a
-        // jump-over inline that loops to code emitted earlier in the same
-        // superblock) points at code specialized on first-iteration constants
-        // — branching to it executes wrong code on iteration >= 2. Fall back
-        // to the normal side exit in that case; the dispatcher re-enters via
-        // a fresh block with correct state.
+        // is_backedge_target() gate: the direct branch may only target a PC
+        // the prescan (or lifter CFG) knew was a loop head when it was
+        // translated. Only then is the pc_map offset a clean re-entry point:
+        // pending write/cond state was flushed BEFORE the offset was recorded,
+        // and const-prop was reset for loop-written registers. A back-edge the
+        // prescan couldn't see (e.g. its branch lies beyond a JAL that
+        // superblock jump-over inlining skipped) may land on a lazily-emitted
+        // pending-write flush (str W0 -> guest reg) that re-executes every
+        // iteration with clobbered scratch — silent register corruption
+        // (found via cpp-exception-basic: DWARF CFI loop corrupted r13).
         if (imm < 0 && ctx->reg_cache_enabled &&
             taken_pc >= ctx->block_start_pc &&
             is_backedge_target(ctx, taken_pc)) {

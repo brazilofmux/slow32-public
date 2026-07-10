@@ -132,6 +132,7 @@ typedef struct {
     backedge_snapshot_slot_t backedge_snapshot[REG_ALLOC_SLOTS];
     int8_t backedge_snapshot_map[32];
     bool backedge_snapshot_valid;
+    uint32_t backedge_snapshot_pc;   // guest PC the snapshot was captured at
 
     // Dead temporary elimination: pending write tracker (AArch64 only)
     pending_write_t pending_write;

@@ -3076,9 +3076,22 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     // specialized on first-iteration constants — wrong on iteration >= 2.
     // Fall back to the normal side exit in that case.
     size_t backedge_host_offset = (size_t)-1;
+    // is_backedge_target() gate: the direct jmp may only target a PC the
+    // prescan knew was a loop head when it was translated. Only then is the
+    // pc_map offset a clean re-entry point (const-prop/bounds-elim were reset
+    // and the cache snapshot was captured BEFORE the offset was recorded).
+    // A back-edge the prescan couldn't see — e.g. its branch lies beyond a
+    // JAL that superblock jump-over inlining skipped — may land mid-stream on
+    // code carrying translation-time linear-path assumptions (found on the
+    // AArch64 twin of this path via cpp-exception-basic, where a lazily
+    // flushed pending write corrupted r13 on every loop iteration).
+    // The snapshot-pc check also prevents reconciling against the wrong
+    // snapshot when a block contains more than one loop head.
     if (imm < 0 && ctx->reg_cache_enabled &&
         taken_pc >= ctx->block_start_pc &&
-        is_backedge_target(ctx, taken_pc)) {
+        is_backedge_target(ctx, taken_pc) &&
+        ctx->backedge_snapshot_valid &&
+        ctx->backedge_snapshot_pc == taken_pc) {
         backedge_host_offset = pc_map_lookup(ctx, taken_pc);
     }
 
@@ -4609,6 +4622,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                 memcpy(ctx->backedge_snapshot_map, ctx->reg_alloc_map,
                        sizeof(ctx->backedge_snapshot_map));
                 ctx->backedge_snapshot_valid = true;
+                ctx->backedge_snapshot_pc = ctx->guest_pc;
             } else {
                 rc_flush(ctx);
                 reg_alloc_reset(ctx);
@@ -5875,6 +5889,7 @@ retry_translate:
                 memcpy(ctx->backedge_snapshot_map, ctx->reg_alloc_map,
                        sizeof(ctx->backedge_snapshot_map));
                 ctx->backedge_snapshot_valid = true;
+                ctx->backedge_snapshot_pc = ctx->guest_pc;
             } else {
                 rc_flush(ctx);
                 reg_alloc_reset(ctx);

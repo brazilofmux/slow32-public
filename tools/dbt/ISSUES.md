@@ -99,3 +99,58 @@ if (self_loop) {
 **Recommended fix for SLOW-32**: The SLOW-32 codegen is SSA-based and more sophisticated than the RV32IM LRU cache, so the fix needs to be adapted. In `cg_emit_self_loop_branch()`, before or alongside the `shuffle_count > 6` check, count the total distinct guest registers that appear in `entry_gpr_for_slot[]` plus any guest registers that were allocated to slots during the block but are NOT in the entry mapping. If that total exceeds `STAGE5_RA_HOST_SLOTS`, return false (bail out to normal two-exit translation). The existing shuffle plan handles slot-to-slot moves and memory reloads, but it may not correctly reconstruct the entry state when heavy slot reuse has occurred.
 
 **Reproduction**: Compile a C program with a 260-byte struct returned by value, with chained `identity(identity(make_str(buf)))` calls, at `-O2`. The test program `~/riscv/examples/test_struct_copy.c` demonstrates the pattern and can be adapted for SLOW-32's toolchain.
+
+**Status (2026-07-09): INVESTIGATED — does not reproduce; directed coverage added.**
+The referenced `stage5_codegen.c` self-loop shuffle plan no longer exists (dead
+Stage 5 emitter removed in `dfb65921`). The equivalent machinery in the live
+translators was audited and stress-tested:
+- **AArch64** (`translate_a64.c`): immune by construction — register slots are
+  assigned once by prescan and never reassigned mid-block, so the back-edge
+  mapping cannot drift (`flush_cached_host_regs`, the only evictor, has no
+  callers).
+- **x86-64** (`translate.c`): the LRU cache *can* evict mid-block, but the
+  back-edge emission compares against `backedge_snapshot` and, when unstable,
+  does a full flush + reload from memory rather than a shuffle plan. Verified
+  empirically: the 9-11-distinct-register unrolled copy loops in
+  `regression/tests/bug-dbt-backedge-regpressure/` drive the UNSTABLE
+  reconciliation path (confirmed via instrumentation) and produce correct
+  results on both the stable and unstable paths, across the full flag matrix,
+  on both host ISAs.
+
+---
+
+## 12. Prescan-Invisible Back-Edge → Pending-Write Corruption (FIXED 2026-07-09)
+
+**Severity**: silent register corruption / crash. Found because
+`cpp-exception-basic` memory-faulted in the DWARF CFI interpreter under the
+default Stage 4 config on AArch64 (`scripts/diff-test.sh` caught it; Stage
+1/2/3, `-R`, and `-S` all masked it).
+
+**Bug chain** (AArch64): `execute_cfa_instructions` writes `r13 = r8 + 8` where
+r13 is uncached, so the value rides in scratch W0 as a *pending write*. It is
+lazily flushed (`str w0 → regs[13]`) inside the emitted code for the loop head
+0xD954 — *after* `pc_map` recorded that PC's host offset. The loop's backward
+branch lives beyond a `jal` that the prescan stops at, but superblock jump-over
+inlining translates past the `jal` and reaches it; the in-block back-edge
+optimization found 0xD954 in `pc_map` and emitted a direct branch to it. Every
+loop iteration then re-executed the pending-write flush with whatever the loop
+tail left in W0 (a ULEB byte), silently corrupting r13.
+
+**Invariant**: a direct back-edge may only target a PC that was *known* to be a
+back-edge target when it was translated (`is_backedge_target()`), because only
+then were pending write/cond flushed and const-prop/bounds-elim reset *before*
+the `pc_map` offset was recorded. A back-edge the prescan cannot see (its
+branch lies beyond a JAL that jump-over inlining skips) violates this.
+
+**Fix**: gate the in-block back-edge on `is_backedge_target(ctx, taken_pc)` in
+both `translate_a64.c` and `translate.c`; on x86-64 additionally tag
+`backedge_snapshot` with the guest PC it was captured at and require it to
+match `taken_pc` (a block with two loop heads could otherwise reconcile
+against the wrong snapshot). Unknown back-edges fall back to a normal chained
+block exit — correct, and benchmark_core shows no measurable cost (its loop
+heads are prescan-visible).
+
+**Regression coverage**: test 5 of
+`regression/tests/bug-dbt-backedge-regpressure/` reproduces the exact shape
+(pre-fix: hangs/corrupts r24; post-fix: passes), alongside `cpp-exception-basic`
+in the differential suite.

@@ -501,12 +501,10 @@ static void dbt_trace_block_regs(dbt_cpu_state_t *cpu, translated_block_t *block
     if (trace_block_regs_budget == 0) return;
     if (trace_block_regs_pc != 0 && block->guest_pc != trace_block_regs_pc) return;
 
-    fprintf(stderr,
-            "dbt-block-regs block_pc=0x%08X pc=0x%08X r7=%08X r10=%08X r12=%08X r14=%08X r15=%08X r16=%08X r18=%08X r19=%08X r20=%08X r21=%08X r23=%08X r28=%08X\n",
-            block->guest_pc, cpu->pc,
-            cpu->regs[7], cpu->regs[10], cpu->regs[12], cpu->regs[14], cpu->regs[15],
-            cpu->regs[16], cpu->regs[18], cpu->regs[19], cpu->regs[20], cpu->regs[21],
-            cpu->regs[23], cpu->regs[28]);
+    fprintf(stderr, "dbt-block-regs block_pc=0x%08X pc=0x%08X", block->guest_pc, cpu->pc);
+    for (int r = 1; r < 32; r++)
+        fprintf(stderr, " r%d=%08X", r, cpu->regs[r]);
+    fprintf(stderr, "\n");
     if (trace_block_store_preview_enabled &&
         trace_block_store_pc != 0 &&
         trace_block_store_pc + 4 <= cpu->code_limit) {
