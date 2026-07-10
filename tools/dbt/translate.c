@@ -2369,7 +2369,8 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     }
 
     // Stage 2 mode: try to chain, or emit patchable jump to dispatcher
-    translated_block_t *target = paranoid_mode ? NULL
+    translated_block_t *target = (paranoid_mode || paranoid_lite_mode || dbt_no_chain)
+                                               ? NULL
                                                : cache_lookup(ctx->cache, target_pc);
 
     // Record the patch site (where the rel32 offset will be)
@@ -2478,7 +2479,8 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc,
     }
 
     // Try to chain to already-translated target
-    translated_block_t *target = paranoid_mode ? NULL
+    translated_block_t *target = (paranoid_mode || paranoid_lite_mode || dbt_no_chain)
+                                               ? NULL
                                                : cache_lookup(ctx->cache, target_pc);
     uint8_t *patch_site = emit_ptr(e) + 1;  // After jmp opcode (E9)
 
@@ -2739,6 +2741,12 @@ void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
     // Stage 3 Phase 2: Push return address to RAS for calls
     if (ctx->ras_enabled && rd == REG_LR) {
         emit_ras_push(ctx, return_pc);
+    }
+
+    // Record the exit edge (paranoid-lite's shadow uses branch_pc to know
+    // where a translated plain jump chopped the block)
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = ctx->guest_pc;
     }
 
     // Exit with branch to target (chainable)
@@ -6229,6 +6237,18 @@ cached_block_done:
         }
         if (block->host_size % 16 != 0) fprintf(stderr, "\n");
         fprintf(stderr, "=== END JIT DUMP ===\n");
+    }
+
+    // Paranoid-lite: record this block's exact guest-PC footprint so the
+    // shadow interpreter can follow superblock inlining and in-block loops.
+    // Skip blocks whose exits overflowed the metadata array — the shadow
+    // needs every exit edge to know where native execution chops.
+    if (paranoid_lite_mode && ctx->pc_map_count > 0 &&
+        ctx->exit_idx <= MAX_BLOCK_EXITS) {
+        uint32_t lite_pcs[MAX_BLOCK_INSTS];
+        for (int i = 0; i < ctx->pc_map_count; i++)
+            lite_pcs[i] = ctx->pc_map[i].guest_pc;
+        shadow_lite_attach_footprint(block, lite_pcs, ctx->pc_map_count);
     }
 
     // Insert into cache

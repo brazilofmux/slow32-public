@@ -15,6 +15,7 @@
 #include "translate.h"      // decode_instruction, OP_* constants
 
 bool paranoid_mode = false;
+bool paranoid_lite_mode = false;
 bool dbt_no_chain = false;
 
 // ============================================================================
@@ -34,6 +35,13 @@ void shadow_init(shadow_state_t *s, dbt_cpu_state_t *cpu) {
     s->bounds_checks_disabled = cpu->bounds_checks_disabled;
     s->enabled = true;
     s->check_memory = true;
+    s->store_gen = 1;   // gen 0 must never be valid: hash entry 0 == empty
+
+    // Paranoid-lite step budget per dispatch: in-block back-edge loops can
+    // legitimately run millions of guest instructions inside one block.
+    s->lite_budget = 1000000000ull;
+    const char *b = getenv("SLOW32_LITE_MAX_STEPS");
+    if (b && b[0] != '\0') s->lite_budget = strtoull(b, NULL, 0);
 
     // Copy intrinsic addresses for skip detection
     s->intrinsic_memcpy  = cpu->intrinsic_memcpy;
@@ -54,20 +62,37 @@ void shadow_init(shadow_state_t *s, dbt_cpu_state_t *cpu) {
 // ============================================================================
 
 static void shadow_store_byte(shadow_state_t *s, uint32_t addr, uint8_t val) {
-    // Check for existing entry at same address
-    for (int i = 0; i < s->store_buf_count; i++) {
-        if (s->store_buf[i].addr == addr) {
-            s->store_buf[i].value = val;
+    // O(1) lookup via the generation-stamped hash index
+    uint32_t h = (addr * 2654435761u) & SHADOW_STORE_HASH_MASK;
+    for (;;) {
+        uint64_t e = s->store_hash[h];
+        if ((e >> 20) != s->store_gen) break;   // empty/stale slot
+        uint32_t idx = (uint32_t)(e & 0xFFFFF) - 1;
+        if (s->store_buf[idx].addr == addr) {
+            s->store_buf[idx].value = val;
             return;
         }
+        h = (h + 1) & SHADOW_STORE_HASH_MASK;
     }
     if (s->store_buf_count < SHADOW_STORE_BUF_SIZE) {
         s->store_buf[s->store_buf_count].addr = addr;
         s->store_buf[s->store_buf_count].value = val;
         s->store_buf_count++;
+        s->store_hash[h] = (s->store_gen << 20) | (uint64_t)s->store_buf_count;
+    } else if (paranoid_lite_mode) {
+        // Long in-block loops legitimately overflow the buffer; degrade to
+        // registers+PC verification for this execution (counted in stats).
+        s->store_buf_overflow = true;
     } else {
         fprintf(stderr, "PARANOID: store buffer overflow at addr 0x%08X\n", addr);
     }
+}
+
+// Reset the store buffer for a new execution (O(1): generation bump).
+static void shadow_store_reset(shadow_state_t *s) {
+    s->store_buf_count = 0;
+    s->store_gen++;
+    s->store_buf_overflow = false;
 }
 
 static void shadow_store16(shadow_state_t *s, uint32_t addr, uint16_t val) {
@@ -84,11 +109,15 @@ static void shadow_store32(shadow_state_t *s, uint32_t addr, uint32_t val) {
 
 // Load with store forwarding: check shadow buffer first, then real memory
 static uint8_t shadow_load_byte(shadow_state_t *s, uint32_t addr) {
-    // Search buffer in reverse for most recent store
-    for (int i = s->store_buf_count - 1; i >= 0; i--) {
-        if (s->store_buf[i].addr == addr) {
-            return s->store_buf[i].value;
+    uint32_t h = (addr * 2654435761u) & SHADOW_STORE_HASH_MASK;
+    for (;;) {
+        uint64_t e = s->store_hash[h];
+        if ((e >> 20) != s->store_gen) break;   // empty/stale slot
+        uint32_t idx = (uint32_t)(e & 0xFFFFF) - 1;
+        if (s->store_buf[idx].addr == addr) {
+            return s->store_buf[idx].value;
         }
+        h = (h + 1) & SHADOW_STORE_HASH_MASK;
     }
     if (addr < s->mem_size) {
         return s->mem_base[addr];
@@ -703,7 +732,7 @@ static void replay_with_trace(shadow_state_t *s, uint32_t block_start,
     // Reset shadow to snapshot state
     memcpy(s->regs, s->snap_regs, sizeof(s->regs));
     s->pc = s->snap_pc;
-    s->store_buf_count = 0;
+    shadow_store_reset(s);
     s->hit_debug = s->hit_yield = s->hit_halt = s->hit_assert_fail = false;
 
     uint32_t block_end = block_start + block_size;
@@ -792,12 +821,153 @@ void shadow_pre_execute(shadow_state_t *s, translated_block_t *block) {
     // Initialize shadow state from snapshot
     memcpy(s->regs, s->snap_regs, sizeof(s->regs));
     s->pc = s->snap_pc;
-    s->store_buf_count = 0;
+    shadow_store_reset(s);
     s->hit_debug = s->hit_yield = s->hit_halt = s->hit_assert_fail = false;
     s->debug_char = 0;
 
     // Execute the block via shadow interpreter (reads pre-block memory)
     shadow_execute_block(s, block->guest_pc, block->guest_size);
+}
+
+// ============================================================================
+// Paranoid-lite: follow the block's exact guest-PC footprint
+// ============================================================================
+
+static int lite_pc_cmp(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return (x > y) - (x < y);
+}
+
+void shadow_lite_attach_footprint(translated_block_t *block,
+                                  const uint32_t *pcs, int count) {
+    if (!paranoid_lite_mode || !block || count <= 0) return;
+    if (block->lite_pcs) return;   // already attached (shouldn't happen)
+    uint32_t *copy = malloc((size_t)count * sizeof(uint32_t));
+    if (!copy) return;             // verification degrades to skip, not UB
+    memcpy(copy, pcs, (size_t)count * sizeof(uint32_t));
+    qsort(copy, (size_t)count, sizeof(uint32_t), lite_pc_cmp);
+    block->lite_pcs = copy;
+    block->lite_pc_count = (uint16_t)count;
+}
+
+static inline bool lite_pc_in_footprint(const translated_block_t *block,
+                                        uint32_t pc) {
+    int lo = 0, hi = (int)block->lite_pc_count - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) >> 1;
+        uint32_t v = block->lite_pcs[mid];
+        if (v == pc) return true;
+        if (v < pc) lo = mid + 1; else hi = mid - 1;
+    }
+    return false;
+}
+
+void shadow_lite_pre_execute(shadow_state_t *s, translated_block_t *block) {
+    if (!s->enabled || !block) return;
+    s->lite_skip_this = false;
+
+    // Same skips as shadow_pre_execute (verify does the bookkeeping).
+    // Whatever the shadow doesn't follow desyncs its continuous register
+    // file: force a resync from cpu->regs on the next verified block.
+    if (is_intrinsic_block(s, block->guest_pc)) { s->lite_synced = false; return; }
+    if (s->pc_filter != 0 && block->guest_pc != s->pc_filter) { s->lite_synced = false; return; }
+    if (s->skip_remaining > 0) { s->lite_synced = false; return; }
+
+    // Blocks translated without a footprint (Stage 1/2 paths, intrinsic
+    // stubs, OOM) can't be followed — skip them.
+    if (!block->lite_pcs || block->lite_pc_count == 0) {
+        s->lite_skip_this = true;
+        s->lite_synced = false;
+        s->lite_nofootprint_skips++;
+        return;
+    }
+
+    if (!s->lite_synced || s->pc != block->guest_pc) {
+        // (Re)sync the continuous shadow register file from the CPU. Safe
+        // at these points: the last hard-verified state matched, and any
+        // register that still differs is a dead-temp writeback skip whose
+        // value is architecturally dead (never read again).
+        memcpy(s->regs, s->snap_regs, sizeof(s->regs));
+        s->pc = s->snap_pc;
+        if (s->lite_synced) s->lite_resyncs++;   // count desyncs, not startup
+        s->lite_synced = true;
+    } else {
+        // Continuous run: the shadow's own registers are the pre-state.
+        // Refresh the snapshot so divergence diagnostics show the truth.
+        memcpy(s->snap_regs, s->regs, sizeof(s->snap_regs));
+        s->snap_pc = s->pc;
+    }
+    shadow_store_reset(s);
+    s->hit_debug = s->hit_yield = s->hit_halt = s->hit_assert_fail = false;
+    s->debug_char = 0;
+    s->lite_jump_chain_n = 0;
+
+    // Step the shadow, stopping exactly where the DBT's native execution
+    // leaves the block. Four chop points mirror the translator:
+    //   1. HALT/DEBUG/YIELD (and faults, which end shadow_step in place).
+    //   2. Any translated JAL or JALR is a block terminal.
+    //   3. A recorded exit edge (branch_pc -> target_pc): deferred side
+    //      exits and the final branch's two exits fire every traversal.
+    //   4. The PC leaves the footprint. If that happens by falling
+    //      sequentially onto a plain `jal r0` the jump-over optimization
+    //      elided (it was never translated), follow the jump chain —
+    //      the DBT's exit target is the chain's end.
+    // Everything else — superblock-inlined paths and in-block back-edge
+    // loops (which may run millions of guest instructions) — continues.
+    uint64_t steps = 0;
+    for (;;) {
+        // Invariant: s->pc is inside the footprint here.
+        if (steps++ >= s->lite_budget) {
+            s->lite_skip_this = true;
+            s->lite_synced = false;   // shadow state is mid-flight: resync
+            s->lite_budget_skips++;
+            return;
+        }
+        uint32_t prev_pc = s->pc;
+        uint32_t raw = *(uint32_t *)(s->mem_base + prev_pc);
+        uint8_t op = raw & 0x7F;
+        uint8_t raw_rd = (raw >> 7) & 0x1F;
+
+        bool ended = shadow_step(s);
+        s->instructions_verified++;
+        if (ended) break;                              // chop 1
+        // chop 2: JALR and linking JALs always end blocks. A plain jump
+        // (JAL rd=0) only ends the block if the translator recorded an
+        // exit edge for it (chop 3) or its target leaves the footprint
+        // (chop 4) — x86-64 inlines forward plain jumps within a block.
+        if (op == 0x41 || (op == 0x40 && raw_rd != 0)) break;
+
+        bool exit_edge = false;                        // chop 3
+        for (uint8_t i = 0; i < block->exit_count; i++) {
+            if (block->exits[i].branch_pc == prev_pc &&
+                block->exits[i].target_pc == s->pc) {
+                exit_edge = true;
+                break;
+            }
+        }
+        if (exit_edge) break;
+
+        if (!lite_pc_in_footprint(block, s->pc)) {     // chop 4
+            while (s->lite_jump_chain_n < 8 && s->pc + 4 <= s->mem_size) {
+                uint32_t jraw = *(uint32_t *)(s->mem_base + s->pc);
+                if ((jraw & 0x7F) != 0x40 || ((jraw >> 7) & 0x1F) != 0) break;
+                if (lite_pc_in_footprint(block, s->pc)) break;
+                s->lite_jump_chain[s->lite_jump_chain_n++] = s->pc;
+                // Decode the J-type immediate and follow the jump
+                uint32_t imm20    = (jraw >> 31) & 0x1;
+                uint32_t imm10_1  = (jraw >> 21) & 0x3FF;
+                uint32_t imm11    = (jraw >> 20) & 0x1;
+                uint32_t imm19_12 = (jraw >> 12) & 0xFF;
+                int32_t imm = (int32_t)((imm20 << 20) | (imm19_12 << 12) |
+                                        (imm11 << 11) | (imm10_1 << 1));
+                if (imm & 0x100000) imm |= (int32_t)0xFFE00000;
+                s->pc = s->pc + (uint32_t)imm;
+            }
+            break;
+        }
+    }
+    // s->pc is now the DBT's expected exit target (or the instruction
+    // after a DEBUG/YIELD/HALT).
 }
 
 bool shadow_verify(shadow_state_t *s, dbt_cpu_state_t *cpu,
@@ -823,20 +993,34 @@ bool shadow_verify(shadow_state_t *s, dbt_cpu_state_t *cpu,
         return true;
     }
 
-    // Back-edge chase ran out of step budget mid-loop — can't compare.
-    if (s->chase_abort) {
+    // Paranoid-lite: pre-execute couldn't follow this execution
+    // (no footprint, or step budget exhausted)
+    if (s->lite_skip_this) {
+        s->lite_skip_this = false;
         s->blocks_skipped++;
         return true;
     }
 
     // Shadow was already executed in shadow_pre_execute() — just compare
 
-    // Compare PC (hard error)
+    // Compare PC (hard error). In lite mode the DBT may legitimately stop
+    // on any of the pure jumps the shadow followed at the block boundary
+    // (registers and memory are identical at every point of the chain).
     bool pc_mismatch = (s->pc != cpu->pc);
+    if (pc_mismatch) {
+        for (int i = 0; i < s->lite_jump_chain_n; i++) {
+            if (s->lite_jump_chain[i] == cpu->pc) {
+                pc_mismatch = false;
+                break;
+            }
+        }
+    }
+
+    if (s->store_buf_overflow) s->lite_mem_skips++;
 
     // Compare store buffer vs real memory (hard error)
     int mem_mismatches = 0;
-    if (s->check_memory && s->store_buf_count > 0) {
+    if (s->check_memory && !s->store_buf_overflow && s->store_buf_count > 0) {
         for (int i = 0; i < s->store_buf_count; i++) {
             uint32_t addr = s->store_buf[i].addr;
             if (addr < s->mem_size) {
@@ -859,18 +1043,33 @@ bool shadow_verify(shadow_state_t *s, dbt_cpu_state_t *cpu,
         }
     }
 
+    // Diagnostic: trace soft (register-only) mismatches as they appear
+    if (reg_mismatch_count > 0 && getenv("SLOW32_LITE_TRACE_SOFT")) {
+        static int soft_budget = 200;
+        if (soft_budget > 0) {
+            soft_budget--;
+            fprintf(stderr, "lite-soft block=0x%08X exec=%" PRIu64 " pc=0x%08X:",
+                    block->guest_pc, exec_num, cpu->pc);
+            for (int i = 0; i < 32; i++) {
+                if (reg_mismatch[i])
+                    fprintf(stderr, " r%d(sh=%08X dbt=%08X)", i, s->regs[i], cpu->regs[i]);
+            }
+            fprintf(stderr, "\n  pre:");
+            for (int i = 1; i < 32; i++) {
+                if (s->snap_regs[i])
+                    fprintf(stderr, " r%d=%08X", i, s->snap_regs[i]);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+
     // Hard divergence: PC or memory mismatch → abort
     // Soft divergence: register-only → DBT dead-temp optimization; skip
-    // SLOW32_SHADOW_REG_HARD=1 escalates register mismatches to hard errors
-    // (noisy: dead temps legitimately differ, but catches live corruption at
-    // the block that caused it instead of wherever it finally hits memory).
-    static int reg_hard = -1;
-    if (reg_hard < 0) {
-        const char *env = getenv("SLOW32_SHADOW_REG_HARD");
-        reg_hard = (env && atoi(env) != 0) ? 1 : 0;
-    }
-    bool hard_mismatch = pc_mismatch || mem_mismatches > 0 ||
-                         (reg_hard && reg_mismatch_count > 0);
+    bool hard_mismatch = pc_mismatch || mem_mismatches > 0;
+    // Debug: escalate register-only mismatches to hard (full report at the
+    // origin block instead of waiting for downstream PC/memory divergence).
+    if (reg_mismatch_count > 0 && getenv("SLOW32_LITE_HARD_REGS"))
+        hard_mismatch = true;
 
     if (hard_mismatch) {
         fprintf(stderr,
@@ -966,7 +1165,22 @@ bool shadow_verify(shadow_state_t *s, dbt_cpu_state_t *cpu,
 // ============================================================================
 
 void shadow_print_stats(shadow_state_t *s) {
-    fprintf(stderr, "Paranoid mode: %" PRIu64 " blocks verified, %" PRIu64 " skipped, "
+    // Suite harnesses compare merged stdout+stderr; let them silence the
+    // summary (divergences still abort loudly regardless).
+    const char *q = getenv("SLOW32_PARANOID_QUIET");
+    if (q && q[0] != '\0' && strcmp(q, "0") != 0) return;
+    fprintf(stderr, "%s: %" PRIu64 " blocks verified, %" PRIu64 " skipped, "
             "%" PRIu64 " instructions — 0 divergences\n",
+            paranoid_lite_mode ? "Paranoid-lite" : "Paranoid mode",
             s->blocks_verified, s->blocks_skipped, s->instructions_verified);
+    if (paranoid_lite_mode &&
+        (s->lite_nofootprint_skips || s->lite_budget_skips ||
+         s->lite_mem_skips || s->lite_resyncs)) {
+        fprintf(stderr, "Paranoid-lite skips: %" PRIu64 " no-footprint, "
+                "%" PRIu64 " budget-exhausted; %" PRIu64
+                " memory compares degraded (store-buffer overflow); %" PRIu64
+                " register resyncs\n",
+                s->lite_nofootprint_skips, s->lite_budget_skips,
+                s->lite_mem_skips, s->lite_resyncs);
+    }
 }

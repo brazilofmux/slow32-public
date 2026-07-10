@@ -45,11 +45,31 @@ superblock interaction (back-edges, deferred side exits, pending writes).
 ## Debugging Tools
 
 ```bash
-# Lockstep shadow-interpreter verify. CAVEAT: forces a flush at every block
-# boundary, which MASKS stale-flush / back-edge re-entry bugs — the
-# 2026-07-09 r13 corruption passed --paranoid cleanly. Use diff-test.sh
-# alongside it.
+# Lockstep shadow-interpreter verify of a DE-OPTIMIZED translation:
+# --paranoid disables superblocks, reg cache, and peephole, so it cannot
+# see bugs in those (the 2026-07-09 r13 corruption passed it cleanly).
 slow32-dbt --paranoid prog.s32x
+
+# Shadow-verify the PRODUCTION translation: all optimizations stay on,
+# only chaining is disabled so every block execution returns to the
+# dispatcher for comparison. The shadow follows each block's exact
+# guest-PC footprint (superblock inlining, in-block back-edge loops) and
+# runs its register file continuously so corruption propagates to a hard
+# divergence instead of being absorbed by re-snapshotting. First runs
+# found three real bugs: the a64 shifted-EOR fold miscompile, the x86
+# JALR-fallback missing register flush, and (retroactively) the r13
+# back-edge corruption. ~2.5s for all 285M insts of benchmark_core.
+# Knobs: SLOW32_LITE_MAX_STEPS (shadow step budget per dispatch),
+#        SLOW32_PARANOID_QUIET=1 (suppress the stats line for harnesses),
+#        SLOW32_LITE_TRACE_SOFT=1 (trace register-only mismatches),
+#        SLOW32_LITE_HARD_REGS=1 (escalate them to full reports).
+# Note: on x86-64 lite disables intrinsic inlining (calls get inlined
+# INTO blocks there); a64 keeps intrinsics (separate stub blocks, skipped
+# by address). A natively-infinite loop inside one block can't be caught
+# (no dispatcher return). Register-only mismatches are soft by design:
+# dead-temp writeback skips make cpu->regs legitimately stale for dead
+# values.
+slow32-dbt --paranoid-lite prog.s32x
 
 # Block-entry register trace (all 31 regs). Logs only dispatcher entries,
 # i.e. first executions / chain misses — cached re-entries are silent even

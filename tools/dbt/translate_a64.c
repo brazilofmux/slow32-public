@@ -2873,6 +2873,12 @@ void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
         emit_ras_push(ctx, return_pc);
     }
 
+    // Record the exit edge (paranoid-lite's shadow uses branch_pc to know
+    // where a translated plain jump chopped the block)
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = ctx->guest_pc;
+    }
+
     // Exit with branch to target (chainable in Stage 2)
     emit_exit_chained(ctx, target_pc, ctx->exit_idx++);
 }
@@ -4983,6 +4989,18 @@ cached_done:
         memcpy(block->side_exit_pcs, ctx->side_exit_pcs, sizeof(uint32_t) * stored);
         cache->superblock_count++;
         cache->side_exit_emitted += ctx->side_exit_emitted;
+    }
+
+    // Paranoid-lite: record this block's exact guest-PC footprint so the
+    // shadow interpreter can follow superblock inlining and in-block loops.
+    // Skip blocks whose exits overflowed the metadata array — the shadow
+    // needs every exit edge to know where native execution chops.
+    if (paranoid_lite_mode && ctx->pc_map_count > 0 &&
+        ctx->exit_idx <= MAX_BLOCK_EXITS) {
+        uint32_t lite_pcs[MAX_BLOCK_INSTS];
+        for (int i = 0; i < ctx->pc_map_count; i++)
+            lite_pcs[i] = ctx->pc_map[i].guest_pc;
+        shadow_lite_attach_footprint(block, lite_pcs, ctx->pc_map_count);
     }
 
     // Insert into hash table so cache_lookup can find it

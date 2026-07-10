@@ -111,6 +111,14 @@ struct translated_block {
     // Stage 4: Side-exit profiling (per-block)
     uint8_t side_exit_count;
     uint32_t side_exit_pcs[MAX_BLOCK_EXITS];
+
+    // Paranoid-lite: sorted array of every guest PC translated into this
+    // block (its exact footprint, including superblock jump-over-inlined
+    // regions). Lets the shadow interpreter follow production Stage-4
+    // control flow: it steps until the PC leaves this set. Allocated only
+    // when paranoid_lite_mode was set at translation time; NULL otherwise.
+    uint32_t *lite_pcs;
+    uint16_t lite_pc_count;
 };
 
 // Block cache

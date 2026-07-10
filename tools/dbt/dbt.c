@@ -1761,6 +1761,9 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         if (paranoid_mode) {
             shadow_snapshot(&paranoid_shadow, cpu);
             shadow_pre_execute(&paranoid_shadow, block);
+        } else if (paranoid_lite_mode) {
+            shadow_snapshot(&paranoid_shadow, cpu);
+            shadow_lite_pre_execute(&paranoid_shadow, block);
         }
 
         // Execute translated code
@@ -1782,7 +1785,7 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         }
 
         // Paranoid mode: verify after execution
-        if (paranoid_mode) {
+        if (paranoid_mode || paranoid_lite_mode) {
             shadow_verify(&paranoid_shadow, cpu, block, dispatch_iter);
         }
 
@@ -1912,7 +1915,13 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -4        Use Stage 4 mode (superblock extension, default)\n");
     fprintf(stderr, "  --allow <list>  Only allow these MMIO services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>   Deny these MMIO services (comma-separated)\n");
-    fprintf(stderr, "  --paranoid            Lockstep shadow interpreter (verify every block)\n");
+    fprintf(stderr, "  --paranoid            Lockstep shadow interpreter (verify every block;\n");
+    fprintf(stderr, "                        NOTE: disables superblocks/reg-cache/peephole, so it\n");
+    fprintf(stderr, "                        verifies a DE-OPTIMIZED translation)\n");
+    fprintf(stderr, "  --paranoid-lite       Shadow-verify the PRODUCTION translation (all\n");
+    fprintf(stderr, "                        optimizations on, chaining off). Catches reg-cache/\n");
+    fprintf(stderr, "                        superblock bugs --paranoid structurally cannot.\n");
+    fprintf(stderr, "                        Env: SLOW32_LITE_MAX_STEPS (shadow step budget)\n");
     fprintf(stderr, "  --paranoid-verbose    Print progress every 100K blocks\n");
     fprintf(stderr, "  --paranoid-pc <addr>  Only verify blocks starting at <addr>\n");
     fprintf(stderr, "  --paranoid-skip <N>   Skip first N blocks before verifying\n");
@@ -2010,6 +2019,11 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--paranoid") == 0) {
             paranoid_mode = true;
+            memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
+            argc -= 1;
+            i--;
+        } else if (strcmp(argv[i], "--paranoid-lite") == 0) {
+            paranoid_lite_mode = true;
             memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
             argc -= 1;
             i--;
@@ -2225,11 +2239,36 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Paranoid-lite verifies the PRODUCTION translation: full paranoid mode
+    // would disable superblocks/reg-cache/peephole (see execute loop), so the
+    // two are mutually exclusive; lite wins. Chaining is disabled so every
+    // block execution returns to the dispatcher for verification.
+    if (paranoid_lite_mode) {
+        paranoid_mode = false;
+        dbt_no_chain = true;
+        if (stage < 2) {
+            fprintf(stderr, "DBT: --paranoid-lite requires stage 2+ (block cache)\n");
+            return 1;
+        }
+    }
+
     // Initialize paranoid mode shadow interpreter
-    if (paranoid_mode) {
-        // Disable intrinsics — the DBT inlines intrinsic calls into blocks,
-        // changing control flow in ways the shadow can't replicate.
-        cpu.intrinsics_enabled = false;
+    if (paranoid_mode || paranoid_lite_mode) {
+        if (paranoid_mode) {
+            // Disable intrinsics — the DBT inlines intrinsic calls into
+            // blocks, changing control flow in ways the shadow can't
+            // replicate.
+            cpu.intrinsics_enabled = false;
+        }
+#ifndef __aarch64__
+        // x86-64 inlines intrinsic calls INTO caller blocks (execution
+        // continues past the call), which the lite shadow can't follow.
+        // AArch64 emits separate stub blocks at the intrinsic's own PC,
+        // which lite recognizes by address and skips — keep them there.
+        if (paranoid_lite_mode) {
+            cpu.intrinsics_enabled = false;
+        }
+#endif
 
         shadow_init(&paranoid_shadow, &cpu);
         paranoid_shadow.verbose = paranoid_verbose;
@@ -2256,10 +2295,10 @@ int main(int argc, char **argv) {
         cpu.lookup_mask = BLOCK_CACHE_MASK;
         cpu.compact_table = cache.compact_table;
 
-        // In paranoid mode, neuter the native dispatcher so it just RETs.
-        // This forces every block exit to return to the C dispatch loop,
-        // ensuring shadow_snapshot/shadow_verify run between each block.
-        if (paranoid_mode && cache.native_dispatcher) {
+        // In paranoid/paranoid-lite mode, neuter the native dispatcher so it
+        // just RETs. This forces every block exit to return to the C dispatch
+        // loop, ensuring shadow_snapshot/shadow_verify run between each block.
+        if ((paranoid_mode || paranoid_lite_mode) && cache.native_dispatcher) {
 #ifdef __aarch64__
             dbt_jit_writable_begin();
             *(uint32_t *)cache.native_dispatcher = 0xD65F03C0;  // RET
@@ -2492,7 +2531,7 @@ int main(int argc, char **argv) {
     }
 
     // Print paranoid mode stats
-    if (paranoid_mode) {
+    if (paranoid_mode || paranoid_lite_mode) {
         shadow_print_stats(&paranoid_shadow);
     }
 

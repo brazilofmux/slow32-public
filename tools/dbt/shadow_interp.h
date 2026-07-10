@@ -16,6 +16,10 @@
 // so we don't write to real guest memory.  Loads check the buffer first
 // (store forwarding) before falling back to real memory.
 #define SHADOW_STORE_BUF_SIZE 65536
+// Open-addressing index over the buffer (2x entries). Generation-stamped so
+// it never needs clearing between executions.
+#define SHADOW_STORE_HASH_SIZE (SHADOW_STORE_BUF_SIZE * 2)
+#define SHADOW_STORE_HASH_MASK (SHADOW_STORE_HASH_SIZE - 1)
 
 typedef struct {
     uint32_t addr;
@@ -34,6 +38,11 @@ typedef struct {
     // Shadow store buffer (intra-block stores)
     shadow_store_entry_t store_buf[SHADOW_STORE_BUF_SIZE];
     int store_buf_count;
+
+    // O(1) addr -> buffer-index map: entry = (generation << 20) | (idx + 1).
+    // An entry whose generation doesn't match store_gen is an empty slot.
+    uint64_t store_hash[SHADOW_STORE_HASH_SIZE];
+    uint64_t store_gen;
 
     // Guest memory pointer (read-only reference to real memory)
     uint8_t *mem_base;
@@ -57,6 +66,29 @@ typedef struct {
     uint64_t blocks_verified;
     uint64_t blocks_skipped;    // intrinsic/intercept blocks
     uint64_t instructions_verified;
+
+    // Paranoid-lite bookkeeping
+    bool store_buf_overflow;     // stores exceeded buffer this execution
+    bool lite_skip_this;         // pre-execute couldn't follow: skip verify
+    uint64_t lite_budget;        // max shadow steps per dispatch
+    uint64_t lite_budget_skips;  // executions skipped: step budget exhausted
+    uint64_t lite_mem_skips;     // memory compares skipped: buffer overflow
+    uint64_t lite_nofootprint_skips; // blocks without a footprint (stage<4 etc.)
+    // When the shadow falls sequentially out of the footprint onto plain
+    // `jal r0` jumps the DBT elided (jump-over inlining), it records each
+    // jump's PC here while following the chain; verify accepts the DBT
+    // stopping at any of them (pure jumps change nothing but the PC).
+    uint32_t lite_jump_chain[8];
+    int lite_jump_chain_n;
+    // Lite runs the shadow REGISTER FILE continuously: cpu->regs is only
+    // copied in when the shadow couldn't follow (intrinsic block, skip,
+    // budget, PC desync). Re-snapshotting every dispatch would launder
+    // DBT register corruption into the shadow (dead-temp writeback skips
+    // force register-only mismatches to be soft), hiding exactly the bug
+    // class this mode exists to catch: with a continuous shadow, corrupt
+    // registers propagate into a hard PC/memory divergence instead.
+    bool lite_synced;
+    uint64_t lite_resyncs;
 
     // Configuration
     bool enabled;
@@ -88,6 +120,12 @@ typedef struct {
 
 // Global paranoid mode flag (checked by block_cache.c to disable chaining)
 extern bool paranoid_mode;
+// Paranoid-lite: verify the PRODUCTION translation (superblocks, reg cache,
+// peephole all ON) instead of --paranoid's de-optimized one. Chaining is
+// disabled for per-dispatch granularity; the shadow follows each block's
+// exact guest-PC footprint (translated_block_t.lite_pcs), so it can track
+// jump-over inlining and in-block back-edge loops.
+extern bool paranoid_lite_mode;
 // Global debug flag: force stage2+ exits through dispatcher (no direct chaining).
 extern bool dbt_no_chain;
 
@@ -101,6 +139,16 @@ void shadow_snapshot(shadow_state_t *s, dbt_cpu_state_t *cpu);
 // executes.  Must be called while guest memory is still in pre-block state.
 // Stores the shadow's final registers/PC/store-buffer for later comparison.
 void shadow_pre_execute(shadow_state_t *s, translated_block_t *block);
+
+// Paranoid-lite pre-execute: like shadow_pre_execute, but follows the block's
+// exact guest-PC footprint (block->lite_pcs) instead of a linear range, so it
+// can track Stage-4 superblock inlining and in-block back-edge loops.
+void shadow_lite_pre_execute(shadow_state_t *s, translated_block_t *block);
+
+// Record a block's guest-PC footprint for paranoid-lite (sorted copy is
+// attached to the block). No-op unless paranoid_lite_mode is set.
+void shadow_lite_attach_footprint(translated_block_t *block,
+                                  const uint32_t *pcs, int count);
 
 // Verify: compare shadow results (from pre_execute) with DBT results.
 // Returns true if OK, false (and prints diagnostics) on divergence.

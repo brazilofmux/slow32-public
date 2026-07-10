@@ -523,8 +523,12 @@ void cache_insert(block_cache_t *cache, translated_block_t *block) {
             cache->blocks[idx] = block;
             cache->block_count++;
 
-            // Also populate compact direct-mapped table (last-writer-wins)
-            if (cache->compact_table && block->host_code) {
+            // Also populate compact direct-mapped table (last-writer-wins).
+            // Skipped under paranoid/paranoid-lite/no-chain: a populated
+            // entry lets a block's inline compact probe continue in JIT
+            // without returning to the C dispatcher.
+            if (cache->compact_table && block->host_code &&
+                !(paranoid_mode || paranoid_lite_mode || dbt_no_chain)) {
                 uint32_t cidx = compact_hash(block->guest_pc);
                 cache->compact_table[cidx].guest_pc = block->guest_pc;
                 cache->compact_table[cidx].native_code = block->host_code;
@@ -668,6 +672,10 @@ void cache_record_pending_chain(block_cache_t *cache, translated_block_t *block,
 }
 
 void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
+    // No chaining under paranoid/paranoid-lite/no-chain: patching a pending
+    // exit into a direct jump would let execution bypass the C dispatcher
+    // (and thus shadow verification / per-block tracing).
+    if (paranoid_mode || paranoid_lite_mode || dbt_no_chain) return;
     uint32_t target_pc;
     uint8_t *target_host_code;
     cache_target_snapshot(target, &target_pc, &target_host_code);
