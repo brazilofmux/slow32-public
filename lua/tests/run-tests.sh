@@ -7,7 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LUA_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$LUA_DIR")"
-EMULATOR="$ROOT_DIR/tools/emulator/slow32-fast"
+# Override with EMULATOR=/abs/path (e.g. tools/dbt/slow32-dbt) to test others
+EMULATOR="${EMULATOR:-$ROOT_DIR/tools/emulator/slow32-fast}"
 BINARY="$LUA_DIR/lua.s32x"
 
 if [ ! -f "$BINARY" ]; then

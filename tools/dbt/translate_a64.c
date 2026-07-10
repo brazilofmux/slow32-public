@@ -1300,23 +1300,13 @@ static void reg_cache_flush(translate_ctx_t *ctx) {
     }
 }
 
-// Flush and evict specific host registers being repurposed as scratch.
-static void flush_cached_host_regs(translate_ctx_t *ctx, a64_reg_t r1, a64_reg_t r2) {
-    if (!ctx->reg_cache_enabled) return;
-    emit_ctx_t *e = &ctx->emit;
-    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (ctx->reg_alloc[i].guest_reg <= 0) continue;
-        if (reg_alloc_hosts[i] == r1 || reg_alloc_hosts[i] == r2) {
-            if (ctx->reg_alloc[i].dirty) {
-                emit_str_w32_imm(e, reg_alloc_hosts[i], W20,
-                                 GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
-            }
-            ctx->reg_alloc_map[ctx->reg_alloc[i].guest_reg] = -1;
-            ctx->reg_alloc[i].guest_reg = -1;
-            ctx->reg_alloc[i].dirty = false;
-        }
-    }
-}
+// INVARIANT: the AArch64 register cache assigns guest->slot mappings once in
+// reg_alloc_prescan() and NEVER reassigns or evicts a slot mid-block. The
+// in-block back-edge optimization and the deferred-side-exit snapshots rely
+// on this: a back-edge re-enters earlier emitted code that assumes the
+// prescan mapping. If mid-block eviction is ever introduced, those paths need
+// the stability machinery the x86-64 translate.c uses (backedge_snapshot).
+// A dead evictor helper (flush_cached_host_regs) was removed here 2026-07-09.
 
 void dbt_set_emit_trace(bool enabled, bool has_pc_filter, uint32_t pc) {
     a64_emit_trace_enabled = enabled;
