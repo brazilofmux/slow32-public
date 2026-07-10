@@ -18,6 +18,7 @@ All platforms and emulators produce bit-identical artifacts.
 | slow32-fast (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 | slow32-dbt (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 | s32fast-hir (stage 7) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
+| slow32-dbt (stages 1–8) | Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz |
 | slow32 | Apple M5 Max (MacBook Pro) |
 | slow32-fast | Apple M5 Max (MacBook Pro) |
 | slow32-dbt | Apple M5 Max (MacBook Pro) |
@@ -51,7 +52,7 @@ All platforms and emulators produce bit-identical artifacts.
 
 ## Stage 05
 
-- 195cee7ba2e53740534733877f7b68577e1f405ec0a490b210404ef5a47d6931  s32-as.s32x
+- d4015589b90ebacf001fb2f2dbd2e36b88c606bcdac605115b22f73c96e8faeb  s32-as.s32x
 - 38e80138287bc650c827a5fe60baf92bda839b182eac27714b5a2ca7c464745b  s32-ld.s32x
 - 4e2553f7fe2247fe7263218ac87c176cd288348ac5704c325727843e22c8aeb8  cc.s32x
 - 5f1ff425e5145f1320037e15795efeaa4855da2a6ec26336702f8ca804c73f6c  slow32dump.s32x
@@ -63,7 +64,7 @@ All platforms and emulators produce bit-identical artifacts.
 - 161e64e61846a0a7eb0473794807cac081cc55657266c1535dd54667867cd873  cc.s32x
 - 4d4289a4be0981ac94747b6e1f2367d1299792e8b942608888f77465dcc5a71b  slow32dis.s32x
 - 6145e162904dfd7708ac80dd8a2e50bc4f3a16695978e3c130798018cec178cf  s32-ar.s32x
-- 8672a3b8e44e71bb7675652ae4df90374fc93349fd3b3d4ec36c03b82d70b7f3  s32-as.s32x
+- 2d393c181459b43f9f1f560fe848658f5a1651d15cc5d6d03883c18dec5353e9  s32-as.s32x
 - 8cab38cb9a77ca5fc140cba589eacf07103e6406671bb2c53614ba3a0cb1a657  s32-ld.s32x
 - e67b2f1f6519ce643bc81ff3ba202cc064dfeba74fbce6e0945e1937cb237f20  slow32dump.s32x
 
