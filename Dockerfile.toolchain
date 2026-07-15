@@ -19,7 +19,7 @@ RUN apk add --no-cache \
 WORKDIR /build
 # Pin to a known-good LLVM commit to avoid transient upstream breakage.
 # Update this SHA when you want to pull in newer upstream changes.
-ARG LLVM_COMMIT=fa4d73761d122c49ebc591118c83f5e142c98b4d
+ARG LLVM_COMMIT=b6059b6ce21886c3f8644355ae9017cf3ba04aad
 RUN wget -q https://github.com/llvm/llvm-project/archive/${LLVM_COMMIT}.zip -O llvm-project.zip && \
     unzip -q llvm-project.zip && \
     mv llvm-project-${LLVM_COMMIT} llvm-project && \

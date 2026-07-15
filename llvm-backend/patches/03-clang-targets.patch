@@ -1,5 +1,5 @@
 diff --git a/clang/lib/Basic/Targets.cpp b/clang/lib/Basic/Targets.cpp
-index ed88ae7173ba..a10af62734ac 100644
+index 8c01cfca8ccb..35910459539a 100644
 --- a/clang/lib/Basic/Targets.cpp
 +++ b/clang/lib/Basic/Targets.cpp
 @@ -31,6 +31,7 @@

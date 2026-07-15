@@ -50,6 +50,7 @@ static bool CC_SLOW32_VarArg_F64(unsigned ValNo, MVT ValVT, MVT LocVT,
   return true;
 }
 
+#define GET_CALLING_CONV_IMPL
 #include "SLOW32GenCallingConv.inc"
 
 static const MCPhysReg SLOW32ArgRegs[] = {
@@ -1454,7 +1455,7 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     SDValue SizeVal = DAG.getConstant(Size, DL, PtrVT);
 
     SDValue Copy = DAG.getMemcpy(Chain, DL, FIN, CLI.OutVals[I], SizeVal,
-                                 Alignment, /*IsVolatile=*/false,
+                                 Alignment, Alignment, /*isVol=*/false,
                                  /*AlwaysInline=*/false, nullptr, std::nullopt,
                                  MachinePointerInfo(), MachinePointerInfo());
     MemOps.push_back(Copy);
