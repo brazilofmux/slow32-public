@@ -46,6 +46,7 @@ RUN cmake -G Ninja \
     -DLLVM_ENABLE_PROJECTS="clang" \
     -DLLVM_TARGETS_TO_BUILD="SLOW32" \
     -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="SLOW32" \
+    -DLLVM_DEFAULT_TARGET_TRIPLE="slow32-unknown-none" \
     -DLLVM_BUILD_TOOLS=ON \
     -DCMAKE_INSTALL_PREFIX=/opt/llvm \
     ../llvm
