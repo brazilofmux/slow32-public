@@ -1,0 +1,44 @@
+diff --git a/compiler/defutil.pas b/compiler/defutil.pas
+index 529e5242b1..6b88aff284 100644
+--- a/compiler/defutil.pas
++++ b/compiler/defutil.pas
+@@ -1764,6 +1764,10 @@       TDefListItem = record
+               or not(tfloatdef(def).floattype=s32real)
+               or not(FPUXTENSA_SINGLE in fpu_capabilities[current_settings.fputype])
+ {$endif xtensa}
++{$ifdef slow32}
++              or not(tfloatdef(def).floattype=s32real)
++              or not(FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype])
++{$endif slow32}
+               then
+               result:=int_cgsize(def.size)
+             else
+diff --git a/compiler/nld.pas b/compiler/nld.pas
+index 5b76b2be1c..d5a275b82a 100644
+--- a/compiler/nld.pas
++++ b/compiler/nld.pas
+@@ -863,6 +863,10 @@ implementation
+ {$ifdef xtensa}
+                 and not((FPUXTENSA_SINGLE in fpu_capabilities[current_settings.fputype]) xor
+                   (FPUXTENSA_DOUBLE in fpu_capabilities[current_settings.fputype]))
++{$endif}
++{$ifdef slow32}
++                and not((FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) xor
++                  (FPUSLOW32_DOUBLE in fpu_capabilities[current_settings.fputype]))
+ {$endif}
+         then
+           begin
+diff --git a/compiler/symdef.pas b/compiler/symdef.pas
+index c50a1d1fd7..59c2e4a5e9 100644
+--- a/compiler/symdef.pas
++++ b/compiler/symdef.pas
+@@ -2595,6 +2595,9 @@ implementation
+ {$ifdef xtensa}
+          and (FPUXTENSA_SINGLE in fpu_capabilities[current_settings.fputype]) and (tfloatdef(self).floattype=s32real)
+ {$endif xtensa}
++{$ifdef slow32}
++         and (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and (tfloatdef(self).floattype=s32real)
++{$endif slow32}
+ {$ifdef riscv}
+          and (((CPURV_HAS_F in cpu_capabilities[current_settings.cputype]) and (tfloatdef(self).floattype=s32real)) or
+            ((CPURV_HAS_D in cpu_capabilities[current_settings.cputype]) and (tfloatdef(self).floattype=s64real)) or

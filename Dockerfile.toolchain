@@ -142,6 +142,20 @@ RUN mkdir -p /opt/fpc/slow32-rtl && \
     cp /fpc-src/rtl/units/slow32-embedded/*.ppu /opt/fpc/slow32-rtl/ && \
     cp /fpc-src/rtl/units/slow32-embedded/*.s   /opt/fpc/slow32-rtl/
 
+# Second RTL variant compiled for the native f32 FPU (-CfSLOW32).
+# Units must match the program's -Cf mode, so programs built with
+# -CfSLOW32 link against /opt/fpc/slow32-rtl-fpu instead.
+RUN cd /fpc-src/rtl/embedded && \
+    make clean CPU_TARGET=slow32 OS_TARGET=embedded && \
+    make all \
+        FPC=/fpc-src/compiler/ppcs32 PP=/fpc-src/compiler/ppcs32 \
+        CPU_TARGET=slow32 OS_TARGET=embedded \
+        FPCOPT='-s -n -CfSLOW32' \
+        ISO7185UNIT= SYSCONSTUNIT= CPU_SPECIFIC_COMMON_UNITS=
+RUN mkdir -p /opt/fpc/slow32-rtl-fpu && \
+    cp /fpc-src/rtl/units/slow32-embedded/*.ppu /opt/fpc/slow32-rtl-fpu/ && \
+    cp /fpc-src/rtl/units/slow32-embedded/*.s   /opt/fpc/slow32-rtl-fpu/
+
 # Stage 2.6: Build the self-hosted SLOW-32 cross-compilers
 # cc-x64 (C -> x86-64 ELF) and cc-a64 (C -> arm64 ELF). These are HOST-native
 # tools — they need no emulator — built by host gcc from the shared stage08
@@ -215,6 +229,7 @@ RUN cp runtime/*.s32o /opt/slow32/lib/ && \
 RUN mkdir -p /opt/slow32/lib/fpc
 COPY --from=fpc-builder /fpc-src/compiler/ppcs32 /opt/slow32/bin/
 COPY --from=fpc-builder /opt/fpc/slow32-rtl/ /opt/slow32/lib/fpc/
+COPY --from=fpc-builder /opt/fpc/slow32-rtl-fpu/ /opt/slow32/lib/fpc-fpu/
 COPY fpc-backend/runtime/fpc_startup.s /opt/slow32/lib/fpc/
 
 # Pre-assemble every RTL unit's .s into .s32o and bundle the lot into

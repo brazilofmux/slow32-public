@@ -37,10 +37,11 @@ interface
          { procedure second_string_to_chararray;override; }
          { procedure second_array_to_pointer;override; }
           function first_int_to_real: tnode; override;
+          function first_real_to_real: tnode; override;
          { procedure second_pointer_to_array;override; }
          { procedure second_chararray_to_string;override; }
          { procedure second_char_to_string;override; }
-         { procedure second_int_to_real;override; }
+          procedure second_int_to_real;override;
          { procedure second_real_to_real;override; }
          { procedure second_cord_to_pointer;override; }
          { procedure second_proc_to_procvar;override; }
@@ -57,12 +58,12 @@ implementation
 
    uses
       verbose,globtype,globals,systems,
-      symconst,symdef,aasmbase,aasmtai,aasmdata,
+      symconst,symdef,symtable,aasmbase,aasmtai,aasmdata,
       defutil,symcpu,
       cgbase,cgutils,pass_1,pass_2,
       ncon,ncal,
       ncgutil,procinfo,
-      cpubase,aasmcpu,
+      cpubase,cpuinfo,aasmcpu,
       rgobj,tgobj,cgobj,hlcgobj;
 
 
@@ -74,7 +75,6 @@ implementation
       var
         fname: string[19];
       begin
-        { SLOW-32 has no hardware FPU, all float conversions use softfpu helpers }
         if is_64bitint(left.resultdef) or
                 is_currency(left.resultdef) then
           begin
@@ -92,18 +92,99 @@ implementation
             firstpass(result);
             exit;
           end
+        else if (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
+          not(cs_fp_emulation in current_settings.moduleswitches) and
+          is_single(resultdef) then
+          begin
+            { 32-bit int -> single natively via FCVT.S.W / FCVT.S.WU;
+              widen sub-32-bit operands first so signedness is explicit }
+            if not(is_32bit(left.resultdef)) then
+              begin
+                inserttypeconv(left,s32inttype);
+                firstpass(left);
+              end;
+            result:=nil;
+            expectloc:=LOC_FPUREGISTER;
+          end
         else
           begin
-            { 32-bit integers: use the generic/inherited conversion path
-              which handles soft-float via the standard compilerprocs }
+            { int -> double (or single without native FP): use the
+              generic/inherited conversion path which routes through the
+              standard softfloat compilerprocs }
             result := inherited first_int_to_real;
           end;
+      end;
+
+
+    function ts32typeconvnode.first_real_to_real: tnode;
+      begin
+        if (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
+          not(FPUSLOW32_DOUBLE in fpu_capabilities[current_settings.fputype]) and
+          not(cs_fp_emulation in current_settings.moduleswitches) then
+          begin
+            { native FP covers only f32; conversions touching f64 go
+              through the softfloat helpers }
+            case tfloatdef(left.resultdef).floattype of
+              s32real:
+                case tfloatdef(resultdef).floattype of
+                  s64real:
+                    result:=ctypeconvnode.create_explicit(ccallnode.createintern('float32_to_float64',ccallparanode.create(
+                      ctypeconvnode.create_internal(left,search_system_type('FLOAT32REC').typedef),nil)),resultdef);
+                  s32real:
+                    begin
+                      result:=left;
+                      left:=nil;
+                    end;
+                  else
+                    internalerror(2026071503);
+                end;
+              s64real:
+                case tfloatdef(resultdef).floattype of
+                  s32real:
+                    result:=ctypeconvnode.create_explicit(ccallnode.createintern('float64_to_float32',ccallparanode.create(
+                      ctypeconvnode.create_internal(left,search_system_type('FLOAT64').typedef),nil)),resultdef);
+                  s64real:
+                    begin
+                      result:=left;
+                      left:=nil;
+                    end;
+                  else
+                    internalerror(2026071502);
+                end;
+              else
+                internalerror(2026071501);
+            end;
+            left:=nil;
+            firstpass(result);
+            exit;
+          end
+        else
+          result := inherited first_real_to_real;
       end;
 
 
 {*****************************************************************************
                              SecondTypeConv
 *****************************************************************************}
+
+    procedure ts32typeconvnode.second_int_to_real;
+      var
+        op: TAsmOp;
+      begin
+        if not(is_single(resultdef)) then
+          internalerror(2026071504);
+        secondpass(left);
+        if not(left.location.loc in [LOC_REGISTER,LOC_CREGISTER]) then
+          hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,left.resultdef,true);
+        location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
+        location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+        if is_signed(left.resultdef) then
+          op:=A_FCVT_S_W
+        else
+          op:=A_FCVT_S_WU;
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,location.register,left.location.register));
+      end;
+
 
     procedure ts32typeconvnode.second_int_to_bool;
       var

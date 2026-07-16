@@ -31,9 +31,11 @@ interface
 
     type
       ts32inlinenode = class(tcginlinenode)
-        { SLOW-32 has no hardware FPU, so all float intrinsics use helpers.
-          Override first_* to return nil only if we had HW support;
-          since we don't, just inherit everything. }
+        { fpu_slow32 handles f32 abs natively (FABS.S); everything else
+          (f64, and all intrinsics without native FP) uses the standard
+          helper calls via the inherited first_* methods }
+        function first_abs_real: tnode; override;
+        procedure second_abs_real; override;
       end;
 
 implementation
@@ -49,6 +51,32 @@ implementation
       cgbase,pass_2,
       cpuinfo,ncgutil,
       hlcgobj,cgutils,cgobj,rgobj,tgobj;
+
+
+    function ts32inlinenode.first_abs_real: tnode;
+      begin
+        if is_single(left.resultdef) and
+          (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
+          not(cs_fp_emulation in current_settings.moduleswitches) then
+          begin
+            result:=nil;
+            expectloc:=LOC_FPUREGISTER;
+          end
+        else
+          result:=inherited first_abs_real;
+      end;
+
+
+    procedure ts32inlinenode.second_abs_real;
+      begin
+        if not(is_single(resultdef)) then
+          internalerror(2026071505);
+        secondpass(left);
+        hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+        location_reset(location,LOC_FPUREGISTER,OS_F32);
+        location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FABS_S,location.register,left.location.register));
+      end;
 
 
 begin

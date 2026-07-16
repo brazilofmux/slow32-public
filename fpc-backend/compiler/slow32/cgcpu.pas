@@ -949,6 +949,12 @@ unit cgcpu;
             { Integer registers to save }
             regs:=rg[R_INTREGISTER].used_in_proc-paramanager.get_volatile_registers_int(pocall_stdcall);
 
+            { F-class registers alias the callee-saved GPRs r20-r28 and use
+              the same superregister indices, so they join the same save set
+              and are stored with plain STW below }
+            if assigned(rg[R_FPUREGISTER]) then
+              regs:=regs+rg[R_FPUREGISTER].used_in_proc;
+
             if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
               regs:=regs+[RS_FRAME_POINTER_REG,RS_RETURN_ADDRESS_REG];
 
@@ -959,8 +965,6 @@ unit cgcpu;
             for r:=RS_R0 to RS_R31 do
               if r in regs then
                 inc(stackcount,sizeof(pint));
-
-            { No FPU registers to save in SLOW-32 }
 
             inc(localsize,stackcount);
             if not is_imm12(-localsize) then
@@ -1019,6 +1023,11 @@ unit cgcpu;
           begin
             regs:=rg[R_INTREGISTER].used_in_proc-paramanager.get_volatile_registers_int(pocall_stdcall);
 
+            { restore F-class registers together with their r20-r28 aliases,
+              mirroring g_proc_entry }
+            if assigned(rg[R_FPUREGISTER]) then
+              regs:=regs+rg[R_FPUREGISTER].used_in_proc;
+
             if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
               regs:=regs+[RS_FRAME_POINTER_REG,RS_RETURN_ADDRESS_REG];
 
@@ -1029,8 +1038,6 @@ unit cgcpu;
             for r:=RS_R31 downto RS_R0 do
               if r in regs then
                 inc(stacksize,sizeof(pint));
-
-            { No FPU registers in SLOW-32 }
 
             localsize:=current_procinfo.calc_stackframe_size+stacksize;
             if localsize>0 then
@@ -1162,12 +1169,9 @@ unit cgcpu;
             list.concat(ai);
             rg[R_FPUREGISTER].add_move_instruction(ai);
           end
-        else if (fromsize=OS_F32) and (tosize=OS_F64) then
-          list.concat(taicpu.op_reg_reg(A_FCVT_D_S,reg2,reg1))
-        else if (fromsize=OS_F64) and (tosize=OS_F32) then
-          list.concat(taicpu.op_reg_reg(A_FCVT_S_D,reg2,reg1))
         else
-          { f64<->f64 reg move needs paired-register support — TODO. }
+          { f64 never lives in F-class registers: def_cgsize maps it to
+            int sizes and all f64 operations route through softfloat }
           internalerror(2026051601);
       end;
 

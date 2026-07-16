@@ -201,7 +201,26 @@ cd ~/slow-32/fpc-backend/scripts
 - Generated assembly uses correct SLOW-32 instructions and conventions
 - Full pipeline validated: Pascal -> ppcs32 -> slow32asm -> s32-ld -> slow32-fast
 - "Hello, Pascal" test program runs correctly with exit code 0
-- Soft-float only (no hardware FPU)
+- Native f32 FPU support via `-CfSLOW32` (FADD.S/FSUB.S/FMUL.S/FDIV.S,
+  FEQ.S/FLT.S/FLE.S, FNEG.S, FABS.S, FCVT.S.W/FCVT.S.WU); f64 always uses
+  the softfloat helpers (register-pair f64 instructions not yet used)
+- Default mode remains full soft-float; the two modes are ABI-compatible
+  (floats cross calls in integer registers either way), but units must be
+  compiled in a single mode (the RTL ships in both: `runtime/` and
+  `runtime/fpu/`)
+- 18-check float test suite passes in both modes (f32 arith/compare/neg/abs,
+  int->f32 conversions, f32<->f64, f64 soft arith, writeln of reals)
+
+### FPU notes
+
+- Compiler-side F-class registers alias the callee-saved GPRs r20-r28; the
+  int allocator gives those up, so the pools never collide and emitted asm
+  uses plain rN names.
+- Unsigned 32-bit `div`/`mod` route through `fpc_div_dword`/`fpc_mod_dword`
+  (the ISA only has signed DIV/REM); smaller unsigned types stay on native
+  DIV/REM via zero-extension.
+
+Build for the FPU: `./scripts/build-example.sh program.pas --run --fpu`
 
 ## Files Modified in FPC
 
@@ -216,3 +235,4 @@ The integration patches modify these existing FPC files to register the `slow32`
 | 05-compiler-driver | `compiler/pp.pas`, `compiler/psystem.pas`, `compiler/dbgdwarf.pas`, `compiler/utils/fpc.pp`, `compiler/utils/ppuutils/ppudump.pp` |
 | 06-rtl-build | `rtl/Makefile`, `rtl/embedded/Makefile`, `rtl/embedded/Makefile.fpc` |
 | 07-rtl-system | `rtl/inc/systemh.inc`, `rtl/inc/system.inc` |
+| 08-compiler-fpu | `compiler/defutil.pas`, `compiler/symdef.pas`, `compiler/nld.pas` |

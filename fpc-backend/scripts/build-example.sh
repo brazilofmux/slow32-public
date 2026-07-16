@@ -19,23 +19,41 @@ RUNTIME="$PROJECT_DIR/runtime"
 # FPC cross-compiler location
 PPCS32="${PPCS32:-$HOME/fpc/compiler/ppcs32}"
 
-# RTL: use in-tree copy by default, override with RTL_DIR
-RTL_DIR="${RTL_DIR:-$FPC_RUNTIME}"
-
 # Parse arguments
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 program.pas [--run]"
+    echo "Usage: $0 program.pas [--run] [--fpu]"
+    echo ""
+    echo "Options:"
+    echo "  --run    Run the program on the emulator after building"
+    echo "  --fpu    Compile with -CfSLOW32 (native f32 FPU) against the FPU RTL"
     echo ""
     echo "Environment variables:"
     echo "  PPCS32   - path to ppcs32 cross-compiler (default: ~/fpc/compiler/ppcs32)"
-    echo "  RTL_DIR  - path to compiled RTL (default: fpc-backend/runtime)"
+    echo "  RTL_DIR  - path to compiled RTL (default: fpc-backend/runtime, or"
+    echo "             fpc-backend/runtime/fpu with --fpu)"
     exit 1
 fi
 
 SOURCE="$1"
+shift
 RUN=0
-if [ "${2:-}" = "--run" ]; then
-    RUN=1
+FPU=0
+FPCFLAGS=""
+for arg in "$@"; do
+    case "$arg" in
+        --run) RUN=1 ;;
+        --fpu) FPU=1 ;;
+        *) echo "Unknown option: $arg"; exit 1 ;;
+    esac
+done
+
+# RTL: use in-tree copy by default, override with RTL_DIR.
+# The FPU RTL is a separate build (units must match the -Cf mode).
+if [ $FPU -eq 1 ]; then
+    RTL_DIR="${RTL_DIR:-$FPC_RUNTIME/fpu}"
+    FPCFLAGS="-CfSLOW32"
+else
+    RTL_DIR="${RTL_DIR:-$FPC_RUNTIME}"
 fi
 
 BASENAME="$(basename "$SOURCE" .pas)"
@@ -63,7 +81,7 @@ fi
 
 # Step 1: Compile Pascal to assembly
 echo "=== Compiling $SOURCE ==="
-"$PPCS32" -Tembedded -s -n \
+"$PPCS32" -Tembedded -s -n $FPCFLAGS \
     -Fu"$RTL_DIR" \
     -FE"$OUTDIR" \
     "$SOURCE"
@@ -72,8 +90,13 @@ echo "  -> $OUTDIR/$BASENAME.s"
 # Step 2: Assemble all components
 echo "=== Assembling ==="
 
-# Assemble system unit (cached in $OUTDIR between runs)
-SYSTEM_OBJ="$OUTDIR/system.s32o"
+# Assemble system unit (cached in $OUTDIR between runs; the FPU RTL is
+# a distinct build, so it gets its own cached object)
+if [ $FPU -eq 1 ]; then
+    SYSTEM_OBJ="$OUTDIR/system-fpu.s32o"
+else
+    SYSTEM_OBJ="$OUTDIR/system.s32o"
+fi
 if [ ! -f "$SYSTEM_OBJ" ] || [ "$RTL_DIR/system.s" -nt "$SYSTEM_OBJ" ]; then
     "$TOOLCHAIN/assembler/slow32asm" "$RTL_DIR/system.s" "$SYSTEM_OBJ"
     echo "  -> system.s32o (assembled)"

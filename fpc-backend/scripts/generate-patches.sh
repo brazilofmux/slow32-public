@@ -98,6 +98,16 @@ else
     echo "   No changes"
 fi
 
+# 8. Compiler core FPU routing (defutil.pas, symdef.pas, nld.pas)
+echo "8. Generating compiler FPU routing patch..."
+git diff $BASE -- compiler/defutil.pas compiler/symdef.pas compiler/nld.pas > "$PATCHES_DIR/08-compiler-fpu.patch" 2>/dev/null || true
+if [ -s "$PATCHES_DIR/08-compiler-fpu.patch" ]; then
+    lines=$(wc -l < "$PATCHES_DIR/08-compiler-fpu.patch")
+    echo "   Created: 08-compiler-fpu.patch ($lines lines)"
+else
+    echo "   No changes"
+fi
+
 # Summary
 echo ""
 echo "Patch generation complete!"

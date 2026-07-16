@@ -42,6 +42,7 @@ interface
       end;
 
       ts32unaryminusnode = class(tcgunaryminusnode)
+        procedure second_float; override;
       end;
 
       ts32notnode = class(tcgnotnode)
@@ -56,10 +57,29 @@ implementation
       symconst,symdef,
       aasmbase,aasmcpu,aasmtai,aasmdata,
       defutil,
-      cgutils,cgobj,hlcgobj,pass_2,
+      cgutils,cgobj,hlcgobj,pass_1,pass_2,
       cpubase,cpuinfo,
-      ncon,procinfo,
+      ncon,ncal,procinfo,
       ncgutil,cgcpu;
+
+    procedure ts32unaryminusnode.second_float;
+      begin
+        if (tfloatdef(resultdef).floattype=s32real) and
+          (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
+          not(cs_fp_emulation in current_settings.moduleswitches) then
+          begin
+            secondpass(left);
+            hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+            location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
+            location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FNEG_S,location.register,left.location.register));
+          end
+        else
+          { f64 (and f32 without native FP) lives in int registers; negation
+            is a sign-bit flip, same as on pure soft-float targets }
+          second_float_emulated;
+      end;
+
 
     procedure ts32notnode.second_boolean;
       var
@@ -96,11 +116,11 @@ implementation
       var
         op: TAsmOp;
       begin
-        if signed then
-          op:=A_DIV
-        else
-          { SLOW-32 has no DIVU; use DIV for now (unsigned division TBD) }
-          op:=A_DIV;
+        { SLOW-32 has no DIVU. Unsigned operands that reach here are
+          u8/u16 zero-extended into positive 32-bit values, for which
+          signed DIV is exact; u32bit is routed to fpc_div_dword in
+          first_moddivint and never reaches this point }
+        op:=A_DIV;
 
         current_asmdata.CurrAsmList.Concat(taicpu.op_reg_reg_reg(op,res,num,denum));
       end;
@@ -109,20 +129,34 @@ implementation
       var
         op: TAsmOp;
       begin
-        if signed then
-          op:=A_REM
-        else
-          { SLOW-32 has no REMU; use REM for now (unsigned remainder TBD) }
-          op:=A_REM;
+        { see emit_div_reg_reg_reg: only signed or zero-extended u8/u16
+          operands reach here, u32bit goes through fpc_mod_dword }
+        op:=A_REM;
 
         current_asmdata.CurrAsmList.Concat(taicpu.op_reg_reg_reg(op,res,num,denum));
       end;
 
 
     function ts32moddivnode.first_moddivint: tnode;
+      var
+        procname: string[31];
       begin
-        { SLOW-32 always has hardware multiply/divide }
-        if not is_64bitint(resultdef) then
+        { SLOW-32 only has signed DIV/REM. Unsigned 32-bit operands can
+          have bit 31 set, so route those through the RTL helpers; smaller
+          unsigned types are zero-extended and fit signed hardware div }
+        if (resultdef.typ=orddef) and (torddef(resultdef).ordtype=u32bit) then
+          begin
+            if nodetype=divn then
+              procname:='fpc_div_dword'
+            else
+              procname:='fpc_mod_dword';
+            result:=ccallnode.createintern(procname,ccallparanode.create(left,
+              ccallparanode.create(right,nil)));
+            left:=nil;
+            right:=nil;
+            firstpass(result);
+          end
+        else if not is_64bitint(resultdef) then
           Result:=nil
         else
           result:=inherited;
