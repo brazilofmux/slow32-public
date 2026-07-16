@@ -1625,3 +1625,81 @@ earlier, the message should clarify that this commit updates tracking/docs for #
 rather than containing those code changes directly.
 
 ### 30. While Stage 4 slow32-dbt on ARM produces the correct artifacts, it does not execute the stage 06 compiler correctly itself. This is being investigated.
+
+### 53. [FIXED] cc.fth: global aggregate initializer hangs as the first declarator
+
+`int a[3] = {1, 2, 3};` at the top of a translation unit made `cc.fth` loop
+forever. `PARSE-TOP-LEVEL` must parse the first declarator itself (it needs the
+next token to tell a function from a variable), so it could not delegate to
+`PARSE-GLOBAL-VAR`, which begins with `PARSE-DECLARATOR`. It therefore carried an
+inlined copy of the initializer emitter and handed only the post-comma
+declarators to `PARSE-GLOBAL-VAR`. The inlined copy handled `TK-NUM` and `TK-STR`
+but had no `P-LBRACE` case, so `{` fell to the default arm, which emitted a
+`.word 0` and called `PARSE-ASSIGN-EXPR` — which does not consume `{`, does not
+advance the token, and loops.
+
+Two copies; one missing a branch. `PARSE-GLOBAL-VAR` had the brace handling all
+along, which is why the workaround was to declare a dummy variable first and push
+the array past the comma.
+
+Fix: factor the initializer emitter into `PARSE-GLOBAL-INIT` and call it from
+both sites, so the paths cannot diverge again. Added an EOF guard to the brace
+loop while there (an unterminated `{` at EOF hung on both paths before).
+
+Verified: six forms went HANG -> OK (`int a[3]={1,2,3}`, `static`, nested braces,
+negative literals, `char *s[2]={"x","y"}`, post-comma). `IF`/`THEN` delta
+unchanged, hardened kernel reports no imbalance. Regression 9/9, subset
+conformance 14/14 with a new `subset14_global_aggregate_init.c`.
+
+Note: this was the "global aggregate-initializer hang" referenced as a known gap
+in `49f62669`.
+
+### 54. [OPEN] cc.fth: `P-MINUS` arm in the aggregate initializer is unreachable
+
+`int n[2] = {-7, 3};` compiles but emits the wrong bytes:
+
+```
+n:
+    .word 0     <- the '-' becomes a spurious zero
+    .word 7     <- positive 7, not -7
+    .word 3
+```
+
+`-` is `TK-PUNCT`, so it is caught by the outer `tok-type @ TK-PUNCT = IF` and
+handled by that branch's "unknown punctuation" default (`.word 0`). The
+`P-MINUS` arm sits further down the *outer* ELSE chain and can never execute.
+Pre-existing on both paths; not introduced by #53. Fix is to test `P-MINUS`
+inside the `TK-PUNCT` branch. Deliberately excluded from
+`subset14_global_aggregate_init.c`.
+
+### 55. [OPEN] cc.fth: multi-level array declarators hang
+
+`int m[2][2];` hangs in `PARSE-DECLARATOR` with or without an initializer.
+Multi-level arrays are not part of the Subset-C contract — that support arrives
+at a later stage — so this is a feature gap. It should reject with a diagnostic
+rather than loop. Tracked under the general hardening goal (#56).
+
+### 56. [OPEN] Forth toolchain: be well-behaved about what is and isn't supported
+
+The Forth toolchain deliberately targets the lowest level of C it can get away
+with. Its failure mode for out-of-contract input, however, is frequently an
+infinite loop rather than a diagnostic (#54, #55). The goal: no hangs, clear
+error messages, and an explicit boundary between supported and unsupported.
+
+Specifically, and separately from the hardening: **global aggregate initializers
+are not in the Subset-C contract at all.** `SUBSET-C.md`'s scope does not list
+initializers; `stage02`'s sources use zero of them; and cc-min (#24) does not
+support them by design, on the grounds that BSS zero-init is sufficient for the
+selfhost toolchain. `PARSE-GLOBAL-VAR`'s brace loop is therefore support for a
+feature above the floor cc.fth aims at, with no customer — which is why the
+`PARSE-TOP-LEVEL` half could be missing for the project's entire life without
+anyone noticing (#53), and why the dead `P-MINUS` arm inside it (#54) went
+unseen.
+
+The considered alternative to #53 was to reject `{` in both paths with a clean
+diagnostic, matching the contract and cc-min. Blast radius measured: **zero**
+global aggregate initializers exist anywhere cc.fth compiles (baseline, subset,
+subset-idioms, validation, stage02). Scalar global initializers *are* used
+(`test3`, `test4`, `test5`, `test9`, `idiom03`, `idiom05`) and must be kept;
+local initializers (`char s[] = "a b"`, `subset01`) are a separate path.
+Deferred by decision, 2026-07-16: unify first (#53), revisit rejection later.

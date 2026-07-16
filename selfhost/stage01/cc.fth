@@ -3820,6 +3820,67 @@ VARIABLE decl-name-len
     0 in-function !
     OUT-NL ;
 
+\ Parse a global initializer, positioned just after '='.
+\ Handles { ... } aggregates (any nesting), numbers, strings, identifiers,
+\ negative literals, and non-constant expressions.
+\ Shared by PARSE-GLOBAL-VAR and PARSE-TOP-LEVEL's first-declarator path:
+\ these were two copies, and the PARSE-TOP-LEVEL copy was missing the
+\ P-LBRACE case, so a leading `int a[3] = {1,2,3};` fell through to
+\ PARSE-ASSIGN-EXPR, which never consumes '{' and never advances.
+: PARSE-GLOBAL-INIT ( -- )
+    tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
+        \ Array/struct initializer
+        CC-TOKEN  \ skip {
+        1 tmp-e !  \ brace depth
+        BEGIN
+            tmp-e @ 0> tok-type @ TK-EOF <> AND
+        WHILE
+            tok-type @ TK-PUNCT = IF
+                tok-val @ P-LBRACE = IF
+                    1 tmp-e +!
+                    CC-TOKEN
+                ELSE tok-val @ P-RBRACE = IF
+                    -1 tmp-e +!
+                    CC-TOKEN
+                ELSE tok-val @ P-COMMA = IF
+                    CC-TOKEN
+                ELSE
+                    \ Unknown punctuation inside initializer
+                    EMIT-INDENT S" .word 0" OUT-STR OUT-NL
+                    CC-TOKEN
+                THEN THEN THEN
+            ELSE tok-type @ TK-NUM = IF
+                EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
+                CC-TOKEN
+            ELSE tok-type @ TK-STR = IF
+                \ String in initializer
+                EMIT-INDENT S" .word .Lstr_" OUT-STR tok-val @ OUT-NUM OUT-NL
+                CC-TOKEN
+            ELSE tok-type @ TK-IDENT = IF
+                \ Identifier — enum value or symbol address
+                EMIT-INDENT S" .word " OUT-STR tok-buf tok-len @ OUT-STR OUT-NL
+                CC-TOKEN
+            ELSE tok-type @ TK-PUNCT = tok-val @ P-MINUS = AND IF
+                CC-TOKEN
+                EMIT-INDENT S" .word " OUT-STR tok-val @ NEGATE OUT-SNUM OUT-NL
+                CC-TOKEN
+            ELSE
+                EMIT-INDENT S" .word 0" OUT-STR OUT-NL
+                CC-TOKEN
+            THEN THEN THEN THEN THEN
+        REPEAT
+    ELSE tok-type @ TK-NUM = IF
+        EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
+        CC-TOKEN
+    ELSE tok-type @ TK-STR = IF
+        EMIT-INDENT S" .word .Lstr_" OUT-STR tok-val @ OUT-NUM OUT-NL
+        CC-TOKEN
+    ELSE
+        EMIT-INDENT S" .word 0" OUT-STR OUT-NL
+        PARSE-ASSIGN-EXPR  \ runtime init not possible for globals, but consume it
+        LVAL-TO-RVAL
+    THEN THEN THEN ;
+
 \ Parse global variable declaration
 : PARSE-GLOBAL-VAR ( type flags -- )
     >R  \ save flags
@@ -3841,59 +3902,7 @@ VARIABLE decl-name-len
             THEN
             decl-name decl-name-len @ OUT-STR 58 OUT-CHAR OUT-NL
             CC-TOKEN  \ skip =
-            \ Parse initializer
-            tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
-                \ Array/struct initializer
-                CC-TOKEN  \ skip {
-                1 tmp-e !  \ brace depth
-                BEGIN
-                    tmp-e @ 0>
-                WHILE
-                    tok-type @ TK-PUNCT = IF
-                        tok-val @ P-LBRACE = IF
-                            1 tmp-e +!
-                            CC-TOKEN
-                        ELSE tok-val @ P-RBRACE = IF
-                            -1 tmp-e +!
-                            CC-TOKEN
-                        ELSE tok-val @ P-COMMA = IF
-                            CC-TOKEN
-                        ELSE
-                            \ Unknown punctuation inside initializer
-                            EMIT-INDENT S" .word 0" OUT-STR OUT-NL
-                            CC-TOKEN
-                        THEN THEN THEN
-                    ELSE tok-type @ TK-NUM = IF
-                        EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
-                        CC-TOKEN
-                    ELSE tok-type @ TK-STR = IF
-                        \ String in initializer
-                        EMIT-INDENT S" .word .Lstr_" OUT-STR tok-val @ OUT-NUM OUT-NL
-                        CC-TOKEN
-                    ELSE tok-type @ TK-IDENT = IF
-                        \ Identifier — enum value or symbol address
-                        EMIT-INDENT S" .word " OUT-STR tok-buf tok-len @ OUT-STR OUT-NL
-                        CC-TOKEN
-                    ELSE tok-type @ TK-PUNCT = tok-val @ P-MINUS = AND IF
-                        CC-TOKEN
-                        EMIT-INDENT S" .word " OUT-STR tok-val @ NEGATE OUT-SNUM OUT-NL
-                        CC-TOKEN
-                    ELSE
-                        EMIT-INDENT S" .word 0" OUT-STR OUT-NL
-                        CC-TOKEN
-                    THEN THEN THEN THEN THEN
-                REPEAT
-            ELSE tok-type @ TK-NUM = IF
-                EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
-                CC-TOKEN
-            ELSE tok-type @ TK-STR = IF
-                EMIT-INDENT S" .word .Lstr_" OUT-STR tok-val @ OUT-NUM OUT-NL
-                CC-TOKEN
-            ELSE
-                EMIT-INDENT S" .word 0" OUT-STR OUT-NL
-                PARSE-ASSIGN-EXPR  \ runtime init not possible for globals, but consume it
-                LVAL-TO-RVAL
-            THEN THEN THEN
+            PARSE-GLOBAL-INIT
         ELSE
             \ Uninitialized — .bss section
             ENSURE-BSS
@@ -4057,17 +4066,7 @@ VARIABLE decl-name-len
         THEN
         decl-name decl-name-len @ OUT-STR 58 OUT-CHAR OUT-NL
         CC-TOKEN  \ skip =
-        tok-type @ TK-NUM = IF
-            EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
-            CC-TOKEN
-        ELSE tok-type @ TK-STR = IF
-            EMIT-INDENT S" .word .Lstr_" OUT-STR tok-val @ OUT-NUM OUT-NL
-            CC-TOKEN
-        ELSE
-            EMIT-INDENT S" .word 0" OUT-STR OUT-NL
-            PARSE-ASSIGN-EXPR  \ consume non-constant initializer expression
-            LVAL-TO-RVAL
-        THEN THEN
+        PARSE-GLOBAL-INIT
     ELSE
         \ Uninitialized global (.bss)
         ENSURE-BSS

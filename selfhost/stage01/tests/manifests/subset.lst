@@ -11,3 +11,4 @@ selfhost/stage01/tests/conformance/subset/subset10_chars.c
 selfhost/stage01/tests/conformance/subset/subset11_logic.c
 selfhost/stage01/tests/conformance/subset/subset12_ptr_arith.c
 selfhost/stage01/tests/conformance/subset/subset13_long_branch.c
+selfhost/stage01/tests/conformance/subset/subset14_global_aggregate_init.c
