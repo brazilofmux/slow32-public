@@ -45,8 +45,6 @@ interface
       procedure g_external_wrapper(list: TAsmList; procdef: tprocdef; const wrappername, externalname: string; global: boolean); override;
     end;
 
-  procedure create_hlcodegen;
-
 implementation
 
   uses
@@ -223,13 +221,14 @@ implementation
     end;
 
 
-  procedure create_hlcodegen;
+  procedure create_hlcodegen_cpu(hlcgobjhelpers: thlcgobjhelpersclass);
     begin
-      hlcg:=thlcgs32.create;
+      hlcg:=thlcgs32.create(hlcgobjhelpers);
       create_codegen;
     end;
 
 
 begin
   chlcgobj:=thlcgs32;
+  create_hlcodegen:=@create_hlcodegen_cpu;
 end.

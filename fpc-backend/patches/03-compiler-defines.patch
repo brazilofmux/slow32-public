@@ -25,10 +25,10 @@ index 7b23da08d8..2c3aba12aa 100644
           ,
           addr_b16, { %b16(sym) }
 diff --git a/compiler/fpcdefs.inc b/compiler/fpcdefs.inc
-index b8485a70b3..67b1a7c72e 100644
+index e9362baff4..653c34d04e 100644
 --- a/compiler/fpcdefs.inc
 +++ b/compiler/fpcdefs.inc
-@@ -420,6 +420,20 @@
+@@ -421,6 +421,20 @@
    {$define support_rodata}
  {$endif loongarch64}
  
@@ -67,10 +67,10 @@ index 178e3516b8..65e8714712 100644
          asmmode : asmmode_standard;
  {$ifndef jvm}
 diff --git a/compiler/options.pas b/compiler/options.pas
-index 6763f89954..235109d0ac 100644
+index 84cc25a6b1..40a41a14c6 100644
 --- a/compiler/options.pas
 +++ b/compiler/options.pas
-@@ -4849,6 +4849,14 @@ procedure read_arguments(cmd:TCmdStr);
+@@ -4850,6 +4850,14 @@ procedure read_arguments(cmd:TCmdStr);
          def_system_macro('FPC_LOCALS_ARE_STACK_REG_RELATIVE');
        {$endif loongarch64}
  
@@ -85,15 +85,26 @@ index 6763f89954..235109d0ac 100644
        {$if defined(cpu8bitalu)}
          def_system_macro('CPUINT8');
        {$elseif defined(cpu16bitalu)}
-@@ -5369,7 +5377,7 @@ procedure read_arguments(cmd:TCmdStr);
-          system_arm_nds,system_arm_embedded,system_arm_freertos,
-          system_riscv32_embedded,system_riscv64_embedded,system_xtensa_linux,
-          system_z80_embedded,system_z80_zxspectrum,system_riscv32_freertos,
--         system_mipsel_ps1])
-+         system_mipsel_ps1,system_slow32_embedded])
- {$ifdef arm}
-       or (target_info.abi=abi_eabi)
- {$endif arm}
+@@ -5735,6 +5743,19 @@ procedure read_arguments(cmd:TCmdStr);
+       ;
+   end;
+ {$endif mipsel}
++{$ifdef slow32}
++  { Default to fpu_soft so the softfpu RTL unit compiles cleanly (it does
++    bit-pattern arithmetic on records that must NOT emit native FADD/etc.).
++    Opt in to native f32 instructions per-translation-unit with -CfSLOW32. }
++  if not option.FPUSetExplicitly then
++    init_settings.fputype:=fpu_soft;
++  if init_settings.fputype=fpu_soft then
++    include(init_settings.moduleswitches,cs_fp_emulation)
++  else
++    { fpu_slow32 emits native FP instructions; clear cs_fp_emulation so
++      def_cgsize maps floatdef to OS_F32/F64 (see defutil.pas:1761). }
++    exclude(init_settings.moduleswitches,cs_fp_emulation);
++{$endif slow32}
+ {$ifdef m68k}
+   if init_settings.cputype in cpu_coldfire then
+     def_system_macro('CPUCOLDFIRE');
 diff --git a/compiler/version.pas b/compiler/version.pas
 index 1b3ca1c5ae..b883fa0397 100644
 --- a/compiler/version.pas

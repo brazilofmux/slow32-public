@@ -84,7 +84,7 @@ RUN MACHINE=$(uname -m) && \
     rm -rf /build/fpc-*
 
 # Clone FPC source at pinned commit
-ARG FPC_COMMIT=12e268f6f67f71de0b674d04309d597f9aff1a94
+ARG FPC_COMMIT=3b5c7beebeff52241a62e8ca6a261681f493dad8
 RUN git init /fpc-src && cd /fpc-src && \
     git remote add origin https://gitlab.com/freepascal.org/fpc/source.git && \
     git fetch --depth=1 origin ${FPC_COMMIT} && \

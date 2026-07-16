@@ -18,7 +18,7 @@ index e7b5a19991..d438d2830e 100644
    {$Error Can't determine processor type !}
  {$endif}
 diff --git a/rtl/inc/systemh.inc b/rtl/inc/systemh.inc
-index 2ec99647b6..19b1c41ef9 100644
+index 8ca6902d79..ab99240e5a 100644
 --- a/rtl/inc/systemh.inc
 +++ b/rtl/inc/systemh.inc
 @@ -429,6 +429,24 @@

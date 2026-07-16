@@ -24,12 +24,14 @@ type
   tfputype =
     (fpu_none,
     fpu_libgcc,
-    fpu_soft
+    fpu_soft,
+    fpu_slow32
     );
 
 const
   fputypestr: array[tfputype] of string[8] = (
     'NONE',
     'LIBGCC',
-    'SOFT'
+    'SOFT',
+    'SLOW32'
     );

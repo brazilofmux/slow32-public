@@ -49,7 +49,21 @@ unit itcpugas;
         { Branch }
         'beq','bne','blt','bge','bgt','ble','bltu','bgeu','bgtu','bleu',
         { Jump }
-        'jal','jalr'
+        'jal','jalr',
+        { f32 arithmetic / cmp / cvt / sign }
+        'fadd.s','fsub.s','fmul.s','fdiv.s','fsqrt.s',
+        'feq.s','flt.s','fle.s',
+        'fcvt.w.s','fcvt.wu.s','fcvt.s.w','fcvt.s.wu',
+        'fneg.s','fabs.s',
+        { f64 arithmetic / cmp / cvt / sign }
+        'fadd.d','fsub.d','fmul.d','fdiv.d','fsqrt.d',
+        'feq.d','flt.d','fle.d',
+        'fcvt.w.d','fcvt.wu.d','fcvt.d.w','fcvt.d.wu',
+        'fcvt.d.s','fcvt.s.d',
+        'fneg.d','fabs.d',
+        { f / i64 conversions }
+        'fcvt.l.s','fcvt.lu.s','fcvt.s.l','fcvt.s.lu',
+        'fcvt.l.d','fcvt.lu.d','fcvt.d.l','fcvt.d.lu'
         );
 
     function gas_regnum_search(const s: string): Tregister;

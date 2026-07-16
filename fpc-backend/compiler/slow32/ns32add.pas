@@ -35,6 +35,7 @@ unit ns32add;
       private
         procedure cmp64_le(left_reg, right_reg: TRegister64; unsigned: boolean);
         procedure cmp64_lt(left_reg, right_reg: TRegister64; unsigned: boolean);
+        function native_float_supported: boolean;
       protected
         procedure Cmp(signed,is_smallset: boolean);
 
@@ -44,6 +45,8 @@ unit ns32add;
         procedure second_cmpsmallset;override;
         procedure second_cmpordinal;override;
         procedure second_cmp64bit; override;
+        procedure second_addfloat; override;
+        procedure second_cmpfloat; override;
 
         procedure second_addordinal; override;
 
@@ -268,8 +271,20 @@ unit ns32add;
       end;
 
 
+    function ts32addnode.native_float_supported: boolean;
+      begin
+        { fpu_slow32 has native f32 instructions (FADD.S etc.). f64 still
+          needs paired-register support in the F-allocator and is not yet
+          wired up, so we let those nodes fall through to softfpu helpers
+          via first_addfloat_soft. }
+        result:=(current_settings.fputype=fpu_slow32) and
+                is_single(left.resultdef) and is_single(right.resultdef);
+      end;
+
+
     function ts32addnode.pass_1: tnode;
       begin
+        result:=nil;
         if (nodetype=muln) and
            (left.resultdef.typ=orddef) and (left.resultdef.typ=orddef) and
            (CPUS32_HAS_MUL in cpu_capabilities[current_settings.cputype])
@@ -277,8 +292,6 @@ unit ns32add;
                      is_64bit(right.resultdef)))
            then
           begin
-            result:=nil;
-
             firstpass(left);
             firstpass(right);
 
@@ -291,22 +304,92 @@ unit ns32add;
           begin
             result:=first_add64bitint;
           end
+        else if is_real(left.resultdef) and
+                (current_settings.fputype=fpu_slow32) and
+                not native_float_supported then
+          begin
+            { f64 (or other precisions): route through softfpu libcall even
+              though fputype isn't fpu_soft. }
+            result:=first_addfloat_soft;
+          end
+        else if is_real(left.resultdef) and native_float_supported then
+          begin
+            { f32 with native FP: keep this node and let second_addfloat fire. }
+            firstpass(left);
+            firstpass(right);
+            if nodetype in [equaln,unequaln,ltn,lten,gtn,gten] then
+              expectloc:=LOC_REGISTER
+            else
+              expectloc:=LOC_FPUREGISTER;
+          end
         else
           Result:=inherited pass_1;
-
-        { if the result is not nil, a new node has been generated and the current node will be discarded }
-        if Result=nil then
-          begin
-            { SLOW-32 has no hardware FPU, no special handling needed }
-          end;
 
         if expectloc=LOC_FLAGS then
           expectloc:=LOC_REGISTER;
         if (expectloc=LOC_JUMP)
            and (not (is_64bit(left.resultdef) or
                      is_64bit(right.resultdef)))
-	  and (nodetype in [equaln, unequaln, ltn, lten, gtn, gten]) then
+          and (nodetype in [equaln, unequaln, ltn, lten, gtn, gten]) then
           expectloc:=LOC_REGISTER;
+      end;
+
+
+    procedure ts32addnode.second_addfloat;
+      var
+        op: TAsmOp;
+        cmpop, inv: boolean;
+      begin
+        if not native_float_supported then
+          internalerror(2026051604);
+
+        pass_left_and_right;
+        if nf_swapped in flags then
+          swapleftright;
+
+        hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+        hlcg.location_force_fpureg(current_asmdata.CurrAsmList,right.location,right.resultdef,true);
+
+        cmpop:=false;
+        inv:=false;
+        case nodetype of
+          addn:    op:=A_FADD_S;
+          subn:    op:=A_FSUB_S;
+          muln:    op:=A_FMUL_S;
+          slashn:  op:=A_FDIV_S;
+          equaln:  begin op:=A_FEQ_S; cmpop:=true; end;
+          unequaln:begin op:=A_FEQ_S; cmpop:=true; inv:=true; end;
+          ltn:     begin op:=A_FLT_S; cmpop:=true; end;
+          lten:    begin op:=A_FLE_S; cmpop:=true; end;
+          gtn:     begin op:=A_FLT_S; cmpop:=true; swapleftright; end;
+          gten:    begin op:=A_FLE_S; cmpop:=true; swapleftright; end;
+          else
+            internalerror(2026051605);
+        end;
+
+        if not cmpop then
+          begin
+            location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
+            location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+          end
+        else
+          begin
+            location_reset(location,LOC_REGISTER,OS_8);
+            location.register:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+          end;
+
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op,
+          location.register,left.location.register,right.location.register));
+
+        if cmpop and inv then
+          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_const(A_XORI,
+            location.register,location.register,1));
+      end;
+
+
+    procedure ts32addnode.second_cmpfloat;
+      begin
+        second_addfloat;
       end;
 
 

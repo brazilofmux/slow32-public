@@ -183,24 +183,31 @@ unit cgcpu;
       begin
         inherited init_register_allocators;
 
-        { SLOW-32 integer register allocation order:
-          - First allocate caller-saved (argument/temp) registers: r3-r10 (a0-a7), r2 (t0), r1 (rv)
-          - Then allocate callee-saved: r11-r28 (s0-s17)
-          - Never allocate: r0 (zero), r29 (sp), r30 (fp), r31 (lr) }
+        { Int-class pool (partitioned away from F-class):
+          - caller-saved (allocated first): r3-r10 (a0-a7), r2 (t0), r1 (rv)
+          - callee-saved: r11-r19 (s0-s8)
+          - never allocate: r0 (zero), r20-r28 (owned by F-class),
+                            r29 (sp), r30 (fp), r31 (lr) }
         rg[R_INTREGISTER]:=trgintcpu.create(R_INTREGISTER,R_SUBWHOLE,
           [RS_R3,RS_R4,RS_R5,RS_R6,RS_R7,RS_R8,RS_R9,RS_R10,
            RS_R2,RS_R1,
            RS_R11,RS_R12,RS_R13,RS_R14,RS_R15,RS_R16,RS_R17,RS_R18,
-           RS_R19,RS_R20,RS_R21,RS_R22,RS_R23,RS_R24,RS_R25,RS_R26,
-           RS_R27,RS_R28],first_int_imreg,[]);
+           RS_R19],first_int_imreg,[]);
 
-        { No FPU register allocator - SLOW-32 has no FPU register file }
+        { F-class pool: r20-r28 viewed as soft-float regs. The F-class
+          allocator owns these physical GPRs exclusively; the int pool
+          above drops them so the two pools never collide. All entries
+          are callee-saved by ABI; the prologue saves whichever are used. }
+        rg[R_FPUREGISTER]:=trgcpu.create(R_FPUREGISTER,R_SUBWHOLE,
+          [RS_F20,RS_F21,RS_F22,RS_F23,RS_F24,RS_F25,RS_F26,RS_F27,RS_F28],
+          first_fpu_imreg,[]);
       end;
 
 
     procedure tcgs32.done_register_allocators;
       begin
         rg[R_INTREGISTER].free;
+        rg[R_FPUREGISTER].free;
         inherited done_register_allocators;
       end;
 
@@ -1137,22 +1144,55 @@ unit cgcpu;
                           FPU stubs (no hardware FPU)
 *****************************************************************************}
 
+    { F-class is a soft-float fiction over GPRs (see cpubase.pas notes).
+      f32 moves through a single F-reg (= one GPR); f64 needs a register
+      pair which is not yet wired (the F-allocator can't yet allocate
+      even-aligned pairs). Until the f64 path lands these helpers
+      internalerror on OS_F64 so callers fall back to softfpu helpers. }
+
     procedure tcgs32.a_loadfpu_reg_reg(list: TAsmList; fromsize, tosize: tcgsize; reg1, reg2: tregister);
+      var
+        ai: taicpu;
       begin
-        { SLOW-32 has no FPU register file, floating point is handled by soft-float }
-        internalerror(2026021301);
+        if (fromsize=OS_F32) and (tosize=OS_F32) then
+          begin
+            { addi rd, rs, 0 acts as a register-to-register move; the
+              R/F register-type tag is preserved by the operands. }
+            ai:=taicpu.op_reg_reg_const(A_ADDI,reg2,reg1,0);
+            list.concat(ai);
+            rg[R_FPUREGISTER].add_move_instruction(ai);
+          end
+        else if (fromsize=OS_F32) and (tosize=OS_F64) then
+          list.concat(taicpu.op_reg_reg(A_FCVT_D_S,reg2,reg1))
+        else if (fromsize=OS_F64) and (tosize=OS_F32) then
+          list.concat(taicpu.op_reg_reg(A_FCVT_S_D,reg2,reg1))
+        else
+          { f64<->f64 reg move needs paired-register support — TODO. }
+          internalerror(2026051601);
       end;
 
 
     procedure tcgs32.a_loadfpu_ref_reg(list: TAsmList; fromsize, tosize: tcgsize; const ref: treference; reg: tregister);
+      var
+        href: treference;
       begin
-        internalerror(2026021302);
+        if fromsize<>OS_F32 then
+          internalerror(2026051602);
+        href:=ref;
+        fixref(list,href);
+        list.concat(taicpu.op_reg_ref(A_LDW,reg,href));
       end;
 
 
     procedure tcgs32.a_loadfpu_reg_ref(list: TAsmList; fromsize, tosize: tcgsize; reg: tregister; const ref: treference);
+      var
+        href: treference;
       begin
-        internalerror(2026021303);
+        if tosize<>OS_F32 then
+          internalerror(2026051603);
+        href:=ref;
+        fixref(list,href);
+        list.concat(taicpu.op_reg_ref(A_STW,reg,href));
       end;
 
 

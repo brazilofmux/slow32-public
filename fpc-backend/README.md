@@ -49,8 +49,13 @@ cd ~/fpc/compiler
 ./ppcs32 -Tembedded -Us -s -n -Sg \
   -Fi../rtl/embedded -Fi../rtl/embedded/slow32 -Fi../rtl/inc \
   -Fi../rtl/inc/innr -Fi../rtl/slow32 -Fu../rtl/inc \
-  -FE/tmp/slow32rtl ../rtl/embedded/system.pp
+  -FE/tmp/slow32rtl ../rtl/slow32/system.pp
 ```
+
+Note: build from `../rtl/slow32/system.pp` (the SLOW-32 fork), not
+`../rtl/embedded/system.pp`. The fork wires in SysInitMemoryManager,
+SysInitStdIO and Slow32InitCmdLine — without them WriteLn fails with
+runtime error 103.
 
 This compiles the system unit, producing:
 - `/tmp/slow32rtl/system.ppu` — compiled unit (needed to compile user programs)

@@ -64,7 +64,27 @@ uses
         A_BEQ,A_BNE,A_BLT,A_BGE,A_BGT,A_BLE,A_BLTU,A_BGEU,A_BGTU,A_BLEU,
 
         { Jump }
-        A_JAL,A_JALR
+        A_JAL,A_JALR,
+
+        { f32 arithmetic / cmp / cvt / sign (opcodes 0x53..0x60) }
+        A_FADD_S,A_FSUB_S,A_FMUL_S,A_FDIV_S,A_FSQRT_S,
+        A_FEQ_S,A_FLT_S,A_FLE_S,
+        A_FCVT_W_S,A_FCVT_WU_S,A_FCVT_S_W,A_FCVT_S_WU,
+        A_FNEG_S,A_FABS_S,
+
+        { f64 arithmetic / cmp / cvt / sign (opcodes 0x61..0x70).
+          f64 ops take an even base register (the implicit hi half is base+1).
+          Pair-aware codegen is TODO (see slow32-todo-fp). The opcodes are
+          declared so RTL inline-asm can use them ahead of HL codegen. }
+        A_FADD_D,A_FSUB_D,A_FMUL_D,A_FDIV_D,A_FSQRT_D,
+        A_FEQ_D,A_FLT_D,A_FLE_D,
+        A_FCVT_W_D,A_FCVT_WU_D,A_FCVT_D_W,A_FCVT_D_WU,
+        A_FCVT_D_S,A_FCVT_S_D,
+        A_FNEG_D,A_FABS_D,
+
+        { Float / int64 conversions (opcodes 0x71..0x78) }
+        A_FCVT_L_S,A_FCVT_LU_S,A_FCVT_S_L,A_FCVT_S_LU,
+        A_FCVT_L_D,A_FCVT_LU_D,A_FCVT_D_L,A_FCVT_D_LU
       );
 
       { This should define the array of instructions as string }
@@ -85,8 +105,12 @@ uses
       tregisterindex=0..{$i rs32nor.inc}-1;
 
     const
-      maxvarregs = 32-6; { 32 int registers - r0 - stackpointer - r2 - 3 scratch registers }
-      maxfpuvarregs = 0; { no separate FPU register file }
+      { Int allocator uses r1..r19 + r28..r31 minus reserved (r0/sp/fp/lr).
+        F-class owns r20..r28, partitioned away from the int pool so the two
+        soft-float register classes don't physically alias the same GPR. }
+      maxvarregs = 32-6-9; { drop r20..r28 from int callee-saved pool }
+      maxfpuvarregs = 7;   { F-class allocates from F20..F28 = 9 supregs;
+                             keep ~2 scratch slots for the allocator }
 
       { Available Superregisters }
       {$i rs32sup.inc}
@@ -107,7 +131,7 @@ uses
       first_mm_imreg     = $20;
 
 { TODO: Calculate bsstart}
-      regnumber_count_bsstart = 32;
+      regnumber_count_bsstart = 64;
 
       regnumber_table : array[tregisterindex] of tregister = (
         {$i rs32num.inc}
@@ -227,7 +251,9 @@ uses
       NR_FUNCTION_RESULT64_HIGH_REG = NR_FUNCTION_RETURN64_HIGH_REG;
       RS_FUNCTION_RESULT64_HIGH_REG = RS_FUNCTION_RETURN64_HIGH_REG;
 
-      NR_FPU_RESULT_REG = NR_NO;
+      { f32 return in r1 (aliased as F1); f64 lives in r1:r2 but f64 isn't
+        wired through F-class yet (see cpupara.pas TODO). }
+      NR_FPU_RESULT_REG = NR_F1;
       NR_MM_RESULT_REG = NR_NO;
 
       NR_DEFAULTFLAGS = NR_NO;
@@ -241,14 +267,21 @@ uses
          cppdecl, cdecl, stdcall, safecall, palmossyscall. The registers
          saved should be the ones as defined in the target ABI and / or GCC.
 
-         SLOW-32 callee-saved: r29(sp), r30(fp), r31(lr), r11-r28(s0-s17)
+         SLOW-32 callee-saved (ABI): r29(sp), r30(fp), r31(lr), r11-r28(s0-s17).
+         Partition: r20-r28 are owned by the F-class allocator, so the int
+         allocator never marks them used and they're tracked separately via
+         saved_fpu_registers.
       }
-      saved_standard_registers : array[0..20] of tsuperregister = (
+      saved_standard_registers : array[0..11] of tsuperregister = (
         RS_R29,
         RS_R30,RS_R31,
         RS_R11,RS_R12,RS_R13,RS_R14,RS_R15,RS_R16,RS_R17,RS_R18,
-        RS_R19,RS_R20,RS_R21,RS_R22,RS_R23,RS_R24,RS_R25,RS_R26,
-        RS_R27,RS_R28
+        RS_R19
+      );
+
+      { F-class callee-saved partition (= r20..r28 viewed as soft-float regs). }
+      saved_fpu_registers : array[0..8] of tsuperregister = (
+        RS_F20,RS_F21,RS_F22,RS_F23,RS_F24,RS_F25,RS_F26,RS_F27,RS_F28
       );
 
       { this is only for the generic code which is not used for this architecture }
@@ -268,7 +301,7 @@ uses
                             CPU Dependent Constants
 *****************************************************************************}
 
-      maxfpuregs = 0;
+      maxfpuregs = 9; { allocator-visible F-class registers (F20..F28) }
 
 {*****************************************************************************
                                   Helpers
