@@ -76,6 +76,25 @@ else
     echo "" > "$PATCHES_DIR/04-clang-cmake.patch"
 fi
 
+# 5. Clang driver toolchain (slow32asm/s32-ld integration, -mdebug-io)
+echo "5. Generating Clang driver patch..."
+git diff $BASE HEAD -- \
+    clang/lib/Driver/ToolChains/SLOW32.h \
+    clang/lib/Driver/ToolChains/SLOW32.cpp \
+    clang/lib/Driver/Driver.cpp \
+    clang/lib/Driver/CMakeLists.txt \
+    clang/include/clang/Options/Options.td \
+    clang/test/Driver/slow32-toolchain.c \
+    > "$PATCHES_DIR/05-clang-driver.patch" 2>/dev/null || true
+
+if [ -s "$PATCHES_DIR/05-clang-driver.patch" ]; then
+    lines=$(wc -l < "$PATCHES_DIR/05-clang-driver.patch")
+    echo "   Created: 05-clang-driver.patch ($lines lines)"
+else
+    echo "   No changes in Clang driver files"
+    echo "" > "$PATCHES_DIR/05-clang-driver.patch"
+fi
+
 # Summary
 echo ""
 echo "Patch generation complete!"

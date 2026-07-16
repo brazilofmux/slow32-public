@@ -36,7 +36,8 @@ WORKDIR /build/llvm-project
 RUN patch -p1 < /build/patches/01-llvm-triple.patch && \
     patch -p1 < /build/patches/02-llvm-cmake.patch && \
     patch -p1 < /build/patches/03-clang-targets.patch && \
-    patch -p1 < /build/patches/04-clang-cmake.patch
+    patch -p1 < /build/patches/04-clang-cmake.patch && \
+    patch -p1 < /build/patches/05-clang-driver.patch
 
 # Configure and build LLVM with SLOW-32 target
 # Note: llc is built as part of LLVM core tools (not a separate project)

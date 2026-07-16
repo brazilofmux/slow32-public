@@ -37,6 +37,25 @@ public:
 
   const char *getTargetNodeName(unsigned Opcode) const override;
 
+  // SLOW-32 is single-hart with no preemption visible to the guest, so a
+  // plain load/store IS atomic with respect to every observer. Lower all
+  // atomic operations to their non-atomic equivalents. Revisit if the
+  // thread service routines ever become preemptive.
+  AtomicExpansionKind shouldExpandAtomicLoadInIR(LoadInst *LI) const override {
+    return AtomicExpansionKind::NotAtomic;
+  }
+  AtomicExpansionKind shouldExpandAtomicStoreInIR(StoreInst *SI) const override {
+    return AtomicExpansionKind::NotAtomic;
+  }
+  AtomicExpansionKind
+  shouldExpandAtomicRMWInIR(const AtomicRMWInst *RMW) const override {
+    return AtomicExpansionKind::NotAtomic;
+  }
+  AtomicExpansionKind
+  shouldExpandAtomicCmpXchgInIR(const AtomicCmpXchgInst *AI) const override {
+    return AtomicExpansionKind::NotAtomic;
+  }
+
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerExternalSymbol(SDValue Op, SelectionDAG &DAG) const;

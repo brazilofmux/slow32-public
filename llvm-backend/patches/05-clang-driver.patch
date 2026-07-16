@@ -1,0 +1,312 @@
+diff --git a/clang/include/clang/Options/Options.td b/clang/include/clang/Options/Options.td
+index bad443efb6c6..b8cd398bb9eb 100644
+--- a/clang/include/clang/Options/Options.td
++++ b/clang/include/clang/Options/Options.td
+@@ -5488,6 +5488,10 @@ def mguard_EQ : Joined<["-"], "mguard=">, Group<m_Group>,
+   Values<"none,cf,cf-nochecks">;
+ def mmcu_EQ : Joined<["-"], "mmcu=">, Group<m_Group>;
+ def msim : Flag<["-"], "msim">, Group<m_Group>;
++// SLOW-32 options
++def mdebug_io : Flag<["-"], "mdebug-io">, Group<m_Group>,
++  HelpText<"SLOW-32: link the DEBUG-instruction I/O runtime (libc_debug) "
++           "instead of the default MMIO runtime (libc_mmio)">;
+ def mfix_and_continue : Flag<["-"], "mfix-and-continue">, Group<clang_ignored_m_Group>;
+ def mieee_fp : Flag<["-"], "mieee-fp">, Group<clang_ignored_m_Group>;
+ def minline_all_stringops : Flag<["-"], "minline-all-stringops">, Group<clang_ignored_m_Group>;
+diff --git a/clang/lib/Driver/CMakeLists.txt b/clang/lib/Driver/CMakeLists.txt
+index 506536cdc04f..878d4f95ac73 100644
+--- a/clang/lib/Driver/CMakeLists.txt
++++ b/clang/lib/Driver/CMakeLists.txt
+@@ -94,6 +94,7 @@ add_clang_library(clangDriver
+   ToolChains/UEFI.cpp
+   ToolChains/VEToolchain.cpp
+   ToolChains/WebAssembly.cpp
++  ToolChains/SLOW32.cpp
+   ToolChains/XCore.cpp
+   ToolChains/PPCLinux.cpp
+   ToolChains/PPCFreeBSD.cpp
+diff --git a/clang/lib/Driver/Driver.cpp b/clang/lib/Driver/Driver.cpp
+index e606cdc4c1cf..c1b1bccc2f5c 100644
+--- a/clang/lib/Driver/Driver.cpp
++++ b/clang/lib/Driver/Driver.cpp
+@@ -51,6 +51,7 @@
+ #include "ToolChains/UEFI.h"
+ #include "ToolChains/VEToolchain.h"
+ #include "ToolChains/WebAssembly.h"
++#include "ToolChains/SLOW32.h"
+ #include "ToolChains/XCore.h"
+ #include "ToolChains/ZOS.h"
+ #include "clang/Basic/DiagnosticDriver.h"
+@@ -7277,6 +7278,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
+       case llvm::Triple::xcore:
+         TC = std::make_unique<toolchains::XCoreToolChain>(*this, Target, Args);
+         break;
++      case llvm::Triple::slow32:
++        TC = std::make_unique<toolchains::SLOW32ToolChain>(*this, Target, Args);
++        break;
+       case llvm::Triple::wasm32:
+       case llvm::Triple::wasm64:
+         TC = std::make_unique<toolchains::WebAssembly>(*this, Target, Args);
+diff --git a/clang/lib/Driver/ToolChains/SLOW32.cpp b/clang/lib/Driver/ToolChains/SLOW32.cpp
+new file mode 100644
+index 000000000000..271df526723a
+--- /dev/null
++++ b/clang/lib/Driver/ToolChains/SLOW32.cpp
+@@ -0,0 +1,124 @@
++//===--- SLOW32.cpp - SLOW-32 ToolChain Implementations ---------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "SLOW32.h"
++#include "clang/Driver/CommonArgs.h"
++#include "clang/Driver/Compilation.h"
++#include "clang/Driver/Driver.h"
++#include "clang/Driver/InputInfo.h"
++#include "clang/Options/Options.h"
++#include "llvm/Option/ArgList.h"
++#include "llvm/Support/Path.h"
++#include <cstdlib> // ::getenv
++
++using namespace clang::driver;
++using namespace clang::driver::toolchains;
++using namespace clang;
++using namespace llvm::opt;
++
++void tools::SLOW32::Assembler::ConstructJob(Compilation &C,
++                                            const JobAction &JA,
++                                            const InputInfo &Output,
++                                            const InputInfoList &Inputs,
++                                            const ArgList &Args,
++                                            const char *LinkingOutput) const {
++  claimNoWarnArgs(Args);
++  ArgStringList CmdArgs;
++
++  // slow32asm <input.s> <output.s32o>
++  assert(Inputs.size() == 1 && "SLOW-32 assembler takes exactly one input");
++  CmdArgs.push_back(Inputs[0].getFilename());
++  CmdArgs.push_back(Output.getFilename());
++
++  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath(
++      "slow32asm"));
++  C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
++                                         Exec, CmdArgs, Inputs, Output));
++}
++
++void tools::SLOW32::Linker::ConstructJob(Compilation &C, const JobAction &JA,
++                                         const InputInfo &Output,
++                                         const InputInfoList &Inputs,
++                                         const ArgList &Args,
++                                         const char *LinkingOutput) const {
++  const ToolChain &TC = getToolChain();
++  ArgStringList CmdArgs;
++
++  assert((Output.isFilename() || Output.isNothing()) && "Invalid output.");
++  if (Output.isFilename()) {
++    CmdArgs.push_back("-o");
++    CmdArgs.push_back(Output.getFilename());
++  }
++
++  // MMIO ring-buffer I/O is the default runtime; -mdebug-io selects the
++  // DEBUG-instruction runtime, which needs no MMIO window.
++  bool DebugIO = Args.hasArg(options::OPT_mdebug_io);
++  if (!DebugIO) {
++    CmdArgs.push_back("--mmio");
++    CmdArgs.push_back("64K");
++  }
++
++  // crt0 provides _start and must come first.
++  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
++    CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crt0.s32o")));
++
++  AddLinkerInputs(TC, Inputs, Args, CmdArgs, JA);
++
++  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
++    CmdArgs.push_back(Args.MakeArgString(
++        TC.GetFilePath(DebugIO ? "libc_debug.s32a" : "libc_mmio.s32a")));
++    CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("libs32.s32a")));
++  }
++
++  const char *Exec = Args.MakeArgString(TC.GetProgramPath("s32-ld"));
++  C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
++                                         Exec, CmdArgs, Inputs, Output));
++}
++
++/// SLOW-32 tool chain
++SLOW32ToolChain::SLOW32ToolChain(const Driver &D, const llvm::Triple &Triple,
++                                 const ArgList &Args)
++    : ToolChain(D, Triple, Args) {
++  // The runtime root: --sysroot, or SLOW32_HOME, in that order. It uses the
++  // layout of the slow-32 repository.
++  if (!D.SysRoot.empty())
++    RuntimeRoot = D.SysRoot;
++  else if (const char *Home = ::getenv("SLOW32_HOME"))
++    RuntimeRoot = Home;
++
++  if (!RuntimeRoot.empty()) {
++    SmallString<256> P;
++    P = RuntimeRoot;
++    llvm::sys::path::append(P, "tools", "assembler");
++    getProgramPaths().push_back(std::string(P));
++    P = RuntimeRoot;
++    llvm::sys::path::append(P, "tools", "linker");
++    getProgramPaths().push_back(std::string(P));
++    P = RuntimeRoot;
++    llvm::sys::path::append(P, "runtime");
++    getFilePaths().push_back(std::string(P));
++  }
++}
++
++Tool *SLOW32ToolChain::buildAssembler() const {
++  return new tools::SLOW32::Assembler(*this);
++}
++
++Tool *SLOW32ToolChain::buildLinker() const {
++  return new tools::SLOW32::Linker(*this);
++}
++
++void SLOW32ToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
++                                                ArgStringList &CC1Args) const {
++  if (DriverArgs.hasArg(options::OPT_nostdinc) ||
++      DriverArgs.hasArg(options::OPT_nostdlibinc) || RuntimeRoot.empty())
++    return;
++  SmallString<256> P(RuntimeRoot);
++  llvm::sys::path::append(P, "runtime", "include");
++  addSystemInclude(DriverArgs, CC1Args, P);
++}
+diff --git a/clang/lib/Driver/ToolChains/SLOW32.h b/clang/lib/Driver/ToolChains/SLOW32.h
+new file mode 100644
+index 000000000000..b369920c04d3
+--- /dev/null
++++ b/clang/lib/Driver/ToolChains/SLOW32.h
+@@ -0,0 +1,90 @@
++//===--- SLOW32.h - SLOW-32 ToolChain Implementations -----------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
++#define LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
++
++#include "clang/Driver/Tool.h"
++#include "clang/Driver/ToolChain.h"
++
++namespace clang {
++namespace driver {
++namespace tools {
++
++// Assembly and linking are handed to the SLOW-32 binutils (slow32asm and
++// s32-ld). Compilation itself is the ordinary "clang -cc1".
++namespace SLOW32 {
++
++class LLVM_LIBRARY_VISIBILITY Assembler final : public Tool {
++public:
++  Assembler(const ToolChain &TC) : Tool("SLOW32::Assembler", "slow32asm", TC) {}
++
++  bool hasIntegratedCPP() const override { return false; }
++  void ConstructJob(Compilation &C, const JobAction &JA,
++                    const InputInfo &Output, const InputInfoList &Inputs,
++                    const llvm::opt::ArgList &TCArgs,
++                    const char *LinkingOutput) const override;
++};
++
++class LLVM_LIBRARY_VISIBILITY Linker final : public Tool {
++public:
++  Linker(const ToolChain &TC) : Tool("SLOW32::Linker", "s32-ld", TC) {}
++
++  bool hasIntegratedCPP() const override { return false; }
++  bool isLinkJob() const override { return true; }
++  void ConstructJob(Compilation &C, const JobAction &JA,
++                    const InputInfo &Output, const InputInfoList &Inputs,
++                    const llvm::opt::ArgList &TCArgs,
++                    const char *LinkingOutput) const override;
++};
++
++} // end namespace SLOW32
++} // end namespace tools
++
++namespace toolchains {
++
++/// SLOW32ToolChain — drives the complete SLOW-32 pipeline:
++///   clang -cc1  ->  slow32asm (.s -> .s32o)  ->  s32-ld (.s32o -> .s32x)
++///
++/// The runtime root is located from --sysroot, or the SLOW32_HOME
++/// environment variable, and is expected to have the layout of the slow-32
++/// repository: runtime/{crt0.s32o,libc_mmio.s32a,libc_debug.s32a,
++/// libs32.s32a,include/}, tools/assembler/slow32asm, tools/linker/s32-ld.
++/// MMIO ring-buffer I/O (libc_mmio) is the default; -mdebug-io selects the
++/// DEBUG-instruction I/O runtime instead.
++class LLVM_LIBRARY_VISIBILITY SLOW32ToolChain : public ToolChain {
++public:
++  SLOW32ToolChain(const Driver &D, const llvm::Triple &Triple,
++                  const llvm::opt::ArgList &Args);
++
++  bool isPICDefault() const override { return false; }
++  bool isPIEDefault(const llvm::opt::ArgList &Args) const override {
++    return false;
++  }
++  bool isPICDefaultForced() const override { return false; }
++  bool IsIntegratedAssemblerDefault() const override { return false; }
++
++  void
++  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
++                            llvm::opt::ArgStringList &CC1Args) const override;
++
++  StringRef getRuntimeRoot() const { return RuntimeRoot; }
++
++protected:
++  Tool *buildAssembler() const override;
++  Tool *buildLinker() const override;
++
++private:
++  std::string RuntimeRoot;
++};
++
++} // end namespace toolchains
++} // end namespace driver
++} // end namespace clang
++
++#endif // LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
+diff --git a/clang/test/Driver/slow32-toolchain.c b/clang/test/Driver/slow32-toolchain.c
+new file mode 100644
+index 000000000000..4d994e021aa8
+--- /dev/null
++++ b/clang/test/Driver/slow32-toolchain.c
+@@ -0,0 +1,31 @@
++// Check the SLOW-32 driver pipeline: clang -cc1, then slow32asm, then s32-ld.
++
++// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
++// RUN:   | FileCheck %s
++// CHECK: "-cc1" "-triple" "slow32-unknown-none"
++// CHECK-SAME: "-internal-isystem" "{{.*}}/s32{{/|\\\\}}runtime{{/|\\\\}}include"
++// CHECK-SAME: "-femulated-tls"
++// CHECK: slow32asm
++// CHECK: s32-ld
++// CHECK-SAME: "--mmio" "64K"
++// CHECK-SAME: crt0.s32o
++// CHECK-SAME: libc_mmio.s32a
++// CHECK-SAME: libs32.s32a
++
++// -mdebug-io selects the DEBUG-instruction runtime and drops the MMIO window.
++// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 -mdebug-io %s \
++// RUN:   2>&1 | FileCheck --check-prefix=DEBUGIO %s
++// DEBUGIO: s32-ld
++// DEBUGIO-NOT: "--mmio"
++// DEBUGIO: libc_debug.s32a
++// DEBUGIO-NOT: libc_mmio.s32a
++
++// -nostdlib suppresses crt0 and the default libraries.
++// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 -nostdlib %s \
++// RUN:   2>&1 | FileCheck --check-prefix=NOSTDLIB %s
++// NOSTDLIB: s32-ld
++// NOSTDLIB-NOT: crt0.s32o
++// NOSTDLIB-NOT: libc_mmio.s32a
++// NOSTDLIB-NOT: libs32.s32a
++
++int main(void) { return 0; }

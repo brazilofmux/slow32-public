@@ -220,6 +220,14 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setMaxDivRemBitWidthSupported(64);
   setMaxLargeFPConvertBitWidthSupported(64);
 
+  // Atomics lower to plain ops (see shouldExpandAtomic* in the header);
+  // keep every width out of the __atomic_* libcall path and drop fences.
+  setMaxAtomicSizeInBitsSupported(128);
+  setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
+
+  // thread_local goes through emulated TLS (__emutls_get_address).
+  setOperationAction(ISD::GlobalTLSAddress, MVT::i32, Custom);
+
   // i1 values live in memory as bytes; promote loads/stores through i8.
   setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, MVT::i32,
                    MVT::i1, Promote);
@@ -495,6 +503,10 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::SMUL_LOHI:      return LowerSMUL_LOHI(Op, DAG);
     case ISD::UDIV:           return LowerUDIV(Op, DAG);
     case ISD::UREM:           return LowerUREM(Op, DAG);
+    // Single-hart: memory ordering is program order; fences are no-ops.
+    case ISD::ATOMIC_FENCE:   return Op.getOperand(0);
+    case ISD::GlobalTLSAddress:
+      return LowerToTLSEmulatedModel(cast<GlobalAddressSDNode>(Op), DAG);
     case ISD::SINT_TO_FP:
     case ISD::UINT_TO_FP: {
       // i64 → fp: split i64 into halves, combine into GPRPair, hardware convert

@@ -55,6 +55,7 @@ public:
     return getTM<SLOW32TargetMachine>();
   }
 
+  void addIRPasses() override;
   bool addInstSelector() override;
   void addPreRegAlloc() override;
   void addPreEmitPass() override;
@@ -67,6 +68,13 @@ public:
 
 TargetPassConfig *SLOW32TargetMachine::createPassConfig(PassManagerBase &PM) {
   return new SLOW32PassConfig(*this, PM);
+}
+
+void SLOW32PassConfig::addIRPasses() {
+  // Rewrites atomics the lowering hooks mark NotAtomic into plain ops and
+  // routes oversized/misaligned ones to __atomic_* libcalls.
+  addPass(createAtomicExpandLegacyPass());
+  TargetPassConfig::addIRPasses();
 }
 
 bool SLOW32PassConfig::addInstSelector() {

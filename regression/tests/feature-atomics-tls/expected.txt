@@ -1,0 +1,9 @@
+tls 42 T0
+ai 15
+cas 1 99
+cas2 0 99 99
+xchg 99 123
+all 0000000200000000
+flag 0 1
+big 1 4
+lockfree int 1 big 0

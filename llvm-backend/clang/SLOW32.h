@@ -52,8 +52,17 @@ public:
     WIntType = UnsignedInt;
     SigAtomicType = SignedInt;
     
-    // No TLS support yet
-    TLSSupported = false;
+    // TLS is provided via emulated TLS (__emutls_get_address in the
+    // runtime); the triple defaults to -femulated-tls.
+    TLSSupported = true;
+
+    // Single-hart machine: the backend lowers all atomics to plain ops,
+    // so everything up to 64 bits is inline and "lock-free". Oversized
+    // _Atomic types are padded/aligned up to 16 bytes so clang emits
+    // properly aligned __atomic_* libcalls for them. Revisit if thread
+    // service routines ever become preemptive.
+    MaxAtomicPromoteWidth = 128;
+    MaxAtomicInlineWidth = 64;
     
     // Data layout string matching SLOW32 backend
     // e = little endian

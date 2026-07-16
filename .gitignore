@@ -26,6 +26,8 @@ selfhost/stage02/*.py
 !tests/*.c
 !tests/*.ll
 !examples/*.c
+# LLVM codegen lit tests mirrored from ~/llvm-project by backup.sh
+!llvm-backend/test/*.ll
 test*.s
 test*.o
 verify*.s
