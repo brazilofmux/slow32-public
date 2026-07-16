@@ -1,5 +1,5 @@
 diff --git a/target/Kconfig b/target/Kconfig
-index 3c73e3bae0..92e16d795f 100644
+index 0288a3f416..db1a5320bb 100644
 --- a/target/Kconfig
 +++ b/target/Kconfig
 @@ -8,6 +8,7 @@ source m68k/Kconfig

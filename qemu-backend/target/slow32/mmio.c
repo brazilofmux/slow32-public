@@ -18,6 +18,7 @@
 #endif
 
 #include "exec/cpu-common.h"
+#include "system/physmem.h"
 #include "hw/core/cpu.h"
 #include "qemu/bswap.h"
 #include "qemu/cutils.h"
@@ -269,7 +270,7 @@ static uint32_t slow32_mmio_readl(const CPUSlow32State *env, uint32_t offset)
 {
     uint32_t value = 0;
 
-    cpu_physical_memory_read(slow32_mmio_addr(env, offset), &value,
+    physical_memory_read(slow32_mmio_addr(env, offset), &value,
                              sizeof(value));
     return le32_to_cpu(value);
 }
@@ -279,7 +280,7 @@ static void slow32_mmio_writel(const CPUSlow32State *env, uint32_t offset,
 {
     uint32_t tmp = cpu_to_le32(value);
 
-    cpu_physical_memory_write(slow32_mmio_addr(env, offset), &tmp,
+    physical_memory_write(slow32_mmio_addr(env, offset), &tmp,
                               sizeof(tmp));
 }
 
@@ -299,7 +300,7 @@ static void slow32_mmio_clear_window(const CPUSlow32State *env)
 
     for (uint32_t offset = 0; offset < S32_MMIO_WINDOW_SIZE;
          offset += sizeof(zero)) {
-        cpu_physical_memory_write(base + offset, zero,
+        physical_memory_write(base + offset, zero,
                                   MIN(sizeof(zero),
                                       S32_MMIO_WINDOW_SIZE - offset));
     }
@@ -1191,7 +1192,7 @@ static void slow32_mmio_read_desc(const CPUSlow32State *env, uint32_t index,
                   (hwaddr)index * S32_MMIO_DESC_BYTES;
     uint32_t words[S32_MMIO_DESC_WORDS] = {0};
 
-    cpu_physical_memory_read(addr, words, sizeof(words));
+    physical_memory_read(addr, words, sizeof(words));
     out->opcode = le32_to_cpu(words[0]);
     out->length = le32_to_cpu(words[1]);
     out->offset = le32_to_cpu(words[2]);
@@ -1210,7 +1211,7 @@ static void slow32_mmio_write_desc(const CPUSlow32State *env, uint32_t index,
     words[1] = cpu_to_le32(desc->length);
     words[2] = cpu_to_le32(desc->offset);
     words[3] = cpu_to_le32(desc->status);
-    cpu_physical_memory_write(addr, words, sizeof(words));
+    physical_memory_write(addr, words, sizeof(words));
 }
 
 static void slow32_mmio_copy_from_guest(const CPUSlow32State *env,
@@ -1227,7 +1228,7 @@ static void slow32_mmio_copy_from_guest(const CPUSlow32State *env,
 
     while (remaining) {
         uint32_t chunk = MIN(remaining, capacity - cursor);
-        cpu_physical_memory_read(base + cursor, dst, chunk);
+        physical_memory_read(base + cursor, dst, chunk);
         dst += chunk;
         remaining -= chunk;
         cursor = 0;
@@ -1248,7 +1249,7 @@ static void slow32_mmio_copy_to_guest(const CPUSlow32State *env,
 
     while (remaining) {
         uint32_t chunk = MIN(remaining, capacity - cursor);
-        cpu_physical_memory_write(base + cursor, src, chunk);
+        physical_memory_write(base + cursor, src, chunk);
         src += chunk;
         remaining -= chunk;
         cursor = 0;
@@ -1789,7 +1790,7 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             if (nread == 0) {
                 break; /* EOF */
             }
-            cpu_physical_memory_write((hwaddr)(guest_addr + total_read),
+            physical_memory_write((hwaddr)(guest_addr + total_read),
                                       ctx->scratch, (uint32_t)nread);
             total_read += (uint32_t)nread;
             if ((uint32_t)nread < chunk) {

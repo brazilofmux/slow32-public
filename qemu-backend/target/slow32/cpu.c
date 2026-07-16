@@ -8,6 +8,8 @@
 #include "hw/core/cpu.h"
 #include "hw/core/sysemu-cpu-ops.h"
 #include "exec/cputlb.h"
+#include "exec/page-protection.h"
+#include "accel/tcg/cpu-loop.h"
 #include "exec/target_page.h"
 #include "exec/translation-block.h"
 #include "exec/gdbstub.h"
