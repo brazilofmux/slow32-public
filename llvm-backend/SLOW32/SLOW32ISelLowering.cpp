@@ -214,6 +214,12 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setBooleanContents(ZeroOrOneBooleanContent);
   setBooleanVectorContents(ZeroOrOneBooleanContent);
 
+  // Wide _BitInt support: div/rem and FP conversions above 64 bits are
+  // inline-expanded (ExpandLargeDivRem / ExpandLargeFpConvert) instead of
+  // calling __divti3-family libcalls the runtime doesn't provide.
+  setMaxDivRemBitWidthSupported(64);
+  setMaxLargeFPConvertBitWidthSupported(64);
+
   // i1 values live in memory as bytes; promote loads/stores through i8.
   setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, MVT::i32,
                    MVT::i1, Promote);

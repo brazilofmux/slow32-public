@@ -130,6 +130,15 @@ public:
   }
 
   bool allowsLargerPreferedTypeAlignment() const override { return false; }
+
+  bool hasBitIntType() const override { return true; }
+
+  // Div/rem and FP conversions wider than 64 bits are inline-expanded by
+  // the backend (ExpandLargeDivRem/ExpandLargeFpConvert), so any IR-legal
+  // width works without extra runtime libcalls.
+  size_t getMaxBitIntWidth() const override {
+    return llvm::IntegerType::MAX_INT_BITS;
+  }
 };
 
 } // namespace targets
