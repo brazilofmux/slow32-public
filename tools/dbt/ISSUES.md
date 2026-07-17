@@ -155,33 +155,38 @@ heads are prescan-visible).
 (pre-fix: hangs/corrupts r24; post-fix: passes), alongside `cpp-exception-basic`
 in the differential suite.
 
-### translate_a64.c is missing the loop pre-warm that translate.c has
+### [RETRACTED, then reopened as a question] a64 vs x64 loop handling — and an unexplained 21%
 
-`translate.c` (x86-64) pre-warms loop-used registers into the register cache at block
-entry, then points the in-block back-edge at the pc_map offset *after* those loads — so a
-loop pays the cold-load sequence once on entry and skips it on every subsequent
-iteration. Implementation is around `translate.c:4594`; `ctx->loop_used_regs` /
-`loop_regs`, ~16 sites.
+**Original claim (2026-07-16, stood for about an hour):** `translate_a64.c` is missing
+the loop pre-warm that `translate.c` has (16 sites of `loop_regs`; zero on a64), and this
+likely explains the ~9.5 (x86-64) vs ~6-7.5 (Apple Silicon) spread.
 
-`translate_a64.c` does not implement it. Zero occurrences of `loop_regs`; zero pre-warm
-sites.
+**Retraction, same day:** the a64 translator doesn't need the pre-warm. The two files use
+different register-cache designs:
 
-**Why it matters:** on loop-dominated code this is a per-iteration cost. It is the most
-likely explanation for `docs/EMULATORS.md`'s long-standing "~9.5 BIPS (x86-64) / ~6 BIPS
-(Apple Silicon)" spread, which has always been recorded as though it were a property of
-the hardware. Measured 2026-07-16 on an Apple M5 Max: benchmark_core at
-`BENCH_ITERS=100000000u` runs 2,850,025,393 instructions in 0.380 s (7.50 BIPS).
+- `translate.c` (x86-64): **lazy demand-driven LRU.** Registers load at first use, so a
+  loop body contains loads — the pre-warm exists to hoist them out (evict non-loop regs
+  at the loop head, load loop regs, record the pc_map offset after the loads so the
+  back-edge skips them; plus `backedge_snapshot` stability machinery).
+- `translate_a64.c` (AArch64): **static prescan allocation, never evicts mid-block**
+  (comment at :1304). All eight slots load **once in the block prologue**
+  (`reg_alloc_emit_prologue`); the back-edge is a **bare `b.cond`/`cbz`** to the loop
+  head, no flush, no reload — stability *"guaranteed by AArch64's static prescan-based
+  allocation."*
 
-**Prior art to copy:** `~/riscv/dbt/dbt_a64.c` implements exactly this (self-loop
-detection + `warm_entry`), and its comment says it was written to *"match the x86
-backend's conservative rules so the runtime cache stays consistent across iterations."*
-Its eligibility rules are worth reading before reimplementing: strictly linear loop body
-(no forward branch before the back-edge, or the cache state at the back-edge depends on
-which path was taken), and at most `RC_NUM_SLOTS` distinct registers in the body (or
-translation evicts slots and breaks the "host reg X holds guest reg G" invariant).
+Both designs keep loop bodies free of cold loads. **Do not port the x64 pre-warm to
+a64 — it has no target.** And do not read the cross-host BIPS spread as attributing
+anything: Xeon vs Apple is different machines *and* different translators.
 
-**Caveat before anyone quotes a number:** the a64 gap has not been isolated. Confirming
-this is the cause means implementing it and re-measuring, or running the same guest binary
-on x86-64 and a64 and comparing. Do not attribute the SLOW-32/RISC-V benchmark delta to
-this without doing that work — that delta also spans two compilers and two slightly
-different programs.
+**What remains open, and is real:** on the same host (Apple M5 Max, 2026-07-16), on
+identical kernels (`benchmark_core.c` at `BENCH_ITERS=100000000u`), `~/riscv`'s AArch64
+DBT does 9.10 BIPS where this one does 7.50 — **21% faster per guest instruction, cause
+unknown.** Candidate differences, none verified: adaptive LRU + warm-entry vs static
+top-8 (matters only if a hot loop's working set isn't the block's top-8); instruction
+selection quality; superblock policy; guest instruction mix (RISC-V's fused
+compare-and-branch does more work per instruction, which makes per-instruction BIPS an
+awkward metric across guest ISAs). **Next step is not borrowing features — it's
+profiling: dump both emitted hot loops for the same kernel and count host instructions
+per iteration.** Also note the a64 static design's known theoretical weakness (working
+set beyond top-8 block-wide goes to memory on every access) has not been shown to fire
+on any real workload.
