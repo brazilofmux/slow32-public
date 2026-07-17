@@ -158,7 +158,7 @@ convert_extra.ll: OPT_LEVEL = -O2
 convert_extra.ll: convert_extra.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
-convert.ll: OPT_LEVEL = -O0
+convert.ll: OPT_LEVEL = -O2
 convert.ll: convert.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
@@ -170,12 +170,12 @@ time_extra.ll: OPT_LEVEL = -O2
 time_extra.ll: time_extra.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
-# Environment variable support (needs -O0 due to i1 load issue)
-envp_mmio.ll: OPT_LEVEL = -O0
+# Environment variable support
+envp_mmio.ll: OPT_LEVEL = -O2
 envp_mmio.ll: envp_mmio.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
-envp_stub.ll: OPT_LEVEL = -O0
+envp_stub.ll: OPT_LEVEL = -O2
 envp_stub.ll: envp_stub.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
