@@ -10,7 +10,7 @@ Five emulators exist with different trade-offs between capability, speed, and po
 | slow32 | Interpreter | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | slow32-fast | Pre-decoded | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | qemu-system-slow32 | TCG JIT | ~1 BIPS | Yes | Yes | Yes | `~/qemu` (separate repo) |
-| slow32-dbt | DBT JIT | ~6 BIPS (Apple Silicon) / ~9.5 BIPS (x86-64) | Yes | Yes | Yes | `tools/dbt/` |
+| slow32-dbt | DBT JIT | 7.5 BIPS (M5 Max) / ~6 BIPS (earlier Apple Silicon) / ~9.5 BIPS (x86-64) | Yes | Yes | Yes | `tools/dbt/` |
 
 ## s32-emu (Selfhost Bootstrap Emulator)
 
@@ -79,7 +79,25 @@ Architecture support:
 
 - **Build**: `make dbt` (gcc, auto-detects host architecture)
 - **Run**: `./tools/dbt/slow32-dbt program.s32x`
-- **Performance**: ~6 BIPS on Apple Silicon, ~9.5 BIPS on x86-64 (roughly 2.3 host instructions per guest instruction)
+- **Performance**: roughly 2.3 host instructions per guest instruction. BIPS is
+  strongly host-dependent, so quote it *with the machine*:
+
+  | Host | benchmark_core | Measured |
+  |------|---------------:|----------|
+  | x86-64 (Xeon 8259CL) | ~9.5 BIPS | — |
+  | Apple M5 Max | **7.50 BIPS** | 2026-07-16 |
+  | earlier Apple Silicon | ~6 BIPS | undated |
+
+  M5 Max figure: `examples/benchmark_core.c` rebuilt at `BENCH_ITERS=100000000u`,
+  2,850,025,393 instructions in 0.380 s (median of 5). **Do not use the checked-in
+  `benchmark_core.s32x` for cross-project comparisons** — it is built at
+  `BENCH_ITERS=10000000u` (285 M instructions), and at that size 21% of the runtime
+  is JIT warm-up (`slow32-dbt -p`: translate 0.010 s of a 0.047 s run). `~/riscv`'s
+  copy of the same source defaults to 100M, i.e. 10x larger; comparing the two
+  checked-in binaries compares a sprint to a marathon. Rebuild both at the same
+  `BENCH_ITERS` on the same host. Like-for-like on the M5 Max, `~/riscv`'s `rv32-run`
+  does 2,493,751,040 instructions in 0.274 s (9.10 BIPS) — 39% faster in wall time,
+  on 12.5% fewer instructions for identical kernels.
 - **Verification**: `--paranoid` lockstep shadow interpreter (verifies the
   register cache and in-block loops); `regression/run-differential.sh` diffs
   all engines on the full regression corpus
