@@ -154,3 +154,34 @@ heads are prescan-visible).
 `regression/tests/bug-dbt-backedge-regpressure/` reproduces the exact shape
 (pre-fix: hangs/corrupts r24; post-fix: passes), alongside `cpp-exception-basic`
 in the differential suite.
+
+### translate_a64.c is missing the loop pre-warm that translate.c has
+
+`translate.c` (x86-64) pre-warms loop-used registers into the register cache at block
+entry, then points the in-block back-edge at the pc_map offset *after* those loads — so a
+loop pays the cold-load sequence once on entry and skips it on every subsequent
+iteration. Implementation is around `translate.c:4594`; `ctx->loop_used_regs` /
+`loop_regs`, ~16 sites.
+
+`translate_a64.c` does not implement it. Zero occurrences of `loop_regs`; zero pre-warm
+sites.
+
+**Why it matters:** on loop-dominated code this is a per-iteration cost. It is the most
+likely explanation for `docs/EMULATORS.md`'s long-standing "~9.5 BIPS (x86-64) / ~6 BIPS
+(Apple Silicon)" spread, which has always been recorded as though it were a property of
+the hardware. Measured 2026-07-16 on an Apple M5 Max: benchmark_core at
+`BENCH_ITERS=100000000u` runs 2,850,025,393 instructions in 0.380 s (7.50 BIPS).
+
+**Prior art to copy:** `~/riscv/dbt/dbt_a64.c` implements exactly this (self-loop
+detection + `warm_entry`), and its comment says it was written to *"match the x86
+backend's conservative rules so the runtime cache stays consistent across iterations."*
+Its eligibility rules are worth reading before reimplementing: strictly linear loop body
+(no forward branch before the back-edge, or the cache state at the back-edge depends on
+which path was taken), and at most `RC_NUM_SLOTS` distinct registers in the body (or
+translation evicts slots and breaks the "host reg X holds guest reg G" invariant).
+
+**Caveat before anyone quotes a number:** the a64 gap has not been isolated. Confirming
+this is the cause means implementing it and re-measuring, or running the same guest binary
+on x86-64 and a64 and comparing. Do not attribute the SLOW-32/RISC-V benchmark delta to
+this without doing that work — that delta also spans two compilers and two slightly
+different programs.

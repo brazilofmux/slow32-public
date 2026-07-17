@@ -88,6 +88,15 @@ Architecture support:
   | Apple M5 Max | **7.50 BIPS** | 2026-07-16 |
   | earlier Apple Silicon | ~6 BIPS | undated |
 
+  **The x86-64 / AArch64 spread is probably not a hardware fact.**
+  `translate.c` pre-warms loop-used registers into the cache at block entry, so
+  the back-edge jumps past the cold loads and skips them every iteration
+  (`loop_regs`, 16 sites). **`translate_a64.c` does not implement this at all.**
+  On a loop-dominated benchmark that is worth real time, and it is the most
+  likely explanation for a64 trailing x86-64 by ~25% on the same guest binary.
+  Treat the AArch64 rows as measuring *the a64 translator's completeness*, not
+  the silicon. See `tools/dbt/ISSUES.md`.
+
   M5 Max figure: `examples/benchmark_core.c` rebuilt at `BENCH_ITERS=100000000u`,
   2,850,025,393 instructions in 0.380 s (median of 5). **Do not use the checked-in
   `benchmark_core.s32x` for cross-project comparisons** — it is built at
@@ -97,7 +106,12 @@ Architecture support:
   checked-in binaries compares a sprint to a marathon. Rebuild both at the same
   `BENCH_ITERS` on the same host. Like-for-like on the M5 Max, `~/riscv`'s `rv32-run`
   does 2,493,751,040 instructions in 0.274 s (9.10 BIPS) — 39% faster in wall time,
-  on 12.5% fewer instructions for identical kernels.
+  on 12.5% fewer instructions for identical kernels. **That gap is not attributed.**
+  Three variables are uncontrolled: the compilers differ (gcc vs this tree's LLVM
+  backend), the programs differ slightly (slow-32 links a libc for `printf`, 97
+  blocks translated vs 36), and — see above — `translate_a64.c` is missing the loop
+  pre-warm, while `~/riscv`'s `dbt_a64.c` has it. The measurement was taken on a64.
+  Re-running both on x86-64, where this tree's translator is whole, would settle it.
 - **Verification**: `--paranoid` lockstep shadow interpreter (verifies the
   register cache and in-block loops); `regression/run-differential.sh` diffs
   all engines on the full regression corpus
