@@ -190,3 +190,16 @@ profiling: dump both emitted hot loops for the same kernel and count host instru
 per iteration.** Also note the a64 static design's known theoretical weakness (working
 set beyond top-8 block-wide goes to memory on every access) has not been shown to fire
 on any real workload.
+
+**Update 2026-07-18 — the x86-64 run happened, and it shrinks this question.** dbase
+reports on a Cascade Lake Xeon: slow32-dbt 212.0 s vs rv32-run 177.7 s = 1.19, against
+the M5 Max's 1.38. Divide out the instruction-count component (~1.14, travels with the
+binaries) and the per-guest-instruction translator ratio is **~1.04 on x64 vs ~1.21 on
+a64**. So: the two x64 backends are near parity; the unexplained gap is specifically
+between the two **a64** backends (this tree's static-prescan design vs riscv's
+LRU+warm_entry — or Apple-microarch interaction with chained exits, or superblock
+policy; still unattributed). Even a full a64 catch-up would leave dbase-on-Mac at ~48 s
+vs riscv's 40 s, because the count component (compiler + fused branches) survives on
+every host. Remaining open step, optional: disassemble both a64 hot loops for the same
+kernel and count host instructions per iteration. Caveats: guests rebuilt on the Xeon;
+count-ratio proxy is benchmark_core's, not dbase's.
