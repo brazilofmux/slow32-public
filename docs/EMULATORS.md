@@ -96,6 +96,10 @@ Architecture support:
   3.5/4.6 BIPS are the same sprint arithmetic on another unstated config.
   **A BIPS figure without a machine, a build size, and a date is not a
   measurement — it's a rumor with units.**
+  Best candidate for the unrecorded host, per author recollection (2026-07-18):
+  a since-decommissioned Athlon x86-64, now in storage — *"it would have landed
+  between the Xeon and the MacBook Pro. I think."* Untestable; recorded as a
+  candidate, not a fact.
 
   **Do not read the x86-64 / AArch64 spread as attributing anything.** The two
   rows are different machines (Xeon vs Apple) running different translators, so
