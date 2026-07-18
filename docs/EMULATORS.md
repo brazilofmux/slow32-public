@@ -118,8 +118,18 @@ Architecture support:
   blocks translated vs 36), and the register-cache designs differ (adaptive LRU with
   warm-entry on riscv-a64 vs static prescan + eager prologue here — see above; both
   keep loops free of cold loads, neither is "incomplete"). The measurement was taken
-  on a64. Re-running both on x86-64 adds a datapoint; profiling the two emitted hot
-  loops on this host would do more.
+  on a64. **The x86-64 run happened (2026-07-18, Cascade Lake Xeon), and it
+  localizes the translator gap:** dbase reports came in at slow32-dbt 212.0 s vs
+  rv32-run 177.7 s — ratio **1.19**, against the M5 Max's 1.38. Dividing out the
+  instruction-count component (~1.14, travels with the binaries) leaves the
+  per-guest-instruction translator ratio at **~1.04 on x64 vs ~1.21 on a64** —
+  i.e. the two x64 backends are near parity and the "21%" is a fact about the
+  two **a64** backends specifically. What survives on every host is the
+  count component (compiler + fused branches, still not separable from each
+  other). Caveats: both guests were rebuilt on the Xeon (updated riscv runtime;
+  container LLVM for slow-32), and the count-ratio proxy comes from
+  benchmark_core, not dbase. The twelve reports were byte-identical again.
+  Profiling the two emitted a64 hot loops remains the open (optional) step.
 
   Real-workload replication (2026-07-17): the MAJESTY dBASE report suite — a
   54,481-record merge join, indexing, running balances, twelve reports — run
@@ -127,7 +137,17 @@ Architecture support:
   rv32-run 40.3 s. **Ratio 1.378 vs benchmark_core's 1.387** — two unrelated
   workloads agreeing within a point. All twelve report files byte-identical
   across the two guests. Same attribution caveats as above; the ratio is
-  robust, the cause is still unassigned.
+  robust, the cause is still unassigned — but see above: the x86-64 rerun
+  localizes the translator share to the a64 backends, and the rest is the
+  compilers'.
+
+  Separate flag from the same run: this Xeon executed the identical workload
+  **~4x slower than the M5 Max** (177.7 s vs 40.3 s on rv; 212.0 vs 55.5 on
+  s32) — while this file credits x86-64 with the DBT's best BIPS (~9.5).
+  Both can be true (tight register loops are what a high-clock Xeon does
+  best; a branchy indexed database is what Apple Silicon does best), but
+  "both can be true" is exactly the 2-07 shape. benchmark_core on that Xeon
+  at BENCH_ITERS=100M is the five-minute check. Not done.
 - **Verification**: `--paranoid` lockstep shadow interpreter (verifies the
   register cache and in-block loops); `regression/run-differential.sh` diffs
   all engines on the full regression corpus
