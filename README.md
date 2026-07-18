@@ -54,7 +54,7 @@ support is not currently a bootstrap target.
 - **DEBUG instruction** for character output; **MMIO ring buffers** for full I/O
 - **Native floating point**: f32/f64 arithmetic on GPRs (f64 in even register pairs)
 - **Sparse memory allocation** - Only allocates touched pages (99.4% memory savings!)
-- **Performance**: ~240 MIPS interpreted up to ~9.5 BIPS under the dynamic
+- **Performance**: ~240 MIPS interpreted up to ~7.5 BIPS under the dynamic
   binary translator — see [docs/EMULATORS.md](docs/EMULATORS.md)
 
 ### Register Convention
@@ -217,7 +217,7 @@ int main() {
 - ✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
 - ✅ **All optimization levels** - -O0, -O1, -O2 fully working
 - ✅ **Emulators** - interpreters (~240 MIPS), QEMU TCG target, and a DBT
-  reaching ~6-9.5 BIPS depending on host — see `docs/EMULATORS.md`
+  reaching ~4-7.5 BIPS depending on host (measured 2026-07; see docs/EMULATORS.md) — see `docs/EMULATORS.md`
 - ✅ **Assembler** - Two-pass with labels, relocations, standard directives
 - ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
 - ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit

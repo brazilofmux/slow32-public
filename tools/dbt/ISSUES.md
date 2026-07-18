@@ -203,3 +203,13 @@ vs riscv's 40 s, because the count component (compiler + fused branches) survive
 every host. Remaining open step, optional: disassemble both a64 hot loops for the same
 kernel and count host instructions per iteration. Caveats: guests rebuilt on the Xeon;
 count-ratio proxy is benchmark_core's, not dbase's.
+
+**Update 2026-07-18, later — benchmark_core on the same Xeon flips the ordering.**
+slow32-dbt 0.70 s vs rv32-run 0.81 s (median of 7; 4.07 vs 3.11 BIPS; both rebuilt at
+100M, checksum 0x27dcb1c8). Same box, same day, dbase had rv ahead by 16%. So the
+translator comparison is a function of (host, workload) — rv +21%/instruction on M5
+kernels, s32 +31%/instruction on Xeon kernels, ~parity on Xeon dbase — and no constant
+"faster translator" exists to go looking for. The a64 hot-loop diff remains the one
+bounded, optional question. Provenance of the old "~9.5 BIPS (x86-64)": a Stage-5
+profiling note ("0.03s, ~9.5 BIPS") — the 285M sprint on an unrecorded host — laundered
+into EMULATORS.md by the 2026-07-02 doc-reconcile. Retired there with a full note.

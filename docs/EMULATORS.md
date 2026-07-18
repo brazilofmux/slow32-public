@@ -82,11 +82,20 @@ Architecture support:
 - **Performance**: roughly 2.3 host instructions per guest instruction. BIPS is
   strongly host-dependent, so quote it *with the machine*:
 
-  | Host | benchmark_core | Measured |
+  | Host | benchmark_core @100M | Measured |
   |------|---------------:|----------|
-  | x86-64 (Xeon 8259CL) | ~9.5 BIPS | — |
   | Apple M5 Max | **7.50 BIPS** | 2026-07-16 |
-  | earlier Apple Silicon | ~6 BIPS | undated |
+  | Xeon 8259CL (EC2 m5.xlarge, virtualized) | **4.07 BIPS** | 2026-07-18 |
+
+  Retired claims, for the record: **"~9.5 BIPS (x86-64)"** entered this file
+  2026-07-02 (`c060f9c8`, the P2 doc-reconcile) with no in-repo measurement
+  behind it. Its source is a Stage-5 profiling note — *"0.03s, ~9.5 BIPS"* —
+  i.e. the checked-in 285M-instruction sprint (21% JIT warm-up) timed once on
+  an unrecorded host. It does not reproduce on an actual Xeon (4.07, above).
+  "~6 BIPS (Apple Silicon)" was likewise undated/unattributed. `TODO.md`'s
+  3.5/4.6 BIPS are the same sprint arithmetic on another unstated config.
+  **A BIPS figure without a machine, a build size, and a date is not a
+  measurement — it's a rumor with units.**
 
   **Do not read the x86-64 / AArch64 spread as attributing anything.** The two
   rows are different machines (Xeon vs Apple) running different translators, so
@@ -147,7 +156,18 @@ Architecture support:
   Both can be true (tight register loops are what a high-clock Xeon does
   best; a branchy indexed database is what Apple Silicon does best), but
   "both can be true" is exactly the 2-07 shape. benchmark_core on that Xeon
-  at BENCH_ITERS=100M is the five-minute check. Not done.
+  at BENCH_ITERS=100M is the five-minute check. **Now done (2026-07-18), and it flipped the story.** On the same Xeon, same
+  day: dbase has rv32-run ahead by 16% wall, but benchmark_core @100M has
+  **slow32-dbt ahead by 14%** (0.70 s vs 0.81 s median-of-7; 4.07 vs 3.11
+  BIPS; per-guest-instruction, slow32-dbt-x64 is ~31% faster on the kernels).
+  So the per-instruction translator comparison is not a constant even per
+  host — it is a function of (host, workload): rv +21% on M5 kernels,
+  s32 +31% on Xeon kernels, near-parity on Xeon dbase. rv32-run's published
+  "6.2 BIPS on a modern x86-64 host" also does not reproduce here (3.11) —
+  the same rumor-with-units disease on the other side. Count-convention
+  footnote: rv32-run's interpreter reports 2,518,751,041 for this build while
+  its DBT stat reports 2,493,751,040 — Δ = 25,000,001 = mem_iters+1, i.e. one
+  fused instruction per mem-loop iteration counted differently (~1%).
 - **Verification**: `--paranoid` lockstep shadow interpreter (verifies the
   register cache and in-block loops); `regression/run-differential.sh` diffs
   all engines on the full regression corpus
