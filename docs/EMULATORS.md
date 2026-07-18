@@ -120,6 +120,14 @@ Architecture support:
   keep loops free of cold loads, neither is "incomplete"). The measurement was taken
   on a64. Re-running both on x86-64 adds a datapoint; profiling the two emitted hot
   loops on this host would do more.
+
+  Real-workload replication (2026-07-17): the MAJESTY dBASE report suite — a
+  54,481-record merge join, indexing, running balances, twelve reports — run
+  end-to-end under both DBTs on the same M5 Max: slow32-dbt 55.5 s wall vs
+  rv32-run 40.3 s. **Ratio 1.378 vs benchmark_core's 1.387** — two unrelated
+  workloads agreeing within a point. All twelve report files byte-identical
+  across the two guests. Same attribution caveats as above; the ratio is
+  robust, the cause is still unassigned.
 - **Verification**: `--paranoid` lockstep shadow interpreter (verifies the
   register cache and in-block loops); `regression/run-differential.sh` diffs
   all engines on the full regression corpus
