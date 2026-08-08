@@ -43,11 +43,12 @@ entry:
 }
 
 ; Folding also applies when starting from an existing LOAD_ADDR.
+; SelectAddr folds +4 into the %hi/%lo pair (glob+4).
 define i32 @reload_from_global() {
 ; CHECK-LABEL: reload_from_global:
-; CHECK: lui [[BASE:r[0-9]+]], %hi(glob)
-; CHECK-NEXT: addi [[BASE]], [[BASE]], %lo(glob)
-; CHECK-NEXT: ldw [[VAL:r[0-9]+]], [[BASE]]+4
+; CHECK: lui [[BASE:r[0-9]+]], %hi(glob+4)
+; CHECK-NEXT: addi [[BASE]], [[BASE]], %lo(glob+4)
+; CHECK-NEXT: ldw [[VAL:r[0-9]+]], [[BASE]]+0
 ; CHECK-NEXT: jalr r0, r31, 0
 entry:
   %ptr = getelementptr inbounds i32, ptr @glob, i32 1

@@ -8,6 +8,8 @@
 
 #include "SLOW32.h"
 #include "SLOW32ISelLowering.h"
+#include "SLOW32RegisterInfo.h"
+#include "SLOW32Subtarget.h"
 #include "SLOW32TargetMachine.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
@@ -79,36 +81,33 @@ public:
         }
       }
 
+      auto tryBasePlusImm = [&](SDValue BaseIn, int64_t CVal) -> bool {
+        if (SDValue Folded =
+                tryFoldLoadAddrAddend(BaseIn, CVal, DL)) {
+          Base = Folded;
+          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+          return true;
+        }
+        if (!isInt<12>(CVal))
+          return false;
+        // Promote bare FrameIndex to TargetFrameIndex so the memory op
+        // carries FI in the base slot for eliminateFrameIndex.
+        if (auto *FI = dyn_cast<FrameIndexSDNode>(BaseIn))
+          Base = CurDAG->getTargetFrameIndex(FI->getIndex(), MVT::i32);
+        else
+          Base = BaseIn;
+        Offset = CurDAG->getTargetConstant(static_cast<uint32_t>(CVal), DL,
+                                           MVT::i32);
+        return true;
+      };
+
       if (const auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-        if (SDValue Folded = tryFoldLoadAddrAddend(N.getOperand(0),
-                                                   CN->getSExtValue(), DL)) {
-          Base = Folded;
-          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+        if (tryBasePlusImm(N.getOperand(0), CN->getSExtValue()))
           return true;
-        }
-
-        int64_t CVal = CN->getSExtValue();
-        if (isInt<12>(CVal)) {
-          Base = N.getOperand(0);
-          Offset = CurDAG->getTargetConstant(static_cast<uint32_t>(CVal), DL, MVT::i32);
-          return true;
-        }
       }
-
       if (const auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(0))) {
-        if (SDValue Folded = tryFoldLoadAddrAddend(N.getOperand(1),
-                                                   CN->getSExtValue(), DL)) {
-          Base = Folded;
-          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+        if (tryBasePlusImm(N.getOperand(1), CN->getSExtValue()))
           return true;
-        }
-
-        int64_t CVal = CN->getSExtValue();
-        if (isInt<12>(CVal)) {
-          Base = N.getOperand(1);
-          Offset = CurDAG->getTargetConstant(static_cast<uint32_t>(CVal), DL, MVT::i32);
-          return true;
-        }
       }
     }
 
@@ -367,16 +366,17 @@ public:
       return;
     }
     case ISD::FrameIndex: {
-      // Convert FrameIndex to an ADDI that will be fixed up later
+      // Materialise the address as ADDI FrameReg, FI; eliminateFrameIndex
+      // rewrites FI to the real offset. FrameReg is FP or SP depending on
+      // hasFP for this function.
       SDLoc DL(N);
       int FI = cast<FrameIndexSDNode>(N)->getIndex();
-      
-      // Create ADDI with FP and the frame index as an immediate
-      // eliminateFrameIndex will fix this up with the real offset
-      SDNode *Result = CurDAG->getMachineNode(SLOW32::ADDI, DL, MVT::i32,
-                                              CurDAG->getRegister(SLOW32::R30, MVT::i32),
-                                              CurDAG->getTargetFrameIndex(FI, MVT::i32));
-      
+      const SLOW32Subtarget &ST =
+          static_cast<const SLOW32TargetMachine &>(TM).getSubtarget();
+      Register FrameReg = ST.getRegisterInfo()->getFrameRegister(*MF);
+      SDNode *Result = CurDAG->getMachineNode(
+          SLOW32::ADDI, DL, MVT::i32, CurDAG->getRegister(FrameReg, MVT::i32),
+          CurDAG->getTargetFrameIndex(FI, MVT::i32));
       ReplaceNode(N, Result);
       return;
     }

@@ -17,9 +17,8 @@ def uimm12 : Operand<i32>, ImmLeaf<i32, [{
   return isUInt<12>(Imm);
 }]>;
 
-// Complex address pattern (SelectAddr in SLOW32ISelDAGToDAG.cpp).
-// Not yet wired into load/store patterns: putting TargetFrameIndex in the
-// base slot needs eliminateFrameIndex FI-as-base support first (see STATUS.md).
+// Complex address pattern (SelectAddr in SLOW32ISelDAGToDAG.cpp):
+// base + simm12, frame indices (FI as base), and global folding.
 def SLOW32Addr : ComplexPattern<iPTR, 2, "SelectAddr", [], []>;
 
 def GPRPairOp : RegisterOperand<GPRPair> {
@@ -375,43 +374,29 @@ def : Pat<(SLOW32hi tjumptable:$addr), (LUI tjumptable:$addr)>;
 // combination patterns are required here.
 
 
-// Patterns for loads and stores (explicit modes; SLOW32Addr not wired yet).
-def : Pat<(i32 (load (i32 GPR:$addr))), (LDW (i32 GPR:$addr), 0)>;
-def : Pat<(store (i32 GPR:$val), (i32 GPR:$addr)),
-          (STW (i32 GPR:$addr), (i32 GPR:$val), 0)>;
-
-def : Pat<(i32 (load (add (i32 GPR:$base), simm12:$offset))),
+// Load/store via SelectAddr. Base is typed i32 so TableGen can disambiguate
+// GPR (i32|f32). FI-as-base is rewritten by eliminateFrameIndex.
+def : Pat<(i32 (load (SLOW32Addr (i32 GPR:$base), simm12:$offset))),
           (LDW (i32 GPR:$base), simm12:$offset)>;
-def : Pat<(i32 (sextloadi8 (add (i32 GPR:$base), simm12:$offset))),
+def : Pat<(i32 (sextloadi8 (SLOW32Addr (i32 GPR:$base), simm12:$offset))),
           (LDB (i32 GPR:$base), simm12:$offset)>;
-def : Pat<(i32 (zextloadi8 (add (i32 GPR:$base), simm12:$offset))),
+def : Pat<(i32 (zextloadi8 (SLOW32Addr (i32 GPR:$base), simm12:$offset))),
           (LDBU (i32 GPR:$base), simm12:$offset)>;
-def : Pat<(i32 (extloadi8 (add (i32 GPR:$base), simm12:$offset))),
+def : Pat<(i32 (extloadi8 (SLOW32Addr (i32 GPR:$base), simm12:$offset))),
           (LDBU (i32 GPR:$base), simm12:$offset)>;
-def : Pat<(i32 (sextloadi16 (add (i32 GPR:$base), simm12:$offset))),
+def : Pat<(i32 (sextloadi16 (SLOW32Addr (i32 GPR:$base), simm12:$offset))),
           (LDH (i32 GPR:$base), simm12:$offset)>;
-def : Pat<(i32 (zextloadi16 (add (i32 GPR:$base), simm12:$offset))),
+def : Pat<(i32 (zextloadi16 (SLOW32Addr (i32 GPR:$base), simm12:$offset))),
           (LDHU (i32 GPR:$base), simm12:$offset)>;
-def : Pat<(i32 (extloadi16 (add (i32 GPR:$base), simm12:$offset))),
+def : Pat<(i32 (extloadi16 (SLOW32Addr (i32 GPR:$base), simm12:$offset))),
           (LDHU (i32 GPR:$base), simm12:$offset)>;
 
-def : Pat<(store (i32 GPR:$val), (add (i32 GPR:$base), simm12:$offset)),
+def : Pat<(store (i32 GPR:$val), (SLOW32Addr (i32 GPR:$base), simm12:$offset)),
           (STW (i32 GPR:$base), (i32 GPR:$val), simm12:$offset)>;
-def : Pat<(truncstorei8 (i32 GPR:$val), (add (i32 GPR:$base), simm12:$offset)),
+def : Pat<(truncstorei8 (i32 GPR:$val), (SLOW32Addr (i32 GPR:$base), simm12:$offset)),
           (STB (i32 GPR:$base), (i32 GPR:$val), simm12:$offset)>;
-def : Pat<(truncstorei16 (i32 GPR:$val), (add (i32 GPR:$base), simm12:$offset)),
+def : Pat<(truncstorei16 (i32 GPR:$val), (SLOW32Addr (i32 GPR:$base), simm12:$offset)),
           (STH (i32 GPR:$base), (i32 GPR:$val), simm12:$offset)>;
-
-def : Pat<(i32 (sextloadi8 (i32 GPR:$addr))), (LDB (i32 GPR:$addr), 0)>;
-def : Pat<(i32 (zextloadi8 (i32 GPR:$addr))), (LDBU (i32 GPR:$addr), 0)>;
-def : Pat<(i32 (extloadi8 (i32 GPR:$addr))), (LDBU (i32 GPR:$addr), 0)>;
-def : Pat<(i32 (sextloadi16 (i32 GPR:$addr))), (LDH (i32 GPR:$addr), 0)>;
-def : Pat<(i32 (zextloadi16 (i32 GPR:$addr))), (LDHU (i32 GPR:$addr), 0)>;
-def : Pat<(i32 (extloadi16 (i32 GPR:$addr))), (LDHU (i32 GPR:$addr), 0)>;
-def : Pat<(truncstorei8 (i32 GPR:$val), (i32 GPR:$addr)),
-          (STB (i32 GPR:$addr), (i32 GPR:$val), 0)>;
-def : Pat<(truncstorei16 (i32 GPR:$val), (i32 GPR:$addr)),
-          (STH (i32 GPR:$addr), (i32 GPR:$val), 0)>;
 
 // Sign/zero extension patterns  
 
@@ -716,14 +701,10 @@ let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], usesCusto
 // Additional patterns for better code generation
 //===----------------------------------------------------------------------===//
 
-// f32 load/store — f32 shares GPR with i32, uses LDW/STW.
-// STW operand order is (base, val, imm).
-def : Pat<(f32 (load (i32 GPR:$base))), (LDW (i32 GPR:$base), 0)>;
-def : Pat<(f32 (load (add (i32 GPR:$base), simm12:$off))),
+// f32 load/store — same SelectAddr addressing as i32.
+def : Pat<(f32 (load (SLOW32Addr (i32 GPR:$base), simm12:$off))),
           (LDW (i32 GPR:$base), simm12:$off)>;
-def : Pat<(store (f32 GPR:$val), (i32 GPR:$base)),
-          (STW (i32 GPR:$base), (f32 GPR:$val), 0)>;
-def : Pat<(store (f32 GPR:$val), (add (i32 GPR:$base), simm12:$off)),
+def : Pat<(store (f32 GPR:$val), (SLOW32Addr (i32 GPR:$base), simm12:$off)),
           (STW (i32 GPR:$base), (f32 GPR:$val), simm12:$off)>;
 
 // Patterns for constant materialization.

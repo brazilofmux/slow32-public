@@ -18,8 +18,9 @@ define i128 @ret_i128(i128 %a, i128 %b) {
 
 define void @caller(i128 %a, i128 %b, ptr %out) {
 ; CHECK-LABEL: caller:
-; The return slot address is passed to the callee in the first argument reg R3.
-; CHECK: add r3, r{{[0-9]+}}, r0
+; The return slot address is passed to the callee in the first argument reg R3
+; (materialised as add/addi from a stack temp or register).
+; CHECK: {{add|addi}} r3,
 ; CHECK: jal r31, ret_i128
   %r = call i128 @ret_i128(i128 %a, i128 %b)
   store i128 %r, ptr %out

@@ -9,10 +9,16 @@
 declare i32 @va(i32, i32, i32, i32, i32, i32, i32, double, ...)
 
 ; CHECK-LABEL: caller:
+; LR saved, then real call-frame adjust so stack args sit below LR.
+; CHECK: stw sp+0, lr
+; CHECK: addi sp, sp, -8
 ; Low half of the double goes in R10, high half is stored at the top of the
 ; outgoing argument area.
 ; CHECK-DAG: ldw r10,
 ; CHECK-DAG: stw sp+0,
+; CHECK: jal r31, va
+; CHECK: addi sp, sp, 8
+; CHECK: ldw lr, sp+0
 define i32 @caller() {
   %r = call i32 (i32, i32, i32, i32, i32, i32, i32, double, ...) @va(
         i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, double 3.5, i32 99)
@@ -21,9 +27,9 @@ define i32 @caller() {
 
 ; CHECK-LABEL: callee:
 ; The returned double's low half comes from R10 and its high half from the
-; incoming stack slot at fp+0 (return value in R1:R2).
+; incoming stack slot at sp+0 (leaf, no frame).
 ; CHECK: add r1, r10, r0
-; CHECK: ldw r2, r{{[0-9]+}}+0
+; CHECK: ldw r2, sp+0
 define double @callee(i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, double %d, ...) {
   ret double %d
 }

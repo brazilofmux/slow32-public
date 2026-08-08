@@ -167,19 +167,21 @@ void SLOW32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                           MachineInstr::MIFlag Flags) const {
   DebugLoc DL;
   if (I != MBB.end()) DL = I->getDebugLoc();
-  
+
+  const SLOW32RegisterInfo &RI = *STI.getRegisterInfo();
+  Register FrameReg = RI.getFrameRegister(*MBB.getParent());
+
   if (RC->hasSubClassEq(&SLOW32::GPRPairRegClass)) {
     if (SrcReg.isPhysical()) {
-      const SLOW32RegisterInfo &RI = *STI.getRegisterInfo();
       Register SrcLo = RI.getSubReg(SrcReg, gsub_0);
       Register SrcHi = RI.getSubReg(SrcReg, gsub_1);
       BuildMI(MBB, I, DL, get(SLOW32::STW_FI))
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addReg(SrcLo, getKillRegState(isKill))
           .addFrameIndex(FrameIndex)
           .addImm(0);
       BuildMI(MBB, I, DL, get(SLOW32::STW_FI))
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addReg(SrcHi, getKillRegState(isKill))
           .addFrameIndex(FrameIndex)
           .addImm(4);
@@ -187,12 +189,12 @@ void SLOW32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
       // Virtual register: pass subreg index on the operand so the register
       // allocator can resolve it later.
       BuildMI(MBB, I, DL, get(SLOW32::STW_FI))
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addReg(SrcReg, RegState(), gsub_0)
           .addFrameIndex(FrameIndex)
           .addImm(0);
       BuildMI(MBB, I, DL, get(SLOW32::STW_FI))
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addReg(SrcReg, getKillRegState(isKill), gsub_1)
           .addFrameIndex(FrameIndex)
           .addImm(4);
@@ -200,9 +202,10 @@ void SLOW32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     return;
   }
 
-  // Store word to stack slot.
+  // Store word to stack slot. FI sits in the imm slot; eliminateFrameIndex
+  // rewrites it using getFrameIndexReference.
   BuildMI(MBB, I, DL, get(SLOW32::STW))
-      .addReg(SLOW32::R30)  // Frame pointer
+      .addReg(FrameReg)
       .addReg(SrcReg, getKillRegState(isKill))
       .addFrameIndex(FrameIndex);
 }
@@ -216,29 +219,31 @@ void SLOW32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   DebugLoc DL;
   if (I != MBB.end()) DL = I->getDebugLoc();
 
+  const SLOW32RegisterInfo &RI = *STI.getRegisterInfo();
+  Register FrameReg = RI.getFrameRegister(*MBB.getParent());
+
   if (RC->hasSubClassEq(&SLOW32::GPRPairRegClass)) {
     if (DestReg.isPhysical()) {
-      const SLOW32RegisterInfo &RI = *STI.getRegisterInfo();
       Register DstLo = RI.getSubReg(DestReg, gsub_0);
       Register DstHi = RI.getSubReg(DestReg, gsub_1);
       BuildMI(MBB, I, DL, get(SLOW32::LDW_FI), DstLo)
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addFrameIndex(FrameIndex)
           .addImm(0);
       BuildMI(MBB, I, DL, get(SLOW32::LDW_FI), DstHi)
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addFrameIndex(FrameIndex)
           .addImm(4);
     } else {
       // Virtual register: define subregs so the allocator can resolve later.
       BuildMI(MBB, I, DL, get(SLOW32::LDW_FI))
           .addReg(DestReg, RegState::DefineNoRead, gsub_0)
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addFrameIndex(FrameIndex)
           .addImm(0);
       BuildMI(MBB, I, DL, get(SLOW32::LDW_FI))
           .addReg(DestReg, RegState::DefineNoRead, gsub_1)
-          .addReg(SLOW32::R30)
+          .addReg(FrameReg)
           .addFrameIndex(FrameIndex)
           .addImm(4);
     }
@@ -248,9 +253,8 @@ void SLOW32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   if (SubReg != 0)
     report_fatal_error("SLOW32 does not support sub-register stack reloads");
 
-  // Load word from stack slot.
   BuildMI(MBB, I, DL, get(SLOW32::LDW), DestReg)
-      .addReg(SLOW32::R30)  // Frame pointer
+      .addReg(FrameReg)
       .addFrameIndex(FrameIndex);
 }
 

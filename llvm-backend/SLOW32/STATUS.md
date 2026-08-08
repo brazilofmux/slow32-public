@@ -24,8 +24,9 @@ Last Reviewed: 2026-08-08
   voluntary `YIELD` to the host. Atomics expand to plain loads/stores.
 
 ## Working
-- Core SelectionDAG + MC plumbing, prologue/epilogue (fp+lr always owned by
-  prologue; not in the CSR list).
+- Core SelectionDAG + MC plumbing, prologue/epilogue: LR saved when the
+  function has calls; FP only when required (var-sized objects, frameaddress,
+  realignment, etc.). Neither is in the CSR list.
 - Integer/logic/shift/memory, mul/mulh, native signed/unsigned branches.
 - Call/return ABI with r1/r2 and r3–r10 pairs; sret demotion for oversized
   returns; varargs including f64 register/stack straddle.
@@ -41,8 +42,6 @@ Last Reviewed: 2026-08-08
 - Switches: chained compares work; jump tables expand (`BR_JT` → Expand) but
   lack dedicated optimisations / tests.
 - Integer `SELECT` is always branchless (`mask = -cond`); no size-tuned path.
-- Frame pointer is always on (`hasFPImpl` → true); leaf/no-alloca functions
-  still pay fp+lr prologue cost.
 - Feature flags (`+m`/`+f`/`+a`) exist but do not gate isel legality yet.
 - Dual libcall registration (TargetLowering + Subtarget) kept in sync via a
   shared helper; revisit when upstream drops one of the APIs.
@@ -66,10 +65,6 @@ varargs/f64 straddle, atomics+emutls, bitint, large frames, extload zext,
 elf relocs, and fp object encoding.
 
 ## Future Opportunities
-- Wire `SLOW32Addr` / `SelectAddr` into load/store patterns once
-  `eliminateFrameIndex` supports FI-as-base (today FI is expected in the
-  imm slot with a real base register).
-- Optional frame pointer for true leaves / no-alloca functions.
 - Size-tuned SELECT under `-Os` (branchless mask is always used today).
 - Gate mul/div/FP isel on subtarget features for a real `slow32-minimal`.
 - Align data-layout stack alignment (`S32` vs 16-byte frame preference).
