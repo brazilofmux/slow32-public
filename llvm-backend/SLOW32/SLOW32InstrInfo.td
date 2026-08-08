@@ -723,13 +723,9 @@ let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], usesCusto
 // Additional patterns for better code generation
 //===----------------------------------------------------------------------===//
 
-// Byte and halfword load patterns with different extensions
-def : Pat<(i32 (extloadi8 (add (i32 GPR:$rs1), simm12:$off))),
-          (LDB (i32 GPR:$rs1), simm12:$off)>;
-def : Pat<(i32 (extloadi16 (add (i32 GPR:$rs1), simm12:$off))),
-          (LDH (i32 GPR:$rs1), simm12:$off)>;
-
-// Zero extension patterns
+// Zero-extension load patterns. Anyext is zero-extend on SLOW32.
+// Note: anyext/zext patterns for base+offset already exist earlier
+// (→ LDBU/LDHU). Do not reintroduce signed LDB/LDH for extload.
 def : Pat<(i32 (zextloadi8 (add (i32 GPR:$rs1), simm12:$off))),
           (LDBU (i32 GPR:$rs1), simm12:$off)>;
 def : Pat<(i32 (zextloadi16 (add (i32 GPR:$rs1), simm12:$off))),
@@ -746,22 +742,10 @@ def : Pat<(i32 (add (i32 GPR:$rs1), simm12:$imm)),
           (ADDI (i32 GPR:$rs1), simm12:$imm)>;
 
 
-// Load/store pairs for memcpy optimization
-// These help LLVM see that it can use word-sized operations
-multiclass LoadStorePat<ValueType vt, PatFrag ldop, PatFrag stop, 
-                        S32Inst ldinst, S32Inst stinst> {
-  def : Pat<(vt (ldop (i32 GPR:$base))), (ldinst (i32 GPR:$base), 0)>;
-  def : Pat<(vt (ldop (add (i32 GPR:$base), simm12:$off))),
-            (ldinst (i32 GPR:$base), simm12:$off)>;
-  def : Pat<(stop vt:$val, (i32 GPR:$base)), (stinst (i32 GPR:$base), 0, vt:$val)>;
-  def : Pat<(stop vt:$val, (add (i32 GPR:$base), simm12:$off)),
-            (stinst (i32 GPR:$base), simm12:$off, vt:$val)>;
-}
-
-defm : LoadStorePat<i32, load, store, LDW, STW>;
-
 // f32 load/store patterns — f32 shares GPR with i32, uses LDW/STW.
-// Written explicitly because the multiclass store patterns need i32-typed operands.
+// STW operand order is (base, val, imm); keep these explicit.
+// (An earlier LoadStorePat multiclass had inverted store operands and was
+// redundant with the i32 patterns above — removed.)
 def : Pat<(f32 (load (i32 GPR:$base))), (LDW (i32 GPR:$base), 0)>;
 def : Pat<(f32 (load (add (i32 GPR:$base), simm12:$off))),
           (LDW (i32 GPR:$base), simm12:$off)>;
@@ -770,16 +754,13 @@ def : Pat<(store (f32 GPR:$val), (i32 GPR:$base)),
 def : Pat<(store (f32 GPR:$val), (add (i32 GPR:$base), simm12:$off)),
           (STW (i32 GPR:$base), (f32 GPR:$val), simm12:$off)>;
 
-// Patterns for constant materialization
+// Patterns for constant materialization.
+// LUI places its field at bits 31:12 (value = imm << 12). Do NOT map
+// (shl imm, 16) → LUI: that would produce imm<<12 instead of imm<<16.
+// Full constants go through custom ISD::Constant lowering in ISelDAGToDAG.
 def : Pat<(i32 0), (ADDI (i32 R0), 0)>;
 def : Pat<(i32 simm12:$imm), (ADDI (i32 R0), simm12:$imm)>;
 def : Pat<(i32 uimm12:$imm), (ORI (i32 R0), uimm12:$imm)>;
-
-// Upper 16-bit constant patterns
-def : Pat<(i32 (shl (i32 imm:$imm), (i32 16))),
-          (LUI imm:$imm)>;
-
-// Arithmetic with immediates in either order  
 
 // Pseudo for select - will be expanded later
 let usesCustomInserter = 1 in {
@@ -801,29 +782,8 @@ let usesCustomInserter = 1 in {
   }
 }
 
-// Select patterns (conditional move emulation)
 // SELECT lowering is handled in SLOW32ISelLowering; avoid pattern ambiguity
 // now that GPR includes both i32 and f32.
-
-// For i64 support, we need pseudo instructions for carry operations
-// These will be expanded to proper sequences later
-let Defs = [R0], usesCustomInserter = 1 in {
-  def ADDC_PSEUDO : Pseudo<(outs GPR:$sum, GPR:$carry), (ins GPR:$lhs, GPR:$rhs),
-                           "# ADDC_PSEUDO $sum, $carry, $lhs, $rhs">;
-  def ADDE_PSEUDO : Pseudo<(outs GPR:$sum, GPR:$carry), (ins GPR:$lhs, GPR:$rhs, GPR:$carryin),
-                           "# ADDE_PSEUDO $sum, $carry, $lhs, $rhs, $carryin">;
-  def SUBC_PSEUDO : Pseudo<(outs GPR:$diff, GPR:$borrow), (ins GPR:$lhs, GPR:$rhs),
-                           "# SUBC_PSEUDO $diff, $borrow, $lhs, $rhs">;
-  def SUBE_PSEUDO : Pseudo<(outs GPR:$diff, GPR:$borrow), (ins GPR:$lhs, GPR:$rhs, GPR:$borrowin),
-                           "# SUBE_PSEUDO $diff, $borrow, $lhs, $rhs, $borrowin">;
-}
-
-// Patterns for multi-word arithmetic
-def : Pat<(addc (i32 GPR:$lhs), (i32 GPR:$rhs)),
-          (ADDC_PSEUDO (i32 GPR:$lhs), (i32 GPR:$rhs))>;
-def : Pat<(adde (i32 GPR:$lhs), (i32 GPR:$rhs)),
-          (ADDE_PSEUDO (i32 GPR:$lhs), (i32 GPR:$rhs), (i32 R0))>;
-def : Pat<(subc (i32 GPR:$lhs), (i32 GPR:$rhs)),
-          (SUBC_PSEUDO (i32 GPR:$lhs), (i32 GPR:$rhs))>;
-def : Pat<(sube (i32 GPR:$lhs), (i32 GPR:$rhs)),
-          (SUBE_PSEUDO (i32 GPR:$lhs), (i32 GPR:$rhs), (i32 R0))>;
+//
+// Multi-word add/sub with carry uses custom UADDO/USUBO lowering, not ADDC
+// pseudos (those were deleted: Expand + dead custom-inserter stubs).

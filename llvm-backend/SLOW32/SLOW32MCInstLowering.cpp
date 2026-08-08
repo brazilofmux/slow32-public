@@ -13,6 +13,20 @@
 
 using namespace llvm;
 
+// Wrap an MC expression with %hi/%lo when the MachineOperand carries those
+// target flags. Shared by every symbolic operand kind so long-branch
+// materialisation (MBB + MO_HI/MO_LO) stays consistent with globals.
+static const MCExpr *applyHiLoFlags(const MCExpr *Expr,
+                                    const MachineOperand &MO,
+                                    MCContext &Ctx) {
+  unsigned TargetFlags = MO.getTargetFlags();
+  if (TargetFlags == SLOW32II::MO_HI)
+    return SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr, Ctx);
+  if (TargetFlags == SLOW32II::MO_LO)
+    return SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr, Ctx);
+  return Expr;
+}
+
 static MCOperand lowerOperand(AsmPrinter &AP, const MachineOperand &MO) {
   switch (MO.getType()) {
     case MachineOperand::MO_Register:
@@ -22,113 +36,59 @@ static MCOperand lowerOperand(AsmPrinter &AP, const MachineOperand &MO) {
     case MachineOperand::MO_GlobalAddress: {
       MCSymbol *Sym = AP.getSymbol(MO.getGlobal());
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
-      
+
       // Handle offset if present (e.g., for symbol+offset addressing)
-      // GlobalAddress supports getOffset()
       int64_t Offset = MO.getOffset();
       if (Offset != 0) {
-        // Create symbol+offset expression
         const MCExpr *OffsetExpr = MCConstantExpr::create(Offset, AP.OutContext);
         Expr = MCBinaryExpr::createAdd(Expr, OffsetExpr, AP.OutContext);
       }
-      
-      // Check target flags for %hi/%lo and wrap the expression
-      unsigned TargetFlags = MO.getTargetFlags();
-      if (TargetFlags == SLOW32II::MO_HI) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
-                                    AP.OutContext);
-      } else if (TargetFlags == SLOW32II::MO_LO) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
-                                    AP.OutContext);
-      }
-      
-      return MCOperand::createExpr(Expr);
+
+      return MCOperand::createExpr(applyHiLoFlags(Expr, MO, AP.OutContext));
     }
     case MachineOperand::MO_ExternalSymbol: {
+      // ExternalSymbol has no offset field.
       MCSymbol *Sym = AP.GetExternalSymbolSymbol(MO.getSymbolName());
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
-      
-      // ExternalSymbol doesn't have offset support - only GlobalAddress and JumpTableIndex do
-      
-      unsigned TargetFlags = MO.getTargetFlags();
-      if (TargetFlags == SLOW32II::MO_HI) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
-                                    AP.OutContext);
-      } else if (TargetFlags == SLOW32II::MO_LO) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
-                                    AP.OutContext);
-      }
-      
-      return MCOperand::createExpr(Expr);
+      return MCOperand::createExpr(applyHiLoFlags(Expr, MO, AP.OutContext));
     }
     case MachineOperand::MO_MachineBasicBlock: {
+      // Long-branch expansion stamps MO_HI/MO_LO on MBB operands for the
+      // LUI/ADDI materialisation sequence. Dropping those flags here produced
+      // bare labels (`lui r2, .LBB0_1`) that the external assembler rejects.
       MCSymbol *Sym = MO.getMBB()->getSymbol();
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
-      return MCOperand::createExpr(Expr);
+      return MCOperand::createExpr(applyHiLoFlags(Expr, MO, AP.OutContext));
     }
     case MachineOperand::MO_JumpTableIndex: {
+      // JumpTableIndex has no offset field.
       MCSymbol *Sym = AP.GetJTISymbol(MO.getIndex());
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
-      
-      // JumpTableIndex doesn't support getOffset() according to LLVM API
-      // Jump tables don't have offsets - they're indexed by the jump table index
-      
-      unsigned TargetFlags = MO.getTargetFlags();
-      if (TargetFlags == SLOW32II::MO_HI) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
-                                    AP.OutContext);
-      } else if (TargetFlags == SLOW32II::MO_LO) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
-                                    AP.OutContext);
-      }
-      
-      return MCOperand::createExpr(Expr);
+      return MCOperand::createExpr(applyHiLoFlags(Expr, MO, AP.OutContext));
     }
     case MachineOperand::MO_ConstantPoolIndex: {
-      // Handle constant pool references
       MCSymbol *Sym = AP.GetCPISymbol(MO.getIndex());
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
 
-      // ConstantPoolIndex supports getOffset()
       int64_t Offset = MO.getOffset();
       if (Offset != 0) {
         const MCExpr *OffsetExpr = MCConstantExpr::create(Offset, AP.OutContext);
         Expr = MCBinaryExpr::createAdd(Expr, OffsetExpr, AP.OutContext);
       }
 
-      unsigned TargetFlags = MO.getTargetFlags();
-      if (TargetFlags == SLOW32II::MO_HI) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
-                                    AP.OutContext);
-      } else if (TargetFlags == SLOW32II::MO_LO) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
-                                    AP.OutContext);
-      }
-
-      return MCOperand::createExpr(Expr);
+      return MCOperand::createExpr(applyHiLoFlags(Expr, MO, AP.OutContext));
     }
     case MachineOperand::MO_BlockAddress: {
-      // Handle block addresses
       MCSymbol *Sym = AP.GetBlockAddressSymbol(MO.getBlockAddress());
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
 
-      // BlockAddress supports getOffset()
       int64_t Offset = MO.getOffset();
       if (Offset != 0) {
         const MCExpr *OffsetExpr = MCConstantExpr::create(Offset, AP.OutContext);
         Expr = MCBinaryExpr::createAdd(Expr, OffsetExpr, AP.OutContext);
       }
 
-      unsigned TargetFlags = MO.getTargetFlags();
-      if (TargetFlags == SLOW32II::MO_HI) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
-                                    AP.OutContext);
-      } else if (TargetFlags == SLOW32II::MO_LO) {
-        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
-                                    AP.OutContext);
-      }
-
-      return MCOperand::createExpr(Expr);
+      return MCOperand::createExpr(applyHiLoFlags(Expr, MO, AP.OutContext));
     }
     case MachineOperand::MO_Metadata:
       // Skip metadata operands - they shouldn't be lowered to MC

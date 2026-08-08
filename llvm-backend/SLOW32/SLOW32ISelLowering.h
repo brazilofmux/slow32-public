@@ -37,10 +37,11 @@ public:
 
   const char *getTargetNodeName(unsigned Opcode) const override;
 
-  // SLOW-32 is single-hart with no preemption visible to the guest, so a
-  // plain load/store IS atomic with respect to every observer. Lower all
-  // atomic operations to their non-atomic equivalents. Revisit if the
-  // thread service routines ever become preemptive.
+  // SLOW-32 is single-hart: no interrupts, no threads. Control leaves the
+  // guest only via a voluntary YIELD to the host emulator, so a plain
+  // load/store IS atomic with respect to every observer. Lower all atomic
+  // operations to their non-atomic equivalents. Revisit if the ISA ever
+  // gains preemptive interrupts or true multi-hart shared memory.
   AtomicExpansionKind shouldExpandAtomicLoadInIR(LoadInst *LI) const override {
     return AtomicExpansionKind::NotAtomic;
   }
