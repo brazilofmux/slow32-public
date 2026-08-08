@@ -1,8 +1,8 @@
 diff --git a/clang/include/clang/Options/Options.td b/clang/include/clang/Options/Options.td
-index bad443efb6c6..b8cd398bb9eb 100644
+index cf66ee3e52f2..2a8ef5f86476 100644
 --- a/clang/include/clang/Options/Options.td
 +++ b/clang/include/clang/Options/Options.td
-@@ -5488,6 +5488,10 @@ def mguard_EQ : Joined<["-"], "mguard=">, Group<m_Group>,
+@@ -5563,6 +5563,10 @@ def mguard_EQ : Joined<["-"], "mguard=">, Group<m_Group>,
    Values<"none,cf,cf-nochecks">;
  def mmcu_EQ : Joined<["-"], "mmcu=">, Group<m_Group>;
  def msim : Flag<["-"], "msim">, Group<m_Group>;
@@ -26,7 +26,7 @@ index 506536cdc04f..878d4f95ac73 100644
    ToolChains/PPCLinux.cpp
    ToolChains/PPCFreeBSD.cpp
 diff --git a/clang/lib/Driver/Driver.cpp b/clang/lib/Driver/Driver.cpp
-index e606cdc4c1cf..c1b1bccc2f5c 100644
+index 3b5d0c0aad98..ceb63594a428 100644
 --- a/clang/lib/Driver/Driver.cpp
 +++ b/clang/lib/Driver/Driver.cpp
 @@ -51,6 +51,7 @@
@@ -37,7 +37,7 @@ index e606cdc4c1cf..c1b1bccc2f5c 100644
  #include "ToolChains/XCore.h"
  #include "ToolChains/ZOS.h"
  #include "clang/Basic/DiagnosticDriver.h"
-@@ -7277,6 +7278,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
+@@ -7322,6 +7323,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
        case llvm::Triple::xcore:
          TC = std::make_unique<toolchains::XCoreToolChain>(*this, Target, Args);
          break;
