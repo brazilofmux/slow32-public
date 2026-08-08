@@ -2,6 +2,7 @@
 #include "SLOW32.h"
 #include "SLOW32MachineFunctionInfo.h"
 #include "SLOW32RegisterInfo.h"
+#include "SLOW32RuntimeLibcalls.h"
 #include "SLOW32Subtarget.h"
 #include "SLOW32TargetMachine.h"
 #include "llvm/CodeGen/SelectionDAG.h"
@@ -253,42 +254,10 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::UDIVREM, MVT::i32, Expand);  // Combined operation also needs expansion
   setOperationAction(ISD::SDIVREM, MVT::i32, Expand);  // Also expand signed divrem
   
-  // SLOW32 is not recognized in LLVM's RuntimeLibcalls infrastructure,
-  // so we need to explicitly set which libcall implementations to use.
-  // These must be set in BOTH places due to LLVM's transitional libcall API:
-  //   - Here via setLibcallImpl() for makeLibCall(RTLIB::Libcall) calls
-  //   - In SLOW32Subtarget::initLibcallLoweringInfo() for DAG.getLibcalls() calls
-
-  // i64 division/remainder
-  setLibcallImpl(RTLIB::SDIV_I64, RTLIB::impl___divdi3);
-  setLibcallImpl(RTLIB::UDIV_I64, RTLIB::impl___udivdi3);
-  setLibcallImpl(RTLIB::SREM_I64, RTLIB::impl___moddi3);
-  setLibcallImpl(RTLIB::UREM_I64, RTLIB::impl___umoddi3);
-
-  // i32 unsigned division/remainder (SLOW32 only has signed DIV/REM instructions)
-  setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
-  setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);
-  setLibcallImpl(RTLIB::REM_F32, RTLIB::impl_fmodf);
-  setLibcallImpl(RTLIB::REM_F64, RTLIB::impl_fmod);
-  setLibcallImpl(RTLIB::RINT_F32, RTLIB::impl_rintf);
-  setLibcallImpl(RTLIB::RINT_F64, RTLIB::impl_rint);
-  setLibcallImpl(RTLIB::NEARBYINT_F32, RTLIB::impl_nearbyintf);
-  setLibcallImpl(RTLIB::NEARBYINT_F64, RTLIB::impl_nearbyint);
-  setLibcallImpl(RTLIB::FLOOR_F32, RTLIB::impl_floorf);
-  setLibcallImpl(RTLIB::FLOOR_F64, RTLIB::impl_floor);
-  setLibcallImpl(RTLIB::CEIL_F32, RTLIB::impl_ceilf);
-  setLibcallImpl(RTLIB::CEIL_F64, RTLIB::impl_ceil);
-  setLibcallImpl(RTLIB::TRUNC_F32, RTLIB::impl_truncf);
-  setLibcallImpl(RTLIB::TRUNC_F64, RTLIB::impl_trunc);
-  setLibcallImpl(RTLIB::ROUND_F32, RTLIB::impl_roundf);
-  setLibcallImpl(RTLIB::ROUND_F64, RTLIB::impl_round);
-  setLibcallImpl(RTLIB::FMA_F32, RTLIB::impl_fmaf);
-  setLibcallImpl(RTLIB::FMA_F64, RTLIB::impl_fma);
-
-  // The runtime ships native C implementations of the basic memory helpers.
-  setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
-  setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
-  setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
+  // Libcall bindings live in SLOW32RuntimeLibcalls.h and are applied here
+  // (makeLibCall) and again in Subtarget::initLibcallLoweringInfo
+  // (DAG.getLibcalls) while LLVM's RuntimeLibcalls API is transitional.
+  setSLOW32LibcallImpls(*this);
 
   // SELECT is our canonical operation — SELECT_CC always expands to SELECT + SETCC
   setOperationAction(ISD::SELECT_CC, MVT::i32, Expand);
@@ -375,7 +344,7 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // This will cause LLVM to generate libcalls to __divdi3, __udivdi3, __moddi3, __umoddi3
   // These need to be provided by compiler-rt or a similar runtime library
   
-  // Register custom DAG combines
+  // Register custom DAG combines (LOAD/STORE stubs removed — no-ops)
   setTargetDAGCombine({ISD::ADD, ISD::MUL, ISD::AND, ISD::OR, ISD::SHL});
 
   // f32/f64 operations are legal; fmod remains a libcall.
@@ -1817,66 +1786,6 @@ SLOW32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   DebugLoc DL = MI.getDebugLoc();
 
   switch (MI.getOpcode()) {
-  case SLOW32::SELECT_PSEUDO: {
-    // SELECT_PSEUDO expands to a triangle pattern with a PHI:
-    //
-    //   HeadMBB:
-    //     bne $cond, r0, TailMBB   // if true, branch to TailMBB
-    //   IfFalseMBB:                 // fallthrough (condition is false)
-    //   TailMBB:
-    //     $dst = PHI [$t, HeadMBB], [$f, IfFalseMBB]
-
-    MachineFunction *MF = BB->getParent();
-    const BasicBlock *LLVM_BB = BB->getBasicBlock();
-
-    MachineBasicBlock *HeadMBB = BB;
-    MachineBasicBlock *IfFalseMBB = MF->CreateMachineBasicBlock(LLVM_BB);
-    MachineBasicBlock *TailMBB = MF->CreateMachineBasicBlock(LLVM_BB);
-
-    MachineFunction::iterator It = ++BB->getIterator();
-    MF->insert(It, IfFalseMBB);
-    MF->insert(It, TailMBB);
-
-    // Move everything after SELECT_PSEUDO to TailMBB.
-    TailMBB->splice(TailMBB->begin(), HeadMBB,
-                    std::next(MachineBasicBlock::iterator(MI)),
-                    HeadMBB->end());
-    TailMBB->transferSuccessorsAndUpdatePHIs(HeadMBB);
-
-    // Set up CFG edges.
-    HeadMBB->addSuccessor(IfFalseMBB);
-    HeadMBB->addSuccessor(TailMBB);
-    IfFalseMBB->addSuccessor(TailMBB);
-
-    // HeadMBB: bne $cond, r0, TailMBB  (if true, skip to TailMBB)
-    BuildMI(HeadMBB, DL, TII.get(SLOW32::BNE))
-        .addReg(MI.getOperand(1).getReg())  // $cond
-        .addReg(SLOW32::R0)
-        .addMBB(TailMBB);
-
-    // IfFalseMBB is empty — just falls through to TailMBB.
-
-    // Propagate live-ins from HeadMBB to the new blocks.  Physical
-    // registers like the stack pointer (R29) must be listed as live-in
-    // in every block that reaches a use.
-    for (const auto &LI : HeadMBB->liveins()) {
-      IfFalseMBB->addLiveIn(LI);
-      TailMBB->addLiveIn(LI);
-    }
-
-    // TailMBB: PHI to merge true/false values.
-    BuildMI(*TailMBB, TailMBB->begin(), DL, TII.get(SLOW32::PHI),
-            MI.getOperand(0).getReg())
-        .addReg(MI.getOperand(2).getReg())  // $t (from HeadMBB)
-        .addMBB(HeadMBB)
-        .addReg(MI.getOperand(3).getReg())  // $f (from IfFalseMBB)
-        .addMBB(IfFalseMBB);
-
-    MF->getProperties().resetNoPHIs();
-
-    MI.eraseFromParent();
-    return TailMBB;
-  }
   case SLOW32::BuildPairF64Pseudo: {
     // Combine two i32 halves into a GPRPair (f64) via REG_SEQUENCE.
     Register LoReg = MI.getOperand(1).getReg();

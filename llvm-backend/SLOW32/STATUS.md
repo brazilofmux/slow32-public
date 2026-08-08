@@ -1,45 +1,76 @@
 # SLOW32 Backend Status
 
-Last Reviewed: 2025-09-29  
-Next Review Due: 2025-11-15 (archive this file if the date passes)
+Last Reviewed: 2026-08-08
 
 ## Overview
-- Backend is active on LLVM main; llc and clang build with assertions on.
-- SelectionDAG, MC, and pass config are exercised by medium-sized C workloads.
-- Treat this snapshot as living documentation; drop it after the next review if it is still stale.
+- Backend tracks LLVM main; `llc` and `clang` build with SLOW32 as the default
+  triple (`slow32-unknown-none`).
+- SelectionDAG, MC, frame lowering, and the clang driver toolchain are exercised
+  by lit tests under `llvm/test/CodeGen/SLOW32/` plus
+  `clang/test/Driver/slow32-toolchain.c`.
+- Integration patches and a backend mirror live in the `slow-32` repo
+  (`llvm-backend/`); regenerate with `scripts/generate-patches.sh` +
+  `scripts/backup.sh` after rebases or backend edits.
 
-## Architecture Reminder
-- 32-bit little-endian RISC with 32 GPRs; `r0`=zero, `r29`=sp, `r30`=fp, `r31`=lr.
-- Base + signed 12-bit offset addressing; stack grows down from `0x0FFFFFF0`.
-- Data layout mirrors clang: `e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-f32:32:32-f64:32:32-n8:16:32-S32`.
+## Architecture
+- 32-bit little-endian RISC, 32 GPRs: `r0`=zero, `r2` reserved (long-branch
+  scratch / MC relaxation), `r29`=sp, `r30`=fp, `r31`=lr.
+- Base + signed 12-bit offset addressing; stack grows down.
+- Data layout (clang + backend):  
+  `e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-f32:32:32-f64:32:32-n8:16:32-S32`
+- Frame lowering requests 16-byte stack alignment; layout string still says `S32`
+  (safe over-align; unify later if ABI tooling cares).
+- Single-hart only: no interrupts, no threads. Control leaves the guest only via
+  voluntary `YIELD` to the host. Atomics expand to plain loads/stores.
 
-## ✅ Working
-- Core SelectionDAG + MC plumbing, prologue/epilogue, and register classes.
-- Integer, logical, shift, and memory instructions (immediate and register forms).
-- Multiply + high-multiply (`MUL`, `MULH`) opcodes in instruction selection.
-- Call/return path with glue-managed CopyToReg, `%hi`/`%lo` global materialisation, and stack argument spill.
-- 64-bit scalar ABI now routes through the r1/r2 and r3/r4 register pairs without gratuitous spill slots.
-- Varargs fast path: `va_start`, register spill to the shadow area, and `va_arg` for integers/pointers.
-- Inline asm constraints `'r'`, `'i'`, `'n'`, `'m'` with register aliases.
-- Signed/unsigned conditional branches select native BLE/BGT/BLTU/BGEU/BGTU/BLEU sequences via dedicated opcodes.
+## Working
+- Core SelectionDAG + MC plumbing, prologue/epilogue (fp+lr always owned by
+  prologue; not in the CSR list).
+- Integer/logic/shift/memory, mul/mulh, native signed/unsigned branches.
+- Call/return ABI with r1/r2 and r3–r10 pairs; sret demotion for oversized
+  returns; varargs including f64 register/stack straddle.
+- Globals/JT/CPI/blockaddr via `LOAD_ADDR` → `%hi`/`%lo` (LUI+ADDI).
+- Long-branch relaxation (machine + MC); PostRA expansion stamps MO_HI/MO_LO
+  on MBB operands; MC lowering wraps `%hi`/`%lo` for the external assembler.
+- f32/f64 in GPRs / GPRPair; NaN-correct compares; i64↔fp via FCVT_* pairs.
+- Emulated TLS (`__emutls_get_address`); single-hart atomics (NotAtomic).
+- C23 `_BitInt` with wide div/rem/fp-convert expand limits at 64 bits.
+- Clang target + driver toolchain (slow32asm / s32-ld / mmio vs debug-io).
 
-## ⚠️ Partially Working
-- Switches: chained compares succeed; jump tables and tail-dup guards are still TODO.
-- Varargs: heavy mixes beyond eight register args need more stress and clang `va_list` layout cleanup.
-- Machine verifier: `-O0` occasionally flags missing barriers around synthesised compare/branch sequences.
+## Partially Working / Soft Spots
+- Switches: chained compares work; jump tables expand (`BR_JT` → Expand) but
+  lack dedicated optimisations / tests.
+- Integer `SELECT` is always branchless (`mask = -cond`); no size-tuned path.
+- Frame pointer is always on (`hasFPImpl` → true); leaf/no-alloca functions
+  still pay fp+lr prologue cost.
+- Feature flags (`+m`/`+f`/`+a`) exist but do not gate isel legality yet.
+- Dual libcall registration (TargetLowering + Subtarget) kept in sync via a
+  shared helper; revisit when upstream drops one of the APIs.
 
-## ❌ Still Todo
-- Wire up an `isMBBSafeToTailDuplicate` guard in `SLOW32InstrInfo` to keep RET+BR blocks sane.
-- Map `llvm.memcpy/memmove/memset` intrinsics to the correct libcall name instead of hard-wiring `memcpy`.
-- Debug info, TLS, atomics, and FP remain out of scope for now.
-
-## 🐛 Known Issues
-- Constant folding for `(C + reg)` in truncated contexts can produce incorrect low bits.
-- Some libcall lowers from intrinsics emit `memcpy` even for memset/memmove.
-- MachineVerifier occasionally reports fallthrough after conditionals when branch barriers are rewritten.
+## Known Pitfalls (fixed or documented)
+- ~~MBB long-branch ops dropped `%hi`/`%lo`~~ — fixed 2026-08-08.
+- ~~`(shl imm, 16) → LUI`~~ — removed (LUI is `<<12`).
+- ~~Duplicate signed `extload` patterns~~ — removed.
+- ~~R30/R31 double-spilled via CSR + prologue~~ — CSR list no longer includes them.
+- ~~Dead ADDC/ADDE/SUBC/SUBE custom-inserter stubs~~ — removed.
+- Handwritten assembly that triggers MC branch relaxation must treat `r2` as
+  clobbered (relaxation uses it as scratch).
 
 ## Regression Tests
-- Run `ninja -C build check-llvm-codegen-SLOW32` and `check-clang` before merging.
-- Current suite covers arithmetic/control/varargs/addressing plus native branch opcode selection (`llvm/test/CodeGen/SLOW32/branches.ll`); extend it for jump tables and inline asm clobbers.
-- f32/f64 arithmetic, compare, and convert lower to native FP opcodes in GPRs (f64 uses even/odd register pairs). Transcendentals such as `fmodf`/`fmod` remain libcalls.
-- Refresh this section with concrete pass/fail counts on each review cycle; archive the document if it is not updated by the next review date.
+```
+./build/bin/llvm-lit -v llvm/test/CodeGen/SLOW32/
+./build/bin/llvm-lit -v clang/test/Driver/slow32-toolchain.c
+```
+Coverage includes addressing, branches (PC+4 fixups), long-branch `%hi`/`%lo`,
+varargs/f64 straddle, atomics+emutls, bitint, large frames, extload zext,
+elf relocs, and fp object encoding.
+
+## Future Opportunities
+- Wire `SLOW32Addr` / `SelectAddr` into load/store patterns once
+  `eliminateFrameIndex` supports FI-as-base (today FI is expected in the
+  imm slot with a real base register).
+- Optional frame pointer for true leaves / no-alloca functions.
+- Size-tuned SELECT under `-Os` (branchless mask is always used today).
+- Gate mul/div/FP isel on subtarget features for a real `slow32-minimal`.
+- Align data-layout stack alignment (`S32` vs 16-byte frame preference).
+- Jump-table / computed-goto stress tests; CFI smoke if debugging soft-core code.

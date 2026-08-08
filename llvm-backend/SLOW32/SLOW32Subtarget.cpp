@@ -8,6 +8,7 @@
 
 #include "SLOW32Subtarget.h"
 #include "SLOW32.h"
+#include "SLOW32RuntimeLibcalls.h"
 #include "llvm/MC/TargetRegistry.h"
 
 #define DEBUG_TYPE "slow32-subtarget"
@@ -34,45 +35,15 @@ SLOW32Subtarget::SLOW32Subtarget(const Triple &TT, StringRef CPU, StringRef FS,
   // Always enable base integer instructions
   HasStdExtI = true;
   
-  // Enable multiply/divide by default for most CPUs
-  if (CPUName != "slow32-minimal")
+  // Default CPUs have multiply/divide and soft-float-in-GPR. A future
+  // "slow32-minimal" profile can leave M/F off once isel respects the flags.
+  if (CPUName != "slow32-minimal") {
     HasStdExtM = true;
+    HasStdExtF = true;
+  }
 }
 
 void SLOW32Subtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
-  // SLOW32 is not recognized in LLVM's RuntimeLibcalls infrastructure,
-  // so we need to explicitly set which libcall implementations to use.
-  // These map to the compiler-rt/libgcc style helpers that our crt ships.
-
-  // i64 division/remainder
-  Info.setLibcallImpl(RTLIB::SDIV_I64, RTLIB::impl___divdi3);
-  Info.setLibcallImpl(RTLIB::UDIV_I64, RTLIB::impl___udivdi3);
-  Info.setLibcallImpl(RTLIB::SREM_I64, RTLIB::impl___moddi3);
-  Info.setLibcallImpl(RTLIB::UREM_I64, RTLIB::impl___umoddi3);
-
-  // i32 unsigned division/remainder (SLOW32 only has signed DIV/REM instructions)
-  Info.setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
-  Info.setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);
-
-  Info.setLibcallImpl(RTLIB::REM_F32, RTLIB::impl_fmodf);
-  Info.setLibcallImpl(RTLIB::REM_F64, RTLIB::impl_fmod);
-  Info.setLibcallImpl(RTLIB::FMA_F32, RTLIB::impl_fmaf);
-  Info.setLibcallImpl(RTLIB::FMA_F64, RTLIB::impl_fma);
-  Info.setLibcallImpl(RTLIB::RINT_F32, RTLIB::impl_rintf);
-  Info.setLibcallImpl(RTLIB::RINT_F64, RTLIB::impl_rint);
-  Info.setLibcallImpl(RTLIB::NEARBYINT_F32, RTLIB::impl_nearbyintf);
-  Info.setLibcallImpl(RTLIB::NEARBYINT_F64, RTLIB::impl_nearbyint);
-  Info.setLibcallImpl(RTLIB::FLOOR_F32, RTLIB::impl_floorf);
-  Info.setLibcallImpl(RTLIB::FLOOR_F64, RTLIB::impl_floor);
-  Info.setLibcallImpl(RTLIB::CEIL_F32, RTLIB::impl_ceilf);
-  Info.setLibcallImpl(RTLIB::CEIL_F64, RTLIB::impl_ceil);
-  Info.setLibcallImpl(RTLIB::TRUNC_F32, RTLIB::impl_truncf);
-  Info.setLibcallImpl(RTLIB::TRUNC_F64, RTLIB::impl_trunc);
-  Info.setLibcallImpl(RTLIB::ROUND_F32, RTLIB::impl_roundf);
-  Info.setLibcallImpl(RTLIB::ROUND_F64, RTLIB::impl_round);
-
-  // The runtime ships native C implementations of the basic memory helpers.
-  Info.setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
-  Info.setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
-  Info.setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
+  // Keep in lockstep with SLOW32TargetLowering via the shared helper.
+  setSLOW32LibcallImpls(Info);
 }

@@ -28,10 +28,6 @@ SDValue SLOW32TargetLowering::PerformDAGCombine(SDNode *N,
     return performORCombine(N, DCI);
   case ISD::SHL:
     return performSHLCombine(N, DCI);
-  case ISD::LOAD:
-    return performLOADCombine(N, DCI);
-  case ISD::STORE:
-    return performSTORECombine(N, DCI);
   }
   return SDValue();
 }
@@ -171,21 +167,5 @@ SDValue SLOW32TargetLowering::performSHLCombine(SDNode *N,
       }
   }
 
-  return SDValue();
-}
-
-SDValue SLOW32TargetLowering::performLOADCombine(SDNode *N,
-                                                 DAGCombinerInfo &DCI) const {
-  auto *LD = cast<LoadSDNode>(N);
-  if (LD->isVolatile())
-    return SDValue();
-  return SDValue();
-}
-
-SDValue SLOW32TargetLowering::performSTORECombine(SDNode *N,
-                                                  DAGCombinerInfo &DCI) const {
-  auto *ST = cast<StoreSDNode>(N);
-  if (ST->isVolatile())
-    return SDValue();
   return SDValue();
 }

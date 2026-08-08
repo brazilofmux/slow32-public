@@ -70,22 +70,6 @@ void buildAbsoluteJump(MachineBasicBlock &MBB,
       .addImm(0);
 }
 
-// TODO: Add tail duplication guard once we find the correct hook name
-// bool SLOW32InstrInfo::isMBBSafeToTailDuplicate(const MachineBasicBlock &MBB) const {
-//   // Conservative approach: don't tail-duplicate blocks ending with RET/barrier
-//   // This prevents creating invalid MIR with both BR and RET in the same block
-//   auto I = MBB.getLastNonDebugInstr();
-//   if (I == MBB.end()) 
-//     return true; // Empty block is safe
-//   
-//   // Skip back over any CFI instructions to find the real terminator
-//   while (I != MBB.begin() && I->isCFIInstruction())
-//     --I;
-//   
-//   // Don't duplicate blocks ending with return or barrier instructions
-//   return !(I->isReturn() || I->isBarrier());
-// }
-
 MachineBasicBlock *getBranchTarget(const MachineInstr &MI) {
   assert(MI.getDesc().isBranch() && "Unexpected non-branch opcode");
   unsigned Idx = MI.getNumExplicitOperands();
@@ -790,17 +774,3 @@ unsigned SLOW32InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
 
   return MI.getDesc().getSize();
 }
-
-// TODO: Add tail duplication guard once we find the correct hook name
-// bool SLOW32InstrInfo::isMBBSafeToTailDuplicate(const MachineBasicBlock &MBB) const {
-//   // Conservative approach: don't tail-duplicate blocks ending with RET/barrier
-//   // This prevents creating invalid MIR with both BR and RET in the same block
-//   auto I = MBB.getLastNonDebugInstr();
-//   if (I == MBB.end())
-//     return true; // Empty block is safe
-//   // Skip back over any CFI instructions to find the real terminator
-//   while (I != MBB.begin() && I->isCFIInstruction())
-//     --I;
-//   // Don't duplicate blocks ending with return or barrier instructions
-//   return !(I->isReturn() || I->isBarrier());
-// }

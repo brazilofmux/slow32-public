@@ -159,8 +159,6 @@ private:
   SDValue performANDCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performORCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performSHLCombine(SDNode *N, DAGCombinerInfo &DCI) const;
-  SDValue performLOADCombine(SDNode *N, DAGCombinerInfo &DCI) const;
-  SDValue performSTORECombine(SDNode *N, DAGCombinerInfo &DCI) const;
 };
 }
 #endif

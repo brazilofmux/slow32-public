@@ -49,7 +49,10 @@ BitVector SLOW32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // would have its register unit not fully reserved, causing LiveIntervals
   // to track its uses and require live-in annotations in every block.
   markSuperRegs(Reserved, SLOW32::R0);   // r0 is always zero
-  markSuperRegs(Reserved, SLOW32::R2);   // Reserved for long-branch materialisation
+  // r2: machine long-branch materialisation AND MC branch-relaxation
+  // scratch (AsmBackend hard-wires r2). Handwritten asm that relaxes
+  // must treat r2 as clobbered.
+  markSuperRegs(Reserved, SLOW32::R2);
   markSuperRegs(Reserved, SLOW32::R29);  // Stack pointer (sp)
   markSuperRegs(Reserved, SLOW32::R30);  // Frame pointer (fp)
   assert(checkAllSuperRegsMarked(Reserved));

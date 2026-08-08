@@ -17,8 +17,9 @@ def uimm12 : Operand<i32>, ImmLeaf<i32, [{
   return isUInt<12>(Imm);
 }]>;
 
-// Complex address pattern for load/store instructions
-// SelectAddr splits addresses into base + offset
+// Complex address pattern (SelectAddr in SLOW32ISelDAGToDAG.cpp).
+// Not yet wired into load/store patterns: putting TargetFrameIndex in the
+// base slot needs eliminateFrameIndex FI-as-base support first (see STATUS.md).
 def SLOW32Addr : ComplexPattern<iPTR, 2, "SelectAddr", [], []>;
 
 def GPRPairOp : RegisterOperand<GPRPair> {
@@ -374,13 +375,11 @@ def : Pat<(SLOW32hi tjumptable:$addr), (LUI tjumptable:$addr)>;
 // combination patterns are required here.
 
 
-// Patterns for loads and stores
+// Patterns for loads and stores (explicit modes; SLOW32Addr not wired yet).
 def : Pat<(i32 (load (i32 GPR:$addr))), (LDW (i32 GPR:$addr), 0)>;
 def : Pat<(store (i32 GPR:$val), (i32 GPR:$addr)),
           (STW (i32 GPR:$addr), (i32 GPR:$val), 0)>;
 
-// Patterns for loads with offsets (base + immediate)
-// Also use ComplexPattern for better address matching
 def : Pat<(i32 (load (add (i32 GPR:$base), simm12:$offset))),
           (LDW (i32 GPR:$base), simm12:$offset)>;
 def : Pat<(i32 (sextloadi8 (add (i32 GPR:$base), simm12:$offset))),
@@ -396,7 +395,6 @@ def : Pat<(i32 (zextloadi16 (add (i32 GPR:$base), simm12:$offset))),
 def : Pat<(i32 (extloadi16 (add (i32 GPR:$base), simm12:$offset))),
           (LDHU (i32 GPR:$base), simm12:$offset)>;
 
-// Patterns for stores with offsets (base + immediate)
 def : Pat<(store (i32 GPR:$val), (add (i32 GPR:$base), simm12:$offset)),
           (STW (i32 GPR:$base), (i32 GPR:$val), simm12:$offset)>;
 def : Pat<(truncstorei8 (i32 GPR:$val), (add (i32 GPR:$base), simm12:$offset)),
@@ -404,24 +402,19 @@ def : Pat<(truncstorei8 (i32 GPR:$val), (add (i32 GPR:$base), simm12:$offset)),
 def : Pat<(truncstorei16 (i32 GPR:$val), (add (i32 GPR:$base), simm12:$offset)),
           (STH (i32 GPR:$base), (i32 GPR:$val), simm12:$offset)>;
 
-// Patterns for byte loads (sign-extended and zero-extended)
-// Keep the simple patterns with explicit addressing modes
 def : Pat<(i32 (sextloadi8 (i32 GPR:$addr))), (LDB (i32 GPR:$addr), 0)>;
 def : Pat<(i32 (zextloadi8 (i32 GPR:$addr))), (LDBU (i32 GPR:$addr), 0)>;
 def : Pat<(i32 (extloadi8 (i32 GPR:$addr))), (LDBU (i32 GPR:$addr), 0)>;
-
-// Patterns for halfword loads (sign-extended and zero-extended)
 def : Pat<(i32 (sextloadi16 (i32 GPR:$addr))), (LDH (i32 GPR:$addr), 0)>;
 def : Pat<(i32 (zextloadi16 (i32 GPR:$addr))), (LDHU (i32 GPR:$addr), 0)>;
 def : Pat<(i32 (extloadi16 (i32 GPR:$addr))), (LDHU (i32 GPR:$addr), 0)>;
-
-// Patterns for byte and halfword stores
 def : Pat<(truncstorei8 (i32 GPR:$val), (i32 GPR:$addr)),
           (STB (i32 GPR:$addr), (i32 GPR:$val), 0)>;
 def : Pat<(truncstorei16 (i32 GPR:$val), (i32 GPR:$addr)),
           (STH (i32 GPR:$addr), (i32 GPR:$val), 0)>;
 
 // Sign/zero extension patterns  
+
 // Sign-extend i8 to i32
 def : Pat<(sext_inreg (i32 GPR:$src), i8),
           (SRAI (SLLI (i32 GPR:$src), 24), 24)>;
@@ -723,29 +716,8 @@ let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], usesCusto
 // Additional patterns for better code generation
 //===----------------------------------------------------------------------===//
 
-// Zero-extension load patterns. Anyext is zero-extend on SLOW32.
-// Note: anyext/zext patterns for base+offset already exist earlier
-// (→ LDBU/LDHU). Do not reintroduce signed LDB/LDH for extload.
-def : Pat<(i32 (zextloadi8 (add (i32 GPR:$rs1), simm12:$off))),
-          (LDBU (i32 GPR:$rs1), simm12:$off)>;
-def : Pat<(i32 (zextloadi16 (add (i32 GPR:$rs1), simm12:$off))),
-          (LDHU (i32 GPR:$rs1), simm12:$off)>;
-
-// Sign extension from i8/i16 without shift sequences
-def : Pat<(i32 (sext_inreg (i32 GPR:$rs1), i8)),
-          (SRA (SLL (i32 GPR:$rs1), 24), 24)>;
-def : Pat<(i32 (sext_inreg (i32 GPR:$rs1), i16)),
-          (SRA (SLL (i32 GPR:$rs1), 16), 16)>;
-
-// Patterns for adding immediates to different types
-def : Pat<(i32 (add (i32 GPR:$rs1), simm12:$imm)),
-          (ADDI (i32 GPR:$rs1), simm12:$imm)>;
-
-
-// f32 load/store patterns — f32 shares GPR with i32, uses LDW/STW.
-// STW operand order is (base, val, imm); keep these explicit.
-// (An earlier LoadStorePat multiclass had inverted store operands and was
-// redundant with the i32 patterns above — removed.)
+// f32 load/store — f32 shares GPR with i32, uses LDW/STW.
+// STW operand order is (base, val, imm).
 def : Pat<(f32 (load (i32 GPR:$base))), (LDW (i32 GPR:$base), 0)>;
 def : Pat<(f32 (load (add (i32 GPR:$base), simm12:$off))),
           (LDW (i32 GPR:$base), simm12:$off)>;
@@ -762,15 +734,7 @@ def : Pat<(i32 0), (ADDI (i32 R0), 0)>;
 def : Pat<(i32 simm12:$imm), (ADDI (i32 R0), simm12:$imm)>;
 def : Pat<(i32 uimm12:$imm), (ORI (i32 R0), uimm12:$imm)>;
 
-// Pseudo for select - will be expanded later
-let usesCustomInserter = 1 in {
-  let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
-  def SELECT_PSEUDO : Pseudo<(outs GPR:$dst), 
-                             (ins GPR:$cond, GPR:$t, GPR:$f),
-                             "# SELECT_PSEUDO $dst, $cond, $t, $f">;
-}
-
-// f64 split/combine pseudos — expanded in EmitInstrWithCustomInserter via stack.
+// f64 split/combine pseudos — expanded in EmitInstrWithCustomInserter.
 let usesCustomInserter = 1 in {
   let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
     def BuildPairF64Pseudo : Pseudo<(outs GPRPairOp:$dst),
@@ -782,8 +746,5 @@ let usesCustomInserter = 1 in {
   }
 }
 
-// SELECT lowering is handled in SLOW32ISelLowering; avoid pattern ambiguity
-// now that GPR includes both i32 and f32.
-//
-// Multi-word add/sub with carry uses custom UADDO/USUBO lowering, not ADDC
-// pseudos (those were deleted: Expand + dead custom-inserter stubs).
+// Integer/float SELECT is custom-lowered in SLOW32ISelLowering (branchless
+// mask for i32/f32, split for f64). Multi-word carry uses UADDO/USUBO.
