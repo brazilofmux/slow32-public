@@ -17,6 +17,7 @@
 #include "llvm/CodeGen/SelectionDAGTargetInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/DataLayout.h"
+#include <memory>
 
 #define GET_SUBTARGETINFO_HEADER
 #include "SLOW32GenSubtargetInfo.inc"
@@ -29,23 +30,24 @@ class SLOW32Subtarget : public SLOW32GenSubtargetInfo {
   SLOW32FrameLowering FrameLowering;
   SLOW32InstrInfo InstrInfo;
   SLOW32RegisterInfo RegInfo;
-  SLOW32TargetLowering TLInfo;
+  // Built after ParseSubtargetFeatures so isel legality sees +m/+f correctly.
+  std::unique_ptr<SLOW32TargetLowering> TLInfo;
   SelectionDAGTargetInfo TSInfo;
 
-  // Subtarget features
-  bool HasStdExtI = true;  // Base integer instructions (always enabled)
-  bool HasStdExtM = false; // Multiply/divide instructions
-  bool HasStdExtF = false; // Floating-point instructions
-  bool HasStdExtA = false; // Atomic instructions
-  bool HasStdExtC = false; // Compressed instructions
-  
+  // Subtarget features (parsed before TLInfo is constructed).
+  bool HasStdExtI = true;
+  bool HasStdExtM = false;
+  bool HasStdExtF = false;
+  bool HasStdExtA = false;
+  bool HasStdExtC = false;
+
   // Performance features
   bool HasFastMul = false;
   bool HasFastDiv = false;
   bool HasMisalignedAccess = false;
   bool HasBranchPredictor = false;
   bool HasReturnStack = false;
-  
+
   // Tuning features
   bool OptimizeForSize = false;
   bool PreferImmediate = false;
@@ -63,7 +65,7 @@ public:
     return &RegInfo;
   }
   const SLOW32TargetLowering *getTargetLowering() const override {
-    return &TLInfo;
+    return TLInfo.get();
   }
   const SelectionDAGTargetInfo *getSelectionDAGInfo() const override {
     return &TSInfo;

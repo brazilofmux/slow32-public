@@ -715,7 +715,7 @@ def : Pat<(i32 0), (ADDI (i32 R0), 0)>;
 def : Pat<(i32 simm12:$imm), (ADDI (i32 R0), simm12:$imm)>;
 def : Pat<(i32 uimm12:$imm), (ORI (i32 R0), uimm12:$imm)>;
 
-// f64 split/combine pseudos — expanded in EmitInstrWithCustomInserter.
+// f64 split/combine + size-tuned SELECT — EmitInstrWithCustomInserter.
 let usesCustomInserter = 1 in {
   let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
     def BuildPairF64Pseudo : Pseudo<(outs GPRPairOp:$dst),
@@ -724,8 +724,11 @@ let usesCustomInserter = 1 in {
     def SplitF64Pseudo : Pseudo<(outs GPR:$lo, GPR:$hi),
                                 (ins GPRPairOp:$src),
                                 "# SplitF64 $src -> $lo, $hi">;
+    // Branchy select for -Os (mask form is shorter at -O2 when cond is 0/1).
+    def SELECT_PSEUDO : Pseudo<(outs GPR:$dst),
+                               (ins GPR:$cond, GPR:$t, GPR:$f),
+                               "# SELECT_PSEUDO $dst, $cond, $t, $f">;
   }
 }
 
-// Integer/float SELECT is custom-lowered in SLOW32ISelLowering (branchless
-// mask for i32/f32, split for f64). Multi-word carry uses UADDO/USUBO.
+// Multi-word carry uses custom UADDO/USUBO lowering.

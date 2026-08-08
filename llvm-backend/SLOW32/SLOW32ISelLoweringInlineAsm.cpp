@@ -23,6 +23,7 @@ SLOW32TargetLowering::getConstraintType(StringRef Constraint) const {
     default:
       break;
     case 'r':
+    case 'f': // f32 lives in a GPR; same class as 'r'
       return C_RegisterClass;
     case 'i':
     case 'n':
@@ -44,10 +45,10 @@ SLOW32TargetLowering::getRegForInlineAsmConstraint(
   if (Constraint.size() == 1) {
     switch (Constraint[0]) {
     case 'r':
-      // General purpose register. f32 lives in a single GPR on this target
-      // (soft float in integer registers), so accept it alongside integer
-      // types. f64 occupies a register pair that the InstPrinter cannot render
-      // as an inline-asm operand, so leave it to the default error path.
+    case 'f':
+      // General-purpose register. f32 lives in a single GPR (native soft-float
+      // encoding). f64 needs a register pair; reject it so users get a clear
+      // diagnostic instead of a half-printed operand.
       if (GPRRC && (VT.isInteger() || VT == MVT::f32 || VT == MVT::Other))
         return std::make_pair(0U, GPRRC);
       break;

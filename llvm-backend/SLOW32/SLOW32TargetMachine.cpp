@@ -25,10 +25,11 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSLOW32Target() {
 }
 
 static std::string computeDataLayout() {
-  // Match the data layout from clang/lib/Basic/Targets/SLOW32.h
-  // i64:32:32 = i64 has 32-bit alignment (no native 64-bit support)
+  // Match clang/lib/Basic/Targets/SLOW32.h.
+  // i64:32:32 = i64 has 32-bit ABI alignment (no native 64-bit load/store).
+  // S128 = 16-byte stack alignment, matching SLOW32FrameLowering.
   return "e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-"
-         "f32:32:32-f64:32:32-n8:16:32-S32";
+         "f32:32:32-f64:32:32-n8:16:32-S128";
 }
 
 SLOW32TargetMachine::SLOW32TargetMachine(const Target &T, const Triple &TT,

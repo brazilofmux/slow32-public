@@ -8,6 +8,7 @@
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Debug.h"
@@ -192,10 +193,11 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   addRegisterClass(MVT::f32, &SLOW32::GPRRegClass);
   addRegisterClass(MVT::f64, &SLOW32::GPRPairRegClass);
 
-  // SLOW32 uses soft-float in GPRs with native f32/f64 instructions.
+  // Soft-float in GPRs with native f32/f64 opcodes when +f is enabled.
 
   // Compute derived properties from the register classes
-  const SLOW32Subtarget &STI = static_cast<const SLOW32TargetMachine&>(TM).getSubtarget();
+  const SLOW32Subtarget &STI =
+      static_cast<const SLOW32TargetMachine &>(TM).getSubtarget();
   computeRegisterProperties(STI.getRegisterInfo());
 
 
@@ -241,18 +243,30 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Configure BRCOND to be Custom (we have a lowering for it)
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
 
-  // Custom lower 32-bit multiply-high operations for i64 multiply expansion
-  setOperationAction(ISD::UMUL_LOHI, MVT::i32, Custom);
-  setOperationAction(ISD::SMUL_LOHI, MVT::i32, Custom);
-  setOperationAction(ISD::MULHS, MVT::i32, Legal);
-  setOperationAction(ISD::MULHU, MVT::i32, Legal);
-  
-  // i32 unsigned division/remainder - SLOW32 only has signed DIV/REM instructions
-  // Use custom lowering to generate libcalls for unsigned operations
-  setOperationAction(ISD::UDIV, MVT::i32, Custom);  // Will call __udivsi3
-  setOperationAction(ISD::UREM, MVT::i32, Custom);  // Will call __umodsi3
-  setOperationAction(ISD::UDIVREM, MVT::i32, Expand);  // Combined operation also needs expansion
-  setOperationAction(ISD::SDIVREM, MVT::i32, Expand);  // Also expand signed divrem
+  // Multiply / high-multiply: native when +m, otherwise expand to libcalls.
+  if (STI.hasStdExtM()) {
+    setOperationAction(ISD::UMUL_LOHI, MVT::i32, Custom);
+    setOperationAction(ISD::SMUL_LOHI, MVT::i32, Custom);
+    setOperationAction(ISD::MULHS, MVT::i32, Legal);
+    setOperationAction(ISD::MULHU, MVT::i32, Legal);
+  } else {
+    setOperationAction(ISD::MUL, MVT::i32, Expand);
+    setOperationAction(ISD::MULHS, MVT::i32, Expand);
+    setOperationAction(ISD::MULHU, MVT::i32, Expand);
+    setOperationAction(ISD::UMUL_LOHI, MVT::i32, Expand);
+    setOperationAction(ISD::SMUL_LOHI, MVT::i32, Expand);
+  }
+
+  // i32 unsigned div/rem always use libcalls (hardware has only signed DIV/REM).
+  // Signed DIV/REM are Legal via TableGen when +m; without +m expand both.
+  setOperationAction(ISD::UDIV, MVT::i32, Custom);
+  setOperationAction(ISD::UREM, MVT::i32, Custom);
+  setOperationAction(ISD::UDIVREM, MVT::i32, Expand);
+  setOperationAction(ISD::SDIVREM, MVT::i32, Expand);
+  if (!STI.hasStdExtM()) {
+    setOperationAction(ISD::SDIV, MVT::i32, Expand);
+    setOperationAction(ISD::SREM, MVT::i32, Expand);
+  }
   
   // Libcall bindings live in SLOW32RuntimeLibcalls.h and are applied here
   // (makeLibCall) and again in Subtarget::initLibcallLoweringInfo
@@ -281,7 +295,8 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // We need to custom lower BR_CC since SLOW32 only has BEQ
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
 
-  // SLOW32 doesn't have a native jump table instruction, expand it
+  // No dedicated JT instruction: Expand to load-from-table + BRIND (jalr).
+  // JumpTable addresses already lower via LOAD_ADDR; BRIND has a pattern.
   setOperationAction(ISD::BR_JT, MVT::Other, Expand);
 
   // SLOW32 doesn't have sign extension instructions for sub-word types
@@ -347,72 +362,85 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Register custom DAG combines (LOAD/STORE stubs removed — no-ops)
   setTargetDAGCombine({ISD::ADD, ISD::MUL, ISD::AND, ISD::OR, ISD::SHL});
 
-  // f32/f64 operations are legal; fmod remains a libcall.
-  setOperationAction(ISD::FADD, MVT::f32, Legal);
-  setOperationAction(ISD::FSUB, MVT::f32, Legal);
-  setOperationAction(ISD::FMUL, MVT::f32, Legal);
-  setOperationAction(ISD::FDIV, MVT::f32, Legal);
-  setOperationAction(ISD::FSQRT, MVT::f32, Legal);
-  setOperationAction(ISD::FNEG, MVT::f32, Legal);
-  setOperationAction(ISD::FABS, MVT::f32, Legal);
-  setOperationAction(ISD::FCOPYSIGN, MVT::f32, Custom);
-  setOperationAction(ISD::FREM, MVT::f32, Expand);
-  setOperationAction(ISD::FMA, MVT::f32, Expand);
-  setOperationAction(ISD::FRINT, MVT::f32, Expand);
-  setOperationAction(ISD::FNEARBYINT, MVT::f32, Expand);
-  setOperationAction(ISD::FTRUNC, MVT::f32, Expand);
-  setOperationAction(ISD::FCEIL, MVT::f32, Expand);
-  setOperationAction(ISD::FFLOOR, MVT::f32, Expand);
-  setOperationAction(ISD::SETCC, MVT::f32, Legal);
-  setOperationAction(ISD::BR_CC, MVT::f32, Expand);
-  setOperationAction(ISD::SELECT, MVT::f32, Custom);
-  setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
-  setOperationAction(ISD::FP_ROUND, MVT::f32, Legal);
-  // f32 and i32 share GPR, so bitcast is a no-op.
-  setOperationAction(ISD::BITCAST, MVT::f32, Legal);
+  // Floating point: native opcodes when +f (default). Without +f, expand to
+  // soft-float libcalls; loads/stores still work as bit patterns in GPRs.
+  if (STI.hasStdExtF()) {
+    setOperationAction(ISD::FADD, MVT::f32, Legal);
+    setOperationAction(ISD::FSUB, MVT::f32, Legal);
+    setOperationAction(ISD::FMUL, MVT::f32, Legal);
+    setOperationAction(ISD::FDIV, MVT::f32, Legal);
+    setOperationAction(ISD::FSQRT, MVT::f32, Legal);
+    setOperationAction(ISD::FNEG, MVT::f32, Legal);
+    setOperationAction(ISD::FABS, MVT::f32, Legal);
+    setOperationAction(ISD::FCOPYSIGN, MVT::f32, Custom);
+    setOperationAction(ISD::SETCC, MVT::f32, Legal);
+    setOperationAction(ISD::FP_ROUND, MVT::f32, Legal);
+    setOperationAction(ISD::BITCAST, MVT::f32, Legal);
 
-  setOperationAction(ISD::FADD, MVT::f64, Legal);
-  setOperationAction(ISD::FSUB, MVT::f64, Legal);
-  setOperationAction(ISD::FMUL, MVT::f64, Legal);
-  setOperationAction(ISD::FDIV, MVT::f64, Legal);
-  setOperationAction(ISD::FSQRT, MVT::f64, Legal);
-  setOperationAction(ISD::FNEG, MVT::f64, Legal);
-  setOperationAction(ISD::FABS, MVT::f64, Legal);
-  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Custom);
-  setOperationAction(ISD::FREM, MVT::f64, Expand);
-  setOperationAction(ISD::FMA, MVT::f64, Expand);
-  setOperationAction(ISD::FRINT, MVT::f64, Expand);
-  setOperationAction(ISD::FNEARBYINT, MVT::f64, Expand);
-  setOperationAction(ISD::FTRUNC, MVT::f64, Expand);
-  setOperationAction(ISD::FCEIL, MVT::f64, Expand);
-  setOperationAction(ISD::FFLOOR, MVT::f64, Expand);
-  setOperationAction(ISD::SETCC, MVT::f64, Legal);
-  setOperationAction(ISD::BR_CC, MVT::f64, Expand);
-  setOperationAction(ISD::SELECT, MVT::f64, Custom);
-  setOperationAction(ISD::SELECT_CC, MVT::f64, Expand);
-  setOperationAction(ISD::FP_EXTEND, MVT::f64, Legal);
+    setOperationAction(ISD::FADD, MVT::f64, Legal);
+    setOperationAction(ISD::FSUB, MVT::f64, Legal);
+    setOperationAction(ISD::FMUL, MVT::f64, Legal);
+    setOperationAction(ISD::FDIV, MVT::f64, Legal);
+    setOperationAction(ISD::FSQRT, MVT::f64, Legal);
+    setOperationAction(ISD::FNEG, MVT::f64, Legal);
+    setOperationAction(ISD::FABS, MVT::f64, Legal);
+    setOperationAction(ISD::FCOPYSIGN, MVT::f64, Custom);
+    setOperationAction(ISD::SETCC, MVT::f64, Legal);
+    setOperationAction(ISD::FP_EXTEND, MVT::f64, Legal);
 
-  setOperationAction(ISD::FP_TO_SINT, MVT::i32, Legal);
-  setOperationAction(ISD::FP_TO_UINT, MVT::i32, Legal);
-  setOperationAction(ISD::SINT_TO_FP, MVT::f32, Legal);
-  setOperationAction(ISD::UINT_TO_FP, MVT::f32, Legal);
-  setOperationAction(ISD::SINT_TO_FP, MVT::f64, Legal);
-  setOperationAction(ISD::UINT_TO_FP, MVT::f64, Legal);
+    setOperationAction(ISD::FP_TO_SINT, MVT::i32, Legal);
+    setOperationAction(ISD::FP_TO_UINT, MVT::i32, Legal);
+    setOperationAction(ISD::SINT_TO_FP, MVT::f32, Legal);
+    setOperationAction(ISD::UINT_TO_FP, MVT::f32, Legal);
+    setOperationAction(ISD::SINT_TO_FP, MVT::f64, Legal);
+    setOperationAction(ISD::UINT_TO_FP, MVT::f64, Legal);
+    setOperationAction(ISD::FP_TO_SINT, MVT::i64, Custom);
+    setOperationAction(ISD::FP_TO_UINT, MVT::i64, Custom);
+    setOperationAction(ISD::SINT_TO_FP, MVT::i64, Custom);
+    setOperationAction(ISD::UINT_TO_FP, MVT::i64, Custom);
+  } else {
+    for (MVT VT : {MVT::f32, MVT::f64}) {
+      setOperationAction(ISD::FADD, VT, Expand);
+      setOperationAction(ISD::FSUB, VT, Expand);
+      setOperationAction(ISD::FMUL, VT, Expand);
+      setOperationAction(ISD::FDIV, VT, Expand);
+      setOperationAction(ISD::FSQRT, VT, Expand);
+      setOperationAction(ISD::FNEG, VT, Expand);
+      setOperationAction(ISD::FABS, VT, Expand);
+      setOperationAction(ISD::FCOPYSIGN, VT, Expand);
+      setOperationAction(ISD::SETCC, VT, Expand);
+    }
+    setOperationAction(ISD::FP_ROUND, MVT::f32, Expand);
+    setOperationAction(ISD::FP_EXTEND, MVT::f64, Expand);
+    setOperationAction(ISD::BITCAST, MVT::f32, Legal); // still a no-op in GPR
+    setOperationAction(ISD::FP_TO_SINT, MVT::i32, Expand);
+    setOperationAction(ISD::FP_TO_UINT, MVT::i32, Expand);
+    setOperationAction(ISD::SINT_TO_FP, MVT::f32, Expand);
+    setOperationAction(ISD::UINT_TO_FP, MVT::f32, Expand);
+    setOperationAction(ISD::SINT_TO_FP, MVT::f64, Expand);
+    setOperationAction(ISD::UINT_TO_FP, MVT::f64, Expand);
+    setOperationAction(ISD::FP_TO_SINT, MVT::i64, Expand);
+    setOperationAction(ISD::FP_TO_UINT, MVT::i64, Expand);
+    setOperationAction(ISD::SINT_TO_FP, MVT::i64, Expand);
+    setOperationAction(ISD::UINT_TO_FP, MVT::i64, Expand);
+  }
 
-  // i64 ↔ FP conversions: use hardware FCVT_L/FCVT_S_L instructions
-  // instead of slow libcalls (__fixdfdi, __floatdidf, etc.)
-  setOperationAction(ISD::FP_TO_SINT, MVT::i64, Custom);
-  setOperationAction(ISD::FP_TO_UINT, MVT::i64, Custom);
-  setOperationAction(ISD::SINT_TO_FP, MVT::i64, Custom);
-  setOperationAction(ISD::UINT_TO_FP, MVT::i64, Custom);
+  // Shared FP policy (libcall or legalized away regardless of +f).
+  for (MVT VT : {MVT::f32, MVT::f64}) {
+    setOperationAction(ISD::FREM, VT, Expand);
+    setOperationAction(ISD::FMA, VT, Expand);
+    setOperationAction(ISD::FRINT, VT, Expand);
+    setOperationAction(ISD::FNEARBYINT, VT, Expand);
+    setOperationAction(ISD::FTRUNC, VT, Expand);
+    setOperationAction(ISD::FCEIL, VT, Expand);
+    setOperationAction(ISD::FFLOOR, VT, Expand);
+    setOperationAction(ISD::BR_CC, VT, Expand);
+    setOperationAction(ISD::SELECT, VT, Custom);
+    setOperationAction(ISD::SELECT_CC, VT, Expand);
+  }
 
-  // No extending FP load — decompose into f32 load + fcvt.d.s.
   setLoadExtAction(ISD::EXTLOAD, MVT::f64, MVT::f32, Expand);
-  // No truncating FP store — decompose into fcvt.s.d + f32 store.
   setTruncStoreAction(MVT::f64, MVT::f32, Expand);
-
-  // f32 loads/stores are handled by TableGen patterns (LDW/STW).
-  // f64 loads/stores need custom splitting into two i32 loads/stores.
   setOperationAction(ISD::LOAD, MVT::f64, Custom);
   setOperationAction(ISD::STORE, MVT::f64, Custom);
 }
@@ -740,12 +768,20 @@ SDValue SLOW32TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
     return SDValue();
   }
 
-  // For i32, use the mask trick to avoid branches
+  // Under -Os/-Oz prefer a branchy SELECT_PSEUDO (often 1-2 instructions after
+  // folding) over the 3-op branchless mask sequence.
+  const Function &F = DAG.getMachineFunction().getFunction();
+  if (F.hasOptSize() || F.hasMinSize()) {
+    SDNode *Sel = DAG.getMachineNode(SLOW32::SELECT_PSEUDO, DL, VT,
+                                     Cond, TrueV, FalseV);
+    return SDValue(Sel, 0);
+  }
+
+  // Default (speed): branchless mask.
   // mask = -C (0 -> 0x00000000, 1 -> 0xFFFFFFFF)
+  // result = F ^ ((T ^ F) & mask)
   SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
   SDValue Mask = DAG.getNode(ISD::SUB, DL, MVT::i32, Zero, Cond);
-
-  // result = F ^ ((T ^ F) & mask)
   SDValue TF = DAG.getNode(ISD::XOR, DL, VT, TrueV, FalseV);
   SDValue And = DAG.getNode(ISD::AND, DL, VT, TF, Mask);
   return DAG.getNode(ISD::XOR, DL, VT, FalseV, And);
@@ -1786,6 +1822,48 @@ SLOW32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   DebugLoc DL = MI.getDebugLoc();
 
   switch (MI.getOpcode()) {
+  case SLOW32::SELECT_PSEUDO: {
+    // Triangle + PHI: bne cond, r0, Tail; fallthrough False; Tail: phi.
+    MachineFunction *MF = BB->getParent();
+    const BasicBlock *LLVM_BB = BB->getBasicBlock();
+
+    MachineBasicBlock *HeadMBB = BB;
+    MachineBasicBlock *IfFalseMBB = MF->CreateMachineBasicBlock(LLVM_BB);
+    MachineBasicBlock *TailMBB = MF->CreateMachineBasicBlock(LLVM_BB);
+
+    MachineFunction::iterator It = ++BB->getIterator();
+    MF->insert(It, IfFalseMBB);
+    MF->insert(It, TailMBB);
+
+    TailMBB->splice(TailMBB->begin(), HeadMBB,
+                    std::next(MachineBasicBlock::iterator(MI)), HeadMBB->end());
+    TailMBB->transferSuccessorsAndUpdatePHIs(HeadMBB);
+
+    HeadMBB->addSuccessor(IfFalseMBB);
+    HeadMBB->addSuccessor(TailMBB);
+    IfFalseMBB->addSuccessor(TailMBB);
+
+    BuildMI(HeadMBB, DL, TII.get(SLOW32::BNE))
+        .addReg(MI.getOperand(1).getReg())
+        .addReg(SLOW32::R0)
+        .addMBB(TailMBB);
+
+    for (const auto &LI : HeadMBB->liveins()) {
+      IfFalseMBB->addLiveIn(LI);
+      TailMBB->addLiveIn(LI);
+    }
+
+    BuildMI(*TailMBB, TailMBB->begin(), DL, TII.get(SLOW32::PHI),
+            MI.getOperand(0).getReg())
+        .addReg(MI.getOperand(2).getReg())
+        .addMBB(HeadMBB)
+        .addReg(MI.getOperand(3).getReg())
+        .addMBB(IfFalseMBB);
+
+    MF->getProperties().resetNoPHIs();
+    MI.eraseFromParent();
+    return TailMBB;
+  }
   case SLOW32::BuildPairF64Pseudo: {
     // Combine two i32 halves into a GPRPair (f64) via REG_SEQUENCE.
     Register LoReg = MI.getOperand(1).getReg();

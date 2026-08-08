@@ -24,6 +24,10 @@ static inline void setSLOW32LibcallImpls(LibcallSink &Sink) {
   Sink.setLibcallImpl(RTLIB::SREM_I64, RTLIB::impl___moddi3);
   Sink.setLibcallImpl(RTLIB::UREM_I64, RTLIB::impl___umoddi3);
 
+  // i32 mul / signed div when -mattr=-m expands them to libcalls
+  Sink.setLibcallImpl(RTLIB::MUL_I32, RTLIB::impl___mulsi3);
+  Sink.setLibcallImpl(RTLIB::SDIV_I32, RTLIB::impl___divsi3);
+  Sink.setLibcallImpl(RTLIB::SREM_I32, RTLIB::impl___modsi3);
   // i32 unsigned division/remainder (hardware has only signed DIV/REM)
   Sink.setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
   Sink.setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);

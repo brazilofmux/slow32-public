@@ -17,55 +17,57 @@ Last Reviewed: 2026-08-08
   scratch / MC relaxation), `r29`=sp, `r30`=fp, `r31`=lr.
 - Base + signed 12-bit offset addressing; stack grows down.
 - Data layout (clang + backend):  
-  `e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-f32:32:32-f64:32:32-n8:16:32-S32`
-- Frame lowering requests 16-byte stack alignment; layout string still says `S32`
-  (safe over-align; unify later if ABI tooling cares).
+  `e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-f32:32:32-f64:32:32-n8:16:32-S128`
+  (`S128` = 16-byte stack alignment, matching `SLOW32FrameLowering`).
 - Single-hart only: no interrupts, no threads. Control leaves the guest only via
   voluntary `YIELD` to the host. Atomics expand to plain loads/stores.
+- Subtarget features: `+m` (mul/div), `+f` (native soft-float in GPRs) on by
+  default; `slow32-minimal` / `-mattr=-m,-f` force libcall soft paths.
 
 ## Working
-- Core SelectionDAG + MC plumbing, prologue/epilogue: LR saved when the
-  function has calls; FP only when required (var-sized objects, frameaddress,
-  realignment, etc.). Neither is in the CSR list.
-- Integer/logic/shift/memory, mul/mulh, native signed/unsigned branches.
-- Call/return ABI with r1/r2 and r3–r10 pairs; sret demotion for oversized
-  returns; varargs including f64 register/stack straddle.
-- Globals/JT/CPI/blockaddr via `LOAD_ADDR` → `%hi`/`%lo` (LUI+ADDI).
-- Long-branch relaxation (machine + MC); PostRA expansion stamps MO_HI/MO_LO
-  on MBB operands; MC lowering wraps `%hi`/`%lo` for the external assembler.
-- f32/f64 in GPRs / GPRPair; NaN-correct compares; i64↔fp via FCVT_* pairs.
-- Emulated TLS (`__emutls_get_address`); single-hart atomics (NotAtomic).
-- C23 `_BitInt` with wide div/rem/fp-convert expand limits at 64 bits.
-- Clang target + driver toolchain (slow32asm / s32-ld / mmio vs debug-io).
+- Core SelectionDAG + MC plumbing; optional FP (LR on calls; FP only when
+  required). Neither FP nor LR is in the CSR list.
+- Real `ADJCALLSTACK*` expansion (no reserved call frame) so stack args sit
+  below LR/FP saves.
+- Integer/logic/shift/memory; mul/mulh when `+m`; native signed/unsigned branches.
+- Call/return ABI with r1/r2 and r3–r10 pairs; sret demotion; varargs f64 straddle.
+- Globals/JT/CPI/blockaddr via `LOAD_ADDR` → `%hi`/`%lo`; jump tables via
+  Expand → load + `BRIND` (`jalr`).
+- Long-branch relaxation PostRA-only (AsmPrinter asserts if a long-branch
+  pseudo leaks through).
+- f32/f64 when `+f`; NaN-correct compares; i64↔fp via FCVT_* pairs.
+- Emulated TLS; single-hart atomics; C23 `_BitInt` (wide expand at 64 bits).
+- Load/store via `SLOW32Addr` / `SelectAddr` (FI-as-base supported).
+- Integer SELECT: branchless mask by default; branchy `SELECT_PSEUDO` under
+  `optsize`/`minsize`.
+- Inline asm: `r`, `f` (f32 in GPR), `i`/`n` (simm12), `m`; f64 pairs unsupported.
+- Clang target + driver (slow32asm / s32-ld / mmio vs debug-io).
 
-## Partially Working / Soft Spots
-- Switches: chained compares work; jump tables expand (`BR_JT` → Expand) but
-  lack dedicated optimisations / tests.
-- Integer `SELECT` is always branchless (`mask = -cond`); no size-tuned path.
-- Feature flags (`+m`/`+f`/`+a`) exist but do not gate isel legality yet.
-- Dual libcall registration (TargetLowering + Subtarget) kept in sync via a
-  shared helper; revisit when upstream drops one of the APIs.
+## Soft Spots
+- Dual libcall registration (TargetLowering + Subtarget) via shared helper —
+  revisit when upstream finishes RuntimeLibcalls consolidation.
+- `SLOW32Schedule.td` exists for TableGen; not heavily tuned against real RTL.
+- f64 inline-asm operands still unsupported (pair printing).
 
 ## Known Pitfalls (fixed or documented)
-- ~~MBB long-branch ops dropped `%hi`/`%lo`~~ — fixed 2026-08-08.
-- ~~`(shl imm, 16) → LUI`~~ — removed (LUI is `<<12`).
-- ~~Duplicate signed `extload` patterns~~ — removed.
-- ~~R30/R31 double-spilled via CSR + prologue~~ — CSR list no longer includes them.
-- ~~Dead ADDC/ADDE/SUBC/SUBE custom-inserter stubs~~ — removed.
-- Handwritten assembly that triggers MC branch relaxation must treat `r2` as
-  clobbered (relaxation uses it as scratch).
+- ~~MBB long-branch ops dropped `%hi`/`%lo`~~ — fixed.
+- ~~`(shl imm, 16) → LUI`~~ — removed.
+- ~~Duplicate signed `extload` / inverted LoadStorePat / ADDC stubs~~ — removed.
+- ~~R30/R31 double-spilled~~ — omitted from CSR; prologue owns them.
+- Handwritten asm that triggers MC branch relaxation must treat `r2` as clobbered.
 
 ## Regression Tests
 ```
 ./build/bin/llvm-lit -v llvm/test/CodeGen/SLOW32/
 ./build/bin/llvm-lit -v clang/test/Driver/slow32-toolchain.c
 ```
-Coverage includes addressing, branches (PC+4 fixups), long-branch `%hi`/`%lo`,
+Coverage: addressing, branches (PC+4), long-branch `%hi`/`%lo`, jump tables,
 varargs/f64 straddle, atomics+emutls, bitint, large frames, extload zext,
-elf relocs, and fp object encoding.
+elf relocs, fp encoding, optional FP, SELECT optsize, memcpy/memmove/memset
+names, i64/i32 udiv libcalls, `+m` feature, CFI smoke.
 
 ## Future Opportunities
-- Size-tuned SELECT under `-Os` (branchless mask is always used today).
-- Gate mul/div/FP isel on subtarget features for a real `slow32-minimal`.
-- Align data-layout stack alignment (`S32` vs 16-byte frame preference).
-- Jump-table / computed-goto stress tests; CFI smoke if debugging soft-core code.
+- Soft-float libcall completeness when `-mattr=-f` (ensure full RTLIB map).
+- f64 / GPRPair inline-asm constraint if external asm needs it.
+- Schedule model tuning against the soft-core pipeline.
+- Computed-goto / blockaddress stress beyond basic JT coverage.

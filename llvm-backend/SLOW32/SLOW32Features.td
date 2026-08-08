@@ -19,18 +19,18 @@ def FeatureStdExtM : SubtargetFeature<"m", "HasStdExtM", "true",
                                       "'M' (Integer Multiplication and Division)",
                                       [FeatureStdExtI]>;
 
-// Future floating-point support placeholder
-def FeatureStdExtF : SubtargetFeature<"f", "HasStdExtF", "false",
-                                      "'F' (Single-Precision Floating-Point)",
+// Soft-float in GPRs with native f32/f64 opcodes
+def FeatureStdExtF : SubtargetFeature<"f", "HasStdExtF", "true",
+                                      "'F' (Floating-Point in GPRs)",
                                       [FeatureStdExtI]>;
 
-// Atomic operations support (future)
-def FeatureStdExtA : SubtargetFeature<"a", "HasStdExtA", "false",
+// Atomic operations support (unused: single-hart NotAtomic expansion)
+def FeatureStdExtA : SubtargetFeature<"a", "HasStdExtA", "true",
                                       "'A' (Atomic Instructions)",
                                       [FeatureStdExtI]>;
 
 // Compressed instructions (future, if SLOW32 adds 16-bit instructions)
-def FeatureStdExtC : SubtargetFeature<"c", "HasStdExtC", "false",
+def FeatureStdExtC : SubtargetFeature<"c", "HasStdExtC", "true",
                                       "'C' (Compressed Instructions)",
                                       [FeatureStdExtI]>;
 
