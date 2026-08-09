@@ -138,6 +138,17 @@ $(OUT)/cc_fp_arith_exe: $(OUT)/cc_fp_arith.o $(OUT)/cc_fp_arith_runner.o \
 	@ld -o $@ $(OUT)/crt0.o $(OUT)/cc_fp_arith.o $(OUT)/cc_fp_arith_runner.o \
 		$(OUT)/crt0_stubs.o
 
+# FP varargs: needs --hir (control-block va_list + V0..V7 save area).
+# Self-contained (no libc); exit 0 on success.  Link with ld-a64 so the
+# rule works on non-Linux hosts where system ld rejects aarch64 ELF.
+$(OUT)/cc_fp_varargs.o: tests/cc_fp_varargs.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 --hir -c $< -o $@ >/dev/null
+
+$(OUT)/cc_fp_varargs_exe: $(OUT)/cc_fp_varargs.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o \
+                          $(OUT)/ld-a64
+	@$(OUT)/ld-a64 -o $@ $(OUT)/crt0.o $(OUT)/cc_fp_varargs.o \
+		$(OUT)/crt0_stubs.o >/dev/null
+
 $(OUT)/cc_multi_include.o: tests/cc_multi_include.c $(OUT)/cc-a64 \
                            tests/inc_one/one.h tests/inc_two/two.h
 	@$(OUT)/cc-a64 -Itests/inc_one -Itests/inc_two -c $< -o $@ >/dev/null
@@ -169,6 +180,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_alu_imm_exe \
          $(OUT)/cc_alu_imm_hir_exe \
          $(OUT)/cc_fp_arith_exe \
+         $(OUT)/cc_fp_varargs_exe \
          $(OUT)/cc_string_exe \
          $(OUT)/cc_libc_extra_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
@@ -200,6 +212,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_alu_imm_exe; rc=$$?; if [ $$rc -eq 8 ]; then echo "cc_alu_imm: ok (exit=8)"; else echo "cc_alu_imm: FAIL (exit=$$rc, expected 8)"; exit 1; fi
 	@$(OUT)/cc_alu_imm_hir_exe; rc=$$?; if [ $$rc -eq 8 ]; then echo "cc_alu_imm (--hir): ok (exit=8)"; else echo "cc_alu_imm (--hir): FAIL (exit=$$rc, expected 8)"; exit 1; fi
 	@$(OUT)/cc_fp_arith_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_fp_arith (--hir): ok"; else echo "cc_fp_arith (--hir): FAIL (exit=$$rc; bitfield: 1=fadd 2=fsub 4=fmul 8=fdiv 16=fneg 32=fcalc 64=fadd-neg 128=six 256=add_one 512=halfneg 1024=unenc 2048=pi 4096=combo)"; exit 1; fi
+	@$(OUT)/cc_fp_varargs_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_fp_varargs (--hir): ok"; else echo "cc_fp_varargs (--hir): FAIL (exit=$$rc, expected 0; 1=one_double 2=sum_mix)"; exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
 		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \
@@ -379,6 +392,7 @@ clean:
 	      $(OUT)/cc_anon_nested_struct.o $(OUT)/cc_anon_nested_struct_exe \
 	      $(OUT)/cc_multi_include.o $(OUT)/cc_multi_include_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
+	      $(OUT)/cc_fp_varargs.o $(OUT)/cc_fp_varargs_exe \
 	      $(OUT)/cc_libc_extra.o $(OUT)/cc_libc_extra_exe \
 	      $(OUT)/ld-a64 $(OUT)/ar-a64 \
 	      $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/cc_uses_lib.o \

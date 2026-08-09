@@ -1,4 +1,5 @@
-/* FP varargs + crude %.Nf smoke for cc-a64. */
+/* FP varargs smoke for cc-a64 --hir (V0..V7 save + control-block va_list).
+ * Exit 0 on success; 1 = one_double failed; 2 = sum_mix failed. */
 
 typedef char *va_list;
 
