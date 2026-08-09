@@ -511,9 +511,13 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def BR : S32Inst<(outs), (ins brtarget:$target), "jal r0, $target", [(br bb:$target)]>;
 }
 
-// Long-branch pseudos (expanded post-RA)
-// Carry an explicit scratch register so both the Machine and MC paths can
-// agree on which temporary gets clobbered by the materialisation sequence.
+// Long-branch pseudos: MC-LAYER ONLY. Never built as MachineInstrs —
+// machine-level branch relaxation emits real LUI/ADDI/JALR directly.
+// These opcodes exist because the AsmBackend's MC branch relaxation
+// rewrites out-of-range branches to them and SLOW32MCCodeEmitter expands
+// them during encoding. Do not delete them as "dead" without removing
+// that MC path too. They carry an explicit scratch register operand so
+// the encoder knows which temporary the sequence clobbers.
 let isBranch = 1, isTerminator = 1, isBarrier = 1,
     hasSideEffects = 0, mayLoad = 0, mayStore = 0,
     isCodeGenOnly = 1, isPseudo = 1 in {

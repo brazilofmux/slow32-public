@@ -13,28 +13,9 @@
 using namespace llvm;
 
 void SLOW32AsmPrinter::emitInstruction(const MachineInstr *MI) {
-  // Long-branch pseudos (PseudoLongBR / PseudoLongB*) are expanded in
-  // ExpandPostRAPseudos to LUI/ADDI/JALR with MO_HI/MO_LO; branch
-  // relaxation emits the real sequence directly. One reaching this point
-  // means the pass pipeline regressed — fail loudly even in release
-  // builds rather than silently dropping the jump.
-  switch (MI->getOpcode()) {
-  case SLOW32::PseudoLongBR:
-  case SLOW32::PseudoLongBEQ:
-  case SLOW32::PseudoLongBNE:
-  case SLOW32::PseudoLongBLT:
-  case SLOW32::PseudoLongBGE:
-  case SLOW32::PseudoLongBGT:
-  case SLOW32::PseudoLongBLE:
-  case SLOW32::PseudoLongBLTU:
-  case SLOW32::PseudoLongBGEU:
-  case SLOW32::PseudoLongBGTU:
-  case SLOW32::PseudoLongBLEU:
-    report_fatal_error("SLOW32 long-branch pseudo reached the AsmPrinter; "
-                       "it should have been expanded earlier");
-  default:
-    break;
-  }
+  // The PseudoLongB* opcodes are MC-layer-only (AsmBackend relaxation
+  // creates them; the code emitter expands them) and are never built as
+  // MachineInstrs: branch relaxation emits real LUI/ADDI/JALR directly.
 
   MCInstLowering Lower(*this);
   MCInst Inst;

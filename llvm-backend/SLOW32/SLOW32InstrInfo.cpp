@@ -95,33 +95,6 @@ void buildCondFromBranch(MachineInstr &MI,
   Cond.push_back(MI.getOperand(1));
 }
 
-unsigned getInvertedLongBranchOpcode(unsigned Opcode) {
-  switch (Opcode) {
-  case SLOW32::PseudoLongBEQ:
-    return SLOW32::BNE_pat;
-  case SLOW32::PseudoLongBNE:
-    return SLOW32::BEQ_pat;
-  case SLOW32::PseudoLongBLT:
-    return SLOW32::BGE;
-  case SLOW32::PseudoLongBGE:
-    return SLOW32::BLT;
-  case SLOW32::PseudoLongBGT:
-    return SLOW32::BLE;
-  case SLOW32::PseudoLongBLE:
-    return SLOW32::BGT;
-  case SLOW32::PseudoLongBLTU:
-    return SLOW32::BGEU;
-  case SLOW32::PseudoLongBGEU:
-    return SLOW32::BLTU;
-  case SLOW32::PseudoLongBGTU:
-    return SLOW32::BLEU;
-  case SLOW32::PseudoLongBLEU:
-    return SLOW32::BGTU;
-  default:
-    llvm_unreachable("Unsupported long branch pseudo");
-  }
-}
-
 } // namespace
 
 SLOW32InstrInfo::SLOW32InstrInfo(const SLOW32Subtarget &STI)
@@ -544,57 +517,6 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     MI.eraseFromParent();
     return true;
   }
-  case SLOW32::PseudoLongBR: {
-    MachineBasicBlock &MBB = *MI.getParent();
-    const DebugLoc &DL = MI.getDebugLoc();
-    Register Scratch = MI.getOperand(0).getReg();
-    MachineBasicBlock *Dest = MI.getOperand(1).getMBB();
-
-    auto InsertPos = MI.getIterator();
-    buildAbsoluteJump(MBB, InsertPos, DL, *this, Scratch, Dest);
-
-    for (int I = 1; I <= 3; ++I) {
-      auto It = std::prev(InsertPos, I);
-      PropagateFlags(*It);
-    }
-
-    MI.eraseFromParent();
-    return true;
-  }
-  case SLOW32::PseudoLongBEQ:
-  case SLOW32::PseudoLongBNE:
-  case SLOW32::PseudoLongBLT:
-  case SLOW32::PseudoLongBGE:
-  case SLOW32::PseudoLongBGT:
-  case SLOW32::PseudoLongBLE:
-  case SLOW32::PseudoLongBLTU:
-  case SLOW32::PseudoLongBGEU:
-  case SLOW32::PseudoLongBGTU:
-  case SLOW32::PseudoLongBLEU: {
-    MachineBasicBlock &MBB = *MI.getParent();
-    const DebugLoc &DL = MI.getDebugLoc();
-    Register Scratch = MI.getOperand(0).getReg();
-    Register LHS = MI.getOperand(1).getReg();
-    Register RHS = MI.getOperand(2).getReg();
-    MachineBasicBlock *Dest = MI.getOperand(3).getMBB();
-
-    unsigned InvertedOpc = getInvertedLongBranchOpcode(MI.getOpcode());
-    MachineInstrBuilder Skip = BuildMI(MBB, MI, DL, get(InvertedOpc))
-                                   .addReg(LHS)
-                                   .addReg(RHS)
-                                   .addImm(12);
-    PropagateFlags(*Skip);
-
-    auto InsertPos = MI.getIterator();
-    buildAbsoluteJump(MBB, InsertPos, DL, *this, Scratch, Dest);
-    for (int I = 1; I <= 3; ++I) {
-      auto It = std::prev(InsertPos, I);
-      PropagateFlags(*It);
-    }
-
-    MI.eraseFromParent();
-    return true;
-  }
   default:
     return false;
   }
@@ -668,31 +590,6 @@ SLOW32InstrInfo::getBranchDestBlock(const MachineInstr &MI) const {
   if (MachineBasicBlock *Dest = getBranchTarget(MI))
     return Dest;
 
-  // Handle Pseudo long branches explicitly - they always have the target as the last operand
-  switch (MI.getOpcode()) {
-  case SLOW32::PseudoLongBR:
-  case SLOW32::PseudoLongBEQ:
-  case SLOW32::PseudoLongBNE:
-  case SLOW32::PseudoLongBLT:
-  case SLOW32::PseudoLongBGE:
-  case SLOW32::PseudoLongBGT:
-  case SLOW32::PseudoLongBLE:
-  case SLOW32::PseudoLongBLTU:
-  case SLOW32::PseudoLongBGEU:
-  case SLOW32::PseudoLongBGTU:
-  case SLOW32::PseudoLongBLEU: {
-    unsigned NumOps = MI.getNumOperands();
-    if (NumOps > 0) {
-      const MachineOperand &MO = MI.getOperand(NumOps - 1);
-      if (MO.isMBB())
-        return MO.getMBB();
-    }
-    break;
-  }
-  default:
-    break;
-  }
-
   // If we got here, we have a direct branch but couldn't find the MBB
   // This can happen for raw instructions (BEQ/BNE with immediates)
   // which should be pre-RA only. During and after RA, all direct branches
@@ -757,24 +654,9 @@ int64_t SLOW32InstrInfo::emitStagedAddImmediate(
 }
 
 unsigned SLOW32InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
-  switch (MI.getOpcode()) {
-  case SLOW32::PseudoLongBR:
-    return 12; // LUI + ADDI + JALR
-  case SLOW32::PseudoLongBEQ:
-  case SLOW32::PseudoLongBNE:
-  case SLOW32::PseudoLongBLT:
-  case SLOW32::PseudoLongBGE:
-  case SLOW32::PseudoLongBGT:
-  case SLOW32::PseudoLongBLE:
-  case SLOW32::PseudoLongBLTU:
-  case SLOW32::PseudoLongBGEU:
-  case SLOW32::PseudoLongBGTU:
-  case SLOW32::PseudoLongBLEU:
-    return 16; // inverted compare + long jump sequence
-  default:
-    break;
-  }
-
+  // Note: the PseudoLongB* opcodes never appear as MachineInstrs — they
+  // exist only for the MC layer, where the AsmBackend's branch relaxation
+  // creates them and the code emitter expands them.
   if (MI.isMetaInstruction())
     return 0;
 
