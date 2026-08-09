@@ -31,8 +31,7 @@ type
   tfpuflags =
     (
       FPUSLOW32_SINGLE, { native f32 instructions (FADD.S etc.) in GPRs }
-      FPUSLOW32_DOUBLE  { dummy: f64 register-pair codegen not implemented,
-                          doubles always go through the softfloat helpers }
+      FPUSLOW32_DOUBLE  { native f64 via even int pairs + FADD.D etc. }
     );
 
 const
@@ -47,5 +46,5 @@ const
     { fpu_none   } [],
     { fpu_libgcc } [],
     { fpu_soft   } [],
-    { fpu_slow32 } [FPUSLOW32_SINGLE]
+    { fpu_slow32 } [FPUSLOW32_SINGLE,FPUSLOW32_DOUBLE]
     );

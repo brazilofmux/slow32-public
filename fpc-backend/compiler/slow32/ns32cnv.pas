@@ -64,7 +64,7 @@ implementation
       ncon,ncal,
       ncgutil,procinfo,
       cpubase,cpuinfo,aasmcpu,
-      rgobj,tgobj,cgobj,hlcgobj;
+      rgobj,tgobj,cgobj,cgcpu,hlcgobj;
 
 
 {*****************************************************************************
@@ -72,32 +72,19 @@ implementation
 *****************************************************************************}
 
     function ts32typeconvnode.first_int_to_real: tnode;
-      var
-        fname: string[19];
       begin
-        if is_64bitint(left.resultdef) or
-                is_currency(left.resultdef) then
+        if is_currency(left.resultdef) then
           begin
-            { hack to avoid double division by 10000, as it's       }
-            { already done by typecheckpass.resultdef_int_to_real }
-            if is_currency(left.resultdef) then
-              left.resultdef := s64inttype;
-            if is_signed(left.resultdef) then
-              fname := 'fpc_int64_to_double'
-            else
-              fname := 'fpc_qword_to_double';
-            result := ccallnode.createintern(fname,ccallparanode.create(
-              left,nil));
-            left:=nil;
-            firstpass(result);
-            exit;
-          end
-        else if (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
+            { currency already scaled by typecheckpass; still needs int64 path }
+            left.resultdef:=s64inttype;
+          end;
+
+        if (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
           not(cs_fp_emulation in current_settings.moduleswitches) and
-          is_single(resultdef) then
+          is_single(resultdef) and
+          not is_64bitint(left.resultdef) then
           begin
-            { 32-bit int -> single natively via FCVT.S.W / FCVT.S.WU;
-              widen sub-32-bit operands first so signedness is explicit }
+            { 32-bit int -> single via FCVT.S.W / FCVT.S.WU }
             if not(is_32bit(left.resultdef)) then
               begin
                 inserttypeconv(left,s32inttype);
@@ -106,13 +93,24 @@ implementation
             result:=nil;
             expectloc:=LOC_FPUREGISTER;
           end
-        else
+        else if (FPUSLOW32_DOUBLE in fpu_capabilities[current_settings.fputype]) and
+          not(cs_fp_emulation in current_settings.moduleswitches) and
+          is_double(resultdef) then
           begin
-            { int -> double (or single without native FP): use the
-              generic/inherited conversion path which routes through the
-              standard softfloat compilerprocs }
-            result := inherited first_int_to_real;
-          end;
+            { int32/int64 -> double via FCVT.D.W / FCVT.D.L }
+            if not is_64bitint(left.resultdef) and not is_32bit(left.resultdef) then
+              begin
+                if is_signed(left.resultdef) then
+                  inserttypeconv(left,s32inttype)
+                else
+                  inserttypeconv(left,u32inttype);
+                firstpass(left);
+              end;
+            result:=nil;
+            expectloc:=LOC_REGISTER;
+          end
+        else
+          result:=inherited first_int_to_real;
       end;
 
 
@@ -172,19 +170,57 @@ implementation
     procedure ts32typeconvnode.second_int_to_real;
       var
         op: TAsmOp;
+        list: TAsmList;
+        cgs: tcgs32;
       begin
-        if not(is_single(resultdef)) then
-          internalerror(2026071504);
+        list:=current_asmdata.CurrAsmList;
         secondpass(left);
         if not(left.location.loc in [LOC_REGISTER,LOC_CREGISTER]) then
-          hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,left.resultdef,true);
-        location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
-        location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
-        if is_signed(left.resultdef) then
-          op:=A_FCVT_S_W
+          hlcg.location_force_reg(list,left.location,left.resultdef,left.resultdef,true);
+
+        if is_single(resultdef) then
+          begin
+            location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
+            location.register:=cg.getfpuregister(list,location.size);
+            if is_signed(left.resultdef) then
+              op:=A_FCVT_S_W
+            else
+              op:=A_FCVT_S_WU;
+            list.concat(taicpu.op_reg_reg(op,location.register,left.location.register));
+          end
+        else if is_double(resultdef) then
+          begin
+            cgs:=tcgs32(cg);
+            cgs.a_alloc_evenpair(list,NR_F64PAIR_A);
+            if is_64bitint(left.resultdef) then
+              begin
+                cgs.a_alloc_evenpair(list,NR_F64PAIR_B);
+                cgs.a_load_reg64_evenpair(list,
+                  left.location.register64.reglo,left.location.register64.reghi,NR_F64PAIR_B);
+                if is_signed(left.resultdef) then
+                  op:=A_FCVT_D_L
+                else
+                  op:=A_FCVT_D_LU;
+                list.concat(taicpu.op_reg_reg(op,NR_F64PAIR_A,NR_F64PAIR_B));
+                cgs.a_dealloc_evenpair(list,NR_F64PAIR_B);
+              end
+            else
+              begin
+                if is_signed(left.resultdef) then
+                  op:=A_FCVT_D_W
+                else
+                  op:=A_FCVT_D_WU;
+                list.concat(taicpu.op_reg_reg(op,NR_F64PAIR_A,left.location.register));
+              end;
+            location_reset(location,LOC_REGISTER,OS_64);
+            location.register64.reglo:=cg.getintregister(list,OS_32);
+            location.register64.reghi:=cg.getintregister(list,OS_32);
+            cgs.a_load_evenpair_reg64(list,NR_F64PAIR_A,
+              location.register64.reglo,location.register64.reghi);
+            cgs.a_dealloc_evenpair(list,NR_F64PAIR_A);
+          end
         else
-          op:=A_FCVT_S_WU;
-        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,location.register,left.location.register));
+          internalerror(2026071504);
       end;
 
 

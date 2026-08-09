@@ -63,20 +63,41 @@ implementation
       ncgutil,cgcpu;
 
     procedure ts32unaryminusnode.second_float;
+      var
+        list: TAsmList;
+        cgs: tcgs32;
       begin
+        list:=current_asmdata.CurrAsmList;
         if (tfloatdef(resultdef).floattype=s32real) and
           (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
           not(cs_fp_emulation in current_settings.moduleswitches) then
           begin
             secondpass(left);
-            hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+            hlcg.location_force_fpureg(list,left.location,left.resultdef,true);
             location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
-            location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
-            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FNEG_S,location.register,left.location.register));
+            location.register:=cg.getfpuregister(list,location.size);
+            list.concat(taicpu.op_reg_reg(A_FNEG_S,location.register,left.location.register));
+          end
+        else if (tfloatdef(resultdef).floattype=s64real) and
+          (FPUSLOW32_DOUBLE in fpu_capabilities[current_settings.fputype]) and
+          not(cs_fp_emulation in current_settings.moduleswitches) then
+          begin
+            secondpass(left);
+            hlcg.location_force_reg(list,left.location,left.resultdef,left.resultdef,true);
+            cgs:=tcgs32(cg);
+            cgs.a_alloc_evenpair(list,NR_F64PAIR_A);
+            cgs.a_load_reg64_evenpair(list,
+              left.location.register64.reglo,left.location.register64.reghi,NR_F64PAIR_A);
+            list.concat(taicpu.op_reg_reg(A_FNEG_D,NR_F64PAIR_A,NR_F64PAIR_A));
+            location_reset(location,LOC_REGISTER,OS_64);
+            location.register64.reglo:=cg.getintregister(list,OS_32);
+            location.register64.reghi:=cg.getintregister(list,OS_32);
+            cgs.a_load_evenpair_reg64(list,NR_F64PAIR_A,
+              location.register64.reglo,location.register64.reghi);
+            cgs.a_dealloc_evenpair(list,NR_F64PAIR_A);
           end
         else
-          { f64 (and f32 without native FP) lives in int registers; negation
-            is a sign-bit flip, same as on pure soft-float targets }
+          { f32 without native FP: soft-float sign-bit flip }
           second_float_emulated;
       end;
 

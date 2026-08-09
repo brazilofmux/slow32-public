@@ -14,17 +14,18 @@ index 529e5242b1..6b88aff284 100644
                result:=int_cgsize(def.size)
              else
 diff --git a/compiler/nld.pas b/compiler/nld.pas
-index 5b76b2be1c..d5a275b82a 100644
+index 5b76b2be1c..70af7c95f2 100644
 --- a/compiler/nld.pas
 +++ b/compiler/nld.pas
-@@ -863,6 +863,10 @@ implementation
+@@ -863,6 +863,11 @@ implementation
  {$ifdef xtensa}
                  and not((FPUXTENSA_SINGLE in fpu_capabilities[current_settings.fputype]) xor
                    (FPUXTENSA_DOUBLE in fpu_capabilities[current_settings.fputype]))
 +{$endif}
 +{$ifdef slow32}
-+                and not((FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) xor
-+                  (FPUSLOW32_DOUBLE in fpu_capabilities[current_settings.fputype]))
++                { f32 lives in F-class regs, f64 in int pairs — only elide
++                  the typeconv when both sides share the same precision }
++                and (tfloatdef(left.resultdef).floattype=tfloatdef(right.resultdef).floattype)
  {$endif}
          then
            begin

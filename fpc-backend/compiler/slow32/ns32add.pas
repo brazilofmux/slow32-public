@@ -281,12 +281,15 @@ unit ns32add;
 
     function ts32addnode.native_float_supported: boolean;
       begin
-        { fpu_slow32 has native f32 instructions (FADD.S etc.). f64 still
-          needs paired-register support in the F-allocator and is not yet
-          wired up, so we let those nodes fall through to softfpu helpers
-          via first_addfloat_soft. }
+        { f32: F-class regs. f64: int pairs staged through even scratch pairs. }
         result:=(current_settings.fputype=fpu_slow32) and
-                is_single(left.resultdef) and is_single(right.resultdef);
+                not(cs_fp_emulation in current_settings.moduleswitches) and
+                (
+                  (is_single(left.resultdef) and is_single(right.resultdef) and
+                   (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype])) or
+                  (is_double(left.resultdef) and is_double(right.resultdef) and
+                   (FPUSLOW32_DOUBLE in fpu_capabilities[current_settings.fputype]))
+                );
       end;
 
 
@@ -316,16 +319,17 @@ unit ns32add;
                 (current_settings.fputype=fpu_slow32) and
                 not native_float_supported then
           begin
-            { f64 (or other precisions): route through softfpu libcall even
-              though fputype isn't fpu_soft. }
+            { mismatched or unsupported real precisions: softfloat helpers }
             result:=first_addfloat_soft;
           end
         else if is_real(left.resultdef) and native_float_supported then
           begin
-            { f32 with native FP: keep this node and let second_addfloat fire. }
             firstpass(left);
             firstpass(right);
             if nodetype in [equaln,unequaln,ltn,lten,gtn,gten] then
+              expectloc:=LOC_REGISTER
+            else if is_double(left.resultdef) then
+              { f64 result is an int register pair (def_cgsize -> OS_64) }
               expectloc:=LOC_REGISTER
             else
               expectloc:=LOC_FPUREGISTER;
@@ -347,6 +351,8 @@ unit ns32add;
       var
         op: TAsmOp;
         cmpop, inv: boolean;
+        list: TAsmList;
+        cgs: tcgs32;
       begin
         if not native_float_supported then
           internalerror(2026051604);
@@ -355,43 +361,100 @@ unit ns32add;
         if nf_swapped in flags then
           swapleftright;
 
-        hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
-        hlcg.location_force_fpureg(current_asmdata.CurrAsmList,right.location,right.resultdef,true);
-
+        list:=current_asmdata.CurrAsmList;
+        cgs:=tcgs32(cg);
         cmpop:=false;
         inv:=false;
-        case nodetype of
-          addn:    op:=A_FADD_S;
-          subn:    op:=A_FSUB_S;
-          muln:    op:=A_FMUL_S;
-          slashn:  op:=A_FDIV_S;
-          equaln:  begin op:=A_FEQ_S; cmpop:=true; end;
-          unequaln:begin op:=A_FEQ_S; cmpop:=true; inv:=true; end;
-          ltn:     begin op:=A_FLT_S; cmpop:=true; end;
-          lten:    begin op:=A_FLE_S; cmpop:=true; end;
-          gtn:     begin op:=A_FLT_S; cmpop:=true; swapleftright; end;
-          gten:    begin op:=A_FLE_S; cmpop:=true; swapleftright; end;
-          else
-            internalerror(2026051605);
-        end;
 
-        if not cmpop then
+        if is_double(left.resultdef) then
           begin
-            location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
-            location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+            { f64: pack both operands into even scratch pairs, operate, unpack }
+            hlcg.location_force_reg(list,left.location,left.resultdef,left.resultdef,true);
+            hlcg.location_force_reg(list,right.location,right.resultdef,right.resultdef,true);
+
+            case nodetype of
+              addn:    op:=A_FADD_D;
+              subn:    op:=A_FSUB_D;
+              muln:    op:=A_FMUL_D;
+              slashn:  op:=A_FDIV_D;
+              equaln:  begin op:=A_FEQ_D; cmpop:=true; end;
+              unequaln:begin op:=A_FEQ_D; cmpop:=true; inv:=true; end;
+              ltn:     begin op:=A_FLT_D; cmpop:=true; end;
+              lten:    begin op:=A_FLE_D; cmpop:=true; end;
+              gtn:     begin op:=A_FLT_D; cmpop:=true; swapleftright; end;
+              gten:    begin op:=A_FLE_D; cmpop:=true; swapleftright; end;
+              else
+                internalerror(2026051605);
+            end;
+
+            cgs.a_alloc_evenpair(list,NR_F64PAIR_A);
+            cgs.a_alloc_evenpair(list,NR_F64PAIR_B);
+            cgs.a_load_reg64_evenpair(list,
+              left.location.register64.reglo,left.location.register64.reghi,NR_F64PAIR_A);
+            cgs.a_load_reg64_evenpair(list,
+              right.location.register64.reglo,right.location.register64.reghi,NR_F64PAIR_B);
+
+            if cmpop then
+              begin
+                location_reset(location,LOC_REGISTER,OS_8);
+                location.register:=cg.getintregister(list,OS_INT);
+                list.concat(taicpu.op_reg_reg_reg(op,location.register,NR_F64PAIR_A,NR_F64PAIR_B));
+                if inv then
+                  list.concat(taicpu.op_reg_reg_const(A_XORI,location.register,location.register,1));
+              end
+            else
+              begin
+                cgs.a_alloc_evenpair(list,NR_F64PAIR_C);
+                list.concat(taicpu.op_reg_reg_reg(op,NR_F64PAIR_C,NR_F64PAIR_A,NR_F64PAIR_B));
+                location_reset(location,LOC_REGISTER,OS_64);
+                location.register64.reglo:=cg.getintregister(list,OS_32);
+                location.register64.reghi:=cg.getintregister(list,OS_32);
+                cgs.a_load_evenpair_reg64(list,NR_F64PAIR_C,
+                  location.register64.reglo,location.register64.reghi);
+                cgs.a_dealloc_evenpair(list,NR_F64PAIR_C);
+              end;
+            cgs.a_dealloc_evenpair(list,NR_F64PAIR_B);
+            cgs.a_dealloc_evenpair(list,NR_F64PAIR_A);
           end
         else
           begin
-            location_reset(location,LOC_REGISTER,OS_8);
-            location.register:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+            { f32 in F-class }
+            hlcg.location_force_fpureg(list,left.location,left.resultdef,true);
+            hlcg.location_force_fpureg(list,right.location,right.resultdef,true);
+
+            case nodetype of
+              addn:    op:=A_FADD_S;
+              subn:    op:=A_FSUB_S;
+              muln:    op:=A_FMUL_S;
+              slashn:  op:=A_FDIV_S;
+              equaln:  begin op:=A_FEQ_S; cmpop:=true; end;
+              unequaln:begin op:=A_FEQ_S; cmpop:=true; inv:=true; end;
+              ltn:     begin op:=A_FLT_S; cmpop:=true; end;
+              lten:    begin op:=A_FLE_S; cmpop:=true; end;
+              gtn:     begin op:=A_FLT_S; cmpop:=true; swapleftright; end;
+              gten:    begin op:=A_FLE_S; cmpop:=true; swapleftright; end;
+              else
+                internalerror(2026051605);
+            end;
+
+            if not cmpop then
+              begin
+                location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
+                location.register:=cg.getfpuregister(list,location.size);
+              end
+            else
+              begin
+                location_reset(location,LOC_REGISTER,OS_8);
+                location.register:=cg.getintregister(list,OS_INT);
+              end;
+
+            list.concat(taicpu.op_reg_reg_reg(op,
+              location.register,left.location.register,right.location.register));
+
+            if cmpop and inv then
+              list.concat(taicpu.op_reg_reg_const(A_XORI,
+                location.register,location.register,1));
           end;
-
-        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op,
-          location.register,left.location.register,right.location.register));
-
-        if cmpop and inv then
-          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_const(A_XORI,
-            location.register,location.register,1));
       end;
 
 

@@ -88,17 +88,26 @@ unit cgcpu;
         procedure g_overflowcheck_loc(list: TAsmList; const Loc: tlocation; def: tdef; ovloc: tlocation); override;
         procedure g_overflowcheck(list: TAsmList; const Loc: tlocation; def: tdef); override;
 
-        { fpu stubs - SLOW-32 has no hardware FPU, floats handled via soft-float }
+        { f32 lives in F-class GPRs; f64 uses int register pairs with even base }
         procedure a_loadfpu_reg_reg(list: TAsmList; fromsize, tosize: tcgsize; reg1, reg2: tregister); override;
         procedure a_loadfpu_ref_reg(list: TAsmList; fromsize, tosize: tcgsize; const ref: treference; reg: tregister); override;
         procedure a_loadfpu_reg_ref(list: TAsmList; fromsize, tosize: tcgsize; reg: tregister; const ref: treference); override;
 
         procedure g_check_for_fpu_exception(list: TAsmList;force,clear : boolean); override;
 
+        { f64 even-pair helpers: ISA requires even base; hi is base+1 }
+        function evenpair_hi(pairbase: tregister): tregister;
+        procedure a_alloc_evenpair(list: TAsmList; pairbase: tregister);
+        procedure a_dealloc_evenpair(list: TAsmList; pairbase: tregister);
+        procedure a_load_reg64_evenpair(list: TAsmList; reglo, reghi, pairbase: tregister);
+        procedure a_load_evenpair_reg64(list: TAsmList; pairbase, reglo, reghi: tregister);
+
         function fixref(list: TAsmList; var ref: treference): boolean;
       protected
         procedure maybeadjustresult(list: TAsmList; op: topcg; size: tcgsize; dst: tregister);
       end;
+
+
 
       { tcg64fs32 - 64-bit code generator for SLOW-32 (32-bit ALU) }
 
@@ -128,6 +137,11 @@ unit cgcpu;
 
   procedure create_codegen;
 
+  { Caller-saved even bases outside F-class (r20-r28) for f64 scratch pairs }
+  function NR_F64PAIR_A: tregister; { r4:r5 }
+  function NR_F64PAIR_B: tregister; { r6:r7 }
+  function NR_F64PAIR_C: tregister; { r8:r9 }
+
   implementation
 
     uses
@@ -143,6 +157,21 @@ unit cgcpu;
   const
      max_12_bit = 1 shl 12;
 {$endif}
+
+  function NR_F64PAIR_A: tregister;
+    begin
+      result:=NR_R4;
+    end;
+
+  function NR_F64PAIR_B: tregister;
+    begin
+      result:=NR_R6;
+    end;
+
+  function NR_F64PAIR_C: tregister;
+    begin
+      result:=NR_R8;
+    end;
 
 { Range check must be disabled explicitly as conversions between signed and unsigned
   32-bit values are done without explicit typecasts }
@@ -1152,14 +1181,72 @@ unit cgcpu;
 
 
 {*****************************************************************************
-                          FPU stubs (no hardware FPU)
+                     FPU / soft-float-in-GPR helpers
 *****************************************************************************}
 
     { F-class is a soft-float fiction over GPRs (see cpubase.pas notes).
-      f32 moves through a single F-reg (= one GPR); f64 needs a register
-      pair which is not yet wired (the F-allocator can't yet allocate
-      even-aligned pairs). Until the f64 path lands these helpers
-      internalerror on OS_F64 so callers fall back to softfpu helpers. }
+      f32 moves through a single F-reg (= one GPR). f64 lives in int
+      register64 pairs and is staged through even physical pairs for
+      FADD.D / FCVT.* etc. a_loadfpu_* only handles OS_F32. }
+
+    function tcgs32.evenpair_hi(pairbase: tregister): tregister;
+      begin
+        result:=newreg(R_INTREGISTER,getsupreg(pairbase)+1,R_SUBWHOLE);
+      end;
+
+
+    procedure tcgs32.a_alloc_evenpair(list: TAsmList; pairbase: tregister);
+      begin
+        a_reg_alloc(list,pairbase);
+        a_reg_alloc(list,evenpair_hi(pairbase));
+      end;
+
+
+    procedure tcgs32.a_dealloc_evenpair(list: TAsmList; pairbase: tregister);
+      begin
+        a_reg_dealloc(list,evenpair_hi(pairbase));
+        a_reg_dealloc(list,pairbase);
+      end;
+
+
+    procedure tcgs32.a_load_reg64_evenpair(list: TAsmList; reglo, reghi, pairbase: tregister);
+      var
+        pairhi, tmpreg: tregister;
+      begin
+        pairhi:=evenpair_hi(pairbase);
+        { Avoid clobber when the source pair aliases the dest pair in reverse }
+        if (reglo=pairhi) and (reghi=pairbase) then
+          begin
+            tmpreg:=getintregister(list,OS_32);
+            a_load_reg_reg(list,OS_32,OS_32,reglo,tmpreg);
+            a_load_reg_reg(list,OS_32,OS_32,reghi,pairhi);
+            a_load_reg_reg(list,OS_32,OS_32,tmpreg,pairbase);
+          end
+        else if reghi=pairbase then
+          begin
+            a_load_reg_reg(list,OS_32,OS_32,reghi,pairhi);
+            if reglo<>pairbase then
+              a_load_reg_reg(list,OS_32,OS_32,reglo,pairbase);
+          end
+        else
+          begin
+            if reglo<>pairbase then
+              a_load_reg_reg(list,OS_32,OS_32,reglo,pairbase);
+            if reghi<>pairhi then
+              a_load_reg_reg(list,OS_32,OS_32,reghi,pairhi);
+          end;
+      end;
+
+
+    procedure tcgs32.a_load_evenpair_reg64(list: TAsmList; pairbase, reglo, reghi: tregister);
+      var
+        pairhi: tregister;
+      begin
+        pairhi:=evenpair_hi(pairbase);
+        a_load_reg_reg(list,OS_32,OS_32,pairbase,reglo);
+        a_load_reg_reg(list,OS_32,OS_32,pairhi,reghi);
+      end;
+
 
     procedure tcgs32.a_loadfpu_reg_reg(list: TAsmList; fromsize, tosize: tcgsize; reg1, reg2: tregister);
       var
@@ -1174,8 +1261,7 @@ unit cgcpu;
             rg[R_FPUREGISTER].add_move_instruction(ai);
           end
         else
-          { f64 never lives in F-class registers: def_cgsize maps it to
-            int sizes and all f64 operations route through softfloat }
+          { f64 is not an F-class value; callers should use int loads }
           internalerror(2026051601);
       end;
 
@@ -1184,11 +1270,18 @@ unit cgcpu;
       var
         href: treference;
       begin
-        if fromsize<>OS_F32 then
-          internalerror(2026051602);
-        href:=ref;
-        fixref(list,href);
-        list.concat(taicpu.op_reg_ref(A_LDW,reg,href));
+        if (fromsize=OS_F32) and (tosize=OS_F32) then
+          begin
+            href:=ref;
+            fixref(list,href);
+            list.concat(taicpu.op_reg_ref(A_LDW,reg,href));
+          end
+        else
+          { Double values use int-pair locations (def_cgsize -> OS_64).
+            If we get here something asked for an F-class load of a double;
+            fall back to a plain 32-bit int load of the lo word only is wrong —
+            use the integer path instead. }
+          a_load_ref_reg(list,fromsize,tosize,ref,reg);
       end;
 
 
@@ -1196,11 +1289,14 @@ unit cgcpu;
       var
         href: treference;
       begin
-        if tosize<>OS_F32 then
-          internalerror(2026051603);
-        href:=ref;
-        fixref(list,href);
-        list.concat(taicpu.op_reg_ref(A_STW,reg,href));
+        if (fromsize=OS_F32) and (tosize=OS_F32) then
+          begin
+            href:=ref;
+            fixref(list,href);
+            list.concat(taicpu.op_reg_ref(A_STW,reg,href));
+          end
+        else
+          a_load_reg_ref(list,fromsize,tosize,reg,ref);
       end;
 
 
