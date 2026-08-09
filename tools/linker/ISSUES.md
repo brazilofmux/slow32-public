@@ -28,13 +28,11 @@ When an archive is processed, several large buffers are allocated:
 - **Problem**: These are not freed in the success path, only in one specific error branch. Every linked library causes a significant leak.
 - **Recommendation**: Ensure `free()` is called for all three buffers before the function returns `true`.
 
-### 4. Quadratic Complexity in Symbol/String Lookups
-The linker performs multiple linear scans:
-- `add_string`: Linear scan of the string table for every insertion.
-- `build_symbol_table`: Linear scan of `ld->symbols` for every symbol in every input file.
-- `collect_relocations`: Linear scan of `ld->symbols` for every relocation.
-- **Problem**: Link time will grow quadratically ($O(N^2)$) with the number of symbols and relocations. Large projects (like those with C++ or complex libraries) will be extremely slow to link.
-- **Recommendation**: Use hash tables to index the string table and the global symbol table.
+### 4. Quadratic Complexity in Symbol/String Lookups (Mostly Resolved)
+Symbol/string tables use `s32_hashmap`. Archive member selection used to call
+`is_symbol_undefined` with nested O(files² × symbols²) scans.
+- **Status (2026-08 Pack C)**: Archive selection now maintains
+  `archive_def_map` / `archive_undef_map` as objects load; undef checks are O(1).
 
 ### 5. `sym_strtab` Stack Overflow in `write_executable` (Resolved)
 `write_executable` allocated `char sym_strtab[STRING_TABLE_SIZE]` (256KB) on the stack.

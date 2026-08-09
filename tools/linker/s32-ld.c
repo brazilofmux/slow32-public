@@ -121,6 +121,10 @@ typedef struct {
     s32_hashmap_t symbol_map;
     s32_hashmap_t section_map;
     s32_hashmap_t string_dedup_map;
+    // Archive member selection: track global def/undef as objects load so
+    // is_symbol_undefined is O(1) instead of nested scans of every file.
+    s32_hashmap_t archive_def_map;
+    s32_hashmap_t archive_undef_map;
 
     // Memory layout
     uint32_t entry_point;
@@ -199,6 +203,33 @@ static const char *safe_string(const input_file_t *inf, uint32_t offset) {
         return "";
     }
     return &inf->string_table[offset];
+}
+
+// Record GLOBAL symbols from a freshly loaded object into the archive
+// selection maps. Keys point into the object's string table (stable for the
+// rest of the link). Call after the object is successfully loaded.
+static void register_object_globals_for_archive(linker_state_t *ld,
+                                                const input_file_t *inf) {
+    for (uint32_t j = 0; j < inf->header.nsymbols; j++) {
+        if (inf->symbols[j].binding != S32O_BIND_GLOBAL) {
+            continue;
+        }
+        const char *name = safe_string(inf, inf->symbols[j].name_offset);
+        if (inf->symbols[j].section != 0) {
+            s32_hashmap_put(&ld->archive_def_map, name, 1);
+        } else if (s32_hashmap_get(&ld->archive_def_map, name) < 0) {
+            s32_hashmap_put(&ld->archive_undef_map, name, 1);
+        }
+    }
+}
+
+// True if some loaded object has a GLOBAL undefined reference to the name
+// and no loaded object has defined it yet.
+static bool is_symbol_undefined(linker_state_t *ld, const char *symbol_name) {
+    if (s32_hashmap_get(&ld->archive_def_map, symbol_name) >= 0) {
+        return false;
+    }
+    return s32_hashmap_get(&ld->archive_undef_map, symbol_name) >= 0;
 }
 
 // Forward declaration
@@ -304,44 +335,12 @@ static bool load_object_from_memory(linker_state_t *ld, const char *filename,
         printf("Loaded '%s' from archive: %d sections, %d symbols\n", 
                filename, inf->header.nsections, inf->header.nsymbols);
     }
-    
+
     ld->num_input_files++;
+    register_object_globals_for_archive(ld, inf);
     return true;
 }
 
-// Check if a symbol is undefined in the current link
-static bool is_symbol_undefined(linker_state_t *ld, const char *symbol_name) {
-    // Look through all undefined symbols in loaded objects
-    for (int i = 0; i < ld->num_input_files; i++) {
-        input_file_t *inf = &ld->input_files[i];
-        for (uint32_t j = 0; j < inf->header.nsymbols; j++) {
-            if (inf->symbols[j].binding == S32O_BIND_GLOBAL && 
-                inf->symbols[j].section == 0) {
-                const char *name = safe_string(inf, inf->symbols[j].name_offset);
-                if (strcmp(name, symbol_name) == 0) {
-                    // Check if it's defined elsewhere
-                    bool defined = false;
-                    for (int k = 0; k < ld->num_input_files; k++) {
-                        input_file_t *inf2 = &ld->input_files[k];
-                        for (uint32_t l = 0; l < inf2->header.nsymbols; l++) {
-                            if (inf2->symbols[l].binding == S32O_BIND_GLOBAL && 
-                                inf2->symbols[l].section != 0) {
-                                const char *name2 = safe_string(inf2, inf2->symbols[l].name_offset);
-                                if (strcmp(name2, symbol_name) == 0) {
-                                    defined = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (defined) break;
-                    }
-                    if (!defined) return true;
-                }
-            }
-        }
-    }
-    return false;
-}
 
 // Find a library file using search paths
 static char* find_library_file(linker_state_t *ld, const char *filename) {
@@ -671,6 +670,7 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
     }
     
     ld->num_input_files++;
+    register_object_globals_for_archive(ld, inf);
     return true;
 }
 
@@ -2488,6 +2488,8 @@ int main(int argc, char *argv[]) {
     s32_hashmap_init(&ld.symbol_map, 256);
     s32_hashmap_init(&ld.section_map, 64);
     s32_hashmap_init(&ld.string_dedup_map, 256);
+    s32_hashmap_init(&ld.archive_def_map, 256);
+    s32_hashmap_init(&ld.archive_undef_map, 256);
 
     // Parse command line — collect input file names in a dynamic array
     int num_input_files = 0;
