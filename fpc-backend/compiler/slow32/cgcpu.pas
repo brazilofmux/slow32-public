@@ -1277,11 +1277,10 @@ unit cgcpu;
             list.concat(taicpu.op_reg_ref(A_LDW,reg,href));
           end
         else
-          { Double values use int-pair locations (def_cgsize -> OS_64).
-            If we get here something asked for an F-class load of a double;
-            fall back to a plain 32-bit int load of the lo word only is wrong —
-            use the integer path instead. }
-          a_load_ref_reg(list,fromsize,tosize,ref,reg);
+          { f64 lives in int-pair locations (def_cgsize -> OS_64) and must
+            never come through the F-class load path; a silent int fallback
+            would load only the lo word. Fail loudly instead. }
+          internalerror(2026051602);
       end;
 
 
@@ -1296,7 +1295,8 @@ unit cgcpu;
             list.concat(taicpu.op_reg_ref(A_STW,reg,href));
           end
         else
-          a_load_reg_ref(list,fromsize,tosize,reg,ref);
+          { see a_loadfpu_ref_reg: f64 must use the int-pair path }
+          internalerror(2026051603);
       end;
 
 

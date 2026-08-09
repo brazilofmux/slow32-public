@@ -297,7 +297,7 @@ unit ns32add;
       begin
         result:=nil;
         if (nodetype=muln) and
-           (left.resultdef.typ=orddef) and (left.resultdef.typ=orddef) and
+           (left.resultdef.typ=orddef) and (right.resultdef.typ=orddef) and
            (CPUS32_HAS_MUL in cpu_capabilities[current_settings.cputype])
            and (not (is_64bit(left.resultdef) or
                      is_64bit(right.resultdef)))

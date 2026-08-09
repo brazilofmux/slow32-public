@@ -3,7 +3,7 @@
 # Includes: clang, llc, assembler, linker, ar, objdump, etc.
 
 # Stage 1: Build LLVM/Clang with SLOW-32 backend
-FROM alpine:3.19 AS llvm-builder
+FROM alpine:3.21 AS llvm-builder
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -55,7 +55,7 @@ RUN cmake -G Ninja \
 RUN ninja && ninja install
 
 # Stage 2: Build FPC cross-compiler for SLOW-32
-FROM alpine:3.19 AS fpc-builder
+FROM alpine:3.21 AS fpc-builder
 
 RUN apk add --no-cache build-base git bash tar
 
@@ -84,7 +84,8 @@ RUN MACHINE=$(uname -m) && \
     rm -rf /build/fpc-*
 
 # Clone FPC source at pinned commit
-ARG FPC_COMMIT=3b5c7beebeff52241a62e8ca6a261681f493dad8
+# Pin to the upstream merge-base of ~/fpc (same SHA patches are regenerated against).
+ARG FPC_COMMIT=fa4cff4b931d2c35a2f70fa597ae8ed7abbadbf4
 RUN git init /fpc-src && cd /fpc-src && \
     git remote add origin https://gitlab.com/freepascal.org/fpc/source.git && \
     git fetch --depth=1 origin ${FPC_COMMIT} && \
@@ -161,7 +162,7 @@ RUN mkdir -p /opt/fpc/slow32-rtl-fpu && \
 # tools — they need no emulator — built by host gcc from the shared stage08
 # frontend. (The slow-32-hosted self-host compiler, cc.s32x, is itself a .s32x
 # and so lives with the emulator, not here.) The selfhost tree builds in <1min.
-FROM alpine:3.19 AS selfhost-builder
+FROM alpine:3.21 AS selfhost-builder
 RUN apk add --no-cache build-base bash
 WORKDIR /build
 # selfhost/ and common/ must stay siblings: the cross libc includes
@@ -177,7 +178,7 @@ RUN cd /build/selfhost/stage08-cross-a64 && rm -rf out && mkdir -p out && \
     make out/cc-a64 out/ld-a64 out/ar-a64 out/crt0.o libc
 
 # Stage 3: Build SLOW-32 native tools and create final image
-FROM alpine:3.19
+FROM alpine:3.21
 
 # Install runtime dependencies
 RUN apk add --no-cache \
