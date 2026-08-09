@@ -67,7 +67,7 @@ index 178e3516b8..65e8714712 100644
          asmmode : asmmode_standard;
  {$ifndef jvm}
 diff --git a/compiler/options.pas b/compiler/options.pas
-index 84cc25a6b1..40a41a14c6 100644
+index 1178acbcc9..94948b8ed1 100644
 --- a/compiler/options.pas
 +++ b/compiler/options.pas
 @@ -4850,6 +4850,14 @@ procedure read_arguments(cmd:TCmdStr);

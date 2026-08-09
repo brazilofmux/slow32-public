@@ -66206,8 +66206,12 @@ SYSTEM$_$TGUID_$__$$_FROMSTRING$SHORTSTRING$TGUID$$BOOLEAN:
 .Lj7728:
 	jal	r0,.Lj7715
 .Lj7729:
-	stw	r30,r0,-68
+	addi	r3,r0,-1
+	stw	r30,r3,-68
 .Lj7730:
+	ldw	r3,r30,-68
+	addi	r3,r3,1
+	stw	r30,r3,-68
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	ldw	r4,r30,-68
@@ -66235,11 +66239,8 @@ SYSTEM$_$TGUID_$__$$_FROMSTRING$SHORTSTRING$TGUID$$BOOLEAN:
 	add	r3,r3,r5
 	stb	r3,r4,0
 	ldw	r3,r30,-68
-	addi	r3,r3,1
-	stw	r30,r3,-68
-	ldw	r4,r30,-68
-	addi	r3,r0,15
-	sgt	r3,r4,r3
+	addi	r4,r0,15
+	sge	r3,r3,r4
 	bne	r3,r0,.Lj7732
 	jal	r0,.Lj7730
 .Lj7732:
