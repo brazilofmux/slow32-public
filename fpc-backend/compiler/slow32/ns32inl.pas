@@ -31,14 +31,16 @@ interface
 
     type
       ts32inlinenode = class(tcginlinenode)
-        { fpu_slow32 handles f32 abs/sqr/sqrt natively (FABS.S/FMUL.S/FSQRT.S).
-          f64 and all other intrinsics still use softfloat helper calls. }
+        { fpu_slow32: native FABS.S / FMUL.S / FSQRT.S / FCVT.L.S for f32.
+          Round and f64 stay softfloat (DBT can still intercept libcalls). }
         function first_abs_real: tnode; override;
         function first_sqr_real: tnode; override;
         function first_sqrt_real: tnode; override;
+        function first_trunc_real: tnode; override;
         procedure second_abs_real; override;
         procedure second_sqr_real; override;
         procedure second_sqrt_real; override;
+        procedure second_trunc_real; override;
       protected
         function use_native_f32: boolean;
       end;
@@ -140,6 +142,55 @@ implementation
         location_reset(location,LOC_FPUREGISTER,OS_F32);
         location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FSQRT_S,location.register,left.location.register));
+      end;
+
+
+    function ts32inlinenode.first_trunc_real: tnode;
+      begin
+        { Trunc returns Int64; FCVT.L.S writes an even register pair. }
+        if use_native_f32 then
+          begin
+            result:=nil;
+            expectloc:=LOC_REGISTER;
+          end
+        else
+          result:=inherited first_trunc_real;
+      end;
+
+
+    procedure ts32inlinenode.second_trunc_real;
+      var
+        list: TAsmList;
+        pairbase, pairhi: tregister;
+      begin
+        list:=current_asmdata.CurrAsmList;
+        secondpass(left);
+        hlcg.location_force_fpureg(list,left.location,left.resultdef,true);
+
+        location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+        if location.size in [OS_S64,OS_64] then
+          begin
+            location.register64.reglo:=cg.getintregister(list,OS_32);
+            location.register64.reghi:=cg.getintregister(list,OS_32);
+          end
+        else
+          location.register:=cg.getintregister(list,location.size);
+
+        { FCVT.L.S requires even dest base; r4:r5 is outside F-class. }
+        pairbase:=NR_R4;
+        pairhi:=NR_R5;
+        cg.a_reg_alloc(list,pairbase);
+        cg.a_reg_alloc(list,pairhi);
+        list.concat(taicpu.op_reg_reg(A_FCVT_L_S,pairbase,left.location.register));
+        if location.size in [OS_S64,OS_64] then
+          begin
+            cg.a_load_reg_reg(list,OS_32,OS_32,pairbase,location.register64.reglo);
+            cg.a_load_reg_reg(list,OS_32,OS_32,pairhi,location.register64.reghi);
+          end
+        else
+          cg.a_load_reg_reg(list,OS_32,OS_32,pairbase,location.register);
+        cg.a_reg_dealloc(list,pairhi);
+        cg.a_reg_dealloc(list,pairbase);
       end;
 
 
