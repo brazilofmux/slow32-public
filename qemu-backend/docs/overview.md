@@ -59,9 +59,9 @@ Future extensions (cycle counters, MMU flags) can be added later. The key is mir
 
 ## Memory & Devices
 
-- The only mandatory device is the DEBUG console output. Implement it via `qemu_chr_fe_write_all` so it integrates with existing chardev plumbing.
-- MMIO ring buffer support (from `slow32_mmio.c` and `mmio_ring.c`) can arrive later; the initial target can route DEBUG directly to host output.
-- Sparse allocation: the interpreter lazily allocates pages. QEMU can approximate this by creating RAM sections sized per header; laziness is nice-to-have but not required for functional correctness.
+- Guest console (DEBUG instruction, MMIO PUTCHAR, and terminal escape sequences) goes through a `CharFrontend` bound to `serial_hd(0)` when present (`-serial file:…`, `-nographic`, etc.). If no serial chardev is configured, the backend falls back to host stdout/stdin so simple CLI runs still work.
+- Full MMIO service window (console, files, time, GETTZ, EXIT, …) lives in `target/slow32/mmio.c` and mirrors the reference emulator ring protocol.
+- Sparse allocation: the interpreter lazily allocates pages. QEMU approximates this with a single RAM `MemoryRegion` sized per header; true lazy paging is optional.
 
 ## Dependencies & References
 
@@ -101,5 +101,14 @@ slow32 comparison (lower is better)
 ```
 
 - When multiple images are requested the script prints a compact table for side-by-side comparison.
+- Functional parity (stdout + exit code vs the reference `slow32` interpreter):
+
+```sh
+$ python3 scripts/slow32/functional.py \
+    --suite ~/slow-32/selfhost/stage01 \
+    --suite ~/slow-32/examples
+PASS  hello_minimal.s32x  (exit 0)
+...
+```
 
 Keeping this overview up to date will help new contributors understand why each subsystem matters before we implement it.

@@ -8,6 +8,7 @@
 #include "accel/tcg/cpu-ldst.h"
 #include "accel/tcg/probe.h"
 #include "system/runstate.h"
+#include "qemu/log.h"
 
 void HELPER(slow32_debug)(CPUSlow32State *env, uint32_t value)
 {
@@ -35,6 +36,30 @@ void HELPER(slow32_halt)(CPUSlow32State *env)
     CPUState *cs = env_cpu(env);
     Slow32CPU *cpu = SLOW32_CPU(cs);
 
+    slow32_handle_yield(cpu);
+    slow32_cpu_complete_halt(cpu);
+    cpu_exit(cs);
+}
+
+void HELPER(slow32_assert_fail)(CPUSlow32State *env, uint32_t a, uint32_t b)
+{
+    CPUState *cs = env_cpu(env);
+    Slow32CPU *cpu = SLOW32_CPU(cs);
+
+    qemu_log_mask(LOG_GUEST_ERROR,
+                  "slow32: ASSERT_EQ failed at PC=0x%08x: "
+                  "0x%08x != 0x%08x\n",
+                  env->pc, a, b);
+    /* Surface on the guest console too (visible without -d guest_errors). */
+    slow32_console_printf(
+        "ASSERT_EQ failed at PC=0x%08x: 0x%08x != 0x%08x\n",
+        env->pc, a, b);
+
+    /* Non-zero exit status for the harness / shell. */
+    if (env->regs[1] == 0) {
+        env->regs[1] = 1;
+    }
+    env->halted = 1;
     slow32_handle_yield(cpu);
     slow32_cpu_complete_halt(cpu);
     cpu_exit(cs);

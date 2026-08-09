@@ -21,7 +21,7 @@
 - [x] Create a simple machine in `hw/slow32/` (similar to `hw/openrisc/openrisc_sim.c`) that wires RAM and a basic DEBUG path (currently stdout; chardev binding TBD).
 - [x] Support `-kernel program.s32x` to boot bare executables (`.s32x` header parser lives in `hw/slow32/slow32-tcg.c`).
 - [ ] Expose loader knobs via machine properties (code size override, MMIO enable flag).
-- [ ] Bind DEBUG / terminal I/O to QEMU chardevs instead of raw stdout.
+- [x] Bind DEBUG / terminal I/O to QEMU chardevs (`serial_hd(0)` when present; stdout/stdin fallback).
 
 ## Phase 4 — TCG Translation MVP
 - [x] Implement decoder scaffolding in `translate.c` (fetch, field extraction, dispatch).
@@ -41,7 +41,8 @@
 - [x] Propagate guest exit status (`r1` / MMIO EXIT) to the QEMU process exit code.
 
 ## Phase 6 — Testing & Tooling
-- [ ] Automate regression comparison: run `slow-32/regression/run-tests.sh`, then execute outputs under QEMU and diff logs.
+- [x] Local functional parity harness: `scripts/slow32/functional.py` (stdout + exit code vs reference `slow32`).
+- [ ] Automate full regression: build via `slow-32/regression/run-tests.sh`, then feed each result `.s32x` through `functional.py`.
 - [ ] Add Avocado or meson `tests/tcg/slow32` cases with tiny programs checked into the repo.
 - [ ] Document the workflow in `docs/system/target/slow32.rst` (build steps, limitations).
 - [ ] Track performance vs. `slow32-fast` (optional stretch goal); optional guest-side stats instrumentation was removed for peak speed — restore behind a machine property if needed.

@@ -693,8 +693,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         uint32_t row = (req->status >> 16) & 0xFFFF;
         uint32_t col = req->status & 0xFFFF;
         if (!ts->in_update) {
-            fprintf(stdout, "\033[%u;%uH", row, col);
-            fflush(stdout);
+            slow32_console_printf("\033[%u;%uH", row, col);
         }
         ts->cur_row = (int)row - 1;  /* shadow: 0-based */
         ts->cur_col = (int)col - 1;
@@ -706,19 +705,18 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         if (!ts->in_update) {
             switch (req->status) {
             case 0:
-                fprintf(stdout, "\033[2J\033[H");
+                slow32_console_printf("\033[2J\033[H");
                 break;
             case 1:
-                fprintf(stdout, "\033[K");
+                slow32_console_printf("\033[K");
                 break;
             case 2:
-                fprintf(stdout, "\033[J");
+                slow32_console_printf("\033[J");
                 break;
             default:
-                fprintf(stdout, "\033[2J\033[H");
+                slow32_console_printf("\033[2J\033[H");
                 break;
             }
-            fflush(stdout);
         }
         slow32_term_shadow_clear(ts, (int)req->status);
         resp->status = S32_MMIO_STATUS_OK;
@@ -727,8 +725,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_SET_ATTR:
         if (!ts->in_update) {
-            fprintf(stdout, "\033[%um", req->status);
-            fflush(stdout);
+            slow32_console_printf("\033[%um", req->status);
         }
         ts->cur_attr = (int)req->status;
         resp->status = S32_MMIO_STATUS_OK;
@@ -759,8 +756,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         uint32_t fg = (req->status >> 8) & 0xFF;
         uint32_t bg = req->status & 0xFF;
         if (!ts->in_update) {
-            fprintf(stdout, "\033[3%u;4%um", fg, bg);
-            fflush(stdout);
+            slow32_console_printf("\033[3%u;4%um", fg, bg);
         }
         ts->cur_fg = (int)fg;
         ts->cur_bg = (int)bg;
@@ -771,8 +767,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     case S32_TERM_PUTC: {
         int ch = (int)(req->status & 0xFF);
         if (!ts->in_update) {
-            fputc(ch, stdout);
-            fflush(stdout);
+            slow32_console_write_byte(ch);
         }
         slow32_term_shadow_putc(ts, ch);
         resp->status = S32_MMIO_STATUS_OK;
@@ -794,7 +789,6 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
             }
         }
         if (!ts->in_update) {
-            fflush(stdout);
         }
         resp->status = S32_MMIO_STATUS_OK;
         break;
@@ -828,12 +822,12 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         }
         Slow32TermScreenSave *s = &ts->save_stack[--ts->save_depth];
         /* Repaint: clear screen, then redraw all cells */
-        fprintf(stdout, "\033[0m\033[2J\033[H");
+        slow32_console_printf("\033[0m\033[2J\033[H");
         int prev_attr = 0, prev_fg = 7, prev_bg = 0;
         int paint_rows = (s->rows < ts->rows) ? s->rows : ts->rows;
         int paint_cols = (s->cols < ts->cols) ? s->cols : ts->cols;
         for (int r = 0; r < paint_rows; r++) {
-            fprintf(stdout, "\033[%d;1H", r + 1);
+            slow32_console_printf("\033[%d;1H", r + 1);
             int last_written_col = -1;
             for (int c = 0; c < paint_cols; c++) {
                 Slow32TermCell *cell = &s->cells[r * s->cols + c];
@@ -844,20 +838,20 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                 }
                 /* Position cursor if we skipped columns */
                 if (c != last_written_col + 1) {
-                    fprintf(stdout, "\033[%d;%dH", r + 1, c + 1);
+                    slow32_console_printf("\033[%d;%dH", r + 1, c + 1);
                 }
                 /* Set attributes if changed */
                 if (cell->attr != prev_attr) {
-                    fprintf(stdout, "\033[%um", (unsigned)cell->attr);
+                    slow32_console_printf("\033[%um", (unsigned)cell->attr);
                     prev_attr = cell->attr;
                 }
                 if (cell->fg != prev_fg || cell->bg != prev_bg) {
-                    fprintf(stdout, "\033[3%u;4%um",
+                    slow32_console_printf("\033[3%u;4%um",
                             (unsigned)cell->fg, (unsigned)cell->bg);
                     prev_fg = cell->fg;
                     prev_bg = cell->bg;
                 }
-                fputc(cell->ch, stdout);
+                slow32_console_write_byte(cell->ch);
                 last_written_col = c;
             }
         }
@@ -885,12 +879,11 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         ts->cur_fg = s->cur_fg;
         ts->cur_bg = s->cur_bg;
         /* Restore cursor position and attributes on terminal */
-        fprintf(stdout, "\033[%um", (unsigned)ts->cur_attr);
-        fprintf(stdout, "\033[3%u;4%um",
+        slow32_console_printf("\033[%um", (unsigned)ts->cur_attr);
+        slow32_console_printf("\033[3%u;4%um",
                 (unsigned)ts->cur_fg, (unsigned)ts->cur_bg);
-        fprintf(stdout, "\033[%d;%dH",
+        slow32_console_printf("\033[%d;%dH",
                 ts->cur_row + 1, ts->cur_col + 1);
-        fflush(stdout);
         g_free(s->cells);
         s->cells = NULL;
         resp->status = S32_MMIO_STATUS_OK;
@@ -943,13 +936,13 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                 }
                 /* Position cursor if needed */
                 if (r != out_row || c != out_col) {
-                    fprintf(stdout, "\033[%d;%dH", r + 1, c + 1);
+                    slow32_console_printf("\033[%d;%dH", r + 1, c + 1);
                     out_row = r;
                     out_col = c;
                 }
                 /* Set attributes if changed */
                 if (cur->attr != out_attr) {
-                    fprintf(stdout, "\033[%um", (unsigned)cur->attr);
+                    slow32_console_printf("\033[%um", (unsigned)cur->attr);
                     out_attr = cur->attr;
                     /* Reset colors after attr change (attr 0 resets everything) */
                     if (cur->attr == 0) {
@@ -958,12 +951,12 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                     }
                 }
                 if (cur->fg != out_fg || cur->bg != out_bg) {
-                    fprintf(stdout, "\033[3%u;4%um",
+                    slow32_console_printf("\033[3%u;4%um",
                             (unsigned)cur->fg, (unsigned)cur->bg);
                     out_fg = cur->fg;
                     out_bg = cur->bg;
                 }
-                fputc(cur->ch, stdout);
+                slow32_console_write_byte(cur->ch);
                 out_col++;
                 if (out_col >= ts->cols) {
                     out_col = 0;
@@ -973,15 +966,14 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         }
         /* Restore final cursor position and attributes */
         if (ts->cur_attr != out_attr) {
-            fprintf(stdout, "\033[%um", (unsigned)ts->cur_attr);
+            slow32_console_printf("\033[%um", (unsigned)ts->cur_attr);
         }
         if (ts->cur_fg != out_fg || ts->cur_bg != out_bg) {
-            fprintf(stdout, "\033[3%u;4%um",
+            slow32_console_printf("\033[3%u;4%um",
                     (unsigned)ts->cur_fg, (unsigned)ts->cur_bg);
         }
-        fprintf(stdout, "\033[%d;%dH",
+        slow32_console_printf("\033[%d;%dH",
                 ts->cur_row + 1, ts->cur_col + 1);
-        fflush(stdout);
         g_free(ts->prev_cells);
         ts->prev_cells = NULL;
         resp->status = S32_MMIO_STATUS_OK;
@@ -1520,14 +1512,13 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
     case S32_MMIO_OP_PUTCHAR:
         slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, 1);
-        putchar(ctx->scratch[0]);
-        fflush(stdout);
+        slow32_console_write_byte(ctx->scratch[0]);
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = 1;
         break;
 
     case S32_MMIO_OP_GETCHAR: {
-        int ch = fgetc(stdin);
+        int ch = slow32_console_getchar();
         if (ch != EOF) {
             ctx->scratch[0] = (uint8_t)ch;
             slow32_mmio_copy_to_guest(env, req->offset, ctx->scratch, 1);
@@ -1735,7 +1726,6 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
     }
 
     case S32_MMIO_OP_FLUSH:
-        fflush(stdout);
         fflush(stderr);
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = 0;

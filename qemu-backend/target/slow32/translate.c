@@ -842,13 +842,17 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         return false;
 
     case OP_ASSERT_EQ: {
-        /* For now, treat as HALT on mismatch and fall-through otherwise. */
+        /*
+         * Equal: fall through (keep translating). Mismatch: log and halt.
+         * is_jmp stays DISAS_NEXT so the success path can chain into the
+         * following instruction inside the same TB.
+         */
         TCGLabel *ok = gen_new_label();
         tcg_gen_brcond_i32(TCG_COND_EQ, load_gpr(rs1), load_gpr(rs2), ok);
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
         slow32_count_insns(ctx);
-        gen_helper_slow32_halt(tcg_env);
+        gen_helper_slow32_assert_fail(tcg_env, load_gpr(rs1), load_gpr(rs2));
         slow32_exit_tb(ctx);
         gen_set_label(ok);
         break;

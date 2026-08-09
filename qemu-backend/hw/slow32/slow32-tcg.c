@@ -4,6 +4,7 @@
 #include "hw/core/boards.h"
 #include "hw/core/loader.h"
 #include "system/memory.h"
+#include "system/system.h"
 #include "qemu/error-report.h"
 #include "qemu/units.h"
 #include "qemu/bswap.h"
@@ -487,6 +488,11 @@ static void slow32_machine_init(MachineState *machine)
                            "slow32.ram", machine->ram_size, &error_fatal);
     memory_region_add_subregion(system_memory, 0, &sms->ram);
 
+    /* Wire guest DEBUG / MMIO console to the first serial chardev if any. */
+    if (serial_hd(0)) {
+        slow32_console_open(serial_hd(0));
+    }
+
     if (!machine->cpu_type) {
         machine->cpu_type = TYPE_SLOW32_CPU;
     }
@@ -508,6 +514,12 @@ static void slow32_machine_class_init(ObjectClass *oc, const void *data)
     mc->default_cpu_type = TYPE_SLOW32_CPU;
     mc->default_ram_size = 256 * MiB;
     mc->ignore_memory_transaction_failures = true;
+    /*
+     * Do not auto-create a default serial (which becomes "null" under
+     * -display none). Guest console falls back to host stdout unless the
+     * user passes -serial / -nographic.
+     */
+    mc->no_serial = true;
 }
 
 static void slow32_machine_instance_init(Object *obj)

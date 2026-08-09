@@ -1,6 +1,7 @@
 #include "qemu/osdep.h"
 
 #include <inttypes.h>
+#include <stdio.h>
 
 #include "qapi/error.h"
 #include "cpu.h"
@@ -16,7 +17,113 @@
 #include "gdbstub/helpers.h"
 #include "tcg/tcg.h"
 #include "qemu/log.h"
+#include "chardev/char-fe.h"
+#include "chardev/char.h"
 #include "mmio.h"
+
+/*
+ * Guest console backend.
+ *
+ * Prefer serial_hd(0) when the machine wires it (works with -serial file:,
+ * -nographic, etc.). Fall back to host stdout/stdin so bare
+ * `-display none -monitor none` still shows DEBUG/MMIO console output.
+ */
+typedef struct Slow32Console {
+    CharFrontend fe;
+    bool connected;
+    struct {
+        uint8_t buffer[256];
+        size_t offset;
+    } input;
+} Slow32Console;
+
+static Slow32Console slow32_console;
+
+static int slow32_console_can_read(void *opaque)
+{
+    Slow32Console *c = opaque;
+
+    return sizeof(c->input.buffer) - c->input.offset;
+}
+
+static void slow32_console_read(void *opaque, const uint8_t *buf, int size)
+{
+    Slow32Console *c = opaque;
+    size_t space = sizeof(c->input.buffer) - c->input.offset;
+    size_t copy = MIN((size_t)size, space);
+
+    memcpy(c->input.buffer + c->input.offset, buf, copy);
+    c->input.offset += copy;
+}
+
+void slow32_console_open(Chardev *chr)
+{
+    if (!chr) {
+        return;
+    }
+
+    if (!qemu_chr_fe_init(&slow32_console.fe, chr, &error_abort)) {
+        return;
+    }
+    qemu_chr_fe_set_handlers(&slow32_console.fe,
+                             slow32_console_can_read,
+                             slow32_console_read,
+                             NULL, NULL, &slow32_console,
+                             NULL, true);
+    slow32_console.connected = true;
+}
+
+void slow32_console_write(const uint8_t *buf, size_t len)
+{
+    if (!buf || len == 0) {
+        return;
+    }
+
+    if (slow32_console.connected) {
+        qemu_chr_fe_write_all(&slow32_console.fe, buf, len);
+    } else {
+        fwrite(buf, 1, len, stdout);
+        fflush(stdout);
+    }
+}
+
+void slow32_console_write_byte(uint8_t ch)
+{
+    slow32_console_write(&ch, 1);
+}
+
+void slow32_console_printf(const char *fmt, ...)
+{
+    char *msg;
+    va_list ap;
+
+    va_start(ap, fmt);
+    msg = g_strdup_vprintf(fmt, ap);
+    va_end(ap);
+    if (msg) {
+        slow32_console_write((const uint8_t *)msg, strlen(msg));
+        g_free(msg);
+    }
+}
+
+int slow32_console_getchar(void)
+{
+    if (slow32_console.connected) {
+        if (slow32_console.input.offset > 0) {
+            int ch = slow32_console.input.buffer[0];
+            memmove(slow32_console.input.buffer,
+                    slow32_console.input.buffer + 1,
+                    slow32_console.input.offset - 1);
+            slow32_console.input.offset--;
+            qemu_chr_fe_accept_input(&slow32_console.fe);
+            return ch;
+        }
+        /* No buffered input: non-blocking EOF (caller may poll again). */
+        return EOF;
+    }
+
+    return fgetc(stdin);
+}
 
 static void slow32_cpu_set_pc(CPUState *cs, vaddr value)
 {
@@ -123,7 +230,22 @@ fault:
 
 static void slow32_cpu_do_interrupt(CPUState *cs)
 {
-    cpu_abort(cs, "Slow32 interrupt delivery is not implemented yet");
+    /*
+     * No interrupt controller yet. An unexpected request used to abort the
+     * whole process; halt cleanly instead so miswired IRQ lines fail soft.
+     */
+    CPUSlow32State *env = cpu_env(cs);
+
+    qemu_log_mask(LOG_UNIMP,
+                  "slow32: unexpected interrupt request 0x%x at PC=0x%08x; "
+                  "halting\n",
+                  cs->interrupt_request, env->pc);
+    cs->interrupt_request = 0;
+    if (env->regs[1] == 0) {
+        env->regs[1] = 1;
+    }
+    env->halted = 1;
+    slow32_cpu_complete_halt(SLOW32_CPU(cs));
 }
 
 static bool slow32_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
@@ -194,8 +316,7 @@ static void slow32_cpu_set_irq(void *opaque, int irq, int level)
 
 void slow32_handle_debug(uint32_t value)
 {
-    putchar(value & 0xFF);
-    fflush(stdout);
+    slow32_console_write_byte(value & 0xFF);
 }
 
 void slow32_handle_yield(Slow32CPU *cpu)

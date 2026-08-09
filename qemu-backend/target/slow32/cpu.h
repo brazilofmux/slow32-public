@@ -14,6 +14,8 @@
 #include "exec/cpu-defs.h"
 #include "exec/cpu-interrupt.h"
 
+typedef struct Chardev Chardev;
+
 #define CPU_RESOLVING_TYPE TYPE_SLOW32_CPU
 
 #define SLOW32_NUM_GPRS 32
@@ -113,5 +115,12 @@ void slow32_disas_set_info(const CPUState *cpu, disassemble_info *info);
 void slow32_handle_debug(uint32_t value);
 void slow32_handle_yield(Slow32CPU *cpu);
 void slow32_cpu_complete_halt(Slow32CPU *cpu);
+
+/* Guest console (DEBUG insn + MMIO PUTCHAR/terminal). Prefer serial_hd(0). */
+void slow32_console_open(Chardev *chr);
+void slow32_console_write(const uint8_t *buf, size_t len);
+void slow32_console_write_byte(uint8_t ch);
+void slow32_console_printf(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
+int slow32_console_getchar(void);
 
 #endif /* SLOW32_CPU_H */
