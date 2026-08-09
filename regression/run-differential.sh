@@ -133,10 +133,19 @@ DIVERGED_TESTS=()
 # Only honored under ALLOW_KNOWN_DIVERGENCES=1 (CI sets it) so that an
 # interactive run still reports them. A divergence outside this list always
 # fails, so a new bug cannot hide behind the allowlist.
-# Previously: bug-dbt-intrinsic-bounds* diverged because A64 intrinsic stubs
-# stored EXIT_REASON into exit_info when info_reg was W0 (clobber order).
-# Fixed in translate_a64.c emit_a64_stub_fault_exit (Pack B, 2026-08).
-KNOWN_DIVERGENT=""
+# History: bug-dbt-intrinsic-bounds* used to diverge on TWO engines. The DBT
+# half (A64 stubs stored EXIT_REASON into exit_info when info_reg was W0) was
+# fixed in translate_a64.c emit_a64_stub_fault_exit (Pack B, 2026-08) — the
+# DBT now matches the reference exactly, verified 2026-08-08. The remaining
+# divergence is qemu-only: qemu-system-slow32 exits silently on an
+# out-of-bounds intrinsic access where the reference prints
+# "fault addr=...". Still open (AUDIT-2026-08 "QEMU fault reporting"),
+# re-verified against a qemu built from bce30bac2c. When that lands, empty
+# this list again — and re-run this harness before believing it.
+KNOWN_DIVERGENT="bug-dbt-intrinsic-bounds
+bug-dbt-intrinsic-bounds-memcpy
+bug-dbt-intrinsic-bounds-memset
+bug-dbt-intrinsic-bounds-strlen"
 
 run_engine() {
     # $1 engine name, $2 engine path, $3 s32x, $4 out-file, then guest args
