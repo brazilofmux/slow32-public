@@ -1835,7 +1835,9 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         break;
 
     case S32_MMIO_OP_EXIT:
+        /* Reference emulators write the exit status into r1 before halt. */
         resp->status = req->status;
+        env->regs[1] = req->status;
         slow32_mmio_request_exit(cpu);
         break;
 

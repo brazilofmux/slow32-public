@@ -79,25 +79,27 @@ Future extensions (cycle counters, MMU flags) can be added later. The key is mir
 
 ## Instrumentation & Benchmarking
 
-- The translator increments a per-CPU instruction counter (`insn_retired`) and accumulates translation time for every TB. `helper.c` prints a single `Slow32 stats: guest_insns=… wall_ms=… translate_ms=… exec_ms=… tb_count=…` line whenever the guest halts so we can see how much time went into translation versus execution.
-- Use `-machine slow32-tcg,stats=off` to disable all counter bookkeeping and suppress the `Slow32 stats` printouts when benchmarking peak performance. (Note: tooling such as `scripts/slow32/compare.py` requires stats to remain enabled.)
-- `scripts/slow32/compare.py` sweeps one or more `.s32x` images and runs each under both `slow32-fast` and `qemu-system-slow32`. Use `--iterations N` to average multiple runs, `--suite DIR_OR_FILE` to point at a directory (all `*.s32x`) or manifest, and `--verbose` to echo the resolved workload list.
-- Example run (smoke workload, 5 iterations):
+- Guest-side `Slow32 stats:` counters (instruction retirement, translate vs exec time, TB counts) were removed to keep the hot path lean. Reintroduce them behind a machine property only if we need finer-grained TCG accounting again.
+- Halt / MMIO EXIT both shut QEMU down with process exit status equal to guest `r1` (matching `slow32` / `slow32-fast`).
+- `scripts/slow32/compare.py` sweeps one or more `.s32x` images under both `slow32-fast` and `qemu-system-slow32`, timing with host wall-clock. It still parses optional `Slow32 stats:` lines when present. Defaults look for `slow32-fast` under `$SLOW32_ROOT`, `~/slow-32`, or a sibling checkout.
+- Useful flags: `--iterations N`, `--suite DIR` (all `*.s32x`), `--suite file.s32x`, `--suite manifest.txt`, `--verbose`.
+- Example:
 
 ```sh
-$ python3 scripts/slow32/compare.py --iterations 5
+$ python3 scripts/slow32/compare.py --iterations 5 \
+    --image ~/slow-32/selfhost/stage01/hello_minimal.s32x
 slow32 comparison (lower is better)
 -----------------------------------
- image: /tmp/s32_smoke.s32x
+ image: .../hello_minimal.s32x
  iterations: 5
 
- qemu-system-slow32: 0.027720s (translate 0.000044s, exec 0.027675s, tb_count≈23)
+ qemu-system-slow32: 0.012345s (host wall clock)
  slow32-fast:        0.000024s
- guest instructions: 260 (qemu reported 260)
- speed ratio (fast/tcg): 0.001x
- translate share: 0.2% (relative to total qemu time)
+ guest instructions: 49 (qemu reported n/a)
+ exit codes:         fast=0 qemu=0
+ speed ratio (fast/tcg): 0.002x
 ```
 
-- When multiple images are requested the script prints a compact table, making it easy to spot workloads dominated by translation/start-up tax versus steady-state execution time.
+- When multiple images are requested the script prints a compact table for side-by-side comparison.
 
 Keeping this overview up to date will help new contributors understand why each subsystem matters before we implement it.

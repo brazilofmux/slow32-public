@@ -22,9 +22,12 @@ void HELPER(slow32_yield)(CPUSlow32State *env)
 void slow32_cpu_complete_halt(Slow32CPU *cpu)
 {
     CPUState *cs = CPU(cpu);
+    /* Match the reference emulators: process exit status is guest r1. */
+    int exit_code = (int)cpu->env.regs[1];
 
     cs->halted = 1;
-    qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
+    qemu_system_shutdown_request_with_code(SHUTDOWN_CAUSE_GUEST_SHUTDOWN,
+                                           exit_code);
 }
 
 void HELPER(slow32_halt)(CPUSlow32State *env)

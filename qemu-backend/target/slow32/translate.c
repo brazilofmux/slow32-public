@@ -875,12 +875,19 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         break;
 
     default:
+        /*
+         * Unknown opcode: log, then take the same halt path as HALT so the
+         * vCPU actually requests a guest shutdown. Leaving halted=1 without
+         * that request parks the CPU forever waiting for an interrupt that
+         * this target never delivers.
+         */
         qemu_log_mask(LOG_GUEST_ERROR,
                       "slow32: unknown opcode 0x%02x at PC=0x%08" PRIx64 "\n",
                       opcode, (uint64_t)ctx->pc);
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
         slow32_count_insns(ctx);
+        gen_helper_slow32_halt(tcg_env);
         slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
         return false;

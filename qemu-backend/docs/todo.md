@@ -19,8 +19,9 @@
 ## Phase 3 — Loader & Machine
 - [x] Write `hw/misc/slow32_loader.c` (or integrate into existing loader) that reads `.s32x`.
 - [x] Create a simple machine in `hw/slow32/` (similar to `hw/openrisc/openrisc_sim.c`) that wires RAM and a basic DEBUG path (currently stdout; chardev binding TBD).
-- [x] Support `-kernel program.s32x` to boot bare executables (presently expects raw binaries; `.s32x` parser pending).
+- [x] Support `-kernel program.s32x` to boot bare executables (`.s32x` header parser lives in `hw/slow32/slow32-tcg.c`).
 - [ ] Expose loader knobs via machine properties (code size override, MMIO enable flag).
+- [ ] Bind DEBUG / terminal I/O to QEMU chardevs instead of raw stdout.
 
 ## Phase 4 — TCG Translation MVP
 - [x] Implement decoder scaffolding in `translate.c` (fetch, field extraction, dispatch).
@@ -34,14 +35,16 @@
 - [x] Add remaining branch variants (`blt/bge`, signed/unsigned).
 - [x] Implement comparison-producing instructions (`slt`, `sle`, etc.).
 - [x] Implement multiply/divide family (`mul`, `mulh`, `div`, `rem`). Start with helper calls mirroring `slow32.c`.
+- [x] Floating-point ops via a shared helper (`helper_slow32_fp_op`); host soft/hard float parity is good enough for now.
+- [x] MMIO window + service opcodes (console, files, time, GETTZ, EXIT, …) in `target/slow32/mmio.c`.
 - [ ] Wire 64-bit helper sequences if needed for runtime builtins.
-- [ ] Handle MMIO load/store paths once the device model exists.
+- [x] Propagate guest exit status (`r1` / MMIO EXIT) to the QEMU process exit code.
 
 ## Phase 6 — Testing & Tooling
 - [ ] Automate regression comparison: run `slow-32/regression/run-tests.sh`, then execute outputs under QEMU and diff logs.
 - [ ] Add Avocado or meson `tests/tcg/slow32` cases with tiny programs checked into the repo.
 - [ ] Document the workflow in `docs/system/target/slow32.rst` (build steps, limitations).
-- [ ] Track performance vs. `slow32-fast` (optional stretch goal).
-- [x] Provide a local benchmarking harness (`scripts/slow32/compare.py`) plus stats logging inside the CPU so we can measure translation start-up tax vs. steady-state execution.
+- [ ] Track performance vs. `slow32-fast` (optional stretch goal); optional guest-side stats instrumentation was removed for peak speed — restore behind a machine property if needed.
+- [x] Provide a local benchmarking harness (`scripts/slow32/compare.py`) that wall-clocks `slow32-fast` vs `qemu-system-slow32` (optional stats lines still parsed when present).
 
 Keep each checkbox tied to specific commits; update this file as scope evolves. Baby steps are fine—merge once a phase is functional, then iterate.
