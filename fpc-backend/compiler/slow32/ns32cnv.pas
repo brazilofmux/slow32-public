@@ -42,7 +42,7 @@ interface
          { procedure second_chararray_to_string;override; }
          { procedure second_char_to_string;override; }
           procedure second_int_to_real;override;
-         { procedure second_real_to_real;override; }
+          procedure second_real_to_real;override;
          { procedure second_cord_to_pointer;override; }
          { procedure second_proc_to_procvar;override; }
          { procedure second_bool_to_int;override; }
@@ -118,18 +118,20 @@ implementation
 
     function ts32typeconvnode.first_real_to_real: tnode;
       begin
+        { With -CfSLOW32, f32 lives in F-class regs and f64 in int pairs
+          (def_cgsize -> OS_64). Use FCVT.D.S / FCVT.S.D instead of softfloat
+          helpers; full f64 arith still stays soft until pair F-class lands. }
         if (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
-          not(FPUSLOW32_DOUBLE in fpu_capabilities[current_settings.fputype]) and
           not(cs_fp_emulation in current_settings.moduleswitches) then
           begin
-            { native FP covers only f32; conversions touching f64 go
-              through the softfloat helpers }
             case tfloatdef(left.resultdef).floattype of
               s32real:
                 case tfloatdef(resultdef).floattype of
                   s64real:
-                    result:=ctypeconvnode.create_explicit(ccallnode.createintern('float32_to_float64',ccallparanode.create(
-                      ctypeconvnode.create_internal(left,search_system_type('FLOAT32REC').typedef),nil)),resultdef);
+                    begin
+                      result:=nil;
+                      expectloc:=LOC_REGISTER;
+                    end;
                   s32real:
                     begin
                       result:=left;
@@ -141,8 +143,10 @@ implementation
               s64real:
                 case tfloatdef(resultdef).floattype of
                   s32real:
-                    result:=ctypeconvnode.create_explicit(ccallnode.createintern('float64_to_float32',ccallparanode.create(
-                      ctypeconvnode.create_internal(left,search_system_type('FLOAT64').typedef),nil)),resultdef);
+                    begin
+                      result:=nil;
+                      expectloc:=LOC_FPUREGISTER;
+                    end;
                   s64real:
                     begin
                       result:=left;
@@ -154,8 +158,6 @@ implementation
               else
                 internalerror(2026071501);
             end;
-            left:=nil;
-            firstpass(result);
             exit;
           end
         else
@@ -183,6 +185,85 @@ implementation
         else
           op:=A_FCVT_S_WU;
         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,location.register,left.location.register));
+      end;
+
+
+    procedure ts32typeconvnode.second_real_to_real;
+      var
+        pairbase, pairhi, tmpreg: tregister;
+        list: TAsmList;
+      begin
+        list:=current_asmdata.CurrAsmList;
+        secondpass(left);
+        if codegenerror then
+          exit;
+
+        { Even-aligned scratch pair for f64 FCVT ops (ISA requires even base).
+          r4:r5 are caller-saved and outside the F-class partition (r20-r28). }
+        pairbase:=NR_R4;
+        pairhi:=NR_R5;
+
+        if is_single(left.resultdef) and is_double(resultdef) then
+          begin
+            { f32 (F-reg) -> f64 (int pair) via FCVT.D.S }
+            hlcg.location_force_fpureg(list,left.location,left.resultdef,true);
+            location_reset(location,LOC_REGISTER,OS_64);
+            location.register64.reglo:=cg.getintregister(list,OS_32);
+            location.register64.reghi:=cg.getintregister(list,OS_32);
+
+            cg.a_reg_alloc(list,pairbase);
+            cg.a_reg_alloc(list,pairhi);
+            list.concat(taicpu.op_reg_reg(A_FCVT_D_S,pairbase,left.location.register));
+            cg.a_load_reg_reg(list,OS_32,OS_32,pairbase,location.register64.reglo);
+            cg.a_load_reg_reg(list,OS_32,OS_32,pairhi,location.register64.reghi);
+            cg.a_reg_dealloc(list,pairhi);
+            cg.a_reg_dealloc(list,pairbase);
+          end
+        else if is_double(left.resultdef) and is_single(resultdef) then
+          begin
+            { f64 (int pair) -> f32 (F-reg) via FCVT.S.D }
+            hlcg.location_force_reg(list,left.location,left.resultdef,left.resultdef,true);
+            location_reset(location,LOC_FPUREGISTER,OS_F32);
+            location.register:=cg.getfpuregister(list,OS_F32);
+
+            cg.a_reg_alloc(list,pairbase);
+            cg.a_reg_alloc(list,pairhi);
+            { Pack lo/hi into the even pair without clobbering if they alias r4/r5 }
+            if (left.location.register64.reglo=pairhi) and
+               (left.location.register64.reghi=pairbase) then
+              begin
+                tmpreg:=cg.getintregister(list,OS_32);
+                cg.a_load_reg_reg(list,OS_32,OS_32,left.location.register64.reglo,tmpreg);
+                cg.a_load_reg_reg(list,OS_32,OS_32,left.location.register64.reghi,pairhi);
+                cg.a_load_reg_reg(list,OS_32,OS_32,tmpreg,pairbase);
+              end
+            else if left.location.register64.reghi=pairbase then
+              begin
+                cg.a_load_reg_reg(list,OS_32,OS_32,left.location.register64.reghi,pairhi);
+                if left.location.register64.reglo<>pairbase then
+                  cg.a_load_reg_reg(list,OS_32,OS_32,left.location.register64.reglo,pairbase);
+              end
+            else
+              begin
+                if left.location.register64.reglo<>pairbase then
+                  cg.a_load_reg_reg(list,OS_32,OS_32,left.location.register64.reglo,pairbase);
+                if left.location.register64.reghi<>pairhi then
+                  cg.a_load_reg_reg(list,OS_32,OS_32,left.location.register64.reghi,pairhi);
+              end;
+            list.concat(taicpu.op_reg_reg(A_FCVT_S_D,location.register,pairbase));
+            cg.a_reg_dealloc(list,pairhi);
+            cg.a_reg_dealloc(list,pairbase);
+          end
+        else if is_single(left.resultdef) and is_single(resultdef) then
+          begin
+            location_copy(location,left.location);
+          end
+        else if is_double(left.resultdef) and is_double(resultdef) then
+          begin
+            location_copy(location,left.location);
+          end
+        else
+          internalerror(2026080803);
       end;
 
 

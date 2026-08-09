@@ -31,11 +31,16 @@ interface
 
     type
       ts32inlinenode = class(tcginlinenode)
-        { fpu_slow32 handles f32 abs natively (FABS.S); everything else
-          (f64, and all intrinsics without native FP) uses the standard
-          helper calls via the inherited first_* methods }
+        { fpu_slow32 handles f32 abs/sqr/sqrt natively (FABS.S/FMUL.S/FSQRT.S).
+          f64 and all other intrinsics still use softfloat helper calls. }
         function first_abs_real: tnode; override;
+        function first_sqr_real: tnode; override;
+        function first_sqrt_real: tnode; override;
         procedure second_abs_real; override;
+        procedure second_sqr_real; override;
+        procedure second_sqrt_real; override;
+      protected
+        function use_native_f32: boolean;
       end;
 
 implementation
@@ -53,17 +58,51 @@ implementation
       hlcgobj,cgutils,cgobj,rgobj,tgobj;
 
 
+    function ts32inlinenode.use_native_f32: boolean;
+      begin
+        if left.nodetype=callparan then
+          result:=is_single(tcallparanode(left).left.resultdef)
+        else
+          result:=is_single(left.resultdef);
+        result:=result and
+          (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
+          not(cs_fp_emulation in current_settings.moduleswitches);
+      end;
+
+
     function ts32inlinenode.first_abs_real: tnode;
       begin
-        if is_single(left.resultdef) and
-          (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
-          not(cs_fp_emulation in current_settings.moduleswitches) then
+        if use_native_f32 then
           begin
             result:=nil;
             expectloc:=LOC_FPUREGISTER;
           end
         else
           result:=inherited first_abs_real;
+      end;
+
+
+    function ts32inlinenode.first_sqr_real: tnode;
+      begin
+        if use_native_f32 then
+          begin
+            result:=nil;
+            expectloc:=LOC_FPUREGISTER;
+          end
+        else
+          result:=inherited first_sqr_real;
+      end;
+
+
+    function ts32inlinenode.first_sqrt_real: tnode;
+      begin
+        if use_native_f32 then
+          begin
+            result:=nil;
+            expectloc:=LOC_FPUREGISTER;
+          end
+        else
+          result:=inherited first_sqrt_real;
       end;
 
 
@@ -76,6 +115,31 @@ implementation
         location_reset(location,LOC_FPUREGISTER,OS_F32);
         location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FABS_S,location.register,left.location.register));
+      end;
+
+
+    procedure ts32inlinenode.second_sqr_real;
+      begin
+        if not(is_single(resultdef)) then
+          internalerror(2026080801);
+        secondpass(left);
+        hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+        location_reset(location,LOC_FPUREGISTER,OS_F32);
+        location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_FMUL_S,
+          location.register,left.location.register,left.location.register));
+      end;
+
+
+    procedure ts32inlinenode.second_sqrt_real;
+      begin
+        if not(is_single(resultdef)) then
+          internalerror(2026080802);
+        secondpass(left);
+        hlcg.location_force_fpureg(current_asmdata.CurrAsmList,left.location,left.resultdef,true);
+        location_reset(location,LOC_FPUREGISTER,OS_F32);
+        location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FSQRT_S,location.register,left.location.register));
       end;
 
 

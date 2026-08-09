@@ -248,8 +248,9 @@ unit ns32add;
     procedure ts32addnode.second_addordinal;
       var
         unsigned: boolean;
+        cgsize: tcgsize;
       begin
-        { 32x32->64 multiplication }
+        { 32x32->64 multiplication via MUL + MULH/MULHU (try_make_mul32to64) }
         if (nodetype=muln) and
            is_32bit(left.resultdef) and
            is_32bit(right.resultdef) and
@@ -263,8 +264,15 @@ unit ns32add;
             if right.location.loc=LOC_CONSTANT then
               hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,right.resultdef,right.resultdef,true);
             location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
-            location.register:=cg.getintregister(current_asmdata.CurrAsmList,def_cgsize(resultdef));
-            current_asmdata.CurrAsmList.Concat(taicpu.op_reg_reg_reg(A_MUL,location.register,left.location.register,right.location.register));
+            location.register64.reglo:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
+            location.register64.reghi:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
+            if unsigned then
+              cgsize:=OS_INT
+            else
+              cgsize:=OS_SINT;
+            tcgs32(cg).a_mul_reg_reg_pair(current_asmdata.CurrAsmList,cgsize,
+              left.location.register,right.location.register,
+              location.register64.reglo,location.register64.reghi);
           end
         else
           inherited second_addordinal;
@@ -429,7 +437,8 @@ unit ns32add;
 
     function ts32addnode.use_generic_mul32to64: boolean;
       begin
-        result:=true;
+        { Prefer MUL + MULH/MULHU in second_addordinal over RTL helpers }
+        result:=not(CPUS32_HAS_MUL in cpu_capabilities[current_settings.cputype]);
       end;
 
     procedure ts32addnode.second_cmp64bit;

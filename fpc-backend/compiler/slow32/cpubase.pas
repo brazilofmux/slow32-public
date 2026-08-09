@@ -308,6 +308,8 @@ uses
 *****************************************************************************}
 
     function is_imm12(value: tcgint): boolean;
+    { True if value fits a zero-extended 12-bit immediate (ANDI/ORI/XORI/SLTIU). }
+    function is_uimm12(value: tcgint): boolean;
 
     function is_calljmp(o:tasmop):boolean;
 
@@ -356,6 +358,15 @@ implementation
     function is_imm12(value: tcgint): boolean;
       begin
         result:=(value >= -2048) and (value <= 2047);
+      end;
+
+
+    function is_uimm12(value: tcgint): boolean;
+      begin
+        { ANDI/ORI/XORI/SLTIU zero-extend the 12-bit field. Negative Pascal
+          masks like -2 / -4 must NOT be folded into these ops (they would
+          become 0xFFE / 0xFFC and clear high bits). }
+        result:=(value >= 0) and (value <= 4095);
       end;
 
 

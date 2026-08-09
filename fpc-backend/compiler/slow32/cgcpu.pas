@@ -474,8 +474,12 @@ unit cgcpu;
             a:=-a;
           end;
 
+        { ADDI/shifts: signed imm12. ANDI/ORI/XORI: zero-extended uimm12.
+          Using is_imm12 for AND/OR/XOR mis-encodes masks like -4 as 0xFFC. }
         if (TOpCG2AsmConstOp[op]<>A_None) and
-           is_imm12(a) and not(setflags) then
+           not(setflags) and
+           (((op in [OP_AND,OP_OR,OP_XOR]) and is_uimm12(a)) or
+            ((not(op in [OP_AND,OP_OR,OP_XOR])) and is_imm12(a))) then
           begin
             list.concat(taicpu.op_reg_reg_const(TOpCG2AsmConstOp[op],dst,src,a));
             maybeadjustresult(list,op,size,dst);
