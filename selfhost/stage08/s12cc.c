@@ -224,6 +224,7 @@ int main(int argc, char **argv) {
     pp_skip = 0;
     pp_dep = 0;
     ps_ntypedefs = 0;
+    pp_set_source_file(infile);
 
     /* Read source file */
     fd = open(infile, 0);

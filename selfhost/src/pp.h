@@ -1,10 +1,12 @@
-/* pp.h -- Preprocessor for stage04 compiler
+/* pp.h -- Preprocessor for the live selfhost frontend (stage08 + cross)
  *
- * Phase 6: #define, #include, #ifdef/#ifndef/#else/#endif, #line skip.
- * Token-level interception: next() calls pp_directive() on TK_HASH,
- * expands macros on TK_IDENT.
+ * Directives: #define (object + function-like + __VA_ARGS__), #undef,
+ * #include, #if / #elif / #ifdef / #ifndef / #else / #endif, #error.
+ * #line / #pragma / unknown: skipped.  # stringize / ## paste: not expanded.
  *
- * Compiled by stage03 s32-cc.
+ * Token-level: next() calls pp_directive() on TK_HASH, expands macros on
+ * TK_IDENT.  Predefs: __STDC__, __LINE__, __FILE__, arch macros (see
+ * pp_install_predefs / next() specials).  Map: docs/DIALECT.md.
  */
 
 #define PP_MAX_DEFS  512
@@ -17,6 +19,11 @@ static int   pp_dnpar[PP_MAX_DEFS];   /* param count, -1 = object-like */
 static char *pp_dparm[PP_MAX_DEFS];   /* packed param names "a\0b\0" (strdup'd) */
 static int   pp_dvar[PP_MAX_DEFS];    /* 1 = variadic macro (.../__VA_ARGS__) */
 static int   pp_ndefs;
+
+/* Current translation-unit path for __FILE__ (main input; includes do not
+ * push a stack yet — nested-include names stay the top-level path). */
+#define PP_FILE_LEN 512
+static char pp_curfile[PP_FILE_LEN];
 
 #define PP_EXP_SZ 8192
 static char pp_exp[PP_EXP_SZ];
@@ -695,6 +702,66 @@ static void pp_undef(void) {
     pp_sync();
 }
 
+/* Record the primary source path for __FILE__ (call after pp_ndefs = 0). */
+static void pp_set_source_file(char *path) {
+    int i;
+    i = 0;
+    if (!path) {
+        pp_curfile[0] = 0;
+        return;
+    }
+    while (path[i] != 0 && i < PP_FILE_LEN - 1) {
+        pp_curfile[i] = path[i];
+        i = i + 1;
+    }
+    pp_curfile[i] = 0;
+}
+
+/* Static predefs available for #ifdef / #if defined().  Dynamic
+ * __LINE__ / __FILE__ are handled in next() so their values track the
+ * current position. */
+static void pp_install_predefs(void) {
+    pp_add("__STDC__", 1);
+    pp_add("__S12CC__", 1);
+    /* Arch-specific macros also installed from parse_program when the
+     * target is known (S12CC_TARGET_A64, ty_ptr_size, …). */
+}
+
+/* Emit a TK_STRING token whose contents are `s` (for __FILE__). */
+static void pp_emit_string_token(char *s) {
+    int pool_start;
+    int slen;
+    int i;
+    pool_start = lex_strpool_len;
+    slen = 0;
+    i = 0;
+    while (s[i] != 0) {
+        if (lex_strpool_len < LEX_POOL_SZ - 1) {
+            lex_strpool[lex_strpool_len] = s[i];
+            lex_strpool_len = lex_strpool_len + 1;
+        }
+        if (slen < LEX_STR_SZ - 1) {
+            lex_str[slen] = s[i];
+            slen = slen + 1;
+        }
+        i = i + 1;
+    }
+    if (lex_strpool_len < LEX_POOL_SZ) {
+        lex_strpool[lex_strpool_len] = 0;
+        lex_strpool_len = lex_strpool_len + 1;
+    }
+    lex_str[slen] = 0;
+    if (lex_str_count < LEX_POOL_MAX) {
+        lex_str_off[lex_str_count] = pool_start;
+        lex_str_len[lex_str_count] = slen;
+        lex_val = lex_str_count;
+        lex_str_count = lex_str_count + 1;
+    } else {
+        lex_val = 0;
+    }
+    lex_tok = TK_STRING;
+}
+
 static void pp_splice_file(char *path) {
     int fd;
     int n;
@@ -1255,6 +1322,22 @@ static void pp_directive(void) {
         pp_skip_line();
         pp_sync();
         return;
+    }
+    if (strcmp(name, "error") == 0) {
+        /* Consume rest of line as the message and hard-fail. */
+        pp_skip_ws();
+        fdputs("s12cc:", 2);
+        fdputuint(2, lex_line);
+        fdputs(": #error", 2);
+        if (lex_src[lex_pos] != 0 && lex_src[lex_pos] != 10) {
+            fdputs(": ", 2);
+            while (lex_src[lex_pos] != 0 && lex_src[lex_pos] != 10) {
+                fdputc(lex_src[lex_pos], 2);
+                lex_pos = lex_pos + 1;
+            }
+        }
+        fdputc(10, 2);
+        exit(1);
     }
 
     /* Unknown directive (#line, #pragma, etc.) — skip */

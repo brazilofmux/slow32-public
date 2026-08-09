@@ -20,6 +20,7 @@ Sibling cross-compiler trees (independent of the numbered cycle):
 
 Reference docs:
 - [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap (V2 stages 0–16, sibling cross-compiler track, trust model).
+- [`docs/DIALECT.md`](docs/DIALECT.md) — live C dialect map (what `src/` actually supports; plan dialect work here).
 - [`TOOL-NAMING.md`](TOOL-NAMING.md) — tool-name conventions across the stages.
 - [`ISSUES.md`](ISSUES.md) — code-review findings (closed and active) across the toolchain.
 

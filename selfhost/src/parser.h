@@ -279,6 +279,23 @@ static void next(void) {
         if (lex_tok == TK_HASH) { pp_directive(); continue; }
         if (pp_skip) { continue; }
         if (lex_tok == TK_IDENT) {
+            /* Dynamic predefs: values track position / primary source path. */
+            if (strcmp(lex_str, "__LINE__") == 0) {
+                lex_tok = TK_NUM;
+                lex_val = lex_line;
+                lex_val_hi = 0;
+                lex_val_ll = 0;
+                lex_val_u = 0;
+                return;
+            }
+            if (strcmp(lex_str, "__FILE__") == 0) {
+                if (pp_curfile[0] != 0) {
+                    pp_emit_string_token(pp_curfile);
+                } else {
+                    pp_emit_string_token("");
+                }
+                return;
+            }
             di = pp_find(lex_str);
             if (di >= 0) {
                 if (pp_dnpar[di] >= 0) {
@@ -4288,10 +4305,20 @@ static Node *parse_program(void) {
     ps_ginit_pool_len = 0;
     ps_ngirelocs = 0;
     ps_comp_lit_id = 0;
+    pp_install_predefs();
 #ifdef S12CC_TARGET_A64
     pp_add("__aarch64__", 1);
     pp_add("__LP64__", 1);
 #endif
+#ifdef S12CC_TARGET_X64
+    pp_add("__x86_64__", 1);
+    pp_add("__LP64__", 1);
+#endif
+    if (ty_ptr_size == 8) {
+        pp_add("__SIZEOF_POINTER__", 8);
+    } else {
+        pp_add("__SIZEOF_POINTER__", 4);
+    }
     if (ty_ptr_size == 8) {
         usize_ty = TY_LLONG | TY_UNSIGNED;
         isize_ty = TY_LLONG;

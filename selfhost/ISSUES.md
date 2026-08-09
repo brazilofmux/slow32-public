@@ -1340,180 +1340,56 @@ entries PASS on both targets.
 
 ---
 
-## Section C: Missing Language / ABI Surface (Feature Backlog)
+## Section C: Language / ABI Surface (live map)
 
-### Stage 6: Subset C Compiler (`s12cc.c`)
+> **Source of truth for planning:** [`docs/DIALECT.md`](docs/DIALECT.md)
+> (2026-08). The bullets below are a short index. Historical stage06
+> snapshots lag `src/`; do not plan new work against frozen stage copies.
 
-### 33. [IMPLEMENTED] `long long` (64-bit) Support
-Originally missing in the Stage 6 subset compiler. Now implemented: `TY_LLONG`
-is threaded through the lexer, parser, sema (full `double > float > long long
-> int` promotion ladder in `src/sema.h`), and HIR lowering; runtime support in
-`stage08/builtins64.s`.
+### Closed / implemented on the live frontend (`selfhost/src/`)
 
-### 34. [IMPLEMENTED] Floating Point Support
-Originally missing in the Stage 6 subset compiler. Now implemented: `TY_FLOAT`
-and `TY_DOUBLE` are supported across the shared frontend and HIR, with runtime
-support in `stage08/builtins_fp64.s`. The cross-compilers lower FP through
-SSE2 (x64) and the AArch64 FP unit (a64).
+| ID | Topic | Notes |
+|----|--------|--------|
+| **#33** | `long long` | Full ladder + builtins |
+| **#34** | `float` / `double` | HIR + host FP / soft builtins |
+| **#35** | Preprocessor core | **Stale claim.** `pp.h` has object + function-like macros, `__VA_ARGS__`, `#undef`, `#if`/`#elif`/`#ifdef`, `defined`, `#include`. See DIALECT.md. |
+| **#38** | Struct by value | **Stale claim for stage07+.** Fixed as `#51` (hidden pointer + callee copy). Stage06 snapshot only is still limited. |
+| **#39** | `for` expressions | Resolved (comma in init/cond/step) |
+| **#47** bulk | Anon aggregates, designated init, compound literals, flex arrays, `_Atomic`/`typeof`/`__attribute__`, GNU stmt exprs | Landed; phase27–30 + corpus d21–d34 |
+| **#48** GP | Variadic int/ptr/`long long` | x64 + a64; d32_varargs |
+| **#51** | Struct-by-value miscompile | Fixed; d31_struct_byval |
+| **#52** | Char lit in static brace init | Fixed; d30 |
 
-### 35. [LIMITATION] Preprocessor Gaps
-`pp.h` lacks function-like macros, `#if` expression evaluation, `#undef`, and predefined macros like `__FILE__`/`__LINE__`.
-**Recommendation**: Enhance `pp.h` to support token-based macro expansion and a more complete expression parser for `#if`.
+Bitfields have **parse + HIR load/store** (`hl_bf_*`, `test_bitfields.c`); not “unimplemented,” though edge cases vs gcc may remain.
 
-### 38. [MISSING] `struct` by Value
-Currently, structs can only be effectively accessed via pointers. Passing or returning a struct by value is not supported in the parser or calling convention.
-**Recommendation**: Update calling convention and codegen to handle struct copies on stack/registers.
+### Still open (live)
 
-### 39. [RESOLVED] For-Loop Expression Limit
-Stage05/Stage06 `parser.h` already parse full expressions (including comma operator)
-for `for` init/cond/step slots via `parse_expr()`.
+| ID | Topic | Status |
+|----|--------|--------|
+| **#35b** | PP polish | `#` stringize / `##` paste not expanded; `#line`/`#pragma` skipped; nested-include `__FILE__` stack not tracked. `#error` is a hard error (2026-08). Predefs: `__STDC__`, `__LINE__`, `__FILE__`, arch macros (2026-08). |
+| **#48 FP** | `va_arg(ap, double/float)` | a64 does not save V0–V7; no FP cursor in `va_list` |
+| **#49** | libc `%f`/`%g`/`%e` | Still `?` in cross libc until FP varargs (or explicit non-variadic helpers) |
+| **#47 residual** | C99 external-`inline` semantics | `inline` accepted as no-op |
+| **#47 headers** | Host-shaped ports | Add shims only when a real port needs them (`dlfcn`, richer `sys/*`, …) |
+| **#46** | Frame/stack limits | Ops limit when compiling huge TUs — not a missing syntax feature |
 
-Issue #23 tracked the remaining Stage02 gap and is now fixed there as well.
+### TCC probe (historical)
 
-### 47. [MISSING] stage07 / cc-x64 third-party C dialect gaps
+2026-05: first non-header failure was anonymous struct/union (since fixed).
+Remaining “TCC scale” work is PP paste/stringize, headers, and ABI edge
+cases — multi-session, not a bootstrap blocker.
 
-**Status**: backlog, captured 2026-05-09. Surfaced by a probe-only
-attempt to compile TCC (`https://repo.or.cz/tinycc.git`) with cc-x64
-— see "TCC stress-test probe" notes below. Not pressing for selfhost,
-but each gap blocks third-party C codebases of any size.
+### #48 / #49 detail (unchanged technical notes)
 
-**Recently addressed**:
+**GP varargs (done):** tagged-pointer `va_list`; spill across reg/stack
+boundary; tests in `diff-test/corpus/d32_varargs.c`.
 
-- **Anonymous struct/union members** (C11) — parser used to reject
-  ```c
-  union {
-      struct { int a, b; };
-      int c;
-  };
-  ```
-  Heavy use in TCC (~40 sites; ~11 in `tcc.h` alone, including the
-  load-bearing `SValue` type). Stage07 now keeps an unnamed aggregate
-  member for layout/initialization and adds lookup aliases for nested
-  member names. Covered by `selfhost/stage07/tests/test_phase27.c`.
-- **Designated initializers** — global, static-local, and automatic-local
-  aggregate initializers now support sparse array indexes, nested field/index
-  chains such as `[2].op = 7` and `.nums[2] = 12`, string initialization
-  of char arrays, and pointer/string relocations at designated offsets for
-  static storage. Covered by `selfhost/stage07/tests/test_phase28.c` and
-  `selfhost/stage07/tests/test_phase29.c`.
-- **Block-scope compound literals** — scalar, struct, nested struct, and
-  array compound literals now lower to hidden automatic locals with ordered
-  initialization side effects. Address-taking and member access work through
-  comma-expression lvalues. Covered by `selfhost/stage07/tests/test_phase30.c`.
-- **Flexible array members** — final unsized struct members such as
-  `char data[];` now get an aligned zero-byte tail offset, do not contribute
-  to `sizeof(struct)`, and still behave as array addresses for `p->data[i]`.
-  Covered by `selfhost/stage08-cross-x64/tests/test_flex_array.c` and
-  `selfhost/stage08-cross-a64/tests/cc_flex_array.c`.
-- **GNU/C11 declaration noise** — `_Atomic` is accepted as an unqualified
-  underlying type, `typeof(...)` / `__typeof__(...)` resolve to the parsed type
-  or expression type, and `__attribute__((...))` is skipped in prefix, infix,
-  suffix, and parameter positions. Covered by
-  `selfhost/stage08-cross-x64/tests/test_decl_dialect.c` and
-  `selfhost/stage08-cross-a64/tests/cc_decl_dialect.c`.
-- **GNU statement expressions** `({ stmts; final_expr; })` — the
-  parenthesized form parses a regular block (so locals are scoped),
-  detaches the trailing expression-statement, and lowers as
-  side-effects-then-expression.  Nests freely; valid as initializer,
-  function argument, or in any other expression context.  Covered by
-  `selfhost/stage08-cross-x64/diff-test/corpus/d34_stmt_expr.c`.
+**FP varargs (open):** needs V-reg save area + FP cursor in `va_arg`
+(a64 especially). Cross libc `fmt_core` still prints `?` for `%f`/`%g`/`%e`
+and does not `va_arg` floats.
 
-**Surveyed but not yet hit (counts from TCC source)**:
-
-| Feature | TCC use sites | Implementation notes |
-|---|---|---|
-| Bitfields | 1 site in `tcc.h` | Real codegen work — masks + shifts |
-| `inline` (with C99 external-inline semantics) | Scattered | Parser accepts inline as a no-op; full external-inline semantics remain unsupported |
-
-**Header-set gaps** (would need to be added to
-`selfhost/stage07/include/`): `stdarg.h`, `errno.h`, `setjmp.h`,
-`fcntl.h`, `sys/time.h`, `dlfcn.h`. cc-x64 already handles `va_start`
-/ `va_arg` / `va_end` as parser intrinsics, so `stdarg.h` is just
-`typedef char *va_list;`.
-
-**TCC stress-test probe (2026-05-09)**: cloned TCC into `/tmp/tcc-src`,
-ran `./configure --cpu=x86_64 && make tccdefs_.h` to seed the predefs,
-then `cc-x64 --hir -c tcc.c` against `selfhost/stage07/include` plus
-shim headers in `/tmp/tcc-shim/`. First non-header failure was the
-anonymous struct/union case above. Tree intentionally not committed —
-this was an evaluation, not a port.
-
-**Recommendation**: address only when forced by a real customer.
-Compound literals are the next most likely C dialect blocker.
-
-### 48. [FIXED-GP-ONLY] cc-a64 callee-side variadic functions (integer/pointer args)
-
-**Status**: fixed for integer / pointer / long-long varargs on
-2026-05-15.  Floating-point varargs (V-register save area) remain
-unimplemented — see #49 for the downstream `%f` consequence.
-
-**What works now**:
-- `va_start(ap, last)` / `va_arg(ap, T)` / `va_end(ap)` for integer,
-  pointer, and `long long` argument types, including the boundary
-  where varargs spill from registers (X0..X7) to the caller's stack
-  overflow area at FP+16.
-- Functions with up to 8 named GP params followed by `...`; named
-  params consuming X-class registers correctly leave the right
-  remaining save-area slots for varargs.
-
-**What still doesn't work**:
-- `va_arg(ap, double)` / `va_arg(ap, float)`.  The prologue does not
-  save V0..V7, and `va_arg`'s load path reads only from the X save
-  area.  Picking these up requires (a) an FP regalloc class (a64
-  codegen menu item 5, multi-session) and (b) extending the va_list
-  tagged-pointer scheme to thread a separate FP cursor.
-
-**Implementation**: mirrors cc-x64's tagged-pointer va_list scheme
-(`hir_codegen_x64.h:1977..2102`) with constants adjusted for AAPCS64:
-8 GP arg slots instead of 6, save area 64 bytes (8×8) instead of 48
-(6×8), tag bits 0..7 instead of 0..6.  The 3-bit tag still suffices
-because valid C always has `nparams >= 1` (va_start requires a
-named-arg reference), so the maximum count value 8 - 1 = 7 fits.
-Three new HI_VA_* codegen cases in `hir_codegen_a64.h`, plus a
-prologue save loop (X0..X7 → save area) and frame-allocation bump
-of 32 slow32 units = 64 a64 bytes.  No-frame-leaf optimization
-disabled when `hx_is_varargs` (the save loop needs valid FP).
-
-**Tests**: `selfhost/stage08-cross-x64/diff-test/corpus/d32_varargs.c`
-covers 1 / 5 / 7 / 8 / 12-arg variadic int sums (spanning the
-reg→stack boundary), `long long` varargs, pointer varargs, and the
-nine-named-param case where one named arg already spills to stack.
-All match gcc on both cc-a64 (native aarch64) and cc-x64
-(qemu-x86_64); 32/32 diff-test PASS on each target.
-
-**stdarg.h shim**: `selfhost/stage07/include/stdarg.h` added with
-just `typedef char *va_list;` so source can use the portable
-`#include <stdarg.h>` and still compile under cc-{x64,a64}.
-
-**Future libc opportunity**: `libc_a64.a`'s `fprintf` / `printf` /
-`snprintf` are still implemented fixed-arity with `char *` slots
-(`stdio.c`, `libc_extra.c`).  They could now be switched to true
-variadic — integer / pointer / `long long` would flow through —
-but `%f` / `%g` / `%e` would still print `?` until #49 lands.
-
-### 49. [DEFERRED] libc printf `%f` / `%g` / `%e` (full float formatting)
-
-**Status**: deferred 2026-05-14.  Blocked by #48 (no callee-side
-variadic → can't read doubles from V regs).  Once #48 lands, replace
-the `?` placeholder in `fmt_core` / `snp_core` with a real
-float-to-string routine.
-
-**Implementation sketch**: `runtime/printf_enhanced.c` already has a
-TinyMUX-derived implementation using David Gay's dtoa
-(`runtime/dtoa.c`, 6250 lines) for accurate float-to-string.  Too
-heavy for the cc-a64 libc.  Sufficient alternatives:
-
-  - Plain `%.Nf` only: multiply by 10^N, round to nearest, split
-    integer and fractional halves, format each as int.  Loses
-    precision for very large or very small values but covers the
-    dbt-style stats use cases (`Time: 0.054 seconds`,
-    `Performance: 178.4 MIPS`).
-  - For `%g` / `%e`: still need an exponent-extraction step.  Defer
-    until needed.
-
-**Why it's deferred**: same as #48 — not on the dbt-a64 critical
-path.  The current `?` placeholder is informative enough that the
-stats output is readable.  Eventually wanted, just not today.
+**Recommendation for `%f`:** once FP varargs exist, a small `%.Nf`
+routine is enough for stats; full dtoa is optional.
 
 ---
 

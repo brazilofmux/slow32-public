@@ -10,6 +10,8 @@
  * before it. Instead, we provide the minimal declarations needed.
  */
 
+#define S12CC_TARGET_X64 1
+
 /* The frontend headers (lexer, parser, ast, etc.) are designed for SLOW-32's
  * cc compiler, which is lenient about redeclarations and return types.
  * When compiling on a host GCC/Clang, we need compatibility shims.
@@ -473,6 +475,7 @@ int main(int argc, char **argv) {
     pp_skip = 0;
     pp_dep = 0;
     ps_ntypedefs = 0;
+    pp_set_source_file(infile);
 
     /* Read source */
     fd = open(infile, 0);
