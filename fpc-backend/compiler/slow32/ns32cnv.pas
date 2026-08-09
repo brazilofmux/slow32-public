@@ -81,13 +81,15 @@ implementation
 
         if (FPUSLOW32_SINGLE in fpu_capabilities[current_settings.fputype]) and
           not(cs_fp_emulation in current_settings.moduleswitches) and
-          is_single(resultdef) and
-          not is_64bitint(left.resultdef) then
+          is_single(resultdef) then
           begin
-            { 32-bit int -> single via FCVT.S.W / FCVT.S.WU }
-            if not(is_32bit(left.resultdef)) then
+            { int32/int64 -> single via FCVT.S.W / FCVT.S.L }
+            if not is_64bitint(left.resultdef) and not is_32bit(left.resultdef) then
               begin
-                inserttypeconv(left,s32inttype);
+                if is_signed(left.resultdef) then
+                  inserttypeconv(left,s32inttype)
+                else
+                  inserttypeconv(left,u32inttype);
                 firstpass(left);
               end;
             result:=nil;
@@ -182,11 +184,27 @@ implementation
           begin
             location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
             location.register:=cg.getfpuregister(list,location.size);
-            if is_signed(left.resultdef) then
-              op:=A_FCVT_S_W
+            if is_64bitint(left.resultdef) then
+              begin
+                cgs:=tcgs32(cg);
+                cgs.a_alloc_evenpair(list,NR_F64PAIR_A);
+                cgs.a_load_reg64_evenpair(list,
+                  left.location.register64.reglo,left.location.register64.reghi,NR_F64PAIR_A);
+                if is_signed(left.resultdef) then
+                  op:=A_FCVT_S_L
+                else
+                  op:=A_FCVT_S_LU;
+                list.concat(taicpu.op_reg_reg(op,location.register,NR_F64PAIR_A));
+                cgs.a_dealloc_evenpair(list,NR_F64PAIR_A);
+              end
             else
-              op:=A_FCVT_S_WU;
-            list.concat(taicpu.op_reg_reg(op,location.register,left.location.register));
+              begin
+                if is_signed(left.resultdef) then
+                  op:=A_FCVT_S_W
+                else
+                  op:=A_FCVT_S_WU;
+                list.concat(taicpu.op_reg_reg(op,location.register,left.location.register));
+              end;
           end
         else if is_double(resultdef) then
           begin
