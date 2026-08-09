@@ -8,10 +8,11 @@ This document tracks bugs, architectural limitations, and potential improvements
 The `EVALUATE` primitive previously copied input strings into the `tib` buffer.
 - **Status**: Fixed in `86b3f41`. Implemented `SOURCE` as a pointer/length pair (`var_source_ptr`, `var_source_len`). `EVALUATE` now saves the caller's source state on the return stack and restores it after interpretation.
 
-### 2. `S"` in Interpretation Mode (kernel.s:2815)
-The `S"` word is marked `IMMEDIATE` but the implementation explicitly does nothing if `STATE` is zero.
-- **Problem**: In interpretation mode, `S" hello"` should parse "hello" and leave `( c-addr u )` on the stack. Currently, it just exits, leaving the string in the input stream where the interpreter will try to execute it as a word.
-- **Recommendation**: Implement interpretation-mode parsing for `S"` (copying the string to a transient buffer like `PAD`).
+### 2. `S"` in Interpretation Mode (Resolved)
+- **Status**: Implemented in `kernel.s` (`squote_interpret`): when `STATE=0`,
+  `S"` parses into alternating transient buffers (`squote_ibuf0` /
+  `squote_ibuf1`) and pushes `( c-addr u )`. Covered by
+  `tests/test-squote-interp.fth`.
 
 ### 3. Missing Dictionary Bounds Checks (Resolved)
 Primitives that advanced `HERE` lacked overflow protection.
