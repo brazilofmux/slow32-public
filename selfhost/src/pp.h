@@ -2,7 +2,7 @@
  *
  * Directives: #define (object + function-like + __VA_ARGS__), #undef,
  * #include, #if / #elif / #ifdef / #ifndef / #else / #endif, #error.
- * #line / #pragma / unknown: skipped.  # stringize / ## paste: not expanded.
+ * #line / #pragma / unknown: skipped.  # stringize / ## paste: expanded.
  *
  * Token-level: next() calls pp_directive() on TK_HASH, expands macros on
  * TK_IDENT.  Predefs: __STDC__, __LINE__, __FILE__, arch macros (see
@@ -418,12 +418,82 @@ static int pp_expand_func(int di) {
         }
     }
 
-    /* Build expanded text in pp_exp */
+    /* Build expanded text in pp_exp.
+     * Supports #param (stringize) and ## (token paste). */
     body = pp_dbody[di];
     exp_len = 0;
     j = 0;
     while (body[j] != 0) {
         c = body[j];
+
+        /* Token paste: ## — drop operator and adjacent body whitespace so
+         * the preceding and following tokens abut. */
+        if (c == 35 && body[j + 1] == 35) {  /* '#' '#' */
+            j = j + 2;
+            while (body[j] == 32 || body[j] == 9) j = j + 1;
+            while (exp_len > 0 &&
+                   (pp_exp[exp_len - 1] == 32 || pp_exp[exp_len - 1] == 9)) {
+                exp_len = exp_len - 1;
+            }
+            continue;
+        }
+
+        /* Stringize: # param  →  "argument text" with escapes */
+        if (c == 35) {
+            j = j + 1;
+            while (body[j] == 32 || body[j] == 9) j = j + 1;
+            c = body[j];
+            ni = 0;
+            while ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) ||
+                   (c >= 48 && c <= 57) || c == 95) {
+                iname[ni] = c;
+                ni = ni + 1;
+                j = j + 1;
+                c = body[j];
+            }
+            iname[ni] = 0;
+            matched = -1;
+            dp = pp_dparm[di];
+            if (dp != 0 && iname[0] != 0) {
+                pi = 0;
+                k = 0;
+                while (pi < pp_dnpar[di]) {
+                    if (strcmp(iname, dp + k) == 0) {
+                        matched = pi;
+                        break;
+                    }
+                    while (dp[k] != 0) k = k + 1;
+                    k = k + 1;
+                    pi = pi + 1;
+                }
+            }
+            if (exp_len < PP_EXP_SZ - 1) {
+                pp_exp[exp_len] = 34;  /* '"' */
+                exp_len = exp_len + 1;
+            }
+            if (matched >= 0 && matched < nargs) {
+                k = 0;
+                while (k < arg_len[matched]) {
+                    int ch;
+                    ch = lex_src[arg_start[matched] + k];
+                    if ((ch == 34 || ch == 92) && exp_len < PP_EXP_SZ - 2) {
+                        pp_exp[exp_len] = 92;  /* '\\' */
+                        exp_len = exp_len + 1;
+                    }
+                    if (exp_len < PP_EXP_SZ - 1) {
+                        pp_exp[exp_len] = ch;
+                        exp_len = exp_len + 1;
+                    }
+                    k = k + 1;
+                }
+            }
+            if (exp_len < PP_EXP_SZ - 1) {
+                pp_exp[exp_len] = 34;
+                exp_len = exp_len + 1;
+            }
+            continue;
+        }
+
         if ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95) {
             /* Read identifier from body */
             ni = 0;

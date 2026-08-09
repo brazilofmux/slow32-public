@@ -4,11 +4,10 @@
  * parser intrinsics; this header only has to provide the va_list type
  * so source code that `#include <stdarg.h>` parses cleanly.
  *
- * va_list is intentionally `char *` (not a struct) because the
- * intrinsics consume it as an opaque tagged pointer on the cross
- * backends and as a frame-pointer cookie on slow32 native; either
- * representation fits in 8 bytes (4 on slow32), so a single pointer
- * slot is enough. */
+ * va_list is intentionally `char *` (not a struct).  On the cross
+ * backends it holds a pointer to a frame control block (GP + FP
+ * cursors + shared stack overflow); on slow32 native it is a
+ * frame-pointer cookie.  Either representation fits in one pointer. */
 #ifndef _STDARG_H
 #define _STDARG_H
 

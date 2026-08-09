@@ -440,42 +440,101 @@ int vsnprintf(char *buf, int sz, char *fmt, va_list ap) {
             width = width * 10 + (fmt[i] - '0');
             i = i + 1;
         }
-        if (fmt[i] == 'l') {
-            i = i + 1;
-            if (fmt[i] == 'l') { is_ll = 1; i = i + 1; }
-        } else if (fmt[i] == 'z') {
-            i = i + 1;  /* size_t — same width as int on this build */
-        }
-        if (fmt[i] == 'd' || fmt[i] == 'i') {
-            if (is_ll) pos = sn_putl64(buf, sz, pos, va_arg(ap, long long), width, zero);
-            else       pos = sn_putint(buf, sz, pos, va_arg(ap, int),       width, zero);
-        } else if (fmt[i] == 'u') {
-            if (is_ll) pos = sn_putu64 (buf, sz, pos, va_arg(ap, unsigned long long), width, zero);
-            else       pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 10, width, zero, 0);
-        } else if (fmt[i] == 'x') {
-            pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 0);
-        } else if (fmt[i] == 'X') {
-            pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 1);
-        } else if (fmt[i] == 's') {
-            s = va_arg(ap, char *);
-            if (s == 0) s = "(null)";
-            while (*s) {
-                pos = sn_emit(buf, sz, pos, *s);
-                s = s + 1;
+        /* Optional .N precision (used by %f), then length modifiers. */
+        {
+            int precision;
+            precision = 6;
+            if (fmt[i] == '.') {
+                precision = 0;
+                i = i + 1;
+                while (fmt[i] >= '0' && fmt[i] <= '9') {
+                    precision = precision * 10 + (fmt[i] - '0');
+                    i = i + 1;
+                }
             }
-        } else if (fmt[i] == 'c') {
-            pos = sn_emit(buf, sz, pos, va_arg(ap, int));
-        } else if (fmt[i] == 'p') {
-            pos = sn_emit(buf, sz, pos, '0');
-            pos = sn_emit(buf, sz, pos, 'x');
-            pos = sn_putu64(buf, sz, pos,
-                            (unsigned long long)va_arg(ap, char *), 0, 0);
-        } else if (fmt[i] == '%') {
-            pos = sn_emit(buf, sz, pos, '%');
-        } else {
-            /* Unknown — emit literal */
-            pos = sn_emit(buf, sz, pos, '%');
-            pos = sn_emit(buf, sz, pos, fmt[i]);
+            if (fmt[i] == 'l') {
+                i = i + 1;
+                if (fmt[i] == 'l') { is_ll = 1; i = i + 1; }
+            } else if (fmt[i] == 'z') {
+                i = i + 1;  /* size_t — same width as int on this build */
+            }
+            if (fmt[i] == 'd' || fmt[i] == 'i') {
+                if (is_ll) pos = sn_putl64(buf, sz, pos, va_arg(ap, long long), width, zero);
+                else       pos = sn_putint(buf, sz, pos, va_arg(ap, int),       width, zero);
+            } else if (fmt[i] == 'u') {
+                if (is_ll) pos = sn_putu64 (buf, sz, pos, va_arg(ap, unsigned long long), width, zero);
+                else       pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 10, width, zero, 0);
+            } else if (fmt[i] == 'x') {
+                pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 0);
+            } else if (fmt[i] == 'X') {
+                pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 1);
+            } else if (fmt[i] == 's') {
+                s = va_arg(ap, char *);
+                if (s == 0) s = "(null)";
+                while (*s) {
+                    pos = sn_emit(buf, sz, pos, *s);
+                    s = s + 1;
+                }
+            } else if (fmt[i] == 'c') {
+                pos = sn_emit(buf, sz, pos, va_arg(ap, int));
+            } else if (fmt[i] == 'p') {
+                pos = sn_emit(buf, sz, pos, '0');
+                pos = sn_emit(buf, sz, pos, 'x');
+                pos = sn_putu64(buf, sz, pos,
+                                (unsigned long long)va_arg(ap, char *), 0, 0);
+            } else if (fmt[i] == 'f' || fmt[i] == 'F' ||
+                       fmt[i] == 'g' || fmt[i] == 'G' ||
+                       fmt[i] == 'e' || fmt[i] == 'E') {
+                /* Crude fixed-point via integer path: print as scaled int. */
+                double dv;
+                long long ip;
+                long long frac;
+                long long scale;
+                int pi;
+                int neg;
+                double absv;
+                dv = va_arg(ap, double);
+                if (precision < 0) precision = 6;
+                if (precision > 9) precision = 9;
+                neg = 0;
+                if (dv < 0.0) { neg = 1; absv = 0.0 - dv; }
+                else absv = dv;
+                scale = 1;
+                pi = 0;
+                while (pi < precision) { scale = scale * 10; pi = pi + 1; }
+                ip = (long long)absv;
+                frac = (long long)((absv - (double)ip) * (double)scale + 0.5);
+                if (frac >= scale) { ip = ip + 1; frac = 0; }
+                if (neg) pos = sn_emit(buf, sz, pos, '-');
+                pos = sn_putl64(buf, sz, pos, ip, 0, 0);
+                if (precision > 0) {
+                    char fbuf[12];
+                    int fn;
+                    long long t;
+                    pos = sn_emit(buf, sz, pos, '.');
+                    fn = 0;
+                    t = frac;
+                    while (t > 0) {
+                        fbuf[fn] = (char)('0' + (int)(t % 10));
+                        fn = fn + 1;
+                        t = t / 10;
+                    }
+                    while (fn < precision) { fbuf[fn] = '0'; fn = fn + 1; }
+                    pi = precision;
+                    while (pi > 0) {
+                        pi = pi - 1;
+                        pos = sn_emit(buf, sz, pos, fbuf[pi]);
+                    }
+                }
+                (void)width;
+                (void)zero;
+            } else if (fmt[i] == '%') {
+                pos = sn_emit(buf, sz, pos, '%');
+            } else {
+                /* Unknown — emit literal */
+                pos = sn_emit(buf, sz, pos, '%');
+                pos = sn_emit(buf, sz, pos, fmt[i]);
+            }
         }
         i = i + 1;
     }

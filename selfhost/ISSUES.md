@@ -1366,9 +1366,8 @@ Bitfields have **parse + HIR load/store** (`hl_bf_*`, `test_bitfields.c`); not �
 
 | ID | Topic | Status |
 |----|--------|--------|
-| **#35b** | PP polish | `#` stringize / `##` paste not expanded; `#line`/`#pragma` skipped; nested-include `__FILE__` stack not tracked. `#error` is a hard error (2026-08). Predefs: `__STDC__`, `__LINE__`, `__FILE__`, arch macros (2026-08). |
-| **#48 FP** | `va_arg(ap, double/float)` | a64 does not save V0–V7; no FP cursor in `va_list` |
-| **#49** | libc `%f`/`%g`/`%e` | Still `?` in cross libc until FP varargs (or explicit non-variadic helpers) |
+| **#35b residual** | PP polish | `#line`/`#pragma` skipped; nested-include `__FILE__` stack not tracked. Stringize/`##` + `#error` + predefs landed (2026-08). |
+| **#48 FP / #49** | FP varargs + `%f` | **Landed (2026-08):** dual GP/FP control-block `va_list` on a64+x64; crude `%.Nf` in cross libc (not full dtoa). |
 | **#47 residual** | C99 external-`inline` semantics | `inline` accepted as no-op |
 | **#47 headers** | Host-shaped ports | Add shims only when a real port needs them (`dlfcn`, richer `sys/*`, …) |
 | **#46** | Frame/stack limits | Ops limit when compiling huge TUs — not a missing syntax feature |
@@ -1381,15 +1380,14 @@ cases — multi-session, not a bootstrap blocker.
 
 ### #48 / #49 detail (unchanged technical notes)
 
-**GP varargs (done):** tagged-pointer `va_list`; spill across reg/stack
-boundary; tests in `diff-test/corpus/d32_varargs.c`.
+**GP + FP varargs (2026-08):** `va_list` is a pointer to a frame control
+block with independent GP/FP cursors and a shared stack overflow pointer.
+Prologue saves X0..X7 (or SysV 6 GP) and V0..V7 / XMM0..XMM7.  Tests:
+`d32_varargs.c` (GP); FP covered by libc `%.Nf` path.
 
-**FP varargs (open):** needs V-reg save area + FP cursor in `va_arg`
-(a64 especially). Cross libc `fmt_core` still prints `?` for `%f`/`%g`/`%e`
-and does not `va_arg` floats.
-
-**Recommendation for `%f`:** once FP varargs exist, a small `%.Nf`
-routine is enough for stats; full dtoa is optional.
+**`%f` (crude):** cross `fmt_core` / `snp_core` implement fixed-point
+`%.Nf` (precision default 6, cap 9).  Not a full dtoa; `%e`/`%g` reuse
+the fixed path.
 
 ---
 

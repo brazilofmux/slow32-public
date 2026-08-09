@@ -287,10 +287,73 @@ static void snp_emit_int64(long long val, int is_unsigned, int base,
     while (i > 0) { i = i - 1; snp_putc(buf[i], ctx); }
 }
 
-/* Sibling of stdio.c's fmt_core.  See the comment there for the rules
- * on `ll`, `.N`, and the `%f` placeholder.  Walks variadic args via
- * va_arg now that cc-a64's callee-side va_* lowering is in place
- * (ISSUES.md #48). */
+/* Crude %.Nf into the snp buffer (matches stdio.c fmt_double). */
+static void snp_emit_double(double val, int precision, int width, int zero_pad,
+                            char **ctx) {
+    char buf[48];
+    int n;
+    int i;
+    int neg;
+    int pad;
+    long long ip;
+    long long frac;
+    long long scale;
+    double absv;
+    double rem;
+
+    if (precision < 0) precision = 6;
+    if (precision > 9) precision = 9;
+    neg = 0;
+    if (val < 0.0) { neg = 1; absv = 0.0 - val; }
+    else absv = val;
+    if (absv > 1000000000000000.0) {
+        if (neg) snp_putc('-', ctx);
+        snp_putc('i', ctx); snp_putc('n', ctx); snp_putc('f', ctx);
+        return;
+    }
+    scale = 1;
+    i = 0;
+    while (i < precision) { scale = scale * 10; i = i + 1; }
+    ip = (long long)absv;
+    rem = absv - (double)ip;
+    frac = (long long)(rem * (double)scale + 0.5);
+    if (frac >= scale) { ip = ip + 1; frac = 0; }
+    n = 0;
+    if (ip == 0) { buf[n] = '0'; n = n + 1; }
+    else {
+        long long t; t = ip;
+        while (t > 0) {
+            buf[n] = (char)('0' + (int)(t % 10));
+            n = n + 1;
+            t = t / 10;
+        }
+    }
+    pad = width - n - (neg ? 1 : 0) - (precision > 0 ? 1 + precision : 0);
+    if (pad < 0) pad = 0;
+    if (!zero_pad) while (pad > 0) { snp_putc(' ', ctx); pad = pad - 1; }
+    if (neg) snp_putc('-', ctx);
+    if (zero_pad) while (pad > 0) { snp_putc('0', ctx); pad = pad - 1; }
+    i = n;
+    while (i > 0) { i = i - 1; snp_putc(buf[i], ctx); }
+    if (precision > 0) {
+        char fbuf[12];
+        int fn;
+        long long t;
+        snp_putc('.', ctx);
+        fn = 0;
+        t = frac;
+        while (t > 0) {
+            fbuf[fn] = (char)('0' + (int)(t % 10));
+            fn = fn + 1;
+            t = t / 10;
+        }
+        while (fn < precision) { fbuf[fn] = '0'; fn = fn + 1; }
+        i = precision;
+        while (i > 0) { i = i - 1; snp_putc(fbuf[i], ctx); }
+    }
+}
+
+/* Sibling of stdio.c's fmt_core.  GP + double varargs. */
 typedef char *va_list;
 
 static int snp_core(char *fmt, va_list ap, char *buf, int size) {
@@ -326,19 +389,17 @@ static int snp_core(char *fmt, va_list ap, char *buf, int size) {
             width = width * 10 + (*fmt - '0');
             fmt = fmt + 1;
         }
-        /* Optional .N precision — parsed but only consumed by the %f
-         * placeholder, which doesn't currently use it. */
-        precision = 0;
+        precision = 6;
         has_prec = 0;
         if (*fmt == '.') {
             has_prec = 1;
+            precision = 0;
             fmt = fmt + 1;
             while (*fmt >= '0' && *fmt <= '9') {
                 precision = precision * 10 + (*fmt - '0');
                 fmt = fmt + 1;
             }
         }
-        (void)precision;
         (void)has_prec;
         /* Length modifier: ll for 64-bit; bare l treated as no-modifier
          * (long == int on the s12cc subset).  z/j/t skipped as size_t /
@@ -374,10 +435,7 @@ static int snp_core(char *fmt, va_list ap, char *buf, int size) {
         } else if (*fmt == 'f' || *fmt == 'F' ||
                    *fmt == 'g' || *fmt == 'G' ||
                    *fmt == 'e' || *fmt == 'E') {
-            /* FP placeholder — see fmt_core for the rationale.  GP-only
-             * va_list path can't see variadic doubles (#49); print '?'
-             * and do NOT va_arg (no GP slot was consumed). */
-            snp_putc('?', ctx);
+            snp_emit_double(va_arg(ap, double), precision, width, zero_pad, ctx);
         } else {
             snp_putc('%', ctx);
             snp_putc(*fmt, ctx);

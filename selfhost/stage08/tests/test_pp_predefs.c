@@ -57,6 +57,28 @@ int pick_val(void) { return 2; }
 int pick_val(void) { return 0; }
 #endif
 
+/* # stringize and ## paste */
+#define STR(x) #x
+#define PASTE(a, b) a##b
+#define PREFIX_ID(name) PASTE(id_, name)
+
+static int id_42 = 42;
+
+int stringize_ok(void) {
+    char *s;
+    s = STR(hello);
+    /* "hello" */
+    if (s[0] != 'h') return 0;
+    if (s[1] != 'e') return 0;
+    if (s[4] != 'o') return 0;
+    if (s[5] != 0) return 0;
+    return 1;
+}
+
+int paste_ok(void) {
+    return PREFIX_ID(42);
+}
+
 int main(void) {
     int a;
     int b;
@@ -70,5 +92,7 @@ int main(void) {
     if (!stdc_if()) return 6;
     if (scratch_alive()) return 7;
     if (pick_val() != 2) return 8;
+    if (!stringize_ok()) return 9;
+    if (paste_ok() != 42) return 10;
     return 0;
 }

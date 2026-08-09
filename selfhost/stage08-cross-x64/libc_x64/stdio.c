@@ -412,14 +412,119 @@ static void fmt_hex(int val, int width, int zero_pad, int upper,
     }
 }
 
-/* fmt_core: walks the format string consuming variadic args via va_arg
- * for each specifier.  For %d/%u/%x/%X read int (or long long with ll
- * modifier); for %s/%p read pointer; for %c read int (default arg
- * promotion); for %f/%g/%e print '?' placeholder and DO NOT va_arg
- * (variadic doubles land in V/XMM regs and aren't covered by the
- * GP-only va_list path on either target — see ISSUES.md #49).
- * Precision (.N) is parsed but ignored (only %f would consume it, and
- * %f is a placeholder anyway). */
+/* Crude fixed-point %.Nf for stats/demos.  Not a full dtoa: no NaN/Inf
+ * spelling, no %e/%g, precision capped at 9, magnitudes outside
+ * roughly 1e15 print as "inf"/"-inf".  Default precision is 6. */
+static int fmt_double(double val, int precision, int width, int zero_pad,
+                      void (*putfn)(), char **ctx) {
+    char buf[48];
+    int n;
+    int i;
+    int neg;
+    int pad;
+    long long ip;
+    long long frac;
+    long long scale;
+    double absv;
+    double rem;
+
+    if (precision < 0) precision = 6;
+    if (precision > 9) precision = 9;
+
+    neg = 0;
+    if (val < 0.0) {
+        neg = 1;
+        absv = 0.0 - val;
+    } else {
+        absv = val;
+    }
+
+    /* Magnitude guard — keep long long conversion safe. */
+    if (absv > 1000000000000000.0) {
+        if (neg) { putfn('-', ctx); n = 4; }
+        else n = 3;
+        fmt_puts("inf", putfn, ctx);
+        return n;
+    }
+
+    scale = 1;
+    i = 0;
+    while (i < precision) {
+        scale = scale * 10;
+        i = i + 1;
+    }
+
+    ip = (long long)absv;
+    rem = absv - (double)ip;
+    frac = (long long)(rem * (double)scale + 0.5);
+    if (frac >= scale) {
+        ip = ip + 1;
+        frac = 0;
+    }
+
+    /* Format integer part into buf (reversed digits). */
+    n = 0;
+    if (ip == 0) {
+        buf[n] = '0';
+        n = n + 1;
+    } else {
+        long long t;
+        t = ip;
+        while (t > 0) {
+            buf[n] = (char)('0' + (int)(t % 10));
+            n = n + 1;
+            t = t / 10;
+        }
+    }
+
+    pad = width - n - (neg ? 1 : 0) - (precision > 0 ? 1 + precision : 0);
+    if (pad < 0) pad = 0;
+    if (!zero_pad) {
+        while (pad > 0) { putfn(' ', ctx); pad = pad - 1; }
+    }
+    if (neg) putfn('-', ctx);
+    if (zero_pad) {
+        while (pad > 0) { putfn('0', ctx); pad = pad - 1; }
+    }
+    i = n;
+    while (i > 0) {
+        i = i - 1;
+        putfn(buf[i], ctx);
+    }
+    if (precision > 0) {
+        char fbuf[12];
+        int fn;
+        long long t;
+        putfn('.', ctx);
+        fn = 0;
+        t = frac;
+        if (t == 0) {
+            /* still emit precision zeros below */
+        } else {
+            while (t > 0) {
+                fbuf[fn] = (char)('0' + (int)(t % 10));
+                fn = fn + 1;
+                t = t / 10;
+            }
+        }
+        while (fn < precision) {
+            fbuf[fn] = '0';
+            fn = fn + 1;
+        }
+        i = precision;
+        while (i > 0) {
+            i = i - 1;
+            putfn(fbuf[i], ctx);
+        }
+    }
+    return (neg ? 1 : 0) + n + (precision > 0 ? 1 + precision : 0) +
+           (width > (neg ? 1 : 0) + n + (precision > 0 ? 1 + precision : 0)
+            ? width - ((neg ? 1 : 0) + n + (precision > 0 ? 1 + precision : 0))
+            : 0);
+}
+
+/* fmt_core: walks the format string consuming variadic args via va_arg.
+ * GP types and double (default-promoted float) are supported. */
 typedef char *va_list;
 
 static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
@@ -429,6 +534,7 @@ static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
     int is_ll;
     int precision;
     int has_prec;
+    int wrote;
 
     count = 0;
 
@@ -460,20 +566,18 @@ static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
             fmt = fmt + 1;
         }
 
-        /* Optional precision: .N (we parse but currently only float
-         * specifiers would use it — those are placeholders so the
-         * precision value is dropped). */
-        precision = 0;
+        /* Optional precision: .N — used by %f. */
+        precision = 6;
         has_prec = 0;
         if (*fmt == '.') {
             has_prec = 1;
+            precision = 0;
             fmt = fmt + 1;
             while (*fmt >= '0' && *fmt <= '9') {
                 precision = precision * 10 + (*fmt - '0');
                 fmt = fmt + 1;
             }
         }
-        (void)precision;
         (void)has_prec;
 
         /* Length modifier: l (long) or ll (long long).  We track only
@@ -534,13 +638,10 @@ static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
         } else if (*fmt == 'f' || *fmt == 'F' ||
                    *fmt == 'g' || *fmt == 'G' ||
                    *fmt == 'e' || *fmt == 'E') {
-            /* FP placeholder — variadic doubles land in V/XMM regs and
-             * are NOT covered by the GP-only va_list path on either
-             * target (see ISSUES.md #49).  Print '?' so callers see
-             * the gap without losing surrounding alignment, and do
-             * NOT va_arg (no GP slot was consumed). */
-            putfn('?', ctx);
-            count = count + 1;
+            /* %g/%e reuse the fixed %.Nf path (crude but consumable). */
+            wrote = fmt_double(va_arg(ap, double), precision, width, zero_pad,
+                               putfn, ctx);
+            count = count + wrote;
         } else {
             putfn('%', ctx);
             putfn(*fmt, ctx);
@@ -551,10 +652,7 @@ static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
     return count;
 }
 
-/* True variadic now that both cc-x64 and cc-a64 implement callee-side
- * va_start / va_arg / va_end for GP types (int / long long / pointer).
- * Floating-point args still bypass the GP save area and print as '?'
- * via the placeholder in fmt_core — see ISSUES.md #49. */
+/* True variadic: GP types + double (default-promoted float). */
 int fprintf(FILE *f, char *fmt, ...) {
     va_list ap;
     char *ctx;

@@ -60,7 +60,7 @@ Full C11/GNU and “TCC compiles clean” are **optional**, not trust-root requi
 | Macro expand on `TK_IDENT` | Yes |
 | `#line` / `#pragma` / unknown | **Skipped** (no-op) |
 | `#error` | **Was no-op** → hard error (see Pack dialect work) |
-| `#` stringize / `##` paste | **Not implemented** in expand (lexer knows `##`) |
+| `#` stringize / `##` paste | **Yes** in `pp_expand_func` (basic; escapes `"`/`\\` in stringize) |
 | `__FILE__` / `__LINE__` | **Dynamic** (see predefs) |
 | `__STDC__` / arch predefs | **Injected** at parse start |
 
@@ -68,10 +68,9 @@ Full C11/GNU and “TCC compiles clean” are **optional**, not trust-root requi
 
 | Gap | Why it matters | Priority |
 |-----|----------------|----------|
-| `##` / `#` in macros | Header metaprogramming | Medium (third-party) |
 | Nested include file name stack for `__FILE__` | Correctness in headers | Low–medium |
-| FP varargs (`va_arg(ap, double)`) on a64 | V0–V7 save area | Medium (cross polish) |
-| libc `%f`/`%g`/`%e` | Stats / demos print `?` | Medium after FP varargs |
+| Full dtoa / `%e`/`%g` fidelity | Crude `%.Nf` only | Low |
+| `##` placemarker / empty-arg paste edges | Rare header metaprogramming | Low |
 | Full C99 external-`inline` | Link-time ODR oddities | Low |
 | Rich Unix headers (`dlfcn`, full `sys/*`) | Ports, not codegen | As needed |
 | Guest stack / frame limits (`ISSUES` #46) | Large TUs feel “broken” | Ops, not dialect |
@@ -82,7 +81,7 @@ Full C11/GNU and “TCC compiles clean” are **optional**, not trust-root requi
 
 - **Struct by value:** one pointer arg (address of source); callee copies into local slot. Matches neither SysV full multi-reg ABI nor pure stack copy — intentional simple ABI; must stay consistent across x64/a64 guest-lowering.  
 - **Struct return:** hidden `__retptr` (sret-style).  
-- **Varargs:** tagged-pointer `va_list` (`typedef char *va_list`); GP only until FP path lands.
+- **Varargs:** `va_list` is `char *` pointing at a frame control block (GP + FP cursors + shared stack overflow). Both X/GP and V/XMM register save areas are filled in the prologue.
 
 ---
 

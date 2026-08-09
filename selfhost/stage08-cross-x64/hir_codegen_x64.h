@@ -22,8 +22,32 @@ static int hx_is_varargs;            /* 1 if current function is variadic */
 static int hx_fn_nparams;            /* number of named params */
 static int hx_param_need_temp;       /* 1 if prologue needs temp area for args */
 static int hx_param_temp_base;       /* RBP offset of param temp area */
-static int hx_va_save_off;           /* RBP offset of varargs register save area */
+static int hx_va_save_off;           /* RBP offset of varargs control block */
+static int hx_va_named_gp;           /* named params in the 6 GP arg regs */
+static int hx_va_named_fp;           /* named params in XMM0..XMM7 */
+static int hx_va_named_stack;        /* named params spilled to stack */
 static int hx_no_frame;             /* 1 if function needs no frame (no spills, no callee-saves) */
+
+/* SysV x64 varargs control + save area (bytes from hx_va_save_off):
+ *   +0:   gp_ptr
+ *   +8:   gp_left   (remaining of 6 GP regs)
+ *   +16:  fp_ptr
+ *   +24:  fp_left   (remaining of 8 XMM regs)
+ *   +32:  stack_ptr
+ *   +40:  pad
+ *   +48:  GP save (6 × 8 = 48)  — rdi,rsi,rdx,rcx,r8,r9
+ *   +96:  XMM save (8 × 8 = 64)
+ * Total 160 bytes.  va_list points at this block. */
+#define HX_VA_GP_PTR     0
+#define HX_VA_GP_LEFT    8
+#define HX_VA_FP_PTR     16
+#define HX_VA_FP_LEFT    24
+#define HX_VA_STACK_PTR  32
+#define HX_VA_X_BASE     48
+#define HX_VA_V_BASE     96
+#define HX_VA_AREA_BYTES 160
+#define HX_VA_NGP        6
+#define HX_VA_NFP        8
 
 /* Block code offsets for jump patching */
 static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
@@ -2185,137 +2209,118 @@ static void hx_emit_inst(int idx) {
     /* HI_FADDR is handled by the existing GADDR/SADDR/FADDR remat path
      * in hx_mat — it produces a GPR address, not an FP value. */
 
-    /* --- Varargs --- */
+    /* --- Varargs (control-block va_list; see HX_VA_* layout) --- */
 
     if (k == HI_VA_START) {
-        /* Compute initial tagged pointer for va_list.
-         * h_val = number of named parameters
-         * Produces the tagged pointer as a value. */
         int dr;
-        int nparams_va;
+        (void)h_val[idx];
         dr = hx_dst(idx);
-        nparams_va = h_val[idx];
-        if (nparams_va < 6) {
-            x64_lea(dr, X64_RBP, hx_va_save_off + nparams_va * 8);
-            x64_or_ri64(dr, 6 - nparams_va);
-        } else {
-            x64_lea(dr, X64_RBP, 16 + (nparams_va - 6) * 8);
-        }
+        x64_lea(dr, X64_RBP, hx_va_save_off);
         hx_maybe_spill(idx);
         return;
     }
 
     if (k == HI_VA_ARG) {
-        /* Extract argument from tagged va_list pointer.
-         * h_src1 = current va_list value (tagged pointer)
-         * h_ty   = type of argument to retrieve
-         * Produces the argument value. */
+        /* h_src1 = pointer to control block.  Mutates gp/fp/stack
+         * fields in place; result in GPR or XMM depending on type. */
         int sr;
         int dr;
         int va_ty;
+        int is_fp_arg;
+        int left_off;
+        int ptr_off;
         int patch_use_stack;
         int patch_after;
 
         hx_save_cx();
         hx_save_dx();
         sr = hx_src(h_src1[idx], X64_RAX);
-        /* Decode tag: RCX = count, RAX = aligned slot pointer */
-        x64_mov_rr64(X64_RAX, sr);
-        x64_mov_rr64(X64_RCX, X64_RAX);
-        x64_and_ri64(X64_RCX, 7);
-        x64_and_ri64(X64_RAX, -8);
+        if (sr != X64_RAX) x64_mov_rr64(X64_RAX, sr);
+
+        va_ty = ty;
+        is_fp_arg = ty_is_fp(va_ty);
+        left_off = is_fp_arg ? HX_VA_FP_LEFT : HX_VA_GP_LEFT;
+        ptr_off  = is_fp_arg ? HX_VA_FP_PTR  : HX_VA_GP_PTR;
+
+        /* RCX = left count */
+        x64_mov_rm(X64_RCX, X64_RAX, left_off);
         x64_test_rr64(X64_RCX, X64_RCX);
         patch_use_stack = x64_jcc_placeholder(X64_CC_E);
 
-        /* Register path: load from save area slot */
-        va_ty = ty;
-        if (hx_is_wide(va_ty)) {
-            x64_mov_rm64(X64_RDX, X64_RAX, 0);
+        /* Register path */
+        x64_mov_rm64(X64_RDX, X64_RAX, ptr_off);  /* slot addr */
+        if (is_fp_arg) {
+            if (ty_is_double(va_ty)) x64_movsd_rm(X64_XMM0, X64_RDX, 0);
+            else                     x64_movss_rm(X64_XMM0, X64_RDX, 0);
+        } else if (hx_is_wide(va_ty)) {
+            x64_mov_rm64(X64_RDX, X64_RDX, 0);
         } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_CHAR) {
-            if (va_ty & TY_UNSIGNED) x64_movzx_rm8(X64_RDX, X64_RAX, 0);
-            else x64_movsx_rm8(X64_RDX, X64_RAX, 0);
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm8(X64_RDX, X64_RDX, 0);
+            else x64_movsx_rm8(X64_RDX, X64_RDX, 0);
         } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_SHORT) {
-            if (va_ty & TY_UNSIGNED) x64_movzx_rm16(X64_RDX, X64_RAX, 0);
-            else x64_movsx_rm16(X64_RDX, X64_RAX, 0);
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm16(X64_RDX, X64_RDX, 0);
+            else x64_movsx_rm16(X64_RDX, X64_RDX, 0);
         } else {
-            x64_mov_rm(X64_RDX, X64_RAX, 0);
+            x64_mov_rm(X64_RDX, X64_RDX, 0);
         }
+        /* Advance ptr and decrement left — need a fresh load of ptr for
+         * the non-FP path where RDX was overwritten by the value. */
+        if (is_fp_arg) {
+            x64_mov_rm64(X64_RCX, X64_RAX, ptr_off);
+            x64_add_ri64(X64_RCX, 8);
+            x64_mov_mr64(X64_RAX, ptr_off, X64_RCX);
+        } else {
+            /* RDX holds the value; reload ptr into RCX, advance, store. */
+            x64_mov_rm64(X64_RCX, X64_RAX, ptr_off);
+            x64_add_ri64(X64_RCX, 8);
+            x64_mov_mr64(X64_RAX, ptr_off, X64_RCX);
+        }
+        x64_mov_rm(X64_RCX, X64_RAX, left_off);
+        x64_sub_ri(X64_RCX, 1);
+        x64_mov_mr(X64_RAX, left_off, X64_RCX);
         patch_after = x64_jmp_placeholder();
 
         /* Stack path */
         x64_patch_rel32(patch_use_stack, x64_off);
-        if (hx_is_wide(va_ty)) {
-            x64_mov_rm64(X64_RDX, X64_RAX, 0);
+        x64_mov_rm64(X64_RCX, X64_RAX, HX_VA_STACK_PTR);
+        if (is_fp_arg) {
+            if (ty_is_double(va_ty)) x64_movsd_rm(X64_XMM0, X64_RCX, 0);
+            else                     x64_movss_rm(X64_XMM0, X64_RCX, 0);
+        } else if (hx_is_wide(va_ty)) {
+            x64_mov_rm64(X64_RDX, X64_RCX, 0);
         } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_CHAR) {
-            if (va_ty & TY_UNSIGNED) x64_movzx_rm8(X64_RDX, X64_RAX, 0);
-            else x64_movsx_rm8(X64_RDX, X64_RAX, 0);
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm8(X64_RDX, X64_RCX, 0);
+            else x64_movsx_rm8(X64_RDX, X64_RCX, 0);
         } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_SHORT) {
-            if (va_ty & TY_UNSIGNED) x64_movzx_rm16(X64_RDX, X64_RAX, 0);
-            else x64_movsx_rm16(X64_RDX, X64_RAX, 0);
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm16(X64_RDX, X64_RCX, 0);
+            else x64_movsx_rm16(X64_RDX, X64_RCX, 0);
         } else {
-            x64_mov_rm(X64_RDX, X64_RAX, 0);
+            x64_mov_rm(X64_RDX, X64_RCX, 0);
         }
+        x64_add_ri64(X64_RCX, 8);
+        x64_mov_mr64(X64_RAX, HX_VA_STACK_PTR, X64_RCX);
 
         x64_patch_rel32(patch_after, x64_off);
-        dr = hx_dst(idx);
-        if (dr != X64_RDX) x64_mov_rr64(dr, X64_RDX);
-        hx_maybe_spill(idx);
+        if (is_fp_arg) {
+            hx_store_xmm(idx, X64_XMM0);
+        } else {
+            dr = hx_dst(idx);
+            if (dr != X64_RDX) x64_mov_rr64(dr, X64_RDX);
+            hx_maybe_spill(idx);
+        }
         hx_restore_dx_safe(idx);
         hx_restore_cx_safe(idx);
         return;
     }
 
     if (k == HI_VA_NEXT) {
-        /* Advance tagged va_list pointer to next slot.
-         * h_src1 = current va_list value (tagged pointer)
-         * Produces the updated va_list value. */
+        /* Identity — control block mutated by HI_VA_ARG. */
         int sr;
         int dr;
-        int patch_use_stack;
-        int patch_stack_transition;
-        int patch_after;
-
-        hx_save_cx();
         sr = hx_src(h_src1[idx], X64_RAX);
-        /* Decode tag */
-        x64_mov_rr64(X64_RAX, sr);
-        x64_mov_rr64(X64_RCX, X64_RAX);
-        x64_and_ri64(X64_RCX, 7);
-        x64_and_ri64(X64_RAX, -8);
-        x64_test_rr64(X64_RCX, X64_RCX);
-        patch_use_stack = x64_jcc_placeholder(X64_CC_E);
-
-        /* Register path: advance and re-tag */
-        x64_add_ri64(X64_RAX, 8);
-        x64_sub_ri64(X64_RCX, 1);
-        x64_test_rr64(X64_RCX, X64_RCX);
-        patch_stack_transition = x64_jcc_placeholder(X64_CC_E);
-        x64_or_rr64(X64_RAX, X64_RCX);
-        patch_after = x64_jmp_placeholder();
-
-        /* Register→stack transition: RAX currently points at slot 6
-         * of the save area (where the prologue stored the
-         * stack-overflow base address).  Load it so the result is
-         * correct even when va_next runs in a callee that received
-         * the va_list (RBP would be wrong in that case). */
-        x64_patch_rel32(patch_stack_transition, x64_off);
-        x64_mov_rm64(X64_RAX, X64_RAX, 0);
-        {
-        int patch_after2;
-        patch_after2 = x64_jmp_placeholder();
-
-        /* Stack path: just advance */
-        x64_patch_rel32(patch_use_stack, x64_off);
-        x64_add_ri64(X64_RAX, 8);
-
-        x64_patch_rel32(patch_after2, x64_off);
-        }
-        x64_patch_rel32(patch_after, x64_off);
-
         dr = hx_dst(idx);
-        if (dr != X64_RAX) x64_mov_rr64(dr, X64_RAX);
+        if (dr != sr) x64_mov_rr64(dr, sr);
         hx_maybe_spill(idx);
-        hx_restore_cx_safe(idx);
         return;
     }
 }
@@ -2342,6 +2347,30 @@ static void hx_gen_func(Node *fn) {
     hx_is_varargs = fn->is_varargs;
     hx_fn_nparams = fn->nparams;
     hx_va_save_off = 0;
+    hx_va_named_gp = 0;
+    hx_va_named_fp = 0;
+    hx_va_named_stack = 0;
+    if (hx_is_varargs) {
+        Node *vp;
+        int v_ngrn;
+        int v_nsrn;
+        v_ngrn = 0;
+        v_nsrn = 0;
+        if (ty_is_struct(fn->ty)) v_ngrn = 1;  /* hidden sret in rdi */
+        vp = fn->args;
+        while (vp) {
+            if (ty_is_fp(vp->ty)) {
+                if (v_nsrn < HX_VA_NFP) v_nsrn = v_nsrn + 1;
+                else hx_va_named_stack = hx_va_named_stack + 1;
+            } else {
+                if (v_ngrn < HX_VA_NGP) v_ngrn = v_ngrn + 1;
+                else hx_va_named_stack = hx_va_named_stack + 1;
+            }
+            vp = vp->next;
+        }
+        hx_va_named_gp = v_ngrn;
+        hx_va_named_fp = v_nsrn;
+    }
 
     /* Align function entry to 16-byte boundary for better icache/branch
      * prediction behavior.  Pad with INT3 (0xCC). */
@@ -2734,14 +2763,9 @@ static void hx_gen_func(Node *fn) {
     }
     }
 
-    /* --- Varargs save area (6 register args × 8 bytes + 1 slot for
-     * the stack-overflow base address used by va_next when the
-     * register save slots are exhausted) = 56 bytes.  Storing the
-     * stack base in the save area instead of recomputing it from RBP
-     * at va_next time lets va_arg/va_next work correctly when called
-     * from a callee that received the va_list. --- */
+    /* --- Varargs control block + GP/XMM save (HX_VA_AREA_BYTES). --- */
     if (hx_is_varargs) {
-        hl_temp_stack = hl_temp_stack + 56;
+        hl_temp_stack = hl_temp_stack + HX_VA_AREA_BYTES;
         hx_va_save_off = 0 - hl_temp_stack;
     }
 
@@ -2793,22 +2817,48 @@ static void hx_gen_func(Node *fn) {
         i = i + 1;
     }
 
-    /* For varargs functions, save all 6 register args to the save
-     * area, then write the stack-overflow base address to slot 6 (the
-     * trailing extra slot).  va_next at register→stack transition
-     * loads that slot rather than computing RBP+16, so the result
-     * stays correct across callee handoff of the va_list. */
+    /* Varargs: save GP + XMM regs and fill the control block. */
     if (hx_is_varargs) {
-        int nrn;
+        int gp_left;
+        int fp_left;
         i = 0;
-        while (i < 6) {
-            x64_mov_mr64(X64_RBP, hx_va_save_off + i * 8, hx_arg_reg[i]);
+        while (i < HX_VA_NGP) {
+            x64_mov_mr64(X64_RBP, hx_va_save_off + HX_VA_X_BASE + i * 8,
+                         hx_arg_reg[i]);
             i = i + 1;
         }
-        nrn = hx_fn_nparams - 6;
-        if (nrn < 0) nrn = 0;
-        x64_lea(X64_RAX, X64_RBP, 16 + nrn * 8);
-        x64_mov_mr64(X64_RBP, hx_va_save_off + 48, X64_RAX);
+        i = 0;
+        while (i < HX_VA_NFP) {
+            x64_movsd_mr(X64_RBP, hx_va_save_off + HX_VA_V_BASE + i * 8, i);
+            i = i + 1;
+        }
+
+        gp_left = HX_VA_NGP - hx_va_named_gp;
+        if (gp_left < 0) gp_left = 0;
+        if (gp_left > 0) {
+            x64_lea(X64_RAX, X64_RBP,
+                    hx_va_save_off + HX_VA_X_BASE + hx_va_named_gp * 8);
+        } else {
+            x64_lea(X64_RAX, X64_RBP, 16 + hx_va_named_stack * 8);
+        }
+        x64_mov_mr64(X64_RBP, hx_va_save_off + HX_VA_GP_PTR, X64_RAX);
+        x64_mov_ri(X64_RAX, gp_left);
+        x64_mov_mr(X64_RBP, hx_va_save_off + HX_VA_GP_LEFT, X64_RAX);
+
+        fp_left = HX_VA_NFP - hx_va_named_fp;
+        if (fp_left < 0) fp_left = 0;
+        if (fp_left > 0) {
+            x64_lea(X64_RAX, X64_RBP,
+                    hx_va_save_off + HX_VA_V_BASE + hx_va_named_fp * 8);
+        } else {
+            x64_lea(X64_RAX, X64_RBP, 16 + hx_va_named_stack * 8);
+        }
+        x64_mov_mr64(X64_RBP, hx_va_save_off + HX_VA_FP_PTR, X64_RAX);
+        x64_mov_ri(X64_RAX, fp_left);
+        x64_mov_mr(X64_RBP, hx_va_save_off + HX_VA_FP_LEFT, X64_RAX);
+
+        x64_lea(X64_RAX, X64_RBP, 16 + hx_va_named_stack * 8);
+        x64_mov_mr64(X64_RBP, hx_va_save_off + HX_VA_STACK_PTR, X64_RAX);
     }
 
     /* Store incoming args to their allocated register or spill slot. */
