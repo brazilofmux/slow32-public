@@ -1577,3 +1577,43 @@ subset-idioms, validation, stage02). Scalar global initializers *are* used
 (`test3`, `test4`, `test5`, `test9`, `idiom03`, `idiom05`) and must be kept;
 local initializers (`char s[] = "a b"`, `subset01`) are a separate path.
 Deferred by decision, 2026-07-16: unify first (#53), revisit rejection later.
+
+### Build / Portability Follow-Ups
+
+### 57. [PORTABILITY] Host cross-compiler builds depend on `-fpermissive`; align frontend libc prototypes with modern GCC/Clang
+The `stage08-cross-{x64,a64}` host bootstrap (`cc-x64.c`/`cc-a64.c` and the shared
+frontend they `#include`) declares K&R-style libc prototypes with SLOW-32 signatures
+(`char *calloc(int, int)`, `char *malloc(int)`, `char *memcpy(char *, char *, int)`,
+`char *strdup`, …). Assigning those `char *` returns to typed pointers
+(`Node *n = calloc(...)` in `ast.h:nd_new`, etc.) is `-Wincompatible-pointer-types`,
+which **GCC 14 (Alpine 3.21) promotes to a hard error that `-w` no longer suppresses**.
+This is why the slow32 toolchain build broke: green on 2026-07-16 (older GCC), red on
+2026-08-08 once the builders picked up GCC 14.
+
+**Current state (workaround landed):** both cross Makefiles carry
+`-fpermissive` in `CFLAGS`, which downgrades the GCC-14 permerrors back to warnings
+(then silenced by `-w`). Unblocks the build; does not make the code clean.
+
+**Proper fix (this issue):** gate the libc prototype blocks so host builds use real
+system headers (`<stdlib.h>`/`<string.h>`/`<unistd.h>`/`<fcntl.h>`) while the slow32
+self-host path keeps the `char *` K&R decls (slow32 `cc` has no system headers). A host
+macro already exists (`S12CC_X64_HOST`, currently gating codegen only, not libc) and can
+be reused or paired with a dedicated one. Then drop `-fpermissive`.
+
+**Blast radius (measured 2026-08-08, alpine:3.21 / GCC 14.2.0):** with the fake `char *`
+prototypes replaced by real headers, `cc-x64.c` compiles under `-Wall` with **0 errors**
+and **85 warnings, all `-Wunused-variable`/`-Wunused-but-set-variable`** in the shared
+frontend (`parser.h`, `pp.h`, `hir_lower.h`, `c_lexer.rl`). No pointer/int-conversion/
+implicit-declaration diagnostics remain — the entire modern-compiler incompatibility is
+the fake libc prototypes, not the compiler's own logic.
+
+**Manage carefully:**
+- Some prototypes are **generated** — `c_lexer_gen.c` comes from `c_lexer.rl` via Ragel.
+  Gate them in `c_lexer.rl` + the gen step, not by hand-editing the generated file.
+- The **self-host path can only be validated by the toolchain build** (slow32 `cc`
+  compiling the shared frontend). Gating keeps that path byte-for-byte unchanged, which
+  is what makes the change low-risk; validate host-side locally in `alpine:3.21`, then
+  run one toolchain build to confirm self-host.
+- LLVM/GCC object interop is a goal, so aligning host warnings/errors is desirable — but
+  the 85 unused-variable warnings should be cleaned or deliberately silenced as part of
+  the same pass, not left to mask future real diagnostics.
