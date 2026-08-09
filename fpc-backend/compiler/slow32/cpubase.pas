@@ -74,8 +74,8 @@ uses
 
         { f64 arithmetic / cmp / cvt / sign (opcodes 0x61..0x70).
           f64 ops take an even base register (the implicit hi half is base+1).
-          Pair-aware codegen is TODO (see slow32-todo-fp). The opcodes are
-          declared so RTL inline-asm can use them ahead of HL codegen. }
+          HL codegen stages through even scratch pairs (cgcpu evenpair
+          helpers) under -CfSLOW32. }
         A_FADD_D,A_FSUB_D,A_FMUL_D,A_FDIV_D,A_FSQRT_D,
         A_FEQ_D,A_FLT_D,A_FLE_D,
         A_FCVT_W_D,A_FCVT_WU_D,A_FCVT_D_W,A_FCVT_D_WU,

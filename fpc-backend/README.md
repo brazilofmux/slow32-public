@@ -201,21 +201,23 @@ cd ~/slow-32/fpc-backend/scripts
 - Generated assembly uses correct SLOW-32 instructions and conventions
 - Full pipeline validated: Pascal -> ppcs32 -> slow32asm -> s32-ld -> slow32-fast
 - "Hello, Pascal" test program runs correctly with exit code 0
-- Native f32 FPU support via `-CfSLOW32` (FADD.S/FSUB.S/FMUL.S/FDIV.S,
-  FEQ.S/FLT.S/FLE.S, FNEG.S, FABS.S, FCVT.S.W/FCVT.S.WU); f64 always uses
-  the softfloat helpers (register-pair f64 instructions not yet used)
-- Default mode remains full soft-float; the two modes are ABI-compatible
-  (floats cross calls in integer registers either way), but units must be
-  compiled in a single mode (the RTL ships in both: `runtime/` and
-  `runtime/fpu/`)
-- 18-check float test suite passes in both modes (f32 arith/compare/neg/abs,
-  int->f32 conversions, f32<->f64, f64 soft arith, writeln of reals)
+- Native f32 **and** f64 under `-CfSLOW32`:
+  - f32 lives in F-class regs (FADD.S / FCVT / FSQRT / compares / …)
+  - f64 uses even int pairs + `F*.D` via scratch even-pair helpers
+    (`a_alloc_evenpair` / `a_load_reg64_evenpair` in `cgcpu.pas`)
+- Default mode remains full soft-float (`fpu_soft`); units must match the
+  program's `-Cf` mode (RTL ships both: `runtime/` and `runtime/fpu/`)
+- ABI: floats still cross calls in integer registers either way
+- Float tests: 18-check fputest + 37-check regtest pass in both modes
+  (see satellite `~/fpc` workflow / agent handoff notes)
 
 ### FPU notes
 
-- Compiler-side F-class registers alias the callee-saved GPRs r20-r28; the
+- Compiler-side F-class registers alias the callee-saved GPRs r20–r28; the
   int allocator gives those up, so the pools never collide and emitted asm
   uses plain rN names.
+- f64 ISA ops require an even base register (hi = base+1); HL codegen
+  stages pairs through fixed even scratch bases before/after the op.
 - Unsigned 32-bit `div`/`mod` route through `fpc_div_dword`/`fpc_mod_dword`
   (the ISA only has signed DIV/REM); smaller unsigned types stay on native
   DIV/REM via zero-extension.
