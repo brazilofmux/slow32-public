@@ -14,6 +14,15 @@ The `errno` variable existed but was not set by MMIO-based system calls.
   hosts put a positive errno in the response `length` field on
   `S32_MMIO_STATUS_ERR`; `mmio_request.c` maps it into guest `errno`
   (ENOENT, EBADF, EINVAL, …) with EIO fallback.
+- **Open refinement (2026-08 review)**: the emulator passes *raw host* errno
+  values, so the guest sees whatever the host OS numbers them. This works
+  for the common set because macOS and Linux agree there (ENOENT=2, EBADF=9,
+  EACCES=13, EINVAL=22), but higher values diverge (EAGAIN is 35 on macOS,
+  11 on Linux), so guest code comparing against those is host-dependent. A
+  canonical `S32_ERRNO_*` enum in `mmio_ring_layout.h` — host maps
+  host→canonical in `mmio_fail()`, guest maps canonical→its `errno.h` — would
+  make the wire format host-independent. Low urgency: no current guest code
+  tests errnos outside the agreeing set.
 
 ### 3. `pow()` Arbitrary Fast-Path Limit (Resolved)
 The `pow(x, y)` implementation had an arbitrary fast-path limit for integer exponents.
