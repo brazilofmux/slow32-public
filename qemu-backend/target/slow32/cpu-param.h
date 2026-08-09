@@ -11,7 +11,10 @@
 #define TARGET_PHYS_ADDR_SPACE_BITS 32
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
 
-/* Aim for larger TBs to reduce dispatch overhead (previously forced in translate.c). */
+/*
+ * TB size cap, applied in slow32_tr_init_disas_context(): larger TBs than
+ * the old 64 to reduce dispatch overhead, but below the generic 512 limit.
+ */
 #define TARGET_DEFAULT_MAX_INSNS 128
 
 #endif

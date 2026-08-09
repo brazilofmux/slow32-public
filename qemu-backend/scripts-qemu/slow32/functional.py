@@ -42,18 +42,20 @@ def _default_ref_bin() -> pathlib.Path:
 
 REF_BIN = _default_ref_bin()
 
-# Noise lines from the reference emulator banner / halt footer.
-REF_NOISE = re.compile(
-    r"^(Starting execution|Program halted\.|HALT at PC=|"
-    r"Instructions executed:|Cycles:|Wall time:|Performance:|"
-    r"Exit code:)"
-)
-# Loader chatter and qemu log lines that are not guest output.
-# Intrinsic dump is multi-line: a "slow32: native intrinsics" header
-# followed by indented "  memcpy:" / "  memset:" rows.
-QEMU_NOISE = re.compile(
-    r"^(slow32:|Slow32 stats:|ASSERT_EQ failed|"
-    r"  (memcpy|memset|memmove|strlen|memswap):)"
+# Emulator banner / stats / loader chatter that is not guest output.
+# One combined pattern applied to BOTH sides: filtering must be symmetric,
+# or a guest line that happens to look like noise on one side produces a
+# spurious mismatch (or masks a real one). Patterns are anchored and as
+# specific as possible so real guest output is unlikely to match.
+NOISE = re.compile(
+    # Reference emulator banner and halt footer.
+    r"^(Starting execution$|Program halted\.$|HALT at PC=0x|"
+    r"Instructions executed:\s|Cycles:\s|Wall time:\s|Performance:\s|"
+    r"Exit code:\s|"
+    # QEMU loader chatter and optional stats instrumentation.
+    r"slow32: |Slow32 stats: |"
+    # Native-intrinsics dump: header plus indented address rows.
+    r"  (memcpy|memset|memmove|strlen|memswap): +0x[0-9a-fA-F]+$)"
 )
 
 
@@ -162,9 +164,10 @@ def compare_one(image: str, ref_bin: str, qemu_bin: str,
     )
 
     # Reference banner is on stdout; guest usage/errors may be on stderr
-    # (e.g. mdfix help text). Combine both streams, then strip noise.
-    ref_guest = guest_stdout(ref_out + "\n" + ref_err, REF_NOISE)
-    qemu_guest = guest_stdout(qemu_out + "\n" + qemu_err, QEMU_NOISE)
+    # (e.g. mdfix help text). Combine both streams, then strip noise with
+    # the same filter on both sides.
+    ref_guest = guest_stdout(ref_out + "\n" + ref_err, NOISE)
+    qemu_guest = guest_stdout(qemu_out + "\n" + qemu_err, NOISE)
 
     # Mask process exit to 8 bits (shell / wait status convention).
     ref_st = ref_ec & 0xFF

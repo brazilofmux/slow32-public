@@ -782,13 +782,11 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         if (len > 0) {
             slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, len);
             if (!ts->in_update) {
-                fwrite(ctx->scratch, 1, len, stdout);
+                slow32_console_write(ctx->scratch, len);
             }
             for (uint32_t i = 0; i < len; i++) {
                 slow32_term_shadow_putc(ts, ctx->scratch[i]);
             }
-        }
-        if (!ts->in_update) {
         }
         resp->status = S32_MMIO_STATUS_OK;
         break;
@@ -1726,6 +1724,9 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
     }
 
     case S32_MMIO_OP_FLUSH:
+        /* Reference: fflush(stdout) + fflush(stderr). */
+        slow32_console_flush();
+        fflush(stdout);
         fflush(stderr);
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = 0;
@@ -2387,6 +2388,12 @@ void slow32_mmio_process(Slow32CPU *cpu)
         resp.offset = req.offset;
 
         slow32_mmio_dispatch(ctx, cpu, &req, &resp);
+        /*
+         * One console flush per op: keeps ordering with OP_WRITE (which
+         * hits host fds directly) while still batching the many small
+         * writes a single terminal repaint op produces.
+         */
+        slow32_console_flush();
 
         if (!slow32_mmio_write_response(ctx, env, &resp)) {
             break;

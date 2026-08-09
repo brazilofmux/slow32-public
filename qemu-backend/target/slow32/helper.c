@@ -26,6 +26,7 @@ void slow32_cpu_complete_halt(Slow32CPU *cpu)
     /* Match the reference emulators: process exit status is guest r1. */
     int exit_code = (int)cpu->env.regs[1];
 
+    slow32_console_flush();
     cs->halted = 1;
     qemu_system_shutdown_request_with_code(SHUTDOWN_CAUSE_GUEST_SHUTDOWN,
                                            exit_code);
@@ -41,26 +42,20 @@ void HELPER(slow32_halt)(CPUSlow32State *env)
     cpu_exit(cs);
 }
 
-void HELPER(slow32_assert_fail)(CPUSlow32State *env, uint32_t a, uint32_t b)
+void HELPER(slow32_assert_fail)(CPUSlow32State *env, uint32_t rs1, uint32_t a,
+                                uint32_t rs2, uint32_t b)
 {
     CPUState *cs = env_cpu(env);
     Slow32CPU *cpu = SLOW32_CPU(cs);
 
-    qemu_log_mask(LOG_GUEST_ERROR,
-                  "slow32: ASSERT_EQ failed at PC=0x%08x: "
-                  "0x%08x != 0x%08x\n",
-                  env->pc, a, b);
-    /* Surface on the guest console too (visible without -d guest_errors). */
-    slow32_console_printf(
-        "ASSERT_EQ failed at PC=0x%08x: 0x%08x != 0x%08x\n",
-        env->pc, a, b);
-
-    /* Non-zero exit status for the harness / shell. */
-    if (env->regs[1] == 0) {
-        env->regs[1] = 1;
-    }
+    /*
+     * Match the reference emulator exactly: same stderr message, r1 (and
+     * therefore the process exit status) left untouched, and no MMIO ring
+     * processing on the way down.
+     */
+    fprintf(stderr, "Assertion failed: r%u (0x%08X) != r%u (0x%08X)\n",
+            rs1, a, rs2, b);
     env->halted = 1;
-    slow32_handle_yield(cpu);
     slow32_cpu_complete_halt(cpu);
     cpu_exit(cs);
 }

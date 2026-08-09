@@ -72,6 +72,10 @@ class CompareResult:
     fast_exit: int
 
     @property
+    def abnormal(self) -> bool:
+        return self.qemu_exit != 0 or self.fast_exit != 0
+
+    @property
     def speed_ratio(self) -> Optional[float]:
         if self.fast_wall is None or self.qemu_wall <= 0:
             return None
@@ -82,6 +86,19 @@ class CompareResult:
         if self.qemu_translate is None or self.qemu_wall <= 0:
             return None
         return min(1.0, max(0.0, self.qemu_translate / self.qemu_wall))
+
+
+def warn_abnormal(name: str, cmd: Sequence[str], returncode: int,
+                  stderr: str, iteration: int) -> None:
+    """A nonzero exit means the timing row is suspect; say so loudly."""
+    sys.stderr.write(
+        f"WARNING: {name} exited {returncode} (iteration {iteration}); "
+        "timings for this workload are not meaningful\n"
+        f"  command: {' '.join(cmd)}\n"
+    )
+    tail = [ln for ln in stderr.splitlines() if ln.strip()][-5:]
+    for line in tail:
+        sys.stderr.write(f"  stderr: {line}\n")
 
 
 def run_cmd(argv: Sequence[str]) -> Tuple[float, subprocess.CompletedProcess[str]]:
@@ -160,6 +177,9 @@ def run_qemu(cmd: Sequence[str], iterations: int
             sys.stderr.write(proc.stdout)
             sys.stderr.write(proc.stderr)
             sys.exit(f"slow32-tcg terminated by signal (iteration {i + 1})")
+        if proc.returncode != 0:
+            warn_abnormal("qemu-system-slow32", cmd, proc.returncode,
+                          proc.stderr, i + 1)
         last_exit = proc.returncode
         match = SLOW32_STATS_RE.search(proc.stdout)
         if match:
@@ -196,6 +216,9 @@ def run_fast(cmd: Sequence[str], iterations: int
             sys.stderr.write(proc.stdout)
             sys.stderr.write(proc.stderr)
             sys.exit(f"slow32-fast terminated by signal (iteration {i + 1})")
+        if proc.returncode != 0:
+            warn_abnormal("slow32-fast", cmd, proc.returncode,
+                          proc.stderr, i + 1)
         last_exit = proc.returncode
         m_insn = FAST_STATS_RE.search(proc.stdout)
         if m_insn:
@@ -356,6 +379,11 @@ def main() -> None:
     else:
         print(f"Collected {len(results)} workloads (iterations={args.iterations})\n")
         print_table(results)
+
+    abnormal = [r for r in results if r.abnormal]
+    if abnormal:
+        names = ", ".join(pathlib.Path(r.image).name for r in abnormal)
+        sys.exit(f"error: abnormal exits for: {names} (see warnings above)")
 
 
 if __name__ == "__main__":

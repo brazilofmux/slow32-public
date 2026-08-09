@@ -17,6 +17,9 @@
 #include "gdbstub/helpers.h"
 #include "tcg/tcg.h"
 #include "qemu/log.h"
+#include "qemu/error-report.h"
+#include "qemu/main-loop.h"
+#include "qemu/thread.h"
 #include "chardev/char-fe.h"
 #include "chardev/char.h"
 #include "mmio.h"
@@ -27,14 +30,31 @@
  * Prefer serial_hd(0) when the machine wires it (works with -serial file:,
  * -nographic, etc.). Fall back to host stdout/stdin so bare
  * `-display none -monitor none` still shows DEBUG/MMIO console output.
+ *
+ * Threading: the chardev handlers run in the main loop (BQL held); the
+ * write/getchar entry points run in the vCPU thread from TCG helpers with
+ * no BQL. `lock` guards the input ring; `cond` wakes a getchar blocked
+ * waiting for input. Output is only touched by the vCPU thread, so the
+ * batching buffer needs no lock.
  */
+#define SLOW32_CONSOLE_INPUT_SIZE  256
+#define SLOW32_CONSOLE_OUTPUT_SIZE 4096
+
 typedef struct Slow32Console {
     CharFrontend fe;
     bool connected;
+    QemuMutex lock;
+    QemuCond cond;
     struct {
-        uint8_t buffer[256];
-        size_t offset;
+        uint8_t buffer[SLOW32_CONSOLE_INPUT_SIZE];
+        size_t rd;
+        size_t count;
+        bool eof;
     } input;
+    struct {
+        uint8_t buffer[SLOW32_CONSOLE_OUTPUT_SIZE];
+        size_t len;
+    } output;
 } Slow32Console;
 
 static Slow32Console slow32_console;
@@ -42,48 +62,102 @@ static Slow32Console slow32_console;
 static int slow32_console_can_read(void *opaque)
 {
     Slow32Console *c = opaque;
+    int space;
 
-    return sizeof(c->input.buffer) - c->input.offset;
+    qemu_mutex_lock(&c->lock);
+    space = SLOW32_CONSOLE_INPUT_SIZE - c->input.count;
+    qemu_mutex_unlock(&c->lock);
+    return space;
 }
 
 static void slow32_console_read(void *opaque, const uint8_t *buf, int size)
 {
     Slow32Console *c = opaque;
-    size_t space = sizeof(c->input.buffer) - c->input.offset;
-    size_t copy = MIN((size_t)size, space);
 
-    memcpy(c->input.buffer + c->input.offset, buf, copy);
-    c->input.offset += copy;
+    qemu_mutex_lock(&c->lock);
+    for (int i = 0; i < size && c->input.count < SLOW32_CONSOLE_INPUT_SIZE;
+         i++) {
+        size_t wr = (c->input.rd + c->input.count) % SLOW32_CONSOLE_INPUT_SIZE;
+        c->input.buffer[wr] = buf[i];
+        c->input.count++;
+    }
+    qemu_cond_signal(&c->cond);
+    qemu_mutex_unlock(&c->lock);
+}
+
+static void slow32_console_event(void *opaque, QEMUChrEvent event)
+{
+    Slow32Console *c = opaque;
+
+    if (event == CHR_EVENT_CLOSED) {
+        qemu_mutex_lock(&c->lock);
+        c->input.eof = true;
+        qemu_cond_signal(&c->cond);
+        qemu_mutex_unlock(&c->lock);
+    }
 }
 
 void slow32_console_open(Chardev *chr)
 {
+    Error *err = NULL;
+
     if (!chr) {
         return;
     }
 
-    if (!qemu_chr_fe_init(&slow32_console.fe, chr, &error_abort)) {
+    if (!qemu_chr_fe_init(&slow32_console.fe, chr, &err)) {
+        warn_report("slow32: console chardev unusable, "
+                    "falling back to stdout/stdin: %s",
+                    error_get_pretty(err));
+        error_free(err);
         return;
     }
+    qemu_mutex_init(&slow32_console.lock);
+    qemu_cond_init(&slow32_console.cond);
     qemu_chr_fe_set_handlers(&slow32_console.fe,
                              slow32_console_can_read,
                              slow32_console_read,
-                             NULL, NULL, &slow32_console,
+                             slow32_console_event,
+                             NULL, &slow32_console,
                              NULL, true);
     slow32_console.connected = true;
 }
 
+void slow32_console_flush(void)
+{
+    Slow32Console *c = &slow32_console;
+
+    if (c->output.len == 0) {
+        return;
+    }
+    if (c->connected) {
+        qemu_chr_fe_write_all(&c->fe, c->output.buffer, c->output.len);
+    } else {
+        fwrite(c->output.buffer, 1, c->output.len, stdout);
+        fflush(stdout);
+    }
+    c->output.len = 0;
+}
+
 void slow32_console_write(const uint8_t *buf, size_t len)
 {
+    Slow32Console *c = &slow32_console;
+
     if (!buf || len == 0) {
         return;
     }
 
-    if (slow32_console.connected) {
-        qemu_chr_fe_write_all(&slow32_console.fe, buf, len);
-    } else {
-        fwrite(buf, 1, len, stdout);
-        fflush(stdout);
+    while (len > 0) {
+        size_t space = SLOW32_CONSOLE_OUTPUT_SIZE - c->output.len;
+        size_t chunk = MIN(len, space);
+
+        memcpy(c->output.buffer + c->output.len, buf, chunk);
+        c->output.len += chunk;
+        buf += chunk;
+        len -= chunk;
+        if (c->output.len == SLOW32_CONSOLE_OUTPUT_SIZE) {
+            slow32_console_flush();
+        }
     }
 }
 
@@ -94,35 +168,71 @@ void slow32_console_write_byte(uint8_t ch)
 
 void slow32_console_printf(const char *fmt, ...)
 {
-    char *msg;
+    char msg[128];
     va_list ap;
+    int n;
 
     va_start(ap, fmt);
-    msg = g_strdup_vprintf(fmt, ap);
+    n = vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
-    if (msg) {
-        slow32_console_write((const uint8_t *)msg, strlen(msg));
-        g_free(msg);
+    if (n >= (int)sizeof(msg)) {
+        char *big;
+
+        va_start(ap, fmt);
+        big = g_strdup_vprintf(fmt, ap);
+        va_end(ap);
+        slow32_console_write((const uint8_t *)big, strlen(big));
+        g_free(big);
+    } else if (n > 0) {
+        slow32_console_write((const uint8_t *)msg, n);
     }
+}
+
+static void slow32_console_accept_bh(void *opaque)
+{
+    Slow32Console *c = opaque;
+
+    qemu_chr_fe_accept_input(&c->fe);
 }
 
 int slow32_console_getchar(void)
 {
-    if (slow32_console.connected) {
-        if (slow32_console.input.offset > 0) {
-            int ch = slow32_console.input.buffer[0];
-            memmove(slow32_console.input.buffer,
-                    slow32_console.input.buffer + 1,
-                    slow32_console.input.offset - 1);
-            slow32_console.input.offset--;
-            qemu_chr_fe_accept_input(&slow32_console.fe);
-            return ch;
-        }
-        /* No buffered input: non-blocking EOF (caller may poll again). */
-        return EOF;
+    Slow32Console *c = &slow32_console;
+    bool was_full;
+    int ch;
+
+    /* A prompt written just before a read must be visible while we block. */
+    slow32_console_flush();
+
+    if (!c->connected) {
+        return fgetc(stdin);
     }
 
-    return fgetc(stdin);
+    qemu_mutex_lock(&c->lock);
+    /*
+     * Match the reference emulator's blocking fgetc(): wait until a byte
+     * arrives or the backend signals end-of-input. The main loop keeps
+     * running (we hold no BQL here), so chardev reads still get delivered.
+     */
+    while (c->input.count == 0 && !c->input.eof) {
+        qemu_cond_wait(&c->cond, &c->lock);
+    }
+    if (c->input.count == 0) {
+        qemu_mutex_unlock(&c->lock);
+        return EOF;
+    }
+    ch = c->input.buffer[c->input.rd];
+    c->input.rd = (c->input.rd + 1) % SLOW32_CONSOLE_INPUT_SIZE;
+    was_full = c->input.count == SLOW32_CONSOLE_INPUT_SIZE;
+    c->input.count--;
+    qemu_mutex_unlock(&c->lock);
+
+    if (was_full) {
+        /* Backend paused on a full ring; restart it from the main loop. */
+        aio_bh_schedule_oneshot(qemu_get_aio_context(),
+                                slow32_console_accept_bh, c);
+    }
+    return ch;
 }
 
 static void slow32_cpu_set_pc(CPUState *cs, vaddr value)
@@ -160,7 +270,11 @@ static void slow32_restore_state_to_opc(CPUState *cs,
                                         const TranslationBlock *tb,
                                         const uint64_t *data)
 {
-    slow32_cpu_set_pc(cs, tb->pc);
+    CPUSlow32State *env = cpu_env(cs);
+
+    /* insn_start records (pc, next_pc, 0) for the faulting instruction. */
+    env->pc = data[0];
+    env->next_pc = data[1];
 }
 
 static bool slow32_cpu_has_work(CPUState *cs)
@@ -317,6 +431,8 @@ static void slow32_cpu_set_irq(void *opaque, int irq, int level)
 void slow32_handle_debug(uint32_t value)
 {
     slow32_console_write_byte(value & 0xFF);
+    /* DEBUG is the minimal ISA's only output; keep it immediately visible. */
+    slow32_console_flush();
 }
 
 void slow32_handle_yield(Slow32CPU *cpu)

@@ -119,6 +119,7 @@ void slow32_cpu_complete_halt(Slow32CPU *cpu);
 /* Guest console (DEBUG insn + MMIO PUTCHAR/terminal). Prefer serial_hd(0). */
 void slow32_console_open(Chardev *chr);
 void slow32_console_write(const uint8_t *buf, size_t len);
+void slow32_console_flush(void);
 void slow32_console_write_byte(uint8_t ch);
 void slow32_console_printf(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
 int slow32_console_getchar(void);

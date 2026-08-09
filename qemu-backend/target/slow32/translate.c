@@ -852,7 +852,9 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
         slow32_count_insns(ctx);
-        gen_helper_slow32_assert_fail(tcg_env, load_gpr(rs1), load_gpr(rs2));
+        gen_helper_slow32_assert_fail(tcg_env,
+                                      tcg_constant_i32(rs1), load_gpr(rs1),
+                                      tcg_constant_i32(rs2), load_gpr(rs2));
         slow32_exit_tb(ctx);
         gen_set_label(ok);
         break;
@@ -922,6 +924,9 @@ static void slow32_tr_init_disas_context(DisasContextBase *db, CPUState *cs)
     ctx->is_jmp = DISAS_NEXT;
     ctx->insn_count = 0;
     ctx->pending_cmp.valid = false;
+
+    /* The generic default is TCG_MAX_INSNS (512); keep the target's cap. */
+    db->max_insns = MIN(db->max_insns, TARGET_DEFAULT_MAX_INSNS);
 }
 
 static void slow32_tr_tb_start(DisasContextBase *db, CPUState *cs)
