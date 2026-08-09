@@ -50,4 +50,11 @@ int solve(term_t goal);
 
 void engine_reset(void);
 
+/* Nested-query isolation: full goal/choice stack snapshots.
+ * Callers must free *goals_out / *choices_out via engine_restore_stacks
+ * (or free themselves if they abandon the restore). */
+int engine_snapshot_stacks(term_t **goals_out, int *gsp_out,
+                           choice_t **choices_out, int *cp_out);
+void engine_restore_stacks(term_t *goals, int gsp, choice_t *chs, int cp);
+
 #endif

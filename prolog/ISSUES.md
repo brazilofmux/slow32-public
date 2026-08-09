@@ -4,11 +4,13 @@ Review date: February 12, 2026.
 
 Current test status: 16/16 passing (Stabilized core + arity guards).
 
-## 1) `findall/3` and `\+/1` Corrupt Engine State (Critical)
-- **Problem:** Both predicates run nested solve loops that overwrite the global `goal_stack` and `choices` arrays. While they save and restore the stack pointers (`goal_sp`, `choice_top`), they do not save the actual content of the stacks (or only save a truncated 64-entry snapshot in the case of negation).
-- **Risk:** Any goals or choice points from the parent query that were deeper in the stack than the maximum depth reached by the nested query are destroyed. This causes non-deterministic crashes or incorrect behavior when backtracking into a parent query after a `findall` or negation.
-- **Evidence:** `Negation as failure` block in `engine.c` and `findall/3` in `builtin.c` use global arrays without full preservation.
-- **Suggested Fix:** Nested queries must use an isolated engine state or fully snapshot the parent state. Given the SLOW-32 environment, moving `goal_stack` and `choices` to the heap and using a linked-list of frames (like a WAM) would be safer.
+## 1) `findall/3` and `\+/1` Corrupt Engine State (Resolved 2026-08 Pack E)
+- **Problem:** Nested solve loops overwrote `goal_stack` / `choices` without
+  fully preserving parent content (`\+` only saved 64 entries; `findall`
+  restored pointers only).
+- **Status:** Fixed. `engine_snapshot_stacks` / `engine_restore_stacks`
+  heap-copy the full parent stacks around nested search. Regression:
+  `tests/nested-isolation.pl` (70× `true` then findall / `\+`).
 
 ## 2) OOB Read/Write in Term Copying (Resolved)
 - **Previous Problem:** `persist_term()` and `copy_term_impl()` used fixed-size `args[32]` buffers and could call constructors with larger arity.

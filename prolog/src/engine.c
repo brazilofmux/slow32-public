@@ -3,6 +3,7 @@
 #include "database.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* Variable bindings */
 term_t var_binding[MAX_VARS];
@@ -130,6 +131,55 @@ void engine_reset(void) {
     var_count = 0;
 }
 
+int engine_snapshot_stacks(term_t **goals_out, int *gsp_out,
+                           choice_t **choices_out, int *cp_out) {
+    *goals_out = NULL;
+    *choices_out = NULL;
+    *gsp_out = goal_sp;
+    *cp_out = choice_top;
+
+    if (goal_sp > 0) {
+        *goals_out = (term_t *)malloc((size_t)goal_sp * sizeof(term_t));
+        if (!*goals_out) {
+            g_error = 1;
+            snprintf(g_errmsg, sizeof(g_errmsg), "out of memory (goal stack snapshot)");
+            return 0;
+        }
+        memcpy(*goals_out, goal_stack, (size_t)goal_sp * sizeof(term_t));
+    }
+    if (choice_top > 0) {
+        *choices_out = (choice_t *)malloc((size_t)choice_top * sizeof(choice_t));
+        if (!*choices_out) {
+            free(*goals_out);
+            *goals_out = NULL;
+            g_error = 1;
+            snprintf(g_errmsg, sizeof(g_errmsg), "out of memory (choice stack snapshot)");
+            return 0;
+        }
+        memcpy(*choices_out, choices, (size_t)choice_top * sizeof(choice_t));
+    }
+    return 1;
+}
+
+void engine_restore_stacks(term_t *goals, int gsp, choice_t *chs, int cp) {
+    if (gsp > 0 && goals) {
+        if (gsp > GOAL_STACK_SIZE) {
+            gsp = GOAL_STACK_SIZE;
+        }
+        memcpy(goal_stack, goals, (size_t)gsp * sizeof(term_t));
+    }
+    if (cp > 0 && chs) {
+        if (cp > MAX_CHOICES) {
+            cp = MAX_CHOICES;
+        }
+        memcpy(choices, chs, (size_t)cp * sizeof(choice_t));
+    }
+    goal_sp = gsp;
+    choice_top = cp;
+    free(goals);
+    free(chs);
+}
+
 /* Build conjunction from remaining goal stack (top..bottom order). */
 static term_t build_continuation(void) {
     if (goal_sp <= 0) return TERM_NIL;
@@ -232,37 +282,32 @@ int solve(term_t goal) {
             continue;
         }
 
-        /* Negation as failure: \+(Goal) */
+        /* Negation as failure: \+(Goal)
+         * solve() resets goal_sp/choice_top; fully snapshot parent stacks
+         * (not a truncated 64-entry window) so remaining conjunction goals
+         * and choice points survive. */
         if (IS_PTR(g) && compound_functor(g) == ATOM_NOT && compound_arity(g) == 1) {
             term_t inner = compound_arg(g, 0);
             int saved_trail = trail_top;
             int saved_hp = hp;
             int saved_vc = var_count;
-            int saved_gsp = goal_sp;
-            int saved_cp = choice_top;
             int saved_cb = cut_barrier;
-            term_t saved_goals[64];
-            choice_t saved_choices[64];
-            int sg_count = goal_sp < 64 ? goal_sp : 64;
-            int sc_count = choice_top < 64 ? choice_top : 64;
-            int j;
-            for (j = 0; j < sg_count; j++)
-                saved_goals[j] = goal_stack[j];
-            for (j = 0; j < sc_count; j++)
-                saved_choices[j] = choices[j];
+            term_t *saved_goals = NULL;
+            choice_t *saved_choices = NULL;
+            int saved_gsp = 0, saved_cp = 0;
+
+            if (!engine_snapshot_stacks(&saved_goals, &saved_gsp,
+                                       &saved_choices, &saved_cp)) {
+                return 0;
+            }
 
             int inner_result = solve(inner);
 
             trail_undo(saved_trail);
             hp = saved_hp;
             var_count = saved_vc;
-            goal_sp = saved_gsp;
-            choice_top = saved_cp;
             cut_barrier = saved_cb;
-            for (j = 0; j < sg_count; j++)
-                goal_stack[j] = saved_goals[j];
-            for (j = 0; j < sc_count; j++)
-                choices[j] = saved_choices[j];
+            engine_restore_stacks(saved_goals, saved_gsp, saved_choices, saved_cp);
 
             if (inner_result)
                 goto backtrack;

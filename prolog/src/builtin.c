@@ -475,13 +475,21 @@ int try_builtin(term_t goal, int functor, int arity) {
         term_t inner_goal = compound_arg(goal, 1);
         term_t result_list = compound_arg(goal, 2);
 
-        /* Save state and run an isolated search loop. */
+        /* Save parent engine state. Nested search reuses goal_stack/choices;
+         * snapshot full contents (not just the pointers) so remaining parent
+         * goals/choice points are not destroyed. */
         int saved_trail = trail_top;
         int saved_hp = hp;
         int saved_vc = var_count;
-        int saved_gsp = goal_sp;
-        int saved_cp = choice_top;
         int saved_cb = cut_barrier;
+        term_t *saved_goals = NULL;
+        choice_t *saved_choices = NULL;
+        int saved_gsp = 0, saved_cp = 0;
+
+        if (!engine_snapshot_stacks(&saved_goals, &saved_gsp,
+                                   &saved_choices, &saved_cp)) {
+            return -1;
+        }
 
         term_t persisted[256];
         int rcount = 0;
@@ -624,9 +632,8 @@ findall_done:
         trail_undo(saved_trail);
         hp = saved_hp;
         var_count = saved_vc;
-        goal_sp = saved_gsp;
-        choice_top = saved_cp;
         cut_barrier = saved_cb;
+        engine_restore_stacks(saved_goals, saved_gsp, saved_choices, saved_cp);
 
         if (g_error) return -1;
 
