@@ -6,11 +6,9 @@
 # the libc/crt0 differ from the x86-64 cross-compiler.
 
 CC = gcc
-# -fpermissive: the frontend self-hosts under slow32 cc and declares K&R-style
 # libc prototypes (char *calloc/malloc/strdup, ...); assigning those to typed
 # pointers is an -Wincompatible-pointer-types warning that GCC 14 promotes to a
-# hard error which -w no longer suppresses. -fpermissive downgrades it back.
-CFLAGS = -O2 -fno-builtin -fno-stack-protector -w -fpermissive
+CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 

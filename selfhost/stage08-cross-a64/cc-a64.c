@@ -13,6 +13,20 @@
  * Instead, we pre-declare what we need with the frontend's signatures.
  */
 
+/* Libc strategy (ISSUES #57): hosted builds get real system headers;
+ * the self-host path keeps the dialect decls. See cc-x64.c for the
+ * full rationale (GCC 14 hard-errors on the K&R decls). */
+#ifdef __GNUC__
+#define S12CC_HOSTED 1
+#endif
+
+#ifdef S12CC_HOSTED
+#define _GNU_SOURCE
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#else
 /* Libc — declared with the SLOW-32 frontend's signatures so the lexer's
  * own redeclarations match. */
 int open(char *path, int flags, ...);
@@ -31,6 +45,7 @@ char *calloc(int n, int size);
 char *getenv(char *name);
 void exit(int status);
 #define NULL 0
+#endif
 
 /* fdputs / fdputc / fdputuint — used by the parser/lexer for error output. */
 static int fdputs(char *s, int f) {

@@ -6,19 +6,28 @@
  * Interface matches s32cc_lex.h API used by s32cc_parse.h.
  */
 
-/* === Libc prototypes === */
+/* === Libc prototypes ===
+ * Dialect decls for the SLOW-32 self-host path (s12cc / cc-x64 / cc-a64
+ * compiling this file have no system headers). Hosted builds (GCC/Clang
+ * compiling the cross drivers) define S12CC_HOSTED in the driver prologue
+ * and include the real headers instead — redeclaring strlen as
+ * `int strlen(char *)` there is a GCC 14 hard error. See ISSUES #57. */
+#ifndef S12CC_HOSTED
 int strcmp(char *a, char *b);
 int strncmp(char *a, char *b, int n);
 int strlen(char *s);
 char *memcpy(char *dst, char *src, int n);
 char *memset(char *dst, int c, int n);
+void exit(int status);
+#endif
 
 int fdputs(char *s, int f);
 int fdputc(int c, int f);
 void fdputuint(int f, int v);
-void exit(int status);
 
+#ifndef NULL
 #define NULL 0
+#endif
 
 /* === Token constants (same numbering as s32cc_lex.h) === */
 

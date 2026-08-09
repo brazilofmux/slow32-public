@@ -12,14 +12,27 @@
 
 #define S12CC_TARGET_X64 1
 
-/* The frontend headers (lexer, parser, ast, etc.) are designed for SLOW-32's
- * cc compiler, which is lenient about redeclarations and return types.
- * When compiling on a host GCC/Clang, we need compatibility shims.
+/* Libc strategy (ISSUES #57): two worlds, one gate.
  *
- * Strategy: suppress host libc builtins, let the frontend headers provide
- * all declarations, and compile with -fno-builtin.
- */
+ * Hosted (GCC/Clang building this driver): use the real system headers.
+ * The old K&R-style dialect decls (`char *calloc(int,int)`, `int
+ * strlen(char *)`, ...) are -Wincompatible-pointer-types, which GCC 14
+ * promotes to a hard error that -w no longer suppresses.
+ *
+ * Self-host (s12cc / cc-x64 / cc-a64 compiling this driver): no system
+ * headers exist; keep the dialect decls, byte-for-byte. Clang defines
+ * __GNUC__ too; no SLOW-32 self-host compiler does. */
+#ifdef __GNUC__
+#define S12CC_HOSTED 1
+#endif
 
+#ifdef S12CC_HOSTED
+#define _GNU_SOURCE
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#else
 /* Libc functions - declared with the SLOW-32 frontend's signatures.
  * These must come FIRST, before any headers that might re-declare them. */
 int open(char *path, int flags, ...);
@@ -38,6 +51,7 @@ char *calloc(int n, int size);
 char *getenv(char *name);
 void exit(int status);
 #define NULL 0
+#endif
 
 /* fd-based I/O: the frontend uses fdputs/fdputc/fdputuint with int fd.
  * Implement via write() so they work on both host and SLOW-32. */

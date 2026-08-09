@@ -1580,7 +1580,7 @@ Deferred by decision, 2026-07-16: unify first (#53), revisit rejection later.
 
 ### Build / Portability Follow-Ups
 
-### 57. [PORTABILITY] Host cross-compiler builds depend on `-fpermissive`; align frontend libc prototypes with modern GCC/Clang
+### 57. [RESOLVED 2026-08-08] Host cross-compiler builds depended on `-fpermissive`; frontend libc prototypes now gated for GCC/Clang
 The `stage08-cross-{x64,a64}` host bootstrap (`cc-x64.c`/`cc-a64.c` and the shared
 frontend they `#include`) declares K&R-style libc prototypes with SLOW-32 signatures
 (`char *calloc(int, int)`, `char *malloc(int)`, `char *memcpy(char *, char *, int)`,
@@ -1607,6 +1607,20 @@ frontend (`parser.h`, `pp.h`, `hir_lower.h`, `c_lexer.rl`). No pointer/int-conve
 implicit-declaration diagnostics remain — the entire modern-compiler incompatibility is
 the fake libc prototypes, not the compiler's own logic.
 
+**Resolution (2026-08-08):** the driver prologues (`cc-x64.c`, `cc-a64.c`) now define
+`S12CC_HOSTED` under `#ifdef __GNUC__` (Clang defines it too; no SLOW-32 self-host
+compiler does) and include the real system headers; the K&R dialect decls live in the
+`#else`, byte-for-byte. The lexer's own decl block is guarded with
+`#ifndef S12CC_HOSTED` — in BOTH `c_lexer.rl` and, surgically, the checked-in
+`c_lexer_gen.c` (see #58 for why regeneration was not an option). `-fpermissive`
+removed from both Makefiles. Verified: macOS clang builds both trees clean;
+alpine:3.21 / GCC 14.2.0 builds both trees clean (the original failure environment);
+a64 test-cc runs identically before/after (its one failure is pre-existing, see #59);
+stage08 native suite gates the guest-dialect parse of the guarded lexer.
+Deliberately deferred: the 85 `-Wunused-variable` warnings stay silenced by `-w` —
+cleaning them edits the shared frontend, which changes guest-built artifacts and the
+sha256 pins; that is a separate pass with a sums refresh, not a rider on this fix.
+
 **Manage carefully:**
 - Some prototypes are **generated** — `c_lexer_gen.c` comes from `c_lexer.rl` via Ragel.
   Gate them in `c_lexer.rl` + the gen step, not by hand-editing the generated file.
@@ -1617,3 +1631,32 @@ the fake libc prototypes, not the compiler's own logic.
 - LLVM/GCC object interop is a goal, so aligning host warnings/errors is desirable — but
   the 85 unused-variable warnings should be cleaned or deliberately silenced as part of
   the same pass, not left to mask future real diagnostics.
+
+
+### 58. [DRIFT] `c_lexer_gen.c` has been hand-edited past its Ragel source; regeneration is destructive
+
+`src/c_lexer_gen.c` contains `TK_OFFSETOF` / `TK_STATIC_ASSERT` handling
+(`__builtin_offsetof`, `offsetof`, `_Static_assert` keyword recognition) that does
+**not exist in `src/c_lexer.rl`**. Regenerating via `gen_lexer.sh` silently deletes
+that support — discovered 2026-08-08 when the #57 fix tried to add its guard "in the
+.rl + the gen step" per this file's own advice, and the regen came back 97/−99 with
+real functionality stripped. The generated file has quietly become the source of
+truth. Fix direction: back-port the offsetof/_Static_assert recognition into
+`c_lexer.rl` (it's a keyword-table addition), confirm regen reproduces the checked-in
+file modulo `#line`, and only then trust `gen_lexer.sh` again. Until that lands,
+**do not regenerate**; edit the generated file surgically and mirror the edit in the
+`.rl` (as #57's guard now does).
+
+### 59. [OPEN] `cc_fp_varargs` fails when `cc-a64` is built by GCC 14 (musl/alpine); passes when built by clang (macOS)
+
+`stage08-cross-a64/tests/cc_fp_varargs.c` (added 2026-08-08 with the dual FP varargs
+work) exits 1 (`one_double` leg) when the compiling `cc-a64` binary was built by
+GCC 14.2.0 in alpine:3.21 — and passes when `cc-a64` was built by macOS clang.
+Discriminated at pristine HEAD (with `-fpermissive`, before the #57 gating), so it is
+not a #57 regression: the same source produces a compiler that miscompiles (or
+correctly exposes a latent bug in) the FP-varargs lowering depending on which host
+compiler built it. That is the same failure signature as the 2026-06 x64 SIB-fold
+bug (uninitialized local / UB in the compiler's own source that one host optimizer
+exploits and another doesn't). Suspect first: uninitialized fields in the new
+FP-varargs frame-control-block codegen paths (`hir_codegen_a64.h`, 523af572).
+Repro: alpine:3.21, `make && make test-cc` in `stage08-cross-a64`.
