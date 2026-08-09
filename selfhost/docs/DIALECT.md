@@ -100,3 +100,34 @@ Full C11/GNU and “TCC compiles clean” are **optional**, not trust-root requi
 | Date | Note |
 |------|------|
 | 2026-08-08 | Initial map after full-tree audit; corrected stale #35/#38 claims; predefs + `#error` landed with tests. |
+
+
+---
+
+## ABI interop with the LLVM backend (native SLOW-32)
+
+**Verified 2026-08-08** (`stage08/run-interop-llvm.sh` — one `.s32x` built from a
+clang TU and an s12cc TU, calling each other in both directions, linked with the
+native `s32-ld` against clang's `crt0.s32o` + `libc_debug.s32a`):
+
+| Crossing the boundary | Status |
+|---|---|
+| `int` / pointer args + returns | **interoperable** |
+| >8 args (stack passing, fp+0…) | **interoperable** |
+| `long long` (register pairs, r1:r2 return) | **interoperable** |
+| s12cc → clang callbacks (incl. via extern) | **interoperable** |
+| s12cc code against clang's libc/crt0 | **interoperable** |
+| Integer varargs (s12cc-defined, clang-called) | **interoperable** — the
+call-site convention is shared; each compiler's `va_*` machinery is
+callee-private |
+| `double` args/returns | **diverges** (FP word-order/pairing) |
+| struct by value | **diverges** (s12cc hidden-pointer ABI vs clang's) |
+
+**Link recipe:** add `stage08/builtins64.s` (`__muldi3` — clang inlines MUL via
+`UMUL_LOHI` so `libs32.s32a` never carried it) and `stage08/builtins_fp64.s`
+(`__fp64_mul` … — clang uses HW FP). Both coexist with `libs32.s32a`; archive
+members are only pulled for still-unresolved symbols.
+
+Convergence work, if wanted: pick one convention each for double passing and
+struct-by-value. Until then, mixed links are safe for the scalar/pointer core —
+which covers most real C library surfaces.
