@@ -188,16 +188,24 @@ static bool isSupportedLocInfo(CCValAssign::LocInfo Info) {
 
 SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   : TargetLowering(TM, static_cast<const SLOW32TargetMachine&>(TM).getSubtarget()) {
+  const SLOW32Subtarget &STI =
+      static_cast<const SLOW32TargetMachine &>(TM).getSubtarget();
+
   // Set up the register classes
   addRegisterClass(MVT::i32, &SLOW32::GPRRegClass);
-  addRegisterClass(MVT::f32, &SLOW32::GPRRegClass);
-  addRegisterClass(MVT::f64, &SLOW32::GPRPairRegClass);
+  // Without +f, f32/f64 must stay ILLEGAL types so the type legalizer
+  // softens every FP operation to integer ops + libcalls. Registering the
+  // classes unconditionally left FP types legal under -mattr=-f, and
+  // "SETCC f64 -> Expand" then ping-pongs with SELECT_CC forever in the
+  // op legalizer (llc hang).
+  if (STI.hasStdExtF()) {
+    addRegisterClass(MVT::f32, &SLOW32::GPRRegClass);
+    addRegisterClass(MVT::f64, &SLOW32::GPRPairRegClass);
+  }
 
   // Soft-float in GPRs with native f32/f64 opcodes when +f is enabled.
 
   // Compute derived properties from the register classes
-  const SLOW32Subtarget &STI =
-      static_cast<const SLOW32TargetMachine &>(TM).getSubtarget();
   computeRegisterProperties(STI.getRegisterInfo());
 
 
@@ -230,6 +238,12 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
 
   // thread_local goes through emulated TLS (__emutls_get_address).
   setOperationAction(ISD::GlobalTLSAddress, MVT::i32, Custom);
+
+  // Dynamic allocas expand to generic SP arithmetic (needs hasFP, which
+  // hasVarSizedObjects already forces).
+  setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32, Expand);
+  setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
+  setOperationAction(ISD::STACKRESTORE, MVT::Other, Expand);
 
   // i1 values live in memory as bytes; promote loads/stores through i8.
   setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, MVT::i32,
@@ -398,32 +412,10 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
     setOperationAction(ISD::FP_TO_UINT, MVT::i64, Custom);
     setOperationAction(ISD::SINT_TO_FP, MVT::i64, Custom);
     setOperationAction(ISD::UINT_TO_FP, MVT::i64, Custom);
-  } else {
-    for (MVT VT : {MVT::f32, MVT::f64}) {
-      setOperationAction(ISD::FADD, VT, Expand);
-      setOperationAction(ISD::FSUB, VT, Expand);
-      setOperationAction(ISD::FMUL, VT, Expand);
-      setOperationAction(ISD::FDIV, VT, Expand);
-      setOperationAction(ISD::FSQRT, VT, Expand);
-      setOperationAction(ISD::FNEG, VT, Expand);
-      setOperationAction(ISD::FABS, VT, Expand);
-      setOperationAction(ISD::FCOPYSIGN, VT, Expand);
-      setOperationAction(ISD::SETCC, VT, Expand);
-    }
-    setOperationAction(ISD::FP_ROUND, MVT::f32, Expand);
-    setOperationAction(ISD::FP_EXTEND, MVT::f64, Expand);
-    setOperationAction(ISD::BITCAST, MVT::f32, Legal); // still a no-op in GPR
-    setOperationAction(ISD::FP_TO_SINT, MVT::i32, Expand);
-    setOperationAction(ISD::FP_TO_UINT, MVT::i32, Expand);
-    setOperationAction(ISD::SINT_TO_FP, MVT::f32, Expand);
-    setOperationAction(ISD::UINT_TO_FP, MVT::f32, Expand);
-    setOperationAction(ISD::SINT_TO_FP, MVT::f64, Expand);
-    setOperationAction(ISD::UINT_TO_FP, MVT::f64, Expand);
-    setOperationAction(ISD::FP_TO_SINT, MVT::i64, Expand);
-    setOperationAction(ISD::FP_TO_UINT, MVT::i64, Expand);
-    setOperationAction(ISD::SINT_TO_FP, MVT::i64, Expand);
-    setOperationAction(ISD::UINT_TO_FP, MVT::i64, Expand);
   }
+  // (no else: with f32/f64 unregistered, the type legalizer soft-floats
+  // every FP operation before op-level actions are ever consulted, using
+  // the __addsf3-family libcalls from SLOW32RuntimeLibcalls.h)
 
   // Shared FP policy (libcall or legalized away regardless of +f).
   for (MVT VT : {MVT::f32, MVT::f64}) {

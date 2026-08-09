@@ -74,6 +74,19 @@ public:
                             RegScavenger *RS) const override;
 
   unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
+
+  /// Emit `DestReg = SrcReg + Amount` as a staged chain of legal 12-bit
+  /// ADDI steps (with an initial copy when DestReg != SrcReg). With
+  /// \p StopWhenImmLegal the chain stops as soon as the remainder fits a
+  /// signed 12-bit immediate and returns it (for absorption into a memory
+  /// operand's displacement); otherwise the chain runs to zero. This is
+  /// the single implementation shared by frame lowering (SP adjustment)
+  /// and frame-index elimination (base materialisation).
+  int64_t emitStagedAddImmediate(
+      MachineBasicBlock &MBB, MachineBasicBlock::iterator InsertPt,
+      const DebugLoc &DL, Register DestReg, Register SrcReg, int64_t Amount,
+      bool StopWhenImmLegal = false,
+      MachineInstr::MIFlag Flag = MachineInstr::NoFlags) const;
 };
 
 } // end namespace llvm

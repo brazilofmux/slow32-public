@@ -34,8 +34,24 @@ public:
   /// frame (not counted in MachineFrameInfo::getStackSize()).
   unsigned getPrologueSaveSize(const MachineFunction &MF) const;
 
-  /// True when the function must preserve LR across its body (calls, etc.).
+  /// True when the function must preserve LR across its body: calls, FP
+  /// setup, or (post-RA) the allocator having used r31 as a scratch.
   bool needsLRSave(const MachineFunction &MF) const;
+
+  /// True when the prologue must save r30: either it serves as the frame
+  /// pointer, or (post-RA) the allocator used it as a scratch and the
+  /// caller may rely on it being preserved (r30 is in the CSR regmask).
+  bool needsFPSave(const MachineFunction &MF) const;
+
+  /// Full SP adjustment the prologue performs: locals + fixed saves,
+  /// rounded up to the 16-byte stack alignment the datalayout advertises.
+  uint64_t getAlignedFrameSize(const MachineFunction &MF) const;
+
+  /// Fixes the LR/FP save decisions (see SLOW32MachineFunctionInfo) and
+  /// keeps r30/r31 out of the generic CSR spill machinery — the fixed
+  /// prologue saves them itself.
+  void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,
+                            RegScavenger *RS) const override;
 
   StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
                                      Register &FrameReg) const override;

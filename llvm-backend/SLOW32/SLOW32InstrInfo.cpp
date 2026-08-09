@@ -714,25 +714,46 @@ void SLOW32InstrInfo::insertIndirectBranch(MachineBasicBlock &MBB,
                                            int64_t BrOffset,
                                            RegScavenger *RS) const {
   (void)BrOffset;
+  (void)RS;
   assert(MBB.empty() && "expected a dedicated block for the long branch");
   assert(RestoreBB.empty() && "SLOW32 long branches do not use restore blocks");
 
-  assert(RS && "RegScavenger required for SLOW32 long branches");
-  RS->enterBasicBlockEnd(MBB);
-  Register ScratchPhys = RS->scavengeRegisterBackwards(SLOW32::GPRRegClass,
-                                                       MBB.end(),
-                                                       /*RestoreAfter=*/false,
-                                                       /*SPAdj=*/0);
-  if (!ScratchPhys)
-    report_fatal_error("Unable to scavenge register for SLOW32 long branch");
+  // r2 is reserved precisely as the long-branch scratch (the MC-level
+  // AsmBackend relaxation hard-wires it too), so no scavenging is needed —
+  // which also matters because the scavenger cannot walk backwards from
+  // the end of this freshly created empty block.
+  //
+  // Emit the real LUI/ADDI/JALR sequence directly: branch relaxation runs
+  // in the pre-emit phase, after ExpandPostRAPseudos, so a pseudo created
+  // here would never be expanded.
+  buildAbsoluteJump(MBB, MBB.end(), DL, *this, SLOW32::R2, &DestBB);
+}
 
-  RS->setRegUsed(ScratchPhys);
+int64_t SLOW32InstrInfo::emitStagedAddImmediate(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator InsertPt,
+    const DebugLoc &DL, Register DestReg, Register SrcReg, int64_t Amount,
+    bool StopWhenImmLegal, MachineInstr::MIFlag Flag) const {
+  if (DestReg != SrcReg) {
+    BuildMI(MBB, InsertPt, DL, get(SLOW32::ADD), DestReg)
+        .addReg(SrcReg)
+        .addReg(SLOW32::R0)
+        .setMIFlag(Flag);
+  }
 
-  LLVM_DEBUG(dbgs() << "Emitting long branch pseudo with scratch register r"
-                    << ScratchPhys << "\n");
-
-  BuildMI(MBB, MBB.end(), DL, get(SLOW32::PseudoLongBR), ScratchPhys)
-      .addMBB(&DestBB);
+  int64_t Remaining = Amount;
+  auto Done = [&] {
+    return StopWhenImmLegal ? isInt<12>(Remaining) : Remaining == 0;
+  };
+  while (!Done()) {
+    int64_t Step = Remaining > 0 ? std::min<int64_t>(Remaining, 2047)
+                                 : std::max<int64_t>(Remaining, -2048);
+    BuildMI(MBB, InsertPt, DL, get(SLOW32::ADDI), DestReg)
+        .addReg(DestReg)
+        .addImm(Step)
+        .setMIFlag(Flag);
+    Remaining -= Step;
+  }
+  return Remaining;
 }
 
 unsigned SLOW32InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {

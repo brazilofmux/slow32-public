@@ -54,6 +54,30 @@ private:
   }
 
 public:
+  // 'm'/'o'-constrained inline-asm operands: produce the base+imm pair
+  // PrintAsmMemoryOperand expects. Without this override the generic
+  // selector aborts with "Could not match memory address" for any
+  // inline asm touching a stack local.
+  bool SelectInlineAsmMemoryOperand(const SDValue &Op,
+                                    InlineAsm::ConstraintCode ConstraintID,
+                                    std::vector<SDValue> &OutOps) override {
+    switch (ConstraintID) {
+    case InlineAsm::ConstraintCode::m:
+    case InlineAsm::ConstraintCode::o: {
+      SDValue Base, Offset;
+      if (!SelectAddr(Op, Base, Offset)) {
+        Base = Op;
+        Offset = CurDAG->getTargetConstant(0, SDLoc(Op), MVT::i32);
+      }
+      OutOps.push_back(Base);
+      OutOps.push_back(Offset);
+      return false;
+    }
+    default:
+      return true;
+    }
+  }
+
   // Select address mode for loads/stores
   // This is critical for proper byte-wise memcpy expansion
   bool SelectAddr(SDValue N, SDValue &Base, SDValue &Offset) {

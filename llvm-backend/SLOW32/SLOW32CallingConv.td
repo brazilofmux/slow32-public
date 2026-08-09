@@ -75,10 +75,15 @@ def RetCC_SLOW32 : CallingConv<[
 ]>;
 
 // Callee-saved register list for the default calling convention.
-// R30 (fp) and R31 (lr) are intentionally omitted: the fixed prologue /
-// epilogue always saves and restores them, so PEI must not allocate a second
-// CSR spill slot. Call clobber of LR is modelled by CALL Defs=[..., R31].
+// R30 (fp) IS call-preserved: callers (a hasFP caller keeps its frame
+// pointer in it across calls) rely on callees restoring it, and the fixed
+// prologue saves it whenever it is the frame pointer or the allocator used
+// it as a scratch. determineCalleeSaves resets it from SavedRegs so PEI
+// never allocates a second CSR spill slot on top of the fixed save.
+// R31 (lr) stays out: calls genuinely clobber it (CALL Defs=[..., R31]);
+// leaf functions that use it as a scratch get a fixed prologue save via
+// the same determineCalleeSaves logic.
 def CSR_SLOW32 : CalleeSavedRegs<(add
   R11, R12, R13, R14, R15, R16, R17, R18, R19, R20,
-  R21, R22, R23, R24, R25, R26, R27, R28
+  R21, R22, R23, R24, R25, R26, R27, R28, R30
 )>;

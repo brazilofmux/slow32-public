@@ -1,1 +1,2 @@
-Memory fault: Failed to read 4 bytes at 0x20000000 (PC=0x000011DC SP=0x0FFFFF70)
+Memory fault: Failed to read 4 bytes at 0x20000000 (PC=0x000011C4 SP=0x0FFFFF68)
+

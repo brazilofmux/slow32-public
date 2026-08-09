@@ -48,7 +48,16 @@ entry:
 }
 
 ; CHECK-LABEL: call_with_4_doubles:
-; Double 4 hi half loaded and stored to stack; lo half goes in r10
+; Double 4 hi half loaded and stored at the bottom of the outgoing area;
+; lo half goes in r10.
 ; CHECK: ldw [[D4HI:r[0-9]+]], {{.*}}+4
-; CHECK: stw {{.*}}, [[D4HI]]
+; CHECK: ldw r10, {{.*}}+0
+; CHECK: stw sp+0, [[D4HI]]
+; Doubles 1-3 in register pairs r4:r5, r6:r7, r8:r9 (lo:hi).
+; CHECK-DAG: ldw r5, {{.*}}+4
+; CHECK-DAG: ldw r4, {{.*}}+0
+; CHECK-DAG: ldw r7, {{.*}}+4
+; CHECK-DAG: ldw r6, {{.*}}+0
+; CHECK-DAG: ldw r9, {{.*}}+4
+; CHECK-DAG: ldw r8, {{.*}}+0
 ; CHECK: jal r31, varargs_f64

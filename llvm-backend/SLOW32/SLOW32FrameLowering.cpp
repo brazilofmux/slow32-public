@@ -3,6 +3,7 @@
 #include "SLOW32FrameLowering.h"
 #include "SLOW32.h"
 #include "SLOW32InstrInfo.h"
+#include "SLOW32MachineFunctionInfo.h"
 #include "SLOW32RegisterInfo.h"
 #include "SLOW32Subtarget.h"
 #include "llvm/CodeGen/CFIInstBuilder.h"
@@ -32,30 +33,8 @@ static void emitAddImmediateChain(
     const DebugLoc &DL, const SLOW32InstrInfo &TII, Register DestReg,
     Register SrcReg, int64_t Amount,
     MachineInstr::MIFlag Flag = MachineInstr::NoFlags) {
-  if (DestReg != SrcReg) {
-    BuildMI(MBB, InsertPt, DL, TII.get(SLOW32::ADD), DestReg)
-        .addReg(SrcReg)
-        .addReg(SLOW32::R0)
-        .setMIFlag(Flag);
-  }
-
-  Register CurrReg = DestReg;
-  int64_t Remaining = Amount;
-
-  while (Remaining != 0) {
-    int64_t Step;
-    if (Remaining > 0)
-      Step = std::min<int64_t>(Remaining, 2047);
-    else
-      Step = std::max<int64_t>(Remaining, -2048);
-
-    BuildMI(MBB, InsertPt, DL, TII.get(SLOW32::ADDI), CurrReg)
-        .addReg(CurrReg)
-        .addImm(Step)
-        .setMIFlag(Flag);
-
-    Remaining -= Step;
-  }
+  TII.emitStagedAddImmediate(MBB, InsertPt, DL, DestReg, SrcReg, Amount,
+                             /*StopWhenImmLegal=*/false, Flag);
 }
 
 } // end anonymous namespace
@@ -73,10 +52,20 @@ bool SLOW32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
 }
 
 bool SLOW32FrameLowering::needsLRSave(const MachineFunction &MF) const {
+  // Post-RA the decision is fixed by determineCalleeSaves; before that,
+  // fall back to the conservative structural answer.
+  if (auto Cached = MF.getInfo<SLOW32MachineFunctionInfo>()->isLRSaved())
+    return *Cached;
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   // Calls clobber LR. FRAMEADDR/RETURNADDR and FP setup also require it.
   return MFI.adjustsStack() || MFI.hasCalls() || MFI.isReturnAddressTaken() ||
          hasFP(MF);
+}
+
+bool SLOW32FrameLowering::needsFPSave(const MachineFunction &MF) const {
+  if (auto Cached = MF.getInfo<SLOW32MachineFunctionInfo>()->isFPSaved())
+    return *Cached;
+  return hasFP(MF);
 }
 
 unsigned
@@ -84,9 +73,43 @@ SLOW32FrameLowering::getPrologueSaveSize(const MachineFunction &MF) const {
   unsigned Size = 0;
   if (needsLRSave(MF))
     Size += 4;
-  if (hasFP(MF))
+  if (needsFPSave(MF))
     Size += 4;
   return Size;
+}
+
+uint64_t
+SLOW32FrameLowering::getAlignedFrameSize(const MachineFunction &MF) const {
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  // The datalayout advertises S128: SP must stay 16-byte aligned, so the
+  // prologue's single adjustment (locals + fixed saves) is rounded up.
+  return alignTo(MFI.getStackSize() + getPrologueSaveSize(MF),
+                 getStackAlign().value());
+}
+
+void SLOW32FrameLowering::determineCalleeSaves(MachineFunction &MF,
+                                               BitVector &SavedRegs,
+                                               RegScavenger *RS) const {
+  TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
+
+  // The fixed prologue saves r30/r31 at SP+0/+4 itself; PEI must not
+  // allocate a second CSR spill slot for them.
+  SavedRegs.reset(SLOW32::R30);
+  SavedRegs.reset(SLOW32::R31);
+
+  // Fix the save decisions now that register allocation is complete. Both
+  // registers are allocatable in leaves (r30 only when !hasFP), so the
+  // structural triggers alone are not enough: if the allocator used one as
+  // a scratch, it must be saved too — r31 still holds the return address
+  // at the return, and r30 is call-preserved from the caller's point of
+  // view (it is in the CSR regmask).
+  auto *FI = MF.getInfo<SLOW32MachineFunctionInfo>();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  FI->setLRSaved(MFI.adjustsStack() || MFI.hasCalls() ||
+                 MFI.isReturnAddressTaken() || hasFP(MF) ||
+                 MRI.isPhysRegModified(SLOW32::R31));
+  FI->setFPSaved(hasFP(MF) || MRI.isPhysRegModified(SLOW32::R30));
 }
 
 StackOffset
@@ -102,15 +125,13 @@ SLOW32FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   // far (PEI locals + fixed LR/FP slots at the bottom).
   int64_t Offset = MFI.getObjectOffset(FI) + MFI.getOffsetAdjustment();
   if (!HasFP)
-    Offset += static_cast<int64_t>(MFI.getStackSize()) +
-              static_cast<int64_t>(getPrologueSaveSize(MF));
+    Offset += static_cast<int64_t>(getAlignedFrameSize(MF));
 
   return StackOffset::getFixed(Offset);
 }
 
 void SLOW32FrameLowering::emitPrologue(MachineFunction &MF,
                                        MachineBasicBlock &MBB) const {
-  MachineFrameInfo &MFI = MF.getFrameInfo();
   const SLOW32InstrInfo *TII =
       static_cast<const SLOW32InstrInfo *>(MF.getSubtarget().getInstrInfo());
 
@@ -123,9 +144,8 @@ void SLOW32FrameLowering::emitPrologue(MachineFunction &MF,
 
   const bool HasFP = hasFP(MF);
   const bool SaveLR = needsLRSave(MF);
-  const unsigned SaveSize = getPrologueSaveSize(MF);
-  const uint64_t StackSize = MFI.getStackSize();
-  const uint64_t FrameSize = StackSize + SaveSize;
+  const bool SaveFP = needsFPSave(MF);
+  const uint64_t FrameSize = getAlignedFrameSize(MF);
 
   if (FrameSize == 0)
     return;
@@ -139,7 +159,7 @@ void SLOW32FrameLowering::emitPrologue(MachineFunction &MF,
       if (!MBB.isLiveIn(R))
         MBB.addLiveIn(R);
     }
-    if (HasFP) {
+    if (SaveFP) {
       if (!MRI.isLiveIn(FramePtr))
         MRI.addLiveIn(FramePtr);
       if (!MBB.isLiveIn(FramePtr))
@@ -178,7 +198,7 @@ void SLOW32FrameLowering::emitPrologue(MachineFunction &MF,
     }
   }
 
-  if (HasFP) {
+  if (SaveFP) {
     const int64_t FPStoreOff = SaveLR ? 4 : 0;
     BuildMI(MBB, MBBI, DL, TII->get(SLOW32::STW))
         .addReg(StackPtr)
@@ -191,7 +211,9 @@ void SLOW32FrameLowering::emitPrologue(MachineFunction &MF,
       CFIBuilder.buildOffset(FramePtr,
                              -(static_cast<int64_t>(FrameSize) - FPStoreOff));
     }
+  }
 
+  if (HasFP) {
     // fp = sp + FrameSize  (points at incoming SP)
     emitAddImmediateChain(MBB, MBBI, DL, *TII, FramePtr, StackPtr,
                           static_cast<int64_t>(FrameSize),
@@ -215,12 +237,21 @@ void SLOW32FrameLowering::emitEpilogue(MachineFunction &MF,
 
   const bool HasFP = hasFP(MF);
   const bool SaveLR = needsLRSave(MF);
-  const unsigned SaveSize = getPrologueSaveSize(MF);
-  const uint64_t StackSize = MFI.getStackSize();
-  const uint64_t FrameSize = StackSize + SaveSize;
+  const bool SaveFP = needsFPSave(MF);
+  const uint64_t FrameSize = getAlignedFrameSize(MF);
 
   if (FrameSize == 0)
     return;
+
+  // A dynamic alloca leaves SP below the static frame at the return, so
+  // recompute it from FP (which points at the incoming SP) before touching
+  // the save slots at SP+0/+4.
+  if (MFI.hasVarSizedObjects()) {
+    assert(HasFP && "variable-sized objects require a frame pointer");
+    emitAddImmediateChain(MBB, MBBI, DL, *TII, StackPtr, FramePtr,
+                          -static_cast<int64_t>(FrameSize),
+                          MachineInstr::FrameDestroy);
+  }
 
   // Before restoring, CFA must be SP-relative again if we had switched to FP.
   if (HasFP && needsDwarfCFI(MF)) {
@@ -240,7 +271,7 @@ void SLOW32FrameLowering::emitEpilogue(MachineFunction &MF,
     }
   }
 
-  if (HasFP) {
+  if (SaveFP) {
     const int64_t FPStoreOff = SaveLR ? 4 : 0;
     BuildMI(MBB, MBBI, DL, TII->get(SLOW32::LDW), FramePtr)
         .addReg(StackPtr)
@@ -270,7 +301,9 @@ MachineBasicBlock::iterator SLOW32FrameLowering::eliminateCallFramePseudoInstr(
       static_cast<const SLOW32InstrInfo *>(MF.getSubtarget().getInstrInfo());
 
   if (!hasReservedCallFrame(MF)) {
-    int64_t Amount = I->getOperand(0).getImm();
+    // Keep SP 16-byte aligned across the call boundary too: the callee's
+    // prologue math assumes an aligned incoming SP.
+    int64_t Amount = alignSPAdjust(I->getOperand(0).getImm());
     if (Amount != 0) {
       if (I->getOpcode() == SLOW32::ADJCALLSTACKDOWN) {
         emitAddImmediateChain(MBB, I, I->getDebugLoc(), *TII, StackPtr,

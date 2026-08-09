@@ -14,20 +14,27 @@ using namespace llvm;
 
 void SLOW32AsmPrinter::emitInstruction(const MachineInstr *MI) {
   // Long-branch pseudos (PseudoLongBR / PseudoLongB*) are expanded in
-  // ExpandPostRAPseudos to LUI/ADDI/JALR with MO_HI/MO_LO. They must not
-  // reach the AsmPrinter; seeing one means the pass pipeline regressed.
-  assert(MI->getOpcode() != SLOW32::PseudoLongBR &&
-         MI->getOpcode() != SLOW32::PseudoLongBEQ &&
-         MI->getOpcode() != SLOW32::PseudoLongBNE &&
-         MI->getOpcode() != SLOW32::PseudoLongBLT &&
-         MI->getOpcode() != SLOW32::PseudoLongBGE &&
-         MI->getOpcode() != SLOW32::PseudoLongBGT &&
-         MI->getOpcode() != SLOW32::PseudoLongBLE &&
-         MI->getOpcode() != SLOW32::PseudoLongBLTU &&
-         MI->getOpcode() != SLOW32::PseudoLongBGEU &&
-         MI->getOpcode() != SLOW32::PseudoLongBGTU &&
-         MI->getOpcode() != SLOW32::PseudoLongBLEU &&
-         "Long-branch pseudo reached AsmPrinter; ExpandPostRAPseudos missing?");
+  // ExpandPostRAPseudos to LUI/ADDI/JALR with MO_HI/MO_LO; branch
+  // relaxation emits the real sequence directly. One reaching this point
+  // means the pass pipeline regressed — fail loudly even in release
+  // builds rather than silently dropping the jump.
+  switch (MI->getOpcode()) {
+  case SLOW32::PseudoLongBR:
+  case SLOW32::PseudoLongBEQ:
+  case SLOW32::PseudoLongBNE:
+  case SLOW32::PseudoLongBLT:
+  case SLOW32::PseudoLongBGE:
+  case SLOW32::PseudoLongBGT:
+  case SLOW32::PseudoLongBLE:
+  case SLOW32::PseudoLongBLTU:
+  case SLOW32::PseudoLongBGEU:
+  case SLOW32::PseudoLongBGTU:
+  case SLOW32::PseudoLongBLEU:
+    report_fatal_error("SLOW32 long-branch pseudo reached the AsmPrinter; "
+                       "it should have been expanded earlier");
+  default:
+    break;
+  }
 
   MCInstLowering Lower(*this);
   MCInst Inst;

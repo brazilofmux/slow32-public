@@ -1,24 +1,40 @@
-# RUN: llc -mtriple=slow32-unknown-none -start-before=postrapseudos %s -o - | FileCheck %s
+# RUN: llc -mtriple=slow32-unknown-none -run-pass=branch-relaxation %s -o - \
+# RUN:   | FileCheck %s
+# RUN: llc -mtriple=slow32-unknown-none -start-after=postrapseudos %s -o - \
+# RUN:   | FileCheck --check-prefix=ASM %s
 # REQUIRES: slow32-registered-target
 #
-# Post-RA expansion of PseudoLongBR materialises the target with LUI/ADDI on a
-# scratch register, stamping MO_HI/MO_LO on MBB operands. MC lowering must wrap
-# those as %hi/%lo so the external assembler (slow32asm) can encode them.
-# Previously MBB operands dropped the flags and produced bare labels.
+# A conditional branch across a >1MB block must be relaxed: the branch is
+# retargeted and an indirect long jump is emitted through r2 (the reserved
+# long-branch scratch). This runs the real branch-relaxation pass — the old
+# pseudo-injection form of this test masked the fact that relaxation-created
+# long branches could never be expanded (relaxation runs after
+# ExpandPostRAPseudos). MC lowering must wrap the MBB operands as %hi/%lo so
+# the external assembler (slow32asm) can encode them.
 
 ---
 name: far
 tracksRegLiveness: true
 body: |
   bb.0:
-    successors: %bb.1
-    $r2 = PseudoLongBR %bb.1
+    liveins: $r3
+    BEQ $r3, $r0, %bb.2
+
   bb.1:
+    liveins: $r3
+    INLINEASM &".space 2097152", 1 /* sideeffect attdialect */
+
+  bb.2:
     RET implicit undef $r1
 ...
 
-# CHECK-LABEL: far:
-# CHECK: lui r2, %hi(.LBB0_1)
-# CHECK-NEXT: addi r2, r2, %lo(.LBB0_1)
-# CHECK-NEXT: jalr r0, r2, 0
-# CHECK: .LBB0_1:
+# The relaxed control flow reaches bb.2 through an absolute jump on r2.
+# CHECK-LABEL: name: far
+# CHECK: $r2 = LUI target-flags({{.*}}) %bb.
+# CHECK-NEXT: $r2 = ADDI $r2, target-flags({{.*}}) %bb.
+# CHECK-NEXT: $r0 = JALR $r2, 0
+
+# ASM-LABEL: far:
+# ASM: lui r2, %hi(.LBB0_
+# ASM-NEXT: addi r2, r2, %lo(.LBB0_
+# ASM-NEXT: jalr r0, r2, 0

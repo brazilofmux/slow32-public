@@ -41,6 +41,18 @@ public:
 
   int getVarArgsSaveSize() const { return VarArgsSaveSize; }
   void setVarArgsSaveSize(int Size) { VarArgsSaveSize = Size; }
+
+  // Prologue save decisions for LR (r31) and FP (r30), fixed once in
+  // determineCalleeSaves after register allocation so that prologue,
+  // epilogue, and frame-index offsets all agree. Unset before PEI.
+  std::optional<bool> isLRSaved() const { return LRSaved; }
+  void setLRSaved(bool V) { LRSaved = V; }
+  std::optional<bool> isFPSaved() const { return FPSaved; }
+  void setFPSaved(bool V) { FPSaved = V; }
+
+private:
+  std::optional<bool> LRSaved;
+  std::optional<bool> FPSaved;
 };
 
 } // end namespace llvm

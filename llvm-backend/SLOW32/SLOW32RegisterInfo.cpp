@@ -61,54 +61,28 @@ BitVector SLOW32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 /// in the memory instruction's imm field.
 static int64_t materialiseBasePlusOffset(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator II, const DebugLoc &DL,
-    const TargetInstrInfo *TII, MachineRegisterInfo &MRI, Register BaseReg,
-    int64_t Offset, int SPAdj, RegScavenger *RS, Register &OutBase) {
+    const SLOW32InstrInfo *TII, Register BaseReg, int64_t Offset, int SPAdj,
+    RegScavenger *RS, Register &OutBase) {
   if (isInt<12>(Offset)) {
     OutBase = BaseReg;
     return Offset;
   }
 
-  if (RS) {
-    if (!BaseReg.isPhysical())
-      report_fatal_error("Frame index elimination requires physical base regs");
+  // requiresRegisterScavenging() is true, so PEI always provides RS here.
+  if (!RS)
+    report_fatal_error("Frame index elimination requires a register scavenger");
+  if (!BaseReg.isPhysical())
+    report_fatal_error("Frame index elimination requires physical base regs");
 
-    unsigned Scav =
-        RS->scavengeRegisterBackwards(SLOW32::GPRRegClass, II, false, SPAdj);
-    if (!Scav)
-      report_fatal_error("Unable to scavenge register for frame index");
+  Register Scratch =
+      RS->scavengeRegisterBackwards(SLOW32::GPRRegClass, II, false, SPAdj);
+  if (!Scratch)
+    report_fatal_error("Unable to scavenge register for frame index");
 
-    Register Scratch = Register(Scav);
-    BuildMI(MBB, II, DL, TII->get(SLOW32::ADD), Scratch)
-        .addReg(BaseReg)
-        .addReg(SLOW32::R0);
-
-    int64_t Remaining = Offset;
-    while (!isInt<12>(Remaining)) {
-      int64_t Step = Remaining > 0 ? std::min<int64_t>(Remaining, 2047)
-                                   : std::max<int64_t>(Remaining, -2048);
-      BuildMI(MBB, II, DL, TII->get(SLOW32::ADDI), Scratch)
-          .addReg(Scratch)
-          .addImm(Step);
-      Remaining -= Step;
-    }
-    OutBase = Scratch;
-    RS->setRegUsed(Scav);
-    return Remaining;
-  }
-
-  Register CurrBase = BaseReg;
-  int64_t Remaining = Offset;
-  while (!isInt<12>(Remaining)) {
-    int64_t Step = Remaining > 0 ? std::min<int64_t>(Remaining, 2047)
-                                 : std::max<int64_t>(Remaining, -2048);
-    Register NextBase = MRI.createVirtualRegister(&SLOW32::GPRRegClass);
-    BuildMI(MBB, II, DL, TII->get(SLOW32::ADDI), NextBase)
-        .addReg(CurrBase)
-        .addImm(Step);
-    CurrBase = NextBase;
-    Remaining -= Step;
-  }
-  OutBase = CurrBase;
+  int64_t Remaining = TII->emitStagedAddImmediate(
+      MBB, II, DL, Scratch, BaseReg, Offset, /*StopWhenImmLegal=*/true);
+  OutBase = Scratch;
+  RS->setRegUsed(Scratch);
   return Remaining;
 }
 
@@ -118,8 +92,8 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   MachineInstr &MI = *II;
   MachineBasicBlock &MBB = *MI.getParent();
   MachineFunction &MF = *MBB.getParent();
-  const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
-  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const SLOW32InstrInfo *TII =
+      static_cast<const SLOW32InstrInfo *>(MF.getSubtarget().getInstrInfo());
   const TargetFrameLowering *TFI = getFrameLowering(MF);
   DebugLoc DL = MI.getDebugLoc();
 
@@ -132,7 +106,10 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   Register FrameReg;
   int64_t Offset =
       TFI->getFrameIndexReference(MF, FrameIndex, FrameReg).getFixed();
-  Offset += SPAdj;
+  // SPAdj is the outstanding ADJCALLSTACKDOWN adjustment. It moves SP but
+  // not FP, so it only skews SP-relative references.
+  if (FrameReg == SLOW32::R29)
+    Offset += SPAdj;
 
   unsigned Opc = MI.getOpcode();
 
@@ -170,7 +147,7 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
       Register OutBase;
       int64_t Imm =
-          materialiseBasePlusOffset(MBB, II, DL, TII, MRI, FrameReg, Offset,
+          materialiseBasePlusOffset(MBB, II, DL, TII, FrameReg, Offset,
                                     SPAdj, RS, OutBase);
       MI.getOperand(BaseIdx).ChangeToRegister(OutBase, /*IsDef=*/false);
       MI.getOperand(ImmIdx).ChangeToImmediate(Imm);
@@ -187,7 +164,7 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
       BaseReg = FrameReg;
 
     Register OutBase;
-    int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, MRI, BaseReg,
+    int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, BaseReg,
                                             Offset, SPAdj, RS, OutBase);
     MI.getOperand(BaseIdx).ChangeToRegister(OutBase, /*IsDef=*/false);
     MI.getOperand(BaseIdx).setIsKill(false);
@@ -202,17 +179,27 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   //           Detected when the desc marks this slot as Imm, or when the
   //           previous operand is a register and there is no following imm.
   // Shape B — FI is a base register with a following imm: `ADDI rd, FI, imm`.
-  const MCOperandInfo &OpInfo = MI.getDesc().operands()[FIOperandNum];
-  const bool DescSaysImm = OpInfo.OperandType == MCOI::OPERAND_IMMEDIATE;
-  const bool PrevIsReg =
-      FIOperandNum > 0 && MI.getOperand(FIOperandNum - 1).isReg();
-  const bool NextIsImm = FIOperandNum + 1 < MI.getNumOperands() &&
+  //
+  // Positional shape-sniffing is only meaningful for fixed-operand SLOW32
+  // instructions. Variadic instructions (INLINEASM with an 'm'-constrained
+  // stack local, patchpoints) declare fewer static operands than
+  // FIOperandNum — indexing the desc would be out of bounds and the
+  // neighbouring operands are constraint flags, not address components —
+  // so they take the bare-FI path: materialise the address into a register.
+  const MCInstrDesc &Desc = MI.getDesc();
+  const bool UseShapes = !MI.isInlineAsm() && !Desc.isVariadic();
+  const bool DescSaysImm =
+      UseShapes && FIOperandNum < Desc.getNumOperands() &&
+      Desc.operands()[FIOperandNum].OperandType == MCOI::OPERAND_IMMEDIATE;
+  const bool PrevIsReg = UseShapes && FIOperandNum > 0 &&
+                         MI.getOperand(FIOperandNum - 1).isReg();
+  const bool NextIsImm = UseShapes && FIOperandNum + 1 < MI.getNumOperands() &&
                          MI.getOperand(FIOperandNum + 1).isImm();
   const bool FIInImmSlot = DescSaysImm || (PrevIsReg && !NextIsImm);
 
   if (FIInImmSlot) {
     Register OutBase;
-    int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, MRI, FrameReg,
+    int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, FrameReg,
                                             Offset, SPAdj, RS, OutBase);
     if (PrevIsReg) {
       MI.getOperand(FIOperandNum - 1)
@@ -226,7 +213,7 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   if (NextIsImm) {
     Offset += MI.getOperand(FIOperandNum + 1).getImm();
     Register OutBase;
-    int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, MRI, FrameReg,
+    int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, FrameReg,
                                             Offset, SPAdj, RS, OutBase);
     MI.getOperand(FIOperandNum).ChangeToRegister(OutBase, /*IsDef=*/false);
     MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Imm);
@@ -235,27 +222,20 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   // Bare FI as a pure register operand: materialise the absolute address.
   Register OutBase;
-  int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, MRI, FrameReg,
+  int64_t Imm = materialiseBasePlusOffset(MBB, II, DL, TII, FrameReg,
                                           Offset, SPAdj, RS, OutBase);
   if (Imm != 0) {
-    if (RS) {
-      unsigned Scav = RS->scavengeRegisterBackwards(SLOW32::GPRRegClass, II,
-                                                    false, SPAdj);
-      if (!Scav)
-        report_fatal_error("Unable to scavenge for frame address");
-      Register Scratch = Register(Scav);
-      BuildMI(MBB, II, DL, TII->get(SLOW32::ADDI), Scratch)
-          .addReg(OutBase)
-          .addImm(Imm);
-      OutBase = Scratch;
-      RS->setRegUsed(Scav);
-    } else {
-      Register Addr = MRI.createVirtualRegister(&SLOW32::GPRRegClass);
-      BuildMI(MBB, II, DL, TII->get(SLOW32::ADDI), Addr)
-          .addReg(OutBase)
-          .addImm(Imm);
-      OutBase = Addr;
-    }
+    if (!RS)
+      report_fatal_error("Frame index elimination requires a scavenger");
+    Register Scratch =
+        RS->scavengeRegisterBackwards(SLOW32::GPRRegClass, II, false, SPAdj);
+    if (!Scratch)
+      report_fatal_error("Unable to scavenge for frame address");
+    BuildMI(MBB, II, DL, TII->get(SLOW32::ADDI), Scratch)
+        .addReg(OutBase)
+        .addImm(Imm);
+    OutBase = Scratch;
+    RS->setRegUsed(Scratch);
   }
   MI.getOperand(FIOperandNum).ChangeToRegister(OutBase, /*IsDef=*/false);
   return false;
