@@ -75,13 +75,17 @@ for all future codegen). None blocking — parity is reached.
 
 ## Open Items
 
-- **DBT intrinsic-stub fault reporting**: on an out-of-bounds intrinsic access
-  (e.g. `memswap` on unmapped memory) slow32-dbt faults correctly but reports
-  a wrong fault address (`bug-dbt-intrinsic-bounds*` differential divergence).
-- **QEMU fault reporting**: qemu-system-slow32 exits silently on the same
-  out-of-bounds intrinsic accesses instead of reporting a fault.
-- **QEMU guest exit codes**: qemu-system-slow32 does not propagate the guest
-  exit code (run-differential.sh compares its output only).
+- **DBT intrinsic-stub fault reporting** ✅ (2026-08 Pack B): A64
+  `emit_a64_stub_fault_exit` stored `EXIT_REASON` into `exit_info` when
+  `info_reg` was W0 (overwrote the fault address with e.g. 7). Fixed by
+  writing `exit_info` before reusing W0 as scratch. Differential
+  `bug-dbt-intrinsic-bounds*` addresses now match the reference.
+- **QEMU fault reporting**: qemu-system-slow32 may still under-report
+  out-of-bounds intrinsic accesses relative to `slow32` (verify when a
+  local `qemu-system-slow32` is available).
+- **QEMU guest exit codes**: `helper.c` now exits with guest `r1` via
+  `qemu_system_shutdown_request_with_code` — re-check differential CI;
+  the previous “does not propagate” note is likely stale.
 - **x64 DBT back-edge fix validation**: the superblock back-edge guard
   (`is_backedge_target` in `translate.c`) was applied to the x86-64 backend by
   inspection; it needs a Linux build+test pass.

@@ -4000,14 +4000,18 @@ static void patch_imm19_branches(emit_ctx_t *e, size_t *offsets, int count, size
 }
 
 // Emit a fault return sequence for intrinsic stubs (restores stack frame first).
+//
+// info_reg holds the guest fault address. It may be W0 (common for dest/a
+// ranges). Store exit_info BEFORE reusing W0 as scratch for PC/reason, or a
+// call with info_reg==W0 reports the exit reason (e.g. 7) as the address.
 static void emit_a64_stub_fault_exit(translate_ctx_t *ctx, exit_reason_t reason, a64_reg_t info_reg) {
     emit_ctx_t *e = &ctx->emit;
     emit_ldp_x64_post(e, W29, W30, WZR, 16);
+    emit_str_w32_imm(e, info_reg, W20, CPU_EXIT_INFO_OFFSET);
     emit_mov_w32_imm32(e, W0, ctx->guest_pc);
     emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
     emit_mov_w32_imm32(e, W0, (uint32_t)reason);
     emit_str_w32_imm(e, W0, W20, CPU_EXIT_REASON_OFFSET);
-    emit_str_w32_imm(e, info_reg, W20, CPU_EXIT_INFO_OFFSET);
     emit_ret_lr(e);
 }
 

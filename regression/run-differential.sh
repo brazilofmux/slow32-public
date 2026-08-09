@@ -133,10 +133,10 @@ DIVERGED_TESTS=()
 # Only honored under ALLOW_KNOWN_DIVERGENCES=1 (CI sets it) so that an
 # interactive run still reports them. A divergence outside this list always
 # fails, so a new bug cannot hide behind the allowlist.
-KNOWN_DIVERGENT="bug-dbt-intrinsic-bounds
-bug-dbt-intrinsic-bounds-memcpy
-bug-dbt-intrinsic-bounds-memset
-bug-dbt-intrinsic-bounds-strlen"
+# Previously: bug-dbt-intrinsic-bounds* diverged because A64 intrinsic stubs
+# stored EXIT_REASON into exit_info when info_reg was W0 (clobber order).
+# Fixed in translate_a64.c emit_a64_stub_fault_exit (Pack B, 2026-08).
+KNOWN_DIVERGENT=""
 
 run_engine() {
     # $1 engine name, $2 engine path, $3 s32x, $4 out-file, then guest args
