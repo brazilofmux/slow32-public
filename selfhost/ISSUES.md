@@ -1633,7 +1633,7 @@ sha256 pins; that is a separate pass with a sums refresh, not a rider on this fi
   the same pass, not left to mask future real diagnostics.
 
 
-### 58. [DRIFT] `c_lexer_gen.c` has been hand-edited past its Ragel source; regeneration is destructive
+### 58. [RESOLVED 2026-08-08] `c_lexer_gen.c` had been hand-edited past its Ragel source; the `.rl` is the source of truth again
 
 `src/c_lexer_gen.c` contains `TK_OFFSETOF` / `TK_STATIC_ASSERT` handling
 (`__builtin_offsetof`, `offsetof`, `_Static_assert` keyword recognition) that does
@@ -1646,6 +1646,22 @@ truth. Fix direction: back-port the offsetof/_Static_assert recognition into
 file modulo `#line`, and only then trust `gen_lexer.sh` again. Until that lands,
 **do not regenerate**; edit the generated file surgically and mirror the edit in the
 `.rl` (as #57's guard now does).
+
+**Resolution (2026-08-08, same day):** the drift was exactly bounded — two token
+defines (`TK_OFFSETOF` 44, `TK_STATIC_ASSERT` 45) and the `c == 95` / `c == 111`
+tails of the keyword classifier, all plain C in the `.rl`'s verbatim section.
+Back-ported into `c_lexer.rl`, regenerated, and acid-tested: the regen matches the
+previously checked-in file **byte-for-byte modulo `#line` renumbering and one
+whitespace-only line** (regen emits four spaces where the hand-maintained file had a
+bare blank). The checked-in `c_lexer_gen.c` is now verbatim `gen_lexer.sh` output —
+generator output is canonical again, and regeneration is safe. Guest impact: none —
+the s12cc PP skips `#line` directives wholesale and whitespace is lexer-invisible, so
+the guest token stream is exactly what the stage08 55/55 gate validated an hour
+earlier. Host gates: both cross trees rebuild (macOS clang; alpine:3.21/GCC 14 for
+cc-x64), `s32fast-hir` reproduces at the identical 55,045 text bytes.
+**Standing rule going forward: edit the `.rl`, run `gen_lexer.sh`, and if the diff to
+the checked-in file is anything other than your change plus `#line` churn, stop —
+that's new drift.**
 
 ### 59. [OPEN] `cc_fp_varargs` fails when `cc-a64` is built by GCC 14 (musl/alpine); passes when built by clang (macOS)
 
