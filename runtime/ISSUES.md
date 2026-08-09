@@ -8,9 +8,12 @@ This document tracks bugs, architectural limitations, and opportunities for impr
 Both `printf` and `fprintf` used a local `buffer[1024]` on the stack.
 - **Status**: Fixed in `903c892`. `vsnprintf_enhanced` now supports size-querying (two-pass), and the formatting functions dynamically allocate a heap buffer if the output exceeds the stack limit.
 
-### 2. Missing `errno` Wiring (Resolved)
+### 2. Missing `errno` Wiring (Resolved, refined 2026-08)
 The `errno` variable existed but was not set by MMIO-based system calls.
-- **Status**: Fixed in `903c892`. Added a full `errno.h` header and updated `mmio_request.c` to map MMIO status codes to standard `errno` values.
+- **Status**: Fixed initially in `903c892` (EINTR / ERR→EIO). Refined 2026-08:
+  hosts put a positive errno in the response `length` field on
+  `S32_MMIO_STATUS_ERR`; `mmio_request.c` maps it into guest `errno`
+  (ENOENT, EBADF, EINVAL, …) with EIO fallback.
 
 ### 3. `pow()` Arbitrary Fast-Path Limit (Resolved)
 The `pow(x, y)` implementation had an arbitrary fast-path limit for integer exponents.
@@ -54,3 +57,12 @@ The current `TIMER` uses 1-second resolution `time()`.
 
 ### 10. `READ_DIRECT` (Zero-copy I/O)
 - **Opportunity**: Ensure all emulators support this opcode to bypass the `S32_MMIO_DATA_BUFFER` for large reads, improving throughput significantly.
+
+### 11. `rewinddir` was a no-op (Resolved 2026-08)
+- **Status**: Fixed. Guest issues `S32_MMIO_OP_REWINDDIR` (0x2B); host
+  emulators (`mmio_ring.c`, QEMU `mmio.c`) call POSIX `rewinddir` on the
+  open `DIR*`.
+
+### 12. `free` double-free freelist corruption (Resolved 2026-08)
+- **Status**: Fixed. `free` rejects out-of-heap pointers, already-free
+  blocks, and impossible sizes before coalescing.

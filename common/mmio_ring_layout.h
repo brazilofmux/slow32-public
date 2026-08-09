@@ -23,7 +23,12 @@ enum {
 #define S32_MMIO_DESC_BYTES   (S32_MMIO_DESC_WORDS * sizeof(uint32_t))
 #define S32_MMIO_DATA_CAPACITY (48u * 1024u)  // Total bytes available in data buffer
 
-// Common response status codes (errno wiring TBD)
+// Common response status codes.
+//
+// On S32_MMIO_STATUS_ERR, the response descriptor's `length` field carries a
+// positive host/guest errno (ENOENT, EBADF, EINVAL, …). Guests map that into
+// the C `errno` variable. If length is 0 or out of range, guests fall back to
+// EIO. Success statuses (OK, byte counts, fds) leave errno unchanged.
 enum {
     S32_MMIO_STATUS_OK    = 0u,
     S32_MMIO_STATUS_EOF   = 0xFFFFFFFDu,  // End of file/directory
@@ -72,9 +77,10 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_ACCESS   = 0x25,  // check file accessibility
     S32_MMIO_OP_CHDIR    = 0x26,  // change current directory
     S32_MMIO_OP_GETCWD   = 0x27,  // get current working directory
-    S32_MMIO_OP_OPENDIR  = 0x28,  // open directory stream
-    S32_MMIO_OP_READDIR  = 0x29,  // read directory entry
-    S32_MMIO_OP_CLOSEDIR = 0x2A,  // close directory stream
+    S32_MMIO_OP_OPENDIR   = 0x28,  // open directory stream
+    S32_MMIO_OP_READDIR   = 0x29,  // read directory entry
+    S32_MMIO_OP_CLOSEDIR  = 0x2A,  // close directory stream
+    S32_MMIO_OP_REWINDDIR = 0x2B,  // rewind directory stream to the start
 
     // 0x30 - 0x3F : Time & event services
     S32_MMIO_OP_GETTIME     = 0x30,  // Returns wall-clock time (64-bit seconds + nanos)

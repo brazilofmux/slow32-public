@@ -191,10 +191,23 @@ void *malloc(size_t size) {
 
 void free(void *ptr) {
     if (!ptr) return;
-    
+
     header_t *block = (header_t *)((char *)ptr - HEADER_SIZE);
+
+    // Reject pointers outside the heap and double-frees. Freestanding libc
+    // does not abort; silently ignore to avoid freelist corruption.
+    if ((char *)block < __heap_start || (char *)block >= __heap_end) {
+        return;
+    }
+    if (!is_allocated(block)) {
+        return;
+    }
+
     size_t size = get_size(block);
-    
+    if (size < MIN_BLOCK_SIZE || (char *)block + size > __heap_end) {
+        return;
+    }
+
     block->size &= ~ALLOCATED_MASK;
     
     // Coalesce Next

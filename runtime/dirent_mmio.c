@@ -107,17 +107,12 @@ void rewinddir(DIR *dirp) {
         return;
     }
 
-    // Close and reopen the directory to reset position
-    // This is a simple implementation - a more efficient one would
-    // add a REWINDDIR MMIO operation
-
-    // Note: We don't have access to the original path, so this is
-    // a limitation. For now, just reset the location counter.
-    // A full implementation would need to either:
-    // 1. Store the path in the DIR structure
-    // 2. Add a REWINDDIR MMIO operation
-    dirp->dd_loc = 0;
-
-    // TODO: Implement proper rewinddir via MMIO operation
-    // For now, this is a no-op beyond resetting dd_loc
+    // Ask the host to rewind the open DIR* (POSIX rewinddir).
+    int result = s32_mmio_request(S32_MMIO_OP_REWINDDIR,
+                                  0u,
+                                  0u,
+                                  (unsigned int)dirp->dd_fd);
+    if (result == (int)S32_MMIO_STATUS_OK) {
+        dirp->dd_loc = 0;
+    }
 }

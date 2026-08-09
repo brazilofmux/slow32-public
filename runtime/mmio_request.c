@@ -9,11 +9,20 @@ static unsigned int next_index(unsigned int value) {
     return (value + 1u) % S32_MMIO_RING_ENTRIES;
 }
 
-static void set_errno_for_status(unsigned int status) {
+// Map MMIO response status (+ optional length-carried errno) into C errno.
+// Success paths leave errno unchanged (POSIX-friendly).
+static void set_errno_for_status(unsigned int status, unsigned int length) {
     if (status == S32_MMIO_STATUS_EINTR) {
         errno = EINTR;
-    } else if (status == S32_MMIO_STATUS_ERR) {
-        errno = EIO;
+        return;
+    }
+    if (status == S32_MMIO_STATUS_ERR) {
+        // Host places a positive errno in length on ERR (see mmio_ring_layout.h).
+        if (length > 0u && length < 4096u) {
+            errno = (int)length;
+        } else {
+            errno = EIO;
+        }
     }
 }
 
@@ -50,9 +59,10 @@ int s32_mmio_request(unsigned int opcode,
     }
 
     unsigned int resp_desc = resp_tail * S32_MMIO_DESC_WORDS;
+    unsigned int resp_length = resp_ring[resp_desc + 1];
     unsigned int result = resp_ring[resp_desc + 3];
 
     S32_MMIO_RESP_TAIL = next_index(resp_tail);
-    set_errno_for_status(result);
+    set_errno_for_status(result, resp_length);
     return (int)result;
 }
