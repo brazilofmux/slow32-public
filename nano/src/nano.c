@@ -17,6 +17,8 @@
 #define LINE_INIT_CAP  64
 #define LINES_INIT_CAP 128
 #define MAX_FILENAME   256
+/* Room for MAX_FILENAME plus the ".nano.<0-99>.tmp" save suffix. */
+#define MAX_TEMP_NAME  (MAX_FILENAME + 16)
 #define MAX_SEARCH     256
 #define MAX_MESSAGE    256
 #define MAX_DIRTY      256  /* max screen rows for dirty tracking */
@@ -459,6 +461,9 @@ static void editor_undo(void) {
         }
     }
     E.current_state = state_before;
+    /* Undo ends any run of cuts: a following ^K starts a fresh cut buffer
+     * instead of appending to the run this undo just took apart. */
+    E.last_was_cut = 0;
     editor_sync_modified();
     editor_set_message("Undo");
 }
@@ -527,6 +532,7 @@ static void editor_redo(void) {
         }
     }
     E.current_state = state_after;
+    E.last_was_cut = 0;
     editor_sync_modified();
     editor_set_message("Redo");
 }
@@ -572,6 +578,10 @@ static void editor_load(const char *filename) {
     fclose(f);
 }
 
+/* Build a sibling temp path for the atomic save. The caller's buffer must be
+ * MAX_TEMP_NAME bytes: E.filename can fill MAX_FILENAME, and the suffix needs
+ * room on top of it, so sizing this at MAX_FILENAME would make the longest
+ * legal filenames unsaveable. */
 static int editor_make_temp_name(char *temp_name, int temp_size) {
     int attempt;
 
@@ -614,7 +624,7 @@ static int editor_write_file(const char *filename) {
 }
 
 static int editor_save(void) {
-    char temp_name[MAX_FILENAME];
+    char temp_name[MAX_TEMP_NAME];
 
     if (E.filename[0] == '\0') {
         char namebuf[MAX_FILENAME] = "";
@@ -637,6 +647,10 @@ static int editor_save(void) {
         snprintf(E.message, MAX_MESSAGE, "Write failed; original unchanged: %s", E.filename);
         return -1;
     }
+    /* rename() replaces the target inode, so the saved file carries the temp
+     * file's mode rather than the original's, and a symlinked path is replaced
+     * by a regular file. Preserving mode would need chmod(), which the SLOW-32
+     * runtime does not provide; the atomicity is worth the trade here. */
     if (rename(temp_name, E.filename) != 0) {
         snprintf(E.message, MAX_MESSAGE, "Rename failed; recovery file: %s", temp_name);
         return -1;
@@ -1076,12 +1090,13 @@ static void editor_insert_newline(void) {
 }
 
 static void editor_insert_tab(void) {
+    char indent[TAB_STOP];
     int visual_cx;
     int spaces;
-    const char *indent = "    ";
     if (E.cy >= E.num_lines) return;
     visual_cx = line_visual_col(&E.lines[E.cy], E.cx);
     spaces = TAB_STOP - (visual_cx % TAB_STOP);
+    memset(indent, ' ', sizeof(indent));
     undo_push(UNDO_INSERT_TEXT, E.cy, E.cx, 0, indent, spaces);
     line_insert_text(&E.lines[E.cy], E.cx, indent, spaces);
     E.cx += spaces;
@@ -1155,6 +1170,15 @@ static void cut_buf_append(const char *text, int len) {
 static void editor_cut_line(void) {
     if (E.cy >= E.num_lines) return;
 
+    /* The sole empty line has nothing to remove. Return before touching the
+     * cut buffer so a held ^K cannot grow it without bound, and leave
+     * last_was_cut alone so an in-progress run of cuts stays intact. */
+    if (E.num_lines == 1 && E.lines[0].len == 0) {
+        E.quit_count = 0;
+        editor_set_message("Nothing to cut");
+        return;
+    }
+
     /* If last action wasn't cut, clear the buffer */
     if (!E.last_was_cut)
         cut_buf_clear();
@@ -1163,13 +1187,11 @@ static void editor_cut_line(void) {
     cut_buf_append(E.lines[E.cy].text, E.lines[E.cy].len);
 
     if (E.num_lines == 1) {
-        int len = E.lines[0].len;
-        if (len > 0) {
-            undo_push(UNDO_DELETE_TEXT, 0, 0, 0, E.lines[0].text, len);
-            line_set(&E.lines[0], "", 0);
-            E.cx = 0;
-            E.modified = 1;
-        }
+        /* Clear the sole line in place: deleting it would leave zero lines. */
+        undo_push(UNDO_DELETE_TEXT, 0, 0, 0, E.lines[0].text, E.lines[0].len);
+        line_set(&E.lines[0], "", 0);
+        E.cx = 0;
+        E.modified = 1;
     } else {
         undo_push(UNDO_FULL_LINE, E.cy, E.cx, 0,
                   E.lines[E.cy].text, E.lines[E.cy].len);
@@ -1367,13 +1389,14 @@ static void editor_delete_word_backward(void) {
 }
 
 static void editor_indent_line(void) {
+    char indent[TAB_STOP];
+    line_t *l;
     if (E.cy >= E.num_lines) return;
-    line_t *l = &E.lines[E.cy];
-    int spaces = TAB_STOP;
-    const char *indent = "    ";
-    undo_push(UNDO_INSERT_TEXT, E.cy, 0, 0, indent, spaces);
-    line_insert_text(l, 0, indent, spaces);
-    E.cx += spaces;
+    l = &E.lines[E.cy];
+    memset(indent, ' ', sizeof(indent));
+    undo_push(UNDO_INSERT_TEXT, E.cy, 0, 0, indent, TAB_STOP);
+    line_insert_text(l, 0, indent, TAB_STOP);
+    E.cx += TAB_STOP;
     E.modified = 1;
     E.quit_count = 0;
     E.last_was_cut = 0;
@@ -2099,6 +2122,63 @@ static int run_tests(void) {
         test_assert(tab_at == 5000 && cr_at == 5002,
                     "round-trip: control bytes preserved in place");
         remove(path);
+    }
+
+    /* Test 27: undo ends a run of cuts */
+    {
+        editor_reset();
+        editor_insert_line(0, "Line1", 5);
+        editor_insert_line(1, "Line2", 5);
+        E.cy = 0; E.cx = 0;
+        editor_cut_line();
+        test_assert(E.cut_count == 1, "cut-run: first cut buffers one line");
+        editor_undo();
+        test_assert(!E.last_was_cut, "cut-run: undo ends the run");
+        editor_cut_line();
+        test_assert(E.cut_count == 1,
+                    "cut-run: cut after undo starts a fresh buffer");
+    }
+
+    /* Test 28: cutting the sole empty line is a no-op */
+    {
+        editor_reset();
+        editor_insert_line(0, "only", 4);
+        editor_cut_line();
+        test_assert(E.cut_count == 1, "empty-cut: real line was cut");
+        editor_cut_line();
+        editor_cut_line();
+        test_assert(E.cut_count == 1,
+                    "empty-cut: sole empty line does not grow the cut buffer");
+        test_assert(E.num_lines == 1 && E.lines[0].len == 0,
+                    "empty-cut: buffer still holds one empty line");
+        editor_undo();
+        test_assert(strcmp(E.lines[0].text, "only") == 0,
+                    "empty-cut: no-op cuts pushed no undo entries");
+    }
+
+    /* Test 29: a long filename still saves atomically. The name is long
+     * enough that "<name>.nano.0.tmp" does not fit in MAX_FILENAME (which
+     * used to make the file unsaveable) but short enough that the temp file's
+     * final path component stays under the host's NAME_MAX. */
+    {
+        char longname[MAX_FILENAME];
+        int n;
+
+        editor_reset();
+        n = snprintf(longname, sizeof(longname), "/tmp/slow32-nano-");
+        while (n < MAX_FILENAME - 11)
+            longname[n++] = 'n';
+        longname[n] = '\0';
+        test_assert(n + 11 >= MAX_FILENAME,
+                    "long-name: fixture overflows a MAX_FILENAME temp buffer");
+
+        remove(longname);
+        editor_insert_line(0, "long", 4);
+        strncpy(E.filename, longname, MAX_FILENAME - 1);
+        E.filename[MAX_FILENAME - 1] = '\0';
+        test_assert(editor_save() == 0,
+                    "long-name: temp name has room for the save suffix");
+        remove(longname);
     }
 
     /* Cleanup */
