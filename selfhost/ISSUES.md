@@ -1676,3 +1676,53 @@ bug (uninitialized local / UB in the compiler's own source that one host optimiz
 exploits and another doesn't). Suspect first: uninitialized fields in the new
 FP-varargs frame-control-block codegen paths (`hir_codegen_a64.h`, 523af572).
 Repro: alpine:3.21, `make && make test-cc` in `stage08-cross-a64`.
+
+### 60. [RESOLVED 2026-08-09] stage08 `cc.s32x` sum pinned a stale (pre-PP-predefs) build
+
+**Report:** three different sha256s for stage08 `cc.s32x` — the old pin
+(`71d36389`), a kagura rebuild that re-pinned it (`3518d180`, commit `f2af1067`),
+and a Mac rebuild matching neither (`e1a44c22`). Suspected reproducibility break.
+
+**Not a reproducibility break.** Determinism is what identified it: rewinding
+`src/pp.h`, `src/parser.h` and `stage08/s12cc.c` to their **pre-`e6c3ee6c`** state
+(commit `b817d2e1`) and rebuilding on the *Mac* reproduced `3518d180` **exactly**,
+byte for byte, 477,029 bytes. You cannot hit a 256-bit target by accident. The
+pinned artifact was simply built from sources predating the PP-predefs commit and
+pinned after the tree had moved on.
+
+Each `pp.h` state has its own signature — verified on this Mac:
+
+| source state | sha256 (first 8) | bytes |
+|---|---|---|
+| `@b817d2e1` (pre-PP-predefs) | `3518d180` | 477,029 |
+| `@e6c3ee6c` (predefs, pre-stringize) | `11464468` | 478,799 |
+| current (`f2af1067`) | `e1a44c22` | 480,523 |
+
+**Cross-host agreement is intact, and was measured rather than assumed:** Mac and
+kagura are byte-identical at every step — same HEAD, same `stage07` inputs, same
+frontend sources, and identical output for all 18 build intermediates (`s12cc.s` at
+2,475,295 bytes, every libc `.s`/`.s32o`, `crt0`, `mmio_no_start`, both builtins).
+Engines agree too: `slow32`, `slow32-fast` and `slow32-dbt` all produce `e1a44c22`
+on the Mac (a64) and on kagura (x64). Both build paths agree: `make` and
+`build-s12cc.sh` both give `e1a44c22`.
+
+**Why only `cc.s32x` moved:** `s12cc.c` is the only stage08 source that includes
+`pp.h`/`parser.h`/`c_lexer_gen.c`. The other five tools don't, so they reproduce
+their pins across the change — which is exactly what kagura observed and correctly
+reported.
+
+**Fix:** re-pinned to `e1a44c22`, the value reproducible on two hosts, three
+engines, and two build paths.
+
+**Latent hazard found while investigating (not the cause here):** `make clean` in
+`stage08` removes `cc.s32x`, the five tools and the stamps, but leaves **12
+`lib/*.s32o`** — the phase-2 gen1-compiled libc — in place. Those do not feed
+`cc.s32x` (phase 1 links fresh `WORKDIR` objects), so they did not cause this. But
+a "clean" that leaves generated objects behind is a staleness trap of the same
+family; worth extending the `clean` target or documenting the exclusion
+deliberately.
+
+**Rule this reinforces:** re-pin only from a build whose tree state you have
+verified, and prefer re-pinning from a build you can reproduce twice. A sum file is
+a claim about a specific input state; pinning after a pull silently changes which
+state the claim refers to.
