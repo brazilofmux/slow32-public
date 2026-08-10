@@ -143,30 +143,7 @@
   2DROP
   R> DUP IF 0< IF -1 ELSE 1 THEN THEN ;
 
-: (STREQ)  ( a1 a2 u -- flag )
-  DUP 0 > IF
-    0 DO
-      OVER I + C@  OVER I + C@ <> IF 2DROP 0 UNLOOP EXIT THEN
-    LOOP
-  ELSE DROP THEN
-  2DROP 1 ;
-
-: SEARCH  ( a1 u1 a2 u2 -- a3 u3 flag )
-  DUP 0= IF 2DROP 1 EXIT THEN
-  ROT >R ROT R>                ( a2 u2 a1 u1 )
-  DUP 3 PICK - 1+ 0 MAX       ( a2 u2 a1 u1 limit )
-  DUP 0 > IF
-    0 DO
-      OVER I +                   ( a2 u2 a1 u1 a1+i )
-      4 PICK 4 PICK              ( a2 u2 a1 u1 a1+i a2 u2 )
-      (STREQ) IF
-        SWAP I + SWAP I -        ( a2 u2 a1+i u1-i )
-        2SWAP 2DROP 1
-        UNLOOP EXIT
-      THEN
-    LOOP
-  ELSE DROP THEN
-  2SWAP 2DROP 0 ;
+\ SEARCH is a kernel primitive (memcmp-based)
 
 : PLACE  ( addr u dest -- )
   2DUP C!  1+ SWAP CMOVE ;
@@ -229,6 +206,9 @@
 
 : >IN  ( -- addr )  TOIN ;
 
+\ PAD is a transient region above HERE (ANS). Separate from the kernel's
+\ word_buf (WORD) and pno_buf (<# HOLD #>/.) so parse and numeric output
+\ do not stomp the user pad.
 : PAD  ( -- addr )  HERE 128 + ;
 
 : >NUMBER  ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )

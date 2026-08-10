@@ -18,7 +18,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 - **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`, `2/`, `S>D`, `D+`, `D-`, `UM/MOD`, `UM*`, `M*`
 - **Logic**: `AND`, `OR`, `XOR`, `INVERT`, `LSHIFT`, `RSHIFT`
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
-- **Memory**: `!`, `@`, `C!`, `C@`, `C,`, `2!`, `2@`
+- **Memory**: `!`, `@`, `C!`, `C@`, `C,`, `2!`, `2@`, `MOVE`, `SEARCH`
 - **I/O**: `EMIT`, `KEY`, `TYPE`, `.`, `.S`, `CR`, `ACCEPT`
 - **Compiler**: `:`, `;`, `:NONAME`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `C"`, `S\"`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
@@ -48,7 +48,8 @@ Loaded automatically from `prelude.fth` at startup:
 - **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`, `HOLDS`
 - **Core Arithmetic**: `SM/REM`, `FM/MOD`, `*/MOD`, `*/`, `>NUMBER`
 - **Double-Number**: `D>S`, `DNEGATE`, `DABS`, `D0=`, `D0<`, `D=`, `D<`, `M+`, `D.`, `D.R`
-- **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `SEARCH`, `PLACE`, `-TRAILING`
+- **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `PLACE`, `-TRAILING`
+  (`SEARCH` and `MOVE` are kernel primitives)
 - **System**: `>BODY`, `SOURCE`, `WITHIN`, `ALIGNED`, `ALIGN`, `ABORT"`, `>IN`, `PAD`, `REFILL`, `NOOP`
 - **Stack**: `ROLL`
 - **I/O**: `.(` (immediate display)

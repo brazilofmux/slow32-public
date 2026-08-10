@@ -572,9 +572,9 @@ dot_make_positive:
     addi r6, r0, 1     # sign = 1
 dot_no_sign:
 
-    # Set buffer end (use top half of PAD)
-    lui r8, %hi(pad)
-    addi r8, r8, %lo(pad)
+    # Set buffer end (use pno_buf, grows downward)
+    lui r8, %hi(pno_buf)
+    addi r8, r8, %lo(pno_buf)
     addi r8, r8, 127   # buffer end
     add r9, r8, r0     # keep end pointer
 
@@ -1125,7 +1125,7 @@ zbranch_fallthrough:
     addi r26, r26, 4   # skip offset cell
     jal r0, next
 
-# Word: WORD ( -- c-addr ) parses next token into PAD as counted string
+# Word: WORD ( -- c-addr ) parses next token into word_buf as counted string
 .text
     .align 2
 head_word:
@@ -1175,9 +1175,13 @@ word_end:
     sub r13, r4, r12        # len
     stw r3, r4, 0           # update >IN
 
-    # Build counted string in PAD (uppercased)
-    lui r14, %hi(pad)
-    addi r14, r14, %lo(pad)
+    # Build counted string in word_buf (uppercased); cap at 255
+    addi r19, r0, 255
+    bgeu r19, r13, word_len_ok
+    add r13, r19, r0
+word_len_ok:
+    lui r14, %hi(word_buf)
+    addi r14, r14, %lo(word_buf)
     stb r14, r13, 0         # length byte
     addi r15, r14, 1        # dest pointer
     add r16, r11, r0        # src pointer
@@ -1200,12 +1204,12 @@ word_no_upper:
 
 word_copy_done:
     addi r28, r28, -4
-    stw r28, r14, 0         # push PAD address
+    stw r28, r14, 0         # push word_buf address
     jal r0, next
 
 word_empty:
-    lui r14, %hi(pad)
-    addi r14, r14, %lo(pad)
+    lui r14, %hi(word_buf)
+    addi r14, r14, %lo(word_buf)
     stb r14, r0, 0          # len = 0
     addi r28, r28, -4
     stw r28, r14, 0
@@ -1493,9 +1497,9 @@ interpret_resume:
 
 interpret_error:
     addi r28, r28, 8         # drop n and flag
-    # Print the offending word from PAD (counted string)
-    lui r1, %hi(pad)
-    addi r1, r1, %lo(pad)
+    # Print the offending word from word_buf (counted string)
+    lui r1, %hi(word_buf)
+    addi r1, r1, %lo(word_buf)
     ldbu r2, r1, 0           # r2 = length
     addi r1, r1, 1           # r1 = first char
     add r4, r0, r0           # r4 = index
@@ -1708,9 +1712,14 @@ colon_end:
     stw r3, r4, 0           # update >IN
     beq r13, r0, colon_done
 
-    # Build counted string in PAD (uppercased)
-    lui r14, %hi(pad)
-    addi r14, r14, %lo(pad)
+    # Cap name length at 127 (IMMEDIATE occupies bit 7 of length byte)
+    addi r19, r0, 127
+    bgeu r19, r13, colon_len_ok
+    add r13, r19, r0
+colon_len_ok:
+    # Build counted string in word_buf (uppercased)
+    lui r14, %hi(word_buf)
+    addi r14, r14, %lo(word_buf)
     stb r14, r13, 0
     addi r15, r14, 1        # dest pointer
     add r16, r11, r0        # src pointer
@@ -1767,8 +1776,8 @@ colon_copy_done:
     stb r4, r2, 0
     addi r4, r4, 1
 
-    # Copy name characters from PAD+1
-    addi r8, r14, 1     # src = PAD+1
+    # Copy name characters from word_buf+1
+    addi r8, r14, 1     # src = word_buf+1
     add r9, r0, r0      # i = 0
 colon_header_copy:
     bge r9, r13, colon_header_done
@@ -2951,9 +2960,14 @@ create_end:
     sub r13, r4, r12
     stw r3, r4, 0          # update >IN
     beq r13, r0, create_done
-    # Build counted string in PAD (uppercased)
-    lui r14, %hi(pad)
-    addi r14, r14, %lo(pad)
+    # Cap name length at 127 (IMMEDIATE occupies bit 7 of length byte)
+    addi r19, r0, 127
+    bgeu r19, r13, create_len_ok
+    add r13, r19, r0
+create_len_ok:
+    # Build counted string in word_buf (uppercased)
+    lui r14, %hi(word_buf)
+    addi r14, r14, %lo(word_buf)
     stb r14, r13, 0
     addi r15, r14, 1
     add r16, r11, r0
@@ -3005,7 +3019,7 @@ create_copy_done:
     and r2, r13, r7
     stb r4, r2, 0
     addi r4, r4, 1
-    # Copy name characters from PAD+1
+    # Copy name characters from word_buf+1
     addi r8, r14, 1
     add r9, r0, r0
 create_header_copy:
@@ -3539,12 +3553,12 @@ head_less_sharp:
 xt_less_sharp:
     .word less_sharp_word
 less_sharp_word:
-    lui r1, %hi(pad)
-    addi r1, r1, %lo(pad)
-    addi r1, r1, 128          # pad + 128 (one past end)
+    lui r1, %hi(pno_buf)
+    addi r1, r1, %lo(pno_buf)
+    addi r1, r1, 128          # pno_buf + 128 (one past end)
     lui r2, %hi(var_hld)
     addi r2, r2, %lo(var_hld)
-    stw r2, r1, 0             # HLD = pad + 128
+    stw r2, r1, 0             # HLD = pno_buf + 128
     jal r0, next
 
 # Word: HOLD ( char -- ) Prepend char to pictured output buffer
@@ -3564,9 +3578,14 @@ hold_word:
     addi r2, r2, %lo(var_hld)
     ldw r3, r2, 0             # HLD
     addi r3, r3, -1           # --HLD
+    lui r4, %hi(pno_buf)
+    addi r4, r4, %lo(pno_buf)
+    bltu r3, r4, hold_overflow  # walked past start of buffer
     stb r3, r1, 0             # *HLD = char
     stw r2, r3, 0             # save updated HLD
     jal r0, next
+hold_overflow:
+    jal r0, abort_word
 
 # Word: #> ( ud -- addr len ) End pictured numeric output
 .text
@@ -3582,9 +3601,9 @@ sharp_greater_word:
     lui r2, %hi(var_hld)
     addi r2, r2, %lo(var_hld)
     ldw r3, r2, 0             # HLD = start addr
-    lui r4, %hi(pad)
-    addi r4, r4, %lo(pad)
-    addi r4, r4, 128          # pad + 128 = end
+    lui r4, %hi(pno_buf)
+    addi r4, r4, %lo(pno_buf)
+    addi r4, r4, 128          # pno_buf + 128 = end
     sub r5, r4, r3            # len = end - HLD
     addi r28, r28, 4          # pop ud_hi (double-cell input)
     stw r28, r3, 0            # replace ud_lo with addr
@@ -3604,13 +3623,19 @@ xt_pick:
     .word pick_word
 pick_word:
     ldw r1, r28, 0        # n
-    addi r1, r1, 1         # n+1 (skip past n itself)
-    add r1, r1, r1         # (n+1) * 2
-    add r1, r1, r1         # (n+1) * 4
-    add r1, r28, r1        # DSP + (n+1)*4
-    ldw r2, r1, 0          # fetch item
+    # Bounds: address = DSP + (n+1)*4 must be < dstack_top
+    addi r2, r1, 1         # n+1
+    add r2, r2, r2
+    add r2, r2, r2         # (n+1)*4
+    add r3, r28, r2        # candidate address
+    lui r4, %hi(dstack_top)
+    addi r4, r4, %lo(dstack_top)
+    bgeu r3, r4, pick_oob  # past stack top
+    ldw r2, r3, 0          # fetch item
     stw r28, r2, 0         # replace TOS
     jal r0, next
+pick_oob:
+    jal r0, abort_word
 
 # Word: 2! ( x1 x2 addr -- ) Store pair: x2 at addr, x1 at addr+4
 .text
@@ -5431,6 +5456,80 @@ move_word:
 .Lmove_done:
     jal r0, next
 
+# Word: SEARCH ( a1 u1 a2 u2 -- a3 u3 flag )
+# Find first occurrence of string a2/u2 within a1/u1.
+# On match: a3/u3 is the remaining haystack from the match; flag=1.
+# On miss:  a3/u3 is the original a1/u1; flag=0.
+# Empty needle (u2=0): match at start, flag=1.
+.text
+    .align 2
+head_search:
+    .word head_move
+    .byte 6
+    .ascii "SEARCH"
+    .align 2
+xt_search:
+    .word search_word
+search_word:
+    ldw r11, r28, 0        # r11 = u2 (needle len)
+    ldw r12, r28, 4        # r12 = a2 (needle)
+    ldw r13, r28, 8        # r13 = u1 (haystack len)
+    ldw r14, r28, 12       # r14 = a1 (haystack)
+    addi r28, r28, 16      # pop 4
+
+    # Empty needle => match at start
+    beq r11, r0, search_hit_start
+
+    # Needle longer than haystack => miss
+    bltu r13, r11, search_miss
+
+    # positions = u1 - u2 + 1
+    sub r15, r13, r11
+    addi r15, r15, 1
+    add r16, r0, r0        # i = 0
+
+search_scan:
+    bge r16, r15, search_miss
+    # memcmp(a1+i, a2, u2) — state kept in callee-saved r11-r16
+    add r3, r14, r16       # s1
+    add r4, r12, r0        # s2
+    add r5, r11, r0        # n
+    jal memcmp
+    beq r1, r0, search_hit
+    addi r16, r16, 1
+    jal r0, search_scan
+
+search_hit:
+    add r17, r14, r16      # a3 = a1 + i
+    sub r18, r13, r16      # u3 = u1 - i
+    addi r28, r28, -4
+    stw r28, r17, 0        # a3
+    addi r28, r28, -4
+    stw r28, r18, 0        # u3
+    addi r28, r28, -4
+    addi r1, r0, 1
+    stw r28, r1, 0         # flag = 1
+    jal r0, next
+
+search_hit_start:
+    addi r28, r28, -4
+    stw r28, r14, 0        # a3 = a1
+    addi r28, r28, -4
+    stw r28, r13, 0        # u3 = u1
+    addi r28, r28, -4
+    addi r1, r0, 1
+    stw r28, r1, 0         # flag = 1
+    jal r0, next
+
+search_miss:
+    addi r28, r28, -4
+    stw r28, r14, 0        # a3 = original a1
+    addi r28, r28, -4
+    stw r28, r13, 0        # u3 = original u1
+    addi r28, r28, -4
+    stw r28, r0, 0         # flag = 0
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -5440,14 +5539,14 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_move                # Point to last defined word
+    .word head_search              # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_ptr: .word tib
 var_source_len: .word 0
 var_prompt_enabled: .word 0        # 0 = suppress prompts (prelude), 1 = show prompts
 var_leave_list:     .word 0        # compile-time leave-list head for DO...LOOP
-var_hld:            .word 0            # Pictured numeric output pointer into PAD
+var_hld:            .word 0            # Pictured numeric output pointer into pno_buf
 var_catch_frame:    .word 0            # Exception frame pointer (0 = none)
 var_compilation_wid: .word var_latest   # Current compilation wordlist (initially FORTH-WORDLIST)
 var_cf_sp:          .word 0            # Control-flow validation stack depth (compile-time)
@@ -5481,7 +5580,8 @@ interp_resume_xt:
 tib:            .space 256         # Terminal Input Buffer
 user_dictionary: .space 2097152    # 2MB space for new words
 user_dictionary_end:
-pad:            .space 128         # Scratch pad for strings/numbers
+word_buf:       .space 256         # WORD / : / CREATE counted-name buffer (len+name)
+pno_buf:        .space 128         # Pictured numeric output + '.' conversion
 file_path_buf:   .space 512        # Temporary path buffer
 file_path_buf2:  .space 512        # Secondary path buffer (rename)
 file_stat_buf:   .space 128        # struct stat scratch buffer
@@ -5576,10 +5676,10 @@ cold_after_prompt:
 .data
     .align 2
 dstack_bottom:
-    .space 4096
+    .space 8192            # 2K cells — deep recursion / nested DO
 dstack_top:
 
     .align 2
 rstack_bottom:
-    .space 4096
+    .space 8192            # 2K cells
 rstack_top:

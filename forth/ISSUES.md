@@ -18,10 +18,16 @@ The `EVALUATE` primitive previously copied input strings into the `tib` buffer.
 Primitives that advanced `HERE` lacked overflow protection.
 - **Status**: Fixed in `86b3f41`. Added checks against `user_dictionary_end` in `COMMA`, `ALLOT`, `C,`, and word definition headers. Overflow now triggers a system reset via `ABORT`.
 
-### 4. `PAD` Buffer Conflict
-- **Problem**: The `pad` label in `kernel.s` (used by `WORD` to store the parsed name) is at the end of the user dictionary. However, the `PAD` word in `prelude.fth` is defined as `HERE 128 +`. 
-- **Conflict**: If the dictionary grows, `PAD` (word) moves and may collide with other data. `WORD` returns an address that is far away from the user's `PAD`.
-- **Recommendation**: Unify the definition of `PAD`. Standard Forth `WORD` buffer is usually separate from `PAD`.
+### 4. `PAD` Buffer Conflict (Resolved)
+- **Problem**: A single fixed `pad` BSS buffer was shared by `WORD`/`: `/`CREATE`
+  (counted names), pictured numeric output (`<#`/`HOLD`/`#>`), and `.`
+  conversion, while the `PAD` word returned `HERE 128 +`.
+- **Status**: Split into dedicated buffers:
+  - `word_buf` (256 B) — parse / define name buffer; length capped at 255
+    for `WORD`, 127 for dictionary headers (IMMEDIATE uses length bit 7)
+  - `pno_buf` (128 B) — pictured numeric output and `.`
+  - `PAD` remains `HERE 128 +` (ANS transient region above the dictionary)
+- Covered by `tests/test-pad-isolation.fth`.
 
 ### 5. Brittle Branch Offsets in `COLD_START` (Resolved)
 The boot code used hardcoded numeric offsets for `0BRANCH` and `BRANCH`.
@@ -31,19 +37,20 @@ The boot code used hardcoded numeric offsets for `0BRANCH` and `BRANCH`.
 
 ## Performance & Optimization Opportunities
 
-### 6. Inefficient `MOVE` and `SEARCH`
+### 6. Inefficient `MOVE` and `SEARCH` (Resolved)
 These were implemented as byte-by-byte loops in `prelude.fth`.
-- **Status**: `MOVE` fixed in `221eb58`. Now an assembly primitive that calls `memmove()`, allowing fast emulators to use host-native memory operations.
-- **Opportunity**: Implement `SEARCH` as an assembly primitive or using an optimized algorithm.
+- **Status**: `MOVE` is a kernel primitive calling `memmove()`. `SEARCH` is now
+  a kernel primitive using host `memcmp()` over candidate windows (empty
+  needle / not-found semantics preserved). Removed the Forth `(STREQ)` helper.
 
-### 7. Native `MULHU` for `UM*` (kernel.s:3460)
-The `UM*` implementation manually converts a signed `MULH` result to unsigned.
-- **Opportunity**: The SLOW-32 ISA provides a native `MULHU` instruction (opcode 0x1F) which performs unsigned 32x32->hi-32 multiply directly.
+### 7. Native `MULHU` for `UM*` (Resolved)
+- **Status**: `UM*` already uses `mulhu` (unsigned high multiply). `M*` continues
+  to use signed `mulh`. No further change required.
 
 ### 8. `FIND` Efficiency
 The `FIND` word performs a linear search through a linked list of word headers.
-- **Note**: While standard for Stage 4, as the dictionary grows (prelude + user code), lookups will slow down significantly. 
-- **Future**: Consider a hashed dictionary or a more efficient search structure for Stage 5.
+- **Note**: While standard for Stage 4, as the dictionary grows (prelude + user code), lookups will slow down significantly.
+- **Future**: Consider a hashed dictionary or a more efficient search structure for Stage 5. Not blocking; stage01 tools remain usable.
 
 ---
 
@@ -53,7 +60,17 @@ The `FIND` word performs a linear search through a linked list of word headers.
 When a word was not found, the interpreter printed only `?`.
 - **Status**: Fixed in `ba29655`. The interpreter now prints the offending word name (e.g., `XYZZY ?`) before the newline.
 
-### 10. Stack Size Limits
-Data and Return stacks are currently 1024 bytes (256 cells) each.
-- **Note**: This is sufficient for the prelude, but deeply recursive Forth code or large `DO` loop nesting may hit these limits quickly.
-- **Recommendation**: Consider increasing to 4KB or 8KB if memory permits.
+### 10. Stack Size Limits (Resolved)
+- **Status**: Data and return stacks are **8192 bytes (2048 cells)** each
+  (was already 4 KB; raised further for deep recursion / nested `DO`).
+
+---
+
+## Hardening (this pass)
+
+| Area | Change |
+|------|--------|
+| `HOLD` | Aborts if the pictured buffer underflows past `pno_buf` |
+| `PICK` | Aborts if the index would read past `dstack_top` |
+| `WORD` / `:` / `CREATE` | Length caps prevent writing past `word_buf` / 7-bit header length |
+| Buffer split | Parse, pictured numbers, and user `PAD` no longer alias |
