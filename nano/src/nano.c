@@ -3,6 +3,22 @@
  *
  * Uses the terminal service (term.h) for full-screen editing.
  * Single-file implementation with array-of-lines buffer.
+ *
+ * File model: the buffer holds file bytes verbatim. Loading never rewrites
+ * what it read, and saving writes back exactly what was loaded unless it was
+ * edited. Two visible consequences follow, and both are deliberate:
+ *
+ *   - A trailing newline is represented as a final empty line rather than a
+ *     flag, so "a\n" loads as two lines and a normal newline-terminated file
+ *     reports one more line than `wc -l`. This is what keeps an empty file,
+ *     "text", and "text\n" distinguishable on a round trip.
+ *   - CR is not stripped, so a CRLF file shows a '?' (the substitute glyph
+ *     for control bytes) at the end of every line. Stripping it on load would
+ *     silently rewrite the file on the next save.
+ *
+ * Undo is transactional: undo_begin()/undo_end() group the entries a single
+ * command produces, so one ^Z reverses one command. Entry cost scales with
+ * lines touched, not characters — see editor_replace_line_all().
  */
 
 #include <stdio.h>
@@ -305,7 +321,12 @@ static void undo_clear(void) {
         undo_free_entry(&E.undo_stack[i]);
     E.undo_top = 0;
     E.undo_count = 0;
+    /* Reset the whole group state, not just the depth: leaving
+     * undo_group_recording clear would silently drop the next command's
+     * entries if undo_clear() were ever called with a group open. */
     E.undo_group_depth = 0;
+    E.undo_group_recording = 0;
+    E.undo_group_has_entries = 0;
 }
 
 static void editor_sync_modified(void) {
@@ -320,6 +341,16 @@ static void undo_begin(void) {
     E.undo_group_after = E.next_state++;
     E.undo_group_has_entries = 0;
     E.undo_group_recording = 1;
+}
+
+/* Record that the open group has changed the buffer. The group's state is
+ * applied here rather than only in undo_end() so that a redraw in the middle
+ * of a command — the ^R replace prompts, say — shows [Modified] correctly.
+ * Applying it twice is harmless: undo_group_after is a fixed value. */
+static void undo_mark_group_dirty(void) {
+    E.undo_group_has_entries = 1;
+    E.current_state = E.undo_group_after;
+    editor_sync_modified();
 }
 
 static void undo_end(void) {
@@ -371,7 +402,7 @@ static void undo_push(int type, int cy, int cx, char ch, const char *text, int t
              * non-undoable instead of allowing a corrupt partial undo. */
             while (E.undo_count > 0)
                 undo_drop_oldest_group();
-            E.undo_group_has_entries = 1;
+            undo_mark_group_dirty();
             E.undo_group_recording = 0;
             if (implicit_group) undo_end();
             return;
@@ -398,7 +429,7 @@ static void undo_push(int type, int cy, int cx, char ch, const char *text, int t
         e->state_after = E.undo_group_after;
     }
     E.undo_top = E.undo_count;
-    E.undo_group_has_entries = 1;
+    undo_mark_group_dirty();
     if (implicit_group) undo_end();
 }
 
@@ -1046,7 +1077,6 @@ static void editor_insert_char(int ch) {
     undo_push(UNDO_INSERT_CHAR, E.cy, E.cx, (char)ch, NULL, 0);
     line_insert_char(&E.lines[E.cy], E.cx, (char)ch);
     E.cx++;
-    E.modified = 1;
     E.quit_count = 0;
     E.last_was_cut = 0;
     dirty_file_row(E.cy);
@@ -1082,7 +1112,6 @@ static void editor_insert_newline(void) {
     }
     undo_end();
 
-    E.modified = 1;
     E.quit_count = 0;
     E.last_was_cut = 0;
     dirty_from_file_row(E.cy - 1);
@@ -1100,7 +1129,6 @@ static void editor_insert_tab(void) {
     undo_push(UNDO_INSERT_TEXT, E.cy, E.cx, 0, indent, spaces);
     line_insert_text(&E.lines[E.cy], E.cx, indent, spaces);
     E.cx += spaces;
-    E.modified = 1;
     E.quit_count = 0;
     E.last_was_cut = 0;
     dirty_file_row(E.cy);
@@ -1113,7 +1141,6 @@ static void editor_backspace(void) {
         undo_push(UNDO_DELETE_CHAR, E.cy, E.cx - 1, deleted, NULL, 0);
         line_delete_char(&E.lines[E.cy], E.cx - 1);
         E.cx--;
-        E.modified = 1;
         dirty_file_row(E.cy);
     } else if (E.cy > 0) {
         /* Join with previous line */
@@ -1122,7 +1149,6 @@ static void editor_backspace(void) {
         E.cx = join_cx;
         editor_join_lines(E.cy - 1);
         E.cy--;
-        E.modified = 1;
         dirty_from_file_row(E.cy);
         E.dirty_status = 1;
     }
@@ -1136,13 +1162,11 @@ static void editor_delete(void) {
         char deleted = E.lines[E.cy].text[E.cx];
         undo_push(UNDO_DELETE_CHAR, E.cy, E.cx, deleted, NULL, 0);
         line_delete_char(&E.lines[E.cy], E.cx);
-        E.modified = 1;
         dirty_file_row(E.cy);
     } else if (E.cy < E.num_lines - 1) {
         /* Join with next line */
         undo_push(UNDO_DELETE_LINE, E.cy, E.cx, 0, NULL, 0);
         editor_join_lines(E.cy);
-        E.modified = 1;
         dirty_from_file_row(E.cy);
         E.dirty_status = 1;
     }
@@ -1191,7 +1215,6 @@ static void editor_cut_line(void) {
         undo_push(UNDO_DELETE_TEXT, 0, 0, 0, E.lines[0].text, E.lines[0].len);
         line_set(&E.lines[0], "", 0);
         E.cx = 0;
-        E.modified = 1;
     } else {
         undo_push(UNDO_FULL_LINE, E.cy, E.cx, 0,
                   E.lines[E.cy].text, E.lines[E.cy].len);
@@ -1199,7 +1222,6 @@ static void editor_cut_line(void) {
         if (E.cy >= E.num_lines)
             E.cy = E.num_lines - 1;
         editor_clamp_cx();
-        E.modified = 1;
     }
     E.quit_count = 0;
     E.last_was_cut = 1;
@@ -1218,7 +1240,6 @@ static void editor_duplicate_line(void) {
     editor_insert_line(E.cy + 1, l->text, l->len);
     E.cy++;
     undo_push(UNDO_ADD_LINE, E.cy, 0, 0, E.lines[E.cy].text, E.lines[E.cy].len);
-    E.modified = 1;
     E.quit_count = 0;
     E.last_was_cut = 0;
     dirty_from_file_row(E.cy - 1);
@@ -1239,7 +1260,6 @@ static void editor_paste_line(void) {
     }
     undo_end();
     E.cx = 0;
-    E.modified = 1;
     E.quit_count = 0;
     E.last_was_cut = 0;
     {
@@ -1363,7 +1383,6 @@ static void editor_delete_word_forward(void) {
         undo_push(UNDO_DELETE_TEXT, E.cy, start, 0, l->text + start, text_len);
         line_delete_text(l, start, text_len);
         E.cx = start;
-        E.modified = 1;
         dirty_file_row(E.cy);
     }
     E.quit_count = 0;
@@ -1381,7 +1400,6 @@ static void editor_delete_word_backward(void) {
         int text_len = end - E.cx;
         undo_push(UNDO_DELETE_TEXT, E.cy, E.cx, 0, l->text + E.cx, text_len);
         line_delete_text(l, E.cx, text_len);
-        E.modified = 1;
         dirty_file_row(E.cy);
     }
     E.quit_count = 0;
@@ -1397,26 +1415,38 @@ static void editor_indent_line(void) {
     undo_push(UNDO_INSERT_TEXT, E.cy, 0, 0, indent, TAB_STOP);
     line_insert_text(l, 0, indent, TAB_STOP);
     E.cx += TAB_STOP;
-    E.modified = 1;
     E.quit_count = 0;
     E.last_was_cut = 0;
     dirty_file_row(E.cy);
 }
 
+/* Remove one indent level of leading whitespace. Measured in visual columns,
+ * not bytes, so this reverses a tab-indented line as well as a space-indented
+ * one — loading no longer rewrites tabs, so both occur in practice. */
 static void editor_unindent_line(void) {
+    line_t *l;
+    int removed = 0;    /* leading bytes to drop */
+    int cols = 0;       /* visual columns those bytes cover */
+
     if (E.cy >= E.num_lines) return;
-    line_t *l = &E.lines[E.cy];
-    int spaces = 0;
-    while (spaces < TAB_STOP && spaces < l->len && l->text[spaces] == ' ')
-        spaces++;
-    if (spaces > 0) {
-        undo_push(UNDO_DELETE_TEXT, E.cy, 0, 0, l->text, spaces);
-        line_delete_text(l, 0, spaces);
-        if (E.cx >= spaces)
-            E.cx -= spaces;
+    l = &E.lines[E.cy];
+    while (removed < l->len && cols < TAB_STOP) {
+        char ch = l->text[removed];
+        if (ch == ' ')
+            cols++;
+        else if (ch == '\t')
+            cols += TAB_STOP - (cols % TAB_STOP);
+        else
+            break;
+        removed++;
+    }
+    if (removed > 0) {
+        undo_push(UNDO_DELETE_TEXT, E.cy, 0, 0, l->text, removed);
+        line_delete_text(l, 0, removed);
+        if (E.cx >= removed)
+            E.cx -= removed;
         else
             E.cx = 0;
-        E.modified = 1;
         dirty_file_row(E.cy);
     }
     E.quit_count = 0;
@@ -1433,8 +1463,51 @@ static void editor_replace_at(int y, int x, const char *search, int slen,
     line_delete_text(l, x, slen);
     line_insert_text(l, x, replacement, rlen);
     undo_end();
-    E.modified = 1;
     dirty_file_row(y);
+}
+
+/* Replace every occurrence at or after from_x in line y, recording ONE undo
+ * entry pair for the whole line rather than a pair per occurrence. Undo cost
+ * then scales with lines touched instead of matches, which keeps a large
+ * replace-all inside UNDO_MAX — overflowing it discards the entire history,
+ * since a partial transaction can never be safely retained. Returns the
+ * number of replacements made. */
+static int editor_replace_line_all(int y, int from_x,
+                                   const char *search, int slen,
+                                   const char *replacement, int rlen) {
+    line_t *l = &E.lines[y];
+    line_t built;
+    int count = 0;
+    int x;
+
+    if (slen <= 0) return 0;
+    if (from_x < 0) from_x = 0;
+    if (from_x > l->len) from_x = l->len;
+
+    line_init(&built);
+    line_append(&built, l->text, from_x);
+    for (x = from_x; x <= l->len - slen; ) {
+        if (memcmp(l->text + x, search, slen) == 0) {
+            line_append(&built, replacement, rlen);
+            x += slen;
+            count++;
+        } else {
+            line_append(&built, l->text + x, 1);
+            x++;
+        }
+    }
+    line_append(&built, l->text + x, l->len - x);
+
+    if (count > 0) {
+        undo_begin();
+        undo_push(UNDO_DELETE_TEXT, y, 0, 0, l->text, l->len);
+        undo_push(UNDO_INSERT_TEXT, y, 0, 0, built.text, built.len);
+        undo_end();
+        line_set(l, built.text, built.len);
+        dirty_file_row(y);
+    }
+    line_free(&built);
+    return count;
 }
 
 static void editor_find_replace(void) {
@@ -1483,30 +1556,13 @@ static void editor_find_replace(void) {
                         x += rlen - 1; /* advance past replacement */
 
                         if (confirm[0] == 'a') {
-                            /* Replace all remaining without prompting */
-                            for (x = x + 1; x <= l->len - slen; x++) {
-                                if (memcmp(l->text + x, E.search_buf, slen) == 0) {
-                                    editor_replace_at(y, x, E.search_buf, slen,
-                                                      replace_buf, rlen);
-                                    l = &E.lines[y];
-                                    replaced++;
-                                    x += rlen - 1;
-                                }
-                            }
-                            dirty_file_row(y);
-                            for (y = y + 1; y < E.num_lines; y++) {
-                                l = &E.lines[y];
-                                for (x = 0; x <= l->len - slen; x++) {
-                                    if (memcmp(l->text + x, E.search_buf, slen) == 0) {
-                                        editor_replace_at(y, x, E.search_buf, slen,
-                                                          replace_buf, rlen);
-                                        l = &E.lines[y];
-                                        replaced++;
-                                        x += rlen - 1;
-                                    }
-                                }
-                                dirty_file_row(y);
-                            }
+                            /* Replace all remaining without prompting, one
+                             * undo entry pair per line touched. */
+                            replaced += editor_replace_line_all(
+                                y, E.cx, E.search_buf, slen, replace_buf, rlen);
+                            for (y = y + 1; y < E.num_lines; y++)
+                                replaced += editor_replace_line_all(
+                                    y, 0, E.search_buf, slen, replace_buf, rlen);
                             goto done;
                         }
                     }
@@ -2179,6 +2235,124 @@ static int run_tests(void) {
         test_assert(editor_save() == 0,
                     "long-name: temp name has room for the save suffix");
         remove(longname);
+    }
+
+    /* Test 30: unindent reverses tab indentation, not just spaces */
+    {
+        editor_reset();
+        editor_insert_line(0, "\thello", 6);
+        E.cy = 0; E.cx = 6;
+        editor_unindent_line();
+        test_assert(strcmp(E.lines[0].text, "hello") == 0,
+                    "unindent-tab: leading tab removed");
+        test_assert(E.cx == 5, "unindent-tab: cx follows the removal");
+        editor_undo();
+        test_assert(strcmp(E.lines[0].text, "\thello") == 0,
+                    "unindent-tab: undo restores the tab");
+
+        /* Mixed whitespace: stop after one indent level of visual columns. */
+        editor_reset();
+        editor_insert_line(0, "  \tx", 4);
+        E.cy = 0; E.cx = 4;
+        editor_unindent_line();
+        test_assert(strcmp(E.lines[0].text, "x") == 0,
+                    "unindent-tab: two spaces plus a tab is one level");
+
+        /* A tab past the first stop only covers the rest of that stop. */
+        editor_reset();
+        editor_insert_line(0, "\t\ty", 3);
+        E.cy = 0; E.cx = 3;
+        editor_unindent_line();
+        test_assert(strcmp(E.lines[0].text, "\ty") == 0,
+                    "unindent-tab: only one tab removed per press");
+    }
+
+    /* Test 31: replace-all costs one undo entry pair per line, not per match */
+    {
+        int before, after;
+        editor_reset();
+        editor_insert_line(0, "foo foo foo foo", 15);
+        before = E.undo_count;
+        test_assert(editor_replace_line_all(0, 0, "foo", 3, "bar", 3) == 4,
+                    "replace-line: all four occurrences replaced");
+        after = E.undo_count;
+        test_assert(strcmp(E.lines[0].text, "bar bar bar bar") == 0,
+                    "replace-line: text fully rewritten");
+        test_assert(after - before == 2,
+                    "replace-line: one entry pair for the whole line");
+        editor_undo();
+        test_assert(strcmp(E.lines[0].text, "foo foo foo foo") == 0,
+                    "replace-line: one undo reverses the whole line");
+        editor_redo();
+        test_assert(strcmp(E.lines[0].text, "bar bar bar bar") == 0,
+                    "replace-line: one redo reapplies the whole line");
+    }
+
+    /* Test 32: replace-line honours from_x and length-changing replacements */
+    {
+        editor_reset();
+        editor_insert_line(0, "aa aa aa", 8);
+        test_assert(editor_replace_line_all(0, 3, "aa", 2, "b", 1) == 2,
+                    "replace-line: matches before from_x are skipped");
+        test_assert(strcmp(E.lines[0].text, "aa b b") == 0,
+                    "replace-line: prefix preserved, tail shortened");
+
+        editor_reset();
+        editor_insert_line(0, "xx", 2);
+        test_assert(editor_replace_line_all(0, 0, "x", 1, "", 0) == 2,
+                    "replace-line: empty replacement deletes matches");
+        test_assert(E.lines[0].len == 0,
+                    "replace-line: line emptied without looping");
+
+        editor_reset();
+        editor_insert_line(0, "ab", 2);
+        test_assert(editor_replace_line_all(0, 0, "zz", 2, "y", 1) == 0,
+                    "replace-line: no match reports zero");
+        test_assert(strcmp(E.lines[0].text, "ab") == 0,
+                    "replace-line: no match leaves the line alone");
+    }
+
+    /* Test 33: every editing command marks the buffer modified. Guards the
+     * removal of the direct E.modified writes — the flag is now derived
+     * solely from the undo state. */
+    {
+        int i;
+        for (i = 0; i < 12; i++) {
+            editor_reset();
+            editor_insert_line(0, "    alpha beta", 14);
+            editor_insert_line(1, "gamma", 5);
+            E.cy = 0; E.cx = 4;
+            test_assert(!E.modified, "modified: clean before the edit");
+            switch (i) {
+            case 0:  editor_insert_char('z'); break;
+            case 1:  editor_insert_newline(); break;
+            case 2:  editor_insert_tab(); break;
+            case 3:  editor_backspace(); break;
+            case 4:  editor_delete(); break;
+            case 5:  editor_cut_line(); break;
+            case 6:  editor_cut_line(); editor_paste_line(); break;
+            case 7:  editor_duplicate_line(); break;
+            case 8:  editor_delete_word_forward(); break;
+            case 9:  E.cx = 9; editor_delete_word_backward(); break;
+            case 10: editor_indent_line(); break;
+            case 11: editor_unindent_line(); break;
+            }
+            test_assert(E.modified, "modified: set after the edit");
+        }
+    }
+
+    /* Test 34: a no-op command leaves the modified flag alone */
+    {
+        editor_reset();
+        editor_insert_line(0, "clean", 5);
+        E.cy = 0; E.cx = 0;
+        editor_unindent_line();          /* nothing to unindent */
+        test_assert(!E.modified, "modified: no-op unindent stays clean");
+        editor_cut_line();               /* clears the sole line */
+        editor_cut_line();               /* no-op: already empty */
+        editor_undo();
+        test_assert(!E.modified,
+                    "modified: undo back to the load state is clean again");
     }
 
     /* Cleanup */
