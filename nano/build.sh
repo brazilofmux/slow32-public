@@ -2,13 +2,13 @@
 set -e
 
 # Paths (relative to nano/)
-LLVM_BIN=~/llvm-project/build/bin
+LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
 CLANG=$LLVM_BIN/clang
 LLC=$LLVM_BIN/llc
 ASM=../tools/assembler/slow32asm
 LD=../tools/linker/s32-ld
 TARGET=slow32-unknown-none
-CFLAGS="-target $TARGET -S -emit-llvm -nostdinc -fno-builtin -I../runtime/include"
+CFLAGS="-target $TARGET -S -emit-llvm -nostdinc -fno-builtin -Wall -Wextra -I../runtime/include"
 
 # Optimization level
 OPT="${OPT:--O1}"
