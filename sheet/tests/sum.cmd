@@ -1,0 +1,12 @@
+A1=1
+A2=2
+A3=3
+A4==@SUM(A1:A3)
+A5==@AVG(A1:A3)
+A6==@MIN(A1:A3)
+A7==@MAX(A1,A2,A3)
+A4
+A5
+A6
+A7
+QUIT

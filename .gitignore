@@ -97,6 +97,9 @@ nano/src/*.s
 # Generated assembly from C sources in command/
 command/src/*.s
 
+# Generated assembly from C sources in sheet/
+sheet/src/*.s
+
 # Temporary LLVM files
 *.ll.tmp
 
