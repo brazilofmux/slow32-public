@@ -168,3 +168,9 @@ tools/dbt/.probe_*.c
 
 # Generated article HTML (markdown is the source of truth)
 articles/*.html
+
+# macOS Finder metadata
+.DS_Store
+
+# mdfix -i backups
+*.bak
