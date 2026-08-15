@@ -208,7 +208,7 @@ void sheet_recalc(sheet_t *sh) {
     }
 }
 
-static void print_value(const cell_t *cell, char *buf, int cap) {
+void sheet_format_value(const cell_t *cell, char *buf, int cap) {
     if (cell->kind == CELL_EMPTY) {
         buf[0] = '\0';
         return;
@@ -256,7 +256,7 @@ void sheet_list(const sheet_t *sh, FILE *out) {
         fprintf(out, "%4d ", r + 1);
         for (c = 0; c <= cmax; c++) {
             char buf[16];
-            print_value(&sh->cells[r][c], buf, (int)sizeof(buf));
+            sheet_format_value(&sh->cells[r][c], buf, (int)sizeof(buf));
             fprintf(out, " %10s", buf);
         }
         fprintf(out, "\n");

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <term.h>
 
 static sheet_t g_sheet;
 
@@ -167,16 +168,35 @@ static int dispatch(char *line) {
 
 int main(int argc, char **argv) {
     char line[256];
+    char filename[256];
     int i;
+    int line_mode = 0;
 
     sheet_init(&g_sheet);
+    filename[0] = '\0';
 
     for (i = 1; i < argc; i++) {
+        if (argv[i][0] == '-' && argv[i][1] == '-' &&
+            (icmp(argv[i] + 2, "line") == 0 || icmp(argv[i] + 2, "repl") == 0)) {
+            line_mode = 1;
+            continue;
+        }
         if (sheet_load(&g_sheet, argv[i]) != 0) {
             printf("cannot load %s\n", argv[i]);
             return 1;
         }
-        sheet_list(&g_sheet, stdout);
+        strncpy(filename, argv[i], sizeof(filename) - 1);
+        filename[sizeof(filename) - 1] = '\0';
+        if (line_mode) {
+            sheet_list(&g_sheet, stdout);
+        }
+    }
+
+    if (!line_mode && term_init() == 0) {
+        sheet_ui(&g_sheet, filename, (int)sizeof(filename));
+        term_cleanup();
+        sheet_clear(&g_sheet);
+        return 0;
     }
 
     printf("SLOW-32 Sheet 0.1   (HELP for commands)\n");

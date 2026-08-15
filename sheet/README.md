@@ -1,12 +1,13 @@
 # SLOW-32 Sheet
 
-A 1-2-3-shaped calc. v1 is the formula engine and a line-mode
-REPL. Full-screen `term.h` grid, `.WK1`, and talking to dBase come
-next.
+A 1-2-3-shaped calc. Interactive mode is a `term.h` grid (arrows,
+Enter to edit, `/` for Save/Load/Quit). `--line` is the old REPL,
+which the tests use.
 
 ```bash
 ./build.sh
 ../tools/emulator/slow32-fast sheet.s32x
+../tools/emulator/slow32-fast sheet.s32x --line
 ./tests/run-tests.sh
 ```
 

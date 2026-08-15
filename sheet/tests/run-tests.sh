@@ -19,7 +19,7 @@ run_script() {
     shift
     local work
     work="$(mktemp -d "${TMPDIR:-/tmp}/s32-sheet.XXXXXX")"
-    (cd "$work" && "$EMU" "$SHEET_DIR/sheet.s32x") \
+    (cd "$work" && "$EMU" "$SHEET_DIR/sheet.s32x" --line) \
         < "$SCRIPT_DIR/$name.cmd" > "$work/out.txt" 2>"$work/err.txt" || true
     local fail=0
     local pat
