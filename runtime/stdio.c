@@ -6,12 +6,7 @@
 #include <unistd.h>
 
 #include "mmio_ring.h"
-
-#define FLAG_READ     0x01
-#define FLAG_WRITE    0x02
-#define FLAG_APPEND   0x04
-#define FLAG_CREATE   0x08
-#define FLAG_TRUNC    0x10
+#include "stdio_impl.h"
 
 #define _IONBF 0
 #define _IOLBF 1
@@ -69,12 +64,14 @@ static int internal_flush(FILE *stream) {
 
 int fflush(FILE *stream) {
     if (!stream) return 0;
+    if (stream->flags & FLAG_MEMSTREAM) return __memstream_flush(stream);
     return internal_flush(stream);
 }
 
 int fclose(FILE *stream) {
     if (!stream) return EOF;
-    
+    if (stream->flags & FLAG_MEMSTREAM) return __memstream_close(stream);
+
     fflush(stream);
     
     if (stream->buffer) free(stream->buffer);
@@ -133,6 +130,8 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!stream || !ptr) return 0;
     size_t total_bytes = size * nmemb;
     if (total_bytes == 0) return 0;
+    if (stream->flags & FLAG_MEMSTREAM)
+        return __memstream_write(stream, ptr, total_bytes) / size;
     
     // Lazy alloc for stdout
     if (stream == stdout && !stream->buffer && stream->mode != _IONBF) {
@@ -245,6 +244,8 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!stream || !ptr) return 0;
     size_t total = size * nmemb;
     if (total == 0) return 0;
+    if (stream->flags & FLAG_MEMSTREAM)
+        return __memstream_read(stream, ptr, total) / size;
 
     if (stream == stdin) {
         unsigned char *p = ptr;
@@ -390,6 +391,8 @@ int puts(const char *s) {
 
 int fseek(FILE *stream, long offset, int whence) {
     if (!stream) return -1;
+    if (stream->flags & FLAG_MEMSTREAM)
+        return __memstream_seek(stream, offset, whence);
 
     fflush(stream);
     stream->buf_pos = 0;
@@ -411,7 +414,9 @@ int fseek(FILE *stream, long offset, int whence) {
 
 long ftell(FILE *stream) {
     if (!stream) return -1L;
-    
+    if (stream->flags & FLAG_MEMSTREAM)
+        return __memstream_tell(stream);
+
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     data_buffer[0] = (unsigned char)SEEK_CUR;
     *(long *)(void *)(data_buffer + 4) = 0;
@@ -480,4 +485,32 @@ int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
 
 FILE *tmpfile(void) {
     return NULL; /* not supported */
+}
+
+ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
+    size_t used = 0;
+    int c;
+
+    if (!lineptr || !n || !stream) return -1;
+    if (!*lineptr || *n == 0) {
+        *n = 128;
+        *lineptr = malloc(*n);
+        if (!*lineptr) return -1;
+    }
+
+    while ((c = fgetc(stream)) != EOF) {
+        if (used + 2 > *n) {
+            size_t ncap = *n * 2;
+            char *nbuf = realloc(*lineptr, ncap);
+            if (!nbuf) return -1;
+            *lineptr = nbuf;
+            *n = ncap;
+        }
+        (*lineptr)[used++] = (char)c;
+        if (c == '\n') break;
+    }
+
+    if (used == 0) return -1;   /* EOF (or error) before any byte */
+    (*lineptr)[used] = '\0';
+    return (ssize_t)used;
 }

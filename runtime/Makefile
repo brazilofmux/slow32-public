@@ -35,7 +35,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
 
 # I/O objects for MMIO version (buffered, ring buffer)
-STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o
+STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o memstream.s32o
 
 # MMIO-only helpers
 LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
@@ -61,7 +61,7 @@ ALL_OBJS = $(STARTUP_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
 
 # C source files that need compilation
 C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_utils.c \
-            stdio.c stdlib_extra.c string_extra.c ctype.c \
+            stdio.c memstream.c stdlib_extra.c string_extra.c ctype.c \
             stdio_minimal.c convert_extra.c \
             stdio_buffered.c flush_mmio.c flush_debug.c \
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \

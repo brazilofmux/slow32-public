@@ -4,6 +4,7 @@
 
 // Basic type definitions for SLOW-32
 typedef unsigned int size_t;
+typedef int ssize_t;    // POSIX (sys/types.h there); kept here beside size_t
 typedef int ptrdiff_t;
 typedef int wchar_t;
 

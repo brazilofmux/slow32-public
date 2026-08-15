@@ -35,6 +35,8 @@ typedef struct FILE {
     size_t buf_pos;
     size_t buf_len;
     int ungetc_char;   /* -1 = empty, otherwise pushed-back character */
+    // Memory-stream bookkeeping (memstream.c); NULL for ordinary files
+    void *mem_cookie;
 } FILE;
 
 extern FILE *stdin;
@@ -81,5 +83,13 @@ int rename(const char *oldpath, const char *newpath);
 int ungetc(int c, FILE *stream);
 int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 FILE *tmpfile(void);
+
+// POSIX line input (MMIO libc)
+ssize_t getline(char **lineptr, size_t *n, FILE *stream);
+
+// POSIX memory streams (MMIO libc, memstream.c). See that file for the
+// exact subset of semantics supported.
+FILE *fmemopen(void *buf, size_t size, const char *mode);
+FILE *open_memstream(char **bufp, size_t *sizep);
 
 #endif
