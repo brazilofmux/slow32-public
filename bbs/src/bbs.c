@@ -7,9 +7,12 @@
 
 #include "dbfuser.h"
 #include "dbfmsg.h"
+#include "zmodem.h"
+
+#include <dirent.h>
 
 #include <stdlib.h>
-
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -130,12 +133,141 @@ static void cmd_post(int fd, msgdb_t *msg, const char *from) {
     sock_puts(fd, "Posted.\r\n");
 }
 
+static int looks_s32x(const char *s) {
+    size_t n = strlen(s);
+    if (n < 5) {
+        return 0;
+    }
+    return toupper((unsigned char)s[n - 5]) == '.' &&
+           toupper((unsigned char)s[n - 4]) == 'S' &&
+           s[n - 3] == '3' && s[n - 2] == '2' &&
+           toupper((unsigned char)s[n - 1]) == 'X';
+}
+
+static const char *resolve_door(const char *name, char *buf, int cap) {
+    if (access(name, F_OK) == 0 && looks_s32x(name)) {
+        return name;
+    }
+    snprintf(buf, (size_t)cap, "%s.s32x", name);
+    if (access(buf, F_OK) == 0) {
+        return buf;
+    }
+    snprintf(buf, (size_t)cap, "doors/%s.s32x", name);
+    if (access(buf, F_OK) == 0) {
+        return buf;
+    }
+    return NULL;
+}
+
+static void cmd_door(int fd, const char *name) {
+    char asked[64];
+    char pathbuf[128];
+    const char *path;
+    char *av[2];
+    int rc;
+
+    sock_puts(fd, "Door: ");
+    if (sock_gets(fd, asked, (int)sizeof(asked)) < 0 || !asked[0]) {
+        return;
+    }
+    path = resolve_door(asked, pathbuf, (int)sizeof(pathbuf));
+    if (!path) {
+        sock_puts(fd, "No such door.\r\n");
+        return;
+    }
+    av[0] = (char *)path;
+    av[1] = NULL;
+    rc = s32_execv_fd(path, av, fd);
+    if (rc < 0) {
+        sock_puts(fd, "Door failed.\r\n");
+    }
+    (void)name;
+}
+
+static int safe_filename(const char *s) {
+    if (!s || !s[0]) {
+        return 0;
+    }
+    if (s[0] == '.') {
+        return 0;
+    }
+    while (*s) {
+        if (*s == '/' || *s == '\\') {
+            return 0;
+        }
+        s++;
+    }
+    return 1;
+}
+
+static void cmd_files(int fd) {
+    const char *dir = "files";
+    DIR *d;
+    struct dirent *ent;
+    int n = 0;
+    char line[128];
+
+    d = opendir(dir);
+    if (!d) {
+        dir = ".";
+        d = opendir(dir);
+    }
+    if (!d) {
+        sock_puts(fd, "No files.\r\n");
+        return;
+    }
+    sock_puts(fd, "Files:\r\n");
+    while ((ent = readdir(d)) != NULL) {
+        if (!safe_filename(ent->d_name)) {
+            continue;
+        }
+        snprintf(line, sizeof(line), "  %s\r\n", ent->d_name);
+        sock_puts(fd, line);
+        n++;
+    }
+    closedir(d);
+    if (n == 0) {
+        sock_puts(fd, "  (none)\r\n");
+    }
+}
+
+static void cmd_transfer(int fd) {
+    char asked[64];
+    char path[128];
+    const char *use = NULL;
+
+    sock_puts(fd, "File: ");
+    if (sock_gets(fd, asked, (int)sizeof(asked)) < 0 || !asked[0]) {
+        return;
+    }
+    if (!safe_filename(asked)) {
+        sock_puts(fd, "Bad name.\r\n");
+        return;
+    }
+    snprintf(path, sizeof(path), "files/%s", asked);
+    if (access(path, F_OK) == 0) {
+        use = path;
+    } else if (access(asked, F_OK) == 0) {
+        use = asked;
+    }
+    if (!use) {
+        sock_puts(fd, "No such file.\r\n");
+        return;
+    }
+    sock_puts(fd, "Sending via ZMODEM...\r\n");
+    if (zmodem_send(fd, use) == 0) {
+        sock_puts(fd, "Done.\r\n");
+    } else {
+        sock_puts(fd, "Transfer failed.\r\n");
+    }
+}
+
 static void session(int fd, userdb_t *db, msgdb_t *msg) {
     char name[64];
     char pass[64];
     char cmd[32];
 
-    sock_puts(fd, "SLOW-32 BBS  v0.3\r\n\r\n");
+    sock_puts(fd, "SLOW-32 BBS  v0.5\r\n\r\n");
     sock_puts(fd, "Name: ");
     if (sock_gets(fd, name, (int)sizeof(name)) < 0 || !name[0]) {
         return;
@@ -153,7 +285,7 @@ static void session(int fd, userdb_t *db, msgdb_t *msg) {
     sock_puts(fd, ".\r\n\r\n");
 
     for (;;) {
-        sock_puts(fd, "[L]ist  [R]ead  [P]ost  [W]ho  [G]oodbye\r\n");
+        sock_puts(fd, "[L]ist  [R]ead  [P]ost  [D]oor  [F]iles  [T]ransfer  [W]ho  [G]oodbye\r\n");
         if (sock_gets(fd, cmd, (int)sizeof(cmd)) < 0) {
             break;
         }
@@ -177,6 +309,18 @@ static void session(int fd, userdb_t *db, msgdb_t *msg) {
         }
         if (cmd[0] == 'p' || cmd[0] == 'P') {
             cmd_post(fd, msg, name);
+            continue;
+        }
+        if (cmd[0] == 'd' || cmd[0] == 'D') {
+            cmd_door(fd, name);
+            continue;
+        }
+        if (cmd[0] == 'f' || cmd[0] == 'F') {
+            cmd_files(fd);
+            continue;
+        }
+        if (cmd[0] == 't' || cmd[0] == 'T') {
+            cmd_transfer(fd);
             continue;
         }
         sock_puts(fd, "Huh?\r\n");

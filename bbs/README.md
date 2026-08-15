@@ -3,8 +3,9 @@
 A dBase-backed board. The user file is a real `.DBF`. The modem is
 `127.0.0.1`.
 
-v0.3 is logon plus a message base. Post is multi-line (blank line
-ends). Both files are `.DBF`. No doors, no ZMODEM.
+v0.5 is logon, DBF mail, doors, and ZMODEM download. `[T]ransfer`
+sends a file from `files/` (or the cwd) with a CRC-16 ZMODEM
+subset. `[F]iles` lists them.
 
 ```bash
 ./tests/make_users.py USERS.DBF   # or CREATE in dBase
@@ -25,5 +26,5 @@ Password: secret
 
 Welcome, alice.
 
-[L]ist  [R]ead  [P]ost  [W]ho  [G]oodbye
+[L]ist  [R]ead  [P]ost  [D]oor  [F]iles  [T]ransfer  [W]ho  [G]oodbye
 ```

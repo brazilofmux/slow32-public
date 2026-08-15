@@ -35,6 +35,9 @@ int ftruncate(int fd, int length);
  * child's exit code, or -1 on failure. argv[0] is ignored; path is
  * the image. Extra arguments start at argv[1]. argv may be NULL. */
 int s32_execv(const char *path, char *const argv[]);
+/* Like s32_execv, but child's stdin/stdout/stderr become guest_fd
+ * (a socket or file). guest_fd < 0 means inherit the parent's stdio. */
+int s32_execv_fd(const char *path, char *const argv[], int guest_fd);
 
 #ifdef __cplusplus
 }

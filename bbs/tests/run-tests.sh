@@ -31,6 +31,16 @@ trap cleanup EXIT
 
 python3 "$SCRIPT_DIR/make_users.py" "$work/USERS.DBF"
 
+echo "=== Building door.s32x ==="
+LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
+"$LLVM_BIN/clang" -target slow32-unknown-none -S -emit-llvm -O1 \
+    -I"$ROOT/runtime/include" "$SCRIPT_DIR/door.c" -o "$work/door.ll"
+"$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$work/door.ll" -o "$work/door.s"
+"$ROOT/tools/assembler/slow32asm" "$work/door.s" "$work/door.s32o"
+"$ROOT/tools/linker/s32-ld" --mmio 64K -o "$work/door.s32x" \
+    "$ROOT/runtime/crt0.s32o" "$work/door.s32o" \
+    "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a"
+
 (cd "$work" && "$EMU" "$BBS_DIR/bbs.s32x" USERS.DBF) \
     >"$work/server.out" 2>"$work/server.err" &
 server_pid=$!
@@ -113,6 +123,29 @@ check posted "$mail" "Posted"
 check list-subj "$mail" "hello"
 check read-body "$mail" "line one"
 check read-line2 "$mail" "line two"
+
+door="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND secret; WAIT Welcome; SEND D; WAIT Door:; SEND door; WAIT FORTUNE; WAIT something; SEND hi; WAIT You said; SEND G; WAIT Goodbye')"
+check door-banner "$door" "FORTUNE"
+check door-echo "$door" "You said: hi"
+check door-back "$door" "Goodbye, alice"
+
+mkdir -p "$work/files"
+printf 'zmodem-payload-ok\n' > "$work/files/payload.bin"
+if python3 "$SCRIPT_DIR/zrecv.py" 127.0.0.1 "$port" payload.bin "$work/got.bin" \
+        >"$work/zrecv.out" 2>"$work/zrecv.err"; then
+    if cmp -s "$work/files/payload.bin" "$work/got.bin"; then
+        echo "  OK  zmodem payload"
+    else
+        echo "  FAIL zmodem payload mismatch"
+        echo "  expected: $(od -An -tx1 "$work/files/payload.bin")"
+        echo "  got:      $(od -An -tx1 "$work/got.bin" 2>/dev/null || true)"
+        fail=1
+    fi
+else
+    echo "  FAIL zmodem transfer"
+    cat "$work/zrecv.out" "$work/zrecv.err"
+    fail=1
+fi
 
 if [ "$fail" -ne 0 ]; then
     echo "=== server ---"

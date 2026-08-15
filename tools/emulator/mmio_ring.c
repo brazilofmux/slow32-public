@@ -1465,6 +1465,21 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             if (pid == 0) {
                 char *av[16];
                 int i, a = 0;
+                int inherit = -1;
+                if (req->status != 0xFFFFFFFFu) {
+                    inherit = host_fd_for_guest(mmio, req->status);
+                    if (inherit < 0) {
+                        _exit(127);
+                    }
+                    if (dup2(inherit, STDIN_FILENO) < 0 ||
+                        dup2(inherit, STDOUT_FILENO) < 0 ||
+                        dup2(inherit, STDERR_FILENO) < 0) {
+                        _exit(127);
+                    }
+                    if (inherit > STDERR_FILENO) {
+                        close(inherit);
+                    }
+                }
                 av[a++] = (char *)emu;
                 av[a++] = "-q";
                 av[a++] = path;

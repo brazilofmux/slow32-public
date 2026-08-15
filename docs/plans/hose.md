@@ -43,8 +43,9 @@ The host composes machines. Guests only see hoses and files.
    are per guest.
 3. **`exec` service** — **v1 landed**: `S32_MMIO_OP_EXEC` (0x10)
    forks the same emulator with `-q` and waits. Image must be a
-   `.s32x`. Policy name `exec`. COMMAND.COM uses this. Doors that
-   inherit a socket come later (spawn + pipe).
+   `.s32x`. Policy name `exec`. `status = 0xFFFFFFFF` inherits
+   stdio (COMMAND.COM). `status = guest_fd` dups that host fd
+   onto the child's 0/1/2 (BBS doors).
 4. **ganl** as the supervisor event loop only when a listener and
    Telnet are real (humans dial in, NAWS, binary mode for ZMODEM).
    Steal `NetworkEngine`, `adoptConnection`, `spawnSlave`, the

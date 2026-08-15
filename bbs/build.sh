@@ -13,7 +13,7 @@ OPT="${OPT:--O1}"
 echo "=== Building SLOW-32 BBS ==="
 
 OBJECTS=""
-for src in src/dbfuser.c src/dbfmsg.c src/bbs.c; do
+for src in src/dbfuser.c src/dbfmsg.c src/zmodem.c src/bbs.c; do
     base=$(basename "$src" .c)
     echo -n "  Compiling $base.c... "
     $CLANG $CFLAGS $OPT "$src" -o "src/$base.ll"
