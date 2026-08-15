@@ -18,6 +18,7 @@
 typedef enum {
     S32_FD_TYPE_FILE = 0,
     S32_FD_TYPE_DIR  = 1,
+    S32_FD_TYPE_SOCK = 2,
 } s32_fd_type_t;
 
 // I/O descriptor structure

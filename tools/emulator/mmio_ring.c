@@ -14,6 +14,8 @@
 #include <termios.h>
 #include <poll.h>
 #include <time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #if defined(__APPLE__)
 #define STAT_ATIME_SEC(st)  ((st).st_atimespec.tv_sec)
@@ -96,6 +98,52 @@ static int host_fd_for_guest(mmio_ring_state_t *mmio, uint32_t guest_fd) {
         return -1;
     }
     return mmio->host_fds[guest_fd];
+}
+
+static int parse_guest_sockaddr_in(mmio_ring_state_t *mmio,
+                                   const io_descriptor_t *req,
+                                   struct sockaddr_in *out) {
+    if (req->length < sizeof(s32_mmio_sockaddr_in_t)) {
+        return EINVAL;
+    }
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_sockaddr_in_t))) {
+        return EINVAL;
+    }
+
+    s32_mmio_sockaddr_in_t g;
+    memcpy(&g, mmio->data_buffer + offset, sizeof(g));
+    if (g.family != S32_AF_INET) {
+        return EAFNOSUPPORT;
+    }
+
+    memset(out, 0, sizeof(*out));
+    out->sin_family = AF_INET;
+    out->sin_port = htons(g.port);
+    out->sin_addr.s_addr = htonl(g.addr);
+    return 0;
+}
+
+static void write_guest_sockaddr_in(mmio_ring_state_t *mmio, uint32_t offset,
+                                    const struct sockaddr_in *in) {
+    if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_sockaddr_in_t))) {
+        return;
+    }
+    s32_mmio_sockaddr_in_t g;
+    g.addr = ntohl(in->sin_addr.s_addr);
+    g.port = ntohs(in->sin_port);
+    g.family = S32_AF_INET;
+    memcpy(mmio->data_buffer + offset, &g, sizeof(g));
+}
+
+static int guest_socket_fd(mmio_ring_state_t *mmio, int host_fd) {
+    int guest_fd = alloc_guest_fd(mmio, host_fd, true);
+    if (guest_fd < 0) {
+        close(host_fd);
+        return -1;
+    }
+    mmio->fd_types[guest_fd] = S32_FD_TYPE_SOCK;
+    return guest_fd;
 }
 
 static int translate_open_flags(uint32_t guest_flags, bool *needs_mode) {
@@ -1025,6 +1073,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             break;
         }
         
+        case S32_MMIO_OP_SEND:
         case S32_MMIO_OP_WRITE: {
             int host_fd = host_fd_for_guest(mmio, req->status);
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
@@ -1051,6 +1100,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             break;
         }
 
+        case S32_MMIO_OP_RECV:
         case S32_MMIO_OP_READ: {
             int host_fd = host_fd_for_guest(mmio, req->status);
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
@@ -1500,6 +1550,189 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             memcpy(mmio->data_buffer + offset, &info, sizeof(info));
             resp.length = sizeof(s32_mmio_tzinfo_t);
             resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_SOCKET: {
+            uint32_t packed = req->status;
+            int family = (int)(packed & 0xffu);
+            int type = (int)((packed >> 8) & 0xffu);
+            int protocol = (int)((packed >> 16) & 0xffu);
+
+            if (family != S32_AF_INET) {
+                mmio_fail(&resp, EAFNOSUPPORT);
+                break;
+            }
+            if (type != S32_SOCK_STREAM) {
+                mmio_fail(&resp, EPROTONOSUPPORT);
+                break;
+            }
+            if (protocol != 0 && protocol != IPPROTO_TCP) {
+                mmio_fail(&resp, EPROTONOSUPPORT);
+                break;
+            }
+
+            int host_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (host_fd < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+
+            int guest_fd = guest_socket_fd(mmio, host_fd);
+            if (guest_fd < 0) {
+                mmio_fail(&resp, EMFILE);
+                break;
+            }
+
+            if (trace_io_enabled) {
+                fprintf(stderr, "[MMIO] SOCKET guest_fd=%d host_fd=%d\n",
+                        guest_fd, host_fd);
+            }
+            resp.status = (uint32_t)guest_fd;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_BIND: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+
+            struct sockaddr_in addr;
+            int perr = parse_guest_sockaddr_in(mmio, req, &addr);
+            if (perr != 0) {
+                mmio_fail(&resp, perr);
+                break;
+            }
+
+            int yes = 1;
+            (void)setsockopt(host_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+            if (bind(host_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+
+            resp.status = S32_MMIO_STATUS_OK;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_GETSOCKNAME: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+            struct sockaddr_in bound;
+            socklen_t bound_len = sizeof(bound);
+            if (getsockname(host_fd, (struct sockaddr *)&bound, &bound_len) < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            write_guest_sockaddr_in(mmio, offset, &bound);
+            resp.status = S32_MMIO_STATUS_OK;
+            resp.length = sizeof(s32_mmio_sockaddr_in_t);
+            break;
+        }
+
+        case S32_MMIO_OP_LISTEN: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+            int backlog = (int)req->length;
+            if (backlog <= 0) {
+                backlog = 8;
+            }
+            if (backlog > 128) {
+                backlog = 128;
+            }
+            if (listen(host_fd, backlog) < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+            resp.status = S32_MMIO_STATUS_OK;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_CONNECT: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+
+            struct sockaddr_in addr;
+            int perr = parse_guest_sockaddr_in(mmio, req, &addr);
+            if (perr != 0) {
+                mmio_fail(&resp, perr);
+                break;
+            }
+
+            if (connect(host_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+            resp.status = S32_MMIO_STATUS_OK;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_ACCEPT: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+
+            struct sockaddr_in peer;
+            socklen_t peer_len = sizeof(peer);
+            int new_host = accept(host_fd, (struct sockaddr *)&peer, &peer_len);
+            if (new_host < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+
+            int guest_fd = guest_socket_fd(mmio, new_host);
+            if (guest_fd < 0) {
+                mmio_fail(&resp, EMFILE);
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            write_guest_sockaddr_in(mmio, offset, &peer);
+            resp.status = (uint32_t)guest_fd;
+            resp.length = sizeof(s32_mmio_sockaddr_in_t);
+            if (trace_io_enabled) {
+                fprintf(stderr, "[MMIO] ACCEPT listen=%u new_fd=%d\n",
+                        req->status, guest_fd);
+            }
+            break;
+        }
+
+        case S32_MMIO_OP_SHUTDOWN: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+            int how = (int)req->length;
+            if (how < S32_SHUT_RD || how > S32_SHUT_RDWR) {
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
+            if (shutdown(host_fd, how) < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+            resp.status = S32_MMIO_STATUS_OK;
+            resp.length = 0;
             break;
         }
 

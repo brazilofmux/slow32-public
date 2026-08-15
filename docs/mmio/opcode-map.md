@@ -8,7 +8,7 @@ The ring descriptors double as Linux-style syscall packets. To keep them memorab
 | `0x10–0x1F` | Memory / process management     | Reserved for `MMAP`, `MUNMAP`, `SPAWN`, etc. |
 | `0x20–0x2F` | Filesystem metadata & tooling   | Reserved for `FSTAT`, `UNLINK`, `DUP`, etc. |
 | `0x30–0x3F` | Time, timers, and wait APIs     | Implemented: `GETTIME`, `SLEEP`. Planned: `TIMER_START`, `TIMER_CANCEL`, `POLL`. |
-| `0x40–0x4F` | Networking / IPC                | Reserved identifiers for `SOCKET`, `CONNECT`, `ACCEPT`, `SEND`, `RECV`, `SHUTDOWN`, etc. |
+| `0x40–0x4F` | Networking / IPC                | Implemented (v1): IPv4 TCP `SOCKET`, `BIND`, `LISTEN`, `CONNECT`, `ACCEPT`, `GETSOCKNAME`, `SHUTDOWN`. `SEND`/`RECV` alias `WRITE`/`READ`. No DNS. |
 | `0x60–0x7F` | Host services (env, randomness) | Reserved for `GETENV`, `RANDOM`, etc. |
 | `0x80–0xFF` | Experimental / user-defined     | Safe playground for prototypes; no stability guarantees. |
 
@@ -57,5 +57,29 @@ Bulk arguments and structs live in `DATA_BUFFER`. Producers must write payloads 
 | `st_atime_sec/nsec`, `st_mtime_sec/nsec`, `st_ctime_sec/nsec` | 64+32 each | Timestamps with nanosecond precision. |
 
 - **Runtime helper**: `runtime/stat_mmio.c` exposes `stat()`/`fstat()` that copy the packed structure into the public `struct stat`. When linking against `libc_debug.s32a`, tiny stubs return `-1` so binaries still link, albeit without metadata.
+
+## Sockets (v1, IPv4 TCP only)
+
+No DNS, no UDP, no Unix sockets. The guest libc (`runtime/net_mmio.c`)
+speaks POSIX `sockaddr_in` (network byte order) and packs an 8-byte
+`s32_mmio_sockaddr_in_t` for the host: `addr` and `port` in guest
+endian, `family = 2` (`S32_AF_INET`).
+
+| Opcode | `status` in | payload | `status` out |
+|--------|-------------|---------|--------------|
+| `SOCKET` (0x40) | `family \| type<<8 \| proto<<16` | none | new guest fd |
+| `CONNECT` (0x41) | fd | `s32_mmio_sockaddr_in_t` | OK |
+| `ACCEPT` (0x42) | listen fd | peer written back | new guest fd |
+| `SEND` (0x43) | fd | bytes (alias of `WRITE`) | byte count |
+| `RECV` (0x44) | fd | bytes (alias of `READ`) | byte count |
+| `SHUTDOWN` (0x45) | fd | `length` = how (0/1/2) | OK |
+| `BIND` (0x46) | fd | `s32_mmio_sockaddr_in_t` | OK |
+| `LISTEN` (0x47) | fd | `length` = backlog | OK |
+| `GETSOCKNAME` (0x48) | fd | address written back | OK |
+
+`SOCKET` accepts only `family=2`, `type=1` (`SOCK_STREAM`), protocol
+0 or 6. The host sets `SO_REUSEADDR` on `BIND`. `CLOSE` already
+closes the guest fd. Policy name is `net` (legacy opcode range
+`0x40–0x4F`); default policy allows it.
 
 Future services should extend this file with their opcode IDs, payload expectations, and completion behavior so host and guest stay synchronized.

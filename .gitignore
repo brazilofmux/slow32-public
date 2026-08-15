@@ -78,6 +78,10 @@ runtime/fs_mmio.s
 runtime/fs_stub.s
 runtime/dirent_mmio.s
 runtime/dirent_stub.s
+runtime/net_mmio.s
+runtime/net_stub.s
+runtime/term_mmio.s
+runtime/term_stub.s
 
 # Generated assembly from C sources in examples/
 # (hand-written examples like hello_clean.s, test_comparisons.s are still tracked)
@@ -168,6 +172,11 @@ tools/dbt/.probe_*.c
 
 # Generated article HTML (markdown is the source of truth)
 articles/*.html
+
+# net/ two-guest echo rendezvous and run logs
+net/echo.port
+net/*.err
+net/*.s
 
 # macOS Finder metadata
 .DS_Store

@@ -91,12 +91,17 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_POLL        = 0x34,  // poll()/select()-style wait (future)
 
     // 0x40 - 0x4F : Networking / IPC
-    S32_MMIO_OP_SOCKET      = 0x40,  // socket()
-    S32_MMIO_OP_CONNECT     = 0x41,  // connect()
-    S32_MMIO_OP_ACCEPT      = 0x42,  // accept()
-    S32_MMIO_OP_SEND        = 0x43,  // send()/write() on socket
-    S32_MMIO_OP_RECV        = 0x44,  // recv()/read() on socket
-    S32_MMIO_OP_SHUTDOWN    = 0x45,  // shutdown()/close socket half
+    // v1 is IPv4 TCP only. No DNS, no UDP, no Unix sockets.
+    // Address payloads are s32_mmio_sockaddr_in_t (guest-endian).
+    S32_MMIO_OP_SOCKET      = 0x40,  // socket() — status packs family|type<<8|proto<<16
+    S32_MMIO_OP_CONNECT     = 0x41,  // connect() — status=fd, payload=sockaddr_in
+    S32_MMIO_OP_ACCEPT      = 0x42,  // accept() — status=listen fd, returns new fd
+    S32_MMIO_OP_SEND        = 0x43,  // send() — alias of WRITE on a socket fd
+    S32_MMIO_OP_RECV        = 0x44,  // recv() — alias of READ on a socket fd
+    S32_MMIO_OP_SHUTDOWN    = 0x45,  // shutdown() — status=fd, length=how
+    S32_MMIO_OP_BIND        = 0x46,  // bind() — status=fd, payload=sockaddr_in
+    S32_MMIO_OP_LISTEN      = 0x47,  // listen() — status=fd, length=backlog
+    S32_MMIO_OP_GETSOCKNAME = 0x48,  // getsockname() — status=fd, writes sockaddr_in
 
     // 0x60 - 0x6F : Host environment services
     S32_MMIO_OP_ARGS_INFO   = 0x60,  // Query argc/total-bytes for guest argv[]
@@ -113,7 +118,24 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_SVC_VERSION  = 0xF4,  // Query protocol version
 };
 
+// SOCKET status packing: family in bits 0-7, type in 8-15, protocol in 16-23.
+#define S32_AF_INET       2
+#define S32_SOCK_STREAM   1
+#define S32_SHUT_RD       0
+#define S32_SHUT_WR       1
+#define S32_SHUT_RDWR     2
+#define S32_MMIO_SOCKADDR_IN_SIZE 8
+
 #pragma pack(push, 1)
+
+// Compact IPv4 address written to the MMIO data buffer for BIND/CONNECT/ACCEPT.
+// Multi-byte fields are guest-endian (little-endian). 0x7f000001 = 127.0.0.1.
+// The host converts to sockaddr_in / network order. This is not POSIX layout.
+typedef struct s32_mmio_sockaddr_in {
+    uint32_t addr;
+    uint16_t port;
+    uint16_t family;
+} s32_mmio_sockaddr_in_t;
 
 typedef struct s32_mmio_timepair64 {
     uint32_t seconds_lo;   // low 32 bits of seconds

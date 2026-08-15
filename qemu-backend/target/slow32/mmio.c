@@ -7,7 +7,9 @@
 #include <poll.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <netinet/in.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -80,6 +82,28 @@
 #define S32_MMIO_OP_GETTIME   0x30
 #define S32_MMIO_OP_SLEEP     0x31
 #define S32_MMIO_OP_GETTZ     0x35
+
+#define S32_MMIO_OP_SOCKET      0x40
+#define S32_MMIO_OP_CONNECT     0x41
+#define S32_MMIO_OP_ACCEPT      0x42
+#define S32_MMIO_OP_SEND        0x43
+#define S32_MMIO_OP_RECV        0x44
+#define S32_MMIO_OP_SHUTDOWN    0x45
+#define S32_MMIO_OP_BIND        0x46
+#define S32_MMIO_OP_LISTEN      0x47
+#define S32_MMIO_OP_GETSOCKNAME 0x48
+
+#define S32_AF_INET     2
+#define S32_SOCK_STREAM 1
+#define S32_SHUT_RD     0
+#define S32_SHUT_WR     1
+#define S32_SHUT_RDWR   2
+
+typedef struct QEMU_PACKED s32_mmio_sockaddr_in {
+    uint32_t addr;
+    uint16_t port;
+    uint16_t family;
+} s32_mmio_sockaddr_in_t;
 
 #define S32_MMIO_OP_ARGS_INFO 0x60
 #define S32_MMIO_OP_ARGS_DATA 0x61
@@ -196,6 +220,7 @@ typedef struct QEMU_PACKED s32_mmio_stat_result {
 typedef enum {
     S32_FD_TYPE_FILE = 0,
     S32_FD_TYPE_DIR  = 1,
+    S32_FD_TYPE_SOCK = 2,
 } Slow32FdType;
 
 #define S32_DT_UNKNOWN 0
@@ -1496,6 +1521,52 @@ static void slow32_mmio_handle_gettz(const CPUSlow32State *env,
     resp->status = S32_MMIO_STATUS_OK;
 }
 
+static int slow32_mmio_parse_sockaddr_in(Slow32MMIOContext *ctx,
+                                         CPUSlow32State *env,
+                                         const Slow32MMIODesc *req,
+                                         struct sockaddr_in *out)
+{
+    s32_mmio_sockaddr_in_t g;
+
+    if (req->length < sizeof(g)) {
+        return EINVAL;
+    }
+    slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, sizeof(g));
+    memcpy(&g, ctx->scratch, sizeof(g));
+    if (g.family != S32_AF_INET) {
+        return EAFNOSUPPORT;
+    }
+    memset(out, 0, sizeof(*out));
+    out->sin_family = AF_INET;
+    out->sin_port = htons(g.port);
+    out->sin_addr.s_addr = htonl(g.addr);
+    return 0;
+}
+
+static void slow32_mmio_write_sockaddr_in(Slow32MMIOContext *ctx,
+                                          CPUSlow32State *env,
+                                          uint32_t offset,
+                                          const struct sockaddr_in *in)
+{
+    s32_mmio_sockaddr_in_t g;
+    g.addr = ntohl(in->sin_addr.s_addr);
+    g.port = ntohs(in->sin_port);
+    g.family = S32_AF_INET;
+    memcpy(ctx->scratch, &g, sizeof(g));
+    slow32_mmio_copy_to_guest(env, offset, ctx->scratch, sizeof(g));
+}
+
+static int slow32_mmio_guest_socket_fd(Slow32MMIOContext *ctx, int host_fd)
+{
+    int guest_fd = slow32_mmio_alloc_guest_fd(ctx, host_fd, true);
+    if (guest_fd < 0) {
+        close(host_fd);
+        return -1;
+    }
+    ctx->fd_types[guest_fd] = S32_FD_TYPE_SOCK;
+    return guest_fd;
+}
+
 static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
                                  const Slow32MMIODesc *req,
                                  Slow32MMIODesc *resp)
@@ -1528,6 +1599,7 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         break;
     }
 
+    case S32_MMIO_OP_SEND:
     case S32_MMIO_OP_WRITE: {
         int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
         uint32_t to_write = MIN(req->length, (uint32_t)S32_MMIO_DATA_CAPACITY);
@@ -1548,6 +1620,7 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         break;
     }
 
+    case S32_MMIO_OP_RECV:
     case S32_MMIO_OP_READ: {
         int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
         uint32_t to_read = MIN(req->length, (uint32_t)S32_MMIO_DATA_CAPACITY);
@@ -1825,6 +1898,176 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
     case S32_MMIO_OP_GETTZ:
         slow32_mmio_handle_gettz(env, req, resp);
         break;
+
+    case S32_MMIO_OP_SOCKET: {
+        uint32_t packed = req->status;
+        int family = (int)(packed & 0xffu);
+        int type = (int)((packed >> 8) & 0xffu);
+        int protocol = (int)((packed >> 16) & 0xffu);
+        int host_fd;
+        int guest_fd;
+
+        if (family != S32_AF_INET) {
+            slow32_mmio_fail(resp, EAFNOSUPPORT);
+            break;
+        }
+        if (type != S32_SOCK_STREAM ||
+            (protocol != 0 && protocol != IPPROTO_TCP)) {
+            slow32_mmio_fail(resp, EPROTONOSUPPORT);
+            break;
+        }
+        host_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        guest_fd = slow32_mmio_guest_socket_fd(ctx, host_fd);
+        if (guest_fd < 0) {
+            slow32_mmio_fail(resp, EMFILE);
+            break;
+        }
+        resp->status = (uint32_t)guest_fd;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_BIND: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        struct sockaddr_in addr;
+        int perr;
+        int yes = 1;
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        perr = slow32_mmio_parse_sockaddr_in(ctx, env, req, &addr);
+        if (perr != 0) {
+            slow32_mmio_fail(resp, perr);
+            break;
+        }
+        (void)setsockopt(host_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        if (bind(host_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_LISTEN: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        int backlog = (int)req->length;
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        if (backlog <= 0) {
+            backlog = 8;
+        }
+        if (backlog > 128) {
+            backlog = 128;
+        }
+        if (listen(host_fd, backlog) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_CONNECT: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        struct sockaddr_in addr;
+        int perr;
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        perr = slow32_mmio_parse_sockaddr_in(ctx, env, req, &addr);
+        if (perr != 0) {
+            slow32_mmio_fail(resp, perr);
+            break;
+        }
+        if (connect(host_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_ACCEPT: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        struct sockaddr_in peer;
+        socklen_t peer_len = sizeof(peer);
+        int new_host;
+        int guest_fd;
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        new_host = accept(host_fd, (struct sockaddr *)&peer, &peer_len);
+        if (new_host < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        guest_fd = slow32_mmio_guest_socket_fd(ctx, new_host);
+        if (guest_fd < 0) {
+            slow32_mmio_fail(resp, EMFILE);
+            break;
+        }
+        slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &peer);
+        resp->status = (uint32_t)guest_fd;
+        resp->length = sizeof(s32_mmio_sockaddr_in_t);
+        break;
+    }
+
+    case S32_MMIO_OP_GETSOCKNAME: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        struct sockaddr_in bound;
+        socklen_t bound_len = sizeof(bound);
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        if (getsockname(host_fd, (struct sockaddr *)&bound, &bound_len) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &bound);
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = sizeof(s32_mmio_sockaddr_in_t);
+        break;
+    }
+
+    case S32_MMIO_OP_SHUTDOWN: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        int how = (int)req->length;
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        if (how < S32_SHUT_RD || how > S32_SHUT_RDWR) {
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
+        if (shutdown(host_fd, how) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = 0;
+        break;
+    }
 
     case S32_MMIO_OP_ENVP_INFO:
         slow32_mmio_handle_envp_info(ctx, env, req, resp);

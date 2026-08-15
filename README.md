@@ -260,6 +260,8 @@ make runtime      # Builds crt0.s32o, libs32.s32a, libc_debug.s32a, libc_mmio.s3
 - [Instruction Set Reference](docs/INSTRUCTION-SET.md) - Complete ISA documentation
 - [File Formats](docs/file-formats.md) - Object (.s32o) and executable (.s32x) formats
 - [Improvements](docs/IMPROVEMENTS.md) - Known issues and suggested fixes
+- [The 1987 Desk](docs/plans/1987-desk.md) - Period software we should (and should not) import
+- [The hose](docs/plans/hose.md) - How two SLOW-32 programs talk (sockets, not shared memory)
 - [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference
 
 ## License
