@@ -31,6 +31,11 @@ int write(int fd, const void *buf, size_t count);
 int lseek(int fd, int offset, int whence);
 int ftruncate(int fd, int length);
 
+/* Run another .s32x via the host emulator and wait. Returns the
+ * child's exit code, or -1 on failure. argv[0] is ignored; path is
+ * the image. Extra arguments start at argv[1]. argv may be NULL. */
+int s32_execv(const char *path, char *const argv[]);
+
 #ifdef __cplusplus
 }
 #endif

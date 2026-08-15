@@ -168,5 +168,6 @@ void mmio_ring_clear_envp(mmio_ring_state_t *mmio);
 void mmio_set_policy(mmio_ring_state_t *mmio, const svc_policy_t *policy);
 void mmio_cleanup_services(mmio_ring_state_t *mmio);
 bool mmio_policy_allows(mmio_ring_state_t *mmio, const char *service_name);
+void mmio_ring_set_emulator(const char *argv0);
 
 #endif // MMIO_RING_H

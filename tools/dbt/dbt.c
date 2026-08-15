@@ -2016,7 +2016,14 @@ int main(int argc, char **argv) {
 
     // Pre-scan for --paranoid and --allow/--deny (strip before single-char parser)
     svc_policy_t svc_policy = { .default_allow = true };
+    mmio_ring_set_emulator(argv[0]);
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
+            memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
+            argc -= 1;
+            i--;
+            continue;
+        }
         if (strcmp(argv[i], "--paranoid") == 0) {
             paranoid_mode = true;
             memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));

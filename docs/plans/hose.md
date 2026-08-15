@@ -41,9 +41,10 @@ The host composes machines. Guests only see hoses and files.
    starts N emulators and pre-wires `socketpair`s. Exactly one
    guest owns the terminal, or none (daemon cluster). Capabilities
    are per guest.
-3. **`exec` service** (ganl `spawnSlave` pattern): allow-listed
-   images, parent keeps a pipe. That is COMMAND.COM launching
-   dbase, and a BBS door. Not how a cluster boots.
+3. **`exec` service** — **v1 landed**: `S32_MMIO_OP_EXEC` (0x10)
+   forks the same emulator with `-q` and waits. Image must be a
+   `.s32x`. Policy name `exec`. COMMAND.COM uses this. Doors that
+   inherit a socket come later (spawn + pipe).
 4. **ganl** as the supervisor event loop only when a listener and
    Telnet are real (humans dial in, NAWS, binary mode for ZMODEM).
    Steal `NetworkEngine`, `adoptConnection`, `spawnSlave`, the

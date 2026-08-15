@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
@@ -16,6 +17,47 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/wait.h>
+#include <limits.h>
+
+static char g_emu_path[4096];
+
+void mmio_ring_set_emulator(const char *argv0) {
+    char resolved[4096];
+    if (!argv0 || !argv0[0]) {
+        return;
+    }
+    if (realpath(argv0, resolved) != NULL) {
+        strncpy(g_emu_path, resolved, sizeof(g_emu_path) - 1);
+        g_emu_path[sizeof(g_emu_path) - 1] = '\0';
+        return;
+    }
+    strncpy(g_emu_path, argv0, sizeof(g_emu_path) - 1);
+    g_emu_path[sizeof(g_emu_path) - 1] = '\0';
+}
+
+static int ends_with_ci(const char *s, const char *suf) {
+    size_t n, m;
+    const char *a, *b;
+    if (!s || !suf) {
+        return 0;
+    }
+    n = strlen(s);
+    m = strlen(suf);
+    if (n < m) {
+        return 0;
+    }
+    a = s + n - m;
+    b = suf;
+    while (*b) {
+        if (toupper((unsigned char)*a) != toupper((unsigned char)*b)) {
+            return 0;
+        }
+        a++;
+        b++;
+    }
+    return 1;
+}
 
 #if defined(__APPLE__)
 #define STAT_ATIME_SEC(st)  ((st).st_atimespec.tv_sec)
@@ -766,6 +808,7 @@ static const char *legacy_opcode_service(uint32_t opcode) {
     if (opcode == 0x0D) return "fs";   // FTRUNCATE
     if (opcode >= 0x20 && opcode <= 0x2A) return "fs";  // FS metadata
     if (opcode >= 0x30 && opcode <= 0x3F) return "time";
+    if (opcode == 0x10) return "exec";
     if (opcode >= 0x40 && opcode <= 0x4F) return "net";
     if (opcode >= 0x60 && opcode <= 0x6F) return "env";
     // 0x01 (PUTCHAR), 0x02 (GETCHAR), 0x09 (EXIT) always allowed
@@ -1362,6 +1405,92 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             }
             resp.status = req->status;  // Exit code
             break;
+
+        case S32_MMIO_OP_EXEC: {
+            char blob[4096];
+            char *path;
+            char *extra[12];
+            int nextra = 0;
+            char *p;
+            char *end;
+            const char *emu;
+            pid_t pid;
+            int st = 0;
+            struct stat sb;
+            uint32_t n;
+            uint32_t off;
+
+            if (req->length == 0 || req->length >= sizeof(blob)) {
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
+            off = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (off > S32_MMIO_DATA_CAPACITY - req->length) {
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
+            memcpy(blob, mmio->data_buffer + off, req->length);
+            blob[req->length] = '\0';
+            path = blob;
+            if (!path[0] || !ends_with_ci(path, ".s32x")) {
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
+            if (stat(path, &sb) != 0 || !S_ISREG(sb.st_mode)) {
+                mmio_fail(&resp, errno > 0 ? errno : ENOENT);
+                break;
+            }
+            p = path + strlen(path) + 1;
+            end = blob + req->length;
+            while (p < end && nextra < 11) {
+                if (*p == '\0') {
+                    break;
+                }
+                extra[nextra++] = p;
+                n = (uint32_t)strlen(p);
+                p += n + 1;
+            }
+
+            emu = g_emu_path[0] ? g_emu_path : getenv("S32_EMU");
+            if (!emu || !emu[0]) {
+                mmio_fail(&resp, ENOENT);
+                break;
+            }
+
+            pid = fork();
+            if (pid < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+            if (pid == 0) {
+                char *av[16];
+                int i, a = 0;
+                av[a++] = (char *)emu;
+                av[a++] = "-q";
+                av[a++] = path;
+                for (i = 0; i < nextra; i++) {
+                    av[a++] = extra[i];
+                }
+                av[a] = NULL;
+                execv(emu, av);
+                _exit(127);
+            }
+            while (waitpid(pid, &st, 0) < 0) {
+                if (errno != EINTR) {
+                    mmio_fail(&resp, errno > 0 ? errno : EIO);
+                    goto exec_done;
+                }
+            }
+            if (WIFEXITED(st)) {
+                resp.status = (uint32_t)WEXITSTATUS(st);
+                resp.length = 0;
+            } else {
+                resp.status = 255;
+                resp.length = 0;
+            }
+        exec_done:
+            break;
+        }
             
         case S32_MMIO_OP_FLUSH:
             fflush(stdout);

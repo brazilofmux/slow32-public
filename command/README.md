@@ -2,9 +2,8 @@
 
 A DOS-shaped shell for SLOW-32. The prompt is theater. `DIR` is the product.
 
-v1 is file commands only. No `.BAT`, no `PATH`, no launching `.s32x` —
-that waits on the host `exec` service sketched in
-[docs/plans/hose.md](../docs/plans/hose.md).
+v0.2 is file commands plus launching a `.s32x` (host `exec`, waits).
+No `.BAT` yet.
 
 ```bash
 ./build.sh

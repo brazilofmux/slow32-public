@@ -1511,11 +1511,22 @@ int main(int argc, char **argv) {
 
     // Pre-scan for --help/--allow/--deny/-p/--probe/-c
     uint64_t max_instructions = 0;  // 0 == unlimited (default)
+    int quiet = 0;
     svc_policy_t policy = { .default_allow = true };
+
+    mmio_ring_set_emulator(argv[0]);
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
+        }
+        if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
+            quiet = 1;
+            memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
+            argc -= 1;
+            i--;
+            continue;
         }
         if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
             max_instructions = strtoull(argv[i + 1], NULL, 0);
@@ -1677,9 +1688,11 @@ int main(int argc, char **argv) {
     }
 
     // Time the execution
-    printf("Starting execution at PC 0x%08x\n", cpu.pc);
-    if (cpu.mmio.enabled) {
-        printf("MMIO enabled for this program\n");
+    if (!quiet) {
+        printf("Starting execution at PC 0x%08x\n", cpu.pc);
+        if (cpu.mmio.enabled) {
+            printf("MMIO enabled for this program\n");
+        }
     }
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1713,17 +1726,19 @@ int main(int argc, char **argv) {
     // Calculate elapsed time
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
-    printf("HALT at PC 0x%08x\n", cpu.pc);
-    printf("\nProgram halted.\n");
-    printf("Exit code: %d\n", cpu.regs[1]);
-    printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);
-    printf("Simulated cycles: %" PRIu64 "\n", cpu.cycle_count);
-    printf("Wall time: %.6f seconds\n", elapsed);
+    if (!quiet) {
+        printf("HALT at PC 0x%08x\n", cpu.pc);
+        printf("\nProgram halted.\n");
+        printf("Exit code: %d\n", cpu.regs[1]);
+        printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);
+        printf("Simulated cycles: %" PRIu64 "\n", cpu.cycle_count);
+        printf("Wall time: %.6f seconds\n", elapsed);
 
-    if (elapsed > 0) {
-        double ips = cpu.inst_count / elapsed;
-        printf("Performance: %.2f MIPS (actual)\n", ips / 1e6);
-        printf("            %.2f instructions/second\n", ips);
+        if (elapsed > 0) {
+            double ips = cpu.inst_count / elapsed;
+            printf("Performance: %.2f MIPS (actual)\n", ips / 1e6);
+            printf("            %.2f instructions/second\n", ips);
+        }
     }
 
     // Cleanup

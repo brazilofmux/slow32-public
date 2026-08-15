@@ -1098,7 +1098,11 @@ int main(int argc, char *argv[]) {
 
     // Parse command line options
     int opt;
-    while ((opt = getopt(argc, argv, "+hstrc:b:w:")) != -1) {
+    int quiet = 0;
+
+    mmio_ring_set_emulator(argv[0]);
+
+    while ((opt = getopt(argc, argv, "+hstrc:b:w:q")) != -1) {
         switch (opt) {
             case 'h':
                 print_usage(argv[0]);
@@ -1125,6 +1129,9 @@ int main(int argc, char *argv[]) {
                     cpu.debug.breakpoints[cpu.debug.num_breakpoints++] = strtoul(optarg, NULL, 0);
                     cpu.debug.enabled = true;
                 }
+                break;
+            case 'q':
+                quiet = 1;
                 break;
             case 'w': {
                 char *dash = strchr(optarg, '-');
@@ -1176,15 +1183,17 @@ int main(int argc, char *argv[]) {
     }
     
     // Run program
-    printf("Starting execution\n");
-    fflush(stdout);
+    if (!quiet) {
+        printf("Starting execution\n");
+        fflush(stdout);
+    }
     clock_t start = clock();
     cpu_run(&cpu);
     clock_t end = clock();
     
     // Calculate performance
     double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-    if (elapsed > 0) {
+    if (!quiet && elapsed > 0) {
         double mips = (cpu.inst_count / elapsed) / 1e6;
         printf("\nProgram halted.\n");
         printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);

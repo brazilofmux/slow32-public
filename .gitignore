@@ -80,6 +80,8 @@ runtime/dirent_mmio.s
 runtime/dirent_stub.s
 runtime/net_mmio.s
 runtime/net_stub.s
+runtime/exec_mmio.s
+runtime/exec_stub.s
 runtime/term_mmio.s
 runtime/term_stub.s
 

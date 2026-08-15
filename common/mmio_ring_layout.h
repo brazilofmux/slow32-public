@@ -63,6 +63,7 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_SEEK    = 0x07,
     // 0x08 reserved (was BRK, removed — heap is statically allocated by linker)
     S32_MMIO_OP_EXIT    = 0x09,
+    S32_MMIO_OP_EXEC    = 0x10,  // run another .s32x and wait; path+args in data buf
     S32_MMIO_OP_STAT    = 0x0A,  // stat()/fstat() metadata fetch
     S32_MMIO_OP_FLUSH   = 0x0B,
     S32_MMIO_OP_READ_DIRECT = 0x0C, // Direct read into guest memory (zero-copy)

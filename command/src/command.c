@@ -96,7 +96,7 @@ static void print_dos_error(void) {
 }
 
 static void cmd_ver(void) {
-    printf("SLOW-32 Command   Version 0.1\n");
+    printf("SLOW-32 Command   Version 0.2\n");
 }
 
 static void cmd_help(void) {
@@ -107,6 +107,7 @@ static void cmd_help(void) {
     printf("ECHO    print text          CLS     clear screen\n");
     printf("VER     version             HELP    this list\n");
     printf("EXIT    leave COMMAND\n");
+    printf("name    run name.s32x (host exec, waits)\n");
 }
 
 static void cmd_cls(void) {
@@ -343,6 +344,68 @@ static void cmd_rd(const char *args) {
     }
 }
 
+static int looks_s32x(const char *s) {
+    size_t n = strlen(s);
+    return n >= 5 && cmd_is(s + n - 5, ".S32X");
+}
+
+/* Returns 1 if a program was launched (or failed to exec), 0 if not found. */
+static int try_run(const char *cmd, const char *args) {
+    char path[PATH_MAX_CMD];
+    char alt[PATH_MAX_CMD];
+    const char *use = NULL;
+    char argbuf[LINE_MAX];
+    char *argv[16];
+    int n = 1;
+    char *p;
+    int rc;
+
+    strncpy(path, cmd, sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+    normalize_slashes(path);
+
+    if (access(path, F_OK) == 0 && looks_s32x(path)) {
+        use = path;
+    } else {
+        snprintf(alt, sizeof(alt), "%s.s32x", path);
+        if (access(alt, F_OK) == 0) {
+            use = alt;
+        }
+    }
+    if (!use) {
+        return 0;
+    }
+
+    argv[0] = (char *)use;
+    strncpy(argbuf, args, sizeof(argbuf) - 1);
+    argbuf[sizeof(argbuf) - 1] = '\0';
+    p = argbuf;
+    while (*p && n < 15) {
+        while (*p && isspace((unsigned char)*p)) {
+            p++;
+        }
+        if (!*p) {
+            break;
+        }
+        argv[n++] = p;
+        while (*p && !isspace((unsigned char)*p)) {
+            p++;
+        }
+        if (*p) {
+            *p++ = '\0';
+        }
+    }
+    argv[n] = NULL;
+
+    rc = s32_execv(use, argv);
+    if (rc < 0) {
+        printf("Cannot execute %s\n", use);
+    } else if (rc != 0) {
+        printf("Program returned %d\n", rc);
+    }
+    return 1;
+}
+
 /* Returns 1 to keep looping, 0 to exit. */
 static int dispatch(char *line) {
     char cmd[32];
@@ -383,6 +446,8 @@ static int dispatch(char *line) {
         cmd_rd(args);
     } else if (cmd_is(cmd, "REM")) {
         /* comment */
+    } else if (try_run(cmd, args)) {
+        /* launched a .s32x */
     } else {
         printf("Bad command or file name\n");
     }
@@ -395,7 +460,7 @@ int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
-    printf("SLOW-32 Command   Version 0.1\n");
+    printf("SLOW-32 Command   Version 0.2\n");
     printf("(C) SLOW-32 desk\n\n");
 
     for (;;) {
