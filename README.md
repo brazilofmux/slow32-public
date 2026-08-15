@@ -229,7 +229,7 @@ int main() {
   (x86-64, AArch64) that compile the project's own DBT
 - ✅ **Applications** - SQLite, Lua, a Z-machine, dBase III clone, editor,
   BASIC, Forth, Lisp, Prolog, COMMAND.COM-shaped shell, spreadsheet,
-  IPv4 TCP examples under their own directories
+  BBS, IPv4 TCP examples under their own directories
 - ✅ **Regression tests** - 62/62 passing, plus `regression/run-differential.sh`
   which diffs every test across all execution engines
 
