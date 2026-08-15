@@ -65,12 +65,12 @@ static int create_empty(const char *path) {
     unsigned char hdr[32];
     unsigned char fd[32];
     unsigned char term;
-    /* FROM 16, TO 16, SUBJ 40, TEXT 80 + delete flag */
-    uint16_t rec_size = 1 + 16 + 16 + 40 + 80;
+    /* FROM 16, TO 16, SUBJ 40, TEXT 254 + delete flag */
+    uint16_t rec_size = 1 + 16 + 16 + 40 + 254;
     uint16_t hdr_size = 32 + 4 * 32 + 1;
     int i;
     const char *names[4] = { "FROM", "TO", "SUBJ", "TEXT" };
-    const int lens[4] = { 16, 16, 40, 80 };
+    const int lens[4] = { 16, 16, 40, 254 };
 
     f = fopen(path, "w");
     if (!f) {

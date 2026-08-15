@@ -7,7 +7,7 @@
 #define MSG_FROM_MAX 16
 #define MSG_TO_MAX   16
 #define MSG_SUBJ_MAX 40
-#define MSG_TEXT_MAX 80
+#define MSG_TEXT_MAX 254
 
 typedef struct {
     char from[MSG_FROM_MAX + 1];

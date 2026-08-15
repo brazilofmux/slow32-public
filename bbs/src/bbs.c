@@ -2,7 +2,7 @@
  * SLOW-32 BBS v0.2 — sockets + two .DBF files.
  *
  * USERS.DBF: NAME / PASS.  MSG.DBF: FROM / TO / SUBJ / TEXT.
- * Menu: L list, R read, P post, W who, G goodbye.
+ * Menu: L list, R read, P post (blank line ends), W who, G goodbye.
  */
 
 #include "dbfuser.h"
@@ -101,9 +101,27 @@ static void cmd_post(int fd, msgdb_t *msg, const char *from) {
     if (sock_gets(fd, subj, (int)sizeof(subj)) < 0) {
         return;
     }
-    sock_puts(fd, "Text: ");
-    if (sock_gets(fd, text, (int)sizeof(text)) < 0) {
-        return;
+    sock_puts(fd, "Text (blank line ends):\r\n");
+    text[0] = '\0';
+    for (;;) {
+        char line[81];
+        int used;
+        if (sock_gets(fd, line, (int)sizeof(line)) < 0) {
+            return;
+        }
+        if (!line[0]) {
+            break;
+        }
+        used = (int)strlen(text);
+        if (used > 0 && used + 1 < (int)sizeof(text)) {
+            text[used++] = ' ';
+            text[used] = '\0';
+        }
+        if (used + (int)strlen(line) >= (int)sizeof(text)) {
+            sock_puts(fd, "(truncated)\r\n");
+            break;
+        }
+        memcpy(text + used, line, strlen(line) + 1);
     }
     if (msgdb_post(msg, from, to, subj, text) != 0) {
         sock_puts(fd, "Post failed.\r\n");
@@ -117,7 +135,7 @@ static void session(int fd, userdb_t *db, msgdb_t *msg) {
     char pass[64];
     char cmd[32];
 
-    sock_puts(fd, "SLOW-32 BBS  v0.2\r\n\r\n");
+    sock_puts(fd, "SLOW-32 BBS  v0.3\r\n\r\n");
     sock_puts(fd, "Name: ");
     if (sock_gets(fd, name, (int)sizeof(name)) < 0 || !name[0]) {
         return;

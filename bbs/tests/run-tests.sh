@@ -76,8 +76,9 @@ for step in script.split(";"):
     step = step.strip()
     if step.startswith("WAIT "):
         out = recv_until(step[5:])
-    elif step.startswith("SEND "):
-        s.sendall((step[5:] + "\r\n").encode())
+    elif step == "SEND" or step.startswith("SEND "):
+        payload = step[5:] if step.startswith("SEND ") else ""
+        s.sendall((payload + "\r\n").encode())
 s.close()
 sys.stdout.write(out)
 PY
@@ -106,11 +107,12 @@ check bye "$ok" "Goodbye, alice"
 bad="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND nope; WAIT Logon')"
 check badpass "$bad" "Logon failed"
 
-mail="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND secret; WAIT Welcome; SEND L; WAIT No messages; SEND P; WAIT To:; SEND all; WAIT Subj:; SEND hello; WAIT Text:; SEND this is a test; WAIT Posted; SEND L; WAIT hello; SEND R; WAIT Read; SEND 1; WAIT this is a test; SEND G; WAIT Goodbye')"
+mail="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND secret; WAIT Welcome; SEND L; WAIT No messages; SEND P; WAIT To:; SEND all; WAIT Subj:; SEND hello; WAIT Text; SEND line one; SEND line two; SEND ; WAIT Posted; SEND L; WAIT hello; SEND R; WAIT Read; SEND 1; WAIT line one; SEND G; WAIT Goodbye')"
 check list-empty "$mail" "No messages"
 check posted "$mail" "Posted"
 check list-subj "$mail" "hello"
-check read-body "$mail" "this is a test"
+check read-body "$mail" "line one"
+check read-line2 "$mail" "line two"
 
 if [ "$fail" -ne 0 ]; then
     echo "=== server ---"
