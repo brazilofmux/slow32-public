@@ -85,32 +85,46 @@ int fclose(FILE *stream) {
     return (result < 0) ? EOF : 0;
 }
 
-FILE *fopen(const char *pathname, const char *mode) {
-    FILE *f = calloc(1, sizeof(FILE));
+static int mode_to_flags(const char *mode) {
+    int flags = 0;
+    if (strchr(mode, 'r')) flags |= FLAG_READ;
+    if (strchr(mode, 'w')) flags |= FLAG_WRITE | FLAG_CREATE | FLAG_TRUNC;
+    if (strchr(mode, 'a')) flags |= FLAG_WRITE | FLAG_APPEND;
+    if (strchr(mode, '+')) flags |= FLAG_READ | FLAG_WRITE;
+    return flags;
+}
+
+/* Wrap an already-open guest fd in a buffered FILE. */
+FILE *fdopen(int fd, const char *mode) {
+    FILE *f;
+    if (fd < 0 || !mode) return NULL;
+    f = calloc(1, sizeof(FILE));
     if (!f) return NULL;
 
     f->ungetc_char = -1;
-    f->flags = 0;
-    if (strchr(mode, 'r')) f->flags |= FLAG_READ;
-    if (strchr(mode, 'w')) f->flags |= FLAG_WRITE | FLAG_CREATE | FLAG_TRUNC;
-    if (strchr(mode, 'a')) f->flags |= FLAG_WRITE | FLAG_APPEND;
-    if (strchr(mode, '+')) f->flags |= FLAG_READ | FLAG_WRITE;
-    
-    size_t len = strlen(pathname);
-    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
-    memcpy((void *)data_buffer, pathname, len + 1);
-    
-    f->fd = s32_mmio_request(S32_MMIO_OP_OPEN, len + 1u, 0u, f->flags);
-    if (f->fd < 0) {
-        free(f);
-        return NULL;
-    }
-    
+    f->flags = mode_to_flags(mode);
+    f->fd = fd;
     f->mode = _IOFBF;
     f->buffer = malloc(STDIO_BUF_SIZE);
     f->buf_size = f->buffer ? STDIO_BUF_SIZE : 0;
     if (!f->buffer) f->mode = _IONBF;
-    
+    return f;
+}
+
+FILE *fopen(const char *pathname, const char *mode) {
+    int flags = mode_to_flags(mode);
+    int fd;
+    FILE *f;
+
+    size_t len = strlen(pathname);
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    memcpy((void *)data_buffer, pathname, len + 1);
+
+    fd = s32_mmio_request(S32_MMIO_OP_OPEN, len + 1u, 0u, flags);
+    if (fd < 0) return NULL;
+
+    f = fdopen(fd, mode);
+    if (!f) s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, fd);
     return f;
 }
 

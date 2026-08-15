@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 
 static int failures;
 
@@ -130,6 +131,25 @@ int main(void) {
               "round-trip through fmemopen converges");
         free(b1);
         free(b2);
+    }
+
+    /* fdopen: wrap a raw guest fd, write through stdio, read back */
+    {
+        const char *path = "/tmp/slow32-memstream-fdopen.txt";
+        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC);
+        FILE *f;
+        char back[16];
+        check(fd >= 0, "open() gives a writable fd");
+        f = fdopen(fd, "w");
+        check(f != NULL, "fdopen wraps the fd");
+        fputs("via fdopen\n", f);
+        check(fclose(f) == 0, "fdopen stream closes");
+        f = fopen(path, "r");
+        check(f && fgets(back, sizeof back, f) &&
+              strcmp(back, "via fdopen\n") == 0,
+              "fdopen data round-trips");
+        if (f) fclose(f);
+        remove(path);
     }
 
     /* fmemopen fixed "w": fills, then errors, never grows */
