@@ -17,3 +17,6 @@ __pycache__/
 # these intermediates are not.
 /gen/tz.sqlite
 /gen/resolved.json
+
+# macOS Finder metadata
+.DS_Store
