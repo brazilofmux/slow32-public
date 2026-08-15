@@ -2355,6 +2355,10 @@ void func_set_udf_callback(udf_callback_t cb) {
     udf_callback = cb;
 }
 
+udf_callback_t func_get_udf_callback(void) {
+    return udf_callback;
+}
+
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
     const func_entry_t *e;
     char upper[64];

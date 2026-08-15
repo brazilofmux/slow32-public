@@ -9,6 +9,7 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
 /* User-defined function callback. Set by program.c. */
 typedef int (*udf_callback_t)(const char *name, value_t *args, int nargs, value_t *result);
 void func_set_udf_callback(udf_callback_t cb);
+udf_callback_t func_get_udf_callback(void);
 
 /* Cleanup low-level file handles */
 void ll_close_all(void);
