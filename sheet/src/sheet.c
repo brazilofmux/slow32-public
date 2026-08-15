@@ -263,7 +263,50 @@ void sheet_list(const sheet_t *sh, FILE *out) {
     }
 }
 
+static int ends_with_ci(const char *s, const char *suf) {
+    size_t n;
+    size_t m;
+    const char *a;
+    const char *b;
+    if (!s || !suf) {
+        return 0;
+    }
+    n = strlen(s);
+    m = strlen(suf);
+    if (n < m) {
+        return 0;
+    }
+    a = s + n - m;
+    b = suf;
+    while (*b) {
+        if (toupper((unsigned char)*a) != toupper((unsigned char)*b)) {
+            return 0;
+        }
+        a++;
+        b++;
+    }
+    return 1;
+}
+
+static int path_is_wk1(const char *path) {
+    return ends_with_ci(path, ".wk1") || ends_with_ci(path, ".wks");
+}
+
 int sheet_save(const sheet_t *sh, const char *path) {
+    if (path_is_wk1(path)) {
+        return sheet_save_wk1(sh, path);
+    }
+    return sheet_save_sht(sh, path);
+}
+
+int sheet_load(sheet_t *sh, const char *path) {
+    if (path_is_wk1(path)) {
+        return sheet_load_wk1(sh, path);
+    }
+    return sheet_load_sht(sh, path);
+}
+
+int sheet_save_sht(const sheet_t *sh, const char *path) {
     FILE *f;
     int r, c;
 
@@ -295,7 +338,7 @@ int sheet_save(const sheet_t *sh, const char *path) {
     return 0;
 }
 
-int sheet_load(sheet_t *sh, const char *path) {
+int sheet_load_sht(sheet_t *sh, const char *path) {
     FILE *f;
     char line[256];
 

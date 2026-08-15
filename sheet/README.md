@@ -30,6 +30,9 @@ A4: 60    [@SUM(A1:A3)]
 - `+ - * / ( )`, unary minus
 - `@SUM @AVG @MIN @MAX @COUNT` over ranges or lists
 - Cycle detection (`#CYCLE!`) and `#DIV/0!`
-- Text `.sht` save/load
+- Text `.sht` save/load (keeps formulas)
+- Lotus `.wk1` / `.wks` subset: INTEGER, NUMBER, LABEL; FORMULA
+  reads the cached value. Save picks the format from the extension.
+  Formulas become numbers on WK1 export.
 
 Grid is A–Z by rows 1–64. No macros, no 3D workbooks, no graphs.

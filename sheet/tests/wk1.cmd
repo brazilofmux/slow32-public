@@ -1,0 +1,12 @@
+A1=42
+B1=hello
+C1==A1+1
+D1=3.5
+SAVE tmp.wk1
+CLEAR
+LOAD tmp.wk1
+A1
+B1
+C1
+D1
+QUIT

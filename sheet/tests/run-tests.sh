@@ -47,6 +47,43 @@ run_script arithmetic "A3: 50" "A4: 60" || fail=1
 run_script sum "A4: 6" "A5: 2" "A6: 1" "A7: 3" || fail=1
 run_script cycle "#CYCLE!" "#DIV/0!" || fail=1
 run_script saveload "A1: 42" "B1: hello" "C1: 43" || fail=1
+# Formulas flatten to cached values in WK1. C1 was A1+1.
+run_script wk1 "A1: 42" "B1: hello" "C1: 43" "D1: 3.5" || fail=1
+
+if command -v python3 >/dev/null 2>&1; then
+    work="$(mktemp -d "${TMPDIR:-/tmp}/s32-sheet.XXXXXX")"
+    python3 - "$work/foreign.wk1" <<'PY'
+import struct, sys
+def rec(op, data):
+    return struct.pack('<HH', op, len(data)) + data
+out = rec(0x0000, struct.pack('<H', 0x0406))
+out += rec(0x000D, struct.pack('<BHH', 0xFF, 0, 0) + struct.pack('<h', 99))
+out += rec(0x000E, struct.pack('<BHH', 0xFF, 1, 0) + struct.pack('<d', 1.25))
+out += rec(0x000F, struct.pack('<BHH', 0xFF, 2, 0) + b"'lotus\x00")
+out += rec(0x0001, b'')
+open(sys.argv[1], 'wb').write(out)
+PY
+    printf 'LOAD foreign.wk1\nA1\nB1\nC1\nQUIT\n' > "$work/in.cmd"
+    (cd "$work" && "$EMU" "$SHEET_DIR/sheet.s32x" --line) \
+        < "$work/in.cmd" > "$work/out.txt" 2>"$work/err.txt" || true
+    f2=0
+    for pat in "A1: 99" "B1: 1.25" "C1: lotus"; do
+        if grep -q "$pat" "$work/out.txt"; then
+            echo "  OK  foreign-wk1: $pat"
+        else
+            echo "  FAIL foreign-wk1: $pat"
+            f2=1
+        fi
+    done
+    if [ "$f2" -ne 0 ]; then
+        echo "=== foreign-wk1 output ---"
+        cat "$work/out.txt"
+        fail=1
+    fi
+    rm -rf "$work"
+else
+    echo "  SKIP foreign-wk1 (no python3)"
+fi
 
 if [ "$fail" -ne 0 ]; then
     echo "=== TESTS FAILED ==="

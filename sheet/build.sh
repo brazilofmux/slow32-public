@@ -13,7 +13,7 @@ OPT="${OPT:--O1}"
 echo "=== Building SLOW-32 Sheet ==="
 
 OBJECTS=""
-for src in src/formula.c src/sheet.c src/ui.c src/main.c; do
+for src in src/formula.c src/sheet.c src/wk1.c src/ui.c src/main.c; do
     base=$(basename "$src" .c)
     echo -n "  Compiling $base.c... "
     $CLANG $CFLAGS $OPT "$src" -o "src/$base.ll"
