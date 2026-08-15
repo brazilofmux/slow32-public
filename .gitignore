@@ -94,6 +94,9 @@ sbasic/src/*.s
 # Generated assembly from C sources in nano/
 nano/src/*.s
 
+# Generated assembly from C sources in command/
+command/src/*.s
+
 # Temporary LLVM files
 *.ll.tmp
 
