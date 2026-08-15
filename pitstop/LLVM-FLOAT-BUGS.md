@@ -24,6 +24,7 @@ Verified by `feature-float-f32-compare` (`a==c`, `a==b`, `e==e`) and
 ## Bug 4: f32 ↔ f64 conversion -- FIXED
 
 Both directions work:
+
 - f32→f64 (extending load → `fcvt.d.s`): verified by `feature-float-f64-basic`
 - f64→f32 (truncating store → `fcvt.s.d`): verified by `feature-float-mixed` (`d2f+f` test)
 
