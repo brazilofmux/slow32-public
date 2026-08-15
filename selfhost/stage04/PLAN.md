@@ -89,6 +89,7 @@ always keeping it working end-to-end.
 Prove the architecture works with the smallest useful subset.
 
 **Subset of C:**
+
 - `int` variables (global and local)
 - Integer literals
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
@@ -101,6 +102,7 @@ Prove the architecture works with the smallest useful subset.
 - `void` return type
 
 **Layers active:**
+
 - Lexer: Ragel (done)
 - Parser → AST: recursive descent
 - Codegen: direct AST tree-walk → assembly (skip all IR layers)
@@ -114,6 +116,7 @@ while, arithmetic. Maybe factorial or fibonacci.
 ### Phase 2: Pointers, Arrays, Structs
 
 Extend the AST and tree-walk codegen to handle:
+
 - Pointer types and dereferencing (`*p`, `&x`)
 - Arrays and subscripting (`a[i]`)
 - `char` type
@@ -130,6 +133,7 @@ manipulation, linked list traversal).
 ### Phase 3: Attribute Grammar + Type System
 
 Add a proper type system via attribute grammar traversal:
+
 - Type inference and checking in single AST pass
 - Struct layout computation (offsets, sizes, alignment)
 - Implicit type conversions (char → int promotion)
@@ -144,6 +148,7 @@ access generates correct offsets.
 ### Phase 4: Preprocessor
 
 Handle the subset of cpp that s32-cc needs:
+
 - `#define` (object-like macros with integer values)
 - `#include` (textual inclusion)
 - `#ifdef` / `#ifndef` / `#else` / `#endif`
@@ -155,6 +160,7 @@ token stream (like stage03's approach).
 ### Phase 5: AST → HIR
 
 Introduce the first IR layer:
+
 - HIR nodes: if/while/for as structured control flow
 - Temporaries for sub-expressions
 - Explicit address-of for lvalues
@@ -166,6 +172,7 @@ Introduce the first IR layer:
 ### Phase 6: HIR → MIR (SSA)
 
 Lower structured control flow to CFG:
+
 - Basic blocks with explicit predecessors/successors
 - φ-nodes at join points
 - SSA construction (dominance frontiers or simple algorithm)
@@ -177,6 +184,7 @@ Lower structured control flow to CFG:
 ### Phase 7: MIR Optimizations
 
 SSA enables clean dataflow analysis:
+
 - Copy propagation
 - Constant propagation and folding
 - Common subexpression elimination (CSE)
@@ -188,6 +196,7 @@ SSA enables clean dataflow analysis:
 ### Phase 8: MIR → LIR (Instruction Selection)
 
 Map MIR operations to SLOW-32 instructions:
+
 - Pattern matching: add(reg, imm) → addi
 - Large constants: lui + addi pairs
 - Comparison → slt/seq/sne/etc.
@@ -200,6 +209,7 @@ virtual registers.
 ### Phase 9: Register Allocation
 
 Map virtual registers to physical registers:
+
 - Linear scan allocator (simpler than graph coloring)
 - Spill to stack when registers exhausted
 - Callee-save/caller-save conventions
@@ -214,6 +224,7 @@ Programs still produce correct output.
 ### Phase 10: LIR Optimizations + Assembly Emission
 
 Final polish:
+
 - Peephole optimizations (redundant loads, dead stores)
 - Branch optimization (remove jumps to next instruction)
 - Stack frame layout and prolog/epilog generation
@@ -224,6 +235,7 @@ Final polish:
 ### Phase 11: Self-Hosting
 
 The ultimate goal: stage04 compiler compiles itself.
+
 - Incrementally add C features needed by the compiler's own source
 - Fixed-point proof: gen2.s == gen3.s
 - Performance comparison with stage03
@@ -231,6 +243,7 @@ The ultimate goal: stage04 compiler compiles itself.
 ## SLOW-32 Target Notes
 
 Things that make this target easier than most:
+
 - 32 registers (generous — less spilling)
 - No instruction ordering constraints (no pipeline hazards)
 - Simple addressing modes (reg + immediate only)
@@ -239,6 +252,7 @@ Things that make this target easier than most:
 - Fixed-width 32-bit instructions
 
 Things to watch:
+
 - 12-bit immediate range (-2048 to +2047) — need lui+addi for larger
 - No barrel shifter for variable shifts (but sll/srl/sra exist)
 - 8 argument registers (r3-r10) — stack spill for args 9+
@@ -296,6 +310,7 @@ stage04/
 ## Constraints from s32-cc (bootstrap compiler)
 
 Stage 04 source must be compilable by stage 11's s32-cc:
+
 - No block-scoped declarations (vars at function top only)
 - No unions (use flat structs with unused fields per kind)
 - No string/array initializers

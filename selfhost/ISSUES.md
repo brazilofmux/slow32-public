@@ -28,6 +28,7 @@ Buffer is now 112 bytes. `ctime.tv_nsec` is written at offset 104, no longer ove
 
 ### 3. [FIXED] Missing Centralized Guest Memory Bounds Checks
 Stage0 now routes guest memory accesses through centralized checked helpers:
+
 - `mem_check()` for range validation and fault reporting
 - `mem_read16()/mem_read32()` for checked loads
 - `mem_write32()` for checked stores
@@ -102,6 +103,7 @@ Stage04 regression scripts now assemble the bootstrap runtime from in-tree sourc
 test time, using the Forth assembler (stage01). No prebuilt `runtime/*.s32o` or
 `runtime/*.s32a` blobs are required. A clean checkout can run Stage00 through Stage04
 using only:
+
 - host C compiler for Stage00 `s32-emu`
 - seeded `forth/kernel.s32x` + `forth/prelude.fth`
 
@@ -146,6 +148,7 @@ Verified by `min_ptr_arith.c` test (int* advances by 4, char* by 1, ptr-ptr divi
 
 ### 20. [FIXED] Small Fixed-Size Symbol Tables and Buffers
 All limits bumped to support self-hosting-scale programs:
+
 - `MAX_LOCALS` 64→128, `MAX_GLOBALS` 64→256, `MAX_FUNCS` 128→256
 - `NAMESZ` 32→48, name buffers proportionally increased
 - `MAX_OUTPUT` 65536→131072 (128KB), `MAX_STRINGS` 128→512, `STR_POOL_SZ` 4096→16384
@@ -239,6 +242,7 @@ The bug is in the **block cache** (translate_block_cached), not the core
 instruction dispatch or JIT optimizer.
 
 **Analysis:**
+
 - The sharp cliff between 133M (0.13s) and 153M (infinite loop) indicates
   a hard trigger, not gradual slowdown.
 - gen1 (tree-walk-compiled, 184KB) compiles s12cc.c fine on dbt (all stages).
@@ -340,6 +344,7 @@ under the limit. This is why gen1 worked but gen2 didn't — and why only
 stages 2+ (which use the block cache) were affected.
 
 **Fix:**
+
 1. Added `cache_needs_flush()` — returns true when load factor exceeds 75%
 2. Added pre-translation check in `translate_block_cached()` to flush before
    the hash table fills up
@@ -347,6 +352,7 @@ stages 2+ (which use the block cache) were affected.
 4. Made `block_cache_t` static (BSS) to avoid 3MB+ stack allocation
 
 **Verification:**
+
 - 4K cache + guard: gen2 selfhost fixed point proven (gen2.s == gen3.s)
 - 128K cache + guard: gen2 selfhost fixed point proven
 - Full stage05 test suite: 22/22 pass
@@ -359,8 +365,10 @@ stages 2+ (which use the block cache) were affected.
 
 ### 7. [INCONSISTENCY] PC-Relative Reference Points
 The reference point for PC-relative offsets differs between instructions:
+
 - `JAL` (0x40): Relative to `PC`.
 - `BEQ/BNE/...` (0x48+): Relative to `PC + 4`.
+
 While the assembler compensates for this in `PARSE-TARGET` vs `PARSE-BTARGET`, it is an inconsistent design that complicates manual assembly and debugging.
 
 ### Stage 6: Subset C Archiver (`s32-ar.c`)
@@ -369,12 +377,14 @@ While the assembler compensates for this in `PARSE-TARGET` vs `PARSE-BTARGET`, i
 The Stage02 subset archiver (`selfhost/stage01/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
 
 Remaining gap:
+
 - Expand command surface and parity checks for `d/m/v/p` paths before Stage02 can be considered complete.
 
 ### Stage 8: Subset C Compiler (`cc-min-pass1.c`)
 
 ### 21. [FIXED] Caller-Side Argument Limit
 Stage02 `cc-min-pass1.c` now handles calls with more than 8 arguments by:
+
 - loading register arguments (`r3-r10`) from a temporary argument block
 - re-packing overflow arguments to caller stack in ABI order (`arg9` at `sp+0`, `arg10` at `sp+4`, etc.)
 - cleaning up caller stack space after call
@@ -385,6 +395,7 @@ into local parameter slots, so both caller and callee sides agree for `>8` argum
 ### 23. [FIXED] Comma Operator and `for` Loop Expressions
 Stage02 `cc-min-pass1.c` now parses comma-separated expression lists in all three `for`
 clause slots (init/cond/step). This enables idioms like:
+
 - `for (i = 0, j = 10; i < n, j > 0; i = i + 1, j = j - 1) { ... }`
 
 Validation: targeted stage02 test returns expected value for mixed init/cond/step lists.
@@ -419,7 +430,9 @@ the gen2==gen3 byte comparison is never reached.  The bug is **not**
 miscompiled and can't lex its own source."
 
 **Diagnostic harness landed in `68dd34a6`**: `selfhost/stage07/diff-corpus.sh`
+
 + a 10-file corpus reproduces the smoking gun in ~1.5 s.  Smallest
+
 signal: `01_return_const.c` (`int main(void){return 0;}`) — fp-gen2's
 output drops the `addi r1, r0, 0` that `cc.s32x` and `gen1_cc.s32x`
 both emit (they're byte-identical for this input).  The bug is purely
@@ -441,6 +454,7 @@ Next bisect target: between `7b9e1405` (the fusion commit, where
 the symptom first surfaces) and `be1514b4` (last commit to rebuild
 the checked-in `cc.s32x` reference).  Likely suspects in that range
 that touch HIR/regalloc/codegen:
+
 - `e92607d4` HIR-codegen global-init byte/element semantics
 - `f5cde4d3` register compiler-generated temp allocas with hl_ainst
 - `83fc86ab` mem2reg false-rejection for allocas + verifier
@@ -463,6 +477,7 @@ stage07 aggregate init and PP support". But the failure mode at
 So `874483ff` is the first commit where the bisect script's BAD
 predicate fires, but several distinct regressions are stacked in
 this range:
+
 1. **`874483ff`** changed `ps_ginit_count` semantics (element-count
    → byte-count) and `ps_ginit_pool` (element-stride → one byte per
    slot).  It updated `codegen.h:gen_data` but missed
@@ -489,6 +504,7 @@ the emission bug is unobservable.
 
 **Next angle**: instead of bisecting, do a *differential code path*
 analysis on gen1_cc compiling some single function from s12cc.c.
+
 - Identify which function (or functions) gen1_cc miscompiles by
   diffing fp-gen2.s against the cc.s32x-built reference.
 - The session log noted `hl_stmt` lost a parameter spill — that's a
@@ -607,6 +623,7 @@ and `bd04478f` (bad, 47/48) using `selfhost/stage07/run-tests.sh
 ```
 
 The commit added:
+
 - `hir_burg.h:hcg_identify_fusions` — marks BRC instructions whose
   condition is a single-use comparison, and their intermediate COPYs.
 - `hir_regalloc.h:ra_extend_fused_cmp` — extends the fused comparison's
@@ -617,6 +634,7 @@ The commit added:
 The live-range extension + NOP-rewrite has a soundness bug: many later
 functions stop spilling parameters/locals.  Visible symptoms in
 `fp-gen2.s` and `fp-gen3.s`:
+
 - `hl_stmt`: `n` (the `Node *` parameter) is no longer spilled at
   `fp-12`.  Without the spill, `n` is reused-then-clobbered for the
   `n->lhs && hl_struct_ret && ty_is_struct(...)` short-circuit chain,
@@ -636,6 +654,7 @@ with the original bug, or rely on fusion working correctly.  The clean
 fix is to make `ra_extend_fused_cmp` sound rather than to disable it.
 
 **Files changed in 7b9e1405** (start here):
+
 - `selfhost/stage07/hir_burg.h` (`hcg_identify_fusions`, +81 lines)
 - `selfhost/stage07/hir_regalloc.h` (`ra_extend_fused_cmp`, +53 lines)
 - `selfhost/stage07/hir_codegen.h` (HI_BRC fusion-aware emission, +134 lines)
@@ -646,6 +665,7 @@ comparison's *operand* live ranges to the BRC position is necessary,
 but the comparison itself becoming HI_NOP changes the live-range layout
 that `ra_compute_ends` already produced for everything that surrounded
 it.  Likely candidates:
+
 - The comparison's own value (the SEQ/SNE/... result) may still appear
   as a use somewhere `ra_compute_ends` recorded but
   `ra_extend_fused_cmp` doesn't account for.
@@ -786,7 +806,9 @@ arg. SLOW-32 read=0x01 collided with Linux `O_WRONLY=1`, so files
 opened "for read" were actually write-only. Added flag translation.
 
 **Layer 3 — SEEK [FIXED]**: open/read worked, but the linker (Forth
+
 + link.fth, used to link libc archive) failed at `Loading archive:
+
 libc.s32a / Error: cannot read archive header`. Cross libc had SEEK
 in its stripped-out set. `AR-READ-AT` in `selfhost/stage01/ar.fth`
 calls `REPOSITION-FILE` (Forth seek) before each archive read, so
@@ -843,6 +865,7 @@ prints "OK" post-fix.  Because `hir_lower.h` is symlinked into the
 a64 cross-compiler tree, the cc-x64-side fix flowed straight in.
 
 **Verification on macOS**:
+
 - `dbt-a64 -v selfhost/stage02/s32-as.s32x` now translates 50
   blocks, reaches `main`, and prints `Usage: s32-as <input.s>
   <output.s32o>` (exit 1) instead of hanging at startup.
@@ -926,6 +949,7 @@ fit comfortably. Captured here because larger third-party C codebases
 epilogue / spill-slot offsets above 2047. Confirmed working, but it is
 the path that historically misbehaves first when a regression bloats
 frames. Watch points:
+
 - `selfhost/stage07/hir_codegen.h` prologue/epilogue offset emission
 - spill-slot allocation in `selfhost/stage07/hir_regalloc.h`
 
@@ -1119,6 +1143,7 @@ the in-tree `runtime/crt0.s32o`.
 
 **Bug A — MMIO shim gaps in `selfhost/stage08-cross-x64/libc_x64/mmio_ring_x64.c`** (FIXED, 40ef705f):
 the x64 MMIO shim was the dbt-a64 #43 fix's missing twin. Three problems:
+
   - `OP_MMIO_STAT` returned ERR for both path and fd variants — added
     `stat`/`fstat` calls and repacking of the Linux x86-64 kernel
     `struct stat` byte layout into `s32_mmio_stat_result_t`.
@@ -1135,6 +1160,7 @@ failure, not a JIT correctness bug.
 
 **Bug B — cc-x64 miscompiles `continue` in `tools/dbt/translate.c`** (WORKED-AROUND, 8884f7a3):
 three sites where `continue` produced wrong control flow under cc-x64:
+
   - `reg_alloc_prescan`: `continue` inside `case OP_JAL` of a `switch`
     inside a `while` jumped back into the function init block
     (re-running prologue with scratch regs already reused), instead
@@ -1178,6 +1204,7 @@ FTH
 ```
 
 **Remaining work**:
+
 - Bug C (superblock crash): localise the cc-x64 miscompile in
   `translate_branch_common`'s `can_extend` path (translate.c:3266+),
   or somewhere downstream of it that only runs when superblocks are
@@ -1399,12 +1426,14 @@ the fixed path.
 Originally `ND_SWITCH` lowered to a linear `HI_SEQ`+`HI_BRC` chain (O(N)).
 
 **Status (2026-06-01): implemented.** `hir_lower.h` now selects, in order:
+
 1. **Dense, non-fall-through switch → O(1) jump table** (`HI_JMPTAB`). Used when
    `sw_n >= 5`, span `<= 4*sw_n`, span `<= 1024`, and no case falls through.
 2. **>= 6 cases → balanced binary search tree** (`hl_sw_emit_bsearch`, O(log N)).
 3. **otherwise → linear chain** (`hl_sw_emit_chain`).
 
 Jump-table mechanics (stage08 only):
+
 - `HI_JMPTAB` terminator with a dedicated `hjt_target[]`/`hjt_base[]`/`hjt_span[]`
   side table (kept out of `h_carg`); wired through CFG successor enumeration
   (deduped), the dead-block reachability walk, terminator scans, and liveness.
@@ -1434,6 +1463,7 @@ uses a 26-register pool — 18 callee-saved (`r11-r28`, colors 0..17) plus 8 cal
 (`r3-r10`, colors 18..25). Values whose live range does *not* cross a call may be colored
 into the cheap caller-saved pool; values that cross a call are kept in the callee-saved
 range. Key pieces in `selfhost/stage07/hir_regalloc.h` (and the identical stage08 fork):
+
 - `ra_caller_saved_enabled_count = 8` knob (set `0` to revert to callee-only).
 - `ra_crosses_call[]` / `ra_mark_call_crossing()` — the live-cross classification.
 - `ra_prefers_caller_for_inst()` — gates caller-pool eligibility.
@@ -1447,6 +1477,7 @@ values landing in the caller pool when the compiler compiles itself. Spot-check
 prologue; a value held across a `jal` is correctly placed in a saved `r11`.
 
 **Remaining sub-opportunities (minor):**
+
 - A handful of identity self-moves (`addi rN, rN, 0`) still survive — ~7 across ~3800
   instructions of libc (~0.2%). Every explicit copy path already guards `dst != src`, so
   these originate in spill/scratch interactions, not the copy emitters.
@@ -1476,6 +1507,7 @@ Comments in `cc.fth` claim that `TY-STRUCT` indices and array counts overlap in 
 ### Documentation Opportunities
 
 ### 10. `ISA-ENCODING.md` Errors and Discrepancies
+
 - The "Operation" column for `SLTI` is a copy-paste error from `ADDI` (or rather, `SLTI` is missing from the I-Type table while appearing in other sections).
 - Opcode ranges for R-type vs I-type are not clearly defined. Instructions `0x18` (SGT) through `0x1D` (SGEU) are R-type (using `rs2`) but reside in the `0x10-0x1F` range typically reserved for I-type arithmetic.
 - **Major Discrepancy:** The instruction format diagrams show `funct7` (bits 25-31) and `f3` (bits 12-14) fields, but the Stage 0 emulator (`s32-emu.c`) and Forth assembler (`asm.fth`) use a flat 7-bit opcode space, effectively ignoring or zeroing these fields. This should be clarified to avoid confusion for developers familiar with standard RISC-V.
@@ -1490,6 +1522,7 @@ While `./docs/INSTRUCTION-SET.md` defines a rich set including floating-point an
 
 ### 29. [DOC] Commit Message vs Touched Files Audit Trail
 Commit `a851552` message says it fixes issues `#1/#2/#19/#25`, but touched files are:
+
 - `selfhost/ISSUES.md`
 - `selfhost/stage01/cc.fth`
 - `selfhost/stage02/*`
@@ -1622,6 +1655,7 @@ cleaning them edits the shared frontend, which changes guest-built artifacts and
 sha256 pins; that is a separate pass with a sums refresh, not a rider on this fix.
 
 **Manage carefully:**
+
 - Some prototypes are **generated** — `c_lexer_gen.c` comes from `c_lexer.rl` via Ragel.
   Gate them in `c_lexer.rl` + the gen step, not by hand-editing the generated file.
 - The **self-host path can only be validated by the toolchain build** (slow32 `cc`

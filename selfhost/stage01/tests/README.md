@@ -38,6 +38,7 @@ Their manifests live in `historical-debug/manifests/`. The helper
 ## Running Tests
 
 Normal validation (what must stay green):
+
 - `../run-regression-as.sh test1`
 - `../run-regression-ar.sh test3`
 - `../run-regression-ld.sh test3`
@@ -45,6 +46,7 @@ Normal validation (what must stay green):
 - `../run-subset-conformance.sh`  (uses subset + subset-idioms manifests)
 
 Debug / archaeology:
+
 - `../run-subset-gap-scan.sh`
 - `./list-bucket.sh as-bisect | head`
 

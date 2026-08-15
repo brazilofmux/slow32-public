@@ -59,6 +59,7 @@ Leaf page (512 bytes):
 ### Integration
 
 When an index is active (SET INDEX TO):
+
 - GO TOP / GO BOTTOM follow index order
 - SKIP follows index order
 - APPEND automatically inserts into index
@@ -79,6 +80,7 @@ When an index is active (SET INDEX TO):
 ### Report File Format (.FRM)
 
 Report definition stored as fixed-format binary:
+
 - Page layout: width, length, margins, spacing
 - Column definitions: header text, expression, width, decimals
 - Group breaks: expression, header text, sub-total flag
@@ -104,6 +106,7 @@ Summary (grand totals)
 | LABEL FORM | `LABEL FORM <file> [FOR <cond>] [TO PRINT]` | Print labels |
 
 Standard label sizes (Avery compatible):
+
 - 3.5" x 15/16" (1-across)
 - 3.5" x 15/16" (2-across)
 - 4" x 1-7/16"

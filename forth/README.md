@@ -4,6 +4,7 @@
 Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary words loaded at startup.
 
 ## Architecture
+
 - **Direct Threaded Code**: IP points to a list of XTs.
 - **Registers**:
   - `r26`: IP
@@ -13,6 +14,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
   - `r29`: System Stack (preserved)
 
 ## Primitives (Assembly)
+
 - **Control**: `EXIT`, `EXECUTE`, `BYE`, `BRANCH`, `0BRANCH`
 - **Stack**: `DUP`, `DROP`, `SWAP`, `OVER`, `>R`, `R>`, `R@`, `2>R`, `2R>`, `2R@`, `DEPTH`, `DSP@`, `DSTKTOP`, `PICK`
 - **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`, `2/`, `S>D`, `D+`, `D-`, `UM/MOD`, `UM*`, `M*`
@@ -34,6 +36,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 
 ## Prelude Words (Forth)
 Loaded automatically from `prelude.fth` at startup:
+
 - **Stack**: `ROT`, `-ROT`, `NIP`, `TUCK`, `2DUP`, `2DROP`, `2SWAP`, `2OVER`, `?DUP`
 - **Arithmetic**: `ABS`, `MIN`, `MAX`, `2*`
 - **Constants**: `TRUE`, `FALSE`, `BL`
@@ -58,6 +61,7 @@ Loaded automatically from `prelude.fth` at startup:
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 
 ## Dictionary Structure
+
 - **Header**:
   - `Link` (4 bytes): Pointer to previous word.
   - `Length` (1 byte): Name length (bit 7 = IMMEDIATE flag).
@@ -79,6 +83,7 @@ cd forth && bash build.sh
 This assembles, links, and runs the kernel with the prelude loaded.
 
 ## Bugs Fixed
+
 - **Blank line EOF**: Empty lines (just `\n`) were treated as EOF. Fixed ACCEPT to return -1 on true EOF, and cold_start to check for -1 instead of 0.
 - **INVERT 12-bit**: `not` pseudo-instruction used `xori rd, rs, -1` which only XORs bottom 12 bits (XORI uses zero-extended immediate). Fixed to use `addi r2, r0, -1` then `xor`.
 - **MMIO output buffering**: Switched all output to `debug` instruction (immediate, unbuffered).

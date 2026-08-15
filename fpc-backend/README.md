@@ -58,6 +58,7 @@ SysInitStdIO and Slow32InitCmdLine — without them WriteLn fails with
 runtime error 103.
 
 This compiles the system unit, producing:
+
 - `/tmp/slow32rtl/system.ppu` — compiled unit (needed to compile user programs)
 - `/tmp/slow32rtl/system.s` — assembly output for the runtime
 
@@ -140,6 +141,7 @@ main:
 ```
 
 Key characteristics:
+
 - Memory references use `base+offset` format (e.g., `r29+4`)
 - Function prologue saves r30 (fp) and r31 (lr), sets up frame pointer
 - Constants loaded via `addi rd,r0,imm` (small) or `lui`+`ori` (32-bit)
@@ -165,6 +167,7 @@ The backend consists of ~30 Pascal units in `compiler/slow32/`, forked from the 
 | `aoptcpu.pas` | Peephole optimizer |
 
 The RTL (`rtl/slow32/`) provides CPU-specific implementations:
+
 - Stack frame intrinsics (`get_frame`, `Sptr`, `get_caller_addr`)
 - SetJmp/LongJmp for exception handling
 - Soft-float FPU initialization (no hardware FPU)

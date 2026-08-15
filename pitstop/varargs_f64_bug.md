@@ -26,6 +26,7 @@ pairs and r10 is an odd register with no pair.
 ### Memory Layout Issue
 
 **Caller passes 4 doubles:**
+
 - r4:r5 = 1.0 (1st double)
 - r6:r7 = 2.0 (2nd double)
 - r8:r9 = 3.0 (3rd double)
@@ -46,6 +47,7 @@ fp+4:  4th double hi (on stack)
 ```
 
 **What happens with va_arg:**
+
 1. va_start returns fp-28
 2. 1st va_arg(double): reads fp-28, fp-24 (r4, r5) ✓ → AP = fp-20
 3. 2nd va_arg(double): reads fp-20, fp-16 (r6, r7) ✓ → AP = fp-12
@@ -58,6 +60,7 @@ The 4th double should read {fp+0, fp+4} but instead reads {fp-4, fp+0}.
 
 ### Why 0.0 Appears
 The 4th double (4.0) has IEEE754 representation:
+
 - Low word: 0x00000000
 - High word: 0x40100000
 

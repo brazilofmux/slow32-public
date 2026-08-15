@@ -216,6 +216,7 @@ Then `cc-x64 --hir` compiles everything else (libc, emulator, tests).
 
 **Architecture**: `cc-x64.c` `#include`s all headers — the compiler is a single translation unit.
 Key files for codegen performance:
+
 - `hir_regalloc_x64.h` — IRC graph-coloring register allocator
 - `hir_codegen_x64.h` — x86-64 instruction emission, SIB/ADDI folds, compare-branch fusion
 - `hir_burg_x64.h` — BURG instruction selection patterns

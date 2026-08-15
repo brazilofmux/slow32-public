@@ -7,6 +7,7 @@ This is the independent home for the full Stage 5 DBT work.
 Stage 4 (the production path in `../dbt/`) is an extremely strong per-instruction + superblock + register-cache translator that leverages excellent LLVM-generated SLOW-32 code. It forms both a performance floor and a development gravity well.
 
 Stage 5 is the deliberate attempt to escape that well:
+
 - Lift guest code to a clean IR (already done, arch-neutral)
 - Build SSA form + value numbering
 - Tree-matching instruction selection (BURG)
@@ -21,6 +22,7 @@ Because every previous attempt to grow "real" Stage 5 emission on AArch64 ended 
 **No source file under `tools/dbt5/` may ever `#include` or call anything defined in `../dbt/translate*.c` or `../dbt/translate.h`.**
 
 The only allowed shared pieces are the obvious infrastructure:
+
 - raw emitters (`emit_a64.*`, `emit_x64.*`)
 - block cache
 - cpu_state, dbt_limits

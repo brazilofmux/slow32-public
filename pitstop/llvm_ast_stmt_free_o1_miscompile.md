@@ -20,15 +20,18 @@ STRICT_FAULTS=1 FILTER_FAULTS=0 EMU=../../tools/emulator/slow32-fast bash ./run-
 ```
 
 At `-O1` (before workaround), failures included:
+
 - `arrays`: `Error: Read out of bounds at 0xfffffff9`
 - `dataread`: `Error: Read out of bounds at 0x4154413c`
 
 Cross-emulator repro:
+
 - `slow32`: memory fault at `PC=0x0001A1E8`
 - `slow32-fast`: same failing site (`HALT at PC 0x0001a1ec`)
 - `slow32-dbt`: `DBT: Memory fault at PC=0x0001A1E8`
 
 Disassembly at fault site:
+
 - `free` entry in `sbasic/sbasic.s32x`
 - faulting instruction: `ldw r7, r3+-8` at `0x0001A1E8`
 
@@ -45,9 +48,11 @@ This isolates the regression to `ast.c` codegen under `-O1`.
 ## Candidate Trigger Region
 
 `sbasic/src/ast.c` function:
+
 - `stmt_free`
 
 Potentially sensitive pattern:
+
 - large tagged-union switch
 - many case arms with variant-specific pointer frees
 - linked-list recursion/iteration patterns in nearby AST free logic

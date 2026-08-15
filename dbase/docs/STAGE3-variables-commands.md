@@ -76,6 +76,7 @@ Cross-area field references: `B->name` accesses field `name` in area B.
 ## Scope Clauses
 
 Commands that iterate records accept scope:
+
 - `ALL` — all records (default for LIST, COUNT, etc.)
 - `NEXT <n>` — next n records from current position
 - `RECORD <n>` — single record

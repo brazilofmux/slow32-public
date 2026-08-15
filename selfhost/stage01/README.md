@@ -84,6 +84,7 @@ The Stage 01 assembler implements the **Bootstrap Core** subset of the SLOW-32 I
 ### Registers
 
 Supports both numeric (`r0`..`r31`) and ABI names:
+
 -   `zero` (r0)
 -   `rv` (r1)
 -   `t0` (r2)

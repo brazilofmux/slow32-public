@@ -135,12 +135,14 @@ These occur but are not concentrated in hot blocks.
 ### Hot block inventory (both workloads)
 
 **benchmark_core:**
+
 - 0xD0A8 (121 execs, 417B): JALR inline lookup. Structural duplication
   (4-probe hash × 2 paths). Not peephole-addressable.
 - 0xC70 (5 execs, 384B): Arithmetic superblock. MOV-ALU redundancy but
   low exec count.
 
 **validatecsv (csv2/descriptions.csv):**
+
 - 0xC7DC (285 execs, 322B): CSV inner loop. 10 guest insns. Dominated by
   bounds check overhead (3 memory ops). Branch comparisons use cached
   regs directly. Loads/stores use cached host registers directly (no
@@ -163,6 +165,7 @@ measure code size and wall time before/after.
 usage in JALR/RAS code resolved via pre-flush of dirty cached values.
 
 **Remaining ideas:**
+
 - Weight register selection by block execution count (profile-guided)
 - Reduce prologue/epilogue cost by only saving/restoring dirty registers
 
@@ -179,6 +182,7 @@ alignment, function pointer load, call/ret) plus bounds checks (~12-16
 instructions for memcpy) can exceed the cost of the copy itself.
 
 **What to implement:**
+
 - At translation time, if the size argument is a known constant (via
   `reg_constants[]`), emit inline loads/stores instead of a call.
   Example: 4-byte memcpy → `mov eax, [src]; mov [dst], eax`.
@@ -196,10 +200,12 @@ size distribution. If most calls are >64 bytes, this has negligible value.
 emitted at end of each block (after the hot path). Superblocks can be large.
 
 **What to investigate:**
+
 - Measure I-cache miss rate with `perf stat` on a long-running benchmark.
 - Compare code buffer utilization.
 
 **Potential improvements:**
+
 - Split code buffer into hot and cold regions.
 - This is a moderate refactor.
 

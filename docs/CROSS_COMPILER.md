@@ -134,6 +134,7 @@ x86-64 System V ABI register classification:
 **Allocation strategy**: The existing linear scan works. Callee-saved registers are preferred for values that live across calls. Caller-saved registers are preferred for temporaries. The allocator needs 15 physical registers instead of 18, but x86-64's `MOV [rsp+off], reg` is faster than SLOW-32's explicit save/restore, so spilling is cheaper.
 
 **Special constraints**:
+
 - `IDIV` requires dividend in RDX:RAX, destroys both → pre-color div/rem instructions
 - Shift counts must be in CL for variable shifts → pre-color or use RORX/SHLX (BMI2)
 - Return value in RAX
@@ -152,6 +153,7 @@ Red zone:   128 bytes below rsp (leaf functions can use without adjusting rsp)
 ```
 
 Changes to HIR lowering:
+
 - `HI_PARAM` index 0-5 maps to rdi,rsi,rdx,rcx,r8,r9 (not r3-r10)
 - Stack params at `[rbp+16]`, `[rbp+24]`, etc. (after saved rbp + return address)
 - 64-bit values use a single register (not register pairs)
@@ -220,6 +222,7 @@ The SLOW-32 runtime already has implementations of malloc, printf, string functi
 **Goal**: Binary encoding functions for the ~30 x86-64 instruction forms we need.
 
 **Deliverables**:
+
 - `x64_encode.h` — encoding functions: `enc_rex()`, `enc_modrm()`, `enc_sib()`, `enc_alu_rr()`, `enc_alu_ri()`, `enc_mov_rr()`, `enc_mov_ri()`, `enc_mov_rm()`, `enc_mov_mr()`, `enc_lea()`, `enc_call_rel()`, `enc_jmp_rel()`, `enc_jcc_rel()`, `enc_push()`, `enc_pop()`, `enc_ret()`, `enc_cmp_rr()`, `enc_cmp_ri()`, `enc_test_rr()`, `enc_idiv()`, `enc_imul_rr()`, `enc_imul_ri()`, `enc_shift()`, `enc_cdq()`, `enc_syscall()`, `enc_setcc()`
 - Code buffer management: `x64_emit_byte()`, `x64_emit32()`, `x64_emit64()`, `x64_patch_rel32()`
 - Register encoding constants (RAX=0, RCX=1, ..., R15=15)
@@ -233,6 +236,7 @@ The SLOW-32 runtime already has implementations of malloc, printf, string functi
 **Goal**: Produce valid static ELF64 executables from raw code/data buffers.
 
 **Deliverables**:
+
 - `elf_writer.h` — ELF64 structures (Elf64_Ehdr, Elf64_Phdr, Elf64_Shdr) and writer
 - `elf_write(filename, code_buf, code_len, data_buf, data_len, bss_size, entry_offset)`
 - crt0 stub (inline `_start` → `main` → `sys_exit`)
@@ -246,6 +250,7 @@ The SLOW-32 runtime already has implementations of malloc, printf, string functi
 **Goal**: Compile a subset of C to working x86-64 code. Functions, local variables, if/else, loops, basic arithmetic.
 
 **Deliverables**:
+
 - `hir_burg_x64.h` — BURG patterns for integer ALU, comparisons, branches, loads, stores
 - `hir_regalloc_x64.h` — register set definition (15 GPRs), allocation config
 - `hir_codegen_x64.h` — instruction dispatch (hcg_inst for each HIR opcode), function prologue/epilogue, basic block labels (as code offsets with backpatching)
@@ -265,6 +270,7 @@ int sum(int n) { int s = 0; for (int i = 0; i < n; i++) s += i; return s; }
 **Goal**: Handle aggregate types and pointer operations — prerequisite for compiling any real program.
 
 **Deliverables**:
+
 - Struct layout (member offsets, alignment, sizeof)
 - Pointer arithmetic (scaled by pointee size)
 - Array indexing (decay to pointer + scale)
@@ -287,6 +293,7 @@ int strlen(char *s) { int n = 0; while (*s++) n++; return n; }
 **Goal**: Compile the Stage 00 emulator (`selfhost/stage00/s32-emu.c`) to a native x86-64 Linux binary.
 
 **Deliverables**:
+
 - `libc_x64.h` or `libc_x64.c` — minimal libc via Linux syscalls:
   - Memory: `malloc`/`free`/`calloc` (simple bump allocator or freelist)
   - File I/O: `open`/`close`/`read`/`write`/`lseek`/`stat`/`fstat` (thin syscall wrappers)
@@ -308,6 +315,7 @@ int strlen(char *s) { int n = 0; while (*s++) n++; return n; }
 **Goal**: Compile the production emulators to native x86-64.
 
 **Deliverables**:
+
 - MMIO ring buffer support (struct-heavy, but no new language features)
 - Remaining libc functions used by the emulators
 - Any missing C features exposed by the larger codebase
@@ -321,6 +329,7 @@ int strlen(char *s) { int n = 0; while (*s++) n++; return n; }
 **Goal**: The DBT compiles itself via the cross-compiler. Full circle.
 
 **Deliverables**:
+
 - Function pointer support (already in Stage 06, but needs x86-64 emission for indirect CALL)
 - `mmap`/`mprotect` syscalls (the DBT needs executable memory)
 - Remaining libc (if any)
@@ -369,6 +378,7 @@ x86-64 encoding is identical. Replace ELF writer with PE/COFF writer (~400 lines
 Once Stages X0-X4 work, the cross-compiler can compile Stage 00. But can it compile *itself*?
 
 cc-x64 is a SLOW-32 program. To compile itself, it would need to:
+
 1. Run on a SLOW-32 emulator (the one it just cross-compiled)
 2. Read its own C source
 3. Emit a native x86-64 binary of itself

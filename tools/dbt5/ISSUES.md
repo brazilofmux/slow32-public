@@ -3,6 +3,7 @@
 Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92692).
 
 **Progress:**
+
 - **DONE**: A1–A10 (all correctness bugs + internal branch cap)
 - **DONE**: B1–B4 (wiring, Apple Silicon, atomic launcher, shadow validation)
 - **DONE**: D1 (LIR x86-shaped baggage removed for A64)
@@ -17,6 +18,7 @@ Review of the clean-room Stage 5 DBT as of 2026-05-18 (D1 complete; HEAD = baf92
 - **DONE**: G2+G3 (JAL/JALR call-graph semantics + distinguished HALT/YIELD/DEBUG exits)
 - **DONE** (pilot): C1–C6 cleanups + the above
 - The pilot now emits, wires, executes the emitted A64 code, and performs a meaningful (if pilot-scoped) validation.
+
 Scope: the AArch64 emission path (`stage5_codegen_a64.{c,h}`), its wiring in
 `dbt5.c`, and the upstream pipeline that feeds it (lift → SSA → MIR → BURG →
 LIR → LIR-opt → RA → emit). The x86-64 emitter (`stage5_codegen_x64.{c,h}`)
@@ -90,6 +92,7 @@ written. Result: any guest `SEQ/SNE/SLT/...` whose result is not consumed by a
 fused `CMP_JCC` is **dead silently**, and W0 is clobbered as a bonus.
 
 Fixes (in order of preference):
+
 1. Handle `LIR_OP_SETCC` properly and let `CMP_*` only emit the compare.
 2. Or fold CMP+SETCC into the codegen explicitly: when you see `CMP_*` at
    index `i` followed by `SETCC` at `i+1`, emit `cmp` then `cset` into the
@@ -121,6 +124,7 @@ side exit. The lifter is producing side exits today (e.g. `bench-fib.s32x`:
 
 The codegen needs a real side-exit shape: emit the inverse-condition B.cond
 that *skips* a side-exit stub, then the stub emits an `flush + write pc/exit
+
 + ret` (or chains to the side-exit block if it has been translated).
 
 ### A4. **DONE** (bb860660) **BUG** Terminal handling assumes ops BURG never emits, mis-derives `next_pc` for CALL
@@ -157,6 +161,7 @@ Smoke run on `bench-fib.s32x` exhibits this exact value:
 
 Same hazard for any ADD/SUB/AND/OR/XOR/LEA where the immediate is negative or
 outside `[0, 4095]`. Fix paths:
+
 - Handle negative ADD by lowering to `SUB Wd, Wn, #imm` (and vice versa).
 - For magnitudes > 4095, materialize the constant via
   `emit_mov_w32_imm32` into a scratch and use the R-form.
@@ -179,6 +184,7 @@ should at minimum return `false` (caller already treats `false` as "don't
 execute") and `stage5_codegen_a64_success` should not be incremented.
 
 Ops currently missing in the a64 switch but produced by BURG:
+
 - `LIR_OP_SETCC`
 - `LIR_OP_JMP` (not emitted today, but trivially possible)
 - `LIR_OP_RET`
@@ -205,6 +211,7 @@ in `cpu->regs[]`. Most visibly: every fib/prime/etc. smoke run reported
 `addi sp, sp, -16` was never committed.
 
 Fix (per-gpr carrier tracking, not per-slot dirty bit):
+
 - New `gpr_to_host[32]` + `gpr_dirty[32]` in `stage5_cg_a64_ctx_t`.
 - Prologue load of live-in G: `gpr_to_host[G] = host_reg`, dirty = false.
 - LIR-walk trailer: any node whose `dst_v` maps via `ssa->value_to_reg[]`
@@ -411,6 +418,7 @@ the header). All C cleanups are now complete.
 ### D1. **DONE** (117ab8e4 + baf92692) LIR x86-shaped baggage removed for A64 path
 
 **Resolution:**
+
 - Post-MIR split (117ab8e4): `target/a64/` now has its own LIR/BURG/codegen/RA.
   The A64 pipeline was freed to diverge from the Stage-4 x86-shaped model.
 - Neutral `lir_cond_t` (EQ/NE/LT/GE/.../GTU) introduced; both burg_a64 and
@@ -437,6 +445,7 @@ a clean-room wrapper."
 ### D2. **DONE** (post-baf92692 + D2 driver sync) 8-slot Stage-4 ceiling removed from A64 path
 
 **Resolution:**
+
 - RA pool expanded to 14 (8 caller-saved W8–W15 + 6 callee-saved W19/W22–W26)
   in `target/a64/regalloc/stage5_ra.h` + matching `slot_to_host[]` and
   conditional stp/ldp save/restore in the codegen (only when used).
@@ -462,6 +471,7 @@ signal; that is a separate and still-reasonable knob for a narrow pilot.)
 ### D3. **DONE** (extractor + threading) Region re-lifting eliminated for discovered CFG blocks
 
 **Resolution:**
+
 - Added `stage5_lift_extract_cfg_block_region(...)` in the lifter. Given a
   parent `stage5_lift_region_t` that already contains a populated `cfg_blocks[]`
   array (with `first_inst`/`inst_count` partitioning the linear `ir[]`), it
@@ -619,6 +629,7 @@ its own future thread.
 ### G2 + G3. **DONE** (2026-05) Proper JAL/JALR exit semantics + distinguished HALT/YIELD/DEBUG codes
 
 G2 implemented in stage5_codegen_a64.c terminal handling + dbt5.c dispatch:
+
 - Terminating LIR_OP_CALL (direct JAL) now emits the link-reg store (when rd!=0)
   and sets cpu->pc to the *call target* (not the return site). Dispatcher
   follows the real call graph.
@@ -645,6 +656,7 @@ their natural halt/yield/debug points, exactly as required for E4.
 ## F. Suggested order of attack (updated)
 
 **Completed (as of bb860660):**
+
 - A1–A6 (full emitter correctness)
 - A3 (real side exits)
 - B1 + B2 (wiring + Apple Silicon execution enablement)

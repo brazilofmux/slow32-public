@@ -27,6 +27,7 @@ stage02.
 ## Bootstrap
 
 Uses pre-built tools from stage02:
+
 - cc-min.s32x (stage02) to compile stage03 compiler
 - s32-as.s32x (stage02) to assemble
 - s32-ld.s32x (stage02) to link

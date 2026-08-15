@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository Overview
 
 This is a fork of QEMU integrating the SLOW-32 CPU architecture. QEMU is a machine emulator and virtualizer. This repository contains:
+
 - Upstream QEMU codebase (main emulation framework)
 - SLOW-32 custom toolchain in `slow-32/` directory
 - SLOW-32 TCG (Tiny Code Generator) backend to run SLOW-32 binaries in QEMU
@@ -51,6 +52,7 @@ make distclean
 ## SLOW-32 Architecture
 
 ### ISA Summary
+
 - 32-bit RISC architecture with 32 registers (r0 hardwired to zero)
 - Fixed 32-bit instruction encoding
 - No condition codes (comparisons produce 0/1 in registers)
@@ -58,6 +60,7 @@ make distclean
 - Special instructions: `debug` (character output), `yield`, `halt`
 
 ### Memory Layout
+
 - Code segment: 0x0000_0000 - 0x000F_FFFF (1MB, execute-only, W^X enforced)
 - Data segment: 0x0010_0000 - 0x0FFF_FFFF (255MB, read/write)
 - Stack: starts at 0x0FFF_FFF0, grows downward
@@ -65,6 +68,7 @@ make distclean
 
 ### Toolchain Location
 The complete SLOW-32 toolchain lives in `slow-32/`:
+
 - Assembler: `slow-32/tools/assembler/slow32asm`
 - Linker: `slow-32/tools/linker/s32-ld`
 - Emulators: `slow-32/tools/emulator/slow32` (reference) and `slow32-fast` (~385 MIPS)
@@ -76,6 +80,7 @@ See `slow-32/CLAUDE.md` and `slow-32/README.md` for toolchain commands.
 ## SLOW-32 TCG Integration
 
 ### Current Status (see `docs/slow32-tcg/todo.md`)
+
 - ✅ Target skeleton created (`target/slow32/`)
 - ✅ Machine implementation (`hw/slow32/slow32-tcg.c`)
 - ✅ Basic TCG translation for arithmetic, loads/stores, branches
@@ -83,6 +88,7 @@ See `slow-32/CLAUDE.md` and `slow-32/README.md` for toolchain commands.
 - ⚠️ ISA not complete (missing some branch/comparison variants)
 
 ### Key Files
+
 - `target/slow32/` - CPU state definition and TCG translation
   - `cpu.h`, `cpu.c` - Slow32CPU state and QOM class
   - `translate.c` - Instruction decoder and TCG emission
@@ -96,6 +102,7 @@ See `slow-32/CLAUDE.md` and `slow-32/README.md` for toolchain commands.
 
 ### Reference Implementation
 The authoritative behavior is defined by `slow-32/tools/emulator/slow32.c`. When implementing TCG translation:
+
 1. Decode logic matches `slow32.c` opcode tables
 2. Instruction semantics must match reference emulator
 3. Memory layout follows `slow-32/tools/emulator/s32x_loader.h`
@@ -174,6 +181,7 @@ diff ref_trace.txt qemu_trace.txt
 
 ### QEMU Target Backend Structure
 Each CPU architecture in QEMU follows this pattern:
+
 - `target/<arch>/cpu.h` - CPU state (registers, flags, MMU state)
 - `target/<arch>/cpu.c` - QOM class registration, reset, initialization
 - `target/<arch>/translate.c` - Decode guest instructions → emit TCG ops
@@ -181,6 +189,7 @@ Each CPU architecture in QEMU follows this pattern:
 - `hw/<arch>/` - Machine definitions, device models, memory maps
 
 ### TCG Translation Pipeline
+
 1. Fetch guest instruction at PC
 2. Decode instruction fields (opcode, registers, immediate)
 3. Emit TCG intermediate ops (tcg_gen_* functions)
@@ -191,10 +200,12 @@ SLOW-32 translation happens in `target/slow32/translate.c` using `DisasContext` 
 
 ### Loader and Executable Format
 SLOW-32 uses custom binary formats:
+
 - `.s32o` - Object files with relocations (defined in `slow-32/tools/emulator/slow32_format.h`)
 - `.s32x` - Linked executables with headers specifying code/data sizes
 
 The loader must parse `.s32x` headers to set up:
+
 - Execute-only code region
 - Read/write data region
 - Stack pointer (r29) initialization
@@ -226,6 +237,7 @@ For operations too complex to inline (e.g., MUL/DIV, MMIO):
 ### Implementing the .s32x Loader
 
 The loader needs to:
+
 1. Read `.s32x` header (magic bytes, section sizes, entry point)
 2. Allocate QEMU MemoryRegions for code/data/stack
 3. Mark code region execute-only (enforce W^X)
@@ -237,28 +249,33 @@ See `slow-32/tools/emulator/s32x_loader.h` for format details.
 ## Important Notes
 
 ### SLOW-32 Binary Linking
+
 - **Always link with `crt0.s32o` first** - Contains `_start` entry point at address 0
 - Link order: `crt0.s32o` → program objects → `libs32.s32a` → `libc.s32a`
 - Use `slow-32/tools/compile-c.sh` helper script for correct linking
 
 ### Memory Protection
+
 - SLOW-32 enforces W^X (write XOR execute)
 - Code segment is execute-only at hardware level
 - Attempts to write code or execute data must fault
 - QEMU should mirror this with MemoryRegion permissions
 
 ### MMIO and Debug Output
+
 - The `DEBUG` instruction outputs a character (only I/O in minimal ISA)
 - MMIO support is optional (enabled via linker `--mmio` flag)
 - For initial testing, `DEBUG` can write directly to stdout
 - Later, integrate with QEMU chardev infrastructure (`qemu_chr_fe_write_all`)
 
 ### ISA Documentation
+
 - `slow-32/docs/INSTRUCTION-SET.md` - Complete instruction reference
 - `slow-32/docs/file-formats.md` - Object and executable format specs
 - `slow-32/tools/emulator/slow32.c` - Executable specification (shows exact semantics)
 
 ### Performance Notes
+
 - Reference interpreter: ~45 MIPS (`slow32`)
 - Optimized interpreter: ~385 MIPS (`slow32-fast`)
 - TCG backend should eventually exceed interpreter performance through JIT compilation

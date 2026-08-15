@@ -70,6 +70,7 @@ difference is that SET DEVICE TO PRINT suppresses cursor positioning —
 output is sequential. SET DEVICE TO SCREEN restores normal positioning.
 
 Implementation:
+
 - Add `device` field to set_state (SCREEN or PRINT)
 - In screen.c `@SAY` handler, check device. If PRINT, use printf
   instead of cursor positioning. Track printer row/col for `PROW()`/`PCOL()`.
@@ -268,6 +269,7 @@ output to expected files. Add tests for each new feature.
 ### Integration test: Teacher's Pet
 
 The ultimate acceptance test. Steps:
+
 1. Copy akron/*.PRG and akron/*.DBF to a test directory
 2. Pipe tp.prg startup sequence to the clone
 3. Exercise each menu option

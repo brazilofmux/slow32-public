@@ -247,6 +247,7 @@ emit_object_file(filename):
 ### Backward Compatibility
 
 The compiler gains a `-c` flag:
+
 - `cc-x64 -c input.c -o output.o` — emit relocatable object
 - `cc-x64 input.c -o output` — compile + link in one shot (legacy behavior, calls internal linker or errors)
 
@@ -448,6 +449,7 @@ Each file compiles to a separate `.o`, then `ar-x64 rcs libc_x64.a *.o`. The lin
 The stage07 compiler's `int` is 32 bits. On x86-64, `int` is 32 bits and pointers are 64 bits. The current codegen uses `MOVABS` (64-bit immediate) for addresses but 32-bit arithmetic for `int`.
 
 For the linker and libc, this means:
+
 - Pointer variables need 64-bit storage (8 bytes on stack)
 - `int` arithmetic is 32-bit (MOV r32 zero-extends to 64 on x86-64)
 - `malloc` returns a pointer — must be 64-bit capable
@@ -462,6 +464,7 @@ The current codegen already handles this: all locals are 8 bytes on the stack, p
 **Goal**: `cc-x64 -c input.c -o output.o` produces a valid ELF64 relocatable object.
 
 **Changes to codegen_x64.h**:
+
 - New function `emit_object_file()` replacing resolve+elf_build+elf_write
 - Build ELF section headers (10 sections: null, .text, .rodata, .data, .bss, .rela.text, .rela.data, .symtab, .strtab, .shstrtab)
 - Convert `cg_cpatch_*` arrays to `.rela.text` entries
@@ -481,6 +484,7 @@ The current codegen already handles this: all locals are 8 bytes on the stack, p
 **New file**: `ld-x64.c` — linker driver
 
 **Components**:
+
 1. ELF64 relocatable reader (~300 lines)
 2. Archive reader (~200 lines)
 3. Symbol table + resolution (~200 lines)

@@ -3,6 +3,7 @@
 This document covers the instruction encoding needed for hand-assembly of SLOW-32 programs. All instructions are 32 bits wide, little-endian.
 
 Decoder model:
+
 - Opcode is always bits `[6:0]` and uniquely selects the instruction.
 - `funct3`/`funct7` bit positions exist in the bit layout, but are not used to distinguish operations.
 

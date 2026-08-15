@@ -95,6 +95,7 @@ typedef struct {
 ## Preprocessor
 
 Before execution, handle:
+
 - `&` macro substitution: `USE &mFile` expands variable
 - `&&` comments (rest of line)
 - `*` comments (full line)

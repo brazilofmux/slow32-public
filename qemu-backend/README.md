@@ -105,6 +105,7 @@ cd ~/slow-32/qemu-backend/scripts
 ## Files Managed
 
 ### Patches (modifications to existing QEMU files)
+
 - `target/Kconfig` - Add SLOW32 target
 - `target/meson.build` - Build integration
 - `hw/Kconfig` - Add SLOW32 machine
@@ -114,6 +115,7 @@ cd ~/slow-32/qemu-backend/scripts
 - `.gitignore` - Ignore slow-32 local copy
 
 ### New Files (backed up directly)
+
 - `target/slow32/` - Complete target implementation
 - `hw/slow32/` - Machine and device models
 - `configs/targets/slow32-softmmu.mak` - Target configuration

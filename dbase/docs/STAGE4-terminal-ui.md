@@ -44,6 +44,7 @@ Formatting masks for GET fields:
 | `*` | Asterisk fill |
 
 Function symbols (prefix with `@`):
+
 - `@!` — force uppercase
 - `@R` — template (literal chars inserted)
 - `@S<n>` — horizontal scroll width
@@ -76,6 +77,7 @@ READ loop:
 ## BROWSE Implementation
 
 Spreadsheet-style record viewer/editor:
+
 - Field names as column headers
 - Records as rows
 - Cursor navigation (arrows, PgUp/PgDn, Home/End)
@@ -85,6 +87,7 @@ Spreadsheet-style record viewer/editor:
 ## Color Support
 
 Using `term_set_color()` and `term_set_attr()`:
+
 - `SET COLOR TO <standard>[,<enhanced>[,<border>]]`
 - Color codes: W(hite), R(ed), G(reen), B(lue), etc.
 - `+` for bright, `*` for blink

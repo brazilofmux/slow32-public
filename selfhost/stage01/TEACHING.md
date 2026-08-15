@@ -26,6 +26,7 @@ The "selfhost-kernel regeneration gate" (`run-selfhost-kernel.sh`) is the dramat
 ## 2. The Four Tools — Mental Models
 
 ### Assembler (`asm.fth`)
+
 - Two-pass design (collect symbols and sizes on pass 1, emit code + record relocations on pass 2).
 - "Bootstrap Core" instruction set — deliberately narrow and consistent; no RISC-V-style aliases that would complicate the parser.
 - Relocation types that matter: `REL-HI20`/`REL-LO12` pairs, `REL-JAL`, `REL-CALL`, plain `REL-32`.
@@ -35,17 +36,20 @@ The "selfhost-kernel regeneration gate" (`run-selfhost-kernel.sh`) is the dramat
 Key subtlety: the assembler must get the *size* of every instruction right on pass 1 even when it does not yet know the final value of a symbol. That is why `la` / `call` / `li` large-immediate pseudo-instructions exist and why long-branch lowering appears later in the C compiler.
 
 ### Linker (`link.fth`)
+
 - Reads multiple `.s32o` files and zero or more `.s32a` archives.
 - Builds a global symbol table, resolves references, applies relocations, and writes a single `.s32x` with the proper header (W^X flags, optional MMIO base, stack size, etc.).
 - The order `crt0` first, then program objects, then archives is significant (the kernel regeneration test depends on it).
 - Relocation application is where HI20/LO12 pairs, JAL targets, and PC-relative forms are finally turned into concrete bits.
 
 ### Archiver (`ar.fth`)
+
 - A faithful but minimal implementation of the `.s32a` format (magic, member table, symbol table, string table, member data).
 - Supports the operations later stages actually need: create, list, extract, replace, delete, and the "verbose" variants used by build scripts.
 - The symbol table in the archive is what lets the linker pull in only the members that satisfy unresolved references.
 
 ### C Compiler (`cc.fth`) — the 4.2 kLOC elephant
+
 - **Accumulator machine**: every expression leaves its result in `r1`. `r2` is the only scratch register the compiler itself uses. Everything else (arguments, locals, temporaries) is handled via the stack or frame pointer.
 - Very limited type system (int, char, unsigned variants, pointers, arrays, structs are barely there). Enough for the subset needed to write `s32-as.c`, `s32-ar.c`, `s32-ld.c`, and the early self-hosting C tools.
 - Preprocessor is *not* a separate pass; it is integrated into the lexer in a way that makes certain macro-expansion edge cases (the "idiom" tests) surprisingly tricky.

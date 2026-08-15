@@ -3,6 +3,7 @@
 This tree implements the multi-cycle bootstrap plan documented in [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md). Each `stage*/` directory is one rebuild iteration that produces an entire toolchain (assembler + archiver + linker + compiler + libc) using the previous stage's outputs.
 
 Stage directories at a glance:
+
 - `stage00`: standalone ~800 line emulator (the trust root). Builds via `make` with host `cc`. Optionally runtime-symlinks to `tools/dbt/slow32-dbt` for speed.
 - `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
 - `stage02`: the same four tools (assembler, archiver, linker, compiler) re-authored in Subset C, still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
@@ -15,10 +16,12 @@ Stage directories at a glance:
 - `src/`: canonical live sources for the shared frontend/HIR (lex, parser, sema, common HIR/SSA pieces). The active trees (stage08 + cross compilers) reference it via symlinks to avoid duplication while developing. Historical stage03–stage07 keep full source snapshots for reproducibility.
 
 Sibling cross-compiler trees (independent of the numbered cycle):
+
 - `stage08-cross-x64`: C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `s32fast-hir`, and `dbt-x64`. Frontend symlinked from `../src/`.
 - `stage08-cross-a64`: C → AArch64 ELF. AArch64 sibling. Frontend symlinked from `../src/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
 
 Reference docs:
+
 - [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap (V2 stages 0–16, sibling cross-compiler track, trust model).
 - [`docs/DIALECT.md`](docs/DIALECT.md) — live C dialect map (what `src/` actually supports; plan dialect work here).
 - [`TOOL-NAMING.md`](TOOL-NAMING.md) — tool-name conventions across the stages.
@@ -39,6 +42,7 @@ selfhost/run-stages.sh --skip-selfhost-kernel
 ```
 
 Manual per-stage entry points:
+
 - `stage00`: `make -C selfhost/stage00 && make -C selfhost/stage00 test`
 - `stage01` (assembler): `selfhost/stage01/run-regression-as.sh test1`
 - `stage01` (archiver): `selfhost/stage01/run-regression-ar.sh test3`
@@ -59,6 +63,7 @@ Manual per-stage entry points:
 - `stage08-cross-a64` (AArch64 cross): `make -C selfhost/stage08-cross-a64 && make -C selfhost/stage08-cross-a64 test`
 
 ABI conformance entry points:
+
 - all supported stages: `selfhost/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt` (currently scoped to stages 03–06)
 - stage03 only: `selfhost/stage03/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage04 only: `selfhost/stage04/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`

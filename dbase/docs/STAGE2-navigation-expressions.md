@@ -67,6 +67,7 @@ typedef struct {
 ```
 
 Operator precedence (low to high):
+
 1. `.OR.`
 2. `.AND.`
 3. `.NOT.`

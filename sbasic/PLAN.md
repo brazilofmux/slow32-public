@@ -46,6 +46,7 @@ sbasic/
 The minimum to feel like BASIC. After this stage, you can write real programs.
 
 **Language features:**
+
 - `PRINT` with `;` (concatenate), `,` (tab zones), expressions
 - `INPUT "prompt"; var`
 - Variables: `x = 10`, `LET x = 10`, `name$ = "hello"`, `count% = 5`
@@ -67,6 +68,7 @@ The minimum to feel like BASIC. After this stage, you can write real programs.
 Structured programming: real procedures, richer control flow.
 
 **Language features:**
+
 - `SUB name(params) ... END SUB`
 - `FUNCTION name(params) ... END FUNCTION` (return via `name = expr`)
 - `CALL sub(args)` or just `sub args`
@@ -87,6 +89,7 @@ Structured programming: real procedures, richer control flow.
 ### Stage 3: Arrays and DATA (~1,400 lines added) ✅ COMPLETE
 
 **Language features:**
+
 - `DIM var(size)`, `DIM var(r, c)` (multi-dimensional, up to 8D)
 - `DIM var(size) AS INTEGER/DOUBLE/STRING`
 - `OPTION BASE 0/1`
@@ -155,6 +158,7 @@ Structured programming: real procedures, richer control flow.
 ## Verification
 
 After each stage:
+
 1. `cd sbasic && bash build.sh` — must compile cleanly
 2. `printf 'PRINT "hello"\nRUN\n' | ../tools/emulator/slow32-fast sbasic.s32x` — smoke test
 3. Run stage test programs: `bash tests/run-tests.sh`

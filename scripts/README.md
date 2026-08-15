@@ -10,6 +10,7 @@ source scripts/aliases.sh
 ```
 
 This gives you convenient shortcuts:
+
 - `s32run program.s32x` - Run with standard emulator
 - `s32run-fast program.s32x` - Run with optimized emulator
 - `s32run-qemu program.s32x` - Run with QEMU
@@ -52,12 +53,14 @@ Convenient wrapper for running SLOW-32 executables in the Docker emulator contai
 ```
 
 **Features:**
+
 - Automatically converts local file paths to container paths
 - Mounts project root as `/data` in container
 - Supports all three emulators: slow32, slow32-fast, qemu-system-slow32
 - Full access to debug options for C++ emulators
 
 **Requirements:**
+
 - Docker must be installed and running
 - `slow32-emulator` image must be built: `docker build -t slow32-emulator -f Dockerfile.emulator .`
 
@@ -71,11 +74,13 @@ s32run [options] program.s32x [args...]
 ```
 
 **Emulator Selection:**
+
 - `-f, --fast` - Use optimized C++ emulator (slow32-fast)
 - `-q, --qemu` - Use QEMU TCG emulator (qemu-system-slow32)
 - Default: Use standard C++ emulator (slow32)
 
 **Debug Options (C++ emulators only):**
+
 - `-s, --step` - Step through each instruction
 - `-t, --trace` - Trace every instruction
 - `-r, --registers` - Show register changes
@@ -84,6 +89,7 @@ s32run [options] program.s32x [args...]
 - `-w RANGE` - Watch memory range (e.g., 0x1000-0x2000)
 
 **Other Options:**
+
 - `-h, --help` - Show help message
 
 This script is automatically included in the `slow32-emulator` Docker image and is called by `run-in-docker.sh`.
@@ -119,12 +125,14 @@ Runs a quick test of the entire toolchain to verify everything is working correc
 ## Docker vs Native
 
 **Docker advantages:**
+
 - Clean, reproducible environment
 - No need to install dependencies on host
 - Easy to test against known-good baseline
 - Works on any platform with Docker
 
 **Native advantages:**
+
 - Slightly faster execution (no container overhead)
 - Easier to debug with gdb/lldb
 - Direct file system access

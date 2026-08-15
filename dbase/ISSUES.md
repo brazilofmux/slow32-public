@@ -121,6 +121,7 @@ Fixed hard-failure path: recursive UDF calls now fail with a controlled
 the VM stack. Added `test_udf_overflow` regression coverage.
 
 Additional hardening:
+
 - moved function-call argument arrays in `expr.c` / `ast.c` from stack to heap
 - restored UDF state cleanly on callback setup failure (no leaked UDF state)
 - improved UDF callback error propagation so execution errors are not reported
@@ -151,6 +152,7 @@ on close.
 
 ### 6.7 ~~Standard-Compliant Index Keys~~ — RESOLVED (Superseded)
 Resolved by the 6.1/6.5 fixes:
+
 - Numeric index keys now use a fixed-width sortable binary-safe encoding
   (transformed IEEE-754), preserving numeric order under `memcmp`.
 - Date index keys now use canonical `YYYYMMDD` internally (equivalent ordering

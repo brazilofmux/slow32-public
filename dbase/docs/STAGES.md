@@ -9,6 +9,7 @@ against the MMIO runtime. Target: run real 1986 dBase III programs.
 for the complete feature inventory.
 
 What works today:
+
 - DBF file format (CREATE, USE, read/write records)
 - 75+ commands (navigation, editing, display, file ops, bulk ops)
 - 39 built-in functions (string, numeric, date, status)
@@ -37,6 +38,7 @@ is another 1-2 sessions.
 ## Architecture
 
 dBase III is a database management system with:
+
 - A **dot prompt** command interpreter
 - **DBF file format** for tabular data (fixed-length ASCII records)
 - **Expression evaluator** for queries and computed fields
