@@ -49,6 +49,7 @@ run_script cycle "#CYCLE!" "#DIV/0!" || fail=1
 run_script saveload "A1: 42" "B1: hello" "C1: 43" || fail=1
 # Formulas flatten to cached values in WK1. C1 was A1+1.
 run_script wk1 "A1: 42" "B1: hello" "C1: 43" "D1: 3.5" || fail=1
+run_script dbf "A1: 10" "B1: hello" "A2: 20" "B2: world" || fail=1
 
 if command -v python3 >/dev/null 2>&1; then
     work="$(mktemp -d "${TMPDIR:-/tmp}/s32-sheet.XXXXXX")"

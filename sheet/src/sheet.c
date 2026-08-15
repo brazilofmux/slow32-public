@@ -292,9 +292,16 @@ static int path_is_wk1(const char *path) {
     return ends_with_ci(path, ".wk1") || ends_with_ci(path, ".wks");
 }
 
+static int path_is_dbf(const char *path) {
+    return ends_with_ci(path, ".dbf");
+}
+
 int sheet_save(const sheet_t *sh, const char *path) {
     if (path_is_wk1(path)) {
         return sheet_save_wk1(sh, path);
+    }
+    if (path_is_dbf(path)) {
+        return sheet_save_dbf(sh, path);
     }
     return sheet_save_sht(sh, path);
 }
@@ -302,6 +309,9 @@ int sheet_save(const sheet_t *sh, const char *path) {
 int sheet_load(sheet_t *sh, const char *path) {
     if (path_is_wk1(path)) {
         return sheet_load_wk1(sh, path);
+    }
+    if (path_is_dbf(path)) {
+        return sheet_load_dbf(sh, path);
     }
     return sheet_load_sht(sh, path);
 }

@@ -58,6 +58,8 @@ int sheet_save_sht(const sheet_t *sh, const char *path);
 int sheet_load_sht(sheet_t *sh, const char *path);
 int sheet_save_wk1(const sheet_t *sh, const char *path);
 int sheet_load_wk1(sheet_t *sh, const char *path);
+int sheet_save_dbf(const sheet_t *sh, const char *path);
+int sheet_load_dbf(sheet_t *sh, const char *path);
 
 /* Full-screen grid. Returns after the user quits. filename_cap includes NUL. */
 void sheet_ui(sheet_t *sh, char *filename, int filename_cap);

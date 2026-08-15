@@ -32,7 +32,9 @@ A4: 60    [@SUM(A1:A3)]
 - Cycle detection (`#CYCLE!`) and `#DIV/0!`
 - Text `.sht` save/load (keeps formulas)
 - Lotus `.wk1` / `.wks` subset: INTEGER, NUMBER, LABEL; FORMULA
-  reads the cached value. Save picks the format from the extension.
-  Formulas become numbers on WK1 export.
+  reads the cached value. Formulas become numbers on WK1 export.
+- dBase III `.dbf` interchange: columns A.. become fields A..,
+  used rows become records. SAVE/LOAD pick the format from the
+  extension.
 
 Grid is A–Z by rows 1–64. No macros, no 3D workbooks, no graphs.
