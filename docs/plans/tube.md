@@ -2,6 +2,9 @@
 
 How SLOW-32 shows pictures, and how it does not.
 
+Wire-level spec: [docs/TUBE.md](../TUBE.md) (opcodes, memory formats,
+viewer socket, test contract).
+
 Captured 2026-08-16. The hose carries bytes; the tube shows pictures.
 Sibling document to [hose.md](hose.md), same rules: the host composes
 machines, guests see services, absence is a legal answer.
