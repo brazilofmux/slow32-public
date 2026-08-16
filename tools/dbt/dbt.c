@@ -1908,7 +1908,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -X <pc>   Dump block containing guest PC\n");
     fprintf(stderr, "  -I        Disable intrinsic recognition (native stubs)\n");
     fprintf(stderr, "  -U        UNSAFE: Disable all bounds/W^X checks (for benchmarking)\n");
-    fprintf(stderr, "  -q [N]    Probe: sample PC every N seconds (default 1) via SIGALRM\n");
+    fprintf(stderr, "  -Q [N]    Probe: sample PC every N seconds (default 1) via SIGALRM\n");
+    fprintf(stderr, "  -q        Quiet (accepted for MMIO-exec compatibility; dbt is already silent)\n");
     fprintf(stderr, "  -1        Use Stage 1 mode (no caching)\n");
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
@@ -2018,6 +2019,9 @@ int main(int argc, char **argv) {
     svc_policy_t svc_policy = { .default_allow = true };
     mmio_ring_set_emulator(argv[0]);
     for (int i = 1; i < argc; i++) {
+        /* -q is the cross-engine MMIO-exec "quiet" flag. dbt has no banner to
+         * suppress, so accept and drop it. dbt's own PC-probe flag is -Q, so
+         * there is no collision and no orphaned interval argument. */
         if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
             memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
             argc -= 1;
@@ -2106,7 +2110,7 @@ int main(int argc, char **argv) {
                 case 'U':
                     bounds_checks_disabled = true;
                     break;
-                case 'q':
+                case 'Q':
                     probe.enabled = true;
                     // Optional numeric argument for interval
                     if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
