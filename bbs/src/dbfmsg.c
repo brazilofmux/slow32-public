@@ -165,6 +165,13 @@ int msgdb_open(msgdb_t *db, const char *path) {
         if (icmp(fname, "TEXT") == 0 || icmp(fname, "BODY") == 0 ||
             icmp(fname, "MSG") == 0) text_i = i;
     }
+    /* Every field must lie within the record. Without this, a crafted header
+     * whose field lengths sum past rec_size makes put_field/trim_copy read or
+     * write past the malloc(rec_size) block. off is the running end offset. */
+    if (off > (int)db->rec_size) {
+        msgdb_close(db);
+        return -1;
+    }
     if (from_i < 0) from_i = 0;
     if (to_i < 0) to_i = (nf > 1) ? 1 : 0;
     if (subj_i < 0) subj_i = (nf > 2) ? 2 : 0;

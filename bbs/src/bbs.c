@@ -144,6 +144,8 @@ static int looks_s32x(const char *s) {
            toupper((unsigned char)s[n - 1]) == 'X';
 }
 
+static int safe_filename(const char *s);
+
 static const char *resolve_door(const char *name, char *buf, int cap) {
     if (access(name, F_OK) == 0 && looks_s32x(name)) {
         return name;
@@ -168,6 +170,13 @@ static void cmd_door(int fd, const char *name) {
 
     sock_puts(fd, "Door: ");
     if (sock_gets(fd, asked, (int)sizeof(asked)) < 0 || !asked[0]) {
+        return;
+    }
+    /* The door name is network-supplied. Gate it exactly as cmd_transfer
+     * does: no leading '.' and no path separators, so resolve_door cannot be
+     * steered outside doors/ to run an arbitrary host .s32x. */
+    if (!safe_filename(asked)) {
+        sock_puts(fd, "No such door.\r\n");
         return;
     }
     path = resolve_door(asked, pathbuf, (int)sizeof(pathbuf));

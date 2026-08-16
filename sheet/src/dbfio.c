@@ -249,6 +249,20 @@ int sheet_load_dbf(sheet_t *sh, const char *path) {
         }
     }
 
+    /* The per-record field walk does memcpy(tmp, rec + off, ...) advancing off
+     * by flen[i]. If the fields sum past rec_size, that reads past the record
+     * (and past the stack rec[] buffer) — reject the file instead. */
+    {
+        int total = 1; /* deletion flag byte */
+        for (i = 0; i < nf; i++) {
+            total += flen[i];
+        }
+        if (total > (int)rec_size) {
+            fclose(f);
+            return -1;
+        }
+    }
+
     if (fseek(f, (long)hdr_size, SEEK_SET) != 0) {
         fclose(f);
         return -1;

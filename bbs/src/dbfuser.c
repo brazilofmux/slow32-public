@@ -116,6 +116,13 @@ int userdb_open(userdb_t *db, const char *path) {
             pass_i = i;
         }
     }
+    /* Reject a header whose fields extend past the record: otherwise
+     * userdb_check's trim_copy reads past the malloc(rec_size) block on the
+     * pre-auth login path. off is the running end offset. */
+    if (off > (int)db->rec_size) {
+        userdb_close(db);
+        return -1;
+    }
     if (name_i < 0) {
         name_i = 0;
     }
