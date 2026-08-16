@@ -61,6 +61,7 @@
 #define S32_MMIO_OP_SEEK      0x07
 /* 0x08 reserved (was BRK, removed — heap is statically allocated by linker) */
 #define S32_MMIO_OP_EXIT      0x09
+#define S32_MMIO_OP_EXEC      0x10
 #define S32_MMIO_OP_STAT      0x0A
 #define S32_MMIO_OP_FLUSH     0x0B
 #define S32_MMIO_OP_READ_DIRECT 0x0C
@@ -2537,6 +2538,24 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         }
         resp->length = pos;
         resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_MMIO_OP_EXEC: {
+        /* The interpreter/DBT hosts implement EXEC by forking another
+         * emulator with the caller's socket inherited onto the child's
+         * stdio. QEMU's TCG process model has no equivalent here, so EXEC is
+         * deliberately unsupported: fail with ENOSYS (a clear "not here")
+         * rather than the generic EINVAL the default case would give, so a
+         * guest sees the same answer as the debug-libc exec stub. */
+        static bool warned;
+        if (!warned) {
+            warned = true;
+            fprintf(stderr,
+                    "slow32: MMIO EXEC (0x10) is not supported on the QEMU "
+                    "backend; guest exec() calls will fail with ENOSYS\n");
+        }
+        slow32_mmio_fail(resp, ENOSYS);
         break;
     }
 

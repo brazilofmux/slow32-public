@@ -806,7 +806,7 @@ static const char *legacy_opcode_service(uint32_t opcode) {
     if (opcode == 0x0B) return "fs";   // FLUSH (file flush)
     if (opcode == 0x0C) return "fs";   // READ_DIRECT
     if (opcode == 0x0D) return "fs";   // FTRUNCATE
-    if (opcode >= 0x20 && opcode <= 0x2A) return "fs";  // FS metadata
+    if (opcode >= 0x20 && opcode <= 0x2B) return "fs";  // FS metadata (through REWINDDIR)
     if (opcode >= 0x30 && opcode <= 0x3F) return "time";
     if (opcode == 0x10) return "exec";
     if (opcode >= 0x40 && opcode <= 0x4F) return "net";
@@ -1463,7 +1463,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             if (pid == 0) {
-                char *av[16];
+                char *av[32];
+                char allow_csv[S32_MAX_SERVICES * S32_MAX_SVC_NAME];
+                char deny_csv[S32_MAX_SERVICES * S32_MAX_SVC_NAME];
                 int i, a = 0;
                 int inherit = -1;
                 if (req->status != 0xFFFFFFFFu) {
@@ -1482,8 +1484,33 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 }
                 av[a++] = (char *)emu;
                 av[a++] = "-q";
+                /* Propagate the parent's MMIO service policy to the child.
+                 * Without this the child inits default-allow, so a guest run
+                 * under --deny/--allow could escape the sandbox by exec'ing a
+                 * helper that regains every service. Both list forms are
+                 * passed as the child evaluates deny first, then allow. */
+                if (mmio->policy.deny_count > 0) {
+                    int p = 0;
+                    for (i = 0; i < mmio->policy.deny_count; i++) {
+                        p += snprintf(deny_csv + p, sizeof(deny_csv) - p,
+                                      "%s%s", i ? "," : "",
+                                      mmio->policy.deny_list[i]);
+                    }
+                    av[a++] = "--deny";
+                    av[a++] = deny_csv;
+                }
+                if (mmio->policy.allow_count > 0) {
+                    int p = 0;
+                    for (i = 0; i < mmio->policy.allow_count; i++) {
+                        p += snprintf(allow_csv + p, sizeof(allow_csv) - p,
+                                      "%s%s", i ? "," : "",
+                                      mmio->policy.allow_list[i]);
+                    }
+                    av[a++] = "--allow";
+                    av[a++] = allow_csv;
+                }
                 av[a++] = path;
-                for (i = 0; i < nextra; i++) {
+                for (i = 0; i < nextra && a < 31; i++) {
                     av[a++] = extra[i];
                 }
                 av[a] = NULL;
