@@ -89,7 +89,7 @@ static int mode_to_flags(const char *mode) {
     int flags = 0;
     if (strchr(mode, 'r')) flags |= FLAG_READ;
     if (strchr(mode, 'w')) flags |= FLAG_WRITE | FLAG_CREATE | FLAG_TRUNC;
-    if (strchr(mode, 'a')) flags |= FLAG_WRITE | FLAG_APPEND;
+    if (strchr(mode, 'a')) flags |= FLAG_WRITE | FLAG_APPEND | FLAG_CREATE;
     if (strchr(mode, '+')) flags |= FLAG_READ | FLAG_WRITE;
     return flags;
 }
