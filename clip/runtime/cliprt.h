@@ -24,6 +24,7 @@ typedef struct {
 } clip_scope_t;
 
 void clip_register_fn(const char *name, clip_fn_t fn);
+void clip_do(const char *name);
 void clip_enter(clip_scope_t *s);
 void clip_param(clip_scope_t *s, const char *name, value_t *args, int nargs, int idx);
 void clip_private(clip_scope_t *s, const char *name);

@@ -55,6 +55,13 @@ static int g_nloaded;
 static char g_inlined[MAX_FILES][MAX_NAME];
 static int g_ninlined;
 
+/* Names of every FUNCTION/PROCEDURE compiled into this translation unit, so a
+ * bare DO can be lowered to a direct registry call (clip_do) instead of the
+ * on-disk program loader that clip_cmd would use. Distinct from g_inlined,
+ * which tracks SET PROCEDURE *files*, not the procedures they contain. */
+static char g_compiled_fn[MAX_FUNCS][MAX_NAME];
+static int g_ncompiled_fn;
+
 static int icmp_n(const char *a, const char *b, int n) {
     int i;
     for (i = 0; i < n; i++) {
@@ -334,6 +341,26 @@ static void mark_inlined(const char *name) {
     strncpy(g_inlined[g_ninlined], name, MAX_NAME - 1);
     g_inlined[g_ninlined][MAX_NAME - 1] = '\0';
     g_ninlined++;
+}
+
+static int was_compiled_fn(const char *name) {
+    int i;
+    for (i = 0; i < g_ncompiled_fn; i++) {
+        if (icmp_n(g_compiled_fn[i], name, MAX_NAME) == 0 &&
+            (int)strlen(g_compiled_fn[i]) == (int)strlen(name)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void mark_compiled_fn(const char *name) {
+    if (g_ncompiled_fn >= MAX_FUNCS || was_compiled_fn(name)) {
+        return;
+    }
+    strncpy(g_compiled_fn[g_ncompiled_fn], name, MAX_NAME - 1);
+    g_compiled_fn[g_ncompiled_fn][MAX_NAME - 1] = '\0';
+    g_ncompiled_fn++;
 }
 
 static int already_loaded(const char *path) {
@@ -650,6 +677,38 @@ static int emit_stmt(emit_t *e, const char *p) {
             e->nest[e->depth++] = 'C';
             return 0;
         }
+        /* DO <name> targeting a compiled-in procedure. SET PROCEDURE TO is
+         * dropped when its file is inlined, so clip_cmd("DO name") would find
+         * neither an on-disk .prg nor a procedure file and raise File-not-
+         * found. Inlined procedures live only in the UDF registry, so route
+         * the call through clip_do(). WITH-argument marshalling is not done,
+         * so an inlined target with WITH is an explicit compile error rather
+         * than a silent miscompile. */
+        {
+            char name[MAX_NAME];
+            int i = 0;
+            const char *r = q;
+            while (*r && (isalnum((unsigned char)*r) || *r == '_') &&
+                   i < MAX_NAME - 1) {
+                name[i++] = *r++;
+            }
+            name[i] = '\0';
+            r = skip_ws(r);
+            if (name[0] && was_compiled_fn(name)) {
+                if (*r != '\0') {
+                    fprintf(stderr,
+                            "%s:%d: DO %s with arguments/clauses is not "
+                            "supported for a compiled-in procedure\n",
+                            e->inpath, e->lineno, name);
+                    return -1;
+                }
+                emit_indent(e->out, e->depth);
+                fprintf(e->out, "clip_do(");
+                c_escape(e->out, name);
+                fprintf(e->out, ");\n");
+                return 0;
+            }
+        }
         emit_cmd(e->out, e->depth, p);
         return 0;
     }
@@ -821,6 +880,7 @@ int main(int argc, char **argv) {
                 j++;
             }
             fns[nfns].end = j;
+            mark_compiled_fn(fns[nfns].name);
             nfns++;
             i = j;
             continue;

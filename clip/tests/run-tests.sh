@@ -32,6 +32,7 @@ run_one case || fail=1
 run_one hybrid || fail=1
 run_one libskip || fail=1
 run_one dofile "$CLIP_DIR/tests" || fail=1
+run_one doproc || fail=1
 run_one setproc || fail=1
 run_one func || fail=1
 run_one funcpriv || fail=1

@@ -46,6 +46,30 @@ static int clip_udf_dispatch(const char *name, value_t *args, int nargs, value_t
     return 1;
 }
 
+/* Run an inlined PROCEDURE by name as a command (DO <name>, no WITH args).
+ * The compiler emits this for a bare DO whose target was compiled in, since
+ * such procedures are reachable only through the UDF registry, not the on-disk
+ * program loader that clip_cmd("DO ...") would use. Name match is
+ * case-insensitive, like the interpreter. Falls back to clip_cmd so a name
+ * that turns out not to be registered still gets the normal DO handling. */
+void clip_do(const char *name) {
+    char upper[MEMVAR_NAMELEN];
+    value_t result;
+    int i;
+    name_upper(upper, name, (int)sizeof(upper));
+    for (i = 0; i < clip_nfn; i++) {
+        if (strcmp(clip_fns[i].name, upper) == 0) {
+            clip_fns[i].fn(NULL, 0, &result);
+            return;
+        }
+    }
+    {
+        char line[MEMVAR_NAMELEN + 4];
+        snprintf(line, sizeof(line), "DO %s", name);
+        clip_cmd(line);
+    }
+}
+
 void clip_register_fn(const char *name, clip_fn_t fn) {
     char upper[MEMVAR_NAMELEN];
     int i;
