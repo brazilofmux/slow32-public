@@ -53,3 +53,11 @@ commands become `clip_cmd()` and ride the existing interpreter
 | `util.prg`       | compiled into whoever `SET PROCEDURE TO util`s       |
 
 `FOR`/`SCAN`/`TEXT`/`BEGIN SEQUENCE` are still compile errors.
+
+A full report-suite A/B against the interpreter (`import` / `bal_run` /
+`runbal_run` / `reports_all` on `slow32-dbt`) produced byte-identical
+output for eleven of twelve reports. The twelfth differs because
+nested `DO reports_all` overflows the interpreter's IF stack; the
+compiled driver matches a standalone `DO activity`. Workdirs and
+`.prn` files stay in `out/` (gitignored). Do not copy private
+datasets into this tree.
