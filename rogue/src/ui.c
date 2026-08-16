@@ -192,6 +192,7 @@ static void help_screen(void) {
 }
 
 void ui_play(game_t *g) {
+    term_clear(0);
     msgf(g, "Hello. Welcome to the Dungeons of Doom. (? for help)");
     for (;;) {
         int ch;

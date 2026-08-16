@@ -161,6 +161,31 @@ static const char *resolve_door(const char *name, char *buf, int cap) {
     return NULL;
 }
 
+static void list_doors(int fd) {
+    DIR *d = opendir("doors");
+    struct dirent *e;
+    int n = 0;
+    if (d) {
+        while ((e = readdir(d)) != NULL) {
+            if (!looks_s32x(e->d_name)) {
+                continue;
+            }
+            if (n == 0) {
+                sock_puts(fd, "Doors:\r\n");
+            }
+            sock_puts(fd, "  ");
+            e->d_name[strlen(e->d_name) - 5] = '\0';
+            sock_puts(fd, e->d_name);
+            sock_puts(fd, "\r\n");
+            n++;
+        }
+        closedir(d);
+    }
+    if (n == 0) {
+        sock_puts(fd, "No doors installed.\r\n");
+    }
+}
+
 static void cmd_door(int fd, const char *name) {
     char asked[64];
     char pathbuf[128];
@@ -168,8 +193,12 @@ static void cmd_door(int fd, const char *name) {
     char *av[2];
     int rc;
 
-    sock_puts(fd, "Door: ");
-    if (sock_gets(fd, asked, (int)sizeof(asked)) < 0 || !asked[0]) {
+    sock_puts(fd, "Door (? lists): ");
+    if (sock_gets(fd, asked, (int)sizeof(asked)) < 0) {
+        return;
+    }
+    if (!asked[0] || strcmp(asked, "?") == 0) {
+        list_doors(fd);
         return;
     }
     /* The door name is network-supplied. Gate it exactly as cmd_transfer

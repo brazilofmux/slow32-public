@@ -618,11 +618,14 @@ ui_play:                                # @ui_play
 	stw fp+-56, r24
 	stw fp+-60, r25
 	add r11, r3, r0
+	addi r12, r0, 0
+	add r3, r12, r0
+	jal r31, term_clear
 	lui r4, %hi(.L.str.11)
 	addi r4, r4, %lo(.L.str.11)
+	add r3, r11, r0
 	jal r31, msgf
 	addi r18, r0, 27
-	addi r12, r0, 0
 	addi r19, r0, 91
 	addi r17, r0, 3
 	lui r20, %hi(.Lswitch.table.ui_play)

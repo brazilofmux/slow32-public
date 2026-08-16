@@ -21,7 +21,10 @@ Keys: `hjkl`/arrows and `yubn` move, `>`/`<` take the staircase (`%`),
 Death and victory append to `rogue.scr`.
 
 `--wizard` adds debug keys: `&` jump to the stairs, `*` reveal the map,
-`A` conjure the Amulet. The test suite plays wizard.
+`A` conjure the Amulet, `+` god mode. The test suite plays wizard.
+
+Rogue also runs as a BBS door: `cp rogue.s32x ../bbs/doors/` and
+callers play over the socket, sharing the board's score file.
 
 v1 keeps rooms lit and items pre-identified; dark rooms, traps, rings,
 and the identification minigame are the classic next fights.

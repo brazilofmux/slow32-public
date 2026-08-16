@@ -74,11 +74,15 @@ buf = b""
 def recv_until(needle):
     global buf
     want = needle.encode()
-    while want not in buf:
-        chunk = s.recv(256)
-        if not chunk:
-            break
-        buf += chunk
+    try:
+        while want not in buf:
+            chunk = s.recv(256)
+            if not chunk:
+                break
+            buf += chunk
+    except socket.timeout:
+        sys.stderr.write("dial: TIMEOUT waiting for %r; tail=%r\n"
+                         % (needle, buf[-200:]))
     return buf.decode("ascii", "replace")
 
 out = ""
@@ -124,10 +128,26 @@ check list-subj "$mail" "hello"
 check read-body "$mail" "line one"
 check read-line2 "$mail" "line two"
 
-door="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND secret; WAIT Welcome; SEND D; WAIT Door:; SEND door; WAIT FORTUNE; WAIT something; SEND hi; WAIT You said; SEND G; WAIT Goodbye')"
+door="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND secret; WAIT Welcome; SEND D; WAIT Door; SEND door; WAIT FORTUNE; WAIT something; SEND hi; WAIT You said; SEND G; WAIT Goodbye')"
 check door-banner "$door" "FORTUNE"
 check door-echo "$door" "You said: hi"
 check door-back "$door" "Goodbye, alice"
+
+# Doors directory: listing, and Rogue as a full-screen door over the socket.
+mkdir -p "$work/doors"
+cp "$work/door.s32x" "$work/doors/door.s32x"
+
+doorlist="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND secret; WAIT Welcome; SEND D; WAIT lists; SEND ?; WAIT Doors:; SEND G; WAIT Goodbye')"
+check door-list "$doorlist" "^  door"
+
+if [ -f "$ROOT/rogue/rogue.s32x" ]; then
+    cp "$ROOT/rogue/rogue.s32x" "$work/doors/rogue.s32x"
+    rogue="$(dial 'WAIT Name:; SEND alice; WAIT Password:; SEND secret; WAIT Welcome; SEND D; WAIT Door; SEND rogue; WAIT Dungeons; SEND Q; WAIT any key; SEND G; WAIT Goodbye')"
+    check rogue-door "$rogue" "Dungeons"
+    check rogue-quit "$rogue" "\[L\]ist"
+else
+    echo "  SKIP rogue door (build rogue/ first)"
+fi
 
 mkdir -p "$work/files"
 printf 'zmodem-payload-ok\n' > "$work/files/payload.bin"
