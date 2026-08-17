@@ -135,9 +135,17 @@ static int sendn(int fd, const void *buf, size_t n) {
     return 0;
 }
 
+/* S32_CRT_KEYLOG=<path> appends raw stdin bytes and sent events —
+ * for diagnosing what a particular terminal actually emits. */
+static FILE *keylog;
+
 static int send_key(int fd, uint16_t code, uint8_t down) {
     uint32_t hdr[2];
     uint8_t ev[4];
+    if (keylog) {
+        fprintf(keylog, "send %#x %s\n", code, down ? "down" : "up");
+        fflush(keylog);
+    }
     hdr[0] = 8;
     hdr[1] = TAG_KEYE;
     ev[0] = (uint8_t)(code & 0xFF);
@@ -361,6 +369,15 @@ static int pump_keys(int fd) {
     if (ifill < (int)sizeof(ibuf)) {
         ssize_t n = read(STDIN_FILENO, ibuf + ifill, sizeof(ibuf) - (size_t)ifill);
         if (n > 0) {
+            if (keylog) {
+                ssize_t k;
+                fprintf(keylog, "read");
+                for (k = 0; k < n; k++) {
+                    fprintf(keylog, " %02x", ibuf[ifill + k]);
+                }
+                fprintf(keylog, "\n");
+                fflush(keylog);
+            }
             ifill += (int)n;
         }
     }
@@ -370,18 +387,35 @@ static int pump_keys(int fd) {
         int used = 1;
         unsigned char b0 = ibuf[0];
         if (b0 == 0x1b) {
-            if (ifill >= 3 && ibuf[1] == '[') {
-                used = 3;
-                if (ibuf[2] == 'A') code = 0x100;
-                else if (ibuf[2] == 'B') code = 0x101;
-                else if (ibuf[2] == 'C') code = 0x103;
-                else if (ibuf[2] == 'D') code = 0x102;
-                /* other CSI finals: swallow silently */
-            } else if (ifill >= 2 && ibuf[1] != '[') {
-                code = 27;              /* ESC followed by an ordinary key */
+            /* Arrows arrive as CSI (ESC [ ... final) or SS3 (ESC O final)
+             * depending on the terminal's cursor-key mode. Parse both;
+             * never fabricate an ESC key out of a partial sequence. */
+            if (ifill >= 2 && (ibuf[1] == '[' || ibuf[1] == 'O')) {
+                int fin = 2;
+                while (fin < ifill &&
+                       (ibuf[fin] < 0x40 || ibuf[fin] > 0x7E)) {
+                    fin++;              /* CSI parameter/intermediate bytes */
+                }
+                if (fin >= ifill) {
+                    if (ifill == (int)sizeof(ibuf)) {
+                        used = ifill;   /* runaway sequence: drop it */
+                        code = 0;
+                    } else {
+                        break;          /* incomplete: wait for the rest */
+                    }
+                } else {
+                    used = fin + 1;
+                    if (ibuf[fin] == 'A') code = 0x100;
+                    else if (ibuf[fin] == 'B') code = 0x101;
+                    else if (ibuf[fin] == 'C') code = 0x103;
+                    else if (ibuf[fin] == 'D') code = 0x102;
+                    /* other finals: swallow silently */
+                }
+            } else if (ifill >= 2) {
+                code = 27;              /* ESC then an ordinary key */
             } else {
-                /* Lone ESC (or ESC-[ so far): wait out the gap before
-                 * deciding the user really meant the ESC key. */
+                /* Lone ESC: wait out the gap before deciding the user
+                 * really meant the ESC key. */
                 if (esc_since_ms == 0) {
                     esc_since_ms = now;
                 }
@@ -470,6 +504,12 @@ int main(int argc, char **argv) {
         }
     }
 
+    {
+        const char *kl = getenv("S32_CRT_KEYLOG");
+        if (kl && kl[0]) {
+            keylog = fopen(kl, "a");
+        }
+    }
     if (opt_draw && !opt_text) {
         raw_enter();
         atexit(raw_leave);
