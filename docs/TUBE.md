@@ -7,6 +7,8 @@ opcodes, memory formats, the viewer socket, and the test contract.
 
 Status: **vec dump + viewer socket landed.** Headless `S32_TUBE_DUMP`
 and a separate `s32-crt` (terminal glass, or `--text` for the wire).
+The glass holds the last frame after the guest exits (`q` to quit).
+`examples/vecscope.c` is a spinning ship that waits for `q`/`ESC`.
 `fb` and `ppu` wait for their flagships (vec: Tempest/Asteroids;
 fb: a Doom port; ppu: unnamed). Mode 4 (`gpu`) has a number and no
 spec, deliberately. `ppu` bit layouts in §5 are **provisional** and

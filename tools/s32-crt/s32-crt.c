@@ -330,7 +330,7 @@ static int pump_keys(int fd) {
         if (code == 'q' || code == 'Q') {
             return 1;
         }
-        if (code) {
+        if (code && fd >= 0) {
             if (send_key(fd, code, 1) < 0 || send_key(fd, code, 0) < 0) {
                 return -1;
             }
@@ -455,7 +455,12 @@ int main(int argc, char **argv) {
                     }
                 }
             } else if (tag == TAG_BYE) {
-                quit = 1;
+                /* Guest closed the tube. Hold the last picture unless --once. */
+                if (opt_once) {
+                    quit = 1;
+                } else {
+                    break;
+                }
             }
         }
 
@@ -467,6 +472,13 @@ int main(int argc, char **argv) {
             if (k < 0) {
                 break;
             }
+        }
+    }
+
+    if (!opt_once && !opt_text && opt_draw && got > 0 && !quit) {
+        fprintf(stderr, "s32-crt: guest halted — press q\n");
+        while (pump_keys(-1) == 0) {
+            usleep(50 * 1000);
         }
     }
 
