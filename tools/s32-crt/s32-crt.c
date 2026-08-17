@@ -32,7 +32,6 @@
 
 static int opt_once;
 static int opt_text;
-static int opt_wait;
 static int opt_frames = 1;
 static int opt_port = -1;
 static const char *opt_port_file = "tube.port";
@@ -50,21 +49,6 @@ static int read_port_file(const char *path) {
     }
     fclose(f);
     return (int)p;
-}
-
-static int wait_port_file(const char *path, int timeout_ms) {
-    int waited = 0;
-    for (;;) {
-        int p = read_port_file(path);
-        if (p > 0) {
-            return p;
-        }
-        if (!opt_wait || waited >= timeout_ms) {
-            return -1;
-        }
-        usleep(10 * 1000);
-        waited += 10;
-    }
 }
 
 static int connect_port(int port) {
@@ -89,6 +73,31 @@ static int connect_port(int port) {
         return -1;
     }
     return fd;
+}
+
+/* timeout_ms < 0 waits forever. A successful attach is a connect, not
+   just a file: leftover tube.port from a crashed run is ignored. */
+static int attach_port_file(const char *path, int timeout_ms) {
+    int waited = 0;
+    int announced = 0;
+    for (;;) {
+        int p = read_port_file(path);
+        if (p > 0) {
+            int fd = connect_port(p);
+            if (fd >= 0) {
+                return fd;
+            }
+        }
+        if (timeout_ms >= 0 && waited >= timeout_ms) {
+            return -1;
+        }
+        if (!announced) {
+            fprintf(stderr, "s32-crt: waiting for %s\n", path);
+            announced = 1;
+        }
+        usleep(20 * 1000);
+        waited += 20;
+    }
 }
 
 static int recvn(int fd, void *buf, size_t n) {
@@ -332,12 +341,14 @@ static int pump_keys(int fd) {
 
 static void usage(void) {
     fprintf(stderr,
-            "usage: s32-crt [--port N | --port-file PATH] [--wait] [--once]\n"
-            "               [--text] [--frames N]\n");
+            "usage: s32-crt [--port N | --port-file PATH] [--once]\n"
+            "               [--text] [--frames N]\n"
+            "  Port-file attach waits for the emulator to write the file.\n"
+            "  --once gives up after 5s if nothing appears (for tests).\n");
 }
 
 int main(int argc, char **argv) {
-    int i, fd, port, got = 0, quit = 0;
+    int i, fd, got = 0, quit = 0;
     uint8_t *payload = NULL;
     size_t paycap = 0;
 
@@ -348,7 +359,7 @@ int main(int argc, char **argv) {
             opt_text = 1;
             opt_draw = 0;
         } else if (strcmp(argv[i], "--wait") == 0) {
-            opt_wait = 1;
+            /* Default for port-file attach; accepted for old command lines. */
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             opt_port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--port-file") == 0 && i + 1 < argc) {
@@ -368,31 +379,17 @@ int main(int argc, char **argv) {
     }
 
     if (opt_port > 0) {
-        port = opt_port;
-    } else {
-        /* Port-file attach waits: the emulator writes the file on OPEN. */
-        port = wait_port_file(opt_port_file, opt_wait || opt_port < 0 ? 5000 : 0);
-        if (port < 0) {
-            fprintf(stderr, "s32-crt: no tube.port\n");
+        fd = connect_port(opt_port);
+        if (fd < 0) {
+            fprintf(stderr, "s32-crt: connect %d failed\n", opt_port);
             return 1;
         }
-    }
-
-    fd = connect_port(port);
-    if (fd < 0) {
-        /* leftover port file from a crashed run */
-        if (opt_wait) {
-            int tries;
-            for (tries = 0; tries < 50 && fd < 0; tries++) {
-                usleep(20 * 1000);
-                port = read_port_file(opt_port_file);
-                if (port > 0) {
-                    fd = connect_port(port);
-                }
-            }
-        }
+    } else {
+        /* Interactive glass waits forever. --once is for tests. */
+        int attach_ms = opt_once ? 5000 : -1;
+        fd = attach_port_file(opt_port_file, attach_ms);
         if (fd < 0) {
-            fprintf(stderr, "s32-crt: connect failed\n");
+            fprintf(stderr, "s32-crt: no listener at %s\n", opt_port_file);
             return 1;
         }
     }
