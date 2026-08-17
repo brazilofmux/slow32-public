@@ -17,7 +17,12 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 #include <sys/wait.h>
 #include <limits.h>
 
@@ -1055,6 +1060,10 @@ static void tube_set_nb(int fd) {
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
     }
 #endif
+    {
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    }
 }
 
 static void tube_close_view(tube_state_t *ts) {
@@ -1081,7 +1090,7 @@ static int tube_send_all(int fd, const void *buf, size_t n) {
     const uint8_t *p = (const uint8_t *)buf;
     int any = 0;
     while (n > 0) {
-        ssize_t w = send(fd, p, n, 0);
+        ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
         if (w < 0) {
             if (errno == EINTR) {
                 continue;
@@ -1190,50 +1199,53 @@ static void tube_recv(tube_state_t *ts) {
         ssize_t n;
         uint32_t length, tag;
 
-        if (ts->rfill < TUBE_RBUF) {
-            n = recv(ts->view_fd, ts->rbuf + ts->rfill, TUBE_RBUF - ts->rfill, 0);
-            if (n < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    break;
-                }
+        /* Parse buffered frames before recv. EAGAIN must not
+           abandon a KEYE burst that already arrived in rbuf. */
+        while (ts->rfill >= 8) {
+            memcpy(&length, ts->rbuf, 4);
+            memcpy(&tag, ts->rbuf + 4, 4);
+            if (length < 4 || length > 16) {
                 tube_close_view(ts);
                 return;
             }
-            if (n == 0) {
+            if (ts->rfill < 4u + length) {
+                break;
+            }
+            if (tag == TUBE_TAG_KEYE && length >= 8) {
+                tube_key_t ev;
+                memcpy(&ev, ts->rbuf + 8, 4);
+                tube_key_push(ts, ev);
+            } else if (tag == TUBE_TAG_BYE) {
                 tube_close_view(ts);
                 return;
             }
-            ts->rfill += (size_t)n;
+            {
+                size_t used = 4u + length;
+                memmove(ts->rbuf, ts->rbuf + used, ts->rfill - used);
+                ts->rfill -= used;
+            }
         }
 
-        if (ts->rfill < 8) {
-            break;
-        }
-        memcpy(&length, ts->rbuf, 4);
-        memcpy(&tag, ts->rbuf + 4, 4);
-        if (length < 4 || length > 16) {
+        if (ts->rfill >= TUBE_RBUF) {
             tube_close_view(ts);
             return;
         }
-        if (ts->rfill < 4u + length) {
-            break;
-        }
-        if (tag == TUBE_TAG_KEYE && length >= 8) {
-            tube_key_t ev;
-            memcpy(&ev, ts->rbuf + 8, 4);
-            tube_key_push(ts, ev);
-        } else if (tag == TUBE_TAG_BYE) {
+        n = recv(ts->view_fd, ts->rbuf + ts->rfill, TUBE_RBUF - ts->rfill, 0);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return;
+            }
             tube_close_view(ts);
             return;
         }
-        {
-            size_t used = 4u + length;
-            memmove(ts->rbuf, ts->rbuf + used, ts->rfill - used);
-            ts->rfill -= used;
+        if (n == 0) {
+            tube_close_view(ts);
+            return;
         }
+        ts->rfill += (size_t)n;
     }
 }
 
@@ -1397,6 +1409,8 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
             ts->nelems = 0;
             ts->have_snap = 0;
             ts->mode = 0;
+            ts->key_head = 0;
+            ts->key_count = 0;
             resp->status = S32_MMIO_STATUS_OK;
             resp->length = 0;
             break;

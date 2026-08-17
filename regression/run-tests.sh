@@ -207,7 +207,13 @@ run_test() {
         mkdir -p "$dump_dir"
         dump_env+=(S32_TUBE_DUMP="$dump_dir" S32_TUBE_DUMP_FULL=1)
     fi
-    if [ -f "$test_path/viewer" ]; then
+    if [ -f "$test_path/inject.py" ]; then
+        run_timeout=5
+        rm -f "$result_path/tube.port"
+        python3 "$test_path/inject.py" "$result_path/tube.port" \
+            >"$result_path/inject.txt" 2>"$result_path/inject.err" &
+        viewer_pid=$!
+    elif [ -f "$test_path/viewer" ]; then
         if [ ! -x "$S32_CRT" ]; then
             echo -e "${YELLOW}SKIP${NC} (s32-crt not built)"
             SKIPPED=$((SKIPPED + 1))

@@ -93,6 +93,7 @@ static int game_over;
 static unsigned frame;
 static int test_mode, thrusting;
 static int held_left, held_right, held_up, held_fire;
+static int tap_left, tap_right, tap_up;
 static int fire_latch, hyper_latch;
 
 static uint32_t rnd(uint32_t n) {
@@ -260,13 +261,13 @@ static void step(void) {
     frame++;
 
     if (alive) {
-        if (held_left) {
+        if (held_left || tap_left) {
             pangle = (pangle + 1) & 63;
         }
-        if (held_right) {
+        if (held_right || tap_right) {
             pangle = (pangle - 1) & 63;
         }
-        thrusting = held_up;
+        thrusting = held_up || tap_up;
         if (thrusting) {
             pvx += 3 * cos64(pangle);
             pvy += 3 * sin64(pangle);
@@ -344,6 +345,7 @@ static void step(void) {
         wave++;
         spawn_wave();
     }
+    tap_left = tap_right = tap_up = 0;
 }
 
 static void draw_poly(uint32_t *n, int32_t cx, int32_t cy,
@@ -442,10 +444,33 @@ static uint32_t build_frame(void) {
 
 /* Returns 0 to keep running, 1 to quit. */
 static int handle_key(const keyev_t *ev) {
-    switch (ev->code) {
-    case K_LEFT:  held_left = ev->down; break;
-    case K_RIGHT: held_right = ev->down; break;
-    case K_UP:    held_up = ev->down; break;
+    uint16_t code = ev->code;
+    if (code == 'a' || code == 'A') {
+        code = K_LEFT;
+    } else if (code == 'd' || code == 'D') {
+        code = K_RIGHT;
+    } else if (code == 'w' || code == 'W') {
+        code = K_UP;
+    }
+    switch (code) {
+    case K_LEFT:
+        held_left = ev->down;
+        if (ev->down) {
+            tap_left = 1;
+        }
+        break;
+    case K_RIGHT:
+        held_right = ev->down;
+        if (ev->down) {
+            tap_right = 1;
+        }
+        break;
+    case K_UP:
+        held_up = ev->down;
+        if (ev->down) {
+            tap_up = 1;
+        }
+        break;
     case ' ':
         if (ev->down && !held_fire) {
             fire_latch = 1;
@@ -523,8 +548,8 @@ int main(int argc, char **argv) {
 
     if (!test_mode) {
         int spins = 0;
-        printf("asteroids: arrows steer, space fires, h hyperspace, "
-               "q on the CRT quits\n");
+        printf("asteroids: arrows/WASD steer, space fires, h hyperspace, "
+               "q quits\n");
         while ((tube_info() & (1u << 8)) == 0 && spins++ < 150) {
             usleep(20000);
         }
@@ -536,6 +561,8 @@ int main(int argc, char **argv) {
         }
         if (!game_over || test_mode) {
             step();
+        } else {
+            tap_left = tap_right = tap_up = 0;
         }
         if (tube_present(list, build_frame(), frame) != 0) {
             printf("present-fail\n");

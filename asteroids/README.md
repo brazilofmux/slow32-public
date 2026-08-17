@@ -15,7 +15,7 @@ and slow32-dbt and demands bit-identical frame hashes.
 ./tests/run-tests.sh
 ```
 
-Keys (on the CRT): arrows rotate and thrust, space fires, `h` is
+Keys (on the CRT): arrows or WASD rotate and thrust, space fires, `h` is
 hyperspace (classic risk included), `q`/ESC quits. Rocks split
 large -> 2 medium -> 2 small (20/50/100 points), extra ship at
 10,000, waves grow. Score and spare ships are drawn with the stroke

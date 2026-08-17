@@ -12,6 +12,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,6 +76,10 @@ static int connect_port(int port) {
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         close(fd);
         return -1;
+    }
+    {
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     }
     return fd;
 }
@@ -138,7 +147,7 @@ static int recvn(int fd, void *buf, size_t n) {
 static int sendn(int fd, const void *buf, size_t n) {
     const uint8_t *p = (const uint8_t *)buf;
     while (n > 0) {
-        ssize_t w = send(fd, p, n, 0);
+        ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
         if (w < 0) {
             if (errno == EINTR) {
                 continue;
@@ -334,8 +343,19 @@ static long long now_ms(void) {
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-static int is_arrow(uint16_t code) {
-    return code >= 0x100 && code <= 0x103;
+static int is_hold_key(uint16_t code) {
+    if (code >= 0x100 && code <= 0x103) {
+        return 1;
+    }
+    switch (code) {
+    case 'w': case 'W':
+    case 'a': case 'A':
+    case 's': case 'S':
+    case 'd': case 'D':
+        return 1;
+    default:
+        return 0;
+    }
 }
 
 static int release_held(int fd) {
@@ -349,13 +369,14 @@ static int release_held(int fd) {
     return rc;
 }
 
-/* Returns 1 on local quit, -1 on send failure, else 0. */
+/* Returns 1 on local quit, -1 on send failure, else 0.
+ * q/Q leave the glass only after the guest is gone (fd < 0). */
 static int emit_key(int fd, uint16_t code) {
-    if (code == 'q' || code == 'Q') {
+    if (fd < 0 && (code == 'q' || code == 'Q')) {
         release_held(fd);
         return 1;
     }
-    if (is_arrow(code)) {
+    if (is_hold_key(code)) {
         if (code == held_code) {
             held_last_ms = now_ms();     /* autorepeat: still held */
             return 0;
@@ -539,7 +560,43 @@ int main(int argc, char **argv) {
     }
 
     while (!quit) {
+        fd_set rfds;
+        struct timeval tv;
+        int nfds, ready, sock_ready;
         uint32_t length = 0, tag = 0;
+
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        nfds = fd + 1;
+        if (raw_on) {
+            FD_SET(STDIN_FILENO, &rfds);
+            if (STDIN_FILENO >= nfds) {
+                nfds = STDIN_FILENO + 1;
+            }
+        }
+        tv.tv_sec = 0;
+        tv.tv_usec = 20 * 1000;
+        ready = select(nfds, &rfds, NULL, NULL, &tv);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (!opt_text && opt_draw) {
+            int k = pump_keys(fd);
+            if (k > 0) {
+                quit = 1;
+                break;
+            }
+            if (k < 0) {
+                break;
+            }
+        }
+        sock_ready = ready > 0 && FD_ISSET(fd, &rfds);
+        if (!sock_ready) {
+            continue;
+        }
 
         if (recvn(fd, &length, 4) < 0 || recvn(fd, &tag, 4) < 0) {
             break;
@@ -600,16 +657,6 @@ int main(int argc, char **argv) {
                 } else {
                     break;
                 }
-            }
-        }
-
-        if (!opt_text && opt_draw && !quit) {
-            int k = pump_keys(fd);
-            if (k > 0) {
-                quit = 1;
-            }
-            if (k < 0) {
-                break;
             }
         }
     }

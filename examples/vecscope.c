@@ -60,7 +60,7 @@ static uint32_t build(uint32_t *w, int angle) {
 static int wait_viewer(void) {
     int spins = 0;
     while ((tube_info() & VIEWER_BIT) == 0) {
-        if (++spins > 50) {
+        if (++spins > 150) {
             return -1;
         }
         usleep(20000);
@@ -89,7 +89,7 @@ int main(void) {
         return 1;
     }
     if (wait_viewer() != 0) {
-        printf("no viewer — start s32-crt first\n");
+        printf("no viewer — start s32-crt (the glass can start second)\n");
         return 1;
     }
     printf("vecscope: q or ESC on the CRT to quit\n");
