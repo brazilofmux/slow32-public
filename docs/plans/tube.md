@@ -44,9 +44,11 @@ Phosphor decay, beam intensity, refresh flicker: viewer-side
 aesthetics, never protocol. Tests assert the *interpretation* — feed
 a list, check the segment set — and never the glow.
 
-Flagship: **Tempest**, or Asteroids if the week is short. Also the
-screen the plotter thread has been circling: Tektronix 4014 output,
-and a live target for the sheet's `/Graph`.
+Flagship: **Asteroids — landed** (`asteroids/`): scripted games hash
+bit-identical across slow32/slow32-fast/slow32-dbt. Tempest stays on
+the card for the DVG's fancier ops. Also the screen the plotter
+thread has been circling: Tektronix 4014 output, and a live target
+for the sheet's `/Graph`.
 
 ### 2. `fb` — the framebuffer
 
