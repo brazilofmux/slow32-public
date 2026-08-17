@@ -6,8 +6,7 @@
  * Present-once prove-out: a box, then a dimmer point. No sleep, no keys,
  * no viewer. The runner journals the dump hash against expected.hash.
  */
-/* Not const: a following .rodata.str can leave a const array unaligned. */
-static uint32_t list[] = {
+static const uint32_t list[] = {
     TUBE_WORD(TUBE_OP_MOVE, 100, 100),
     TUBE_WORD(TUBE_OP_DRAW, 300, 100),
     TUBE_WORD(TUBE_OP_DRAW, 300, 300),

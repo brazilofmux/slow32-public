@@ -1641,6 +1641,47 @@ static bool assemble_line(assembler_t *as, char *line) {
                 bump_size(as, as->current_section, 2);
             }
             return true;
+        } else if (strcmp(tokens[0], ".p2align") == 0) {
+            // .p2align P[,fill[,max]] - align to 2^P boundary (GAS semantics).
+            // This is the directive LLVM emits; ignoring it leaves word data
+            // unaligned after byte-packed strings in the same section.
+            int align_power = 2;
+            if (num_tokens > 1) {
+                align_power = parse_immediate(tokens[1]);
+            }
+            if (align_power < 0 || align_power > 12) {
+                fprintf(stderr, "Error: .p2align power %d out of range (0-12)\n", align_power);
+                return false;
+            }
+            int fill_byte = 0;
+            if (num_tokens > 2 && tokens[2][0] != '\0') {
+                fill_byte = parse_immediate(tokens[2]);
+            }
+            int max_padding = -1;  // no limit
+            if (num_tokens > 3) {
+                max_padding = parse_immediate(tokens[3]);
+            }
+            int align_bytes = 1 << align_power;
+            int align_mask = align_bytes - 1;
+            int padding = 0;
+            if (as->current_addr & align_mask) {
+                padding = align_bytes - (int)(as->current_addr & (uint32_t)align_mask);
+            }
+            // GAS: if more than max bytes would be needed, do not align at all.
+            if (max_padding >= 0 && padding > max_padding) {
+                padding = 0;
+            }
+            ensure_instruction_capacity(as, padding);
+            for (int p = 0; p < padding; p++) {
+                as->instructions[as->num_instructions].instruction = ((uint32_t)fill_byte & 0xFFu) | 0x80000000;
+                as->instructions[as->num_instructions].address = as->current_addr;
+                as->instructions[as->num_instructions].section = as->current_section;
+                as->instructions[as->num_instructions].is_data_byte = true;
+                as->num_instructions++;
+                as->current_addr += 1;
+                bump_size(as, as->current_section, 1);
+            }
+            return true;
         } else if (strcmp(tokens[0], ".balign") == 0) {
             // .balign N[,fill] - align to N-byte boundary (N is byte count)
             int align_bytes = 4;  // Default to word alignment
@@ -1984,7 +2025,6 @@ static bool assemble_line(assembler_t *as, char *line) {
             strcmp(tokens[0], ".hidden") == 0 ||
             strcmp(tokens[0], ".protected") == 0 ||
             strcmp(tokens[0], ".internal") == 0 ||
-            strcmp(tokens[0], ".p2align") == 0 ||
             strcmp(tokens[0], ".loc") == 0 ||
             strcmp(tokens[0], ".attribute") == 0 ||
             strcmp(tokens[0], ".option") == 0 ||
