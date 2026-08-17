@@ -15,6 +15,7 @@ tools/utilities/s32-ar
 tools/utilities/slow32dis
 tools/dbt/slow32-dbt
 tools/utilities/slow32dump
+tools/s32-crt/s32-crt
 
 # Selfhost one-off scripts and binaries
 selfhost/stage00/s32-emu
