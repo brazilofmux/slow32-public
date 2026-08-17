@@ -288,52 +288,128 @@ static void raw_leave(void) {
     phos = NULL;
 }
 
-static uint16_t decode_key(const unsigned char *b, int n, int *used) {
-    *used = 1;
-    if (n <= 0) {
+/* A terminal has no key-up, and escape sequences can arrive split
+ * across reads. So: bytes accumulate in a carry buffer; a lone ESC is
+ * only reported as the ESC key after a short quiet gap; and arrow
+ * keys become synthesized make/break — down on first sight, held
+ * while terminal autorepeat keeps them coming, up after the repeats
+ * stop. Everything else stays an instant down+up pair. */
+
+#define ESC_GAP_MS    150
+#define REPEAT_GAP_MS 500
+
+static unsigned char ibuf[32];
+static int ifill;
+static uint16_t held_code;
+static long long held_last_ms;
+static long long esc_since_ms;
+
+static long long now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static int is_arrow(uint16_t code) {
+    return code >= 0x100 && code <= 0x103;
+}
+
+static int release_held(int fd) {
+    int rc = 0;
+    if (held_code) {
+        if (fd >= 0 && send_key(fd, held_code, 0) < 0) {
+            rc = -1;
+        }
+        held_code = 0;
+    }
+    return rc;
+}
+
+/* Returns 1 on local quit, -1 on send failure, else 0. */
+static int emit_key(int fd, uint16_t code) {
+    if (code == 'q' || code == 'Q') {
+        release_held(fd);
+        return 1;
+    }
+    if (is_arrow(code)) {
+        if (code == held_code) {
+            held_last_ms = now_ms();     /* autorepeat: still held */
+            return 0;
+        }
+        if (release_held(fd) < 0) {
+            return -1;
+        }
+        if (fd >= 0 && send_key(fd, code, 1) < 0) {
+            return -1;
+        }
+        held_code = code;
+        held_last_ms = now_ms();
         return 0;
     }
-    if (b[0] == 0x1b && n >= 3 && b[1] == '[') {
-        *used = 3;
-        if (b[2] == 'A') return 0x100;
-        if (b[2] == 'B') return 0x101;
-        if (b[2] == 'C') return 0x103;
-        if (b[2] == 'D') return 0x102;
+    if (fd >= 0 &&
+        (send_key(fd, code, 1) < 0 || send_key(fd, code, 0) < 0)) {
+        return -1;
     }
-    if (b[0] == 0x1b) {
-        return 27;
-    }
-    if (b[0] == '\r' || b[0] == '\n') {
-        return 13;
-    }
-    if (b[0] == 0x7f) {
-        return 8;
-    }
-    return (uint16_t)b[0];
+    return 0;
 }
 
 static int pump_keys(int fd) {
-    unsigned char buf[16];
-    ssize_t n;
-    int off = 0;
+    long long now;
     if (!raw_on) {
         return 0;
     }
-    n = read(STDIN_FILENO, buf, sizeof(buf));
-    if (n <= 0) {
-        return 0;
-    }
-    while (off < n) {
-        int used = 1;
-        uint16_t code = decode_key(buf + off, (int)n - off, &used);
-        off += used;
-        if (code == 'q' || code == 'Q') {
-            return 1;
+    if (ifill < (int)sizeof(ibuf)) {
+        ssize_t n = read(STDIN_FILENO, ibuf + ifill, sizeof(ibuf) - (size_t)ifill);
+        if (n > 0) {
+            ifill += (int)n;
         }
-        if (code && fd >= 0) {
-            if (send_key(fd, code, 1) < 0 || send_key(fd, code, 0) < 0) {
-                return -1;
+    }
+    now = now_ms();
+    while (ifill > 0) {
+        uint16_t code = 0;
+        int used = 1;
+        unsigned char b0 = ibuf[0];
+        if (b0 == 0x1b) {
+            if (ifill >= 3 && ibuf[1] == '[') {
+                used = 3;
+                if (ibuf[2] == 'A') code = 0x100;
+                else if (ibuf[2] == 'B') code = 0x101;
+                else if (ibuf[2] == 'C') code = 0x103;
+                else if (ibuf[2] == 'D') code = 0x102;
+                /* other CSI finals: swallow silently */
+            } else if (ifill >= 2 && ibuf[1] != '[') {
+                code = 27;              /* ESC followed by an ordinary key */
+            } else {
+                /* Lone ESC (or ESC-[ so far): wait out the gap before
+                 * deciding the user really meant the ESC key. */
+                if (esc_since_ms == 0) {
+                    esc_since_ms = now;
+                }
+                if (now - esc_since_ms < ESC_GAP_MS) {
+                    break;
+                }
+                code = 27;
             }
+        } else if (b0 == '\r' || b0 == '\n') {
+            code = 13;
+        } else if (b0 == 0x7f) {
+            code = 8;
+        } else {
+            code = b0;
+        }
+        esc_since_ms = 0;
+        memmove(ibuf, ibuf + used, (size_t)(ifill - used));
+        ifill -= used;
+        if (code) {
+            int rc = emit_key(fd, code);
+            if (rc != 0) {
+                return rc;
+            }
+        }
+    }
+    if (held_code && now - held_last_ms > REPEAT_GAP_MS) {
+        if (release_held(fd) < 0) {
+            return -1;
         }
     }
     return 0;
