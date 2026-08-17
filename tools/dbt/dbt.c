@@ -877,6 +877,7 @@ static void dbt_init_mmio(dbt_cpu_state_t *cpu) {
     // Configure direct access to guest memory (for zero-copy I/O)
     mmio_state.guest_mem_base = cpu->mem_base;
     mmio_state.guest_mem_size = cpu->mem_size;
+    mmio_state.guest_code_limit = cpu->code_limit;
 
     // Point ring buffers directly at guest memory
     uint8_t *mmio_mem = cpu->mem_base + cpu->mmio_base;

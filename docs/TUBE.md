@@ -5,11 +5,12 @@ the constitutional amendment live in
 [docs/plans/tube.md](plans/tube.md); this document is the layer below:
 opcodes, memory formats, the viewer socket, and the test contract.
 
-Status: **spec only.** Nothing here is implemented. Each mode is built
-when its flagship program demands it (vec: Tempest/Asteroids;
-fb: a Doom port; ppu: unnamed). Mode 4 (`gpu`) has a number and no
-spec, deliberately. `ppu` bit layouts in §5 are **provisional** and
-freeze when that flagship has a name.
+Status: **vec dump path landed** (negotiate / OPEN / PRESENT / headless
+`S32_TUBE_DUMP`). No viewer socket yet. `fb` and `ppu` wait for their
+flagships (vec: Tempest/Asteroids; fb: a Doom port; ppu: unnamed).
+Mode 4 (`gpu`) has a number and no spec, deliberately. `ppu` bit
+layouts in §5 are **provisional** and freeze when that flagship has a
+name.
 
 v0.2 pins the numbers an implementer could not invent: mode ids,
 display-list bitfields, errno, the guest-memory walk, `PRESENT`

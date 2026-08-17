@@ -111,8 +111,9 @@ stage08-built emulator staying blind forever is policy, not debt.
 
 `vec` first: smallest surface, period-purest, zero test ambiguity,
 and it gives Tempest, the 4014, and the sheet chart one screen.
-Then `fb` when someone is actually willing to carry Doom. `ppu`
-when its flagship has a name.
+**Dump path landed** (negotiate / OPEN / PRESENT / `S32_TUBE_DUMP`);
+no viewer, no flagship yet. Then `fb` when someone is actually
+willing to carry Doom. `ppu` when its flagship has a name.
 
 ## What not to do
 

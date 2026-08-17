@@ -26,6 +26,11 @@
 
 // CPU state is now defined in slow32.h with memory_manager_t
 
+static int slow32_mmio_guest_read(void *ctx, uint32_t addr, void *dest, size_t size) {
+    cpu_state_t *cpu = (cpu_state_t *)ctx;
+    return mm_read(&cpu->mm, addr, dest, size);
+}
+
 // Initialize MMIO on first YIELD
 static void cpu_init_mmio(cpu_state_t *cpu) {
     if (cpu->mmio.initialized) return;
@@ -68,6 +73,9 @@ static void cpu_init_mmio(cpu_state_t *cpu) {
 
     mmio_region->host_addr = cpu->mmio.mem;
     cpu->mmio.state->base_addr = cpu->mmio.base;
+    cpu->mmio.state->guest_read = slow32_mmio_guest_read;
+    cpu->mmio.state->guest_read_ctx = cpu;
+    cpu->mmio.state->guest_code_limit = cpu->code_limit;
     cpu->mmio.initialized = true;
 }
 

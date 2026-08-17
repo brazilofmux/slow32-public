@@ -86,6 +86,32 @@ static void mmio_fail(io_descriptor_t *resp, int err)
     resp->length = (uint32_t)err;
 }
 
+// Snapshot walk of guest RAM. Prefer the sparse callback; fall back to a
+// flat map. Reads of the execute-only code window fail when a limit is set.
+static int mmio_guest_read(mmio_ring_state_t *mmio, uint32_t addr,
+                           void *dest, size_t size) {
+    if (size == 0) {
+        return 0;
+    }
+    if ((uint64_t)addr + size < addr) {
+        return -1;
+    }
+    if (mmio->guest_code_limit != 0 && addr < mmio->guest_code_limit) {
+        return -1;
+    }
+    if (mmio->guest_read) {
+        return mmio->guest_read(mmio->guest_read_ctx, addr, dest, size);
+    }
+    if (mmio->guest_mem_base) {
+        if ((uint64_t)addr + size > mmio->guest_mem_size) {
+            return -1;
+        }
+        memcpy(dest, (uint8_t *)mmio->guest_mem_base + addr, size);
+        return 0;
+    }
+    return -1;
+}
+
 static void reset_fd_table(mmio_ring_state_t *mmio) {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
         mmio->host_fds[i] = -1;
@@ -764,6 +790,372 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
     }
 }
 
+// ========== Tube service (vec only; viewer socket later) ==========
+
+#define TUBE_KEY_QUEUE S32_TUBE_KEY_QUEUE
+
+typedef struct {
+    char kind;          /* 'M', 'D', 'P' */
+    uint16_t x, y;
+    uint8_t r, g, b, i;
+} tube_elem_t;
+
+typedef struct {
+    uint16_t code;
+    uint8_t down;
+    uint8_t reserved;
+} tube_key_t;
+
+typedef struct {
+    int mode;                   /* 0 = none, else S32_TUBE_MODE_* */
+    uint32_t frames;
+    tube_elem_t *elems;
+    uint32_t nelems;
+    char *dump_dir;
+    int dump_full;
+    uint32_t dump_index;
+    tube_key_t keys[TUBE_KEY_QUEUE];
+    uint32_t key_head;
+    uint32_t key_count;
+} tube_state_t;
+
+static uint64_t tube_fnv1a64(const uint8_t *p, size_t n) {
+    uint64_t h = 14695981039346656037ULL;
+    size_t i;
+    for (i = 0; i < n; i++) {
+        h ^= p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static void tube_key_push(tube_state_t *ts, tube_key_t ev) {
+    if (ts->key_count == TUBE_KEY_QUEUE) {
+        ts->key_head = (ts->key_head + 1u) % TUBE_KEY_QUEUE;
+        ts->key_count--;
+    }
+    uint32_t tail = (ts->key_head + ts->key_count) % TUBE_KEY_QUEUE;
+    ts->keys[tail] = ev;
+    ts->key_count++;
+}
+
+static void tube_preload_keys(tube_state_t *ts) {
+    const char *path = getenv("S32_TUBE_KEYS");
+    FILE *f;
+    tube_key_t ev;
+    if (!path || !path[0]) {
+        return;
+    }
+    f = fopen(path, "rb");
+    if (!f) {
+        return;
+    }
+    while (fread(&ev, sizeof(ev), 1, f) == 1) {
+        tube_key_push(ts, ev);
+    }
+    fclose(f);
+}
+
+static char *tube_canonical_vec(const tube_state_t *ts, size_t *out_len) {
+    size_t cap, pos, i;
+    char *buf;
+
+    if (ts->nelems == 0) {
+        char *empty = (char *)malloc(1);
+        if (empty) {
+            empty[0] = '\0';
+        }
+        *out_len = 0;
+        return empty;
+    }
+
+    cap = (size_t)ts->nelems * 40u + 1u;
+    buf = (char *)malloc(cap);
+    if (!buf) {
+        return NULL;
+    }
+    pos = 0;
+    for (i = 0; i < ts->nelems; i++) {
+        const tube_elem_t *e = &ts->elems[i];
+        int n;
+        if (e->kind == 'M') {
+            n = snprintf(buf + pos, cap - pos, "M %u %u\n", e->x, e->y);
+        } else {
+            n = snprintf(buf + pos, cap - pos, "%c %u %u %u %u %u %u\n",
+                         e->kind, e->x, e->y, e->r, e->g, e->b, e->i);
+        }
+        if (n < 0 || (size_t)n >= cap - pos) {
+            free(buf);
+            return NULL;
+        }
+        pos += (size_t)n;
+    }
+    *out_len = pos;
+    return buf;
+}
+
+static void tube_dump_vec(tube_state_t *ts) {
+    size_t len = 0;
+    char *text;
+    uint64_t h;
+    char path[4096];
+    FILE *f;
+
+    if (!ts->dump_dir) {
+        return;
+    }
+    text = tube_canonical_vec(ts, &len);
+    if (!text) {
+        return;
+    }
+    h = tube_fnv1a64((const uint8_t *)text, len);
+
+    snprintf(path, sizeof(path), "%s/%06u.hash", ts->dump_dir, ts->dump_index);
+    f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "%016llx\n", (unsigned long long)h);
+        fclose(f);
+    }
+    if (ts->dump_full) {
+        snprintf(path, sizeof(path), "%s/%06u.txt", ts->dump_dir, ts->dump_index);
+        f = fopen(path, "w");
+        if (f) {
+            if (len > 0) {
+                fwrite(text, 1, len, f);
+            }
+            fclose(f);
+        }
+    }
+    free(text);
+    ts->dump_index++;
+}
+
+static int tube_walk_vec(tube_state_t *ts, mmio_ring_state_t *mmio,
+                         uint32_t base, uint32_t nwords) {
+    uint32_t bx = 0, by = 0, inten = 255, color = 0xFFFFFFu;
+    uint32_t i, nelems = 0;
+    int saw_end = 0;
+    tube_elem_t *elems;
+
+    if (nwords == 0 || nwords > S32_TUBE_LIST_MAX_WORDS) {
+        return EINVAL;
+    }
+    if (base & 3u) {
+        return EINVAL;
+    }
+
+    elems = (tube_elem_t *)malloc((size_t)nwords * sizeof(tube_elem_t));
+    if (!elems) {
+        return ENOMEM;
+    }
+
+    for (i = 0; i < nwords; i++) {
+        uint32_t w, op, x, y;
+        if (mmio_guest_read(mmio, base + i * 4u, &w, 4) != 0) {
+            free(elems);
+            return EINVAL;
+        }
+        op = (w >> 28) & 0xFu;
+        x = (w >> 16) & 0xFFFu;
+        y = (w >> 4) & 0xFFFu;
+        if (op == S32_TUBE_VOP_END) {
+            saw_end = 1;
+            break;
+        }
+        switch (op) {
+            case S32_TUBE_VOP_MOVE:
+                elems[nelems].kind = 'M';
+                elems[nelems].x = (uint16_t)x;
+                elems[nelems].y = (uint16_t)y;
+                elems[nelems].r = elems[nelems].g = elems[nelems].b = 0;
+                elems[nelems].i = 0;
+                nelems++;
+                bx = x;
+                by = y;
+                break;
+            case S32_TUBE_VOP_DRAW:
+                elems[nelems].kind = 'D';
+                elems[nelems].x = (uint16_t)x;
+                elems[nelems].y = (uint16_t)y;
+                elems[nelems].r = (uint8_t)((color >> 16) & 0xFFu);
+                elems[nelems].g = (uint8_t)((color >> 8) & 0xFFu);
+                elems[nelems].b = (uint8_t)(color & 0xFFu);
+                elems[nelems].i = (uint8_t)inten;
+                nelems++;
+                bx = x;
+                by = y;
+                break;
+            case S32_TUBE_VOP_POINT:
+                elems[nelems].kind = 'P';
+                elems[nelems].x = (uint16_t)x;
+                elems[nelems].y = (uint16_t)y;
+                elems[nelems].r = (uint8_t)((color >> 16) & 0xFFu);
+                elems[nelems].g = (uint8_t)((color >> 8) & 0xFFu);
+                elems[nelems].b = (uint8_t)(color & 0xFFu);
+                elems[nelems].i = (uint8_t)inten;
+                nelems++;
+                (void)bx;
+                (void)by;
+                break;
+            case S32_TUBE_VOP_INTEN:
+                inten = w & 0xFFu;
+                break;
+            case S32_TUBE_VOP_COLOR:
+                color = w & 0xFFFFFFu;
+                break;
+            default:
+                free(elems);
+                return EINVAL;
+        }
+    }
+
+    if (!saw_end) {
+        free(elems);
+        return EINVAL;
+    }
+
+    free(ts->elems);
+    ts->elems = elems;
+    ts->nelems = nelems;
+    return 0;
+}
+
+static void *tube_create(void) {
+    tube_state_t *ts = (tube_state_t *)calloc(1, sizeof(tube_state_t));
+    const char *dir;
+    if (!ts) {
+        return NULL;
+    }
+    dir = getenv("S32_TUBE_DUMP");
+    if (dir && dir[0]) {
+        if (mkdir(dir, 0777) < 0 && errno != EEXIST) {
+            /* Headless dump is best-effort; OPEN still succeeds. */
+        } else {
+            ts->dump_dir = strdup(dir);
+        }
+        if (getenv("S32_TUBE_DUMP_FULL")) {
+            ts->dump_full = 1;
+        }
+    }
+    return ts;
+}
+
+static void tube_cleanup(void *state) {
+    tube_state_t *ts = (tube_state_t *)state;
+    if (!ts) {
+        return;
+    }
+    free(ts->elems);
+    free(ts->dump_dir);
+    free(ts);
+}
+
+static uint32_t tube_info_status(const tube_state_t *ts) {
+    uint32_t st = (1u << (S32_TUBE_MODE_VEC - 1)); /* vec implemented */
+    st |= (1u << 16);                              /* version 1 */
+    (void)ts;
+    return st;
+}
+
+static void tube_handle(void *state, mmio_ring_state_t *mmio,
+                        uint32_t sub_opcode, io_descriptor_t *req,
+                        io_descriptor_t *resp) {
+    tube_state_t *ts = (tube_state_t *)state;
+    if (!ts) {
+        mmio_fail(resp, EIO);
+        return;
+    }
+
+    switch (sub_opcode) {
+        case S32_TUBE_INFO:
+            resp->status = tube_info_status(ts);
+            resp->length = 0;
+            break;
+
+        case S32_TUBE_OPEN: {
+            uint32_t mode = req->status;
+            if (ts->mode != 0) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            if (mode != S32_TUBE_MODE_VEC) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            if (req->length != 0) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            ts->mode = (int)mode;
+            tube_preload_keys(ts);
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+            break;
+        }
+
+        case S32_TUBE_CLOSE:
+            free(ts->elems);
+            ts->elems = NULL;
+            ts->nelems = 0;
+            ts->mode = 0;
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+            break;
+
+        case S32_TUBE_PRESENT: {
+            int err;
+            if (ts->mode != S32_TUBE_MODE_VEC) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            err = tube_walk_vec(ts, mmio, req->status, req->length);
+            if (err != 0) {
+                mmio_fail(resp, err);
+                break;
+            }
+            tube_dump_vec(ts);
+            ts->frames = (ts->frames + 1u) & 0xFFFFFFu;
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+            break;
+        }
+
+        case S32_TUBE_STATUS:
+            resp->status = (ts->frames & 0xFFFFFFu);
+            resp->length = 0;
+            break;
+
+        case S32_TUBE_KEYS: {
+            uint32_t offset, nbytes, nfit, ncopy, i;
+            if (req->length % 4u != 0) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            nbytes = req->length;
+            if (offset + nbytes > S32_MMIO_DATA_CAPACITY) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            nfit = nbytes / 4u;
+            ncopy = nfit < ts->key_count ? nfit : ts->key_count;
+            for (i = 0; i < ncopy; i++) {
+                tube_key_t ev = ts->keys[ts->key_head];
+                ts->key_head = (ts->key_head + 1u) % TUBE_KEY_QUEUE;
+                ts->key_count--;
+                memcpy(mmio->data_buffer + offset + i * 4u, &ev, 4);
+            }
+            resp->status = ncopy;
+            resp->length = ncopy * 4u;
+            break;
+        }
+
+        default:
+            mmio_fail(resp, EINVAL);
+            break;
+    }
+}
+
 // ========== Built-in service table ==========
 
 typedef struct {
@@ -785,6 +1177,14 @@ static const builtin_service_t builtin_services[] = {
         .create = term_create,
         .cleanup = term_cleanup,
         .handle = term_handle,
+    },
+    {
+        .name = "tube",
+        .opcode_count = S32_TUBE_OPCODE_COUNT,
+        .version = 1,
+        .create = tube_create,
+        .cleanup = tube_cleanup,
+        .handle = tube_handle,
     },
 };
 

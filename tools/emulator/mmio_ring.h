@@ -70,9 +70,16 @@ struct mmio_ring_state {
     // Base address of the MMIO window in guest memory
     uint32_t base_addr;
 
-    // Guest memory range for Direct I/O (optional)
+    // Guest memory range for Direct I/O (optional; flat maps only)
     void *guest_mem_base;
     uint32_t guest_mem_size;
+
+    // Sparse guest RAM walk for services that snapshot guest memory (tube).
+    // Prefer guest_read (mm_read). Fallback: guest_mem_base. Reads of
+    // [0, guest_code_limit) fail when guest_code_limit is nonzero.
+    int (*guest_read)(void *ctx, uint32_t addr, void *dest, size_t size);
+    void *guest_read_ctx;
+    uint32_t guest_code_limit;
 
     // Ring buffers (allocated as part of MMIO memory)
     io_descriptor_t *req_ring;

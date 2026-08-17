@@ -242,6 +242,30 @@ typedef struct s32_mmio_envp_info {
 #define S32_TERM_END_UPDATE   13  // End update: diff shadow vs prev, emit minimum ANSI
 #define S32_TERM_OPCODE_COUNT 14  // Total opcodes for term service
 
+// Tube service opcode offsets (relative to negotiated base). 16-opcode
+// window; 6..15 reserved. See docs/TUBE.md.
+#define S32_TUBE_INFO         0
+#define S32_TUBE_OPEN         1
+#define S32_TUBE_CLOSE        2
+#define S32_TUBE_PRESENT      3
+#define S32_TUBE_STATUS       4
+#define S32_TUBE_KEYS         5
+#define S32_TUBE_OPCODE_COUNT 16
+
+#define S32_TUBE_MODE_VEC     1
+#define S32_TUBE_MODE_FB      2
+#define S32_TUBE_MODE_PPU     3
+
+#define S32_TUBE_LIST_MAX_WORDS 65536u
+#define S32_TUBE_KEY_QUEUE      256u
+
+#define S32_TUBE_VOP_END      0u
+#define S32_TUBE_VOP_MOVE     1u
+#define S32_TUBE_VOP_DRAW     2u
+#define S32_TUBE_VOP_POINT    3u
+#define S32_TUBE_VOP_INTEN    4u
+#define S32_TUBE_VOP_COLOR    5u
+
 // Access mode constants for S32_MMIO_OP_ACCESS
 #define S32_MMIO_F_OK 0  // File exists
 #define S32_MMIO_X_OK 1  // Execute permission

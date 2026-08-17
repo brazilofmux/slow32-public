@@ -216,6 +216,10 @@ run_test() {
             details="$details [qemu: skipped, guest argv unsupported]"
             continue
         fi
+        if [ "$name" = "qemu" ] && [ -f "$test_path/skip_qemu" ]; then
+            details="$details [qemu: skipped, no guest surface]"
+            continue
+        fi
 
         local rc
         rc=$(run_engine "$name" "$path" "$s32x" "$diff_dir/$name.out" "${run_args[@]}")

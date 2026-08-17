@@ -196,7 +196,14 @@ run_test() {
     # as failures unless an expected_exit.txt is provided.
     # timeout returns 124 on timeout, 128+N on signal.
     local emu_exit=0
-    timeout $TIMEOUT $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
+    local dump_dir=""
+    local dump_env=()
+    if [ -f "$test_path/expected.hash" ]; then
+        dump_dir="$result_path/tube"
+        mkdir -p "$dump_dir"
+        dump_env=(S32_TUBE_DUMP="$dump_dir" S32_TUBE_DUMP_FULL=1)
+    fi
+    env "${dump_env[@]}" timeout $TIMEOUT $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
          >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
 
     if [ $emu_exit -ge 124 ]; then
@@ -239,6 +246,20 @@ run_test() {
             tr -d '\n' < "$test_path/expected.txt" > "$result_path/expected_stripped.txt"
 
             if diff -q "$result_path/expected_stripped.txt" "$result_path/output_stripped.txt" >/dev/null 2>&1; then
+                if [ -f "$test_path/expected.hash" ]; then
+                    if [ ! -f "$dump_dir/000000.hash" ]; then
+                        echo -e "${RED}FAIL${NC} (no tube dump)"
+                        FAILED=$((FAILED + 1))
+                        return
+                    fi
+                    if ! diff -q "$test_path/expected.hash" "$dump_dir/000000.hash" >/dev/null 2>&1; then
+                        echo -e "${RED}FAIL${NC} (tube hash)"
+                        FAILED=$((FAILED + 1))
+                        echo "  Expected: $(tr -d '\n' < "$test_path/expected.hash")"
+                        echo "  Got:      $(tr -d '\n' < "$dump_dir/000000.hash")"
+                        return
+                    fi
+                fi
                 echo -e "${GREEN}PASS${NC}"
                 PASSED=$((PASSED + 1))
             else
