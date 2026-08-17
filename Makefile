@@ -20,7 +20,7 @@ CFLAGS := -target $(TARGET) -S -emit-llvm $(OPT) -Iruntime/include
 LIBC ?= debug
 LIBC_ARCHIVE := runtime/libc_$(LIBC).s32a
 
-.PHONY: all clean emulator assembler runtime test tools cpp-test cpp-run dbt
+.PHONY: all clean emulator assembler runtime test tools cpp-test cpp-run dbt s32-crt
 
 ifeq ($(HAVE_LLVM),yes)
 all: tools runtime
@@ -32,7 +32,10 @@ all: tools
 	@echo "      or set LLVM_BIN to point to your LLVM build."
 endif
 
-tools: emulator assembler linker utilities dbt
+tools: emulator assembler linker utilities dbt s32-crt
+
+s32-crt:
+	$(MAKE) -C tools/s32-crt
 
 emulator:
 	$(MAKE) -C tools/emulator
@@ -92,6 +95,7 @@ clean:
 	$(MAKE) -C tools/linker clean
 	$(MAKE) -C tools/utilities clean
 	$(MAKE) -C tools/dbt clean
+	$(MAKE) -C tools/s32-crt clean
 	$(MAKE) -C runtime clean-build
 	rm -rf tests/
 	rm -f *.o *.bin *.ll *.s *.s32o *.s32x

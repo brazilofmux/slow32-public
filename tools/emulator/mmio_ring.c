@@ -17,6 +17,7 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/wait.h>
 #include <limits.h>
 
@@ -796,6 +797,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
 
 typedef struct {
     char kind;          /* 'M', 'D', 'P' */
+    uint16_t x0, y0;    /* beam start (D) or equal to x,y (P) */
     uint16_t x, y;
     uint8_t r, g, b, i;
 } tube_elem_t;
@@ -806,9 +808,17 @@ typedef struct {
     uint8_t reserved;
 } tube_key_t;
 
+#define TUBE_TAG_HELO 0x4F4C4548u
+#define TUBE_TAG_VSEG 0x47455356u
+#define TUBE_TAG_KEYE 0x4559454Bu
+#define TUBE_TAG_BYE  0x00455942u
+#define TUBE_RBUF     64
+
 typedef struct {
     int mode;                   /* 0 = none, else S32_TUBE_MODE_* */
     uint32_t frames;
+    uint32_t generation;
+    int have_snap;
     tube_elem_t *elems;
     uint32_t nelems;
     char *dump_dir;
@@ -817,6 +827,12 @@ typedef struct {
     tube_key_t keys[TUBE_KEY_QUEUE];
     uint32_t key_head;
     uint32_t key_count;
+    int listen_fd;
+    int view_fd;
+    char port_path[4096];
+    int port_written;
+    uint8_t rbuf[TUBE_RBUF];
+    size_t rfill;
 } tube_state_t;
 
 static uint64_t tube_fnv1a64(const uint8_t *p, size_t n) {
@@ -965,6 +981,8 @@ static int tube_walk_vec(tube_state_t *ts, mmio_ring_state_t *mmio,
         switch (op) {
             case S32_TUBE_VOP_MOVE:
                 elems[nelems].kind = 'M';
+                elems[nelems].x0 = (uint16_t)x;
+                elems[nelems].y0 = (uint16_t)y;
                 elems[nelems].x = (uint16_t)x;
                 elems[nelems].y = (uint16_t)y;
                 elems[nelems].r = elems[nelems].g = elems[nelems].b = 0;
@@ -975,6 +993,8 @@ static int tube_walk_vec(tube_state_t *ts, mmio_ring_state_t *mmio,
                 break;
             case S32_TUBE_VOP_DRAW:
                 elems[nelems].kind = 'D';
+                elems[nelems].x0 = (uint16_t)bx;
+                elems[nelems].y0 = (uint16_t)by;
                 elems[nelems].x = (uint16_t)x;
                 elems[nelems].y = (uint16_t)y;
                 elems[nelems].r = (uint8_t)((color >> 16) & 0xFFu);
@@ -987,6 +1007,8 @@ static int tube_walk_vec(tube_state_t *ts, mmio_ring_state_t *mmio,
                 break;
             case S32_TUBE_VOP_POINT:
                 elems[nelems].kind = 'P';
+                elems[nelems].x0 = (uint16_t)x;
+                elems[nelems].y0 = (uint16_t)y;
                 elems[nelems].x = (uint16_t)x;
                 elems[nelems].y = (uint16_t)y;
                 elems[nelems].r = (uint8_t)((color >> 16) & 0xFFu);
@@ -994,8 +1016,6 @@ static int tube_walk_vec(tube_state_t *ts, mmio_ring_state_t *mmio,
                 elems[nelems].b = (uint8_t)(color & 0xFFu);
                 elems[nelems].i = (uint8_t)inten;
                 nelems++;
-                (void)bx;
-                (void)by;
                 break;
             case S32_TUBE_VOP_INTEN:
                 inten = w & 0xFFu;
@@ -1020,12 +1040,282 @@ static int tube_walk_vec(tube_state_t *ts, mmio_ring_state_t *mmio,
     return 0;
 }
 
+static void tube_set_nb(int fd) {
+    int flags;
+    if (fd < 0) {
+        return;
+    }
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+#ifdef SO_NOSIGPIPE
+    {
+        int one = 1;
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+    }
+#endif
+}
+
+static void tube_close_view(tube_state_t *ts) {
+    if (ts->view_fd >= 0) {
+        close(ts->view_fd);
+        ts->view_fd = -1;
+    }
+    ts->rfill = 0;
+}
+
+static void tube_unlisten(tube_state_t *ts) {
+    tube_close_view(ts);
+    if (ts->listen_fd >= 0) {
+        close(ts->listen_fd);
+        ts->listen_fd = -1;
+    }
+    if (ts->port_written && ts->port_path[0]) {
+        unlink(ts->port_path);
+        ts->port_written = 0;
+    }
+}
+
+static int tube_send_all(int fd, const void *buf, size_t n) {
+    const uint8_t *p = (const uint8_t *)buf;
+    int any = 0;
+    while (n > 0) {
+        ssize_t w = send(fd, p, n, 0);
+        if (w < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && !any) {
+                return -2; /* drop whole frame */
+            }
+            return -1;
+        }
+        if (w == 0) {
+            return -1;
+        }
+        any = 1;
+        p += (size_t)w;
+        n -= (size_t)w;
+    }
+    return 0;
+}
+
+static int tube_send_frame(int fd, uint32_t tag, const void *payload, uint32_t plen) {
+    uint32_t hdr[2];
+    uint8_t *pkt;
+    uint32_t length = 4u + plen;
+    int rc;
+
+    pkt = (uint8_t *)malloc(8u + plen);
+    if (!pkt) {
+        return -1;
+    }
+    hdr[0] = length;
+    hdr[1] = tag;
+    memcpy(pkt, hdr, 8);
+    if (plen && payload) {
+        memcpy(pkt + 8, payload, plen);
+    }
+    rc = tube_send_all(fd, pkt, 8u + plen);
+    free(pkt);
+    return rc;
+}
+
+static void tube_send_helo(tube_state_t *ts) {
+    uint32_t pl[4];
+    int rc;
+    if (ts->view_fd < 0) {
+        return;
+    }
+    pl[0] = 1;
+    pl[1] = (uint32_t)ts->mode;
+    pl[2] = 4096;
+    pl[3] = 4096;
+    rc = tube_send_frame(ts->view_fd, TUBE_TAG_HELO, pl, sizeof(pl));
+    if (rc == -1) {
+        tube_close_view(ts);
+    }
+}
+
+static void tube_send_vseg(tube_state_t *ts) {
+    uint32_t count = 0, i, o;
+    uint8_t *pl;
+    int rc;
+
+    if (ts->view_fd < 0 || !ts->have_snap) {
+        return;
+    }
+    for (i = 0; i < ts->nelems; i++) {
+        if (ts->elems[i].kind == 'D' || ts->elems[i].kind == 'P') {
+            count++;
+        }
+    }
+    pl = (uint8_t *)malloc(8u + count * 12u);
+    if (!pl) {
+        return;
+    }
+    memcpy(pl + 0, &ts->generation, 4);
+    memcpy(pl + 4, &count, 4);
+    o = 8;
+    for (i = 0; i < ts->nelems; i++) {
+        const tube_elem_t *e = &ts->elems[i];
+        uint16_t xy[4];
+        if (e->kind != 'D' && e->kind != 'P') {
+            continue;
+        }
+        xy[0] = e->x0;
+        xy[1] = e->y0;
+        xy[2] = e->x;
+        xy[3] = e->y;
+        memcpy(pl + o, xy, 8);
+        pl[o + 8] = e->r;
+        pl[o + 9] = e->g;
+        pl[o + 10] = e->b;
+        pl[o + 11] = e->i;
+        o += 12;
+    }
+    rc = tube_send_frame(ts->view_fd, TUBE_TAG_VSEG, pl, 8u + count * 12u);
+    free(pl);
+    if (rc == -1) {
+        tube_close_view(ts);
+    }
+}
+
+static void tube_recv(tube_state_t *ts) {
+    if (ts->view_fd < 0) {
+        return;
+    }
+    for (;;) {
+        ssize_t n;
+        uint32_t length, tag;
+
+        if (ts->rfill < TUBE_RBUF) {
+            n = recv(ts->view_fd, ts->rbuf + ts->rfill, TUBE_RBUF - ts->rfill, 0);
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                tube_close_view(ts);
+                return;
+            }
+            if (n == 0) {
+                tube_close_view(ts);
+                return;
+            }
+            ts->rfill += (size_t)n;
+        }
+
+        if (ts->rfill < 8) {
+            break;
+        }
+        memcpy(&length, ts->rbuf, 4);
+        memcpy(&tag, ts->rbuf + 4, 4);
+        if (length < 4 || length > 16) {
+            tube_close_view(ts);
+            return;
+        }
+        if (ts->rfill < 4u + length) {
+            break;
+        }
+        if (tag == TUBE_TAG_KEYE && length >= 8) {
+            tube_key_t ev;
+            memcpy(&ev, ts->rbuf + 8, 4);
+            tube_key_push(ts, ev);
+        } else if (tag == TUBE_TAG_BYE) {
+            tube_close_view(ts);
+            return;
+        }
+        {
+            size_t used = 4u + length;
+            memmove(ts->rbuf, ts->rbuf + used, ts->rfill - used);
+            ts->rfill -= used;
+        }
+    }
+}
+
+static void tube_pump(tube_state_t *ts) {
+    if (ts->listen_fd >= 0) {
+        for (;;) {
+            struct sockaddr_in addr;
+            socklen_t alen = sizeof(addr);
+            int cfd = accept(ts->listen_fd, (struct sockaddr *)&addr, &alen);
+            if (cfd < 0) {
+                break;
+            }
+            tube_set_nb(cfd);
+            tube_close_view(ts);
+            ts->view_fd = cfd;
+            ts->rfill = 0;
+            tube_send_helo(ts);
+            tube_send_vseg(ts);
+        }
+    }
+    tube_recv(ts);
+}
+
+static void tube_listen(tube_state_t *ts) {
+    struct sockaddr_in addr;
+    socklen_t alen;
+    const char *path;
+    FILE *f;
+    int fd, port;
+
+    if (ts->listen_fd >= 0) {
+        return;
+    }
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return;
+    }
+    {
+        int one = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    }
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(0);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
+        listen(fd, 1) < 0) {
+        close(fd);
+        return;
+    }
+    tube_set_nb(fd);
+    alen = sizeof(addr);
+    if (getsockname(fd, (struct sockaddr *)&addr, &alen) < 0) {
+        close(fd);
+        return;
+    }
+    port = (int)ntohs(addr.sin_port);
+    path = getenv("S32_TUBE_PORT");
+    if (!path || !path[0]) {
+        path = "tube.port";
+    }
+    strncpy(ts->port_path, path, sizeof(ts->port_path) - 1);
+    ts->port_path[sizeof(ts->port_path) - 1] = '\0';
+    f = fopen(ts->port_path, "w");
+    if (!f) {
+        close(fd);
+        return;
+    }
+    fprintf(f, "%u\n", (unsigned)port);
+    fclose(f);
+    ts->port_written = 1;
+    ts->listen_fd = fd;
+}
+
 static void *tube_create(void) {
     tube_state_t *ts = (tube_state_t *)calloc(1, sizeof(tube_state_t));
     const char *dir;
     if (!ts) {
         return NULL;
     }
+    ts->listen_fd = -1;
+    ts->view_fd = -1;
     dir = getenv("S32_TUBE_DUMP");
     if (dir && dir[0]) {
         if (mkdir(dir, 0777) < 0 && errno != EEXIST) {
@@ -1045,6 +1335,7 @@ static void tube_cleanup(void *state) {
     if (!ts) {
         return;
     }
+    tube_unlisten(ts);
     free(ts->elems);
     free(ts->dump_dir);
     free(ts);
@@ -1052,8 +1343,10 @@ static void tube_cleanup(void *state) {
 
 static uint32_t tube_info_status(const tube_state_t *ts) {
     uint32_t st = (1u << (S32_TUBE_MODE_VEC - 1)); /* vec implemented */
-    st |= (1u << 16);                              /* version 1 */
-    (void)ts;
+    if (ts->view_fd >= 0) {
+        st |= (1u << 8);
+    }
+    st |= (1u << 16); /* version 1 */
     return st;
 }
 
@@ -1065,6 +1358,8 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
         mmio_fail(resp, EIO);
         return;
     }
+
+    tube_pump(ts);
 
     switch (sub_opcode) {
         case S32_TUBE_INFO:
@@ -1088,15 +1383,19 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
             }
             ts->mode = (int)mode;
             tube_preload_keys(ts);
+            tube_listen(ts);
+            tube_pump(ts);
             resp->status = S32_MMIO_STATUS_OK;
             resp->length = 0;
             break;
         }
 
         case S32_TUBE_CLOSE:
+            tube_unlisten(ts);
             free(ts->elems);
             ts->elems = NULL;
             ts->nelems = 0;
+            ts->have_snap = 0;
             ts->mode = 0;
             resp->status = S32_MMIO_STATUS_OK;
             resp->length = 0;
@@ -1114,7 +1413,10 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
                 break;
             }
             tube_dump_vec(ts);
+            ts->generation = req->offset;
+            ts->have_snap = 1;
             ts->frames = (ts->frames + 1u) & 0xFFFFFFu;
+            tube_send_vseg(ts);
             resp->status = S32_MMIO_STATUS_OK;
             resp->length = 0;
             break;
@@ -1122,6 +1424,9 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
 
         case S32_TUBE_STATUS:
             resp->status = (ts->frames & 0xFFFFFFu);
+            if (ts->view_fd >= 0) {
+                resp->status |= (1u << 31);
+            }
             resp->length = 0;
             break;
 

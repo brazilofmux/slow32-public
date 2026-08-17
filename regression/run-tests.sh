@@ -20,6 +20,7 @@ LLC="${LLC:-$LLVM_BIN/llc}"
 ASSEMBLER="${ASSEMBLER:-$SLOW32_BASE/tools/assembler/slow32asm}"
 LINKER="${LINKER:-$SLOW32_BASE/tools/linker/s32-ld}"
 EMULATOR="${EMULATOR:-$SLOW32_BASE/tools/emulator/slow32}"
+S32_CRT="${S32_CRT:-$SLOW32_BASE/tools/s32-crt/s32-crt}"
 
 # Runtime components
 CRT0="$SLOW32_BASE/runtime/crt0.s32o"
@@ -198,13 +199,32 @@ run_test() {
     local emu_exit=0
     local dump_dir=""
     local dump_env=()
+    local viewer_pid=""
+    local run_timeout=$TIMEOUT
+    dump_env+=(S32_TUBE_PORT="$result_path/tube.port")
     if [ -f "$test_path/expected.hash" ]; then
         dump_dir="$result_path/tube"
         mkdir -p "$dump_dir"
-        dump_env=(S32_TUBE_DUMP="$dump_dir" S32_TUBE_DUMP_FULL=1)
+        dump_env+=(S32_TUBE_DUMP="$dump_dir" S32_TUBE_DUMP_FULL=1)
     fi
-    env "${dump_env[@]}" timeout $TIMEOUT $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
+    if [ -f "$test_path/viewer" ]; then
+        if [ ! -x "$S32_CRT" ]; then
+            echo -e "${YELLOW}SKIP${NC} (s32-crt not built)"
+            SKIPPED=$((SKIPPED + 1))
+            return
+        fi
+        run_timeout=5
+        rm -f "$result_path/tube.port"
+        "$S32_CRT" --wait --once --text --port-file "$result_path/tube.port" \
+            >"$result_path/viewer.txt" 2>"$result_path/viewer.err" &
+        viewer_pid=$!
+    fi
+    env "${dump_env[@]}" timeout $run_timeout $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
          >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
+    if [ -n "$viewer_pid" ]; then
+        wait "$viewer_pid" 2>/dev/null || true
+        viewer_pid=""
+    fi
 
     if [ $emu_exit -ge 124 ]; then
         echo -e "${RED}FAIL${NC} (timeout/crash, exit=$emu_exit)"
@@ -257,6 +277,17 @@ run_test() {
                         FAILED=$((FAILED + 1))
                         echo "  Expected: $(tr -d '\n' < "$test_path/expected.hash")"
                         echo "  Got:      $(tr -d '\n' < "$dump_dir/000000.hash")"
+                        return
+                    fi
+                fi
+                if [ -f "$test_path/expected.vseg.txt" ]; then
+                    tr -d '\r' < "$result_path/viewer.txt" > "$result_path/viewer_stripped.txt"
+                    tr -d '\r' < "$test_path/expected.vseg.txt" > "$result_path/vseg_expected_stripped.txt"
+                    if ! diff -q "$result_path/vseg_expected_stripped.txt" "$result_path/viewer_stripped.txt" >/dev/null 2>&1; then
+                        echo -e "${RED}FAIL${NC} (vseg)"
+                        FAILED=$((FAILED + 1))
+                        echo "  Expected: $(tr '\n' ' ' < "$test_path/expected.vseg.txt")"
+                        echo "  Got:      $(tr '\n' ' ' < "$result_path/viewer.txt")"
                         return
                     fi
                 fi

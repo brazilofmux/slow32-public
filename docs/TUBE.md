@@ -5,12 +5,12 @@ the constitutional amendment live in
 [docs/plans/tube.md](plans/tube.md); this document is the layer below:
 opcodes, memory formats, the viewer socket, and the test contract.
 
-Status: **vec dump path landed** (negotiate / OPEN / PRESENT / headless
-`S32_TUBE_DUMP`). No viewer socket yet. `fb` and `ppu` wait for their
-flagships (vec: Tempest/Asteroids; fb: a Doom port; ppu: unnamed).
-Mode 4 (`gpu`) has a number and no spec, deliberately. `ppu` bit
-layouts in §5 are **provisional** and freeze when that flagship has a
-name.
+Status: **vec dump + viewer socket landed.** Headless `S32_TUBE_DUMP`
+and a separate `s32-crt` (terminal glass, or `--text` for the wire).
+`fb` and `ppu` wait for their flagships (vec: Tempest/Asteroids;
+fb: a Doom port; ppu: unnamed). Mode 4 (`gpu`) has a number and no
+spec, deliberately. `ppu` bit layouts in §5 are **provisional** and
+freeze when that flagship has a name.
 
 v0.2 pins the numbers an implementer could not invent: mode ids,
 display-list bitfields, errno, the guest-memory walk, `PRESENT`
@@ -334,7 +334,8 @@ through `fs`. Two emulators in the same cwd clobber one file; a
 leftover file from a crashed run may be stale — a viewer that cannot
 connect treats that as "no tube." `CLOSE` and session cleanup unlink
 the file. No `tube.port` is written if listen fails; `OPEN` still
-succeeds.
+succeeds. `S32_TUBE_PORT` overrides the port-file path (tests use
+this so they do not clobber `./tube.port`).
 
 One viewer at a time (v1). A second connect replaces the first: the
 old socket is closed, the new one gets `HELO` plus the latest
