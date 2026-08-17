@@ -2,8 +2,8 @@
 
 How SLOW-32 shows pictures, and how it does not.
 
-Wire-level spec: [docs/TUBE.md](../TUBE.md) (opcodes, memory formats,
-viewer socket, test contract).
+Wire-level spec: [docs/TUBE.md](../TUBE.md) (v0.2: opcodes, memory
+formats, viewer socket, test contract — numbers pinned).
 
 Captured 2026-08-16. The hose carries bytes; the tube shows pictures.
 Sibling document to [hose.md](hose.md), same rules: the host composes
@@ -35,9 +35,10 @@ the game pulls the ops.
 
 The Atari DVG, rediscovered. A display list in guest memory; the
 host interprets it as line segments and hands them to the viewer.
-The guest swaps lists with a generation counter through MMIO — the
-double-buffered JSRL swap the real hardware did, so the authentic
-design is also the correct one.
+`PRESENT` is the VG taking the list: a synchronous snapshot, after
+which the guest may smash that memory. Double-buffering two lists
+is a guest convenience, not a host handshake. The generation number
+is for the viewer to see dropped frames.
 
 Phosphor decay, beam intensity, refresh flicker: viewer-side
 aesthetics, never protocol. Tests assert the *interpretation* — feed
