@@ -79,7 +79,7 @@ static int connect_port(int port) {
    just a file: leftover tube.port from a crashed run is ignored. */
 static int attach_port_file(const char *path, int timeout_ms) {
     int waited = 0;
-    int announced = 0;
+    int announced = 0, warned_stale = 0;
     for (;;) {
         int p = read_port_file(path);
         if (p > 0) {
@@ -87,12 +87,28 @@ static int attach_port_file(const char *path, int timeout_ms) {
             if (fd >= 0) {
                 return fd;
             }
+            if (!warned_stale) {
+                fprintf(stderr,
+                        "s32-crt: %s says port %d but nothing is listening "
+                        "(stale file from an old run?) — still waiting\n",
+                        path, p);
+                warned_stale = 1;
+            }
         }
         if (timeout_ms >= 0 && waited >= timeout_ms) {
             return -1;
         }
         if (!announced) {
-            fprintf(stderr, "s32-crt: waiting for %s\n", path);
+            char cwd[512];
+            if (path[0] != '/' && getcwd(cwd, sizeof(cwd))) {
+                fprintf(stderr,
+                        "s32-crt: waiting for %s/%s\n"
+                        "         (the emulator writes it in ITS cwd — start "
+                        "the game and the glass from the same directory)\n",
+                        cwd, path);
+            } else {
+                fprintf(stderr, "s32-crt: waiting for %s\n", path);
+            }
             announced = 1;
         }
         usleep(20 * 1000);
