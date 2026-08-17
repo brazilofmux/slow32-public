@@ -504,6 +504,19 @@ int main(int argc, char **argv) {
         }
     }
 
+    {
+        /* Open before the attach wait so the log exists (and stamps a
+         * line) even when the glass never finds a tube. */
+        const char *kl = getenv("S32_CRT_KEYLOG");
+        if (kl && kl[0]) {
+            keylog = fopen(kl, "a");
+            if (keylog) {
+                fprintf(keylog, "start\n");
+                fflush(keylog);
+            }
+        }
+    }
+
     if (opt_port > 0) {
         fd = connect_port(opt_port);
         if (fd < 0) {
@@ -520,12 +533,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    {
-        const char *kl = getenv("S32_CRT_KEYLOG");
-        if (kl && kl[0]) {
-            keylog = fopen(kl, "a");
-        }
-    }
     if (opt_draw && !opt_text) {
         raw_enter();
         atexit(raw_leave);
