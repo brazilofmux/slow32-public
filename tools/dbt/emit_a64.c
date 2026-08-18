@@ -68,7 +68,16 @@ bool a64_encode_logical_imm(uint32_t val, uint32_t *encoded) {
         // Try each rotation
         for (int r = 0; r < esz; r++) {
             // Rotate elem left by r to get the canonical form
-            uint32_t rotated = ((elem << r) | (elem >> (esz - r))) & mask;
+            /* r==0 must not compute elem >> esz: for esz==32 that is a
+             * shift by 32 - undefined behavior. Clang at -O3 can inline
+             * this encoder with a constant operand (e.g. 1, encodable
+             * only at element size 32), prove the path reaches UB, and
+             * delete the CALLER's surrounding branch as unreachable -
+             * silently dropping emitted instructions. Found in VCC's
+             * copy of this header when the arm64 JIT's LSRA carry write
+             * vanished at -O3 (vcc commit f8360ff). */
+            uint32_t rotated = r ? (((elem << r) | (elem >> (esz - r))) & mask)
+                                 : elem;
 
             // Check if rotated is a contiguous run of ones from bit 0
             if (rotated == 0) continue;
