@@ -85,6 +85,23 @@ Flagship: something sprite-shaped. Named when it exists.
 **Interface landed** (golden-tested; `examples/sprites.c` is the
 demo — starfield, bouncing balls, ghost alpha).
 
+**Amended 2026-08-23** (website Opus 5's advice, relayed from the
+road): the thing that freezes §5 of the spec is **not a game**. A
+game — ported or rolled — uses the comfortable 60% of an interface
+and ships with the corners untested. What the ppu needs first is a
+**demo that doesn't try to be a game**: a choreographed exerciser
+that touches all of it — both flip bits, all eight sub-palettes,
+alpha against alpha, sprite 0-vs-127 priority, signed coords
+straddling every screen edge, scroll wrap on both axes of the
+nametable torus, palette animation, pixel-0 transparency over
+`bg_color`, nametable sizes up to the 128×128 cap. Present a fixed
+frame sequence and it is golden-hashable across engines — the
+bug-finder and the regression suite become the same artifact, the
+way `-timedemo demo3` was for `fb`. The reel freezes the spec; a
+game, if one ever arrives, inherits a frozen spec instead of
+carrying the burden of freezing it. Working name: `ppu-reel`
+(a name, not a decision).
+
 GDI — if it ever exists — is a guest-side library over `fb`/`ppu`,
 the way `term.h` sits over the term service. It is not host surface.
 

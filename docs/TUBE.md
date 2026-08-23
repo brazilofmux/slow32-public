@@ -11,7 +11,9 @@ implemented with golden-frame regression tests and demo programs
 (`examples/fire.c`, `examples/sprites.c` — build via
 `examples/build-tube-demos.sh`). **fb's flagship is landed: `doom/`**
 — deterministic `-timedemo demo3`, 2173 frames, bit-identical across
-engines. ppu's flagship remains unnamed. Headless `S32_TUBE_DUMP` journals
+engines. ppu's spec-freezer is a planned full-coverage conformance
+demo, not a game (plans/tube.md, amended 2026-08-23; working name
+`ppu-reel`). Headless `S32_TUBE_DUMP` journals
 all modes (vec text hash, fb/ppu RGBA hash + `.ppm`). Two glasses:
 `s32-crt` (terminal: phosphor ramp for vec, truecolor half-blocks
 for rasters, `--text` for the wire) and `tools/s32-crt-mac` (native
@@ -19,7 +21,7 @@ macOS: additive phosphor with decay for vec, nearest-neighbor +
 scanlines for rasters, real NSEvent make/break keys, reattaches
 when a new guest appears). Mode 4 (`gpu`) has a number and no
 spec, deliberately. `ppu` bit layouts in §5 are **provisional** and
-freeze when that flagship has a name.
+freeze when the conformance reel lands.
 
 v0.2 pins the numbers an implementer could not invent: mode ids,
 display-list bitfields, errno, the guest-memory walk, `PRESENT`
@@ -283,7 +285,10 @@ here because this mode is what demands it.
 ## 5. Mode 3: `ppu` — sprites and tiles
 
 **Provisional.** The shape is the one we intend; bit layouts freeze
-when a sprite-shaped flagship exists.
+when the ppu conformance reel lands — a choreographed exerciser
+demo, deliberately not a game, that touches every feature below and
+golden-hashes a fixed frame sequence (see plans/tube.md, amended
+2026-08-23).
 
 Everything lives in guest RAM. `TUBE_OPEN` `length` = 4, data buffer
 holds the register-block guest address (4-byte aligned). `PRESENT`
