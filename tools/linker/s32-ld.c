@@ -815,8 +815,13 @@ static void build_symbol_table(linker_state_t *ld) {
                 }
             }
             
-            // Look for existing symbol via hashmap
-            int existing = s32_hashmap_get(&ld->symbol_map, name);
+            // Look for existing symbol via hashmap. LOCAL symbols never
+            // join the global namespace: a static that happens to share
+            // a name with some other file's global is not a conflict —
+            // it always gets its own unique '@file' entry below.
+            int existing = (isym->binding == S32O_BIND_LOCAL)
+                               ? -1
+                               : s32_hashmap_get(&ld->symbol_map, name);
             
             if (existing >= 0) {
                 // Symbol already exists - check for conflicts

@@ -52,6 +52,7 @@ typedef struct {
     section_t section;
     bool is_global;
     bool is_defined;
+    bool force_local;   // .local: never export, even via .comm
 } label_t;
 
 typedef struct {
@@ -1162,6 +1163,7 @@ static void add_label(assembler_t *as, const char *name, uint32_t addr) {
     as->labels[as->num_labels].section = as->current_section;
     as->labels[as->num_labels].is_global = false;  // Default to local
     as->labels[as->num_labels].is_defined = true;
+    as->labels[as->num_labels].force_local = false;
     s32_hashmap_put(&as->label_map, as->labels[as->num_labels].name, as->num_labels);
     as->num_labels++;
 }
@@ -1547,6 +1549,20 @@ static bool assemble_line(assembler_t *as, char *line) {
                     fprintf(stderr, "  Known sections: .text*, .data*, .bss*, .rodata*, .init_array*, .fpc*, .debug*\n");
                     return false;
                 }
+            }
+            return true;
+        } else if (strcmp(tokens[0], ".local") == 0) {
+            // .local NAME - the symbol stays file-local even if a later
+            // .comm defines it (the GAS static-BSS idiom llc emits).
+            if (num_tokens > 1) {
+                label_t *label = find_label(as, tokens[1]);
+                if (!label) {
+                    add_label(as, tokens[1], 0);
+                    label = &as->labels[as->num_labels - 1];
+                    label->is_defined = false;
+                }
+                label->force_local = true;
+                label->is_global = false;
             }
             return true;
         } else if (strcmp(tokens[0], ".global") == 0 || strcmp(tokens[0], ".globl") == 0) {
@@ -1994,19 +2010,28 @@ static bool assemble_line(assembler_t *as, char *line) {
                 }
             }
             
-            // Add label for the symbol
-            add_label(as, symbol, as->current_addr);
-            label_t *label = &as->labels[as->num_labels - 1];
+            // Define the symbol (it may pre-exist from .local/.globl)
+            label_t *label = find_label(as, symbol);
+            if (!label) {
+                add_label(as, symbol, as->current_addr);
+                label = &as->labels[as->num_labels - 1];
+            }
+            label->address = as->current_addr;
             label->section = SECTION_BSS;
-            label->is_global = true;
+            label->is_global = !label->force_local;
             label->is_defined = true;
             
             // Reserve space
             as->bss_size += size;
-            
-            // Restore section
+
+            // Restore section. If we were already emitting into .bss,
+            // the saved cursor is stale — the .comm just grew the
+            // section, and resuming at the old address would overlap
+            // the fresh allocation (Doom's hu_stuff statics collided
+            // exactly this way: plr under chat_on).
             as->current_section = saved_section;
-            as->current_addr = saved_addr;
+            as->current_addr = (saved_section == SECTION_BSS)
+                                   ? as->bss_size : saved_addr;
             return true;
         }
         // Handle CFI directives (build .eh_frame data)
@@ -2021,7 +2046,6 @@ static bool assemble_line(assembler_t *as, char *line) {
             strcmp(tokens[0], ".addrsig") == 0 ||
             strcmp(tokens[0], ".addrsig_sym") == 0 ||
             strcmp(tokens[0], ".weak") == 0 ||
-            strcmp(tokens[0], ".local") == 0 ||
             strcmp(tokens[0], ".hidden") == 0 ||
             strcmp(tokens[0], ".protected") == 0 ||
             strcmp(tokens[0], ".internal") == 0 ||
