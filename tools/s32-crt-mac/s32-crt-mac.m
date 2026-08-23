@@ -379,7 +379,21 @@ static uint16_t map_key(NSEvent *ev) {
                             NSWindowStyleMaskResizable
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    self.window.title = @"s32-crt — waiting for a tube";
+    if (opt_port > 0) {
+        self.window.title = [NSString stringWithFormat:
+            @"s32-crt — waiting for port %d", opt_port];
+    } else {
+        char abs[1024];
+        if (opt_port_file[0] != '/' && getcwd(abs, sizeof(abs) - 64)) {
+            strlcat(abs, "/", sizeof(abs));
+            strlcat(abs, opt_port_file, sizeof(abs));
+        } else {
+            strlcpy(abs, opt_port_file, sizeof(abs));
+        }
+        self.window.title = [NSString stringWithFormat:
+            @"s32-crt — waiting for %s (start the guest in that directory)",
+            abs];
+    }
     self.view = [[GlassView alloc] initWithFrame:r];
     self.window.contentView = self.view;
     [self.window makeFirstResponder:self.view];
@@ -492,7 +506,9 @@ static uint16_t map_key(NSEvent *ev) {
             dispatch_sync(g_send_q, ^{ g_fd = -1; });
             close(fd);
             self.view.attached = NO;
-            [self setTitle:@"s32-crt — guest halted (waiting for a tube)"];
+            [self setTitle:[NSString stringWithFormat:
+                @"s32-crt — guest halted (watching %s)",
+                opt_port > 0 ? "the port" : opt_port_file]];
             usleep(300 * 1000);
         }
     });
