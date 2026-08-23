@@ -67,6 +67,48 @@ int tube_open(uint32_t mode) {
     return (r == (int)S32_MMIO_STATUS_ERR) ? -1 : 0;
 }
 
+int tube_open_fb(uint32_t w, uint32_t h, const void *pixels,
+                 const uint32_t *palette) {
+    volatile unsigned char *data;
+    uint32_t p[5];
+    int r;
+    if (!tube_initialized) {
+        return -1;
+    }
+    p[0] = w;
+    p[1] = h;
+    p[2] = 1; /* P8 */
+    p[3] = (uint32_t)(uintptr_t)pixels;
+    p[4] = (uint32_t)(uintptr_t)palette;
+    data = S32_MMIO_DATA_BUFFER;
+    memcpy((void *)data, p, sizeof(p));
+    r = s32_mmio_request(tube_base_opcode + 1, 20, 0, TUBE_MODE_FB);
+    return (r == (int)S32_MMIO_STATUS_ERR) ? -1 : 0;
+}
+
+int tube_open_ppu(const uint32_t *regs) {
+    volatile unsigned char *data;
+    uint32_t rb;
+    int r;
+    if (!tube_initialized) {
+        return -1;
+    }
+    rb = (uint32_t)(uintptr_t)regs;
+    data = S32_MMIO_DATA_BUFFER;
+    memcpy((void *)data, &rb, 4);
+    r = s32_mmio_request(tube_base_opcode + 1, 4, 0, TUBE_MODE_PPU);
+    return (r == (int)S32_MMIO_STATUS_ERR) ? -1 : 0;
+}
+
+int tube_flip(uint32_t generation) {
+    int r;
+    if (!tube_initialized) {
+        return -1;
+    }
+    r = s32_mmio_request(tube_base_opcode + 3, 0, generation, 0);
+    return (r == (int)S32_MMIO_STATUS_ERR) ? -1 : 0;
+}
+
 int tube_close(void) {
     int r;
     if (!tube_initialized) {

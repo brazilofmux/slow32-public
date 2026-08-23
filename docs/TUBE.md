@@ -5,13 +5,18 @@ the constitutional amendment live in
 [docs/plans/tube.md](plans/tube.md); this document is the layer below:
 opcodes, memory formats, the viewer socket, and the test contract.
 
-Status: **vec landed, flagship landed.** Headless `S32_TUBE_DUMP`
-and a separate `s32-crt` (terminal glass, or `--text` for the wire).
-The glass holds the last frame after the guest exits (`q` to quit).
-`examples/vecscope.c` is a spinning ship that waits for `q`/`ESC`;
-`asteroids/` is the vec flagship and the cross-engine determinism
-proof. `fb` and `ppu` wait for their flagships (fb: a Doom port;
-ppu: unnamed). Mode 4 (`gpu`) has a number and no
+Status: **all three modes landed.** vec has its flagship
+(`asteroids/`, the cross-engine determinism proof); fb and ppu are
+implemented with golden-frame regression tests and demo programs
+(`examples/fire.c`, `examples/sprites.c` — build via
+`examples/build-tube-demos.sh`) while their flagships (fb: a Doom
+port; ppu: unnamed) remain open. Headless `S32_TUBE_DUMP` journals
+all modes (vec text hash, fb/ppu RGBA hash + `.ppm`). Two glasses:
+`s32-crt` (terminal: phosphor ramp for vec, truecolor half-blocks
+for rasters, `--text` for the wire) and `tools/s32-crt-mac` (native
+macOS: additive phosphor with decay for vec, nearest-neighbor +
+scanlines for rasters, real NSEvent make/break keys, reattaches
+when a new guest appears). Mode 4 (`gpu`) has a number and no
 spec, deliberately. `ppu` bit layouts in §5 are **provisional** and
 freeze when that flagship has a name.
 
@@ -304,8 +309,9 @@ tiles, max 128×128; scroll in pixels, wraps the nametable torus.
 - **Palettes**: 8 sub-palettes × 16 × `u32` `0xAARRGGBB`. Alpha is
   first-class. Pixel value 0 is transparent in sprites and in bg
   tiles (bg shows `bg_color` through it).
-- **OAM**: 128 sprites × 8 bytes: `u16 x, u16 y` (top-left, may be
-  offscreen), `u16` packed as a nametable cell, `u8 alpha`
+- **OAM**: 128 sprites × 8 bytes: `i16 x, i16 y` (top-left, signed
+  little-endian so a sprite can straddle any screen edge; offscreen
+  clips), `u16` packed as a nametable cell, `u8 alpha`
   (whole-sprite multiplier), `u8 flags` (bit 0 enable, bit 1 16×16
   — a 2×2 tile block, reserved v1).
 
@@ -391,6 +397,12 @@ is a point via `D` in the dump and a point-shaped `VSEG` record.
 
 Viewer absence is invisible to the guest: `PRESENT` succeeds, frames
 drop, the dump still journals. Viewer attach/detach mid-run is legal.
+
+`VFRM` frames are large (320×200 is ~256KB); the listener requests a
+4MB `SO_SNDBUF` (best-effort, inherited by accepted sockets) so the
+non-blocking sender does not hit mid-frame `EAGAIN` — which still
+costs a viewer its connection if it happens, by design: half a frame
+on the wire cannot be resynchronized.
 
 ## 7. Test contract
 

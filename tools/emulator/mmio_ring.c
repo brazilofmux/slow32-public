@@ -796,7 +796,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
     }
 }
 
-// ========== Tube service (vec only; viewer socket later) ==========
+// ========== Tube service (vec, fb, ppu; viewer over a socket) ==========
 
 #define TUBE_KEY_QUEUE S32_TUBE_KEY_QUEUE
 
@@ -815,6 +815,7 @@ typedef struct {
 
 #define TUBE_TAG_HELO 0x4F4C4548u
 #define TUBE_TAG_VSEG 0x47455356u
+#define TUBE_TAG_VFRM 0x4D524656u
 #define TUBE_TAG_KEYE 0x4559454Bu
 #define TUBE_TAG_BYE  0x00455942u
 #define TUBE_RBUF     64
@@ -826,6 +827,13 @@ typedef struct {
     int have_snap;
     tube_elem_t *elems;
     uint32_t nelems;
+    /* fb mode parameters (from OPEN) */
+    uint32_t fb_w, fb_h, fb_pix_base, fb_pal_base;
+    /* ppu mode parameters */
+    uint32_t ppu_reg_base;
+    /* latest composited raster snapshot (fb and ppu) */
+    uint8_t *frame_rgba;
+    uint32_t frame_w, frame_h;
     char *dump_dir;
     int dump_full;
     uint32_t dump_index;
@@ -949,6 +957,223 @@ static void tube_dump_vec(tube_state_t *ts) {
     }
     free(text);
     ts->dump_index++;
+}
+
+/* Journal the latest RGBA composite: hash always, P6 ppm when full. */
+static void tube_dump_raster(tube_state_t *ts) {
+    uint64_t h;
+    char path[4096];
+    FILE *f;
+
+    if (!ts->dump_dir || !ts->frame_rgba) {
+        return;
+    }
+    h = tube_fnv1a64(ts->frame_rgba,
+                     (size_t)ts->frame_w * ts->frame_h * 4u);
+    snprintf(path, sizeof(path), "%s/%06u.hash", ts->dump_dir, ts->dump_index);
+    f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "%016llx\n", (unsigned long long)h);
+        fclose(f);
+    }
+    if (ts->dump_full) {
+        snprintf(path, sizeof(path), "%s/%06u.ppm", ts->dump_dir, ts->dump_index);
+        f = fopen(path, "wb");
+        if (f) {
+            uint32_t i, npix = ts->frame_w * ts->frame_h;
+            fprintf(f, "P6\n%u %u\n255\n", ts->frame_w, ts->frame_h);
+            for (i = 0; i < npix; i++) {
+                fwrite(ts->frame_rgba + i * 4u, 1, 3, f);
+            }
+            fclose(f);
+        }
+    }
+    ts->dump_index++;
+}
+
+static int tube_frame_alloc(tube_state_t *ts, uint32_t w, uint32_t h) {
+    if (ts->frame_w != w || ts->frame_h != h || !ts->frame_rgba) {
+        uint8_t *nf = (uint8_t *)realloc(ts->frame_rgba,
+                                         (size_t)w * h * 4u);
+        if (!nf) {
+            return ENOMEM;
+        }
+        ts->frame_rgba = nf;
+        ts->frame_w = w;
+        ts->frame_h = h;
+    }
+    return 0;
+}
+
+/* fb PRESENT: snapshot indexed pixels + palette, expand to RGBA. */
+static int tube_walk_fb(tube_state_t *ts, mmio_ring_state_t *mmio) {
+    uint32_t w = ts->fb_w, h = ts->fb_h, i, npix = w * h;
+    uint8_t *idx;
+    uint32_t pal[256];
+    uint8_t palrgb[256][4];
+
+    idx = (uint8_t *)malloc(npix);
+    if (!idx) {
+        return ENOMEM;
+    }
+    if (mmio_guest_read(mmio, ts->fb_pix_base, idx, npix) != 0 ||
+        mmio_guest_read(mmio, ts->fb_pal_base, pal, sizeof(pal)) != 0) {
+        free(idx);
+        return EINVAL;
+    }
+    if (tube_frame_alloc(ts, w, h) != 0) {
+        free(idx);
+        return ENOMEM;
+    }
+    for (i = 0; i < 256; i++) {
+        palrgb[i][0] = (uint8_t)(pal[i] >> 16);
+        palrgb[i][1] = (uint8_t)(pal[i] >> 8);
+        palrgb[i][2] = (uint8_t)pal[i];
+        palrgb[i][3] = 255;
+    }
+    for (i = 0; i < npix; i++) {
+        memcpy(ts->frame_rgba + i * 4u, palrgb[idx[i]], 4);
+    }
+    free(idx);
+    return 0;
+}
+
+/* ppu PRESENT: snapshot the register block and every table it points
+ * at, composite bg tiles + sprites into RGBA. Pure integer math per
+ * docs/TUBE.md section 5. */
+static int tube_composite_ppu(tube_state_t *ts, mmio_ring_state_t *mmio) {
+    uint32_t regs[16];
+    uint32_t pat_base, nt_base, oam_base, pal_base;
+    uint32_t nt_w, nt_h, scroll_x, scroll_y, bg_color;
+    uint8_t *pattern = NULL;
+    uint16_t *nametable = NULL;
+    uint32_t palettes[8][16];
+    uint8_t oam[S32_TUBE_PPU_SPRITES][8];
+    uint32_t w = S32_TUBE_PPU_W, h = S32_TUBE_PPU_H;
+    uint32_t x, y, world_w, world_h;
+    int spr;
+    int err = EINVAL;
+
+    if (mmio_guest_read(mmio, ts->ppu_reg_base, regs, sizeof(regs)) != 0) {
+        return EINVAL;
+    }
+    pat_base = regs[0];
+    nt_base = regs[1];
+    oam_base = regs[2];
+    pal_base = regs[3];
+    nt_w = regs[4];
+    nt_h = regs[5];
+    scroll_x = regs[6];
+    scroll_y = regs[7];
+    bg_color = regs[8];
+    if (nt_w == 0 || nt_h == 0 ||
+        nt_w > S32_TUBE_PPU_MAX_NT || nt_h > S32_TUBE_PPU_MAX_NT) {
+        return EINVAL;
+    }
+
+    pattern = (uint8_t *)malloc(S32_TUBE_PPU_TILES * 32u);
+    nametable = (uint16_t *)malloc((size_t)nt_w * nt_h * 2u);
+    if (!pattern || !nametable) {
+        err = ENOMEM;
+        goto out;
+    }
+    if (mmio_guest_read(mmio, pat_base, pattern, S32_TUBE_PPU_TILES * 32u) != 0 ||
+        mmio_guest_read(mmio, nt_base, nametable, (size_t)nt_w * nt_h * 2u) != 0 ||
+        mmio_guest_read(mmio, pal_base, palettes, sizeof(palettes)) != 0 ||
+        mmio_guest_read(mmio, oam_base, oam, sizeof(oam)) != 0) {
+        goto out;
+    }
+    if (tube_frame_alloc(ts, w, h) != 0) {
+        err = ENOMEM;
+        goto out;
+    }
+
+    world_w = nt_w * 8u;
+    world_h = nt_h * 8u;
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            uint32_t wx = (x + scroll_x) % world_w;
+            uint32_t wy = (y + scroll_y) % world_h;
+            uint16_t cell = nametable[(wy / 8u) * nt_w + (wx / 8u)];
+            uint32_t tile = cell & 0x3FFu;
+            uint32_t palsel = (cell >> 10) & 7u;
+            uint32_t px = wx & 7u, py = wy & 7u;
+            uint8_t *dst = ts->frame_rgba + (y * w + x) * 4u;
+            uint32_t v;
+            uint8_t byte;
+
+            dst[0] = (uint8_t)(bg_color >> 16);
+            dst[1] = (uint8_t)(bg_color >> 8);
+            dst[2] = (uint8_t)bg_color;
+            dst[3] = 255;
+
+            if (cell & 0x2000u) {   /* hflip */
+                px = 7u - px;
+            }
+            if (cell & 0x4000u) {   /* vflip */
+                py = 7u - py;
+            }
+            byte = pattern[tile * 32u + py * 4u + px / 2u];
+            v = (px & 1u) ? (byte & 0xFu) : (byte >> 4);
+            if (v != 0) {
+                uint32_t c = palettes[palsel][v];
+                uint32_t a = (c >> 24) & 0xFFu;
+                dst[0] = (uint8_t)(((c >> 16 & 0xFFu) * a + dst[0] * (255u - a)) / 255u);
+                dst[1] = (uint8_t)(((c >> 8 & 0xFFu) * a + dst[1] * (255u - a)) / 255u);
+                dst[2] = (uint8_t)(((c & 0xFFu) * a + dst[2] * (255u - a)) / 255u);
+            }
+        }
+    }
+
+    /* Descending OAM index: sprite 0 painted last, so it wins on top. */
+    for (spr = S32_TUBE_PPU_SPRITES - 1; spr >= 0; spr--) {
+        const uint8_t *s = oam[spr];
+        int32_t sx = (int16_t)(s[0] | (s[1] << 8));
+        int32_t sy = (int16_t)(s[2] | (s[3] << 8));
+        uint16_t cell = (uint16_t)(s[4] | (s[5] << 8));
+        uint32_t salpha = s[6];
+        uint32_t tile = cell & 0x3FFu;
+        uint32_t palsel = (cell >> 10) & 7u;
+        int32_t px, py;
+
+        if (!(s[7] & 1u)) {     /* enable bit */
+            continue;
+        }
+        for (py = 0; py < 8; py++) {
+            int32_t dy = sy + py;
+            uint32_t ty = (cell & 0x4000u) ? 7u - (uint32_t)py : (uint32_t)py;
+            if (dy < 0 || dy >= (int32_t)h) {
+                continue;
+            }
+            for (px = 0; px < 8; px++) {
+                int32_t dx = sx + px;
+                uint32_t tx = (cell & 0x2000u) ? 7u - (uint32_t)px : (uint32_t)px;
+                uint8_t byte;
+                uint32_t v, c, a;
+                uint8_t *dst;
+                if (dx < 0 || dx >= (int32_t)w) {
+                    continue;
+                }
+                byte = pattern[tile * 32u + ty * 4u + tx / 2u];
+                v = (tx & 1u) ? (byte & 0xFu) : (byte >> 4);
+                if (v == 0) {
+                    continue;
+                }
+                c = palettes[palsel][v];
+                a = (salpha * ((c >> 24) & 0xFFu)) / 255u;
+                dst = ts->frame_rgba + ((uint32_t)dy * w + (uint32_t)dx) * 4u;
+                dst[0] = (uint8_t)(((c >> 16 & 0xFFu) * a + dst[0] * (255u - a)) / 255u);
+                dst[1] = (uint8_t)(((c >> 8 & 0xFFu) * a + dst[1] * (255u - a)) / 255u);
+                dst[2] = (uint8_t)(((c & 0xFFu) * a + dst[2] * (255u - a)) / 255u);
+            }
+        }
+    }
+    err = 0;
+
+out:
+    free(pattern);
+    free(nametable);
+    return err;
 }
 
 static int tube_walk_vec(tube_state_t *ts, mmio_ring_state_t *mmio,
@@ -1139,8 +1364,16 @@ static void tube_send_helo(tube_state_t *ts) {
     }
     pl[0] = 1;
     pl[1] = (uint32_t)ts->mode;
-    pl[2] = 4096;
-    pl[3] = 4096;
+    if (ts->mode == S32_TUBE_MODE_FB) {
+        pl[2] = ts->fb_w;
+        pl[3] = ts->fb_h;
+    } else if (ts->mode == S32_TUBE_MODE_PPU) {
+        pl[2] = S32_TUBE_PPU_W;
+        pl[3] = S32_TUBE_PPU_H;
+    } else {
+        pl[2] = 4096;
+        pl[3] = 4096;
+    }
     rc = tube_send_frame(ts->view_fd, TUBE_TAG_HELO, pl, sizeof(pl));
     if (rc == -1) {
         tube_close_view(ts);
@@ -1188,6 +1421,39 @@ static void tube_send_vseg(tube_state_t *ts) {
     free(pl);
     if (rc == -1) {
         tube_close_view(ts);
+    }
+}
+
+static void tube_send_vfrm(tube_state_t *ts) {
+    uint32_t npix, plen;
+    uint8_t *pl;
+    int rc;
+
+    if (ts->view_fd < 0 || !ts->have_snap || !ts->frame_rgba) {
+        return;
+    }
+    npix = ts->frame_w * ts->frame_h;
+    plen = 12u + npix * 4u;
+    pl = (uint8_t *)malloc(plen);
+    if (!pl) {
+        return;
+    }
+    memcpy(pl + 0, &ts->generation, 4);
+    memcpy(pl + 4, &ts->frame_w, 4);
+    memcpy(pl + 8, &ts->frame_h, 4);
+    memcpy(pl + 12, ts->frame_rgba, (size_t)npix * 4u);
+    rc = tube_send_frame(ts->view_fd, TUBE_TAG_VFRM, pl, plen);
+    free(pl);
+    if (rc == -1) {
+        tube_close_view(ts);
+    }
+}
+
+static void tube_send_snapshot(tube_state_t *ts) {
+    if (ts->mode == S32_TUBE_MODE_VEC) {
+        tube_send_vseg(ts);
+    } else if (ts->mode == S32_TUBE_MODE_FB || ts->mode == S32_TUBE_MODE_PPU) {
+        tube_send_vfrm(ts);
     }
 }
 
@@ -1263,7 +1529,7 @@ static void tube_pump(tube_state_t *ts) {
             ts->view_fd = cfd;
             ts->rfill = 0;
             tube_send_helo(ts);
-            tube_send_vseg(ts);
+            tube_send_snapshot(ts);
         }
     }
     tube_recv(ts);
@@ -1285,7 +1551,12 @@ static void tube_listen(tube_state_t *ts) {
     }
     {
         int one = 1;
+        /* VFRM frames are ~256KB; a roomy send buffer keeps the
+         * non-blocking sender from hitting mid-frame EAGAIN (which
+         * costs the viewer its connection). Best-effort. */
+        int sndbuf = 4 * 1024 * 1024;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
     }
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -1349,12 +1620,15 @@ static void tube_cleanup(void *state) {
     }
     tube_unlisten(ts);
     free(ts->elems);
+    free(ts->frame_rgba);
     free(ts->dump_dir);
     free(ts);
 }
 
 static uint32_t tube_info_status(const tube_state_t *ts) {
-    uint32_t st = (1u << (S32_TUBE_MODE_VEC - 1)); /* vec implemented */
+    uint32_t st = (1u << (S32_TUBE_MODE_VEC - 1)) |
+                  (1u << (S32_TUBE_MODE_FB - 1)) |
+                  (1u << (S32_TUBE_MODE_PPU - 1));
     if (ts->view_fd >= 0) {
         st |= (1u << 8);
     }
@@ -1381,15 +1655,49 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
 
         case S32_TUBE_OPEN: {
             uint32_t mode = req->status;
+            uint32_t off = req->offset % S32_MMIO_DATA_CAPACITY;
             if (ts->mode != 0) {
                 mmio_fail(resp, EINVAL);
                 break;
             }
-            if (mode != S32_TUBE_MODE_VEC) {
-                mmio_fail(resp, EINVAL);
-                break;
-            }
-            if (req->length != 0) {
+            if (mode == S32_TUBE_MODE_VEC) {
+                if (req->length != 0) {
+                    mmio_fail(resp, EINVAL);
+                    break;
+                }
+            } else if (mode == S32_TUBE_MODE_FB) {
+                uint32_t p[5];
+                if (req->length != 20 ||
+                    off + 20u > S32_MMIO_DATA_CAPACITY) {
+                    mmio_fail(resp, EINVAL);
+                    break;
+                }
+                memcpy(p, mmio->data_buffer + off, 20);
+                if (p[0] < 16 || p[0] > S32_TUBE_FB_MAX_W ||
+                    p[1] < 16 || p[1] > S32_TUBE_FB_MAX_H ||
+                    p[2] != S32_TUBE_FB_FORMAT_P8 ||
+                    (p[4] & 3u) != 0) {
+                    mmio_fail(resp, EINVAL);
+                    break;
+                }
+                ts->fb_w = p[0];
+                ts->fb_h = p[1];
+                ts->fb_pix_base = p[3];
+                ts->fb_pal_base = p[4];
+            } else if (mode == S32_TUBE_MODE_PPU) {
+                uint32_t rb;
+                if (req->length != 4 ||
+                    off + 4u > S32_MMIO_DATA_CAPACITY) {
+                    mmio_fail(resp, EINVAL);
+                    break;
+                }
+                memcpy(&rb, mmio->data_buffer + off, 4);
+                if ((rb & 3u) != 0) {
+                    mmio_fail(resp, EINVAL);
+                    break;
+                }
+                ts->ppu_reg_base = rb;
+            } else {
                 mmio_fail(resp, EINVAL);
                 break;
             }
@@ -1417,20 +1725,28 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
 
         case S32_TUBE_PRESENT: {
             int err;
-            if (ts->mode != S32_TUBE_MODE_VEC) {
-                mmio_fail(resp, EINVAL);
-                break;
+            if (ts->mode == S32_TUBE_MODE_VEC) {
+                err = tube_walk_vec(ts, mmio, req->status, req->length);
+            } else if (ts->mode == S32_TUBE_MODE_FB) {
+                err = tube_walk_fb(ts, mmio);
+            } else if (ts->mode == S32_TUBE_MODE_PPU) {
+                err = tube_composite_ppu(ts, mmio);
+            } else {
+                err = EINVAL;
             }
-            err = tube_walk_vec(ts, mmio, req->status, req->length);
             if (err != 0) {
                 mmio_fail(resp, err);
                 break;
             }
-            tube_dump_vec(ts);
             ts->generation = req->offset;
             ts->have_snap = 1;
             ts->frames = (ts->frames + 1u) & 0xFFFFFFu;
-            tube_send_vseg(ts);
+            if (ts->mode == S32_TUBE_MODE_VEC) {
+                tube_dump_vec(ts);
+            } else {
+                tube_dump_raster(ts);
+            }
+            tube_send_snapshot(ts);
             resp->status = S32_MMIO_STATUS_OK;
             resp->length = 0;
             break;

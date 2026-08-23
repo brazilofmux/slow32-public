@@ -56,6 +56,9 @@ Just a frame store. 320x200x8 with a palette to start; the guest
 owns the pixels, the host scans them out. The whole interface is
 "here is the base address, here is the palette, present."
 
+**Interface landed** (golden-tested; `examples/fire.c` is the demo).
+The Doom flagship remains the open pull.
+
 Flagship: **a Doom port** — the final boss of "does your C compiler
 actually work." Known toll: Doom wants key make/break events, not
 cooked characters, so this mode pulls an input upgrade along with
@@ -76,6 +79,8 @@ hot cases — never 256 loops. The pattern operand is a printing-ism
 and stays in printing.
 
 Flagship: something sprite-shaped. Named when it exists.
+**Interface landed** (golden-tested; `examples/sprites.c` is the
+demo — starfield, bouncing balls, ghost alpha).
 
 GDI — if it ever exists — is a guest-side library over `fb`/`ppu`,
 the way `term.h` sits over the term service. It is not host surface.

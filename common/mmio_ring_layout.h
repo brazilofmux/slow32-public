@@ -266,6 +266,15 @@ typedef struct s32_mmio_envp_info {
 #define S32_TUBE_VOP_INTEN    4u
 #define S32_TUBE_VOP_COLOR    5u
 
+#define S32_TUBE_FB_FORMAT_P8 1u   // 8bpp indexed + 256 x 0x00RRGGBB palette
+#define S32_TUBE_FB_MAX_W     640u
+#define S32_TUBE_FB_MAX_H     480u
+#define S32_TUBE_PPU_W        320u
+#define S32_TUBE_PPU_H        200u
+#define S32_TUBE_PPU_MAX_NT   128u  // nametable max dimension in tiles
+#define S32_TUBE_PPU_TILES    1024u
+#define S32_TUBE_PPU_SPRITES  128u
+
 // Access mode constants for S32_MMIO_OP_ACCESS
 #define S32_MMIO_F_OK 0  // File exists
 #define S32_MMIO_X_OK 1  // Execute permission

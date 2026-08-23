@@ -31,13 +31,27 @@
 int  tube_init(void);
 void tube_cleanup(void);
 
-/* Open a mode (TUBE_MODE_VEC in v1). Returns 0 or -1. */
+/* Open a mode (vec takes no parameters). Returns 0 or -1. */
 int  tube_open(uint32_t mode);
 int  tube_close(void);
 
-/* Present a display list in guest RAM. length is a word count.
-   Returns 0 or -1. */
+/* Open the framebuffer: 8bpp indexed pixels (w*h bytes, row-major,
+   top-left origin) plus a 256 x u32 0x00RRGGBB palette. The host
+   re-reads both on every flip. */
+int  tube_open_fb(uint32_t w, uint32_t h, const void *pixels,
+                  const uint32_t *palette);
+
+/* Open the PPU: regs is 16 x u32 in guest RAM (see docs/TUBE.md #5):
+   pattern_base, nametable_base, oam_base, palette_base, nt_w, nt_h,
+   scroll_x, scroll_y, bg_color, flags, reserved... */
+int  tube_open_ppu(const uint32_t *regs);
+
+/* Present a display list in guest RAM (vec mode). length is a word
+   count. Returns 0 or -1. */
 int  tube_present(const uint32_t *list, uint32_t words, uint32_t generation);
+
+/* Present the current fb/ppu state (a snapshot barrier). */
+int  tube_flip(uint32_t generation);
 
 /* Packed INFO / STATUS words; 0 if the service is not granted. */
 uint32_t tube_info(void);
