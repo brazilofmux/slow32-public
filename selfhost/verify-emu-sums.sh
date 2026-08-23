@@ -55,7 +55,7 @@ declare -A EXPECTED
 current_stage=""
 while IFS= read -r line; do
     if [[ "$line" =~ ^"## Stage "([0-9]+) ]]; then
-        n="${BASH_REMATCH[1]}"
+        n="$((10#${BASH_REMATCH[1]}))"   # force base-10: "08" is not octal
         current_stage="stage$(printf '%02d' "$n")"
     elif [[ -n "$current_stage" && "$line" =~ ^-\ ([0-9a-f]{64})\ +(.+\.s32x)$ ]]; then
         h="${BASH_REMATCH[1]}"

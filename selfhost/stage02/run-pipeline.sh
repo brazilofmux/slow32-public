@@ -15,7 +15,8 @@ ASM_FTH="${SELFHOST_ASM_FTH:-$SELFHOST_DIR/stage01/asm.fth}"
 LINK_FTH="${SELFHOST_LINK_FTH:-$SELFHOST_DIR/stage01/link.fth}"
 AR_FTH="${SELFHOST_AR_FTH:-$SELFHOST_DIR/stage01/ar.fth}"
 
-TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage01/tests}"
+# testN.c sources moved in the ec57873f reorg (tests/ -> tests/conformance/baseline/)
+TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage01/tests/conformance/baseline}"
 VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$SELFHOST_DIR/stage01/validation}"
 STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$SCRIPT_DIR/s32-ar.c}"
 STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$SCRIPT_DIR/s32-ar-scan.c}"
