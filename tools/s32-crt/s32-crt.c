@@ -30,6 +30,7 @@
 
 #define TAG_HELO 0x4F4C4548u
 #define TAG_VSEG 0x47455356u
+#define TAG_VFRM 0x4D524656u
 #define TAG_KEYE 0x4559454Bu
 #define TAG_BYE  0x00455942u
 
@@ -292,6 +293,41 @@ static void draw_segs(const seg_t *segs, uint32_t count) {
             fputc(ramp[idx], stdout);
         }
         fputc('\n', stdout);
+    }
+    fflush(stdout);
+}
+
+/* Draw a VFRM raster with truecolor half-blocks: each terminal cell
+ * shows two pixel rows (fg = top, bg = bottom), nearest-neighbor
+ * sampled to the terminal size. */
+static void draw_frame(const uint8_t *rgba, uint32_t w, uint32_t h) {
+    struct winsize ws;
+    int cols = 80, rows = 24;
+    int r, c;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 &&
+        ws.ws_col > 0 && ws.ws_row > 1) {
+        cols = ws.ws_col;
+        rows = ws.ws_row - 1;
+    }
+    /* Keep the guest aspect: each cell is ~1 wide x 2 pixels tall. */
+    if ((uint32_t)cols * h > 2u * (uint32_t)rows * w) {
+        cols = (int)((2u * (uint32_t)rows * w + h - 1) / h);
+    } else {
+        rows = (int)(((uint32_t)cols * h + 2u * w - 1) / (2u * w));
+    }
+    fputs("\033[H\033[2J", stdout);
+    for (r = 0; r < rows; r++) {
+        for (c = 0; c < cols; c++) {
+            uint32_t x = (uint32_t)c * w / (uint32_t)cols;
+            uint32_t yt = (uint32_t)(r * 2) * h / (uint32_t)(rows * 2);
+            uint32_t yb = (uint32_t)(r * 2 + 1) * h / (uint32_t)(rows * 2);
+            const uint8_t *t = rgba + (yt * w + x) * 4u;
+            const uint8_t *b = rgba + (yb * w + x) * 4u;
+            printf("\033[38;2;%u;%u;%um\033[48;2;%u;%u;%um\xE2\x96\x80",
+                   t[0], t[1], t[2], b[0], b[1], b[2]);
+        }
+        fputs("\033[0m\n", stdout);
     }
     fflush(stdout);
 }
@@ -645,6 +681,23 @@ int main(int argc, char **argv) {
                         draw_segs(segs, count);
                     }
                     free(segs);
+                    got++;
+                    if (opt_once && got >= opt_frames) {
+                        quit = 1;
+                    }
+                }
+            } else if (tag == TAG_VFRM && plen >= 12) {
+                uint32_t gen, fw, fh;
+                memcpy(&gen, payload, 4);
+                memcpy(&fw, payload + 4, 4);
+                memcpy(&fh, payload + 8, 4);
+                if (fw && fh && 12u + fw * fh * 4u <= plen) {
+                    if (opt_text) {
+                        printf("F %u %ux%u\n", gen, fw, fh);
+                        fflush(stdout);
+                    } else if (opt_draw) {
+                        draw_frame(payload + 12, fw, fh);
+                    }
                     got++;
                     if (opt_once && got >= opt_frames) {
                         quit = 1;

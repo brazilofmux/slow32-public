@@ -201,3 +201,4 @@ net/*.s
 # mdfix -i backups
 *.bak
 tube.port
+tools/s32-crt-mac/s32-crt-mac
