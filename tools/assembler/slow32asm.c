@@ -1409,6 +1409,14 @@ static bool assemble_line(assembler_t *as, char *line) {
         // Check if label already exists (e.g., from .global)
         label_t *existing = find_label(as, label_name);
         if (existing) {
+            // A second definition silently rebinds every reference to the
+            // later address (this corrupted the Forth dictionary chain
+            // when a duplicate head_ms: was added) — make it fatal.
+            if (existing->is_defined) {
+                fprintf(stderr, "Error: duplicate label definition: '%s'\n",
+                        label_name);
+                exit(1);
+            }
             existing->address = as->current_addr;
             existing->section = as->current_section;
             existing->is_defined = true;

@@ -4226,11 +4226,11 @@ head_ms:
 xt_ms:
     .word ms_word
 ms_word:
-    ldw r4, r28, 0     # n (ms)
+    ldw r3, r28, 0     # n (ms) — first C arg goes in r3
     addi r28, r28, 4   # pop
     # usleep takes microseconds. n ms = n * 1000 us.
     addi r1, r0, 1000
-    mul r4, r4, r1
+    mul r3, r3, r1
     jal usleep
     jal r0, next
 
@@ -5531,6 +5531,131 @@ search_miss:
     jal r0, next
 
 # ----------------------------------------------------------------------
+# Tube service primitives (docs/TUBE.md). Thin wrappers over the C
+# guest API in runtime/tube_mmio.c; r26-r28 are callee-saved in the
+# C ABI so the VM registers survive the calls (same as KEY/getchar).
+# The friendly vec vocabulary (MOVE DRAW INTEN PRESENT ...) is Forth,
+# in tube.fth.
+# ----------------------------------------------------------------------
+
+# Word: TUBE-INIT ( -- ior ) negotiate the service; 0 = granted
+.text
+    .align 2
+head_tube_init:
+    .word head_search
+    .byte 9
+    .ascii "TUBE-INIT"
+    .align 2
+xt_tube_init:
+    .word tube_init_word
+tube_init_word:
+    jal tube_init
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: TUBE-OPEN ( mode -- ior ) open a mode (1=vec)
+.text
+    .align 2
+head_tube_open:
+    .word head_tube_init
+    .byte 9
+    .ascii "TUBE-OPEN"
+    .align 2
+xt_tube_open:
+    .word tube_open_word
+tube_open_word:
+    ldw r3, r28, 0
+    jal tube_open
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: TUBE-CLOSE ( -- ior )
+.text
+    .align 2
+head_tube_close:
+    .word head_tube_open
+    .byte 10
+    .ascii "TUBE-CLOSE"
+    .align 2
+xt_tube_close:
+    .word tube_close_word
+tube_close_word:
+    jal tube_close
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: TUBE-PRESENT ( addr words gen -- ior ) ship a display list
+.text
+    .align 2
+head_tube_present:
+    .word head_tube_close
+    .byte 12
+    .ascii "TUBE-PRESENT"
+    .align 2
+xt_tube_present:
+    .word tube_present_word
+tube_present_word:
+    ldw r5, r28, 0         # gen (TOS)
+    ldw r4, r28, 4         # word count
+    ldw r3, r28, 8         # list address
+    addi r28, r28, 8       # pop two; result reuses the third slot
+    jal tube_present
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: TUBE-INFO ( -- u ) packed info; 0 if not granted
+.text
+    .align 2
+head_tube_info:
+    .word head_tube_present
+    .byte 9
+    .ascii "TUBE-INFO"
+    .align 2
+xt_tube_info:
+    .word tube_info_word
+tube_info_word:
+    jal tube_info
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: TUBE-STATUS ( -- u ) packed status
+.text
+    .align 2
+head_tube_status:
+    .word head_tube_info
+    .byte 11
+    .ascii "TUBE-STATUS"
+    .align 2
+xt_tube_status:
+    .word tube_status_word
+tube_status_word:
+    jal tube_status
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: TUBE-KEYS ( addr nbytes -- n ) copy viewer key events
+.text
+    .align 2
+head_tube_keys:
+    .word head_tube_status
+    .byte 9
+    .ascii "TUBE-KEYS"
+    .align 2
+xt_tube_keys:
+    .word tube_keys_word
+tube_keys_word:
+    ldw r4, r28, 0         # nbytes (TOS)
+    ldw r3, r28, 4         # addr
+    addi r28, r28, 4       # pop one; result reuses the other slot
+    jal tube_keys
+    stw r28, r1, 0
+    jal r0, next
+
+# ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
 .data
@@ -5539,7 +5664,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_search              # Point to last defined word
+    .word head_tube_keys           # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_ptr: .word tib

@@ -32,6 +32,8 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 - **Exception**: `CATCH`, `THROW`
 - **Search-Order**: `FORTH-WORDLIST`, `GET-CURRENT`, `SET-CURRENT`, `GET-ORDER`, `SET-ORDER`, `SEARCH-WORDLIST`, `WORDLIST`
 - **System**: `ABORT`, `EVALUATE`
+- **Facility**: `MS`
+- **Tube** (docs/TUBE.md): `TUBE-INIT`, `TUBE-OPEN`, `TUBE-CLOSE`, `TUBE-PRESENT`, `TUBE-INFO`, `TUBE-STATUS`, `TUBE-KEYS`
 - **Other**: `HELLO`, `PROMPTS-ON`
 
 ## Prelude Words (Forth)
@@ -81,6 +83,30 @@ During prelude loading, prompts are suppressed (`var_prompt_enabled=0`). The pre
 cd forth && bash build.sh
 ```
 This assembles, links, and runs the kernel with the prelude loaded.
+
+## The Tube (vec words)
+
+`tube.fth` is the 1987-desk fence post: the DVG names in their own
+wordlist over the tube's `vec` mode. `MOVE` means "beam" only while the
+`TUBE` vocabulary is in the search order; `PRESENT` appends `END`, ships
+the display list, bumps the generation, and wipes for the next frame.
+`GLASS-KEY` polls the viewer's make/break queue (key-downs only).
+
+```bash
+cat prelude.fth tube.fth - | ../tools/emulator/slow32-fast kernel.s32x
+# in another terminal: ../tools/s32-crt-mac   (or s32-crt)
+```
+```forth
+TUBE-ON .            \ -1 = glass ready; degrades to a message without a tube
+ALSO TUBE
+WIPE 2048 2048 MOVE 3000 3000 DRAW PRESENT
+```
+
+`ship.fth` is the demo the fence post asked for: a ship flown from the
+glass (arrows rotate, up thrusts, ESC lands at `ok>`), whose words —
+`SHIP`, `STEP`, `SHAPE` — are small and `DEFER`red so you can redefine
+them at the prompt and `FLY` again with position, velocity, and heading
+intact. The arcade stays on while you rewire it.
 
 ## Bugs Fixed
 
