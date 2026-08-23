@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include "convert.h"
 
@@ -553,6 +554,37 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             }
         }
 
+
+        // Integer precision: minimum digit count, zero-filled on the
+        // left; the '0' flag is ignored when a precision is given (C99).
+        // Doom's "STCFN%.3d" was the first caller to notice its absence.
+        bool int_conv = (spec == 'd' || spec == 'i' || spec == 'u' ||
+                         spec == 'x' || spec == 'X' || spec == 'o');
+        if (int_conv && has_precision) {
+            const char *dsrc = conv_str;
+            size_t dlen = conv_len;
+            zero_pad = false;
+            if (dlen && dsrc[0] == '-') {
+                dsrc++;
+                dlen--;              /* sign re-added via prefix below */
+            }
+            if (precision == 0 && dlen == 1 && dsrc[0] == '0') {
+                dlen = 0;            /* "%.0d" of zero prints nothing */
+            }
+            {
+                size_t zeros = ((size_t)precision > dlen)
+                                   ? (size_t)precision - dlen : 0;
+                if (zeros + dlen + 1 < CONV_BUF_SIZE) {
+                    char tmp[CONV_BUF_SIZE];
+                    memcpy(tmp, dsrc, dlen);
+                    memset(conv_buf, '0', zeros);
+                    memcpy(conv_buf + zeros, tmp, dlen);
+                    conv_buf[zeros + dlen] = '\0';
+                    conv_str = conv_buf;
+                    conv_len = zeros + dlen;
+                }
+            }
+        }
 
         // Calculate padding
         size_t field_width = conv_len;

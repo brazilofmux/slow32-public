@@ -493,8 +493,20 @@ int ungetc(int c, FILE *stream) {
 }
 
 int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
-    (void)stream; (void)buf; (void)mode; (void)size;
-    return 0; /* pretend success */
+    /* The public header speaks POSIX (_IOFBF 0, _IOLBF 1, _IONBF 2);
+     * this file's internal constants are historically reversed.
+     * Translate; custom buffers are not supported (ignored). */
+    (void)buf; (void)size;
+    if (!stream) {
+        return -1;
+    }
+    switch (mode) {
+        case 0: stream->mode = _IOFBF; break;  /* public _IOFBF */
+        case 1: stream->mode = _IOLBF; break;  /* public _IOLBF */
+        case 2: stream->mode = _IONBF; break;  /* public _IONBF */
+        default: return -1;
+    }
+    return 0;
 }
 
 FILE *tmpfile(void) {

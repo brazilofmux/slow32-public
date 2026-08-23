@@ -35,7 +35,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
 
 # I/O objects for MMIO version (buffered, ring buffer)
-STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o memstream.s32o
+STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o memstream.s32o sscanf.s32o
 
 # MMIO-only helpers
 LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \

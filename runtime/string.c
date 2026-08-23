@@ -14,10 +14,17 @@ char *strcpy(char *dest, const char *src) {
 }
 
 char *strncpy(char *dest, const char *src, size_t n) {
-    char *ret = dest;
-    while (n && (*dest++ = *src++)) n--;
-    while (n--) *dest++ = '\0';
-    return ret;
+    /* Exactly n bytes, never n+1: the old form skipped the n-- on the
+     * iteration that copied the NUL, so every padded copy overwrote
+     * one byte past the field. Doom's lumpinfo name[8] found it. */
+    size_t i = 0;
+    for (; i < n && src[i]; i++) {
+        dest[i] = src[i];
+    }
+    for (; i < n; i++) {
+        dest[i] = '\0';
+    }
+    return dest;
 }
 
 int strcmp(const char *s1, const char *s2) {
