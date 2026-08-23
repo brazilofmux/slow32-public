@@ -9,8 +9,9 @@ Status: **all three modes landed.** vec has its flagship
 (`asteroids/`, the cross-engine determinism proof); fb and ppu are
 implemented with golden-frame regression tests and demo programs
 (`examples/fire.c`, `examples/sprites.c` — build via
-`examples/build-tube-demos.sh`) while their flagships (fb: a Doom
-port; ppu: unnamed) remain open. Headless `S32_TUBE_DUMP` journals
+`examples/build-tube-demos.sh`). **fb's flagship is landed: `doom/`**
+— deterministic `-timedemo demo3`, 2173 frames, bit-identical across
+engines. ppu's flagship remains unnamed. Headless `S32_TUBE_DUMP` journals
 all modes (vec text hash, fb/ppu RGBA hash + `.ppm`). Two glasses:
 `s32-crt` (terminal: phosphor ramp for vec, truecolor half-blocks
 for rasters, `--text` for the wire) and `tools/s32-crt-mac` (native

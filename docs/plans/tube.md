@@ -57,7 +57,10 @@ owns the pixels, the host scans them out. The whole interface is
 "here is the base address, here is the palette, present."
 
 **Interface landed** (golden-tested; `examples/fire.c` is the demo).
-The Doom flagship remains the open pull.
+**Flagship landed: `doom/`** — the final boss passed; landing it
+flushed five real platform bugs (strncpy n+1, .comm/.bss overlap,
+linker local-symbol collisions, missing sscanf, printf precision),
+which is exactly the job a flagship exists to do.
 
 Flagship: **a Doom port** — the final boss of "does your C compiler
 actually work." Known toll: Doom wants key make/break events, not

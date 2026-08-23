@@ -202,3 +202,7 @@ net/*.s
 *.bak
 tube.port
 tools/s32-crt-mac/s32-crt-mac
+doom/doom1.wad
+doom/obj/
+doom/.default.cfg
+doom/.savegame/
