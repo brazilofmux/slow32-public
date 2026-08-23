@@ -164,6 +164,12 @@ typedef enum {
     STMT_WIDTH,
     STMT_NOOP,  /* parsed-and-discarded: FIELD, CHAIN, PCOPY, KEY, SOUND, PLAY, VIEW PRINT, ENVIRON, COMMON */
     STMT_CLEAR,
+    /* Graphics (tube fb) */
+    STMT_PSET,
+    STMT_LINE_G,
+    STMT_CIRCLE,
+    STMT_PAINT,
+    STMT_PALETTE,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -549,6 +555,18 @@ typedef struct stmt {
         struct {
             struct expr *columns;
         } width_stmt;
+
+        /* STMT_PSET / STMT_LINE_G / STMT_CIRCLE / STMT_PAINT / STMT_PALETTE */
+        struct {
+            struct expr *x1, *y1;   /* first point (PALETTE: x1 = attr) */
+            struct expr *x2, *y2;   /* LINE second point; CIRCLE: x2 = radius */
+            struct expr *color;     /* optional color (PALETTE: rgb24) */
+            struct expr *aux;       /* PAINT border color */
+            int step1, step2;       /* STEP prefixes */
+            int has_from;           /* LINE: first point present */
+            int box;                /* LINE: 0=line 1=B 2=BF */
+            int preset;             /* PSET vs PRESET */
+        } gfx;
     };
 } stmt_t;
 

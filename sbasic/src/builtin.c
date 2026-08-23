@@ -2,6 +2,7 @@
 #include "eval.h"
 #include "fileio.h"
 #include "terminal.h"
+#include "graphics.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -867,10 +868,19 @@ static error_t fn_replace(value_t *args, int nargs, value_t *out) {
 /* TIMER - seconds since midnight */
 static error_t fn_timer(value_t *args, int nargs, value_t *out) {
     if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    time_t now = time(NULL);
+    struct timespec ts;
+    double frac = 0.0;
+    time_t now;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        now = ts.tv_sec;
+        frac = (double)ts.tv_nsec / 1e9;
+    } else {
+        now = time(NULL);
+    }
     struct tm *tm = localtime(&now);
     if (!tm) { *out = val_integer(0); return ERR_NONE; }
-    *out = val_double((double)(tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec));
+    *out = val_double((double)(tm->tm_hour * 3600 + tm->tm_min * 60 +
+                               tm->tm_sec) + frac);
     return ERR_NONE;
 }
 
@@ -1076,16 +1086,35 @@ static error_t fn_command(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
-/* INKEY$ - non-blocking single character read */
+/* INKEY$ - non-blocking single character read. With a graphics
+ * screen open, the tube viewer's key queue is polled first (extended
+ * keys come back GW-style as CHR$(0) + scancode). */
 static error_t fn_inkey(value_t *args, int nargs, value_t *out) {
     (void)args;
     if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    char ch[2];
+    char ch[3];
+    if (sb_gfx_active()) {
+        int n = sb_gfx_inkey(ch);
+        if (n > 0) {
+            *out = val_string(ch, n);
+            return ERR_NONE;
+        }
+    }
     if (sb_term_inkey(ch)) {
         *out = val_string(ch, 1);
     } else {
         *out = val_string_cstr("");
     }
+    return ERR_NONE;
+}
+
+/* POINT(x, y) - pixel value at (x, y), or -1 */
+static error_t fn_point(value_t *args, int nargs, value_t *out) {
+    if (nargs != 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    double x, y;
+    EVAL_CHECK(get_num(&args[0], &x));
+    EVAL_CHECK(get_num(&args[1], &y));
+    *out = val_integer(sb_gfx_point((int)x, (int)y));
     return ERR_NONE;
 }
 
@@ -1335,6 +1364,7 @@ static const builtin_entry_t builtins[] = {
     { "PEEK",     fn_peek },
     { "STRIG",    fn_strig },
     { "STICK",    fn_stick },
+    { "POINT",    fn_point },
     { NULL, NULL }
 };
 

@@ -27,6 +27,7 @@ filter_output() {
         -e "^Exit code:" \
         -e "^Instructions executed" \
         -e "^Simulated cycles" \
+        -e "^Cycles:" \
         -e "^Wall time:" \
         -e "^Performance:" \
         -e "instructions/second"

@@ -144,6 +144,44 @@ Structured programming: real procedures, richer control flow.
 
 **Tests**: types.bas, onerror.bas, advanced.bas (21/21 total passing)
 
+### Stage 7: GW-BASIC Graphics over the tube (~600 lines added) ✅ COMPLETE
+
+The fence post from docs/plans/1987-desk.md: the honest home-computer
+debt, paid as a guest-side layer over the tube's `fb` mode
+(docs/TUBE.md §4). Statements only, no fake hardware registers.
+
+**Language features:**
+
+- `SCREEN 0/1/2/7/8/9/12/13` — 0 closes; 1/7 = 320×200×16,
+  2/8 = 640×200×16, 9 = 640×350×16, 12 = 640×480×16,
+  13 = 320×200×256 (16 RGBI + gray ramp + 6×6×6 cube)
+- `PSET/PRESET [STEP](x, y)[, color]`
+- `LINE [[STEP](x1, y1)]-[STEP](x2, y2)[, color[, B|BF]]`
+- `CIRCLE [STEP](x, y), r[, color]` (arcs/aspect deliberately out)
+- `PAINT [STEP](x, y)[, paint[, border]]` — span-stack seed fill
+- `PALETTE attr, rgb24` / bare `PALETTE` restores (host re-reads the
+  palette every present, so this animates drawn pixels for free)
+- `POINT(x, y)` function; `CLS` clears the pixels when a screen is open
+- Bare niladic builtins the GW way (`k$ = INKEY$`, `t = TIMER`) —
+  eval falls back to a 0-arg builtin for never-assigned names
+- `INKEY$` polls the tube viewer's key queue first when a screen is
+  open (extended keys as `CHR$(0) + scancode`, GW-style)
+- Fractional `TIMER` (clock_gettime) and fractional `SLEEP 0.02`
+
+**Degradation**: no tube (`--deny tube`) prints "No tube: graphics
+unavailable" once and every drawing statement no-ops; drawing without
+any `SCREEN` is Illegal function call; `PALETTE` stays legal in text
+mode. Immediate mode: every drawing statement presents a frame.
+
+**Files**: graphics.h/c (new: tube fb wrapper, Bresenham, midpoint
+circle, scanline flood fill, key queue), updated lexer.h/c, ast.h/c,
+parser.c, eval.c, builtin.c
+
+**Tests**: graphics.bas — self-verifying via POINT, runs headless
+(tube OPEN succeeds with no viewer); frame hashes bit-identical
+across slow32 / slow32-fast / slow32-dbt via S32_TUBE_DUMP.
+**Demo**: demos/bounce.bas (attach s32-crt / s32-crt-mac).
+
 ## Cumulative Size
 
 | Stage | Delta | Total | Milestone |
@@ -154,6 +192,7 @@ Structured programming: real procedures, richer control flow.
 | 4 | ~1,750 | ~9,350 | Rich library ✅ |
 | 5 | ~1,640 | ~11,000 | File I/O ✅ |
 | 6 | ~1,640 | ~12,600 | Feature complete ✅ |
+| 7 | ~600 | ~13,200 | Graphics on the tube ✅ |
 
 ## Verification
 

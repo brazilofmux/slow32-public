@@ -624,6 +624,18 @@ void stmt_free(stmt_t *s) {
             case STMT_NOOP:
             case STMT_CLEAR:
                 break;
+            case STMT_PSET:
+            case STMT_LINE_G:
+            case STMT_CIRCLE:
+            case STMT_PAINT:
+            case STMT_PALETTE:
+                expr_free(s->gfx.x1);
+                expr_free(s->gfx.y1);
+                expr_free(s->gfx.x2);
+                expr_free(s->gfx.y2);
+                expr_free(s->gfx.color);
+                expr_free(s->gfx.aux);
+                break;
         }
         free(s);
         s = next;

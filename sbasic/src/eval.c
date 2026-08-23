@@ -3,6 +3,7 @@
 #include "array.h"
 #include "fileio.h"
 #include "terminal.h"
+#include "graphics.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -297,6 +298,13 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             if (strcmp(e->var.name, "ERL") == 0) {
                 *out = val_integer(on_error_err_line);
                 return ERR_NONE;
+            }
+            /* Bare niladic builtins, the GW way (k$ = INKEY$, t = TIMER):
+               only when no variable of that name exists; any builtin
+               error falls through to the plain-variable path */
+            if (!env_exists(env, e->var.name) && builtin_exists(e->var.name)) {
+                if (builtin_call(e->var.name, NULL, 0, out) == ERR_NONE)
+                    return ERR_NONE;
             }
             value_t *v = env_get(env, e->var.name);
             if (!v) return ERR_OUT_OF_MEMORY;
@@ -1149,9 +1157,92 @@ static error_t exec_input(env_t *env, stmt_t *s) {
 
 static error_t exec_cls(stmt_t *s) {
     (void)s;
+    if (sb_gfx_active()) {
+        sb_gfx_cls();
+        return ERR_NONE;
+    }
     sb_term_cls();
     print_col = 0;
     print_row = 1;
+    return ERR_NONE;
+}
+
+/* --- Graphics statements --- */
+
+static error_t gfx_eval_int(env_t *env, expr_t *e, int *out) {
+    value_t v;
+    EVAL_CHECK(eval_expr(env, e, &v));
+    error_t err = val_to_integer(&v, out);
+    val_clear(&v);
+    return err;
+}
+
+/* Evaluate an optional color expression; -1 = "use foreground". */
+static error_t gfx_eval_color(env_t *env, expr_t *e, int *out) {
+    if (!e) { *out = -1; return ERR_NONE; }
+    return gfx_eval_int(env, e, out);
+}
+
+static error_t exec_gfx(env_t *env, stmt_t *s) {
+    int x1 = 0, y1 = 0, x2 = 0, y2 = 0, color, aux;
+
+    /* Evaluate operands even when degraded, so side effects and type
+     * errors behave the same with or without a tube. */
+    if (s->gfx.x1) EVAL_CHECK(gfx_eval_int(env, s->gfx.x1, &x1));
+    if (s->gfx.y1) EVAL_CHECK(gfx_eval_int(env, s->gfx.y1, &y1));
+    if (s->gfx.x2) EVAL_CHECK(gfx_eval_int(env, s->gfx.x2, &x2));
+    if (s->gfx.y2) EVAL_CHECK(gfx_eval_int(env, s->gfx.y2, &y2));
+    EVAL_CHECK(gfx_eval_color(env, s->gfx.color, &color));
+    EVAL_CHECK(gfx_eval_color(env, s->gfx.aux, &aux));
+
+    if (!sb_gfx_active()) {
+        if (s->type == STMT_PALETTE)
+            return ERR_NONE;            /* legal in text mode (no-op) */
+        if (sb_gfx_degraded())
+            return ERR_NONE;            /* no tube: statements no-op */
+        return ERR_ILLEGAL_FUNCTION_CALL;  /* no SCREEN yet */
+    }
+
+    if (s->gfx.step1) {
+        int lx, ly;
+        sb_gfx_last(&lx, &ly);
+        x1 += lx;
+        y1 += ly;
+    }
+
+    switch (s->type) {
+        case STMT_PSET:
+            /* PRESET without a color erases (background); with one it
+             * draws that color, same as PSET */
+            sb_gfx_pset(x1, y1, (s->gfx.preset && !s->gfx.color) ? 0 : color);
+            break;
+        case STMT_LINE_G: {
+            int fx = x1, fy = y1;
+            if (!s->gfx.has_from)
+                sb_gfx_last(&fx, &fy);
+            if (s->gfx.step2) {
+                /* STEP on the second point is relative to the first */
+                x2 += fx;
+                y2 += fy;
+            }
+            sb_gfx_line(fx, fy, x2, y2, color, s->gfx.box);
+            break;
+        }
+        case STMT_CIRCLE:
+            sb_gfx_circle(x1, y1, x2, color);
+            break;
+        case STMT_PAINT:
+            sb_gfx_paint(x1, y1, color, s->gfx.aux ? aux : -1);
+            break;
+        case STMT_PALETTE:
+            if (s->gfx.x1)
+                sb_gfx_palette(x1, color);
+            else
+                sb_gfx_palette(-1, 0);
+            break;
+        default:
+            return ERR_INTERNAL;
+    }
     return ERR_NONE;
 }
 
@@ -2321,18 +2412,22 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_SLEEP: {
-            unsigned int secs = 0;
+            double secs = 0.0;
             if (s->sleep_stmt.duration) {
                 value_t v;
                 EVAL_CHECK(eval_expr(env, s->sleep_stmt.duration, &v));
-                int isecs;
-                error_t cerr = val_to_integer(&v, &isecs);
+                if (v.type == VAL_STRING) { val_clear(&v); return ERR_TYPE_MISMATCH; }
+                secs = (v.type == VAL_INTEGER) ? (double)v.ival : v.dval;
                 val_clear(&v);
-                if (cerr != ERR_NONE) return cerr;
-                if (isecs < 0) return ERR_ILLEGAL_FUNCTION_CALL;
-                secs = (unsigned int)isecs;
+                if (secs < 0) return ERR_ILLEGAL_FUNCTION_CALL;
             }
-            if (secs > 0) sleep(secs);
+            /* Fractional seconds sleep (SLEEP 0.03 paces animation) */
+            if (secs > 0) {
+                unsigned int whole = (unsigned int)secs;
+                unsigned int usecs = (unsigned int)((secs - whole) * 1e6);
+                if (whole > 0) sleep(whole);
+                if (usecs > 0) usleep(usecs);
+            }
             return ERR_NONE;
         }
 
@@ -2430,11 +2525,11 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_SCREEN: {
-            /* No-op: accept SCREEN mode but ignore it (text-only) */
-            value_t mode;
-            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &mode));
-            val_clear(&mode);
-            return ERR_NONE;
+            int mode;
+            EVAL_CHECK(gfx_eval_int(env, s->shell_stmt.command, &mode));
+            if (sb_gfx_screen(mode) == -2)
+                return ERR_ILLEGAL_FUNCTION_CALL;
+            return ERR_NONE;    /* denied tube already printed its message */
         }
 
         case STMT_LSET:
@@ -2481,6 +2576,13 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
         case STMT_NOOP:
             return ERR_NONE;
+
+        case STMT_PSET:
+        case STMT_LINE_G:
+        case STMT_CIRCLE:
+        case STMT_PAINT:
+        case STMT_PALETTE:
+            return exec_gfx(env, s);
 
         case STMT_CLEAR:
             env_clear(env);

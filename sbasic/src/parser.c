@@ -555,6 +555,125 @@ static stmt_t *parse_color(parser_t *p) {
     return stmt_color(fg, bg, has_fg, has_bg, line);
 }
 
+/* --- Graphics statements (tube fb) --- */
+
+/* [STEP] ( x , y ) */
+static int parse_gfx_coord(parser_t *p, expr_t **x, expr_t **y, int *step) {
+    *step = lexer_match(&p->lex, TOK_STEP) ? 1 : 0;
+    if (!expect(p, TOK_LPAREN)) return 0;
+    *x = parse_expr(p);
+    if (!*x) return 0;
+    if (!expect(p, TOK_COMMA)) return 0;
+    *y = parse_expr(p);
+    if (!*y) return 0;
+    if (!expect(p, TOK_RPAREN)) return 0;
+    return 1;
+}
+
+/* PSET/PRESET [STEP](x, y)[, color] */
+static stmt_t *parse_pset(parser_t *p, int preset) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex);
+    stmt_t *s = stmt_alloc(STMT_PSET, line);
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    s->gfx.preset = preset;
+    if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &s->gfx.step1)) {
+        stmt_free(s); return NULL;
+    }
+    if (lexer_match(&p->lex, TOK_COMMA)) {
+        s->gfx.color = parse_expr(p);
+        if (!s->gfx.color) { stmt_free(s); return NULL; }
+    }
+    return s;
+}
+
+/* LINE [[STEP](x1, y1)]-[STEP](x2, y2)[, [color][, [B|BF][, style]]]
+ * (LINE itself is already consumed; style is parsed and ignored) */
+static stmt_t *parse_line_graphics(parser_t *p, int line) {
+    stmt_t *s = stmt_alloc(STMT_LINE_G, line);
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    if (!lexer_check(&p->lex, TOK_MINUS)) {
+        s->gfx.has_from = 1;
+        if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &s->gfx.step1)) {
+            stmt_free(s); return NULL;
+        }
+    }
+    if (!expect(p, TOK_MINUS)) { stmt_free(s); return NULL; }
+    if (!parse_gfx_coord(p, &s->gfx.x2, &s->gfx.y2, &s->gfx.step2)) {
+        stmt_free(s); return NULL;
+    }
+    if (lexer_match(&p->lex, TOK_COMMA)) {
+        if (!lexer_check(&p->lex, TOK_COMMA) && !at_stmt_end(p)) {
+            s->gfx.color = parse_expr(p);
+            if (!s->gfx.color) { stmt_free(s); return NULL; }
+        }
+        if (lexer_match(&p->lex, TOK_COMMA)) {
+            if (lexer_check(&p->lex, TOK_IDENT)) {
+                token_t bt = lexer_next(&p->lex);
+                if (strcmp(bt.text, "B") == 0 || strcmp(bt.text, "b") == 0) {
+                    s->gfx.box = 1;
+                } else if (strcmp(bt.text, "BF") == 0 || strcmp(bt.text, "bf") == 0 ||
+                           strcmp(bt.text, "Bf") == 0 || strcmp(bt.text, "bF") == 0) {
+                    s->gfx.box = 2;
+                } else {
+                    parser_error_detail(p, ERR_SYNTAX, "Expected B or BF");
+                    stmt_free(s); return NULL;
+                }
+            }
+            if (lexer_match(&p->lex, TOK_COMMA)) {
+                expr_t *style = parse_expr(p);   /* dashed style: ignored */
+                if (!style) { stmt_free(s); return NULL; }
+                expr_free(style);
+            }
+        }
+    }
+    return s;
+}
+
+/* CIRCLE [STEP](x, y), r[, color] */
+static stmt_t *parse_circle(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex);
+    stmt_t *s = stmt_alloc(STMT_CIRCLE, line);
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &s->gfx.step1)) {
+        stmt_free(s); return NULL;
+    }
+    if (!expect(p, TOK_COMMA)) { stmt_free(s); return NULL; }
+    s->gfx.x2 = parse_expr(p);   /* radius */
+    if (!s->gfx.x2) { stmt_free(s); return NULL; }
+    if (lexer_match(&p->lex, TOK_COMMA)) {
+        s->gfx.color = parse_expr(p);
+        if (!s->gfx.color) { stmt_free(s); return NULL; }
+    }
+    if (!at_stmt_end(p)) {
+        parser_error_detail(p, ERR_SYNTAX,
+                            "CIRCLE arcs/aspect not supported");
+        stmt_free(s); return NULL;
+    }
+    return s;
+}
+
+/* PAINT [STEP](x, y)[, paint[, border]] */
+static stmt_t *parse_paint(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex);
+    stmt_t *s = stmt_alloc(STMT_PAINT, line);
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &s->gfx.step1)) {
+        stmt_free(s); return NULL;
+    }
+    if (lexer_match(&p->lex, TOK_COMMA)) {
+        s->gfx.color = parse_expr(p);
+        if (!s->gfx.color) { stmt_free(s); return NULL; }
+        if (lexer_match(&p->lex, TOK_COMMA)) {
+            s->gfx.aux = parse_expr(p);
+            if (!s->gfx.aux) { stmt_free(s); return NULL; }
+        }
+    }
+    return s;
+}
+
 static stmt_t *parse_assign(parser_t *p, const char *name) {
     int line = lexer_peek(&p->lex)->line;
     val_type_t vt = var_type_from_name(name);
@@ -1404,6 +1523,12 @@ static stmt_t *parse_line_input(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex); /* consume LINE */
     if (!lexer_match(&p->lex, TOK_INPUT)) {
+        /* Graphics form: LINE [[STEP](x1,y1)]-[STEP](x2,y2)... */
+        if (lexer_check(&p->lex, TOK_LPAREN) ||
+            lexer_check(&p->lex, TOK_MINUS) ||
+            lexer_check(&p->lex, TOK_STEP)) {
+            return parse_line_graphics(p, line);
+        }
         parser_error(p, ERR_SYNTAX); return NULL;
     }
     /* File variant: LINE INPUT #n, var$ */
@@ -2090,11 +2215,23 @@ static stmt_t *parse_stmt(parser_t *p) {
             lexer_next(&p->lex);
             expr_t *mode = parse_expr(p);
             if (!mode) return NULL;
+            /* burst/apage/vpage arguments: parse and ignore */
+            while (lexer_match(&p->lex, TOK_COMMA)) {
+                if (at_stmt_end(p) || lexer_check(&p->lex, TOK_COMMA)) continue;
+                expr_t *e = parse_expr(p);
+                if (!e) { expr_free(mode); return NULL; }
+                expr_free(e);
+            }
             stmt_t *s = stmt_alloc(STMT_SCREEN, line);
             if (!s) { expr_free(mode); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             s->shell_stmt.command = mode;
             return s;
         }
+
+        case TOK_PSET:   return parse_pset(p, 0);
+        case TOK_PRESET: return parse_pset(p, 1);
+        case TOK_CIRCLE: return parse_circle(p);
+        case TOK_PAINT:  return parse_paint(p);
 
         case TOK_LSET: case TOK_RSET: {
             stmt_type_t stype = (tok->type == TOK_LSET) ? STMT_LSET : STMT_RSET;
@@ -2181,16 +2318,18 @@ static stmt_t *parse_stmt(parser_t *p) {
         }
 
         case TOK_PALETTE: {
-            /* PALETTE [attr, color] — no-op */
+            /* PALETTE attr, rgb24 — set one entry; PALETTE alone restores */
             int line = tok->line;
             lexer_next(&p->lex);
-            while (!at_stmt_end(p)) {
-                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
-                expr_t *e = parse_expr(p);
-                if (e) expr_free(e);
-                else break;
-            }
-            return stmt_alloc(STMT_NOOP, line);
+            stmt_t *s = stmt_alloc(STMT_PALETTE, line);
+            if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            if (at_stmt_end(p)) return s;   /* x1 == NULL: restore default */
+            s->gfx.x1 = parse_expr(p);
+            if (!s->gfx.x1) { stmt_free(s); return NULL; }
+            if (!expect(p, TOK_COMMA)) { stmt_free(s); return NULL; }
+            s->gfx.color = parse_expr(p);
+            if (!s->gfx.color) { stmt_free(s); return NULL; }
+            return s;
         }
 
         case TOK_WAIT: {
