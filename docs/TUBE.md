@@ -11,17 +11,18 @@ implemented with golden-frame regression tests and demo programs
 (`examples/fire.c`, `examples/sprites.c` — build via
 `examples/build-tube-demos.sh`). **fb's flagship is landed: `doom/`**
 — deterministic `-timedemo demo3`, 2173 frames, bit-identical across
-engines. ppu's spec-freezer is a planned full-coverage conformance
-demo, not a game (plans/tube.md, amended 2026-08-23; working name
-`ppu-reel`). Headless `S32_TUBE_DUMP` journals
+engines. **ppu's spec is frozen by its conformance reel (`ppu-reel/`,
+landed 2026-08-23)**: 14 fixed frames, bit-identical across the three
+C engines, with ~80 spec-derived pixel assertions checked against the
+`.ppm` journal. Headless `S32_TUBE_DUMP` journals
 all modes (vec text hash, fb/ppu RGBA hash + `.ppm`). Two glasses:
 `s32-crt` (terminal: phosphor ramp for vec, truecolor half-blocks
 for rasters, `--text` for the wire) and `tools/s32-crt-mac` (native
 macOS: additive phosphor with decay for vec, nearest-neighbor +
 scanlines for rasters, real NSEvent make/break keys, reattaches
 when a new guest appears). Mode 4 (`gpu`) has a number and no
-spec, deliberately. `ppu` bit layouts in §5 are **provisional** and
-freeze when the conformance reel lands.
+spec, deliberately. `ppu` bit layouts in §5 are **frozen** (the reel
+landed).
 
 v0.2 pins the numbers an implementer could not invent: mode ids,
 display-list bitfields, errno, the guest-memory walk, `PRESENT`
@@ -284,11 +285,16 @@ here because this mode is what demands it.
 
 ## 5. Mode 3: `ppu` — sprites and tiles
 
-**Provisional.** The shape is the one we intend; bit layouts freeze
-when the ppu conformance reel lands — a choreographed exerciser
-demo, deliberately not a game, that touches every feature below and
-golden-hashes a fixed frame sequence (see plans/tube.md, amended
-2026-08-23).
+**Frozen 2026-08-23** by the conformance reel (`ppu-reel/`): a
+choreographed exerciser demo, deliberately not a game, that touches
+every feature below — flips, all eight sub-palettes, scroll wrap on
+both torus axes, the 128×128 nametable cap, OAM priority, the enable
+bit, edge-straddling sprites, the full pattern-table range, the alpha
+formula (sprite × palette, stacked), pixel-0 transparency, palette
+animation, and all 128 sprites at once — in 14 fixed frames,
+golden-hashed across engines, with the blend math re-derived
+independently in `ppu-reel/tests/check-pixels.py`. Changes to this
+section now require regenerating those goldens deliberately.
 
 Everything lives in guest RAM. `TUBE_OPEN` `length` = 4, data buffer
 holds the register-block guest address (4-byte aligned). `PRESENT`
@@ -300,7 +306,9 @@ Register block: 16 × `u32`, little-endian. Words 0–11 are
 scroll_x, scroll_y, bg_color, flags, reserved, reserved`. Words
 12–15 reserved, write as 0, ignore on read. `nt_w` / `nt_h` in
 tiles, max 128×128; scroll in pixels, wraps the nametable torus.
-`bg_color` is `0xAARRGGBB`. `flags` unused in v1.
+`bg_color` is `0xAARRGGBB`; its alpha byte is ignored — the
+composite starts opaque (frozen ruling: the output frame is always
+opaque, so `out_a` below is 255 throughout). `flags` unused in v1.
 
 - **Tiles**: 8×8, 4bpp packed (two pixels per byte, high nibble
   left), 32 bytes per tile, up to 1024 tiles in the pattern table.

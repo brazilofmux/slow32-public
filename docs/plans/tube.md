@@ -102,6 +102,16 @@ game, if one ever arrives, inherits a frozen spec instead of
 carrying the burden of freezing it. Working name: `ppu-reel`
 (a name, not a decision).
 
+**Landed 2026-08-23, the same evening** (`ppu-reel/`): 14 frames,
+bit-identical across the three C engines, ~80 pixel assertions
+re-derived from the spec text by an independent checker
+(`tests/check-pixels.py`). §5 is frozen; the one ruling the freeze
+codified is that the composite is opaque (`bg_color`'s alpha byte is
+ignored). Along the way the reel did its job on itself: the first
+cut's sparse palettes made most of the 128-sprite crowd invisible —
+caught by looking at the frames, which is the whole argument for a
+demo you can look at.
+
 GDI — if it ever exists — is a guest-side library over `fb`/`ppu`,
 the way `term.h` sits over the term service. It is not host surface.
 
