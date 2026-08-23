@@ -33,8 +33,9 @@ scan_no_match() {
 # Restrict checks to stage00..stage08 orchestration/build files (the main
 # selfhost build path driven by run-stages.sh). Optional comparison /
 # cross-compilation scaffolding that intentionally invokes host gcc/clang
-# (stage08-cross-{x64,a64}, stage06+stage07 compare-llvm-selfhost.sh,
-# verify-emu-sums.sh) is deliberately excluded.
+# or links the LLVM-built runtime (stage08-cross-{x64,a64}, stage06+stage07
+# compare-llvm-selfhost.sh, stage08 run-interop-llvm.sh, verify-emu-sums.sh)
+# is deliberately excluded.
 SCAN_PATHS=(
     "$SELFHOST_DIR/run-stages.sh"
     "$SELFHOST_DIR/stage00"
@@ -61,6 +62,7 @@ scan_no_match \
     '^(?!\s*[#\\]).*runtime/[^[:space:]]*\.s32[oa]\b' \
     "${BASE_GLOBS[@]}" \
     --glob '!compare-llvm-selfhost.sh' \
+    --glob '!run-interop-llvm.sh' \
     "${SCAN_PATHS[@]}"
 
 # 2) No direct host compiler invocations in stage01..08 scripts.
