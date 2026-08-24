@@ -40,6 +40,32 @@ work stays binned until a workload demonstrates headroom. This leg is
 about **parity with our own x64 backend**, which is proven territory,
 not speculation.
 
+**Profile taken 2026-08-23, the night the front was declared.** Three
+hypotheses tested against the code and the clock:
+
+- *Flags*: not it. RISC-V has no condition codes either — same
+  materialized booleans (SLT ≈ SEQ), same fused reg-reg branches —
+  and our a64 backend already uses host flags (guest `beq/bne` →
+  `cmp + b.cond`, with cmp/branch fusion counters to prove it).
+- *Memory checks*: not it. `-U` A/B on the M5: ~5% on the Forth
+  bench, unmeasurable on benchmark_core — `bounds_elim` earns its
+  keep. (Methodology note: the first A/B used a wrong flag spelling
+  and produced a fantasy 15× — caught because the harness validates
+  output. Always validate output.)
+- **The register cache: it.** `translate.c` (x64) has the regcache
+  (96 references; part of its 9.5 BIPS). `translate_a64.c` has
+  *none* — every guest-register operand is an `ldr`/`str` against
+  the context struct. The RISC-V sibling's a64 backend has a proper
+  LRU regcache (`rc_read`/`rc_write`, pinned host regs, hardwired
+  WZR) — that is its edge on identical silicon, not the ISA.
+
+Leg 1's work item is therefore crisp: **port the register cache to
+`translate_a64.c`**, with two in-house reference implementations —
+our own x64 backend for the invariants, the RISC-V a64 backend for
+the same-host-architecture shape. Verified by `run-differential.sh`
+and the fleet of golden tests (reel, doom timedemo, forth suite),
+measured by the same three workloads, medians of five.
+
 ## 2. forthc — the AOT Forth compiler
 
 Elevated from the curiosity shelf (1987-desk.md §8) to an engine-room
