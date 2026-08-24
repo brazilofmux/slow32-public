@@ -187,6 +187,29 @@ compiler emits transformable shapes, not host-flavored ones. First
 entry: the mask-select. Candidates to audit later through the same
 lens: min/max, abs, byte-swap, carry chains.
 
+**Shipped (2026-08-23, the same sitting).** Both sides of the
+contract's first entry:
+
+- *Compiler side*: one td pattern — negation anchors on the
+  architectural zero (`sub rX, r0, rC`), never a CSE'd zero in an
+  allocatable register, which had made the mask unprovable across
+  blocks. Semantics identical; this is canonicalization, not the
+  frozen-oracle drift the leg-3 rule guards against.
+- *DBT side (a64)*: `select_idiom_scan` in the prescan recognizes
+  the five-op mask-select by use-def walk (operand order agnostic,
+  interleaved T-computation tolerated, r0 anchor required for
+  soundness); the blend-final XOR emits `CMP + CSEL` instead. Only
+  the final XOR is replaced, so a mismatched pattern can never be
+  unsound — the negative control (allocated-register zero) refuses
+  by construction. Kill switch: `S32_DBT_NO_SELECT_FUSE=1`.
+- *Measured* (benchmark_core, median of 7, checksum intact):
+  166.9M → 151.7M host cycles, **−9.1% whole-benchmark** from the
+  one idiom; per-iteration 16.0 → 14.5 vs GCC-rv32's 12.6 — the
+  gap shrinks from +21% to +15%, the remainder being general
+  instruction-count surplus in the other kernels, not selects.
+- x64 DBT translates the new canon literally (correct, unfused);
+  its cmp+cmov fusion is queued for an x86 sitting.
+
 ## 2. forthc — the AOT Forth compiler
 
 Elevated from the curiosity shelf (1987-desk.md §8) to an engine-room

@@ -778,6 +778,159 @@ static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_re
     ctx->reg_alloc[slot].dirty = true;
 }
 
+// ============================================================================
+// Select-idiom fusion (see docs/plans/engine-room.md, "the idiom contract")
+//
+// The LLVM backend's canonical branchless select is
+//     C  = setcc(a, b)          ; 0 or 1
+//     M  = sub r0, C            ; 0 or 0xFFFFFFFF — anchored on r0 for
+//                               ; provability (an allocated zero cannot be
+//                               ; proven zero across blocks)
+//     t2 = xor T, F
+//     u  = and t2, M
+//     rd = xor F, u             ; = C ? T : F
+// The five ops carry a 5-deep dependent chain on the (often loop-carried)
+// select result. Recognized here, the final XOR becomes CMP a,b + CSEL
+// rd, T, F, cond — 2 host insts, 2-deep. The intermediate instructions
+// still emit (dead-temp analysis may drop their stores); only the final
+// XOR is replaced, so a partial or mismatched pattern is never unsound.
+// ============================================================================
+
+uint32_t select_fusion_count = 0;   // fusions taken (for -s stats)
+
+static int select_fuse_enabled = -1;
+static bool select_fusion_on(void) {
+    if (select_fuse_enabled < 0) {
+        const char *v = getenv("S32_DBT_NO_SELECT_FUSE");
+        select_fuse_enabled = (v && v[0] && v[0] != '0') ? 0 : 1;
+    }
+    return select_fuse_enabled == 1;
+}
+
+// Register defined by a decoded instruction (0 = none; r0 never counts).
+static uint8_t inst_def_reg(const decoded_inst_t *d) {
+    switch (d->format) {
+        case FMT_R: case FMT_I: case FMT_U: case FMT_J:
+            return d->rd;
+        default:
+            return 0;
+    }
+}
+
+// True if `reg` is defined by any instruction in (lo, hi) exclusive.
+static bool defined_between(const decoded_inst_t *decoded, int lo, int hi,
+                            uint8_t reg) {
+    if (reg == 0) return false;
+    for (int i = lo + 1; i < hi; i++) {
+        if (inst_def_reg(&decoded[i]) == reg) return true;
+    }
+    return false;
+}
+
+// Index of the last def of `reg` strictly before `before` (-1 if none).
+static int last_def_before(const decoded_inst_t *decoded, int before,
+                           uint8_t reg) {
+    if (reg == 0) return -1;
+    for (int i = before - 1; i >= 0; i--) {
+        if (inst_def_reg(&decoded[i]) == reg) return i;
+    }
+    return -1;
+}
+
+static bool setcc_to_cond(uint8_t opcode, uint8_t *cond_out) {
+    switch (opcode) {
+        case OP_SEQ:  *cond_out = COND_EQ; return true;
+        case OP_SNE:  *cond_out = COND_NE; return true;
+        case OP_SLT:  *cond_out = COND_LT; return true;
+        case OP_SLTU: *cond_out = COND_LO; return true;
+        case OP_SGT:  *cond_out = COND_GT; return true;
+        case OP_SGTU: *cond_out = COND_HI; return true;
+        case OP_SLE:  *cond_out = COND_LE; return true;
+        case OP_SLEU: *cond_out = COND_LS; return true;
+        case OP_SGE:  *cond_out = COND_GE; return true;
+        case OP_SGEU: *cond_out = COND_HS; return true;
+        default: return false;
+    }
+}
+
+static void select_idiom_scan(translate_ctx_t *ctx,
+                              const decoded_inst_t *decoded, int inst_count,
+                              uint32_t start_pc) {
+    ctx->select_fuse_count = 0;
+    if (!select_fusion_on()) return;
+
+    for (int k = 0; k < inst_count; k++) {
+        if (ctx->select_fuse_count >= MAX_SELECT_FUSIONS) break;
+        const decoded_inst_t *fx = &decoded[k];
+        if (fx->opcode != OP_XOR || fx->rd == 0) continue;
+
+        // Try both operand orders for rd = xor(F, u)
+        for (int swap = 0; swap < 2; swap++) {
+            uint8_t f = swap ? fx->rs2 : fx->rs1;
+            uint8_t u = swap ? fx->rs1 : fx->rs2;
+            if (u == 0 || f == 0 || u == f) continue;
+
+            int j = last_def_before(decoded, k, u);
+            if (j < 0 || decoded[j].opcode != OP_AND) continue;
+            if (defined_between(decoded, j, k, u)) continue;
+
+            // AND operands: one is the mask, the other the T^F temp
+            for (int mswap = 0; mswap < 2; mswap++) {
+                uint8_t m  = mswap ? decoded[j].rs2 : decoded[j].rs1;
+                uint8_t t2 = mswap ? decoded[j].rs1 : decoded[j].rs2;
+                if (m == 0 || t2 == 0 || m == t2) continue;
+
+                int s = last_def_before(decoded, j, m);
+                if (s < 0 || decoded[s].opcode != OP_SUB) continue;
+                if (decoded[s].rs1 != 0) continue;         // must be r0 - C
+                if (defined_between(decoded, s, j, m)) continue;
+                uint8_t c = decoded[s].rs2;
+                if (c == 0) continue;
+
+                int x = last_def_before(decoded, j, t2);
+                if (x < 0 || decoded[x].opcode != OP_XOR) continue;
+                if (defined_between(decoded, x, j, t2)) continue;
+
+                // Identify T and F from the inner XOR's operands
+                uint8_t T;
+                if (decoded[x].rs1 == f && decoded[x].rs2 != f) {
+                    T = decoded[x].rs2;
+                } else if (decoded[x].rs2 == f && decoded[x].rs1 != f) {
+                    T = decoded[x].rs1;
+                } else {
+                    continue;
+                }
+                if (T == 0) continue;
+
+                int i0 = last_def_before(decoded, s, c);
+                uint8_t cond;
+                if (i0 < 0 || !setcc_to_cond(decoded[i0].opcode, &cond))
+                    continue;
+                if (decoded[i0].format != FMT_R) continue;
+                if (defined_between(decoded, i0, s, c)) continue;
+
+                uint8_t a = decoded[i0].rs1, b = decoded[i0].rs2;
+                // Leaves must survive untouched until the fusion point
+                if (defined_between(decoded, i0, k, a)) continue;
+                if (defined_between(decoded, i0, k, b)) continue;
+                if (defined_between(decoded, x, k, T)) continue;
+                if (defined_between(decoded, x, k, f)) continue;
+
+                int n = ctx->select_fuse_count++;
+                ctx->select_fuse[n].xor_pc  = start_pc + (uint32_t)k * 4u;
+                ctx->select_fuse[n].rd      = fx->rd;
+                ctx->select_fuse[n].rT      = T;
+                ctx->select_fuse[n].rF      = f;
+                ctx->select_fuse[n].cmp_rs1 = a;
+                ctx->select_fuse[n].cmp_rs2 = b;
+                ctx->select_fuse[n].cond    = cond;
+                goto next_xor;
+            }
+        }
+        next_xor:;
+    }
+}
+
 // Pre-scan block: tally register usage, dead temporary analysis, back-edge detection,
 // and select top-used guest registers for caching in host callee-saved registers.
 static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
@@ -888,6 +1041,9 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         pc += 4;
         inst_count++;
     }
+
+    // Recognize canonical mask-selects for CMP+CSEL fusion
+    select_idiom_scan(ctx, decoded, inst_count, start_pc);
 
     // Dead temporary elimination: backward liveness scan.
     //
@@ -2256,6 +2412,38 @@ void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
         emit_eor_w32(e, W0, W0, s2);
         emit_store_guest_reg(ctx, rd, W0);
     }
+}
+
+// Replace the blend-final XOR of a recognized mask-select with CMP+CSEL.
+// Returns true if fused (caller skips translate_xor). See select_idiom_scan.
+static bool try_select_fusion(translate_ctx_t *ctx, const decoded_inst_t *inst) {
+    if (ctx->select_fuse_count == 0) return false;
+    for (int n = 0; n < ctx->select_fuse_count; n++) {
+        if (ctx->select_fuse[n].xor_pc != ctx->guest_pc) continue;
+        if (ctx->select_fuse[n].rd != inst->rd) return false;    // shape drift
+
+        emit_ctx_t *e = &ctx->emit;
+        uint8_t rd = ctx->select_fuse[n].rd;
+        ctx->pending_shift.valid = false;
+
+        a64_reg_t s1 = resolve_src(ctx, ctx->select_fuse[n].cmp_rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, ctx->select_fuse[n].cmp_rs2, W1);
+        emit_cmp_w32_w32(e, s1, s2);
+        a64_reg_t hT = resolve_src(ctx, ctx->select_fuse[n].rT, W0);
+        a64_reg_t hF = resolve_src(ctx, ctx->select_fuse[n].rF, W1);
+
+        a64_reg_t hd = guest_host_reg(ctx, rd);
+        if (hd != A64_NOREG) {
+            emit_csel_w32(e, hd, hT, hF, (a64_cond_t)ctx->select_fuse[n].cond);
+            reg_cache_mark_written(ctx, rd);
+        } else {
+            emit_csel_w32(e, W2, hT, hF, (a64_cond_t)ctx->select_fuse[n].cond);
+            emit_store_guest_reg(ctx, rd, W2);
+        }
+        select_fusion_count++;
+        return true;
+    }
+    return false;
 }
 
 void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -3764,7 +3952,10 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             // Logical
             case OP_AND:  translate_and(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_OR:   translate_or(ctx, inst.rd, inst.rs1, inst.rs2); break;
-            case OP_XOR:  translate_xor(ctx, inst.rd, inst.rs1, inst.rs2); break;
+            case OP_XOR:
+                if (try_select_fusion(ctx, &inst)) break;
+                translate_xor(ctx, inst.rd, inst.rs1, inst.rs2);
+                break;
             case OP_ANDI: translate_andi(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_ORI:  translate_ori(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_XORI: translate_xori(ctx, inst.rd, inst.rs1, inst.imm); break;
@@ -4882,7 +5073,10 @@ retry_translate:
             case OP_ADDI: translate_addi(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_AND:  translate_and(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_OR:   translate_or(ctx, inst.rd, inst.rs1, inst.rs2); break;
-            case OP_XOR:  translate_xor(ctx, inst.rd, inst.rs1, inst.rs2); break;
+            case OP_XOR:
+                if (try_select_fusion(ctx, &inst)) break;
+                translate_xor(ctx, inst.rd, inst.rs1, inst.rs2);
+                break;
             case OP_ANDI: translate_andi(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_ORI:  translate_ori(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_XORI: translate_xori(ctx, inst.rd, inst.rs1, inst.imm); break;

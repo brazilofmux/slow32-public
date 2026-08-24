@@ -719,6 +719,13 @@ def : Pat<(i32 0), (ADDI (i32 R0), 0)>;
 def : Pat<(i32 simm12:$imm), (ADDI (i32 R0), simm12:$imm)>;
 def : Pat<(i32 uimm12:$imm), (ORI (i32 R0), uimm12:$imm)>;
 
+// Negation anchors on the architectural zero, never a materialized one.
+// This keeps the branchless select's mask step (`sub r0, cond`) provable
+// so the DBT can fuse the idiom into a host conditional select — see
+// slow-32 docs/plans/engine-room.md, "the idiom contract". A CSE'd zero
+// in an allocatable register defeats the proof.
+def : Pat<(sub (i32 0), (i32 GPR:$x)), (SUB (i32 R0), (i32 GPR:$x))>;
+
 // f64 split/combine + size-tuned SELECT — EmitInstrWithCustomInserter.
 let usesCustomInserter = 1 in {
   let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {

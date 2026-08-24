@@ -3,7 +3,6 @@
 Last Reviewed: 2026-08-08
 
 ## Overview
-
 - Backend tracks LLVM main; `llc` and `clang` build with SLOW32 as the default
   triple (`slow32-unknown-none`).
 - SelectionDAG, MC, frame lowering, and the clang driver toolchain are exercised
@@ -14,7 +13,6 @@ Last Reviewed: 2026-08-08
   `scripts/backup.sh` after rebases or backend edits.
 
 ## Architecture
-
 - 32-bit little-endian RISC, 32 GPRs: `r0`=zero, `r2` reserved (long-branch
   scratch / MC relaxation), `r29`=sp, `r30`=fp, `r31`=lr.
 - Base + signed 12-bit offset addressing; stack grows down.
@@ -27,7 +25,6 @@ Last Reviewed: 2026-08-08
   default; `slow32-minimal` / `-mattr=-m,-f` force libcall soft paths.
 
 ## Working
-
 - Core SelectionDAG + MC plumbing; optional FP (LR on calls; FP only when
   required). Neither FP nor LR is in the CSR list.
 - Real `ADJCALLSTACK*` expansion (no reserved call frame) so stack args sit
@@ -47,14 +44,12 @@ Last Reviewed: 2026-08-08
 - Clang target + driver (slow32asm / s32-ld / mmio vs debug-io).
 
 ## Soft Spots
-
 - Dual libcall registration (TargetLowering + Subtarget) via shared helper —
   revisit when upstream finishes RuntimeLibcalls consolidation.
 - `SLOW32Schedule.td` exists for TableGen; not heavily tuned against real RTL.
 - f64 inline-asm operands still unsupported (pair printing).
 
 ## Known Pitfalls (fixed or documented)
-
 - ~~MBB long-branch ops dropped `%hi`/`%lo`~~ — fixed.
 - ~~`(shl imm, 16) → LUI`~~ — removed.
 - ~~Duplicate signed `extload` / inverted LoadStorePat / ADDC stubs~~ — removed.
@@ -72,7 +67,6 @@ elf relocs, fp encoding, optional FP, SELECT optsize, memcpy/memmove/memset
 names, i64/i32 udiv libcalls, `+m` feature, CFI smoke.
 
 ## Future Opportunities
-
 - Soft-float libcall completeness when `-mattr=-f` (ensure full RTLIB map).
 - f64 / GPRPair inline-asm constraint if external asm needs it.
 - Schedule model tuning against the soft-core pipeline.

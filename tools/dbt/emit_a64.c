@@ -650,6 +650,15 @@ void emit_cset_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_cond_t cond) {
     emit_inst(ctx, inst);
 }
 
+// CSEL Wd, Wn, Wm, cond — Wd = cond ? Wn : Wm
+void emit_csel_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn,
+                   a64_reg_t rm, a64_cond_t cond) {
+    // 0 0 0 11010100 Rm(5) cond(4) 0 0 Rn(5) Rd(5)
+    uint32_t inst = 0x1A800000 | ((rm & 0x1F) << 16) | ((cond & 0xF) << 12) |
+                    ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
 // ============================================================================
 // Branches
 // ============================================================================

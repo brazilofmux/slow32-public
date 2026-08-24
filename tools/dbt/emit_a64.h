@@ -289,6 +289,10 @@ void emit_cmn_w32_imm(emit_ctx_t *ctx, a64_reg_t rn, uint32_t imm12);
 // CSET Wd, cond  (CSINC Wd, WZR, WZR, invert(cond))
 void emit_cset_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_cond_t cond);
 
+// CSEL Wd, Wn, Wm, cond — Wd = cond ? Wn : Wm
+void emit_csel_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn,
+                   a64_reg_t rm, a64_cond_t cond);
+
 // ============================================================================
 // Branches
 // ============================================================================
