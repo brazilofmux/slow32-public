@@ -47,6 +47,21 @@ index 3b5d0c0aad98..ceb63594a428 100644
        case llvm::Triple::wasm32:
        case llvm::Triple::wasm64:
          TC = std::make_unique<toolchains::WebAssembly>(*this, Target, Args);
+diff --git a/clang/lib/Driver/ToolChains/CommonArgs.cpp b/clang/lib/Driver/ToolChains/CommonArgs.cpp
+index 883296e43111..67e29a69b352 100644
+--- a/clang/lib/Driver/ToolChains/CommonArgs.cpp
++++ b/clang/lib/Driver/ToolChains/CommonArgs.cpp
+@@ -121,6 +121,10 @@ static bool useFramePointerForTargetByDefault(const llvm::opt::ArgList &Args,
+   case llvm::Triple::mips64el:
+   case llvm::Triple::mips:
+   case llvm::Triple::mipsel:
++  case llvm::Triple::slow32:
++    // SLOW-32: frame pointers only at -O0. Leaf functions otherwise pay a
++    // dead lr/fp save/restore on every call — and under the DBT each of
++    // those stack touches is also a bounds/W^X-checked guest memory op.
+     return !clang::driver::tools::areOptimizationsEnabled(Args);
+   default:
+     break;
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.cpp b/clang/lib/Driver/ToolChains/SLOW32.cpp
 new file mode 100644
 index 000000000000..271df526723a

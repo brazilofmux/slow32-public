@@ -210,6 +210,32 @@ contract's first entry:
 - x64 DBT translates the new canon literally (correct, unfused);
   its cmp+cmov fusion is queued for an x86 sitting.
 
+**The kernel audit finished the same night, and found a bigger fish
+than any loop.** Per-iteration scorecard vs GCC-rv32: bench_branch
+fixed by the fusion; bench_mem at parity (12 vs 12, different
+routes); bench_arith 8 vs 7 — GCC does linear-function test
+replacement (the seed accumulator doubles as the exit test) where we
+carry a separate down-counter. Small fish, noted. The big fish:
+**every function was paying a full lr/fp frame — including pure
+leaves with zero stack use** — because nobody had told the clang
+driver that SLOW-32 may omit frame pointers when optimizing. One
+line in `useFramePointerForTargetByDefault` (riscv-style: frames
+only at -O0), and:
+
+- tiny leaf: 10 instructions → 3
+- DOOM: −2.1% guest instructions (4.640G → 4.542G), −2.9% text,
+  −5.1% host instructions and −3.6% host cycles under the DBT,
+  and **all 2173 timedemo frame hashes bit-identical** — the
+  determinism proof now spans codegen shapes, not just engines.
+- Measurement trap logged: DOOM's timedemo wall time is
+  ~85% sleep (frame pacing), so wall A/Bs are noise — an apparent
+  +7% "regression" inverted to −3.6% under CPU counters. Cycles
+  retired, not wall clock, for paced workloads.
+
+Compiler-side changes live as one local llvm-project commit
+(e507704cf3c4), mirrored: td via backup.sh, CommonArgs via the
+integration patches (generate-patches.sh now includes it).
+
 ## 2. forthc — the AOT Forth compiler
 
 Elevated from the curiosity shelf (1987-desk.md §8) to an engine-room

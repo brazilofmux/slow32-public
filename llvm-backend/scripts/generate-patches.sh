@@ -81,6 +81,7 @@ echo "5. Generating Clang driver patch..."
 git diff $BASE HEAD -- \
     clang/lib/Driver/ToolChains/SLOW32.h \
     clang/lib/Driver/ToolChains/SLOW32.cpp \
+    clang/lib/Driver/ToolChains/CommonArgs.cpp \
     clang/lib/Driver/Driver.cpp \
     clang/lib/Driver/CMakeLists.txt \
     clang/include/clang/Options/Options.td \
