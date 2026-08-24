@@ -99,6 +99,20 @@ should approach 3–4× on dispatch-bound code.
   comparison + logic vocabulary — everything `bench.fth` needs.
   *Gate: the win condition. Heavy bench compiled vs DTC-under-dbt,
   medians of five, ≥2× or a written explanation.*
+  **LANDED 2026-08-23, same sitting as M1 and M2.** Top-level
+  CREATE/ALLOT/VARIABLE/CONSTANT/`,` ride forthc's own data stack
+  (the metacompiler's oldest trick); data lands in a `.data` buffer
+  appended in the postamble; typed word-table entries make a name
+  mean call, address-push, or literal. bench.fth's kernels compile
+  verbatim and print 317811/1899/1000000 on the first run, three
+  engines identical. **The measurement (heavy bench, medians of 7,
+  wall):** compiled-on-dbt 86 ms; DTC-on-dbt 271 ms; gforth 102 ms;
+  gforth-fast 85 ms. Win condition met at **3.8×**; plain gforth
+  beaten; **statistical dead heat with native gforth-fast — the
+  stretch goal, unoptimized.** Counters: we retire 2.8× more host
+  instructions (2.93G vs 1.05G) in 4.6% more cycles — IPC 9.1 vs
+  3.4; the M5 absorbs the translation surplus and the race is
+  critical paths, where compiled Forth is gforth's equal.
 - **M4 — the differential.** Enough of the prelude to compile the
   kernel test suite's programs; run each `.fth` both ways (DTC vs
   compiled), outputs must match exactly. *Gate: the forth suite's

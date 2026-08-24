@@ -111,32 +111,54 @@ VARIABLE num-acc  VARIABLE num-neg  VARIABLE num-ok
     num-ok @ IF num-acc @ num-neg @ IF NEGATE THEN TRUE
     ELSE FALSE THEN ;
 
-\ --- word table: [id:cell][len:byte][name...] ------------------------
+\ --- word table: [val:cell][kind:byte][len:byte][name...] ------------
+\ kind 0 = code (val is the FW label id, compiles to a call)
+\ kind 1 = data (val is the FD label id, compiles to an address push)
+\ kind 2 = constant (val is the value, compiles to a literal)
 CREATE wtab 8192 ALLOT   VARIABLE wt-len   VARIABLE nwords
-0 wt-len !  0 nwords !
+VARIABLE ndat
+0 wt-len !  0 nwords !  0 ndat !
 
-: W-ADD ( addr u -- id )
-    nwords @ >R
-    wt-len @ 6 + OVER + 8192 > IF S" too many words" FC-ERR THEN
-    R@ wtab wt-len @ + !        4 wt-len +!
-    DUP wtab wt-len @ + C!      1 wt-len +!
-    ( addr u ) DUP >R wtab wt-len @ + SWAP CMOVE R> wt-len +!
-    1 nwords +!  R> ;
+: W-ADD ( addr u val kind -- )
+    >R >R                                        ( a u ) ( R: kind val )
+    wt-len @ OVER + 8 + 8192 > IF S" too many words" FC-ERR THEN
+    R> wtab wt-len @ + !        4 wt-len +!      \ val
+    R> wtab wt-len @ + C!       1 wt-len +!      \ kind
+    DUP wtab wt-len @ + C!      1 wt-len +!      \ len
+    ( addr u ) DUP >R wtab wt-len @ + SWAP CMOVE R> wt-len +! ;
 
 VARIABLE fw-cur
-: FIND-WORD ( addr u -- id true | false )
+: FIND-WORD ( addr u -- val kind true | false )
     0 fw-cur !
     BEGIN fw-cur @ wt-len @ < WHILE
-        wtab fw-cur @ + 4 + C@ >R                  ( a u ) ( R: len )
-        2DUP  wtab fw-cur @ + 5 +  R@  COMPARE 0= IF
-            R> DROP
-            wtab fw-cur @ + @  NIP NIP TRUE EXIT THEN
-        R> 5 + fw-cur +!
+        wtab fw-cur @ + 5 + C@ >R                  ( a u ) ( R: len )
+        2DUP  wtab fw-cur @ + 6 +  R@  COMPARE 0= IF
+            R> DROP 2DROP
+            wtab fw-cur @ + DUP @ SWAP 4 + C@ TRUE EXIT THEN
+        R> 6 + fw-cur +!
     REPEAT 2DROP FALSE ;
+
+\ --- .data emission buffer (appended before .bss in the postamble) ---
+32768 CONSTANT DAT-SZ
+CREATE dat-buf DAT-SZ ALLOT   VARIABLE dat-len
+: DAT-CHAR ( ch -- )
+    dat-len @ DAT-SZ >= IF DROP S" data buffer full" FC-ERR EXIT THEN
+    dat-buf dat-len @ + C!  1 dat-len +! ;
+: DAT-STR ( addr u -- ) 0 ?DO DUP I + C@ DAT-CHAR LOOP DROP ;
+: DAT-NUM ( n -- )
+    DUP 0< IF 45 DAT-CHAR NEGATE THEN
+    DUP 10 >= IF DUP 10 / RECURSE THEN
+    10 MOD 48 + DAT-CHAR ;
+: DAT-NL 10 DAT-CHAR ;
 
 \ --- emission --------------------------------------------------------
 : EMIT-LABEL ( id -- )  S" FW" OUT-STR OUT-SNUM 58 OUT-CHAR OUT-NL ;
 : EMIT-CALL  ( id -- )  S"     jal r31, FW" OUT-STR OUT-SNUM OUT-NL ;
+: EMIT-DLIT  ( id -- )  \ push the address of data label FDn
+    S" addi r28, r28, -4" ALINE
+    DUP S"     lui r1, %hi(FD" OUT-STR OUT-SNUM S" )" OUT-STR OUT-NL
+    S"     addi r1, r1, %lo(FD" OUT-STR OUT-SNUM S" )" OUT-STR OUT-NL
+    S" stw r28, r1, 0" ALINE ;
 
 \ --- local labels + control-flow stack (M2) --------------------------
 VARIABLE nlabels
@@ -320,6 +342,7 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
           S" debug r1" ALINE ;
 : P-CR    S" addi r1, r0, 10" ALINE S" debug r1" ALINE ;
 : P-DOT   S" jal r31, FDOT" ALINE ;
+: P-FILL  S" jal r31, FFILL" ALINE ;
 
 \ --- the compiler ----------------------------------------------------
 : COMPILE-TOK ( addr u -- )
@@ -372,15 +395,22 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     2DUP S" R@"     COMPARE 0= IF 2DROP P-R@ EXIT THEN
     2DUP S" EXIT"    COMPARE 0= IF 2DROP cur-exit @ EMIT-JMP EXIT THEN
     2DUP S" RECURSE" COMPARE 0= IF 2DROP cur-id @ EMIT-CALL EXIT THEN
+    2DUP S" FILL" COMPARE 0= IF 2DROP P-FILL EXIT THEN
     2DUP TOK-NUM IF NIP NIP EMIT-LIT EXIT THEN
-    2DUP FIND-WORD IF NIP NIP EMIT-CALL EXIT THEN
+    2DUP FIND-WORD IF
+        2SWAP 2DROP                     ( val kind )
+        DUP 0 = IF DROP EMIT-CALL EXIT THEN
+        DUP 1 = IF DROP EMIT-DLIT EXIT THEN
+        DROP EMIT-LIT EXIT THEN
     ." forthc: unknown word: " TYPE CR 1 fc-errors +! ABORT ;
 
 : COMPILE-DEF
     NEXT-TOK DUP 0= IF S" name expected after :" FC-ERR THEN
     2DUP TOK-NUM IF DROP S" word name is a number" FC-ERR THEN
-    2DUP FIND-WORD IF DROP S" duplicate definition" FC-ERR THEN
-    2DUP W-ADD DUP cur-id ! >R
+    2DUP FIND-WORD IF 2DROP S" duplicate definition" FC-ERR THEN
+    nwords @ >R
+    2DUP R@ 0 W-ADD  1 nwords +!
+    R@ cur-id !
     NEWLBL cur-exit !
     S" # : " OUT-STR 2DUP OUT-STR OUT-NL
     R@ EMIT-LABEL
@@ -439,9 +469,45 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     S" addi r4, r0, 32" ALINE
     S" debug r4" ALINE
     S" jalr r0, r31, 0" ALINE
+    S" " RLINE
+    S" # FILL ( addr u ch -- )" RLINE
+    S" FFILL:" RLINE
+    S" ldw r1, r28, 0" ALINE
+    S" ldw r2, r28, 4" ALINE
+    S" ldw r3, r28, 8" ALINE
+    S" addi r28, r28, 12" ALINE
+    S" beq r2, r0, FFILL_done" ALINE
+    S" FFILL_loop:" RLINE
+    S" stb r3, r1, 0" ALINE
+    S" addi r3, r3, 1" ALINE
+    S" addi r2, r2, -1" ALINE
+    S" bne r2, r0, FFILL_loop" ALINE
+    S" FFILL_done:" RLINE
+    S" jalr r0, r31, 0" ALINE
     S" " RLINE ;
 
+\ --- top-level (compile-time) words: forthc's own stack is the
+\ --- metacompiler's interpretation stack -----------------------------
+: TOP-NAME ( -- addr u )   \ read + validate a fresh definition name
+    NEXT-TOK DUP 0= IF S" name expected" FC-ERR THEN
+    2DUP TOK-NUM IF DROP S" name is a number" FC-ERR THEN
+    2DUP FIND-WORD IF 2DROP S" duplicate definition" FC-ERR THEN ;
+
+: TOP-CREATE
+    TOP-NAME
+    ndat @ >R
+    R@ 1 W-ADD  1 ndat +!
+    S" FD" DAT-STR R> DAT-NUM 58 DAT-CHAR DAT-NL ;
+
+: TOP-ALLOT ( n -- )  S" .space " DAT-STR DAT-NUM DAT-NL ;
+: TOP-COMMA ( n -- )  S" .word "  DAT-STR DAT-NUM DAT-NL ;
+: TOP-VARIABLE  TOP-CREATE 4 TOP-ALLOT ;
+: TOP-CONST ( n -- )  TOP-NAME ROT 2 W-ADD ;
+
 : EMIT-POSTAMBLE
+    dat-len @ 0<> IF
+        S" .data" RLINE
+        dat-buf dat-len @ OUT-STR THEN
     S" .bss" RLINE
     S" fdstack: .space 16384" RLINE
     S" fdstack_top:" RLINE
@@ -453,13 +519,21 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     2>R
     0 fc-errors !  FALSE have-main !  0 out-len !
     0 wt-len !  0 nwords !  0 nlabels !  0 ctl-sp !
+    0 dat-len !  0 ndat !
     LOAD-SOURCE
     EMIT-PREAMBLE
     BEGIN
         NEXT-TOK DUP 0<> WHILE
-        2DUP S" :" COMPARE 0= IF 2DROP COMPILE-DEF ELSE
-            ." forthc: only definitions at top level, got: " TYPE CR
-            1 fc-errors +! ABORT THEN
+        2DUP S" :"        COMPARE 0= IF 2DROP COMPILE-DEF  ELSE
+        2DUP S" CREATE"   COMPARE 0= IF 2DROP TOP-CREATE   ELSE
+        2DUP S" VARIABLE" COMPARE 0= IF 2DROP TOP-VARIABLE ELSE
+        2DUP S" CONSTANT" COMPARE 0= IF 2DROP TOP-CONST    ELSE
+        2DUP S" ALLOT"    COMPARE 0= IF 2DROP TOP-ALLOT    ELSE
+        2DUP S" ,"        COMPARE 0= IF 2DROP TOP-COMMA    ELSE
+        2DUP TOK-NUM               IF NIP NIP              ELSE
+            ." forthc: not allowed at top level: " TYPE CR
+            1 fc-errors +! ABORT
+        THEN THEN THEN THEN THEN THEN THEN
     REPEAT 2DROP
     have-main @ 0= IF S" no MAIN defined" FC-ERR THEN
     EMIT-POSTAMBLE
