@@ -233,6 +233,22 @@ static int hi_is_remat(int kind) {
     return 0;
 }
 
+/* Per-instruction remat override.  hcg_mark_loop_consts sets this
+ * for big (non-i12) HI_ICONSTs used inside loops: instead of a
+ * lui+addi rematerialized at every use (two instructions per loop
+ * iteration), the value gets a graph node, a color, and one
+ * materialization at its def.  Reset per function by that pass. */
+static int h_no_remat[HIR_MAX_INST];
+
+/* Instruction-level remat query: kind says remat, override says
+ * keep it in a register.  Use wherever an instruction (not just a
+ * kind) is in hand. */
+static int hi_inst_remat(int i) {
+    if (i < 0) return 0;
+    if (h_no_remat[i]) return 0;
+    return hi_is_remat(h_kind[i]);
+}
+
 static int hi_is_a64_cache_asm(int kind) {
     return kind == HI_A64_DC_CVAU || kind == HI_A64_IC_IVAU ||
            kind == HI_A64_DSB_ISH || kind == HI_A64_ISB;

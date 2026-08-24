@@ -1391,12 +1391,28 @@ int resolve_local_text_relocs() {
                 rs1 = (inst >> 15) & 31;
                 rs2 = (inst >> 20) & 31;
                 disp = disp - 4;
+                /* Conditional branches reach only +/-4096 bytes.  A
+                 * silent overflow here assembled WILD branches (the
+                 * host slow32asm has always range-checked; this
+                 * assembler let a 60KB function jump garbage). */
+                if (disp < -4096 || disp > 4094) {
+                    fdputs("s32-as: branch offset out of range (+/-4096): ", 2);
+                    fdputs(g_lbl_name_pool + g_lbl_name_off[li], 2);
+                    fdputc(10, 2);
+                    return -1;
+                }
                 patched = enc_b(0, rs1, rs2, disp);
                 patched = patched | (inst & 0x7F);
                 wr32(g_text + off, patched);
             } else {
                 inst = rd32(g_text + off);
                 rd = (inst >> 7) & 31;
+                if (disp < -1048576 || disp > 1048574) {
+                    fdputs("s32-as: jal offset out of range (+/-1MB): ", 2);
+                    fdputs(g_lbl_name_pool + g_lbl_name_off[li], 2);
+                    fdputc(10, 2);
+                    return -1;
+                }
                 patched = enc_j(0, rd, disp);
                 patched = patched | (inst & 0xFFF);
                 wr32(g_text + off, patched);

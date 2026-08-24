@@ -2644,7 +2644,12 @@ static void gen_data(void) {
     cg_s(".bss\n");
     i = 0;
     while (i < ps_nglobals) {
-        if (ps_ginit_start[i] >= 0) {
+        if (ps_gextern[i]) {
+            /* extern declaration: storage lives in another TU; emitting
+             * .space here made every stdio.h includer DEFINE stdout et
+             * al. — the stage08 linker merged them common-style, the
+             * host linker correctly refused the multiple definition. */
+        } else if (ps_ginit_start[i] >= 0) {
             /* Already emitted in .data */
         } else if (ps_gsize[i] > 0) {
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }

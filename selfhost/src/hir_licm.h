@@ -24,6 +24,11 @@ static int licm_next[HIR_MAX_INST];   /* next hoisted inst, -1 = end */
 /* --- Old-to-clone mapping --- */
 static int licm_map[HIR_MAX_INST];    /* old index -> clone index, -1 = not hoisted */
 
+/* Blocks belonging to ANY natural loop in this function — persists
+ * after hir_licm (ssa_vis is per-loop scratch).  Consumed by
+ * hcg_mark_loop_consts. */
+static int licm_in_any_loop[HIR_MAX_BLOCK];
+
 /* --- Stats --- */
 static int licm_stat_hoisted;
 
@@ -334,6 +339,7 @@ static void hir_licm(void) {
     while (b < bb_nblk) {
         licm_head[b] = -1;
         licm_tail[b] = -1;
+        licm_in_any_loop[b] = 0;
         b = b + 1;
     }
     i = 0;
@@ -354,6 +360,14 @@ static void hir_licm(void) {
             if (s >= 0 && s < bb_nblk && licm_dominates(s, b)) {
                 /* Back-edge: b -> s, s is loop header */
                 body_count = licm_find_body(s, b);
+                {
+                    int lb;
+                    lb = 0;
+                    while (lb < bb_nblk) {
+                        if (ssa_vis[lb]) licm_in_any_loop[lb] = 1;
+                        lb = lb + 1;
+                    }
+                }
                 licm_mark(body_count);
                 licm_hoist(s, body_count);
             }

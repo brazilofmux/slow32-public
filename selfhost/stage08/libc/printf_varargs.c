@@ -17,7 +17,8 @@ typedef struct _FILE FILE;
 
 int fputc(int c, FILE *fp);
 int fputs(const char *s, FILE *fp);
-FILE *stdout;
+extern FILE *stdout;   /* defined in stdio.c; a second definition here
+                          relied on the old every-TU-defines behavior */
 
 typedef char *va_list;
 
