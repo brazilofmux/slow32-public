@@ -138,6 +138,138 @@ VARIABLE fw-cur
 : EMIT-LABEL ( id -- )  S" FW" OUT-STR OUT-SNUM 58 OUT-CHAR OUT-NL ;
 : EMIT-CALL  ( id -- )  S"     jal r31, FW" OUT-STR OUT-SNUM OUT-NL ;
 
+\ --- local labels + control-flow stack (M2) --------------------------
+VARIABLE nlabels
+: NEWLBL ( -- n ) nlabels @ 1 nlabels +! ;
+: OUT-LBL  ( n -- ) S" FL" OUT-STR OUT-SNUM ;
+: EMIT-LBL ( n -- ) OUT-LBL 58 OUT-CHAR OUT-NL ;
+: EMIT-JMP ( n -- ) S"     jal r0, " OUT-STR OUT-LBL OUT-NL ;
+: EMIT-BEQZ ( n -- )  \ pop TOS, branch to FLn if it is zero
+    S" ldw r1, r28, 0" ALINE  S" addi r28, r28, 4" ALINE
+    S"     beq r1, r0, " OUT-STR OUT-LBL OUT-NL ;
+
+\ Entries are [a][b][c][type], 16 bytes each.
+1 CONSTANT CT-IF   2 CONSTANT CT-BEGIN
+3 CONSTANT CT-WHILE  4 CONSTANT CT-DO
+CREATE ctl-stk 512 ALLOT   VARIABLE ctl-sp  0 ctl-sp !
+
+: CPUSH ( a b c type -- )
+    ctl-sp @ 496 > IF S" control stack overflow" FC-ERR THEN
+    ctl-stk ctl-sp @ + >R
+    R@ 12 + !  R@ 8 + !  R@ 4 + !  R> !
+    16 ctl-sp +! ;
+
+: CPOP ( type -- a b c )
+    ctl-sp @ 0= IF S" unbalanced control structure" FC-ERR THEN
+    -16 ctl-sp +!
+    ctl-stk ctl-sp @ + >R
+    R@ 12 + @ <> IF S" mismatched control structure" FC-ERR THEN
+    R@ @  R@ 4 + @  R> 8 + @ ;
+
+VARIABLE cur-id     \ current definition's word id (RECURSE)
+VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
+
+\ --- structure words -------------------------------------------------
+: C-IF    NEWLBL DUP EMIT-BEQZ 0 0 CT-IF CPUSH ;
+: C-ELSE  CT-IF CPOP 2DROP NEWLBL DUP EMIT-JMP SWAP EMIT-LBL
+          0 0 CT-IF CPUSH ;
+: C-THEN  CT-IF CPOP 2DROP EMIT-LBL ;
+: C-BEGIN NEWLBL DUP EMIT-LBL 0 0 CT-BEGIN CPUSH ;
+: C-AGAIN CT-BEGIN CPOP 2DROP EMIT-JMP ;
+: C-UNTIL CT-BEGIN CPOP 2DROP EMIT-BEQZ ;
+: C-WHILE CT-BEGIN CPOP 2DROP NEWLBL DUP EMIT-BEQZ
+          0 0 CT-WHILE CPUSH  0 0 CT-BEGIN CPUSH ;
+: C-REPEAT CT-BEGIN CPOP 2DROP EMIT-JMP
+           CT-WHILE CPOP 2DROP EMIT-LBL ;
+
+\ DO frame: a=start-label b=leave-label c=skip-label.
+\ rstack layout inside a loop matches the kernel: [r27]=index,
+\ [r27+4]=limit; J's outer index sits at [r27+8].
+: EMIT-DO-PUSH
+    S" ldw r1, r28, 0" ALINE      \ index (top of data stack)
+    S" ldw r2, r28, 4" ALINE      \ limit
+    S" addi r28, r28, 8" ALINE
+    S" addi r27, r27, -8" ALINE
+    S" stw r27, r1, 0" ALINE
+    S" stw r27, r2, 4" ALINE ;
+
+: C-DO
+    EMIT-DO-PUSH
+    NEWLBL NEWLBL NEWLBL          ( start leave skip )
+    2 PICK EMIT-LBL
+    CT-DO CPUSH ;
+
+: C-?DO
+    S" ldw r1, r28, 0" ALINE
+    S" ldw r2, r28, 4" ALINE
+    S" addi r28, r28, 8" ALINE
+    NEWLBL NEWLBL NEWLBL          ( start leave skip )
+    DUP S"     beq r1, r2, " OUT-STR OUT-LBL OUT-NL
+    S" addi r27, r27, -8" ALINE
+    S" stw r27, r1, 0" ALINE
+    S" stw r27, r2, 4" ALINE
+    2 PICK EMIT-LBL
+    CT-DO CPUSH ;
+
+\ The kernel's boundary-cross test, inlined. Fallthrough exits and
+\ pops the loop frame; LEAVE jumps straight to that pop.
+: EMIT-LOOP-TAIL ( start leave skip -- )
+    S" sub r3, r1, r2" ALINE
+    S" sub r5, r4, r2" ALINE
+    S" xor r6, r3, r5" ALINE
+    S" slt r6, r6, r0" ALINE
+    OVER S"     bne r6, r0, " OUT-STR OUT-LBL OUT-NL
+    S" stw r27, r4, 0" ALINE
+    ROT EMIT-JMP                  ( leave skip )
+    SWAP EMIT-LBL                 ( skip )
+    S" addi r27, r27, 8" ALINE
+    EMIT-LBL ;
+
+: C-LOOP
+    CT-DO CPOP
+    S" ldw r1, r27, 0" ALINE
+    S" ldw r2, r27, 4" ALINE
+    S" addi r4, r1, 1" ALINE
+    EMIT-LOOP-TAIL ;
+
+: C-+LOOP
+    CT-DO CPOP
+    S" ldw r7, r28, 0" ALINE      \ increment from data stack
+    S" addi r28, r28, 4" ALINE
+    S" ldw r1, r27, 0" ALINE
+    S" ldw r2, r27, 4" ALINE
+    S" add r4, r1, r7" ALINE
+    EMIT-LOOP-TAIL ;
+
+: FIND-DO ( -- leave-lbl )  \ innermost DO frame, without popping it
+    ctl-sp @
+    BEGIN DUP 0> WHILE
+        16 -
+        DUP ctl-stk + 12 + @ CT-DO = IF
+            ctl-stk + 4 + @ EXIT THEN
+    REPEAT
+    DROP 0 S" LEAVE outside DO" FC-ERR ;
+: C-LEAVE FIND-DO EMIT-JMP ;
+
+: P-I   S" ldw r1, r27, 0" ALINE
+        S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
+: P-J   S" ldw r1, r27, 8" ALINE
+        S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
+: P->R  S" ldw r1, r28, 0" ALINE  S" addi r28, r28, 4" ALINE
+        S" addi r27, r27, -4" ALINE  S" stw r27, r1, 0" ALINE ;
+: P-R>  S" ldw r1, r27, 0" ALINE  S" addi r27, r27, 4" ALINE
+        S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
+: P-R@  S" ldw r1, r27, 0" ALINE
+        S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
+: P-ZCMP ( op-a op-u -- )   \ TOS := TOS <op> 0  (kernel flags: 0/1)
+    S" ldw r1, r28, 0" ALINE
+    S"     " OUT-STR OUT-STR S"  r1, r1, r0" OUT-STR OUT-NL
+    S" stw r28, r1, 0" ALINE ;
+: P-INC ( n -- )            \ TOS += n, in place
+    S" ldw r1, r28, 0" ALINE
+    S"     addi r1, r1, " OUT-STR OUT-SNUM OUT-NL
+    S" stw r28, r1, 0" ALINE ;
+
 : EMIT-LIT ( n -- )
     S" addi r28, r28, -4" ALINE
     DUP -2048 2048 WITHIN IF
@@ -205,6 +337,41 @@ VARIABLE fw-cur
     2DUP S" EMIT" COMPARE 0= IF 2DROP P-EMIT EXIT THEN
     2DUP S" CR"   COMPARE 0= IF 2DROP P-CR   EXIT THEN
     2DUP S" ."    COMPARE 0= IF 2DROP P-DOT  EXIT THEN
+    2DUP S" 1+"   COMPARE 0= IF 2DROP 1 P-INC  EXIT THEN
+    2DUP S" 1-"   COMPARE 0= IF 2DROP -1 P-INC EXIT THEN
+    2DUP S" ="    COMPARE 0= IF 2DROP S" seq"  P-BINOP EXIT THEN
+    2DUP S" <>"   COMPARE 0= IF 2DROP S" sne"  P-BINOP EXIT THEN
+    2DUP S" <"    COMPARE 0= IF 2DROP S" slt"  P-BINOP EXIT THEN
+    2DUP S" >"    COMPARE 0= IF 2DROP S" sgt"  P-BINOP EXIT THEN
+    2DUP S" <="   COMPARE 0= IF 2DROP S" sle"  P-BINOP EXIT THEN
+    2DUP S" >="   COMPARE 0= IF 2DROP S" sge"  P-BINOP EXIT THEN
+    2DUP S" U<"   COMPARE 0= IF 2DROP S" sltu" P-BINOP EXIT THEN
+    2DUP S" AND"  COMPARE 0= IF 2DROP S" and"  P-BINOP EXIT THEN
+    2DUP S" OR"   COMPARE 0= IF 2DROP S" or"   P-BINOP EXIT THEN
+    2DUP S" XOR"  COMPARE 0= IF 2DROP S" xor"  P-BINOP EXIT THEN
+    2DUP S" 0="   COMPARE 0= IF 2DROP S" seq" P-ZCMP EXIT THEN
+    2DUP S" 0<"   COMPARE 0= IF 2DROP S" slt" P-ZCMP EXIT THEN
+    2DUP S" 0<>"  COMPARE 0= IF 2DROP S" sne" P-ZCMP EXIT THEN
+    2DUP S" IF"     COMPARE 0= IF 2DROP C-IF     EXIT THEN
+    2DUP S" ELSE"   COMPARE 0= IF 2DROP C-ELSE   EXIT THEN
+    2DUP S" THEN"   COMPARE 0= IF 2DROP C-THEN   EXIT THEN
+    2DUP S" BEGIN"  COMPARE 0= IF 2DROP C-BEGIN  EXIT THEN
+    2DUP S" AGAIN"  COMPARE 0= IF 2DROP C-AGAIN  EXIT THEN
+    2DUP S" UNTIL"  COMPARE 0= IF 2DROP C-UNTIL  EXIT THEN
+    2DUP S" WHILE"  COMPARE 0= IF 2DROP C-WHILE  EXIT THEN
+    2DUP S" REPEAT" COMPARE 0= IF 2DROP C-REPEAT EXIT THEN
+    2DUP S" DO"     COMPARE 0= IF 2DROP C-DO     EXIT THEN
+    2DUP S" ?DO"    COMPARE 0= IF 2DROP C-?DO    EXIT THEN
+    2DUP S" LOOP"   COMPARE 0= IF 2DROP C-LOOP   EXIT THEN
+    2DUP S" +LOOP"  COMPARE 0= IF 2DROP C-+LOOP  EXIT THEN
+    2DUP S" LEAVE"  COMPARE 0= IF 2DROP C-LEAVE  EXIT THEN
+    2DUP S" I"      COMPARE 0= IF 2DROP P-I  EXIT THEN
+    2DUP S" J"      COMPARE 0= IF 2DROP P-J  EXIT THEN
+    2DUP S" >R"     COMPARE 0= IF 2DROP P->R EXIT THEN
+    2DUP S" R>"     COMPARE 0= IF 2DROP P-R> EXIT THEN
+    2DUP S" R@"     COMPARE 0= IF 2DROP P-R@ EXIT THEN
+    2DUP S" EXIT"    COMPARE 0= IF 2DROP cur-exit @ EMIT-JMP EXIT THEN
+    2DUP S" RECURSE" COMPARE 0= IF 2DROP cur-id @ EMIT-CALL EXIT THEN
     2DUP TOK-NUM IF NIP NIP EMIT-LIT EXIT THEN
     2DUP FIND-WORD IF NIP NIP EMIT-CALL EXIT THEN
     ." forthc: unknown word: " TYPE CR 1 fc-errors +! ABORT ;
@@ -213,15 +380,21 @@ VARIABLE fw-cur
     NEXT-TOK DUP 0= IF S" name expected after :" FC-ERR THEN
     2DUP TOK-NUM IF DROP S" word name is a number" FC-ERR THEN
     2DUP FIND-WORD IF DROP S" duplicate definition" FC-ERR THEN
-    2DUP W-ADD >R
+    2DUP W-ADD DUP cur-id ! >R
+    NEWLBL cur-exit !
     S" # : " OUT-STR 2DUP OUT-STR OUT-NL
     R@ EMIT-LABEL
     S" MAIN" COMPARE 0= IF S" FMAIN:" RLINE TRUE have-main ! THEN
     R> DROP
     EMIT-PROLOGUE
+    ctl-sp @ >R
     BEGIN
         NEXT-TOK DUP 0= IF S" missing ;" FC-ERR THEN
-        2DUP S" ;" COMPARE 0= IF 2DROP EMIT-EPILOGUE EXIT THEN
+        2DUP S" ;" COMPARE 0= IF
+            2DROP
+            ctl-sp @ R> <> IF S" unbalanced structure at ;" FC-ERR THEN
+            cur-exit @ EMIT-LBL
+            EMIT-EPILOGUE EXIT THEN
         COMPILE-TOK
     AGAIN ;
 
@@ -279,7 +452,7 @@ VARIABLE fw-cur
 : FORTHC ( src-addr src-u out-addr out-u -- )
     2>R
     0 fc-errors !  FALSE have-main !  0 out-len !
-    0 wt-len !  0 nwords !
+    0 wt-len !  0 nwords !  0 nlabels !  0 ctl-sp !
     LOAD-SOURCE
     EMIT-PREAMBLE
     BEGIN

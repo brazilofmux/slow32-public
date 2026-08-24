@@ -84,6 +84,17 @@ should approach 3–4× on dispatch-bound code.
   DO/LOOP/+LOOP/I/J/LEAVE, colon calls, RECURSE, `>R R> R@`.
   `fib-only.fth` compiles. *Gate: fib(32) = 2178309 everywhere, and
   a first honest fib measurement vs DTC.*
+  **LANDED 2026-08-23, same sitting as M1.** Structure words emit
+  real labels and branches (text output makes forward references
+  free); DO/LOOP inlines the kernel's exact boundary-cross test;
+  comparisons are single SLT-family instructions (the kernel's 0/1
+  flag convention, mirrored for M4). Every m2.fth case and fib(32)
+  correct on the first compiled run, three engines byte-identical.
+  First measurement (fib 32, medians of 5): compiled-under-dbt 34 ms
+  compute vs DTC-under-dbt 121 ms — **3.6×, the M3 win condition
+  already exceeded** — and within 1.2× of native gforth-fast (28 ms)
+  with zero optimization: framed leaves, memory stack, no peephole.
+  Guest instructions: 226M vs the DTC's 585M.
 - **M3 — the bench.** CREATE/ALLOT, FILL, VARIABLE/CONSTANT,
   comparison + logic vocabulary — everything `bench.fth` needs.
   *Gate: the win condition. Heavy bench compiled vs DTC-under-dbt,
