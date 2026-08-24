@@ -37,10 +37,16 @@ bug reproduced ONLY with the default config; every one of these masked it:
 slow32-dbt -1|-2|-3 prog.s32x   # earlier stages
 slow32-dbt -R prog.s32x         # no register cache
 slow32-dbt -S prog.s32x         # no superblocks
+S32_DBT_NO_SELECT_FUSE=1 slow32-dbt prog.s32x   # no CMP+CSEL/CMOV select fusion
+SLOW32_DBT_NO_CHAIN=1 slow32-dbt prog.s32x      # no block chaining
 ```
 
 If Stage 4 fails but `-R` and `-S` each pass, suspect a reg-cache x
 superblock interaction (back-edges, deferred side exits, pending writes).
+
+If *every* stage including `-1` fails identically, the culprit is something
+the stage flags don't gate — the select fusion is the first thing to rule out
+with `S32_DBT_NO_SELECT_FUSE=1` (that is exactly how ISSUES.md #13 was found).
 
 ## Debugging Tools
 

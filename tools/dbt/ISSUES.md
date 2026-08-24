@@ -167,6 +167,91 @@ heads are prescan-visible).
 (pre-fix: hangs/corrupts r24; post-fix: passes), alongside `cpp-exception-basic`
 in the differential suite.
 
+## 13. Select-Fusion In-Place setcc → Wrong Condition (FIXED 2026-08-24)
+
+**Severity**: silent wrong answers on BOTH back ends, default config. Found by
+`--paranoid-lite` on `lua/tests/control.lua`, where `repeat n = n * 2 until n
+> 100` printed `2` instead of `128` (one iteration instead of seven). The a64
+fusion shipped in `8621ab66`, the x64 one in `3d988e84`; the bug is in the
+shared recognizer logic, so both carried it.
+
+**Bug**: `select_idiom_scan()` recognizes LLVM's branchless select
+
+```
+C  = setcc a, b
+M  = sub r0, C
+t2 = xor T, F
+u  = and t2, M
+rd = xor F, u          ; = C ? T : F
+```
+
+and replaces the final XOR with `CMP a,b` + `CSEL`/`CMOV`. That re-materialized
+compare reads `a` and `b` at the *fusion point*, so both must still hold their
+original values there. The recognizer checked that with `defined_between()`,
+which scans defs strictly **after** the setcc — and therefore cannot see the
+setcc clobbering its own compare operand:
+
+```
+addi r3, r0, 255
+sgtu r3, r1, r3        # in place: r3 is now the boolean, not 255
+...
+xor  r17, r1, r4       # fused CMP r1, r3 compares against 0/1
+```
+
+lparser.c's `luaK_...` register-limit check does exactly this, so the fused
+condition became `r1 >u 1` — nearly always true — and the select returned the
+wrong arm. The same blind spot was already known and handled one level down
+(the in-place inner XOR is explicitly rejected); the setcc case was missed.
+
+**Fix**: reject the fusion when the setcc's destination aliases either compare
+operand (`if (c == a || c == b) continue;`) in both `translate_a64.c` and
+`translate.c`. The leaf is often rematerializable from its def *before* the
+setcc (x64 already has `select_operand_route()` for the analogous
+after-the-setcc case) — a future win, not needed for correctness. Cost is one
+fusion on the whole lua workload (2 → 1); benchmark_core is unchanged.
+
+**Why the flag matrix missed it**: the fusion is not gated by stage or by
+`-R`/`-S`, so `-1`, `-2`, `-3`, `-R`, and `-S` all reproduced it identically.
+`S32_DBT_NO_SELECT_FUSE=1` is the knob that isolates it — add it to the triage
+matrix.
+
+**Regression coverage**: `regression/tests/bug-dbt-select-fuse-inplace-setcc/`
+(in-place `sgtu` with the condition false, in-place `slt` on the first
+operand, plus a non-in-place control). Pre-fix both back ends print `F1`;
+post-fix both print `OK`.
+
+## 14. x86-64 Stage-4 RTRIM$ Truncation (OPEN, found 2026-08-24)
+
+**Severity**: silent wrong answer, x86-64 back end only, default config.
+
+`sbasic/tests/stringfuncs` prints `[hello  ]` instead of `[hello]` for
+`RTRIM$("hello   ")` — two trailing spaces survive. AArch64 is correct
+(45/45), as is the reference interpreter; only `translate.c` at full Stage 4
+is wrong. Predates the warning/select-fusion work of 2026-08-24 (reproduced on
+a clean build of the parent commit).
+
+**Triage so far**: `-1`, `-2`, `-3`, `-R`, and `-S` each produce the correct
+`[hello]`; only the default (reg cache + superblocks together) fails.
+`S32_DBT_NO_SELECT_FUSE=1` and `SLOW32_DBT_NO_CHAIN=1` do **not** help, so it
+is neither the select fusion nor chaining. Per the handbook's heuristic this
+points at a reg-cache × superblock interaction (back-edge, deferred side exit,
+or pending write) — the same family as #12, but on the x86-64 side.
+
+**Reproduction** (from an AArch64 box):
+
+```bash
+cd tools/dbt && make clean && make UNAME_M=x86_64 CC=x86_64-linux-gnu-gcc
+cd ../../sbasic
+(cat tests/stringfuncs.bas; echo RUN) | \
+  qemu-x86_64-static -s 64M -L /usr/x86_64-linux-gnu \
+    ../tools/dbt/slow32-dbt sbasic.s32x | sed -n 8p
+```
+
+**Lead**: `--paranoid-lite` pins the first divergence at block
+`0x00023D4C..0x00023ED0` (97 instructions, `DIRECT` flag set), exec #111566,
+with `r12` = 7 instead of 5 and `r3` = 0x13 instead of 0x11 — i.e. the trimmed
+length is off by exactly the two spaces. Start there.
+
 ### [RETRACTED, then reopened as a question] a64 vs x64 loop handling — and an unexplained 21%
 
 **Original claim (2026-07-16, stood for about an hour):** `translate_a64.c` is missing

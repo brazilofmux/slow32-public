@@ -760,6 +760,13 @@ static void select_idiom_scan(translate_ctx_t *ctx,
                 if (defined_between(decoded, i0, s, c)) continue;
 
                 uint8_t a = decoded[i0].rs1, b = decoded[i0].rs2;
+                // In-place setcc (the boolean overwrites one of its own
+                // compare operands, e.g. `addi r3,r0,255; sgtu r3,r1,r3`).
+                // select_operand_route() below scans defs strictly after i0,
+                // so it cannot see that the destroying def IS i0 and would
+                // route the leaf as still-live. Reject. (The leaf is often
+                // rematerializable from its def before i0 — a future win.)
+                if (c == a || c == b) continue;
                 // Compare operands must be available at the fusion point,
                 // either live in their register or rematerializable
                 uint8_t a_op, a_src, b_op, b_src;

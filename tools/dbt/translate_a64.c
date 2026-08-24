@@ -385,6 +385,14 @@ static void select_idiom_scan(translate_ctx_t *ctx,
                 if (defined_between(decoded, i0, s, c)) continue;
 
                 uint8_t a = decoded[i0].rs1, b = decoded[i0].rs2;
+                // In-place setcc (the boolean overwrites one of its own
+                // compare operands, e.g. `addi r3,r0,255; sgtu r3,r1,r3`).
+                // The CMP re-materialized at the fusion point would read the
+                // boolean instead of the leaf; the survival checks below
+                // can't see it because the destroying def IS instruction i0.
+                // Reject. (Recoverable in principle by rematerializing the
+                // leaf from its def before i0 — not worth it yet.)
+                if (c == a || c == b) continue;
                 // Leaves must survive untouched until the fusion point
                 if (defined_between(decoded, i0, k, a)) continue;
                 if (defined_between(decoded, i0, k, b)) continue;
