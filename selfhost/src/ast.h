@@ -44,6 +44,7 @@ static int   stm_type[ST_MAX_MEMBERS];
 static int   stm_off[ST_MAX_MEMBERS];
 static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load) */
 static int   stm_arr_size[ST_MAX_MEMBERS]; /* total byte size for array members */
+static int   stm_arr_cols[ST_MAX_MEMBERS]; /* 2D members: last-dim count (0 = 1D) */
 static int   stm_owner[ST_MAX_MEMBERS]; /* owning struct index for this member */
 static int   stm_synth[ST_MAX_MEMBERS]; /* 1 = lookup alias from anonymous aggregate */
 /* Bit-field metadata.  stm_bit_width[mi]==0 means "not a bit-field" — the
@@ -214,6 +215,7 @@ struct Node {
     int offset;       /* VAR: stack offset from fp (locals) */
     int is_local;     /* VAR: 1=local, 0=global */
     int is_array;     /* VAR: 1=array (address, no load) */
+    int arr_cols;     /* VAR/MEMBER: 2D array column count (0 = 1D/scalar) */
     int nparams;      /* FUNC: number of parameters */
     int is_varargs;   /* FUNC: 1 if variadic (...) */
     int is_static;    /* FUNC: 1 if `static` storage class — emit STB_LOCAL */
