@@ -396,6 +396,20 @@ is inst/iter — ≤35 makes apps viable, 28.5 is parity), extern-def
 fix folded in, then apps smallest-teeth-first, DOOM last, HW FP
 when the first double-using app or the ABI gate forces the issue.
 
+**Second strike (445afa1c): 34.4 → 30.1 inst/iter** — branch
+trampolines replaced by direct branch shapes + a forwarding map,
+and big loop constants promoted out of remat. Two latent traps
+surfaced (both caught by the fixed-point gate, neither by the
+55-test suite; both localized by per-function binary search over a
+hybrid of good/bad gen1 assembly): (a) SLOW-32 bcond reaches only
+±4096 bytes and the trampolines were accidental branch islands —
+redirects are now distance-gated (hcg_bnear), and stage08's s32-as
+was found not to range-check branches at all (owed); (b) the
+call-crossing classifier used the kind-based remat predicate, so
+promoted constants were colored caller-saved and died at the first
+call. Remaining distance to LLVM's 28.5 ≈ loop rotation
+(bottom-test) + LFTR.
+
 **First strike landed same day (5f7bb023): 63.1 → 34.4 inst/iter**
 (DBT cycles 561M → 188M; LLVM 154M — from 3.6× behind to 1.22×).
 The copy plague was three stacked latent bugs — backprop liveness
