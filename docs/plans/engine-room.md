@@ -366,6 +366,23 @@ Milestones, each a gate, none a promise:
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same
    answer from a different compiler: the final boss, again.
+   **LANDED 2026-08-24, the same day as milestones 1 and 2
+   (b2911110): all 84 TUs compiled by stage08 cc, all 2173 frames
+   hash-identical to the clang goldens on BOTH slow32-fast and
+   slow32-dbt** (`scripts/test-stage08-doom.sh`). The bug ladder it
+   flushed out — a preprocessor define that silently dropped
+   `*FRACUNIT` after a leading number (weapon never reached the
+   top; gameplay diverged at frame 16), the 4-byte struct-size
+   floor breaking on-disk WAD strides, unscaled pointer
+   subtraction, unsigned div/rem emitted as signed instructions,
+   three regalloc operand-reuse paths leaking caller-saved colors
+   to call-crossing values, array typedefs decaying at
+   registration, named init-relocs all emitting gname[0] — is
+   recorded in that commit. Method: clang/stage08 objects
+   interoperate, so every bug fell to mixed-object bisection, then
+   per-function hybrid assembly, then deterministic frame-hash
+   comparison. Milestone 3's remaining formal items: struct-by-value
+   passing and double args (sbasic's HW FP work).
 
 LLVM is not deleted at the end of this. It becomes the reference —
 the differential oracle stage08 is measured against, the way gforth
