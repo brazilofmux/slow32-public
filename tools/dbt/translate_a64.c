@@ -901,6 +901,12 @@ static void select_idiom_scan(translate_ctx_t *ctx,
                     continue;
                 }
                 if (T == 0) continue;
+                // In-place inner XOR (t2 written over T's or F's register)
+                // destroys that operand before the blend — the survival
+                // checks below can't see it because the destroying def IS
+                // instruction x. Reject. (The x64 backend instead recovers
+                // T = t2 ^ F when T == t2 — portable here if ever needed.)
+                if (T == t2 || f == t2) continue;
 
                 int i0 = last_def_before(decoded, s, c);
                 uint8_t cond;

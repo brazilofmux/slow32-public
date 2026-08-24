@@ -34,6 +34,7 @@ extern uint32_t superblock_taken_pct_threshold;
 extern uint32_t cmp_branch_fusion_count;
 extern uint32_t cmp_branch_fusion_carry_skipped;
 extern uint32_t cbz_peephole_count;
+extern uint32_t select_fusion_count;
 extern uint32_t native_stub_count;
 extern uint32_t stage5_emit_side_exits;
 
@@ -141,17 +142,26 @@ typedef struct {
     bool dead_temp_skip[MAX_BLOCK_INSTS];
     int current_inst_idx;
 
-    // Select-idiom fusion (AArch64 only): the canonical branchless
+    // Select-idiom fusion (both backends): the canonical branchless
     // mask-select the LLVM backend emits — C = setcc; M = sub r0, C;
     // rd = F ^ ((T ^ F) & M) — recognized in prescan and replaced at
-    // the final XOR with CMP + CSEL. See docs/plans/engine-room.md,
-    // "the idiom contract".
+    // the final XOR with CMP + CSEL (a64) / CMP + CMOVcc (x64).
+    // See docs/plans/engine-room.md, "the idiom contract".
     #define MAX_SELECT_FUSIONS 8
     struct {
         uint32_t xor_pc;        // guest PC of the blend-final XOR
-        uint8_t rd, rT, rF;     // csel: rd = cond ? rT : rF
+        uint8_t rd, rT, rF;     // select: rd = cond ? rT : rF
         uint8_t cmp_rs1, cmp_rs2;
-        uint8_t cond;           // a64_cond_t
+        uint8_t cond;           // a64_cond_t on a64; x86 cc nibble on x64
+        // Operand rematerialization (x64): when a compare operand's register
+        // is clobbered before the blend XOR (regalloc reuses the setcc
+        // operand's register for the mask), but its defining op was a simple
+        // reg-op-imm whose source survives, recompute it at the fusion point:
+        // value = src <op> imm. op 0 = read cmp_rs1/cmp_rs2 directly.
+        uint8_t a_op, b_op;     // 0 = direct, else FMT_I opcode to re-apply
+        uint8_t a_src, b_src;   // remat source guest register
+        int32_t a_imm, b_imm;   // remat immediate
+        uint8_t t_recover;      // rT holds t2 (in-place T^F): T = rT ^ rF
     } select_fuse[MAX_SELECT_FUSIONS];
     int select_fuse_count;
 

@@ -911,6 +911,17 @@ static inline void emit_setae(emit_ctx_t *ctx, x64_reg_t dst) { emit_setcc(ctx, 
 static inline void emit_seta(emit_ctx_t *ctx, x64_reg_t dst)  { emit_setcc(ctx, 0x97, dst); }
 static inline void emit_setbe(emit_ctx_t *ctx, x64_reg_t dst) { emit_setcc(ctx, 0x96, dst); }
 
+// cmovcc r32, r/m32  (0F 40+cc /r): dst = src if cc holds, else unchanged.
+// cc is the low condition nibble (same encoding as setcc: 0x4=E, 0x5=NE, ...).
+static inline void emit_cmovcc_r32_r32(emit_ctx_t *ctx, uint8_t cc, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
+    uint8_t rex = rex_for_regs(dst, src, false);
+    emit_rex_if_needed(ctx, rex);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x40 | (cc & 0x0F));
+    emit_byte(ctx, MODRM(MOD_DIRECT, dst, src));
+}
+
 // ============================================================================
 // Control flow
 // ============================================================================

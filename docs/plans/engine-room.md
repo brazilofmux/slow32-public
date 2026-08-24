@@ -236,6 +236,62 @@ Compiler-side changes live as one local llvm-project commit
 (e507704cf3c4), mirrored: td via backup.sh, CommonArgs via the
 integration patches (generate-patches.sh now includes it).
 
+**x64 select fusion shipped (2026-08-23, the Intel sitting) — and the
+frame-pointer rebuild quietly moved the goalposts.** The queued
+cmp+cmov port landed in translate.c (same prescan scan, same
+kill switch, CMOVcc encoder added to emit_x64.h; fusions surface in
+`-s` as "Select-idiom fusions"), but pointing it at the CURRENT
+benchmark_core — rebuilt after the frame-pointer change — found
+**zero matchable canonical selects**. The fp rebuild shifted register
+allocation, and the hot loop now reuses one register three ways
+(`andi r7,…; seq r7,r7,r1; sub r7,zero,r7`): the compare operand is
+clobbered by the mask, so both backends' shipped scans refuse. The
+a64's measured −9.1% predates these bits — **re-measure on the Mac;
+it is likely gone.**
+
+Two DBT-side answers landed on x64:
+
+- *Operand rematerialization*: a compare operand whose register was
+  reused is recomputed at the fusion point when its def is a simple
+  reg-op-imm (ANDI/ADDI/ORI/XORI/shift-imm) whose source survives —
+  guarded against in-block back-edge re-entry between def and blend.
+- *T-recovery*: the hot loop also computes `t2 = T ^ F` **in place
+  over T's register**, which exposed a latent soundness hole in the
+  shipped a64 scan — the destroying def is instruction x itself, so
+  `defined_between(x, k, T)` cannot see it, and a fused select reads
+  t2 where T was meant. Never triggered on a64 only because that loop
+  was rejected earlier on the clobbered compare operand. x64 recovers
+  T = t2 ^ F (both live at the blend, exactly the literal values);
+  translate_a64.c got the conservative reject (`T == t2 || f == t2`)
+  — untested on ARM hardware, verify on the Mac.
+
+Measured (Cascade Lake VM, task-clock median of 21, checksum
+0x8d70b2b intact): benchmark_core 71.1 ms → 71.1 ms — **parity, not
+a win**. The remat+recovery shape only shortens the loop-carried
+chain by ~1 level (the literal intermediates still execute; x64 has
+no dead-temp elimination), and the recovered operands cost as much
+as they save. A directed microbench of the *canonical* shape with
+surviving operands (the shape the contract promises) shows −2.2% —
+the mechanism works; the guest code stopped holding up its end.
+
+**Contract follow-up (Macbook, compiler-side):** the fp rebuild made
+the canon untransformable — regalloc reuses the setcc operand's and
+T's registers because they die inside the idiom. Either the lowering
+keeps them live through the blend (transformability as a stated
+canon property), or the DBT-side remat/recovery is accepted as the
+contract's other half and ported to a64. Decide with the a64
+re-measurement in hand.
+
+Battery for the x64 sitting: hand-asm suite (now committed:
+regression/tests/feature-dbt-select-fuse — 8 positive shapes fuse
+including remat and in-place-t2, allocated-zero and FMT_R-clobber
+controls refuse), regression 78/78 effective (76 in the toolchain
+container + the two tube tests verified on the host: the stale image
+lacks python3/s32-crt — run-tests-docker.sh now builds assembler and
+linker from workspace source so image staleness stops failing them),
+differential 78/78 agree, forth 26/26 on dbt, ppu-reel PASS with
+golden hashes.
+
 ## 2. forthc — the AOT Forth compiler
 
 Elevated from the curiosity shelf (1987-desk.md §8) to an engine-room

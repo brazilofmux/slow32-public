@@ -605,6 +605,243 @@ static void reg_alloc_reset(translate_ctx_t *ctx) {
     ctx->reg_cache_misses = 0;
 }
 
+// ============================================================================
+// Select-idiom fusion (see docs/plans/engine-room.md, "the idiom contract")
+//
+// The LLVM backend's canonical branchless select is
+//     C  = setcc(a, b)          ; 0 or 1
+//     M  = sub r0, C            ; 0 or 0xFFFFFFFF — anchored on r0 for
+//                               ; provability (an allocated zero cannot be
+//                               ; proven zero across blocks)
+//     t2 = xor T, F
+//     u  = and t2, M
+//     rd = xor F, u             ; = C ? T : F
+// The five ops carry a 5-deep dependent chain on the (often loop-carried)
+// select result. Recognized here, the final XOR becomes CMP a,b + CMOVcc
+// rd, T/F — 2 host insts, 2-deep. The intermediate instructions still
+// emit; only the final XOR is replaced, so a partial or mismatched
+// pattern is never unsound.
+// ============================================================================
+
+uint32_t select_fusion_count = 0;   // fusions taken (for -s stats)
+
+static int select_fuse_enabled = -1;
+static bool select_fusion_on(void) {
+    if (select_fuse_enabled < 0) {
+        const char *v = getenv("S32_DBT_NO_SELECT_FUSE");
+        select_fuse_enabled = (v && v[0] && v[0] != '0') ? 0 : 1;
+    }
+    return select_fuse_enabled == 1;
+}
+
+// Register defined by a decoded instruction (0 = none; r0 never counts).
+static uint8_t inst_def_reg(const decoded_inst_t *d) {
+    switch (d->format) {
+        case FMT_R: case FMT_I: case FMT_U: case FMT_J:
+            return d->rd;
+        default:
+            return 0;
+    }
+}
+
+// True if `reg` is defined by any instruction in (lo, hi) exclusive.
+static bool defined_between(const decoded_inst_t *decoded, int lo, int hi,
+                            uint8_t reg) {
+    if (reg == 0) return false;
+    for (int i = lo + 1; i < hi; i++) {
+        if (inst_def_reg(&decoded[i]) == reg) return true;
+    }
+    return false;
+}
+
+// Index of the last def of `reg` strictly before `before` (-1 if none).
+static int last_def_before(const decoded_inst_t *decoded, int before,
+                           uint8_t reg) {
+    if (reg == 0) return -1;
+    for (int i = before - 1; i >= 0; i--) {
+        if (inst_def_reg(&decoded[i]) == reg) return i;
+    }
+    return -1;
+}
+
+// A compare operand whose register is clobbered before the blend XOR can
+// still be fused if its defining op is one of these reg-op-imm shapes and
+// the source register survives: recompute value = src <op> imm at the
+// fusion point. (Regalloc routinely reuses the setcc operand's register
+// for the mask — the canonical benchmark hot loop does exactly this.)
+static bool select_remat_op_ok(uint8_t opcode) {
+    switch (opcode) {
+        case OP_ADDI: case OP_ANDI: case OP_ORI: case OP_XORI:
+        case OP_SLLI: case OP_SRLI: case OP_SRAI:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Route for one compare operand read by instruction `at`, needed again at
+// the fusion point `k`: direct (still in its register) or rematerialized.
+// On success fills {op, src, imm}: op 0 = direct read of `reg`.
+static bool select_operand_route(translate_ctx_t *ctx,
+                                 const decoded_inst_t *decoded,
+                                 const uint32_t *pcs, int inst_count,
+                                 int at, int k, uint8_t reg,
+                                 uint8_t *op, uint8_t *src, int32_t *imm) {
+    *op = 0; *src = reg; *imm = 0;
+    if (!defined_between(decoded, at, k, reg)) return true;
+
+    int da = last_def_before(decoded, at, reg);
+    if (da < 0) return false;
+    if (decoded[da].format != FMT_I) return false;
+    if (!select_remat_op_ok(decoded[da].opcode)) return false;
+    uint8_t s = decoded[da].rs1;
+    if (defined_between(decoded, da, k, s)) return false;
+    // In-block back-edge entering in (def, XOR]: iteration 2+ re-reads the
+    // literal operand unchanged, while a remat would see any post-XOR
+    // redefinition of the source. Require source stability to block end.
+    for (int t = 0; t < ctx->backedge_target_count; t++) {
+        uint32_t tpc = ctx->backedge_targets[t];
+        if (tpc > pcs[da] && tpc <= pcs[k]) {
+            if (defined_between(decoded, k - 1, inst_count, s)) return false;
+            break;
+        }
+    }
+    *op = decoded[da].opcode;
+    *src = s;
+    *imm = decoded[da].imm;
+    return true;
+}
+
+// Map a setcc opcode to the x86 condition nibble (setcc/cmovcc share it).
+static bool setcc_to_cc(uint8_t opcode, uint8_t *cc_out) {
+    switch (opcode) {
+        case OP_SEQ:  *cc_out = 0x4; return true;   // E
+        case OP_SNE:  *cc_out = 0x5; return true;   // NE
+        case OP_SLT:  *cc_out = 0xC; return true;   // L
+        case OP_SLTU: *cc_out = 0x2; return true;   // B
+        case OP_SGT:  *cc_out = 0xF; return true;   // G
+        case OP_SGTU: *cc_out = 0x7; return true;   // A
+        case OP_SLE:  *cc_out = 0xE; return true;   // LE
+        case OP_SLEU: *cc_out = 0x6; return true;   // BE
+        case OP_SGE:  *cc_out = 0xD; return true;   // GE
+        case OP_SGEU: *cc_out = 0x3; return true;   // AE
+        default: return false;
+    }
+}
+
+// `pcs` carries the actual guest PC of each decoded instruction — the
+// prescan inlines forward JAL r0 jumps, so index*4 is not a valid mapping.
+static void select_idiom_scan(translate_ctx_t *ctx,
+                              const decoded_inst_t *decoded,
+                              const uint32_t *pcs, int inst_count) {
+    ctx->select_fuse_count = 0;
+    if (!select_fusion_on()) return;
+
+    for (int k = 0; k < inst_count; k++) {
+        if (ctx->select_fuse_count >= MAX_SELECT_FUSIONS) break;
+        const decoded_inst_t *fx = &decoded[k];
+        if (fx->opcode != OP_XOR || fx->rd == 0) continue;
+
+        // Try both operand orders for rd = xor(F, u)
+        for (int swap = 0; swap < 2; swap++) {
+            uint8_t f = swap ? fx->rs2 : fx->rs1;
+            uint8_t u = swap ? fx->rs1 : fx->rs2;
+            if (u == 0 || f == 0 || u == f) continue;
+
+            int j = last_def_before(decoded, k, u);
+            if (j < 0 || decoded[j].opcode != OP_AND) continue;
+            if (defined_between(decoded, j, k, u)) continue;
+
+            // AND operands: one is the mask, the other the T^F temp
+            for (int mswap = 0; mswap < 2; mswap++) {
+                uint8_t m  = mswap ? decoded[j].rs2 : decoded[j].rs1;
+                uint8_t t2 = mswap ? decoded[j].rs1 : decoded[j].rs2;
+                if (m == 0 || t2 == 0 || m == t2) continue;
+
+                int s = last_def_before(decoded, j, m);
+                if (s < 0 || decoded[s].opcode != OP_SUB) continue;
+                if (decoded[s].rs1 != 0) continue;         // must be r0 - C
+                if (defined_between(decoded, s, j, m)) continue;
+                uint8_t c = decoded[s].rs2;
+                if (c == 0) continue;
+
+                int x = last_def_before(decoded, j, t2);
+                if (x < 0 || decoded[x].opcode != OP_XOR) continue;
+                if (defined_between(decoded, x, j, t2)) continue;
+
+                // Identify T and F from the inner XOR's operands
+                uint8_t T;
+                if (decoded[x].rs1 == f && decoded[x].rs2 != f) {
+                    T = decoded[x].rs2;
+                } else if (decoded[x].rs2 == f && decoded[x].rs1 != f) {
+                    T = decoded[x].rs1;
+                } else {
+                    continue;
+                }
+                if (T == 0) continue;
+                if (f == t2) continue;     // F's register destroyed by the inner XOR
+                // In-place inner XOR (t2 written over T's register) destroys
+                // T — but T is always recoverable at the fusion point as
+                // t2 ^ F, the exact values the literal blend XOR would read.
+                bool t_recover = (T == t2);
+
+                int i0 = last_def_before(decoded, s, c);
+                uint8_t cc;
+                if (i0 < 0 || !setcc_to_cc(decoded[i0].opcode, &cc))
+                    continue;
+                if (decoded[i0].format != FMT_R) continue;
+                if (defined_between(decoded, i0, s, c)) continue;
+
+                uint8_t a = decoded[i0].rs1, b = decoded[i0].rs2;
+                // Compare operands must be available at the fusion point,
+                // either live in their register or rematerializable
+                uint8_t a_op, a_src, b_op, b_src;
+                int32_t a_imm, b_imm;
+                if (!select_operand_route(ctx, decoded, pcs, inst_count,
+                                          i0, k, a, &a_op, &a_src, &a_imm))
+                    continue;
+                if (!select_operand_route(ctx, decoded, pcs, inst_count,
+                                          i0, k, b, &b_op, &b_src, &b_imm))
+                    continue;
+                // T and F must survive untouched until the fusion point
+                if (defined_between(decoded, x, k, T)) continue;
+                if (defined_between(decoded, x, k, f)) continue;
+
+                // An in-block back-edge landing strictly inside (setcc, XOR]
+                // would re-run the fused CMP with post-loop operand values
+                // while the literal chain would have kept the pre-loop mask.
+                bool backedge_splits = false;
+                for (int t = 0; t < ctx->backedge_target_count; t++) {
+                    uint32_t tpc = ctx->backedge_targets[t];
+                    if (tpc > pcs[i0] && tpc <= pcs[k]) {
+                        backedge_splits = true;
+                        break;
+                    }
+                }
+                if (backedge_splits) continue;
+
+                int n = ctx->select_fuse_count++;
+                ctx->select_fuse[n].xor_pc  = pcs[k];
+                ctx->select_fuse[n].rd      = fx->rd;
+                ctx->select_fuse[n].rT      = T;
+                ctx->select_fuse[n].rF      = f;
+                ctx->select_fuse[n].cmp_rs1 = a;
+                ctx->select_fuse[n].cmp_rs2 = b;
+                ctx->select_fuse[n].cond    = cc;
+                ctx->select_fuse[n].a_op    = a_op;
+                ctx->select_fuse[n].a_src   = a_src;
+                ctx->select_fuse[n].a_imm   = a_imm;
+                ctx->select_fuse[n].b_op    = b_op;
+                ctx->select_fuse[n].b_src   = b_src;
+                ctx->select_fuse[n].b_imm   = b_imm;
+                ctx->select_fuse[n].t_recover = t_recover ? 1 : 0;
+                goto next_xor;
+            }
+        }
+        next_xor:;
+    }
+}
+
 // Pre-scan block for back-edge detection and jump inlining boundaries.
 // With LRU demand-driven allocation, register counting and dead-temp
 // analysis are no longer needed — the cache naturally handles both.
@@ -613,6 +850,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
     uint32_t pc = start_pc;
     int inst_count = 0;
     decoded_inst_t decoded[MAX_BLOCK_INSTS];
+    uint32_t inst_pcs[MAX_BLOCK_INSTS];
 
     ctx->loop_written_regs = 0;
     ctx->loop_used_regs = 0;
@@ -627,6 +865,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         uint32_t raw = *(uint32_t *)(cpu->mem_base + pc);
         decoded_inst_t inst = decode_instruction(raw);
         decoded[inst_count] = inst;
+        inst_pcs[inst_count] = pc;
 
         // Stop at block-ending instructions
         bool is_block_end = false;
@@ -716,6 +955,10 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         pc += 4;
         inst_count++;
     }
+
+    // Recognize canonical mask-selects for CMP+CMOVcc fusion.
+    // Runs after the loop so backedge_targets is complete.
+    select_idiom_scan(ctx, decoded, inst_pcs, inst_count);
 }
 
 // Dead temporary elimination: flush any pending write to memory
@@ -892,6 +1135,7 @@ void translate_reset_for_block(translate_ctx_t *ctx, uint32_t guest_pc) {
     ctx->backedge_target_pc = 0;
     ctx->backedge_target_count = 0;
     ctx->backedge_snapshot_valid = false;
+    ctx->select_fuse_count = 0;
     
     // side_exit_pcs does not need a reset if side_exit_emitted is 0.
     // It is used as a linear buffer.
@@ -1369,6 +1613,117 @@ void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (hd == h1)       emit_xor_r32_r32(e, hd, h2);
     else if (hd == h2)  emit_xor_r32_r32(e, hd, h1);       // Commutative
     else { emit_mov_r32_r32(e, hd, h1); emit_xor_r32_r32(e, hd, h2); }
+}
+
+// Produce one compare operand for a select fusion into scratch reg `dst`:
+// either the register's live value or its rematerialized def (src <op> imm).
+// Runs before the CMP, so flag clobbering here is harmless.
+static void emit_select_cmp_operand(translate_ctx_t *ctx, x64_reg_t dst,
+                                    uint8_t op, uint8_t reg, int32_t imm) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_load_guest_reg(ctx, dst, reg);
+    switch (op) {
+        case 0:       break;
+        case OP_ADDI: emit_add_r32_imm32(e, dst, imm); break;
+        case OP_ANDI: emit_and_r32_imm32(e, dst, imm); break;
+        case OP_ORI:  emit_or_r32_imm32(e, dst, imm); break;
+        case OP_XORI: emit_xor_r32_imm32(e, dst, imm); break;
+        case OP_SLLI: if (imm & 0x1F) emit_shl_r32_imm8(e, dst, imm & 0x1F); break;
+        case OP_SRLI: if (imm & 0x1F) emit_shr_r32_imm8(e, dst, imm & 0x1F); break;
+        case OP_SRAI: if (imm & 0x1F) emit_sar_r32_imm8(e, dst, imm & 0x1F); break;
+    }
+}
+
+// Replace the blend-final XOR of a recognized mask-select with CMP+CMOVcc.
+// Returns true if fused (caller skips translate_xor). See select_idiom_scan.
+static bool try_select_fusion(translate_ctx_t *ctx, const decoded_inst_t *inst) {
+    if (ctx->select_fuse_count == 0) return false;
+    for (int n = 0; n < ctx->select_fuse_count; n++) {
+        if (ctx->select_fuse[n].xor_pc != ctx->guest_pc) continue;
+        if (ctx->select_fuse[n].rd != inst->rd) return false;    // shape drift
+
+        emit_ctx_t *e = &ctx->emit;
+
+        // Operands into stable scratch regs (cache slots never alias RAX/RCX;
+        // materialize_pending_cond uses the same discipline). The T/F loads
+        // sit between CMP and CMOVcc — they are guaranteed non-r0 by the
+        // scan, so emit_load_guest_reg emits only MOVs and flags survive.
+        uint8_t cc = ctx->select_fuse[n].cond;
+
+        if (!ctx->reg_cache_enabled) {
+            // Scratch-reg path: everything staged through RAX/RCX/RDX.
+            if (ctx->select_fuse[n].t_recover) {
+                emit_load_guest_reg(ctx, RDX, ctx->select_fuse[n].rT);  // rT holds t2
+                emit_load_guest_reg(ctx, RAX, ctx->select_fuse[n].rF);
+                emit_xor_r32_r32(e, RDX, RAX);                          // RDX = T
+            }
+            // a_src/b_src hold the operand register itself in the direct case
+            emit_select_cmp_operand(ctx, RAX, ctx->select_fuse[n].a_op,
+                                    ctx->select_fuse[n].a_src,
+                                    ctx->select_fuse[n].a_imm);
+            emit_select_cmp_operand(ctx, RCX, ctx->select_fuse[n].b_op,
+                                    ctx->select_fuse[n].b_src,
+                                    ctx->select_fuse[n].b_imm);
+            emit_cmp_r32_r32(e, RAX, RCX);
+            if (ctx->select_fuse[n].t_recover) {
+                emit_load_guest_reg(ctx, RCX, ctx->select_fuse[n].rF);
+                emit_cmovcc_r32_r32(e, cc, RCX, RDX);
+            } else {
+                emit_load_guest_reg(ctx, RAX, ctx->select_fuse[n].rT);
+                emit_load_guest_reg(ctx, RCX, ctx->select_fuse[n].rF);
+                emit_cmovcc_r32_r32(e, cc, RCX, RAX);  // RCX = cond ? T : F
+            }
+            emit_store_guest_reg(ctx, inst->rd, RCX);
+            select_fusion_count++;
+            return true;
+        }
+
+        // Reg-cache path: operate on cached host registers directly — the
+        // ideal shape is just CMP + CMOVcc. The reads below keep T/F/a/b as
+        // the 4 most-recently-used slots, so no rc_alloc here can evict
+        // them (REG_ALLOC_SLOTS is 8); evictions and cache-miss fills emit
+        // only MOVs, which preserve the CMP flags.
+        x64_reg_t hT;
+        if (ctx->select_fuse[n].t_recover) {
+            // T destroyed by an in-place T^F: recover T = t2 ^ F into RDX
+            // before the CMP (XOR clobbers flags)
+            emit_load_guest_reg(ctx, RDX, ctx->select_fuse[n].rT);      // rT holds t2
+            emit_xor_r32_r32(e, RDX, rc_read(ctx, ctx->select_fuse[n].rF));
+            hT = RDX;
+        } else {
+            hT = rc_read(ctx, ctx->select_fuse[n].rT);
+        }
+        x64_reg_t ha, hb;
+        if (ctx->select_fuse[n].a_op) {
+            emit_select_cmp_operand(ctx, RAX, ctx->select_fuse[n].a_op,
+                                    ctx->select_fuse[n].a_src,
+                                    ctx->select_fuse[n].a_imm);
+            ha = RAX;
+        } else {
+            ha = rc_read(ctx, ctx->select_fuse[n].cmp_rs1);
+        }
+        if (ctx->select_fuse[n].b_op) {
+            emit_select_cmp_operand(ctx, RCX, ctx->select_fuse[n].b_op,
+                                    ctx->select_fuse[n].b_src,
+                                    ctx->select_fuse[n].b_imm);
+            hb = RCX;
+        } else {
+            hb = rc_read(ctx, ctx->select_fuse[n].cmp_rs2);
+        }
+        emit_cmp_r32_r32(e, ha, hb);
+        x64_reg_t hF = rc_read(ctx, ctx->select_fuse[n].rF);
+        x64_reg_t hd = rc_write(ctx, inst->rd);
+        if (hd == hT) {
+            // rd aliases T: select F on the inverted condition instead
+            emit_cmovcc_r32_r32(e, cc ^ 1, hd, hF);
+        } else {
+            if (hd != hF) emit_mov_r32_r32(e, hd, hF);
+            emit_cmovcc_r32_r32(e, cc, hd, hT);
+        }
+        select_fusion_count++;
+        return true;
+    }
+    return false;
 }
 
 void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -4560,6 +4915,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     ctx->backedge_target_pc = 0;
     ctx->backedge_target_count = 0;
     ctx->backedge_snapshot_valid = false;
+    ctx->select_fuse_count = 0;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
 
     reg_alloc_reset(ctx);
@@ -4685,7 +5041,10 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             // Logical
             case OP_AND:  translate_and(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_OR:   translate_or(ctx, inst.rd, inst.rs1, inst.rs2); break;
-            case OP_XOR:  translate_xor(ctx, inst.rd, inst.rs1, inst.rs2); break;
+            case OP_XOR:
+                if (try_select_fusion(ctx, &inst)) break;
+                translate_xor(ctx, inst.rd, inst.rs1, inst.rs2);
+                break;
             case OP_ANDI: translate_andi(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_ORI:  translate_ori(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_XORI: translate_xori(ctx, inst.rd, inst.rs1, inst.imm); break;
@@ -5951,7 +6310,10 @@ retry_translate:
             // Logical
             case OP_AND:  translate_and(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_OR:   translate_or(ctx, inst.rd, inst.rs1, inst.rs2); break;
-            case OP_XOR:  translate_xor(ctx, inst.rd, inst.rs1, inst.rs2); break;
+            case OP_XOR:
+                if (try_select_fusion(ctx, &inst)) break;
+                translate_xor(ctx, inst.rd, inst.rs1, inst.rs2);
+                break;
             case OP_ANDI: translate_andi(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_ORI:  translate_ori(ctx, inst.rd, inst.rs1, inst.imm); break;
             case OP_XORI: translate_xori(ctx, inst.rd, inst.rs1, inst.imm); break;
