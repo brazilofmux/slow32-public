@@ -1227,8 +1227,41 @@ static void s32_disasm_one(uint32_t addr, uint32_t inst) {
 // Hot block dump
 // ============================================================================
 
+// S32_DBT_DUMP_PC=0x4C[,0x87FC...]: dump these blocks by guest PC even if
+// their dispatcher-entry exec_count is zero (chained blocks never count).
+static void dump_blocks_by_pc(block_cache_t *cache, uint8_t *mem_base,
+                              bool host_disasm) {
+    const char *spec = getenv("S32_DBT_DUMP_PC");
+    if (!spec || !spec[0]) return;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", spec);
+    for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+        uint32_t want = (uint32_t)strtoul(tok, NULL, 0);
+        for (uint32_t i = 0; i < cache->block_pool_used; i++) {
+            translated_block_t *b = &cache->block_pool[i];
+            if (b->host_code == NULL || b->guest_pc != want) continue;
+            uint32_t guest_insts = b->guest_size / 4;
+            fprintf(stderr,
+                    "\n=== Block 0x%08X%s — %u guest insts, %u host bytes, %u executions ===\n",
+                    b->guest_pc, (b->flags & BLOCK_FLAG_STAGE5) ? " [s5]" : "",
+                    guest_insts, b->host_size, b->exec_count);
+            fprintf(stderr, "  Guest:\n");
+            for (uint32_t j = 0; j < guest_insts; j++) {
+                uint32_t inst;
+                memcpy(&inst, mem_base + b->guest_pc + j * 4, 4);
+                s32_disasm_one(b->guest_pc + j * 4, inst);
+            }
+            if (host_disasm) {
+                fprintf(stderr, "  Host:\n");
+                dump_objdump(b->host_code, b->host_size, b->guest_pc);
+            }
+        }
+    }
+}
+
 void cache_dump_hot_blocks(block_cache_t *cache, uint8_t *mem_base,
                            int count, bool host_disasm) {
+    dump_blocks_by_pc(cache, mem_base, host_disasm);
     if (count <= 0) return;
     if (count > 64) count = 64;
 

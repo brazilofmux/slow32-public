@@ -87,6 +87,43 @@ hypotheses tested against the code and the clock:
   both. The rv32 backend's lazy rc_read (no prologue loads) and
   self-loop warm-entry are the visible structural differences left.
 
+**The probe ran (2026-08-23, same night). Leg 1 closes.** Done with
+`S32_DBT_DUMP_PC` (new: dump any translated block by guest PC — the
+`-d` counter only sees dispatcher entries, so chained blocks were
+invisible) and `/usr/bin/time -l`'s retired-instruction counters:
+
+- **Instruction-density parity with x64 is already real.** On
+  benchmark_core the a64 backend emits 2.24 host instructions per
+  guest instruction — the x64 backend's storied number is 2.27. At
+  0.67 host *cycles* per guest instruction on the M5, the "~6 vs
+  ~9.5 BIPS" framing this leg was declared under turns out to be a
+  cross-machine clock/µarch artifact, not a backend gap.
+- **The Forth-dispatch gap is real but latency-bound, and the M5
+  proves it:** `-U` cuts 33% of retired instructions and saves zero
+  cycles — IPC falls 7.9 → 5.1 as the spare-slot padding disappears.
+  Our NEXT block runs 12.3 host inst/guest inst vs rv32's ~7.5
+  (bounds checks, branch-over-fault, write-only prologue loads,
+  scratch-mov churn), and the M5 hides essentially all of it. The
+  residual 1.4× vs the rv32 sibling works out to ~2 cycles per
+  dispatch of critical-path difference — microarchitectural dust
+  (both DBTs even share the same block structure: rv32 also ends
+  blocks at plain `jal`). Chasing it is not worth a sitting.
+- **What this proves about leg 2:** dispatch cost on this machine is
+  *serial* — no amount of DBT-side instruction shaving removes it.
+  The 4× Forth win lives exactly where the plan put it: forthc
+  deleting the dispatch loop itself. Leg 1's measurement is leg 2's
+  justification.
+- Instruction-shaving items worth keeping for the *x64 fleet*
+  (narrow cores pay for width where the M5 doesn't): fault stubs
+  out-of-line via the existing deferred-exit machinery, write-only
+  prologue-load elision, loading guest memory straight into cache
+  registers. File under "when an x86 box feels slow," not now.
+
+Leg 1 verdict: dead RAS removed (877690a9), density parity
+confirmed, dispatch residue quantified at ~2 cycles/dispatch and
+deliberately left. The leg's remaining value is monitoring, not
+work. **Proceed to leg 2.**
+
 ## 2. forthc — the AOT Forth compiler
 
 Elevated from the curiosity shelf (1987-desk.md §8) to an engine-room
