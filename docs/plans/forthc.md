@@ -75,7 +75,11 @@ should approach 3–4× on dispatch-bound code.
   definitions into a linkable object; `hello.fth` → `hello.s32x`
   prints on all engines. *Gate: byte-for-byte identical output from
   slow32 / slow32-fast / slow32-dbt.* Directory `forthc/` is earned
-  here.
+  here. **LANDED 2026-08-23, the same evening as the charter** —
+  `forthc/forthc.fth` (~330 lines of Forth), gate green on all three
+  engines on the first compiled program's first run. Emits `.s` text
+  exactly as cc.fth does; lui/addi constant synthesis; the dot
+  routine rides `debug`.
 - **M2 — control flow and calls.** IF-family, BEGIN-family,
   DO/LOOP/+LOOP/I/J/LEAVE, colon calls, RECURSE, `>R R> R@`.
   `fib-only.fth` compiles. *Gate: fib(32) = 2178309 everywhere, and
