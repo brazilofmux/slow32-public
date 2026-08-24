@@ -97,6 +97,21 @@ static int hcg_va_save_size; /* varargs register save area size */
 /* Block labels */
 static int hcg_blk_lbl[HIR_MAX_BLOCK];
 
+/* --- Branch-target forwarding through empty trampoline blocks ---
+ * SSA critical-edge splitting leaves blocks whose entire content is
+ * one unconditional HI_BR — and they land between a loop header and
+ * its body in block-index order, so every loop iteration paid two
+ * extra instructions: a taken branch into the trampoline plus its
+ * jal (bcond -> jal -> jal).  hcg_fwd[b] names the block control
+ * actually reaches from b; branch emission resolves targets through
+ * it and skips the bodies of forwarded blocks.  hcg_next_emit[b] is
+ * the next non-forwarded block after b — the real fallthrough
+ * neighbor once trampolines stop being emitted. */
+static int hcg_fwd[HIR_MAX_BLOCK];
+static int hcg_next_emit[HIR_MAX_BLOCK];
+static int hcg_skip[HIR_MAX_BLOCK]; /* (always 0 now; see hcg_compute_fwd) */
+static int hcg_blk_pos[HIR_MAX_BLOCK]; /* estimated byte offset, over-estimated */
+
 /* Deferred jump-table emission (issue #32).  HI_JMPTAB dispatch is emitted
  * inline in .text, but the table of target addresses must live in a
  * readable section (.text is execute-only under W^X), so it is collected
@@ -386,7 +401,7 @@ static int hcg_dst(int idx) {
 static void hcg_maybe_spill(int idx) {
     int off;
     if (ra_reg[idx] >= 0) return;
-    if (hi_is_remat(h_kind[idx])) return;
+    if (hi_inst_remat(idx)) return;
     off = ra_spill_off[idx];
     if (off == 0) return;
     if (off >= -2048 && off <= 2047) {
@@ -970,6 +985,94 @@ static void hcg_emit_epilogue_inline(void) {
 
 /* --- Generate code for one HIR instruction (BURG-dispatched) --- */
 
+/* Conservatively: can a conditional branch in block a reach block b? */
+static int hcg_bnear(int a, int b) {
+    int d;
+    if (a < 0 || b < 0 || a >= bb_nblk || b >= bb_nblk) return 0;
+    d = hcg_blk_pos[a] - hcg_blk_pos[b];
+    if (d < 0) d = 0 - d;
+    return d < 2000;
+}
+
+/* --- Shared conditional-branch tail ---
+ * bt branches when the condition is TRUE (to the taken block), bf
+ * when it is FALSE, comparing r<ra> to r<rb>.  Picks the cheapest
+ * layout: when the true block is the fallthrough neighbor, one
+ * branch-if-false to the false block; when the false block is, one
+ * branch-if-true to the true block; else the generic
+ * branch-over-jump shape.  The direct shapes require phi-free
+ * targets — their edge copies would otherwise be skipped (critical
+ * edges are split, so conditional edges are copy-free in practice;
+ * the guard keeps this honest). */
+static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
+    int t;
+    int f;
+    int ft;
+    int ff;
+    int ne;
+    int skip;
+
+    t = h_src2[idx];
+    f = h_val[idx];
+    ft = hcg_fwd[t];
+    ff = hcg_fwd[f];
+    ne = hcg_next_emit[hcg_cur_blk];
+
+    if (ssa_phi_head[t] < 0 && ssa_phi_head[f] < 0) {
+        if (ft == ne && hcg_bnear(hcg_cur_blk, ff)) {
+            cg_s("    ");
+            cg_s(bf);
+            cg_s(" r");
+            cg_n(ra);
+            cg_s(", r");
+            cg_n(rb);
+            cg_s(", ");
+            cg_lref(hcg_blk_lbl[ff]);
+            cg_c(10);
+            hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            return;
+        }
+        if (ff == ne && hcg_bnear(hcg_cur_blk, ft)) {
+            cg_s("    ");
+            cg_s(bt);
+            cg_s(" r");
+            cg_n(ra);
+            cg_s(", r");
+            cg_n(rb);
+            cg_s(", ");
+            cg_lref(hcg_blk_lbl[ft]);
+            cg_c(10);
+            hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            return;
+        }
+    }
+
+    /* Generic: branch-if-false over the taken jump */
+    skip = cg_label();
+    cg_s("    ");
+    cg_s(bf);
+    cg_s(" r");
+    cg_n(ra);
+    cg_s(", r");
+    cg_n(rb);
+    cg_s(", ");
+    cg_lref(skip);
+    cg_c(10);
+    hcg_phi_copies(h_blk[idx], t);
+    cg_s("    jal r0, ");
+    cg_lref(hcg_blk_lbl[ft]);
+    cg_c(10);
+    cg_ldef(skip);
+    hcg_phi_copies(h_blk[idx], f);
+    if (ff >= bb_nblk || ff != ne) {
+        cg_s("    jal r0, ");
+        cg_lref(hcg_blk_lbl[ff]);
+        cg_c(10);
+    } else {
+        hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+    }
+}
+
 static void hcg_inst(int idx) {
     int k;
     int ty;
@@ -995,8 +1098,18 @@ static void hcg_inst(int idx) {
 
     k = h_kind[idx];
     if (k == HI_NOP) return;
-    if (hi_is_remat(k)) return;
+    if (hi_inst_remat(idx)) return;
     if (k == HI_PHI) return;
+
+    /* Promoted constant (h_no_remat): materialize once at the def. */
+    if (k == HI_ICONST) {
+        rd = hcg_dst(idx);
+        if (h_val[idx] == 0) cg_rri("addi", rd, 0, 0);
+        else if (hcg_is_i12(h_val[idx])) cg_rri("addi", rd, 0, h_val[idx]);
+        else hcg_li(rd, h_val[idx]);
+        hcg_maybe_spill(idx);
+        return;
+    }
 
     ty = h_ty[idx];
     s1 = h_src1[idx];
@@ -1663,11 +1776,14 @@ static void hcg_inst(int idx) {
 
     /* Branch (unconditional) */
     if (k == HI_BR) {
+        int tb;
         hcg_phi_copies(h_blk[idx], h_val[idx]);
-        /* Fallthrough elimination: skip jal if target is next block */
-        if (h_val[idx] != hcg_cur_blk + 1 || h_val[idx] >= bb_nblk) {
+        tb = hcg_fwd[h_val[idx]];
+        /* Fallthrough elimination: skip jal if target is the next
+         * emitted (non-forwarded) block */
+        if (tb >= bb_nblk || tb != hcg_next_emit[hcg_cur_blk]) {
             cg_s("    jal r0, ");
-            cg_lref(hcg_blk_lbl[h_val[idx]]);
+            cg_lref(hcg_blk_lbl[tb]);
             cg_c(10);
         } else {
             hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
@@ -1684,19 +1800,26 @@ static void hcg_inst(int idx) {
         int ra;
         int rb;
         char *brop;
+        char *bropt;
         int fall_blk;
 
         if (hcg_const_imm_inst(s1, &off)) {
             if (off != 0) {
+                int tb2;
                 hcg_phi_copies(h_blk[idx], s2);
-                cg_s("    jal r0, ");
-                cg_lref(hcg_blk_lbl[s2]);
-                cg_c(10);
-            } else {
-                hcg_phi_copies(h_blk[idx], h_val[idx]);
-                if (h_val[idx] != hcg_cur_blk + 1 || h_val[idx] >= bb_nblk) {
+                tb2 = hcg_fwd[s2];
+                if (tb2 >= bb_nblk || tb2 != hcg_next_emit[hcg_cur_blk]) {
                     cg_s("    jal r0, ");
-                    cg_lref(hcg_blk_lbl[h_val[idx]]);
+                    cg_lref(hcg_blk_lbl[tb2]);
+                    cg_c(10);
+                }
+            } else {
+                int tb2;
+                hcg_phi_copies(h_blk[idx], h_val[idx]);
+                tb2 = hcg_fwd[h_val[idx]];
+                if (tb2 >= bb_nblk || tb2 != hcg_next_emit[hcg_cur_blk]) {
+                    cg_s("    jal r0, ");
+                    cg_lref(hcg_blk_lbl[tb2]);
                     cg_c(10);
                 } else {
                     hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
@@ -1712,188 +1835,43 @@ static void hcg_inst(int idx) {
             ca = h_src1[cmp_idx];
             cb = h_src2[cmp_idx];
 
-            /* Determine inverted branch opcode and operand order.
-             * We branch to skip (fallthrough path) when condition is FALSE. */
-            ra = -1;
-            rb = -1;
-            brop = "bne"; /* default, overwritten below */
-
-            if (ck == HI_SEQ) {
-                brop = "bne";
+            if (ck == HI_SEQ || ck == HI_SNE || ck == HI_SLT ||
+                ck == HI_SGE || ck == HI_SLTU || ck == HI_SGEU) {
+                if (ck == HI_SEQ) { bropt = "beq"; brop = "bne"; }
+                else if (ck == HI_SNE) { bropt = "bne"; brop = "beq"; }
+                else if (ck == HI_SLT) { bropt = "blt"; brop = "bge"; }
+                else if (ck == HI_SGE) { bropt = "bge"; brop = "blt"; }
+                else if (ck == HI_SLTU) { bropt = "bltu"; brop = "bgeu"; }
+                else { bropt = "bgeu"; brop = "bltu"; }
                 ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
                 rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-            } else if (ck == HI_SNE) {
-                brop = "beq";
-                ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
-                rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-            } else if (ck == HI_SLT) {
-                brop = "bge";
-                ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
-                rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-            } else if (ck == HI_SGE) {
-                brop = "blt";
-                ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
-                rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-            } else if (ck == HI_SGT) {
-                /* a > b  => compute (b < a), skip if false */
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-                skip = cg_label();
-                cg_rrr("slt", 1, ra, rb);
-                cg_s("    beq r1, r0, ");
-                cg_lref(skip);
-                cg_c(10);
-                hcg_phi_copies(h_blk[idx], s2);
-                cg_s("    jal r0, ");
-                cg_lref(hcg_blk_lbl[s2]);
-                cg_c(10);
-                cg_ldef(skip);
-                hcg_phi_copies(h_blk[idx], h_val[idx]);
-                fall_blk = h_val[idx];
-                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
-                    cg_s("    jal r0, ");
-                    cg_lref(hcg_blk_lbl[fall_blk]);
-                    cg_c(10);
-                } else {
-                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
-                }
-                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
-                return;
-            } else if (ck == HI_SLE) {
-                /* a <= b => compute (b < a), skip if true */
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-                skip = cg_label();
-                cg_rrr("slt", 1, ra, rb);
-                cg_s("    bne r1, r0, ");
-                cg_lref(skip);
-                cg_c(10);
-                hcg_phi_copies(h_blk[idx], s2);
-                cg_s("    jal r0, ");
-                cg_lref(hcg_blk_lbl[s2]);
-                cg_c(10);
-                cg_ldef(skip);
-                hcg_phi_copies(h_blk[idx], h_val[idx]);
-                fall_blk = h_val[idx];
-                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
-                    cg_s("    jal r0, ");
-                    cg_lref(hcg_blk_lbl[fall_blk]);
-                    cg_c(10);
-                } else {
-                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
-                }
-                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
-                return;
-            } else if (ck == HI_SLTU) {
-                brop = "bgeu";
-                ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
-                rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-            } else if (ck == HI_SGEU) {
-                brop = "bltu";
-                ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
-                rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-            } else if (ck == HI_SGTU) {
-                /* a >u b => compute (b <u a), skip if false */
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-                skip = cg_label();
-                cg_rrr("sltu", 1, ra, rb);
-                cg_s("    beq r1, r0, ");
-                cg_lref(skip);
-                cg_c(10);
-                hcg_phi_copies(h_blk[idx], s2);
-                cg_s("    jal r0, ");
-                cg_lref(hcg_blk_lbl[s2]);
-                cg_c(10);
-                cg_ldef(skip);
-                hcg_phi_copies(h_blk[idx], h_val[idx]);
-                fall_blk = h_val[idx];
-                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
-                    cg_s("    jal r0, ");
-                    cg_lref(hcg_blk_lbl[fall_blk]);
-                    cg_c(10);
-                } else {
-                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
-                }
-                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
-                return;
-            } else if (ck == HI_SLEU) {
-                /* a <=u b => compute (b <u a), skip if true */
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-                skip = cg_label();
-                cg_rrr("sltu", 1, ra, rb);
-                cg_s("    bne r1, r0, ");
-                cg_lref(skip);
-                cg_c(10);
-                hcg_phi_copies(h_blk[idx], s2);
-                cg_s("    jal r0, ");
-                cg_lref(hcg_blk_lbl[s2]);
-                cg_c(10);
-                cg_ldef(skip);
-                hcg_phi_copies(h_blk[idx], h_val[idx]);
-                fall_blk = h_val[idx];
-                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
-                    cg_s("    jal r0, ");
-                    cg_lref(hcg_blk_lbl[fall_blk]);
-                    cg_c(10);
-                } else {
-                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
-                }
+                hcg_condbr_finish(idx, bropt, brop, ra, rb);
                 hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
                 return;
             }
-
-            skip = cg_label();
-            cg_s("    ");
-            cg_s(brop);
-            cg_s(" r");
-            cg_n(ra);
-            cg_s(", r");
-            cg_n(rb);
-            cg_s(", ");
-            cg_lref(skip);
-            cg_c(10);
-            hcg_phi_copies(h_blk[idx], s2);
-            cg_s("    jal r0, ");
-            cg_lref(hcg_blk_lbl[s2]);
-            cg_c(10);
-            cg_ldef(skip);
-            hcg_phi_copies(h_blk[idx], h_val[idx]);
-            fall_blk = h_val[idx];
-            if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
-                cg_s("    jal r0, ");
-                cg_lref(hcg_blk_lbl[fall_blk]);
-                cg_c(10);
-            } else {
-                hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            if (ck == HI_SGT || ck == HI_SGTU) {
+                /* a > b => r1 = (b < a); condition true when r1 != 0 */
+                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
+                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
+                if (ck == HI_SGT) brop = "slt"; else brop = "sltu";
+                cg_rrr(brop, 1, ra, rb);
+                hcg_condbr_finish(idx, "bne", "beq", 1, 0);
+                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
+                return;
             }
+            /* HI_SLE / HI_SLEU: a <= b => r1 = (b < a); true when r1 == 0 */
+            ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
+            rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
+            if (ck == HI_SLE) brop = "slt"; else brop = "sltu";
+            cg_rrr(brop, 1, ra, rb);
+            hcg_condbr_finish(idx, "beq", "bne", 1, 0);
             hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
             return;
         }
 
-        /* Unfused conditional branch (original path) */
+        /* Unfused conditional branch: materialized 0/1 condition */
         cond = hcg_src(s1, 1);
-        skip = cg_label();
-        cg_s("    beq r");
-        cg_n(cond);
-        cg_s(", r0, ");
-        cg_lref(skip);
-        cg_c(10);
-        hcg_phi_copies(h_blk[idx], s2);
-        cg_s("    jal r0, ");
-        cg_lref(hcg_blk_lbl[s2]);
-        cg_c(10);
-        cg_ldef(skip);
-        hcg_phi_copies(h_blk[idx], h_val[idx]);
-        fall_blk = h_val[idx];
-        if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
-            cg_s("    jal r0, ");
-            cg_lref(hcg_blk_lbl[fall_blk]);
-            cg_c(10);
-        } else {
-            hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
-        }
+        hcg_condbr_finish(idx, "bne", "beq", cond, 0);
         return;
     }
 
@@ -1940,7 +1918,7 @@ static void hcg_inst(int idx) {
         cg_jt_span[cg_njt] = span;
         t = 0;
         while (t < span) {
-            cg_jt_ent[cg_njt_ent] = hcg_blk_lbl[hjt_target[base + t]];
+            cg_jt_ent[cg_njt_ent] = hcg_blk_lbl[hjt_target[base + t]]; /* BISECT: no JT fwd */
             cg_njt_ent = cg_njt_ent + 1;
             t = t + 1;
         }
@@ -2111,6 +2089,192 @@ static void hcg_inst(int idx) {
     }
 }
 
+/* --- Promote big loop-used constants out of remat ---
+ * A big (non-i12) HI_ICONST is rematerialized as lui+addi at every
+ * use; when the use sits inside a loop that is two instructions per
+ * iteration for a loop-invariant value (bench_arith paid it on the
+ * Weyl increment).  Mark such constants h_no_remat: they get a
+ * register and one materialization at the def (constants live in
+ * the entry block, so the def IS the preheader).  A constant used
+ * only outside loops stays remat — no live-range cost. */
+static void hcg_mark_loop_consts(void) {
+    int i;
+    int j;
+    int k;
+    int b;
+    int inloop;
+    int a;
+    int p;
+
+    i = 0;
+    while (i < h_ninst) {
+        h_no_remat[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k != HI_NOP) {
+            b = h_blk[i];
+            inloop = 0;
+            if (b >= 0 && b < bb_nblk && licm_in_any_loop[b]) inloop = 1;
+            if (k == HI_PHI) {
+                /* A phi argument is used at the END of its incoming
+                 * predecessor block — the copy runs there. */
+                if (h_pbase[i] >= 0) {
+                    j = 0;
+                    while (j < h_pcnt[i]) {
+                        a = h_pval[h_pbase[i] + j];
+                        p = h_pblk[h_pbase[i] + j];
+                        if (a >= 0 && p >= 0 && p < bb_nblk &&
+                            licm_in_any_loop[p] &&
+                            h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a])) {
+                            h_no_remat[a] = 1;
+                        }
+                        j = j + 1;
+                    }
+                }
+            } else if (inloop) {
+                a = h_src1[i];
+                if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]))
+                    h_no_remat[a] = 1;
+                if (ho_src2_is_ref(k)) {
+                    a = h_src2[i];
+                    if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]))
+                        h_no_remat[a] = 1;
+                }
+                if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+                    j = 0;
+                    while (j < h_val[i]) {
+                        a = h_carg[h_cbase[i] + j];
+                        if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]))
+                            h_no_remat[a] = 1;
+                        j = j + 1;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+}
+
+/* --- Compute the trampoline-forwarding maps for this function ---
+ * A block forwards when it is nothing but one HI_BR: no phis, no
+ * LICM hoists, no value instructions — and its target has no phis
+ * (a phi target's edge copies live in the trampoline, so skipping
+ * it would skip them; in practice a copy-carrying trampoline never
+ * qualifies, and a phi-ful target keeps its preds intact).  Block 0
+ * never forwards: it is entered by fallthrough from the prologue,
+ * not by a branch that could be redirected. */
+static void hcg_compute_fwd(void) {
+    int b;
+    int i;
+    int k;
+    int tgt;
+    int ok;
+    int hops;
+    int nxt;
+
+    b = 0;
+    while (b < bb_nblk) {
+        hcg_fwd[b] = b;
+        b = b + 1;
+    }
+
+    b = 1;
+    while (b < bb_nblk) {
+        if (ssa_phi_head[b] < 0 && licm_head[b] < 0) {
+            tgt = -1;
+            ok = 1;
+            i = bb_start[b];
+            while (i < bb_end[b]) {
+                k = h_kind[i];
+                if (k == HI_BR) {
+                    if (tgt >= 0) { ok = 0; break; }
+                    tgt = h_val[i];
+                } else if (k != HI_NOP) {
+                    ok = 0;
+                    break;
+                }
+                i = i + 1;
+            }
+            if (ok && tgt >= 0 && tgt < bb_nblk && tgt != b &&
+                ssa_phi_head[tgt] < 0) {
+                hcg_fwd[b] = tgt;
+            }
+        }
+        b = b + 1;
+    }
+
+    /* Collapse chains (bounded; guards degenerate cycles) */
+    b = 0;
+    while (b < bb_nblk) {
+        tgt = hcg_fwd[b];
+        hops = 0;
+        while (hcg_fwd[tgt] != tgt && hops < 8) {
+            tgt = hcg_fwd[tgt];
+            hops = hops + 1;
+        }
+        hcg_fwd[b] = tgt;
+        b = b + 1;
+    }
+
+    /* Every block is emitted, forwarded or not: a fully-forwarded
+     * trampoline is 4 dead bytes of .text, and keeping it makes
+     * implicit fallthrough and branch-range questions moot.  (An
+     * earlier revision skipped them; the complexity wasn't worth
+     * four bytes.) */
+    b = 0;
+    while (b < bb_nblk) {
+        hcg_skip[b] = 0;
+        hcg_next_emit[b] = b + 1;
+        b = b + 1;
+    }
+
+    /* Estimated byte position of each block, deliberately
+     * OVER-estimated (24 bytes per HIR instruction, calls charged
+     * per argument, phi copies charged to the phi's own block).
+     * Conditional branches reach only +/-4096 bytes; a bcond may be
+     * redirected past a trampoline, or emitted in a direct
+     * fallthrough shape, ONLY when hcg_bnear says the target is
+     * conservatively within range.  The trampoline's jal (+/-1MB)
+     * remains the long-range path — that is what these blocks ARE:
+     * branch islands.  Over-estimation only costs an optimization,
+     * never correctness. */
+    nxt = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        hcg_blk_pos[b] = nxt;
+        nxt = nxt + 32;
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            k = h_kind[i];
+            if (k != HI_NOP) {
+                if (k == HI_CALL || k == HI_CALLP) {
+                    nxt = nxt + 24 + 8 * h_val[i];
+                } else {
+                    nxt = nxt + 24;
+                }
+            }
+            i = i + 1;
+        }
+        i = licm_head[b];
+        while (i >= 0) {
+            nxt = nxt + 24;
+            i = licm_next[i];
+        }
+        i = ssa_phi_head[b];
+        while (i >= 0) {
+            nxt = nxt + 24;
+            i = ssa_phi_next[i];
+        }
+        b = b + 1;
+    }
+}
+
+
+
 /* --- Generate code for one basic block --- */
 
 static void hcg_block(int b) {
@@ -2119,6 +2283,10 @@ static void hcg_block(int b) {
     int k;
     hcg_cur_blk = b;
     cg_ldef(hcg_blk_lbl[b]);
+
+    /* Skipped trampoline: every reference was redirected to its
+     * final target and nothing falls into it — emit only the label. */
+    if (hcg_skip[b]) return;
 
     /* Find the terminator (last non-NOP: BR/BRC/RET/JMPTAB) */
     term = -1;
@@ -2207,6 +2375,10 @@ static void hcg_func(Node *fn) {
     /* Loop-invariant code motion */
     hir_licm();
 
+    /* Promote big loop-used constants out of remat (needs the loop
+     * map hir_licm just built; must precede regalloc node creation) */
+    hcg_mark_loop_consts();
+
     /* BURG instruction selection: labels + selects patterns */
     hir_burg();
 
@@ -2246,6 +2418,9 @@ static void hcg_func(Node *fn) {
 
     /* Reset the one-shot param entry emission for this function */
     hcg_params_emitted = 0;
+
+    /* Branch-target forwarding through empty trampoline blocks */
+    hcg_compute_fwd();
 
     /* Allocate labels for blocks and epilog */
     b = 0;

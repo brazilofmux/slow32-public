@@ -706,7 +706,7 @@ static void ra_assign_spills(void) {
     i = 0;
     while (i < h_ninst) {
         if (ra_reg[i] < 0 && h_kind[i] != HI_NOP &&
-            hi_has_value(h_kind[i]) && !hi_is_remat(h_kind[i])) {
+            hi_has_value(h_kind[i]) && !hi_inst_remat(i)) {
             hl_temp_stack = hl_temp_stack + 4;
             ra_spill_off[i] = 0 - hl_temp_stack;
             ra_stat_spills = ra_stat_spills + 1;
@@ -929,7 +929,7 @@ static void gc_build(void) {
     while (i < ra_norder) {
         inst = ra_order[i];
         k = h_kind[inst];
-        if (hi_has_value(k) && !hi_is_remat(k) && k != HI_NOP) {
+        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
             if (gc_nnode < GC_MAX_NODE) {
                 n = gc_nnode;
                 gc_inst[n] = inst;
@@ -1732,8 +1732,12 @@ static void ra_mark_call_crossing(void) {
         }
 
         /* If this instruction produces a tracked value, add it to the active set.
-         * We use the same predicate that gc_build uses. */
-        if (hi_has_value(k) && !hi_is_remat(k) && k != HI_NOP) {
+         * We use the same predicate that gc_build uses — the INSTRUCTION-level
+         * remat query, so a promoted (h_no_remat) constant is tracked here too;
+         * missing it colored call-crossing constants from the caller-saved pool
+         * and they died at the first call (found via ssa_insert_phis's 32768
+         * bound landing in r6). */
+        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
             if (nact < HIR_MAX_INST) {
                 act[nact] = inst;
                 nact = nact + 1;
