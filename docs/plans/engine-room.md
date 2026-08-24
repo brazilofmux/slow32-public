@@ -396,6 +396,19 @@ is inst/iter — ≤35 makes apps viable, 28.5 is parity), extern-def
 fix folded in, then apps smallest-teeth-first, DOOM last, HW FP
 when the first double-using app or the ABI gate forces the issue.
 
+**First strike landed same day (5f7bb023): 63.1 → 34.4 inst/iter**
+(DBT cycles 561M → 188M; LLVM 154M — from 3.6× behind to 1.22×).
+The copy plague was three stacked latent bugs — backprop liveness
+over-extension (which had silently kept IRC coalescing from EVER
+firing in this backend), missing coalesced-color propagation at
+writeback, and per-param entry moves that clobber under register
+permutation (fixed with a cycle-safe hoisted entry sequence; found
+by strcmp comparing a string with itself). Gates: 56/56 incl.
+fixed-point, LLVM interop PASS, checksum exact. Still open, named:
+branch trampolines (bcond→jal→jal), loop-invariant constant remat
+(lui+addi per iteration) — worth ~4 inst/iter on bench_arith,
+i.e., most of the distance to LLVM parity.
+
 ## What not to do
 
 - No JIT, no runtime codegen, no W^X exceptions. Ruled, permanent.
