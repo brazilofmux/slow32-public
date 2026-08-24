@@ -84,8 +84,17 @@ Architecture support:
 
   | Host | benchmark_core @100M | Measured |
   |------|---------------:|----------|
-  | Apple M5 Max | **7.50 BIPS** | 2026-07-16 |
+  | Apple M5 Max | **8.26 BIPS** | 2026-08-23 (post dead-RAS removal; select fusion dormant pending idiom-canon fix, engine-room.md) |
+  | Apple M5 Max | 7.50 BIPS | 2026-07-16 |
   | Xeon 8259CL (EC2 m5.xlarge, virtualized) | **4.07 BIPS** | 2026-07-18 |
+
+  Same-day cross-reference (2026-08-23, same M5, medians of 5): the
+  rv32 sibling (`~/riscv/dbt/rv32-run`) measures 8.72 BIPS on its
+  benchmark_core @100M. July recorded that gap as 21% "cause unknown
+  and unprofiled"; the engine-room leg-1 profile closed it to 6%
+  per-guest-instruction and attributed the wall-clock remainder to
+  guest codegen (+14% instructions from our LLVM backend vs GCC-rv32
+  on identical kernels), not translation quality.
 
   Retired claims, for the record: **"~9.5 BIPS (x86-64)"** entered this file
   2026-07-02 (`c060f9c8`, the P2 doc-reconcile) with no in-repo measurement

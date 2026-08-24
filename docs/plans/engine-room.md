@@ -124,6 +124,14 @@ confirmed, dispatch residue quantified at ~2 cycles/dispatch and
 deliberately left. The leg's remaining value is monitoring, not
 work. **Proceed to leg 2.**
 
+**Scoreboard rerun (end of the same day, M5 Max, benchmark_core
+@100M, medians of 5):** slow32-dbt 8.26 BIPS (July's row: 7.50 —
++10% from this leg's work), rv32-run 8.72 BIPS (July: 9.10). The
+21%-"cause unknown" per-guest-instruction gap ~/riscv recorded on
+2026-07-16 is now 6% and attributed; roughly two-thirds of the
+remainder is the dormant select fusion (see the contract follow-up
+below). Canonical number home: docs/EMULATORS.md, dated rows only.
+
 **Coda (same night): the guest-codegen layer, measured.** The user's
 follow-up hypothesis — GCC generates easier-to-DBT rv32 code than
 our LLVM backend generates SLOW-32, so the DBT's hands are tied
