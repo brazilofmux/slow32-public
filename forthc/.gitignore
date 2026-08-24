@@ -1,0 +1,5 @@
+*.full.fth
+*.s
+*.s32o
+*.s32x
+!demo/ship.s32x
