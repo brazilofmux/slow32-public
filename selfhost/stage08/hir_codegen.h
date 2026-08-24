@@ -2563,11 +2563,20 @@ static void gen_data(void) {
         len = lex_str_len[i];
         j = 0;
         while (j < len) {
-            if (j > 0) cg_s(", ");
+            if (j > 0) {
+                /* Chunk long literals: the host assembler caps a line
+                 * at 512 tokens (doom's f_finale victory text is one
+                 * ~1800-byte string). */
+                if ((j & 15) == 0) cg_s("\n    .byte ");
+                else cg_s(", ");
+            }
             cg_n(sp[j] & 255);
             j = j + 1;
         }
-        if (j > 0) cg_s(", ");
+        if (j > 0) {
+            if ((j & 15) == 0) cg_s("\n    .byte ");
+            else cg_s(", ");
+        }
         cg_s("0\n");
         i = i + 1;
     }
@@ -2596,7 +2605,18 @@ static void gen_data(void) {
                         cg_n(ps_girel_idx[reli]);
                     } else {
                         cg_s("    .word ");
-                        cg_s(ps_gname[ps_girel_idx[reli]]);
+                        /* Named symbol relocs carry the target in
+                         * ps_girel_name; ps_girel_idx is 0 for them
+                         * (every named reloc used to emit gname[0] —
+                         * doom's doom_defaults pointed at stdin). */
+                        if (ps_girel_name[reli] != 0)
+                            cg_s(ps_girel_name[reli]);
+                        else
+                            cg_s(ps_gname[ps_girel_idx[reli]]);
+                        if (ps_girel_add[reli] != 0) {
+                            cg_c(43); /* '+' */
+                            cg_n(ps_girel_add[reli]);
+                        }
                     }
                     cg_c(10);
                     off = off + ps_girel_size[reli];

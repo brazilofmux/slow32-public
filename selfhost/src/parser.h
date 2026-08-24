@@ -10,6 +10,7 @@ static int find_typedef(char *name);
 static Node *parse_unary(void);
 static int parse_string_literal(void);
 static int parse_const_int(void);
+static int parse_const_unary(void);
 static void next(void);
 static void skip_gnu_attributes(void);
 
@@ -213,7 +214,7 @@ static char  ps_sl_buf[256];          /* scratch buffer for name mangling */
 static int   ps_sl_count;             /* global static-local counter */
 
 /* Array/struct initializer bytes for globals */
-#define PS_MAX_INIT_POOL 65536
+#define PS_MAX_INIT_POOL 262144  /* doom's tables.c initializes ~80KB of LUTs */
 static unsigned char ps_ginit_pool[PS_MAX_INIT_POOL];
 static int ps_ginit_start[P_MAX_GLOBALS]; /* -1 = no init bytes */
 static int ps_ginit_count[P_MAX_GLOBALS]; /* byte count */
@@ -229,6 +230,7 @@ static int ps_girel_off[PS_MAX_INIT_RELOCS];
 static int ps_girel_kind[PS_MAX_INIT_RELOCS];
 static int ps_girel_idx[PS_MAX_INIT_RELOCS];
 static int ps_girel_size[PS_MAX_INIT_RELOCS];
+static int   ps_girel_add[PS_MAX_INIT_RELOCS]; /* byte addend for GIRELOC_SYMBOL (&arr[k]) */
 static char *ps_girel_name[PS_MAX_INIT_RELOCS];
 static int ps_ngirelocs;
 
@@ -247,7 +249,13 @@ static int   ps_nconsts;
 #define PS_MAX_TYPEDEFS 1024
 static char *ps_tdname[PS_MAX_TYPEDEFS];
 static int   ps_tdtype[PS_MAX_TYPEDEFS];
+static int   ps_tdarr[PS_MAX_TYPEDEFS];  /* array typedefs: element count (0 = scalar) */
 static int   ps_ntypedefs;
+/* Set by parse_type: element count when the type came from an array
+ * typedef (typedef byte sha1_digest_t[20]); a declaration of that
+ * type must create a real array, not the decayed pointer (SHA1_Final
+ * wrote its digest through an uninitialized 4-byte 'pointer'). */
+static int   ps_type_arrcount;
 
 /* Function return type table (for 64-bit return value tracking) */
 #define PS_MAX_FUNCS 4096
@@ -400,6 +408,7 @@ static void add_typedef(char *name, int ty) {
     }
     ps_tdname[ps_ntypedefs] = strdup(name);
     ps_tdtype[ps_ntypedefs] = ty;
+    ps_tdarr[ps_ntypedefs] = 0;
     ps_ntypedefs = ps_ntypedefs + 1;
 }
 
@@ -764,6 +773,10 @@ static int parse_type(void) {
     int flex_member;
     int first_decl;
     char nm[256];
+    int mtdac;
+    mtdac = 0;
+    (void)mtdac;
+    ps_type_arrcount = 0;
     /* Skip const/volatile/signed/restrict qualifiers */
     while (1) {
         if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
@@ -907,6 +920,7 @@ static int parse_type(void) {
             bs[BF_UBITS] = 0;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
+                mtdac = ps_type_arrcount;
                 first_decl = 1;
                 flex_member = 0;
                 while (1) {
@@ -1047,6 +1061,13 @@ static int parse_type(void) {
                     arr_count = 0;
                     arr_ndims = 0;
                     arr_last = 0;
+                    if (mtdac > 0 && lex_tok != TK_LBRACK) {
+                        /* typedef byte sha1_digest_t[20]; member of that
+                         * type is a real array member (net_defs). */
+                        arr_count = mtdac;
+                        arr_ndims = 1;
+                        member_ty = ty_deref(member_ty);
+                    }
                     while (lex_tok == TK_LBRACK) {
                         next();
                         if (lex_tok == TK_RBRACK) {
@@ -1125,7 +1146,11 @@ static int parse_type(void) {
              * of struct keep each element naturally aligned.  The historical
              * "round to 4" rule is a special case of this when max_align <= 4. */
             st_align[si] = max_align;
-            if (max_align < 4) max_align = 4;
+            /* Size rounds to the struct's REAL alignment (C semantics,
+             * and clang's layout — the milestone-3 ABI ruling).  The old
+             * 4-byte floor made doom's all-shorts mappatch_t sizeof 12
+             * instead of 10, so mpatch++ strode past the on-disk data
+             * and the first multi-patch texture (COMP2) read garbage. */
             st_size[si] = ((off + max_align - 1) / max_align) * max_align;
         } else {
             /* Forward declaration or reference: struct Name (no brace) */
@@ -1331,7 +1356,6 @@ static int parse_type(void) {
             /* Round total size up to the union's alignment so that arrays
              * of union keep each element naturally aligned. */
             st_align[si] = max_align;
-            if (max_align < 4) max_align = 4;
             st_size[si] = ((max_sz + max_align - 1) / max_align) * max_align;
         } else {
             /* Forward declaration or reference: union Name (no brace) */
@@ -1343,12 +1367,16 @@ static int parse_type(void) {
         ty = TY_STRUCT_BASE + si;
     }
     else if (lex_tok == TK_IDENT) {
-        ty = find_typedef(lex_str);
-        if (ty < 0) { p_error("expected type"); return TY_INT; }
+        int tdi;
+        tdi = ps_ntypedefs - 1;
+        while (tdi >= 0 && strcmp(lex_str, ps_tdname[tdi]) != 0) tdi = tdi - 1;
+        if (tdi < 0) { p_error("expected type"); return TY_INT; }
+        ty = ps_tdtype[tdi];
+        ps_type_arrcount = ps_tdarr[tdi];
         next();
     }
     else { p_error("expected type"); return TY_INT; }
-    while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
+    while (lex_tok == TK_STAR) { ty = ty + TY_PTR; ps_type_arrcount = 0; next(); }
     return ty;
 }
 
@@ -1421,6 +1449,13 @@ static int add_local_array(char *name, int elem_ty, int count) {
     ps_larr[idx] = 1;
     ps_lcols[idx] = 0;
     ps_lsize[idx] = total;
+    /* The table is reused across functions: without this clear, a
+     * local array landing on a slot a previous function used for a
+     * STATIC local inherits ps_lstatic/ps_lsname and silently aliases
+     * that function's mangled global (doom: D_BindVariables' buf
+     * became D_Display.menuactivestate.1). */
+    ps_lstatic[idx] = 0;
+    ps_lsname[idx] = NULL;
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
 }
@@ -1556,6 +1591,24 @@ static int parse_const_primary(void) {
             return sv;
         }
     }
+    if (lex_tok == TK_FNUM) {
+        double fa;
+        int fop;
+        int rv;
+        int fw[2];
+        fw[0] = lex_val;
+        fw[1] = lex_fval_hi;
+        memcpy(&fa, fw, 8);
+        next();
+        while (lex_tok == TK_STAR || lex_tok == TK_SLASH) {
+            fop = lex_tok;
+            next();
+            rv = parse_const_unary();
+            if (fop == TK_STAR) fa = fa * (double)rv;
+            else fa = fa / (double)rv;
+        }
+        return (int)fa;
+    }
     if (lex_tok == TK_NUM || lex_tok == TK_CHARLIT) {
         ci = lex_val;
         next();
@@ -1572,6 +1625,13 @@ static int parse_const_primary(void) {
     return 0;
 }
 
+/* Compile-time FP constant folding for integer contexts: doom's
+ * am_map casts scaled FP constants to fixed_t in a global table,
+ * (fixed_t)(-.867*R).  A TK_FNUM primary folds an immediate * / /
+ * chain in double arithmetic, then truncates.  (Native doubles:
+ * host-built cross compilers use hardware FP; the stage07-built
+ * bootstrap lowers to the __fp64 soft-float calls it already
+ * links.) */
 static int parse_const_unary(void) {
     int ty;
     int sv_tok;
@@ -1637,8 +1697,10 @@ static int parse_const_mul(void) {
     return v;
 }
 
-/* Parse a compile-time constant integer (for initializers and array sizes) */
-static int parse_const_int(void) {
+/* Constant-expression precedence chain: mul < add < shift < and <
+ * xor < or.  Doom's headers lean on shifts ((1<<FRACBITS), (7<<29))
+ * and masks in constant initializers. */
+static int parse_const_add(void) {
     int v;
 
     v = parse_const_mul();
@@ -1650,6 +1712,56 @@ static int parse_const_int(void) {
             next();
             v = v - parse_const_mul();
         }
+    }
+    return v;
+}
+
+static int parse_const_shift(void) {
+    int v;
+
+    v = parse_const_add();
+    while (lex_tok == TK_LSHIFT || lex_tok == TK_RSHIFT) {
+        if (lex_tok == TK_LSHIFT) {
+            next();
+            v = v << parse_const_add();
+        } else {
+            next();
+            v = v >> parse_const_add();
+        }
+    }
+    return v;
+}
+
+static int parse_const_band(void) {
+    int v;
+
+    v = parse_const_shift();
+    while (lex_tok == TK_AMP) {
+        next();
+        v = v & parse_const_shift();
+    }
+    return v;
+}
+
+static int parse_const_bxor(void) {
+    int v;
+
+    v = parse_const_band();
+    while (lex_tok == TK_CARET) {
+        next();
+        v = v ^ parse_const_band();
+    }
+    return v;
+}
+
+/* Parse a compile-time constant integer (for initializers and array sizes) */
+static int parse_const_int(void) {
+    int v;
+
+    v = parse_const_bxor();
+    while (lex_tok == TK_PIPE) {
+        next();
+        v = v | parse_const_bxor();
     }
     return v;
 }
@@ -1698,6 +1810,9 @@ static void ps_ginit_finish(int gidx) {
     ps_girel_count[gidx] = ps_ngirelocs - ps_girel_start[gidx];
 }
 
+/* Track where the most recent reloc landed so an addend can be
+ * attached after insertion (insertion is position-sorted). */
+static int ps_girel_last_pos;
 static void ps_ginit_insert_reloc_at(int gidx, int rel_off, int kind,
                                      int idx, char *name, int sz) {
     int pos;
@@ -1713,11 +1828,14 @@ static void ps_ginit_insert_reloc_at(int gidx, int rel_off, int kind,
         ps_girel_off[i] = ps_girel_off[i - 1];
         ps_girel_kind[i] = ps_girel_kind[i - 1];
         ps_girel_idx[i] = ps_girel_idx[i - 1];
+        ps_girel_add[i] = ps_girel_add[i - 1];
         ps_girel_size[i] = ps_girel_size[i - 1];
         ps_girel_name[i] = ps_girel_name[i - 1];
         i = i - 1;
     }
     ps_girel_off[pos] = rel_off;
+    ps_girel_add[pos] = 0;
+    ps_girel_last_pos = pos;
     ps_girel_kind[pos] = kind;
     ps_girel_idx[pos] = idx;
     ps_girel_size[pos] = sz;
@@ -1730,9 +1848,34 @@ static void ps_ginit_add_reloc_at(int gidx, int rel_off, int kind, int idx, int 
     ps_ginit_insert_reloc_at(gidx, rel_off, kind, idx, NULL, sz);
 }
 
+/* Compile-time f64->f32 bit conversion (integer-only; truncating
+ * mantissa round, subnormals flush to zero).  For float globals with
+ * double literals: `float mouse_acceleration = 2.0;` */
+static int ps_f64_to_f32_bits(int lo, int hi) {
+    int sign;
+    int exp;
+    unsigned int mant;
+
+    sign = (hi >> 31) & 1;
+    exp = (hi >> 20) & 2047;
+    if (exp == 0) return sign << 31;                  /* zero/subnormal */
+    if (exp == 2047) {
+        if ((hi & 1048575) != 0 || lo != 0)
+            return (sign << 31) | 0x7FC00000;         /* nan */
+        return (sign << 31) | 0x7F800000;             /* inf */
+    }
+    exp = exp - 1023 + 127;
+    if (exp <= 0) return sign << 31;                  /* underflow */
+    if (exp >= 255) return (sign << 31) | 0x7F800000; /* overflow */
+    mant = (((unsigned int)hi & 1048575u) << 3) | (((unsigned int)lo >> 29) & 7u);
+    return (sign << 31) | (exp << 23) | (int)mant;
+}
+
 static void ps_ginit_add_sym_reloc_at(int gidx, int rel_off, char *name, int sz) {
     ps_ginit_insert_reloc_at(gidx, rel_off, GIRELOC_SYMBOL, 0, name, sz);
 }
+
+
 
 static int try_consume_type_cast(void) {
     int sv_tok;
@@ -1771,15 +1914,41 @@ static int try_consume_type_cast(void) {
 static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     char nm[256];
     int ci;
+    int amp;
+    int gi2;
+    int esz;
+    int sidx;
 
     while (try_consume_type_cast()) {
     }
-    if (lex_tok != TK_IDENT) return 0;
+    amp = 0;
+    if (lex_tok == TK_AMP) {
+        amp = 1;
+        next();
+        while (try_consume_type_cast()) {
+        }
+    }
+    if (lex_tok != TK_IDENT) {
+        if (amp) p_error("expected symbol after & in initializer");
+        return 0;
+    }
     ci = find_const(lex_str);
     if (ci >= 0) return 0;
     memcpy(nm, lex_str, lex_slen + 1);
     next();
     ps_ginit_add_sym_reloc_at(gidx, rel_off, nm, sz);
+    /* &sym[const]: address constant with a byte addend
+     * (tables.c: const fixed_t *finecosine = &finesine[FINEANGLES/4]) */
+    if (amp && lex_tok == TK_LBRACK) {
+        next();
+        sidx = parse_const_int();
+        expect(TK_RBRACK);
+        esz = 4;
+        gi2 = find_global(nm);
+        if (gi2 >= 0 && ty_is_ptr(ps_gtype[gi2]))
+            esz = ty_size(ty_deref(ps_gtype[gi2]));
+        ps_girel_add[ps_girel_last_pos] = sidx * esz;
+    }
     return 1;
 }
 
@@ -2034,6 +2203,15 @@ static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_
         return;
     }
     if (ty_is_ptr(ty) && parse_global_init_symbol_reloc_at(gidx, rel_off, ty_size(ty))) {
+        return;
+    }
+    /* Word-sized field initialized with a function or global name:
+     * doom's info.c state table stores action functions in a union
+     * whose member is a function-pointer typedef (flattened to int
+     * here), e.g. {SPR_SHTG,4,0,{A_Light0},...}. */
+    if (lex_tok == TK_IDENT && ty_size(ty) == 4 && find_const(lex_str) < 0 &&
+        (is_known_func(lex_str) || find_global(lex_str) >= 0)) {
+        parse_global_init_symbol_reloc_at(gidx, rel_off, 4);
         return;
     }
     v = parse_const_int();
@@ -2609,6 +2787,15 @@ static Node *parse_postfix(void) {
                 }
             }
             expect(TK_RPAREN);
+            /* C: (*f)(args) == f(args) for function pointers.  In this
+             * subset a function pointer VALUE is int-typed, so the
+             * no-op derefs to strip are exactly the STARs whose
+             * operand is NOT a real pointer.  A STAR over a pointer
+             * operand is a genuine element load (wipes[i] loads the
+             * slot; stripping it called the slot's ADDRESS). */
+            while (n->kind == ND_UNARY && n->op == TK_STAR &&
+                   n->lhs != NULL && !ty_is_ptr(n->lhs->ty))
+                n = n->lhs;
             n = nd_call_ptr(n, ahead, anargs);
         } else if (lex_tok == TK_LBRACK) {
             next();
@@ -2727,6 +2914,14 @@ static Node *parse_unary(void) {
         n = parse_unary();
         if (n->kind == ND_MEMBER && n->bit_width > 0) {
             p_error("cannot take address of bit-field");
+        }
+        /* &arr2d[i]: the first subscript of a 2D array already yields
+         * the row ADDRESS (an ADD node, not an lvalue).  C's pointer-
+         * to-row has the same numeric value, so the node stands as-is
+         * (m_menu's fread(&savegamestrings[i], ...)).  Plain &(a+b)
+         * is not legal C, so this only fires for that shape. */
+        if (n->kind == ND_BINOP && n->op == TK_PLUS) {
+            return n;
         }
         return nd_unary(TK_AMP, n);
     }
@@ -3303,10 +3498,15 @@ static void parse_typedef_decl(void) {
             return;
         }
         if (lex_tok == TK_LBRACK) {
+            int tdcount;
             next();
-            if (lex_tok != TK_RBRACK) parse_const_int();
+            tdcount = 0;
+            if (lex_tok != TK_RBRACK) tdcount = parse_const_int();
             expect(TK_RBRACK);
-            add_typedef(nm, ty + TY_PTR);  /* array typedefs decay to pointer use-sites here */
+            add_typedef(nm, ty + TY_PTR);
+            /* Object declarations of this type must materialize the
+             * array; parameters still decay. */
+            ps_tdarr[ps_ntypedefs - 1] = tdcount;
             skip_gnu_decl_suffixes();
             expect(TK_SEMI);
             return;
@@ -3318,6 +3518,7 @@ static void parse_typedef_decl(void) {
     }
 
 static Node *parse_stmt(void) {
+    int tdac;
     Node *n;
     Node *c;
     Node *t;
@@ -3509,28 +3710,12 @@ static Node *parse_stmt(void) {
         return n;
     }
 
-    /* case label */
+    /* case label: any constant expression (doom packs chars with
+     * shifts: case AM_MSGENTERED == (('a'<<24)+...)+('e'<<8)) */
     if (lex_tok == TK_CASE) {
         next();
         neg = 0;
-        if (lex_tok == TK_MINUS) {
-            neg = 1;
-            next();
-        }
-        if (lex_tok == TK_NUM || lex_tok == TK_CHARLIT) {
-            cv = lex_val;
-            next();
-        } else if (lex_tok == TK_IDENT) {
-            ci = find_const(lex_str);
-            if (ci < 0) {
-                p_error("undefined constant in case");
-            }
-            cv = ps_cval[ci];
-            next();
-        } else {
-            p_error("expected constant in case");
-            cv = 0;
-        }
+        cv = parse_const_int();
         if (neg) cv = 0 - cv;
         expect(TK_COLON);
         n = nd_new(ND_CASE);
@@ -3614,6 +3799,7 @@ static Node *parse_stmt(void) {
     /* local variable declaration */
     if (is_type()) {
         ty = parse_type();
+        tdac = ps_type_arrcount;
         skip_decl_qualifiers();
         /* Function pointer declaration: type (*name)(args); */
         if (lex_tok == TK_LPAREN) {
@@ -3625,6 +3811,74 @@ static Node *parse_stmt(void) {
             }
             memcpy(nm, lex_str, lex_slen + 1);
             next();
+            /* Array of function pointers: type (*name[N])(args)
+             * (f_wipe's static wipes[] table).  Elements are word-
+             * sized; a static one lives in .data with symbol-reloc
+             * initializers. */
+            if (lex_tok == TK_LBRACK) {
+                int fpcount;
+                int fpi;
+                char fpn[256];
+                next();
+                fpcount = -1;
+                if (lex_tok != TK_RBRACK) fpcount = parse_const_int();
+                expect(TK_RBRACK);
+                expect(TK_RPAREN);
+                if (lex_tok == TK_LPAREN) {
+                    next();
+                    while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+                    expect(TK_RPAREN);
+                }
+                if (!is_static) {
+                    p_error("non-static local fn-ptr arrays unsupported");
+                    return nd_num(0);
+                }
+                ps_mangle_static(ps_cur_func, nm);
+                sl_gi = add_global(ps_sl_buf, TY_INT + TY_PTR,
+                                   (fpcount >= 0) ? 4 * fpcount : 0);
+                ps_glocal[sl_gi] = 1;
+                if (lex_tok == TK_ASSIGN) {
+                    next();
+                    expect(TK_LBRACE);
+                    ps_ginit_begin(sl_gi);
+                    fpi = 0;
+                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                        if (fpi > 0) {
+                            expect(TK_COMMA);
+                            if (lex_tok == TK_RBRACE) break;
+                        }
+                        if (lex_tok != TK_IDENT) {
+                            p_error("expected function name in fn-ptr array init");
+                            return nd_num(0);
+                        }
+                        memcpy(fpn, lex_str, lex_slen + 1);
+                        next();
+                        ps_ginit_add_sym_reloc_at(sl_gi, fpi * 4, fpn, 4);
+                        fpi = fpi + 1;
+                    }
+                    if (lex_tok == TK_COMMA) next();
+                    expect(TK_RBRACE);
+                    if (fpcount < 0) fpcount = fpi;
+                    ps_gsize[sl_gi] = 4 * fpcount;
+                    ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
+                    ps_ginit_finish(sl_gi);
+                } else if (fpcount < 0) {
+                    p_error("fn-ptr array size required without initializer");
+                    return nd_num(0);
+                }
+                expect(TK_SEMI);
+                sl_li = ps_nlocals;
+                if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
+                ps_lname[sl_li] = strdup(nm);
+                ps_loff[sl_li] = 0;
+                ps_ltype[sl_li] = TY_INT + TY_PTR;
+                ps_larr[sl_li] = 1;
+                ps_lcols[sl_li] = 0;
+                ps_lstatic[sl_li] = 1;
+                ps_lsname[sl_li] = strdup(ps_sl_buf);
+                ps_nlocals = ps_nlocals + 1;
+                return nd_block(NULL);
+            }
             expect(TK_RPAREN);
             /* Skip parameter list */
             if (lex_tok == TK_LPAREN) {
@@ -3651,6 +3905,31 @@ static Node *parse_stmt(void) {
         next();
         skip_gnu_decl_suffixes();
 
+        /* Typedef'd array object: typedef byte sha1_digest_t[20];
+         * sha1_digest_t digest;  — materialize the array. */
+        if (tdac > 0 && lex_tok == TK_SEMI && !is_extern && !is_static) {
+            off = add_local_array(nm, ty_deref(ty), tdac);
+            next();
+            return nd_block(NULL);
+        }
+
+        /* Statement-scope function PROTOTYPE (doom's wi_stuff declares
+         * `void WI_unloadData(void);` inside a function).  Skip the
+         * parameter list; calls resolve like any direct call. */
+        if (lex_tok == TK_LPAREN) {
+            int pdepth;
+            pdepth = 0;
+            next();
+            pdepth = 1;
+            while (pdepth > 0 && lex_tok != TK_EOF) {
+                if (lex_tok == TK_LPAREN) pdepth = pdepth + 1;
+                if (lex_tok == TK_RPAREN) pdepth = pdepth - 1;
+                next();
+            }
+            expect(TK_SEMI);
+            return nd_block(NULL);
+        }
+
         /* Function-scope extern declaration: bind the name as global, but
          * do not allocate a stack local. */
         if (is_extern) {
@@ -3670,23 +3949,48 @@ static Node *parse_stmt(void) {
         /* Static local scalar: emit as global with mangled name */
         if (is_static && lex_tok != TK_LBRACK) {
             ps_mangle_static(ps_cur_func, nm);
-            sl_gi = add_global(ps_sl_buf, ty, 0);
+            sl_gi = add_global(ps_sl_buf, ty,
+                               ty_is_struct(ty) ? ty_size(ty) : 0);
             ps_glocal[sl_gi] = 1;
             if (lex_tok == TK_ASSIGN) {
                 next();
-                ps_ginit[sl_gi] = parse_const_int();
+                if (ty_is_struct(ty)) {
+                    /* static event_t st_notify = { ev_keyup, ... }
+                     * (am_map) — full struct initializer machinery. */
+                    ps_ginit_begin(sl_gi);
+                    parse_global_init_struct_at(ty, sl_gi, 0);
+                    ps_ginit_finish(sl_gi);
+                } else {
+                    ps_ginit[sl_gi] = parse_const_int();
+                }
+            }
+            /* Register, then loop on comma for further declarators:
+             * static int lastlevel = -1, lastepisode = -1; (am_map) */
+            while (1) {
+                sl_li = ps_nlocals;
+                if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
+                ps_lname[sl_li] = strdup(nm);
+                ps_loff[sl_li] = 0;
+                ps_ltype[sl_li] = ty;
+                ps_larr[sl_li] = 0;
+                ps_lstatic[sl_li] = 1;
+                ps_lsname[sl_li] = strdup(ps_sl_buf);
+                ps_nlocals = ps_nlocals + 1;
+                if (lex_tok != TK_COMMA) break;
+                next();
+                if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
+                memcpy(nm, lex_str, lex_slen + 1);
+                next();
+                ps_mangle_static(ps_cur_func, nm);
+                sl_gi = add_global(ps_sl_buf, ty,
+                                   ty_is_struct(ty) ? ty_size(ty) : 0);
+                ps_glocal[sl_gi] = 1;
+                if (lex_tok == TK_ASSIGN) {
+                    next();
+                    ps_ginit[sl_gi] = parse_const_int();
+                }
             }
             expect(TK_SEMI);
-            /* Add to local table for scoped name lookup */
-            sl_li = ps_nlocals;
-            if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
-            ps_lname[sl_li] = strdup(nm);
-            ps_loff[sl_li] = 0;
-            ps_ltype[sl_li] = ty;
-            ps_larr[sl_li] = 0;
-            ps_lstatic[sl_li] = 1;
-            ps_lsname[sl_li] = strdup(ps_sl_buf);
-            ps_nlocals = ps_nlocals + 1;
             return nd_block(NULL);
         }
 
@@ -3829,11 +4133,55 @@ static Node *parse_stmt(void) {
                         if (head == NULL) { head = a; tail = a; }
                         else { tail->next = a; tail = a; }
                     }
-                } else if (lex_tok == TK_LBRACE) {
-                    if (lcols2 > 0) {
-                        p_error("2D local array initializers unsupported (use static)");
+                } else if (lex_tok == TK_LBRACE && lcols2 > 0) {
+                    /* Local 2D char array with string rows:
+                     * char name[23][8] = { "e2m1", ... } (d_main).  Each
+                     * row gets its string's bytes, zero-padded to cols;
+                     * a string of exactly cols chars drops its NUL (C
+                     * semantics — doom's "spida1d1" needs this). */
+                    if ((ty & TY_BASE_MASK) != TY_CHAR || (ty & TY_PTR_MASK) != 0 || count < 0) {
+                        p_error("2D local array initializers support only char[N][M] with string rows");
                         return nd_num(0);
                     }
+                    off = add_local_array(nm, ty, count);
+                    ps_lcols[ps_nlocals - 1] = lcols2;
+                    head = NULL;
+                    tail = NULL;
+                    next();
+                    ci = 0;
+                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                        if (ci > 0) {
+                            expect(TK_COMMA);
+                            if (lex_tok == TK_RBRACE) break;
+                        }
+                        if (lex_tok != TK_STRING) {
+                            p_error("expected string row in 2D char array init");
+                            return nd_num(0);
+                        }
+                        sp_idx = parse_string_literal();
+                        sp = lex_strpool + lex_str_off[sp_idx];
+                        slen = lex_str_len[sp_idx];
+                        cv = 0;
+                        while (cv < lcols2) {
+                            n = nd_var(nm, off, ty + TY_PTR);
+                            n->is_local = 1;
+                            n->is_array = 1;
+                            a = nd_binop(TK_PLUS, n, nd_num(ci * lcols2 + cv));
+                            a = nd_unary(TK_STAR, a);
+                            a = nd_assign(a, nd_num((cv < slen) ? (sp[cv] & 255) : 0));
+                            a = nd_expr_stmt(a);
+                            if (head == NULL) { head = a; tail = a; }
+                            else { tail->next = a; tail = a; }
+                            cv = cv + 1;
+                        }
+                        ci = ci + 1;
+                    }
+                    if (lex_tok == TK_COMMA) next();
+                    expect(TK_RBRACE);
+                    expect(TK_SEMI);
+                    if (head != NULL) return nd_block(head);
+                    return nd_block(NULL);
+                } else if (lex_tok == TK_LBRACE) {
                     local_init_begin(nm, 0, ty + TY_PTR, 1);
                     count = parse_local_init_array_at(ty, count, 0);
                     head = ps_li_head;
@@ -4054,16 +4402,24 @@ static Node *parse_top_decl(void) {
         return NULL;
     }
 
-    /* Enum definition at top level */
+    /* Enum definition at top level.  `enum {...} name;` also declares
+     * an int variable of the anonymous enum type (doom's main_e /
+     * specials_e). */
     if (lex_tok == TK_ENUM) {
         next();
         parse_enum_def();
+        if (lex_tok == TK_IDENT) {
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            add_defined_global(nm, TY_INT, 0);
+        }
         expect(TK_SEMI);
         return NULL;
     }
 
     /* Parse return type / variable type */
     ty = parse_type();
+    g2cols = ps_type_arrcount;  /* reuse: typedef'd array element count */
     skip_decl_qualifiers();
 
     /* Bare struct definition: struct Foo { ... }; */
@@ -4091,6 +4447,7 @@ static Node *parse_top_decl(void) {
         skip_gnu_decl_suffixes();
         if (is_extern) idx = add_extern_global(nm, TY_INT, 0);
         else           idx = add_defined_global(nm, TY_INT, 0);
+        if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
         expect(TK_SEMI);
         return NULL;
     }
@@ -4104,6 +4461,17 @@ static Node *parse_top_decl(void) {
     next();
     skip_gnu_decl_suffixes();
 
+    /* Typedef'd array global: sha1_digest_t g;  — real array storage. */
+    if (g2cols > 0 && lex_tok == TK_SEMI) {
+        if (is_extern) idx = add_extern_global(nm, ty, ty_size(ty_deref(ty)) * g2cols);
+        else           idx = add_defined_global(nm, ty, ty_size(ty_deref(ty)) * g2cols);
+        if (is_static) ps_glocal[idx] = 1;
+        ps_gcols[idx] = 0;
+        next();
+        return NULL;
+    }
+    g2cols = 0;
+
     /* Global scalar(s): type name; type name = expr; or type a, b = expr; */
     if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN || lex_tok == TK_COMMA) {
         xty = ty;
@@ -4115,11 +4483,13 @@ static Node *parse_top_decl(void) {
                     idx = add_extern_global(nm, xty, ty_size(xty));
                 else
                     idx = add_defined_global(nm, xty, ty_size(xty));
+                    if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
             } else {
                 if (is_extern && !decl_had_init)
                     idx = add_extern_global(nm, xty, 0);
                 else
                     idx = add_defined_global(nm, xty, 0);
+                    if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
             }
             skip_gnu_decl_suffixes();
             if (lex_tok == TK_ASSIGN) {
@@ -4131,6 +4501,53 @@ static Node *parse_top_decl(void) {
                     ps_ginit_finish(idx);
                 } else if (lex_tok == TK_STRING) {
                     ps_gstr[idx] = parse_string_literal();
+                } else if (ty_is_fp(xty) &&
+                           (lex_tok == TK_FNUM ||
+                            (lex_tok == TK_MINUS && 1))) {
+                    /* float/double global with an FP literal initializer */
+                    {
+                        int fneg;
+                        int flo;
+                        int fhi;
+                        int fb;
+                        fneg = 0;
+                        if (lex_tok == TK_MINUS) { fneg = 1; next(); }
+                        if (lex_tok != TK_FNUM) p_error("expected float literal");
+                        flo = lex_val;
+                        fhi = lex_fval_hi;
+                        next();
+                        if (fneg) fhi = fhi ^ (1 << 31);
+                        ps_ginit_begin(idx);
+                        if (ty_is_double(xty)) {
+                            ps_ginit_emit_byte(flo & 255);
+                            ps_ginit_emit_byte((flo >> 8) & 255);
+                            ps_ginit_emit_byte((flo >> 16) & 255);
+                            ps_ginit_emit_byte((flo >> 24) & 255);
+                            ps_ginit_emit_byte(fhi & 255);
+                            ps_ginit_emit_byte((fhi >> 8) & 255);
+                            ps_ginit_emit_byte((fhi >> 16) & 255);
+                            ps_ginit_emit_byte((fhi >> 24) & 255);
+                        } else {
+                            fb = ps_f64_to_f32_bits(flo, fhi);
+                            ps_ginit_emit_byte(fb & 255);
+                            ps_ginit_emit_byte((fb >> 8) & 255);
+                            ps_ginit_emit_byte((fb >> 16) & 255);
+                            ps_ginit_emit_byte((fb >> 24) & 255);
+                        }
+                        ps_ginit_finish(idx);
+                    }
+                } else if (ty_is_ptr(xty) &&
+                           (lex_tok == TK_AMP ||
+                            (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
+                             find_global(lex_str) >= 0))) {
+                    /* Pointer global initialized with an address constant:
+                     * `const fixed_t *finecosine = &finesine[FINEANGLES/4];`
+                     * Route through the init-pool reloc machinery. */
+                    ps_ginit_begin(idx);
+                    if (!parse_global_init_symbol_reloc_at(idx, 0, ty_size(xty)))
+                        p_error("bad pointer initializer");
+                    ps_ginit_ensure_len(idx, ty_size(xty));
+                    ps_ginit_finish(idx);
                 } else {
                     ps_ginit[idx] = parse_const_int();
                     /* Sign-extend for long long globals */
@@ -4190,6 +4607,7 @@ static Node *parse_top_decl(void) {
             }
             require_complete_type(ty, "incomplete element type");
             idx = add_defined_global(nm, ty + TY_PTR, 0);
+            if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
             ps_gcols[idx] = g2cols;
             ps_ginit_begin(idx);
             count = parse_global_init_array2d_at(ty, (count >= 0) ? count / g2cols : -1,
@@ -4211,6 +4629,7 @@ static Node *parse_top_decl(void) {
                 if (count < 0) count = slen + 1;
                 require_complete_type(ty, "incomplete element type");
                 idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
+                if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
                 ps_ginit_begin(idx);
                 /* parse_string_literal already consumed the literal, so emit
                  * its bytes directly rather than calling the aggregate
@@ -4229,6 +4648,7 @@ static Node *parse_top_decl(void) {
                 ps_ginit_finish(idx);
             } else if (lex_tok == TK_LBRACE) {
                 idx = add_defined_global(nm, ty + TY_PTR, 0);
+                if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
                 ps_ginit_begin(idx);
                 count = parse_global_init_array_at(ty, count, idx, 0);
                 require_complete_type(ty, "incomplete element type");
@@ -4250,6 +4670,7 @@ static Node *parse_top_decl(void) {
             require_complete_type(ty, "incomplete element type");
             if (is_extern) idx = add_extern_global(nm, ty + TY_PTR, ty_size(ty) * count);
             else           idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
+            if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
             ps_gcols[idx] = g2cols;
         }
         expect(TK_SEMI);

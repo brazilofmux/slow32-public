@@ -394,6 +394,28 @@ static int hl_promote_to_f64(int val, int from_ty) {
     return r;
 }
 
+/* Unsigned 32-bit divide/modulo: SLOW-32 has only signed DIV/REM
+ * instructions, so unsigned goes through the platform libcalls
+ * (__udivsi3/__umodsi3 in libs32), matching clang.  A signed rem of
+ * a large unsigned value went negative — W_LumpNameHash's
+ * `hash % numlumps` sent every WAD lookup to the wrong bucket. */
+static int hl_udivmod32(int lv, int rv, int is_rem) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = lv;
+    h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = rv;
+    h_ncarg = h_ncarg + 1;
+    if (is_rem) {
+        r = hi_emit(HI_CALL, TY_INT | TY_UNSIGNED, -1, -1, 2, "__umodsi3");
+    } else {
+        r = hi_emit(HI_CALL, TY_INT | TY_UNSIGNED, -1, -1, 2, "__udivsi3");
+    }
+    h_cbase[r] = cb;
+    return r;
+}
+
 /* Map AST binary operator token to HIR instruction kind */
 static int hl_binop_kind(int op, int ty) {
     if (op == TK_PLUS) return HI_ADD;
@@ -1369,6 +1391,23 @@ static int hl_expr(Node *n) {
             /* Logical && || handled elsewhere */
         }
 
+        /* Pointer difference: (a - b) / elem_sz.  Scaling b like an
+         * index multiplied one POINTER by the element size — doom's
+         * `lump_p - lumpinfo` returned a huge negative "index" and
+         * every W_GetNumForName bombed as not-found. */
+        if (n->op == TK_MINUS && ty_is_ptr(n->lhs->ty) && ty_is_ptr(n->rhs->ty)) {
+            int diff;
+            elem_sz = ty_size(ty_deref(n->lhs->ty));
+            lv = hl_expr(n->lhs);
+            rv = hl_expr(n->rhs);
+            diff = hi_emit(HI_SUB, TY_INT, lv, rv, 0, NULL);
+            if (elem_sz > 1) {
+                scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
+                diff = hi_emit(HI_DIV, TY_INT, diff, scale, 0, NULL);
+            }
+            return diff;
+        }
+
         /* Pointer arithmetic: scale the integer operand */
         if ((n->op == TK_PLUS || n->op == TK_MINUS) && ty_is_ptr(n->lhs->ty)) {
             elem_sz = ty_size(ty_deref(n->lhs->ty));
@@ -1523,6 +1562,14 @@ static int hl_expr(Node *n) {
         lv = hl_expr(n->lhs);
         rv = hl_expr(n->rhs);
         kind = hl_binop_kind(n->op, n->ty);
+#ifndef S12CC_X64_HOST
+        /* SLOW-32 has only signed DIV/REM instructions; unsigned goes
+         * through the libs32 libcalls.  Cross hosts divide natively. */
+        if ((kind == HI_DIV || kind == HI_REM) && (n->ty & TY_UNSIGNED) &&
+            !ty_is_llong(n->ty)) {
+            return hl_udivmod32(lv, rv, kind == HI_REM);
+        }
+#endif
         return hi_emit(kind, n->ty, lv, rv, 0, NULL);
     }
 
@@ -1585,7 +1632,16 @@ static int hl_expr(Node *n) {
             return new_val;
         }
         kind = hl_binop_kind(n->op, n->ty);
+#ifndef S12CC_X64_HOST
+        if ((kind == HI_DIV || kind == HI_REM) && (n->ty & TY_UNSIGNED) &&
+            !ty_is_llong(n->ty)) {
+            new_val = hl_udivmod32(old_val, rv, kind == HI_REM);
+        } else {
+            new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
+        }
+#else
         new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
+#endif
         hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
         return new_val;
     }

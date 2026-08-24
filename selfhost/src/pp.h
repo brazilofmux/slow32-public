@@ -9,7 +9,7 @@
  * pp_install_predefs / next() specials).  Map: docs/DIALECT.md.
  */
 
-#define PP_MAX_DEFS  512
+#define PP_MAX_DEFS  2048  /* doom's header web defines >512 macros */
 #define PP_MAX_IF    16
 
 static char *pp_dname[PP_MAX_DEFS];
@@ -730,12 +730,39 @@ static void pp_define(void) {
 
     pp_skip_ws();
     c = lex_src[lex_pos];
-    /* Check if there's a value: digit, minus, or 0x */
+    /* Check if there's a value: digit, minus, or 0x — but ONLY when
+     * the number is the whole body.  `#define WEAPONTOP 32*FRACUNIT`
+     * used to store 32 and silently drop `*FRACUNIT` (doom's weapon
+     * never reached the top of the screen). */
     if ((c >= 48 && c <= 57) || c == 45) {
+        int save_pos;
+        int tail;
+        save_pos = lex_pos;
         val = pp_read_int();
+        pp_skip_ws();
+        tail = lex_src[lex_pos];
+        if (tail != 10 && tail != 13 && tail != 0 &&
+            !(tail == 47 && (lex_src[lex_pos + 1] == 47 ||
+                             lex_src[lex_pos + 1] == 42))) {
+            /* More than a number: store the full text body. */
+            lex_pos = save_pos;
+            bi = pp_read_body_text(pp_def_body);
+            pp_add(name, 0);
+            pp_dbody[pp_find(name)] = strdup(pp_def_body);
+            pp_skip_line();
+            pp_sync();
+            return;
+        }
     } else if (c == 10 || c == 13 || c == 0) {
-        /* No value — define as 1 */
-        val = 1;
+        /* No value: an empty macro must expand to NOTHING in text
+         * position (doom's `#define PACKEDATTR` branch expanded to
+         * "1" and broke `} PACKEDATTR name_t;`), while still
+         * existing for #ifdef.  Store an empty text body. */
+        pp_add(name, 0);
+        pp_dbody[pp_find(name)] = strdup("");
+        pp_skip_line();
+        pp_sync();
+        return;
     } else {
         /* Non-numeric value — store as text body */
         bi = pp_read_body_text(pp_def_body);
@@ -748,6 +775,39 @@ static void pp_define(void) {
     pp_skip_line();
     pp_add(name, val);
     pp_sync();
+}
+
+/* Command-line -DNAME[=value].  A bare name defines an empty text
+ * body (expands to nothing, exists for #ifdef); a numeric value
+ * defines an int; anything else a text body. */
+static void pp_add_cmdline_def(char *name, char *val) {
+    int i;
+    int neg;
+    int v;
+    int c;
+
+    if (val == 0 || val[0] == 0) {
+        pp_add(name, 0);
+        pp_dbody[pp_find(name)] = strdup("");
+        return;
+    }
+    i = 0;
+    neg = 0;
+    if (val[0] == 45) { neg = 1; i = 1; }
+    v = 0;
+    c = val[i];
+    while (c >= 48 && c <= 57) {
+        v = v * 10 + (c - 48);
+        i = i + 1;
+        c = val[i];
+    }
+    if (c == 0 && i > neg) {
+        if (neg) v = 0 - v;
+        pp_add(name, v);
+        return;
+    }
+    pp_add(name, 0);
+    pp_dbody[pp_find(name)] = strdup(val);
 }
 
 static void pp_undef(void) {

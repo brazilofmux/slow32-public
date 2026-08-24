@@ -154,6 +154,9 @@ static void print_iconst_nonimm_top_ops(int topn) {
     }
 }
 
+static char *s12_cmd_defs[32];
+static int s12_ncmd_defs;
+
 int main(int argc, char **argv) {
     int fd;
     int n;
@@ -167,6 +170,7 @@ int main(int argc, char **argv) {
     Node *prog;
 
     /* Parse arguments: [-I dir] input.c output.s */
+    s12_ncmd_defs = 0;
     pp_nidirs = 0;
     infile = 0;
     outfile = 0;
@@ -180,6 +184,13 @@ int main(int argc, char **argv) {
                 /* -I dir (with space) */
                 argi = argi + 1;
                 pp_add_idir(argv[argi]);
+            }
+        } else if (argv[argi][0] == 45 && argv[argi][1] == 68) {  /* "-D" */
+            /* -DNAME[=value] — recorded now, applied after pp init
+             * (pp_ndefs is reset below, which would wipe them). */
+            if (s12_ncmd_defs < 32) {
+                s12_cmd_defs[s12_ncmd_defs] = argv[argi] + 2;
+                s12_ncmd_defs = s12_ncmd_defs + 1;
             }
         } else if (argv[argi][0] == 45 && argv[argi][1] == 100 && argv[argi][2] == 0) {
             /* "-d" — dump regalloc intervals to stderr (Issue #31 diagnostic) */
@@ -225,6 +236,26 @@ int main(int argc, char **argv) {
     pp_dep = 0;
     ps_ntypedefs = 0;
     pp_set_source_file(infile);
+
+    /* Apply command-line -D defines now that the table is live. */
+    {
+        int di2;
+        char *dq;
+        int deq;
+        di2 = 0;
+        while (di2 < s12_ncmd_defs) {
+            dq = s12_cmd_defs[di2];
+            deq = 0;
+            while (dq[deq] != 0 && dq[deq] != 61) deq = deq + 1;
+            if (dq[deq] == 61) {
+                dq[deq] = 0;
+                pp_add_cmdline_def(dq, dq + deq + 1);
+            } else {
+                pp_add_cmdline_def(dq, 0);
+            }
+            di2 = di2 + 1;
+        }
+    }
 
     /* Read source file */
     fd = open(infile, 0);

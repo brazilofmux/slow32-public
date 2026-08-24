@@ -1359,6 +1359,12 @@ static void gc_select(void) {
                         int s1_node = gc_node[s1];
                         if (s1_node >= 0) {
                             int col = gc_color[s1_node];
+                            /* A call-crossing value must not inherit a
+                             * caller-saved color from its operand — the
+                             * call clobbers r3-r10 (W_LumpNameHash's
+                             * xor temp died across toupper()). */
+                            if (col >= RA_NCALLEE &&
+                                !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 gc_color[n] = col;
                                 ra_stat_operand_reuse = ra_stat_operand_reuse + 1;
@@ -1389,6 +1395,8 @@ static void gc_select(void) {
                         int s1_node = gc_node[s1];
                         if (s1_node >= 0) {
                             int col = gc_color[s1_node];
+                            if (col >= RA_NCALLEE &&
+                                !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
                                 if (phys < best_phys) {
@@ -1406,6 +1414,8 @@ static void gc_select(void) {
                         int s2_node = gc_node[s2];
                         if (s2_node >= 0) {
                             int col = gc_color[s2_node];
+                            if (col >= RA_NCALLEE &&
+                                !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
                                 if (phys < best_phys) {
@@ -1579,6 +1589,12 @@ static void gc_select(void) {
                 }
             }
 
+            if (s12cc_dump_intervals && gc_color[n] >= RA_NCALLEE &&
+                ra_crosses_call[inst]) {
+                fdputs("XVIOL select inst=", 2);
+                ra_dump_signed(inst);
+                fdputc(10, 2);
+            }
             if (gc_color[n] < 0) gc_wl[n] = GC_WL_SPILL;
 
             i = i - 1;
@@ -1594,6 +1610,14 @@ static void gc_select(void) {
     while (i < gc_nnode) {
         if (gc_wl[i] == GC_WL_COALESCED) {
             gc_color[i] = gc_color[gc_get_alias(i)];
+            if (s12cc_dump_intervals && ra_crosses_call[gc_inst[i]] &&
+                gc_color[i] >= RA_NCALLEE) {
+                fdputs("XVIOL coalesce inst=", 2);
+                ra_dump_signed(gc_inst[i]);
+                fdputs(" rep=", 2);
+                ra_dump_signed(gc_inst[gc_get_alias(i)]);
+                fdputc(10, 2);
+            }
         }
         i = i + 1;
     }
@@ -1819,6 +1843,8 @@ static void ra_dump_intervals(char *fname) {
         ra_dump_signed(h_src1[i]);
         fdputs(" s2=", 2);
         ra_dump_signed(h_src2[i]);
+        fdputs(" x=", 2);
+        ra_dump_signed(ra_crosses_call[i]);
         fdputc(10, 2);
         i = i + 1;
     }

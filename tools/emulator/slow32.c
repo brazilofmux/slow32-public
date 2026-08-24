@@ -285,6 +285,8 @@ static void cpu_set_policy(cpu_state_t *cpu, const svc_policy_t *policy) {
 }
 
 // Memory access functions using memory manager
+static void cpu_crash_dump(cpu_state_t *cpu);
+
 static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
     uint32_t value = 0;
     
@@ -315,6 +317,7 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
     if (mm_read(&cpu->mm, addr, &value, size) < 0) {
         fprintf(stderr, "Memory fault: Failed to read %d bytes at 0x%08X (PC=0x%08X SP=0x%08X)\n",
                 size, addr, cpu->pc, cpu->regs[REG_SP]);
+        cpu_crash_dump(cpu);
         cpu->halted = true;
         return 0;
     }
@@ -375,8 +378,39 @@ static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size)
     if (mm_write(&cpu->mm, addr, &data, size) < 0) {
         fprintf(stderr, "Memory fault: Failed to write %d bytes at 0x%08X (PC=0x%08X SP=0x%08X)\n",
                 size, addr, cpu->pc, cpu->regs[REG_SP]);
+        cpu_crash_dump(cpu);
         cpu->halted = true;
     }
+}
+
+
+// Crash mini-dump: registers + a return-address scan of the stack, so a
+// fault names its caller chain without an interactive session.
+static void cpu_crash_dump(cpu_state_t *cpu) {
+    int i;
+    // Opt-in via S32_CRASH_DUMP=1: the extra lines would otherwise land
+    // in every fault-message expected-output (regression bug-dbt-*).
+    const char *en = getenv("S32_CRASH_DUMP");
+    if (!en || en[0] != '1') return;
+    fprintf(stderr, "  lr=0x%08X fp=0x%08X\n", cpu->regs[31], cpu->regs[30]);
+    fprintf(stderr, "  args r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X\n",
+            cpu->regs[3], cpu->regs[4], cpu->regs[5], cpu->regs[6]);
+    // Scan the top of the stack for plausible code addresses (call chain).
+    fprintf(stderr, "  stack code-ptrs:");
+    {
+        uint32_t sp = cpu->regs[REG_SP];
+        int shown = 0;
+        for (i = 0; i < 64 && shown < 8; i++) {
+            uint32_t a = sp + (uint32_t)i * 4;
+            uint32_t v;
+            if (mm_read(&cpu->mm, a, &v, 4) < 0) break;
+            if (v > 16 && v < cpu->code_limit && (v & 3) == 0) {
+                fprintf(stderr, " [sp+%d]=0x%08X", i * 4, v);
+                shown++;
+            }
+        }
+    }
+    fprintf(stderr, "\n");
 }
 
 // Instruction fetch - optimized with single boundary check and fast path
