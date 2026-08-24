@@ -944,7 +944,9 @@ static void pp_include(void) {
         fdputc(10, 2);
         exit(1);
     } else {
-        /* Quoted: search source directory */
+        /* Quoted: search the source directory first, then fall back to
+         * the -I directories like a real C preprocessor (vecscope's
+         * quoted "tube.h" lives in -Iruntime/include). */
         pi = 0;
         fi = 0;
         while (pp_sdir[fi] != 0) {
@@ -959,7 +961,40 @@ static void pp_include(void) {
             fi = fi + 1;
         }
         path[pi] = 0;
-        pp_splice_file(path);
+        fd = open(path, 0);
+        if (fd >= 0) {
+            close(fd);
+            pp_splice_file(path);
+            return;
+        }
+        idir = 0;
+        while (idir < pp_nidirs) {
+            pi = 0;
+            fi = 0;
+            while (pp_idir[idir * PP_IDIR_LEN + fi] != 0) {
+                path[pi] = pp_idir[idir * PP_IDIR_LEN + fi];
+                pi = pi + 1;
+                fi = fi + 1;
+            }
+            fi = 0;
+            while (fname[fi] != 0) {
+                path[pi] = fname[fi];
+                pi = pi + 1;
+                fi = fi + 1;
+            }
+            path[pi] = 0;
+            fd = open(path, 0);
+            if (fd >= 0) {
+                close(fd);
+                pp_splice_file(path);
+                return;
+            }
+            idir = idir + 1;
+        }
+        fdputs("s12cc: cannot open include: ", 2);
+        fdputs(fname, 2);
+        fdputc(10, 2);
+        exit(1);
     }
 }
 

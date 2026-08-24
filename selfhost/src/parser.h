@@ -1786,6 +1786,7 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
 static void parse_global_init_value(int ty, int gidx);
 static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_off);
 static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base_rel);
+static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gidx, int base_rel);
 static void parse_global_init_struct_at(int ty, int gidx, int base_rel);
 
 static void parse_global_init_designator(int base_ty, int base_arr_count,
@@ -1914,6 +1915,35 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
     return count;
 }
 
+/* 2D array initializer: { {row}, {row}, ... }.  Each row is delegated
+ * to parse_global_init_array_at, which already handles both braced
+ * rows and C99 brace-elided flat rows.  Returns the row count (rows
+ * may come in as -1 for an inferred first dimension, as in
+ * vecscope's `static const int ship[][2] = {...}`). */
+static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gidx, int base_rel) {
+    int i;
+    int row_sz;
+
+    row_sz = ty_size(elem_ty) * cols;
+    expect(TK_LBRACE);
+    i = 0;
+    while (lex_tok != TK_EOF) {
+        if (lex_tok == TK_RBRACE) break;
+        if (i > 0) {
+            expect(TK_COMMA);
+            if (lex_tok == TK_RBRACE) break;
+        }
+        if (rows >= 0 && i >= rows) p_error("too many 2D initializer rows");
+        parse_global_init_array_at(elem_ty, cols, gidx, base_rel + i * row_sz);
+        i = i + 1;
+    }
+    if (lex_tok == TK_COMMA) next();
+    expect(TK_RBRACE);
+    if (rows < 0) rows = i;
+    ps_ginit_ensure_len(gidx, base_rel + rows * row_sz);
+    return rows;
+}
+
 static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
     int si;
     int nf;
@@ -1963,7 +1993,14 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
                 p_error("bit-field in struct initializer unsupported");
             field_ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
-            parse_global_init_value_at(field_ty, arr_count, gidx, base_rel + stm_off[mi]);
+            if (stm_arr_cols[mi] > 0 && lex_tok == TK_LBRACE) {
+                /* 2D member array: rows of cols elements */
+                parse_global_init_array2d_at(ty_deref(field_ty),
+                    arr_count / stm_arr_cols[mi], stm_arr_cols[mi],
+                    gidx, base_rel + stm_off[mi]);
+            } else {
+                parse_global_init_value_at(field_ty, arr_count, gidx, base_rel + stm_off[mi]);
+            }
             i = i + 1;
         }
         if (st_is_union[si]) break;
@@ -3223,6 +3260,63 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
 
 static Node *parse_block(void);
 
+/* Shared typedef declaration body (after the `typedef` keyword).
+ * Called from both file scope and statement scope — vecscope declares
+ * `typedef struct {...} key_t;` inside main.  Names register in the
+ * file-scope typedef table either way (fine for this C subset). */
+static void parse_typedef_decl(void) {
+    int ty;
+    char nm[256];
+        ty = parse_type();
+        if (lex_tok == TK_LPAREN) {
+            /* Function pointer typedef: typedef int (*Name)(args); */
+            next();  /* skip ( */
+            if (lex_tok == TK_STAR) next();  /* skip * */
+            if (lex_tok != TK_IDENT) {
+                p_error("expected typedef name");
+                return;
+            }
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            expect(TK_RPAREN);
+            /* Skip argument list */
+            expect(TK_LPAREN);
+            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+            expect(TK_RPAREN);
+            add_typedef(nm, TY_INT);  /* treat function pointers as int-sized */
+            expect(TK_SEMI);
+            return;
+        }
+        if (lex_tok != TK_IDENT) {
+            p_error("expected typedef name");
+            return;
+        }
+        memcpy(nm, lex_str, lex_slen + 1);
+        next();
+        if (lex_tok == TK_LPAREN) {
+            next();
+            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+            expect(TK_RPAREN);
+            add_typedef(nm, TY_INT);  /* function types decay to pointer use-sites here */
+            skip_gnu_decl_suffixes();
+            expect(TK_SEMI);
+            return;
+        }
+        if (lex_tok == TK_LBRACK) {
+            next();
+            if (lex_tok != TK_RBRACK) parse_const_int();
+            expect(TK_RBRACK);
+            add_typedef(nm, ty + TY_PTR);  /* array typedefs decay to pointer use-sites here */
+            skip_gnu_decl_suffixes();
+            expect(TK_SEMI);
+            return;
+        }
+        add_typedef(nm, ty);
+        skip_gnu_decl_suffixes();
+        expect(TK_SEMI);
+        return;
+    }
+
 static Node *parse_stmt(void) {
     Node *n;
     Node *c;
@@ -3237,6 +3331,7 @@ static Node *parse_stmt(void) {
     int off;
     int count;
     int count2;
+    int lcols2;
     int ci;
     int cv;
     int neg;
@@ -3498,6 +3593,12 @@ static Node *parse_stmt(void) {
     is_static = 0;
     is_extern = 0;
     skip_gnu_attributes();
+    /* Function-scope typedef (vecscope: typedef struct {...} key_t;) */
+    if (lex_tok == TK_TYPEDEF) {
+        next();
+        parse_typedef_decl();
+        return nd_block(NULL);
+    }
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_EXTERN ||
            lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
@@ -3597,6 +3698,7 @@ static Node *parse_stmt(void) {
                 count = parse_const_int();
             }
             expect(TK_RBRACK);
+            lcols2 = 0;
             while (lex_tok == TK_LBRACK) {
                 next();
                 count2 = -1;
@@ -3604,11 +3706,16 @@ static Node *parse_stmt(void) {
                     count2 = parse_const_int();
                 }
                 expect(TK_RBRACK);
-                if (count < 0 || count2 < 0) {
+                if (count2 < 0) {
                     p_error("array size required without initializer");
                     return nd_num(0);
                 }
-                count = count * count2;
+                if (lcols2 != 0) {
+                    p_error("arrays of more than 2 dimensions unsupported");
+                    return nd_num(0);
+                }
+                lcols2 = count2;
+                if (count >= 0) count = count * count2;
             }
             if (is_static) {
                 sp_idx = -1;
@@ -3645,6 +3752,7 @@ static Node *parse_stmt(void) {
                 sl_gi = add_global(ps_sl_buf, ty + TY_PTR,
                                    (count >= 0) ? ty_size(ty) * count : 0);
                 ps_glocal[sl_gi] = 1;
+                ps_gcols[sl_gi] = lcols2;
                 if (sp_idx >= 0) {
                     sp = lex_strpool + lex_str_off[sp_idx];
                     slen = lex_str_len[sp_idx];
@@ -3661,7 +3769,13 @@ static Node *parse_stmt(void) {
                     ps_ginit_finish(sl_gi);
                 } else if (neg) {
                     ps_ginit_begin(sl_gi);
-                    count = parse_global_init_array_at(ty, count, sl_gi, 0);
+                    if (lcols2 > 0) {
+                        count = parse_global_init_array2d_at(ty,
+                            (count >= 0) ? count / lcols2 : -1, lcols2, sl_gi, 0);
+                        count = count * lcols2;
+                    } else {
+                        count = parse_global_init_array_at(ty, count, sl_gi, 0);
+                    }
                     ps_gsize[sl_gi] = ty_size(ty) * count;
                     ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
                     ps_ginit_finish(sl_gi);
@@ -3673,6 +3787,7 @@ static Node *parse_stmt(void) {
                 ps_loff[sl_li] = 0;
                 ps_ltype[sl_li] = ty + TY_PTR;
                 ps_larr[sl_li] = 1;
+                ps_lcols[sl_li] = lcols2;
                 ps_lstatic[sl_li] = 1;
                 ps_lsname[sl_li] = strdup(ps_sl_buf);
                 ps_nlocals = ps_nlocals + 1;
@@ -3715,6 +3830,10 @@ static Node *parse_stmt(void) {
                         else { tail->next = a; tail = a; }
                     }
                 } else if (lex_tok == TK_LBRACE) {
+                    if (lcols2 > 0) {
+                        p_error("2D local array initializers unsupported (use static)");
+                        return nd_num(0);
+                    }
                     local_init_begin(nm, 0, ty + TY_PTR, 1);
                     count = parse_local_init_array_at(ty, count, 0);
                     head = ps_li_head;
@@ -3744,6 +3863,7 @@ static Node *parse_stmt(void) {
                     return nd_num(0);
                 }
                 off = add_local_array(nm, ty, count);
+                ps_lcols[ps_nlocals - 1] = lcols2;
             }
             expect(TK_SEMI);
             if (head != NULL) return nd_block(head);
@@ -3930,53 +4050,7 @@ static Node *parse_top_decl(void) {
     /* Typedef */
     if (lex_tok == TK_TYPEDEF) {
         next();
-        ty = parse_type();
-        if (lex_tok == TK_LPAREN) {
-            /* Function pointer typedef: typedef int (*Name)(args); */
-            next();  /* skip ( */
-            if (lex_tok == TK_STAR) next();  /* skip * */
-            if (lex_tok != TK_IDENT) {
-                p_error("expected typedef name");
-                return NULL;
-            }
-            memcpy(nm, lex_str, lex_slen + 1);
-            next();
-            expect(TK_RPAREN);
-            /* Skip argument list */
-            expect(TK_LPAREN);
-            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
-            expect(TK_RPAREN);
-            add_typedef(nm, TY_INT);  /* treat function pointers as int-sized */
-            expect(TK_SEMI);
-            return NULL;
-        }
-        if (lex_tok != TK_IDENT) {
-            p_error("expected typedef name");
-            return NULL;
-        }
-        memcpy(nm, lex_str, lex_slen + 1);
-        next();
-        if (lex_tok == TK_LPAREN) {
-            next();
-            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
-            expect(TK_RPAREN);
-            add_typedef(nm, TY_INT);  /* function types decay to pointer use-sites here */
-            skip_gnu_decl_suffixes();
-            expect(TK_SEMI);
-            return NULL;
-        }
-        if (lex_tok == TK_LBRACK) {
-            next();
-            if (lex_tok != TK_RBRACK) parse_const_int();
-            expect(TK_RBRACK);
-            add_typedef(nm, ty + TY_PTR);  /* array typedefs decay to pointer use-sites here */
-            skip_gnu_decl_suffixes();
-            expect(TK_SEMI);
-            return NULL;
-        }
-        add_typedef(nm, ty);
-        skip_gnu_decl_suffixes();
-        expect(TK_SEMI);
+        parse_typedef_decl();
         return NULL;
     }
 
@@ -4095,19 +4169,36 @@ static Node *parse_top_decl(void) {
         g2cols = 0;
         while (lex_tok == TK_LBRACK) {
             /* Global 2D array: flatten to rows*cols elements; record the
-             * column count so the first subscript scales by a whole row. */
+             * column count so the first subscript scales by a whole row.
+             * The first dimension may be omitted when an initializer
+             * infers it (T a[][C] = {...}). */
             next();
-            if (g2cols != 0 || count < 0) {
+            if (g2cols != 0) {
                 p_error("arrays of more than 2 dimensions unsupported");
                 return NULL;
             }
             g2cols = parse_const_int();
-            count = count * g2cols;
+            if (count >= 0) count = count * g2cols;
             expect(TK_RBRACK);
         }
         skip_gnu_decl_suffixes();
         if (g2cols > 0 && lex_tok == TK_ASSIGN) {
-            p_error("2D array initializers unsupported");
+            next();
+            if (lex_tok != TK_LBRACE) {
+                p_error("expected { in 2D array init");
+                return NULL;
+            }
+            require_complete_type(ty, "incomplete element type");
+            idx = add_defined_global(nm, ty + TY_PTR, 0);
+            ps_gcols[idx] = g2cols;
+            ps_ginit_begin(idx);
+            count = parse_global_init_array2d_at(ty, (count >= 0) ? count / g2cols : -1,
+                                                 g2cols, idx, 0);
+            count = count * g2cols;
+            ps_gsize[idx] = ty_size(ty) * count;
+            ps_ginit_ensure_len(idx, ps_gsize[idx]);
+            ps_ginit_finish(idx);
+            expect(TK_SEMI);
             return NULL;
         }
         if (lex_tok == TK_ASSIGN) {

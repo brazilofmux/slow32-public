@@ -1629,7 +1629,11 @@ static uint32_t tube_info_status(const tube_state_t *ts) {
     uint32_t st = (1u << (S32_TUBE_MODE_VEC - 1)) |
                   (1u << (S32_TUBE_MODE_FB - 1)) |
                   (1u << (S32_TUBE_MODE_PPU - 1));
-    if (ts->view_fd >= 0) {
+    if (ts->view_fd >= 0 || ts->dump_dir) {
+        /* A headless dump directory counts as an attached viewer:
+         * every presented frame is consumed (written to disk), so
+         * demos that politely wait for a viewer run under
+         * S32_TUBE_DUMP instead of timing out. */
         st |= (1u << 8);
     }
     st |= (1u << 16); /* version 1 */
