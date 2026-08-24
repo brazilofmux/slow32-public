@@ -141,6 +141,21 @@ should approach 3–4× on dispatch-bound code.
 - **M5 — turnkey and the showpiece.** A driver script (`forthc
   prog.fth prog.s32x`), docs, and one demo with teeth: `ship.fth`
   compiled — the vec arcade at native speed, tube words inlined.
+  **LANDED 2026-08-23 — five milestones, one charter, one day.**
+  The new machinery is **hosted mode** (`compile.sh --hosted`):
+  forthc emits `main` under crt0 + libc_mmio instead of its own
+  `_start`, preserving the C callee-saved registers it repurposes —
+  and because r27/r28 *are* callee-saved, the tube words are the
+  kernel's own ten-line C-call wrappers as inline templates
+  (TUBE-INIT/OPEN/CLOSE/PRESENT/INFO/STATUS/KEYS, MS via usleep).
+  HEX/DECIMAL landed as dual-effect words (compile-time parse radix
+  + runtime FBASE store, with `n BASE !` literal folding), which
+  brought the differential to **18/26 matched, 0 diverged** — the
+  8 remaining skips all interpreter-domain. `demo/ship.fth` is the
+  compiled flyable ship; the gate (`tests/run-tube-frames.sh`) runs
+  the same scene script — two headings, thrust, the DEFER-retargeted
+  pinwheel — through both worlds: **4 frames, compiled == DTC,
+  hash-identical, first try.** The arcade is native now.
 - **Parked until pulled:** DOES>, mixed compiled/DTC execution,
   cross-word inlining, peephole on emitted SLOW-32, forthc
   compiling itself (delicious, not load-bearing).

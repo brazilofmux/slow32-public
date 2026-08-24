@@ -24,7 +24,11 @@ filter() {
 
 for t in "$ROOT"/forth/tests/test-*.fth; do
     name="$(basename "$t" .fth)"
-    if ! bash "$FC_DIR/compile.sh" "$t" "$WORK/$name.s32x" \
+    MODE=""
+    case "$name" in
+        test-tube) MODE="--hosted" ;;   # tube words need the C runtime
+    esac
+    if ! bash "$FC_DIR/compile.sh" $MODE "$t" "$WORK/$name.s32x" \
             > "$WORK/$name.cc.log" 2>&1; then
         reason="$(grep -m1 "forthc:" "$WORK/$name.cc.log" | sed 's/forthc: //')"
         printf "SKIP: %-28s (%s)\n" "$name" "${reason:-compile failed}"

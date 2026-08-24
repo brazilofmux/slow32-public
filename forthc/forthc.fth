@@ -27,7 +27,10 @@ CREATE out-buf OUT-SZ ALLOT
 VARIABLE inp-len   VARIABLE ipos
 VARIABLE out-len
 VARIABLE fc-errors
-VARIABLE have-main
+VARIABLE have-main  VARIABLE main-id
+VARIABLE hosted-mode    \ emit `main` under crt0/libc_mmio, not _start
+VARIABLE fc-base        \ compile-time radix (HEX / DECIMAL)
+: HOSTED TRUE hosted-mode ! ;
 
 : FC-ERR ( addr u -- ) ." forthc: " TYPE CR 1 fc-errors +! ABORT ;
 
@@ -122,8 +125,12 @@ CREATE str-buf 256 ALLOT  VARIABLE str-len
         SRC-CH str-buf str-len @ + C!  1 str-len +!  1 ipos +!
     AGAIN ;
 
-\ --- number parsing (decimal, optional leading minus) ----------------
+\ --- number parsing (fc-base radix, optional leading minus) ----------
 VARIABLE num-acc  VARIABLE num-neg  VARIABLE num-ok
+: DIGIT-VAL ( ch -- v true | false )   \ 0-9 A-Z
+    DUP 48 58 WITHIN IF 48 - TRUE EXIT THEN
+    DUP 65 91 WITHIN IF 55 - TRUE EXIT THEN
+    DROP FALSE ;
 : TOK-NUM ( addr u -- n true | false )
     0 num-acc !  0 num-neg !  TRUE num-ok !
     DUP 0= IF 2DROP FALSE EXIT THEN
@@ -131,9 +138,9 @@ VARIABLE num-acc  VARIABLE num-neg  VARIABLE num-ok
         DUP 1 = IF 2DROP FALSE EXIT THEN
         1 num-neg !  1 - SWAP 1 + SWAP THEN
     0 ?DO
-        DUP I + C@ DUP 48 58 WITHIN 0= IF
-            DROP FALSE num-ok ! LEAVE THEN
-        48 - num-acc @ 10 * + num-acc !
+        DUP I + C@ DIGIT-VAL 0= IF FALSE num-ok ! LEAVE THEN
+        DUP fc-base @ >= IF DROP FALSE num-ok ! LEAVE THEN
+        num-acc @ fc-base @ * + num-acc !
     LOOP DROP
     num-ok @ IF num-acc @ num-neg @ IF NEGATE THEN TRUE
     ELSE FALSE THEN ;
@@ -217,6 +224,8 @@ CREATE ctl-stk 512 ALLOT   VARIABLE ctl-sp  0 ctl-sp !
 
 VARIABLE cur-id     \ current definition's word id (RECURSE)
 VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
+VARIABLE ll-val  VARIABLE ll-valid  VARIABLE ll-prev
+\ literal tracking: `n BASE !` folds n into the compile-time radix
 
 \ --- structure words -------------------------------------------------
 : C-IF    NEWLBL DUP EMIT-BEQZ 0 0 CT-IF CPUSH ;
@@ -509,6 +518,50 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     S" stw r28, r2, 4" ALINE
     S" stw r28, r3, 0" ALINE ;
 
+\ --- hosted-only primitives: C-ABI calls (r27/r28 are callee-saved,
+\ --- so the guest stacks survive — the DTC kernel's own trick) -------
+: ?HOSTED hosted-mode @ 0= IF
+    S" this word needs --hosted (crt0 + libc_mmio)" FC-ERR THEN ;
+: PUSH-R1  S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
+: P-TUBE-INIT   ?HOSTED S" jal r31, tube_init" ALINE PUSH-R1 ;
+: P-TUBE-CLOSE  ?HOSTED S" jal r31, tube_close" ALINE PUSH-R1 ;
+: P-TUBE-INFO   ?HOSTED S" jal r31, tube_info" ALINE PUSH-R1 ;
+: P-TUBE-STATUS ?HOSTED S" jal r31, tube_status" ALINE PUSH-R1 ;
+: P-TUBE-OPEN   ?HOSTED
+    S" ldw r3, r28, 0" ALINE
+    S" jal r31, tube_open" ALINE
+    S" stw r28, r1, 0" ALINE ;
+: P-TUBE-PRESENT ?HOSTED
+    S" ldw r5, r28, 0" ALINE   S" ldw r4, r28, 4" ALINE
+    S" ldw r3, r28, 8" ALINE   S" addi r28, r28, 8" ALINE
+    S" jal r31, tube_present" ALINE
+    S" stw r28, r1, 0" ALINE ;
+: P-TUBE-KEYS ?HOSTED
+    S" ldw r4, r28, 0" ALINE   S" ldw r3, r28, 4" ALINE
+    S" addi r28, r28, 4" ALINE
+    S" jal r31, tube_keys" ALINE
+    S" stw r28, r1, 0" ALINE ;
+: P-MS ?HOSTED
+    S" ldw r3, r28, 0" ALINE   S" addi r28, r28, 4" ALINE
+    S" addi r2, r0, 1000" ALINE
+    S" mul r3, r3, r2" ALINE
+    S" jal r31, usleep" ALINE ;
+
+\ HEX/DECIMAL set the compile-time parse radix AND, when the prelude
+\ has defined the BASE cell, the runtime print radix — both effects,
+\ like the kernel word.
+: EMIT-FBASE-ADDR
+    S" lui r1, %hi(FBASE)" ALINE
+    S" addi r1, r1, %lo(FBASE)" ALINE ;
+: P-BASE   \ push the address of the runtime radix cell
+    EMIT-FBASE-ADDR
+    S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
+: C-RADIX ( base -- )
+    DUP fc-base !
+    EMIT-FBASE-ADDR
+    S"     addi r2, r0, " OUT-STR OUT-SNUM OUT-NL
+    S" stw r1, r2, 0" ALINE ;
+
 : WANT-KIND ( k -- val )   \ next token must be a word of kind k
     NEXT-TOK DUP 0= IF S" name expected" FC-ERR THEN
     FIND-WORD 0= IF S" unknown word name" FC-ERR THEN
@@ -521,6 +574,7 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
 
 \ --- the compiler ----------------------------------------------------
 : COMPILE-TOK ( addr u -- )
+    ll-valid @ ll-prev !  FALSE ll-valid !
     2DUP S" DUP"  COMPARE 0= IF 2DROP P-DUP  EXIT THEN
     2DUP S" DROP" COMPARE 0= IF 2DROP P-DROP EXIT THEN
     2DUP S" SWAP" COMPARE 0= IF 2DROP P-SWAP EXIT THEN
@@ -606,7 +660,31 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     2DUP S" '"       COMPARE 0= IF 2DROP C-TICK    EXIT THEN
     2DUP S" [']"     COMPARE 0= IF 2DROP C-TICK    EXIT THEN
     2DUP S" ACTION-OF" COMPARE 0= IF 2DROP C-ACTION-OF EXIT THEN
-    2DUP TOK-NUM IF NIP NIP EMIT-LIT EXIT THEN
+    2DUP S" BASE"    COMPARE 0= IF 2DROP
+        NEXT-TOK 2DUP S" !" COMPARE 0= IF 2DROP
+            \ n BASE ! — store at runtime, and fold a known literal
+            \ into the compile-time parse radix
+            EMIT-FBASE-ADDR
+            S" ldw r2, r28, 0" ALINE  S" addi r28, r28, 4" ALINE
+            S" stw r1, r2, 0" ALINE
+            ll-prev @ IF ll-val @ fc-base ! THEN
+        ELSE
+            DUP 0<> IF 2DUP PUSHBACK THEN 2DROP
+            P-BASE
+        THEN EXIT THEN
+    2DUP S" HEX"     COMPARE 0= IF 2DROP 16 C-RADIX EXIT THEN
+    2DUP S" DECIMAL" COMPARE 0= IF 2DROP 10 C-RADIX EXIT THEN
+    2DUP S" TUBE-INIT"    COMPARE 0= IF 2DROP P-TUBE-INIT    EXIT THEN
+    2DUP S" TUBE-OPEN"    COMPARE 0= IF 2DROP P-TUBE-OPEN    EXIT THEN
+    2DUP S" TUBE-CLOSE"   COMPARE 0= IF 2DROP P-TUBE-CLOSE   EXIT THEN
+    2DUP S" TUBE-PRESENT" COMPARE 0= IF 2DROP P-TUBE-PRESENT EXIT THEN
+    2DUP S" TUBE-INFO"    COMPARE 0= IF 2DROP P-TUBE-INFO    EXIT THEN
+    2DUP S" TUBE-STATUS"  COMPARE 0= IF 2DROP P-TUBE-STATUS  EXIT THEN
+    2DUP S" TUBE-KEYS"    COMPARE 0= IF 2DROP P-TUBE-KEYS    EXIT THEN
+    2DUP S" MS"           COMPARE 0= IF 2DROP P-MS           EXIT THEN
+    2DUP TOK-NUM IF NIP NIP
+        DUP ll-val !  TRUE ll-valid !
+        EMIT-LIT EXIT THEN
     2DUP FIND-WORD IF
         2SWAP 2DROP                     ( val kind )
         DUP 0 = IF DROP EMIT-CALL EXIT THEN
@@ -627,7 +705,7 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     NEWLBL cur-exit !
     S" # : " OUT-STR 2DUP OUT-STR OUT-NL
     R@ EMIT-LABEL
-    S" MAIN" COMPARE 0= IF S" FMAIN:" RLINE TRUE have-main ! THEN
+    S" MAIN" COMPARE 0= IF R@ main-id ! TRUE have-main ! THEN
     R> DROP
     EMIT-PROLOGUE
     ctl-sp @ >R
@@ -642,23 +720,47 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     AGAIN ;
 
 : EMIT-PREAMBLE
-    S" # generated by forthc (M1)" RLINE
+    S" # generated by forthc" RLINE
     S" .text" RLINE
-    S" .global _start" RLINE
-    S" _start:" RLINE
-    S" lui r28, %hi(fdstack_top)" ALINE
-    S" addi r28, r28, %lo(fdstack_top)" ALINE
-    S" lui r27, %hi(frstack_top)" ALINE
-    S" addi r27, r27, %lo(frstack_top)" ALINE
-    S" jal r31, FMAIN" ALINE
-    S" addi r1, r0, 0" ALINE
-    S" halt" ALINE
+    hosted-mode @ IF
+        \ hosted: crt0 calls main; preserve the C callee-saved regs
+        \ we repurpose (r27/r28) plus lr, and return 0 to crt0.
+        S" .global main" RLINE
+        S" main:" RLINE
+        S" addi r29, r29, -16" ALINE
+        S" stw r29, r31, 0" ALINE
+        S" stw r29, r27, 4" ALINE
+        S" stw r29, r28, 8" ALINE
+        S" lui r28, %hi(fdstack_top)" ALINE
+        S" addi r28, r28, %lo(fdstack_top)" ALINE
+        S" lui r27, %hi(frstack_top)" ALINE
+        S" addi r27, r27, %lo(frstack_top)" ALINE
+        S" jal r31, FMAIN" ALINE
+        S" ldw r31, r29, 0" ALINE
+        S" ldw r27, r29, 4" ALINE
+        S" ldw r28, r29, 8" ALINE
+        S" addi r29, r29, 16" ALINE
+        S" addi r1, r0, 0" ALINE
+        S" jalr r0, r31, 0" ALINE
+    ELSE
+        S" .global _start" RLINE
+        S" _start:" RLINE
+        S" lui r28, %hi(fdstack_top)" ALINE
+        S" addi r28, r28, %lo(fdstack_top)" ALINE
+        S" lui r27, %hi(frstack_top)" ALINE
+        S" addi r27, r27, %lo(frstack_top)" ALINE
+        S" jal r31, FMAIN" ALINE
+        S" addi r1, r0, 0" ALINE
+        S" halt" ALINE
+    THEN
     S" " RLINE
-    S" # . : signed decimal + trailing space, via debug" RLINE
+    S" # . : signed number in current FBASE + trailing space, via debug" RLINE
     S" FDOT:" RLINE
     S" ldw r1, r28, 0" ALINE
     S" addi r28, r28, 4" ALINE
-    S" addi r5, r0, 10" ALINE
+    S" lui r5, %hi(FBASE)" ALINE
+    S" addi r5, r5, %lo(FBASE)" ALINE
+    S" ldw r5, r5, 0" ALINE
     S" bge r1, r0, FDOT_pos" ALINE
     S" addi r2, r0, 45" ALINE
     S" debug r2" ALINE
@@ -675,6 +777,10 @@ VARIABLE cur-exit   \ current definition's exit label (EXIT and ;)
     S" FDOT_out:" RLINE
     S" ldw r4, r28, 0" ALINE
     S" addi r28, r28, 4" ALINE
+    S" addi r6, r0, 10" ALINE
+    S" blt r4, r6, FDOT_dec" ALINE
+    S" addi r4, r4, 7" ALINE
+    S" FDOT_dec:" RLINE
     S" addi r4, r4, 48" ALINE
     S" debug r4" ALINE
     S" addi r3, r3, -1" ALINE
@@ -762,7 +868,8 @@ VARIABLE tc-init  VARIABLE tc-kind  VARIABLE tc-hi
 CREATE pnum 32 ALLOT   VARIABLE pnum-n
 : PNUM-FLUSH
     pnum-n @ 0 ?DO
-        >MAINB pnum I 4 * + @ EMIT-LIT >CODE
+        pnum I 4 * + @ DUP ll-val ! TRUE ll-valid !
+        >MAINB EMIT-LIT >CODE
     LOOP 0 pnum-n ! ;
 : PNUM-PUSH ( n -- )
     pnum-n @ 8 >= IF PNUM-FLUSH THEN
@@ -772,8 +879,9 @@ CREATE pnum 32 ALLOT   VARIABLE pnum-n
     -1 pnum-n +!  pnum pnum-n @ 4 * + @ ;
 
 : EMIT-POSTAMBLE
+    S" .data" RLINE
+    S" FBASE: .word 10" RLINE
     dat-len @ 0<> IF
-        S" .data" RLINE
         dat-buf dat-len @ OUT-STR THEN
     S" .bss" RLINE
     S" fdstack: .space 16384" RLINE
@@ -786,7 +894,7 @@ CREATE pnum 32 ALLOT   VARIABLE pnum-n
     2>R
     0 fc-errors !  FALSE have-main !  0 out-len !
     0 wt-len !  0 nwords !  0 nlabels !  0 ctl-sp !
-    0 dat-len !  0 ndat !
+    0 dat-len !  0 ndat !  10 fc-base !
     0 main-len !  0 pb-valid !  >CODE
     LOAD-SOURCE
     EMIT-PREAMBLE
@@ -806,24 +914,26 @@ CREATE pnum 32 ALLOT   VARIABLE pnum-n
         2DUP S" ,"         COMPARE 0= IF 2DROP PNUM-POP TOP-COMMA    ELSE
         2DUP S" C,"        COMPARE 0= IF 2DROP PNUM-POP TOP-CCOMMA   ELSE
         2DUP S" BYE"       COMPARE 0= IF 2DROP PNUM-FLUSH            ELSE
+        2DUP S" HEX"       COMPARE 0= IF 2DROP
+            PNUM-FLUSH >MAINB 16 C-RADIX >CODE                       ELSE
+        2DUP S" DECIMAL"   COMPARE 0= IF 2DROP
+            PNUM-FLUSH >MAINB 10 C-RADIX >CODE                       ELSE
         2DUP TOK-NUM IF NIP NIP PNUM-PUSH ELSE
             \ any other word: a top-level statement for the implicit
             \ MAIN; pending numbers precede it in source order
             PNUM-FLUSH
             >MAINB COMPILE-TOK >CODE
-        THEN THEN THEN THEN THEN THEN THEN THEN THEN THEN THEN THEN THEN
+        THEN THEN THEN THEN THEN THEN THEN THEN THEN THEN THEN THEN
+        THEN THEN THEN
     REPEAT 2DROP
     PNUM-FLUSH
-    main-len @ 0<> IF
-        have-main @ IF S" both MAIN and top-level statements" FC-ERR THEN
-        S" # implicit MAIN (top-level statements)" RLINE
-        S" FMAIN:" RLINE
-        EMIT-PROLOGUE
-        main-buf main-len @ OUT-STR
-        EMIT-EPILOGUE
-        TRUE have-main !
-    THEN
-    have-main @ 0= IF S" no MAIN defined" FC-ERR THEN
+    main-len @ 0<> have-main @ OR 0= IF S" no MAIN defined" FC-ERR THEN
+    S" # entry: top-level statements, then MAIN if defined" RLINE
+    S" FMAIN:" RLINE
+    EMIT-PROLOGUE
+    main-buf main-len @ OUT-STR
+    have-main @ IF main-id @ EMIT-CALL THEN
+    EMIT-EPILOGUE
     EMIT-POSTAMBLE
     2R> WRITE-OUTPUT
     ." forthc: " nwords @ . ." words, " out-len @ . ." bytes of assembly" CR ;

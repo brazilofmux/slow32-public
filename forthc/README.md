@@ -1,6 +1,6 @@
 # forthc — the native Forth compiler
 
-Charter and milestones: `docs/plans/forthc.md`. Status: **M4 landed.**
+Charter and milestones: `docs/plans/forthc.md`. Status: **M5 landed — the charter is complete.**
 
 forthc is a Forth program (`forthc.fth`) that runs on the DTC kernel
 the way `asm.fth` and `cc.fth` do, reads a closed-world Forth source
@@ -23,11 +23,13 @@ The measurement (heavy bench, medians of 7): compiled 86 ms vs DTC
 271 ms (3.8×), gforth 102 ms (beaten), gforth-fast 85 ms — **dead
 heat with native gforth, unoptimized**.
 
-M4: implicit MAIN lets unmodified kernel test files compile;
-`prelude-fc.fth` re-hosts the prelude in compilable Forth (the
-oracle's own definitions, verbatim); VALUE/DEFER/tick, doubles,
-strings, CASE, S"/.", pictured-lite. `tests/run-differential.sh`
-runs the kernel suite both ways: **15/26 compile and match the DTC
-oracle byte-for-byte, 0 divergences**; the 11 skips are
-interpreter-domain by nature. M5 next: turnkey + the compiled ship
-(tube words — linking against the runtime).
+M4/M5: implicit MAIN compiles unmodified kernel test files;
+`prelude-fc.fth` re-hosts the prelude in compilable Forth;
+VALUE/DEFER/tick, doubles, strings, CASE, S"/.", pictured with a
+runtime BASE. `tests/run-differential.sh`: **18/26 kernel-suite
+tests compile and match the DTC oracle byte-for-byte, 0
+divergences** (8 skips, all interpreter-domain). `--hosted` mode
+links under crt0 + libc_mmio with the tube words as the kernel's own
+C-call wrappers; `demo/ship.fth` is the compiled flyable ship, and
+`tests/run-tube-frames.sh` proves it: the same scene script through
+DTC and compiled worlds produces **hash-identical tube frames**.
