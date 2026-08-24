@@ -1534,7 +1534,11 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
     ctx.inline_lookup_enabled = true;  // Enable Stage 3 inline lookup
+#if defined(__aarch64__)
+    ctx.ras_enabled = false;  // dead on a64: see translate_a64.c translate_init
+#else
     ctx.ras_enabled = true;             // Enable Stage 3 Phase 2 RAS
+#endif
     uint64_t dispatch_iter = 0;
 
     while (!cpu->halted) {
@@ -1692,7 +1696,11 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
     ctx.inline_lookup_enabled = !(paranoid_mode || dbt_no_chain);
+#if defined(__aarch64__)
+    ctx.ras_enabled = false;  // dead on a64: see translate_a64.c translate_init
+#else
     ctx.ras_enabled = !(paranoid_mode || dbt_no_chain);
+#endif
     // SLOW32_PARANOID_SB=1 keeps superblocks on under paranoid — the shadow
     // chases in-block control flow, so superblocks verify like-for-like.
     {

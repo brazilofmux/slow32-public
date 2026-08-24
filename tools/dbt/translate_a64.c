@@ -712,7 +712,15 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
     ctx->cache = cache;  // Stage 2 mode
     ctx->block = NULL;
     ctx->inline_lookup_enabled = true;   // Stage 3: inline hash-probe lookup
-    ctx->ras_enabled = true;              // Stage 3: return address stack
+    // RAS disabled on AArch64 (2026-08-23): emit_ras_predict here never
+    // consumed its prediction — it popped the stack, compared, discarded
+    // the flags, and fell into the generic inline probe anyway. That cost
+    // ~10 dead insts per return plus ~7 per call for emit_ras_push, in
+    // the hottest block of every call-heavy workload (Forth EXIT was 26
+    // host insts; the rv32 sibling does the same job in 11 with no RAS).
+    // If a real RAS is ever wanted, port the x64 one properly — on hit it
+    // must shortcut, not re-probe.
+    ctx->ras_enabled = false;
     ctx->superblock_enabled = true;
     ctx->superblock_depth = 0;
     ctx->side_exit_info_enabled = false;

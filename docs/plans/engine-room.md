@@ -52,19 +52,40 @@ hypotheses tested against the code and the clock:
   keep. (Methodology note: the first A/B used a wrong flag spelling
   and produced a fantasy 15× — caught because the harness validates
   output. Always validate output.)
-- **The register cache: it.** `translate.c` (x64) has the regcache
-  (96 references; part of its 9.5 BIPS). `translate_a64.c` has
-  *none* — every guest-register operand is an `ldr`/`str` against
-  the context struct. The RISC-V sibling's a64 backend has a proper
-  LRU regcache (`rc_read`/`rc_write`, pinned host regs, hardwired
-  WZR) — that is its edge on identical silicon, not the ISA.
+- ~~The register cache: it.~~ **RETRACTED, same night.** The a64
+  backend HAS the regcache — under its own vocabulary
+  (`reg_alloc`/`resolve_src`, 82 uses, 7 callee-saved slots, prescan,
+  dirty tracking) — and it works: `-R` costs 40% on benchmark_core.
+  The original claim came from grepping the other two codebases'
+  names for it. Lesson re-learned: grep the file's own vocabulary
+  before declaring absence.
 
-Leg 1's work item is therefore crisp: **port the register cache to
-`translate_a64.c`**, with two in-house reference implementations —
-our own x64 backend for the invariants, the RISC-V a64 backend for
-the same-host-architecture shape. Verified by `run-differential.sh`
-and the fleet of golden tests (reel, doom timedemo, forth suite),
-measured by the same three workloads, medians of five.
+**Corrected findings (2026-08-23, late), each measured:**
+
+- **The a64 RAS was dead weight — removed.** `emit_ras_predict`
+  popped the return-address stack, compared predicted vs actual, and
+  *discarded the flags* — every return then fell into the generic
+  probe anyway (the function's own comments talk themselves out of
+  using the prediction, but the emission stayed). ~10 dead insts per
+  return + ~7 per call. Forth EXIT block: 104 → 68 host bytes.
+  Wall-clock effect on the M5: ~2% on the Forth bench — the wide
+  core was absorbing most of the waste. Disabled arch-scoped in
+  dbt.c + translate_a64.c; x64's real RAS untouched. Full battery
+  green (regression 77, differential 73/4-allowlisted, forth 26,
+  reel goldens, doom timedemo hash).
+- **The rv32 sibling's edge, decomposed** (identical bench, guest
+  inst counts within 1%): fib-only (dispatch/call/return dense)
+  1.43×; nested loops 1.19×; whole Forth bench 1.34×. Not checks
+  (`-U` flat), not superblocks (`-S` slightly worse off), not the
+  regcache (`-R` flat on Forth — per-block caching can't help
+  4-inst blocks). The gap is concentrated in the emitted
+  dispatch-path code itself.
+- **Next probe, for a fresh sitting:** side-by-side host code of
+  NEXT/DOCOL/(LOOP) blocks, ours vs rv32's, instruction-by-
+  instruction on the serial dependency chain (the indirect-probe
+  path is ~4 dependent loads deep); count host insts/dispatch on
+  both. The rv32 backend's lazy rc_read (no prologue loads) and
+  self-loop warm-entry are the visible structural differences left.
 
 ## 2. forthc — the AOT Forth compiler
 
