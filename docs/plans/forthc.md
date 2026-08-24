@@ -160,6 +160,21 @@ should approach 3–4× on dispatch-bound code.
   cross-word inlining, peephole on emitted SLOW-32, forthc
   compiling itself (delicious, not load-bearing).
 
+## Where forthc does not go (ruled 2026-08-23, day of completion)
+
+**Not into selfhost/stage01, ever.** The user's argument, endorsed
+and sharpened: the stage01 tools are run-once batch work with no
+runtime to win (the full leg rebuilds in under a second); using
+compiled tools *adds* a forthc compile step or a cached artifact
+with its own regeneration and sum-verification burden — net slower;
+`asm.fth`/`cc.fth` are interpreter-hosted by design and outside the
+closed world; and above all, the bootstrap's tiny trusted seed
+(s32-emu + kernel.s32x + prelude.fth) is the purity argument itself
+— inserting a compiler between seed and toolchain enlarges the
+auditable base for zero benefit. The DTC kernel's slowness in
+stage01 is a feature: it is the simplicity you can read. forthc is
+a *product* of the bootstrap, never a component of it.
+
 ## What not to do
 
 - No runtime codegen, no dictionary-in-the-image, no "small
