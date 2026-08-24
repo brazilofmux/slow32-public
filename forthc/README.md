@@ -1,6 +1,6 @@
 # forthc — the native Forth compiler
 
-Charter and milestones: `docs/plans/forthc.md`. Status: **M3 landed.**
+Charter and milestones: `docs/plans/forthc.md`. Status: **M4 landed.**
 
 forthc is a Forth program (`forthc.fth`) that runs on the DTC kernel
 the way `asm.fth` and `cc.fth` do, reads a closed-world Forth source
@@ -19,9 +19,15 @@ comparisons `= <> < > <= >= U< 0= 0< 0<>` (kernel 0/1 flags),
 `IF ELSE THEN`, `BEGIN AGAIN UNTIL WHILE REPEAT`,
 `DO ?DO LOOP +LOOP I J LEAVE`, `>R R> R@`, `EXIT`, `RECURSE`.
 
-M3 adds top-level `CREATE ALLOT VARIABLE CONSTANT ,` (compile-time
-values ride forthc's own stack) and `FILL`; bench.fth compiles
-verbatim. The measurement (heavy bench, medians of 7): compiled 86 ms
-vs DTC 271 ms (3.8×), gforth 102 ms (beaten), gforth-fast 85 ms —
-**dead heat with native gforth, unoptimized**. M4 next: the
-differential — the kernel suite compiled vs DTC, outputs identical.
+The measurement (heavy bench, medians of 7): compiled 86 ms vs DTC
+271 ms (3.8×), gforth 102 ms (beaten), gforth-fast 85 ms — **dead
+heat with native gforth, unoptimized**.
+
+M4: implicit MAIN lets unmodified kernel test files compile;
+`prelude-fc.fth` re-hosts the prelude in compilable Forth (the
+oracle's own definitions, verbatim); VALUE/DEFER/tick, doubles,
+strings, CASE, S"/.", pictured-lite. `tests/run-differential.sh`
+runs the kernel suite both ways: **15/26 compile and match the DTC
+oracle byte-for-byte, 0 divergences**; the 11 skips are
+interpreter-domain by nature. M5 next: turnkey + the compiled ship
+(tube words — linking against the runtime).

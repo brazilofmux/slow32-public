@@ -12,7 +12,11 @@ OUT="${2:-${1%.fth}.s32x}"
 ASM="${OUT%.s32x}.s"
 OBJ="${OUT%.s32x}.s32o"
 
-printf 'S" %s" S" %s" FORTHC BYE\n' "$SRC" "$ASM" \
+# prelude-fc provides the closed-world prelude vocabulary
+FULLSRC="${OUT%.s32x}.full.fth"
+cat "$SCRIPT_DIR/prelude-fc.fth" "$SRC" > "$FULLSRC"
+
+printf 'S" %s" S" %s" FORTHC BYE\n' "$FULLSRC" "$ASM" \
     | cat "$ROOT/forth/prelude.fth" "$SCRIPT_DIR/forthc.fth" - \
     | "$EMU" "$ROOT/forth/kernel.s32x" \
     | grep -E "^forthc:" || true

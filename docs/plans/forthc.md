@@ -118,6 +118,26 @@ should approach 3–4× on dispatch-bound code.
   compiled), outputs must match exactly. *Gate: the forth suite's
   programs, 26/26, identical output.* This is forthc's version of
   the reel: the DTC kernel becomes the oracle.
+  **LANDED 2026-08-23, same sitting (26/26 amended to what closed
+  worlds can honestly mean).** Additions: implicit MAIN (top-level
+  statements compile into a synthesized entry, so unmodified kernel
+  test files feed straight in, with a pending-number queue for
+  compile-time values), `prelude-fc.fth` — the prelude re-hosted in
+  compilable Forth, stealing the oracle's own colon definitions
+  verbatim (division family, doubles, strings) — plus
+  kernel-verbatim primitives (2!/2@/S>D/D+/D-/UM*/M*/2>R-family/
+  DEPTH/PICK/EXECUTE/UNLOOP, UM/MOD as an emitted routine), VALUE/TO,
+  DEFER/IS/'/[']/ACTION-OF (function pointers via `jalr`),
+  2VARIABLE/2CONSTANT, CASE family, S"/."/TYPE, and pictured-lite
+  (decimal `<# #S #>`, `D.`, `.R` family). *Result: 15 of 26 suite
+  tests compile and match the DTC oracle byte-for-byte; 0
+  divergences; the 11 skips are enumerated and principled* —
+  interpreter-domain tests (runtime `:`, ticking kernel words,
+  PARSE/WORD/PAD, wordlists, BASE/HEX, `[ ]`), the kernel's own
+  error-message test, and the tube test (M5's linking work). The
+  differential caught two real slips en route: a prelude ordering
+  bug and SEARCH returning ANS -1 where the kernel returns 1 — the
+  oracle works.
 - **M5 — turnkey and the showpiece.** A driver script (`forthc
   prog.fth prog.s32x`), docs, and one demo with teeth: `ship.fth`
   compiled — the vec arcade at native speed, tube words inlined.
