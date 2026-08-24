@@ -342,6 +342,18 @@ Milestones, each a gate, none a promise:
 
 1. **One shipped app.** rogue or sbasic (real C, real test suites)
    builds with stage08 targeting slow32 and passes its suite.
+   **LANDED 2026-08-24 (bef81eed): rogue, all five TUs compiled by
+   stage08 cc, passes all 23 checks** — winner run, save/restore,
+   10-seed soak (`rogue/tests/run-tests-s08.sh`). Language gaps
+   closed en route: sizeof(expr) in constant contexts, and 2D
+   arrays (flat layout + recorded column count; first subscript
+   scales by a row and stays an address; >2D and 2D initializers
+   are honest errors). The gate also flushed out an LLVM oracle
+   bug (SPAdj disarmed by canSimplifyCallFramePseudos=true —
+   frameless locals in call regions resolved low; fixed and
+   validated against rogue/regression/DOOM goldens) plus the
+   extern-.bss fix and s32-as branch range checks. sbasic waits on
+   HW FP.
 2. **The tube demos and the reel.** Frame hashes are
    compiler-independent truths — a stage08-built reel must produce
    the same 14 golden hashes. First cross-compiler conformance test
