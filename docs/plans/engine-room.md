@@ -124,6 +124,35 @@ confirmed, dispatch residue quantified at ~2 cycles/dispatch and
 deliberately left. The leg's remaining value is monitoring, not
 work. **Proceed to leg 2.**
 
+**Coda (same night): the guest-codegen layer, measured.** The user's
+follow-up hypothesis — GCC generates easier-to-DBT rv32 code than
+our LLVM backend generates SLOW-32, so the DBT's hands are tied
+upstream — tested on identical benchmark_core kernels through both
+stacks, normalized per iteration:
+
+| per iteration | rv32 (GCC) | slow32 (our LLVM) |
+|---|---|---|
+| guest instructions | 24.9 | 28.5 (+14%) |
+| host inst / guest inst | 2.33 | 2.17 |
+| cycles / iteration | 12.6 | 15.3 (+21%) |
+
+DBT layer: parity (ours slightly denser). The 21% end-to-end gap is
+**compiler-layer**, and the hot-loop diff names the mechanism: for
+`if ((acc & 0x10) == 0) acc = acc << 1 | 1;` GCC emits a 3-inst
+branchy form (`andi; bnez; ori`) while our LLVM emits an 8-inst
+branchless mask-select whose 5-deep dependent chain rides the
+loop-carried `acc` — serial latency the OoO host cannot hide, spent
+to avoid a branch the host predicts anyway. (cc-x64's branchless
+ternary win, 18a172fc, is the same idiom pointing the other way —
+the right answer is host-dependent.)
+
+**Where the fix lives:** not the LLVM backend — it stays frozen as
+leg 3's oracle. This finding transfers to **leg 3's quality bar**:
+stage08's slow32 codegen now has a measured external reference
+(GCC-for-rv32 at 24.9 inst/iter on this kernel set), and
+if-conversion/select policy is the first named lever. "Sufficiency"
+for leg 3 quietly gained a number to chase.
+
 ## 2. forthc — the AOT Forth compiler
 
 Elevated from the curiosity shelf (1987-desk.md §8) to an engine-room
