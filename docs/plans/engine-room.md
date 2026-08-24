@@ -359,6 +359,43 @@ LLVM is not deleted at the end of this. It becomes the reference —
 the differential oracle stage08 is measured against, the way gforth
 oracles stage01. "Taking over" means default, not exile.
 
+**Leg 3 opened 2026-08-24 — the survey (the leg's number).**
+benchmark_core through stage08 cc (`cc.s32x` under the DBT):
+- Ergonomics: already solved — 31 ms to compile under slow32-dbt;
+  cc/s32-as/s32-ar/s32-ld all exist as .s32x and run hosted.
+- Correctness: exact reference checksum (0x8d70b2b) first try; the
+  verification estate (fixed-point gate, diff-corpus, interop, LLVM
+  compare) already exists.
+- **The mountain: 63.1 guest inst/iter vs LLVM 28.5 vs GCC-rv32
+  24.9 (2.2×; 3.6× in DBT cycles — 561M vs 154M — because the waste
+  sits on loop-carried chains the M5 cannot absorb).** Ten lines of
+  bench_arith name the defects: branch trampolines (bcond→jal→jal),
+  loop-invariant constants rematerialized per-iteration (LICM gap),
+  3–4 uncoalesced phi copies per trip. Same three levers the x64
+  cross already climbed to gcc parity; the slow32 backend
+  (hir_regalloc.h/hir_codegen.h) never got the June work.
+- New divergence: stage08 cc emits `extern` globals as .bss
+  DEFINITIONS (stdio.h → stdin/stdout/stderr defined per TU);
+  stage08's linker merges common-style, the host linker correctly
+  refuses. Compiler-side fix owed.
+
+**Rulings (user, 2026-08-24):**
+- **Struct-by-value: adopt clang's convention.** Every existing
+  .s32o speaks it; stage08 conforms.
+- **HW FP is in scope, not deferred.** stage08 cc must emit the
+  real SLOW-32 FP instructions (FP on GPRs) and keep the
+  transcendentals as intrinsic calls that slow32-dbt intercepts and
+  hot-swaps to host intrinsics — the platform FP architecture, not
+  the current `__fp64_*` soft-float.
+- **Naming: say "stage08 cc".** "s12cc" is a fossil from a dead
+  stage-12 staging breakdown; the file name stays, the prose stops.
+
+Campaign order: codegen first (port the x64 cross's coalescing,
+LICM-of-constants, branch layout into the slow32 backend; scoreboard
+is inst/iter — ≤35 makes apps viable, 28.5 is parity), extern-def
+fix folded in, then apps smallest-teeth-first, DOOM last, HW FP
+when the first double-using app or the ABI gate forces the issue.
+
 ## What not to do
 
 - No JIT, no runtime codegen, no W^X exceptions. Ruled, permanent.

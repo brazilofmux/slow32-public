@@ -422,9 +422,14 @@ static void ra_backprop(int val, int use_blk) {
         b = b + 1;
     }
 
-    /* Start BFS from use_blk — extend val to end of use_blk */
+    /* Start BFS from use_blk.  The value was already extended to its
+     * actual use position by the forward pass — do NOT extend it to
+     * the end of the use block here.  That over-extension made every
+     * loop-carried phi overlap its own next value (one copy per
+     * iteration, uncoalesceable).  When use_blk is re-reached below
+     * as a predecessor on a cycle, the value genuinely lives through
+     * all of it, and the unconditional extend in the walk covers it. */
     ra_bvis[use_blk] = 1;
-    ra_extend(val, ra_blk_last[use_blk]);
     ra_bwl[0] = use_blk;
     wh = 0;
     wt = 1;
@@ -433,17 +438,22 @@ static void ra_backprop(int val, int use_blk) {
         b = ra_bwl[wh];
         wh = wh + 1;
 
-        /* Walk predecessors of b */
+        /* Walk predecessors of b.  Every predecessor on a def->use
+         * path carries the value across its whole extent, so the
+         * extend is unconditional (idempotent on revisits); visited
+         * only gates enqueueing. */
         j = 0;
         while (j < ssa_npred[b]) {
             p = ssa_pred[ssa_pbase[b] + j];
-            if (p >= 0 && p < bb_nblk && !ra_bvis[p]) {
-                ra_bvis[p] = 1;
+            if (p >= 0 && p < bb_nblk) {
                 ra_extend(val, ra_blk_last[p]);
-                if (p != def_blk && wt < HIR_MAX_BLOCK) {
-                    /* Continue BFS past intermediate blocks, stop at def */
-                    ra_bwl[wt] = p;
-                    wt = wt + 1;
+                if (!ra_bvis[p]) {
+                    ra_bvis[p] = 1;
+                    if (p != def_blk && wt < HIR_MAX_BLOCK) {
+                        /* Continue BFS past intermediate blocks, stop at def */
+                        ra_bwl[wt] = p;
+                        wt = wt + 1;
+                    }
                 }
             }
             j = j + 1;
@@ -953,10 +963,33 @@ static void gc_build(void) {
             }
         }
 
+        /* Dying-src1 exception (ported from the x64 cross, where it was
+         * two-address motivated): a result does NOT interfere with its
+         * src1 when src1's live interval ends exactly at this op's
+         * position p.  The strict `< p` expiry above keeps such a src
+         * active here, which forces a spurious d<->s1 edge and blocks
+         * the coalescer — every loop-carried phi (i=i+1, s=s+i) paid a
+         * copy per iteration for it.  On SLOW-32 the suppression is
+         * sound for the plain ALU range because each of these ops is a
+         * single three-operand instruction: both sources are read
+         * before the destination is written, so d may share s1's
+         * register.  HI_COPY is the same case trivially.  We do NOT
+         * suppress d<->s2 (mirrors the x64 rule; keeps the two files'
+         * logic identical and avoids auditing every s2 emission). */
         if (ni >= 0) {
+            int skip_node;
+            skip_node = -1;
+            if ((h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) ||
+                h_kind[inst] == HI_COPY) {
+                int two_s1;
+                two_s1 = h_src1[inst];
+                if (two_s1 >= 0 && ra_iend[two_s1] <= p)
+                    skip_node = gc_node[two_s1];
+            }
             j = 0;
             while (j < nact) {
-                gc_add_edge(ni, act[j]);
+                if (act[j] != skip_node)
+                    gc_add_edge(ni, act[j]);
                 j = j + 1;
             }
             act[nact] = ni;
@@ -1551,6 +1584,67 @@ static void gc_select(void) {
             i = i - 1;
         }
         pass = pass + 1;
+    }
+
+    /* Propagate colors to coalesced nodes (ported from the x64 cross).
+     * A coalesced node is never selected, so without this it keeps
+     * color -1 and gc_writeback hands it to the spiller.  Unreachable
+     * before the backprop liveness fix (no move ever coalesced). */
+    i = 0;
+    while (i < gc_nnode) {
+        if (gc_wl[i] == GC_WL_COALESCED) {
+            gc_color[i] = gc_color[gc_get_alias(i)];
+        }
+        i = i + 1;
+    }
+
+    /* Post-coloring PARAM fix-up (ported from the x64 cross): if a
+     * PARAM didn't get its ABI register and no neighbor holds that
+     * color, take it — a param sitting in its incoming register costs
+     * zero prologue moves, and params displaced from their homes are
+     * how entry-move permutations (see ra_demote_conflicted_params)
+     * arise in the first place.  Iterate: a PARAM blocked by another
+     * PARAM may unblock once that one moves to its own want. */
+    {
+        int n2;
+        int inst2;
+        int want;
+        int conflict;
+        int ei;
+        int pa;
+        int moved;
+        int passes;
+
+        passes = 0;
+        moved = 1;
+        while (moved && passes < 8) {
+            moved = 0;
+            passes = passes + 1;
+            n2 = 0;
+            while (n2 < gc_nnode) {
+                inst2 = gc_inst[n2];
+                if (h_kind[inst2] == HI_PARAM && gc_color[n2] >= 0) {
+                    want = ra_param_preferred_color(inst2);
+                    if (want >= 0 && gc_color[n2] != want) {
+                        conflict = 0;
+                        ei = gc_adj_head[n2];
+                        while (ei >= 0) {
+                            pa = gc_get_alias(gc_adj_peer[ei]);
+                            if (gc_color[pa] == want) {
+                                conflict = 1;
+                                break;
+                            }
+                            ei = gc_adj_next[ei];
+                        }
+                        if (!conflict) {
+                            gc_color[n2] = want;
+                            moved = 1;
+                        }
+                    }
+                }
+                n2 = n2 + 1;
+            }
+        }
     }
 }
 

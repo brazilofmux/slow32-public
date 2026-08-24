@@ -400,6 +400,129 @@ static void hcg_maybe_spill(int idx) {
     }
 }
 
+/* --- Cycle-safe parameter entry sequence ---
+ * The allocator may color a register param anywhere, including a
+ * permutation of the ABI registers (param0 in r4, param1 in r3).
+ * Emitting each param's ABI->assigned move independently in
+ * instruction order clobbers a later move's source in that case
+ * (found via strcmp comparing a string with itself once phi
+ * coalescing went live).  So the first HI_PARAM emits the WHOLE
+ * entry sequence, ordered for safety:
+ *   1. spilled register params — read ABI reg, write only r1+memory;
+ *   2. register-resident params — parallel copy with cycle breaking
+ *      through the reserved r2 temp (same discipline as
+ *      hcg_phi_copies' fast path);
+ *   3. stack-passed params — read memory, write registers whose
+ *      pending readers (step 2 sources) are already consumed.
+ * Subsequent HI_PARAMs emit nothing. */
+static int hcg_params_emitted;
+static int hcg_pe_dst[8];
+static int hcg_pe_src[8];
+static int hcg_pe_active[8];
+
+static void hcg_emit_param_entry(void) {
+    int i;
+    int j;
+    int nc;
+    int rem;
+    int progress;
+    int blocked;
+    int srcv;
+    int pidx;
+
+    /* Step 1: spilled register params (order-independent). */
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PARAM && h_val[i] < 8 && ra_reg[i] < 0) {
+            cg_rri("addi", 1, 3 + h_val[i], 0);
+            hcg_maybe_spill(i);
+        }
+        i = i + 1;
+    }
+
+    /* Step 2: register-resident params — parallel copy. */
+    nc = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PARAM && h_val[i] < 8 && ra_reg[i] >= 0 && nc < 8) {
+            hcg_pe_dst[nc] = ra_reg[i];
+            hcg_pe_src[nc] = 3 + h_val[i];
+            hcg_pe_active[nc] = 1;
+            nc = nc + 1;
+        }
+        i = i + 1;
+    }
+    rem = 0;
+    j = 0;
+    while (j < nc) {
+        if (hcg_pe_dst[j] == hcg_pe_src[j]) {
+            hcg_pe_active[j] = 0;
+        } else {
+            rem = rem + 1;
+        }
+        j = j + 1;
+    }
+    while (rem > 0) {
+        progress = 0;
+        j = 0;
+        while (j < nc) {
+            if (hcg_pe_active[j]) {
+                blocked = 0;
+                i = 0;
+                while (i < nc) {
+                    if (hcg_pe_active[i] && i != j &&
+                        hcg_pe_src[i] == hcg_pe_dst[j]) {
+                        blocked = 1;
+                        break;
+                    }
+                    i = i + 1;
+                }
+                if (!blocked) {
+                    cg_rri("addi", hcg_pe_dst[j], hcg_pe_src[j], 0);
+                    hcg_pe_active[j] = 0;
+                    rem = rem - 1;
+                    progress = 1;
+                }
+            }
+            j = j + 1;
+        }
+        if (!progress) {
+            /* Copy cycle: snapshot one source in the reserved r2 temp
+             * and redirect its readers. */
+            srcv = -1;
+            j = 0;
+            while (j < nc) {
+                if (hcg_pe_active[j]) { srcv = hcg_pe_src[j]; break; }
+                j = j + 1;
+            }
+            if (srcv < 0) break;
+            cg_rri("addi", 2, srcv, 0);
+            j = 0;
+            while (j < nc) {
+                if (hcg_pe_active[j] && hcg_pe_src[j] == srcv) {
+                    hcg_pe_src[j] = 2;
+                }
+                j = j + 1;
+            }
+        }
+    }
+
+    /* Step 3: stack-passed params (pidx >= 8). */
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PARAM && h_val[i] >= 8) {
+            pidx = h_val[i];
+            if (ra_reg[i] >= 0) {
+                cg_rri("ldw", ra_reg[i], 30, (pidx - 8) * 4);
+            } else {
+                cg_rri("ldw", 1, 30, (pidx - 8) * 4);
+                hcg_maybe_spill(i);
+            }
+        }
+        i = i + 1;
+    }
+}
+
 /* --- Typed load/store helpers --- */
 
 /* Emit load from [areg+0] into dreg with appropriate width */
@@ -893,23 +1016,15 @@ static void hcg_inst(int idx) {
     }
 
     if (k == HI_PARAM) {
-        int phys_idx;
-        rd = hcg_dst(idx);
-        phys_idx = h_val[idx];
-        if (phys_idx < 8) {
-            int src = 3 + phys_idx;
-            if (rd != src) {
-                cg_rri("addi", rd, src, 0);
-                hcg_stat_copy_emit = hcg_stat_copy_emit + 1;
-            } else {
-                hcg_stat_addi0_elide = hcg_stat_addi0_elide + 1;
-            }
-        } else {
-            /* Stack-passed argument: the caller pushed it just before
-             * the call, so it lives at fp + (phys_idx - 8) * 4.  fp = r30. */
-            cg_rri("ldw", rd, 30, (phys_idx - 8) * 4);
+        /* The first HI_PARAM emits the whole cycle-safe entry
+         * sequence (register moves, spill stores, stack loads) for
+         * every param; the rest emit nothing.  See
+         * hcg_emit_param_entry for why per-param emission is unsafe
+         * once the allocator may permute the ABI registers. */
+        if (!hcg_params_emitted) {
+            hcg_params_emitted = 1;
+            hcg_emit_param_entry();
         }
-        hcg_maybe_spill(idx);
         return;
     }
 
@@ -2128,6 +2243,9 @@ static void hcg_func(Node *fn) {
     fs = ((fs + 3) / 4) * 4;
     hcg_locals = fn->locals_size;
     hcg_frame = fs;
+
+    /* Reset the one-shot param entry emission for this function */
+    hcg_params_emitted = 0;
 
     /* Allocate labels for blocks and epilog */
     b = 0;
