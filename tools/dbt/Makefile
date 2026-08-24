@@ -12,8 +12,12 @@ ifeq ($(shell uname -s),Darwin)
     CFLAGS += -D_XOPEN_SOURCE=700 -D_DARWIN_C_SOURCE
 endif
 
-# Disable some warnings that are noisy during development
-CFLAGS += -Wno-unused-parameter -Wno-unused-variable
+# The tree builds warning-free with -Wall -Wextra on both back ends at every
+# -O level; keep it that way rather than muting whole warning classes. Note
+# that only ONE translator compiles per host (translate_a64.c on aarch64,
+# translate.c + emit_x64.c on x86-64), so warnings in the other back end are
+# invisible here — cross-check with:
+#   make clean && make UNAME_M=x86_64 CC=x86_64-linux-gnu-gcc
 
 LDFLAGS = -lm
 

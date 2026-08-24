@@ -453,5 +453,42 @@ bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t
     return true;
 }
 
-const char *stage5_burg_reason_str(stage5_burg_reason_t reason) { return "ok"; }
-const char *stage5_burg_pattern_str(stage5_burg_pattern_t pattern) { return "generic"; }
+const char *stage5_burg_reason_str(stage5_burg_reason_t reason) {
+    switch (reason) {
+        case STAGE5_BURG_OK:              return "ok";
+        case STAGE5_BURG_NOT_IMPLEMENTED: return "not_implemented";
+        case STAGE5_BURG_NO_COVER:        return "no_cover";
+        case STAGE5_BURG_ILLEGAL_COVER:   return "illegal_cover";
+        case STAGE5_BURG_INTERNAL_ERROR:  return "internal_error";
+    }
+    return "unknown";
+}
+
+const char *stage5_burg_pattern_str(stage5_burg_pattern_t pattern) {
+    switch (pattern) {
+        case STAGE5_BURG_PATTERN_NONE:                return "none";
+        case STAGE5_BURG_PATTERN_JAL_CALL_SHORT:      return "jal_call_short";
+        case STAGE5_BURG_PATTERN_JAL_CALL_LONG:       return "jal_call_long";
+        case STAGE5_BURG_PATTERN_JAL_JUMP:            return "jal_jump";
+        case STAGE5_BURG_PATTERN_JALR_RET_SHORT:      return "jalr_ret_short";
+        case STAGE5_BURG_PATTERN_JALR_RET_LONG:       return "jalr_ret_long";
+        case STAGE5_BURG_PATTERN_JALR_INDIRECT:       return "jalr_indirect";
+        case STAGE5_BURG_PATTERN_HALT:                return "halt";
+        case STAGE5_BURG_PATTERN_YIELD:               return "yield";
+        case STAGE5_BURG_PATTERN_DEBUG:               return "debug";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ:    return "direct_branch_eq";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE:    return "direct_branch_ne";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL:   return "direct_branch_rel";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU:  return "direct_branch_relu";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO:     return "cmp_branch_zero";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01:  return "cmp_branch_const01";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1:     return "cmp_branch_xor1";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR: return "cmp_branch_boolpair";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP:   return "cmp_branch_cmpdep";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP: return "cmp_branch_nocmpdep";
+        case STAGE5_BURG_PATTERN_BLOCK_END:           return "block_end";
+        case STAGE5_BURG_PATTERN_GENERIC:             return "generic";
+        case STAGE5_BURG_PATTERN_COUNT:               break;
+    }
+    return "unknown";
+}

@@ -640,21 +640,40 @@ static void dbt_sigfault_handler(int sig, siginfo_t *si, void *ucontext) {
         for (int i = 0; lr[i]; i++) buf[pos++] = lr[i];
         pos += probe_hex32(buf + pos, g_dbt_cpu->regs[31]);
     }
-#if defined(__x86_64__)
+    // Host-side fault context. The register file layout is per-OS/arch, so
+    // extract PC/SP here and share the JIT-range reporting below.
+    uint64_t host_pc = 0, host_sp = 0;
+    bool have_host_ctx = false;
     if (ucontext) {
         ucontext_t *uc = (ucontext_t *)ucontext;
-        uint64_t ripv = (uint64_t)uc->uc_mcontext.gregs[REG_RIP];
-        const char rip[] = " host_rip=";
-        for (int i = 0; rip[i]; i++) buf[pos++] = rip[i];
-        pos += probe_hex64(buf + pos, ripv);
-        const char rsp[] = " host_rsp=";
-        for (int i = 0; rsp[i]; i++) buf[pos++] = rsp[i];
-        pos += probe_hex64(buf + pos, (uint64_t)uc->uc_mcontext.gregs[REG_RSP]);
+#if defined(__x86_64__)
+        host_pc = (uint64_t)uc->uc_mcontext.gregs[REG_RIP];
+        host_sp = (uint64_t)uc->uc_mcontext.gregs[REG_RSP];
+        have_host_ctx = true;
+#elif defined(__aarch64__) && defined(__APPLE__)
+        host_pc = (uint64_t)uc->uc_mcontext->__ss.__pc;
+        host_sp = (uint64_t)uc->uc_mcontext->__ss.__sp;
+        have_host_ctx = true;
+#elif defined(__aarch64__)
+        host_pc = (uint64_t)uc->uc_mcontext.pc;
+        host_sp = (uint64_t)uc->uc_mcontext.sp;
+        have_host_ctx = true;
+#endif
+        (void)uc;  // unused on hosts without a known mcontext layout
+    }
+
+    if (have_host_ctx) {
+        const char hpc[] = " host_pc=";
+        for (int i = 0; hpc[i]; i++) buf[pos++] = hpc[i];
+        pos += probe_hex64(buf + pos, host_pc);
+        const char hsp[] = " host_sp=";
+        for (int i = 0; hsp[i]; i++) buf[pos++] = hsp[i];
+        pos += probe_hex64(buf + pos, host_sp);
         if (g_dbt_code_base != 0 && g_dbt_code_limit > g_dbt_code_base &&
-            ripv >= g_dbt_code_base && ripv < g_dbt_code_limit) {
+            host_pc >= g_dbt_code_base && host_pc < g_dbt_code_limit) {
             const char off[] = " host_off=";
             for (int i = 0; off[i]; i++) buf[pos++] = off[i];
-            pos += probe_hex64(buf + pos, ripv - g_dbt_code_base);
+            pos += probe_hex64(buf + pos, host_pc - g_dbt_code_base);
         }
         if (g_dbt_block_code != 0) {
             const char bpc[] = " block_pc=";
@@ -662,15 +681,14 @@ static void dbt_sigfault_handler(int sig, siginfo_t *si, void *ucontext) {
             pos += probe_hex32(buf + pos, g_dbt_block_pc);
             const char boff[] = " block_off=";
             for (int i = 0; boff[i]; i++) buf[pos++] = boff[i];
-            if (ripv >= g_dbt_block_code &&
-                ripv < g_dbt_block_code + g_dbt_block_size) {
-                pos += probe_hex64(buf + pos, ripv - g_dbt_block_code);
+            if (host_pc >= g_dbt_block_code &&
+                host_pc < g_dbt_block_code + g_dbt_block_size) {
+                pos += probe_hex64(buf + pos, host_pc - g_dbt_block_code);
             } else {
                 pos += probe_hex64(buf + pos, UINT64_MAX);
             }
         }
     }
-#endif
 
     buf[pos++] = '\n';
     if (write(STDERR_FILENO, buf, pos)) {/* async-signal-safe */}

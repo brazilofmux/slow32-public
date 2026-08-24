@@ -225,39 +225,6 @@ static inline bool stage5_emit_single_terminal(translate_ctx_t *ctx,
 
 
 
-// Pick two scratch GPRs for compare materialization, preferring regs that
-// won't clobber an active pending write.
-static inline void stage5_pick_cmp_scratch_regs(translate_ctx_t *ctx,
-                                                x64_reg_t avoid1,
-                                                x64_reg_t avoid2,
-                                                x64_reg_t *out_a,
-                                                x64_reg_t *out_b) {
-    static const x64_reg_t k_candidates[] = {RAX, RCX, RDX, R10};
-    x64_reg_t pending = X64_NOREG;
-
-    x64_reg_t a = RAX;
-    x64_reg_t b = RCX;
-
-    for (size_t i = 0; i < sizeof(k_candidates) / sizeof(k_candidates[0]); i++) {
-        x64_reg_t r = k_candidates[i];
-        if (r == avoid1 || r == avoid2 || r == pending) continue;
-        a = r;
-        break;
-    }
-    for (size_t i = 0; i < sizeof(k_candidates) / sizeof(k_candidates[0]); i++) {
-        x64_reg_t r = k_candidates[i];
-        if (r == a || r == avoid1 || r == avoid2 || r == pending) continue;
-        b = r;
-        break;
-    }
-    if (b == a) {
-        b = (a == RAX) ? RCX : RAX;
-    }
-
-    *out_a = a;
-    *out_b = b;
-}
-
 static inline void stage5_translate_jal_jump_compact(translate_ctx_t *ctx,
                                                      uint8_t rd, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
@@ -2307,8 +2274,6 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
 void translate_lui(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
     if (rd == 0) return;
-    emit_ctx_t *e = &ctx->emit;
-
     emit_store_guest_reg_imm32(ctx, rd, (uint32_t)imm);
 }
 

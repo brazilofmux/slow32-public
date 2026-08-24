@@ -104,4 +104,3 @@ bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_
 }
 
 bool stage5_ra_enabled(void) { return true; }
-bool stage5_ra_build_plan(const stage5_lift_region_t *region, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan) { return false; }

@@ -244,6 +244,7 @@ bool cache_init(block_cache_t *cache) {
     //   mov dword [rbp + CPU_EXIT_REASON_OFFSET], EXIT_BRANCH  (10 bytes)
     //   jmp native_dispatcher                                   (5 bytes)
     // Total: 15 bytes
+    uint8_t *branch_exit_jmp = NULL;  // patched once native_dispatcher exists
     {
         uint8_t *p = cache->code_buffer + cache->code_buffer_used;
         cache->shared_branch_exit = p;
@@ -262,7 +263,7 @@ bool cache_init(block_cache_t *cache) {
         *p++ = (reason >> 16) & 0xFF;
         *p++ = (reason >> 24) & 0xFF;
         // jmp rel32 (placeholder — patched after native_dispatcher is emitted)
-        uint8_t *jmp_patch = p;
+        branch_exit_jmp = p;
         *p++ = 0xE9;
         *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; *p++ = 0x00;
         cache->code_buffer_used += (uint32_t)(p - cache->shared_branch_exit);
@@ -282,13 +283,12 @@ bool cache_init(block_cache_t *cache) {
         cache->native_dispatcher = p;
 
         // Patch the jmp in shared_branch_exit to point here
-        {
-            uint8_t *jmp_site = cache->shared_branch_exit + 10; // after mov dword
-            int32_t rel = (int32_t)(p - (jmp_site + 5));
-            jmp_site[1] = (rel >> 0) & 0xFF;
-            jmp_site[2] = (rel >> 8) & 0xFF;
-            jmp_site[3] = (rel >> 16) & 0xFF;
-            jmp_site[4] = (rel >> 24) & 0xFF;
+        if (branch_exit_jmp) {
+            int32_t rel = (int32_t)(p - (branch_exit_jmp + 5));
+            branch_exit_jmp[1] = (rel >> 0) & 0xFF;
+            branch_exit_jmp[2] = (rel >> 8) & 0xFF;
+            branch_exit_jmp[3] = (rel >> 16) & 0xFF;
+            branch_exit_jmp[4] = (rel >> 24) & 0xFF;
         }
 
         int32_t pc_off = (int32_t)CPU_PC_OFFSET;

@@ -3697,8 +3697,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             // Register session
             svc_session_t *session = &mmio->services[mmio->num_services++];
             session->active = true;
-            strncpy(session->name, svc_name, S32_MAX_SVC_NAME - 1);
-            session->name[S32_MAX_SVC_NAME - 1] = '\0';
+            size_t svc_name_len = strnlen(svc_name, S32_MAX_SVC_NAME - 1);
+            memcpy(session->name, svc_name, svc_name_len);
+            session->name[svc_name_len] = '\0';
             session->base_opcode = base;
             session->opcode_count = builtin->opcode_count;
             session->version = builtin->version;

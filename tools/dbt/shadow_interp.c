@@ -739,8 +739,9 @@ static void replay_with_trace(shadow_state_t *s, uint32_t block_start,
     int max_steps = 200;  // Limit trace output to first 200 steps
     int step_num = 0;
 
-    fprintf(stderr, "\nInstruction trace (shadow re-execution, first %d steps):\n",
-            max_steps);
+    fprintf(stderr, "\nInstruction trace (shadow re-execution, first %d steps).\n"
+                    "DBT stopped at PC=0x%08X:\n",
+            max_steps, dbt_pc);
 
     for (int i = 0; i < max_steps; i++) {
         if (s->pc < block_start || s->pc >= block_end) break;
