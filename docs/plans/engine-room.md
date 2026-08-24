@@ -153,6 +153,40 @@ stage08's slow32 codegen now has a measured external reference
 if-conversion/select policy is the first named lever. "Sufficiency"
 for leg 3 quietly gained a number to chase.
 
+**The homework (same night): which shape should the guest canon
+be?** The user's reframe: the guest ISA is an IR between two
+compilers we own; if the two DBT hosts prefer different code
+flavors, the compiler should emit whichever shape the DBT can most
+cheaply transform, and the DBT re-flavors per host. Answered:
+
+- Branchy → host-select needs if-conversion inside the DBT
+  (diamond recognition, speculation-safety proofs, block-boundary
+  surgery — branches end blocks in both our DBTs). Hard.
+- Branchless mask-select → host-select is an adjacency peephole
+  over pure dataflow — no control flow touched, no proofs needed —
+  and the machinery half-exists (`pending_cond` compare-deferral in
+  translate_a64.c is the same shape).
+- Our LLVM backend already emits the branchless form as ONE
+  canonical idiom (`LowerSELECT`: `F ^ ((T ^ F) & -C)`, with a
+  branchy `SELECT_PSEUDO` already in-tree for -Os). So the canon is
+  already right; the DBT just translates it literally instead of
+  recognizing it.
+
+**Work item (leg 1 reopens for exactly this): select-idiom fusion in
+both DBT backends** — recognize the canonical mask-select, emit
+`cmp+csel` (a64) / `cmp+cmov` (x64). Expected: collapses 5-8 guest
+ALU ops with a 5-deep loop-carried chain to 2 host insts, 2-deep —
+strictly better than BOTH literal flavors on BOTH hosts, no
+misprediction exposure. Measured target: close most of the 21%
+cycles/iter gap vs GCC-rv32 on bench_branch-class code.
+
+**Doctrine (name it once): the idiom contract.** The backend's
+canonical lowering shapes are documented, stable, recognizable
+idioms; each DBT backend peepholes them to its host's optimum. The
+compiler emits transformable shapes, not host-flavored ones. First
+entry: the mask-select. Candidates to audit later through the same
+lens: min/max, abs, byte-swap, carry chains.
+
 ## 2. forthc — the AOT Forth compiler
 
 Elevated from the curiosity shelf (1987-desk.md §8) to an engine-room
