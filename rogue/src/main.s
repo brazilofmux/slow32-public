@@ -7,23 +7,20 @@ main:                                   # @main
 # %bb.0:
 	addi sp, sp, -160
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 160
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, r17
-	stw fp+-32, r18
-	stw fp+-36, r19
-	stw fp+-40, r20
-	stw fp+-44, r21
-	stw fp+-48, r22
-	stw fp+-52, r23
-	stw fp+-56, r24
+	stw sp+156, r11
+	stw sp+152, r12
+	stw sp+148, r13
+	stw sp+144, r14
+	stw sp+140, r15
+	stw sp+136, r16
+	stw sp+132, r17
+	stw sp+128, r18
+	stw sp+124, r19
+	stw sp+120, r20
+	stw sp+116, r21
+	stw sp+112, r22
+	stw sp+108, r23
+	stw sp+104, r24
 	add r13, r3, r0
 	addi r20, r0, 0
 	addi r3, r0, 2
@@ -91,13 +88,13 @@ main:                                   # @main
 	lui r12, %hi(g+5132)
 	addi r12, r12, %lo(g+5132)
 	stw r12+0, r18
-	lui r13, %hi(g+5128)
-	addi r13, r13, %lo(g+5128)
-	stw r13+0, r19
-	lui r15, %hi(g+5092)
-	addi r15, r15, %lo(g+5092)
-	lui r14, %hi(stdout)
-	addi r14, r14, %lo(stdout)
+	lui r15, %hi(g+5128)
+	addi r15, r15, %lo(g+5128)
+	stw r15+0, r19
+	lui r14, %hi(g+5092)
+	addi r14, r14, %lo(g+5092)
+	lui r13, %hi(stdout)
+	addi r13, r13, %lo(stdout)
 	bne r1, r20, .LBB0_13
 .LBB0_12:
 	lui r3, %hi(g)
@@ -122,7 +119,7 @@ main:                                   # @main
 	add r4, r11, r0
 	jal r31, init_game
 	stw r12+0, r18
-	stw r13+0, r19
+	stw r15+0, r19
 	addi r1, r0, 0
 	bne r18, r1, .LBB0_21
 .LBB0_16:
@@ -159,50 +156,51 @@ main:                                   # @main
 	lui r3, %hi(.L.str.7)
 	addi r3, r3, %lo(.L.str.7)
 	jal r31, printf
-	ldw r4, r14+0
+	ldw r4, r13+0
 	add r3, r11, r0
 	jal r31, line_render
-	lui r16, %hi(stdin)
-	addi r16, r16, %lo(stdin)
-	ldw r5, r16+0
-	addi r3, fp, -136
+	lui r15, %hi(stdin)
+	addi r15, r15, %lo(stdin)
+	ldw r5, r15+0
+	addi r3, sp, 24
 	addi r4, r0, 80
 	jal r31, fgets
-	addi r18, r0, 0
-	beq r1, r18, .LBB0_27
+	addi r16, r0, 0
+	beq r1, r16, .LBB0_27
 .LBB0_22:
-	addi r12, fp, -136
-	addi r13, r0, 80
-	addi r19, r0, 10
+	lui r11, %hi(g)
+	addi r11, r11, %lo(g)
+	addi r12, r0, 80
+	addi r18, r0, 10
 	jal r0, .LBB0_24
 .LBB0_23:
-	ldw r4, r14+0
+	ldw r4, r13+0
 	add r3, r11, r0
 	jal r31, line_render
-	ldw r5, r16+0
-	add r3, r12, r0
-	add r4, r13, r0
+	ldw r5, r15+0
+	addi r3, sp, 24
+	add r4, r12, r0
 	jal r31, fgets
-	beq r1, r18, .LBB0_27
+	beq r1, r16, .LBB0_27
 .LBB0_24:
-	ldbu r1, fp+-136
-	beq r1, r18, .LBB0_23
+	ldbu r1, sp+24
+	beq r1, r16, .LBB0_23
 .LBB0_25:
-	beq r1, r19, .LBB0_23
+	beq r1, r18, .LBB0_23
 .LBB0_26:
 	slli r1, r1, 24
 	srai r4, r1, 24
 	add r3, r11, r0
 	jal r31, do_command
-	bne r1, r18, .LBB0_23
+	bne r1, r16, .LBB0_23
 .LBB0_27:
-	ldw r1, r15+0
-	bne r1, r18, .LBB0_29
+	ldw r1, r14+0
+	bne r1, r16, .LBB0_29
 .LBB0_28:
 	addi r1, r0, 3
-	stw r15+0, r1
+	stw r14+0, r1
 .LBB0_29:
-	ldw r1, r15+0
+	ldw r1, r14+0
 	addi r1, r1, -1
 	addi r11, r0, 0
 	bgtu r1, r17, .LBB0_31
@@ -213,27 +211,26 @@ main:                                   # @main
 	addi r12, r12, %lo(.L.str.6)
 	add r4, r12, r0
 	jal r31, record_score
-	ldw r4, r14+0
+	ldw r4, r13+0
 	add r3, r12, r0
 	jal r31, show_scores
 .LBB0_31:
 	add r1, r11, r0
-	ldw r24, fp+-56
-	ldw r23, fp+-52
-	ldw r22, fp+-48
-	ldw r21, fp+-44
-	ldw r20, fp+-40
-	ldw r19, fp+-36
-	ldw r18, fp+-32
-	ldw r17, fp+-28
-	ldw r16, fp+-24
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r24, sp+104
+	ldw r23, sp+108
+	ldw r22, sp+112
+	ldw r21, sp+116
+	ldw r20, sp+120
+	ldw r19, sp+124
+	ldw r18, sp+128
+	ldw r17, sp+132
+	ldw r16, sp+136
+	ldw r15, sp+140
+	ldw r14, sp+144
+	ldw r13, sp+148
+	ldw r12, sp+152
+	ldw r11, sp+156
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 160
 	jalr r0, r31, 0
 .Lfunc_end0:
@@ -283,5 +280,5 @@ main:                                   # @main
 	.asciz	"Hello. Welcome to the Dungeons of Doom.\n"
 	.size	.L.str.7, 41
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e34f541beea69553ff1fd655361b4faa1e656dc2)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e507704cf3c4d36284ffcb21f50e8531ceb63f7f)"
 	.section	".note.GNU-stack","",@progbits

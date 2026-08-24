@@ -23,12 +23,22 @@ public:
     return false;
   }
 
-  /// Always expand ADJCALLSTACK* in PEI. The default also requires hasFP or
-  /// reserved call frames; we have neither in leaf-callers with only an LR
-  /// save, and without this the pseudos leak into the asm printer as comments.
-  bool canSimplifyCallFramePseudos(const MachineFunction &MF) const override {
-    return true;
-  }
+  // NOTE: canSimplifyCallFramePseudos is deliberately NOT overridden.
+  // An earlier override forced it to true (to stop ADJCALLSTACK pseudos
+  // leaking into the asm printer as comments in leaf callers), but
+  // "true" lets PEI eliminate the pseudos BEFORE replaceFrameIndices
+  // walks the function — SPAdj tracking never sees them, so every
+  // SP-relative frame index inside a call-argument region resolved
+  // with SPAdj=0 and eliminateFrameIndex's `Offset += SPAdj` fix was
+  // dead code. In frameless functions (the -O1+ default since the
+  // frame-pointer-omission change) a local's address materialized
+  // between ADJCALLSTACKDOWN and the call came out low by the
+  // outgoing-argument size: rogue's status_line snprintf wrote
+  // "Level: 1..." 32 bytes low, straight over the saved LR at sp+0,
+  // and the function returned into string bytes (PC=0x31203a6c =
+  // "l: 1"). The base-class default (hasReservedCallFrame || hasFP)
+  // keeps the pseudos for PEI's SPAdj-tracked walk, which both
+  // eliminates them (no printer leak) and passes the adjustment down.
 
   /// Bytes for fixed LR/FP saves the prologue places at the bottom of the
   /// frame (not counted in MachineFrameInfo::getStackSize()).

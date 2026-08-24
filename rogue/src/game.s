@@ -7,9 +7,6 @@ rnd:                                    # @rnd
 # %bb.0:
 	addi sp, sp, -16
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 16
 	ldw r1, r3+0
 	slli r5, r1, 13
 	xor r1, r5, r1
@@ -22,13 +19,14 @@ rnd:                                    # @rnd
 	blt r4, r3, .LBB0_2
 .LBB0_1:
 	srli r3, r1, 8
+	# ADJCALLSTACKDOWN 0, 0
 	jal r31, __umodsi3
+	# ADJCALLSTACKUP 0, 0
 	jal r0, .LBB0_3
 .LBB0_2:
 	addi r1, r0, 0
 .LBB0_3:
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 16
 	jalr r0, r31, 0
 .Lfunc_end0:
@@ -41,16 +39,13 @@ roll:                                   # @roll
 # %bb.0:
 	addi sp, sp, -48
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 48
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, r17
+	stw sp+44, r11
+	stw sp+40, r12
+	stw sp+36, r13
+	stw sp+32, r14
+	stw sp+28, r15
+	stw sp+24, r16
+	stw sp+20, r17
 	addi r15, r0, 1
 	blt r4, r15, .LBB1_6
 .LBB1_1:
@@ -87,15 +82,14 @@ roll:                                   # @roll
 	addi r14, r0, 0
 .LBB1_7:
 	add r1, r14, r0
-	ldw r17, fp+-28
-	ldw r16, fp+-24
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r17, sp+20
+	ldw r16, sp+24
+	ldw r15, sp+28
+	ldw r14, sp+32
+	ldw r13, sp+36
+	ldw r12, sp+40
+	ldw r11, sp+44
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 48
 	jalr r0, r31, 0
 .Lfunc_end1:
@@ -108,25 +102,22 @@ msgf:                                   # @msgf
 # %bb.0:
 	addi sp, sp, -160
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 160
-	stw fp+-28, r11
-	stw fp+-32, r12
-	stw fp+-36, r13
-	stw fp+-40, r14
+	stw sp+132, r11
+	stw sp+128, r12
+	stw sp+124, r13
+	stw sp+120, r14
 	add r1, r4, r0
 	add r11, r3, r0
-	addi lr, fp, -24
+	addi lr, sp, 136
 	addi r3, lr, 4
 	stw r3+0, r6
-	stw fp+-4, r10
-	stw fp+-8, r9
-	stw fp+-12, r8
-	stw fp+-16, r7
-	stw fp+-24, r5
-	stw fp+-44, lr
-	addi r3, fp, -144
+	stw sp+156, r10
+	stw sp+152, r9
+	stw sp+148, r8
+	stw sp+144, r7
+	stw sp+136, r5
+	stw sp+116, lr
+	addi r3, sp, 16
 	addi r4, r0, 100
 	add r5, r1, r0
 	add r6, lr, r0
@@ -147,7 +138,7 @@ msgf:                                   # @msgf
 	add r1, r11, r1
 	stb r1+0, r14
 .LBB2_2:
-	addi r4, fp, -144
+	addi r4, sp, 16
 	addi r5, r0, 99
 	add r3, r12, r0
 	jal r31, strncpy
@@ -164,12 +155,11 @@ msgf:                                   # @msgf
 	add r4, r12, r0
 	jal r31, printf
 .LBB2_4:
-	ldw r14, fp+-40
-	ldw r13, fp+-36
-	ldw r12, fp+-32
-	ldw r11, fp+-28
+	ldw r14, sp+120
+	ldw r13, sp+124
+	ldw r12, sp+128
+	ldw r11, sp+132
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 160
 	jalr r0, r31, 0
 .Lfunc_end2:
@@ -180,22 +170,16 @@ msgf:                                   # @msgf
 	.type	rank_name,@function
 rank_name:                              # @rank_name
 # %bb.0:
-	addi sp, sp, -16
-	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 16
 	addi r1, r0, 1
 	sgt r1, r3, r1
-	addi r4, r0, 0
-	sub r1, r4, r1
+	sub r1, r0, r1
 	xori r3, r3, 1
 	and r1, r3, r1
 	xori r3, r1, 1
-	addi r5, r0, 16
-	slt r3, r3, r5
-	sub r3, r4, r3
 	xori r1, r1, 17
+	addi r4, r0, 16
+	slt r3, r3, r4
+	sub r3, r0, r3
 	and r1, r1, r3
 	xori r1, r1, 16
 	slli r1, r1, 2
@@ -203,9 +187,6 @@ rank_name:                              # @rank_name
 	addi r3, r3, %lo(rank_name.ranks-4)
 	add r1, r1, r3
 	ldw r1, r1+0
-	ldw lr, sp+0
-	ldw fp, sp+4
-	addi sp, sp, 16
 	jalr r0, r31, 0
 .Lfunc_end3:
 	.size	rank_name, .Lfunc_end3-rank_name
@@ -217,9 +198,6 @@ inv_name:                               # @inv_name
 # %bb.0:
 	addi sp, sp, -16
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 16
 	add r1, r6, r0
 	add r3, r5, r0
 	ldw r5, r4+0
@@ -235,6 +213,7 @@ inv_name:                               # @inv_name
 	jalr r0, r5, 0
 .LBB4_2:
 	ldw r6, r4+8
+	# ADJCALLSTACKDOWN 0, 0
 	addi r4, r0, 2
 	blt r6, r4, .LBB4_10
 .LBB4_3:
@@ -249,6 +228,7 @@ inv_name:                               # @inv_name
 	addi r5, r5, %lo(armor_table)
 	add r4, r4, r5
 	ldw r7, r4+0
+	# ADJCALLSTACKDOWN 0, 0
 	lui r5, %hi(.L.str.37)
 	addi r5, r5, %lo(.L.str.37)
 	jal r0, .LBB4_11
@@ -259,6 +239,7 @@ inv_name:                               # @inv_name
 	addi r5, r5, %lo(scroll_names)
 	add r4, r4, r5
 	ldw r6, r4+0
+	# ADJCALLSTACKDOWN 0, 0
 	lui r5, %hi(.L.str.35)
 	addi r5, r5, %lo(.L.str.35)
 	jal r0, .LBB4_11
@@ -271,6 +252,7 @@ inv_name:                               # @inv_name
 	addi r5, r5, %lo(weapon_table)
 	add r4, r4, r5
 	ldw r7, r4+0
+	# ADJCALLSTACKDOWN 0, 0
 	lui r5, %hi(.L.str.36)
 	addi r5, r5, %lo(.L.str.36)
 	jal r0, .LBB4_11
@@ -281,14 +263,17 @@ inv_name:                               # @inv_name
 	addi r5, r5, %lo(potion_names)
 	add r4, r4, r5
 	ldw r6, r4+0
+	# ADJCALLSTACKDOWN 0, 0
 	lui r5, %hi(.L.str.34)
 	addi r5, r5, %lo(.L.str.34)
 	jal r0, .LBB4_11
 .LBB4_8:
+	# ADJCALLSTACKDOWN 0, 0
 	lui r5, %hi(.L.str.38)
 	addi r5, r5, %lo(.L.str.38)
 	jal r0, .LBB4_11
 .LBB4_9:
+	# ADJCALLSTACKDOWN 0, 0
 	lui r5, %hi(.L.str.39)
 	addi r5, r5, %lo(.L.str.39)
 	jal r0, .LBB4_11
@@ -298,8 +283,8 @@ inv_name:                               # @inv_name
 .LBB4_11:
 	add r4, r1, r0
 	jal r31, snprintf
+	# ADJCALLSTACKUP 0, 0
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 16
 	jalr r0, r31, 0
 .Lfunc_end4:
@@ -324,13 +309,10 @@ init_game:                              # @init_game
 # %bb.0:
 	addi sp, sp, -32
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 32
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
+	stw sp+28, r11
+	stw sp+24, r12
+	stw sp+20, r13
+	stw sp+16, r14
 	add r12, r4, r0
 	add r13, r3, r0
 	lui r14, 1
@@ -339,10 +321,10 @@ init_game:                              # @init_game
 	add r4, r11, r0
 	jal r31, memset
 	seq r1, r12, r11
-	sub r1, r11, r1
 	lui r4, 21365
 	addi r4, r4, 1825
 	xor r4, r12, r4
+	sub r1, r0, r1
 	and r1, r4, r1
 	xor r1, r12, r1
 	stw r13+0, r1
@@ -426,12 +408,11 @@ init_game:                              # @init_game
 	stw r5+0, r7
 	add r3, r13, r0
 	jal r31, new_level
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r14, sp+16
+	ldw r13, sp+20
+	ldw r12, sp+24
+	ldw r11, sp+28
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 32
 	jalr r0, r31, 0
 .Lfunc_end5:
@@ -442,11 +423,6 @@ init_game:                              # @init_game
 	.type	player_armor,@function
 player_armor:                           # @player_armor
 # %bb.0:
-	addi sp, sp, -16
-	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 16
 	lui r1, 1
 	addi r4, r1, 564
 	add r4, r3, r4
@@ -470,9 +446,6 @@ player_armor:                           # @player_armor
 .LBB6_2:
 	addi r1, r0, 1
 .LBB6_3:
-	ldw lr, sp+0
-	ldw fp, sp+4
-	addi sp, sp, 16
 	jalr r0, r31, 0
 .Lfunc_end6:
 	.size	player_armor, .Lfunc_end6-player_armor
@@ -484,14 +457,11 @@ mon_visible:                            # @mon_visible
 # %bb.0:
 	addi sp, sp, -48
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 48
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
+	stw sp+44, r11
+	stw sp+40, r12
+	stw sp+36, r13
+	stw sp+32, r14
+	stw sp+28, r15
 	add r11, r4, r0
 	add r12, r3, r0
 	lui r1, 1
@@ -525,13 +495,12 @@ mon_visible:                            # @mon_visible
 	seq r1, r13, r1
 	and r1, r4, r1
 	or  r1, r3, r1
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r15, sp+28
+	ldw r14, sp+32
+	ldw r13, sp+36
+	ldw r12, sp+40
+	ldw r11, sp+44
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 48
 	jalr r0, r31, 0
 .Lfunc_end7:
@@ -545,29 +514,27 @@ do_command:                             # @do_command
 	addi sp, sp, -160
 	stw sp+0, lr
 	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 160
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, r17
-	stw fp+-32, r18
-	stw fp+-36, r19
-	stw fp+-40, r20
-	stw fp+-44, r21
-	stw fp+-48, r22
-	stw fp+-52, r23
-	stw fp+-56, r24
-	stw fp+-60, r25
-	stw fp+-64, r26
-	stw fp+-68, r27
-	stw fp+-72, r28
+	stw sp+156, r11
+	stw sp+152, r12
+	stw sp+148, r13
+	stw sp+144, r14
+	stw sp+140, r15
+	stw sp+136, r16
+	stw sp+132, r17
+	stw sp+128, r18
+	stw sp+124, r19
+	stw sp+120, r20
+	stw sp+116, r21
+	stw sp+112, r22
+	stw sp+108, r23
+	stw sp+104, r24
+	stw sp+100, r25
+	stw sp+96, r26
+	stw sp+92, r27
+	stw sp+88, r28
 	add r11, r3, r0
-	lui r17, 1
-	addi r1, r17, 1040
+	lui r16, 1
+	addi r1, r16, 1040
 	add r1, r3, r1
 	addi r12, r0, 0
 	stb r1+0, r12
@@ -583,23 +550,23 @@ do_command:                             # @do_command
 	add r13, r12, r0
 	jalr r0, r1, 0
 .LBB8_2:
-	addi r1, r17, 1032
+	addi r1, r16, 1032
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r13, r0, 1
 	addi r3, r0, 0
 	beq r1, r3, .LBB8_159
 .LBB8_3:
-	addi r1, r17, 504
+	addi r1, r16, 504
 	add r1, r11, r1
 	ldw r1, r1+0
-	addi r3, r17, 512
+	addi r3, r16, 512
 	add r3, r11, r3
 	stw r3+0, r1
-	addi r1, r17, 508
+	addi r1, r16, 508
 	add r1, r11, r1
 	ldw r1, r1+0
-	addi r3, r17, 516
+	addi r3, r16, 516
 	add r3, r11, r3
 	stw r3+0, r1
 	add r3, r11, r0
@@ -612,11 +579,11 @@ do_command:                             # @do_command
 	addi r5, r0, 1
 	jal r0, .LBB8_61
 .LBB8_5:
-	addi r4, r17, 572
+	addi r4, r16, 572
 	add r15, r11, r4
 	addi r1, r0, 0
 	addi r3, r0, 4
-	addi r5, r17, 988
+	addi r5, r16, 988
 .LBB8_6:
 	add r6, r11, r4
 	ldw r6, r6+0
@@ -628,29 +595,28 @@ do_command:                             # @do_command
 	addi r4, r0, 1
 	bleu r1, r4, .LBB8_9
 .LBB8_8:
-	addi r1, r17, 1036
+	addi r1, r16, 1036
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r4, r0, 0
 	beq r1, r4, .LBB8_95
 .LBB8_9:
 	addi r1, r0, -1
-	addi r5, r0, 0
-	addi r6, r0, 26
-	add r7, r15, r0
-	add r4, r5, r0
-	add r8, r5, r0
+	addi r4, r0, 0
+	addi r5, r0, 26
+	add r6, r15, r0
+	add r7, r4, r0
 .LBB8_10:
-	ldw r9, r7+0
-	seq r9, r9, r3
-	xor r10, r8, r1
-	sub lr, r5, r9
-	and r10, r10, lr
-	xor r1, r1, r10
-	add r4, r4, r9
-	addi r8, r8, 1
-	addi r7, r7, 16
-	bne r8, r6, .LBB8_10
+	ldw r8, r6+0
+	seq r8, r8, r3
+	xor r9, r7, r1
+	sub r10, r0, r8
+	and r9, r9, r10
+	xor r1, r1, r9
+	add r4, r4, r8
+	addi r7, r7, 1
+	addi r6, r6, 16
+	bne r7, r5, .LBB8_10
 .LBB8_11:
 	addi r3, r0, 0
 	bne r4, r3, .LBB8_96
@@ -664,11 +630,11 @@ do_command:                             # @do_command
 	addi r1, r0, -1
 	jal r0, .LBB8_96
 .LBB8_13:
-	addi r4, r17, 572
+	addi r4, r16, 572
 	add r14, r11, r4
 	addi r1, r0, 0
 	addi r3, r0, 2
-	addi r5, r17, 988
+	addi r5, r16, 988
 .LBB8_14:
 	add r6, r11, r4
 	ldw r6, r6+0
@@ -680,29 +646,28 @@ do_command:                             # @do_command
 	addi r15, r0, 1
 	bleu r1, r15, .LBB8_17
 .LBB8_16:
-	addi r1, r17, 1036
+	addi r1, r16, 1036
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r4, r0, 0
 	beq r1, r4, .LBB8_100
 .LBB8_17:
 	addi r1, r0, -1
-	addi r5, r0, 0
-	addi r6, r0, 26
-	add r7, r14, r0
-	add r4, r5, r0
-	add r8, r5, r0
+	addi r4, r0, 0
+	addi r5, r0, 26
+	add r6, r14, r0
+	add r7, r4, r0
 .LBB8_18:
-	ldw r9, r7+0
-	seq r9, r9, r3
-	xor r10, r8, r1
-	sub lr, r5, r9
-	and r10, r10, lr
-	xor r1, r1, r10
-	add r4, r4, r9
-	addi r8, r8, 1
-	addi r7, r7, 16
-	bne r8, r6, .LBB8_18
+	ldw r8, r6+0
+	seq r8, r8, r3
+	xor r9, r7, r1
+	sub r10, r0, r8
+	and r9, r9, r10
+	xor r1, r1, r9
+	add r4, r4, r8
+	addi r7, r7, 1
+	addi r6, r6, 16
+	bne r7, r5, .LBB8_18
 .LBB8_19:
 	addi r3, r0, 0
 	bne r4, r3, .LBB8_101
@@ -716,11 +681,11 @@ do_command:                             # @do_command
 	addi r1, r0, -1
 	jal r0, .LBB8_101
 .LBB8_21:
-	addi r4, r17, 572
+	addi r4, r16, 572
 	add r14, r11, r4
 	addi r1, r0, 0
 	addi r3, r0, 5
-	addi r5, r17, 988
+	addi r5, r16, 988
 .LBB8_22:
 	add r6, r11, r4
 	ldw r6, r6+0
@@ -732,29 +697,28 @@ do_command:                             # @do_command
 	addi r4, r0, 1
 	bleu r1, r4, .LBB8_25
 .LBB8_24:
-	addi r1, r17, 1036
+	addi r1, r16, 1036
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r4, r0, 0
 	beq r1, r4, .LBB8_105
 .LBB8_25:
 	addi r1, r0, -1
-	addi r5, r0, 0
-	addi r6, r0, 26
-	add r7, r14, r0
-	add r4, r5, r0
-	add r8, r5, r0
+	addi r4, r0, 0
+	addi r5, r0, 26
+	add r6, r14, r0
+	add r7, r4, r0
 .LBB8_26:
-	ldw r9, r7+0
-	seq r9, r9, r3
-	xor r10, r8, r1
-	sub lr, r5, r9
-	and r10, r10, lr
-	xor r1, r1, r10
-	add r4, r4, r9
-	addi r8, r8, 1
-	addi r7, r7, 16
-	bne r8, r6, .LBB8_26
+	ldw r8, r6+0
+	seq r8, r8, r3
+	xor r9, r7, r1
+	sub r10, r0, r8
+	and r9, r9, r10
+	xor r1, r1, r9
+	add r4, r4, r8
+	addi r7, r7, 1
+	addi r6, r6, 16
+	bne r7, r5, .LBB8_26
 .LBB8_27:
 	addi r3, r0, 0
 	bne r4, r3, .LBB8_106
@@ -768,7 +732,7 @@ do_command:                             # @do_command
 	addi r1, r0, -1
 	jal r0, .LBB8_106
 .LBB8_29:
-	addi r1, r17, 564
+	addi r1, r16, 564
 	add r1, r11, r1
 	ldw r3, r1+0
 	addi r13, r0, 0
@@ -780,18 +744,18 @@ do_command:                             # @do_command
 	addi r4, r4, %lo(.L.str.48)
 	jal r0, .LBB8_122
 .LBB8_31:
-	addi r1, r17, 1032
+	addi r1, r16, 1032
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r13, r0, 1
 	addi r3, r0, 0
 	beq r1, r3, .LBB8_159
 .LBB8_32:
-	addi r1, r17, 524
+	addi r1, r16, 524
 	add r1, r11, r1
 	addi r3, r0, 999
 	stw r1+0, r3
-	addi r1, r17, 520
+	addi r1, r16, 520
 	add r1, r11, r1
 	stw r1+0, r3
 	lui r4, %hi(.L.str.57)
@@ -811,13 +775,13 @@ do_command:                             # @do_command
 	addi r4, r0, 1
 	jal r0, .LBB8_52
 .LBB8_37:
-	addi r1, r17, 512
+	addi r1, r16, 512
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r3, r0, 80
 	mul r1, r1, r3
 	add r1, r11, r1
-	addi r3, r17, 516
+	addi r3, r16, 516
 	add r3, r11, r3
 	ldw r3, r3+0
 	add r1, r1, r3
@@ -825,19 +789,19 @@ do_command:                             # @do_command
 	addi r3, r0, 37
 	bne r1, r3, .LBB8_88
 .LBB8_38:
-	addi r1, r17, 568
+	addi r1, r16, 568
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r13, r0, 0
 	beq r1, r13, .LBB8_108
 .LBB8_39:
-	addi r1, r17, 548
+	addi r1, r16, 548
 	add r14, r11, r1
 	ldw r1, r14+0
 	addi r3, r0, 1
 	bne r1, r3, .LBB8_121
 .LBB8_40:
-	addi r1, r17, 996
+	addi r1, r16, 996
 	add r1, r11, r1
 	addi r3, r0, 2
 	stw r1+0, r3
@@ -845,11 +809,11 @@ do_command:                             # @do_command
 	addi r4, r4, %lo(.L.str.86)
 	jal r0, .LBB8_122
 .LBB8_41:
-	addi r4, r17, 572
+	addi r4, r16, 572
 	add r14, r11, r4
 	addi r1, r0, 0
 	addi r3, r0, 6
-	addi r5, r17, 988
+	addi r5, r16, 988
 .LBB8_42:
 	add r6, r11, r4
 	ldw r6, r6+0
@@ -861,29 +825,28 @@ do_command:                             # @do_command
 	addi r4, r0, 1
 	bleu r1, r4, .LBB8_45
 .LBB8_44:
-	addi r1, r17, 1036
+	addi r1, r16, 1036
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r4, r0, 0
 	beq r1, r4, .LBB8_109
 .LBB8_45:
 	addi r1, r0, -1
-	addi r5, r0, 0
-	addi r6, r0, 26
-	add r7, r14, r0
-	add r4, r5, r0
-	add r8, r5, r0
+	addi r4, r0, 0
+	addi r5, r0, 26
+	add r6, r14, r0
+	add r7, r4, r0
 .LBB8_46:
-	ldw r9, r7+0
-	seq r9, r9, r3
-	xor r10, r8, r1
-	sub lr, r5, r9
-	and r10, r10, lr
-	xor r1, r1, r10
-	add r4, r4, r9
-	addi r8, r8, 1
-	addi r7, r7, 16
-	bne r8, r6, .LBB8_46
+	ldw r8, r6+0
+	seq r8, r8, r3
+	xor r9, r7, r1
+	sub r10, r0, r8
+	and r9, r9, r10
+	xor r1, r1, r9
+	add r4, r4, r8
+	addi r7, r7, 1
+	addi r6, r6, 16
+	bne r7, r5, .LBB8_46
 .LBB8_47:
 	addi r3, r0, 0
 	bne r4, r3, .LBB8_110
@@ -897,7 +860,7 @@ do_command:                             # @do_command
 	addi r1, r0, -1
 	jal r0, .LBB8_110
 .LBB8_49:
-	addi r1, r17, 1032
+	addi r1, r16, 1032
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r13, r0, 1
@@ -919,13 +882,13 @@ do_command:                             # @do_command
 	add r13, r12, r0
 	jal r0, .LBB8_159
 .LBB8_54:
-	addi r1, r17, 512
+	addi r1, r16, 512
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r3, r0, 80
 	mul r1, r1, r3
 	add r1, r11, r1
-	addi r3, r17, 516
+	addi r3, r16, 516
 	add r3, r11, r3
 	ldw r3, r3+0
 	add r1, r1, r3
@@ -933,12 +896,12 @@ do_command:                             # @do_command
 	addi r3, r0, 37
 	bne r1, r3, .LBB8_89
 .LBB8_55:
-	addi r1, r17, 548
+	addi r1, r16, 548
 	add r13, r11, r1
 	ldw r4, r13+0
 	addi r1, r4, 1
 	stw r13+0, r1
-	addi r3, r17, 552
+	addi r3, r16, 552
 	add r3, r11, r3
 	ldw r5, r3+0
 	blt r4, r5, .LBB8_57
@@ -952,13 +915,13 @@ do_command:                             # @do_command
 	addi r4, r4, %lo(.L.str.83)
 	jal r0, .LBB8_90
 .LBB8_58:
-	addi r1, r17, 1032
+	addi r1, r16, 1032
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r3, r0, 0
 	beq r1, r3, .LBB8_93
 .LBB8_59:
-	addi r1, r17, 568
+	addi r1, r16, 568
 	add r1, r11, r1
 	addi r13, r0, 1
 	stw r1+0, r13
@@ -974,64 +937,63 @@ do_command:                             # @do_command
 	jal r31, try_move
 	jal r0, .LBB8_159
 .LBB8_62:
-	addi r1, r17, 1036
-	add r18, r11, r1
-	ldw r1, r18+0
-	addi r19, r0, 0
-	beq r1, r19, .LBB8_92
+	addi r1, r16, 1036
+	add r17, r11, r1
+	ldw r1, r17+0
+	addi r18, r0, 0
+	beq r1, r18, .LBB8_92
 .LBB8_63:
-	addi r1, r17, 572
+	addi r1, r16, 572
 	add r13, r11, r1
-	addi r1, r17, 560
+	addi r1, r16, 560
+	add r20, r11, r1
+	addi r1, r16, 564
 	add r21, r11, r1
-	addi r1, r17, 564
-	add r22, r11, r1
-	addi r23, r0, 26
-	addi r14, fp, -136
-	addi r15, r0, 64
-	lui r24, %hi(.L.str.90)
-	addi r24, r24, %lo(.L.str.90)
+	addi r22, r0, 26
+	addi r14, r0, 64
+	lui r23, %hi(.L.str.90)
+	addi r23, r23, %lo(.L.str.90)
 	lui r1, %hi(.L.str.89)
 	addi r1, r1, %lo(.L.str.89)
-	xor r25, r1, r24
+	xor r24, r1, r23
 	lui r1, %hi(.L.str.91)
 	addi r1, r1, %lo(.L.str.91)
-	xor r26, r1, r24
-	lui r16, %hi(.L.str.88)
-	addi r16, r16, %lo(.L.str.88)
-	add r20, r19, r0
-	add r27, r19, r0
+	xor r25, r1, r23
+	lui r15, %hi(.L.str.88)
+	addi r15, r15, %lo(.L.str.88)
+	add r19, r18, r0
+	add r26, r18, r0
 	jal r0, .LBB8_66
 .LBB8_64:
-	addi r20, r20, 1
+	addi r19, r19, 1
 .LBB8_65:
-	addi r27, r27, 1
+	addi r26, r26, 1
 	addi r13, r13, 16
-	beq r27, r23, .LBB8_83
+	beq r26, r22, .LBB8_83
 .LBB8_66:
 	ldw r1, r13+0
-	beq r1, r19, .LBB8_65
+	beq r1, r18, .LBB8_65
 .LBB8_67:
+	addi r5, sp, 24
 	add r4, r13, r0
-	add r5, r14, r0
-	add r6, r15, r0
+	add r6, r14, r0
 	jal r31, inv_name
-	ldw r1, r18+0
-	beq r1, r19, .LBB8_64
+	ldw r1, r17+0
+	beq r1, r18, .LBB8_64
 .LBB8_68:
-	addi r4, r27, 97
+	addi r4, r26, 97
+	ldw r1, r20+0
+	seq r1, r26, r1
+	sub r1, r0, r1
+	and r1, r24, r1
+	xor r6, r1, r23
 	ldw r1, r21+0
-	seq r1, r27, r1
-	sub r1, r19, r1
+	seq r1, r26, r1
+	sub r1, r0, r1
 	and r1, r25, r1
-	xor r6, r1, r24
-	ldw r1, r22+0
-	seq r1, r27, r1
-	sub r1, r19, r1
-	and r1, r26, r1
-	xor r7, r1, r24
-	add r3, r16, r0
-	add r5, r14, r0
+	xor r7, r1, r23
+	addi r5, sp, 24
+	add r3, r15, r0
 	jal r31, printf
 	jal r0, .LBB8_64
 .LBB8_69:
@@ -1048,7 +1010,7 @@ do_command:                             # @do_command
 	jal r31, msgf
 	jal r0, .LBB8_226
 .LBB8_71:
-	addi r1, r17, 996
+	addi r1, r16, 996
 	add r1, r11, r1
 	addi r3, r0, 3
 	stw r1+0, r3
@@ -1070,15 +1032,15 @@ do_command:                             # @do_command
 	jal r31, try_move
 	jal r0, .LBB8_159
 .LBB8_75:
-	addi r3, r17, 572
+	addi r3, r16, 572
 	add r14, r11, r3
 	addi r1, r0, 0
-	addi r16, r0, 3
-	addi r4, r17, 988
+	addi r17, r0, 3
+	addi r4, r16, 988
 .LBB8_76:
 	add r5, r11, r3
 	ldw r5, r5+0
-	seq r5, r5, r16
+	seq r5, r5, r17
 	add r1, r1, r5
 	addi r3, r3, 16
 	bne r3, r4, .LBB8_76
@@ -1086,29 +1048,28 @@ do_command:                             # @do_command
 	addi r15, r0, 1
 	bleu r1, r15, .LBB8_79
 .LBB8_78:
-	addi r1, r17, 1036
+	addi r1, r16, 1036
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r3, r0, 0
 	beq r1, r3, .LBB8_113
 .LBB8_79:
 	addi r1, r0, -1
-	addi r4, r0, 0
-	addi r5, r0, 26
-	add r6, r14, r0
-	add r3, r4, r0
-	add r7, r4, r0
+	addi r3, r0, 0
+	addi r4, r0, 26
+	add r5, r14, r0
+	add r6, r3, r0
 .LBB8_80:
-	ldw r8, r6+0
-	seq r8, r8, r16
-	xor r9, r7, r1
-	sub r10, r4, r8
-	and r9, r9, r10
-	xor r1, r1, r9
-	add r3, r3, r8
-	addi r7, r7, 1
-	addi r6, r6, 16
-	bne r7, r5, .LBB8_80
+	ldw r7, r5+0
+	seq r7, r7, r17
+	xor r8, r6, r1
+	sub r9, r0, r7
+	and r8, r8, r9
+	xor r1, r1, r8
+	add r3, r3, r7
+	addi r6, r6, 1
+	addi r5, r5, 16
+	bne r6, r4, .LBB8_80
 .LBB8_81:
 	addi r4, r0, 0
 	bne r3, r4, .LBB8_114
@@ -1122,11 +1083,11 @@ do_command:                             # @do_command
 	addi r1, r0, -1
 	jal r0, .LBB8_114
 .LBB8_83:
-	ldw r1, r18+0
+	ldw r1, r17+0
 	addi r13, r0, 0
 	beq r1, r13, .LBB8_86
 .LBB8_84:
-	addi r1, r17, 568
+	addi r1, r16, 568
 	add r1, r11, r1
 	ldw r1, r1+0
 	beq r1, r13, .LBB8_86
@@ -1135,7 +1096,7 @@ do_command:                             # @do_command
 	addi r3, r3, %lo(.L.str.92)
 	jal r31, printf
 .LBB8_86:
-	bne r20, r13, .LBB8_93
+	bne r19, r13, .LBB8_93
 .LBB8_87:
 	lui r4, %hi(.L.str.93)
 	addi r4, r4, %lo(.L.str.93)
@@ -1169,7 +1130,7 @@ do_command:                             # @do_command
 	addi r4, r4, %lo(.L.str.51)
 	add r3, r11, r0
 	jal r31, msgf
-	addi r1, r17, 996
+	addi r1, r16, 996
 	add r1, r11, r1
 	addi r3, r0, 3
 	stw r1+0, r3
@@ -1212,7 +1173,7 @@ do_command:                             # @do_command
 	addi r13, r0, 0
 	blt r1, r13, .LBB8_159
 .LBB8_102:
-	addi r3, r17, 556
+	addi r3, r16, 556
 	add r3, r11, r3
 	addi r4, r0, 1300
 	stw r3+0, r4
@@ -1239,12 +1200,12 @@ do_command:                             # @do_command
 	addi r13, r0, 0
 	blt r1, r13, .LBB8_159
 .LBB8_107:
-	addi r3, r17, 560
+	addi r3, r16, 560
 	add r3, r11, r3
 	stw r3+0, r1
 	slli r1, r1, 4
 	add r4, r14, r1
-	addi r14, fp, -136
+	addi r14, sp, 24
 	addi r6, r0, 64
 	add r5, r14, r0
 	jal r31, inv_name
@@ -1265,12 +1226,12 @@ do_command:                             # @do_command
 	addi r13, r0, 0
 	blt r1, r13, .LBB8_159
 .LBB8_111:
-	addi r3, r17, 564
+	addi r3, r16, 564
 	add r3, r11, r3
 	stw r3+0, r1
 	slli r1, r1, 4
 	add r4, r14, r1
-	addi r14, fp, -136
+	addi r14, sp, 24
 	addi r6, r0, 64
 	add r5, r14, r0
 	jal r31, inv_name
@@ -1294,7 +1255,7 @@ do_command:                             # @do_command
 	slli r1, r1, 4
 	add r14, r14, r1
 	ldw r1, r14+4
-	bgtu r1, r16, .LBB8_158
+	bgtu r1, r17, .LBB8_158
 .LBB8_116:
 	slli r1, r1, 2
 	lui r3, %hi(.LJTI8_2)
@@ -1303,7 +1264,7 @@ do_command:                             # @do_command
 	ldw r1, r1+0
 	jalr r0, r1, 0
 .LBB8_117:
-	addi r1, r17, 536
+	addi r1, r16, 536
 	add r1, r11, r1
 	ldw r3, r1+0
 	blt r3, r15, .LBB8_148
@@ -1340,7 +1301,7 @@ do_command:                             # @do_command
 	jal r31, msgf
 	jal r0, .LBB8_159
 .LBB8_123:
-	addi r1, r17, 560
+	addi r1, r16, 560
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r3, r0, 0
@@ -1355,7 +1316,7 @@ do_command:                             # @do_command
 	addi r4, r4, %lo(.L.str.102)
 	jal r0, .LBB8_156
 .LBB8_125:
-	addi r1, r17, 564
+	addi r1, r16, 564
 	add r1, r11, r1
 	ldw r1, r1+0
 	addi r3, r0, 0
@@ -1380,16 +1341,16 @@ do_command:                             # @do_command
 	addi r6, r6, 820
 	addi r7, r0, 80
 	addi r8, r0, 46
-	addi r9, r17, -392
-	addi r10, r17, -388
-	addi lr, r17, -384
+	addi r9, r16, -392
+	addi r10, r16, -388
+	addi lr, r16, -384
 	addi r15, r0, 320
-	addi r16, r0, 1000
+	addi r17, r0, 1000
 	add r18, r3, r0
 	jal r0, .LBB8_129
 .LBB8_128:
 	addi r18, r18, 1
-	beq r18, r16, .LBB8_241
+	beq r18, r17, .LBB8_241
 .LBB8_129:
 	slli r19, r13, 13
 	xor r13, r19, r13
@@ -1437,12 +1398,12 @@ do_command:                             # @do_command
 	bne r22, r20, .LBB8_131
 	jal r0, .LBB8_128
 .LBB8_135:
-	addi r1, r17, 528
+	addi r1, r16, 528
 	add r3, r11, r1
 	ldw r4, r3+0
 	addi r1, r4, 1
 	stw r3+0, r1
-	addi r3, r17, 532
+	addi r3, r16, 532
 	add r3, r11, r3
 	ldw r5, r3+0
 	blt r4, r5, .LBB8_137
@@ -1466,7 +1427,7 @@ do_command:                             # @do_command
 	addi r4, r0, -8
 	or  r3, r3, r4
 	stw r11+0, r1
-	addi r1, r17, 520
+	addi r1, r16, 520
 	add r13, r11, r1
 	ldw r1, r13+0
 	add r1, r1, r3
@@ -1476,29 +1437,29 @@ do_command:                             # @do_command
 	add r3, r11, r0
 	jal r31, msgf
 	ldw r1, r13+0
-	addi r16, r0, 0
-	bgt r1, r16, .LBB8_158
+	addi r17, r0, 0
+	bgt r1, r17, .LBB8_158
 .LBB8_139:
-	addi r1, r17, 996
+	addi r1, r16, 996
 	add r1, r11, r1
 	stw r1+0, r15
-	addi r1, r17, 1000
+	addi r1, r16, 1000
 	add r3, r11, r1
 	lui r13, %hi(.L.str.61)
 	addi r13, r13, %lo(.L.str.61)
 	addi r5, r0, 31
 	add r4, r13, r0
 	jal r31, strncpy
-	addi r1, r17, 1031
+	addi r1, r16, 1031
 	add r1, r11, r1
-	stb r1+0, r16
+	stb r1+0, r17
 	lui r4, %hi(.L.str.99)
 	addi r4, r4, %lo(.L.str.99)
 	add r3, r11, r0
 	add r5, r13, r0
 	jal r0, .LBB8_157
 .LBB8_140:
-	addi r1, r17, 536
+	addi r1, r16, 536
 	add r1, r11, r1
 	ldw r3, r1+0
 	blt r3, r15, .LBB8_152
@@ -1524,10 +1485,10 @@ do_command:                             # @do_command
 	jal r0, .LBB8_153
 .LBB8_144:
 	stw r11+0, r13
-	addi r1, r17, 512
+	addi r1, r16, 512
 	add r1, r11, r1
 	stw r1+0, r19
-	addi r1, r17, 516
+	addi r1, r16, 516
 	add r1, r11, r1
 	stw r1+0, r20
 	add r3, r11, r0
@@ -1547,12 +1508,12 @@ do_command:                             # @do_command
 .LBB8_148:
 	addi r1, r0, 0
 .LBB8_149:
-	addi r3, r17, 520
+	addi r3, r16, 520
 	add r3, r11, r3
 	ldw r4, r3+0
 	add r5, r4, r1
 	stw r3+0, r5
-	addi r1, r17, 524
+	addi r1, r16, 524
 	add r1, r11, r1
 	ldw r4, r1+0
 	ble r5, r4, .LBB8_151
@@ -1567,12 +1528,12 @@ do_command:                             # @do_command
 .LBB8_152:
 	addi r1, r0, 0
 .LBB8_153:
-	addi r3, r17, 520
+	addi r3, r16, 520
 	add r3, r11, r3
 	ldw r4, r3+0
 	add r5, r4, r1
 	stw r3+0, r5
-	addi r1, r17, 524
+	addi r1, r16, 524
 	add r1, r11, r1
 	ldw r4, r1+0
 	ble r5, r4, .LBB8_155
@@ -1591,19 +1552,19 @@ do_command:                             # @do_command
 	addi r13, r0, 0
 	stw r14+0, r13
 .LBB8_159:
-	addi r1, r17, 996
+	addi r1, r16, 996
 	add r14, r11, r1
 	ldw r1, r14+0
 	bne r1, r12, .LBB8_226
 .LBB8_160:
-	addi r25, r0, 0
-	bne r13, r25, .LBB8_225
+	addi r17, r0, 0
+	bne r13, r17, .LBB8_225
 .LBB8_161:
-	addi r18, r17, -392
+	addi r18, r16, -392
 	add r19, r11, r18
-	addi r1, r17, 512
+	addi r1, r16, 512
 	add r20, r11, r1
-	addi r1, r17, 516
+	addi r1, r16, 516
 	add r21, r11, r1
 	addi r22, r11, 4
 	addi r23, r0, 20
@@ -1611,32 +1572,31 @@ do_command:                             # @do_command
 	addi r15, r0, 1
 	lui r1, 7
 	addi r1, r1, -1791
-	stw fp+-140, r1
+	stw sp+20, r1
 	lui r26, 349525
-	addi r1, r26, 1366
-	stw fp+-144, r1
+	addi r27, r26, 1366
 	addi r28, r0, -1
-	add r16, r25, r0
+	add fp, r17, r0
 	jal r0, .LBB8_164
 .LBB8_162:
 	add r3, r11, r0
 	add r4, r12, r0
 	jal r31, monster_attacks
 .LBB8_163:
-	addi r16, r16, 1
+	addi fp, fp, 1
 	addi r1, r0, 16
-	beq r16, r1, .LBB8_224
+	beq fp, r1, .LBB8_224
 .LBB8_164:
 	ldw r1, r14+0
-	bne r1, r25, .LBB8_224
+	bne r1, r17, .LBB8_224
 .LBB8_165:
-	mul r1, r16, r23
+	mul r1, fp, r23
 	add r12, r19, r1
-	ldw r27, r12+0
-	blt r27, r25, .LBB8_163
+	ldw r25, r12+0
+	blt r25, r17, .LBB8_163
 .LBB8_166:
 	ldw r1, r12+16
-	beq r1, r25, .LBB8_171
+	beq r1, r17, .LBB8_171
 .LBB8_167:
 	ldw r4, r20+0
 	ldw r5, r21+0
@@ -1723,17 +1683,17 @@ do_command:                             # @do_command
 	or  r3, r3, r6
 	bne r3, r15, .LBB8_178
 .LBB8_176:
-	slt r3, r13, r25
+	slt r3, r13, r17
 	sne r1, r13, r1
 	or  r1, r3, r1
-	beq r1, r25, .LBB8_178
+	beq r1, r17, .LBB8_178
 .LBB8_177:
-	sll r1, r15, r27
-	ldw r3, fp+-140
+	sll r1, r15, r25
+	ldw r3, sp+20
 	and r1, r1, r3
-	bne r1, r25, .LBB8_163
+	bne r1, r17, .LBB8_163
 .LBB8_178:
-	bne r27, r25, .LBB8_180
+	bne r25, r17, .LBB8_180
 .LBB8_179:
 	ldw r1, r11+0
 	slli r3, r1, 13
@@ -1744,7 +1704,7 @@ do_command:                             # @do_command
 	xor r1, r3, r1
 	stw r11+0, r1
 	andi r3, r1, 256
-	beq r3, r25, .LBB8_183
+	beq r3, r17, .LBB8_183
 .LBB8_180:
 	add r3, r11, r0
 	jal r31, room_at
@@ -1781,8 +1741,7 @@ do_command:                             # @do_command
 	slli r3, r1, 5
 	xor r1, r3, r1
 	srli r3, r1, 8
-	ldw r6, fp+-144
-	mulhu r4, r3, r6
+	mulhu r4, r3, r27
 	slli r5, r4, 1
 	add r4, r5, r4
 	xor r4, r4, r28
@@ -1795,7 +1754,7 @@ do_command:                             # @do_command
 	xor r1, r3, r1
 	stw r11+0, r1
 	srli r1, r1, 8
-	mulhu r3, r1, r6
+	mulhu r3, r1, r27
 	slli r4, r3, 1
 	add r3, r4, r3
 	xor r3, r3, r28
@@ -1829,7 +1788,7 @@ do_command:                             # @do_command
 	addi r10, r0, 11
 	bgtu r9, r10, .LBB8_194
 .LBB8_188:
-	addi r10, r17, -1787
+	addi r10, r16, -1787
 	srl r9, r10, r9
 	andi r10, r9, 1
 	addi r9, r0, 0
@@ -1847,12 +1806,12 @@ do_command:                             # @do_command
 	ldw r13, r13+0
 	blt r13, r9, .LBB8_190
 .LBB8_192:
-	addi r13, r17, -388
+	addi r13, r16, -388
 	add r13, lr, r13
 	ldw r13, r13+0
 	bne r13, r6, .LBB8_190
 .LBB8_193:
-	addi r13, r17, -384
+	addi r13, r16, -384
 	add lr, lr, r13
 	ldw lr, lr+0
 	bne lr, r3, .LBB8_190
@@ -1872,7 +1831,7 @@ do_command:                             # @do_command
 	addi r10, r0, 11
 	bgtu r9, r10, .LBB8_208
 .LBB8_197:
-	addi r10, r17, -1787
+	addi r10, r16, -1787
 	srl r9, r10, r9
 	andi r10, r9, 1
 	addi r9, r0, 0
@@ -1890,12 +1849,12 @@ do_command:                             # @do_command
 	ldw r13, r13+0
 	blt r13, r9, .LBB8_199
 .LBB8_201:
-	addi r13, r17, -388
+	addi r13, r16, -388
 	add r13, lr, r13
 	ldw r13, r13+0
 	bne r13, r6, .LBB8_199
 .LBB8_202:
-	addi r13, r17, -384
+	addi r13, r16, -384
 	add lr, lr, r13
 	ldw lr, lr+0
 	bne lr, r7, .LBB8_199
@@ -1928,7 +1887,7 @@ do_command:                             # @do_command
 	addi r6, r0, 11
 	bgtu r5, r6, .LBB8_163
 .LBB8_211:
-	addi r6, r17, -1787
+	addi r6, r16, -1787
 	srl r5, r6, r5
 	andi r6, r5, 1
 	addi r5, r0, 0
@@ -1946,12 +1905,12 @@ do_command:                             # @do_command
 	ldw r8, r8+0
 	blt r8, r5, .LBB8_213
 .LBB8_215:
-	addi r8, r17, -388
+	addi r8, r16, -388
 	add r8, r7, r8
 	ldw r8, r8+0
 	bne r8, r4, .LBB8_213
 .LBB8_216:
-	addi r8, r17, -384
+	addi r8, r16, -384
 	add r7, r7, r8
 	ldw r7, r7+0
 	bne r7, r3, .LBB8_213
@@ -1987,35 +1946,35 @@ do_command:                             # @do_command
 	seq r12, r1, r3
 .LBB8_226:
 	add r1, r12, r0
-	ldw r28, fp+-72
-	ldw r27, fp+-68
-	ldw r26, fp+-64
-	ldw r25, fp+-60
-	ldw r24, fp+-56
-	ldw r23, fp+-52
-	ldw r22, fp+-48
-	ldw r21, fp+-44
-	ldw r20, fp+-40
-	ldw r19, fp+-36
-	ldw r18, fp+-32
-	ldw r17, fp+-28
-	ldw r16, fp+-24
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r28, sp+88
+	ldw r27, sp+92
+	ldw r26, sp+96
+	ldw r25, sp+100
+	ldw r24, sp+104
+	ldw r23, sp+108
+	ldw r22, sp+112
+	ldw r21, sp+116
+	ldw r20, sp+120
+	ldw r19, sp+124
+	ldw r18, sp+128
+	ldw r17, sp+132
+	ldw r16, sp+136
+	ldw r15, sp+140
+	ldw r14, sp+144
+	ldw r13, sp+148
+	ldw r12, sp+152
+	ldw r11, sp+156
 	ldw lr, sp+0
 	ldw fp, sp+4
 	addi sp, sp, 160
 	jalr r0, r31, 0
 .LBB8_227:
-	addi r1, r17, 988
+	addi r1, r16, 988
 	add r1, r11, r1
 	ldw r3, r1+0
 	addi r3, r3, 1
 	stw r1+0, r3
-	addi r1, r17, 556
+	addi r1, r16, 556
 	add r12, r11, r1
 	ldw r1, r12+0
 	blt r1, r15, .LBB8_232
@@ -2034,7 +1993,7 @@ do_command:                             # @do_command
 	addi r4, r4, %lo(.L.str.110)
 	jal r0, .LBB8_236
 .LBB8_232:
-	addi r1, r17, 520
+	addi r1, r16, 520
 	add r1, r11, r1
 	ldw r3, r1+0
 	addi r4, r3, -1
@@ -2042,14 +2001,14 @@ do_command:                             # @do_command
 	bgt r3, r15, .LBB8_237
 .LBB8_233:
 	stw r14+0, r15
-	addi r1, r17, 1000
+	addi r1, r16, 1000
 	add r3, r11, r1
 	lui r12, %hi(.L.str.112)
 	addi r12, r12, %lo(.L.str.112)
 	addi r5, r0, 31
 	add r4, r12, r0
 	jal r31, strncpy
-	addi r1, r17, 1031
+	addi r1, r16, 1031
 	add r1, r11, r1
 	stb r1+0, r13
 	lui r4, %hi(.L.str.99)
@@ -2069,10 +2028,10 @@ do_command:                             # @do_command
 	add r3, r11, r0
 	jal r31, msgf
 .LBB8_237:
-	addi r1, r17, 520
+	addi r1, r16, 520
 	add r1, r11, r1
 	ldw r3, r1+0
-	addi r4, r17, 524
+	addi r4, r16, 524
 	add r4, r11, r4
 	ldw r4, r4+0
 	bge r3, r4, .LBB8_225
@@ -2080,19 +2039,19 @@ do_command:                             # @do_command
 	ldw r4, r12+0
 	blt r4, r15, .LBB8_225
 .LBB8_239:
-	addi r4, r17, 536
+	addi r4, r16, 536
 	add r4, r11, r4
 	ldw r4, r4+0
 	slli r4, r4, 1
 	addi r5, r0, 21
 	sub r4, r5, r4
-	addi r5, r0, 3
-	sgt r5, r4, r5
-	sub r5, r13, r5
-	xori r4, r4, 3
-	and r4, r4, r5
 	xori r5, r4, 3
-	addi r4, r17, 992
+	addi r6, r0, 3
+	sgt r4, r4, r6
+	sub r4, r0, r4
+	and r4, r5, r4
+	xori r5, r4, 3
+	addi r4, r16, 992
 	add r4, r11, r4
 	ldw r6, r4+0
 	addi r6, r6, 1
@@ -2219,23 +2178,20 @@ try_move:                               # @try_move
 # %bb.0:
 	addi sp, sp, -144
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 144
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, r17
-	stw fp+-32, r18
-	stw fp+-36, r19
-	stw fp+-40, r20
-	stw fp+-44, r21
-	stw fp+-48, r22
-	stw fp+-52, r23
-	stw fp+-56, r24
+	stw sp+140, r11
+	stw sp+136, r12
+	stw sp+132, r13
+	stw sp+128, r14
+	stw sp+124, r15
+	stw sp+120, r16
+	stw sp+116, r17
+	stw sp+112, r18
+	stw sp+108, r19
+	stw sp+104, r20
+	stw sp+100, r21
+	stw sp+96, r22
+	stw sp+92, r23
+	stw sp+88, r24
 	add r11, r3, r0
 	lui r13, 1
 	addi r1, r13, 512
@@ -2497,14 +2453,14 @@ try_move:                               # @try_move
 .LBB9_43:
 	addi r3, r0, 7
 	slt r3, r19, r3
-	sub r3, r20, r3
+	sub r3, r0, r3
 .LBB9_44:
 	add r1, r3, r1
-	addi r3, r0, 1
-	sgt r3, r1, r3
-	sub r3, r20, r3
-	xori r1, r1, 1
-	and r1, r1, r3
+	xori r3, r1, 1
+	addi r4, r0, 1
+	sgt r1, r1, r4
+	sub r1, r0, r1
+	and r1, r3, r1
 	xori r1, r1, 1
 	ldw r3, r16+12
 	sub r1, r3, r1
@@ -2518,22 +2474,21 @@ try_move:                               # @try_move
 	add r3, r11, r0
 	jal r31, msgf
 .LBB9_47:
-	ldw r24, fp+-56
-	ldw r23, fp+-52
-	ldw r22, fp+-48
-	ldw r21, fp+-44
-	ldw r20, fp+-40
-	ldw r19, fp+-36
-	ldw r18, fp+-32
-	ldw r17, fp+-28
-	ldw r16, fp+-24
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r24, sp+88
+	ldw r23, sp+92
+	ldw r22, sp+96
+	ldw r21, sp+100
+	ldw r20, sp+104
+	ldw r19, sp+108
+	ldw r18, sp+112
+	ldw r17, sp+116
+	ldw r16, sp+120
+	ldw r15, sp+124
+	ldw r14, sp+128
+	ldw r13, sp+132
+	ldw r12, sp+136
+	ldw r11, sp+140
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 144
 	jalr r0, r31, 0
 .LBB9_48:
@@ -2664,7 +2619,7 @@ try_move:                               # @try_move
 	add r1, r11, r1
 	addi r3, r13, 572
 	add r4, r1, r3
-	addi r12, fp, -120
+	addi r12, sp, 24
 	addi r6, r0, 64
 	add r5, r12, r0
 	jal r31, inv_name
@@ -2706,17 +2661,14 @@ monster_attacks:                        # @monster_attacks
 # %bb.0:
 	addi sp, sp, -96
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 96
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, r17
-	stw fp+-32, r18
+	stw sp+92, r11
+	stw sp+88, r12
+	stw sp+84, r13
+	stw sp+80, r14
+	stw sp+76, r15
+	stw sp+72, r16
+	stw sp+68, r17
+	stw sp+64, r18
 	add r11, r3, r0
 	ldw r1, r4+0
 	addi r3, r0, 40
@@ -2810,7 +2762,7 @@ monster_attacks:                        # @monster_attacks
 .LBB10_8:
 	lui r5, %hi(.L.str.107)
 	addi r5, r5, %lo(.L.str.107)
-	addi r13, fp, -72
+	addi r13, sp, 24
 	addi r4, r0, 40
 	add r3, r13, r0
 	add r6, r12, r0
@@ -2834,16 +2786,15 @@ monster_attacks:                        # @monster_attacks
 .LBB10_9:
 	jal r31, msgf
 .LBB10_10:
-	ldw r18, fp+-32
-	ldw r17, fp+-28
-	ldw r16, fp+-24
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r18, sp+64
+	ldw r17, sp+68
+	ldw r16, sp+72
+	ldw r15, sp+76
+	ldw r14, sp+80
+	ldw r13, sp+84
+	ldw r12, sp+88
+	ldw r11, sp+92
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 96
 	jalr r0, r31, 0
 .Lfunc_end10:
@@ -3697,5 +3648,5 @@ level_exp:
 	.asciz	"starvation"
 	.size	.L.str.112, 11
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e34f541beea69553ff1fd655361b4faa1e656dc2)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e507704cf3c4d36284ffcb21f50e8531ceb63f7f)"
 	.section	".note.GNU-stack","",@progbits
