@@ -53,9 +53,26 @@ docker run --rm \
                 -o "$EMU_BIN" -lm
         fi
 
+        # Build the assembler and linker from workspace source too — the
+        # copies baked into /opt/slow32/bin go stale as the image ages and
+        # then fail tests that need newer directives (.p2align, .local, ...).
+        ASM_BIN=regression/.docker-emu-bin/slow32asm
+        if [ ! -x "$ASM_BIN" ] || \
+           [ tools/assembler/slow32asm.c -nt "$ASM_BIN" ]; then
+            echo "Building musl-linked slow32asm into $ASM_BIN ..."
+            gcc -O2 -Wall tools/assembler/slow32asm.c -o "$ASM_BIN"
+        fi
+        LD_BIN=regression/.docker-emu-bin/s32-ld
+        if [ ! -x "$LD_BIN" ] || \
+           [ tools/linker/s32-ld.c -nt "$LD_BIN" ] || \
+           [ common/s32_formats.h -nt "$LD_BIN" ]; then
+            echo "Building musl-linked s32-ld into $LD_BIN ..."
+            gcc -O2 -Wall tools/linker/s32-ld.c -o "$LD_BIN"
+        fi
+
         export LLVM_BIN=/opt/llvm/bin
-        export ASSEMBLER=/opt/slow32/bin/slow32asm
-        export LINKER=/opt/slow32/bin/s32-ld
+        export ASSEMBLER="$PWD/$ASM_BIN"
+        export LINKER="$PWD/$LD_BIN"
         export EMULATOR="$PWD/$EMU_BIN"
 
         cd regression
