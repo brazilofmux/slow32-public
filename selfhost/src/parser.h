@@ -2222,6 +2222,57 @@ static void parse_global_init_struct(int ty, int gidx) {
     parse_global_init_struct_at(ty, gidx, ps_ginit_cur_off(gidx));
 }
 
+/* FP initializer element: [+|-] (FP literal | integer const-expr),
+ * stored as IEEE bytes at rel_off — 8 for double, 4 for float (the
+ * float narrowing is a native (float) cast, so it round-to-nearest
+ * matches clang, unlike the truncating ps_f64_to_f32_bits).  Integer
+ * constants convert through a native double ((double)2 for
+ * `double x = 2;`), which the old int-truncating fallthrough silently
+ * corrupted. */
+static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
+    int fneg;
+    int flo;
+    int fhi;
+    int fw[2];
+    int i;
+    double fd;
+
+    fneg = 0;
+    if (lex_tok == TK_MINUS) { fneg = 1; next(); }
+    else if (lex_tok == TK_PLUS) next();
+    if (lex_tok == TK_FNUM) {
+        flo = lex_val;
+        fhi = lex_fval_hi;
+        next();
+    } else {
+        fd = (double)parse_const_int();
+        memcpy(fw, &fd, 8);
+        flo = fw[0];
+        fhi = fw[1];
+    }
+    if (fneg) fhi = fhi ^ (1 << 31);
+    if (ty_is_double(ty)) {
+        i = 0;
+        while (i < 4) {
+            ps_ginit_store_byte_at(gidx, rel_off + i, (flo >> (i * 8)) & 255);
+            ps_ginit_store_byte_at(gidx, rel_off + 4 + i, (fhi >> (i * 8)) & 255);
+            i = i + 1;
+        }
+    } else {
+        float ff;
+        fw[0] = flo;
+        fw[1] = fhi;
+        memcpy(&fd, fw, 8);
+        ff = (float)fd;
+        memcpy(&flo, &ff, 4);
+        i = 0;
+        while (i < 4) {
+            ps_ginit_store_byte_at(gidx, rel_off + i, (flo >> (i * 8)) & 255);
+            i = i + 1;
+        }
+    }
+}
+
 static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_off) {
     int v;
     int sp_idx;
@@ -2249,6 +2300,10 @@ static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_
     if (lex_tok == TK_IDENT && ty_size(ty) == 4 && find_const(lex_str) < 0 &&
         (is_known_func(lex_str) || find_global(lex_str) >= 0)) {
         parse_global_init_symbol_reloc_at(gidx, rel_off, 4);
+        return;
+    }
+    if (ty_is_fp(ty)) {
+        ps_fp_init_store_at(ty, gidx, rel_off);
         return;
     }
     v = parse_const_int();
@@ -4583,41 +4638,14 @@ static Node *parse_top_decl(void) {
                     ps_ginit_finish(idx);
                 } else if (lex_tok == TK_STRING) {
                     ps_gstr[idx] = parse_string_literal();
-                } else if (ty_is_fp(xty) &&
-                           (lex_tok == TK_FNUM ||
-                            (lex_tok == TK_MINUS && 1))) {
-                    /* float/double global with an FP literal initializer */
-                    {
-                        int fneg;
-                        int flo;
-                        int fhi;
-                        int fb;
-                        fneg = 0;
-                        if (lex_tok == TK_MINUS) { fneg = 1; next(); }
-                        if (lex_tok != TK_FNUM) p_error("expected float literal");
-                        flo = lex_val;
-                        fhi = lex_fval_hi;
-                        next();
-                        if (fneg) fhi = fhi ^ (1 << 31);
-                        ps_ginit_begin(idx);
-                        if (ty_is_double(xty)) {
-                            ps_ginit_emit_byte(flo & 255);
-                            ps_ginit_emit_byte((flo >> 8) & 255);
-                            ps_ginit_emit_byte((flo >> 16) & 255);
-                            ps_ginit_emit_byte((flo >> 24) & 255);
-                            ps_ginit_emit_byte(fhi & 255);
-                            ps_ginit_emit_byte((fhi >> 8) & 255);
-                            ps_ginit_emit_byte((fhi >> 16) & 255);
-                            ps_ginit_emit_byte((fhi >> 24) & 255);
-                        } else {
-                            fb = ps_f64_to_f32_bits(flo, fhi);
-                            ps_ginit_emit_byte(fb & 255);
-                            ps_ginit_emit_byte((fb >> 8) & 255);
-                            ps_ginit_emit_byte((fb >> 16) & 255);
-                            ps_ginit_emit_byte((fb >> 24) & 255);
-                        }
-                        ps_ginit_finish(idx);
-                    }
+                } else if (ty_is_fp(xty)) {
+                    /* float/double global initializer: FP literal or
+                     * integer constant, converted at full precision
+                     * (ps_fp_init_store_at). */
+                    ps_ginit_begin(idx);
+                    ps_fp_init_store_at(xty, idx, 0);
+                    ps_ginit_ensure_len(idx, ty_size(xty));
+                    ps_ginit_finish(idx);
                 } else if (ty_is_ptr(xty) &&
                            (lex_tok == TK_AMP ||
                             (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&

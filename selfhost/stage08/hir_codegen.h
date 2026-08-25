@@ -1135,6 +1135,93 @@ static void hcg_push_stack_args(int base, int nargs) {
     }
 }
 
+/* --- HW FP emission for the __fp64_* pair libcalls ---
+ * Lowering synthesizes doubles as HI_CALLs to one-instruction wrappers
+ * in builtins_fp64.s (fadd.d behind a jal).  Codegen recognises those
+ * names and emits the SLOW-32 FP instruction inline instead.  The
+ * HI_CALL keeps call clobber semantics for the allocator, and every
+ * argument value is call-crossing (ra_mark_call_crossing sees it live
+ * AT the call, so it is never colored r3-r10) — marshalling into the
+ * even-aligned scratch pairs r4:r5 / r6:r7 therefore cannot disturb
+ * an argument's home register.  Results land in r1 (lo) / r2 (hi) so
+ * the shared post-call result path runs unchanged.  f64 instructions
+ * take EVEN base registers (rd:rd+1); 2-operand forms are written
+ * with a trailing r0 like the wrappers and the f32 emitters. */
+static int hcg_fp64_kind(char *nm) {
+    if (!nm) return -1;
+    if (nm[0] != '_' || nm[1] != '_' || nm[2] != 'f' || nm[3] != 'p' ||
+        nm[4] != '6' || nm[5] != '4' || nm[6] != '_') return -1;
+    nm = nm + 7;
+    if (strcmp(nm, "add") == 0) return 0;
+    if (strcmp(nm, "sub") == 0) return 1;
+    if (strcmp(nm, "mul") == 0) return 2;
+    if (strcmp(nm, "div") == 0) return 3;
+    if (strcmp(nm, "neg") == 0) return 4;
+    if (strcmp(nm, "eq") == 0) return 5;
+    if (strcmp(nm, "lt") == 0) return 6;
+    if (strcmp(nm, "le") == 0) return 7;
+    if (strcmp(nm, "cvt_itoD") == 0) return 8;
+    if (strcmp(nm, "cvt_ftoD") == 0) return 9;
+    if (strcmp(nm, "cvt_DtoI") == 0) return 10;
+    if (strcmp(nm, "cvt_DtoF") == 0) return 11;
+    if (strcmp(nm, "cvt_ltoD") == 0) return 12;
+    if (strcmp(nm, "cvt_DtoL") == 0) return 13;
+    return -1;
+}
+
+static void hcg_fp64_emit(int fpk, int base) {
+    /* Binary arithmetic and compares: pairs r4:r5 op r6:r7 */
+    if (fpk <= 3 || (fpk >= 5 && fpk <= 7)) {
+        hcg_into(4, h_carg[base + 0]);
+        hcg_into(5, h_carg[base + 1]);
+        hcg_into(6, h_carg[base + 2]);
+        hcg_into(7, h_carg[base + 3]);
+        if (fpk == 5) { cg_rrr("feq.d", 1, 4, 6); return; }
+        if (fpk == 6) { cg_rrr("flt.d", 1, 4, 6); return; }
+        if (fpk == 7) { cg_rrr("fle.d", 1, 4, 6); return; }
+        if (fpk == 0) cg_rrr("fadd.d", 4, 4, 6);
+        else if (fpk == 1) cg_rrr("fsub.d", 4, 4, 6);
+        else if (fpk == 2) cg_rrr("fmul.d", 4, 4, 6);
+        else cg_rrr("fdiv.d", 4, 4, 6);
+        cg_rri("addi", 1, 4, 0);
+        cg_rri("addi", 2, 5, 0);
+        return;
+    }
+    /* Negate: pair r4:r5 */
+    if (fpk == 4) {
+        hcg_into(4, h_carg[base + 0]);
+        hcg_into(5, h_carg[base + 1]);
+        cg_rrr("fneg.d", 4, 4, 0);
+        cg_rri("addi", 1, 4, 0);
+        cg_rri("addi", 2, 5, 0);
+        return;
+    }
+    /* int/float word → double pair */
+    if (fpk == 8 || fpk == 9) {
+        hcg_into(3, h_carg[base + 0]);
+        if (fpk == 8) cg_rrr("fcvt.d.w", 4, 3, 0);
+        else cg_rrr("fcvt.d.s", 4, 3, 0);
+        cg_rri("addi", 1, 4, 0);
+        cg_rri("addi", 2, 5, 0);
+        return;
+    }
+    /* double pair → int/float word */
+    if (fpk == 10 || fpk == 11) {
+        hcg_into(4, h_carg[base + 0]);
+        hcg_into(5, h_carg[base + 1]);
+        if (fpk == 10) cg_rrr("fcvt.w.d", 1, 4, 0);
+        else cg_rrr("fcvt.s.d", 1, 4, 0);
+        return;
+    }
+    /* llong pair ↔ double pair */
+    hcg_into(4, h_carg[base + 0]);
+    hcg_into(5, h_carg[base + 1]);
+    if (fpk == 12) cg_rrr("fcvt.d.l", 4, 4, 0);
+    else cg_rrr("fcvt.l.d", 4, 4, 0);
+    cg_rri("addi", 1, 4, 0);
+    cg_rri("addi", 2, 5, 0);
+}
+
 static void hcg_inst(int idx) {
     int k;
     int ty;
@@ -2007,8 +2094,16 @@ static void hcg_inst(int idx) {
         int has_callhi;
         int rd2;
         int is_tail;
+        int fpk;
         nargs = h_val[idx];
         base = h_cbase[idx];
+
+        fpk = hcg_fp64_kind(h_name[idx]);
+        if (fpk >= 0) {
+            /* HW FP inline instead of the wrapper call; results in
+             * r1/r2 so the shared post-call path below runs as-is. */
+            hcg_fp64_emit(fpk, base);
+        } else {
 
         /* ABI walk: aligned f64 pairs, back-filled ints, ordered
          * stack spill (matches clang's CC_SLOW32). */
@@ -2042,6 +2137,8 @@ static void hcg_inst(int idx) {
         cg_c(10);
 
         hcg_pop_stack_args(nstk * 4);
+
+        }
 
         /* Check for CALLHI following this CALL */
         has_callhi = 0;
@@ -2780,8 +2877,10 @@ static void gen_data(void) {
             cg_s(":\n    .space ");
             cg_n(ps_gsize[i]);
             cg_c(10);
-        } else if (ty_is_llong(ps_gtype[i]) && ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
-            /* 64-bit uninitialized global */
+        } else if ((ty_is_llong(ps_gtype[i]) || ty_is_double(ps_gtype[i])) &&
+                   ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
+            /* 64-bit uninitialized global (llong or double: an 8-byte
+             * store to a 4-byte slot stomps the next global) */
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space 8\n");

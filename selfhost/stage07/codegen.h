@@ -1189,10 +1189,17 @@ static void gen_data(void) {
             cg_n(ps_gsize[i]);
             cg_c(10);
         } else if (ps_ginit[i] == 0 && ps_gstr[i] < 0) {
-            /* Zero-init scalar (not string-initialized) */
+            /* Zero-init scalar (not string-initialized).  llong and
+             * double scalars are 8 bytes — a 4-byte slot lets their
+             * stores stomp the next global (stage08's FP lexer hit
+             * this via its static double twoProd operands). */
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
-            cg_s(":\n    .space 4\n");
+            if (ty_is_llong(ps_gtype[i]) || ty_is_double(ps_gtype[i])) {
+                cg_s(":\n    .space 8\n");
+            } else {
+                cg_s(":\n    .space 4\n");
+            }
         }
         i = i + 1;
     }

@@ -55,8 +55,9 @@ int bigmix(int a,int b,int c,int d,int e,int f,int g,int h,
            struct Big s, int i, int j) {
     return a + h + s.a[0] + s.a[5] + i + j;
 }
-/* s12cc caller -> clang byval callee: the callee mutates its copy;
- * our local must come back untouched (proves the caller-side copy). */
+/* s12cc caller -> LLVM-built byval callee: the callee mutates its
+ * copy; our local must come back untouched (proves the caller-side
+ * copy). */
 extern int cmut(struct Pt p);
 int drive_cmut(void) {
     struct Pt p; int r;

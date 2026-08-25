@@ -391,8 +391,34 @@ Milestones, each a gate, none a promise:
    56/56, sbasic 45/45 output-identical, rogue 23/23 + soak,
    graphics reel/vecscope/fire/sprites frame-identical, DOOM 2173
    frames bit-exact on both engines, benchmark_core checksum exact.
-   Remaining formal item: HW FP instruction emission (stage08
-   currently goes through the ABI-compatible __fp64 pair libcalls).
+   **HW FP EMISSION CLOSED 2026-08-24 — leg 3's formal items are
+   complete.** stage08 cc emits the real SLOW-32 FP instructions:
+   codegen recognises the synthesized __fp64_* pair libcalls and
+   inlines the fadd.d/fcvt.* family (even-aligned scratch pairs
+   r4:r5/r6:r7; call clobber semantics kept, so the allocator needed
+   no pair support — args are call-crossing, never r3-r10).  f32 was
+   already native.  The rabbit hole underneath, all fixed: double
+   LITERALS were parsed at f32 precision (lexer's 24-bit converter —
+   now native-double conversion with an exact-5^e compensated
+   Dekker ladder + exact 2^e scale, correctly rounded to the last
+   bit outside the denormal band); global FP initializers (scalars
+   with int values, and every array element) truncated through
+   parse_const_int (now ps_fp_init_store_at, 8-byte IEEE emission);
+   and BOTH stage07 and stage08 allocated 4-byte slots for zero-init
+   double scalar globals, so 8-byte stores stomped the next global
+   (stage07 repaired per ruling — a better stage07, not stage08;
+   its cc.s32x rebuilt via stage06, sums updated).  Discovered en
+   route and documented: stage07 cannot pass/return doubles (or
+   long longs) as function values — the lexer's twoProd communicates
+   through statics for that reason.  New standing gate:
+   run-fp-differential.sh — 288 FP results (arith/compare/convert,
+   1e±300 extremes, global-array inits) bit-identical between a
+   stage08 build and the LLVM build, plus a no-__fp64-calls check.
+   Transcendentals stay libcalls the DBT hot-swaps, per the
+   platform FP architecture.  Full ladder green under HW FP:
+   stage07 53/53, fixed-point 56/56, interop, sbasic 45/45 (eval.s
+   has ZERO __fp64 calls now), rogue, graphics, DOOM 2173 bit-exact
+   both engines, benchmark_core exact, purity clean.
 4. **DOOM.** Built by stage08, `-timedemo demo3` runs to completion —
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same

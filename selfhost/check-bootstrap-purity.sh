@@ -63,17 +63,20 @@ scan_no_match \
     "${BASE_GLOBS[@]}" \
     --glob '!compare-llvm-selfhost.sh' \
     --glob '!run-interop-llvm.sh' \
+    --glob '!run-fp-differential.sh' \
     "${SCAN_PATHS[@]}"
 
 # 2) No direct host compiler invocations in stage01..08 scripts.
 # (stage00 Makefile is the accepted seed toolchain root.
-#  compare-llvm-selfhost.sh is an optional comparison harness that is
-#  not invoked by run-stages.sh and is allowed to call clang directly.)
+#  compare-llvm-selfhost.sh and run-fp-differential.sh are optional
+#  comparison harnesses that are not invoked by run-stages.sh and are
+#  allowed to call clang directly.)
 scan_no_match \
     "direct host compiler command in stage01..08 scripts" \
     '^(?!\s*[#\\]).*(^|[;&|()[:space:]])(cc|gcc|clang)[[:space:]]' \
     --glob '*.sh' \
     --glob '!compare-llvm-selfhost.sh' \
+    --glob '!run-fp-differential.sh' \
     "$SELFHOST_DIR/stage01" \
     "$SELFHOST_DIR/stage02" \
     "$SELFHOST_DIR/stage03" \

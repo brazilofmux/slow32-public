@@ -2281,8 +2281,10 @@ static void gen_data(void) {
             cg_s(":\n    .space ");
             cg_n(ps_gsize[i]);
             cg_c(10);
-        } else if (ty_is_llong(ps_gtype[i]) && ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
-            /* 64-bit uninitialized global */
+        } else if ((ty_is_llong(ps_gtype[i]) || ty_is_double(ps_gtype[i])) &&
+                   ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
+            /* 64-bit uninitialized global (llong or double: an 8-byte
+             * store to a 4-byte slot stomps the next global) */
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space 8\n");

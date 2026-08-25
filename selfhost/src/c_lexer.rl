@@ -391,119 +391,87 @@ static void lex_parse_num(char *ts, char *te) {
     lex_val_ll = (n_l >= 2) ? 1 : 0;
 }
 
-/* === Helper: decimal to IEEE 754 binary32 (32-bit int only) === */
-/* sig: decimal significand (up to 9 digits, fits int)
- * exp10: decimal exponent (value = sig * 10^exp10)
- * neg: sign (0=positive, 1=negative)
- * Returns: IEEE 754 binary32 bits packed in int */
+/* === Decimal -> IEEE 754 binary64 via native doubles ===
+ * The compiler's own doubles are IEEE binary64 on every host that
+ * builds it (the stage07-built bootstrap lowers them to the __fp64
+ * pair libcalls -- HW FP behind one call -- and the cross compilers
+ * use host hardware FP), so decimal->binary conversion is done in
+ * double arithmetic instead of the old 24-bit integer approximation.
+ * The significand is accumulated exactly in a long long (<= 18
+ * digits) and converted with one rounding; the power-of-ten table is
+ * BUILT by exact multiplication because an FP literal in this very
+ * file would be parsed by the previous stage's lexer.  10^k is
+ * exactly representable for k <= 22, so a literal with <= 15-16
+ * significant digits and |exp10| <= 22 rounds exactly once --
+ * bit-identical to a correctly-rounded strtod (clang's parse).
+ * Larger |exp10| takes one rounding per 10^22 ladder step (a few ulp
+ * near 1e+-300). */
 
-static int lex_soft_f32(int sig, int exp10, int neg) {
-    int m;
-    int e2;
-    int biased;
+static double lex_p10[23];
+static double lex_p5[23];     /* 5^k, exact for k <= 22 */
+static double lex_dd_split;   /* 2^27 + 1, Dekker splitter */
+static double lex_tp_err;     /* twoProd error out-param */
+static int lex_p10_ready;
 
-    if (sig == 0) return neg ? (1 << 31) : 0;
-
-    m = sig;
-    e2 = 0;
-
-    /* Normalize m to [2^20, 2^27) for precision headroom.
-     * Max after *5 is ~2^29.3, still fits 32-bit signed int. */
-    while (m < 0 || m >= (1 << 27)) { m = (m >> 1) & 0x7FFFFFFF; e2 = e2 + 1; }
-    while (m < (1 << 20)) { m = m << 1; e2 = e2 - 1; }
-
-    /* Apply 10^exp10 = 2^exp10 * 5^exp10 */
-    while (exp10 > 0) {
-        m = m * 5;
-        e2 = e2 + 1;
-        while (m < 0 || m >= (1 << 27)) { m = (m >> 1) & 0x7FFFFFFF; e2 = e2 + 1; }
-        exp10 = exp10 - 1;
+static void lex_p10_build(void) {
+    int i;
+    double p;
+    p = 1.0;
+    i = 0;
+    while (i < 23) {
+        lex_p10[i] = p;
+        p = p * 10.0;
+        i = i + 1;
     }
-    while (exp10 < 0) {
-        while (m < (1 << 24)) { m = m << 1; e2 = e2 - 1; }
-        m = (m + 2) / 5;  /* rounded division */
-        e2 = e2 - 1;
-        exp10 = exp10 + 1;
+    p = 1.0;
+    i = 0;
+    while (i < 23) {
+        lex_p5[i] = p;
+        p = p * 5.0;
+        i = i + 1;
     }
-
-    /* Normalize to [2^23, 2^24) for f32 mantissa */
-    while (m >= (1 << 24)) {
-        m = (m + 1) >> 1;  /* round */
-        e2 = e2 + 1;
-    }
-    while (m > 0 && m < (1 << 23)) { m = m << 1; e2 = e2 - 1; }
-
-    /* value = m * 2^e2, m in [2^23, 2^24)
-     * IEEE: 1.frac * 2^(biased-127), biased = e2+150 */
-    biased = e2 + 150;
-
-    if (biased >= 255) return (neg << 31) | 0x7F800000;  /* infinity */
-    if (biased <= 0) {
-        if (biased < -23) return neg << 31;  /* zero */
-        m = m >> (1 - biased);
-        biased = 0;
-    }
-
-    return (neg << 31) | (biased << 23) | (m & 0x7FFFFF);
+    /* built arithmetically: 134217728.0 (= 2^27) parses exactly even
+     * under the previous stage's 24-bit lexer; 134217729.0 would not */
+    lex_dd_split = 134217728.0 + 1.0;
+    lex_p10_ready = 1;
 }
 
-/* === Helper: decimal to IEEE 754 binary64 (32-bit int only) === */
-/* Computes f32 first, then promotes to f64 by adjusting exponent and
- * extending mantissa.  Precision limited to ~24 bits (f32 level),
- * sufficient for bootstrap. */
-/* Returns lo 32 bits; lex_fval_hi receives hi 32 bits */
+/* Dekker twoProd: lex_tp_x = fl(a*b), lex_tp_err = a*b - fl(a*b).
+ * Operands and results travel through file-scope statics because the
+ * STAGE07 bootstrap compiler cannot pass or return doubles by value
+ * (the reason the old converter was integer-only).  Near the overflow
+ * threshold the 2^27 split itself overflows; there the error term is
+ * surrendered (plain rounding) rather than NaN -- the 5^e ladder never
+ * reaches that band, so the guards are pure insurance. */
+static double lex_tp_a;
+static double lex_tp_b;
+static double lex_tp_x;
 
-static int lex_soft_f64(int sig, int exp10, int neg) {
-    int f32bits;
-    int s;
-    int exp8;
-    int mant23;
-    int exp11;
-    int hi;
-    int lo;
+static void lex_two_prod(void) {
+    double t;
+    double ah;
+    double al;
+    double bh;
+    double bl;
 
-    if (sig == 0) {
-        lex_fval_hi = neg ? (1 << 31) : 0;
-        return 0;
-    }
-
-    /* Compute f32 representation first */
-    f32bits = lex_soft_f32(sig, exp10, neg);
-
-    s = (f32bits >> 31) & 1;
-    exp8 = (f32bits >> 23) & 0xFF;
-    mant23 = f32bits & 0x7FFFFF;
-
-    if (exp8 == 0) {
-        /* Zero or denormal → f64 zero */
-        lex_fval_hi = s << 31;
-        return 0;
-    }
-    if (exp8 == 255) {
-        /* Infinity or NaN */
-        lex_fval_hi = (s << 31) | 0x7FF00000;
-        if (mant23) lex_fval_hi = lex_fval_hi | 0x80000;  /* NaN */
-        return 0;
-    }
-
-    /* Normal: f64_exp = f32_exp - 127 + 1023 = f32_exp + 896 */
-    exp11 = exp8 + 896;
-
-    /* f64 mantissa = f32 mantissa << 29 (52-23 = 29 extra bits, all zero)
-     * Split into hi (top 20 bits) and lo (bottom 32 bits):
-     *   f64_mant[51:32] = mant23 >> 3  (top 20 bits of 23-bit mantissa)
-     *   f64_mant[31:0]  = (mant23 & 7) << 29  (bottom 3 bits shifted up) */
-    hi = (s << 31) | (exp11 << 20) | (mant23 >> 3);
-    lo = (mant23 & 7) << 29;
-
-    lex_fval_hi = hi;
-    return lo;
+    lex_tp_x = lex_tp_a * lex_tp_b;
+    t = lex_tp_a * lex_dd_split;
+    if (t * 0.5 == t && t != 0.0) { lex_tp_err = 0.0; return; }
+    ah = t - (t - lex_tp_a);
+    al = lex_tp_a - ah;
+    t = lex_tp_b * lex_dd_split;
+    if (t * 0.5 == t && t != 0.0) { lex_tp_err = 0.0; return; }
+    bh = t - (t - lex_tp_b);
+    bl = lex_tp_b - bh;
+    lex_tp_err = ((ah * bh - lex_tp_x) + ah * bl + al * bh) + al * bl;
 }
 
 /* === Helper: parse float literal from ts..te === */
 
 static void lex_parse_fnum(char *ts, char *te) {
-    int sig;
+    long long sig;
+    double d;
+    int ndig;
     int exp10;
     int neg;
     int is_float;
@@ -513,8 +481,11 @@ static void lex_parse_fnum(char *ts, char *te) {
     int frac_digits;
     int eneg;
     int eval;
+    int e;
+    int *pw;
 
     sig = 0;
+    ndig = 0;
     exp10 = 0;
     neg = 0;
     is_float = 0;  /* 0=double, 1=float */
@@ -540,12 +511,16 @@ static void lex_parse_fnum(char *ts, char *te) {
         } else if (ch == 108 || ch == 76) { /* 'l' or 'L' */
             np = np + 1;  /* skip suffix */
         } else if (ch >= 48 && ch <= 57) {
-            /* Accumulate up to 9 significant digits (999999999 < 2^30) */
-            if (sig < 100000000) {
+            if (ndig < 18 && (sig != 0 || ch != 48)) {
+                /* significant digit (leading zeros only scale) */
                 sig = sig * 10 + (ch - 48);
+                ndig = ndig + 1;
+                if (saw_dot) frac_digits = frac_digits + 1;
+            } else if (sig == 0) {
+                /* leading zero: contributes only to the scale */
                 if (saw_dot) frac_digits = frac_digits + 1;
             } else {
-                /* Overflow: just adjust exponent for excess digits */
+                /* excess significant digits: drop, keep the scale */
                 if (!saw_dot) exp10 = exp10 + 1;
             }
             np = np + 1;
@@ -565,7 +540,7 @@ static void lex_parse_fnum(char *ts, char *te) {
         while (np < te) {
             ch = *np & 255;
             if (ch >= 48 && ch <= 57) {
-                eval = eval * 10 + (ch - 48);
+                if (eval < 100000000) eval = eval * 10 + (ch - 48);
                 np = np + 1;
             } else {
                 break;
@@ -583,13 +558,106 @@ static void lex_parse_fnum(char *ts, char *te) {
         else { break; }
     }
 
-    /* Convert to IEEE 754 bits */
+    /* Convert: d = sig * 10^exp10 in double arithmetic.  Clamp the
+     * exponent well past the representable range so absurd literals
+     * saturate to inf/0 without an absurd loop.
+     *
+     * Fast path: sig <= 2^53 (exact in double) and |exp10| <= 22
+     * (10^e exact) is ONE rounding -- bit-identical to a correctly
+     * rounded strtod.  Otherwise the scale 10^|exp10| is accumulated
+     * as a double-double (sh + sl) with twoProd-compensated ladder
+     * steps and sig's conversion residue rides along, so the result
+     * stays correct to the last bit except within ~2^-50 ulp of a
+     * rounding halfway point, in the split-overflow band above
+     * ~6.7e300, and deep in the denormal range. */
+    if (!lex_p10_ready) lex_p10_build();
+    if (exp10 > 400) exp10 = 400;
+    if (exp10 < -400) exp10 = -400;
+    d = (double)sig;
+    {
+        double sigerr;
+        double b;
+        double sh;
+        double sl;
+        double ph;
+        double pe;
+        double q;
+        double resid;
+        sigerr = (double)(sig - (long long)d);
+        if (exp10 == 0) {
+            /* d is the single-rounded conversion of sig: done */
+        } else if (exp10 > 0 && exp10 <= 22 && sigerr == 0.0) {
+            d = d * lex_p10[exp10];
+        } else if (exp10 < 0 && exp10 >= -22 && sigerr == 0.0) {
+            d = d / lex_p10[0 - exp10];
+        } else {
+            /* 10^e = 5^e * 2^e.  5^|e| stays in the normal range for
+             * |e| <= 400 (5^400 ~ 1.5e280), so the compensated ladder
+             * never saturates and the Dekker splits never overflow;
+             * the final scale by 2^e is EXACT, so the one rounding
+             * that matters already happened in the combine below.
+             * (Results that land in the denormal range round a second
+             * time there -- the one remaining corner.) */
+            sh = 1.0;
+            sl = 0.0;
+            e = exp10;
+            if (e < 0) e = 0 - e;
+            while (e > 0) {
+                if (e > 22) { b = lex_p5[22]; e = e - 22; }
+                else        { b = lex_p5[e];  e = 0; }
+                lex_tp_a = sh;
+                lex_tp_b = b;
+                lex_two_prod();
+                ph = lex_tp_x;
+                pe = lex_tp_err + sl * b;
+                sh = ph + pe;
+                sl = pe - (sh - ph);
+            }
+            if (exp10 > 0) {
+                /* v = (d + sigerr) * (sh + sl) */
+                lex_tp_a = d;
+                lex_tp_b = sh;
+                lex_two_prod();
+                ph = lex_tp_x;
+                d = ph + (lex_tp_err + (d * sl + sigerr * sh));
+            } else {
+                /* v = (d + sigerr) / (sh + sl): one Newton correction
+                 * of the plain quotient using the exact residual */
+                q = d / sh;
+                lex_tp_a = q;
+                lex_tp_b = sh;
+                lex_two_prod();
+                ph = lex_tp_x;
+                resid = ((d - ph) - lex_tp_err) + (sigerr - q * sl);
+                d = q + resid / sh;
+            }
+            /* exact scale by 2^exp10, assembled from exponent bits
+             * (inlined: stage07 cannot return a double) */
+            {
+                double p2;
+                int *p2w;
+                p2w = (int *)&p2;
+                p2w[0] = 0;
+                p2w[1] = (exp10 + 1023) << 20;
+                d = d * p2;
+            }
+        }
+    }
+
+    /* Emit IEEE bits (sign applied by bit flip so -0.0 works) */
     if (is_float) {
-        lex_val = lex_soft_f32(sig, exp10, neg);
+        float fv;
+        fv = (float)d;
+        pw = (int *)&fv;
+        lex_val = pw[0];
+        if (neg) lex_val = lex_val ^ (1 << 31);
         lex_fval_hi = 0;
         lex_fty = 5;  /* TY_FLOAT */
     } else {
-        lex_val = lex_soft_f64(sig, exp10, neg);
+        pw = (int *)&d;
+        lex_val = pw[0];
+        lex_fval_hi = pw[1];
+        if (neg) lex_fval_hi = lex_fval_hi ^ (1 << 31);
         lex_fty = 6;  /* TY_DOUBLE */
     }
     lex_tok = TK_FNUM;
