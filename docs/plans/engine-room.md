@@ -362,6 +362,26 @@ Milestones, each a gate, none a promise:
    passing and struct-by-value are "known-divergent, not gated" in
    the interop proof. Taking over means picking conventions and
    closing them.
+   **LANDED 2026-08-24 (3f027ad4), completing the same-day sweep:
+   doubles now use clang's aligned-pair convention** (hi_abi_assign
+   is the one shared ABI walk for calls, params, and codegen entry;
+   the interop double probe matches), **and sbasic — 13 TUs of
+   doubles and structs-by-value — builds under stage08 cc
+   output-identical to the clang build on all 45 suite tests.**
+   The forcing app flushed out two deep codegen bugs (the
+   large-frame epilogue used r1 as an address scratch and clobbered
+   return values; tail calls popped frames whose locals' addresses
+   had escaped as arguments), a param-emission ordering hazard
+   (copy loops stole later params' incoming registers before their
+   PARAM defs existed), the struct-return shift leaving ABI tags
+   behind, pair-blind ternaries, a silently-dropped double compound
+   assignment (every BASIC FOR loop spun), and pointer-to-array
+   members. Both fell to the emulator's `-w` watchpoint once printf
+   bisection had named the frame. Remaining formal items: the
+   clang struct-by-value ARG convention (pointer-to-copy in a stack
+   slot — the one interop divergence still open) and HW FP
+   instruction emission (stage08 currently goes through the
+   ABI-compatible __fp64 pair libcalls).
 4. **DOOM.** Built by stage08, `-timedemo demo3` runs to completion —
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same
