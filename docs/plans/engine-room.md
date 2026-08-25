@@ -494,6 +494,24 @@ Milestones, each a gate, none a promise:
    memory shapes).  The a64 suite therefore now fails at diff-test
    BY DESIGN — the new corpus test is doing its job.  Fix owed on
    the cc-a64 side; the rest of the suite is green.
+   **FIX LANDED (b5b0387d, same sitting): not an a64 backend hole —
+   TYPE-PUNNED accesses vs BOTH shared mem2reg layers.**
+   `*(unsigned long long *)&d` is an HI_LOAD on d's alloca, which
+   the promotion scans counted as a safe use: (a) ssa_find_promo
+   promoted d and the rename rewrote the pun into the raw double
+   SSA value (V-class value into an X-class consumer — the a64
+   shift read x16 while the value sat in d16); (b) with that
+   blocked, ho_promote_single_store_alloca (trivial single-store
+   mem2reg) forwarded the pun load to the stored double
+   type-blindly.  Both scans now treat fp-ness/width mismatch
+   between access type and alloca type as address-taken.  x64
+   dodged by emitter accident; slow32 never promoted doubles (pair
+   ADDI+4 escapes) — only the crosses bled, only via memory-shape
+   double reads.  Debug chain: layer probes → pre-SSA HIR dump
+   (lowering PERFECT → optimizer indicted) → SLF kill-switch
+   acquitted → second mem2reg.  AFTER: a64 35/35 diff-tests 0
+   mismatches (d35 passes), full slow32 ladder green, crosses
+   rebuilt, kit + kagura refreshed.
    **THE dtoa CAMPAIGN (same day): stage08's libc gained full FP
    printf — %f/%e/%g and width flags — by compiling David Gay's
    dtoa.c (6,250 lines, VERBATIM) + printf_enhanced.c + convert.c,
