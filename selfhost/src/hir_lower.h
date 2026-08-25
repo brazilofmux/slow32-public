@@ -598,6 +598,42 @@ static int hl_addr(Node *n) {
     return -1;
 }
 
+#ifndef S12CC_X64_HOST
+/* Byval struct argument (clang's SLOW-32 convention): the caller copies
+ * the struct into a fresh temp in its own frame and passes the temp's
+ * ADDRESS in a stack slot that reserves the struct's full rounded size
+ * (never an argument register) — see hi_abi_assign tag 16+k.  The copy
+ * is per-call so a callee that writes through the pointer only touches
+ * this call's private copy.  Returns the temp's alloca; kept out of
+ * hl_expr so its frame stays under stage07's 12-bit offset ceiling. */
+static int hl_byval_arg(int src_addr, int sz) {
+    int tmp;
+    int ci;
+    int so;
+    int dn;
+    int tv;
+
+    hl_temp_stack = hl_temp_stack + ((sz + 3) / 4) * 4;
+    tmp = hl_emit_temp_alloca(HL_ADDR_TY, 0 - hl_temp_stack);
+    ci = 0;
+    while (ci + 4 <= sz) {
+        so = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, ci, NULL);
+        tv = hi_emit(HI_LOAD, TY_INT, so, -1, 0, NULL);
+        dn = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, ci, NULL);
+        hi_emit(HI_STORE, TY_INT, dn, tv, 0, NULL);
+        ci = ci + 4;
+    }
+    while (ci < sz) {
+        so = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, ci, NULL);
+        tv = hi_emit(HI_LOAD, TY_CHAR, so, -1, 0, NULL);
+        dn = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, ci, NULL);
+        hi_emit(HI_STORE, TY_CHAR, dn, tv, 0, NULL);
+        ci = ci + 1;
+    }
+    return tmp;
+}
+#endif
+
 /* --- Expression lowering --- */
 
 static int hl_expr(Node *n) {
@@ -2169,6 +2205,14 @@ static int hl_expr(Node *n) {
             } else {
                 av_hi[nargs] = -1;
                 is64[nargs] = 0;
+#ifndef S12CC_X64_HOST
+                if (ty_is_struct(a->ty)) {
+                    /* clang byval: pass the address of a private copy in
+                     * a size-reserving stack slot (hl_byval_arg). */
+                    av[nargs] = hl_byval_arg(av[nargs], ty_size(a->ty));
+                    is64[nargs] = HI_TAG_BYVAL + (ty_size(a->ty) + 3) / 4;
+                }
+#endif
             }
             nargs = nargs + 1;
             a = a->next;
@@ -2184,10 +2228,14 @@ static int hl_expr(Node *n) {
         while (i < nargs) {
             if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
             h_carg[h_ncarg] = av[i];
-            h_carg_tag[h_ncarg] = (is64[i] == 2 && !callee_var) ? 1 : 0;
+            if (is64[i] >= HI_TAG_BYVAL) {
+                h_carg_tag[h_ncarg] = is64[i];
+            } else {
+                h_carg_tag[h_ncarg] = (is64[i] == 2 && !callee_var) ? 1 : 0;
+            }
             h_ncarg = h_ncarg + 1;
             phys_count = phys_count + 1;
-            if (is64[i]) {
+            if (is64[i] == 1 || is64[i] == 2) {
                 if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
                 h_carg[h_ncarg] = av_hi[i];
                 h_carg_tag[h_ncarg] = (is64[i] == 2 && !callee_var) ? 2 : 0;
@@ -2268,6 +2316,13 @@ static int hl_expr(Node *n) {
             } else {
                 av_hi2[nargs] = -1;
                 is64_2[nargs] = 0;
+#ifndef S12CC_X64_HOST
+                if (ty_is_struct(a->ty)) {
+                    /* clang byval, same as the direct-call path. */
+                    av[nargs] = hl_byval_arg(av[nargs], ty_size(a->ty));
+                    is64_2[nargs] = HI_TAG_BYVAL + (ty_size(a->ty) + 3) / 4;
+                }
+#endif
             }
             nargs = nargs + 1;
             a = a->next;
@@ -2278,10 +2333,14 @@ static int hl_expr(Node *n) {
         while (i < nargs) {
             if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
             h_carg[h_ncarg] = av[i];
-            h_carg_tag[h_ncarg] = (is64_2[i] == 2) ? 1 : 0;
+            if (is64_2[i] >= HI_TAG_BYVAL) {
+                h_carg_tag[h_ncarg] = is64_2[i];
+            } else {
+                h_carg_tag[h_ncarg] = (is64_2[i] == 2) ? 1 : 0;
+            }
             h_ncarg = h_ncarg + 1;
             phys_count2 = phys_count2 + 1;
-            if (is64_2[i]) {
+            if (is64_2[i] == 1 || is64_2[i] == 2) {
                 if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
                 h_carg[h_ncarg] = av_hi2[i];
                 h_carg_tag[h_ncarg] = (is64_2[i] == 2) ? 2 : 0;
@@ -2723,6 +2782,17 @@ static void hl_func(Node *fn) {
         pp = fn->args;
         while (pp) {
             if (ty_is_struct(pp->ty)) {
+#ifndef S12CC_X64_HOST
+                /* clang byval: the pointer to the caller's copy arrives
+                 * in a stack slot reserving the struct's rounded size,
+                 * never in a register.  A varargs fn can't mix that slot
+                 * with the register save area's contiguous va walk. */
+                if (fn->is_varargs)
+                    p_error("struct parameter in varargs function (slow32)");
+                if (phys_idx < 64)
+                    hl_param_tags[phys_idx] =
+                        HI_TAG_BYVAL + (ty_size(pp->ty) + 3) / 4;
+#endif
                 hl_pp_inst[phys_idx] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, phys_idx, NULL);
                 phys_idx = phys_idx + 1;
             } else if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) {
@@ -2836,12 +2906,18 @@ static void hl_func(Node *fn) {
             int pm_i;
             int pm_ord;
             hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
+            /* Byte offsets from the incoming sp: byval slots reserve
+             * the struct's rounded size, everything else one word. */
             pm_ord = 0;
             pm_i = 0;
             while (pm_i < hl_param_nflat) {
                 if (hl_param_map[pm_i] < 0) {
                     hl_param_stkord[pm_i] = pm_ord;
-                    pm_ord = pm_ord + 1;
+                    if (hl_param_tags[pm_i] >= HI_TAG_BYVAL) {
+                        pm_ord = pm_ord + (hl_param_tags[pm_i] - HI_TAG_BYVAL) * 4;
+                    } else {
+                        pm_ord = pm_ord + 4;
+                    }
                 } else {
                     hl_param_stkord[pm_i] = -1;
                 }

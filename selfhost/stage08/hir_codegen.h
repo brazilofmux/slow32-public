@@ -533,10 +533,21 @@ static void hcg_emit_param_entry(void) {
         if (h_kind[i] == HI_PARAM && h_val[i] < hl_param_nflat &&
             hl_param_map[h_val[i]] < 0) {
             pidx = h_val[i];
-            if (ra_reg[i] >= 0) {
-                cg_rri("ldw", ra_reg[i], 30, hl_param_stkord[pidx] * 4);
+            if (hl_param_stkord[pidx] > 2047) {
+                /* Earlier byval slots pushed this offset past LDW's imm
+                 * range: form the address in the r1 scratch. */
+                hcg_li(1, hl_param_stkord[pidx]);
+                cg_rrr("add", 1, 30, 1);
+                if (ra_reg[i] >= 0) {
+                    cg_rri("ldw", ra_reg[i], 1, 0);
+                } else {
+                    cg_rri("ldw", 1, 1, 0);
+                    hcg_maybe_spill(i);
+                }
+            } else if (ra_reg[i] >= 0) {
+                cg_rri("ldw", ra_reg[i], 30, hl_param_stkord[pidx]);
             } else {
-                cg_rri("ldw", 1, 30, hl_param_stkord[pidx] * 4);
+                cg_rri("ldw", 1, 30, hl_param_stkord[pidx]);
                 hcg_maybe_spill(i);
             }
         }
@@ -1077,6 +1088,50 @@ static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
         cg_c(10);
     } else {
         hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+    }
+}
+
+/* Pop a call's stack-arg bytes.  Byval slots can push the total past
+ * ADDI's +2047 ceiling, and after the call r1/r2 hold return words, so
+ * a big pop is chunked instead of materialized in a scratch reg. */
+static void hcg_pop_stack_args(int bytes) {
+    while (bytes > 2047) {
+        cg_rri("addi", 29, 29, 2044);
+        bytes = bytes - 2044;
+    }
+    if (bytes > 0) {
+        cg_rri("addi", 29, 29, bytes);
+    }
+}
+
+/* Push a call's stack-assigned args in reverse order so the first
+ * spilled slot lands at the lowest address.  A byval slot (tag 16+k)
+ * reserves k words with the struct-copy pointer stored at the slot
+ * base — clang's convention — so a following slot's offset already
+ * accounts for the struct's full rounded size. */
+static void hcg_push_stack_args(int base, int nargs) {
+    int i;
+    int t;
+    int sz;
+    i = nargs - 1;
+    while (i >= 0) {
+        if (hcg_argmap[i] < 0) {
+            t = h_carg_tag[base + i];
+            sz = (t >= HI_TAG_BYVAL) ? (t - HI_TAG_BYVAL) * 4 : 4;
+            if (sz == 4 && hcg_const_is_zero(h_carg[base + i])) {
+                cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
+            } else {
+                hcg_into(1, h_carg[base + i]);
+                if (sz <= 2047) {
+                    cg_rri("addi", 29, 29, 0 - sz);
+                } else {
+                    hcg_li(2, sz);
+                    cg_rrr("sub", 29, 29, 2);
+                }
+                cg_s("    stw r29, r1, 0\n");
+            }
+        }
+        i = i - 1;
     }
 }
 
@@ -1979,28 +2034,14 @@ static void hcg_inst(int idx) {
             return;
         }
 
-        /* Normal call: push stack args (reverse order so the first
-         * spilled slot lands at the lowest address), call with link */
-        i = nargs - 1;
-        while (i >= 0) {
-            if (hcg_argmap[i] < 0) {
-                if (hcg_const_is_zero(h_carg[base + i])) {
-                    cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
-                } else {
-                    hcg_into(1, h_carg[base + i]);
-                    cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
-                }
-            }
-            i = i - 1;
-        }
+        /* Normal call: push stack args, call with link */
+        hcg_push_stack_args(base, nargs);
 
         cg_s("    jal r31, ");
         cg_s(h_name[idx]);
         cg_c(10);
 
-        if (nstk > 0) {
-            cg_rri("addi", 29, 29, nstk * 4);
-        }
+        hcg_pop_stack_args(nstk * 4);
 
         /* Check for CALLHI following this CALL */
         has_callhi = 0;
@@ -2046,25 +2087,22 @@ static void hcg_inst(int idx) {
         hcg_into(1, s1);
         cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
 
-        i = nargs - 1;
-        while (i >= 0) {
-            if (hcg_argmap[i] < 0) {
-                if (hcg_const_is_zero(h_carg[base + i])) {
-                    cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
-                } else {
-                    hcg_into(1, h_carg[base + i]);
-                    cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
-                }
-            }
-            i = i - 1;
-        }
+        hcg_push_stack_args(base, nargs);
 
-        cg_s("    ldw r2, r29, ");
-        cg_n(nstk * 4);
-        cg_c(10);
+        if (nstk * 4 <= 2047) {
+            cg_s("    ldw r2, r29, ");
+            cg_n(nstk * 4);
+            cg_c(10);
+        } else {
+            /* Function-pointer slot out of LDW's imm range: form the
+             * address in r2 (free scratch before the call). */
+            hcg_li(2, nstk * 4);
+            cg_rrr("add", 2, 29, 2);
+            cg_rri("ldw", 2, 2, 0);
+        }
         cg_s("    jalr r31, r2, 0\n");
 
-        cg_rri("addi", 29, 29, (nstk + 1) * 4);
+        hcg_pop_stack_args((nstk + 1) * 4);
 
         /* Check for CALLHI following this CALLP */
         has_callhi2 = 0;

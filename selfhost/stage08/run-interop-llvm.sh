@@ -2,15 +2,17 @@
 # Mixed-compiler link test: one .s32x from BOTH clang (LLVM slow32 backend)
 # and selfhost stage08 s12cc, calling each other in both directions.
 #
-# Verified interoperable (2026-08-08, gates below): int/pointer args, >8 args
-# on the stack, long long register pairs + r1:r2 return, s12cc->clang
-# callbacks, s12cc code against clang's crt0/libc_debug, and integer varargs
-# defined by s12cc and called by clang (call-site convention is shared; va_*
-# machinery is callee-private).
-#
-# Known-divergent (probed, reported, NOT gated): double arguments (FP
-# word-order/pairing differs) and struct-by-value (s12cc hidden-pointer ABI
-# vs clang's in-register). Fixing either means picking one convention.
+# Verified interoperable (gates below): int/pointer args, >8 args on the
+# stack, long long register pairs + r1:r2 return, s12cc->clang callbacks,
+# s12cc code against clang's crt0/libc_debug, integer varargs defined by
+# s12cc and called by clang (call-site convention is shared; va_*
+# machinery is callee-private), double arguments (clang's aligned-pair
+# convention, closed 2026-08-24), and struct-by-value in BOTH directions
+# (clang's byval convention, closed 2026-08-24: the caller copies the
+# struct into its own frame and passes the copy's address in a stack
+# slot that reserves the struct's full rounded size — never an argument
+# register — with stack slots laid out in argument order; struct RETURN
+# uses the shared hidden-pointer-in-r3 sret convention).
 #
 # Link recipe: the s12cc side needs selfhost/stage08/builtins64.s (__muldi3;
 # clang inlines MUL via UMUL_LOHI) and builtins_fp64.s (__fp64_mul etc.;
@@ -47,6 +49,22 @@ int vsum(int n, ...) {
 double dmul(double a, double b) { return a * b; }
 struct Pt { int x; int y; };
 int ptsum(struct Pt p) { return p.x + p.y; }
+struct Pt mkpt(int x, int y) { struct Pt p; p.x = x; p.y = y; return p; }
+struct Big { int a[6]; };
+int bigmix(int a,int b,int c,int d,int e,int f,int g,int h,
+           struct Big s, int i, int j) {
+    return a + h + s.a[0] + s.a[5] + i + j;
+}
+/* s12cc caller -> clang byval callee: the callee mutates its copy;
+ * our local must come back untouched (proves the caller-side copy). */
+extern int cmut(struct Pt p);
+int drive_cmut(void) {
+    struct Pt p; int r;
+    p.x = 5; p.y = 6;
+    r = cmut(p);
+    if (p.x != 5 || p.y != 6) return -1;
+    return r;
+}
 EOF
 cat > "$W/main_clang.c" <<'EOF'
 #include <stdio.h>
@@ -58,6 +76,11 @@ extern int vsum(int, ...);
 extern double dmul(double, double);
 struct Pt { int x; int y; };
 extern int ptsum(struct Pt);
+extern struct Pt mkpt(int x, int y);
+struct Big { int a[6]; };
+extern int bigmix(int,int,int,int,int,int,int,int, struct Big, int, int);
+extern int drive_cmut(void);
+int cmut(struct Pt p) { p.x = p.x + 100; return p.x + p.y; }
 int cb(int x) { return x * 10; }
 int main(void) {
     int fail = 0;
@@ -66,10 +89,14 @@ int main(void) {
     if (mul64(0x100000001ULL, 7u) != 0x700000007ULL) { fail = 1; printf("GATE mul64 FAIL\n"); }
     if (call_back_twice(4) != 90) { fail = 1; printf("GATE callback FAIL\n"); }
     if (vsum(3, 10, 20, 30) != 60) { fail = 1; printf("GATE varargs FAIL\n"); }
-    double d = dmul(2.5, 4.0);
+    if (dmul(2.5, 4.0) != 10.0) { fail = 1; printf("GATE double FAIL\n"); }
     struct Pt p; p.x = 30; p.y = 12;
-    printf("known-diverge double: %s\n", d == 10.0 ? "now PASSES (update script!)" : "still diverges");
-    printf("known-diverge struct: %s\n", ptsum(p) == 42 ? "now PASSES (update script!)" : "still diverges");
+    if (ptsum(p) != 42) { fail = 1; printf("GATE struct-arg FAIL\n"); }
+    struct Pt q = mkpt(7, 8);
+    if (q.x != 7 || q.y != 8) { fail = 1; printf("GATE struct-ret FAIL\n"); }
+    struct Big bg = {{21, 0, 0, 0, 0, 22}};
+    if (bigmix(1,2,3,4,5,6,7,8, bg, 10, 11) != 73) { fail = 1; printf("GATE struct-stack-mix FAIL\n"); }
+    if (drive_cmut() != 111) { fail = 1; printf("GATE struct-byval-copy FAIL\n"); }
     if (!fail) printf("INTEROP OK\n");
     return fail;
 }

@@ -377,11 +377,22 @@ Milestones, each a gate, none a promise:
    behind, pair-blind ternaries, a silently-dropped double compound
    assignment (every BASIC FOR loop spun), and pointer-to-array
    members. Both fell to the emulator's `-w` watchpoint once printf
-   bisection had named the frame. Remaining formal items: the
-   clang struct-by-value ARG convention (pointer-to-copy in a stack
-   slot — the one interop divergence still open) and HW FP
-   instruction emission (stage08 currently goes through the
-   ABI-compatible __fp64 pair libcalls).
+   bisection had named the frame.
+   **Struct-by-value ARG convention CLOSED 2026-08-24: stage08 now
+   speaks clang's byval** — the caller copies the struct into its own
+   frame and passes the copy's address in a stack slot reserving the
+   struct's full rounded size (never an argument register; stack
+   slots laid out in argument order), so no interop divergence
+   remains.  run-interop-llvm.sh now GATES doubles, struct args,
+   struct return (shared sret-in-r3), the byval slot layout after
+   8 register args, and caller-copy semantics (clang callee mutates
+   its copy; stage08 caller's local must survive) — both directions.
+   Full gate ladder re-run green under the new ABI: fixed-point
+   56/56, sbasic 45/45 output-identical, rogue 23/23 + soak,
+   graphics reel/vecscope/fire/sprites frame-identical, DOOM 2173
+   frames bit-exact on both engines, benchmark_core checksum exact.
+   Remaining formal item: HW FP instruction emission (stage08
+   currently goes through the ABI-compatible __fp64 pair libcalls).
 4. **DOOM.** Built by stage08, `-timedemo demo3` runs to completion —
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same
@@ -401,8 +412,9 @@ Milestones, each a gate, none a promise:
    recorded in that commit. Method: clang/stage08 objects
    interoperate, so every bug fell to mixed-object bisection, then
    per-function hybrid assembly, then deterministic frame-hash
-   comparison. Milestone 3's remaining formal items: struct-by-value
-   passing and double args (sbasic's HW FP work).
+   comparison. (Milestone 3's then-open items — struct-by-value
+   passing and double args — have since closed; HW FP emission is
+   the one left.)
 
 LLVM is not deleted at the end of this. It becomes the reference —
 the differential oracle stage08 is measured against, the way gforth

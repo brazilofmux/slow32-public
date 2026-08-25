@@ -122,19 +122,26 @@ static int   h_ninst;
 /* Call arguments (flat array, indexed per-call) */
 static int   h_carg[HIR_MAX_CARG];
 /* ABI tag per flat call-arg slot: 0 = 32-bit word (ints, i64 halves,
- * varargs doubles), 1 = f64 LO half, 2 = f64 HI half.  Non-varargs
+ * varargs doubles), 1 = f64 LO half, 2 = f64 HI half, 16+k = byval
+ * struct pointer whose stack slot reserves k words.  Non-varargs
  * doubles occupy an even-odd aligned register pair (r3:r4, r5:r6,
- * r7:r8, r9:r10) in clang's convention; everything else fills the
- * lowest free register. */
+ * r7:r8, r9:r10) in clang's convention; byval pointers always go to
+ * the stack (clang never assigns them a register, and the slot keeps
+ * the struct's full rounded size so later stack args land where a
+ * clang callee expects them); everything else fills the lowest free
+ * register. */
+#define HI_TAG_BYVAL 16
 static int   h_carg_tag[HIR_MAX_CARG];
 
 /* Assign physical argument locations for n flat slots with the given
  * tags (see h_carg_tag).  out[i] = register number 3..10, or -1 for a
- * stack slot.  Returns the number of stack slots.  Mirrors clang's
- * CC_SLOW32: f64 takes the lowest free even-odd aligned pair, every
- * other slot (ints, i64 halves, f32, varargs f64 halves) takes the
- * lowest free single register; later args back-fill skipped registers;
- * spilled args go to the stack in argument order. */
+ * stack slot.  Returns the number of stack WORDS (byval slots count
+ * their full reserved size).  Mirrors clang's CC_SLOW32: f64 takes the
+ * lowest free even-odd aligned pair, byval pointers (tag 16+k) always
+ * take a k-word stack slot and never a register, every other slot
+ * (ints, i64 halves, f32, varargs f64 halves) takes the lowest free
+ * single register; later args back-fill skipped registers; spilled
+ * args go to the stack in argument order. */
 static int hi_abi_assign(int *tags, int n, int *out) {
     int freeb[8];
     int i;
@@ -146,7 +153,11 @@ static int hi_abi_assign(int *tags, int n, int *out) {
     nstk = 0;
     i = 0;
     while (i < n) {
-        if (tags[i] == 1 && i + 1 < n && tags[i + 1] == 2) {
+        if (tags[i] >= HI_TAG_BYVAL) {
+            out[i] = -1;
+            nstk = nstk + (tags[i] - HI_TAG_BYVAL);
+            i = i + 1;
+        } else if (tags[i] == 1 && i + 1 < n && tags[i + 1] == 2) {
             p = 0;
             while (p < 8 && !(freeb[p] && freeb[p + 1])) p = p + 2;
             if (p < 8) {
@@ -181,7 +192,10 @@ static int hi_abi_assign(int *tags, int n, int *out) {
  abi colors) and the codegen entry sequence. */
 static int hl_param_tags[64];
 static int hl_param_map[64];     /* reg 3..10 or -1 = stack */
-static int hl_param_stkord[64];  /* for -1 slots: ordinal on the stack */
+static int hl_param_stkord[64];  /* for -1 slots: BYTE offset from the
+                                    incoming sp (byval slots reserve the
+                                    struct's rounded size, so ordinals
+                                    would lie) */
 static int hl_param_nflat;
 static int hl_pp_inst[66];       /* HI_PARAM inst id per flat phys slot;
                                     all PARAMs are emitted before any
