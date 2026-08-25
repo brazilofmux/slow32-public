@@ -79,7 +79,7 @@ All platforms and emulators produce bit-identical artifacts.
 
 ## Stage 08
 
-- 5146e97a8b54c1791ca93d222703f2d67187cd4768ae119b3b906abf6cc9fa27  cc.s32x
+- 005485553bc741d777711ec6bb9502fcb10ce941aa12f362f4be6d51765cd3d6  cc.s32x
 - ac2f0a1c8cfcd6d204560cb75d577b5fccf3bb53c51aa3baffd9ff7c029df26e  s32-ar.s32x
 - 20c46ed5ad6595c070f7abf1411b4b73f3bd963a340fdbf52ac9144585f9946d  s32-as.s32x
 - 8364f4e5a78cc17c50c1013ef9de16901358c3c2af654cbfbfaf8d6ce573856f  s32-ld.s32x

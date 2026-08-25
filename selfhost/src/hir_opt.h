@@ -1177,13 +1177,27 @@ static int ho_promote_single_store_alloca(void) {
                 s2 = h_src2[j];
 
                 if (k == HI_LOAD && s1 == i) {
-                    /* Direct load via alloca: OK. */
+                    /* Direct load via alloca: OK — but only when the
+                     * load's type matches the alloca's.  A type-PUNNED
+                     * load (`*(unsigned long long *)&d`) must read the
+                     * slot's bytes; forwarding it to the stored value
+                     * handed the raw double to an integer consumer
+                     * (cc-a64: every local-double pun returned junk —
+                     * d35_fp_loads' locmem shape). */
+                    if (ty_is_fp(h_ty[j]) != ty_is_fp(h_ty[i]) ||
+                        ty_size(h_ty[j]) != ty_size(h_ty[i]))
+                        has_bad = 1;
                 } else if (k == HI_STORE && s1 == i) {
                     /* Direct store *into* alloca.  But if the value being
                      * stored is also the alloca itself, the address
-                     * escapes through itself — bail. */
+                     * escapes through itself — bail.  A type-punned
+                     * store blocks promotion the same way a punned
+                     * load does. */
                     if (s2 == i) { has_bad = 1; }
-                    else {
+                    else if (ty_is_fp(h_ty[j]) != ty_is_fp(h_ty[i]) ||
+                             ty_size(h_ty[j]) != ty_size(h_ty[i])) {
+                        has_bad = 1;
+                    } else {
                         n_stores = n_stores + 1;
                         store_inst = j;
                     }

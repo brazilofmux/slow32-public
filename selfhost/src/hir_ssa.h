@@ -467,16 +467,31 @@ static void ssa_find_promo(void) {
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
-        /* src1: only OK as addr in LOAD or STORE.  Reject
-         * unconditionally — an earlier ssa_find_promo_idx() guard here
-         * consulted ssa_promo[], which at this point still held the
-         * PREVIOUS function's list, so an escaping alloca whose inst id
-         * collided with a stale entry skipped rejection and got
-         * promoted (cc-a64: a double literal's temp alloca escaping
-         * into ADDI+4 was promoted, and the f64 LOAD collapsed to its
-         * lo-word ICONST — one_double(0, 3.75) received 0.0). */
+        /* src1: only OK as addr in a LOAD or STORE whose type MATCHES
+         * the alloca's.  Reject unconditionally otherwise — an earlier
+         * ssa_find_promo_idx() guard here consulted ssa_promo[], which
+         * at this point still held the PREVIOUS function's list, so an
+         * escaping alloca whose inst id collided with a stale entry
+         * skipped rejection and got promoted (cc-a64: a double
+         * literal's temp alloca escaping into ADDI+4 was promoted, and
+         * the f64 LOAD collapsed to its lo-word ICONST).
+         *
+         * The type check treats a PUNNED access as address-taken:
+         * `*(unsigned long long *)&d` is a LOAD on d's alloca, so the
+         * old scan happily promoted d — the pun then read a stale slot
+         * or a wrong-class register (cc-a64: every such pun returned
+         * stack junk; d35_fp_loads).  fp-ness or width mismatch
+         * blocks promotion; same-width integer sign punning stays
+         * promotable. */
         if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ALLOCA) {
-            if (k != HI_LOAD && k != HI_STORE) {
+            int punned;
+            punned = 0;
+            if (k == HI_LOAD || k == HI_STORE) {
+                if (ty_is_fp(h_ty[i]) != ty_is_fp(h_ty[h_src1[i]]) ||
+                    ty_size(h_ty[i]) != ty_size(h_ty[h_src1[i]]))
+                    punned = 1;
+            }
+            if ((k != HI_LOAD && k != HI_STORE) || punned) {
                 j = 0;
                 while (j < hl_nalloca) {
                     if (hl_ainst[j] == h_src1[i]) { ok[j] = 0; }
