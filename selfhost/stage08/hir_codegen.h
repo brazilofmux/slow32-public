@@ -91,6 +91,8 @@ static void cg_rri(char *op, int rd, int ra, int imm) {
 
 static int hcg_locals;     /* fn->locals_size (original) */
 static int hcg_frame;      /* total frame size */
+static int hcg_frame_escapes; /* an alloca's address may reach a callee:
+                                 tail calls must not pop the frame first */
 static int hcg_epilog;     /* epilog label */
 static int hcg_va_save_size; /* varargs register save area size */
 
@@ -434,6 +436,7 @@ static int hcg_params_emitted;
 static int hcg_pe_dst[8];
 static int hcg_pe_src[8];
 static int hcg_pe_active[8];
+static int hcg_argmap[HIR_MAX_CARG]; /* per-call ABI register map */
 
 static void hcg_emit_param_entry(void) {
     int i;
@@ -448,8 +451,9 @@ static void hcg_emit_param_entry(void) {
     /* Step 1: spilled register params (order-independent). */
     i = 0;
     while (i < h_ninst) {
-        if (h_kind[i] == HI_PARAM && h_val[i] < 8 && ra_reg[i] < 0) {
-            cg_rri("addi", 1, 3 + h_val[i], 0);
+        if (h_kind[i] == HI_PARAM && h_val[i] < hl_param_nflat &&
+            hl_param_map[h_val[i]] >= 0 && ra_reg[i] < 0) {
+            cg_rri("addi", 1, hl_param_map[h_val[i]], 0);
             hcg_maybe_spill(i);
         }
         i = i + 1;
@@ -459,9 +463,10 @@ static void hcg_emit_param_entry(void) {
     nc = 0;
     i = 0;
     while (i < h_ninst) {
-        if (h_kind[i] == HI_PARAM && h_val[i] < 8 && ra_reg[i] >= 0 && nc < 8) {
+        if (h_kind[i] == HI_PARAM && h_val[i] < hl_param_nflat &&
+            hl_param_map[h_val[i]] >= 0 && ra_reg[i] >= 0 && nc < 8) {
             hcg_pe_dst[nc] = ra_reg[i];
-            hcg_pe_src[nc] = 3 + h_val[i];
+            hcg_pe_src[nc] = hl_param_map[h_val[i]];
             hcg_pe_active[nc] = 1;
             nc = nc + 1;
         }
@@ -522,15 +527,16 @@ static void hcg_emit_param_entry(void) {
         }
     }
 
-    /* Step 3: stack-passed params (pidx >= 8). */
+    /* Step 3: stack-passed params (ABI walk spilled them). */
     i = 0;
     while (i < h_ninst) {
-        if (h_kind[i] == HI_PARAM && h_val[i] >= 8) {
+        if (h_kind[i] == HI_PARAM && h_val[i] < hl_param_nflat &&
+            hl_param_map[h_val[i]] < 0) {
             pidx = h_val[i];
             if (ra_reg[i] >= 0) {
-                cg_rri("ldw", ra_reg[i], 30, (pidx - 8) * 4);
+                cg_rri("ldw", ra_reg[i], 30, hl_param_stkord[pidx] * 4);
             } else {
-                cg_rri("ldw", 1, 30, (pidx - 8) * 4);
+                cg_rri("ldw", 1, 30, hl_param_stkord[pidx] * 4);
                 hcg_maybe_spill(i);
             }
         }
@@ -930,6 +936,7 @@ static int hcg_is_tailcall(int idx) {
     /* Conservative guards */
     if (hcg_va_save_size > 0) return 0;       /* varargs fn */
     if (h_val[idx] > 8) return 0;              /* stack args */
+    if (hcg_frame_escapes) return 0;          /* callee may see our frame */
 
     blk = h_blk[idx];
     end = bb_end[blk];
@@ -1083,6 +1090,9 @@ static void hcg_inst(int idx) {
     int rnt;
     int nargs;
     int regc;
+    int nstk;
+    regc = 0;
+    nstk = regc;
     int base;
     int i;
     int skip;
@@ -1945,18 +1955,19 @@ static void hcg_inst(int idx) {
         nargs = h_val[idx];
         base = h_cbase[idx];
 
-        regc = nargs;
-        if (regc > 8) regc = 8;
+        /* ABI walk: aligned f64 pairs, back-filled ints, ordered
+         * stack spill (matches clang's CC_SLOW32). */
+        nstk = hi_abi_assign(&h_carg_tag[base], nargs, hcg_argmap);
 
-        /* Load register args (r3..r10) */
+        /* Load register args */
         i = 0;
-        while (i < regc) {
-            hcg_into(3 + i, h_carg[base + i]);
+        while (i < nargs) {
+            if (hcg_argmap[i] >= 0) hcg_into(hcg_argmap[i], h_carg[base + i]);
             i = i + 1;
         }
 
         /* Check for tail call BEFORE emitting stack args or jal */
-        is_tail = hcg_is_tailcall(idx);
+        is_tail = (nstk == 0) && hcg_is_tailcall(idx);
 
         if (is_tail) {
             /* Tail call: epilogue + jump (no link) */
@@ -1968,14 +1979,17 @@ static void hcg_inst(int idx) {
             return;
         }
 
-        /* Normal call: push stack args, call with link */
+        /* Normal call: push stack args (reverse order so the first
+         * spilled slot lands at the lowest address), call with link */
         i = nargs - 1;
-        while (i >= regc) {
-            if (hcg_const_is_zero(h_carg[base + i])) {
-                cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
-            } else {
-                hcg_into(1, h_carg[base + i]);
-                cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+        while (i >= 0) {
+            if (hcg_argmap[i] < 0) {
+                if (hcg_const_is_zero(h_carg[base + i])) {
+                    cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
+                } else {
+                    hcg_into(1, h_carg[base + i]);
+                    cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+                }
             }
             i = i - 1;
         }
@@ -1984,8 +1998,8 @@ static void hcg_inst(int idx) {
         cg_s(h_name[idx]);
         cg_c(10);
 
-        if (nargs > regc) {
-            cg_rri("addi", 29, 29, (nargs - regc) * 4);
+        if (nstk > 0) {
+            cg_rri("addi", 29, 29, nstk * 4);
         }
 
         /* Check for CALLHI following this CALL */
@@ -2021,12 +2035,11 @@ static void hcg_inst(int idx) {
         nargs = h_val[idx];
         base = h_cbase[idx];
 
-        regc = nargs;
-        if (regc > 8) regc = 8;
+        nstk = hi_abi_assign(&h_carg_tag[base], nargs, hcg_argmap);
 
         i = 0;
-        while (i < regc) {
-            hcg_into(3 + i, h_carg[base + i]);
+        while (i < nargs) {
+            if (hcg_argmap[i] >= 0) hcg_into(hcg_argmap[i], h_carg[base + i]);
             i = i + 1;
         }
 
@@ -2034,22 +2047,24 @@ static void hcg_inst(int idx) {
         cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
 
         i = nargs - 1;
-        while (i >= regc) {
-            if (hcg_const_is_zero(h_carg[base + i])) {
-                cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
-            } else {
-                hcg_into(1, h_carg[base + i]);
-                cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+        while (i >= 0) {
+            if (hcg_argmap[i] < 0) {
+                if (hcg_const_is_zero(h_carg[base + i])) {
+                    cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
+                } else {
+                    hcg_into(1, h_carg[base + i]);
+                    cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+                }
             }
             i = i - 1;
         }
 
         cg_s("    ldw r2, r29, ");
-        cg_n((nargs - regc) * 4);
+        cg_n(nstk * 4);
         cg_c(10);
         cg_s("    jalr r31, r2, 0\n");
 
-        cg_rri("addi", 29, 29, (nargs - regc + 1) * 4);
+        cg_rri("addi", 29, 29, (nstk + 1) * 4);
 
         /* Check for CALLHI following this CALLP */
         has_callhi2 = 0;
@@ -2348,11 +2363,17 @@ static void hcg_restore_reg(int reg, int off) {
         cg_n(off);
         cg_c(10);
     } else {
-        hcg_li(1, off);
-        cg_rrr("add", 1, 30, 1);
+        /* Use the register being restored as its own address scratch —
+         * it's dead until the load.  r1 here clobbered the return value
+         * in large-frame epilogues (sbasic parse_primary, 4456-byte
+         * frame: every expr_t* it returned came back as a stack addr). */
+        hcg_li(reg, off);
+        cg_rrr("add", reg, 30, reg);
         cg_s("    ldw r");
         cg_n(reg);
-        cg_s(", r1, 0\n");
+        cg_s(", r");
+        cg_n(reg);
+        cg_s(", 0\n");
     }
 }
 
@@ -2415,6 +2436,50 @@ static void hcg_func(Node *fn) {
     fs = ((fs + 3) / 4) * 4;
     hcg_locals = fn->locals_size;
     hcg_frame = fs;
+
+    /* Frame-escape scan for the tail-call guard.  A tail call pops this
+     * frame BEFORE entering the callee; if any local's address escaped
+     * (alloca used outside a direct LOAD/STORE address position, or
+     * passed as a call argument), the callee could read/write dead
+     * stack that its own frame then reuses.  parse_stmt's
+     * `return parse_assign(p, var.text)` handed the callee a pointer
+     * into its own popped frame — lexer_next's frame landed exactly on
+     * var and shredded the name. */
+    hcg_frame_escapes = 0;
+    {
+        int fe_i;
+        int fe_j;
+        int fe_k;
+        fe_i = 0;
+        while (fe_i < h_ninst) {
+            fe_k = h_kind[fe_i];
+            if (fe_k != HI_NOP) {
+                if (h_src1[fe_i] >= 0 && h_kind[h_src1[fe_i]] == HI_ALLOCA &&
+                    fe_k != HI_LOAD && fe_k != HI_STORE) {
+                    hcg_frame_escapes = 1;
+                }
+                /* src2 is a block index for BR/BRC and a phi slot for PHI;
+                 * only real value refs count (mirrors ssa_find_promo). */
+                if (h_src2[fe_i] >= 0 && fe_k != HI_BR && fe_k != HI_BRC &&
+                    fe_k != HI_PHI &&
+                    h_kind[h_src2[fe_i]] == HI_ALLOCA) {
+                    hcg_frame_escapes = 1;
+                }
+                if (fe_k == HI_CALL || fe_k == HI_CALLP) {
+                    fe_j = 0;
+                    while (fe_j < h_val[fe_i]) {
+                        int fe_a;
+                        fe_a = h_carg[h_cbase[fe_i] + fe_j];
+                        if (fe_a >= 0 && h_kind[fe_a] == HI_ALLOCA) {
+                            hcg_frame_escapes = 1;
+                        }
+                        fe_j = fe_j + 1;
+                    }
+                }
+            }
+            fe_i = fe_i + 1;
+        }
+    }
 
     /* Reset the one-shot param entry emission for this function */
     hcg_params_emitted = 0;

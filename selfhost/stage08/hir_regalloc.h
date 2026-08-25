@@ -172,12 +172,13 @@ static int ra_param_preferred_color(int inst) {
 
     if (inst < 0 || inst >= h_ninst) return -1;
     if (h_kind[inst] != HI_PARAM) return -1;
-    /* Stack-passed args (phys_idx >= 8) have no incoming register: the
-     * codegen materialises them with a fp-relative LOAD, so the param
-     * can be placed in any free color the allocator chooses. */
-    if (h_val[inst] >= 8) return -1;
+    /* Incoming location comes from the ABI walk (aligned f64 pairs,
+     * back-filled ints).  Stack-passed params have no incoming
+     * register — any free color works. */
+    if (h_val[inst] >= hl_param_nflat) return -1;
+    if (hl_param_map[h_val[inst]] < 0) return -1;
 
-    phys = 3 + h_val[inst];
+    phys = hl_param_map[h_val[inst]];
     ra_init_phys_regs();
     nactive = ra_num_active_slots();
 

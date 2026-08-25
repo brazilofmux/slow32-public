@@ -227,6 +227,13 @@ int main() {
 - ✅ **Self-hosting** - `selfhost/` bootstraps from an 800-line emulator to a
   near-C99 compiler that rebuilds itself byte-identically, plus cross-compilers
   (x86-64, AArch64) that compile the project's own DBT
+- ✅ **stage08 cc as a peer toolchain** - the self-hosted compiler now builds
+  real applications end-to-end on SLOW-32: rogue, the graphics demos, DOOM
+  (`-timedemo demo3` bit-exact with the clang build on both slow32-fast and
+  slow32-dbt), and sbasic (output-identical to the clang build across its
+  full test suite).  Its double-argument ABI matches clang's aligned-pair
+  convention, so stage08 and clang objects link and interoperate (struct
+  by-value args are the one remaining convention gap)
 - ✅ **Applications** - SQLite, Lua, a Z-machine, dBase III clone, editor,
   BASIC, Forth, Lisp, Prolog, COMMAND.COM-shaped shell, spreadsheet,
   BBS, IPv4 TCP examples under their own directories

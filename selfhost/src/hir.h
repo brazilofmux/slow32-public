@@ -121,6 +121,72 @@ static int   h_ninst;
 
 /* Call arguments (flat array, indexed per-call) */
 static int   h_carg[HIR_MAX_CARG];
+/* ABI tag per flat call-arg slot: 0 = 32-bit word (ints, i64 halves,
+ * varargs doubles), 1 = f64 LO half, 2 = f64 HI half.  Non-varargs
+ * doubles occupy an even-odd aligned register pair (r3:r4, r5:r6,
+ * r7:r8, r9:r10) in clang's convention; everything else fills the
+ * lowest free register. */
+static int   h_carg_tag[HIR_MAX_CARG];
+
+/* Assign physical argument locations for n flat slots with the given
+ * tags (see h_carg_tag).  out[i] = register number 3..10, or -1 for a
+ * stack slot.  Returns the number of stack slots.  Mirrors clang's
+ * CC_SLOW32: f64 takes the lowest free even-odd aligned pair, every
+ * other slot (ints, i64 halves, f32, varargs f64 halves) takes the
+ * lowest free single register; later args back-fill skipped registers;
+ * spilled args go to the stack in argument order. */
+static int hi_abi_assign(int *tags, int n, int *out) {
+    int freeb[8];
+    int i;
+    int p;
+    int nstk;
+
+    i = 0;
+    while (i < 8) { freeb[i] = 1; i = i + 1; }
+    nstk = 0;
+    i = 0;
+    while (i < n) {
+        if (tags[i] == 1 && i + 1 < n && tags[i + 1] == 2) {
+            p = 0;
+            while (p < 8 && !(freeb[p] && freeb[p + 1])) p = p + 2;
+            if (p < 8) {
+                out[i] = 3 + p;
+                out[i + 1] = 4 + p;
+                freeb[p] = 0;
+                freeb[p + 1] = 0;
+            } else {
+                out[i] = -1;
+                out[i + 1] = -1;
+                nstk = nstk + 2;
+            }
+            i = i + 2;
+        } else {
+            p = 0;
+            while (p < 8 && !freeb[p]) p = p + 1;
+            if (p < 8) {
+                out[i] = 3 + p;
+                freeb[p] = 0;
+            } else {
+                out[i] = -1;
+                nstk = nstk + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return nstk;
+}
+
+/* Per-function incoming-parameter ABI map, filled by hl_func from the
+ * parameter list and consumed by the register allocator (preferred
+ abi colors) and the codegen entry sequence. */
+static int hl_param_tags[64];
+static int hl_param_map[64];     /* reg 3..10 or -1 = stack */
+static int hl_param_stkord[64];  /* for -1 slots: ordinal on the stack */
+static int hl_param_nflat;
+static int hl_pp_inst[66];       /* HI_PARAM inst id per flat phys slot;
+                                    all PARAMs are emitted before any
+                                    param-copy code so incoming registers
+                                    stay pinned across earlier copies */
 static int   h_cbase[HIR_MAX_INST];
 static int   h_ncarg;
 
@@ -154,6 +220,11 @@ static int   hl_cur_blk;
 static void hir_reset(void) {
     h_ninst = 0;
     h_ncarg = 0;
+    {
+        int hi_i;
+        hi_i = 0;
+        while (hi_i < HIR_MAX_CARG) { h_carg_tag[hi_i] = 0; hi_i = hi_i + 1; }
+    }
     h_nparg = 0;
     hjt_n = 0;
     bb_nblk = 0;

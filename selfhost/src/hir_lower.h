@@ -580,6 +580,20 @@ static int hl_addr(Node *n) {
         return hl_addr(n->rhs);
     }
 
+    /* Struct-valued call: lowering already materializes the result in a
+     * caller temp and yields its address (the retptr), so the "address of"
+     * a struct call is just its value.  Covers `return val_integer(0);`
+     * and member access on a call result. */
+    if ((n->kind == ND_CALL || n->kind == ND_CALL_PTR) && ty_is_struct(n->ty)) {
+        return hl_expr(n);
+    }
+
+    /* Struct assignment used as a value (a = b = c chains, or taking a
+     * member of an assignment): hl_expr returns the destination address. */
+    if (n->kind == ND_ASSIGN && ty_is_struct(n->ty)) {
+        return hl_expr(n);
+    }
+
     p_error("not an lvalue (hir)");
     return -1;
 }
@@ -1611,6 +1625,47 @@ static int hl_expr(Node *n) {
         /* Float / double LHS: promote the rhs to the LHS's FP type and
          * emit HI_F*.  hl_binop_kind below would return integer HI_ADD
          * etc., which is wrong for FP destinations. */
+#ifndef S12CC_NATIVE_F64
+        if (ty_is_double(n->ty)) {
+            /* Soft-pair f64: old_val above loaded only the LO word.
+             * Load the pair, promote the rhs, libcall, store the pair.
+             * (HI_FADD w/ TY_DOUBLE has no slow32 BURG pattern — the
+             * old code here silently dropped the op: `d += step` was a
+             * no-op and every sbasic FOR loop spun forever.) */
+            int a4;
+            int old_hi;
+            int rv_hi;
+            int cb;
+            int r_lo;
+            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+            old_hi = hi_emit(HI_LOAD, TY_INT, a4, -1, 0, NULL);
+            if (ty_is_double(n->rhs->ty)) {
+                rv_hi = hl_hi;
+            } else {
+                rv = hl_promote_to_f64(rv, n->rhs->ty);
+                rv_hi = hl_hi;
+            }
+            cb = h_ncarg;
+            h_carg[h_ncarg] = old_val; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = old_hi;  h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
+            if (n->op == TK_PLUS)
+                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
+            else if (n->op == TK_MINUS)
+                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_sub");
+            else if (n->op == TK_STAR)
+                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_mul");
+            else
+                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_div");
+            h_cbase[r_lo] = cb;
+            hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+            hi_emit(HI_STORE, TY_INT, addr, r_lo, 0, NULL);
+            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, a4, hl_hi, 0, NULL);
+            return r_lo;
+        }
+#endif
         if (ty_is_float(n->ty) || ty_is_double(n->ty)) {
             int rhs_ty;
             int fkind;
@@ -1748,6 +1803,51 @@ static int hl_expr(Node *n) {
         else_blk = hir_new_block();
         join_blk = hir_new_block();
         hi_emit(HI_BRC, 0, cv, then_blk, else_blk, NULL);
+
+#ifndef S12CC_X64_HOST
+        if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
+            /* Pair-typed result: both words must flow through the temp.
+             * Storing only the lo word leaves the join reading whatever
+             * hl_hi last held — an arm that never executed. */
+            int t4;
+
+            hl_switch_block(then_blk);
+            val = hl_expr(n->lhs);
+            if (!ty_is_llong(n->lhs->ty) && !ty_is_double(n->lhs->ty)) {
+                if (ty_is_double(n->ty)) {
+                    /* result is double: CONVERT the int/float arm (sema
+                     * doesn't insert arm casts) */
+                    val = hl_promote_to_f64(val, n->lhs->ty);
+                } else {
+                    hl_widen64(val, n->lhs->ty, &val, &hl_hi);
+                }
+            }
+            hi_emit(HI_STORE, TY_INT, tmp, val, 0, NULL);
+            t4 = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, t4, hl_hi, 0, NULL);
+            hi_emit(HI_BR, 0, -1, -1, join_blk, NULL);
+
+            hl_switch_block(else_blk);
+            val = hl_expr(n->rhs);
+            if (!ty_is_llong(n->rhs->ty) && !ty_is_double(n->rhs->ty)) {
+                if (ty_is_double(n->ty)) {
+                    val = hl_promote_to_f64(val, n->rhs->ty);
+                } else {
+                    hl_widen64(val, n->rhs->ty, &val, &hl_hi);
+                }
+            }
+            hi_emit(HI_STORE, TY_INT, tmp, val, 0, NULL);
+            t4 = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, t4, hl_hi, 0, NULL);
+            hi_emit(HI_BR, 0, -1, -1, join_blk, NULL);
+
+            hl_switch_block(join_blk);
+            val = hi_emit(HI_LOAD, TY_INT, tmp, -1, 0, NULL);
+            t4 = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 4, NULL);
+            hl_hi = hi_emit(HI_LOAD, TY_INT, t4, -1, 0, NULL);
+            return val;
+        }
+#endif
 
         hl_switch_block(then_blk);
         val = hl_expr(n->lhs);
@@ -2027,7 +2127,10 @@ static int hl_expr(Node *n) {
     if (n->kind == ND_CALL) {
         int av[32];
         int av_hi[32];
-        int is64[32];
+        int is64[32];   /* 0 = word, 1 = llong pair, 2 = double pair.
+                           (No extra arrays: hl_expr's frame is near
+                           stage07's 12-bit offset ceiling.) */
+        int callee_var;
         int phys_count;
         int ret_ty;
 
@@ -2061,7 +2164,7 @@ static int hl_expr(Node *n) {
                 is64[nargs] = 0;
 #else
                 av_hi[nargs] = hl_hi;
-                is64[nargs] = 1;
+                is64[nargs] = ty_is_double(a->ty) ? 2 : 1;
 #endif
             } else {
                 av_hi[nargs] = -1;
@@ -2070,6 +2173,10 @@ static int hl_expr(Node *n) {
             nargs = nargs + 1;
             a = a->next;
         }
+        /* Non-varargs doubles occupy aligned register pairs (clang's
+         * f64 ABI); varargs calls pack sequentially so the callee's
+         * va_arg walk stays gapless. */
+        callee_var = (n->name != NULL) ? find_func_varargs(n->name) : 0;
         /* Now record args in h_carg, expanding 64-bit args to lo/hi pairs */
         carg_base = h_ncarg;
         phys_count = 0;
@@ -2077,11 +2184,13 @@ static int hl_expr(Node *n) {
         while (i < nargs) {
             if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
             h_carg[h_ncarg] = av[i];
+            h_carg_tag[h_ncarg] = (is64[i] == 2 && !callee_var) ? 1 : 0;
             h_ncarg = h_ncarg + 1;
             phys_count = phys_count + 1;
             if (is64[i]) {
                 if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
                 h_carg[h_ncarg] = av_hi[i];
+                h_carg_tag[h_ncarg] = (is64[i] == 2 && !callee_var) ? 2 : 0;
                 h_ncarg = h_ncarg + 1;
                 phys_count = phys_count + 1;
             }
@@ -2096,13 +2205,18 @@ static int hl_expr(Node *n) {
             tmp_sz = ((tmp_sz + 3) / 4) * 4;
             hl_temp_stack = hl_temp_stack + tmp_sz;
             tmp_alloca = hl_emit_temp_alloca(HL_ADDR_TY, 0 - hl_temp_stack);
-            /* Shift existing cargs right by 1 to make room for hidden first arg */
+            /* Shift existing cargs right by 1 to make room for hidden
+             * first arg.  Tags must move with their values or a double's
+             * pair tags land on the wrong flat slots and caller/callee
+             * disagree on its register pair. */
             i = h_ncarg;
             while (i > carg_base) {
                 h_carg[i] = h_carg[i - 1];
+                h_carg_tag[i] = h_carg_tag[i - 1];
                 i = i - 1;
             }
             h_carg[carg_base] = tmp_alloca;
+            h_carg_tag[carg_base] = 0;
             h_ncarg = h_ncarg + 1;
             phys_count = phys_count + 1;
             i = hi_emit(HI_CALL, HL_ADDR_TY, -1, -1, phys_count, n->name);
@@ -2135,7 +2249,7 @@ static int hl_expr(Node *n) {
     if (n->kind == ND_CALL_PTR) {
         int av[32];
         int av_hi2[32];
-        int is64_2[32];
+        int is64_2[32];  /* tri-state like is64 */
         int phys_count2;
         callee = hl_expr(n->lhs);
         a = n->args;
@@ -2149,7 +2263,7 @@ static int hl_expr(Node *n) {
                 is64_2[nargs] = 0;
 #else
                 av_hi2[nargs] = hl_hi;
-                is64_2[nargs] = 1;
+                is64_2[nargs] = ty_is_double(a->ty) ? 2 : 1;
 #endif
             } else {
                 av_hi2[nargs] = -1;
@@ -2164,11 +2278,13 @@ static int hl_expr(Node *n) {
         while (i < nargs) {
             if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
             h_carg[h_ncarg] = av[i];
+            h_carg_tag[h_ncarg] = (is64_2[i] == 2) ? 1 : 0;
             h_ncarg = h_ncarg + 1;
             phys_count2 = phys_count2 + 1;
             if (is64_2[i]) {
                 if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
                 h_carg[h_ncarg] = av_hi2[i];
+                h_carg_tag[h_ncarg] = (is64_2[i] == 2) ? 2 : 0;
                 h_ncarg = h_ncarg + 1;
                 phys_count2 = phys_count2 + 1;
             }
@@ -2585,17 +2701,64 @@ static void hl_func(Node *fn) {
         Node *pp;
         phys_idx = 0;
 
-        /* Hidden first param for struct return.  On 64-bit hosts the
-         * retptr is a pointer (8 bytes); using TY_INT silently truncates
-         * to 32 bits and the high bits of the caller's stack address are
-         * lost on the first store-through. */
-        if (hl_struct_ret) {
-            param_inst = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, 0, NULL);
-            hl_retptr_alloca = hl_get_alloca(fn->offset, HL_ADDR_TY);
-            hi_emit(HI_STORE, HL_ADDR_TY, hl_retptr_alloca, param_inst, 0, NULL);
-            phys_idx = 1;
+        {
+            int pt_i;
+            pt_i = 0;
+            while (pt_i < 64) { hl_param_tags[pt_i] = 0; pt_i = pt_i + 1; }
         }
 
+        /* Pass 1: emit EVERY HI_PARAM before any copy/store code.  A
+         * PARAM's incoming register is only pinned from its def point
+         * onward; if the copy loop for an earlier param runs first, the
+         * allocator may hand a later param's incoming register to one
+         * of the copy's address temps (this clobbered a second struct
+         * param's pointer in r5 before it was ever read). */
+        if (hl_struct_ret) {
+            /* Hidden first param for struct return.  On 64-bit hosts the
+             * retptr is a pointer (8 bytes); using TY_INT silently
+             * truncates to 32 bits. */
+            hl_pp_inst[0] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, 0, NULL);
+            phys_idx = 1;
+        }
+        pp = fn->args;
+        while (pp) {
+            if (ty_is_struct(pp->ty)) {
+                hl_pp_inst[phys_idx] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, phys_idx, NULL);
+                phys_idx = phys_idx + 1;
+            } else if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) {
+#ifdef S12CC_X64_HOST
+                hl_pp_inst[phys_idx] = hi_emit(HI_PARAM, pp->ty, -1, -1, phys_idx, NULL);
+                phys_idx = phys_idx + 1;
+#else
+                /* Doubles in NON-VARARGS functions sit in an aligned
+                 * register pair (tags 1/2 -> hi_abi_assign). */
+                if (phys_idx < 62 && ty_is_double(pp->ty) && !fn->is_varargs) {
+                    hl_param_tags[phys_idx] = 1;
+                    hl_param_tags[phys_idx + 1] = 2;
+                }
+                hl_pp_inst[phys_idx] = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
+                hl_pp_inst[phys_idx + 1] = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx + 1, NULL);
+                phys_idx = phys_idx + 2;
+#endif
+            } else {
+#ifdef S12CC_X64_HOST
+                hl_pp_inst[phys_idx] = hi_emit(HI_PARAM, pp->ty, -1, -1, phys_idx, NULL);
+#else
+                hl_pp_inst[phys_idx] = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
+#endif
+                phys_idx = phys_idx + 1;
+            }
+            pp = pp->next;
+        }
+        hl_nparams = phys_idx;
+
+        /* Pass 2: store/copy each param into its local slot. */
+        phys_idx = 0;
+        if (hl_struct_ret) {
+            hl_retptr_alloca = hl_get_alloca(fn->offset, HL_ADDR_TY);
+            hi_emit(HI_STORE, HL_ADDR_TY, hl_retptr_alloca, hl_pp_inst[0], 0, NULL);
+            phys_idx = 1;
+        }
         pp = fn->args;
         while (pp) {
             if (ty_is_struct(pp->ty)) {
@@ -2614,7 +2777,7 @@ static void hl_func(Node *fn) {
                 int dst_off;
                 int tmp;
 
-                param_ptr = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, phys_idx, NULL);
+                param_ptr = hl_pp_inst[phys_idx];
                 local_addr = hl_get_alloca(pp->offset, pp->ty);
                 copy_sz = ty_size(pp->ty);
                 copy_i = 0;
@@ -2633,15 +2796,16 @@ static void hl_func(Node *fn) {
                     copy_i = copy_i + 1;
                 }
                 phys_idx = phys_idx + 1;
-            } else if (ty_is_llong(pp->ty)) {
+            } else if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) {
 #ifdef S12CC_X64_HOST
-                param_inst = hi_emit(HI_PARAM, TY_LLONG, -1, -1, phys_idx, NULL);
-                param_alloca = hl_get_alloca(pp->offset, TY_LLONG);
-                hi_emit(HI_STORE, TY_LLONG, param_alloca, param_inst, 0, NULL);
+                param_inst = hl_pp_inst[phys_idx];
+                param_alloca = hl_get_alloca(pp->offset, pp->ty);
+                hi_emit(HI_STORE, pp->ty, param_alloca, param_inst, 0, NULL);
                 phys_idx = phys_idx + 1;
 #else
-                param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
-                param_hi = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx + 1, NULL);
+                /* Both llong and double arrive as a lo/hi word pair. */
+                param_inst = hl_pp_inst[phys_idx];
+                param_hi = hl_pp_inst[phys_idx + 1];
                 param_alloca = hl_get_alloca(pp->offset, TY_INT);
                 hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
                 a4 = hi_emit(HI_ADDI, TY_INT, param_alloca, -1, 4, NULL);
@@ -2651,11 +2815,11 @@ static void hl_func(Node *fn) {
             } else {
 #ifdef S12CC_X64_HOST
                 /* x64: preserve pointer types (8 bytes) vs int (4 bytes) */
-                param_inst = hi_emit(HI_PARAM, pp->ty, -1, -1, phys_idx, NULL);
+                param_inst = hl_pp_inst[phys_idx];
                 param_alloca = hl_get_alloca(pp->offset, pp->ty);
                 hi_emit(HI_STORE, pp->ty, param_alloca, param_inst, 0, NULL);
 #else
-                param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
+                param_inst = hl_pp_inst[phys_idx];
                 param_alloca = hl_get_alloca(pp->offset, TY_INT);
                 hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
 #endif
@@ -2664,6 +2828,26 @@ static void hl_func(Node *fn) {
             pp = pp->next;
         }
         hl_nparams = phys_idx;
+        /* Resolve the incoming-parameter ABI locations (register or
+         * stack) for the allocator's preferences and the codegen
+         * entry sequence. */
+        hl_param_nflat = phys_idx;
+        {
+            int pm_i;
+            int pm_ord;
+            hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
+            pm_ord = 0;
+            pm_i = 0;
+            while (pm_i < hl_param_nflat) {
+                if (hl_param_map[pm_i] < 0) {
+                    hl_param_stkord[pm_i] = pm_ord;
+                    pm_ord = pm_ord + 1;
+                } else {
+                    hl_param_stkord[pm_i] = -1;
+                }
+                pm_i = pm_i + 1;
+            }
+        }
     }
 
     hl_stmt(fn->body);

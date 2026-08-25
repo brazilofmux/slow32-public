@@ -261,6 +261,7 @@ static int   ps_type_arrcount;
 #define PS_MAX_FUNCS 4096
 static char *ps_fname[PS_MAX_FUNCS];
 static int   ps_ftype[PS_MAX_FUNCS];
+static int   ps_fvar[PS_MAX_FUNCS];   /* 1 = variadic (affects f64 arg ABI) */
 static int   ps_nfuncs;
 
 /* Forward declarations */
@@ -433,6 +434,18 @@ static int is_known_func(char *name) {
     return 0;
 }
 
+/* Variadic-ness of a declared function (0 for unknown callees; C
+ * defaults unprototyped functions to non-variadic). */
+static int find_func_varargs(char *name) {
+    int i;
+    i = ps_nfuncs - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_fname[i]) == 0) return ps_fvar[i];
+        i = i - 1;
+    }
+    return 0;
+}
+
 static void add_func_type(char *name, int ty) {
     int i;
     /* Update existing entry if already registered */
@@ -440,6 +453,7 @@ static void add_func_type(char *name, int ty) {
     while (i >= 0) {
         if (strcmp(name, ps_fname[i]) == 0) {
             ps_ftype[i] = ty;
+            ps_fvar[i] = ps_is_varargs;
             return;
         }
         i = i - 1;
@@ -447,6 +461,7 @@ static void add_func_type(char *name, int ty) {
     if (ps_nfuncs >= PS_MAX_FUNCS) return;
     ps_fname[ps_nfuncs] = strdup(name);
     ps_ftype[ps_nfuncs] = ty;
+    ps_fvar[ps_nfuncs] = ps_is_varargs;
     ps_nfuncs = ps_nfuncs + 1;
 }
 
@@ -929,6 +944,7 @@ static int parse_type(void) {
                     int bf_width;
                     int bf_byte_off;
                     int bf_bit_off;
+                    int ptr_row_cols;
 
                     if (first_decl) {
                         dty = mty;
@@ -965,6 +981,7 @@ static int parse_type(void) {
                         goto struct_comma_check;
                     }
                     is_fn_ptr_member = 0;
+                    ptr_row_cols = 0;
                     member_ty = dty;
                     skip_gnu_decl_suffixes();
                     if (lex_tok == TK_SEMI && ty_is_struct(member_ty)) {
@@ -1005,6 +1022,15 @@ static int parse_type(void) {
                             next();
                             while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                             expect(TK_RPAREN);
+                        } else if (lex_tok == TK_LBRACK) {
+                            /* Pointer-to-array member: T (*name)[N] — a
+                             * 4-byte pointer whose [i] selects row i
+                             * (base + i*N*sizeof(T)) with no element
+                             * load (sbasic's char (*varnames)[64]). */
+                            next();
+                            ptr_row_cols = parse_const_int();
+                            expect(TK_RBRACK);
+                            member_ty = dty + TY_PTR;
                         }
                     }
                     /* Named bit-field: 'type name :W;'.  Must run BEFORE the
@@ -1120,7 +1146,7 @@ static int parse_type(void) {
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty;
                         stm_is_arr[stm_count] = 0;
-                        stm_arr_cols[stm_count] = 0;
+                        stm_arr_cols[stm_count] = ptr_row_cols;
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = off;
                         stm_synth[stm_count] = 0;
@@ -1192,6 +1218,7 @@ static int parse_type(void) {
                     int is_fn_ptr_member;
                     int member_ty;
                     int bf_width;
+                    int ptr_row_cols;
 
                     if (first_decl) {
                         dty = mty;
@@ -1229,6 +1256,7 @@ static int parse_type(void) {
                         goto union_comma_check;
                     }
                     is_fn_ptr_member = 0;
+                    ptr_row_cols = 0;
                     member_ty = dty;
                     skip_gnu_decl_suffixes();
                     if (lex_tok == TK_SEMI && ty_is_struct(member_ty)) {
@@ -1266,6 +1294,15 @@ static int parse_type(void) {
                             next();
                             while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                             expect(TK_RPAREN);
+                        } else if (lex_tok == TK_LBRACK) {
+                            /* Pointer-to-array member: T (*name)[N] — a
+                             * 4-byte pointer whose [i] selects row i
+                             * (base + i*N*sizeof(T)) with no element
+                             * load (sbasic's char (*varnames)[64]). */
+                            next();
+                            ptr_row_cols = parse_const_int();
+                            expect(TK_RBRACK);
+                            member_ty = dty + TY_PTR;
                         }
                     }
                     /* Named bit-field in union: each occupies bits 0..W-1
@@ -1336,7 +1373,7 @@ static int parse_type(void) {
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty;
                         stm_is_arr[stm_count] = 0;
-                        stm_arr_cols[stm_count] = 0;
+                        stm_arr_cols[stm_count] = ptr_row_cols;
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = 0;
                         stm_synth[stm_count] = 0;
@@ -2739,6 +2776,10 @@ static Node *parse_primary(void) {
             } else if (n->kind == ND_MEMBER && n->is_array) {
                 /* Struct array member: arr_size stored in val_hi */
                 v = n->val_hi;
+            } else if (n->kind == ND_BINOP && n->arr_cols > 0 &&
+                       ty_is_ptr(n->ty)) {
+                /* Row of a pointer-to-array member: N * elem size */
+                v = n->arr_cols * ty_size(ty_deref(n->ty));
             } else {
                 v = ty_size(n->ty);
             }
@@ -2807,6 +2848,19 @@ static Node *parse_postfix(void) {
                  * scaling of both additions stays in codegen. */
                 idx = nd_binop(TK_STAR, idx, nd_num(n->arr_cols));
                 n = nd_binop(TK_PLUS, n, idx);
+            } else if (n->kind == ND_MEMBER && !n->is_array &&
+                       n->arr_cols > 0 && ty_is_ptr(n->ty)) {
+                /* Pointer-to-array member: p[i] selects row i — scale
+                 * by the row width, keep the value a row pointer (no
+                 * element load).  arr_cols is kept on the row node so
+                 * sizeof(p[i]) reports the row size. */
+                {
+                    int row_cols;
+                    row_cols = n->arr_cols;
+                    idx = nd_binop(TK_STAR, idx, nd_num(row_cols));
+                    n = nd_binop(TK_PLUS, n, idx);
+                    n->arr_cols = row_cols;
+                }
             } else {
                 /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling */
                 n = nd_binop(TK_PLUS, n, idx);
@@ -4212,6 +4266,20 @@ static Node *parse_stmt(void) {
                 }
                 off = add_local_array(nm, ty, count);
                 ps_lcols[ps_nlocals - 1] = lcols2;
+                /* Comma-separated array declarators:
+                 * char lbuf[64], rbuf[64]; (sbasic's eval.c) */
+                while (lex_tok == TK_COMMA) {
+                    next();
+                    if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
+                    memcpy(nm, lex_str, lex_slen + 1);
+                    next();
+                    if (lex_tok != TK_LBRACK) { p_error("expected [ in comma array decl"); return nd_num(0); }
+                    next();
+                    count = parse_const_int();
+                    expect(TK_RBRACK);
+                    off = add_local_array(nm, ty, count);
+                    ps_lcols[ps_nlocals - 1] = 0;
+                }
             }
             expect(TK_SEMI);
             if (head != NULL) return nd_block(head);
@@ -4448,6 +4516,20 @@ static Node *parse_top_decl(void) {
         if (is_extern) idx = add_extern_global(nm, TY_INT, 0);
         else           idx = add_defined_global(nm, TY_INT, 0);
         if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
+        if (lex_tok == TK_ASSIGN) {
+            /* fn-ptr global initializer: NULL/0 or a function name
+             * (sbasic: env_deftype_hook = NULL) */
+            next();
+            if (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
+                (is_known_func(lex_str) || find_global(lex_str) >= 0)) {
+                ps_ginit_begin(idx);
+                parse_global_init_symbol_reloc_at(idx, 0, 4);
+                ps_ginit_ensure_len(idx, 4);
+                ps_ginit_finish(idx);
+            } else {
+                ps_ginit[idx] = parse_const_int();
+            }
+        }
         expect(TK_SEMI);
         return NULL;
     }
