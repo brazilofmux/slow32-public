@@ -1525,6 +1525,15 @@ int main(int argc, char **argv) {
     mmio_ring_set_emulator(argv[0]);
 
     for (int i = 1; i < argc; i++) {
+        /* Option scanning ends at the first non-option argument (the guest
+         * binary) or an explicit "--"; anything after belongs to the guest.
+         * Scanning the whole of argv stole guest flags (issue #5). */
+        if (strcmp(argv[i], "--") == 0) {
+            memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
+            argc -= 1;
+            break;
+        }
+        if (argv[i][0] != '-') break;
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -1571,6 +1580,13 @@ int main(int argc, char **argv) {
             argc -= 2;
             i--;
         }
+    }
+
+    /* The usage promises `<binary> [-- <args...>]`: consume the separator
+     * so the guest never sees it. */
+    if (argc >= 3 && strcmp(argv[2], "--") == 0) {
+        memmove(&argv[2], &argv[3], (argc - 3) * sizeof(char *));
+        argc -= 1;
     }
 
     fast_cpu_state_t cpu = {0};

@@ -2046,6 +2046,10 @@ int main(int argc, char **argv) {
     svc_policy_t svc_policy = { .default_allow = true };
     mmio_ring_set_emulator(argv[0]);
     for (int i = 1; i < argc; i++) {
+        /* Stop at the first non-option (the guest binary) or "--" — a guest
+         * flag past that point is the guest's, not ours (issue #5).  The
+         * "--" is handled by the main parser below. */
+        if (argv[i][0] != '-' || strcmp(argv[i], "--") == 0) break;
         /* -q is the cross-engine MMIO-exec "quiet" flag. dbt has no banner to
          * suppress, so accept and drop it. dbt's own PC-probe flag is -Q, so
          * there is no collision and no orphaned interval argument. */
@@ -2099,6 +2103,16 @@ int main(int argc, char **argv) {
     // Parse arguments
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
+            if (strcmp(argv[i], "--") == 0) {
+                /* End of emulator options: the next argument is the guest
+                 * binary, everything after it the guest's argv. */
+                if (i + 1 < argc) {
+                    filename = argv[i + 1];
+                    host_argc = argc - (i + 1);
+                    host_argv = &argv[i + 1];
+                }
+                break;
+            }
             switch (argv[i][1]) {
                 case 'h':
                     usage(argv[0]);
@@ -2217,6 +2231,13 @@ int main(int argc, char **argv) {
     if (!filename) {
         usage(argv[0]);
         return 1;
+    }
+
+    /* The usage promises `<binary> [-- <args...>]`: consume the separator
+     * so the guest never sees it. */
+    if (host_argc >= 2 && strcmp(host_argv[1], "--") == 0) {
+        memmove(&host_argv[1], &host_argv[2], (host_argc - 2) * sizeof(char *));
+        host_argc -= 1;
     }
 
     if (emit_trace && emit_trace_pc == 0 && dump_pc != 0) {

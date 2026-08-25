@@ -1116,6 +1116,10 @@ int main(int argc, char *argv[]) {
     // Pre-scan for --help/--allow/--deny (before getopt)
     svc_policy_t policy = { .default_allow = true };
     for (int i = 1; i < argc; i++) {
+        /* Stop at the first non-option (the guest binary) or "--" — a guest
+         * flag past that point is the guest's, not ours (issue #5).  The
+         * "--" itself is left for getopt to consume. */
+        if (argv[i][0] != '-' || strcmp(argv[i], "--") == 0) break;
         if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -1208,6 +1212,12 @@ int main(int argc, char *argv[]) {
 
     int guest_argc = argc - optind;
     char **guest_argv = &argv[optind];
+    /* The usage promises `<binary> [-- <args...>]`: consume the separator
+     * so the guest never sees it. */
+    if (guest_argc >= 2 && strcmp(guest_argv[1], "--") == 0) {
+        memmove(&guest_argv[1], &guest_argv[2], (guest_argc - 2) * sizeof(char *));
+        guest_argc -= 1;
+    }
     if (cpu.mmio.enabled && cpu.mmio.state) {
         if (mmio_ring_set_args(cpu.mmio.state, (uint32_t)guest_argc, guest_argv) != 0) {
             fprintf(stderr, "Error: unable to stage guest arguments (too many bytes?)\n");
