@@ -220,37 +220,76 @@ matrix.
 operand, plus a non-in-place control). Pre-fix both back ends print `F1`;
 post-fix both print `OK`.
 
-## 14. x86-64 Stage-4 RTRIM$ Truncation (OPEN, found 2026-08-24)
+## 14. x86-64 Stage-4 RTRIM$ Truncation (FIXED 2026-08-25)
 
 **Severity**: silent wrong answer, x86-64 back end only, default config.
 
-`sbasic/tests/stringfuncs` prints `[hello  ]` instead of `[hello]` for
-`RTRIM$("hello   ")` — two trailing spaces survive. AArch64 is correct
-(45/45), as is the reference interpreter; only `translate.c` at full Stage 4
-is wrong. Predates the warning/select-fusion work of 2026-08-24 (reproduced on
-a clean build of the parent commit).
+`sbasic/tests/stringfuncs` printed `[hello  ]` instead of `[hello]` for
+`RTRIM$("hello   ")` — two trailing spaces survived. AArch64 was correct
+(45/45), as was the reference interpreter; only `translate.c` at full Stage 4
+was wrong. Only the default (reg cache + superblocks together) failed: `-1`,
+`-2`, `-3`, `-R` and `-S` each produced the correct `[hello]`, and neither
+`S32_DBT_NO_SELECT_FUSE=1` nor `SLOW32_DBT_NO_CHAIN=1` helped.
 
-**Triage so far**: `-1`, `-2`, `-3`, `-R`, and `-S` each produce the correct
-`[hello]`; only the default (reg cache + superblocks together) fails.
-`S32_DBT_NO_SELECT_FUSE=1` and `SLOW32_DBT_NO_CHAIN=1` do **not** help, so it
-is neither the select fusion nor chaining. Per the handbook's heuristic this
-points at a reg-cache × superblock interaction (back-edge, deferred side exit,
-or pending write) — the same family as #12, but on the x86-64 side.
+**Root cause**: `reg_alloc_prescan()` inlines forward `jal r0, target` while
+scanning a block (to match what the translator does), advancing `pc` to the
+jump target but the `decoded[]` index by only one. From that point on `pc` and
+the index are no longer in lockstep. When the prescan later found an in-block
+back-edge it located the loop head arithmetically:
 
-**Reproduction** (from an AArch64 box):
-
-```bash
-cd tools/dbt && make clean && make UNAME_M=x86_64 CC=x86_64-linux-gnu-gcc
-cd ../../sbasic
-(cat tests/stringfuncs.bas; echo RUN) | \
-  qemu-x86_64-static -s 64M -L /usr/x86_64-linux-gnu \
-    ../tools/dbt/slow32-dbt sbasic.s32x | sed -n 8p
+```c
+uint32_t target_idx = (target - start_pc) / 4;   // wrong after a JAL inline
 ```
 
-**Lead**: `--paranoid-lite` pins the first divergence at block
-`0x00023D4C..0x00023ED0` (97 instructions, `DIRECT` flag set), exec #111566,
-with `r12` = 7 instead of 5 and `r3` = 0x13 instead of 0x11 — i.e. the trimmed
-length is off by exactly the two spaces. Start there.
+which overshoots by exactly the number of instructions the JAL skipped. In the
+failing block (guest `0x71CC`, `jal 0x71D0 -> 0x71E4`, 4 skipped) the loop head
+`0x71E8` sits at index 3 but the formula yields 7, equal to `inst_count`, so
+the "registers written in the loop body" scan covered only the back-edge branch
+itself — which has no `rd`. `loop_written_regs` therefore came back **0**.
+
+That matters because a deferred side exit captures its dirty-register snapshot
+at translation time. The `bne r8, r4, 0x7208` exit at `0x71F0` is translated
+*before* the `addi r3, r3, -1` at `0x71F4` exists, so r3 is clean in its
+snapshot; correctness depends entirely on the back-edge handler promoting
+`loop_written_regs` to dirty (translate.c, "Mark registers written in the loop
+as dirty in all deferred exit snapshots"). With `loop_written_regs == 0` the
+promotion never fired, and the emitted exit flushed only r8:
+
+```asm
+b6:  mov  DWORD PTR [rbp+0x20],r12d   ; r8 flushed
+ba:  mov  DWORD PTR [rbp+0x80],0x7208 ; pc
+c4:  jmp  <shared exit>               ; esi (r3) never written back
+```
+
+The guest then read the pre-loop `len` from memory. The observed r12/r3 deltas
+were the *consequence* seen at `malloc`, not the cause: paranoid-lite's first
+**soft** mismatch (`SLOW32_LITE_TRACE_SOFT=1`) was three blocks earlier at
+`0x000071CC`, which is where the trim loop lives.
+
+**Fix**: locate the back-edge target's index by pc lookup over `inst_pcs[]`
+instead of the linear formula.
+
+**Why a64 was unaffected**: `translate_a64.c`'s prescan ends the block at
+`OP_JAL` rather than inlining it, so its indices stay in lockstep and the same
+formula is correct there. A comment now records that invariant — if JAL
+inlining is ever added to the a64 prescan, it must become a pc lookup too.
+
+**Verification**: sbasic 45/45 on x86-64 (was 44/45) and 45/45 on a64;
+regression and cross-engine differential green; `--paranoid-lite` clean over
+stringfuncs on both back ends; `benchmark_core` checksum `0x8d70b2b` exact on
+both; both builds warning-free.
+
+**No directed regression test.** One was attempted and dropped rather than
+shipped. A synthetic block reproducing the full pattern — profile-gated
+superblock extension, an inlined forward JAL whose gap is wide enough to
+overshoot past the loop's write, a genuine out-of-block deferred side exit, and
+the written register arriving clean as a parameter — reaches an *identical*
+`flushsnap` trace (`slot r3 dirty=0 -> skip`, `lwr=0x0`) and still computes the
+right answer, so at least one further ingredient (probably which host register
+r3 occupies, and whether the back-edge cache-stability reconciliation happens to
+flush it) was not isolated. A test that passes both pre- and post-fix is worse
+than none. Real coverage is `sbasic/tests/stringfuncs` run under the x86-64
+DBT, which does discriminate.
 
 ### [RETRACTED, then reopened as a question] a64 vs x64 loop handling — and an unexplained 21%
 

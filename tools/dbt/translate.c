@@ -888,9 +888,20 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                                 ctx->backedge_targets[ctx->backedge_target_count++] = target;
                             }
 
-                            // Compute registers used in the loop body (target to current)
-                            uint32_t target_idx = (target - start_pc) / 4;
-                            for (int k = target_idx; k <= inst_count; k++) {
+                            // Compute registers used in the loop body (target to current).
+                            // Locate the target by PC rather than arithmetic: the
+                            // forward-JAL inlining above advances pc to the jump
+                            // target while the index advances by one, so pc and
+                            // index are NOT in lockstep and (target - start_pc)/4
+                            // overshoots. Getting this wrong silently leaves
+                            // loop_written_regs empty, which leaves a deferred side
+                            // exit's dirty snapshot stale and drops a register
+                            // writeback on loop exit (issue #14).
+                            int target_idx = -1;
+                            for (int k = 0; k <= inst_count; k++) {
+                                if (inst_pcs[k] == target) { target_idx = k; break; }
+                            }
+                            for (int k = target_idx; target_idx >= 0 && k <= inst_count; k++) {
                                 uint8_t wr = 0;
                                 switch (decoded[k].format) {
                                     case FMT_R: case FMT_I: case FMT_U: case FMT_J:

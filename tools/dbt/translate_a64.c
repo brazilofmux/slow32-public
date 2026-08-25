@@ -498,6 +498,14 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                             }
 
                             // Compute registers written in the loop body
+                            // NOTE: this linear index formula is only valid
+                            // because OP_JAL ends the block above, keeping pc and
+                            // the decoded[] index in lockstep. The x86-64 twin
+                            // inlines forward JALs and therefore must look the
+                            // target up by pc instead — see translate.c and
+                            // ISSUES.md #14. If JAL inlining is ever added here,
+                            // this must become a pc lookup too, or
+                            // loop_written_regs silently comes back empty.
                             uint32_t target_idx = (target - start_pc) / 4;
                             for (int k = (int)target_idx; k <= inst_count; k++) {
                                 uint8_t wr = 0;
