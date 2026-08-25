@@ -10,7 +10,7 @@ Five emulators exist with different trade-offs between capability, speed, and po
 | slow32 | Interpreter | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | slow32-fast | Pre-decoded | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | qemu-system-slow32 | TCG JIT | ~1 BIPS | Yes | Yes | Yes | `~/qemu` (separate repo) |
-| slow32-dbt | DBT JIT | 7.5 BIPS (M5 Max) / ~6 BIPS (earlier Apple Silicon) / ~9.5 BIPS (x86-64) | Yes | Yes | Yes | `tools/dbt/` |
+| slow32-dbt | DBT JIT | 8.26 BIPS (M5 Max, 2026-08-23) / 4.07 BIPS (Xeon 8259CL, virtualized) | Yes | Yes | Yes | `tools/dbt/` |
 
 ## s32-emu (Selfhost Bootstrap Emulator)
 

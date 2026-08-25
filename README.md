@@ -2,9 +2,10 @@
 
 A deliberately inefficient 32-bit RISC CPU architecture with complete toolchain.
 
-- **Built in under 2 hours** - From spec to working C compiler!
 - **Purpose**: Educational CPU design and sandboxed compute engine
-- **Status**: Active maintenance-ready baseline with all optimization levels (-O0, -O1, -O2) working
+- **Status**: Active. Two independent C compilers (an LLVM backend and a
+  self-hosted one that share an ABI), five execution engines, a graphics
+  stack, and a broad application corpus — see [Current Status](#current-status)
 
 ## Quick Start
 
@@ -54,8 +55,12 @@ support is not currently a bootstrap target.
 - **DEBUG instruction** for character output; **MMIO ring buffers** for full I/O
 - **Native floating point**: f32/f64 arithmetic on GPRs (f64 in even register pairs)
 - **Sparse memory allocation** - Only allocates touched pages (99.4% memory savings!)
-- **Performance**: ~240 MIPS interpreted up to ~7.5 BIPS under the dynamic
-  binary translator — see [docs/EMULATORS.md](docs/EMULATORS.md)
+- **Graphics**: the **tube** service — three display modes (vector,
+  framebuffer, PPU/tile), an MMIO wire protocol, and two host viewers;
+  spec in [docs/TUBE.md](docs/TUBE.md)
+- **Performance**: ~240 MIPS interpreted, ~1 BIPS under QEMU TCG, and up to
+  ~8.3 BIPS under the dynamic binary translator (Apple M5 Max, 2026-08-23;
+  4.07 BIPS on a virtualized Xeon) — see [docs/EMULATORS.md](docs/EMULATORS.md)
 
 ### Register Convention
 
@@ -154,22 +159,61 @@ The linker automatically detects small programs and creates ultra-compact layout
 
 ```
 slow-32/
-├── tools/
-│   ├── emulator/     # CPU emulators (slow32, slow32-fast) with W^X protection
-│   ├── assembler/    # Two-pass assembler with relocation support
-│   ├── linker/       # Linker with symbol resolution
-│   ├── utilities/    # Binary analysis tools (slow32dump, slow32dis, s32-ar)
-│   └── dbt/          # Dynamic binary translator (x86-64 and AArch64 JIT)
-├── runtime/          # C runtime (crt0), intrinsics, and standard library
-│   └── include/      # C standard library headers
-├── llvm-backend/     # LLVM backend for native clang/llc support
-├── selfhost/         # Self-hosting bootstrap chain (stage00..stage08 +
-│                     #   cross-compilers targeting x86-64 and AArch64)
-├── common/           # Shared format definitions (.s32o, .s32x)
-├── regression/       # Regression test suite + cross-engine differential harness
-├── scripts/          # Helper scripts (compile.sh, test-quick.sh)
-└── docs/             # Documentation
+├── tools/              # Toolchain and host-side tooling
+│   ├── emulator/       #   CPU emulators (slow32, slow32-fast), W^X protection
+│   ├── assembler/      #   Two-pass assembler with relocation support
+│   ├── linker/         #   Linker with symbol resolution
+│   ├── utilities/      #   Binary analysis (slow32dump, slow32dis, s32-ar)
+│   ├── dbt/            #   Dynamic binary translator (x86-64 and AArch64 JIT)
+│   ├── dbt5/           #   Clean-room Stage-5 DBT fork
+│   ├── s32-crt/        #   Tube viewer (terminal)
+│   └── s32-crt-mac/    #   Tube viewer (native macOS)
+├── common/             # Shared format definitions (.s32o, .s32x)
+├── runtime/            # C runtime (crt0), intrinsics, standard library
+│   └── include/        #   C standard library headers
+├── selfhost/           # Self-hosting bootstrap chain (stage00..stage08 +
+│                       #   cross-compilers targeting x86-64 and AArch64)
+│
+├── llvm-backend/       # LLVM backend for native clang/llc support
+├── clang-target/       # Clang driver/target definitions
+├── qemu-backend/       # QEMU TCG backend
+├── fpc-backend/        # Free Pascal Compiler backend
+├── fpga/               # RTL and simulation
+│
+├── doom/               # DOOM — framebuffer flagship, bit-exact timedemo
+├── asteroids/          # Vector flagship, cross-engine determinism proof
+├── ppu-reel/           # PPU conformance reel — 14 frozen frames
+├── examples/           # Tube demos (fire, sprites) and sample programs
+│
+├── sqlite/             # SQLite
+├── lua/                # Lua
+├── zork/               # Z-machine
+├── dbase/              # dBase III clone
+├── sbasic/             # BASIC
+├── forth/              # Forth kernel (SLOW-32 assembly)
+├── forthc/             # AOT Forth compiler (written in Forth)
+├── lisp/               # Lisp
+├── prolog/             # Prolog
+├── command/            # COMMAND.COM-shaped shell
+├── clip/               # Clipper (.prg → .s32x)
+├── sheet/              # Spreadsheet
+├── nano/               # Editor
+├── rogue/              # Rogue
+├── bbs/                # BBS
+├── net/                # IPv4 TCP
+├── kermit/             # Kermit file transfer
+│
+├── regression/         # Regression suite + cross-engine differential harness
+├── benchmarks/         # Benchmark programs
+├── scripts/            # Helper scripts (compile.sh, test-quick.sh)
+├── docker/             # Container build assets
+├── articles/           # Substack write-ups
+├── pitstop/            # Scratch notes: miscompile repros, optimization ideas
+└── docs/               # Documentation
     ├── INSTRUCTION-SET.md    # Complete ISA reference
+    ├── TUBE.md               # Graphics service specification
+    ├── EMULATORS.md          # The five execution engines
+    ├── CALLING_CONVENTION.md # ABI reference
     ├── file-formats.md       # Object and executable formats
     └── IMPROVEMENTS.md       # Known issues and improvements
 ```
@@ -216,8 +260,9 @@ int main() {
 - ✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
 - ✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
 - ✅ **All optimization levels** - -O0, -O1, -O2 fully working
-- ✅ **Emulators** - interpreters (~240 MIPS), QEMU TCG target, and a DBT
-  reaching ~4-7.5 BIPS depending on host (measured 2026-07; see docs/EMULATORS.md) — see `docs/EMULATORS.md`
+- ✅ **Emulators** - five engines: two interpreters (~240 MIPS), the stage00
+  bootstrap interpreter (~50 MIPS), a QEMU TCG target (~1 BIPS), and a DBT at
+  ~8.3 BIPS (Apple M5 Max, 2026-08-23) — see [docs/EMULATORS.md](docs/EMULATORS.md)
 - ✅ **Assembler** - Two-pass with labels, relocations, standard directives
 - ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
 - ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit
@@ -231,19 +276,30 @@ int main() {
   real applications end-to-end on SLOW-32: rogue, the graphics demos, DOOM
   (`-timedemo demo3` bit-exact with the clang build on both slow32-fast and
   slow32-dbt), and sbasic (output-identical to the clang build across its
-  full test suite).  Its double-argument ABI matches clang's aligned-pair
-  convention, so stage08 and clang objects link and interoperate (struct
-  by-value args are the one remaining convention gap)
-- ✅ **Applications** - SQLite, Lua, a Z-machine, dBase III clone, editor,
-  BASIC, Forth, Lisp, Prolog, COMMAND.COM-shaped shell, spreadsheet,
-  BBS, IPv4 TCP examples under their own directories
-- ✅ **Regression tests** - 62/62 passing, plus `regression/run-differential.sh`
-  which diffs every test across all execution engines
+  full test suite).  It shares clang's ABI — aligned-pair doubles and the
+  byval struct-argument convention — with no known divergence, so stage08 and
+  clang objects link and interoperate in both directions
+  (`selfhost/stage08/run-interop-llvm.sh` gates it)
+- ✅ **Graphics** - the tube service, all three modes landed: vector
+  (`asteroids/`), framebuffer (`doom/`), and PPU/tile (`ppu-reel/`, spec frozen
+  against a 14-frame conformance reel).  Golden-hash regression coverage,
+  headless journaling via `S32_TUBE_DUMP`, two host viewers, and bindings in
+  both SBASIC and Forth — see [docs/TUBE.md](docs/TUBE.md)
+- ✅ **Applications** - DOOM, Rogue, Asteroids, SQLite, Lua, a Z-machine,
+  dBase III clone, editor, BASIC, Forth (plus `forthc`, an AOT Forth compiler
+  written in Forth), Lisp, Prolog, COMMAND.COM-shaped shell, Clipper,
+  spreadsheet, BBS, Kermit, and IPv4 TCP examples under their own directories
+- ✅ **Regression tests** - 79 tests in `regression/tests/`, plus
+  `regression/run-differential.sh` which diffs every test across all execution
+  engines.  C-based tests need an LLVM build; without clang the suite runs the
+  assembly tests and skips the rest
 
 ## Known Limitations
 
-- No scanf/sscanf (declared but not implemented)
-- `ungetc` is a stub; `strftime` is minimal
+- `scanf` and `fscanf` are declared but not implemented.  `sscanf` and
+  `vsscanf` are implemented (`runtime/sscanf.c`), and are linked into the MMIO
+  libc build
+- `strftime` is minimal
 - See `docs/IMPROVEMENTS.md` for open items and fixes
 
 ## Building from Source
@@ -266,11 +322,21 @@ make runtime      # Builds crt0.s32o, libs32.s32a, libc_debug.s32a, libc_mmio.s3
 ## Documentation
 
 - [Instruction Set Reference](docs/INSTRUCTION-SET.md) - Complete ISA documentation
+- [The Tube](docs/TUBE.md) - Graphics service specification (vec, fb, ppu)
+- [Emulators](docs/EMULATORS.md) - The five execution engines, with measurements
+- [Calling Convention](docs/CALLING_CONVENTION.md) - ABI reference
 - [File Formats](docs/file-formats.md) - Object (.s32o) and executable (.s32x) formats
 - [Improvements](docs/IMPROVEMENTS.md) - Known issues and suggested fixes
 - [The 1987 Desk](docs/plans/1987-desk.md) - Period software we should (and should not) import
 - [The hose](docs/plans/hose.md) - How two SLOW-32 programs talk (sockets, not shared memory)
+- [Engine Room](docs/plans/engine-room.md) - DBT and codegen performance work
 - [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference
+
+## History
+
+The first version of SLOW-32 went from specification to a working C compiler
+in under two hours.  Everything above — the self-hosting bootstrap chain, the
+second compiler, the graphics stack, DOOM — came after.
 
 ## License
 
