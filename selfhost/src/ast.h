@@ -128,8 +128,17 @@ static int ty_align(int ty) {
     base = ty & TY_BASE_MASK;
     if (base >= TY_STRUCT_BASE) return st_align[base - TY_STRUCT_BASE];
     if (base == TY_I128) return 16;
+#ifdef S12CC_X64_HOST
+    /* x64/a64 targets: native ABI aligns 64-bit scalars to 8 */
     if (base == TY_DOUBLE) return 8;
     if (base == TY_LLONG) return 8;
+#else
+    /* SLOW-32: clang's target ABI aligns double and long long to 4
+     * (32-bit machine, pair loads/stores) — 8 here diverged struct
+     * member offsets and sizes from every clang-built object */
+    if (base == TY_DOUBLE) return 4;
+    if (base == TY_LLONG) return 4;
+#endif
     if (base == TY_FLOAT) return 4;
     if (base == TY_CHAR) return 1;
     if (base == TY_SHORT) return 2;

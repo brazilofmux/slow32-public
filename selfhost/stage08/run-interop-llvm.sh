@@ -55,6 +55,16 @@ int bigmix(int a,int b,int c,int d,int e,int f,int g,int h,
            struct Big s, int i, int j) {
     return a + h + s.a[0] + s.a[5] + i + j;
 }
+/* Struct LAYOUT across the boundary: doubles and long longs align to
+ * 4 in the SLOW-32 ABI, so this struct is 16 bytes with d at offset 4
+ * and t at offset 12.  Passed by pointer, so only offsets are probed. */
+struct Mix { char c; double d; int t; };
+int mixlayout(struct Mix *m) {
+    if (sizeof(struct Mix) != 16) return -1;
+    if (m->c != 'x' || m->d != 2.5 || m->t != 77) return -2;
+    m->t = 78;
+    return 0;
+}
 /* s12cc caller -> LLVM-built byval callee: the callee mutates its
  * copy; our local must come back untouched (proves the caller-side
  * copy). */
@@ -80,6 +90,8 @@ extern int ptsum(struct Pt);
 extern struct Pt mkpt(int x, int y);
 struct Big { int a[6]; };
 extern int bigmix(int,int,int,int,int,int,int,int, struct Big, int, int);
+struct Mix { char c; double d; int t; };
+extern int mixlayout(struct Mix *m);
 extern int drive_cmut(void);
 int cmut(struct Pt p) { p.x = p.x + 100; return p.x + p.y; }
 int cb(int x) { return x * 10; }
@@ -98,6 +110,10 @@ int main(void) {
     struct Big bg = {{21, 0, 0, 0, 0, 22}};
     if (bigmix(1,2,3,4,5,6,7,8, bg, 10, 11) != 73) { fail = 1; printf("GATE struct-stack-mix FAIL\n"); }
     if (drive_cmut() != 111) { fail = 1; printf("GATE struct-byval-copy FAIL\n"); }
+    struct Mix mx; mx.c = 'x'; mx.d = 2.5; mx.t = 77;
+    if (sizeof(struct Mix) != 16 || mixlayout(&mx) != 0 || mx.t != 78) {
+        fail = 1; printf("GATE struct-layout FAIL\n");
+    }
     if (!fail) printf("INTEROP OK\n");
     return fail;
 }

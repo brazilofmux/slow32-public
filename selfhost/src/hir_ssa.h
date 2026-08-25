@@ -452,6 +452,10 @@ static void ssa_find_promo(void) {
     int off;
     int ok[HL_MAX_ALLOCA];
 
+    /* The promo list is rebuilt at the end of this scan; clear it up
+     * front so nothing consults the PREVIOUS function's entries. */
+    ssa_npromo = 0;
+
     /* Mark all allocas as potentially promotable */
     i = 0;
     while (i < hl_nalloca) {
@@ -463,17 +467,20 @@ static void ssa_find_promo(void) {
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
-        /* src1: only OK as addr in LOAD or STORE */
+        /* src1: only OK as addr in LOAD or STORE.  Reject
+         * unconditionally — an earlier ssa_find_promo_idx() guard here
+         * consulted ssa_promo[], which at this point still held the
+         * PREVIOUS function's list, so an escaping alloca whose inst id
+         * collided with a stale entry skipped rejection and got
+         * promoted (cc-a64: a double literal's temp alloca escaping
+         * into ADDI+4 was promoted, and the f64 LOAD collapsed to its
+         * lo-word ICONST — one_double(0, 3.75) received 0.0). */
         if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ALLOCA) {
             if (k != HI_LOAD && k != HI_STORE) {
-                ai = ssa_find_promo_idx(h_src1[i]);
-                if (ai < 0) {
-                    /* Not yet in promo list, find by scanning hl_ainst */
-                    j = 0;
-                    while (j < hl_nalloca) {
-                        if (hl_ainst[j] == h_src1[i]) { ok[j] = 0; }
-                        j = j + 1;
-                    }
+                j = 0;
+                while (j < hl_nalloca) {
+                    if (hl_ainst[j] == h_src1[i]) { ok[j] = 0; }
+                    j = j + 1;
                 }
             }
         }

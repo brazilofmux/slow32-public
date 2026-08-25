@@ -419,6 +419,41 @@ Milestones, each a gate, none a promise:
    stage07 53/53, fixed-point 56/56, interop, sbasic 45/45 (eval.s
    has ZERO __fp64 calls now), rogue, graphics, DOOM 2173 bit-exact
    both engines, benchmark_core exact, purity clean.
+   **POLISH SWEEP (day after):** the leftover minor items all fell,
+   and pulling on them found real bugs.  (1) The "sizeof +4"
+   divergence was struct ALIGNMENT: stage08 aligned double/llong to
+   8 where clang's SLOW-32 ABI uses 4 — member offsets diverged too
+   (offsetof a post-double field was +4 off), so any mixed-object
+   struct with a 64-bit member was layout-incompatible.  ty_align
+   now returns 4 on the slow32 target (cross targets keep native 8);
+   interop gains a struct-layout gate (char/double/int by pointer).
+   (2) cc-a64's cc_dbt_c_forms test was INVALID C (assigning to a 2D
+   array row — host cc rejects it too); the "not an lvalue" error
+   was stage08-lineage 2D semantics working correctly.  Test fixed;
+   that un-dammed the rest of the long-blocked a64 suite, exposing:
+   (3) ssa_find_promo consulted ssa_promo[] BEFORE rebuilding it, so
+   an escaping alloca whose inst id collided with the PREVIOUS
+   function's stale promo entry skipped rejection and was wrongly
+   promoted (cc-a64: a double literal's temp alloca escaped into
+   ADDI+4, got promoted, and the f64 load collapsed to its lo-word
+   ICONST — one_double(0, 3.75) received 0.0).  Fixed in shared src
+   AND repaired in place in stage05/06/07's frozen copies (ruling:
+   better stageN, never stageN+1; only the three cc.s32x binaries
+   changed — every rebuilt tool hashed byte-identical).  (4) a64
+   HI_VA_ARG clobbered its own control-block base: a SPILLED result
+   materialises with dst == HX_SCRATCH1 (the base register), and the
+   value load preceded the pointer write-back — snprintf("%x", 255)
+   stored through the VALUE and segfaulted (%d worked only because
+   its result drew a real register).  Both paths now finish every
+   base use before the final value load (x64's emitter always did).
+   (5) t_printf_f was an orphaned ad-hoc binary, never in the suite;
+   %f/%g/%e verified working under cc-a64 today; cruft removed.
+   RESULT: the a64 suite runs END-TO-END GREEN for the first time
+   (all cc_* tests + 34/34 diff-tests, zero mismatches); full slow32
+   ladder re-verified green (stage06 47/47, stage07 53/53, stage08
+   56/56 fixed-point, interop incl. new layout gate, FP differential
+   288/288, sbasic 45/45, rogue, graphics, DOOM 2173 bit-exact both
+   engines, benchmark checksum, purity).
 4. **DOOM.** Built by stage08, `-timedemo demo3` runs to completion —
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same

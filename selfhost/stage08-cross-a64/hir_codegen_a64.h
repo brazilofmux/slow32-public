@@ -3412,13 +3412,28 @@ static void hx_emit_inst(int idx) {
         left_off = is_fp_arg ? HX_VA_FP_LEFT : HX_VA_GP_LEFT;
         ptr_off  = is_fp_arg ? HX_VA_FP_PTR  : HX_VA_GP_PTR;
 
+        /* A SPILLED result materialises with dst == HX_SCRATCH1 — the
+         * very register holding the control-block base — so the value
+         * load must be the LAST thing each path does, after every use
+         * of the base.  (The old order loaded the value first: with
+         * dst == SCRATCH1 the base was clobbered and the ptr
+         * write-back stored through the VALUE — snprintf("%x", 255)
+         * stored to address 0xff.)  Both paths therefore advance the
+         * pointer first, step SCRATCH2 back, and load dst from the
+         * original slot as the final instruction. */
+
         /* HX_SCRATCH2 = left count */
         a64_ldr_w_imm(HX_SCRATCH2, HX_SCRATCH1, left_off);
         site_use_stack = a64_pos();
         a64_cbz_w(HX_SCRATCH2, 0);
 
-        /* --- Register path: load *ptr, ptr += 8, left -= 1 --- */
+        /* --- Register path: left -= 1, ptr += 8, then load slot --- */
+        a64_sub_x_imm(HX_SCRATCH2, HX_SCRATCH2, 1);
+        a64_str_w_imm(HX_SCRATCH2, HX_SCRATCH1, left_off);
         a64_ldr_x_imm(HX_SCRATCH2, HX_SCRATCH1, ptr_off); /* slot addr */
+        a64_add_x_imm(HX_SCRATCH2, HX_SCRATCH2, 8);
+        a64_str_x_imm(HX_SCRATCH2, HX_SCRATCH1, ptr_off); /* base's last use */
+        a64_sub_x_imm(HX_SCRATCH2, HX_SCRATCH2, 8);
         if (is_fp_arg) {
             /* dst is a V-class reg for float/double. */
             if (ty_is_double(va_ty)) a64_ldr_d_imm(dst, HX_SCRATCH2, 0);
@@ -3434,17 +3449,15 @@ static void hx_emit_inst(int idx) {
         } else {
             a64_ldr_w_imm(dst, HX_SCRATCH2, 0);
         }
-        a64_add_x_imm(HX_SCRATCH2, HX_SCRATCH2, 8);
-        a64_str_x_imm(HX_SCRATCH2, HX_SCRATCH1, ptr_off);
-        a64_ldr_w_imm(HX_SCRATCH2, HX_SCRATCH1, left_off);
-        a64_sub_x_imm(HX_SCRATCH2, HX_SCRATCH2, 1);
-        a64_str_w_imm(HX_SCRATCH2, HX_SCRATCH1, left_off);
         site_done = a64_pos();
         a64_b(0);
 
-        /* --- Stack path: load *stack_ptr, stack_ptr += 8 --- */
+        /* --- Stack path: stack_ptr += 8, then load original slot --- */
         a64_patch_cond(site_use_stack, a64_pos());
         a64_ldr_x_imm(HX_SCRATCH2, HX_SCRATCH1, HX_VA_STACK_PTR);
+        a64_add_x_imm(HX_SCRATCH2, HX_SCRATCH2, 8);
+        a64_str_x_imm(HX_SCRATCH2, HX_SCRATCH1, HX_VA_STACK_PTR); /* base done */
+        a64_sub_x_imm(HX_SCRATCH2, HX_SCRATCH2, 8);
         if (is_fp_arg) {
             if (ty_is_double(va_ty)) a64_ldr_d_imm(dst, HX_SCRATCH2, 0);
             else                     a64_ldr_s_imm(dst, HX_SCRATCH2, 0);
@@ -3459,8 +3472,6 @@ static void hx_emit_inst(int idx) {
         } else {
             a64_ldr_w_imm(dst, HX_SCRATCH2, 0);
         }
-        a64_add_x_imm(HX_SCRATCH2, HX_SCRATCH2, 8);
-        a64_str_x_imm(HX_SCRATCH2, HX_SCRATCH1, HX_VA_STACK_PTR);
 
         a64_patch_b(site_done, a64_pos());
         hx_spill(idx, dst);

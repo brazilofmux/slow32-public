@@ -28,12 +28,12 @@ static int scan_names(void) {
     int sum;
     static char scratch[2][8];
 
-    scratch[0] = 'x';
+    scratch[0][0] = 'x';
     sum = hex[10];
     for (char *const *p = names; *p != 0; ++p) {
         sum = sum + (*p)[3];
     }
-    return sum + scratch[0];
+    return sum + scratch[0][0];
 }
 
 int main(void) {
