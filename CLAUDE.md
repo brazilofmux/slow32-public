@@ -114,38 +114,44 @@ int sum_to_n(int n) {
 }
 ```
 
-## Docker Support
+## Container Support (podman/docker)
 
-Docker containers provide a clean baseline for testing. Two containers available:
+Containers provide a clean baseline for testing. Two images, repo:tag
+naming (`slow32:toolchain`, `slow32:emulator`) — the same names
+~/builder's jobs build per-arch and the ECR mirror serves. Podman is
+the local engine of choice; the commands below work with `docker`
+substituted 1:1.
 
-- `slow32-toolchain`: Full development environment with LLVM 22
-- `slow32-emulator`: Lightweight runtime for testing executables (includes slow32, slow32-fast, qemu-system-slow32)
+- `slow32:toolchain`: Full development environment with LLVM 22
+- `slow32:emulator`: Lightweight runtime for testing executables (includes slow32, slow32-fast, qemu-system-slow32)
 
 ```bash
-# Build Docker images (if not already built)
-docker build -t slow32-toolchain -f Dockerfile.toolchain .
-docker build -t slow32-emulator -f Dockerfile.emulator .
+# Build images (if not already built)
+podman build -t slow32:toolchain -f Dockerfile.toolchain .
+podman build -t slow32:emulator -f Dockerfile.emulator .
 
-# Run programs with the emulator container (easy wrapper script)
+# Run programs with the emulator container (easy wrapper script;
+# auto-detects podman/docker and falls back to the legacy
+# slow32-emulator image name if that's what is present)
 ./scripts/run-in-docker.sh program.s32x              # Use default slow32 emulator
 ./scripts/run-in-docker.sh --fast program.s32x      # Use optimized slow32-fast
 ./scripts/run-in-docker.sh --qemu program.s32x      # Use QEMU TCG emulator
 ./scripts/run-in-docker.sh -t program.s32x          # Trace mode (C++ emulators only)
 ./scripts/run-in-docker.sh --help                   # Show all options
 
-# Manual Docker commands (if you prefer)
-docker run --rm -v $(pwd):/data slow32-emulator s32run program.s32x
-docker run --rm -v $(pwd):/data slow32-emulator s32run --fast program.s32x
-docker run --rm -v $(pwd):/data slow32-emulator s32run --qemu program.s32x
+# Manual commands (if you prefer)
+podman run --rm -v $(pwd):/data slow32:emulator s32run program.s32x
+podman run --rm -v $(pwd):/data slow32:emulator s32run --fast program.s32x
+podman run --rm -v $(pwd):/data slow32:emulator s32run --qemu program.s32x
 
 # Test against clean baseline when unsure if changes broke something
-docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && make"
+podman run --rm -v $(pwd):/workspace slow32:toolchain bash -c "cd /workspace && make"
 
 # Run tests in clean environment
-docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace/regression && ./run-tests.sh"
+podman run --rm -v $(pwd):/workspace slow32:toolchain bash -c "cd /workspace/regression && ./run-tests.sh"
 
 # Test specific program compilation (uses clang/llc from /usr/local/bin in container)
-docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include test.c -o test.ll && llc -mtriple=slow32-unknown-none test.ll -o test.s"
+podman run --rm -v $(pwd):/workspace slow32:toolchain bash -c "cd /workspace && clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include test.c -o test.ll && llc -mtriple=slow32-unknown-none test.ll -o test.s"
 ```
 
 ## Cross-Compiler (stage08-cross-x64) — Build, Test, Benchmark
