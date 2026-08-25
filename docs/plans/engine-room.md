@@ -454,6 +454,35 @@ Milestones, each a gate, none a promise:
    56/56 fixed-point, interop incl. new layout gate, FP differential
    288/288, sbasic 45/45, rogue, graphics, DOOM 2173 bit-exact both
    engines, benchmark checksum, purity).
+   **x86-64 HARDWARE STAMP (2026-08-24, the Intel box) — and the
+   validation earned its keep.** cc-x64 rebuilt clean from the
+   post-sweep sources; suite executes; diff-test vs gcc runs
+   natively (qemu-x86_64-static replaced by a ulimit-honoring
+   passthrough shim — pointless to emulate x86 on x86); s32fast-hir
+   rebuilt by the fresh cc-x64 holds benchmark_core at 1.03 s,
+   checksum exact.  Then the FP torture from run-fp-differential.sh,
+   compiled by cc-x64 vs gcc natively, DIVERGED — and the bug was
+   real and shared: in hir_lower.h the TK_STAR deref and ND_MEMBER
+   loads had the S12CC_X64_HOST llong bypass but NOT the
+   S12CC_NATIVE_F64 double bypass, so `*p` / `arr[i]` / `s.d` /
+   `p->d` double READS fell into the 32-bit pair path; the hi-half
+   load was DCE'd and the double became its low word (vals[1]=1.5
+   read as 0.0).  ND_VAR and the store paths always had the guard —
+   only the deref/member read paths were holed, on BOTH crosses
+   (cc-a64 defines the same macros; its green suite simply never
+   reads a double through a pointer, array index, or member).
+   Baseline check: pre-FP-work cc-x64 could not even PARSE a global
+   double-array initializer — new surface, not a regression.  Both
+   sites fixed with the ND_VAR-mirror bypass; slow32 target
+   untouched by construction (the blocks are #ifdef'd on a macro no
+   slow32-target build defines).  After: FP torture 287 lines
+   bit-identical vs gcc, new corpus test d35_fp_loads (all four
+   double-read shapes + init + RMW) PASSES, diff-test 35/35,
+   benchmark checksum exact, cc-a64 builds clean with the shared
+   fix.  OWED TO THE MACBOOK: run the a64 suite once more (the fix
+   changes cc-a64's lowering too — expect green, but stamp it), and
+   consider a cc_* test that reads doubles through deref/index/
+   member so the a64 suite would have caught this class.
 4. **DOOM.** Built by stage08, `-timedemo demo3` runs to completion —
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same

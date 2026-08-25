@@ -1052,6 +1052,11 @@ static int hl_expr(Node *n) {
                 return hi_emit(HI_LOAD, TY_LLONG, lv, -1, 0, NULL);
             }
 #endif
+#ifdef S12CC_NATIVE_F64
+            if (ty_is_double(n->ty)) {
+                return hi_emit(HI_LOAD, TY_DOUBLE, lv, -1, 0, NULL);
+            }
+#endif
             if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
                 int t2;
                 val = hi_emit(HI_LOAD, TY_INT, lv, -1, 0, NULL);
@@ -2092,6 +2097,10 @@ static int hl_expr(Node *n) {
 #ifdef S12CC_X64_HOST
         if (ty_is_llong(n->ty))
             return hi_emit(HI_LOAD, TY_LLONG, addr, -1, 0, NULL);
+#endif
+#ifdef S12CC_NATIVE_F64
+        if (ty_is_double(n->ty))
+            return hi_emit(HI_LOAD, TY_DOUBLE, addr, -1, 0, NULL);
 #endif
         if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
