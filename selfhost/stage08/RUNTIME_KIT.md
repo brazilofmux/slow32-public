@@ -93,16 +93,26 @@ slow32 prog.s32x
 `__mmio_base` resolves to 0 and the program faults on the first write
 (`Memory fault ... at 0xF0E8F900`).
 
-## Known issues
+## Kit vintage
 
-- **[#6](https://github.com/brazilofmux/slow-32/issues/6) — silent miscompile.**
-  An `int`-typed argument *implicitly* promoted to a `long long` parameter
-  leaves the high word uninitialized (`mul(k, 7)` wrong; `mul(k, 7LL)` and
-  `mul(k, (long long)n)` correct). Context-dependent: often reads a stale zero
-  and appears to work. Use explicitly-typed 64-bit arguments until fixed.
-- `sizeof x` without parentheses is rejected (`expected token 50 got 4`);
-  `sizeof(T)` and `sizeof(expr)` work. The failure surfaces as an empty
-  44-byte object file.
+No known issues in the current kit. Two bugs were fixed in `9b6d29ac`
+(2026-08-25) — if your `cc.s32x` predates that, both are live:
+
+- **Silent miscompile ([#6](https://github.com/brazilofmux/slow-32/issues/6)).**
+  An argument whose marshalling class differed from the declared parameter's
+  was passed unconverted — an `int` bound to a `long long` parameter left the
+  pair's high register holding whatever was there. `mul(k, 7)` yielded
+  `0x800000007` instead of `0x700000007`. Context-sensitive: it frequently read
+  a stale zero and appeared to work. The root cause was the parser's function
+  registry recording return types only, so argument classification never saw
+  the declared parameter type; the fix stores parameter types and lets sema
+  insert the conversions, so all three backends inherit it.
+- `sizeof x` without parentheses was rejected, surfacing as an empty 44-byte
+  object file rather than a diagnostic.
+
+Verified fixed on this kit: implicit and explicit 64-bit args, `int` variables,
+sign extension of negatives, the reverse `long long`-to-`int` parameter hazard,
+`int`-to-`double` promotion, and both `sizeof` forms.
 
 ## Regenerating
 
