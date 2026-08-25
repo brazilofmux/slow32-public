@@ -266,3 +266,43 @@ time ./tools/emulator/slow32-fast program.s32x  # Optimized version
 4. Add tests for new features or bug fixes
 
 The regression suite helps catch unintended breakage. See `~/slow-32/regression/README.md` for details.
+
+## Issue Tracking — two channels, two numbering spaces
+
+The project tracks work in two places on purpose. Know which one you are
+writing to.
+
+- **GitHub issues** — the cross-machine handoff inbox. An agent on one
+  machine (Lenovo, kagura) hits a bug and files it out-of-band; whichever
+  machine owns the fix picks it up and closes it. Use it for work another
+  machine must act on, or when a durable external URL is wanted. That is
+  how #5, #6 and #7 came to exist.
+- **`ISSUES.md` (14 of them, per component) + `docs/IMPROVEMENTS.md`** —
+  the in-tree engineering log: open items, and post-mortems of fixed ones
+  kept next to the code they describe, versioned with it, greppable from
+  any checkout. Deep debugging narratives belong here, not in a tracker —
+  `eb49434c` was cracked using a lead recorded in `tools/dbt/ISSUES.md`.
+
+Do **not** bulk-migrate the in-tree logs into GitHub issues. ~285 numbered
+items across ~3,800 lines, many of them defensive code-review suggestions
+rather than actionable bugs; filing them would destroy the tracker's signal.
+Promote items one at a time, on the criteria above.
+
+**CRITICAL — citing an in-tree item: never write a bare `#N`.**
+The two numbering spaces overlap. Commit subjects already cite in-tree item
+numbers across the range #1–#60 (48 commits, 36 distinct numbers, mostly
+`selfhost/ISSUES.md`), while the GitHub counter is still climbing through
+that same range from single digits. Consequences:
+
+- GitHub resolves `#N` in a commit message at *render* time, so every new
+  GitHub issue retroactively repoints an old in-tree reference at something
+  unrelated.
+- `fixes #N` / `closes #N` / `resolves #N` are GitHub auto-close keywords.
+  A future commit saying `fixes #48` about a selfhost item will silently
+  close GitHub issue #48 once that issue exists.
+
+So: write in-tree items as **`selfhost ISSUES-48`**, **`DBT-14`**,
+`runtime ISSUES-9` — component name plus a non-`#` number. Reserve bare
+`#N` and the closing keywords exclusively for real GitHub issues.
+(Historical commits using the old style are inert and stay as they are;
+pushed history is not rewritten.)
