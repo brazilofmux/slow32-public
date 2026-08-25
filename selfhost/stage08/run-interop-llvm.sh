@@ -76,6 +76,19 @@ int drive_cmut(void) {
     if (p.x != 5 || p.y != 6) return -1;
     return r;
 }
+/* Issue #6: implicit int -> long long argument promotion.  A plain
+ * int argument bound to a 64-bit parameter must widen to a full pair
+ * (sign- or zero-extended); before the fix only the low word was
+ * marshalled and the high word was whatever the register held. */
+extern long long negate64(long long v);
+int drive_promote(void) {
+    int k; int m;
+    k = 7; m = -5;
+    if (mul64(k, 7) != 49ULL) return 1;
+    if (negate64(m) != 5LL) return 2;
+    if (negate64(2) != -2LL) return 3;
+    return 0;
+}
 EOF
 cat > "$W/main_clang.c" <<'EOF'
 #include <stdio.h>
@@ -93,6 +106,8 @@ extern int bigmix(int,int,int,int,int,int,int,int, struct Big, int, int);
 struct Mix { char c; double d; int t; };
 extern int mixlayout(struct Mix *m);
 extern int drive_cmut(void);
+extern int drive_promote(void);
+long long negate64(long long v) { return -v; }
 int cmut(struct Pt p) { p.x = p.x + 100; return p.x + p.y; }
 int cb(int x) { return x * 10; }
 int main(void) {
@@ -110,6 +125,7 @@ int main(void) {
     struct Big bg = {{21, 0, 0, 0, 0, 22}};
     if (bigmix(1,2,3,4,5,6,7,8, bg, 10, 11) != 73) { fail = 1; printf("GATE struct-stack-mix FAIL\n"); }
     if (drive_cmut() != 111) { fail = 1; printf("GATE struct-byval-copy FAIL\n"); }
+    if (drive_promote() != 0) { fail = 1; printf("GATE arg-promote FAIL (%d)\n", drive_promote()); }
     struct Mix mx; mx.c = 'x'; mx.d = 2.5; mx.t = 77;
     if (sizeof(struct Mix) != 16 || mixlayout(&mx) != 0 || mx.t != 78) {
         fail = 1; printf("GATE struct-layout FAIL\n");

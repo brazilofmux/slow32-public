@@ -257,11 +257,19 @@ static int   ps_ntypedefs;
  * wrote its digest through an uninitialized 4-byte 'pointer'). */
 static int   ps_type_arrcount;
 
-/* Function return type table (for 64-bit return value tracking) */
+/* Function signature table (return type, variadic flag, and declared
+ * parameter types).  Param types drive implicit argument conversion at
+ * call sites (issue #6: `mul(k, 7)` with long long params passed the
+ * int 7 as ONE register slot, leaving the pair's high word stale). */
 #define PS_MAX_FUNCS 4096
+#define PS_MAX_FPARAM 16384
 static char *ps_fname[PS_MAX_FUNCS];
 static int   ps_ftype[PS_MAX_FUNCS];
 static int   ps_fvar[PS_MAX_FUNCS];   /* 1 = variadic (affects f64 arg ABI) */
+static int   ps_fpbase[PS_MAX_FUNCS]; /* base into ps_fptypes, -1 = unknown */
+static int   ps_fpn[PS_MAX_FUNCS];    /* declared param count */
+static int   ps_fptypes[PS_MAX_FPARAM];
+static int   ps_nfptypes;
 static int   ps_nfuncs;
 
 /* Forward declarations */
@@ -446,7 +454,21 @@ static int find_func_varargs(char *name) {
     return 0;
 }
 
-static void add_func_type(char *name, int ty) {
+static int ps_fp_store(int *ptys, int np) {
+    int base;
+    int i;
+    if (np < 0 || ps_nfptypes + np > PS_MAX_FPARAM) return -1;
+    base = ps_nfptypes;
+    i = 0;
+    while (i < np) {
+        ps_fptypes[ps_nfptypes] = ptys[i];
+        ps_nfptypes = ps_nfptypes + 1;
+        i = i + 1;
+    }
+    return base;
+}
+
+static void add_func_type(char *name, int ty, int *ptys, int np) {
     int i;
     /* Update existing entry if already registered */
     i = ps_nfuncs - 1;
@@ -454,6 +476,10 @@ static void add_func_type(char *name, int ty) {
         if (strcmp(name, ps_fname[i]) == 0) {
             ps_ftype[i] = ty;
             ps_fvar[i] = ps_is_varargs;
+            if (np >= 0) {
+                ps_fpbase[i] = ps_fp_store(ptys, np);
+                ps_fpn[i] = (ps_fpbase[i] >= 0) ? np : 0;
+            }
             return;
         }
         i = i - 1;
@@ -462,7 +488,26 @@ static void add_func_type(char *name, int ty) {
     ps_fname[ps_nfuncs] = strdup(name);
     ps_ftype[ps_nfuncs] = ty;
     ps_fvar[ps_nfuncs] = ps_is_varargs;
+    ps_fpbase[ps_nfuncs] = (np >= 0) ? ps_fp_store(ptys, np) : -1;
+    ps_fpn[ps_nfuncs] = (ps_fpbase[ps_nfuncs] >= 0) ? np : 0;
     ps_nfuncs = ps_nfuncs + 1;
+}
+
+/* Declared type of parameter `idx` of `name`, or -1 when unknown
+ * (unregistered function, old-style declaration, or a variadic slot
+ * past the fixed parameters). */
+static int find_func_param(char *name, int idx) {
+    int i;
+    i = 0;
+    while (i < ps_nfuncs) {
+        if (strcmp(name, ps_fname[i]) == 0) {
+            if (ps_fpbase[i] < 0) return -1;
+            if (idx >= ps_fpn[i]) return -1;
+            return ps_fptypes[ps_fpbase[i] + idx];
+        }
+        i = i + 1;
+    }
+    return -1;
 }
 
 /* Find or create a label for goto/label. Returns codegen label ID. */
@@ -1581,6 +1626,26 @@ static void ps_mangle_static(char *func, char *var) {
     ps_sl_count = ps_sl_count + 1;
 }
 
+/* Size of the object an already-parsed sizeof operand denotes.
+ * Arrays report their stored total size; a row of a pointer-to-array
+ * member reports cols * element size; everything else is ty_size. */
+static int ps_sizeof_node(Node *n) {
+    int li;
+    int gi;
+    if (n->kind == ND_VAR && n->is_array) {
+        if (n->is_local) {
+            li = find_local(n->name);
+            return (li >= 0) ? ps_lsize[li] : ty_size(n->ty);
+        }
+        gi = find_global(n->name);
+        return (gi >= 0) ? ps_gsize[gi] : ty_size(n->ty);
+    }
+    if (n->kind == ND_MEMBER && n->is_array) return n->val_hi;
+    if (n->kind == ND_BINOP && n->arr_cols > 0 && ty_is_ptr(n->ty))
+        return n->arr_cols * ty_size(ty_deref(n->ty));
+    return ty_size(n->ty);
+}
+
 static int parse_const_primary(void) {
     int ci;
     int ty;
@@ -1593,6 +1658,12 @@ static int parse_const_primary(void) {
     }
     if (lex_tok == TK_SIZEOF) {
         next();
+        if (lex_tok != TK_LPAREN) {
+            /* sizeof unary-expression, no parens (C99 6.5.3.4) */
+            Node *sn;
+            sn = parse_unary();
+            return ps_sizeof_node(sn);
+        }
         expect(TK_LPAREN);
         if (is_type()) {
             ty = parse_type();
@@ -1603,27 +1674,12 @@ static int parse_const_primary(void) {
         }
         /* sizeof(expression) in a constant context -- global initializers
          * like `sizeof(tab) / sizeof(tab[0])` (rogue's mon_table_len).
-         * Mirror the expression parser's sizeof: build the node just to
-         * read its type/size, then discard it. */
+         * Build the node just to read its type/size, then discard it. */
         {
             Node *sn;
             int sv;
-            int sli;
-            int sgi;
             sn = parse_expr();
-            if (sn->kind == ND_VAR && sn->is_array) {
-                if (sn->is_local) {
-                    sli = find_local(sn->name);
-                    sv = (sli >= 0) ? ps_lsize[sli] : ty_size(sn->ty);
-                } else {
-                    sgi = find_global(sn->name);
-                    sv = (sgi >= 0) ? ps_gsize[sgi] : ty_size(sn->ty);
-                }
-            } else if (sn->kind == ND_MEMBER && sn->is_array) {
-                sv = sn->val_hi;
-            } else {
-                sv = ty_size(sn->ty);
-            }
+            sv = ps_sizeof_node(sn);
             expect(TK_RPAREN);
             return sv;
         }
@@ -2840,33 +2896,19 @@ static Node *parse_primary(void) {
         return nd_num(v);
     }
 
-    /* sizeof(type_or_expr) */
+    /* sizeof(type_or_expr) / sizeof unary-expression */
     if (lex_tok == TK_SIZEOF) {
         next();
+        if (lex_tok != TK_LPAREN) {
+            n = parse_unary();
+            return nd_num(ps_sizeof_node(n));
+        }
         expect(TK_LPAREN);
         if (is_type()) {
             v = ty_size(parse_type());
         } else {
             n = parse_expr();
-            if (n->kind == ND_VAR && n->is_array) {
-                /* Local array: use stored total size */
-                if (n->is_local) {
-                    li = find_local(n->name);
-                    v = (li >= 0) ? ps_lsize[li] : ty_size(n->ty);
-                } else {
-                    gi = find_global(n->name);
-                    v = (gi >= 0) ? ps_gsize[gi] : ty_size(n->ty);
-                }
-            } else if (n->kind == ND_MEMBER && n->is_array) {
-                /* Struct array member: arr_size stored in val_hi */
-                v = n->val_hi;
-            } else if (n->kind == ND_BINOP && n->arr_cols > 0 &&
-                       ty_is_ptr(n->ty)) {
-                /* Row of a pointer-to-array member: N * elem size */
-                v = n->arr_cols * ty_size(ty_deref(n->ty));
-            } else {
-                v = ty_size(n->ty);
-            }
+            v = ps_sizeof_node(n);
         }
         expect(TK_RPAREN);
         return nd_num(v);
@@ -4490,6 +4532,8 @@ static Node *parse_top_decl(void) {
     char pnm[256];
     int ty;
     int pty;
+    int fp_tys[64];
+    int fp_n;
     int off;
     int i;
     int count;
@@ -4533,6 +4577,7 @@ static Node *parse_top_decl(void) {
      * inline, register, restrict, auto, GNU attrs) have no semantic
      * effect in this single-file compiler. */
     is_extern = 0;
+    fp_n = 0;
     is_static = 0;
     skip_gnu_attributes();
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
@@ -4883,6 +4928,7 @@ static Node *parse_top_decl(void) {
                 while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                 expect(TK_RPAREN);
             }
+            pty = TY_INT;  /* record fn-ptr param as a word */
         } else if (lex_tok == TK_LBRACK) {
             while (lex_tok == TK_LBRACK) {
                 pty = pty + TY_PTR;
@@ -4915,6 +4961,7 @@ static Node *parse_top_decl(void) {
             p->is_local = 1;
         }
         skip_gnu_decl_suffixes();
+        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_n = fp_n + 1; }
         ps_nparams = 1;
         phead = p;
         ptail = p;
@@ -4952,6 +4999,7 @@ static Node *parse_top_decl(void) {
                     while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                     expect(TK_RPAREN);
                 }
+                pty = TY_INT;  /* record fn-ptr param as a word */
             } else if (lex_tok == TK_LBRACK) {
                 while (lex_tok == TK_LBRACK) {
                     pty = pty + TY_PTR;
@@ -4991,6 +5039,7 @@ static Node *parse_top_decl(void) {
                 ptail->next = p;
                 ptail = p;
             }
+            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_n = fp_n + 1; }
             ps_nparams = ps_nparams + 1;
         }
     }
@@ -5001,7 +5050,7 @@ params_done:
     /* Prototype: type name(params); */
     if (lex_tok == TK_SEMI) {
         next();
-        add_func_type(nm, ty);
+        add_func_type(nm, ty, fp_tys, fp_n);
         return NULL;
     }
 
@@ -5010,7 +5059,7 @@ params_done:
         p_error("expected param name");
         return NULL;
     }
-    add_func_type(nm, ty);
+    add_func_type(nm, ty, fp_tys, fp_n);
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
     fn->ty = ty;  /* store return type for sema pass */

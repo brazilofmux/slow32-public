@@ -37,12 +37,31 @@ static int sema_is_cmp(int op) {
     return 0;
 }
 
+/* Marshalling class of a type: 0=word (int/char/short/ptr), 1=llong,
+ * 2=double, 3=float, 4=struct.  Distinct classes occupy different
+ * numbers/kinds of argument slots, so a class mismatch between the
+ * argument expression and the declared parameter is a silent
+ * miscompile unless we insert the implicit conversion (issue #6:
+ * int passed to a long long parameter left the high word stale). */
+static int sema_arg_class(int ty) {
+    if (ty_is_struct(ty)) return 4;
+    if (ty_is_ptr(ty)) return 0;
+    if (ty_is_double(ty)) return 2;
+    if (ty_is_float(ty)) return 3;
+    if (ty_is_llong(ty)) return 1;
+    return 0;
+}
+
 /* --- Expression walk --- */
 
 static void sema_expr(Node *n) {
     Node *a;
+    Node *prev;
+    Node *cast;
     int lty;
     int rty;
+    int idx;
+    int pt;
 
     if (!n) return;
 
@@ -116,7 +135,35 @@ static void sema_expr(Node *n) {
         return;
     }
 
-    /* ND_CALL: typed by parser via find_func_type() */
+    /* ND_CALL: return type set by parser via find_func_type().  Here we
+     * apply the implicit argument conversions the parser cannot: it may
+     * not have seen the prototype yet at the call site, but by sema time
+     * every prototype is registered.  An argument whose marshalling
+     * class differs from the declared parameter's is wrapped in a cast
+     * so the existing cast lowering (sign/zero extension, fp<->int,
+     * truncation) produces a correctly-classed value in every backend. */
+    if (n->kind == ND_CALL) {
+        idx = 0;
+        prev = NULL;
+        a = n->args;
+        while (a) {
+            pt = find_func_param(n->name, idx);
+            if (pt >= 0 &&
+                sema_arg_class(a->ty) != sema_arg_class(pt) &&
+                sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
+                cast = nd_cast(a, pt);
+                cast->next = a->next;
+                a->next = NULL;
+                if (prev) prev->next = cast;
+                else n->args = cast;
+                a = cast;
+            }
+            prev = a;
+            idx = idx + 1;
+            a = a->next;
+        }
+        return;
+    }
     /* ND_CALL_PTR: stays TY_INT (no return type info for indirect calls) */
     /* ND_CAST: preserve parser-assigned type */
     /* ND_MEMBER: preserve member type */

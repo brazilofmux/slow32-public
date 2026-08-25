@@ -552,6 +552,33 @@ Milestones, each a gate, none a promise:
    latent in frozen stage05-07 copies (their outputs are proven by
    sums; nothing they compile triggers them) — left per the
    repair-only ruling, flagged for a future ruling.
+   **ISSUE #6 (2026-08-25): implicit int→long long ARGUMENT
+   promotion — the seventh pair-blind bug, and the first found by a
+   filed bug report (Lenovo Claude Code, via the ~/s32x kit).**
+   `mul(k, 7)` with `long long mul(long long, long long)` marshalled
+   the literal 7 as ONE word; r6 (the pair's hi half) kept whatever
+   it held — `800000007` instead of `700000007`.  Root cause: the
+   parser's function registry recorded return types only, so
+   hir_lower classified call args by the ARGUMENT's type, never the
+   parameter's.  Fix at the right layer: the registry now stores
+   declared parameter types (ps_fptypes pool, find_func_param), and
+   SEMA — running after the whole TU is parsed, so every prototype
+   is known — wraps any argument whose marshalling class (word /
+   llong / double / float) differs from the parameter's in an
+   nd_cast; every backend inherits the conversion through existing
+   cast lowering.  Covers the whole family: sign/zero-extension
+   int→ll, int→double, AND the reverse hazard (ll arg to int param
+   used to shift every later argument's slots).  Variadic tails and
+   unprototyped functions keep old behavior (C default promotions;
+   note a double vararg to an UNDECLARED printf still misaligns —
+   that is UB, prototype it).  Bonus from the same report's margins:
+   `sizeof x` without parens now parses (shared ps_sizeof_node in
+   both const and expression contexts).  Gates: new interop gate
+   drive_promote (s12↔clang, both directions), new shared corpus
+   test d36_arg_promote, fixed-point 56/56, FP diff 288, DOOM 2173
+   bit-exact, sbasic 45/45, a64 suite 36/36, cc-x64 rebuilt; the
+   five stage08 tool binaries recompiled BYTE-IDENTICAL — the casts
+   fire only where code was already wrong.
 4. **DOOM.** Built by stage08, `-timedemo demo3` runs to completion —
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same
