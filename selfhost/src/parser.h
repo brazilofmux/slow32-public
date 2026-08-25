@@ -2235,7 +2235,9 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
     int fhi;
     int fw[2];
     int i;
+    int fop;
     double fd;
+    double rv;
 
     fneg = 0;
     if (lex_tok == TK_MINUS) { fneg = 1; next(); }
@@ -2251,6 +2253,33 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
         fhi = fw[1];
     }
     if (fneg) fhi = fhi ^ (1 << 31);
+    /* Fold an immediate * / / chain in double arithmetic (dtoa's
+     * tinytens entry is `9007199254740992.*9007199254740992.e-256`).
+     * The sign parsed above binds to the FIRST literal, as in C. */
+    while (lex_tok == TK_STAR || lex_tok == TK_SLASH) {
+        fop = lex_tok;
+        next();
+        fneg = 0;
+        if (lex_tok == TK_MINUS) { fneg = 1; next(); }
+        else if (lex_tok == TK_PLUS) next();
+        if (lex_tok == TK_FNUM) {
+            fw[0] = lex_val;
+            fw[1] = fneg ? (lex_fval_hi ^ (1 << 31)) : lex_fval_hi;
+            memcpy(&rv, fw, 8);
+            next();
+        } else {
+            rv = (double)parse_const_int();
+            if (fneg) rv = 0.0 - rv;
+        }
+        fw[0] = flo;
+        fw[1] = fhi;
+        memcpy(&fd, fw, 8);
+        if (fop == TK_STAR) fd = fd * rv;
+        else fd = fd / rv;
+        memcpy(fw, &fd, 8);
+        flo = fw[0];
+        fhi = fw[1];
+    }
     if (ty_is_double(ty)) {
         i = 0;
         while (i < 4) {

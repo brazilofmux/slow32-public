@@ -769,11 +769,19 @@ static void ho_count_uses(void) {
             }
         }
 
-        /* PHI arguments */
+        /* PHI arguments.  A phi's reference to ITSELF (loop back edge:
+         * x = phi(pre, x)) is not a real use — counting it kept dead
+         * loop phis alive forever, and a pile of dead phis at one join
+         * all get the same free color (empty ranges never interfere),
+         * so their parallel-copy at the join edge stomped a live value
+         * sharing that register (dtoa_r's `s` died at Roundup).  The
+         * ho_dce fixpoint loop cascades chains once self-uses are
+         * ignored. */
         if (k == HI_PHI && h_pbase[i] >= 0) {
             j = 0;
             while (j < h_pcnt[i]) {
-                if (h_pval[h_pbase[i] + j] >= 0)
+                if (h_pval[h_pbase[i] + j] >= 0 &&
+                    h_pval[h_pbase[i] + j] != i)
                     ho_use[h_pval[h_pbase[i] + j]] =
                         ho_use[h_pval[h_pbase[i] + j]] + 1;
                 j = j + 1;

@@ -399,6 +399,33 @@ static int hcg_dst(int idx) {
     return 1;
 }
 
+/* --- Store an arbitrary register to idx's spill slot ---
+ * Used for post-call CALLHI (hi word in r2): materializing a spilled
+ * CALLHI through the r1 spill scratch (`addi r1, r2`) destroyed the
+ * call's own lo word before ITS spill — dtoa_r's spilled
+ * `1ull << j` came back with lo == hi.  r3 is safe address scratch
+ * after a call: caller-saved registers hold nothing live there. */
+static void hcg_spill_from(int idx, int reg) {
+    int off;
+    if (ra_reg[idx] >= 0) return;
+    if (hi_inst_remat(idx)) return;
+    off = ra_spill_off[idx];
+    if (off == 0) return;
+    if (off >= -2048 && off <= 2047) {
+        cg_s("    stw r30, r");
+        cg_n(reg);
+        cg_s(", ");
+        cg_n(off);
+        cg_c(10);
+    } else {
+        hcg_li(3, off);
+        cg_rrr("add", 3, 30, 3);
+        cg_s("    stw r3, r");
+        cg_n(reg);
+        cg_s(", 0\n");
+    }
+}
+
 /* --- Store r1 to spill slot if instruction is spilled --- */
 static void hcg_maybe_spill(int idx) {
     int off;
@@ -722,6 +749,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
         i = ssa_phi_next[i];
     }
     if (n == 0) return;
+
 
     /* Fast path: all destinations and non-constant sources are in registers.
      * Emit cycle-safe parallel copies without runtime stack traffic. */
@@ -2140,16 +2168,19 @@ static void hcg_inst(int idx) {
 
         }
 
-        /* Check for CALLHI following this CALL */
+        /* Check for CALLHI following this CALL.  A spilled CALLHI is
+         * stored straight from r2 (hcg_spill_from): the old path went
+         * addi r1, r2 then spilled r1 — clobbering the call's lo word
+         * before its own spill, so both words spilled == hi. */
         has_callhi = 0;
         if (idx + 1 < bb_end[h_blk[idx]] && h_kind[idx + 1] == HI_CALLHI) {
             has_callhi = 1;
             rd2 = hcg_dst(idx + 1);
-            /* Capture r2 (hi word) before any register shuffling */
-            if (rd2 != 2) {
-                cg_rri("addi", rd2, 2, 0);
+            if (ra_reg[idx + 1] >= 0) {
+                if (rd2 != 2) cg_rri("addi", rd2, 2, 0);
+            } else {
+                hcg_spill_from(idx + 1, 2);
             }
-            hcg_maybe_spill(idx + 1);
         }
 
         rd = hcg_dst(idx);
@@ -2201,15 +2232,17 @@ static void hcg_inst(int idx) {
 
         hcg_pop_stack_args((nstk + 1) * 4);
 
-        /* Check for CALLHI following this CALLP */
+        /* Check for CALLHI following this CALLP (same r2-direct spill
+         * as the direct-call path — see hcg_spill_from). */
         has_callhi2 = 0;
         if (idx + 1 < bb_end[h_blk[idx]] && h_kind[idx + 1] == HI_CALLHI) {
             has_callhi2 = 1;
             rd2b = hcg_dst(idx + 1);
-            if (rd2b != 2) {
-                cg_rri("addi", rd2b, 2, 0);
+            if (ra_reg[idx + 1] >= 0) {
+                if (rd2b != 2) cg_rri("addi", rd2b, 2, 0);
+            } else {
+                hcg_spill_from(idx + 1, 2);
             }
-            hcg_maybe_spill(idx + 1);
         }
 
         rd = hcg_dst(idx);

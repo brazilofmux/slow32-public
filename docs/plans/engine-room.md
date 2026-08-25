@@ -483,6 +483,46 @@ Milestones, each a gate, none a promise:
    changes cc-a64's lowering too — expect green, but stamp it), and
    consider a cc_* test that reads doubles through deref/index/
    member so the a64 suite would have caught this class.
+   **THE dtoa CAMPAIGN (same day): stage08's libc gained full FP
+   printf — %f/%e/%g and width flags — by compiling David Gay's
+   dtoa.c (6,250 lines, VERBATIM) + printf_enhanced.c + convert.c,
+   the SAME sources as the clang runtime, so both libcs print
+   byte-identically by construction.** Gay's own config knobs
+   (Omit_Private_Memory, No_Hex_NaN, NO_ERRNO, Bad_float_h) dodged
+   dialect corners with zero source patches.  The forcing file
+   surfaced FOUR real compiler bugs, each minimized and fixed:
+   (1) pair-blind TRUTHINESS — !double tested only the LO word
+   (dtoa's `if (!dval(&u))` returned "0" for 255.0), and bare
+   double/float/llong conditions in if/while/for/ternary/&&/||
+   branched on one word; new hl_truthy/hl_cond_val wired at every
+   condition site (slow32 only); (2) pair-blind llong COMPOUND
+   ASSIGN and ++/-- — `dbits |= 0x8000000000000000ull` silently
+   dropped the hi word (the implicit mantissa bit!); new hl_ll_op
+   pair-RMW covering all ops incl. shift/mul/div libcalls;
+   (3) post-call SPILLED-CALLHI clobber — a spilled hi word
+   materialized via `addi r1, r2` BEFORE the lo's spill, so both
+   spilled words == hi (`1ull << j` gave hb lo==hi); hcg_spill_from
+   stores straight from r2, r3 as large-offset scratch (caller-saved
+   regs are dead post-call); (4) IMMORTAL DEAD LOOP PHIS — a dead
+   phi's self-reference (x = phi(pre, x)) counted as a use, so DCE
+   never removed them; 35 dead phis at one dtoa_r join all colored
+   the same free register (empty ranges never interfere) and their
+   join-edge copies stomped a live value sharing it.  Self-uses no
+   longer count; the DCE fixpoint cascades the rest.  Debugging
+   method: assembly-level per-function splice (clang dtoa_r into
+   the stage08 build — legal now that the ABI matches!), -Dstatic=
+   probe drivers, and light global-store instrumentation when
+   printf perturbation Heisenbugged the regalloc.  Gates: bootstrap
+   smoke now checks %f|%g|%08x through the gen1 lib; run-tests'
+   gen1 libc uses the same trio; stage08/include gains errno.h;
+   full ladder re-verified green (fixed-point 56/56, FP diff 288,
+   interop, sbasic 45/45, rogue, graphics, DOOM 2173 bit-exact both
+   engines, benchmark, purity, a64 suite 0 mismatches).  The ~/s32x
+   kit ships the new libc — `printf("%f", pi)` works through the
+   four-command self-hosted flow.  NOTE: the four bug classes are
+   latent in frozen stage05-07 copies (their outputs are proven by
+   sums; nothing they compile triggers them) — left per the
+   repair-only ruling, flagged for a future ruling.
 4. **DOOM.** Built by stage08, `-timedemo demo3` runs to completion —
    and because the game logic is fixed-point-deterministic, the 2173
    frame hashes should match the clang build's goldens exactly. Same

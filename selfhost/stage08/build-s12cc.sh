@@ -151,8 +151,9 @@ echo "  gen1: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
 
 compile_gen1() {
     local src="$1" asm="$2" log="$3"
+    shift 3
     set +e
-    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$OUT_EXE" "$src" "$asm" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$OUT_EXE" "$@" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -173,8 +174,22 @@ for name in string_extra string_more ctype convert stdio malloc; do
 done
 compile_gen1 "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.cc.log"
 assemble "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_start.as.log"
-compile_gen1 "$LIBC_DIR/printf_varargs.c" "$WORKDIR/g1_printf_varargs.s" "$WORKDIR/g1_printf_varargs.cc.log"
-assemble "$WORKDIR/g1_printf_varargs.s" "$LIBC_OUT_DIR/printf_varargs.s32o" "$WORKDIR/g1_printf_varargs.as.log"
+# printf: David Gay's dtoa + the enhanced printf family, the SAME
+# sources the clang runtime builds — %f/%e/%g and width flags print
+# byte-identically across the two libcs.  Gay's config knobs
+# (Omit_Private_Memory / No_Hex_NaN / NO_ERRNO / Bad_float_h) dodge
+# host-dialect corners without touching his source.  This replaces
+# printf_varargs.c in the gen1 lib (the phase-1 compiler binary keeps
+# the small printf; it never prints floats).
+RUNTIME_DIR="$ROOT_DIR/runtime"
+DTOA_FLAGS="-DIEEE_8087 -DOmit_Private_Memory -DNo_Hex_NaN -DNO_ERRNO -DBad_float_h"
+compile_gen1 "$RUNTIME_DIR/dtoa.c" "$WORKDIR/g1_dtoa.s" "$WORKDIR/g1_dtoa.cc.log"     $DTOA_FLAGS "-I$SCRIPT_DIR/include"
+assemble "$WORKDIR/g1_dtoa.s" "$LIBC_OUT_DIR/dtoa.s32o" "$WORKDIR/g1_dtoa.as.log"
+compile_gen1 "$RUNTIME_DIR/printf_enhanced.c" "$WORKDIR/g1_pe.s" "$WORKDIR/g1_pe.cc.log"     "-I$SCRIPT_DIR/include"
+assemble "$WORKDIR/g1_pe.s" "$LIBC_OUT_DIR/printf_enhanced.s32o" "$WORKDIR/g1_pe.as.log"
+compile_gen1 "$RUNTIME_DIR/convert.c" "$WORKDIR/g1_convert_rt.s" "$WORKDIR/g1_convert_rt.cc.log"     "-I$SCRIPT_DIR/include"
+assemble "$WORKDIR/g1_convert_rt.s" "$LIBC_OUT_DIR/convert_rt.s32o" "$WORKDIR/g1_convert_rt.as.log"
+rm -f "$LIBC_OUT_DIR/printf_varargs.s32o"
 
 # Runtime asm objects are ABI-neutral (hand-written assembly)
 cp "$WORKDIR/crt0.s32o" "$LIBC_OUT_DIR/crt0.s32o"
@@ -191,9 +206,14 @@ echo "[6/6] Verify gen1 + gen1-libc"
 # verifying the ABI is consistent (r11-r28 preserved across calls).
 cat > "$WORKDIR/smoke.c" <<'SMOKE_EOF'
 int strcmp(char *a, char *b);
+int snprintf(char *buf, unsigned int size, const char *fmt, ...);
 int main(void) {
+    char b[40];
     if (strcmp("hello", "hello") != 0) return 1;
     if (strcmp("abc", "abd") == 0) return 2;
+    /* %f through Gay dtoa + printf_enhanced (the gen1 lib's printf) */
+    snprintf(b, 40, "%f|%g|%08x", 2.5, 0.001220703125, 255);
+    if (strcmp(b, "2.500000|0.0012207|000000ff") != 0) return 3;
     return 0;
 }
 SMOKE_EOF
@@ -215,7 +235,8 @@ link_exe "$WORKDIR/smoke.link.log" -o "$WORKDIR/smoke.s32x" --mmio 64K \
     "$LIBC_OUT_DIR/string_extra.s32o" "$LIBC_OUT_DIR/string_more.s32o" \
     "$LIBC_OUT_DIR/ctype.s32o" "$LIBC_OUT_DIR/convert.s32o" \
     "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o" \
-    "$LIBC_OUT_DIR/printf_varargs.s32o"
+    "$LIBC_OUT_DIR/dtoa.s32o" "$LIBC_OUT_DIR/printf_enhanced.s32o" \
+    "$LIBC_OUT_DIR/convert_rt.s32o"
 
 set +e
 timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$WORKDIR/smoke.s32x" > "$WORKDIR/smoke.out" 2>&1

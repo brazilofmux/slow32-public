@@ -374,8 +374,24 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI) ==="
 
-    for name in string_extra string_more ctype convert stdio malloc printf_varargs; do
-        run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
+    # printf comes from Gay dtoa + printf_enhanced + runtime convert
+    # (same trio as build-s12cc.sh's gen1 lib; printf_varargs retired)
+    G1_RT_SRCS="dtoa printf_enhanced convert_rt"
+    for name in string_extra string_more ctype convert stdio malloc $G1_RT_SRCS; do
+        case "$name" in
+          dtoa)
+            run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
+                -DIEEE_8087 -DOmit_Private_Memory -DNo_Hex_NaN -DNO_ERRNO -DBad_float_h \
+                "-I$SCRIPT_DIR/include" "$SELFHOST_DIR/../runtime/dtoa.c" "$WORKDIR/g1_${name}.s" ;;
+          printf_enhanced)
+            run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
+                "-I$SCRIPT_DIR/include" "$SELFHOST_DIR/../runtime/printf_enhanced.c" "$WORKDIR/g1_${name}.s" ;;
+          convert_rt)
+            run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
+                "-I$SCRIPT_DIR/include" "$SELFHOST_DIR/../runtime/convert.c" "$WORKDIR/g1_${name}.s" ;;
+          *)
+            run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" ;;
+        esac
         if [[ ! -s "$WORKDIR/g1_${name}.s" ]]; then
             echo "  WARN: gen1 failed to compile ${name}.c, falling back to stage07 libc" >&2
             G1_LIBC_OBJS=""

@@ -634,6 +634,133 @@ static int hl_byval_arg(int src_addr, int sz) {
 }
 #endif
 
+#ifndef S12CC_X64_HOST
+/* C truthiness of a lowered value: `x != 0`.  A raw pair word is NOT
+ * that for wide types — doubles must FP-compare against +0.0 (dtoa's
+ * `if (!dval(&u))` fired for 255.0 because the pair's LO word is 0,
+ * and -0.0 must be falsy), floats must FEQ against +0.0f bits, and
+ * llong pairs must OR both words.  Plain ints pass through. */
+static int hl_truthy(int ty, int lv) {
+    int d_hi;
+    int z;
+    int cb;
+    int r;
+
+    if (ty_is_double(ty)) {
+        d_hi = hl_hi;
+        cb = h_ncarg;
+        h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+        z = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+        h_carg[h_ncarg] = z; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = z; h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_eq");
+        h_cbase[r] = cb;
+        return hi_emit(HI_NOT, TY_INT, r, -1, 0, NULL);
+    }
+    if (ty_is_float(ty)) {
+        z = hi_emit(HI_ICONST, TY_FLOAT, -1, -1, 0, NULL);
+        r = hi_emit(HI_FEQ, TY_INT, lv, z, 0, NULL);
+        return hi_emit(HI_NOT, TY_INT, r, -1, 0, NULL);
+    }
+    if (ty_is_llong(ty)) {
+        return hi_emit(HI_OR, TY_INT, lv, hl_hi, 0, NULL);
+    }
+    return lv;
+}
+#else
+static int hl_truthy(int ty, int lv) {
+    (void)ty;
+    return lv;
+}
+#endif
+
+/* Lower a condition expression to a branchable truth value. */
+static int hl_cond_val(Node *n) {
+    int lv;
+    lv = hl_expr(n);
+    return hl_truthy(n->ty, lv);
+}
+
+#ifndef S12CC_X64_HOST
+/* Pair llong binary op for the RMW paths (compound assign, ++/--),
+ * mirroring the ND_BINOP pair lowering: result lo returned, hi left
+ * in hl_hi.  op is the TK_ operator token; shifts take rv as a plain
+ * int count.  The old scalar RMW tail silently dropped the HI word —
+ * dtoa's `dbits |= 0x8000000000000000ull` lost the implicit mantissa
+ * bit and every digit came out wrong. */
+static int hl_ll_op(int op, int uns, int lv, int lv_hi, int rv, int rv_hi) {
+    int r_lo;
+    int r_hi;
+    int carry;
+    int cb;
+
+    if (op == TK_PLUS) {
+        r_lo = hi_emit(HI_ADD, TY_INT, lv, rv, 0, NULL);
+        carry = hi_emit(HI_SLTU, TY_INT, r_lo, lv, 0, NULL);
+        r_hi = hi_emit(HI_ADD, TY_INT, lv_hi, rv_hi, 0, NULL);
+        hl_hi = hi_emit(HI_ADD, TY_INT, r_hi, carry, 0, NULL);
+        return r_lo;
+    }
+    if (op == TK_MINUS) {
+        carry = hi_emit(HI_SLTU, TY_INT, lv, rv, 0, NULL);
+        r_lo = hi_emit(HI_SUB, TY_INT, lv, rv, 0, NULL);
+        r_hi = hi_emit(HI_SUB, TY_INT, lv_hi, rv_hi, 0, NULL);
+        hl_hi = hi_emit(HI_SUB, TY_INT, r_hi, carry, 0, NULL);
+        return r_lo;
+    }
+    if (op == TK_AMP) {
+        r_lo = hi_emit(HI_AND, TY_INT, lv, rv, 0, NULL);
+        hl_hi = hi_emit(HI_AND, TY_INT, lv_hi, rv_hi, 0, NULL);
+        return r_lo;
+    }
+    if (op == TK_PIPE) {
+        r_lo = hi_emit(HI_OR, TY_INT, lv, rv, 0, NULL);
+        hl_hi = hi_emit(HI_OR, TY_INT, lv_hi, rv_hi, 0, NULL);
+        return r_lo;
+    }
+    if (op == TK_CARET) {
+        r_lo = hi_emit(HI_XOR, TY_INT, lv, rv, 0, NULL);
+        hl_hi = hi_emit(HI_XOR, TY_INT, lv_hi, rv_hi, 0, NULL);
+        return r_lo;
+    }
+    if (op == TK_LSHIFT || op == TK_RSHIFT) {
+        cb = h_ncarg;
+        h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
+        if (op == TK_LSHIFT)
+            r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashldi3");
+        else if (uns)
+            r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__lshrdi3");
+        else
+            r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashrdi3");
+        h_cbase[r_lo] = cb;
+        hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+        return r_lo;
+    }
+    /* mul / div / rem via libcalls */
+    cb = h_ncarg;
+    h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
+    if (op == TK_STAR)
+        r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__muldi3");
+    else if (op == TK_SLASH)
+        r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, uns ? "__udivdi3" : "__divdi3");
+    else if (op == TK_PERCENT)
+        r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, uns ? "__umoddi3" : "__moddi3");
+    else {
+        p_error("unsupported llong compound op (hir)");
+        return -1;
+    }
+    h_cbase[r_lo] = cb;
+    hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+    return r_lo;
+}
+#endif
+
 /* --- Expression lowering --- */
 
 static int hl_expr(Node *n) {
@@ -1022,6 +1149,15 @@ static int hl_expr(Node *n) {
                 eq_hi = hi_emit(HI_SEQ, TY_INT, lv_hi, z, 0, NULL);
                 return hi_emit(HI_AND, TY_INT, eq_lo, eq_hi, 0, NULL);
             }
+#ifndef S12CC_X64_HOST
+            /* !double / !float are FP compares against +0.0 — a raw
+             * word NOT is pair-blind (dtoa returned "0" for 255.0). */
+            if (ty_is_fp(n->lhs->ty)) {
+                lv = hl_expr(n->lhs);
+                lv = hl_truthy(n->lhs->ty, lv);
+                return hi_emit(HI_NOT, TY_INT, lv, -1, 0, NULL);
+            }
+#endif
             lv = hl_expr(n->lhs);
             return hi_emit(HI_NOT, n->ty, lv, -1, 0, NULL);
         }
@@ -1079,14 +1215,14 @@ static int hl_expr(Node *n) {
         if (n->op == TK_LAND) {
             tmp_off = hl_alloc_temp();
             tmp = hl_emit_temp_alloca(TY_INT, tmp_off);
-            lv = hl_expr(n->lhs);
+            lv = hl_cond_val(n->lhs);
             rhs_blk = hir_new_block();
             else_blk = hir_new_block();
             join_blk = hir_new_block();
             hi_emit(HI_BRC, 0, lv, rhs_blk, else_blk, NULL);
 
             hl_switch_block(rhs_blk);
-            rv = hl_expr(n->rhs);
+            rv = hl_cond_val(n->rhs);
             zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
             val = hi_emit(HI_SNE, TY_INT, rv, zero, 0, NULL);
             hi_emit(HI_STORE, TY_INT, tmp, val, 0, NULL);
@@ -1105,14 +1241,14 @@ static int hl_expr(Node *n) {
         if (n->op == TK_LOR) {
             tmp_off = hl_alloc_temp();
             tmp = hl_emit_temp_alloca(TY_INT, tmp_off);
-            lv = hl_expr(n->lhs);
+            lv = hl_cond_val(n->lhs);
             rhs_blk = hir_new_block();
             then_blk = hir_new_block();
             join_blk = hir_new_block();
             hi_emit(HI_BRC, 0, lv, then_blk, rhs_blk, NULL);
 
             hl_switch_block(rhs_blk);
-            rv = hl_expr(n->rhs);
+            rv = hl_cond_val(n->rhs);
             zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
             val = hi_emit(HI_SNE, TY_INT, rv, zero, 0, NULL);
             hi_emit(HI_STORE, TY_INT, tmp, val, 0, NULL);
@@ -1727,6 +1863,30 @@ static int hl_expr(Node *n) {
             hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
             return new_val;
         }
+#ifndef S12CC_X64_HOST
+        if (ty_is_llong(n->ty)) {
+            /* Pair RMW: the scalar tail below is pair-blind (loads,
+             * ops, and stores only the LO word). */
+            int a4;
+            int old_lo;
+            int old_hi;
+            int rv_hi2;
+            old_lo = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+            old_hi = hi_emit(HI_LOAD, TY_INT, a4, -1, 0, NULL);
+            if (ty_is_llong(n->rhs->ty)) {
+                rv_hi2 = hl_hi;
+            } else {
+                hl_widen64(rv, n->rhs->ty, &rv, &rv_hi2);
+            }
+            new_val = hl_ll_op(n->op, (n->ty & TY_UNSIGNED) != 0,
+                               old_lo, old_hi, rv, rv_hi2);
+            hi_emit(HI_STORE, TY_INT, addr, new_val, 0, NULL);
+            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, a4, hl_hi, 0, NULL);
+            return new_val;
+        }
+#endif
         kind = hl_binop_kind(n->op, n->ty);
 #ifndef S12CC_X64_HOST
         if ((kind == HI_DIV || kind == HI_REM) && (n->ty & TY_UNSIGNED) &&
@@ -1770,6 +1930,28 @@ static int hl_expr(Node *n) {
         }
         addr = hl_addr(n->lhs);
         old_val = hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
+#ifndef S12CC_X64_HOST
+        if (ty_is_llong(n->ty)) {
+            /* Pair RMW: carry/borrow across both words; the scalar
+             * path below only touches the LO word. */
+            int a4;
+            int old_hi;
+            int one;
+            int zero_hi;
+            int nl;
+            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+            old_hi = hi_emit(HI_LOAD, TY_INT, a4, -1, 0, NULL);
+            one = hi_emit(HI_ICONST, TY_INT, -1, -1, 1, NULL);
+            zero_hi = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+            nl = hl_ll_op((n->kind == ND_POST_INC) ? TK_PLUS : TK_MINUS, 0,
+                          old_val, old_hi, one, zero_hi);
+            hi_emit(HI_STORE, TY_INT, addr, nl, 0, NULL);
+            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, a4, hl_hi, 0, NULL);
+            hl_hi = old_hi;
+            return old_val;
+        }
+#endif
         /* Float / double: scale is a 1.0 of the right FP type, op is
          * HI_FADD / HI_FSUB. */
         if (ty_is_float(n->ty) || ty_is_double(n->ty)) {
@@ -1825,7 +2007,7 @@ static int hl_expr(Node *n) {
             !ty_is_ptr(n->cond->ty)) {
             int ck;
             int zero;
-            cv = hl_expr(n->cond);
+            cv = hl_cond_val(n->cond);
             ck = h_kind[cv];
             if (n->lhs->val == 1) {
                 /* c ? 1 : 0 */
@@ -1839,7 +2021,7 @@ static int hl_expr(Node *n) {
         }
         tmp_off = hl_alloc_temp();
         tmp = hl_emit_temp_alloca(n->ty, tmp_off);
-        cv = hl_expr(n->cond);
+        cv = hl_cond_val(n->cond);
         then_blk = hir_new_block();
         else_blk = hir_new_block();
         join_blk = hir_new_block();
@@ -2451,7 +2633,7 @@ static void hl_stmt(Node *n) {
 
     /* If / If-else */
     if (n->kind == ND_IF) {
-        cv = hl_expr(n->cond);
+        cv = hl_cond_val(n->cond);
         if (n->els) {
             then_blk = hir_new_block();
             else_blk = hir_new_block();
@@ -2490,7 +2672,7 @@ static void hl_stmt(Node *n) {
         hi_emit(HI_BR, 0, -1, -1, head_blk, NULL);
 
         hl_switch_block(head_blk);
-        cv = hl_expr(n->cond);
+        cv = hl_cond_val(n->cond);
         hi_emit(HI_BRC, 0, cv, body_blk, exit_blk, NULL);
 
         hl_break_blk[hl_loop_depth] = exit_blk;
@@ -2523,7 +2705,7 @@ static void hl_stmt(Node *n) {
         if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, step_blk, NULL);
 
         hl_switch_block(step_blk);
-        cv = hl_expr(n->cond);
+        cv = hl_cond_val(n->cond);
         hi_emit(HI_BRC, 0, cv, body_blk, exit_blk, NULL);
 
         hl_loop_depth = hl_loop_depth - 1;
@@ -2542,7 +2724,7 @@ static void hl_stmt(Node *n) {
         hi_emit(HI_BR, 0, -1, -1, head_blk, NULL);
 
         hl_switch_block(head_blk);
-        cv = hl_expr(n->cond);
+        cv = hl_cond_val(n->cond);
         hi_emit(HI_BRC, 0, cv, body_blk, exit_blk, NULL);
 
         hl_break_blk[hl_loop_depth] = exit_blk;
