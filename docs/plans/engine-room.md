@@ -483,6 +483,17 @@ Milestones, each a gate, none a promise:
    changes cc-a64's lowering too — expect green, but stamp it), and
    consider a cc_* test that reads doubles through deref/index/
    member so the a64 suite would have caught this class.
+   **STAMP EXECUTED (MacBook, same night): expectation FALSIFIED.**
+   d35_fp_loads DIVERGES under cc-a64 — every double read comes back
+   0 (vals[0] as 0000ffff00000000), reproduced identically at the
+   pre-dtoa baseline (566b9ebc), so it is NOT from the dtoa-campaign
+   rebase: the shared lowering fix is correct but the cc-a64
+   BACKEND has its own broken double-load paths beyond it (Session-3
+   float-plan territory — deref/member double loads on a64 never
+   worked; the suite's other FP tests don't read doubles through
+   memory shapes).  The a64 suite therefore now fails at diff-test
+   BY DESIGN — the new corpus test is doing its job.  Fix owed on
+   the cc-a64 side; the rest of the suite is green.
    **THE dtoa CAMPAIGN (same day): stage08's libc gained full FP
    printf — %f/%e/%g and width flags — by compiling David Gay's
    dtoa.c (6,250 lines, VERBATIM) + printf_enhanced.c + convert.c,
