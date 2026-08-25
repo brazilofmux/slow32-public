@@ -134,14 +134,18 @@ test: $(TEST_BINS)
 # without those installed, while still running for anyone who has them.
 
 DIFF_GCC  := $(shell command -v x86_64-linux-gnu-gcc 2>/dev/null)
+# qemu is only needed off-x86-64; a native x86-64 Linux host runs the
+# binaries directly (run.sh falls back to a ulimit-honoring direct exec).
 DIFF_QEMU := $(shell command -v qemu-x86_64-static 2>/dev/null)
+DIFF_NATIVE := $(shell [ "$$(uname -sm)" = "Linux x86_64" ] && echo yes)
 
 diff-test: $(OUT)/cc-x64 $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
 	@echo ""
 	@echo "--- diff-test (cc-x64 vs gcc) ---"
-	@if [ -z "$(DIFF_GCC)" ] || [ -z "$(DIFF_QEMU)" ]; then \
-		echo "  [skip] need x86_64-linux-gnu-gcc and qemu-x86_64-static (install"; \
-		echo "         binutils-x86-64-linux-gnu + gcc-x86-64-linux-gnu + qemu-user-static)"; \
+	@if [ -z "$(DIFF_GCC)" ] || { [ -z "$(DIFF_QEMU)" ] && [ "$(DIFF_NATIVE)" != "yes" ]; }; then \
+		echo "  [skip] need x86_64-linux-gnu-gcc, plus qemu-x86_64-static on"; \
+		echo "         non-x86-64 hosts (install binutils-x86-64-linux-gnu +"; \
+		echo "         gcc-x86-64-linux-gnu + qemu-user-static)"; \
 	else \
 		diff-test/run.sh; \
 	fi

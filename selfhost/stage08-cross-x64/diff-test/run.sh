@@ -23,6 +23,22 @@ GCC="${GCC:-x86_64-linux-gnu-gcc}"
 QEMU="${QEMU:-qemu-x86_64-static}"
 QEMU_STACK="${QEMU_STACK:-67108864}"
 
+# On a native x86-64 Linux host there is nothing to emulate: if qemu is
+# absent, run the binaries directly (in a subshell, honoring qemu's -s
+# guest-stack size via ulimit so deep-recursion cases behave the same).
+run_target() {
+    # args: stack_bytes exe
+    if [ "$QEMU" = "native" ]; then
+        ( ulimit -s $(( $1 / 1024 )) 2>/dev/null; exec "$2" )
+    else
+        "$QEMU" -s "$1" "$2"
+    fi
+}
+if ! command -v "$QEMU" >/dev/null 2>&1 &&
+   [ "$(uname -sm)" = "Linux x86_64" ]; then
+    QEMU="native"
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -69,9 +85,9 @@ run_one() {
     # Run both
     local cc_stdout="$WORK/$name.cc.out"
     local gcc_stdout="$WORK/$name.gcc.out"
-    "$QEMU" -s "$QEMU_STACK" "$cc_exe" > "$cc_stdout" 2>/dev/null
+    run_target "$QEMU_STACK" "$cc_exe" > "$cc_stdout" 2>/dev/null
     local cc_rc=$?
-    "$QEMU" -s "$QEMU_STACK" "$gcc_exe" > "$gcc_stdout" 2>/dev/null
+    run_target "$QEMU_STACK" "$gcc_exe" > "$gcc_stdout" 2>/dev/null
     local gcc_rc=$?
 
     if [ "$cc_rc" = "$gcc_rc" ] && cmp -s "$cc_stdout" "$gcc_stdout"; then
@@ -100,7 +116,9 @@ for tool in "$CC_X64" "$LD_X64" "$CRT0" "$LIBC"; do
     [ -e "$tool" ] || { echo "Missing: $tool — run 'make' first"; exit 2; }
 done
 command -v "$GCC" >/dev/null || { echo "Missing: $GCC"; exit 2; }
-command -v "$QEMU" >/dev/null || { echo "Missing: $QEMU"; exit 2; }
+if [ "$QEMU" != "native" ]; then
+    command -v "$QEMU" >/dev/null || { echo "Missing: $QEMU"; exit 2; }
+fi
 
 # Collect inputs
 #
