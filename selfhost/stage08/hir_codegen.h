@@ -1211,6 +1211,7 @@ static int hcg_fp64_kind(char *nm) {
  * it happen often rather than by luck. */
 static int hcg_fp64_cur = -1;   /* CALL being inlined, or -1 */
 static int hcg_fp64_dst = -1;   /* home pair for its result, or -1 */
+static int hcg_fp64_spill_direct;  /* result will be spilled from r4:r5 */
 
 static int hcg_pair_reg(int lo_inst, int hi_inst) {
     int a;
@@ -1261,8 +1262,13 @@ static void hcg_fp64_emit(int fpk, int base) {
         /* Write the result straight into its home pair when it has one,
          * which also skips the r1:r2 hop the generic call path uses. */
         hcg_fp64_dst = -1;
-        if (hcg_fp64_cur >= 0)
+        hcg_fp64_spill_direct = 0;
+        if (hcg_fp64_cur >= 0) {
             hcg_fp64_dst = hcg_pair_reg(hcg_fp64_cur, hcg_fp64_cur + 1);
+            if (hcg_fp64_dst < 0 && ra_reg[hcg_fp64_cur] < 0 &&
+                ra_reg[hcg_fp64_cur + 1] < 0)
+                hcg_fp64_spill_direct = 1;
+        }
         {
             int rd;
             rd = (hcg_fp64_dst >= 0) ? hcg_fp64_dst : 4;
@@ -1270,7 +1276,7 @@ static void hcg_fp64_emit(int fpk, int base) {
             else if (fpk == 1) cg_rrr("fsub.d", rd, pa, pb);
             else if (fpk == 2) cg_rrr("fmul.d", rd, pa, pb);
             else cg_rrr("fdiv.d", rd, pa, pb);
-            if (hcg_fp64_dst < 0) {
+            if (hcg_fp64_dst < 0 && !hcg_fp64_spill_direct) {
                 cg_rri("addi", 1, 4, 0);
                 cg_rri("addi", 2, 5, 0);
             }
@@ -1310,6 +1316,65 @@ static void hcg_fp64_emit(int fpk, int base) {
     else cg_rrr("fcvt.l.d", 4, 4, 0);
     cg_rri("addi", 1, 4, 0);
     cg_rri("addi", 2, 5, 0);
+}
+
+/* True when this ADDI is only ever consumed as the address of a
+ * LOAD/STORE that will fold it into a 12-bit displacement, so emitting
+ * it would produce a dead instruction.  DCE cannot know this: it runs
+ * long before BURG chooses the fold.  Every `x = base + 4` feeding the
+ * hi word of a double load was costing one dead instruction.
+ */
+static int hcg_addi_lnt(int i) {
+    int pat;
+    pat = bg_sel[i];
+    if (pat >= 0) return bg_plnt[pat];
+    if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ALLOCA) return BG_FADDR;
+    return -1;
+}
+
+static int hcg_dbg_addi[6];
+static int hcg_addi_folds_away(int idx) {
+    int i;
+    int users;
+    int folded;
+    int base_i;
+    int off;
+    int lnt_i;
+
+    hcg_dbg_addi[0]++;
+    if (h_kind[idx] != HI_ADDI) return 0;
+    if (ra_reg[idx] < 0) { hcg_dbg_addi[1]++; return 0; }
+    if (bg_uses[idx] <= 0) { hcg_dbg_addi[2]++; return 0; }
+
+    users = 0;
+    folded = 0;
+    i = 0;
+    while (i < h_ninst) {
+        int k2;
+        k2 = h_kind[i];
+        if (h_src1[i] == idx && (k2 == HI_LOAD || k2 == HI_STORE)) {
+            users = users + 1;
+            lnt_i = hcg_addi_lnt(i);
+            if (lnt_i != BG_FADDR && lnt_i != BG_SADDR &&
+                hcg_addr_base_off(idx, &base_i, &off) && hcg_is_i12(off))
+                folded = folded + 1;
+        } else if (h_src1[i] == idx || h_src2[i] == idx) {
+            hcg_dbg_addi[3]++;
+            return 0;                        /* used as a value somewhere */
+        }
+        i = i + 1;
+    }
+    /* Requiring users == bg_uses[idx] proves this scan saw EVERY use --
+     * bg_uses also counts call arguments and phi operands, which this
+     * walk does not look at.  One ADDI commonly feeds both the hi load
+     * and the hi store of the same double, so several uses is normal;
+     * what matters is that they all fold. */
+    if (!(users > 0 && users == folded && users == bg_uses[idx])) {
+        hcg_dbg_addi[4]++;
+        return 0;
+    }
+    hcg_dbg_addi[5]++;
+    return 1;
 }
 
 static void hcg_inst(int idx) {
@@ -1979,6 +2044,9 @@ static void hcg_inst(int idx) {
 
     /* ADDI — dispatched by BURG left-child NT */
     if (k == HI_ADDI) {
+        /* Suppress an address ADDI that every consumer folds into its
+         * own displacement -- see hcg_addi_folds_away. */
+        if (hcg_addi_folds_away(idx)) return;
         rd = hcg_dst(idx);
         if (lnt == BG_FADDR) {
             /* ADDI(faddr, imm): combined offset precomputed */
@@ -2199,6 +2267,18 @@ static void hcg_inst(int idx) {
             hcg_fp64_dst = -1;
             hcg_fp64_emit(fpk, base);
             if (hcg_fp64_dst >= 0) return;   /* already in its home pair */
+            /* Result is in r4:r5.  If it is going to be spilled anyway,
+             * store straight from there rather than moving it through
+             * the r1:r2 call-return convention first -- two fewer
+             * instructions per spilled operation, and in fp64-heavy
+             * code most temporaries do spill. */
+            if (fpk <= 3 && hcg_fp64_cur == idx &&
+                ra_reg[idx] < 0 && ra_reg[idx + 1] < 0) {
+                hcg_spill_from(idx, 4);
+                hcg_spill_from(idx + 1, 5);
+                return;
+            }
+
         } else {
 
         /* ABI walk: aligned f64 pairs, back-filled ints, ordered

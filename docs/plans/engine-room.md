@@ -709,8 +709,42 @@ regression 78/78, cross-engine differential (only the documented
 KNOWN_DIVERGENT set). Five of the six stage08 tool binaries recompiled
 **byte-identical** — the change is a true no-op for integer-only code.
 
-Remaining distance to clang on fp64 is mostly inlining, plus the
-residual moves where no pair could be claimed (15.7 per op vs 0.6).
+**Second round (same day): pairs allocated as a UNIT — 2.40x -> 2.17x
+on LINPACK, and 2.92x on a scalar-double kernel.**
+
+LLVM models `f64` on this same ISA as a first-class register class
+(`GPRPair` over `RegisterTuples` of even/odd GPRs), so its allocator
+colours a double as one thing and alignment falls out. Ours had two
+independent values plus a placement preference. Two further changes:
+
+- **Pairs are coloured before singles.** An aligned pair needs two
+  *adjacent* free colours, and scattered singles destroy those faster
+  than they consume capacity — 12 of 30 claims were failing purely for
+  want of a free aligned pair. On its own this was a NET LOSS, which is
+  what exposed the real problem:
+- **Pairs share fate.** When a claim failed the halves were coloured
+  independently, so one landed in a register and the other spilled —
+  paying spill traffic AND the moves to rebuild the pair in scratch.
+  The hot loop's 26 memory ops had merely become 37 register moves. A
+  pair that cannot be placed now leaves BOTH halves in memory.
+  "Allocated together or spilled together" is what a real pair class
+  gives for free.
+
+Also ported: suppression of address ADDIs that BURG folds into a
+load/store displacement (DCE runs long before the fold is chosen), and
+direct spilling of fp64 results from `r4:r5` instead of via `r1:r2`.
+
+Prototyped in `fortran/` throughout, then ported here — the Fortran
+compiler is now the place fp64 codegen gets exercised, because it is
+the only front end that leans on doubles.
+
+Two experiments were run and REJECTED on measurement, before any of
+this: exempting fp64 ops from the call-crossing analysis (17% worse,
+and incorrect — the whole test suite passed anyway), and a precise
+`r3-r7`-only clobber model (spills fell, instructions rose). Register
+count was never the binding constraint, so the register-convention
+change those would have needed — carrying through f77, stage08 and
+~/llvm in lockstep — was not worth its blast radius.
 
 ## What not to do
 
