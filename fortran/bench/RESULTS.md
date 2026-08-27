@@ -72,17 +72,42 @@ scan is proven to have seen every use (one ADDI commonly feeds both the
 hi load and the hi store). 35 suppressed on this kernel; DAXPY's hot
 loop went 19 → 17 instructions.
 
-## The biggest remaining lever: doubles never live in registers
+## Doubles now live in registers (fixed)
 
-A program with one `DOUBLE PRECISION` variable and one integer emits
-**twelve frame accesses**. Double locals are never register-promoted,
-because reaching the hi word takes the alloca's address (`ADDI base,4`)
-and every promotion scan treats an address-taken alloca as
-unpromotable. So every double in every Fortran program lives in memory.
+Double locals were **never** register-promoted: reaching a double's hi
+word takes the alloca's address (`ADDI base,4`), and every promotion
+scan treats an address-taken alloca as unpromotable. A routine with one
+double and one integer emitted twelve frame accesses.
 
-Fixing it needs **pair-aware mem2reg** — one alloca promoted to two SSA
-values — which is a real change to `hir_ssa.h`. It is almost certainly
-where the next large win is, and it would benefit `stage08` equally.
+Fixed without touching the promoter, by removing the shape it cannot
+handle rather than teaching it about pairs: a scalar double local now
+gets **two allocas**, lo and hi, emitted together, with the hi slot
+keeping the frame offset the `+4` would have addressed. Neither slot
+ever has its address taken, so each has only direct word LOAD/STOREs —
+exactly what `ssa_find_promo` accepts. The one-double loop went from 12
+frame accesses to a body with none at all.
+
+Taking such a double's address escapes **both** halves. The promoter
+sees the lo alloca in `h_carg` and rejects it, but the hi alloca
+appears nowhere and would have stayed promoted while a callee read
+stale memory at offset+4. A dead `ADDI` on the hi slot is an
+address-taking use the scan rejects, and DCE removes it afterwards, so
+it costs nothing in the emitted code.
+
+**On LINPACK this changes nothing** (2.144× → 2.145×): its doubles are
+array elements and dummy arguments, not scalar locals. The win is in a
+shape LINPACK does not have, so `bench/mandel.f` measures it — a
+Mandelbrot iteration where every hot value is a double scalar:
+
+| | instructions | ratio |
+|---|---:|---:|
+| clang -O2 | 23,399,759 | 1.00× |
+| f77, splitting off | 186,807,480 | 7.98× |
+| f77, splitting on | 126,669,044 | **5.41×** (−32%) |
+
+Note what that says: the **scalar-double case is far worse than
+LINPACK's 2.14×**, so it is where the remaining headroom is, not in the
+array code. Disable with `F77_NO_SPLIT=1`.
 
 ## Scalar dummy copy-in was tried, and lost
 

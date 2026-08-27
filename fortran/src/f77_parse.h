@@ -59,6 +59,24 @@ static int  f77_label_base;
  * loads, stores and subscripting need no special case. */
 static int  f77_sarg[F77_MAX_SYM];
 
+/* Hi-word slot for a scalar DOUBLE local, or -1.
+ *
+ * A double is an 8-byte alloca whose hi word is normally reached with
+ * `ADDI base,4` at each use.  That ADDI is a use of the alloca which is
+ * neither a LOAD nor a STORE, and every mem2reg scan reads such a use
+ * as address-taken -- so NO double was ever promoted to a register, and
+ * every one lived in memory.  A routine with one double and one integer
+ * emitted twelve frame accesses.
+ *
+ * Giving the hi word its OWN alloca, emitted beside the lo one, means
+ * neither slot ever has its address taken: each has only direct word
+ * LOAD/STOREs, which is exactly what the promoter accepts.  The hi slot
+ * keeps the frame offset the ADDI would have addressed, so the layout
+ * is unchanged. */
+static int  f77_shi[F77_MAX_SYM];
+static int  f77_split_count;
+static int  f77_split_on = -1;
+
 /* F77 implicit typing: I-N are INTEGER, everything else REAL. */
 static int f77_implicit_ty(char *nm) {
     int c;
@@ -81,6 +99,7 @@ static int f77_sym(char *nm) {
     f77_sty[f77_nsym] = f77_implicit_ty(nm);
     f77_srank[f77_nsym] = 0;
     f77_sarg[f77_nsym] = 0;
+    f77_shi[f77_nsym] = -1;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
@@ -119,6 +138,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sty[s] = f77_implicit_ty(nm);
     f77_srank[s] = 0;
     f77_sarg[s] = 1;
+    f77_shi[s] = -1;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
@@ -142,6 +162,7 @@ static int f77_sym_nelem(int s) {
  * second pass over the declarations. */
 static void f77_realloc_sym(int s) {
     int bytes;
+    f77_shi[s] = -1;
     if (f77_sarg[s]) {
         /* By-reference dummy: storage belongs to the caller.  Only the
          * type and shape are recorded here. */
@@ -153,6 +174,20 @@ static void f77_realloc_sym(int s) {
     h_val[f77_sval[s]] = 0 - f77_frame;
     h_ty[f77_sval[s]] = f77_sty[s];
     hl_aoff[hl_nalloca - 1] = 0 - f77_frame;
+
+    /* Scalar double: give the hi word its own promotable slot. */
+    if (f77_split_on < 0) f77_split_on = getenv("F77_NO_SPLIT") ? 0 : 1;
+    if (f77_split_on && f77_srank[s] == 0 && ty_size(f77_sty[s]) == 8) {
+        h_ty[f77_sval[s]] = TY_INT;                 /* lo word only */
+        f77_shi[s] = hi_emit(HI_ALLOCA, TY_INT, -1, -1,
+                             0 - f77_frame + 4, NULL);
+        if (hl_nalloca < HL_MAX_ALLOCA) {
+            hl_ainst[hl_nalloca] = f77_shi[s];
+            hl_aoff[hl_nalloca] = 0 - f77_frame + 4;
+            hl_nalloca = hl_nalloca + 1;
+        }
+        f77_split_count = f77_split_count + 1;
+    }
     {
         /* Keep the alloca registry entry pointing at this symbol's
          * instruction, wherever it landed. */
@@ -244,6 +279,9 @@ static int f77_find_func(char *nm);
 static int f77_actual_addr(void);
 static int f77_urty_of(int u);
 static int f77_load_at(int addr, int ty);
+static int f77_load_sym(int s);
+static void f77_store_sym_val(int s, int v, int vty, int vhi);
+static void f77_store_at(int addr, int ty, int v, int vty, int vhi);
 static int f77_cur_unit;
 static int f77_can_inline(int u);
 static int f77_inline_unit_body(int u, int *addrs, int nargs);
@@ -467,6 +505,30 @@ static int f77_subscript_addr(int s) {
     else if (t == 8) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
     else byte = hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
     return hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
+}
+
+/* Load a scalar symbol.  When it has a paired hi slot, both halves are
+ * direct loads of promotable allocas -- no address arithmetic, so
+ * mem2reg can keep the whole double in registers. */
+static int f77_load_sym(int s) {
+    int v;
+    ex_ty = f77_sty[s];
+    if (f77_shi[s] >= 0) {
+        v = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
+        ex_hi = hi_emit(HI_LOAD, TY_INT, f77_shi[s], -1, 0, NULL);
+        return v;
+    }
+    return f77_load_at(f77_sval[s], f77_sty[s]);
+}
+
+static void f77_store_sym_val(int s, int v, int vty, int vhi) {
+    if (f77_shi[s] >= 0) {
+        v = f77_cvt(v, &vhi, vty, f77_sty[s]);
+        hi_emit(HI_STORE, TY_INT, f77_sval[s], v, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, f77_shi[s], vhi, 0, NULL);
+        return;
+    }
+    f77_store_at(f77_sval[s], f77_sty[s], v, vty, vhi);
 }
 
 /* Load a value of type `ty` from `addr`, setting ex_ty/ex_hi. */
@@ -754,7 +816,7 @@ static int f77_primary(void) {
                 /* Splice the body, then read its result variable. */
                 int rs;
                 rs = f77_inline_unit_body(u, addrs, nargs);
-                if (rs >= 0) return f77_load_at(f77_sval[rs], f77_sty[rs]);
+                if (rs >= 0) return f77_load_sym(rs);
                 ex_ty = TY_INT;
                 return f77_iconst(0);
             }
@@ -783,7 +845,7 @@ static int f77_primary(void) {
             addr = f77_subscript_addr(s);
             return f77_load_at(addr, f77_sty[s]);
         }
-        return f77_load_at(f77_sval[s], f77_sty[s]);
+        return f77_load_sym(s);
     }
     f77_error("bad expression");
     ex_ty = TY_INT;
@@ -1119,7 +1181,10 @@ static void f77_stmt_assign(void) {
     f77_tok();
     v = f77_expr();
     vty = ex_ty;
-    f77_store_at(addr, f77_sty[s], v, vty, ex_hi);
+    if (addr == f77_sval[s] && f77_srank[s] == 0)
+        f77_store_sym_val(s, v, vty, ex_hi);
+    else
+        f77_store_at(addr, f77_sty[s], v, vty, ex_hi);
 }
 
 /* A dimension bound: a signed integer constant.  F77 allows constant
@@ -1356,7 +1421,7 @@ static void f77_emit_return(void) {
         return;
     }
     if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0) {
-        v = f77_load_at(f77_sval[f77_result_sym], f77_sty[f77_result_sym]);
+        v = f77_load_sym(f77_result_sym);
         if (ex_ty == TY_DOUBLE) {
             /* Wide result: lo in src1, hi in src2, and ty stays 0 --
              * the convention the C compiler uses for llong/double
@@ -1427,6 +1492,15 @@ static int f77_actual_addr(void) {
             f77_tok();
             return f77_subscript_addr(s);
         }
+        /* Taking the address of a split double escapes BOTH halves.
+         * The promoter sees the lo alloca in h_carg and rejects it, but
+         * the hi alloca appears nowhere -- it would stay promoted while
+         * the callee read stale memory at offset+4.  A dead ADDI on the
+         * hi slot is an address-taking use, which the promotion scan
+         * rejects; DCE removes it afterwards, so it costs nothing in
+         * the emitted code. */
+        if (f77_shi[s] >= 0)
+            hi_emit(HI_ADDI, HL_ADDR_TY, f77_shi[s], -1, 0, NULL);
         return f77_sval[s];
     }
 
@@ -1525,7 +1599,8 @@ static int f77_bind_actual(char *nm, int addr) {
     strcpy(f77_sname[s], nm);
     f77_sty[s] = f77_implicit_ty(nm);
     f77_srank[s] = 0;
-    f77_sarg[s] = 1;                 /* by-reference: value is an address */
+    f77_sarg[s] = 1;
+    f77_shi[s] = -1;                 /* by-reference: value is an address */
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = addr;
     f77_nsym = f77_nsym + 1;
@@ -1828,7 +1903,7 @@ static void f77_emit_copyout(void) {
     while (i < f77_ci_n) {
         s = f77_ci_sym[i];
         if (!f77_sarg[s]) {
-            v = f77_load_at(f77_sval[s], f77_sty[s]);
+            v = f77_load_sym(s);
             f77_store_at(f77_ci_addr[i], f77_sty[s], v, f77_sty[s], ex_hi);
         }
         i = i + 1;

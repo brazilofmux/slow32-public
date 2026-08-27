@@ -209,6 +209,9 @@ int main(int argc, char **argv) {
 
     if (getenv("F77_PAIR_STATS")) {
         int z;
+        fdputs("split doubles: ", 2);
+        fdputuint(2, (unsigned int)f77_split_count);
+        fdputc(10, 2);
         fdputs("pair-pref hits: ", 2);
         fdputuint(2, (unsigned int)ra_stat_pair_pref);
         fdputs("  addi[calls,spill,nouse,valuse,mismatch,HIT]=", 2);
