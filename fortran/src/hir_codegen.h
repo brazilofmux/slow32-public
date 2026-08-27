@@ -1178,9 +1178,19 @@ static void hcg_push_stack_args(int base, int nargs) {
  * with a trailing r0 like the wrappers and the f32 emitters. */
 static int hcg_fp64_kind(char *nm) {
     if (!nm) return -1;
+    /* DIVERGENCE FROM selfhost (fortran/ only): __fp32_sqrt and
+     * __fp64_sqrt are recognised here so SQRT/DSQRT reach the hardware
+     * FSQRT.S / FSQRT.D instructions.  The C compiler routes sqrt
+     * through HI_FSQRT, which this backend does not implement -- and
+     * silently emits NOTHING for -- so Fortran would otherwise have to
+     * call a libm function whose entire body is one instruction. */
+    if (nm[0] == '_' && nm[1] == '_' && nm[2] == 'f' && nm[3] == 'p' &&
+        nm[4] == '3' && nm[5] == '2' && nm[6] == '_' &&
+        strcmp(nm + 7, "sqrt") == 0) return 15;
     if (nm[0] != '_' || nm[1] != '_' || nm[2] != 'f' || nm[3] != 'p' ||
         nm[4] != '6' || nm[5] != '4' || nm[6] != '_') return -1;
     nm = nm + 7;
+    if (strcmp(nm, "sqrt") == 0) return 14;
     if (strcmp(nm, "add") == 0) return 0;
     if (strcmp(nm, "sub") == 0) return 1;
     if (strcmp(nm, "mul") == 0) return 2;
@@ -1214,6 +1224,21 @@ static void hcg_fp64_emit(int fpk, int base) {
         else cg_rrr("fdiv.d", 4, 4, 6);
         cg_rri("addi", 1, 4, 0);
         cg_rri("addi", 2, 5, 0);
+        return;
+    }
+    /* Square root, f64: pair r4:r5 (see the divergence note above). */
+    if (fpk == 14) {
+        hcg_into(4, h_carg[base + 0]);
+        hcg_into(5, h_carg[base + 1]);
+        cg_rrr("fsqrt.d", 4, 4, 0);
+        cg_rri("addi", 1, 4, 0);
+        cg_rri("addi", 2, 5, 0);
+        return;
+    }
+    /* Square root, f32: single word. */
+    if (fpk == 15) {
+        hcg_into(3, h_carg[base + 0]);
+        cg_rrr("fsqrt.s", 1, 3, 0);
         return;
     }
     /* Negate: pair r4:r5 */

@@ -215,9 +215,41 @@ No linker change is required, and none should be added for this.
 
    Not yet: adjustable dimensions in dummy arguments, which come with
    subprograms.
-7. **The app that justifies it.** Per the desk's own rule, the language
-   earns its place through a program, not a test suite: a LINPACK-shaped
-   kernel plus a plotter routine on the tube.
+7. **The app that justifies it.** ✅ **LINPACK RUNS 2026-08-27.**
+   `tests/f77/linpack.f` is the real thing — `DGEFA`, `DGESL`, `DAXPY`,
+   `DSCAL`, `DDOT`, `IDAMAX` in the shapes they actually take: adjustable
+   dimensions `A(LDA,1)`, by-reference arguments, `DABS`/`DMAX1`,
+   column-major traversal, and the pivot search. It factors a
+   diagonally-dominant matrix, solves `A*x = b` for a right-hand side
+   whose exact solution is all ones, and checks the residual — matching
+   gfortran exactly.
+
+   Getting there needed three things, all now done:
+
+   - **Adjustable dimensions.** `A(LDA,1)` inside a subprogram, where
+     `LDA` is itself a dummy argument, so the column stride is a
+     run-time value. The stride stays a compile-time constant until the
+     first run-time extent appears and becomes a value from then on; the
+     last dimension's extent is never needed, which is why both
+     `A(LDA,1)` and `A(LDA,*)` work.
+   - **Intrinsics.** `ABS`/`IABS`/`DABS` (sign-bit clear for FP, the
+     branchless `(x^(x>>31))-(x>>31)` for integers), the `MAX`/`MIN`
+     families n-ary, `MOD`, `SIGN`, the conversions, and `SQRT`/`DSQRT`.
+     `MAX`/`MIN` and `SIGN` select branchlessly via
+     `b ^ ((a^b) & -cond)` — SLOW-32 has no conditional move, and a
+     branch mid-expression would mean splitting the block.
+   - **A real bug in argument passing.** `f77_actual_addr` took any
+     leading NAME as the whole actual, so `IDAMAX(N-K+1, A(K,K), 1)`
+     passed `N`'s address and left `-K+1` unconsumed. It survived
+     earlier tests only because their actuals happened to start with a
+     digit. Now a text-level lookahead over the assembled statement
+     decides whether a NAME (plus an optional balanced subscript list)
+     really is the entire argument, which avoids parse-and-rewind
+     un-emitting HIR that subscripts had already produced.
+
+   Still owed for the *benchmark* proper rather than the kernel: the
+   FORMAT engine, for printing the timing and residual table.
+
 
 ## Testing
 

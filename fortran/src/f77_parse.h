@@ -38,7 +38,12 @@ static int  f77_sty[F77_MAX_SYM];      /* TY_INT / TY_FLOAT / TY_DOUBLE */
 static int  f77_sval[F77_MAX_SYM];     /* HIR alloca */
 static int  f77_srank[F77_MAX_SYM];    /* 0 = scalar */
 static int  f77_slo[F77_MAX_SYM][F77_MAX_RANK];   /* lower bound per dim */
-static int  f77_sext[F77_MAX_SYM][F77_MAX_RANK];  /* extent per dim */
+static int  f77_sext[F77_MAX_SYM][F77_MAX_RANK];  /* constant extent */
+/* Adjustable dimensions: DOUBLE PRECISION A(LDA,1) inside a subprogram,
+ * where LDA is itself a dummy argument.  LINPACK is built on this.  When
+ * f77_sextsym[s][k] >= 0 the extent is that symbol's runtime value and
+ * f77_sext[s][k] is meaningless. */
+static int  f77_sextsym[F77_MAX_SYM][F77_MAX_RANK];
 static int  f77_nsym;
 
 /* Is `s` a dummy argument?  Dummy arguments are passed BY REFERENCE in
@@ -69,6 +74,7 @@ static int f77_sym(char *nm) {
     f77_sty[f77_nsym] = f77_implicit_ty(nm);
     f77_srank[f77_nsym] = 0;
     f77_sarg[f77_nsym] = 0;
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
                                  0 - f77_frame, NULL);
@@ -106,6 +112,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sty[s] = f77_implicit_ty(nm);
     f77_srank[s] = 0;
     f77_sarg[s] = 1;
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
     return s;
@@ -200,6 +207,7 @@ static int f77_expr(void);
 static int f77_find_func(char *nm);
 static int f77_actual_addr(void);
 static int f77_urty_of(int u);
+static int f77_load_at(int addr, int ty);
 static int f77_cur_unit;
 
 /* DOUBLE PRECISION on SLOW-32 is a PAIR of 32-bit values: the lo word is
@@ -221,6 +229,19 @@ static int f77_fp64_call2(char *name, int alo, int ahi, int blo, int bhi, int *r
     h_carg[h_ncarg] = blo; h_ncarg = h_ncarg + 1;
     h_carg[h_ncarg] = bhi; h_ncarg = h_ncarg + 1;
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, name);
+    h_cbase[r] = cb;
+    if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    return r;
+}
+
+/* Unary operation on a double PAIR: exactly two argument words. */
+static int f77_fp64_pair1(char *name, int alo, int ahi, int *rhi) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = alo; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = ahi; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, name);
     h_cbase[r] = cb;
     if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     return r;
@@ -320,14 +341,17 @@ static int f77_rconst(double d) {
  * subtraction, and constant subscripts fold away entirely downstream. */
 static int f77_subscript_addr(int s) {
     int off;
-    int stride;
+    int cstride;      /* constant part of the running stride */
+    int vstride;      /* runtime stride value, or -1 while still constant */
     int k;
     int idx;
     int t;
     int byte;
+    int e;
 
     off = f77_iconst(0);
-    stride = 1;
+    cstride = 1;
+    vstride = -1;
     k = 0;
     for (;;) {
         idx = f77_expr();
@@ -335,10 +359,32 @@ static int f77_subscript_addr(int s) {
         if (k < f77_srank[s]) {
             if (f77_slo[s][k] != 0)
                 idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 0 - f77_slo[s][k], NULL);
-            if (stride != 1)
-                idx = hi_emit(HI_MUL, TY_INT, idx, f77_iconst(stride), 0, NULL);
+            if (vstride >= 0)
+                idx = hi_emit(HI_MUL, TY_INT, idx, vstride, 0, NULL);
+            else if (cstride != 1)
+                idx = hi_emit(HI_MUL, TY_INT, idx, f77_iconst(cstride), 0, NULL);
             off = hi_emit(HI_ADD, TY_INT, off, idx, 0, NULL);
-            stride = stride * f77_sext[s][k];
+
+            /* Advance the stride by this dimension's extent.  Once any
+             * extent is a run-time value the stride becomes one too;
+             * the last dimension's extent is never needed, which is why
+             * A(LDA,1) and A(LDA,*) both work. */
+            if (f77_sextsym[s][k] >= 0) {
+                e = f77_load_at(f77_sval[f77_sextsym[s][k]],
+                                f77_sty[f77_sextsym[s][k]]);
+                if (vstride >= 0) {
+                    vstride = hi_emit(HI_MUL, TY_INT, vstride, e, 0, NULL);
+                } else if (cstride == 1) {
+                    vstride = e;
+                } else {
+                    vstride = hi_emit(HI_MUL, TY_INT, e, f77_iconst(cstride), 0, NULL);
+                }
+            } else if (vstride >= 0) {
+                vstride = hi_emit(HI_MUL, TY_INT, vstride,
+                                  f77_iconst(f77_sext[s][k]), 0, NULL);
+            } else {
+                cstride = cstride * f77_sext[s][k];
+            }
         }
         k = k + 1;
         if (lx_t != T_COMMA) break;
@@ -383,6 +429,91 @@ static void f77_store_at(int addr, int ty, int v, int vty, int vhi) {
     hi_emit(HI_STORE, ty, addr, v, 0, NULL);
 }
 
+/* --- intrinsic functions --------------------------------------------- */
+
+/* Branchless select: cond ? a : b, via  b ^ ((a^b) & -cond).
+ * SLOW-32 has no conditional move, and a branch inside an expression
+ * would mean splitting the current block mid-expression, so the mask
+ * form is both simpler here and better code. */
+static int f77_select(int cond, int a, int b) {
+    int m;
+    int x;
+    m = hi_emit(HI_NEG, TY_INT, cond, -1, 0, NULL);
+    x = hi_emit(HI_XOR, TY_INT, a, b, 0, NULL);
+    x = hi_emit(HI_AND, TY_INT, x, m, 0, NULL);
+    return hi_emit(HI_XOR, TY_INT, b, x, 0, NULL);
+}
+
+#define IN_NONE   0
+#define IN_ABS    1
+#define IN_MAX    2
+#define IN_MIN    3
+#define IN_MOD    4
+#define IN_INT    5
+#define IN_REAL   6
+#define IN_DBLE   7
+#define IN_SQRT   8
+#define IN_SIGN   9
+
+/* F77 intrinsic names are type-decorated (ABS/IABS/DABS, MAX0/AMAX1/
+ * DMAX1); the operation is the same and the operand types decide the
+ * lowering, so the decorations all fold onto one id here. */
+static int f77_intrinsic(char *nm) {
+    if (strcmp(nm, "ABS") == 0 || strcmp(nm, "IABS") == 0 ||
+        strcmp(nm, "DABS") == 0) return IN_ABS;
+    if (strcmp(nm, "MAX") == 0 || strcmp(nm, "MAX0") == 0 ||
+        strcmp(nm, "AMAX1") == 0 || strcmp(nm, "DMAX1") == 0 ||
+        strcmp(nm, "AMAX0") == 0 || strcmp(nm, "MAX1") == 0) return IN_MAX;
+    if (strcmp(nm, "MIN") == 0 || strcmp(nm, "MIN0") == 0 ||
+        strcmp(nm, "AMIN1") == 0 || strcmp(nm, "DMIN1") == 0 ||
+        strcmp(nm, "AMIN0") == 0 || strcmp(nm, "MIN1") == 0) return IN_MIN;
+    if (strcmp(nm, "MOD") == 0 || strcmp(nm, "AMOD") == 0 ||
+        strcmp(nm, "DMOD") == 0) return IN_MOD;
+    if (strcmp(nm, "INT") == 0 || strcmp(nm, "IDINT") == 0 ||
+        strcmp(nm, "IFIX") == 0) return IN_INT;
+    if (strcmp(nm, "REAL") == 0 || strcmp(nm, "FLOAT") == 0 ||
+        strcmp(nm, "SNGL") == 0) return IN_REAL;
+    if (strcmp(nm, "DBLE") == 0 || strcmp(nm, "DFLOAT") == 0) return IN_DBLE;
+    if (strcmp(nm, "SQRT") == 0 || strcmp(nm, "DSQRT") == 0) return IN_SQRT;
+    if (strcmp(nm, "SIGN") == 0 || strcmp(nm, "ISIGN") == 0 ||
+        strcmp(nm, "DSIGN") == 0) return IN_SIGN;
+    return IN_NONE;
+}
+
+/* |x|: for FP just clear the sign bit; for an integer use the standard
+ * branchless (x ^ (x>>31)) - (x>>31). */
+static int f77_abs(int v, int ty, int *hi) {
+    int m;
+    if (ty == TY_DOUBLE) {
+        *hi = hi_emit(HI_AND, TY_INT, *hi, f77_iconst(0x7fffffff), 0, NULL);
+        return v;
+    }
+    if (ty == TY_FLOAT)
+        return hi_emit(HI_AND, TY_FLOAT, v, f77_iconst(0x7fffffff), 0, NULL);
+    m = hi_emit(HI_SRA, TY_INT, v, f77_iconst(31), 0, NULL);
+    v = hi_emit(HI_XOR, TY_INT, v, m, 0, NULL);
+    return hi_emit(HI_SUB, TY_INT, v, m, 0, NULL);
+}
+
+/* max/min of two already-balanced operands. */
+static int f77_minmax(int want_max, int a, int ahi, int b, int bhi,
+                      int ty, int *rhi) {
+    int c;
+    if (ty == TY_DOUBLE) {
+        c = want_max ? f77_fp64_call2("__fp64_lt", b, bhi, a, ahi, NULL)
+                     : f77_fp64_call2("__fp64_lt", a, ahi, b, bhi, NULL);
+        *rhi = f77_select(c, ahi, bhi);
+        return f77_select(c, a, b);
+    }
+    if (ty == TY_FLOAT)
+        c = want_max ? hi_emit(HI_FLT, TY_INT, b, a, 0, NULL)
+                     : hi_emit(HI_FLT, TY_INT, a, b, 0, NULL);
+    else
+        c = want_max ? hi_emit(HI_SGT, TY_INT, a, b, 0, NULL)
+                     : hi_emit(HI_SLT, TY_INT, a, b, 0, NULL);
+    return f77_select(c, a, b);
+}
+
 static int f77_primary(void) {
     int v;
     int s;
@@ -409,16 +540,8 @@ static int f77_primary(void) {
         save = ex_ty;
         vhi = ex_hi;
         if (save == TY_DOUBLE) {
-            int cb;
-            int r;
-            cb = h_ncarg;
-            h_carg[h_ncarg] = v;   h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = vhi; h_ncarg = h_ncarg + 1;
-            r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_neg");
-            h_cbase[r] = cb;
-            ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             ex_ty = TY_DOUBLE;
-            return r;
+            return f77_fp64_pair1("__fp64_neg", v, vhi, &ex_hi);
         }
         if (save == TY_FLOAT) return hi_emit(HI_FNEG, TY_FLOAT, v, -1, 0, NULL);
         return hi_emit(HI_NEG, TY_INT, v, -1, 0, NULL);
@@ -427,8 +550,110 @@ static int f77_primary(void) {
     if (lx_t == T_NAME) {
         char nm[F77_MAX_NAME];
         int u;
+        int in;
         strcpy(nm, lex_name);
         u = f77_find_func(nm);
+
+        /* Intrinsics, unless a unit in this file defines the name --
+         * a user FUNCTION shadows the intrinsic of the same name. */
+        in = (u < 0) ? f77_intrinsic(nm) : IN_NONE;
+        if (in != IN_NONE) {
+            int a; int ahi; int aty;
+            int b; int bhi; int bty;
+            int rty;
+            int qzero_hi;
+            qzero_hi = -1;
+            f77_tok();
+            if (lx_t != T_LP) { f77_error("intrinsic needs arguments"); return f77_iconst(0); }
+            f77_tok();
+            a = f77_expr(); aty = ex_ty; ahi = ex_hi;
+
+            if (in == IN_ABS) {
+                a = f77_abs(a, aty, &ahi);
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                ex_ty = aty; ex_hi = ahi;
+                return a;
+            }
+            if (in == IN_INT || in == IN_REAL || in == IN_DBLE) {
+                rty = (in == IN_INT) ? TY_INT : (in == IN_REAL ? TY_FLOAT : TY_DOUBLE);
+                a = f77_cvt(a, &ahi, aty, rty);
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                ex_ty = rty; ex_hi = ahi;
+                return a;
+            }
+            if (in == IN_SQRT) {
+                /* SLOW-32 has FSQRT, but the HI_FSQRT path is only wired
+                 * for single-value doubles; the pair form goes through
+                 * libm, which the DBT intercepts to a native call. */
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                if (aty == TY_DOUBLE) {
+                    /* Inlined by the backend to a single FSQRT.D; the
+                     * symbol never reaches the linker. */
+                    ex_ty = TY_DOUBLE;
+                    return f77_fp64_pair1("__fp64_sqrt", a, ahi, &ex_hi);
+                }
+                {
+                    a = f77_cvt(a, &ahi, aty, TY_FLOAT);
+                    ex_ty = TY_FLOAT;
+                    return f77_fp64_call1("__fp32_sqrt", a, NULL);
+                }
+            }
+
+            /* Binary and n-ary forms: MAX/MIN fold pairwise. */
+            for (;;) {
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+                b = f77_expr(); bty = ex_ty; bhi = ex_hi;
+                rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
+                if (in == IN_MAX || in == IN_MIN) {
+                    a = f77_minmax(in == IN_MAX, a, ahi, b, bhi, rty, &ahi);
+                } else if (in == IN_MOD) {
+                    if (rty == TY_INT) {
+                        a = hi_emit(HI_REM, TY_INT, a, b, 0, NULL);
+                    } else {
+                        /* a - INT(a/b)*b, in the operands' own type */
+                        int q; int qhi; int t;
+                        qhi = -1;
+                        if (rty == TY_DOUBLE) {
+                            q = f77_fp64_call2("__fp64_div", a, ahi, b, bhi, &qhi);
+                            t = f77_cvt(q, &qhi, TY_DOUBLE, TY_INT);
+                            q = f77_cvt(t, &qhi, TY_INT, TY_DOUBLE);
+                            q = f77_fp64_call2("__fp64_mul", q, qhi, b, bhi, &qhi);
+                            a = f77_fp64_call2("__fp64_sub", a, ahi, q, qhi, &ahi);
+                        } else {
+                            q = hi_emit(HI_FDIV, TY_FLOAT, a, b, 0, NULL);
+                            t = hi_emit(HI_FCVT_FtoI, TY_INT, q, -1, 0, NULL);
+                            q = hi_emit(HI_FCVT_ItoF, TY_FLOAT, t, -1, 0, NULL);
+                            q = hi_emit(HI_FMUL, TY_FLOAT, q, b, 0, NULL);
+                            a = hi_emit(HI_FSUB, TY_FLOAT, a, q, 0, NULL);
+                        }
+                    }
+                } else if (in == IN_SIGN) {
+                    /* |a| with the sign of b */
+                    int neg;
+                    a = f77_abs(a, rty, &ahi);
+                    if (rty == TY_DOUBLE) {
+                        neg = f77_fp64_call2("__fp64_lt", b, bhi,
+                                             f77_dconst(0.0, &qzero_hi), qzero_hi, NULL);
+                        ahi = f77_select(neg,
+                                hi_emit(HI_OR, TY_INT, ahi, f77_iconst(0x80000000), 0, NULL),
+                                ahi);
+                    } else if (rty == TY_FLOAT) {
+                        neg = hi_emit(HI_FLT, TY_INT, b, f77_rconst(0.0), 0, NULL);
+                        a = f77_select(neg,
+                                hi_emit(HI_OR, TY_INT, a, f77_iconst(0x80000000), 0, NULL), a);
+                    } else {
+                        neg = hi_emit(HI_SLT, TY_INT, b, f77_iconst(0), 0, NULL);
+                        a = f77_select(neg, hi_emit(HI_NEG, TY_INT, a, -1, 0, NULL), a);
+                    }
+                }
+                aty = rty;
+            }
+            if (lx_t == T_RP) f77_tok(); else f77_error("expected ) after intrinsic");
+            ex_ty = aty; ex_hi = ahi;
+            return a;
+        }
+
         if (u >= 0 && u != f77_cur_unit) {
             /* FUNCTION reference: by-reference actuals, result in the
              * usual return register (plus its hi word for a double). */
@@ -834,21 +1059,48 @@ static int f77_dim_bound(void) {
     return neg ? 0 - v : v;
 }
 
+/* One dimension bound: an integer constant, `*` (assumed size), or the
+ * name of an integer variable (an adjustable dimension).  Returns the
+ * constant value, or sets *sym to a symbol index for the runtime case. */
+static int f77_bound(int *sym) {
+    *sym = -1;
+    if (lx_t == T_STAR) { f77_tok(); return 1; }   /* assumed size */
+    if (lx_t == T_NAME) {
+        *sym = f77_sym(lex_name);
+        f77_tok();
+        return 1;
+    }
+    return f77_dim_bound();
+}
+
 /* Parse `(d1[,d2...])` after a name, each dimension `[lo:]hi`. */
 static void f77_parse_dims(int s) {
     int rank;
     int lo;
     int hi;
+    int losym;
+    int hisym;
     rank = 0;
     f77_tok();                       /* past ( */
     for (;;) {
         lo = 1;
-        hi = f77_dim_bound();
-        if (lx_t == T_COLON) { f77_tok(); lo = hi; hi = f77_dim_bound(); }
+        losym = -1;
+        hi = f77_bound(&hisym);
+        if (lx_t == T_COLON) {
+            f77_tok();
+            lo = hi;
+            losym = hisym;
+            hi = f77_bound(&hisym);
+        }
         if (rank < F77_MAX_RANK) {
-            f77_slo[s][rank] = lo;
-            f77_sext[s][rank] = hi - lo + 1;
-            if (f77_sext[s][rank] < 0) f77_sext[s][rank] = 0;
+            f77_slo[s][rank] = (losym >= 0) ? 1 : lo;
+            f77_sextsym[s][rank] = hisym;
+            if (hisym >= 0) {
+                f77_sext[s][rank] = 1;      /* size unknown until run time */
+            } else {
+                f77_sext[s][rank] = hi - lo + 1;
+                if (f77_sext[s][rank] < 0) f77_sext[s][rank] = 0;
+            }
         }
         rank = rank + 1;
         if (lx_t != T_COMMA) break;
@@ -1019,6 +1271,36 @@ static void f77_emit_return(void) {
     f77_cur_blk_live = 0;
 }
 
+/* Is the actual starting at the current token just a variable or a
+ * single array element -- i.e. does a NAME, optionally followed by a
+ * balanced subscript list, run to the very end of this argument?
+ *
+ * This is a text-level lookahead over the assembled statement rather
+ * than a parse-and-rewind, because rewinding would mean un-emitting the
+ * HIR the subscript expressions had already produced. */
+static int f77_actual_is_simple(void) {
+    int i;
+    int depth;
+    i = (int)(lx_rts - lx_stmt);       /* start of the current token */
+    if (i < 0 || i >= lx_stmt_len) return 0;
+    if (!lx_isalpha(lx_stmt[i])) return 0;
+    while (i < lx_stmt_len &&
+           (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) i = i + 1;
+    if (i < lx_stmt_len && lx_stmt[i] == '(') {
+        depth = 0;
+        while (i < lx_stmt_len) {
+            if (lx_stmt[i] == '(') depth = depth + 1;
+            else if (lx_stmt[i] == ')') {
+                depth = depth - 1;
+                if (depth == 0) { i = i + 1; break; }
+            }
+            i = i + 1;
+        }
+    }
+    if (i >= lx_stmt_len) return 0;
+    return lx_stmt[i] == ',' || lx_stmt[i] == ')';
+}
+
 /* Address of an actual argument.  Fortran is call-by-reference, so a
  * variable or array element is passed as its address; anything else is
  * evaluated into a temporary whose address is passed instead. */
@@ -1029,10 +1311,14 @@ static int f77_actual_addr(void) {
     int vhi;
     int tmp;
 
-    if (lx_t == T_NAME && f77_find_func(lex_name) < 0) {
+    if (lx_t == T_NAME && f77_find_func(lex_name) < 0 && f77_actual_is_simple()) {
         /* A bare name, or a subscripted element, is passed by address;
          * a whole array passes its base.  A FUNCTION reference is not a
-         * variable, so it falls through and is evaluated below. */
+         * variable, so it falls through and is evaluated below.
+         *
+         * f77_actual_is_simple() is what keeps `N-K+1` out of this
+         * path: without it the leading NAME would be taken as the whole
+         * actual, N's address passed, and `-K+1` left unconsumed. */
         s = f77_sym(lex_name);
         f77_tok();
         if (lx_t == T_LP && f77_srank[s] > 0) {

@@ -28,6 +28,16 @@ re-sync is a deliberate act: re-copy, re-stamp the vintage, and run the
 tests — `backend_slice` exists precisely to catch a contract break at
 the moment it happens.
 
+**Deliberate divergences from the selfhost original** (re-apply these
+after any re-sync; each is marked in-place with a `DIVERGENCE` comment):
+
+- `hir_codegen.h` — `hcg_fp64_kind`/`hcg_fp64_emit` additionally
+  recognise `__fp64_sqrt` and `__fp32_sqrt`, emitting the hardware
+  `FSQRT.D` / `FSQRT.S`. The C compiler reaches sqrt through
+  `HI_FSQRT`, which this backend does not implement and **silently
+  emits nothing for**, so without this Fortran would call a libm
+  function whose entire body is one instruction.
+
 SLOW-32 is the only target. x86-64 and aarch64 are reached through
 `slow32-dbt`, as with every other language here.
 
