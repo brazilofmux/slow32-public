@@ -25,21 +25,35 @@ as the reason:
 
 - CORDIC was profiled and **Newton series beat it**. `math_soft.c`
   carries the Newton implementations.
-- Those soft routines are a **fallback**, not the main path. Under the
-  DBT, `math_intercepts[]` in `tools/dbt/dbt.c` overrides **37**
-  symbols — `sin cos tan asin acos atan sinh cosh tanh exp log log10
-  sqrt fabs ceil floor round trunc` and the `f` variants — with native
-  host calls. The Newton code runs only when the DBT does not
-  intercept.
+- Those soft routines are a **fallback**, not the main path.
 - The DBTs offer native f32 and f64 arithmetic.
 
-So a numeric workload gets native FP *and* native transcendentals.
-That is a real numerics platform, not a toy.
+**Correction (2026-08-27), because an earlier draft of this file got it
+backwards.** It previously cited the DBT's math intercepts as a *reason*
+Fortran would be fast here. That is a trapdoor, not a feature, and
+Fortran must not use it. `slow32-dbt` links host libm (`LDFLAGS = -lm`)
+and installs an intercept for any of ~37 math symbols it finds in the
+**guest's** symbol table, replacing guest execution with a native host
+call. Any binary carrying those symbols stops measuring the guest:
+`sbasic.s32x` carries `sqrt`, `atan2` and `floor`, so under the DBT it
+runs them on the host.
 
-**Gap worth closing early:** `pow`, `atan2` and `fmod` are NOT in the
-intercept table (`fmodf` is). F77 leans on all three — `**` with a real
-exponent, and `ATAN2` is everywhere in numeric code. They currently
-fall to the Newton path under exactly the workload Fortran brings.
+**Fortran does not go through that door, and a gate enforces it.**
+Every FP operation f77 emits is a SLOW-32 hardware instruction —
+`fadd.d`, `fsub.d`, `fmul.d`, `fdiv.d`, `fneg.d`, `feq.d`, `flt.d`,
+`fle.d`, `fcvt.*`, `fsqrt.d`, `fsqrt.s` — so a Fortran binary contains
+no interceptable math symbol at all. Verified: the LINPACK binary's
+symbols are `main`, `DAXPY`, `DGEFA` … and nothing else, and it gives
+an identical answer under `slow32`, `slow32-fast` and `slow32-dbt`.
+Gate 4 (`no-libm-sidedoor`) asserts this for every test program on
+every run, and is mutation-proven — routing `DSQRT` back through libm
+makes it fail, naming the leaked symbols.
+
+**Consequence for the intrinsics still to come:** `**` with a real
+exponent, `ATAN2`, `EXP`, `LOG` and the trig functions have no SLOW-32
+instruction behind them. Each one must be implemented as *guest* code —
+emitted inline, or put in a Fortran runtime compiled to SLOW-32 — and
+must not be lowered to a libm call, or gate 4 will fail, correctly.
 
 ## Two rulings that shape the design
 

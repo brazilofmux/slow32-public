@@ -103,6 +103,40 @@ else
     done
 fi
 
+# --- Gate 4: no libm side door --------------------------------------
+# slow32-dbt links host libm (LDFLAGS = -lm) and installs an intercept
+# for any of ~37 math symbols it finds in the GUEST's symbol table,
+# replacing guest execution with a native host call.  That is a real
+# trapdoor: sbasic.s32x, for instance, carries sqrt/atan2/floor and so
+# runs them on the host under the DBT.
+#
+# Fortran must not reach through it.  Every FP operation we emit is a
+# SLOW-32 hardware instruction, so a Fortran binary should contain NO
+# interceptable math symbol at all.  This gate asserts that, because it
+# is the kind of property that regresses silently the first time
+# someone lowers an intrinsic to a libcall.
+INTERCEPTABLE="sqrt sqrtf sin cos tan asin acos atan sinh cosh tanh exp log log10 ceil floor round trunc fabs fmod fmodf sinf cosf tanf asinf acosf atanf sinhf coshf tanhf expf logf log10f ceilf floorf roundf truncf fabsf"
+leaked=""
+for f in "$HERE"/f77/*.f; do
+    [ -e "$f" ] || continue
+    b="$(basename "$f" .f)"
+    "$F77" "$f" "$W/$b.lm.s" >/dev/null 2>&1 || continue
+    "$AS" "$W/$b.lm.s" "$W/$b.lm.s32o" >/dev/null 2>&1 || continue
+    "$LD" -o "$W/$b.lm.s32x" --mmio 64K "$ROOT/runtime/crt0.s32o" "$W/$b.lm.s32o" \
+          "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null 2>&1 || continue
+    for n in $INTERCEPTABLE; do
+        if strings -a "$W/$b.lm.s32x" 2>/dev/null | grep -qx "$n"; then
+            leaked="$leaked $b:$n"
+        fi
+    done
+done
+if [ -z "$leaked" ]; then
+    report "no-libm-sidedoor" 0
+else
+    report "no-libm-sidedoor" 1 "interceptable symbols linked in"
+    echo "     leaked:$leaked"
+fi
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
