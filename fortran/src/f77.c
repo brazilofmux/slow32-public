@@ -208,8 +208,12 @@ int main(int argc, char **argv) {
     gen_program(&f77_program);
 
     if (getenv("F77_PAIR_STATS")) {
+        int z;
         fdputs("pair-pref hits: ", 2);
         fdputuint(2, (unsigned int)ra_stat_pair_pref);
+        fdputs("  addi[calls,spill,nouse,valuse,mismatch,HIT]=", 2);
+        z = 0;
+        while (z < 6) { fdputuint(2, (unsigned)hcg_dbg_addi[z]); fdputc(' ', 2); z = z + 1; }
         fdputc(10, 2);
     }
     if (f77_nerr > 0) {

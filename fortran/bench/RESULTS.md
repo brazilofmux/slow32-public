@@ -61,6 +61,44 @@ honoured the emitter falls back to the moves.
 The remaining 2.30× is inlining (clang inlines `daxpy` into its
 callers) and the residual moves where a pair could not be claimed.
 
+## Folded address ADDIs suppressed (2.30× → 2.14×)
+
+`x = base + 4`, emitted to reach the hi word of a double, is folded by
+BURG into the following load/store's 12-bit displacement — leaving the
+ADDI itself dead. DCE cannot see that: it runs long before BURG chooses
+the fold. `hcg_addi_folds_away` suppresses the ADDI at emission, where
+the fold is finally known, guarded by `users == bg_uses[idx]` so the
+scan is proven to have seen every use (one ADDI commonly feeds both the
+hi load and the hi store). 35 suppressed on this kernel; DAXPY's hot
+loop went 19 → 17 instructions.
+
+## The biggest remaining lever: doubles never live in registers
+
+A program with one `DOUBLE PRECISION` variable and one integer emits
+**twelve frame accesses**. Double locals are never register-promoted,
+because reaching the hi word takes the alloca's address (`ADDI base,4`)
+and every promotion scan treats an address-taken alloca as
+unpromotable. So every double in every Fortran program lives in memory.
+
+Fixing it needs **pair-aware mem2reg** — one alloca promoted to two SSA
+values — which is a real change to `hir_ssa.h`. It is almost certainly
+where the next large win is, and it would benefit `stage08` equally.
+
+## Scalar dummy copy-in was tried, and lost
+
+Fortran permits an optimisation C cannot: if a dummy argument is
+assigned, no other name may be associated with the same storage
+(F77 15.9.3.6), so a load of `DA` IS loop-invariant even though the
+loop stores through `DY`. Copying scalar dummies into locals on entry
+(and back at RETURN) should therefore hoist those loads.
+
+It made things worse: **2.14× → 3.09×**, DAXPY's hot loop 17 → 30
+instructions, the loop full of spills. Not because the reasoning is
+wrong but because of the gap above — the "local copy" of a double is
+still a memory access, so no load is saved, while the extra live values
+push the allocator into spilling. Off by default; `F77_COPYIN=1` to
+re-run the experiment.
+
 ## Inlining was tried, and lost
 
 Implemented as source-level splicing (f77 is one-pass with no AST, so

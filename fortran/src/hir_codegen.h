@@ -1338,6 +1338,65 @@ static void hcg_fp64_emit(int fpk, int base) {
     cg_rri("addi", 2, 5, 0);
 }
 
+/* True when this ADDI is only ever consumed as the address of a
+ * LOAD/STORE that will fold it into a 12-bit displacement, so emitting
+ * it would produce a dead instruction.  DCE cannot know this: it runs
+ * long before BURG chooses the fold.  Every `x = base + 4` feeding the
+ * hi word of a double load was costing one dead instruction.
+ */
+static int hcg_addi_lnt(int i) {
+    int pat;
+    pat = bg_sel[i];
+    if (pat >= 0) return bg_plnt[pat];
+    if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ALLOCA) return BG_FADDR;
+    return -1;
+}
+
+static int hcg_dbg_addi[6];
+static int hcg_addi_folds_away(int idx) {
+    int i;
+    int users;
+    int folded;
+    int base_i;
+    int off;
+    int lnt_i;
+
+    hcg_dbg_addi[0]++;
+    if (h_kind[idx] != HI_ADDI) return 0;
+    if (ra_reg[idx] < 0) { hcg_dbg_addi[1]++; return 0; }
+    if (bg_uses[idx] <= 0) { hcg_dbg_addi[2]++; return 0; }
+
+    users = 0;
+    folded = 0;
+    i = 0;
+    while (i < h_ninst) {
+        int k2;
+        k2 = h_kind[i];
+        if (h_src1[i] == idx && (k2 == HI_LOAD || k2 == HI_STORE)) {
+            users = users + 1;
+            lnt_i = hcg_addi_lnt(i);
+            if (lnt_i != BG_FADDR && lnt_i != BG_SADDR &&
+                hcg_addr_base_off(idx, &base_i, &off) && hcg_is_i12(off))
+                folded = folded + 1;
+        } else if (h_src1[i] == idx || h_src2[i] == idx) {
+            hcg_dbg_addi[3]++;
+            return 0;                        /* used as a value somewhere */
+        }
+        i = i + 1;
+    }
+    /* Requiring users == bg_uses[idx] proves this scan saw EVERY use --
+     * bg_uses also counts call arguments and phi operands, which this
+     * walk does not look at.  One ADDI commonly feeds both the hi load
+     * and the hi store of the same double, so several uses is normal;
+     * what matters is that they all fold. */
+    if (!(users > 0 && users == folded && users == bg_uses[idx])) {
+        hcg_dbg_addi[4]++;
+        return 0;
+    }
+    hcg_dbg_addi[5]++;
+    return 1;
+}
+
 static void hcg_inst(int idx) {
     int k;
     int ty;
@@ -2005,6 +2064,9 @@ static void hcg_inst(int idx) {
 
     /* ADDI — dispatched by BURG left-child NT */
     if (k == HI_ADDI) {
+        /* Suppress an address ADDI that every consumer folds into its
+         * own displacement -- see hcg_addi_folds_away. */
+        if (hcg_addi_folds_away(idx)) return;
         rd = hcg_dst(idx);
         if (lnt == BG_FADDR) {
             /* ADDI(faddr, imm): combined offset precomputed */

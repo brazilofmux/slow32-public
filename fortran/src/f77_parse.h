@@ -248,6 +248,9 @@ static int f77_cur_unit;
 static int f77_can_inline(int u);
 static int f77_inline_unit_body(int u, int *addrs, int nargs);
 static int f77_find_unit(char *nm);
+static int f77_stmt_is_declaration(int cls);
+static void f77_emit_copyin(void);
+static void f77_emit_copyout(void);
 
 /* DOUBLE PRECISION on SLOW-32 is a PAIR of 32-bit values: the lo word is
  * the expression's value and the hi word travels beside it.  Operations
@@ -1344,6 +1347,7 @@ static int f77_unit_header_ty(void) {
 static void f77_emit_return(void) {
     int v;
     if (!f77_cur_blk_live) return;
+    f77_emit_copyout();
     if (f77_inline_depth > 0) {
         /* Inside a spliced body a RETURN is a branch to the
          * continuation, not a machine return.  The FUNCTION result is
@@ -1735,6 +1739,102 @@ static void f77_stmt_call(int skip) {
 
 static int f77_unit_nparams;
 
+/* --- scalar dummy copy-in / copy-out ---------------------------------
+ *
+ * A by-reference scalar dummy is re-loaded through its address at every
+ * use, and LICM cannot hoist those loads out of a loop that stores
+ * through any other pointer, because it has no alias analysis.  In
+ * DAXPY that costs two loads of DA on every iteration.
+ *
+ * Fortran, unlike C, says those loads ARE invariant: if a dummy
+ * argument is assigned, no other name may be associated with the same
+ * storage (F77 15.9.3.6).  DY is assigned, so DA cannot alias it.  This
+ * is the rule that historically made Fortran faster than C on numeric
+ * code, and it is available here for free.
+ *
+ * So each scalar dummy is copied into a local on entry and copied back
+ * at every RETURN.  Copy-out keeps routines like SWAP correct; arrays
+ * are left alone, since copying them would cost more than it saves.
+ *
+ * MEASURED A LOSS, so it is OFF by default (F77_COPYIN=1 to enable):
+ * 2.14x clang without it, 3.09x with, and DAXPY's hot loop went from 17
+ * instructions to 30.  The reason is not the idea but a deeper gap:
+ * DOUBLE PRECISION locals are NEVER register-promoted in this compiler,
+ * so the "local copy" is still a memory access -- no load is saved --
+ * while the extra live values push the allocator into spilling.  A
+ * program with one double and one integer emits twelve frame accesses.
+ *
+ * mem2reg refuses a double alloca because reaching its hi word takes
+ * the alloca's address (ADDI base,4), which every promotion scan treats
+ * as address-taken.  Promoting doubles needs PAIR-AWARE promotion --
+ * one alloca becoming two SSA values -- and until that exists, copy-in
+ * has nothing to win.
+ *
+ * The copies are emitted at the first EXECUTABLE statement rather than
+ * at the header, because in a one-pass compiler the dummy's type is not
+ * known until its declaration has been read -- and F77 requires all
+ * declarations to precede executable statements, so that point is
+ * exactly when every type is known. */
+#define F77_MAX_COPYIN 32
+static int f77_ci_sym[F77_MAX_COPYIN];   /* the dummy's symbol */
+static int f77_ci_addr[F77_MAX_COPYIN];  /* its original address value */
+static int f77_ci_n;
+static int f77_decls_open;               /* still in the declaration part */
+
+static int f77_copyin_on = -1;
+
+static void f77_emit_copyin(void) {
+    int i;
+    if (f77_copyin_on < 0) f77_copyin_on = getenv("F77_COPYIN") ? 1 : 0;
+    if (!f77_copyin_on) { f77_decls_open = 0; f77_ci_n = 0; return; }
+    int s;
+    int a;
+    int v;
+    int hi;
+    f77_decls_open = 0;
+    i = 0;
+    while (i < f77_ci_n) {
+        s = f77_ci_sym[i];
+        a = f77_ci_addr[i];
+        if (f77_srank[s] == 0) {
+            /* Give the symbol real local storage and seed it. */
+            hi = -1;
+            v = f77_load_at(a, f77_sty[s]);
+            hi = ex_hi;
+            f77_sarg[s] = 0;
+            f77_frame = f77_frame + ty_size(f77_sty[s]);
+            f77_sval[s] = hi_emit(HI_ALLOCA, f77_sty[s], -1, -1,
+                                  0 - f77_frame, NULL);
+            hl_ainst[hl_nalloca] = f77_sval[s];
+            hl_aoff[hl_nalloca] = 0 - f77_frame;
+            hl_nalloca = hl_nalloca + 1;
+            f77_store_at(f77_sval[s], f77_sty[s], v, f77_sty[s], hi);
+            i = i + 1;
+        } else {
+            /* An array dummy keeps its by-reference binding. */
+            f77_ci_sym[i] = f77_ci_sym[f77_ci_n - 1];
+            f77_ci_addr[i] = f77_ci_addr[f77_ci_n - 1];
+            f77_ci_n = f77_ci_n - 1;
+        }
+    }
+}
+
+/* Write the local copies back through their original addresses. */
+static void f77_emit_copyout(void) {
+    int i;
+    int s;
+    int v;
+    i = 0;
+    while (i < f77_ci_n) {
+        s = f77_ci_sym[i];
+        if (!f77_sarg[s]) {
+            v = f77_load_at(f77_sval[s], f77_sty[s]);
+            f77_store_at(f77_ci_addr[i], f77_sty[s], v, f77_sty[s], ex_hi);
+        }
+        i = i + 1;
+    }
+}
+
 static int f77_urty_of(int u) { return f77_urty[u]; }
 
 /* Index of the FUNCTION unit called `nm`, or -1.  Phase 1 records every
@@ -1790,6 +1890,8 @@ static void f77_bind_unit(int u) {
     f77_result_sym = -1;
     nparam = 0;
     f77_unit_nparams = 0;
+    f77_ci_n = 0;
+    f77_decls_open = 1;
 
     if (f77_ukind[u] == F77_UNIT_PROGRAM) {
         hl_param_nflat = 0;
@@ -1819,6 +1921,11 @@ static void f77_bind_unit(int u) {
             for (;;) {
                 if (lx_t != T_NAME) { f77_error("bad dummy argument"); break; }
                 s = f77_sym_param(lex_name, nparam);
+                if (f77_ci_n < F77_MAX_COPYIN) {
+                    f77_ci_sym[f77_ci_n] = s;
+                    f77_ci_addr[f77_ci_n] = f77_sval[s];
+                    f77_ci_n = f77_ci_n + 1;
+                }
                 nparam = nparam + 1;
                 f77_tok();
                 if (lx_t != T_COMMA) break;
@@ -2114,6 +2221,30 @@ static void f77_stmt_print(int skip) {
     f77_wr_finish();
 }
 
+/* Is this statement part of the declaration part (so the scalar dummy
+ * copies must not be emitted yet)? */
+static int f77_stmt_is_declaration(int cls) {
+    if (cls != S_KEYWORD) return 0;
+    if (f77_starts("INTEGER")) return 1;
+    if (f77_starts("REAL")) return 1;
+    if (f77_starts("DOUBLEPRECISION")) return 1;
+    if (f77_starts("LOGICAL")) return 1;
+    if (f77_starts("CHARACTER")) return 1;
+    if (f77_starts("DIMENSION")) return 1;
+    if (f77_starts("COMMON")) return 1;
+    if (f77_starts("EXTERNAL")) return 1;
+    if (f77_starts("INTRINSIC")) return 1;
+    if (f77_starts("SAVE")) return 1;
+    if (f77_starts("DATA")) return 1;
+    if (f77_starts("PARAMETER")) return 1;
+    if (f77_starts("IMPLICIT")) return 1;
+    if (f77_starts("FORMAT")) return 1;
+    if (f77_starts("PROGRAM")) return 1;
+    if (f77_starts("SUBROUTINE")) return 1;
+    if (f77_unit_header_ty() >= 0) return 1;
+    return 0;
+}
+
 /* Dispatch one statement.  Called once per assembled statement. */
 static void f77_statement(void) {
     int cls;
@@ -2134,6 +2265,11 @@ static void f77_statement(void) {
     }
 
     cls = f77_classify();
+
+    /* Declarations must all precede executable statements, so the first
+     * executable one is where every dummy's type is finally known --
+     * and therefore where the scalar copies can be emitted. */
+    if (f77_decls_open && !f77_stmt_is_declaration(cls)) f77_emit_copyin();
 
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
     if (cls == S_DO)       { f77_open_do();     goto done; }
