@@ -136,12 +136,39 @@ wrong and slower (148.2M): `hcg_fp64_emit` really does clobber
 `r4:r7` on its fallback path, so values allocated there would be
 destroyed — the tests passed only by luck — and it lost 17% anyway.
 
-A correct fix needs the scratch pair to come from registers that are
-neither allocatable nor callee-saved, so that an fp64 op clobbers
-nothing the allocator cares about. SLOW-32 reserves only `r1` and `r2`,
-which are not an even-aligned pair, so this needs an actual register-map
-change (and the same in `stage08`). That is the next real step, and it
-is a bigger one than anything above.
+### More registers does NOT fix it — measured, twice
+
+The obvious fix is to stop fp64 ops being call boundaries, which needs
+the scratch pair to come from registers that are neither allocatable
+nor callee-saved. SLOW-32 reserves only `r1` and `r2`, which are not an
+even-aligned pair, so that is a **register-convention change** — and
+`CC_SLOW32` in the LLVM backend implements the same conventions, as
+does the hand-written runtime assembly, with `run-interop-llvm.sh`
+existing precisely to catch the two disagreeing. It would have to carry
+through f77, stage08 and ~/llvm in lockstep.
+
+**So the payoff was measured in f77 first, and it is not there.**
+
+Two experiments, both bounding what such a change could buy:
+
+1. *Precise clobber model.* Treat an inlined fp64 op as clobbering only
+   its scratch (`r3-r7`) rather than the whole caller-saved pool,
+   expressed as forbidden colours in `gc_select` — recovering `r8`,
+   `r9`, `r10` for fp64-crossing values. Result: spill traffic fell
+   (26 → 18 memory ops) but total instructions ROSE, 52 → 54. The
+   freed registers bought less than the extra moves cost.
+
+2. *Full exemption*, the ceiling of the ABI change — every value free
+   to use all eight caller-saved registers across fp64 ops. Result:
+   **17% worse** (126.7M → 148.2M). This version is also incorrect, and
+   the whole test suite passed anyway; it was the performance number
+   that exposed it.
+
+Conclusion: **register count is not the binding constraint**, so the
+ABI change would not pay for itself. What remains is more likely the
+pair-alignment fragmentation itself — an aligned-pair requirement makes
+the 18-register file behave like far fewer — and that is a question
+about the allocator, not about the calling convention.
 
 ## Scalar dummy copy-in was tried, and lost
 
