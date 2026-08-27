@@ -1222,6 +1222,7 @@ static int hcg_fp64_kind(char *nm) {
  * it happen often rather than by luck. */
 static int hcg_fp64_cur = -1;   /* CALL being inlined, or -1 */
 static int hcg_fp64_dst = -1;   /* home pair for its result, or -1 */
+static int hcg_fp64_spill_direct;  /* result will be spilled from r4:r5 */
 
 static int hcg_pair_reg(int lo_inst, int hi_inst) {
     int a;
@@ -1272,8 +1273,13 @@ static void hcg_fp64_emit(int fpk, int base) {
         /* Write the result straight into its home pair when it has one,
          * which also skips the r1:r2 hop the generic call path uses. */
         hcg_fp64_dst = -1;
-        if (hcg_fp64_cur >= 0)
+        hcg_fp64_spill_direct = 0;
+        if (hcg_fp64_cur >= 0) {
             hcg_fp64_dst = hcg_pair_reg(hcg_fp64_cur, hcg_fp64_cur + 1);
+            if (hcg_fp64_dst < 0 && ra_reg[hcg_fp64_cur] < 0 &&
+                ra_reg[hcg_fp64_cur + 1] < 0)
+                hcg_fp64_spill_direct = 1;
+        }
         {
             int rd;
             rd = (hcg_fp64_dst >= 0) ? hcg_fp64_dst : 4;
@@ -1281,7 +1287,7 @@ static void hcg_fp64_emit(int fpk, int base) {
             else if (fpk == 1) cg_rrr("fsub.d", rd, pa, pb);
             else if (fpk == 2) cg_rrr("fmul.d", rd, pa, pb);
             else cg_rrr("fdiv.d", rd, pa, pb);
-            if (hcg_fp64_dst < 0) {
+            if (hcg_fp64_dst < 0 && !hcg_fp64_spill_direct) {
                 cg_rri("addi", 1, 4, 0);
                 cg_rri("addi", 2, 5, 0);
             }
@@ -2287,6 +2293,17 @@ static void hcg_inst(int idx) {
             hcg_fp64_dst = -1;
             hcg_fp64_emit(fpk, base);
             if (hcg_fp64_dst >= 0) return;   /* already in its home pair */
+            /* Result is in r4:r5.  If it is going to be spilled anyway,
+             * store straight from there rather than moving it through
+             * the r1:r2 call-return convention first -- two fewer
+             * instructions per spilled operation, and in fp64-heavy
+             * code most temporaries do spill. */
+            if (fpk <= 3 && hcg_fp64_cur == idx &&
+                ra_reg[idx] < 0 && ra_reg[idx + 1] < 0) {
+                hcg_spill_from(idx, 4);
+                hcg_spill_from(idx + 1, 5);
+                return;
+            }
         } else {
 
         /* ABI walk: aligned f64 pairs, back-filled ints, ordered

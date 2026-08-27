@@ -109,6 +109,40 @@ Note what that says: the **scalar-double case is far worse than
 LINPACK's 2.14×**, so it is where the remaining headroom is, not in the
 array code. Disable with `F77_NO_SPLIT=1`.
 
+### Spilling fp64 results directly (5.41× → 4.93×)
+
+When an fp64 result is going to be spilled anyway, it is now stored
+straight from the `r4:r5` the instruction produced it in, instead of
+being moved through the `r1:r2` call-return convention first. Two fewer
+instructions per spilled operation, and in fp64-heavy code most
+temporaries do spill: the mandel hot loop went 62 → 52 instructions,
+115.3M total. LINPACK unchanged.
+
+### Where the last 4.93× lives: register pressure
+
+The mandel hot loop is now 52 instructions against clang's 16, and
+**26 of them are loads and stores** — spill traffic, not real work
+(11 FP ops, 13 register moves, 26 memory).
+
+The cause is structural. Every fp64 operation is an `HI_CALL`, so
+`ra_mark_call_crossing` marks every value live across one as
+call-crossing and bars it from the cheap `r3-r10` pool. In a loop with
+eleven fp64 operations that is everything, leaving only the 18
+callee-saved registers — and aligned-pair allocation fragments those
+further.
+
+Excluding fp64 calls from the crossing analysis was tried and is BOTH
+wrong and slower (148.2M): `hcg_fp64_emit` really does clobber
+`r4:r7` on its fallback path, so values allocated there would be
+destroyed — the tests passed only by luck — and it lost 17% anyway.
+
+A correct fix needs the scratch pair to come from registers that are
+neither allocatable nor callee-saved, so that an fp64 op clobbers
+nothing the allocator cares about. SLOW-32 reserves only `r1` and `r2`,
+which are not an even-aligned pair, so this needs an actual register-map
+change (and the same in `stage08`). That is the next real step, and it
+is a bigger one than anything above.
+
 ## Scalar dummy copy-in was tried, and lost
 
 Fortran permits an optimisation C cannot: if a dummy argument is
