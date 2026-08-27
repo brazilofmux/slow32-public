@@ -169,10 +169,22 @@ No linker change is required, and none should be added for this.
    non-vacuous by mutation — swapping integer `+`/`-` in the compiler
    fails all three.
 
-   Not yet: `DOUBLE PRECISION` (SLOW-32 native does not define
-   `S12CC_NATIVE_F64`, so doubles are lo/hi pairs via the `hl_hi`
-   protocol, which the lowering must learn), `**`, arrays, and
-   subprograms.
+   **`DOUBLE PRECISION` added the same day.** SLOW-32 native does not
+   define `S12CC_NATIVE_F64`, so a double is a PAIR of 32-bit values:
+   the lo word is the expression's value and the hi word travels beside
+   it in `ex_hi`, which must be captured immediately after each
+   subexpression because the next emission overwrites it. Operations are
+   emitted as calls to the `__fp64_*` helpers — and every one of the 14
+   is recognised by the backend (`hcg_fp64_kind`/`hcg_fp64_emit`) and
+   replaced with inline hardware FP, so **no call survives to the
+   assembly**: `slice4.f` emits `fadd.d`, `fsub.d`, `fmul.d`, `fdiv.d`,
+   `fneg.d`, `feq.d`, `flt.d`, `fle.d` and `fcvt.d`, with zero `__fp64`
+   references left. Covers mixed-mode promotion (DOUBLE beats REAL beats
+   INTEGER), both conversion directions, and DOUBLE relationals — only
+   eq/lt/le exist in hardware, so `>`, `>=` and `/=` are built by
+   swapping operands or inverting.
+
+   Not yet: `**`, arrays, subprograms, and `COMPLEX`.
 
 4. **The FORMAT engine.** The sleeper: `WRITE(6,100)` /
    `FORMAT(1X,F10.4)` is an interpreted mini-language at runtime and is

@@ -26,6 +26,9 @@
 #ifndef F77_PARSE_H
 #define F77_PARSE_H
 
+/* SLOW-32 is 32-bit, so addresses are plain ints. */
+#define HL_ADDR_TY TY_INT
+
 /* --- symbols -------------------------------------------------------- */
 
 #define F77_MAX_SYM 1024
@@ -54,7 +57,7 @@ static int f77_sym(char *nm) {
     if (f77_nsym >= F77_MAX_SYM) { f77_error("too many symbols"); return 0; }
     strcpy(f77_sname[f77_nsym], nm);
     f77_sty[f77_nsym] = f77_implicit_ty(nm);
-    f77_frame = f77_frame + 4;
+    f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
                                  0 - f77_frame, NULL);
     hl_ainst[hl_nalloca] = f77_sval[f77_nsym];
@@ -107,12 +110,74 @@ static void f77_ctl_reset(void) { ctl_n = 0; }
 /* --- expression lowering -------------------------------------------- */
 
 static int ex_ty;     /* type of the value most recently produced */
+static int ex_hi;     /* its hi word, when ex_ty is TY_DOUBLE */
 
 static int f77_expr(void);
 
-/* Convert `v` of type `from` to type `to`. */
-static int f77_convert(int v, int from, int to) {
+/* DOUBLE PRECISION on SLOW-32 is a PAIR of 32-bit values: the lo word is
+ * the expression's value and the hi word travels beside it.  Operations
+ * are emitted as calls to the __fp64_* helpers, every one of which the
+ * backend recognises and replaces with inline hardware FP instructions
+ * (hcg_fp64_kind / hcg_fp64_emit) -- so despite looking like libcalls
+ * here, no call survives to the assembly.
+ *
+ * The hi word must be captured immediately after each subexpression:
+ * the next emission overwrites the side channel. */
+
+static int f77_fp64_call2(char *name, int alo, int ahi, int blo, int bhi, int *rhi) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = alo; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = ahi; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = blo; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = bhi; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, name);
+    h_cbase[r] = cb;
+    if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    return r;
+}
+
+static int f77_fp64_call1(char *name, int alo, int *rhi) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = alo; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, name);
+    h_cbase[r] = cb;
+    if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    return r;
+}
+
+/* A DOUBLE literal is just its two words as constants. */
+static int f77_dconst(double d, int *hi) {
+    int w[2];
+    memcpy(w, &d, 8);
+    *hi = hi_emit(HI_ICONST, TY_INT, -1, -1, w[1], NULL);
+    return hi_emit(HI_ICONST, TY_INT, -1, -1, w[0], NULL);
+}
+
+/* Convert `v` (with hi word *hi when it is a double) from one type to
+ * another, updating *hi in place. */
+static int f77_cvt(int v, int *hi, int from, int to) {
     if (from == to) return v;
+    if (to == TY_DOUBLE) {
+        if (from == TY_INT)   return f77_fp64_call1("__fp64_cvt_itoD", v, hi);
+        if (from == TY_FLOAT) return f77_fp64_call1("__fp64_cvt_ftoD", v, hi);
+        return v;
+    }
+    if (from == TY_DOUBLE) {
+        int cb;
+        int r;
+        cb = h_ncarg;
+        h_carg[h_ncarg] = v;   h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = *hi; h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 2,
+                    to == TY_INT ? "__fp64_cvt_DtoI" : "__fp64_cvt_DtoF");
+        h_cbase[r] = cb;
+        h_ty[r] = to;
+        return r;
+    }
     if (from == TY_INT && to == TY_FLOAT)
         return hi_emit(HI_FCVT_ItoF, TY_FLOAT, v, -1, 0, NULL);
     if (from == TY_FLOAT && to == TY_INT)
@@ -120,12 +185,24 @@ static int f77_convert(int v, int from, int to) {
     return v;
 }
 
-/* F77 mixed-mode: if either side is REAL the operation is REAL. */
-static int f77_balance(int *a, int aty, int *b, int bty) {
+/* Back-compatible single-word convert (no doubles involved). */
+static int f77_convert(int v, int from, int to) {
+    int hi;
+    hi = -1;
+    return f77_cvt(v, &hi, from, to);
+}
+
+/* F77 mixed mode: DOUBLE beats REAL beats INTEGER. */
+static int f77_balance(int *a, int *ahi, int aty, int *b, int *bhi, int bty) {
     if (aty == bty) return aty;
+    if (aty == TY_DOUBLE || bty == TY_DOUBLE) {
+        *a = f77_cvt(*a, ahi, aty, TY_DOUBLE);
+        *b = f77_cvt(*b, bhi, bty, TY_DOUBLE);
+        return TY_DOUBLE;
+    }
     if (aty == TY_FLOAT || bty == TY_FLOAT) {
-        *a = f77_convert(*a, aty, TY_FLOAT);
-        *b = f77_convert(*b, bty, TY_FLOAT);
+        *a = f77_cvt(*a, ahi, aty, TY_FLOAT);
+        *b = f77_cvt(*b, bhi, bty, TY_FLOAT);
         return TY_FLOAT;
     }
     return TY_INT;
@@ -151,8 +228,9 @@ static int f77_primary(void) {
     int save;
 
     if (lx_t == T_ICON) { v = f77_iconst(lex_ival); ex_ty = TY_INT; f77_tok(); return v; }
-    if (lx_t == T_RCON || lx_t == T_DCON) {
-        v = f77_rconst(lex_dval); ex_ty = TY_FLOAT; f77_tok(); return v;
+    if (lx_t == T_RCON) { v = f77_rconst(lex_dval); ex_ty = TY_FLOAT; f77_tok(); return v; }
+    if (lx_t == T_DCON) {
+        v = f77_dconst(lex_dval, &ex_hi); ex_ty = TY_DOUBLE; f77_tok(); return v;
     }
     if (lx_t == T_TRUE)  { v = f77_iconst(1); ex_ty = TY_INT; f77_tok(); return v; }
     if (lx_t == T_FALSE) { v = f77_iconst(0); ex_ty = TY_INT; f77_tok(); return v; }
@@ -164,9 +242,23 @@ static int f77_primary(void) {
         return v;
     }
     if (lx_t == T_MINUS) {
+        int vhi;
         f77_tok();
         v = f77_primary();
         save = ex_ty;
+        vhi = ex_hi;
+        if (save == TY_DOUBLE) {
+            int cb;
+            int r;
+            cb = h_ncarg;
+            h_carg[h_ncarg] = v;   h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = vhi; h_ncarg = h_ncarg + 1;
+            r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_neg");
+            h_cbase[r] = cb;
+            ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+            ex_ty = TY_DOUBLE;
+            return r;
+        }
         if (save == TY_FLOAT) return hi_emit(HI_FNEG, TY_FLOAT, v, -1, 0, NULL);
         return hi_emit(HI_NEG, TY_INT, v, -1, 0, NULL);
     }
@@ -175,6 +267,13 @@ static int f77_primary(void) {
         s = f77_sym(lex_name);
         f77_tok();
         ex_ty = f77_sty[s];
+        if (ex_ty == TY_DOUBLE) {
+            int addr4;
+            v = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
+            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 4, NULL);
+            ex_hi = hi_emit(HI_LOAD, TY_INT, addr4, -1, 0, NULL);
+            return v;
+        }
         return hi_emit(HI_LOAD, f77_sty[s], f77_sval[s], -1, 0, NULL);
     }
     f77_error("bad expression");
@@ -211,52 +310,50 @@ static int f77_power(void) {
 }
 
 static int f77_term(void) {
-    int a;
-    int b;
-    int aty;
-    int bty;
-    int rty;
+    int a; int b; int aty; int bty; int rty; int ahi; int bhi;
     a = f77_power();
-    aty = ex_ty;
+    aty = ex_ty; ahi = ex_hi;
     while (lx_t == T_STAR || lx_t == T_SLASH) {
         int op;
         op = lx_t;
         f77_tok();
         b = f77_power();
-        bty = ex_ty;
-        rty = f77_balance(&a, aty, &b, bty);
-        if (rty == TY_FLOAT)
+        bty = ex_ty; bhi = ex_hi;
+        rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
+        if (rty == TY_DOUBLE)
+            a = f77_fp64_call2(op == T_STAR ? "__fp64_mul" : "__fp64_div",
+                               a, ahi, b, bhi, &ahi);
+        else if (rty == TY_FLOAT)
             a = hi_emit(op == T_STAR ? HI_FMUL : HI_FDIV, TY_FLOAT, a, b, 0, NULL);
         else
             a = hi_emit(op == T_STAR ? HI_MUL : HI_DIV, TY_INT, a, b, 0, NULL);
         aty = rty;
     }
-    ex_ty = aty;
+    ex_ty = aty; ex_hi = ahi;
     return a;
 }
 
 static int f77_arith(void) {
-    int a;
-    int b;
-    int aty;
-    int bty;
-    int rty;
+    int a; int b; int aty; int bty; int rty; int ahi; int bhi;
     a = f77_term();
-    aty = ex_ty;
+    aty = ex_ty; ahi = ex_hi;
     while (lx_t == T_PLUS || lx_t == T_MINUS) {
         int op;
         op = lx_t;
         f77_tok();
         b = f77_term();
-        bty = ex_ty;
-        rty = f77_balance(&a, aty, &b, bty);
-        if (rty == TY_FLOAT)
+        bty = ex_ty; bhi = ex_hi;
+        rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
+        if (rty == TY_DOUBLE)
+            a = f77_fp64_call2(op == T_PLUS ? "__fp64_add" : "__fp64_sub",
+                               a, ahi, b, bhi, &ahi);
+        else if (rty == TY_FLOAT)
             a = hi_emit(op == T_PLUS ? HI_FADD : HI_FSUB, TY_FLOAT, a, b, 0, NULL);
         else
             a = hi_emit(op == T_PLUS ? HI_ADD : HI_SUB, TY_INT, a, b, 0, NULL);
         aty = rty;
     }
-    ex_ty = aty;
+    ex_ty = aty; ex_hi = ahi;
     return a;
 }
 
@@ -264,23 +361,30 @@ static int f77_arith(void) {
  * FEQ/FLT/FLE, so >, >= and /= are built by swapping operands or
  * inverting the result. */
 static int f77_relat(void) {
-    int a;
-    int b;
-    int aty;
-    int bty;
-    int rty;
-    int op;
-    int r;
+    int a; int b; int aty; int bty; int rty; int op; int r; int ahi; int bhi;
     a = f77_arith();
-    aty = ex_ty;
+    aty = ex_ty; ahi = ex_hi;
     if (lx_t == T_EQ || lx_t == T_NE || lx_t == T_LT ||
         lx_t == T_LE || lx_t == T_GT || lx_t == T_GE) {
         op = lx_t;
         f77_tok();
         b = f77_arith();
-        bty = ex_ty;
-        rty = f77_balance(&a, aty, &b, bty);
+        bty = ex_ty; bhi = ex_hi;
+        rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
         ex_ty = TY_INT;
+        if (rty == TY_DOUBLE) {
+            /* Only eq/lt/le exist; the rest come from swapping the
+             * operands or inverting the result. */
+            if (op == T_EQ) return f77_fp64_call2("__fp64_eq", a, ahi, b, bhi, NULL);
+            if (op == T_NE) {
+                r = f77_fp64_call2("__fp64_eq", a, ahi, b, bhi, NULL);
+                return hi_emit(HI_NOT, TY_INT, r, -1, 0, NULL);
+            }
+            if (op == T_LT) return f77_fp64_call2("__fp64_lt", a, ahi, b, bhi, NULL);
+            if (op == T_LE) return f77_fp64_call2("__fp64_le", a, ahi, b, bhi, NULL);
+            if (op == T_GT) return f77_fp64_call2("__fp64_lt", b, bhi, a, ahi, NULL);
+            return f77_fp64_call2("__fp64_le", b, bhi, a, ahi, NULL);
+        }
         if (rty == TY_FLOAT) {
             if (op == T_EQ) return hi_emit(HI_FEQ, TY_INT, a, b, 0, NULL);
             if (op == T_NE) {
@@ -299,7 +403,7 @@ static int f77_relat(void) {
         if (op == T_GT) return hi_emit(HI_SGT, TY_INT, a, b, 0, NULL);
         return hi_emit(HI_SGE, TY_INT, a, b, 0, NULL);
     }
-    ex_ty = aty;
+    ex_ty = aty; ex_hi = ahi;
     return a;
 }
 
@@ -463,8 +567,15 @@ static void f77_scan_from(int off) {
     f77_tok();
 }
 
-static void f77_store_sym(int s, int v, int vty) {
-    v = f77_convert(v, vty, f77_sty[s]);
+static void f77_store_sym(int s, int v, int vty, int vhi) {
+    v = f77_cvt(v, &vhi, vty, f77_sty[s]);
+    if (f77_sty[s] == TY_DOUBLE) {
+        int addr4;
+        hi_emit(HI_STORE, TY_INT, f77_sval[s], v, 0, NULL);
+        addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 4, NULL);
+        hi_emit(HI_STORE, TY_INT, addr4, vhi, 0, NULL);
+        return;
+    }
     hi_emit(HI_STORE, f77_sty[s], f77_sval[s], v, 0, NULL);
 }
 
@@ -491,17 +602,27 @@ static void f77_stmt_assign(void) {
     f77_tok();
     v = f77_expr();
     vty = ex_ty;
-    f77_store_sym(s, v, vty);
+    f77_store_sym(s, v, vty, ex_hi);
 }
 
 static void f77_stmt_decl(int ty, int skip) {
     int s;
+    int was;
     f77_scan_from(skip);
     for (;;) {
         if (lx_t != T_NAME) break;
         s = f77_sym(lex_name);
+        was = f77_sty[s];
         f77_sty[s] = ty;          /* declaration overrides implicit typing */
         h_ty[f77_sval[s]] = ty;
+        if (ty_size(ty) > ty_size(was)) {
+            /* The slot was sized by implicit typing; a DOUBLE PRECISION
+             * declaration needs 8 bytes, so widen it before anything
+             * else is allocated below it. */
+            f77_frame = f77_frame + (ty_size(ty) - ty_size(was));
+            h_val[f77_sval[s]] = 0 - f77_frame;
+            hl_aoff[hl_nalloca - 1] = 0 - f77_frame;
+        }
         f77_tok();
         if (lx_t != T_COMMA) break;
         f77_tok();
@@ -527,13 +648,13 @@ static void f77_open_do(void) {
     f77_tok();
     if (lx_t != T_ASSIGN) { f77_error("expected = in DO"); return; }
     f77_tok();
-    m1 = f77_expr(); m1 = f77_convert(m1, ex_ty, TY_INT);
+    m1 = f77_expr(); m1 = f77_cvt(m1, &ex_hi, ex_ty, TY_INT);
     if (lx_t != T_COMMA) { f77_error("expected , in DO"); return; }
     f77_tok();
-    m2 = f77_expr(); m2 = f77_convert(m2, ex_ty, TY_INT);
+    m2 = f77_expr(); m2 = f77_cvt(m2, &ex_hi, ex_ty, TY_INT);
     if (lx_t == T_COMMA) {
         f77_tok();
-        m3 = f77_expr(); m3 = f77_convert(m3, ex_ty, TY_INT);
+        m3 = f77_expr(); m3 = f77_cvt(m3, &ex_hi, ex_ty, TY_INT);
     } else {
         m3 = f77_iconst(1);
     }
@@ -680,6 +801,7 @@ static void f77_statement(void) {
     if (f77_starts("CONTINUE")) goto done;
     if (f77_starts("INTEGER"))  { f77_stmt_decl(TY_INT,   7); goto done; }
     if (f77_starts("LOGICAL"))  { f77_stmt_decl(TY_INT,   7); goto done; }
+    if (f77_starts("DOUBLEPRECISION")) { f77_stmt_decl(TY_DOUBLE, 15); goto done; }
     if (f77_starts("REAL"))     { f77_stmt_decl(TY_FLOAT, 4); goto done; }
 
     if (f77_starts("ELSEIF")) {
