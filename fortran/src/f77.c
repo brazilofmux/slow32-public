@@ -202,6 +202,11 @@ int main(int argc, char **argv) {
 
     gen_program(&f77_program);
 
+    if (getenv("F77_PAIR_STATS")) {
+        fdputs("pair-pref hits: ", 2);
+        fdputuint(2, (unsigned int)ra_stat_pair_pref);
+        fdputc(10, 2);
+    }
     if (f77_nerr > 0) {
         fdputs("f77: compilation failed\n", 2);
         return 1;

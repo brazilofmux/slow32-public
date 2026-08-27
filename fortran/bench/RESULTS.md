@@ -10,7 +10,7 @@ deliberate mirrors of each other).
 | compiler | instructions | ratio |
 |---|---:|---:|
 | clang -O2 | 501,352,191 | 1.00× |
-| **f77** | 1,668,542,079 | **3.33×** |
+| **f77** | 1,154,751,549 | **2.30×** |
 | stage08 cc *(same C source)* | — | **3.56×** at 12 reps |
 
 The third row is the important one. Compiling the **C** version with
@@ -36,8 +36,32 @@ forced into fixed `r4:r5` and `r6:r7`, and the result comes back in
 even-aligned pairs directly and emits `fadd.d rd, rs1, rs2` on whatever
 registers the allocator chose — 0.6 moves per operation.
 
-Closing this means teaching the register allocator to allocate
-even-aligned pairs for doubles. It would benefit `stage08` equally.
+**Closed, partly — 2026-08-27.** The register allocator now claims
+aligned pairs for fp64 halves and the emitter names them directly:
+
+| | instructions | ratio | moves/fp64 op |
+|---|---:|---:|---:|
+| before | 1,668,542,079 | 3.33× | 23.0 |
+| after | 1,154,751,549 | **2.30×** | **15.7** |
+
+31% fewer instructions, 21% less wall time (0.2922 s → 0.2299 s).
+
+Two parts. `hcg_pair_reg` lets the emitter name an already-aligned pair
+instead of shuffling through `r4:r5`/`r6:r7` — safe on its own, since
+it falls back to the moves. Then `ra_pair_claim` in `gc_select` claims
+a free aligned pair for one half and *pins* the partner to the other.
+The first attempt only looked for an already-coloured partner and
+scored **zero hits**: select colours one node at a time, so the partner
+is almost always still uncoloured (33 misses, 0 hits, measured). Claim-
+and-pin scores 53 hits on this kernel. A pin is honoured only if it is
+still conflict-free for the pinned node's own neighbours, so it can
+never colour two interfering values the same; when it cannot be
+honoured the emitter falls back to the moves.
+
+The remaining 2.30× is inlining (clang inlines `daxpy` into its
+callers) and the residual moves where a pair could not be claimed.
+
+This work applies to `stage08` equally and is not yet ported there.
 
 ## The DBT is not the problem
 
