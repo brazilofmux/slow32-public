@@ -339,8 +339,33 @@ static int f77_balance(int *a, int *ahi, int aty, int *b, int *bhi, int bty) {
     return TY_INT;
 }
 
+/* Integer constants are cached PER BASIC BLOCK.  CSE hashes on operand
+ * instruction indices, so two identical expressions built from two
+ * separately-emitted ICONSTs of the same value never match -- which is
+ * why `(i-1)*8` was being recomputed once per array reference instead
+ * of shared.  The cache is per-block, not per-function, so a reused
+ * constant always dominates its uses. */
+#define F77_KCACHE 64
+static int f77_kval[F77_KCACHE];
+static int f77_kinst[F77_KCACHE];
+static int f77_nk;
+static int f77_kblk = -1;
+
 static int f77_iconst(int v) {
-    return hi_emit(HI_ICONST, TY_INT, -1, -1, v, NULL);
+    int i;
+    if (hl_cur_blk != f77_kblk) { f77_kblk = hl_cur_blk; f77_nk = 0; }
+    i = 0;
+    while (i < f77_nk) {
+        if (f77_kval[i] == v) return f77_kinst[i];
+        i = i + 1;
+    }
+    i = hi_emit(HI_ICONST, TY_INT, -1, -1, v, NULL);
+    if (f77_nk < F77_KCACHE) {
+        f77_kval[f77_nk] = v;
+        f77_kinst[f77_nk] = i;
+        f77_nk = f77_nk + 1;
+    }
+    return i;
 }
 
 /* REAL constant: f32 bits carried in an ICONST typed TY_FLOAT, which is
@@ -1039,6 +1064,8 @@ static void f77_store_sym(int s, int v, int vty, int vhi) {
 static void f77_begin_blk(int b) {
     hl_switch_block(b);
     f77_cur_blk_live = 1;
+    f77_nk = 0;
+    f77_kblk = b;
 }
 
 static void f77_goto_blk(int b) {
