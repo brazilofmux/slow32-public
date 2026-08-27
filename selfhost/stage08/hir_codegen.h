@@ -1197,22 +1197,84 @@ static int hcg_fp64_kind(char *nm) {
     return -1;
 }
 
+/* fp64 aligned-pair support.
+ *
+ * fadd.d/fmul.d etc. address a register PAIR (r_n, r_n+1) and require n
+ * even (CHECK_F64_REG).  The helper-call shape forced every operand
+ * through the fixed r4:r5 / r6:r7 pair and returned via r1:r2, costing
+ * ~8 register moves around a single instruction -- measured at 23 moves
+ * per fp64 op against clang's 0.6 (fortran/bench/RESULTS.md).
+ *
+ * If the allocator already placed a double's two halves in an aligned
+ * consecutive pair, the instruction can name that pair directly and the
+ * moves vanish.  This checks for that; hcg_pair_pref() below then makes
+ * it happen often rather than by luck. */
+static int hcg_fp64_cur = -1;   /* CALL being inlined, or -1 */
+static int hcg_fp64_dst = -1;   /* home pair for its result, or -1 */
+
+static int hcg_pair_reg(int lo_inst, int hi_inst) {
+    int a;
+    int b;
+    if (lo_inst < 0 || hi_inst < 0) return -1;
+    a = ra_reg[lo_inst];
+    b = ra_reg[hi_inst];
+    if (a < 0 || b < 0) return -1;      /* spilled: no pair */
+    if (a & 1) return -1;               /* must be even */
+    if (a >= 31) return -1;
+    if (b != a + 1) return -1;
+    return a;
+}
+
 static void hcg_fp64_emit(int fpk, int base) {
-    /* Binary arithmetic and compares: pairs r4:r5 op r6:r7 */
+    /* Binary arithmetic and compares.  Each operand uses its own aligned
+     * pair when the allocator gave it one, otherwise it is moved into
+     * the scratch pair (r4:r5 for the left, r6:r7 for the right). */
     if (fpk <= 3 || (fpk >= 5 && fpk <= 7)) {
-        hcg_into(4, h_carg[base + 0]);
-        hcg_into(5, h_carg[base + 1]);
-        hcg_into(6, h_carg[base + 2]);
-        hcg_into(7, h_carg[base + 3]);
-        if (fpk == 5) { cg_rrr("feq.d", 1, 4, 6); return; }
-        if (fpk == 6) { cg_rrr("flt.d", 1, 4, 6); return; }
-        if (fpk == 7) { cg_rrr("fle.d", 1, 4, 6); return; }
-        if (fpk == 0) cg_rrr("fadd.d", 4, 4, 6);
-        else if (fpk == 1) cg_rrr("fsub.d", 4, 4, 6);
-        else if (fpk == 2) cg_rrr("fmul.d", 4, 4, 6);
-        else cg_rrr("fdiv.d", 4, 4, 6);
-        cg_rri("addi", 1, 4, 0);
-        cg_rri("addi", 2, 5, 0);
+        int pa;
+        int pb;
+        pa = hcg_pair_reg(h_carg[base + 0], h_carg[base + 1]);
+        pb = hcg_pair_reg(h_carg[base + 2], h_carg[base + 3]);
+
+        /* The right operand's scratch pair is r6:r7; if the left operand
+         * already lives there, move it out first so loading the right
+         * cannot clobber it. */
+        if (pa == 6 && pb < 0) {
+            cg_rri("addi", 4, 6, 0);
+            cg_rri("addi", 5, 7, 0);
+            pa = 4;
+        }
+        if (pa < 0) {
+            hcg_into(4, h_carg[base + 0]);
+            hcg_into(5, h_carg[base + 1]);
+            pa = 4;
+        }
+        if (pb < 0) {
+            hcg_into(6, h_carg[base + 2]);
+            hcg_into(7, h_carg[base + 3]);
+            pb = 6;
+        }
+
+        if (fpk == 5) { cg_rrr("feq.d", 1, pa, pb); return; }
+        if (fpk == 6) { cg_rrr("flt.d", 1, pa, pb); return; }
+        if (fpk == 7) { cg_rrr("fle.d", 1, pa, pb); return; }
+
+        /* Write the result straight into its home pair when it has one,
+         * which also skips the r1:r2 hop the generic call path uses. */
+        hcg_fp64_dst = -1;
+        if (hcg_fp64_cur >= 0)
+            hcg_fp64_dst = hcg_pair_reg(hcg_fp64_cur, hcg_fp64_cur + 1);
+        {
+            int rd;
+            rd = (hcg_fp64_dst >= 0) ? hcg_fp64_dst : 4;
+            if (fpk == 0) cg_rrr("fadd.d", rd, pa, pb);
+            else if (fpk == 1) cg_rrr("fsub.d", rd, pa, pb);
+            else if (fpk == 2) cg_rrr("fmul.d", rd, pa, pb);
+            else cg_rrr("fdiv.d", rd, pa, pb);
+            if (hcg_fp64_dst < 0) {
+                cg_rri("addi", 1, 4, 0);
+                cg_rri("addi", 2, 5, 0);
+            }
+        }
         return;
     }
     /* Negate: pair r4:r5 */
@@ -2128,9 +2190,15 @@ static void hcg_inst(int idx) {
 
         fpk = hcg_fp64_kind(h_name[idx]);
         if (fpk >= 0) {
-            /* HW FP inline instead of the wrapper call; results in
-             * r1/r2 so the shared post-call path below runs as-is. */
+            /* HW FP inline instead of the wrapper call.  Results land in
+             * r1/r2 so the shared post-call path below runs as-is,
+             * unless the value has a home pair -- hcg_fp64_dst records
+             * that so the writeback can be skipped. */
+            hcg_fp64_cur = (idx + 1 < bb_end[h_blk[idx]] &&
+                            h_kind[idx + 1] == HI_CALLHI) ? idx : -1;
+            hcg_fp64_dst = -1;
             hcg_fp64_emit(fpk, base);
+            if (hcg_fp64_dst >= 0) return;   /* already in its home pair */
         } else {
 
         /* ABI walk: aligned f64 pairs, back-filled ints, ordered

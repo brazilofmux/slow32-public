@@ -1290,6 +1290,114 @@ static void gc_irc(void) {
      * gc_select / gc_writeback via gc_force_spill or degree >= K. */
 }
 
+/* --- fp64 aligned-pair allocation ---
+ *
+ * fadd.d and friends address a register PAIR (r_n, r_n+1) with n even.
+ * Nothing in the IR says which two values form a double, so the
+ * allocator scatters the halves and the emitter pays ~8 moves per
+ * operation shuffling them into the fixed r4:r5 / r6:r7 pair.
+ *
+ * ra_pair_of[v] records the partner of a value that is half of an fp64
+ * pair, and ra_pair_lo[v] which half it is.  gc_select then PREFERS a
+ * colour adjacent to an already-coloured partner.  It is only a
+ * preference: when it cannot be honoured the emitter falls back to the
+ * moves, so this can never produce wrong code -- only fewer or more
+ * instructions. */
+static int hcg_fp64_kind(char *nm);   /* defined in hir_codegen.h */
+
+static int ra_stat_pair_pref;
+static int ra_pair_of[HIR_MAX_INST];
+static int ra_pair_lo[HIR_MAX_INST];
+
+static void ra_build_pairs(void) {
+    int i;
+    int base;
+    int n;
+    i = 0;
+    while (i < h_ninst) { ra_pair_of[i] = -1; ra_pair_lo[i] = 0; i = i + 1; }
+
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_CALL && hcg_fp64_kind(h_name[i]) >= 0) {
+            base = h_cbase[i];
+            n = h_val[i];
+            if (base >= 0 && n >= 2) {
+                int a;
+                int b;
+                a = h_carg[base + 0];
+                b = h_carg[base + 1];
+                if (a >= 0 && b >= 0) {
+                    ra_pair_of[a] = b; ra_pair_lo[a] = 1;
+                    ra_pair_of[b] = a; ra_pair_lo[b] = 0;
+                }
+                if (n >= 4) {
+                    a = h_carg[base + 2];
+                    b = h_carg[base + 3];
+                    if (a >= 0 && b >= 0) {
+                        ra_pair_of[a] = b; ra_pair_lo[a] = 1;
+                        ra_pair_of[b] = a; ra_pair_lo[b] = 0;
+                    }
+                }
+            }
+            /* The result pair: the CALL is the lo word, its CALLHI the hi. */
+            if (i + 1 < h_ninst && h_kind[i + 1] == HI_CALLHI &&
+                h_src1[i + 1] == i) {
+                ra_pair_of[i] = i + 1; ra_pair_lo[i] = 1;
+                ra_pair_of[i + 1] = i; ra_pair_lo[i + 1] = 0;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+/* Pinned colour for a node whose fp64 partner already claimed a pair.
+ * -1 = unpinned.  A pin is honoured only if it is still conflict-free
+ * for the pinned node's own neighbours, so it can never colour two
+ * interfering values the same. */
+static int gc_pin[GC_MAX_NODE];
+
+/* Claim an aligned register pair for `inst` and pin its partner to the
+ * other half.  Returns this node's colour, or -1.
+ *
+ * The earlier version only looked for an ALREADY-coloured partner,
+ * which never fired: select colours one node at a time and the partner
+ * is almost always still uncoloured (measured: 33 misses, 0 hits). */
+static int ra_pair_claim(int n, int inst, int maxc, int *used) {
+    int partner;
+    int pn;
+    int c;
+    int lo_c;
+    int hi_c;
+
+    partner = ra_pair_of[inst];
+    if (partner < 0) return -1;
+    pn = gc_node[partner];
+    if (pn < 0) return -1;
+    if (gc_color[gc_get_alias(pn)] >= 0) return -1;   /* already placed */
+
+    c = 0;
+    while (c + 1 < maxc) {
+        int p0;
+        int p1;
+        p0 = ra_get_phys(c);
+        p1 = ra_get_phys(c + 1);
+        if (p0 >= 0 && p1 == p0 + 1 && (p0 & 1) == 0 && p0 + 1 < 31 &&
+            !used[c] && !used[c + 1]) {
+            if (ra_pair_lo[inst]) { lo_c = c; hi_c = c + 1; }
+            else                  { lo_c = c + 1; hi_c = c; }
+            /* Respect the caller/callee split for both halves. */
+            if (lo_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(inst))
+                { c = c + 1; continue; }
+            if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(partner))
+                { c = c + 1; continue; }
+            gc_pin[pn] = hi_c;
+            return lo_c;
+        }
+        c = c + 1;
+    }
+    return -1;
+}
+
 static void gc_select(void) {
     int i, n, inst, e, peer, pa, pc, c;
     int used[RA_NPHY_TOTAL];
@@ -1346,6 +1454,25 @@ static void gc_select(void) {
             }
 
             gc_color[n] = -1;
+
+            /* fp64 pairs, tried before src1 reuse.  Either honour a
+             * pin left by this value's partner, or claim a fresh
+             * aligned pair and pin the partner to the other half, so
+             * the emitter can name the pair directly instead of
+             * shuffling it through r4:r5. */
+            if (gc_color[n] < 0 && gc_pin[n] >= 0 && gc_pin[n] < maxc &&
+                !used[gc_pin[n]]) {
+                gc_color[n] = gc_pin[n];
+                ra_stat_pair_pref = ra_stat_pair_pref + 1;
+            }
+            if (gc_color[n] < 0) {
+                int pw;
+                pw = ra_pair_claim(n, inst, maxc, used);
+                if (pw >= 0) {
+                    gc_color[n] = pw;
+                    ra_stat_pair_pref = ra_stat_pair_pref + 1;
+                }
+            }
 
             /* Src1 reuse for destructive binary ops.
              * For ADD, SUB, AND, OR, XOR, shifts, etc. the result can
@@ -1776,6 +1903,8 @@ static void ra_mark_call_crossing(void) {
 static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
+    { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+    ra_build_pairs();      /* fp64 halves that want adjacent registers */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();

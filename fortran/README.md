@@ -36,7 +36,13 @@ after any re-sync; each is marked in-place with a `DIVERGENCE` comment):
   `FSQRT.D` / `FSQRT.S`. The C compiler reaches sqrt through
   `HI_FSQRT`, which this backend does not implement and **silently
   emits nothing for**, so without this Fortran would call a libm
-  function whose entire body is one instruction.
+  function whose entire body is one instruction. Not ported to
+  stage08, where nothing emits those names.
+
+The fp64 **aligned-pair allocation** (`ra_pair_claim`/`hcg_pair_reg`)
+was prototyped here and has since been **ported upstream to
+`selfhost/stage08`**, so it is no longer a divergence — the two copies
+agree on it.
 
 SLOW-32 is the only target. x86-64 and aarch64 are reached through
 `slow32-dbt`, as with every other language here.

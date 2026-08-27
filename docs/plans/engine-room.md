@@ -670,6 +670,48 @@ branch trampolines (bcond→jal→jal), loop-invariant constant remat
 (lui+addi per iteration) — worth ~4 inst/iter on bench_arith,
 i.e., most of the distance to LLVM parity.
 
+## fp64 aligned-pair allocation (2026-08-27)
+
+Fortran was the first workload to lean on double precision, and it
+found a gap integer benchmarks structurally could not: on a LINPACK
+kernel, **stage08 emitted 3.56x more instructions than clang** for the
+same C source. Measured cause, not guessed — ~23 register moves per
+fp64 operation against clang's 0.6.
+
+`fadd.d` and friends address a register PAIR `(r_n, r_n+1)` with `n`
+even (`CHECK_F64_REG`). Nothing in the IR said which two values formed
+a double, so the allocator scattered the halves and the emitter
+shuffled them through the fixed `r4:r5`/`r6:r7` pair on every
+operation, returning via `r1:r2`.
+
+Now `ra_build_pairs` records fp64 halves (operand pairs from the
+helper's `h_carg`, result pair from `CALL` + `CALLHI`), `ra_pair_claim`
+in `gc_select` claims a free aligned pair for one half and **pins** the
+partner to the other, and `hcg_pair_reg` lets the emitter name the pair
+directly. A pin is honoured only when still conflict-free for the
+pinned node's own neighbours, so it can never colour two interfering
+values the same; when it cannot be honoured the emitter falls back to
+the old moves, so the change can only alter instruction count.
+
+**stage08 on the same C kernel: 3.56x -> 2.40x clang, 33% fewer
+instructions.** Prototyped in `fortran/` (3.33x -> 2.30x) and ported
+here.
+
+Worth recording: the first version of the allocator half looked for an
+ALREADY-COLOURED partner and scored exactly **zero hits** — select
+colours one node at a time, so a partner is almost always still
+uncoloured. Instrumenting the failure paths said so directly (33
+misses, 0 hits) rather than leaving it to be guessed at.
+
+Gates: fixed-point 56/56, FP differential 288 bit-identical, interop,
+DOOM 2173 frames `75fd024951e9cf7f` on both engines, sbasic 45/45,
+regression 78/78, cross-engine differential (only the documented
+KNOWN_DIVERGENT set). Five of the six stage08 tool binaries recompiled
+**byte-identical** — the change is a true no-op for integer-only code.
+
+Remaining distance to clang on fp64 is mostly inlining, plus the
+residual moves where no pair could be claimed (15.7 per op vs 0.6).
+
 ## What not to do
 
 - No JIT, no runtime codegen, no W^X exceptions. Ruled, permanent.
