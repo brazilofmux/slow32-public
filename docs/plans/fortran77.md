@@ -192,8 +192,26 @@ No linker change is required, and none should be added for this.
    to F77 pays this; there is no shortcut.
 5. **Subprograms.** `SUBROUTINE`/`FUNCTION`, by-reference arguments,
    `COMMON`, `SAVE`, `EXTERNAL`.
-6. **Arrays.** Column-major, 1-based, arbitrary lower bounds, adjustable
-   dimensions in dummy arguments.
+6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,
+   arbitrary lower bounds (`R(0:9)`, `A(-5:5)`), up to rank 7, elements
+   of any type including DOUBLE PRECISION, the `DIMENSION` statement,
+   and `REAL*8`-style length specifiers. Element offset is
+   `(s1-lo1) + (s2-lo2)*n1 + ...` — first subscript fastest, the
+   opposite of C — and constant subscripts fold away completely.
+
+   **Caveat, recorded rather than glossed:** `tests/f77/slice5.f` does
+   NOT prove the layout. It writes and reads through the same
+   subscripts, so a row-major implementation would pass it identically.
+   Column-major was verified by *inspection* instead — `M(2,3)` in an
+   `INTEGER M(3,4)` compiles to a `+28` byte offset, i.e. element 7,
+   which is `(2-1)+(3-1)*3`; row-major would have been element 6. A
+   real black-box test needs the layout to be observable through a
+   second view of the same storage, which arrives with subprograms
+   (passing a 2-D array to a routine that treats it as 1-D — exactly
+   what LINPACK does) or EQUIVALENCE. That test is owed.
+
+   Not yet: adjustable dimensions in dummy arguments, which come with
+   subprograms.
 7. **The app that justifies it.** Per the desk's own rule, the language
    earns its place through a program, not a test suite: a LINPACK-shaped
    kernel plus a plotter routine on the tube.

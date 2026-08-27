@@ -32,9 +32,13 @@
 /* --- symbols -------------------------------------------------------- */
 
 #define F77_MAX_SYM 1024
+#define F77_MAX_RANK 7                 /* the F77 limit */
 static char f77_sname[F77_MAX_SYM][F77_MAX_NAME];
-static int  f77_sty[F77_MAX_SYM];      /* TY_INT / TY_FLOAT */
+static int  f77_sty[F77_MAX_SYM];      /* TY_INT / TY_FLOAT / TY_DOUBLE */
 static int  f77_sval[F77_MAX_SYM];     /* HIR alloca */
+static int  f77_srank[F77_MAX_SYM];    /* 0 = scalar */
+static int  f77_slo[F77_MAX_SYM][F77_MAX_RANK];   /* lower bound per dim */
+static int  f77_sext[F77_MAX_SYM][F77_MAX_RANK];  /* extent per dim */
 static int  f77_nsym;
 
 /* F77 implicit typing: I-N are INTEGER, everything else REAL. */
@@ -57,6 +61,7 @@ static int f77_sym(char *nm) {
     if (f77_nsym >= F77_MAX_SYM) { f77_error("too many symbols"); return 0; }
     strcpy(f77_sname[f77_nsym], nm);
     f77_sty[f77_nsym] = f77_implicit_ty(nm);
+    f77_srank[f77_nsym] = 0;
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
                                  0 - f77_frame, NULL);
@@ -65,6 +70,40 @@ static int f77_sym(char *nm) {
     hl_nalloca = hl_nalloca + 1;
     f77_nsym = f77_nsym + 1;
     return f77_nsym - 1;
+}
+
+/* Total element count of a shaped symbol. */
+static int f77_sym_nelem(int s) {
+    int n;
+    int k;
+    n = 1;
+    k = 0;
+    while (k < f77_srank[s]) { n = n * f77_sext[s][k]; k = k + 1; }
+    return n;
+}
+
+/* (Re)allocate a symbol's frame slot once its type and shape are known.
+ * Declarations arrive after the implicit-typing allocation, so the slot
+ * is simply re-issued at the end of the frame; the earlier bytes are
+ * abandoned, which costs a few words in exchange for not needing a
+ * second pass over the declarations. */
+static void f77_realloc_sym(int s) {
+    int bytes;
+    bytes = ty_size(f77_sty[s]) * f77_sym_nelem(s);
+    f77_frame = f77_frame + bytes;
+    h_val[f77_sval[s]] = 0 - f77_frame;
+    h_ty[f77_sval[s]] = f77_sty[s];
+    hl_aoff[hl_nalloca - 1] = 0 - f77_frame;
+    {
+        /* Keep the alloca registry entry pointing at this symbol's
+         * instruction, wherever it landed. */
+        int i;
+        i = 0;
+        while (i < hl_nalloca) {
+            if (hl_ainst[i] == f77_sval[s]) hl_aoff[i] = 0 - f77_frame;
+            i = i + 1;
+        }
+    }
 }
 
 /* --- statement labels ----------------------------------------------- */
@@ -222,6 +261,79 @@ static int f77_rconst(double d) {
     return hi_emit(HI_ICONST, TY_FLOAT, -1, -1, bits, NULL);
 }
 
+/* Address of A(s1,s2,...).  Fortran is COLUMN-MAJOR and 1-based by
+ * default, so the element offset is
+ *
+ *     (s1-lo1) + (s2-lo2)*n1 + (s3-lo3)*n1*n2 + ...
+ *
+ * i.e. the FIRST subscript varies fastest -- the opposite of C.  Any
+ * lower bound is allowed (A(0:9), A(-5:5)); it is folded into the
+ * subtraction, and constant subscripts fold away entirely downstream. */
+static int f77_subscript_addr(int s) {
+    int off;
+    int stride;
+    int k;
+    int idx;
+    int t;
+    int byte;
+
+    off = f77_iconst(0);
+    stride = 1;
+    k = 0;
+    for (;;) {
+        idx = f77_expr();
+        idx = f77_cvt(idx, &ex_hi, ex_ty, TY_INT);
+        if (k < f77_srank[s]) {
+            if (f77_slo[s][k] != 0)
+                idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 0 - f77_slo[s][k], NULL);
+            if (stride != 1)
+                idx = hi_emit(HI_MUL, TY_INT, idx, f77_iconst(stride), 0, NULL);
+            off = hi_emit(HI_ADD, TY_INT, off, idx, 0, NULL);
+            stride = stride * f77_sext[s][k];
+        }
+        k = k + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after subscripts"); }
+    else f77_tok();
+    if (k != f77_srank[s]) f77_error("wrong number of subscripts");
+
+    t = ty_size(f77_sty[s]);
+    if (t == 1) byte = off;
+    else if (t == 4) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(2), 0, NULL);
+    else if (t == 8) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
+    else byte = hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
+    return hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
+}
+
+/* Load a value of type `ty` from `addr`, setting ex_ty/ex_hi. */
+static int f77_load_at(int addr, int ty) {
+    int v;
+    ex_ty = ty;
+    if (ty == TY_DOUBLE) {
+        int a4;
+        v = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+        a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+        ex_hi = hi_emit(HI_LOAD, TY_INT, a4, -1, 0, NULL);
+        return v;
+    }
+    return hi_emit(HI_LOAD, ty, addr, -1, 0, NULL);
+}
+
+/* Store `v` (hi word `vhi`) of type `vty` to `addr` as type `ty`. */
+static void f77_store_at(int addr, int ty, int v, int vty, int vhi) {
+    v = f77_cvt(v, &vhi, vty, ty);
+    if (ty == TY_DOUBLE) {
+        int a4;
+        hi_emit(HI_STORE, TY_INT, addr, v, 0, NULL);
+        a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+        hi_emit(HI_STORE, TY_INT, a4, vhi, 0, NULL);
+        return;
+    }
+    hi_emit(HI_STORE, ty, addr, v, 0, NULL);
+}
+
 static int f77_primary(void) {
     int v;
     int s;
@@ -266,15 +378,13 @@ static int f77_primary(void) {
     if (lx_t == T_NAME) {
         s = f77_sym(lex_name);
         f77_tok();
-        ex_ty = f77_sty[s];
-        if (ex_ty == TY_DOUBLE) {
-            int addr4;
-            v = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
-            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 4, NULL);
-            ex_hi = hi_emit(HI_LOAD, TY_INT, addr4, -1, 0, NULL);
-            return v;
+        if (lx_t == T_LP && f77_srank[s] > 0) {
+            int addr;
+            f77_tok();
+            addr = f77_subscript_addr(s);
+            return f77_load_at(addr, f77_sty[s]);
         }
-        return hi_emit(HI_LOAD, f77_sty[s], f77_sval[s], -1, 0, NULL);
+        return f77_load_at(f77_sval[s], f77_sty[s]);
     }
     f77_error("bad expression");
     ex_ty = TY_INT;
@@ -594,36 +704,81 @@ static void f77_stmt_assign(void) {
     int s;
     int v;
     int vty;
+    int addr;
     f77_scan_from(0);
     if (lx_t != T_NAME) { f77_error("expected variable on the left of ="); return; }
     s = f77_sym(lex_name);
     f77_tok();
+    addr = f77_sval[s];
+    if (lx_t == T_LP && f77_srank[s] > 0) {
+        f77_tok();
+        addr = f77_subscript_addr(s);
+    }
     if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
     f77_tok();
     v = f77_expr();
     vty = ex_ty;
-    f77_store_sym(s, v, vty, ex_hi);
+    f77_store_at(addr, f77_sty[s], v, vty, ex_hi);
 }
 
+/* A dimension bound: a signed integer constant.  F77 allows constant
+ * expressions here; only literals and negation are accepted so far. */
+static int f77_dim_bound(void) {
+    int neg;
+    int v;
+    neg = 0;
+    if (lx_t == T_MINUS) { neg = 1; f77_tok(); }
+    else if (lx_t == T_PLUS) f77_tok();
+    if (lx_t != T_ICON) { f77_error("dimension bound must be an integer constant"); return 1; }
+    v = lex_ival;
+    f77_tok();
+    return neg ? 0 - v : v;
+}
+
+/* Parse `(d1[,d2...])` after a name, each dimension `[lo:]hi`. */
+static void f77_parse_dims(int s) {
+    int rank;
+    int lo;
+    int hi;
+    rank = 0;
+    f77_tok();                       /* past ( */
+    for (;;) {
+        lo = 1;
+        hi = f77_dim_bound();
+        if (lx_t == T_COLON) { f77_tok(); lo = hi; hi = f77_dim_bound(); }
+        if (rank < F77_MAX_RANK) {
+            f77_slo[s][rank] = lo;
+            f77_sext[s][rank] = hi - lo + 1;
+            if (f77_sext[s][rank] < 0) f77_sext[s][rank] = 0;
+        }
+        rank = rank + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) f77_error("expected ) after dimensions");
+    else f77_tok();
+    if (rank > F77_MAX_RANK) { f77_error("too many dimensions"); rank = F77_MAX_RANK; }
+    f77_srank[s] = rank;
+}
+
+/* Type declarations, and DIMENSION (which sets shape without a type). */
 static void f77_stmt_decl(int ty, int skip) {
     int s;
-    int was;
     f77_scan_from(skip);
     for (;;) {
         if (lx_t != T_NAME) break;
         s = f77_sym(lex_name);
-        was = f77_sty[s];
-        f77_sty[s] = ty;          /* declaration overrides implicit typing */
-        h_ty[f77_sval[s]] = ty;
-        if (ty_size(ty) > ty_size(was)) {
-            /* The slot was sized by implicit typing; a DOUBLE PRECISION
-             * declaration needs 8 bytes, so widen it before anything
-             * else is allocated below it. */
-            f77_frame = f77_frame + (ty_size(ty) - ty_size(was));
-            h_val[f77_sval[s]] = 0 - f77_frame;
-            hl_aoff[hl_nalloca - 1] = 0 - f77_frame;
-        }
+        if (ty >= 0) f77_sty[s] = ty;   /* declaration overrides implicit typing */
         f77_tok();
+        if (lx_t == T_STAR) {           /* REAL*8 X -- length specifier */
+            f77_tok();
+            if (lx_t == T_ICON) {
+                if (lex_ival == 8 && f77_sty[s] == TY_FLOAT) f77_sty[s] = TY_DOUBLE;
+                f77_tok();
+            }
+        }
+        if (lx_t == T_LP) f77_parse_dims(s);
+        f77_realloc_sym(s);
         if (lx_t != T_COMMA) break;
         f77_tok();
     }
@@ -802,6 +957,7 @@ static void f77_statement(void) {
     if (f77_starts("INTEGER"))  { f77_stmt_decl(TY_INT,   7); goto done; }
     if (f77_starts("LOGICAL"))  { f77_stmt_decl(TY_INT,   7); goto done; }
     if (f77_starts("DOUBLEPRECISION")) { f77_stmt_decl(TY_DOUBLE, 15); goto done; }
+    if (f77_starts("DIMENSION")) { f77_stmt_decl(-1, 9); goto done; }
     if (f77_starts("REAL"))     { f77_stmt_decl(TY_FLOAT, 4); goto done; }
 
     if (f77_starts("ELSEIF")) {
