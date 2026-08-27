@@ -1,0 +1,33 @@
+# SLOW-32 Fortran Oracle Image
+#
+# A reference Fortran 77 compiler, used ONLY as a differential oracle
+# while building fortran/ (our F77 for SLOW-32).  Every compiler in this
+# project is developed against a reference implementation -- LLVM for
+# stage08, gforth for stage01 -- and this is F77's.
+#
+# Deliberately a separate image: slow32:toolchain and slow32:emulator
+# are what ~/builder builds and the ECR mirror serves, and neither needs
+# gfortran.  Nothing here is required to BUILD or RUN SLOW-32 software;
+# it only produces expected output to diff against.
+#
+# Build:  podman build -t slow32:fortran-oracle -f Dockerfile.fortran-oracle .
+# Use:    fortran/tests/oracle.sh prog.f
+
+FROM alpine:3.21
+
+RUN apk add --no-cache gfortran musl-dev bash
+
+# Fortran 77 semantics, not Fortran 95+:
+#   -std=legacy   accept F77 constructs gfortran otherwise rejects
+#   -ffixed-form  fixed-form source regardless of file extension
+#   -fno-range-check   allow F77-era constant folding
+ENV FFLAGS="-std=legacy -ffixed-form -fno-range-check"
+
+WORKDIR /work
+
+# Compile the given fixed-form source and run it, so the container's
+# whole job is "source in, program output out".
+RUN printf '#!/bin/sh\nset -e\nsrc="$1"; shift\nout=$(mktemp)\ngfortran $FFLAGS -o "$out" "$src" 2>&1 || { echo "ORACLE-COMPILE-FAIL"; exit 2; }\nexec "$out" "$@"\n' > /usr/local/bin/f77run \
+    && chmod +x /usr/local/bin/f77run
+
+ENTRYPOINT ["/usr/local/bin/f77run"]

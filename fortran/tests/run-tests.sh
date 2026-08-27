@@ -63,6 +63,42 @@ else
     fi
 fi
 
+# --- Gate 3: differential vs the gfortran oracle ----------------------
+# Each tests/f77/*.f is run under gfortran-in-a-container (expected) and,
+# once fortran/out/f77 exists, under our compiler on the emulator
+# (actual).  stdout and exit status must both match.  gfortran sends the
+# `STOP n` message to stderr and the code to the exit status, so stdout
+# stays clean for diffing.
+F77="$FDIR/out/f77"
+if [ ! -x "$F77" ]; then
+    printf "  %-24s SKIP (no compiler yet -- milestone 3)\n" "differential:"
+elif ! "$HERE/oracle.sh" --check >/dev/null 2>&1 && \
+     ! podman image exists slow32:fortran-oracle 2>/dev/null; then
+    printf "  %-24s SKIP (oracle image absent)\n" "differential:"
+else
+    for f in "$HERE"/f77/*.f; do
+        [ -e "$f" ] || continue
+        b="$(basename "$f" .f)"
+        "$HERE/oracle.sh" "$f" > "$W/$b.want" 2>/dev/null; wrc=$?
+        # our compiler -> .s -> .s32o -> .s32x -> emulator
+        if ! "$F77" "$f" "$W/$b.s" >"$W/$b.cc.log" 2>&1; then
+            report "diff:$b" 1 "f77 compile"; continue
+        fi
+        "$AS" "$W/$b.s" "$W/$b.s32o" >/dev/null 2>&1 || { report "diff:$b" 1 "assemble"; continue; }
+        "$LD" -o "$W/$b.s32x" --mmio 64K "$FDIR/runtime/crt0.s32o" "$W/$b.s32o" \
+              "$FDIR/runtime/libf77.s32a" >/dev/null 2>&1 || { report "diff:$b" 1 "link"; continue; }
+        "$EMU" "$W/$b.s32x" 2>/dev/null \
+            | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO" \
+            > "$W/$b.got"; grc=$?
+        if diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 && [ "$wrc" = "$grc" ]; then
+            report "diff:$b" 0
+        else
+            report "diff:$b" 1 "output/exit differs"
+            diff "$W/$b.want" "$W/$b.got" | head -8
+        fi
+    done
+fi
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

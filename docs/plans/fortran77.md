@@ -150,11 +150,36 @@ No linker change is required, and none should be added for this.
 ## Testing
 
 The project's standing method is a differential oracle (LLVM for
-stage08, gforth for stage01). There is **no Fortran on this host** —
-no `gfortran`, `f2c` or `g77` — so an oracle has to be arranged before
-milestone 3 lands. Cheapest route is gfortran in a container, diffing
-program output; that is much cheaper than porting f2c, which was
-considered and set aside as "the compiler story" the desk warns about.
+stage08, gforth for stage01). There was no Fortran on this host, so one
+was built.
+
+**`slow32:fortran-oracle`** (`Dockerfile.fortran-oracle`, Alpine 3.21 +
+GNU Fortran 14.2.0, ~218 MB) compiles and runs a fixed-form program and
+prints what it printed. `fortran/tests/oracle.sh` wraps it: it mounts
+only the source file's directory, auto-detects podman/docker, and
+passes the program's exit status through.
+
+It is deliberately a **separate image**. `slow32:toolchain` and
+`slow32:emulator` are what `~/builder` builds and the ECR mirror
+serves, and neither needs gfortran; nothing in this image is required
+to build or run SLOW-32 software.
+
+Oracle settings, which are part of the comparison and should not drift:
+
+    -std=legacy -ffixed-form -fno-range-check
+
+Two behaviours pinned while setting it up, because tests depend on them:
+
+- `STOP n` writes its message to **stderr** and the value to the **exit
+  status**. stdout therefore stays clean for diffing, and milestone 3's
+  slice can be checked by exit code alone with no I/O runtime.
+- Podman on macOS runs in a VM that shares home paths but **not**
+  `/tmp`, so oracle sources must live under `$HOME` — `tests/f77/`
+  does.
+
+Gate 3 in `tests/run-tests.sh` runs every `tests/f77/*.f` under both the
+oracle and (once it exists) our compiler, requiring stdout and exit
+status to match. It reports SKIP until milestone 3 lands the driver.
 
 ## What not to do
 

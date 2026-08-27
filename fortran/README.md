@@ -31,6 +31,21 @@ the moment it happens.
 SLOW-32 is the only target. x86-64 and aarch64 are reached through
 `slow32-dbt`, as with every other language here.
 
+## The oracle
+
+F77 is developed against a reference implementation, as every compiler
+here is. `Dockerfile.fortran-oracle` (repo root) builds
+`slow32:fortran-oracle` -- Alpine + GNU Fortran 14.2.0 -- and
+`tests/oracle.sh` runs a program through it:
+
+    podman build -t slow32:fortran-oracle -f Dockerfile.fortran-oracle .
+    ./tests/oracle.sh tests/f77/sumsq.f
+
+It is a separate image on purpose: `slow32:toolchain` and
+`slow32:emulator` are what `~/builder` builds, and neither needs
+gfortran. Sources must live under `$HOME` (podman's macOS VM does not
+share `/tmp`).
+
 ## Tests
 
     ./tests/run-tests.sh
