@@ -61,6 +61,43 @@ honoured the emitter falls back to the moves.
 The remaining 2.30× is inlining (clang inlines `daxpy` into its
 callers) and the residual moves where a pair could not be claimed.
 
+## Inlining was tried, and lost
+
+Implemented as source-level splicing (f77 is one-pass with no AST, so
+the callee's body is re-lexed at the call site with its dummies bound
+to the actuals' addresses). It is **off by default** because it is a
+measured pessimisation at every threshold:
+
+| inline cutoff | instructions | ratio |
+|---|---:|---:|
+| off | 1,154,751,490 | **2.30×** |
+| 8 statements | 1,154,751,490 | 2.30× |
+| 12 | 1,398,778,290 | 2.79× |
+| 16 / 20 | 1,777,998,290 | 3.55× |
+| 40 | 3,052,208,300 | 6.09× |
+
+At the 12-statement setting it produced 17% more instructions and 26%
+more load/store traffic (1401 vs 1196 static instructions, 474 vs 377
+loads and stores).
+
+**Why**, and it is specific to Fortran: arguments are BY REFERENCE, so
+a dummy is an address whether or not the body is spliced. Inlining
+`DAXPY` does not turn `DA` into a value — the inner loop still loads
+through the address on every iteration. The splice buys only the call
+and return, amortised over the callee's own loop and therefore nearly
+nothing, while paying more live values and more spilling in a larger
+function. C wins here because inlining lets the optimiser see `da` as a
+value; Fortran would need **scalar replacement** of the dummy first,
+which is an analysis this compiler does not have.
+
+There is also structurally less on offer than in C: Fortran's tiny hot
+operations are INTRINSICS (`DABS`, `DMAX1`), already emitted inline, so
+what remains in user subprograms is loop bodies — the shape where
+inlining pays least.
+
+Kept behind `F77_INLINE_MAX=<statements>` so the experiment is
+repeatable. `F77_NO_INLINE=1` forces it off.
+
 This work applies to `stage08` equally and is not yet ported there.
 
 ## The DBT is not the problem

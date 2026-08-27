@@ -46,6 +46,13 @@ static int  f77_sext[F77_MAX_SYM][F77_MAX_RANK];  /* constant extent */
 static int  f77_sextsym[F77_MAX_SYM][F77_MAX_RANK];
 static int  f77_nsym;
 
+/* Lookups start here, not at 0.  Inlining a subprogram pushes a fresh
+ * scope so the callee's locals cannot resolve to identically-named
+ * caller locals -- without this, a callee's `I` would silently become
+ * the caller's `I`. */
+static int  f77_scope_base;
+static int  f77_label_base;
+
 /* Is `s` a dummy argument?  Dummy arguments are passed BY REFERENCE in
  * Fortran, so the symbol's value is already an address and there is no
  * alloca behind it -- everything downstream works off an address, so
@@ -64,7 +71,7 @@ static int f77_frame;   /* bytes of locals allocated so far */
 
 static int f77_sym(char *nm) {
     int i;
-    i = 0;
+    i = f77_scope_base;
     while (i < f77_nsym) {
         if (strcmp(f77_sname[i], nm) == 0) return i;
         i = i + 1;
@@ -168,7 +175,7 @@ static int f77_nlabel;
 /* Block for a label, created on first mention so forward GOTOs work. */
 static int f77_label_blk(int n) {
     int i;
-    i = 0;
+    i = f77_label_base;
     while (i < f77_nlabel) {
         if (f77_lnum[i] == n) return f77_lblk[i];
         i = i + 1;
@@ -218,7 +225,14 @@ static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
 static int ctl_else[F77_MAX_CTL];    /* IF: pending else block */
 static int ctl_n;
 
-static void f77_ctl_reset(void) { ctl_n = 0; }
+/* Floor for f77_close_do.  A spliced callee raises it so that a label
+ * in the callee can never close a DO belonging to the caller: DGEFA has
+ * a statement labelled 70 and is inlined inside main's `DO 70`, and
+ * without this floor parsing the callee's label popped the CALLER's
+ * loop off the control stack. */
+static int f77_ctl_base;
+
+static void f77_ctl_reset(void) { ctl_n = 0; f77_ctl_base = 0; }
 
 /* --- expression lowering -------------------------------------------- */
 
@@ -231,6 +245,9 @@ static int f77_actual_addr(void);
 static int f77_urty_of(int u);
 static int f77_load_at(int addr, int ty);
 static int f77_cur_unit;
+static int f77_can_inline(int u);
+static int f77_inline_unit_body(int u, int *addrs, int nargs);
+static int f77_find_unit(char *nm);
 
 /* DOUBLE PRECISION on SLOW-32 is a PAIR of 32-bit values: the lo word is
  * the expression's value and the hi word travels beside it.  Operations
@@ -729,6 +746,14 @@ static int f77_primary(void) {
                 }
                 if (lx_t != T_RP) f77_error("expected ) after arguments");
                 else f77_tok();
+            }
+            if (f77_can_inline(u)) {
+                /* Splice the body, then read its result variable. */
+                int rs;
+                rs = f77_inline_unit_body(u, addrs, nargs);
+                if (rs >= 0) return f77_load_at(f77_sval[rs], f77_sty[rs]);
+                ex_ty = TY_INT;
+                return f77_iconst(0);
             }
             cb = h_ncarg;
             ai = 0;
@@ -1261,7 +1286,7 @@ static void f77_close_do(int lab) {
     int s;
     int v;
     int t;
-    while (ctl_n > 0 && ctl_kind[ctl_n - 1] == F77_CTL_DO &&
+    while (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_DO &&
            ctl_label[ctl_n - 1] == lab) {
         ctl_n = ctl_n - 1;
         s = ctl_var[ctl_n];
@@ -1280,6 +1305,23 @@ static void f77_close_do(int lab) {
 }
 
 /* --- subprograms ------------------------------------------------------ */
+
+#define F77_MAX_INLINE_DEPTH 3
+/* Default 0 = inlining OFF.  It is a MEASURED PESSIMISATION on the
+ * LINPACK kernel at every threshold tried (2.30x clang with it off;
+ * 2.79x at 12 statements, 3.55x at 16, 6.09x at 40).  See the note on
+ * f77_inline_unit_body for why.  The machinery is kept and gated on
+ * F77_INLINE_MAX so the experiment is repeatable. */
+#define F77_INLINE_MAX_STMTS 0
+
+static int f77_inline_depth;
+static int f77_inline_unit[F77_MAX_INLINE_DEPTH];
+static int f77_inline_ret_blk;       /* where RETURN branches to */
+static int f77_inline_result;        /* FUNCTION result symbol, or -1 */
+static int f77_ustmts[F77_MAX_UNIT]; /* statement count per unit */
+static int f77_inline_count;         /* diagnostics */
+
+
 
 static int f77_result_sym;    /* FUNCTION: the symbol named after the unit */
 
@@ -1302,6 +1344,13 @@ static int f77_unit_header_ty(void) {
 static void f77_emit_return(void) {
     int v;
     if (!f77_cur_blk_live) return;
+    if (f77_inline_depth > 0) {
+        /* Inside a spliced body a RETURN is a branch to the
+         * continuation, not a machine return.  The FUNCTION result is
+         * already in its variable, which the caller reads. */
+        f77_goto_blk(f77_inline_ret_blk);
+        return;
+    }
     if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0) {
         v = f77_load_at(f77_sval[f77_result_sym], f77_sty[f77_result_sym]);
         if (ex_ty == TY_DOUBLE) {
@@ -1389,6 +1438,248 @@ static int f77_actual_addr(void) {
     return tmp;
 }
 
+/* --- inlining (OFF by default -- see the measurement below) -----------
+ *
+ * f77 is one-pass with no AST, so a callee's body is not sitting in a
+ * data structure waiting to be spliced.  What IS available is its
+ * source offset (phase 1 recorded it), so inlining here means
+ * RE-LEXING the callee's body at the call site with its dummy
+ * arguments bound to the actuals.
+ *
+ * Fortran makes the binding unusually clean: arguments are by
+ * reference, so a dummy's "value" is just an address.  Inlining
+ * therefore binds each dummy symbol to the actual's address value
+ * directly -- no PARAM, no marshalling, no call.  That is the entire
+ * saving, and on LINPACK it is DAXPY vanishing into DGEFA's inner loop.
+ *
+ * Everything the callee touches must be scoped: symbols and labels get
+ * fresh bases, the control stack is checkpointed (f77_ctl_base -- a
+ * callee label must not close a CALLER's DO loop), the caller's
+ * assembled statement is saved, and so is the token scanner's own state,
+ * or a nested splice resumes the outer call mid-nowhere.
+ *
+ * WHY IT IS OFF BY DEFAULT.  Measured on the LINPACK kernel it makes
+ * things WORSE at every threshold: 2.30x clang with inlining off, 2.79x
+ * inlining at 12 statements, 3.55x at 16, 6.09x at 40.  At the 12-
+ * statement setting it produced 17% more instructions and 26% more
+ * load/store traffic.
+ *
+ * The reason is Fortran's calling convention.  Arguments are BY
+ * REFERENCE, so a dummy is an address whether or not the body is
+ * spliced -- inlining DAXPY does not turn DA into a value, and the
+ * inner loop still loads through the address every iteration.  So the
+ * splice buys only the call and return, amortised over the callee's own
+ * loop and therefore nearly nothing, while paying more live values and
+ * more spilling in a larger function.  C wins here because inlining
+ * lets the optimiser see `da` as a value; Fortran needs SCALAR
+ * REPLACEMENT of the dummy first, which is an analysis this compiler
+ * does not have.
+ *
+ * There is also less on offer than in C to begin with: Fortran's tiny
+ * hot operations are INTRINSICS (DABS, DMAX1), already emitted inline,
+ * so what remains in user subprograms is loop bodies -- the shape where
+ * inlining pays least.
+ *
+ * Enable with F77_INLINE_MAX=<statements> to re-run the experiment.
+ */
+
+/* Is `u` worth and safe to inline here?  Recursion is excluded by
+ * checking the active inline stack, which also covers mutual
+ * recursion. */
+static int f77_inline_disabled = -1;   /* -1 = not yet probed */
+static int f77_inline_max;
+
+static int f77_can_inline(int u) {
+    int i;
+    if (f77_inline_disabled < 0) {
+        char *e;
+        f77_inline_disabled = getenv("F77_NO_INLINE") ? 1 : 0;
+        e = getenv("F77_INLINE_MAX");
+        f77_inline_max = e ? atoi(e) : F77_INLINE_MAX_STMTS;
+    }
+    if (f77_inline_disabled) return 0;
+    if (u < 0) return 0;
+    if (f77_ukind[u] == F77_UNIT_PROGRAM) return 0;
+    if (f77_inline_depth >= F77_MAX_INLINE_DEPTH) return 0;
+    if (f77_ustmts[u] > f77_inline_max) return 0;
+    if (u == f77_cur_unit) return 0;
+    i = 0;
+    while (i < f77_inline_depth) {
+        if (f77_inline_unit[i] == u) return 0;
+        i = i + 1;
+    }
+    return 1;
+}
+
+/* Bind one dummy argument to an actual's address, as a symbol whose
+ * "storage" IS that address.  This is what a by-reference call would
+ * have achieved via a PARAM, minus the call. */
+static int f77_bind_actual(char *nm, int addr) {
+    int s;
+    if (f77_nsym >= F77_MAX_SYM) { f77_error("too many symbols"); return 0; }
+    s = f77_nsym;
+    strcpy(f77_sname[s], nm);
+    f77_sty[s] = f77_implicit_ty(nm);
+    f77_srank[s] = 0;
+    f77_sarg[s] = 1;                 /* by-reference: value is an address */
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
+    f77_sval[s] = addr;
+    f77_nsym = f77_nsym + 1;
+    return s;
+}
+
+static void f77_statement(void);
+
+/* Splice unit `u`'s body in at the current point, with `addrs[0..n)`
+ * bound to its dummy arguments.  Returns the FUNCTION result symbol,
+ * or -1 for a SUBROUTINE. */
+static int f77_inline_unit_body(int u, int *addrs, int nargs) {
+    char save_stmt[F77_MAX_STMT];
+    int save_len;
+    int save_label;
+    int save_line;
+    int save_pos;
+    /* The token scanner runs over lx_stmt, so splicing a callee moves
+     * the cursor into the callee's statements.  Restoring the buffer is
+     * not enough -- the scanner state and the current token have to come
+     * back too, or the caller resumes mid-nowhere.  This is what broke
+     * ISQ(ISQ(2)): the outer call resumed with a stale cursor. */
+    char *save_rp;
+    char *save_rpe;
+    char *save_rts;
+    char *save_rte;
+    int save_rcs;
+    int save_ract;
+    int save_t;
+    char save_name[F77_MAX_NAME];
+    int save_namelen;
+    int save_ival;
+    double save_dval;
+    int save_sidx;
+    int save_slen;
+    int save_scope;
+    int save_lblbase;
+    int save_nlabel;
+    int save_ctl;
+    int save_ctl_base;
+    int save_unit;
+    int save_ret;
+    int save_result;
+    int b_cont;
+    int skip;
+    int i;
+    int rty;
+    int result;
+
+    /* Checkpoint everything the callee will disturb. */
+    memcpy(save_stmt, lx_stmt, lx_stmt_len + 1);
+    save_len = lx_stmt_len;
+    save_label = lx_stmt_label;
+    save_line = lx_line;
+    save_pos = lx_pos;
+    save_rp = lx_rp; save_rpe = lx_rpe; save_rts = lx_rts; save_rte = lx_rte;
+    save_rcs = lx_rcs; save_ract = lx_ract;
+    save_t = lx_t;
+    memcpy(save_name, lex_name, F77_MAX_NAME);
+    save_namelen = lex_namelen;
+    save_ival = lex_ival; save_dval = lex_dval;
+    save_sidx = lex_sidx; save_slen = lex_slen;
+    save_scope = f77_scope_base;
+    save_lblbase = f77_label_base;
+    save_nlabel = f77_nlabel;
+    save_ctl = ctl_n;
+    save_ctl_base = f77_ctl_base;
+    save_unit = f77_cur_unit;
+    save_ret = f77_inline_ret_blk;
+    save_result = f77_inline_result;
+
+    b_cont = hir_new_block();
+
+    f77_scope_base = f77_nsym;
+    f77_label_base = f77_nlabel;
+    f77_ctl_base = ctl_n;
+    f77_inline_ret_blk = b_cont;
+    f77_cur_unit = u;
+    f77_inline_unit[f77_inline_depth] = u;
+    f77_inline_depth = f77_inline_depth + 1;
+    f77_inline_count = f77_inline_count + 1;
+
+    /* Read the callee's header and bind its dummies to the actuals. */
+    lx_pos = f77_upos[u];
+    lx_line = f77_uline[u];
+    if (!f77_next_stmt()) { f77_error("inline: empty unit"); }
+    if (f77_ukind[u] == F77_UNIT_SUBR) skip = 10;
+    else if (f77_starts("DOUBLEPRECISIONFUNCTION")) skip = 23;
+    else if (f77_starts("INTEGERFUNCTION"))    skip = 15;
+    else if (f77_starts("LOGICALFUNCTION"))    skip = 15;
+    else if (f77_starts("REALFUNCTION"))       skip = 12;
+    else                                       skip = 8;
+    f77_scan_from(skip);
+    if (lx_t == T_NAME) f77_tok();
+    i = 0;
+    if (lx_t == T_LP) {
+        f77_tok();
+        while (lx_t == T_NAME) {
+            if (i < nargs) f77_bind_actual(lex_name, addrs[i]);
+            else           f77_sym(lex_name);   /* missing actual: local */
+            i = i + 1;
+            f77_tok();
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        if (lx_t == T_RP) f77_tok();
+    }
+
+    result = -1;
+    if (f77_ukind[u] == F77_UNIT_FUNC) {
+        rty = f77_urty[u];
+        result = f77_sym(f77_uname[u]);
+        f77_sty[result] = rty;
+        f77_sarg[result] = 0;
+        f77_realloc_sym(result);
+    }
+    f77_inline_result = result;
+
+    /* Body. */
+    for (;;) {
+        if (!f77_next_stmt()) break;
+        if (f77_starts("END")) break;
+        if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) break;
+        f77_statement();
+    }
+
+    f77_goto_blk(b_cont);
+    f77_begin_blk(b_cont);
+
+    /* Restore. */
+    f77_inline_depth = f77_inline_depth - 1;
+    f77_cur_unit = save_unit;
+    f77_inline_ret_blk = save_ret;
+    f77_inline_result = save_result;
+    f77_scope_base = save_scope;
+    f77_label_base = save_lblbase;
+    /* f77_nsym is deliberately NOT restored: the FUNCTION result
+     * symbol must outlive the splice so the caller can load it, and
+     * the scope base already hides the callee's names. */
+    f77_nlabel = save_nlabel;
+    ctl_n = save_ctl;
+    f77_ctl_base = save_ctl_base;
+    lx_pos = save_pos;
+    lx_line = save_line;
+    memcpy(lx_stmt, save_stmt, save_len + 1);
+    lx_stmt_len = save_len;
+    lx_stmt_label = save_label;
+    lx_rp = save_rp; lx_rpe = save_rpe; lx_rts = save_rts; lx_rte = save_rte;
+    lx_rcs = save_rcs; lx_ract = save_ract;
+    lx_t = save_t;
+    memcpy(lex_name, save_name, F77_MAX_NAME);
+    lex_namelen = save_namelen;
+    lex_ival = save_ival; lex_dval = save_dval;
+    lex_sidx = save_sidx; lex_slen = save_slen;
+
+    return result;
+}
+
 /* CALL name(a1, a2, ...) */
 static void f77_stmt_call(int skip) {
     char nm[F77_MAX_NAME];
@@ -1419,6 +1710,14 @@ static void f77_stmt_call(int skip) {
         if (lx_t != T_RP) f77_error("expected ) after arguments");
         else f77_tok();
     }
+    {
+        int u;
+        u = f77_find_unit(nm);
+        if (u >= 0 && f77_can_inline(u)) {
+            f77_inline_unit_body(u, addrs, nargs);
+            return;
+        }
+    }
     cb = h_ncarg;
     {
         int ai;
@@ -1441,6 +1740,18 @@ static int f77_urty_of(int u) { return f77_urty[u]; }
 /* Index of the FUNCTION unit called `nm`, or -1.  Phase 1 records every
  * unit in the file before any of them is compiled, so a call can be
  * resolved even when the callee appears later in the source. */
+/* Any program unit with this name -- SUBROUTINE or FUNCTION. */
+static int f77_find_unit(char *nm) {
+    int i;
+    i = 0;
+    while (i < f77_nunit) {
+        if (f77_ukind[i] != F77_UNIT_PROGRAM &&
+            strcmp(f77_uname[i], nm) == 0) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
 static int f77_find_func(char *nm) {
     int i;
     i = 0;

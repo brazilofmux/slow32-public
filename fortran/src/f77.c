@@ -61,6 +61,7 @@ static void f77_scan_units(void) {
 
     f77_nunit = 0;
     f77_nformat = 0;
+    { int z; z = 0; while (z < F77_MAX_UNIT) { f77_ustmts[z] = 0; z = z + 1; } }
     started = 0;
     pos = lx_pos;
     line = lx_line;
@@ -75,6 +76,7 @@ static void f77_scan_units(void) {
                 f77_intern_str(lx_stmt + 6, lx_stmt_len - 6);
             f77_nformat = f77_nformat + 1;
         }
+        if (started && f77_nunit > 0) f77_ustmts[f77_nunit - 1]++;
         rty = f77_unit_header_ty();
         if (f77_starts("SUBROUTINE") || rty >= 0) {
             if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
@@ -118,6 +120,9 @@ static void hl_func(Node *fn) {
     hl_temp_stack = 0;
     f77_nsym = 0;
     f77_nlabel = 0;
+    f77_scope_base = 0;
+    f77_label_base = 0;
+    f77_inline_depth = 0;
     f77_ctl_reset();
     /* Reserve the top 8 bytes of the frame for the saved r31 and r30,
      * exactly as the C compiler's parser does (ps_stack = 8).  Starting
