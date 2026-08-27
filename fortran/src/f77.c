@@ -46,13 +46,62 @@ static void f77_error(char *msg) {
     f77_nerr = f77_nerr + 1;
 }
 
-static Node f77_main_unit;
+static Node f77_units[F77_MAX_UNIT];
 static Node f77_program;
 
-/* The backend asks the frontend to build HIR for one unit. */
+/* Phase 1: walk the source once and record where each program unit
+ * begins.  A file may hold a PROGRAM plus any number of SUBROUTINEs and
+ * FUNCTIONs, and the backend drives them one at a time, so their
+ * boundaries have to be known before any of them is compiled. */
+static void f77_scan_units(void) {
+    int pos;
+    int line;
+    int rty;
+    int started;
+
+    f77_nunit = 0;
+    started = 0;
+    pos = lx_pos;
+    line = lx_line;
+
+    while (f77_next_stmt()) {
+        rty = f77_unit_header_ty();
+        if (f77_starts("SUBROUTINE") || rty >= 0) {
+            if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
+            f77_upos[f77_nunit] = pos;
+            f77_uline[f77_nunit] = line;
+            if (rty >= 0) {
+                f77_ukind[f77_nunit] = F77_UNIT_FUNC;
+                f77_urty[f77_nunit] = rty;
+            } else {
+                f77_ukind[f77_nunit] = F77_UNIT_SUBR;
+                f77_urty[f77_nunit] = TY_INT;
+            }
+            f77_unit_name(f77_nunit);
+            f77_nunit = f77_nunit + 1;
+            started = 1;
+        } else if (!started) {
+            /* Statements before any subprogram header belong to the
+             * main program, whether or not a PROGRAM card is present. */
+            f77_upos[f77_nunit] = pos;
+            f77_uline[f77_nunit] = line;
+            f77_ukind[f77_nunit] = F77_UNIT_PROGRAM;
+            f77_urty[f77_nunit] = TY_INT;
+            strcpy(f77_uname[f77_nunit], "main");
+            f77_nunit = f77_nunit + 1;
+            started = 1;
+        }
+        pos = lx_pos;
+        line = lx_line;
+    }
+}
+
+/* Phase 2: the backend asks for one unit's HIR. */
 static void hl_func(Node *fn) {
     int b_entry;
-    (void)fn;
+    int u;
+
+    u = fn->unit;
 
     hir_reset();
     hl_nalloca = 0;
@@ -65,13 +114,26 @@ static void hl_func(Node *fn) {
     b_entry = hir_new_block();
     f77_begin_blk(b_entry);
 
-    while (f77_next_stmt()) {
-        f77_statement();
+    /* Rewind to this unit's first statement and bind its header. */
+    lx_pos = f77_upos[u];
+    lx_line = f77_uline[u];
+    if (!f77_next_stmt()) return;
+    f77_bind_unit(u);
+    fn->nparams = f77_unit_nparams;
+
+    if (f77_ukind[u] != F77_UNIT_PROGRAM) {
+        /* The header itself emits nothing; go on to the body. */
+        if (!f77_next_stmt()) { f77_emit_return(); fn->locals_size = f77_frame; return; }
     }
 
-    /* An implicit RET keeps every path terminated even when the source
-     * ends without STOP or END. */
-    if (f77_cur_blk_live) hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
+    for (;;) {
+        f77_statement();
+        if (f77_starts("END")) break;
+        if (!f77_next_stmt()) break;
+        if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) break;
+    }
+
+    if (f77_cur_blk_live) f77_emit_return();
 
     fn->locals_size = f77_frame;
 }
@@ -103,12 +165,23 @@ int main(int argc, char **argv) {
     lx_pos = 0;
     lx_line = 1;
 
-    f77_main_unit.name = "main";
-    f77_main_unit.nparams = 0;
-    f77_main_unit.is_varargs = 0;
-    f77_main_unit.next = NULL;
-    f77_main_unit.body = NULL;
-    f77_program.body = &f77_main_unit;
+    f77_scan_units();
+    if (f77_nunit == 0) { fdputs("f77: empty source\n", 2); return 1; }
+
+    {
+        int i;
+        i = 0;
+        while (i < f77_nunit) {
+            f77_units[i].name = f77_uname[i];
+            f77_units[i].nparams = 0;
+            f77_units[i].is_varargs = 0;
+            f77_units[i].unit = i;
+            f77_units[i].body = NULL;
+            f77_units[i].next = (i + 1 < f77_nunit) ? &f77_units[i + 1] : NULL;
+            i = i + 1;
+        }
+    }
+    f77_program.body = &f77_units[0];
 
     gen_program(&f77_program);
 

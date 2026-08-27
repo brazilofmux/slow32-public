@@ -16,6 +16,7 @@ typedef struct Node {
     int          is_varargs;   /* always 0: F77 has no varargs */
     struct Node *next;         /* next unit */
     struct Node *body;         /* on the program node: first unit */
+    int          unit;         /* index into the f77 unit table */
 } Node;
 
 #endif

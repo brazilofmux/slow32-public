@@ -92,6 +92,7 @@ static int hl_ainst[HL_MAX_ALLOCA];  /* HIR index of each ALLOCA */
 static int hl_aoff[HL_MAX_ALLOCA];   /* frame offset of each ALLOCA */
 static int hl_nalloca;
 static int hl_temp_stack;            /* bytes of compiler temporaries */
+static int hl_nparams;               /* flat incoming-parameter count */
 
 /* --- 4. global data tables walked by gen_data() --------------------- */
 

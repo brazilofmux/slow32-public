@@ -32,7 +32,20 @@ static void hl_func(Node *fn) {
     b_body  = hir_new_block(); b_exit = hir_new_block();
 
     hl_switch_block(b_entry);
-    p_n  = hi_emit(HI_PARAM, TY_INT, 0, -1, 0, NULL);
+    /* The parameter index goes in h_val (the codegen's entry sequence
+     * reads h_val), and hl_param_* must describe where the argument
+     * actually arrives -- otherwise no entry move is emitted and the
+     * code only works when the allocator happens to pick r3. */
+    {
+        int k;
+        k = 0;
+        while (k < 64) { hl_param_tags[k] = 0; k = k + 1; }
+        hl_param_nflat = 1;
+        hl_nparams = 1;
+        hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
+        hl_param_stkord[0] = (hl_param_map[0] < 0) ? 0 : -1;
+    }
+    p_n  = hi_emit(HI_PARAM, TY_INT, -1, -1, 0, NULL);
     a_s  = hi_emit(HI_ALLOCA, TY_INT, -1, -1, -4, NULL);
     hl_ainst[hl_nalloca] = a_s; hl_aoff[hl_nalloca] = -4; hl_nalloca++;
     a_i  = hi_emit(HI_ALLOCA, TY_INT, -1, -1, -8, NULL);

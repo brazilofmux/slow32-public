@@ -41,6 +41,12 @@ static int  f77_slo[F77_MAX_SYM][F77_MAX_RANK];   /* lower bound per dim */
 static int  f77_sext[F77_MAX_SYM][F77_MAX_RANK];  /* extent per dim */
 static int  f77_nsym;
 
+/* Is `s` a dummy argument?  Dummy arguments are passed BY REFERENCE in
+ * Fortran, so the symbol's value is already an address and there is no
+ * alloca behind it -- everything downstream works off an address, so
+ * loads, stores and subscripting need no special case. */
+static int  f77_sarg[F77_MAX_SYM];
+
 /* F77 implicit typing: I-N are INTEGER, everything else REAL. */
 static int f77_implicit_ty(char *nm) {
     int c;
@@ -62,6 +68,7 @@ static int f77_sym(char *nm) {
     strcpy(f77_sname[f77_nsym], nm);
     f77_sty[f77_nsym] = f77_implicit_ty(nm);
     f77_srank[f77_nsym] = 0;
+    f77_sarg[f77_nsym] = 0;
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
                                  0 - f77_frame, NULL);
@@ -70,6 +77,38 @@ static int f77_sym(char *nm) {
     hl_nalloca = hl_nalloca + 1;
     f77_nsym = f77_nsym + 1;
     return f77_nsym - 1;
+}
+
+/* --- program units --------------------------------------------------- */
+
+#define F77_UNIT_PROGRAM 0
+#define F77_UNIT_SUBR    1
+#define F77_UNIT_FUNC    2
+#define F77_MAX_UNIT     256
+
+static char f77_uname[F77_MAX_UNIT][F77_MAX_NAME];
+static int  f77_ukind[F77_MAX_UNIT];
+static int  f77_upos[F77_MAX_UNIT];    /* source offset of the header */
+static int  f77_uline[F77_MAX_UNIT];
+static int  f77_urty[F77_MAX_UNIT];    /* FUNCTION result type */
+static int  f77_nunit;
+
+/* Create a symbol whose storage is a by-reference dummy argument: its
+ * value is the ADDRESS of the actual, delivered in an argument
+ * register.  Deliberately NOT registered in hl_ainst -- it is not an
+ * alloca, and listing it there would offer it to mem2reg, which would
+ * then rewrite loads through it into the address itself. */
+static int f77_sym_param(char *nm, int index) {
+    int s;
+    if (f77_nsym >= F77_MAX_SYM) { f77_error("too many symbols"); return 0; }
+    s = f77_nsym;
+    strcpy(f77_sname[s], nm);
+    f77_sty[s] = f77_implicit_ty(nm);
+    f77_srank[s] = 0;
+    f77_sarg[s] = 1;
+    f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
+    f77_nsym = f77_nsym + 1;
+    return s;
 }
 
 /* Total element count of a shaped symbol. */
@@ -89,6 +128,12 @@ static int f77_sym_nelem(int s) {
  * second pass over the declarations. */
 static void f77_realloc_sym(int s) {
     int bytes;
+    if (f77_sarg[s]) {
+        /* By-reference dummy: storage belongs to the caller.  Only the
+         * type and shape are recorded here. */
+        h_ty[f77_sval[s]] = HL_ADDR_TY;
+        return;
+    }
     bytes = ty_size(f77_sty[s]) * f77_sym_nelem(s);
     f77_frame = f77_frame + bytes;
     h_val[f77_sval[s]] = 0 - f77_frame;
@@ -152,6 +197,10 @@ static int ex_ty;     /* type of the value most recently produced */
 static int ex_hi;     /* its hi word, when ex_ty is TY_DOUBLE */
 
 static int f77_expr(void);
+static int f77_find_func(char *nm);
+static int f77_actual_addr(void);
+static int f77_urty_of(int u);
+static int f77_cur_unit;
 
 /* DOUBLE PRECISION on SLOW-32 is a PAIR of 32-bit values: the lo word is
  * the expression's value and the hi word travels beside it.  Operations
@@ -376,7 +425,57 @@ static int f77_primary(void) {
     }
     if (lx_t == T_PLUS) { f77_tok(); return f77_primary(); }
     if (lx_t == T_NAME) {
-        s = f77_sym(lex_name);
+        char nm[F77_MAX_NAME];
+        int u;
+        strcpy(nm, lex_name);
+        u = f77_find_func(nm);
+        if (u >= 0 && u != f77_cur_unit) {
+            /* FUNCTION reference: by-reference actuals, result in the
+             * usual return register (plus its hi word for a double). */
+            int cb;
+            int nargs;
+            int r;
+            int rty;
+            int addrs[64];
+            int ai;
+            f77_tok();
+            nargs = 0;
+            if (lx_t == T_LP) {
+                f77_tok();
+                if (lx_t != T_RP) {
+                    for (;;) {
+                        /* Evaluate every actual BEFORE reserving any
+                         * h_carg slots: an actual may itself contain a
+                         * call, which would otherwise interleave its
+                         * arguments with ours. */
+                        if (nargs < 64) addrs[nargs] = f77_actual_addr();
+                        else f77_actual_addr();
+                        nargs = nargs + 1;
+                        if (lx_t != T_COMMA) break;
+                        f77_tok();
+                    }
+                }
+                if (lx_t != T_RP) f77_error("expected ) after arguments");
+                else f77_tok();
+            }
+            cb = h_ncarg;
+            ai = 0;
+            while (ai < nargs) {
+                h_carg[h_ncarg] = addrs[ai];
+                h_carg_tag[h_ncarg] = 0;
+                h_ncarg = h_ncarg + 1;
+                ai = ai + 1;
+            }
+            rty = f77_urty_of(u);
+            r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty, -1, -1,
+                        nargs, f77_uname[u]);
+            h_cbase[r] = cb;
+            ex_ty = rty;
+            if (rty == TY_DOUBLE)
+                ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+            return r;
+        }
+        s = f77_sym(nm);
         f77_tok();
         if (lx_t == T_LP && f77_srank[s] > 0) {
             int addr;
@@ -879,6 +978,242 @@ static void f77_close_do(int lab) {
     }
 }
 
+/* --- subprograms ------------------------------------------------------ */
+
+static int f77_result_sym;    /* FUNCTION: the symbol named after the unit */
+
+/* If this statement is a `[type] FUNCTION name(...)` header, return the
+ * result type; otherwise -1.  Checked before the type-declaration
+ * keywords, because `REAL FUNCTION F(X)` squeezes to REALFUNCTIONF(X)
+ * and would otherwise parse as a REAL declaration. */
+static int f77_unit_header_ty(void) {
+    if (f77_starts("FUNCTION"))                return TY_INT;   /* implicit */
+    if (f77_starts("INTEGERFUNCTION"))         return TY_INT;
+    if (f77_starts("LOGICALFUNCTION"))         return TY_INT;
+    if (f77_starts("REALFUNCTION"))            return TY_FLOAT;
+    if (f77_starts("DOUBLEPRECISIONFUNCTION")) return TY_DOUBLE;
+    return -1;
+}
+
+/* Emit the unit's return.  A FUNCTION returns the variable named after
+ * it, which F77 code assigns to; a SUBROUTINE and the main PROGRAM
+ * return an int (the exit status, for the PROGRAM). */
+static void f77_emit_return(void) {
+    int v;
+    if (!f77_cur_blk_live) return;
+    if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0) {
+        v = f77_load_at(f77_sval[f77_result_sym], f77_sty[f77_result_sym]);
+        if (ex_ty == TY_DOUBLE) {
+            /* Wide result: lo in src1, hi in src2, and ty stays 0 --
+             * the convention the C compiler uses for llong/double
+             * returns on SLOW-32. */
+            hi_emit(HI_RET, 0, v, ex_hi, 0, NULL);
+            f77_cur_blk_live = 0;
+            return;
+        }
+        hi_emit(HI_RET, 0, v, -1, 0, NULL);
+        f77_cur_blk_live = 0;
+        return;
+    }
+    hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
+    f77_cur_blk_live = 0;
+}
+
+/* Address of an actual argument.  Fortran is call-by-reference, so a
+ * variable or array element is passed as its address; anything else is
+ * evaluated into a temporary whose address is passed instead. */
+static int f77_actual_addr(void) {
+    int s;
+    int v;
+    int vty;
+    int vhi;
+    int tmp;
+
+    if (lx_t == T_NAME && f77_find_func(lex_name) < 0) {
+        /* A bare name, or a subscripted element, is passed by address;
+         * a whole array passes its base.  A FUNCTION reference is not a
+         * variable, so it falls through and is evaluated below. */
+        s = f77_sym(lex_name);
+        f77_tok();
+        if (lx_t == T_LP && f77_srank[s] > 0) {
+            f77_tok();
+            return f77_subscript_addr(s);
+        }
+        return f77_sval[s];
+    }
+
+    v = f77_expr();
+    vty = ex_ty;
+    vhi = ex_hi;
+    f77_frame = f77_frame + ty_size(vty);
+    tmp = hi_emit(HI_ALLOCA, vty, -1, -1, 0 - f77_frame, NULL);
+    hl_ainst[hl_nalloca] = tmp;
+    hl_aoff[hl_nalloca] = 0 - f77_frame;
+    hl_nalloca = hl_nalloca + 1;
+    f77_store_at(tmp, vty, v, vty, vhi);
+    return tmp;
+}
+
+/* CALL name(a1, a2, ...) */
+static void f77_stmt_call(int skip) {
+    char nm[F77_MAX_NAME];
+    int addrs[64];
+    int cb;
+    int nargs;
+    int r;
+
+    f77_scan_from(skip);
+    if (lx_t != T_NAME) { f77_error("CALL needs a subroutine name"); return; }
+    strcpy(nm, lex_name);
+    f77_tok();
+
+    nargs = 0;
+    if (lx_t == T_LP) {
+        f77_tok();
+        if (lx_t != T_RP) {
+            for (;;) {
+                /* Evaluated before any h_carg slot is reserved -- see
+                 * the note in the FUNCTION path. */
+                if (nargs < 64) addrs[nargs] = f77_actual_addr();
+                else f77_actual_addr();
+                nargs = nargs + 1;
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+            }
+        }
+        if (lx_t != T_RP) f77_error("expected ) after arguments");
+        else f77_tok();
+    }
+    cb = h_ncarg;
+    {
+        int ai;
+        ai = 0;
+        while (ai < nargs) {
+            h_carg[h_ncarg] = addrs[ai];
+            h_carg_tag[h_ncarg] = 0;
+            h_ncarg = h_ncarg + 1;
+            ai = ai + 1;
+        }
+    }
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, nargs, strdup(nm));
+    h_cbase[r] = cb;
+}
+
+static int f77_unit_nparams;
+
+static int f77_urty_of(int u) { return f77_urty[u]; }
+
+/* Index of the FUNCTION unit called `nm`, or -1.  Phase 1 records every
+ * unit in the file before any of them is compiled, so a call can be
+ * resolved even when the callee appears later in the source. */
+static int f77_find_func(char *nm) {
+    int i;
+    i = 0;
+    while (i < f77_nunit) {
+        if (f77_ukind[i] == F77_UNIT_FUNC && strcmp(f77_uname[i], nm) == 0)
+            return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+/* Record the unit's name from its header statement. */
+static void f77_unit_name(int u) {
+    int skip;
+    if (f77_starts("SUBROUTINE")) skip = 10;
+    else if (f77_starts("DOUBLEPRECISIONFUNCTION")) skip = 23;
+    else if (f77_starts("INTEGERFUNCTION")) skip = 15;
+    else if (f77_starts("LOGICALFUNCTION")) skip = 15;
+    else if (f77_starts("REALFUNCTION")) skip = 12;
+    else skip = 8;
+    f77_scan_from(skip);
+    if (lx_t == T_NAME) strcpy(f77_uname[u], lex_name);
+    else { f77_error("subprogram needs a name"); strcpy(f77_uname[u], "unnamed"); }
+}
+
+/* Bind this unit's header: record its dummy arguments as by-reference
+ * symbols backed by HIR PARAMs, and, for a FUNCTION, create the result
+ * variable that shares the unit's name. */
+static void f77_bind_unit(int u) {
+    int skip;
+    int s;
+    int nparam;
+    int rty;
+
+    f77_cur_unit = u;
+    f77_result_sym = -1;
+    nparam = 0;
+    f77_unit_nparams = 0;
+
+    if (f77_ukind[u] == F77_UNIT_PROGRAM) {
+        hl_param_nflat = 0;
+        hl_nparams = 0;
+        return;
+    }
+
+    /* Skip past the keyword and the unit name to the argument list. */
+    skip = 0;
+    if (f77_ukind[u] == F77_UNIT_SUBR) skip = 10;              /* SUBROUTINE */
+    else {
+        rty = f77_unit_header_ty();
+        if (f77_starts("DOUBLEPRECISIONFUNCTION")) skip = 23;
+        else if (f77_starts("INTEGERFUNCTION"))    skip = 15;
+        else if (f77_starts("LOGICALFUNCTION"))    skip = 15;
+        else if (f77_starts("REALFUNCTION"))       skip = 12;
+        else                                       skip = 8;   /* FUNCTION */
+        (void)rty;
+    }
+    f77_scan_from(skip);
+    if (lx_t != T_NAME) { f77_error("subprogram needs a name"); return; }
+    f77_tok();
+
+    if (lx_t == T_LP) {
+        f77_tok();
+        if (lx_t != T_RP) {
+            for (;;) {
+                if (lx_t != T_NAME) { f77_error("bad dummy argument"); break; }
+                s = f77_sym_param(lex_name, nparam);
+                nparam = nparam + 1;
+                f77_tok();
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+            }
+        }
+        if (lx_t == T_RP) f77_tok();
+    }
+
+    f77_unit_nparams = nparam;
+
+    /* Resolve where the incoming arguments actually arrive.  Without
+     * this the codegen's entry sequence is skipped entirely (it gates
+     * on h_val < hl_param_nflat) and the argument registers are never
+     * moved into the registers the allocator chose -- which silently
+     * "works" only when the allocator happens to pick the ABI register.
+     * Every Fortran dummy is one 32-bit address, so every tag is 0. */
+    {
+        int i;
+        int ord;
+        i = 0;
+        while (i < 64) { hl_param_tags[i] = 0; i = i + 1; }
+        hl_param_nflat = nparam;
+        hl_nparams = nparam;
+        hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
+        ord = 0;
+        i = 0;
+        while (i < hl_param_nflat) {
+            if (hl_param_map[i] < 0) { hl_param_stkord[i] = ord; ord = ord + 4; }
+            else hl_param_stkord[i] = -1;
+            i = i + 1;
+        }
+    }
+
+    if (f77_ukind[u] == F77_UNIT_FUNC) {
+        f77_result_sym = f77_sym(f77_uname[u]);
+        f77_sty[f77_result_sym] = f77_urty[u];
+        f77_realloc_sym(f77_result_sym);
+    }
+}
+
 /* Dispatch one statement.  Called once per assembled statement. */
 static void f77_statement(void) {
     int cls;
@@ -953,6 +1288,24 @@ static void f77_statement(void) {
     /* --- keyword statements --- */
 
     if (f77_starts("PROGRAM")) goto done;      /* name is documentation */
+
+    if (f77_starts("SUBROUTINE") || f77_unit_header_ty() >= 0) {
+        /* The header was consumed by f77_bind_unit() before the body
+         * was parsed; seeing it here means it is this unit's own
+         * header, which needs no code. */
+        goto done;
+    }
+
+    if (f77_starts("RETURN")) {
+        f77_emit_return();
+        goto done;
+    }
+
+    if ((n = f77_starts("CALL")) != 0) {
+        f77_stmt_call(n);
+        goto done;
+    }
+
     if (f77_starts("CONTINUE")) goto done;
     if (f77_starts("INTEGER"))  { f77_stmt_decl(TY_INT,   7); goto done; }
     if (f77_starts("LOGICAL"))  { f77_stmt_decl(TY_INT,   7); goto done; }

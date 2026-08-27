@@ -206,9 +206,12 @@ No linker change is required, and none should be added for this.
    `INTEGER M(3,4)` compiles to a `+28` byte offset, i.e. element 7,
    which is `(2-1)+(3-1)*3`; row-major would have been element 6. A
    real black-box test needs the layout to be observable through a
-   second view of the same storage, which arrives with subprograms
-   (passing a 2-D array to a routine that treats it as 1-D — exactly
-   what LINPACK does) or EQUIVALENCE. That test is owed.
+   second view of the same storage. **That test is now delivered**:
+   `slice6.f` passes an `INTEGER M(3,4)` to a subroutine that receives
+   it as `A(12)`, making the storage order observable. Proven to have
+   teeth by mutation — under a row-major mutant `slice6` FAILS while
+   `slice5` still PASSES, confirming exactly the blindness described
+   here.
 
    Not yet: adjustable dimensions in dummy arguments, which come with
    subprograms.
