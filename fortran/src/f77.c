@@ -60,11 +60,21 @@ static void f77_scan_units(void) {
     int started;
 
     f77_nunit = 0;
+    f77_nformat = 0;
     started = 0;
     pos = lx_pos;
     line = lx_line;
 
     while (f77_next_stmt()) {
+        /* Collect FORMAT statements: a WRITE may name a label defined
+         * later in the unit, so they must all be known up front. */
+        if (f77_starts("FORMAT") && lx_stmt_label >= 0 &&
+            f77_nformat < F77_MAX_FORMAT) {
+            f77_flabel[f77_nformat] = lx_stmt_label;
+            f77_fstr[f77_nformat] =
+                f77_intern_str(lx_stmt + 6, lx_stmt_len - 6);
+            f77_nformat = f77_nformat + 1;
+        }
         rty = f77_unit_header_ty();
         if (f77_starts("SUBROUTINE") || rty >= 0) {
             if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
@@ -109,7 +119,14 @@ static void hl_func(Node *fn) {
     f77_nsym = 0;
     f77_nlabel = 0;
     f77_ctl_reset();
-    f77_frame = 0;
+    /* Reserve the top 8 bytes of the frame for the saved r31 and r30,
+     * exactly as the C compiler's parser does (ps_stack = 8).  Starting
+     * at 0 lets the register allocator place the first callee-save slot
+     * at fp-4 -- on top of the saved return address -- so any unit with
+     * fewer than two locals returned to a wild address.  It only became
+     * visible when a bigger .text gave that address somewhere harmful
+     * to land. */
+    f77_frame = 8;
 
     b_entry = hir_new_block();
     f77_begin_blk(b_entry);

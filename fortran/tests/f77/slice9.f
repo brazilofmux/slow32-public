@@ -13,7 +13,7 @@ C     argument, so the column stride is only known at run time.
       IF (S .NE. 165.0D0) STOP 111
 C     Same array, a smaller logical order: the leading dimension stays 5
       CALL DIAG(A, 5, 3, S)
-      IF (S .NE. 63.0D0) STOP 112
+      IF (S .NE. 66.0D0) STOP 112
       CALL SCALE(A, 5, 5, 2.0D0)
       CALL DIAG(A, 5, 5, S)
       IF (S .NE. 330.0D0) STOP 113

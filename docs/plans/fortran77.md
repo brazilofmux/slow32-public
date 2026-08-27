@@ -218,10 +218,37 @@ No linker change is required, and none should be added for this.
 
    Not yet: `**`, arrays, subprograms, and `COMPLEX`.
 
-4. **The FORMAT engine.** The sleeper: `WRITE(6,100)` /
-   `FORMAT(1X,F10.4)` is an interpreted mini-language at runtime and is
-   the single largest component — most of what libf2c is. Every route
-   to F77 pays this; there is no shortcut.
+4. **The FORMAT engine.** ✅ **DONE 2026-08-27.** Lives in
+   `runtime/libf77.c`, compiled to SLOW-32, because FORMAT is an
+   interpreted mini-language and not something a compiler can expand
+   inline: descriptors are consumed on demand as the I/O list supplies
+   items, repeat counts and nested groups carry run-time state, and when
+   the list outlasts the format it REVERTS to the last top-level group.
+   The compiler emits a format string plus a sequence of item calls.
+
+   Supported: `I`, `F`, `E`, `D`, `G`, `A`, `L`, `nX`, `/`, quoted
+   literals with the `''` escape, `nH`, repeat counts, nested groups
+   with repeats, format reversion, `WRITE (unit, label)`,
+   `WRITE (*,*)`, `PRINT`, and implied-DO in the output list.
+
+   Two things that had to be got right rather than approximated:
+
+   - **Reversion includes the repeat count.** It restarts at the last
+     top-level group *with* its count, so `2(I2,'-')` keeps printing
+     two pairs per record. Reverting to the parenthesis instead
+     silently dropped the count.
+   - **Fortran's `E` is not C's `%E`.** C gives `1.250000E-07`; the E
+     descriptor normalises the mantissa below one, giving
+     `0.1250000E-06`. C's output is rewritten rather than coaxed.
+     Numeric rendering otherwise defers to `snprintf`, which on SLOW-32
+     is David Gay's dtoa — which is what makes F/E/D digits match a
+     reference Fortran instead of merely being close.
+
+   Implied-DO needed the loop control, which sits *after* the items it
+   governs, to be parsed from its own offset first so the loop could be
+   opened before the items were emitted into its body.
+
+
 5. **Subprograms.** `SUBROUTINE`/`FUNCTION`, by-reference arguments,
    `COMMON`, `SAVE`, `EXTERNAL`.
 6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,

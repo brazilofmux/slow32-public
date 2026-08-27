@@ -5,7 +5,7 @@ C     column-major order becomes observable.
       INTEGER M(3,4), FLAT(12), I, J, K
       DO 20 J = 1, 4
          DO 10 I = 1, 3
-            M(I,J) = I + 10*J
+            M(I,J) = I*10 + J
    10    CONTINUE
    20 CONTINUE
       CALL COPY12(M, FLAT)
@@ -14,13 +14,13 @@ C     Column-major: M(1,1) M(2,1) M(3,1) M(1,2) ... so FLAT(4) is M(1,2)
       IF (FLAT(2) .NE. 21) STOP 82
       IF (FLAT(3) .NE. 31) STOP 83
       IF (FLAT(4) .NE. 12) STOP 84
-      IF (FLAT(12) .NE. 43) STOP 85
+      IF (FLAT(12) .NE. 34) STOP 85
 C     By-reference: the callee writes through the argument
       K = 5
       CALL DOUBLE(K)
       IF (K .NE. 10) STOP 86
       CALL ADDUP(M, 12, K)
-      IF (K .NE. 318) STOP 87
+      IF (K .NE. 270) STOP 87
       STOP 0
       END
 

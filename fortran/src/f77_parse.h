@@ -180,6 +180,28 @@ static int f77_label_blk(int n) {
     return f77_lblk[f77_nlabel - 1];
 }
 
+/* --- FORMAT statements ----------------------------------------------- */
+
+/* A FORMAT may appear anywhere in the unit, including after the WRITE
+ * that names it, so phase 1 collects them all before any code is
+ * emitted.  The format text is interned verbatim (parens included) and
+ * handed to the runtime, which interprets it -- see runtime/libf77.c
+ * for why this cannot be expanded inline. */
+#define F77_MAX_FORMAT 256
+static int f77_flabel[F77_MAX_FORMAT];
+static int f77_fstr[F77_MAX_FORMAT];    /* string-pool index */
+static int f77_nformat;
+
+static int f77_find_format(int label) {
+    int i;
+    i = 0;
+    while (i < f77_nformat) {
+        if (f77_flabel[i] == label) return f77_fstr[i];
+        i = i + 1;
+    }
+    return -1;
+}
+
 /* --- control stack (DO loops and block IFs) ------------------------- */
 
 #define F77_CTL_DO 1
@@ -1500,6 +1522,260 @@ static void f77_bind_unit(int u) {
     }
 }
 
+/* --- formatted output ------------------------------------------------ */
+
+/* Emit the call that hands one item to the runtime, choosing the entry
+ * point by the item's type.  Doubles travel as an aligned register pair
+ * (tags 1/2), which is the ABI a C callee taking a double expects. */
+static void f77_wr_item(int v, int vty, int vhi) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    if (vty == TY_DOUBLE) {
+        h_carg[h_ncarg] = v;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = vhi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_d");
+    } else if (vty == TY_FLOAT) {
+        h_carg[h_ncarg] = v; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_r");
+    } else {
+        h_carg[h_ncarg] = v; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_i");
+    }
+    h_cbase[r] = cb;
+}
+
+/* Does the parenthesised group starting at `open` look like an
+ * implied-DO?  It does when the group contains a top-level `=` -- an
+ * ordinary parenthesised expression never has one.  Reports the offset
+ * just past the closing paren, the `=`, where the items start, and
+ * where the control variable begins. */
+static int f77_implied_do_spans(int open, int *close_off, int *eq_off,
+                                int *items_off, int *ctl_off) {
+    int i;
+    int depth;
+    int eq;
+    int comma;
+
+    if (open >= lx_stmt_len || lx_stmt[open] != '(') return 0;
+    depth = 0;
+    eq = -1;
+    comma = -1;
+    i = open;
+    while (i < lx_stmt_len) {
+        if (lx_stmt[i] == '\'') {
+            i = i + 1;
+            while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1;
+        } else if (lx_stmt[i] == '(') depth = depth + 1;
+        else if (lx_stmt[i] == ')') {
+            depth = depth - 1;
+            if (depth == 0) break;
+        } else if (depth == 1) {
+            if (lx_stmt[i] == '=' && eq < 0) eq = i;
+            else if (lx_stmt[i] == ',' && eq < 0) comma = i;
+        }
+        i = i + 1;
+    }
+    if (i >= lx_stmt_len || eq < 0 || comma < 0) return 0;
+    *close_off = i + 1;
+    *eq_off = eq;
+    *items_off = open + 1;
+    *ctl_off = comma + 1;
+    return 1;
+}
+
+/* One element of an output list: an expression, a character constant,
+ * or an implied-DO `(items, VAR = e1, e2 [, e3])`, which becomes a real
+ * loop around the item calls. */
+static void f77_wr_list(void);
+
+static void f77_wr_one(void) {
+    int v;
+    int vty;
+    int vhi;
+    int cb;
+    int r;
+
+    if (lx_t == T_SCON) {
+        int sa;
+        sa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, lex_sidx, NULL);
+        cb = h_ncarg;
+        h_carg[h_ncarg] = sa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = f77_iconst(lex_slen); h_carg_tag[h_ncarg] = 0;
+        h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_a");
+        h_cbase[r] = cb;
+        f77_tok();
+        return;
+    }
+
+    /* Implied-DO: `(items, VAR = e1, e2 [, e3])`.  The loop control sits
+     * AFTER the items it governs, so the control spec is parsed first
+     * from its own offset, the loop opened, and the scanner then rewound
+     * to the items -- which are emitted straight into the body block.
+     * Rewinding is safe here precisely because nothing has been emitted
+     * for the items yet. */
+    {
+        int open_off;
+        int close_off;
+        int eq_off;
+        int items_off;
+        int ctl_off;
+        open_off = (int)(lx_rts - lx_stmt);
+        if (lx_t == T_LP &&
+            f77_implied_do_spans(open_off, &close_off, &eq_off, &items_off, &ctl_off)) {
+            int sv;
+            int m1, m2, m3, t1, t2, t3;
+            int trip;
+            int b_test, b_body, b_exit, c;
+
+            f77_scan_from(ctl_off);
+            if (lx_t != T_NAME) { f77_error("implied-DO needs a control variable"); return; }
+            sv = f77_sym(lex_name);
+            f77_tok();
+            if (lx_t != T_ASSIGN) { f77_error("expected = in implied-DO"); return; }
+            f77_tok();
+            m1 = f77_expr(); m1 = f77_cvt(m1, &ex_hi, ex_ty, TY_INT);
+            if (lx_t != T_COMMA) { f77_error("expected , in implied-DO"); return; }
+            f77_tok();
+            m2 = f77_expr(); m2 = f77_cvt(m2, &ex_hi, ex_ty, TY_INT);
+            if (lx_t == T_COMMA) {
+                f77_tok();
+                m3 = f77_expr(); m3 = f77_cvt(m3, &ex_hi, ex_ty, TY_INT);
+            } else {
+                m3 = f77_iconst(1);
+            }
+
+            hi_emit(HI_STORE, TY_INT, f77_sval[sv], m1, 0, NULL);
+            t1 = hi_emit(HI_SUB, TY_INT, m2, m1, 0, NULL);
+            t2 = hi_emit(HI_ADD, TY_INT, t1, m3, 0, NULL);
+            t3 = hi_emit(HI_DIV, TY_INT, t2, m3, 0, NULL);
+            f77_frame = f77_frame + 4;
+            trip = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
+            hl_ainst[hl_nalloca] = trip;
+            hl_aoff[hl_nalloca] = 0 - f77_frame;
+            hl_nalloca = hl_nalloca + 1;
+            hi_emit(HI_STORE, TY_INT, trip, t3, 0, NULL);
+
+            b_test = hir_new_block();
+            b_body = hir_new_block();
+            b_exit = hir_new_block();
+            f77_goto_blk(b_test);
+            f77_begin_blk(b_test);
+            c = hi_emit(HI_LOAD, TY_INT, trip, -1, 0, NULL);
+            c = hi_emit(HI_SGT, TY_INT, c, f77_iconst(0), 0, NULL);
+            hi_emit(HI_BRC, TY_VOID, c, b_body, b_exit, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_body);
+
+            /* Rewind to the items and emit them inside the body. */
+            f77_scan_from(items_off);
+            for (;;) {
+                f77_wr_one();
+                if (lx_t != T_COMMA) break;
+                if ((int)(lx_rts - lx_stmt) >= ctl_off - 1) break;
+                f77_tok();
+                if ((int)(lx_rts - lx_stmt) >= ctl_off) break;
+            }
+
+            {
+                int iv;
+                iv = hi_emit(HI_LOAD, TY_INT, f77_sval[sv], -1, 0, NULL);
+                iv = hi_emit(HI_ADD, TY_INT, iv, m3, 0, NULL);
+                hi_emit(HI_STORE, TY_INT, f77_sval[sv], iv, 0, NULL);
+                iv = hi_emit(HI_LOAD, TY_INT, trip, -1, 0, NULL);
+                iv = hi_emit(HI_ADDI, TY_INT, iv, -1, -1, NULL);
+                hi_emit(HI_STORE, TY_INT, trip, iv, 0, NULL);
+                hi_emit(HI_BR, TY_VOID, -1, -1, b_test, NULL);
+            }
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_exit);
+
+            /* Continue after the implied-DO's closing paren. */
+            f77_scan_from(close_off);
+            return;
+        }
+    }
+
+    v = f77_expr();
+    vty = ex_ty;
+    vhi = ex_hi;
+    f77_wr_item(v, vty, vhi);
+}
+
+static void f77_wr_list(void) {
+    if (lx_t == T_EOF) return;
+    for (;;) {
+        f77_wr_one();
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+}
+
+/* Emit the f77_wr_begin call: unit number, plus the format string or a
+ * null pointer for list-directed (FMT=*) output. */
+static void f77_wr_begin(int unit_val, int fmt_label) {
+    int cb;
+    int r;
+    int fs;
+    int fa;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    if (fmt_label >= 0) {
+        fs = f77_find_format(fmt_label);
+        if (fs < 0) { f77_error("no FORMAT statement with that label"); fs = 0; }
+        fa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, fs, NULL);
+    } else {
+        fa = f77_iconst(0);
+    }
+    h_carg[h_ncarg] = fa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_begin");
+    h_cbase[r] = cb;
+}
+
+static void f77_wr_finish(void) {
+    int r;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 0, "f77_wr_end");
+    h_cbase[r] = h_ncarg;
+}
+
+/* WRITE (unit, fmt) list  --  unit and fmt may each be `*`. */
+static void f77_stmt_write(int skip) {
+    int unit_val;
+    int fmt_label;
+    f77_scan_from(skip);
+    if (lx_t != T_LP) { f77_error("WRITE needs (unit, format)"); return; }
+    f77_tok();
+    if (lx_t == T_STAR) { unit_val = f77_iconst(6); f77_tok(); }
+    else { unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT); }
+    fmt_label = -1;
+    if (lx_t == T_COMMA) {
+        f77_tok();
+        if (lx_t == T_STAR) f77_tok();
+        else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else { f77_error("only a FORMAT label or * is supported"); return; }
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after WRITE control list"); return; }
+    f77_tok();
+    f77_wr_begin(unit_val, fmt_label);
+    f77_wr_list();
+    f77_wr_finish();
+}
+
+/* PRINT fmt, list  --  always unit 6. */
+static void f77_stmt_print(int skip) {
+    int fmt_label;
+    f77_scan_from(skip);
+    fmt_label = -1;
+    if (lx_t == T_STAR) f77_tok();
+    else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+    else { f77_error("PRINT needs a FORMAT label or *"); return; }
+    if (lx_t == T_COMMA) f77_tok();
+    f77_wr_begin(f77_iconst(6), fmt_label);
+    f77_wr_list();
+    f77_wr_finish();
+}
+
 /* Dispatch one statement.  Called once per assembled statement. */
 static void f77_statement(void) {
     int cls;
@@ -1574,6 +1850,12 @@ static void f77_statement(void) {
     /* --- keyword statements --- */
 
     if (f77_starts("PROGRAM")) goto done;      /* name is documentation */
+
+    if (f77_starts("FORMAT")) goto done;       /* collected in phase 1 */
+
+    if ((n = f77_starts("WRITE")) != 0) { f77_stmt_write(n); goto done; }
+    if ((n = f77_starts("PRINT")) != 0) { f77_stmt_print(n); goto done; }
+
 
     if (f77_starts("SUBROUTINE") || f77_unit_header_ty() >= 0) {
         /* The header was consumed by f77_bind_unit() before the body

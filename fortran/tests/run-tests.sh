@@ -88,17 +88,28 @@ else
         # --mmio + libc_mmio is what propagates the guest exit status out
         # of the emulator, which is how STOP n is checked.
         "$LD" -o "$W/$b.s32x" --mmio 64K "$ROOT/runtime/crt0.s32o" "$W/$b.s32o" \
+              "$FDIR/runtime/libf77.s32o" \
               "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" \
               >/dev/null 2>&1 || { report "diff:$b" 1 "link"; continue; }
         "$EMU" "$W/$b.s32x" 2>/dev/null \
             | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO|^Exit code" \
             > "$W/$b.got"
         "$EMU" "$W/$b.s32x" >/dev/null 2>&1; grc=$?
-        if diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 && [ "$wrc" = "$grc" ]; then
-            report "diff:$b" 0
-        else
-            report "diff:$b" 1 "output/exit differs"
+        # Agreement is necessary but NOT sufficient.  Every program in
+        # f77/ is self-checking and ends in STOP 0, so a non-zero exit
+        # means an assertion tripped -- and if the oracle trips the same
+        # one, a plain diff calls that a PASS while the test has in fact
+        # stopped early and never exercised what it was written for.
+        # That happened: slice6 asserted FLAT(2)==21 against a fill of
+        # I+10*J, stopped at its second check on BOTH compilers, and
+        # reported PASS for several commits.  So require exit 0 too.
+        if ! diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 || [ "$wrc" != "$grc" ]; then
+            report "diff:$b" 1 "output/exit differs (ours=$grc oracle=$wrc)"
             diff "$W/$b.want" "$W/$b.got" | head -8
+        elif [ "$grc" != "0" ]; then
+            report "diff:$b" 1 "both stopped early at STOP $grc -- test never completed"
+        else
+            report "diff:$b" 0
         fi
     done
 fi
@@ -126,6 +137,7 @@ for f in "$HERE"/f77/*.f; do
     "$F77" "$f" "$W/$b.lm.s" >/dev/null 2>&1 || continue
     "$AS" "$W/$b.lm.s" "$W/$b.lm.s32o" >/dev/null 2>&1 || continue
     "$LD" -o "$W/$b.lm.s32x" --mmio 64K "$ROOT/runtime/crt0.s32o" "$W/$b.lm.s32o" \
+          "$FDIR/runtime/libf77.s32o" \
           "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null 2>&1 || continue
     for n in $INTERCEPTABLE; do
         if strings -a "$W/$b.lm.s32x" 2>/dev/null | grep -qx "$n"; then
