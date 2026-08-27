@@ -112,8 +112,26 @@ No linker change is required, and none should be added for this.
    frontend contract after a re-sync immediately and specifically.
    Notable: mem2reg promoted both allocas to registers, so the emitted
    loop touches no stack at all.
-2. **Fixed-form lexer.** Columns 1-5 label, 6 continuation, 7-72
-   statement, `C`/`*` comment, blanks-insignificant, no reserved words.
+2. **Fixed-form lexer.** ✅ **DONE 2026-08-27.** Split in two, matching
+   house style: `f77_card.h` hand-writes the card-image layer (columns
+   1-5 label, 6 continuation, 7-72 text, 73-80 ignored; comment lines;
+   blank squeezing; Hollerith counts) because counted reads are not a
+   regular-language job, and `f77_lexer.rl` is a Ragel `-G2` scanner
+   over the assembled statement. Gated by `tests/torture.f`, which
+   pins the rules that bite: `1.EQ.2` splitting correctly rather than
+   lexing `1.` as a REAL, `X.GE.1.5.AND..NOT.Y`, `1.5D-3` vs `1.E5`,
+   Hollerith with embedded blanks (`6HAB CD `), `IT''S`, continuation
+   cards, tab-format source, case folding, and column 73+ ignored.
+
+   **The lexer classifies no keywords, on purpose.** F77 has no reserved
+   words, so `PROGRAM TORTUR` arrives as the single name
+   `PROGRAMTORTUR` and `DO 20 I = 1, 10` is indistinguishable from
+   `DO20I = 1.10` at this level — the comma is what separates them, and
+   only the parser can see it. Consequence for milestone 3: **the
+   parser must classify statements by prefix-matching keywords against
+   the assembled statement text, then re-init the scanner past the
+   keyword.** That is how real F77 front ends work; it is not a
+   workaround.
 3. **Vertical slice to `STOP`.** `PROGRAM`/`END`, INTEGER arithmetic,
    assignment, `IF`, `DO`, `GOTO`, `STOP n` — checked by exit code, no
    I/O runtime needed yet.

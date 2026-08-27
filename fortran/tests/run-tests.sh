@@ -50,6 +50,19 @@ else
     fi
 fi
 
+# --- Gate 2: card image + tokenizer ----------------------------------
+if ! gcc -I"$FDIR/src" -O1 -w -o "$W/lexdump" "$HERE/lexdump.c" 2>"$W/lex.log"; then
+    report "lex-torture" 1 "host build"
+else
+    "$W/lexdump" "$HERE/torture.f" > "$W/torture.out" 2>&1
+    if diff -q "$W/torture.out" "$HERE/torture.expected" >/dev/null 2>&1; then
+        report "lex-torture" 0
+    else
+        report "lex-torture" 1 "token stream mismatch"
+        diff "$HERE/torture.expected" "$W/torture.out" | head -12
+    fi
+fi
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
