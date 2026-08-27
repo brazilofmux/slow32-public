@@ -1307,6 +1307,7 @@ static void gc_irc(void) {
 static int hcg_fp64_kind(char *nm);   /* defined in hir_codegen.h */
 
 static int ra_stat_pair_pref;
+static int ra_pair_share_fate = 1;
 static int ra_pair_of[HIR_MAX_INST];
 static int ra_pair_lo[HIR_MAX_INST];
 
@@ -1363,6 +1364,7 @@ static int gc_pin[GC_MAX_NODE];
  * The earlier version only looked for an ALREADY-coloured partner,
  * which never fired: select colours one node at a time and the partner
  * is almost always still uncoloured (measured: 33 misses, 0 hits). */
+static int ra_pc_dbg[6];
 static int ra_pair_claim(int n, int inst, int maxc, int *used) {
     int partner;
     int pn;
@@ -1372,9 +1374,10 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
 
     partner = ra_pair_of[inst];
     if (partner < 0) return -1;
+    ra_pc_dbg[0]++;                       /* had a partner */
     pn = gc_node[partner];
-    if (pn < 0) return -1;
-    if (gc_color[gc_get_alias(pn)] >= 0) return -1;   /* already placed */
+    if (pn < 0) { ra_pc_dbg[1]++; return -1; }        /* partner not a node */
+    if (gc_color[gc_get_alias(pn)] >= 0) { ra_pc_dbg[2]++; return -1; }
 
     c = 0;
     while (c + 1 < maxc) {
@@ -1392,10 +1395,12 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
             if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(partner))
                 { c = c + 1; continue; }
             gc_pin[pn] = hi_c;
+            ra_pc_dbg[4]++;
             return lo_c;
         }
         c = c + 1;
     }
+    ra_pc_dbg[3]++;                       /* no free aligned pair */
     return -1;
 }
 
@@ -1426,8 +1431,17 @@ static void gc_select(void) {
      * This is the same technique used in the x64 and a64 backends
      * after the edge-transfer robustness work.
      */
+    /* Three passes.  Parameters first (they have a preferred ABI
+     * register), then fp64 PAIRS, then everything else.
+     *
+     * Pairs go before singles because an aligned pair needs two
+     * ADJACENT free colours, and singles scattered through the file
+     * destroy those far faster than they consume capacity.  Measured on
+     * the mandel kernel before this change: of 30 pair claims, 12
+     * failed purely for want of a free aligned pair, against 10 that
+     * succeeded. */
     pass = 0;
-    while (pass < 2) {
+    while (pass < 3) {
 
         i = gc_nsel - 1;
         while (i >= 0) {
@@ -1439,7 +1453,10 @@ static void gc_select(void) {
 
             /* Skip nodes that do not belong in this pass */
             if (pass == 0 && h_kind[inst] != HI_PARAM) { i = i - 1; continue; }
-            if (pass == 1 && h_kind[inst] == HI_PARAM) { i = i - 1; continue; }
+            if (pass == 1 && (h_kind[inst] == HI_PARAM ||
+                              ra_pair_of[inst] < 0)) { i = i - 1; continue; }
+            if (pass == 2 && (h_kind[inst] == HI_PARAM ||
+                              ra_pair_of[inst] >= 0)) { i = i - 1; continue; }
 
             /* Zero only the active portion of the used[] mask */
             c = 0;
@@ -1472,6 +1489,19 @@ static void gc_select(void) {
                 if (pw >= 0) {
                     gc_color[n] = pw;
                     ra_stat_pair_pref = ra_stat_pair_pref + 1;
+                } else if (ra_pair_of[inst] >= 0 && ra_pair_share_fate) {
+                    /* SHARE FATE.  Colouring the halves of a double
+                     * independently is the worst outcome available: one
+                     * lands in a register and the other spills, so the
+                     * code pays spill traffic AND the moves to rebuild
+                     * the pair in scratch.  If the pair cannot be
+                     * placed, leave BOTH in memory -- the emitter then
+                     * loads them into its scratch pair directly.  This
+                     * is the property a real pair register class gives
+                     * for free: allocated together, or spilled
+                     * together. */
+                    i = i - 1;
+                    continue;
                 }
             }
 

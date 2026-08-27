@@ -212,6 +212,13 @@ int main(int argc, char **argv) {
         fdputs("split doubles: ", 2);
         fdputuint(2, (unsigned int)f77_split_count);
         fdputc(10, 2);
+        {
+            int q;
+            fdputs("pair-claim [partner,nonode,placed,nofree,HIT]=", 2);
+            q = 0;
+            while (q < 5) { fdputuint(2, (unsigned)ra_pc_dbg[q]); fdputc(' ', 2); q = q + 1; }
+            fdputc(10, 2);
+        }
         fdputs("pair-pref hits: ", 2);
         fdputuint(2, (unsigned int)ra_stat_pair_pref);
         fdputs("  addi[calls,spill,nouse,valuse,mismatch,HIT]=", 2);

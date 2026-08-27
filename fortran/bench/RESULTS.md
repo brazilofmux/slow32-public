@@ -10,7 +10,7 @@ deliberate mirrors of each other).
 | compiler | instructions | ratio |
 |---|---:|---:|
 | clang -O2 | 501,352,191 | 1.00× |
-| **f77** | 1,154,751,549 | **2.30×** |
+| **f77** | 994,174,607 | **1.98×** |
 | stage08 cc *(same C source)* | — | **3.56×** at 12 reps |
 
 The third row is the important one. Compiling the **C** version with
@@ -165,10 +165,51 @@ Two experiments, both bounding what such a change could buy:
    that exposed it.
 
 Conclusion: **register count is not the binding constraint**, so the
-ABI change would not pay for itself. What remains is more likely the
-pair-alignment fragmentation itself — an aligned-pair requirement makes
-the 18-register file behave like far fewer — and that is a question
-about the allocator, not about the calling convention.
+ABI change would not pay for itself. What remains is the pair-alignment
+handling itself — a question about the allocator, not the calling
+convention. That turned out to be exactly right; see below.
+
+## Pairs allocated as a unit (mandel 4.93× → 3.26×, LINPACK 2.14× → 1.98×)
+
+LLVM models `f64` on this same ISA as a first-class register class:
+
+    def Tuples2GPR : RegisterTuples<[gsub_0, gsub_1], ...>;
+    def GPRPair : RegisterClass<"SLOW32", [f64], 64, (add Tuples2GPR)>;
+
+so the allocator colours a double as ONE unit and alignment falls out.
+Our allocator had two independent 32-bit values plus a preference. Two
+changes closed most of the distance without a real pair class:
+
+**1. Pairs are coloured before singles.** An aligned pair needs two
+*adjacent* free colours, and singles scattered through the file destroy
+those far faster than they consume capacity. Measured before: of 30
+claims, 12 failed purely for want of a free aligned pair. Colouring
+pairs in their own select pass halved that.
+
+On its own this was a NET LOSS (4.93× → 5.18×) — and the reason is the
+finding that mattered:
+
+**2. Pairs share fate.** When a claim failed, the two halves were
+coloured *independently*, so one landed in a register and the other
+spilled — paying spill traffic AND the moves to rebuild the pair in
+scratch. The hot loop's 26 memory operations had merely become 37
+register moves. Now a pair that cannot be placed leaves BOTH halves in
+memory, and the emitter loads them straight into its scratch pair.
+"Allocated together, or spilled together" is precisely the property a
+real pair register class provides for free.
+
+Together:
+
+| | mandel | hot loop | LINPACK |
+|---|---:|---:|---:|
+| start of this work | 7.98× | — | 3.33× |
+| after pair *preference* | 5.41× | 62 insns, 26 mem | 2.30× |
+| after direct spill | 4.93× | 52 insns, 26 mem | 2.14× |
+| **pairs as a unit** | **3.26×** | **18 insns, 0 mem** | **1.98×** |
+| clang | 1.00× | 16 insns, 2 mem | 1.00× |
+
+The mandel hot loop is now 18 instructions against clang's 16, with no
+spill traffic at all.
 
 ## Scalar dummy copy-in was tried, and lost
 
