@@ -1,0 +1,7 @@
+slice(0) = 0
+slice(1) = 1
+slice(2) = 5
+slice(3) = 14
+slice(4) = 30
+slice(5) = 55
+slice(10) = 385

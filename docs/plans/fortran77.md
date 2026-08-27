@@ -1,0 +1,147 @@
+# Fortran 77 on SLOW-32
+
+Status: **started 2026-08-27.** Backend detached and proven; frontend
+not yet begun.
+
+## Why this one
+
+`docs/plans/1987-desk.md` §8 is titled "Languages, only if they change
+the job", and Fortran 77 is its first entry: *"We already have CORDIC
+and native f64. 80s science was Fortran talking to a plotter, not
+Python talking to a GPU."*
+
+Sorted by domain rather than by name, the desk already covers systems
+(C/C++), structured (FPC), interactive (sbasic), business-interactive
+(dBase, clip), stack (Forth), scripting (Lua) and symbolic (lisp,
+prolog — both minimal). **Numeric/scientific is empty.** No other
+missing language opens a domain the machine cannot otherwise reach;
+this one does, and its substrate quietly finished landing after the
+desk bullet was written.
+
+### The substrate is better than the bullet claimed
+
+The desk credited CORDIC. That is superseded and should not be cited
+as the reason:
+
+- CORDIC was profiled and **Newton series beat it**. `math_soft.c`
+  carries the Newton implementations.
+- Those soft routines are a **fallback**, not the main path. Under the
+  DBT, `math_intercepts[]` in `tools/dbt/dbt.c` overrides **37**
+  symbols — `sin cos tan asin acos atan sinh cosh tanh exp log log10
+  sqrt fabs ceil floor round trunc` and the `f` variants — with native
+  host calls. The Newton code runs only when the DBT does not
+  intercept.
+- The DBTs offer native f32 and f64 arithmetic.
+
+So a numeric workload gets native FP *and* native transcendentals.
+That is a real numerics platform, not a toy.
+
+**Gap worth closing early:** `pow`, `atan2` and `fmod` are NOT in the
+intercept table (`fmodf` is). F77 leans on all three — `**` with a real
+exponent, and `ATAN2` is everywhere in numeric code. They currently
+fall to the Newton path under exactly the workload Fortran brings.
+
+## Two rulings that shape the design
+
+Both from the user, 2026-08-27, and both narrow the work:
+
+1. **`fortran/` is self-contained: COPY the backend, do not share it.**
+   `selfhost/` must stay free to evolve without worrying about breaking
+   f77. This is deliberately *not* the cc-x64 / cc-a64 pattern, which
+   symlinks `../src`. The copied files carry a provenance header naming
+   their source commit; re-syncs are deliberate and re-stamp it.
+
+2. **SLOW-32 is the only target.** The path to x86-64 and aarch64 is
+   through `slow32-dbt`, exactly as it is for every other language in
+   the set. f77 will not grow native backends: if x64/a64 performance
+   is wanted, improve slow32-dbt generally rather than opening two new
+   streams.
+
+## Architecture
+
+The stage08 compiler splits cleanly, and the split is sharper than
+expected — the backend has just **four** references to the C AST
+(`fn->name`, `fn->locals_size`, `fn->next`, `prog->body`, plus
+`nparams`/`is_varargs` in the prologue), in ~8.8k lines:
+
+```
+  f77 frontend (new)          copied backend (8,851 lines)
+  ------------------          ----------------------------
+  fixed-form lexer   ─┐
+  parser → AST        ├──►  hir.h ──► hir_ssa ──► hir_opt ──► hir_licm
+  sema (implicit       │                                          │
+   typing, COMMON)     │                                    hir_burg
+  lower → HIR        ─┘                                          │
+                                              hir_regalloc ──► hir_codegen
+                                                                 │
+                                                          SLOW-32 asm
+```
+
+Inherited free: SSA construction, mem2reg, CSE/DSE/LICM, BURG
+instruction selection, IRC graph-colouring regalloc, compare-branch
+fusion — all proven by DOOM and sbasic.
+
+### The frontend contract
+
+`src/f77_contract.h` supplies the 45 symbols the backend reads,
+in four groups: `fd*` diagnostics; the type encoding and `ty_size` /
+`ty_is_*` predicates (kept **bit-identical** to the C compiler's so FP
+pair handling and ABI assignment behave identically); the alloca
+registry the SSA promoter scans; and the `ps_g*` global-data tables
+`gen_data()` emits.
+
+Type mapping: `INTEGER`/`LOGICAL`→`TY_INT`, `INTEGER*2`→`TY_SHORT`,
+`REAL`→`TY_FLOAT`, `DOUBLE PRECISION`→`TY_DOUBLE`, `CHARACTER`→
+`TY_CHAR`, `COMPLEX`→a pair.
+
+### COMMON blocks are a compiler problem, not a linker problem
+
+`common/s32_formats.h` defines only `LOCAL`/`GLOBAL`/`WEAK` bindings —
+there is no COMMON/tentative-definition binding, so `s32-ld` cannot
+merge blocks the way an ELF linker would. Each COMMON block is
+therefore emitted by *this compiler* as one named, sized `.bss` object
+via the `ps_g*` tables, with EQUIVALENCE riding on the same mechanism.
+No linker change is required, and none should be added for this.
+
+## Milestones
+
+1. **Backend detached and proven.** ✅ **DONE 2026-08-27.** Copied at
+   `849dd791`; `tests/backend_slice.c` drives it with hand-built HIR
+   and no frontend, producing Σi² correctly on the emulator (0, 1, 5,
+   14, 30, 55, 385). Kept as a permanent gate: it catches a broken
+   frontend contract after a re-sync immediately and specifically.
+   Notable: mem2reg promoted both allocas to registers, so the emitted
+   loop touches no stack at all.
+2. **Fixed-form lexer.** Columns 1-5 label, 6 continuation, 7-72
+   statement, `C`/`*` comment, blanks-insignificant, no reserved words.
+3. **Vertical slice to `STOP`.** `PROGRAM`/`END`, INTEGER arithmetic,
+   assignment, `IF`, `DO`, `GOTO`, `STOP n` — checked by exit code, no
+   I/O runtime needed yet.
+4. **The FORMAT engine.** The sleeper: `WRITE(6,100)` /
+   `FORMAT(1X,F10.4)` is an interpreted mini-language at runtime and is
+   the single largest component — most of what libf2c is. Every route
+   to F77 pays this; there is no shortcut.
+5. **Subprograms.** `SUBROUTINE`/`FUNCTION`, by-reference arguments,
+   `COMMON`, `SAVE`, `EXTERNAL`.
+6. **Arrays.** Column-major, 1-based, arbitrary lower bounds, adjustable
+   dimensions in dummy arguments.
+7. **The app that justifies it.** Per the desk's own rule, the language
+   earns its place through a program, not a test suite: a LINPACK-shaped
+   kernel plus a plotter routine on the tube.
+
+## Testing
+
+The project's standing method is a differential oracle (LLVM for
+stage08, gforth for stage01). There is **no Fortran on this host** —
+no `gfortran`, `f2c` or `g77` — so an oracle has to be arranged before
+milestone 3 lands. Cheapest route is gfortran in a container, diffing
+program output; that is much cheaper than porting f2c, which was
+considered and set aside as "the compiler story" the desk warns about.
+
+## What not to do
+
+- No native x64/a64 backends (ruling 2). slow32-dbt is the path.
+- No symlinks back into `selfhost/` (ruling 1).
+- No COMMON support in `s32-ld`; merge compiler-side.
+- No new HIR opcodes without a demonstrated need — the existing set
+  covers everything F77 requires, COMPLEX included (as pairs).
