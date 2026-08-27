@@ -28,32 +28,50 @@ as the reason:
 - Those soft routines are a **fallback**, not the main path.
 - The DBTs offer native f32 and f64 arithmetic.
 
-**Correction (2026-08-27), because an earlier draft of this file got it
-backwards.** It previously cited the DBT's math intercepts as a *reason*
-Fortran would be fast here. That is a trapdoor, not a feature, and
-Fortran must not use it. `slow32-dbt` links host libm (`LDFLAGS = -lm`)
-and installs an intercept for any of ~37 math symbols it finds in the
-**guest's** symbol table, replacing guest execution with a native host
-call. Any binary carrying those symbols stops measuring the guest:
-`sbasic.s32x` carries `sqrt`, `atan2` and `floor`, so under the DBT it
-runs them on the host.
+### Which universe this lives in
 
-**Fortran does not go through that door, and a gate enforces it.**
-Every FP operation f77 emits is a SLOW-32 hardware instruction —
-`fadd.d`, `fsub.d`, `fmul.d`, `fdiv.d`, `fneg.d`, `feq.d`, `flt.d`,
-`fle.d`, `fcvt.*`, `fsqrt.d`, `fsqrt.s` — so a Fortran binary contains
-no interceptable math symbol at all. Verified: the LINPACK binary's
-symbols are `main`, `DAXPY`, `DGEFA` … and nothing else, and it gives
-an identical answer under `slow32`, `slow32-fast` and `slow32-dbt`.
-Gate 4 (`no-libm-sidedoor`) asserts this for every test program on
-every run, and is mutation-proven — routing `DSQRT` back through libm
-makes it fail, naming the leaked symbols.
+`fortran/` is in the tree's **ordinary** universe, not `selfhost/`'s
+closed one, and the two play different games:
+
+- **`selfhost/`** bottoms out at the ~900-line `s32-emu.c`. Anything it
+  needs, it must build itself. Nothing may come from outside.
+- **Everything else**, including here, is two-sided: the *front* may use
+  anything on the host to target SLOW-32, and the *emulators* may use
+  anything in their environment — possibly a different machine — to run
+  SLOW-32 code.
+
+So `slow32-dbt` linking host libm (`LDFLAGS = -lm`) and intercepting
+~37 math symbols found in the guest's symbol table is **sanctioned**:
+that is the emulator using its environment, by design. `sbasic.s32x`
+carries `sqrt`, `atan2` and `floor` and runs them on the host under the
+DBT, legitimately. It is a benchmarking caveat — a DBT run of
+math-heavy code is not timing guest instructions — not a cheat.
+
+Two consequences for f77, both settled by this:
+
+- Using host `strtod` and host doubles to convert literals is fine and
+  permanent. f77 is a cross-compiler in the ordinary universe and is
+  not required to self-host, so it needs none of the machinery stage08
+  built to avoid exactly that (`lex_p10`/`lex_p5`, Dekker `twoProd`).
+- Lowering an intrinsic to a guest libm call will be a legitimate
+  option when `EXP`, `LOG`, `ATAN2`, the trig functions and
+  real-exponent `**` arrive.
+
+As it happens f77 needs **no math libcall at all today**: every FP
+operation it emits is a SLOW-32 hardware instruction — `fadd.d`,
+`fsub.d`, `fmul.d`, `fdiv.d`, `fneg.d`, `feq.d`, `flt.d`, `fle.d`,
+`fcvt.*`, `fsqrt.d`, `fsqrt.s`. The LINPACK binary's only symbols are
+`main`, `DAXPY`, `DGEFA` and its own routines, and it gives an
+identical answer under `slow32`, `slow32-fast` and `slow32-dbt`. The
+harness reports this as a code-quality fact (`math-libcalls`) rather
+than enforcing it, so that adding the missing transcendentals is not
+blocked by a rule that was never this directory's.
 
 **Consequence for the intrinsics still to come:** `**` with a real
 exponent, `ATAN2`, `EXP`, `LOG` and the trig functions have no SLOW-32
-instruction behind them. Each one must be implemented as *guest* code —
-emitted inline, or put in a Fortran runtime compiled to SLOW-32 — and
-must not be lowered to a libm call, or gate 4 will fail, correctly.
+instruction behind them, so each will be either inline guest code or a
+call into the SLOW-32 libc — the latter being legitimate here (see
+"Which universe this lives in").
 
 ## Two rulings that shape the design
 
