@@ -85,11 +85,15 @@ else
             report "diff:$b" 1 "f77 compile"; continue
         fi
         "$AS" "$W/$b.s" "$W/$b.s32o" >/dev/null 2>&1 || { report "diff:$b" 1 "assemble"; continue; }
-        "$LD" -o "$W/$b.s32x" --mmio 64K "$FDIR/runtime/crt0.s32o" "$W/$b.s32o" \
-              "$FDIR/runtime/libf77.s32a" >/dev/null 2>&1 || { report "diff:$b" 1 "link"; continue; }
+        # --mmio + libc_mmio is what propagates the guest exit status out
+        # of the emulator, which is how STOP n is checked.
+        "$LD" -o "$W/$b.s32x" --mmio 64K "$ROOT/runtime/crt0.s32o" "$W/$b.s32o" \
+              "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" \
+              >/dev/null 2>&1 || { report "diff:$b" 1 "link"; continue; }
         "$EMU" "$W/$b.s32x" 2>/dev/null \
-            | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO" \
-            > "$W/$b.got"; grc=$?
+            | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO|^Exit code" \
+            > "$W/$b.got"
+        "$EMU" "$W/$b.s32x" >/dev/null 2>&1; grc=$?
         if diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 && [ "$wrc" = "$grc" ]; then
             report "diff:$b" 0
         else

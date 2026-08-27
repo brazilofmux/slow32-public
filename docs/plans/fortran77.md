@@ -132,9 +132,48 @@ No linker change is required, and none should be added for this.
    the assembled statement text, then re-init the scanner past the
    keyword.** That is how real F77 front ends work; it is not a
    workaround.
-3. **Vertical slice to `STOP`.** `PROGRAM`/`END`, INTEGER arithmetic,
-   assignment, `IF`, `DO`, `GOTO`, `STOP n` — checked by exit code, no
-   I/O runtime needed yet.
+3. **Vertical slice to `STOP`.** ✅ **DONE 2026-08-27.** `PROGRAM`/`END`,
+   `INTEGER`/`REAL`/`LOGICAL` declarations, implicit typing (I-N rule),
+   assignment, mixed-mode arithmetic, all six relationals,
+   `.AND.`/`.OR.`/`.NOT.`/`.EQV.`/`.NEQV.`, logical `IF`, block
+   `IF`/`ELSE IF`/`ELSE`/`ENDIF`, `DO` (including negative and
+   zero-trip), `CONTINUE`, `GOTO`, `STOP n`.
+
+   One pass, syntax-directed, lowering straight to HIR — no AST. F77
+   requires declarations before executable statements, so nothing needs
+   a second look, and the copied backend's SSA/optimizer does the work
+   an AST would have been built to enable. Forward `GOTO` works because
+   HIR blocks can be created before they are filled.
+
+   The PROGRAM unit is emitted as `main`, so the existing crt0 turns its
+   return value into the process exit status. Linking with `--mmio` +
+   `libc_mmio` is what propagates that status out of the emulator, which
+   is how `STOP n` is checked — no Fortran I/O runtime needed yet.
+
+   `DO` uses the standard trip count, `MAX(0, (m2-m1+m3)/m3)`, computed
+   once at entry, rather than re-testing the variable. That is what
+   makes a negative or run-time-signed step work without knowing its
+   sign at compile time, and it gives correct zero-trip behaviour.
+
+   Statement classification lives in `f77_classify()` and is the part
+   that could not be done in the lexer: `IF(` matches balanced parens
+   and then looks at what follows (`THEN` → block IF, `=` → assignment
+   to array element `IF(...)`, else logical IF); `DO` requires a
+   top-level `=` *and* a top-level `,` after it, which is the entire
+   difference between `DO 20 I = 1, 10` and `DO20I = 1.10`.
+
+   Gated differentially against the oracle by `tests/f77/slice[1-3].f`,
+   which are **self-checking**: each wrong answer exits with its own
+   code and success falls through to `STOP 0`, so the exit status
+   depends on the computation rather than on a literal. Verified
+   non-vacuous by mutation — swapping integer `+`/`-` in the compiler
+   fails all three.
+
+   Not yet: `DOUBLE PRECISION` (SLOW-32 native does not define
+   `S12CC_NATIVE_F64`, so doubles are lo/hi pairs via the `hl_hi`
+   protocol, which the lowering must learn), `**`, arrays, and
+   subprograms.
+
 4. **The FORMAT engine.** The sleeper: `WRITE(6,100)` /
    `FORMAT(1X,F10.4)` is an interpreted mini-language at runtime and is
    the single largest component — most of what libf2c is. Every route
