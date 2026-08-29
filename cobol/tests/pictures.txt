@@ -1,0 +1,58 @@
+# alphanumeric and alphabetic
+X
+X(10)
+XXX
+A(5)
+AXA
+X(2100)
+# alphanumeric edited: B, 0, / are insertion positions
+XXBXX
+X(4)/X(2)
+A(3)0A
+# numeric: 9, S, V, P
+9
+9(5)
+S9(3)
+S9(7)V99
+99V9
+S9(3)V9(3)
+9(18)
+9(19)
+V99
+PPP9
+9PP
+SPPP9
+S9(4)PP
+# numeric edited: suppression, fill, insertion
+Z(5)
+ZZZ9
+ZZ9.99
+**,***.99
+9,999
+99/99/99
+9(3)B9(3)
+99.9
+# fixed sign and currency
++9(3)
+-9(3)
+9(3)-
+$9(3).99
+9(3)CR
+9(3)DB
+# floating insertion: n symbols give n-1 digit positions
+--9
+----,---,--9.99
+$$$,$$9.99
+++++9
+# majesty's own
++99999
+-----9
+S9(9)V99
+S9(9)V9(2)
+# errors
+Q
+9(0)
+9(19)V9
+P9P
+Z9P
+X9

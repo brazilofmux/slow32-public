@@ -9,7 +9,7 @@ several.
 ## Stage 0 — specifications (this directory)
 
 Done when the docs here match the rulings and someone can implement
-Stage 1 without inventing a product. **This is the current stage.**
+Stage 1 without inventing a product. **Done 2026-08-29.**
 
 ## Prerequisite -- the corpus rewrite, in `~/majesty` **DONE**
 
@@ -24,7 +24,7 @@ hazard the pass turned up: [functions.md](functions.md). The
 pure-COBOL date-function family is still 2002 and is listed under
 After v1.
 
-## Stage 1 — host skeleton + PICTURE + hello **L**
+## Stage 1 — host skeleton + PICTURE + hello **L** — DONE 2026-08-29
 
 - Directory layout as in [architecture.md](architecture.md)
 - Fixed-format and free-format readers
@@ -38,6 +38,20 @@ After v1.
   (`ALTER`)
 
 Done: a `.cbl` becomes a `.s32x` that prints a line.
+
+What landed: `src/s32-cobc.c` (~1,100 lines), `picture.rl` re-hosted
+with `picture.c` rewritten around a software edit descriptor,
+`libcob/libcob.c` (init, stop, DISPLAY of every usage majesty
+declares), `tests/run-tests.sh` with three gates -- PICTURE synthesis
+against a hand-checked table, programs against `.expected` **and**
+against host GnuCOBOL when present, refusals against their message.
+Beyond the list above, because VALUE made them free: DISPLAY of
+identifiers (all usages), figurative constants, `WITH NO ADVANCING`,
+`X'..'` literals, `END PROGRAM`, `IS INITIAL`, sections and
+paragraphs as labels, `CONTINUE`, `EXIT`. The DBT runs the output.
+Rulings made here: command name `s32-cobc`; format by flag, fixed
+default; `_` accepted in user-words; COMP/COMP-5 sizes and DISPLAY
+conventions in [dialect.md](dialect.md).
 
 ## Stage 2 — data division + MOVE + COMP integer **L**
 

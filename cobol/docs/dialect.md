@@ -91,6 +91,34 @@ Do not pretend these are in X3.23-1985:
 Each is documented, tested, and listed in diagnostics as an
 implementor feature when we have to talk about it.
 
+## Implementor conventions, as built (Stage 1)
+
+Where the 1985 text says "implementor-defined", this is what
+`s32-cobc` does. Each is GnuCOBOL's behaviour unless a reason is
+given, because majesty's `.prn` oracles were produced under it.
+
+- **Uninitialised WORKING-STORAGE**: alphanumeric to spaces, numeric
+  to zero (in the item's usage). The standard leaves it undefined;
+  majesty was written against GnuCOBOL's rule.
+- **`COMP`/`BINARY` width**: 2, 4, 8 bytes for 1-4, 5-9, 10-18 digits.
+  IBM's table and the natural fit for the SLOW-32 C types. GnuCOBOL's
+  default is 1-2-4-8; the difference is one- and two-digit items, and
+  it only shows in a layout (REDEFINES, SYNC groups handed to C).
+- **`COMP-5` width**: 1, 2, 4, 8 bytes for 1-2, 3-4, 5-9, 10-18
+  digits -- GnuCOBOL's, because COMP-5 is GnuCOBOL's usage and
+  majesty's `pic 9 comp-5` is one byte there. DISPLAY of a COMP-5 or
+  C-ABI item shows the field's full capacity (3, 5, 10, 19 digits),
+  not the picture's digits; DISPLAY of a COMP item shows the picture's.
+- **Numeric DISPLAY sign**: trailing overpunch; a negative last digit
+  is `p`..`y` (X'70'..X'79'). `SIGN SEPARATE` is not implemented yet.
+- **DISPLAY of a numeric item**: a leading `+`/`-` when the picture is
+  signed, every digit of the picture, and a `.` inserted where `V`
+  falls (`pic 9(3)v99 value 1.5` displays `001.50`).
+- **`HIGH-VALUE`** is X'FF', **`LOW-VALUE`** X'00'; the collating
+  sequence is ASCII.
+- **User-words** may contain `_`.
+- **Floating comment** `*>` is accepted in both formats.
+
 ## COBOL 85 we will grow into, not v1
 
 Nucleus Level 2 at full width (abbreviated conditions,

@@ -206,3 +206,7 @@ doom/doom1.wad
 doom/obj/
 doom/.default.cfg
 doom/.savegame/
+
+# cobol compiler output and host binary
+cobol/out/
+cobol/libcob/*.s

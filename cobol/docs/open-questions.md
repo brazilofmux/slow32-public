@@ -38,8 +38,8 @@ rewrite ([functions.md](functions.md)) could rename them to hyphens
 in the same pass, leaving the lexer strictly 85; or the lexer accepts
 `_` as one more implementor allowance. Renaming touches many files
 and every `CALL` literal; accepting `_` is a one-line lexer rule.
-Lean: accept `_`, list it, and let the rewrite stay minimal. Not
-ruled.
+**Ruled: accept `_`**, listed in dialect.md; the rewrite stayed
+minimal and kept the names.
 
 *(The former "activation semantics of `FUNCTION-ID`" question is
 gone: there are no functions after the rewrite, and a subprogram's

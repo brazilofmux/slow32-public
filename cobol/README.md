@@ -1,6 +1,8 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **specifications only.** No compiler yet.
+Status: **Stage 1 landed** (2026-08-29) -- a `.cbl` becomes a `.s32x`
+that prints a line, in either reference format, with GnuCOBOL agreeing
+on every test program. Stages in [docs/plan.md](docs/plan.md).
 
 A host cross-compiler in the tree's ordinary universe (like `fortran/`
 and `clip/`, not `selfhost/`). It reads COBOL 85 plus the implementor
@@ -48,14 +50,34 @@ under `docs/`.
    is `BY VALUE`/`RETURNING` on `CALL`, as the seam to C. See
    [docs/functions.md](docs/functions.md).
 
-## Layout (now)
+## Layout
 
-    README.md       this file
-    docs/           requirements, architecture, plans — the whole compiler
-                    until there is a compiler
+    README.md         this file
+    docs/             requirements, architecture, plans, rulings
+    src/s32-cobc.c    the host compiler: reader, tokenizer, parser, Sym[],
+                      lowering, emitter -- one file until it earns a split
+    src/picture.rl    PICTURE scanner, Ragel -G2 (re-hosted from cobc370);
+                      picture_scan.c is the generated output, checked in;
+                      gen_picture.sh regenerates it
+    src/picture.c     PICTURE analysis: category, digits, scale, sign,
+                      width, and the software edit descriptor
+    libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
+    tests/            run-tests.sh; fixed/ free/ programs with .expected;
+                      bad/ programs that must be refused; pictures.txt
+    build.sh          host build of s32-cobc + libcob
+    compile.sh        .cbl -> .s32x (assemble + link with libcob and libc)
 
-Layout later, when code exists, is sketched in
-[docs/architecture.md](docs/architecture.md). It is not created yet.
+## Build, run, test
+
+    ./build.sh                                   # out/s32-cobc, libcob/libcob.s32o
+    ./compile.sh -free prog.cbl -o prog.s32x     # majesty is free-format
+    ../tools/emulator/slow32 prog.s32x           # or slow32-fast, slow32-dbt
+    ./tests/run-tests.sh                         # 3 gates; uses host cobc as
+                                                 # oracle when present
+
+`s32-cobc [-free|-fixed] [-o out.s] source.cbl`. Fixed format is the
+default (the standard's reference format); majesty passes `-free`,
+as it already does to GnuCOBOL.
 
 ## Reading order
 
