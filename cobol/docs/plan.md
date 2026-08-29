@@ -11,6 +11,16 @@ several.
 Done when the docs here match the rulings and someone can implement
 Stage 1 without inventing a product. **This is the current stage.**
 
+## Prerequisite — the corpus rewrite, in `~/majesty` **S–M**
+
+Not a stage of this compiler. [functions.md](functions.md): every
+`FUNCTION-ID` on the v1 path becomes a `PROGRAM-ID`, every
+`name(args)` becomes `CALL 'name' USING …`, `REPOSITORY` and
+`IF … THEN` go. Landed under GnuCOBOL, `batch.sh` unchanged,
+`reports_cobol/*.prn` byte-identical before and after. Stage 6 does
+not open until it has. The oracle `.prn` files are then regenerated
+from the rewritten source.
+
 ## Stage 1 — host skeleton + PICTURE + hello **L**
 
 - Directory layout as in [architecture.md](architecture.md)
@@ -84,22 +94,22 @@ place or a stripped fixture), write a copy, diff.
 
 Done: gl039 then a tiny reader prints descriptions by id.
 
-## Stage 6 — user functions and the C bridge **M**
+## Stage 6 — subprograms and the C bridge **M**
 
-[functions.md](functions.md). This is what the earlier plan did not
-have and both remaining gates need.
+[functions.md](functions.md). Plain 1985 Inter-Program Communication,
+plus the C seam.
 
-- `FUNCTION-ID` / `END FUNCTION`, `LINKAGE SECTION`,
-  `PROCEDURE DIVISION [USING …] RETURNING`, a group as the result
-- `REPOSITORY. FUNCTION name.` and invocation `name(args)` / `name()`
-  in expressions
-- `CALL 'du_…' USING BY VALUE … BY REFERENCE … RETURNING …`
+- `CALL 'name' USING …` to another COBOL `PROGRAM-ID`; `LINKAGE
+  SECTION`; `PROCEDURE DIVISION USING …`; `GOBACK`
+- Several units per source file (`clinkages.cbl` holds four),
+  each closed by `END PROGRAM`
+- `CALL 'du_…' USING BY VALUE … BY REFERENCE … RETURNING …` — the
+  C-ABI implementor clauses, confined to `clinkages.cbl`
 - `dateutil.c` compiled for SLOW-32 and linked
-- Several units per source file (`clinkages.cbl` holds four)
 
-Done: a test program calls `c_lineartofielded` through
-`clinkages.cbl` and prints the fielded date; `c_isvaliddate` rejects
-a bad one.
+Done: a test program `CALL`s `c_lineartofielded` through the
+rewritten `clinkages.cbl` and prints the fielded date;
+`c_isvaliddate` rejects a bad one.
 
 ## Stage 7 — Report Writer, cheap half **L**
 
@@ -120,8 +130,9 @@ Done: `usescreen.cbl` runs.
 
 ## Stage 9 — the menu, and what it drags in **L**
 
-`menu.cbl` looks like a screen program. It is not small: it calls
-`taskdt()`, and `taskdt.cbl` uses, on the gate path,
+`menu.cbl` looks like a screen program. It is not small: it `CALL`s
+`taskdt` (after the rewrite), and `taskdt.cbl` uses, on the gate
+path,
 
 - `EVALUATE … WHEN … WHEN OTHER … END-EVALUATE`, nested
 - `STRING … DELIMITED BY SPACE / SIZE … WITH POINTER … END-STRING`
@@ -130,13 +141,16 @@ Done: `usescreen.cbl` runs.
 - **reference modification** with arithmetic:
   `todays-year(leading-zeros + 1:length(todays-year) - leading-zeros)`
 - `FUNCTION LENGTH`, `FUNCTION CURRENT-DATE` (a clock, through MMIO),
-  `FUNCTION UPPER-CASE`
+  `FUNCTION UPPER-CASE` — all 1989 amendment, invoked with the
+  `FUNCTION` keyword and no `REPOSITORY`
 - `REDEFINES` of a `VALUE`d list as an `OCCURS` table
 - a third screen, `date-page`, with `FROM` of a runtime-built item
 
 So the Nucleus Level 2 verbs the earlier plan put "after v1" are in
-v1, at the width taskdt uses them. Full-width `INSPECT`/`STRING`
-(`REPLACING`, `CONVERTING`, multiple `INTO`s) can still wait.
+v1, at the width taskdt uses them — and every one of them is 1985,
+which is why they stay when `FUNCTION-ID` goes. Full-width
+`INSPECT`/`STRING` (`REPLACING`, `CONVERTING`, multiple `INTO`s) can
+still wait.
 
 Done: `menu.cbl` runs, `DT` shows today's date.
 
@@ -171,6 +185,8 @@ of accounts, and for the two screen programs.
 - In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
 - Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated
   conditions, nested programs, `REPLACE`, `INSPECT REPLACING`)
+- The rest of the corpus rewrite (`fielded_to_linear.cbl` and the
+  other date functions, 28 call sites) when their callers are compiled
 - Report Writer `CONTROL`/`SUM`
 - Alternate keys
 - dBase-compatible writer filter

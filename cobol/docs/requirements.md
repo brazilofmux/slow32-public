@@ -50,7 +50,7 @@ modules majesty already uses and SLOW-32 already has a home for:
 | `ORGANIZATION IS LINE SEQUENTIAL` | no; implementor | the whole majesty batch path |
 | SCREEN SECTION | no; Micro Focus / GnuCOBOL | `usescreen`, `menu`, `taskdt` |
 | `USAGE COMP-5`, `signed-int`, `binary-char`, `POINTER` | no; C ABI | `CALL` of `du_*` in `src/c/dateutil.c` |
-| User-defined functions (`FUNCTION-ID`) | no; COBOL 2002 | `c_lineartofielded`, `taskdt` — see [functions.md](functions.md) |
+| `CALL … BY VALUE / RETURNING` | no; C ABI (2002 syntax) | `clinkages.cbl` reaching `du_*`; the only 2002 kept, and only at the C seam |
 | `ACCEPT FROM ARGUMENT-VALUE` | no; implementor | nine `YYYYMM` programs; after v1 |
 
 Fixed-format source is required (CCVS-85, and anyone coming from
@@ -72,8 +72,9 @@ to make:
 2. **gl022, gl023, gl030** — reports byte-identical to current
    `~/majesty/reports_cobol/` (chart of accounts two ways; journal).
    gl030 is the load-bearing one: line sequential, indexed random
-   read, Report Writer, **and** the user function
-   `c_lineartofielded` from `clinkages.cbl` over `dateutil.c`.
+   read, Report Writer, **and** `CALL 'c_lineartofielded'` into
+   `clinkages.cbl` over `dateutil.c` — after the corpus rewrite in
+   [functions.md](functions.md), which lands in `~/majesty` first.
 3. **`usescreen.cbl` and `menu.cbl`** on the existing `term.h` service.
    `menu` calls `taskdt()`, which is where `STRING WITH POINTER`,
    `INSPECT TALLYING`, `INITIALIZE`, reference modification,
@@ -104,6 +105,10 @@ Each with a reason, the cobc370 way:
   none on the v1 path. An in-program `SORT` is a later library around
   qsort-shaped code. Null level is conforming.
 - **EBCDIC, packed-decimal hardware, base locator cells.** 370 facts.
+- **COBOL 2002.** `FUNCTION-ID`, `REPOSITORY`, `IF … THEN`: the
+  corpus is rewritten to 1985 forms rather than the compiler taught
+  them. The one exception is `BY VALUE`/`RETURNING` on `CALL`, kept
+  as the C seam. See [functions.md](functions.md).
 - **Sharing cobc370's parser.** See [borrowing.md](borrowing.md).
 - **Self-hosting.** Ordinary universe.
 - **File-level dBase compatibility as an invariant.** See

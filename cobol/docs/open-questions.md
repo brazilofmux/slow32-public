@@ -32,16 +32,21 @@ was named to avoid that. Candidates: `s32-cobc`, `cobc85`,
 
 ## Functions
 
-**Activation semantics of `FUNCTION-ID` programs.** COBOL 2002 gives
-each activation fresh `WORKING-STORAGE`; GnuCOBOL follows that. No
-majesty function depends on state surviving between calls (`taskdt`
-rebuilds everything from `CURRENT-DATE`), so re-initialise-on-entry
-and static-with-a-note both satisfy the corpus. Stage 6 decides;
-whichever it is, say so in a diagnostic if a function ever declares
-`INITIAL`/`RECURSIVE` explicitly. See [functions.md](functions.md).
+**Underscores in user-words.** `ltf_lineardate`, `is_valid`,
+`c_lineartofielded`: a GnuCOBOL extension, not 1985. The corpus
+rewrite ([functions.md](functions.md)) could rename them to hyphens
+in the same pass, leaving the lexer strictly 85; or the lexer accepts
+`_` as one more implementor allowance. Renaming touches many files
+and every `CALL` literal; accepting `_` is a one-line lexer rule.
+Lean: accept `_`, list it, and let the rewrite stay minimal. Not
+ruled.
+
+*(The former "activation semantics of `FUNCTION-ID`" question is
+gone: there are no functions after the rewrite, and a subprogram's
+`WORKING-STORAGE` is static, as 85 says.)*
 
 **Linking granularity.** One `.s32x` per `PROGRAM-ID`, each linking
-the function modules its `REPOSITORY` reaches (gl030 → clinkages;
+the subprograms its `CALL` literals name (gl030 → clinkages;
 menu → taskdt → clinkages) plus `dateutil.c`. Ruled for v1; a single
 image holding every program, GnuCOBOL's `MAJESTY.so` shape, is not
 needed and not planned.

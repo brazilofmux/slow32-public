@@ -82,7 +82,8 @@ edit description, and share `term.h` with nano and dBase.
 USING option AUTO`, switching screens on a two-character command via
 nested `EVALUATE` inside `PERFORM WITH TEST AFTER`.
 
-`taskdt.cbl`, which menu's `DT` command invokes as a user function,
+`taskdt.cbl`, which menu's `DT` command `CALL`s (a user function
+until the rewrite),
 carries a **third** screen, `date-page`: `FROM todays-date`, an item
 the function builds at run time with `STRING`, `INSPECT` and
 reference modification from `FUNCTION CURRENT-DATE`. So "the two

@@ -16,9 +16,9 @@ summary: which language and I-O facts each cluster forces.
 | **gl022** | line sequential in, line sequential print out, Report Writer, per-company `ASSIGN` to a data-name. Chart of accounts by number. |
 | **gl023** | same, by name. |
 | **gl030** | line sequential + indexed random read + Report Writer journal. Several detail groups, edited amounts, `FUNCTION` / `CALL` of `c_lineartofielded`. Load-bearing. |
-| **clinkages** | `FUNCTION-ID` wrappers over `dateutil.c`; `CALL … BY VALUE … BY REFERENCE … RETURNING`. Pulled in by gl030. |
+| **clinkages** | subprogram wrappers over `dateutil.c` (after the rewrite; `FUNCTION-ID`s today); `CALL … BY VALUE … BY REFERENCE … RETURNING` to C. Pulled in by gl030. |
 | **usescreen** | SCREEN SECTION, `CBL_GET_SCR_SIZE`, `TO`/`FROM`, edited PIC, `BLANK WHEN ZERO`, `BINARY-CHAR`. |
-| **menu** | several screens, `USING`, `AUTO`, `HIGHLIGHT`, `UNDERLINE`, nested `EVALUATE`, `PERFORM WITH TEST AFTER`; calls `taskdt()`. |
+| **menu** | several screens, `USING`, `AUTO`, `HIGHLIGHT`, `UNDERLINE`, nested `EVALUATE`, `PERFORM WITH TEST AFTER`; `CALL`s `taskdt`. |
 | **taskdt** | pulled in by menu: `STRING WITH POINTER`, `INSPECT TALLYING`, `INITIALIZE`, reference modification, `CURRENT-DATE`, `LENGTH`, `REDEFINES`+`OCCURS`, a third screen. The expensive part of the screen gate. |
 
 Matching `reports_cobol/chartofaccounts1-*.prn`,
@@ -47,10 +47,11 @@ unless pulled in.
 **C ABI** — `signed-int`, `signed-short`, `unsigned-short`,
 `binary-char`, `POINTER`. The C is in `~/majesty/src/c/` —
 `dateutil.c` (v1), `crc.c`, `rs.c`, `csvgen.c`, `csvparser.c` — built
-into `libmajesty_c.a`. It is reached through COBOL `FUNCTION-ID`
-wrappers (`clinkages.cbl`: `c_lineartofielded`, `c_fieldedtolinear`,
-`c_isvaliddate`, …), not by `CALL` from the reports. See
-[functions.md](functions.md). `COMP-3` is common on amounts.
+into `libmajesty_c.a`. It is reached through COBOL wrappers in
+`clinkages.cbl` (`c_lineartofielded`, `c_fieldedtolinear`,
+`c_isvaliddate`, …) — user functions today, subprograms after the
+rewrite in [functions.md](functions.md). `COMP-3` is common on
+amounts.
 
 **Parameters** — `ACCEPT … FROM ARGUMENT-VALUE` / `ARGUMENT-NUMBER` in
 nine programs (`gl024`, `gl034`, `gl036`, `gl038`, `gl040`, `gl042`,
@@ -72,8 +73,8 @@ The single image is a `cobcrun` packaging choice. Retirement replaces
 (`data/…`, `tmp/…`, `reports_cobol/…`) and the emulator's file service
 opens paths against the host's cwd. The precedent is already in the
 tree: `run_dbase_s32.sh` does `(cd "$workdir" && slow32-dbt … dbase.s32x)`.
-Each `.s32x` links the function modules its `REPOSITORY` reaches and
-the SLOW-32 build of `dateutil.c`.
+Each `.s32x` links the subprograms its `CALL` literals name and the
+SLOW-32 build of `dateutil.c`.
 
 ## Pipeline shape
 
@@ -98,10 +99,11 @@ oracle `.prn` files already include it.
 - `sharing with all other` on SELECT
 - `copy 'world.cpy'` in an FD (`w001`)
 - `_` inside user-words (`ltf_lineardate`, `is_valid`)
-- `if … then`
-- `end program name.` / `end function name.`; several units per file
+- `end program name.`; several units per file
 - `block contains n records` on line-sequential FDs (ignored)
-- `repository. function name.` beside `function all intrinsic`
+- *(pre-rewrite only, not to be implemented:* `if … then`,
+  `end function`, `repository.`, `name(args)` invocation — see
+  [functions.md](functions.md)*)*
 
 Fixed-format remains a separate source mode for CCVS-85 and for
 anyone bringing cobc370-shaped tests across (rewritten, not

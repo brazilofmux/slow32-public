@@ -110,15 +110,30 @@ v1.
 Dynamic `CALL identifier` is later; majesty's `CALL` sites in the
 report path are of literals (including `'CBL_GET_SCR_SIZE'`).
 
-## User function invocation
+## COBOL-to-COBOL `CALL` — whose convention?
 
-`c_lineartofielded(x)` and `taskdt()` are not calls to C; they are
-COBOL `FUNCTION-ID` programs ([functions.md](functions.md)). Lower an
-invocation as: evaluate arguments into the function's `LINKAGE`
-shape, call the function program's entry, and treat the `RETURNING`
-item — which may be a **group** — as the expression's value with the
-function's declared shape. `MOVE f(x) TO group` is then an ordinary
-group move.
+GnuCOBOL is a transpiler, so every convention in the corpus today is
+C's: a COBOL `CALL` *is* a C call because that is all GnuCOBOL can
+emit. That is an artifact, not a property of the programs. A compiler
+that is COBOL all the way down defines its own COBOL-to-COBOL
+convention — cobc370 uses IBM's (R1 → list of parameter addresses)
+because MVS and `DYNALOAD` require it, and nothing here requires that.
+
+**Ruling for v1:** one convention, the SLOW-32 C ABI, for every
+`CALL`. `CALL 'name' USING a b` passes the addresses of `a` and `b`
+in `r3`, `r4`; the callee's `LINKAGE SECTION` items are those
+addresses; more than eight go to the stack exactly as the ABI says;
+`GOBACK` returns. Reasons: the C seam in `clinkages.cbl` then costs
+nothing extra, `dateutil.c` and any future C link with no thunk, and
+the corpus's largest `USING` list on the v1 path is two items. If a
+COBOL-only convention (an address list, cobc370-style) ever earns its
+keep — many-argument calls, or a `CALL identifier` table — it is a
+change to this section, not to the corpus.
+
+`c_lineartofielded` and `taskdt` are COBOL subprograms after the
+rewrite in [functions.md](functions.md). No function-invocation form
+exists in this compiler: `name(args)` in an expression is a
+diagnostic naming the rewrite.
 
 ## Two cells the corpus forces
 

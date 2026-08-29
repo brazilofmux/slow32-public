@@ -15,8 +15,8 @@ Three COBOL dialects sit in this orbit. They are not interchangeable.
 | `PERFORM … AFTER` | 74 reset order | 85 reset order | 85 |
 | ODO receiving group | current count (74) | maximum (85) | 85 |
 | ALTER | implemented (74) | gone from 85; refuse | unused |
-| user-defined `FUNCTION-ID` | no | yes (2002; implementor here) | yes, load-bearing |
-| `CALL … BY VALUE / RETURNING` | no | yes (C ABI) | yes |
+| user-defined `FUNCTION-ID` (2002) | no | **no — corpus rewritten to `CALL`** | yes, today |
+| `CALL … BY VALUE / RETURNING` | no | yes, C-ABI implementor only | yes |
 
 Sharing a parser across the first two columns would be a defect
 factory. The `AFTER` reset and the ODO receiving rule are enough;
@@ -27,7 +27,8 @@ cobc370 has the receipts in `COBOL74-ROADMAP.md`.
 From `~/majesty/src/cobol/` and `~/majesty/docs/cobol-programs.md`:
 
 - Identification / Environment / Data / Procedure, including
-  `CONFIGURATION SECTION`, `REPOSITORY`, `INPUT-OUTPUT SECTION`
+  `CONFIGURATION SECTION` and `INPUT-OUTPUT SECTION` (`REPOSITORY`
+  leaves with the rewrite)
 - `COPY` of copybooks under `~/majesty/src/copy/`
 - Data: levels 01–49, 77, 88; `PIC`; `VALUE`; `OCCURS` (fixed);
   `REDEFINES`; `COMP-3`; `COMP-5`; `signed-int`; `signed-short`;
@@ -46,12 +47,14 @@ From `~/majesty/src/cobol/` and `~/majesty/docs/cobol-programs.md`:
 - `INSPECT … TALLYING … FOR LEADING`, `INITIALIZE`, reference
   modification with arithmetic (`x(a + 1:length(x) - a)`): all in
   taskdt, on the menu gate path
-- **User-defined functions** (`FUNCTION-ID`, `RETURNING`, `REPOSITORY.
-  FUNCTION name`, `name(args)` and `name()`): see
-  [functions.md](functions.md). gl030 and menu both stand on them.
-- `CALL … USING BY VALUE … BY REFERENCE … RETURNING …` (clinkages.cbl)
-- User-words containing `_` (`ltf_lineardate`, `is_valid`,
-  `c_lineartofielded`) — not in 85; GnuCOBOL accepts them
+- **Not** user-defined functions. The corpus uses them today
+  (`c_lineartofielded(x)`, `taskdt()`), and is being rewritten to
+  plain `CALL … USING` — see [functions.md](functions.md). The
+  compiler never learns `FUNCTION-ID` or `REPOSITORY`.
+- `CALL … USING BY VALUE … BY REFERENCE … RETURNING …` — only in
+  `clinkages.cbl`, only to reach C; C-ABI implementor module
+- User-words containing `_` (`ltf_lineardate`, `is_valid`) — not in
+  85; whether the rewrite also renames them is an open question
 - Report Writer: `RD`, `PAGE LIMIT`, heading/first/last detail,
   `TYPE PAGE HEADING` and `TYPE DETAIL`, `LINE` / `LINE PLUS`,
   `COLUMN`, `SOURCE`, `VALUE`, `INITIATE`/`GENERATE`/`TERMINATE`
@@ -76,8 +79,9 @@ Do not pretend these are in X3.23-1985:
 - SCREEN SECTION and `DISPLAY`/`ACCEPT` of a screen-name
 - `USAGE COMP-5`, `BINARY-CHAR [UNSIGNED]`, `SIGNED-INT`,
   `SIGNED-SHORT`, `UNSIGNED-SHORT`, `POINTER`
-- User-defined functions (`FUNCTION-ID`) — COBOL 2002, not 1985
-- `_` in user-words
+- `CALL … BY VALUE` / `CALL … RETURNING` — the seam to C, confined
+  to `clinkages.cbl`
+- `_` in user-words (pending the rewrite decision)
 - `ACCEPT … FROM ARGUMENT-VALUE / ARGUMENT-NUMBER` (nine programs
   take a `YYYYMM`/`YYYY` parameter that way; none of the v1 gates)
 - `CBL_GET_SCR_SIZE` and other `CBL_*` runtime entry points as
