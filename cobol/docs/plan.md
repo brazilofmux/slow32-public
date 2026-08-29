@@ -11,15 +11,18 @@ several.
 Done when the docs here match the rulings and someone can implement
 Stage 1 without inventing a product. **This is the current stage.**
 
-## Prerequisite — the corpus rewrite, in `~/majesty` **S–M**
+## Prerequisite -- the corpus rewrite, in `~/majesty` **DONE**
 
-Not a stage of this compiler. [functions.md](functions.md): every
-`FUNCTION-ID` on the v1 path becomes a `PROGRAM-ID`, every
-`name(args)` becomes `CALL 'name' USING …`, `REPOSITORY` and
-`IF … THEN` go. Landed under GnuCOBOL, `batch.sh` unchanged,
-`reports_cobol/*.prn` byte-identical before and after. Stage 6 does
-not open until it has. The oracle `.prn` files are then regenerated
-from the rewritten source.
+Not a stage of this compiler. Landed as majesty `1da955d`
+(2026-08-29): the seven C-bridge functions, `taskdt`, and every
+caller are `PROGRAM-ID` / `CALL ... USING`; `REPOSITORY` and
+`IF ... THEN` are gone from them. Verified under GnuCOBOL with
+`batch.sh` unchanged and all 12 `reports_cobol/*.prn` byte-identical
+to a same-day baseline, so the oracle `.prn` files are now produced
+from 1985 source. Stage 6 is open. Details and the receiver-size
+hazard the pass turned up: [functions.md](functions.md). The
+pure-COBOL date-function family is still 2002 and is listed under
+After v1.
 
 ## Stage 1 — host skeleton + PICTURE + hello **L**
 
@@ -185,8 +188,13 @@ of accounts, and for the two screen programs.
 - In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
 - Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated
   conditions, nested programs, `REPLACE`, `INSPECT REPLACING`)
-- The rest of the corpus rewrite (`fielded_to_linear.cbl` and the
-  other date functions, 28 call sites) when their callers are compiled
+- The rest of the corpus rewrite: the pure-COBOL date-function family
+  (`fielded_to_linear.cbl`, `linear_to_fielded.cbl`, `isvaliddate`,
+  `isleapyear`, `floor-div`, `floor-divmod`, `holidays`' inner units)
+  is still `FUNCTION-ID`; its invocations sit inside arithmetic and
+  conditions and need hoisted temporaries, and nothing on `batch.sh`
+  reaches them -- do it when `jerm`/`exgltrans` are compiled, with a
+  test plan of its own
 - Report Writer `CONTROL`/`SUM`
 - Alternate keys
 - dBase-compatible writer filter

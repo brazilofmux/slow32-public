@@ -40,30 +40,58 @@ under (taskdt rebuilds everything from `CURRENT-DATE` on each call).
 The "activation semantics" question this document used to carry is
 gone.
 
-### Files the rewrite touches on the v1 path
+### Landed: ~/majesty commit `1da955d` (2026-08-29)
 
-| file | change |
-|---|---|
-| `clinkages.cbl` | four `FUNCTION-ID`s → `PROGRAM-ID`s; `RETURNING` → last `USING` item; `END FUNCTION` → `END PROGRAM`. The inner `call 'du_*' using by value … by reference … returning …` **stays** — see below. |
-| `gl030.cbl` | delete `repository.`; one `move c_lineartofielded(…)` → `call`. |
-| `menu.cbl` | delete `repository.`; `move taskdt() to option` → `call 'taskdt' using option`. |
-| `taskdt.cbl` | `FUNCTION-ID` → `PROGRAM-ID`; `returning option-to-parent` → `using option-to-parent`; delete `repository.`; two function invocations → `call`s; `if is-valid then` → drop `then`; `END FUNCTION` → `END PROGRAM`. |
+Done in one scripted pass over 18 files, wider than the v1 path: all
+seven C-bridge functions in `clinkages.cbl` (`c_isvaliddate`,
+`c_fieldedtolinear`, `c_lineartofielded`, `c_newyear`, `c_yearend`,
+`c_dayofweek`, `c_kdayonorbefore`) plus `taskdt`, and every caller
+(`gl024`, `gl030`, `gl034`, `gl036`, `gl038`, `gl040`, `gl042`,
+`gl043`, `holidays`, `jerm2`, `ldgltrans`, `menu`, `today`, `w001`,
+and the retired `gl015`/`gl016`). Every `REPOSITORY` that named only
+converted functions is gone, including its `FUNCTION ALL INTRINSIC`
+(the compiler flagged nothing, so no bare intrinsic remained beyond
+taskdt's two `length(`). The inner `call 'du_*' using by value ...
+returning ...` **stays** -- see below.
 
-Corpus-wide the same pattern reaches `fielded_to_linear.cbl`,
+Verified the way this document asked: GnuCOBOL build clean of
+warnings; `batch.sh` unchanged; all 12 `reports_cobol/*.prn`
+byte-identical to a baseline taken from the untouched source minutes
+earlier; `run_tests.sh` verdicts identical to that baseline. So the
+oracle `.prn` files this compiler is gated on are now produced from
+1985 source, and stage 6 is open.
+
+**The one non-mechanical finding, worth keeping:** `MOVE f(x) TO y`
+and `CALL 'f' USING x y` differ when `y` is *smaller* than the
+function's `RETURNING` item. `c_lineartofielded` returns an 11-byte
+group (five `SYNC` shorts and a flag); `taskdt` and `today` received
+it into the 10-byte `fielded-date`. The `MOVE` truncated the flag
+silently; a by-reference `CALL` would have written it one byte past
+the receiver. Both sites now call into a correctly-shaped temporary
+and `MOVE` the group part across. Every other receiver was checked
+against its function's `RETURNING` item and matched in size and
+layout. Any future rewrite of this kind has to make that check --
+GnuCOBOL will not, and neither will this compiler, because
+by-reference `CALL` is *defined* to overlay whatever it is handed.
+`jerm2`'s `if c_isvaliddate(...) = 0` needed a `pic x` temporary for
+the same reason `fielded_to_linear`'s sites do (below); the odd
+comparison itself was left exactly as it was.
+
+### What is still 2002, and why it waited
+
+The pure-COBOL date family -- `fielded_to_linear.cbl`,
 `linear_to_fielded.cbl`, `isvaliddate.cbl`, `isleapyear.cbl`,
-`floor-div.cbl`, `floor-divmod.cbl`, `holidays.cbl` and their callers
-(`c_fieldedtolinear` has 17 call sites, `c_lineartofielded` 11). Not
-v1's problem, but the same rewrite, and worth doing in one pass.
-
-### Where it lives and how it is checked
-
-The rewrite is a **`~/majesty` change**, landed and verified there
-under GnuCOBOL before this compiler needs it: GnuCOBOL accepts the
-1985 forms, so `batch.sh` runs unchanged and `reports_cobol/*.prn`
-must come out byte-identical. That makes the rewrite an ordinary
-majesty commit with an ordinary majesty check, and it means the
-oracle `.prn` files this compiler is gated on are produced from the
-*rewritten* source. Stage 6 does not open until that has landed.
+`floor-div.cbl`, `floor-divmod.cbl`, `holidays.cbl`'s inner units and
+their callers (`jerm`, `exgltrans`) -- still uses `FUNCTION-ID`.
+Those invocations sit inside arithmetic and conditions
+(`add floor-div(fdm-x, c4) to gtl-linear`,
+`if isleapyear(gtl-year) = 'Y'`,
+`subtract 584389 from gregorian_to_linear(year, month, dom) giving
+linear`, `move linear_to_gregorian(584389 + linear) to fielded` with an
+expression argument), so each needs a temporary and a `CALL` hoisted
+ahead of the statement, and none of them is on `batch.sh`, so the
+byte-identical check does not reach them. Separate pass, own test
+plan, after v1 -- see [plan.md](plan.md).
 
 ## What stays, as the C-ABI implementor module
 
