@@ -17,7 +17,7 @@ Stage 1 without inventing a product. **This is the current stage.**
 - Fixed-format and free-format readers
 - Recursive-descent parser for Identification Division,
   `WORKING-STORAGE` elementary items, `DISPLAY` of literals,
-  `STOP RUN` / `GOBACK`
+  `STOP RUN` / `GOBACK`; `*>` comments; lowercase everything
 - Ragel `picture.rl` re-hosted; software edit descriptor, not `ED`
 - Emit SLOW-32 assembler, link, run on the emulator
 - Refuse unimplemented with a message
@@ -29,21 +29,34 @@ Done: a `.cbl` becomes a `.s32x` that prints a line.
 ## Stage 2 — data division + MOVE + COMP integer **L**
 
 - Groups, `REDEFINES`, `OCCURS` (fixed, three levels is enough;
-  85 allows seven, grow when a program asks)
-- Qualification `OF`/`IN`
+  85 allows seven, grow when a program asks), subscripts that are
+  data-names (`name-of-day(dow-plus-1)`)
+- Level 77, level 88 condition-names and `SET`-free tests of them
+  (`if not is_valid`) — every gate program uses 88s
+- Qualification `OF`/`IN` — `com-id in company-record` in gl030,
+  where the same name lives in two FDs
+- User-words containing `_` (`ltf_lineardate`, `is_valid`): GnuCOBOL
+  extension, required by the corpus
 - Conversion matrix, alphanumeric and COMP integer hot cases
-- `IF` / `END-IF` on those
-- Structured `PERFORM`
+- `IF` / `ELSE` / `END-IF`, including `IF … THEN` (taskdt)
+- Structured `PERFORM … UNTIL`, `PERFORM … WITH TEST AFTER`, and
+  **paragraph `PERFORM`** — it is not "if it appears"; it appears in
+  every gate program
+- `SECTION`s in the Procedure Division (`main-logic section.`),
+  `EXIT`, `END PROGRAM name.`
+- `OPEN`/`CLOSE` of several files in one statement; `MOVE` to several
+  receivers; figurative constants
 
 Done: `MOVE` and `ADD` of `PIC S9(8) COMP` and `PIC X(n)` match
-GnuCOBOL `-std=cobol85` on checked-in tests.
+GnuCOBOL on checked-in tests.
 
 ## Stage 3 — decimal library + edited MOVE **L**
 
 - Canonical numeric, `COMP-3`, DISPLAY numeric, scale, `ROUNDED`,
   `ON SIZE ERROR`
-- Edited pictures, de-edit
-- `COMPUTE`
+- Edited pictures, de-edit; `----,---,--9.99` with **negative**
+  values (see [report-writer.md](report-writer.md))
+- `COMPUTE`, `ADD … GIVING`
 
 Done: cobc370's `arith`/`compute`/`edtest`-shaped tests, rewritten
 as 85, green against GnuCOBOL. Majesty amounts (`pic s9(9)v99
@@ -52,9 +65,13 @@ comp-3`) round-trip.
 ## Stage 4 — line sequential I-O **M**
 
 - `SELECT` / `FD` / `OPEN` / `READ` / `WRITE` / `CLOSE`
-- `ORGANIZATION IS LINE SEQUENTIAL`
+- `ORGANIZATION IS LINE SEQUENTIAL`; `BLOCK CONTAINS` accepted and
+  ignored; `SHARING WITH ALL OTHER` accepted and ignored
 - `ASSIGN` to literal and to data-name
-- `AT END` / `END-READ` / `OPTIONAL`
+- `AT END` / `NOT AT END` / `END-READ` / `OPTIONAL`
+- `STRING … DELIMITED BY SIZE … INTO` and `FUNCTION LOWER-CASE`:
+  gl022/gl023/gl030 build each per-company output filename with
+  exactly that pair before `OPEN OUTPUT`
 
 Done: read `data/descriptions_fixed_width.txt` (from majesty, in
 place or a stripped fixture), write a copy, diff.
@@ -63,11 +80,28 @@ place or a stripped fixture), write a copy, diff.
 
 - Default path in [indexed.md](indexed.md)
 - `gl039` compiles and runs
-- Random `READ` by `desc-id`
+- Random `READ … KEY IS` by `desc-id`, `INVALID KEY`, `END-READ`
 
 Done: gl039 then a tiny reader prints descriptions by id.
 
-## Stage 6 — Report Writer, cheap half **L**
+## Stage 6 — user functions and the C bridge **M**
+
+[functions.md](functions.md). This is what the earlier plan did not
+have and both remaining gates need.
+
+- `FUNCTION-ID` / `END FUNCTION`, `LINKAGE SECTION`,
+  `PROCEDURE DIVISION [USING …] RETURNING`, a group as the result
+- `REPOSITORY. FUNCTION name.` and invocation `name(args)` / `name()`
+  in expressions
+- `CALL 'du_…' USING BY VALUE … BY REFERENCE … RETURNING …`
+- `dateutil.c` compiled for SLOW-32 and linked
+- Several units per source file (`clinkages.cbl` holds four)
+
+Done: a test program calls `c_lineartofielded` through
+`clinkages.cbl` and prints the fielded date; `c_isvaliddate` rejects
+a bad one.
+
+## Stage 7 — Report Writer, cheap half **L**
 
 - [report-writer.md](report-writer.md) v1 subset
 - Print files are line sequential
@@ -76,14 +110,37 @@ Done: **gl022, gl023, gl030** match `reports_cobol/`. This is the
 first product claim. GnuCOBOL can still be on the rest of the
 majesty path.
 
-## Stage 7 — SCREEN SECTION **M–L**
+## Stage 8 — SCREEN SECTION, first screen **M**
 
 - [screen.md](screen.md) against `term.h`
-- `CBL_GET_SCR_SIZE`
+- `CBL_GET_SCR_SIZE`; `USAGE BINARY-CHAR [UNSIGNED]`
+- The `PIC X(6)` → `PIC S9(3)V99 COMP-5` `MOVE` usescreen makes
 
-Done: `usescreen.cbl` and `menu.cbl` run.
+Done: `usescreen.cbl` runs.
 
-## Stage 8 — sequential V / RDW **M**
+## Stage 9 — the menu, and what it drags in **L**
+
+`menu.cbl` looks like a screen program. It is not small: it calls
+`taskdt()`, and `taskdt.cbl` uses, on the gate path,
+
+- `EVALUATE … WHEN … WHEN OTHER … END-EVALUATE`, nested
+- `STRING … DELIMITED BY SPACE / SIZE … WITH POINTER … END-STRING`
+- `INSPECT … TALLYING … FOR LEADING ZERO`
+- `INITIALIZE`
+- **reference modification** with arithmetic:
+  `todays-year(leading-zeros + 1:length(todays-year) - leading-zeros)`
+- `FUNCTION LENGTH`, `FUNCTION CURRENT-DATE` (a clock, through MMIO),
+  `FUNCTION UPPER-CASE`
+- `REDEFINES` of a `VALUE`d list as an `OCCURS` table
+- a third screen, `date-page`, with `FROM` of a runtime-built item
+
+So the Nucleus Level 2 verbs the earlier plan put "after v1" are in
+v1, at the width taskdt uses them. Full-width `INSPECT`/`STRING`
+(`REPLACING`, `CONVERTING`, multiple `INTO`s) can still wait.
+
+Done: `menu.cbl` runs, `DT` shows today's date.
+
+## Stage 10 — sequential V / RDW **M**
 
 - [framing.md](framing.md)
 - Round-trip with tapemgr
@@ -92,12 +149,14 @@ Done: a V file this compiler writes is read by tapemgr; a V file
 tapemgr writes (or cobc370's `vrec` output, ASCII-translated if
 needed) is read back.
 
-## Stage 9 — v1 close
+## Stage 11 — v1 close
 
-- C ABI `CALL` as used by gl030 (`c_lineartofielded`) if not
-  already pulled in by Stage 6
-- `FUNCTION ALL INTRINSIC` at the subset gl030 uses
-- Document remaining majesty programs as Stage 10+
+- Intrinsics at exactly the v1 set: `LOWER-CASE`, `UPPER-CASE`,
+  `LENGTH`, `CURRENT-DATE`. Nothing else is referenced by a gate.
+- `batch.sh`'s `run_cobol` switched from `cobcrun -M MAJESTY` to the
+  emulator for the retired programs (see
+  [majesty-corpus.md](majesty-corpus.md))
+- Document remaining majesty programs as Stage 12+
 - cobc370 still untouched
 
 **v1 is done.** GnuCOBOL is retired for the journal and both charts
@@ -105,17 +164,20 @@ of accounts, and for the two screen programs.
 
 ## After v1 (not scheduled, each when a program asks)
 
+- `ACCEPT … FROM ARGUMENT-VALUE / ARGUMENT-NUMBER` — the first thing
+  needed, because gl024 (the journal pipeline's first step) takes
+  `YYYYMM` that way, as do eight other programs
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
-- Full Nucleus Level 2 (`STRING`, `INSPECT`, `CORRESPONDING`,
-  abbreviated conditions, nested programs, `INITIALIZE`, reference
-  modification)
+- In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
+- Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated
+  conditions, nested programs, `REPLACE`, `INSPECT REPLACING`)
 - Report Writer `CONTROL`/`SUM`
 - Alternate keys
 - dBase-compatible writer filter
 - CCVS-85 NC/SQ/IC as a pass/fail suite
-- Intrinsic functions beyond what majesty calls
+- `rs.c`, `csvgen.c`, `crc.c` on SLOW-32, when a program calls them
 
-Sort-Merge, Debug, Communication stay out.
+Sort-Merge as a module, Debug, Communication stay out.
 
 ## What not to start a stage with
 

@@ -13,6 +13,7 @@ is one.
 | [screen.md](screen.md) | SCREEN SECTION as a focus state machine |
 | [report-writer.md](report-writer.md) | page engine; majesty's subset; cobc370 lessons |
 | [lowering.md](lowering.md) | conversion matrix, hot cases, libcob |
+| [functions.md](functions.md) | user-defined `FUNCTION-ID` and the C bridge; load-bearing for gl030 and menu |
 | [borrowing.md](borrowing.md) | what to take from cobc370, and what not to |
 | [oracles.md](oracles.md) | GnuCOBOL, the 1985 text, CCVS-85, majesty reports |
 | [majesty-corpus.md](majesty-corpus.md) | the programs that define done |

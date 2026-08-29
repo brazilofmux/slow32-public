@@ -92,11 +92,44 @@ DEPENDING ON` is a branch table. `ALTER` is refused: it is not in
 ## CALL
 
 SLOW-32 ABI (`docs/CALLING_CONVENTION.md`): `r3`–`r10` arguments,
-`r1`/`r2` return, `r29` sp, `r31` lr. `USING` items are passed by
-reference (address of the data item), which is COBOL and also what
-majesty's C callees expect (`c_lineartofielded` and friends).
+`r1`/`r2` return, `r29` sp, `r31` lr. `USING` items default to
+`BY REFERENCE` (address of the data item). The C bridge in
+`clinkages.cbl` uses the full form and v1 needs all of it:
+
+    call 'du_lineartofielded' using by value     ltf_lineardate
+                                    by reference ltf_fieldeddate
+                              returning isvalid.
+
+`BY VALUE` of a `signed-int`/`signed-short`/`unsigned-short` is the
+value widened to a word in an argument register; `BY REFERENCE` is
+an address; `RETURNING` takes `r1` into a `signed-int`. `SYNC` inside
+the group handed by reference must reproduce the C struct layout.
 `USAGE POINTER` is a word. Nested programs and `EXTERNAL` are after
 v1.
 
 Dynamic `CALL identifier` is later; majesty's `CALL` sites in the
 report path are of literals (including `'CBL_GET_SCR_SIZE'`).
+
+## User function invocation
+
+`c_lineartofielded(x)` and `taskdt()` are not calls to C; they are
+COBOL `FUNCTION-ID` programs ([functions.md](functions.md)). Lower an
+invocation as: evaluate arguments into the function's `LINKAGE`
+shape, call the function program's entry, and treat the `RETURNING`
+item — which may be a **group** — as the expression's value with the
+function's declared shape. `MOVE f(x) TO group` is then an ordinary
+group move.
+
+## Two cells the corpus forces
+
+- `PIC X(6)` → `PIC S9(3)V99 COMP-5` (usescreen: `move amount-in to
+  amount`). Alphanumeric to numeric is not a standard-conforming
+  `MOVE`; GnuCOBOL performs it as a numeric conversion of the text.
+  Implement that cell, as GnuCOBOL does, and name it in the matrix.
+- `----,---,--9.99` with a **negative** source. This is gl030's
+  picture, and the one that exposed cobc370's floating-sign bug: a
+  floating minus printed at the far left instead of against the
+  digits when the first nonzero digit lands at or after the
+  significance starter (`DIFFERENTIAL-TESTING.md`, GL035/GL036).
+  gl030 never sees a negative amount, so the bug survived it there.
+  Test negatives before believing the picture.

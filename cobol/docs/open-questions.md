@@ -13,15 +13,38 @@ plus the two screen programs is the definition of done.
 ## Dialect
 
 **Source format selection.** Majesty is free-format. CCVS-85 is
-fixed. GnuCOBOL takes `-free`/`-fixed`. Options: a flag with
-default fixed (the standard's reference format); a flag with
-default free (the corpus); a heuristic (`*> ` or lowercase in the
-first non-comment line). The flag-with-an-explicit-Makefile is the
-least surprising. Not ruled.
+fixed. GnuCOBOL takes `-free`/`-fixed`; majesty's Makefile passes
+`-free` explicitly. Options: a flag with default fixed (the
+standard's reference format); a flag with default free (the corpus);
+a heuristic (`*> ` or lowercase in the first non-comment line). The
+flag-with-an-explicit-Makefile is the least surprising and is what
+majesty already does. Not ruled, but leaning that way.
+
+**Oracle dialect for majesty programs.** Resolved by measurement:
+the `.prn` files are GnuCOBOL 4.0-early-dev **default** dialect, not
+`-std=cobol85`, because majesty's build passes no `-std`. A
+recompiled oracle for a majesty program uses majesty's flags. See
+[oracles.md](oracles.md).
 
 **Compiler command name.** `cobc` collides with GnuCOBOL. cobc370
 was named to avoid that. Candidates: `s32-cobc`, `cobc85`,
 `slow32cobc`. Not ruled.
+
+## Functions
+
+**Activation semantics of `FUNCTION-ID` programs.** COBOL 2002 gives
+each activation fresh `WORKING-STORAGE`; GnuCOBOL follows that. No
+majesty function depends on state surviving between calls (`taskdt`
+rebuilds everything from `CURRENT-DATE`), so re-initialise-on-entry
+and static-with-a-note both satisfy the corpus. Stage 6 decides;
+whichever it is, say so in a diagnostic if a function ever declares
+`INITIAL`/`RECURSIVE` explicitly. See [functions.md](functions.md).
+
+**Linking granularity.** One `.s32x` per `PROGRAM-ID`, each linking
+the function modules its `REPOSITORY` reaches (gl030 → clinkages;
+menu → taskdt → clinkages) plus `dateutil.c`. Ruled for v1; a single
+image holding every program, GnuCOBOL's `MAJESTY.so` shape, is not
+needed and not planned.
 
 ## Numeric
 
@@ -52,7 +75,7 @@ no.
 
 **`UNDERLINE`.** `term.h` has normal/bold/reverse, not underline.
 v1 may paint without it. Adding a term opcode is a runtime change
-that nano and dBase do not need. Not ruled; Stage 7.
+that nano and dBase do not need. Not ruled; Stage 8.
 
 ## Report Writer
 

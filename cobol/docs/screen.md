@@ -79,7 +79,19 @@ edit description, and share `term.h` with nano and dBase.
 `ACCEPT` then `DISPLAY`.
 
 `menu.cbl`: several `01` screens, `UNDERLINE`, `HIGHLIGHT`, `PIC xx
-USING option AUTO`, switching screens on a two-character command.
+USING option AUTO`, switching screens on a two-character command via
+nested `EVALUATE` inside `PERFORM WITH TEST AFTER`.
+
+`taskdt.cbl`, which menu's `DT` command invokes as a user function,
+carries a **third** screen, `date-page`: `FROM todays-date`, an item
+the function builds at run time with `STRING`, `INSPECT` and
+reference modification from `FUNCTION CURRENT-DATE`. So "the two
+screen programs" are three screens and most of Nucleus Level 2. See
+[plan.md](plan.md) Stage 9 and [functions.md](functions.md).
+
+`usescreen.cbl` also `MOVE`s `amount-in PIC X(6)` to `amount PIC
+S9(3)V99 COMP-5` after `ACCEPT` — the alphanumeric-to-numeric cell
+in [lowering.md](lowering.md).
 
 If `UNDERLINE` is missing from `term.h` when this is implemented,
 menu still has to be usable; the words remain visible without the

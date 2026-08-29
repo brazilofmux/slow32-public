@@ -44,6 +44,21 @@ these reports.
 (`transaction-line`, `description-line`, `debit-line`, `credit-line`,
 `total-line`), `LINE PLUS`, edited amounts.
 
+Three details from reading the gates rather than surveying them:
+
+- gl022 writes the first line of its page heading as `line +1` —
+  the signed form, no `PLUS` word — and gl030 writes `line plus 2`
+  on a detail. Both spellings, and `LINE n` absolute, are v1.
+- The amount picture is `----,---,--9.99`, printed at columns 65 and
+  81. It is the exact picture on which cobc370's floating minus was
+  found misplaced for small negatives (`DIFFERENTIAL-TESTING.md`,
+  GL035/GL036), and the journal contains only positive amounts, so
+  matching `journal-*.prn` proves nothing about the sign. Put a
+  negative through it in a unit test.
+- Dates print `pic 9(5) source year` — a **five-digit year**, by
+  design (`data-formats.md`); `year` is a `signed-short` in the
+  fielded-date group a user function returned.
+
 ## How to compile it
 
 cobc370's approach, which survived contact with the 1974 tables:

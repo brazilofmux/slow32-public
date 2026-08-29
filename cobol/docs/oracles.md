@@ -11,6 +11,28 @@ of Report Writer page rules.
 Here GnuCOBOL is usually following 85, which is this compiler's
 standard. It is still not the text.
 
+## The GnuCOBOL that made the oracles
+
+`cobc (GnuCOBOL) 4.0-early-dev.0`, invoked by majesty as
+
+    cobc -free -O3 -m -fimplicit-init -I../copy
+
+**No `-std` flag.** Every `.prn` in `reports_cobol/` is default-dialect
+output, not `-std=cobol85` output. So the rule below — `-std=cobol85`
+on oracle compiles — applies to *portable* unit tests. For the majesty
+gate the oracle is the `.prn` file itself, produced under majesty's
+own flags; a recompiled oracle for a majesty program must use those
+same flags, or the comparison is against something majesty never ran.
+`-m` builds a module and `-fimplicit-init` initialises it on load;
+both are about `cobcrun -M MAJESTY`, not about the language.
+
+This is the same 4.0 trunk line in which cobc370 found GnuCOBOL
+**comparing a signed `COMP-3` item against a literal wrongly** for
+some widths (12, 15 and 18 digits; `DIFFERENTIAL-TESTING.md`, "When
+the oracle is the one that is wrong"). Majesty amounts are `S9(9)V99`
+— eleven digits — and not affected, but a test that widens a packed
+item must know the oracle can be wrong there.
+
 ## Authority
 
 - **ANSI X3.23-1985** (and the 1989 intrinsic-function amendment,
@@ -25,7 +47,8 @@ standard. It is still not the text.
 
 | class | oracle | notes |
 |---|---|---|
-| Majesty reports | current `~/majesty/reports_cobol/*.prn` | byte-identical is v1 done. Produced today by GnuCOBOL. If the 85 text disagrees with a `.prn`, stop and decide; do not silently "fix" the report. |
+| Majesty reports, same source | current `~/majesty/reports_cobol/*.prn` | byte-identical is v1 done. A positional byte diff is valid here because both sides are `\n`-terminated line-sequential print files with no CR/FF/trailing blanks (measured) — unlike cobc370's ASA case, where two compilers encoded identical spacing differently and only `batch-compare` was fair. If the 85 text disagrees with a `.prn`, stop and decide; do not silently "fix" the report. |
+| Majesty reports, cross-stack | `~/majesty/tests/compare_reports.sh` | normalised data-content parity against C++ (and dBase). Not byte-identical by design. The check that outlives any formatting decision. |
 | Portable 85 programs | GnuCOBOL `-std=cobol85` | default for unit tests |
 | Report Writer fit / LINE-COUNTER | 85 text first | GnuCOBOL's RW was a bad oracle for cobc370; for majesty v1 the *output files* are still the gate, because those files are the product. A new RW test that is not a majesty report should be derived from the text. |
 | Sequential V / RDW | tapemgr + cobc370 `tests/vrec` files | framing, not language |

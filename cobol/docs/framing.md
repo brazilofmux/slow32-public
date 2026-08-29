@@ -60,6 +60,11 @@ its RDWs. `ASSIGN` plus `ORGANIZATION` pick the framing. The
 compiler implements both. LINE SEQUENTIAL is mandatory to retire
 GnuCOBOL. RDW is mandatory to meet tapemgr.
 
+`BLOCK CONTAINS n RECORDS` appears on every line-sequential FD in the
+corpus (`block contains 2000 records`). It is a blocking hint with no
+meaning on a byte-stream file: parse it, ignore it, do not diagnose
+it.
+
 Line sequential on write: payload, then `\n`. On read: up to `\n`
 or the maximum record, strip a trailing `\r` if present so CRLF
 hosts do not pollute the last byte. A record longer than the FD

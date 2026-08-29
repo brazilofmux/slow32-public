@@ -11,6 +11,22 @@ port that emits C and then clang would be a compiler story and would
 not change the job. This compiler is interesting because the reports
 run *here*, next to dBase, nano, and the rest of the desk.
 
+Two tiers of "the same figures", and they are different tests:
+
+- **Byte-identical to `reports_cobol/*.prn`.** Same COBOL source,
+  same data, our compiler versus GnuCOBOL. Valid as a byte compare
+  because both sides write `\n`-terminated line-sequential print
+  files with no CR, no form feeds and no trailing blanks (measured on
+  the journal: 549 lines, zero of each). This is the v1 gate.
+- **Cross-stack parity**, `~/majesty/tests/compare_reports.sh`: C++
+  versus COBOL, and dBase beside them. It is *normalised* — headers
+  and company names dropped, commas removed, whitespace collapsed,
+  only the shared columns kept — because the stacks format
+  differently (one balance sheet is 4196, 4332 and 4142 bytes
+  across them). That is the business check, and it is what a report
+  must still pass on the day we ever choose to differ from
+  GnuCOBOL's formatting.
+
 Until that retirement, GnuCOBOL remains the differential oracle for
 the majesty programs. The 1985 text remains authority where the two
 disagree. Same rule cobc370 used against IBM ANS COBOL and GnuCOBOL;
@@ -33,7 +49,9 @@ modules majesty already uses and SLOW-32 already has a home for:
 | Intrinsic Function module (1989) | amendment | `FUNCTION ALL INTRINSIC` |
 | `ORGANIZATION IS LINE SEQUENTIAL` | no; implementor | the whole majesty batch path |
 | SCREEN SECTION | no; Micro Focus / GnuCOBOL | `usescreen`, `menu`, `taskdt` |
-| `USAGE COMP-5`, `signed-int`, `POINTER` | no; C ABI | `CALL` of `c_lineartofielded` and friends |
+| `USAGE COMP-5`, `signed-int`, `binary-char`, `POINTER` | no; C ABI | `CALL` of `du_*` in `src/c/dateutil.c` |
+| User-defined functions (`FUNCTION-ID`) | no; COBOL 2002 | `c_lineartofielded`, `taskdt` — see [functions.md](functions.md) |
+| `ACCEPT FROM ARGUMENT-VALUE` | no; implementor | nine `YYYYMM` programs; after v1 |
 
 Fixed-format source is required (CCVS-85, and anyone coming from
 cobc370). Free-format is required (majesty). A program is one or the
@@ -54,8 +72,13 @@ to make:
 2. **gl022, gl023, gl030** — reports byte-identical to current
    `~/majesty/reports_cobol/` (chart of accounts two ways; journal).
    gl030 is the load-bearing one: line sequential, indexed random
-   read, Report Writer.
+   read, Report Writer, **and** the user function
+   `c_lineartofielded` from `clinkages.cbl` over `dateutil.c`.
 3. **`usescreen.cbl` and `menu.cbl`** on the existing `term.h` service.
+   `menu` calls `taskdt()`, which is where `STRING WITH POINTER`,
+   `INSPECT TALLYING`, `INITIALIZE`, reference modification,
+   `EVALUATE`, `CURRENT-DATE` and a third screen enter v1. That is
+   most of the language's cost, and it is inside a 160-line menu.
 4. **Sequential V** files that `~/majesty/src/cpp_standalone/tapemgr.cpp`
    can read: IBM RDW, no newline, no delete byte. See [framing.md](framing.md).
 5. **cobc370 untouched.**
@@ -75,9 +98,11 @@ Each with a reason, the cobc370 way:
 - **Debug (`WITH DEBUGGING MODE`).** Null level is conforming. A
   statement-label table, if wanted, is an implementor diagnostic, not
   the module.
-- **Sort-Merge as a language module.** Majesty sorts with host `sort`
-  (and MVS sorts in JCL). An in-program `SORT` is a later library
-  around qsort-shaped code, not v1. Null level is conforming.
+- **Sort-Merge as a language module.** The batch path sorts with host
+  `sort` between programs (and MVS sorts in JCL). Four programs do
+  use the `SORT` verb — `dist01`, `gl008`, `glacpost`, `ldglentry` —
+  none on the v1 path. An in-program `SORT` is a later library around
+  qsort-shaped code. Null level is conforming.
 - **EBCDIC, packed-decimal hardware, base locator cells.** 370 facts.
 - **Sharing cobc370's parser.** See [borrowing.md](borrowing.md).
 - **Self-hosting.** Ordinary universe.

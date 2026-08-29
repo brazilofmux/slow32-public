@@ -34,6 +34,14 @@ Full text in `cobol/docs/`. Short form:
 - Indexed I-O reuses dBase *machinery* (slots, btree). File-level
   `.DBF` compatibility is a nice-to-have filter, not the default
   path.
+- **User-defined functions (`FUNCTION-ID`, COBOL 2002) are in the
+  dialect.** Found 2026-08-30 by reading the gates transitively:
+  gl030 reaches C through `FUNCTION c_lineartofielded`, and menu
+  through `taskdt()`, which also pulls `STRING WITH POINTER`,
+  `INSPECT TALLYING`, `INITIALIZE`, reference modification and
+  `EVALUATE` into v1. See `cobol/docs/functions.md`.
+- The `.prn` oracles are GnuCOBOL 4.0-early-dev **default** dialect
+  (majesty passes no `-std`); `-std=cobol85` is for portable tests.
 
 ## Stages
 

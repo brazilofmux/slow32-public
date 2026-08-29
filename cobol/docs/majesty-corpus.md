@@ -16,8 +16,10 @@ summary: which language and I-O facts each cluster forces.
 | **gl022** | line sequential in, line sequential print out, Report Writer, per-company `ASSIGN` to a data-name. Chart of accounts by number. |
 | **gl023** | same, by name. |
 | **gl030** | line sequential + indexed random read + Report Writer journal. Several detail groups, edited amounts, `FUNCTION` / `CALL` of `c_lineartofielded`. Load-bearing. |
-| **usescreen** | SCREEN SECTION, `CBL_GET_SCR_SIZE`, `TO`/`FROM`, edited PIC, `BLANK WHEN ZERO`. |
-| **menu** | several screens, `USING`, `AUTO`, `HIGHLIGHT`, `UNDERLINE`. |
+| **clinkages** | `FUNCTION-ID` wrappers over `dateutil.c`; `CALL … BY VALUE … BY REFERENCE … RETURNING`. Pulled in by gl030. |
+| **usescreen** | SCREEN SECTION, `CBL_GET_SCR_SIZE`, `TO`/`FROM`, edited PIC, `BLANK WHEN ZERO`, `BINARY-CHAR`. |
+| **menu** | several screens, `USING`, `AUTO`, `HIGHLIGHT`, `UNDERLINE`, nested `EVALUATE`, `PERFORM WITH TEST AFTER`; calls `taskdt()`. |
+| **taskdt** | pulled in by menu: `STRING WITH POINTER`, `INSPECT TALLYING`, `INITIALIZE`, reference modification, `CURRENT-DATE`, `LENGTH`, `REDEFINES`+`OCCURS`, a third screen. The expensive part of the screen gate. |
 
 Matching `reports_cobol/chartofaccounts1-*.prn`,
 `chartofaccounts2-*.prn`, `journal-*.prn` is the report proof.
@@ -42,9 +44,36 @@ unless pulled in.
 
 **SCREEN SECTION** — `usescreen`, `menu`, `taskdt`.
 
-**C ABI** — `signed-int`, `signed-short`, `POINTER`, `CALL` of
-`c_lineartofielded` / `c_fieldedtolinear` and the `c/` library
-(`crc`, `rs`, date utilities). `COMP-3` is also common on amounts.
+**C ABI** — `signed-int`, `signed-short`, `unsigned-short`,
+`binary-char`, `POINTER`. The C is in `~/majesty/src/c/` —
+`dateutil.c` (v1), `crc.c`, `rs.c`, `csvgen.c`, `csvparser.c` — built
+into `libmajesty_c.a`. It is reached through COBOL `FUNCTION-ID`
+wrappers (`clinkages.cbl`: `c_lineartofielded`, `c_fieldedtolinear`,
+`c_isvaliddate`, …), not by `CALL` from the reports. See
+[functions.md](functions.md). `COMP-3` is common on amounts.
+
+**Parameters** — `ACCEPT … FROM ARGUMENT-VALUE` / `ARGUMENT-NUMBER` in
+nine programs (`gl024`, `gl034`, `gl036`, `gl038`, `gl040`, `gl042`,
+`gl043`, …). None of the v1 gates; gl024 is the first that will.
+
+**SORT verb** — `dist01`, `gl008`, `glacpost`, `ldglentry`. Not v1.
+
+## How the programs run today, and after
+
+GnuCOBOL builds **one** shared object: `MAJESTY.so` =
+`src/cobol/libmajesty_cobol.a` (every `PROGRAM-ID` and `FUNCTION-ID`)
++ `src/c/libmajesty_c.a`. `batch.sh` runs a step as
+
+    cobcrun -M MAJESTY gl030 "$@"
+
+The single image is a `cobcrun` packaging choice. Retirement replaces
+`run_cobol()` with one `.s32x` per program, run under the emulator
+**from the majesty directory**, because every `ASSIGN` is relative
+(`data/…`, `tmp/…`, `reports_cobol/…`) and the emulator's file service
+opens paths against the host's cwd. The precedent is already in the
+tree: `run_dbase_s32.sh` does `(cd "$workdir" && slow32-dbt … dbase.s32x)`.
+Each `.s32x` links the function modules its `REPOSITORY` reaches and
+the SLOW-32 build of `dateutil.c`.
 
 ## Pipeline shape
 
@@ -68,6 +97,11 @@ oracle `.prn` files already include it.
 - `repository. function all intrinsic.`
 - `sharing with all other` on SELECT
 - `copy 'world.cpy'` in an FD (`w001`)
+- `_` inside user-words (`ltf_lineardate`, `is_valid`)
+- `if … then`
+- `end program name.` / `end function name.`; several units per file
+- `block contains n records` on line-sequential FDs (ignored)
+- `repository. function name.` beside `function all intrinsic`
 
 Fixed-format remains a separate source mode for CCVS-85 and for
 anyone bringing cobc370-shaped tests across (rewritten, not

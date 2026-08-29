@@ -42,6 +42,10 @@ under `docs/`.
    newline with a record length. See [docs/framing.md](docs/framing.md).
 7. **SCREEN SECTION is in the dialect** even though it is not in the
    1985 text. Majesty already writes it. See [docs/screen.md](docs/screen.md).
+8. **User-defined functions are in the dialect** (COBOL 2002
+   `FUNCTION-ID`), because gl030 and menu are built on them and the
+   product test cannot be met without them. See
+   [docs/functions.md](docs/functions.md).
 
 ## Layout (now)
 
@@ -56,5 +60,7 @@ Layout later, when code exists, is sketched in
 
 1. [docs/requirements.md](docs/requirements.md) — product, dialect, done
 2. [docs/architecture.md](docs/architecture.md) — shape, toys, IR
-3. [docs/plan.md](docs/plan.md) — stages
-4. The rest, as the stage needs them
+3. [docs/functions.md](docs/functions.md) — the module the first
+   draft missed; read it before believing the stage sizes
+4. [docs/plan.md](docs/plan.md) — stages
+5. The rest, as the stage needs them
