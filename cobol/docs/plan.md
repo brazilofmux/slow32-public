@@ -96,7 +96,7 @@ alphanumeric MOVE as `memcpy`. Tests: `tables`, `move`, `arith`,
 modification (stage 9), `OCCURS DEPENDING ON`, `SIGN SEPARATE`,
 `MOVE CORRESPONDING`, arithmetic expressions inside conditions.
 
-## Stage 3 — decimal library + edited MOVE **L**
+## Stage 3 — decimal library + edited MOVE **L** — DONE 2026-08-29
 
 - Canonical numeric, `COMP-3`, DISPLAY numeric, scale, `ROUNDED`,
   `ON SIZE ERROR`
@@ -107,6 +107,31 @@ modification (stage 9), `OCCURS DEPENDING ON`, `SIGN SEPARATE`,
 Done: cobc370's `arith`/`compute`/`edtest`-shaped tests, rewritten
 as 85, green against GnuCOBOL. Majesty amounts (`pic s9(9)v99
 comp-3`) round-trip.
+
+What landed: `libcob/cobedit.h`, the software edit descriptor applied
+and reversed -- zero suppression, `*` fill, floating `+ - $` with
+insertion characters inside the string, fixed signs, `CR`/`DB`, the
+point ending suppression, `BLANK WHEN ZERO`, the all-suppressed zero;
+de-editing on any numeric-edited sender (`MOVE ed TO num`), so the 85
+feature IBM ANS COBOL lacked is in. `tests/fixed/edit.cbl` puts every
+picture majesty prints through -1234567.89, -5, **-0.05**, 0, a
+9-digit value and 12.34, and GnuCOBOL agrees on all of it -- the
+small negative under `----,---,--9.99` that cobc370 misplaced lands
+against the digits here. `COMPUTE` with a recursive-descent expression
+grammar (`+ - * / **`, unary minus, parentheses) emitted onto the
+numeric stack; the same expressions as condition operands (a
+parenthesis is classified as condition or expression by lookahead);
+`ROUNDED` per receiver (nearest, ties away from zero); `ON SIZE ERROR`
+/ `NOT ON SIZE ERROR` on every arithmetic verb, with the receiver
+unchanged on overflow and on division by zero; `REMAINDER`;
+numeric-edited `GIVING`/`COMPUTE` receivers. Division carries the
+operands' larger scale plus six guard digits, and GnuCOBOL agreed on
+`1 / 3 * 3` (0.99) and on `tot / 3 ROUNDED` at eleven digits.
+Refused as the text says: a numeric literal `VALUE` on a numeric-edited
+item (GnuCOBOL `-std=cobol85` refuses it too), `ROUNDED MODE` (2002).
+Not in: `SIGN SEPARATE`, `**` with a fractional or negative exponent,
+`REMAINDER` beside `ROUNDED` or `SIZE ERROR`, multiplication past 18
+digits (i64 is the canonical numeric; majesty's amounts are 11).
 
 ## Stage 4 — line sequential I-O **M**
 

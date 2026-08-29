@@ -11,8 +11,10 @@
  * REDEFINES, OCCURS with subscripts, 77, 88, qualification -- the
  * conversion matrix behind MOVE, the arithmetic statements on a scaled-i64
  * numeric stack with COMP-integer hot cases inline, conditions, IF,
- * every PERFORM form, GO TO, SET.  Unimplemented is a diagnostic, never
- * silence.
+ * every PERFORM form, GO TO, SET.  Stage 3: edited MOVE and de-edit
+ * through the shared software editor (libcob/cobedit.h), COMPUTE with
+ * arithmetic expressions (also as condition operands), ROUNDED, ON SIZE
+ * ERROR, REMAINDER.  Unimplemented is a diagnostic, never silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +24,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.2 (stage 2)"
+#define VERSION "0.3 (stage 3)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -944,7 +946,7 @@ static void init_one(Sym *rec, int si, int base, int defaults)
     }
     if (v->kind == T_NUM) {
         if (s->pi.category == PIC_NUMERIC_EDITED)
-            die_at(v->line, "VALUE of the numeric-edited item '%s' must be a nonnumeric literal in this compiler", s->name);
+            die_at(v->line, "the VALUE of the numeric-edited item '%s' must be a nonnumeric literal (X3.23-1985 VALUE clause rule; GnuCOBOL -std=cobol85 agrees)", s->name);
         if (!numeric) die_at(v->line, "a numeric VALUE is not valid for the alphanumeric item '%s'", s->name);
         NumLit n; numlit_parse(v, &n);
         store_numeric(s, &n, p, v->line);
@@ -1044,8 +1046,11 @@ static Lit *g_lit; static int g_nlit, g_lcap;
 typedef struct { unsigned char cat, usage, digits; signed char scale; unsigned char flags; int size; char picstr[PIC_MAXPAT]; } Desc;
 static Desc *g_desc; static int g_ndesc, g_dcap;
 
+static int g_noemit;        /* >0 while a lookahead parse runs: no code */
+
 static void emit(const char *fmt, ...)
 {
+    if (g_noemit) return;
     va_list ap;
     va_start(ap, fmt); vfprintf(g_out, fmt, ap); va_end(ap);
     fputc('\n', g_out);
@@ -1183,7 +1188,7 @@ typedef struct {
     int line;
 } Ref;
 
-enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL };
+enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR };
 
 typedef struct {
     int kind;
@@ -1191,6 +1196,7 @@ typedef struct {
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
     NumLit num;         /* O_NUM */
     int line;
+    int e_start, e_end; /* O_EXPR: token range, re-parsed when emitted */
 } Opnd;
 
 static int is_int_item(Sym *s)
@@ -1433,7 +1439,7 @@ static int opnd_size(Opnd *o)
 static int opnd_numeric(Opnd *o)
 {
     if (o->kind == O_REF) return is_numeric_sym(o->ref.sym);
-    return o->kind == O_NUM;
+    return o->kind == O_NUM || o->kind == O_EXPR;
 }
 
 /* an integer operand usable on the hot path: a hot-int item, or an
@@ -1496,10 +1502,19 @@ static Cond *cond_bin(int kind, Cond *a, Cond *b) { Cond *c = cond_new(kind); c-
 
 static Cond *parse_cond(void);
 
-static void refuse_arith(int line)
+static Opnd expr_opnd(void);
+static int paren_is_condition(void);
+static int at_arith_op(void);
+static void emit_push_opnd(Opnd *o);
+
+/* a condition operand: a plain operand, or an arithmetic expression */
+static Opnd parse_cond_operand(void)
 {
-    if (at_op("+") || at_op("-") || at_op("*") || at_op("/") || at_op("**"))
-        die_at(line, "arithmetic expressions in conditions are not implemented yet (stage 3)");
+    if (cur()->kind == T_LP && !paren_is_condition()) return expr_opnd();
+    int start = g_tp;
+    Opnd x; parse_operand(&x);
+    if (at_arith_op()) { g_tp = start; return expr_opnd(); }
+    return x;
 }
 
 static Opnd lit_opnd(Tok *t)
@@ -1535,8 +1550,7 @@ static Cond *cond_88(Ref *r, int neg)
 static Cond *parse_simple(void)
 {
     int line = cur()->line;
-    Opnd x; parse_operand(&x);
-    refuse_arith(line);
+    Opnd x = parse_cond_operand();
     accept_word("is");
     int neg = 0;
     if (accept_word("not")) neg = 1;
@@ -1600,9 +1614,8 @@ static Cond *parse_simple(void)
             die_at(line, "expected a relational operator after '%s' (abbreviated combined conditions are not implemented)", x.ref.sym->name);
         die_at(line, "expected a relational operator, found %s", tok_desc(t));
     }
-    Opnd y; parse_operand(&y);
-    refuse_arith(line);
-    if (x.kind != O_REF && y.kind != O_REF)
+    Opnd y = parse_cond_operand();
+    if (x.kind != O_REF && y.kind != O_REF && x.kind != O_EXPR && y.kind != O_EXPR)
         die_at(line, "a condition needs at least one data item");
     return cond_rel(&x, op, &y, neg);
 }
@@ -1610,7 +1623,11 @@ static Cond *parse_simple(void)
 static Cond *parse_not(void)
 {
     if (accept_word("not")) { Cond *c = cond_new(C_NOT); c->a = parse_not(); return c; }
-    if (cur()->kind == T_LP) { advance(); Cond *c = parse_cond(); if (cur()->kind != T_RP) die_at(cur()->line, "expected ')'"); advance(); return c; }
+    if (cur()->kind == T_LP && paren_is_condition()) {
+        advance(); Cond *c = parse_cond();
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')'");
+        advance(); return c;
+    }
     return parse_simple();
 }
 
@@ -1640,6 +1657,21 @@ static void emit_cond_value(Cond *c)
         return;
     }
     /* C_REL */
+    if (c->x.kind == O_EXPR || c->y.kind == O_EXPR) {
+        emit_push_opnd(&c->x);
+        emit_push_opnd(&c->y);
+        emit_call("cob_ncmp");
+        switch (c->op) {
+        case R_EQ: emit("\tseq r1, r1, r0"); break;
+        case R_NE: emit("\tsne r1, r1, r0"); break;
+        case R_LT: emit("\tslt r1, r1, r0"); break;
+        case R_GT: emit("\tsgt r1, r1, r0"); break;
+        case R_LE: emit("\tsle r1, r1, r0"); break;
+        case R_GE: emit("\tsge r1, r1, r0"); break;
+        }
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
     if (opnd_hot_int(&c->x) && opnd_hot_int(&c->y)) {
         emit_hot_value(&c->x);
         emit("\tstw sp+%d, r1", SLOT_A);
@@ -1726,7 +1758,9 @@ static int at_scope_end(void)
 {
     Tok *t = cur();
     if (t->kind == T_PERIOD || t->kind == T_EOF) return 1;
-    return t->kind == T_WORD && is_terminator(t->s);
+    if (t->kind != T_WORD) return 0;
+    if (!strcmp(t->s, "not") && (is_word(peek(1), "on") || is_word(peek(1), "size"))) return 1;
+    return is_terminator(t->s);
 }
 
 /* the operand list of a statement continues while the next token can
@@ -1851,8 +1885,25 @@ static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
-    if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED))
-        die_at(dst->line, "MOVE to the edited item '%s' is not implemented yet (stage 3)", d->name);
+    if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) {
+        int ned = d->pi.category == PIC_NUMERIC_EDITED;
+        if (src->kind == O_FIG && !(ned && !strncmp(src->tok->s, "zero", 4))) {
+            Arg a[3] = { arg_ref(dst), arg_imm(d->size), arg_imm(fig_byte(src->tok->s)) };
+            emit_args(a, 3); emit_call("cob_fill");
+            return;
+        }
+        if (src->kind == O_ALL) {
+            Arg a[4] = { arg_ref(dst), arg_imm(d->size), arg_label(lit_label((unsigned char *)src->tok->s, src->tok->len)), arg_imm(src->tok->len) };
+            emit_args(a, 4); emit_call("cob_fill_all");
+            return;
+        }
+        if (src->kind == O_REF && src->ref.sym->is_cond) die_at(src->line, "'%s' is a condition-name and cannot be moved", src->ref.sym->name);
+        Arg a[4];
+        opnd_args(src, &a[0], &a[1], d->size, ned);
+        a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
+        emit_args(a, 4); emit_call("cob_move");
+        return;
+    }
     int dnum = is_numeric_sym(d);
 
     if (!dnum) {
@@ -1957,11 +2008,33 @@ static void parse_move(void)
 
 /* ---- arithmetic ------------------------------------------------------- */
 
-static void refuse_arith_options(void)
+/* [NOT] [ON] SIZE ERROR follows the receivers; whether it is there
+ * decides the store options, so look before emitting the stores */
+static int at_size_error_clause(void)
 {
-    if (at_word("rounded")) die_at(cur()->line, "ROUNDED is not implemented yet (stage 3)");
-    if (at_word("on") || at_word("size")) die_at(cur()->line, "ON SIZE ERROR is not implemented yet (stage 3)");
-    if (at_word("remainder")) die_at(cur()->line, "REMAINDER is not implemented yet (stage 3)");
+    if (at_word("on") || at_word("size")) return 1;
+    return at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "size"));
+}
+
+static void accept_size_error_words(void)
+{
+    accept_word("on"); expect_word("size"); expect_word("error");
+}
+
+/* after the stores: branch on the accumulated status in SLOT_B */
+static void parse_size_error_clauses(int size_err, const char *end_word)
+{
+    if (size_err) {
+        int Lok = new_label(), Lend = new_label();
+        emit("\tldw r1, sp+%d", SLOT_B);
+        emit("\tbeq r1, r0, .L%d", Lok);
+        if (at_word("on") || at_word("size")) { accept_size_error_words(); parse_statements(); }
+        emit_jump(Lend);
+        emit_label(Lok);
+        if (accept_word("not")) { accept_size_error_words(); parse_statements(); }
+        emit_label(Lend);
+    }
+    accept_word(end_word);
 }
 
 static void check_numeric_opnd(Opnd *o)
@@ -1974,6 +2047,7 @@ static void check_numeric_opnd(Opnd *o)
 /* push an operand onto the numeric stack */
 static void emit_push(Opnd *o)
 {
+    if (o->kind == O_EXPR) die_at(o->line, "internal: expression pushed as an operand");
     if (o->kind == O_NUM || o->kind == O_FIG) {
         long long v = o->kind == O_NUM ? numlit_scaled(&o->num) : 0;
         int scale = o->kind == O_NUM ? o->num.scale : 0;
@@ -1988,11 +2062,18 @@ static void emit_push(Opnd *o)
     emit_call("cob_push");
 }
 
-static void emit_top_op(Ref *r, const char *fn)
+/* store from the stack top; opts 1 = ROUNDED, 2 = size-error check.
+ * With the check on, the status accumulates in SLOT_B. */
+static void emit_top_op(Ref *r, const char *fn, int opts)
 {
-    Arg a[2] = { arg_ref(r), arg_desc(sym_desc(r->sym)) };
-    emit_args(a, 2);
+    Arg a[3] = { arg_ref(r), arg_desc(sym_desc(r->sym)), arg_imm(opts) };
+    emit_args(a, 3);
     emit_call(fn);
+    if (opts & 2) {
+        emit("\tldw r2, sp+%d", SLOT_B);
+        emit("\tor r2, r2, r1");
+        emit("\tstw sp+%d, r2", SLOT_B);
+    }
 }
 
 static int all_hot(Opnd *ops, int n)
@@ -2029,23 +2110,35 @@ static int parse_operand_list(Opnd *ops, int max)
     return n;
 }
 
-static int parse_ref_list(Ref *rs, int max)
+/* receivers, each with an optional ROUNDED; GIVING and COMPUTE receivers
+ * may be numeric-edited */
+static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)
 {
     int n = 0;
     while (at_operand()) {
         if (n >= max) die_at(cur()->line, "too many receiving items");
         parse_ref(&rs[n]);
-        if (!is_numeric_sym(rs[n].sym)) die_at(rs[n].line, "'%s' is not numeric", rs[n].sym->name);
-        if (rs[n].sym->pi.category != PIC_NUMERIC) die_at(rs[n].line, "'%s' is edited and cannot be an arithmetic receiver", rs[n].sym->name);
+        Sym *d = rs[n].sym;
+        if (d->is_group || (d->pi.category != PIC_NUMERIC && !(edited_ok && d->pi.category == PIC_NUMERIC_EDITED)))
+            die_at(rs[n].line, "'%s' is not numeric", d->name);
+        rounded[n] = 0;
+        if (accept_word("rounded")) {
+            rounded[n] = 1;
+            if (at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2002; plain ROUNDED is the 1985 form");
+        }
         n++;
     }
     return n;
 }
 
+static int any_rounded(const int *r, int n) { for (int i = 0; i < n; i++) if (r[i]) return 1; return 0; }
+
 /* store the sum on the stack top (general) or in SLOT_A (hot) to receivers */
-static void emit_store_receivers(Ref *rs, int nr, int hot, int giving, int subtract)
+static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err)
 {
+    if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
+        int opts = (rounded[i] ? 1 : 0) | (size_err ? 2 : 0);
         if (hot) {
             Sym *d = rs[i].sym;
             emit_ref_addr(&rs[i], "r3");
@@ -2058,7 +2151,7 @@ static void emit_store_receivers(Ref *rs, int nr, int hot, int giving, int subtr
             emit_trunc(d);
             emit_store_int(d, "r3", "r1");
         } else {
-            emit_top_op(&rs[i], giving ? "cob_top_store" : subtract ? "cob_top_subfrom" : "cob_top_addto");
+            emit_top_op(&rs[i], giving ? "cob_top_store" : subtract ? "cob_top_subfrom" : "cob_top_addto", opts);
         }
     }
     if (!hot) emit_call("cob_drop");
@@ -2067,55 +2160,58 @@ static void emit_store_receivers(Ref *rs, int nr, int hot, int giving, int subtr
 static void parse_add(void)
 {
     if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "ADD CORRESPONDING is not implemented yet");
-    Opnd ops[MAXOPS]; Ref rs[MAXOPS];
+    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
     int n = parse_operand_list(ops, MAXOPS);
     if (!n) die_at(cur()->line, "ADD needs an operand");
     int giving = 0, nr = 0;
     if (accept_word("to")) {
-        if (peek(0)->kind == T_WORD && !is_verb(peek(0)->s)) {
-            /* ADD a TO b [GIVING c]: b is a receiver unless GIVING follows */
-            int save = g_tp;
-            Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
-            if (accept_word("giving")) {
-                for (int i = 0; i < ne; i++) { if (n >= MAXOPS) die_at(cur()->line, "too many operands"); ops[n++] = extra[i]; }
-                giving = 1;
-                nr = parse_ref_list(rs, MAXOPS);
-            } else { g_tp = save; nr = parse_ref_list(rs, MAXOPS); }
-        } else nr = parse_ref_list(rs, MAXOPS);
+        /* ADD a TO b [GIVING c]: b is a receiver unless GIVING follows */
+        int save = g_tp;
+        g_noemit++;
+        Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
+        int has_giving = accept_word("giving");
+        g_noemit--;
+        if (has_giving) {
+            for (int i = 0; i < ne; i++) { if (n >= MAXOPS) die_at(cur()->line, "too many operands"); ops[n++] = extra[i]; }
+            giving = 1;
+            nr = parse_ref_list(rs, rd, MAXOPS, 1);
+        } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
     } else if (accept_word("giving")) {
-        giving = 1; nr = parse_ref_list(rs, MAXOPS);
+        giving = 1; nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else die_at(cur()->line, "expected TO or GIVING in ADD");
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
-    refuse_arith_options();
-    accept_word("end-add");
+    int size_err = at_size_error_clause();
 
-    int hot = all_hot(ops, n) && refs_hot(rs, nr);
+    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) && refs_hot(rs, nr);
     if (hot) emit_hot_sum(ops, n);
     else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
-    emit_store_receivers(rs, nr, hot, giving, 0);
+    emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err);
+    parse_size_error_clauses(size_err, "end-add");
 }
 
 static void parse_subtract(void)
 {
     if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "SUBTRACT CORRESPONDING is not implemented yet");
-    Opnd ops[MAXOPS]; Ref rs[MAXOPS];
+    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
     int n = parse_operand_list(ops, MAXOPS);
     if (!n) die_at(cur()->line, "SUBTRACT needs an operand");
     expect_word("from");
     int giving = 0, nr = 0;
-    Opnd minuend;
+    Opnd minuend; memset(&minuend, 0, sizeof minuend);
     int save = g_tp;
+    g_noemit++;
     Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
-    if (accept_word("giving")) {
+    int has_giving = accept_word("giving");
+    g_noemit--;
+    if (has_giving) {
         if (ne != 1) die_at(cur()->line, "SUBTRACT ... FROM x GIVING takes one item after FROM");
         minuend = extra[0]; giving = 1;
-        nr = parse_ref_list(rs, MAXOPS);
-    } else { g_tp = save; nr = parse_ref_list(rs, MAXOPS); }
+        nr = parse_ref_list(rs, rd, MAXOPS, 1);
+    } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
     if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
-    refuse_arith_options();
-    accept_word("end-subtract");
+    int size_err = at_size_error_clause();
 
-    int hot = all_hot(ops, n) && refs_hot(rs, nr) && (!giving || opnd_hot_int(&minuend));
+    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) && refs_hot(rs, nr) && (!giving || opnd_hot_int(&minuend));
     if (hot) {
         emit_hot_sum(ops, n);
         if (giving) {
@@ -2129,72 +2225,214 @@ static void parse_subtract(void)
         for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
         if (giving) emit_call("cob_nsub");
     }
-    emit_store_receivers(rs, nr, hot, giving, !giving);
+    emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err);
+    parse_size_error_clauses(size_err, "end-subtract");
 }
 
 static void parse_multiply(void)
 {
     Opnd a; parse_operand(&a); check_numeric_opnd(&a);
     expect_word("by");
-    Ref rs[MAXOPS]; int nr = 0;
+    Ref rs[MAXOPS]; int rd[MAXOPS]; int nr = 0;
     int save = g_tp;
+    g_noemit++;
     Opnd b; parse_operand(&b); check_numeric_opnd(&b);
-    if (accept_word("giving")) {
-        nr = parse_ref_list(rs, MAXOPS);
+    int has_giving = accept_word("giving");
+    g_noemit--;
+    if (has_giving) {
+        nr = parse_ref_list(rs, rd, MAXOPS, 1);
         if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-        refuse_arith_options(); accept_word("end-multiply");
+        int size_err = at_size_error_clause();
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
-        for (int i = 0; i < nr; i++) emit_top_op(&rs[i], "cob_top_store");
-        emit_call("cob_drop");
+        emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+        parse_size_error_clauses(size_err, "end-multiply");
         return;
     }
     g_tp = save;
-    nr = parse_ref_list(rs, MAXOPS);
+    nr = parse_ref_list(rs, rd, MAXOPS, 0);
     if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-    refuse_arith_options(); accept_word("end-multiply");
+    int size_err = at_size_error_clause();
+    if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
         emit_push(&r); emit_push(&a); emit_call("cob_nmul");
-        emit_top_op(&rs[i], "cob_top_store"); emit_call("cob_drop");
+        emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
     }
+    parse_size_error_clauses(size_err, "end-multiply");
+}
+
+/* REMAINDER r: dividend - (quotient as stored, truncated) * divisor */
+static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor)
+{
+    if (!accept_word("remainder")) return;
+    if (q_rounded) die_at(cur()->line, "REMAINDER with a ROUNDED quotient is not implemented");
+    Ref r; parse_ref(&r);
+    if (!is_numeric_sym(r.sym)) die_at(r.line, "'%s' is not numeric", r.sym->name);
+    Opnd qo; memset(&qo, 0, sizeof qo); qo.kind = O_REF; qo.ref = *q; qo.line = q->line;
+    emit_push(dividend); emit_push(&qo); emit_push(divisor);
+    emit_call("cob_nmul"); emit_call("cob_nsub");
+    emit_top_op(&r, "cob_top_store", 0); emit_call("cob_drop");
 }
 
 static void parse_divide(void)
 {
     Opnd a; parse_operand(&a); check_numeric_opnd(&a);
-    Ref rs[MAXOPS]; int nr;
+    Ref rs[MAXOPS]; int rd[MAXOPS]; int nr;
     if (accept_word("into")) {
         int save = g_tp;
+        g_noemit++;
         Opnd b; parse_operand(&b); check_numeric_opnd(&b);
-        if (accept_word("giving")) {
-            nr = parse_ref_list(rs, MAXOPS);
+        int has_giving = accept_word("giving");
+        g_noemit--;
+        if (has_giving) {
+            nr = parse_ref_list(rs, rd, MAXOPS, 1);
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-            refuse_arith_options(); accept_word("end-divide");
+            int has_rem = at_word("remainder");
+            int size_err = at_size_error_clause();
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
-            for (int i = 0; i < nr; i++) emit_top_op(&rs[i], "cob_top_store");
-            emit_call("cob_drop");
+            emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err && !has_rem);
+            emit_remainder(&b, &rs[0], rd[0], &a);
+            size_err = at_size_error_clause();
+            if (size_err && has_rem) die_at(cur()->line, "SIZE ERROR together with REMAINDER is not implemented");
+            parse_size_error_clauses(size_err, "end-divide");
             return;
         }
         g_tp = save;
-        nr = parse_ref_list(rs, MAXOPS);
+        nr = parse_ref_list(rs, rd, MAXOPS, 0);
         if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-        refuse_arith_options(); accept_word("end-divide");
+        int size_err = at_size_error_clause();
+        if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
         for (int i = 0; i < nr; i++) {
             Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
             emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
-            emit_top_op(&rs[i], "cob_top_store"); emit_call("cob_drop");
+            emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
         }
+        parse_size_error_clauses(size_err, "end-divide");
         return;
     }
     expect_word("by");
     Opnd b; parse_operand(&b); check_numeric_opnd(&b);
     expect_word("giving");
-    nr = parse_ref_list(rs, MAXOPS);
+    nr = parse_ref_list(rs, rd, MAXOPS, 1);
     if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-    refuse_arith_options(); accept_word("end-divide");
+    int has_rem = at_word("remainder");
+    int size_err = at_size_error_clause();
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
-    for (int i = 0; i < nr; i++) emit_top_op(&rs[i], "cob_top_store");
-    emit_call("cob_drop");
+    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err && !has_rem);
+    emit_remainder(&a, &rs[0], rd[0], &b);
+    size_err = at_size_error_clause();
+    if (size_err && has_rem) die_at(cur()->line, "SIZE ERROR together with REMAINDER is not implemented");
+    parse_size_error_clauses(size_err, "end-divide");
+}
+
+/* ---- arithmetic expressions: COMPUTE and condition operands ----------- */
+
+static void parse_expr(void);
+
+static int at_arith_op(void)
+{
+    return at_op("+") || at_op("-") || at_op("*") || at_op("/") || at_op("**");
+}
+
+static void parse_primary(void)
+{
+    Tok *t = cur();
+    if (t->kind == T_LP) {
+        advance(); parse_expr();
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' in the expression");
+        advance();
+        return;
+    }
+    if (at_op("+")) { advance(); parse_primary(); return; }
+    if (at_op("-")) { advance(); parse_primary(); emit_call("cob_nneg"); return; }
+    Opnd o; parse_operand(&o);
+    check_numeric_opnd(&o);
+    emit_push(&o);
+}
+
+static void parse_power(void)
+{
+    parse_primary();
+    if (at_op("**")) { advance(); parse_power(); emit_call("cob_npow"); }
+}
+
+static void parse_term(void)
+{
+    parse_power();
+    while (at_op("*") || at_op("/")) {
+        int mul = at_op("*"); advance();
+        parse_power();
+        emit_call(mul ? "cob_nmul" : "cob_ndiv");
+    }
+}
+
+static void parse_expr(void)
+{
+    parse_term();
+    while (at_op("+") || at_op("-")) {
+        int add = at_op("+"); advance();
+        parse_term();
+        emit_call(add ? "cob_nadd" : "cob_nsub");
+    }
+}
+
+/* an expression operand in a condition: scanned now, emitted later */
+static Opnd expr_opnd(void)
+{
+    Opnd o; memset(&o, 0, sizeof o);
+    o.kind = O_EXPR; o.line = cur()->line; o.e_start = g_tp;
+    g_noemit++; parse_expr(); g_noemit--;
+    o.e_end = g_tp;
+    return o;
+}
+
+static void emit_push_opnd(Opnd *o)
+{
+    if (o->kind != O_EXPR) { emit_push(o); return; }
+    int save = g_tp;
+    g_tp = o->e_start;
+    parse_expr();
+    if (g_tp != o->e_end) die_at(o->line, "internal: expression re-parse drifted");
+    g_tp = save;
+}
+
+/* does the parenthesis at the cursor open a condition or an expression? */
+static int paren_is_condition(void)
+{
+    int depth = 0, words = 0;
+    Tok *only = NULL;
+    for (int i = g_tp; i < g_ntok; i++) {
+        Tok *t = &g_tok[i];
+        if (t->kind == T_LP) depth++;
+        else if (t->kind == T_RP) { if (--depth == 0) break; }
+        else if (t->kind == T_OP && (!strcmp(t->s, "=") || !strcmp(t->s, "<") || !strcmp(t->s, ">") ||
+                 !strcmp(t->s, "<=") || !strcmp(t->s, ">=") || !strcmp(t->s, "<>"))) return 1;
+        else if (t->kind == T_WORD) {
+            static const char *cw[] = { "is", "not", "and", "or", "equal", "equals", "greater", "less",
+                "than", "numeric", "alphabetic", "alphabetic-lower", "alphabetic-upper", "positive", "negative", NULL };
+            for (int k = 0; cw[k]; k++) if (!strcmp(t->s, cw[k])) return 1;
+            words++; only = t;
+        }
+        else if (t->kind == T_PERIOD || t->kind == T_EOF) break;
+    }
+    /* (cond-name) alone is a condition */
+    if (words == 1 && only) {
+        for (int i = 0; i < g_nsym; i++) if (g_sym[i].is_cond && !strcmp(g_sym[i].name, only->s)) return 1;
+    }
+    return 0;
+}
+
+static void parse_compute(void)
+{
+    Ref rs[MAXOPS]; int rd[MAXOPS];
+    int nr = parse_ref_list(rs, rd, MAXOPS, 1);
+    if (!nr) die_at(cur()->line, "COMPUTE needs a receiving item");
+    if (!at_op("=")) die_at(cur()->line, "expected '=' in COMPUTE, found %s", tok_desc(cur()));
+    advance();
+    parse_expr();
+    int size_err = at_size_error_clause();
+    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+    parse_size_error_clauses(size_err, "end-compute");
 }
 
 /* ---- IF ---------------------------------------------------------------- */
@@ -2252,9 +2490,10 @@ static void emit_add_to_ref(Opnd *by, Ref *var)
 {
     Opnd ops[1] = { *by }; Ref rs[1] = { *var };
     int hot = opnd_hot_int(by) && is_hot_int(var->sym);
+    int rd[1] = { 0 };
     if (hot) emit_hot_sum(ops, 1);
     else emit_push(by);
-    emit_store_receivers(rs, 1, hot, 0, 0);
+    emit_store_receivers(rs, rd, 1, hot, 0, 0, 0);
 }
 
 typedef struct { Ref var; Opnd from, by; Cond *until; } Vary;
@@ -2399,8 +2638,9 @@ static void parse_set(void)
     for (int i = 0; i < nr; i++) {
         Opnd ops[1] = { v };
         int hot = opnd_hot_int(&v) && is_hot_int(rs[i].sym);
+        int rd[1] = { 0 };
         if (hot) emit_hot_sum(ops, 1); else emit_push(&v);
-        emit_store_receivers(&rs[i], 1, hot, 0, down);
+        emit_store_receivers(&rs[i], rd, 1, hot, 0, down, 0);
     }
 }
 
@@ -2418,6 +2658,7 @@ static void parse_statement(void)
     if (!strcmp(v, "subtract")) { advance(); parse_subtract(); return; }
     if (!strcmp(v, "multiply")) { advance(); parse_multiply(); return; }
     if (!strcmp(v, "divide")) { advance(); parse_divide(); return; }
+    if (!strcmp(v, "compute")) { advance(); parse_compute(); return; }
     if (!strcmp(v, "if")) { advance(); parse_if(); return; }
     if (!strcmp(v, "perform")) { advance(); parse_perform(); return; }
     if (!strcmp(v, "go")) { advance(); parse_goto(); return; }
@@ -2443,7 +2684,7 @@ static void parse_statement(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
-        { "compute", "stage 3" }, { "open", "stage 4" }, { "close", "stage 4" }, { "read", "stage 4" },
+        { "open", "stage 4" }, { "close", "stage 4" }, { "read", "stage 4" },
         { "write", "stage 4" }, { "rewrite", "stage 5" }, { "start", "stage 5" }, { "delete", "stage 5" },
         { "call", "stage 6" }, { "cancel", "stage 6" }, { "initiate", "stage 7" }, { "generate", "stage 7" },
         { "terminate", "stage 7" }, { "accept", "stage 8" }, { "evaluate", "stage 9" },

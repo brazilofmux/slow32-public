@@ -6,14 +6,16 @@
  * descriptor it built (cobrt.h); the runtime works in bytes and pictures
  * and knows nothing about the statement that called it.
  *
- * Stage 2: DISPLAY; MOVE across the conversion matrix (unedited cells);
- * comparison; class tests; a scaled-i64 numeric stack for the arithmetic
- * statements; the PERFORM stack.
+ * Stage 2: DISPLAY; MOVE across the conversion matrix; comparison; class
+ * tests; a scaled-i64 numeric stack for the arithmetic statements; the
+ * PERFORM stack.  Stage 3: editing and de-editing (cobedit.h), ROUNDED,
+ * SIZE ERROR, COMPUTE's operators.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "cobrt.h"
+#include "cobedit.h"
 
 /* ---- output: DISPLAY goes to stdout, buffered by us ------------------ */
 
@@ -81,6 +83,14 @@ long long cob_get_num(const void *vp, const cob_desc *d)
     long long v = 0;
     int neg = 0;
 
+    if (d->cat == COB_NUM_ED) {
+        /* de-editing: a 1985 feature IBM ANS COBOL never had */
+        char digs[40];
+        int n = cob_deedit(d->pic, p, digs, &neg);
+        for (int i = 0; i < n; i++) v = v * 10 + (digs[i] - '0');
+        return neg ? -v : v;
+    }
+
     switch (d->usage) {
     case COB_U_BINARY: {
         unsigned long long u = 0;
@@ -120,17 +130,38 @@ long long cob_get_num(const void *vp, const cob_desc *d)
 /* Store v (scaled by vscale) into the item, aligning the scale by
  * truncation and truncating high-order digits to the picture (unless the
  * usage says the binary field's capacity is the limit). */
-void cob_put_num(void *vp, const cob_desc *d, long long v, int vscale)
+/* opts: 1 = ROUNDED (nearest, ties away from zero -- the 85 rule),
+ * 2 = report a size error instead of truncating.  Returns 1 on a size
+ * error (nothing stored), else 0. */
+int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts)
 {
     unsigned char *p = vp;
-    if (vscale > d->scale) v /= pow10tab[vscale - d->scale];
-    else if (vscale < d->scale) v *= pow10tab[d->scale - vscale];
+    if (vscale > d->scale) {
+        long long k = pow10tab[vscale - d->scale];
+        long long q = v / k, r = v % k;
+        if ((opts & 1) && (r < 0 ? -r : r) * 2 >= k) q += (v < 0) ? -1 : 1;
+        v = q;
+    } else if (vscale < d->scale) v *= pow10tab[d->scale - vscale];
 
     int neg = v < 0;
     unsigned long long mag = neg ? (unsigned long long)(-v) : (unsigned long long)v;
-    if (!(d->flags & COB_F_NOTRUNC) && d->digits <= 18)
+    if (d->flags & COB_F_NOTRUNC) {
+        if ((opts & 2) && d->size < 8) {
+            unsigned long long lim = 1ULL << (d->size * 8 - ((d->flags & COB_F_SIGNED) ? 1 : 0));
+            if (mag >= lim) return 1;
+        }
+    } else if (d->digits <= 18) {
+        if ((opts & 2) && mag >= (unsigned long long)pow10tab[d->digits]) return 1;
         mag %= (unsigned long long)pow10tab[d->digits];
+    }
     if (!(d->flags & COB_F_SIGNED)) neg = 0;         /* unsigned takes the magnitude */
+
+    if (d->cat == COB_NUM_ED) {
+        char digs[40];
+        for (int i = d->digits - 1; i >= 0; i--) { digs[i] = (char)('0' + mag % 10); mag /= 10; }
+        cob_edit_apply(d->pic, digs, neg, d->flags & COB_F_BLANKZ, (char *)p);
+        return 0;
+    }
 
     switch (d->usage) {
     case COB_U_BINARY: {
@@ -161,7 +192,10 @@ void cob_put_num(void *vp, const cob_desc *d, long long v, int vscale)
         break;
     }
     }
+    return 0;
 }
+
+void cob_put_num(void *vp, const cob_desc *d, long long v, int vscale) { cob_put_num_x(vp, d, v, vscale, 0); }
 
 /* ---- DISPLAY ---------------------------------------------------------- */
 
@@ -241,13 +275,32 @@ static int num_to_digits(const void *p, const cob_desc *d, char *out)
     return digits;
 }
 
+/* alphanumeric-edited receiver: source characters into the A/X/9
+ * positions, insertion characters where the picture puts them */
+static void move_alnum_edited(const char *s, int n, char *dst, const cob_desc *dd)
+{
+    int si = 0, o = 0;
+    for (const char *p = dd->pic; *p; p++) {
+        switch (*p) {
+        case 'B': dst[o++] = ' '; break;
+        case '0': dst[o++] = '0'; break;
+        case '/': dst[o++] = '/'; break;
+        default:  dst[o++] = si < n ? s[si++] : ' '; break;
+        }
+    }
+}
+
 void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd)
 {
     char tmp[40];
-    int dnum = dd->cat == COB_NUM, snum = sd->cat == COB_NUM;
+    int dnum = dd->cat == COB_NUM || dd->cat == COB_NUM_ED;
+    int snum = sd->cat == COB_NUM || sd->cat == COB_NUM_ED;
 
-    if (dd->cat == COB_NUM_ED || dd->cat == COB_ALNUM_ED)
-        cob_fatal("edited MOVE is not implemented yet (stage 3)");
+    if (dd->cat == COB_ALNUM_ED) {
+        if (!snum || sd->cat == COB_NUM_ED) move_alnum_edited(src, (int)sd->size, dst, dd);
+        else { int n = num_to_digits(src, sd, tmp); move_alnum_edited(tmp, n, dst, dd); }
+        return;
+    }
 
     if (!dnum) {
         if (!snum || dd->cat == COB_GROUP) {
@@ -374,10 +427,12 @@ void cob_nmul(void) { cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1]; a->v *= 
  * receiver with a wider scale than either operand still gets its digits;
  * the store truncates.  (The 85 intermediate rules are implementor-defined;
  * this is the stage-2 rule and stage 3 may tighten it.) */
+static int div0;        /* a division by zero happened in this statement */
+
 void cob_ndiv(void)
 {
     cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
-    if (b->v == 0) cob_fatal("division by zero (ON SIZE ERROR not implemented yet)");
+    if (b->v == 0) { div0 = 1; nsp--; return; }   /* size error; the left operand stands in */
     int guard = 6;
     int target = (a->scale > b->scale ? a->scale : b->scale) + guard;
     long long av = a->v, bv = b->v;
@@ -390,23 +445,55 @@ void cob_ndiv(void)
 
 void cob_nneg(void) { nstk[nsp - 1].v = -nstk[nsp - 1].v; }
 
-void cob_top_store(void *p, const cob_desc *d) { cob_put_num(p, d, nstk[nsp - 1].v, nstk[nsp - 1].scale); }
-
-void cob_top_addto(void *p, const cob_desc *d)
+/* a ** b for an integer b >= 0; anything else is beyond this stage */
+void cob_npow(void)
 {
-    cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
-    align2(&a, &b);
-    cob_put_num(p, d, a.v + b.v, a.scale);
+    cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
+    if (b->scale > 0) { long long k = pow10tab[b->scale]; if (b->v % k) cob_fatal("** with a non-integer exponent is not implemented"); b->v /= k; b->scale = 0; }
+    if (b->v < 0) cob_fatal("** with a negative exponent is not implemented");
+    long long base = a->v, r = 1; int scale = 0;
+    for (long long i = 0; i < b->v; i++) {
+        r *= base; scale += a->scale;
+        while (scale > 12) { r /= 10; scale--; }
+    }
+    a->v = r; a->scale = scale;
+    nsp--;
 }
 
-void cob_top_subfrom(void *p, const cob_desc *d)
+/* compare the two on top; pops both; -1 0 1 */
+int cob_ncmp(void)
 {
-    cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
-    align2(&a, &b);
-    cob_put_num(p, d, a.v - b.v, a.scale);
+    cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
+    align2(a, b);
+    int r = a->v < b->v ? -1 : a->v > b->v ? 1 : 0;
+    nsp -= 2;
+    return r;
 }
 
-void cob_drop(void) { if (nsp) nsp--; }
+/* opts as cob_put_num_x; return 1 on a size error (receiver unchanged) */
+int cob_top_store(void *p, const cob_desc *d, int opts)
+{
+    if (div0) return 1;
+    return cob_put_num_x(p, d, nstk[nsp - 1].v, nstk[nsp - 1].scale, opts);
+}
+
+int cob_top_addto(void *p, const cob_desc *d, int opts)
+{
+    if (div0) return 1;
+    cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
+    align2(&a, &b);
+    return cob_put_num_x(p, d, a.v + b.v, a.scale, opts);
+}
+
+int cob_top_subfrom(void *p, const cob_desc *d, int opts)
+{
+    if (div0) return 1;
+    cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
+    align2(&a, &b);
+    return cob_put_num_x(p, d, a.v - b.v, a.scale, opts);
+}
+
+void cob_drop(void) { if (nsp) nsp--; div0 = 0; }
 
 /* subscripts: the integer value of an item */
 int cob_load_int(const void *p, const cob_desc *d)
