@@ -52,7 +52,26 @@ comment the way f77 stamps `hir_*.h`.
 
 On disk, v1 default: a data file of fixed slots (payload only, no
 RDW, no delete byte) plus a key file. The key file's format is
-ours. Document it when it exists. It does not have to be `.NDX`.
+ours. It does not have to be `.NDX`.
+
+**As built (Stage 5, `libcob/libcob.c`):** the data file named by
+`ASSIGN` holds `recsize`-byte slots in arrival order; beside it
+`<name>.key` holds the key table:
+
+    "S32KEY01" | u32 recsize | u32 keyoff | u32 keylen | u32 count
+             | u32 nslots | u32 0 | u32 0 | count x (key bytes, u32 slot)
+
+all little-endian, entries sorted by key (byte order, i.e. ASCII).
+While open the table is an in-memory array: a random `READ` is a
+binary search, `READ NEXT` walks it, `WRITE` of an ascending key
+appends and an out-of-order key inserts in place, `DELETE` removes
+the entry and leaves the slot unused, `CLOSE` rewrites the key file.
+`OPEN` refuses (status 39) a key file whose recsize/keyoff/keylen do
+not match the FD. A btree can replace the array without changing
+program-visible behaviour; gl039's 3,113 descriptions take 0.13 s
+under `slow32-fast` as it is. Status codes follow the text: 22
+duplicate, 23 not found, 21 sequence error under ACCESS SEQUENTIAL,
+10 at end, 35/39 on OPEN.
 
 `DELETE` removes the key and frees the slot. A subsequent `READ` by
 that key is invalid key. No `PACK` step.

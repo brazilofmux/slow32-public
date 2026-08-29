@@ -168,13 +168,28 @@ oracle, in a fresh copy of `tests/data/`. The done-criterion was run
 against majesty's real file in place: 3,113 records copied
 byte-identical, under `slow32-fast` and under `slow32-dbt`.
 
-## Stage 5 — indexed I-O **L**
+## Stage 5 — indexed I-O **L** — DONE 2026-08-29
 
 - Default path in [indexed.md](indexed.md)
 - `gl039` compiles and runs
 - Random `READ … KEY IS` by `desc-id`, `INVALID KEY`, `END-READ`
 
 Done: gl039 then a tiny reader prints descriptions by id.
+
+What landed: the default path in [indexed.md](indexed.md) -- fixed
+slots plus our own key file, the table sorted in memory; `OPEN`
+INPUT/OUTPUT/I-O, `WRITE`, `READ` by key (`KEY IS` or ACCESS RANDOM),
+`READ NEXT`, `REWRITE` (indexed and fixed sequential), `DELETE`,
+`START` with every relation, `INVALID KEY` / `NOT INVALID KEY` on all
+of them; the `RECORD KEY` checked to be an item of the record. **The
+real gl039.cbl compiles unchanged** and, run in place against
+majesty's data, writes all 3,113 descriptions in 0.13 s; a five-line
+reader then fetches four of them by id under `slow32-dbt`, matching
+`grep` on the source file, and reports 23 for the fifth. One
+documented divergence from GnuCOBOL ([oracles.md](oracles.md)):
+`REWRITE` of an absent key under dynamic access is 23 by the text,
+21 by GnuCOBOL. Not in: `ALTERNATE RECORD KEY`, RELATIVE files
+(after v1), slot reuse after `DELETE`, a `SORT`-shaped rebuild.
 
 ## Stage 6 — subprograms and the C bridge **M**
 

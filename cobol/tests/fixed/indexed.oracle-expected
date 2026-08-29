@@ -1,0 +1,17 @@
+open output: 00
+duplicate 100: 22
+write 50: 00
+close: 00
+open i-o: 00
+hit 00200 [two hundred ]
+miss 250: 23
+rewrite: 00
+rewrite 999: 21
+delete 300: 00
+read 300 after delete: 23
+delete 300 again: 23
+start > 100: 00
+next 00200 [TWO HUNDRED ]
+at end: 10
+start >= 400: 23
+03 records in key order

@@ -40,6 +40,8 @@ typedef struct {
     unsigned int assign_len;  /* ... and length */
     unsigned int at_eof;
     unsigned int last_len;    /* bytes the last READ delivered */
+    unsigned int keyoff, keylen;   /* RECORD KEY: offset in the record, length */
+    void *idx;                /* indexed: the in-memory key table while open */
 } cob_file;
 
 typedef struct {

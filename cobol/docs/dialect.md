@@ -117,6 +117,9 @@ given, because majesty's `.prn` oracles were produced under it.
   GnuCOBOL 4 instead delivers the remainder as further records with
   status 06. No majesty file has such a line; a program that depends
   on the split would be wrong on both.
+- **`GOBACK`** is accepted (IBM's word, not in X3.23-1985 -- GnuCOBOL
+  `-std=cobol85` refuses it; majesty uses it everywhere). In the main
+  program it is `STOP RUN`.
 - **ADVANCING PAGE** is refused: majesty's `.prn` files carry no form
   feed, and a line-sequential print file has nowhere to put one.
 - **`COMP`/`BINARY` width**: 2, 4, 8 bytes for 1-4, 5-9, 10-18 digits.

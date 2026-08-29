@@ -110,7 +110,11 @@ for fmt in fixed free; do
             if "$ORACLE" -x $std $flag -o "$W/$name.orc" "$src" >"$W/$name.orclog" 2>&1; then
                 fresh_workdir
                 (cd "$W/run" && "$W/$name.orc") > "$W/$name.orcout" 2>/dev/null
-                if diff -q "$W/$name.orcout" "$exp" >/dev/null; then note="oracle agrees"
+                # a documented divergence from GnuCOBOL (docs/oracles.md) keeps
+                # GnuCOBOL's own output beside the standard's in .oracle-expected
+                oexp="$exp"; [ -f "${src%.cbl}.oracle-expected" ] && oexp="${src%.cbl}.oracle-expected"
+                if diff -q "$W/$name.orcout" "$oexp" >/dev/null; then
+                    note="oracle agrees"; [ "$oexp" != "$exp" ] && note="oracle agrees with its documented divergence"
                 else
                     report "$fmt/$name" 1 "GnuCOBOL disagrees with .expected"
                     diff "$exp" "$W/$name.orcout" | head -8

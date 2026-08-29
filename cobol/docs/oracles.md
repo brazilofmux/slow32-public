@@ -56,6 +56,17 @@ item must know the oracle can be wrong there.
 | SCREEN SECTION | GnuCOBOL on a real tty, plus dBase Stage 4 behaviour where they overlap | no ISO text |
 | CCVS-85 | NIST CCVS-85 via GnuCOBOL's extracted modules | a **histogram of missing features**, as `cobc370/bin/cobc-ccvs` does, not a v1 score. Later, a pass/fail suite for NC/SQ/IC. |
 
+## Documented divergences from GnuCOBOL
+
+Where the 85 text and GnuCOBOL disagree, the `.expected` file carries
+the text's answer and a `.oracle-expected` file beside it carries
+GnuCOBOL's, so the harness still checks both (it reports "oracle
+agrees with its documented divergence").
+
+| test | statement | text | GnuCOBOL 4.0-early-dev |
+|---|---|---|---|
+| `fixed/indexed` | `REWRITE` of an absent key, ACCESS DYNAMIC | status **23** (record not found; 21 is the *sequential-access* sequence error) | 21 |
+
 ## What we will not do
 
 - Use cobc370 as an oracle for 85 semantics.

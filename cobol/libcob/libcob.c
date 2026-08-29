@@ -10,7 +10,8 @@
  * tests; a scaled-i64 numeric stack for the arithmetic statements; the
  * PERFORM stack.  Stage 3: editing and de-editing (cobedit.h), ROUNDED,
  * SIZE ERROR, COMPUTE's operators.  Stage 4: line sequential and fixed
- * sequential files, STRING, the case intrinsics.
+ * sequential files, STRING, the case intrinsics.  Stage 5: indexed files
+ * on the default path (docs/indexed.md).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -548,7 +549,7 @@ static int file_result(cob_file *f, const char *st, const char *what)
 {
     set_status(f, st);
     if (st[0] == '0') return 0;
-    if (st[0] == '1') return 1;
+    if (st[0] == '1' || st[0] == '2') return 1;      /* at end; the invalid key condition */
     if (!f->status) {
         char msg[96];
         int n = 0;
@@ -573,11 +574,16 @@ static const char *file_name(cob_file *f)
     return name;
 }
 
+static int idx_open(cob_file *f, int mode);
+static int idx_close(cob_file *f);
+static int idx_read_next(cob_file *f);
+static int idx_write(cob_file *f);
+
 int cob_open(cob_file *f, int mode)
 {
     if (f->open_mode) return file_result(f, "41", "OPEN of a file already open");
-    if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ)
-        cob_fatal("INDEXED and RELATIVE files are not implemented yet (stage 5)");
+    if (f->org == COB_ORG_INDEXED) return idx_open(f, mode);
+    if (f->org == COB_ORG_RELATIVE) cob_fatal("RELATIVE files are not implemented yet (after v1)");
     const char *name = file_name(f);
     const char *fm = mode == COB_OPEN_INPUT ? "rb" : mode == COB_OPEN_OUTPUT ? "wb"
                    : mode == COB_OPEN_EXTEND ? "ab" : "r+b";
@@ -599,6 +605,7 @@ int cob_open(cob_file *f, int mode)
 int cob_close(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "42", "CLOSE of a file not open");
+    if (f->org == COB_ORG_INDEXED) return idx_close(f);
     if (f->fp) fclose((FILE *)f->fp);
     f->fp = 0; f->open_mode = 0; f->at_eof = 0;
     return file_result(f, "00", "");
@@ -609,6 +616,7 @@ int cob_read(cob_file *f)
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
     if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)
         return file_result(f, "47", "READ of a file open for output");
+    if (f->org == COB_ORG_INDEXED) return idx_read_next(f);
     if (f->at_eof) return file_result(f, "10", "");
     FILE *fp = (FILE *)f->fp;
     char *rec = f->record;
@@ -640,6 +648,7 @@ int cob_write(cob_file *f, int before, int after)
 {
     if (!f->open_mode) return file_result(f, "48", "WRITE of a file not open");
     if (f->open_mode == COB_OPEN_INPUT) return file_result(f, "48", "WRITE of a file open for input");
+    if (f->org == COB_ORG_INDEXED) return idx_write(f);
     FILE *fp = (FILE *)f->fp;
     const char *rec = f->record;
     unsigned n = f->recsize;
@@ -717,4 +726,277 @@ char *cob_fn_lower(const char *s, int n)
     char *b = fn_buffer(n);
     for (int i = 0; i < n; i++) b[i] = (s[i] >= 'A' && s[i] <= 'Z') ? (char)(s[i] + 32) : s[i];
     return b;
+}
+
+/* ====================================================================== */
+/* Indexed files: the default path                                          */
+/* ====================================================================== */
+
+/* On disk: the data file named by ASSIGN holds fixed slots of recsize
+ * bytes (payload only -- no RDW, no delete byte), written in arrival
+ * order; beside it, "<name>.key" holds the key table.  In memory the
+ * table is an array of (key bytes, slot) kept sorted by key, so a random
+ * READ is a binary search and READ NEXT walks the array.  Keys in
+ * ascending arrival order (gl039's case) append without a sort; an
+ * out-of-order WRITE inserts in place.  DELETE removes the entry and
+ * leaves the slot unused.  The key file is rewritten on CLOSE.
+ *
+ *   key file: "S32KEY01" | u32 recsize | u32 keyoff | u32 keylen |
+ *             u32 count | u32 nslots | u32 0 | u32 0 | count x (u32 slot, key)
+ *
+ * A btree can replace the array without changing the program-visible
+ * behaviour; docs/indexed.md keeps the format's description. */
+
+typedef struct {
+    unsigned char *keys;    /* count entries of (keylen bytes + 4-byte slot), sorted */
+    unsigned count, cap;
+    unsigned nslots;        /* slots present in the data file */
+    int pos;                /* current record pointer: next entry for READ NEXT; -1 none */
+    int last;               /* entry the last READ delivered, for REWRITE/DELETE; -1 */
+    int dirty;
+} cob_idx;
+
+#define KEYMAGIC "S32KEY01"
+
+static unsigned entry_size(cob_file *f) { return f->keylen + 4; }
+static unsigned char *entry(cob_file *f, cob_idx *x, unsigned i) { return x->keys + (size_t)i * entry_size(f); }
+static unsigned entry_slot(cob_file *f, unsigned char *e) { unsigned char *p = e + f->keylen; return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24); }
+static void entry_set_slot(cob_file *f, unsigned char *e, unsigned s) { unsigned char *p = e + f->keylen; p[0] = (unsigned char)s; p[1] = (unsigned char)(s >> 8); p[2] = (unsigned char)(s >> 16); p[3] = (unsigned char)(s >> 24); }
+
+static const char *key_file_name(cob_file *f)
+{
+    static char name[300];
+    const char *d = file_name(f);
+    size_t n = strlen(d);
+    if (n > 290) n = 290;
+    memcpy(name, d, n); memcpy(name + n, ".key", 5);
+    return name;
+}
+
+/* binary search: index of the first entry with key >= k; *found says equal */
+static unsigned idx_find(cob_file *f, cob_idx *x, const unsigned char *k, int *found)
+{
+    unsigned lo = 0, hi = x->count;
+    while (lo < hi) {
+        unsigned mid = (lo + hi) / 2;
+        int c = memcmp(entry(f, x, mid), k, f->keylen);
+        if (c < 0) lo = mid + 1; else hi = mid;
+    }
+    *found = (lo < x->count && !memcmp(entry(f, x, lo), k, f->keylen));
+    return lo;
+}
+
+static void idx_grow(cob_file *f, cob_idx *x)
+{
+    if (x->count < x->cap) return;
+    unsigned ncap = x->cap ? x->cap * 2 : 256;
+    unsigned char *nk = realloc(x->keys, (size_t)ncap * entry_size(f));
+    if (!nk) cob_fatal("out of memory for the key table");
+    x->keys = nk; x->cap = ncap;
+}
+
+static void put_u32(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24); }
+static unsigned get_u32(const unsigned char *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24); }
+
+static int idx_load(cob_file *f, cob_idx *x)
+{
+    FILE *kf = fopen(key_file_name(f), "rb");
+    if (!kf) return 0;
+    unsigned char h[32];
+    if (fread(h, 1, 32, kf) != 32 || memcmp(h, KEYMAGIC, 8) || get_u32(h + 8) != f->recsize ||
+        get_u32(h + 12) != f->keyoff || get_u32(h + 16) != f->keylen) { fclose(kf); return 0; }
+    x->count = get_u32(h + 20); x->nslots = get_u32(h + 24);
+    x->cap = x->count ? x->count : 1;
+    x->keys = malloc((size_t)x->cap * entry_size(f));
+    if (!x->keys) cob_fatal("out of memory for the key table");
+    size_t want = (size_t)x->count * entry_size(f);
+    if (fread(x->keys, 1, want, kf) != want) { fclose(kf); return 0; }
+    fclose(kf);
+    return 1;
+}
+
+static int idx_save(cob_file *f, cob_idx *x)
+{
+    FILE *kf = fopen(key_file_name(f), "wb");
+    if (!kf) return 0;
+    unsigned char h[32];
+    memset(h, 0, 32); memcpy(h, KEYMAGIC, 8);
+    put_u32(h + 8, f->recsize); put_u32(h + 12, f->keyoff); put_u32(h + 16, f->keylen);
+    put_u32(h + 20, x->count); put_u32(h + 24, x->nslots);
+    fwrite(h, 1, 32, kf);
+    size_t n = (size_t)x->count * entry_size(f);
+    if (n && fwrite(x->keys, 1, n, kf) != n) { fclose(kf); return 0; }
+    fclose(kf);
+    return 1;
+}
+
+static int idx_open(cob_file *f, int mode)
+{
+    const char *name = file_name(f);
+    if (f->keylen == 0 || f->keylen > 255) cob_fatal("RECORD KEY must be 1 to 255 bytes");
+    cob_idx *x = calloc(1, sizeof *x);
+    if (!x) cob_fatal("out of memory");
+    x->pos = -1; x->last = -1;
+    FILE *fp;
+    if (mode == COB_OPEN_OUTPUT) {
+        fp = fopen(name, "w+b");
+        if (!fp) { free(x); return file_result(f, "30", name); }
+    } else {
+        fp = fopen(name, mode == COB_OPEN_INPUT ? "rb" : "r+b");
+        if (!fp) {
+            free(x);
+            if (f->optional && mode != COB_OPEN_EXTEND) { f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
+            return file_result(f, "35", name);
+        }
+        if (!idx_load(f, x)) { fclose(fp); free(x); return file_result(f, "39", "key file missing or does not match the FD"); }
+    }
+    f->fp = fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0;
+    return file_result(f, "00", name);
+}
+
+static int idx_close(cob_file *f)
+{
+    cob_idx *x = f->idx;
+    int ok = 1;
+    if (x) {
+        if (f->open_mode != COB_OPEN_INPUT) ok = idx_save(f, x);
+        free(x->keys); free(x);
+    }
+    if (f->fp) fclose((FILE *)f->fp);
+    f->fp = 0; f->idx = 0; f->open_mode = 0; f->at_eof = 0;
+    return file_result(f, ok ? "00" : "30", "could not write the key file");
+}
+
+static int slot_read(cob_file *f, unsigned slot)
+{
+    FILE *fp = (FILE *)f->fp;
+    if (fseek(fp, (long)slot * (long)f->recsize, 0) != 0) return 0;
+    return fread(f->record, 1, f->recsize, fp) == f->recsize;
+}
+
+static int slot_write(cob_file *f, unsigned slot)
+{
+    FILE *fp = (FILE *)f->fp;
+    if (fseek(fp, (long)slot * (long)f->recsize, 0) != 0) return 0;
+    return fwrite(f->record, 1, f->recsize, fp) == f->recsize;
+}
+
+/* WRITE: insert by the key in the record area */
+static int idx_write(cob_file *f)
+{
+    cob_idx *x = f->idx;
+    if (!x) return file_result(f, "48", "WRITE to an OPTIONAL file that is absent");
+    const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
+    int found;
+    unsigned at = idx_find(f, x, k, &found);
+    if (found) return file_result(f, "22", "");                 /* duplicate key */
+    if (f->access == 0 && x->count && at != x->count)
+        return file_result(f, "21", "");                        /* sequential access: keys must ascend */
+    unsigned slot = x->nslots;
+    if (!slot_write(f, slot)) return file_result(f, "30", "write failed");
+    x->nslots++;
+    idx_grow(f, x);
+    unsigned es = entry_size(f);
+    memmove(entry(f, x, at + 1), entry(f, x, at), (size_t)(x->count - at) * es);
+    memcpy(entry(f, x, at), k, f->keylen);
+    entry_set_slot(f, entry(f, x, at), slot);
+    x->count++;
+    x->pos = (int)at + 1; x->last = -1;
+    return file_result(f, "00", "");
+}
+
+/* READ with KEY (random): the key is what the record's key field holds */
+int cob_read_key(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
+    if (f->org != COB_ORG_INDEXED) cob_fatal("READ ... KEY on a file that is not INDEXED");
+    cob_idx *x = f->idx;
+    if (!x) return file_result(f, "23", "");
+    unsigned char key[256];
+    memcpy(key, f->record + f->keyoff, f->keylen);
+    int found;
+    unsigned at = idx_find(f, x, key, &found);
+    if (!found) { x->last = -1; return file_result(f, "23", ""); }
+    if (!slot_read(f, entry_slot(f, entry(f, x, at)))) return file_result(f, "30", "read failed");
+    x->pos = (int)at + 1; x->last = (int)at;
+    return file_result(f, "00", "");
+}
+
+static int idx_read_next(cob_file *f)
+{
+    cob_idx *x = f->idx;
+    if (!x || f->at_eof) return file_result(f, "10", "");
+    if (x->pos < 0) x->pos = 0;
+    if ((unsigned)x->pos >= x->count) { f->at_eof = 1; x->last = -1; return file_result(f, "10", ""); }
+    if (!slot_read(f, entry_slot(f, entry(f, x, (unsigned)x->pos)))) return file_result(f, "30", "read failed");
+    x->last = x->pos; x->pos++;
+    return file_result(f, "00", "");
+}
+
+/* START: position by the key in the record area.  op: 0 =, 1 >, 2 >=, 3 <, 4 <= */
+int cob_start(cob_file *f, int op)
+{
+    if (!f->open_mode) return file_result(f, "47", "START of a file not open");
+    if (f->org != COB_ORG_INDEXED) cob_fatal("START on a file that is not INDEXED");
+    cob_idx *x = f->idx;
+    if (!x) return file_result(f, "23", "");
+    const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
+    int found;
+    unsigned at = idx_find(f, x, k, &found);
+    int pos = -1;
+    switch (op) {
+    case 0: if (found) pos = (int)at; break;
+    case 1: pos = (int)(found ? at + 1 : at); if ((unsigned)pos >= x->count) pos = -1; break;
+    case 2: if (at < x->count) pos = (int)at; break;
+    case 3: if (at > 0) pos = (int)at - 1; break;
+    case 4: if (found) pos = (int)at; else if (at > 0) pos = (int)at - 1; break;
+    }
+    if (pos < 0) return file_result(f, "23", "");
+    x->pos = pos; x->last = -1; f->at_eof = 0;
+    return file_result(f, "00", "");
+}
+
+/* REWRITE: indexed by key; fixed sequential in place after a READ */
+int cob_rewrite(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "49", "REWRITE of a file not open");
+    if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "REWRITE needs OPEN I-O");
+    if (f->org == COB_ORG_INDEXED) {
+        cob_idx *x = f->idx;
+        const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
+        int found;
+        unsigned at = idx_find(f, x, k, &found);
+        if (!found) return file_result(f, "23", "");
+        if (!slot_write(f, entry_slot(f, entry(f, x, at)))) return file_result(f, "30", "write failed");
+        return file_result(f, "00", "");
+    }
+    if (f->org == COB_ORG_SEQ) {
+        FILE *fp = (FILE *)f->fp;
+        if (fseek(fp, -(long)f->recsize, 1) != 0) return file_result(f, "43", "");
+        if (fwrite(f->record, 1, f->recsize, fp) != f->recsize) return file_result(f, "30", "write failed");
+        return file_result(f, "00", "");
+    }
+    return file_result(f, "49", "REWRITE on a LINE SEQUENTIAL file");
+}
+
+/* DELETE: the record whose key is in the record area (random) or the
+ * one last read (sequential access) */
+int cob_delete(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "49", "DELETE of a file not open");
+    if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "DELETE needs OPEN I-O");
+    if (f->org != COB_ORG_INDEXED) cob_fatal("DELETE on a file that is not INDEXED");
+    cob_idx *x = f->idx;
+    unsigned at; int found;
+    if (f->access == 0) {
+        if (x->last < 0) return file_result(f, "43", "");
+        at = (unsigned)x->last; found = 1;
+    } else at = idx_find(f, x, (const unsigned char *)f->record + f->keyoff, &found);
+    if (!found) return file_result(f, "23", "");
+    unsigned es = entry_size(f);
+    memmove(entry(f, x, at), entry(f, x, at + 1), (size_t)(x->count - at - 1) * es);
+    x->count--;
+    if (x->pos > (int)at) x->pos--;
+    x->last = -1;
+    return file_result(f, "00", "");
 }

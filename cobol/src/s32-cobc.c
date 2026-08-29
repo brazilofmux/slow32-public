@@ -16,7 +16,9 @@
  * arithmetic expressions (also as condition operands), ROUNDED, ON SIZE
  * ERROR, REMAINDER.  Stage 4: SELECT/FD, line sequential and fixed
  * sequential files (OPEN, CLOSE, READ, WRITE), STRING, the case
- * intrinsics.  Unimplemented is a diagnostic, never silence.
+ * intrinsics.  Stage 5: INDEXED files -- READ KEY / NEXT, WRITE, REWRITE,
+ * DELETE, START, INVALID KEY.  Unimplemented is a diagnostic, never
+ * silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +28,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.4 (stage 4)"
+#define VERSION "0.5 (stage 5)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -511,7 +513,7 @@ typedef struct {
     Tok *assign_lit;                 /* ASSIGN TO literal ... */
     char assign_name[64];            /* ... or to a data-name */
     char status_name[64], key_name[64], report_name[64];
-    Sym *assign_sym, *status_sym;
+    Sym *assign_sym, *status_sym, *key_sym;
     int  rec;                        /* sym index of the first 01, -1 */
     int  recsize;
 } File;
@@ -1070,6 +1072,18 @@ static void finish_data_division(void)
         }
         for (int j = 0; j < g_nsym; j++)
             if (g_sym[j].fd == i && g_sym[j].level == 1 && g_sym[j].size > f->recsize) f->recsize = g_sym[j].size;
+        if (f->key_name[0]) {
+            /* the RECORD KEY must be an item inside this file's record */
+            Sym *k = NULL; int nk = 0;
+            for (int j = 0; j < g_nsym; j++)
+                if (!g_sym[j].is_cond && !g_sym[j].is_filler && !strcmp(g_sym[j].name, f->key_name) &&
+                    f->rec >= 0 && g_sym[j].record == g_sym[f->rec].record) { k = &g_sym[j]; nk++; }
+            if (!k) die_at(f->line, "RECORD KEY '%s' is not an item of file '%s'", f->key_name, f->name);
+            if (nk > 1) die_at(f->line, "RECORD KEY '%s' is ambiguous in file '%s'", f->key_name, f->name);
+            if (k->ndims) die_at(f->line, "RECORD KEY '%s' cannot be a table item", f->key_name);
+            if (k->size < 1 || k->size > 255) die_at(f->line, "RECORD KEY '%s' must be 1 to 255 bytes", f->key_name);
+            f->key_sym = k;
+        }
         if (f->rec >= 0 && g_sym[f->rec].image_size < f->recsize) g_sym[f->rec].image_size = f->recsize;
     }
     /* images */
@@ -2764,9 +2778,8 @@ static File *expect_file(void)
     if (t->kind != T_WORD) die_at(t->line, "expected a file-name, found %s", tok_desc(t));
     File *f = file_find(t->s);
     if (!f) die_at(t->line, "'%s' is not a file (no SELECT)", t->s);
-    if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ)
-        die_at(t->line, "'%s' is %s; INDEXED and RELATIVE files are not implemented yet (stage 5)", t->s,
-               f->org == COB_ORG_INDEXED ? "INDEXED" : "RELATIVE");
+    if (f->org == COB_ORG_RELATIVE)
+        die_at(t->line, "'%s' is RELATIVE; RELATIVE files are not implemented yet (after v1)", t->s);
     advance();
     return f;
 }
@@ -2806,17 +2819,54 @@ static void parse_close(void)
     if (!n) die_at(cur()->line, "CLOSE needs a file-name");
 }
 
+/* [NOT] INVALID KEY / [NOT] AT END after a keyed verb, on the result in
+ * SLOT_C: 0 done, 1 the condition, 2 an error already reported */
+static void parse_condition_clauses(const char *w1, const char *w2, const char *end_word)
+{
+    int Lend = new_label();
+    if (at_word(w1)) {
+        advance(); expect_word(w2);
+        int Lnot = new_label();
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit_li("r2", 1);
+        emit("\tbne r1, r2, .L%d", Lnot);
+        parse_statements();
+        emit_jump(Lend);
+        emit_label(Lnot);
+    }
+    if (at_word("not") && is_word(peek(1), w1)) {
+        advance(); advance(); expect_word(w2);
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit("\tbne r1, r0, .L%d", Lend);
+        parse_statements();
+    }
+    emit_label(Lend);
+    accept_word(end_word);
+}
+
 static void parse_read(void)
 {
     File *f = expect_file();
-    accept_word("next"); accept_word("record");
+    int has_next = accept_word("next"); accept_word("record");
     Ref into; int has_into = 0;
     if (accept_word("into")) { parse_ref(&into); has_into = 1; }
-    if (at_word("key")) die_at(cur()->line, "READ ... KEY is for INDEXED files (stage 5)");
-    if (at_word("invalid")) die_at(cur()->line, "INVALID KEY is for INDEXED and RELATIVE files (stage 5)");
+    int keyed = 0;
+    if (accept_word("key")) {
+        accept_word("is");
+        Ref k; parse_ref(&k);
+        if (f->org != COB_ORG_INDEXED) die_at(k.line, "READ ... KEY needs an INDEXED file");
+        if (k.sym != f->key_sym) die_at(k.line, "READ ... KEY IS '%s': only the RECORD KEY is supported (no ALTERNATE keys)", k.sym->name);
+        keyed = 1;
+    }
+    if (f->org == COB_ORG_INDEXED) {
+        if (has_next && keyed) die_at(cur()->line, "READ NEXT cannot name a KEY");
+        if (!has_next && !keyed && f->access == 1) keyed = 1;         /* ACCESS RANDOM: every READ is by key */
+        if (has_next && f->access == 1) die_at(cur()->line, "READ NEXT needs ACCESS SEQUENTIAL or DYNAMIC");
+        if (keyed && f->access == 0) die_at(cur()->line, "READ ... KEY needs ACCESS RANDOM or DYNAMIC");
+    } else if (keyed) die_at(cur()->line, "READ ... KEY needs an INDEXED file");
 
     emit_file_addr("r3", f);
-    emit_call("cob_read");
+    emit_call(keyed ? "cob_read_key" : "cob_read");
     emit("\tstw sp+%d, r1", SLOT_C);
     if (has_into) {
         int Lskip = new_label();
@@ -2826,33 +2876,19 @@ static void parse_read(void)
         emit_move(&src, &into);
         emit_label(Lskip);
     }
-    int Lend = new_label();
-    if (accept_word("at")) {
-        expect_word("end");
-        int Lnot = new_label();
-        emit("\tldw r1, sp+%d", SLOT_C);
-        emit_li("r2", 1);
-        emit("\tbne r1, r2, .L%d", Lnot);
-        parse_statements();
-        emit_jump(Lend);
-        emit_label(Lnot);
+    if (keyed) {
+        if (at_word("at")) die_at(cur()->line, "a READ by key takes INVALID KEY, not AT END");
+        parse_condition_clauses("invalid", "key", "end-read");
+    } else {
+        if (at_word("invalid")) die_at(cur()->line, "a sequential READ takes AT END, not INVALID KEY");
+        parse_condition_clauses("at", "end", "end-read");
     }
-    if (accept_word("not")) {
-        expect_word("at"); expect_word("end");
-        emit("\tldw r1, sp+%d", SLOT_C);
-        emit("\tbne r1, r0, .L%d", Lend);
-        parse_statements();
-    }
-    emit_label(Lend);
-    accept_word("end-read");
 }
 
 static void parse_write(void)
 {
     Ref rec; parse_ref(&rec);
     File *f = file_of_record(rec.sym, rec.line);
-    if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ)
-        die_at(rec.line, "WRITE to an INDEXED or RELATIVE file is not implemented yet (stage 5)");
     if (accept_word("from")) {
         Opnd src; parse_operand(&src);
         emit_move(&src, &rec);
@@ -2868,7 +2904,8 @@ static void parse_write(void)
         else die_at(n.line, "ADVANCING needs an integer");
         accept_word("line"); accept_word("lines");
     }
-    if (at_word("invalid")) die_at(cur()->line, "INVALID KEY is for INDEXED and RELATIVE files (stage 5)");
+    if (f->org == COB_ORG_INDEXED && (before || after || dyn)) die_at(rec.line, "ADVANCING is not valid on an INDEXED file");
+    if (f->org != COB_ORG_INDEXED && at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED file");
     if (dyn) {
         if (is_hot_int(n.ref.sym)) emit_hot_value(&n);
         else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
@@ -2881,7 +2918,64 @@ static void parse_write(void)
         emit_file_addr("r3", f); emit_li("r4", before); emit_li("r5", after);
     }
     emit_call("cob_write");
-    accept_word("end-write");
+    if (f->org == COB_ORG_INDEXED) {
+        emit("\tstw sp+%d, r1", SLOT_C);
+        parse_condition_clauses("invalid", "key", "end-write");
+    } else accept_word("end-write");
+}
+
+/* REWRITE record [FROM x] [INVALID KEY ...] */
+static void parse_rewrite(void)
+{
+    Ref rec; parse_ref(&rec);
+    File *f = file_of_record(rec.sym, rec.line);
+    if (f->org == COB_ORG_LINESEQ) die_at(rec.line, "REWRITE is not valid on a LINE SEQUENTIAL file");
+    if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
+    emit_file_addr("r3", f);
+    emit_call("cob_rewrite");
+    emit("\tstw sp+%d, r1", SLOT_C);
+    if (f->org == COB_ORG_INDEXED) parse_condition_clauses("invalid", "key", "end-rewrite");
+    else { if (at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED file"); accept_word("end-rewrite"); }
+}
+
+/* DELETE file [RECORD] [INVALID KEY ...] */
+static void parse_delete(void)
+{
+    File *f = expect_file();
+    accept_word("record");
+    if (f->org != COB_ORG_INDEXED) die_at(cur()->line, "DELETE needs an INDEXED file");
+    emit_file_addr("r3", f);
+    emit_call("cob_delete");
+    emit("\tstw sp+%d, r1", SLOT_C);
+    parse_condition_clauses("invalid", "key", "end-delete");
+}
+
+/* START file [KEY IS relation key] [INVALID KEY ...] */
+static void parse_start(void)
+{
+    File *f = expect_file();
+    if (f->org != COB_ORG_INDEXED) die_at(cur()->line, "START needs an INDEXED file");
+    if (f->access == 1) die_at(cur()->line, "START needs ACCESS SEQUENTIAL or DYNAMIC");
+    int op = 0;                     /* = */
+    if (accept_word("key")) {
+        accept_word("is");
+        int neg = 0;
+        if (accept_word("not")) neg = 1;
+        if (at_op("=") || at_word("equal") || at_word("equals")) { advance(); accept_word("to"); op = 0; }
+        else if (at_op(">") || at_word("greater")) { advance(); accept_word("than"); op = 1; if (accept_word("or")) { expect_word("equal"); accept_word("to"); op = 2; } }
+        else if (at_op(">=")) { advance(); op = 2; }
+        else if (at_op("<") || at_word("less")) { advance(); accept_word("than"); op = 3; if (accept_word("or")) { expect_word("equal"); accept_word("to"); op = 4; } }
+        else if (at_op("<=")) { advance(); op = 4; }
+        else die_at(cur()->line, "expected a relation in START ... KEY IS");
+        if (neg) { if (op == 3) op = 2; else if (op == 1) op = 4; else die_at(cur()->line, "START KEY IS NOT takes LESS or GREATER"); }
+        Ref k; parse_ref(&k);
+        if (k.sym != f->key_sym) die_at(k.line, "START ... KEY IS '%s': only the RECORD KEY is supported", k.sym->name);
+    }
+    emit_file_addr("r3", f);
+    emit_li("r4", op);
+    emit_call("cob_start");
+    emit("\tstw sp+%d, r1", SLOT_C);
+    parse_condition_clauses("invalid", "key", "end-start");
 }
 
 /* ---- STRING ------------------------------------------------------------ */
@@ -2982,6 +3076,9 @@ static void parse_statement(void)
     if (!strcmp(v, "close")) { advance(); parse_close(); return; }
     if (!strcmp(v, "read")) { advance(); parse_read(); return; }
     if (!strcmp(v, "write")) { advance(); parse_write(); return; }
+    if (!strcmp(v, "rewrite")) { advance(); parse_rewrite(); return; }
+    if (!strcmp(v, "delete")) { advance(); parse_delete(); return; }
+    if (!strcmp(v, "start")) { advance(); parse_start(); return; }
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
     if (!strcmp(v, "if")) { advance(); parse_if(); return; }
     if (!strcmp(v, "perform")) { advance(); parse_perform(); return; }
@@ -3008,7 +3105,6 @@ static void parse_statement(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
-        { "rewrite", "stage 5" }, { "start", "stage 5" }, { "delete", "stage 5" },
         { "call", "stage 6" }, { "cancel", "stage 6" }, { "initiate", "stage 7" }, { "generate", "stage 7" },
         { "terminate", "stage 7" }, { "accept", "stage 8" }, { "evaluate", "stage 9" },
         { "inspect", "stage 9" }, { "initialize", "stage 9" },
@@ -3382,6 +3478,9 @@ static void emit_data(void)
         if (f->assign_sym) { emit("\t.word %s+%d", g_sym[f->assign_sym->record].label, f->assign_sym->offset); emit("\t.word %d", f->assign_sym->size); }
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
+        emit("\t.word 0");
+        if (f->key_sym) { emit("\t.word %d", f->key_sym->offset); emit("\t.word %d", f->key_sym->size); }
+        else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
     }
     emit("");
