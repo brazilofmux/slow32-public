@@ -25,6 +25,23 @@ enum {
     COB_F_NOTRUNC  = 32   /* COMP-5 / C types: full binary capacity, no decimal truncation */
 };
 
+/* a file, as SELECT/FD described it; built by the compiler in .data */
+enum { COB_ORG_LINESEQ = 0, COB_ORG_SEQ = 1, COB_ORG_INDEXED = 2, COB_ORG_RELATIVE = 3 };
+enum { COB_OPEN_INPUT = 1, COB_OPEN_OUTPUT = 2, COB_OPEN_IO = 3, COB_OPEN_EXTEND = 4 };
+
+typedef struct {
+    unsigned char org, access, optional, open_mode;   /* open_mode: 0 closed */
+    void *fp;                 /* FILE* while open */
+    char *record;             /* the record area (the FD's first 01) */
+    unsigned int recsize;     /* the largest 01 under the FD */
+    char *status;             /* FILE STATUS item (2 bytes) or 0 */
+    const char *assign;       /* literal name, NUL-terminated, or 0 */
+    char *assign_item;        /* ASSIGN TO data-name: its bytes ... */
+    unsigned int assign_len;  /* ... and length */
+    unsigned int at_eof;
+    unsigned int last_len;    /* bytes the last READ delivered */
+} cob_file;
+
 typedef struct {
     unsigned char cat;
     unsigned char usage;

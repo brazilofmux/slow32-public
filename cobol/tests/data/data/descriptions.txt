@@ -1,0 +1,25 @@
+0000000003Invoice utilities ledger
+0000000006Hardware
+0000000009Rent
+0000000012Ledger hardware receipt ledger journal
+0000000015
+0000000018Utilities ledger travel journal receipt
+0000000021Travel ledger travel travel utilities le
+0000000024Ledger hardware
+0000000027Payroll utilities
+0000000030Hardware journal
+0000000033Payroll hardware invoice journal travel
+0000000036Receipt rent journal hardware journal
+0000000039Ledger travel receipt software hardware
+0000000042Rent software travel software
+0000000045Payroll receipt invoice
+0000000048Receipt journal travel payroll hardware 
+0000000051Software payroll travel
+0000000054Journal
+0000000057Utilities invoice rent invoice software
+0000000060Ledger journal hardware travel
+0000000063Rent rent travel
+0000000066Travel software journal journal
+0000000069Software journal ledger
+0000000072Payroll travel software payroll utilitie
+0000000075Software

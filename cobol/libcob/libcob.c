@@ -9,7 +9,8 @@
  * Stage 2: DISPLAY; MOVE across the conversion matrix; comparison; class
  * tests; a scaled-i64 numeric stack for the arithmetic statements; the
  * PERFORM stack.  Stage 3: editing and de-editing (cobedit.h), ROUNDED,
- * SIZE ERROR, COMPUTE's operators.
+ * SIZE ERROR, COMPUTE's operators.  Stage 4: line sequential and fixed
+ * sequential files, STRING, the case intrinsics.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -523,4 +524,197 @@ void *cob_perform_exit(int id)
 {
     if (psp > 0 && pstk[psp - 1].exit_id == id) return pstk[--psp].ret;
     return 0;
+}
+
+/* ====================================================================== */
+/* Files                                                                   */
+/* ====================================================================== */
+
+/* Line sequential and fixed sequential.  The framing is the FD's fact
+ * (docs/framing.md): line sequential is payload then '\n', trailing
+ * spaces removed on WRITE (GnuCOBOL's convention, and csv2fw's), the
+ * record area space-filled beyond a short line on READ, a '\r' before
+ * the '\n' dropped.  A line longer than the record area is truncated with
+ * status 04 -- not split into further records as GnuCOBOL 4 does. */
+
+static void set_status(cob_file *f, const char *st)
+{
+    if (f->status) { f->status[0] = st[0]; f->status[1] = st[1]; }
+}
+
+/* 0 success, 1 at end / no record, 2 error.  A hard error with no FILE
+ * STATUS to report it in stops the run, as GnuCOBOL does. */
+static int file_result(cob_file *f, const char *st, const char *what)
+{
+    set_status(f, st);
+    if (st[0] == '0') return 0;
+    if (st[0] == '1') return 1;
+    if (!f->status) {
+        char msg[96];
+        int n = 0;
+        const char *pre = "file error (status ";
+        while (*pre) msg[n++] = *pre++;
+        msg[n++] = st[0]; msg[n++] = st[1]; msg[n++] = ')'; msg[n++] = ' ';
+        while (*what && n < 90) msg[n++] = *what++;
+        msg[n] = 0;
+        cob_fatal(msg);
+    }
+    return 2;
+}
+
+static const char *file_name(cob_file *f)
+{
+    static char name[256];
+    if (f->assign) return f->assign;
+    int n = (int)f->assign_len;
+    if (n > 255) n = 255;
+    while (n > 0 && f->assign_item[n - 1] == ' ') n--;
+    memcpy(name, f->assign_item, n); name[n] = 0;
+    return name;
+}
+
+int cob_open(cob_file *f, int mode)
+{
+    if (f->open_mode) return file_result(f, "41", "OPEN of a file already open");
+    if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ)
+        cob_fatal("INDEXED and RELATIVE files are not implemented yet (stage 5)");
+    const char *name = file_name(f);
+    const char *fm = mode == COB_OPEN_INPUT ? "rb" : mode == COB_OPEN_OUTPUT ? "wb"
+                   : mode == COB_OPEN_EXTEND ? "ab" : "r+b";
+    FILE *fp = fopen(name, fm);
+    f->at_eof = 0;
+    if (!fp) {
+        if (mode == COB_OPEN_INPUT && f->optional) {
+            /* OPTIONAL and absent: open succeeds, the first READ is at end */
+            f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1;
+            return file_result(f, "05", name);
+        }
+        if (mode == COB_OPEN_INPUT) return file_result(f, "35", name);
+        return file_result(f, "30", name);
+    }
+    f->fp = fp; f->open_mode = (unsigned char)mode;
+    return file_result(f, "00", name);
+}
+
+int cob_close(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "42", "CLOSE of a file not open");
+    if (f->fp) fclose((FILE *)f->fp);
+    f->fp = 0; f->open_mode = 0; f->at_eof = 0;
+    return file_result(f, "00", "");
+}
+
+int cob_read(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
+    if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)
+        return file_result(f, "47", "READ of a file open for output");
+    if (f->at_eof) return file_result(f, "10", "");
+    FILE *fp = (FILE *)f->fp;
+    char *rec = f->record;
+    unsigned n = f->recsize;
+
+    if (f->org == COB_ORG_SEQ) {
+        size_t got = fread(rec, 1, n, fp);
+        if (got == 0) { f->at_eof = 1; return file_result(f, "10", ""); }
+        if (got < n) { memset(rec + got, ' ', n - got); f->last_len = (unsigned)got; return file_result(f, "04", ""); }
+        f->last_len = n;
+        return file_result(f, "00", "");
+    }
+
+    unsigned i = 0; int c, truncated = 0, any = 0;
+    while ((c = fgetc(fp)) != EOF) {
+        any = 1;
+        if (c == '\n') break;
+        if (i < n) rec[i++] = (char)c; else truncated = 1;
+    }
+    if (!any) { f->at_eof = 1; return file_result(f, "10", ""); }
+    if (i > 0 && rec[i - 1] == '\r') i--;
+    f->last_len = i;
+    if (i < n) memset(rec + i, ' ', n - i);
+    return file_result(f, truncated ? "04" : "00", "");
+}
+
+/* before/after: extra newlines around the record (ADVANCING) */
+int cob_write(cob_file *f, int before, int after)
+{
+    if (!f->open_mode) return file_result(f, "48", "WRITE of a file not open");
+    if (f->open_mode == COB_OPEN_INPUT) return file_result(f, "48", "WRITE of a file open for input");
+    FILE *fp = (FILE *)f->fp;
+    const char *rec = f->record;
+    unsigned n = f->recsize;
+    if (f->org == COB_ORG_SEQ) {
+        if (fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
+        return file_result(f, "00", "");
+    }
+    for (int i = 0; i < before; i++) fputc('\n', fp);
+    while (n > 0 && rec[n - 1] == ' ') n--;
+    if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
+    fputc('\n', fp);
+    for (int i = 0; i < after; i++) fputc('\n', fp);
+    return file_result(f, "00", "");
+}
+
+/* ====================================================================== */
+/* STRING                                                                  */
+/* ====================================================================== */
+
+static struct { char *dst; int dlen, pos, overflow; } cs;
+
+/* pos is the 1-based POINTER value, or 0 when there is none */
+void cob_str_begin(char *dst, int dlen, int pos)
+{
+    cs.dst = dst; cs.dlen = dlen; cs.overflow = 0;
+    cs.pos = pos ? pos : 1;
+    if (cs.pos < 1 || cs.pos > dlen) cs.overflow = 1;
+}
+
+/* delim of length dn; dn == 0 means DELIMITED BY SIZE */
+void cob_str_src(const char *s, int n, const char *delim, int dn)
+{
+    if (cs.overflow) return;
+    int take = n;
+    if (dn) {
+        for (int i = 0; i + dn <= n; i++)
+            if (!memcmp(s + i, delim, dn)) { take = i; break; }
+    }
+    for (int i = 0; i < take; i++) {
+        if (cs.pos > cs.dlen) { cs.overflow = 1; return; }
+        cs.dst[cs.pos - 1] = s[i];
+        cs.pos++;
+    }
+}
+
+int cob_str_pointer(void) { return cs.pos; }
+int cob_str_overflow(void) { return cs.overflow; }
+
+/* an integer into any numeric item */
+void cob_store_int(void *p, const cob_desc *d, int v) { cob_put_num(p, d, v, 0); }
+
+/* ====================================================================== */
+/* Intrinsic functions                                                     */
+/* ====================================================================== */
+
+static char fnbuf[4][1024];
+static int fnrot;
+
+static char *fn_buffer(int n)
+{
+    if (n > 1024) cob_fatal("intrinsic function argument longer than 1024");
+    char *b = fnbuf[fnrot++ & 3];
+    return b;
+}
+
+char *cob_fn_upper(const char *s, int n)
+{
+    char *b = fn_buffer(n);
+    for (int i = 0; i < n; i++) b[i] = (s[i] >= 'a' && s[i] <= 'z') ? (char)(s[i] - 32) : s[i];
+    return b;
+}
+
+char *cob_fn_lower(const char *s, int n)
+{
+    char *b = fn_buffer(n);
+    for (int i = 0; i < n; i++) b[i] = (s[i] >= 'A' && s[i] <= 'Z') ? (char)(s[i] + 32) : s[i];
+    return b;
 }

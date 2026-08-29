@@ -14,7 +14,9 @@
  * every PERFORM form, GO TO, SET.  Stage 3: edited MOVE and de-edit
  * through the shared software editor (libcob/cobedit.h), COMPUTE with
  * arithmetic expressions (also as condition operands), ROUNDED, ON SIZE
- * ERROR, REMAINDER.  Unimplemented is a diagnostic, never silence.
+ * ERROR, REMAINDER.  Stage 4: SELECT/FD, line sequential and fixed
+ * sequential files (OPEN, CLOSE, READ, WRITE), STRING, the case
+ * intrinsics.  Unimplemented is a diagnostic, never silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +26,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.3 (stage 3)"
+#define VERSION "0.4 (stage 4)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -452,6 +454,7 @@ typedef struct Sym {
     Tok *value_tok; int value_all, value_fig;
     /* level 88 */
     int  ncv; Tok *cv_lo[MAXCV], *cv_hi[MAXCV];
+    int  fd;                        /* file index for an 01 under an FD, else -1 */
     /* records */
     unsigned char *image; int image_size;
     char label[48];
@@ -468,7 +471,7 @@ static Sym *sym_new(void)
     Sym *s = &g_sym[g_nsym++];
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
-    s->desc_id = -1;
+    s->desc_id = -1; s->fd = -1;
     return s;
 }
 
@@ -499,6 +502,34 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
 }
 
 static char g_progid[64];
+
+/* ---- files: SELECT + FD ------------------------------------------------ */
+
+typedef struct {
+    char name[64];
+    int  line, org, access, optional;
+    Tok *assign_lit;                 /* ASSIGN TO literal ... */
+    char assign_name[64];            /* ... or to a data-name */
+    char status_name[64], key_name[64], report_name[64];
+    Sym *assign_sym, *status_sym;
+    int  rec;                        /* sym index of the first 01, -1 */
+    int  recsize;
+} File;
+
+static File *g_files; static int g_nfile, g_fcap;
+static int g_cur_fd = -1;            /* the FD whose 01s are being parsed */
+
+static File *file_find(const char *name)
+{
+    for (int i = 0; i < g_nfile; i++) if (!strcmp(g_files[i].name, name)) return &g_files[i];
+    return NULL;
+}
+
+static File *file_of_record(Sym *s, int line)
+{
+    if (s->level != 1 || s->fd < 0) die_at(line, "'%s' is not a record of a file", s->name);
+    return &g_files[s->fd];
+}
 
 /* ====================================================================== */
 /* Data Division                                                           */
@@ -800,6 +831,13 @@ static void parse_data_item(void)
         die_at(line, "a level 77 item cannot have OCCURS or REDEFINES");
     if (level == 1 && s->occurs)
         die_at(line, "OCCURS is not allowed at level 01");
+    if (g_cur_fd >= 0 && level == 1) {
+        /* every 01 under an FD is a view of the same record area */
+        File *f = &g_files[g_cur_fd];
+        s->fd = g_cur_fd;
+        if (f->rec < 0) f->rec = sym_idx(s); else s->redefines = f->rec;
+    } else if (g_cur_fd >= 0 && level == 77)
+        die_at(line, "a level 77 item cannot appear in the FILE SECTION");
 }
 
 /* ---- tree, layout, images ------------------------------------------- */
@@ -1017,6 +1055,23 @@ static void finish_data_division(void)
         if (s->size > g_sym[r].image_size && s->size > g_sym[r].size) g_sym[r].image_size = s->size;
         for (int j = 0; j < g_nsym; j++) if (g_sym[j].record == i) g_sym[j].record = r;
     }
+    /* files: names, status, the record area */
+    for (int i = 0; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (f->rec < 0 && !f->report_name[0]) die_at(f->line, "file '%s' has no FD", f->name);
+        if (f->assign_name[0]) {
+            f->assign_sym = sym_lookup(f->assign_name, NULL, 0, f->line);
+            if (f->assign_sym->is_group || f->assign_sym->pi.category == PIC_NUMERIC)
+                die_at(f->line, "ASSIGN TO '%s': the data-name must be alphanumeric", f->assign_name);
+        }
+        if (f->status_name[0]) {
+            f->status_sym = sym_lookup(f->status_name, NULL, 0, f->line);
+            if (f->status_sym->size != 2) die_at(f->line, "FILE STATUS '%s' must be PIC XX", f->status_name);
+        }
+        for (int j = 0; j < g_nsym; j++)
+            if (g_sym[j].fd == i && g_sym[j].level == 1 && g_sym[j].size > f->recsize) f->recsize = g_sym[j].size;
+        if (f->rec >= 0 && g_sym[f->rec].image_size < f->recsize) g_sym[f->rec].image_size = f->recsize;
+    }
     /* images */
     for (int i = 0; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
@@ -1188,15 +1243,16 @@ typedef struct {
     int line;
 } Ref;
 
-enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR };
+enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC };
 
-typedef struct {
+typedef struct Opnd_ {
     int kind;
     Ref ref;
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
     NumLit num;         /* O_NUM */
     int line;
     int e_start, e_end; /* O_EXPR: token range, re-parsed when emitted */
+    int fn; struct Opnd_ *farg; int fsize;   /* O_FUNC: intrinsic, its argument, result width */
 } Opnd;
 
 static int is_int_item(Sym *s)
@@ -1271,11 +1327,35 @@ static void parse_ref(Ref *r)
             die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
 }
 
+enum { FN_UPPER, FN_LOWER };
+
 static void parse_operand(Opnd *o)
 {
     memset(o, 0, sizeof *o);
     Tok *t = cur();
     o->line = t->line;
+    if (t->kind == T_WORD && !strcmp(t->s, "function")) {
+        advance();
+        Tok *n = cur();
+        if (n->kind != T_WORD) die_at(n->line, "expected an intrinsic function name");
+        if (!strcmp(n->s, "upper-case")) o->fn = FN_UPPER;
+        else if (!strcmp(n->s, "lower-case")) o->fn = FN_LOWER;
+        else if (!strcmp(n->s, "length") || !strcmp(n->s, "current-date"))
+            die_at(n->line, "FUNCTION %s is not implemented yet (stage 9)", n->s);
+        else die_at(n->line, "FUNCTION %s is not implemented", n->s);
+        advance();
+        if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
+        advance();
+        o->farg = xmalloc(sizeof *o->farg);
+        parse_operand(o->farg);
+        if (o->farg->kind != O_REF && o->farg->kind != O_STR)
+            die_at(n->line, "FUNCTION %s takes an alphanumeric item or literal", n->s);
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+        advance();
+        o->kind = O_FUNC;
+        o->fsize = o->farg->kind == O_REF ? o->farg->ref.sym->size : o->farg->tok->len;
+        return;
+    }
     if (t->kind == T_STR) { o->kind = O_STR; o->tok = t; advance(); return; }
     if (t->kind == T_NUM) { o->kind = O_NUM; numlit_parse(t, &o->num); advance(); return; }
     if (t->kind == T_WORD && is_figurative(t->s)) { o->kind = O_FIG; o->tok = t; advance(); return; }
@@ -1356,13 +1436,14 @@ static void emit_ref_addr(const Ref *r, const char *reg)
 
 /* ---- argument staging ------------------------------------------------- */
 
-enum { A_REF, A_LABEL, A_DESC, A_IMM };
-typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; } Arg;
+enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC };
+typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; Opnd *fn; } Arg;
+static Arg arg_func(Opnd *o)       { Arg a = { A_FUNC, 0, 0, 0, 0, o }; return a; }
 
-static Arg arg_ref(const Ref *r)   { Arg a = { A_REF, r, 0, 0, 0 }; return a; }
-static Arg arg_label(const char *l){ Arg a = { A_LABEL, 0, l, 0, 0 }; return a; }
-static Arg arg_desc(int d)         { Arg a = { A_DESC, 0, 0, d, 0 }; return a; }
-static Arg arg_imm(long v)         { Arg a = { A_IMM, 0, 0, 0, v }; return a; }
+static Arg arg_ref(const Ref *r)   { Arg a = { A_REF, r, 0, 0, 0, 0 }; return a; }
+static Arg arg_label(const char *l){ Arg a = { A_LABEL, 0, l, 0, 0, 0 }; return a; }
+static Arg arg_desc(int d)         { Arg a = { A_DESC, 0, 0, d, 0, 0 }; return a; }
+static Arg arg_imm(long v)         { Arg a = { A_IMM, 0, 0, 0, v, 0 }; return a; }
 
 static const char *argreg(int i)
 {
@@ -1375,12 +1456,22 @@ static const char *argreg(int i)
 static void emit_args(const Arg *a, int n)
 {
     int slotted[8] = { 0 };
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++) {
         if (a[i].kind == A_REF && ref_needs_call(a[i].ref)) {
             emit_ref_addr(a[i].ref, "r1");
             emit("\tstw sp+%d, r1", SLOT(i));
             slotted[i] = 1;
+        } else if (a[i].kind == A_FUNC) {
+            /* an intrinsic: evaluate into libcob's buffer, park the pointer */
+            Opnd *f = a[i].fn, *x = f->farg;
+            if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
+            else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
+            emit_li("r4", f->fsize);
+            emit_call(f->fn == FN_UPPER ? "cob_fn_upper" : "cob_fn_lower");
+            emit("\tstw sp+%d, r1", SLOT(i));
+            slotted[i] = 1;
         }
+    }
     for (int i = 0; i < n; i++) {
         const char *reg = argreg(i);
         if (slotted[i]) { emit("\tldw %s, sp+%d", reg, SLOT(i)); continue; }
@@ -1400,6 +1491,8 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
     switch (o->kind) {
     case O_REF:
         *addr = arg_ref(&o->ref); *desc = arg_desc(sym_desc(o->ref.sym)); return;
+    case O_FUNC:
+        *addr = arg_func(o); *desc = arg_desc(str_desc(o->fsize)); return;
     case O_STR:
         *addr = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
         *desc = arg_desc(str_desc(o->tok->len)); return;
@@ -1432,6 +1525,7 @@ static int opnd_size(Opnd *o)
     case O_REF: return o->ref.sym->size;
     case O_STR: return o->tok->len;
     case O_NUM: return o->num.ndigits;
+    case O_FUNC: return o->fsize;
     default: return 0;
     }
 }
@@ -1759,7 +1853,9 @@ static int at_scope_end(void)
     Tok *t = cur();
     if (t->kind == T_PERIOD || t->kind == T_EOF) return 1;
     if (t->kind != T_WORD) return 0;
-    if (!strcmp(t->s, "not") && (is_word(peek(1), "on") || is_word(peek(1), "size"))) return 1;
+    if (!strcmp(t->s, "not") && (is_word(peek(1), "on") || is_word(peek(1), "size") ||
+                                 is_word(peek(1), "at") || is_word(peek(1), "invalid") ||
+                                 is_word(peek(1), "overflow"))) return 1;
     return is_terminator(t->s);
 }
 
@@ -1774,7 +1870,9 @@ static int at_operand(void)
     static const char *clause[] = { "to", "from", "by", "into", "giving", "rounded", "on",
         "size", "upon", "with", "thru", "through", "until", "varying", "times", "after",
         "before", "remainder", "depending", "corresponding", "corr", "then", "and", "or",
-        "is", "not", "up", "down", NULL };
+        "is", "not", "up", "down", "delimited", "pointer", "overflow", "at", "next", "record",
+        "key", "invalid", "advancing", "lines", "line", "page", "input", "output", "i-o",
+        "extend", "lock", "rewind", "end-string", NULL };
     for (int i = 0; clause[i]; i++) if (!strcmp(t->s, clause[i])) return 0;
     return 1;
 }
@@ -1870,7 +1968,8 @@ static void parse_display(void)
             emit_args(a, 2); emit_call("cob_display"); break;
         }
         default: {
-            Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) };
+            Arg a[2];
+            opnd_args(&o, &a[0], &a[1], 0, 0);
             emit_args(a, 2); emit_call("cob_display_field"); break;
         }
         }
@@ -1933,6 +2032,13 @@ static void emit_move(Opnd *src, Ref *dst)
         case O_ALL: {
             Arg a[4] = { arg_ref(dst), arg_imm(d->size), arg_label(lit_label((unsigned char *)src->tok->s, src->tok->len)), arg_imm(src->tok->len) };
             emit_args(a, 4); emit_call("cob_fill_all");
+            return;
+        }
+        case O_FUNC: {
+            Arg a[4];
+            opnd_args(src, &a[0], &a[1], d->size, 0);
+            a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
+            emit_args(a, 4); emit_call("cob_move");
             return;
         }
         default: {
@@ -2644,6 +2750,219 @@ static void parse_set(void)
     }
 }
 
+/* ---- files: OPEN, CLOSE, READ, WRITE ---------------------------------- */
+
+static void emit_file_addr(const char *reg, File *f)
+{
+    char lab[32]; snprintf(lab, sizeof lab, ".Lfile%d", (int)(f - g_files));
+    emit_la(reg, lab);
+}
+
+static File *expect_file(void)
+{
+    Tok *t = cur();
+    if (t->kind != T_WORD) die_at(t->line, "expected a file-name, found %s", tok_desc(t));
+    File *f = file_find(t->s);
+    if (!f) die_at(t->line, "'%s' is not a file (no SELECT)", t->s);
+    if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ)
+        die_at(t->line, "'%s' is %s; INDEXED and RELATIVE files are not implemented yet (stage 5)", t->s,
+               f->org == COB_ORG_INDEXED ? "INDEXED" : "RELATIVE");
+    advance();
+    return f;
+}
+
+static void parse_open(void)
+{
+    int n = 0;
+    for (;;) {
+        int mode;
+        if (accept_word("input")) mode = COB_OPEN_INPUT;
+        else if (accept_word("output")) mode = COB_OPEN_OUTPUT;
+        else if (accept_word("i-o")) mode = COB_OPEN_IO;
+        else if (accept_word("extend")) mode = COB_OPEN_EXTEND;
+        else break;
+        while (cur()->kind == T_WORD && !at_word("input") && !at_word("output") && !at_word("i-o") &&
+               !at_word("extend") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
+            File *f = expect_file();
+            if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
+            if (accept_word("reversed")) die_at(cur()->line, "OPEN REVERSED is not supported");
+            emit_file_addr("r3", f); emit_li("r4", mode); emit_call("cob_open");
+            n++;
+        }
+    }
+    if (!n) die_at(cur()->line, "OPEN needs INPUT, OUTPUT, I-O or EXTEND and a file-name");
+}
+
+static void parse_close(void)
+{
+    int n = 0;
+    while (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
+        File *f = expect_file();
+        if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
+        else if (accept_word("reel") || accept_word("unit")) die_at(cur()->line, "CLOSE REEL/UNIT is not supported");
+        emit_file_addr("r3", f); emit_call("cob_close");
+        n++;
+    }
+    if (!n) die_at(cur()->line, "CLOSE needs a file-name");
+}
+
+static void parse_read(void)
+{
+    File *f = expect_file();
+    accept_word("next"); accept_word("record");
+    Ref into; int has_into = 0;
+    if (accept_word("into")) { parse_ref(&into); has_into = 1; }
+    if (at_word("key")) die_at(cur()->line, "READ ... KEY is for INDEXED files (stage 5)");
+    if (at_word("invalid")) die_at(cur()->line, "INVALID KEY is for INDEXED and RELATIVE files (stage 5)");
+
+    emit_file_addr("r3", f);
+    emit_call("cob_read");
+    emit("\tstw sp+%d, r1", SLOT_C);
+    if (has_into) {
+        int Lskip = new_label();
+        emit("\tbne r1, r0, .L%d", Lskip);
+        Opnd src; memset(&src, 0, sizeof src); src.kind = O_REF; src.line = into.line;
+        src.ref.sym = &g_sym[f->rec]; src.ref.line = into.line;
+        emit_move(&src, &into);
+        emit_label(Lskip);
+    }
+    int Lend = new_label();
+    if (accept_word("at")) {
+        expect_word("end");
+        int Lnot = new_label();
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit_li("r2", 1);
+        emit("\tbne r1, r2, .L%d", Lnot);
+        parse_statements();
+        emit_jump(Lend);
+        emit_label(Lnot);
+    }
+    if (accept_word("not")) {
+        expect_word("at"); expect_word("end");
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit("\tbne r1, r0, .L%d", Lend);
+        parse_statements();
+    }
+    emit_label(Lend);
+    accept_word("end-read");
+}
+
+static void parse_write(void)
+{
+    Ref rec; parse_ref(&rec);
+    File *f = file_of_record(rec.sym, rec.line);
+    if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ)
+        die_at(rec.line, "WRITE to an INDEXED or RELATIVE file is not implemented yet (stage 5)");
+    if (accept_word("from")) {
+        Opnd src; parse_operand(&src);
+        emit_move(&src, &rec);
+    }
+    int before = 0, after = 0, after_kw = 0; Opnd n; int dyn = 0;
+    if (at_word("before") || at_word("after")) {
+        after_kw = accept_word("after"); if (!after_kw) accept_word("before");
+        accept_word("advancing");
+        if (accept_word("page")) die_at(cur()->line, "ADVANCING PAGE is not implemented (line sequential print files carry no form feed)");
+        parse_operand(&n);
+        if (n.kind == O_NUM) { long v = (long)numlit_int(&n.num); if (after_kw) before = (int)v - 1; else after = (int)v - 1; }
+        else if (n.kind == O_REF && is_int_item(n.ref.sym)) dyn = 1;
+        else die_at(n.line, "ADVANCING needs an integer");
+        accept_word("line"); accept_word("lines");
+    }
+    if (at_word("invalid")) die_at(cur()->line, "INVALID KEY is for INDEXED and RELATIVE files (stage 5)");
+    if (dyn) {
+        if (is_hot_int(n.ref.sym)) emit_hot_value(&n);
+        else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+        emit("\taddi r1, r1, -1");
+        emit("\tstw sp+%d, r1", SLOT_C);
+        emit_file_addr("r3", f);
+        if (after_kw) { emit("\tldw r4, sp+%d", SLOT_C); emit_li("r5", 0); }
+        else { emit_li("r4", 0); emit("\tldw r5, sp+%d", SLOT_C); }
+    } else {
+        emit_file_addr("r3", f); emit_li("r4", before); emit_li("r5", after);
+    }
+    emit_call("cob_write");
+    accept_word("end-write");
+}
+
+/* ---- STRING ------------------------------------------------------------ */
+
+static void parse_string(void)
+{
+    Opnd srcs[MAXOPS]; Opnd delims[MAXOPS]; int has_delim[MAXOPS];
+    int n = 0, pending = 0;
+    for (;;) {
+        while (at_operand() || at_word("function")) {
+            if (n >= MAXOPS) die_at(cur()->line, "too many STRING sources");
+            parse_operand(&srcs[n]);
+            if (srcs[n].kind == O_FIG || srcs[n].kind == O_ALL || srcs[n].kind == O_EXPR)
+                die_at(srcs[n].line, "a STRING source must be an item or a literal");
+            has_delim[n] = 0; n++; pending++;
+        }
+        if (accept_word("delimited")) {
+            accept_word("by");
+            Opnd d; memset(&d, 0, sizeof d);
+            if (accept_word("size")) d.kind = O_ALL;      /* stands for SIZE here */
+            else { parse_operand(&d); if (d.kind != O_STR && d.kind != O_REF && d.kind != O_FIG) die_at(d.line, "DELIMITED BY needs SIZE, a literal or an item"); }
+            for (int i = n - pending; i < n; i++) { delims[i] = d; has_delim[i] = 1; }
+            pending = 0;
+            continue;
+        }
+        break;
+    }
+    if (!n) die_at(cur()->line, "STRING needs a source");
+    for (int i = 0; i < n; i++) if (!has_delim[i]) die_at(srcs[i].line, "every STRING source needs DELIMITED BY");
+    expect_word("into");
+    Ref dst; parse_ref(&dst);
+    if (dst.sym->is_group || dst.sym->pi.category == PIC_NUMERIC)
+        die_at(dst.line, "the STRING receiver must be an elementary alphanumeric item");
+    Ref ptr; int has_ptr = 0;
+    if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; if (!is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item"); }
+    else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
+
+    /* begin: receiver, its length, the pointer's value */
+    if (has_ptr) {
+        if (is_hot_int(ptr.sym)) { Opnd po; memset(&po, 0, sizeof po); po.kind = O_REF; po.ref = ptr; emit_hot_value(&po); }
+        else { Arg a[2] = { arg_ref(&ptr), arg_desc(sym_desc(ptr.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+        emit("\tstw sp+%d, r1", SLOT_C);
+    }
+    Arg b[2] = { arg_ref(&dst), arg_imm(dst.sym->size) };
+    emit_args(b, 2);
+    if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 0);
+    emit_call("cob_str_begin");
+
+    for (int i = 0; i < n; i++) {
+        Arg a[4]; Arg dd;
+        opnd_args(&srcs[i], &a[0], &dd, 0, 0);
+        a[1] = arg_imm(opnd_size(&srcs[i]));
+        Opnd *d = &delims[i];
+        if (d->kind == O_ALL) { a[2] = arg_imm(0); a[3] = arg_imm(0); }
+        else if (d->kind == O_FIG) { unsigned char c = (unsigned char)fig_byte(d->tok->s); a[2] = arg_label(lit_label(&c, 1)); a[3] = arg_imm(1); }
+        else { Arg x; opnd_args(d, &a[2], &x, 0, 0); a[3] = arg_imm(opnd_size(d)); }
+        emit_args(a, 4);
+        emit_call("cob_str_src");
+    }
+    if (has_ptr) {
+        emit_call("cob_str_pointer");
+        emit("\tstw sp+%d, r1", SLOT_C);
+        Arg a[2] = { arg_ref(&ptr), arg_desc(sym_desc(ptr.sym)) };
+        emit_args(a, 2);
+        emit("\tldw r5, sp+%d", SLOT_C);
+        emit_call("cob_store_int");
+    }
+    int has_ovf = at_word("on") || at_word("overflow") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "overflow")));
+    if (has_ovf) {
+        int Lok = new_label(), Lend = new_label();
+        emit_call("cob_str_overflow");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        if (at_word("on") || at_word("overflow")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
+        emit_jump(Lend);
+        emit_label(Lok);
+        if (accept_word("not")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
+        emit_label(Lend);
+    }
+    accept_word("end-string");
+}
+
 /* ---- dispatch ---------------------------------------------------------- */
 
 static void parse_statement(void)
@@ -2659,6 +2978,11 @@ static void parse_statement(void)
     if (!strcmp(v, "multiply")) { advance(); parse_multiply(); return; }
     if (!strcmp(v, "divide")) { advance(); parse_divide(); return; }
     if (!strcmp(v, "compute")) { advance(); parse_compute(); return; }
+    if (!strcmp(v, "open")) { advance(); parse_open(); return; }
+    if (!strcmp(v, "close")) { advance(); parse_close(); return; }
+    if (!strcmp(v, "read")) { advance(); parse_read(); return; }
+    if (!strcmp(v, "write")) { advance(); parse_write(); return; }
+    if (!strcmp(v, "string")) { advance(); parse_string(); return; }
     if (!strcmp(v, "if")) { advance(); parse_if(); return; }
     if (!strcmp(v, "perform")) { advance(); parse_perform(); return; }
     if (!strcmp(v, "go")) { advance(); parse_goto(); return; }
@@ -2684,11 +3008,10 @@ static void parse_statement(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
-        { "open", "stage 4" }, { "close", "stage 4" }, { "read", "stage 4" },
-        { "write", "stage 4" }, { "rewrite", "stage 5" }, { "start", "stage 5" }, { "delete", "stage 5" },
+        { "rewrite", "stage 5" }, { "start", "stage 5" }, { "delete", "stage 5" },
         { "call", "stage 6" }, { "cancel", "stage 6" }, { "initiate", "stage 7" }, { "generate", "stage 7" },
         { "terminate", "stage 7" }, { "accept", "stage 8" }, { "evaluate", "stage 9" },
-        { "string", "stage 9" }, { "inspect", "stage 9" }, { "initialize", "stage 9" },
+        { "inspect", "stage 9" }, { "initialize", "stage 9" },
         { "unstring", "after v1" }, { "search", "after v1" }, { "sort", "after v1" },
         { "merge", "after v1" }, { "release", "after v1" }, { "return", "after v1" },
         { "use", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };
@@ -2825,6 +3148,93 @@ static void skip_to_period(void)
     expect_period();
 }
 
+/* SELECT [OPTIONAL] file ASSIGN TO ... [ORGANIZATION ...] [ACCESS ...]
+ * [RECORD KEY ...] [FILE STATUS ...] [SHARING ...]. */
+static void parse_select(void)
+{
+    int line = cur()->line;
+    if (g_nfile == g_fcap) { g_fcap = g_fcap ? g_fcap * 2 : 16; g_files = realloc(g_files, g_fcap * sizeof *g_files); }
+    File *f = &g_files[g_nfile++];
+    memset(f, 0, sizeof *f);
+    f->line = line; f->rec = -1; f->org = COB_ORG_SEQ;
+    if (accept_word("optional")) f->optional = 1;
+    if (cur()->kind != T_WORD) die_at(line, "expected a file-name after SELECT");
+    if (file_find(cur()->s)) die_at(line, "file '%s' is SELECTed twice", cur()->s);
+    snprintf(f->name, sizeof f->name, "%s", cur()->s);
+    advance();
+    int has_assign = 0;
+    while (cur()->kind != T_PERIOD) {
+        Tok *t = cur();
+        if (t->kind != T_WORD) die_at(t->line, "unexpected %s in SELECT %s", tok_desc(t), f->name);
+        if (accept_word("assign")) {
+            accept_word("to");
+            if (cur()->kind == T_STR) { f->assign_lit = cur(); advance(); }
+            else if (cur()->kind == T_WORD) {
+                if (at_word("disk") || at_word("keyboard") || at_word("display") || at_word("printer"))
+                    die_at(t->line, "ASSIGN TO %s (a device) is not supported; name a file", cur()->s);
+                snprintf(f->assign_name, sizeof f->assign_name, "%s", cur()->s); advance();
+            } else die_at(t->line, "expected a literal or data-name after ASSIGN TO");
+            has_assign = 1;
+            continue;
+        }
+        if (accept_word("organization") || accept_word("organisation")) {
+            accept_word("is");
+            if (accept_word("line")) { expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
+            else if (accept_word("sequential")) f->org = COB_ORG_SEQ;
+            else if (accept_word("indexed")) f->org = COB_ORG_INDEXED;
+            else if (accept_word("relative")) f->org = COB_ORG_RELATIVE;
+            else die_at(t->line, "unknown ORGANIZATION %s", cur()->s);
+            continue;
+        }
+        if (accept_word("access")) {
+            accept_word("mode"); accept_word("is");
+            if (accept_word("sequential")) f->access = 0;
+            else if (accept_word("random")) f->access = 1;
+            else if (accept_word("dynamic")) f->access = 2;
+            else die_at(t->line, "unknown ACCESS MODE %s", cur()->s);
+            continue;
+        }
+        if (accept_word("record")) {
+            accept_word("key"); accept_word("is");
+            if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after RECORD KEY");
+            snprintf(f->key_name, sizeof f->key_name, "%s", cur()->s); advance();
+            continue;
+        }
+        if (accept_word("alternate")) die_at(t->line, "ALTERNATE RECORD KEY is not implemented (after v1)");
+        if (accept_word("relative")) die_at(t->line, "RELATIVE KEY is not implemented yet");
+        if (accept_word("file")) {
+            expect_word("status"); accept_word("is");
+            if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after FILE STATUS");
+            snprintf(f->status_name, sizeof f->status_name, "%s", cur()->s); advance();
+            continue;
+        }
+        if (accept_word("status")) {
+            accept_word("is");
+            snprintf(f->status_name, sizeof f->status_name, "%s", cur()->s); advance();
+            continue;
+        }
+        if (accept_word("sharing")) {
+            /* SHARING WITH ALL OTHER: accepted and ignored on this machine */
+            accept_word("with");
+            if (accept_word("all")) accept_word("other");
+            else if (accept_word("no")) accept_word("other");
+            else if (accept_word("read")) accept_word("only");
+            continue;
+        }
+        if (accept_word("lock")) {
+            accept_word("mode"); accept_word("is");
+            while (cur()->kind == T_WORD && !at_word("assign") && !at_word("organization") &&
+                   !at_word("access") && !at_word("file") && !at_word("record") && !at_word("sharing")) advance();
+            continue;
+        }
+        if (accept_word("reserve")) { while (cur()->kind != T_PERIOD && !at_word("organization") && !at_word("access") && !at_word("file")) advance(); continue; }
+        die_at(t->line, "unexpected %s in SELECT %s", tok_desc(t), f->name);
+    }
+    expect_period();
+    if (!has_assign) die_at(line, "SELECT %s has no ASSIGN clause", f->name);
+    if (f->org == COB_ORG_INDEXED && !f->key_name[0]) die_at(line, "an INDEXED file needs RECORD KEY");
+}
+
 static void parse_environment_division(void)
 {
     if (!accept_word("environment")) return;
@@ -2849,8 +3259,69 @@ static void parse_environment_division(void)
             break;
         }
     }
-    if (at_word("input-output")) die_at(cur()->line, "the INPUT-OUTPUT SECTION is not implemented yet (stage 4)");
+    if (accept_word("input-output")) {
+        expect_word("section"); expect_period();
+        if (accept_word("file-control")) {
+            expect_period();
+            while (accept_word("select")) parse_select();
+        }
+        if (at_word("i-o-control")) die_at(cur()->line, "I-O-CONTROL is not implemented yet");
+    }
     if (!at_division()) die_at(cur()->line, "unexpected %s in the ENVIRONMENT DIVISION", tok_desc(cur()));
+}
+
+/* FD file-name [clauses]. followed by its 01s */
+static void parse_fd(void)
+{
+    int line = cur()->line;
+    if (accept_word("sd")) die_at(line, "SD (sort files) is not implemented (after v1)");
+    expect_word("fd");
+    if (cur()->kind != T_WORD) die_at(line, "expected a file-name after FD");
+    File *f = file_find(cur()->s);
+    if (!f) die_at(line, "FD %s has no SELECT", cur()->s);
+    advance();
+    while (cur()->kind != T_PERIOD) {
+        Tok *t = cur();
+        if (t->kind != T_WORD) die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
+        if (accept_word("block")) {
+            /* BLOCK CONTAINS: a blocking hint with no meaning on a byte stream */
+            accept_word("contains");
+            if (cur()->kind == T_NUM) advance();
+            if (accept_word("to")) { if (cur()->kind == T_NUM) advance(); }
+            accept_word("records"); accept_word("characters");
+            continue;
+        }
+        if (accept_word("record")) {
+            accept_word("contains");
+            if (cur()->kind == T_NUM) advance();
+            if (accept_word("to")) { if (cur()->kind == T_NUM) advance(); }
+            if (at_word("varying")) die_at(t->line, "RECORD IS VARYING is not implemented yet (stage 10)");
+            accept_word("characters");
+            continue;
+        }
+        if (accept_word("label")) { accept_word("record"); accept_word("records"); accept_word("is"); accept_word("are"); accept_word("standard"); accept_word("omitted"); continue; }
+        if (accept_word("data")) { accept_word("record"); accept_word("records"); accept_word("is"); accept_word("are"); while (cur()->kind == T_WORD && !at_word("block") && !at_word("record") && !at_word("label") && !at_word("report") && !at_word("value")) advance(); continue; }
+        if (accept_word("report") || accept_word("reports")) {
+            accept_word("is"); accept_word("are");
+            if (cur()->kind != T_WORD) die_at(t->line, "expected a report-name");
+            snprintf(f->report_name, sizeof f->report_name, "%s", cur()->s); advance();
+            continue;
+        }
+        if (accept_word("recording")) {
+            accept_word("mode"); accept_word("is");
+            if (accept_word("f")) continue;
+            die_at(t->line, "RECORDING MODE %s is not implemented yet (V is stage 10; U and S are refused)", cur()->s);
+        }
+        if (accept_word("value")) { expect_word("of"); while (cur()->kind != T_PERIOD && !at_word("block") && !at_word("record") && !at_word("data")) advance(); continue; }
+        if (accept_word("linage")) die_at(t->line, "LINAGE is not implemented");
+        if (accept_word("code-set")) die_at(t->line, "CODE-SET is not supported (ASCII only)");
+        if (accept_word("copy")) die_at(t->line, "COPY is not implemented yet");
+        die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
+    }
+    expect_period();
+    g_cur_fd = (int)(f - g_files);
+    while (cur()->kind == T_NUM) parse_data_item();
+    g_cur_fd = -1;
 }
 
 static void parse_data_division(void)
@@ -2858,8 +3329,12 @@ static void parse_data_division(void)
     if (!accept_word("data")) { finish_data_division(); return; }
     expect_word("division"); expect_period();
     for (;;) {
-        if (at_word("file") && is_word(peek(1), "section"))
-            die_at(cur()->line, "the FILE SECTION is not implemented yet (stage 4)");
+        if (at_word("file") && is_word(peek(1), "section")) {
+            advance(); advance(); expect_period();
+            while (at_word("fd") || at_word("sd")) parse_fd();
+            g_cur_fd = -1;
+            continue;
+        }
         if (at_word("working-storage")) {
             advance(); expect_word("section"); expect_period();
             while (cur()->kind == T_NUM) parse_data_item();
@@ -2889,6 +3364,26 @@ static void emit_data(void)
         emit_bytes(s->image, s->image_size);
     }
     for (int i = 0; i < g_ncnt; i++) { emit("\t.p2align 2"); emit(".Lcnt%d:", i); emit("\t.word 0"); }
+    for (int i = 0; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        emit("\t.p2align 2");
+        emit(".Lfile%d:\t# %s", i, f->name);
+        emit("\t.byte %d,%d,%d,0", f->org, f->access, f->optional);
+        emit("\t.word 0");
+        if (f->rec >= 0) emit("\t.word %s", g_sym[g_sym[f->rec].record].label); else emit("\t.word 0");
+        emit("\t.word %d", f->recsize);
+        if (f->status_sym) emit("\t.word %s+%d", g_sym[f->status_sym->record].label, f->status_sym->offset); else emit("\t.word 0");
+        if (f->assign_lit) {
+            unsigned char *z = xmalloc(f->assign_lit->len + 1);
+            memcpy(z, f->assign_lit->s, f->assign_lit->len);
+            emit("\t.word %s", lit_label(z, f->assign_lit->len + 1));
+            free(z);
+        } else emit("\t.word 0");
+        if (f->assign_sym) { emit("\t.word %s+%d", g_sym[f->assign_sym->record].label, f->assign_sym->offset); emit("\t.word %d", f->assign_sym->size); }
+        else { emit("\t.word 0"); emit("\t.word 0"); }
+        emit("\t.word 0");
+        emit("\t.word 0");
+    }
     emit("");
     emit("\t.section .rodata");
     for (int i = 0; i < g_nlit; i++) {

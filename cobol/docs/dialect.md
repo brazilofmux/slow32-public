@@ -106,6 +106,19 @@ given, because majesty's `.prn` oracles were produced under it.
   read an item before setting it.
 - **MOVE of a non-integer numeric item to an alphanumeric item** is
   refused, as the standard and GnuCOBOL both do ("invalid MOVE").
+- **LINE SEQUENTIAL** (implementor module; measured against GnuCOBOL
+  4.0-early-dev): a record is payload then `\n`; trailing spaces are
+  removed on WRITE (an all-space record is an empty line); on READ the
+  record area is space-filled beyond the line and a `\r` before the
+  `\n` is dropped; a missing input file is status 35 (05 and at-end on
+  the first READ when `OPTIONAL`); at end is 10. **One divergence,
+  chosen:** a line longer than the record area is truncated with
+  status 04 and the rest of the line discarded, per framing.md.
+  GnuCOBOL 4 instead delivers the remainder as further records with
+  status 06. No majesty file has such a line; a program that depends
+  on the split would be wrong on both.
+- **ADVANCING PAGE** is refused: majesty's `.prn` files carry no form
+  feed, and a line-sequential print file has nowhere to put one.
 - **`COMP`/`BINARY` width**: 2, 4, 8 bytes for 1-4, 5-9, 10-18 digits.
   IBM's table and the natural fit for the SLOW-32 C types. GnuCOBOL's
   default is 1-2-4-8; the difference is one- and two-digit items, and

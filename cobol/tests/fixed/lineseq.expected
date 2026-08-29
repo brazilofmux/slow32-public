@@ -1,0 +1,18 @@
+copy name=[tmp/copy-desc.txt                       ]
+open copy: 00
+read 0025 records, 0001 empty; close: 00
+first id=0000000075
+0000000003 [Invoice utilities ledger                ]
+0000000006 [Hardware                                ]
+0000000009 [Rent                                    ]
+0000000015 [                                        ]
+copy has 0025
+optional open: 05
+optional at end: 10
+missing open: 35
+0001 -00123.45 abcd
+0002 -00246.90 abcd
+0003 -00370.35 abcd
+01 reports_cobol/chartofaccounts1-aaa.prn  
+02 reports_cobol/chartofaccounts1-bbb.prn  
+03 reports_cobol/chartofaccounts1-ccc.prn  

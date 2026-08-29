@@ -36,14 +36,25 @@ report() {
     else printf "  %-28s FAIL%s\n" "$1:" "${3:+ ($3)}"; FAIL=$((FAIL+1)); fi
 }
 
+# Every program runs with a fresh copy of tests/data as its working
+# directory (fixtures in data/, outputs to tmp/), for us and for the oracle.
+fresh_workdir() {
+    rm -rf "$W/run"; mkdir -p "$W/run/tmp"
+    [ -d "$HERE/data" ] && cp -R "$HERE/data/." "$W/run/"
+}
+
 emu_run() {   # emu_run prog.s32x > stdout: the guest's output only
     # Everything between the emulator's "Starting execution" line and its
     # halt report is the program's.  Blank lines inside are the program's
     # too (DISPLAY of nothing), so this is a capture, not a grep -v.
-    "$EMU" "$1" 2>/dev/null | awk '
-        /^Starting execution/ { capture = 1; next }
-        /^HALT at|^Program halted|^Exit code/ { capture = 0 }
-        capture { print }'
+    # The emulator writes one empty line of its own before "Program halted.";
+    # hold each line back one step so that line can be dropped and a
+    # program's own trailing blank line kept.
+    (cd "$W/run" && "$EMU" "$1" 2>/dev/null) | awk '
+        /^Starting execution/ { capture = 1; held = 0; next }
+        /^HALT at|^Program halted|^Exit code/ { if (held && prev != "") print prev; capture = 0; held = 0 }
+        capture { if (held) print prev; prev = $0; held = 1 }
+        END { if (held) print prev }'
 }
 
 if [ ! -x "$COBC" ] || [ ! -f "$LIBCOB" ]; then
@@ -77,10 +88,11 @@ for fmt in fixed free; do
         if ! "$AS" "$W/$name.s" "$W/$name.s32o" >"$W/$name.as" 2>&1; then
             report "$fmt/$name" 1 "assemble: $(grep -m1 -i error "$W/$name.as")"; continue
         fi
-        if ! "$LD" -o "$W/$name.s32x" "$ROOT/runtime/crt0.s32o" "$W/$name.s32o" "$LIBCOB" \
-                "$ROOT/runtime/libc_debug.s32a" "$ROOT/runtime/libs32.s32a" >"$W/$name.ld" 2>&1; then
+        if ! "$LD" --mmio 64K --stack-size 128K --heap-size 8M -o "$W/$name.s32x" "$ROOT/runtime/crt0.s32o" "$W/$name.s32o" "$LIBCOB" \
+                "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >"$W/$name.ld" 2>&1; then
             report "$fmt/$name" 1 "link: $(grep -m1 -i error "$W/$name.ld")"; continue
         fi
+        fresh_workdir
         emu_run "$W/$name.s32x" > "$W/$name.out"
         if [ ! -f "$exp" ]; then
             report "$fmt/$name" 1 "no .expected file"; continue
@@ -96,7 +108,8 @@ for fmt in fixed free; do
             std="-std=cobol85"
             grep -qi "default dialect" "$src" && std=""
             if "$ORACLE" -x $std $flag -o "$W/$name.orc" "$src" >"$W/$name.orclog" 2>&1; then
-                "$W/$name.orc" > "$W/$name.orcout" 2>/dev/null
+                fresh_workdir
+                (cd "$W/run" && "$W/$name.orc") > "$W/$name.orcout" 2>/dev/null
                 if diff -q "$W/$name.orcout" "$exp" >/dev/null; then note="oracle agrees"
                 else
                     report "$fmt/$name" 1 "GnuCOBOL disagrees with .expected"

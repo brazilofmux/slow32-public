@@ -133,7 +133,7 @@ Not in: `SIGN SEPARATE`, `**` with a fractional or negative exponent,
 `REMAINDER` beside `ROUNDED` or `SIZE ERROR`, multiplication past 18
 digits (i64 is the canonical numeric; majesty's amounts are 11).
 
-## Stage 4 — line sequential I-O **M**
+## Stage 4 — line sequential I-O **M** — DONE 2026-08-29
 
 - `SELECT` / `FD` / `OPEN` / `READ` / `WRITE` / `CLOSE`
 - `ORGANIZATION IS LINE SEQUENTIAL`; `BLOCK CONTAINS` accepted and
@@ -146,6 +146,27 @@ digits (i64 is the canonical numeric; majesty's amounts are 11).
 
 Done: read `data/descriptions_fixed_width.txt` (from majesty, in
 place or a stripped fixture), write a copy, diff.
+
+What landed: `SELECT` with every clause the corpus writes (`OPTIONAL`,
+`ASSIGN` to literal or data-name, `ORGANIZATION`, `ACCESS`, `RECORD
+KEY`, `FILE STATUS`, `SHARING` accepted and ignored), `FD` with
+`BLOCK`/`RECORD CONTAINS`, `LABEL`, `DATA RECORD`, `REPORT IS`,
+`RECORDING MODE F`; every 01 under an FD a view of one record area;
+a `cob_file` block per file in `.data` (`libcob/cobrt.h`); `OPEN`
+(all four modes, several files), `CLOSE`, `READ [INTO] AT END / NOT
+AT END`, `WRITE [FROM] [BEFORE/AFTER ADVANCING n LINES]`; file status
+00/04/05/10/30/35/41/42/47/48, a hard error with no FILE STATUS
+stopping the run as GnuCOBOL does. Line sequential: payload then
+`\n`, trailing spaces removed on WRITE, space-filled on READ, `\r`
+dropped, an over-long line truncated with status 04 (GnuCOBOL 4
+splits it into further records with 06 -- see dialect.md). Fixed
+sequential: `LRECL` bytes, nothing else. `STRING` in full (`DELIMITED
+BY SIZE`/literal/item, `WITH POINTER`, `ON OVERFLOW`), `FUNCTION
+UPPER-CASE`/`LOWER-CASE` as operands anywhere. Programs now link the
+MMIO libc (`--mmio 64K`); the harness runs each program, and the
+oracle, in a fresh copy of `tests/data/`. The done-criterion was run
+against majesty's real file in place: 3,113 records copied
+byte-identical, under `slow32-fast` and under `slow32-dbt`.
 
 ## Stage 5 — indexed I-O **L**
 

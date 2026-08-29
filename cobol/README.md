@@ -1,10 +1,12 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **Stage 3 landed** (2026-08-29) -- the Data Division as a tree,
+Status: **Stage 4 landed** (2026-08-29) -- the Data Division as a tree,
 the whole MOVE matrix including editing and de-editing, COMPUTE and the
 arithmetic verbs with ROUNDED / SIZE ERROR / REMAINDER, conditions, IF
-and every PERFORM form; 20/20 tests with GnuCOBOL agreeing on each
-program's output. Stages in [docs/plan.md](docs/plan.md).
+and every PERFORM form, line sequential and fixed sequential files,
+STRING; 24/24 tests with GnuCOBOL agreeing on each program's output,
+and majesty's descriptions file copied byte-identical in place. Stages
+in [docs/plan.md](docs/plan.md).
 
 A host cross-compiler in the tree's ordinary universe (like `fortran/`
 and `clip/`, not `selfhost/`). It reads COBOL 85 plus the implementor
@@ -68,7 +70,8 @@ under `docs/`.
     libcob/cobedit.h  the software edit descriptor, applied and reversed
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
     tests/            run-tests.sh; fixed/ free/ programs with .expected;
-                      bad/ programs that must be refused; pictures.txt
+                      bad/ programs that must be refused; pictures.txt;
+                      data/ fixtures, copied fresh for every program run
     build.sh          host build of s32-cobc + libcob
     compile.sh        .cbl -> .s32x (assemble + link with libcob and libc)
 
