@@ -11,7 +11,8 @@
  * PERFORM stack.  Stage 3: editing and de-editing (cobedit.h), ROUNDED,
  * SIZE ERROR, COMPUTE's operators.  Stage 4: line sequential and fixed
  * sequential files, STRING, the case intrinsics.  Stage 5: indexed files
- * on the default path (docs/indexed.md).
+ * on the default path (docs/indexed.md).  Stage 7: Report Writer, the
+ * cheap half (docs/report-writer.md).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -999,4 +1000,90 @@ int cob_delete(cob_file *f)
     if (x->pos > (int)at) x->pos--;
     x->last = -1;
     return file_result(f, "00", "");
+}
+
+/* ====================================================================== */
+/* Report Writer                                                           */
+/* ====================================================================== */
+
+/* The page model that reproduces GnuCOBOL's line-sequential print files
+ * (measured on majesty's .prn: every page is exactly PAGE LIMIT physical
+ * lines, blank lines fill the gaps and the tail, no form feed):
+ *   - a page heading is presented when the first body group of a page
+ *     is generated; an absolute LINE n lands on line n, a relative one on
+ *     LINE-COUNTER + n;
+ *   - the first body group on a page with a relative first line lands on
+ *     FIRST DETAIL (the 85 rule), later ones on LINE-COUNTER + n;
+ *   - a body group whose last line would pass LAST DETAIL advances the
+ *     page first: blank lines to PAGE LIMIT, then the heading again;
+ *   - TERMINATE pads the current page to PAGE LIMIT. */
+
+#define RW_WIDTH 512
+static char rw_line[RW_WIDTH];
+
+static void rw_put_line(cob_report *r, const char *p, int n)
+{
+    cob_file *f = r->file;
+    if (!f->open_mode || !f->fp) cob_fatal("GENERATE: the report's print file is not open");
+    while (n > 0 && p[n - 1] == ' ') n--;
+    if (n) fwrite(p, 1, n, (FILE *)f->fp);
+    fputc('\n', (FILE *)f->fp);
+    r->line_counter++;
+}
+
+static void rw_blank_to(cob_report *r, int line)   /* blank lines up to, not including, line */
+{
+    while (r->line_counter < line - 1) rw_put_line(r, "", 0);
+}
+
+void cob_rw_initiate(cob_report *r)
+{
+    r->line_counter = 0; r->page_counter = 0; r->body_seen = 0;
+}
+
+/* where the next line of a group would land */
+static int rw_target(cob_report *r, int abs, int plus, int body_first)
+{
+    if (abs) return abs;
+    if (body_first && !r->body_seen) return r->first_detail;
+    return r->line_counter + plus;
+}
+
+/* 1 if the body group (first line abs/plus, `height` further lines of
+ * relative extent) needs a new page before it is presented */
+int cob_rw_fit(cob_report *r, int abs, int plus, int height)
+{
+    if (r->page_counter == 0) return 1;
+    int first = rw_target(r, abs, plus, 1);
+    return first + height > r->last_detail;
+}
+
+/* end the page: pad to PAGE LIMIT (when anything was printed), count it */
+void cob_rw_page_end(cob_report *r)
+{
+    if (r->page_counter > 0) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
+    r->page_counter++;
+    r->line_counter = 0; r->body_seen = 0;
+}
+
+void cob_rw_line_begin(void) { memset(rw_line, ' ', RW_WIDTH); }
+
+void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *sd)
+{
+    if (col < 1 || col - 1 + (int)dd->size > RW_WIDTH) cob_fatal("report line wider than 512 columns");
+    cob_move(src, sd, rw_line + col - 1, dd);
+}
+
+void cob_rw_line_write(cob_report *r, int abs, int plus, int body_first)
+{
+    int target = rw_target(r, abs, plus, body_first);
+    if (target < r->line_counter + 1) target = r->line_counter + 1;
+    rw_blank_to(r, target);
+    rw_put_line(r, rw_line, RW_WIDTH);
+    if (body_first) r->body_seen = 1;
+}
+
+void cob_rw_terminate(cob_report *r)
+{
+    if (r->page_counter > 0) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
 }

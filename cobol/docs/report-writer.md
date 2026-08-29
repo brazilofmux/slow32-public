@@ -90,6 +90,38 @@ Print files in majesty are `ORGANIZATION IS LINE SEQUENTIAL` with
 newlines, not ASA. `WRITE … ADVANCING` on non-report sequential
 files is a separate, later item.
 
+## As built (Stage 7)
+
+The page model, measured on majesty's `.prn` files and then
+reproduced byte for byte:
+
+- A page is exactly `PAGE LIMIT` physical lines. Every physical line
+  is one line-sequential record (trailing spaces removed); the lines
+  a `LINE` clause skips, and the tail of every page including the
+  last, are empty records. There is no form feed.
+- The page heading is presented when the first body group of a page
+  is generated; an absolute `LINE n` lands on line n, a relative one
+  on LINE-COUNTER + n (LINE-COUNTER is 0 at the top of a page, so
+  gl022's `line +1, +1, +2` gives lines 1, 2 and 4).
+- The first body group on a page with a relative first line lands on
+  `FIRST DETAIL` -- the 85 rule -- so gl030's `line plus 2`
+  transaction lands on line 6 after a three-line heading, not 5 or 8.
+  Later groups land on LINE-COUNTER + n.
+- Fit: a body group whose last line (first line plus the relative
+  extent of its remaining lines) would pass `LAST DETAIL` advances the
+  page first: blank lines to `PAGE LIMIT`, then the heading again.
+- `TERMINATE` pads the current page to `PAGE LIMIT`; with nothing
+  generated it prints nothing.
+- Fields render by `MOVE` into a 512-column line buffer -- the
+  ordinary conversion matrix, editing included -- so
+  `----,---,--9.99` with a negative amount prints the sign against
+  the digits (`tests/fixed/report.cbl` puts -3,765.44 through it).
+
+The state block per report (`cob_report`) carries the file, the four
+RD numbers, LINE-COUNTER, PAGE-COUNTER and the body-seen flag; the
+compiler emits the fit test and the heading inline at each
+`GENERATE` site.
+
 ## After v1
 
 `CONTROL` / `CH`/`CF` / `SUM` / `USE BEFORE REPORTING` are the

@@ -44,6 +44,16 @@ typedef struct {
     void *idx;                /* indexed: the in-memory key table while open */
 } cob_file;
 
+/* a report (RD), as the compiler described it; the counters are the
+ * runtime's.  Lines are rendered into a buffer and written through the
+ * report's print file, one line-sequential record per physical line. */
+typedef struct {
+    cob_file *file;
+    int page_limit, heading, first_detail, last_detail;
+    int line_counter, page_counter;
+    int body_seen;            /* a body group has been presented on this page */
+} cob_report;
+
 typedef struct {
     unsigned char cat;
     unsigned char usage;

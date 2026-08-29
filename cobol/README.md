@@ -1,15 +1,15 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **Stage 6 landed** (2026-08-29) -- gl039, the first majesty
-gate, compiles unchanged and runs in place, and the C bridge is real:
-majesty's `clinkages.cbl` over `dateutil.c` prints under `slow32-dbt`
-what GnuCOBOL prints. The language so far: the Data Division as a tree,
+Status: **Stage 7 landed** (2026-08-29) -- **the first product claim
+holds**: gl022, gl023 and gl030 compile unchanged, run in place on
+SLOW-32, and all six of their reports are byte-identical to
+`~/majesty/reports_cobol/`. The language so far: the Data Division as a tree,
 the whole MOVE matrix including editing and de-editing, COMPUTE and the
 arithmetic verbs with ROUNDED / SIZE ERROR / REMAINDER, conditions, IF
 and every PERFORM form, line sequential, fixed sequential and indexed
-files, STRING, CALL / LINKAGE / USING on the SLOW-32 C ABI; 28/28
-tests with GnuCOBOL agreeing on each program's output. Stages in
-[docs/plan.md](docs/plan.md).
+files, STRING, CALL / LINKAGE / USING on the SLOW-32 C ABI, Report
+Writer's cheap half; 29/29 tests with GnuCOBOL agreeing on each
+program's output. Stages in [docs/plan.md](docs/plan.md).
 
 A host cross-compiler in the tree's ordinary universe (like `fortran/`
 and `clip/`, not `selfhost/`). It reads COBOL 85 plus the implementor

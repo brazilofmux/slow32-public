@@ -230,7 +230,7 @@ sources. Not in: dynamic `CALL identifier`, `BY CONTENT`, more than
 eight arguments (the stack case), `ON EXCEPTION`, `IS INITIAL`
 re-initialisation, nested (contained) programs, `GLOBAL`/`EXTERNAL`.
 
-## Stage 7 — Report Writer, cheap half **L**
+## Stage 7 — Report Writer, cheap half **L** — DONE 2026-08-29
 
 - [report-writer.md](report-writer.md) v1 subset
 - Print files are line sequential
@@ -238,6 +238,27 @@ re-initialisation, nested (contained) programs, `GLOBAL`/`EXTERNAL`.
 Done: **gl022, gl023, gl030** match `reports_cobol/`. This is the
 first product claim. GnuCOBOL can still be on the rest of the
 majesty path.
+
+**Achieved.** `gl022.cbl`, `gl023.cbl` and `gl030.cbl` compile
+unchanged (gl030 with the rewritten `clinkages.cbl` and majesty's
+`dateutil.c`), run in place against majesty's data on `slow32-fast`
+(0.03 s, 0.02 s, 0.08 s) and under `slow32-dbt`, and all six reports
+-- `chartofaccounts1-*.prn`, `chartofaccounts2-*.prn`,
+`journal-*.prn`, 1,647 lines -- are byte-identical to
+`~/majesty/reports_cobol/`. The journal's inputs were rebuilt with
+GnuCOBOL's gl024/gl025/gl026/gl029 exactly as `batch.sh` does (those
+take `ARGUMENT-VALUE`, after v1); our gl039 built the index.
+
+What landed: `REPORT SECTION` with `RD` (`PAGE LIMIT`, `HEADING`,
+`FIRST DETAIL`, `LAST DETAIL`), `TYPE PAGE HEADING` and `DETAIL`
+groups, `LINE n` / `LINE +n` / `LINE PLUS n`, fields with `COLUMN`,
+`PICTURE`, `SOURCE` (qualified), `VALUE`, `JUSTIFIED`, `BLANK WHEN
+ZERO`; `INITIATE` / `GENERATE` / `TERMINATE`. Each `GENERATE` site
+emits the fit test, the page advance with the heading rendered inline,
+then the group's lines; `libcob` owns the page model
+([report-writer.md](report-writer.md)). Refused with a message:
+`CONTROL`, `SUM`, footing and heading types beyond PH, `GROUP
+INDICATE`, `NEXT GROUP`, summary `GENERATE`, subscripted `SOURCE`.
 
 ## Stage 8 — SCREEN SECTION, first screen **M**
 

@@ -20,8 +20,12 @@
  * DELETE, START, INVALID KEY.  Stage 6: several program units per
  * source, LINKAGE SECTION, PROCEDURE DIVISION USING, CALL on the SLOW-32
  * C ABI (BY REFERENCE / BY VALUE / RETURNING at the C seam), so COBOL, C
- * and Fortran link with no glue.  Unimplemented is a diagnostic, never
- * silence.
+ * and Fortran link with no glue.  Stage 7: Report Writer, the cheap
+ * half -- RD with PAGE LIMIT / HEADING / FIRST and LAST DETAIL, PAGE
+ * HEADING and DETAIL groups, LINE / COLUMN / SOURCE / VALUE, INITIATE /
+ * GENERATE / TERMINATE, rendered per GENERATE site against a page engine
+ * in libcob (docs/report-writer.md).  Unimplemented is a diagnostic,
+ * never silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +35,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.6 (stage 6)"
+#define VERSION "0.7 (stage 7)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -530,6 +534,44 @@ static int g_cur_fd = -1;            /* the FD whose 01s are being parsed */
 static File *file_find(const char *name)
 {
     for (int i = 0; i < g_nfile; i++) if (!strcmp(g_files[i].name, name)) return &g_files[i];
+    return NULL;
+}
+
+/* ---- reports: RD and its groups --------------------------------------- */
+
+typedef struct {
+    int column, line;
+    int has_pic; char pic[PIC_MAXPAT]; PicInfo pi;
+    int has_source; char source_name[64]; char source_qual[64]; int nq;   /* resolved at GENERATE time */
+    Tok *value;
+    int just, blank_zero;
+} RField;
+
+typedef struct {
+    int abs, plus, line;
+    RField *f; int nf, fcap;
+} RLine;
+
+enum { RG_PAGE_HEADING, RG_DETAIL };
+
+typedef struct {
+    char name[64];
+    int type, line;
+    RLine *l; int nl, lcap;
+} RGroup;
+
+typedef struct {
+    char name[64];
+    int line, file;                  /* the FD whose REPORT IS names it */
+    int page_limit, heading, first_detail, last_detail;
+    RGroup *g; int ng, gcap;
+} Report;
+
+static Report *g_reports; static int g_nreport, g_rcap;
+
+static Report *report_find(const char *name)
+{
+    for (int i = 0; i < g_nreport; i++) if (!strcmp(g_reports[i].name, name)) return &g_reports[i];
     return NULL;
 }
 
@@ -3177,6 +3219,126 @@ static void parse_call(void)
     accept_word("end-call");
 }
 
+/* ---- Report Writer ------------------------------------------------------ */
+
+static void emit_report_addr(const char *reg, Report *r)
+{
+    char lab[32]; snprintf(lab, sizeof lab, ".Lrpt%d_%d", g_unit, (int)(r - g_reports));
+    emit_la(reg, lab);
+}
+
+static Report *expect_report(void)
+{
+    Tok *t = cur();
+    if (t->kind != T_WORD) die_at(t->line, "expected a report-name, found %s", tok_desc(t));
+    Report *r = report_find(t->s);
+    if (!r) die_at(t->line, "'%s' is not a report (no RD)", t->s);
+    advance();
+    return r;
+}
+
+static int rfield_desc(RField *f)
+{
+    Desc d; memset(&d, 0, sizeof d);
+    switch (f->pi.category) {
+    case PIC_ALPHABETIC: d.cat = COB_ALPHA; break;
+    case PIC_ALPHANUMERIC: d.cat = COB_ALNUM; break;
+    case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;
+    case PIC_NUMERIC: d.cat = COB_NUM; break;
+    default: d.cat = COB_NUM_ED; break;
+    }
+    d.usage = COB_U_DISPLAY;
+    d.digits = (unsigned char)f->pi.digits; d.scale = (signed char)f->pi.scale;
+    if (f->pi.is_signed) d.flags |= COB_F_SIGNED;
+    if (f->just) d.flags |= COB_F_JUST;
+    if (f->blank_zero) d.flags |= COB_F_BLANKZ;
+    if (f->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", f->pi.pat);
+    d.size = f->pi.bytes;
+    return desc_add(&d);
+}
+
+/* render one group's lines at this point in the code */
+static void emit_report_group(Report *r, RGroup *g)
+{
+    for (int i = 0; i < g->nl; i++) {
+        RLine *ln = &g->l[i];
+        emit_call("cob_rw_line_begin");
+        for (int k = 0; k < ln->nf; k++) {
+            RField *f = &ln->f[k];
+            Arg a[4];
+            a[0] = arg_imm(f->column);
+            a[1] = arg_desc(rfield_desc(f));
+            if (f->has_source) {
+                Ref *rf = xmalloc(sizeof *rf);
+                char *q[1] = { f->source_qual };
+                rf->sym = sym_lookup(f->source_name, q, f->nq, f->line);
+                rf->line = f->line;
+                if (rf->sym->ndims) die_at(f->line, "SOURCE '%s' needs subscripts, which are not implemented in reports yet", rf->sym->name);
+                if (rf->sym->is_cond) die_at(f->line, "SOURCE '%s' is a condition-name", rf->sym->name);
+                a[2] = arg_ref(rf); a[3] = arg_desc(sym_desc(rf->sym));
+            } else if (f->value->kind == T_STR) {
+                a[2] = arg_label(lit_label((unsigned char *)f->value->s, f->value->len));
+                a[3] = arg_desc(str_desc(f->value->len));
+            } else {
+                NumLit n; numlit_parse(f->value, &n);
+                int d; a[2] = arg_label(num_lit_label(&n, &d)); a[3] = arg_desc(d);
+            }
+            emit_args(a, 4);
+            emit_call("cob_rw_field");
+        }
+        emit_report_addr("r3", r);
+        emit_li("r4", ln->abs); emit_li("r5", ln->plus);
+        emit_li("r6", g->type == RG_DETAIL && i == 0);
+        emit_call("cob_rw_line_write");
+    }
+}
+
+static void parse_initiate(void)
+{
+    Report *r = expect_report();
+    emit_report_addr("r3", r);
+    emit_call("cob_rw_initiate");
+}
+
+static void parse_terminate(void)
+{
+    Report *r = expect_report();
+    emit_report_addr("r3", r);
+    emit_call("cob_rw_terminate");
+}
+
+static void parse_generate(void)
+{
+    Tok *t = cur();
+    if (t->kind != T_WORD) die_at(t->line, "expected a report group after GENERATE");
+    Report *r = NULL; RGroup *g = NULL;
+    for (int i = 0; i < g_nreport && !g; i++)
+        for (int k = 0; k < g_reports[i].ng; k++)
+            if (g_reports[i].g[k].name[0] && !strcmp(g_reports[i].g[k].name, t->s)) { r = &g_reports[i]; g = &g_reports[i].g[k]; break; }
+    if (!g) {
+        if (report_find(t->s)) die_at(t->line, "GENERATE %s (summary reporting) is not implemented; GENERATE a DETAIL group", t->s);
+        die_at(t->line, "'%s' is not a report group", t->s);
+    }
+    if (g->type != RG_DETAIL) die_at(t->line, "GENERATE needs a DETAIL group; '%s' is a page heading", t->s);
+    advance();
+
+    /* the fit test: the group's first line as it would land, plus the
+     * relative extent of the rest */
+    int height = 0;
+    for (int i = 1; i < g->nl; i++) height += g->l[i].plus;
+    emit_report_addr("r3", r);
+    emit_li("r4", g->l[0].abs); emit_li("r5", g->l[0].plus); emit_li("r6", height);
+    emit_call("cob_rw_fit");
+    int Lfits = new_label();
+    emit("\tbeq r1, r0, .L%d", Lfits);
+    emit_report_addr("r3", r);
+    emit_call("cob_rw_page_end");
+    for (int k = 0; k < r->ng; k++)
+        if (r->g[k].type == RG_PAGE_HEADING) emit_report_group(r, &r->g[k]);
+    emit_label(Lfits);
+    emit_report_group(r, g);
+}
+
 /* ---- dispatch ---------------------------------------------------------- */
 
 static void parse_statement(void)
@@ -3201,6 +3363,9 @@ static void parse_statement(void)
     if (!strcmp(v, "start")) { advance(); parse_start(); return; }
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
     if (!strcmp(v, "call")) { advance(); parse_call(); return; }
+    if (!strcmp(v, "initiate")) { advance(); parse_initiate(); return; }
+    if (!strcmp(v, "generate")) { advance(); parse_generate(); return; }
+    if (!strcmp(v, "terminate")) { advance(); parse_terminate(); return; }
     if (!strcmp(v, "cancel")) {
         /* everything is linked statically; there is nothing to release */
         advance();
@@ -3232,8 +3397,7 @@ static void parse_statement(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
-        { "initiate", "stage 7" }, { "generate", "stage 7" },
-        { "terminate", "stage 7" }, { "accept", "stage 8" }, { "evaluate", "stage 9" },
+        { "accept", "stage 8" }, { "evaluate", "stage 9" },
         { "inspect", "stage 9" }, { "initialize", "stage 9" },
         { "unstring", "after v1" }, { "search", "after v1" }, { "sort", "after v1" },
         { "merge", "after v1" }, { "release", "after v1" }, { "return", "after v1" },
@@ -3584,6 +3748,166 @@ static void parse_fd(void)
     g_cur_fd = -1;
 }
 
+/* RD report-name [PAGE [LIMIT IS] n [LINE(S)]] [HEADING n] [FIRST DETAIL n]
+ * [LAST DETAIL n] [FOOTING n]. then the group descriptions */
+static void parse_rd(void)
+{
+    int line = cur()->line;
+    expect_word("rd");
+    if (cur()->kind != T_WORD) die_at(line, "expected a report-name after RD");
+    if (g_nreport == g_rcap) { g_rcap = g_rcap ? g_rcap * 2 : 4; g_reports = realloc(g_reports, g_rcap * sizeof *g_reports); }
+    Report *r = &g_reports[g_nreport++];
+    memset(r, 0, sizeof *r);
+    r->line = line; r->file = -1;
+    snprintf(r->name, sizeof r->name, "%s", cur()->s);
+    advance();
+    for (int i = 0; i < g_nfile; i++) if (!strcmp(g_files[i].report_name, r->name)) r->file = i;
+    if (r->file < 0) die_at(line, "no FD says REPORT IS %s", r->name);
+    if (g_files[r->file].org != COB_ORG_LINESEQ) die_at(line, "the print file of report %s must be LINE SEQUENTIAL", r->name);
+    while (cur()->kind != T_PERIOD) {
+        Tok *t = cur();
+        if (accept_word("page")) {
+            accept_word("limit"); accept_word("limits"); accept_word("is"); accept_word("are");
+            if (cur()->kind != T_NUM) die_at(t->line, "expected a number after PAGE LIMIT");
+            r->page_limit = atoi(cur()->s); advance();
+            accept_word("line"); accept_word("lines");
+            continue;
+        }
+        if (accept_word("heading")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after HEADING"); r->heading = atoi(cur()->s); advance(); continue; }
+        if (accept_word("first")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->first_detail = atoi(cur()->s); advance(); continue; }
+        if (accept_word("last")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->last_detail = atoi(cur()->s); advance(); continue; }
+        if (accept_word("footing")) die_at(t->line, "FOOTING is not implemented (no footing groups in v1)");
+        if (accept_word("control") || accept_word("controls")) die_at(t->line, "CONTROL is not implemented (after v1; majesty's totals are Procedure Division items)");
+        if (accept_word("code")) die_at(t->line, "the CODE clause is not implemented");
+        die_at(t->line, "unexpected %s in RD %s", tok_desc(t), r->name);
+    }
+    expect_period();
+    if (!r->page_limit) die_at(line, "RD %s needs PAGE LIMIT", r->name);
+    if (!r->heading) r->heading = 1;
+    if (!r->first_detail) r->first_detail = r->heading;
+    if (!r->last_detail) r->last_detail = r->page_limit;
+
+    /* groups: 01 [name] TYPE ... . then LINE entries with their fields */
+    while (cur()->kind == T_NUM && !strcmp(cur()->s, "01")) {
+        advance();
+        if (r->ng == r->gcap) { r->gcap = r->gcap ? r->gcap * 2 : 8; r->g = realloc(r->g, r->gcap * sizeof *r->g); }
+        RGroup *g = &r->g[r->ng++];
+        memset(g, 0, sizeof *g);
+        g->line = cur()->line;
+        if (cur()->kind == T_WORD && !at_word("type")) { snprintf(g->name, sizeof g->name, "%s", cur()->s); advance(); }
+        int has_type = 0;
+        while (cur()->kind != T_PERIOD) {
+            Tok *t = cur();
+            if (accept_word("type")) {
+                accept_word("is");
+                if (accept_word("page")) { expect_word("heading"); g->type = RG_PAGE_HEADING; }
+                else if (accept_word("ph")) g->type = RG_PAGE_HEADING;
+                else if (accept_word("detail") || accept_word("de")) g->type = RG_DETAIL;
+                else if (at_word("report") || at_word("rh") || at_word("rf") || at_word("control") || at_word("ch") || at_word("cf") || at_word("pf"))
+                    die_at(t->line, "TYPE %s groups are not implemented (v1 is PAGE HEADING and DETAIL)", cur()->s);
+                else die_at(t->line, "unknown report group TYPE %s", cur()->s);
+                has_type = 1;
+                continue;
+            }
+            if (at_word("line") || at_word("next") || at_word("column") || at_word("pic") || at_word("picture") || at_word("source") || at_word("value"))
+                die_at(t->line, "clauses on the 01 report group '%s' are not implemented; put LINE on a 02 entry", g->name);
+            die_at(t->line, "unexpected %s in report group '%s'", tok_desc(t), g->name);
+        }
+        expect_period();
+        if (!has_type) die_at(g->line, "report group '%s' needs a TYPE", g->name);
+
+        /* 02 LINE entries, each with its 05 fields */
+        while (cur()->kind == T_NUM && strcmp(cur()->s, "01")) {
+            int lvl = parse_level(); int lline = cur()->line; advance();
+            if (lvl <= 1 || lvl > 49) die_at(lline, "bad level %d in a report group", lvl);
+            if (cur()->kind == T_WORD && !at_word("line") && !at_word("column") && !at_word("pic") && !at_word("picture") && !at_word("source") && !at_word("value"))
+                advance();                          /* a name on the line entry */
+            if (!at_word("line")) die_at(lline, "expected LINE on the level %02d entry of report group '%s' (fields go on entries below a LINE)", lvl, g->name);
+            if (g->nl == g->lcap) { g->lcap = g->lcap ? g->lcap * 2 : 4; g->l = realloc(g->l, g->lcap * sizeof *g->l); }
+            RLine *ln = &g->l[g->nl++];
+            memset(ln, 0, sizeof *ln);
+            ln->line = lline;
+            advance(); accept_word("number"); accept_word("is");
+            if (accept_word("plus")) { if (cur()->kind != T_NUM) die_at(lline, "expected a number after LINE PLUS"); ln->plus = atoi(cur()->s); advance(); }
+            else if (at_op("+")) { advance(); if (cur()->kind != T_NUM) die_at(lline, "expected a number after LINE +"); ln->plus = atoi(cur()->s); advance(); }
+            else if (cur()->kind == T_NUM) {
+                /* the tokenizer read "+1" as a signed literal */
+                if (cur()->s[0] == '+') ln->plus = atoi(cur()->s + 1);
+                else if (cur()->s[0] == '-') die_at(lline, "LINE cannot be negative");
+                else ln->abs = atoi(cur()->s);
+                advance();
+            } else if (accept_word("next")) die_at(lline, "LINE NEXT PAGE is not implemented");
+            else die_at(lline, "expected a line number after LINE");
+            if (!ln->abs && !ln->plus) die_at(lline, "LINE needs a number");
+            if (ln->abs && ln->abs > r->page_limit) die_at(lline, "LINE %d is past PAGE LIMIT %d", ln->abs, r->page_limit);
+            while (cur()->kind != T_PERIOD) {
+                Tok *t = cur();
+                if (at_word("column") || at_word("pic") || at_word("picture") || at_word("source") || at_word("value"))
+                    die_at(t->line, "a field clause on the LINE entry itself is not implemented; put fields on entries below it");
+                die_at(t->line, "unexpected %s after LINE in report group '%s'", tok_desc(t), g->name);
+            }
+            expect_period();
+            /* fields: deeper level numbers */
+            int next_col = 1;
+            while (cur()->kind == T_NUM) {
+                int fl = parse_level();
+                if (fl <= lvl) break;
+                int fline = cur()->line; advance();
+                if (ln->nf == ln->fcap) { ln->fcap = ln->fcap ? ln->fcap * 2 : 8; ln->f = realloc(ln->f, ln->fcap * sizeof *ln->f); }
+                RField *fd = &ln->f[ln->nf++];
+                memset(fd, 0, sizeof *fd);
+                fd->line = fline;
+                if (cur()->kind == T_WORD && !at_word("column") && !at_word("pic") && !at_word("picture") && !at_word("source") && !at_word("value") && !at_word("line"))
+                    advance();                      /* a name on the field */
+                while (cur()->kind != T_PERIOD) {
+                    Tok *t = cur();
+                    if (accept_word("column")) {
+                        accept_word("number"); accept_word("is");
+                        if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
+                        fd->column = atoi(cur()->s); advance();
+                        continue;
+                    }
+                    if (accept_word("pic") || accept_word("picture")) {
+                        if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
+                        fd->has_pic = 1;
+                        snprintf(fd->pic, sizeof fd->pic, "%s", cur()->s);
+                        if (pic_analyse(fd->pic, &fd->pi) < 0) die_at(t->line, "report field: %s", fd->pi.err);
+                        advance();
+                        continue;
+                    }
+                    if (accept_word("source")) {
+                        accept_word("is");
+                        if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after SOURCE");
+                        fd->has_source = 1;
+                        snprintf(fd->source_name, sizeof fd->source_name, "%s", cur()->s); advance();
+                        if (at_word("of") || at_word("in")) { advance(); snprintf(fd->source_qual, sizeof fd->source_qual, "%s", cur()->s); fd->nq = 1; advance(); }
+                        if (cur()->kind == T_LP) die_at(t->line, "a subscripted SOURCE is not implemented yet");
+                        continue;
+                    }
+                    if (accept_word("value")) {
+                        accept_word("is");
+                        if (cur()->kind != T_STR && cur()->kind != T_NUM) die_at(t->line, "VALUE in a report field needs a literal");
+                        fd->value = cur(); advance();
+                        continue;
+                    }
+                    if (accept_word("just") || accept_word("justified")) { accept_word("right"); fd->just = 1; continue; }
+                    if (accept_word("blank")) { accept_word("when"); accept_word("zero"); accept_word("zeros"); fd->blank_zero = 1; continue; }
+                    if (accept_word("sum")) die_at(t->line, "SUM is not implemented (after v1)");
+                    if (accept_word("group")) die_at(t->line, "GROUP INDICATE is not implemented (after v1)");
+                    if (at_word("line")) die_at(t->line, "LINE on a field entry: nested lines are not implemented");
+                    die_at(t->line, "unexpected %s in a report field", tok_desc(t));
+                }
+                expect_period();
+                if (!fd->has_pic) die_at(fline, "a report field needs a PICTURE");
+                if (fd->has_source == !!fd->value) die_at(fline, "a report field needs exactly one of SOURCE and VALUE");
+                if (!fd->column) fd->column = next_col;
+                next_col = fd->column + fd->pi.bytes;
+            }
+        }
+        if (!g->nl) die_at(g->line, "report group '%s' has no LINE", g->name);
+    }
+}
+
 static void parse_data_division(void)
 {
     if (!accept_word("data")) { finish_data_division(); return; }
@@ -3607,7 +3931,12 @@ static void parse_data_division(void)
             g_in_linkage = 0;
             continue;
         }
-        if ((at_word("screen") || at_word("report") || at_word("communication")) && is_word(peek(1), "section"))
+        if (at_word("report") && is_word(peek(1), "section")) {
+            advance(); advance(); expect_period();
+            while (at_word("rd")) parse_rd();
+            continue;
+        }
+        if ((at_word("screen") || at_word("communication")) && is_word(peek(1), "section"))
             die_at(cur()->line, "the %s SECTION is not implemented yet", cur()->s);
         break;
     }
@@ -3658,6 +3987,15 @@ static void emit_unit_data(void)
         if (f->key_sym) { emit("\t.word %d", f->key_sym->offset); emit("\t.word %d", f->key_sym->size); }
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
+    }
+    for (int i = 0; i < g_nreport; i++) {
+        Report *r = &g_reports[i];
+        emit("\t.p2align 2");
+        emit(".Lrpt%d_%d:\t# report %s", g_unit, i, r->name);
+        emit("\t.word .Lf%d_%d", g_unit, r->file);
+        emit("\t.word %d", r->page_limit); emit("\t.word %d", r->heading);
+        emit("\t.word %d", r->first_detail); emit("\t.word %d", r->last_detail);
+        emit("\t.word 0"); emit("\t.word 0"); emit("\t.word 0");
     }
 }
 
@@ -3735,7 +4073,7 @@ int main(int argc, char **argv)
     for (;;) {
         /* one program unit; a source file may hold several, each closed
          * by END PROGRAM */
-        g_nsym = 0; g_nfile = 0; g_npara = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();
