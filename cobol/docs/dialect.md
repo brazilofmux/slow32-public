@@ -117,6 +117,15 @@ given, because majesty's `.prn` oracles were produced under it.
   GnuCOBOL 4 instead delivers the remainder as further records with
   status 06. No majesty file has such a line; a program that depends
   on the split would be wrong on both.
+- **`CALL`**: literal program-names only; `BY REFERENCE` passes the
+  address, `BY VALUE` an integer item of up to four bytes widened to a
+  word (or an integer literal), `RETURNING` takes `r1` into an integer
+  item; at most eight arguments (the C ABI's registers). The
+  program-name literal is the linker symbol, lower-cased, with
+  anything but letters, digits and `_` turned into `_` -- so `CALL
+  'du_lineartofielded'` reaches C directly and `CALL 'c_lineartofielded'`
+  reaches the COBOL unit of that `PROGRAM-ID`. `CANCEL` is accepted
+  and does nothing. `EXIT PROGRAM` returns like `GOBACK`.
 - **`GOBACK`** is accepted (IBM's word, not in X3.23-1985 -- GnuCOBOL
   `-std=cobol85` refuses it; majesty uses it everywhere). In the main
   program it is `STOP RUN`.

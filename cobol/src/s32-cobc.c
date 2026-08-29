@@ -17,7 +17,10 @@
  * ERROR, REMAINDER.  Stage 4: SELECT/FD, line sequential and fixed
  * sequential files (OPEN, CLOSE, READ, WRITE), STRING, the case
  * intrinsics.  Stage 5: INDEXED files -- READ KEY / NEXT, WRITE, REWRITE,
- * DELETE, START, INVALID KEY.  Unimplemented is a diagnostic, never
+ * DELETE, START, INVALID KEY.  Stage 6: several program units per
+ * source, LINKAGE SECTION, PROCEDURE DIVISION USING, CALL on the SLOW-32
+ * C ABI (BY REFERENCE / BY VALUE / RETURNING at the C seam), so COBOL, C
+ * and Fortran link with no glue.  Unimplemented is a diagnostic, never
  * silence.
  */
 #include <stdio.h>
@@ -28,7 +31,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.5 (stage 5)"
+#define VERSION "0.6 (stage 6)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -36,6 +39,8 @@
 
 static const char *g_file = "?";
 static int g_free = 0;              /* -free: majesty; default is fixed */
+static int g_module = 0;            /* -m: no main entry; every unit is a subprogram */
+static int g_unit = 0;              /* program unit being compiled, for label spaces */
 
 static void die_at(int line, const char *fmt, ...)
 {
@@ -457,6 +462,7 @@ typedef struct Sym {
     /* level 88 */
     int  ncv; Tok *cv_lo[MAXCV], *cv_hi[MAXCV];
     int  fd;                        /* file index for an 01 under an FD, else -1 */
+    int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     /* records */
     unsigned char *image; int image_size;
     char label[48];
@@ -653,6 +659,7 @@ static int parse_level(void)
 }
 
 static int g_last_item = -1;        /* the previous non-88 item, for 88s */
+static int g_in_linkage = 0;        /* parsing the LINKAGE SECTION */
 
 static void parse_data_item(void)
 {
@@ -667,6 +674,7 @@ static void parse_data_item(void)
 
     Sym *s = sym_new();
     s->level = level; s->line = line; s->usage = U_DISPLAY;
+    s->is_linkage = g_in_linkage;
     if (accept_word("filler")) {
         s->is_filler = 1;
         snprintf(s->name, sizeof s->name, "filler");
@@ -1031,7 +1039,8 @@ static void finish_data_division(void)
         layout(i, 0);
         set_dims(i, 0, zero, zero);
         s->record = i;
-        snprintf(s->label, sizeof s->label, "ws_%d", nrec++);
+        if (s->is_linkage) snprintf(s->label, sizeof s->label, ".Llk%d_%d", g_unit, nrec++);
+        else snprintf(s->label, sizeof s->label, "ws%d_%d", g_unit, nrec++);
     }
     /* propagate record ownership down, and 88s take their parent's dims */
     for (int i = 0; i < g_nsym; i++) {
@@ -1063,11 +1072,13 @@ static void finish_data_division(void)
         if (f->rec < 0 && !f->report_name[0]) die_at(f->line, "file '%s' has no FD", f->name);
         if (f->assign_name[0]) {
             f->assign_sym = sym_lookup(f->assign_name, NULL, 0, f->line);
+            if (g_sym[f->assign_sym->record].is_linkage) die_at(f->line, "ASSIGN TO '%s': a LINKAGE item cannot name a file", f->assign_name);
             if (f->assign_sym->is_group || f->assign_sym->pi.category == PIC_NUMERIC)
                 die_at(f->line, "ASSIGN TO '%s': the data-name must be alphanumeric", f->assign_name);
         }
         if (f->status_name[0]) {
             f->status_sym = sym_lookup(f->status_name, NULL, 0, f->line);
+            if (g_sym[f->status_sym->record].is_linkage) die_at(f->line, "FILE STATUS '%s' cannot be a LINKAGE item", f->status_name);
             if (f->status_sym->size != 2) die_at(f->line, "FILE STATUS '%s' must be PIC XX", f->status_name);
         }
         for (int j = 0; j < g_nsym; j++)
@@ -1092,7 +1103,7 @@ static void finish_data_division(void)
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0) continue;
         if (s->image_size < s->size) s->image_size = s->size;
         s->image = xmalloc(s->image_size);
-        init_instance(s, i, 0, 1);
+        if (!s->is_linkage) init_instance(s, i, 0, 1);
     }
     for (int i = 0; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
@@ -1406,6 +1417,19 @@ static void emit_store_int(Sym *s, const char *areg, const char *vreg)
     else emit("\tstw %s+0, %s", areg, vreg);
 }
 
+/* reg = address of item s plus off: WORKING-STORAGE by label, a LINKAGE
+ * item through its cell, which the entry sequence filled from the
+ * caller's argument register */
+static void emit_item_addr(const char *reg, Sym *s, int off)
+{
+    Sym *rec = &g_sym[s->record];
+    if (!rec->is_linkage) { emit_la_off(reg, rec->label, off); return; }
+    emit_la(reg, rec->label);
+    emit("\tldw %s, %s+0", reg, reg);
+    if (off >= -2048 && off <= 2047) { if (off) emit("\taddi %s, %s, %d", reg, reg, off); }
+    else { emit_li("r2", off); emit("\tadd %s, %s, r2", reg, reg); }
+}
+
 static int ref_has_runtime_sub(const Ref *r)
 {
     for (int i = 0; i < r->nsub; i++) if (r->sub[i].sym) return 1;
@@ -1421,7 +1445,6 @@ static int ref_has_runtime_sub(const Ref *r)
 static void emit_ref_addr(const Ref *r, const char *reg)
 {
     Sym *s = r->sym;
-    Sym *rec = &g_sym[s->record];
     int off = s->offset;
     int runtime = ref_has_runtime_sub(r);
     for (int i = 0; i < r->nsub; i++)
@@ -1431,10 +1454,10 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         if (!r->sub[i].sym) continue;
         Sym *ss = r->sub[i].sym;
         if (is_hot_int(ss)) {
-            emit_la_off("r1", g_sym[ss->record].label, ss->offset);
+            emit_item_addr("r1", ss, ss->offset);
             emit_load_int(ss, "r1", "r1");
         } else {
-            emit_la_off("r3", g_sym[ss->record].label, ss->offset);
+            emit_item_addr("r3", ss, ss->offset);
             emit_desc_addr("r4", sym_desc(ss));
             emit_call("cob_load_int");
         }
@@ -1444,15 +1467,16 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         emit("\tmul r1, r1, r2");
         emit("\tadd r11, r11, r1");
     }
-    emit_la_off(reg, rec->label, off);
+    emit_item_addr(reg, s, off);
     if (runtime) emit("\tadd %s, %s, r11", reg, reg);
 }
 
 /* ---- argument staging ------------------------------------------------- */
 
-enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC };
+enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE };
 typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; Opnd *fn; } Arg;
 static Arg arg_func(Opnd *o)       { Arg a = { A_FUNC, 0, 0, 0, 0, o }; return a; }
+static Arg arg_value(Opnd *o)      { Arg a = { A_VALUE, 0, 0, 0, 0, o }; return a; }
 
 static Arg arg_ref(const Ref *r)   { Arg a = { A_REF, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_label(const char *l){ Arg a = { A_LABEL, 0, l, 0, 0, 0 }; return a; }
@@ -1473,6 +1497,14 @@ static void emit_args(const Arg *a, int n)
     for (int i = 0; i < n; i++) {
         if (a[i].kind == A_REF && ref_needs_call(a[i].ref)) {
             emit_ref_addr(a[i].ref, "r1");
+            emit("\tstw sp+%d, r1", SLOT(i));
+            slotted[i] = 1;
+        } else if (a[i].kind == A_VALUE) {
+            /* BY VALUE: the item's integer value, widened to a word */
+            Opnd *o = a[i].fn;
+            if (o->kind == O_REF && is_hot_int(o->ref.sym)) { emit_ref_addr(&o->ref, "r3"); emit_load_int(o->ref.sym, "r3", "r1"); }
+            else if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit_desc_addr("r4", sym_desc(o->ref.sym)); emit_call("cob_load_int"); }
+            else emit_li("r1", (long)numlit_int(&o->num));
             emit("\tstw sp+%d, r1", SLOT(i));
             slotted[i] = 1;
         } else if (a[i].kind == A_FUNC) {
@@ -1886,7 +1918,8 @@ static int at_operand(void)
         "before", "remainder", "depending", "corresponding", "corr", "then", "and", "or",
         "is", "not", "up", "down", "delimited", "pointer", "overflow", "at", "next", "record",
         "key", "invalid", "advancing", "lines", "line", "page", "input", "output", "i-o",
-        "extend", "lock", "rewind", "end-string", NULL };
+        "extend", "lock", "rewind", "end-string", "returning", "reference", "content",
+        "exception", "end-call", NULL };
     for (int i = 0; clause[i]; i++) if (!strcmp(t->s, clause[i])) return 0;
     return 1;
 }
@@ -1918,7 +1951,7 @@ static Para *para_add(const char *name, int is_section, int line)
     return p;
 }
 
-static void emit_para_label(Para *p) { emit(".Lp%d:\t# %s%s", p->id, p->name, p->is_section ? " section" : ""); }
+static void emit_para_label(Para *p) { emit(".Lp%d_%d:\t# %s%s", g_unit, p->id, p->name, p->is_section ? " section" : ""); }
 
 /* prescan the Procedure Division for paragraph and section headers */
 static void prescan_paragraphs(int from)
@@ -2599,7 +2632,7 @@ static void emit_body(Body *b)
         emit_li("r3", b->thru ? b->thru->id : b->from->id);
         emit_la("r4", lab);
         emit_call("cob_perform_push");
-        emit("\tjal r0, .Lp%d", b->from->id);
+        emit("\tjal r0, .Lp%d_%d", g_unit, b->from->id);
         emit_label(Lret);
     } else {
         parse_statements();
@@ -2718,12 +2751,12 @@ static void parse_goto(void)
         else { Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
         for (int i = 0; i < n; i++) {
             emit_li("r2", i + 1);
-            emit("\tbeq r1, r2, .Lp%d", ps[i]->id);
+            emit("\tbeq r1, r2, .Lp%d_%d", g_unit, ps[i]->id);
         }
         return;
     }
     if (n != 1) die_at(cur()->line, "GO TO with several procedure-names needs DEPENDING ON");
-    emit("\tjal r0, .Lp%d", ps[0]->id);
+    emit("\tjal r0, .Lp%d_%d", g_unit, ps[0]->id);
 }
 
 static void parse_set(void)
@@ -2768,7 +2801,7 @@ static void parse_set(void)
 
 static void emit_file_addr(const char *reg, File *f)
 {
-    char lab[32]; snprintf(lab, sizeof lab, ".Lfile%d", (int)(f - g_files));
+    char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", g_unit, (int)(f - g_files));
     emit_la(reg, lab);
 }
 
@@ -3057,6 +3090,93 @@ static void parse_string(void)
     accept_word("end-string");
 }
 
+/* ---- CALL -------------------------------------------------------------- */
+
+/* a PROGRAM-ID or CALL literal as a linker symbol: the SLOW-32 C ABI's
+ * name space, shared with C and Fortran (docs/lowering.md) */
+static const char *link_name(const char *name)
+{
+    static char b[128];
+    int n = 0;
+    for (const char *p = name; *p && n < 120; p++) b[n++] = (isalnum((unsigned char)*p) || *p == '_') ? *p : '_';
+    b[n] = 0;
+    return b;
+}
+
+static void parse_call(void)
+{
+    int line = cur()->line;
+    Tok *t = cur();
+    if (t->kind != T_STR) {
+        if (t->kind == T_WORD) die_at(line, "CALL of an identifier (dynamic CALL) is not implemented; CALL a literal");
+        die_at(line, "expected a program-name literal after CALL");
+    }
+    char name[128]; snprintf(name, sizeof name, "%.*s", t->len > 120 ? 120 : t->len, t->s);
+    for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
+    advance();
+    Arg a[8]; Opnd ops[8]; int n = 0;
+    if (accept_word("using")) {
+        int mode = 0;               /* 0 reference, 1 content, 2 value */
+        for (;;) {
+            if (accept_word("by")) {
+                if (accept_word("reference")) mode = 0;
+                else if (accept_word("content")) mode = 1;
+                else if (accept_word("value")) mode = 2;
+                else die_at(cur()->line, "expected REFERENCE, CONTENT or VALUE after BY");
+                continue;
+            }
+            if (accept_word("reference")) { mode = 0; continue; }
+            if (accept_word("value")) { mode = 2; continue; }
+            if (accept_word("content")) { mode = 1; continue; }
+            if (!at_operand()) break;
+            if (n >= 8) die_at(cur()->line, "more than eight CALL arguments (stack arguments) are not implemented yet");
+            parse_operand(&ops[n]);
+            Opnd *o = &ops[n];
+            if (mode == 1) die_at(o->line, "BY CONTENT is not implemented yet");
+            if (mode == 2) {
+                if (o->kind == O_REF) {
+                    if (!is_int_item(o->ref.sym)) die_at(o->line, "BY VALUE '%s' must be an integer item", o->ref.sym->name);
+                    if (o->ref.sym->size > 4) die_at(o->line, "BY VALUE '%s': only items up to four bytes (a word) are passed by value", o->ref.sym->name);
+                    a[n] = arg_value(o);
+                } else if (o->kind == O_NUM) {
+                    if (!numlit_is_int(&o->num)) die_at(o->line, "BY VALUE needs an integer");
+                    a[n] = arg_imm((long)numlit_int(&o->num));
+                } else die_at(o->line, "BY VALUE needs an integer item or literal");
+            } else {
+                if (o->kind == O_REF) { if (o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed"); a[n] = arg_ref(&o->ref); }
+                else if (o->kind == O_STR) a[n] = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
+                else if (o->kind == O_NUM) { int d; a[n] = arg_label(num_lit_label(&o->num, &d)); }
+                else die_at(o->line, "a CALL argument must be an item or a literal");
+            }
+            n++;
+        }
+    }
+    Ref ret; int has_ret = 0;
+    if (accept_word("returning") || accept_word("giving")) {
+        parse_ref(&ret); has_ret = 1;
+        if (!is_int_item(ret.sym)) die_at(ret.line, "RETURNING '%s' must be an integer item (the C ABI returns a word)", ret.sym->name);
+    }
+    if (at_word("on") || at_word("exception") || at_word("overflow") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "exception"))))
+        die_at(cur()->line, "CALL ... ON EXCEPTION is not implemented (every CALL is resolved by the linker)");
+    emit_args(a, n);
+    emit("\tjal r31, %s", link_name(name));
+    if (has_ret) {
+        if (is_hot_int(ret.sym)) {
+            emit("\tstw sp+%d, r1", SLOT_C);
+            emit_ref_addr(&ret, "r3");
+            emit("\tldw r1, sp+%d", SLOT_C);
+            emit_store_int(ret.sym, "r3", "r1");
+        } else {
+            emit("\tstw sp+%d, r1", SLOT_C);
+            Arg b[2] = { arg_ref(&ret), arg_desc(sym_desc(ret.sym)) };
+            emit_args(b, 2);
+            emit("\tldw r5, sp+%d", SLOT_C);
+            emit_call("cob_store_int");
+        }
+    }
+    accept_word("end-call");
+}
+
 /* ---- dispatch ---------------------------------------------------------- */
 
 static void parse_statement(void)
@@ -3080,6 +3200,13 @@ static void parse_statement(void)
     if (!strcmp(v, "delete")) { advance(); parse_delete(); return; }
     if (!strcmp(v, "start")) { advance(); parse_start(); return; }
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
+    if (!strcmp(v, "call")) { advance(); parse_call(); return; }
+    if (!strcmp(v, "cancel")) {
+        /* everything is linked statically; there is nothing to release */
+        advance();
+        while (cur()->kind == T_STR || (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s))) advance();
+        return;
+    }
     if (!strcmp(v, "if")) { advance(); parse_if(); return; }
     if (!strcmp(v, "perform")) { advance(); parse_perform(); return; }
     if (!strcmp(v, "go")) { advance(); parse_goto(); return; }
@@ -3089,11 +3216,11 @@ static void parse_statement(void)
         if (accept_word("run")) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
         die_at(t->line, "STOP literal is not implemented");
     }
-    if (!strcmp(v, "goback")) { advance(); emit("\tjal r0, .Lgoback"); return; }
+    if (!strcmp(v, "goback")) { advance(); emit("\tjal r0, .Lgb%d", g_unit); return; }
     if (!strcmp(v, "continue")) { advance(); return; }
     if (!strcmp(v, "exit")) {
         advance();
-        if (at_word("program")) die_at(t->line, "EXIT PROGRAM is not implemented yet (stage 6)");
+        if (accept_word("program")) { emit("\tjal r0, .Lgb%d", g_unit); return; }
         if (at_word("perform") || at_word("paragraph") || at_word("section"))
             die_at(t->line, "EXIT %s is not in COBOL 85", cur()->s);
         return;
@@ -3105,7 +3232,7 @@ static void parse_statement(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
-        { "call", "stage 6" }, { "cancel", "stage 6" }, { "initiate", "stage 7" }, { "generate", "stage 7" },
+        { "initiate", "stage 7" }, { "generate", "stage 7" },
         { "terminate", "stage 7" }, { "accept", "stage 8" }, { "evaluate", "stage 9" },
         { "inspect", "stage 9" }, { "initialize", "stage 9" },
         { "unstring", "after v1" }, { "search", "after v1" }, { "sort", "after v1" },
@@ -3127,22 +3254,42 @@ static void emit_exit_check(int id)
     emit_label(Ln);
 }
 
+static int g_saw_end_program;
+
 static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
-    if (at_word("using")) die_at(cur()->line, "PROCEDURE DIVISION USING is not implemented yet (stage 6)");
+    Sym *using[8]; int nusing = 0;
+    if (accept_word("using")) {
+        while (cur()->kind == T_WORD && !at_word("returning")) {
+            if (nusing >= 8) die_at(cur()->line, "more than eight USING items (stack arguments) are not implemented yet");
+            Sym *u = sym_lookup(cur()->s, NULL, 0, cur()->line);
+            if (!g_sym[u->record].is_linkage || u->parent >= 0)
+                die_at(cur()->line, "USING '%s' must be a level 01 or 77 item of the LINKAGE SECTION", u->name);
+            using[nusing++] = u;
+            advance();
+        }
+    }
+    if (at_word("returning"))
+        die_at(cur()->line, "PROCEDURE DIVISION RETURNING is COBOL 2002; make the result the last USING item (docs/functions.md)");
     expect_period();
     prescan_paragraphs(g_tp);
 
+    char entry[128];
+    snprintf(entry, sizeof entry, "%s", link_name(g_progid));   /* link_name's buffer is static; CALLs reuse it */
     emit("\t.text");
-    emit("\t.globl main");
+    emit("\t.globl %s", entry);
     emit("\t.p2align 2");
-    emit("\t.type main,@function");
-    emit("main:");
+    emit("\t.type %s,@function", entry);
+    emit("%s:", entry);
     emit("\taddi sp, sp, -%d", FRAME);
     emit("\tstw sp+0, lr");
     emit("\tstw sp+4, r11");
-    emit_call("cob_init");
+    /* the caller's addresses go into the LINKAGE cells */
+    for (int i = 0; i < nusing; i++) {
+        emit_la("r1", g_sym[using[i]->record].label);
+        emit("\tstw r1+0, %s", argreg(i));
+    }
 
     int cur_par = -1, cur_sec = -1;
     for (;;) {
@@ -3178,20 +3325,37 @@ static void parse_procedure_division(void)
     if (cur_par >= 0) emit_exit_check(cur_par);
     if (cur_sec >= 0) emit_exit_check(cur_sec);
 
-    emit(".Lgoback:");
+    emit(".Lgb%d:", g_unit);
     emit("\taddi r1, r0, 0");
     emit("\tldw r11, sp+4");
     emit("\tldw lr, sp+0");
     emit("\taddi sp, sp, %d", FRAME);
     emit("\tjalr r0, r31, 0");
 
+    if (g_unit == 0 && !g_module) {
+        /* the first unit of an executable is the main program */
+        emit("\t.globl main");
+        emit("\t.p2align 2");
+        emit("\t.type main,@function");
+        emit("main:");
+        emit("\taddi sp, sp, -16");
+        emit("\tstw sp+0, lr");
+        emit_call("cob_init");
+        emit("\tjal r31, %s", entry);
+        emit("\taddi r1, r0, 0");
+        emit("\tldw lr, sp+0");
+        emit("\taddi sp, sp, 16");
+        emit("\tjalr r0, r31, 0");
+    }
+
+    g_saw_end_program = 0;
     if (accept_word("end")) {
         expect_word("program");
         if (cur()->kind != T_WORD || strcmp(cur()->s, g_progid))
             die_at(cur()->line, "END PROGRAM names '%s' but the program is '%s'", cur()->s, g_progid);
         advance();
         expect_period();
-        if (cur()->kind != T_EOF) die_at(cur()->line, "more than one program in a source file is not implemented yet (stage 6)");
+        g_saw_end_program = 1;
     }
 }
 
@@ -3436,7 +3600,14 @@ static void parse_data_division(void)
             while (cur()->kind == T_NUM) parse_data_item();
             continue;
         }
-        if ((at_word("linkage") || at_word("screen") || at_word("report") || at_word("communication")) && is_word(peek(1), "section"))
+        if (at_word("linkage") && is_word(peek(1), "section")) {
+            advance(); advance(); expect_period();
+            g_in_linkage = 1;
+            while (cur()->kind == T_NUM) parse_data_item();
+            g_in_linkage = 0;
+            continue;
+        }
+        if ((at_word("screen") || at_word("report") || at_word("communication")) && is_word(peek(1), "section"))
             die_at(cur()->line, "the %s SECTION is not implemented yet", cur()->s);
         break;
     }
@@ -3448,22 +3619,27 @@ static void parse_data_division(void)
 /* Driver                                                                  */
 /* ====================================================================== */
 
-static void emit_data(void)
+static void emit_unit_data(void)
 {
     emit("");
     emit("\t.data");
     for (int i = 0; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0) continue;
+        if (s->is_linkage) {
+            emit("\t.p2align 2");
+            emit("%s:\t# linkage %02d %s (%d bytes at the caller's)", s->label, s->level, s->name, s->image_size);
+            emit("\t.word 0");
+            continue;
+        }
         emit("\t.p2align 3");
         emit("%s:\t# %02d %s (%d bytes)", s->label, s->level, s->name, s->image_size);
         emit_bytes(s->image, s->image_size);
     }
-    for (int i = 0; i < g_ncnt; i++) { emit("\t.p2align 2"); emit(".Lcnt%d:", i); emit("\t.word 0"); }
     for (int i = 0; i < g_nfile; i++) {
         File *f = &g_files[i];
         emit("\t.p2align 2");
-        emit(".Lfile%d:\t# %s", i, f->name);
+        emit(".Lf%d_%d:\t# %s", g_unit, i, f->name);
         emit("\t.byte %d,%d,%d,0", f->org, f->access, f->optional);
         emit("\t.word 0");
         if (f->rec >= 0) emit("\t.word %s", g_sym[g_sym[f->rec].record].label); else emit("\t.word 0");
@@ -3483,6 +3659,13 @@ static void emit_data(void)
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
     }
+}
+
+static void emit_rodata(void)
+{
+    emit("");
+    emit("\t.data");
+    for (int i = 0; i < g_ncnt; i++) { emit("\t.p2align 2"); emit(".Lcnt%d:", i); emit("\t.word 0"); }
     emit("");
     emit("\t.section .rodata");
     for (int i = 0; i < g_nlit; i++) {
@@ -3511,7 +3694,8 @@ static void usage(void)
     fprintf(stderr, "s32-cobc %s -- COBOL 85 for SLOW-32\n"
         "usage: s32-cobc [-free|-fixed] [-o out.s] source.cbl\n"
         "  -fixed   reference format (columns 7/8-72); the default\n"
-        "  -free    free format (GnuCOBOL -free; majesty)\n", VERSION);
+        "  -free    free format (GnuCOBOL -free; majesty)\n"
+        "  -m       module: no main entry, every unit a subprogram\n", VERSION);
     exit(2);
 }
 
@@ -3521,6 +3705,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-free")) g_free = 1;
         else if (!strcmp(argv[i], "-fixed")) g_free = 0;
+        else if (!strcmp(argv[i], "-m")) g_module = 1;
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
         else if (!strcmp(argv[i], "--version")) { printf("s32-cobc %s\n", VERSION); return 0; }
         else if (argv[i][0] == '-') usage();
@@ -3547,13 +3732,21 @@ int main(int argc, char **argv)
     emit("\t.file\t\"%s\"", in);
     emit("# s32-cobc %s", VERSION);
 
-    parse_identification_division();
-    parse_environment_division();
-    parse_data_division();
-    if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
-    parse_procedure_division();
-    if (cur()->kind != T_EOF) die_at(cur()->line, "unexpected %s after the program", tok_desc(cur()));
-    emit_data();
+    for (;;) {
+        /* one program unit; a source file may hold several, each closed
+         * by END PROGRAM */
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
+        parse_identification_division();
+        parse_environment_division();
+        parse_data_division();
+        if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
+        parse_procedure_division();
+        emit_unit_data();
+        if (cur()->kind == T_EOF) break;
+        if (!g_saw_end_program) die_at(cur()->line, "unexpected %s after the program (a further program needs END PROGRAM before it)", tok_desc(cur()));
+        g_unit++;
+    }
+    emit_rodata();
     fclose(g_out);
     return 0;
 }

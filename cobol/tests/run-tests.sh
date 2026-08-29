@@ -82,15 +82,14 @@ for fmt in fixed free; do
         name="$(basename "$src" .cbl)"
         exp="${src%.cbl}.expected"
         flag="-$fmt"
-        if ! "$COBC" $flag -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
-            report "$fmt/$name" 1 "$(head -1 "$W/$name.err")"; continue
+        # a .link file beside the test names further sources (subprogram
+        # .cbl, .c) relative to tests/, for us and for the oracle
+        extra=()
+        if [ -f "${src%.cbl}.link" ]; then
+            for e in $(cat "${src%.cbl}.link"); do extra+=("$HERE/$e"); done
         fi
-        if ! "$AS" "$W/$name.s" "$W/$name.s32o" >"$W/$name.as" 2>&1; then
-            report "$fmt/$name" 1 "assemble: $(grep -m1 -i error "$W/$name.as")"; continue
-        fi
-        if ! "$LD" --mmio 64K --stack-size 128K --heap-size 8M -o "$W/$name.s32x" "$ROOT/runtime/crt0.s32o" "$W/$name.s32o" "$LIBCOB" \
-                "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >"$W/$name.ld" 2>&1; then
-            report "$fmt/$name" 1 "link: $(grep -m1 -i error "$W/$name.ld")"; continue
+        if ! "$CDIR/compile.sh" $flag "$src" "${extra[@]+"${extra[@]}"}" -o "$W/$name.s32x" >"$W/$name.log" 2>"$W/$name.err"; then
+            report "$fmt/$name" 1 "$(grep -m1 -i "error" "$W/$name.err" "$W/$name.log" | head -1 | sed 's/^[^:]*://')"; continue
         fi
         fresh_workdir
         emu_run "$W/$name.s32x" > "$W/$name.out"
@@ -107,7 +106,7 @@ for fmt in fixed free; do
         if [ -n "$ORACLE" ]; then
             std="-std=cobol85"
             grep -qi "default dialect" "$src" && std=""
-            if "$ORACLE" -x $std $flag -o "$W/$name.orc" "$src" >"$W/$name.orclog" 2>&1; then
+            if (cd "$W" && "$ORACLE" -x $std $flag -o "$W/$name.orc" "$src" "${extra[@]+"${extra[@]}"}") >"$W/$name.orclog" 2>&1; then
                 fresh_workdir
                 (cd "$W/run" && "$W/$name.orc") > "$W/$name.orcout" 2>/dev/null
                 # a documented divergence from GnuCOBOL (docs/oracles.md) keeps

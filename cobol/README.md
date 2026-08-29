@@ -1,13 +1,15 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **Stage 5 landed** (2026-08-29) -- gl039, the first majesty
-gate, compiles unchanged and runs in place. The language so far: the
-Data Division as a tree,
+Status: **Stage 6 landed** (2026-08-29) -- gl039, the first majesty
+gate, compiles unchanged and runs in place, and the C bridge is real:
+majesty's `clinkages.cbl` over `dateutil.c` prints under `slow32-dbt`
+what GnuCOBOL prints. The language so far: the Data Division as a tree,
 the whole MOVE matrix including editing and de-editing, COMPUTE and the
 arithmetic verbs with ROUNDED / SIZE ERROR / REMAINDER, conditions, IF
 and every PERFORM form, line sequential, fixed sequential and indexed
-files, STRING; 26/26 tests with GnuCOBOL agreeing on each program's
-output. Stages in [docs/plan.md](docs/plan.md).
+files, STRING, CALL / LINKAGE / USING on the SLOW-32 C ABI; 28/28
+tests with GnuCOBOL agreeing on each program's output. Stages in
+[docs/plan.md](docs/plan.md).
 
 A host cross-compiler in the tree's ordinary universe (like `fortran/`
 and `clip/`, not `selfhost/`). It reads COBOL 85 plus the implementor
@@ -70,7 +72,9 @@ under `docs/`.
                       digits, scale, flags, size, picture)
     libcob/cobedit.h  the software edit descriptor, applied and reversed
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
-    tests/            run-tests.sh; fixed/ free/ programs with .expected;
+    tests/            run-tests.sh; fixed/ free/ programs with .expected
+                      (a .link beside one names its subprograms and C);
+                      subs/ subprogram units; c/ C called from tests;
                       bad/ programs that must be refused; pictures.txt;
                       data/ fixtures, copied fresh for every program run
     build.sh          host build of s32-cobc + libcob
@@ -80,6 +84,7 @@ under `docs/`.
 
     ./build.sh                                   # out/s32-cobc, libcob/libcob.s32o
     ./compile.sh -free prog.cbl -o prog.s32x     # majesty is free-format
+    ./compile.sh -free gl030.cbl clinkages.cbl dateutil.c -I ~/majesty/src/h -o gl030.s32x
     ../tools/emulator/slow32 prog.s32x           # or slow32-fast, slow32-dbt
     ./tests/run-tests.sh                         # 3 gates; uses host cobc as
                                                  # oracle when present

@@ -191,7 +191,7 @@ documented divergence from GnuCOBOL ([oracles.md](oracles.md)):
 21 by GnuCOBOL. Not in: `ALTERNATE RECORD KEY`, RELATIVE files
 (after v1), slot reuse after `DELETE`, a `SORT`-shaped rebuild.
 
-## Stage 6 — subprograms and the C bridge **M**
+## Stage 6 — subprograms and the C bridge **M** — DONE 2026-08-29
 
 [functions.md](functions.md). Plain 1985 Inter-Program Communication,
 plus the C seam.
@@ -207,6 +207,28 @@ plus the C seam.
 Done: a test program `CALL`s `c_lineartofielded` through the
 rewritten `clinkages.cbl` and prints the fielded date;
 `c_isvaliddate` rejects a bad one.
+
+What landed: several program units per source file, each closed by
+`END PROGRAM`, each a linker-visible function named after its
+`PROGRAM-ID` on the SLOW-32 C ABI (`docs/lowering.md`'s ruling: one
+convention, so COBOL, C and Fortran link with no glue); the first
+unit of an executable also gets the `main` wrapper, `-m` makes a
+module of subprograms only. `LINKAGE SECTION`; `PROCEDURE DIVISION
+USING` fills a cell per LINKAGE record from the argument registers
+and every reference to a LINKAGE item goes through that cell; `CALL
+'literal' USING` with `BY REFERENCE` (addresses), `BY VALUE`
+(integer items up to a word, widened; literals), `RETURNING` into an
+integer item from `r1`; `GOBACK` and `EXIT PROGRAM` return; `CANCEL`
+is a no-op (everything is linked statically). `compile.sh` takes
+several `.cbl`, `.c` and `.s32o` files; the harness takes a `.link`
+file beside a test. The done-criterion ran for real: a program
+`CALL`ing `c_lineartofielded`, `c_isvaliddate` and
+`c_fieldedtolinear` through majesty's rewritten `clinkages.cbl` over
+majesty's `dateutil.c`, compiled by the SLOW-32 C toolchain, printed
+under `slow32-dbt` exactly what GnuCOBOL printed from the same three
+sources. Not in: dynamic `CALL identifier`, `BY CONTENT`, more than
+eight arguments (the stack case), `ON EXCEPTION`, `IS INITIAL`
+re-initialisation, nested (contained) programs, `GLOBAL`/`EXTERNAL`.
 
 ## Stage 7 — Report Writer, cheap half **L**
 
