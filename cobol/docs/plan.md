@@ -53,7 +53,7 @@ Rulings made here: command name `s32-cobc`; format by flag, fixed
 default; `_` accepted in user-words; COMP/COMP-5 sizes and DISPLAY
 conventions in [dialect.md](dialect.md).
 
-## Stage 2 — data division + MOVE + COMP integer **L**
+## Stage 2 — data division + MOVE + COMP integer **L** — DONE 2026-08-29
 
 - Groups, `REDEFINES`, `OCCURS` (fixed, three levels is enough;
   85 allows seven, grow when a program asks), subscripts that are
@@ -76,6 +76,25 @@ conventions in [dialect.md](dialect.md).
 
 Done: `MOVE` and `ADD` of `PIC S9(8) COMP` and `PIC X(n)` match
 GnuCOBOL on checked-in tests.
+
+What landed: the Data Division as a tree (`Sym[]` with parent/child,
+layout with `REDEFINES` overlay and `SYNC` alignment, images built
+per record with `VALUE` replicated across `OCCURS`), subscripts
+literal / data-name / `name +- n`, qualification, 88s with `THRU` and
+`SET ... TO TRUE`, a runtime descriptor shared by compiler and
+`libcob` (`libcob/cobrt.h`), `cob_move` over the unedited cells of the
+matrix, `cob_cmp`/`cob_class`, a scaled-i64 numeric stack for the four
+arithmetic verbs (`GIVING`, several receivers, scale alignment, digit
+truncation), IF with `NEXT SENTENCE`, every `PERFORM` form (paragraph,
+`THRU`, `TIMES`, `UNTIL`, `VARYING ... AFTER`, `WITH TEST AFTER`,
+inline) over a runtime PERFORM stack with an exit check at every
+paragraph and section end, `GO TO ... DEPENDING ON`, `SET UP/DOWN BY`.
+Hot cases inline: COMP-integer MOVE/ADD/SUBTRACT/compare, equal-size
+alphanumeric MOVE as `memcpy`. Tests: `tables`, `move`, `arith`,
+`control`, all oracle-agreed; five new refusals. Not in: `ROUNDED`,
+`ON SIZE ERROR`, `REMAINDER`, edited receivers (stage 3), reference
+modification (stage 9), `OCCURS DEPENDING ON`, `SIGN SEPARATE`,
+`MOVE CORRESPONDING`, arithmetic expressions inside conditions.
 
 ## Stage 3 — decimal library + edited MOVE **L**
 

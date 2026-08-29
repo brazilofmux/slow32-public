@@ -5,12 +5,14 @@
  * assembler for slow32asm / s32-ld.  Not SSA, not BURG: the IR is the
  * symbol table (Sym[]), and each verb is a lowering against it -- an inline
  * sequence for the hot cases, otherwise a call into libcob with a
- * descriptor the compiler built.  docs/architecture.md.
+ * descriptor the compiler built (libcob/cobrt.h).  docs/architecture.md.
  *
- * Stage 1 (docs/plan.md): reader for both formats, tokenizer, the four
- * divisions with WORKING-STORAGE elementary items, DISPLAY, STOP RUN,
- * GOBACK, and a refusal with a message for everything else.  Unimplemented
- * is a diagnostic, never silence.
+ * Stage 2 (docs/plan.md): the Data Division as a tree -- groups,
+ * REDEFINES, OCCURS with subscripts, 77, 88, qualification -- the
+ * conversion matrix behind MOVE, the arithmetic statements on a scaled-i64
+ * numeric stack with COMP-integer hot cases inline, conditions, IF,
+ * every PERFORM form, GO TO, SET.  Unimplemented is a diagnostic, never
+ * silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,8 +20,9 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include "picture.h"
+#include "../libcob/cobrt.h"
 
-#define VERSION "0.1 (stage 1)"
+#define VERSION "0.2 (stage 2)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -232,7 +235,6 @@ static void tokenize(void)
                 while (isdigit((unsigned char)*e)) e++;
                 if (*e == '.' && isdigit((unsigned char)e[1])) { e++; while (isdigit((unsigned char)*e)) e++; }
                 if (is_wordch((unsigned char)*e) && !signed_num) {
-                    /* user-word beginning with digits */
                     e = p; while (is_wordch((unsigned char)*e)) e++;
                     Tok *w = push_tok(T_WORD, line, p, (int)(e - p));
                     for (char *k = w->s; *k; k++) *k = (char)tolower((unsigned char)*k);
@@ -251,7 +253,6 @@ static void tokenize(void)
                 for (char *k = w->s; *k; k++) *k = (char)tolower((unsigned char)*k);
                 if (!strcmp(w->s, "pic") || !strcmp(w->s, "picture")) pic_ctx = 1;
                 p = e;
-                /* PIC IS 9(3): let IS through without leaving picture context */
                 if (pic_ctx) {
                     const char *q = p;
                     while (*q == ' ' || *q == '\t') q++;
@@ -276,6 +277,7 @@ static void tokenize(void)
             if (c == ':') { push_tok(T_COLON, line, ":", 1); p++; continue; }
             if (c == '*' && p[1] == '*') { push_tok(T_OP, line, "**", 2); p += 2; continue; }
             if ((c == '>' || c == '<') && p[1] == '=') { push_tok(T_OP, line, p, 2); p += 2; continue; }
+            if (c == '<' && p[1] == '>') { push_tok(T_OP, line, "<>", 2); p += 2; continue; }
             if (strchr("=<>+-*/", c)) { push_tok(T_OP, line, p, 1); p++; continue; }
             die_at(line, "unexpected character '%c'", c);
         }
@@ -294,6 +296,7 @@ static void advance(void) { if (g_tp < g_ntok - 1) g_tp++; }
 static int is_word(Tok *t, const char *w) { return t->kind == T_WORD && !strcmp(t->s, w); }
 static int at_word(const char *w) { return is_word(cur(), w); }
 static int accept_word(const char *w) { if (at_word(w)) { advance(); return 1; } return 0; }
+static int at_op(const char *o) { return cur()->kind == T_OP && !strcmp(cur()->s, o); }
 
 static const char *tok_desc(Tok *t)
 {
@@ -318,55 +321,23 @@ static void expect_period(void)
     advance();
 }
 
-/* ====================================================================== */
-/* Symbol table -- the IR                                                  */
-/* ====================================================================== */
-
-enum {
-    U_DISPLAY, U_BINARY, U_PACKED, U_COMP5,
-    U_SINT, U_UINT, U_SSHORT, U_USHORT, U_BCHAR, U_UBCHAR, U_POINTER, U_INDEX
-};
-
-static const char *usage_name(int u)
+static int is_figurative(const char *w)
 {
-    static const char *n[] = { "display", "comp", "comp-3", "comp-5", "signed-int",
-        "unsigned-int", "signed-short", "unsigned-short", "binary-char",
-        "binary-char unsigned", "pointer", "index" };
-    return n[u];
+    static const char *figs[] = { "space", "spaces", "zero", "zeros", "zeroes",
+        "low-value", "low-values", "high-value", "high-values", "quote", "quotes",
+        "null", "nulls", NULL };
+    for (int i = 0; figs[i]; i++) if (!strcmp(w, figs[i])) return 1;
+    return 0;
 }
 
-typedef struct Sym {
-    char name[64];
-    int  level, line, is_filler;
-    int  usage, has_usage;
-    int  has_pic;
-    char pic[PIC_MAXPAT];
-    PicInfo pi;
-    int  size;
-    int  has_value;
-    unsigned char *value;       /* size bytes */
-    char label[80];             /* assembler label for the storage */
-} Sym;
-
-static Sym *g_sym;
-static int g_nsym, g_scap;
-
-static Sym *sym_new(void)
+static int fig_byte(const char *w)
 {
-    if (g_nsym == g_scap) { g_scap = g_scap ? g_scap * 2 : 64; g_sym = realloc(g_sym, g_scap * sizeof *g_sym); }
-    Sym *s = &g_sym[g_nsym++];
-    memset(s, 0, sizeof *s);
-    return s;
+    if (!strncmp(w, "space", 5)) return ' ';
+    if (!strncmp(w, "zero", 4)) return '0';
+    if (!strncmp(w, "high", 4)) return 0xFF;                 /* ASCII: HIGH-VALUE is X'FF' */
+    if (!strncmp(w, "quote", 5)) return '"';
+    return 0;                                                 /* LOW-VALUE, NULL */
 }
-
-static Sym *sym_find(const char *name)
-{
-    for (int i = 0; i < g_nsym; i++)
-        if (!g_sym[i].is_filler && !strcmp(g_sym[i].name, name)) return &g_sym[i];
-    return NULL;
-}
-
-static char g_progid[64];
 
 /* ====================================================================== */
 /* Numeric literals                                                        */
@@ -390,12 +361,30 @@ static void numlit_parse(Tok *t, NumLit *n)
         n->digits[n->ndigits++] = *s;
         if (seen) n->scale++;
     }
-    /* strip leading zeros, keeping at least one digit */
-    int lead = 0;
-    while (lead < n->ndigits - 1 && n->digits[lead] == '0' && lead + n->scale < n->ndigits) lead++;
-    (void)lead;
     if (n->ndigits - n->scale > 18 || n->ndigits > 36)
         die_at(t->line, "numeric literal has more than 18 digits");
+}
+
+static void numlit_zero(NumLit *n) { memset(n, 0, sizeof *n); n->digits[0] = '0'; n->ndigits = 1; }
+
+static int numlit_is_int(const NumLit *n)
+{
+    for (int i = n->ndigits - n->scale; i < n->ndigits; i++) if (n->digits[i] != '0') return 0;
+    return 1;
+}
+
+static long long numlit_int(const NumLit *n)       /* integer part */
+{
+    long long v = 0;
+    for (int i = 0; i < n->ndigits - n->scale; i++) v = v * 10 + (n->digits[i] - '0');
+    return n->neg ? -v : v;
+}
+
+static long long numlit_scaled(const NumLit *n)    /* all digits as an integer */
+{
+    long long v = 0;
+    for (int i = 0; i < n->ndigits; i++) v = v * 10 + (n->digits[i] - '0');
+    return n->neg ? -v : v;
 }
 
 /* Value of the literal scaled to `scale` decimal places, as digit text
@@ -403,20 +392,111 @@ static void numlit_parse(Tok *t, NumLit *n)
  * Returns 0 if the integer part does not fit. */
 static int numlit_align(const NumLit *n, int digits, int scale, char *out)
 {
-    int int_digits = n->ndigits - n->scale;       /* digits left of the point */
+    int int_digits = n->ndigits - n->scale;
     int want_int = digits - scale;
     memset(out, '0', digits);
-    /* integer part */
     for (int i = 0; i < int_digits; i++) {
         int pos = want_int - int_digits + i;
         if (pos < 0) { if (n->digits[i] != '0') return 0; continue; }
         out[pos] = n->digits[i];
     }
-    /* fraction, truncated to the receiving scale */
     for (int i = 0; i < n->scale && i < scale; i++)
         out[want_int + i] = n->digits[int_digits + i];
     return 1;
 }
+
+/* ====================================================================== */
+/* Symbol table -- the IR                                                  */
+/* ====================================================================== */
+
+enum {
+    U_DISPLAY, U_BINARY, U_PACKED, U_COMP5,
+    U_SINT, U_UINT, U_SSHORT, U_USHORT, U_BCHAR, U_UBCHAR, U_POINTER, U_INDEX
+};
+
+static const char *usage_name(int u)
+{
+    static const char *n[] = { "display", "comp", "comp-3", "comp-5", "signed-int",
+        "unsigned-int", "signed-short", "unsigned-short", "binary-char",
+        "binary-char unsigned", "pointer", "index" };
+    return n[u];
+}
+
+static int usage_is_native(int u)
+{
+    return u == U_SINT || u == U_UINT || u == U_SSHORT || u == U_USHORT ||
+           u == U_BCHAR || u == U_UBCHAR || u == U_POINTER || u == U_INDEX;
+}
+
+#define MAXDIM 7
+#define MAXCV 32
+
+typedef struct Sym {
+    char name[64];
+    int  level, line, is_filler;
+    int  parent, child, sibling;    /* tree, as indices; -1 = none */
+    int  record;                    /* the 01/77 (or index) owning the storage */
+    int  usage, has_usage, has_pic;
+    char pic[PIC_MAXPAT];
+    PicInfo pi;
+    int  is_group, is_cond, is_index;
+    int  size;                      /* one occurrence */
+    int  offset;                    /* from the start of the record */
+    int  occurs;                    /* 0 = no OCCURS */
+    int  redefines;                 /* sym index, -1 */
+    int  sync, just, blank_zero;
+    int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];
+    /* VALUE (elementary or group) */
+    Tok *value_tok; int value_all, value_fig;
+    /* level 88 */
+    int  ncv; Tok *cv_lo[MAXCV], *cv_hi[MAXCV];
+    /* records */
+    unsigned char *image; int image_size;
+    char label[48];
+    /* descriptor */
+    int  desc_id;                   /* -1 until emitted */
+} Sym;
+
+static Sym *g_sym;
+static int g_nsym, g_scap;
+
+static Sym *sym_new(void)
+{
+    if (g_nsym == g_scap) { g_scap = g_scap ? g_scap * 2 : 128; g_sym = realloc(g_sym, g_scap * sizeof *g_sym); }
+    Sym *s = &g_sym[g_nsym++];
+    memset(s, 0, sizeof *s);
+    s->parent = s->child = s->sibling = s->redefines = -1;
+    s->desc_id = -1;
+    return s;
+}
+
+static int sym_idx(Sym *s) { return (int)(s - g_sym); }
+
+/* name [OF|IN qualifier]...: the unique item that matches */
+static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
+{
+    Sym *found = NULL; int nfound = 0;
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_filler || strcmp(s->name, name)) continue;
+        int ok = 1, at = i;
+        for (int q = 0; q < nq && ok; q++) {
+            int hit = -1;
+            for (int p = g_sym[at].parent; p >= 0; p = g_sym[p].parent)
+                if (!strcmp(g_sym[p].name, quals[q])) { hit = p; break; }
+            if (hit < 0) ok = 0; else at = hit;
+        }
+        if (ok) { found = s; nfound++; }
+    }
+    if (!nfound) {
+        if (nq) die_at(line, "'%s' is not declared under '%s'", name, quals[0]);
+        die_at(line, "'%s' is not declared", name);
+    }
+    if (nfound > 1) die_at(line, "'%s' is ambiguous; qualify it with OF/IN", name);
+    return found;
+}
+
+static char g_progid[64];
 
 /* ====================================================================== */
 /* Data Division                                                           */
@@ -429,26 +509,24 @@ static int binary_bytes(int digits, int usage)
      * the SLOW-32 C ABI's own types make natural.  COMP-5 is GnuCOBOL's
      * usage (via Micro Focus), so it takes GnuCOBOL's default 1-2-4-8 and
      * its rule that the item holds the binary field's full capacity, not
-     * just the picture's digits -- majesty's `pic 9 comp-5` is one byte
-     * there.  docs/dialect.md. */
+     * just the picture's digits.  docs/dialect.md. */
     if (usage == U_COMP5 && digits <= 2) return 1;
     if (digits <= 4) return 2;
     if (digits <= 9) return 4;
     return 8;
 }
 
-/* Digits a native binary field can show: what DISPLAY of a COMP-5 or
- * C-ABI item prints (GnuCOBOL convention). */
 static int capacity_digits(int bytes)
 {
     return bytes == 1 ? 3 : bytes == 2 ? 5 : bytes == 4 ? 10 : 19;
 }
 
+/* elementary size and numeric attributes */
 static void sym_finish(Sym *s)
 {
     int u = s->usage;
-    int native = (u == U_SINT || u == U_UINT || u == U_SSHORT || u == U_USHORT ||
-                  u == U_BCHAR || u == U_UBCHAR || u == U_POINTER || u == U_INDEX);
+    if (s->is_group) { s->pi.category = PIC_ALPHANUMERIC; return; }
+    int native = usage_is_native(u);
 
     if (!s->has_pic && !native)
         die_at(s->line, "'%s' has no PICTURE clause", s->name);
@@ -456,7 +534,6 @@ static void sym_finish(Sym *s)
         die_at(s->line, "'%s': USAGE %s takes no PICTURE", s->name, usage_name(u));
 
     if (native) {
-        /* C ABI types: the implementor module for CALL of existing C. */
         switch (u) {
         case U_SINT:   s->size = 4; s->pi.digits = 10; s->pi.is_signed = 1; break;
         case U_UINT:   s->size = 4; s->pi.digits = 10; break;
@@ -486,10 +563,14 @@ static void sym_finish(Sym *s)
         s->size = pi->digits / 2 + 1;
         break;
     }
+    if (s->just && pi->category == PIC_NUMERIC)
+        die_at(s->line, "'%s': JUSTIFIED is only for alphanumeric items", s->name);
 }
 
-/* Encode a numeric literal into the item's storage. */
-static void store_numeric(Sym *s, const NumLit *n, int line)
+static int is_numeric_sym(Sym *s) { return !s->is_group && s->pi.category == PIC_NUMERIC; }
+
+/* Encode a numeric literal into storage described by s, at p. */
+static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
 {
     const PicInfo *pi = &s->pi;
     int digits = pi->digits, scale = pi->scale;
@@ -497,58 +578,33 @@ static void store_numeric(Sym *s, const NumLit *n, int line)
     if (!numlit_align(n, digits, scale, d))
         die_at(line, "VALUE %s%.*s does not fit PICTURE of '%s'", n->neg ? "-" : "",
                n->ndigits, n->digits, s->name);
-    int neg = n->neg && pi->is_signed;      /* unsigned items take the magnitude */
+    int neg = n->neg && pi->is_signed;
 
     switch (s->usage) {
     case U_DISPLAY:
-        memcpy(s->value, d, digits);
-        if (neg) s->value[digits - 1] = (unsigned char)(d[digits - 1] - '0' + 'p');
+        memcpy(p, d, digits);
+        if (neg) p[digits - 1] = (unsigned char)(d[digits - 1] - '0' + 'p');
         break;
     case U_PACKED: {
-        /* digits, high nibble first, padded with a leading zero nibble when
-         * the count is even; sign nibble last */
-        int nb = s->size, k = 0;
-        int pad = (digits % 2 == 0);
-        unsigned char *v = s->value;
-        memset(v, 0, nb);
-        if (pad) { v[0] = (unsigned char)(d[0] - '0'); k = 1; }
-        for (int i = k ? 1 : 0, j = pad ? 1 : 0; i < digits; ) {
-            int hi = d[i++] - '0';
-            int lo = (i < digits) ? d[i++] - '0' : (pi->is_signed ? (neg ? 0xD : 0xC) : 0xF);
-            v[j++] = (unsigned char)(hi * 16 + lo);
+        int bytes = s->size;
+        memset(p, 0, bytes);
+        int nib = bytes * 2 - 2;
+        for (int i = digits - 1; i >= 0; i--, nib--) {
+            int v = d[i] - '0';
+            if (nib & 1) p[nib / 2] |= (unsigned char)v; else p[nib / 2] |= (unsigned char)(v << 4);
         }
-        if (pad) {
-            /* even digit count: the last byte holds the last digit and the sign */
-            v[nb - 1] = (unsigned char)((d[digits - 1] - '0') * 16 + (pi->is_signed ? (neg ? 0xD : 0xC) : 0xF));
-        }
+        p[bytes - 1] |= pi->is_signed ? (neg ? 0xD : 0xC) : 0xF;
         break;
     }
     default: {
-        /* binary: two's complement little-endian of the scaled value */
         unsigned long long mag = 0;
         for (int i = 0; i < digits; i++) mag = mag * 10 + (d[i] - '0');
-        if (s->size < 8 && mag >> (s->size * 8 - (pi->is_signed ? 1 : 0)))
+        if (s->size < 8 && (mag >> (s->size * 8 - (pi->is_signed ? 1 : 0))))
             die_at(line, "VALUE does not fit the %d-byte binary item '%s'", s->size, s->name);
         long long v = neg ? -(long long)mag : (long long)mag;
-        for (int i = 0; i < s->size; i++) s->value[i] = (unsigned char)(v >> (8 * i));
+        for (int i = 0; i < s->size; i++) p[i] = (unsigned char)(v >> (8 * i));
         break;
     }
-    }
-}
-
-static void default_init(Sym *s)
-{
-    /* The standard leaves uninitialised WORKING-STORAGE undefined.  The
-     * implementor rule here is GnuCOBOL's: alphanumeric to spaces, numeric
-     * to zero -- majesty was written against it. */
-    s->value = xmalloc(s->size);
-    if (s->usage == U_DISPLAY && s->pi.category != PIC_NUMERIC) {
-        memset(s->value, ' ', s->size);
-    } else {
-        NumLit z; memset(&z, 0, sizeof z); z.digits[0] = '0'; z.ndigits = 1;
-        if (s->usage == U_DISPLAY) memset(s->value, '0', s->size);
-        else if (s->usage == U_PACKED) store_numeric(s, &z, s->line);
-        else memset(s->value, 0, s->size);
     }
 }
 
@@ -556,11 +612,12 @@ static int parse_level(void)
 {
     Tok *t = cur();
     if (t->kind != T_NUM) return -1;
-    int all = 1;
-    for (char *k = t->s; *k; k++) if (!isdigit((unsigned char)*k)) all = 0;
-    if (!all || strlen(t->s) > 2) return -1;
+    for (char *k = t->s; *k; k++) if (!isdigit((unsigned char)*k)) return -1;
+    if (strlen(t->s) > 2) return -1;
     return atoi(t->s);
 }
+
+static int g_last_item = -1;        /* the previous non-88 item, for 88s */
 
 static void parse_data_item(void)
 {
@@ -570,28 +627,51 @@ static void parse_data_item(void)
     advance();
 
     if (level == 66) die_at(line, "level 66 (RENAMES) is not implemented yet");
-    if (level == 88) die_at(line, "level 88 condition-names are not implemented yet (stage 2)");
-    if (level != 1 && level != 77) {
-        if (level >= 2 && level <= 49)
-            die_at(line, "group items (level %02d) are not implemented yet (stage 2)", level);
+    if (!((level >= 1 && level <= 49) || level == 77 || level == 88))
         die_at(line, "level number %d is not valid", level);
-    }
 
     Sym *s = sym_new();
     s->level = level; s->line = line; s->usage = U_DISPLAY;
     if (accept_word("filler")) {
         s->is_filler = 1;
         snprintf(s->name, sizeof s->name, "filler");
-    } else if (cur()->kind == T_WORD) {
-        if (sym_find(cur()->s)) die_at(line, "'%s' is already declared", cur()->s);
+    } else if (cur()->kind == T_WORD && !at_word("redefines") && !at_word("pic") &&
+               !at_word("picture") && !at_word("value") && !at_word("occurs") && !at_word("usage")) {
         snprintf(s->name, sizeof s->name, "%s", cur()->s);
         advance();
-    } else if (cur()->kind == T_PERIOD) {
+    } else {
         s->is_filler = 1;                       /* 85 lets the name be omitted */
         snprintf(s->name, sizeof s->name, "filler");
-    } else die_at(line, "expected a data-name, found %s", tok_desc(cur()));
+    }
 
-    Tok *value_tok = NULL; int value_all = 0; int value_fig = 0; const char *fig = NULL;
+    if (level == 88) {
+        if (g_last_item < 0) die_at(line, "level 88 '%s' has no conditional variable", s->name);
+        s->is_cond = 1;
+        s->parent = g_last_item;
+        if (!(accept_word("value") || accept_word("values")))
+            die_at(line, "level 88 '%s' needs a VALUE clause", s->name);
+        accept_word("is"); accept_word("are");
+        for (;;) {
+            Tok *v = cur();
+            if (!(v->kind == T_STR || v->kind == T_NUM || (v->kind == T_WORD && is_figurative(v->s))))
+                die_at(v->line, "expected a literal in the VALUE of '%s'", s->name);
+            if (s->ncv >= MAXCV) die_at(v->line, "too many values for '%s'", s->name);
+            s->cv_lo[s->ncv] = v; s->cv_hi[s->ncv] = NULL;
+            advance();
+            if (accept_word("thru") || accept_word("through")) {
+                Tok *h = cur();
+                if (!(h->kind == T_STR || h->kind == T_NUM)) die_at(h->line, "expected a literal after THRU");
+                s->cv_hi[s->ncv] = h;
+                advance();
+            }
+            s->ncv++;
+            if (cur()->kind == T_PERIOD) break;
+        }
+        expect_period();
+        return;
+    }
+
+    g_last_item = sym_idx(s);
 
     while (cur()->kind != T_PERIOD) {
         Tok *t = cur();
@@ -637,83 +717,316 @@ static void parse_data_item(void)
 
         if (!strcmp(t->s, "value")) {
             advance(); accept_word("is");
-            if (accept_word("all")) value_all = 1;
+            if (accept_word("all")) s->value_all = 1;
             Tok *v = cur();
-            if (v->kind == T_STR || v->kind == T_NUM) { value_tok = v; advance(); }
-            else if (v->kind == T_WORD) {
-                static const char *figs[] = { "space", "spaces", "zero", "zeros", "zeroes",
-                    "low-value", "low-values", "high-value", "high-values", "quote", "quotes", "null", "nulls", NULL };
-                for (int i = 0; figs[i]; i++) if (!strcmp(v->s, figs[i])) fig = figs[i];
-                if (!fig) die_at(v->line, "expected a literal after VALUE, found %s", tok_desc(v));
-                value_fig = 1; value_tok = v; advance();
-            } else die_at(v->line, "expected a literal after VALUE, found %s", tok_desc(v));
+            if (v->kind == T_STR || v->kind == T_NUM) { s->value_tok = v; advance(); }
+            else if (v->kind == T_WORD && is_figurative(v->s)) { s->value_fig = 1; s->value_tok = v; advance(); }
+            else die_at(v->line, "expected a literal after VALUE, found %s", tok_desc(v));
             if (at_word("thru") || at_word("through"))
                 die_at(cur()->line, "VALUE ... THRU is only for level 88");
             continue;
         }
-
-        static const char *later[] = { "occurs", "redefines", "sync", "synchronized",
-            "just", "justified", "blank", "sign", "global", "external", "renames", NULL };
-        for (int i = 0; later[i]; i++)
-            if (!strcmp(t->s, later[i]))
-                die_at(t->line, "the %s clause is not implemented yet", later[i]);
+        if (!strcmp(t->s, "occurs")) {
+            advance();
+            if (cur()->kind != T_NUM) die_at(t->line, "expected a count after OCCURS");
+            s->occurs = atoi(cur()->s);
+            advance();
+            if (at_word("to")) die_at(t->line, "OCCURS DEPENDING ON is not implemented yet");
+            accept_word("times");
+            for (;;) {
+                if (accept_word("ascending") || accept_word("descending")) {
+                    accept_word("key"); accept_word("is");
+                    while (cur()->kind == T_WORD && !at_word("indexed") && !at_word("ascending") &&
+                           !at_word("descending") && !at_word("pic") && !at_word("picture") &&
+                           !at_word("value") && !at_word("usage")) advance();
+                    continue;
+                }
+                if (accept_word("indexed")) {
+                    accept_word("by");
+                    while (cur()->kind == T_WORD && !at_word("pic") && !at_word("picture") &&
+                           !at_word("value") && !at_word("usage") && !at_word("ascending") &&
+                           !at_word("descending") && !at_word("comp") && !at_word("comp-3") &&
+                           !at_word("comp-5") && !at_word("display") && !at_word("sync")) {
+                        Sym *ix = sym_new();
+                        snprintf(ix->name, sizeof ix->name, "%s", cur()->s);
+                        ix->line = cur()->line; ix->usage = U_INDEX; ix->has_usage = 1;
+                        ix->is_index = 1; ix->level = 1;
+                        advance();
+                        s = &g_sym[g_last_item];      /* sym_new may have moved the array */
+                    }
+                    continue;
+                }
+                break;
+            }
+            if (s->occurs < 1) die_at(t->line, "OCCURS needs a count of at least 1");
+            continue;
+        }
+        if (!strcmp(t->s, "redefines")) {
+            advance();
+            if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after REDEFINES");
+            /* the redefined item must be an earlier sibling in the same group */
+            int found = -1;
+            for (int i = sym_idx(s) - 1; i >= 0; i--)
+                if (!g_sym[i].is_cond && !strcmp(g_sym[i].name, cur()->s) && g_sym[i].level == level) { found = i; break; }
+            if (found < 0) die_at(t->line, "'%s' does not redefine an item at level %02d", cur()->s, level);
+            s->redefines = found;
+            advance();
+            continue;
+        }
+        if (!strcmp(t->s, "sync") || !strcmp(t->s, "synchronized")) {
+            advance(); accept_word("left"); accept_word("right");
+            s->sync = 1; continue;
+        }
+        if (!strcmp(t->s, "just") || !strcmp(t->s, "justified")) {
+            advance(); accept_word("right");
+            s->just = 1; continue;
+        }
+        if (!strcmp(t->s, "blank")) {
+            advance(); accept_word("when"); if (!(accept_word("zero") || accept_word("zeros") || accept_word("zeroes")))
+                die_at(t->line, "expected ZERO after BLANK WHEN");
+            s->blank_zero = 1; continue;
+        }
+        if (!strcmp(t->s, "sign"))
+            die_at(t->line, "the SIGN clause is not implemented yet");
+        if (!strcmp(t->s, "global") || !strcmp(t->s, "external"))
+            die_at(t->line, "the %s clause is not implemented yet (stage 6)", t->s);
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
     }
     expect_period();
 
-    sym_finish(s);
-    default_init(s);
-    snprintf(s->label, sizeof s->label, "ws_%d", (int)(s - g_sym));
+    if (level == 77 && (s->occurs || s->redefines >= 0))
+        die_at(line, "a level 77 item cannot have OCCURS or REDEFINES");
+    if (level == 1 && s->occurs)
+        die_at(line, "OCCURS is not allowed at level 01");
+}
 
-    if (!value_tok) return;
-    s->has_value = 1;
-    int numeric = (s->pi.category == PIC_NUMERIC);
+/* ---- tree, layout, images ------------------------------------------- */
 
-    if (value_fig) {
-        unsigned char fill = 0;
-        if (!strncmp(fig, "space", 5)) fill = ' ';
-        else if (!strncmp(fig, "zero", 4)) fill = '0';
-        else if (!strncmp(fig, "low", 3) || !strncmp(fig, "null", 4)) fill = 0x00;
-        else if (!strncmp(fig, "high", 4)) fill = 0xFF;       /* ASCII: HIGH-VALUE is X'FF' */
-        else if (!strncmp(fig, "quote", 5)) fill = '"';
+static void build_tree(void)
+{
+    int stack[64], sp = 0;              /* open items by level */
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond) continue;
+        if (s->is_index) { s->record = i; sym_finish(s); continue; }
+        if (s->level == 1 || s->level == 77) { sp = 0; }
+        else {
+            while (sp > 0 && g_sym[stack[sp - 1]].level >= s->level) sp--;
+            if (sp == 0) die_at(s->line, "level %02d '%s' has no group above it", s->level, s->name);
+            if (g_sym[stack[sp - 1]].level == 77) die_at(s->line, "a level 77 item cannot have subordinates");
+        }
+        if (sp > 0) {
+            int p = stack[sp - 1];
+            s->parent = p;
+            g_sym[p].is_group = 1;
+            /* append as last child */
+            if (g_sym[p].child < 0) g_sym[p].child = i;
+            else { int c = g_sym[p].child; while (g_sym[c].sibling >= 0) c = g_sym[c].sibling; g_sym[c].sibling = i; }
+        }
+        stack[sp++] = i;
+    }
+    /* a group must not carry PICTURE/USAGE of its own; an item with no
+     * children is elementary */
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->is_index) continue;
+        if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
+        if (s->is_group && s->usage != U_DISPLAY && s->has_usage)
+            die_at(s->line, "USAGE on the group '%s' is not implemented yet", s->name);
+        if (!s->is_group) sym_finish(s);
+    }
+    /* level 88 parents: the item they follow; a 88 under an 88 shares it */
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!s->is_cond) continue;
+        int p = s->parent;
+        if (g_sym[p].is_cond) s->parent = g_sym[p].parent;
+    }
+}
+
+static int align_of(Sym *s)
+{
+    if (!s->sync || s->is_group) return 1;
+    switch (s->usage) {
+    case U_BINARY: case U_COMP5: case U_SINT: case U_UINT: case U_SSHORT: case U_USHORT:
+    case U_POINTER: case U_INDEX:
+        return s->size >= 8 ? 8 : s->size;
+    default: return 1;
+    }
+}
+
+/* lay out s at `base` (offset within the record); returns one occurrence's size */
+static int layout(int si, int base)
+{
+    Sym *s = &g_sym[si];
+    s->offset = base;
+    if (!s->is_group) return s->size;
+    int off = base, end = base;
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+        Sym *ch = &g_sym[c];
+        int cbase;
+        if (ch->redefines >= 0) {
+            cbase = g_sym[ch->redefines].offset;
+        } else {
+            int a = align_of(ch);
+            cbase = (off + a - 1) / a * a;
+        }
+        int sz = layout(c, cbase);
+        if (sz <= 0) die_at(ch->line, "'%s' has no size", ch->name);
+        int cend = cbase + sz * (ch->occurs ? ch->occurs : 1);
+        if (ch->redefines < 0) off = cend;
+        if (cend > end) end = cend;
+        if (ch->redefines >= 0) {
+            Sym *r = &g_sym[ch->redefines];
+            int rsz = r->size * (r->occurs ? r->occurs : 1);
+            if (sz * (ch->occurs ? ch->occurs : 1) > rsz && s->level != 0)
+                ; /* larger than the redefined item: allowed here, the group grows */
+        }
+    }
+    s->size = end - base;
+    return s->size;
+}
+
+static void set_dims(int si, int ndims, const int *counts, const int *strides)
+{
+    Sym *s = &g_sym[si];
+    int cnt[MAXDIM], str[MAXDIM];
+    memcpy(cnt, counts, ndims * sizeof *cnt); memcpy(str, strides, ndims * sizeof *str);
+    if (s->occurs) {
+        if (ndims >= MAXDIM) die_at(s->line, "too many OCCURS levels");
+        cnt[ndims] = s->occurs; str[ndims] = s->size; ndims++;
+    }
+    s->ndims = ndims;
+    memcpy(s->dim_count, cnt, ndims * sizeof *cnt); memcpy(s->dim_stride, str, ndims * sizeof *str);
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) set_dims(c, ndims, cnt, str);
+}
+
+/* write VALUE / default initialisation for one instance of s at image+base */
+static void init_instance(Sym *rec, int si, int base, int defaults);
+
+static void init_one(Sym *rec, int si, int base, int defaults)
+{
+    Sym *s = &g_sym[si];
+    unsigned char *p = rec->image + base;
+    if (s->is_group) {
+        if (s->value_tok) {
+            Tok *v = s->value_tok;
+            if (v->kind != T_STR && !s->value_fig) die_at(v->line, "VALUE of the group '%s' must be a nonnumeric literal", s->name);
+            if (s->value_fig) memset(p, fig_byte(v->s), s->size);
+            else if (s->value_all) for (int i = 0; i < s->size; i++) p[i] = (unsigned char)v->s[i % v->len];
+            else { int n = v->len < s->size ? v->len : s->size; memcpy(p, v->s, n); memset(p + n, ' ', s->size - n); }
+            defaults = 0;
+        }
+        for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+            Sym *ch = &g_sym[c];
+            int cbase = base + (ch->offset - s->offset);
+            init_instance(rec, c, cbase, ch->redefines >= 0 ? 0 : defaults);
+        }
+        return;
+    }
+    int numeric = is_numeric_sym(s);
+    if (defaults) {
+        if (s->usage == U_DISPLAY && !numeric) memset(p, ' ', s->size);
+        else if (s->usage == U_DISPLAY) memset(p, '0', s->size);
+        else if (s->usage == U_PACKED) { NumLit z; numlit_zero(&z); store_numeric(s, &z, p, s->line); }
+        else memset(p, 0, s->size);
+    }
+    if (!s->value_tok) return;
+    Tok *v = s->value_tok;
+    if (s->value_fig) {
+        int fill = fig_byte(v->s);
         if (numeric) {
-            if (!strncmp(fig, "zero", 4)) { NumLit z; memset(&z, 0, sizeof z); z.digits[0] = '0'; z.ndigits = 1; store_numeric(s, &z, line); }
-            else if (s->usage == U_DISPLAY && (fill == ' ' || fill == 0 || fill == 0xFF)) memset(s->value, fill, s->size);
-            else die_at(value_tok->line, "VALUE %s is not valid for the numeric item '%s'", fig, s->name);
-        } else memset(s->value, fill, s->size);
+            if (!strncmp(v->s, "zero", 4)) { NumLit z; numlit_zero(&z); store_numeric(s, &z, p, v->line); }
+            else if (s->usage == U_DISPLAY && (fill == ' ' || fill == 0 || fill == 0xFF)) memset(p, fill, s->size);
+            else die_at(v->line, "VALUE %s is not valid for the numeric item '%s'", v->s, s->name);
+        } else memset(p, fill, s->size);
         return;
     }
-
-    if (value_tok->kind == T_NUM) {
+    if (v->kind == T_NUM) {
         if (s->pi.category == PIC_NUMERIC_EDITED)
-            die_at(value_tok->line, "VALUE of a numeric-edited item must be a nonnumeric literal in this compiler");
-        if (!numeric) die_at(value_tok->line, "a numeric VALUE is not valid for the alphanumeric item '%s'", s->name);
-        NumLit n; numlit_parse(value_tok, &n);
-        store_numeric(s, &n, value_tok->line);
+            die_at(v->line, "VALUE of the numeric-edited item '%s' must be a nonnumeric literal in this compiler", s->name);
+        if (!numeric) die_at(v->line, "a numeric VALUE is not valid for the alphanumeric item '%s'", s->name);
+        NumLit n; numlit_parse(v, &n);
+        store_numeric(s, &n, p, v->line);
         return;
     }
-
-    /* nonnumeric literal */
     if (numeric && s->usage != U_DISPLAY)
-        die_at(value_tok->line, "a nonnumeric VALUE is not valid for the %s item '%s'", usage_name(s->usage), s->name);
-    if (value_all) {
-        if (value_tok->len < 1) die_at(value_tok->line, "VALUE ALL of an empty literal");
-        for (int i = 0; i < s->size; i++) s->value[i] = (unsigned char)value_tok->s[i % value_tok->len];
+        die_at(v->line, "a nonnumeric VALUE is not valid for the %s item '%s'", usage_name(s->usage), s->name);
+    if (s->value_all) {
+        if (v->len < 1) die_at(v->line, "VALUE ALL of an empty literal");
+        for (int i = 0; i < s->size; i++) p[i] = (unsigned char)v->s[i % v->len];
         return;
     }
-    if (value_tok->len > s->size)
-        die_at(value_tok->line, "VALUE literal (%d characters) is longer than '%s' (%d)", value_tok->len, s->name, s->size);
-    memcpy(s->value, value_tok->s, value_tok->len);
+    if (v->len > s->size)
+        die_at(v->line, "VALUE literal (%d characters) is longer than '%s' (%d)", v->len, s->name, s->size);
     if (numeric) {
-        /* right-justify digits into a numeric DISPLAY item, as a MOVE of a
-         * numeric literal would */
-        for (int i = 0; i < value_tok->len; i++)
-            if (!isdigit((unsigned char)value_tok->s[i]))
-                die_at(value_tok->line, "VALUE of the numeric item '%s' must be numeric", s->name);
-        memset(s->value, '0', s->size);
-        memcpy(s->value + s->size - value_tok->len, value_tok->s, value_tok->len);
+        for (int i = 0; i < v->len; i++)
+            if (!isdigit((unsigned char)v->s[i])) die_at(v->line, "VALUE of the numeric item '%s' must be numeric", s->name);
+        memset(p, '0', s->size);
+        memcpy(p + s->size - v->len, v->s, v->len);
     } else {
-        memset(s->value + value_tok->len, ' ', s->size - value_tok->len);
+        memcpy(p, v->s, v->len);
+        memset(p + v->len, ' ', s->size - v->len);
+    }
+}
+
+static void init_instance(Sym *rec, int si, int base, int defaults)
+{
+    Sym *s = &g_sym[si];
+    int n = s->occurs ? s->occurs : 1;
+    for (int k = 0; k < n; k++) init_one(rec, si, base + k * s->size, defaults);
+}
+
+static void finish_data_division(void)
+{
+    build_tree();
+    int nrec = 0;
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->parent >= 0) continue;
+        /* a record: 01, 77, or an index */
+        int zero[1] = { 0 };
+        layout(i, 0);
+        set_dims(i, 0, zero, zero);
+        s->record = i;
+        snprintf(s->label, sizeof s->label, "ws_%d", nrec++);
+    }
+    /* propagate record ownership down, and 88s take their parent's dims */
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond) {
+            Sym *p = &g_sym[s->parent];
+            s->record = p->record; s->ndims = p->ndims;
+            memcpy(s->dim_count, p->dim_count, sizeof s->dim_count);
+            memcpy(s->dim_stride, p->dim_stride, sizeof s->dim_stride);
+            continue;
+        }
+        int r = i; while (g_sym[r].parent >= 0) r = g_sym[r].parent;
+        s->record = r;
+    }
+    /* 01 REDEFINES 01: share the earlier record's storage */
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->parent >= 0 || s->redefines < 0) continue;
+        int r = s->redefines;
+        while (g_sym[r].redefines >= 0) r = g_sym[r].redefines;
+        s->record = r;
+        strcpy(s->label, g_sym[r].label);
+        if (s->size > g_sym[r].image_size && s->size > g_sym[r].size) g_sym[r].image_size = s->size;
+        for (int j = 0; j < g_nsym; j++) if (g_sym[j].record == i) g_sym[j].record = r;
+    }
+    /* images */
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0) continue;
+        if (s->image_size < s->size) s->image_size = s->size;
+        s->image = xmalloc(s->image_size);
+        init_instance(s, i, 0, 1);
+    }
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->parent >= 0 || s->redefines < 0) continue;
+        init_instance(&g_sym[s->record], i, 0, 0);
     }
 }
 
@@ -722,10 +1035,14 @@ static void parse_data_item(void)
 /* ====================================================================== */
 
 static FILE *g_out;
-static int g_nlit;
+static int g_nlabel;
 
 typedef struct { char label[32]; unsigned char *bytes; int len; } Lit;
-static Lit *g_lit; static int g_lcap;
+static Lit *g_lit; static int g_nlit, g_lcap;
+
+/* descriptors: emitted into .rodata at the end */
+typedef struct { unsigned char cat, usage, digits; signed char scale; unsigned char flags; int size; char picstr[PIC_MAXPAT]; } Desc;
+static Desc *g_desc; static int g_ndesc, g_dcap;
 
 static void emit(const char *fmt, ...)
 {
@@ -733,6 +1050,8 @@ static void emit(const char *fmt, ...)
     va_start(ap, fmt); vfprintf(g_out, fmt, ap); va_end(ap);
     fputc('\n', g_out);
 }
+
+static int new_label(void) { return g_nlabel++; }
 
 static const char *lit_label(const unsigned char *bytes, int len)
 {
@@ -745,11 +1064,79 @@ static const char *lit_label(const unsigned char *bytes, int len)
     return l->label;
 }
 
-/* rd = symbol address */
-static void emit_la(const char *rd, const char *sym)
+static int desc_add(const Desc *d)
 {
-    emit("\tlui %s, %%hi(%s)", rd, sym);
-    emit("\taddi %s, %s, %%lo(%s)", rd, rd, sym);
+    for (int i = 0; i < g_ndesc; i++)
+        if (!memcmp(&g_desc[i], d, sizeof *d)) return i;
+    if (g_ndesc == g_dcap) { g_dcap = g_dcap ? g_dcap * 2 : 64; g_desc = realloc(g_desc, g_dcap * sizeof *g_desc); }
+    g_desc[g_ndesc] = *d;
+    return g_ndesc++;
+}
+
+static int sym_desc(Sym *s)
+{
+    if (s->desc_id >= 0) return s->desc_id;
+    Desc d; memset(&d, 0, sizeof d);
+    if (s->is_group) { d.cat = COB_GROUP; d.usage = COB_U_DISPLAY; }
+    else {
+        switch (s->pi.category) {
+        case PIC_ALPHABETIC: d.cat = COB_ALPHA; break;
+        case PIC_ALPHANUMERIC: d.cat = COB_ALNUM; break;
+        case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;
+        case PIC_NUMERIC: d.cat = COB_NUM; break;
+        default: d.cat = COB_NUM_ED; break;
+        }
+        switch (s->usage) {
+        case U_DISPLAY: d.usage = COB_U_DISPLAY; break;
+        case U_PACKED: d.usage = COB_U_PACKED; break;
+        default: d.usage = COB_U_BINARY; break;
+        }
+        d.digits = (unsigned char)s->pi.digits; d.scale = (signed char)s->pi.scale;
+        if (s->pi.is_signed) d.flags |= COB_F_SIGNED;
+        if (s->usage == U_COMP5 || usage_is_native(s->usage)) d.flags |= COB_F_NOTRUNC;
+        if (s->just) d.flags |= COB_F_JUST;
+        if (s->blank_zero) d.flags |= COB_F_BLANKZ;
+        if (s->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", s->pi.pat);
+    }
+    d.size = s->size;
+    s->desc_id = desc_add(&d);
+    return s->desc_id;
+}
+
+/* a nonnumeric literal's descriptor */
+static int str_desc(int len)
+{
+    Desc d; memset(&d, 0, sizeof d);
+    d.cat = COB_ALNUM; d.usage = COB_U_DISPLAY; d.size = len;
+    return desc_add(&d);
+}
+
+/* a numeric literal: DISPLAY digits with a separate leading sign */
+static const char *num_lit_label(const NumLit *n, int *desc)
+{
+    char img[40];
+    img[0] = n->neg ? '-' : '+';
+    memcpy(img + 1, n->digits, n->ndigits);
+    Desc d; memset(&d, 0, sizeof d);
+    d.cat = COB_NUM; d.usage = COB_U_DISPLAY; d.digits = (unsigned char)n->ndigits;
+    d.scale = (signed char)n->scale; d.flags = COB_F_SIGNED | COB_F_SEPLEAD; d.size = n->ndigits + 1;
+    *desc = desc_add(&d);
+    return lit_label((unsigned char *)img, n->ndigits + 1);
+}
+
+/* rd = address of sym+off */
+static void emit_la_off(const char *rd, const char *sym, int off)
+{
+    if (off) { emit("\tlui %s, %%hi(%s+%d)", rd, sym, off); emit("\taddi %s, %s, %%lo(%s+%d)", rd, rd, sym, off); }
+    else { emit("\tlui %s, %%hi(%s)", rd, sym); emit("\taddi %s, %s, %%lo(%s)", rd, rd, sym); }
+}
+
+static void emit_la(const char *rd, const char *sym) { emit_la_off(rd, sym, 0); }
+
+static void emit_desc_addr(const char *rd, int desc)
+{
+    char b[32]; snprintf(b, sizeof b, ".Ld%d", desc);
+    emit_la(rd, b);
 }
 
 /* rd = 32-bit constant */
@@ -764,6 +1151,8 @@ static void emit_li(const char *rd, long v)
 }
 
 static void emit_call(const char *fn) { emit("\tjal r31, %s", fn); }
+static void emit_jump(int label) { emit("\tjal r0, .L%d", label); }
+static void emit_label(int label) { emit(".L%d:", label); }
 
 static void emit_bytes(const unsigned char *b, int n)
 {
@@ -775,20 +1164,540 @@ static void emit_bytes(const unsigned char *b, int n)
     }
 }
 
-static char *mangle(const char *name)
+/* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, then three scratch words */
+#define FRAME       96
+#define SLOT(i)     (8 + 4 * (i))
+#define NSLOTS      16
+#define SLOT_A      (8 + 4 * NSLOTS)
+#define SLOT_B      (SLOT_A + 4)
+#define SLOT_C      (SLOT_A + 8)
+
+/* ====================================================================== */
+/* Operands and addresses                                                  */
+/* ====================================================================== */
+
+typedef struct {
+    Sym *sym;
+    int nsub;
+    struct { Sym *sym; long lit; long adj; } sub[MAXDIM];   /* sym == NULL: literal */
+    int line;
+} Ref;
+
+enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL };
+
+typedef struct {
+    int kind;
+    Ref ref;
+    Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
+    NumLit num;         /* O_NUM */
+    int line;
+} Opnd;
+
+static int is_int_item(Sym *s)
 {
-    static char b[128];
-    int n = 0;
-    for (const char *p = name; *p && n < 120; p++) b[n++] = isalnum((unsigned char)*p) ? *p : '_';
-    b[n] = 0;
-    return b;
+    return is_numeric_sym(s) && s->pi.scale == 0;
+}
+
+/* a "hot" integer: binary, at most 4 bytes, no scale */
+static int is_hot_int(Sym *s)
+{
+    if (s->is_group || s->pi.category != PIC_NUMERIC || s->pi.scale != 0) return 0;
+    if (s->usage == U_DISPLAY || s->usage == U_PACKED) return 0;
+    return s->size <= 4;
+}
+
+/* identifier [OF|IN qualifier]... [( subscripts )] */
+static void parse_ref(Ref *r)
+{
+    memset(r, 0, sizeof *r);
+    Tok *t = cur();
+    if (t->kind != T_WORD) die_at(t->line, "expected a data-name, found %s", tok_desc(t));
+    r->line = t->line;
+    char *name = t->s; advance();
+    char *quals[8]; int nq = 0;
+    while (at_word("of") || at_word("in")) {
+        advance();
+        if (cur()->kind != T_WORD) die_at(cur()->line, "expected a data-name after OF/IN");
+        if (nq < 8) quals[nq++] = cur()->s;
+        advance();
+    }
+    r->sym = sym_lookup(name, quals, nq, t->line);
+    if (cur()->kind == T_LP) {
+        advance();
+        for (;;) {
+            if (r->nsub >= MAXDIM) die_at(cur()->line, "too many subscripts");
+            Tok *st = cur();
+            if (st->kind == T_NUM) {
+                NumLit n; numlit_parse(st, &n);
+                if (!numlit_is_int(&n) || n.neg) die_at(st->line, "a subscript must be a positive integer");
+                r->sub[r->nsub].lit = numlit_int(&n);
+                advance();
+            } else if (st->kind == T_WORD) {
+                char *sname = st->s; advance();
+                char *sq[8]; int snq = 0;
+                while (at_word("of") || at_word("in")) { advance(); if (snq < 8) sq[snq++] = cur()->s; advance(); }
+                Sym *ss = sym_lookup(sname, sq, snq, st->line);
+                if (!is_int_item(ss)) die_at(st->line, "the subscript '%s' must be an integer item", ss->name);
+                if (ss->ndims) die_at(st->line, "a subscript cannot itself be subscripted in COBOL 85");
+                r->sub[r->nsub].sym = ss;
+                if (at_op("+") || at_op("-")) {
+                    int neg = at_op("-"); advance();
+                    if (cur()->kind != T_NUM) die_at(cur()->line, "expected an integer after '%s' in a subscript", neg ? "-" : "+");
+                    NumLit n; numlit_parse(cur(), &n);
+                    r->sub[r->nsub].adj = neg ? -numlit_int(&n) : numlit_int(&n);
+                    advance();
+                }
+            } else if (st->kind == T_COLON) {
+                die_at(st->line, "reference modification is not implemented yet (stage 9)");
+            } else die_at(st->line, "expected a subscript, found %s", tok_desc(st));
+            r->nsub++;
+            if (cur()->kind == T_COLON) die_at(cur()->line, "reference modification is not implemented yet (stage 9)");
+            if (cur()->kind == T_RP) { advance(); break; }
+        }
+    }
+    if (r->nsub != r->sym->ndims) {
+        if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
+        die_at(r->line, "'%s' needs %d subscript%s, %d given", r->sym->name, r->sym->ndims,
+               r->sym->ndims == 1 ? "" : "s", r->nsub);
+    }
+    for (int i = 0; i < r->nsub; i++)
+        if (!r->sub[i].sym && (r->sub[i].lit < 1 || r->sub[i].lit > r->sym->dim_count[i]))
+            die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
+}
+
+static void parse_operand(Opnd *o)
+{
+    memset(o, 0, sizeof *o);
+    Tok *t = cur();
+    o->line = t->line;
+    if (t->kind == T_STR) { o->kind = O_STR; o->tok = t; advance(); return; }
+    if (t->kind == T_NUM) { o->kind = O_NUM; numlit_parse(t, &o->num); advance(); return; }
+    if (t->kind == T_WORD && is_figurative(t->s)) { o->kind = O_FIG; o->tok = t; advance(); return; }
+    if (t->kind == T_WORD && !strcmp(t->s, "all")) {
+        advance();
+        if (cur()->kind == T_STR) { o->kind = O_ALL; o->tok = cur(); advance(); return; }
+        if (cur()->kind == T_WORD && is_figurative(cur()->s)) { o->kind = O_FIG; o->tok = cur(); advance(); return; }
+        die_at(t->line, "expected a literal after ALL");
+    }
+    o->kind = O_REF;
+    parse_ref(&o->ref);
+}
+
+static int ref_needs_call(const Ref *r)
+{
+    for (int i = 0; i < r->nsub; i++)
+        if (r->sub[i].sym && !is_hot_int(r->sub[i].sym)) return 1;
+    return 0;
+}
+
+/* load the integer value of a hot item at address in areg into dreg */
+static void emit_load_int(Sym *s, const char *areg, const char *dreg)
+{
+    int sg = s->pi.is_signed;
+    if (s->size == 1) emit("\t%s %s, %s+0", sg ? "ldb" : "ldbu", dreg, areg);
+    else if (s->size == 2) emit("\t%s %s, %s+0", sg ? "ldh" : "ldhu", dreg, areg);
+    else emit("\tldw %s, %s+0", dreg, areg);
+}
+
+static void emit_store_int(Sym *s, const char *areg, const char *vreg)
+{
+    if (s->size == 1) emit("\tstb %s+0, %s", areg, vreg);
+    else if (s->size == 2) emit("\tsth %s+0, %s", areg, vreg);
+    else emit("\tstw %s+0, %s", areg, vreg);
+}
+
+static int ref_has_runtime_sub(const Ref *r)
+{
+    for (int i = 0; i < r->nsub; i++) if (r->sub[i].sym) return 1;
+    return 0;
+}
+
+/* reg = address of the reference.  Literal subscripts fold into the
+ * displacement.  Runtime subscripts accumulate in r11 (callee-saved, so a
+ * cob_load_int call for a DISPLAY-numeric subscript does not lose the
+ * sum); r1/r2 are scratch.  A reference whose subscript needs that call
+ * clobbers r3-r10, so callers stage such operands through frame slots
+ * (emit_args) before loading argument registers. */
+static void emit_ref_addr(const Ref *r, const char *reg)
+{
+    Sym *s = r->sym;
+    Sym *rec = &g_sym[s->record];
+    int off = s->offset;
+    int runtime = ref_has_runtime_sub(r);
+    for (int i = 0; i < r->nsub; i++)
+        if (!r->sub[i].sym) off += (int)(r->sub[i].lit - 1) * s->dim_stride[i];
+    if (runtime) emit("\tadd r11, r0, r0");
+    for (int i = 0; i < r->nsub; i++) {
+        if (!r->sub[i].sym) continue;
+        Sym *ss = r->sub[i].sym;
+        if (is_hot_int(ss)) {
+            emit_la_off("r1", g_sym[ss->record].label, ss->offset);
+            emit_load_int(ss, "r1", "r1");
+        } else {
+            emit_la_off("r3", g_sym[ss->record].label, ss->offset);
+            emit_desc_addr("r4", sym_desc(ss));
+            emit_call("cob_load_int");
+        }
+        long adj = r->sub[i].adj - 1;
+        if (adj) emit("\taddi r1, r1, %ld", adj);
+        emit_li("r2", s->dim_stride[i]);
+        emit("\tmul r1, r1, r2");
+        emit("\tadd r11, r11, r1");
+    }
+    emit_la_off(reg, rec->label, off);
+    if (runtime) emit("\tadd %s, %s, r11", reg, reg);
+}
+
+/* ---- argument staging ------------------------------------------------- */
+
+enum { A_REF, A_LABEL, A_DESC, A_IMM };
+typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; } Arg;
+
+static Arg arg_ref(const Ref *r)   { Arg a = { A_REF, r, 0, 0, 0 }; return a; }
+static Arg arg_label(const char *l){ Arg a = { A_LABEL, 0, l, 0, 0 }; return a; }
+static Arg arg_desc(int d)         { Arg a = { A_DESC, 0, 0, d, 0 }; return a; }
+static Arg arg_imm(long v)         { Arg a = { A_IMM, 0, 0, 0, v }; return a; }
+
+static const char *argreg(int i)
+{
+    static const char *r[] = { "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10" };
+    return r[i];
+}
+
+/* load r3.. with the arguments; operands whose address needs a runtime
+ * call are computed first and parked in frame slots */
+static void emit_args(const Arg *a, int n)
+{
+    int slotted[8] = { 0 };
+    for (int i = 0; i < n; i++)
+        if (a[i].kind == A_REF && ref_needs_call(a[i].ref)) {
+            emit_ref_addr(a[i].ref, "r1");
+            emit("\tstw sp+%d, r1", SLOT(i));
+            slotted[i] = 1;
+        }
+    for (int i = 0; i < n; i++) {
+        const char *reg = argreg(i);
+        if (slotted[i]) { emit("\tldw %s, sp+%d", reg, SLOT(i)); continue; }
+        switch (a[i].kind) {
+        case A_REF:   emit_ref_addr(a[i].ref, reg); break;
+        case A_LABEL: emit_la(reg, a[i].label); break;
+        case A_DESC:  emit_desc_addr(reg, a[i].desc); break;
+        case A_IMM:   emit_li(reg, a[i].imm); break;
+        }
+    }
+}
+
+/* address + descriptor of an operand, as two Args.  Figuratives need the
+ * other operand's size and are expanded by the caller. */
+static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_numeric)
+{
+    switch (o->kind) {
+    case O_REF:
+        *addr = arg_ref(&o->ref); *desc = arg_desc(sym_desc(o->ref.sym)); return;
+    case O_STR:
+        *addr = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
+        *desc = arg_desc(str_desc(o->tok->len)); return;
+    case O_NUM: {
+        int d; const char *l = num_lit_label(&o->num, &d);
+        *addr = arg_label(l); *desc = arg_desc(d); return;
+    }
+    case O_FIG: case O_ALL: {
+        /* ZERO against a numeric item is the number; otherwise a fill of
+         * the other operand's length */
+        if (o->kind == O_FIG && other_numeric && !strncmp(o->tok->s, "zero", 4)) {
+            NumLit z; numlit_zero(&z);
+            int d; const char *l = num_lit_label(&z, &d);
+            *addr = arg_label(l); *desc = arg_desc(d); return;
+        }
+        int n = other_size > 0 ? other_size : 1;
+        unsigned char *buf = xmalloc(n);
+        if (o->kind == O_ALL) for (int i = 0; i < n; i++) buf[i] = (unsigned char)o->tok->s[i % o->tok->len];
+        else memset(buf, fig_byte(o->tok->s), n);
+        *addr = arg_label(lit_label(buf, n)); *desc = arg_desc(str_desc(n));
+        free(buf);
+        return;
+    }
+    }
+}
+
+static int opnd_size(Opnd *o)
+{
+    switch (o->kind) {
+    case O_REF: return o->ref.sym->size;
+    case O_STR: return o->tok->len;
+    case O_NUM: return o->num.ndigits;
+    default: return 0;
+    }
+}
+
+static int opnd_numeric(Opnd *o)
+{
+    if (o->kind == O_REF) return is_numeric_sym(o->ref.sym);
+    return o->kind == O_NUM;
+}
+
+/* an integer operand usable on the hot path: a hot-int item, or an
+ * integer literal that fits a word */
+static int opnd_hot_int(Opnd *o)
+{
+    if (o->kind == O_REF) return is_hot_int(o->ref.sym) && !(o->ref.sym->size == 4 && !o->ref.sym->pi.is_signed);
+    if (o->kind == O_NUM) return numlit_is_int(&o->num) && numlit_int(&o->num) <= 2147483647LL && numlit_int(&o->num) >= -2147483647LL;
+    if (o->kind == O_FIG) return !strncmp(o->tok->s, "zero", 4);
+    return 0;
+}
+
+/* r1 = integer value of a hot operand; uses r3 (address) and r1/r2/r11 */
+static void emit_hot_value(Opnd *o)
+{
+    if (o->kind == O_NUM) { emit_li("r1", (long)numlit_int(&o->num)); return; }
+    if (o->kind == O_FIG) { emit_li("r1", 0); return; }
+    emit_ref_addr(&o->ref, "r3");
+    emit_load_int(o->ref.sym, "r3", "r1");
+}
+
+static long pow10l(int n) { long v = 1; while (n-- > 0) v *= 10; return v; }
+
+/* truncate r1 to the receiver's picture when it is a COMP item (COMP-5 and
+ * the C types keep the binary field's capacity) */
+static void emit_trunc(Sym *s)
+{
+    if (s->usage != U_BINARY) return;
+    if (s->pi.digits >= capacity_digits(s->size)) return;
+    emit_li("r2", pow10l(s->pi.digits));
+    emit("\trem r1, r1, r2");
+}
+
+
+/* ====================================================================== */
+/* Conditions                                                              */
+/* ====================================================================== */
+
+enum { C_AND, C_OR, C_NOT, C_REL, C_CLASS };
+enum { R_EQ, R_LT, R_GT, R_LE, R_GE, R_NE };
+
+typedef struct Cond {
+    int kind;
+    struct Cond *a, *b;
+    Opnd x, y;
+    int op, neg;            /* C_REL */
+    int klass;              /* C_CLASS: 0 NUMERIC 1 ALPHABETIC 2 LOWER 3 UPPER */
+} Cond;
+
+static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); c->kind = kind; return c; }
+
+static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
+{
+    Cond *c = cond_new(C_REL);
+    c->x = *x; c->y = *y; c->op = op; c->neg = neg;
+    return c;
+}
+
+static Cond *cond_bin(int kind, Cond *a, Cond *b) { Cond *c = cond_new(kind); c->a = a; c->b = b; return c; }
+
+static Cond *parse_cond(void);
+
+static void refuse_arith(int line)
+{
+    if (at_op("+") || at_op("-") || at_op("*") || at_op("/") || at_op("**"))
+        die_at(line, "arithmetic expressions in conditions are not implemented yet (stage 3)");
+}
+
+static Opnd lit_opnd(Tok *t)
+{
+    Opnd o; memset(&o, 0, sizeof o);
+    o.line = t->line;
+    if (t->kind == T_STR) { o.kind = O_STR; o.tok = t; }
+    else if (t->kind == T_NUM) { o.kind = O_NUM; numlit_parse(t, &o.num); }
+    else { o.kind = O_FIG; o.tok = t; }
+    return o;
+}
+
+/* level 88: (parent = v1) OR (parent >= lo AND parent <= hi) OR ... */
+static Cond *cond_88(Ref *r, int neg)
+{
+    Sym *c = r->sym;
+    Opnd p; memset(&p, 0, sizeof p);
+    p.kind = O_REF; p.ref = *r; p.ref.sym = &g_sym[c->parent]; p.line = r->line;
+    Cond *all = NULL;
+    for (int i = 0; i < c->ncv; i++) {
+        Opnd lo = lit_opnd(c->cv_lo[i]);
+        Cond *one;
+        if (c->cv_hi[i]) {
+            Opnd hi = lit_opnd(c->cv_hi[i]);
+            one = cond_bin(C_AND, cond_rel(&p, R_GE, &lo, 0), cond_rel(&p, R_LE, &hi, 0));
+        } else one = cond_rel(&p, R_EQ, &lo, 0);
+        all = all ? cond_bin(C_OR, all, one) : one;
+    }
+    if (neg) { Cond *n = cond_new(C_NOT); n->a = all; return n; }
+    return all;
+}
+
+static Cond *parse_simple(void)
+{
+    int line = cur()->line;
+    Opnd x; parse_operand(&x);
+    refuse_arith(line);
+    accept_word("is");
+    int neg = 0;
+    if (accept_word("not")) neg = 1;
+    Tok *t = cur();
+
+    if (t->kind == T_WORD) {
+        int klass = -1;
+        if (!strcmp(t->s, "numeric")) klass = 0;
+        else if (!strcmp(t->s, "alphabetic")) klass = 1;
+        else if (!strcmp(t->s, "alphabetic-lower")) klass = 2;
+        else if (!strcmp(t->s, "alphabetic-upper")) klass = 3;
+        if (klass >= 0) {
+            if (x.kind != O_REF) die_at(line, "a class condition needs a data item");
+            advance();
+            Cond *c = cond_new(C_CLASS); c->x = x; c->klass = klass; c->neg = neg;
+            return c;
+        }
+        int sop = -1;
+        if (!strcmp(t->s, "positive")) sop = R_GT;
+        else if (!strcmp(t->s, "negative")) sop = R_LT;
+        else if (!strcmp(t->s, "zero") || !strcmp(t->s, "zeros") || !strcmp(t->s, "zeroes")) sop = R_EQ;
+        if (sop >= 0) {
+            if (!opnd_numeric(&x)) {
+                if (sop != R_EQ) die_at(line, "a sign condition needs a numeric operand");
+                /* alphanumeric compared with ZERO: the figurative */
+                advance();
+                Opnd z = lit_opnd(t);
+                return cond_rel(&x, R_EQ, &z, neg);
+            }
+            advance();
+            Opnd z; memset(&z, 0, sizeof z); z.kind = O_NUM; numlit_zero(&z.num); z.line = line;
+            return cond_rel(&x, sop, &z, neg);
+        }
+    }
+
+    int op = -1;
+    if (t->kind == T_OP) {
+        if (!strcmp(t->s, "=")) op = R_EQ;
+        else if (!strcmp(t->s, "<")) op = R_LT;
+        else if (!strcmp(t->s, ">")) op = R_GT;
+        else if (!strcmp(t->s, "<=")) op = R_LE;
+        else if (!strcmp(t->s, ">=")) op = R_GE;
+        else if (!strcmp(t->s, "<>")) op = R_NE;
+        if (op >= 0) advance();
+    } else if (t->kind == T_WORD) {
+        if (!strcmp(t->s, "equal") || !strcmp(t->s, "equals")) { advance(); accept_word("to"); op = R_EQ; }
+        else if (!strcmp(t->s, "greater")) {
+            advance(); accept_word("than"); op = R_GT;
+            if (at_word("or")) { advance(); expect_word("equal"); accept_word("to"); op = R_GE; }
+        } else if (!strcmp(t->s, "less")) {
+            advance(); accept_word("than"); op = R_LT;
+            if (at_word("or")) { advance(); expect_word("equal"); accept_word("to"); op = R_LE; }
+        }
+    }
+    if (op < 0) {
+        if (x.kind == O_REF && x.ref.sym->is_cond) {
+            if (neg == 0 && is_word(t, "not")) { /* handled above */ }
+            return cond_88(&x.ref, neg);
+        }
+        if (x.kind == O_REF && !neg)
+            die_at(line, "expected a relational operator after '%s' (abbreviated combined conditions are not implemented)", x.ref.sym->name);
+        die_at(line, "expected a relational operator, found %s", tok_desc(t));
+    }
+    Opnd y; parse_operand(&y);
+    refuse_arith(line);
+    if (x.kind != O_REF && y.kind != O_REF)
+        die_at(line, "a condition needs at least one data item");
+    return cond_rel(&x, op, &y, neg);
+}
+
+static Cond *parse_not(void)
+{
+    if (accept_word("not")) { Cond *c = cond_new(C_NOT); c->a = parse_not(); return c; }
+    if (cur()->kind == T_LP) { advance(); Cond *c = parse_cond(); if (cur()->kind != T_RP) die_at(cur()->line, "expected ')'"); advance(); return c; }
+    return parse_simple();
+}
+
+static Cond *parse_and(void)
+{
+    Cond *a = parse_not();
+    while (accept_word("and")) a = cond_bin(C_AND, a, parse_not());
+    return a;
+}
+
+static Cond *parse_cond(void)
+{
+    Cond *a = parse_and();
+    while (accept_word("or")) a = cond_bin(C_OR, a, parse_and());
+    return a;
+}
+
+/* r1 = 0/1 for a simple condition */
+static void emit_cond_value(Cond *c)
+{
+    if (c->kind == C_CLASS) {
+        Arg a[3]; Arg d;
+        opnd_args(&c->x, &a[0], &d, 0, 0); a[1] = d; a[2] = arg_imm(c->klass);
+        emit_args(a, 3);
+        emit_call("cob_class");
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
+    /* C_REL */
+    if (opnd_hot_int(&c->x) && opnd_hot_int(&c->y)) {
+        emit_hot_value(&c->x);
+        emit("\tstw sp+%d, r1", SLOT_A);
+        emit_hot_value(&c->y);
+        emit("\tldw r2, sp+%d", SLOT_A);
+        switch (c->op) {
+        case R_EQ: emit("\tseq r1, r2, r1"); break;
+        case R_NE: emit("\tsne r1, r2, r1"); break;
+        case R_LT: emit("\tslt r1, r2, r1"); break;
+        case R_GT: emit("\tsgt r1, r2, r1"); break;
+        case R_LE: emit("\tsle r1, r2, r1"); break;
+        case R_GE: emit("\tsge r1, r2, r1"); break;
+        }
+    } else {
+        Arg a[4];
+        int xs = opnd_size(&c->x), ys = opnd_size(&c->y);
+        int xn = opnd_numeric(&c->x), yn = opnd_numeric(&c->y);
+        opnd_args(&c->x, &a[0], &a[1], ys, yn);
+        opnd_args(&c->y, &a[2], &a[3], xs, xn);
+        emit_args(a, 4);
+        emit_call("cob_cmp");
+        switch (c->op) {
+        case R_EQ: emit("\tseq r1, r1, r0"); break;
+        case R_NE: emit("\tsne r1, r1, r0"); break;
+        case R_LT: emit("\tslt r1, r1, r0"); break;
+        case R_GT: emit("\tsgt r1, r1, r0"); break;
+        case R_LE: emit("\tsle r1, r1, r0"); break;
+        case R_GE: emit("\tsge r1, r1, r0"); break;
+        }
+    }
+    if (c->neg) emit("\txori r1, r1, 1");
+}
+
+static void cond_jump_true(Cond *c, int L);
+
+static void cond_jump_false(Cond *c, int L)
+{
+    switch (c->kind) {
+    case C_AND: cond_jump_false(c->a, L); cond_jump_false(c->b, L); return;
+    case C_OR: { int Lt = new_label(); cond_jump_true(c->a, Lt); cond_jump_false(c->b, L); emit_label(Lt); return; }
+    case C_NOT: cond_jump_true(c->a, L); return;
+    default: emit_cond_value(c); emit("\tbeq r1, r0, .L%d", L); return;
+    }
+}
+
+static void cond_jump_true(Cond *c, int L)
+{
+    switch (c->kind) {
+    case C_AND: { int Ls = new_label(); cond_jump_false(c->a, Ls); cond_jump_true(c->b, L); emit_label(Ls); return; }
+    case C_OR: cond_jump_true(c->a, L); cond_jump_true(c->b, L); return;
+    case C_NOT: cond_jump_false(c->a, L); return;
+    default: emit_cond_value(c); emit("\tbne r1, r0, .L%d", L); return;
+    }
 }
 
 /* ====================================================================== */
-/* Procedure Division                                                      */
+/* Procedure Division: statements                                          */
 /* ====================================================================== */
-
-static int g_nlabel;
 
 static int is_verb(const char *w)
 {
@@ -798,115 +1707,764 @@ static int is_verb(const char *w)
         "initiate", "inspect", "merge", "move", "multiply", "open", "perform", "purge",
         "read", "receive", "release", "return", "rewrite", "search", "send", "set",
         "sort", "start", "stop", "string", "subtract", "suppress", "terminate",
-        "unstring", "use", "write", NULL };
+        "unstring", "use", "write", "next", NULL };
     for (int i = 0; verbs[i]; i++) if (!strcmp(w, verbs[i])) return 1;
     return 0;
 }
 
-/* DISPLAY {identifier | literal | figurative}... [UPON ...] [WITH NO ADVANCING] */
+static int is_terminator(const char *w)
+{
+    static const char *t[] = { "else", "end-if", "end-perform", "when", "end-evaluate",
+        "end-read", "end-write", "end-add", "end-subtract", "end-multiply", "end-divide",
+        "end-compute", "end-call", "end-string", "end-unstring", "end-search", "end-start",
+        "end-delete", "end-rewrite", "end-return", "end-accept", "end-display", "end-program", NULL };
+    for (int i = 0; t[i]; i++) if (!strcmp(w, t[i])) return 1;
+    return 0;
+}
+
+static int at_scope_end(void)
+{
+    Tok *t = cur();
+    if (t->kind == T_PERIOD || t->kind == T_EOF) return 1;
+    return t->kind == T_WORD && is_terminator(t->s);
+}
+
+/* the operand list of a statement continues while the next token can
+ * start an operand and is not a verb or a clause word */
+static int at_operand(void)
+{
+    Tok *t = cur();
+    if (t->kind == T_STR || t->kind == T_NUM) return 1;
+    if (t->kind != T_WORD) return 0;
+    if (is_verb(t->s) || is_terminator(t->s)) return 0;
+    static const char *clause[] = { "to", "from", "by", "into", "giving", "rounded", "on",
+        "size", "upon", "with", "thru", "through", "until", "varying", "times", "after",
+        "before", "remainder", "depending", "corresponding", "corr", "then", "and", "or",
+        "is", "not", "up", "down", NULL };
+    for (int i = 0; clause[i]; i++) if (!strcmp(t->s, clause[i])) return 0;
+    return 1;
+}
+
+static void parse_statement(void);
+static void parse_statements(void) { while (!at_scope_end()) parse_statement(); }
+
+static int g_sentence_label = -1;   /* NEXT SENTENCE target, made on demand */
+
+/* ---- paragraphs ------------------------------------------------------- */
+
+typedef struct { char name[64]; int id, is_section, line; } Para;
+static Para *g_para; static int g_npara, g_pcap;
+
+static Para *para_find(const char *name)
+{
+    for (int i = 0; i < g_npara; i++) if (!strcmp(g_para[i].name, name)) return &g_para[i];
+    return NULL;
+}
+
+static Para *para_add(const char *name, int is_section, int line)
+{
+    if (para_find(name)) die_at(line, "the procedure-name '%s' is declared twice (qualified paragraph names are not implemented yet)", name);
+    if (g_npara == g_pcap) { g_pcap = g_pcap ? g_pcap * 2 : 64; g_para = realloc(g_para, g_pcap * sizeof *g_para); }
+    Para *p = &g_para[g_npara];
+    snprintf(p->name, sizeof p->name, "%s", name);
+    p->id = g_npara + 1; p->is_section = is_section; p->line = line;
+    g_npara++;
+    return p;
+}
+
+static void emit_para_label(Para *p) { emit(".Lp%d:\t# %s%s", p->id, p->name, p->is_section ? " section" : ""); }
+
+/* prescan the Procedure Division for paragraph and section headers */
+static void prescan_paragraphs(int from)
+{
+    int sentence_start = 1;
+    for (int i = from; i < g_ntok; i++) {
+        Tok *t = &g_tok[i];
+        if (t->kind == T_EOF) break;
+        if (sentence_start && t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s)) {
+            if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, 0, t->line); }
+            else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, 1, t->line);
+            else if (!strcmp(t->s, "declaratives")) die_at(t->line, "DECLARATIVES are not implemented yet");
+            else if (!strcmp(t->s, "end") && is_word(&g_tok[i + 1], "program")) break;
+        }
+        sentence_start = (t->kind == T_PERIOD);
+    }
+}
+
+static Para *expect_para(void)
+{
+    Tok *t = cur();
+    if (t->kind != T_WORD) die_at(t->line, "expected a procedure-name, found %s", tok_desc(t));
+    Para *p = para_find(t->s);
+    if (!p) die_at(t->line, "'%s' is not a paragraph or section", t->s);
+    advance();
+    return p;
+}
+
+/* ---- DISPLAY ---------------------------------------------------------- */
+
 static void parse_display(void)
 {
     int line = cur()->line;
     int n = 0, no_adv = 0;
     for (;;) {
         Tok *t = cur();
-        if (t->kind == T_STR) {
-            const char *l = lit_label((unsigned char *)t->s, t->len);
-            emit_la("r3", l); emit_li("r4", t->len); emit_call("cob_display");
-            advance(); n++; continue;
+        if (t->kind == T_WORD && (!strcmp(t->s, "upon"))) die_at(t->line, "DISPLAY UPON is not implemented yet");
+        if (t->kind == T_WORD && (!strcmp(t->s, "with") || !strcmp(t->s, "no"))) {
+            accept_word("with"); expect_word("no"); expect_word("advancing");
+            no_adv = 1; break;
         }
-        if (t->kind == T_NUM) {
-            /* a numeric literal displays as written */
-            const char *l = lit_label((unsigned char *)t->s, (int)strlen(t->s));
-            emit_la("r3", l); emit_li("r4", (long)strlen(t->s)); emit_call("cob_display");
-            advance(); n++; continue;
+        if (!at_operand() && !(t->kind == T_WORD && (is_figurative(t->s) || !strcmp(t->s, "all")))) break;
+        Opnd o; parse_operand(&o);
+        n++;
+        switch (o.kind) {
+        case O_STR: {
+            Arg a[2] = { arg_label(lit_label((unsigned char *)o.tok->s, o.tok->len)), arg_imm(o.tok->len) };
+            emit_args(a, 2); emit_call("cob_display"); break;
         }
-        if (t->kind == T_WORD) {
-            if (!strcmp(t->s, "upon")) die_at(t->line, "DISPLAY UPON is not implemented yet");
-            if (!strcmp(t->s, "with") || !strcmp(t->s, "no")) {
-                accept_word("with");
-                expect_word("no"); expect_word("advancing");
-                no_adv = 1;
-                break;
-            }
-            if (is_verb(t->s)) break;
-            static const char *figs[] = { "space", "spaces", "zero", "zeros", "zeroes",
-                "quote", "quotes", "low-value", "low-values", "high-value", "high-values", NULL };
-            int isfig = 0;
-            for (int i = 0; figs[i]; i++) if (!strcmp(t->s, figs[i])) isfig = 1;
-            if (isfig) {
-                unsigned char c = ' ';
-                if (!strncmp(t->s, "zero", 4)) c = '0'; else if (!strncmp(t->s, "quote", 5)) c = '"';
-                else if (!strncmp(t->s, "low", 3)) c = 0; else if (!strncmp(t->s, "high", 4)) c = 0xFF;
-                const char *l = lit_label(&c, 1);
-                emit_la("r3", l); emit_li("r4", 1); emit_call("cob_display");
-                advance(); n++; continue;
-            }
-            if (!strcmp(t->s, "all")) die_at(t->line, "DISPLAY ALL literal is not implemented yet");
-            Sym *s = sym_find(t->s);
-            if (!s) die_at(t->line, "'%s' is not declared", t->s);
-            advance();
-            if (cur()->kind == T_LP) die_at(cur()->line, "subscripts and reference modification are not implemented yet (stage 2)");
-            emit_la("r3", s->label);
-            switch (s->usage) {
-            case U_DISPLAY:
-                if (s->pi.category == PIC_NUMERIC) {
-                    emit_li("r4", s->size); emit_li("r5", s->pi.scale); emit_li("r6", s->pi.is_signed); emit_call("cob_display_numdisp");
-                } else { emit_li("r4", s->size); emit_call("cob_display"); }
-                break;
-            case U_PACKED:
-                emit_li("r4", s->pi.digits); emit_li("r5", s->pi.scale); emit_li("r6", s->pi.is_signed);
-                emit_call("cob_display_packed");
-                break;
-            default:
-                emit_li("r4", s->size);
-                emit_li("r5", s->usage == U_BINARY ? s->pi.digits : capacity_digits(s->size));
-                emit_li("r6", s->pi.scale);
-                emit_li("r7", s->pi.is_signed);
-                emit_call("cob_display_bin");
-                break;
-            }
-            n++;
-            continue;
+        case O_NUM: {  /* a numeric literal displays as written */
+            const char *txt = g_tok[g_tp - 1].s;
+            Arg a[2] = { arg_label(lit_label((unsigned char *)txt, (int)strlen(txt))), arg_imm((long)strlen(txt)) };
+            emit_args(a, 2); emit_call("cob_display"); break;
         }
-        break;
+        case O_FIG: case O_ALL: {
+            int len = o.kind == O_ALL ? o.tok->len : 1;
+            unsigned char *b = xmalloc(len);
+            if (o.kind == O_ALL) memcpy(b, o.tok->s, len); else b[0] = (unsigned char)fig_byte(o.tok->s);
+            Arg a[2] = { arg_label(lit_label(b, len)), arg_imm(len) };
+            free(b);
+            emit_args(a, 2); emit_call("cob_display"); break;
+        }
+        default: {
+            Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) };
+            emit_args(a, 2); emit_call("cob_display_field"); break;
+        }
+        }
     }
     if (!n) die_at(line, "DISPLAY needs at least one operand");
     if (!no_adv) emit_call("cob_display_nl");
 }
 
+/* ---- MOVE ------------------------------------------------------------- */
+
+static void emit_move(Opnd *src, Ref *dst)
+{
+    Sym *d = dst->sym;
+    if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
+    if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED))
+        die_at(dst->line, "MOVE to the edited item '%s' is not implemented yet (stage 3)", d->name);
+    int dnum = is_numeric_sym(d);
+
+    if (!dnum) {
+        switch (src->kind) {
+        case O_STR: case O_NUM: {
+            if (src->kind == O_NUM && !numlit_is_int(&src->num))
+                die_at(src->line, "MOVE of a non-integer numeric literal to the alphanumeric item '%s' is not valid COBOL", d->name);
+            const char *txt = src->tok ? src->tok->s : NULL;
+            int len = src->tok ? src->tok->len : 0;
+            char dig[40];
+            if (src->kind == O_NUM) { memcpy(dig, src->num.digits, src->num.ndigits); txt = dig; len = src->num.ndigits; }
+            const char *l = lit_label((unsigned char *)txt, len);
+            if (len == d->size && !d->just) {
+                Arg a[3] = { arg_ref(dst), arg_label(l), arg_imm(len) };
+                emit_args(a, 3); emit_call("memcpy");
+            } else {
+                Arg a[5] = { arg_label(l), arg_imm(len), arg_ref(dst), arg_imm(d->size), arg_imm(d->just) };
+                emit_args(a, 5); emit_call("cob_move_alnum");
+            }
+            return;
+        }
+        case O_FIG: {
+            Arg a[3] = { arg_ref(dst), arg_imm(d->size), arg_imm(fig_byte(src->tok->s)) };
+            emit_args(a, 3); emit_call("cob_fill");
+            return;
+        }
+        case O_ALL: {
+            Arg a[4] = { arg_ref(dst), arg_imm(d->size), arg_label(lit_label((unsigned char *)src->tok->s, src->tok->len)), arg_imm(src->tok->len) };
+            emit_args(a, 4); emit_call("cob_fill_all");
+            return;
+        }
+        default: {
+            Sym *s = src->ref.sym;
+            if (s->is_cond) die_at(src->line, "'%s' is a condition-name and cannot be moved", s->name);
+            if (is_numeric_sym(s) && s->pi.scale != 0)
+                die_at(src->line, "MOVE of the non-integer numeric item '%s' to the alphanumeric item '%s' is not valid COBOL", s->name, d->name);
+            if (!is_numeric_sym(s) && s->size == d->size && !d->just) {
+                Arg a[3] = { arg_ref(dst), arg_ref(&src->ref), arg_imm(d->size) };
+                emit_args(a, 3); emit_call("memcpy");
+                return;
+            }
+            Arg a[4] = { arg_ref(&src->ref), arg_desc(sym_desc(s)), arg_ref(dst), arg_desc(sym_desc(d)) };
+            emit_args(a, 4); emit_call("cob_move");
+            return;
+        }
+        }
+    }
+
+    /* numeric receiver */
+    if (src->kind == O_FIG && !strncmp(src->tok->s, "zero", 4)) {
+        Opnd z; memset(&z, 0, sizeof z); z.kind = O_NUM; numlit_zero(&z.num); z.line = src->line;
+        emit_move(&z, dst);
+        return;
+    }
+    if (src->kind == O_FIG || src->kind == O_ALL) {
+        if (d->usage != U_DISPLAY) die_at(src->line, "%s cannot be moved to the %s item '%s'", src->tok->s, usage_name(d->usage), d->name);
+        Arg a[3] = { arg_ref(dst), arg_imm(d->size), arg_imm(src->kind == O_ALL ? (unsigned char)src->tok->s[0] : fig_byte(src->tok->s)) };
+        emit_args(a, 3); emit_call("cob_fill");
+        return;
+    }
+    if (src->kind == O_NUM && is_hot_int(d)) {
+        long long v = numlit_int(&src->num);
+        if (d->usage == U_BINARY) v %= pow10l(d->pi.digits);
+        if (!d->pi.is_signed && v < 0) v = -v;
+        emit_ref_addr(dst, "r3");
+        emit_li("r1", (long)v);
+        emit_store_int(d, "r3", "r1");
+        return;
+    }
+    if (src->kind == O_REF && is_hot_int(d) && is_hot_int(src->ref.sym) &&
+        (d->pi.is_signed || !src->ref.sym->pi.is_signed)) {
+        Sym *s = src->ref.sym;
+        emit_ref_addr(&src->ref, "r3");
+        emit_load_int(s, "r3", "r1");
+        if (d->usage == U_BINARY && !(s->usage == U_BINARY && s->pi.digits <= d->pi.digits)) emit_trunc(d);
+        emit("\tstw sp+%d, r1", SLOT_A);
+        emit_ref_addr(dst, "r3");
+        emit("\tldw r1, sp+%d", SLOT_A);
+        emit_store_int(d, "r3", "r1");
+        return;
+    }
+    Arg a[4]; Arg da = arg_ref(dst), dd = arg_desc(sym_desc(d));
+    opnd_args(src, &a[0], &a[1], d->size, 1);
+    a[2] = da; a[3] = dd;
+    emit_args(a, 4);
+    emit_call("cob_move");
+}
+
+static void parse_move(void)
+{
+    if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "MOVE CORRESPONDING is not implemented yet");
+    Opnd src; parse_operand(&src);
+    expect_word("to");
+    int n = 0;
+    while (at_operand()) {
+        Ref dst; parse_ref(&dst);
+        emit_move(&src, &dst);
+        n++;
+    }
+    if (!n) die_at(cur()->line, "MOVE needs a receiving item");
+}
+
+/* ---- arithmetic ------------------------------------------------------- */
+
+static void refuse_arith_options(void)
+{
+    if (at_word("rounded")) die_at(cur()->line, "ROUNDED is not implemented yet (stage 3)");
+    if (at_word("on") || at_word("size")) die_at(cur()->line, "ON SIZE ERROR is not implemented yet (stage 3)");
+    if (at_word("remainder")) die_at(cur()->line, "REMAINDER is not implemented yet (stage 3)");
+}
+
+static void check_numeric_opnd(Opnd *o)
+{
+    if (o->kind == O_STR || o->kind == O_ALL) die_at(o->line, "an arithmetic operand must be numeric");
+    if (o->kind == O_FIG && strncmp(o->tok->s, "zero", 4)) die_at(o->line, "an arithmetic operand must be numeric");
+    if (o->kind == O_REF && !is_numeric_sym(o->ref.sym)) die_at(o->line, "'%s' is not numeric", o->ref.sym->name);
+}
+
+/* push an operand onto the numeric stack */
+static void emit_push(Opnd *o)
+{
+    if (o->kind == O_NUM || o->kind == O_FIG) {
+        long long v = o->kind == O_NUM ? numlit_scaled(&o->num) : 0;
+        int scale = o->kind == O_NUM ? o->num.scale : 0;
+        emit_li("r3", (long)(int)(v & 0xFFFFFFFF));
+        emit_li("r4", (long)(int)(v >> 32));
+        emit_li("r5", scale);
+        emit_call("cob_push_lit");
+        return;
+    }
+    Arg a[2] = { arg_ref(&o->ref), arg_desc(sym_desc(o->ref.sym)) };
+    emit_args(a, 2);
+    emit_call("cob_push");
+}
+
+static void emit_top_op(Ref *r, const char *fn)
+{
+    Arg a[2] = { arg_ref(r), arg_desc(sym_desc(r->sym)) };
+    emit_args(a, 2);
+    emit_call(fn);
+}
+
+static int all_hot(Opnd *ops, int n)
+{
+    for (int i = 0; i < n; i++) if (!opnd_hot_int(&ops[i])) return 0;
+    return 1;
+}
+
+static int refs_hot(Ref *rs, int n)
+{
+    for (int i = 0; i < n; i++) if (!is_hot_int(rs[i].sym)) return 0;
+    return 1;
+}
+
+/* SLOT_A = sum of the operands (hot path) */
+static void emit_hot_sum(Opnd *ops, int n)
+{
+    for (int i = 0; i < n; i++) {
+        emit_hot_value(&ops[i]);
+        if (i) { emit("\tldw r2, sp+%d", SLOT_A); emit("\tadd r1, r1, r2"); }
+        emit("\tstw sp+%d, r1", SLOT_A);
+    }
+}
+
+#define MAXOPS 16
+
+static int parse_operand_list(Opnd *ops, int max)
+{
+    int n = 0;
+    while (at_operand() || (cur()->kind == T_WORD && is_figurative(cur()->s))) {
+        if (n >= max) die_at(cur()->line, "too many operands");
+        parse_operand(&ops[n]); check_numeric_opnd(&ops[n]); n++;
+    }
+    return n;
+}
+
+static int parse_ref_list(Ref *rs, int max)
+{
+    int n = 0;
+    while (at_operand()) {
+        if (n >= max) die_at(cur()->line, "too many receiving items");
+        parse_ref(&rs[n]);
+        if (!is_numeric_sym(rs[n].sym)) die_at(rs[n].line, "'%s' is not numeric", rs[n].sym->name);
+        if (rs[n].sym->pi.category != PIC_NUMERIC) die_at(rs[n].line, "'%s' is edited and cannot be an arithmetic receiver", rs[n].sym->name);
+        n++;
+    }
+    return n;
+}
+
+/* store the sum on the stack top (general) or in SLOT_A (hot) to receivers */
+static void emit_store_receivers(Ref *rs, int nr, int hot, int giving, int subtract)
+{
+    for (int i = 0; i < nr; i++) {
+        if (hot) {
+            Sym *d = rs[i].sym;
+            emit_ref_addr(&rs[i], "r3");
+            if (giving) emit("\tldw r1, sp+%d", SLOT_A);
+            else {
+                emit_load_int(d, "r3", "r1");
+                emit("\tldw r2, sp+%d", SLOT_A);
+                emit(subtract ? "\tsub r1, r1, r2" : "\tadd r1, r1, r2");
+            }
+            emit_trunc(d);
+            emit_store_int(d, "r3", "r1");
+        } else {
+            emit_top_op(&rs[i], giving ? "cob_top_store" : subtract ? "cob_top_subfrom" : "cob_top_addto");
+        }
+    }
+    if (!hot) emit_call("cob_drop");
+}
+
+static void parse_add(void)
+{
+    if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "ADD CORRESPONDING is not implemented yet");
+    Opnd ops[MAXOPS]; Ref rs[MAXOPS];
+    int n = parse_operand_list(ops, MAXOPS);
+    if (!n) die_at(cur()->line, "ADD needs an operand");
+    int giving = 0, nr = 0;
+    if (accept_word("to")) {
+        if (peek(0)->kind == T_WORD && !is_verb(peek(0)->s)) {
+            /* ADD a TO b [GIVING c]: b is a receiver unless GIVING follows */
+            int save = g_tp;
+            Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
+            if (accept_word("giving")) {
+                for (int i = 0; i < ne; i++) { if (n >= MAXOPS) die_at(cur()->line, "too many operands"); ops[n++] = extra[i]; }
+                giving = 1;
+                nr = parse_ref_list(rs, MAXOPS);
+            } else { g_tp = save; nr = parse_ref_list(rs, MAXOPS); }
+        } else nr = parse_ref_list(rs, MAXOPS);
+    } else if (accept_word("giving")) {
+        giving = 1; nr = parse_ref_list(rs, MAXOPS);
+    } else die_at(cur()->line, "expected TO or GIVING in ADD");
+    if (!nr) die_at(cur()->line, "ADD needs a receiving item");
+    refuse_arith_options();
+    accept_word("end-add");
+
+    int hot = all_hot(ops, n) && refs_hot(rs, nr);
+    if (hot) emit_hot_sum(ops, n);
+    else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
+    emit_store_receivers(rs, nr, hot, giving, 0);
+}
+
+static void parse_subtract(void)
+{
+    if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "SUBTRACT CORRESPONDING is not implemented yet");
+    Opnd ops[MAXOPS]; Ref rs[MAXOPS];
+    int n = parse_operand_list(ops, MAXOPS);
+    if (!n) die_at(cur()->line, "SUBTRACT needs an operand");
+    expect_word("from");
+    int giving = 0, nr = 0;
+    Opnd minuend;
+    int save = g_tp;
+    Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
+    if (accept_word("giving")) {
+        if (ne != 1) die_at(cur()->line, "SUBTRACT ... FROM x GIVING takes one item after FROM");
+        minuend = extra[0]; giving = 1;
+        nr = parse_ref_list(rs, MAXOPS);
+    } else { g_tp = save; nr = parse_ref_list(rs, MAXOPS); }
+    if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
+    refuse_arith_options();
+    accept_word("end-subtract");
+
+    int hot = all_hot(ops, n) && refs_hot(rs, nr) && (!giving || opnd_hot_int(&minuend));
+    if (hot) {
+        emit_hot_sum(ops, n);
+        if (giving) {
+            emit_hot_value(&minuend);
+            emit("\tldw r2, sp+%d", SLOT_A);
+            emit("\tsub r1, r1, r2");
+            emit("\tstw sp+%d, r1", SLOT_A);
+        }
+    } else {
+        if (giving) emit_push(&minuend);
+        for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
+        if (giving) emit_call("cob_nsub");
+    }
+    emit_store_receivers(rs, nr, hot, giving, !giving);
+}
+
+static void parse_multiply(void)
+{
+    Opnd a; parse_operand(&a); check_numeric_opnd(&a);
+    expect_word("by");
+    Ref rs[MAXOPS]; int nr = 0;
+    int save = g_tp;
+    Opnd b; parse_operand(&b); check_numeric_opnd(&b);
+    if (accept_word("giving")) {
+        nr = parse_ref_list(rs, MAXOPS);
+        if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
+        refuse_arith_options(); accept_word("end-multiply");
+        emit_push(&a); emit_push(&b); emit_call("cob_nmul");
+        for (int i = 0; i < nr; i++) emit_top_op(&rs[i], "cob_top_store");
+        emit_call("cob_drop");
+        return;
+    }
+    g_tp = save;
+    nr = parse_ref_list(rs, MAXOPS);
+    if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
+    refuse_arith_options(); accept_word("end-multiply");
+    for (int i = 0; i < nr; i++) {
+        Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
+        emit_push(&r); emit_push(&a); emit_call("cob_nmul");
+        emit_top_op(&rs[i], "cob_top_store"); emit_call("cob_drop");
+    }
+}
+
+static void parse_divide(void)
+{
+    Opnd a; parse_operand(&a); check_numeric_opnd(&a);
+    Ref rs[MAXOPS]; int nr;
+    if (accept_word("into")) {
+        int save = g_tp;
+        Opnd b; parse_operand(&b); check_numeric_opnd(&b);
+        if (accept_word("giving")) {
+            nr = parse_ref_list(rs, MAXOPS);
+            if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+            refuse_arith_options(); accept_word("end-divide");
+            emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
+            for (int i = 0; i < nr; i++) emit_top_op(&rs[i], "cob_top_store");
+            emit_call("cob_drop");
+            return;
+        }
+        g_tp = save;
+        nr = parse_ref_list(rs, MAXOPS);
+        if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+        refuse_arith_options(); accept_word("end-divide");
+        for (int i = 0; i < nr; i++) {
+            Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
+            emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
+            emit_top_op(&rs[i], "cob_top_store"); emit_call("cob_drop");
+        }
+        return;
+    }
+    expect_word("by");
+    Opnd b; parse_operand(&b); check_numeric_opnd(&b);
+    expect_word("giving");
+    nr = parse_ref_list(rs, MAXOPS);
+    if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+    refuse_arith_options(); accept_word("end-divide");
+    emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
+    for (int i = 0; i < nr; i++) emit_top_op(&rs[i], "cob_top_store");
+    emit_call("cob_drop");
+}
+
+/* ---- IF ---------------------------------------------------------------- */
+
+static void parse_branch_body(void)
+{
+    if (at_word("next")) {
+        advance(); expect_word("sentence");
+        if (g_sentence_label < 0) g_sentence_label = new_label();
+        emit_jump(g_sentence_label);
+        return;
+    }
+    parse_statements();
+}
+
+static void parse_if(void)
+{
+    Cond *c = parse_cond();
+    accept_word("then");
+    int Lelse = new_label();
+    cond_jump_false(c, Lelse);
+    parse_branch_body();
+    if (accept_word("else")) {
+        int Lend = new_label();
+        emit_jump(Lend);
+        emit_label(Lelse);
+        parse_branch_body();
+        emit_label(Lend);
+    } else emit_label(Lelse);
+    accept_word("end-if");
+}
+
+/* ---- PERFORM ---------------------------------------------------------- */
+
+static int g_ncnt;      /* TIMES counters */
+
+typedef struct { Para *from, *thru; int inline_body; } Body;
+
+static void emit_body(Body *b)
+{
+    if (!b->inline_body) {
+        int Lret = new_label();
+        char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
+        emit_li("r3", b->thru ? b->thru->id : b->from->id);
+        emit_la("r4", lab);
+        emit_call("cob_perform_push");
+        emit("\tjal r0, .Lp%d", b->from->id);
+        emit_label(Lret);
+    } else {
+        parse_statements();
+    }
+}
+
+static void emit_add_to_ref(Opnd *by, Ref *var)
+{
+    Opnd ops[1] = { *by }; Ref rs[1] = { *var };
+    int hot = opnd_hot_int(by) && is_hot_int(var->sym);
+    if (hot) emit_hot_sum(ops, 1);
+    else emit_push(by);
+    emit_store_receivers(rs, 1, hot, 0, 0);
+}
+
+typedef struct { Ref var; Opnd from, by; Cond *until; } Vary;
+
+static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
+{
+    Vary *x = &v[level];
+    emit_move(&x->from, &x->var);
+    int Ltop = new_label(), Lend = new_label();
+    emit_label(Ltop);
+    if (!test_after) cond_jump_true(x->until, Lend);
+    if (level + 1 < nv) emit_varying(v, nv, level + 1, body, test_after);
+    else emit_body(body);
+    if (test_after) cond_jump_true(x->until, Lend);
+    emit_add_to_ref(&x->by, &x->var);
+    emit_jump(Ltop);
+    emit_label(Lend);
+}
+
+static void parse_perform(void)
+{
+    int line = cur()->line;
+    Body body; memset(&body, 0, sizeof body);
+    if (cur()->kind == T_WORD && para_find(cur()->s)) {
+        body.from = expect_para();
+        if (accept_word("thru") || accept_word("through")) body.thru = expect_para();
+    } else body.inline_body = 1;
+
+    int test_after = 0;
+    if (accept_word("with")) { expect_word("test"); if (accept_word("after")) test_after = 1; else expect_word("before"); }
+    else if (accept_word("test")) { if (accept_word("after")) test_after = 1; else expect_word("before"); }
+
+    if (accept_word("until")) {
+        Cond *c = parse_cond();
+        int Ltop = new_label(), Lend = new_label();
+        emit_label(Ltop);
+        if (!test_after) cond_jump_true(c, Lend);
+        emit_body(&body);
+        if (test_after) cond_jump_false(c, Ltop); else emit_jump(Ltop);
+        emit_label(Lend);
+    } else if (accept_word("varying")) {
+        Vary v[3]; int nv = 0;
+        for (;;) {
+            if (nv >= 3) die_at(cur()->line, "more than three VARYING/AFTER levels are not implemented");
+            parse_ref(&v[nv].var);
+            if (!is_numeric_sym(v[nv].var.sym)) die_at(v[nv].var.line, "the VARYING item must be numeric");
+            expect_word("from"); parse_operand(&v[nv].from); check_numeric_opnd(&v[nv].from);
+            expect_word("by"); parse_operand(&v[nv].by); check_numeric_opnd(&v[nv].by);
+            expect_word("until"); v[nv].until = parse_cond();
+            nv++;
+            if (!accept_word("after")) break;
+        }
+        if (test_after && nv > 1) die_at(line, "WITH TEST AFTER together with AFTER is not implemented yet");
+        emit_varying(v, nv, 0, &body, test_after);
+    } else if (at_operand() && (peek(1)->kind == T_WORD && (!strcmp(peek(1)->s, "times")))) {
+        Opnd n; parse_operand(&n); check_numeric_opnd(&n);
+        expect_word("times");
+        char cnt[32]; snprintf(cnt, sizeof cnt, ".Lcnt%d", g_ncnt++);
+        if (opnd_hot_int(&n)) emit_hot_value(&n);
+        else {
+            if (n.kind != O_REF) die_at(n.line, "TIMES needs an integer");
+            Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
+            emit_args(a, 2); emit_call("cob_load_int");
+        }
+        emit_la("r2", cnt);
+        emit("\tstw r2+0, r1");
+        int Ltop = new_label(), Lend = new_label();
+        emit_label(Ltop);
+        emit_la("r2", cnt);
+        emit("\tldw r1, r2+0");
+        emit("\tbge r0, r1, .L%d", Lend);
+        emit("\taddi r1, r1, -1");
+        emit("\tstw r2+0, r1");
+        emit_body(&body);
+        emit_jump(Ltop);
+        emit_label(Lend);
+    } else if (body.inline_body) {
+        emit_body(&body);
+    } else {
+        emit_body(&body);
+    }
+    if (body.inline_body) expect_word("end-perform");
+    else accept_word("end-perform");
+}
+
+/* ---- GO TO, SET ------------------------------------------------------- */
+
+static void parse_goto(void)
+{
+    accept_word("to");
+    Para *ps[64]; int n = 0;
+    while (cur()->kind == T_WORD && !at_word("depending") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
+        if (n >= 64) die_at(cur()->line, "too many GO TO targets");
+        ps[n++] = expect_para();
+    }
+    if (!n) die_at(cur()->line, "GO TO without a procedure-name needs ALTER, which is not in COBOL 85");
+    if (accept_word("depending")) {
+        accept_word("on");
+        Opnd o; parse_operand(&o);
+        if (o.kind != O_REF || !is_int_item(o.ref.sym)) die_at(o.line, "GO TO DEPENDING ON needs an integer item");
+        if (is_hot_int(o.ref.sym)) emit_hot_value(&o);
+        else { Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+        for (int i = 0; i < n; i++) {
+            emit_li("r2", i + 1);
+            emit("\tbeq r1, r2, .Lp%d", ps[i]->id);
+        }
+        return;
+    }
+    if (n != 1) die_at(cur()->line, "GO TO with several procedure-names needs DEPENDING ON");
+    emit("\tjal r0, .Lp%d", ps[0]->id);
+}
+
+static void parse_set(void)
+{
+    Ref rs[MAXOPS]; int nr = 0;
+    while (at_operand()) { if (nr >= MAXOPS) die_at(cur()->line, "too many items in SET"); parse_ref(&rs[nr++]); }
+    if (!nr) die_at(cur()->line, "SET needs an item");
+    if (accept_word("to")) {
+        if (accept_word("true")) {
+            for (int i = 0; i < nr; i++) {
+                Sym *c = rs[i].sym;
+                if (!c->is_cond) die_at(rs[i].line, "'%s' is not a condition-name", c->name);
+                Opnd v = lit_opnd(c->cv_lo[0]);
+                Ref p = rs[i]; p.sym = &g_sym[c->parent];
+                emit_move(&v, &p);
+            }
+            return;
+        }
+        if (accept_word("false")) die_at(cur()->line, "SET ... TO FALSE is not in COBOL 85");
+        Opnd v; parse_operand(&v);
+        for (int i = 0; i < nr; i++) {
+            if (!is_numeric_sym(rs[i].sym)) die_at(rs[i].line, "SET ... TO needs an index or integer item");
+            emit_move(&v, &rs[i]);
+        }
+        return;
+    }
+    int down = 0;
+    if (accept_word("up")) down = 0; else if (accept_word("down")) down = 1;
+    else die_at(cur()->line, "expected TO, UP BY or DOWN BY in SET");
+    expect_word("by");
+    Opnd v; parse_operand(&v); check_numeric_opnd(&v);
+    for (int i = 0; i < nr; i++) {
+        Opnd ops[1] = { v };
+        int hot = opnd_hot_int(&v) && is_hot_int(rs[i].sym);
+        if (hot) emit_hot_sum(ops, 1); else emit_push(&v);
+        emit_store_receivers(&rs[i], 1, hot, 0, down);
+    }
+}
+
+/* ---- dispatch ---------------------------------------------------------- */
+
 static void parse_statement(void)
 {
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a statement, found %s", tok_desc(t));
+    const char *v = t->s;
 
-    if (!strcmp(t->s, "display")) { advance(); parse_display(); return; }
-    if (!strcmp(t->s, "stop")) {
+    if (!strcmp(v, "display")) { advance(); parse_display(); return; }
+    if (!strcmp(v, "move")) { advance(); parse_move(); return; }
+    if (!strcmp(v, "add")) { advance(); parse_add(); return; }
+    if (!strcmp(v, "subtract")) { advance(); parse_subtract(); return; }
+    if (!strcmp(v, "multiply")) { advance(); parse_multiply(); return; }
+    if (!strcmp(v, "divide")) { advance(); parse_divide(); return; }
+    if (!strcmp(v, "if")) { advance(); parse_if(); return; }
+    if (!strcmp(v, "perform")) { advance(); parse_perform(); return; }
+    if (!strcmp(v, "go")) { advance(); parse_goto(); return; }
+    if (!strcmp(v, "set")) { advance(); parse_set(); return; }
+    if (!strcmp(v, "stop")) {
         advance();
-        if (accept_word("run")) {
-            emit_li("r3", 0);
-            emit_call("cob_stop_run");
-            return;
-        }
+        if (accept_word("run")) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
         die_at(t->line, "STOP literal is not implemented");
     }
-    if (!strcmp(t->s, "goback")) { advance(); emit("\tjal r0, .Lgoback"); return; }
-    if (!strcmp(t->s, "continue")) { advance(); return; }
-    if (!strcmp(t->s, "exit")) {
+    if (!strcmp(v, "goback")) { advance(); emit("\tjal r0, .Lgoback"); return; }
+    if (!strcmp(v, "continue")) { advance(); return; }
+    if (!strcmp(v, "exit")) {
         advance();
         if (at_word("program")) die_at(t->line, "EXIT PROGRAM is not implemented yet (stage 6)");
         if (at_word("perform") || at_word("paragraph") || at_word("section"))
             die_at(t->line, "EXIT %s is not in COBOL 85", cur()->s);
-        return;                                     /* EXIT: no operation */
+        return;
     }
-    if (!strcmp(t->s, "alter"))
+    if (!strcmp(v, "next")) die_at(t->line, "NEXT SENTENCE is only valid inside IF (or SEARCH)");
+    if (!strcmp(v, "alter"))
         die_at(t->line, "ALTER is not in COBOL 85 (obsolete in the 1985 standard); refused");
-    if (!strcmp(t->s, "enter") || !strcmp(t->s, "disable") || !strcmp(t->s, "enable") ||
-        !strcmp(t->s, "purge") || !strcmp(t->s, "receive") || !strcmp(t->s, "send"))
-        die_at(t->line, "%s is not supported (the Communication module is deliberately out)", t->s);
-    if (is_verb(t->s))
-        die_at(t->line, "the verb %s is not implemented yet", t->s);
-    die_at(t->line, "'%s' is not a COBOL verb", t->s);
+    if (!strcmp(v, "enter") || !strcmp(v, "disable") || !strcmp(v, "enable") ||
+        !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
+        die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
+    static const struct { const char *verb; const char *when; } later[] = {
+        { "compute", "stage 3" }, { "open", "stage 4" }, { "close", "stage 4" }, { "read", "stage 4" },
+        { "write", "stage 4" }, { "rewrite", "stage 5" }, { "start", "stage 5" }, { "delete", "stage 5" },
+        { "call", "stage 6" }, { "cancel", "stage 6" }, { "initiate", "stage 7" }, { "generate", "stage 7" },
+        { "terminate", "stage 7" }, { "accept", "stage 8" }, { "evaluate", "stage 9" },
+        { "string", "stage 9" }, { "inspect", "stage 9" }, { "initialize", "stage 9" },
+        { "unstring", "after v1" }, { "search", "after v1" }, { "sort", "after v1" },
+        { "merge", "after v1" }, { "release", "after v1" }, { "return", "after v1" },
+        { "use", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };
+    for (int i = 0; later[i].verb; i++)
+        if (!strcmp(v, later[i].verb)) die_at(t->line, "the verb %s is not implemented yet (%s)", v, later[i].when);
+    if (is_terminator(v)) die_at(t->line, "'%s' without a matching statement", v);
+    die_at(t->line, "'%s' is not a COBOL verb", v);
+}
+
+static void emit_exit_check(int id)
+{
+    int Ln = new_label();
+    emit_li("r3", id);
+    emit_call("cob_perform_exit");
+    emit("\tbeq r1, r0, .L%d", Ln);
+    emit("\tjalr r0, r1, 0");
+    emit_label(Ln);
 }
 
 static void parse_procedure_division(void)
@@ -914,27 +2472,33 @@ static void parse_procedure_division(void)
     expect_word("procedure"); expect_word("division");
     if (at_word("using")) die_at(cur()->line, "PROCEDURE DIVISION USING is not implemented yet (stage 6)");
     expect_period();
+    prescan_paragraphs(g_tp);
 
     emit("\t.text");
     emit("\t.globl main");
     emit("\t.p2align 2");
     emit("\t.type main,@function");
     emit("main:");
-    emit("\taddi sp, sp, -16");
+    emit("\taddi sp, sp, -%d", FRAME);
     emit("\tstw sp+0, lr");
+    emit("\tstw sp+4, r11");
     emit_call("cob_init");
 
+    int cur_par = -1, cur_sec = -1;
     for (;;) {
         Tok *t = cur();
         if (t->kind == T_EOF) break;
         if (is_word(t, "end") && is_word(peek(1), "program")) break;
 
-        /* paragraph-name. or section-name SECTION. */
         if (t->kind == T_WORD && !is_verb(t->s) && (peek(1)->kind == T_PERIOD ||
             (is_word(peek(1), "section") && peek(2)->kind == T_PERIOD))) {
-            int is_section = is_word(peek(1), "section");
-            emit(".L%s_%s_%d:", is_section ? "sec" : "par", mangle(t->s), g_nlabel++);
-            advance(); if (is_section) advance();
+            Para *p = para_find(t->s);
+            if (!p) die_at(t->line, "internal: paragraph '%s' not prescanned", t->s);
+            if (cur_par >= 0) emit_exit_check(cur_par);
+            if (p->is_section && cur_sec >= 0) emit_exit_check(cur_sec);
+            emit_para_label(p);
+            if (p->is_section) { cur_sec = p->id; cur_par = -1; } else cur_par = p->id;
+            advance(); if (p->is_section) advance();
             expect_period();
             continue;
         }
@@ -942,17 +2506,23 @@ static void parse_procedure_division(void)
             die_at(t->line, "section segment numbers are obsolete in COBOL 85; not supported");
 
         /* a sentence */
+        g_sentence_label = -1;
         for (;;) {
             parse_statement();
             if (cur()->kind == T_PERIOD) { advance(); break; }
             if (cur()->kind == T_EOF) die_at(cur()->line, "missing '.' at the end of the last sentence");
+            if (at_scope_end()) die_at(cur()->line, "'%s' without a matching statement", cur()->s);
         }
+        if (g_sentence_label >= 0) emit_label(g_sentence_label);
     }
+    if (cur_par >= 0) emit_exit_check(cur_par);
+    if (cur_sec >= 0) emit_exit_check(cur_sec);
 
     emit(".Lgoback:");
     emit("\taddi r1, r0, 0");
+    emit("\tldw r11, sp+4");
     emit("\tldw lr, sp+0");
-    emit("\taddi sp, sp, 16");
+    emit("\taddi sp, sp, %d", FRAME);
     emit("\tjalr r0, r31, 0");
 
     if (accept_word("end")) {
@@ -991,8 +2561,6 @@ static void parse_identification_division(void)
     }
     expect_period();
 
-    /* The remaining paragraphs are comment-entries: anything up to the next
-     * paragraph header or division. */
     static const char *paras[] = { "author", "installation", "date-written",
         "date-compiled", "security", "remarks", NULL };
     while (!at_division() && cur()->kind != T_EOF) {
@@ -1023,7 +2591,12 @@ static void parse_environment_division(void)
     if (accept_word("configuration")) {
         expect_word("section"); expect_period();
         for (;;) {
-            if (accept_word("source-computer") || accept_word("object-computer")) { expect_period(); if (cur()->kind == T_WORD && !at_word("special-names") && !at_word("input-output") && !at_division()) skip_to_period(); continue; }
+            if (accept_word("source-computer") || accept_word("object-computer")) {
+                expect_period();
+                if (cur()->kind == T_WORD && !at_word("special-names") && !at_word("input-output") &&
+                    !at_word("source-computer") && !at_word("object-computer") && !at_division()) skip_to_period();
+                continue;
+            }
             if (at_word("special-names")) {
                 advance(); expect_period();
                 if (cur()->kind != T_PERIOD && !at_division() && !at_word("input-output"))
@@ -1041,7 +2614,7 @@ static void parse_environment_division(void)
 
 static void parse_data_division(void)
 {
-    if (!accept_word("data")) return;
+    if (!accept_word("data")) { finish_data_division(); return; }
     expect_word("division"); expect_period();
     for (;;) {
         if (at_word("file") && is_word(peek(1), "section"))
@@ -1056,6 +2629,7 @@ static void parse_data_division(void)
         break;
     }
     if (!at_division() && cur()->kind != T_EOF) die_at(cur()->line, "unexpected %s in the DATA DIVISION", tok_desc(cur()));
+    finish_data_division();
 }
 
 /* ====================================================================== */
@@ -1068,18 +2642,32 @@ static void emit_data(void)
     emit("\t.data");
     for (int i = 0; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
-        emit("\t.p2align 2");
-        emit("%s:\t# %02d %s pic %s usage %s (%d bytes)", s->label, s->level, s->name,
-             s->has_pic ? s->pic : "-", usage_name(s->usage), s->size);
-        emit_bytes(s->value, s->size);
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0) continue;
+        emit("\t.p2align 3");
+        emit("%s:\t# %02d %s (%d bytes)", s->label, s->level, s->name, s->image_size);
+        emit_bytes(s->image, s->image_size);
     }
-    if (g_nlit) {
-        emit("");
-        emit("\t.section .rodata");
-        for (int i = 0; i < g_nlit; i++) {
-            emit("%s:", g_lit[i].label);
-            emit_bytes(g_lit[i].bytes, g_lit[i].len);
+    for (int i = 0; i < g_ncnt; i++) { emit("\t.p2align 2"); emit(".Lcnt%d:", i); emit("\t.word 0"); }
+    emit("");
+    emit("\t.section .rodata");
+    for (int i = 0; i < g_nlit; i++) {
+        emit("%s:", g_lit[i].label);
+        emit_bytes(g_lit[i].bytes, g_lit[i].len);
+    }
+    for (int i = 0; i < g_ndesc; i++) {
+        Desc *d = &g_desc[i];
+        if (d->picstr[0]) {
+            emit(".Lpic%d:", i);
+            emit_bytes((unsigned char *)d->picstr, (int)strlen(d->picstr) + 1);
         }
+    }
+    for (int i = 0; i < g_ndesc; i++) {
+        Desc *d = &g_desc[i];
+        emit("\t.p2align 2");
+        emit(".Ld%d:", i);
+        emit("\t.byte %d,%d,%d,%d,%d,0,0,0", d->cat, d->usage, d->digits, (unsigned char)d->scale, d->flags);
+        emit("\t.word %d", d->size);
+        if (d->picstr[0]) emit("\t.word .Lpic%d", i); else emit("\t.word 0");
     }
 }
 

@@ -1,8 +1,9 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **Stage 1 landed** (2026-08-29) -- a `.cbl` becomes a `.s32x`
-that prints a line, in either reference format, with GnuCOBOL agreeing
-on every test program. Stages in [docs/plan.md](docs/plan.md).
+Status: **Stage 2 landed** (2026-08-29) -- groups, tables, the
+conversion matrix behind MOVE, the arithmetic verbs, conditions, IF and
+every PERFORM form; 18/18 tests with GnuCOBOL agreeing on each program's
+output. Stages in [docs/plan.md](docs/plan.md).
 
 A host cross-compiler in the tree's ordinary universe (like `fortran/`
 and `clip/`, not `selfhost/`). It reads COBOL 85 plus the implementor
@@ -61,6 +62,8 @@ under `docs/`.
                       gen_picture.sh regenerates it
     src/picture.c     PICTURE analysis: category, digits, scale, sign,
                       width, and the software edit descriptor
+    libcob/cobrt.h    the field descriptor both sides read (cat, usage,
+                      digits, scale, flags, size, picture)
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
     tests/            run-tests.sh; fixed/ free/ programs with .expected;
                       bad/ programs that must be refused; pictures.txt

@@ -1,0 +1,39 @@
+show 00
+show 00
+show 00
+i=07
+0102030405
+0103 0102 0101 0303 0302 0301 0503 0502 0501 .
+after: 03
+after para: 03
+total=+000030
+first
+middle
+inner
+last
+back
+outer in
+inner in
+show 03
+show 03
+inner out
+outer out
+b
+refmod
+in range
+either
+is
+neg
+not pos
+numeric
+not alpha
+lower
+ne
+gt
+le
+eq
+lt
+str ne
+padded eq
+sentence end
+two

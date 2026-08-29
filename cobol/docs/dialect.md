@@ -99,7 +99,13 @@ given, because majesty's `.prn` oracles were produced under it.
 
 - **Uninitialised WORKING-STORAGE**: alphanumeric to spaces, numeric
   to zero (in the item's usage). The standard leaves it undefined;
-  majesty was written against GnuCOBOL's rule.
+  majesty was written against GnuCOBOL's rule. Note that GnuCOBOL's
+  own rule is per dialect: `default.conf` says `defaultbyte: init`,
+  `cobol85.conf` says `none` (a numeric DISPLAY item under OCCURS came
+  out as spaces there). Tests compiled with `-std=cobol85` must not
+  read an item before setting it.
+- **MOVE of a non-integer numeric item to an alphanumeric item** is
+  refused, as the standard and GnuCOBOL both do ("invalid MOVE").
 - **`COMP`/`BINARY` width**: 2, 4, 8 bytes for 1-4, 5-9, 10-18 digits.
   IBM's table and the natural fit for the SLOW-32 C types. GnuCOBOL's
   default is 1-2-4-8; the difference is one- and two-digit items, and
