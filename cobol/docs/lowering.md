@@ -120,15 +120,29 @@ convention — cobc370 uses IBM's (R1 → list of parameter addresses)
 because MVS and `DYNALOAD` require it, and nothing here requires that.
 
 **Ruling for v1:** one convention, the SLOW-32 C ABI, for every
-`CALL`. `CALL 'name' USING a b` passes the addresses of `a` and `b`
-in `r3`, `r4`; the callee's `LINKAGE SECTION` items are those
-addresses; more than eight go to the stack exactly as the ABI says;
-`GOBACK` returns. Reasons: the C seam in `clinkages.cbl` then costs
-nothing extra, `dateutil.c` and any future C link with no thunk, and
-the corpus's largest `USING` list on the v1 path is two items. If a
-COBOL-only convention (an address list, cobc370-style) ever earns its
-keep — many-argument calls, or a `CALL identifier` table — it is a
-change to this section, not to the corpus.
+`CALL` — chosen, not inherited. `CALL 'name' USING a b` passes the
+addresses of `a` and `b` in `r3`, `r4`; the callee's `LINKAGE
+SECTION` items are those addresses; more than eight go to the stack
+exactly as the ABI says; `GOBACK` returns.
+
+The reason is interoperability, and it is a feature rather than a
+convenience. On this machine the C ABI is also what `fortran/` emits:
+a Fortran dummy argument is an address in `r3`–`r10`, which is
+precisely COBOL `BY REFERENCE`. So with one shared convention, a
+COBOL `CALL 'DAXPY' USING n da dx incx dy incy` reaches a Fortran
+`SUBROUTINE DAXPY` with no thunk, a Fortran `CALL` reaches a COBOL
+subprogram the same way, and both reach C — `dateutil.c` links into
+`gl030` with nothing between them. Three languages, one linker, no
+glue; the desk has wanted that since the 1987 plan named "a COBOL
+that speaks this machine's files."
+
+Also true, but secondary: the corpus's largest `USING` list on the
+v1 path is two items, so nothing here even exercises the stack case.
+
+If a COBOL-only convention (an address list, cobc370-style) ever
+earns its keep — a `CALL identifier` dispatch table, say — it is a
+change to this section and would cost the cross-language linking
+above; that trade should be made knowingly.
 
 `c_lineartofielded` and `taskdt` are COBOL subprograms after the
 rewrite in [functions.md](functions.md). No function-invocation form
