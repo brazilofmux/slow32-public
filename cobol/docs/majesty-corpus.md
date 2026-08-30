@@ -122,12 +122,13 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 |---|---|---|
 | ~~8~~ | ~~`COPY`~~ **landed** (Stage 12, 2026-08-29): with `-I src/copy` seven of the eight compile; exglentry moves to the RELATIVE row | ~~crglacct, crglacpd, crgltrans, exglacct, exglentry, ldglacct, ldgltrans, w001~~ |
 | 7 | `FUNCTION-ID` -- the legacy pure-COBOL date family, a retirement candidate rather than a rewrite (the C `du_*` path replaced it) | fielded_to_linear, linear_to_fielded, floor-div, floor-divmod, holidays, isleapyear, isvaliddate |
-| 4 | `ACCEPT FROM ARGUMENT-NUMBER` / `ARGUMENT-VALUE` -- the `YYYYMM` parameter; first on the after-v1 list, because gl024 opens the journal pipeline | gl024, gl038, gl042, gl043 |
+| ~~4~~ | ~~`ACCEPT FROM ARGUMENT-NUMBER` / `ARGUMENT-VALUE`~~ **landed** (Stage 13): gl024 and gl038 compile, gl024's outputs match GnuCOBOL's byte for byte; gl042/gl043 move on to their next blocker | ~~gl024, gl038, gl042, gl043~~ |
 | 2 | `REPOSITORY` -- callers of that date family | exgltrans, jerm |
 | 3 | `RELATIVE KEY` (relative I-O) | crglentry, ldglentry, exglentry |
 | 2 | `OCCURS DEPENDING ON` | gl034, gl040 |
 | 2 | `SPECIAL-NAMES` clauses | damm, gl008 |
-| 1 | a subscripted `SOURCE` in a report field | gl036 |
+| ~~1~~ | ~~a subscripted `SOURCE` in a report field~~ gl036 compiles as of Stage 13 (a `VALUE`-only report field was the last stop) | ~~gl036~~ |
+| 2 | `SEARCH` (table handling, the serial form) | gl042, gl043 |
 | 1 | a report field without a PICTURE (a group field with children) | gl015, gl016 (retired programs, not in the build) |
 | 1 | `SD` -- an in-program `SORT` | glacpost |
 | 1 | a numeric item of more than 18 digits (`ws-temp`) | dist01 |
@@ -135,7 +136,7 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | 1 | `USAGE BINARY-INT` | testcrc |
 | 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
 
-After COPY (2026-08-29): **29 of 58 compile.** The copybooks also
+After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, **32 of 58.** The copybooks also
 brought `packed-decimal` before `pic`, a trailing `+` in a numeric
 picture (`9(9)v99+`, numeric-edited: moved to a numeric item before
 arithmetic, as the programs already do) and level 88 directly under

@@ -42,7 +42,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.12 (stage 12: COPY)"
+#define VERSION "0.13 (stage 13: the command line)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -2338,8 +2338,18 @@ static void parse_accept(void)
     }
     Ref r; parse_ref(&r);
     if (accept_word("from")) {
-        if (at_word("argument-value") || at_word("argument-number") || at_word("command-line"))
-            die_at(cur()->line, "ACCEPT FROM %s is not implemented yet (after v1)", cur()->s);
+        if (at_word("argument-number") || at_word("argument-value") || at_word("command-line")) {
+            const char *fn = at_word("argument-number") ? "cob_accept_argnum"
+                           : at_word("argument-value") ? "cob_accept_argval" : "cob_accept_cmdline";
+            if (at_word("argument-number") && !is_numeric_sym(r.sym)) die_at(r.line, "ACCEPT ... FROM ARGUMENT-NUMBER needs a numeric item");
+            advance();
+            Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            emit_args(a, 2);
+            emit_call(fn);
+            if (at_word("on") || at_word("exception") || at_word("not")) die_at(cur()->line, "ACCEPT ... ON EXCEPTION is not implemented");
+            accept_word("end-accept");
+            return;
+        }
         if (at_word("date") || at_word("day") || at_word("time") || at_word("day-of-week"))
             die_at(cur()->line, "ACCEPT FROM %s is not implemented yet; FUNCTION CURRENT-DATE is stage 9", cur()->s);
         die_at(cur()->line, "ACCEPT FROM %s is not implemented", tok_desc(cur()));
@@ -2355,9 +2365,28 @@ static void parse_display(void)
         Screen *sc = screen_find(cur()->s);
         if (sc) { advance(); emit_screen_addr("r3", sc); emit_call("cob_screen_display"); return; }
     }
+    /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
+    if (is_word(peek(1), "upon") && is_word(peek(2), "argument-number")) {
+        Opnd o; parse_operand(&o);
+        if (!opnd_hot_int(&o)) {
+            if (o.kind != O_REF || !is_int_item(o.ref.sym)) die_at(o.line, "DISPLAY ... UPON ARGUMENT-NUMBER needs an integer");
+            Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int");
+        } else emit_hot_value(&o);
+        emit("\tadd r3, r1, r0");
+        emit_call("cob_display_upon_argnum");
+        advance(); advance();
+        return;
+    }
+    if (is_word(peek(1), "upon") && (is_word(peek(2), "sysout") || is_word(peek(2), "console") || is_word(peek(2), "syserr") || is_word(peek(2), "stderr"))) {
+        /* the console: an ordinary DISPLAY */
+    }
     for (;;) {
         Tok *t = cur();
-        if (t->kind == T_WORD && (!strcmp(t->s, "upon"))) die_at(t->line, "DISPLAY UPON is not implemented yet");
+        if (t->kind == T_WORD && !strcmp(t->s, "upon")) {
+            advance();
+            if (accept_word("sysout") || accept_word("console") || accept_word("syserr") || accept_word("stderr")) continue;
+            die_at(t->line, "DISPLAY UPON %s is not implemented (ARGUMENT-NUMBER takes one operand)", cur()->s);
+        }
         if (t->kind == T_WORD && (!strcmp(t->s, "with") || !strcmp(t->s, "no"))) {
             accept_word("with"); expect_word("no"); expect_word("advancing");
             no_adv = 1; break;
@@ -3128,7 +3157,8 @@ static void parse_perform(void)
         emit_body(&body);
     }
     if (body.inline_body) expect_word("end-perform");
-    else accept_word("end-perform");
+    /* an out-of-line PERFORM has no END-PERFORM: the next one belongs to
+     * whatever inline PERFORM encloses this statement */
 }
 
 /* ---- GO TO, SET ------------------------------------------------------- */
@@ -4056,6 +4086,7 @@ static void parse_procedure_division(void)
         emit("main:");
         emit("\taddi sp, sp, -16");
         emit("\tstw sp+0, lr");
+        emit_call("cob_set_args");          /* r3 = argc, r4 = argv, as crt0 hands them */
         emit_call("cob_init");
         emit("\tjal r31, %s", entry);
         emit_li("r3", 0);
@@ -4471,6 +4502,12 @@ static void parse_rd(void)
                     die_at(t->line, "unexpected %s in a report field", tok_desc(t));
                 }
                 expect_period();
+                if (!fd->has_pic && fd->value && fd->value->kind == T_STR) {
+                    /* VALUE without PICTURE: an alphanumeric of the literal's width */
+                    fd->has_pic = 1;
+                    snprintf(fd->pic, sizeof fd->pic, "x(%d)", fd->value->len > 0 ? fd->value->len : 1);
+                    if (pic_analyse(fd->pic, &fd->pi) < 0) die_at(fline, "report field: %s", fd->pi.err);
+                }
                 if (!fd->has_pic) die_at(fline, "a report field needs a PICTURE");
                 if (fd->has_source == !!fd->value) die_at(fline, "a report field needs exactly one of SOURCE and VALUE");
                 if (!fd->column) fd->column = next_col;

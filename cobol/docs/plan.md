@@ -397,11 +397,25 @@ majesty's `-I../copy`). Diagnostics name the copybook. `REPLACING`
 is refused for now (nothing in the corpus uses it). Seven of the eight
 blocked programs compile; 29 of 58 now.
 
+## Stage 13 — the command line **S** — DONE 2026-08-29
+
+`ACCEPT x FROM ARGUMENT-NUMBER` (the count, excluding the program
+name), `ACCEPT x FROM ARGUMENT-VALUE` (the arguments in turn from 1;
+past the end the item is left alone), `DISPLAY n UPON ARGUMENT-NUMBER`
+(the next one is n), `ACCEPT x FROM COMMAND-LINE` (the arguments
+joined by blanks) -- GnuCOBOL's implementor module, measured and
+matched; the main wrapper hands crt0's argc/argv to `libcob` first
+thing. The harness passes a `.args` file to the program and the
+oracle. **gl024, the journal pipeline's first step, compiles unchanged
+and, run in place with this month's `YYYYMM`, writes
+`transactions-sel.txt` and `transactions-ids.txt` byte-identical to
+GnuCOBOL's** (213 lines each); gl038 compiles too. Two compiler slips
+the sweep caught: an out-of-line `PERFORM para` swallowed the
+enclosing inline PERFORM's `END-PERFORM` (gl042, gl043), and a report
+field with `VALUE` but no `PICTURE` was refused (gl036).
+
 ## After v1 (not scheduled, each when a program asks)
 
-- `ACCEPT … FROM ARGUMENT-VALUE / ARGUMENT-NUMBER` — next, because
-  gl024 (the journal pipeline's first step) takes `YYYYMM` that way,
-  as do gl038, gl042 and gl043
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
 - In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
 - Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated

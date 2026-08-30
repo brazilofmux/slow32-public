@@ -134,6 +134,12 @@ given, because majesty's `.prn` oracles were produced under it.
   reference modification is refused), `CURRENT-DATE` (the guest clock
   through the emulator, local time as the guest libc gives it,
   `YYYYMMDDhhmmsshh+hhmm`).
+- **The command line** (GnuCOBOL's module, measured): `ARGUMENT-NUMBER`
+  is the count without the program name; `ARGUMENT-VALUE` yields the
+  arguments in turn from 1 and leaves the item unchanged past the end;
+  `DISPLAY n UPON ARGUMENT-NUMBER` makes the next one n; `COMMAND-LINE`
+  is the arguments joined by blanks. The emulator passes arguments
+  after the program name (`slow32-fast prog.s32x 202608`).
 - **`COPY`**: text-name as a word or literal; found as given, then
   `.cpy`, `.CPY`, `.cbl`, `.CBL`, beside the source and in the `-I`
   directories; `OF`/`IN library` accepted (the directories serve as the

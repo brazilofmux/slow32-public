@@ -15,7 +15,8 @@
  * cheap half (docs/report-writer.md).  Stage 8: SCREEN SECTION on the
  * term service (docs/screen.md).  Stage 9: INSPECT, reference
  * modification, CURRENT-DATE -- what menu and taskdt drag in.  Stage 10:
- * sequential V with the IBM RDW (docs/framing.md).
+ * sequential V with the IBM RDW (docs/framing.md).  Stage 13: the
+ * command line -- ARGUMENT-NUMBER, ARGUMENT-VALUE, COMMAND-LINE.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -1363,4 +1364,50 @@ char *cob_fn_current_date(void)
     #undef PUT2
     memcpy(b, tmp, 21);
     return b;
+}
+
+/* ====================================================================== */
+/* The command line: ACCEPT FROM ARGUMENT-NUMBER / ARGUMENT-VALUE /       */
+/* COMMAND-LINE, DISPLAY UPON ARGUMENT-NUMBER (GnuCOBOL's implementor      */
+/* module, measured: the count excludes the program name; ARGUMENT-VALUE   */
+/* yields the arguments in turn from 1, DISPLAY n UPON ARGUMENT-NUMBER     */
+/* makes the next one n, and past the end the item is left unchanged).     */
+/* ====================================================================== */
+
+static int cl_argc;
+static char **cl_argv;
+static int cl_next = 1;
+
+void cob_set_args(int argc, char **argv) { cl_argc = argc; cl_argv = argv; cl_next = 1; }
+
+static void put_text(void *p, const cob_desc *d, const char *s, int n)
+{
+    cob_desc td; memset(&td, 0, sizeof td);
+    td.cat = COB_ALNUM; td.usage = COB_U_DISPLAY; td.size = (unsigned)n;
+    cob_move(s, &td, p, d);
+}
+
+void cob_accept_argnum(void *p, const cob_desc *d)
+{
+    cob_put_num(p, d, cl_argc > 0 ? cl_argc - 1 : 0, 0);
+}
+
+void cob_display_upon_argnum(int n) { cl_next = n; }
+
+void cob_accept_argval(void *p, const cob_desc *d)
+{
+    if (cl_next < 1 || cl_next >= cl_argc) return;            /* past the end: unchanged */
+    const char *a = cl_argv[cl_next++];
+    put_text(p, d, a, (int)strlen(a));
+}
+
+void cob_accept_cmdline(void *p, const cob_desc *d)
+{
+    char line[4096]; int n = 0;
+    for (int i = 1; i < cl_argc; i++) {
+        const char *a = cl_argv[i];
+        if (i > 1 && n < (int)sizeof line) line[n++] = ' ';
+        for (const char *q = a; *q && n < (int)sizeof line; q++) line[n++] = *q;
+    }
+    put_text(p, d, line, n);
 }
