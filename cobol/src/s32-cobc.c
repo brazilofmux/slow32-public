@@ -1077,6 +1077,8 @@ typedef struct {
     Tok *value;
     int has_pic; char pic[PIC_MAXPAT]; PicInfo pi; int blank_zero;
     Sym *item;
+    int ref_tp, dyn;            /* the reference's token position; dyn: its address is computed at ACCEPT/DISPLAY */
+    long stat_off;              /* static references (literal subscripts included): the resolved offset */
 } SField;
 
 typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested group: a window into the slot table */
@@ -1089,23 +1091,31 @@ typedef struct {
 } Screen;
 
 static Screen *g_screens; static int g_nscreen, g_scrcap;
+static int g_screen_base;   /* the unit's screens start here (contained programs append) */
 
 static Screen *screen_find(const char *name)
 {
-    for (int i = 0; i < g_nscreen; i++) if (!strcmp(g_screens[i].name, name)) return &g_screens[i];
+    for (int i = g_screen_base; i < g_nscreen; i++) if (!strcmp(g_screens[i].name, name)) return &g_screens[i];
     return NULL;
 }
 
-/* the record label for a screen-name or a named group inside one */
-static int screen_ref(const char *name, char *lab, size_t n)
+/* the record label for a screen-name or a named group inside one; the
+ * window's slot range comes back for the dynamic-address fill */
+static Screen *screen_ref(const char *name, char *lab, size_t n, int *first, int *count)
 {
     Screen *sc = screen_find(name);
-    if (sc) { snprintf(lab, n, ".Lscr%d_%d", g_unit, (int)(sc - g_screens)); return 1; }
-    for (int i = 0; i < g_nscreen; i++)
+    if (sc) { snprintf(lab, n, ".Lscr%d_%d", g_unit, (int)(sc - g_screens)); *first = 0; *count = sc->nf; return sc; }
+    for (int i = g_screen_base; i < g_nscreen; i++)
         for (int j = 0; j < g_screens[i].nsub; j++)
-            if (!strcmp(g_screens[i].sub[j].name, name)) { snprintf(lab, n, ".Lscrg%d_%d_%d", g_unit, i, j); return 1; }
-    return 0;
+            if (!strcmp(g_screens[i].sub[j].name, name)) {
+                snprintf(lab, n, ".Lscrg%d_%d_%d", g_unit, i, j);
+                *first = g_screens[i].sub[j].first; *count = g_screens[i].sub[j].count;
+                return &g_screens[i];
+            }
+    return NULL;
 }
+
+static void emit_screen_dyn_fill(Screen *sc, int first, int count);   /* below, after parse_ref exists */
 
 static Report *report_find(const char *name)
 {
@@ -2585,6 +2595,43 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     if (runtime) emit("\tadd %s, %s, r11", reg, reg);
 }
 
+/* a slot's reference, resolved once the data tree is complete: LINKAGE,
+ * EXTERNAL and runtime subscripts make the slot dynamic; a literal
+ * subscript folds into a static offset */
+static void sfield_resolve(SField *f)
+{
+    if (f->item || f->kind == COB_SCR_VALUE || f->kind < 0 || !f->ref_tp) return;
+    int save_tp = g_tp; g_tp = f->ref_tp;
+    Ref rr; parse_ref(&rr);
+    g_tp = save_tp;
+    if (rr.rm) die_at(f->srcline, "reference modification in a screen item is not implemented");
+    f->item = rr.sym;
+    if (g_sym[rr.sym->record].is_linkage || g_sym[rr.sym->record].is_external || ref_has_runtime_sub(&rr))
+        f->dyn = 1;
+    long off = rr.sym->offset;
+    for (int si = 0; si < rr.nsub; si++)
+        if (!rr.sub[si].sym) off += (rr.sub[si].lit - 1) * rr.sym->dim_stride[si];
+    f->stat_off = off;
+}
+
+/* the screen window's dynamic slots: re-parse each reference where its
+ * tokens sit (Report Writer's SOURCE trick) and store the address into
+ * the slot's cell before the runtime paints or focuses the window */
+static void emit_screen_dyn_fill(Screen *sc, int first, int count)
+{
+    for (int k = first; k < first + count && k < sc->nf; k++) {
+        SField *f = &sc->f[k];
+        sfield_resolve(f);
+        if (!f->dyn) continue;
+        Ref rr; int save_tp = g_tp;
+        g_tp = f->ref_tp; parse_ref(&rr); g_tp = save_tp;
+        emit_ref_addr(&rr, "r1");
+        char cell[48]; snprintf(cell, sizeof cell, ".Lsdyn%d_%d_%d", g_unit, (int)(sc - g_screens), k);
+        emit_la("r2", cell);
+        emit("\tstw r2+0, r1");
+    }
+}
+
 /* ---- argument staging ------------------------------------------------- */
 
 enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT };
@@ -3305,9 +3352,11 @@ static void parse_accept(void)
 {
     Tok *t = cur();
     if (t->kind == T_WORD) {
-        char scrlab[40];
-        if (screen_ref(t->s, scrlab, sizeof scrlab)) {
+        char scrlab[40]; int sfirst, scount;
+        Screen *scp = screen_ref(t->s, scrlab, sizeof scrlab, &sfirst, &scount);
+        if (scp) {
             advance();
+            emit_screen_dyn_fill(scp, sfirst, scount);
             if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
                 Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line);
                 if (g_sym[cs->record].is_linkage) die_at(t->line, "a LINKAGE item cannot be the CRT STATUS yet");
@@ -3368,8 +3417,9 @@ static void parse_display(void)
     int line = cur()->line;
     int n = 0, no_adv = 0;
     if (cur()->kind == T_WORD) {
-        char scrlab[40];
-        if (screen_ref(cur()->s, scrlab, sizeof scrlab)) { advance(); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
+        char scrlab[40]; int sfirst, scount;
+        Screen *scp = screen_ref(cur()->s, scrlab, sizeof scrlab, &sfirst, &scount);
+        if (scp) { advance(); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
     }
     /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
     if (is_word(peek(1), "upon") && is_word(peek(2), "argument-number")) {
@@ -6097,7 +6147,7 @@ static int g_initial;               /* PROGRAM-ID ... IS INITIAL: WORKING-STORAG
 struct UnitSave {
     int unit, sym_base, sym_end, file_base, file_end, para_base, para_end, use_end;
     char progid[64];
-    int nreport, nscreen, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
+    int nreport, nscreen, screen_base, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
     char collate_name[64];
     char crtname[64];
     int nuse, in_decl, cur_sec_id, saw_end, initial, nsorttab;
@@ -6130,7 +6180,7 @@ static void compile_nested_unit(void)
     u->unit = g_unit; u->sym_base = g_sym_base; u->sym_end = g_nsym; u->file_base = g_file_base; u->file_end = g_nfile;
     u->para_base = g_para_base; u->para_end = g_npara; u->use_end = g_nuse;
     memcpy(u->progid, g_progid, sizeof u->progid);
-    u->nreport = g_nreport; u->nscreen = g_nscreen; u->nclass = g_nclass; u->nswitch = g_nswitch; u->nalphabet = g_nalphabet;
+    u->nreport = g_nreport; u->nscreen = g_nscreen; u->screen_base = g_screen_base; u->nclass = g_nclass; u->nswitch = g_nswitch; u->nalphabet = g_nalphabet;
     u->nmnemonic = g_nmnemonic; u->last_item = g_last_item; u->nsame_groups = g_nsame_groups; u->collate = g_collate;
     u->lowval = g_lowval; u->highval = g_highval; u->cur_fd = g_cur_fd; u->in_linkage = g_in_linkage;
     memcpy(u->collate_name, g_collate_name, sizeof u->collate_name);
@@ -6146,7 +6196,7 @@ static void compile_nested_unit(void)
     g_unit = ++g_unit_counter;
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
-    g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
+    g_nreport = 0; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
     g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
     g_nsorttab = 0; g_initial = 0;
     parse_identification_division();
@@ -6161,7 +6211,7 @@ static void compile_nested_unit(void)
     g_unit = u->unit; g_sym_base = u->sym_base; g_nsym = u->sym_end; g_file_base = u->file_base; g_nfile = u->file_end;
     g_para_base = u->para_base; g_npara = u->para_end;
     memcpy(g_progid, u->progid, sizeof g_progid);
-    g_nreport = u->nreport; g_nscreen = u->nscreen; g_nclass = u->nclass; g_nswitch = u->nswitch; g_nalphabet = u->nalphabet;
+    g_nreport = u->nreport; g_nscreen = u->nscreen; g_screen_base = u->screen_base; g_nclass = u->nclass; g_nswitch = u->nswitch; g_nalphabet = u->nalphabet;
     g_nmnemonic = u->nmnemonic; g_last_item = u->last_item; g_nsame_groups = u->nsame_groups; g_collate = u->collate;
     g_lowval = u->lowval; g_highval = u->highval; g_cur_fd = u->cur_fd; g_in_linkage = u->in_linkage;
     memcpy(g_collate_name, u->collate_name, sizeof g_collate_name);
@@ -7227,11 +7277,21 @@ static void parse_screen_section(void)
                 if (at_word("from") || at_word("to") || at_word("using")) {
                     int kind = at_word("from") ? COB_SCR_FROM : at_word("to") ? COB_SCR_TO : COB_SCR_USING;
                     advance();
+                    /* the reference's tokens are recorded and skipped, as
+                     * Report Writer records SOURCE: the table dimensions do
+                     * not exist yet, so it is resolved at first use
+                     * (sfield_resolve) and re-parsed at every ACCEPT/DISPLAY
+                     * when its address is not static */
+                    f->ref_tp = g_tp;
                     if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name");
-                    f->item = sym_lookup(cur()->s, NULL, 0, t->line); advance();
-                    if (cur()->kind == T_LP) die_at(t->line, "a subscripted screen item is not implemented");
-                    if (f->item->ndims) die_at(t->line, "screen item '%s' is a table item; give it a subscript is not implemented", f->item->name);
-                    if (g_sym[f->item->record].is_linkage) die_at(t->line, "a LINKAGE item cannot be a screen item yet");
+                    advance();
+                    while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD) { advance(); advance(); }
+                    if (cur()->kind == T_LP) {
+                        int d = 0;
+                        do { if (cur()->kind == T_LP) d++; else if (cur()->kind == T_RP) d--; advance(); }
+                        while (d && cur()->kind != T_PERIOD);
+                    }
+                    if (cur()->kind == T_LP) die_at(t->line, "reference modification in a screen item is not implemented");
                     f->kind = kind; continue;
                 }
                 if (accept_word("highlight")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
@@ -7271,8 +7331,8 @@ static void parse_screen_section(void)
                 gstk[gdepth].subidx = -1;
                 if (ename[0] && strcmp(ename, "filler")) {
                     if (sym_lookup_quiet(ename)) die_at(fline, "'%s' is both a data item and a screen group", ename);
-                    char dummy[40];
-                    if (screen_ref(ename, dummy, sizeof dummy)) die_at(fline, "screen group '%s' is already a screen or group name", ename);
+                    char dummy[40]; int d1, d2;
+                    if (screen_ref(ename, dummy, sizeof dummy, &d1, &d2)) die_at(fline, "screen group '%s' is already a screen or group name", ename);
                     if (sc->nsub == sc->subcap) { sc->subcap = sc->subcap ? sc->subcap * 2 : 4; sc->sub = realloc(sc->sub, sc->subcap * sizeof *sc->sub); }
                     SGroup *g = &sc->sub[sc->nsub];
                     snprintf(g->name, sizeof g->name, "%s", ename);
@@ -7341,7 +7401,7 @@ static void parse_data_division(void)
             continue;
         }
         if (at_word("screen") && is_word(peek(1), "section")) {
-            if (g_udepth) die_at(cur()->line, "a SCREEN SECTION in a contained program is not implemented");
+
             advance(); advance(); expect_period();
             parse_screen_section();
             continue;
@@ -7469,13 +7529,14 @@ static void emit_unit_data(void)
         for (int k = 0; k < t->nk; k++) { emit("\t.word %d", t->k[k].offset); emit("\t.word .Ld%d", t->k[k].desc); emit("\t.word %d", t->k[k].descending); }
     }
     g_nsorttab = 0;
-    for (int i = 0; i < g_nscreen; i++) {
+    for (int i = g_screen_base; i < g_nscreen; i++) {
         Screen *sc = &g_screens[i];
         emit("\t.p2align 2");
         emit(".Lscrf%d_%d:\t# screen %s slots", g_unit, i, sc->name);
         for (int k = 0; k < sc->nf; k++) {
             SField *f = &sc->f[k];
-            emit("\t.byte %d,%d", f->kind, f->flags);
+            sfield_resolve(f);
+            emit("\t.byte %d,%d", f->kind | (f->dyn ? 0x80 : 0), f->flags);
             emit("\t.short %d", f->line); emit("\t.short %d", f->col);
             emit("\t.byte %d,%d", f->fg, f->bg);   /* FOREGROUND-COLOR, BACKGROUND-COLOR (255: not given) */
             emit("\t.word %d", f->width);
@@ -7496,7 +7557,8 @@ static void emit_unit_data(void)
                 d.size = f->pi.bytes;
                 emit("\t.word .Ld%d", desc_add(&d));
             } else emit("\t.word 0");
-            if (f->item) { emit("\t.word %s+%d", g_sym[f->item->record].label, f->item->offset); emit("\t.word .Ld%d", sym_desc(f->item)); }
+            if (f->item && f->dyn) { emit("\t.word .Lsdyn%d_%d_%d", g_unit, i, k); emit("\t.word .Ld%d", sym_desc(f->item)); }
+            else if (f->item) { emit("\t.word %s+%ld", g_sym[f->item->record].label, f->stat_off); emit("\t.word .Ld%d", sym_desc(f->item)); }
             else { emit("\t.word 0"); emit("\t.word 0"); }
         }
         emit(".Lscr%d_%d:\t# screen %s", g_unit, i, sc->name);
@@ -7509,6 +7571,8 @@ static void emit_unit_data(void)
             emit("\t.word 0");
             emit("\t.word .Lscrf%d_%d+%d", g_unit, i, sc->sub[j].first * 28);   /* 28 = sizeof(cob_scr_field) on the guest */
         }
+        for (int k = 0; k < sc->nf; k++)
+            if (sc->f[k].dyn) { emit(".Lsdyn%d_%d_%d:\t# %s: the address, computed at ACCEPT/DISPLAY", g_unit, i, k, sc->f[k].item->name); emit("\t.word 0"); }
     }
     for (int i = 0; i < g_naltcell; i++) {
         emit("\t.p2align 2");
@@ -7605,7 +7669,7 @@ int main(int argc, char **argv)
     for (;;) {
         /* one program unit; a source file may hold several, each closed
          * by END PROGRAM */
-        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
         g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_nsymch = 0;
         parse_identification_division();

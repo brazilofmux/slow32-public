@@ -82,8 +82,9 @@ Do not pretend these are in X3.23-1985:
   `AUTO`, `SECURE`, `REQUIRED`, `FULL`, `HIGHLIGHT`, `LOWLIGHT`,
   `UNDERLINE`, `REVERSE-VIDEO`, `FOREGROUND-COLOR`/`BACKGROUND-COLOR`,
   `BLANK WHEN ZERO`, `SPECIAL-NAMES CRT STATUS IS`, nested groups
-  (inherited look, DISPLAY/ACCEPT of a named group); the focus loop as
-  docs/screen.md describes it
+  (inherited look, DISPLAY/ACCEPT of a named group), subscripted /
+  LINKAGE / EXTERNAL slot items, screens in contained programs; the
+  focus loop as docs/screen.md describes it
 - `USAGE COMP-5`, `BINARY-CHAR [UNSIGNED]`, `SIGNED-INT`,
   `SIGNED-SHORT`, `UNSIGNED-SHORT`, `POINTER`
 - `CALL … BY VALUE` / `CALL … RETURNING` — the seam to C, confined

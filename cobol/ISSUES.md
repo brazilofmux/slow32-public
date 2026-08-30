@@ -166,16 +166,20 @@ fixed decimal places, so it is libcob's precision (soft-float or
 hardware FP) against an answer key. Nothing majesty runs needs any of
 it -- queued, not scheduled.
 
-### 23. Screen section leftovers (queued 2026-08-30)
+### 23. ~~Screen section leftovers~~ — CLOSED 2026-08-30 (Stages 59-61)
 ~~`CRT STATUS` and the exception keys~~ — Stage 59, 2026-08-30
 (screen.md; GnuCOBOL's numbering, F1-F12/PgUp/PgDn end the ACCEPT
 with the fields kept, Escape abandons; free/screen3).
 ~~Nested screen groups~~ — Stage 60, 2026-08-30 (inherited look, the
 group's LINE/COLUMN anchoring its first child, DISPLAY/ACCEPT of a
 named group as a window into the parent's slots; free/screen4).
-Still queued: subscripted or LINKAGE items in a slot, `BLINK`,
-`BELL`, `ERASE EOL/EOS` (accepted, ignored). Each is small; each
-waits for a screen that uses it.
+~~Subscripted or LINKAGE items in a slot~~ — Stage 61, 2026-08-30
+(the reference recorded as tokens and re-parsed at each ACCEPT/
+DISPLAY into a .data cell the slot points at; literal subscripts stay
+static; contained programs may own screens; free/screen5). What
+remains by choice: `BLINK`, `BELL`, `ERASE EOL/EOS` accepted without
+effect, and reference modification in a slot refused. The screen
+module is done.
 
 ### 12. ~~Indexed: `ALTERNATE RECORD KEY`, `DUPLICATES`~~ — RESOLVED 2026-08-31
 One sorted table per key (docs/indexed.md "Alternate keys"); key of

@@ -2400,6 +2400,12 @@ void cbl_get_scr_size(unsigned char *lines, unsigned char *cols)
     *cols = (unsigned char)(c > 255 ? 255 : c);
 }
 
+/* the slot's kind, and its item: the high kind bit says the slot holds
+ * the address of a cell the compiler fills at ACCEPT/DISPLAY (a
+ * subscripted, LINKAGE or EXTERNAL item) */
+static int scr_kind(const cob_scr_field *f) { return f->kind & 0x7f; }
+static void *scr_item(const cob_scr_field *f) { return (f->kind & 0x80) ? *(void **)f->item : f->item; }
+
 static int scr_has_attr(const cob_scr_field *f)
 {
     return (f->flags & (COB_SF_REVERSE | COB_SF_UNDERLINE | COB_SF_HIGHLIGHT | COB_SF_LOWLIGHT)) || f->fg != 255 || f->bg != 255;
@@ -2435,9 +2441,9 @@ static void scr_puts_n(const char *p, unsigned n)
 /* render a FROM/USING item through its picture into buf (width bytes) */
 static void scr_render(const cob_scr_field *f, char *buf)
 {
-    if (f->kind == COB_SCR_VALUE) { memcpy(buf, f->value, f->width); return; }
-    if (f->kind == COB_SCR_TO) { memset(buf, ' ', f->width); return; }
-    cob_move(f->item, (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
+    if (scr_kind(f) == COB_SCR_VALUE) { memcpy(buf, f->value, f->width); return; }
+    if (scr_kind(f) == COB_SCR_TO) { memset(buf, ' ', f->width); return; }
+    cob_move(scr_item(f), (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
 }
 
 static void scr_paint_text(const cob_scr_field *f, const char *buf)
@@ -2578,9 +2584,9 @@ static void scr_num_render(scr_edit *e)
 static void scr_num_load(scr_edit *e)
 {
     const cob_desc *d = (const cob_desc *)e->f->pic;
-    long long v = e->f->kind == COB_SCR_USING ? cob_get_num(e->f->item, (const cob_desc *)e->f->item_desc) : 0;
+    long long v = scr_kind(e->f) == COB_SCR_USING ? cob_get_num(scr_item(e->f), (const cob_desc *)e->f->item_desc) : 0;
     int is = ((const cob_desc *)e->f->item_desc)->scale;
-    if (e->f->kind == COB_SCR_USING && is != d->scale) v = is > d->scale ? div_pow10(v, is - d->scale, 0) : v * pow10tab[d->scale - is];
+    if (scr_kind(e->f) == COB_SCR_USING && is != d->scale) v = is > d->scale ? div_pow10(v, is - d->scale, 0) : v * pow10tab[d->scale - is];
     e->neg = v < 0 && (d->flags & COB_F_SIGNED);
     unsigned long long mag = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v, fr;
     unsigned long long ip = udiv_pow10(mag, d->scale, &fr);
@@ -2627,14 +2633,14 @@ void cob_screen_accept(const cob_screen *s)
     cob_screen_display(s);
     unsigned nin = 0;
     for (unsigned i = 0; i < s->nfields; i++)
-        if (s->fields[i].kind == COB_SCR_TO || s->fields[i].kind == COB_SCR_USING) nin++;
+        if (scr_kind(&s->fields[i]) == COB_SCR_TO || scr_kind(&s->fields[i]) == COB_SCR_USING) nin++;
     if (!nin) { scr_set_status(scr_key_status(scr_key())); return; }   /* nothing to type into: wait for a key */
     scr_edit *ed = calloc(nin, sizeof *ed);
     if (!ed) cob_fatal("out of memory");
     unsigned k = 0;
     for (unsigned i = 0; i < s->nfields; i++) {
         const cob_scr_field *f = &s->fields[i];
-        if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING) continue;
+        if (scr_kind(f) != COB_SCR_TO && scr_kind(f) != COB_SCR_USING) continue;
         scr_edit *e = &ed[k++];
         e->f = f;
         e->buf = malloc(f->width + 1);
@@ -2741,11 +2747,11 @@ void cob_screen_accept(const cob_screen *s)
             const cob_scr_field *f = e->f;
             if (e->numeric) {
                 const cob_desc *d = (const cob_desc *)f->pic;
-                cob_put_num(f->item, (const cob_desc *)f->item_desc, scr_num_value(e), d->scale);
+                cob_put_num(scr_item(f), (const cob_desc *)f->item_desc, scr_num_value(e), d->scale);
             } else {
                 cob_desc td; memset(&td, 0, sizeof td);
                 td.cat = COB_ALNUM; td.usage = COB_U_DISPLAY; td.size = f->width;
-                cob_move(e->buf, &td, f->item, (const cob_desc *)f->item_desc);
+                cob_move(e->buf, &td, scr_item(f), (const cob_desc *)f->item_desc);
             }
         }
     }

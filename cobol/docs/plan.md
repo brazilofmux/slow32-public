@@ -1244,6 +1244,24 @@ free/screen4 pins two levels of nesting, inherited reverse+colour,
 LINE PLUS on an inner group, ACCEPT of both windows with CRT STATUS
 still reporting; the harness is 83.
 
+## Stage 61 — subscripted and LINKAGE slot items; the screen module closed **S** — DONE 2026-08-30
+
+The last of ISSUES-23. A slot's FROM/TO/USING reference is recorded
+as tokens and resolved lazily (sfield_resolve) -- at Screen Section
+parse time the OCCURS dimensions are not built yet, the same reason
+Report Writer defers SOURCE to GENERATE. Literal subscripts fold into
+the static address; a runtime subscript, LINKAGE or EXTERNAL item
+flags the slot dynamic (kind bit 7): its image points at a .data
+cell, and emit_screen_dyn_fill re-parses the reference and stores the
+address before every cob_screen_display/accept of a window containing
+it -- USING CELL(I) follows I. The runtime grew scr_item()/scr_kind()
+and nothing else. Contained programs may own screens: the screen
+table gained g_screen_base like the symbol table's, and the old
+refusal fell out. free/screen5: a dynamic slot re-ACCEPTed under a
+moved subscript, a static literal-subscript slot, and a contained
+program's LINKAGE screen editing the caller's element in place; the
+harness is 84.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

@@ -205,8 +205,23 @@ notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
   and the group's own slot count bounds the loop. The runtime needed
   nothing.
 
-Still not: subscripted or LINKAGE items in a slot. Each waits for a
-program.
+- **Subscripted, LINKAGE and EXTERNAL slot items** (Stage 61). A
+  slot's reference is recorded as tokens (Report Writer's SOURCE
+  trick, since OCCURS dimensions do not exist yet when the Screen
+  Section parses) and resolved at first use. A literal subscript
+  folds into the slot's static address; a runtime subscript, a
+  LINKAGE item or an EXTERNAL one makes the slot *dynamic*: its image
+  points at a .data cell, flagged in the kind byte's high bit, and
+  every ACCEPT or DISPLAY of the window re-parses the reference and
+  stores the freshly computed address first -- so `PIC X(4) USING
+  CELL(I)` follows I from one ACCEPT to the next. A contained program
+  may own screens now (the screen table gained a per-unit base, like
+  the symbol table's); screens are per-unit, not GLOBAL. Reference
+  modification in a slot stays refused.
+
+The module is complete against the RM/Micro Focus target and
+GnuCOBOL's clause set; only `BLINK`, `BELL` and `ERASE EOL/EOS` are
+accepted without effect.
 
 Testing: `tests/free/screen3.cbl` pins the four endings (Enter, F3,
 Page Down, Escape after a typed character); `tests/free/screen2.cbl` drives the rest from `screen2.keys`
