@@ -1,0 +1,12 @@
+#!/bin/bash
+# s32-cobol -- PATH-friendly driver for the SLOW-32 COBOL 85 toolchain.
+# Install: ln -sf ~/slow-32/cobol/s32-cobol ~/bin/s32-cobol
+# Still needs the slow-32 tree (assembler, linker, libcob, LLVM target).
+set -eu
+SLOW32="${SLOW32:-$HOME/slow-32}"
+COMPILE="$SLOW32/cobol/compile.sh"
+if [ ! -x "$COMPILE" ]; then
+    echo "s32-cobol: no compile.sh at $COMPILE (set SLOW32)" >&2
+    exit 1
+fi
+exec "$COMPILE" "$@"

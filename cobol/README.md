@@ -89,6 +89,11 @@ under `docs/`.
 
 ## Build, run, test
 
+PATH install (optional, for majesty and friends):
+
+    ln -sfn ~/slow-32/cobol/s32-cobol ~/bin/s32-cobol
+    # then: s32-cobol -free prog.cbl -o prog.s32x
+
     ./build.sh                                   # out/s32-cobc, libcob/libcob.s32o
     ./compile.sh -free prog.cbl -o prog.s32x     # majesty is free-format
     ./compile.sh -free gl030.cbl clinkages.cbl dateutil.c -I ~/majesty/src/h -o gl030.s32x
