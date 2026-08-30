@@ -3631,6 +3631,211 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
     return local_init_list_expr(ps_li_head, result);
 }
 
+/* --- Block-scope declarators --- */
+
+/* The dimensions of a block-scope array declarator, cursor on `[`.
+ * Two dimensions at most; a second one must be sized. */
+static void parse_local_array_dims(int *pcount, int *plcols2) {
+    int count;
+    int count2;
+    int lcols2;
+
+    next();
+    count = -1;
+    if (lex_tok != TK_RBRACK) {
+        count = parse_const_int();
+    }
+    expect(TK_RBRACK);
+    lcols2 = 0;
+    while (lex_tok == TK_LBRACK) {
+        next();
+        count2 = -1;
+        if (lex_tok != TK_RBRACK) {
+            count2 = parse_const_int();
+        }
+        expect(TK_RBRACK);
+        if (count2 < 0) {
+            p_error("array size required without initializer");
+        }
+        if (lcols2 != 0) {
+            p_error("arrays of more than 2 dimensions unsupported");
+        }
+        lcols2 = count2;
+        if (count >= 0) count = count * count2;
+    }
+    *pcount = count;
+    *plcols2 = lcols2;
+}
+
+/* One non-static block-scope declarator after its name and stars:
+ * the dimensions and the initializer, if any.  Allocates the local
+ * and returns its initializing statements (NULL when there are none),
+ * stopping at the `,` or `;` so parse_stmt can loop over a declarator
+ * list.  Before this every shape returned from its own early exit,
+ * so a `,` after a brace initializer, or a `[` after a `,`, was a
+ * parse error (GitHub #8: `cob_num a = { getv(), 2 }, b = st[n];`,
+ * `int a[2] = { 1, 2 }, b = 3;`, `int a = 1, b[2];`). */
+static Node *parse_local_declarator(char *nm, int ty) {
+    Node *n;
+    Node *a;
+    Node *head;
+    Node *tail;
+    Node *zhead;
+    Node *ztail;
+    int off;
+    int count;
+    int lcols2;
+    int ci;
+    int cv;
+    int sp_idx;
+    int slen;
+    char *sp;
+
+    if (lex_tok == TK_LBRACK) {
+        parse_local_array_dims(&count, &lcols2);
+        head = NULL;
+        if (lex_tok == TK_ASSIGN) {
+            next();
+            if (lex_tok == TK_STRING) {
+                /* String array init: char s[N] = "str" or char s[] = "str" */
+                sp_idx = parse_string_literal();
+                slen = lex_str_len[sp_idx];
+                if (count < 0) count = slen + 1;
+                off = add_local_array(nm, ty, count);
+                sp = lex_strpool + lex_str_off[sp_idx];
+                tail = NULL;
+                ci = 0;
+                while (ci < slen && ci < count) {
+                    n = nd_var(nm, off, ty + TY_PTR);
+                    n->is_local = 1;
+                    n->is_array = 1;
+                    a = nd_binop(TK_PLUS, n, nd_num(ci));
+                    a = nd_unary(TK_STAR, a);
+                    a = nd_assign(a, nd_num(sp[ci] & 255));
+                    a = nd_expr_stmt(a);
+                    if (head == NULL) { head = a; tail = a; }
+                    else { tail->next = a; tail = a; }
+                    ci = ci + 1;
+                }
+                if (ci < count) {
+                    /* null terminator */
+                    n = nd_var(nm, off, ty + TY_PTR);
+                    n->is_local = 1;
+                    n->is_array = 1;
+                    a = nd_binop(TK_PLUS, n, nd_num(ci));
+                    a = nd_unary(TK_STAR, a);
+                    a = nd_assign(a, nd_num(0));
+                    a = nd_expr_stmt(a);
+                    if (head == NULL) { head = a; tail = a; }
+                    else { tail->next = a; tail = a; }
+                }
+            } else if (lex_tok == TK_LBRACE && lcols2 > 0) {
+                /* Local 2D char array with string rows:
+                 * char name[23][8] = { "e2m1", ... } (d_main).  Each
+                 * row gets its string's bytes, zero-padded to cols;
+                 * a string of exactly cols chars drops its NUL (C
+                 * semantics — doom's "spida1d1" needs this). */
+                if ((ty & TY_BASE_MASK) != TY_CHAR || (ty & TY_PTR_MASK) != 0 || count < 0) {
+                    p_error("2D local array initializers support only char[N][M] with string rows");
+                    return nd_num(0);
+                }
+                off = add_local_array(nm, ty, count);
+                ps_lcols[ps_nlocals - 1] = lcols2;
+                head = NULL;
+                tail = NULL;
+                next();
+                ci = 0;
+                while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                    if (ci > 0) {
+                        expect(TK_COMMA);
+                        if (lex_tok == TK_RBRACE) break;
+                    }
+                    if (lex_tok != TK_STRING) {
+                        p_error("expected string row in 2D char array init");
+                        return nd_num(0);
+                    }
+                    sp_idx = parse_string_literal();
+                    sp = lex_strpool + lex_str_off[sp_idx];
+                    slen = lex_str_len[sp_idx];
+                    cv = 0;
+                    while (cv < lcols2) {
+                        n = nd_var(nm, off, ty + TY_PTR);
+                        n->is_local = 1;
+                        n->is_array = 1;
+                        a = nd_binop(TK_PLUS, n, nd_num(ci * lcols2 + cv));
+                        a = nd_unary(TK_STAR, a);
+                        a = nd_assign(a, nd_num((cv < slen) ? (sp[cv] & 255) : 0));
+                        a = nd_expr_stmt(a);
+                        if (head == NULL) { head = a; tail = a; }
+                        else { tail->next = a; tail = a; }
+                        cv = cv + 1;
+                    }
+                    ci = ci + 1;
+                }
+                if (lex_tok == TK_COMMA) next();
+                expect(TK_RBRACE);
+                return head;
+            } else if (lex_tok == TK_LBRACE) {
+                local_init_begin(nm, 0, ty + TY_PTR, 1);
+                count = parse_local_init_array_at(ty, count, 0);
+                head = ps_li_head;
+                tail = ps_li_tail;
+                off = add_local_array(nm, ty, count);
+                local_init_patch_offsets(head, nm, off);
+                local_init_begin(nm, off, ty + TY_PTR, 1);
+                local_init_zero_at(ty + TY_PTR, count, 0);
+                zhead = ps_li_head;
+                ztail = ps_li_tail;
+                if (zhead != NULL) {
+                    if (ztail == NULL) {
+                        ztail = zhead;
+                        while (ztail->next != NULL) ztail = ztail->next;
+                    }
+                    ztail->next = head;
+                    head = zhead;
+                    if (tail == NULL) tail = ztail;
+                }
+            } else {
+                p_error("expected string or { in array init");
+                return nd_num(0);
+            }
+        } else {
+            if (count < 0) {
+                p_error("array size required without initializer");
+                return nd_num(0);
+            }
+            off = add_local_array(nm, ty, count);
+            ps_lcols[ps_nlocals - 1] = lcols2;
+        }
+        return head;
+    }
+
+    /* Scalar or struct: type name; or type name = expr; */
+    off = add_local(nm, ty);
+    if (lex_tok == TK_ASSIGN) {
+        next();
+        if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
+            local_init_begin(nm, off, ty, 0);
+            local_init_zero_at(ty, 0, 0);
+            parse_local_init_struct_at(ty, 0);
+            return ps_li_head;
+        }
+        if (lex_tok == TK_LBRACE) {
+            /* C89 lets a scalar initializer wear braces: int k = { 1 }; */
+            next();
+            n = nd_assign(nd_var(nm, off, ty), parse_assign());
+            if (lex_tok == TK_COMMA) next();
+            expect(TK_RBRACE);
+        } else {
+            n = nd_assign(nd_var(nm, off, ty), parse_assign());
+        }
+        n->lhs->is_local = 1;
+        return nd_expr_stmt(n);
+    }
+    return NULL;
+}
+
+
 /* --- Statement parser --- */
 
 static Node *parse_block(void);
@@ -4174,287 +4379,109 @@ static Node *parse_stmt(void) {
             return nd_block(NULL);
         }
 
-        /* Array declaration: type name[N]; or type name[N] = ...; or type name[] = ...; */
-        if (lex_tok == TK_LBRACK) {
-            next();
-            count = -1;
-            if (lex_tok != TK_RBRACK) {
-                count = parse_const_int();
-            }
-            expect(TK_RBRACK);
-            lcols2 = 0;
-            while (lex_tok == TK_LBRACK) {
-                next();
-                count2 = -1;
-                if (lex_tok != TK_RBRACK) {
-                    count2 = parse_const_int();
-                }
-                expect(TK_RBRACK);
-                if (count2 < 0) {
-                    p_error("array size required without initializer");
-                    return nd_num(0);
-                }
-                if (lcols2 != 0) {
-                    p_error("arrays of more than 2 dimensions unsupported");
-                    return nd_num(0);
-                }
-                lcols2 = count2;
-                if (count >= 0) count = count * count2;
-            }
-            if (is_static) {
-                sp_idx = -1;
-                neg = 0;
-                if (count < 0) {
-                    if (lex_tok == TK_ASSIGN) {
-                        next();
-                        if (lex_tok == TK_STRING) {
-                            sp_idx = parse_string_literal();
-                            count = lex_str_len[sp_idx] + 1;
-                        } else if (lex_tok == TK_LBRACE) {
-                            neg = 1;
-                        } else {
-                            p_error("array size required without initializer");
-                            return nd_num(0);
-                        }
+        /* Static local array: emit as global with mangled name */
+        if (lex_tok == TK_LBRACK && is_static) {
+            parse_local_array_dims(&count, &lcols2);
+            sp_idx = -1;
+            neg = 0;
+            if (count < 0) {
+                if (lex_tok == TK_ASSIGN) {
+                    next();
+                    if (lex_tok == TK_STRING) {
+                        sp_idx = parse_string_literal();
+                        count = lex_str_len[sp_idx] + 1;
+                    } else if (lex_tok == TK_LBRACE) {
+                        neg = 1;
                     } else {
                         p_error("array size required without initializer");
                         return nd_num(0);
                     }
-                }
-                if (sp_idx < 0 && lex_tok == TK_ASSIGN) {
-                    next();
-                    if (lex_tok == TK_STRING) {
-                        sp_idx = parse_string_literal();
-                    } else if (lex_tok == TK_LBRACE) {
-                        neg = 1;
-                    } else {
-                        p_error("static local array initializer unsupported");
-                        return nd_num(0);
-                    }
-                }
-                ps_mangle_static(ps_cur_func, nm);
-                sl_gi = add_global(ps_sl_buf, ty + TY_PTR,
-                                   (count >= 0) ? ty_size(ty) * count : 0);
-                ps_glocal[sl_gi] = 1;
-                ps_gcols[sl_gi] = lcols2;
-                if (sp_idx >= 0) {
-                    sp = lex_strpool + lex_str_off[sp_idx];
-                    slen = lex_str_len[sp_idx];
-                    ps_ginit_begin(sl_gi);
-                    ci = 0;
-                    while (ci < slen && ci < count) {
-                        ps_ginit_emit_byte(sp[ci] & 255);
-                        ci = ci + 1;
-                    }
-                    while (ci < count) {
-                        ps_ginit_emit_byte(0);
-                        ci = ci + 1;
-                    }
-                    ps_ginit_finish(sl_gi);
-                } else if (neg) {
-                    ps_ginit_begin(sl_gi);
-                    if (lcols2 > 0) {
-                        count = parse_global_init_array2d_at(ty,
-                            (count >= 0) ? count / lcols2 : -1, lcols2, sl_gi, 0);
-                        count = count * lcols2;
-                    } else {
-                        count = parse_global_init_array_at(ty, count, sl_gi, 0);
-                    }
-                    ps_gsize[sl_gi] = ty_size(ty) * count;
-                    ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
-                    ps_ginit_finish(sl_gi);
-                }
-                expect(TK_SEMI);
-                sl_li = ps_nlocals;
-                if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
-                ps_lname[sl_li] = strdup(nm);
-                ps_loff[sl_li] = 0;
-                ps_ltype[sl_li] = ty + TY_PTR;
-                ps_larr[sl_li] = 1;
-                ps_lcols[sl_li] = lcols2;
-                ps_lstatic[sl_li] = 1;
-                ps_lsname[sl_li] = strdup(ps_sl_buf);
-                ps_nlocals = ps_nlocals + 1;
-                return nd_block(NULL);
-            }
-            head = NULL;
-            if (lex_tok == TK_ASSIGN) {
-                next();
-                if (lex_tok == TK_STRING) {
-                    /* String array init: char s[N] = "str" or char s[] = "str" */
-                    sp_idx = parse_string_literal();
-                    slen = lex_str_len[sp_idx];
-                    if (count < 0) count = slen + 1;
-                    off = add_local_array(nm, ty, count);
-                    sp = lex_strpool + lex_str_off[sp_idx];
-                    tail = NULL;
-                    ci = 0;
-                    while (ci < slen && ci < count) {
-                        n = nd_var(nm, off, ty + TY_PTR);
-                        n->is_local = 1;
-                        n->is_array = 1;
-                        a = nd_binop(TK_PLUS, n, nd_num(ci));
-                        a = nd_unary(TK_STAR, a);
-                        a = nd_assign(a, nd_num(sp[ci] & 255));
-                        a = nd_expr_stmt(a);
-                        if (head == NULL) { head = a; tail = a; }
-                        else { tail->next = a; tail = a; }
-                        ci = ci + 1;
-                    }
-                    if (ci < count) {
-                        /* null terminator */
-                        n = nd_var(nm, off, ty + TY_PTR);
-                        n->is_local = 1;
-                        n->is_array = 1;
-                        a = nd_binop(TK_PLUS, n, nd_num(ci));
-                        a = nd_unary(TK_STAR, a);
-                        a = nd_assign(a, nd_num(0));
-                        a = nd_expr_stmt(a);
-                        if (head == NULL) { head = a; tail = a; }
-                        else { tail->next = a; tail = a; }
-                    }
-                } else if (lex_tok == TK_LBRACE && lcols2 > 0) {
-                    /* Local 2D char array with string rows:
-                     * char name[23][8] = { "e2m1", ... } (d_main).  Each
-                     * row gets its string's bytes, zero-padded to cols;
-                     * a string of exactly cols chars drops its NUL (C
-                     * semantics — doom's "spida1d1" needs this). */
-                    if ((ty & TY_BASE_MASK) != TY_CHAR || (ty & TY_PTR_MASK) != 0 || count < 0) {
-                        p_error("2D local array initializers support only char[N][M] with string rows");
-                        return nd_num(0);
-                    }
-                    off = add_local_array(nm, ty, count);
-                    ps_lcols[ps_nlocals - 1] = lcols2;
-                    head = NULL;
-                    tail = NULL;
-                    next();
-                    ci = 0;
-                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                        if (ci > 0) {
-                            expect(TK_COMMA);
-                            if (lex_tok == TK_RBRACE) break;
-                        }
-                        if (lex_tok != TK_STRING) {
-                            p_error("expected string row in 2D char array init");
-                            return nd_num(0);
-                        }
-                        sp_idx = parse_string_literal();
-                        sp = lex_strpool + lex_str_off[sp_idx];
-                        slen = lex_str_len[sp_idx];
-                        cv = 0;
-                        while (cv < lcols2) {
-                            n = nd_var(nm, off, ty + TY_PTR);
-                            n->is_local = 1;
-                            n->is_array = 1;
-                            a = nd_binop(TK_PLUS, n, nd_num(ci * lcols2 + cv));
-                            a = nd_unary(TK_STAR, a);
-                            a = nd_assign(a, nd_num((cv < slen) ? (sp[cv] & 255) : 0));
-                            a = nd_expr_stmt(a);
-                            if (head == NULL) { head = a; tail = a; }
-                            else { tail->next = a; tail = a; }
-                            cv = cv + 1;
-                        }
-                        ci = ci + 1;
-                    }
-                    if (lex_tok == TK_COMMA) next();
-                    expect(TK_RBRACE);
-                    expect(TK_SEMI);
-                    if (head != NULL) return nd_block(head);
-                    return nd_block(NULL);
-                } else if (lex_tok == TK_LBRACE) {
-                    local_init_begin(nm, 0, ty + TY_PTR, 1);
-                    count = parse_local_init_array_at(ty, count, 0);
-                    head = ps_li_head;
-                    tail = ps_li_tail;
-                    off = add_local_array(nm, ty, count);
-                    local_init_patch_offsets(head, nm, off);
-                    local_init_begin(nm, off, ty + TY_PTR, 1);
-                    local_init_zero_at(ty + TY_PTR, count, 0);
-                    zhead = ps_li_head;
-                    ztail = ps_li_tail;
-                    if (zhead != NULL) {
-                        if (ztail == NULL) {
-                            ztail = zhead;
-                            while (ztail->next != NULL) ztail = ztail->next;
-                        }
-                        ztail->next = head;
-                        head = zhead;
-                        if (tail == NULL) tail = ztail;
-                    }
                 } else {
-                    p_error("expected string or { in array init");
-                    return nd_num(0);
-                }
-            } else {
-                if (count < 0) {
                     p_error("array size required without initializer");
                     return nd_num(0);
                 }
-                off = add_local_array(nm, ty, count);
-                ps_lcols[ps_nlocals - 1] = lcols2;
-                /* Comma-separated array declarators:
-                 * char lbuf[64], rbuf[64]; (sbasic's eval.c) */
-                while (lex_tok == TK_COMMA) {
-                    next();
-                    if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
-                    memcpy(nm, lex_str, lex_slen + 1);
-                    next();
-                    if (lex_tok != TK_LBRACK) { p_error("expected [ in comma array decl"); return nd_num(0); }
-                    next();
-                    count = parse_const_int();
-                    expect(TK_RBRACK);
-                    off = add_local_array(nm, ty, count);
-                    ps_lcols[ps_nlocals - 1] = 0;
+            }
+            if (sp_idx < 0 && lex_tok == TK_ASSIGN) {
+                next();
+                if (lex_tok == TK_STRING) {
+                    sp_idx = parse_string_literal();
+                } else if (lex_tok == TK_LBRACE) {
+                    neg = 1;
+                } else {
+                    p_error("static local array initializer unsupported");
+                    return nd_num(0);
                 }
             }
+            ps_mangle_static(ps_cur_func, nm);
+            sl_gi = add_global(ps_sl_buf, ty + TY_PTR,
+                               (count >= 0) ? ty_size(ty) * count : 0);
+            ps_glocal[sl_gi] = 1;
+            ps_gcols[sl_gi] = lcols2;
+            if (sp_idx >= 0) {
+                sp = lex_strpool + lex_str_off[sp_idx];
+                slen = lex_str_len[sp_idx];
+                ps_ginit_begin(sl_gi);
+                ci = 0;
+                while (ci < slen && ci < count) {
+                    ps_ginit_emit_byte(sp[ci] & 255);
+                    ci = ci + 1;
+                }
+                while (ci < count) {
+                    ps_ginit_emit_byte(0);
+                    ci = ci + 1;
+                }
+                ps_ginit_finish(sl_gi);
+            } else if (neg) {
+                ps_ginit_begin(sl_gi);
+                if (lcols2 > 0) {
+                    count = parse_global_init_array2d_at(ty,
+                        (count >= 0) ? count / lcols2 : -1, lcols2, sl_gi, 0);
+                    count = count * lcols2;
+                } else {
+                    count = parse_global_init_array_at(ty, count, sl_gi, 0);
+                }
+                ps_gsize[sl_gi] = ty_size(ty) * count;
+                ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
+                ps_ginit_finish(sl_gi);
+            }
             expect(TK_SEMI);
-            if (head != NULL) return nd_block(head);
+            sl_li = ps_nlocals;
+            if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
+            ps_lname[sl_li] = strdup(nm);
+            ps_loff[sl_li] = 0;
+            ps_ltype[sl_li] = ty + TY_PTR;
+            ps_larr[sl_li] = 1;
+            ps_lcols[sl_li] = lcols2;
+            ps_lstatic[sl_li] = 1;
+            ps_lsname[sl_li] = strdup(ps_sl_buf);
+            ps_nlocals = ps_nlocals + 1;
             return nd_block(NULL);
         }
 
-        /* Scalar or struct: type name; or type name = expr; */
-        off = add_local(nm, ty);
+        /* Everything else is a declarator list.  Each declarator brings
+         * its own stars, dimensions and initializer; the statements
+         * that initialize them run in declaration order. */
         head = NULL;
         tail = NULL;
-        if (lex_tok == TK_ASSIGN) {
-            next();
-            if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
-                local_init_begin(nm, off, ty, 0);
-                local_init_zero_at(ty, 0, 0);
-                parse_local_init_struct_at(ty, 0);
-                head = ps_li_head;
-                tail = ps_li_tail;
-                expect(TK_SEMI);
-                if (head != NULL) return nd_block(head);
-                return nd_block(NULL);
+        base = ty;
+        while (ty_is_ptr(base)) base = ty_deref(base);
+        while (1) {
+            t = parse_local_declarator(nm, ty);
+            if (t != NULL) {
+                if (head == NULL) head = t;
+                else tail->next = t;
+                tail = t;
+                while (tail->next != NULL) tail = tail->next;
             }
-            n = nd_assign(nd_var(nm, off, ty), parse_assign());
-            n->lhs->is_local = 1;
-            t = nd_expr_stmt(n);
-            if (head == NULL) { head = t; tail = t; }
-            else { tail->next = t; tail = t; }
-        }
-        /* Additional declarators after comma: int a, b; or int *a, *b; */
-        while (lex_tok == TK_COMMA) {
+            if (lex_tok != TK_COMMA) break;
             next();
-            /* Strip pointer depth from ty to get base type */
-            xty = ty;
-            while (ty_is_ptr(xty)) xty = ty_deref(xty);
-            /* Each declarator adds its own pointer stars */
-            while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); }
+            ty = base;
+            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
             skip_decl_qualifiers();
             if (lex_tok != TK_IDENT) break;
             memcpy(nm, lex_str, lex_slen + 1);
             next();
-            off = add_local(nm, xty);
-            if (lex_tok == TK_ASSIGN) {
-                next();
-                n = nd_assign(nd_var(nm, off, xty), parse_assign());
-                n->lhs->is_local = 1;
-                t = nd_expr_stmt(n);
-                if (head == NULL) { head = t; tail = t; }
-                else { tail->next = t; tail = t; }
-            }
+            skip_gnu_decl_suffixes();
         }
         expect(TK_SEMI);
         if (head != NULL) return nd_block(head);

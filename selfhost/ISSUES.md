@@ -1760,3 +1760,29 @@ deliberately.
 verified, and prefer re-pinning from a build you can reproduce twice. A sum file is
 a claim about a specific input state; pinning after a pull silently changes which
 state the claim refers to.
+
+### 61. [RESOLVED 2026-08-30] stage08 cc: a block-scope declarator list ended at a brace initializer (GitHub #8)
+
+`cob_num a = { getv(), 2 }, b = st[nsp - 1];` inside a function was
+rejected with `expected token 56 got 57` (`;` wanted, `,` found); so were
+`int a[2] = { 1, 2 }, b = 3;`, `int a = 1, b[2];` and `int k = { 1 };`.
+File scope took all of them. Found on Kagura, building `cobol/libcob/libcob.c`
+through `cctool.sh`'s self-hosted fallback (no LLVM there); worked around in
+957b5a29 by splitting the two declarations.
+
+**Cause:** the block-scope declaration parser in `parser.h` was a chain of
+early-return special cases -- fn-ptr, extern, static scalar, array, scalar --
+and only the scalar case looped on `,`; the array case had a private loop
+that took `name[N]` continuations only, and the brace-initializer cases
+returned straight after `expect(TK_SEMI)`.
+
+**Fix:** the non-static array and scalar/struct shapes moved into
+`parse_local_declarator(nm, ty)` (dimensions via `parse_local_array_dims`,
+shared with the static-array case), which allocates the local, parses its
+initializer and returns the initializing statements without touching the
+`;`. `parse_stmt` loops over declarators -- stars, qualifiers, name, then
+the helper -- appending each one's statements in declaration order. Braces
+around a scalar initializer (C89) are taken too. `tests/test_phase32.c`
+holds every row of the issue's table; suite 57/57 with `--fixed-point`; the
+unsplit `libcob.c` compiles through `cc.s32x`. The kit `~/s32x/cc.s32x`
+carries the fix once the kit is rebuilt.
