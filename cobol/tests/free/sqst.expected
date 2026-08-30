@@ -1,0 +1,13 @@
+reversed: Dog   04
+reversed: cat   03
+reversed: Bee   02
+reversed: ant   01
+reversed: at end
+sorted: cat   03
+sorted: ant   01
+sorted: Dog   04
+sorted: Bee   02
+sorted: at end
+print: [line one            ]
+print: [line two            ]
+print: at end

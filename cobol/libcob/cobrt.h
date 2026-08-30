@@ -80,6 +80,8 @@ typedef struct {
     unsigned int lin_eop;     /* the last WRITE met the footing or overflowed the page */
     unsigned int lin_needs_top;   /* the top margin has not been written yet */
     char *saved_status;       /* EXTERNAL: the entering program's own image keeps the shared connector's previous status item here */
+    unsigned int reversed;    /* OPEN INPUT ... REVERSED: fixed-length records read from the last back */
+    unsigned int nl_pending;  /* line sequential: the last record went out without its newline (BEFORE ADVANCING ZERO) */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

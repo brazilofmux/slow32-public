@@ -1146,6 +1146,28 @@ under -std=cobol85; NC302M and NC303M run, NC401M compiles; the NC
 module compiles 95 of 95; the suite 296 of 303 compile, 7290 of 7336
 pass, none fail, 293 match.
 
+## Stage 56 — the last seven; the suite compiles 303 of 303 **M** — DONE 2026-08-31
+
+SQ101M's `WRITE ... BEFORE ADVANCING ZERO` had collided with the PAGE
+sentinel (-1) and written a form feed; ZERO lines is its own value
+(-2): the record goes out without its newline and the file remembers
+(`nl_pending`), the next write supplying it -- the lines GnuCOBOL's
+file has. SQ111A's `CODE-SET IS` is accepted for a STANDARD-1/NATIVE
+alphabet. SQ207M qualifies a record by its file (`PRINT-REC IN
+PRINT-FILE`): sym_lookup's outermost qualifier may be the FD's
+file-name. SQ303M/SQ401M `OPEN INPUT ... REVERSED`: bit 8 of the mode
+to cob_open, which seeks to the end of a fixed-length sequential file,
+and cob_read then delivers the record before the position (GnuCOBOL
+ignores REVERSED and reads forward -- the text is followed,
+oracles.md). ST139A/ST140A `SORT ... [COLLATING] SEQUENCE [IS]
+alphabet`: a non-native alphabet's rank table is emitted
+(`.Lalph<unit>_<i>`) and handed to cob_sort_begin, which sets
+cob_collating for the merge and puts the program's back. free/sqst
+(GnuCOBOL's forward-reading answer beside ours); the whole suite: 303
+of 303 compile, 7314 of 7425 pass, none fail, 300 match -- the three
+others being the obsolete-element programs that have no tests and
+run.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

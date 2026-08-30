@@ -856,6 +856,18 @@ static void lin_values(cob_file *f);
 
 int cob_open(cob_file *f, int mode)
 {
+    int reversed = mode & 8; mode &= 7;
+    f->reversed = 0;
+    if (reversed) {
+        if (f->org != COB_ORG_SEQ || f->varying) cob_fatal("OPEN REVERSED needs a sequential file of fixed-length records");
+        int rc = cob_open(f, mode);
+        if (rc == 0 && f->fp) {
+            fseek((FILE *)f->fp, 0, 2);
+            long end = ftell((FILE *)f->fp);
+            f->fpos = end < 0 ? 0 : (unsigned)end; f->reversed = 1;
+        }
+        return rc;
+    }
     f->open_try = (unsigned)mode;
     if (f->open_mode) return file_result(f, "41", "OPEN of a file already open");
     if (f->org == COB_ORG_INDEXED) return idx_open(f, mode);
@@ -967,6 +979,15 @@ int cob_read(cob_file *f)
         f->last_len = take;
         if (f->dep_item) cob_put_num(f->dep_item, (const cob_desc *)f->dep_desc, (long long)take, 0);
         return file_result(f, len > n ? "04" : "00", "");
+    }
+    if (f->org == COB_ORG_SEQ && f->reversed) {
+        /* REVERSED: the record before the position, the position moved back */
+        if (f->fpos < n) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
+        f->fpos -= n;
+        fseek(fp, (long)f->fpos, 0);
+        if (fread(rec, 1, n, fp) != n) return file_result(f, "30", "read");
+        f->last_len = n;
+        return file_result(f, "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
         size_t got = fread(rec, 1, n, fp);
@@ -1085,13 +1106,17 @@ int cob_write(cob_file *f, int before, int after, int reclen)
         f->fpos += n; f->last_len = 0;
         return file_result(f, "00", "");
     }
-    /* ADVANCING: n extra newlines before or after; -1 is PAGE, a form feed */
-    if (before < 0) { fputc('\f', fp); f->fpos++; }
+    /* ADVANCING: n extra newlines before or after; -1 is PAGE, a form feed;
+     * -2 is ZERO LINES -- BEFORE ADVANCING ZERO leaves the record without
+     * its newline, the next record's AFTER supplying one (SQ101M) */
+    if (f->nl_pending) { fputc('\n', fp); f->fpos++; f->nl_pending = 0; }   /* the line the last record left open */
+    if (before == -1) { fputc('\f', fp); f->fpos++; }
     for (int i = 0; i < before; i++) { fputc('\n', fp); f->fpos++; }
     while (n > 0 && rec[n - 1] == ' ') n--;
     if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
-    fputc('\n', fp); f->fpos += n + 1;
-    if (after < 0) { fputc('\f', fp); f->fpos++; }
+    f->fpos += n;
+    if (after != -2) { fputc('\n', fp); f->fpos++; } else f->nl_pending = 1;
+    if (after == -1) { fputc('\f', fp); f->fpos++; }
     for (int i = 0; i < after; i++) { fputc('\n', fp); f->fpos++; }
     f->last_len = 0;
     return file_result(f, "00", "");
@@ -1322,18 +1347,19 @@ static int rel_start(cob_file *f, int op)
 
 typedef struct {
     const cob_sort_key *keys; int nkeys;
+    const unsigned char *coll;      /* SORT ... COLLATING SEQUENCE: the alphabet's ranks, or 0 */
     char *buf; unsigned n, cap;       /* n records of recsize bytes */
     unsigned *order;                  /* after cob_sort_perform: record indices in key order */
     unsigned pos;                     /* next RETURN */
 } cob_sorter;
 
-void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups)
+void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups, const unsigned char *coll)
 {
     (void)dups;
     if (sd->org != COB_ORG_SORT) cob_fatal("SORT of a file that is not an SD");
     cob_sorter *so = calloc(1, sizeof *so);
     if (!so) cob_fatal("SORT: out of memory");
-    so->keys = keys; so->nkeys = nkeys;
+    so->keys = keys; so->nkeys = nkeys; so->coll = coll;
     sd->idx = so; sd->open_mode = COB_OPEN_IO; sd->at_eof = 0;
 }
 
@@ -1413,7 +1439,11 @@ void cob_sort_perform(cob_file *sd)
     if (!so->order || !tmp) cob_fatal("SORT: out of memory");
     for (unsigned i = 0; i < so->n; i++) so->order[i] = i;
     sort_sd = sd; sort_so = so;
+    /* the statement's collating sequence for the alphanumeric keys, the program's back afterwards */
+    const unsigned char *old_coll = cob_collating;
+    if (so->coll) cob_collating = so->coll;
     sort_merge(so->order, tmp, 0, so->n);
+    cob_collating = old_coll;
     free(tmp);
     so->pos = 0; sd->at_eof = 0;
 }

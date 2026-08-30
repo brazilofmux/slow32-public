@@ -85,7 +85,7 @@ static SwitchName *switch_find(const char *name)
 /* SPECIAL-NAMES ALPHABET name IS STANDARD-1|NATIVE|...: only the native
  * (ASCII) sequence exists here; another alphabet is recorded and refused
  * where it would be used */
-typedef struct { char name[64]; int native; unsigned char rank[256]; } Alphabet;   /* rank: the collating position of each character */
+typedef struct { char name[64]; int native, used; unsigned char rank[256]; } Alphabet;   /* rank: the collating position of each character; used: a SORT names it, its table is emitted */
 static Alphabet g_alphabet[16];
 static int g_nalphabet;
 static int g_collate = -1;                  /* PROGRAM COLLATING SEQUENCE: an alphabet index, -1 native */
@@ -943,6 +943,7 @@ static int sym_idx(Sym *s) { return (int)(s - g_sym); }
 
 /* name [OF|IN qualifier]...: the unique item that matches */
 static void unit_range(int level, int *from, int *to);   /* an ancestor's symbol range */
+static const char *file_name_of(int fd);                /* the FD's file-name (File is declared below) */
 
 static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
 {
@@ -959,6 +960,11 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
                 int hit = -1;
                 for (int p = g_sym[at].parent; p >= 0; p = g_sym[p].parent)
                     if (!strcmp(g_sym[p].name, quals[q])) { hit = p; break; }
+                if (hit < 0) {
+                    /* the outermost qualifier may be the file whose FD holds the record (SQ207M: PRINT-REC IN PRINT-FILE) */
+                    int r = at; while (g_sym[r].parent >= 0) r = g_sym[r].parent;
+                    if (g_sym[r].fd >= 0 && !strcmp(file_name_of(g_sym[r].fd), quals[q]) && q == nq - 1) hit = r;
+                }
                 if (hit < 0) ok = 0; else at = hit;
             }
             if (ok) { found = s; nfound++; }
@@ -1015,6 +1021,7 @@ typedef struct {
 } File;
 
 static File *g_files; static int g_nfile, g_fcap;
+static const char *file_name_of(int fd) { return g_files[fd].name; }
 static int g_cur_fd = -1;            /* the FD whose 01s are being parsed */
 
 static void unit_file_range(int level, int *from, int *to);
@@ -4330,7 +4337,7 @@ static void parse_sort(void)
         accept_word("key");
         int any = 0;
         while (cur()->kind == T_WORD && !at_word("on") && !at_word("ascending") && !at_word("descending") &&
-               !at_word("with") && !at_word("collating") && !at_word("using") && !at_word("input") &&
+               !at_word("with") && !at_word("collating") && !at_word("sequence") && !at_word("using") && !at_word("input") &&
                !at_word("giving") && !at_word("output")) {
             Ref k; parse_ref(&k);
             if (k.sym->record != g_sym[sd->rec].record) die_at(k.line, "SORT key '%s' is not an item of the SD %s", k.sym->name, sd->name);
@@ -4344,9 +4351,19 @@ static void parse_sort(void)
     if (!t->nk) die_at(line, "SORT needs at least one KEY");
     int dups = 0;
     if (accept_word("with")) { expect_word("duplicates"); accept_word("in"); accept_word("order"); dups = 1; }
-    if (at_word("collating")) die_at(cur()->line, "SORT ... COLLATING SEQUENCE is not implemented (the sequence is ASCII)");
+    int coll = -1;                          /* [COLLATING] SEQUENCE [IS] alphabet-name: the keys compare by its ranks */
+    if (accept_word("collating") || at_word("sequence")) {
+        expect_word("sequence"); accept_word("is");
+        if (cur()->kind != T_WORD) die_at(cur()->line, "SORT COLLATING SEQUENCE needs an alphabet-name");
+        for (int i = 0; i < g_nalphabet; i++) if (!strcmp(g_alphabet[i].name, cur()->s)) coll = i;
+        if (coll < 0) die_at(cur()->line, "SORT COLLATING SEQUENCE: '%s' is not an alphabet-name", cur()->s);
+        if (g_alphabet[coll].native) coll = -1;
+        else g_alphabet[coll].used = 1;
+        advance();
+    }
     char tab[32]; snprintf(tab, sizeof tab, ".Lsk%d_%d", g_unit, t->id);
     emit_file_addr("r3", sd); emit_la("r4", tab); emit_li("r5", t->nk); emit_li("r6", dups);
+    if (coll >= 0) { char al[32]; snprintf(al, sizeof al, ".Lalph%d_%d", g_unit, coll); emit_la("r7", al); } else emit_li("r7", 0);
     emit_call("cob_sort_begin");
     if (accept_word("using")) {
         int n = 0;
@@ -4698,9 +4715,13 @@ static void parse_open(void)
         while (cur()->kind == T_WORD && !at_word("input") && !at_word("output") && !at_word("i-o") &&
                !at_word("extend") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
             File *f = expect_file();
+            int reversed = 0;
             if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
-            if (accept_word("reversed")) die_at(cur()->line, "OPEN REVERSED is not supported");
-            emit_file_addr("r3", f); emit_li("r4", mode); emit_call("cob_open");
+            if (accept_word("reversed")) {          /* obsolete: read from the last record back (SQ303M, SQ401M) */
+                if (mode != COB_OPEN_INPUT) die_at(cur()->line, "REVERSED goes with OPEN INPUT");
+                reversed = 8;
+            }
+            emit_file_addr("r3", f); emit_li("r4", mode | reversed); emit_call("cob_open");
             emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0);
             n++;
         }
@@ -4850,7 +4871,13 @@ static void parse_write(void)
             goto advancing_done;
         }
         parse_operand(&n);
-        if (n.kind == O_NUM) { long v = (long)numlit_int(&n.num); if (f->linage) { if (after_kw) before = (int)v; else after = (int)v; } else if (after_kw) before = (int)v - 1; else after = (int)v - 1; }
+        if (n.kind == O_FIG && !strncmp(n.tok->s, "zero", 4)) { n.kind = O_NUM; numlit_zero(&n.num); }   /* ADVANCING ZERO (SQ101M) */
+        if (n.kind == O_NUM) {
+            long v = (long)numlit_int(&n.num);
+            /* the runtime's counts are the newlines beyond the record's own; PAGE is -1, ZERO lines -2 (no advance at all) */
+            if (f->linage) { if (after_kw) before = (int)v; else after = (int)v; }
+            else if (after_kw) before = v ? (int)v - 1 : -2; else after = v ? (int)v - 1 : -2;
+        }
         else if (n.kind == O_REF && is_int_item(n.ref.sym)) dyn = 1;
         else die_at(n.line, "ADVANCING needs an integer");
         accept_word("line"); accept_word("lines");
@@ -6872,7 +6899,15 @@ static void parse_fd(void)
             f->lin_counter_sym = sym_idx(lc);
             continue;
         }
-        if (accept_word("code-set")) die_at(t->line, "CODE-SET is not supported (ASCII only)");
+        if (accept_word("code-set")) {
+            accept_word("is");
+            if (cur()->kind != T_WORD) die_at(t->line, "CODE-SET needs an alphabet-name");
+            int found = -1;
+            for (int i = 0; i < g_nalphabet; i++) if (!strcmp(g_alphabet[i].name, cur()->s)) found = i;
+            if (found < 0) die_at(t->line, "CODE-SET: '%s' is not an alphabet-name", cur()->s);
+            if (!g_alphabet[found].native) die_at(t->line, "CODE-SET %s: only the native (STANDARD-1) character set is available", cur()->s);
+            advance(); continue;
+        }
         die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
     }
     expect_period();
@@ -7282,6 +7317,8 @@ static void emit_unit_data(void)
         if (f->linage) emit("\t.word .Llin%d_%d", g_unit, i); else emit("\t.word 0");   /* LINAGE: lines/footing/top/bottom */
         for (int w = 0; w < 7; w++) emit("\t.word 0");    /* lin_lines lin_foot lin_top lin_bot lin_counter lin_eop lin_needs_top */
         emit("\t.word 0");                                 /* saved_status (EXTERNAL) */
+        emit("\t.word 0");                                 /* reversed (OPEN INPUT ... REVERSED) */
+        emit("\t.word 0");                                 /* nl_pending (BEFORE ADVANCING ZERO) */
         if (f->external) { emit(".Lfx%d_%d:\t# the shared connector of EXTERNAL %s", f->unit, i, f->name); emit("\t.word 0"); }
     }
     emit("\t.p2align 2");
@@ -7291,6 +7328,11 @@ static void emit_unit_data(void)
         emit(".Lcoll%d:\t# PROGRAM COLLATING SEQUENCE %s: rank of each character", g_unit, g_alphabet[g_collate].name);
         emit_bytes(g_alphabet[g_collate].rank, 256);
     }
+    for (int i = 0; i < g_nalphabet; i++)
+        if (g_alphabet[i].used) {
+            emit(".Lalph%d_%d:\t# ALPHABET %s: rank of each character, for SORT", g_unit, i, g_alphabet[i].name);
+            emit_bytes(g_alphabet[i].rank, 256);
+        }
     for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         if (!f->linage) continue;

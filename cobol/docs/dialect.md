@@ -422,6 +422,18 @@ given, because majesty's `.prn` oracles were produced under it.
   to the operator, who would resume the run: it is displayed and the
   run goes on. NC302M and NC303M run, NC401M compiles: the whole NC
   module compiles now.
+- **The last SQ and ST refusals** (Stage 56): `WRITE ... ADVANCING ZERO`
+  (BEFORE: the record without its newline, the next record's AFTER
+  supplying one; SQ101M); `FD ... CODE-SET IS alphabet-name` with a
+  STANDARD-1/NATIVE alphabet (SQ111A; any other is refused: the native
+  set is the one there is); a record qualified by its file, `PRINT-REC
+  IN PRINT-FILE` (SQ207M); `OPEN INPUT f REVERSED` for a sequential
+  file of fixed-length records -- positioned after the last record,
+  each READ delivers the one before (SQ303M, SQ401M; GnuCOBOL ignores
+  REVERSED and reads forward -- docs/oracles.md); `SORT ... [COLLATING]
+  SEQUENCE [IS] alphabet-name` -- the keys compare by the alphabet's
+  ranks, the program's own sequence back afterwards (ST139A, ST140A).
+  **With these the whole CCVS-85 suite compiles: 303 of 303.**
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
