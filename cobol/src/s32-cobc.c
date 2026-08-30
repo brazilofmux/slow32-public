@@ -140,7 +140,7 @@ static char *xstrndup(const char *s, int n)
  * comment is post-85 but majesty is written with it and it is harmless).
  * A program is one format or the other, chosen on the command line. */
 
-typedef struct { char *text; int line; } SrcLine;
+typedef struct { char *text; int line; int dbg; } SrcLine;   /* dbg: a D in column 7 */
 static SrcLine *g_lines;
 static int g_nlines;
 
@@ -167,14 +167,20 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
         int len = e ? (int)(e - p) : (int)strlen(p);
         lineno++;
         if (len && p[len - 1] == '\r') len--;
-        char *text = NULL;
+        char *text = NULL; int dbg = 0;
         if (g_free) {
             text = xstrndup(p, len);
         } else {
             if (len > 6) {
                 char ind = p[6];
                 if (ind == '*' || ind == '/') text = NULL;         /* comment */
-                else if (ind == 'D' || ind == 'd') text = NULL;    /* debugging line */
+                else if (ind == 'D' || ind == 'd') {
+                    /* a debugging line: text for COPY/REPLACE matching ("as
+                     * if the D did not appear"), dropped afterwards -- there
+                     * is no WITH DEBUGGING MODE here */
+                    int cn = len - 7; if (cn > 65) cn = 65; if (cn < 0) cn = 0;
+                    text = xstrndup(p + 7, cn); dbg = 1;
+                }
                 else if (ind == '-') {
                     /* continuation: the previous text line goes on here.  If
                      * it stopped inside a non-numeric literal, this line's
@@ -219,6 +225,7 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
             if (n == cap) { cap *= 2; lines = realloc(lines, cap * sizeof *lines); }
             lines[n].text = text;
             lines[n].line = lineno;
+            lines[n].dbg = dbg;
             n++;
         }
         if (!e) break;
@@ -245,16 +252,18 @@ typedef struct {
     char *s;        /* word (lowercased), number text, literal bytes, picture, op */
     int len;        /* literal byte length (literals may hold NULs) */
     const char *file;
+    int dbg;        /* from a debugging line: matched by COPY REPLACING, then dropped */
 } Tok;
 
 static Tok *g_tok;
 static int g_ntok, g_tcap;
+static int g_tok_dbg;
 
 static Tok *push_tok(int kind, int line, const char *s, int len)
 {
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg;
     return t;
 }
 
@@ -275,6 +284,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
         const char *t = lines[li].text;
         int line = lines[li].line;
         const char *p = t;
+        g_tok_dbg = lines[li].dbg;
         while (*p) {
             if (*p == ' ' || *p == '\t') { p++; continue; }
             if (p[0] == '*' && p[1] == '>') break;            /* comment to EOL */
@@ -284,7 +294,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                  * unless it is the last character before that space, in which
                  * case it is the sentence separator. */
                 const char *q = p;
-                while (*q && *q != ' ' && *q != '\t') q++;
+                while (*q && *q != ' ' && *q != '\t' && !(q[0] == '=' && q[1] == '=')) q++;   /* == ends pseudo-text */
                 int n = (int)(q - p);
                 int sep = 0;
                 if (n > 1 && p[n - 1] == '.') { n--; sep = 1; }
@@ -343,9 +353,9 @@ static void tokenize_lines(SrcLine *lines, int nlines)
              * at a word boundary.  A run of digits followed by more word
              * characters (0100-main, 9000-end) is a user-word. */
             int signed_num = (c == '+' || c == '-') && (isdigit((unsigned char)p[1]) || (p[1] == '.' && isdigit((unsigned char)p[2]))) &&
-                             (p == t || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '(');
+                             (p == t || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '(' || p[-1] == '=');
             int dot_num = c == '.' && isdigit((unsigned char)p[1]) &&
-                          (p == t || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '(');
+                          (p == t || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '(' || p[-1] == '=');
             if (isdigit(c) || signed_num || dot_num) {
                 const char *s = p + (signed_num ? 1 : 0), *e = s;
                 while (isdigit((unsigned char)*e)) e++;
@@ -379,7 +389,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
             }
 
             if (c == '.') {
-                if (p[1] == 0 || p[1] == ' ' || p[1] == '\t' || (p[1] == '*' && p[2] == '>')) {
+                if (p[1] == 0 || p[1] == ' ' || p[1] == '\t' || (p[1] == '*' && p[2] == '>') || (p[1] == '=' && p[2] == '=')) {   /* ".==": a period ending pseudo-text */
                     push_tok(T_PERIOD, line, ".", 1); p++; continue;
                 }
                 die_at(line, "a period must be followed by a space or the end of the line");
@@ -392,6 +402,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
             if (c == ')') { push_tok(T_RP, line, ")", 1); p++; continue; }
             if (c == ':') { push_tok(T_COLON, line, ":", 1); p++; continue; }
             if (c == '*' && p[1] == '*') { push_tok(T_OP, line, "**", 2); p += 2; continue; }
+            if (c == '=' && p[1] == '=') { push_tok(T_OP, line, "==", 2); p += 2; continue; }      /* pseudo-text delimiter */
             if ((c == '>' || c == '<') && p[1] == '=') { push_tok(T_OP, line, p, 2); p += 2; continue; }
             if (c == '<' && p[1] == '>') { push_tok(T_OP, line, "<>", 2); p += 2; continue; }
             if (strchr("=<>+-*/", c)) { push_tok(T_OP, line, p, 1); p++; continue; }
@@ -424,10 +435,88 @@ static int copy_open(const char *name, SrcLine **lines, int *n, char *found, siz
     return 0;
 }
 
+static int g_copy_guard;
+
+/* REPLACE ==pseudo-text== BY ==pseudo-text== ... / REPLACE OFF: from the
+ * statement on, every matching token sequence of the source is replaced,
+ * until the next REPLACE (the Library module's other verb, after COPY) */
+static void apply_replace(void)
+{
+    struct { Tok *from; int fl; Tok *to; int tl; } pairs[32]; int npairs = 0;
+    int sentence_start = 1;
+    for (int i = 0; i < g_ntok; ) {
+        Tok *t = &g_tok[i];
+        if (sentence_start && t->kind == T_WORD && !strcmp(t->s, "replace")) {
+            int line = t->line, j = i + 1;
+            npairs = 0;
+            if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "off")) j++;
+            else for (;;) {
+                int r[2][2];
+                for (int side = 0; side < 2; side++) {
+                    if (side == 1) { if (!(j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "by"))) die_at(line, "REPLACE: expected BY"); j++; }
+                    if (!(j < g_ntok && g_tok[j].kind == T_OP && !strcmp(g_tok[j].s, "==")))
+                        die_at(line, "REPLACE takes ==pseudo-text== BY ==pseudo-text==");
+                    j++; r[side][0] = j;
+                    while (j < g_ntok && !(g_tok[j].kind == T_OP && !strcmp(g_tok[j].s, "=="))) {
+                        if (g_tok[j].kind == T_EOF) die_at(line, "REPLACE: pseudo-text not closed by ==");
+                        j++;
+                    }
+                    r[side][1] = j; j++;
+                    if (side == 0 && r[0][1] == r[0][0]) die_at(line, "REPLACE: the text to replace is empty");
+                }
+                if (npairs == 32) die_at(line, "REPLACE: too many pairs");
+                int fl = r[0][1] - r[0][0], tl = r[1][1] - r[1][0];
+                /* the operands, copied aside: the statement itself goes */
+                Tok *aside = xmalloc((size_t)(fl + tl + 1) * sizeof *aside);
+                memcpy(aside, &g_tok[r[0][0]], (size_t)fl * sizeof *aside);
+                memcpy(aside + fl, &g_tok[r[1][0]], (size_t)tl * sizeof *aside);
+                pairs[npairs].from = aside; pairs[npairs].fl = fl; pairs[npairs].to = aside + fl; pairs[npairs].tl = tl; npairs++;
+                if (j < g_ntok && g_tok[j].kind == T_PERIOD) break;
+            }
+            if (j >= g_ntok || g_tok[j].kind != T_PERIOD) die_at(line, "REPLACE needs its period");
+            memmove(&g_tok[i], &g_tok[j + 1], (size_t)(g_ntok - (j + 1)) * sizeof *g_tok);
+            g_ntok -= j - i + 1;
+            sentence_start = 1;
+            continue;
+        }
+        if (npairs) {
+            int hit = -1;
+            for (int q = 0; q < npairs && hit < 0; q++) {
+                int fl = pairs[q].fl;
+                if (i + fl > g_ntok) continue;
+                int same = 1;
+                for (int m = 0; m < fl && same; m++) {
+                    const Tok *a = &g_tok[i + m], *b = &pairs[q].from[m];
+                    if (a->kind != b->kind) same = 0;
+                    else if (a->kind == T_STR) same = a->len == b->len && !memcmp(a->s, b->s, (size_t)a->len);
+                    else same = !strcmp(a->s, b->s);
+                }
+                if (same) hit = q;
+            }
+            if (hit >= 0) {
+                int fl = pairs[hit].fl, tl = pairs[hit].tl;
+                int line = g_tok[i].line; const char *file = g_tok[i].file;
+                int delta = tl - fl;
+                if (delta > 0) {
+                    if (g_ntok + delta > g_tcap) { g_tcap = g_ntok + delta + 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
+                    memmove(&g_tok[i + tl], &g_tok[i + fl], (size_t)(g_ntok - (i + fl)) * sizeof *g_tok);
+                } else if (delta < 0) memmove(&g_tok[i + tl], &g_tok[i + fl], (size_t)(g_ntok - (i + fl)) * sizeof *g_tok);
+                g_ntok += delta;
+                for (int m = 0; m < tl; m++) { g_tok[i + m] = pairs[hit].to[m]; g_tok[i + m].line = line; g_tok[i + m].file = file; }
+                if (tl > 0) sentence_start = (g_tok[i + tl - 1].kind == T_PERIOD);
+                i += tl;
+                continue;
+            }
+        }
+        sentence_start = (t->kind == T_PERIOD);
+        i++;
+    }
+}
+
 static void expand_copies(int depth)
 {
     for (int i = 0; i < g_ntok; i++) {
-        if (!(g_tok[i].kind == T_WORD && !strcmp(g_tok[i].s, "copy"))) continue;
+        if (!(g_tok[i].kind == T_WORD && !strcmp(g_tok[i].s, "copy")) || g_tok[i].dbg) continue;   /* a COPY on a debugging line is a comment */
         int line = g_tok[i].line;
         int j = i + 1;
         if (j >= g_ntok || !(g_tok[j].kind == T_WORD || g_tok[j].kind == T_STR)) die_at(line, "COPY needs a text-name");
@@ -441,10 +530,46 @@ static void expand_copies(int depth)
             j++;                                        /* the library: a subdirectory of the -I directories, else they serve */
         }
         if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "suppress")) j++;
-        if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "replacing"))
-            die_at(line, "COPY ... REPLACING is not implemented yet");
+        /* REPLACING {==pseudo-text== | word | literal} BY {the same} ...: the
+         * operands are token ranges of this statement, matched against the
+         * copied text token for token */
+        struct { int f0, f1, t0, t1; } pairs[32]; int npairs = 0;
+        if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "replacing")) {
+            j++;
+            for (;;) {
+                int r[2][2];
+                for (int side = 0; side < 2; side++) {
+                    if (side == 1) { if (!(j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "by"))) die_at(line, "COPY REPLACING: expected BY"); j++; }
+                    if (j < g_ntok && g_tok[j].kind == T_OP && !strcmp(g_tok[j].s, "==")) {
+                        j++; r[side][0] = j;
+                        while (j < g_ntok && !(g_tok[j].kind == T_OP && !strcmp(g_tok[j].s, "=="))) {
+                            if (g_tok[j].kind == T_EOF) die_at(line, "COPY REPLACING: pseudo-text not closed by ==");
+                            j++;
+                        }
+                        r[side][1] = j; j++;
+                        if (side == 0 && r[0][1] == r[0][0]) die_at(line, "COPY REPLACING: the text to replace is empty");
+                    } else {
+                        if (j >= g_ntok || g_tok[j].kind == T_PERIOD || g_tok[j].kind == T_EOF) die_at(line, "COPY REPLACING: expected a word, a literal or ==pseudo-text==");
+                        r[side][0] = j; j++;
+                        if (g_tok[j - 1].kind == T_WORD) {
+                            /* an identifier: qualifiers and a subscript list belong to it */
+                            while (j + 1 < g_ntok && g_tok[j].kind == T_WORD && (!strcmp(g_tok[j].s, "of") || !strcmp(g_tok[j].s, "in")) && g_tok[j + 1].kind == T_WORD) j += 2;
+                            if (j < g_ntok && g_tok[j].kind == T_LP) {
+                                int depth_p = 0;
+                                do { if (g_tok[j].kind == T_LP) depth_p++; else if (g_tok[j].kind == T_RP) depth_p--; else if (g_tok[j].kind == T_EOF) die_at(line, "COPY REPLACING: unbalanced parentheses"); j++; } while (depth_p > 0);
+                            }
+                        }
+                        r[side][1] = j;
+                    }
+                }
+                if (npairs == 32) die_at(line, "COPY REPLACING: too many pairs");
+                pairs[npairs].f0 = r[0][0]; pairs[npairs].f1 = r[0][1]; pairs[npairs].t0 = r[1][0]; pairs[npairs].t1 = r[1][1]; npairs++;
+                if (j < g_ntok && g_tok[j].kind == T_PERIOD) break;
+            }
+        }
         if (j >= g_ntok || g_tok[j].kind != T_PERIOD) die_at(line, "COPY %s needs its period", name);
         if (depth > 8) die_at(line, "COPY nests deeper than 8 (%s)", name);
+        if (g_copy_guard++ > 4000) die_at(line, "COPY: more than 4000 expansions -- a copybook that copies itself?");
 
         SrcLine *lines; int n; char found[1200];
         char qual[512]; int ok = 0;
@@ -460,6 +585,35 @@ static void expand_copies(int depth)
         Tok *ctok = g_tok; int cn = g_ntok;
         g_tok = save_tok; g_ntok = save_n; g_tcap = save_cap; g_tok_file = save_file;
 
+        if (npairs) {
+            /* the copied text with every matching token sequence replaced */
+            int rcap = cn + 64, rn = 0;
+            Tok *rtok = xmalloc((size_t)rcap * sizeof *rtok);
+            for (int k = 0; k < cn; ) {
+                int hit = -1;
+                for (int q = 0; q < npairs && hit < 0; q++) {
+                    int len = pairs[q].f1 - pairs[q].f0;
+                    if (k + len > cn) continue;
+                    int same = 1;
+                    for (int m = 0; m < len && same; m++) {
+                        const Tok *a = &ctok[k + m], *b = &g_tok[pairs[q].f0 + m];
+                        if (a->kind != b->kind) same = 0;
+                        else if (a->kind == T_STR) same = a->len == b->len && !memcmp(a->s, b->s, (size_t)a->len);
+                        else same = !strcmp(a->s, b->s);
+                    }
+                    if (same) hit = q;
+                }
+                int add = hit < 0 ? 1 : pairs[hit].t1 - pairs[hit].t0;
+                if (rn + add > rcap) { rcap = rn + add + 64; rtok = realloc(rtok, (size_t)rcap * sizeof *rtok); }
+                if (hit < 0) rtok[rn++] = ctok[k++];
+                else {
+                    for (int m = pairs[hit].t0; m < pairs[hit].t1; m++) { rtok[rn] = g_tok[m]; rtok[rn].line = ctok[k].line; rtok[rn].file = ctok[k].file; rn++; }
+                    k += pairs[hit].f1 - pairs[hit].f0;
+                }
+            }
+            free(ctok); ctok = rtok; cn = rn;
+        }
+
         int removed = j - i + 1;
         int newn = g_ntok - removed + cn;
         if (newn > g_tcap) { g_tcap = newn + 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
@@ -468,7 +622,6 @@ static void expand_copies(int depth)
         g_ntok = newn;
         free(ctok);
         i--;                                            /* rescan from the spliced text: nested COPY */
-        depth++;
     }
 }
 
@@ -477,6 +630,12 @@ static void tokenize(void)
     g_tok_file = g_file;
     tokenize_lines(g_lines, g_nlines);
     expand_copies(0);
+    apply_replace();
+    {
+        int w = 0;
+        for (int r = 0; r < g_ntok; r++) if (!g_tok[r].dbg) g_tok[w++] = g_tok[r];
+        g_ntok = w;
+    }
     push_tok(T_EOF, g_nlines ? g_lines[g_nlines - 1].line : 1, "", 0);
 }
 

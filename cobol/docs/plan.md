@@ -653,6 +653,24 @@ verdict into the same slot the other clauses use. free/linage, oracle
 agreeing on counters, verdicts and the page read back; NIST SQ201M,
 SQ208M-SQ210M compile and match GnuCOBOL's tally.
 
+## Stage 26 — COPY REPLACING and REPLACE **S** — DONE 2026-08-31
+
+The Source Text Manipulation module's other half. `==` is a token of
+the tokenizer's own (the picture scanner stops at it; a period before
+it is the separator); `expand_copies` parses the REPLACING pairs --
+pseudo-text, literal, word, or an identifier with its qualifiers and
+subscripts (SM206A's `BY x IN y IN z (1)`) -- and rewrites the
+copybook's token vector; `apply_replace` runs the same match over the
+whole stream once every COPY is in, `REPLACE OFF` or the next
+`REPLACE` ending the reach of the pairs. What the CCVS insisted on:
+a debugging line is text for the matching and a comment afterwards
+(KP008's `D THIS IS GARBAGE.` sits inside the pseudo-text that must
+match), a `COPY` on a debugging line stays a comment (SM101A), and
+the nesting guard counts depth, not expansions (SM101A copies 116
+times). free/copyrep, free/replace; SM 12 of 13 compile and every
+one matches GnuCOBOL's tally; the whole suite 217 of 303 compile,
+4115 of 4152 tests pass, none fail, 214 programs match.
+
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
 step on SLOW-32**: the charts, the journal pipeline, the balances

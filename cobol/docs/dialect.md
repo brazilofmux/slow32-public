@@ -146,7 +146,22 @@ given, because majesty's `.prn` oracles were produced under it.
 - **`COPY`**: text-name as a word or literal; found as given, then
   `.cpy`, `.CPY`, `.cbl`, `.CBL`, beside the source and in the `-I`
   directories; `OF`/`IN library` accepted (the directories serve as the
-  library); `SUPPRESS` accepted; `REPLACING` not yet.
+  library); `SUPPRESS` accepted. **`REPLACING`** (Stage 26): each
+  operand is `==pseudo-text==`, a literal, a word, or an identifier
+  with its `IN`/`OF` qualifiers and subscripts; the copied text is
+  rewritten token by token, leftmost pair first at each position,
+  the replacement taking the copied token's line for diagnostics.
+  Comment lines never take part; a debugging line (`D` in column 7)
+  takes part in the matching as if the `D` were not there, and is
+  dropped afterwards (there is no `WITH DEBUGGING MODE`) -- a `COPY`
+  on a debugging line stays a comment. Nesting is limited to 8 deep;
+  a program may expand any number of copybooks (SM101A has 116).
+- **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
+  machinery over the source that follows the statement, until the
+  next `REPLACE`; runs after every `COPY` has been expanded, so it
+  sees copied text too. `== = ==` is a pseudo-text holding one `=`
+  (`==` is a token of its own; a sign right after it still begins
+  a numeric literal).
 - **`GOBACK`** is accepted (IBM's word, not in X3.23-1985 -- GnuCOBOL
   `-std=cobol85` refuses it; majesty uses it everywhere). In the main
   program it is `STOP RUN`.
@@ -254,7 +269,7 @@ given, because majesty's `.prn` oracles were produced under it.
 
 Nucleus Level 2 at full width (abbreviated conditions,
 `CORRESPONDING`, `UNSTRING`, `INSPECT REPLACING`/`CONVERTING`, nested
-programs, `REPLACE`). `STRING`, `INSPECT TALLYING`, `INITIALIZE` and
+programs; `REPLACE` and `COPY REPLACING` landed in Stage 26). `STRING`, `INSPECT TALLYING`, `INITIALIZE` and
 reference modification are **in v1**, at the width taskdt uses them —
 see [plan.md](plan.md) Stage 9. Indexed alternate keys. Report Writer `CONTROL`/`SUM`/`USE BEFORE REPORTING`. These are
 real 85; they are not on the majesty v1 path. CCVS-85 NC/SQ/IC is the
