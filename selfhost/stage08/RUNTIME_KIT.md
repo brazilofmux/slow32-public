@@ -98,6 +98,17 @@ slow32 prog.s32x
 No known issues in the current kit. Four bugs have been fixed since the
 first kit; if your `cc.s32x` predates the commit named, the bug is live.
 
+Fixed 2026-08-30 (the return-side twin of #6):
+
+- **Silent miscompile: a narrower value returned from a `long long` or
+  `double` function ([#13](https://github.com/brazilofmux/slow-32/issues/13)).**
+  `unsigned q = x / d; return q;` in a function declared `unsigned long
+  long` handed back the low word with the pair's high register untouched
+  (`100.00 / 4` came out as `12 * 2^32 + 2500` hundredths on the
+  self-hosted COBOL leg). Sema now wraps the returned value in the cast
+  to the function's type, as #6 did for arguments; `tests/test_ret_widen.c`
+  pins unsigned, signed, char, a call and an int-to-double return.
+
 Fixed in `a34a578a` and `4b14e491` (2026-08-29) — a `cc.s32x` built
 before 20:30 that evening lacks them:
 

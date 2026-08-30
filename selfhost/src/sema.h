@@ -178,6 +178,15 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_RETURN) {
         sema_expr(n->lhs);
+        /* The value's marshalling class must be the function's: a 32-bit
+         * value returned from a long long function is otherwise handed
+         * back with the pair's high register untouched (GitHub #13, the
+         * return-side twin of #6).  The cast lowering extends it. */
+        if (n->lhs && sema_ret_ty >= 0 &&
+            sema_arg_class(n->lhs->ty) != sema_arg_class(sema_ret_ty) &&
+            sema_arg_class(n->lhs->ty) != 4 && sema_arg_class(sema_ret_ty) != 4) {
+            n->lhs = nd_cast(n->lhs, sema_ret_ty);
+        }
         return;
     }
 

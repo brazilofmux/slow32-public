@@ -70,10 +70,12 @@ s32_cc_obj() {
 s32_cc_builtins() {
     [ "$s32_cc_backend" = selfhost ] || return 0
     _b="$ROOT/cobol/out/builtins64.s32o"
-    if [ ! -f "$_b" ]; then
+    _s="$ROOT/selfhost/stage08/builtins64.s"
+    # rebuilt when the source is newer: an object older than the source
+    # linked a day-old divider on Kagura and nothing noticed (GitHub #14)
+    if [ ! -f "$_b" ] || [ "$_s" -nt "$_b" ]; then
         mkdir -p "$ROOT/cobol/out"
-        "$ROOT/tools/assembler/slow32asm" "$ROOT/selfhost/stage08/builtins64.s" \
-            "$_b" >/dev/null
+        "$ROOT/tools/assembler/slow32asm" "$_s" "$_b" >/dev/null
     fi
     echo "$_b"
 }
