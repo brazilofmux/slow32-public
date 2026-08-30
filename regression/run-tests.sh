@@ -92,6 +92,7 @@ run_test() {
         asm_source="s"
     else
         echo -e "${YELLOW}SKIP${NC} (no test.c or test.s)"
+        SKIPPED=$((SKIPPED + 1))
         return
     fi
     
