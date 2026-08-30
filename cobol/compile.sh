@@ -9,7 +9,6 @@
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
-LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
 fmt="-fixed"; out=""; incs=""
 mains=(); subs=(); cs=(); objs=()
 while [ $# -gt 0 ]; do
@@ -28,7 +27,8 @@ done
 [ ${#mains[@]} -eq 1 ] || { echo "usage: compile.sh [-free|-fixed] main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-o prog.s32x]" >&2; exit 2; }
 main="${mains[0]}"
 [ -n "$out" ] || out="${main%.cbl}.s32x"
-[ -x "$HERE/out/s32-cobc" ] || "$HERE/build.sh" >/dev/null
+[ -x "$HERE/out/s32-cobc" ] && [ -f "$HERE/libcob/libcob.s32o" ] || "$HERE/build.sh" >/dev/null
+. "$HERE/cctool.sh"
 base="${out%.s32x}"
 link=()
 "$HERE/out/s32-cobc" $fmt $incs -o "$base.s" "$main"
@@ -43,12 +43,12 @@ for f in "${subs[@]+"${subs[@]}"}"; do
 done
 for f in "${cs[@]+"${cs[@]}"}"; do
     i=$((i+1))
-    "$LLVM_BIN/clang" -target slow32-unknown-none -S -emit-llvm -O1 -nostdinc -fno-builtin \
-        -I"$ROOT/runtime/include" $incs "$f" -o "$base-$i.ll"
-    "$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$base-$i.ll" -o "$base-$i.s"
-    "$ROOT/tools/assembler/slow32asm" "$base-$i.s" "$base-$i.s32o" >/dev/null
+    s32_cc_obj "$base-$i.s32o" "$f" $incs
     link+=("$base-$i.s32o")
 done
+# __muldi3 when the self-hosted cc compiled any of this; empty otherwise
+builtins=$(s32_cc_builtins)
+if [ -n "$builtins" ]; then link+=("$builtins"); fi
 for f in "${objs[@]+"${objs[@]}"}"; do link+=("$f"); done
 # The MMIO libc: files (fopen and friends) live only there, and the
 # linker's --mmio gives the emulator the ring buffers to serve them.
