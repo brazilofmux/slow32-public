@@ -414,6 +414,18 @@ the sweep caught: an out-of-line `PERFORM para` swallowed the
 enclosing inline PERFORM's `END-PERFORM` (gl042, gl043), and a report
 field with `VALUE` but no `PICTURE` was refused (gl036).
 
+**The journal pipeline end to end, on SLOW-32.** gl024 → gl025 →
+gl026 → gl029 → gl039 → gl030, with `batch.sh`'s host sorts between,
+run in place against majesty's data: every intermediate --
+`transactions-sel.txt`, `transactions-ids.txt`, `lines-sel.txt`,
+`lnaccts.txt`, `txnlnaccts.txt` -- byte-identical to GnuCOBOL's run of
+the same pipeline, then both journals identical, under `slow32-fast`
+and `slow32-dbt`. majesty's `batch.sh` now runs that whole pipeline
+under `run_s32` in its private `tmp/` (majesty commit "batch: the
+whole journal pipeline runs on SLOW-32"; `s32x/build.sh` builds all
+eight binaries); the whole batch exits 0 with all twelve reports
+identical to the all-GnuCOBOL baseline.
+
 ## After v1 (not scheduled, each when a program asks)
 
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
