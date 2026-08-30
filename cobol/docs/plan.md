@@ -576,7 +576,30 @@ conversion of the date family (majesty e69e98b), **55 of 58**
 programs compile; the three left are a `BINARY-INT` rewrite and the
 XML/JSON extension pair.
 
-## The batch, whole — 2026-08-29
+## Stage 22 — CCVS-85 as a histogram, first pass **L** — 2026-08-30
+
+ISSUES-17, and the first work under the "cobol/ does the language"
+ruling. `tests/ccvs-histogram.sh` feeds the NIST modules (NC SQ RL IX
+ST SM IC RW; IF once extracted) to `s32-cobc` and ranks first
+refusals, the same exercise cobc370's `cobc-ccvs` does. The first run
+was **4 of 303**, 285 of them stopped by one reader gap -- column-7
+continuation lines. Four batches later, **202 of 303** compile; what
+landed, each because it topped a bin: continuation lines; numeric
+literals beginning with `.`; `ADVANCING PAGE`; `I-O-CONTROL`;
+`SPECIAL-NAMES` switches, alphabets, device mnemonics; the `SIGN`
+clause with a leading overpunch in the runtime; `DECLARATIVES` with
+`USE AFTER ERROR PROCEDURE` (a dispatch after every I/O statement,
+the runtime choosing the section by file or open mode); optional
+`AT`/`KEY`/`ORGANIZATION IS`/`KEY IS`; `77 ... REDEFINES`; `SIGN` on a
+group; `88 VALUE ALL`; `MERGE`; `CLOSE REEL`; qualified and repeated
+paragraph names; `EVALUATE` with a condition subject; `PERFORM
+x(i) TIMES`; a MOVE of an ODO group (the 85 receiving rule, a
+documented divergence). "Compiles" here means s32-cobc produced
+assembly; running the modules against their own PASS/FAIL output is
+the next gate. Two bugs the suite found in what majesty never touched:
+`GO TO` swallowing a following `NOT`, and a picture split across a
+continuation line.
+
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
 step on SLOW-32**: the charts, the journal pipeline, the balances

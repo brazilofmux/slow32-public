@@ -22,7 +22,8 @@ enum {
     COB_F_SEPTRAIL = 4,   /* SIGN TRAILING SEPARATE */
     COB_F_JUST     = 8,   /* JUSTIFIED RIGHT */
     COB_F_BLANKZ   = 16,  /* BLANK WHEN ZERO */
-    COB_F_NOTRUNC  = 32   /* COMP-5 / C types: full binary capacity, no decimal truncation */
+    COB_F_NOTRUNC  = 32,  /* COMP-5 / C types: full binary capacity, no decimal truncation */
+    COB_F_LEAD     = 64   /* SIGN LEADING (not separate): overpunch on the first digit */
 };
 
 /* a file, as SELECT/FD described it; built by the compiler in .data */
@@ -57,6 +58,9 @@ typedef struct {
     const void *rel_key_desc; /* ... and its descriptor, or 0 (sequential access may omit it) */
     unsigned int rel_pos;     /* relative: the next record number for READ NEXT / sequential WRITE */
     unsigned int rel_last;    /* relative: record number of the last successful READ, 0 = none */
+    int use_para;             /* DECLARATIVES: the USE section for this file (a paragraph id), 0 none */
+    const int *use_modes;     /* the unit's USE sections by open mode, indexed by COB_OPEN_ */
+    unsigned int open_try;    /* the mode the last OPEN asked for (it may have failed) */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

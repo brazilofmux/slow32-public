@@ -18,7 +18,7 @@ every change, and majesty's batch (twelve reports byte-identical) as
 the regression gate before a push. Corpus programs are not rewritten
 from this side; they are majesty's.
 
-State on 2026-08-30: harness 47/47 with the GnuCOBOL oracle agreeing
+State on 2026-08-30 (late): harness 47/47; CCVS-85 202 of 303 compile (ISSUES-17) with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
 report step on SLOW-32 with all twelve reports byte-identical; **every
 program in `~/majesty/src/cobol` compiles, 56 of 56** (2026-08-30 evening). The sweep that
@@ -155,12 +155,13 @@ masking), and fields drawn in reverse video or underline. As built
 (Stage 8) the screen paints and accepts field by field. `UNDERLINE`
 also needs the term service to grow an attribute (`open-questions.md`).
 
-### 14. OCCURS DEPENDING ON is laid out at its maximum
-Documented in `dialect.md`; a whole-group MOVE of an ODO group is
-refused (`bad/odo-group-move`) rather than moved wrongly. The
-standard's variable-length semantics (group size follows the
-depending item) would matter for a group WRITE of an ODO record;
-mode V WRITE already honours `dep_item` for the record length.
+### 14. ~~OCCURS DEPENDING ON is laid out at its maximum~~ — a group MOVE lands 2026-08-30
+Still laid out at the maximum, which is the 1985 receiving length
+when the DEPENDING ON item is outside the group. A MOVE *of* such a
+group now sends its current length (`cob_move_odo`, the table being
+the group's last direct child; a deeper table is still refused, 4
+CCVS programs). free/odomove; GnuCOBOL's receiving length is the
+current one -- documented divergence (oracles.md).
 
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
@@ -211,11 +212,21 @@ into `pic 9(9)v99+` and moved it to a packed item: GnuCOBOL made
 says the sending item's content must be a valid edited value. Left
 open only so the difference is on record; not worth matching.
 
-### 17. CCVS-85 as a histogram
-The NIST suite (NC, SQ, IC modules) has never been run through
-`s32-cobc`. First use is a *histogram of first refusals*, like the
-majesty sweep — not a pass/fail gate, which would need the
-implementor-defined parts (`X-cards`) settled first.
+### 17. CCVS-85 as a histogram — RUNNING since 2026-08-30 (Stage 22)
+`tests/ccvs-histogram.sh` over the extracted modules in
+`~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
+4 → 202 of 303 in one day. The remaining bins, largest first, each a
+work item: `ALTERNATE RECORD KEY` (12; ISSUES-12), `LINAGE` (5), `COPY
+... REPLACING` (5), an ODO table nested below a direct child (4),
+`INSPECT ... BEFORE/AFTER INITIAL` (4), `CALL identifier` (4; needs a
+program registry), nested programs (3), alphanumeric-edited pictures
+with A/9 mixed (3) and `;` in a picture (3), `USAGE INDEX` on a
+group (2), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
+more than three `VARYING ... AFTER` levels (2), clauses on an 01
+report group (2), `EXTERNAL` (2), a multi-character `CLASS` literal
+(2), `CURRENCY SIGN` (1). Then the real gate: run each compiled
+program and read its own PASS/FAIL lines (the IF module wants
+`make IF` there first).
 
 ### 18. Building on a host without LLVM
 `cctool.sh` (b96c4aff, Kagura) falls back to the self-hosted stage08

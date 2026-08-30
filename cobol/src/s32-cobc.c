@@ -66,6 +66,36 @@ typedef struct { char name[64]; unsigned char tab[256]; } UClass;
 static UClass g_class[16];
 static int g_nclass;
 
+/* SPECIAL-NAMES SWITCH-n [IS mnemonic] [ON [STATUS] [IS] cond] [OFF ...]:
+ * eight implementor switches, all off unless SET; a condition-name tests
+ * one, a mnemonic names one for SET */
+typedef struct { char name[64]; int sw, on; } SwitchName;   /* on: 1 ON cond, 0 OFF cond, -1 mnemonic */
+static SwitchName g_switch[32];
+static int g_nswitch;
+static SwitchName *switch_find(const char *name)
+{
+    for (int i = 0; i < g_nswitch; i++) if (!strcmp(g_switch[i].name, name)) return &g_switch[i];
+    return NULL;
+}
+
+/* SPECIAL-NAMES ALPHABET name IS STANDARD-1|NATIVE|...: only the native
+ * (ASCII) sequence exists here; another alphabet is recorded and refused
+ * where it would be used */
+typedef struct { char name[64]; int native; } Alphabet;
+static Alphabet g_alphabet[16];
+static int g_nalphabet;
+
+/* SPECIAL-NAMES SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic-name:
+ * kind 1 the console for ACCEPT, 2 the console for DISPLAY, 3 a page */
+typedef struct { char name[64]; int kind; } Mnemonic;
+static Mnemonic g_mnemonic[16];
+static int g_nmnemonic;
+static int mnemonic_kind(const char *name)
+{
+    for (int i = 0; i < g_nmnemonic; i++) if (!strcmp(g_mnemonic[i].name, name)) return g_mnemonic[i].kind;
+    return 0;
+}
+
 static void die_at(int line, const char *fmt, ...)
 {
     va_list ap;
@@ -134,8 +164,36 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                 char ind = p[6];
                 if (ind == '*' || ind == '/') text = NULL;         /* comment */
                 else if (ind == 'D' || ind == 'd') text = NULL;    /* debugging line */
-                else if (ind == '-')
-                    die_at(lineno, "continuation lines are not implemented yet");
+                else if (ind == '-') {
+                    /* continuation: the previous text line goes on here.  If
+                     * it stopped inside a non-numeric literal, this line's
+                     * first non-blank must be that literal's quote and the
+                     * text after the quote joins directly (the previous line
+                     * kept its trailing spaces up to column 72); otherwise
+                     * the first non-blank joins with no space between. */
+                    if (n == 0) die_at(lineno, "a continuation line with nothing to continue");
+                    char *prev = lines[n - 1].text;
+                    char open = 0;                      /* quote of an unclosed literal */
+                    for (char *q = prev; *q; q++) {
+                        if (open) { if (*q == open) open = 0; }
+                        else if (*q == '"' || *q == '\'') open = *q;
+                    }
+                    int cn = len - 7; if (cn > 65) cn = 65; if (cn < 0) cn = 0;
+                    const char *c = p + 7, *ce = p + 7 + cn;
+                    while (c < ce && (*c == ' ' || *c == '\t')) c++;
+                    if (open) {
+                        if (c >= ce || *c != open)
+                            die_at(lineno, "a continuation of a literal must begin with its quote (%c)", open);
+                        c++;
+                    }
+                    size_t pl = strlen(prev), cl = (size_t)(ce - c);
+                    if (!open) while (pl > 0 && (prev[pl - 1] == ' ' || prev[pl - 1] == '\t')) pl--;
+                    char *joined = xmalloc(pl + cl + 1);
+                    memcpy(joined, prev, pl); memcpy(joined + pl, c, cl); joined[pl + cl] = 0;
+                    free(prev);
+                    lines[n - 1].text = joined;
+                    text = NULL;
+                }
                 else if (ind != ' ')
                     die_at(lineno, "unrecognised indicator '%c' in column 7 "
                            "(free-format source? compile it with -free)", ind);
@@ -273,9 +331,11 @@ static void tokenize_lines(SrcLine *lines, int nlines)
             /* Numeric literal: [+-]digits[.digits], sign only when it stands
              * at a word boundary.  A run of digits followed by more word
              * characters (0100-main, 9000-end) is a user-word. */
-            int signed_num = (c == '+' || c == '-') && isdigit((unsigned char)p[1]) &&
+            int signed_num = (c == '+' || c == '-') && (isdigit((unsigned char)p[1]) || (p[1] == '.' && isdigit((unsigned char)p[2]))) &&
                              (p == t || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '(');
-            if (isdigit(c) || signed_num) {
+            int dot_num = c == '.' && isdigit((unsigned char)p[1]) &&
+                          (p == t || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '(');
+            if (isdigit(c) || signed_num || dot_num) {
                 const char *s = p + (signed_num ? 1 : 0), *e = s;
                 while (isdigit((unsigned char)*e)) e++;
                 if (*e == '.' && isdigit((unsigned char)e[1])) { e++; while (isdigit((unsigned char)*e)) e++; }
@@ -574,11 +634,13 @@ typedef struct Sym {
     int  idx1;                      /* the table's first INDEXED BY item, or -1 */
     int  redefines;                 /* sym index, -1 */
     int  sync, just, blank_zero;
+    int  sign_lead, sign_sep;        /* SIGN IS LEADING/TRAILING [SEPARATE] */
     int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];
     /* VALUE (elementary or group) */
     Tok *value_tok; int value_all, value_fig;
     /* level 88 */
     int  ncv; Tok *cv_lo[MAXCV], *cv_hi[MAXCV];
+    unsigned cv_all;                 /* bit i: value i is ALL literal */
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     /* records */
@@ -644,8 +706,10 @@ typedef struct {
     Tok *assign_lit;                 /* ASSIGN TO literal ... */
     char assign_name[64];            /* ... or to a data-name */
     char status_name[64], key_name[64], report_name[64];
+    char status_qual[64];            /* FILE STATUS name OF group */
     char relkey_name[64];            /* RELATIVE KEY IS data-name */
     Sym *assign_sym, *status_sym, *key_sym, *relkey_sym;
+    int  use_para;                   /* DECLARATIVES: the USE section for this file, 0 none */
     int  rec;                        /* sym index of the first 01, -1 */
     int  recsize;
     int  org_given;                  /* an ORGANIZATION clause was written */
@@ -785,6 +849,10 @@ static void sym_finish(Sym *s)
     switch (u) {
     case U_DISPLAY:
         s->size = pi->bytes;
+        if (!s->sign_lead && !s->sign_sep && pi->category == PIC_NUMERIC && pi->is_signed)
+            for (int a = s->parent; a >= 0; a = g_sym[a].parent)          /* a group's SIGN clause reaches down */
+                if (g_sym[a].sign_lead || g_sym[a].sign_sep) { s->sign_lead = g_sym[a].sign_lead; s->sign_sep = g_sym[a].sign_sep; break; }
+        if (s->sign_sep) s->size++;                 /* SIGN SEPARATE: its own character */
         break;
     case U_BINARY: case U_COMP5:
         if (pi->category != PIC_NUMERIC)
@@ -889,10 +957,13 @@ static void parse_data_item(void)
             die_at(line, "level 88 '%s' needs a VALUE clause", s->name);
         accept_word("is"); accept_word("are");
         for (;;) {
+            int is_all = accept_word("all");
             Tok *v = cur();
             if (!(v->kind == T_STR || v->kind == T_NUM || (v->kind == T_WORD && is_figurative(v->s))))
                 die_at(v->line, "expected a literal in the VALUE of '%s'", s->name);
             if (s->ncv >= MAXCV) die_at(v->line, "too many values for '%s'", s->name);
+            if (is_all && v->kind != T_STR) die_at(v->line, "ALL needs a non-numeric literal");
+            if (is_all) s->cv_all |= 1u << s->ncv;
             s->cv_lo[s->ncv] = v; s->cv_hi[s->ncv] = NULL;
             advance();
             if (accept_word("thru") || accept_word("through")) {
@@ -913,6 +984,7 @@ static void parse_data_item(void)
     while (cur()->kind != T_PERIOD) {
         Tok *t = cur();
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
+        if (!strcmp(t->s, "is")) { advance(); continue; }        /* 01 X IS GLOBAL: a noise word */
 
         if (!strcmp(t->s, "pic") || !strcmp(t->s, "picture")) {
             advance();
@@ -1037,16 +1109,26 @@ static void parse_data_item(void)
                 die_at(t->line, "expected ZERO after BLANK WHEN");
             s->blank_zero = 1; continue;
         }
-        if (!strcmp(t->s, "sign"))
-            die_at(t->line, "the SIGN clause is not implemented yet");
-        if (!strcmp(t->s, "global") || !strcmp(t->s, "external"))
-            die_at(t->line, "the %s clause is not implemented yet (stage 6)", t->s);
+        if (!strcmp(t->s, "sign") || !strcmp(t->s, "leading") || !strcmp(t->s, "trailing")) {
+            /* [SIGN IS] LEADING|TRAILING [SEPARATE [CHARACTER]] */
+            if (accept_word("sign")) accept_word("is");
+            if (accept_word("leading")) s->sign_lead = 1;
+            else if (accept_word("trailing")) s->sign_lead = 0;
+            else die_at(t->line, "SIGN needs LEADING or TRAILING");
+            if (accept_word("separate")) { s->sign_sep = 1; accept_word("character"); }
+            continue;
+        }
+        if (!strcmp(t->s, "global")) { advance(); continue; }      /* one program per unit: nothing to share */
+        if (!strcmp(t->s, "external"))
+            die_at(t->line, "EXTERNAL items (shared between separately compiled programs) are not implemented");
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
     }
     expect_period();
 
-    if (level == 77 && (s->occurs || s->redefines >= 0))
-        die_at(line, "a level 77 item cannot have OCCURS or REDEFINES");
+    if (level == 77 && s->occurs)
+        die_at(line, "a level 77 item cannot have OCCURS");
+    if ((s->sign_lead || s->sign_sep) && s->has_pic && (s->usage != U_DISPLAY || s->pi.category != PIC_NUMERIC || !s->pi.is_signed))
+        die_at(line, "SIGN applies to a signed numeric DISPLAY item; '%s' is not one", s->name);
     if (level == 1 && s->occurs)
         die_at(line, "OCCURS is not allowed at level 01");
     if (g_cur_fd >= 0 && level == 1) {
@@ -1294,7 +1376,8 @@ static void finish_data_division(void)
                 die_at(f->line, "ASSIGN TO '%s': the data-name must be alphanumeric", f->assign_name);
         }
         if (f->status_name[0]) {
-            f->status_sym = sym_lookup(f->status_name, NULL, 0, f->line);
+            char *sq[1] = { f->status_qual };
+            f->status_sym = sym_lookup(f->status_name, sq, f->status_qual[0] ? 1 : 0, f->line);
             if (g_sym[f->status_sym->record].is_linkage) die_at(f->line, "FILE STATUS '%s' cannot be a LINKAGE item", f->status_name);
             if (f->status_sym->size != 2) die_at(f->line, "FILE STATUS '%s' must be PIC XX", f->status_name);
         }
@@ -1525,6 +1608,8 @@ static int sym_desc(Sym *s)
         if (s->usage == U_COMP5 || usage_is_native(s->usage)) d.flags |= COB_F_NOTRUNC;
         if (s->just) d.flags |= COB_F_JUST;
         if (s->blank_zero) d.flags |= COB_F_BLANKZ;
+        if (s->sign_sep) d.flags |= s->sign_lead ? COB_F_SEPLEAD : COB_F_SEPTRAIL;
+        else if (s->sign_lead) d.flags |= COB_F_LEAD;
         if (s->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", s->pi.pat);
     }
     d.size = s->size;
@@ -2161,7 +2246,7 @@ static void emit_trunc(Sym *s)
 /* Conditions                                                              */
 /* ====================================================================== */
 
-enum { C_AND, C_OR, C_NOT, C_REL, C_CLASS };
+enum { C_AND, C_OR, C_NOT, C_REL, C_CLASS, C_SWITCH };
 enum { R_EQ, R_LT, R_GT, R_LE, R_GE, R_NE };
 
 typedef struct Cond {
@@ -2219,6 +2304,7 @@ static Cond *cond_88(Ref *r, int neg)
     Cond *all = NULL;
     for (int i = 0; i < c->ncv; i++) {
         Opnd lo = lit_opnd(c->cv_lo[i]);
+        if (c->cv_all & (1u << i)) lo.kind = O_ALL;
         Cond *one;
         if (c->cv_hi[i]) {
             Opnd hi = lit_opnd(c->cv_hi[i]);
@@ -2233,6 +2319,14 @@ static Cond *cond_88(Ref *r, int neg)
 static Cond *parse_simple(void)
 {
     int line = cur()->line;
+    if (cur()->kind == T_WORD) {
+        SwitchName *m = switch_find(cur()->s);
+        if (m && m->on >= 0) {      /* a switch-status condition-name */
+            advance();
+            Cond *c = cond_new(C_SWITCH); c->klass = m->sw; c->neg = !m->on;
+            return c;
+        }
+    }
     Opnd x = parse_cond_operand();
     accept_word("is");
     int neg = 0;
@@ -2333,6 +2427,12 @@ static Cond *parse_cond(void)
 /* r1 = 0/1 for a simple condition */
 static void emit_cond_value(Cond *c)
 {
+    if (c->kind == C_SWITCH) {
+        emit_la("r3", "cob_switches");
+        emit("\tldw r1, r3+%d", 4 * (c->klass - 1));
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
     if (c->kind == C_CLASS) {
         Arg a[3]; Arg d;
         opnd_args(&c->x, &a[0], &d, 0, 0); a[1] = d;
@@ -2453,7 +2553,8 @@ static int at_scope_end(void)
     if (t->kind != T_WORD) return 0;
     if (!strcmp(t->s, "not") && (is_word(peek(1), "on") || is_word(peek(1), "size") ||
                                  is_word(peek(1), "at") || is_word(peek(1), "invalid") ||
-                                 is_word(peek(1), "overflow"))) return 1;
+                                 is_word(peek(1), "end") || is_word(peek(1), "overflow") ||
+                                 is_word(peek(1), "exception"))) return 1;
     return is_terminator(t->s);
 }
 
@@ -2484,22 +2585,41 @@ static int g_sentence_label = -1;   /* NEXT SENTENCE target, made on demand */
 
 /* ---- paragraphs ------------------------------------------------------- */
 
-typedef struct { char name[64]; int id, is_section, line; } Para;
+typedef struct { char name[64]; int id, is_section, line, section; } Para;   /* section: id of the enclosing section, 0 none */
 static Para *g_para; static int g_npara, g_pcap;
+
+static int g_cur_sec_id;            /* the section being parsed (or prescanned), -1 outside one */
+
+/* a paragraph name may be repeated in different sections; an unqualified
+ * reference means the one in the current section, else the only one */
+static Para *para_find_in(const char *name, int section)
+{
+    for (int i = 0; i < g_npara; i++)
+        if (!strcmp(g_para[i].name, name) && (g_para[i].is_section || g_para[i].section == section)) return &g_para[i];
+    return NULL;
+}
 
 static Para *para_find(const char *name)
 {
-    for (int i = 0; i < g_npara; i++) if (!strcmp(g_para[i].name, name)) return &g_para[i];
-    return NULL;
+    Para *found = NULL;
+    for (int i = 0; i < g_npara; i++) {
+        if (strcmp(g_para[i].name, name)) continue;
+        if (g_para[i].is_section || g_para[i].section == g_cur_sec_id) return &g_para[i];
+        if (!found) found = &g_para[i];
+    }
+    return found;
 }
 
 static Para *para_add(const char *name, int is_section, int line)
 {
-    if (para_find(name)) die_at(line, "the procedure-name '%s' is declared twice (qualified paragraph names are not implemented yet)", name);
+    if (is_section) { for (int i = 0; i < g_npara; i++) if (!strcmp(g_para[i].name, name)) die_at(line, "the procedure-name '%s' is declared twice", name); }
+    else if (para_find_in(name, g_cur_sec_id)) die_at(line, "the paragraph '%s' is declared twice in the same section", name);
     if (g_npara == g_pcap) { g_pcap = g_pcap ? g_pcap * 2 : 64; g_para = realloc(g_para, g_pcap * sizeof *g_para); }
     Para *p = &g_para[g_npara];
     snprintf(p->name, sizeof p->name, "%s", name);
     p->id = g_npara + 1; p->is_section = is_section; p->line = line;
+    p->section = is_section ? 0 : (g_cur_sec_id >= 0 ? g_cur_sec_id : 0);
+    if (is_section) g_cur_sec_id = p->id;
     g_npara++;
     return p;
 }
@@ -2510,25 +2630,40 @@ static void emit_para_label(Para *p) { emit(".Lp%d_%d:\t# %s%s", g_unit, p->id, 
 static void prescan_paragraphs(int from)
 {
     int sentence_start = 1;
+    g_cur_sec_id = -1;
     for (int i = from; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
         if (t->kind == T_EOF) break;
         if (sentence_start && t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s)) {
-            if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, 0, t->line); }
+            if (!strcmp(t->s, "declaratives")) { }
+            else if (!strcmp(t->s, "end") && (is_word(&g_tok[i + 1], "declaratives") || is_word(&g_tok[i + 1], "program"))) { if (is_word(&g_tok[i + 1], "program")) break; }
+            else if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, 0, t->line); }
             else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, 1, t->line);
-            else if (!strcmp(t->s, "declaratives")) die_at(t->line, "DECLARATIVES are not implemented yet");
-            else if (!strcmp(t->s, "end") && is_word(&g_tok[i + 1], "program")) break;
         }
         sentence_start = (t->kind == T_PERIOD);
     }
+    g_cur_sec_id = -1;
 }
 
+/* procedure-name [OF|IN section-name] */
 static Para *expect_para(void)
 {
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a procedure-name, found %s", tok_desc(t));
-    Para *p = para_find(t->s);
-    if (!p) die_at(t->line, "'%s' is not a paragraph or section", t->s);
+    Para *p;
+    if (is_word(peek(1), "of") || is_word(peek(1), "in")) {
+        Tok *q = peek(2);
+        if (q->kind != T_WORD) die_at(t->line, "expected a section-name after OF/IN");
+        Para *sec = NULL;
+        for (int i = 0; i < g_npara; i++) if (g_para[i].is_section && !strcmp(g_para[i].name, q->s)) sec = &g_para[i];
+        if (!sec) die_at(q->line, "'%s' is not a section", q->s);
+        p = para_find_in(t->s, sec->id);
+        if (!p || p->is_section) die_at(t->line, "'%s' is not a paragraph of section '%s'", t->s, q->s);
+        advance(); advance();
+    } else {
+        p = para_find(t->s);
+        if (!p) die_at(t->line, "'%s' is not a paragraph or section", t->s);
+    }
     advance();
     return p;
 }
@@ -2564,6 +2699,14 @@ static void parse_accept(void)
         }
         if (at_word("date") || at_word("day") || at_word("time") || at_word("day-of-week"))
             die_at(cur()->line, "ACCEPT FROM %s is not implemented yet; FUNCTION CURRENT-DATE is stage 9", cur()->s);
+        if (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 1) {
+            advance();
+            Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            emit_args(a, 2);
+            emit_call("cob_accept_console");
+            accept_word("end-accept");
+            return;
+        }
         die_at(cur()->line, "ACCEPT FROM %s is not implemented", tok_desc(cur()));
     }
     /* ACCEPT identifier: a line from standard input */
@@ -2603,6 +2746,7 @@ static void parse_display(void)
         if (t->kind == T_WORD && !strcmp(t->s, "upon")) {
             advance();
             if (accept_word("sysout") || accept_word("console") || accept_word("syserr") || accept_word("stderr")) continue;
+            if (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 2) { advance(); continue; }
             die_at(t->line, "DISPLAY UPON %s is not implemented (ARGUMENT-NUMBER takes one operand)", cur()->s);
         }
         if (t->kind == T_WORD && (!strcmp(t->s, "with") || !strcmp(t->s, "no"))) {
@@ -2660,10 +2804,23 @@ static int has_odo(Sym *s)
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
-    if (d->is_group && has_odo(d))
-        die_at(dst->line, "MOVE to the group '%s', which holds an OCCURS DEPENDING ON table, is not implemented (its length varies); its entries can be moved by subscript", d->name);
-    if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym))
-        die_at(src->line, "MOVE of the group '%s', which holds an OCCURS DEPENDING ON table, is not implemented (its length varies); its entries can be moved by subscript", src->ref.sym->name);
+    /* a receiving group holding an OCCURS DEPENDING ON table has its
+     * maximum length (the 1985 rule), which is how it is laid out */
+    if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym)) {
+        /* a sending group's length is its current one: the fixed part plus
+         * DEPENDING ON occurrences of the table, which must be its last
+         * (direct) child; deeper tables are still refused */
+        Sym *g = src->ref.sym, *tbl = NULL;
+        for (int c = g->child; c >= 0; c = g_sym[c].sibling) if (g_sym[c].odo_dep[0]) tbl = &g_sym[c];
+        if (!tbl || !tbl->odo_dep_sym)
+            die_at(src->line, "MOVE of the group '%s': its OCCURS DEPENDING ON table is nested too deep (only a direct child is implemented)", g->name);
+        Opnd dep; memset(&dep, 0, sizeof dep); dep.kind = O_REF; dep.ref.sym = tbl->odo_dep_sym; dep.ref.line = src->line;
+        Arg a[6] = { arg_ref(&src->ref), arg_ref(dst), arg_value(&dep), arg_imm(d->size),
+                     arg_imm(tbl->offset - g->offset), arg_imm(tbl->size) };
+        emit_args(a, 6);
+        emit_call("cob_move_odo");
+        return;
+    }
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
     if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) {
         int ned = d->pi.category == PIC_NUMERIC_EDITED;
@@ -3277,6 +3434,81 @@ static void parse_if(void)
     accept_word("end-if");
 }
 
+/* ---- DECLARATIVES: USE AFTER ERROR PROCEDURE --------------------------- */
+
+static File *expect_file(void);
+static void emit_file_addr(const char *reg, File *f);
+static File *g_io_file;             /* the file the statement being parsed acts on, for the USE dispatch */
+
+/* the unit's declarative sections: which one applies to a file is its
+ * use_para; which one applies to an open mode is g_use_mode[mode]; both
+ * reach the runtime through the cob_file image (.Luse<unit>) */
+static int g_use_mode[5];           /* by COB_OPEN_ mode; 0 none */
+static int g_use_secs[32], g_nuse_secs;
+static int g_in_decl;
+
+/* USE [GLOBAL] AFTER [STANDARD] {ERROR|EXCEPTION} PROCEDURE [ON] {file... | INPUT | OUTPUT | I-O | EXTEND} */
+static void parse_use(void)
+{
+    int line = cur()->line;
+    if (!g_in_decl) die_at(line, "USE belongs in a DECLARATIVES section");
+    if (g_cur_sec_id < 0) die_at(line, "USE must be the first sentence of a section in DECLARATIVES");
+    accept_word("global");
+    expect_word("after"); accept_word("standard");
+    if (!accept_word("error") && !accept_word("exception")) die_at(line, "USE AFTER ... : expected ERROR or EXCEPTION PROCEDURE (the other USE forms are not implemented)");
+    expect_word("procedure"); accept_word("on");
+    int sec = g_cur_sec_id, any = 0;
+    if (g_nuse_secs < 32) { int dup = 0; for (int i = 0; i < g_nuse_secs; i++) if (g_use_secs[i] == sec) dup = 1; if (!dup) g_use_secs[g_nuse_secs++] = sec; }
+    for (;;) {
+        int mode = 0;
+        if (accept_word("input")) mode = COB_OPEN_INPUT;
+        else if (accept_word("output")) mode = COB_OPEN_OUTPUT;
+        else if (accept_word("i-o")) mode = COB_OPEN_IO;
+        else if (accept_word("extend")) mode = COB_OPEN_EXTEND;
+        if (mode) {
+            if (g_use_mode[mode]) die_at(line, "two USE procedures for the same open mode");
+            g_use_mode[mode] = sec; any = 1; continue;
+        }
+        if (cur()->kind == T_WORD && file_find(cur()->s)) {
+            File *f = expect_file();
+            if (f->use_para) die_at(line, "two USE procedures for file '%s'", f->name);
+            f->use_para = sec; any = 1; continue;
+        }
+        break;
+    }
+    if (!any) die_at(line, "USE AFTER ERROR PROCEDURE needs a file-name or INPUT/OUTPUT/I-O/EXTEND");
+}
+
+/* after an I/O statement, with its result in SLOT_C: if the condition is
+ * not handled by the statement's own clause and a USE procedure applies,
+ * perform that section (the runtime picks it: the file's, else the open
+ * mode's), then continue with the next statement */
+static void emit_use_dispatch(File *f, int has_clause)
+{
+    if (!g_nuse_secs) return;
+    int Ldone = new_label();
+    emit("\tldw r1, sp+%d", SLOT_C);
+    emit("\tbeq r1, r0, .L%d", Ldone);
+    if (has_clause) { emit_li("r2", 1); emit("\tbeq r1, r2, .L%d", Ldone); }
+    emit_file_addr("r3", f);
+    emit_call("cob_use_select");
+    emit("\tbeq r1, r0, .L%d", Ldone);
+    for (int i = 0; i < g_nuse_secs; i++) {
+        int id = g_use_secs[i], Lnext = new_label(), Lret = new_label();
+        char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
+        emit_li("r2", id);
+        emit("\tbne r1, r2, .L%d", Lnext);
+        emit_li("r3", id);
+        emit_la("r4", lab);
+        emit_call("cob_perform_push");
+        emit("\tjal r0, .Lp%d_%d", g_unit, id);
+        emit_label(Lret);
+        emit_jump(Ldone);
+        emit_label(Lnext);
+    }
+    emit_label(Ldone);
+}
+
 /* ---- PERFORM ---------------------------------------------------------- */
 
 static int g_ncnt;      /* TIMES counters */
@@ -3296,11 +3528,14 @@ static void parse_condition_clauses(const char *w1, const char *w2, const char *
  *   {GIVING file... | OUTPUT PROCEDURE IS para [THRU para]}
  * The records live in memory for the statement's duration; the sort is
  * stable whether or not DUPLICATES IN ORDER is written. */
+static int g_is_merge;    /* parse_sort is parsing MERGE: USING of two or more files, no INPUT PROCEDURE */
+
 static void parse_sort(void)
 {
     int line = cur()->line;
+    const char *verb = g_is_merge ? "MERGE" : "SORT";
     File *sd = expect_file();
-    if (sd->org != COB_ORG_SORT) die_at(line, "SORT '%s': the file must be described by an SD (a table SORT is COBOL 2002; sort the table in a paragraph)", sd->name);
+    if (sd->org != COB_ORG_SORT) die_at(line, "%s '%s': the file must be described by an SD (a table SORT is COBOL 2002; sort the table in a paragraph)", verb, sd->name);
     if (sd->rec < 0) die_at(line, "SD %s has no record description", sd->name);
     if (g_nsorttab == g_sorttabcap) { g_sorttabcap = g_sorttabcap ? g_sorttabcap * 2 : 4; g_sorttab = realloc(g_sorttab, g_sorttabcap * sizeof *g_sorttab); }
     SortTab *t = &g_sorttab[g_nsorttab++];
@@ -3335,11 +3570,13 @@ static void parse_sort(void)
         int n = 0;
         while (cur()->kind == T_WORD && !at_word("giving") && !at_word("output")) {
             File *in = expect_file();
-            if (in->org == COB_ORG_SORT) die_at(line, "SORT USING names a sort file");
+            if (in->org == COB_ORG_SORT) die_at(line, "%s USING names a sort file", verb);
             emit_file_addr("r3", sd); emit_file_addr("r4", in); emit_call("cob_sort_using"); n++;
         }
         if (!n) die_at(cur()->line, "expected a file-name after USING");
-    } else if (accept_word("input")) {
+        if (g_is_merge && n < 2) die_at(line, "MERGE USING needs at least two files");
+    } else if (g_is_merge) die_at(cur()->line, "MERGE needs USING");
+    else if (accept_word("input")) {
         expect_word("procedure"); accept_word("is");
         Body b; memset(&b, 0, sizeof b);
         b.from = expect_para();
@@ -3387,6 +3624,7 @@ static void parse_return(void)
     emit_file_addr("r3", f);
     emit_call("cob_return");
     emit("\tstw sp+%d, r1", SLOT_C);
+    g_io_file = NULL;                   /* an SD has no USE procedure */
     if (has_into) {
         int Lskip = new_label();
         emit("\tbne r1, r0, .L%d", Lskip);
@@ -3440,6 +3678,22 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
     emit_label(Lend);
 }
 
+/* is the operand at the cursor followed by TIMES?  (a data-name may carry
+ * OF/IN qualifiers and a subscript) */
+static int times_follows(void)
+{
+    int j = g_tp;
+    if (g_tok[j].kind == T_NUM) return is_word(&g_tok[j + 1], "times");
+    if (g_tok[j].kind != T_WORD) return 0;
+    j++;
+    while (is_word(&g_tok[j], "of") || is_word(&g_tok[j], "in")) j += 2;
+    if (g_tok[j].kind == T_LP) {
+        int depth = 0;
+        do { if (g_tok[j].kind == T_LP) depth++; else if (g_tok[j].kind == T_RP) depth--; else if (g_tok[j].kind == T_EOF) return 0; j++; } while (depth > 0);
+    }
+    return is_word(&g_tok[j], "times");
+}
+
 static void parse_perform(void)
 {
     int line = cur()->line;
@@ -3475,7 +3729,7 @@ static void parse_perform(void)
         }
         if (test_after && nv > 1) die_at(line, "WITH TEST AFTER together with AFTER is not implemented yet");
         emit_varying(v, nv, 0, &body, test_after);
-    } else if (at_operand() && (peek(1)->kind == T_WORD && (!strcmp(peek(1)->s, "times")))) {
+    } else if (at_operand() && times_follows()) {
         Opnd n; parse_operand(&n); check_numeric_opnd(&n);
         expect_word("times");
         char cnt[32]; snprintf(cnt, sizeof cnt, ".Lcnt%d", g_ncnt++);
@@ -3513,7 +3767,7 @@ static void parse_goto(void)
 {
     accept_word("to");
     Para *ps[64]; int n = 0;
-    while (cur()->kind == T_WORD && !at_word("depending") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
+    while (cur()->kind == T_WORD && !at_word("depending") && !is_verb(cur()->s) && !is_terminator(cur()->s) && para_find(cur()->s)) {
         if (n >= 64) die_at(cur()->line, "too many GO TO targets");
         ps[n++] = expect_para();
     }
@@ -3537,6 +3791,21 @@ static void parse_goto(void)
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
+    if (cur()->kind == T_WORD && switch_find(cur()->s) && switch_find(cur()->s)->on < 0) {
+        /* SET mnemonic-name ... TO ON | OFF */
+        int sws[8], ns = 0;
+        while (cur()->kind == T_WORD && switch_find(cur()->s) && switch_find(cur()->s)->on < 0) {
+            if (ns < 8) sws[ns++] = switch_find(cur()->s)->sw;
+            advance();
+        }
+        expect_word("to");
+        int v = 0;
+        if (accept_word("on")) v = 1; else if (accept_word("off")) v = 0;
+        else die_at(cur()->line, "SET switch: expected ON or OFF");
+        emit_la("r3", "cob_switches"); emit_li("r1", v);
+        for (int i = 0; i < ns; i++) emit("\tstw r3+%d, r1", 4 * (sws[i] - 1));
+        return;
+    }
     while (at_operand()) { if (nr >= MAXOPS) die_at(cur()->line, "too many items in SET"); parse_ref(&rs[nr++]); }
     if (!nr) die_at(cur()->line, "SET needs an item");
     if (accept_word("to")) {
@@ -3545,6 +3814,7 @@ static void parse_set(void)
                 Sym *c = rs[i].sym;
                 if (!c->is_cond) die_at(rs[i].line, "'%s' is not a condition-name", c->name);
                 Opnd v = lit_opnd(c->cv_lo[0]);
+                if (c->cv_all & 1u) v.kind = O_ALL;
                 Ref p = rs[i]; p.sym = &g_sym[c->parent];
                 emit_move(&v, &p);
             }
@@ -3608,6 +3878,7 @@ static void parse_open(void)
             if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
             if (accept_word("reversed")) die_at(cur()->line, "OPEN REVERSED is not supported");
             emit_file_addr("r3", f); emit_li("r4", mode); emit_call("cob_open");
+            emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0);
             n++;
         }
     }
@@ -3620,8 +3891,14 @@ static void parse_close(void)
     while (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
         File *f = expect_file();
         if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
-        else if (accept_word("reel") || accept_word("unit")) die_at(cur()->line, "CLOSE REEL/UNIT is not supported");
+        else if (accept_word("reel") || accept_word("unit")) {
+            /* closes a reel, not the file; a disk file has one reel, so nothing happens */
+            if (accept_word("for")) accept_word("removal");
+            if (accept_word("with")) { accept_word("no"); accept_word("rewind"); }
+            n++; continue;
+        }
         emit_file_addr("r3", f); emit_call("cob_close");
+        emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0);
         n++;
     }
     if (!n) die_at(cur()->line, "CLOSE needs a file-name");
@@ -3629,11 +3906,16 @@ static void parse_close(void)
 
 /* [NOT] INVALID KEY / [NOT] AT END after a keyed verb, on the result in
  * SLOT_C: 0 done, 1 the condition, 2 an error already reported */
+static void emit_use_dispatch(File *f, int has_clause);
+
 static void parse_condition_clauses(const char *w1, const char *w2, const char *end_word)
 {
     int Lend = new_label();
-    if (at_word(w1)) {
-        advance(); expect_word(w2);
+    int has_clause = at_word(w1) || at_word(w2);
+    if (g_io_file) emit_use_dispatch(g_io_file, has_clause);
+    if (at_word(w1) || at_word(w2)) {
+        /* AT END / INVALID KEY: AT and KEY may be omitted */
+        if (accept_word(w1)) accept_word(w2); else advance();
         int Lnot = new_label();
         emit("\tldw r1, sp+%d", SLOT_C);
         emit_li("r2", 1);
@@ -3642,8 +3924,9 @@ static void parse_condition_clauses(const char *w1, const char *w2, const char *
         emit_jump(Lend);
         emit_label(Lnot);
     }
-    if (at_word("not") && is_word(peek(1), w1)) {
-        advance(); advance(); expect_word(w2);
+    if (at_word("not") && (is_word(peek(1), w1) || is_word(peek(1), w2))) {
+        advance();
+        if (accept_word(w1)) accept_word(w2); else advance();
         emit("\tldw r1, sp+%d", SLOT_C);
         emit("\tbne r1, r0, .L%d", Lend);
         parse_statements();
@@ -3679,6 +3962,7 @@ static void parse_read(void)
         if (!has_next && f->access != 0) keyed = 1;
     } else if (keyed) die_at(cur()->line, "READ ... KEY needs an INDEXED file");
 
+    g_io_file = f;
     emit_file_addr("r3", f);
     emit_call(keyed ? "cob_read_key" : "cob_read");
     emit("\tstw sp+%d, r1", SLOT_C);
@@ -3712,13 +3996,19 @@ static void parse_write(void)
     if (at_word("before") || at_word("after")) {
         after_kw = accept_word("after"); if (!after_kw) accept_word("before");
         accept_word("advancing");
-        if (accept_word("page")) die_at(cur()->line, "ADVANCING PAGE is not implemented (line sequential print files carry no form feed)");
+        if (accept_word("page") || (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 3 && (advance(), 1))) {
+            /* a form feed before (AFTER PAGE) or after (BEFORE PAGE) the record */
+            if (after_kw) before = -1; else after = -1;
+            accept_word("line"); accept_word("lines");
+            goto advancing_done;
+        }
         parse_operand(&n);
         if (n.kind == O_NUM) { long v = (long)numlit_int(&n.num); if (after_kw) before = (int)v - 1; else after = (int)v - 1; }
         else if (n.kind == O_REF && is_int_item(n.ref.sym)) dyn = 1;
         else die_at(n.line, "ADVANCING needs an integer");
         accept_word("line"); accept_word("lines");
     }
+advancing_done:;
     int keyed_org = f->org == COB_ORG_INDEXED || f->org == COB_ORG_RELATIVE;
     if (keyed_org && (before || after || dyn)) die_at(rec.line, "ADVANCING is not valid on an %s file", f->org == COB_ORG_INDEXED ? "INDEXED" : "RELATIVE");
     if (!keyed_org && at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED or RELATIVE file");
@@ -3735,10 +4025,10 @@ static void parse_write(void)
     }
     emit_li("r6", rec.sym->size);          /* the 01 named: a mode-V record's length */
     emit_call("cob_write");
-    if (keyed_org) {
-        emit("\tstw sp+%d, r1", SLOT_C);
-        parse_condition_clauses("invalid", "key", "end-write");
-    } else accept_word("end-write");
+    emit("\tstw sp+%d, r1", SLOT_C);
+    g_io_file = f;
+    if (keyed_org) parse_condition_clauses("invalid", "key", "end-write");
+    else { emit_use_dispatch(f, 0); accept_word("end-write"); }
 }
 
 /* REWRITE record [FROM x] [INVALID KEY ...] */
@@ -3751,8 +4041,9 @@ static void parse_rewrite(void)
     emit_file_addr("r3", f);
     emit_call("cob_rewrite");
     emit("\tstw sp+%d, r1", SLOT_C);
+    g_io_file = f;
     if (f->org == COB_ORG_INDEXED || f->org == COB_ORG_RELATIVE) parse_condition_clauses("invalid", "key", "end-rewrite");
-    else { if (at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED or RELATIVE file"); accept_word("end-rewrite"); }
+    else { if (at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED or RELATIVE file"); emit_use_dispatch(f, 0); accept_word("end-rewrite"); }
 }
 
 /* DELETE file [RECORD] [INVALID KEY ...] */
@@ -3764,6 +4055,7 @@ static void parse_delete(void)
     emit_file_addr("r3", f);
     emit_call("cob_delete");
     emit("\tstw sp+%d, r1", SLOT_C);
+    g_io_file = f;
     parse_condition_clauses("invalid", "key", "end-delete");
 }
 
@@ -3793,6 +4085,7 @@ static void parse_start(void)
     emit_li("r4", op);
     emit_call("cob_start");
     emit("\tstw sp+%d, r1", SLOT_C);
+    g_io_file = f;
     parse_condition_clauses("invalid", "key", "end-start");
 }
 
@@ -4118,7 +4411,7 @@ static void parse_generate(void)
 
 /* ---- EVALUATE ---------------------------------------------------------- */
 
-typedef struct { int kind; Opnd o; } Subject;      /* kind: 0 value, 1 TRUE, 2 FALSE */
+typedef struct { int kind; Opnd o; Cond *c; } Subject;      /* kind: 0 value, 1 TRUE, 2 FALSE, 3 a condition */
 
 static Cond *cond_never(void)
 {
@@ -4134,7 +4427,18 @@ static void parse_evaluate(void)
         if (ns >= 8) die_at(cur()->line, "too many EVALUATE subjects");
         if (accept_word("true")) subj[ns].kind = 1;
         else if (accept_word("false")) subj[ns].kind = 2;
-        else { subj[ns].kind = 0; subj[ns].o = parse_cond_operand(); }
+        else {
+            int start = g_tp;
+            subj[ns].kind = 0; subj[ns].o = parse_cond_operand();
+            /* an operand followed by a class word or a relation is a condition
+             * subject, matched by WHEN TRUE / WHEN FALSE */
+            static const char *cw[] = { "numeric", "alphabetic", "alphabetic-lower", "alphabetic-upper", "positive", "negative",
+                "is", "not", "equal", "equals", "greater", "less", "=", "<", ">", "<=", ">=", "<>", NULL };
+            int is_cond = 0;
+            if (cur()->kind == T_WORD || cur()->kind == T_OP) for (int k = 0; cw[k]; k++) if (!strcmp(cur()->s, cw[k])) is_cond = 1;
+            if (cur()->kind == T_WORD && switch_find(cur()->s)) is_cond = 0;
+            if (is_cond) { g_tp = start; subj[ns].kind = 3; subj[ns].c = parse_cond(); }
+        }
         ns++;
         if (!accept_word("also")) break;
     }
@@ -4148,6 +4452,12 @@ static void parse_evaluate(void)
                 if (i) expect_word("also");
                 Cond *c = NULL;
                 if (accept_word("any")) c = NULL;
+                else if (subj[i].kind == 3) {
+                    /* a condition subject against TRUE or FALSE */
+                    if (accept_word("true")) c = subj[i].c;
+                    else if (accept_word("false")) { Cond *nn = cond_new(C_NOT); nn->a = subj[i].c; c = nn; }
+                    else die_at(cur()->line, "WHEN for a condition subject takes TRUE, FALSE or ANY");
+                }
                 else if (subj[i].kind) {
                     if (at_word("true") || at_word("false")) {
                         int t = at_word("true"); advance();
@@ -4413,7 +4723,9 @@ static void parse_statement(void)
     if (!strcmp(v, "rewrite")) { advance(); parse_rewrite(); return; }
     if (!strcmp(v, "delete")) { advance(); parse_delete(); return; }
     if (!strcmp(v, "start")) { advance(); parse_start(); return; }
-    if (!strcmp(v, "sort")) { advance(); parse_sort(); return; }
+    if (!strcmp(v, "use")) { advance(); parse_use(); return; }
+    if (!strcmp(v, "sort")) { advance(); g_is_merge = 0; parse_sort(); return; }
+    if (!strcmp(v, "merge")) { advance(); g_is_merge = 1; parse_sort(); g_is_merge = 0; return; }
     if (!strcmp(v, "release")) { advance(); parse_release(); return; }
     if (!strcmp(v, "return")) { advance(); parse_return(); return; }
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
@@ -4458,11 +4770,12 @@ static void parse_statement(void)
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
 
-        { "unstring", "after v1" }, { "merge", "after v1" },
-        { "use", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };
+        { "unstring", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };
     for (int i = 0; later[i].verb; i++)
         if (!strcmp(v, later[i].verb)) die_at(t->line, "the verb %s is not implemented yet (%s)", v, later[i].when);
     if (is_terminator(v)) die_at(t->line, "'%s' without a matching statement", v);
+    if (!strcmp(v, "identification") || !strcmp(v, "id"))
+        die_at(t->line, "a nested program (IDENTIFICATION DIVISION inside a program) is not implemented; END PROGRAM first, or compile it as a separate unit");
     die_at(t->line, "'%s' is not a COBOL verb", v);
 }
 
@@ -4514,19 +4827,36 @@ static void parse_procedure_division(void)
     }
 
     int cur_par = -1, cur_sec = -1;
+    int Ldecl_end = -1;
+    g_nuse_secs = 0; memset(g_use_mode, 0, sizeof g_use_mode); g_cur_sec_id = -1; g_in_decl = 0;
+    if (accept_word("declaratives")) {
+        /* the declarative sections are reached only through USE; jump over them */
+        expect_period();
+        Ldecl_end = new_label(); emit_jump(Ldecl_end); g_in_decl = 1;
+    }
     for (;;) {
         Tok *t = cur();
         if (t->kind == T_EOF) break;
         if (is_word(t, "end") && is_word(peek(1), "program")) break;
+        if (is_word(t, "end") && is_word(peek(1), "declaratives")) {
+            if (!g_in_decl) die_at(t->line, "END DECLARATIVES without DECLARATIVES");
+            if (cur_par >= 0) emit_exit_check(cur_par);
+            if (cur_sec >= 0) emit_exit_check(cur_sec);
+            cur_par = -1; cur_sec = -1; g_cur_sec_id = -1;
+            advance(); advance(); expect_period();
+            emit_label(Ldecl_end); g_in_decl = 0;
+            continue;
+        }
 
         if (t->kind == T_WORD && !is_verb(t->s) && (peek(1)->kind == T_PERIOD ||
             (is_word(peek(1), "section") && peek(2)->kind == T_PERIOD))) {
-            Para *p = para_find(t->s);
+            Para *p = is_word(peek(1), "section") ? para_find(t->s) : para_find_in(t->s, cur_sec >= 0 ? cur_sec : -1);
+            if (!p) p = para_find(t->s);
             if (!p) die_at(t->line, "internal: paragraph '%s' not prescanned", t->s);
             if (cur_par >= 0) emit_exit_check(cur_par);
             if (p->is_section && cur_sec >= 0) emit_exit_check(cur_sec);
             emit_para_label(p);
-            if (p->is_section) { cur_sec = p->id; cur_par = -1; } else cur_par = p->id;
+            if (p->is_section) { cur_sec = p->id; cur_par = -1; g_cur_sec_id = p->id; } else cur_par = p->id;
             advance(); if (p->is_section) advance();
             expect_period();
             continue;
@@ -4658,6 +4988,14 @@ static void parse_select(void)
             has_assign = 1;
             continue;
         }
+        if (at_word("sequential") || at_word("indexed") || (at_word("line") && is_word(peek(1), "sequential"))) {
+            /* ORGANIZATION IS may be omitted */
+            f->org_given = 1;
+            if (accept_word("line")) { expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
+            else if (accept_word("sequential")) f->org = COB_ORG_SEQ;
+            else { advance(); f->org = COB_ORG_INDEXED; }
+            continue;
+        }
         if (accept_word("organization") || accept_word("organisation")) {
             accept_word("is"); f->org_given = 1;
             if (accept_word("line")) { expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
@@ -4676,6 +5014,7 @@ static void parse_select(void)
             continue;
         }
         if (accept_word("record")) {
+            if (accept_word("delimiter")) { accept_word("is"); if (cur()->kind == T_WORD) advance(); continue; }   /* RECORD DELIMITER IS STANDARD-1 */
             accept_word("key"); accept_word("is");
             if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after RECORD KEY");
             snprintf(f->key_name, sizeof f->key_name, "%s", cur()->s); advance();
@@ -4683,20 +5022,39 @@ static void parse_select(void)
         }
         if (accept_word("alternate")) die_at(t->line, "ALTERNATE RECORD KEY is not implemented (after v1)");
         if (accept_word("relative")) {
-            expect_word("key"); accept_word("is");
-            if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after RELATIVE KEY");
-            snprintf(f->relkey_name, sizeof f->relkey_name, "%s", cur()->s); advance();
+            /* RELATIVE [KEY IS] data-name -- or ORGANIZATION IS omitted before
+             * a bare RELATIVE, told apart by what follows */
+            static const char *clause_words[] = { "access", "assign", "organization", "organisation", "record",
+                "alternate", "file", "status", "sharing", "lock", "reserve", "padding", "sequential", "indexed",
+                "relative", "line", "select", NULL };
+            int has_key = accept_word("key");
+            if (has_key) accept_word("is");
+            int is_clause = 0;
+            if (cur()->kind == T_WORD) for (int k = 0; clause_words[k]; k++) if (!strcmp(cur()->s, clause_words[k])) is_clause = 1;
+            if (has_key || (cur()->kind == T_WORD && !is_clause)) {
+                if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after RELATIVE KEY");
+                snprintf(f->relkey_name, sizeof f->relkey_name, "%s", cur()->s); advance();
+            } else { f->org_given = 1; f->org = COB_ORG_RELATIVE; }
             continue;
         }
-        if (accept_word("file")) {
-            expect_word("status"); accept_word("is");
+        if (at_word("file") || at_word("status")) {
+            accept_word("file"); expect_word("status"); accept_word("is");
             if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after FILE STATUS");
             snprintf(f->status_name, sizeof f->status_name, "%s", cur()->s); advance();
+            if (accept_word("of") || accept_word("in")) {           /* status-name OF group */
+                if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after OF/IN");
+                snprintf(f->status_qual, sizeof f->status_qual, "%s", cur()->s); advance();
+            }
             continue;
         }
-        if (accept_word("status")) {
-            accept_word("is");
-            snprintf(f->status_name, sizeof f->status_name, "%s", cur()->s); advance();
+        if (accept_word("padding")) {           /* PADDING CHARACTER: block padding, no blocks here */
+            accept_word("character"); accept_word("is");
+            if (cur()->kind == T_STR || cur()->kind == T_WORD) advance();
+            continue;
+        }
+        if (accept_word("reserve")) {           /* RESERVE n AREAS: buffering is the host's */
+            if (cur()->kind == T_NUM || at_word("no")) advance();
+            accept_word("area"); accept_word("areas");
             continue;
         }
         if (accept_word("sharing")) {
@@ -4761,8 +5119,57 @@ static void parse_environment_division(void)
                         if (!any) die_at(cur()->line, "CLASS %s: expected a one-character literal", uc->name);
                         continue;
                     }
+                    if (cur()->kind == T_WORD && !strncmp(cur()->s, "switch-", 7) && isdigit((unsigned char)cur()->s[7])) {
+                        int sw = atoi(cur()->s + 7); advance();
+                        if (sw < 1 || sw > 8) die_at(cur()->line, "SWITCH-%d: switches are 1 to 8", sw);
+                        if (accept_word("is")) {
+                            if (cur()->kind != T_WORD) die_at(cur()->line, "expected a mnemonic-name after SWITCH-%d IS", sw);
+                            if (g_nswitch == 32) die_at(cur()->line, "too many switch names");
+                            SwitchName *m = &g_switch[g_nswitch++];
+                            snprintf(m->name, sizeof m->name, "%s", cur()->s); m->sw = sw; m->on = -1; advance();
+                        }
+                        while (at_word("on") || at_word("off")) {
+                            int on = accept_word("on"); if (!on) accept_word("off");
+                            accept_word("status"); accept_word("is");
+                            if (cur()->kind != T_WORD) die_at(cur()->line, "expected a condition-name after ON/OFF STATUS");
+                            if (g_nswitch == 32) die_at(cur()->line, "too many switch names");
+                            SwitchName *m = &g_switch[g_nswitch++];
+                            snprintf(m->name, sizeof m->name, "%s", cur()->s); m->sw = sw; m->on = on; advance();
+                        }
+                        continue;
+                    }
+                    if (accept_word("alphabet")) {
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "expected an alphabet-name after ALPHABET");
+                        if (g_nalphabet == 16) die_at(cur()->line, "too many ALPHABET clauses");
+                        Alphabet *a = &g_alphabet[g_nalphabet++];
+                        snprintf(a->name, sizeof a->name, "%s", cur()->s); advance();
+                        accept_word("is");
+                        if (accept_word("native") || accept_word("standard-1") || accept_word("standard-2")) a->native = 1;
+                        else if (accept_word("ebcdic")) a->native = 0;
+                        else {
+                            /* literal phrases: lit [THROUGH lit | ALSO lit...] ... -- a
+                             * user-defined collating sequence, recorded as not native */
+                            a->native = 0;
+                            while (cur()->kind == T_STR || cur()->kind == T_NUM || at_word("through") || at_word("thru") || at_word("also") || at_word("high-value") || at_word("low-value") || at_word("high-values") || at_word("low-values") || at_word("space") || at_word("spaces") || at_word("zero") || at_word("zeros") || at_word("zeroes") || at_word("quote") || at_word("quotes")) advance();
+                        }
+                        continue;
+                    }
+                    if (cur()->kind == T_WORD) {
+                        int mk = 0;
+                        if (at_word("sysin") || at_word("stdin") || at_word("sysipt")) mk = 1;
+                        else if (at_word("sysout") || at_word("stdout") || at_word("console") || at_word("syserr") || at_word("stderr") || at_word("syslst") || at_word("sysprint")) mk = 2;
+                        else if (at_word("formfeed") || at_word("c01") || at_word("csp")) mk = 3;
+                        if (mk) {
+                            advance(); accept_word("is");
+                            if (cur()->kind != T_WORD) die_at(cur()->line, "expected a mnemonic-name after the device name");
+                            if (g_nmnemonic == 16) die_at(cur()->line, "too many mnemonic-names");
+                            Mnemonic *m = &g_mnemonic[g_nmnemonic++];
+                            snprintf(m->name, sizeof m->name, "%s", cur()->s); m->kind = mk; advance();
+                            continue;
+                        }
+                    }
                     if (at_division() || at_word("input-output")) break;
-                    die_at(cur()->line, "SPECIAL-NAMES clause '%s' is not implemented yet (CLASS is)", cur()->s);
+                    die_at(cur()->line, "SPECIAL-NAMES clause '%s' is not implemented yet (CLASS, SWITCH-n, ALPHABET and the device names are)", cur()->s);
                 }
                 continue;
             }
@@ -4777,7 +5184,12 @@ static void parse_environment_division(void)
             expect_period();
             while (accept_word("select")) parse_select();
         }
-        if (at_word("i-o-control")) die_at(cur()->line, "I-O-CONTROL is not implemented yet");
+        if (accept_word("i-o-control")) {
+            /* SAME [RECORD|SORT] AREA, RERUN, MULTIPLE FILE TAPE: hints for
+             * machines with tapes and scarce memory; nothing here to do */
+            expect_period();
+            while (!at_division() && cur()->kind != T_EOF) advance();
+        }
     }
     if (!at_division()) die_at(cur()->line, "unexpected %s in the ENVIRONMENT DIVISION", tok_desc(cur()));
 }
@@ -4808,7 +5220,8 @@ static void parse_fd(void)
             if (accept_word("is") || accept_word("are")) { }
             if (accept_word("varying")) {
                 accept_word("in"); accept_word("size");
-                if (accept_word("from")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after FROM"); f->minlen = atoi(cur()->s); advance(); }
+                accept_word("from");
+                if (cur()->kind == T_NUM) { f->minlen = atoi(cur()->s); advance(); }
                 if (accept_word("to")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after TO"); f->maxlen = atoi(cur()->s); advance(); }
                 accept_word("characters");
                 if (accept_word("depending")) {
@@ -4845,6 +5258,9 @@ static void parse_fd(void)
             die_at(t->line, "RECORDING MODE %s is refused (U and S are tapemgr's business; docs/framing.md)", cur()->s);
         }
         if (accept_word("value")) { expect_word("of"); while (cur()->kind != T_PERIOD && !at_word("block") && !at_word("record") && !at_word("data")) advance(); continue; }
+        if (accept_word("is")) continue;
+        if (accept_word("global")) continue;
+        if (accept_word("external")) die_at(t->line, "FD %s IS EXTERNAL (a file shared between separately compiled programs) is not implemented", f->name);
         if (accept_word("linage")) die_at(t->line, "LINAGE is not implemented");
         if (accept_word("code-set")) die_at(t->line, "CODE-SET is not supported (ASCII only)");
         die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
@@ -5224,7 +5640,13 @@ static void emit_unit_data(void)
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");                  /* rel_pos, rel_last: the runtime's */
         emit("\t.word 0");
+        emit("\t.word %d", f->use_para);   /* DECLARATIVES: this file's USE section, the unit's mode table, open_try */
+        emit("\t.word .Luse%d", g_unit);
+        emit("\t.word 0");
     }
+    emit("\t.p2align 2");
+    emit(".Luse%d:\t# USE sections by open mode", g_unit);
+    for (int m = 0; m < 5; m++) emit("\t.word %d", g_use_mode[m]);
     for (int i = 0; i < g_nsorttab; i++) {
         SortTab *t = &g_sorttab[i];
         emit("\t.p2align 2");
@@ -5355,7 +5777,7 @@ int main(int argc, char **argv)
     for (;;) {
         /* one program unit; a source file may hold several, each closed
          * by END PROGRAM */
-        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();

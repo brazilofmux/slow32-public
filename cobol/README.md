@@ -80,7 +80,8 @@ under `docs/`.
     libcob/cobedit.h  the software edit descriptor, applied and reversed
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
     ISSUES.md         open items, ranked, and closed ones with the lesson
-    tests/            run-tests.sh; fixed/ free/ programs with .expected
+    tests/            run-tests.sh; fixed/ free/ programs with .expected;
+                      ccvs-histogram.sh ranks NIST CCVS-85 first refusals
                       (a .link beside one names its subprograms and C);
                       subs/ subprogram units; c/ C called from tests;
                       bad/ programs that must be refused; pictures.txt;

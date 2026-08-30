@@ -138,7 +138,7 @@ long long cob_get_num(const void *vp, const cob_desc *d)
         if (d->flags & COB_F_SEPTRAIL) { neg = (p[n - 1] == '-'); end = n - 1; }
         for (; i < end; i++) {
             unsigned char c = p[i];
-            if (c >= 'p' && c <= 'y') { v = v * 10 + (c - 'p'); neg = 1; }
+            if (c >= 'p' && c <= 'y') { v = v * 10 + (c - 'p'); neg = 1; }     /* overpunch: last digit, or first with SIGN LEADING */
             else if (c >= '0' && c <= '9') v = v * 10 + (c - '0');
             else if (c == ' ') v = v * 10;             /* a space counts as zero */
             else v = v * 10 + (c & 15);                 /* GnuCOBOL: low nibble */
@@ -208,8 +208,10 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
         if (d->flags & COB_F_SEPLEAD) { p[0] = neg ? '-' : '+'; start = 1; }
         if (d->flags & COB_F_SEPTRAIL) { p[n - 1] = neg ? '-' : '+'; i = n - 2; }
         for (; i >= start; i--) { p[i] = (unsigned char)('0' + mag % 10); mag /= 10; }
-        if (neg && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)))
-            p[n - 1] = (unsigned char)(p[n - 1] - '0' + 'p');
+        if (neg && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) {
+            int k = (d->flags & COB_F_LEAD) ? 0 : n - 1;
+            p[k] = (unsigned char)(p[k] - '0' + 'p');
+        }
         break;
     }
     }
@@ -245,7 +247,8 @@ void cob_display_field(const void *vp, const cob_desc *d)
     if (d->cat != COB_NUM) { out_bytes((const char *)p, (int)d->size); return; }
     if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) {
         int n = (int)d->size;
-        unsigned char last = p[n - 1];
+        int sk = (d->flags & COB_F_LEAD) ? 0 : n - 1;
+        unsigned char last = p[sk];
         int neg = (d->flags & COB_F_SIGNED) && last >= 'p' && last <= 'y';
         if (d->flags & COB_F_SIGNED) out_char(neg ? '-' : '+');
         for (int i = 0; i < n; i++) {
@@ -285,8 +288,9 @@ static int num_to_digits(const void *p, const cob_desc *d, char *out)
 {
     if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) {
         memcpy(out, p, d->size);
-        unsigned char last = (unsigned char)out[d->size - 1];
-        if (last >= 'p' && last <= 'y') out[d->size - 1] = (char)(last - 'p' + '0');
+        int sk = (d->flags & COB_F_LEAD) ? 0 : (int)d->size - 1;
+        unsigned char last = (unsigned char)out[sk];
+        if (last >= 'p' && last <= 'y') out[sk] = (char)(last - 'p' + '0');
         return (int)d->size;
     }
     long long v = cob_get_num(p, d);
@@ -410,7 +414,7 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
         for (int i = start; i < end; i++) {
             unsigned char c = p[i];
             if (c >= '0' && c <= '9') continue;
-            if (i == n - 1 && (d->flags & COB_F_SIGNED) && c >= 'p' && c <= 'y') continue;
+            if (i == ((d->flags & COB_F_LEAD) ? 0 : n - 1) && (d->flags & COB_F_SIGNED) && c >= 'p' && c <= 'y') continue;
             return 0;
         }
         return 1;
@@ -584,11 +588,23 @@ static void set_status(cob_file *f, const char *st)
 
 /* 0 success, 1 at end / no record, 2 error.  A hard error with no FILE
  * STATUS to report it in stops the run, as GnuCOBOL does. */
+/* DECLARATIVES: the USE AFTER ERROR PROCEDURE section that applies to a
+ * file -- its own, else the one for its open mode -- as a paragraph id
+ * the compiled code dispatches on; 0 when none */
+int cob_use_select(cob_file *f)
+{
+    if (f->use_para) return f->use_para;
+    unsigned mode = f->open_mode ? f->open_mode : f->open_try;
+    if (f->use_modes && mode < 5) return f->use_modes[mode];
+    return 0;
+}
+
 static int file_result(cob_file *f, const char *st, const char *what)
 {
     set_status(f, st);
     if (st[0] == '0') return 0;
     if (st[0] == '1' || st[0] == '2') return 1;      /* at end; the invalid key condition */
+    if (!f->status && cob_use_select(f)) return 2;    /* a USE procedure will hear of it */
     if (!f->status) {
         char msg[96];
         int n = 0;
@@ -627,6 +643,7 @@ static unsigned rel_slot_size(cob_file *f);
 
 int cob_open(cob_file *f, int mode)
 {
+    f->open_try = (unsigned)mode;
     if (f->open_mode) return file_result(f, "41", "OPEN of a file already open");
     if (f->org == COB_ORG_INDEXED) return idx_open(f, mode);
     const char *name = file_name(f);
@@ -745,10 +762,13 @@ int cob_write(cob_file *f, int before, int after, int reclen)
         if (fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
         return file_result(f, "00", "");
     }
+    /* ADVANCING: n extra newlines before or after; -1 is PAGE, a form feed */
+    if (before < 0) fputc('\f', fp);
     for (int i = 0; i < before; i++) fputc('\n', fp);
     while (n > 0 && rec[n - 1] == ' ') n--;
     if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
     fputc('\n', fp);
+    if (after < 0) fputc('\f', fp);
     for (int i = 0; i < after; i++) fputc('\n', fp);
     return file_result(f, "00", "");
 }
@@ -1091,6 +1111,18 @@ void cob_sort_end(cob_file *sd)
     free(so->buf); free(so->order); free(so);
     sd->idx = 0; sd->open_mode = 0;
 }
+
+/* MOVE of a group whose last child is an OCCURS DEPENDING ON table: the
+ * sending length is base + n occurrences of elem; the receiver's is what
+ * it was laid out at (its maximum) */
+void cob_move_odo(const void *src, void *dst, int n, int dstlen, int base, int elem)
+{
+    if (n < 0) n = 0;
+    cob_move_alnum(src, base + n * elem, dst, dstlen, 0);
+}
+
+/* SPECIAL-NAMES SWITCH-1..8: all off until SET */
+int cob_switches[8];
 
 /* ====================================================================== */
 /* STRING                                                                  */

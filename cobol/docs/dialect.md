@@ -178,6 +178,43 @@ given, because majesty's `.prn` oracles were produced under it.
   into `9(3)v99` the line `12345` arrives as the decimal 12345 and
   truncates to `345.00`, as GnuCOBOL does. At end of file the item is
   left as it was.
+- **Continuation lines** (`-` in column 7): inside a non-numeric
+  literal the continuation's first non-blank must be the literal's
+  quote and the previous line keeps its trailing blanks to column 72;
+  outside one, the previous line's trailing blanks go and the join is
+  at the continuation's first non-blank.
+- **`WRITE ... ADVANCING PAGE`** (and a FORMFEED mnemonic) writes a
+  form feed before (AFTER) or after (BEFORE) the record, GnuCOBOL's
+  reading of a page on a line-sequential file.
+- **`I-O-CONTROL`** (SAME AREA, RERUN, MULTIPLE FILE) is parsed and
+  ignored. **`CLOSE ... REEL/UNIT`** does nothing: a disk file has one
+  reel. **`RESERVE`, `PADDING CHARACTER`, `RECORD DELIMITER`** are
+  accepted and ignored.
+- **`SPECIAL-NAMES`**: `SWITCH-1`..`SWITCH-8` with ON/OFF STATUS
+  condition-names and `SET mnemonic TO ON/OFF` (all off at start);
+  `ALPHABET name IS STANDARD-1|NATIVE` is the native (ASCII) sequence,
+  any other alphabet is recorded and refused where it would be used;
+  `SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic` for ACCEPT FROM,
+  DISPLAY UPON and ADVANCING. `CURRENCY SIGN`, `DECIMAL-POINT IS
+  COMMA` and `SYMBOLIC CHARACTERS` are refused by name.
+- **`SIGN IS LEADING|TRAILING [SEPARATE]`** on a signed numeric
+  DISPLAY item or on a group (reaching its subordinate ones): a
+  leading overpunch is on the first digit; SEPARATE adds a character.
+- **`DECLARATIVES`**: `USE [GLOBAL] AFTER [STANDARD] ERROR|EXCEPTION
+  PROCEDURE ON {file | INPUT | OUTPUT | I-O | EXTEND}`. After an I/O
+  statement whose condition its own AT END / INVALID KEY clause does
+  not handle, the applicable section (the file's, else the open
+  mode's) is performed and execution continues with the next statement.
+  A file with no FILE STATUS and no USE still stops the run on an
+  error.
+- **`MERGE`** is a stable SORT of its USING files (they are sorted,
+  so that is the merge). **Qualified procedure-names** (`para OF
+  section`) and the same paragraph name in different sections are
+  taken; an unqualified reference means the current section's.
+- **A level 77 item may REDEFINES** another (not OCCURS). **`88 ...
+  VALUE ALL literal`** is taken. **`[AT] END`, `INVALID [KEY]`,
+  `[ORGANIZATION IS] SEQUENTIAL`, `RELATIVE [KEY IS]`** -- the optional
+  words are optional.
 - **Relative files** are fixed slots of `4 + maximum record` bytes
   framed with the mode-V RDW, zero for an empty slot (docs/indexed.md);
   records may be shorter than the slot (`RECORD CONTAINS m TO n`).

@@ -81,6 +81,7 @@ agrees with its documented divergence").
 | `fixed/indexed` | `REWRITE` of an absent key, ACCESS DYNAMIC | status **23** (record not found; 21 is the *sequential-access* sequence error) | 21 |
 | `free/vrec` | `WRITE` with `DEPENDING ON` past `RECORD IS VARYING ... TO n` | status **44**, nothing written | clamps to n, status 00 |
 | (not a test) | mode-V bytes on disk | IBM RDW: length includes the 4-byte header, then two zero bytes -- tapemgr's and cobc370's | length excludes the header |
+| `free/odomove` | MOVE to a group ending in an OCCURS DEPENDING ON table whose DEPENDING ON item is outside the group | the receiving length is the **maximum** (X3.23-1985 general rules for OCCURS) | the current length |
 | (not a test) | relative slots on disk | the same 4-byte RDW per slot, zero for an empty slot; slot = 4 + maximum record (docs/indexed.md) | an 8-byte native `size_t` length per slot, 0 for empty |
 
 ## What we will not do
