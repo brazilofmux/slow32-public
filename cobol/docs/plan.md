@@ -815,6 +815,20 @@ the print file is ours by the text (report-writer.md). RW 6 of 6
 match, 42 of 42; the suite 248 of 303 compile, 4409 of 4450 pass,
 none fail, 245 match -- IC and RW complete.
 
+## Stage 33 — the ODO table at any depth **S** — DONE 2026-08-31
+
+A MOVE of a group whose OCCURS DEPENDING ON table sits in a subgroup
+(NC247A, SQ214A and ST146A: `03 GRP. 04 T OCCURS 0 TO 9 DEPENDING ON
+D`): the sending length is size - (max - d) x element whatever the
+depth, the layout being at the maximum -- `odo_table_below` finds the
+table, and the group's shape is checked so that nothing follows it
+(items after an ODO table sit at variable locations in the 85 text;
+this layout does not slide them, so such a MOVE is refused by name
+rather than sent wrong). free/odonest, oracle agreeing (GnuCOBOL
+refuses the variable-location shape outright); SQ214A and ST146A
+match GnuCOBOL, NC247A reaches UNSTRING; the suite 250 of 303
+compile, 4418 of 4459 pass, none fail, 247 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

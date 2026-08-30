@@ -161,10 +161,11 @@ also needs the term service to grow an attribute (`open-questions.md`).
 ### 14. ~~OCCURS DEPENDING ON is laid out at its maximum~~ — a group MOVE lands 2026-08-30
 Still laid out at the maximum, which is the 1985 receiving length
 when the DEPENDING ON item is outside the group. A MOVE *of* such a
-group now sends its current length (`cob_move_odo`, the table being
-the group's last direct child; a deeper table is still refused, 4
-CCVS programs). free/odomove; GnuCOBOL's receiving length is the
-current one -- documented divergence (oracles.md).
+group now sends its current length (`cob_move_odo`; since Stage 33
+the table may sit at any depth, as long as nothing follows it in the
+group -- variable-location items are refused by name; free/odonest).
+free/odomove; GnuCOBOL's receiving length is the current one --
+documented divergence (oracles.md).
 
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
@@ -221,7 +222,7 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **4409 of 4450 tests pass, none fail, 245
+them by their own reports: **4418 of 4459 tests pass, none fail, 247
 programs match GnuCOBOL's tally exactly** (IC and RW complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
@@ -229,8 +230,8 @@ the runner not building `lib/`, then `CALL identifier`/`ON
 EXCEPTION`/`CANCEL` -- IC 16 of 25). The
 remaining bins, largest first, each a
 work item: ~~`ALTERNATE RECORD KEY`~~ (done), ~~`LINAGE`~~ (done),
-~~`COPY ... REPLACING`~~ (done), ~~`CALL identifier`~~ (done), an ODO
-table nested below a direct child (4),
+~~`COPY ... REPLACING`~~ (done), ~~`CALL identifier`~~ (done), ~~an ODO
+table nested below a direct child~~ (done; NC247A goes on to UNSTRING),
 `INSPECT ... BEFORE/AFTER INITIAL` (4), ~~nested programs~~ (done), ~~`EXTERNAL`~~ (done), ~~`BY CONTENT`~~
 (done: **IC 25 of 25**), ~~Report Writer clauses~~ (done: **RW 6 of
 6**, ISSUES-11 keeps CONTROL/SUM), alphanumeric-edited pictures

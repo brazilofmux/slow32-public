@@ -3192,22 +3192,38 @@ static int has_odo(Sym *s)
     return 0;
 }
 
+/* the OCCURS DEPENDING ON table below a group, at any depth (85 allows one) */
+static Sym *odo_table_below(Sym *s)
+{
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+        if (g_sym[c].odo_dep[0]) return &g_sym[c];
+        Sym *t = odo_table_below(&g_sym[c]);
+        if (t) return t;
+    }
+    return NULL;
+}
+
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
     /* a receiving group holding an OCCURS DEPENDING ON table has its
      * maximum length (the 1985 rule), which is how it is laid out */
     if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym)) {
-        /* a sending group's length is its current one: the fixed part plus
-         * DEPENDING ON occurrences of the table, which must be its last
-         * (direct) child; deeper tables are still refused */
-        Sym *g = src->ref.sym, *tbl = NULL;
-        for (int c = g->child; c >= 0; c = g_sym[c].sibling) if (g_sym[c].odo_dep[0]) tbl = &g_sym[c];
+        /* a sending group's length is its current one.  The group is laid
+         * out with the table at its maximum, so however deep the table
+         * sits, as long as nothing follows it: length = size - (max - d) * elem */
+        Sym *g = src->ref.sym, *tbl = odo_table_below(g);
         if (!tbl || !tbl->odo_dep_sym)
-            die_at(src->line, "MOVE of the group '%s': its OCCURS DEPENDING ON table is nested too deep (only a direct child is implemented)", g->name);
+            die_at(src->line, "MOVE of the group '%s': its OCCURS DEPENDING ON table's DEPENDING ON item is not resolved", g->name);
+        /* the table must be the last thing in the group: items after it
+         * would sit at variable locations, which this layout (the maximum)
+         * does not give them */
+        for (Sym *k = tbl; k != g; k = &g_sym[k->parent])
+            if (k->sibling >= 0)
+                die_at(src->line, "MOVE of the group '%s': items follow its OCCURS DEPENDING ON table (variable-location items are not implemented)", g->name);
         Opnd dep; memset(&dep, 0, sizeof dep); dep.kind = O_REF; dep.ref.sym = tbl->odo_dep_sym; dep.ref.line = src->line;
         Arg a[6] = { arg_ref(&src->ref), arg_ref(dst), arg_value(&dep), arg_imm(d->size),
-                     arg_imm(tbl->offset - g->offset), arg_imm(tbl->size) };
+                     arg_imm(g->size - tbl->occurs * tbl->size), arg_imm(tbl->size) };
         emit_args(a, 6);
         emit_call("cob_move_odo");
         return;

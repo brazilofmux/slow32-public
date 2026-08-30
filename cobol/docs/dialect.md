@@ -142,8 +142,14 @@ given, because majesty's `.prn` oracles were produced under it.
   is the arguments joined by blanks. The emulator passes arguments
   after the program name (`slow32-fast prog.s32x 202608`).
 - **`OCCURS m TO n DEPENDING ON d`**: laid out at n; d must be an
-  integer item outside the table; a whole-group `MOVE` of a group the
-  table sits in is refused for now (its length varies with d).
+  integer item outside the table. A `MOVE` *of* a group the table sits
+  in sends the group's current length -- the table at any depth below
+  it (Stage 33): laid out at the maximum, the length is size - (max -
+  d) x element; the table must be the last thing in the group (items
+  following it would sit at variable locations, which this layout does
+  not give them: refused by name). A *receiving* group with such a
+  table takes its maximum length, the 85 rule (free/odomove; GnuCOBOL
+  takes the current one).
 - **`COPY`**: text-name as a word or literal; found as given, then
   `.cpy`, `.CPY`, `.cbl`, `.CBL`, beside the source and in the `-I`
   directories; `OF`/`IN library` accepted (the directories serve as the
