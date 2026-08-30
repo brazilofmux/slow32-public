@@ -8,6 +8,16 @@ this file is what is *open*, ranked, plus what was closed and why.
 Nothing here is scheduled: the front is app-driven, and an item moves
 when a program asks for it.
 
+**Operating mode (ruled 2026-08-30, with the corpus at 56 of 56):** the
+split between `~/majesty` and `cobol/` is clean. majesty cleans up and
+consumes -- it builds with `s32-cobol`, runs under `slow32-dbt`, and
+files what it needs as GitHub issues. `cobol/` gets serious about the
+*language* (CCVS-85, Nucleus level 2, the rest of §B) and validates
+that nothing has been broken: the harness with its GnuCOBOL oracle on
+every change, and majesty's batch (twelve reports byte-identical) as
+the regression gate before a push. Corpus programs are not rewritten
+from this side; they are majesty's.
+
 State on 2026-08-30: harness 47/47 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
 report step on SLOW-32 with all twelve reports byte-identical; **every
