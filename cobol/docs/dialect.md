@@ -207,6 +207,15 @@ given, because majesty's `.prn` oracles were produced under it.
   mode's) is performed and execution continues with the next statement.
   A file with no FILE STATUS and no USE still stops the run on an
   error.
+- **`PROGRAM COLLATING SEQUENCE IS alphabet`** (OBJECT-COMPUTER) with an
+  `ALPHABET` of literal phrases: the characters named take the first
+  collating positions in that order (`ALSO` shares one, `THROUGH` runs
+  a range), the rest follow in native order; alphanumeric comparisons
+  (and so SORT keys) use it, and `LOW-VALUE`/`HIGH-VALUE` are its first
+  and last characters. Set at the unit's entry, the caller's restored
+  at its exit.
+- **`I-O-CONTROL SAME RECORD AREA FOR f1 f2 ...`**: the files share one
+  record area (the later files' 01s redefine the first's).
 - **`MERGE`** is a stable SORT of its USING files (they are sorted,
   so that is the merge). **Qualified procedure-names** (`para OF
   section`) and the same paragraph name in different sections are

@@ -81,9 +81,16 @@ static SwitchName *switch_find(const char *name)
 /* SPECIAL-NAMES ALPHABET name IS STANDARD-1|NATIVE|...: only the native
  * (ASCII) sequence exists here; another alphabet is recorded and refused
  * where it would be used */
-typedef struct { char name[64]; int native; } Alphabet;
+typedef struct { char name[64]; int native; unsigned char rank[256]; } Alphabet;   /* rank: the collating position of each character */
 static Alphabet g_alphabet[16];
 static int g_nalphabet;
+static int g_collate = -1;                  /* PROGRAM COLLATING SEQUENCE: an alphabet index, -1 native */
+static char g_collate_name[64];
+/* g_lowval / g_highval (declared with fig_byte): LOW-VALUE / HIGH-VALUE under the program collating sequence */
+
+/* I-O-CONTROL SAME RECORD AREA FOR f1 f2 ...: the files share one record
+ * area, so a record read from one is the record of the others */
+static int g_same[8][16], g_nsame[8], g_nsame_groups;
 
 /* SPECIAL-NAMES SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic-name:
  * kind 1 the console for ACCEPT, 2 the console for DISPLAY, 3 a page */
@@ -521,13 +528,15 @@ static int is_figurative(const char *w)
     return 0;
 }
 
+static int g_lowval, g_highval;
 static int fig_byte(const char *w)
 {
     if (!strncmp(w, "space", 5)) return ' ';
     if (!strncmp(w, "zero", 4)) return '0';
-    if (!strncmp(w, "high", 4)) return 0xFF;                 /* ASCII: HIGH-VALUE is X'FF' */
+    if (!strncmp(w, "high", 4)) return g_highval;            /* X'FF', or the program collating sequence's last */
     if (!strncmp(w, "quote", 5)) return '"';
-    return 0;                                                 /* LOW-VALUE, NULL */
+    if (!strncmp(w, "low", 3)) return g_lowval;              /* X'00', or the sequence's first */
+    return 0;                                                 /* NULL */
 }
 
 /* ====================================================================== */
@@ -1369,6 +1378,13 @@ static void finish_data_division(void)
         int r = i; while (g_sym[r].parent >= 0) r = g_sym[r].parent;
         s->record = r;
     }
+    /* SAME RECORD AREA: the later files' first 01s redefine the first file's */
+    for (int g = 0; g < g_nsame_groups; g++)
+        for (int k = 1; k < g_nsame[g]; k++) {
+            File *a = &g_files[g_same[g][0]], *b = &g_files[g_same[g][k]];
+            if (a->rec < 0 || b->rec < 0) die_at(b->line, "SAME RECORD AREA: file '%s' has no record description", b->name);
+            if (g_sym[b->rec].redefines < 0) g_sym[b->rec].redefines = a->rec;
+        }
     /* 01 REDEFINES 01: share the earlier record's storage */
     for (int i = 0; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
@@ -1711,7 +1727,8 @@ static void emit_bytes(const unsigned char *b, int n)
 }
 
 /* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, then three scratch words */
-#define FRAME       96
+#define FRAME       104
+#define SLOT_COLL   96          /* the caller's collating table, when this unit sets its own */
 #define SLOT(i)     (8 + 4 * (i))
 #define NSLOTS      16
 #define SLOT_A      (8 + 4 * NSLOTS)
@@ -4856,6 +4873,10 @@ static void parse_procedure_division(void)
     emit("\taddi sp, sp, -%d", FRAME);
     emit("\tstw sp+0, lr");
     emit("\tstw sp+4, r11");
+    if (g_collate >= 0) {       /* PROGRAM COLLATING SEQUENCE: this unit's table, the caller's kept */
+        char lab[32]; snprintf(lab, sizeof lab, ".Lcoll%d", g_unit);
+        emit_la("r3", lab); emit_call("cob_set_collating"); emit("\tstw sp+%d, r1", SLOT_COLL);
+    }
     /* the caller's addresses go into the LINKAGE cells */
     for (int i = 0; i < nusing; i++) {
         emit_la("r1", g_sym[using[i]->record].label);
@@ -4914,6 +4935,7 @@ static void parse_procedure_division(void)
     if (cur_sec >= 0) emit_exit_check(cur_sec);
 
     emit(".Lgb%d:", g_unit);
+    if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
     emit("\taddi r1, r0, 0");
     emit("\tldw r11, sp+4");
     emit("\tldw lr, sp+0");
@@ -4989,6 +5011,7 @@ static void parse_identification_division(void)
     }
 }
 
+static void skip_to_period(void) __attribute__((unused));
 static void skip_to_period(void)
 {
     while (cur()->kind != T_PERIOD && cur()->kind != T_EOF) advance();
@@ -5124,8 +5147,16 @@ static void parse_environment_division(void)
         for (;;) {
             if (accept_word("source-computer") || accept_word("object-computer")) {
                 expect_period();
-                if (cur()->kind == T_WORD && !at_word("special-names") && !at_word("input-output") &&
-                    !at_word("source-computer") && !at_word("object-computer") && !at_division()) skip_to_period();
+                while (cur()->kind == T_WORD && !at_word("special-names") && !at_word("input-output") &&
+                       !at_word("source-computer") && !at_word("object-computer") && !at_division()) {
+                    if (accept_word("collating")) {         /* [PROGRAM] COLLATING SEQUENCE IS alphabet-name */
+                        accept_word("sequence"); accept_word("is");
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "expected an alphabet-name after COLLATING SEQUENCE");
+                        snprintf(g_collate_name, sizeof g_collate_name, "%s", cur()->s);
+                    }
+                    advance();
+                }
+                if (cur()->kind == T_PERIOD) advance();
                 continue;
             }
             if (at_word("special-names")) {
@@ -5181,12 +5212,42 @@ static void parse_environment_division(void)
                         snprintf(a->name, sizeof a->name, "%s", cur()->s); advance();
                         accept_word("is");
                         if (accept_word("native") || accept_word("standard-1") || accept_word("standard-2")) a->native = 1;
-                        else if (accept_word("ebcdic")) a->native = 0;
+                        else if (accept_word("ebcdic")) die_at(cur()->line, "ALPHABET %s IS EBCDIC is not implemented (the machine is ASCII)", a->name);
                         else {
-                            /* literal phrases: lit [THROUGH lit | ALSO lit...] ... -- a
-                             * user-defined collating sequence, recorded as not native */
+                            /* literal phrases: lit [THROUGH lit | ALSO lit ...] ... -- the
+                             * characters named take the first collating positions in that
+                             * order (ALSO: the same position), the rest follow in native order */
                             a->native = 0;
-                            while (cur()->kind == T_STR || cur()->kind == T_NUM || at_word("through") || at_word("thru") || at_word("also") || at_word("high-value") || at_word("low-value") || at_word("high-values") || at_word("low-values") || at_word("space") || at_word("spaces") || at_word("zero") || at_word("zeros") || at_word("zeroes") || at_word("quote") || at_word("quotes")) advance();
+                            int seen[256] = { 0 }, rank = 0, any = 0;
+                            #define ALPHA_CH(tok, out) do { \
+                                Tok *_t = (tok); \
+                                if (_t->kind == T_STR) { if (_t->len != 1) die_at(_t->line, "ALPHABET %s: a literal of one character (or THROUGH a range)", a->name); *(out) = (unsigned char)_t->s[0]; } \
+                                else if (_t->kind == T_NUM) { int _v = atoi(_t->s); if (_v < 1 || _v > 256) die_at(_t->line, "ALPHABET %s: an ordinal position is 1 to 256", a->name); *(out) = (unsigned char)(_v - 1); } \
+                                else if (_t->kind == T_WORD && is_figurative(_t->s)) *(out) = (unsigned char)fig_byte(_t->s); \
+                                else die_at(_t->line, "ALPHABET %s: expected a literal", a->name); } while (0)
+                            for (;;) {
+                                Tok *lo = cur();
+                                if (!(lo->kind == T_STR || lo->kind == T_NUM || (lo->kind == T_WORD && is_figurative(lo->s)))) break;
+                                if (lo->kind == T_STR && lo->len > 1) {
+                                    /* a longer literal: each character in turn */
+                                    for (int c = 0; c < lo->len; c++) { unsigned char ch = (unsigned char)lo->s[c]; if (!seen[ch]) { seen[ch] = 1; a->rank[ch] = (unsigned char)rank++; } }
+                                    advance(); any = 1; continue;
+                                }
+                                unsigned char c1; ALPHA_CH(lo, &c1); advance();
+                                if (accept_word("through") || accept_word("thru")) {
+                                    unsigned char c2 = 0; ALPHA_CH(cur(), &c2); advance();
+                                    int step = c2 >= c1 ? 1 : -1;
+                                    for (int c = c1; ; c += step) { if (!seen[c]) { seen[c] = 1; a->rank[c] = (unsigned char)rank++; } if (c == c2) break; }
+                                } else {
+                                    if (!seen[c1]) { seen[c1] = 1; a->rank[c1] = (unsigned char)rank; }
+                                    while (accept_word("also")) { unsigned char c3 = 0; ALPHA_CH(cur(), &c3); advance(); if (!seen[c3]) { seen[c3] = 1; a->rank[c3] = (unsigned char)rank; } }
+                                    rank++;
+                                }
+                                any = 1;
+                            }
+                            #undef ALPHA_CH
+                            if (!any) die_at(cur()->line, "ALPHABET %s: expected NATIVE, STANDARD-1 or literals", a->name);
+                            for (int c = 0; c < 256; c++) if (!seen[c]) a->rank[c] = (unsigned char)(rank < 255 ? rank++ : 255);
                         }
                         continue;
                     }
@@ -5214,6 +5275,18 @@ static void parse_environment_division(void)
             break;
         }
     }
+    if (g_collate_name[0]) {
+        int found = -1;
+        for (int i = 0; i < g_nalphabet; i++) if (!strcmp(g_alphabet[i].name, g_collate_name)) found = i;
+        if (found < 0) die_at(cur()->line, "PROGRAM COLLATING SEQUENCE '%s' is not an ALPHABET of SPECIAL-NAMES", g_collate_name);
+        if (!g_alphabet[found].native) {
+            g_collate = found;
+            /* LOW-VALUE and HIGH-VALUE are the sequence's first and last characters */
+            int lo = 0, hi = 0;
+            for (int c = 0; c < 256; c++) { if (g_alphabet[found].rank[c] < g_alphabet[found].rank[lo]) lo = c; if (g_alphabet[found].rank[c] >= g_alphabet[found].rank[hi]) hi = c; }
+            g_lowval = lo; g_highval = hi;
+        }
+    }
     if (accept_word("input-output")) {
         expect_word("section"); expect_period();
         if (accept_word("file-control")) {
@@ -5221,10 +5294,28 @@ static void parse_environment_division(void)
             while (accept_word("select")) parse_select();
         }
         if (accept_word("i-o-control")) {
-            /* SAME [RECORD|SORT] AREA, RERUN, MULTIPLE FILE TAPE: hints for
-             * machines with tapes and scarce memory; nothing here to do */
+            /* SAME RECORD AREA means what it says; SAME AREA / SORT AREA,
+             * RERUN and MULTIPLE FILE TAPE are hints for machines with tapes
+             * and scarce memory, and are read past */
             expect_period();
-            while (!at_division() && cur()->kind != T_EOF) advance();
+            while (!at_division() && cur()->kind != T_EOF) {
+                if (accept_word("same")) {
+                    int is_record = accept_word("record");
+                    if (!is_record) { accept_word("sort"); accept_word("sort-merge"); }
+                    accept_word("area"); accept_word("for");
+                    int g = -1;
+                    if (is_record) {
+                        if (g_nsame_groups == 8) die_at(cur()->line, "too many SAME RECORD AREA clauses");
+                        g = g_nsame_groups++; g_nsame[g] = 0;
+                    }
+                    while (cur()->kind == T_WORD && file_find(cur()->s)) {
+                        if (g >= 0 && g_nsame[g] < 16) g_same[g][g_nsame[g]++] = (int)(file_find(cur()->s) - g_files);
+                        advance();
+                    }
+                    continue;
+                }
+                advance();
+            }
         }
     }
     if (!at_division()) die_at(cur()->line, "unexpected %s in the ENVIRONMENT DIVISION", tok_desc(cur()));
@@ -5686,6 +5777,10 @@ static void emit_unit_data(void)
     emit("\t.p2align 2");
     emit(".Luse%d:\t# USE sections by open mode", g_unit);
     for (int m = 0; m < 5; m++) emit("\t.word %d", g_use_mode[m]);
+    if (g_collate >= 0) {
+        emit(".Lcoll%d:\t# PROGRAM COLLATING SEQUENCE %s: rank of each character", g_unit, g_alphabet[g_collate].name);
+        emit_bytes(g_alphabet[g_collate].rank, 256);
+    }
     for (int i = 0; i < g_nsorttab; i++) {
         SortTab *t = &g_sorttab[i];
         emit("\t.p2align 2");
@@ -5816,7 +5911,8 @@ int main(int argc, char **argv)
     for (;;) {
         /* one program unit; a source file may hold several, each closed
          * by END PROGRAM */
-        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
+        g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();

@@ -374,11 +374,17 @@ void cob_fill_all(void *dst, int n, const char *lit, int len)
 
 /* ---- comparison ------------------------------------------------------- */
 
+/* PROGRAM COLLATING SEQUENCE: the rank of each character, or native order */
+static const unsigned char *cob_collating;
+const unsigned char *cob_set_collating(const unsigned char *t) { const unsigned char *old = cob_collating; cob_collating = t; return old; }
+
 static int cmp_bytes(const unsigned char *a, int na, const unsigned char *b, int nb)
 {
     int n = na > nb ? na : nb;          /* the shorter is extended with spaces */
+    const unsigned char *t = cob_collating;
     for (int i = 0; i < n; i++) {
         int ca = i < na ? a[i] : ' ', cb = i < nb ? b[i] : ' ';
+        if (t) { ca = t[ca]; cb = t[cb]; }
         if (ca != cb) return ca < cb ? -1 : 1;
     }
     return 0;
