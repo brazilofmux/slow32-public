@@ -1238,6 +1238,14 @@ The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
 - CCVS-85 NC/SQ/IC as a pass/fail suite
 - `rs.c`, `csvgen.c`, `crc.c` on SLOW-32, when a program calls them
 
+Queued 2026-08-30, after the suite and the screen (ISSUES-22, 23):
+
+- The IF module -- X3.23a-1989's 44 intrinsic functions, 45 CCVS-85
+  programs already in the tree, 34 functions to add; the one
+  85-adjacent standard with an answer key
+- Screen leftovers: `CRT STATUS` and exception keys, nested screen
+  groups, subscripted/LINKAGE slot items
+
 Sort-Merge as a module, Debug, Communication stay out.
 
 ## What not to start a stage with

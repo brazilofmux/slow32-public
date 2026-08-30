@@ -145,6 +145,35 @@ clauses in any order, PAGE FOOTING, FOOTING, LINE-COUNTER/PAGE-COUNTER
 as items -- 6 of 6 match GnuCOBOL; CONTROL/SUM/NEXT GROUP/GROUP
 INDICATE/RH/RF/USE BEFORE REPORTING remain here.
 
+### 22. The IF module: X3.23a-1989 intrinsic functions (queued 2026-08-30)
+The 1989 amendment is the one COBOL-85-adjacent standard, and its
+test module sits in the same CCVS-85 suite, unextracted
+(`ccvs-run.sh` prints `IF not extracted` every run): 45 programs,
+IF101A-IF142A and IF401M-IF403M, over 44 functions. The compiler
+knows the ten majesty asked for -- `CURRENT-DATE`, `UPPER-CASE`,
+`LOWER-CASE`, `LENGTH`, `INTEGER-OF-DATE`, `DATE-OF-INTEGER`,
+`INTEGER-OF-DAY`, `DAY-OF-INTEGER`, `RANDOM`, `SUM`. The other 34:
+`NUMVAL`, `NUMVAL-C`, `MOD`, `REM`, `INTEGER`, `INTEGER-PART`, `MAX`,
+`MIN`, `ORD-MAX`, `ORD-MIN`, `CHAR`, `ORD`, `REVERSE`, `WHEN-COMPILED`,
+`MEAN`, `MEDIAN`, `MIDRANGE`, `RANGE`, `VARIANCE`,
+`STANDARD-DEVIATION`, `ANNUITY`, `PRESENT-VALUE`, `SQRT`, `LOG`,
+`LOG10`, `EXP`, `SIN`, `COS`, `TAN`, `ASIN`, `ACOS`, `ATAN`,
+`FACTORIAL`, and the `ALL` argument / table arguments the statistics
+take. Same oracle, same runner, same authority order (NIST cases,
+then the text, then GnuCOBOL where it agrees). The transcendentals
+are the interesting part on this platform: the cases pin results to
+fixed decimal places, so it is libcob's precision (soft-float or
+hardware FP) against an answer key. Nothing majesty runs needs any of
+it -- queued, not scheduled.
+
+### 23. Screen section leftovers (queued 2026-08-30)
+What Stage 58 (ISSUES-13) did not do because no program asks: `CRT
+STATUS` and the exception keys (function keys, the status after an
+ACCEPT), nested screen groups (a group item carrying LINE/COLUMN for
+its children), subscripted or LINKAGE items in a slot, `BLINK`,
+`BELL`, `ERASE EOL/EOS` (accepted, ignored). Each is small; each
+waits for a screen that uses it.
+
 ### 12. ~~Indexed: `ALTERNATE RECORD KEY`, `DUPLICATES`~~ — RESOLVED 2026-08-31
 One sorted table per key (docs/indexed.md "Alternate keys"); key of
 reference; partial-key START; 02/22 per the text. free/altkey; NIST IX
