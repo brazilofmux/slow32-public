@@ -169,11 +169,13 @@ it -- queued, not scheduled.
 ### 23. Screen section leftovers (queued 2026-08-30)
 ~~`CRT STATUS` and the exception keys~~ — Stage 59, 2026-08-30
 (screen.md; GnuCOBOL's numbering, F1-F12/PgUp/PgDn end the ACCEPT
-with the fields kept, Escape abandons; free/screen3). Still queued:
-nested screen groups (a group item carrying LINE/COLUMN for its
-children), subscripted or LINKAGE items in a slot, `BLINK`, `BELL`,
-`ERASE EOL/EOS` (accepted, ignored). Each is small; each waits for a
-screen that uses it.
+with the fields kept, Escape abandons; free/screen3).
+~~Nested screen groups~~ — Stage 60, 2026-08-30 (inherited look, the
+group's LINE/COLUMN anchoring its first child, DISPLAY/ACCEPT of a
+named group as a window into the parent's slots; free/screen4).
+Still queued: subscripted or LINKAGE items in a slot, `BLINK`,
+`BELL`, `ERASE EOL/EOS` (accepted, ignored). Each is small; each
+waits for a screen that uses it.
 
 ### 12. ~~Indexed: `ALTERNATE RECORD KEY`, `DUPLICATES`~~ — RESOLVED 2026-08-31
 One sorted table per key (docs/indexed.md "Alternate keys"); key of

@@ -1230,6 +1230,20 @@ sequence. Function and page keys end the ACCEPT with the fields
 committed; Escape still abandons. free/screen3 pins Enter/F3/PgDn/
 Escape; the harness is 82.
 
+## Stage 60 — nested screen groups **S** — DONE 2026-08-30
+
+The second item off ISSUES-23. The screen parser keeps a stack of the
+enclosing entries: an entry with a name and no PICTURE or VALUE
+pushes a group whose flags and colours compose over its parent's and
+reach every child (input-only clauses reach only TO/USING fields),
+and whose LINE/COLUMN anchor the first child. A named group becomes a
+second cob_screen record pointing into the parent's slot table at
+first * sizeof(cob_scr_field), so DISPLAY and ACCEPT of the group
+paint and focus just that window -- the runtime is untouched.
+free/screen4 pins two levels of nesting, inherited reverse+colour,
+LINE PLUS on an inner group, ACCEPT of both windows with CRT STATUS
+still reporting; the harness is 83.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

@@ -1079,10 +1079,13 @@ typedef struct {
     Sym *item;
 } SField;
 
+typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested group: a window into the slot table */
+
 typedef struct {
     char name[64];
     int line, blank_screen;
     SField *f; int nf, fcap;
+    SGroup *sub; int nsub, subcap;
 } Screen;
 
 static Screen *g_screens; static int g_nscreen, g_scrcap;
@@ -1091,6 +1094,17 @@ static Screen *screen_find(const char *name)
 {
     for (int i = 0; i < g_nscreen; i++) if (!strcmp(g_screens[i].name, name)) return &g_screens[i];
     return NULL;
+}
+
+/* the record label for a screen-name or a named group inside one */
+static int screen_ref(const char *name, char *lab, size_t n)
+{
+    Screen *sc = screen_find(name);
+    if (sc) { snprintf(lab, n, ".Lscr%d_%d", g_unit, (int)(sc - g_screens)); return 1; }
+    for (int i = 0; i < g_nscreen; i++)
+        for (int j = 0; j < g_screens[i].nsub; j++)
+            if (!strcmp(g_screens[i].sub[j].name, name)) { snprintf(lab, n, ".Lscrg%d_%d_%d", g_unit, i, j); return 1; }
+    return 0;
 }
 
 static Report *report_find(const char *name)
@@ -3287,18 +3301,12 @@ static Para *expect_para(void)
 
 /* ---- DISPLAY ---------------------------------------------------------- */
 
-static void emit_screen_addr(const char *reg, Screen *sc)
-{
-    char lab[32]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, (int)(sc - g_screens));
-    emit_la(reg, lab);
-}
-
 static void parse_accept(void)
 {
     Tok *t = cur();
     if (t->kind == T_WORD) {
-        Screen *sc = screen_find(t->s);
-        if (sc) {
+        char scrlab[40];
+        if (screen_ref(t->s, scrlab, sizeof scrlab)) {
             advance();
             if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
                 Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line);
@@ -3309,7 +3317,7 @@ static void parse_accept(void)
                 emit_la("r4", b);
                 emit_call("cob_crt_status");
             }
-            emit_screen_addr("r3", sc); emit_call("cob_screen_accept"); return;
+            emit_la("r3", scrlab); emit_call("cob_screen_accept"); return;
         }
     }
     Ref r; parse_ref(&r);
@@ -3360,8 +3368,8 @@ static void parse_display(void)
     int line = cur()->line;
     int n = 0, no_adv = 0;
     if (cur()->kind == T_WORD) {
-        Screen *sc = screen_find(cur()->s);
-        if (sc) { advance(); emit_screen_addr("r3", sc); emit_call("cob_screen_display"); return; }
+        char scrlab[40];
+        if (screen_ref(cur()->s, scrlab, sizeof scrlab)) { advance(); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
     }
     /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
     if (is_word(peek(1), "upon") && is_word(peek(2), "argument-number")) {
@@ -7149,15 +7157,27 @@ static void parse_screen_section(void)
             die_at(cur()->line, "unexpected %s on screen '%s' (v1 takes BLANK SCREEN on the 01, fields below it)", tok_desc(cur()), sc->name);
         }
         expect_period();
+        /* nested groups: a stack of the enclosing entries.  Each carries
+         * the composed look (flags, colours) its children inherit, and
+         * the group's LINE/COLUMN, which anchor its first child. */
+        struct { int level, flags, fg, bg, line, col, subidx; } gstk[16];
+        int gdepth = 0;
         while (cur()->kind == T_NUM && strcmp(cur()->s, "01")) {
             int fl = parse_level(); int fline = cur()->line; advance();
             if (fl <= 1 || fl > 49) die_at(fline, "bad level %d in a screen", fl);
+            while (gdepth && gstk[gdepth - 1].level >= fl) {
+                int si = gstk[--gdepth].subidx;
+                if (si >= 0) sc->sub[si].count = sc->nf - sc->sub[si].first;
+            }
+            char ename[64] = "";
             if (cur()->kind == T_WORD && !at_word("blank") && !at_word("line") && !at_word("column") && !at_word("col") &&
                 !at_word("value") && !at_word("pic") && !at_word("picture") && !at_word("highlight") && !at_word("underline") &&
                 !at_word("auto") && !at_word("auto-skip") && !at_word("reverse-video") && !at_word("from") && !at_word("to") && !at_word("using") &&
                 !at_word("secure") && !at_word("required") && !at_word("full") && !at_word("lowlight") && !at_word("blink") && !at_word("bell") &&
-                !at_word("beep") && !at_word("erase") && !at_word("foreground-color") && !at_word("background-color"))
-                advance();                                       /* a name on the slot */
+                !at_word("beep") && !at_word("erase") && !at_word("foreground-color") && !at_word("background-color")) {
+                snprintf(ename, sizeof ename, "%s", cur()->s);
+                advance();                                       /* a name on the entry */
+            }
             if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 16; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
             SField *f = &sc->f[sc->nf];
             SField *prev = sc->nf ? &sc->f[sc->nf - 1] : NULL;
@@ -7237,7 +7257,45 @@ static void parse_screen_section(void)
             }
             expect_period();
             if (blank_screen_entry && f->kind < 0 && !f->has_pic) continue;   /* just BLANK SCREEN */
+            if (f->kind < 0 && !f->has_pic) {
+                /* a group: its look composes over the enclosing one and its
+                 * children inherit it; its position anchors the first child */
+                if (gdepth == 16) die_at(fline, "screen groups nested more than 16 deep");
+                int pf = gdepth ? gstk[gdepth - 1].flags : 0;
+                int pfg = gdepth ? gstk[gdepth - 1].fg : 255, pbg = gdepth ? gstk[gdepth - 1].bg : 255;
+                gstk[gdepth].level = fl;
+                gstk[gdepth].flags = pf | f->flags;
+                gstk[gdepth].fg = f->fg != 255 ? f->fg : pfg;
+                gstk[gdepth].bg = f->bg != 255 ? f->bg : pbg;
+                gstk[gdepth].line = f->line; gstk[gdepth].col = f->col;
+                gstk[gdepth].subidx = -1;
+                if (ename[0] && strcmp(ename, "filler")) {
+                    if (sym_lookup_quiet(ename)) die_at(fline, "'%s' is both a data item and a screen group", ename);
+                    char dummy[40];
+                    if (screen_ref(ename, dummy, sizeof dummy)) die_at(fline, "screen group '%s' is already a screen or group name", ename);
+                    if (sc->nsub == sc->subcap) { sc->subcap = sc->subcap ? sc->subcap * 2 : 4; sc->sub = realloc(sc->sub, sc->subcap * sizeof *sc->sub); }
+                    SGroup *g = &sc->sub[sc->nsub];
+                    snprintf(g->name, sizeof g->name, "%s", ename);
+                    g->first = sc->nf; g->count = 0;
+                    gstk[gdepth].subidx = sc->nsub++;
+                }
+                gdepth++;
+                continue;
+            }
             if (f->kind < 0) die_at(fline, "a screen slot needs VALUE, or PIC with FROM, TO or USING");
+            if (gdepth) {
+                /* inherit the enclosing look; the input-only clauses reach
+                 * only the fields that take input */
+                int gf = gstk[gdepth - 1].flags;
+                if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
+                    gf &= ~(COB_SF_AUTO | COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL);
+                f->flags |= gf;
+                if (f->fg == 255) f->fg = gstk[gdepth - 1].fg;
+                if (f->bg == 255) f->bg = gstk[gdepth - 1].bg;
+                if (!f->line && gstk[gdepth - 1].line) f->line = gstk[gdepth - 1].line;
+                if (!f->col && gstk[gdepth - 1].col) f->col = gstk[gdepth - 1].col;
+                gstk[gdepth - 1].line = 0; gstk[gdepth - 1].col = 0;    /* the anchor is the first child's */
+            }
             if (f->kind == COB_SCR_VALUE) { if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE"); f->width = f->value->len; }
             else { if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE"); f->width = f->pi.bytes; }
             if (!f->line) f->line = prev ? prev->line : 1;        /* no LINE: the previous slot's line */
@@ -7245,6 +7303,10 @@ static void parse_screen_section(void)
             if ((f->flags & (COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL)) && f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
                 die_at(fline, "SECURE, REQUIRED and FULL belong to an input field (TO or USING)");
             sc->nf++;
+        }
+        while (gdepth) {
+            int si = gstk[--gdepth].subidx;
+            if (si >= 0) sc->sub[si].count = sc->nf - sc->sub[si].first;
         }
     }
 }
@@ -7441,6 +7503,12 @@ static void emit_unit_data(void)
         emit("\t.word %d", sc->nf);
         emit("\t.word %d", sc->blank_screen);
         emit("\t.word .Lscrf%d_%d", g_unit, i);
+        for (int j = 0; j < sc->nsub; j++) {                  /* a named group: a window into the same slots */
+            emit(".Lscrg%d_%d_%d:\t# screen %s group %s", g_unit, i, j, sc->name, sc->sub[j].name);
+            emit("\t.word %d", sc->sub[j].count);
+            emit("\t.word 0");
+            emit("\t.word .Lscrf%d_%d+%d", g_unit, i, sc->sub[j].first * 28);   /* 28 = sizeof(cob_scr_field) on the guest */
+        }
     }
     for (int i = 0; i < g_naltcell; i++) {
         emit("\t.p2align 2");

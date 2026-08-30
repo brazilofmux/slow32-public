@@ -194,9 +194,19 @@ notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
   four digits as text. The escape reader keeps one byte of pushback,
   so a lone Escape followed by typed text is told from a sequence.
 
-Still not: nested screen groups (a group item carrying LINE/COLUMN for
-its children), subscripted or LINKAGE items in a slot. Each waits for
-a program.
+- **Nested groups** (Stage 60). An entry with a name and no PICTURE
+  or VALUE is a group: its look (attributes, colours) composes over
+  the enclosing group's and reaches its children -- the input-only
+  clauses (`AUTO`, `SECURE`, `REQUIRED`, `FULL`) only the fields that
+  take input -- and its `LINE`/`COLUMN` anchor its first child. A
+  *named* group is a screen of its own for `DISPLAY` and `ACCEPT`: the
+  compiler emits a second `cob_screen` record whose field pointer
+  lands mid-table, so the runtime paints or focuses just that window,
+  and the group's own slot count bounds the loop. The runtime needed
+  nothing.
+
+Still not: subscripted or LINKAGE items in a slot. Each waits for a
+program.
 
 Testing: `tests/free/screen3.cbl` pins the four endings (Enter, F3,
 Page Down, Escape after a typed character); `tests/free/screen2.cbl` drives the rest from `screen2.keys`
