@@ -2241,8 +2241,13 @@ static void parse_ref(Ref *r)
                 advance();
             } else if (st->kind == T_WORD) {
                 char *sname = st->s; advance();
-                char *sq[8]; int snq = 0;
-                while (at_word("of") || at_word("in")) { advance(); if (snq < 8) sq[snq++] = cur()->s; advance(); }
+                char *sq[64]; int snq = 0;                 /* NC246A qualifies a subscript 18 deep */
+                while (at_word("of") || at_word("in")) {
+                    advance();
+                    if (cur()->kind != T_WORD) die_at(cur()->line, "expected a qualifier after OF/IN");
+                    if (snq == 64) die_at(cur()->line, "more than 64 qualifiers on a subscript");
+                    sq[snq++] = cur()->s; advance();
+                }
                 Sym *ss = sym_lookup(sname, sq, snq, st->line);
                 if (!is_int_item(ss)) die_at(st->line, "the subscript '%s' must be an integer item", ss->name);
                 if (ss->ndims) die_at(st->line, "a subscript cannot itself be subscripted in COBOL 85");

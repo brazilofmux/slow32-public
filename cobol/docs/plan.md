@@ -1057,6 +1057,16 @@ POINTER, then the overflow), oracle agreeing; NC217A (82 tests)
 matches; the suite 284 of 303 compile, 6538 of 6580 pass, none fail,
 281 match.
 
+## Stage 49 — qualified subscripts to 64 deep **S** — DONE 2026-08-31
+
+The subscript parser took qualifiers but kept eight and dropped the
+rest silently, so NC246A's eighteen-deep subscript came out
+ambiguous. 64 now, an error past it, and a missing word after OF/IN
+is an error rather than a stride. free/subqual (a ten-deep qualified
+subscript, the same name in two records, an adjusted one), oracle
+agreeing; NC246A (49 tests) matches; the suite 285 of 303 compile,
+6587 of 6629 pass, none fail, 282 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

@@ -374,6 +374,9 @@ given, because majesty's `.prn` oracles were produced under it.
   forbids only an edited or JUSTIFIED receiver; a group is alphanumeric
   and is filled through its whole length. NC217A (82 tests) matches
   GnuCOBOL.
+- **A qualified subscript** (Stage 49) takes up to 64 qualifiers, like
+  a name (NC246A writes `(SUB1 OF S48 IN S47 ... IN S31)`; the cap was
+  eight, and the rest were dropped, which made the name ambiguous).
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
