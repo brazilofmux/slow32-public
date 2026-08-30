@@ -1143,6 +1143,16 @@ void cob_rw_line_write(cob_report *r, int abs, int plus, int body_first)
     if (body_first) r->body_seen = 1;
 }
 
+/* a body group ended beyond LAST DETAIL: the page is over.  GnuCOBOL
+ * then starts a new page (heading and all) before TERMINATE pads --
+ * measured on the profit-and-loss report, whose second page is a heading over
+ * blank lines -- so TERMINATE asks first and the compiler renders the
+ * heading. */
+int cob_rw_overflowed(cob_report *r)
+{
+    return r->page_counter > 0 && r->line_counter > r->last_detail;
+}
+
 void cob_rw_terminate(cob_report *r)
 {
     if (r->page_counter > 0) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);

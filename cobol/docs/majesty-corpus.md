@@ -128,7 +128,7 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | ~~2~~ | ~~`OCCURS DEPENDING ON`~~ **landed** (Stage 14): gl040 compiles, gl034 moves to `SEARCH` | ~~gl034, gl040~~ |
 | 2 | `SPECIAL-NAMES` clauses | damm, gl008 |
 | ~~1~~ | ~~a subscripted `SOURCE` in a report field~~ gl036 compiles as of Stage 13 (a `VALUE`-only report field was the last stop) | ~~gl036~~ |
-| 3 | `SEARCH` (gl042/gl043 the serial form, gl034 `SEARCH ALL`) | gl042, gl043, gl034 |
+| ~~3~~ | ~~`SEARCH`~~ **landed** (Stage 15); gl042/gl043 also needed their `EXIT PARAGRAPH` rewritten to 1985 | ~~gl042, gl043, gl034~~ |
 | 1 | a report field without a PICTURE (a group field with children) | gl015, gl016 (retired programs, not in the build) |
 | 1 | `SD` -- an in-program `SORT` | glacpost |
 | 1 | a numeric item of more than 18 digits (`ws-temp`) | dist01 |
@@ -136,7 +136,7 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | 1 | `USAGE BINARY-INT` | testcrc |
 | 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
 
-After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, **33 of 58.** The copybooks also
+After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), **36 of 58.** The copybooks also
 brought `packed-decimal` before `pic`, a trailing `+` in a numeric
 picture (`9(9)v99+`, numeric-edited: moved to a numeric item before
 arithmetic, as the programs already do) and level 88 directly under

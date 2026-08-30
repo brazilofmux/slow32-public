@@ -112,6 +112,14 @@ reproduced byte for byte:
   page first: blank lines to `PAGE LIMIT`, then the heading again.
 - `TERMINATE` pads the current page to `PAGE LIMIT`; with nothing
   generated it prints nothing.
+- Two rules measured later on the profit-and-loss report (Stage 15): the fit
+  test counts a group's *printing* lines -- a trailing `LINE PLUS 1`
+  with no fields is a blank line allowed to run past `LAST DETAIL`
+  (gl043's "Net Profit" group, one printing line and one empty, lands
+  on line 60 of 60); and when a body group has ended beyond `LAST
+  DETAIL`, `TERMINATE` starts a new page -- heading and all -- before it
+  pads, which is why that report is two pages, the second a heading
+  over blanks.
 - Fields render by `MOVE` into a 512-column line buffer -- the
   ordinary conversion matrix, editing included -- so
   `----,---,--9.99` with a negative amount prints the sign against

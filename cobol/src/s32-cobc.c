@@ -42,7 +42,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.14 (stage 14: OCCURS DEPENDING ON)"
+#define VERSION "0.15 (stage 15: SEARCH)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -560,6 +560,7 @@ typedef struct Sym {
     int  offset;                    /* from the start of the record */
     int  occurs;                    /* 0 = no OCCURS; with DEPENDING ON, the maximum */
     int  odo_min; char odo_dep[64]; struct Sym *odo_dep_sym;   /* OCCURS m TO n DEPENDING ON */
+    int  idx1;                      /* the table's first INDEXED BY item, or -1 */
     int  redefines;                 /* sym index, -1 */
     int  sync, just, blank_zero;
     int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];
@@ -585,7 +586,7 @@ static Sym *sym_new(void)
     Sym *s = &g_sym[g_nsym++];
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
-    s->desc_id = -1; s->fd = -1;
+    s->desc_id = -1; s->fd = -1; s->idx1 = -1;
     return s;
 }
 
@@ -986,8 +987,10 @@ static void parse_data_item(void)
                         snprintf(ix->name, sizeof ix->name, "%s", cur()->s);
                         ix->line = cur()->line; ix->usage = U_INDEX; ix->has_usage = 1;
                         ix->is_index = 1; ix->level = 1;
+                        int ixi = sym_idx(ix);
                         advance();
                         s = &g_sym[g_last_item];      /* sym_new may have moved the array */
+                        if (s->idx1 < 0) s->idx1 = ixi;
                     }
                     continue;
                 }
@@ -2281,7 +2284,7 @@ static int at_operand(void)
         "key", "invalid", "advancing", "lines", "line", "page", "input", "output", "i-o",
         "extend", "lock", "rewind", "end-string", "returning", "reference", "content",
         "exception", "end-call", "also", "when", "other", "tallying", "replacing", "converting",
-        "characters", "leading", "first", "initial", "true", "false", "any", NULL };
+        "characters", "leading", "first", "initial", "true", "false", "any", "end-search", NULL };
     for (int i = 0; clause[i]; i++) if (!strcmp(t->s, clause[i])) return 0;
     return 1;
 }
@@ -3735,6 +3738,17 @@ static void parse_initiate(void)
 static void parse_terminate(void)
 {
     Report *r = expect_report();
+    /* a page whose last body group ran past LAST DETAIL is followed by a
+     * new page, heading and all, before the padding (report-writer.md) */
+    emit_report_addr("r3", r);
+    emit_call("cob_rw_overflowed");
+    int Lno = new_label();
+    emit("\tbeq r1, r0, .L%d", Lno);
+    emit_report_addr("r3", r);
+    emit_call("cob_rw_page_end");
+    for (int k = 0; k < r->ng; k++)
+        if (r->g[k].type == RG_PAGE_HEADING) emit_report_group(r, &r->g[k]);
+    emit_label(Lno);
     emit_report_addr("r3", r);
     emit_call("cob_rw_terminate");
 }
@@ -3756,8 +3770,15 @@ static void parse_generate(void)
 
     /* the fit test: the group's first line as it would land, plus the
      * relative extent of the rest */
+    /* the fit test counts the lines that print something; a trailing
+     * LINE with no fields is a blank line that may run into the footing
+     * area -- measured on majesty's profit-and-loss report, where GnuCOBOL
+     * put a "Net Profit" line on LAST DETAIL with its empty trailing line
+     * beyond it (report-writer.md) */
+    int last_printing = 0;
+    for (int i = 0; i < g->nl; i++) if (g->l[i].nf) last_printing = i;
     int height = 0;
-    for (int i = 1; i < g->nl; i++) height += g->l[i].plus;
+    for (int i = 1; i <= last_printing; i++) height += g->l[i].plus;
     emit_report_addr("r3", r);
     emit_li("r4", g->l[0].abs); emit_li("r5", g->l[0].plus); emit_li("r6", height);
     emit_call("cob_rw_fit");
@@ -3952,6 +3973,100 @@ static void parse_initialize(void)
     if (at_word("with") || at_word("default")) die_at(cur()->line, "INITIALIZE WITH FILLER / DEFAULT is COBOL 2002");
 }
 
+/* ---- SEARCH ------------------------------------------------------------ */
+
+/* SEARCH table [VARYING id] [AT END s] {WHEN cond s}... [END-SEARCH]
+ * walks the table's first index from its current value; SEARCH ALL sets
+ * it to 1 first.  Both are a scan here: SEARCH ALL's table is ordered by
+ * its key and its keys are unique in every use the corpus makes, so the
+ * first entry satisfying the WHEN is the one a binary search would
+ * report.  The bound is the OCCURS count, or the DEPENDING ON item. */
+static void parse_search(void)
+{
+    int all = accept_word("all");
+    /* the table is named without subscripts */
+    Tok *tt = cur();
+    if (tt->kind != T_WORD) die_at(tt->line, "SEARCH needs a table name");
+    Ref t; memset(&t, 0, sizeof t); t.line = tt->line;
+    t.sym = sym_lookup(tt->s, NULL, 0, tt->line); advance();
+    Sym *tbl = t.sym;
+    if (!tbl->occurs) die_at(t.line, "SEARCH needs a table (an item with OCCURS)");
+    if (cur()->kind == T_LP) die_at(t.line, "SEARCH names the table without subscripts");
+    if (tbl->idx1 < 0) die_at(t.line, "SEARCH needs the table to have INDEXED BY");
+    Sym *ix = &g_sym[tbl->idx1];
+    Ref ixr; memset(&ixr, 0, sizeof ixr); ixr.sym = ix; ixr.line = t.line;
+    Ref vary; int has_vary = 0;
+    if (accept_word("varying")) { parse_ref(&vary); has_vary = 1; if (!is_int_item(vary.sym)) die_at(vary.line, "VARYING needs an integer or index item"); }
+    if (all && has_vary) die_at(t.line, "SEARCH ALL takes no VARYING");
+
+    int Lend = new_label(), Ltop = new_label(), Latend = new_label();
+    Opnd one; memset(&one, 0, sizeof one); one.kind = O_NUM; numlit_from_int(&one.num, 1); one.line = t.line;
+    if (all) emit_move(&one, &ixr);
+    emit_label(Ltop);
+    /* at end when the index passes the bound */
+    Opnd ixo; memset(&ixo, 0, sizeof ixo); ixo.kind = O_REF; ixo.ref = ixr; ixo.line = t.line;
+    emit_hot_value(&ixo);
+    emit("\tstw sp+%d, r1", SLOT_A);
+    if (tbl->odo_dep_sym) {
+        Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
+        if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
+        else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+    } else emit_li("r1", tbl->occurs);
+    emit("\tldw r2, sp+%d", SLOT_A);
+    emit("\tslt r1, r1, r2");                    /* bound < index */
+    emit("\tbne r1, r0, .L%d", Latend);
+
+    /* the WHENs are parsed once; their bodies are emitted after the
+     * loop, so the loop only holds the tests */
+    int Lwhen[16]; int nwhen = 0;
+    int save_atend = -1, atend_start = -1;
+    if (accept_word("at")) {
+        expect_word("end");
+        /* the AT END imperative comes before the WHENs in the source; scan
+         * past it now (no code), emit it at Latend later */
+        atend_start = g_tp;
+        g_noemit++; parse_statements(); g_noemit--;
+        save_atend = g_tp;
+    }
+    int when_start[16], when_body_end[16];
+    while (at_word("when")) {
+        if (nwhen >= 16) die_at(cur()->line, "too many WHENs in SEARCH");
+        advance();
+        Cond *c = parse_cond();
+        Lwhen[nwhen] = new_label();
+        cond_jump_true(c, Lwhen[nwhen]);
+        when_start[nwhen] = g_tp;
+        g_noemit++;
+        if (at_word("next")) { advance(); expect_word("sentence"); } else parse_statements();
+        g_noemit--;
+        when_body_end[nwhen] = g_tp;
+        nwhen++;
+    }
+    if (!nwhen) die_at(t.line, "SEARCH needs at least one WHEN");
+    /* no WHEN held: step and go round */
+    Opnd step; memset(&step, 0, sizeof step); step.kind = O_NUM; numlit_from_int(&step.num, 1); step.line = t.line;
+    emit_add_to_ref(&step, &ixr);
+    if (has_vary) emit_add_to_ref(&step, &vary);
+    emit_jump(Ltop);
+
+    /* AT END */
+    emit_label(Latend);
+    if (atend_start >= 0) { int here = g_tp; g_tp = atend_start; parse_statements(); if (g_tp != save_atend) die_at(t.line, "internal: AT END re-parse drifted"); g_tp = here; }
+    emit_jump(Lend);
+    /* WHEN bodies */
+    for (int i = 0; i < nwhen; i++) {
+        emit_label(Lwhen[i]);
+        int here = g_tp; g_tp = when_start[i];
+        if (at_word("next")) { advance(); expect_word("sentence"); if (g_sentence_label < 0) g_sentence_label = new_label(); emit_jump(g_sentence_label); }
+        else parse_statements();
+        if (g_tp != when_body_end[i]) die_at(t.line, "internal: WHEN re-parse drifted");
+        g_tp = here;
+        emit_jump(Lend);
+    }
+    emit_label(Lend);
+    accept_word("end-search");
+}
+
 /* ---- dispatch ---------------------------------------------------------- */
 
 static void parse_statement(void)
@@ -3979,6 +4094,7 @@ static void parse_statement(void)
     if (!strcmp(v, "initiate")) { advance(); parse_initiate(); return; }
     if (!strcmp(v, "accept")) { advance(); parse_accept(); return; }
     if (!strcmp(v, "evaluate")) { advance(); parse_evaluate(); return; }
+    if (!strcmp(v, "search")) { advance(); parse_search(); return; }
     if (!strcmp(v, "inspect")) { advance(); parse_inspect(); return; }
     if (!strcmp(v, "initialize")) { advance(); parse_initialize(); return; }
     if (!strcmp(v, "generate")) { advance(); parse_generate(); return; }
@@ -4015,7 +4131,7 @@ static void parse_statement(void)
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
 
-        { "unstring", "after v1" }, { "search", "after v1" }, { "sort", "after v1" },
+        { "unstring", "after v1" }, { "sort", "after v1" },
         { "merge", "after v1" }, { "release", "after v1" }, { "return", "after v1" },
         { "use", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };
     for (int i = 0; later[i].verb; i++)

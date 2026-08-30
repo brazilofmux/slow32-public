@@ -445,6 +445,22 @@ table doing the retained-earnings work) and 12,566 `acctbal` rows,
 each file byte-identical to GnuCOBOL's. gl042/gl043, which print the
 balance sheet and profit-and-loss from `acctbal`, wait on `SEARCH`.
 
+## Stage 15 — SEARCH **S** — DONE 2026-08-29
+
+`SEARCH table [VARYING id] [AT END s] {WHEN cond s}... [END-SEARCH]`
+walks the table's first `INDEXED BY` item from its current value;
+`SEARCH ALL` sets it to 1 first. Both are index scans: every `SEARCH
+ALL` in the corpus is over a table ordered by its key with unique
+keys, where the first entry satisfying the `WHEN` is the one a binary
+search would report. The bound is the `OCCURS` count or the
+`DEPENDING ON` item. The `AT END` and `WHEN` bodies are parsed once
+and emitted after the loop. Two Report Writer rules came out of gl043
+(report-writer.md, "Two rules measured later"). gl034, gl042 and gl043
+compile -- gl042/gl043 after their `EXIT PARAGRAPH` (2002) became `GO
+TO process-class-exit` in majesty, verified under GnuCOBOL -- and
+**the balance sheet and profit-and-loss reports run on SLOW-32 in place
+byte-identical to majesty's**.
+
 ## After v1 (not scheduled, each when a program asks)
 
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
