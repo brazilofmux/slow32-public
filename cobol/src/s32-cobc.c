@@ -752,18 +752,30 @@ static void expect_period(void)
     advance();
 }
 
+/* SPECIAL-NAMES SYMBOLIC CHARACTERS: figurative constants of the program's
+ * own, each a character named by its ordinal position (1-based) in the
+ * native character set */
+static struct { char name[64]; int byte; } g_symch[32]; static int g_nsymch;
+static int symch_find(const char *w)
+{
+    for (int i = 0; i < g_nsymch; i++) if (!strcmp(g_symch[i].name, w)) return g_symch[i].byte;
+    return -1;
+}
+
 static int is_figurative(const char *w)
 {
     static const char *figs[] = { "space", "spaces", "zero", "zeros", "zeroes",
         "low-value", "low-values", "high-value", "high-values", "quote", "quotes",
         "null", "nulls", NULL };
     for (int i = 0; figs[i]; i++) if (!strcmp(w, figs[i])) return 1;
-    return 0;
+    return symch_find(w) >= 0;
 }
 
 static int g_lowval, g_highval;
 static int fig_byte(const char *w)
 {
+    int sc = symch_find(w);
+    if (sc >= 0) return sc;
     if (!strncmp(w, "space", 5)) return ' ';
     if (!strncmp(w, "zero", 4)) return '0';
     if (!strncmp(w, "high", 4)) return g_highval;            /* X'FF', or the program collating sequence's last */
@@ -6549,6 +6561,38 @@ static void parse_environment_division(void)
                         }
                         continue;
                     }
+                    if (accept_word("symbolic")) {
+                        /* SYMBOLIC [CHARACTERS] {name... {IS|ARE} integer...}... [IN alphabet-name] */
+                        accept_word("characters");
+                        for (;;) {
+                            char names[32][64]; int nn = 0;
+                            while (cur()->kind == T_WORD && !at_word("is") && !at_word("are") && !at_word("in")) {
+                                if (nn == 32) die_at(cur()->line, "SYMBOLIC CHARACTERS: too many names in one list");
+                                snprintf(names[nn++], 64, "%s", cur()->s); advance();
+                            }
+                            if (!nn) die_at(cur()->line, "SYMBOLIC CHARACTERS: expected a name");
+                            if (!accept_word("is")) accept_word("are");
+                            int ni = 0;
+                            while (cur()->kind == T_NUM) {
+                                if (ni >= nn) die_at(cur()->line, "SYMBOLIC CHARACTERS: more integers than names");
+                                int ord = atoi(cur()->s);
+                                if (ord < 1 || ord > 256) die_at(cur()->line, "SYMBOLIC CHARACTERS: the ordinal position is 1 through 256");
+                                if (g_nsymch == 32) die_at(cur()->line, "too many SYMBOLIC CHARACTERS");
+                                if (symch_find(names[ni]) >= 0) die_at(cur()->line, "SYMBOLIC CHARACTERS: '%s' is named twice", names[ni]);
+                                snprintf(g_symch[g_nsymch].name, 64, "%s", names[ni]); g_symch[g_nsymch].byte = ord - 1; g_nsymch++;
+                                ni++; advance();
+                            }
+                            if (ni != nn) die_at(cur()->line, "SYMBOLIC CHARACTERS: %d names but %d integers", nn, ni);
+                            if (accept_word("in")) {
+                                /* IN alphabet-name: the native sequence is the one there is */
+                                if (cur()->kind != T_WORD) die_at(cur()->line, "SYMBOLIC CHARACTERS IN needs an alphabet-name");
+                                advance(); break;
+                            }
+                            if (cur()->kind != T_WORD || at_word("class") || at_word("currency") || at_word("decimal-point") || at_word("alphabet") || at_word("symbolic") || switch_find(cur()->s)) break;
+                            if (mnemonic_kind(cur()->s) >= 0 || !strncmp(cur()->s, "switch-", 7) || at_word("sysin") || at_word("sysout") || at_word("console") || at_word("syserr") || at_word("formfeed")) break;
+                        }
+                        continue;
+                    }
                     if (accept_word("currency")) {            /* already applied to the pictures; see apply_decimal_point */
                         accept_word("sign"); accept_word("is");
                         if (cur()->kind != T_STR) die_at(cur()->line, "CURRENCY SIGN needs a literal");
@@ -7341,7 +7385,7 @@ int main(int argc, char **argv)
          * by END PROGRAM */
         g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
-        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0;
+        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_nsymch = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();

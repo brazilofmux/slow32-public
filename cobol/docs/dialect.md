@@ -196,7 +196,9 @@ given, because majesty's `.prn` oracles were produced under it.
   every CALL (the CANCEL image). Not in a contained program: a REPORT
   or SCREEN SECTION. A contained program's link name is its own
   PROGRAM-ID, so two contained programs of one executable may not
-  share a name.
+  share a name. A contained program sees the containing one's CLASS,
+  SWITCH, ALPHABET, mnemonic and SYMBOLIC CHARACTERS names as well as
+  its own.
 - **`EXTERNAL`** (Stage 30): an 01/77 `IS EXTERNAL` is storage shared
   by name among every program of the executable -- the runtime hands
   out one block per name (`cob_external`, zeroed like GnuCOBOL's, grown
@@ -403,6 +405,13 @@ given, because majesty's `.prn` oracles were produced under it.
   holds keeps the rightmost (an unsigned integer moved). And a
   floating insertion picture with no `9` shows spaces for a zero
   value, the point and the currency sign included (NC124A).
+- **`SYMBOLIC CHARACTERS name... {IS|ARE} integer... [IN alphabet]`**
+  (Stage 54): each name is a figurative constant for the character at
+  that ordinal position (1-based) of the native set, usable wherever a
+  figurative constant is -- VALUE, MOVE (filling the receiver), ALL
+  name, a comparison, STRING, INSPECT. The alphabet-name is accepted
+  (the native sequence is the one there is). NC401M's clause compiles;
+  it then wants ALTER.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

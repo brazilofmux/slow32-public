@@ -258,8 +258,8 @@ standard's executable form and win where they and the text differ),  ~~"too many
 reader refuses (NC215A)~~ (done: a doubled quote split at column 72, Stage 52), ~~a STRING receiver that is a group (NC217A)~~ (done, Stage 48),
 ~~INITIALIZE REPLACING (NC223A)~~ (done, Stage 45), ~~SEARCH with no WHEN (NC237A)~~ (done: `END` without `AT`, Stage 47), ~~an
 ambiguous subscript name (NC246A)~~ (done: 64 qualifiers, Stage 49), ~~`-` as a data-name start (NC250A)~~ (done: a signed expression operand, Stage 50),
-NC302M's ENVIRONMENT DIVISION, ALTER (NC303M), SYMBOLIC CHARACTERS
-(NC401M); SQ 5, ST 3 not yet listed here (RL's last program was the
+NC302M's ENVIRONMENT DIVISION, ALTER (NC303M), ~~SYMBOLIC CHARACTERS
+(NC401M)~~ (done, Stage 54; NC401M then wants ALTER, as NC303M does); SQ 5, ST 3 not yet listed here (RL's last program was the
 abbreviated condition: RL is complete)., `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01
 report group (2), `EXTERNAL` (2), a multi-character `CLASS` literal

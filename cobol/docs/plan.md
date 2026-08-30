@@ -1120,6 +1120,16 @@ same MOVE; the harness's bad/nonint-to-alnum test, which encoded the
 refusal, is gone; the suite 293 of 303 compile, 7289 of 7335 pass,
 none fail, 290 match.
 
+## Stage 54 — SYMBOLIC CHARACTERS **S** — DONE 2026-08-31
+
+The clause's names join the figurative constants: `is_figurative` and
+`fig_byte` consult a per-unit table of name and byte (ordinal - 1),
+so VALUE, MOVE, ALL, comparisons, STRING and INSPECT take them where
+they take SPACE or ZERO. free/symchar, oracle agreeing; NC401M's
+clause compiles, and the program (compile-only) then stops at ALTER,
+where NC303M stops too; the suite unchanged at 293 of 303 compile,
+7289 of 7335 pass, none fail, 290 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
