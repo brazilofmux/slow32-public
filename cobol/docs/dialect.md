@@ -134,6 +134,10 @@ given, because majesty's `.prn` oracles were produced under it.
   reference modification is refused), `CURRENT-DATE` (the guest clock
   through the emulator, local time as the guest libc gives it,
   `YYYYMMDDhhmmsshh+hhmm`).
+- **`COPY`**: text-name as a word or literal; found as given, then
+  `.cpy`, `.CPY`, `.cbl`, `.CBL`, beside the source and in the `-I`
+  directories; `OF`/`IN library` accepted (the directories serve as the
+  library); `SUPPRESS` accepted; `REPLACING` not yet.
 - **`GOBACK`** is accepted (IBM's word, not in X3.23-1985 -- GnuCOBOL
   `-std=cobol85` refuses it; majesty uses it everywhere). In the main
   program it is `STOP RUN`.

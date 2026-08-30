@@ -90,7 +90,7 @@ for fmt in fixed free; do
         if [ -f "${src%.cbl}.link" ]; then
             for e in $(cat "${src%.cbl}.link"); do extra+=("$HERE/$e"); done
         fi
-        if ! "$CDIR/compile.sh" $flag "$src" "${extra[@]+"${extra[@]}"}" -o "$W/$name.s32x" >"$W/$name.log" 2>"$W/$name.err"; then
+        if ! "$CDIR/compile.sh" $flag -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" -o "$W/$name.s32x" >"$W/$name.log" 2>"$W/$name.err"; then
             report "$fmt/$name" 1 "$(grep -m1 -i "error" "$W/$name.err" "$W/$name.log" | head -1 | sed 's/^[^:]*://')"; continue
         fi
         fresh_workdir
@@ -134,7 +134,7 @@ JSON
         if [ -n "$ORACLE" ] && [ "$ORACLE_SKIP" = 0 ]; then
             std="-std=cobol85"
             grep -qi "default dialect" "$src" && std=""
-            if (cd "$W" && "$ORACLE" -x $std $flag -o "$W/$name.orc" "$src" "${extra[@]+"${extra[@]}"}") >"$W/$name.orclog" 2>&1; then
+            if (cd "$W" && "$ORACLE" -x $std $flag -I "$HERE/copy" -o "$W/$name.orc" "$src" "${extra[@]+"${extra[@]}"}") >"$W/$name.orclog" 2>&1; then
                 fresh_workdir
                 (cd "$W/run" && "$W/$name.orc") > "$W/$name.orcout" 2>/dev/null
                 # a documented divergence from GnuCOBOL (docs/oracles.md) keeps
@@ -163,7 +163,7 @@ for src in "$HERE/bad"/*.cbl; do
     exp="${src%.cbl}.expected"
     flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
     [ "$name" = "mixed-format" ] && flag="-fixed"
-    if "$COBC" $flag -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
+    if "$COBC" $flag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
         report "bad/$name" 1 "was accepted"; continue
     fi
     if grep -qF "$(cat "$exp")" "$W/$name.err"; then

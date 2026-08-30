@@ -12,7 +12,7 @@ fixed sequential and indexed files, STRING, CALL / LINKAGE / USING on
 the SLOW-32 C ABI, Report Writer's cheap half, SCREEN SECTION,
 EVALUATE / INSPECT / INITIALIZE / reference modification / the 1989
 intrinsics taskdt uses, sequential mode V behind the IBM RDW that
-tapemgr round-trips; 33/33 tests, GnuCOBOL agreeing on every program
+tapemgr round-trips, COPY; 35/35 tests, GnuCOBOL agreeing on every program
 that can run without a tty. Stages in [docs/plan.md](docs/plan.md);
 what the rest of the corpus needs, in
 [docs/majesty-corpus.md](docs/majesty-corpus.md) "Stage 12+".

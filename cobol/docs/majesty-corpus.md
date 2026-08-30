@@ -120,11 +120,11 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 
 | blocks | first refusal | programs |
 |---|---|---|
-| 8 | `COPY` (the Library module; copybooks under `src/copy/`) | crglacct, crglacpd, crgltrans, exglacct, exglentry, ldglacct, ldgltrans, w001 |
+| ~~8~~ | ~~`COPY`~~ **landed** (Stage 12, 2026-08-29): with `-I src/copy` seven of the eight compile; exglentry moves to the RELATIVE row | ~~crglacct, crglacpd, crgltrans, exglacct, exglentry, ldglacct, ldgltrans, w001~~ |
 | 7 | `FUNCTION-ID` -- the legacy pure-COBOL date family, a retirement candidate rather than a rewrite (the C `du_*` path replaced it) | fielded_to_linear, linear_to_fielded, floor-div, floor-divmod, holidays, isleapyear, isvaliddate |
 | 4 | `ACCEPT FROM ARGUMENT-NUMBER` / `ARGUMENT-VALUE` -- the `YYYYMM` parameter; first on the after-v1 list, because gl024 opens the journal pipeline | gl024, gl038, gl042, gl043 |
 | 2 | `REPOSITORY` -- callers of that date family | exgltrans, jerm |
-| 2 | `RELATIVE KEY` (relative I-O) | crglentry, ldglentry |
+| 3 | `RELATIVE KEY` (relative I-O) | crglentry, ldglentry, exglentry |
 | 2 | `OCCURS DEPENDING ON` | gl034, gl040 |
 | 2 | `SPECIAL-NAMES` clauses | damm, gl008 |
 | 1 | a subscripted `SOURCE` in a report field | gl036 |
@@ -134,6 +134,12 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | 1 | `FUNCTION INTEGER-OF-DATE` | jerm2 |
 | 1 | `USAGE BINARY-INT` | testcrc |
 | 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
+
+After COPY (2026-08-29): **29 of 58 compile.** The copybooks also
+brought `packed-decimal` before `pic`, a trailing `+` in a numeric
+picture (`9(9)v99+`, numeric-edited: moved to a numeric item before
+arithmetic, as the programs already do) and level 88 directly under
+an 01, all of which the compiler already took.
 
 Two things this table settles. First, `COPY` is the one item that
 moves eight programs at once and is plain 1985 (Library module), so

@@ -30,8 +30,9 @@
  * in: EVALUATE, INSPECT, INITIALIZE, reference modification with
  * arithmetic, FUNCTION LENGTH and CURRENT-DATE.  Stage 10: sequential
  * mode V -- RECORDING MODE V, RECORD CONTAINS m TO n, RECORD IS VARYING
- * DEPENDING ON, or unequal 01s -- with the IBM RDW on disk.
- * Unimplemented is a diagnostic, never silence.
+ * DEPENDING ON, or unequal 01s -- with the IBM RDW on disk.  Stage 12:
+ * COPY (the Library module) as token-stream inclusion, copybooks found
+ * through -I.  Unimplemented is a diagnostic, never silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,21 +42,23 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.10 (stage 10)"
+#define VERSION "0.12 (stage 12: COPY)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
 /* ====================================================================== */
 
 static const char *g_file = "?";
+static const char *g_tok_file = "?";    /* the file being tokenized (a copybook, or the source) */
 static int g_free = 0;              /* -free: majesty; default is fixed */
+static const char *diag_file(int line);
 static int g_module = 0;            /* -m: no main entry; every unit is a subprogram */
 static int g_unit = 0;              /* program unit being compiled, for label spaces */
 
 static void die_at(int line, const char *fmt, ...)
 {
     va_list ap;
-    fprintf(stderr, "%s:%d: error: ", g_file, line);
+    fprintf(stderr, "%s:%d: error: ", diag_file(line), line);
     va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
     fputc('\n', stderr);
     exit(1);
@@ -89,10 +92,12 @@ typedef struct { char *text; int line; } SrcLine;
 static SrcLine *g_lines;
 static int g_nlines;
 
-static void read_source(const char *path)
+/* read a source file (or a copybook) into lines of program text; 0 if
+ * it cannot be opened */
+static int read_lines(const char *path, SrcLine **out, int *nout)
 {
     FILE *f = fopen(path, "rb");
-    if (!f) { fprintf(stderr, "s32-cobc: cannot open %s\n", path); exit(1); }
+    if (!f) return 0;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -101,8 +106,8 @@ static void read_source(const char *path)
     fclose(f);
     buf[sz] = 0;
 
-    int cap = 256;
-    g_lines = xmalloc(cap * sizeof *g_lines);
+    int cap = 256, n = 0;
+    SrcLine *lines = xmalloc(cap * sizeof *lines);
     int lineno = 0;
     char *p = buf;
     while (*p) {
@@ -131,15 +136,22 @@ static void read_source(const char *path)
             }
         }
         if (text) {
-            if (g_nlines == cap) { cap *= 2; g_lines = realloc(g_lines, cap * sizeof *g_lines); }
-            g_lines[g_nlines].text = text;
-            g_lines[g_nlines].line = lineno;
-            g_nlines++;
+            if (n == cap) { cap *= 2; lines = realloc(lines, cap * sizeof *lines); }
+            lines[n].text = text;
+            lines[n].line = lineno;
+            n++;
         }
         if (!e) break;
         p = e + 1;
     }
     free(buf);
+    *out = lines; *nout = n;
+    return 1;
+}
+
+static void read_source(const char *path)
+{
+    if (!read_lines(path, &g_lines, &g_nlines)) { fprintf(stderr, "s32-cobc: cannot open %s\n", path); exit(1); }
 }
 
 /* ====================================================================== */
@@ -152,6 +164,7 @@ typedef struct {
     int kind, line;
     char *s;        /* word (lowercased), number text, literal bytes, picture, op */
     int len;        /* literal byte length (literals may hold NULs) */
+    const char *file;
 } Tok;
 
 static Tok *g_tok;
@@ -161,7 +174,7 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
 {
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file;
     return t;
 }
 
@@ -175,12 +188,12 @@ static int hexval(int c)
     return -1;
 }
 
-static void tokenize(void)
+static void tokenize_lines(SrcLine *lines, int nlines)
 {
     int pic_ctx = 0;    /* after PIC/PICTURE [IS]: the next token is a picture */
-    for (int li = 0; li < g_nlines; li++) {
-        const char *t = g_lines[li].text;
-        int line = g_lines[li].line;
+    for (int li = 0; li < nlines; li++) {
+        const char *t = lines[li].text;
+        int line = lines[li].line;
         const char *p = t;
         while (*p) {
             if (*p == ' ' || *p == '\t') { p++; continue; }
@@ -303,6 +316,81 @@ static void tokenize(void)
             die_at(line, "unexpected character '%c'", c);
         }
     }
+}
+
+/* ---- COPY: the Library module ------------------------------------------ */
+
+/* COPY text-name [OF/IN library] [SUPPRESS] [REPLACING ...]. is replaced,
+ * period included, by the copybook's tokens; the copybook is read in the
+ * same reference format, may itself COPY, and is looked for as the name
+ * given, then name.cpy / .CPY / .cbl, in the source's directory and the
+ * -I directories. */
+static const char *g_incdirs[16]; static int g_nincdir;
+
+static int copy_open(const char *name, SrcLine **lines, int *n, char *found, size_t foundsz)
+{
+    static const char *exts[] = { "", ".cpy", ".CPY", ".cbl", ".CBL", NULL };
+    char srcdir[1024]; snprintf(srcdir, sizeof srcdir, "%s", g_file);
+    char *sl = strrchr(srcdir, '/'); if (sl) *sl = 0; else strcpy(srcdir, ".");
+    for (int d = -1; d < g_nincdir; d++) {
+        const char *dir = d < 0 ? srcdir : g_incdirs[d];
+        for (int e = 0; exts[e]; e++) {
+            snprintf(found, foundsz, "%s/%s%s", dir, name, exts[e]);
+            if (read_lines(found, lines, n)) return 1;
+        }
+    }
+    return 0;
+}
+
+static void expand_copies(int depth)
+{
+    for (int i = 0; i < g_ntok; i++) {
+        if (!(g_tok[i].kind == T_WORD && !strcmp(g_tok[i].s, "copy"))) continue;
+        int line = g_tok[i].line;
+        int j = i + 1;
+        if (j >= g_ntok || !(g_tok[j].kind == T_WORD || g_tok[j].kind == T_STR)) die_at(line, "COPY needs a text-name");
+        char name[256]; snprintf(name, sizeof name, "%.*s", g_tok[j].len > 250 ? 250 : g_tok[j].len, g_tok[j].s);
+        j++;
+        if (j < g_ntok && g_tok[j].kind == T_WORD && (!strcmp(g_tok[j].s, "of") || !strcmp(g_tok[j].s, "in"))) {
+            j++;
+            if (j >= g_ntok || !(g_tok[j].kind == T_WORD || g_tok[j].kind == T_STR)) die_at(line, "COPY ... OF needs a library-name");
+            j++;                                        /* the library: the -I directories serve */
+        }
+        if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "suppress")) j++;
+        if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "replacing"))
+            die_at(line, "COPY ... REPLACING is not implemented yet");
+        if (j >= g_ntok || g_tok[j].kind != T_PERIOD) die_at(line, "COPY %s needs its period", name);
+        if (depth > 8) die_at(line, "COPY nests deeper than 8 (%s)", name);
+
+        SrcLine *lines; int n; char found[1200];
+        if (!copy_open(name, &lines, &n, found, sizeof found))
+            die_at(line, "COPY: cannot find '%s' (looked beside the source and in the -I directories, as %s, %s.cpy, %s.cbl)", name, name, name, name);
+
+        /* tokenize the copybook into its own vector, then splice */
+        Tok *save_tok = g_tok; int save_n = g_ntok, save_cap = g_tcap;
+        const char *save_file = g_tok_file;
+        g_tok = NULL; g_ntok = 0; g_tcap = 0; g_tok_file = xstrndup(found, (int)strlen(found));
+        tokenize_lines(lines, n);
+        Tok *ctok = g_tok; int cn = g_ntok;
+        g_tok = save_tok; g_ntok = save_n; g_tcap = save_cap; g_tok_file = save_file;
+
+        int removed = j - i + 1;
+        int newn = g_ntok - removed + cn;
+        if (newn > g_tcap) { g_tcap = newn + 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
+        memmove(&g_tok[i + cn], &g_tok[j + 1], (size_t)(g_ntok - (j + 1)) * sizeof *g_tok);
+        memcpy(&g_tok[i], ctok, (size_t)cn * sizeof *ctok);
+        g_ntok = newn;
+        free(ctok);
+        i--;                                            /* rescan from the spliced text: nested COPY */
+        depth++;
+    }
+}
+
+static void tokenize(void)
+{
+    g_tok_file = g_file;
+    tokenize_lines(g_lines, g_nlines);
+    expand_copies(0);
     push_tok(T_EOF, g_nlines ? g_lines[g_nlines - 1].line : 1, "", 0);
 }
 
@@ -311,6 +399,13 @@ static void tokenize(void)
 static int g_tp;
 
 static Tok *cur(void)  { return &g_tok[g_tp]; }
+
+static const char *diag_file(int line)
+{
+    if (g_tok && g_tp < g_ntok && g_tok[g_tp].file && g_tok[g_tp].line == line) return g_tok[g_tp].file;
+    if (g_tok && g_tp > 0 && g_tp <= g_ntok && g_tok[g_tp - 1].file && g_tok[g_tp - 1].line == line) return g_tok[g_tp - 1].file;
+    return g_tok_file ? g_tok_file : g_file;
+}
 static Tok *peek(int k){ int i = g_tp + k; if (i >= g_ntok) i = g_ntok - 1; return &g_tok[i]; }
 static void advance(void) { if (g_tp < g_ntok - 1) g_tp++; }
 
@@ -1174,8 +1269,12 @@ static void finish_data_division(void)
             }
         /* 01s of different lengths under a sequential FD: mode V, as cobc370 infers */
         if (f->org == COB_ORG_SEQ && minrec && minrec != f->recsize) f->varying = 1;
-        if (f->maxlen && f->recsize && f->maxlen != f->recsize && f->rec >= 0 && !f->dep_name[0])
+        /* RECORD CONTAINS larger than the 01s: the record area is that
+         * size (GnuCOBOL's reading of majesty's sglentry, 98 over a
+         * 92-byte 01); smaller is a contradiction */
+        if (f->maxlen && f->recsize && f->maxlen < f->recsize && f->rec >= 0 && !f->dep_name[0])
             die_at(f->line, "FD %s: RECORD CONTAINS says %d characters but the largest 01 is %d", f->name, f->maxlen, f->recsize);
+        if (f->maxlen > f->recsize && f->rec >= 0) f->recsize = f->maxlen;
         if (f->dep_name[0]) {
             f->dep_sym = sym_lookup(f->dep_name, NULL, 0, f->line);
             if (!is_int_item(f->dep_sym)) die_at(f->line, "DEPENDING ON '%s' must be an integer item", f->dep_name);
@@ -4209,14 +4308,13 @@ static void parse_fd(void)
         if (accept_word("value")) { expect_word("of"); while (cur()->kind != T_PERIOD && !at_word("block") && !at_word("record") && !at_word("data")) advance(); continue; }
         if (accept_word("linage")) die_at(t->line, "LINAGE is not implemented");
         if (accept_word("code-set")) die_at(t->line, "CODE-SET is not supported (ASCII only)");
-        if (accept_word("copy")) die_at(t->line, "COPY is not implemented yet");
         die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
     }
     expect_period();
     g_cur_fd = (int)(f - g_files);
     while (cur()->kind == T_NUM) parse_data_item();
     g_cur_fd = -1;
-    if (f->varying && f->org != COB_ORG_SEQ)
+    if (f->varying && f->org == COB_ORG_LINESEQ)
         die_at(line, "FD %s: variable records need ORGANIZATION SEQUENTIAL (LINE SEQUENTIAL names its own framing; docs/framing.md)", f->name);
 }
 
@@ -4646,7 +4744,8 @@ static void usage(void)
         "usage: s32-cobc [-free|-fixed] [-o out.s] source.cbl\n"
         "  -fixed   reference format (columns 7/8-72); the default\n"
         "  -free    free format (GnuCOBOL -free; majesty)\n"
-        "  -m       module: no main entry, every unit a subprogram\n", VERSION);
+        "  -m       module: no main entry, every unit a subprogram\n"
+        "  -I dir   where COPY looks for copybooks (repeatable)\n", VERSION);
     exit(2);
 }
 
@@ -4657,6 +4756,8 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "-free")) g_free = 1;
         else if (!strcmp(argv[i], "-fixed")) g_free = 0;
         else if (!strcmp(argv[i], "-m")) g_module = 1;
+        else if (!strcmp(argv[i], "-I") && i + 1 < argc) { if (g_nincdir < 16) g_incdirs[g_nincdir++] = argv[++i]; }
+        else if (!strncmp(argv[i], "-I", 2) && argv[i][2]) { if (g_nincdir < 16) g_incdirs[g_nincdir++] = argv[i] + 2; }
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
         else if (!strcmp(argv[i], "--version")) { printf("s32-cobc %s\n", VERSION); return 0; }
         else if (argv[i][0] == '-') usage();

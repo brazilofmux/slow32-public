@@ -384,12 +384,24 @@ the oracle for every program that can run without a tty, and the
 product claim -- the same reports, produced on this machine, without
 GnuCOBOL -- true for the three reports and two screens v1 named.
 
+## Stage 12 — COPY **S** — DONE 2026-08-29
+
+The Library module: `COPY text-name [OF/IN library] [SUPPRESS].` is
+replaced, period included, by the copybook's tokens before parsing --
+so majesty's `fd glacct copy sglacct.`, where the copybook supplies the
+FD's remaining clauses and its record, works as written. The copybook
+is read in the same reference format, may COPY in turn (8 deep), and is
+looked for as the name given, then `.cpy` / `.CPY` / `.cbl`, beside the
+source and in the `-I` directories (`s32-cobc -I`, `compile.sh -I`,
+majesty's `-I../copy`). Diagnostics name the copybook. `REPLACING`
+is refused for now (nothing in the corpus uses it). Seven of the eight
+blocked programs compile; 29 of 58 now.
+
 ## After v1 (not scheduled, each when a program asks)
 
-- `COPY` (the Library module) — eight programs stop on it and nothing
-  else moves as many; with `ACCEPT … FROM ARGUMENT-VALUE /
-  ARGUMENT-NUMBER` next, because gl024 (the journal pipeline's first
-  step) takes `YYYYMM` that way, as do gl038, gl042 and gl043
+- `ACCEPT … FROM ARGUMENT-VALUE / ARGUMENT-NUMBER` — next, because
+  gl024 (the journal pipeline's first step) takes `YYYYMM` that way,
+  as do gl038, gl042 and gl043
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
 - In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
 - Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated

@@ -31,13 +31,13 @@ main="${mains[0]}"
 [ -x "$HERE/out/s32-cobc" ] || "$HERE/build.sh" >/dev/null
 base="${out%.s32x}"
 link=()
-"$HERE/out/s32-cobc" $fmt -o "$base.s" "$main"
+"$HERE/out/s32-cobc" $fmt $incs -o "$base.s" "$main"
 "$ROOT/tools/assembler/slow32asm" "$base.s" "$base.s32o" >/dev/null
 link+=("$base.s32o")
 i=0
 for f in "${subs[@]+"${subs[@]}"}"; do
     i=$((i+1))
-    "$HERE/out/s32-cobc" $fmt -m -o "$base-$i.s" "$f"
+    "$HERE/out/s32-cobc" $fmt $incs -m -o "$base-$i.s" "$f"
     "$ROOT/tools/assembler/slow32asm" "$base-$i.s" "$base-$i.s32o" >/dev/null
     link+=("$base-$i.s32o")
 done
