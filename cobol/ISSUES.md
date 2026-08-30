@@ -18,7 +18,7 @@ every change, and majesty's batch (twelve reports byte-identical) as
 the regression gate before a push. Corpus programs are not rewritten
 from this side; they are majesty's.
 
-State on 2026-08-30 (late): harness 47/47; CCVS-85 202 of 303 compile (ISSUES-17) with the GnuCOBOL oracle agreeing
+State on 2026-08-31: harness 47/47; CCVS-85 192 of 303 compile, and of those 3741 of 3751 tests pass with none failing (ISSUES-17) with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
 report step on SLOW-32 with all twelve reports byte-identical; **every
 program in `~/majesty/src/cobol` compiles, 56 of 56** (2026-08-30 evening). The sweep that
@@ -215,7 +215,9 @@ open only so the difference is on record; not worth matching.
 ### 17. CCVS-85 as a histogram — RUNNING since 2026-08-30 (Stage 22)
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
-4 → 202 of 303 in one day. The remaining bins, largest first, each a
+4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
+them by their own reports: **3741 of 3751 tests pass, none fail, 185
+programs match GnuCOBOL's tally exactly** (Stage 23). The remaining bins, largest first, each a
 work item: `ALTERNATE RECORD KEY` (12; ISSUES-12), `LINAGE` (5), `COPY
 ... REPLACING` (5), an ODO table nested below a direct child (4),
 `INSPECT ... BEFORE/AFTER INITIAL` (4), `CALL identifier` (4; needs a

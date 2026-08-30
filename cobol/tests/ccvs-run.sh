@@ -70,6 +70,8 @@ for m in $MODULES; do
         case "$name" in NC110M|NC214M) [ "$rc" = 0 ] && { pass=1; total=1; summary=1; } ;; esac
         [ "$summary" = 1 ] && [ "$total" = 0 ] && { pass=1; total=1; }     # "000 OF 000 TESTS": the run itself is the test
         status=""
+        # a program with no summary that GnuCOBOL's tally also scores 0 of 0 is fine when it exits 0
+        if [ "$summary" = 0 ] && [ "$rc" = 0 ] && [ "${exp% *}" = "0 0 0" ]; then summary=1; fi
         if [ "$summary" = 0 ]; then
             if [ "$rc" != 0 ] || grep -q "fatal\|HALT at\|Memory fault\|file error" "$run/$name.err" "$run/$name.out" 2>/dev/null; then
                 status="CRASH rc=$rc: $(grep -m1 -h "fatal\|error\|fault" "$run/$name.err" "$run/$name.out" 2>/dev/null | cut -c1-50)"

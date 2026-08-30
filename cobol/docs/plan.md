@@ -600,6 +600,30 @@ the next gate. Two bugs the suite found in what majesty never touched:
 `GO TO` swallowing a following `NOT`, and a picture split across a
 continuation line.
 
+## Stage 23 — CCVS-85 run and scored **L** — 2026-08-30/31
+
+`tests/ccvs-run.sh` runs what compiles and reads each program's own
+report (`nnn OF nnn TESTS WERE EXECUTED SUCCESSFULLY`, the lines
+GnuCOBOL's report.pl reads), one directory per module in the suite's
+order with the X-card files fresh for each program, compile-only
+programs counted as report.pl counts them. First run: 3535 of 3725
+tests, 130 programs matching GnuCOBOL's tally. Every failure came with
+a COMPUTED/CORRECT pair, and the fixes were: numeric VALUE images
+with P positions and SIGN clauses; alnum-vs-numeric comparison as
+characters; the insertion `0`; `*` check protection of zero; SEARCH
+VARYING; the file-status matrix (05/35 on OPTIONAL and EXTEND, 38 after
+CLOSE WITH LOCK, 43/44 on REWRITE, 46 after AT END, 48 for WRITE under
+I-O, 07 for CLOSE REEL, 21 for an indexed sequential-access WRITE out
+of order, 14 for a relative record number the key cannot hold); libcob
+keeping the sequential file position itself, because the guest libc's
+buffered stream reads ahead and REWRITE seeks by it; exact decimal
+long division; the program collating sequence; SAME RECORD AREA.
+**3741 of 3751 tests pass, none fail; 185 of 187 programs that run
+match GnuCOBOL exactly** (the two short are NC121M/NC220M, whose
+missing tests are console inspections). What does not compile is
+listed in ISSUES-17.
+
+## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
 step on SLOW-32**: the charts, the journal pipeline, the balances
