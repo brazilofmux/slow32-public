@@ -190,6 +190,21 @@ given, because majesty's `.prn` oracles were produced under it.
   or SCREEN SECTION. A contained program's link name is its own
   PROGRAM-ID, so two contained programs of one executable may not
   share a name.
+- **`EXTERNAL`** (Stage 30): an 01/77 `IS EXTERNAL` is storage shared
+  by name among every program of the executable -- the runtime hands
+  out one block per name (`cob_external`, zeroed like GnuCOBOL's, grown
+  if a later program declares it longer) and the record is addressed
+  through a cell, as a LINKAGE item is; no VALUE. **`FD ... EXTERNAL`**
+  is one file connector for every program naming the file: the first
+  program to enter with it lends its image, its record area is a block
+  shared under the file's name (so the records of every program's FD
+  are the same bytes), and each program entering sets the connector's
+  FILE STATUS to its own item and puts the previous one back on exit,
+  so the program executing the statement is the one whose status is
+  written (IC227A). A `SELECT` may leave `ASSIGN TO` empty only for an
+  EXTERNAL file (the other program names it; GnuCOBOL always wants a
+  name, and so does NIST IC227A-1 -- an X-card). A FILE STATUS item may now be in the LINKAGE SECTION:
+  its address goes into the image at entry.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

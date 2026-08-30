@@ -79,6 +79,7 @@ typedef struct {
     unsigned int lin_counter; /* LINAGE-COUNTER (offset 136: the compiler reads it as a data item) */
     unsigned int lin_eop;     /* the last WRITE met the footing or overflowed the page */
     unsigned int lin_needs_top;   /* the top margin has not been written yet */
+    char *saved_status;       /* EXTERNAL: the entering program's own image keeps the shared connector's previous status item here */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

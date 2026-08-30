@@ -864,6 +864,7 @@ typedef struct Sym {
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
+    int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
     /* records */
     unsigned char *image; int image_size;
     char label[48];
@@ -967,6 +968,7 @@ typedef struct {
     char dep_name[64]; Sym *dep_sym; /* RECORD IS VARYING ... DEPENDING ON */
     int  unit;                       /* the program unit that declares it (its image is .Lf<unit>_<index>) */
     int  global;                     /* FD ... GLOBAL: contained programs may use it */
+    int  external;                   /* FD ... EXTERNAL: one file connector for every program naming it */
 } File;
 
 static File *g_files; static int g_nfile, g_fcap;
@@ -1392,8 +1394,7 @@ static void parse_data_item(void)
             continue;
         }
         if (!strcmp(t->s, "global")) { advance(); s->is_global = 1; continue; }
-        if (!strcmp(t->s, "external"))
-            die_at(t->line, "EXTERNAL items (shared between separately compiled programs) are not implemented");
+        if (!strcmp(t->s, "external")) { advance(); s->is_external = 1; continue; }
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
     }
     expect_period();
@@ -1602,7 +1603,11 @@ static void finish_data_division(void)
         Sym *s = &g_sym[i];
         if (s->fd >= 0 && g_files[s->fd].global) s->is_global = 1;
         if (s->parent >= 0 && g_sym[s->parent].is_global) s->is_global = 1;
+        if (s->fd >= 0 && g_files[s->fd].external && s->parent < 0) s->is_external = 1;
     }
+    for (int i = g_file_base; i < g_nfile; i++)
+        if (!g_files[i].external && !g_files[i].assign_lit && !g_files[i].assign_name[0] && !g_files[i].report_name[0])
+            die_at(g_files[i].line, "SELECT %s names nothing in ASSIGN TO (only an EXTERNAL file may leave it to another program)", g_files[i].name);
     int nrec = 0;
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
@@ -1619,6 +1624,7 @@ static void finish_data_division(void)
         set_dims(i, 0, zero, zero);
         s->record = i;
         if (s->is_linkage) snprintf(s->label, sizeof s->label, ".Llk%d_%d", g_unit, nrec++);
+        else if (s->is_external) snprintf(s->label, sizeof s->label, ".Lex%d_%d", g_unit, nrec++);
         else snprintf(s->label, sizeof s->label, "ws%d_%d", g_unit, nrec++);
     }
     /* propagate record ownership down, and 88s take their parent's dims */
@@ -1674,7 +1680,6 @@ static void finish_data_division(void)
         if (f->status_name[0]) {
             char *sq[1] = { f->status_qual };
             f->status_sym = sym_lookup(f->status_name, sq, f->status_qual[0] ? 1 : 0, f->line);
-            if (g_sym[f->status_sym->record].is_linkage) die_at(f->line, "FILE STATUS '%s' cannot be a LINKAGE item", f->status_name);
             if (f->status_sym->size != 2) die_at(f->line, "FILE STATUS '%s' must be PIC XX", f->status_name);
         }
         int minrec = 0;
@@ -1753,7 +1758,7 @@ static void finish_data_division(void)
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0) continue;
         if (s->image_size < s->size) s->image_size = s->size;
         s->image = xmalloc(s->image_size);
-        if (!s->is_linkage) init_instance(s, i, 0, 1);
+        if (!s->is_linkage && !s->is_external) init_instance(s, i, 0, 1);
     }
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
@@ -2328,7 +2333,7 @@ static void emit_store_int(Sym *s, const char *areg, const char *vreg)
 static void emit_item_addr(const char *reg, Sym *s, int off)
 {
     Sym *rec = &g_sym[s->record];
-    if (!rec->is_linkage) { emit_la_off(reg, rec->label, off); return; }
+    if (!rec->is_linkage && !rec->is_external) { emit_la_off(reg, rec->label, off); return; }
     emit_la(reg, rec->label);
     emit("\tldw %s, %s+0", reg, reg);
     if (off >= -2048 && off <= 2047) { if (off) emit("\taddi %s, %s, %d", reg, reg, off); }
@@ -4213,8 +4218,9 @@ static void parse_set(void)
 
 static void emit_file_addr(const char *reg, File *f)
 {
-    char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, (int)(f - g_files));
+    char lab[32]; snprintf(lab, sizeof lab, ".Lf%s%d_%d", f->external ? "x" : "", f->unit, (int)(f - g_files));
     emit_la(reg, lab);
+    if (f->external) emit("\tldw %s, %s+0", reg, reg);      /* the shared connector, from cob_ext_file_enter */
 }
 
 static File *expect_file(void)
@@ -5380,6 +5386,48 @@ static void parse_procedure_division(void)
         emit_la("r1", g_sym[using[i]->record].label);
         emit("\tstw r1+0, %s", argreg(i));
     }
+    /* a FILE STATUS item in the LINKAGE SECTION (or EXTERNAL): the image
+     * takes its address now that the cell is filled (status is at 16) */
+    for (int i = g_file_base; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->status_sym) continue;
+        Sym *rec = &g_sym[f->status_sym->record];
+        if (!rec->is_linkage && !rec->is_external) continue;
+        emit_item_addr("r1", f->status_sym, f->status_sym->offset);
+        char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
+        emit_la("r2", lab);
+        emit("\tstw r2+16, r1");
+    }
+    /* EXTERNAL records: the block every program of this name shares (the
+     * records of an EXTERNAL FD share one block under the file's name) */
+    int has_ext_file = 0;
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || !s->is_external) continue;
+        char nm[80];
+        if (s->fd >= 0) snprintf(nm, sizeof nm, "file:%s", g_files[s->fd].name); else snprintf(nm, sizeof nm, "%s", s->name);
+        emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+        emit_li("r4", s->image_size);
+        emit_call("cob_external");
+        emit("\tadd r2, r0, r1");
+        emit_la("r1", s->label);
+        emit("\tstw r1+0, r2");
+    }
+    for (int i = g_file_base; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->external) continue;
+        has_ext_file = 1;
+        char nm[80]; snprintf(nm, sizeof nm, "%s", f->name);
+        emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+        char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
+        emit_la("r4", lab);
+        if (f->rec >= 0) { emit_la("r5", g_sym[g_sym[f->rec].record].label); emit("\tldw r5, r5+0"); } else emit_li("r5", 0);
+        emit_call("cob_ext_file_enter");
+        snprintf(lab, sizeof lab, ".Lfx%d_%d", f->unit, i);
+        emit("\tadd r2, r0, r1");
+        emit_la("r1", lab);
+        emit("\tstw r1+0, r2");
+    }
 
     int cur_par = -1, cur_sec = -1;
     int Ldecl_end = -1;
@@ -5445,6 +5493,16 @@ static void parse_procedure_division(void)
     if (cur_sec >= 0) emit_exit_check(cur_sec);
 
     emit(".Lgb%d:", g_unit);
+    if (has_ext_file)
+        for (int i = g_file_base; i < g_nfile; i++) {
+            File *f = &g_files[i];
+            if (!f->external) continue;
+            char nm[80]; snprintf(nm, sizeof nm, "%s", f->name);
+            emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+            char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
+            emit_la("r4", lab);
+            emit_call("cob_ext_file_exit");
+        }
     if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
     if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
     emit("\taddi r1, r0, 0");
@@ -5465,7 +5523,7 @@ static void parse_procedure_division(void)
         emit("\tstw sp+0, lr");
         for (int i = g_sym_base; i < g_nsym; i++) {
             Sym *s = &g_sym[i];
-            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->is_linkage) continue;
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->is_linkage || s->is_external) continue;
             emit_la("r3", s->label);
             char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
             emit_la("r4", il);
@@ -5592,6 +5650,8 @@ static void parse_select(void)
         if (accept_word("assign")) {
             accept_word("to");
             if (cur()->kind == T_STR) { f->assign_lit = cur(); advance(); }
+            else if (cur()->kind == T_PERIOD || at_word("file") || at_word("organization") || at_word("organisation") || at_word("access") || at_word("record") || at_word("status"))
+                has_assign = -1;                        /* nothing named: allowed for an EXTERNAL file */
             else if (cur()->kind == T_WORD) {
                 if (at_word("disk") || at_word("keyboard") || at_word("display") || at_word("printer"))
                     die_at(t->line, "ASSIGN TO %s (a device) is not supported; name a file", cur()->s);
@@ -5700,6 +5760,7 @@ static void parse_select(void)
     }
     expect_period();
     if (!has_assign) die_at(line, "SELECT %s has no ASSIGN clause", f->name);
+    if (has_assign < 0) f->assign_name[0] = 0, f->assign_lit = NULL;   /* checked against EXTERNAL once the FD is in */
     if (f->org == COB_ORG_INDEXED && !f->key_name[0]) die_at(line, "an INDEXED file needs RECORD KEY");
 }
 
@@ -5958,7 +6019,7 @@ static void parse_fd(void)
         if (accept_word("value")) { expect_word("of"); while (cur()->kind != T_PERIOD && !at_word("block") && !at_word("record") && !at_word("data")) advance(); continue; }
         if (accept_word("is")) continue;
         if (accept_word("global")) { f->global = 1; continue; }
-        if (accept_word("external")) die_at(t->line, "FD %s IS EXTERNAL (a file shared between separately compiled programs) is not implemented", f->name);
+        if (accept_word("external")) { f->external = 1; continue; }
         if (accept_word("linage")) {
             /* LINAGE [IS] n [LINES] [WITH FOOTING [AT] f] [LINES AT TOP t] [LINES AT BOTTOM b] */
             accept_word("is");
@@ -6327,9 +6388,10 @@ static void emit_unit_data(void)
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0) continue;
-        if (s->is_linkage) {
+        if (s->is_linkage || s->is_external) {
             emit("\t.p2align 2");
-            emit("%s:\t# linkage %02d %s (%d bytes at the caller's)", s->label, s->level, s->name, s->image_size);
+            emit("%s:\t# %s %02d %s (%d bytes %s)", s->label, s->is_linkage ? "linkage" : "external", s->level, s->name, s->image_size,
+                 s->is_linkage ? "at the caller's" : "shared by name");
             emit("\t.word 0");
             continue;
         }
@@ -6349,9 +6411,11 @@ static void emit_unit_data(void)
         emit(".Lf%d_%d:\t# %s", f->unit, i, f->name);
         emit("\t.byte %d,%d,%d,0", f->org, f->access, f->optional);
         emit("\t.word 0");
-        if (f->rec >= 0) emit("\t.word %s", g_sym[g_sym[f->rec].record].label); else emit("\t.word 0");
+        if (f->rec >= 0 && !f->external) emit("\t.word %s", g_sym[g_sym[f->rec].record].label); else emit("\t.word 0");   /* an EXTERNAL file's record area is set at entry */
         emit("\t.word %d", f->recsize);
-        if (f->status_sym) emit("\t.word %s+%d", g_sym[f->status_sym->record].label, f->status_sym->offset); else emit("\t.word 0");
+        if (f->status_sym && !g_sym[f->status_sym->record].is_linkage && !g_sym[f->status_sym->record].is_external)
+            emit("\t.word %s+%d", g_sym[f->status_sym->record].label, f->status_sym->offset);
+        else emit("\t.word 0");                            /* a LINKAGE or EXTERNAL status item: its address is stored at entry */
         if (f->assign_lit) {
             unsigned char *z = xmalloc(f->assign_lit->len + 1);
             memcpy(z, f->assign_lit->s, f->assign_lit->len);
@@ -6383,6 +6447,8 @@ static void emit_unit_data(void)
         emit("\t.word %d", f->nalt);
         if (f->linage) emit("\t.word .Llin%d_%d", g_unit, i); else emit("\t.word 0");   /* LINAGE: lines/footing/top/bottom */
         for (int w = 0; w < 7; w++) emit("\t.word 0");    /* lin_lines lin_foot lin_top lin_bot lin_counter lin_eop lin_needs_top */
+        emit("\t.word 0");                                 /* saved_status (EXTERNAL) */
+        if (f->external) { emit(".Lfx%d_%d:\t# the shared connector of EXTERNAL %s", f->unit, i, f->name); emit("\t.word 0"); }
     }
     emit("\t.p2align 2");
     emit(".Luse%d:\t# USE sections by open mode", g_unit);

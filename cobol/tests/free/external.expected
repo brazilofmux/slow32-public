@@ -1,0 +1,6 @@
+sub sees 005 [main    ]
+main sees 015 [sub     ]
+sub wrote status [00] main status [<>]
+first: from-main   
+second: from-sub    
+main at end, status 10

@@ -760,6 +760,25 @@ hung the harness twice, which now puts a timeout on every oracle run
 match ours. IC 20 of 25, 143 of 143, all matching; the suite 237 of
 303 compile, 4263 of 4300 pass, none fail, 234 match.
 
+## Stage 30 — EXTERNAL **S** — DONE 2026-08-31
+
+Data shared by name between separately compiled programs. An EXTERNAL
+record is a cell-addressed record like a LINKAGE one, filled at entry
+from `cob_external(name, size)` -- one zeroed block per name for the
+executable, grown if a later program declares it longer. An EXTERNAL
+FD is one connector: `cob_ext_file_enter(name, image, recblock)` lends
+the first program's image to everyone (its record pointer is the
+block shared under `file:<name>`, which every program's FD records
+address), and swaps the connector's FILE STATUS pointer to the
+entering program's item, `cob_ext_file_exit` swapping it back -- what
+IC227A's F-S-PARAM test measures, since its subprogram's status item
+is in the LINKAGE SECTION, which a FILE STATUS may now be (the image
+takes the address at entry, status at offset 16). free/external (a
+shared item both ways, a file written by two programs and read back,
+the two status items), oracle agreeing; IC226A and IC227A's EXTERNAL
+tests pass (IC227A goes on to BY CONTENT); IC 21 of 25, 147 of 147;
+the suite 238 of 303 compile, 4267 of 4304 pass, none fail, 235 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

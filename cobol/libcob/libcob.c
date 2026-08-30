@@ -423,6 +423,53 @@ void *cob_resolve(const unsigned char *p, int len, int must)
     return 0;
 }
 
+/* EXTERNAL: storage shared by name between the programs of one executable.
+ * A record's block is made on first request (zeroed, as GnuCOBOL's); an
+ * EXTERNAL file has one connector, the image of the first program to enter
+ * with it, whose record area is that program's shared record block.  Each
+ * program entering sets the connector's FILE STATUS item to its own and
+ * puts the previous one back on exit, so the statement's own program's
+ * status is the one written. */
+static struct { const char *name; void *p; unsigned size; } cob_exts[128]; static int cob_nexts;
+void *cob_external(const char *name, unsigned size)
+{
+    for (int i = 0; i < cob_nexts; i++)
+        if (!strcmp(cob_exts[i].name, name)) {
+            if (size > cob_exts[i].size) {
+                void *q = calloc(size, 1);
+                memcpy(q, cob_exts[i].p, cob_exts[i].size);
+                cob_exts[i].p = q; cob_exts[i].size = size;
+            }
+            return cob_exts[i].p;
+        }
+    if (cob_nexts == 128) cob_fatal("more than 128 EXTERNAL items");
+    cob_exts[cob_nexts].name = name; cob_exts[cob_nexts].p = calloc(size ? size : 1, 1); cob_exts[cob_nexts].size = size;
+    return cob_exts[cob_nexts++].p;
+}
+static struct { const char *name; cob_file *f; } cob_extf[64]; static int cob_nextf;
+cob_file *cob_ext_file_enter(const char *name, cob_file *mine, void *rec)
+{
+    for (int i = 0; i < cob_nextf; i++)
+        if (!strcmp(cob_extf[i].name, name)) {
+            cob_file *f = cob_extf[i].f;
+            if (f != mine) { mine->saved_status = f->status; f->status = mine->status; }
+            return f;
+        }
+    if (cob_nextf == 64) cob_fatal("more than 64 EXTERNAL files");
+    mine->record = rec;
+    cob_extf[cob_nextf].name = name; cob_extf[cob_nextf].f = mine; cob_nextf++;
+    return mine;
+}
+void cob_ext_file_exit(const char *name, cob_file *mine)
+{
+    for (int i = 0; i < cob_nextf; i++)
+        if (!strcmp(cob_extf[i].name, name)) {
+            cob_file *f = cob_extf[i].f;
+            if (f != mine) f->status = mine->saved_status;
+            return;
+        }
+}
+
 /* DECIMAL-POINT IS COMMA: the program's own; a called program's is restored on its exit */
 int cob_dp_comma;
 int cob_set_decimal_point(int comma) { int old = cob_dp_comma; cob_dp_comma = comma; return old; }
