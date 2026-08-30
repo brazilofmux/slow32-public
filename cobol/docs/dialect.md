@@ -325,6 +325,17 @@ given, because majesty's `.prn` oracles were produced under it.
   which NIST's report.pl relies on: NC254A expects SWITCH-1 on); `SET
   a TO ON b TO OFF` takes several groups in one statement. NC174A and
   NC254A match GnuCOBOL.
+- **`CURRENCY SIGN IS "c"`** (Stage 43): `c` stands for `$` in every
+  picture (rewritten to `$` once the text is whole, like DECIMAL-POINT
+  IS COMMA, so the analyser and the editor read `$`); the runtime
+  prints `c` where the edit produced `$` and reads `c` back as `$`
+  when de-editing (`cob_set_currency`, set on entry and restored on
+  exit, frame slot 104). `c` may not be a digit, a space or a
+  character with a meaning of its own in a picture. **`BLANK WHEN
+  ZERO`** on a plain numeric DISPLAY item fills it with spaces at zero
+  (NC108M). **Procedure-names of digits only** (`3.`, `GO TO 3 4 5
+  DEPENDING ON n`, NC107A) are paragraphs like any other. NC107A (177
+  tests) and NC108M match GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

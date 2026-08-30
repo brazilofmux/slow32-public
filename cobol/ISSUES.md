@@ -222,7 +222,7 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **5533 of 5574 tests pass, none fail, 272
+them by their own reports: **5724 of 5765 tests pass, none fail, 274
 programs match GnuCOBOL's tally exactly** (IC and RW complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
@@ -246,7 +246,19 @@ receiver: NC203A and NC251A match), ~~RENAMES~~ (done: NC252A matches),
 group~~ (done: NC131A, NC135A match), ~~more than three `VARYING ...
 AFTER` levels~~ (done, with WITH TEST AFTER across levels: NC201A,
 NC233A, NC243A match), ~~a multi-character `CLASS` literal~~ (done, with
-switches from the environment and SET groups: NC174A, NC254A match), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
+switches from the environment and SET groups: NC174A, NC254A match),
+~~`CURRENCY SIGN`~~ (done, with BLANK WHEN ZERO on a plain numeric item
+and procedure-names of digits: NC107A, NC108M match). **What the 27
+refused programs stop on now (2026-08-31):** a non-integer numeric
+MOVEd to an alphanumeric item (NC105A, NC114M, NC124A: forbidden by the
+85 text, GnuCOBOL allows it), "too many operands" (NC106A, NC176A),
+abbreviated combined relations (NC205A, NC211A, NC225A -- ISSUES-10),
+ACCEPT FROM DATE/DAY/TIME (NC214M), a literal continued in a way the
+reader refuses (NC215A), a STRING receiver that is a group (NC217A),
+INITIALIZE REPLACING (NC223A), SEARCH with no WHEN (NC237A), an
+ambiguous subscript name (NC246A), `-` as a data-name start (NC250A),
+NC302M's ENVIRONMENT DIVISION, ALTER (NC303M), SYMBOLIC CHARACTERS
+(NC401M); SQ 5, RL 1, ST 3 not yet listed here., `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01
 report group (2), `EXTERNAL` (2), a multi-character `CLASS` literal
 (2), `CURRENCY SIGN` (1). Then the real gate: run each compiled

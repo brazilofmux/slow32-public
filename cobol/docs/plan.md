@@ -971,6 +971,27 @@ and ccvs-run.sh sets the two as report.pl does. free/classlit, oracle
 agreeing; NC174A and NC254A match; the suite 274 of 303 compile, 5533
 of 5574 pass, none fail, 272 match.
 
+## Stage 43 — CURRENCY SIGN, and what NC107A/NC108M wanted next **S** — DONE 2026-08-31
+
+CURRENCY SIGN IS "c" is applied where DECIMAL-POINT IS COMMA is: once
+the text is whole, `c` in every picture becomes `$`, and the runtime
+swaps `$` for `c` after editing and back before de-editing
+(`cob_set_currency`, saved and restored per unit; the frame grew to
+112 for the slot). NC108M then wanted BLANK WHEN ZERO on a plain
+numeric item (the runtime honoured it only in edited pictures), and
+NC107A wanted paragraphs named `3`, `4`, `5` -- procedure-names of
+digits only, recognised in the prescan, the statement loop, GO TO and
+PERFORM -- which was also NC114M's "`0` statement". The runner learned
+two things from NC107A: BSD awk stops a line at the NUL bytes
+LOW-VALUE prints, so the summary is scanned with NULs stripped; and
+report.pl scores the five "*** INFORMATION ***" lines by their bytes
+(ZERO, SPACE, QUOTE, HIGH-VALUE, LOW-VALUE as 20 characters), which
+ccvs-run.sh now does in perl. free/currency, oracle agreeing; NC107A
+(177 tests) and NC108M match; the suite 276 of 303 compile, 5724 of
+5765 pass, none fail, 274 match. Every bin the first histogram named
+is now closed; the 27 refused programs' next stops are listed in
+ISSUES-17.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
