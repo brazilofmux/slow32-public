@@ -11,6 +11,19 @@ of Report Writer page rules.
 Here GnuCOBOL is usually following 85, which is this compiler's
 standard. It is still not the text.
 
+## Where the oracle lives now (2026-08-30)
+
+GnuCOBOL is uninstalled from every host. The harness reaches it
+through two container images, `gnucobol:4.0-builder` (`cobc`) and
+`gnucobol:4.0-runtime` (runs the built program), under podman or
+docker, with the slow-32 tree bind-mounted at its own absolute path
+so the same command lines work on both sides. The work directory is
+under `cobol/out/` for that reason (`/tmp` is not shareable with a
+podman machine on macOS). About 0.2 s per container launch; the
+whole harness takes ~11 s. If neither an image nor a host `cobc` is
+found the harness says so on its last line -- `NO ORACLE` -- rather
+than passing quietly on `.expected` alone.
+
 ## The GnuCOBOL that made the oracles
 
 `cobc (GnuCOBOL) 4.0-early-dev.0`, invoked by majesty as

@@ -79,6 +79,7 @@ under `docs/`.
                       digits, scale, flags, size, picture)
     libcob/cobedit.h  the software edit descriptor, applied and reversed
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
+    ISSUES.md         open items, ranked, and closed ones with the lesson
     tests/            run-tests.sh; fixed/ free/ programs with .expected
                       (a .link beside one names its subprograms and C);
                       subs/ subprogram units; c/ C called from tests;
@@ -98,8 +99,9 @@ PATH install (optional, for majesty and friends):
     ./compile.sh -free prog.cbl -o prog.s32x     # majesty is free-format
     ./compile.sh -free gl030.cbl clinkages.cbl dateutil.c -I ~/majesty/src/h -o gl030.s32x
     ../tools/emulator/slow32 prog.s32x           # or slow32-fast, slow32-dbt
-    ./tests/run-tests.sh                         # 3 gates; uses host cobc as
-                                                 # oracle when present
+    ./tests/run-tests.sh                         # 3 gates; GnuCOBOL oracle from
+                                                 # gnucobol:4.0-builder/-runtime
+                                                 # (podman/docker), or a host cobc
 
 `s32-cobc [-free|-fixed] [-o out.s] source.cbl`. Fixed format is the
 default (the standard's reference format); majesty passes `-free`,

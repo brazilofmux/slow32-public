@@ -482,6 +482,9 @@ second. 36 of 58 corpus programs compile; what is left is the legacy
 
 ## After v1 (not scheduled, each when a program asks)
 
+The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
+(2026-08-30); what follows is the list as written at v1.
+
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
 - In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
 - Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated

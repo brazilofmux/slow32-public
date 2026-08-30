@@ -5,12 +5,16 @@
 #   file checked by hand against the 1985 PICTURE clause text.
 # Gate 2 (programs): every tests/fixed/*.cbl and tests/free/*.cbl compiled by
 #   s32-cobc, assembled, linked with libcob and the SLOW-32 libc, run on the
-#   emulator; stdout must match the .expected file.  When GnuCOBOL's cobc is
-#   on the host, the same source is also run under it and diffed, so the
-#   .expected files are checked against the oracle as well as against us
-#   (docs/oracles.md: -std=cobol85 for portable programs; a program whose
-#   first comment names "default dialect" uses GnuCOBOL's default, because
-#   it exercises implementor usages -std=cobol85 rejects).
+#   emulator; stdout must match the .expected file.  The same source is also
+#   compiled and run under GnuCOBOL and diffed, so the .expected files are
+#   checked against the oracle as well as against us (docs/oracles.md:
+#   -std=cobol85 for portable programs; a program whose first comment names
+#   "default dialect" uses GnuCOBOL's default, because it exercises
+#   implementor usages -std=cobol85 rejects).  GnuCOBOL is no longer
+#   installed on any host: the oracle is the gnucobol:4.0-builder image
+#   (cobc) and gnucobol:4.0-runtime (the built program), under podman or
+#   docker, with the repo bind-mounted at its own path.  A host cobc, if
+#   one exists, is used instead.  No oracle at all is reported, not hidden.
 # Gate 3 (refusals): every tests/bad/*.cbl must be refused, and the message
 #   must contain the text in its .expected file.  Unimplemented is a
 #   diagnostic, never silence.
@@ -24,10 +28,42 @@ LD="$ROOT/tools/linker/s32-ld"
 EMU="${EMU:-$ROOT/tools/emulator/slow32}"
 COBC="$CDIR/out/s32-cobc"
 LIBCOB="$CDIR/libcob/libcob.s32o"
-ORACLE="$(command -v cobc || true)"
+# The oracle: host cobc if present, else GnuCOBOL in a container.
+ORACLE_ENGINE=""
+if command -v cobc >/dev/null 2>&1; then
+    ORACLE_ENGINE=host
+else
+    for e in podman docker; do
+        if command -v "$e" >/dev/null 2>&1 && "$e" image inspect gnucobol:4.0-builder >/dev/null 2>&1; then
+            ORACLE_ENGINE="$e"
+            ORACLE_RUN_IMAGE=gnucobol:4.0-builder
+            "$e" image inspect gnucobol:4.0-runtime >/dev/null 2>&1 && ORACLE_RUN_IMAGE=gnucobol:4.0-runtime
+            break
+        fi
+    done
+fi
 
-W="$(mktemp -d "${TMPDIR:-/tmp}/cobol-tests.XXXXXX")"
+# The work directory lives under cobol/out (gitignored), not /tmp: a
+# container engine on macOS can bind-mount the home directory but not
+# /tmp, and the oracle compiles and runs inside the container on the
+# same absolute paths the host sees.
+mkdir -p "$CDIR/out"
+W="$(mktemp -d "$CDIR/out/tests.XXXXXX")"
 trap 'rm -rf "$W"' EXIT
+
+oracle_cc() {   # oracle_cc out.orc [cobc args...]: compile under GnuCOBOL, cwd $W
+    out="$1"; shift
+    case "$ORACLE_ENGINE" in
+        host) (cd "$W" && cobc -x "$@" -o "$out") ;;
+        *)    "$ORACLE_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" gnucobol:4.0-builder cobc -x "$@" -o "$out" ;;
+    esac
+}
+oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/run
+    case "$ORACLE_ENGINE" in
+        host) (cd "$W/run" && "$@") ;;
+        *)    "$ORACLE_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W/run" "$ORACLE_RUN_IMAGE" "$@" ;;
+    esac
+}
 
 PASS=0; FAIL=0
 
@@ -121,8 +157,9 @@ JSON
 { "volume_serial": "S32V01", "owner_code": "SLOW32", "files": [ { "dataset_name": "S32.VREC", "local_file": "$W/tm-back.dat", "record_format": "V", "record_length": $vlen, "block_size": 4096, "binary": true } ] }
 JSON
                 rm -f "$W/tm.aws" "$W/tm-back.dat"
-                if ! "$HOME/majesty/tapemgr" create --volser=S32V01 -o "$W/tm.aws" -c "$W/tm.json" >"$W/tm.log" 2>&1 ||
-                   ! "$HOME/majesty/tapemgr" extract -c "$W/tmx.json" "$W/tm.aws" >>"$W/tm.log" 2>&1 ||
+                # (tapemgr create drops a RESTORE.JCL in its cwd; keep that in $W)
+                if ! (cd "$W" && "$HOME/majesty/tapemgr" create --volser=S32V01 -o "$W/tm.aws" -c "$W/tm.json") >"$W/tm.log" 2>&1 ||
+                   ! (cd "$W" && "$HOME/majesty/tapemgr" extract -c "$W/tmx.json" "$W/tm.aws") >>"$W/tm.log" 2>&1 ||
                    ! cmp -s "$W/run/$vf" "$W/tm-back.dat"; then
                     tm_ok=0; report "$fmt/$name" 1 "tapemgr round trip of $vf failed: $(tail -1 "$W/tm.log")"; break
                 fi
@@ -133,12 +170,12 @@ JSON
         # comments say "no oracle" (screens need a tty there) is ours alone.
         note=""
         if grep -qi "no oracle" "$src"; then note="no oracle: reviewed by hand"; ORACLE_SKIP=1; else ORACLE_SKIP=0; fi
-        if [ -n "$ORACLE" ] && [ "$ORACLE_SKIP" = 0 ]; then
+        if [ -n "$ORACLE_ENGINE" ] && [ "$ORACLE_SKIP" = 0 ]; then
             std="-std=cobol85"
             grep -qi "default dialect" "$src" && std=""
-            if (cd "$W" && "$ORACLE" -x $std $flag -I "$HERE/copy" -o "$W/$name.orc" "$src" "${extra[@]+"${extra[@]}"}") >"$W/$name.orclog" 2>&1; then
+            if oracle_cc "$W/$name.orc" $std $flag -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" >"$W/$name.orclog" 2>&1; then
                 fresh_workdir
-                (cd "$W/run" && "$W/$name.orc" $PROG_ARGS) > "$W/$name.orcout" 2>/dev/null
+                oracle_run "$W/$name.orc" $PROG_ARGS > "$W/$name.orcout" 2>/dev/null
                 # a documented divergence from GnuCOBOL (docs/oracles.md) keeps
                 # GnuCOBOL's own output beside the standard's in .oracle-expected
                 oexp="$exp"; [ -f "${src%.cbl}.oracle-expected" ] && oexp="${src%.cbl}.oracle-expected"
@@ -176,5 +213,10 @@ for src in "$HERE/bad"/*.cbl; do
 done
 
 echo
+case "$ORACLE_ENGINE" in
+    "")   echo "cobol: NO ORACLE -- neither a host cobc nor a gnucobol:4.0-builder image; .expected files were checked against us alone" ;;
+    host) echo "cobol: oracle is the host cobc" ;;
+    *)    echo "cobol: oracle is gnucobol:4.0-builder / $ORACLE_RUN_IMAGE under $ORACLE_ENGINE" ;;
+esac
 echo "cobol: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
