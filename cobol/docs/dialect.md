@@ -258,6 +258,17 @@ given, because majesty's `.prn` oracles were produced under it.
   (`cob_inspect_begin/range/phrase/convert`), the runtime makes the
   pass (`cob_inspect_run`), the counts are added (`cob_inspect_count`).
   NIST NC115A, NC122A, NC216A (57 tests) and NC221A match GnuCOBOL.
+- **`MOVE` / `ADD` / `SUBTRACT CORRESPONDING`** (Stage 36): the pairs are
+  found at compile time (X3.23 6.4.2) -- items of the two groups with
+  the same name and the same qualifiers below them, neither FILLER,
+  neither with REDEFINES or OCCURS (a child with one is skipped with
+  its subtree), no condition-names; two groups that correspond are
+  searched further. MOVE moves a pair when at least one is elementary;
+  ADD/SUBTRACT act on pairs of elementary numeric items, ROUNDED on
+  each, ON SIZE ERROR once for the statement if any pair overflowed
+  (that pair's receiver unchanged). The operands' own subscripts and
+  qualification carry to every pair. Qualification may run 64 deep
+  (NC207A's is 48). NC202A, NC207A, NC208A, NC222A, NC253A match.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
@@ -397,9 +408,9 @@ given, because majesty's `.prn` oracles were produced under it.
 
 ## COBOL 85 we will grow into, not v1
 
-Nucleus Level 2 at full width (abbreviated conditions,
-`CORRESPONDING`; `UNSTRING` landed in Stage 34, `INSPECT` at full width
-in Stage 35,
+Nucleus Level 2 at full width (abbreviated conditions; `UNSTRING`
+landed in Stage 34, `INSPECT` at full width in Stage 35,
+`CORRESPONDING` in Stage 36,
 `REPLACE` and `COPY REPLACING` landed in Stage 26, contained programs
 with `GLOBAL` in Stage 29). `STRING`, `INSPECT TALLYING`, `INITIALIZE` and
 reference modification are **in v1**, at the width taskdt uses them —

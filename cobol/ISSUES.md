@@ -129,7 +129,7 @@ out in 85, see ISSUES-4a), then its table `SORT` (ISSUES-4a / GitHub #10).
 ## B. Language — known gaps no program has asked for
 
 ### 10. Nucleus level 2 remainder
-`MOVE/ADD/SUBTRACT CORRESPONDING` (each refused by name), abbreviated
+~~`MOVE/ADD/SUBTRACT CORRESPONDING`~~ (Stage 36), abbreviated
 combined relation conditions (`a > b and < c`), ~~nested programs~~
 (Stage 29), ~~`REPLACE`, `COPY ... REPLACING`~~ (Stage 26, 2026-08-31),
 ~~the full `INSPECT` (BEFORE/AFTER INITIAL, CONVERTING, the one-pass
@@ -222,7 +222,7 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **4692 of 4734 tests pass, none fail, 253
+them by their own reports: **4947 of 4989 tests pass, none fail, 258
 programs match GnuCOBOL's tally exactly** (IC and RW complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
@@ -234,7 +234,8 @@ work item: ~~`ALTERNATE RECORD KEY`~~ (done), ~~`LINAGE`~~ (done),
 table nested below a direct child~~ (done), ~~`UNSTRING`~~ (done; NC218A
 and NC247A match, the ODO group's current length in every operand use),
 ~~`INSPECT ... BEFORE/AFTER INITIAL`~~ (done, with the one-pass rule and
-CONVERTING: all four match), ~~nested programs~~ (done), ~~`EXTERNAL`~~ (done), ~~`BY CONTENT`~~
+CONVERTING: all four match), ~~`MOVE/ADD CORRESPONDING`~~ (done: five
+programs match), ~~nested programs~~ (done), ~~`EXTERNAL`~~ (done), ~~`BY CONTENT`~~
 (done: **IC 25 of 25**), ~~Report Writer clauses~~ (done: **RW 6 of
 6**, ISSUES-11 keeps CONTROL/SUM), alphanumeric-edited pictures
 with A/9 mixed (3) and `;` in a picture (3), `USAGE INDEX` on a

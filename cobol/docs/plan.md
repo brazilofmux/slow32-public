@@ -867,6 +867,21 @@ embedded sign. free/inspinit, oracle agreeing; NC115A, NC122A, NC216A,
 NC221A match; the suite 256 of 303 compile, 4692 of 4734 pass, none
 fail, 253 match.
 
+## Stage 36 — CORRESPONDING **S** — DONE 2026-08-31
+
+MOVE, ADD and SUBTRACT CORRESPONDING, natively: `corr_walk` pairs the
+two groups' subtrees at compile time by the 6.4.2 rules (same name and
+qualifiers, no FILLER, no REDEFINES/OCCURS with their subtrees, groups
+that correspond searched further), emits a MOVE per pair with at least
+one elementary item, or the arithmetic per pair of elementary numeric
+items through the existing push/store path with ROUNDED on each and
+the size-error flag OR-ed across the pairs into one ON SIZE ERROR. The
+operands' subscripts carry to every pair by copying the Ref. NC207A
+then wanted 48 qualifiers on one name (`GROUP-49-1 OF GROUP-48 IN ...`);
+the cap was 8, now 64. free/corr, oracle agreeing; NC202A, NC207A,
+NC208A, NC222A, NC253A match; the suite 261 of 303 compile, 4947 of
+4989 pass, none fail, 258 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

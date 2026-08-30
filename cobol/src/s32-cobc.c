@@ -2123,11 +2123,11 @@ static void parse_ref(Ref *r)
         return;
     }
     char *name = t->s; advance();
-    char *quals[8]; int nq = 0;
+    char *quals[64]; int nq = 0;                    /* NC207A qualifies 48 deep */
     while (at_word("of") || at_word("in")) {
         advance();
         if (cur()->kind != T_WORD) die_at(cur()->line, "expected a data-name after OF/IN");
-        if (nq < 8) quals[nq++] = cur()->s;
+        if (nq < 64) quals[nq++] = cur()->s; else die_at(cur()->line, "more than 64 qualifiers");
         advance();
     }
     r->sym = sym_lookup(name, quals, nq, t->line);
@@ -3403,9 +3403,86 @@ static void emit_move(Opnd *src, Ref *dst)
     emit_call("cob_move");
 }
 
+/* CORRESPONDING (X3.23 6.4.2): items of the two groups with the same
+ * name and the same qualifiers below them, neither FILLER, neither with
+ * REDEFINES or OCCURS (nor subordinate to one: such a child is skipped
+ * with its subtree), no condition-names.  Two groups that correspond
+ * are searched further; MOVE moves a pair when at least one is
+ * elementary, ADD/SUBTRACT act on a pair of elementary numeric items.
+ * The operands' own subscripts and qualification carry to every pair. */
+static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err);
+static void emit_push(Opnd *o);
+static Opnd ref_opnd(const Ref *r);
+static int at_size_error_clause(void);
+static void parse_size_error_clauses(int size_err, const char *end_word);
+
+static int corr_eligible(Sym *c)
+{
+    return !c->is_filler && !c->is_cond && c->level != 66 && c->redefines < 0 && !c->occurs && !c->odo_dep[0];
+}
+
+static int corr_walk(Ref *a, Ref *b, int mode, int rounded, int size_err)
+{
+    int n = 0;
+    for (int i = a->sym->child; i >= 0; i = g_sym[i].sibling) {
+        Sym *c1 = &g_sym[i];
+        if (!corr_eligible(c1)) continue;
+        Sym *c2 = NULL;
+        for (int j = b->sym->child; j >= 0; j = g_sym[j].sibling)
+            if (corr_eligible(&g_sym[j]) && !strcmp(g_sym[j].name, c1->name)) { c2 = &g_sym[j]; break; }
+        if (!c2) continue;
+        Ref r1 = *a, r2 = *b; r1.sym = c1; r2.sym = c2;
+        if (c1->is_group && c2->is_group) { n += corr_walk(&r1, &r2, mode, rounded, size_err); continue; }
+        if (mode == 0) {
+            Opnd o = ref_opnd(&r1);
+            emit_move(&o, &r2); n++;
+        } else {
+            if (c1->is_group || c2->is_group || c1->pi.category != PIC_NUMERIC || c2->pi.category != PIC_NUMERIC) continue;
+            Opnd o = ref_opnd(&r1);
+            emit_push(&o);
+            int rd = rounded;
+            emit_store_receivers(&r2, &rd, 1, 0, 0, mode == 2, size_err);
+            if (size_err) {         /* the size error of any pair is the statement's */
+                emit("\tldw r1, sp+%d", SLOT_B); emit("\tldw r2, sp+%d", SLOT_A);
+                emit("\tor r1, r1, r2"); emit("\tstw sp+%d, r1", SLOT_A);
+            }
+            n++;
+        }
+    }
+    return n;
+}
+
+/* the two group operands of a CORRESPONDING statement */
+static void parse_corr_operands(Ref *a, Ref *b, const char *between)
+{
+    parse_ref(a);
+    if (!a->sym->is_group) die_at(a->line, "CORRESPONDING: '%s' is not a group", a->sym->name);
+    if (a->rm) die_at(a->line, "CORRESPONDING: no reference modification on a group");
+    expect_word(between);
+    parse_ref(b);
+    if (!b->sym->is_group) die_at(b->line, "CORRESPONDING: '%s' is not a group", b->sym->name);
+    if (b->rm) die_at(b->line, "CORRESPONDING: no reference modification on a group");
+}
+
+static void parse_arith_corr(int mode, const char *between, const char *end_word)
+{
+    Ref a, b; parse_corr_operands(&a, &b, between);
+    int rounded = accept_word("rounded");
+    if (rounded && at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2002; plain ROUNDED is the 1985 form");
+    int size_err = at_size_error_clause();
+    if (size_err) emit("\tstw sp+%d, r0", SLOT_A);
+    corr_walk(&a, &b, mode, rounded, size_err);
+    if (size_err) { emit("\tldw r1, sp+%d", SLOT_A); emit("\tstw sp+%d, r1", SLOT_B); }
+    parse_size_error_clauses(size_err, end_word);
+}
+
 static void parse_move(void)
 {
-    if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "MOVE CORRESPONDING is not implemented yet");
+    if (accept_word("corresponding") || accept_word("corr")) {
+        Ref a, b; parse_corr_operands(&a, &b, "to");
+        corr_walk(&a, &b, 0, 0, 0);
+        return;
+    }
     Opnd src; parse_operand(&src);
     expect_word("to");
     int n = 0;
@@ -3574,7 +3651,7 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
 
 static void parse_add(void)
 {
-    if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "ADD CORRESPONDING is not implemented yet");
+    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
     Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
     int n = parse_operand_list(ops, MAXOPS);
     if (!n) die_at(cur()->line, "ADD needs an operand");
@@ -3606,7 +3683,7 @@ static void parse_add(void)
 
 static void parse_subtract(void)
 {
-    if (at_word("corresponding") || at_word("corr")) die_at(cur()->line, "SUBTRACT CORRESPONDING is not implemented yet");
+    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(2, "from", "end-subtract"); return; }
     Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
     int n = parse_operand_list(ops, MAXOPS);
     if (!n) die_at(cur()->line, "SUBTRACT needs an operand");
