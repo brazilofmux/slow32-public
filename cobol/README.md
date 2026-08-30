@@ -1,8 +1,9 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **v1 done** (2026-08-29, Stages 1-11). majesty's `batch.sh`
-now runs gl022, gl023, gl039 and gl030 on SLOW-32 and every one of its
-twelve reports comes out byte-identical to the all-GnuCOBOL run;
+Status: **v1 done and then some** (2026-08-29, Stages 1-15). majesty's
+`batch.sh` now runs *every* COBOL report step on SLOW-32 -- charts,
+journal, balances and activity pipelines, eighteen programs -- and all
+twelve of its reports come out byte-identical to the all-GnuCOBOL run;
 usescreen and menu (with taskdt over clinkages and dateutil.c) paint
 and accept on the term service. What the compiler covers: the Data
 Division as a tree, the whole MOVE matrix including editing and

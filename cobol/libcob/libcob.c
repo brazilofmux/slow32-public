@@ -1364,7 +1364,11 @@ void cob_inspect_replace(char *p, int n, int kind, const char *pat, int plen, co
 char *cob_fn_current_date(void)
 {
     char *b = fn_buffer(21);
-    time_t now = time(0);
+    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 0;
+    int hund = 0;
+    if (clock_gettime(0, &ts) == 0) hund = (int)(ts.tv_nsec / 10000000);   /* CLOCK_REALTIME: the hundredths */
+    else ts.tv_sec = time(0);
+    time_t now = (time_t)ts.tv_sec;
     struct tm *t = localtime(&now);
     int y = t->tm_year + 1900, mo = t->tm_mon + 1, d = t->tm_mday;
     long off = t->tm_gmtoff;
@@ -1374,7 +1378,7 @@ char *cob_fn_current_date(void)
     int n = 0;
     #define PUT2(v) do { tmp[n++] = (char)('0' + (v) / 10 % 10); tmp[n++] = (char)('0' + (v) % 10); } while (0)
     tmp[n++] = (char)('0' + y / 1000 % 10); tmp[n++] = (char)('0' + y / 100 % 10); PUT2(y % 100);
-    PUT2(mo); PUT2(d); PUT2(t->tm_hour); PUT2(t->tm_min); PUT2(t->tm_sec); PUT2(0);
+    PUT2(mo); PUT2(d); PUT2(t->tm_hour); PUT2(t->tm_min); PUT2(t->tm_sec); PUT2(hund);
     tmp[n++] = neg ? '-' : '+'; PUT2(oh); PUT2(om);
     #undef PUT2
     memcpy(b, tmp, 21);

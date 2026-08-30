@@ -464,6 +464,22 @@ acttxnlin (56,164) byte-identical to GnuCOBOL's. **All twelve of
 majesty's reports now come off SLOW-32 byte-identical**, the last two
 (activity) after the spill rule above.
 
+## The batch, whole — 2026-08-29
+
+After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
+step on SLOW-32**: the charts, the journal pipeline, the balances
+pipeline (gl037–gl043) and the activity pipeline (gl033–gl036), each
+pipeline in its own working directory with its own description index
+(majesty commit "batch: every COBOL report step runs on SLOW-32").
+Measured: exit 0, all twelve `reports_cobol/*.prn` byte-identical to
+the all-GnuCOBOL baseline, `tmp/` clean; eighteen binaries from
+`s32x/build.sh`. What still runs under `cobcrun`: the interactive
+`menu` (which runs on SLOW-32 too, but not through a pipe) and
+`today`, whose output matches GnuCOBOL's to the hundredth of a
+second. 36 of 58 corpus programs compile; what is left is the legacy
+`FUNCTION-ID` date family (retire), relative I-O, `SPECIAL-NAMES`,
+`SORT`, and one-offs.
+
 ## After v1 (not scheduled, each when a program asks)
 
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)

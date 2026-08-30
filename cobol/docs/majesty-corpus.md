@@ -151,11 +151,9 @@ subscript, will meet whatever comes after. The sweep is one command
 (`for f in src/cobol/*.cbl; do s32-cobc -free -m -o /dev/null $f; done`)
 and should be re-run at the start of every later stage.
 
-`batch.sh` today: `run_s32` runs gl022, gl023 and the whole journal
-pipeline -- gl024, gl025, gl026, gl029, gl039, gl030 -- on SLOW-32
-(`s32x/build.sh` compiles the eight; `S32_EMU` names the emulator),
-in a private working directory whose `tmp/` holds the pipeline's
-intermediates, so the index our gl039 builds for our gl030 never meets
-the one GnuCOBOL's gl039 still builds for gl036. The balances and
-activity pipelines (gl033–gl043) are still `cobcrun`: gl034/gl040 need
-`OCCURS DEPENDING ON`, gl042/gl043 `SEARCH`.
+`batch.sh` today: `run_s32` runs every COBOL report step on SLOW-32 --
+the charts, the journal pipeline, the balances pipeline and the
+activity pipeline -- each pipeline in its own working directory under
+`s32x/` with its own description index (`s32x/build.sh` compiles the
+eighteen binaries; `S32_EMU` names the emulator). Only `today` and the
+interactive `menu` still say `cobcrun`.
