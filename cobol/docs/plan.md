@@ -1168,6 +1168,33 @@ of 303 compile, 7314 of 7425 pass, none fail, 300 match -- the three
 others being the obsolete-element programs that have no tests and
 run.
 
+## Stage 57 — the first performance pass, driven by batch.sh **M** — DONE 2026-08-30
+
+majesty's batch ran in 1.83 s and the user asked whether the compiler
+could take a share of it. The profile (docs/performance.md, method
+and table) said the compiler was nowhere in it: 88% of a step was
+libc's `fgetc` reading the file a byte at a time through `fread` and a
+per-call `bytes / size` -- an unsigned divide the runtime performed as
+a 32-round shift-subtract loop although the ISA divides in hardware.
+Fixed from the bottom: `fgetc` takes the buffered byte itself and
+`fread`/`fwrite` skip the divide for `size == 1`; `__udivsi3`,
+`__divsi3`, `__umodsi3` on the hardware `div`/`rem` (both operands
+under 2^31 in one instruction, the two big cases a line each; the
+same routine in stage08's builtins64.s); `__udivdi3` with a 32-bit
+divisor in two hardware steps (Hacker's Delight divlu). Then libcob:
+digits nine at a time in a 32-bit word, two a step through a pairs
+table, powers of ten as compile-time constants, the line-sequential
+READ through the runtime's own buffer and memchr (cob_file grew
+rbuf/rpos/rlen; the compiler emits the three words), the de-edit path
+out of cob_get_num's frame, packed bytes straight from the digit
+pairs. gl036: 2.83 G instructions to 0.30 G; the batch: 0.64 s, 2.6 G
+instructions over all its steps, every report byte-identical; the NIST
+suite, the harness and the regression suite (two new division-edge
+tests) unchanged. tools/utilities/s32-hotspots.py is the attribution
+tool. What is left is the COBOL program's own work at ~5,000
+instructions a record; the levers not taken are listed in
+performance.md.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

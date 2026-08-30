@@ -106,15 +106,82 @@ static int capacity_digits(unsigned size)
     return size == 1 ? 3 : size == 2 ? 5 : size == 4 ? 10 : 19;
 }
 
-/* Value of the item scaled by 10^scale (i.e. the integer the digits spell). */
-long long cob_get_num(const void *vp, const cob_desc *d)
+#define COB_RBUF 8192   /* line-sequential read buffer */
+
+/* ---- digits without 64-bit division ---------------------------------- */
+/* SLOW-32 divides 32 bits in hardware and 64 bits a bit at a time (some
+ * 600 instructions), and a numeric item is at most 18 digits: so the
+ * digit loops work nine digits at a time in a 32-bit word, two digits a
+ * step through a pairs table, and a division by a power of ten is by a
+ * constant in every case, which the compiler turns into a multiply. */
+static const char digit_pairs[201] =
+    "00010203040506070809" "10111213141516171819" "20212223242526272829"
+    "30313233343536373839" "40414243444546474849" "50515253545556575859"
+    "60616263646566676869" "70717273747576777879" "80818283848586878889"
+    "90919293949596979899";
+
+/* the low n digits of mag as characters, the least significant at out[n-1] */
+static void mag_to_digits(unsigned long long mag, char *out, int n)
 {
-    const unsigned char *p = vp;
+    while (n > 0) {
+        unsigned lo; int take;
+        if (mag >> 32) { unsigned long long q = mag / 1000000000ULL; lo = (unsigned)(mag - q * 1000000000ULL); mag = q; take = 9; }
+        else { lo = (unsigned)mag; mag = 0; take = n; }
+        if (take > n) take = n;
+        n -= take;
+        char *o = out + n + take;
+        while (take >= 2) { unsigned q = lo / 100u, r = lo - q * 100u; *--o = digit_pairs[r * 2 + 1]; *--o = digit_pairs[r * 2]; lo = q; take -= 2; }
+        if (take) *--o = (char)('0' + lo % 10u);
+    }
+}
+
+/* a / 10^m, the remainder through *rem */
+static unsigned long long udiv_pow10(unsigned long long a, int m, unsigned long long *rem)
+{
+    unsigned long long q;
+    if (m <= 0) { *rem = 0; return a; }
+    if (!(a >> 32) && m <= 9) { unsigned x = (unsigned)a, d = (unsigned)pow10tab[m], qq = x / d; *rem = x - qq * d; return qq; }
+    switch (m) {
+    case 1: q = a / 10ULL; break;
+    case 2: q = a / 100ULL; break;
+    case 3: q = a / 1000ULL; break;
+    case 4: q = a / 10000ULL; break;
+    case 5: q = a / 100000ULL; break;
+    case 6: q = a / 1000000ULL; break;
+    case 7: q = a / 10000000ULL; break;
+    case 8: q = a / 100000000ULL; break;
+    case 9: q = a / 1000000000ULL; break;
+    case 10: q = a / 10000000000ULL; break;
+    case 11: q = a / 100000000000ULL; break;
+    case 12: q = a / 1000000000000ULL; break;
+    case 13: q = a / 10000000000000ULL; break;
+    case 14: q = a / 100000000000000ULL; break;
+    case 15: q = a / 1000000000000000ULL; break;
+    case 16: q = a / 10000000000000000ULL; break;
+    case 17: q = a / 100000000000000000ULL; break;
+    case 18: q = a / 1000000000000000000ULL; break;
+    default: *rem = a; return 0;
+    }
+    *rem = a - q * (unsigned long long)pow10tab[m];
+    return q;
+}
+
+/* v / 10^m with C's truncation toward zero, the remainder v's sign */
+static long long div_pow10(long long v, int m, long long *rem)
+{
+    unsigned long long r, q = udiv_pow10(v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v, m, &r);
+    if (rem) *rem = v < 0 ? -(long long)r : (long long)r;
+    return v < 0 ? -(long long)q : (long long)q;
+}
+
+/* Value of the item scaled by 10^scale (i.e. the integer the digits spell). */
+/* de-editing: a 1985 feature IBM ANS COBOL never had.  Out of line so
+ * its arrays do not put a 350-byte frame under every numeric fetch. */
+static __attribute__((noinline)) long long get_num_edited(const unsigned char *p, const cob_desc *d)
+{
     long long v = 0;
     int neg = 0;
-
-    if (d->cat == COB_NUM_ED) {
-        /* de-editing: a 1985 feature IBM ANS COBOL never had */
+    {
         char digs[40];
         unsigned char sw[256];
         if ((cob_dp_comma || cob_currency != '$') && d->size <= sizeof sw) {     /* the bytes carry ',' for the point, c for '$': read them the other way round */
@@ -130,6 +197,15 @@ long long cob_get_num(const void *vp, const cob_desc *d)
         for (int i = 0; i < n; i++) v = v * 10 + (digs[i] - '0');
         return neg ? -v : v;
     }
+}
+
+long long cob_get_num(const void *vp, const cob_desc *d)
+{
+    const unsigned char *p = vp;
+    long long v = 0;
+    int neg = 0;
+
+    if (d->cat == COB_NUM_ED) return get_num_edited(p, d);
 
     switch (d->usage) {
     case COB_U_BINARY: {
@@ -141,10 +217,17 @@ long long cob_get_num(const void *vp, const cob_desc *d)
     }
     case COB_U_PACKED: {
         int bytes = (int)d->size;
-        for (int i = 0; i < bytes; i++) {
-            v = v * 10 + (p[i] >> 4);
-            if (i < bytes - 1) v = v * 10 + (p[i] & 15);
+        /* eight digits at a time in a 32-bit word (the flush into v kept
+         * out of the byte loop: inside it the compiler if-converts it into
+         * a 64-bit multiply on every byte) */
+        int i = 0, first = 1;
+        while (i < bytes - 1) {
+            int len = bytes - 1 - i < 4 ? bytes - 1 - i : 4, stop = i + len;
+            unsigned w = 0;
+            for (; i < stop; i++) w = w * 100 + (p[i] >> 4) * 10 + (p[i] & 15);
+            v = first ? (long long)w : v * pow10tab[2 * len] + w; first = 0;
         }
+        v = v * 10 + (p[bytes - 1] >> 4);
         if ((p[bytes - 1] & 15) == 0xD) v = -v;
         return v;
     }
@@ -155,12 +238,24 @@ long long cob_get_num(const void *vp, const cob_desc *d)
         if (d->flags & COB_F_SEPLEAD) { neg = (p[0] == '-'); i = 1; }
         int end = n;
         if (d->flags & COB_F_SEPTRAIL) { neg = (p[n - 1] == '-'); end = n - 1; }
-        for (; i < end; i++) {
-            unsigned char c = p[i];
-            if (c >= 'p' && c <= 'y') { v = v * 10 + (c - 'p'); neg = 1; }     /* overpunch: last digit, or first with SIGN LEADING */
-            else if (c >= '0' && c <= '9') v = v * 10 + (c - '0');
-            else if (c == ' ') v = v * 10;             /* a space counts as zero */
-            else v = v * 10 + (c & 15);                 /* GnuCOBOL: low nibble */
+        /* nine digits at a time in a 32-bit word; the flush into v stays
+         * outside the character loop (inside, the compiler if-converts it
+         * into a 64-bit multiply on every character) */
+        int first = 1;
+        while (i < end) {
+            int len = end - i < 9 ? end - i : 9, stop = i + len;
+            unsigned w = 0;
+            for (; i < stop; i++) {
+                unsigned c = (unsigned)p[i] - '0';
+                if (c > 9) {
+                    unsigned char ch = p[i];
+                    if (ch >= 'p' && ch <= 'y') { c = ch - 'p'; neg = 1; }     /* overpunch: last digit, or first with SIGN LEADING */
+                    else if (ch == ' ') c = 0;              /* a space counts as zero */
+                    else c = ch & 15;                       /* GnuCOBOL: low nibble */
+                }
+                w = w * 10 + c;
+            }
+            v = first ? (long long)w : v * pow10tab[len] + w; first = 0;
         }
         return neg ? -v : v;
     }
@@ -180,8 +275,9 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
     int eff = d->digits;
     if (d->pic) for (const char *q = d->pic; *q; q++) if (*q == 'P') eff--;
     if (vscale > d->scale) {
-        long long k = pow10tab[vscale - d->scale];
-        long long q = v / k, r = v % k;
+        int m = vscale - d->scale;
+        long long k = pow10tab[m], r;
+        long long q = div_pow10(v, m, &r);
         if ((opts & 1) && (r < 0 ? -r : r) * 2 >= k) q += (v < 0) ? -1 : 1;
         v = q;
     } else if (vscale < d->scale) {
@@ -196,7 +292,7 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
                 if (lim < 0 ? a != 0 : (lim <= 18 && a >= (unsigned long long)pow10tab[lim])) return 1;
             }
             int keep = eff - k;
-            if (keep <= 0) v = 0; else if (keep <= 18) v %= pow10tab[keep];
+            if (keep <= 0) v = 0; else if (keep <= 18 && a >= (unsigned long long)pow10tab[keep]) div_pow10(v, keep, &v);
         }
         if (v) v *= pow10tab[k > 18 ? 18 : k];
     }
@@ -209,8 +305,10 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
             if (mag >= lim) return 1;
         }
     } else if (d->digits <= 18) {
-        if ((opts & 2) && mag >= (unsigned long long)pow10tab[eff]) return 1;
-        mag %= (unsigned long long)pow10tab[eff];
+        if (mag >= (unsigned long long)pow10tab[eff]) {
+            if (opts & 2) return 1;
+            udiv_pow10(mag, eff, &mag);
+        }
     }
     if (!(d->flags & COB_F_SIGNED)) neg = 0;         /* unsigned takes the magnitude */
 
@@ -218,7 +316,7 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
         char digs[40];
         int nd = d->digits;                         /* the P positions hold no digit character */
         for (const char *q = d->pic; q && *q; q++) if (*q == 'P') nd--;
-        for (int i = nd - 1; i >= 0; i--) { digs[i] = (char)('0' + mag % 10); mag /= 10; }
+        mag_to_digits(mag, digs, nd);
         int w = cob_edit_apply(d->pic, digs, neg, d->flags & COB_F_BLANKZ, (char *)p);
         if (cob_dp_comma) for (int i = 0; i < w; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
         if (cob_currency != '$') for (int i = 0; i < w; i++) if (p[i] == '$') p[i] = (unsigned char)cob_currency;
@@ -234,14 +332,16 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
     case COB_U_PACKED: {
         int digits = d->digits, bytes = (int)d->size;
         char dg[20];
-        for (int i = digits - 1; i >= 0; i--) { dg[i] = (char)(mag % 10); mag /= 10; }
-        memset(p, 0, bytes);
-        int nib = bytes * 2 - 2;             /* nibble index of the last digit */
-        for (int i = digits - 1; i >= 0; i--, nib--) {
-            if (nib & 1) p[nib / 2] |= (unsigned char)dg[i];
-            else p[nib / 2] |= (unsigned char)(dg[i] << 4);
+        mag_to_digits(mag, dg, digits);
+        /* the last digit shares its byte with the sign; the rest pair off
+         * leftwards, a zero nibble at the front when the count is even */
+        int k = digits - 1, j = bytes - 1;
+        p[j] = (unsigned char)(((dg[k] - '0') << 4) | ((d->flags & COB_F_SIGNED) ? (neg ? 0xD : 0xC) : 0xF));
+        for (k--; k >= 0; k -= 2) {
+            unsigned hi = k > 0 ? (unsigned)(dg[k - 1] - '0') : 0u;
+            p[--j] = (unsigned char)((hi << 4) | (unsigned)(dg[k] - '0'));
         }
-        p[bytes - 1] |= (d->flags & COB_F_SIGNED) ? (neg ? 0xD : 0xC) : 0xF;
+        while (j > 0) p[--j] = 0;
         break;
     }
     default: {
@@ -249,7 +349,7 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
         if ((d->flags & COB_F_BLANKZ) && mag == 0) { memset(p, ' ', (size_t)n); break; }   /* BLANK WHEN ZERO on a plain numeric item */
         if (d->flags & COB_F_SEPLEAD) { p[0] = neg ? '-' : '+'; start = 1; }
         if (d->flags & COB_F_SEPTRAIL) { p[n - 1] = neg ? '-' : '+'; i = n - 2; }
-        for (; i >= start; i--) { p[i] = (unsigned char)('0' + mag % 10); mag /= 10; }
+        mag_to_digits(mag, (char *)p + start, i - start + 1);
         if (neg && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) {
             int k = (d->flags & COB_F_LEAD) ? 0 : n - 1;
             p[k] = (unsigned char)(p[k] - '0' + 'p');
@@ -274,11 +374,10 @@ void cob_display_flush(void) { out_flush(); }
 static void emit_scaled(unsigned long long mag, int neg, int digits, int scale, int is_signed)
 {
     char d[40];
-    int n = 0;
     if (is_signed) out_char(neg ? '-' : '+');
-    for (int i = 0; i < digits; i++) { d[n++] = (char)('0' + mag % 10); mag /= 10; }
-    for (int i = n - 1; i >= 0; i--) {
-        if (scale > 0 && i == scale - 1) out_char('.');
+    mag_to_digits(mag, d, digits);
+    for (int i = 0; i < digits; i++) {
+        if (scale > 0 && i == digits - scale) out_char('.');
         out_char(d[i]);
     }
 }
@@ -350,12 +449,12 @@ static int num_to_digits(const void *p, const cob_desc *d, char *out)
         /* the stored digits, the P positions zeros on the side they sit */
         int stored = digits - np, o = 0;
         if (lead_p) for (int i = 0; i < np; i++) out[o++] = '0';
-        for (int i = stored - 1; i >= 0; i--) { out[o + i] = (char)('0' + mag % 10); mag /= 10; }
+        mag_to_digits(mag, out + o, stored);
         o += stored;
         if (!lead_p) for (int i = 0; i < np; i++) out[o++] = '0';
         return o;
     }
-    for (int i = digits - 1; i >= 0; i--) { out[i] = (char)('0' + mag % 10); mag /= 10; }
+    mag_to_digits(mag, out, digits);
     return digits;
 }
 
@@ -674,13 +773,26 @@ void cob_ndiv(void)
     int neg = (a->v < 0) != (b->v < 0);
     unsigned long long ua = a->v < 0 ? (unsigned long long)(-a->v) : (unsigned long long)a->v;
     unsigned long long ub = b->v < 0 ? (unsigned long long)(-b->v) : (unsigned long long)b->v;
-    unsigned long long q = ua / ub, r = ua % ub;
+    unsigned long long q, r;
+    if (!((ua | ub) >> 32)) { unsigned x = (unsigned)ua, y = (unsigned)ub, qq = x / y; q = qq; r = x - qq * y; }
+    else { q = ua / ub; r = ua % ub; }
     int scale = a->scale - b->scale;
     int want = (a->scale > b->scale ? a->scale : b->scale) + 6;
-    while (scale < want && q < (unsigned long long)pow10tab[17]) {
-        r *= 10;
-        q = q * 10 + r / ub; r %= ub;
-        scale++;
+    if (ub < (1u << 28)) {                          /* r * 10 stays in 32 bits: the hardware divider */
+        unsigned d32 = (unsigned)ub, r32 = (unsigned)r;
+        while (scale < want && q < (unsigned long long)pow10tab[17]) {
+            r32 *= 10;
+            unsigned t = r32 / d32;
+            q = q * 10 + t; r32 -= t * d32;
+            scale++;
+        }
+        r = r32;
+    } else {
+        while (scale < want && q < (unsigned long long)pow10tab[17]) {
+            r *= 10;
+            q = q * 10 + r / ub; r %= ub;
+            scale++;
+        }
     }
     if (scale < 0) {                            /* the divisor's scale exceeded the dividend's */
         while (scale < 0 && q < (unsigned long long)pow10tab[17]) { q *= 10; scale++; }
@@ -696,7 +808,7 @@ void cob_nneg(void) { nstk[nsp - 1].v = -nstk[nsp - 1].v; }
 void cob_ntrunc(int scale)
 {
     cob_num *a = &nstk[nsp - 1];
-    while (a->scale > scale) { a->v /= 10; a->scale--; }
+    if (a->scale > scale) { a->v = div_pow10(a->v, a->scale - scale, 0); a->scale = scale; }
 }
 
 /* a ** b for an integer b >= 0; anything else is beyond this stage */
@@ -753,7 +865,7 @@ void cob_drop(void) { if (nsp) nsp--; div0 = 0; }
 int cob_load_int(const void *p, const cob_desc *d)
 {
     long long v = cob_get_num(p, d);
-    if (d->scale > 0) v /= pow10tab[d->scale];
+    if (d->scale > 0) v = div_pow10(v, d->scale, 0);
     return (int)v;
 }
 
@@ -896,6 +1008,7 @@ int cob_open(cob_file *f, int mode)
         }
     }
     f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
+    f->rpos = f->rlen = 0;
     if (fp && f->org == COB_ORG_RELATIVE) {
         f->rel_pos = 1; f->rel_last = 0;
         if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0)
@@ -939,6 +1052,8 @@ int cob_close(cob_file *f)
     if (f->org == COB_ORG_INDEXED) return idx_close(f);
     if (f->fp) fclose((FILE *)f->fp);
     f->fp = 0; f->open_mode = 0; f->at_eof = 0;
+    if (f->rbuf) { free(f->rbuf); f->rbuf = 0; }
+    f->rpos = f->rlen = 0;
     return file_result(f, "00", "");
 }
 
@@ -998,11 +1113,27 @@ int cob_read(cob_file *f)
         return file_result(f, "00", "");
     }
 
-    unsigned i = 0; int c, truncated = 0, any = 0;
-    while ((c = fgetc(fp)) != EOF) {
-        any = 1; f->fpos++;
-        if (c == '\n') break;
-        if (i < n) rec[i++] = (char)c; else truncated = 1;
+    /* line sequential: the bytes to the newline, out of a block buffer of
+     * the runtime's own -- a byte through fgetc is thirty-odd instructions
+     * on this target, a memchr over a block about three */
+    if (!f->rbuf) { f->rbuf = malloc(COB_RBUF); f->rpos = f->rlen = 0; if (!f->rbuf) cob_fatal("out of memory"); }
+    unsigned i = 0; int truncated = 0, any = 0;
+    for (;;) {
+        if (f->rpos >= f->rlen) {
+            size_t got = fread(f->rbuf, 1, COB_RBUF, fp);
+            if (got == 0) break;
+            f->rpos = 0; f->rlen = (unsigned)got;
+        }
+        any = 1;
+        unsigned char *s = (unsigned char *)f->rbuf + f->rpos, *e = memchr(s, '\n', f->rlen - f->rpos);
+        unsigned take = e ? (unsigned)(e - s) : f->rlen - f->rpos;
+        if (take) {
+            if (i < n) { unsigned c = take < n - i ? take : n - i; memcpy(rec + i, s, c); i += c; if (c < take) truncated = 1; }
+            else truncated = 1;
+        }
+        f->rpos += take + (e ? 1 : 0);
+        f->fpos += take + (e ? 1 : 0);
+        if (e) break;
     }
     if (!any) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
     if (i > 0 && rec[i - 1] == '\r') i--;
@@ -2378,7 +2509,7 @@ int cob_pop_int(void)
     if (nsp <= 0) cob_fatal("numeric stack underflow");
     cob_num *a = &nstk[--nsp];
     long long v = a->v;
-    if (a->scale > 0) v /= pow10tab[a->scale];
+    if (a->scale > 0) v = div_pow10(v, a->scale, 0);
     return (int)v;
 }
 

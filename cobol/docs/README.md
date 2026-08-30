@@ -12,6 +12,7 @@ is one.
 | [indexed.md](indexed.md) | keyed files; dBase machinery vs dBase files |
 | [screen.md](screen.md) | SCREEN SECTION as a focus state machine |
 | [report-writer.md](report-writer.md) | page engine; majesty's subset; cobc370 lessons |
+| [performance.md](performance.md) | where a step's time went (libc, the divider, libcob), the profiling recipe, the levers not taken |
 | [lowering.md](lowering.md) | conversion matrix, hot cases, libcob |
 | [functions.md](functions.md) | the C bridge, and the corpus rewrite that keeps COBOL 2002 out of the compiler |
 | [borrowing.md](borrowing.md) | what to take from cobc370, and what not to |

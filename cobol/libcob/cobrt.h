@@ -82,6 +82,8 @@ typedef struct {
     char *saved_status;       /* EXTERNAL: the entering program's own image keeps the shared connector's previous status item here */
     unsigned int reversed;    /* OPEN INPUT ... REVERSED: fixed-length records read from the last back */
     unsigned int nl_pending;  /* line sequential: the last record went out without its newline (BEFORE ADVANCING ZERO) */
+    char *rbuf;               /* line sequential input: the runtime's read buffer ... */
+    unsigned int rpos, rlen;  /* ... the next byte in it, and how many it holds */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

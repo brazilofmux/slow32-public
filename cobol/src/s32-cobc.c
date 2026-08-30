@@ -7319,6 +7319,9 @@ static void emit_unit_data(void)
         emit("\t.word 0");                                 /* saved_status (EXTERNAL) */
         emit("\t.word 0");                                 /* reversed (OPEN INPUT ... REVERSED) */
         emit("\t.word 0");                                 /* nl_pending (BEFORE ADVANCING ZERO) */
+        emit("\t.word 0");                                 /* rbuf, rpos, rlen: the runtime's line-sequential read buffer */
+        emit("\t.word 0");
+        emit("\t.word 0");
         if (f->external) { emit(".Lfx%d_%d:\t# the shared connector of EXTERNAL %s", f->unit, i, f->name); emit("\t.word 0"); }
     }
     emit("\t.p2align 2");
