@@ -470,6 +470,24 @@ void cob_ext_file_exit(const char *name, cob_file *mine)
         }
 }
 
+/* CALL ... BY CONTENT: the callee is handed a copy, from an arena that
+ * behaves as a stack -- pushed before the CALL, popped after it */
+static char cob_content_arena[1 << 16]; static unsigned cob_content_top;
+static unsigned cob_content_mark[256]; static int cob_content_nmark;
+void *cob_content_push(const void *p, unsigned n)
+{
+    unsigned at = (cob_content_top + 7u) & ~7u;
+    if (at + n > sizeof cob_content_arena || cob_content_nmark == 256) cob_fatal("BY CONTENT: too much or too deep");
+    cob_content_mark[cob_content_nmark++] = cob_content_top;
+    memcpy(cob_content_arena + at, p, n);
+    cob_content_top = at + n;
+    return cob_content_arena + at;
+}
+void cob_content_pop(int k)
+{
+    while (k-- > 0 && cob_content_nmark > 0) cob_content_top = cob_content_mark[--cob_content_nmark];
+}
+
 /* DECIMAL-POINT IS COMMA: the program's own; a called program's is restored on its exit */
 int cob_dp_comma;
 int cob_set_decimal_point(int comma) { int old = cob_dp_comma; cob_dp_comma = comma; return old; }

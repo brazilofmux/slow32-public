@@ -84,6 +84,7 @@ agrees with its documented divergence").
 | `free/odomove` | MOVE to a group ending in an OCCURS DEPENDING ON table whose DEPENDING ON item is outside the group | the receiving length is the **maximum** (X3.23-1985 general rules for OCCURS) | the current length |
 | `free/altkey` | READ under an alternate key WITH DUPLICATES, the next record having the same key | status **02** on that READ, whether it followed a START, a random READ or a READ NEXT (4.5.4: "equal to the value of that same key in the next record") | 02 only when the READ NEXT followed another READ NEXT |
 | `free/nestuse` (no oracle) | a containing program's `USE GLOBAL` procedure invoked for a contained program's I/O | runs, control returns after the statement (X3.23 USE general rules; NIST IC233A/IC234A agree) | 4.0-early-dev hangs after the procedure; the harness now times every oracle run out at 60 s |
+| (not a test) | a numeric literal as a CALL argument (`CALL X USING 1234`, by reference or by content) | its digits, read through the callee's picture (the 85 text leaves the literal's class to the callee) | a 4-byte big-endian binary: a `PIC 9(4)` callee reads `0042` |
 | (not a test) | `CALL 'twice'` when the program is `TWICE` | found: program-names are words, case is not significant (the static link folds them the same way) | not found (a case-sensitive symbol lookup) |
 | (not a test) | relative slots on disk | the same 4-byte RDW per slot, zero for an empty slot; slot = 4 + maximum record (docs/indexed.md) | an 8-byte native `size_t` length per slot, 0 for empty |
 

@@ -53,6 +53,19 @@ for m in $MODULES; do
         cp "$f" "$run/$lc.cbl"
         # GnuCOBOL's tally for this program: total pass fail deleted
         exp="$(grep "^$name.CBL" "$CCVS/$m.txt" 2>/dev/null | head -1 | awk '{print $2, $3, $4, $5}')"
+        # compile-only programs (report.pl's comp_only) may CALL programs the
+        # suite never supplies (IC401M's FIC401M): compile and assemble, no link
+        case "$name" in NC401M|RL301M|RL401M|IC401M|IX301M|IX401M|SQ401M|ST301M|SM401M|OB401M|DB301M|DB302M|DB303M|DB304M|DB305M|SG301M|CM301M|CM401M)
+            if "$CDIR/out/s32-cobc" -fixed -I "$CCVS/copy" -o "$run/$lc.s" "$run/$lc.cbl" >"$run/$name.compile.log" 2>&1 &&
+               "$ROOT/tools/assembler/slow32asm" "$run/$lc.s" "$run/$lc.s32o" >>"$run/$name.compile.log" 2>&1; then
+                printf '  %-7s %3d/%3d  fail %2d  del %2d   %s\n' "$name" 1 1 0 0 "= GnuCOBOL (compile only)"
+                t_all=$((t_all+1)); t_pass=$((t_pass+1)); t_progok=$((t_progok+1))
+            else
+                t_nocomp=$((t_nocomp+1))
+                printf '  %-7s %-24s (%s)\n' "$name" "does not compile" "$(grep -m1 -i error "$run/$name.compile.log" | sed 's/^[^:]*:[0-9]*: *error: *//' | cut -c1-60)"
+            fi
+            continue ;;
+        esac
         if ! "$CDIR/compile.sh" -fixed -I "$CCVS/copy" "$run/$lc.cbl" "${libobjs[@]+"${libobjs[@]}"}" -o "$run/$lc.s32x" >"$run/$name.compile.log" 2>&1; then
             t_nocomp=$((t_nocomp+1))
             printf '  %-7s %-24s (%s)\n' "$name" "does not compile" "$(grep -m1 -i error "$run/$name.compile.log" | sed 's/^[^:]*:[0-9]*: *error: *//' | cut -c1-60)"

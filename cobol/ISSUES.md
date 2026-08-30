@@ -217,8 +217,8 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **4267 of 4304 tests pass, none fail, 235
-programs match GnuCOBOL's tally exactly** (Stage 23; alternate keys
+them by their own reports: **4367 of 4408 tests pass, none fail, 239
+programs match GnuCOBOL's tally exactly** (IC complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
 the runner not building `lib/`, then `CALL identifier`/`ON
@@ -227,8 +227,8 @@ remaining bins, largest first, each a
 work item: ~~`ALTERNATE RECORD KEY`~~ (done), ~~`LINAGE`~~ (done),
 ~~`COPY ... REPLACING`~~ (done), ~~`CALL identifier`~~ (done), an ODO
 table nested below a direct child (4),
-`INSPECT ... BEFORE/AFTER INITIAL` (4), ~~nested programs~~ (done), ~~`EXTERNAL`~~ (done; IC 21 of 25), `BY
-CONTENT` (IC 3, one of them compile-only), alphanumeric-edited pictures
+`INSPECT ... BEFORE/AFTER INITIAL` (4), ~~nested programs~~ (done), ~~`EXTERNAL`~~ (done), ~~`BY CONTENT`~~
+(done: **IC 25 of 25**), alphanumeric-edited pictures
 with A/9 mixed (3) and `;` in a picture (3), `USAGE INDEX` on a
 group (2), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01

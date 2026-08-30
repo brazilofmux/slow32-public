@@ -779,6 +779,22 @@ the two status items), oracle agreeing; IC226A and IC227A's EXTERNAL
 tests pass (IC227A goes on to BY CONTENT); IC 21 of 25, 147 of 147;
 the suite 238 of 303 compile, 4267 of 4304 pass, none fail, 235 match.
 
+## Stage 31 — BY CONTENT; the IC module complete **S** — DONE 2026-08-31
+
+The last IC bin. `BY CONTENT` hands the callee a copy from a runtime
+arena that behaves as a stack: `cob_content_push(p, n)` before the
+CALL for each such argument (an item or a literal; the `Arg` kind
+A_CONTENT stages the copy's address), `cob_content_pop(k)` after it
+with the result kept aside, so nested and recursive calls balance.
+Numeric literals as CALL arguments, by reference or by content, are
+now their plain digits rather than the pool's sign-led image (the
+callee reads them through its own picture; GnuCOBOL hands over a
+binary word, a documented divergence). The runner compiles and assembles the suite's compile-only
+programs without linking, since IC401M CALLs a program the suite never
+supplies. free/bycontent (copy vs reference, literals), oracle
+agreeing; **IC 25 of 25 compile and match GnuCOBOL, 247 of 251**; the
+suite 242 of 303 compile, 4367 of 4408 pass, none fail, 239 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

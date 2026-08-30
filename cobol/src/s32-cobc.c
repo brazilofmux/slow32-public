@@ -1970,6 +1970,18 @@ static const char *num_lit_label(const NumLit *n, int *desc)
     return lit_label((unsigned char *)img, n->ndigits + 1);
 }
 
+/* a numeric literal as a CALL argument: the callee reads it through its
+ * own picture, so the bytes are the plain digits (a negative one zoned
+ * in its last digit), as GnuCOBOL stores literals -- not the pool's
+ * sign-led image the runtime's descriptors describe */
+static const char *call_num_lit_label(const NumLit *n)
+{
+    char img[40];
+    memcpy(img, n->digits, n->ndigits);
+    if (n->neg && n->ndigits) img[n->ndigits - 1] = (char)('p' + (img[n->ndigits - 1] - '0'));
+    return lit_label((unsigned char *)img, n->ndigits);
+}
+
 /* rd = address of sym+off */
 static void emit_la_off(const char *rd, const char *sym, int off)
 {
@@ -2392,10 +2404,11 @@ static void emit_ref_addr(const Ref *r, const char *reg)
 
 /* ---- argument staging ------------------------------------------------- */
 
-enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN };
+enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT };
 typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; Opnd *fn; } Arg;
 static Arg arg_func(Opnd *o)       { Arg a = { A_FUNC, 0, 0, 0, 0, o }; return a; }
 static Arg arg_value(Opnd *o)      { Arg a = { A_VALUE, 0, 0, 0, 0, o }; return a; }
+static Arg arg_content(Opnd *o)    { Arg a = { A_CONTENT, 0, 0, 0, 0, o }; return a; }   /* BY CONTENT: a copy's address */
 static Arg arg_rdesc(const Ref *r) { Arg a = { A_RDESC, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_rlen(const Ref *r)  { Arg a = { A_RLEN, r, 0, 0, 0, 0 }; return a; }
 static int g_slot_base;             /* staged operands of nested evaluations use higher slots */
@@ -2444,6 +2457,16 @@ static void emit_args(const Arg *a, int n)
             emit("\tldw r5, sp+%d", SLOT(base + i));
             emit_desc_addr("r3", sym_desc(r->sym));
             emit_call(a[i].kind == A_RDESC ? "cob_refmod_desc" : "cob_refmod_len");
+            emit("\tstw sp+%d, r1", SLOT(base + i));
+            slotted[i] = 1;
+        } else if (a[i].kind == A_CONTENT) {
+            /* BY CONTENT: the callee gets a copy, from the runtime's arena,
+             * released after the CALL (cob_content_pop) */
+            Opnd *o = a[i].fn;
+            if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit_li("r4", o->ref.sym->size); }
+            else if (o->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)o->tok->s, o->tok->len)); emit_li("r4", o->tok->len); }
+            else { emit_la("r3", call_num_lit_label(&o->num)); emit_li("r4", o->num.ndigits); }
+            emit_call("cob_content_push");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_VALUE) {
@@ -4625,7 +4648,7 @@ static void parse_call(void)
         parse_ref(&target); dynamic = 1;
         if (target.sym->is_cond) die_at(line, "CALL: a condition-name cannot name a program");
     } else die_at(line, "expected a program-name literal or an identifier after CALL");
-    Arg a[8]; Opnd ops[8]; int n = 0;
+    Arg a[8]; Opnd ops[8]; int n = 0, ncontent = 0;
     if (accept_word("using")) {
         int mode = 0;               /* 0 reference, 1 content, 2 value */
         for (;;) {
@@ -4643,8 +4666,12 @@ static void parse_call(void)
             if (n >= 8) die_at(cur()->line, "more than eight CALL arguments (stack arguments) are not implemented yet");
             parse_operand(&ops[n]);
             Opnd *o = &ops[n];
-            if (mode == 1) die_at(o->line, "BY CONTENT is not implemented yet");
-            if (mode == 2) {
+            if (mode == 1) {
+                if (o->kind == O_REF && o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed");
+                if (o->kind == O_REF && o->ref.rm) die_at(o->line, "BY CONTENT of a reference-modified item is not implemented");
+                if (!(o->kind == O_REF || o->kind == O_STR || o->kind == O_NUM)) die_at(o->line, "a CALL argument must be an item or a literal");
+                a[n] = arg_content(o); ncontent++;
+            } else if (mode == 2) {
                 if (o->kind == O_REF) {
                     if (!is_int_item(o->ref.sym)) die_at(o->line, "BY VALUE '%s' must be an integer item", o->ref.sym->name);
                     if (o->ref.sym->size > 4) die_at(o->line, "BY VALUE '%s': only items up to four bytes (a word) are passed by value", o->ref.sym->name);
@@ -4656,7 +4683,7 @@ static void parse_call(void)
             } else {
                 if (o->kind == O_REF) { if (o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed"); a[n] = arg_ref(&o->ref); }
                 else if (o->kind == O_STR) a[n] = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
-                else if (o->kind == O_NUM) { int d; a[n] = arg_label(num_lit_label(&o->num, &d)); }
+                else if (o->kind == O_NUM) a[n] = arg_label(call_num_lit_label(&o->num));
                 else die_at(o->line, "a CALL argument must be an item or a literal");
             }
             n++;
@@ -4690,6 +4717,11 @@ static void parse_call(void)
     emit_args(a, n);
     if (dynamic || has_clause) emit("\tjalr r31, r12, 0");
     else emit("\tjal r31, %s", link_name(name));
+    if (ncontent) {                 /* the BY CONTENT copies go, the result kept */
+        emit("\tstw sp+%d, r1", SLOT_C);
+        emit_li("r3", ncontent); emit_call("cob_content_pop");
+        emit("\tldw r1, sp+%d", SLOT_C);
+    }
     if (has_ret) {
         if (is_hot_int(ret.sym)) {
             emit("\tstw sp+%d, r1", SLOT_C);

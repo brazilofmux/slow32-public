@@ -1,0 +1,6 @@
+bump sees [caller] 0010
+after content: [caller] 0010 r=0011
+bump sees [caller] 0010
+after reference: [callee] 0011 r=0011
+bump sees [litera] 0011
+literal and item by content: r=0012 n=0011

@@ -17,6 +17,7 @@ Three COBOL dialects sit in this orbit. They are not interchangeable.
 | ALTER | implemented (74) | gone from 85; refuse | unused |
 | user-defined `FUNCTION-ID` (2002) | no | **no — corpus rewritten to `CALL`** | yes, today |
 | `CALL … BY VALUE / RETURNING` | no | yes, C-ABI implementor only | yes |
+| `CALL … BY CONTENT` | yes | yes (Stage 31) | yes |
 
 Sharing a parser across the first two columns would be a defect
 factory. The `AFTER` reset and the ODO receiving rule are enough;
@@ -205,6 +206,15 @@ given, because majesty's `.prn` oracles were produced under it.
   EXTERNAL file (the other program names it; GnuCOBOL always wants a
   name, and so does NIST IC227A-1 -- an X-card). A FILE STATUS item may now be in the LINKAGE SECTION:
   its address goes into the image at entry.
+- **`CALL ... BY CONTENT`** (Stage 31): the callee is handed the
+  address of a copy, taken from a runtime arena that behaves as a stack
+  -- pushed before the CALL, released after it (`cob_content_push`/
+  `_pop`), so recursion and nesting balance. An item, or a literal. A
+  numeric literal handed to a CALL, by reference or by content, is its
+  plain digits (a negative one zoned in the last digit), read through
+  the callee's own picture (GnuCOBOL hands over a binary word instead
+  -- docs/oracles.md; the 85 text leaves a literal's class to the
+  callee). Not yet: BY CONTENT of a reference-modified item.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
