@@ -443,6 +443,7 @@ static int copy_open(const char *name, SrcLine **lines, int *n, char *found, siz
 
 static int g_copy_guard;
 static int g_dp_comma;      /* SPECIAL-NAMES DECIMAL-POINT IS COMMA */
+static int g_currency;      /* SPECIAL-NAMES CURRENCY SIGN IS "c": the picture symbol standing for '$', 0 for '$' itself */
 
 /* DECIMAL-POINT IS COMMA swaps the roles of '.' and ',' in numeric
  * literals and pictures.  It may arrive by COPY (SM103A), so it is
@@ -457,9 +458,26 @@ static void apply_decimal_point(void)
         if (g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "is")) j++;
         if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "comma")) { g_dp_comma = 1; break; }
     }
+    /* CURRENCY [SIGN] [IS] "c": in every picture c stands for '$', which
+     * is what the analyser and the editor read; the runtime prints c */
+    for (int i = 0; i + 1 < g_ntok; i++) {
+        if (g_tok[i].kind != T_WORD || strcmp(g_tok[i].s, "currency")) continue;
+        int j = i + 1;
+        if (g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "sign")) j++;
+        if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "is")) j++;
+        if (j >= g_ntok || g_tok[j].kind != T_STR) die_at(g_tok[i].line, "CURRENCY SIGN needs a literal");
+        if (g_tok[j].len != 1) die_at(g_tok[j].line, "CURRENCY SIGN IS: the literal is one character");
+        unsigned char c = (unsigned char)g_tok[j].s[0];
+        if (isdigit(c) || c == ' ' || strchr("ABCDPRSVXZabcdprsvxz*+-,.;()\"/=", c))
+            die_at(g_tok[j].line, "CURRENCY SIGN IS '%c': that character has a meaning of its own in a PICTURE", c);
+        g_currency = c;
+        break;
+    }
     int w = 0;
     for (int i = 0; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
+        if (g_currency && t->kind == T_PIC && g_currency != '$')
+            for (char *q = t->s; *q; q++) if (toupper((unsigned char)*q) == toupper(g_currency)) *q = '$';
         if (t->kind == T_OP && !strcmp(t->s, ",")) {
             if (g_dp_comma && w > 0 && g_tok[w - 1].kind == T_NUM && i + 1 < g_ntok && g_tok[i + 1].kind == T_NUM && g_tok[i + 1].line == t->line) {
                 Tok *a = &g_tok[w - 1], *b = &g_tok[i + 1];
@@ -2098,9 +2116,10 @@ static void emit_bytes(const unsigned char *b, int n)
 }
 
 /* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, then three scratch words */
-#define FRAME       104
+#define FRAME       112
 #define SLOT_COLL   96          /* the caller's collating table, when this unit sets its own */
 #define SLOT_DP     100         /* the caller's decimal point, under DECIMAL-POINT IS COMMA */
+#define SLOT_CUR    104         /* the caller's currency sign, under CURRENCY SIGN */
 #define SLOT(i)     (8 + 4 * (i))
 #define NSLOTS      16
 #define SLOT_A      (8 + 4 * NSLOTS)
@@ -3132,6 +3151,11 @@ static void prescan_paragraphs(int from)
     for (int i = from; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
         if (t->kind == T_EOF) break;
+        if (sentence_start && t->kind == T_NUM && !strchr(t->s, '.') && !strchr(t->s, '+') && !strchr(t->s, '-')) {
+            /* a procedure-name of digits only (NC107A's paragraphs 3, 4, 5) */
+            if (g_tok[i + 1].kind == T_PERIOD) para_add(t->s, 0, t->line);
+            else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, 1, t->line);
+        }
         if (sentence_start && t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s)) {
             if (!strcmp(t->s, "declaratives")) { }
             else if (!strcmp(t->s, "end") && (is_word(&g_tok[i + 1], "declaratives") || is_word(&g_tok[i + 1], "program"))) { if (is_word(&g_tok[i + 1], "program")) break; }
@@ -3145,10 +3169,17 @@ static void prescan_paragraphs(int from)
 }
 
 /* procedure-name [OF|IN section-name] */
+/* a token that may name a procedure: a word, or a number of digits only */
+static int at_para_name(Tok *t)
+{
+    if (t->kind == T_WORD) return 1;
+    return t->kind == T_NUM && !strchr(t->s, '.') && !strchr(t->s, '+') && !strchr(t->s, '-');
+}
+
 static Para *expect_para(void)
 {
     Tok *t = cur();
-    if (t->kind != T_WORD) die_at(t->line, "expected a procedure-name, found %s", tok_desc(t));
+    if (!at_para_name(t)) die_at(t->line, "expected a procedure-name, found %s", tok_desc(t));
     Para *p;
     if (is_word(peek(1), "of") || is_word(peek(1), "in")) {
         Tok *q = peek(2);
@@ -4362,7 +4393,7 @@ static void parse_perform(void)
 {
     int line = cur()->line;
     Body body; memset(&body, 0, sizeof body);
-    if (cur()->kind == T_WORD && para_find(cur()->s)) {
+    if (at_para_name(cur()) && para_find(cur()->s)) {
         body.from = expect_para();
         if (accept_word("thru") || accept_word("through")) body.thru = expect_para();
     } else body.inline_body = 1;
@@ -4431,7 +4462,7 @@ static void parse_goto(void)
 {
     accept_word("to");
     Para *ps[64]; int n = 0;
-    while (cur()->kind == T_WORD && !at_word("depending") && !is_verb(cur()->s) && !is_terminator(cur()->s) && para_find(cur()->s)) {
+    while (at_para_name(cur()) && !at_word("depending") && !(cur()->kind == T_WORD && (is_verb(cur()->s) || is_terminator(cur()->s))) && para_find(cur()->s)) {
         if (n >= 64) die_at(cur()->line, "too many GO TO targets");
         ps[n++] = expect_para();
     }
@@ -5890,6 +5921,7 @@ static void parse_procedure_division(void)
         emit_la("r3", lab); emit_call("cob_set_collating"); emit("\tstw sp+%d, r1", SLOT_COLL);
     }
     if (g_dp_comma) { emit("\taddi r3, r0, 1"); emit_call("cob_set_decimal_point"); emit("\tstw sp+%d, r1", SLOT_DP); }
+    if (g_currency && g_currency != '$') { emit_li("r3", g_currency); emit_call("cob_set_currency"); emit("\tstw sp+%d, r1", SLOT_CUR); }
     if (g_initial) { char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit); emit_call(cl); }   /* INITIAL: as after CANCEL */
     /* the caller's addresses go into the LINKAGE cells */
     for (int i = 0; i < nusing; i++) {
@@ -5973,7 +6005,7 @@ static void parse_procedure_division(void)
             continue;
         }
 
-        if (t->kind == T_WORD && !is_verb(t->s) && (peek(1)->kind == T_PERIOD ||
+        if (((t->kind == T_WORD && !is_verb(t->s)) || (t->kind != T_WORD && at_para_name(t))) && (peek(1)->kind == T_PERIOD ||
             (is_word(peek(1), "section") && peek(2)->kind == T_PERIOD))) {
             Para *p = is_word(peek(1), "section") ? para_find(t->s) : para_find_in(t->s, cur_sec >= 0 ? cur_sec : -1);
             if (!p) p = para_find(t->s);
@@ -6015,6 +6047,7 @@ static void parse_procedure_division(void)
         }
     if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
     if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
+    if (g_currency && g_currency != '$') { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_set_currency"); }
     emit("\taddi r1, r0, 0");
     emit("\tldw r11, sp+4");
     emit("\tldw lr, sp+0");
@@ -6345,6 +6378,11 @@ static void parse_environment_division(void)
                             snprintf(m->name, sizeof m->name, "%s", cur()->s); m->sw = sw; m->on = on; advance();
                         }
                         continue;
+                    }
+                    if (accept_word("currency")) {            /* already applied to the pictures; see apply_decimal_point */
+                        accept_word("sign"); accept_word("is");
+                        if (cur()->kind != T_STR) die_at(cur()->line, "CURRENCY SIGN needs a literal");
+                        advance(); continue;
                     }
                     if (accept_word("decimal-point")) {       /* already applied to the text; see apply_decimal_point */
                         accept_word("is");

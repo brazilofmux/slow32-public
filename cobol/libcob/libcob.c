@@ -117,8 +117,13 @@ long long cob_get_num(const void *vp, const cob_desc *d)
         /* de-editing: a 1985 feature IBM ANS COBOL never had */
         char digs[40];
         unsigned char sw[256];
-        if (cob_dp_comma && d->size <= sizeof sw) {     /* the bytes carry ',' for the point: read them the other way round */
-            for (size_t i = 0; i < d->size; i++) sw[i] = p[i] == '.' ? ',' : p[i] == ',' ? '.' : p[i];
+        if ((cob_dp_comma || cob_currency != '$') && d->size <= sizeof sw) {     /* the bytes carry ',' for the point, c for '$': read them the other way round */
+            for (size_t i = 0; i < d->size; i++) {
+                unsigned char c = p[i];
+                if (cob_dp_comma) c = c == '.' ? ',' : c == ',' ? '.' : c;
+                if (cob_currency != '$' && c == (unsigned char)cob_currency) c = '$';
+                sw[i] = c;
+            }
             p = sw;
         }
         int n = cob_deedit(d->pic, p, digs, &neg);
@@ -216,6 +221,7 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
         for (int i = nd - 1; i >= 0; i--) { digs[i] = (char)('0' + mag % 10); mag /= 10; }
         int w = cob_edit_apply(d->pic, digs, neg, d->flags & COB_F_BLANKZ, (char *)p);
         if (cob_dp_comma) for (int i = 0; i < w; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
+        if (cob_currency != '$') for (int i = 0; i < w; i++) if (p[i] == '$') p[i] = (unsigned char)cob_currency;
         return 0;
     }
 
@@ -240,6 +246,7 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
     }
     default: {
         int n = (int)d->size, i = n - 1, start = 0;
+        if ((d->flags & COB_F_BLANKZ) && mag == 0) { memset(p, ' ', (size_t)n); break; }   /* BLANK WHEN ZERO on a plain numeric item */
         if (d->flags & COB_F_SEPLEAD) { p[0] = neg ? '-' : '+'; start = 1; }
         if (d->flags & COB_F_SEPTRAIL) { p[n - 1] = neg ? '-' : '+'; i = n - 2; }
         for (; i >= start; i--) { p[i] = (unsigned char)('0' + mag % 10); mag /= 10; }
@@ -521,6 +528,9 @@ void cob_content_pop(int k)
 /* DECIMAL-POINT IS COMMA: the program's own; a called program's is restored on its exit */
 int cob_dp_comma;
 int cob_set_decimal_point(int comma) { int old = cob_dp_comma; cob_dp_comma = comma; return old; }
+/* CURRENCY SIGN: the character printed where the picture says '$' */
+int cob_currency = '$';
+int cob_set_currency(int c) { int old = cob_currency; cob_currency = c ? c : '$'; return old; }
 
 static int cmp_bytes(const unsigned char *a, int na, const unsigned char *b, int nb)
 {

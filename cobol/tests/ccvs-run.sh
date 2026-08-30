@@ -88,13 +88,30 @@ for m in $MODULES; do
 
         pass=0; total=0; fail=0; del=0; summary=0
         if [ -f "$rep" ]; then
-            eval "$(awk '
+            # (NUL bytes -- NC107A prints LOW-VALUE -- stop BSD awk's line: strip them first)
+            eval "$(LC_ALL=C tr -d '\000' < "$rep" | LC_ALL=C awk '
                 /^ *[0-9]+ *OF *[0-9]+ *TESTS WERE/ { pass += $1; total += $3; summary = 1 }
                 /^ *[0-9NO]+ *TEST\(S\) FAILED/ { if ($1 != "NO") fail += $1 }
                 /^ *[0-9NO]+ *TEST\(S\) DELETED/ { if ($1 != "NO") del += $1 }
-                END { printf "pass=%d total=%d fail=%d del=%d summary=%d\n", pass, total, fail, del, summary }' "$rep")"
+                END { printf "pass=%d total=%d fail=%d del=%d summary=%d\n", pass, total, fail, del, summary }')"
         fi
         case "$name" in NC110M|NC214M) [ "$rc" = 0 ] && { pass=1; total=1; summary=1; } ;; esac
+        # NC107A: report.pl checks the bytes of the five "*** INFORMATION ***"
+        # lines (ZERO, SPACE, QUOTE, HIGH-VALUE, LOW-VALUE as 20 characters)
+        if [ "$name" = NC107A ] && [ -f "$rep" ]; then
+            eval "$(perl -e '
+                my ($p, $f) = (0, 0);
+                open(my $fh, "<", $ARGV[0]) or exit; binmode($fh);
+                while (<$fh>) {
+                    next unless /^\*\*\* INFORMATION \*\*\*        (.{20})     ([A-Z-]+) /;
+                    my ($v, $n) = ($1, $2);
+                    if (($n eq "ZERO" && $v eq " 000000000000000000 ") || ($n eq "SPACE" && $v eq " " x 20)
+                     || ($n eq "QUOTE" && $v eq "\"" x 20) || ($n eq "HIGH-VALUE" && $v eq "\377" x 20)
+                     || ($n eq "LOW-VALUE" && $v eq "\000" x 20)) { $p++ } else { $f++ }
+                }
+                print "tp=$p tf=$f\n";' "$rep")"
+            pass=$((pass + tp)); fail=$((fail + tf))
+        fi
         # NC135A: report.pl reads the 20x15 table the program prints (001 to 300
         # in order) and counts it as one more pass, or a failure
         if [ "$name" = NC135A ] && [ -f "$rep" ]; then

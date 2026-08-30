@@ -130,5 +130,7 @@ typedef struct {
 /* SPECIAL-NAMES DECIMAL-POINT IS COMMA: editing and DISPLAY swap '.' and ',' */
 extern int cob_dp_comma;
 int cob_set_decimal_point(int comma);
+extern int cob_currency;
+int cob_set_currency(int c);
 
 #endif
