@@ -74,6 +74,11 @@ typedef struct {
                                  buffered stream cannot tell it back reliably) */
     const cob_altkey *altkeys;/* indexed: the ALTERNATE RECORD KEYs ... */
     unsigned int naltkeys;    /* ... and how many */
+    const void *linage;       /* FD LINAGE: four of (literal, item, descriptor) -- lines, footing, top, bottom */
+    unsigned int lin_lines, lin_foot, lin_top, lin_bot;   /* their values, taken at OPEN and at each new page */
+    unsigned int lin_counter; /* LINAGE-COUNTER (offset 136: the compiler reads it as a data item) */
+    unsigned int lin_eop;     /* the last WRITE met the footing or overflowed the page */
+    unsigned int lin_needs_top;   /* the top margin has not been written yet */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

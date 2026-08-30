@@ -641,7 +641,18 @@ a START, where the text is followed (`.oracle-expected`). NIST IX:
 29 of 29 programs, 438 of 439 tests, all matching GnuCOBOL's tally;
 the suite as a whole 4050 of 4061, none failing.
 
-## The batch, whole — 2026-08-29
+## Stage 25 — LINAGE **S** — DONE 2026-08-31
+
+The print file's logical page, built to GnuCOBOL's `cob_linage_write_opt`
+so the bytes and the counter agree with the oracle: `lin_write` in
+libcob.c, the values re-taken at each page; `LINAGE-COUNTER` is a
+cell of the file's `cob_file` image that the compiler declares as a
+77 for each LINAGE file (`LINAGE-COUNTER OF file` when there are
+several); `WRITE ... [NOT] [AT] END-OF-PAGE`/`EOP` reads the runtime's
+verdict into the same slot the other clauses use. free/linage, oracle
+agreeing on counters, verdicts and the page read back; NIST SQ201M,
+SQ208M-SQ210M compile and match GnuCOBOL's tally.
+
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
 step on SLOW-32**: the charts, the journal pipeline, the balances

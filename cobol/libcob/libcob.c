@@ -666,6 +666,7 @@ static int rel_rewrite(cob_file *f);
 static int rel_delete(cob_file *f);
 static int rel_start(cob_file *f, int op);
 static unsigned rel_slot_size(cob_file *f);
+static void lin_values(cob_file *f);
 
 int cob_open(cob_file *f, int mode)
 {
@@ -713,6 +714,7 @@ int cob_open(cob_file *f, int mode)
     }
     f->fp = fp; f->open_mode = (unsigned char)mode;
     if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0) { long e = ftell(fp); f->fpos = e > 0 ? (unsigned)e : 0; }
+    if (f->linage) { lin_values(f); f->lin_counter = 1; f->lin_needs_top = 1; f->lin_eop = 0; }
     return file_result(f, "00", name);
 }
 
@@ -802,6 +804,69 @@ int cob_read(cob_file *f)
     return file_result(f, truncated ? "04" : "00", "");
 }
 
+/* ---- LINAGE: the logical page of a print file ------------------------- */
+/* The page is lin_top blank lines, lin_lines lines the records go on, and
+ * lin_bot blank lines; LINAGE-COUNTER is the line the device stands on.
+ * The steps below are GnuCOBOL's (fileio.c, cob_linage_write_opt), so the
+ * bytes and the counter agree with the oracle: a WRITE AFTER n LINES adds
+ * n to the counter and n-1 blank lines before the record; past the last
+ * line it fills the page, the bottom and the next top and starts at 1;
+ * END-OF-PAGE is the footing reached or the page overflowed. */
+
+static unsigned lin_value(cob_file *f, int which)
+{
+    const unsigned *t = (const unsigned *)f->linage + which * 3;
+    if (t[1]) { long long v = cob_get_num((const void *)(size_t)t[1], (const cob_desc *)(size_t)t[2]); return v > 0 ? (unsigned)v : 0; }
+    return t[0];
+}
+
+static void lin_values(cob_file *f)
+{
+    f->lin_lines = lin_value(f, 0); f->lin_foot = lin_value(f, 1); f->lin_top = lin_value(f, 2); f->lin_bot = lin_value(f, 3);
+    if (f->lin_lines < 1) f->lin_lines = 1;
+    if (f->lin_foot > f->lin_lines) f->lin_foot = 0;
+}
+
+static void lin_newlines(cob_file *f, unsigned n) { FILE *fp = (FILE *)f->fp; for (unsigned i = 0; i < n; i++) fputc('\n', fp); f->fpos += n; }
+
+static void lin_new_page(cob_file *f, unsigned from)
+{
+    if (from < f->lin_lines) lin_newlines(f, f->lin_lines - from);
+    lin_newlines(f, f->lin_bot);
+    lin_values(f);
+    lin_newlines(f, f->lin_top);
+    f->lin_counter = 1;
+}
+
+/* ADVANCING n LINES on a LINAGE file, before or after the record */
+static void lin_lines_opt(cob_file *f, unsigned n)
+{
+    unsigned was = f->lin_counter;
+    f->lin_counter += n;
+    if (f->lin_foot && f->lin_counter >= f->lin_foot) f->lin_eop = 1;
+    if (f->lin_counter > f->lin_lines) { f->lin_eop = 1; lin_new_page(f, was); }
+    else if (n > 1) lin_newlines(f, n - 1);
+}
+
+static int lin_write(cob_file *f, int before, int after)
+{
+    FILE *fp = (FILE *)f->fp;
+    const char *rec = f->record;
+    unsigned n = f->recsize;
+    f->lin_eop = 0;
+    if (f->lin_needs_top) { lin_newlines(f, f->lin_top); f->lin_needs_top = 0; }
+    if (before == 0 && after == 0) after = 1;               /* no ADVANCING phrase: BEFORE ADVANCING 1 */
+    if (before < 0) lin_new_page(f, f->lin_counter);       /* AFTER ADVANCING PAGE */
+    else if (before > 0) lin_lines_opt(f, (unsigned)before);
+    /* the whole record, trailing spaces included (GnuCOBOL keeps them on a LINAGE file) */
+    if (fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
+    fputc('\n', fp); f->fpos += n + 1;
+    if (after < 0) lin_new_page(f, f->lin_counter);        /* BEFORE ADVANCING PAGE */
+    else if (after > 0) lin_lines_opt(f, (unsigned)after);
+    f->last_len = 0;
+    return file_result(f, "00", "");
+}
+
 /* before/after: extra newlines around the record (ADVANCING); reclen:
  * the size of the 01 the WRITE named, which is the length of a mode-V
  * record unless DEPENDING ON says otherwise */
@@ -813,6 +878,7 @@ int cob_write(cob_file *f, int before, int after, int reclen)
         return file_result(f, "48", "WRITE of a sequential file open I-O");
     if (f->org == COB_ORG_INDEXED) return idx_write(f);
     if (f->org == COB_ORG_RELATIVE) return rel_write(f, reclen);
+    if (f->linage) return lin_write(f, before, after);
     FILE *fp = (FILE *)f->fp;
     const char *rec = f->record;
     unsigned n = f->recsize;

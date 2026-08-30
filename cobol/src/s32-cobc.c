@@ -55,6 +55,10 @@ static const char *diag_file(int line);
 static int g_module = 0;            /* -m: no main entry; every unit is a subprogram */
 static int g_unit = 0;              /* program unit being compiled, for label spaces */
 
+/* the cob_file image (cobrt.h): the byte offset of lin_counter, which a
+ * program reads as LINAGE-COUNTER; lin_eop follows it */
+#define COB_FILE_LIN_COUNTER_OFF 136
+
 /* a SORT statement's key table, emitted into .data with the unit's files */
 typedef struct { int offset, desc, descending; } SortKey;
 typedef struct { int id; SortKey k[16]; int nk; } SortTab;
@@ -646,6 +650,7 @@ typedef struct Sym {
     int  odo_min; char odo_dep[64]; struct Sym *odo_dep_sym;   /* OCCURS m TO n DEPENDING ON */
     int  idx1;                      /* the table's first INDEXED BY item, or -1 */
     int  ix_table;                  /* an index item: the table it indexes */
+    int  lin_file;                  /* LINAGE-COUNTER of file lin_file (a cell in its cob_file), -1 otherwise */
     int  redefines;                 /* sym index, -1 */
     int  sync, just, blank_zero;
     int  sign_lead, sign_sep;        /* SIGN IS LEADING/TRAILING [SEPARATE] */
@@ -673,7 +678,7 @@ static Sym *sym_new(void)
     Sym *s = &g_sym[g_nsym++];
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
-    s->desc_id = -1; s->fd = -1; s->idx1 = -1; s->ix_table = -1;
+    s->desc_id = -1; s->fd = -1; s->idx1 = -1; s->ix_table = -1; s->lin_file = -1;
     return s;
 }
 
@@ -723,6 +728,9 @@ typedef struct {
     char status_qual[64];            /* FILE STATUS name OF group */
     char relkey_name[64];            /* RELATIVE KEY IS data-name */
     char key_qual[64];               /* RECORD KEY IS name IN group */
+    int  linage;                     /* FD LINAGE: lin_lit/lin_name for LINES, FOOTING, TOP, BOTTOM */
+    long lin_lit[4]; char lin_name[4][64]; Sym *lin_sym[4];
+    int  lin_counter_sym;            /* the LINAGE-COUNTER item, or -1 */
     struct { char name[64]; char qual[64]; Sym *sym; int dups; } alt[16]; int nalt;   /* ALTERNATE RECORD KEY ... [WITH DUPLICATES] */
     Sym *assign_sym, *status_sym, *key_sym, *relkey_sym;
     int  use_para;                   /* DECLARATIVES: the USE section for this file, 0 none */
@@ -1361,6 +1369,12 @@ static void finish_data_division(void)
         if (s->is_cond || s->parent >= 0) continue;
         /* a record: 01, 77, or an index */
         int zero[1] = { 0 };
+        if (s->lin_file >= 0) {
+            /* LINAGE-COUNTER: the cell in the file's cob_file image */
+            s->record = i; s->offset = COB_FILE_LIN_COUNTER_OFF;
+            snprintf(s->label, sizeof s->label, ".Lf%d_%d", g_unit, s->lin_file);
+            continue;
+        }
         layout(i, 0);
         set_dims(i, 0, zero, zero);
         s->record = i;
@@ -1457,6 +1471,15 @@ static void finish_data_division(void)
             if (k->size < 1 || k->size > 255) die_at(f->line, "RECORD KEY '%s' must be 1 to 255 bytes", f->key_name);
             f->key_sym = k;
         }
+        if (f->linage) {
+            if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ) die_at(f->line, "FD %s: LINAGE needs a sequential file", f->name);
+            f->org = COB_ORG_LINESEQ;               /* a LINAGE file is a print file: its records are lines */
+            for (int w = 0; w < 4; w++)
+                if (f->lin_name[w][0]) {
+                    f->lin_sym[w] = sym_lookup(f->lin_name[w], NULL, 0, f->line);
+                    if (!is_int_item(f->lin_sym[w])) die_at(f->line, "LINAGE: '%s' must be an integer item", f->lin_name[w]);
+                }
+        }
         for (int a = 0; a < f->nalt; a++) {
             Sym *k = NULL; int nk = 0;
             if (f->alt[a].qual[0]) { char *q[1] = { f->alt[a].qual }; k = sym_lookup(f->alt[a].name, q, 1, f->line); nk = 1; }
@@ -1487,7 +1510,7 @@ static void finish_data_division(void)
     /* images */
     for (int i = 0; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
-        if (s->is_cond || s->parent >= 0 || s->redefines >= 0) continue;
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0) continue;
         if (s->image_size < s->size) s->image_size = s->size;
         s->image = xmalloc(s->image_size);
         if (!s->is_linkage) init_instance(s, i, 0, 1);
@@ -1800,6 +1823,24 @@ static void parse_ref(Ref *r)
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a data-name, found %s", tok_desc(t));
     r->line = t->line;
+    if (!strcmp(t->s, "linage-counter") && !sym_lookup_quiet("linage-counter")) { }   /* (declared by an FD LINAGE below) */
+    if (!strcmp(t->s, "linage-counter")) {
+        /* LINAGE-COUNTER [OF|IN file-name]: the cell of that file, or of the one LINAGE file */
+        advance();
+        File *lf = NULL;
+        if (accept_word("of") || accept_word("in")) {
+            if (cur()->kind != T_WORD || !file_find(cur()->s)) die_at(t->line, "LINAGE-COUNTER OF needs a file-name");
+            lf = file_find(cur()->s); advance();
+            if (!lf->linage) die_at(t->line, "file '%s' has no LINAGE clause", lf->name);
+        } else {
+            int n = 0;
+            for (int i = 0; i < g_nfile; i++) if (g_files[i].linage) { lf = &g_files[i]; n++; }
+            if (!lf) die_at(t->line, "LINAGE-COUNTER: no file has a LINAGE clause");
+            if (n > 1) die_at(t->line, "LINAGE-COUNTER is ambiguous: say LINAGE-COUNTER OF file-name");
+        }
+        r->sym = &g_sym[lf->lin_counter_sym];
+        return;
+    }
     char *name = t->s; advance();
     char *quals[8]; int nq = 0;
     while (at_word("of") || at_word("in")) {
@@ -2611,7 +2652,8 @@ static int at_scope_end(void)
     if (!strcmp(t->s, "not") && (is_word(peek(1), "on") || is_word(peek(1), "size") ||
                                  is_word(peek(1), "at") || is_word(peek(1), "invalid") ||
                                  is_word(peek(1), "end") || is_word(peek(1), "overflow") ||
-                                 is_word(peek(1), "exception"))) return 1;
+                                 is_word(peek(1), "exception") || is_word(peek(1), "end-of-page") ||
+                                 is_word(peek(1), "eop"))) return 1;
     return is_terminator(t->s);
 }
 
@@ -4084,7 +4126,7 @@ static void parse_write(void)
             goto advancing_done;
         }
         parse_operand(&n);
-        if (n.kind == O_NUM) { long v = (long)numlit_int(&n.num); if (after_kw) before = (int)v - 1; else after = (int)v - 1; }
+        if (n.kind == O_NUM) { long v = (long)numlit_int(&n.num); if (f->linage) { if (after_kw) before = (int)v; else after = (int)v; } else if (after_kw) before = (int)v - 1; else after = (int)v - 1; }
         else if (n.kind == O_REF && is_int_item(n.ref.sym)) dyn = 1;
         else die_at(n.line, "ADVANCING needs an integer");
         accept_word("line"); accept_word("lines");
@@ -4093,13 +4135,15 @@ advancing_done:;
     /* a file written WITH ADVANCING and no ORGANIZATION clause is a print
      * file: its records are lines (GnuCOBOL's "line advancing" file) */
     if ((before || after || dyn) && f->org == COB_ORG_SEQ && !f->org_given && !f->varying) f->org = COB_ORG_LINESEQ;
+    /* (a LINAGE file took the line counts themselves above, not n-1: AFTER n
+     * in r4, BEFORE n in r5, -1 for PAGE, 0/0 for no ADVANCING) */
     int keyed_org = f->org == COB_ORG_INDEXED || f->org == COB_ORG_RELATIVE;
     if (keyed_org && (before || after || dyn)) die_at(rec.line, "ADVANCING is not valid on an %s file", f->org == COB_ORG_INDEXED ? "INDEXED" : "RELATIVE");
     if (!keyed_org && at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED or RELATIVE file");
     if (dyn) {
         if (is_hot_int(n.ref.sym)) emit_hot_value(&n);
         else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-        emit("\taddi r1, r1, -1");
+        if (!f->linage) emit("\taddi r1, r1, -1");
         emit("\tstw sp+%d, r1", SLOT_C);
         emit_file_addr("r3", f);
         if (after_kw) { emit("\tldw r4, sp+%d", SLOT_C); emit_li("r5", 0); }
@@ -4112,6 +4156,19 @@ advancing_done:;
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
     if (keyed_org) parse_condition_clauses("invalid", "key", "end-write");
+    else if (f->linage) {
+        emit_use_dispatch(f, 0);
+        /* [NOT] [AT] END-OF-PAGE (EOP): the runtime's verdict on this WRITE */
+        for (int j = g_tp; j < g_ntok && g_tok[j].kind != T_PERIOD && !is_word(&g_tok[j], "end-write"); j++)
+            if (is_word(&g_tok[j], "eop")) { free(g_tok[j].s); g_tok[j].s = xstrndup("end-of-page", 11); }
+        if (at_word("at") || at_word("end-of-page") || (at_word("not") && (is_word(peek(1), "at") || is_word(peek(1), "end-of-page")))) {
+            emit_file_addr("r3", f);
+            emit("\tldw r1, r3+%d", COB_FILE_LIN_COUNTER_OFF + 4);    /* lin_eop */
+            emit("\tstw sp+%d, r1", SLOT_C);
+            g_io_file = NULL;
+            parse_condition_clauses("at", "end-of-page", "end-write");
+        } else accept_word("end-write");
+    }
     else { emit_use_dispatch(f, 0); accept_word("end-write"); }
 }
 
@@ -5381,6 +5438,7 @@ static void parse_fd(void)
     if (cur()->kind != T_WORD) die_at(line, "expected a file-name after %s", is_sd ? "SD" : "FD");
     File *f = file_find(cur()->s);
     if (!f) die_at(line, "%s %s has no SELECT", is_sd ? "SD" : "FD", cur()->s);
+    f->lin_counter_sym = -1;
     if (is_sd) f->org = COB_ORG_SORT;         /* a sort file: SORT opens it, RELEASE/RETURN use it */
     advance();
     while (cur()->kind != T_PERIOD) {
@@ -5439,7 +5497,34 @@ static void parse_fd(void)
         if (accept_word("is")) continue;
         if (accept_word("global")) continue;
         if (accept_word("external")) die_at(t->line, "FD %s IS EXTERNAL (a file shared between separately compiled programs) is not implemented", f->name);
-        if (accept_word("linage")) die_at(t->line, "LINAGE is not implemented");
+        if (accept_word("linage")) {
+            /* LINAGE [IS] n [LINES] [WITH FOOTING [AT] f] [LINES AT TOP t] [LINES AT BOTTOM b] */
+            accept_word("is");
+            f->linage = 1;
+            int which = 0;
+            for (;;) {
+                if (cur()->kind == T_NUM) { f->lin_lit[which] = atol(cur()->s); advance(); }
+                else if (cur()->kind == T_WORD && !at_word("lines") && !at_word("with") && !at_word("footing") && !at_word("at") && !at_word("top") && !at_word("bottom")) { snprintf(f->lin_name[which], sizeof f->lin_name[which], "%s", cur()->s); advance(); }
+                else die_at(t->line, "LINAGE: expected an integer or a data-name");
+                if (which == 0) accept_word("lines");
+                if (accept_word("with")) { expect_word("footing"); accept_word("at"); which = 1; continue; }
+                if (accept_word("footing")) { accept_word("at"); which = 1; continue; }
+                if (accept_word("lines")) { accept_word("at"); if (accept_word("top")) which = 2; else if (accept_word("bottom")) which = 3; else die_at(t->line, "LINAGE: LINES AT TOP or BOTTOM"); continue; }
+                if (accept_word("at")) { if (accept_word("top")) which = 2; else if (accept_word("bottom")) which = 3; else die_at(t->line, "LINAGE: AT TOP or BOTTOM"); continue; }
+                if (accept_word("top")) { which = 2; continue; }
+                if (accept_word("bottom")) { which = 3; continue; }
+                break;
+            }
+            /* the file's LINAGE-COUNTER: a four-byte unsigned cell in its cob_file */
+            Sym *lc = sym_new();
+            snprintf(lc->name, sizeof lc->name, "linage-counter");
+            lc->line = t->line; lc->level = 77; lc->usage = U_COMP5; lc->has_usage = 1;
+            lc->has_pic = 1; snprintf(lc->pic, sizeof lc->pic, "9(9)"); pic_analyse(lc->pic, &lc->pi);
+            lc->size = 4; lc->lin_file = (int)(f - g_files);
+            f = &g_files[lc->lin_file];              /* sym_new may have moved nothing of files; keep f */
+            f->lin_counter_sym = sym_idx(lc);
+            continue;
+        }
         if (accept_word("code-set")) die_at(t->line, "CODE-SET is not supported (ASCII only)");
         die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
     }
@@ -5777,7 +5862,7 @@ static void emit_unit_data(void)
     emit("\t.data");
     for (int i = 0; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
-        if (s->is_cond || s->parent >= 0 || s->redefines >= 0) continue;
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0) continue;
         if (s->is_linkage) {
             emit("\t.p2align 2");
             emit("%s:\t# linkage %02d %s (%d bytes at the caller's)", s->label, s->level, s->name, s->image_size);
@@ -5826,6 +5911,8 @@ static void emit_unit_data(void)
         emit("\t.word 0");                  /* fpos */
         if (f->nalt) emit("\t.word .Lak%d_%d", g_unit, i); else emit("\t.word 0");   /* ALTERNATE RECORD KEYs */
         emit("\t.word %d", f->nalt);
+        if (f->linage) emit("\t.word .Llin%d_%d", g_unit, i); else emit("\t.word 0");   /* LINAGE: lines/footing/top/bottom */
+        for (int w = 0; w < 7; w++) emit("\t.word 0");    /* lin_lines lin_foot lin_top lin_bot lin_counter lin_eop lin_needs_top */
     }
     emit("\t.p2align 2");
     emit(".Luse%d:\t# USE sections by open mode", g_unit);
@@ -5833,6 +5920,17 @@ static void emit_unit_data(void)
     if (g_collate >= 0) {
         emit(".Lcoll%d:\t# PROGRAM COLLATING SEQUENCE %s: rank of each character", g_unit, g_alphabet[g_collate].name);
         emit_bytes(g_alphabet[g_collate].rank, 256);
+    }
+    for (int i = 0; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->linage) continue;
+        emit("\t.p2align 2");
+        emit(".Llin%d_%d:\t# LINAGE of %s: lines, footing, top, bottom -- literal, item, descriptor", g_unit, i, f->name);
+        for (int w = 0; w < 4; w++) {
+            emit("\t.word %ld", f->lin_lit[w]);
+            if (f->lin_sym[w]) { emit("\t.word %s+%d", g_sym[f->lin_sym[w]->record].label, f->lin_sym[w]->offset); emit("\t.word .Ld%d", sym_desc(f->lin_sym[w])); }
+            else { emit("\t.word 0"); emit("\t.word 0"); }
+        }
     }
     for (int i = 0; i < g_nfile; i++) {
         File *f = &g_files[i];

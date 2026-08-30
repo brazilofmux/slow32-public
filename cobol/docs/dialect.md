@@ -186,6 +186,18 @@ given, because majesty's `.prn` oracles were produced under it.
 - **`WRITE ... ADVANCING PAGE`** (and a FORMFEED mnemonic) writes a
   form feed before (AFTER) or after (BEFORE) the record, GnuCOBOL's
   reading of a page on a line-sequential file.
+- **`FD ... LINAGE IS n [LINES] [WITH FOOTING AT f] [LINES AT TOP t]
+  [LINES AT BOTTOM b]`** (integers or integer items, taken at OPEN and
+  at each new page) makes the file a print file with a logical page,
+  laid out as GnuCOBOL lays it (fileio.c): a WRITE AFTER n LINES adds n
+  to `LINAGE-COUNTER` and n-1 blank lines before the record, BEFORE n
+  the same after it, no ADVANCING is BEFORE 1; past the last line the
+  page is filled, the bottom and next top margins written, and the
+  counter starts at 1; ADVANCING PAGE does the same at once; the
+  record is written whole, trailing spaces kept. `LINAGE-COUNTER [OF
+  file]` reads the counter (1 at OPEN). `WRITE ... [NOT] [AT]
+  END-OF-PAGE` (or `EOP`) sees the footing reached or the page
+  overflowed by that WRITE.
 - **`I-O-CONTROL`** (SAME AREA, RERUN, MULTIPLE FILE) is parsed and
   ignored. **`CLOSE ... REEL/UNIT`** does nothing: a disk file has one
   reel. **`RESERVE`, `PADDING CHARACTER`, `RECORD DELIMITER`** are
