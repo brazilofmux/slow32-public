@@ -58,10 +58,11 @@ oracle_cc() {   # oracle_cc out.orc [cobc args...]: compile under GnuCOBOL, cwd 
         *)    "$ORACLE_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" gnucobol:4.0-builder cobc -x "$@" -o "$out" ;;
     esac
 }
-oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/run
+oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/run,
+                # standard input from $keys (the test's .keys file, or nothing)
     case "$ORACLE_ENGINE" in
-        host) (cd "$W/run" && "$@") ;;
-        *)    "$ORACLE_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W/run" "$ORACLE_RUN_IMAGE" "$@" ;;
+        host) (cd "$W/run" && "$@" < "$keys") ;;
+        *)    "$ORACLE_ENGINE" run --rm -i -v "$ROOT:$ROOT" -w "$W/run" "$ORACLE_RUN_IMAGE" "$@" < "$keys" ;;
     esac
 }
 

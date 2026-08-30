@@ -8,15 +8,15 @@ this file is what is *open*, ranked, plus what was closed and why.
 Nothing here is scheduled: the front is app-driven, and an item moves
 when a program asks for it.
 
-State on 2026-08-30: harness 39/39 with the GnuCOBOL oracle agreeing
+State on 2026-08-30: harness 41/41 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; 36 of
+report step on SLOW-32 with all twelve reports byte-identical; 37 of
 the 58 programs in `~/majesty/src/cobol` compile. The sweep that
 measures the last number is one line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 
-## A. The corpus — 22 refusals, by what unblocks most
+## A. The corpus — 21 refusals, by what unblocks most
 
 ### 1. RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)
 Plain 1985 (Relative I-O module, level 1). Fixed-length records,
@@ -40,17 +40,20 @@ move to `CALL 'du_...' USING` like the rest of the corpus did in
 `1da955d`, and the seven units leave the build. Nothing in the
 compiler. `bad/repository` pins the refusal message.
 
-### 3. `SPECIAL-NAMES` — `CLASS name IS '0' THROUGH '9'` (damm, gl008)
-The only clause the corpus uses is a user-defined class condition
-(`class digits is '0' through '9'`, four times in damm with different
-ranges, once in gl008). Nucleus level 2. A 256-entry membership table
-per class in rodata, and the class test in `parse_cond` beside
-`NUMERIC`/`ALPHABETIC`. Small. Other SPECIAL-NAMES clauses
-(`CURRENCY SIGN`, `DECIMAL-POINT IS COMMA`, switches, `SYMBOLIC`)
-stay refused until a program asks; `DECIMAL-POINT IS COMMA` in
-particular touches the PICTURE scanner and every literal.
+### 3. ~~`SPECIAL-NAMES` — `CLASS name IS '0' THROUGH '9'` (damm)~~ — RESOLVED 2026-08-30
+Stage 16: a 256-entry membership table per class in the literal pool,
+per program unit; the test beside `NUMERIC` in `parse_simple`;
+`cob_class_user` in the runtime. damm then wanted console `ACCEPT`
+(one line of stdin, moved as text) and `LENGTH OF`; both landed, and
+damm's output is byte-identical to GnuCOBOL's over seven inputs
+including the check-digit fixtures majesty's tests use. gl008's declarations were
+unused and were removed on the majesty side. Other SPECIAL-NAMES
+clauses (`CURRENCY SIGN`, `DECIMAL-POINT IS COMMA`, switches,
+`SYMBOLIC`) stay refused by name until a program asks;
+`DECIMAL-POINT IS COMMA` in particular touches the PICTURE scanner
+and every literal.
 
-### 4. `SD` and in-program `SORT` (glacpost; then gl008, dist01, ldglentry)
+### 4. `SD` and file `SORT` (glacpost; then ldglentry)
 Sort-Merge module. `SORT sd-file ON ASCENDING KEY ... USING/INPUT
 PROCEDURE ... GIVING/OUTPUT PROCEDURE`, `RELEASE`, `RETURN`. The
 runtime half is a sort of fixed-length records on the key
@@ -59,7 +62,19 @@ records spilled to a temp file only if the corpus ever needs more
 than memory); the compiler half is the input/output procedure
 control flow, which is a `PERFORM` range with `RELEASE`/`RETURN`
 inside it. `glacpost` is the one program whose first refusal is this;
-the other three reach it after ISSUES-1/3/5.
+`ldglentry` reaches it after ISSUES-1. Table `SORT` (gl008, dist01)
+is a different form — see ISSUES-19 / GitHub #10.
+
+### 4a. Table `SORT` (gl008, dist01) — GitHub #10
+`SORT table-name ON DESCENDING KEY …` over an OCCURS group, no `SD`.
+gl008: `sort taxcode on descending tax-total` and `sort category on
+descending cat-total` (ODO 0 TO 200, packed-decimal keys). dist01:
+`sort l-entries on descending l-n1`. ISO 1985 Sort-Merge is file
+`SORT` only; table `SORT` is ISO 2002 Format 2. Product ruling:
+implement as an after-v1 allowance, or majesty rewrites both sites
+to a paragraph sort. The verb is already in `later[]` (`the verb
+sort is not implemented yet (after v1)`). Hidden today behind
+ISSUES-19 (gl008) and ISSUES-5 (dist01).
 
 ### 5. A numeric item of more than 18 digits (dist01: `pic s9(18)v999 packed-decimal`)
 21 digits. The 1985 limit is 18 (GnuCOBOL's default allows 38). Under
@@ -82,8 +97,24 @@ GnuCOBOL extensions. Out of scope; the two are demonstration
 programs. Retire from the build or leave them refusing — either way
 not compiler work.
 
-### 9. gl015, gl016 — a subscripted `SOURCE` in a report field
+### 9. gl015, gl016 — a report field without a PICTURE
 Both are retired programs, not in majesty's build. Not counted.
+(The Stage 12+ corpus table used to list them under a subscripted
+`SOURCE`; that refusal now belongs to live gl008 — ISSUES-19.)
+
+### 19. Subscripted `SOURCE` in a Report Writer field (gl008) — GitHub #9
+gl008's first refusal, measured 2026-08-29 after unused CLASS and a
+missing `TYPE DETAIL` on `blank-line` were removed:
+
+    gl008.cbl:212: error: a subscripted SOURCE is not implemented yet
+
+`source is tax-tax(taxcode-index)` and ~30 siblings on the ODO
+taxcode/category tables. Unsubscripted `SOURCE` already works. The
+parser takes the data-name and dies on `T_LP` (`s32-cobc.c` ~4646).
+Procedure Division already parses `name(index)`; Report Writer
+fields still store a bare name. Stage 13's "gl036 compiles" was a
+VALUE-only field, not this. Workaround: MOVE to a WS scalar before
+`GENERATE`.
 
 ## B. Language — known gaps no program has asked for
 

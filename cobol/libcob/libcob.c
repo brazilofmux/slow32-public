@@ -426,6 +426,16 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
     return 1;
 }
 
+/* a SPECIAL-NAMES CLASS: every character of the item is in the class's
+ * 256-entry table (the compiler builds it from the literals and ranges) */
+int cob_class_user(const void *vp, const cob_desc *d, const unsigned char *tab)
+{
+    const unsigned char *p = vp;
+    int n = (int)d->size;
+    for (int i = 0; i < n; i++) if (!tab[p[i]]) return 0;
+    return 1;
+}
+
 /* ---- the numeric stack: ADD/SUBTRACT/MULTIPLY/DIVIDE, COMPUTE later --- */
 
 typedef struct { long long v; int scale; } cob_num;
@@ -1420,6 +1430,17 @@ void cob_accept_argval(void *p, const cob_desc *d)
     if (cl_next < 1 || cl_next >= cl_argc) return;            /* past the end: unchanged */
     const char *a = cl_argv[cl_next++];
     put_text(p, d, a, (int)strlen(a));
+}
+
+/* ACCEPT identifier: one line from standard input, without its newline,
+ * moved as alphanumeric text.  At end of file the item is left as it was. */
+void cob_accept_console(void *p, const cob_desc *d)
+{
+    char line[4096];
+    if (!fgets(line, sizeof line, stdin)) return;
+    int n = (int)strlen(line);
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+    put_text(p, d, line, n);
 }
 
 void cob_accept_cmdline(void *p, const cob_desc *d)

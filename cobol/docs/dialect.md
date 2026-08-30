@@ -170,6 +170,17 @@ given, because majesty's `.prn` oracles were produced under it.
   sequence is ASCII.
 - **User-words** may contain `_`.
 - **Floating comment** `*>` is accepted in both formats.
+- **`LENGTH OF item`** (IBM register, in the corpus) is the same
+  compile-time size as `FUNCTION LENGTH(item)`; a data item named
+  `LENGTH` takes precedence.
+- **`ACCEPT identifier`** (no `FROM`) reads one line from standard
+  input, drops the newline, and moves it as alphanumeric text -- so
+  into `9(3)v99` the line `12345` arrives as the decimal 12345 and
+  truncates to `345.00`, as GnuCOBOL does. At end of file the item is
+  left as it was.
+- **`SPECIAL-NAMES` `CLASS name IS lit [THROUGH lit] ...`** builds a
+  256-entry membership table over the native collating sequence; other
+  `SPECIAL-NAMES` clauses are refused by name.
 
 ## COBOL 85 we will grow into, not v1
 

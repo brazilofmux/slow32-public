@@ -464,6 +464,25 @@ acttxnlin (56,164) byte-identical to GnuCOBOL's. **All twelve of
 majesty's reports now come off SLOW-32 byte-identical**, the last two
 (activity) after the spill rule above.
 
+## Stage 16 — SPECIAL-NAMES CLASS, console ACCEPT **S** — DONE 2026-08-30
+
+Picked from ISSUES-3: the only `SPECIAL-NAMES` clause the corpus uses
+is a user-defined class (`class digits is '0' through '9'`, four
+times in damm with different ranges). A class is a 256-entry table
+in the literal pool, per program unit, and `x IS class` / `NOT class`
+sits in `parse_simple` beside `NUMERIC`; `cob_class_user` walks the
+item's bytes. damm's next stop was `ACCEPT ws-code` from the console
+-- one line of standard input, moved as text (`cob_accept_console`)
+-- and `LENGTH OF item`, the IBM register, folded like `FUNCTION
+LENGTH`. The harness now feeds a test's `.keys` file to the oracle's
+program as well as to ours. damm (four units, main + damm3/4/10)
+compiles and its output is byte-identical to GnuCOBOL's over seven
+inputs including the account-number fixtures majesty's own tests use
+(one valid, one with a wrong check digit). Tests: free/classcond, free/accept
+(both "oracle agrees"). 37 of 58 compile; gl008's first refusal turns
+out to be a subscripted `SOURCE` in a report line, not SPECIAL-NAMES
+(ISSUES-19 / GitHub #9 names it).
+
 ## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report

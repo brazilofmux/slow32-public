@@ -55,6 +55,12 @@ static const char *diag_file(int line);
 static int g_module = 0;            /* -m: no main entry; every unit is a subprogram */
 static int g_unit = 0;              /* program unit being compiled, for label spaces */
 
+/* SPECIAL-NAMES CLASS name IS lit [THROUGH lit] ...: a user class is a
+ * 256-entry membership table, per program unit, tested like NUMERIC */
+typedef struct { char name[64]; unsigned char tab[256]; } UClass;
+static UClass g_class[16];
+static int g_nclass;
+
 static void die_at(int line, const char *fmt, ...)
 {
     va_list ap;
@@ -1644,6 +1650,18 @@ static void parse_operand(Opnd *o)
     memset(o, 0, sizeof *o);
     Tok *t = cur();
     o->line = t->line;
+    /* LENGTH OF item: the IBM register the corpus writes (damm), the same
+     * compile-time size as FUNCTION LENGTH; a data item named LENGTH wins */
+    if (t->kind == T_WORD && !strcmp(t->s, "length") && g_tp + 1 < g_ntok &&
+        g_tok[g_tp + 1].kind == T_WORD && !strcmp(g_tok[g_tp + 1].s, "of") && !sym_lookup_quiet("length")) {
+        advance(); advance();
+        Opnd x; parse_operand(&x);
+        if (x.kind != O_REF) die_at(t->line, "LENGTH OF takes a data item");
+        int len = opnd_size(&x);
+        if (len < 0) die_at(t->line, "LENGTH OF a reference modification with a variable length is not implemented");
+        o->kind = O_NUM; numlit_from_int(&o->num, len);
+        return;
+    }
     if (t->kind == T_WORD && !strcmp(t->s, "function")) {
         advance();
         Tok *n = cur();
@@ -1990,7 +2008,7 @@ typedef struct Cond {
     struct Cond *a, *b;
     Opnd x, y;
     int op, neg;            /* C_REL */
-    int klass;              /* C_CLASS: 0 NUMERIC 1 ALPHABETIC 2 LOWER 3 UPPER */
+    int klass;              /* C_CLASS: 0 NUMERIC 1 ALPHABETIC 2 LOWER 3 UPPER, 4+i SPECIAL-NAMES class i */
 } Cond;
 
 static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); c->kind = kind; return c; }
@@ -2066,6 +2084,8 @@ static Cond *parse_simple(void)
         else if (!strcmp(t->s, "alphabetic")) klass = 1;
         else if (!strcmp(t->s, "alphabetic-lower")) klass = 2;
         else if (!strcmp(t->s, "alphabetic-upper")) klass = 3;
+        if (klass < 0)
+            for (int i = 0; i < g_nclass; i++) if (!strcmp(t->s, g_class[i].name)) klass = 4 + i;
         if (klass >= 0) {
             if (x.kind != O_REF) die_at(line, "a class condition needs a data item");
             advance();
@@ -2154,9 +2174,16 @@ static void emit_cond_value(Cond *c)
 {
     if (c->kind == C_CLASS) {
         Arg a[3]; Arg d;
-        opnd_args(&c->x, &a[0], &d, 0, 0); a[1] = d; a[2] = arg_imm(c->klass);
-        emit_args(a, 3);
-        emit_call("cob_class");
+        opnd_args(&c->x, &a[0], &d, 0, 0); a[1] = d;
+        if (c->klass >= 4) {    /* a SPECIAL-NAMES class: its table */
+            a[2] = arg_label(lit_label(g_class[c->klass - 4].tab, 256));
+            emit_args(a, 3);
+            emit_call("cob_class_user");
+        } else {
+            a[2] = arg_imm(c->klass);
+            emit_args(a, 3);
+            emit_call("cob_class");
+        }
         if (c->neg) emit("\txori r1, r1, 1");
         return;
     }
@@ -2378,7 +2405,13 @@ static void parse_accept(void)
             die_at(cur()->line, "ACCEPT FROM %s is not implemented yet; FUNCTION CURRENT-DATE is stage 9", cur()->s);
         die_at(cur()->line, "ACCEPT FROM %s is not implemented", tok_desc(cur()));
     }
-    die_at(r.line, "ACCEPT from the console is not implemented; ACCEPT a screen");
+    /* ACCEPT identifier: a line from standard input */
+    {
+        Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+        emit_args(a, 2);
+        emit_call("cob_accept_console");
+        accept_word("end-accept");
+    }
 }
 
 static void parse_display(void)
@@ -4413,8 +4446,34 @@ static void parse_environment_division(void)
             }
             if (at_word("special-names")) {
                 advance(); expect_period();
-                if (cur()->kind != T_PERIOD && !at_division() && !at_word("input-output"))
-                    die_at(cur()->line, "SPECIAL-NAMES clauses are not implemented yet");
+                for (;;) {
+                    if (cur()->kind == T_PERIOD) { advance(); continue; }
+                    if (accept_word("class")) {
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "expected a class-name after CLASS");
+                        if (g_nclass == (int)(sizeof g_class / sizeof g_class[0])) die_at(cur()->line, "too many CLASS clauses");
+                        UClass *uc = &g_class[g_nclass++];
+                        memset(uc, 0, sizeof *uc);
+                        snprintf(uc->name, sizeof uc->name, "%s", cur()->s); advance();
+                        accept_word("is");
+                        int any = 0;
+                        while (cur()->kind == T_STR) {
+                            Tok *lo = cur(); advance();
+                            if (lo->len != 1) die_at(lo->line, "CLASS %s: each literal is one character (this one is %d)", uc->name, lo->len);
+                            unsigned a = (unsigned char)lo->s[0], b = a;
+                            if (accept_word("through") || accept_word("thru")) {
+                                if (cur()->kind != T_STR || cur()->len != 1) die_at(cur()->line, "CLASS %s: THROUGH needs a one-character literal", uc->name);
+                                b = (unsigned char)cur()->s[0]; advance();
+                            }
+                            if (b < a) { unsigned t = a; a = b; b = t; }
+                            for (unsigned c = a; c <= b; c++) uc->tab[c] = 1;
+                            any = 1;
+                        }
+                        if (!any) die_at(cur()->line, "CLASS %s: expected a one-character literal", uc->name);
+                        continue;
+                    }
+                    if (at_division() || at_word("input-output")) break;
+                    die_at(cur()->line, "SPECIAL-NAMES clause '%s' is not implemented yet (CLASS is)", cur()->s);
+                }
                 continue;
             }
             if (at_word("repository"))
@@ -4982,7 +5041,7 @@ int main(int argc, char **argv)
     for (;;) {
         /* one program unit; a source file may hold several, each closed
          * by END PROGRAM */
-        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();
