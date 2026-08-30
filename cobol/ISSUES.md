@@ -8,7 +8,7 @@ this file is what is *open*, ranked, plus what was closed and why.
 Nothing here is scheduled: the front is app-driven, and an item moves
 when a program asks for it.
 
-State on 2026-08-30: harness 41/41 with the GnuCOBOL oracle agreeing
+State on 2026-08-30: harness 43/43 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
 report step on SLOW-32 with all twelve reports byte-identical; 37 of
 the 58 programs in `~/majesty/src/cobol` compile. The sweep that
@@ -102,19 +102,14 @@ Both are retired programs, not in majesty's build. Not counted.
 (The Stage 12+ corpus table used to list them under a subscripted
 `SOURCE`; that refusal now belongs to live gl008 — ISSUES-19.)
 
-### 19. Subscripted `SOURCE` in a Report Writer field (gl008) — GitHub #9
-gl008's first refusal, measured 2026-08-29 after unused CLASS and a
-missing `TYPE DETAIL` on `blank-line` were removed:
-
-    gl008.cbl:212: error: a subscripted SOURCE is not implemented yet
-
-`source is tax-tax(taxcode-index)` and ~30 siblings on the ODO
-taxcode/category tables. Unsubscripted `SOURCE` already works. The
-parser takes the data-name and dies on `T_LP` (`s32-cobc.c` ~4646).
-Procedure Division already parses `name(index)`; Report Writer
-fields still store a bare name. Stage 13's "gl036 compiles" was a
-VALUE-only field, not this. Workaround: MOVE to a WS scalar before
-`GENERATE`.
+### 19. ~~Subscripted `SOURCE` in a Report Writer field (gl008) — GitHub #9~~ — RESOLVED 2026-08-30
+The field keeps the token position of its SOURCE reference and
+`parse_ref` reads it at GENERATE, where every other reference is
+parsed -- so subscripts, `OF` qualification and reference
+modification all come with it (`nm(i)(1:3)` included). Test
+free/rptsub prints straight out of an ODO table, GnuCOBOL agreeing.
+gl008's next stop is `ROUNDED MODE` (2002, majesty rewrites to plain
+`ROUNDED`), then its table `SORT` (ISSUES-4a / GitHub #10).
 
 ## B. Language — known gaps no program has asked for
 

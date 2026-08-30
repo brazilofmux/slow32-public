@@ -129,7 +129,7 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | ~~2~~ | ~~`SPECIAL-NAMES` clauses~~ **landed** (Stage 16, `CLASS`; with console `ACCEPT` and `LENGTH OF`): damm compiles and matches GnuCOBOL; gl008 never needed it -- its stop is a subscripted `SOURCE` | ~~damm~~, gl008 |
 | ~~1~~ | ~~a subscripted `SOURCE` in a report field~~ gl036 compiles as of Stage 13 (a `VALUE`-only report field was the last stop) | ~~gl036~~ |
 | ~~3~~ | ~~`SEARCH`~~ **landed** (Stage 15); gl042/gl043 also needed their `EXIT PARAGRAPH` rewritten to 1985 | ~~gl042, gl043, gl034~~ |
-| 1 | a subscripted `SOURCE` in a report line (`source is tax-tax(taxcode-index)`) | gl008 (live: `run_gl008.sh`); also gl015, gl016 (retired, not in the build) |
+| ~~1~~ | ~~a subscripted `SOURCE` in a report line~~ **landed** (Stage 17): gl008 moves on to `ROUNDED MODE` (2002, a majesty rewrite) and then its table `SORT` (GitHub #10) | gl008; gl015, gl016 (retired) now stop at a report field without a PICTURE |
 | 1 | `SD` -- an in-program `SORT` | glacpost |
 | 1 | a numeric item of more than 18 digits (`ws-temp`) | dist01 |
 | 1 | `FUNCTION INTEGER-OF-DATE` | jerm2 |

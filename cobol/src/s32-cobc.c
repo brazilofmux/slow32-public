@@ -662,7 +662,7 @@ static File *file_find(const char *name)
 typedef struct {
     int column, line;
     int has_pic; char pic[PIC_MAXPAT]; PicInfo pi;
-    int has_source; char source_name[64]; char source_qual[64]; int nq;   /* resolved at GENERATE time */
+    int has_source; int source_tp;      /* token position of the SOURCE reference, parsed at GENERATE time */
     Tok *value;
     int just, blank_zero;
 } RField;
@@ -1008,6 +1008,7 @@ static void parse_data_item(void)
         if (!strcmp(t->s, "redefines")) {
             advance();
             if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after REDEFINES");
+            if (!strcmp(cur()->s, "filler")) die_at(t->line, "REDEFINES FILLER: the redefined item needs a name (FILLER cannot be referenced)");
             /* the redefined item must be an earlier sibling in the same group */
             int found = -1;
             for (int i = sym_idx(s) - 1; i >= 0; i--)
@@ -3760,10 +3761,8 @@ static void emit_report_group(Report *r, RGroup *g)
             a[1] = arg_desc(rfield_desc(f));
             if (f->has_source) {
                 Ref *rf = xmalloc(sizeof *rf);
-                char *q[1] = { f->source_qual };
-                rf->sym = sym_lookup(f->source_name, q, f->nq, f->line);
-                rf->line = f->line;
-                if (rf->sym->ndims) die_at(f->line, "SOURCE '%s' needs subscripts, which are not implemented in reports yet", rf->sym->name);
+                int save_tp = g_tp;
+                g_tp = f->source_tp; parse_ref(rf); g_tp = save_tp;
                 if (rf->sym->is_cond) die_at(f->line, "SOURCE '%s' is a condition-name", rf->sym->name);
                 a[2] = arg_ref(rf); a[3] = arg_desc(sym_desc(rf->sym));
             } else if (f->value->kind == T_STR) {
@@ -4699,10 +4698,22 @@ static void parse_rd(void)
                     if (accept_word("source")) {
                         accept_word("is");
                         if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after SOURCE");
+                        /* keep the reference's position: data-name, OF/IN
+                         * qualifiers, subscripts or a reference modification
+                         * in parentheses; parse_ref reads it at GENERATE,
+                         * when every item is declared */
                         fd->has_source = 1;
-                        snprintf(fd->source_name, sizeof fd->source_name, "%s", cur()->s); advance();
-                        if (at_word("of") || at_word("in")) { advance(); snprintf(fd->source_qual, sizeof fd->source_qual, "%s", cur()->s); fd->nq = 1; advance(); }
-                        if (cur()->kind == T_LP) die_at(t->line, "a subscripted SOURCE is not implemented yet");
+                        fd->source_tp = g_tp; advance();
+                        while (at_word("of") || at_word("in")) { advance(); if (cur()->kind == T_WORD) advance(); }
+                        while (cur()->kind == T_LP) {   /* subscripts, then maybe (start:len) */
+                            int depth = 0;
+                            do {
+                                if (cur()->kind == T_LP) depth++;
+                                else if (cur()->kind == T_RP) depth--;
+                                else if (cur()->kind == T_PERIOD || cur()->kind == T_EOF) die_at(t->line, "unbalanced parentheses in SOURCE");
+                                advance();
+                            } while (depth > 0);
+                        }
                         continue;
                     }
                     if (accept_word("value")) {

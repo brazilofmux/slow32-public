@@ -483,6 +483,20 @@ inputs including the account-number fixtures majesty's own tests use
 out to be a subscripted `SOURCE` in a report line, not SPECIAL-NAMES
 (ISSUES-19 / GitHub #9 names it).
 
+## Stage 17 — a subscripted SOURCE in a report line **S** — DONE 2026-08-30
+
+GitHub #9 (ISSUES-19), gl008's first refusal: `source is
+tax-tax(taxcode-index)`. A report field used to keep its SOURCE as a
+name string and look it up at GENERATE; now it keeps the token
+position and `parse_ref` reads the reference there, so subscripts,
+qualification and reference modification are the same code as
+everywhere else. Test free/rptsub generates from an ODO table with
+`nm(i)(1:3)` on a field, oracle agreeing. Also refused now:
+`REDEFINES FILLER` (the text names a data-name; GnuCOBOL rejects it;
+we had taken it silently). gl008 next stops at `ROUNDED MODE`, a 2002
+form majesty rewrites to plain `ROUNDED`, then its table `SORT`
+(GitHub #10, a product ruling).
+
 ## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
