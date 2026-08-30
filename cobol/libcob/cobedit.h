@@ -41,6 +41,17 @@ static int cob_edit_apply(const char *pat, const char *digs, int neg, int blank_
     if (fl) npos--;
     for (int i = 0; i < npos; i++) if (digs[i] != '0') { zero = 0; break; }
 
+    /* a zero value in a picture whose every digit position is check-
+     * protected (*) and none is 9: all asterisks but the decimal point */
+    if (zero && fill == '*' && !has9) {
+        int o = 0;
+        for (const char *p = pat; *p; p++) {
+            if (*p == '.') out[o++] = '.';
+            else if (*p == 'C' || *p == 'D') { out[o++] = '*'; out[o++] = '*'; p++; }
+            else out[o++] = '*';
+        }
+        return o;
+    }
     int sig = 0, di = 0, o = 0, first_sig = -1;
     for (const char *p = pat; *p; p++) {
         char c = *p;

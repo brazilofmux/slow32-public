@@ -61,6 +61,10 @@ typedef struct {
     int use_para;             /* DECLARATIVES: the USE section for this file (a paragraph id), 0 none */
     const int *use_modes;     /* the unit's USE sections by open mode, indexed by COB_OPEN_ */
     unsigned int open_try;    /* the mode the last OPEN asked for (it may have failed) */
+    unsigned int locked;      /* CLOSE WITH LOCK: no further OPEN (38) */
+    unsigned int eof_seen;    /* the AT END condition was already reported once (the next READ is 46) */
+    unsigned int fpos;        /* sequential: the byte position after the last READ/WRITE (the libc's
+                                 buffered stream cannot tell it back reliably) */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

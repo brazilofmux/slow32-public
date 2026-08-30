@@ -483,13 +483,28 @@ void cob_ndiv(void)
 {
     cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
     if (b->v == 0) { div0 = 1; nsp--; return; }   /* size error; the left operand stands in */
-    int guard = 6;
-    int target = (a->scale > b->scale ? a->scale : b->scale) + guard;
-    long long av = a->v, bv = b->v;
-    int raise = target + b->scale - a->scale;
-    while (raise > 0 && av < pow10tab[17] && av > -pow10tab[17]) { av *= 10; raise--; }
-    while (raise > 0) { bv /= 10; raise--; }
-    a->v = av / bv; a->scale = target;
+    /* long division in decimal: the integer quotient of the scaled values,
+     * then one fraction digit at a time from the remainder (ten times a
+     * remainder below 10^18 fits in 64 bits), until the quotient holds
+     * seventeen digits or the wanted scale -- the operands' larger one plus
+     * six guard digits -- is reached.  Exact, so 111111111.111111111
+     * divided by itself is 1.000000000 and not 1.001001001. */
+    int neg = (a->v < 0) != (b->v < 0);
+    unsigned long long ua = a->v < 0 ? (unsigned long long)(-a->v) : (unsigned long long)a->v;
+    unsigned long long ub = b->v < 0 ? (unsigned long long)(-b->v) : (unsigned long long)b->v;
+    unsigned long long q = ua / ub, r = ua % ub;
+    int scale = a->scale - b->scale;
+    int want = (a->scale > b->scale ? a->scale : b->scale) + 6;
+    while (scale < want && q < (unsigned long long)pow10tab[17]) {
+        r *= 10;
+        q = q * 10 + r / ub; r %= ub;
+        scale++;
+    }
+    if (scale < 0) {                            /* the divisor's scale exceeded the dividend's */
+        while (scale < 0 && q < (unsigned long long)pow10tab[17]) { q *= 10; scale++; }
+        if (scale < 0) { q = (unsigned long long)pow10tab[18]; scale = 0; }   /* beyond eighteen digits: a size error at the store */
+    }
+    a->v = neg ? -(long long)q : (long long)q; a->scale = scale;
     nsp--;
 }
 
@@ -658,9 +673,24 @@ int cob_open(cob_file *f, int mode)
      * access and positions after the last slot (created when absent) */
     if (f->org == COB_ORG_RELATIVE && mode == COB_OPEN_EXTEND) fm = "r+b";
     if (f->org == COB_ORG_RELATIVE && mode == COB_OPEN_OUTPUT) fm = "w+b";   /* WRITE checks the slot first */
-    FILE *fp = fopen(name, fm);
-    if (!fp && f->org == COB_ORG_RELATIVE && mode == COB_OPEN_EXTEND) fp = fopen(name, "w+b");
-    f->at_eof = 0;
+    if (f->locked) return file_result(f, "38", "OPEN of a file closed WITH LOCK");
+    FILE *fp;
+    if (mode == COB_OPEN_EXTEND) {           /* "ab" would create it: look first */
+        fp = fopen(name, "rb");
+        if (fp) { fclose(fp); fp = fopen(name, fm); } else fp = 0;
+    } else fp = fopen(name, fm);
+    /* EXTEND or I-O on an absent file: an OPTIONAL one comes into being
+     * (05), any other is 35 */
+    if (!fp && (mode == COB_OPEN_EXTEND || mode == COB_OPEN_IO)) {
+        if (!f->optional) return file_result(f, "35", name);
+        fp = fopen(name, "w+b");
+        if (fp) {
+            f->fp = fp; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
+            if (f->org == COB_ORG_RELATIVE) { f->rel_pos = 1; f->rel_last = 0; }
+            return file_result(f, "05", name);
+        }
+    }
+    f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
     if (fp && f->org == COB_ORG_RELATIVE) {
         f->rel_pos = 1; f->rel_last = 0;
         if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0)
@@ -676,7 +706,25 @@ int cob_open(cob_file *f, int mode)
         return file_result(f, "30", name);
     }
     f->fp = fp; f->open_mode = (unsigned char)mode;
+    if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0) { long e = ftell(fp); f->fpos = e > 0 ? (unsigned)e : 0; }
     return file_result(f, "00", name);
+}
+
+int cob_close(cob_file *f);
+
+/* CLOSE ... REEL/UNIT on a file that has no reels: 07 */
+int cob_close_reel(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "42", "CLOSE of a file not open");
+    return file_result(f, "07", "");
+}
+
+/* CLOSE ... WITH LOCK: the file cannot be opened again in this run */
+int cob_close_lock(cob_file *f)
+{
+    int r = cob_close(f);
+    if (r == 0) f->locked = 1;
+    return r;
 }
 
 int cob_close(cob_file *f)
@@ -695,7 +743,13 @@ int cob_read(cob_file *f)
         return file_result(f, "47", "READ of a file open for output");
     if (f->org == COB_ORG_INDEXED) return idx_read_next(f);
     if (f->org == COB_ORG_RELATIVE) return rel_read_next(f);
-    if (f->at_eof) return file_result(f, "10", "");
+    if (f->at_eof) {
+        /* the end: 10 the first time, 46 for every READ after it */
+        f->last_len = 0;
+        if (f->eof_seen) return file_result(f, "46", "");
+        f->eof_seen = 1;
+        return file_result(f, "10", "");
+    }
     FILE *fp = (FILE *)f->fp;
     char *rec = f->record;
     unsigned n = f->recsize;
@@ -707,21 +761,23 @@ int cob_read(cob_file *f)
          * rule: move, do not promise the tail). */
         unsigned char rdw[4];
         size_t got = fread(rdw, 1, 4, fp);
-        if (got == 0) { f->at_eof = 1; return file_result(f, "10", ""); }
+        if (got == 0) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
         if (got < 4) return file_result(f, "30", "truncated RDW");
         unsigned len = ((unsigned)rdw[0] << 8) | rdw[1];
         if (len < 4) return file_result(f, "30", "bad RDW");
         len -= 4;
         unsigned take = len < n ? len : n;
         if (fread(rec, 1, take, fp) != take) return file_result(f, "30", "truncated record");
-        if (len > n) { fseek(fp, (long)(len - n), 1); }
+        f->fpos += 4 + len;
+        if (len > n) { fseek(fp, (long)f->fpos, 0); }
         f->last_len = take;
         if (f->dep_item) cob_put_num(f->dep_item, (const cob_desc *)f->dep_desc, (long long)take, 0);
         return file_result(f, len > n ? "04" : "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
         size_t got = fread(rec, 1, n, fp);
-        if (got == 0) { f->at_eof = 1; return file_result(f, "10", ""); }
+        if (got == 0) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
+        f->fpos += (unsigned)got;
         if (got < n) { memset(rec + got, ' ', n - got); f->last_len = (unsigned)got; return file_result(f, "04", ""); }
         f->last_len = n;
         return file_result(f, "00", "");
@@ -729,11 +785,11 @@ int cob_read(cob_file *f)
 
     unsigned i = 0; int c, truncated = 0, any = 0;
     while ((c = fgetc(fp)) != EOF) {
-        any = 1;
+        any = 1; f->fpos++;
         if (c == '\n') break;
         if (i < n) rec[i++] = (char)c; else truncated = 1;
     }
-    if (!any) { f->at_eof = 1; return file_result(f, "10", ""); }
+    if (!any) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
     if (i > 0 && rec[i - 1] == '\r') i--;
     f->last_len = i;
     if (i < n) memset(rec + i, ' ', n - i);
@@ -747,6 +803,8 @@ int cob_write(cob_file *f, int before, int after, int reclen)
 {
     if (!f->open_mode) return file_result(f, "48", "WRITE of a file not open");
     if (f->open_mode == COB_OPEN_INPUT) return file_result(f, "48", "WRITE of a file open for input");
+    if (f->open_mode == COB_OPEN_IO && (f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ))
+        return file_result(f, "48", "WRITE of a sequential file open I-O");
     if (f->org == COB_ORG_INDEXED) return idx_write(f);
     if (f->org == COB_ORG_RELATIVE) return rel_write(f, reclen);
     FILE *fp = (FILE *)f->fp;
@@ -761,20 +819,23 @@ int cob_write(cob_file *f, int before, int after, int reclen)
         }
         unsigned char rdw[4] = { (unsigned char)((len + 4) >> 8), (unsigned char)((len + 4) & 255), 0, 0 };
         if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(rec, 1, len, fp) != len) return file_result(f, "30", "write failed");
+        f->fpos += 4 + len; f->last_len = 0;
         return file_result(f, "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
         if (fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
+        f->fpos += n; f->last_len = 0;
         return file_result(f, "00", "");
     }
     /* ADVANCING: n extra newlines before or after; -1 is PAGE, a form feed */
-    if (before < 0) fputc('\f', fp);
-    for (int i = 0; i < before; i++) fputc('\n', fp);
+    if (before < 0) { fputc('\f', fp); f->fpos++; }
+    for (int i = 0; i < before; i++) { fputc('\n', fp); f->fpos++; }
     while (n > 0 && rec[n - 1] == ' ') n--;
     if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
-    fputc('\n', fp);
-    if (after < 0) fputc('\f', fp);
-    for (int i = 0; i < after; i++) fputc('\n', fp);
+    fputc('\n', fp); f->fpos += n + 1;
+    if (after < 0) { fputc('\f', fp); f->fpos++; }
+    for (int i = 0; i < after; i++) { fputc('\n', fp); f->fpos++; }
+    f->last_len = 0;
     return file_result(f, "00", "");
 }
 
@@ -864,12 +925,19 @@ static unsigned rel_slot_count(cob_file *f)
 /* READ [NEXT]: the next slot that holds a record; the key item learns its number */
 static int rel_read_next(cob_file *f)
 {
-    if (f->at_eof) return file_result(f, "10", "");
+    if (f->at_eof) {
+        if (f->eof_seen) return file_result(f, "46", "");
+        f->eof_seen = 1; return file_result(f, "10", "");
+    }
     for (unsigned n = f->rel_pos; ; n++) {
         int r = rel_slot_get(f, n, 1);
         if (r == -2) return file_result(f, "30", "read failed");
-        if (r == -1) { f->at_eof = 1; f->rel_last = 0; return file_result(f, "10", ""); }
+        if (r == -1) { f->at_eof = 1; f->eof_seen = 1; f->rel_last = 0; return file_result(f, "10", ""); }
         if (r == 0) continue;
+        if (f->rel_key) {       /* a record number the RELATIVE KEY item cannot hold: 14 */
+            int kd = ((const cob_desc *)f->rel_key_desc)->digits;
+            if (kd > 0 && kd < 10 && (long long)n >= pow10tab[kd]) { f->rel_pos = n + 1; return file_result(f, "14", ""); }
+        }
         f->rel_last = n; f->rel_pos = n + 1;
         rel_key_set(f, n);
         return file_result(f, "00", "");
@@ -916,6 +984,11 @@ static int rel_write(cob_file *f, int reclen)
         int r = rel_slot_get(f, n, 0);
         if (r == -2) return file_result(f, "30", "read failed");
         if (r == 1) return file_result(f, "22", "");
+    }
+    if (f->access == 0 && f->rel_key) {
+        /* the record number must fit the RELATIVE KEY item */
+        int kd = ((const cob_desc *)f->rel_key_desc)->digits;
+        if (kd > 0 && kd < 10 && (long long)n >= pow10tab[kd]) return file_result(f, "14", "");
     }
     if (!rel_slot_put(f, n, 0, len)) return file_result(f, "30", "write failed");
     if (f->access == 0) { f->rel_pos = n + 1; rel_key_set(f, n); }
@@ -1303,15 +1376,20 @@ static int idx_open(cob_file *f, int mode)
     if (!x) cob_fatal("out of memory");
     x->pos = -1; x->last = -1;
     FILE *fp;
+    if (f->locked) { free(x); return file_result(f, "38", "OPEN of a file closed WITH LOCK"); }
     if (mode == COB_OPEN_OUTPUT) {
         fp = fopen(name, "w+b");
         if (!fp) { free(x); return file_result(f, "30", name); }
     } else {
         fp = fopen(name, mode == COB_OPEN_INPUT ? "rb" : "r+b");
         if (!fp) {
-            free(x);
-            if (f->optional && mode != COB_OPEN_EXTEND) { f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
-            return file_result(f, "35", name);
+            if (!f->optional) { free(x); return file_result(f, "35", name); }
+            if (mode == COB_OPEN_INPUT) { free(x); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
+            /* OPTIONAL, absent, I-O or EXTEND: the file comes into being, empty */
+            fp = fopen(name, "w+b");
+            if (!fp) { free(x); return file_result(f, "30", name); }
+            f->fp = fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0;
+            return file_result(f, "05", name);
         }
         if (!idx_load(f, x)) { fclose(fp); free(x); return file_result(f, "39", "key file missing or does not match the FD"); }
     }
@@ -1354,9 +1432,9 @@ static int idx_write(cob_file *f)
     const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
     int found;
     unsigned at = idx_find(f, x, k, &found);
+    if (f->access == 0 && x->count && (found || at != x->count))
+        return file_result(f, "21", "");                        /* sequential access: keys must ascend (an equal one is out of sequence too) */
     if (found) return file_result(f, "22", "");                 /* duplicate key */
-    if (f->access == 0 && x->count && at != x->count)
-        return file_result(f, "21", "");                        /* sequential access: keys must ascend */
     unsigned slot = x->nslots;
     if (!slot_write(f, slot)) return file_result(f, "30", "write failed");
     x->nslots++;
@@ -1391,9 +1469,10 @@ int cob_read_key(cob_file *f)
 static int idx_read_next(cob_file *f)
 {
     cob_idx *x = f->idx;
-    if (!x || f->at_eof) return file_result(f, "10", "");
+    if (!x) return file_result(f, "10", "");
+    if (f->at_eof) { if (f->eof_seen) return file_result(f, "46", ""); f->eof_seen = 1; return file_result(f, "10", ""); }
     if (x->pos < 0) x->pos = 0;
-    if ((unsigned)x->pos >= x->count) { f->at_eof = 1; x->last = -1; return file_result(f, "10", ""); }
+    if ((unsigned)x->pos >= x->count) { f->at_eof = 1; f->eof_seen = 1; x->last = -1; return file_result(f, "10", ""); }
     if (!slot_read(f, entry_slot(f, entry(f, x, (unsigned)x->pos)))) return file_result(f, "30", "read failed");
     x->last = x->pos; x->pos++;
     return file_result(f, "00", "");
@@ -1424,7 +1503,7 @@ int cob_start(cob_file *f, int op)
 }
 
 /* REWRITE: indexed by key; fixed sequential in place after a READ */
-int cob_rewrite(cob_file *f)
+int cob_rewrite(cob_file *f, int reclen)
 {
     if (!f->open_mode) return file_result(f, "49", "REWRITE of a file not open");
     if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "REWRITE needs OPEN I-O");
@@ -1439,9 +1518,26 @@ int cob_rewrite(cob_file *f)
         return file_result(f, "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
+        /* the record last read, at the position libcob kept (the libc's
+         * buffered stream reads ahead, so its own position is not it);
+         * the same length, or 44 */
         FILE *fp = (FILE *)f->fp;
-        if (fseek(fp, -(long)f->recsize, 1) != 0) return file_result(f, "43", "");
-        if (fwrite(f->record, 1, f->recsize, fp) != f->recsize) return file_result(f, "30", "write failed");
+        if (!f->last_len) return file_result(f, "43", "");                 /* no READ before it */
+        unsigned len = f->last_len;
+        if (f->varying) {
+            unsigned want = reclen > 0 ? (unsigned)reclen : len;
+            if (f->dep_item) want = (unsigned)cob_get_num(f->dep_item, (const cob_desc *)f->dep_desc);
+            if (want != len) return file_result(f, "44", "");
+            if (fseek(fp, (long)(f->fpos - 4 - len), 0) != 0) return file_result(f, "30", "seek failed");
+            unsigned char rdw[4] = { (unsigned char)((len + 4) >> 8), (unsigned char)((len + 4) & 255), 0, 0 };
+            if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(f->record, 1, len, fp) != len) return file_result(f, "30", "write failed");
+        } else {
+            if (reclen > 0 && (unsigned)reclen != len) return file_result(f, "44", "");
+            if (fseek(fp, (long)(f->fpos - len), 0) != 0) return file_result(f, "30", "seek failed");
+            if (fwrite(f->record, 1, len, fp) != len) return file_result(f, "30", "write failed");
+        }
+        fseek(fp, (long)f->fpos, 0);                    /* back to after the record; the read buffer refills */
+        f->last_len = 0;
         return file_result(f, "00", "");
     }
     return file_result(f, "49", "REWRITE on a LINE SEQUENTIAL file");
@@ -1902,6 +1998,10 @@ void cob_accept_console(void *p, const cob_desc *d)
     if (!fgets(line, sizeof line, stdin)) return;
     int n = (int)strlen(line);
     while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+    /* a line longer than a numeric DISPLAY item arrives as characters,
+     * left-justified and truncated (what the NIST suite and GnuCOBOL do);
+     * otherwise it is moved as text, which converts */
+    if (d->cat == COB_NUM && d->usage == COB_U_DISPLAY && n > (int)d->size) { memcpy(p, line, d->size); return; }
     put_text(p, d, line, n);
 }
 

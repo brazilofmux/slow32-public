@@ -422,10 +422,12 @@ static void expand_copies(int depth)
         if (j >= g_ntok || !(g_tok[j].kind == T_WORD || g_tok[j].kind == T_STR)) die_at(line, "COPY needs a text-name");
         char name[256]; snprintf(name, sizeof name, "%.*s", g_tok[j].len > 250 ? 250 : g_tok[j].len, g_tok[j].s);
         j++;
+        char lib[256] = "";
         if (j < g_ntok && g_tok[j].kind == T_WORD && (!strcmp(g_tok[j].s, "of") || !strcmp(g_tok[j].s, "in"))) {
             j++;
             if (j >= g_ntok || !(g_tok[j].kind == T_WORD || g_tok[j].kind == T_STR)) die_at(line, "COPY ... OF needs a library-name");
-            j++;                                        /* the library: the -I directories serve */
+            snprintf(lib, sizeof lib, "%.*s", g_tok[j].len > 250 ? 250 : g_tok[j].len, g_tok[j].s);
+            j++;                                        /* the library: a subdirectory of the -I directories, else they serve */
         }
         if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "suppress")) j++;
         if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "replacing"))
@@ -434,7 +436,9 @@ static void expand_copies(int depth)
         if (depth > 8) die_at(line, "COPY nests deeper than 8 (%s)", name);
 
         SrcLine *lines; int n; char found[1200];
-        if (!copy_open(name, &lines, &n, found, sizeof found))
+        char qual[512]; int ok = 0;
+        if (lib[0]) { snprintf(qual, sizeof qual, "%s/%s", lib, name); ok = copy_open(qual, &lines, &n, found, sizeof found); }
+        if (!ok && !copy_open(name, &lines, &n, found, sizeof found))
             die_at(line, "COPY: cannot find '%s' (looked beside the source and in the -I directories, as %s, %s.cpy, %s.cbl)", name, name, name, name);
 
         /* tokenize the copybook into its own vector, then splice */
@@ -632,6 +636,7 @@ typedef struct Sym {
     int  occurs;                    /* 0 = no OCCURS; with DEPENDING ON, the maximum */
     int  odo_min; char odo_dep[64]; struct Sym *odo_dep_sym;   /* OCCURS m TO n DEPENDING ON */
     int  idx1;                      /* the table's first INDEXED BY item, or -1 */
+    int  ix_table;                  /* an index item: the table it indexes */
     int  redefines;                 /* sym index, -1 */
     int  sync, just, blank_zero;
     int  sign_lead, sign_sep;        /* SIGN IS LEADING/TRAILING [SEPARATE] */
@@ -659,7 +664,7 @@ static Sym *sym_new(void)
     Sym *s = &g_sym[g_nsym++];
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
-    s->desc_id = -1; s->fd = -1; s->idx1 = -1;
+    s->desc_id = -1; s->fd = -1; s->idx1 = -1; s->ix_table = -1;
     return s;
 }
 
@@ -877,7 +882,9 @@ static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
     const PicInfo *pi = &s->pi;
     int digits = pi->digits, scale = pi->scale;
     char d[40];
-    if (!numlit_align(n, digits, scale, d))
+    /* trailing P (scale < 0): the picture's digits are the integer's own,
+     * the P positions being its low zeros; align as an integer */
+    if (!numlit_align(n, digits, scale < 0 ? 0 : scale, d))
         die_at(line, "VALUE %s%.*s does not fit PICTURE of '%s'", n->neg ? "-" : "",
                n->ndigits, n->digits, s->name);
     int neg = n->neg && pi->is_signed;
@@ -1088,6 +1095,7 @@ static void parse_data_item(void)
                         advance();
                         s = &g_sym[g_last_item];      /* sym_new may have moved the array */
                         if (s->idx1 < 0) s->idx1 = ixi;
+                        g_sym[ixi].ix_table = g_last_item;
                     }
                     continue;
                 }
@@ -3906,11 +3914,16 @@ static void parse_close(void)
     int n = 0;
     while (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
         File *f = expect_file();
-        if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
-        else if (accept_word("reel") || accept_word("unit")) {
-            /* closes a reel, not the file; a disk file has one reel, so nothing happens */
+        int lock = 0;
+        if (accept_word("with")) { accept_word("no"); accept_word("rewind"); if (accept_word("lock")) lock = 1; }
+        if (lock) { emit_file_addr("r3", f); emit_call("cob_close_lock"); emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0); n++; continue; }
+        if (accept_word("reel") || accept_word("unit")) {
+            /* closes a reel, not the file; a disk file has one reel, so the
+             * runtime only reports 07 (successful, no reel) */
             if (accept_word("for")) accept_word("removal");
             if (accept_word("with")) { accept_word("no"); accept_word("rewind"); }
+            emit_file_addr("r3", f); emit_call("cob_close_reel");
+            emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0);
             n++; continue;
         }
         emit_file_addr("r3", f); emit_call("cob_close");
@@ -4057,7 +4070,7 @@ static void parse_rewrite(void)
     File *f = file_of_record(rec.sym, rec.line);
     if (f->org == COB_ORG_LINESEQ) die_at(rec.line, "REWRITE is not valid on a LINE SEQUENTIAL file");
     if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
-    emit_file_addr("r3", f);
+    emit_file_addr("r3", f); emit_li("r4", rec.sym->size);
     emit_call("cob_rewrite");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
@@ -4651,6 +4664,10 @@ static void parse_search(void)
     Ref vary; int has_vary = 0;
     if (accept_word("varying")) { parse_ref(&vary); has_vary = 1; if (!is_int_item(vary.sym)) die_at(vary.line, "VARYING needs an integer or index item"); }
     if (all && has_vary) die_at(t.line, "SEARCH ALL takes no VARYING");
+    if (has_vary && vary.sym->is_index && vary.sym->ix_table == sym_idx(tbl)) {
+        /* VARYING one of the table's own indexes: that index does the search */
+        ix = vary.sym; ixr.sym = ix; has_vary = 0;
+    }
 
     int Lend = new_label(), Ltop = new_label(), Latend = new_label();
     Opnd one; memset(&one, 0, sizeof one); one.kind = O_NUM; numlit_from_int(&one.num, 1); one.line = t.line;
@@ -5662,6 +5679,9 @@ static void emit_unit_data(void)
         emit("\t.word %d", f->use_para);   /* DECLARATIVES: this file's USE section, the unit's mode table, open_try */
         emit("\t.word .Luse%d", g_unit);
         emit("\t.word 0");
+        emit("\t.word 0");                  /* locked (CLOSE WITH LOCK) */
+        emit("\t.word 0");                  /* eof_seen */
+        emit("\t.word 0");                  /* fpos */
     }
     emit("\t.p2align 2");
     emit(".Luse%d:\t# USE sections by open mode", g_unit);
