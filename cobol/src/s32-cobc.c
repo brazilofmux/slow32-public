@@ -539,6 +539,7 @@ typedef struct {
     Sym *assign_sym, *status_sym, *key_sym;
     int  rec;                        /* sym index of the first 01, -1 */
     int  recsize;
+    int  org_given;                  /* an ORGANIZATION clause was written */
     int  varying;                    /* mode V: RECORDING MODE V, RECORD CONTAINS m TO n, VARYING, unequal 01s */
     int  minlen, maxlen;             /* from RECORD CONTAINS / VARYING; 0 = unset */
     char dep_name[64]; Sym *dep_sym; /* RECORD IS VARYING ... DEPENDING ON */
@@ -4052,7 +4053,7 @@ static void parse_select(void)
             continue;
         }
         if (accept_word("organization") || accept_word("organisation")) {
-            accept_word("is");
+            accept_word("is"); f->org_given = 1;
             if (accept_word("line")) { expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
             else if (accept_word("sequential")) f->org = COB_ORG_SEQ;
             else if (accept_word("indexed")) f->org = COB_ORG_INDEXED;
@@ -4234,6 +4235,9 @@ static void parse_rd(void)
     advance();
     for (int i = 0; i < g_nfile; i++) if (!strcmp(g_files[i].report_name, r->name)) r->file = i;
     if (r->file < 0) die_at(line, "no FD says REPORT IS %s", r->name);
+    /* a print file SELECTed without ORGANIZATION is line sequential: that
+     * is what GnuCOBOL made of gl036's, and its .prn is the oracle */
+    if (!g_files[r->file].org_given && g_files[r->file].org == COB_ORG_SEQ) g_files[r->file].org = COB_ORG_LINESEQ;
     if (g_files[r->file].org != COB_ORG_LINESEQ) die_at(line, "the print file of report %s must be LINE SEQUENTIAL", r->name);
     while (cur()->kind != T_PERIOD) {
         Tok *t = cur();

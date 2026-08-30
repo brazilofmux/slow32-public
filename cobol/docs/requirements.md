@@ -66,7 +66,8 @@ cobc370's refusal was a 370 fact (no 64-bit) and does not travel.
 ## v1 done
 
 Not CCVS-85 NC complete. This, in order, is the claim v1 is allowed
-to make:
+to make -- **and, as of 2026-08-29, makes** (Stage 11 in
+[plan.md](plan.md)): every item below was run, not argued.
 
 1. **gl039** — line sequential in, indexed out, random read back.
 2. **gl022, gl023, gl030** — reports byte-identical to current

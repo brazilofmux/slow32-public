@@ -108,3 +108,44 @@ oracle `.prn` files already include it.
 Fixed-format remains a separate source mode for CCVS-85 and for
 anyone bringing cobc370-shaped tests across (rewritten, not
 compiled as 74).
+
+## Stage 12+ — the rest of the corpus, measured (2026-08-29)
+
+Every `src/cobol/*.cbl` through `s32-cobc -free -m`, and the first
+thing that stopped each one. 22 of 58 compile today, the v1 gates
+among them (`clinkages`, `gl022`, `gl023`, `gl030`, `gl039`, `menu`,
+`taskdt`, `usescreen`, `today`) and thirteen more that were never
+gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
+`testcsvgen`, `testrs`). Ranked by what unblocks most:
+
+| blocks | first refusal | programs |
+|---|---|---|
+| 8 | `COPY` (the Library module; copybooks under `src/copy/`) | crglacct, crglacpd, crgltrans, exglacct, exglentry, ldglacct, ldgltrans, w001 |
+| 7 | `FUNCTION-ID` -- the legacy pure-COBOL date family, a retirement candidate rather than a rewrite (the C `du_*` path replaced it) | fielded_to_linear, linear_to_fielded, floor-div, floor-divmod, holidays, isleapyear, isvaliddate |
+| 4 | `ACCEPT FROM ARGUMENT-NUMBER` / `ARGUMENT-VALUE` -- the `YYYYMM` parameter; first on the after-v1 list, because gl024 opens the journal pipeline | gl024, gl038, gl042, gl043 |
+| 2 | `REPOSITORY` -- callers of that date family | exgltrans, jerm |
+| 2 | `RELATIVE KEY` (relative I-O) | crglentry, ldglentry |
+| 2 | `OCCURS DEPENDING ON` | gl034, gl040 |
+| 2 | `SPECIAL-NAMES` clauses | damm, gl008 |
+| 1 | a subscripted `SOURCE` in a report field | gl036 |
+| 1 | a report field without a PICTURE (a group field with children) | gl015, gl016 (retired programs, not in the build) |
+| 1 | `SD` -- an in-program `SORT` | glacpost |
+| 1 | a numeric item of more than 18 digits (`ws-temp`) | dist01 |
+| 1 | `FUNCTION INTEGER-OF-DATE` | jerm2 |
+| 1 | `USAGE BINARY-INT` | testcrc |
+| 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
+
+Two things this table settles. First, `COPY` is the one item that
+moves eight programs at once and is plain 1985 (Library module), so
+it leads Stage 12 together with `ACCEPT FROM ARGUMENT-VALUE`, which
+gl024 needs before the journal pipeline can leave GnuCOBOL. Second,
+each first refusal hides the next: gl036, once its `SOURCE` takes a
+subscript, will meet whatever comes after. The sweep is one command
+(`for f in src/cobol/*.cbl; do s32-cobc -free -m -o /dev/null $f; done`)
+and should be re-run at the start of every later stage.
+
+`batch.sh` today: `run_s32` runs gl022, gl023, gl039 and gl030 on
+SLOW-32 (`s32x/build.sh` compiles them; `S32_EMU` names the
+emulator), in a private working directory so the index our gl039
+builds for our gl030 never meets the one GnuCOBOL's gl039 still
+builds for gl036. Every other step is still `cobcrun`.

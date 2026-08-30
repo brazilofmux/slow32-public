@@ -351,7 +351,7 @@ we write is what tapemgr reads, and what tapemgr writes is what we
 read. GnuCOBOL's own V framing differs (recorded), so its output is
 the oracle for the program's stdout only.
 
-## Stage 11 — v1 close
+## Stage 11 — v1 close — DONE 2026-08-29
 
 - Intrinsics at exactly the v1 set: `LOWER-CASE`, `UPPER-CASE`,
   `LENGTH`, `CURRENT-DATE`. Nothing else is referenced by a gate.
@@ -364,11 +364,32 @@ the oracle for the program's stdout only.
 **v1 is done.** GnuCOBOL is retired for the journal and both charts
 of accounts, and for the two screen programs.
 
+**Closed 2026-08-29.** Intrinsics are exactly the v1 set. `batch.sh`'s
+`run_s32` (majesty commit "batch: the chart-of-accounts and journal
+reports run on SLOW-32") runs gl022, gl023, gl039 and gl030 on the
+emulator in a private working directory, the other steps still under
+`cobcrun`; the whole batch exits 0 and all twelve
+`reports_cobol/*.prn` are byte-identical to a same-day run of the
+untouched all-GnuCOBOL batch, with majesty's test suite giving the
+same verdicts. The rest of the corpus is measured and ranked in
+[majesty-corpus.md](majesty-corpus.md) "Stage 12+" (22 of 58 compile;
+`COPY` blocks eight, then the legacy `FUNCTION-ID` date family, then
+`ACCEPT FROM ARGUMENT-VALUE`). cobc370 is untouched -- the one
+defect this work found outside its own tree was in tapemgr, and is
+fixed there. The CCVS-85 histogram stays on the after-v1 list.
+
+Stages 1 through 11 landed in one day, 2026-08-29: eleven commits,
+about 6,000 lines of compiler and runtime, 33 tests with GnuCOBOL as
+the oracle for every program that can run without a tty, and the
+product claim -- the same reports, produced on this machine, without
+GnuCOBOL -- true for the three reports and two screens v1 named.
+
 ## After v1 (not scheduled, each when a program asks)
 
-- `ACCEPT … FROM ARGUMENT-VALUE / ARGUMENT-NUMBER` — the first thing
-  needed, because gl024 (the journal pipeline's first step) takes
-  `YYYYMM` that way, as do eight other programs
+- `COPY` (the Library module) — eight programs stop on it and nothing
+  else moves as many; with `ACCEPT … FROM ARGUMENT-VALUE /
+  ARGUMENT-NUMBER` next, because gl024 (the journal pipeline's first
+  step) takes `YYYYMM` that way, as do gl038, gl042 and gl043
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
 - In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
 - Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated
