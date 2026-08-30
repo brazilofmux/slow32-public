@@ -1,0 +1,9 @@
+01 short 001 [first   ]
+02 long  002 [a long record, fifty-six characters of text in here.... ]
+03 short 003 [third   ]
+write past TO: 00
+05 [abcde]
+16 [abcdefghijklmnop]
+27 [abcdefghijklmnopqrstuvwxyz0]
+38 [abcdefghijklmnopqrstuvwxyz0123456789  ]
+40 [abcdefghijklmnopqrstuvwxyz0123456789    ]

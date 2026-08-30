@@ -332,7 +332,7 @@ stamp, oracle-agreed) and `curdate` (the clock's shape). Not in:
 `INSPECT ... BEFORE/AFTER INITIAL`, `CONVERTING`, `INITIALIZE
 REPLACING`, `LENGTH` of a variable-length slice.
 
-## Stage 10 — sequential V / RDW **M**
+## Stage 10 — sequential V / RDW **M** — DONE 2026-08-29
 
 - [framing.md](framing.md)
 - Round-trip with tapemgr
@@ -340,6 +340,16 @@ REPLACING`, `LENGTH` of a variable-length slice.
 Done: a V file this compiler writes is read by tapemgr; a V file
 tapemgr writes (or cobc370's `vrec` output, ASCII-translated if
 needed) is read back.
+
+What landed: [framing.md](framing.md) "As built" -- the four V
+spellings on the FD, the WRITE length from the 01 named or the
+`DEPENDING ON` item, READ setting that item and leaving the tail,
+status 44 past the bounds. The harness's `.tapemgr` step sends every
+V file the test wrote through `tapemgr create` and `extract` and
+demands the bytes back unchanged; both of vrec's files pass, so what
+we write is what tapemgr reads, and what tapemgr writes is what we
+read. GnuCOBOL's own V framing differs (recorded), so its output is
+the oracle for the program's stdout only.
 
 ## Stage 11 — v1 close
 

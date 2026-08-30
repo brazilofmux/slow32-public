@@ -28,8 +28,10 @@
  * of slots per 01, DISPLAY paints and ACCEPT runs the focus loop, on the
  * term service (docs/screen.md).  Stage 9, what menu and taskdt drag
  * in: EVALUATE, INSPECT, INITIALIZE, reference modification with
- * arithmetic, FUNCTION LENGTH and CURRENT-DATE.  Unimplemented is a
- * diagnostic, never silence.
+ * arithmetic, FUNCTION LENGTH and CURRENT-DATE.  Stage 10: sequential
+ * mode V -- RECORDING MODE V, RECORD CONTAINS m TO n, RECORD IS VARYING
+ * DEPENDING ON, or unequal 01s -- with the IBM RDW on disk.
+ * Unimplemented is a diagnostic, never silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,7 +41,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.9 (stage 9)"
+#define VERSION "0.10 (stage 10)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -537,6 +539,9 @@ typedef struct {
     Sym *assign_sym, *status_sym, *key_sym;
     int  rec;                        /* sym index of the first 01, -1 */
     int  recsize;
+    int  varying;                    /* mode V: RECORDING MODE V, RECORD CONTAINS m TO n, VARYING, unequal 01s */
+    int  minlen, maxlen;             /* from RECORD CONTAINS / VARYING; 0 = unset */
+    char dep_name[64]; Sym *dep_sym; /* RECORD IS VARYING ... DEPENDING ON */
 } File;
 
 static File *g_files; static int g_nfile, g_fcap;
@@ -637,6 +642,8 @@ static int capacity_digits(int bytes)
 {
     return bytes == 1 ? 3 : bytes == 2 ? 5 : bytes == 4 ? 10 : 19;
 }
+
+static int is_int_item(Sym *s);
 
 /* elementary size and numeric attributes */
 static void sym_finish(Sym *s)
@@ -1158,8 +1165,23 @@ static void finish_data_division(void)
             if (g_sym[f->status_sym->record].is_linkage) die_at(f->line, "FILE STATUS '%s' cannot be a LINKAGE item", f->status_name);
             if (f->status_sym->size != 2) die_at(f->line, "FILE STATUS '%s' must be PIC XX", f->status_name);
         }
+        int minrec = 0;
         for (int j = 0; j < g_nsym; j++)
-            if (g_sym[j].fd == i && g_sym[j].level == 1 && g_sym[j].size > f->recsize) f->recsize = g_sym[j].size;
+            if (g_sym[j].fd == i && g_sym[j].level == 1) {
+                if (g_sym[j].size > f->recsize) f->recsize = g_sym[j].size;
+                if (!minrec || g_sym[j].size < minrec) minrec = g_sym[j].size;
+            }
+        /* 01s of different lengths under a sequential FD: mode V, as cobc370 infers */
+        if (f->org == COB_ORG_SEQ && minrec && minrec != f->recsize) f->varying = 1;
+        if (f->maxlen && f->recsize && f->maxlen != f->recsize && f->rec >= 0 && !f->dep_name[0])
+            die_at(f->line, "FD %s: RECORD CONTAINS says %d characters but the largest 01 is %d", f->name, f->maxlen, f->recsize);
+        if (f->dep_name[0]) {
+            f->dep_sym = sym_lookup(f->dep_name, NULL, 0, f->line);
+            if (!is_int_item(f->dep_sym)) die_at(f->line, "DEPENDING ON '%s' must be an integer item", f->dep_name);
+            if (g_sym[f->dep_sym->record].is_linkage) die_at(f->line, "DEPENDING ON '%s' cannot be a LINKAGE item", f->dep_name);
+            if (!f->maxlen) f->maxlen = f->recsize;
+            if (f->maxlen > f->recsize) die_at(f->line, "FD %s: VARYING TO %d is larger than its record area (%d)", f->name, f->maxlen, f->recsize);
+        }
         if (f->key_name[0]) {
             /* the RECORD KEY must be an item inside this file's record */
             Sym *k = NULL; int nk = 0;
@@ -3227,6 +3249,7 @@ static void parse_write(void)
     } else {
         emit_file_addr("r3", f); emit_li("r4", before); emit_li("r5", after);
     }
+    emit_li("r6", rec.sym->size);          /* the 01 named: a mode-V record's length */
     emit_call("cob_write");
     if (f->org == COB_ORG_INDEXED) {
         emit("\tstw sp+%d, r1", SLOT_C);
@@ -4143,10 +4166,28 @@ static void parse_fd(void)
             continue;
         }
         if (accept_word("record")) {
+            if (accept_word("is") || accept_word("are")) { }
+            if (accept_word("varying")) {
+                accept_word("in"); accept_word("size");
+                if (accept_word("from")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after FROM"); f->minlen = atoi(cur()->s); advance(); }
+                if (accept_word("to")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after TO"); f->maxlen = atoi(cur()->s); advance(); }
+                accept_word("characters");
+                if (accept_word("depending")) {
+                    accept_word("on");
+                    if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after DEPENDING ON");
+                    snprintf(f->dep_name, sizeof f->dep_name, "%s", cur()->s); advance();
+                }
+                f->varying = 1;
+                continue;
+            }
             accept_word("contains");
-            if (cur()->kind == T_NUM) advance();
-            if (accept_word("to")) { if (cur()->kind == T_NUM) advance(); }
-            if (at_word("varying")) die_at(t->line, "RECORD IS VARYING is not implemented yet (stage 10)");
+            if (cur()->kind != T_NUM) die_at(t->line, "expected a number after RECORD CONTAINS");
+            f->minlen = atoi(cur()->s); advance();
+            if (accept_word("to")) {
+                if (cur()->kind != T_NUM) die_at(t->line, "expected a number after TO");
+                f->maxlen = atoi(cur()->s); advance();
+                f->varying = 1;                     /* m TO n: variable, as cobc370 infers */
+            } else { f->maxlen = f->minlen; }
             accept_word("characters");
             continue;
         }
@@ -4160,8 +4201,9 @@ static void parse_fd(void)
         }
         if (accept_word("recording")) {
             accept_word("mode"); accept_word("is");
-            if (accept_word("f")) continue;
-            die_at(t->line, "RECORDING MODE %s is not implemented yet (V is stage 10; U and S are refused)", cur()->s);
+            if (accept_word("f")) { f->varying = 0; continue; }
+            if (accept_word("v")) { f->varying = 1; continue; }
+            die_at(t->line, "RECORDING MODE %s is refused (U and S are tapemgr's business; docs/framing.md)", cur()->s);
         }
         if (accept_word("value")) { expect_word("of"); while (cur()->kind != T_PERIOD && !at_word("block") && !at_word("record") && !at_word("data")) advance(); continue; }
         if (accept_word("linage")) die_at(t->line, "LINAGE is not implemented");
@@ -4173,6 +4215,8 @@ static void parse_fd(void)
     g_cur_fd = (int)(f - g_files);
     while (cur()->kind == T_NUM) parse_data_item();
     g_cur_fd = -1;
+    if (f->varying && f->org != COB_ORG_SEQ)
+        die_at(line, "FD %s: variable records need ORGANIZATION SEQUENTIAL (LINE SEQUENTIAL names its own framing; docs/framing.md)", f->name);
 }
 
 /* RD report-name [PAGE [LIMIT IS] n [LINE(S)]] [HEADING n] [FIRST DETAIL n]
@@ -4513,6 +4557,10 @@ static void emit_unit_data(void)
         if (f->key_sym) { emit("\t.word %d", f->key_sym->offset); emit("\t.word %d", f->key_sym->size); }
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
+        emit("\t.word %d", f->varying);
+        emit("\t.word %d", f->minlen);
+        if (f->dep_sym) { emit("\t.word %s+%d", g_sym[f->dep_sym->record].label, f->dep_sym->offset); emit("\t.word .Ld%d", sym_desc(f->dep_sym)); }
+        else { emit("\t.word 0"); emit("\t.word 0"); }
     }
     for (int i = 0; i < g_nscreen; i++) {
         Screen *sc = &g_screens[i];

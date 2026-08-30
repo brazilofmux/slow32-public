@@ -104,6 +104,29 @@ for fmt in fixed free; do
             diff "$exp" "$W/$name.out" | head -8
             continue
         fi
+        # a .tapemgr file lists "file maxlen" pairs the program wrote in
+        # mode V: each goes through majesty's tapemgr (create a binary-V
+        # dataset from it, extract it again) and must come back byte for
+        # byte -- the RDW on disk is IBM's, not a private length word
+        if [ -f "${src%.cbl}.tapemgr" ] && [ -x "$HOME/majesty/tapemgr" ]; then
+            tm_ok=1
+            while read -r vf vlen; do
+                [ -n "$vf" ] || continue
+                cat > "$W/tm.json" <<JSON
+{ "volume_serial": "S32V01", "owner_code": "SLOW32", "files": [ { "dataset_name": "S32.VREC", "local_file": "$W/run/$vf", "record_format": "V", "record_length": $vlen, "block_size": 4096, "binary": true } ] }
+JSON
+                cat > "$W/tmx.json" <<JSON
+{ "volume_serial": "S32V01", "owner_code": "SLOW32", "files": [ { "dataset_name": "S32.VREC", "local_file": "$W/tm-back.dat", "record_format": "V", "record_length": $vlen, "block_size": 4096, "binary": true } ] }
+JSON
+                rm -f "$W/tm.aws" "$W/tm-back.dat"
+                if ! "$HOME/majesty/tapemgr" create --volser=S32V01 -o "$W/tm.aws" -c "$W/tm.json" >"$W/tm.log" 2>&1 ||
+                   ! "$HOME/majesty/tapemgr" extract -c "$W/tmx.json" "$W/tm.aws" >>"$W/tm.log" 2>&1 ||
+                   ! cmp -s "$W/run/$vf" "$W/tm-back.dat"; then
+                    tm_ok=0; report "$fmt/$name" 1 "tapemgr round trip of $vf failed: $(tail -1 "$W/tm.log")"; break
+                fi
+            done < "${src%.cbl}.tapemgr"
+            [ "$tm_ok" = 1 ] || continue
+        fi
         # oracle: GnuCOBOL on the same source, when present.  A program whose
         # comments say "no oracle" (screens need a tty there) is ours alone.
         note=""
@@ -119,6 +142,7 @@ for fmt in fixed free; do
                 oexp="$exp"; [ -f "${src%.cbl}.oracle-expected" ] && oexp="${src%.cbl}.oracle-expected"
                 if diff -q "$W/$name.orcout" "$oexp" >/dev/null; then
                     note="oracle agrees"; [ "$oexp" != "$exp" ] && note="oracle agrees with its documented divergence"
+                    [ -f "${src%.cbl}.tapemgr" ] && note="$note; tapemgr round trip"
                 else
                     report "$fmt/$name" 1 "GnuCOBOL disagrees with .expected"
                     diff "$exp" "$W/$name.orcout" | head -8

@@ -1,6 +1,6 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **Stage 9 landed** (2026-08-29) -- **the first product claim
+Status: **Stage 10 landed** (2026-08-29) -- **the first product claim
 holds**: gl022, gl023 and gl030 compile unchanged, run in place on
 SLOW-32, and all six of their reports are byte-identical to
 `~/majesty/reports_cobol/`; usescreen and menu (with taskdt over
@@ -11,8 +11,9 @@ arithmetic verbs with ROUNDED / SIZE ERROR / REMAINDER, conditions, IF
 and every PERFORM form, line sequential, fixed sequential and indexed
 files, STRING, CALL / LINKAGE / USING on the SLOW-32 C ABI, Report
 Writer's cheap half, SCREEN SECTION, EVALUATE / INSPECT / INITIALIZE /
-reference modification / the 1989 intrinsics taskdt uses; 32/32
-tests, GnuCOBOL agreeing on every program that can run without a tty. Stages in
+reference modification / the 1989 intrinsics taskdt uses, sequential
+mode V behind the IBM RDW that tapemgr round-trips; 33/33 tests,
+GnuCOBOL agreeing on every program that can run without a tty. Stages in
 [docs/plan.md](docs/plan.md).
 
 A host cross-compiler in the tree's ordinary universe (like `fortran/`

@@ -14,7 +14,8 @@
  * on the default path (docs/indexed.md).  Stage 7: Report Writer, the
  * cheap half (docs/report-writer.md).  Stage 8: SCREEN SECTION on the
  * term service (docs/screen.md).  Stage 9: INSPECT, reference
- * modification, CURRENT-DATE -- what menu and taskdt drag in.
+ * modification, CURRENT-DATE -- what menu and taskdt drag in.  Stage 10:
+ * sequential V with the IBM RDW (docs/framing.md).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -649,6 +650,25 @@ int cob_read(cob_file *f)
     char *rec = f->record;
     unsigned n = f->recsize;
 
+    if (f->org == COB_ORG_SEQ && f->varying) {
+        /* mode V: the four-byte RDW tapemgr writes -- 2 bytes big-endian
+         * length including the RDW, 2 zero bytes -- then the payload.  The
+         * record area beyond a short record is left as it was (cobc370's
+         * rule: move, do not promise the tail). */
+        unsigned char rdw[4];
+        size_t got = fread(rdw, 1, 4, fp);
+        if (got == 0) { f->at_eof = 1; return file_result(f, "10", ""); }
+        if (got < 4) return file_result(f, "30", "truncated RDW");
+        unsigned len = ((unsigned)rdw[0] << 8) | rdw[1];
+        if (len < 4) return file_result(f, "30", "bad RDW");
+        len -= 4;
+        unsigned take = len < n ? len : n;
+        if (fread(rec, 1, take, fp) != take) return file_result(f, "30", "truncated record");
+        if (len > n) { fseek(fp, (long)(len - n), 1); }
+        f->last_len = take;
+        if (f->dep_item) cob_put_num(f->dep_item, (const cob_desc *)f->dep_desc, (long long)take, 0);
+        return file_result(f, len > n ? "04" : "00", "");
+    }
     if (f->org == COB_ORG_SEQ) {
         size_t got = fread(rec, 1, n, fp);
         if (got == 0) { f->at_eof = 1; return file_result(f, "10", ""); }
@@ -670,8 +690,10 @@ int cob_read(cob_file *f)
     return file_result(f, truncated ? "04" : "00", "");
 }
 
-/* before/after: extra newlines around the record (ADVANCING) */
-int cob_write(cob_file *f, int before, int after)
+/* before/after: extra newlines around the record (ADVANCING); reclen:
+ * the size of the 01 the WRITE named, which is the length of a mode-V
+ * record unless DEPENDING ON says otherwise */
+int cob_write(cob_file *f, int before, int after, int reclen)
 {
     if (!f->open_mode) return file_result(f, "48", "WRITE of a file not open");
     if (f->open_mode == COB_OPEN_INPUT) return file_result(f, "48", "WRITE of a file open for input");
@@ -679,6 +701,17 @@ int cob_write(cob_file *f, int before, int after)
     FILE *fp = (FILE *)f->fp;
     const char *rec = f->record;
     unsigned n = f->recsize;
+    if (f->org == COB_ORG_SEQ && f->varying) {
+        unsigned len = reclen > 0 ? (unsigned)reclen : n;
+        if (f->dep_item) {
+            long long d = cob_get_num(f->dep_item, (const cob_desc *)f->dep_desc);
+            if (d < (long long)f->minlen || d > (long long)n) return file_result(f, "44", "record length outside RECORD VARYING bounds");
+            len = (unsigned)d;
+        }
+        unsigned char rdw[4] = { (unsigned char)((len + 4) >> 8), (unsigned char)((len + 4) & 255), 0, 0 };
+        if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(rec, 1, len, fp) != len) return file_result(f, "30", "write failed");
+        return file_result(f, "00", "");
+    }
     if (f->org == COB_ORG_SEQ) {
         if (fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
         return file_result(f, "00", "");

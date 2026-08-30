@@ -42,6 +42,10 @@ typedef struct {
     unsigned int last_len;    /* bytes the last READ delivered */
     unsigned int keyoff, keylen;   /* RECORD KEY: offset in the record, length */
     void *idx;                /* indexed: the in-memory key table while open */
+    unsigned int varying;     /* sequential: records carry an IBM RDW (mode V) */
+    unsigned int minlen;      /* RECORD CONTAINS m TO n / VARYING FROM m TO n */
+    void *dep_item;           /* RECORD IS VARYING ... DEPENDING ON item, or 0 */
+    const void *dep_desc;
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

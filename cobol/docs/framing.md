@@ -47,6 +47,29 @@ rest as it was; IBM locate-mode shows the next record's RDW. The
 standard (85, Sequential I-O) says only that the record is made
 available. Follow cobc370: move, do not promise the tail.
 
+### As built (Stage 10)
+
+`ORGANIZATION SEQUENTIAL` goes to mode V when the FD says `RECORDING
+MODE V`, `RECORD CONTAINS m TO n`, `RECORD IS VARYING [FROM m] [TO n]
+[DEPENDING ON d]`, or holds 01s of different lengths (cobc370's
+inference). `WRITE record-name` writes the length of the 01 it names;
+with `DEPENDING ON`, the item's value, and a value outside FROM..TO is
+status 44 with nothing written. `READ` delivers the payload behind
+its RDW into the record area, leaves the tail as it was, sets the
+`DEPENDING ON` item, and reports 04 for a record longer than the
+area. The bytes are exactly tapemgr's `VariableBinaryWriter`'s, and
+the harness proves it: `tests/free/vrec.tapemgr` sends each V file
+the test wrote through `tapemgr create` (a binary-V dataset) and
+`tapemgr extract`, and the extraction must come back byte for byte.
+
+**GnuCOBOL's own variable-sequential file is not this format**: its
+prefix is a 2-byte big-endian length that *excludes* the four header
+bytes, then two zero bytes. A file GnuCOBOL wrote is read here as
+garbage and vice versa -- by design, since the point of the RDW on
+disk is tapemgr and cobc370, not GnuCOBOL. GnuCOBOL also clamps a
+`DEPENDING ON` length past `TO` and writes the record with status
+00; the text says 44 (both recorded in [oracles.md](oracles.md)).
+
 ## LINE SEQUENTIAL is not V-mode
 
 Majesty's batch path is line sequential. `csv2fw` writes
