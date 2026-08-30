@@ -284,7 +284,8 @@ which made every COBOL division return 0 through `pow10tab` -- fixed
 the same day (selfhost ISSUES-62). The fallback is now exercised by the
 whole harness: with `LLVM_BIN=/nonexistent` (libcob and the C bridge
 through `cc.s32x`) it runs 46/46 with the oracle agreeing. The kit
-`~/s32x/cc.s32x` carries both fixes only once the kit is rebuilt.
+`~/s32x/cc.s32x` (and kagura's copy) was rebuilt with both fixes the
+same evening; probed 2026-08-30 through the kit's own cc/as/ld.
 
 ## E. Closed, with the lesson
 
