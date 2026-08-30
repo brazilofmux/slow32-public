@@ -26,8 +26,10 @@
  * GENERATE / TERMINATE, rendered per GENERATE site against a page engine
  * in libcob (docs/report-writer.md).  Stage 8: SCREEN SECTION -- a table
  * of slots per 01, DISPLAY paints and ACCEPT runs the focus loop, on the
- * term service (docs/screen.md).  Unimplemented is a diagnostic, never
- * silence.
+ * term service (docs/screen.md).  Stage 9, what menu and taskdt drag
+ * in: EVALUATE, INSPECT, INITIALIZE, reference modification with
+ * arithmetic, FUNCTION LENGTH and CURRENT-DATE.  Unimplemented is a
+ * diagnostic, never silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +39,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.8 (stage 8)"
+#define VERSION "0.9 (stage 9)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -733,6 +735,7 @@ static int parse_level(void)
 }
 
 static int g_last_item = -1;        /* the previous non-88 item, for 88s */
+static int g_no_values;             /* building an INITIALIZE template: VALUE clauses do not apply */
 static int g_in_linkage = 0;        /* parsing the LINKAGE SECTION */
 
 static void parse_data_item(void)
@@ -1033,7 +1036,7 @@ static void init_one(Sym *rec, int si, int base, int defaults)
     Sym *s = &g_sym[si];
     unsigned char *p = rec->image + base;
     if (s->is_group) {
-        if (s->value_tok) {
+        if (s->value_tok && !g_no_values) {
             Tok *v = s->value_tok;
             if (v->kind != T_STR && !s->value_fig) die_at(v->line, "VALUE of the group '%s' must be a nonnumeric literal", s->name);
             if (s->value_fig) memset(p, fig_byte(v->s), s->size);
@@ -1055,7 +1058,7 @@ static void init_one(Sym *rec, int si, int base, int defaults)
         else if (s->usage == U_PACKED) { NumLit z; numlit_zero(&z); store_numeric(s, &z, p, s->line); }
         else memset(p, 0, s->size);
     }
-    if (!s->value_tok) return;
+    if (!s->value_tok || g_no_values) return;
     Tok *v = s->value_tok;
     if (s->value_fig) {
         int fill = fig_byte(v->s);
@@ -1340,7 +1343,13 @@ typedef struct {
     int nsub;
     struct { Sym *sym; long lit; long adj; } sub[MAXDIM];   /* sym == NULL: literal */
     int line;
+    int rm;                         /* reference modification item(start:len) */
+    long rm_start, rm_len;          /* literal values, or 0 when an expression / omitted */
+    int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
 } Ref;
+
+static void parse_expr(void);
+static void emit_expr_tokens(int s0, int s1);
 
 enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC };
 
@@ -1383,7 +1392,19 @@ static void parse_ref(Ref *r)
         advance();
     }
     r->sym = sym_lookup(name, quals, nq, t->line);
-    if (cur()->kind == T_LP) {
+    /* an unsubscripted item's parenthesis holding a ':' is a reference
+     * modification, not a subscript list */
+    int lead_rm = 0;
+    if (cur()->kind == T_LP && r->sym->ndims == 0) {
+        int depth = 0;
+        for (int i = g_tp; i < g_ntok; i++) {
+            if (g_tok[i].kind == T_LP) depth++;
+            else if (g_tok[i].kind == T_RP) { if (--depth == 0) break; }
+            else if (g_tok[i].kind == T_COLON && depth == 1) { lead_rm = 1; break; }
+            else if (g_tok[i].kind == T_PERIOD) break;
+        }
+    }
+    if (cur()->kind == T_LP && !lead_rm) {
         advance();
         for (;;) {
             if (r->nsub >= MAXDIM) die_at(cur()->line, "too many subscripts");
@@ -1408,13 +1429,49 @@ static void parse_ref(Ref *r)
                     r->sub[r->nsub].adj = neg ? -numlit_int(&n) : numlit_int(&n);
                     advance();
                 }
-            } else if (st->kind == T_COLON) {
-                die_at(st->line, "reference modification is not implemented yet (stage 9)");
             } else die_at(st->line, "expected a subscript, found %s", tok_desc(st));
             r->nsub++;
-            if (cur()->kind == T_COLON) die_at(cur()->line, "reference modification is not implemented yet (stage 9)");
             if (cur()->kind == T_RP) { advance(); break; }
         }
+    }
+    /* item(start:len) -- after the subscripts, or alone on an unsubscripted
+     * item: the parenthesis holds a ':' at depth one */
+    int is_rm = 0;
+    if (cur()->kind == T_LP) {
+        int depth = 0;
+        for (int i = g_tp; i < g_ntok; i++) {
+            if (g_tok[i].kind == T_LP) depth++;
+            else if (g_tok[i].kind == T_RP) { if (--depth == 0) break; }
+            else if (g_tok[i].kind == T_COLON && depth == 1) { is_rm = 1; break; }
+            else if (g_tok[i].kind == T_PERIOD) break;
+        }
+    }
+    if (is_rm) {
+        if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
+        advance();
+        r->rm = 1; r->rm_l0 = -1;
+        if (cur()->kind == T_NUM && peek(1)->kind == T_COLON) {
+            NumLit n; numlit_parse(cur(), &n);
+            if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the start of a reference modification must be a positive integer");
+            r->rm_start = (long)numlit_int(&n); advance();
+        } else {
+            r->rm_s0 = g_tp; g_noemit++; parse_expr(); g_noemit--; r->rm_s1 = g_tp;
+        }
+        if (cur()->kind != T_COLON) die_at(cur()->line, "expected ':' in the reference modification");
+        advance();
+        if (cur()->kind == T_RP) { /* (start:) runs to the end */ }
+        else if (cur()->kind == T_NUM && peek(1)->kind == T_RP) {
+            NumLit n; numlit_parse(cur(), &n);
+            if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the length of a reference modification must be a positive integer");
+            r->rm_len = (long)numlit_int(&n); advance();
+        } else {
+            r->rm_l0 = g_tp; g_noemit++; parse_expr(); g_noemit--; r->rm_l1 = g_tp;
+        }
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
+        advance();
+        if (r->rm_start && r->rm_start > r->sym->size) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
+        if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > r->sym->size) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
+        if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = r->sym->size - r->rm_start + 1;
     }
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
@@ -1426,7 +1483,15 @@ static void parse_ref(Ref *r)
             die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
 }
 
-enum { FN_UPPER, FN_LOWER };
+enum { FN_UPPER, FN_LOWER, FN_CURDATE };
+static int opnd_size(Opnd *o);
+
+static void numlit_from_int(NumLit *n, long v)
+{
+    memset(n, 0, sizeof *n);
+    char b[24]; snprintf(b, sizeof b, "%ld", v < 0 ? -v : v);
+    n->neg = v < 0; n->ndigits = (int)strlen(b); memcpy(n->digits, b, n->ndigits);
+}
 
 static void parse_operand(Opnd *o)
 {
@@ -1439,8 +1504,24 @@ static void parse_operand(Opnd *o)
         if (n->kind != T_WORD) die_at(n->line, "expected an intrinsic function name");
         if (!strcmp(n->s, "upper-case")) o->fn = FN_UPPER;
         else if (!strcmp(n->s, "lower-case")) o->fn = FN_LOWER;
-        else if (!strcmp(n->s, "length") || !strcmp(n->s, "current-date"))
-            die_at(n->line, "FUNCTION %s is not implemented yet (stage 9)", n->s);
+        else if (!strcmp(n->s, "current-date")) {
+            advance();
+            o->kind = O_FUNC; o->fn = FN_CURDATE; o->fsize = 21;
+            return;
+        } else if (!strcmp(n->s, "length")) {
+            /* known at compile time, except for a variable reference modification */
+            advance();
+            if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION LENGTH");
+            advance();
+            Opnd x; parse_operand(&x);
+            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+            advance();
+            if (x.kind != O_REF && x.kind != O_STR && x.kind != O_FUNC) die_at(n->line, "FUNCTION LENGTH takes an item or a literal");
+            int len = opnd_size(&x);
+            if (len < 0) die_at(n->line, "FUNCTION LENGTH of a reference modification with a variable length is not implemented");
+            o->kind = O_NUM; numlit_from_int(&o->num, len);
+            return;
+        }
         else die_at(n->line, "FUNCTION %s is not implemented", n->s);
         advance();
         if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
@@ -1472,7 +1553,16 @@ static int ref_needs_call(const Ref *r)
 {
     for (int i = 0; i < r->nsub; i++)
         if (r->sub[i].sym && !is_hot_int(r->sub[i].sym)) return 1;
+    if (r->rm && !r->rm_start) return 1;           /* the start is an expression */
     return 0;
+}
+
+/* the literal length of a reference-modified item, or -1 when it is
+ * only known at run time */
+static int ref_static_len(const Ref *r)
+{
+    if (!r->rm) return r->sym->size;
+    return r->rm_len ? (int)r->rm_len : -1;
 }
 
 /* load the integer value of a hot item at address in areg into dreg */
@@ -1507,6 +1597,7 @@ static void emit_item_addr(const char *reg, Sym *s, int off)
 static int ref_has_runtime_sub(const Ref *r)
 {
     for (int i = 0; i < r->nsub; i++) if (r->sub[i].sym) return 1;
+    if (r->rm && !r->rm_start) return 1;
     return 0;
 }
 
@@ -1523,6 +1614,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     int runtime = ref_has_runtime_sub(r);
     for (int i = 0; i < r->nsub; i++)
         if (!r->sub[i].sym) off += (int)(r->sub[i].lit - 1) * s->dim_stride[i];
+    if (r->rm && r->rm_start) off += (int)r->rm_start - 1;
     if (runtime) emit("\tadd r11, r0, r0");
     for (int i = 0; i < r->nsub; i++) {
         if (!r->sub[i].sym) continue;
@@ -1541,16 +1633,26 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         emit("\tmul r1, r1, r2");
         emit("\tadd r11, r11, r1");
     }
+    if (r->rm && !r->rm_start) {
+        /* the start expression: onto the numeric stack, then off as an int */
+        emit_expr_tokens(r->rm_s0, r->rm_s1);
+        emit_call("cob_pop_int");
+        emit("\taddi r1, r1, -1");
+        emit("\tadd r11, r11, r1");
+    }
     emit_item_addr(reg, s, off);
     if (runtime) emit("\tadd %s, %s, r11", reg, reg);
 }
 
 /* ---- argument staging ------------------------------------------------- */
 
-enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE };
+enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN };
 typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; Opnd *fn; } Arg;
 static Arg arg_func(Opnd *o)       { Arg a = { A_FUNC, 0, 0, 0, 0, o }; return a; }
 static Arg arg_value(Opnd *o)      { Arg a = { A_VALUE, 0, 0, 0, 0, o }; return a; }
+static Arg arg_rdesc(const Ref *r) { Arg a = { A_RDESC, r, 0, 0, 0, 0 }; return a; }
+static Arg arg_rlen(const Ref *r)  { Arg a = { A_RLEN, r, 0, 0, 0, 0 }; return a; }
+static int g_slot_base;             /* staged operands of nested evaluations use higher slots */
 
 static Arg arg_ref(const Ref *r)   { Arg a = { A_REF, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_label(const char *l){ Arg a = { A_LABEL, 0, l, 0, 0, 0 }; return a; }
@@ -1565,13 +1667,38 @@ static const char *argreg(int i)
 
 /* load r3.. with the arguments; operands whose address needs a runtime
  * call are computed first and parked in frame slots */
+/* r1 = the reference modification's start; its length in SLOT(slot).
+ * The expressions may stage operands of their own, above this call's
+ * slots. */
+static void emit_rm_start_len(const Ref *r, int slot)
+{
+    if (r->rm_len) emit_li("r1", r->rm_len);
+    else if (r->rm_l0 >= 0) { emit_expr_tokens(r->rm_l0, r->rm_l1); emit_call("cob_pop_int"); }
+    else emit_li("r1", 0);
+    emit("\tstw sp+%d, r1", SLOT(slot));
+    if (r->rm_start) emit_li("r1", r->rm_start);
+    else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_call("cob_pop_int"); }
+}
+
 static void emit_args(const Arg *a, int n)
 {
     int slotted[8] = { 0 };
+    int base = g_slot_base;
+    if (base + n > NSLOTS) die_at(cur()->line, "internal: too many staged operands");
+    g_slot_base += n;
     for (int i = 0; i < n; i++) {
         if (a[i].kind == A_REF && ref_needs_call(a[i].ref)) {
             emit_ref_addr(a[i].ref, "r1");
-            emit("\tstw sp+%d, r1", SLOT(i));
+            emit("\tstw sp+%d, r1", SLOT(base + i));
+            slotted[i] = 1;
+        } else if (a[i].kind == A_RDESC || a[i].kind == A_RLEN) {
+            const Ref *r = a[i].ref;
+            emit_rm_start_len(r, base + i);
+            emit("\tadd r4, r1, r0");
+            emit("\tldw r5, sp+%d", SLOT(base + i));
+            emit_desc_addr("r3", sym_desc(r->sym));
+            emit_call(a[i].kind == A_RDESC ? "cob_refmod_desc" : "cob_refmod_len");
+            emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_VALUE) {
             /* BY VALUE: the item's integer value, widened to a word */
@@ -1579,29 +1706,34 @@ static void emit_args(const Arg *a, int n)
             if (o->kind == O_REF && is_hot_int(o->ref.sym)) { emit_ref_addr(&o->ref, "r3"); emit_load_int(o->ref.sym, "r3", "r1"); }
             else if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit_desc_addr("r4", sym_desc(o->ref.sym)); emit_call("cob_load_int"); }
             else emit_li("r1", (long)numlit_int(&o->num));
-            emit("\tstw sp+%d, r1", SLOT(i));
+            emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_FUNC) {
             /* an intrinsic: evaluate into libcob's buffer, park the pointer */
             Opnd *f = a[i].fn, *x = f->farg;
-            if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
-            else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
-            emit_li("r4", f->fsize);
-            emit_call(f->fn == FN_UPPER ? "cob_fn_upper" : "cob_fn_lower");
-            emit("\tstw sp+%d, r1", SLOT(i));
+            if (f->fn == FN_CURDATE) emit_call("cob_fn_current_date");
+            else {
+                if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
+                else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
+                emit_li("r4", f->fsize);
+                emit_call(f->fn == FN_UPPER ? "cob_fn_upper" : "cob_fn_lower");
+            }
+            emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         }
     }
     for (int i = 0; i < n; i++) {
         const char *reg = argreg(i);
-        if (slotted[i]) { emit("\tldw %s, sp+%d", reg, SLOT(i)); continue; }
+        if (slotted[i]) { emit("\tldw %s, sp+%d", reg, SLOT(base + i)); continue; }
         switch (a[i].kind) {
         case A_REF:   emit_ref_addr(a[i].ref, reg); break;
         case A_LABEL: emit_la(reg, a[i].label); break;
         case A_DESC:  emit_desc_addr(reg, a[i].desc); break;
         case A_IMM:   emit_li(reg, a[i].imm); break;
+        default: die_at(cur()->line, "internal: unstaged argument kind");
         }
     }
+    g_slot_base = base;
 }
 
 /* address + descriptor of an operand, as two Args.  Figuratives need the
@@ -1610,7 +1742,11 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
 {
     switch (o->kind) {
     case O_REF:
-        *addr = arg_ref(&o->ref); *desc = arg_desc(sym_desc(o->ref.sym)); return;
+        *addr = arg_ref(&o->ref);
+        if (!o->ref.rm) *desc = arg_desc(sym_desc(o->ref.sym));
+        else if (o->ref.rm_len) *desc = arg_desc(str_desc((int)o->ref.rm_len));
+        else *desc = arg_rdesc(&o->ref);
+        return;
     case O_FUNC:
         *addr = arg_func(o); *desc = arg_desc(str_desc(o->fsize)); return;
     case O_STR:
@@ -1642,7 +1778,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
 static int opnd_size(Opnd *o)
 {
     switch (o->kind) {
-    case O_REF: return o->ref.sym->size;
+    case O_REF: return ref_static_len(&o->ref);
     case O_STR: return o->tok->len;
     case O_NUM: return o->num.ndigits;
     case O_FUNC: return o->fsize;
@@ -1652,15 +1788,23 @@ static int opnd_size(Opnd *o)
 
 static int opnd_numeric(Opnd *o)
 {
-    if (o->kind == O_REF) return is_numeric_sym(o->ref.sym);
+    if (o->kind == O_REF) return !o->ref.rm && is_numeric_sym(o->ref.sym);
     return o->kind == O_NUM || o->kind == O_EXPR;
+}
+
+/* the byte length of an operand as an Arg: a literal, or for a
+ * reference-modified item whose length is an expression, evaluated */
+static Arg arg_len(Opnd *o)
+{
+    if (o->kind == O_REF && o->ref.rm && !o->ref.rm_len) return arg_rlen(&o->ref);
+    return arg_imm(opnd_size(o));
 }
 
 /* an integer operand usable on the hot path: a hot-int item, or an
  * integer literal that fits a word */
 static int opnd_hot_int(Opnd *o)
 {
-    if (o->kind == O_REF) return is_hot_int(o->ref.sym) && !(o->ref.sym->size == 4 && !o->ref.sym->pi.is_signed);
+    if (o->kind == O_REF) return !o->ref.rm && is_hot_int(o->ref.sym) && !(o->ref.sym->size == 4 && !o->ref.sym->pi.is_signed);
     if (o->kind == O_NUM) return numlit_is_int(&o->num) && numlit_int(&o->num) <= 2147483647LL && numlit_int(&o->num) >= -2147483647LL;
     if (o->kind == O_FIG) return !strncmp(o->tok->s, "zero", 4);
     return 0;
@@ -1993,7 +2137,8 @@ static int at_operand(void)
         "is", "not", "up", "down", "delimited", "pointer", "overflow", "at", "next", "record",
         "key", "invalid", "advancing", "lines", "line", "page", "input", "output", "i-o",
         "extend", "lock", "rewind", "end-string", "returning", "reference", "content",
-        "exception", "end-call", NULL };
+        "exception", "end-call", "also", "when", "other", "tallying", "replacing", "converting",
+        "characters", "leading", "first", "initial", "true", "false", "any", NULL };
     for (int i = 0; clause[i]; i++) if (!strcmp(t->s, clause[i])) return 0;
     return 1;
 }
@@ -2104,8 +2249,13 @@ static void parse_display(void)
             emit_args(a, 2); emit_call("cob_display"); break;
         }
         case O_NUM: {  /* a numeric literal displays as written */
-            const char *txt = g_tok[g_tp - 1].s;
-            Arg a[2] = { arg_label(lit_label((unsigned char *)txt, (int)strlen(txt))), arg_imm((long)strlen(txt)) };
+            char txt[48]; int k = 0;
+            if (o.num.neg) txt[k++] = '-';
+            for (int i = 0; i < o.num.ndigits; i++) {
+                if (o.num.scale && i == o.num.ndigits - o.num.scale) txt[k++] = '.';
+                txt[k++] = o.num.digits[i];
+            }
+            Arg a[2] = { arg_label(lit_label((unsigned char *)txt, k)), arg_imm(k) };
             emit_args(a, 2); emit_call("cob_display"); break;
         }
         case O_FIG: case O_ALL: {
@@ -2153,6 +2303,25 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     int dnum = is_numeric_sym(d);
+
+    if (dst->rm || (src->kind == O_REF && src->ref.rm)) {
+        /* a reference-modified side is an alphanumeric of runtime extent */
+        if (src->kind == O_FIG || src->kind == O_ALL) {
+            Arg len = dst->rm_len ? arg_imm((long)dst->rm_len) : arg_rlen(dst);
+            if (src->kind == O_ALL && src->tok->len > 1) {
+                Arg b[4] = { arg_ref(dst), len, arg_label(lit_label((unsigned char *)src->tok->s, src->tok->len)), arg_imm(src->tok->len) };
+                emit_args(b, 4); emit_call("cob_fill_all"); return;
+            }
+            Arg a[3] = { arg_ref(dst), len, arg_imm(src->kind == O_ALL ? (unsigned char)src->tok->s[0] : fig_byte(src->tok->s)) };
+            emit_args(a, 3); emit_call("cob_fill"); return;
+        }
+        Arg a[4];
+        opnd_args(src, &a[0], &a[1], ref_static_len(dst) > 0 ? ref_static_len(dst) : 1, dnum && !dst->rm);
+        a[2] = arg_ref(dst);
+        a[3] = dst->rm ? (dst->rm_len ? arg_desc(str_desc((int)dst->rm_len)) : arg_rdesc(dst)) : arg_desc(sym_desc(d));
+        emit_args(a, 4); emit_call("cob_move");
+        return;
+    }
 
     if (!dnum) {
         switch (src->kind) {
@@ -2374,6 +2543,7 @@ static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)
         if (n >= max) die_at(cur()->line, "too many receiving items");
         parse_ref(&rs[n]);
         Sym *d = rs[n].sym;
+        if (rs[n].rm) die_at(rs[n].line, "a reference-modified item cannot be an arithmetic receiver");
         if (d->is_group || (d->pi.category != PIC_NUMERIC && !(edited_ok && d->pi.category == PIC_NUMERIC_EDITED)))
             die_at(rs[n].line, "'%s' is not numeric", d->name);
         rounded[n] = 0;
@@ -2641,14 +2811,19 @@ static Opnd expr_opnd(void)
     return o;
 }
 
+static void emit_expr_tokens(int s0, int s1)
+{
+    int save = g_tp;
+    g_tp = s0;
+    parse_expr();
+    if (g_tp != s1) die_at(g_tok[s0].line, "internal: expression re-parse drifted");
+    g_tp = save;
+}
+
 static void emit_push_opnd(Opnd *o)
 {
     if (o->kind != O_EXPR) { emit_push(o); return; }
-    int save = g_tp;
-    g_tp = o->e_start;
-    parse_expr();
-    if (g_tp != o->e_end) die_at(o->line, "internal: expression re-parse drifted");
-    g_tp = save;
+    emit_expr_tokens(o->e_start, o->e_end);
 }
 
 /* does the parenthesis at the cursor open a condition or an expression? */
@@ -3123,8 +3298,7 @@ static void parse_string(void)
         while (at_operand() || at_word("function")) {
             if (n >= MAXOPS) die_at(cur()->line, "too many STRING sources");
             parse_operand(&srcs[n]);
-            if (srcs[n].kind == O_FIG || srcs[n].kind == O_ALL || srcs[n].kind == O_EXPR)
-                die_at(srcs[n].line, "a STRING source must be an item or a literal");
+            if (srcs[n].kind == O_EXPR) die_at(srcs[n].line, "a STRING source must be an item, a literal or a figurative constant");
             has_delim[n] = 0; n++; pending++;
         }
         if (accept_word("delimited")) {
@@ -3139,11 +3313,14 @@ static void parse_string(void)
         break;
     }
     if (!n) die_at(cur()->line, "STRING needs a source");
-    for (int i = 0; i < n; i++) if (!has_delim[i]) die_at(srcs[i].line, "every STRING source needs DELIMITED BY");
+    /* DELIMITED BY is mandatory in the 1985 text; GnuCOBOL lets it be
+     * omitted and takes SIZE, and taskdt does exactly that (dialect.md) */
+    for (int i = 0; i < n; i++) if (!has_delim[i]) { memset(&delims[i], 0, sizeof delims[i]); delims[i].kind = O_ALL; has_delim[i] = 1; }
     expect_word("into");
     Ref dst; parse_ref(&dst);
     if (dst.sym->is_group || dst.sym->pi.category == PIC_NUMERIC)
         die_at(dst.line, "the STRING receiver must be an elementary alphanumeric item");
+    if (dst.rm) die_at(dst.line, "a reference-modified STRING receiver is not implemented");
     Ref ptr; int has_ptr = 0;
     if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; if (!is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item"); }
     else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
@@ -3161,12 +3338,20 @@ static void parse_string(void)
 
     for (int i = 0; i < n; i++) {
         Arg a[4]; Arg dd;
-        opnd_args(&srcs[i], &a[0], &dd, 0, 0);
-        a[1] = arg_imm(opnd_size(&srcs[i]));
+        if (srcs[i].kind == O_FIG) {
+            /* SPACE, ZERO, ...: a one-character source */
+            unsigned char c = (unsigned char)fig_byte(srcs[i].tok->s);
+            a[0] = arg_label(lit_label(&c, 1)); a[1] = arg_imm(1);
+        } else if (srcs[i].kind == O_ALL) {
+            a[0] = arg_label(lit_label((unsigned char *)srcs[i].tok->s, srcs[i].tok->len)); a[1] = arg_imm(srcs[i].tok->len);
+        } else {
+            opnd_args(&srcs[i], &a[0], &dd, 0, 0);
+            a[1] = arg_len(&srcs[i]);
+        }
         Opnd *d = &delims[i];
         if (d->kind == O_ALL) { a[2] = arg_imm(0); a[3] = arg_imm(0); }
         else if (d->kind == O_FIG) { unsigned char c = (unsigned char)fig_byte(d->tok->s); a[2] = arg_label(lit_label(&c, 1)); a[3] = arg_imm(1); }
-        else { Arg x; opnd_args(d, &a[2], &x, 0, 0); a[3] = arg_imm(opnd_size(d)); }
+        else { Arg x; opnd_args(d, &a[2], &x, 0, 0); a[3] = arg_len(d); }
         emit_args(a, 4);
         emit_call("cob_str_src");
     }
@@ -3399,6 +3584,187 @@ static void parse_generate(void)
     emit_report_group(r, g);
 }
 
+/* ---- EVALUATE ---------------------------------------------------------- */
+
+typedef struct { int kind; Opnd o; } Subject;      /* kind: 0 value, 1 TRUE, 2 FALSE */
+
+static Cond *cond_never(void)
+{
+    Opnd z, one; memset(&z, 0, sizeof z); memset(&one, 0, sizeof one);
+    z.kind = O_NUM; numlit_zero(&z.num); one.kind = O_NUM; numlit_from_int(&one.num, 1);
+    return cond_rel(&z, R_EQ, &one, 0);
+}
+
+static void parse_evaluate(void)
+{
+    Subject subj[8]; int ns = 0;
+    for (;;) {
+        if (ns >= 8) die_at(cur()->line, "too many EVALUATE subjects");
+        if (accept_word("true")) subj[ns].kind = 1;
+        else if (accept_word("false")) subj[ns].kind = 2;
+        else { subj[ns].kind = 0; subj[ns].o = parse_cond_operand(); }
+        ns++;
+        if (!accept_word("also")) break;
+    }
+    int Lend = new_label();
+    while (at_word("when")) {
+        Cond *group = NULL; int other = 0;
+        while (accept_word("when")) {
+            if (accept_word("other")) { other = 1; break; }
+            Cond *all = NULL;
+            for (int i = 0; i < ns; i++) {
+                if (i) expect_word("also");
+                Cond *c = NULL;
+                if (accept_word("any")) c = NULL;
+                else if (subj[i].kind) {
+                    if (at_word("true") || at_word("false")) {
+                        int t = at_word("true"); advance();
+                        if ((subj[i].kind == 1) != t) c = cond_never();
+                    } else {
+                        c = parse_cond();
+                        if (subj[i].kind == 2) { Cond *nn = cond_new(C_NOT); nn->a = c; c = nn; }
+                    }
+                } else {
+                    int neg = accept_word("not");
+                    Opnd x = parse_cond_operand();
+                    if (accept_word("thru") || accept_word("through")) {
+                        Opnd y = parse_cond_operand();
+                        c = cond_bin(C_AND, cond_rel(&subj[i].o, R_GE, &x, 0), cond_rel(&subj[i].o, R_LE, &y, 0));
+                    } else c = cond_rel(&subj[i].o, R_EQ, &x, 0);
+                    if (neg) { Cond *nn = cond_new(C_NOT); nn->a = c; c = nn; }
+                }
+                if (c) all = all ? cond_bin(C_AND, all, c) : c;
+            }
+            if (!all) { Cond *nn = cond_new(C_NOT); nn->a = cond_never(); all = nn; }   /* every ANY: always */
+            group = group ? cond_bin(C_OR, group, all) : all;
+        }
+        if (other) { parse_statements(); emit_jump(Lend); break; }
+        int Lnext = new_label();
+        cond_jump_false(group, Lnext);
+        parse_statements();
+        emit_jump(Lend);
+        emit_label(Lnext);
+    }
+    emit_label(Lend);
+    accept_word("end-evaluate");
+}
+
+/* ---- INSPECT ----------------------------------------------------------- */
+
+/* a pattern operand: address and length as Args */
+static void pattern_args(Opnd *o, Arg *addr, Arg *len)
+{
+    if (o->kind == O_FIG) { unsigned char c = (unsigned char)fig_byte(o->tok->s); *addr = arg_label(lit_label(&c, 1)); *len = arg_imm(1); return; }
+    Arg d; opnd_args(o, addr, &d, 0, 0);
+    *len = arg_len(o);
+}
+
+static Opnd ref_opnd(const Ref *r)
+{
+    Opnd o; memset(&o, 0, sizeof o);
+    o.kind = O_REF; o.ref = *r; o.line = r->line;
+    return o;
+}
+
+static void parse_inspect(void)
+{
+    Ref item; parse_ref(&item);
+    if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
+    Opnd itemo = ref_opnd(&item);
+    if (accept_word("converting")) die_at(cur()->line, "INSPECT CONVERTING is not implemented (after v1)");
+    int any = 0;
+    if (accept_word("tallying")) {
+        any = 1;
+        for (;;) {
+            Ref tally; parse_ref(&tally);
+            if (!is_int_item(tally.sym)) die_at(tally.line, "the INSPECT tally '%s' must be an integer item", tally.sym->name);
+            expect_word("for");
+            for (;;) {
+                int kind = 0; Opnd pat; memset(&pat, 0, sizeof pat);
+                if (accept_word("characters")) kind = 0;
+                else if (accept_word("all")) { kind = 1; parse_operand(&pat); }
+                else if (accept_word("leading")) { kind = 2; parse_operand(&pat); }
+                else die_at(cur()->line, "expected CHARACTERS, ALL or LEADING in INSPECT TALLYING");
+                if (at_word("before") || at_word("after")) die_at(cur()->line, "INSPECT ... BEFORE/AFTER INITIAL is not implemented");
+                Arg a[5];
+                a[0] = arg_ref(&item); a[1] = arg_len(&itemo); a[2] = arg_imm(kind);
+                if (kind) pattern_args(&pat, &a[3], &a[4]); else { a[3] = arg_imm(0); a[4] = arg_imm(0); }
+                emit_args(a, 5);
+                emit_call("cob_inspect_tally");
+                emit("\tstw sp+%d, r1", SLOT_C);
+                if (is_hot_int(tally.sym)) {
+                    emit_ref_addr(&tally, "r3");
+                    emit_load_int(tally.sym, "r3", "r1");
+                    emit("\tldw r2, sp+%d", SLOT_C);
+                    emit("\tadd r1, r1, r2");
+                    emit_trunc(tally.sym);
+                    emit_store_int(tally.sym, "r3", "r1");
+                } else {
+                    emit("\tldw r3, sp+%d", SLOT_C);
+                    emit("\tsrai r4, r3, 31");
+                    emit_li("r5", 0);
+                    emit_call("cob_push_lit");
+                    emit_top_op(&tally, "cob_top_addto", 0);
+                    emit_call("cob_drop");
+                }
+                if (!(at_word("characters") || at_word("all") || at_word("leading"))) break;
+            }
+            if (!at_operand() || at_word("replacing")) break;
+        }
+    }
+    if (accept_word("replacing")) {
+        any = 1;
+        for (;;) {
+            int kind = 0; Opnd pat, rep; memset(&pat, 0, sizeof pat); memset(&rep, 0, sizeof rep);
+            if (accept_word("characters")) { kind = 0; expect_word("by"); parse_operand(&rep); }
+            else {
+                if (accept_word("all")) kind = 1;
+                else if (accept_word("leading")) kind = 2;
+                else if (accept_word("first")) kind = 3;
+                else die_at(cur()->line, "expected CHARACTERS, ALL, LEADING or FIRST in INSPECT REPLACING");
+                parse_operand(&pat); expect_word("by"); parse_operand(&rep);
+                int pl = pat.kind == O_FIG ? 1 : opnd_size(&pat), rl = rep.kind == O_FIG ? 1 : opnd_size(&rep);
+                if (pl > 0 && rl > 0 && pl != rl) die_at(rep.line, "INSPECT REPLACING: the two operands must be the same length");
+            }
+            if (at_word("before") || at_word("after")) die_at(cur()->line, "INSPECT ... BEFORE/AFTER INITIAL is not implemented");
+            Arg a[6];
+            a[0] = arg_ref(&item); a[1] = arg_len(&itemo); a[2] = arg_imm(kind);
+            if (kind) pattern_args(&pat, &a[3], &a[4]); else { a[3] = arg_imm(0); a[4] = arg_imm(1); }
+            Arg rl; pattern_args(&rep, &a[5], &rl);
+            emit_args(a, 6);
+            emit_call("cob_inspect_replace");
+            if (!(at_word("characters") || at_word("all") || at_word("leading") || at_word("first"))) break;
+        }
+    }
+    if (!any) die_at(item.line, "INSPECT needs TALLYING or REPLACING");
+}
+
+/* ---- INITIALIZE -------------------------------------------------------- */
+
+static void parse_initialize(void)
+{
+    int n = 0;
+    while (at_operand()) {
+        Ref r; parse_ref(&r);
+        if (r.sym->is_cond) die_at(r.line, "INITIALIZE of a condition-name");
+        if (r.rm) die_at(r.line, "INITIALIZE of a reference-modified item is not implemented");
+        /* the template: the item's default initialisation, VALUEs ignored */
+        Sym tmp; memset(&tmp, 0, sizeof tmp);
+        tmp.image = xmalloc(r.sym->size); tmp.image_size = r.sym->size;
+        g_no_values = 1;
+        init_one(&tmp, sym_idx(r.sym), 0, 1);
+        g_no_values = 0;
+        Arg a[3] = { arg_ref(&r), arg_label(lit_label(tmp.image, r.sym->size)), arg_imm(r.sym->size) };
+        emit_args(a, 3);
+        emit_call("memcpy");
+        free(tmp.image);
+        n++;
+    }
+    if (!n) die_at(cur()->line, "INITIALIZE needs an item");
+    if (at_word("replacing")) die_at(cur()->line, "INITIALIZE ... REPLACING is not implemented");
+    if (at_word("with") || at_word("default")) die_at(cur()->line, "INITIALIZE WITH FILLER / DEFAULT is COBOL 2002");
+}
+
 /* ---- dispatch ---------------------------------------------------------- */
 
 static void parse_statement(void)
@@ -3425,6 +3791,9 @@ static void parse_statement(void)
     if (!strcmp(v, "call")) { advance(); parse_call(); return; }
     if (!strcmp(v, "initiate")) { advance(); parse_initiate(); return; }
     if (!strcmp(v, "accept")) { advance(); parse_accept(); return; }
+    if (!strcmp(v, "evaluate")) { advance(); parse_evaluate(); return; }
+    if (!strcmp(v, "inspect")) { advance(); parse_inspect(); return; }
+    if (!strcmp(v, "initialize")) { advance(); parse_initialize(); return; }
     if (!strcmp(v, "generate")) { advance(); parse_generate(); return; }
     if (!strcmp(v, "terminate")) { advance(); parse_terminate(); return; }
     if (!strcmp(v, "cancel")) {
@@ -3458,8 +3827,7 @@ static void parse_statement(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
-        { "evaluate", "stage 9" },
-        { "inspect", "stage 9" }, { "initialize", "stage 9" },
+
         { "unstring", "after v1" }, { "search", "after v1" }, { "sort", "after v1" },
         { "merge", "after v1" }, { "release", "after v1" }, { "return", "after v1" },
         { "use", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };

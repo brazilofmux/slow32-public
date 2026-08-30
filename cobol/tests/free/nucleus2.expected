@@ -1,0 +1,22 @@
+date
+file
+files
+main
+merit
+mid
+both
+six
+zeros=06 leading-a=01
+chars=12
+[A--b--c--   ]
+[............]
+[        ][0000][+0000][  00]
+[  ][00]
+[bcd][hij]
+[cd][def]
+abcXYfghij
+ab
+10 5 26
+[abc       ]
+padded
+[February, 9, 2026             ]

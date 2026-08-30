@@ -126,6 +126,14 @@ given, because majesty's `.prn` oracles were produced under it.
   'du_lineartofielded'` reaches C directly and `CALL 'c_lineartofielded'`
   reaches the COBOL unit of that `PROGRAM-ID`. `CANCEL` is accepted
   and does nothing. `EXIT PROGRAM` returns like `GOBACK`.
+- **`STRING` without `DELIMITED BY`**: the 1985 text requires the
+  phrase on every source; GnuCOBOL lets it be omitted and takes
+  `SIZE`, and `taskdt.cbl` writes it that way. Accepted, as `SIZE`.
+- **Intrinsic functions** (1989 amendment): `UPPER-CASE`,
+  `LOWER-CASE`, `LENGTH` (folded at compile time; a variable-length
+  reference modification is refused), `CURRENT-DATE` (the guest clock
+  through the emulator, local time as the guest libc gives it,
+  `YYYYMMDDhhmmsshh+hhmm`).
 - **`GOBACK`** is accepted (IBM's word, not in X3.23-1985 -- GnuCOBOL
   `-std=cobol85` refuses it; majesty uses it everywhere). In the main
   program it is `STOP RUN`.

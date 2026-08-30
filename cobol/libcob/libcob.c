@@ -13,7 +13,8 @@
  * sequential files, STRING, the case intrinsics.  Stage 5: indexed files
  * on the default path (docs/indexed.md).  Stage 7: Report Writer, the
  * cheap half (docs/report-writer.md).  Stage 8: SCREEN SECTION on the
- * term service (docs/screen.md).
+ * term service (docs/screen.md).  Stage 9: INSPECT, reference
+ * modification, CURRENT-DATE -- what menu and taskdt drag in.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 #include "cobrt.h"
 #include "cobedit.h"
 #include <term.h>
+#include <time.h>
 
 /* ---- output: DISPLAY goes to stdout, buffered by us ------------------ */
 
@@ -1239,4 +1241,93 @@ void cob_screen_accept(const cob_screen *s)
         free(ed[i]);
     }
     free(ed); free(idx);
+}
+
+/* ====================================================================== */
+/* Stage 9: INSPECT, reference modification, the clock                     */
+/* ====================================================================== */
+
+/* the integer value of the numeric stack's top; pops it */
+int cob_pop_int(void)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[--nsp];
+    long long v = a->v;
+    if (a->scale > 0) v /= pow10tab[a->scale];
+    return (int)v;
+}
+
+/* a descriptor for item(start:len): the base's category, the given
+ * length (0: to the end of the item).  Rotating buffers, like the
+ * intrinsic functions'. */
+static cob_desc rmdesc[8];
+static int rmrot;
+
+const cob_desc *cob_refmod_desc(const cob_desc *base, int start, int len)
+{
+    if (start < 1 || (unsigned)start > base->size) cob_fatal("reference modification: start is outside the item");
+    if (len == 0) len = (int)base->size - start + 1;
+    if (len < 1 || (unsigned)(start - 1 + len) > base->size) cob_fatal("reference modification: length is outside the item");
+    cob_desc *d = &rmdesc[rmrot++ & 7];
+    memset(d, 0, sizeof *d);
+    d->cat = (base->cat == COB_NUM && base->usage == COB_U_DISPLAY) || base->cat == COB_ALNUM || base->cat == COB_ALPHA ? COB_ALNUM : COB_ALNUM;
+    d->usage = COB_U_DISPLAY;
+    d->size = (unsigned)len;
+    return d;
+}
+
+int cob_refmod_len(const cob_desc *base, int start, int len)
+{
+    if (len == 0) len = (int)base->size - start + 1;
+    return len;
+}
+
+/* INSPECT ... TALLYING: kind 0 CHARACTERS, 1 ALL, 2 LEADING; the count
+ * of occurrences in item[0..n) (BEFORE/AFTER INITIAL narrow n and the
+ * start on the compiler side) */
+int cob_inspect_tally(const char *p, int n, int kind, const char *pat, int plen)
+{
+    int count = 0;
+    if (kind == 0) return n;
+    if (plen < 1 || plen > n) return 0;
+    for (int i = 0; i + plen <= n; ) {
+        if (!memcmp(p + i, pat, plen)) { count++; i += plen; }
+        else { if (kind == 2) break; i++; }
+    }
+    return count;
+}
+
+/* INSPECT ... REPLACING: kind 0 CHARACTERS, 1 ALL, 2 LEADING, 3 FIRST;
+ * pattern and replacement are the same length (the standard's rule) */
+void cob_inspect_replace(char *p, int n, int kind, const char *pat, int plen, const char *rep)
+{
+    if (kind == 0) { for (int i = 0; i < n; i++) p[i] = rep[0]; return; }
+    if (plen < 1 || plen > n) return;
+    for (int i = 0; i + plen <= n; ) {
+        if (!memcmp(p + i, pat, plen)) { memcpy(p + i, rep, plen); i += plen; if (kind == 3) return; }
+        else { if (kind == 2) break; i++; }
+    }
+}
+
+/* FUNCTION CURRENT-DATE: YYYYMMDDhhmmsshh followed by the offset from
+ * UTC as +hhmm / -hhmm (21 characters); the guest clock through the
+ * emulator, local time as the guest libc gives it */
+char *cob_fn_current_date(void)
+{
+    char *b = fn_buffer(21);
+    time_t now = time(0);
+    struct tm *t = localtime(&now);
+    int y = t->tm_year + 1900, mo = t->tm_mon + 1, d = t->tm_mday;
+    long off = t->tm_gmtoff;
+    int neg = off < 0; if (neg) off = -off;
+    int oh = (int)(off / 3600), om = (int)((off % 3600) / 60);
+    char tmp[32];
+    int n = 0;
+    #define PUT2(v) do { tmp[n++] = (char)('0' + (v) / 10 % 10); tmp[n++] = (char)('0' + (v) % 10); } while (0)
+    tmp[n++] = (char)('0' + y / 1000 % 10); tmp[n++] = (char)('0' + y / 100 % 10); PUT2(y % 100);
+    PUT2(mo); PUT2(d); PUT2(t->tm_hour); PUT2(t->tm_min); PUT2(t->tm_sec); PUT2(0);
+    tmp[n++] = neg ? '-' : '+'; PUT2(oh); PUT2(om);
+    #undef PUT2
+    memcpy(b, tmp, 21);
+    return b;
 }

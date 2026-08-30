@@ -283,7 +283,7 @@ Enter as submit, numeric anchoring, AUTO, SECURE, underline / reverse
 video) is written in `screen.md`; numeric anchoring, SECURE and
 underline are not there yet.
 
-## Stage 9 — the menu, and what it drags in **L**
+## Stage 9 — the menu, and what it drags in **L** — DONE 2026-08-29
 
 `menu.cbl` looks like a screen program. It is not small: it `CALL`s
 `taskdt` (after the rewrite), and `taskdt.cbl` uses, on the gate
@@ -308,6 +308,29 @@ which is why they stay when `FUNCTION-ID` goes. Full-width
 still wait.
 
 Done: `menu.cbl` runs, `DT` shows today's date.
+
+What landed: `EVALUATE` (several subjects with `ALSO`, `TRUE`/`FALSE`
+subjects with condition objects, `THRU`, `NOT`, `ANY`, stacked
+`WHEN`s, `WHEN OTHER`, expressions as subjects, nested), `INSPECT
+TALLYING` (`CHARACTERS` / `ALL` / `LEADING`, several tallies) and
+`REPLACING` (`CHARACTERS` / `ALL` / `LEADING` / `FIRST`),
+`INITIALIZE` (a template of the item's default initialisation with
+`VALUE`s ignored, `memcpy`'d -- tables and groups included),
+reference modification `item(start:len)` with literal or expression
+bounds and the length omitted, usable as sender, receiver and
+`STRING` source (a runtime descriptor of the slice), `FUNCTION
+LENGTH` folded at compile time, `FUNCTION CURRENT-DATE` from the
+guest clock, figurative `STRING` sources, `DELIMITED BY` defaulting
+to `SIZE`. Staged operands now nest (an expression inside a
+reference modification inside a `STRING` source stages above its
+caller's slots). `menu.cbl` + `taskdt.cbl` + `clinkages.cbl` +
+`dateutil.c` compile unchanged; with `DT`, Enter, `LO` typed, the
+date page paints today's date -- `Saturday, August 29, 2026` -- under
+`slow32-fast` and `slow32-dbt`, and `LO` leaves cleanly. Tests:
+`nucleus2` (all of the above with taskdt's date build on a fixed
+stamp, oracle-agreed) and `curdate` (the clock's shape). Not in:
+`INSPECT ... BEFORE/AFTER INITIAL`, `CONVERTING`, `INITIALIZE
+REPLACING`, `LENGTH` of a variable-length slice.
 
 ## Stage 10 — sequential V / RDW **M**
 
