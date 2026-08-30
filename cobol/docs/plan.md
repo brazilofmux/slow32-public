@@ -943,6 +943,21 @@ the program prints; ccvs-run.sh now scores it the same way.
 free/grpusage, oracle agreeing; NC131A, NC135A, NC245A match; the
 suite 269 of 303 compile, 5357 of 5399 pass, none fail, 267 match.
 
+## Stage 41 — VARYING ... AFTER at 85 width **S** — DONE 2026-08-31
+
+The limit of three levels was an array; it is eight. The fixture for
+four levels then disagreed with GnuCOBOL twice, and the text was with
+GnuCOBOL both times: with TEST BEFORE an inner item is set back to its
+FROM when its condition comes true and the outer item is augmented
+(6.20.4), so the inner items read FROM at the end -- `emit_varying`
+now resets an inner level as its loop ends; and WITH TEST AFTER across
+levels, which had been refused, follows the figure for two
+identifiers: the innermost condition after each body, then outward,
+a false outer condition sending every inner item back to FROM. NC201A
+had been the program refused for that; free/vary4, oracle agreeing;
+NC201A, NC233A and NC243A match; the suite 272 of 303 compile, 5447
+of 5488 pass, none fail, 270 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

@@ -222,7 +222,7 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **5357 of 5399 tests pass, none fail, 267
+them by their own reports: **5447 of 5488 tests pass, none fail, 270
 programs match GnuCOBOL's tally exactly** (IC and RW complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
@@ -243,7 +243,9 @@ non-integer numeric MOVEd to an alphanumeric item (2), ~~`REMAINDER`
 with a ROUNDED quotient~~ (done, with SIZE ERROR and an edited
 receiver: NC203A and NC251A match), ~~RENAMES~~ (done: NC252A matches),
 ~~`USAGE` on a group~~ (done), and NC114M's `0` statement), ~~`USAGE INDEX` on a
-group~~ (done: NC131A, NC135A match), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
+group~~ (done: NC131A, NC135A match), ~~more than three `VARYING ...
+AFTER` levels~~ (done, with WITH TEST AFTER across levels: NC201A,
+NC233A, NC243A match), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01
 report group (2), `EXTERNAL` (2), a multi-character `CLASS` literal
 (2), `CURRENCY SIGN` (1). Then the real gate: run each compiled

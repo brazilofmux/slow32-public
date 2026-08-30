@@ -308,6 +308,16 @@ given, because majesty's `.prn` oracles were produced under it.
   subordinate saying otherwise is refused, as GnuCOBOL refuses it.
   NC131A, NC135A and NC245A match GnuCOBOL (the runner now scores
   NC135A's printed 20x15 table as report.pl does).
+- **`PERFORM VARYING ... AFTER` at 85 width** (Stage 41): up to eight
+  levels (the text sets no limit; NC233A and NC243A nest four). With
+  TEST BEFORE an inner item goes back to its FROM when its condition is
+  true and the outer one is augmented, so every inner item reads FROM
+  at the end. `WITH TEST AFTER` across levels follows the text's figure
+  (6.20.4): after each body the innermost condition is tested -- false:
+  augment and run again; true: test the next outer -- false: every inner
+  item back to FROM, the outer augmented, run again; true: outward
+  again; the items keep the values at which their conditions came true.
+  NC201A, NC233A and NC243A match GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

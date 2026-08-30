@@ -4313,6 +4313,33 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
     emit_add_to_ref(&x->by, &x->var);
     emit_jump(Ltop);
     emit_label(Lend);
+    /* an inner item goes back to its FROM when its condition is true and
+     * the outer one is augmented (6.20.4), so it reads FROM at the end */
+    if (level > 0) emit_move(&x->from, &x->var);
+}
+
+/* VARYING ... AFTER ... WITH TEST AFTER (X3.23 6.20.4, the figure for
+ * two identifiers): every item takes its FROM once; after each execution
+ * of the body the innermost condition is tested -- false: its item is
+ * augmented and the body runs again; true: the next outer condition is
+ * tested -- false: every inner item goes back to its FROM, the outer is
+ * augmented and the body runs again; true: outward again, the first
+ * condition's truth ending the statement.  The items keep the values at
+ * which their conditions came true. */
+static void emit_varying_test_after(Vary *v, int nv, Body *body)
+{
+    for (int k = 0; k < nv; k++) emit_move(&v[k].from, &v[k].var);
+    int Ltop = new_label();
+    emit_label(Ltop);
+    emit_body(body);
+    for (int k = nv - 1; k >= 0; k--) {
+        int Ldone = new_label();
+        cond_jump_true(v[k].until, Ldone);
+        for (int j = k + 1; j < nv; j++) emit_move(&v[j].from, &v[j].var);
+        emit_add_to_ref(&v[k].by, &v[k].var);
+        emit_jump(Ltop);
+        emit_label(Ldone);
+    }
 }
 
 /* is the operand at the cursor followed by TIMES?  (a data-name may carry
@@ -4353,9 +4380,9 @@ static void parse_perform(void)
         if (test_after) cond_jump_false(c, Ltop); else emit_jump(Ltop);
         emit_label(Lend);
     } else if (accept_word("varying")) {
-        Vary v[3]; int nv = 0;
+        Vary v[8]; int nv = 0;                 /* the text sets no limit; NC233A/NC243A nest four */
         for (;;) {
-            if (nv >= 3) die_at(cur()->line, "more than three VARYING/AFTER levels are not implemented");
+            if (nv >= 8) die_at(cur()->line, "more than eight VARYING/AFTER levels");
             parse_ref(&v[nv].var);
             if (!is_numeric_sym(v[nv].var.sym)) die_at(v[nv].var.line, "the VARYING item must be numeric");
             expect_word("from"); parse_operand(&v[nv].from); check_numeric_opnd(&v[nv].from);
@@ -4364,8 +4391,8 @@ static void parse_perform(void)
             nv++;
             if (!accept_word("after")) break;
         }
-        if (test_after && nv > 1) die_at(line, "WITH TEST AFTER together with AFTER is not implemented yet");
-        emit_varying(v, nv, 0, &body, test_after);
+        if (test_after && nv > 1) emit_varying_test_after(v, nv, &body);
+        else emit_varying(v, nv, 0, &body, test_after);
     } else if (at_operand() && times_follows()) {
         Opnd n; parse_operand(&n); check_numeric_opnd(&n);
         expect_word("times");
