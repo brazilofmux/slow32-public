@@ -931,6 +931,18 @@ stored digits. free/renames, oracle agreeing (GnuCOBOL wants the
 repeated names qualified; ours need not); NC252A matches; the suite
 266 of 303 compile, 5311 of 5353 pass, none fail, 263 match.
 
+## Stage 40 — USAGE on a group **S** — DONE 2026-08-31
+
+`build_tree`'s second pass hands a group's USAGE down to each child
+that has none, before the children are finished, so `01 G USAGE COMP`
+lays its pictures out binary and `01 G USAGE IS INDEX` makes
+picture-less children index items (NC131A, NC135A); a child that
+contradicts the group is refused, as GnuCOBOL refuses it. NC135A's
+eighth "test" turned out to be report.pl inspecting the 20x15 table
+the program prints; ccvs-run.sh now scores it the same way.
+free/grpusage, oracle agreeing; NC131A, NC135A, NC245A match; the
+suite 269 of 303 compile, 5357 of 5399 pass, none fail, 267 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

@@ -1475,8 +1475,17 @@ static void build_tree(void)
         Sym *s = &g_sym[i];
         if (s->is_cond || s->is_index || s->is_rename) continue;
         if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
-        if (s->is_group && s->usage != U_DISPLAY && s->has_usage)
-            die_at(s->line, "USAGE on the group '%s' is not implemented yet", s->name);
+        if (s->is_group && s->has_usage) {
+            /* USAGE on a group is every subordinate's that does not say
+             * otherwise (X3.23 5.3.x); the children follow in the table, so
+             * they are finished after this with the usage in place */
+            for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+                if (g_sym[c].is_cond) continue;
+                if (!g_sym[c].has_usage) { g_sym[c].usage = s->usage; g_sym[c].has_usage = 1; }
+                else if (g_sym[c].usage != s->usage)
+                    die_at(g_sym[c].line, "USAGE of '%s' contradicts the USAGE of its group '%s'", g_sym[c].name, s->name);
+            }
+        }
         if (!s->is_group) sym_finish(s);
     }
     /* level 88 parents: the item they follow; a 88 under an 88 shares it */

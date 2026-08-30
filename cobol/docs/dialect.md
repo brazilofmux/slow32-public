@@ -302,6 +302,12 @@ given, because majesty's `.prn` oracles were produced under it.
   overflow test and truncation of a numeric item with P positions are
   on its *stored* digits (`S99P` holds 2), so the descriptor of any
   item whose picture has P now carries the picture.
+- **`USAGE` on a group** (Stage 40) is every subordinate's that does not
+  say otherwise -- `01 G USAGE COMP` makes its pictures binary, `01 G
+  USAGE IS INDEX` makes its picture-less children index items -- and a
+  subordinate saying otherwise is refused, as GnuCOBOL refuses it.
+  NC131A, NC135A and NC245A match GnuCOBOL (the runner now scores
+  NC135A's printed 20x15 table as report.pl does).
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

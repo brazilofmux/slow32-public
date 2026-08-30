@@ -94,6 +94,13 @@ for m in $MODULES; do
                 END { printf "pass=%d total=%d fail=%d del=%d summary=%d\n", pass, total, fail, del, summary }' "$rep")"
         fi
         case "$name" in NC110M|NC214M) [ "$rc" = 0 ] && { pass=1; total=1; summary=1; } ;; esac
+        # NC135A: report.pl reads the 20x15 table the program prints (001 to 300
+        # in order) and counts it as one more pass, or a failure
+        if [ "$name" = NC135A ] && [ -f "$rep" ]; then
+            eval "$(awk '/^   ([0-9]+  )+/ { line = $0; while (match(line, /[0-9]+/)) { seq++; v = substr(line, RSTART, RLENGTH) + 0; line = substr(line, RSTART + RLENGTH); if (seq != v) { bad = 1; exit } if (seq == 300) ok = 1 } }
+                          END { printf "tp=%d tf=%d\n", ok ? 1 : 0, bad ? 1 : 0 }' "$rep")"
+            pass=$((pass + tp)); fail=$((fail + tf))
+        fi
         [ "$summary" = 1 ] && [ "$total" = 0 ] && { pass=1; total=1; }     # "000 OF 000 TESTS": the run itself is the test
         status=""
         # a program with no summary that GnuCOBOL's tally also scores 0 of 0 is fine when it exits 0
