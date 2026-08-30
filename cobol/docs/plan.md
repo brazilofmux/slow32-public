@@ -687,6 +687,28 @@ grouping, floating `-`, currency, de-editing, COMPUTE with `0,25`,
 DISPLAY of `3,75`), oracle agreeing; SM 13 of 13 match GnuCOBOL; the
 suite 218 of 303 compile, 4121 of 4158 pass, none fail, 215 match.
 
+## Stage 28 — CALL identifier, ON EXCEPTION, CANCEL **M** — DONE 2026-08-31
+
+The IC module. First a runner finding: report.pl compiles `IC/lib`
+(the CALLed subprograms) before the mains and ccvs-run.sh never did,
+so every IC program failed at the link and the histogram bin read as
+"nested programs" -- building `lib/` once per module and linking it
+in made IC 0 → 11 with no compiler change. Then the language: every
+unit emits a registration stub in `.init_array` (runtime/start.c runs
+them before main) giving libcob its PROGRAM-ID, entry and a CANCEL
+routine; `CALL identifier` resolves through that registry into r12
+(callee-saved, unused by the compiler) and `jalr`s; `[NOT] [ON]
+EXCEPTION|OVERFLOW` is the lookup failing, so a literal CALL with the
+clause is routed through the registry too; `CANCEL` copies each
+WORKING-STORAGE record's initial image (kept in `.rodata`) back over
+it, which is what IC203A's "SET TO INITIAL STATE" tests measure. A
+subtlety on the way: `ADD 2 TO X NOT ON EXCEPTION` inside a CALL's
+branch -- the arithmetic clause parser must claim `NOT` only before
+`[ON] SIZE`. free/dyncall (oracle agreeing, after two GnuCOBOL-isms
+were written out of the fixture: DISPLAY's own 2002 exception clause,
+case-sensitive names); IC 16 of 25, 125 of 125, all matching; the
+suite 233 of 303 compile, 4245 of 4282 pass, none fail, 230 match.
+
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
 step on SLOW-32**: the charts, the journal pipeline, the balances

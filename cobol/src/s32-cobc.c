@@ -3276,8 +3276,11 @@ static void parse_move(void)
  * decides the store options, so look before emitting the stores */
 static int at_size_error_clause(void)
 {
-    if (at_word("on") || at_word("size")) return 1;
-    return at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "size"));
+    /* ON EXCEPTION after an arithmetic statement inside a CALL's clause
+     * belongs to the CALL: only ON SIZE / SIZE is ours */
+    if (at_word("size")) return 1;
+    if (at_word("on")) return is_word(peek(1), "size");
+    return at_word("not") && (is_word(peek(1), "size") || (is_word(peek(1), "on") && is_word(peek(2), "size")));
 }
 
 static void accept_size_error_words(void)
@@ -3292,10 +3295,10 @@ static void parse_size_error_clauses(int size_err, const char *end_word)
         int Lok = new_label(), Lend = new_label();
         emit("\tldw r1, sp+%d", SLOT_B);
         emit("\tbeq r1, r0, .L%d", Lok);
-        if (at_word("on") || at_word("size")) { accept_size_error_words(); parse_statements(); }
+        if (at_word("size") || (at_word("on") && is_word(peek(1), "size"))) { accept_size_error_words(); parse_statements(); }
         emit_jump(Lend);
         emit_label(Lok);
-        if (accept_word("not")) { accept_size_error_words(); parse_statements(); }
+        if (at_size_error_clause() && accept_word("not")) { accept_size_error_words(); parse_statements(); }
         emit_label(Lend);
     }
     accept_word(end_word);
@@ -4542,13 +4545,17 @@ static void parse_call(void)
 {
     int line = cur()->line;
     Tok *t = cur();
-    if (t->kind != T_STR) {
-        if (t->kind == T_WORD) die_at(line, "CALL of an identifier (dynamic CALL) is not implemented; CALL a literal");
-        die_at(line, "expected a program-name literal after CALL");
-    }
-    char name[128]; snprintf(name, sizeof name, "%.*s", t->len > 120 ? 120 : t->len, t->s);
-    for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
-    advance();
+    char name[128]; Ref target; int dynamic = 0;
+    if (t->kind == T_STR) {
+        snprintf(name, sizeof name, "%.*s", t->len > 120 ? 120 : t->len, t->s);
+        for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
+        advance();
+    } else if (t->kind == T_WORD) {
+        /* CALL identifier: the item names the program; resolved at run
+         * time against the registry every unit joins at start-up */
+        parse_ref(&target); dynamic = 1;
+        if (target.sym->is_cond) die_at(line, "CALL: a condition-name cannot name a program");
+    } else die_at(line, "expected a program-name literal or an identifier after CALL");
     Arg a[8]; Opnd ops[8]; int n = 0;
     if (accept_word("using")) {
         int mode = 0;               /* 0 reference, 1 content, 2 value */
@@ -4591,10 +4598,29 @@ static void parse_call(void)
         parse_ref(&ret); has_ret = 1;
         if (!is_int_item(ret.sym)) die_at(ret.line, "RETURNING '%s' must be an integer item (the C ABI returns a word)", ret.sym->name);
     }
-    if (at_word("on") || at_word("exception") || at_word("overflow") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "exception"))))
-        die_at(cur()->line, "CALL ... ON EXCEPTION is not implemented (every CALL is resolved by the linker)");
+    /* [ON] EXCEPTION|OVERFLOW ... [NOT [ON] EXCEPTION|OVERFLOW ...]: the
+     * exception is the program not being in this executable.  A literal
+     * CALL with the clause goes through the registry too, so the link
+     * does not demand the program; without it, the linker resolves it. */
+    int has_clause = at_word("on") || at_word("exception") || at_word("overflow") ||
+                     (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "exception") || is_word(peek(1), "overflow")));
+    int Lcall = new_label(), Lafter = new_label();
+    if (dynamic || has_clause) {
+        if (dynamic) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
+        else { emit_la("r3", lit_label((const unsigned char *)t->s, t->len)); emit_li("r4", t->len); }
+        emit_li("r5", !has_clause);                     /* no clause: the runtime stops on a missing program */
+        emit_call("cob_resolve");
+        emit("\tadd r12, r0, r1");                      /* callee-saved; the compiler uses no other of r12-r28 */
+        if (has_clause) {
+            emit("\tbne r12, r0, .L%d", Lcall);
+            emit_li("r1", 1); emit("\tstw sp+%d, r1", SLOT_C);
+            emit_jump(Lafter);
+            emit_label(Lcall);
+        }
+    }
     emit_args(a, n);
-    emit("\tjal r31, %s", link_name(name));
+    if (dynamic || has_clause) emit("\tjalr r31, r12, 0");
+    else emit("\tjal r31, %s", link_name(name));
     if (has_ret) {
         if (is_hot_int(ret.sym)) {
             emit("\tstw sp+%d, r1", SLOT_C);
@@ -4608,6 +4634,29 @@ static void parse_call(void)
             emit("\tldw r5, sp+%d", SLOT_C);
             emit_call("cob_store_int");
         }
+    }
+    if (has_clause) {
+        emit("\tstw sp+%d, r0", SLOT_C);
+        emit_label(Lafter);
+        int Lend = new_label();
+        if (at_word("on") || at_word("exception") || at_word("overflow")) {
+            accept_word("on");
+            if (!accept_word("exception") && !accept_word("overflow")) die_at(cur()->line, "expected EXCEPTION or OVERFLOW after ON");
+            int Lnot = new_label();
+            emit("\tldw r1, sp+%d", SLOT_C);
+            emit("\tbeq r1, r0, .L%d", Lnot);
+            parse_statements();
+            emit_jump(Lend);
+            emit_label(Lnot);
+        }
+        if (at_word("not")) {
+            advance(); accept_word("on");
+            if (!accept_word("exception") && !accept_word("overflow")) die_at(cur()->line, "expected EXCEPTION or OVERFLOW after NOT");
+            emit("\tldw r1, sp+%d", SLOT_C);
+            emit("\tbne r1, r0, .L%d", Lend);
+            parse_statements();
+        }
+        emit_label(Lend);
     }
     accept_word("end-call");
 }
@@ -5090,9 +5139,14 @@ static void parse_statement(void)
     if (!strcmp(v, "generate")) { advance(); parse_generate(); return; }
     if (!strcmp(v, "terminate")) { advance(); parse_terminate(); return; }
     if (!strcmp(v, "cancel")) {
-        /* everything is linked statically; there is nothing to release */
+        /* nothing to release -- the program is linked in -- but its next
+         * CALL finds it in its initial state: the registry's cancel routine */
         advance();
-        while (cur()->kind == T_STR || (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s))) advance();
+        while (cur()->kind == T_STR || (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s))) {
+            if (cur()->kind == T_STR) { emit_la("r3", lit_label((const unsigned char *)cur()->s, cur()->len)); emit_li("r4", cur()->len); advance(); }
+            else { Ref r; parse_ref(&r); emit_ref_addr(&r, "r3"); emit_li("r4", r.sym->size); }
+            emit_call("cob_cancel");
+        }
         return;
     }
     if (!strcmp(v, "if")) { advance(); parse_if(); return; }
@@ -5241,6 +5295,46 @@ static void parse_procedure_division(void)
     emit("\tldw lr, sp+0");
     emit("\taddi sp, sp, %d", FRAME);
     emit("\tjalr r0, r31, 0");
+
+    /* the unit joins the program registry at start-up (CALL identifier) */
+    {
+        char nm[130]; int nl = (int)strlen(g_progid);
+        memcpy(nm, g_progid, (size_t)nl); nm[nl] = 0;
+        const char *nlab = lit_label((const unsigned char *)nm, nl + 1);
+        /* CANCEL: every WORKING-STORAGE record back to its initial state */
+        emit("\t.p2align 2");
+        emit(".Lcan%d:", g_unit);
+        emit("\taddi sp, sp, -8");
+        emit("\tstw sp+0, lr");
+        for (int i = 0; i < g_nsym; i++) {
+            Sym *s = &g_sym[i];
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->is_linkage) continue;
+            emit_la("r3", s->label);
+            char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
+            emit_la("r4", il);
+            emit_li("r5", s->image_size);
+            emit_call("memcpy");
+        }
+        emit("\tldw lr, sp+0");
+        emit("\taddi sp, sp, 8");
+        emit("\tjalr r0, r31, 0");
+        emit("\t.p2align 2");
+        emit(".Lreg%d:", g_unit);
+        emit("\taddi sp, sp, -8");
+        emit("\tstw sp+0, lr");
+        emit_la("r3", nlab);
+        emit_la("r4", entry);
+        char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit);
+        emit_la("r5", cl);
+        emit_call("cob_register");
+        emit("\tldw lr, sp+0");
+        emit("\taddi sp, sp, 8");
+        emit("\tjalr r0, r31, 0");
+        emit("\t.section .init_array");
+        emit("\t.p2align 2");
+        emit("\t.word .Lreg%d", g_unit);
+        emit("\t.text");
+    }
 
     if (g_unit == 0 && !g_module) {
         /* the first unit of an executable is the main program */
@@ -6081,6 +6175,12 @@ static void emit_unit_data(void)
         emit("\t.p2align 3");
         emit("%s:\t# %02d %s (%d bytes)", s->label, s->level, s->name, s->image_size);
         emit_bytes(s->image, s->image_size);
+        /* the record's initial state, for CANCEL */
+        emit("\t.section .rodata");
+        emit("\t.p2align 3");
+        emit("%s_i:", s->label);
+        emit_bytes(s->image, s->image_size);
+        emit("\t.data");
     }
     for (int i = 0; i < g_nfile; i++) {
         File *f = &g_files[i];

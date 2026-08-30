@@ -1,0 +1,13 @@
+twice: call 1
+after TWICE: 0010
+twice: call 2
+called again: 0020
+flag P
+no such program
+flag E
+twice: call 3
+twice: call 1
+after cancel: 0080
+literal: no such program
+twice: call 2
+end 0160

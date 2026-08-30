@@ -156,6 +156,18 @@ given, because majesty's `.prn` oracles were produced under it.
   dropped afterwards (there is no `WITH DEBUGGING MODE`) -- a `COPY`
   on a debugging line stays a comment. Nesting is limited to 8 deep;
   a program may expand any number of copybooks (SM101A has 116).
+- **`CALL identifier`** (Stage 28): every unit registers its
+  PROGRAM-ID and entry (and a CANCEL routine) from `.init_array`
+  before `main`, so a name held in a data item is resolved at run
+  time against every program linked into the executable, trailing
+  spaces trimmed, case folded (the static link folds too; GnuCOBOL's
+  dynamic lookup is case-sensitive -- docs/oracles.md). A name not in
+  the executable stops the run unless the CALL has **`[ON]
+  EXCEPTION|OVERFLOW` / `NOT [ON] EXCEPTION`**, which is the only
+  exception there is; a literal CALL with the clause goes through the
+  registry too, so the link does not demand the program. **`CANCEL`**
+  puts every WORKING-STORAGE record of the program back to its initial
+  state (an image kept in `.rodata`); open files are not closed by it.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "cobrt.h"
 #include "cobedit.h"
 #include <term.h>
@@ -383,6 +384,44 @@ void cob_fill_all(void *dst, int n, const char *lit, int len)
 /* PROGRAM COLLATING SEQUENCE: the rank of each character, or native order */
 static const unsigned char *cob_collating;
 const unsigned char *cob_set_collating(const unsigned char *t) { const unsigned char *old = cob_collating; cob_collating = t; return old; }
+
+/* The program registry: every unit registers its PROGRAM-ID and entry
+ * from .init_array before main; CALL identifier looks the name up. */
+static struct { const char *name; void *fn; void (*cancel)(void); } cob_progs[256];
+static int cob_nprogs;
+void cob_register(const char *name, void *fn, void (*cancel)(void))
+{
+    if (cob_nprogs == 256) cob_fatal("more than 256 programs in one executable");
+    cob_progs[cob_nprogs].name = name; cob_progs[cob_nprogs].fn = fn; cob_progs[cob_nprogs].cancel = cancel; cob_nprogs++;
+}
+static int prog_index(const unsigned char *p, int len)
+{
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == 0)) len--;
+    for (int i = 0; i < cob_nprogs; i++) {
+        const char *n = cob_progs[i].name; int k = 0;
+        while (k < len && n[k] && tolower((unsigned char)n[k]) == tolower(p[k])) k++;
+        if (k == len && !n[k]) return i;
+    }
+    return -1;
+}
+/* CANCEL: the program's WORKING-STORAGE back to its initial state; a
+ * name that is not a program here is ignored, as GnuCOBOL does */
+void cob_cancel(const unsigned char *p, int len)
+{
+    int i = prog_index(p, len);
+    if (i >= 0 && cob_progs[i].cancel) cob_progs[i].cancel();
+}
+void *cob_resolve(const unsigned char *p, int len, int must)
+{
+    int i = prog_index(p, len);
+    if (i >= 0) return cob_progs[i].fn;
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == 0)) len--;
+    if (must) {
+        char msg[200]; snprintf(msg, sizeof msg, "CALL: the program '%.*s' is not in this executable", len > 120 ? 120 : len, (const char *)p);
+        cob_fatal(msg);
+    }
+    return 0;
+}
 
 /* DECIMAL-POINT IS COMMA: the program's own; a called program's is restored on its exit */
 int cob_dp_comma;

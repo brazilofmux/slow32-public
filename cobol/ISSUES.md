@@ -175,6 +175,8 @@ Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
   by a `tapemgr` round trip on every V file the tests write.
 - An over-long LINE SEQUENTIAL record → 04, the rest of the line
   dropped (GnuCOBOL 4 splits it into two records with 06).
+- `CALL` by name folds case (`'twice'` finds `TWICE`), as the static
+  link does; GnuCOBOL's dynamic lookup is case-sensitive.
 
 ## D. Harness and infrastructure
 
@@ -215,15 +217,18 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **4121 of 4158 tests pass, none fail, 215
+them by their own reports: **4245 of 4282 tests pass, none fail, 230
 programs match GnuCOBOL's tally exactly** (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
-made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13). The
+made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
+the runner not building `lib/`, then `CALL identifier`/`ON
+EXCEPTION`/`CANCEL` -- IC 16 of 25). The
 remaining bins, largest first, each a
 work item: ~~`ALTERNATE RECORD KEY`~~ (done), ~~`LINAGE`~~ (done),
-~~`COPY ... REPLACING`~~ (done), an ODO table nested below a direct child (4),
-`INSPECT ... BEFORE/AFTER INITIAL` (4), `CALL identifier` (4; needs a
-program registry), nested programs (3), alphanumeric-edited pictures
+~~`COPY ... REPLACING`~~ (done), ~~`CALL identifier`~~ (done), an ODO
+table nested below a direct child (4),
+`INSPECT ... BEFORE/AFTER INITIAL` (4), nested programs (IC 4), `EXTERNAL`
+(IC 3), `BY CONTENT` (IC 2), alphanumeric-edited pictures
 with A/9 mixed (3) and `;` in a picture (3), `USAGE INDEX` on a
 group (2), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01
