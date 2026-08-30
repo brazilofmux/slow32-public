@@ -883,10 +883,23 @@ static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
     int neg = n->neg && pi->is_signed;
 
     switch (s->usage) {
-    case U_DISPLAY:
-        memcpy(p, d, digits);
-        if (neg) p[digits - 1] = (unsigned char)(d[digits - 1] - '0' + 'p');
+    case U_DISPLAY: {
+        /* the stored digits: all of them, or -- with P in the picture --
+         * the last `bytes` (leading P) or the first `bytes` (trailing P);
+         * then the sign where the SIGN clause put it */
+        int stored = pi->bytes;
+        const char *src = d;
+        if (stored < digits) src = scale < 0 ? d : d + (digits - stored);
+        unsigned char *q = p;
+        if (s->sign_sep && s->sign_lead) { *q++ = neg ? '-' : '+'; }
+        memcpy(q, src, stored);
+        if (s->sign_sep && !s->sign_lead) q[stored] = neg ? '-' : '+';
+        else if (neg && !s->sign_sep) {
+            int k = s->sign_lead ? 0 : stored - 1;
+            q[k] = (unsigned char)(q[k] - '0' + 'p');
+        }
         break;
+    }
     case U_PACKED: {
         int bytes = s->size;
         memset(p, 0, bytes);
@@ -1267,7 +1280,10 @@ static void init_one(Sym *rec, int si, int base, int defaults)
     int numeric = is_numeric_sym(s);
     if (defaults) {
         if (s->usage == U_DISPLAY && !numeric) memset(p, ' ', s->size);
-        else if (s->usage == U_DISPLAY) memset(p, '0', s->size);
+        else if (s->usage == U_DISPLAY) {
+            memset(p, '0', s->size);
+            if (s->sign_sep) p[s->sign_lead ? 0 : s->size - 1] = '+';       /* a separate sign of zero */
+        }
         else if (s->usage == U_PACKED) { NumLit z; numlit_zero(&z); store_numeric(s, &z, p, s->line); }
         else memset(p, 0, s->size);
     }
@@ -4683,7 +4699,7 @@ static void parse_search(void)
     /* no WHEN held: step and go round */
     Opnd step; memset(&step, 0, sizeof step); step.kind = O_NUM; numlit_from_int(&step.num, 1); step.line = t.line;
     emit_add_to_ref(&step, &ixr);
-    if (has_vary) emit_add_to_ref(&step, &vary);
+    if (has_vary && vary.sym != ixr.sym) emit_add_to_ref(&step, &vary);   /* VARYING the table's own index: once */
     emit_jump(Ltop);
 
     /* AT END */

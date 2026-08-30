@@ -245,7 +245,8 @@ void cob_display_field(const void *vp, const cob_desc *d)
 {
     const unsigned char *p = vp;
     if (d->cat != COB_NUM) { out_bytes((const char *)p, (int)d->size); return; }
-    if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) {
+    if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && d->digits == d->size) {
+        /* the digits as stored (a picture with P positions takes the general path) */
         int n = (int)d->size;
         int sk = (d->flags & COB_F_LEAD) ? 0 : n - 1;
         unsigned char last = p[sk];
@@ -254,7 +255,7 @@ void cob_display_field(const void *vp, const cob_desc *d)
         for (int i = 0; i < n; i++) {
             if (d->scale > 0 && i == n - d->scale) out_char('.');
             unsigned char c = p[i];
-            if (i == n - 1 && neg) c = (unsigned char)(last - 'p' + '0');
+            if (i == sk && neg) c = (unsigned char)(last - 'p' + '0');
             out_char((char)c);
         }
         return;
@@ -398,8 +399,12 @@ int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd
     char ta[40], tb[40];
     const unsigned char *pa = a, *pb = b;
     int na = (int)ad->size, nb = (int)bd->size;
-    if (an && ad->usage != COB_U_DISPLAY) { na = num_to_digits(a, ad, ta); pa = (unsigned char *)ta; }
-    if (bn && bd->usage != COB_U_DISPLAY) { nb = num_to_digits(b, bd, tb); pb = (unsigned char *)tb; }
+    /* one side numeric, the other not: the numeric side is compared as the
+     * characters of its digits (a literal's sign, a separate sign, an
+     * overpunch, a binary or packed usage all go) */
+    unsigned signs = COB_F_SEPLEAD | COB_F_SEPTRAIL | COB_F_LEAD | COB_F_SIGNED;
+    if (an && (ad->usage != COB_U_DISPLAY || (ad->flags & signs))) { na = num_to_digits(a, ad, ta); pa = (unsigned char *)ta; }
+    if (bn && (bd->usage != COB_U_DISPLAY || (bd->flags & signs))) { nb = num_to_digits(b, bd, tb); pb = (unsigned char *)tb; }
     return cmp_bytes(pa, na, pb, nb);
 }
 

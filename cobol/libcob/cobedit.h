@@ -62,7 +62,7 @@ static int cob_edit_apply(const char *pat, const char *digs, int neg, int blank_
         case '.': if (!sig) { sig = 1; first_sig = o; } out[o++] = '.'; break;
         case ',': out[o++] = sig ? ',' : fill; break;
         case 'B': out[o++] = sig ? ' ' : fill; break;
-        case '0': out[o++] = sig ? '0' : fill; break;
+        case '0': out[o++] = '0'; break;                 /* simple insertion: always the character */
         case '/': out[o++] = sig ? '/' : fill; break;
         case '+': out[o++] = neg ? '-' : '+'; break;
         case '-': out[o++] = neg ? '-' : ' '; break;
