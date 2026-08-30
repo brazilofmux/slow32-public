@@ -133,6 +133,34 @@ RD numbers, LINE-COUNTER, PAGE-COUNTER and the body-seen flag; the
 compiler emits the fit test and the heading inline at each
 `GENERATE` site.
 
+## As built, Stage 32 (the NIST RW module)
+
+The four RW programs that run (RW101A-RW104A) and the two compile-only
+ones (RW301M, RW302M) all match GnuCOBOL's tally. What they added to
+the Stage 7 model:
+
+- The group parser is flat: any entry at any level carries its clauses
+  in any order; `LINE` begins a line, the printable clauses make a
+  field of the current line, the same entry may do both. `TYPE` on the
+  01 only.
+- `TYPE PAGE FOOTING` (at each page end and at TERMINATE, once a page
+  was begun) and RD `FOOTING n`.
+- `LINE-COUNTER` / `PAGE-COUNTER [OF report]` as items in the report
+  block. INITIATE: 0 and 1 (VIII-53 3.2.4); the first GENERATE begins
+  page 1 without counting it (`page_started`, separate from the
+  counter); `cob_rw_page_end` counts. LINE-COUNTER is set to a line's
+  number *before* its SOURCE items are moved (VIII-5 2.4.5: RW104A's
+  note that the PH line prints 1), so `cob_rw_line_begin` now takes the
+  line's position and `cob_rw_line_write` only writes.
+- An RD with no PAGE clause is one endless page; a record-oriented
+  print file takes each line as a space-filled record (RW301M).
+
+GnuCOBOL 4.0-early-dev as an oracle here: the counters and pages of
+`free/rwpage` agree on stdout, but its rendering of a detail line
+holding `SOURCE N`, a VALUE and `SOURCE LINE-COUNTER` at three columns
+is garbage (`entry 0000lc`), so the `.prn` is ours by the text -- the
+"bad oracle for RW" finding of cobc370, again.
+
 ## After v1
 
 `CONTROL` / `CH`/`CF` / `SUM` / `USE BEFORE REPORTING` are the

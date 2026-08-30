@@ -90,6 +90,8 @@ typedef struct {
     int page_limit, heading, first_detail, last_detail;
     int line_counter, page_counter;
     int body_seen;            /* a body group has been presented on this page */
+    int footing;              /* RD FOOTING: the last line a body group may use (= LAST DETAIL when absent) */
+    int page_started;         /* the first GENERATE has begun a page (PAGE-COUNTER is 1 from INITIATE) */
 } cob_report;
 
 /* a SCREEN SECTION 01: a table of slots (docs/screen.md).  kind: 0 VALUE,

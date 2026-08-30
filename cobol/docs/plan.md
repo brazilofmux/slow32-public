@@ -795,6 +795,26 @@ supplies. free/bycontent (copy vs reference, literals), oracle
 agreeing; **IC 25 of 25 compile and match GnuCOBOL, 247 of 251**; the
 suite 242 of 303 compile, 4367 of 4408 pass, none fail, 239 match.
 
+## Stage 32 — Report Writer at 85 width; the RW module complete **M** — DONE 2026-08-31
+
+The NIST RW programs wanted the page half of the module as the text
+writes it, not as majesty's reports happen to: a flat group parser
+(clauses in any order at any level; LINE begins a line, the printable
+clauses make a field, one entry may be both -- the elementary group),
+`TYPE PAGE FOOTING` and RD `FOOTING`, `LINE-COUNTER`/`PAGE-COUNTER`
+as items of the report block (INITIATE 0 and 1; the first GENERATE
+begins page 1 without counting it -- `page_started` now separate from
+the counter; LINE-COUNTER set to a line's number before its SOURCE
+items move, so the PH line prints 1), an RD without PAGE as one
+endless page, and a record-oriented print file. The runner's
+compile-only list gained RW301M/RW302M, SQ303M and DB205A from
+report.pl. free/rwpage (counters after INITIATE, GENERATE and
+TERMINATE, the footing, a page break at LAST DETAIL): stdout agrees
+with GnuCOBOL; its `.prn` rendering of the detail line is garbage, so
+the print file is ours by the text (report-writer.md). RW 6 of 6
+match, 42 of 42; the suite 248 of 303 compile, 4409 of 4450 pass,
+none fail, 245 match -- IC and RW complete.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

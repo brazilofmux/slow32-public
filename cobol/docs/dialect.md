@@ -272,6 +272,24 @@ given, because majesty's `.prn` oracles were produced under it.
   file]` reads the counter (1 at OPEN). `WRITE ... [NOT] [AT]
   END-OF-PAGE` (or `EOP`) sees the footing reached or the page
   overflowed by that WRITE.
+- **Report Writer, the page half at 85 width** (Stage 32): report
+  group entries take their clauses in any order at any level (X3.23
+  VIII-7): `LINE` begins a line of the group -- on the 01 too -- and
+  `COLUMN`/`PICTURE`/`SOURCE`/`VALUE` make the entry a printable field
+  of the current line, so an entry may be both (the elementary group
+  `01 X TYPE DE LINE PLUS 1 COLUMN 1 PIC ... SOURCE ...`). `TYPE PAGE
+  FOOTING`/`PF` groups are presented at each page end and at
+  TERMINATE, on a page that was begun; RD `FOOTING n` bounds the body
+  (LAST DETAIL defaults to it). `LINE-COUNTER` and `PAGE-COUNTER`
+  `[OF report]` are items (four-byte, in the report block): INITIATE
+  sets them 0 and 1, the first GENERATE begins page 1 without counting
+  it, a page end counts; while a line's fields are moved LINE-COUNTER
+  already holds that line's number, so a `SOURCE LINE-COUNTER` on the
+  page heading prints 1. An RD without a PAGE clause is one endless
+  page. A print file need not be LINE SEQUENTIAL: another organization
+  takes each line as a space-filled record. Still not: `CONTROL`,
+  `SUM`, `NEXT GROUP`, `GROUP INDICATE`, report heading/footing groups,
+  `USE BEFORE REPORTING` (ISSUES-11).
 - **`I-O-CONTROL`** (SAME AREA, RERUN, MULTIPLE FILE) is parsed and
   ignored. **`CLOSE ... REEL/UNIT`** does nothing: a disk file has one
   reel. **`RESERVE`, `PADDING CHARACTER`, `RECORD DELIMITER`** are

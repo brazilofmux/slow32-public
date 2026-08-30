@@ -1979,6 +1979,14 @@ static void rw_put_line(cob_report *r, const char *p, int n)
 {
     cob_file *f = r->file;
     if (!f->open_mode || !f->fp) cob_fatal("GENERATE: the report's print file is not open");
+    if (f->org != COB_ORG_LINESEQ && f->recsize) {
+        /* a record-oriented print file: each line is one record, space-filled */
+        unsigned m = (unsigned)n < f->recsize ? (unsigned)n : f->recsize;
+        fwrite(p, 1, m, (FILE *)f->fp);
+        for (unsigned k = m; k < f->recsize; k++) fputc(' ', (FILE *)f->fp);
+        r->line_counter++;
+        return;
+    }
     while (n > 0 && p[n - 1] == ' ') n--;
     if (n) fwrite(p, 1, n, (FILE *)f->fp);
     fputc('\n', (FILE *)f->fp);
@@ -1990,10 +1998,13 @@ static void rw_blank_to(cob_report *r, int line)   /* blank lines up to, not inc
     while (r->line_counter < line - 1) rw_put_line(r, "", 0);
 }
 
+/* INITIATE: LINE-COUNTER 0, PAGE-COUNTER 1 (X3.23 VIII-53 3.2.4); the
+ * first page is begun by the first GENERATE without counting again */
 void cob_rw_initiate(cob_report *r)
 {
-    r->line_counter = 0; r->page_counter = 0; r->body_seen = 0;
+    r->line_counter = 0; r->page_counter = 1; r->body_seen = 0; r->page_started = 0;
 }
+int cob_rw_page_started(cob_report *r) { return r->page_started; }
 
 /* where the next line would land: a body line while no body group has
  * been presented on the page goes to FIRST DETAIL -- the 85 rule for
@@ -2011,7 +2022,7 @@ static int rw_target(cob_report *r, int abs, int plus, int is_body)
  * relative extent) needs a new page before it is presented */
 int cob_rw_fit(cob_report *r, int abs, int plus, int height)
 {
-    if (r->page_counter == 0) return 1;
+    if (!r->page_started) return 1;
     int first = rw_target(r, abs, plus, 1);
     return first + height > r->last_detail;
 }
@@ -2019,12 +2030,25 @@ int cob_rw_fit(cob_report *r, int abs, int plus, int height)
 /* end the page: pad to PAGE LIMIT (when anything was printed), count it */
 void cob_rw_page_end(cob_report *r)
 {
-    if (r->page_counter > 0) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
-    r->page_counter++;
+    if (r->page_started) {
+        while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
+        r->page_counter++;
+    }
+    r->page_started = 1;
     r->line_counter = 0; r->body_seen = 0;
 }
 
-void cob_rw_line_begin(void) { memset(rw_line, ' ', RW_WIDTH); }
+/* a print line: its position is settled first -- blank lines up to it,
+ * LINE-COUNTER set to it -- so a SOURCE of LINE-COUNTER on the line
+ * prints the line's own number; then the fields; then the write */
+void cob_rw_line_begin(cob_report *r, int abs, int plus, int is_body)
+{
+    int target = rw_target(r, abs, plus, is_body);
+    if (target < r->line_counter + 1) target = r->line_counter + 1;
+    rw_blank_to(r, target);
+    r->line_counter = target;
+    memset(rw_line, ' ', RW_WIDTH);
+}
 
 void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *sd)
 {
@@ -2032,11 +2056,9 @@ void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *
     cob_move(src, sd, rw_line + col - 1, dd);
 }
 
-void cob_rw_line_write(cob_report *r, int abs, int plus, int is_body)
+void cob_rw_line_write(cob_report *r, int is_body)
 {
-    int target = rw_target(r, abs, plus, is_body);
-    if (target < r->line_counter + 1) target = r->line_counter + 1;
-    rw_blank_to(r, target);
+    r->line_counter--;                  /* rw_put_line counts it again */
     rw_put_line(r, rw_line, RW_WIDTH);
     if (is_body) r->body_seen = 1;
 }
@@ -2048,13 +2070,13 @@ void cob_rw_line_write(cob_report *r, int abs, int plus, int is_body)
  * TERMINATE padding that page). */
 int cob_rw_line_overflows(cob_report *r, int abs, int plus, int is_body)
 {
-    if (!is_body || r->page_counter == 0) return 0;
+    if (!is_body || !r->page_started) return 0;
     return rw_target(r, abs, plus, is_body) > r->last_detail;
 }
 
 void cob_rw_terminate(cob_report *r)
 {
-    if (r->page_counter > 0) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
+    if (r->page_started) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
 }
 
 /* ====================================================================== */

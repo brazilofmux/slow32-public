@@ -140,6 +140,10 @@ The expensive half of the module. majesty's reports compute their
 totals in the Procedure Division, so the page engine
 (`docs/report-writer.md`) is enough for all twelve. Stage 7 chose
 this deliberately; do not start it without a report that needs it.
+Stage 32 (2026-08-31) widened the page half to the NIST RW module --
+clauses in any order, PAGE FOOTING, FOOTING, LINE-COUNTER/PAGE-COUNTER
+as items -- 6 of 6 match GnuCOBOL; CONTROL/SUM/NEXT GROUP/GROUP
+INDICATE/RH/RF/USE BEFORE REPORTING remain here.
 
 ### 12. ~~Indexed: `ALTERNATE RECORD KEY`, `DUPLICATES`~~ — RESOLVED 2026-08-31
 One sorted table per key (docs/indexed.md "Alternate keys"); key of
@@ -217,8 +221,8 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **4367 of 4408 tests pass, none fail, 239
-programs match GnuCOBOL's tally exactly** (IC complete) (Stage 23; alternate keys
+them by their own reports: **4409 of 4450 tests pass, none fail, 245
+programs match GnuCOBOL's tally exactly** (IC and RW complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
 the runner not building `lib/`, then `CALL identifier`/`ON
@@ -228,7 +232,8 @@ work item: ~~`ALTERNATE RECORD KEY`~~ (done), ~~`LINAGE`~~ (done),
 ~~`COPY ... REPLACING`~~ (done), ~~`CALL identifier`~~ (done), an ODO
 table nested below a direct child (4),
 `INSPECT ... BEFORE/AFTER INITIAL` (4), ~~nested programs~~ (done), ~~`EXTERNAL`~~ (done), ~~`BY CONTENT`~~
-(done: **IC 25 of 25**), alphanumeric-edited pictures
+(done: **IC 25 of 25**), ~~Report Writer clauses~~ (done: **RW 6 of
+6**, ISSUES-11 keeps CONTROL/SUM), alphanumeric-edited pictures
 with A/9 mixed (3) and `;` in a picture (3), `USAGE INDEX` on a
 group (2), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01
