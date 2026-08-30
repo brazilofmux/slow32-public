@@ -494,7 +494,7 @@ everywhere else. Test free/rptsub generates from an ODO table with
 `nm(i)(1:3)` on a field, oracle agreeing. Also refused now:
 `REDEFINES FILLER` (the text names a data-name; GnuCOBOL rejects it;
 we had taken it silently). gl008 next stops at `ROUNDED MODE`, a 2002
-form majesty rewrites to plain `ROUNDED`, then its table `SORT`
+form majesty writes out as half-to-even arithmetic, then its table `SORT`
 (GitHub #10, a product ruling).
 
 ## Stage 18 — the calendar functions **S** — DONE 2026-08-30
@@ -541,7 +541,9 @@ now an `SD` program (ISSUES-4).
 
 The corpus's biggest program. Its 2002 forms were rewritten in majesty
 under the standing ruling (table `SORT` as stable insertion sorts,
-`ROUNDED MODE NEAREST-EVEN` as `ROUNDED`, a subscripted subscript as
+`ROUNDED MODE NEAREST-EVEN` as half-to-even written out in 85 arithmetic
+(first as plain `ROUNDED`, which the user reversed: a half-cent always
+moved the same way; majesty 7f2d3ce / 06f5cc1), a subscripted subscript as
 two MOVEs; dist01's `OCCURS UNBOUNDED` and 21-digit item likewise),
 verified first under GnuCOBOL -- old and new gl008 print twelve
 receipts byte-identically -- and then the compile stopped in the

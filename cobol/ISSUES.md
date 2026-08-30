@@ -69,9 +69,15 @@ Ruling: rewritten in majesty to COBOL 85 -- insertion sorts through a
 holding element (stable; a 2002 table `SORT` leaves equal keys
 unspecified). Under GnuCOBOL the old and new gl008 print twelve
 receipts byte-identically; on SLOW-32 the same twelve match GnuCOBOL.
-The same commit rewrote gl008's `ROUNDED MODE NEAREST-EVEN` and a
-subscripted subscript (`cat-tax(ws-id(i))`, also 2002), and dist01's
-`OCCURS UNBOUNDED` and 21-digit item (ISSUES-5).
+The same commit rewrote a subscripted subscript (`cat-tax(ws-id(i))`,
+also 2002) and dist01's `OCCURS UNBOUNDED` and 21-digit item
+(ISSUES-5). `ROUNDED MODE NEAREST-EVEN` was first made plain
+`ROUNDED`, which moves every exact half-cent the other way; the
+user's call was to keep half-to-even, so majesty 7f2d3ce / 06f5cc1
+write it out in 1985 arithmetic (gl008 `072-round-half-to-even`;
+dist01 from DIVIDE's exact REMAINDER), swept against GnuCOBOL's
+nearest-even over 40,001 values and 13,824 splits. The MODE phrase
+itself stays refused (`bad/rounded-mode`).
 
 ### 5. ~~A numeric item of more than 18 digits (dist01)~~ — RESOLVED 2026-08-30 by rewrite
 `s9(18)v999` became `s9(15)v999` in majesty; the compiler keeps the
@@ -109,8 +115,8 @@ The field keeps the token position of its SOURCE reference and
 parsed -- so subscripts, `OF` qualification and reference
 modification all come with it (`nm(i)(1:3)` included). Test
 free/rptsub prints straight out of an ODO table, GnuCOBOL agreeing.
-gl008's next stop is `ROUNDED MODE` (2002, majesty rewrites to plain
-`ROUNDED`), then its table `SORT` (ISSUES-4a / GitHub #10).
+gl008's next stop was `ROUNDED MODE` (2002; majesty writes half-to-even
+out in 85, see ISSUES-4a), then its table `SORT` (ISSUES-4a / GitHub #10).
 
 ## B. Language — known gaps no program has asked for
 

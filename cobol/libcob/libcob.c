@@ -521,8 +521,7 @@ int cob_top_store(void *p, const cob_desc *d, int opts)
 int cob_top_addto(void *p, const cob_desc *d, int opts)
 {
     if (div0) return 1;
-    cob_num a = { cob_get_num(p, d), d->scale };
-    cob_num b = nstk[nsp - 1];
+    cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
     align2(&a, &b);
     return cob_put_num_x(p, d, a.v + b.v, a.scale, opts);
 }
@@ -530,8 +529,7 @@ int cob_top_addto(void *p, const cob_desc *d, int opts)
 int cob_top_subfrom(void *p, const cob_desc *d, int opts)
 {
     if (div0) return 1;
-    cob_num a = { cob_get_num(p, d), d->scale };
-    cob_num b = nstk[nsp - 1];
+    cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
     align2(&a, &b);
     return cob_put_num_x(p, d, a.v - b.v, a.scale, opts);
 }
