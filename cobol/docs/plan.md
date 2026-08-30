@@ -882,6 +882,23 @@ the cap was 8, now 64. free/corr, oracle agreeing; NC202A, NC207A,
 NC208A, NC222A, NC253A match; the suite 261 of 303 compile, 4947 of
 4989 pass, none fail, 258 match.
 
+## Stage 37 — PICTURE at 85 width **S** — DONE 2026-08-31
+
+Three faults behind six refusals: the tokenizer folded a separator `;`
+or `,` after a picture into it; `pic_analyse` refused `A`/`X`/`9`
+mixed (they are alphanumeric, X3.23 5.3.9) and `P` beside `Z`; and
+its stored-digit count knew only `9`, so `ZZZPP` read as leading P.
+The editor's digit string now leaves the P positions out, DISPLAY of
+a trailing-P item shows the value with its low zeros, and
+`cob_put_num` scales a value up without passing 64 bits (NC104A's
+12345 into `9V9(17)` came out 4.318529385). free/picmix, with
+GnuCOBOL's own answers for `ZZZPP` beside the text's (4.0-early-dev
+scales by the P count twice); tests/pictures.expected re-pinned for
+`Z9P` and `X9`; NC104A matches; the suite 262 of 303 compile, 5088 of
+5130 pass, none fail, 259 match. The six programs go on to their next
+refusals: a non-integer numeric MOVEd to an alphanumeric item,
+REMAINDER with a ROUNDED quotient, RENAMES, USAGE on a group.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

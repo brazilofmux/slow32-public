@@ -46,5 +46,5 @@ Q                    ERROR PICTURE 'Q' is not valid at character 1
 9(0)                 ERROR PICTURE '9(0)' is not valid at character 1
 9(19)V9              ERROR more than 18 digits -- the standard's limit for a numeric item is 18
 P9P                  ERROR P may run to the left or to the right, not both
-Z9P                  ERROR P and an insertion character cannot both appear in one PICTURE
-X9                   ERROR mixed alphanumeric and numeric PICTURE characters are not implemented
+Z9P                  numeric-edited       bytes=2 digits=3 scale=-1 signed=0 pat=Z9P
+X9                   alphanumeric         bytes=2 digits=0 scale=0 signed=0

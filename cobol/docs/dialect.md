@@ -269,6 +269,16 @@ given, because majesty's `.prn` oracles were produced under it.
   (that pair's receiver unchanged). The operands' own subscripts and
   qualification carry to every pair. Qualification may run 64 deep
   (NC207A's is 48). NC202A, NC207A, NC208A, NC222A, NC253A match.
+- **PICTURE at 85 width** (Stage 37): `A`, `X` and `9` in any
+  combination are an alphanumeric item (all `A` alphabetic; `9A9`,
+  `AB9`, `XBA09` alphanumeric or alphanumeric-edited with `B`, `0`,
+  `/`); `P` beside `Z`, `*` or a floating string is an edited picture
+  with scaling positions (`ZZZPP`: the stored digits are the high ones,
+  the editor gives P no character, DISPLAY shows the value with its low
+  zeros); a `;` or `,` right after a picture is the separator, not a
+  symbol (`PICTURE 99; VALUE 8`). A MOVE that scales a value up past 64
+  bits (12345 into `9V9(17)`) truncates the high-order digits as the
+  text says rather than overflowing (NC104A).
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

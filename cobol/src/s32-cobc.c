@@ -298,6 +298,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 int n = (int)(q - p);
                 int sep = 0;
                 if (n > 1 && p[n - 1] == '.') { n--; sep = 1; }
+                else if (n > 1 && (p[n - 1] == ';' || p[n - 1] == ',')) n--;    /* a separator, not a symbol: PICTURE 99; VALUE 8 */
                 push_tok(T_PIC, line, p, n);
                 if (sep) push_tok(T_PERIOD, line, ".", 1);
                 p = q;

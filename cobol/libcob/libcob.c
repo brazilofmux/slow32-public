@@ -168,7 +168,22 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
         long long q = v / k, r = v % k;
         if ((opts & 1) && (r < 0 ? -r : r) * 2 >= k) q += (v < 0) ? -1 : 1;
         v = q;
-    } else if (vscale < d->scale) v *= pow10tab[d->scale - vscale];
+    } else if (vscale < d->scale) {
+        /* scaling up can pass 64 bits (12345 into 9V9(17)): the size error
+         * is decided on the integer digits first, then the digits that
+         * cannot survive the receiver's width are dropped before the shift */
+        int k = d->scale - vscale;
+        if (!(d->flags & COB_F_NOTRUNC) && d->digits <= 18) {
+            unsigned long long a = v < 0 ? (unsigned long long)(-v) : (unsigned long long)v;
+            int lim = d->digits - d->scale + vscale;     /* integer positions, in v's scale */
+            if (opts & 2) {
+                if (lim < 0 ? a != 0 : (lim <= 18 && a >= (unsigned long long)pow10tab[lim])) return 1;
+            }
+            int keep = d->digits - k;
+            if (keep <= 0) v = 0; else if (keep <= 18) v %= pow10tab[keep];
+        }
+        if (v) v *= pow10tab[k > 18 ? 18 : k];
+    }
 
     int neg = v < 0;
     unsigned long long mag = neg ? (unsigned long long)(-v) : (unsigned long long)v;
@@ -185,7 +200,9 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
 
     if (d->cat == COB_NUM_ED) {
         char digs[40];
-        for (int i = d->digits - 1; i >= 0; i--) { digs[i] = (char)('0' + mag % 10); mag /= 10; }
+        int nd = d->digits;                         /* the P positions hold no digit character */
+        for (const char *q = d->pic; q && *q; q++) if (*q == 'P') nd--;
+        for (int i = nd - 1; i >= 0; i--) { digs[i] = (char)('0' + mag % 10); mag /= 10; }
         int w = cob_edit_apply(d->pic, digs, neg, d->flags & COB_F_BLANKZ, (char *)p);
         if (cob_dp_comma) for (int i = 0; i < w; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
         return 0;
@@ -271,7 +288,9 @@ void cob_display_field(const void *vp, const cob_desc *d)
     int neg = v < 0;
     unsigned long long mag = neg ? (unsigned long long)(-v) : (unsigned long long)v;
     int digits = (d->flags & COB_F_NOTRUNC) ? capacity_digits(d->size) : d->digits;
-    emit_scaled(mag, neg, digits, d->scale, d->flags & COB_F_SIGNED);
+    int scale = d->scale;
+    if (scale < 0) { mag *= (unsigned long long)pow10tab[-scale]; scale = 0; }   /* trailing P: the value, its low zeros shown */
+    emit_scaled(mag, neg, digits, scale, d->flags & COB_F_SIGNED);
 }
 
 /* ---- MOVE ------------------------------------------------------------- */
