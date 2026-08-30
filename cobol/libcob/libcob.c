@@ -2294,8 +2294,11 @@ static void rw_blank_to(cob_report *r, int line)   /* blank lines up to, not inc
 void cob_rw_initiate(cob_report *r)
 {
     r->line_counter = 0; r->page_counter = 1; r->body_seen = 0; r->page_started = 0;
+    r->first_gen = 0; r->brk = 0; r->next_line = 0; r->next_page = 0; r->suppress = 0;
+    r->gi_pending = ~0;
 }
 int cob_rw_page_started(cob_report *r) { return r->page_started; }
+void cob_rw_first_page(cob_report *r) { r->page_started = 1; }
 
 /* where the next line would land: a body line while no body group has
  * been presented on the page goes to FIRST DETAIL -- the 85 rule for
@@ -2305,7 +2308,7 @@ int cob_rw_page_started(cob_report *r) { return r->page_started; }
 static int rw_target(cob_report *r, int abs, int plus, int is_body)
 {
     if (abs) return abs;
-    if (is_body && !r->body_seen) return r->first_detail;
+    if (is_body && !r->body_seen) return r->next_line ? r->next_line : r->first_detail;
     return r->line_counter + plus;
 }
 
@@ -2314,9 +2317,12 @@ static int rw_target(cob_report *r, int abs, int plus, int is_body)
 int cob_rw_fit(cob_report *r, int abs, int plus, int height)
 {
     if (!r->page_started) return 1;
+    if (r->next_page) return 1;
     int first = rw_target(r, abs, plus, 1);
     return first + height > r->last_detail;
 }
+
+static int rw_body_bound(cob_report *r, int is_body) { return is_body == 2 ? r->footing : r->last_detail; }
 
 /* end the page: pad to PAGE LIMIT (when anything was printed), count it */
 void cob_rw_page_end(cob_report *r)
@@ -2327,6 +2333,8 @@ void cob_rw_page_end(cob_report *r)
     }
     r->page_started = 1;
     r->line_counter = 0; r->body_seen = 0;
+    r->next_page = 0;
+    r->gi_pending = ~0;                 /* GROUP INDICATE prints again after a page advance */
 }
 
 /* a print line: its position is settled first -- blank lines up to it,
@@ -2351,7 +2359,7 @@ void cob_rw_line_write(cob_report *r, int is_body)
 {
     r->line_counter--;                  /* rw_put_line counts it again */
     rw_put_line(r, rw_line, RW_WIDTH);
-    if (is_body) r->body_seen = 1;
+    if (is_body) { r->body_seen = 1; r->next_line = 0; }
 }
 
 /* a body line that would land past LAST DETAIL spills onto a new page:
@@ -2362,7 +2370,38 @@ void cob_rw_line_write(cob_report *r, int is_body)
 int cob_rw_line_overflows(cob_report *r, int abs, int plus, int is_body)
 {
     if (!is_body || !r->page_started) return 0;
-    return rw_target(r, abs, plus, is_body) > r->last_detail;
+    if (r->next_page) return 1;
+    return rw_target(r, abs, plus, is_body) > rw_body_bound(r, is_body);
+}
+
+/* NEXT GROUP, after its group presented (X3.23 VIII: the final-setting
+ * rules, reduced to their effect): an integer ahead of the position
+ * moves LINE-COUNTER there; one behind saves itself for the next page;
+ * PLUS spaces down; NEXT PAGE defers the next body group to a new page */
+void cob_rw_next_group(cob_report *r, int kind, int n)
+{
+    if (kind == 1) {
+        if (n > r->line_counter && n <= r->last_detail) { while (r->line_counter < n) rw_put_line(r, "", 0); }
+        else { r->next_page = 1; r->next_line = n; }
+    } else if (kind == 2) {
+        if (r->line_counter + n > r->last_detail) r->next_page = 1;
+        else for (int i = 0; i < n; i++) rw_put_line(r, "", 0);
+    } else r->next_page = 1;
+}
+
+/* the REPORT FOOTING's place (X3.23 VIII Table 5, as cobc370 derived
+ * it): after the PAGE FOOTING when one printed, else from the FOOTING
+ * line; a footing that cannot fit takes a page of its own, with no
+ * PAGE HEADING after the eject (2.21.4(3)a) */
+void cob_rw_rf_begin(cob_report *r, int abs, int plus)
+{
+    if (!r->page_started) return;
+    /* in this engine LINE-COUNTER is the paper: positioning writes lines */
+    while (r->line_counter < r->footing) rw_put_line(r, "", 0);
+    if (abs ? abs <= r->line_counter : r->line_counter + plus > r->page_limit) {
+        while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
+        r->page_counter++; r->line_counter = 0; r->body_seen = 0;
+    }
 }
 
 void cob_rw_terminate(cob_report *r)

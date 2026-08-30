@@ -1262,6 +1262,27 @@ moved subscript, a static literal-subscript slot, and a contained
 program's LINKAGE screen editing the caller's element in place; the
 harness is 84.
 
+## Stage 62 — Report Writer's expensive half; the module entire **L** — DONE 2026-08-30
+
+ISSUES-11, at the user's ask, cobc370's slices 3-5 as the design
+donor. CONTROL with FINAL; break sensing major-to-minor against
+hidden clones; the GENERATE sequence (CF minor-to-break with the
+control items swapped to their prior values -- SOURCE and USE BEFORE
+REPORTING both see them; clone-redirect leaked the new value to USE
+and GnuCOBOL's behaviour exposed it -- then CH break-to-minor, then
+subtotals, then the detail); SUM counters as referable hidden items
+with UPON, RESET ON, crossfooting and rolling at the summed counter's
+reset level; TERMINATE as a most-major break then PF then RF; RH/RF
+with Table 5's placement (rf_begin writes paper -- in this engine
+LINE-COUNTER is the paper, the register/paper split designed out);
+NEXT GROUP's three forms (CF-below-break ignored); GROUP INDICATE as
+a report-block bitmask; USE BEFORE REPORTING + SUPPRESS through the
+declaratives machinery; GENERATE report-name. Four GnuCOBOL 4
+divergences documented in report-writer.md and oracles.md, the text
+and cobc370's IKFCBL00-corroborated derivations winning. rptctl,
+rptnext, rptuse (.oracle-expected each); harness 87; NIST and majesty
+unchanged. Out by choice: CODE, REPORTS ARE.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

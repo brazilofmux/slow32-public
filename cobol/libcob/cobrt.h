@@ -96,6 +96,12 @@ typedef struct {
     int body_seen;            /* a body group has been presented on this page */
     int footing;              /* RD FOOTING: the last line a body group may use (= LAST DETAIL when absent) */
     int page_started;         /* the first GENERATE has begun a page (PAGE-COUNTER is 1 from INITIATE) */
+    int first_gen;            /* (40) the first GENERATE has run: controls saved, RH presented */
+    int brk;                  /* (44) the level of the current control break; 0 none, 1 most major */
+    int next_line;            /* (48) NEXT GROUP integer saved for the next page's body group */
+    int next_page;            /* (52) NEXT GROUP NEXT PAGE (or an integer that did not fit) */
+    int suppress;             /* (56) SUPPRESS PRINTING from a USE BEFORE REPORTING procedure */
+    int gi_pending;           /* (60) GROUP INDICATE: bit k set = group k presents its indicated fields */
 } cob_report;
 
 /* a SCREEN SECTION 01: a table of slots (docs/screen.md).  kind: 0 VALUE,

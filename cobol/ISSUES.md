@@ -135,7 +135,13 @@ combined relation conditions (`a > b and < c`)~~ (Stage 44), ~~nested programs~~
 ~~the full `INSPECT` (BEFORE/AFTER INITIAL, CONVERTING, the one-pass
 rule)~~ (Stage 35). Each is a diagnostic today, never silence.
 
-### 11. Report Writer: `CONTROL` breaks and `SUM`
+### 11. ~~Report Writer: `CONTROL` breaks and `SUM`~~ — RESOLVED 2026-08-30 (Stage 62)
+The module is entire now: CONTROL/CH/CF with prior values by swap,
+SUM with UPON and RESET and rolling, RH/RF, NEXT GROUP, GROUP
+INDICATE, USE BEFORE REPORTING with SUPPRESS, summary GENERATE
+(docs/report-writer.md "The expensive half"; four GnuCOBOL
+divergences documented, the text winning). Out by choice: CODE,
+REPORTS ARE. The original entry, for the record:
 The expensive half of the module. majesty's reports compute their
 totals in the Procedure Division, so the page engine
 (`docs/report-writer.md`) is enough for all twelve. Stage 7 chose

@@ -170,3 +170,72 @@ Implement when a program asks, against the 85 text, with GnuCOBOL
 consulted only where it agrees. cobc370's Report Writer slices in
 `COBOL74-ROADMAP.md` are the work-order if that day comes; the
 oracles will need to be rebuilt for 85 where 74 and 85 diverge.
+
+
+## The expensive half (Stage 62, 2026-08-30): the module entire
+
+Everything ISSUES-11 held is in, built to cobc370's derivation of the
+standard's tables (its slices 3-5, which IKFCBL00 corroborated):
+
+- **CONTROL IS / CONTROLS ARE [FINAL] id...** -- levels 1 (most major)
+  to n. Each control item gets two hidden clones: the *prior* value
+  sensed against, and a *held* cell for the swap below.
+- **Break sensing** at GENERATE, major to minor, stopping at the first
+  item whose value moved (cob_cmp against the clone); the level lands
+  in the report block's `brk` cell.
+- **The GENERATE sequence**: CONTROL FOOTINGs from the most minor up to
+  the break level -- during which the control items themselves hold
+  their prior values (2.21.4(13)) by a swap, so `SOURCE` and a `USE
+  BEFORE REPORTING` procedure alike see them (the clone-redirect
+  design tried first leaked the new value to USE; GnuCOBOL's swap
+  behaviour exposed it) -- then the clones catch up, GROUP INDICATE
+  re-arms, and CONTROL HEADINGs come down from the break level; then
+  subtotalling; then the detail. The first GENERATE presents REPORT
+  HEADING, the first page, and every CONTROL HEADING, FINAL first.
+- **SUM**: a counter is a hidden signed item sized by the entry's
+  PICTURE, named and referable when the entry has a data-name, zeroed
+  by INITIATE. Subtotalling (plain sources) at GENERATE, `UPON`
+  restricting a counter to its named details; counter-summing
+  (crossfooting, rolling forward) when the summed counter's reset
+  level breaks, before that level's footing presents; resets after it;
+  a level with no footing group still rolls and resets. `RESET ON`
+  moves a counter's reset level.
+- **TERMINATE**: nothing at all unless a GENERATE ran; else a break in
+  the most major control with the last GENERATE's values, FINAL's
+  footing, the PAGE FOOTING as the page's last group, then the REPORT
+  FOOTING.
+- **REPORT HEADING / FOOTING**: RH once from the first GENERATE (a page
+  of its own under NEXT GROUP NEXT PAGE); RF after the PAGE FOOTING or
+  from the RD FOOTING line (Table 5), a page of its own -- with no
+  PAGE HEADING -- only when it cannot fit.
+- **NEXT GROUP** integer / PLUS / NEXT PAGE, on a CONTROL FOOTING
+  applied only at its own break level (2.15.4(3)). In this engine
+  LINE-COUNTER is the paper, so positioning writes blank records --
+  the register-vs-paper split cobc370 hit is designed out.
+- **GROUP INDICATE**: a bit per detail group in the report block, set
+  by INITIATE, page advance and control break, cleared as the group
+  presents.
+- **USE BEFORE REPORTING group-name** in DECLARATIVES, entered like a
+  file USE section; **SUPPRESS PRINTING** presents nothing and moves
+  no paper while the footing's rolls and resets still run.
+- **LINE ... NEXT PAGE** on a body group begins a page (rule 3c).
+- **GENERATE report-name** (summary reporting): breaks and sums,
+  no detail lines; counters with UPON take nothing.
+
+Still out, by choice: `CODE` (refused; nothing prints to a device that
+wants it) and `REPORTS ARE` with several reports on one FD.
+
+### Where GnuCOBOL 4 disagrees (the text wins; oracles.md)
+
+- The REPORT FOOTING always takes a fresh page; Table 5 puts it in the
+  footing area of the current page when it fits (rptctl).
+- `LINE n NEXT PAGE` on a detail is ignored when a body group is
+  already on the page; rule 3c starts one (rptnext).
+- A counter with `UPON` is fed by every GENERATE; the text feeds it
+  only from its named details (rptuse).
+- A sum counter keeps its value after TERMINATE; 2.20.4(8) resets it
+  when its footing's processing completes (rptctl).
+
+`tests/free/rptctl`, `rptnext`, `rptuse` pin ours and the oracle's
+outputs side by side; cobc370's `tests/rptctl`-family is the design
+donor and its 1974-text derivations the arbiter.

@@ -10,6 +10,7 @@ Three COBOL dialects sit in this orbit. They are not interchangeable.
 | packed hardware | yes | no (library) | host GnuCOBOL |
 | I-O | QSAM, ISAM, VSAM | framing in [framing.md](framing.md) | line sequential + indexed + relative |
 | SCREEN SECTION | no | yes (implementor) | yes |
+| Report Writer (entire: CONTROL, SUM, RH/RF, NEXT GROUP, GROUP INDICATE, USE BEFORE REPORTING) | level 1 | yes | yes |
 | Report Writer | 1974 tables, complete | 85; v1 is majesty's subset | GnuCOBOL RW |
 | `COMP` > 9 digits | refused | i64 | GnuCOBOL |
 | `PERFORM … AFTER` | 74 reset order | 85 reset order | 85 |

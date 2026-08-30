@@ -1045,18 +1045,32 @@ typedef struct {
     int has_source; int source_tp;      /* token position of the SOURCE reference, parsed at GENERATE time */
     Tok *value;
     int just, blank_zero;
+    char ename[64];                     /* the entry's data-name (a SUM entry's names its counter) */
+    int gi;                             /* GROUP INDICATE */
+    int has_sum, nsum, sum_tp[8];       /* SUM operands: token positions, resolved when the report is first used */
+    int nupon, upon_tp[4];              /* UPON detail-names */
+    int reset_tp, reset_final;          /* RESET ON: a control's token position, or FINAL */
+    int ctr_sym;                        /* the sum counter item (0 = none) */
+    int sum_sym[8], sum_is_ctr[8];      /* resolved operands */
+    int upon_g[4];                      /* resolved UPON detail groups (indexes into r->g) */
+    int reset_lvl;                      /* resolved: 0 FINAL, 1..nctl; the own CF's level by default */
 } RField;
 
 typedef struct {
-    int abs, plus, line;
+    int abs, plus, line, np;            /* np: LINE ... NEXT PAGE */
     RField *f; int nf, fcap;
 } RLine;
 
-enum { RG_PAGE_HEADING, RG_DETAIL, RG_PAGE_FOOTING };
+enum { RG_PAGE_HEADING, RG_DETAIL, RG_PAGE_FOOTING,
+       RG_REPORT_HEADING, RG_REPORT_FOOTING, RG_CONTROL_HEADING, RG_CONTROL_FOOTING };
 
 typedef struct {
     char name[64];
     int type, line;
+    int ctl_tp;                         /* CH/CF: the control reference's token position (0: FINAL) */
+    int ctl_level;                      /* resolved: 0 FINAL, 1 most major .. nctl; -1 not a control group */
+    int next_kind, next_n;              /* NEXT GROUP: 0 none, 1 integer, 2 PLUS, 3 NEXT PAGE */
+    int use_sec;                        /* USE BEFORE REPORTING: the DECLARATIVES section, -1 none */
     RLine *l; int nl, lcap;
 } RGroup;
 
@@ -1065,8 +1079,18 @@ typedef struct {
     int line, file;                  /* the FD whose REPORT IS names it */
     int page_limit, heading, first_detail, last_detail, footing;
     int lc_sym, pc_sym;              /* the synthetic LINE-COUNTER and PAGE-COUNTER items */
+    int nctl, ctl_final;             /* CONTROL: levels 1 (most major) .. nctl; FINAL besides */
+    int ctl_sym[8], ctl_clone[8];    /* each control item and its prior-value clone (X3.23 VIII 2.21.4(13)) */
+    int ctl_held[8];                 /* where the new value waits while the item holds the prior one */
+    int resolved;                    /* SUM operands, UPON, RESET, CH/CF levels resolved at first use */
     RGroup *g; int ng, gcap;
 } Report;
+
+/* the report state block's cells past the ones with symbols (cobrt.h) */
+#define RW_OFF_FIRST_GEN 40
+#define RW_OFF_BRK       44
+#define RW_OFF_SUPPRESS  56
+#define RW_OFF_GI        60
 
 static Report *g_reports; static int g_nreport, g_rcap;
 
@@ -4283,6 +4307,7 @@ static File *g_io_file;             /* the file the statement being parsed acts 
  * the containing programs' GLOBAL ones (X3.23-1985 USE general rules). */
 typedef struct { int sec, unit, global, mode; File *file; } UseEntry;
 static UseEntry g_use[64]; static int g_nuse;
+static struct { int unit, sec; int rep; } g_rwuse[16]; static int g_nrwuse;   /* USE BEFORE REPORTING sections: their report, for SUPPRESS */
 static int g_in_decl;
 
 /* USE [GLOBAL] AFTER [STANDARD] {ERROR|EXCEPTION} PROCEDURE [ON] {file... | INPUT | OUTPUT | I-O | EXTEND} */
@@ -4292,6 +4317,23 @@ static void parse_use(void)
     if (!g_in_decl) die_at(line, "USE belongs in a DECLARATIVES section");
     if (g_cur_sec_id < 0) die_at(line, "USE must be the first sentence of a section in DECLARATIVES");
     int global = accept_word("global");
+    if (accept_word("before")) {
+        expect_word("reporting");
+        if (cur()->kind != T_WORD) die_at(line, "USE BEFORE REPORTING needs a report group name");
+        RGroup *g = NULL; Report *r = NULL;
+        for (int i = 0; i < g_nreport && !g; i++)
+            for (int k = 0; k < g_reports[i].ng; k++)
+                if (g_reports[i].g[k].name[0] && !strcmp(g_reports[i].g[k].name, cur()->s)) { r = &g_reports[i]; g = &g_reports[i].g[k]; break; }
+        if (!g) die_at(line, "'%s' is not a report group", cur()->s);
+        if (g->use_sec >= 0) die_at(line, "two USE BEFORE REPORTING procedures for '%s'", cur()->s);
+        advance();
+        g->use_sec = g_cur_sec_id;
+        if (g_nrwuse == 16) die_at(line, "too many USE BEFORE REPORTING sections");
+        g_rwuse[g_nrwuse].unit = g_unit; g_rwuse[g_nrwuse].sec = g_cur_sec_id; g_rwuse[g_nrwuse].rep = (int)(r - g_reports);
+        g_nrwuse++;
+        (void)global;
+        return;
+    }
     expect_word("after"); accept_word("standard");
     if (!accept_word("error") && !accept_word("exception")) die_at(line, "USE AFTER ... : expected ERROR or EXCEPTION PROCEDURE (the other USE forms are not implemented)");
     expect_word("procedure"); accept_word("on");
@@ -5434,6 +5476,150 @@ static int rfield_desc(RField *f)
 
 static void emit_report_group(Report *r, RGroup *g);
 
+/* ---- resolution at first use (INITIATE/GENERATE/TERMINATE) ----------- */
+
+static Sym *rw_ref_sym(int tp, int line)
+{
+    Ref rr; int save_tp = g_tp;
+    g_tp = tp; parse_ref(&rr); g_tp = save_tp;
+    if (rr.nsub || rr.rm) die_at(line, "a report control or SUM operand is a plain data-name");
+    return rr.sym;
+}
+
+static int rw_ctl_level_of(Report *r, Sym *sym, int line)
+{
+    for (int i = 0; i < r->nctl; i++) if (r->ctl_sym[i] == sym_idx(sym)) return i + 1;
+    die_at(line, "'%s' is not in RD %s's CONTROL clause", sym->name, r->name);
+    return 0;
+}
+
+static int rw_sym_is_counter(Report *r, int symidx)
+{
+    for (int gi = 0; gi < r->ng; gi++)
+        for (int li = 0; li < r->g[gi].nl; li++)
+            for (int fi = 0; fi < r->g[gi].l[li].nf; fi++)
+                if (r->g[gi].l[li].f[fi].ctr_sym == symidx) return 1;
+    return 0;
+}
+
+static void rw_resolve(Report *r)
+{
+    if (r->resolved) return;
+    r->resolved = 1;
+    for (int gi = 0; gi < r->ng; gi++) {
+        RGroup *g = &r->g[gi];
+        g->ctl_level = -1;
+        if (g->type == RG_CONTROL_HEADING || g->type == RG_CONTROL_FOOTING) {
+            if (!g->ctl_tp) {
+                if (!r->ctl_final) die_at(g->line, "TYPE CONTROL %s FINAL needs CONTROL FINAL in the RD", g->type == RG_CONTROL_FOOTING ? "FOOTING" : "HEADING");
+                g->ctl_level = 0;
+            } else g->ctl_level = rw_ctl_level_of(r, rw_ref_sym(g->ctl_tp, g->line), g->line);
+        }
+        for (int li = 0; li < g->nl; li++)
+            for (int fi = 0; fi < g->l[li].nf; fi++) {
+                RField *f = &g->l[li].f[fi];
+                if (!f->has_sum) continue;
+                for (int k = 0; k < f->nsum; k++) {
+                    Sym *op = rw_ref_sym(f->sum_tp[k], f->line);
+                    f->sum_sym[k] = sym_idx(op);
+                    f->sum_is_ctr[k] = rw_sym_is_counter(r, f->sum_sym[k]);
+                }
+                for (int k = 0; k < f->nupon; k++) {
+                    Tok *nt = &g_tok[f->upon_tp[k]];
+                    int found = -1;
+                    for (int gj = 0; gj < r->ng; gj++)
+                        if (r->g[gj].type == RG_DETAIL && r->g[gj].name[0] && !strcmp(r->g[gj].name, nt->s)) found = gj;
+                    if (found < 0) die_at(f->line, "UPON '%s' is not a DETAIL group of RD %s", nt->s, r->name);
+                    f->upon_g[k] = found;
+                }
+                if (f->reset_final) f->reset_lvl = 0;
+                else if (f->reset_tp) f->reset_lvl = rw_ctl_level_of(r, rw_ref_sym(f->reset_tp, f->line), f->line);
+                else f->reset_lvl = g->ctl_level;   /* its own footing's level (FINAL = 0) */
+            }
+    }
+}
+
+/* ---- small emission helpers ------------------------------------------- */
+
+static void emit_rw_ldw(Report *r, int off, const char *reg)
+{
+    emit_report_addr("r1", r);
+    emit("\tldw %s, r1+%d", reg, off);
+}
+
+static void emit_rw_stw_imm(Report *r, int off, int v)
+{
+    emit_report_addr("r1", r);
+    emit_li("r2", v);
+    emit("\tstw r1+%d, r2", off);
+}
+
+static void emit_rw_move_sym(int from, int to)
+{
+    emit_item_addr("r3", &g_sym[from], g_sym[from].offset);
+    emit_desc_addr("r4", sym_desc(&g_sym[from]));
+    emit_item_addr("r5", &g_sym[to], g_sym[to].offset);
+    emit_desc_addr("r6", sym_desc(&g_sym[to]));
+    emit_call("cob_move");
+}
+
+/* counter += source (both plain items): through the numeric stack */
+static void emit_rw_add_into(int src, int ctr)
+{
+    emit_item_addr("r3", &g_sym[src], g_sym[src].offset);
+    emit_desc_addr("r4", sym_desc(&g_sym[src]));
+    emit_call("cob_push");
+    emit_item_addr("r3", &g_sym[ctr], g_sym[ctr].offset);
+    emit_desc_addr("r4", sym_desc(&g_sym[ctr]));
+    emit_li("r5", 0);
+    emit_call("cob_top_addto");
+    emit_call("cob_drop");
+}
+
+static void emit_rw_zero(int ctr)
+{
+    emit_li("r3", 0); emit_li("r4", 0); emit_li("r5", 0);
+    emit_call("cob_push_lit");
+    emit_item_addr("r3", &g_sym[ctr], g_sym[ctr].offset);
+    emit_desc_addr("r4", sym_desc(&g_sym[ctr]));
+    emit_li("r5", 0);
+    emit_call("cob_top_store");
+    emit_call("cob_drop");
+}
+
+/* the counter arithmetic a control level L owes when it breaks: every
+ * counter summing a counter that resets at L takes its value (rolling
+ * forward, crossfooting), in the order the entries stand; then, after
+ * the footing presents, the counters resetting at L go to zero */
+static void emit_rw_rolls(Report *r, int level)
+{
+    for (int gi = 0; gi < r->ng; gi++)
+        for (int li = 0; li < r->g[gi].nl; li++)
+            for (int fi = 0; fi < r->g[gi].l[li].nf; fi++) {
+                RField *f = &r->g[gi].l[li].f[fi];
+                if (!f->has_sum) continue;
+                for (int k = 0; k < f->nsum; k++)
+                    if (f->sum_is_ctr[k]) {
+                        RField *sf = NULL;
+                        for (int gj = 0; gj < r->ng && !sf; gj++)
+                            for (int lj = 0; lj < r->g[gj].nl && !sf; lj++)
+                                for (int fj = 0; fj < r->g[gj].l[lj].nf; fj++)
+                                    if (r->g[gj].l[lj].f[fj].ctr_sym == f->sum_sym[k]) { sf = &r->g[gj].l[lj].f[fj]; break; }
+                        if (sf && sf->reset_lvl == level) emit_rw_add_into(f->sum_sym[k], f->ctr_sym);
+                    }
+            }
+}
+
+static void emit_rw_resets(Report *r, int level)
+{
+    for (int gi = 0; gi < r->ng; gi++)
+        for (int li = 0; li < r->g[gi].nl; li++)
+            for (int fi = 0; fi < r->g[gi].l[li].nf; fi++) {
+                RField *f = &r->g[gi].l[li].f[fi];
+                if (f->has_sum && f->reset_lvl == level) emit_rw_zero(f->ctr_sym);
+            }
+}
+
 /* the page advance: pad, count, and render the page heading */
 /* the PAGE FOOTING groups, on a page that was started */
 static void emit_page_footing(Report *r)
@@ -5460,12 +5646,41 @@ static void emit_page_advance(Report *r)
 }
 
 /* render one group's lines at this point in the code; a body line that
- * would pass LAST DETAIL spills onto a new page first */
+ * would pass its bound spills onto a new page first.  The body groups
+ * are DETAIL, CONTROL HEADING and CONTROL FOOTING (X3.23 VIII); a
+ * CONTROL FOOTING's bound is the RD FOOTING line, the others' LAST
+ * DETAIL -- the runtime reads the kind from is_body (1 or 2). */
 static void emit_report_group(Report *r, RGroup *g)
 {
-    int is_body = g->type == RG_DETAIL;
+    int is_body = g->type == RG_DETAIL || g->type == RG_CONTROL_HEADING ? 1
+                : g->type == RG_CONTROL_FOOTING ? 2 : 0;
+    int Lsupp = -1;
+    if (g->type == RG_REPORT_FOOTING && g->nl) {
+        emit_report_addr("r3", r);
+        emit_li("r4", g->l[0].abs); emit_li("r5", g->l[0].plus);
+        emit_call("cob_rw_rf_begin");
+    }
+    if (g->use_sec >= 0) {
+        int Lret = new_label();
+        char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
+        emit_li("r3", g->use_sec);
+        emit_la("r4", lab);
+        emit_call("cob_perform_push");
+        emit("\tjal r0, .Lp%d_%d", g_unit, g->use_sec);
+        emit_label(Lret);
+        Lsupp = new_label();
+        emit_rw_ldw(r, RW_OFF_SUPPRESS, "r2");
+        int Lrender = new_label();
+        emit("\tbeq r2, r0, .L%d", Lrender);
+        emit_rw_stw_imm(r, RW_OFF_SUPPRESS, 0);
+        emit_jump(Lsupp);
+        emit_label(Lrender);
+    }
     for (int i = 0; i < g->nl; i++) {
         RLine *ln = &g->l[i];
+        if (ln->np && is_body) {                    /* LINE ... NEXT PAGE */
+            emit_page_advance(r);
+        }
         if (is_body) {
             emit_report_addr("r3", r);
             emit_li("r4", ln->abs); emit_li("r5", ln->plus); emit_li("r6", 1);
@@ -5483,10 +5698,22 @@ static void emit_report_group(Report *r, RGroup *g)
         emit_call("cob_rw_line_begin");
         for (int k = 0; k < ln->nf; k++) {
             RField *f = &ln->f[k];
+            int Lgi = -1;
+            if (f->gi && g->type == RG_DETAIL) {    /* GROUP INDICATE: spaces except first after a page or break */
+                Lgi = new_label();
+                emit_rw_ldw(r, RW_OFF_GI, "r2");
+                emit("\tandi r2, r2, %d", 1 << (int)(g - r->g));
+                emit("\tbeq r2, r0, .L%d", Lgi);
+            }
             Arg a[4];
             a[0] = arg_imm(f->column);
             a[1] = arg_desc(rfield_desc(f));
-            if (f->has_source) {
+            if (f->ctr_sym) {                       /* a SUM entry prints its counter */
+                Ref *rf = xmalloc(sizeof *rf);
+                memset(rf, 0, sizeof *rf);
+                rf->sym = &g_sym[f->ctr_sym]; rf->line = f->line;
+                a[2] = arg_ref(rf); a[3] = arg_desc(sym_desc(rf->sym));
+            } else if (f->has_source) {
                 Ref *rf = xmalloc(sizeof *rf);
                 int save_tp = g_tp;
                 g_tp = f->source_tp; parse_ref(rf); g_tp = save_tp;
@@ -5501,11 +5728,38 @@ static void emit_report_group(Report *r, RGroup *g)
             }
             emit_args(a, 4);
             emit_call("cob_rw_field");
+            if (Lgi >= 0) emit_label(Lgi);
         }
         emit_report_addr("r3", r);
         emit_li("r4", is_body);
         emit_call("cob_rw_line_write");
     }
+    if (g->type == RG_DETAIL) {
+        int gi_any = 0;
+        for (int i = 0; i < g->nl; i++) for (int k = 0; k < g->l[i].nf; k++) if (g->l[i].f[k].gi) gi_any = 1;
+        if (gi_any) {                               /* this group's GROUP INDICATE fields wait for the next page or break */
+            emit_report_addr("r1", r);
+            emit("\tldw r2, r1+%d", RW_OFF_GI);
+            emit_li("r3", ~(1 << (int)(g - r->g)));
+            emit("\tand r2, r2, r3");
+            emit("\tstw r1+%d, r2", RW_OFF_GI);
+        }
+    }
+    if (g->next_kind) {
+        int Lskip = -1;
+        if (g->type == RG_CONTROL_FOOTING) {        /* NEXT GROUP on a CF applies only at its own break level (VIII 2.15.4(3)) */
+            Lskip = new_label();
+            emit_rw_ldw(r, RW_OFF_BRK, "r2");
+            emit_li("r3", g->ctl_level);
+            emit("\tbne r2, r3, .L%d", Lskip);
+        }
+        emit_report_addr("r3", r);
+        emit_li("r4", g->next_kind);
+        emit_li("r5", g->next_n);
+        emit_call("cob_rw_next_group");
+        if (Lskip >= 0) emit_label(Lskip);
+    }
+    if (Lsupp >= 0) emit_label(Lsupp);
 }
 
 static void parse_initiate(void)
@@ -5515,12 +5769,156 @@ static void parse_initiate(void)
     emit_call("cob_rw_initiate");
 }
 
+/* the counters a GENERATE subtotals: plain (non-counter) sources, the
+ * UPON list honoured -- at GENERATE report-name only unrestricted
+ * counters take their sources (X3.23 VIII 2.21.4(11)) */
+static void emit_rw_subtotals(Report *r, RGroup *det)
+{
+    for (int gi = 0; gi < r->ng; gi++)
+        for (int li = 0; li < r->g[gi].nl; li++)
+            for (int fi = 0; fi < r->g[gi].l[li].nf; fi++) {
+                RField *f = &r->g[gi].l[li].f[fi];
+                if (!f->has_sum) continue;
+                if (f->nupon) {
+                    int hit = 0;
+                    for (int k = 0; k < f->nupon; k++) if (det && &r->g[f->upon_g[k]] == det) hit = 1;
+                    if (!hit) continue;
+                }
+                for (int k = 0; k < f->nsum; k++)
+                    if (!f->sum_is_ctr[k]) emit_rw_add_into(f->sum_sym[k], f->ctr_sym);
+            }
+}
+
+/* the control footing sequence for every level from the most minor up
+ * to `to_level` (1 = most major, 0 = FINAL too): the rolls, the group,
+ * the resets -- a level with no footing group still rolls and resets */
+static void emit_rw_cf_level(Report *r, int L)
+{
+    emit_rw_rolls(r, L);
+    for (int k = 0; k < r->ng; k++)
+        if (r->g[k].type == RG_CONTROL_FOOTING && r->g[k].ctl_level == L) emit_report_group(r, &r->g[k]);
+    emit_rw_resets(r, L);
+}
+
+static void emit_rw_generate(Report *r, RGroup *det)
+{
+    rw_resolve(r);
+    int Lsense = new_label(), Lbody = new_label();
+    emit_rw_ldw(r, RW_OFF_FIRST_GEN, "r2");
+    emit("\tbne r2, r0, .L%d", Lsense);
+
+    /* the first GENERATE: the controls remembered, the REPORT HEADING,
+     * the first page, CONTROL HEADINGs FINAL then major to minor */
+    for (int L = 0; L < r->nctl; L++) emit_rw_move_sym(r->ctl_sym[L], r->ctl_clone[L]);
+    emit_rw_stw_imm(r, RW_OFF_FIRST_GEN, 1);
+    for (int k = 0; k < r->ng; k++) if (r->g[k].type == RG_REPORT_HEADING) emit_report_group(r, &r->g[k]);
+    {
+        int Lpg = new_label();
+        emit_rw_ldw(r, 52, "r2");                   /* next_page: an RH that kept the page to itself */
+        emit("\tbne r2, r0, .L%d", Lpg);
+        emit_report_addr("r3", r);
+        emit_call("cob_rw_first_page");
+        for (int k = 0; k < r->ng; k++) if (r->g[k].type == RG_PAGE_HEADING) emit_report_group(r, &r->g[k]);
+        emit_label(Lpg);
+    }
+    for (int L = 0; L <= r->nctl; L++)
+        for (int k = 0; k < r->ng; k++)
+            if (r->g[k].type == RG_CONTROL_HEADING && r->g[k].ctl_level == L) emit_report_group(r, &r->g[k]);
+    emit_jump(Lbody);
+
+    emit_label(Lsense);
+    if (r->nctl) {
+        /* sense: the most major control whose value moved */
+        int Lfound = new_label();
+        emit_rw_stw_imm(r, RW_OFF_BRK, 0);
+        for (int L = 1; L <= r->nctl; L++) {
+            Sym *it = &g_sym[r->ctl_sym[L - 1]], *cl = &g_sym[r->ctl_clone[L - 1]];
+            emit_item_addr("r3", it, it->offset); emit_desc_addr("r4", sym_desc(it));
+            emit_item_addr("r5", cl, cl->offset); emit_desc_addr("r6", sym_desc(cl));
+            emit_call("cob_cmp");
+            int Lnx = new_label();
+            emit("\tbeq r1, r0, .L%d", Lnx);
+            emit_report_addr("r1", r); emit_li("r2", L);
+            emit("\tstw r1+%d, r2", RW_OFF_BRK);
+            emit_jump(Lfound);
+            emit_label(Lnx);
+        }
+        emit_jump(Lbody);
+        emit_label(Lfound);
+        /* CONTROL FOOTINGs, most minor up to the break level.  During
+         * them the control items themselves hold the prior values (VIII
+         * 2.21.4(13)): the new values wait aside, the clones move in --
+         * so a USE BEFORE REPORTING procedure sees what the footing sees */
+        for (int L = 0; L < r->nctl; L++) {
+            emit_rw_move_sym(r->ctl_sym[L], r->ctl_held[L]);
+            emit_rw_move_sym(r->ctl_clone[L], r->ctl_sym[L]);
+        }
+        for (int L = r->nctl; L >= 1; L--) {
+            int Lskip = new_label();
+            emit_rw_ldw(r, RW_OFF_BRK, "r2");
+            emit_li("r3", L);
+            emit("\tblt r3, r2, .L%d", Lskip);      /* L < brk: this level did not break */
+            emit_rw_cf_level(r, L);
+            emit_label(Lskip);
+        }
+        for (int L = 0; L < r->nctl; L++) {
+            emit_rw_move_sym(r->ctl_held[L], r->ctl_sym[L]);
+            emit_rw_move_sym(r->ctl_sym[L], r->ctl_clone[L]);
+        }
+        emit_report_addr("r1", r);
+        emit_li("r2", -1);
+        emit("\tstw r1+%d, r2", RW_OFF_GI);
+        for (int L = 1; L <= r->nctl; L++) {
+            int Lskip = new_label();
+            emit_rw_ldw(r, RW_OFF_BRK, "r2");
+            emit_li("r3", L);
+            emit("\tblt r3, r2, .L%d", Lskip);
+            for (int k = 0; k < r->ng; k++)
+                if (r->g[k].type == RG_CONTROL_HEADING && r->g[k].ctl_level == L) emit_report_group(r, &r->g[k]);
+            emit_label(Lskip);
+        }
+    }
+    emit_label(Lbody);
+    emit_rw_subtotals(r, det);
+    if (det) {
+        int last_printing = 0;
+        for (int i = 0; i < det->nl; i++) if (det->l[i].nf) last_printing = i;
+        int height = 0;
+        for (int i = 1; i <= last_printing; i++) height += det->l[i].plus;
+        emit_report_addr("r3", r);
+        emit_li("r4", det->l[0].abs); emit_li("r5", det->l[0].plus); emit_li("r6", height);
+        emit_call("cob_rw_fit");
+        int Lfits = new_label();
+        emit("\tbeq r1, r0, .L%d", Lfits);
+        emit_page_advance(r);
+        emit_label(Lfits);
+        emit_report_group(r, det);
+    }
+}
+
 static void parse_terminate(void)
 {
     Report *r = expect_report();
-    emit_page_footing(r);
+    rw_resolve(r);
+    int Lend = new_label();
+    emit_rw_ldw(r, RW_OFF_FIRST_GEN, "r2");
+    emit("\tbeq r2, r0, .L%d", Lend);              /* no GENERATE ran: TERMINATE presents nothing */
+    /* a break in the most major control, FINAL included, then the
+     * REPORT FOOTING; the footings read the last GENERATE's values */
+    emit_rw_stw_imm(r, RW_OFF_BRK, 1);
+    for (int L = 0; L < r->nctl; L++) {         /* the footings read the last GENERATE's values */
+        emit_rw_move_sym(r->ctl_sym[L], r->ctl_held[L]);
+        emit_rw_move_sym(r->ctl_clone[L], r->ctl_sym[L]);
+    }
+    for (int L = r->nctl; L >= 1; L--) emit_rw_cf_level(r, L);
+    if (r->ctl_final || r->nctl == 0) emit_rw_cf_level(r, 0);
+    emit_page_footing(r);                       /* the page's last group, before the REPORT FOOTING (VIII 3.4.4) */
+    for (int k = 0; k < r->ng; k++) if (r->g[k].type == RG_REPORT_FOOTING) emit_report_group(r, &r->g[k]);
+    for (int L = 0; L < r->nctl; L++) emit_rw_move_sym(r->ctl_held[L], r->ctl_sym[L]);
     emit_report_addr("r3", r);
     emit_call("cob_rw_terminate");
+    emit_rw_stw_imm(r, RW_OFF_FIRST_GEN, 0);
+    emit_label(Lend);
 }
 
 static void parse_generate(void)
@@ -5532,31 +5930,15 @@ static void parse_generate(void)
         for (int k = 0; k < g_reports[i].ng; k++)
             if (g_reports[i].g[k].name[0] && !strcmp(g_reports[i].g[k].name, t->s)) { r = &g_reports[i]; g = &g_reports[i].g[k]; break; }
     if (!g) {
-        if (report_find(t->s)) die_at(t->line, "GENERATE %s (summary reporting) is not implemented; GENERATE a DETAIL group", t->s);
-        die_at(t->line, "'%s' is not a report group", t->s);
+        r = report_find(t->s);
+        if (!r) die_at(t->line, "'%s' is not a report group", t->s);
+        advance();
+        emit_rw_generate(r, NULL);                  /* GENERATE report-name: summary reporting */
+        return;
     }
-    if (g->type != RG_DETAIL) die_at(t->line, "GENERATE needs a DETAIL group; '%s' is a page %s", t->s, g->type == RG_PAGE_HEADING ? "heading" : "footing");
+    if (g->type != RG_DETAIL) die_at(t->line, "GENERATE needs a DETAIL group or the report-name");
     advance();
-
-    /* the fit test: the group's first line as it would land, plus the
-     * relative extent of the rest */
-    /* the fit test counts the lines that print something; a trailing
-     * LINE with no fields is a blank line that may run into the footing
-     * area -- measured on majesty's profit-and-loss report, where GnuCOBOL
-     * put a "Net Profit" line on LAST DETAIL with its empty trailing line
-     * beyond it (report-writer.md) */
-    int last_printing = 0;
-    for (int i = 0; i < g->nl; i++) if (g->l[i].nf) last_printing = i;
-    int height = 0;
-    for (int i = 1; i <= last_printing; i++) height += g->l[i].plus;
-    emit_report_addr("r3", r);
-    emit_li("r4", g->l[0].abs); emit_li("r5", g->l[0].plus); emit_li("r6", height);
-    emit_call("cob_rw_fit");
-    int Lfits = new_label();
-    emit("\tbeq r1, r0, .L%d", Lfits);
-    emit_page_advance(r);
-    emit_label(Lfits);
-    emit_report_group(r, g);
+    emit_rw_generate(r, g);
 }
 
 /* ---- EVALUATE ---------------------------------------------------------- */
@@ -6055,6 +6437,17 @@ static void parse_statement(void)
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
     if (!strcmp(v, "unstring")) { advance(); parse_unstring(); return; }
     if (!strcmp(v, "call")) { advance(); parse_call(); return; }
+    if (!strcmp(v, "suppress")) {
+        advance(); accept_word("printing");
+        int rep = -1;
+        for (int i = 0; i < g_nrwuse; i++)
+            if (g_rwuse[i].unit == g_unit && g_rwuse[i].sec == g_cur_sec_id) rep = g_rwuse[i].rep;
+        if (rep < 0) die_at(t->line, "SUPPRESS belongs in a USE BEFORE REPORTING section");
+        emit_report_addr("r1", &g_reports[rep]);
+        emit_li("r2", 1);
+        emit("\tstw r1+%d, r2", RW_OFF_SUPPRESS);
+        return;
+    }
     if (!strcmp(v, "initiate")) { advance(); parse_initiate(); return; }
     if (!strcmp(v, "accept")) { advance(); parse_accept(); return; }
     if (!strcmp(v, "evaluate")) { advance(); parse_evaluate(); return; }
@@ -7030,7 +7423,33 @@ static void parse_rd(void)
         if (accept_word("first")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->first_detail = atoi(cur()->s); advance(); continue; }
         if (accept_word("last")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->last_detail = atoi(cur()->s); advance(); continue; }
         if (accept_word("footing")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after FOOTING"); r->footing = atoi(cur()->s); advance(); continue; }
-        if (accept_word("control") || accept_word("controls")) die_at(t->line, "CONTROL is not implemented (after v1; majesty's totals are Procedure Division items)");
+        if (accept_word("control") || accept_word("controls")) {
+            accept_word("is"); accept_word("are");
+            if (accept_word("final")) r->ctl_final = 1;
+            while (cur()->kind == T_WORD && !at_word("page") && !at_word("heading") && !at_word("first") && !at_word("last") && !at_word("footing") && !at_word("code")) {
+                if (r->nctl == 8) die_at(t->line, "more than 8 control levels");
+                Sym *c = sym_lookup(cur()->s, NULL, 0, t->line); advance();
+                r->ctl_sym[r->nctl] = sym_idx(c);
+                /* the prior values a CONTROL FOOTING prints: a hidden clone
+                 * of the item, sensed against and refreshed at each break */
+                Sym *cl = sym_new();
+                snprintf(cl->name, sizeof cl->name, "*prior-%.50s-%d", c->name, r->nctl);
+                cl->line = t->line; cl->level = 77;
+                cl->has_pic = c->has_pic; memcpy(cl->pic, c->pic, sizeof cl->pic); cl->pi = c->pi;
+                cl->usage = c->usage; cl->has_usage = c->has_usage;
+                r->ctl_clone[r->nctl] = sym_idx(cl);
+                Sym *hd = sym_new();
+                snprintf(hd->name, sizeof hd->name, "*held-%.51s-%d", c->name, r->nctl);
+                hd->line = t->line; hd->level = 77;
+                hd->has_pic = c->has_pic; memcpy(hd->pic, c->pic, sizeof hd->pic); hd->pi = c->pi;
+                hd->usage = c->usage; hd->has_usage = c->has_usage;
+                r->ctl_held[r->nctl] = sym_idx(hd);
+                r = &g_reports[g_nreport - 1];                       /* sym_new may move nothing, but be safe */
+                r->nctl++;
+            }
+            if (!r->nctl && !r->ctl_final) die_at(t->line, "CONTROL needs FINAL or data-names");
+            continue;
+        }
         if (accept_word("code")) die_at(t->line, "the CODE clause is not implemented");
         die_at(t->line, "unexpected %s in RD %s", tok_desc(t), r->name);
     }
@@ -7063,6 +7482,7 @@ static void parse_rd(void)
         if (r->ng == r->gcap) { r->gcap = r->gcap ? r->gcap * 2 : 8; r->g = realloc(r->g, r->gcap * sizeof *r->g); }
         RGroup *g = &r->g[r->ng++];
         memset(g, 0, sizeof *g);
+        g->use_sec = -1; g->ctl_level = -1;
         g->line = cur()->line;
         int has_type = 0, first = 1;
         static const char *clause_words[] = { "type", "line", "next", "column", "pic", "picture", "source", "value", "just", "justified", "blank", "sum", "group", "usage", "display", NULL };
@@ -7073,14 +7493,20 @@ static void parse_rd(void)
                 lvl = parse_level(); advance();
                 if (lvl < 2 || lvl > 49) die_at(eline, "bad level %d in report group '%s'", lvl, g->name);
             }
+            char entry_name[64] = "";
             if (cur()->kind == T_WORD) {
                 int is_clause = 0;
                 for (int k = 0; clause_words[k]; k++) if (at_word(clause_words[k])) is_clause = 1;
-                if (!is_clause) { if (first) snprintf(g->name, sizeof g->name, "%s", cur()->s); advance(); }   /* a name */
+                if (!is_clause) {
+                    if (first) snprintf(g->name, sizeof g->name, "%s", cur()->s);
+                    else snprintf(entry_name, sizeof entry_name, "%s", cur()->s);
+                    advance();
+                }   /* a name */
             }
             /* the entry's clauses */
-            int has_line = 0, labs = 0, lplus = 0, is_field = 0;
+            int has_line = 0, labs = 0, lplus = 0, is_field = 0, lnp = 0;
             RField fd; memset(&fd, 0, sizeof fd); fd.line = eline;
+            snprintf(fd.ename, sizeof fd.ename, "%s", entry_name);
             while (cur()->kind != T_PERIOD) {
                 Tok *t = cur();
                 if (accept_word("type")) {
@@ -7090,8 +7516,18 @@ static void parse_rd(void)
                     else if (accept_word("ph")) g->type = RG_PAGE_HEADING;
                     else if (accept_word("pf")) g->type = RG_PAGE_FOOTING;
                     else if (accept_word("detail") || accept_word("de")) g->type = RG_DETAIL;
-                    else if (at_word("report") || at_word("rh") || at_word("rf") || at_word("control") || at_word("ch") || at_word("cf"))
-                        die_at(t->line, "TYPE %s groups are not implemented (PAGE HEADING, PAGE FOOTING and DETAIL are)", cur()->s);
+                    else if (accept_word("report")) { if (accept_word("heading")) g->type = RG_REPORT_HEADING; else if (accept_word("footing")) g->type = RG_REPORT_FOOTING; else die_at(t->line, "TYPE REPORT: HEADING or FOOTING"); }
+                    else if (accept_word("rh")) g->type = RG_REPORT_HEADING;
+                    else if (accept_word("rf")) g->type = RG_REPORT_FOOTING;
+                    else if (at_word("control") || at_word("ch") || at_word("cf")) {
+                        int foot = at_word("cf");
+                        if (accept_word("control")) { if (accept_word("footing")) foot = 1; else if (!accept_word("heading")) die_at(t->line, "TYPE CONTROL: HEADING or FOOTING"); }
+                        else advance();
+                        g->type = foot ? RG_CONTROL_FOOTING : RG_CONTROL_HEADING;
+                        if (accept_word("final")) g->ctl_tp = 0;
+                        else if (cur()->kind == T_WORD) { g->ctl_tp = g_tp; advance(); while (at_word("of") || at_word("in")) { advance(); if (cur()->kind == T_WORD) advance(); } }
+                        else die_at(t->line, "TYPE CONTROL %s needs a control data-name or FINAL", foot ? "FOOTING" : "HEADING");
+                    }
                     else die_at(t->line, "unknown report group TYPE %s", cur()->s);
                     has_type = 1;
                     continue;
@@ -7105,14 +7541,26 @@ static void parse_rd(void)
                         else if (cur()->s[0] == '-') die_at(t->line, "LINE cannot be negative");
                         else labs = atoi(cur()->s);
                         advance();
-                    } else if (accept_word("next")) die_at(t->line, "LINE NEXT PAGE is not implemented");
+                    } else if (accept_word("next")) { expect_word("page"); lnp = 1; }
                     else die_at(t->line, "expected a line number after LINE");
-                    if (!labs && !lplus) die_at(t->line, "LINE needs a number");
+                    if (!lnp && !labs && !lplus) die_at(t->line, "LINE needs a number");
                     if (r->page_limit && labs > r->page_limit) die_at(t->line, "LINE %d is past PAGE LIMIT %d", labs, r->page_limit);
                     has_line = 1;
                     continue;
                 }
-                if (accept_word("next")) die_at(t->line, "NEXT GROUP is not implemented");
+                if (accept_word("next")) {
+                    expect_word("group"); accept_word("is");
+                    if (!first) die_at(t->line, "NEXT GROUP belongs on the 01 of report group '%s'", g->name);
+                    if (accept_word("plus")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after NEXT GROUP PLUS"); g->next_kind = 2; g->next_n = atoi(cur()->s); advance(); }
+                    else if (accept_word("next")) { expect_word("page"); g->next_kind = 3; }
+                    else if (cur()->kind == T_NUM) {
+                        if (cur()->s[0] == '+') { g->next_kind = 2; g->next_n = atoi(cur()->s + 1); }
+                        else { g->next_kind = 1; g->next_n = atoi(cur()->s); }
+                        advance();
+                    }
+                    else die_at(t->line, "NEXT GROUP takes an integer, PLUS integer, or NEXT PAGE");
+                    continue;
+                }
                 if (accept_word("column")) {
                     accept_word("number"); accept_word("is");
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
@@ -7156,8 +7604,35 @@ static void parse_rd(void)
                 if (accept_word("blank")) { accept_word("when"); accept_word("zero"); accept_word("zeros"); fd.blank_zero = 1; is_field = 1; continue; }
                 if (accept_word("usage")) { accept_word("is"); expect_word("display"); continue; }
                 if (accept_word("display")) continue;
-                if (accept_word("sum")) die_at(t->line, "SUM is not implemented (after v1)");
-                if (accept_word("group")) die_at(t->line, "GROUP INDICATE is not implemented (after v1)");
+                if (accept_word("sum")) {
+                    fd.has_sum = 1; is_field = 1;
+                    for (;;) {
+                        accept_word("of");
+                        if (cur()->kind != T_WORD) die_at(t->line, "SUM needs data-names");
+                        if (fd.nsum == 8) die_at(t->line, "more than 8 SUM operands");
+                        fd.sum_tp[fd.nsum++] = g_tp; advance();
+                        while (at_word("of") || at_word("in")) { advance(); if (cur()->kind == T_WORD) advance(); }
+                        if (at_word("upon") || at_word("reset") || cur()->kind == T_PERIOD || at_word("sum")) {
+                            if (accept_word("sum")) continue;
+                            break;
+                        }
+                    }
+                    if (accept_word("upon")) {
+                        while (cur()->kind == T_WORD && !at_word("reset")) {
+                            if (fd.nupon == 4) die_at(t->line, "more than 4 UPON details");
+                            fd.upon_tp[fd.nupon++] = g_tp; advance();
+                        }
+                        if (!fd.nupon) die_at(t->line, "UPON needs a DETAIL group name");
+                    }
+                    if (accept_word("reset")) {
+                        accept_word("on");
+                        if (accept_word("final")) fd.reset_final = 1;
+                        else if (cur()->kind == T_WORD) { fd.reset_tp = g_tp; advance(); }
+                        else die_at(t->line, "RESET ON needs a control data-name or FINAL");
+                    }
+                    continue;
+                }
+                if (accept_word("group")) { accept_word("indicate"); fd.gi = 1; is_field = 1; continue; }
                 die_at(t->line, "unexpected %s in report group '%s'", tok_desc(t), g->name);
             }
             expect_period();
@@ -7166,11 +7641,30 @@ static void parse_rd(void)
                 if (g->nl == g->lcap) { g->lcap = g->lcap ? g->lcap * 2 : 4; g->l = realloc(g->l, g->lcap * sizeof *g->l); }
                 RLine *ln = &g->l[g->nl++];
                 memset(ln, 0, sizeof *ln);
-                ln->line = eline; ln->abs = labs; ln->plus = lplus;
+                ln->line = eline; ln->abs = labs; ln->plus = lplus; ln->np = lnp;
             }
             if (is_field) {
                 if (!g->nl) die_at(eline, "a printable entry of report group '%s' before any LINE", g->name);
                 RLine *ln = &g->l[g->nl - 1];
+                if (fd.has_sum) {
+                    /* the sum counter: a signed item sized by the entry's
+                     * PICTURE, named by the entry's data-name when it has
+                     * one (X3.23 VIII 2.20), zeroed by INITIATE */
+                    if (g->type != RG_CONTROL_FOOTING) die_at(eline, "SUM belongs in a CONTROL FOOTING group");
+                    if (!fd.has_pic) die_at(eline, "a SUM entry needs a PICTURE");
+                    Sym *ctr = sym_new();
+                    if (fd.ename[0]) snprintf(ctr->name, sizeof ctr->name, "%s", fd.ename);
+                    else snprintf(ctr->name, sizeof ctr->name, "*sum-%d-%d", (int)(r - g_reports), r->ng * 100 + g->nl);
+                    ctr->line = eline; ctr->level = 77;
+                    ctr->has_pic = 1;
+                    int idig = fd.pi.digits - fd.pi.scale;
+                    if (fd.pi.scale > 0 && idig > 0) snprintf(ctr->pic, sizeof ctr->pic, "s9(%d)v9(%d)", idig, fd.pi.scale);
+                    else if (fd.pi.scale > 0) snprintf(ctr->pic, sizeof ctr->pic, "sv9(%d)", fd.pi.scale);
+                    else snprintf(ctr->pic, sizeof ctr->pic, "s9(%d)", fd.pi.digits > 0 ? fd.pi.digits : 1);
+                    pic_analyse(ctr->pic, &ctr->pi);
+                    fd.ctr_sym = sym_idx(ctr);
+                    r = &g_reports[g_nreport - 1]; g = &r->g[r->ng - 1]; ln = &g->l[g->nl - 1];
+                }
                 if (!fd.has_pic && fd.value && fd.value->kind == T_STR) {
                     /* VALUE without PICTURE: an alphanumeric of the literal's width */
                     fd.has_pic = 1;
@@ -7178,7 +7672,7 @@ static void parse_rd(void)
                     if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(eline, "report field: %s", fd.pi.err);
                 }
                 if (!fd.has_pic) die_at(eline, "a report field needs a PICTURE");
-                if (fd.has_source == !!fd.value) die_at(eline, "a report field needs exactly one of SOURCE and VALUE");
+                if (fd.has_source + !!fd.value + fd.has_sum != 1) die_at(eline, "a report field needs exactly one of SOURCE, VALUE and SUM");
                 if (!fd.column) fd.column = ln->nf ? ln->f[ln->nf - 1].column + ln->f[ln->nf - 1].pi.bytes : 1;
                 if (ln->nf == ln->fcap) { ln->fcap = ln->fcap ? ln->fcap * 2 : 8; ln->f = realloc(ln->f, ln->fcap * sizeof *ln->f); }
                 ln->f[ln->nf++] = fd;
@@ -7589,6 +8083,7 @@ static void emit_unit_data(void)
         emit("\t.word %d", r->first_detail); emit("\t.word %d", r->last_detail);
         emit("\t.word 0"); emit("\t.word 0"); emit("\t.word 0");    /* line_counter (20), page_counter (24), body_seen */
         emit("\t.word %d", r->footing); emit("\t.word 0");           /* footing, page_started */
+        for (int w = 0; w < 6; w++) emit("\t.word 0");               /* first_gen brk next_line next_page suppress gi_pending */
     }
 }
 

@@ -114,3 +114,18 @@ Until the compiler can run that batch, smaller programs with
 checked-in expected output carry the language. The report
 byte-compare against `reports_cobol/` is the first differential
 that matters.
+
+## Report Writer, Stage 62 (2026-08-30)
+
+Four divergences from GnuCOBOL 4, each pinned by a fixture's
+`.oracle-expected`; the 85 text as cobc370 derived it (IKFCBL00
+concurring) wins:
+
+- REPORT FOOTING: GnuCOBOL takes a fresh page; Table 5 places it in
+  the current page's footing area when it fits (free/rptctl).
+- LINE n NEXT PAGE on a detail: GnuCOBOL ignores it when a body group
+  is already on the page; rule 3c starts one (free/rptnext).
+- SUM ... UPON: GnuCOBOL feeds the counter from every GENERATE; the
+  text only from the named details (free/rptuse).
+- A sum counter after TERMINATE: GnuCOBOL leaves the final value;
+  2.20.4(8) resets it with its footing's processing (free/rptctl).
