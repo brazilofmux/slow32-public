@@ -112,8 +112,8 @@ reproduced byte for byte:
   page first: blank lines to `PAGE LIMIT`, then the heading again.
 - `TERMINATE` pads the current page to `PAGE LIMIT`; with nothing
   generated it prints nothing.
-- Two rules measured later on the profit-and-loss report and
-  the activity report (Stage 15): the fit test counts a group's
+- Two rules measured later on the profit-and-loss and activity
+  reports (Stage 15): the fit test counts a group's
   *printing* lines -- a trailing `LINE PLUS 1` with no fields does not
   keep a group off the page (gl043's "Net Profit" group, one printing
   line and one empty, lands on line 60 of 60); and a body line that

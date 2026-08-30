@@ -1474,7 +1474,7 @@ void cob_rw_initiate(cob_report *r)
 
 /* where the next line would land: a body line while no body group has
  * been presented on the page goes to FIRST DETAIL -- the 85 rule for
- * the first body group, and (measured on the activity report) where
+ * the first body group, and (measured on majesty's activity report) where
  * GnuCOBOL puts a group's remaining lines when they spill onto a new
  * page */
 static int rw_target(cob_report *r, int abs, int plus, int is_body)
@@ -1520,8 +1520,8 @@ void cob_rw_line_write(cob_report *r, int abs, int plus, int is_body)
 
 /* a body line that would land past LAST DETAIL spills onto a new page:
  * the compiler renders the heading, and the line then lands on FIRST
- * DETAIL.  Measured on the activity report (a group's trailing blank line
- * starting the next page) and the profit-and-loss report (the same, with
+ * DETAIL.  Measured on majesty's activity report (a group's trailing blank line
+ * starting the next page) and its profit-and-loss report (the same, with
  * TERMINATE padding that page). */
 int cob_rw_line_overflows(cob_report *r, int abs, int plus, int is_body)
 {
