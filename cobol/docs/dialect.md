@@ -347,6 +347,20 @@ given, because majesty's `.prn` oracles were produced under it.
   A condition-name alone is a condition subject of `EVALUATE`, matched
   by `WHEN TRUE`/`FALSE` (NC225A). NC205A, NC211A and NC225A match
   GnuCOBOL.
+- **`INITIALIZE` as X3.23 6.16 has it** (Stage 45): without REPLACING
+  every elementary item takes its category's default -- ZERO for
+  numeric and numeric-edited (the edited zero, `  $0.00`), SPACES for
+  the rest (through the edit for alphanumeric-edited: `     /`);
+  elementary FILLERs, index items and REDEFINES items with their
+  subordinates are left alone. `REPLACING category [DATA] BY value`
+  (ALPHABETIC, ALPHANUMERIC, NUMERIC, ALPHANUMERIC-EDITED,
+  NUMERIC-EDITED, any number of them) gives the named categories the
+  value by the MOVE rules and touches nothing else (GR2, "wrongly
+  affected by other initialisation" is NC223A's failure text). Tables
+  are initialised in every occurrence, the receiver's own subscripts
+  leading, the rest unrolled at compile time. A figurative constant
+  MOVEd to an alphanumeric-edited item now goes through the edit.
+  NC223A (94 tests) matches GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

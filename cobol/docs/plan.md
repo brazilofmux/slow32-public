@@ -1011,6 +1011,22 @@ Ruling recorded this stage: the 85 text over GnuCOBOL -- what the
 text forbids (a non-integer numeric MOVEd to an alphanumeric item,
 three NC programs) stays refused.
 
+## Stage 45 — INITIALIZE as the text has it **S** — DONE 2026-08-31
+
+REPLACING was the ask; NC223A's 41 failures on the first cut were
+the rest of 6.16. The template image (init_one, VALUEs ignored) is
+now copied in runs around the bytes the text leaves alone --
+elementary FILLERs, index items, REDEFINES items and their
+subordinates, every occurrence (`init_mask`) -- and the edited items
+then get a MOVE: ZERO to numeric-edited, SPACES through the edit to
+alphanumeric-edited, which took a fix to emit_move (a figurative into
+an alphanumeric-edited item was a fill; it is a move through the
+edit). REPLACING touches only the named categories (GR2): the walk
+(`init_replace_walk`) emits a MOVE per elementary item of the
+category, tables unrolled over every occurrence. free/initrep, oracle
+agreeing; NC223A matches; the suite 281 of 303 compile, 6442 of 6484
+pass, none fail, 278 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

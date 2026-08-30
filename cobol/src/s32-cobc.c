@@ -3398,6 +3398,15 @@ static void emit_move(Opnd *src, Ref *dst)
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
     if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) {
         int ned = d->pi.category == PIC_NUMERIC_EDITED;
+        if (src->kind == O_FIG && !ned) {
+            /* MOVE SPACES to an alphanumeric-edited item: a literal of spaces
+             * through the edit, the insertion characters appearing */
+            unsigned char *f = xmalloc((size_t)d->size); memset(f, fig_byte(src->tok->s), (size_t)d->size);
+            Arg a[4] = { arg_label(lit_label(f, d->size)), arg_desc(str_desc(d->size)), arg_ref(dst), arg_desc(sym_desc(d)) };
+            free(f);
+            emit_args(a, 4); emit_call("cob_move");
+            return;
+        }
         if (src->kind == O_FIG && !(ned && !strncmp(src->tok->s, "zero", 4))) {
             Arg a[3] = { arg_ref(dst), arg_imm(d->size), arg_imm(fig_byte(src->tok->s)) };
             emit_args(a, 3); emit_call("cob_fill");
@@ -5618,27 +5627,116 @@ static void parse_inspect(void)
 
 /* ---- INITIALIZE -------------------------------------------------------- */
 
+/* INITIALIZE ... REPLACING category DATA BY value: every elementary item
+ * of that category below the receiver (index items, condition-names,
+ * REDEFINES items and elementary FILLERs left alone, X3.23 6.16) takes
+ * the value by the MOVE rules -- every occurrence of a table, the
+ * receiver's own subscripts leading, the rest unrolled at compile time */
+static void init_replace_walk(Sym *s, const Ref *base, int cat, Opnd *value, long *sub, int nsub, int line)
+{
+    if (s->is_cond || s->is_index || s->redefines >= 0) return;
+    if (s->is_group) {
+        for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+            Sym *k = &g_sym[c];
+            if (k->occurs) {
+                /* one more dimension: every occurrence */
+                if (nsub >= MAXDIM) die_at(line, "INITIALIZE REPLACING: too many dimensions");
+                for (long i = 1; i <= k->occurs; i++) { sub[nsub] = i; init_replace_walk(k, base, cat, value, sub, nsub + 1, line); }
+            } else init_replace_walk(k, base, cat, value, sub, nsub, line);
+        }
+        return;
+    }
+    if (s->is_filler || s->pi.category != cat) return;
+    Ref r = *base; r.sym = s; r.nsub = nsub;
+    for (int i = 0; i < nsub; i++) { if (i < base->nsub) r.sub[i] = base->sub[i]; else { r.sub[i].sym = NULL; r.sub[i].lit = sub[i]; r.sub[i].adj = 0; } }
+    if (nsub != s->ndims) die_at(line, "INITIALIZE REPLACING: '%s' needs %d subscripts", s->name, s->ndims);
+    emit_move(value, &r);
+}
+
+/* the bytes INITIALIZE leaves alone: elementary FILLERs, index items,
+ * REDEFINES items and their subordinates (X3.23 6.16), every occurrence */
+static void init_mask(Sym *s, int top_off, int disp, unsigned char *mask, int limit, int is_top)
+{
+    if (s->is_cond) return;
+    if (!is_top && s->redefines >= 0) { int a = s->offset - top_off + disp; for (int k = a; k < a + s->size && k < limit; k++) if (k >= 0) mask[k] = 1; return; }
+    int reps = (!is_top && s->occurs) ? s->occurs : 1;
+    for (int i = 0; i < reps; i++) {
+        int d = disp + i * s->size;
+        if (s->is_group) { for (int c = s->child; c >= 0; c = g_sym[c].sibling) init_mask(&g_sym[c], top_off, d, mask, limit, 0); }
+        else if (s->is_filler || s->is_index) { int a = s->offset - top_off + d; for (int k = a; k < a + s->size && k < limit; k++) if (k >= 0) mask[k] = 1; }
+    }
+}
+
 static void parse_initialize(void)
 {
-    int n = 0;
+    Ref rs[MAXOPS]; int n = 0;
+    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0 }, tok_space = { T_WORD, 0, "spaces", 6, NULL, 0 };
+    Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
+    fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand()) {
-        Ref r; parse_ref(&r);
-        if (r.sym->is_cond) die_at(r.line, "INITIALIZE of a condition-name");
-        if (r.rm) die_at(r.line, "INITIALIZE of a reference-modified item is not implemented");
-        /* the template: the item's default initialisation, VALUEs ignored */
-        Sym tmp; memset(&tmp, 0, sizeof tmp);
-        tmp.image = xmalloc(r.sym->size); tmp.image_size = r.sym->size;
-        g_no_values = 1;
-        init_one(&tmp, sym_idx(r.sym), 0, 1);
-        g_no_values = 0;
-        Arg a[3] = { arg_ref(&r), arg_label(lit_label(tmp.image, r.sym->size)), arg_imm(r.sym->size) };
-        emit_args(a, 3);
-        emit_call("memcpy");
-        free(tmp.image);
+        if (n >= MAXOPS) die_at(cur()->line, "too many items in INITIALIZE");
+        Ref *r = &rs[n]; parse_ref(r);
+        if (r->sym->is_cond) die_at(r->line, "INITIALIZE of a condition-name");
+        if (r->rm) die_at(r->line, "INITIALIZE of a reference-modified item is not implemented");
         n++;
     }
     if (!n) die_at(cur()->line, "INITIALIZE needs an item");
-    if (at_word("replacing")) die_at(cur()->line, "INITIALIZE ... REPLACING is not implemented");
+    if (!at_word("replacing")) {
+        /* no REPLACING: every elementary item to its category's default --
+         * the template image copied in runs around the bytes left alone,
+         * then the edited items by MOVE (ZERO or SPACES through the edit) */
+        for (int i = 0; i < n; i++) {
+            Ref *r = &rs[i]; Sym *t = r->sym;
+            Sym tmp; memset(&tmp, 0, sizeof tmp);
+            tmp.image = xmalloc(t->size); tmp.image_size = t->size;
+            g_no_values = 1;
+            init_one(&tmp, sym_idx(t), 0, 1);
+            g_no_values = 0;
+            unsigned char *mask = xmalloc((size_t)t->size + 1); memset(mask, 0, (size_t)t->size + 1);
+            init_mask(t, t->offset, 0, mask, t->size, 1);
+            for (int a = 0; a < t->size; ) {
+                if (mask[a]) { a++; continue; }
+                int b = a; while (b < t->size && !mask[b]) b++;
+                Ref part = *r;
+                if (a) { part.rm = 1; part.rm_start = a + 1; part.rm_len = b - a; part.rm_l0 = -1; }
+                Arg args[3] = { arg_ref(&part), arg_label(lit_label(tmp.image + a, b - a)), arg_imm(b - a) };
+                emit_args(args, 3);
+                emit_call("memcpy");
+                a = b;
+            }
+            free(mask); free(tmp.image);
+            long sub[MAXDIM];
+            if (t->is_group) {
+                init_replace_walk(t, r, PIC_NUMERIC_EDITED, &fig_zero, sub, r->nsub, r->line);
+                init_replace_walk(t, r, PIC_ALPHANUMERIC_EDITED, &fig_space, sub, r->nsub, r->line);
+            } else if (t->pi.category == PIC_NUMERIC_EDITED) emit_move(&fig_zero, r);
+            else if (t->pi.category == PIC_ALPHANUMERIC_EDITED) emit_move(&fig_space, r);
+        }
+    }
+    if (accept_word("replacing")) {
+        for (;;) {
+            int line = cur()->line, cat;
+            if (accept_word("alphabetic")) cat = PIC_ALPHABETIC;
+            else if (accept_word("alphanumeric")) cat = PIC_ALPHANUMERIC;
+            else if (accept_word("numeric")) cat = PIC_NUMERIC;
+            else if (accept_word("alphanumeric-edited")) cat = PIC_ALPHANUMERIC_EDITED;
+            else if (accept_word("numeric-edited")) cat = PIC_NUMERIC_EDITED;
+            else die_at(line, "INITIALIZE REPLACING: expected ALPHABETIC, ALPHANUMERIC, NUMERIC, ALPHANUMERIC-EDITED or NUMERIC-EDITED");
+            accept_word("data"); expect_word("by");
+            Opnd value; parse_operand(&value);
+            if (value.kind != O_REF && value.kind != O_STR && value.kind != O_NUM && value.kind != O_FIG)
+                die_at(line, "INITIALIZE REPLACING ... BY needs an item or a literal");
+            for (int i = 0; i < n; i++) {
+                Sym *t = rs[i].sym;
+                long sub[MAXDIM];
+                for (int k = 0; k < rs[i].nsub && k < MAXDIM; k++) sub[k] = 0;
+                if (!t->is_group) {
+                    if (!t->is_filler && t->pi.category == cat) { Ref r = rs[i]; emit_move(&value, &r); }
+                } else init_replace_walk(t, &rs[i], cat, &value, sub, rs[i].nsub, line);
+            }
+            if (!(at_word("alphabetic") || at_word("alphanumeric") || at_word("numeric") || at_word("alphanumeric-edited") || at_word("numeric-edited"))) break;
+        }
+    }
     if (at_word("with") || at_word("default")) die_at(cur()->line, "INITIALIZE WITH FILLER / DEFAULT is COBOL 2002");
 }
 
