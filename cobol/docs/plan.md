@@ -497,6 +497,24 @@ we had taken it silently). gl008 next stops at `ROUNDED MODE`, a 2002
 form majesty rewrites to plain `ROUNDED`, then its table `SORT`
 (GitHub #10, a product ruling).
 
+## Stage 18 — the calendar functions **S** — DONE 2026-08-30
+
+ISSUES-6. `INTEGER-OF-DATE`, `DATE-OF-INTEGER`, `DAY-OF-INTEGER`,
+`INTEGER-OF-DAY` from the 1989 addendum, the same addendum
+`CURRENT-DATE` came from. Integer 1 is 1601-01-01 (proleptic
+Gregorian, the civil-from-days algorithm in `libcob.c`); an invalid
+date or day gives 0. A numeric function result is a new shape on the
+intrinsic path: the runtime renders it as unsigned DISPLAY digits in
+its buffer and the compiler pairs it with a numeric descriptor
+(`num_desc`), so MOVE, DISPLAY and the rest see an ordinary numeric
+item. Widths when DISPLAYed directly follow GnuCOBOL (10 / 8 / 7),
+measured, since the standard leaves them to the implementor. Test
+free/datefn, oracle agreeing; jerm2 -- majesty's own cross-check of
+the C `du_*` date routines against these functions over 400,000 days
+-- compiles, runs in 0.4 s under the DBT, and disagrees nowhere on
+either engine (its output window differs by the container's UTC day).
+38 of 58 compile.
+
 ## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report

@@ -178,6 +178,10 @@ given, because majesty's `.prn` oracles were produced under it.
   into `9(3)v99` the line `12345` arrives as the decimal 12345 and
   truncates to `345.00`, as GnuCOBOL does. At end of file the item is
   left as it was.
+- **Calendar functions** (`INTEGER-OF-DATE`, `DATE-OF-INTEGER`,
+  `DAY-OF-INTEGER`, `INTEGER-OF-DAY`): integer 1 is 1601-01-01; an
+  invalid argument gives 0; a value DISPLAYed directly shows ten,
+  eight and seven digits respectively -- GnuCOBOL's widths, measured.
 - **`SPECIAL-NAMES` `CLASS name IS lit [THROUGH lit] ...`** builds a
   256-entry membership table over the native collating sequence; other
   `SPECIAL-NAMES` clauses are refused by name.

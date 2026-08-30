@@ -8,15 +8,15 @@ this file is what is *open*, ranked, plus what was closed and why.
 Nothing here is scheduled: the front is app-driven, and an item moves
 when a program asks for it.
 
-State on 2026-08-30: harness 43/43 with the GnuCOBOL oracle agreeing
+State on 2026-08-30: harness 44/44 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; 37 of
+report step on SLOW-32 with all twelve reports byte-identical; 38 of
 the 58 programs in `~/majesty/src/cobol` compile. The sweep that
 measures the last number is one line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 
-## A. The corpus — 21 refusals, by what unblocks most
+## A. The corpus — 20 refusals, by what unblocks most
 
 ### 1. RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)
 Plain 1985 (Relative I-O module, level 1). Fixed-length records,
@@ -82,11 +82,16 @@ the standing "rewrite to 85" ruling this is a majesty-side change to
 `dist01` (split the scale, or accept 18) rather than a wider
 `cob_num`. Refused with the standard's limit named.
 
-### 6. `FUNCTION INTEGER-OF-DATE` / `DATE-OF-INTEGER` (jerm2, and jerm after ISSUES-2)
-1989 Intrinsic Function addendum to COBOL 85 — the same addendum
-`CURRENT-DATE` and `UPPER-CASE` come from, both already taken. Two
-integer functions over the Gregorian calendar; cheap, and they are
-what the retired date family (ISSUES-2) was hand-rolling.
+### 6. ~~`FUNCTION INTEGER-OF-DATE` / `DATE-OF-INTEGER` (jerm2)~~ — RESOLVED 2026-08-30
+Stage 18: the four calendar functions of the 1989 addendum
+(`INTEGER-OF-DATE`, `DATE-OF-INTEGER`, `DAY-OF-INTEGER`,
+`INTEGER-OF-DAY`), integer 1 = 1601-01-01, invalid input gives 0. A
+result rides the intrinsic plumbing as numeric DISPLAY digits (ten for
+a day count, eight for a date, seven for a day-of-year -- the widths
+GnuCOBOL shows when the value is DISPLAYed directly). free/datefn agrees
+with GnuCOBOL; jerm2 -- majesty's 400,000-day cross-check of the C
+`du_*` routines against these functions -- compiles, runs on SLOW-32
+in 0.4 s under the DBT, and reports no disagreement on either engine.
 
 ### 7. `USAGE BINARY-INT UNSIGNED` (testcrc)
 GnuCOBOL extension (with `BINARY-LONG`, `BINARY-SHORT`, …). Rewrite

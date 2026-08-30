@@ -1426,6 +1426,14 @@ static int str_desc(int len)
     return desc_add(&d);
 }
 
+/* an unsigned integer of n DISPLAY digits (a calendar function's result) */
+static int num_desc(int digits)
+{
+    Desc d; memset(&d, 0, sizeof d);
+    d.cat = COB_NUM; d.usage = COB_U_DISPLAY; d.digits = (unsigned char)digits; d.scale = 0; d.size = digits;
+    return desc_add(&d);
+}
+
 /* a numeric literal: DISPLAY digits with a separate leading sign */
 static const char *num_lit_label(const NumLit *n, int *desc)
 {
@@ -1636,7 +1644,19 @@ static void parse_ref(Ref *r)
             die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
 }
 
-enum { FN_UPPER, FN_LOWER, FN_CURDATE };
+enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY };
+/* the calendar functions (1989 addendum) take an integer and give one back;
+ * the runtime renders the result as numeric DISPLAY digits in its buffer */
+static int fn_is_numeric(int fn) { return fn >= FN_INTDATE; }
+static const char *fn_runtime_name(int fn)
+{
+    switch (fn) {
+    case FN_INTDATE: return "cob_fn_integer_of_date";
+    case FN_DATEINT: return "cob_fn_date_of_integer";
+    case FN_DAYINT:  return "cob_fn_day_of_integer";
+    default:         return "cob_fn_integer_of_day";
+    }
+}
 static int opnd_size(Opnd *o);
 
 static void numlit_from_int(NumLit *n, long v)
@@ -1672,6 +1692,24 @@ static void parse_operand(Opnd *o)
         else if (!strcmp(n->s, "current-date")) {
             advance();
             o->kind = O_FUNC; o->fn = FN_CURDATE; o->fsize = 21;
+            return;
+        } else if (!strcmp(n->s, "integer-of-date") || !strcmp(n->s, "date-of-integer") ||
+                   !strcmp(n->s, "day-of-integer") || !strcmp(n->s, "integer-of-day")) {
+            int fn = !strcmp(n->s, "integer-of-date") ? FN_INTDATE : !strcmp(n->s, "date-of-integer") ? FN_DATEINT
+                   : !strcmp(n->s, "day-of-integer") ? FN_DAYINT : FN_INTDAY;
+            advance();
+            if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
+            advance();
+            o->farg = xmalloc(sizeof *o->farg);
+            parse_operand(o->farg);
+            if (o->farg->kind == O_REF && !is_int_item(o->farg->ref.sym))
+                die_at(n->line, "FUNCTION %s takes an integer; '%s' is not one", n->s, o->farg->ref.sym->name);
+            if (o->farg->kind != O_REF && o->farg->kind != O_NUM)
+                die_at(n->line, "FUNCTION %s takes an integer item or literal", n->s);
+            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+            advance();
+            o->kind = O_FUNC; o->fn = fn;
+            o->fsize = fn == FN_DATEINT ? 8 : fn == FN_DAYINT ? 7 : 10;   /* DISPLAYed directly: yyyymmdd, yyyyddd, or ten digits, as GnuCOBOL shows them */
             return;
         } else if (!strcmp(n->s, "length")) {
             /* known at compile time, except for a variable reference modification */
@@ -1877,7 +1915,13 @@ static void emit_args(const Arg *a, int n)
             /* an intrinsic: evaluate into libcob's buffer, park the pointer */
             Opnd *f = a[i].fn, *x = f->farg;
             if (f->fn == FN_CURDATE) emit_call("cob_fn_current_date");
-            else {
+            else if (fn_is_numeric(f->fn)) {
+                if (x->kind == O_REF && is_hot_int(x->ref.sym)) { emit_ref_addr(&x->ref, "r3"); emit_load_int(x->ref.sym, "r3", "r1"); }
+                else if (x->kind == O_REF) { emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
+                else emit_li("r1", (long)numlit_int(&x->num));
+                emit("\tadd r3, r1, r0");
+                emit_call(fn_runtime_name(f->fn));
+            } else {
                 if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
                 else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
                 emit_li("r4", f->fsize);
@@ -1913,7 +1957,9 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
         else *desc = arg_rdesc(&o->ref);
         return;
     case O_FUNC:
-        *addr = arg_func(o); *desc = arg_desc(str_desc(o->fsize)); return;
+        *addr = arg_func(o);
+        *desc = arg_desc(fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
+        return;
     case O_STR:
         *addr = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
         *desc = arg_desc(str_desc(o->tok->len)); return;

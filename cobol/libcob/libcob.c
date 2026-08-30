@@ -1373,6 +1373,72 @@ void cob_inspect_replace(char *p, int n, int kind, const char *pat, int plen, co
 /* FUNCTION CURRENT-DATE: YYYYMMDDhhmmsshh followed by the offset from
  * UTC as +hhmm / -hhmm (21 characters); the guest clock through the
  * emulator, local time as the guest libc gives it */
+/* The calendar functions of the 1989 addendum.  Integer 1 is 1601-01-01
+ * (Gregorian); a date is yyyymmdd, a day yyyyddd.  An argument that is
+ * not a valid date or day gives 0; a day count is ten DISPLAY digits, a
+ * date eight, a day-of-year seven, as GnuCOBOL renders them. */
+static long civil_to_days(long y, long m, long d)      /* days since 1601-01-01, +1 */
+{
+    y -= m <= 2;
+    long era = (y >= 0 ? y : y - 399) / 400;
+    long yoe = y - era * 400;
+    long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    long from_0000_03_01 = era * 146097 + doe;
+    return from_0000_03_01 - 584694 + 1;                /* 584694 = 1601-01-01 counted from 0000-03-01 */
+}
+static void days_to_civil(long n, long *y, long *m, long *d)
+{
+    long z = n - 1 + 584694;
+    long era = (z >= 0 ? z : z - 146096) / 146097;
+    long doe = z - era * 146097;
+    long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long yy = yoe + era * 400;
+    long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long mp = (5 * doy + 2) / 153;
+    *d = doy - (153 * mp + 2) / 5 + 1;
+    *m = mp + (mp < 10 ? 3 : -9);
+    *y = yy + (*m <= 2);
+}
+static int leap(long y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
+static int valid_date(long y, long m, long d)
+{
+    static const int mdays[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (y < 1601 || y > 9999 || m < 1 || m > 12 || d < 1) return 0;
+    return d <= mdays[m - 1] + (m == 2 && leap(y));
+}
+static char *fn_digits(long v, int n)
+{
+    char *b = fn_buffer(n);
+    if (v < 0) v = 0;
+    for (int i = n - 1; i >= 0; i--) { b[i] = (char)('0' + v % 10); v /= 10; }
+    return b;
+}
+#define MAX_DAY 3067671L                                 /* 9999-12-31 */
+char *cob_fn_integer_of_date(long ymd)
+{
+    long y = ymd / 10000, m = ymd / 100 % 100, d = ymd % 100;
+    return fn_digits(valid_date(y, m, d) ? civil_to_days(y, m, d) : 0, 10);
+}
+char *cob_fn_date_of_integer(long n)
+{
+    if (n < 1 || n > MAX_DAY) return fn_digits(0, 8);
+    long y, m, d; days_to_civil(n, &y, &m, &d);
+    return fn_digits(y * 10000 + m * 100 + d, 8);
+}
+char *cob_fn_day_of_integer(long n)
+{
+    if (n < 1 || n > MAX_DAY) return fn_digits(0, 7);
+    long y, m, d; days_to_civil(n, &y, &m, &d);
+    return fn_digits(y * 1000 + (n - civil_to_days(y, 1, 1) + 1), 7);
+}
+char *cob_fn_integer_of_day(long yddd)
+{
+    long y = yddd / 1000, doy = yddd % 1000;
+    if (y < 1601 || y > 9999 || doy < 1 || doy > 365 + leap(y)) return fn_digits(0, 10);
+    return fn_digits(civil_to_days(y, 1, 1) + doy - 1, 10);
+}
+
 char *cob_fn_current_date(void)
 {
     char *b = fn_buffer(21);
