@@ -3738,7 +3738,7 @@ static void emit_hot_sum(Opnd *ops, int n)
     }
 }
 
-#define MAXOPS 16
+#define MAXOPS 64                  /* NC106A/NC176A add and subtract 21 operands */
 
 static int parse_operand_list(Opnd *ops, int max)
 {

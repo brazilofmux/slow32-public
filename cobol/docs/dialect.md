@@ -381,6 +381,9 @@ given, because majesty's `.prn` oracles were produced under it.
   NOT EQUAL - (b * 7) + c`, `IF - N = 5` -- a unary sign begins an
   arithmetic expression wherever an operand may stand (NC250A); after
   AND/OR it is an expression, not an abbreviated relational operator.
+- **Up to 64 operands in a statement** (Stage 51): ADD, SUBTRACT and
+  the other operand lists took 16; NC106A and NC176A add and subtract
+  21 (the runtime's numeric stack is 96 deep).
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

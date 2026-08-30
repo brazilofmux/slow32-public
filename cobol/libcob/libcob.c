@@ -608,7 +608,7 @@ int cob_class_user(const void *vp, const cob_desc *d, const unsigned char *tab)
 /* ---- the numeric stack: ADD/SUBTRACT/MULTIPLY/DIVIDE, COMPUTE later --- */
 
 typedef struct { long long v; int scale; } cob_num;
-static cob_num nstk[32];
+static cob_num nstk[96];
 static int nsp;
 
 void cob_push(const void *p, const cob_desc *d)

@@ -1078,6 +1078,14 @@ expression rather than the abbreviated relational operator of Stage
 NC250A (115 tests) matches; the suite 286 of 303 compile, 6702 of
 6744 pass, none fail, 283 match.
 
+## Stage 51 — 64 operands **S** — DONE 2026-08-31
+
+MAXOPS was 16; NC106A and NC176A add and subtract 21 operands. 64
+now, the runtime's numeric stack 96 deep. free/manyops (21 items
+added and subtracted, 30 literals GIVING), oracle agreeing; NC106A
+(126 tests) and NC176A (124) match; the suite 288 of 303 compile,
+6952 of 6994 pass, none fail, 285 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
