@@ -10,13 +10,13 @@ when a program asks for it.
 
 State on 2026-08-30: harness 47/47 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; 56 of
-the 58 programs in `~/majesty/src/cobol` compile. The sweep that
+report step on SLOW-32 with all twelve reports byte-identical; **every
+program in `~/majesty/src/cobol` compiles, 56 of 56** (2026-08-30 evening). The sweep that
 measures the last number is one line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 
-## A. The corpus — 2 refusals, by what unblocks most
+## A. The corpus — no refusals left; the items, as they were closed
 
 ### 1. ~~RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)~~ — RESOLVED 2026-08-30
 Stage 19. Slots of `4 + recsize` framed with the mode-V RDW (zero =
@@ -99,10 +99,9 @@ majesty: `PIC 9(9) COMP-5` (four bytes, the C seam's unsigned 32-bit),
 the hex literal in decimal, `CBL_NOT` as `4294967295 - item`. Prints
 zlib's CRC-32 of 'A' on both engines.
 
-### 8. `XML` / `JSON` verbs (usexml, usejson)
-GnuCOBOL extensions. Out of scope; the two are demonstration
-programs. Retire from the build or leave them refusing — either way
-not compiler work.
+### 8. ~~`XML` / `JSON` verbs (usexml, usejson)~~ — RESOLVED 2026-08-30 by deletion
+GnuCOBOL extension probes, 2002 by construction; removed from majesty
+(3f342ed). Nothing in the corpus refuses now.
 
 ### 9. gl015, gl016 — a report field without a PICTURE
 Both are retired programs, not in majesty's build. Not counted.
