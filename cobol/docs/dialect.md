@@ -140,6 +140,9 @@ given, because majesty's `.prn` oracles were produced under it.
   `DISPLAY n UPON ARGUMENT-NUMBER` makes the next one n; `COMMAND-LINE`
   is the arguments joined by blanks. The emulator passes arguments
   after the program name (`slow32-fast prog.s32x 202608`).
+- **`OCCURS m TO n DEPENDING ON d`**: laid out at n; d must be an
+  integer item outside the table; a whole-group `MOVE` of a group the
+  table sits in is refused for now (its length varies with d).
 - **`COPY`**: text-name as a word or literal; found as given, then
   `.cpy`, `.CPY`, `.cbl`, `.CBL`, beside the source and in the `-I`
   directories; `OF`/`IN library` accepted (the directories serve as the

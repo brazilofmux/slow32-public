@@ -42,7 +42,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.13 (stage 13: the command line)"
+#define VERSION "0.14 (stage 14: OCCURS DEPENDING ON)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -558,7 +558,8 @@ typedef struct Sym {
     int  is_group, is_cond, is_index;
     int  size;                      /* one occurrence */
     int  offset;                    /* from the start of the record */
-    int  occurs;                    /* 0 = no OCCURS */
+    int  occurs;                    /* 0 = no OCCURS; with DEPENDING ON, the maximum */
+    int  odo_min; char odo_dep[64]; struct Sym *odo_dep_sym;   /* OCCURS m TO n DEPENDING ON */
     int  redefines;                 /* sym index, -1 */
     int  sync, just, blank_zero;
     int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];
@@ -951,10 +952,21 @@ static void parse_data_item(void)
         }
         if (!strcmp(t->s, "occurs")) {
             advance();
+            if (at_word("unbounded")) die_at(t->line, "OCCURS UNBOUNDED is COBOL 2002 (not in the 1985 text)");
             if (cur()->kind != T_NUM) die_at(t->line, "expected a count after OCCURS");
             s->occurs = atoi(cur()->s);
             advance();
-            if (at_word("to")) die_at(t->line, "OCCURS DEPENDING ON is not implemented yet");
+            if (accept_word("to")) {
+                /* OCCURS m TO n DEPENDING ON d: laid out at n (the 85 rule for a
+                 * receiving item); d says how many are in use */
+                if (cur()->kind != T_NUM) die_at(t->line, "expected the maximum after OCCURS m TO");
+                s->odo_min = s->occurs; s->occurs = atoi(cur()->s); advance();
+                accept_word("times");
+                if (!accept_word("depending")) die_at(t->line, "OCCURS m TO n needs DEPENDING ON");
+                accept_word("on");
+                if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after DEPENDING ON");
+                snprintf(s->odo_dep, sizeof s->odo_dep, "%s", cur()->s); advance();
+            }
             accept_word("times");
             for (;;) {
                 if (accept_word("ascending") || accept_word("descending")) {
@@ -1245,6 +1257,15 @@ static void finish_data_division(void)
         strcpy(s->label, g_sym[r].label);
         if (s->size > g_sym[r].image_size && s->size > g_sym[r].size) g_sym[r].image_size = s->size;
         for (int j = 0; j < g_nsym; j++) if (g_sym[j].record == i) g_sym[j].record = r;
+    }
+    /* OCCURS DEPENDING ON: the item must be an integer outside the table */
+    for (int i = 0; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!s->odo_dep[0]) continue;
+        s->odo_dep_sym = sym_lookup(s->odo_dep, NULL, 0, s->line);
+        if (!is_int_item(s->odo_dep_sym)) die_at(s->line, "DEPENDING ON '%s' must be an integer item", s->odo_dep);
+        if (s->odo_dep_sym->record == s->record && s->odo_dep_sym->offset >= s->offset)
+            die_at(s->line, "DEPENDING ON '%s' must not be inside or after the table", s->odo_dep);
     }
     /* files: names, status, the record area */
     for (int i = 0; i < g_nfile; i++) {
@@ -2430,9 +2451,22 @@ static void parse_display(void)
 
 /* ---- MOVE ------------------------------------------------------------- */
 
+/* does a group's length depend on an OCCURS DEPENDING ON below it?  One
+ * occurrence of the table itself (always subscripted) is fixed-length. */
+static int has_odo(Sym *s)
+{
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling)
+        if (g_sym[c].odo_dep[0] || has_odo(&g_sym[c])) return 1;
+    return 0;
+}
+
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
+    if (d->is_group && has_odo(d))
+        die_at(dst->line, "MOVE to the group '%s', which holds an OCCURS DEPENDING ON table, is not implemented (its length varies); its entries can be moved by subscript", d->name);
+    if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym))
+        die_at(src->line, "MOVE of the group '%s', which holds an OCCURS DEPENDING ON table, is not implemented (its length varies); its entries can be moved by subscript", src->ref.sym->name);
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
     if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) {
         int ned = d->pi.category == PIC_NUMERIC_EDITED;

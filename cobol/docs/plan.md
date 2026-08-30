@@ -426,6 +426,25 @@ whole journal pipeline runs on SLOW-32"; `s32x/build.sh` builds all
 eight binaries); the whole batch exits 0 with all twelve reports
 identical to the all-GnuCOBOL baseline.
 
+## Stage 14 — OCCURS DEPENDING ON **S** — DONE 2026-08-29
+
+`OCCURS m TO n [TIMES] DEPENDING ON d` (with `ASCENDING KEY` and
+`INDEXED BY` alongside): laid out at n, the 1985 rule for a receiving
+item; d resolved to an integer item outside the table; entries used
+by subscript, index or `PERFORM VARYING` exactly as fixed tables are.
+A `MOVE` of a *group* whose length the table makes variable is refused
+with a message (nothing in the corpus does it; one occurrence of the
+table, always subscripted, is fixed-length and moves). `OCCURS
+UNBOUNDED` is refused as 2002. gl034 and gl040 compile; gl034 stops
+next at `SEARCH ALL`.
+
+**The balances pipeline through gl041, on SLOW-32:** gl037 → gl038 →
+gl040 → gl041 with `batch.sh`'s sorts between, run in place: 55,232
+`translines`, 12,564 `balances`, 12,566 `balances-re` (gl040's ODO
+table doing the retained-earnings work) and 12,566 `acctbal` rows,
+each file byte-identical to GnuCOBOL's. gl042/gl043, which print the
+balance sheet and profit-and-loss from `acctbal`, wait on `SEARCH`.
+
 ## After v1 (not scheduled, each when a program asks)
 
 - Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
