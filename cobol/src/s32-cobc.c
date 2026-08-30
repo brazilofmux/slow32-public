@@ -394,6 +394,11 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 }
                 die_at(line, "a period must be followed by a space or the end of the line");
             }
+            if (c == ',' && p > t && isdigit((unsigned char)p[-1]) && isdigit((unsigned char)p[1])) {
+                /* a comma tight between digits: the decimal point under
+                 * DECIMAL-POINT IS COMMA, settled once the whole text is in */
+                push_tok(T_OP, line, ",", 1); p++; continue;
+            }
             if (c == ',' || c == ';') {
                 if (p[1] == 0 || p[1] == ' ' || p[1] == '\t') { p++; continue; }
                 die_at(line, "'%c' is a separator only when followed by a space", c);
@@ -436,6 +441,42 @@ static int copy_open(const char *name, SrcLine **lines, int *n, char *found, siz
 }
 
 static int g_copy_guard;
+static int g_dp_comma;      /* SPECIAL-NAMES DECIMAL-POINT IS COMMA */
+
+/* DECIMAL-POINT IS COMMA swaps the roles of '.' and ',' in numeric
+ * literals and pictures.  It may arrive by COPY (SM103A), so it is
+ * settled here, after the text is whole: literals '12,5' are joined
+ * and pictures rewritten into the ordinary form the rest of the
+ * compiler reads; the runtime swaps the characters back when it edits. */
+static void apply_decimal_point(void)
+{
+    for (int i = 0; i + 1 < g_ntok; i++) {
+        if (g_tok[i].kind != T_WORD || strcmp(g_tok[i].s, "decimal-point")) continue;
+        int j = i + 1;
+        if (g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "is")) j++;
+        if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "comma")) { g_dp_comma = 1; break; }
+    }
+    int w = 0;
+    for (int i = 0; i < g_ntok; i++) {
+        Tok *t = &g_tok[i];
+        if (t->kind == T_OP && !strcmp(t->s, ",")) {
+            if (g_dp_comma && w > 0 && g_tok[w - 1].kind == T_NUM && i + 1 < g_ntok && g_tok[i + 1].kind == T_NUM && g_tok[i + 1].line == t->line) {
+                Tok *a = &g_tok[w - 1], *b = &g_tok[i + 1];
+                if (strchr(a->s, '.') || strchr(b->s, '.')) die_at(t->line, "a numeric literal with two decimal points");
+                char *joined = xmalloc(strlen(a->s) + strlen(b->s) + 2);
+                sprintf(joined, "%s.%s", a->s, b->s);
+                a->s = joined; a->len = (int)strlen(joined);
+                i++;                                    /* the fraction is consumed */
+                continue;
+            }
+            die_at(t->line, "',' is a separator only when followed by a space");
+        }
+        if (g_dp_comma && t->kind == T_PIC)
+            for (char *q = t->s; *q; q++) { if (*q == '.') *q = ','; else if (*q == ',') *q = '.'; }
+        g_tok[w++] = *t;
+    }
+    g_ntok = w;
+}
 
 /* REPLACE ==pseudo-text== BY ==pseudo-text== ... / REPLACE OFF: from the
  * statement on, every matching token sequence of the source is replaced,
@@ -636,6 +677,7 @@ static void tokenize(void)
         for (int r = 0; r < g_ntok; r++) if (!g_tok[r].dbg) g_tok[w++] = g_tok[r];
         g_ntok = w;
     }
+    apply_decimal_point();
     push_tok(T_EOF, g_nlines ? g_lines[g_nlines - 1].line : 1, "", 0);
 }
 
@@ -1927,6 +1969,7 @@ static void emit_bytes(const unsigned char *b, int n)
 /* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, then three scratch words */
 #define FRAME       104
 #define SLOT_COLL   96          /* the caller's collating table, when this unit sets its own */
+#define SLOT_DP     100         /* the caller's decimal point, under DECIMAL-POINT IS COMMA */
 #define SLOT(i)     (8 + 4 * (i))
 #define NSLOTS      16
 #define SLOT_A      (8 + 4 * NSLOTS)
@@ -3023,7 +3066,7 @@ static void parse_display(void)
             char txt[48]; int k = 0;
             if (o.num.neg) txt[k++] = '-';
             for (int i = 0; i < o.num.ndigits; i++) {
-                if (o.num.scale && i == o.num.ndigits - o.num.scale) txt[k++] = '.';
+                if (o.num.scale && i == o.num.ndigits - o.num.scale) txt[k++] = g_dp_comma ? ',' : '.';
                 txt[k++] = o.num.digits[i];
             }
             Arg a[2] = { arg_label(lit_label((unsigned char *)txt, k)), arg_imm(k) };
@@ -5132,6 +5175,7 @@ static void parse_procedure_division(void)
         char lab[32]; snprintf(lab, sizeof lab, ".Lcoll%d", g_unit);
         emit_la("r3", lab); emit_call("cob_set_collating"); emit("\tstw sp+%d, r1", SLOT_COLL);
     }
+    if (g_dp_comma) { emit("\taddi r3, r0, 1"); emit_call("cob_set_decimal_point"); emit("\tstw sp+%d, r1", SLOT_DP); }
     /* the caller's addresses go into the LINKAGE cells */
     for (int i = 0; i < nusing; i++) {
         emit_la("r1", g_sym[using[i]->record].label);
@@ -5191,6 +5235,7 @@ static void parse_procedure_division(void)
 
     emit(".Lgb%d:", g_unit);
     if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
+    if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
     emit("\taddi r1, r0, 0");
     emit("\tldw r11, sp+4");
     emit("\tldw lr, sp+0");
@@ -5470,6 +5515,11 @@ static void parse_environment_division(void)
                             SwitchName *m = &g_switch[g_nswitch++];
                             snprintf(m->name, sizeof m->name, "%s", cur()->s); m->sw = sw; m->on = on; advance();
                         }
+                        continue;
+                    }
+                    if (accept_word("decimal-point")) {       /* already applied to the text; see apply_decimal_point */
+                        accept_word("is");
+                        if (!accept_word("comma")) die_at(cur()->line, "DECIMAL-POINT IS COMMA is the only form");
                         continue;
                     }
                     if (accept_word("alphabet")) {

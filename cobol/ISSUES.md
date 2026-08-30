@@ -54,10 +54,9 @@ per program unit; the test beside `NUMERIC` in `parse_simple`;
 damm's output is byte-identical to GnuCOBOL's over seven inputs
 including the check-digit fixtures majesty's tests use. gl008's declarations were
 unused and were removed on the majesty side. Other SPECIAL-NAMES
-clauses (`CURRENCY SIGN`, `DECIMAL-POINT IS COMMA`, switches,
-`SYMBOLIC`) stay refused by name until a program asks;
-`DECIMAL-POINT IS COMMA` in particular touches the PICTURE scanner
-and every literal.
+clauses (`CURRENCY SIGN`, `SYMBOLIC`) stay refused by name until a
+program asks; switches landed in Stage 23 and `DECIMAL-POINT IS
+COMMA` in Stage 27 (a token post-pass, not the scanner).
 
 ### 4. ~~`SD` and file `SORT` (glacpost; ldglentry)~~ — RESOLVED 2026-08-30
 Stage 21. The SD is a `cob_file` of organization SORT; a SORT
@@ -216,10 +215,10 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **4115 of 4152 tests pass, none fail, 214
+them by their own reports: **4121 of 4158 tests pass, none fail, 215
 programs match GnuCOBOL's tally exactly** (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
-made SM 12 of 13 -- SM103A wants `DECIMAL-POINT IS COMMA`). The
+made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13). The
 remaining bins, largest first, each a
 work item: ~~`ALTERNATE RECORD KEY`~~ (done), ~~`LINAGE`~~ (done),
 ~~`COPY ... REPLACING`~~ (done), an ODO table nested below a direct child (4),

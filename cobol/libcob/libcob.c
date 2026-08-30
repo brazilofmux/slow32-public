@@ -107,6 +107,11 @@ long long cob_get_num(const void *vp, const cob_desc *d)
     if (d->cat == COB_NUM_ED) {
         /* de-editing: a 1985 feature IBM ANS COBOL never had */
         char digs[40];
+        unsigned char sw[256];
+        if (cob_dp_comma && d->size <= sizeof sw) {     /* the bytes carry ',' for the point: read them the other way round */
+            for (size_t i = 0; i < d->size; i++) sw[i] = p[i] == '.' ? ',' : p[i] == ',' ? '.' : p[i];
+            p = sw;
+        }
         int n = cob_deedit(d->pic, p, digs, &neg);
         for (int i = 0; i < n; i++) v = v * 10 + (digs[i] - '0');
         return neg ? -v : v;
@@ -180,7 +185,8 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
     if (d->cat == COB_NUM_ED) {
         char digs[40];
         for (int i = d->digits - 1; i >= 0; i--) { digs[i] = (char)('0' + mag % 10); mag /= 10; }
-        cob_edit_apply(d->pic, digs, neg, d->flags & COB_F_BLANKZ, (char *)p);
+        int w = cob_edit_apply(d->pic, digs, neg, d->flags & COB_F_BLANKZ, (char *)p);
+        if (cob_dp_comma) for (int i = 0; i < w; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
         return 0;
     }
 
@@ -253,7 +259,7 @@ void cob_display_field(const void *vp, const cob_desc *d)
         int neg = (d->flags & COB_F_SIGNED) && last >= 'p' && last <= 'y';
         if (d->flags & COB_F_SIGNED) out_char(neg ? '-' : '+');
         for (int i = 0; i < n; i++) {
-            if (d->scale > 0 && i == n - d->scale) out_char('.');
+            if (d->scale > 0 && i == n - d->scale) out_char(cob_dp_comma ? ',' : '.');
             unsigned char c = p[i];
             if (i == sk && neg) c = (unsigned char)(last - 'p' + '0');
             out_char((char)c);
@@ -377,6 +383,10 @@ void cob_fill_all(void *dst, int n, const char *lit, int len)
 /* PROGRAM COLLATING SEQUENCE: the rank of each character, or native order */
 static const unsigned char *cob_collating;
 const unsigned char *cob_set_collating(const unsigned char *t) { const unsigned char *old = cob_collating; cob_collating = t; return old; }
+
+/* DECIMAL-POINT IS COMMA: the program's own; a called program's is restored on its exit */
+int cob_dp_comma;
+int cob_set_decimal_point(int comma) { int old = cob_dp_comma; cob_dp_comma = comma; return old; }
 
 static int cmp_bytes(const unsigned char *a, int na, const unsigned char *b, int nb)
 {

@@ -671,6 +671,22 @@ times). free/copyrep, free/replace; SM 12 of 13 compile and every
 one matches GnuCOBOL's tally; the whole suite 217 of 303 compile,
 4115 of 4152 tests pass, none fail, 214 programs match.
 
+## Stage 27 — DECIMAL-POINT IS COMMA **S** — DONE 2026-08-31
+
+The last SM program. The clause reaches SM103A by `COPY K3SNA`, after
+the main text has been scanned, so it is not a tokenizer mode: a comma
+tight between digits becomes a token of its own, and once COPY and
+REPLACE are done `apply_decimal_point` looks for the clause, joins
+`12345678,91` into one literal and swaps `.`/`,` in every picture so
+the rest of the compiler reads the ordinary form. libcob keeps
+`cob_dp_comma` (set on entry, restored on exit, frame slot 100) and
+swaps the characters after `cob_edit_apply`, before `cob_deedit`, and
+in DISPLAY of a scaled item; the compiler does the same for a literal
+displayed as written. free/dpcomma (edited pictures with `.`
+grouping, floating `-`, currency, de-editing, COMPUTE with `0,25`,
+DISPLAY of `3,75`), oracle agreeing; SM 13 of 13 match GnuCOBOL; the
+suite 218 of 303 compile, 4121 of 4158 pass, none fail, 215 match.
+
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
 step on SLOW-32**: the charts, the journal pipeline, the balances

@@ -222,8 +222,18 @@ given, because majesty's `.prn` oracles were produced under it.
   `ALPHABET name IS STANDARD-1|NATIVE` is the native (ASCII) sequence,
   any other alphabet is recorded and refused where it would be used;
   `SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic` for ACCEPT FROM,
-  DISPLAY UPON and ADVANCING. `CURRENCY SIGN`, `DECIMAL-POINT IS
-  COMMA` and `SYMBOLIC CHARACTERS` are refused by name.
+  DISPLAY UPON and ADVANCING. **`DECIMAL-POINT IS COMMA`** (Stage
+  27): a comma tight between digits is the decimal point of a numeric
+  literal (`12,5`; `1,5` outside this mode is still the old error),
+  and `.` and `,` trade places in every PICTURE -- `ZZ.ZZZ,99` edits
+  to `12.345,67`. The clause may arrive by COPY, so it is applied
+  once the text is whole (`apply_decimal_point`): literals joined,
+  pictures rewritten into the ordinary form; the runtime
+  (`cob_dp_comma`, set on entry and restored on exit like the
+  collating sequence) swaps the two characters on the way out of
+  editing, into de-editing, and in DISPLAY of a scaled numeric item
+  or literal. `CURRENCY SIGN` and `SYMBOLIC CHARACTERS` are refused
+  by name.
 - **`SIGN IS LEADING|TRAILING [SEPARATE]`** on a signed numeric
   DISPLAY item or on a group (reaching its subordinate ones): a
   leading overpunch is on the first digit; SEPARATE adds a character.

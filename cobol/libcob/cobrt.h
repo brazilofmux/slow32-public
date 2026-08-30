@@ -124,4 +124,8 @@ typedef struct {
     const char   *pic;       /* flattened PICTURE symbols, or 0 */
 } cob_desc;
 
+/* SPECIAL-NAMES DECIMAL-POINT IS COMMA: editing and DISPLAY swap '.' and ',' */
+extern int cob_dp_comma;
+int cob_set_decimal_point(int comma);
+
 #endif
