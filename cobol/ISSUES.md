@@ -8,26 +8,25 @@ this file is what is *open*, ranked, plus what was closed and why.
 Nothing here is scheduled: the front is app-driven, and an item moves
 when a program asks for it.
 
-State on 2026-08-30: harness 44/44 with the GnuCOBOL oracle agreeing
+State on 2026-08-30: harness 45/45 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; 38 of
+report step on SLOW-32 with all twelve reports byte-identical; 40 of
 the 58 programs in `~/majesty/src/cobol` compile. The sweep that
 measures the last number is one line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 
-## A. The corpus — 20 refusals, by what unblocks most
+## A. The corpus — 18 refusals, by what unblocks most
 
-### 1. RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)
-Plain 1985 (Relative I-O module, level 1). Fixed-length records,
-record number → byte offset, `RELATIVE KEY`, READ/WRITE/REWRITE/DELETE/
-START by key, sequential read skipping deleted slots. Same `cob_file`
-as the sequential organisations; a deleted slot needs a marker (a
-record of all `X'00'`, or a per-file bitmap in a side file like the
-indexed `.key`) — decide by looking at what dBase/tapemgr expect to
-read from these files, not in the abstract. `ldglentry` also has an
-`SD`, so it meets ISSUES-4 next. Refusal today: `RELATIVE KEY is not
-implemented yet` (`bad/relative-open` pins the message).
+### 1. ~~RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)~~ — RESOLVED 2026-08-30
+Stage 19. Slots of `4 + recsize` framed with the mode-V RDW (zero =
+empty), which also carries glentry's variable-length records; the
+six verbs under random, dynamic and sequential access, statuses and
+positioning measured against GnuCOBOL (docs/indexed.md "As built").
+crglentry and exglentry run on SLOW-32 with GnuCOBOL's output;
+ldglentry now stops at its `SD` (ISSUES-4). The on-disk bytes differ
+from GnuCOBOL's 8-byte native length -- documented, and no program
+outside COBOL reads these files.
 
 ### 2. The legacy `FUNCTION-ID` date family (7 units + 2 callers)
 `fielded_to_linear`, `linear_to_fielded`, `floor-div`, `floor-divmod`,

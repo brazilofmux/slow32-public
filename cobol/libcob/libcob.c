@@ -619,17 +619,33 @@ static int idx_open(cob_file *f, int mode);
 static int idx_close(cob_file *f);
 static int idx_read_next(cob_file *f);
 static int idx_write(cob_file *f);
+static int rel_read_next(cob_file *f);
+static int rel_read_key(cob_file *f);
+static int rel_write(cob_file *f, int reclen);
+static int rel_rewrite(cob_file *f);
+static int rel_delete(cob_file *f);
+static int rel_start(cob_file *f, int op);
+static unsigned rel_slot_size(cob_file *f);
 
 int cob_open(cob_file *f, int mode)
 {
     if (f->open_mode) return file_result(f, "41", "OPEN of a file already open");
     if (f->org == COB_ORG_INDEXED) return idx_open(f, mode);
-    if (f->org == COB_ORG_RELATIVE) cob_fatal("RELATIVE files are not implemented yet (after v1)");
     const char *name = file_name(f);
     const char *fm = mode == COB_OPEN_INPUT ? "rb" : mode == COB_OPEN_OUTPUT ? "wb"
                    : mode == COB_OPEN_EXTEND ? "ab" : "r+b";
+    /* a relative file is addressed by slot, so EXTEND keeps read-write
+     * access and positions after the last slot (created when absent) */
+    if (f->org == COB_ORG_RELATIVE && mode == COB_OPEN_EXTEND) fm = "r+b";
+    if (f->org == COB_ORG_RELATIVE && mode == COB_OPEN_OUTPUT) fm = "w+b";   /* WRITE checks the slot first */
     FILE *fp = fopen(name, fm);
+    if (!fp && f->org == COB_ORG_RELATIVE && mode == COB_OPEN_EXTEND) fp = fopen(name, "w+b");
     f->at_eof = 0;
+    if (fp && f->org == COB_ORG_RELATIVE) {
+        f->rel_pos = 1; f->rel_last = 0;
+        if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0)
+            f->rel_pos = (unsigned)(ftell(fp) / (long)rel_slot_size(f)) + 1;
+    }
     if (!fp) {
         if (mode == COB_OPEN_INPUT && f->optional) {
             /* OPTIONAL and absent: open succeeds, the first READ is at end */
@@ -658,6 +674,7 @@ int cob_read(cob_file *f)
     if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)
         return file_result(f, "47", "READ of a file open for output");
     if (f->org == COB_ORG_INDEXED) return idx_read_next(f);
+    if (f->org == COB_ORG_RELATIVE) return rel_read_next(f);
     if (f->at_eof) return file_result(f, "10", "");
     FILE *fp = (FILE *)f->fp;
     char *rec = f->record;
@@ -711,6 +728,7 @@ int cob_write(cob_file *f, int before, int after, int reclen)
     if (!f->open_mode) return file_result(f, "48", "WRITE of a file not open");
     if (f->open_mode == COB_OPEN_INPUT) return file_result(f, "48", "WRITE of a file open for input");
     if (f->org == COB_ORG_INDEXED) return idx_write(f);
+    if (f->org == COB_ORG_RELATIVE) return rel_write(f, reclen);
     FILE *fp = (FILE *)f->fp;
     const char *rec = f->record;
     unsigned n = f->recsize;
@@ -734,6 +752,207 @@ int cob_write(cob_file *f, int before, int after, int reclen)
     if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
     fputc('\n', fp);
     for (int i = 0; i < after; i++) fputc('\n', fp);
+    return file_result(f, "00", "");
+}
+
+/* ====================================================================== */
+/* Relative I-O.  The file is fixed slots of 4 + recsize bytes; record n  */
+/* is slot n.  A slot's four-byte prefix is the RDW our mode-V files      */
+/* carry (big-endian length including the four, then two zero bytes),    */
+/* all zero for an empty slot -- so a relative file is a sequence of     */
+/* fixed-length V records, and a deleted record is unambiguous.          */
+/* (GnuCOBOL 4 keeps an 8-byte native length there; docs/oracles.md.)    */
+/* ====================================================================== */
+
+static unsigned rel_slot_size(cob_file *f) { return 4 + f->recsize; }
+
+static long rel_key_value(cob_file *f)
+{
+    if (!f->rel_key) return 0;
+    return (long)cob_get_num(f->rel_key, (const cob_desc *)f->rel_key_desc);
+}
+
+static void rel_key_set(cob_file *f, unsigned n)
+{
+    if (f->rel_key) cob_put_num(f->rel_key, (const cob_desc *)f->rel_key_desc, (long long)n, 0);
+}
+
+/* the slot's state: 1 holds a record (read into the area when into_area),
+ * 0 empty, -1 beyond the end of the file, -2 an I/O error */
+static int rel_slot_get(cob_file *f, unsigned n, int into_area)
+{
+    FILE *fp = (FILE *)f->fp;
+    unsigned char rdw[4];
+    if (n < 1) return -1;
+    if (fseek(fp, (long)(n - 1) * (long)rel_slot_size(f), 0) != 0) return -2;
+    size_t got = fread(rdw, 1, 4, fp);
+    if (got == 0) return -1;
+    if (got < 4) return -2;
+    unsigned len = ((unsigned)rdw[0] << 8) | rdw[1];
+    if (len == 0) return 0;
+    if (!into_area) return 1;
+    if (len < 4) return -2;
+    len -= 4;
+    if (len > f->recsize) len = f->recsize;
+    if (fread(f->record, 1, len, fp) != len) return -2;
+    f->last_len = len;
+    if (f->dep_item) cob_put_num(f->dep_item, (const cob_desc *)f->dep_desc, (long long)len, 0);
+    return 1;
+}
+
+/* write slot n from the record area -- len bytes of it, the RDW saying so,
+ * the rest of the slot zero -- or mark it empty; slots between the end of
+ * the file and n come into being empty */
+static int rel_slot_put(cob_file *f, unsigned n, int empty, unsigned len)
+{
+    FILE *fp = (FILE *)f->fp;
+    unsigned sz = rel_slot_size(f);
+    static const unsigned char zero[64];
+    if (fseek(fp, 0, 2) != 0) return 0;
+    long end = ftell(fp), want = (long)(n - 1) * (long)sz;
+    for (long left = want - end; left > 0; ) {
+        size_t k = left > 64 ? 64 : (size_t)left;
+        if (fwrite(zero, 1, k, fp) != k) return 0;
+        left -= (long)k;
+    }
+    if (fseek(fp, want, 0) != 0) return 0;
+    unsigned char rdw[4] = { 0, 0, 0, 0 };
+    if (empty) len = 0;
+    if (len > f->recsize) len = f->recsize;
+    if (!empty) { rdw[0] = (unsigned char)((len + 4) >> 8); rdw[1] = (unsigned char)((len + 4) & 255); }
+    if (fwrite(rdw, 1, 4, fp) != 4) return 0;
+    if (len && fwrite(f->record, 1, len, fp) != len) return 0;
+    for (unsigned left = f->recsize - len; left > 0; ) {
+        size_t k = left > 64 ? 64 : left;
+        if (fwrite(zero, 1, k, fp) != k) return 0;
+        left -= (unsigned)k;
+    }
+    fflush(fp);
+    return 1;
+}
+
+static unsigned rel_slot_count(cob_file *f)
+{
+    FILE *fp = (FILE *)f->fp;
+    if (fseek(fp, 0, 2) != 0) return 0;
+    return (unsigned)(ftell(fp) / (long)rel_slot_size(f));
+}
+
+/* READ [NEXT]: the next slot that holds a record; the key item learns its number */
+static int rel_read_next(cob_file *f)
+{
+    if (f->at_eof) return file_result(f, "10", "");
+    for (unsigned n = f->rel_pos; ; n++) {
+        int r = rel_slot_get(f, n, 1);
+        if (r == -2) return file_result(f, "30", "read failed");
+        if (r == -1) { f->at_eof = 1; f->rel_last = 0; return file_result(f, "10", ""); }
+        if (r == 0) continue;
+        f->rel_last = n; f->rel_pos = n + 1;
+        rel_key_set(f, n);
+        return file_result(f, "00", "");
+    }
+}
+
+/* READ (random): the record the RELATIVE KEY names */
+static int rel_read_key(cob_file *f)
+{
+    long k = rel_key_value(f);
+    if (k < 1) { f->rel_last = 0; return file_result(f, "23", ""); }
+    int r = rel_slot_get(f, (unsigned)k, 1);
+    if (r == -2) return file_result(f, "30", "read failed");
+    if (r <= 0) { f->rel_last = 0; return file_result(f, "23", ""); }
+    f->rel_last = (unsigned)k; f->rel_pos = (unsigned)k + 1; f->at_eof = 0;
+    return file_result(f, "00", "");
+}
+
+/* the length a WRITE records: DEPENDING ON's value, else the 01 named,
+ * else the record area (a relative file may hold variable-length records;
+ * the slot stays the maximum) */
+static int rel_write_len(cob_file *f, int reclen, unsigned *len)
+{
+    *len = reclen > 0 ? (unsigned)reclen : f->recsize;
+    if (f->dep_item) {
+        long long d = cob_get_num(f->dep_item, (const cob_desc *)f->dep_desc);
+        if (d < (long long)f->minlen || d > (long long)f->recsize) return file_result(f, "44", "record length outside RECORD VARYING bounds");
+        *len = (unsigned)d;
+    }
+    return 0;
+}
+
+/* WRITE: sequential access fills the next slot and tells the key item;
+ * random access takes the slot the key names -- occupied is 22, 0 is 24 */
+static int rel_write(cob_file *f, int reclen)
+{
+    unsigned n, len; int rc;
+    if ((rc = rel_write_len(f, reclen, &len))) return rc;
+    if (f->access == 0) n = f->rel_pos;
+    else {
+        long k = rel_key_value(f);
+        if (k < 1) return file_result(f, "24", "");
+        n = (unsigned)k;
+        int r = rel_slot_get(f, n, 0);
+        if (r == -2) return file_result(f, "30", "read failed");
+        if (r == 1) return file_result(f, "22", "");
+    }
+    if (!rel_slot_put(f, n, 0, len)) return file_result(f, "30", "write failed");
+    if (f->access == 0) { f->rel_pos = n + 1; rel_key_set(f, n); }
+    return file_result(f, "00", "");
+}
+
+/* the slot REWRITE/DELETE act on: the last READ under sequential access
+ * (43 when there was none), the key's under random or dynamic (23 absent) */
+static int rel_target(cob_file *f, unsigned *n)
+{
+    if (f->access == 0) {
+        if (!f->rel_last) return file_result(f, "43", "");
+        *n = f->rel_last;
+    } else {
+        long k = rel_key_value(f);
+        if (k < 1) return file_result(f, "23", "");
+        *n = (unsigned)k;
+    }
+    int r = rel_slot_get(f, *n, 0);
+    if (r == -2) return file_result(f, "30", "read failed");
+    if (r <= 0) return file_result(f, "23", "");
+    return 0;
+}
+
+static int rel_rewrite(cob_file *f)
+{
+    unsigned n, len; int rc = rel_target(f, &n);
+    if (rc) return rc;
+    if ((rc = rel_write_len(f, 0, &len))) return rc;
+    if (!rel_slot_put(f, n, 0, len)) return file_result(f, "30", "write failed");
+    return file_result(f, "00", "");
+}
+
+static int rel_delete(cob_file *f)
+{
+    unsigned n; int rc = rel_target(f, &n);
+    if (rc) return rc;
+    if (!rel_slot_put(f, n, 1, 0)) return file_result(f, "30", "write failed");
+    f->rel_last = 0;
+    return file_result(f, "00", "");
+}
+
+/* START: position on the first (or, for < and <=, the last) occupied slot
+ * in the relation to the key; the key item is left alone */
+static int rel_start(cob_file *f, int op)
+{
+    long k = rel_key_value(f);
+    unsigned count = rel_slot_count(f), found = 0;
+    if (op == 3 || op == 4) {
+        long from = op == 3 ? k - 1 : k;
+        if (from > (long)count) from = (long)count;
+        for (long n = from; n >= 1 && !found; n--) if (rel_slot_get(f, (unsigned)n, 0) == 1) found = (unsigned)n;
+    } else {
+        long from = op == 1 ? k + 1 : k;
+        if (from < 1) from = 1;
+        if (op == 0) { if (k >= 1 && rel_slot_get(f, (unsigned)k, 0) == 1) found = (unsigned)k; }
+        else for (long n = from; n <= (long)count && !found; n++) if (rel_slot_get(f, (unsigned)n, 0) == 1) found = (unsigned)n;
+    }
+    if (!found) return file_result(f, "23", "");
+    f->rel_pos = found; f->rel_last = 0; f->at_eof = 0;
     return file_result(f, "00", "");
 }
 
@@ -982,6 +1201,7 @@ static int idx_write(cob_file *f)
 int cob_read_key(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
+    if (f->org == COB_ORG_RELATIVE) return rel_read_key(f);
     if (f->org != COB_ORG_INDEXED) cob_fatal("READ ... KEY on a file that is not INDEXED");
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
@@ -1010,6 +1230,7 @@ static int idx_read_next(cob_file *f)
 int cob_start(cob_file *f, int op)
 {
     if (!f->open_mode) return file_result(f, "47", "START of a file not open");
+    if (f->org == COB_ORG_RELATIVE) return rel_start(f, op);
     if (f->org != COB_ORG_INDEXED) cob_fatal("START on a file that is not INDEXED");
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
@@ -1034,6 +1255,7 @@ int cob_rewrite(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "49", "REWRITE of a file not open");
     if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "REWRITE needs OPEN I-O");
+    if (f->org == COB_ORG_RELATIVE) return rel_rewrite(f);
     if (f->org == COB_ORG_INDEXED) {
         cob_idx *x = f->idx;
         const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
@@ -1058,6 +1280,7 @@ int cob_delete(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "49", "DELETE of a file not open");
     if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "DELETE needs OPEN I-O");
+    if (f->org == COB_ORG_RELATIVE) return rel_delete(f);
     if (f->org != COB_ORG_INDEXED) cob_fatal("DELETE on a file that is not INDEXED");
     cob_idx *x = f->idx;
     unsigned at; int found;

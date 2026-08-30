@@ -515,6 +515,28 @@ the C `du_*` date routines against these functions over 400,000 days
 either engine (its output window differs by the container's UTC day).
 38 of 58 compile.
 
+## Stage 19 — relative I-O **M** — DONE 2026-08-30
+
+ISSUES-1, the first item that was a module rather than a clause.
+Measured first: three probe programs under the GnuCOBOL container
+gave every status (22 occupied, 23 absent, 24 for key 0, 43 with no
+prior READ, 10 at end), READ NEXT skipping empty slots and setting the
+key item, START leaving it alone, and the bytes on disk (an 8-byte
+native length per slot). Built: slots of `4 + recsize` framed with the
+mode-V RDW (docs/indexed.md "As built"), which made empty slots and
+`RECORD CONTAINS 10 TO 98` -- glentry's control record and data
+records -- fall out of the same frame. Runtime: `rel_slot_get/put`
+and the six verbs in libcob.c; `cob_file` grew the key item, its
+descriptor and two counters. Compiler: `RELATIVE KEY` in SELECT
+(refused inside the record, or without ORGANIZATION RELATIVE, or
+missing under random/dynamic access), the verbs' relative forms,
+INVALID KEY on WRITE/REWRITE/DELETE/START. tests/free/relative --
+random, dynamic and sequential access in one program -- agrees with
+GnuCOBOL line for line; bad/relative-key-in-record replaces the old
+"not implemented" refusal. crglentry then exglentry run on SLOW-32
+with output identical to GnuCOBOL's. 40 of 58 compile; ldglentry is
+now an `SD` program (ISSUES-4).
+
 ## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report

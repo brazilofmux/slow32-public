@@ -46,6 +46,10 @@ typedef struct {
     unsigned int minlen;      /* RECORD CONTAINS m TO n / VARYING FROM m TO n */
     void *dep_item;           /* RECORD IS VARYING ... DEPENDING ON item, or 0 */
     const void *dep_desc;
+    void *rel_key;            /* relative: the RELATIVE KEY item ... */
+    const void *rel_key_desc; /* ... and its descriptor, or 0 (sequential access may omit it) */
+    unsigned int rel_pos;     /* relative: the next record number for READ NEXT / sequential WRITE */
+    unsigned int rel_last;    /* relative: record number of the last successful READ, 0 = none */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

@@ -1,0 +1,33 @@
+open 00
+w1 00
+w3 00
+dup3 22
+inv0 24
+d3 00
+r2 23
+r5 00 [fifth   ]
+r9 23
+rw5 00
+rw4 23
+open 00
+next 00 dk=0001 [first   ]
+next 00 dk=0005 [FIFTH   ]
+eof 10
+start 00 dk=0002
+after start 0005 [FIFTH   ]
+after start2 0005 [FIFTH   ]
+start3 23
+after start4 0005 [FIFTH   ]
+random through dynamic: 00 [first   ]
+w 00 sk=0001
+w 00 sk=0002
+w 00 sk=0003
+r 00 sk=0001 [one     ]
+rw 00
+r 00 sk=0002 [two     ]
+del 00
+r 00 sk=0003 [three   ]
+end4 10
+rw after end 43
+n 00 sk=0001 [ONE     ]
+n 00 sk=0003 [three   ]

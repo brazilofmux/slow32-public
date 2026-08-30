@@ -178,6 +178,9 @@ given, because majesty's `.prn` oracles were produced under it.
   into `9(3)v99` the line `12345` arrives as the decimal 12345 and
   truncates to `345.00`, as GnuCOBOL does. At end of file the item is
   left as it was.
+- **Relative files** are fixed slots of `4 + maximum record` bytes
+  framed with the mode-V RDW, zero for an empty slot (docs/indexed.md);
+  records may be shorter than the slot (`RECORD CONTAINS m TO n`).
 - **Calendar functions** (`INTEGER-OF-DATE`, `DATE-OF-INTEGER`,
   `DAY-OF-INTEGER`, `INTEGER-OF-DAY`): integer 1 is 1601-01-01; an
   invalid argument gives 0; a value DISPLAYed directly shows ten,

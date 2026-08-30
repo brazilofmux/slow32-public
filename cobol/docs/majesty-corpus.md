@@ -124,7 +124,7 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | 7 | `FUNCTION-ID` -- the legacy pure-COBOL date family, a retirement candidate rather than a rewrite (the C `du_*` path replaced it) | fielded_to_linear, linear_to_fielded, floor-div, floor-divmod, holidays, isleapyear, isvaliddate |
 | ~~4~~ | ~~`ACCEPT FROM ARGUMENT-NUMBER` / `ARGUMENT-VALUE`~~ **landed** (Stage 13): gl024 and gl038 compile, gl024's outputs match GnuCOBOL's byte for byte; gl042/gl043 move on to their next blocker | ~~gl024, gl038, gl042, gl043~~ |
 | 2 | `REPOSITORY` -- callers of that date family | exgltrans, jerm |
-| 3 | `RELATIVE KEY` (relative I-O) | crglentry, ldglentry, exglentry |
+| ~~3~~ | ~~`RELATIVE KEY` (relative I-O)~~ **landed** (Stage 19): crglentry and exglentry compile and their run matches GnuCOBOL; ldglentry moves on to `SD` | ~~crglentry, exglentry~~, ldglentry |
 | ~~2~~ | ~~`OCCURS DEPENDING ON`~~ **landed** (Stage 14): gl040 compiles, gl034 moves to `SEARCH` | ~~gl034, gl040~~ |
 | ~~2~~ | ~~`SPECIAL-NAMES` clauses~~ **landed** (Stage 16, `CLASS`; with console `ACCEPT` and `LENGTH OF`): damm compiles and matches GnuCOBOL; gl008 never needed it -- its stop is a subscripted `SOURCE` | ~~damm~~, gl008 |
 | ~~1~~ | ~~a subscripted `SOURCE` in a report field~~ gl036 compiles as of Stage 13 (a `VALUE`-only report field was the last stop) | ~~gl036~~ |
@@ -136,7 +136,7 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | 1 | `USAGE BINARY-INT` | testcrc |
 | 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
 
-After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, **38 of 58.** The copybooks also
+After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, 38 of 58; after relative I-O, **40 of 58.** The copybooks also
 brought `packed-decimal` before `pic`, a trailing `+` in a numeric
 picture (`9(9)v99+`, numeric-edited: moved to a numeric item before
 arithmetic, as the programs already do) and level 88 directly under

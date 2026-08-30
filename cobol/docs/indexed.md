@@ -78,11 +78,31 @@ that key is invalid key. No `PACK` step.
 
 ## Relative
 
-`ORGANIZATION IS RELATIVE`, `RELATIVE KEY` an integer item. Slot =
-`RRN × LRECL`. Empty slots are invalid key. No RDW. Majesty uses
-this for journal entries in the `cr`/`ld`/`ex` programs; it is
-after v1 unless a v1 program needs it. The slot machinery is the
-same as indexed data pages without the btree.
+`ORGANIZATION IS RELATIVE`, `RELATIVE KEY` an integer item outside the
+record. Majesty uses it for journal entries in the `cr`/`ld`/`ex`
+programs.
+
+### As built (Stage 19, 2026-08-30)
+
+Slot n is at `(n-1) × (4 + recsize)`: every slot carries the same
+four-byte RDW as a mode-V record (big-endian length including the
+four, then two zero bytes), all zero when the slot is empty, so a
+relative file is a sequence of fixed-size V frames and a deleted
+record is unambiguous -- the plan above said "no RDW", and the RDW
+turned out to be exactly what makes empty and variable-length slots
+representable (`RECORD CONTAINS 10 TO 98` is what glentry declares:
+a 10-byte control record in slot 1, 98-byte data records after it).
+The bytes past a short record are zero. Random access reads and writes
+the slot the key names (22 occupied, 23 absent, 24 for key 0);
+sequential access fills the next slot on WRITE and tells the key item
+its number, READ NEXT skips empty slots and sets the key item, and
+REWRITE/DELETE act on the last record read (43 when there was none);
+START positions on the first occupied slot in the relation (last, for
+`<` and `<=`) without touching the key item; OPEN EXTEND positions
+after the last slot. All of it measured against GnuCOBOL 4 in
+tests/free/relative -- every status and every line agree; the bytes
+differ (GnuCOBOL keeps an 8-byte native length per slot,
+docs/oracles.md), and no program outside COBOL reads these files.
 
 ## Where dBase cannot follow
 
