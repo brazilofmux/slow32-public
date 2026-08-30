@@ -163,6 +163,9 @@ long long cob_get_num(const void *vp, const cob_desc *d)
 int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts)
 {
     unsigned char *p = vp;
+    /* the digit positions that hold a character: P scaling positions do not */
+    int eff = d->digits;
+    if (d->pic) for (const char *q = d->pic; *q; q++) if (*q == 'P') eff--;
     if (vscale > d->scale) {
         long long k = pow10tab[vscale - d->scale];
         long long q = v / k, r = v % k;
@@ -175,11 +178,11 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
         int k = d->scale - vscale;
         if (!(d->flags & COB_F_NOTRUNC) && d->digits <= 18) {
             unsigned long long a = v < 0 ? (unsigned long long)(-v) : (unsigned long long)v;
-            int lim = d->digits - d->scale + vscale;     /* integer positions, in v's scale */
+            int lim = eff - d->scale + vscale;           /* integer positions, in v's scale */
             if (opts & 2) {
                 if (lim < 0 ? a != 0 : (lim <= 18 && a >= (unsigned long long)pow10tab[lim])) return 1;
             }
-            int keep = d->digits - k;
+            int keep = eff - k;
             if (keep <= 0) v = 0; else if (keep <= 18) v %= pow10tab[keep];
         }
         if (v) v *= pow10tab[k > 18 ? 18 : k];
@@ -193,8 +196,8 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
             if (mag >= lim) return 1;
         }
     } else if (d->digits <= 18) {
-        if ((opts & 2) && mag >= (unsigned long long)pow10tab[d->digits]) return 1;
-        mag %= (unsigned long long)pow10tab[d->digits];
+        if ((opts & 2) && mag >= (unsigned long long)pow10tab[eff]) return 1;
+        mag %= (unsigned long long)pow10tab[eff];
     }
     if (!(d->flags & COB_F_SIGNED)) neg = 0;         /* unsigned takes the magnitude */
 

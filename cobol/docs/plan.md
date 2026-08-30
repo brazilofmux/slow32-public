@@ -913,6 +913,24 @@ remainder receiver is allowed. free/remrnd, oracle agreeing; NC203A
 and NC251A match; the suite 264 of 303 compile, 5204 of 5246 pass,
 none fail, 261 match.
 
+## Stage 39 — RENAMES **S** — DONE 2026-08-31
+
+Level 66 as a Sym outside the record's tree: `build_tree` gives it the
+01 it follows as parent without linking it as a child, so layout,
+group MOVE and CORRESPONDING never see it, while `OF record` and the
+storage emission (which skips subordinates) work unchanged; after
+layout its two names are resolved with the 01's name as an implicit
+last qualifier (NC252A writes both `RENAMES X OF REC` and bare names
+that repeat across records) and it takes `a`'s offset to the end of
+`b`, an alias of `a` when `a` alone is elementary, else a group.
+NC252A's two remaining failures were not RENAMES: a COMPUTE into
+`S99P` overflowed silently because the size-error test counted P as
+a digit -- the descriptor of any item with P in its picture now
+carries the picture, and `cob_put_num` tests and truncates on the
+stored digits. free/renames, oracle agreeing (GnuCOBOL wants the
+repeated names qualified; ours need not); NC252A matches; the suite
+266 of 303 compile, 5311 of 5353 pass, none fail, 263 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

@@ -288,6 +288,20 @@ given, because majesty's `.prn` oracles were produced under it.
   overflows is the statement's size error too, and the clause runs for
   either. The remainder receiver may be numeric-edited. NC203A and
   NC251A match GnuCOBOL.
+- **Level 66 `RENAMES`** (Stage 39): `66 name RENAMES a [THRU|THROUGH
+  b]` after a record's entries names the storage from `a` to the end
+  of `b` (or `a` alone) in that record. The names are the record's own:
+  the 01 the entry follows (a REDEFINES 01 by its own name) is an
+  implicit last qualifier, and `OF`/`IN` may be written. `a` alone and
+  elementary makes an alias with `a`'s picture and usage; anything else
+  a group. The 66 lives outside the record's tree (no subordinates,
+  never a CORRESPONDING pair, no storage of its own), belongs to the
+  record for `OF record`, and may carry 88s. Neither name may be a
+  level 01/66/77/88 nor have OCCURS or lie in a table. NC252A (75
+  tests) matches GnuCOBOL -- after a size-error fix it exposed: the
+  overflow test and truncation of a numeric item with P positions are
+  on its *stored* digits (`S99P` holds 2), so the descriptor of any
+  item whose picture has P now carries the picture.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

@@ -867,6 +867,8 @@ typedef struct Sym {
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
+    int  is_rename;                 /* level 66: another name for a range of the record, resolved after layout */
+    char rn_a[64], rn_b[64]; char rn_aq[8][64], rn_bq[8][64]; int rn_naq, rn_nbq;
     /* records */
     unsigned char *image; int image_size;
     char label[48];
@@ -1207,8 +1209,7 @@ static void parse_data_item(void)
     if (level < 0) die_at(line, "expected a level number, found %s", tok_desc(cur()));
     advance();
 
-    if (level == 66) die_at(line, "level 66 (RENAMES) is not implemented yet");
-    if (!((level >= 1 && level <= 49) || level == 77 || level == 88))
+    if (!((level >= 1 && level <= 49) || level == 66 || level == 77 || level == 88))
         die_at(line, "level number %d is not valid", level);
 
     Sym *s = sym_new();
@@ -1257,6 +1258,27 @@ static void parse_data_item(void)
     }
 
     g_last_item = sym_idx(s);
+
+    if (level == 66) {
+        /* 66 name RENAMES a [THRU b]: another name for the storage from a to
+         * the end of b, in the record it follows; resolved after layout */
+        if (s->is_filler) die_at(line, "a level 66 entry needs a name");
+        expect_word("renames");
+        s->is_rename = 1;
+        for (int which = 0; which < 2; which++) {
+            if (which && !(accept_word("thru") || accept_word("through"))) break;
+            if (cur()->kind != T_WORD) die_at(line, "RENAMES needs a data-name");
+            snprintf(which ? s->rn_b : s->rn_a, 64, "%s", cur()->s); advance();
+            int *nq = which ? &s->rn_nbq : &s->rn_naq;
+            while (accept_word("of") || accept_word("in")) {
+                if (cur()->kind != T_WORD) die_at(line, "RENAMES: expected a qualifier after OF/IN");
+                if (*nq == 8) die_at(line, "RENAMES: too many qualifiers");
+                snprintf(which ? s->rn_bq[*nq] : s->rn_aq[*nq], 64, "%s", cur()->s); (*nq)++; advance();
+            }
+        }
+        expect_period();
+        return;
+    }
 
     while (cur()->kind != T_PERIOD) {
         Tok *t = cur();
@@ -1426,6 +1448,11 @@ static void build_tree(void)
         Sym *s = &g_sym[i];
         if (s->is_cond) continue;
         if (s->is_index) { s->record = i; sym_finish(s); continue; }
+        if (s->is_rename) {                 /* belongs to the record it follows, outside its tree */
+            if (sp == 0) die_at(s->line, "level 66 '%s' follows no record", s->name);
+            s->parent = stack[0];
+            continue;
+        }
         if (s->level == 1 || s->level == 77) { sp = 0; }
         else {
             while (sp > 0 && g_sym[stack[sp - 1]].level >= s->level) sp--;
@@ -1446,7 +1473,7 @@ static void build_tree(void)
      * children is elementary */
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
-        if (s->is_cond || s->is_index) continue;
+        if (s->is_cond || s->is_index || s->is_rename) continue;
         if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
         if (s->is_group && s->usage != U_DISPLAY && s->has_usage)
             die_at(s->line, "USAGE on the group '%s' is not implemented yet", s->name);
@@ -1666,6 +1693,36 @@ static void finish_data_division(void)
         strcpy(s->label, g_sym[r].label);
         if (s->size > g_sym[r].image_size && s->size > g_sym[r].size) g_sym[r].image_size = s->size;
         for (int j = 0; j < g_nsym; j++) if (g_sym[j].record == i) g_sym[j].record = r;
+    }
+    /* RENAMES: the range from a to the end of b (or a alone) in the
+     * record; a alone and elementary is an alias, anything else a group */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!s->is_rename) continue;
+        /* the names are the record's own: its name is an implicit last qualifier */
+        char *aq[9], *bq[9]; int naq = s->rn_naq, nbq = s->rn_nbq;
+        for (int k = 0; k < 8; k++) { aq[k] = s->rn_aq[k]; bq[k] = s->rn_bq[k]; }
+        Sym *rec = &g_sym[s->parent];       /* the 01 the entry follows (a REDEFINES 01 keeps its own name) */
+        if (!rec->is_filler && !(naq && !strcmp(aq[naq - 1], rec->name))) aq[naq++] = rec->name;
+        if (!rec->is_filler && !(nbq && !strcmp(bq[nbq - 1], rec->name))) bq[nbq++] = rec->name;
+        Sym *a = sym_lookup(s->rn_a, aq, naq, s->line), *b = NULL;
+        if (s->rn_b[0]) b = sym_lookup(s->rn_b, bq, nbq, s->line);
+        Sym *chk[2] = { a, b };
+        for (int k = 0; k < 2; k++) {
+            Sym *x = chk[k];
+            if (!x) continue;
+            if (x->record != s->record) die_at(s->line, "RENAMES '%s': '%s' is not in the same record", s->name, x->name);
+            if (x->level == 1 || x->level == 66 || x->level == 77 || x->is_cond) die_at(s->line, "RENAMES '%s': '%s' is not a level 02-49 item", s->name, x->name);
+            if (x->ndims) die_at(s->line, "RENAMES '%s': '%s' has OCCURS or lies in a table", s->name, x->name);
+        }
+        int end = b ? (int)(b->offset + b->size) : (int)(a->offset + a->size);
+        if (end <= (int)a->offset) die_at(s->line, "RENAMES '%s': '%s' does not follow '%s'", s->name, b->name, a->name);
+        s->offset = a->offset; s->size = end - (int)a->offset; s->ndims = 0;
+        if (!b && !a->is_group) {
+            s->usage = a->usage; s->has_usage = a->has_usage; s->pi = a->pi; s->has_pic = a->has_pic;
+            memcpy(s->pic, a->pic, sizeof s->pic); s->sign_lead = a->sign_lead; s->sign_sep = a->sign_sep;
+            s->is_group = 0;
+        } else s->is_group = 1;
     }
     /* OCCURS DEPENDING ON: the item must be an integer outside the table */
     for (int i = g_sym_base; i < g_nsym; i++) {
@@ -1943,7 +2000,7 @@ static int sym_desc(Sym *s)
         if (s->blank_zero) d.flags |= COB_F_BLANKZ;
         if (s->sign_sep) d.flags |= s->sign_lead ? COB_F_SEPLEAD : COB_F_SEPTRAIL;
         else if (s->sign_lead) d.flags |= COB_F_LEAD;
-        if (s->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", s->pi.pat);
+        if (s->pi.edited || strchr(s->pi.pat, 'P')) snprintf(d.picstr, sizeof d.picstr, "%s", s->pi.pat);   /* P: the runtime counts the stored digits */
     }
     d.size = s->size;
     s->desc_id = desc_add(&d);
