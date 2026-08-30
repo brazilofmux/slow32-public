@@ -115,6 +115,13 @@ before 20:30 that evening lacks them:
   throughout. libcob's `pow10tab` is the first shape: every COBOL
   division returned 0 when libcob was built with the old compiler.
 
+Changed 2026-08-30 (runtime, not compiler): `__udivsi3`, `__divsi3` and
+`__umodsi3` in `libc.s32a` use the hardware divider -- one `div` when both
+operands are under 2^31, a fixup for the other cases -- instead of a
+32-round shift-subtract loop. Same results at every edge (the regression
+suite's `feature-udiv-edge`); a kit older than this runs unsigned division
+some twenty times slower, nothing else differs.
+
 Fixed in `9b6d29ac` (2026-08-25):
 
 - **Silent miscompile ([#6](https://github.com/brazilofmux/slow-32/issues/6)).**

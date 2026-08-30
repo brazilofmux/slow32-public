@@ -176,7 +176,7 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
                  break;
              }
          }
-         return bytes_written / size;
+         return size == 1 ? bytes_written : bytes_written / size;
     }
     
     const unsigned char *src = ptr;
@@ -203,7 +203,7 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
         }
     }
     
-    return bytes_processed / size;
+    return size == 1 ? bytes_processed : bytes_processed / size;
 }
 
 static size_t fread_fill_buffer(FILE *stream) {
@@ -342,10 +342,10 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
         }
     }
 
-    return bytes_copied / size;
+    return size == 1 ? bytes_copied : bytes_copied / size;
 }
 
-int fgetc(FILE *stream) {
+static __attribute__((noinline)) int fgetc_slow(FILE *stream) {
     if (stream->ungetc_char >= 0) {
         int c = stream->ungetc_char;
         stream->ungetc_char = -1;
@@ -355,6 +355,14 @@ int fgetc(FILE *stream) {
     unsigned char c;
     if (fread(&c, 1, 1, stream) != 1) return EOF;
     return c;
+}
+
+int fgetc(FILE *stream) {
+    /* the buffered byte is the common case: no fread, no memcpy, no divide,
+     * and no frame -- the slow path is a separate function */
+    if (stream->ungetc_char < 0 && stream->buf_pos < stream->buf_len && !(stream->flags & FLAG_MEMSTREAM))
+        return (unsigned char)stream->buffer[stream->buf_pos++];
+    return fgetc_slow(stream);
 }
 
 int getc(FILE *stream) {

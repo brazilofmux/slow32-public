@@ -30,7 +30,8 @@ extern uint32_t __udivsi3(uint32_t n, uint32_t d);
 uint32_t __umodsi3(uint32_t n, uint32_t d) {
     if (d == 0)
         return n; // match compiler-rt semantics
-
+    if ((int32_t)(n | d) >= 0)
+        return (uint32_t)((int32_t)n % (int32_t)d);   // the hardware REM serves
     uint32_t q = __udivsi3(n, d);
     return n - q * d;
 }
@@ -40,6 +41,37 @@ uint32_t __umodsi3(uint32_t n, uint32_t d) {
 #else
 #define S32_NO_OPT
 #endif
+
+static int nlz32(uint32_t x) {
+    int n = 0;
+    if (x <= 0x0000FFFFu) { n += 16; x <<= 16; }
+    if (x <= 0x00FFFFFFu) { n += 8; x <<= 8; }
+    if (x <= 0x0FFFFFFFu) { n += 4; x <<= 4; }
+    if (x <= 0x3FFFFFFFu) { n += 2; x <<= 2; }
+    if (x <= 0x7FFFFFFFu) n += 1;
+    return n;
+}
+
+// (u1:u0) / v with u1 < v: Hacker's Delight divlu2 -- two 32-bit hardware
+// divisions and a correction step each, in place of 64 shift-subtract
+// rounds.  The arithmetic wraps modulo 2^32 as the algorithm intends.
+static uint32_t divlu32(uint32_t u1, uint32_t u0, uint32_t v, uint32_t *r) {
+    const uint32_t b = 65536u;
+    int s = nlz32(v);
+    v <<= s;
+    uint32_t vn1 = v >> 16, vn0 = v & 0xFFFFu;
+    uint32_t un32 = s ? (u1 << s) | (u0 >> (32 - s)) : u1;
+    uint32_t un10 = u0 << s;
+    uint32_t un1 = un10 >> 16, un0 = un10 & 0xFFFFu;
+    uint32_t q1 = un32 / vn1, rhat = un32 - q1 * vn1;
+    while (q1 >= b || q1 * vn0 > b * rhat + un1) { q1--; rhat += vn1; if (rhat >= b) break; }
+    uint32_t un21 = un32 * b + un1 - q1 * v;
+    uint32_t q0 = un21 / vn1;
+    rhat = un21 - q0 * vn1;
+    while (q0 >= b || q0 * vn0 > b * rhat + un0) { q0--; rhat += vn1; if (rhat >= b) break; }
+    *r = (un21 * b + un0 - q0 * v) >> s;
+    return q1 * b + q0;
+}
 
 static uint64_t udivmoddi3_core(uint64_t n, uint64_t d, uint64_t *rem) {
     if (d == 0) {
@@ -54,6 +86,22 @@ static uint64_t udivmoddi3_core(uint64_t n, uint64_t d, uint64_t *rem) {
         if (rem)
             *rem = n;
         return 0;
+    }
+
+    // The divisor fits 32 bits (every power of ten to 10^9, every time_t
+    // step, most of what programs divide by): hardware steps.
+    if ((d >> 32) == 0) {
+        uint32_t d32 = (uint32_t)d, hi = (uint32_t)(n >> 32), lo = (uint32_t)n, r;
+        if (hi == 0) {
+            uint32_t q = lo / d32;
+            if (rem) *rem = lo - q * d32;
+            return q;
+        }
+        uint32_t qhi = hi / d32;
+        hi -= qhi * d32;
+        uint32_t qlo = divlu32(hi, lo, d32, &r);
+        if (rem) *rem = r;
+        return ((uint64_t)qhi << 32) | qlo;
     }
     
     // Special case: divisor is power of 2
