@@ -2052,6 +2052,7 @@ typedef struct {
     int rm;                         /* reference modification item(start:len) */
     long rm_start, rm_len;          /* literal values, or 0 when an expression / omitted */
     int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
+    int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
 
 static void parse_expr(void);
@@ -2243,7 +2244,33 @@ static void numlit_from_int(NumLit *n, long v)
     n->neg = v < 0; n->ndigits = (int)strlen(b); memcpy(n->digits, b, n->ndigits);
 }
 
-static void parse_operand(Opnd *o)
+static int has_odo(Sym *s);
+static Sym *odo_table_below(Sym *s);
+
+/* an operand that is a whole group over an OCCURS DEPENDING ON table
+ * (no subscript, no reference modification) has the group's current
+ * length wherever it is sent -- MOVE, STRING, UNSTRING, INSPECT, a
+ * comparison, DISPLAY: it becomes (1:length) computed at run time.
+ * Receivers are not operands here and keep the maximum, the 85 rule. */
+static void operand_odo_length(Opnd *o)
+{
+    if (o->kind != O_REF || o->ref.rm || o->ref.nsub) return;
+    Sym *g = o->ref.sym;
+    if (!g->is_group || !has_odo(g)) return;
+    Sym *tbl = odo_table_below(g);
+    if (!tbl || !tbl->odo_dep_sym) return;
+    for (Sym *k = tbl; k != g; k = &g_sym[k->parent])
+        if (k->sibling >= 0)
+            die_at(o->line, "'%s': items follow its OCCURS DEPENDING ON table (variable-location items are not implemented)", g->name);
+    o->ref.rm = 1; o->ref.rm_start = 1; o->ref.rm_len = 0; o->ref.rm_l0 = -1;
+    o->ref.rm_odo = 1; o->ref.odo_dep = tbl->odo_dep_sym;
+    o->ref.odo_base = g->size - tbl->occurs * tbl->size; o->ref.odo_elem = tbl->size;
+}
+
+static void parse_operand_raw(Opnd *o);
+static void parse_operand(Opnd *o) { parse_operand_raw(o); operand_odo_length(o); }
+
+static void parse_operand_raw(Opnd *o)
 {
     memset(o, 0, sizeof *o);
     Tok *t = cur();
@@ -2451,8 +2478,22 @@ static const char *argreg(int i)
 /* r1 = the reference modification's start; its length in SLOT(slot).
  * The expressions may stage operands of their own, above this call's
  * slots. */
+static void emit_args(const Arg *a, int n);
+static void emit_hot_value(Opnd *o);
+
 static void emit_rm_start_len(const Ref *r, int slot)
 {
+    if (r->rm_odo) {
+        /* the group's current length: base + DEPENDING ON x element */
+        Opnd po; memset(&po, 0, sizeof po); po.kind = O_REF; po.ref.sym = r->odo_dep; po.ref.line = r->line;
+        if (is_hot_int(r->odo_dep)) emit_hot_value(&po);
+        else { Arg a[2] = { arg_ref(&po.ref), arg_desc(sym_desc(r->odo_dep)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+        emit("\tadd r3, r0, r1"); emit_li("r4", r->odo_base); emit_li("r5", r->odo_elem);
+        emit_call("cob_odo_length");
+        emit("\tstw sp+%d, r1", SLOT(slot));
+        emit_li("r1", 1);
+        return;
+    }
     if (r->rm_len) emit_li("r1", r->rm_len);
     else if (r->rm_l0 >= 0) { emit_expr_tokens(r->rm_l0, r->rm_l1); emit_call("cob_pop_int"); }
     else emit_li("r1", 0);
@@ -3208,7 +3249,7 @@ static void emit_move(Opnd *src, Ref *dst)
     Sym *d = dst->sym;
     /* a receiving group holding an OCCURS DEPENDING ON table has its
      * maximum length (the 1985 rule), which is how it is laid out */
-    if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym)) {
+    if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym) && !src->ref.rm_odo && !src->ref.rm && !src->ref.nsub) {
         /* a sending group's length is its current one.  The group is laid
          * out with the table at its maximum, so however deep the table
          * sits, as long as nothing follows it: length = size - (max - d) * elem */
@@ -4658,6 +4699,112 @@ static void parse_string(void)
     accept_word("end-string");
 }
 
+/* UNSTRING src [DELIMITED BY [ALL] d [OR [ALL] d]...] INTO {r [DELIMITER IN
+ * r] [COUNT IN r]}... [WITH POINTER p] [TALLYING IN t] [[NOT] ON OVERFLOW]
+ * [END-UNSTRING]; the runtime does the scanning (cob_unstr_*) */
+static void parse_unstring(void)
+{
+    int line = cur()->line;
+    Opnd src; parse_operand(&src);
+    if (src.kind != O_REF) die_at(src.line, "UNSTRING needs a data item to take apart");
+    if (!src.ref.rm && !src.ref.sym->is_group && src.ref.sym->pi.category == PIC_NUMERIC && src.ref.sym->usage != U_DISPLAY)
+        die_at(src.line, "UNSTRING: '%s' is not a DISPLAY item", src.ref.sym->name);
+    Opnd delims[16]; int dall[16]; int nd = 0;
+    if (accept_word("delimited")) {
+        accept_word("by");
+        for (;;) {
+            if (nd == 16) die_at(cur()->line, "UNSTRING: more than 16 delimiters");
+            dall[nd] = accept_word("all");
+            parse_operand(&delims[nd]);
+            if (delims[nd].kind != O_STR && delims[nd].kind != O_REF && delims[nd].kind != O_FIG)
+                die_at(delims[nd].line, "DELIMITED BY needs a literal or an item");
+            nd++;
+            if (!accept_word("or")) break;
+        }
+    }
+    expect_word("into");
+    Ref rcv[MAXOPS], dlm[MAXOPS], cnt[MAXOPS]; int has_d[MAXOPS], has_c[MAXOPS], n = 0;
+    while (at_operand() && cur()->kind == T_WORD && !at_word("with") && !at_word("pointer") && !at_word("tallying") && !at_word("on") && !at_word("overflow") && !at_word("not") && !at_word("end-unstring")) {
+        if (n >= MAXOPS) die_at(cur()->line, "too many UNSTRING receivers");
+        parse_ref(&rcv[n]);
+        if (rcv[n].sym->is_cond) die_at(rcv[n].line, "'%s' is a condition-name", rcv[n].sym->name);
+        has_d[n] = has_c[n] = 0;
+        for (;;) {
+            if (accept_word("delimiter")) { accept_word("in"); parse_ref(&dlm[n]); has_d[n] = 1; continue; }
+            if (accept_word("count")) { accept_word("in"); parse_ref(&cnt[n]); has_c[n] = 1; if (!is_int_item(cnt[n].sym)) die_at(cnt[n].line, "COUNT IN needs an integer item"); continue; }
+            break;
+        }
+        if (has_d[n] && !nd) die_at(rcv[n].line, "DELIMITER IN without DELIMITED BY");
+        if (has_c[n] && !nd) die_at(rcv[n].line, "COUNT IN without DELIMITED BY");
+        n++;
+    }
+    if (!n) die_at(line, "UNSTRING needs a receiver after INTO");
+    Ref ptr; int has_ptr = 0;
+    if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; }
+    else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
+    if (has_ptr && !is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item");
+    Ref tly; int has_tly = 0;
+    if (accept_word("tallying")) { accept_word("in"); parse_ref(&tly); has_tly = 1; if (!is_int_item(tly.sym)) die_at(tly.line, "TALLYING IN needs an integer item"); }
+
+    /* begin: the source, its length, the pointer */
+    if (has_ptr) {
+        Arg a[2] = { arg_ref(&ptr), arg_desc(sym_desc(ptr.sym)) }; emit_args(a, 2); emit_call("cob_load_int");
+        emit("\tstw sp+%d, r1", SLOT_C);
+    }
+    { Arg a[2], dd; opnd_args(&src, &a[0], &dd, 0, 0); a[1] = arg_len(&src); emit_args(a, 2); }
+    if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 0);
+    emit_call("cob_unstr_begin");
+    for (int i = 0; i < nd; i++) {
+        Arg a[3];
+        if (delims[i].kind == O_FIG) { unsigned char c = (unsigned char)fig_byte(delims[i].tok->s); a[0] = arg_label(lit_label(&c, 1)); a[1] = arg_imm(1); }
+        else { Arg x; opnd_args(&delims[i], &a[0], &x, 0, 0); a[1] = arg_len(&delims[i]); }
+        a[2] = arg_imm(dall[i]);
+        emit_args(a, 3);
+        emit_call("cob_unstr_delim");
+    }
+    for (int i = 0; i < n; i++) {
+        Arg a[6];
+        a[0] = arg_ref(&rcv[i]); a[1] = arg_desc(sym_desc(rcv[i].sym));
+        if (has_d[i]) { a[2] = arg_ref(&dlm[i]); a[3] = arg_desc(sym_desc(dlm[i].sym)); } else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
+        if (has_c[i]) { a[4] = arg_ref(&cnt[i]); a[5] = arg_desc(sym_desc(cnt[i].sym)); } else { a[4] = arg_imm(0); a[5] = arg_imm(0); }
+        emit_args(a, 6);
+        emit_call("cob_unstr_into");
+    }
+    if (has_ptr) {
+        emit_call("cob_unstr_pointer");
+        emit("\tstw sp+%d, r1", SLOT_C);
+        Arg a[2] = { arg_ref(&ptr), arg_desc(sym_desc(ptr.sym)) };
+        emit_args(a, 2);
+        emit("\tldw r5, sp+%d", SLOT_C);
+        emit_call("cob_store_int");
+    }
+    if (has_tly) {
+        /* TALLYING IN is incremented by the receivers acted on */
+        Arg a[2] = { arg_ref(&tly), arg_desc(sym_desc(tly.sym)) };
+        emit_args(a, 2); emit_call("cob_load_int");
+        emit("\tstw sp+%d, r1", SLOT_C);
+        emit_call("cob_unstr_tally");
+        emit("\tldw r2, sp+%d", SLOT_C);
+        emit("\tadd r1, r1, r2");
+        emit("\tstw sp+%d, r1", SLOT_C);
+        emit_args(a, 2);
+        emit("\tldw r5, sp+%d", SLOT_C);
+        emit_call("cob_store_int");
+    }
+    int has_ovf = at_word("on") || at_word("overflow") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "overflow")));
+    if (has_ovf) {
+        int Lok = new_label(), Lend = new_label();
+        emit_call("cob_unstr_overflow");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        if (at_word("on") || at_word("overflow")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
+        emit_jump(Lend);
+        emit_label(Lok);
+        if (accept_word("not")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
+        emit_label(Lend);
+    }
+    accept_word("end-unstring");
+}
+
 /* ---- CALL -------------------------------------------------------------- */
 
 /* a PROGRAM-ID or CALL literal as a linker symbol: the SLOW-32 C ABI's
@@ -5069,6 +5216,7 @@ static void parse_inspect(void)
     Ref item; parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
     Opnd itemo = ref_opnd(&item);
+    operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
     if (accept_word("converting")) die_at(cur()->line, "INSPECT CONVERTING is not implemented (after v1)");
     int any = 0;
     if (accept_word("tallying")) {
@@ -5289,6 +5437,7 @@ static void parse_statement(void)
     if (!strcmp(v, "release")) { advance(); parse_release(); return; }
     if (!strcmp(v, "return")) { advance(); parse_return(); return; }
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
+    if (!strcmp(v, "unstring")) { advance(); parse_unstring(); return; }
     if (!strcmp(v, "call")) { advance(); parse_call(); return; }
     if (!strcmp(v, "initiate")) { advance(); parse_initiate(); return; }
     if (!strcmp(v, "accept")) { advance(); parse_accept(); return; }
@@ -5335,7 +5484,7 @@ static void parse_statement(void)
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
 
-        { "unstring", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };
+        { "suppress", "after v1" }, { NULL, NULL } };
     for (int i = 0; later[i].verb; i++)
         if (!strcmp(v, later[i].verb)) die_at(t->line, "the verb %s is not implemented yet (%s)", v, later[i].when);
     if (is_terminator(v)) die_at(t->line, "'%s' without a matching statement", v);

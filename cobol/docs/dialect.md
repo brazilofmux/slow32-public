@@ -221,6 +221,25 @@ given, because majesty's `.prn` oracles were produced under it.
   the callee's own picture (GnuCOBOL hands over a binary word instead
   -- docs/oracles.md; the 85 text leaves a literal's class to the
   callee). Not yet: BY CONTENT of a reference-modified item.
+- **`UNSTRING`** (Stage 34): `UNSTRING src [DELIMITED BY [ALL] d [OR
+  [ALL] d]...] INTO {r [DELIMITER IN r] [COUNT IN r]}... [WITH POINTER
+  p] [TALLYING IN t] [[NOT] ON OVERFLOW] [END-UNSTRING]`. The runtime
+  scans (`cob_unstr_*`): the characters up to the leftmost delimiter
+  (the first listed wins at equal positions; ALL takes the repeats)
+  go to the receiver by the MOVE rules -- an empty field gives spaces,
+  or zero to a numeric receiver; with no DELIMITED BY each receiver
+  takes as many characters as it holds (one fewer for a separate
+  sign). Receivers left over when the source is exhausted are
+  untouched; source left over when the receivers are is the overflow,
+  as is a POINTER outside the source; TALLYING is incremented by the
+  receivers acted on. NIST NC218A (125 tests) matches GnuCOBOL.
+- **A whole group over an OCCURS DEPENDING ON table as an operand**
+  (Stage 34) -- MOVE, STRING, UNSTRING, INSPECT, a comparison, DISPLAY
+  -- has the group's *current* length: the operand becomes
+  `(1:length)` with the length computed at run time (base + DEPENDING
+  ON x element; `Ref.rm_odo`), so every path that handles reference
+  modification handles it. Receivers are not operands and keep the
+  maximum, the 85 rule. NC247A matches GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
@@ -361,7 +380,8 @@ given, because majesty's `.prn` oracles were produced under it.
 ## COBOL 85 we will grow into, not v1
 
 Nucleus Level 2 at full width (abbreviated conditions,
-`CORRESPONDING`, `UNSTRING`, `INSPECT REPLACING`/`CONVERTING`;
+`CORRESPONDING`, `INSPECT REPLACING`/`CONVERTING`; `UNSTRING` landed in
+Stage 34,
 `REPLACE` and `COPY REPLACING` landed in Stage 26, contained programs
 with `GLOBAL` in Stage 29). `STRING`, `INSPECT TALLYING`, `INITIALIZE` and
 reference modification are **in v1**, at the width taskdt uses them —

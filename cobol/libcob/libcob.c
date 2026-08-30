@@ -1388,6 +1388,8 @@ void cob_move_odo(const void *src, void *dst, int n, int dstlen, int base, int e
     cob_move_alnum(src, base + n * elem, dst, dstlen, 0);
 }
 
+int cob_odo_length(int d, int base, int elem) { return d < 0 ? base : base + d * elem; }
+
 /* SPECIAL-NAMES SWITCH-1..8: all off until SET */
 int cob_switches[8];
 
@@ -1423,6 +1425,65 @@ void cob_str_src(const char *s, int n, const char *delim, int dn)
 
 int cob_str_pointer(void) { return cs.pos; }
 int cob_str_overflow(void) { return cs.overflow; }
+
+/* ---- UNSTRING ---------------------------------------------------------
+ * begin (source, its length, the POINTER or 0), the DELIMITED BY list,
+ * then one call per receiver: the characters up to the leftmost
+ * delimiter (the first listed wins at equal positions; ALL takes the
+ * repeats too) go to the receiver by the MOVE rules, the delimiter to
+ * DELIMITER IN, their count to COUNT IN.  Receivers left over when the
+ * source is exhausted are untouched; source left over when the
+ * receivers are is the overflow, as is a POINTER outside the source. */
+static struct {
+    const char *src; int slen, pos, overflow, tally, moved;
+    struct { const char *p; int n, all; } d[16]; int nd;
+} cu;
+
+void cob_unstr_begin(const char *src, int slen, int pos)
+{
+    cu.src = src; cu.slen = slen; cu.overflow = 0; cu.tally = 0; cu.nd = 0; cu.moved = 0;
+    cu.pos = pos ? pos : 1;
+    if (cu.pos < 1 || cu.pos > slen) cu.overflow = 1;
+}
+void cob_unstr_setlen(int slen) { cu.slen = slen; if (cu.pos > slen) cu.overflow = 1; }
+void cob_unstr_delim(const char *p, int n, int all)
+{
+    if (cu.nd == 16) cob_fatal("UNSTRING: more than 16 delimiters");
+    cu.d[cu.nd].p = p; cu.d[cu.nd].n = n; cu.d[cu.nd].all = all; cu.nd++;
+}
+void cob_unstr_into(void *dst, const cob_desc *dd, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd)
+{
+    if (cu.overflow || cu.pos > cu.slen) return;
+    int start = cu.pos - 1, i = start, hit = -1;
+    if (cu.nd == 0) {
+        /* no DELIMITED BY: as many characters as the receiver holds (one
+         * fewer for a separate sign) */
+        int room = (int)dd->size - ((dd->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) ? 1 : 0);
+        if (room < 0) room = 0;
+        i = start + room; if (i > cu.slen) i = cu.slen;
+    } else {
+        for (; i < cu.slen && hit < 0; i++)
+            for (int k = 0; k < cu.nd; k++)
+                if (cu.d[k].n && i + cu.d[k].n <= cu.slen && !memcmp(cu.src + i, cu.d[k].p, cu.d[k].n)) { hit = k; break; }
+        if (hit >= 0) i--;                      /* the delimiter's position */
+    }
+    int k = i - start;                          /* the examined characters */
+    cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = COB_ALNUM; sd.size = (unsigned)k;
+    if (k) cob_move(cu.src + start, &sd, dst, dd);
+    else { sd.size = 1; cob_move(dd->cat == COB_NUM || dd->cat == COB_NUM_ED ? "0" : " ", &sd, dst, dd); }
+    if (cdst) cob_put_num(cdst, cdd, k, 0);
+    if (hit >= 0) {
+        int dn = cu.d[hit].n;
+        if (ddst) { sd.size = (unsigned)dn; cob_move(cu.d[hit].p, &sd, ddst, ddd); }
+        i += dn;
+        if (cu.d[hit].all) while (i + dn <= cu.slen && !memcmp(cu.src + i, cu.d[hit].p, dn)) i += dn;
+    } else if (ddst) { sd.size = 1; cob_move(" ", &sd, ddst, ddd); }
+    cu.pos = i + 1;
+    cu.tally++; cu.moved = 1;
+}
+int cob_unstr_pointer(void) { return cu.pos; }
+int cob_unstr_tally(void) { return cu.tally; }
+int cob_unstr_overflow(void) { return cu.overflow || cu.pos <= cu.slen; }
 
 /* an integer into any numeric item */
 void cob_store_int(void *p, const cob_desc *d, int v) { cob_put_num(p, d, v, 0); }

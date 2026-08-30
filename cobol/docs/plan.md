@@ -829,6 +829,24 @@ refuses the variable-location shape outright); SQ214A and ST146A
 match GnuCOBOL, NC247A reaches UNSTRING; the suite 250 of 303
 compile, 4418 of 4459 pass, none fail, 247 match.
 
+## Stage 34 — UNSTRING; an ODO group's current length everywhere **S** — DONE 2026-08-31
+
+The last verb of the 85 nucleus that was refused by name. The runtime
+scans (`cob_unstr_begin/delim/into/pointer/tally/overflow`, the shape
+of STRING's), the compiler parses the whole statement and emits one
+call per receiver with its DELIMITER IN and COUNT IN; what the text
+insisted on: with no DELIMITED BY a receiver takes as many characters
+as it holds, an empty field is spaces or zero, TALLYING is
+incremented. NC218A's 125 tests match GnuCOBOL. NC247A then showed
+the rule Stage 33 gave MOVE alone applies to every operand use of a
+group over an ODO table -- IF, STRING, UNSTRING, INSPECT: such an
+operand now becomes `(1:current length)` at parse time (`Ref.rm_odo`,
+the length computed by `cob_odo_length` where reference modification
+computes its own), so one mechanism serves them all and receivers keep
+the maximum. free/unstring, oracle agreeing; NC 53 of 95, 2176 of
+2181; the suite 252 of 303 compile, 4563 of 4605 pass, none fail, 249
+match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
