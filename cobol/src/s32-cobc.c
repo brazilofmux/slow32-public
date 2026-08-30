@@ -1371,12 +1371,108 @@ static Desc *g_desc; static int g_ndesc, g_dcap;
 
 static int g_noemit;        /* >0 while a lookahead parse runs: no code */
 
+/* The assembly is kept in memory until the end so that conditional
+ * branches can be relaxed: a bcond reaches +/-4096 bytes and a big
+ * program's IF or PERFORM body can be longer than that (gl008 was the
+ * first).  Every instruction line the compiler writes is one 4-byte
+ * instruction -- li and la are already spelled out -- so positions in
+ * .text are exact, and a branch that cannot reach becomes its inverse
+ * over a jal (+/-1 MB), iterated to a fixed point. */
+static char **g_asm; static int g_nasm, g_asmcap;
+static int new_label(void);
+
 static void emit(const char *fmt, ...)
 {
     if (g_noemit) return;
+    char buf[4096];
     va_list ap;
-    va_start(ap, fmt); vfprintf(g_out, fmt, ap); va_end(ap);
-    fputc('\n', g_out);
+    va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
+    if (g_nasm == g_asmcap) { g_asmcap = g_asmcap ? g_asmcap * 2 : 4096; g_asm = realloc(g_asm, g_asmcap * sizeof *g_asm); }
+    g_asm[g_nasm++] = xstrndup(buf, strlen(buf));
+}
+
+/* a label definition line: ".L12:", ".Lp0_3:\t# name", "ws0_1:\t# ..." */
+static int line_label(const char *l, char *name, int cap)
+{
+    if (l[0] == '\t' || l[0] == ' ' || l[0] == '#' || !l[0]) return 0;
+    const char *c = strchr(l, ':');
+    if (!c || c - l >= cap) return 0;
+    memcpy(name, l, (size_t)(c - l)); name[c - l] = 0;
+    return 1;
+}
+
+/* a conditional branch line: "\tbeq r1, r0, .L12" -> op, operands, target */
+static int line_branch(const char *l, char *op, char *ops, char *target)
+{
+    static const char *bops[] = { "beq", "bne", "blt", "bge", "bltu", "bgeu", NULL };
+    if (l[0] != '\t' || l[1] != 'b') return 0;
+    const char *sp = strchr(l, ' ');
+    if (!sp || sp - l - 1 > 7) return 0;
+    memcpy(op, l + 1, (size_t)(sp - l - 1)); op[sp - l - 1] = 0;
+    int k; for (k = 0; bops[k] && strcmp(bops[k], op); k++) ;
+    if (!bops[k]) return 0;
+    const char *last = strrchr(sp, ',');
+    if (!last) return 0;
+    memcpy(ops, sp + 1, (size_t)(last - sp - 1)); ops[last - sp - 1] = 0;   /* "r1, r0" */
+    while (*++last == ' ') ;
+    snprintf(target, 64, "%s", last);
+    return 1;
+}
+
+static const char *branch_inverse(const char *op)
+{
+    if (!strcmp(op, "beq")) return "bne";
+    if (!strcmp(op, "bne")) return "beq";
+    if (!strcmp(op, "blt")) return "bge";
+    if (!strcmp(op, "bge")) return "blt";
+    if (!strcmp(op, "bltu")) return "bgeu";
+    return "bltu";
+}
+
+typedef struct { char *name; long pos; } LabelPos;
+
+static int labelpos_cmp(const void *a, const void *b) { return strcmp(((const LabelPos *)a)->name, ((const LabelPos *)b)->name); }
+
+static void relax_branches(void)
+{
+    unsigned char *islong = calloc((size_t)g_nasm, 1);
+    long *pos = xmalloc((size_t)g_nasm * sizeof *pos);
+    LabelPos *labels = xmalloc((size_t)g_nasm * sizeof *labels);
+    char name[128], op[8], ops[64], target[64];
+    for (int pass = 0; pass < 8; pass++) {
+        /* positions: .text only; a label's position is the next instruction's */
+        int in_text = 0, nl = 0; long at = 0;
+        for (int i = 0; i < g_nasm; i++) {
+            const char *l = g_asm[i];
+            pos[i] = at;
+            if (!strcmp(l, "\t.text")) { in_text = 1; continue; }
+            if (!strcmp(l, "\t.data") || !strcmp(l, "\t.rodata") || !strncmp(l, "\t.section", 9)) { in_text = 0; continue; }
+            if (!in_text) continue;
+            if (line_label(l, name, sizeof name)) { labels[nl].name = xstrndup(name, strlen(name)); labels[nl].pos = at; nl++; continue; }
+            if (l[0] != '\t') continue;
+            if (l[1] == '.') { if (!strncmp(l, "\t.p2align", 9)) at += 12; continue; }   /* padding, over-estimated */
+            at += islong[i] ? 8 : 4;
+        }
+        qsort(labels, (size_t)nl, sizeof *labels, labelpos_cmp);
+        int changed = 0;
+        for (int i = 0; i < g_nasm; i++) {
+            if (islong[i] || !line_branch(g_asm[i], op, ops, target)) continue;
+            LabelPos key = { target, 0 };
+            LabelPos *lp = bsearch(&key, labels, (size_t)nl, sizeof *labels, labelpos_cmp);
+            if (!lp) continue;                         /* a symbol elsewhere: leave it */
+            long d = lp->pos - pos[i];
+            if (d > 4000 || d < -4000) { islong[i] = 1; changed = 1; }
+        }
+        for (int k = 0; k < nl; k++) free(labels[k].name);
+        if (!changed) break;
+    }
+    for (int i = 0; i < g_nasm; i++) {
+        if (islong[i] && line_branch(g_asm[i], op, ops, target)) {
+            int L = new_label();
+            fprintf(g_out, "\t%s %s, .L%d\n\tjal r0, %s\n.L%d:\n", branch_inverse(op), ops, L, target, L);
+        } else fprintf(g_out, "%s\n", g_asm[i]);
+    }
+    free(islong); free(pos); free(labels);
 }
 
 static int new_label(void) { return g_nlabel++; }
@@ -1493,10 +1589,10 @@ static void emit_label(int label) { emit(".L%d:", label); }
 static void emit_bytes(const unsigned char *b, int n)
 {
     for (int i = 0; i < n; i += 16) {
-        fputs("\t.byte ", g_out);
+        char line[128]; int k = snprintf(line, sizeof line, "\t.byte ");
         for (int j = i; j < n && j < i + 16; j++)
-            fprintf(g_out, "%s%d", j == i ? "" : ",", b[j]);
-        fputc('\n', g_out);
+            k += snprintf(line + k, sizeof line - (size_t)k, "%s%d", j == i ? "" : ",", b[j]);
+        emit("%s", line);
     }
 }
 
@@ -5137,6 +5233,7 @@ int main(int argc, char **argv)
         g_unit++;
     }
     emit_rodata();
+    relax_branches();
     fclose(g_out);
     return 0;
 }

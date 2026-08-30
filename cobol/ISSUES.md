@@ -8,15 +8,15 @@ this file is what is *open*, ranked, plus what was closed and why.
 Nothing here is scheduled: the front is app-driven, and an item moves
 when a program asks for it.
 
-State on 2026-08-30: harness 45/45 with the GnuCOBOL oracle agreeing
+State on 2026-08-30: harness 46/46 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; 40 of
+report step on SLOW-32 with all twelve reports byte-identical; 42 of
 the 58 programs in `~/majesty/src/cobol` compile. The sweep that
 measures the last number is one line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 
-## A. The corpus — 18 refusals, by what unblocks most
+## A. The corpus — 14 refusals, by what unblocks most
 
 ### 1. ~~RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)~~ — RESOLVED 2026-08-30
 Stage 19. Slots of `4 + recsize` framed with the mode-V RDW (zero =
@@ -64,22 +64,18 @@ inside it. `glacpost` is the one program whose first refusal is this;
 `ldglentry` reaches it after ISSUES-1. Table `SORT` (gl008, dist01)
 is a different form — see ISSUES-19 / GitHub #10.
 
-### 4a. Table `SORT` (gl008, dist01) — GitHub #10
-`SORT table-name ON DESCENDING KEY …` over an OCCURS group, no `SD`.
-gl008: `sort taxcode on descending tax-total` and `sort category on
-descending cat-total` (ODO 0 TO 200, packed-decimal keys). dist01:
-`sort l-entries on descending l-n1`. ISO 1985 Sort-Merge is file
-`SORT` only; table `SORT` is ISO 2002 Format 2. Product ruling:
-implement as an after-v1 allowance, or majesty rewrites both sites
-to a paragraph sort. The verb is already in `later[]` (`the verb
-sort is not implemented yet (after v1)`). Hidden today behind
-ISSUES-19 (gl008) and ISSUES-5 (dist01).
+### 4a. ~~Table `SORT` (gl008, dist01) — GitHub #10~~ — RESOLVED 2026-08-30 by rewrite
+Ruling: rewritten in majesty to COBOL 85 -- insertion sorts through a
+holding element (stable; a 2002 table `SORT` leaves equal keys
+unspecified). Under GnuCOBOL the old and new gl008 print twelve
+receipts byte-identically; on SLOW-32 the same twelve match GnuCOBOL.
+The same commit rewrote gl008's `ROUNDED MODE NEAREST-EVEN` and a
+subscripted subscript (`cat-tax(ws-id(i))`, also 2002), and dist01's
+`OCCURS UNBOUNDED` and 21-digit item (ISSUES-5).
 
-### 5. A numeric item of more than 18 digits (dist01: `pic s9(18)v999 packed-decimal`)
-21 digits. The 1985 limit is 18 (GnuCOBOL's default allows 38). Under
-the standing "rewrite to 85" ruling this is a majesty-side change to
-`dist01` (split the scale, or accept 18) rather than a wider
-`cob_num`. Refused with the standard's limit named.
+### 5. ~~A numeric item of more than 18 digits (dist01)~~ — RESOLVED 2026-08-30 by rewrite
+`s9(18)v999` became `s9(15)v999` in majesty; the compiler keeps the
+standard's limit and names it.
 
 ### 6. ~~`FUNCTION INTEGER-OF-DATE` / `DATE-OF-INTEGER` (jerm2)~~ — RESOLVED 2026-08-30
 Stage 18: the four calendar functions of the 1989 addendum
@@ -180,6 +176,17 @@ the last line names the oracle, or says `NO ORACLE`.
 (a real feature: the MVS job that restores the tape). The Stage 10
 harness ran it from `cobol/`, and the file went in with `34d5a81e`.
 Removed; the harness now runs tapemgr inside its work directory.
+
+### 20. ~~A conditional branch past ±4096 bytes~~ — RESOLVED 2026-08-30
+gl008's `100-allocation-reports` was the first PERFORM body longer
+than a bcond can reach; the assembler refused the program ("Branch
+offset out of range ... 4424 bytes away"). The compiler now keeps its
+assembly in memory and relaxes: every instruction line it writes is
+one 4-byte instruction (`li`/`la` are already spelled out), so .text
+positions are exact, and a branch that cannot reach becomes its
+inverse over a `jal` (±1 MB), iterated to a fixed point. gl008 needs
+four; tests/free/farbranch two. Found only because the corpus's
+biggest program finally compiled -- the sweep's value again.
 
 ### 17. CCVS-85 as a histogram
 The NIST suite (NC, SQ, IC modules) has never been run through

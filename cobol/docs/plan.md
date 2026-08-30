@@ -537,6 +537,22 @@ GnuCOBOL line for line; bad/relative-key-in-record replaces the old
 with output identical to GnuCOBOL's. 40 of 58 compile; ldglentry is
 now an `SD` program (ISSUES-4).
 
+## Stage 20 — gl008 arrives; branch relaxation **S** — DONE 2026-08-30
+
+The corpus's biggest program. Its 2002 forms were rewritten in majesty
+under the standing ruling (table `SORT` as stable insertion sorts,
+`ROUNDED MODE NEAREST-EVEN` as `ROUNDED`, a subscripted subscript as
+two MOVEs; dist01's `OCCURS UNBOUNDED` and 21-digit item likewise),
+verified first under GnuCOBOL -- old and new gl008 print twelve
+receipts byte-identically -- and then the compile stopped in the
+assembler: a PERFORM body longer than a conditional branch's ±4096
+bytes. The compiler now buffers its assembly and relaxes such
+branches (ISSUES-20; tests/free/farbranch). gl008 then runs on
+SLOW-32 with all twelve receipts identical to GnuCOBOL's, and
+`run_gl008.sh` uses it. 42 of 58 compile; what remains is `SD`/`SORT`
+(glacpost, ldglentry), the date family to retire, and three
+extension programs.
+
 ## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report

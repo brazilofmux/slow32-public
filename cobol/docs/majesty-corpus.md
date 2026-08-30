@@ -129,14 +129,14 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | ~~2~~ | ~~`SPECIAL-NAMES` clauses~~ **landed** (Stage 16, `CLASS`; with console `ACCEPT` and `LENGTH OF`): damm compiles and matches GnuCOBOL; gl008 never needed it -- its stop is a subscripted `SOURCE` | ~~damm~~, gl008 |
 | ~~1~~ | ~~a subscripted `SOURCE` in a report field~~ gl036 compiles as of Stage 13 (a `VALUE`-only report field was the last stop) | ~~gl036~~ |
 | ~~3~~ | ~~`SEARCH`~~ **landed** (Stage 15); gl042/gl043 also needed their `EXIT PARAGRAPH` rewritten to 1985 | ~~gl042, gl043, gl034~~ |
-| ~~1~~ | ~~a subscripted `SOURCE` in a report line~~ **landed** (Stage 17): gl008 moves on to `ROUNDED MODE` (2002, a majesty rewrite) and then its table `SORT` (GitHub #10) | gl008; gl015, gl016 (retired) now stop at a report field without a PICTURE |
+| ~~1~~ | ~~a subscripted `SOURCE` in a report line~~ **landed** (Stage 17); gl008's 2002 leftovers (`ROUNDED MODE`, table `SORT`, a subscripted subscript) rewritten in majesty 2026-08-30 -- **gl008 runs on SLOW-32, twelve receipts identical to GnuCOBOL** | ~~gl008~~; gl015, gl016 (retired) stop at a report field without a PICTURE |
 | 1 | `SD` -- an in-program `SORT` | glacpost |
-| 1 | a numeric item of more than 18 digits (`ws-temp`) | dist01 |
+| ~~1~~ | ~~a numeric item of more than 18 digits (`ws-temp`)~~ rewritten in majesty to `s9(15)v999`; its table `SORT` and `OCCURS UNBOUNDED` rewritten too (2026-08-30) | ~~dist01~~ |
 | ~~1~~ | ~~`FUNCTION INTEGER-OF-DATE`~~ **landed** (Stage 18, with DATE-OF-INTEGER, DAY-OF-INTEGER, INTEGER-OF-DAY): jerm2 runs, no disagreement over 400,000 days | ~~jerm2~~ |
 | 1 | `USAGE BINARY-INT` | testcrc |
 | 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
 
-After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, 38 of 58; after relative I-O, **40 of 58.** The copybooks also
+After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, 38 of 58; after relative I-O, 40 of 58; after the gl008/dist01 rewrites (table `SORT`, `ROUNDED MODE`, a subscripted subscript, `OCCURS UNBOUNDED`) and branch relaxation, **42 of 58.** The copybooks also
 brought `packed-decimal` before `pic`, a trailing `+` in a numeric
 picture (`9(9)v99+`, numeric-edited: moved to a numeric item before
 arithmetic, as the programs already do) and level 88 directly under
