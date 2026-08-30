@@ -1786,3 +1786,26 @@ around a scalar initializer (C89) are taken too. `tests/test_phase32.c`
 holds every row of the issue's table; suite 57/57 with `--fixed-point`; the
 unsplit `libcob.c` compiles through `cc.s32x`. The kit `~/s32x/cc.s32x`
 carries the fix once the kit is rebuilt.
+
+### 62. [RESOLVED 2026-08-30] stage08 cc: a file-scope long long array initializer repeated the low word (GitHub #11)
+
+`static const long long ga[3] = { 1LL, 10LL, -5LL };` came out as
+`01 00 00 00 01 00 00 00 ...` -- each element's 32-bit encoding written twice
+-- and `static long long g = 5000000000LL;` lost its high word.  libcob's
+`pow10tab[19]` is exactly the first shape, so on a host that builds libcob with
+this compiler (Kagura, no LLVM) every COBOL division returned 0.
+
+**Cause:** two things.  `ps_ginit_store_int_at(v, sz)` takes a 32-bit `v` and
+shifts it by `i * 8` for `i < sz`; a shift by 32 or more wraps on SLOW-32, so
+bytes 4..7 repeat bytes 0..3.  And the constant-expression evaluator is 32-bit
+throughout: the lexer's `lex_val_hi` never reached a global initializer (the
+scalar path only sign-extended the low word).
+
+**Fix:** the evaluator keeps a side channel -- `pc_hi`/`pc_wide` set by a long
+long literal in `parse_const_primary`, negated with the low word by unary minus,
+and `pc_nleaf` counting leaves so `parse_const_ll_hi` can tell one literal from
+an expression (which stays 32-bit and is sign-extended).  An 8-byte element or
+global stores two words from it.  `tests/test_phase33.c`; suite 58/58 with
+`--fixed-point`; the COBOL harness runs 46/46 with libcob and its C bridge built
+by `cc.s32x` through `cctool.sh`'s fallback (`LLVM_BIN=/nonexistent`).  The kit
+`~/s32x/cc.s32x` carries this once rebuilt.

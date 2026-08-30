@@ -201,9 +201,13 @@ route exposed a stage08 parser gap — a block-scope declarator list
 ending at a brace initializer — filed as GitHub #8, worked around in
 `libcob.c` (957b5a29), and fixed in the parser on 2026-08-30
 (`parse_local_declarator`; stage08 `tests/test_phase32.c`; the unsplit
-`libcob.c` compiles again). The kit `~/s32x/cc.s32x` carries the fix
-only once the kit is rebuilt. The fallback has been exercised only for
-`libcob.c`; a `.c` given to `compile.sh` takes the same path.
+`libcob.c` compiles again). The same route then found GitHub #11 --
+a file-scope `long long` array initializer repeating its low word,
+which made every COBOL division return 0 through `pow10tab` -- fixed
+the same day (selfhost ISSUES-62). The fallback is now exercised by the
+whole harness: with `LLVM_BIN=/nonexistent` (libcob and the C bridge
+through `cc.s32x`) it runs 46/46 with the oracle agreeing. The kit
+`~/s32x/cc.s32x` carries both fixes only once the kit is rebuilt.
 
 ## E. Closed, with the lesson
 

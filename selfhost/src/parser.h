@@ -1646,10 +1646,22 @@ static int ps_sizeof_node(Node *n) {
     return ty_size(n->ty);
 }
 
+/* The constant evaluator is 32-bit.  A long long literal keeps its high
+ * word here: pc_wide says the last leaf was such a literal and pc_hi is
+ * its high word (negated along with the low word by unary minus);
+ * pc_nleaf counts leaves, so a caller can tell one literal -- maybe
+ * negated, maybe in parentheses -- from an expression, whose value is
+ * 32-bit and gets sign-extended. */
+static int pc_hi;
+static int pc_wide;
+static int pc_nleaf;
+
 static int parse_const_primary(void) {
     int ci;
     int ty;
 
+    pc_wide = 0;
+    pc_nleaf = pc_nleaf + 1;
     if (lex_tok == TK_LPAREN) {
         next();
         ci = parse_const_int();
@@ -1704,6 +1716,10 @@ static int parse_const_primary(void) {
     }
     if (lex_tok == TK_NUM || lex_tok == TK_CHARLIT) {
         ci = lex_val;
+        if (lex_tok == TK_NUM && (lex_val_hi != 0 || lex_val_ll)) {
+            pc_hi = lex_val_hi;
+            pc_wide = 1;
+        }
         next();
         return ci;
     }
@@ -1742,8 +1758,15 @@ static int parse_const_unary(void) {
         return parse_const_unary();
     }
     if (lex_tok == TK_MINUS) {
+        int nv;
         next();
-        return 0 - parse_const_unary();
+        nv = parse_const_unary();
+        if (pc_wide) {
+            /* negate the 64-bit pair: -(hi:lo) */
+            pc_hi = ~pc_hi;
+            if (nv == 0) pc_hi = pc_hi + 1;
+        }
+        return 0 - nv;
     }
     if (lex_tok == TK_LPAREN) {
         sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
@@ -1857,6 +1880,19 @@ static int parse_const_int(void) {
         v = v | parse_const_bxor();
     }
     return v;
+}
+
+/* a constant for an 8-byte integer initializer: one long long literal's
+ * own high word, otherwise the 32-bit constant expression sign-extended */
+static int parse_const_ll_hi(int *lo) {
+    int v;
+    int n0;
+    n0 = pc_nleaf;
+    v = parse_const_int();
+    *lo = v;
+    if (pc_wide && pc_nleaf == n0 + 1) return pc_hi;
+    if (v < 0) return -1;
+    return 0;
 }
 
 static int ps_ginit_cur_off(int gidx) {
@@ -2389,6 +2425,15 @@ static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_
     }
     if (ty_is_fp(ty)) {
         ps_fp_init_store_at(ty, gidx, rel_off);
+        return;
+    }
+    if (ty_size(ty) == 8) {
+        /* a long long element: two words, not one word's bytes repeated
+         * (a 32-bit shift by 32 wraps here -- GitHub #11) */
+        int hi;
+        hi = parse_const_ll_hi(&v);
+        ps_ginit_store_int_at(gidx, rel_off, v, 4);
+        ps_ginit_store_int_at(gidx, rel_off + 4, hi, 4);
         return;
     }
     v = parse_const_int();
@@ -4760,13 +4805,13 @@ static Node *parse_top_decl(void) {
                     ps_ginit_ensure_len(idx, ty_size(xty));
                     ps_ginit_finish(idx);
                 } else {
-                    ps_ginit[idx] = parse_const_int();
-                    /* Sign-extend for long long globals */
                     if (ty_is_llong(xty)) {
-                        if (ps_ginit[idx] < 0)
-                            ps_ginit_hi[idx] = -1;
-                        else
-                            ps_ginit_hi[idx] = 0;
+                        /* a long long global: the literal's own high word */
+                        int glo;
+                        ps_ginit_hi[idx] = parse_const_ll_hi(&glo);
+                        ps_ginit[idx] = glo;
+                    } else {
+                        ps_ginit[idx] = parse_const_int();
                     }
                 }
             }
