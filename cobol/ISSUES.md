@@ -222,8 +222,9 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **7289 of 7335 tests pass, none fail, 290
-programs match GnuCOBOL's tally exactly** (IC, RL, RW and IX complete) (Stage 23; alternate keys
+them by their own reports: **7290 of 7336 tests pass, none fail, 293
+programs match GnuCOBOL's tally exactly** (IC, RL, RW and IX complete;
+NC compiles 95 of 95) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
 the runner not building `lib/`, then `CALL identifier`/`ON
@@ -248,7 +249,7 @@ AFTER` levels~~ (done, with WITH TEST AFTER across levels: NC201A,
 NC233A, NC243A match), ~~a multi-character `CLASS` literal~~ (done, with
 switches from the environment and SET groups: NC174A, NC254A match),
 ~~`CURRENCY SIGN`~~ (done, with BLANK WHEN ZERO on a plain numeric item
-and procedure-names of digits: NC107A, NC108M match). **What the 10
+and procedure-names of digits: NC107A, NC108M match). **What the 7
 refused programs stop on now (2026-08-31):** ~~a non-integer numeric
 MOVEd to an alphanumeric item (NC105A, NC114M, NC124A)~~ (done, Stage
 53: the user reversed the text-first ruling -- the NIST cases are the
@@ -258,7 +259,8 @@ standard's executable form and win where they and the text differ),  ~~"too many
 reader refuses (NC215A)~~ (done: a doubled quote split at column 72, Stage 52), ~~a STRING receiver that is a group (NC217A)~~ (done, Stage 48),
 ~~INITIALIZE REPLACING (NC223A)~~ (done, Stage 45), ~~SEARCH with no WHEN (NC237A)~~ (done: `END` without `AT`, Stage 47), ~~an
 ambiguous subscript name (NC246A)~~ (done: 64 qualifiers, Stage 49), ~~`-` as a data-name start (NC250A)~~ (done: a signed expression operand, Stage 50),
-NC302M's ENVIRONMENT DIVISION, ALTER (NC303M), ~~SYMBOLIC CHARACTERS
+~~NC302M's ENVIRONMENT DIVISION (MEMORY SIZE), ALTER (NC303M, NC401M),
+STOP literal~~ (done, Stage 55: NC compiles 95 of 95), ~~SYMBOLIC CHARACTERS
 (NC401M)~~ (done, Stage 54; NC401M then wants ALTER, as NC303M does); SQ 5, ST 3 not yet listed here (RL's last program was the
 abbreviated condition: RL is complete)., `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01

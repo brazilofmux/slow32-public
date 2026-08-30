@@ -3199,6 +3199,20 @@ static Para *para_add(const char *name, int is_section, int line)
 static void emit_para_label(Para *p) { emit(".Lp%d_%d:\t# %s%s", g_unit, p->id, p->name, p->is_section ? " section" : ""); }
 
 /* prescan the Procedure Division for paragraph and section headers */
+/* ALTER (obsolete in the 1985 text; NC302M, NC303M and NC401M use it): a
+ * paragraph named in an ALTER statement holds one GO TO, which jumps
+ * through a cell the ALTER rewrites.  The names are gathered before the
+ * procedure division is compiled; the cells are laid out with the unit's
+ * data, each initialised to the GO TO's own target (or 0 for a bare GO TO). */
+static char g_altname[64][64]; static int g_naltname;
+static struct { int para, target; } g_altcell[64]; static int g_naltcell;
+static Para *g_cur_para;
+static int is_altered_para(const char *name)
+{
+    for (int i = 0; i < g_naltname; i++) if (!strcmp(g_altname[i], name)) return 1;
+    return 0;
+}
+
 static void prescan_paragraphs(int from)
 {
     int sentence_start = 1;
@@ -3206,6 +3220,16 @@ static void prescan_paragraphs(int from)
     for (int i = from; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
         if (t->kind == T_EOF) break;
+        if (sentence_start && t->kind == T_WORD && !strcmp(t->s, "alter")) {
+            /* ALTER p1 TO [PROCEED TO] p2 [p3 TO [PROCEED TO] p4]... */
+            for (int j = i + 1; j + 2 < g_ntok && g_tok[j].kind == T_WORD && is_word(&g_tok[j + 1], "to"); ) {
+                if (g_naltname < 64) snprintf(g_altname[g_naltname++], 64, "%s", g_tok[j].s);
+                j += 2;
+                if (is_word(&g_tok[j], "proceed") && is_word(&g_tok[j + 1], "to")) j += 2;
+                if (g_tok[j].kind != T_WORD) break;
+                j++;
+            }
+        }
         if (sentence_start && t->kind == T_NUM && !strchr(t->s, '.') && !strchr(t->s, '+') && !strchr(t->s, '-')) {
             /* a procedure-name of digits only (NC107A's paragraphs 3, 4, 5) */
             if (g_tok[i + 1].kind == T_PERIOD) para_add(t->s, 0, t->line);
@@ -4556,7 +4580,18 @@ static void parse_goto(void)
         if (n >= 64) die_at(cur()->line, "too many GO TO targets");
         ps[n++] = expect_para();
     }
-    if (!n) die_at(cur()->line, "GO TO without a procedure-name needs ALTER, which is not in COBOL 85");
+    int altered = g_cur_para && is_altered_para(g_cur_para->name);
+    if (!n && !altered) die_at(cur()->line, "GO TO without a procedure-name: the paragraph is not named in any ALTER");
+    if (altered && n <= 1 && !at_word("depending")) {
+        /* through the paragraph's cell, which ALTER rewrites */
+        if (g_naltcell == 64) die_at(cur()->line, "too many altered paragraphs");
+        g_altcell[g_naltcell].para = g_cur_para->id; g_altcell[g_naltcell].target = n ? ps[0]->id : -1; g_naltcell++;
+        char lab[32]; snprintf(lab, sizeof lab, ".Lalt%d_%d", g_unit, g_cur_para->id);
+        emit_la("r1", lab);
+        emit("\tldw r1, r1+0");
+        emit("\tjalr r0, r1, 0");
+        return;
+    }
     if (accept_word("depending")) {
         accept_word("on");
         Opnd o; parse_operand(&o);
@@ -5948,7 +5983,12 @@ static void parse_statement(void)
     if (!strcmp(v, "stop")) {
         advance();
         if (accept_word("run")) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
-        die_at(t->line, "STOP literal is not implemented");
+        /* STOP literal (obsolete): the literal to the operator, who would
+         * resume the run -- displayed, and the run goes on */
+        if (cur()->kind != T_STR && cur()->kind != T_NUM) die_at(t->line, "STOP needs RUN or a literal");
+        { Arg a[2] = { arg_label(lit_label((unsigned char *)cur()->s, cur()->len)), arg_imm(cur()->len) }; emit_args(a, 2); emit_call("cob_display"); emit_call("cob_display_nl"); }
+        advance();
+        return;
     }
     if (!strcmp(v, "goback")) { advance(); emit("\tjal r0, .Lgb%d", g_unit); return; }
     if (!strcmp(v, "continue")) { advance(); return; }
@@ -5960,8 +6000,24 @@ static void parse_statement(void)
         return;
     }
     if (!strcmp(v, "next")) die_at(t->line, "NEXT SENTENCE is only valid inside IF (or SEARCH)");
-    if (!strcmp(v, "alter"))
-        die_at(t->line, "ALTER is not in COBOL 85 (obsolete in the 1985 standard); refused");
+    if (!strcmp(v, "alter")) {
+        /* ALTER p1 TO [PROCEED TO] p2 ...: p1's GO TO now goes to p2 */
+        advance();
+        for (;;) {
+            Para *p1 = expect_para();
+            if (p1->is_section) die_at(t->line, "ALTER names a paragraph, not a section");
+            if (!is_altered_para(p1->name)) die_at(t->line, "internal: '%s' was not seen by the ALTER prescan", p1->name);
+            expect_word("to");
+            if (accept_word("proceed")) expect_word("to");
+            Para *p2 = expect_para();
+            char cell[32], tgt[32];
+            snprintf(cell, sizeof cell, ".Lalt%d_%d", g_unit, p1->id);
+            snprintf(tgt, sizeof tgt, ".Lp%d_%d", g_unit, p2->id);
+            emit_la("r2", tgt); emit_la("r1", cell); emit("\tstw r1+0, r2");
+            if (!(cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s) && para_find(cur()->s))) break;
+        }
+        return;
+    }
     if (!strcmp(v, "enter") || !strcmp(v, "disable") || !strcmp(v, "enable") ||
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
@@ -6195,6 +6251,7 @@ static void parse_procedure_division(void)
             if (cur_par >= 0) emit_exit_check(cur_par);
             if (p->is_section && cur_sec >= 0) emit_exit_check(cur_sec);
             emit_para_label(p);
+            g_cur_para = p;
             if (p->is_section) { cur_sec = p->id; cur_par = -1; g_cur_sec_id = p->id; } else cur_par = p->id;
             advance(); if (p->is_section) advance();
             expect_period();
@@ -6498,8 +6555,8 @@ static void parse_environment_division(void)
         for (;;) {
             if (accept_word("source-computer") || accept_word("object-computer")) {
                 expect_period();
-                while (cur()->kind == T_WORD && !at_word("special-names") && !at_word("input-output") &&
-                       !at_word("source-computer") && !at_word("object-computer") && !at_division()) {
+                while ((cur()->kind == T_WORD || cur()->kind == T_NUM) && !at_word("special-names") && !at_word("input-output") &&
+                       !at_word("source-computer") && !at_word("object-computer") && !at_division()) {   /* MEMORY SIZE 64000 CHARACTERS: obsolete, no effect */
                     if (accept_word("collating")) {         /* [PROGRAM] COLLATING SEQUENCE IS alphabet-name */
                         accept_word("sequence"); accept_word("is");
                         if (cur()->kind != T_WORD) die_at(cur()->line, "expected an alphabet-name after COLLATING SEQUENCE");
@@ -7294,6 +7351,12 @@ static void emit_unit_data(void)
         emit("\t.word %d", sc->blank_screen);
         emit("\t.word .Lscrf%d_%d", g_unit, i);
     }
+    for (int i = 0; i < g_naltcell; i++) {
+        emit("\t.p2align 2");
+        emit(".Lalt%d_%d:\t# ALTERed paragraph's GO TO target", g_unit, g_altcell[i].para);
+        if (g_altcell[i].target >= 0) emit("\t.word .Lp%d_%d", g_unit, g_altcell[i].target); else emit("\t.word 0");
+    }
+    g_naltcell = 0; g_naltname = 0;
     for (int i = 0; i < g_nreport; i++) {
         Report *r = &g_reports[i];
         emit("\t.p2align 2");

@@ -412,6 +412,16 @@ given, because majesty's `.prn` oracles were produced under it.
   name, a comparison, STRING, INSPECT. The alphabet-name is accepted
   (the native sequence is the one there is). NC401M's clause compiles;
   it then wants ALTER.
+- **The obsolete elements the NIST cases exercise** (Stage 55):
+  `OBJECT-COMPUTER ... MEMORY SIZE n WORDS|CHARACTERS|MODULES` is read
+  and has no effect; **`ALTER p1 TO [PROCEED TO] p2 ...`** -- a paragraph
+  named in an ALTER holds one GO TO (possibly bare, `GO TO.`), which
+  jumps through a cell in the unit's data, initialised to its own
+  target and rewritten by ALTER (the names are gathered before the
+  procedure division is compiled); **`STOP literal`** shows the literal
+  to the operator, who would resume the run: it is displayed and the
+  run goes on. NC302M and NC303M run, NC401M compiles: the whole NC
+  module compiles now.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

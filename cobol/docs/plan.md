@@ -1130,6 +1130,22 @@ clause compiles, and the program (compile-only) then stops at ALTER,
 where NC303M stops too; the suite unchanged at 293 of 303 compile,
 7289 of 7335 pass, none fail, 290 match.
 
+## Stage 55 — the obsolete elements: MEMORY SIZE, ALTER, STOP literal **S** — DONE 2026-08-31
+
+NC302M's OBJECT-COMPUTER carries MEMORY SIZE 64000 CHARACTERS, which
+the paragraph reader stopped at (a number); it skips it. The program
+then ALTERs, as NC303M and NC401M do: the ALTER names are gathered in
+the paragraph prescan, a GO TO in such a paragraph (its only
+statement, possibly bare) jumps through a cell `.Lalt<unit>_<para>`
+laid out with the unit's data and initialised to the GO TO's own
+target, and the ALTER statement stores the new target there. STOP
+literal displays the literal and goes on, there being no operator.
+free/alter (PERFORM ... THRU ranges, as the NIST programs write it --
+a performed paragraph that GO TOs out never returns), oracle agreeing
+under -std=cobol85; NC302M and NC303M run, NC401M compiles; the NC
+module compiles 95 of 95; the suite 296 of 303 compile, 7290 of 7336
+pass, none fail, 293 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
