@@ -2517,6 +2517,28 @@ char *cob_fn_integer_of_day(long yddd)
     return fn_digits(civil_to_days(y, 1, 1) + doy - 1, 10);
 }
 
+/* ACCEPT ... FROM DATE (YYMMDD) | DAY (YYDDD) | TIME (HHMMSShh) |
+ * DAY-OF-WEEK (1 Monday .. 7 Sunday): the text's unsigned integer,
+ * moved to the item by the MOVE rules (X3.23 6.2.4) */
+void cob_accept_datetime(int which, void *dst, const cob_desc *dd)
+{
+    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 0;
+    int hund = 0;
+    if (clock_gettime(0, &ts) == 0) hund = (int)(ts.tv_nsec / 10000000); else ts.tv_sec = time(0);
+    time_t now = (time_t)ts.tv_sec;
+    struct tm *t = localtime(&now);
+    char b[16]; int n;
+    switch (which) {
+    case 0: n = snprintf(b, sizeof b, "%02d%02d%02d", t->tm_year % 100, t->tm_mon + 1, t->tm_mday); break;
+    case 1: n = snprintf(b, sizeof b, "%02d%03d", t->tm_year % 100, t->tm_yday + 1); break;
+    case 2: n = snprintf(b, sizeof b, "%02d%02d%02d%02d", t->tm_hour, t->tm_min, t->tm_sec, hund); break;
+    default: n = snprintf(b, sizeof b, "%d", t->tm_wday == 0 ? 7 : t->tm_wday); break;
+    }
+    cob_desc sd; memset(&sd, 0, sizeof sd);
+    sd.cat = COB_NUM; sd.usage = COB_U_DISPLAY; sd.digits = (unsigned char)n; sd.size = (unsigned)n;
+    cob_move(b, &sd, dst, dd);
+}
+
 char *cob_fn_current_date(void)
 {
     char *b = fn_buffer(21);

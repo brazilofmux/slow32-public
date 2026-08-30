@@ -361,6 +361,11 @@ given, because majesty's `.prn` oracles were produced under it.
   leading, the rest unrolled at compile time. A figurative constant
   MOVEd to an alphanumeric-edited item now goes through the edit.
   NC223A (94 tests) matches GnuCOBOL.
+- **`ACCEPT item FROM DATE | DAY | TIME | DAY-OF-WEEK`** (Stage 46,
+  X3.23 6.2.4): the text's unsigned integer -- YYMMDD, YYDDD, HHMMSShh,
+  1 (Monday) to 7 -- moved to the item by the MOVE rules
+  (`cob_accept_datetime`, from the guest clock as local time).
+  NC214M matches GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

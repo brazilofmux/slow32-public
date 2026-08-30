@@ -1027,6 +1027,17 @@ category, tables unrolled over every occurrence. free/initrep, oracle
 agreeing; NC223A matches; the suite 281 of 303 compile, 6442 of 6484
 pass, none fail, 278 match.
 
+## Stage 46 — ACCEPT FROM DATE, DAY, TIME, DAY-OF-WEEK **S** — DONE 2026-08-31
+
+The runtime builds the text's integer (YYMMDD, YYDDD, HHMMSShh with
+the hundredths from the clock, 1 Monday to 7 Sunday) and moves it to
+the item by the MOVE rules through a numeric DISPLAY descriptor of
+that width. free/acceptdate checks shapes rather than values (month
+and day ranges, the year against FUNCTION CURRENT-DATE, an hour under
+24, a weekday in 1..7), so the oracle can agree on any day; NC214M
+matches; the suite 282 of 303 compile, 6443 of 6485 pass, none fail,
+279 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
