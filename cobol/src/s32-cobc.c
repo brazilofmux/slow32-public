@@ -5799,8 +5799,8 @@ static void parse_search(void)
      * loop, so the loop only holds the tests */
     int Lwhen[16]; int nwhen = 0;
     int save_atend = -1, atend_start = -1;
-    if (accept_word("at")) {
-        expect_word("end");
+    if (at_word("at") || at_word("end")) {          /* [AT] END: AT is optional (NC237A writes SEARCH ALL t END GO TO ...) */
+        accept_word("at"); expect_word("end");
         /* the AT END imperative comes before the WHENs in the source; scan
          * past it now (no code), emit it at Latend later */
         atend_start = g_tp;

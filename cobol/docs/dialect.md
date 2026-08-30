@@ -366,6 +366,10 @@ given, because majesty's `.prn` oracles were produced under it.
   1 (Monday) to 7 -- moved to the item by the MOVE rules
   (`cob_accept_datetime`, from the guest clock as local time).
   NC214M matches GnuCOBOL.
+- **`SEARCH ... [AT] END`** (Stage 47): AT is optional in the text's
+  format (`SEARCH ALL t END GO TO ... WHEN ...`, NC237A); the word END
+  alone at that position can only be the phrase. NC237A matches
+  GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

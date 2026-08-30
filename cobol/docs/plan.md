@@ -1038,6 +1038,16 @@ and day ranges, the year against FUNCTION CURRENT-DATE, an hour under
 matches; the suite 282 of 303 compile, 6443 of 6485 pass, none fail,
 279 match.
 
+## Stage 47 — SEARCH ... END without AT **S** — DONE 2026-08-31
+
+"SEARCH needs at least one WHEN" was the parser reading `END` (AT
+omitted) as nothing and then finding no WHEN behind the AT END
+statements it had not consumed. `[AT] END` now. free/searchend
+(SEARCH ALL on a two-key table and a serial SEARCH, the index shown
+through a numeric item since DISPLAY of an index item is the
+implementor's), oracle agreeing; NC237A matches; the suite 283 of 303
+compile, 6456 of 6498 pass, none fail, 280 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
