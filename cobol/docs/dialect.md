@@ -384,6 +384,12 @@ given, because majesty's `.prn` oracles were produced under it.
 - **Up to 64 operands in a statement** (Stage 51): ADD, SUBTRACT and
   the other operand lists took 16; NC106A and NC176A add and subtract
   21 (the runtime's numeric stack is 96 deep).
+- **A quotation mark at column 72 met by a continuation line beginning
+  with the same quotation mark** (Stage 52): the two are the halves of
+  an embedded doubled quote and the literal is still open -- the
+  reader's balance count would have closed it (NC215A's alphabet
+  literal `..."8J"` at column 72, then `-    ""9K...`). Only at column
+  72 exactly: a shorter line ending in a quote closes its literal.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

@@ -198,6 +198,15 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                     int cn = len - 7; if (cn > 65) cn = 65; if (cn < 0) cn = 0;
                     const char *c = p + 7, *ce = p + 7 + cn;
                     while (c < ce && (*c == ' ' || *c == '\t')) c++;
+                    /* a literal whose quotes look balanced but whose last character,
+                     * at the end of the line, is a quote, met by a continuation
+                     * line beginning with the same quote: the two are the halves
+                     * of an embedded doubled quote, the literal still open (NC215A:
+                     * "...8J" at column 72, then -    ""9K...) */
+                    if (!open) {
+                        size_t pl = strlen(prev);
+                        if (pl == 65 && (prev[pl - 1] == '"' || prev[pl - 1] == '\'') && c < ce && *c == prev[pl - 1]) open = prev[pl - 1];   /* column 72 exactly */
+                    }
                     if (open) {
                         if (c >= ce || *c != open)
                             die_at(lineno, "a continuation of a literal must begin with its quote (%c)", open);

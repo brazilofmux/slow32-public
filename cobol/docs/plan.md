@@ -1086,6 +1086,20 @@ added and subtracted, 30 literals GIVING), oracle agreeing; NC106A
 (126 tests) and NC176A (124) match; the suite 288 of 303 compile,
 6952 of 6994 pass, none fail, 285 match.
 
+## Stage 52 — a doubled quote split across a continuation **S** — DONE 2026-08-31
+
+The source reader decides whether a continued line ended inside a
+literal by counting its quotes; NC215A's alphabet literal ends line
+49 with a quote at column 72 and continues `-    ""9K...`, the two
+quotes being the halves of an embedded doubled quote. When the
+balance count says closed but the last character at column 72 is a
+quote and the continuation line begins with the same one, the literal
+is still open and the continuation's quote is the required marker;
+the join then reads `""` as one embedded quote. tests/fixed/litcont
+(built to column 72 by a script), the oracle agreeing on the output;
+NC215A matches; the suite 289 of 303 compile, 6959 of 7001 pass, none
+fail, 286 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
