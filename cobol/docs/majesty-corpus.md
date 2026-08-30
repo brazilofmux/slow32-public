@@ -133,10 +133,10 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | ~~1~~ | ~~`SD` -- an in-program `SORT`~~ **landed** (Stage 21): glacpost and the crglentry → ldglentry → exglentry chain match GnuCOBOL | ~~glacpost, ldglentry~~ |
 | ~~1~~ | ~~a numeric item of more than 18 digits (`ws-temp`)~~ rewritten in majesty to `s9(15)v999`; its table `SORT` and `OCCURS UNBOUNDED` rewritten too (2026-08-30) | ~~dist01~~ |
 | ~~1~~ | ~~`FUNCTION INTEGER-OF-DATE`~~ **landed** (Stage 18, with DATE-OF-INTEGER, DAY-OF-INTEGER, INTEGER-OF-DAY): jerm2 runs, no disagreement over 400,000 days | ~~jerm2~~ |
-| 1 | `USAGE BINARY-INT` | testcrc |
+| ~~1~~ | ~~`USAGE BINARY-INT`~~ rewritten in majesty to `PIC 9(9) COMP-5` (2026-08-30); both engines print zlib's CRC-32 | ~~testcrc~~ |
 | 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
 
-After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, 38 of 58; after relative I-O, 40 of 58; after the gl008/dist01 rewrites (table `SORT`, `ROUNDED MODE`, a subscripted subscript, `OCCURS UNBOUNDED`) and branch relaxation, 42 of 58; after Kagura's date-family conversion and file SORT, **55 of 58** -- what refuses is testcrc (`BINARY-INT`, a rewrite) and the XML/JSON pair (extensions, out). The copybooks also
+After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, 38 of 58; after relative I-O, 40 of 58; after the gl008/dist01 rewrites (table `SORT`, `ROUNDED MODE`, a subscripted subscript, `OCCURS UNBOUNDED`) and branch relaxation, 42 of 58; after Kagura's date-family conversion and file SORT, 55 of 58; after the testcrc rewrite, **56 of 58** -- what refuses is the XML/JSON pair (extensions, out). The copybooks also
 brought `packed-decimal` before `pic`, a trailing `+` in a numeric
 picture (`9(9)v99+`, numeric-edited: moved to a numeric item before
 arithmetic, as the programs already do) and level 88 directly under

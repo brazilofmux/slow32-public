@@ -10,13 +10,13 @@ when a program asks for it.
 
 State on 2026-08-30: harness 47/47 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; 55 of
+report step on SLOW-32 with all twelve reports byte-identical; 56 of
 the 58 programs in `~/majesty/src/cobol` compile. The sweep that
 measures the last number is one line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 
-## A. The corpus — 3 refusals, by what unblocks most
+## A. The corpus — 2 refusals, by what unblocks most
 
 ### 1. ~~RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)~~ — RESOLVED 2026-08-30
 Stage 19. Slots of `4 + recsize` framed with the mode-V RDW (zero =
@@ -88,9 +88,10 @@ with GnuCOBOL; jerm2 -- majesty's 400,000-day cross-check of the C
 `du_*` routines against these functions -- compiles, runs on SLOW-32
 in 0.4 s under the DBT, and reports no disagreement on either engine.
 
-### 7. `USAGE BINARY-INT UNSIGNED` (testcrc)
-GnuCOBOL extension (with `BINARY-LONG`, `BINARY-SHORT`, …). Rewrite
-in majesty to `COMP-5 PIC 9(9)`, per the ruling; not a compiler item.
+### 7. ~~`USAGE BINARY-INT UNSIGNED` (testcrc)~~ — RESOLVED 2026-08-30 by rewrite
+majesty: `PIC 9(9) COMP-5` (four bytes, the C seam's unsigned 32-bit),
+the hex literal in decimal, `CBL_NOT` as `4294967295 - item`. Prints
+zlib's CRC-32 of 'A' on both engines.
 
 ### 8. `XML` / `JSON` verbs (usexml, usejson)
 GnuCOBOL extensions. Out of scope; the two are demonstration
