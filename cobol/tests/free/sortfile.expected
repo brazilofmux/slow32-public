@@ -1,0 +1,16 @@
+--- using/giving
+01 A1 0010000+ chairs            
+02 A1 0010000+ desks             
+03 A1 0002550+ coffee            
+04 B2 0010000+ printer paper     
+05 B2 0010000+ toner             
+06 B2 0000999+ pens              
+07 C3 0000100- refund            
+total      435.49
+--- procedures
+01 B2 0010000+ toner             
+02 B2 0010000+ printer paper     
+03 A1 0010000+ desks             
+04 A1 0010000+ chairs            
+05 A1 0002550+ coffee            
+06 B2 0000999+ pens              

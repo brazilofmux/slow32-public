@@ -121,22 +121,22 @@ gates (`gl025`–`gl029`, `gl031`–`gl033`, `gl035`, `gl037`, `gl041`,
 | blocks | first refusal | programs |
 |---|---|---|
 | ~~8~~ | ~~`COPY`~~ **landed** (Stage 12, 2026-08-29): with `-I src/copy` seven of the eight compile; exglentry moves to the RELATIVE row | ~~crglacct, crglacpd, crgltrans, exglacct, exglentry, ldglacct, ldgltrans, w001~~ |
-| 7 | `FUNCTION-ID` -- the legacy pure-COBOL date family, a retirement candidate rather than a rewrite (the C `du_*` path replaced it) | fielded_to_linear, linear_to_fielded, floor-div, floor-divmod, holidays, isleapyear, isvaliddate |
+| ~~7~~ | ~~`FUNCTION-ID` -- the legacy pure-COBOL date family~~ converted to subprograms on the majesty side (Kagura, e69e98b, 2026-08-30) | ~~fielded_to_linear, linear_to_fielded, floor-div, floor-divmod, holidays, isleapyear, isvaliddate~~ |
 | ~~4~~ | ~~`ACCEPT FROM ARGUMENT-NUMBER` / `ARGUMENT-VALUE`~~ **landed** (Stage 13): gl024 and gl038 compile, gl024's outputs match GnuCOBOL's byte for byte; gl042/gl043 move on to their next blocker | ~~gl024, gl038, gl042, gl043~~ |
-| 2 | `REPOSITORY` -- callers of that date family | exgltrans, jerm |
+| ~~2~~ | ~~`REPOSITORY` -- callers of that date family~~ converted with it | ~~exgltrans, jerm~~ |
 | ~~3~~ | ~~`RELATIVE KEY` (relative I-O)~~ **landed** (Stage 19): crglentry and exglentry compile and their run matches GnuCOBOL; ldglentry moves on to `SD` | ~~crglentry, exglentry~~, ldglentry |
 | ~~2~~ | ~~`OCCURS DEPENDING ON`~~ **landed** (Stage 14): gl040 compiles, gl034 moves to `SEARCH` | ~~gl034, gl040~~ |
 | ~~2~~ | ~~`SPECIAL-NAMES` clauses~~ **landed** (Stage 16, `CLASS`; with console `ACCEPT` and `LENGTH OF`): damm compiles and matches GnuCOBOL; gl008 never needed it -- its stop is a subscripted `SOURCE` | ~~damm~~, gl008 |
 | ~~1~~ | ~~a subscripted `SOURCE` in a report field~~ gl036 compiles as of Stage 13 (a `VALUE`-only report field was the last stop) | ~~gl036~~ |
 | ~~3~~ | ~~`SEARCH`~~ **landed** (Stage 15); gl042/gl043 also needed their `EXIT PARAGRAPH` rewritten to 1985 | ~~gl042, gl043, gl034~~ |
 | ~~1~~ | ~~a subscripted `SOURCE` in a report line~~ **landed** (Stage 17); gl008's 2002 leftovers (`ROUNDED MODE`, table `SORT`, a subscripted subscript) rewritten in majesty 2026-08-30 -- **gl008 runs on SLOW-32, twelve receipts identical to GnuCOBOL** | ~~gl008~~; gl015, gl016 (retired) stop at a report field without a PICTURE |
-| 1 | `SD` -- an in-program `SORT` | glacpost |
+| ~~1~~ | ~~`SD` -- an in-program `SORT`~~ **landed** (Stage 21): glacpost and the crglentry → ldglentry → exglentry chain match GnuCOBOL | ~~glacpost, ldglentry~~ |
 | ~~1~~ | ~~a numeric item of more than 18 digits (`ws-temp`)~~ rewritten in majesty to `s9(15)v999`; its table `SORT` and `OCCURS UNBOUNDED` rewritten too (2026-08-30) | ~~dist01~~ |
 | ~~1~~ | ~~`FUNCTION INTEGER-OF-DATE`~~ **landed** (Stage 18, with DATE-OF-INTEGER, DAY-OF-INTEGER, INTEGER-OF-DAY): jerm2 runs, no disagreement over 400,000 days | ~~jerm2~~ |
 | 1 | `USAGE BINARY-INT` | testcrc |
 | 2 | `XML` / `JSON` verbs (GnuCOBOL extensions) | usexml, usejson |
 
-After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, 38 of 58; after relative I-O, 40 of 58; after the gl008/dist01 rewrites (table `SORT`, `ROUNDED MODE`, a subscripted subscript, `OCCURS UNBOUNDED`) and branch relaxation, **42 of 58.** The copybooks also
+After COPY (2026-08-29): 29 of 58 compile; after the command line and two sweep fixes, 32 of 58; after OCCURS DEPENDING ON, 33 of 58; after SEARCH (and the EXIT PARAGRAPH rewrite), 36 of 58; after CLASS and console ACCEPT, 37 of 58; after the calendar functions, 38 of 58; after relative I-O, 40 of 58; after the gl008/dist01 rewrites (table `SORT`, `ROUNDED MODE`, a subscripted subscript, `OCCURS UNBOUNDED`) and branch relaxation, 42 of 58; after Kagura's date-family conversion and file SORT, **55 of 58** -- what refuses is testcrc (`BINARY-INT`, a rewrite) and the XML/JSON pair (extensions, out). The copybooks also
 brought `packed-decimal` before `pic`, a trailing `+` in a numeric
 picture (`9(9)v99+`, numeric-edited: moved to a numeric item before
 arithmetic, as the programs already do) and level 88 directly under

@@ -8,15 +8,15 @@ this file is what is *open*, ranked, plus what was closed and why.
 Nothing here is scheduled: the front is app-driven, and an item moves
 when a program asks for it.
 
-State on 2026-08-30: harness 46/46 with the GnuCOBOL oracle agreeing
+State on 2026-08-30: harness 47/47 with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; 42 of
+report step on SLOW-32 with all twelve reports byte-identical; 55 of
 the 58 programs in `~/majesty/src/cobol` compile. The sweep that
 measures the last number is one line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 
-## A. The corpus — 14 refusals, by what unblocks most
+## A. The corpus — 3 refusals, by what unblocks most
 
 ### 1. ~~RELATIVE I-O (3 programs: crglentry, ldglentry, exglentry)~~ — RESOLVED 2026-08-30
 Stage 19. Slots of `4 + recsize` framed with the mode-V RDW (zero =
@@ -28,16 +28,13 @@ ldglentry now stops at its `SD` (ISSUES-4). The on-disk bytes differ
 from GnuCOBOL's 8-byte native length -- documented, and no program
 outside COBOL reads these files.
 
-### 2. The legacy `FUNCTION-ID` date family (7 units + 2 callers)
-`fielded_to_linear`, `linear_to_fielded`, `floor-div`, `floor-divmod`,
-`holidays`, `isleapyear`, `isvaliddate` are COBOL 2002 user-defined
-functions; `exgltrans` and `jerm` call them through `REPOSITORY`.
-**User ruling: retire, do not rewrite** — the C `du_*` path in
-`dateutil.c` replaced them (it is also what MVS 3.8j does, with
-hand-written assembly). Work is on the majesty side: the two callers
-move to `CALL 'du_...' USING` like the rest of the corpus did in
-`1da955d`, and the seven units leave the build. Nothing in the
-compiler. `bad/repository` pins the refusal message.
+### 2. ~~The legacy `FUNCTION-ID` date family (7 units + 2 callers)~~ — RESOLVED 2026-08-30 on the majesty side
+Kagura converted the family to subprograms rather than retiring it
+(majesty e69e98b: FUNCTION-ID → PROGRAM-ID, RETURNING → a trailing
+USING argument, every invocation a CALL, temporaries hoisted where an
+invocation sat inside an expression), verified byte-identical under
+GnuCOBOL over jerm's 400,001 lines. All thirteen units and both
+callers compile here now. The C `du_*` path stays the deployed one.
 
 ### 3. ~~`SPECIAL-NAMES` — `CLASS name IS '0' THROUGH '9'` (damm)~~ — RESOLVED 2026-08-30
 Stage 16: a 256-entry membership table per class in the literal pool,
@@ -52,17 +49,20 @@ clauses (`CURRENCY SIGN`, `DECIMAL-POINT IS COMMA`, switches,
 `DECIMAL-POINT IS COMMA` in particular touches the PICTURE scanner
 and every literal.
 
-### 4. `SD` and file `SORT` (glacpost; then ldglentry)
-Sort-Merge module. `SORT sd-file ON ASCENDING KEY ... USING/INPUT
-PROCEDURE ... GIVING/OUTPUT PROCEDURE`, `RELEASE`, `RETURN`. The
-runtime half is a sort of fixed-length records on the key
-descriptors (libc `qsort` with a comparator over `cob_desc` keys,
-records spilled to a temp file only if the corpus ever needs more
-than memory); the compiler half is the input/output procedure
-control flow, which is a `PERFORM` range with `RELEASE`/`RETURN`
-inside it. `glacpost` is the one program whose first refusal is this;
-`ldglentry` reaches it after ISSUES-1. Table `SORT` (gl008, dist01)
-is a different form — see ISSUES-19 / GitHub #10.
+### 4. ~~`SD` and file `SORT` (glacpost; ldglentry)~~ — RESOLVED 2026-08-30
+Stage 21. The SD is a `cob_file` of organization SORT; a SORT
+statement's records live in memory (RELEASE appends, a merge sort on
+an index array orders them -- stable, so WITH DUPLICATES IN ORDER
+costs nothing -- RETURN hands them back); USING reads through the
+input file's own READ and GIVING writes through the output file's own
+WRITE, so the two keep their organizations. Keys are items of the SD
+record, ascending or descending, up to sixteen. tests/free/sortfile
+covers USING/GIVING, INPUT/OUTPUT PROCEDURE with RELEASE and RETURN
+... INTO, two keys in opposite directions and DUPLICATES IN ORDER;
+GnuCOBOL agrees. glacpost (stdout, `sorted.tmp`, the new master) and
+crglentry → ldglentry → exglentry are byte-identical to GnuCOBOL.
+Not done: MERGE, COLLATING SEQUENCE, a spill to disk (the corpus
+sorts thousands of records, not millions).
 
 ### 4a. ~~Table `SORT` (gl008, dist01) — GitHub #10~~ — RESOLVED 2026-08-30 by rewrite
 Ruling: rewritten in majesty to COBOL 85 -- insertion sorts through a
@@ -187,6 +187,13 @@ positions are exact, and a branch that cannot reach becomes its
 inverse over a `jal` (±1 MB), iterated to a fixed point. gl008 needs
 four; tests/free/farbranch two. Found only because the corpus's
 biggest program finally compiled -- the sweep's value again.
+
+### 21. MOVE from a numeric-edited item holding malformed text
+Feeding ldglentry a lines file of the wrong schema put `000066C00000`
+into `pic 9(9)v99+` and moved it to a packed item: GnuCOBOL made
+`-6600000.04` of it, we made `+6600000.00`. Garbage in; the 1985 text
+says the sending item's content must be a valid edited value. Left
+open only so the difference is on record; not worth matching.
 
 ### 17. CCVS-85 as a histogram
 The NIST suite (NC, SQ, IC modules) has never been run through

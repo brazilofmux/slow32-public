@@ -55,6 +55,11 @@ static const char *diag_file(int line);
 static int g_module = 0;            /* -m: no main entry; every unit is a subprogram */
 static int g_unit = 0;              /* program unit being compiled, for label spaces */
 
+/* a SORT statement's key table, emitted into .data with the unit's files */
+typedef struct { int offset, desc, descending; } SortKey;
+typedef struct { int id; SortKey k[16]; int nk; } SortTab;
+static SortTab *g_sorttab; static int g_nsorttab, g_sorttabcap;
+
 /* SPECIAL-NAMES CLASS name IS lit [THROUGH lit] ...: a user class is a
  * 256-entry membership table, per program unit, tested like NUMERIC */
 typedef struct { char name[64]; unsigned char tab[256]; } UClass;
@@ -3278,6 +3283,121 @@ static int g_ncnt;      /* TIMES counters */
 
 typedef struct { Para *from, *thru; int inline_body; } Body;
 
+static void emit_body(Body *b);
+
+/* ---- SORT / RELEASE / RETURN ------------------------------------------ */
+
+static File *expect_file(void);
+static void emit_file_addr(const char *reg, File *f);
+static void parse_condition_clauses(const char *w1, const char *w2, const char *end_word);
+
+/* SORT sd {ON ASCENDING|DESCENDING KEY item...}... [WITH DUPLICATES IN ORDER]
+ *   {USING file... | INPUT PROCEDURE IS para [THRU para]}
+ *   {GIVING file... | OUTPUT PROCEDURE IS para [THRU para]}
+ * The records live in memory for the statement's duration; the sort is
+ * stable whether or not DUPLICATES IN ORDER is written. */
+static void parse_sort(void)
+{
+    int line = cur()->line;
+    File *sd = expect_file();
+    if (sd->org != COB_ORG_SORT) die_at(line, "SORT '%s': the file must be described by an SD (a table SORT is COBOL 2002; sort the table in a paragraph)", sd->name);
+    if (sd->rec < 0) die_at(line, "SD %s has no record description", sd->name);
+    if (g_nsorttab == g_sorttabcap) { g_sorttabcap = g_sorttabcap ? g_sorttabcap * 2 : 4; g_sorttab = realloc(g_sorttab, g_sorttabcap * sizeof *g_sorttab); }
+    SortTab *t = &g_sorttab[g_nsorttab++];
+    memset(t, 0, sizeof *t); t->id = new_label();
+    while (at_word("on") || at_word("ascending") || at_word("descending")) {
+        accept_word("on");
+        int descending = 0;
+        if (accept_word("descending")) descending = 1;
+        else if (!accept_word("ascending")) die_at(cur()->line, "expected ASCENDING or DESCENDING in SORT");
+        accept_word("key");
+        int any = 0;
+        while (cur()->kind == T_WORD && !at_word("on") && !at_word("ascending") && !at_word("descending") &&
+               !at_word("with") && !at_word("collating") && !at_word("using") && !at_word("input") &&
+               !at_word("giving") && !at_word("output")) {
+            Ref k; parse_ref(&k);
+            if (k.sym->record != g_sym[sd->rec].record) die_at(k.line, "SORT key '%s' is not an item of the SD %s", k.sym->name, sd->name);
+            if (k.nsub || k.rm) die_at(k.line, "a SORT key is a plain data item of the SD record");
+            if (t->nk == 16) die_at(k.line, "too many SORT keys (16)");
+            t->k[t->nk].offset = k.sym->offset; t->k[t->nk].desc = sym_desc(k.sym); t->k[t->nk].descending = descending; t->nk++;
+            any = 1;
+        }
+        if (!any) die_at(cur()->line, "expected a key data-name after KEY");
+    }
+    if (!t->nk) die_at(line, "SORT needs at least one KEY");
+    int dups = 0;
+    if (accept_word("with")) { expect_word("duplicates"); accept_word("in"); accept_word("order"); dups = 1; }
+    if (at_word("collating")) die_at(cur()->line, "SORT ... COLLATING SEQUENCE is not implemented (the sequence is ASCII)");
+    char tab[32]; snprintf(tab, sizeof tab, ".Lsk%d_%d", g_unit, t->id);
+    emit_file_addr("r3", sd); emit_la("r4", tab); emit_li("r5", t->nk); emit_li("r6", dups);
+    emit_call("cob_sort_begin");
+    if (accept_word("using")) {
+        int n = 0;
+        while (cur()->kind == T_WORD && !at_word("giving") && !at_word("output")) {
+            File *in = expect_file();
+            if (in->org == COB_ORG_SORT) die_at(line, "SORT USING names a sort file");
+            emit_file_addr("r3", sd); emit_file_addr("r4", in); emit_call("cob_sort_using"); n++;
+        }
+        if (!n) die_at(cur()->line, "expected a file-name after USING");
+    } else if (accept_word("input")) {
+        expect_word("procedure"); accept_word("is");
+        Body b; memset(&b, 0, sizeof b);
+        b.from = expect_para();
+        if (accept_word("thru") || accept_word("through")) b.thru = expect_para();
+        emit_body(&b);
+    } else die_at(cur()->line, "SORT needs USING or INPUT PROCEDURE");
+    emit_file_addr("r3", sd); emit_call("cob_sort_perform");
+    if (accept_word("giving")) {
+        int n = 0;
+        while (cur()->kind == T_WORD && file_find(cur()->s)) {
+            File *out = expect_file();
+            if (out->org == COB_ORG_SORT) die_at(line, "SORT GIVING names a sort file");
+            emit_file_addr("r3", sd); emit_file_addr("r4", out); emit_call("cob_sort_giving"); n++;
+        }
+        if (!n) die_at(cur()->line, "expected a file-name after GIVING");
+    } else if (accept_word("output")) {
+        expect_word("procedure"); accept_word("is");
+        Body b; memset(&b, 0, sizeof b);
+        b.from = expect_para();
+        if (accept_word("thru") || accept_word("through")) b.thru = expect_para();
+        emit_body(&b);
+    } else die_at(cur()->line, "SORT needs GIVING or OUTPUT PROCEDURE");
+    emit_file_addr("r3", sd); emit_call("cob_sort_end");
+}
+
+/* RELEASE record [FROM x] */
+static void parse_release(void)
+{
+    Ref rec; parse_ref(&rec);
+    File *f = file_of_record(rec.sym, rec.line);
+    if (f->org != COB_ORG_SORT) die_at(rec.line, "RELEASE '%s': the record must belong to an SD", rec.sym->name);
+    if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
+    emit_file_addr("r3", f);
+    emit_call("cob_release");
+}
+
+/* RETURN sd [RECORD] [INTO x] AT END ... [NOT AT END ...] [END-RETURN] */
+static void parse_return(void)
+{
+    File *f = expect_file();
+    if (f->org != COB_ORG_SORT) die_at(cur()->line, "RETURN '%s': the file must be an SD", f->name);
+    accept_word("record");
+    Ref into; int has_into = 0;
+    if (accept_word("into")) { parse_ref(&into); has_into = 1; }
+    emit_file_addr("r3", f);
+    emit_call("cob_return");
+    emit("\tstw sp+%d, r1", SLOT_C);
+    if (has_into) {
+        int Lskip = new_label();
+        emit("\tbne r1, r0, .L%d", Lskip);
+        Opnd src; memset(&src, 0, sizeof src); src.kind = O_REF; src.line = into.line;
+        src.ref.sym = &g_sym[f->rec]; src.ref.line = into.line;
+        emit_move(&src, &into);
+        emit_label(Lskip);
+    }
+    parse_condition_clauses("at", "end", "end-return");
+}
+
 static void emit_body(Body *b)
 {
     if (!b->inline_body) {
@@ -3475,6 +3595,8 @@ static void parse_open(void)
     int n = 0;
     for (;;) {
         int mode;
+        if (cur()->kind == T_WORD && file_find(cur()->s) && file_find(cur()->s)->org == COB_ORG_SORT)
+            die_at(cur()->line, "'%s' is a sort file (SD); SORT opens it", cur()->s);
         if (accept_word("input")) mode = COB_OPEN_INPUT;
         else if (accept_word("output")) mode = COB_OPEN_OUTPUT;
         else if (accept_word("i-o")) mode = COB_OPEN_IO;
@@ -3533,6 +3655,7 @@ static void parse_condition_clauses(const char *w1, const char *w2, const char *
 static void parse_read(void)
 {
     File *f = expect_file();
+    if (f->org == COB_ORG_SORT) die_at(cur()->line, "READ of the sort file '%s': use RETURN inside the OUTPUT PROCEDURE", f->name);
     int has_next = accept_word("next"); accept_word("record");
     Ref into; int has_into = 0;
     if (accept_word("into")) { parse_ref(&into); has_into = 1; }
@@ -3580,6 +3703,7 @@ static void parse_write(void)
 {
     Ref rec; parse_ref(&rec);
     File *f = file_of_record(rec.sym, rec.line);
+    if (f->org == COB_ORG_SORT) die_at(rec.line, "WRITE to the sort file '%s': use RELEASE inside the INPUT PROCEDURE", f->name);
     if (accept_word("from")) {
         Opnd src; parse_operand(&src);
         emit_move(&src, &rec);
@@ -4289,6 +4413,9 @@ static void parse_statement(void)
     if (!strcmp(v, "rewrite")) { advance(); parse_rewrite(); return; }
     if (!strcmp(v, "delete")) { advance(); parse_delete(); return; }
     if (!strcmp(v, "start")) { advance(); parse_start(); return; }
+    if (!strcmp(v, "sort")) { advance(); parse_sort(); return; }
+    if (!strcmp(v, "release")) { advance(); parse_release(); return; }
+    if (!strcmp(v, "return")) { advance(); parse_return(); return; }
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
     if (!strcmp(v, "call")) { advance(); parse_call(); return; }
     if (!strcmp(v, "initiate")) { advance(); parse_initiate(); return; }
@@ -4331,8 +4458,7 @@ static void parse_statement(void)
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
 
-        { "unstring", "after v1" }, { "sort", "after v1" },
-        { "merge", "after v1" }, { "release", "after v1" }, { "return", "after v1" },
+        { "unstring", "after v1" }, { "merge", "after v1" },
         { "use", "after v1" }, { "suppress", "after v1" }, { NULL, NULL } };
     for (int i = 0; later[i].verb; i++)
         if (!strcmp(v, later[i].verb)) die_at(t->line, "the verb %s is not implemented yet (%s)", v, later[i].when);
@@ -4660,11 +4786,12 @@ static void parse_environment_division(void)
 static void parse_fd(void)
 {
     int line = cur()->line;
-    if (accept_word("sd")) die_at(line, "SD (sort files) is not implemented (after v1)");
-    expect_word("fd");
-    if (cur()->kind != T_WORD) die_at(line, "expected a file-name after FD");
+    int is_sd = accept_word("sd");
+    if (!is_sd) expect_word("fd");
+    if (cur()->kind != T_WORD) die_at(line, "expected a file-name after %s", is_sd ? "SD" : "FD");
     File *f = file_find(cur()->s);
-    if (!f) die_at(line, "FD %s has no SELECT", cur()->s);
+    if (!f) die_at(line, "%s %s has no SELECT", is_sd ? "SD" : "FD", cur()->s);
+    if (is_sd) f->org = COB_ORG_SORT;         /* a sort file: SORT opens it, RELEASE/RETURN use it */
     advance();
     while (cur()->kind != T_PERIOD) {
         Tok *t = cur();
@@ -5098,6 +5225,13 @@ static void emit_unit_data(void)
         emit("\t.word 0");                  /* rel_pos, rel_last: the runtime's */
         emit("\t.word 0");
     }
+    for (int i = 0; i < g_nsorttab; i++) {
+        SortTab *t = &g_sorttab[i];
+        emit("\t.p2align 2");
+        emit(".Lsk%d_%d:\t# SORT keys", g_unit, t->id);
+        for (int k = 0; k < t->nk; k++) { emit("\t.word %d", t->k[k].offset); emit("\t.word .Ld%d", t->k[k].desc); emit("\t.word %d", t->k[k].descending); }
+    }
+    g_nsorttab = 0;
     for (int i = 0; i < g_nscreen; i++) {
         Screen *sc = &g_screens[i];
         emit("\t.p2align 2");

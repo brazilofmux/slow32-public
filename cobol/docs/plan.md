@@ -553,6 +553,27 @@ SLOW-32 with all twelve receipts identical to GnuCOBOL's, and
 (glacpost, ldglentry), the date family to retire, and three
 extension programs.
 
+## Stage 21 — file SORT **M** — DONE 2026-08-30
+
+ISSUES-4, the Sort-Merge module's file form: `SD`, `SORT ... ON
+ASCENDING/DESCENDING KEY ... [WITH DUPLICATES IN ORDER] {USING |
+INPUT PROCEDURE} {GIVING | OUTPUT PROCEDURE}`, `RELEASE`, `RETURN ...
+AT END`. The SD is a `cob_file` of organization SORT; the statement's
+records live in memory behind it (`cob_sorter`), ordered by a merge
+sort on an index array -- stable, so DUPLICATES IN ORDER is the only
+behaviour. USING and GIVING go through the other files' own READ and
+WRITE, so a line-sequential input and a fixed-sequential output keep
+their framings. The key table is emitted into .data beside the unit's
+files; the procedures are PERFORMed through `emit_body`. tests/free/
+sortfile (both forms, two keys in opposite directions, RETURN INTO),
+GnuCOBOL agreeing. glacpost -- a SORT USING/GIVING then a master-file
+update -- is byte-identical to GnuCOBOL on stdout and both files, and
+crglentry → ldglentry (INPUT/OUTPUT PROCEDURE writing the relative
+file) → exglentry is identical on well-formed input. With Kagura's
+conversion of the date family (majesty e69e98b), **55 of 58**
+programs compile; the three left are a `BINARY-INT` rewrite and the
+XML/JSON extension pair.
+
 ## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report

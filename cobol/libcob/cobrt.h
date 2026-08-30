@@ -26,7 +26,14 @@ enum {
 };
 
 /* a file, as SELECT/FD described it; built by the compiler in .data */
-enum { COB_ORG_LINESEQ = 0, COB_ORG_SEQ = 1, COB_ORG_INDEXED = 2, COB_ORG_RELATIVE = 3 };
+enum { COB_ORG_LINESEQ = 0, COB_ORG_SEQ = 1, COB_ORG_INDEXED = 2, COB_ORG_RELATIVE = 3, COB_ORG_SORT = 4 };
+
+/* a SORT key, as the compiler lays the statement's key table out in .data */
+typedef struct {
+    unsigned int offset;      /* in the SD record */
+    const void *desc;         /* the key item's cob_desc */
+    unsigned int descending;
+} cob_sort_key;
 enum { COB_OPEN_INPUT = 1, COB_OPEN_OUTPUT = 2, COB_OPEN_IO = 3, COB_OPEN_EXTEND = 4 };
 
 typedef struct {

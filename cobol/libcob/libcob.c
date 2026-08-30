@@ -957,6 +957,144 @@ static int rel_start(cob_file *f, int op)
 }
 
 /* ====================================================================== */
+/* SORT (Sort-Merge, the file form).  The SD is a cob_file of              */
+/* organization SORT; while a SORT statement runs, its records live in     */
+/* memory behind the SD's idx pointer.  USING reads a file through the    */
+/* ordinary READ, GIVING writes through the ordinary WRITE, so the        */
+/* input and output files keep their own organizations and framings.     */
+/* The sort is a merge sort on an index array: stable, which is what     */
+/* WITH DUPLICATES IN ORDER asks for and costs nothing to give always.   */
+/* ====================================================================== */
+
+typedef struct {
+    const cob_sort_key *keys; int nkeys;
+    char *buf; unsigned n, cap;       /* n records of recsize bytes */
+    unsigned *order;                  /* after cob_sort_perform: record indices in key order */
+    unsigned pos;                     /* next RETURN */
+} cob_sorter;
+
+void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups)
+{
+    (void)dups;
+    if (sd->org != COB_ORG_SORT) cob_fatal("SORT of a file that is not an SD");
+    cob_sorter *so = calloc(1, sizeof *so);
+    if (!so) cob_fatal("SORT: out of memory");
+    so->keys = keys; so->nkeys = nkeys;
+    sd->idx = so; sd->open_mode = COB_OPEN_IO; sd->at_eof = 0;
+}
+
+static cob_sorter *sorter_of(cob_file *sd, const char *what)
+{
+    if (sd->org != COB_ORG_SORT || !sd->idx) { char m[80]; snprintf(m, sizeof m, "%s outside a SORT of its SD", what); cob_fatal(m); }
+    return (cob_sorter *)sd->idx;
+}
+
+/* RELEASE: the SD's record area joins the set to be sorted */
+void cob_release(cob_file *sd)
+{
+    cob_sorter *so = sorter_of(sd, "RELEASE");
+    if (so->n == so->cap) {
+        so->cap = so->cap ? so->cap * 2 : 256;
+        so->buf = realloc(so->buf, (size_t)so->cap * sd->recsize);
+        if (!so->buf) cob_fatal("SORT: out of memory");
+    }
+    memcpy(so->buf + (size_t)so->n * sd->recsize, sd->record, sd->recsize);
+    so->n++;
+}
+
+/* a record moves between a file's area and the SD's as a group MOVE would */
+static void sort_copy(char *dst, unsigned dn, const char *src, unsigned sn)
+{
+    unsigned k = sn < dn ? sn : dn;
+    memcpy(dst, src, k);
+    if (k < dn) memset(dst + k, ' ', dn - k);
+}
+
+/* USING: every record of a file, read as that file reads */
+void cob_sort_using(cob_file *sd, cob_file *in)
+{
+    cob_sorter *so = sorter_of(sd, "SORT USING");
+    (void)so;
+    if (cob_open(in, COB_OPEN_INPUT) == 2) cob_fatal("SORT USING: cannot open the input file");
+    for (;;) {
+        int r = cob_read(in);
+        if (r == 1) break;
+        if (r == 2) cob_fatal("SORT USING: read failed");
+        sort_copy(sd->record, sd->recsize, in->record, in->last_len ? in->last_len : in->recsize);
+        cob_release(sd);
+    }
+    cob_close(in);
+}
+
+static cob_file *sort_sd; static cob_sorter *sort_so;
+
+static int sort_cmp(unsigned a, unsigned b)
+{
+    const char *ra = sort_so->buf + (size_t)a * sort_sd->recsize, *rb = sort_so->buf + (size_t)b * sort_sd->recsize;
+    for (int i = 0; i < sort_so->nkeys; i++) {
+        const cob_sort_key *k = &sort_so->keys[i];
+        int c = cob_cmp(ra + k->offset, (const cob_desc *)k->desc, rb + k->offset, (const cob_desc *)k->desc);
+        if (c) return k->descending ? -c : c;
+    }
+    return a < b ? -1 : a > b ? 1 : 0;      /* equal keys keep their order */
+}
+
+static void sort_merge(unsigned *v, unsigned *tmp, unsigned lo, unsigned hi)
+{
+    if (hi - lo < 2) return;
+    unsigned mid = lo + (hi - lo) / 2;
+    sort_merge(v, tmp, lo, mid); sort_merge(v, tmp, mid, hi);
+    unsigned i = lo, j = mid, k = lo;
+    while (i < mid && j < hi) tmp[k++] = sort_cmp(v[i], v[j]) <= 0 ? v[i++] : v[j++];
+    while (i < mid) tmp[k++] = v[i++];
+    while (j < hi) tmp[k++] = v[j++];
+    memcpy(v + lo, tmp + lo, (size_t)(hi - lo) * sizeof *v);
+}
+
+void cob_sort_perform(cob_file *sd)
+{
+    cob_sorter *so = sorter_of(sd, "SORT");
+    so->order = malloc(((size_t)so->n + 1) * sizeof *so->order);
+    unsigned *tmp = malloc(((size_t)so->n + 1) * sizeof *tmp);
+    if (!so->order || !tmp) cob_fatal("SORT: out of memory");
+    for (unsigned i = 0; i < so->n; i++) so->order[i] = i;
+    sort_sd = sd; sort_so = so;
+    sort_merge(so->order, tmp, 0, so->n);
+    free(tmp);
+    so->pos = 0; sd->at_eof = 0;
+}
+
+/* GIVING: the sorted records, written as that file writes */
+void cob_sort_giving(cob_file *sd, cob_file *out)
+{
+    cob_sorter *so = sorter_of(sd, "SORT GIVING");
+    if (cob_open(out, COB_OPEN_OUTPUT) == 2) cob_fatal("SORT GIVING: cannot open the output file");
+    for (unsigned i = 0; i < so->n; i++) {
+        sort_copy(out->record, out->recsize, so->buf + (size_t)so->order[i] * sd->recsize, sd->recsize);
+        if (cob_write(out, 0, 0, 0) == 2) cob_fatal("SORT GIVING: write failed");
+    }
+    cob_close(out);
+}
+
+/* RETURN: the next sorted record into the SD's area; 1 at end */
+int cob_return(cob_file *sd)
+{
+    cob_sorter *so = sorter_of(sd, "RETURN");
+    if (!so->order) cob_fatal("RETURN before the sort (RETURN belongs in the OUTPUT PROCEDURE)");
+    if (so->pos >= so->n) { sd->at_eof = 1; return file_result(sd, "10", ""); }
+    memcpy(sd->record, so->buf + (size_t)so->order[so->pos++] * sd->recsize, sd->recsize);
+    sd->last_len = sd->recsize;
+    return file_result(sd, "00", "");
+}
+
+void cob_sort_end(cob_file *sd)
+{
+    cob_sorter *so = sorter_of(sd, "SORT");
+    free(so->buf); free(so->order); free(so);
+    sd->idx = 0; sd->open_mode = 0;
+}
+
+/* ====================================================================== */
 /* STRING                                                                  */
 /* ====================================================================== */
 

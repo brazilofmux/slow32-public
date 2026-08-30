@@ -181,6 +181,9 @@ given, because majesty's `.prn` oracles were produced under it.
 - **Relative files** are fixed slots of `4 + maximum record` bytes
   framed with the mode-V RDW, zero for an empty slot (docs/indexed.md);
   records may be shorter than the slot (`RECORD CONTAINS m TO n`).
+- **SORT** holds its records in memory and is stable; `WITH DUPLICATES
+  IN ORDER` is accepted and is what happens anyway; `COLLATING
+  SEQUENCE` and `MERGE` are refused.
 - **Calendar functions** (`INTEGER-OF-DATE`, `DATE-OF-INTEGER`,
   `DAY-OF-INTEGER`, `INTEGER-OF-DAY`): integer 1 is 1601-01-01; an
   invalid argument gives 0; a value DISPLAYed directly shows ten,
