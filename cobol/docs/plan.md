@@ -724,6 +724,42 @@ second. 36 of 58 corpus programs compile; what is left is the legacy
 `FUNCTION-ID` date family (retire), relative I-O, `SPECIAL-NAMES`,
 `SORT`, and one-offs.
 
+## Stage 29 — contained programs, GLOBAL, USE GLOBAL **M** — DONE 2026-08-31
+
+The nesting the IC module is named for. The compiler kept one symbol,
+file and paragraph table per unit and reset them between sequential
+units; now the tables are shared with a per-unit base, and an
+`IDENTIFICATION DIVISION` met where a sentence would begin pushes the
+containing unit's state (`UnitSave`: bases, PROGRAM-ID, SPECIAL-NAMES
+tables, USE entries, sort tables) and compiles the contained program
+as a unit of its own, cutting the tables back on its `END PROGRAM`.
+Files and paragraphs carry their unit so labels resolve across the
+boundary (`.Lf<unit>_<i>`, `.Lp<unit>_<id>`; paragraph ids were
+already file-unique, which keeps the runtime PERFORM stack honest).
+Name lookup falls outward to GLOBAL items -- the flag propagated down
+from a GLOBAL 01 or FD once the tree is built -- and GLOBAL files. The
+USE decision moved from the runtime (which chose by the file image's
+own unit) into the compiler: after each I/O statement it emits the
+candidates in the standard's order, the program's own for the file,
+then the open mode (`cob_open_mode`), then each containing program's
+GLOBAL ones; the runtime's result code (2 with a FILE STATUS, 3
+without) says whether `cob_io_unhandled` stops the run when nothing
+matched. Two things the tests taught: a contained unit's data
+emission leaves the assembler in `.data`, so the containing program's
+epilogue had to be put back in `.text`; and the contained unit must
+append its USE entries after the enclosing units', not restart the
+table (IC234A's three levels). `IS INITIAL` now re-initialises through
+the CANCEL image; `IS COMMON` is accepted. free/nested (two levels,
+GLOBAL data, INITIAL, same-named private items), oracle agreeing;
+free/nestuse (a GLOBAL file, the READ at end in the innermost program
+reaching the outermost USE GLOBAL past a non-matching one) has no
+oracle: GnuCOBOL 4.0-early-dev never returns from a containing
+program's USE procedure invoked for a contained program's I/O -- it
+hung the harness twice, which now puts a timeout on every oracle run
+-- while IC233A/IC234A, which GnuCOBOL does pass, cover the rule and
+match ours. IC 20 of 25, 143 of 143, all matching; the suite 237 of
+303 compile, 4263 of 4300 pass, none fail, 234 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

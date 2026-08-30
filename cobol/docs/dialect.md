@@ -168,6 +168,28 @@ given, because majesty's `.prn` oracles were produced under it.
   registry too, so the link does not demand the program. **`CANCEL`**
   puts every WORKING-STORAGE record of the program back to its initial
   state (an image kept in `.rodata`); open files are not closed by it.
+- **Contained (nested) programs** (Stage 29): an `IDENTIFICATION
+  DIVISION` after a program's last sentence begins a program it
+  contains, closed by its own `END PROGRAM`; any depth up to 8. Each is
+  a unit of its own -- entry, WORKING-STORAGE, files, paragraphs, its
+  registry entry -- compiled from one shared symbol, file and paragraph
+  table cut back on `END PROGRAM`. A contained program sees the
+  containing programs' **`GLOBAL`** items (an 01 `IS GLOBAL` reaches its
+  subordinates and 88s) and **`FD ... GLOBAL`** files with their records,
+  by name lookup that falls outward once the program's own names miss;
+  everything else is private, so two programs may declare the same
+  names. **`USE GLOBAL`** procedures of the containing programs apply
+  to a contained program's I/O: the compiler emits the choice after
+  every I/O statement -- the program's own USE for the file, then for
+  the open mode, then outward through the enclosing programs' GLOBAL
+  ones (the runtime's result code says whether an unhandled error
+  stops the run: 3 with no FILE STATUS, 2 with one). `PROGRAM-ID ...
+  IS COMMON` is accepted (every program here may call every other, so
+  it changes nothing); `IS INITIAL` re-initialises WORKING-STORAGE on
+  every CALL (the CANCEL image). Not in a contained program: a REPORT
+  or SCREEN SECTION. A contained program's link name is its own
+  PROGRAM-ID, so two contained programs of one executable may not
+  share a name.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
@@ -290,8 +312,9 @@ given, because majesty's `.prn` oracles were produced under it.
 ## COBOL 85 we will grow into, not v1
 
 Nucleus Level 2 at full width (abbreviated conditions,
-`CORRESPONDING`, `UNSTRING`, `INSPECT REPLACING`/`CONVERTING`, nested
-programs; `REPLACE` and `COPY REPLACING` landed in Stage 26). `STRING`, `INSPECT TALLYING`, `INITIALIZE` and
+`CORRESPONDING`, `UNSTRING`, `INSPECT REPLACING`/`CONVERTING`;
+`REPLACE` and `COPY REPLACING` landed in Stage 26, contained programs
+with `GLOBAL` in Stage 29). `STRING`, `INSPECT TALLYING`, `INITIALIZE` and
 reference modification are **in v1**, at the width taskdt uses them —
 see [plan.md](plan.md) Stage 9. Indexed alternate keys. Report Writer `CONTROL`/`SUM`/`USE BEFORE REPORTING`. These are
 real 85; they are not on the majesty v1 path. CCVS-85 NC/SQ/IC is the

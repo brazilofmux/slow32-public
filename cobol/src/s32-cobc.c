@@ -863,6 +863,7 @@ typedef struct Sym {
     unsigned cv_all;                 /* bit i: value i is ALL literal */
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
+    int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     /* records */
     unsigned char *image; int image_size;
     char label[48];
@@ -872,6 +873,17 @@ typedef struct Sym {
 
 static Sym *g_sym;
 static int g_nsym, g_scap;
+
+/* Program units share one symbol, file and paragraph table; a unit's own
+ * entries begin at the bases.  A contained program (COBOL 85 nesting)
+ * pushes the containing unit's state on g_ustack and starts its bases at
+ * the current ends; on END PROGRAM the tables are cut back and the
+ * containing unit resumes.  Name lookup falls through the stack to the
+ * ancestors' GLOBAL items and files. */
+static int g_sym_base, g_file_base, g_para_base;
+static int g_unit_counter;          /* units so far in this source file, for label spaces */
+typedef struct UnitSave UnitSave;
+static UnitSave *g_ustack[8]; static int g_udepth;
 
 static Sym *sym_new(void)
 {
@@ -886,20 +898,27 @@ static Sym *sym_new(void)
 static int sym_idx(Sym *s) { return (int)(s - g_sym); }
 
 /* name [OF|IN qualifier]...: the unique item that matches */
+static void unit_range(int level, int *from, int *to);   /* an ancestor's symbol range */
+
 static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
 {
     Sym *found = NULL; int nfound = 0;
-    for (int i = 0; i < g_nsym; i++) {
-        Sym *s = &g_sym[i];
-        if (s->is_filler || strcmp(s->name, name)) continue;
-        int ok = 1, at = i;
-        for (int q = 0; q < nq && ok; q++) {
-            int hit = -1;
-            for (int p = g_sym[at].parent; p >= 0; p = g_sym[p].parent)
-                if (!strcmp(g_sym[p].name, quals[q])) { hit = p; break; }
-            if (hit < 0) ok = 0; else at = hit;
+    int from = g_sym_base, to = g_nsym, global_only = 0;
+    for (int level = g_udepth; level >= 0 && !nfound; level--) {
+        if (level < g_udepth) { unit_range(level, &from, &to); global_only = 1; }
+        for (int i = from; i < to; i++) {
+            Sym *s = &g_sym[i];
+            if (s->is_filler || strcmp(s->name, name)) continue;
+            if (global_only && !s->is_global) continue;
+            int ok = 1, at = i;
+            for (int q = 0; q < nq && ok; q++) {
+                int hit = -1;
+                for (int p = g_sym[at].parent; p >= 0; p = g_sym[p].parent)
+                    if (!strcmp(g_sym[p].name, quals[q])) { hit = p; break; }
+                if (hit < 0) ok = 0; else at = hit;
+            }
+            if (ok) { found = s; nfound++; }
         }
-        if (ok) { found = s; nfound++; }
     }
     if (!nfound) {
         if (nq) die_at(line, "'%s' is not declared under '%s'", name, quals[0]);
@@ -911,8 +930,13 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
 
 static Sym *sym_lookup_quiet(const char *name)
 {
-    for (int i = 0; i < g_nsym; i++)
+    for (int i = g_sym_base; i < g_nsym; i++)
         if (!g_sym[i].is_filler && !strcmp(g_sym[i].name, name)) return &g_sym[i];
+    for (int level = g_udepth - 1; level >= 0; level--) {
+        int from, to; unit_range(level, &from, &to);
+        for (int i = from; i < to; i++)
+            if (g_sym[i].is_global && !g_sym[i].is_filler && !strcmp(g_sym[i].name, name)) return &g_sym[i];
+    }
     return NULL;
 }
 
@@ -941,14 +965,22 @@ typedef struct {
     int  varying;                    /* mode V: RECORDING MODE V, RECORD CONTAINS m TO n, VARYING, unequal 01s */
     int  minlen, maxlen;             /* from RECORD CONTAINS / VARYING; 0 = unset */
     char dep_name[64]; Sym *dep_sym; /* RECORD IS VARYING ... DEPENDING ON */
+    int  unit;                       /* the program unit that declares it (its image is .Lf<unit>_<index>) */
+    int  global;                     /* FD ... GLOBAL: contained programs may use it */
 } File;
 
 static File *g_files; static int g_nfile, g_fcap;
 static int g_cur_fd = -1;            /* the FD whose 01s are being parsed */
 
+static void unit_file_range(int level, int *from, int *to);
+
 static File *file_find(const char *name)
 {
-    for (int i = 0; i < g_nfile; i++) if (!strcmp(g_files[i].name, name)) return &g_files[i];
+    for (int i = g_file_base; i < g_nfile; i++) if (!strcmp(g_files[i].name, name)) return &g_files[i];
+    for (int level = g_udepth - 1; level >= 0; level--) {
+        int from, to; unit_file_range(level, &from, &to);
+        for (int i = from; i < to; i++) if (g_files[i].global && !strcmp(g_files[i].name, name)) return &g_files[i];
+    }
     return NULL;
 }
 
@@ -1359,7 +1391,7 @@ static void parse_data_item(void)
             if (accept_word("separate")) { s->sign_sep = 1; accept_word("character"); }
             continue;
         }
-        if (!strcmp(t->s, "global")) { advance(); continue; }      /* one program per unit: nothing to share */
+        if (!strcmp(t->s, "global")) { advance(); s->is_global = 1; continue; }
         if (!strcmp(t->s, "external"))
             die_at(t->line, "EXTERNAL items (shared between separately compiled programs) are not implemented");
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
@@ -1386,7 +1418,7 @@ static void parse_data_item(void)
 static void build_tree(void)
 {
     int stack[64], sp = 0;              /* open items by level */
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond) continue;
         if (s->is_index) { s->record = i; sym_finish(s); continue; }
@@ -1408,7 +1440,7 @@ static void build_tree(void)
     }
     /* a group must not carry PICTURE/USAGE of its own; an item with no
      * children is elementary */
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->is_index) continue;
         if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
@@ -1417,7 +1449,7 @@ static void build_tree(void)
         if (!s->is_group) sym_finish(s);
     }
     /* level 88 parents: the item they follow; a 88 under an 88 shares it */
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (!s->is_cond) continue;
         int p = s->parent;
@@ -1564,8 +1596,15 @@ static void init_instance(Sym *rec, int si, int base, int defaults)
 static void finish_data_division(void)
 {
     build_tree();
+    /* GLOBAL reaches down: a GLOBAL item's subordinates and conditions, the
+     * records of a GLOBAL FD (parents precede children in the table) */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->fd >= 0 && g_files[s->fd].global) s->is_global = 1;
+        if (s->parent >= 0 && g_sym[s->parent].is_global) s->is_global = 1;
+    }
     int nrec = 0;
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0) continue;
         /* a record: 01, 77, or an index */
@@ -1573,7 +1612,7 @@ static void finish_data_division(void)
         if (s->lin_file >= 0) {
             /* LINAGE-COUNTER: the cell in the file's cob_file image */
             s->record = i; s->offset = COB_FILE_LIN_COUNTER_OFF;
-            snprintf(s->label, sizeof s->label, ".Lf%d_%d", g_unit, s->lin_file);
+            snprintf(s->label, sizeof s->label, ".Lf%d_%d", g_files[s->lin_file].unit, s->lin_file);
             continue;
         }
         layout(i, 0);
@@ -1583,7 +1622,7 @@ static void finish_data_division(void)
         else snprintf(s->label, sizeof s->label, "ws%d_%d", g_unit, nrec++);
     }
     /* propagate record ownership down, and 88s take their parent's dims */
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond) {
             Sym *p = &g_sym[s->parent];
@@ -1603,7 +1642,7 @@ static void finish_data_division(void)
             if (g_sym[b->rec].redefines < 0) g_sym[b->rec].redefines = a->rec;
         }
     /* 01 REDEFINES 01: share the earlier record's storage */
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines < 0) continue;
         int r = s->redefines;
@@ -1614,7 +1653,7 @@ static void finish_data_division(void)
         for (int j = 0; j < g_nsym; j++) if (g_sym[j].record == i) g_sym[j].record = r;
     }
     /* OCCURS DEPENDING ON: the item must be an integer outside the table */
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (!s->odo_dep[0]) continue;
         s->odo_dep_sym = sym_lookup(s->odo_dep, NULL, 0, s->line);
@@ -1623,7 +1662,7 @@ static void finish_data_division(void)
             die_at(s->line, "DEPENDING ON '%s' must not be inside or after the table", s->odo_dep);
     }
     /* files: names, status, the record area */
-    for (int i = 0; i < g_nfile; i++) {
+    for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         if (f->rec < 0 && !f->report_name[0]) die_at(f->line, "file '%s' has no FD", f->name);
         if (f->assign_name[0]) {
@@ -1709,14 +1748,14 @@ static void finish_data_division(void)
         if (f->rec >= 0 && g_sym[f->rec].image_size < f->recsize) g_sym[f->rec].image_size = f->recsize;
     }
     /* images */
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0) continue;
         if (s->image_size < s->size) s->image_size = s->size;
         s->image = xmalloc(s->image_size);
         if (!s->is_linkage) init_instance(s, i, 0, 1);
     }
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines < 0) continue;
         init_instance(&g_sym[s->record], i, 0, 0);
@@ -2036,7 +2075,7 @@ static void parse_ref(Ref *r)
             if (!lf->linage) die_at(t->line, "file '%s' has no LINAGE clause", lf->name);
         } else {
             int n = 0;
-            for (int i = 0; i < g_nfile; i++) if (g_files[i].linage) { lf = &g_files[i]; n++; }
+            for (int i = g_file_base; i < g_nfile; i++) if (g_files[i].linage) { lf = &g_files[i]; n++; }
             if (!lf) die_at(t->line, "LINAGE-COUNTER: no file has a LINAGE clause");
             if (n > 1) die_at(t->line, "LINAGE-COUNTER is ambiguous: say LINAGE-COUNTER OF file-name");
         }
@@ -2886,7 +2925,7 @@ static int g_sentence_label = -1;   /* NEXT SENTENCE target, made on demand */
 
 /* ---- paragraphs ------------------------------------------------------- */
 
-typedef struct { char name[64]; int id, is_section, line, section; } Para;   /* section: id of the enclosing section, 0 none */
+typedef struct { char name[64]; int id, is_section, line, section, unit; } Para;   /* section: id of the enclosing section, 0 none; unit: where it is */
 static Para *g_para; static int g_npara, g_pcap;
 
 static int g_cur_sec_id;            /* the section being parsed (or prescanned), -1 outside one */
@@ -2895,7 +2934,7 @@ static int g_cur_sec_id;            /* the section being parsed (or prescanned),
  * reference means the one in the current section, else the only one */
 static Para *para_find_in(const char *name, int section)
 {
-    for (int i = 0; i < g_npara; i++)
+    for (int i = g_para_base; i < g_npara; i++)
         if (!strcmp(g_para[i].name, name) && (g_para[i].is_section || g_para[i].section == section)) return &g_para[i];
     return NULL;
 }
@@ -2903,7 +2942,7 @@ static Para *para_find_in(const char *name, int section)
 static Para *para_find(const char *name)
 {
     Para *found = NULL;
-    for (int i = 0; i < g_npara; i++) {
+    for (int i = g_para_base; i < g_npara; i++) {
         if (strcmp(g_para[i].name, name)) continue;
         if (g_para[i].is_section || g_para[i].section == g_cur_sec_id) return &g_para[i];
         if (!found) found = &g_para[i];
@@ -2913,12 +2952,12 @@ static Para *para_find(const char *name)
 
 static Para *para_add(const char *name, int is_section, int line)
 {
-    if (is_section) { for (int i = 0; i < g_npara; i++) if (!strcmp(g_para[i].name, name)) die_at(line, "the procedure-name '%s' is declared twice", name); }
+    if (is_section) { for (int i = g_para_base; i < g_npara; i++) if (!strcmp(g_para[i].name, name)) die_at(line, "the procedure-name '%s' is declared twice", name); }
     else if (para_find_in(name, g_cur_sec_id)) die_at(line, "the paragraph '%s' is declared twice in the same section", name);
     if (g_npara == g_pcap) { g_pcap = g_pcap ? g_pcap * 2 : 64; g_para = realloc(g_para, g_pcap * sizeof *g_para); }
     Para *p = &g_para[g_npara];
     snprintf(p->name, sizeof p->name, "%s", name);
-    p->id = g_npara + 1; p->is_section = is_section; p->line = line;
+    p->id = g_npara + 1; p->is_section = is_section; p->line = line; p->unit = g_unit;
     p->section = is_section ? 0 : (g_cur_sec_id >= 0 ? g_cur_sec_id : 0);
     if (is_section) g_cur_sec_id = p->id;
     g_npara++;
@@ -2938,6 +2977,7 @@ static void prescan_paragraphs(int from)
         if (sentence_start && t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s)) {
             if (!strcmp(t->s, "declaratives")) { }
             else if (!strcmp(t->s, "end") && (is_word(&g_tok[i + 1], "declaratives") || is_word(&g_tok[i + 1], "program"))) { if (is_word(&g_tok[i + 1], "program")) break; }
+            else if ((!strcmp(t->s, "identification") || !strcmp(t->s, "id")) && is_word(&g_tok[i + 1], "division")) break;   /* a contained program's */
             else if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, 0, t->line); }
             else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, 1, t->line);
         }
@@ -2956,7 +2996,7 @@ static Para *expect_para(void)
         Tok *q = peek(2);
         if (q->kind != T_WORD) die_at(t->line, "expected a section-name after OF/IN");
         Para *sec = NULL;
-        for (int i = 0; i < g_npara; i++) if (g_para[i].is_section && !strcmp(g_para[i].name, q->s)) sec = &g_para[i];
+        for (int i = g_para_base; i < g_npara; i++) if (g_para[i].is_section && !strcmp(g_para[i].name, q->s)) sec = &g_para[i];
         if (!sec) die_at(q->line, "'%s' is not a section", q->s);
         p = para_find_in(t->s, sec->id);
         if (!p || p->is_section) die_at(t->line, "'%s' is not a paragraph of section '%s'", t->s, q->s);
@@ -3690,7 +3730,7 @@ static int paren_is_condition(void)
     }
     /* (cond-name) alone is a condition */
     if (words == 1 && only) {
-        for (int i = 0; i < g_nsym; i++) if (g_sym[i].is_cond && !strcmp(g_sym[i].name, only->s)) return 1;
+        for (int i = g_sym_base; i < g_nsym; i++) if (g_sym[i].is_cond && !strcmp(g_sym[i].name, only->s)) return 1;
     }
     return 0;
 }
@@ -3744,11 +3784,12 @@ static File *expect_file(void);
 static void emit_file_addr(const char *reg, File *f);
 static File *g_io_file;             /* the file the statement being parsed acts on, for the USE dispatch */
 
-/* the unit's declarative sections: which one applies to a file is its
- * use_para; which one applies to an open mode is g_use_mode[mode]; both
- * reach the runtime through the cob_file image (.Luse<unit>) */
-static int g_use_mode[5];           /* by COB_OPEN_ mode; 0 none */
-static int g_use_secs[32], g_nuse_secs;
+/* the unit's declarative sections: each USE names files or open modes.
+ * After an I/O statement the compiler emits the choice: this unit's USE
+ * for the file, then this unit's for the open mode, then outward through
+ * the containing programs' GLOBAL ones (X3.23-1985 USE general rules). */
+typedef struct { int sec, unit, global, mode; File *file; } UseEntry;
+static UseEntry g_use[64]; static int g_nuse;
 static int g_in_decl;
 
 /* USE [GLOBAL] AFTER [STANDARD] {ERROR|EXCEPTION} PROCEDURE [ON] {file... | INPUT | OUTPUT | I-O | EXTEND} */
@@ -3757,28 +3798,28 @@ static void parse_use(void)
     int line = cur()->line;
     if (!g_in_decl) die_at(line, "USE belongs in a DECLARATIVES section");
     if (g_cur_sec_id < 0) die_at(line, "USE must be the first sentence of a section in DECLARATIVES");
-    accept_word("global");
+    int global = accept_word("global");
     expect_word("after"); accept_word("standard");
     if (!accept_word("error") && !accept_word("exception")) die_at(line, "USE AFTER ... : expected ERROR or EXCEPTION PROCEDURE (the other USE forms are not implemented)");
     expect_word("procedure"); accept_word("on");
     int sec = g_cur_sec_id, any = 0;
-    if (g_nuse_secs < 32) { int dup = 0; for (int i = 0; i < g_nuse_secs; i++) if (g_use_secs[i] == sec) dup = 1; if (!dup) g_use_secs[g_nuse_secs++] = sec; }
     for (;;) {
         int mode = 0;
         if (accept_word("input")) mode = COB_OPEN_INPUT;
         else if (accept_word("output")) mode = COB_OPEN_OUTPUT;
         else if (accept_word("i-o")) mode = COB_OPEN_IO;
         else if (accept_word("extend")) mode = COB_OPEN_EXTEND;
-        if (mode) {
-            if (g_use_mode[mode]) die_at(line, "two USE procedures for the same open mode");
-            g_use_mode[mode] = sec; any = 1; continue;
+        File *f = NULL;
+        if (!mode) {
+            if (!(cur()->kind == T_WORD && file_find(cur()->s))) break;
+            f = expect_file();
         }
-        if (cur()->kind == T_WORD && file_find(cur()->s)) {
-            File *f = expect_file();
-            if (f->use_para) die_at(line, "two USE procedures for file '%s'", f->name);
-            f->use_para = sec; any = 1; continue;
-        }
-        break;
+        for (int i = 0; i < g_nuse; i++)
+            if (g_use[i].unit == g_unit && g_use[i].mode == mode && g_use[i].file == f)
+                die_at(line, mode ? "two USE procedures for the same open mode" : "two USE procedures for file '%s'", f ? f->name : "");
+        if (g_nuse == 64) die_at(line, "too many USE procedures");
+        g_use[g_nuse].sec = sec; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = global; g_use[g_nuse].mode = mode; g_use[g_nuse].file = f;
+        g_nuse++; any = 1;
     }
     if (!any) die_at(line, "USE AFTER ERROR PROCEDURE needs a file-name or INPUT/OUTPUT/I-O/EXTEND");
 }
@@ -3787,29 +3828,51 @@ static void parse_use(void)
  * not handled by the statement's own clause and a USE procedure applies,
  * perform that section (the runtime picks it: the file's, else the open
  * mode's), then continue with the next statement */
+static void unit_use_range(int level, int *from, int *to);
+static int unit_use_own_from(void);                     /* where this unit's own USE entries begin */
+
 static void emit_use_dispatch(File *f, int has_clause)
 {
-    if (!g_nuse_secs) return;
+    /* the candidates, in the order the text gives them: this unit's USE
+     * for the file, its USE for the open mode, then each containing
+     * program's GLOBAL ones the same way */
+    UseEntry *c[64]; int nc = 0, any_mode = 0;
+    for (int level = g_udepth; level >= 0; level--) {
+        int from, to;
+        if (level == g_udepth) { from = unit_use_own_from(); to = g_nuse; } else unit_use_range(level, &from, &to);
+        for (int pass = 0; pass < 2; pass++)
+            for (int i = from; i < to; i++) {
+                UseEntry *u = &g_use[i];
+                if (level < g_udepth && !u->global) continue;
+                if (pass == 0 ? u->file != f : !u->mode) continue;
+                if (u->mode) any_mode = 1;
+                c[nc++] = u;
+            }
+    }
+    /* SLOT_C after the statement: 0 fine, 1 the statement's own condition,
+     * 2 an error with a FILE STATUS to record it, 3 an error nothing but a
+     * USE procedure can take -- the run stops if none does */
     int Ldone = new_label();
-    emit("\tldw r1, sp+%d", SLOT_C);
-    emit("\tbeq r1, r0, .L%d", Ldone);
-    if (has_clause) { emit_li("r2", 1); emit("\tbeq r1, r2, .L%d", Ldone); }
-    emit_file_addr("r3", f);
-    emit_call("cob_use_select");
-    emit("\tbeq r1, r0, .L%d", Ldone);
-    for (int i = 0; i < g_nuse_secs; i++) {
-        int id = g_use_secs[i], Lnext = new_label(), Lret = new_label();
+    emit("\tldw r13, sp+%d", SLOT_C);
+    emit("\tbeq r13, r0, .L%d", Ldone);
+    if (has_clause) { emit_li("r2", 1); emit("\tbeq r13, r2, .L%d", Ldone); }
+    if (any_mode) { emit_file_addr("r3", f); emit_call("cob_open_mode"); emit("\tadd r12, r0, r1"); }
+    for (int i = 0; i < nc; i++) {
+        int Lnext = new_label(), Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
-        emit_li("r2", id);
-        emit("\tbne r1, r2, .L%d", Lnext);
-        emit_li("r3", id);
+        if (c[i]->mode) { emit_li("r2", c[i]->mode); emit("\tbne r12, r2, .L%d", Lnext); }
+        emit_li("r3", c[i]->sec);
         emit_la("r4", lab);
         emit_call("cob_perform_push");
-        emit("\tjal r0, .Lp%d_%d", g_unit, id);
+        emit("\tjal r0, .Lp%d_%d", c[i]->unit, c[i]->sec);
         emit_label(Lret);
         emit_jump(Ldone);
         emit_label(Lnext);
     }
+    emit_li("r2", 3);
+    emit("\tbne r13, r2, .L%d", Ldone);
+    emit_file_addr("r3", f);
+    emit_call("cob_io_unhandled");
     emit_label(Ldone);
 }
 
@@ -4150,7 +4213,7 @@ static void parse_set(void)
 
 static void emit_file_addr(const char *reg, File *f)
 {
-    char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", g_unit, (int)(f - g_files));
+    char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, (int)(f - g_files));
     emit_la(reg, lab);
 }
 
@@ -5180,7 +5243,7 @@ static void parse_statement(void)
         if (!strcmp(v, later[i].verb)) die_at(t->line, "the verb %s is not implemented yet (%s)", v, later[i].when);
     if (is_terminator(v)) die_at(t->line, "'%s' without a matching statement", v);
     if (!strcmp(v, "identification") || !strcmp(v, "id"))
-        die_at(t->line, "a nested program (IDENTIFICATION DIVISION inside a program) is not implemented; END PROGRAM first, or compile it as a separate unit");
+        die_at(t->line, "IDENTIFICATION DIVISION in the middle of a sentence (a contained program begins after a period)");
     die_at(t->line, "'%s' is not a COBOL verb", v);
 }
 
@@ -5195,6 +5258,87 @@ static void emit_exit_check(int id)
 }
 
 static int g_saw_end_program;
+static int g_initial;               /* PROGRAM-ID ... IS INITIAL: WORKING-STORAGE fresh on every CALL */
+
+/* everything a unit keeps in globals, saved while a contained program is compiled */
+struct UnitSave {
+    int unit, sym_base, sym_end, file_base, file_end, para_base, para_end, use_end;
+    char progid[64];
+    int nreport, nscreen, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
+    char collate_name[64];
+    int nuse, in_decl, cur_sec_id, saw_end, initial, nsorttab;
+    UseEntry use[64];
+    File *io_file;
+    UClass cls[16]; SwitchName sw[32]; Alphabet alph[16]; Mnemonic mn[16]; int same[8][16], nsame[8];
+    SortTab *sorttab;
+};
+static void unit_range(int level, int *from, int *to) { *from = g_ustack[level]->sym_base; *to = g_ustack[level]->sym_end; }
+static void unit_file_range(int level, int *from, int *to) { *from = g_ustack[level]->file_base; *to = g_ustack[level]->file_end; }
+static void unit_use_range(int level, int *from, int *to) { *from = level ? g_ustack[level - 1]->use_end : 0; *to = g_ustack[level]->use_end; }
+static int unit_use_own_from(void) { return g_udepth ? g_ustack[g_udepth - 1]->use_end : 0; }
+
+static void parse_identification_division(void);
+static void parse_environment_division(void);
+static void parse_data_division(void);
+static void emit_unit_data(void);
+static void parse_procedure_division(void);
+
+/* IDENTIFICATION DIVISION inside a program: a contained program.  It is
+ * compiled as a unit of its own -- its own entry, WORKING-STORAGE, files,
+ * paragraphs -- seeing the containing programs' GLOBAL items, files and
+ * USE procedures.  The tables are shared: the contained unit's entries
+ * are appended and cut back on its END PROGRAM; the USE entries of every
+ * enclosing unit stay in g_use below this unit's own. */
+static void compile_nested_unit(void)
+{
+    if (g_udepth == 8) die_at(cur()->line, "programs nested more than 8 deep");
+    UnitSave *u = xmalloc(sizeof *u);
+    u->unit = g_unit; u->sym_base = g_sym_base; u->sym_end = g_nsym; u->file_base = g_file_base; u->file_end = g_nfile;
+    u->para_base = g_para_base; u->para_end = g_npara; u->use_end = g_nuse;
+    memcpy(u->progid, g_progid, sizeof u->progid);
+    u->nreport = g_nreport; u->nscreen = g_nscreen; u->nclass = g_nclass; u->nswitch = g_nswitch; u->nalphabet = g_nalphabet;
+    u->nmnemonic = g_nmnemonic; u->last_item = g_last_item; u->nsame_groups = g_nsame_groups; u->collate = g_collate;
+    u->lowval = g_lowval; u->highval = g_highval; u->cur_fd = g_cur_fd; u->in_linkage = g_in_linkage;
+    memcpy(u->collate_name, g_collate_name, sizeof u->collate_name);
+    u->nuse = g_nuse; memcpy(u->use, g_use, sizeof u->use); u->in_decl = g_in_decl; u->cur_sec_id = g_cur_sec_id;
+    u->saw_end = g_saw_end_program; u->initial = g_initial; u->io_file = g_io_file;
+    memcpy(u->cls, g_class, sizeof u->cls); memcpy(u->sw, g_switch, sizeof u->sw); memcpy(u->alph, g_alphabet, sizeof u->alph);
+    memcpy(u->mn, g_mnemonic, sizeof u->mn); memcpy(u->same, g_same, sizeof u->same); memcpy(u->nsame, g_nsame, sizeof u->nsame);
+    u->nsorttab = g_nsorttab; u->sorttab = xmalloc((size_t)(g_nsorttab + 1) * sizeof *g_sorttab);
+    memcpy(u->sorttab, g_sorttab, (size_t)g_nsorttab * sizeof *g_sorttab);
+    g_ustack[g_udepth++] = u;
+
+    g_unit = ++g_unit_counter;
+    g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
+    /* the contained unit's own USE entries follow every enclosing unit's */
+    g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
+    g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
+    g_nsorttab = 0; g_initial = 0;
+    parse_identification_division();
+    parse_environment_division();
+    parse_data_division();
+    if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
+    parse_procedure_division();
+    emit_unit_data();
+    if (!g_saw_end_program) die_at(cur()->line, "a contained program needs its END PROGRAM");
+
+    g_udepth--;
+    g_unit = u->unit; g_sym_base = u->sym_base; g_nsym = u->sym_end; g_file_base = u->file_base; g_nfile = u->file_end;
+    g_para_base = u->para_base; g_npara = u->para_end;
+    memcpy(g_progid, u->progid, sizeof g_progid);
+    g_nreport = u->nreport; g_nscreen = u->nscreen; g_nclass = u->nclass; g_nswitch = u->nswitch; g_nalphabet = u->nalphabet;
+    g_nmnemonic = u->nmnemonic; g_last_item = u->last_item; g_nsame_groups = u->nsame_groups; g_collate = u->collate;
+    g_lowval = u->lowval; g_highval = u->highval; g_cur_fd = u->cur_fd; g_in_linkage = u->in_linkage;
+    memcpy(g_collate_name, u->collate_name, sizeof g_collate_name);
+    g_nuse = u->nuse; memcpy(g_use, u->use, sizeof g_use); g_in_decl = u->in_decl; g_cur_sec_id = u->cur_sec_id;
+    g_saw_end_program = u->saw_end; g_initial = u->initial; g_io_file = u->io_file;
+    memcpy(g_class, u->cls, sizeof g_class); memcpy(g_switch, u->sw, sizeof g_switch); memcpy(g_alphabet, u->alph, sizeof g_alphabet);
+    memcpy(g_mnemonic, u->mn, sizeof g_mnemonic); memcpy(g_same, u->same, sizeof g_same); memcpy(g_nsame, u->nsame, sizeof g_nsame);
+    g_nsorttab = u->nsorttab;
+    if (g_nsorttab > g_sorttabcap) { g_sorttabcap = g_nsorttab; g_sorttab = realloc(g_sorttab, (size_t)g_sorttabcap * sizeof *g_sorttab); }
+    memcpy(g_sorttab, u->sorttab, (size_t)g_nsorttab * sizeof *g_sorttab);
+    free(u->sorttab); free(u);
+}
 
 static void parse_procedure_division(void)
 {
@@ -5230,6 +5374,7 @@ static void parse_procedure_division(void)
         emit_la("r3", lab); emit_call("cob_set_collating"); emit("\tstw sp+%d, r1", SLOT_COLL);
     }
     if (g_dp_comma) { emit("\taddi r3, r0, 1"); emit_call("cob_set_decimal_point"); emit("\tstw sp+%d, r1", SLOT_DP); }
+    if (g_initial) { char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit); emit_call(cl); }   /* INITIAL: as after CANCEL */
     /* the caller's addresses go into the LINKAGE cells */
     for (int i = 0; i < nusing; i++) {
         emit_la("r1", g_sym[using[i]->record].label);
@@ -5238,7 +5383,8 @@ static void parse_procedure_division(void)
 
     int cur_par = -1, cur_sec = -1;
     int Ldecl_end = -1;
-    g_nuse_secs = 0; memset(g_use_mode, 0, sizeof g_use_mode); g_cur_sec_id = -1; g_in_decl = 0;
+    if (!g_udepth) g_nuse = 0;              /* a contained unit's USE entries follow the enclosing units' */
+    g_cur_sec_id = -1; g_in_decl = 0;
     if (accept_word("declaratives")) {
         /* the declarative sections are reached only through USE; jump over them */
         expect_period();
@@ -5248,6 +5394,17 @@ static void parse_procedure_division(void)
         Tok *t = cur();
         if (t->kind == T_EOF) break;
         if (is_word(t, "end") && is_word(peek(1), "program")) break;
+        if ((is_word(t, "identification") || is_word(t, "id")) && is_word(peek(1), "division")) {
+            /* a contained program: from here to END PROGRAM the text is nested
+             * programs; the containing program's flow ends as at its last line */
+            if (cur_par >= 0) emit_exit_check(cur_par);
+            if (cur_sec >= 0) emit_exit_check(cur_sec);
+            cur_par = -1; cur_sec = -1; g_cur_sec_id = -1;
+            emit("\tjal r0, .Lgb%d", g_unit);
+            compile_nested_unit();
+            emit("\t.text");                   /* the contained unit's data left the section */
+            continue;
+        }
         if (is_word(t, "end") && is_word(peek(1), "declaratives")) {
             if (!g_in_decl) die_at(t->line, "END DECLARATIVES without DECLARATIVES");
             if (cur_par >= 0) emit_exit_check(cur_par);
@@ -5306,7 +5463,7 @@ static void parse_procedure_division(void)
         emit(".Lcan%d:", g_unit);
         emit("\taddi sp, sp, -8");
         emit("\tstw sp+0, lr");
-        for (int i = 0; i < g_nsym; i++) {
+        for (int i = g_sym_base; i < g_nsym; i++) {
             Sym *s = &g_sym[i];
             if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->is_linkage) continue;
             emit_la("r3", s->label);
@@ -5381,11 +5538,13 @@ static void parse_identification_division(void)
     if (cur()->kind != T_WORD) die_at(cur()->line, "expected a program-name");
     snprintf(g_progid, sizeof g_progid, "%s", cur()->s);
     advance();
-    if (accept_word("is")) {
-        if (accept_word("initial")) accept_word("program");
-        else if (accept_word("common")) die_at(cur()->line, "COMMON programs are not implemented yet");
-        else die_at(cur()->line, "expected INITIAL after IS");
+    accept_word("is");
+    for (;;) {
+        if (accept_word("initial")) g_initial = 1;              /* fresh WORKING-STORAGE on every CALL */
+        else if (accept_word("common")) { }                      /* callable by the siblings too: every program here is */
+        else break;
     }
+    accept_word("program");
     expect_period();
 
     static const char *paras[] = { "author", "installation", "date-written",
@@ -5420,7 +5579,7 @@ static void parse_select(void)
     if (g_nfile == g_fcap) { g_fcap = g_fcap ? g_fcap * 2 : 16; g_files = realloc(g_files, g_fcap * sizeof *g_files); }
     File *f = &g_files[g_nfile++];
     memset(f, 0, sizeof *f);
-    f->line = line; f->rec = -1; f->org = COB_ORG_SEQ;
+    f->line = line; f->rec = -1; f->org = COB_ORG_SEQ; f->unit = g_unit;
     if (accept_word("optional")) f->optional = 1;
     if (cur()->kind != T_WORD) die_at(line, "expected a file-name after SELECT");
     if (file_find(cur()->s)) die_at(line, "file '%s' is SELECTed twice", cur()->s);
@@ -5798,7 +5957,7 @@ static void parse_fd(void)
         }
         if (accept_word("value")) { expect_word("of"); while (cur()->kind != T_PERIOD && !at_word("block") && !at_word("record") && !at_word("data")) advance(); continue; }
         if (accept_word("is")) continue;
-        if (accept_word("global")) continue;
+        if (accept_word("global")) { f->global = 1; continue; }
         if (accept_word("external")) die_at(t->line, "FD %s IS EXTERNAL (a file shared between separately compiled programs) is not implemented", f->name);
         if (accept_word("linage")) {
             /* LINAGE [IS] n [LINES] [WITH FOOTING [AT] f] [LINES AT TOP t] [LINES AT BOTTOM b] */
@@ -5852,7 +6011,7 @@ static void parse_rd(void)
     r->line = line; r->file = -1;
     snprintf(r->name, sizeof r->name, "%s", cur()->s);
     advance();
-    for (int i = 0; i < g_nfile; i++) if (!strcmp(g_files[i].report_name, r->name)) r->file = i;
+    for (int i = g_file_base; i < g_nfile; i++) if (!strcmp(g_files[i].report_name, r->name)) r->file = i;
     if (r->file < 0) die_at(line, "no FD says REPORT IS %s", r->name);
     /* a print file SELECTed without ORGANIZATION is line sequential: that
      * is what GnuCOBOL made of gl036's, and its .prn is the oracle */
@@ -6138,11 +6297,13 @@ static void parse_data_division(void)
             continue;
         }
         if (at_word("report") && is_word(peek(1), "section")) {
+            if (g_udepth) die_at(cur()->line, "a REPORT SECTION in a contained program is not implemented");
             advance(); advance(); expect_period();
             while (at_word("rd")) parse_rd();
             continue;
         }
         if (at_word("screen") && is_word(peek(1), "section")) {
+            if (g_udepth) die_at(cur()->line, "a SCREEN SECTION in a contained program is not implemented");
             advance(); advance(); expect_period();
             parse_screen_section();
             continue;
@@ -6163,7 +6324,7 @@ static void emit_unit_data(void)
 {
     emit("");
     emit("\t.data");
-    for (int i = 0; i < g_nsym; i++) {
+    for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0) continue;
         if (s->is_linkage) {
@@ -6182,10 +6343,10 @@ static void emit_unit_data(void)
         emit_bytes(s->image, s->image_size);
         emit("\t.data");
     }
-    for (int i = 0; i < g_nfile; i++) {
+    for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         emit("\t.p2align 2");
-        emit(".Lf%d_%d:\t# %s", g_unit, i, f->name);
+        emit(".Lf%d_%d:\t# %s", f->unit, i, f->name);
         emit("\t.byte %d,%d,%d,0", f->org, f->access, f->optional);
         emit("\t.word 0");
         if (f->rec >= 0) emit("\t.word %s", g_sym[g_sym[f->rec].record].label); else emit("\t.word 0");
@@ -6212,7 +6373,7 @@ static void emit_unit_data(void)
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");                  /* rel_pos, rel_last: the runtime's */
         emit("\t.word 0");
-        emit("\t.word %d", f->use_para);   /* DECLARATIVES: this file's USE section, the unit's mode table, open_try */
+        emit("\t.word 0");                 /* (use_para, use_modes: the compiler now emits the USE choice itself) */
         emit("\t.word .Luse%d", g_unit);
         emit("\t.word 0");
         emit("\t.word 0");                  /* locked (CLOSE WITH LOCK) */
@@ -6225,12 +6386,12 @@ static void emit_unit_data(void)
     }
     emit("\t.p2align 2");
     emit(".Luse%d:\t# USE sections by open mode", g_unit);
-    for (int m = 0; m < 5; m++) emit("\t.word %d", g_use_mode[m]);
+    for (int m = 0; m < 5; m++) emit("\t.word 0");
     if (g_collate >= 0) {
         emit(".Lcoll%d:\t# PROGRAM COLLATING SEQUENCE %s: rank of each character", g_unit, g_alphabet[g_collate].name);
         emit_bytes(g_alphabet[g_collate].rank, 256);
     }
-    for (int i = 0; i < g_nfile; i++) {
+    for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         if (!f->linage) continue;
         emit("\t.p2align 2");
@@ -6241,7 +6402,7 @@ static void emit_unit_data(void)
             else { emit("\t.word 0"); emit("\t.word 0"); }
         }
     }
-    for (int i = 0; i < g_nfile; i++) {
+    for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         if (!f->nalt) continue;
         emit("\t.p2align 2");
@@ -6294,7 +6455,7 @@ static void emit_unit_data(void)
         Report *r = &g_reports[i];
         emit("\t.p2align 2");
         emit(".Lrpt%d_%d:\t# report %s", g_unit, i, r->name);
-        emit("\t.word .Lf%d_%d", g_unit, r->file);
+        emit("\t.word .Lf%d_%d", g_files[r->file].unit, r->file);
         emit("\t.word %d", r->page_limit); emit("\t.word %d", r->heading);
         emit("\t.word %d", r->first_detail); emit("\t.word %d", r->last_detail);
         emit("\t.word 0"); emit("\t.word 0"); emit("\t.word 0");
@@ -6380,6 +6541,7 @@ int main(int argc, char **argv)
          * by END PROGRAM */
         g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
+        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();
@@ -6388,7 +6550,7 @@ int main(int argc, char **argv)
         emit_unit_data();
         if (cur()->kind == T_EOF) break;
         if (!g_saw_end_program) die_at(cur()->line, "unexpected %s after the program (a further program needs END PROGRAM before it)", tok_desc(cur()));
-        g_unit++;
+        g_unit = ++g_unit_counter;
     }
     emit_rodata();
     relax_branches();

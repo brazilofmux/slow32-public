@@ -130,8 +130,8 @@ out in 85, see ISSUES-4a), then its table `SORT` (ISSUES-4a / GitHub #10).
 
 ### 10. Nucleus level 2 remainder
 `MOVE/ADD/SUBTRACT CORRESPONDING` (each refused by name), abbreviated
-combined relation conditions (`a > b and < c`), nested programs,
-~~`REPLACE`, `COPY ... REPLACING`~~ (Stage 26, 2026-08-31), the full
+combined relation conditions (`a > b and < c`), ~~nested programs~~
+(Stage 29), ~~`REPLACE`, `COPY ... REPLACING`~~ (Stage 26, 2026-08-31), the full
 `INSPECT CONVERTING` corner cases. Each is a diagnostic today, never
 silence.
 
@@ -217,7 +217,7 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **4245 of 4282 tests pass, none fail, 230
+them by their own reports: **4263 of 4300 tests pass, none fail, 234
 programs match GnuCOBOL's tally exactly** (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
@@ -227,8 +227,8 @@ remaining bins, largest first, each a
 work item: ~~`ALTERNATE RECORD KEY`~~ (done), ~~`LINAGE`~~ (done),
 ~~`COPY ... REPLACING`~~ (done), ~~`CALL identifier`~~ (done), an ODO
 table nested below a direct child (4),
-`INSPECT ... BEFORE/AFTER INITIAL` (4), nested programs (IC 4), `EXTERNAL`
-(IC 3), `BY CONTENT` (IC 2), alphanumeric-edited pictures
+`INSPECT ... BEFORE/AFTER INITIAL` (4), ~~nested programs~~ (done; IC 20
+of 25), `EXTERNAL` (IC 3), `BY CONTENT` (IC 2), alphanumeric-edited pictures
 with A/9 mixed (3) and `;` in a picture (3), `USAGE INDEX` on a
 group (2), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01

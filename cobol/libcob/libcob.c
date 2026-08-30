@@ -666,31 +666,34 @@ static void set_status(cob_file *f, const char *st)
 /* DECLARATIVES: the USE AFTER ERROR PROCEDURE section that applies to a
  * file -- its own, else the one for its open mode -- as a paragraph id
  * the compiled code dispatches on; 0 when none */
-int cob_use_select(cob_file *f)
-{
-    if (f->use_para) return f->use_para;
-    unsigned mode = f->open_mode ? f->open_mode : f->open_try;
-    if (f->use_modes && mode < 5) return f->use_modes[mode];
-    return 0;
-}
+/* the open mode a USE ... ON INPUT/OUTPUT/I-O/EXTEND procedure is chosen by:
+ * the mode the file is open in, or the one the failing OPEN tried */
+int cob_open_mode(cob_file *f) { return f->open_mode ? (int)f->open_mode : (int)f->open_try; }
 
+/* An I/O statement's result for the compiler's dispatch: 0 fine, 1 the
+ * statement's own condition (AT END, INVALID KEY), 2 an error recorded in
+ * a FILE STATUS, 3 an error with no FILE STATUS to record it -- the
+ * compiler runs a USE procedure if one applies, else cob_io_unhandled. */
+static char cob_last_st[3]; static const char *cob_last_op = "";
 static int file_result(cob_file *f, const char *st, const char *what)
 {
     set_status(f, st);
     if (st[0] == '0') return 0;
     if (st[0] == '1' || st[0] == '2') return 1;      /* at end; the invalid key condition */
-    if (!f->status && cob_use_select(f)) return 2;    /* a USE procedure will hear of it */
-    if (!f->status) {
-        char msg[96];
-        int n = 0;
-        const char *pre = "file error (status ";
-        while (*pre) msg[n++] = *pre++;
-        msg[n++] = st[0]; msg[n++] = st[1]; msg[n++] = ')'; msg[n++] = ' ';
-        while (*what && n < 90) msg[n++] = *what++;
-        msg[n] = 0;
-        cob_fatal(msg);
-    }
-    return 2;
+    cob_last_st[0] = st[0]; cob_last_st[1] = st[1]; cob_last_op = what;
+    return f->status ? 2 : 3;
+}
+void cob_io_unhandled(cob_file *f)
+{
+    (void)f;
+    char msg[96];
+    int n = 0;
+    const char *pre = "file error (status ", *what = cob_last_op;
+    while (*pre) msg[n++] = *pre++;
+    msg[n++] = cob_last_st[0]; msg[n++] = cob_last_st[1]; msg[n++] = ')'; msg[n++] = ' ';
+    while (*what && n < 90) msg[n++] = *what++;
+    msg[n] = 0;
+    cob_fatal(msg);
 }
 
 static const char *file_name(cob_file *f)

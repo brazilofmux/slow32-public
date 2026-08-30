@@ -62,9 +62,12 @@ oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/
                 # standard input from $keys (the test's .keys file, or nothing)
     case "$ORACLE_ENGINE" in
         host) (cd "$W/run" && "$@" < "$keys") ;;
-        *)    "$ORACLE_ENGINE" run --rm -i -v "$ROOT:$ROOT" -w "$W/run" "$ORACLE_RUN_IMAGE" "$@" < "$keys" ;;
+        *)    "$ORACLE_ENGINE" run --rm -i -v "$ROOT:$ROOT" -w "$W/run" "$ORACLE_RUN_IMAGE" timeout 60 "$@" < "$keys" ;;
     esac
 }
+# (timeout: an oracle that hangs -- GnuCOBOL 4.0-early-dev does on an OPEN
+# failure without FILE STATUS inside a contained program -- counts as a
+# disagreement, not a stalled harness)
 
 PASS=0; FAIL=0
 

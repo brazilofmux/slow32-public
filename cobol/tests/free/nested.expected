@@ -1,0 +1,10 @@
+inner-a visit 1 sees inner
+inner-b, two levels down, tally 011
+tally 011 note set       
+condition on a global item holds
+inner-a visit 2 sees inner
+inner-a visit 3 sees inner
+tally 013
+fresh count 1
+fresh count 1
+private outer
