@@ -2400,11 +2400,31 @@ void cbl_get_scr_size(unsigned char *lines, unsigned char *cols)
     *cols = (unsigned char)(c > 255 ? 255 : c);
 }
 
+static int scr_has_attr(const cob_scr_field *f)
+{
+    return (f->flags & (COB_SF_REVERSE | COB_SF_UNDERLINE | COB_SF_HIGHLIGHT | COB_SF_LOWLIGHT)) || f->fg != 255 || f->bg != 255;
+}
+
+/* COBOL's colour numbers (0 black, 1 blue, 2 green, 3 cyan, 4 red, 5
+ * magenta, 6 yellow, 7 white) to ANSI's (1 red, 4 blue); 9 = default */
+static int scr_ansi_colour(unsigned c) { static const int m[8] = { 0, 4, 2, 6, 1, 5, 3, 7 }; return c < 8 ? m[c] : 9; }
+
 static void scr_attr(const cob_scr_field *f)
 {
+    if (!scr_has_attr(f)) return;
     if (f->flags & COB_SF_REVERSE) term_set_attr(7);
+    else if (f->flags & COB_SF_UNDERLINE) term_set_attr(4);
     else if (f->flags & COB_SF_HIGHLIGHT) term_set_attr(1);
+    else if (f->flags & COB_SF_LOWLIGHT) term_set_attr(2);
     else term_set_attr(0);
+    if (f->fg != 255 || f->bg != 255) term_set_color(scr_ansi_colour(f->fg), scr_ansi_colour(f->bg));
+}
+
+static void scr_attr_off(const cob_scr_field *f)
+{
+    if (!scr_has_attr(f)) return;
+    term_set_attr(0);
+    if (f->fg != 255 || f->bg != 255) term_set_color(9, 9);
 }
 
 static void scr_puts_n(const char *p, unsigned n)
@@ -2420,15 +2440,21 @@ static void scr_render(const cob_scr_field *f, char *buf)
     cob_move(f->item, (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
 }
 
+static void scr_paint_text(const cob_scr_field *f, const char *buf)
+{
+    term_gotoxy(f->line, f->col);
+    scr_attr(f);
+    if (f->flags & COB_SF_SECURE) { for (unsigned i = 0; i < f->width; i++) term_putc(buf[i] == ' ' ? ' ' : '*'); }
+    else scr_puts_n(buf, f->width);
+    scr_attr_off(f);
+}
+
 static void scr_paint_field(const cob_scr_field *f)
 {
     char buf[512];
     if (f->width > sizeof buf) cob_fatal("screen field wider than 512");
     scr_render(f, buf);
-    term_gotoxy(f->line, f->col);
-    scr_attr(f);
-    scr_puts_n(buf, f->width);
-    term_set_attr(0);
+    scr_paint_text(f, buf);
 }
 
 void cob_screen_display(const cob_screen *s)
@@ -2440,63 +2466,238 @@ void cob_screen_display(const cob_screen *s)
     term_end_update();
 }
 
+/* ---- the focus loop (docs/screen.md, "the eventual target") ------------ */
+/* Keys: the terminal's bytes, with the ANSI cursor sequences folded into
+ * codes of their own; a lone Escape is K_ESC. */
+enum { K_EOF = -1, K_ESC = 27, K_UP = 1001, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_BTAB, K_INS };
+
+static int scr_key(void)
+{
+    int k = term_getkey();
+    if (k != 27) return k;
+    if (!term_kbhit()) return K_ESC;
+    int c = term_getkey();
+    if (c == '[' || c == 'O') {
+        int n = 0, d = term_getkey();
+        while (d >= '0' && d <= '9') { n = n * 10 + (d - '0'); d = term_getkey(); }
+        switch (d) {
+        case 'A': return K_UP;
+        case 'B': return K_DOWN;
+        case 'C': return K_RIGHT;
+        case 'D': return K_LEFT;
+        case 'H': return K_HOME;
+        case 'F': return K_END;
+        case 'Z': return K_BTAB;
+        case '~': return n == 3 ? K_DEL : n == 1 || n == 7 ? K_HOME : n == 4 || n == 8 ? K_END : n == 2 ? K_INS : 0;
+        default: return 0;
+        }
+    }
+    return c == 9 ? K_BTAB : 0;                 /* ESC TAB: back-tab on terminals without a Shift-Tab */
+}
+
+static int scr_is_numeric(const cob_scr_field *f)
+{
+    const cob_desc *d = (const cob_desc *)f->pic;
+    return d && (d->cat == COB_NUM || d->cat == COB_NUM_ED);
+}
+
+/* the state of one input field under edit */
+typedef struct {
+    const cob_scr_field *f;
+    char *buf;                 /* text: the characters; numeric: the rendering */
+    unsigned pos;              /* text: the cursor */
+    int numeric, neg, infrac, touched;
+    int ni, nf, ni_max, nf_max, point;   /* numeric: digits typed each side of the point, the capacities, the point's column */
+    char ibuf[20], fbuf[20];
+} scr_edit;
+
+/* the numeric value the digits typed so far stand for, at the picture's scale */
+static long long scr_num_value(const scr_edit *e)
+{
+    long long v = 0;
+    for (int i = 0; i < e->ni; i++) v = v * 10 + (e->ibuf[i] - '0');
+    for (int i = 0; i < e->nf_max; i++) v = v * 10 + (i < e->nf ? e->fbuf[i] - '0' : 0);
+    return e->neg ? -v : v;
+}
+
+static void scr_num_render(scr_edit *e)
+{
+    const cob_desc *d = (const cob_desc *)e->f->pic;
+    cob_put_num_x(e->buf, d, scr_num_value(e), d->scale, 0);
+}
+
+/* the item's current value, as digits to edit in place */
+static void scr_num_load(scr_edit *e)
+{
+    const cob_desc *d = (const cob_desc *)e->f->pic;
+    long long v = e->f->kind == COB_SCR_USING ? cob_get_num(e->f->item, (const cob_desc *)e->f->item_desc) : 0;
+    int is = ((const cob_desc *)e->f->item_desc)->scale;
+    if (e->f->kind == COB_SCR_USING && is != d->scale) v = is > d->scale ? div_pow10(v, is - d->scale, 0) : v * pow10tab[d->scale - is];
+    e->neg = v < 0 && (d->flags & COB_F_SIGNED);
+    unsigned long long mag = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v, fr;
+    unsigned long long ip = udiv_pow10(mag, d->scale, &fr);
+    char t[24]; mag_to_digits(ip, t, 20);
+    int k = 0; while (k < 20 && t[k] == '0') k++;
+    e->ni = 20 - k; if (e->ni > e->ni_max) { k += e->ni - e->ni_max; e->ni = e->ni_max; }
+    memcpy(e->ibuf, t + k, (size_t)e->ni);
+    e->nf = fr ? d->scale : 0;
+    if (e->nf) mag_to_digits(fr, e->fbuf, e->nf);
+    e->infrac = 0; e->touched = 0;
+}
+
+static unsigned scr_num_cursor(const scr_edit *e)
+{
+    unsigned w = e->f->width;
+    if (e->infrac) { unsigned c = (unsigned)e->point + 1 + (unsigned)e->nf; return c < w ? c : w - 1; }
+    if (e->nf_max == 0) return w - 1;
+    return (unsigned)e->point;
+}
+
+static void scr_beep(void) { term_putc(7); }
+
+/* entering a field: the cursor at its start; a numeric field takes the
+ * next digit as a fresh entry (Enter alone keeps what it shows) */
+static void scr_focus(scr_edit *e) { e->pos = 0; e->infrac = 0; e->touched = 0; }
+
+/* leaving a field forwards: REQUIRED wants something in it, FULL wants it
+ * empty or full */
+static int scr_may_leave(const scr_edit *e)
+{
+    const cob_scr_field *f = e->f;
+    if (f->flags & COB_SF_REQUIRED) {
+        if (e->numeric ? scr_num_value(e) == 0 : strspn(e->buf, " ") >= f->width) return 0;
+    }
+    if ((f->flags & COB_SF_FULL) && !e->numeric) {
+        unsigned n = f->width; while (n > 0 && e->buf[n - 1] == ' ') n--;
+        if (n != 0 && n != f->width) return 0;
+    }
+    return 1;
+}
+
 void cob_screen_accept(const cob_screen *s)
 {
     cob_screen_display(s);
-    /* edit buffers for the input fields */
     unsigned nin = 0;
     for (unsigned i = 0; i < s->nfields; i++)
         if (s->fields[i].kind == COB_SCR_TO || s->fields[i].kind == COB_SCR_USING) nin++;
     if (!nin) { term_getkey(); return; }        /* nothing to type into: wait for a key */
-    char **ed = malloc(nin * sizeof *ed);
-    unsigned *idx = malloc(nin * sizeof *idx);
-    if (!ed || !idx) cob_fatal("out of memory");
+    scr_edit *ed = calloc(nin, sizeof *ed);
+    if (!ed) cob_fatal("out of memory");
     unsigned k = 0;
     for (unsigned i = 0; i < s->nfields; i++) {
         const cob_scr_field *f = &s->fields[i];
         if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING) continue;
-        ed[k] = malloc(f->width + 1);
-        if (!ed[k]) cob_fatal("out of memory");
-        scr_render(f, ed[k]);
-        idx[k++] = i;
+        scr_edit *e = &ed[k++];
+        e->f = f;
+        e->buf = malloc(f->width + 1);
+        if (!e->buf) cob_fatal("out of memory");
+        scr_render(f, e->buf); e->buf[f->width] = 0;
+        e->numeric = scr_is_numeric(f);
+        if (e->numeric) {
+            const cob_desc *d = (const cob_desc *)f->pic;
+            e->nf_max = d->scale; e->ni_max = d->digits - d->scale;
+            e->point = -1;
+            if (d->pic) { const char *q = strchr(d->pic, '.'); if (q) e->point = (int)(q - d->pic); }
+            if (e->point < 0) e->point = d->scale ? (int)f->width - d->scale - 1 : (int)f->width;   /* an assumed point: the fraction's first column, less one */
+            scr_num_load(e);
+        }
     }
-    unsigned cur = 0, pos = 0;
-    int done = 0;
+    unsigned cur = 0;
+    int done = 0, abandon = 0;
     while (!done) {
-        const cob_scr_field *f = &s->fields[idx[cur]];
-        term_gotoxy(f->line, f->col + (int)pos);
-        int key = term_getkey();
-        if (key == -1 || key == 27) { done = 1; break; }             /* EOF / Escape ends the ACCEPT */
-        if (key == '\r' || key == '\n' || key == '\t') {
-            if (cur + 1 < nin) { cur++; pos = 0; } else done = 1;
+        scr_edit *e = &ed[cur];
+        const cob_scr_field *f = e->f;
+        term_gotoxy(f->line, f->col + (int)(e->numeric ? scr_num_cursor(e) : e->pos));
+        int key = scr_key();
+        if (key == K_EOF) { done = 1; break; }
+        if (key == K_ESC) { done = 1; abandon = 1; break; }
+        if (key == '\r' || key == '\n' || key == '\t' || key == K_DOWN) {
+            if (!scr_may_leave(e)) { scr_beep(); continue; }
+            if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); }
+            else if (key == '\r' || key == '\n') done = 1;
+            else { cur = 0; scr_focus(&ed[0]); }
             continue;
         }
+        if (key == K_UP || key == K_BTAB) { cur = cur ? cur - 1 : nin - 1; scr_focus(&ed[cur]); continue; }
+        if (e->numeric) {
+            const cob_desc *d = (const cob_desc *)f->pic;
+            int dp = cob_dp_comma ? ',' : '.';
+            if ((key >= '0' && key <= '9') || key == dp || key == '-' || key == '+' || key == 8 || key == 127) {
+                if (!e->touched) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; }
+            }
+            if (key >= '0' && key <= '9') {
+                if (e->infrac) { if (e->nf < e->nf_max) e->fbuf[e->nf++] = (char)key; else { scr_beep(); continue; } }
+                else if (e->ni < e->ni_max) e->ibuf[e->ni++] = (char)key;
+                else { scr_beep(); continue; }
+                scr_num_render(e); scr_paint_text(f, e->buf);
+                if ((f->flags & COB_SF_AUTO) && (e->infrac ? e->nf == e->nf_max : e->nf_max == 0 && e->ni == e->ni_max)) {
+                    if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
+                }
+                continue;
+            }
+            if (key == dp) { if (e->nf_max) e->infrac = 1; else scr_beep(); continue; }
+            if (key == '-' || key == '+') {
+                if (!(d->flags & COB_F_SIGNED)) { scr_beep(); continue; }
+                e->neg = key == '-' ? !e->neg : 0;
+                scr_num_render(e); scr_paint_text(f, e->buf); continue;
+            }
+            if (key == 8 || key == 127) {
+                if (e->infrac) { if (e->nf) e->nf--; else e->infrac = 0; }
+                else if (e->ni) e->ni--;
+                scr_num_render(e); scr_paint_text(f, e->buf); continue;
+            }
+            if (key == K_HOME) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; scr_num_render(e); scr_paint_text(f, e->buf); continue; }
+            continue;                           /* other keys: nothing */
+        }
+        /* a text field: edited where it sits */
+        if (key == K_LEFT) { if (e->pos) e->pos--; continue; }
+        if (key == K_RIGHT) { if (e->pos + 1 < f->width) e->pos++; continue; }
+        if (key == K_HOME) { e->pos = 0; continue; }
+        if (key == K_END) { unsigned n = f->width; while (n > 0 && e->buf[n - 1] == ' ') n--; e->pos = n < f->width ? n : f->width - 1; continue; }
         if (key == 8 || key == 127) {
-            if (pos > 0) { pos--; ed[cur][pos] = ' '; term_gotoxy(f->line, f->col + (int)pos); term_putc(' '); }
+            if (e->pos > 0) {
+                e->pos--;
+                memmove(e->buf + e->pos, e->buf + e->pos + 1, f->width - e->pos - 1);
+                e->buf[f->width - 1] = ' ';
+                scr_paint_text(f, e->buf);
+            }
+            continue;
+        }
+        if (key == K_DEL) {
+            memmove(e->buf + e->pos, e->buf + e->pos + 1, f->width - e->pos - 1);
+            e->buf[f->width - 1] = ' ';
+            scr_paint_text(f, e->buf);
             continue;
         }
         if (key >= 32 && key < 127) {
-            if (pos < f->width) {
-                ed[cur][pos] = (char)key;
-                term_putc((char)key);
-                pos++;
-                if (pos >= f->width && (f->flags & COB_SF_AUTO)) {
-                    if (cur + 1 < nin) { cur++; pos = 0; } else done = 1;
-                }
+            e->buf[e->pos] = (char)key;                 /* the cursor stands on pos already */
+            scr_attr(f); term_putc((f->flags & COB_SF_SECURE) ? '*' : key); scr_attr_off(f);
+            if (e->pos + 1 < f->width) e->pos++;
+            else if (f->flags & COB_SF_AUTO) {
+                if (!scr_may_leave(e)) { scr_beep(); continue; }
+                if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
             }
             continue;
         }
         /* other control keys are ignored */
     }
-    /* commit every input field into its item as alphanumeric text */
-    for (unsigned i = 0; i < nin; i++) {
-        const cob_scr_field *f = &s->fields[idx[i]];
-        cob_desc td; memset(&td, 0, sizeof td);
-        td.cat = COB_ALNUM; td.usage = COB_U_DISPLAY; td.size = f->width;
-        cob_move(ed[i], &td, f->item, (const cob_desc *)f->item_desc);
-        free(ed[i]);
+    if (!abandon) {
+        /* commit every input field into its item */
+        for (unsigned i = 0; i < nin; i++) {
+            scr_edit *e = &ed[i];
+            const cob_scr_field *f = e->f;
+            if (e->numeric) {
+                const cob_desc *d = (const cob_desc *)f->pic;
+                cob_put_num(f->item, (const cob_desc *)f->item_desc, scr_num_value(e), d->scale);
+            } else {
+                cob_desc td; memset(&td, 0, sizeof td);
+                td.cat = COB_ALNUM; td.usage = COB_U_DISPLAY; td.size = f->width;
+                cob_move(e->buf, &td, f->item, (const cob_desc *)f->item_desc);
+            }
+        }
     }
-    free(ed); free(idx);
+    for (unsigned i = 0; i < nin; i++) free(ed[i].buf);
+    free(ed);
 }
 
 /* ====================================================================== */

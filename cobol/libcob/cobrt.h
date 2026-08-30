@@ -100,13 +100,16 @@ typedef struct {
 
 /* a SCREEN SECTION 01: a table of slots (docs/screen.md).  kind: 0 VALUE,
  * 1 FROM, 2 TO, 3 USING.  flags: 1 HIGHLIGHT, 2 UNDERLINE, 4 AUTO,
- * 8 REVERSE-VIDEO. */
+ * 8 REVERSE-VIDEO, 16 SECURE, 32 REQUIRED, 64 FULL, 128 LOWLIGHT.
+ * fg, bg: FOREGROUND-COLOR / BACKGROUND-COLOR 0-7, 255 when not given. */
 enum { COB_SCR_VALUE = 0, COB_SCR_FROM = 1, COB_SCR_TO = 2, COB_SCR_USING = 3 };
-enum { COB_SF_HIGHLIGHT = 1, COB_SF_UNDERLINE = 2, COB_SF_AUTO = 4, COB_SF_REVERSE = 8 };
+enum { COB_SF_HIGHLIGHT = 1, COB_SF_UNDERLINE = 2, COB_SF_AUTO = 4, COB_SF_REVERSE = 8,
+       COB_SF_SECURE = 16, COB_SF_REQUIRED = 32, COB_SF_FULL = 64, COB_SF_LOWLIGHT = 128 };
 
 typedef struct {
     unsigned char kind, flags;
     unsigned short line, col;
+    unsigned char fg, bg;
     unsigned int width;          /* characters painted */
     const char *value;           /* VALUE literal (width bytes) */
     const void *pic;             /* cob_desc of the PICTURE, or 0 */

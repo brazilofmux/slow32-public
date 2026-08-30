@@ -138,10 +138,60 @@ is bold, REVERSE-VIDEO reverse; **UNDERLINE is painted plain** because
 `term_get_size`. The main wrapper leaves through `cob_stop_run`, which
 restores the terminal.
 
-Not yet, against the target above: numeric anchoring on the point,
-`SECURE`, underline, `REQUIRED`/`FULL`, colour (parsed, ignored),
-`LINE PLUS` / `COLUMN PLUS`, nested screen groups, subscripted or
-LINKAGE items in a slot.
+## As built (Stage 58, 2026-08-30): the target above, reached
+
+The focus loop (`cob_screen_accept`) now does what the RM/Micro Focus
+notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
+
+- **Keys.** The terminal's bytes, with the ANSI cursor sequences folded
+  into codes (`scr_key`): arrows, Home/End, Delete, Shift-Tab (`ESC [
+  Z`; `ESC TAB` on terminals without one). A lone Escape is told from
+  a sequence by `term_kbhit`.
+- **Order.** Fields in declaration order. Enter, Tab and Down go to the
+  next; Enter on the last field submits, Tab and Down wrap; Up and
+  Shift-Tab go back. Escape abandons: no item is changed. End of input
+  submits (that is how the `.keys` files end).
+- **Text fields** are edited where they sit: the buffer starts as the
+  item's rendering (`USING`) or blanks (`TO`); typing overwrites at the
+  cursor and moves right (stays on the last column when full; `AUTO`
+  leaves); Left/Right/Home/End move; Backspace and Delete take a
+  character out and close the gap. `SECURE` echoes `*` for every
+  non-blank character. `FULL` refuses to leave a field neither empty
+  nor full; `REQUIRED` refuses to leave an empty one (a bell).
+- **Numeric fields** (a slot whose PICTURE is numeric or numeric-edited)
+  are edited on the point: digits typed before the point shift into the
+  integer part, `.` (or `,` under `DECIMAL-POINT IS COMMA`) moves to the
+  fraction, which fills left to right; `-` and `+` set the sign when the
+  picture has one; Backspace takes the last digit back; Home clears.
+  After every key the value is rendered through the slot's picture and
+  repainted (`Z9.99` shows ` 9.75`), the cursor standing at the point,
+  or after the last fraction digit, or on the last column of an integer
+  field. The first digit typed into a field replaces its value (Enter
+  alone keeps it); `AUTO` leaves when the fraction, or an integer
+  field, is full. The commit is `cob_put_num` at the picture's scale,
+  so a `99` slot on a `9(4)` item and a `Z9.99` slot on a `S9(3)V99`
+  item both land right. `REQUIRED` on a numeric field wants a non-zero
+  value.
+- **Look.** `UNDERLINE` is `term_set_attr(4)`, `LOWLIGHT` 2 -- the
+  emulator's term service passes any SGR code through, so `term.h` grew
+  only a comment. `FOREGROUND-COLOR`/`BACKGROUND-COLOR n` use COBOL's
+  numbering (0 black, 1 blue, 2 green, 3 cyan, 4 red, 5 magenta, 6
+  yellow, 7 white), mapped to ANSI's; painted and reset after the
+  field. `BLINK`, `BELL`, `ERASE` are accepted and do nothing.
+- **Placement.** `LINE PLUS n` is the previous slot's line plus n;
+  `COLUMN PLUS n` counts from the position after the previous slot, as
+  GnuCOBOL does; a slot without `LINE` takes the previous slot's line,
+  without `COLUMN` the position after it.
+
+Still not: nested screen groups (a group item carrying LINE/COLUMN for
+its children), subscripted or LINKAGE items in a slot, `CRT STATUS`
+and the exception keys. Each waits for a program.
+
+Testing: `tests/free/screen2.cbl` drives all of it from `screen2.keys`
+(arrows, Shift-Tab, a REQUIRED refusal, SECURE stars, both numeric
+shapes) and its ANSI stream is pinned, reviewed by hand like
+`screen.cbl`'s. majesty's `menu.s32x` walks MAIN, DAILY, the DATE PAGE
+and back on `dwdtmmlo`.
 
 Testing: `tests/free/screen.cbl` is driven by `screen.keys` on the
 emulator's stdin and its expected output is the ANSI stream, reviewed

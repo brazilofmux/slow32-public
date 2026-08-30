@@ -1072,7 +1072,7 @@ static Report *g_reports; static int g_nreport, g_rcap;
 /* ---- screens: SCREEN SECTION 01s as slot tables ------------------------ */
 
 typedef struct {
-    int kind, flags, line, col, width, srcline;
+    int kind, flags, line, col, width, srcline, fg, bg;
     Tok *value;
     int has_pic; char pic[PIC_MAXPAT]; PicInfo pi; int blank_zero;
     Sym *item;
@@ -7132,12 +7132,15 @@ static void parse_screen_section(void)
             if (fl <= 1 || fl > 49) die_at(fline, "bad level %d in a screen", fl);
             if (cur()->kind == T_WORD && !at_word("blank") && !at_word("line") && !at_word("column") && !at_word("col") &&
                 !at_word("value") && !at_word("pic") && !at_word("picture") && !at_word("highlight") && !at_word("underline") &&
-                !at_word("auto") && !at_word("reverse-video") && !at_word("from") && !at_word("to") && !at_word("using"))
+                !at_word("auto") && !at_word("auto-skip") && !at_word("reverse-video") && !at_word("from") && !at_word("to") && !at_word("using") &&
+                !at_word("secure") && !at_word("required") && !at_word("full") && !at_word("lowlight") && !at_word("blink") && !at_word("bell") &&
+                !at_word("beep") && !at_word("erase") && !at_word("foreground-color") && !at_word("background-color"))
                 advance();                                       /* a name on the slot */
             if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 16; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
             SField *f = &sc->f[sc->nf];
+            SField *prev = sc->nf ? &sc->f[sc->nf - 1] : NULL;
             memset(f, 0, sizeof *f);
-            f->srcline = fline; f->kind = -1;
+            f->srcline = fline; f->kind = -1; f->fg = 255; f->bg = 255;
             int blank_screen_entry = 0;
             while (cur()->kind != T_PERIOD) {
                 Tok *t = cur();
@@ -7149,13 +7152,21 @@ static void parse_screen_section(void)
                 }
                 if (accept_word("line")) {
                     accept_word("number"); accept_word("is");
-                    if (at_word("plus")) die_at(t->line, "LINE PLUS in a screen is not implemented; give the line");
+                    if (accept_word("plus") || accept_word("+")) {       /* relative to the previous slot's line */
+                        int n = 1;
+                        if (cur()->kind == T_NUM) { n = atoi(cur()->s); advance(); }
+                        f->line = (prev ? prev->line : 0) + n; continue;
+                    }
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after LINE");
                     f->line = atoi(cur()->s); advance(); continue;
                 }
                 if (accept_word("column") || accept_word("col")) {
                     accept_word("number"); accept_word("is");
-                    if (at_word("plus")) die_at(t->line, "COLUMN PLUS in a screen is not implemented; give the column");
+                    if (accept_word("plus") || accept_word("+")) {       /* from the position after the previous slot, as GnuCOBOL counts */
+                        int n = 1;
+                        if (cur()->kind == T_NUM) { n = atoi(cur()->s); advance(); }
+                        f->col = (prev && (!f->line || f->line == prev->line) ? prev->col + prev->width : 0) + n; continue;
+                    }
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
                     f->col = atoi(cur()->s); advance(); continue;
                 }
@@ -7185,11 +7196,21 @@ static void parse_screen_section(void)
                 if (accept_word("underline")) { f->flags |= COB_SF_UNDERLINE; continue; }
                 if (accept_word("auto") || accept_word("auto-skip")) { f->flags |= COB_SF_AUTO; continue; }
                 if (accept_word("reverse-video")) { f->flags |= COB_SF_REVERSE; continue; }
-                if (accept_word("bell") || accept_word("beep")) continue;
+                if (accept_word("bell") || accept_word("beep") || accept_word("blink")) continue;   /* no bell, no blink: painted plain */
                 if (accept_word("erase")) { accept_word("eol"); accept_word("eos"); continue; }
-                if (accept_word("foreground-color") || accept_word("background-color")) { accept_word("is"); if (cur()->kind == T_NUM) advance(); continue; }
-                if (accept_word("secure") || accept_word("required") || accept_word("full") || accept_word("lowlight") || accept_word("blink"))
-                    die_at(t->line, "the %s clause is not implemented", t->s);
+                if (accept_word("foreground-color") || accept_word("foreground-colour") || accept_word("background-color") || accept_word("background-colour")) {
+                    int bg = t->s[0] == 'b';
+                    accept_word("is");
+                    if (cur()->kind != T_NUM) die_at(t->line, "expected a colour number 0-7 after %s", t->s);
+                    int c = atoi(cur()->s); advance();
+                    if (c < 0 || c > 7) die_at(t->line, "a screen colour is 0-7 (black, blue, green, cyan, red, magenta, yellow, white)");
+                    if (bg) f->bg = c; else f->fg = c;
+                    continue;
+                }
+                if (accept_word("secure")) { f->flags |= COB_SF_SECURE; continue; }
+                if (accept_word("required")) { f->flags |= COB_SF_REQUIRED; continue; }
+                if (accept_word("full")) { f->flags |= COB_SF_FULL; continue; }
+                if (accept_word("lowlight")) { f->flags |= COB_SF_LOWLIGHT; continue; }
                 die_at(t->line, "unexpected %s in screen '%s'", tok_desc(t), sc->name);
             }
             expect_period();
@@ -7197,7 +7218,10 @@ static void parse_screen_section(void)
             if (f->kind < 0) die_at(fline, "a screen slot needs VALUE, or PIC with FROM, TO or USING");
             if (f->kind == COB_SCR_VALUE) { if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE"); f->width = f->value->len; }
             else { if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE"); f->width = f->pi.bytes; }
-            if (!f->line || !f->col) die_at(fline, "a screen slot needs LINE and COLUMN");
+            if (!f->line) f->line = prev ? prev->line : 1;        /* no LINE: the previous slot's line */
+            if (!f->col) f->col = prev && prev->line == f->line ? prev->col + prev->width : 1;   /* no COLUMN: right after it */
+            if ((f->flags & (COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL)) && f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
+                die_at(fline, "SECURE, REQUIRED and FULL belong to an input field (TO or USING)");
             sc->nf++;
         }
     }
@@ -7369,7 +7393,7 @@ static void emit_unit_data(void)
             SField *f = &sc->f[k];
             emit("\t.byte %d,%d", f->kind, f->flags);
             emit("\t.short %d", f->line); emit("\t.short %d", f->col);
-            emit("\t.short 0");                    /* pad: width is word-aligned in cob_scr_field */
+            emit("\t.byte %d,%d", f->fg, f->bg);   /* FOREGROUND-COLOR, BACKGROUND-COLOR (255: not given) */
             emit("\t.word %d", f->width);
             if (f->kind == COB_SCR_VALUE) emit("\t.word %s", lit_label((unsigned char *)f->value->s, f->value->len)); else emit("\t.word 0");
             if (f->has_pic) {

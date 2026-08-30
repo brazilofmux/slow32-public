@@ -1195,6 +1195,27 @@ tool. What is left is the COBOL program's own work at ~5,000
 instructions a record; the levers not taken are listed in
 performance.md.
 
+## Stage 58 — the Screen section as the user's RM notes have it **M** — DONE 2026-08-30
+
+The one item in the backlog with a program behind it (ISSUES-13;
+menu.cbl and taskdt.cbl, batch.sh --menu). The focus loop rewritten
+(docs/screen.md "As built (Stage 58)"): the terminal's cursor
+sequences folded into key codes with a lone Escape told apart by
+term_kbhit; fields in declaration order with Enter/Tab/Down forward,
+Up/Shift-Tab back, Enter on the last submitting, Escape abandoning;
+text edited in place with the cursor keys, Backspace and Delete
+closing the gap, SECURE echoing stars, REQUIRED and FULL refusing to
+leave; numeric fields edited on the point -- integer digits shifting
+in, `.` to the fraction, sign keys where the picture has a sign --
+rendered through the slot's picture after every key and committed
+with cob_put_num at the picture's scale; UNDERLINE and LOWLIGHT as
+SGR 4 and 2 (the term service passes codes through), COBOL colour
+numbers mapped to ANSI's; LINE PLUS / COLUMN PLUS, and a slot without
+LINE or COLUMN following the previous one. cob_scr_field's pad short
+now carries fg/bg. free/screen2 pins the stream (reviewed by hand;
+screen's re-pinned for the Backspace that now closes the gap); the
+harness is 81; menu.s32x walks MAIN, DAILY, DATE PAGE and back.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

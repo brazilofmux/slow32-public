@@ -150,13 +150,16 @@ One sorted table per key (docs/indexed.md "Alternate keys"); key of
 reference; partial-key START; 02/22 per the text. free/altkey; NIST IX
 28 of 29 programs and 405 of 406 tests matching GnuCOBOL.
 
-### 13. Screen: the user's eventual target
+### 13. ~~Screen: the user's eventual target~~ — RESOLVED 2026-08-30 (Stage 58)
 Recorded in `docs/screen.md` from RM COBOL / Micro Focus experience:
 TAB order across fields with Enter as submit, numeric fields anchored
-on the decimal point, `AUTO` (auto-tab when full), `SECURE` (`*`
-masking), and fields drawn in reverse video or underline. As built
-(Stage 8) the screen paints and accepts field by field. `UNDERLINE`
-also needs the term service to grow an attribute (`open-questions.md`).
+on the decimal point, `AUTO`, `SECURE`, reverse video or underline.
+All of it is in the focus loop now (screen.md, "As built (Stage 58)"):
+cursor keys, in-place text editing, numeric entry on the point through
+the slot's picture, SECURE/REQUIRED/FULL, underline and colours, LINE
+PLUS / COLUMN PLUS. free/screen2; menu.s32x walks its four screens.
+Left: nested screen groups, subscripted/LINKAGE slot items, CRT
+STATUS -- each when a program asks.
 
 ### 14. ~~OCCURS DEPENDING ON is laid out at its maximum~~ — a group MOVE lands 2026-08-30
 Still laid out at the maximum, which is the 1985 receiving length

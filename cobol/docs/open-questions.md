@@ -78,9 +78,10 @@ no.
 
 ## Screen
 
-**`UNDERLINE`.** `term.h` has normal/bold/reverse, not underline.
-v1 may paint without it. Adding a term opcode is a runtime change
-that nano and dBase do not need. Not ruled; Stage 8.
+**`UNDERLINE`.** ~~`term.h` has normal/bold/reverse, not underline.~~
+Ruled 2026-08-30 (Stage 58): the term service passes any SGR code
+through, so `term_set_attr(4)` underlines with no emulator change;
+`term.h`'s comment now says so. No new opcode.
 
 ## Report Writer
 

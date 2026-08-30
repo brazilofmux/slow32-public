@@ -21,7 +21,7 @@ void term_gotoxy(int row, int col);
 /* Clear: 0=full screen, 1=to end of line, 2=to end of screen. */
 void term_clear(int mode);
 
-/* Set text attribute: 0=normal, 1=bold, 7=reverse. */
+/* Set text attribute: an ANSI SGR code -- 0=normal, 1=bold, 2=dim, 4=underline, 7=reverse. */
 void term_set_attr(int attr);
 
 /* Blocking key read. Returns character or -1 on EOF. */
