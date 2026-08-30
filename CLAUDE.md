@@ -267,6 +267,32 @@ time ./tools/emulator/slow32-fast program.s32x  # Optimized version
 
 The regression suite helps catch unintended breakage. See `~/slow-32/regression/README.md` for details.
 
+## Public mirror — ~/slow32-public, and what stays out of it
+
+`~/slow32-public` (github.com/brazilofmux/slow32-public) is the copy the
+outside world points at; it cannot be renamed. It is **not** a git
+mirror: periodically a Claude Code session in that tree is asked to
+pull commits over from `~/slow-32`, re-creating them by hand. Both
+trees carry this file, so this section is addressed to that session
+as much as to sessions here.
+
+The private side of this tree is `~/majesty` (the user's own ledger)
+and what `cobol/`, `clip/` and `dbase/` learned from it. The project
+name and `~/majesty/...` paths are already public and fine. What must
+not cross, in files **or commit messages**:
+
+- ledger codes and the report file names built on them
+  (`*-<code>.prn`); say "the activity report", "one balance sheet";
+- account numbers, transaction ids, amounts and dates from the ledger
+  or from majesty's test fixtures (`tests/cases/*`);
+- vendor, payee and receipt names; family names other than the user's;
+- anything under `cobol/out/` (gitignored here; it has held real data).
+
+When a commit message here carries one of those, reword it on the way
+over rather than skipping the commit. Known: `59c8fe53` (cobol Stage
+16) quotes two fixture account numbers. `cobol/tests/data` is synthetic
+(checked 2026-08-30 against the real files) and may cross as is.
+
 ## Issue Tracking — two channels, two numbering spaces
 
 The project tracks work in two places on purpose. Know which one you are
