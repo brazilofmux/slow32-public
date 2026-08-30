@@ -80,7 +80,8 @@ for m in $MODULES; do
         inp=/dev/null; [ -f "$d/$name.DAT" ] && inp="$d/$name.DAT"
         # the X-card files start afresh for every program, as report.pl does
         rm -f "$run"/XXXXX* "$run/REPORT"
-        ( cd "$run" && timeout 120 "$EMU" "$lc.s32x" < "$inp" > "$name.out" 2> "$name.err" ); rc=$?
+        # report.pl runs every program with COB_SWITCH_1=ON and COB_SWITCH_2=OFF (NC254A reads them)
+        ( cd "$run" && COB_SWITCH_1=ON COB_SWITCH_2=OFF timeout 120 "$EMU" "$lc.s32x" < "$inp" > "$name.out" 2> "$name.err" ); rc=$?
         rep="$run/REPORT"
         # a few programs report on the console instead (report.pl reads NC121M's
         # and NC220M's .out); two write nothing and count as one pass when they exit 0

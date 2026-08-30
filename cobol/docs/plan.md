@@ -958,6 +958,19 @@ had been the program refused for that; free/vary4, oracle agreeing;
 NC201A, NC233A and NC243A match; the suite 272 of 303 compile, 5447
 of 5488 pass, none fail, 270 match.
 
+## Stage 42 — CLASS literals, switches from the environment **S** — DONE 2026-08-31
+
+`CLASS name IS "ABCD"` puts every character of the literal in the
+class (only one-character literals were taken). The two programs then
+wanted two more switch things: `SET SW-1 TO ON SW-2 TO OFF` -- several
+mnemonic groups in one SET -- and switches that are on at start:
+report.pl runs every program with COB_SWITCH_1=ON and COB_SWITCH_2=OFF
+in the environment and NC254A checks them, so `cob_init` reads
+COB_SWITCH_1..8 (the emulator passes the host environment through)
+and ccvs-run.sh sets the two as report.pl does. free/classlit, oracle
+agreeing; NC174A and NC254A match; the suite 274 of 303 compile, 5533
+of 5574 pass, none fail, 272 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

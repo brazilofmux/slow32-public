@@ -318,6 +318,13 @@ given, because majesty's `.prn` oracles were produced under it.
   item back to FROM, the outer augmented, run again; true: outward
   again; the items keep the values at which their conditions came true.
   NC201A, NC233A and NC243A match GnuCOBOL.
+- **`CLASS name IS "ABCD" ...`** (Stage 42): every character of a
+  literal is in the class, a one-character literal `THROUGH` another a
+  range, any number of either. **Switches from the environment**:
+  `COB_SWITCH_n=ON` sets SWITCH-n at start-up (GnuCOBOL's convention,
+  which NIST's report.pl relies on: NC254A expects SWITCH-1 on); `SET
+  a TO ON b TO OFF` takes several groups in one statement. NC174A and
+  NC254A match GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

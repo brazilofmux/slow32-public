@@ -61,9 +61,17 @@ static void cob_fatal(const char *msg)
 
 /* ---- program lifetime -------------------------------------------------- */
 
+extern int cob_switches[8];
 void cob_init(void)
 {
     out_n = 0;
+    /* SPECIAL-NAMES SWITCH-1..8 as the environment sets them: COB_SWITCH_n
+     * = ON (GnuCOBOL's convention, which NIST's report.pl relies on) */
+    for (int i = 0; i < 8; i++) {
+        char name[16]; snprintf(name, sizeof name, "COB_SWITCH_%d", i + 1);
+        const char *v = getenv(name);
+        cob_switches[i] = v && (v[0] == 'O' || v[0] == 'o') && (v[1] == 'N' || v[1] == 'n');
+    }
 }
 
 static int term_up;      /* the terminal service is initialised and raw */
@@ -1419,7 +1427,7 @@ void cob_move_odo(const void *src, void *dst, int n, int dstlen, int base, int e
 
 int cob_odo_length(int d, int base, int elem) { return d < 0 ? base : base + d * elem; }
 
-/* SPECIAL-NAMES SWITCH-1..8: all off until SET */
+/* SPECIAL-NAMES SWITCH-1..8: from the environment at start (cob_init), then SET */
 int cob_switches[8];
 
 /* ====================================================================== */

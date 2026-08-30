@@ -4456,18 +4456,20 @@ static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
     if (cur()->kind == T_WORD && switch_find(cur()->s) && switch_find(cur()->s)->on < 0) {
-        /* SET mnemonic-name ... TO ON | OFF */
-        int sws[8], ns = 0;
+        /* SET {mnemonic-name ... TO ON | OFF}... (NC174A: SET SW-1 TO ON SW-2 TO OFF) */
         while (cur()->kind == T_WORD && switch_find(cur()->s) && switch_find(cur()->s)->on < 0) {
-            if (ns < 8) sws[ns++] = switch_find(cur()->s)->sw;
-            advance();
+            int sws[8], ns = 0;
+            while (cur()->kind == T_WORD && switch_find(cur()->s) && switch_find(cur()->s)->on < 0) {
+                if (ns < 8) sws[ns++] = switch_find(cur()->s)->sw;
+                advance();
+            }
+            expect_word("to");
+            int v = 0;
+            if (accept_word("on")) v = 1; else if (accept_word("off")) v = 0;
+            else die_at(cur()->line, "SET switch: expected ON or OFF");
+            emit_la("r3", "cob_switches"); emit_li("r1", v);
+            for (int i = 0; i < ns; i++) emit("\tstw r3+%d, r1", 4 * (sws[i] - 1));
         }
-        expect_word("to");
-        int v = 0;
-        if (accept_word("on")) v = 1; else if (accept_word("off")) v = 0;
-        else die_at(cur()->line, "SET switch: expected ON or OFF");
-        emit_la("r3", "cob_switches"); emit_li("r1", v);
-        for (int i = 0; i < ns; i++) emit("\tstw r3+%d, r1", 4 * (sws[i] - 1));
         return;
     }
     while (at_operand()) { if (nr >= MAXOPS) die_at(cur()->line, "too many items in SET"); parse_ref(&rs[nr++]); }
@@ -6307,14 +6309,19 @@ static void parse_environment_division(void)
                         int any = 0;
                         while (cur()->kind == T_STR) {
                             Tok *lo = cur(); advance();
-                            if (lo->len != 1) die_at(lo->line, "CLASS %s: each literal is one character (this one is %d)", uc->name, lo->len);
-                            unsigned a = (unsigned char)lo->s[0], b = a;
-                            if (accept_word("through") || accept_word("thru")) {
+                            if (at_word("through") || at_word("thru")) {
+                                /* a range: one character to one character */
+                                advance();
+                                if (lo->len != 1) die_at(lo->line, "CLASS %s: THROUGH takes one-character literals", uc->name);
                                 if (cur()->kind != T_STR || cur()->len != 1) die_at(cur()->line, "CLASS %s: THROUGH needs a one-character literal", uc->name);
-                                b = (unsigned char)cur()->s[0]; advance();
+                                unsigned a = (unsigned char)lo->s[0], b = (unsigned char)cur()->s[0]; advance();
+                                if (b < a) { unsigned t = a; a = b; b = t; }
+                                for (unsigned c = a; c <= b; c++) uc->tab[c] = 1;
+                            } else {
+                                /* every character of the literal is in the class ("ABCD") */
+                                if (lo->len < 1) die_at(lo->line, "CLASS %s: an empty literal", uc->name);
+                                for (int k = 0; k < lo->len; k++) uc->tab[(unsigned char)lo->s[k]] = 1;
                             }
-                            if (b < a) { unsigned t = a; a = b; b = t; }
-                            for (unsigned c = a; c <= b; c++) uc->tab[c] = 1;
                             any = 1;
                         }
                         if (!any) die_at(cur()->line, "CLASS %s: expected a one-character literal", uc->name);
