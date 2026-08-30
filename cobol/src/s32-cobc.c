@@ -2832,6 +2832,41 @@ static Cond *cond_88(Ref *r, int neg)
     return all;
 }
 
+/* the relational operator at the cursor, consumed; -1 when there is none */
+static int parse_relop(void)
+{
+    Tok *t = cur();
+    int op = -1;
+    if (t->kind == T_OP) {
+        if (!strcmp(t->s, "=")) op = R_EQ;
+        else if (!strcmp(t->s, "<")) op = R_LT;
+        else if (!strcmp(t->s, ">")) op = R_GT;
+        else if (!strcmp(t->s, "<=")) op = R_LE;
+        else if (!strcmp(t->s, ">=")) op = R_GE;
+        else if (!strcmp(t->s, "<>")) op = R_NE;
+        if (op >= 0) advance();
+    } else if (t->kind == T_WORD) {
+        if (!strcmp(t->s, "equal") || !strcmp(t->s, "equals")) { advance(); accept_word("to"); op = R_EQ; }
+        else if (!strcmp(t->s, "greater")) {
+            advance(); accept_word("than"); op = R_GT;
+            if (at_word("or")) { advance(); expect_word("equal"); accept_word("to"); op = R_GE; }
+        } else if (!strcmp(t->s, "less")) {
+            advance(); accept_word("than"); op = R_LT;
+            if (at_word("or")) { advance(); expect_word("equal"); accept_word("to"); op = R_LE; }
+        }
+    }
+    return op;
+}
+
+/* Abbreviated combined relation conditions (X3.23 6.5.3): after a
+ * relation, AND/OR may be followed by just a relational operator and an
+ * object, or by an object alone; the subject -- and, with the object
+ * alone, the operator (NOT included when it preceded the operator) --
+ * are those of the last relation.  NOT before an abbreviation is the
+ * ordinary negation (parse_not); the truth is the same as the text's. */
+static Opnd g_abbr_x; static int g_abbr_op = -1, g_abbr_neg;
+static int g_cond_depth;
+
 static Cond *parse_simple(void)
 {
     int line = cur()->line;
@@ -2842,6 +2877,15 @@ static Cond *parse_simple(void)
             Cond *c = cond_new(C_SWITCH); c->klass = m->sw; c->neg = !m->on;
             return c;
         }
+    }
+    if (g_abbr_op >= 0 && (cur()->kind == T_OP || at_word("equal") || at_word("equals") || at_word("greater") || at_word("less") || at_word("is"))) {
+        /* [IS] [NOT] relop object: the last relation's subject */
+        accept_word("is");
+        int neg = accept_word("not");
+        int op = parse_relop();
+        if (op < 0) die_at(line, "expected a relational operator, found %s", tok_desc(cur()));
+        Opnd y = parse_cond_operand();
+        return cond_rel(&g_abbr_x, op, &y, neg);
     }
     Opnd x = parse_cond_operand();
     accept_word("is");
@@ -2881,37 +2925,19 @@ static Cond *parse_simple(void)
         }
     }
 
-    int op = -1;
-    if (t->kind == T_OP) {
-        if (!strcmp(t->s, "=")) op = R_EQ;
-        else if (!strcmp(t->s, "<")) op = R_LT;
-        else if (!strcmp(t->s, ">")) op = R_GT;
-        else if (!strcmp(t->s, "<=")) op = R_LE;
-        else if (!strcmp(t->s, ">=")) op = R_GE;
-        else if (!strcmp(t->s, "<>")) op = R_NE;
-        if (op >= 0) advance();
-    } else if (t->kind == T_WORD) {
-        if (!strcmp(t->s, "equal") || !strcmp(t->s, "equals")) { advance(); accept_word("to"); op = R_EQ; }
-        else if (!strcmp(t->s, "greater")) {
-            advance(); accept_word("than"); op = R_GT;
-            if (at_word("or")) { advance(); expect_word("equal"); accept_word("to"); op = R_GE; }
-        } else if (!strcmp(t->s, "less")) {
-            advance(); accept_word("than"); op = R_LT;
-            if (at_word("or")) { advance(); expect_word("equal"); accept_word("to"); op = R_LE; }
-        }
-    }
+    int op = parse_relop();
     if (op < 0) {
-        if (x.kind == O_REF && x.ref.sym->is_cond) {
-            if (neg == 0 && is_word(t, "not")) { /* handled above */ }
-            return cond_88(&x.ref, neg);
-        }
+        if (x.kind == O_REF && x.ref.sym->is_cond) return cond_88(&x.ref, neg);
+        if (g_abbr_op >= 0)             /* an object alone: the last relation's subject and operator */
+            return cond_rel(&g_abbr_x, g_abbr_op, &x, g_abbr_neg ^ neg);
         if (x.kind == O_REF && !neg)
-            die_at(line, "expected a relational operator after '%s' (abbreviated combined conditions are not implemented)", x.ref.sym->name);
+            die_at(line, "expected a relational operator after '%s'", x.ref.sym->name);
         die_at(line, "expected a relational operator, found %s", tok_desc(t));
     }
     Opnd y = parse_cond_operand();
     if (x.kind != O_REF && y.kind != O_REF && x.kind != O_EXPR && y.kind != O_EXPR)
         die_at(line, "a condition needs at least one data item");
+    g_abbr_x = x; g_abbr_op = op; g_abbr_neg = neg;
     return cond_rel(&x, op, &y, neg);
 }
 
@@ -2935,8 +2961,10 @@ static Cond *parse_and(void)
 
 static Cond *parse_cond(void)
 {
+    if (g_cond_depth++ == 0) g_abbr_op = -1;       /* a new condition: nothing to abbreviate yet */
     Cond *a = parse_and();
     while (accept_word("or")) a = cond_bin(C_OR, a, parse_and());
+    g_cond_depth--;
     return a;
 }
 
@@ -5363,6 +5391,8 @@ static void parse_evaluate(void)
             int is_cond = 0;
             if (cur()->kind == T_WORD || cur()->kind == T_OP) for (int k = 0; cw[k]; k++) if (!strcmp(cur()->s, cw[k])) is_cond = 1;
             if (cur()->kind == T_WORD && switch_find(cur()->s)) is_cond = 0;
+            /* a condition-name alone is a condition subject too (NC225A: ALSO IT-IS-81 ... WHEN ... ALSO TRUE) */
+            if (subj[ns].o.kind == O_REF && subj[ns].o.ref.sym->is_cond) is_cond = 1;
             if (is_cond) { g_tp = start; subj[ns].kind = 3; subj[ns].c = parse_cond(); }
         }
         ns++;

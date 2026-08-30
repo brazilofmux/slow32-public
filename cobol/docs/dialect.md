@@ -336,6 +336,17 @@ given, because majesty's `.prn` oracles were produced under it.
   (NC108M). **Procedure-names of digits only** (`3.`, `GO TO 3 4 5
   DEPENDING ON n`, NC107A) are paragraphs like any other. NC107A (177
   tests) and NC108M match GnuCOBOL.
+- **Abbreviated combined relation conditions** (Stage 44, X3.23
+  6.5.3): after a relation, `AND`/`OR` may be followed by a relational
+  operator and an object (`A > B AND < C`, `NOT EQUAL TO 12 AND GREATER
+  THAN 10`) or by an object alone (`A = 1 OR 7 OR 15`, `OR -11 + F`);
+  the subject -- and, with an object alone, the operator, `NOT`
+  included when it preceded the operator -- are the last relation's.
+  `NOT` before an abbreviation negates it. The abbreviations take part
+  in the ordinary AND-before-OR precedence and may sit in parentheses.
+  A condition-name alone is a condition subject of `EVALUATE`, matched
+  by `WHEN TRUE`/`FALSE` (NC225A). NC205A, NC211A and NC225A match
+  GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

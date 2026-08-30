@@ -992,6 +992,25 @@ ccvs-run.sh now does in perl. free/currency, oracle agreeing; NC107A
 is now closed; the 27 refused programs' next stops are listed in
 ISSUES-17.
 
+## Stage 44 — abbreviated combined relation conditions **S** — DONE 2026-08-31
+
+The last nucleus item ISSUES-10 named. `parse_simple` remembers the
+last relation's subject, operator and NOT; an `AND`/`OR` followed by a
+relational operator and an object, or by an object alone that is not a
+condition-name and is not itself followed by an operator, builds the
+relation on that subject (6.5.3), and `parse_not` above it supplies
+the negation, so the abbreviations fall into the ordinary precedence
+and parentheses. The relational-operator parse is factored out
+(`parse_relop`). NC225A then wanted a condition-name alone as an
+EVALUATE subject (`ALSO IT-IS-81`, answered by `WHEN ... ALSO TRUE`).
+free/abbrcond, oracle agreeing; NC205A, NC211A, NC225A match, and so
+does RL's last refused program, which makes RL complete; the suite
+(a full run, the earlier running tallies had drifted by one) 280 of
+303 compile, 6348 of 6390 pass, none fail, 277 match.
+Ruling recorded this stage: the 85 text over GnuCOBOL -- what the
+text forbids (a non-integer numeric MOVEd to an alphanumeric item,
+three NC programs) stays refused.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

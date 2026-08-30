@@ -129,8 +129,8 @@ out in 85, see ISSUES-4a), then its table `SORT` (ISSUES-4a / GitHub #10).
 ## B. Language — known gaps no program has asked for
 
 ### 10. Nucleus level 2 remainder
-~~`MOVE/ADD/SUBTRACT CORRESPONDING`~~ (Stage 36), abbreviated
-combined relation conditions (`a > b and < c`), ~~nested programs~~
+~~`MOVE/ADD/SUBTRACT CORRESPONDING`~~ (Stage 36), ~~abbreviated
+combined relation conditions (`a > b and < c`)~~ (Stage 44), ~~nested programs~~
 (Stage 29), ~~`REPLACE`, `COPY ... REPLACING`~~ (Stage 26, 2026-08-31),
 ~~the full `INSPECT` (BEFORE/AFTER INITIAL, CONVERTING, the one-pass
 rule)~~ (Stage 35). Each is a diagnostic today, never silence.
@@ -222,8 +222,8 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **5724 of 5765 tests pass, none fail, 274
-programs match GnuCOBOL's tally exactly** (IC and RW complete) (Stage 23; alternate keys
+them by their own reports: **6348 of 6390 tests pass, none fail, 277
+programs match GnuCOBOL's tally exactly** (IC, RL, RW and IX complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
 the runner not building `lib/`, then `CALL identifier`/`ON
@@ -248,17 +248,19 @@ AFTER` levels~~ (done, with WITH TEST AFTER across levels: NC201A,
 NC233A, NC243A match), ~~a multi-character `CLASS` literal~~ (done, with
 switches from the environment and SET groups: NC174A, NC254A match),
 ~~`CURRENCY SIGN`~~ (done, with BLANK WHEN ZERO on a plain numeric item
-and procedure-names of digits: NC107A, NC108M match). **What the 27
+and procedure-names of digits: NC107A, NC108M match). **What the 23
 refused programs stop on now (2026-08-31):** a non-integer numeric
 MOVEd to an alphanumeric item (NC105A, NC114M, NC124A: forbidden by the
-85 text, GnuCOBOL allows it), "too many operands" (NC106A, NC176A),
-abbreviated combined relations (NC205A, NC211A, NC225A -- ISSUES-10),
+85 text, GnuCOBOL allows it -- the user's ruling is to stay with the
+text, so these stay refused), "too many operands" (NC106A, NC176A),
+~~abbreviated combined relations (NC205A, NC211A, NC225A)~~ (done, Stage 44),
 ACCEPT FROM DATE/DAY/TIME (NC214M), a literal continued in a way the
 reader refuses (NC215A), a STRING receiver that is a group (NC217A),
 INITIALIZE REPLACING (NC223A), SEARCH with no WHEN (NC237A), an
 ambiguous subscript name (NC246A), `-` as a data-name start (NC250A),
 NC302M's ENVIRONMENT DIVISION, ALTER (NC303M), SYMBOLIC CHARACTERS
-(NC401M); SQ 5, RL 1, ST 3 not yet listed here., `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
+(NC401M); SQ 5, ST 3 not yet listed here (RL's last program was the
+abbreviated condition: RL is complete)., `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01
 report group (2), `EXTERNAL` (2), a multi-character `CLASS` literal
 (2), `CURRENCY SIGN` (1). Then the real gate: run each compiled
