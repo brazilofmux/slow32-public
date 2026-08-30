@@ -5211,14 +5211,79 @@ static Opnd ref_opnd(const Ref *r)
     return o;
 }
 
+/* [BEFORE|AFTER] [INITIAL] operand, either or both, after a TALLYING or
+ * REPLACING phrase: the runtime is told the range for the next phrase */
+static void parse_inspect_range(void)
+{
+    Opnd before, after; int hb = 0, ha = 0;
+    for (;;) {
+        if (accept_word("before")) { if (hb) die_at(cur()->line, "two BEFORE phrases"); accept_word("initial"); parse_operand(&before); hb = 1; }
+        else if (accept_word("after")) { if (ha) die_at(cur()->line, "two AFTER phrases"); accept_word("initial"); parse_operand(&after); ha = 1; }
+        else break;
+    }
+    if (!hb && !ha) return;
+    Arg a[4];
+    if (hb) pattern_args(&before, &a[0], &a[1]); else { a[0] = arg_imm(0); a[1] = arg_imm(0); }
+    if (ha) pattern_args(&after, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
+    emit_args(a, 4);
+    emit_call("cob_inspect_range");
+}
+
+/* after a run: each TALLYING phrase's count added to its item */
+static void emit_inspect_tallies(Ref *tallies, int *tally_ph, int nt)
+{
+    for (int t = 0; t < nt; t++) {
+        Ref *tally = &tallies[t];
+        emit_li("r3", tally_ph[t]);
+        emit_call("cob_inspect_count");
+        emit("\tstw sp+%d, r1", SLOT_C);
+        if (is_hot_int(tally->sym)) {
+            emit_ref_addr(tally, "r3");
+            emit_load_int(tally->sym, "r3", "r1");
+            emit("\tldw r2, sp+%d", SLOT_C);
+            emit("\tadd r1, r1, r2");
+            emit_trunc(tally->sym);
+            emit_store_int(tally->sym, "r3", "r1");
+        } else {
+            emit("\tldw r3, sp+%d", SLOT_C);
+            emit("\tsrai r4, r3, 31");
+            emit_li("r5", 0);
+            emit_call("cob_push_lit");
+            emit_top_op(tally, "cob_top_addto", 0);
+            emit_call("cob_drop");
+        }
+    }
+}
+
 static void parse_inspect(void)
 {
     Ref item; parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
     Opnd itemo = ref_opnd(&item);
     operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
-    if (accept_word("converting")) die_at(cur()->line, "INSPECT CONVERTING is not implemented (after v1)");
-    int any = 0;
+    /* the phrases are registered with the runtime, which makes the one pass
+     * the text describes (cob_inspect_run); then each tally is added.  A
+     * statement with both TALLYING and REPLACING is two statements, the
+     * tallying pass first (X3.23 general rule): two begin/run rounds. */
+    { Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? arg_imm(0) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin"); }
+    Ref tallies[32]; int tally_ph[32], nt = 0, np = 0, any = 0;
+    if (accept_word("converting")) {
+        Opnd from, to; parse_operand(&from); expect_word("to"); parse_operand(&to);
+        int fl = from.kind == O_FIG ? 1 : opnd_size(&from), tl = to.kind == O_FIG ? 1 : opnd_size(&to);
+        if (fl > 0 && tl > 0 && fl != tl && to.kind != O_FIG) die_at(to.line, "INSPECT CONVERTING: the two operands must be the same length");
+        parse_inspect_range();
+        Arg a[3], x;
+        if (to.kind == O_FIG && fl > 1) {
+            /* CONVERTING "abc" TO SPACE: the figurative is as long as the other */
+            unsigned char *f = xmalloc((size_t)fl); memset(f, fig_byte(to.tok->s), (size_t)fl);
+            a[2] = arg_label(lit_label(f, fl)); free(f);
+        } else pattern_args(&to, &a[2], &x);
+        pattern_args(&from, &a[0], &a[1]);
+        emit_args(a, 3);
+        emit_call("cob_inspect_convert");
+        emit_call("cob_inspect_run");
+        return;
+    }
     if (accept_word("tallying")) {
         any = 1;
         for (;;) {
@@ -5226,63 +5291,76 @@ static void parse_inspect(void)
             if (!is_int_item(tally.sym)) die_at(tally.line, "the INSPECT tally '%s' must be an integer item", tally.sym->name);
             expect_word("for");
             for (;;) {
-                int kind = 0; Opnd pat; memset(&pat, 0, sizeof pat);
+                int kind = 0;
                 if (accept_word("characters")) kind = 0;
-                else if (accept_word("all")) { kind = 1; parse_operand(&pat); }
-                else if (accept_word("leading")) { kind = 2; parse_operand(&pat); }
+                else if (accept_word("all")) kind = 1;
+                else if (accept_word("leading")) kind = 2;
                 else die_at(cur()->line, "expected CHARACTERS, ALL or LEADING in INSPECT TALLYING");
-                if (at_word("before") || at_word("after")) die_at(cur()->line, "INSPECT ... BEFORE/AFTER INITIAL is not implemented");
-                Arg a[5];
-                a[0] = arg_ref(&item); a[1] = arg_len(&itemo); a[2] = arg_imm(kind);
-                if (kind) pattern_args(&pat, &a[3], &a[4]); else { a[3] = arg_imm(0); a[4] = arg_imm(0); }
-                emit_args(a, 5);
-                emit_call("cob_inspect_tally");
-                emit("\tstw sp+%d, r1", SLOT_C);
-                if (is_hot_int(tally.sym)) {
-                    emit_ref_addr(&tally, "r3");
-                    emit_load_int(tally.sym, "r3", "r1");
-                    emit("\tldw r2, sp+%d", SLOT_C);
-                    emit("\tadd r1, r1, r2");
-                    emit_trunc(tally.sym);
-                    emit_store_int(tally.sym, "r3", "r1");
-                } else {
-                    emit("\tldw r3, sp+%d", SLOT_C);
-                    emit("\tsrai r4, r3, 31");
-                    emit_li("r5", 0);
-                    emit_call("cob_push_lit");
-                    emit_top_op(&tally, "cob_top_addto", 0);
-                    emit_call("cob_drop");
+                /* CHARACTERS [range]; ALL|LEADING {operand [range]}... */
+                for (;;) {
+                    Opnd pat; memset(&pat, 0, sizeof pat);
+                    if (kind) parse_operand(&pat);
+                    parse_inspect_range();
+                    if (np == 32) die_at(cur()->line, "INSPECT: more than 32 phrases");
+                    Arg a[5];
+                    a[0] = arg_imm(1); a[1] = arg_imm(kind);
+                    if (kind) pattern_args(&pat, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
+                    a[4] = arg_imm(0);
+                    emit_args(a, 5);
+                    emit_call("cob_inspect_phrase");
+                    if (nt == 32) die_at(tally.line, "INSPECT: more than 32 tallies");
+                    tallies[nt] = tally; tally_ph[nt] = np; nt++; np++;
+                    /* another operand under the same ALL/LEADING: not a keyword, not the next tally (an identifier followed by FOR) */
+                    if (!kind || !at_operand() || at_word("characters") || at_word("all") || at_word("leading") || at_word("replacing")) break;
+                    if (cur()->kind == T_WORD && is_word(peek(1), "for")) break;
                 }
                 if (!(at_word("characters") || at_word("all") || at_word("leading"))) break;
             }
             if (!at_operand() || at_word("replacing")) break;
         }
     }
+    if (at_word("replacing") && nt) {
+        /* the tallying pass first, its counts added; then the replacing pass */
+        emit_call("cob_inspect_run");
+        emit_inspect_tallies(tallies, tally_ph, nt);
+        nt = 0; np = 0;
+        Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? arg_imm(0) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin");
+    }
     if (accept_word("replacing")) {
         any = 1;
         for (;;) {
-            int kind = 0; Opnd pat, rep; memset(&pat, 0, sizeof pat); memset(&rep, 0, sizeof rep);
-            if (accept_word("characters")) { kind = 0; expect_word("by"); parse_operand(&rep); }
-            else {
-                if (accept_word("all")) kind = 1;
-                else if (accept_word("leading")) kind = 2;
-                else if (accept_word("first")) kind = 3;
-                else die_at(cur()->line, "expected CHARACTERS, ALL, LEADING or FIRST in INSPECT REPLACING");
-                parse_operand(&pat); expect_word("by"); parse_operand(&rep);
-                int pl = pat.kind == O_FIG ? 1 : opnd_size(&pat), rl = rep.kind == O_FIG ? 1 : opnd_size(&rep);
-                if (pl > 0 && rl > 0 && pl != rl) die_at(rep.line, "INSPECT REPLACING: the two operands must be the same length");
+            int kind = 0;
+            if (accept_word("characters")) kind = 0;
+            else if (accept_word("all")) kind = 1;
+            else if (accept_word("leading")) kind = 2;
+            else if (accept_word("first")) kind = 3;
+            else die_at(cur()->line, "expected CHARACTERS, ALL, LEADING or FIRST in INSPECT REPLACING");
+            /* CHARACTERS BY rep [range]; ALL|LEADING|FIRST {pat BY rep [range]}... */
+            for (;;) {
+                Opnd pat, rep; memset(&pat, 0, sizeof pat); memset(&rep, 0, sizeof rep);
+                if (kind) parse_operand(&pat);
+                expect_word("by"); parse_operand(&rep);
+                if (kind) {
+                    int pl = pat.kind == O_FIG ? 1 : opnd_size(&pat), rl = rep.kind == O_FIG ? 1 : opnd_size(&rep);
+                    if (pl > 0 && rl > 0 && pl != rl) die_at(rep.line, "INSPECT REPLACING: the two operands must be the same length");
+                }
+                parse_inspect_range();
+                if (np == 32) die_at(cur()->line, "INSPECT: more than 32 phrases");
+                Arg a[5];
+                a[0] = arg_imm(0); a[1] = arg_imm(kind);
+                if (kind) pattern_args(&pat, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(1); }
+                Arg rl; pattern_args(&rep, &a[4], &rl);
+                emit_args(a, 5);
+                emit_call("cob_inspect_phrase");
+                np++;
+                if (!kind || !at_operand() || at_word("characters") || at_word("all") || at_word("leading") || at_word("first")) break;
             }
-            if (at_word("before") || at_word("after")) die_at(cur()->line, "INSPECT ... BEFORE/AFTER INITIAL is not implemented");
-            Arg a[6];
-            a[0] = arg_ref(&item); a[1] = arg_len(&itemo); a[2] = arg_imm(kind);
-            if (kind) pattern_args(&pat, &a[3], &a[4]); else { a[3] = arg_imm(0); a[4] = arg_imm(1); }
-            Arg rl; pattern_args(&rep, &a[5], &rl);
-            emit_args(a, 6);
-            emit_call("cob_inspect_replace");
             if (!(at_word("characters") || at_word("all") || at_word("leading") || at_word("first"))) break;
         }
     }
-    if (!any) die_at(item.line, "INSPECT needs TALLYING or REPLACING");
+    if (!any) die_at(item.line, "INSPECT needs TALLYING, REPLACING or CONVERTING");
+    emit_call("cob_inspect_run");
+    emit_inspect_tallies(tallies, tally_ph, nt);
 }
 
 /* ---- INITIALIZE -------------------------------------------------------- */

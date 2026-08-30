@@ -240,6 +240,24 @@ given, because majesty's `.prn` oracles were produced under it.
   ON x element; `Ref.rm_odo`), so every path that handles reference
   modification handles it. Receivers are not operands and keep the
   maximum, the 85 rule. NC247A matches GnuCOBOL.
+- **`INSPECT` as the text describes it** (Stage 35): one pass over the
+  item, the phrases tried in order at each position; a phrase that
+  matches takes the positions -- tallied or replaced -- and no later
+  phrase sees them; with no match the position is passed over. `[BEFORE
+  |AFTER] [INITIAL] x` on any phrase bounds its range, found in the
+  item's original contents from its first character (AFTER absent: the
+  phrase sees nothing; BEFORE absent: to the end). LEADING ends at the
+  first position of its range the phrase does not take; FIRST takes
+  once. A statement with both TALLYING and REPLACING is two
+  statements, the tallying pass first. `ALL`/`LEADING`/`FIRST` take a
+  list of operands (`FOR LEADING "S" AFTER x "T" AFTER y`).
+  `CONVERTING from TO to [range]` is one single-character replacing
+  phrase per character. A signed numeric DISPLAY item with the sign in
+  a digit is inspected as though moved to an unsigned item, the sign
+  put back afterwards. The compiler registers the phrases
+  (`cob_inspect_begin/range/phrase/convert`), the runtime makes the
+  pass (`cob_inspect_run`), the counts are added (`cob_inspect_count`).
+  NIST NC115A, NC122A, NC216A (57 tests) and NC221A match GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
@@ -380,8 +398,8 @@ given, because majesty's `.prn` oracles were produced under it.
 ## COBOL 85 we will grow into, not v1
 
 Nucleus Level 2 at full width (abbreviated conditions,
-`CORRESPONDING`, `INSPECT REPLACING`/`CONVERTING`; `UNSTRING` landed in
-Stage 34,
+`CORRESPONDING`; `UNSTRING` landed in Stage 34, `INSPECT` at full width
+in Stage 35,
 `REPLACE` and `COPY REPLACING` landed in Stage 26, contained programs
 with `GLOBAL` in Stage 29). `STRING`, `INSPECT TALLYING`, `INITIALIZE` and
 reference modification are **in v1**, at the width taskdt uses them —

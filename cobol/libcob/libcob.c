@@ -2308,30 +2308,96 @@ int cob_refmod_len(const cob_desc *base, int start, int len)
     return len;
 }
 
-/* INSPECT ... TALLYING: kind 0 CHARACTERS, 1 ALL, 2 LEADING; the count
- * of occurrences in item[0..n) (BEFORE/AFTER INITIAL narrow n and the
- * start on the compiler side) */
-int cob_inspect_tally(const char *p, int n, int kind, const char *pat, int plen)
+/* INSPECT, as X3.23 VIII (NC) describes it: one pass over the item, the
+ * phrases tried in order at each position; a phrase that matches takes
+ * the positions (tallied or replaced), which no later phrase sees; with
+ * no match the position is passed over.  BEFORE/AFTER INITIAL bound
+ * each phrase's range, found in the item's original contents from its
+ * first character (AFTER absent: the phrase sees nothing; BEFORE
+ * absent: to the end).  LEADING ends at the first position of its range
+ * the phrase does not take; FIRST takes once.  The compiler registers
+ * the phrases (cob_inspect_range before each, when it has one), runs
+ * the pass, then adds each TALLYING phrase's count to its item. */
+static const char *ci_before, *ci_after; static int ci_blen, ci_alen;
+void cob_inspect_range(const char *bp, int bl, const char *ap, int al)
 {
-    int count = 0;
-    if (kind == 0) return n;
-    if (plen < 1 || plen > n) return 0;
-    for (int i = 0; i + plen <= n; ) {
-        if (!memcmp(p + i, pat, plen)) { count++; i += plen; }
-        else { if (kind == 2) break; i++; }
-    }
-    return count;
+    ci_before = bp; ci_blen = bl; ci_after = ap; ci_alen = al;
 }
-
-/* INSPECT ... REPLACING: kind 0 CHARACTERS, 1 ALL, 2 LEADING, 3 FIRST;
- * pattern and replacement are the same length (the standard's rule) */
-void cob_inspect_replace(char *p, int n, int kind, const char *pat, int plen, const char *rep)
+static int ci_find(const char *p, int n, const char *x, int xl)
 {
-    if (kind == 0) { for (int i = 0; i < n; i++) p[i] = rep[0]; return; }
-    if (plen < 1 || plen > n) return;
-    for (int i = 0; i + plen <= n; ) {
-        if (!memcmp(p + i, pat, plen)) { memcpy(p + i, rep, plen); i += plen; if (kind == 3) return; }
-        else { if (kind == 2) break; i++; }
+    if (xl < 1) return -1;
+    for (int i = 0; i + xl <= n; i++) if (!memcmp(p + i, x, xl)) return i;
+    return -1;
+}
+static struct {
+    char *item; int n, np;
+    struct { int tallying, kind, plen, lo, hi, done, count; const char *pat, *rep; } ph[32];
+    char *real; int signpos, neg;       /* a signed DISPLAY item: inspected without its embedded sign */
+} cin;
+static char ci_copy[4096];
+/* a signed numeric DISPLAY item with the sign in a digit is inspected as
+ * though it had been moved to an unsigned item of the same size (X3.23
+ * INSPECT general rules); the sign goes back afterwards */
+void cob_inspect_begin(char *item, int n, const cob_desc *d)
+{
+    cin.item = item; cin.n = n; cin.np = 0; cin.real = NULL; cin.signpos = -1; cin.neg = 0;
+    if (d && d->cat == COB_NUM && d->usage == COB_U_DISPLAY && (d->flags & COB_F_SIGNED) && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && n > 0 && n <= (int)sizeof ci_copy) {
+        int sp = (d->flags & COB_F_LEAD) ? 0 : n - 1;
+        unsigned char c = (unsigned char)item[sp];
+        memcpy(ci_copy, item, (size_t)n);
+        if (c >= 'p' && c <= 'y') { cin.neg = 1; ci_copy[sp] = (char)(c - 'p' + '0'); }
+        cin.real = item; cin.item = ci_copy; cin.signpos = sp;
+    }
+}
+void cob_inspect_phrase(int tallying, int kind, const char *pat, int plen, const char *rep)
+{
+    if (cin.np == 32) cob_fatal("INSPECT: more than 32 phrases");
+    int lo = 0, hi = cin.n;
+    if (ci_after) { int i = ci_find(cin.item, cin.n, ci_after, ci_alen); lo = i < 0 ? cin.n : i + ci_alen; }
+    if (ci_before) { int i = ci_find(cin.item, cin.n, ci_before, ci_blen); if (i >= 0) hi = i; }
+    if (hi < lo) hi = lo;
+    ci_before = ci_after = NULL; ci_blen = ci_alen = 0;
+    cin.ph[cin.np].tallying = tallying; cin.ph[cin.np].kind = kind; cin.ph[cin.np].pat = pat;
+    cin.ph[cin.np].plen = kind == 0 ? 1 : plen; cin.ph[cin.np].rep = rep;
+    cin.ph[cin.np].lo = lo; cin.ph[cin.np].hi = hi; cin.ph[cin.np].done = 0; cin.ph[cin.np].count = 0;
+    cin.np++;
+}
+void cob_inspect_run(void)
+{
+    for (int pos = 0; pos < cin.n; ) {
+        int took = 0, taker = -1;
+        for (int k = 0; k < cin.np && !took; k++) {
+            if (cin.ph[k].done || pos < cin.ph[k].lo || pos + cin.ph[k].plen > cin.ph[k].hi) continue;
+            int m = cin.ph[k].kind == 0 || !memcmp(cin.item + pos, cin.ph[k].pat, cin.ph[k].plen);
+            if (!m) continue;
+            if (cin.ph[k].tallying) cin.ph[k].count++;
+            else memcpy(cin.item + pos, cin.ph[k].rep, cin.ph[k].plen);
+            if (cin.ph[k].kind == 3) cin.ph[k].done = 1;
+            took = cin.ph[k].plen; taker = k;
+        }
+        /* a LEADING phrase whose range has begun and which did not take
+         * this position is over */
+        for (int k = 0; k < cin.np; k++)
+            if (cin.ph[k].kind == 2 && !cin.ph[k].done && pos >= cin.ph[k].lo && taker != k) cin.ph[k].done = 1;
+        pos += took ? took : 1;
+    }
+    if (cin.real) {
+        memcpy(cin.real, cin.item, (size_t)cin.n);
+        unsigned char c = (unsigned char)cin.real[cin.signpos];
+        if (cin.neg && c >= '0' && c <= '9') cin.real[cin.signpos] = (char)('p' + (c - '0'));
+        cin.item = cin.real; cin.real = NULL;
+    }
+}
+int cob_inspect_count(int k) { return cin.ph[k].count; }
+
+/* CONVERTING from TO to [range]: one single-character replacing phrase per
+ * character of `from`, all in the range set for the next phrase */
+void cob_inspect_convert(const char *from, int n, const char *to)
+{
+    const char *bp = ci_before, *ap = ci_after; int bl = ci_blen, al = ci_alen;
+    for (int i = 0; i < n; i++) {
+        ci_before = bp; ci_after = ap; ci_blen = bl; ci_alen = al;
+        cob_inspect_phrase(0, 1, from + i, 1, to + i);
     }
 }
 

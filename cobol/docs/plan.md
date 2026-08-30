@@ -847,6 +847,26 @@ the maximum. free/unstring, oracle agreeing; NC 53 of 95, 2176 of
 2181; the suite 252 of 303 compile, 4563 of 4605 pass, none fail, 249
 match.
 
+## Stage 35 — INSPECT as the text describes it **M** — DONE 2026-08-31
+
+BEFORE/AFTER INITIAL was the ask; the four programs then taught the
+rest. The phrase itself is a range per phrase, found in the item's
+original contents. But a fixture written for it disagreed with
+GnuCOBOL on a two-phrase TALLYING, and the text is with GnuCOBOL: one
+INSPECT is one pass, the phrases tried in order at each position, a
+matched position taken from every later phrase. The runtime was
+per-phrase; it now registers the phrases (`cob_inspect_phrase`, with
+`cob_inspect_range` before each that has one) and makes the pass
+(`cob_inspect_run`), the compiler adding the counts after
+(`cob_inspect_count`). The first single-pass build regressed twelve
+NIST tests -- a statement with both TALLYING and REPLACING is two
+statements, the tallying pass first -- and NC216A added CONVERTING
+(one single-character phrase per character), operand lists under one
+ALL/LEADING, and the signed DISPLAY item inspected without its
+embedded sign. free/inspinit, oracle agreeing; NC115A, NC122A, NC216A,
+NC221A match; the suite 256 of 303 compile, 4692 of 4734 pass, none
+fail, 253 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
