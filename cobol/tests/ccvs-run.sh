@@ -31,6 +31,19 @@ for m in $MODULES; do
     # read files the programs before them wrote (the X-card files)
     run="$W/$m"; mkdir -p "$run"
     for x in "$d"/*.DAT; do [ -e "$x" ] && cp "$x" "$run/" 2>/dev/null; done
+    # the module's library programs (IC: the CALLed subprograms), compiled
+    # once as modules and linked into every main, as report.pl's compile_lib
+    libobjs=()
+    for x in "$d"/lib/*.CBL; do
+        [ -e "$x" ] || continue
+        ln="$(basename "$x" .CBL | tr 'A-Z' 'a-z')"
+        if "$CDIR/out/s32-cobc" -fixed -I "$CCVS/copy" -m -o "$run/lib-$ln.s" "$x" >"$run/lib-$ln.compile.log" 2>&1 &&
+           "$ROOT/tools/assembler/slow32asm" "$run/lib-$ln.s" "$run/lib-$ln.s32o" >/dev/null 2>&1; then
+            libobjs+=("$run/lib-$ln.s32o")
+        else
+            printf '  lib/%-7s does not compile   (%s)\n' "$(basename "$x" .CBL)" "$(grep -m1 -i error "$run/lib-$ln.compile.log" | sed 's/^[^:]*:[0-9]*: *error: *//' | cut -c1-60)"
+        fi
+    done
     for f in "$d"/*.CBL; do
         [ -e "$f" ] || continue
         name="$(basename "$f" .CBL)"
@@ -40,7 +53,7 @@ for m in $MODULES; do
         cp "$f" "$run/$lc.cbl"
         # GnuCOBOL's tally for this program: total pass fail deleted
         exp="$(grep "^$name.CBL" "$CCVS/$m.txt" 2>/dev/null | head -1 | awk '{print $2, $3, $4, $5}')"
-        if ! "$CDIR/compile.sh" -fixed -I "$CCVS/copy" "$run/$lc.cbl" -o "$run/$lc.s32x" >"$run/$name.compile.log" 2>&1; then
+        if ! "$CDIR/compile.sh" -fixed -I "$CCVS/copy" "$run/$lc.cbl" "${libobjs[@]+"${libobjs[@]}"}" -o "$run/$lc.s32x" >"$run/$name.compile.log" 2>&1; then
             t_nocomp=$((t_nocomp+1))
             printf '  %-7s %-24s (%s)\n' "$name" "does not compile" "$(grep -m1 -i error "$run/$name.compile.log" | sed 's/^[^:]*:[0-9]*: *error: *//' | cut -c1-60)"
             continue
