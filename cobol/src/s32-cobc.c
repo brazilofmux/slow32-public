@@ -90,6 +90,7 @@ static Alphabet g_alphabet[16];
 static int g_nalphabet;
 static int g_collate = -1;                  /* PROGRAM COLLATING SEQUENCE: an alphabet index, -1 native */
 static char g_collate_name[64];
+static char g_crt_status_name[64];   /* SPECIAL-NAMES CRT STATUS IS name */
 /* g_lowval / g_highval (declared with fig_byte): LOW-VALUE / HIGH-VALUE under the program collating sequence */
 
 /* I-O-CONTROL SAME RECORD AREA FOR f1 f2 ...: the files share one record
@@ -3297,7 +3298,19 @@ static void parse_accept(void)
     Tok *t = cur();
     if (t->kind == T_WORD) {
         Screen *sc = screen_find(t->s);
-        if (sc) { advance(); emit_screen_addr("r3", sc); emit_call("cob_screen_accept"); return; }
+        if (sc) {
+            advance();
+            if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
+                Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line);
+                if (g_sym[cs->record].is_linkage) die_at(t->line, "a LINKAGE item cannot be the CRT STATUS yet");
+                char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
+                emit_la("r3", b);
+                snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
+                emit_la("r4", b);
+                emit_call("cob_crt_status");
+            }
+            emit_screen_addr("r3", sc); emit_call("cob_screen_accept"); return;
+        }
     }
     Ref r; parse_ref(&r);
     if (accept_word("from")) {
@@ -6078,6 +6091,7 @@ struct UnitSave {
     char progid[64];
     int nreport, nscreen, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
     char collate_name[64];
+    char crtname[64];
     int nuse, in_decl, cur_sec_id, saw_end, initial, nsorttab;
     UseEntry use[64];
     File *io_file;
@@ -6112,6 +6126,7 @@ static void compile_nested_unit(void)
     u->nmnemonic = g_nmnemonic; u->last_item = g_last_item; u->nsame_groups = g_nsame_groups; u->collate = g_collate;
     u->lowval = g_lowval; u->highval = g_highval; u->cur_fd = g_cur_fd; u->in_linkage = g_in_linkage;
     memcpy(u->collate_name, g_collate_name, sizeof u->collate_name);
+    memcpy(u->crtname, g_crt_status_name, sizeof u->crtname);
     u->nuse = g_nuse; memcpy(u->use, g_use, sizeof u->use); u->in_decl = g_in_decl; u->cur_sec_id = g_cur_sec_id;
     u->saw_end = g_saw_end_program; u->initial = g_initial; u->io_file = g_io_file;
     memcpy(u->cls, g_class, sizeof u->cls); memcpy(u->sw, g_switch, sizeof u->sw); memcpy(u->alph, g_alphabet, sizeof u->alph);
@@ -6124,7 +6139,7 @@ static void compile_nested_unit(void)
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
     g_nreport = 0; g_nscreen = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
-    g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
+    g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
     g_nsorttab = 0; g_initial = 0;
     parse_identification_division();
     parse_environment_division();
@@ -6142,6 +6157,7 @@ static void compile_nested_unit(void)
     g_nmnemonic = u->nmnemonic; g_last_item = u->last_item; g_nsame_groups = u->nsame_groups; g_collate = u->collate;
     g_lowval = u->lowval; g_highval = u->highval; g_cur_fd = u->cur_fd; g_in_linkage = u->in_linkage;
     memcpy(g_collate_name, u->collate_name, sizeof g_collate_name);
+    memcpy(g_crt_status_name, u->crtname, sizeof g_crt_status_name);
     g_nuse = u->nuse; memcpy(g_use, u->use, sizeof g_use); g_in_decl = u->in_decl; g_cur_sec_id = u->cur_sec_id;
     g_saw_end_program = u->saw_end; g_initial = u->initial; g_io_file = u->io_file;
     memcpy(g_class, u->cls, sizeof g_class); memcpy(g_switch, u->sw, sizeof g_switch); memcpy(g_alphabet, u->alph, sizeof g_alphabet);
@@ -6676,6 +6692,12 @@ static void parse_environment_division(void)
                             if (mnemonic_kind(cur()->s) >= 0 || !strncmp(cur()->s, "switch-", 7) || at_word("sysin") || at_word("sysout") || at_word("console") || at_word("syserr") || at_word("formfeed")) break;
                         }
                         continue;
+                    }
+                    if (at_word("crt") && is_word(peek(1), "status")) {
+                        advance(); advance(); accept_word("is");
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "CRT STATUS IS needs a data-name");
+                        snprintf(g_crt_status_name, sizeof g_crt_status_name, "%s", cur()->s);
+                        advance(); continue;
                     }
                     if (accept_word("currency")) {            /* already applied to the pictures; see apply_decimal_point */
                         accept_word("sign"); accept_word("is");

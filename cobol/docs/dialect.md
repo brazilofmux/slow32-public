@@ -81,7 +81,8 @@ Do not pretend these are in X3.23-1985:
   SCREEN`, `LINE`/`COLUMN` (and `PLUS`), `VALUE`, `PIC ... FROM/TO/USING`,
   `AUTO`, `SECURE`, `REQUIRED`, `FULL`, `HIGHLIGHT`, `LOWLIGHT`,
   `UNDERLINE`, `REVERSE-VIDEO`, `FOREGROUND-COLOR`/`BACKGROUND-COLOR`,
-  `BLANK WHEN ZERO`; the focus loop as docs/screen.md describes it
+  `BLANK WHEN ZERO`, `SPECIAL-NAMES CRT STATUS IS`; the focus loop as
+  docs/screen.md describes it
 - `USAGE COMP-5`, `BINARY-CHAR [UNSIGNED]`, `SIGNED-INT`,
   `SIGNED-SHORT`, `UNSIGNED-SHORT`, `POINTER`
 - `CALL … BY VALUE` / `CALL … RETURNING` — the seam to C, confined

@@ -183,11 +183,23 @@ notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
   GnuCOBOL does; a slot without `LINE` takes the previous slot's line,
   without `COLUMN` the position after it.
 
-Still not: nested screen groups (a group item carrying LINE/COLUMN for
-its children), subscripted or LINKAGE items in a slot, `CRT STATUS`
-and the exception keys. Each waits for a program.
+- **`CRT STATUS`** (Stage 59). `SPECIAL-NAMES. CRT STATUS IS item.`
+  puts the ACCEPT's ending in the item, in GnuCOBOL's numbering: 0000
+  an ordinary ending (Enter, or the last AUTO field filling), 1001-1012
+  a function key (F1-F4 arrive as `ESC O P..S` or `ESC [ 11~..14~`,
+  F5-F12 as `ESC [ 15~..24~`), 2001/2002 Page Up and Page Down, 2005
+  Escape. A function key or page key ends the ACCEPT with the fields
+  committed; Escape still abandons. A numeric item takes the number, a
+  three-byte alphanumeric GnuCOBOL's packed form, anything else the
+  four digits as text. The escape reader keeps one byte of pushback,
+  so a lone Escape followed by typed text is told from a sequence.
 
-Testing: `tests/free/screen2.cbl` drives all of it from `screen2.keys`
+Still not: nested screen groups (a group item carrying LINE/COLUMN for
+its children), subscripted or LINKAGE items in a slot. Each waits for
+a program.
+
+Testing: `tests/free/screen3.cbl` pins the four endings (Enter, F3,
+Page Down, Escape after a typed character); `tests/free/screen2.cbl` drives the rest from `screen2.keys`
 (arrows, Shift-Tab, a REQUIRED refusal, SECURE stars, both numeric
 shapes) and its ANSI stream is pinned, reviewed by hand like
 `screen.cbl`'s. majesty's `menu.s32x` walks MAIN, DAILY, the DATE PAGE

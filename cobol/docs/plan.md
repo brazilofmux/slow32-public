@@ -1216,6 +1216,20 @@ now carries fg/bg. free/screen2 pins the stream (reviewed by hand;
 screen's re-pinned for the Backspace that now closes the gap); the
 harness is 81; menu.s32x walks MAIN, DAILY, DATE PAGE and back.
 
+## Stage 59 — CRT STATUS **S** — DONE 2026-08-30
+
+The first item off ISSUES-23, at the user's ask. `SPECIAL-NAMES. CRT
+STATUS IS item.` (saved per unit like the collating name; the ACCEPT
+emits cob_crt_status(item, desc) before cob_screen_accept). The
+runtime reports the ending in GnuCOBOL's numbering -- 0 ordinary,
+1001+n function key, 2001/2002 page keys, 2005 Escape -- into a
+numeric item, GnuCOBOL's packed three-byte form, or four digits of
+text; scr_key learned the F1-F12 and page-key sequences and keeps one
+byte of pushback so a lone Escape ahead of typed text is told from a
+sequence. Function and page keys end the ACCEPT with the fields
+committed; Escape still abandons. free/screen3 pins Enter/F3/PgDn/
+Escape; the harness is 82.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

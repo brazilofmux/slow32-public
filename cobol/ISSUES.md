@@ -167,12 +167,13 @@ hardware FP) against an answer key. Nothing majesty runs needs any of
 it -- queued, not scheduled.
 
 ### 23. Screen section leftovers (queued 2026-08-30)
-What Stage 58 (ISSUES-13) did not do because no program asks: `CRT
-STATUS` and the exception keys (function keys, the status after an
-ACCEPT), nested screen groups (a group item carrying LINE/COLUMN for
-its children), subscripted or LINKAGE items in a slot, `BLINK`,
-`BELL`, `ERASE EOL/EOS` (accepted, ignored). Each is small; each
-waits for a screen that uses it.
+~~`CRT STATUS` and the exception keys~~ — Stage 59, 2026-08-30
+(screen.md; GnuCOBOL's numbering, F1-F12/PgUp/PgDn end the ACCEPT
+with the fields kept, Escape abandons; free/screen3). Still queued:
+nested screen groups (a group item carrying LINE/COLUMN for its
+children), subscripted or LINKAGE items in a slot, `BLINK`, `BELL`,
+`ERASE EOL/EOS` (accepted, ignored). Each is small; each waits for a
+screen that uses it.
 
 ### 12. ~~Indexed: `ALTERNATE RECORD KEY`, `DUPLICATES`~~ — RESOLVED 2026-08-31
 One sorted table per key (docs/indexed.md "Alternate keys"); key of

@@ -2469,10 +2469,14 @@ void cob_screen_display(const cob_screen *s)
 /* ---- the focus loop (docs/screen.md, "the eventual target") ------------ */
 /* Keys: the terminal's bytes, with the ANSI cursor sequences folded into
  * codes of their own; a lone Escape is K_ESC. */
-enum { K_EOF = -1, K_ESC = 27, K_UP = 1001, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_BTAB, K_INS };
+enum { K_EOF = -1, K_ESC = 27, K_UP = 1001, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_BTAB, K_INS,
+       K_PGUP, K_PGDN, K_F1, K_F12 = K_F1 + 11 };
+
+static int scr_pending = -2;                    /* a byte read past a lone Escape */
 
 static int scr_key(void)
 {
+    if (scr_pending != -2) { int k = scr_pending; scr_pending = -2; return k; }
     int k = term_getkey();
     if (k != 27) return k;
     if (!term_kbhit()) return K_ESC;
@@ -2488,11 +2492,55 @@ static int scr_key(void)
         case 'H': return K_HOME;
         case 'F': return K_END;
         case 'Z': return K_BTAB;
-        case '~': return n == 3 ? K_DEL : n == 1 || n == 7 ? K_HOME : n == 4 || n == 8 ? K_END : n == 2 ? K_INS : 0;
+        case 'P': case 'Q': case 'R': case 'S':
+            return d == 'P' ? K_F1 : d == 'Q' ? K_F1 + 1 : d == 'R' ? K_F1 + 2 : K_F1 + 3;   /* ESC O P..S: F1-F4 */
+        case '~':
+            if (n >= 11 && n <= 15) return K_F1 + (n - 11);          /* F1-F5 */
+            if (n >= 17 && n <= 21) return K_F1 + 5 + (n - 17);      /* F6-F10 */
+            if (n == 23 || n == 24) return K_F1 + 10 + (n - 23);     /* F11, F12 */
+            return n == 3 ? K_DEL : n == 1 || n == 7 ? K_HOME : n == 4 || n == 8 ? K_END : n == 2 ? K_INS
+                 : n == 5 ? K_PGUP : n == 6 ? K_PGDN : 0;
         default: return 0;
         }
     }
-    return c == 9 ? K_BTAB : 0;                 /* ESC TAB: back-tab on terminals without a Shift-Tab */
+    if (c == 9) return K_BTAB;                  /* ESC TAB: back-tab on terminals without a Shift-Tab */
+    scr_pending = c;                            /* a real Escape with the next keystroke behind it */
+    return K_ESC;
+}
+
+/* SPECIAL-NAMES CRT STATUS IS item: the ACCEPT's ending, in GnuCOBOL's
+ * numbering -- 0 ordinary, 1001+n function key n, 2001/2002 page up and
+ * down, 2005 Escape.  A numeric item takes the number; a three-byte
+ * alphanumeric the packed form GnuCOBOL writes; anything else the four
+ * digits as text. */
+static void *crt_item; static const cob_desc *crt_desc;
+
+void cob_crt_status(void *item, const void *desc) { crt_item = item; crt_desc = desc; }
+
+static void scr_set_status(int fret)
+{
+    if (!crt_item) return;
+    const cob_desc *d = crt_desc;
+    if (d->cat == COB_NUM) { cob_put_num(crt_item, d, fret, 0); return; }
+    unsigned char *p = crt_item;
+    if (d->size == 3) {
+        p[0] = '0'; p[1] = 0; p[2] = 0;
+        if (fret == 0) { p[1] = '0'; }
+        else if (fret == 2005) p[0] = '1';
+        else if (fret >= 1001 && fret <= 1064) { p[0] = '1'; p[1] = (unsigned char)(fret - 1000); }
+        else if (fret >= 2001 && fret <= 2110) { p[0] = '2'; p[1] = (unsigned char)(fret - 2000); }
+        else if (fret >= 8000) p[0] = '9';
+        return;
+    }
+    char b[4]; int n = fret;
+    for (int i = 3; i >= 0; i--) { b[i] = (char)('0' + n % 10); n /= 10; }
+    for (unsigned i = 0; i < d->size; i++) p[i] = i < 4 ? (unsigned char)b[i] : ' ';
+}
+
+static int scr_key_status(int k)
+{
+    if (k >= K_F1 && k <= K_F12) return 1001 + (k - K_F1);
+    return k == K_PGUP ? 2001 : k == K_PGDN ? 2002 : k == K_ESC ? 2005 : 0;
 }
 
 static int scr_is_numeric(const cob_scr_field *f)
@@ -2580,7 +2628,7 @@ void cob_screen_accept(const cob_screen *s)
     unsigned nin = 0;
     for (unsigned i = 0; i < s->nfields; i++)
         if (s->fields[i].kind == COB_SCR_TO || s->fields[i].kind == COB_SCR_USING) nin++;
-    if (!nin) { term_getkey(); return; }        /* nothing to type into: wait for a key */
+    if (!nin) { scr_set_status(scr_key_status(scr_key())); return; }   /* nothing to type into: wait for a key */
     scr_edit *ed = calloc(nin, sizeof *ed);
     if (!ed) cob_fatal("out of memory");
     unsigned k = 0;
@@ -2603,14 +2651,18 @@ void cob_screen_accept(const cob_screen *s)
         }
     }
     unsigned cur = 0;
-    int done = 0, abandon = 0;
+    int done = 0, abandon = 0, fret = 0;
     while (!done) {
         scr_edit *e = &ed[cur];
         const cob_scr_field *f = e->f;
         term_gotoxy(f->line, f->col + (int)(e->numeric ? scr_num_cursor(e) : e->pos));
         int key = scr_key();
         if (key == K_EOF) { done = 1; break; }
-        if (key == K_ESC) { done = 1; abandon = 1; break; }
+        if (key == K_ESC) { done = 1; abandon = 1; fret = 2005; break; }
+        if ((key >= K_F1 && key <= K_F12) || key == K_PGUP || key == K_PGDN) {
+            fret = scr_key_status(key);         /* an exception key ends the ACCEPT, the fields kept */
+            done = 1; break;
+        }
         if (key == '\r' || key == '\n' || key == '\t' || key == K_DOWN) {
             if (!scr_may_leave(e)) { scr_beep(); continue; }
             if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); }
@@ -2681,6 +2733,7 @@ void cob_screen_accept(const cob_screen *s)
         }
         /* other control keys are ignored */
     }
+    scr_set_status(fret);
     if (!abandon) {
         /* commit every input field into its item */
         for (unsigned i = 0; i < nin; i++) {
