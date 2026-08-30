@@ -4009,6 +4009,9 @@ static void parse_write(void)
         accept_word("line"); accept_word("lines");
     }
 advancing_done:;
+    /* a file written WITH ADVANCING and no ORGANIZATION clause is a print
+     * file: its records are lines (GnuCOBOL's "line advancing" file) */
+    if ((before || after || dyn) && f->org == COB_ORG_SEQ && !f->org_given && !f->varying) f->org = COB_ORG_LINESEQ;
     int keyed_org = f->org == COB_ORG_INDEXED || f->org == COB_ORG_RELATIVE;
     if (keyed_org && (before || after || dyn)) die_at(rec.line, "ADVANCING is not valid on an %s file", f->org == COB_ORG_INDEXED ? "INDEXED" : "RELATIVE");
     if (!keyed_org && at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED or RELATIVE file");
