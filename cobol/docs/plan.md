@@ -899,6 +899,20 @@ scales by the P count twice); tests/pictures.expected re-pinned for
 refusals: a non-integer numeric MOVEd to an alphanumeric item,
 REMAINDER with a ROUNDED quotient, RENAMES, USAGE on a group.
 
+## Stage 38 — DIVIDE ... REMAINDER at full width **S** — DONE 2026-08-31
+
+The remainder is defined on the quotient as it would be stored before
+ROUNDED (6.9.4); it was computed from the stored quotient, which
+broke under ROUNDED, so it is now recomputed: the quotient truncated
+to the receiver's decimals (`cob_ntrunc`), times the divisor, from
+the dividend. ON SIZE ERROR with REMAINDER: the clause is looked for
+past the REMAINDER phrase so the quotient's store knows of it, a
+quotient overflow (the flag in SLOT_B) skips the remainder's store,
+and the remainder's own overflow joins the flag. A numeric-edited
+remainder receiver is allowed. free/remrnd, oracle agreeing; NC203A
+and NC251A match; the suite 264 of 303 compile, 5204 of 5246 pass,
+none fail, 261 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

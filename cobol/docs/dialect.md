@@ -279,6 +279,15 @@ given, because majesty's `.prn` oracles were produced under it.
   symbol (`PICTURE 99; VALUE 8`). A MOVE that scales a value up past 64
   bits (12345 into `9V9(17)`) truncates the high-order digits as the
   text says rather than overflowing (NC104A).
+- **`DIVIDE ... REMAINDER` at full width** (Stage 38): the remainder is
+  the dividend less the divisor times the quotient *as it would be
+  stored before ROUNDED* -- the quotient truncated to the receiver's
+  decimals (X3.23 6.9.4), recomputed for the purpose rather than read
+  back -- so `ROUNDED` on the quotient is fine. With `ON SIZE ERROR`, a
+  quotient that overflowed leaves the remainder alone, a remainder that
+  overflows is the statement's size error too, and the clause runs for
+  either. The remainder receiver may be numeric-edited. NC203A and
+  NC251A match GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

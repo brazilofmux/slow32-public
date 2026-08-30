@@ -3755,16 +3755,41 @@ static void parse_multiply(void)
 }
 
 /* REMAINDER r: dividend - (quotient as stored, truncated) * divisor */
-static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor)
+/* REMAINDER r: the dividend less the product of the divisor and the
+ * quotient as it would be stored *before* ROUNDED -- the quotient
+ * truncated to the receiver's decimals (X3.23 6.9.4), recomputed here
+ * rather than read back from the receiver */
+static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor, int size_err)
 {
     if (!accept_word("remainder")) return;
-    if (q_rounded) die_at(cur()->line, "REMAINDER with a ROUNDED quotient is not implemented");
+    (void)q_rounded;
     Ref r; parse_ref(&r);
-    if (!is_numeric_sym(r.sym)) die_at(r.line, "'%s' is not numeric", r.sym->name);
-    Opnd qo; memset(&qo, 0, sizeof qo); qo.kind = O_REF; qo.ref = *q; qo.line = q->line;
-    emit_push(dividend); emit_push(&qo); emit_push(divisor);
-    emit_call("cob_nmul"); emit_call("cob_nsub");
-    emit_top_op(&r, "cob_top_store", 0); emit_call("cob_drop");
+    if (r.sym->is_group || (r.sym->pi.category != PIC_NUMERIC && r.sym->pi.category != PIC_NUMERIC_EDITED))
+        die_at(r.line, "REMAINDER '%s' is not numeric (or numeric-edited)", r.sym->name);
+    emit_push(dividend);
+    emit_push(dividend); emit_push(divisor); emit_call("cob_ndiv");
+    emit_li("r3", q->sym->pi.scale); emit_call("cob_ntrunc");
+    emit_push(divisor); emit_call("cob_nmul");
+    emit_call("cob_nsub");
+    /* ON SIZE ERROR: a quotient that overflowed leaves the remainder alone;
+     * a remainder that overflows is the statement's size error too */
+    int Lskip = new_label();
+    if (size_err) { emit("\tldw r1, sp+%d", SLOT_B); emit("\tbne r1, r0, .L%d", Lskip); }
+    emit_top_op(&r, "cob_top_store", size_err ? 2 : 0);
+    emit_label(Lskip);
+    emit_call("cob_drop");
+}
+
+/* is ON SIZE ERROR written after a REMAINDER phrase?  The quotient's store
+ * needs to know before the phrase is parsed */
+static int size_error_after_remainder(void)
+{
+    if (!at_word("remainder")) return at_size_error_clause();
+    int save = g_tp; g_noemit++;
+    advance(); Ref tmp; parse_ref(&tmp);
+    int se = at_size_error_clause();
+    g_noemit--; g_tp = save;
+    return se;
 }
 
 static void parse_divide(void)
@@ -3780,13 +3805,10 @@ static void parse_divide(void)
         if (has_giving) {
             nr = parse_ref_list(rs, rd, MAXOPS, 1);
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-            int has_rem = at_word("remainder");
-            int size_err = at_size_error_clause();
+            int size_err = size_error_after_remainder();
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
-            emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err && !has_rem);
-            emit_remainder(&b, &rs[0], rd[0], &a);
-            size_err = at_size_error_clause();
-            if (size_err && has_rem) die_at(cur()->line, "SIZE ERROR together with REMAINDER is not implemented");
+            emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+            emit_remainder(&b, &rs[0], rd[0], &a, size_err);
             parse_size_error_clauses(size_err, "end-divide");
             return;
         }
@@ -3808,13 +3830,10 @@ static void parse_divide(void)
     expect_word("giving");
     nr = parse_ref_list(rs, rd, MAXOPS, 1);
     if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-    int has_rem = at_word("remainder");
-    int size_err = at_size_error_clause();
+    int size_err = size_error_after_remainder();
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
-    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err && !has_rem);
-    emit_remainder(&a, &rs[0], rd[0], &b);
-    size_err = at_size_error_clause();
-    if (size_err && has_rem) die_at(cur()->line, "SIZE ERROR together with REMAINDER is not implemented");
+    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+    emit_remainder(&a, &rs[0], rd[0], &b, size_err);
     parse_size_error_clauses(size_err, "end-divide");
 }
 

@@ -648,6 +648,13 @@ void cob_ndiv(void)
 }
 
 void cob_nneg(void) { nstk[nsp - 1].v = -nstk[nsp - 1].v; }
+/* the top truncated to `scale` decimals (DIVIDE ... REMAINDER: the
+ * quotient as it would be stored before ROUNDED, X3.23 6.9.4) */
+void cob_ntrunc(int scale)
+{
+    cob_num *a = &nstk[nsp - 1];
+    while (a->scale > scale) { a->v /= 10; a->scale--; }
+}
 
 /* a ** b for an integer b >= 0; anything else is beyond this stage */
 void cob_npow(void)

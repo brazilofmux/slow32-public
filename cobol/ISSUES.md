@@ -222,7 +222,7 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **5088 of 5130 tests pass, none fail, 259
+them by their own reports: **5204 of 5246 tests pass, none fail, 261
 programs match GnuCOBOL's tally exactly** (IC and RW complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
@@ -239,9 +239,10 @@ programs match), ~~nested programs~~ (done), ~~`EXTERNAL`~~ (done), ~~`BY CONTEN
 (done: **IC 25 of 25**), ~~Report Writer clauses~~ (done: **RW 6 of
 6**, ISSUES-11 keeps CONTROL/SUM), ~~alphanumeric-edited pictures
 with A/9 mixed and `;` in a picture~~ (done; those programs go on to a
-non-integer numeric MOVEd to an alphanumeric item (2), `REMAINDER`
-with a ROUNDED quotient (2), RENAMES (1), `USAGE` on a group (1), and
-NC114M's `0` statement), `USAGE INDEX` on a
+non-integer numeric MOVEd to an alphanumeric item (2), ~~`REMAINDER`
+with a ROUNDED quotient~~ (done, with SIZE ERROR and an edited
+receiver: NC203A and NC251A match), RENAMES (1), `USAGE` on a group
+(1), and NC114M's `0` statement), `USAGE INDEX` on a
 group (2), `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
 more than three `VARYING ... AFTER` levels (2), clauses on an 01
 report group (2), `EXTERNAL` (2), a multi-character `CLASS` literal
