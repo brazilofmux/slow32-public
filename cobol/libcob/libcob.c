@@ -1101,11 +1101,15 @@ void cob_rw_initiate(cob_report *r)
     r->line_counter = 0; r->page_counter = 0; r->body_seen = 0;
 }
 
-/* where the next line of a group would land */
-static int rw_target(cob_report *r, int abs, int plus, int body_first)
+/* where the next line would land: a body line while no body group has
+ * been presented on the page goes to FIRST DETAIL -- the 85 rule for
+ * the first body group, and (measured on the activity report) where
+ * GnuCOBOL puts a group's remaining lines when they spill onto a new
+ * page */
+static int rw_target(cob_report *r, int abs, int plus, int is_body)
 {
     if (abs) return abs;
-    if (body_first && !r->body_seen) return r->first_detail;
+    if (is_body && !r->body_seen) return r->first_detail;
     return r->line_counter + plus;
 }
 
@@ -1134,23 +1138,24 @@ void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *
     cob_move(src, sd, rw_line + col - 1, dd);
 }
 
-void cob_rw_line_write(cob_report *r, int abs, int plus, int body_first)
+void cob_rw_line_write(cob_report *r, int abs, int plus, int is_body)
 {
-    int target = rw_target(r, abs, plus, body_first);
+    int target = rw_target(r, abs, plus, is_body);
     if (target < r->line_counter + 1) target = r->line_counter + 1;
     rw_blank_to(r, target);
     rw_put_line(r, rw_line, RW_WIDTH);
-    if (body_first) r->body_seen = 1;
+    if (is_body) r->body_seen = 1;
 }
 
-/* a body group ended beyond LAST DETAIL: the page is over.  GnuCOBOL
- * then starts a new page (heading and all) before TERMINATE pads --
- * measured on the profit-and-loss report, whose second page is a heading over
- * blank lines -- so TERMINATE asks first and the compiler renders the
- * heading. */
-int cob_rw_overflowed(cob_report *r)
+/* a body line that would land past LAST DETAIL spills onto a new page:
+ * the compiler renders the heading, and the line then lands on FIRST
+ * DETAIL.  Measured on the activity report (a group's trailing blank line
+ * starting the next page) and the profit-and-loss report (the same, with
+ * TERMINATE padding that page). */
+int cob_rw_line_overflows(cob_report *r, int abs, int plus, int is_body)
 {
-    return r->page_counter > 0 && r->line_counter > r->last_detail;
+    if (!is_body || r->page_counter == 0) return 0;
+    return rw_target(r, abs, plus, is_body) > r->last_detail;
 }
 
 void cob_rw_terminate(cob_report *r)

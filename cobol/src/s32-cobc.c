@@ -3692,11 +3692,33 @@ static int rfield_desc(RField *f)
     return desc_add(&d);
 }
 
-/* render one group's lines at this point in the code */
+static void emit_report_group(Report *r, RGroup *g);
+
+/* the page advance: pad, count, and render the page heading */
+static void emit_page_advance(Report *r)
+{
+    emit_report_addr("r3", r);
+    emit_call("cob_rw_page_end");
+    for (int k = 0; k < r->ng; k++)
+        if (r->g[k].type == RG_PAGE_HEADING) emit_report_group(r, &r->g[k]);
+}
+
+/* render one group's lines at this point in the code; a body line that
+ * would pass LAST DETAIL spills onto a new page first */
 static void emit_report_group(Report *r, RGroup *g)
 {
+    int is_body = g->type == RG_DETAIL;
     for (int i = 0; i < g->nl; i++) {
         RLine *ln = &g->l[i];
+        if (is_body) {
+            emit_report_addr("r3", r);
+            emit_li("r4", ln->abs); emit_li("r5", ln->plus); emit_li("r6", 1);
+            emit_call("cob_rw_line_overflows");
+            int Lok = new_label();
+            emit("\tbeq r1, r0, .L%d", Lok);
+            emit_page_advance(r);
+            emit_label(Lok);
+        }
         emit_call("cob_rw_line_begin");
         for (int k = 0; k < ln->nf; k++) {
             RField *f = &ln->f[k];
@@ -3723,7 +3745,7 @@ static void emit_report_group(Report *r, RGroup *g)
         }
         emit_report_addr("r3", r);
         emit_li("r4", ln->abs); emit_li("r5", ln->plus);
-        emit_li("r6", g->type == RG_DETAIL && i == 0);
+        emit_li("r6", is_body);
         emit_call("cob_rw_line_write");
     }
 }
@@ -3738,17 +3760,6 @@ static void parse_initiate(void)
 static void parse_terminate(void)
 {
     Report *r = expect_report();
-    /* a page whose last body group ran past LAST DETAIL is followed by a
-     * new page, heading and all, before the padding (report-writer.md) */
-    emit_report_addr("r3", r);
-    emit_call("cob_rw_overflowed");
-    int Lno = new_label();
-    emit("\tbeq r1, r0, .L%d", Lno);
-    emit_report_addr("r3", r);
-    emit_call("cob_rw_page_end");
-    for (int k = 0; k < r->ng; k++)
-        if (r->g[k].type == RG_PAGE_HEADING) emit_report_group(r, &r->g[k]);
-    emit_label(Lno);
     emit_report_addr("r3", r);
     emit_call("cob_rw_terminate");
 }
@@ -3784,10 +3795,7 @@ static void parse_generate(void)
     emit_call("cob_rw_fit");
     int Lfits = new_label();
     emit("\tbeq r1, r0, .L%d", Lfits);
-    emit_report_addr("r3", r);
-    emit_call("cob_rw_page_end");
-    for (int k = 0; k < r->ng; k++)
-        if (r->g[k].type == RG_PAGE_HEADING) emit_report_group(r, &r->g[k]);
+    emit_page_advance(r);
     emit_label(Lfits);
     emit_report_group(r, g);
 }

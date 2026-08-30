@@ -457,9 +457,12 @@ search would report. The bound is the `OCCURS` count or the
 and emitted after the loop. Two Report Writer rules came out of gl043
 (report-writer.md, "Two rules measured later"). gl034, gl042 and gl043
 compile -- gl042/gl043 after their `EXIT PARAGRAPH` (2002) became `GO
-TO process-class-exit` in majesty, verified under GnuCOBOL -- and
-**the balance sheet and profit-and-loss reports run on SLOW-32 in place
-byte-identical to majesty's**.
+TO process-class-exit` in majesty, verified under GnuCOBOL -- and with
+gl033, gl035 and gl036 the activity pipeline runs too: txnlines
+(55,232), txnlines-re (56,164, `SEARCH ALL` over the ODO table) and
+acttxnlin (56,164) byte-identical to GnuCOBOL's. **All twelve of
+majesty's reports now come off SLOW-32 byte-identical**, the last two
+(activity) after the spill rule above.
 
 ## After v1 (not scheduled, each when a program asks)
 
