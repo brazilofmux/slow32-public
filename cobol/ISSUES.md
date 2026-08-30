@@ -18,7 +18,7 @@ every change, and majesty's batch (twelve reports byte-identical) as
 the regression gate before a push. Corpus programs are not rewritten
 from this side; they are majesty's.
 
-State on 2026-08-31: harness 47/47; CCVS-85 192 of 303 compile, and of those 3741 of 3751 tests pass with none failing (ISSUES-17) with the GnuCOBOL oracle agreeing
+State on 2026-08-31: harness 48/48; CCVS-85 206 of 303 compile, and of those 4050 of 4061 tests pass with none failing, 203 programs matching GnuCOBOL (ISSUES-17) with the GnuCOBOL oracle agreeing
 on every program that has one; majesty `batch.sh` runs every COBOL
 report step on SLOW-32 with all twelve reports byte-identical; **every
 program in `~/majesty/src/cobol` compiles, 56 of 56** (2026-08-30 evening). The sweep that
@@ -142,10 +142,10 @@ totals in the Procedure Division, so the page engine
 (`docs/report-writer.md`) is enough for all twelve. Stage 7 chose
 this deliberately; do not start it without a report that needs it.
 
-### 12. Indexed: `ALTERNATE RECORD KEY`, `DUPLICATES`
-`READ ... KEY IS` takes only the `RECORD KEY`. The `.key` side file
-(`docs/indexed.md`) is one sorted table; alternates would be more
-tables in the same file.
+### 12. ~~Indexed: `ALTERNATE RECORD KEY`, `DUPLICATES`~~ — RESOLVED 2026-08-31
+One sorted table per key (docs/indexed.md "Alternate keys"); key of
+reference; partial-key START; 02/22 per the text. free/altkey; NIST IX
+28 of 29 programs and 405 of 406 tests matching GnuCOBOL.
 
 ### 13. Screen: the user's eventual target
 Recorded in `docs/screen.md` from RM COBOL / Micro Focus experience:
@@ -216,9 +216,10 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **3741 of 3751 tests pass, none fail, 185
-programs match GnuCOBOL's tally exactly** (Stage 23). The remaining bins, largest first, each a
-work item: `ALTERNATE RECORD KEY` (12; ISSUES-12), `LINAGE` (5), `COPY
+them by their own reports: **4050 of 4061 tests pass, none fail, 203
+programs match GnuCOBOL's tally exactly** (Stage 23; alternate keys
+made IX 29 of 29). The remaining bins, largest first, each a
+work item: ~~`ALTERNATE RECORD KEY`~~ (done), `LINAGE` (5), `COPY
 ... REPLACING` (5), an ODO table nested below a direct child (4),
 `INSPECT ... BEFORE/AFTER INITIAL` (4), `CALL identifier` (4; needs a
 program registry), nested programs (3), alphanumeric-edited pictures

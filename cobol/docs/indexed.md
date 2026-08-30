@@ -76,6 +76,25 @@ duplicate, 23 not found, 21 sequence error under ACCESS SEQUENTIAL,
 `DELETE` removes the key and frees the slot. A subsequent `READ` by
 that key is invalid key. No `PACK` step.
 
+### Alternate keys (2026-08-31)
+
+`ALTERNATE RECORD KEY IS name [WITH DUPLICATES]`, any number. Each
+key has a table of `(key bytes, u32 slot, u32 seq)` sorted by key then
+`seq`, the arrival counter -- which is the order duplicates are
+retrieved in. The key file is now `S32KEY02`: the prime table, then
+`u32 nalt` and per alternate `u32 offset | len | dups | count` and its
+entries; an `S32KEY01` file still loads and its alternate tables are
+rebuilt from the records. A random `READ ... KEY IS k` or a `START
+... KEY IS k` makes `k` the key of reference for `READ NEXT`; `START`
+on an item that begins where a key begins compares that leading part.
+`WRITE` and `REWRITE` refuse (22) a duplicate on a key without
+DUPLICATES and report 02 on one with; `READ` reports 02 when the next
+record under the key of reference has the same key value (the 1985
+I-O status rule -- GnuCOBOL leaves the first record after a START or
+random READ at 00, `free/altkey.oracle-expected`); `DELETE` and a
+`REWRITE` that changes an alternate keep every table right. NIST IX:
+28 of 29 programs, 405 of 406 tests, all matching GnuCOBOL's tally.
+
 ## Relative
 
 `ORGANIZATION IS RELATIVE`, `RELATIVE KEY` an integer item outside the

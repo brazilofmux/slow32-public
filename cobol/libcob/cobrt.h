@@ -29,6 +29,13 @@ enum {
 /* a file, as SELECT/FD described it; built by the compiler in .data */
 enum { COB_ORG_LINESEQ = 0, COB_ORG_SEQ = 1, COB_ORG_INDEXED = 2, COB_ORG_RELATIVE = 3, COB_ORG_SORT = 4 };
 
+/* an ALTERNATE RECORD KEY, as the compiler lays a file's key table out in .data */
+typedef struct {
+    unsigned int offset;      /* in the record */
+    unsigned int len;
+    unsigned int dups;        /* WITH DUPLICATES */
+} cob_altkey;
+
 /* a SORT key, as the compiler lays the statement's key table out in .data */
 typedef struct {
     unsigned int offset;      /* in the SD record */
@@ -65,6 +72,8 @@ typedef struct {
     unsigned int eof_seen;    /* the AT END condition was already reported once (the next READ is 46) */
     unsigned int fpos;        /* sequential: the byte position after the last READ/WRITE (the libc's
                                  buffered stream cannot tell it back reliably) */
+    const cob_altkey *altkeys;/* indexed: the ALTERNATE RECORD KEYs ... */
+    unsigned int naltkeys;    /* ... and how many */
 } cob_file;
 
 /* a report (RD), as the compiler described it; the counters are the

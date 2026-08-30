@@ -722,6 +722,8 @@ typedef struct {
     char status_name[64], key_name[64], report_name[64];
     char status_qual[64];            /* FILE STATUS name OF group */
     char relkey_name[64];            /* RELATIVE KEY IS data-name */
+    char key_qual[64];               /* RECORD KEY IS name IN group */
+    struct { char name[64]; char qual[64]; Sym *sym; int dups; } alt[16]; int nalt;   /* ALTERNATE RECORD KEY ... [WITH DUPLICATES] */
     Sym *assign_sym, *status_sym, *key_sym, *relkey_sym;
     int  use_para;                   /* DECLARATIVES: the USE section for this file, 0 none */
     int  rec;                        /* sym index of the first 01, -1 */
@@ -1445,14 +1447,28 @@ static void finish_data_division(void)
         if (f->key_name[0]) {
             /* the RECORD KEY must be an item inside this file's record */
             Sym *k = NULL; int nk = 0;
-            for (int j = 0; j < g_nsym; j++)
+            if (f->key_qual[0]) { char *q[1] = { f->key_qual }; k = sym_lookup(f->key_name, q, 1, f->line); nk = 1; }
+            else for (int j = 0; j < g_nsym; j++)
                 if (!g_sym[j].is_cond && !g_sym[j].is_filler && !strcmp(g_sym[j].name, f->key_name) &&
                     f->rec >= 0 && g_sym[j].record == g_sym[f->rec].record) { k = &g_sym[j]; nk++; }
-            if (!k) die_at(f->line, "RECORD KEY '%s' is not an item of file '%s'", f->key_name, f->name);
+            if (!k || f->rec < 0 || k->record != g_sym[f->rec].record) die_at(f->line, "RECORD KEY '%s' is not an item of file '%s'", f->key_name, f->name);
             if (nk > 1) die_at(f->line, "RECORD KEY '%s' is ambiguous in file '%s'", f->key_name, f->name);
             if (k->ndims) die_at(f->line, "RECORD KEY '%s' cannot be a table item", f->key_name);
             if (k->size < 1 || k->size > 255) die_at(f->line, "RECORD KEY '%s' must be 1 to 255 bytes", f->key_name);
             f->key_sym = k;
+        }
+        for (int a = 0; a < f->nalt; a++) {
+            Sym *k = NULL; int nk = 0;
+            if (f->alt[a].qual[0]) { char *q[1] = { f->alt[a].qual }; k = sym_lookup(f->alt[a].name, q, 1, f->line); nk = 1; }
+            else for (int j = 0; j < g_nsym; j++)
+                if (!g_sym[j].is_cond && !g_sym[j].is_filler && !strcmp(g_sym[j].name, f->alt[a].name) &&
+                    f->rec >= 0 && g_sym[j].record == g_sym[f->rec].record) { k = &g_sym[j]; nk++; }
+            if (!k || f->rec < 0 || k->record != g_sym[f->rec].record) die_at(f->line, "ALTERNATE RECORD KEY '%s' is not an item of file '%s'", f->alt[a].name, f->name);
+            if (nk > 1) die_at(f->line, "ALTERNATE RECORD KEY '%s' is ambiguous in file '%s'", f->alt[a].name, f->name);
+            if (k->ndims) die_at(f->line, "ALTERNATE RECORD KEY '%s' cannot be a table item", f->alt[a].name);
+            if (k->size < 1 || k->size > 255) die_at(f->line, "ALTERNATE RECORD KEY '%s' must be 1 to 255 bytes", f->alt[a].name);
+            if (f->org != COB_ORG_INDEXED) die_at(f->line, "ALTERNATE RECORD KEY needs ORGANIZATION INDEXED");
+            f->alt[a].sym = k;
         }
         if (f->org == COB_ORG_RELATIVE) {
             if (f->relkey_name[0]) {
@@ -3932,7 +3948,9 @@ static void parse_close(void)
     while (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
         File *f = expect_file();
         int lock = 0;
-        if (accept_word("with")) { accept_word("no"); accept_word("rewind"); if (accept_word("lock")) lock = 1; }
+        accept_word("with");
+        if (accept_word("no")) accept_word("rewind");
+        if (accept_word("lock")) lock = 1;
         if (lock) { emit_file_addr("r3", f); emit_call("cob_close_lock"); emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0); n++; continue; }
         if (accept_word("reel") || accept_word("unit")) {
             /* closes a reel, not the file; a disk file has one reel, so the
@@ -3981,6 +3999,22 @@ static void parse_condition_clauses(const char *w1, const char *w2, const char *
     accept_word(end_word);
 }
 
+/* which key of an indexed file a data item names: 0 the RECORD KEY, i the
+ * i-th ALTERNATE, -1 none.  An item that begins where a key begins and is
+ * no longer is a leading part of it (START on a partial key): *len is
+ * then the item's size. */
+static int file_key_index(File *f, Sym *s, int *len)
+{
+    *len = 0;
+    if (s == f->key_sym) return 0;
+    for (int a = 0; a < f->nalt; a++) if (s == f->alt[a].sym) return a + 1;
+    if (f->rec < 0 || s->record != g_sym[f->rec].record || s->ndims) return -1;
+    if (f->key_sym && s->offset == f->key_sym->offset && s->size <= f->key_sym->size) { *len = s->size; return 0; }
+    for (int a = 0; a < f->nalt; a++)
+        if (s->offset == f->alt[a].sym->offset && s->size <= f->alt[a].sym->size) { *len = s->size; return a + 1; }
+    return -1;
+}
+
 static void parse_read(void)
 {
     File *f = expect_file();
@@ -3988,18 +4022,19 @@ static void parse_read(void)
     int has_next = accept_word("next"); accept_word("record");
     Ref into; int has_into = 0;
     if (accept_word("into")) { parse_ref(&into); has_into = 1; }
-    int keyed = 0;
+    int keyed = 0, ki = 0;
     if (accept_word("key")) {
         accept_word("is");
         Ref k; parse_ref(&k);
         if (f->org == COB_ORG_RELATIVE) die_at(k.line, "READ ... KEY IS is for INDEXED files; a RELATIVE file reads the record its RELATIVE KEY names");
         if (f->org != COB_ORG_INDEXED) die_at(k.line, "READ ... KEY needs an INDEXED file");
-        if (k.sym != f->key_sym) die_at(k.line, "READ ... KEY IS '%s': only the RECORD KEY is supported (no ALTERNATE keys)", k.sym->name);
+        int klen; ki = file_key_index(f, k.sym, &klen);
+        if (ki < 0 || klen) die_at(k.line, "READ ... KEY IS '%s': not the RECORD KEY or an ALTERNATE RECORD KEY of '%s'", k.sym->name, f->name);
         keyed = 1;
     }
     if (f->org == COB_ORG_INDEXED) {
         if (has_next && keyed) die_at(cur()->line, "READ NEXT cannot name a KEY");
-        if (!has_next && !keyed && f->access == 1) keyed = 1;         /* ACCESS RANDOM: every READ is by key */
+        if (!has_next && !keyed && f->access != 0) keyed = 1;         /* ACCESS RANDOM or DYNAMIC: a READ without NEXT is by the prime key */
         if (has_next && f->access == 1) die_at(cur()->line, "READ NEXT needs ACCESS SEQUENTIAL or DYNAMIC");
         if (keyed && f->access == 0) die_at(cur()->line, "READ ... KEY needs ACCESS RANDOM or DYNAMIC");
     } else if (f->org == COB_ORG_RELATIVE) {
@@ -4009,7 +4044,7 @@ static void parse_read(void)
     } else if (keyed) die_at(cur()->line, "READ ... KEY needs an INDEXED file");
 
     g_io_file = f;
-    emit_file_addr("r3", f);
+    emit_file_addr("r3", f); emit_li("r4", ki);
     emit_call(keyed ? "cob_read_key" : "cob_read");
     emit("\tstw sp+%d, r1", SLOT_C);
     if (has_into) {
@@ -4115,6 +4150,7 @@ static void parse_start(void)
     if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE) die_at(cur()->line, "START needs an INDEXED or RELATIVE file");
     if (f->access == 1) die_at(cur()->line, "START needs ACCESS SEQUENTIAL or DYNAMIC");
     int op = 0;                     /* = */
+    int ki = 0, klen = 0;           /* the key: prime, or an alternate; a leading part's length */
     if (accept_word("key")) {
         accept_word("is");
         int neg = 0;
@@ -4128,10 +4164,13 @@ static void parse_start(void)
         if (neg) { if (op == 3) op = 2; else if (op == 1) op = 4; else die_at(cur()->line, "START KEY IS NOT takes LESS or GREATER"); }
         Ref k; parse_ref(&k);
         if (f->org == COB_ORG_RELATIVE) { if (k.sym != f->relkey_sym) die_at(k.line, "START ... KEY IS '%s': a RELATIVE file starts on its RELATIVE KEY", k.sym->name); }
-        else if (k.sym != f->key_sym) die_at(k.line, "START ... KEY IS '%s': only the RECORD KEY is supported", k.sym->name);
+        else {
+            ki = file_key_index(f, k.sym, &klen);
+            if (ki < 0) die_at(k.line, "START ... KEY IS '%s': not a key of '%s', nor an item that begins where one begins", k.sym->name, f->name);
+        }
     }
     emit_file_addr("r3", f);
-    emit_li("r4", op);
+    emit_li("r4", op); emit_li("r5", ki); emit_li("r6", klen);
     emit_call("cob_start");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
@@ -5077,9 +5116,21 @@ static void parse_select(void)
             accept_word("key"); accept_word("is");
             if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after RECORD KEY");
             snprintf(f->key_name, sizeof f->key_name, "%s", cur()->s); advance();
+            if ((at_word("in") || at_word("of")) && peek(1)->kind == T_WORD) { advance(); snprintf(f->key_qual, sizeof f->key_qual, "%s", cur()->s); advance(); }
             continue;
         }
-        if (accept_word("alternate")) die_at(t->line, "ALTERNATE RECORD KEY is not implemented (after v1)");
+        if (accept_word("alternate")) {
+            /* ALTERNATE [RECORD] [KEY] [IS] data-name [WITH DUPLICATES] */
+            accept_word("record"); accept_word("key"); accept_word("is");
+            if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after ALTERNATE RECORD KEY");
+            if (f->nalt == 16) die_at(t->line, "too many ALTERNATE RECORD KEYs (16)");
+            snprintf(f->alt[f->nalt].name, sizeof f->alt[f->nalt].name, "%s", cur()->s); advance();
+            if ((at_word("in") || at_word("of")) && peek(1)->kind == T_WORD) { advance(); snprintf(f->alt[f->nalt].qual, sizeof f->alt[f->nalt].qual, "%s", cur()->s); advance(); }
+            if (accept_word("with")) { expect_word("duplicates"); f->alt[f->nalt].dups = 1; }
+            else if (accept_word("duplicates")) f->alt[f->nalt].dups = 1;
+            f->nalt++;
+            continue;
+        }
         if (accept_word("relative")) {
             /* RELATIVE [KEY IS] data-name -- or ORGANIZATION IS omitted before
              * a bare RELATIVE, told apart by what follows */
@@ -5773,6 +5824,8 @@ static void emit_unit_data(void)
         emit("\t.word 0");                  /* locked (CLOSE WITH LOCK) */
         emit("\t.word 0");                  /* eof_seen */
         emit("\t.word 0");                  /* fpos */
+        if (f->nalt) emit("\t.word .Lak%d_%d", g_unit, i); else emit("\t.word 0");   /* ALTERNATE RECORD KEYs */
+        emit("\t.word %d", f->nalt);
     }
     emit("\t.p2align 2");
     emit(".Luse%d:\t# USE sections by open mode", g_unit);
@@ -5780,6 +5833,13 @@ static void emit_unit_data(void)
     if (g_collate >= 0) {
         emit(".Lcoll%d:\t# PROGRAM COLLATING SEQUENCE %s: rank of each character", g_unit, g_alphabet[g_collate].name);
         emit_bytes(g_alphabet[g_collate].rank, 256);
+    }
+    for (int i = 0; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->nalt) continue;
+        emit("\t.p2align 2");
+        emit(".Lak%d_%d:\t# ALTERNATE RECORD KEYs of %s", g_unit, i, f->name);
+        for (int a = 0; a < f->nalt; a++) { emit("\t.word %d", f->alt[a].sym->offset); emit("\t.word %d", f->alt[a].sym->size); emit("\t.word %d", f->alt[a].dups); }
     }
     for (int i = 0; i < g_nsorttab; i++) {
         SortTab *t = &g_sorttab[i];

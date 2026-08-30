@@ -623,6 +623,24 @@ match GnuCOBOL exactly** (the two short are NC121M/NC220M, whose
 missing tests are console inspections). What does not compile is
 listed in ISSUES-17.
 
+## Stage 24 — ALTERNATE RECORD KEY **M** — DONE 2026-08-31
+
+ISSUES-12, the IX module's other half. One sorted table per key,
+entries of key bytes, slot and an arrival counter (the order
+duplicates come back in); the key file grows to `S32KEY02` and still
+reads `S32KEY01`, rebuilding the alternate tables from the records.
+A random READ or a START names its key, which becomes the key of
+reference for READ NEXT; a START on an item that begins where a key
+begins is a START on that leading part; WRITE and REWRITE keep the
+duplicates rule (22, or 02 when duplicates are allowed), REWRITE moves
+a changed alternate, DELETE forgets every table. Also on the way:
+`READ file` under DYNAMIC access is by the prime key, a qualified
+`RECORD KEY IS k IN group`, `CLOSE f LOCK` without WITH. free/altkey
+against GnuCOBOL: identical but for the 02 on the first record after
+a START, where the text is followed (`.oracle-expected`). NIST IX:
+29 of 29 programs, 438 of 439 tests, all matching GnuCOBOL's tally;
+the suite as a whole 4050 of 4061, none failing.
+
 ## The batch, whole — 2026-08-29
 
 After Stages 12–15, majesty's `batch.sh` runs **every COBOL report
