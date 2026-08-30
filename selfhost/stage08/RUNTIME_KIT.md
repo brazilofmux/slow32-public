@@ -95,8 +95,27 @@ slow32 prog.s32x
 
 ## Kit vintage
 
-No known issues in the current kit. Two bugs were fixed in `9b6d29ac`
-(2026-08-25) — if your `cc.s32x` predates that, both are live:
+No known issues in the current kit. Four bugs have been fixed since the
+first kit; if your `cc.s32x` predates the commit named, the bug is live.
+
+Fixed in `a34a578a` and `4b14e491` (2026-08-29) — a `cc.s32x` built
+before 20:30 that evening lacks them:
+
+- **Block-scope declarator list ([#8](https://github.com/brazilofmux/slow-32/issues/8)).**
+  `int a = 1, b = 2;` was refused at block scope with
+  `expected token 56 got 57` (the parser wanted `;` and found `,`), as
+  were `int a[2] = { 1, 2 }, b = 3;`, `int a = 1, b[2];` and
+  `int k = { 1 };`. File scope took all of them. Found by the self-hosted
+  build of `cobol/libcob/libcob.c` on Kagura.
+- **Silent miscompile: `long long` initializer lost its high word ([#11](https://github.com/brazilofmux/slow-32/issues/11)).**
+  A file-scope `long long` array initializer wrote each element's 32-bit
+  encoding twice (`{ 1LL, 10LL }` → `01 00 00 00 01 00 00 00 …`), and a
+  `long long` global initialized past 32 bits kept only the low word. A
+  shift by 32 wraps on SLOW-32, and the constant evaluator was 32-bit
+  throughout. libcob's `pow10tab` is the first shape: every COBOL
+  division returned 0 when libcob was built with the old compiler.
+
+Fixed in `9b6d29ac` (2026-08-25):
 
 - **Silent miscompile ([#6](https://github.com/brazilofmux/slow-32/issues/6)).**
   An argument whose marshalling class differed from the declared parameter's
@@ -112,7 +131,9 @@ No known issues in the current kit. Two bugs were fixed in `9b6d29ac`
 
 Verified fixed on this kit: implicit and explicit 64-bit args, `int` variables,
 sign extension of negatives, the reverse `long long`-to-`int` parameter hazard,
-`int`-to-`double` promotion, and both `sizeof` forms.
+`int`-to-`double` promotion, both `sizeof` forms, a block-scope declarator
+list mixing scalars, arrays and brace initializers, and a file-scope
+`long long` table read back as a 64-bit quotient.
 
 ## Regenerating
 
