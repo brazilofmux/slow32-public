@@ -2800,6 +2800,7 @@ static void emit_push_opnd(Opnd *o);
 static Opnd parse_cond_operand(void)
 {
     if (cur()->kind == T_LP && !paren_is_condition()) return expr_opnd();
+    if (cur()->kind == T_OP && (!strcmp(cur()->s, "-") || !strcmp(cur()->s, "+"))) return expr_opnd();   /* a unary sign begins an expression */
     int start = g_tp;
     Opnd x; parse_operand(&x);
     if (at_arith_op()) { g_tp = start; return expr_opnd(); }
@@ -2883,7 +2884,7 @@ static Cond *parse_simple(void)
             return c;
         }
     }
-    if (g_abbr_op >= 0 && (cur()->kind == T_OP || at_word("equal") || at_word("equals") || at_word("greater") || at_word("less") || at_word("is"))) {
+    if (g_abbr_op >= 0 && ((cur()->kind == T_OP && strchr("=<>", cur()->s[0])) || at_word("equal") || at_word("equals") || at_word("greater") || at_word("less") || at_word("is"))) {
         /* [IS] [NOT] relop object: the last relation's subject */
         accept_word("is");
         int neg = accept_word("not");

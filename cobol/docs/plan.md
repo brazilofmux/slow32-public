@@ -1067,6 +1067,17 @@ subscript, the same name in two records, an adjusted one), oracle
 agreeing; NC246A (49 tests) matches; the suite 285 of 303 compile,
 6587 of 6629 pass, none fail, 282 match.
 
+## Stage 50 — a signed expression as a condition operand **S** — DONE 2026-08-31
+
+`IF NINE * 9 - 7 * SEVEN NOT EQUAL - (SEVEN * 7) + 9 * NINE`: the
+object begins with a unary minus, and parse_cond_operand routed to
+the expression parser only after an operand or a parenthesis. A
+leading sign is an expression too; and after AND/OR it is an
+expression rather than the abbreviated relational operator of Stage
+44 (only =, < and > start one). free/unaryexpr, oracle agreeing;
+NC250A (115 tests) matches; the suite 286 of 303 compile, 6702 of
+6744 pass, none fail, 283 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

@@ -377,6 +377,10 @@ given, because majesty's `.prn` oracles were produced under it.
 - **A qualified subscript** (Stage 49) takes up to 64 qualifiers, like
   a name (NC246A writes `(SUB1 OF S48 IN S47 ... IN S31)`; the cap was
   eight, and the rest were dropped, which made the name ambiguous).
+- **A signed expression as a condition operand** (Stage 50): `IF a
+  NOT EQUAL - (b * 7) + c`, `IF - N = 5` -- a unary sign begins an
+  arithmetic expression wherever an operand may stand (NC250A); after
+  AND/OR it is an expression, not an abbreviated relational operator.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it
