@@ -370,6 +370,10 @@ given, because majesty's `.prn` oracles were produced under it.
   format (`SEARCH ALL t END GO TO ... WHEN ...`, NC237A); the word END
   alone at that position can only be the phrase. NC237A matches
   GnuCOBOL.
+- **A group as the `STRING` receiver** (Stage 48): the text (6.24.2)
+  forbids only an edited or JUSTIFIED receiver; a group is alphanumeric
+  and is filled through its whole length. NC217A (82 tests) matches
+  GnuCOBOL.
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

@@ -1048,6 +1048,15 @@ through a numeric item since DISPLAY of an index item is the
 implementor's), oracle agreeing; NC237A matches; the suite 283 of 303
 compile, 6456 of 6498 pass, none fail, 280 match.
 
+## Stage 48 — a group as the STRING receiver **S** — DONE 2026-08-31
+
+The receiver check refused every group; the text forbids only an
+edited or JUSTIFIED item (6.24.2), and a group is alphanumeric.
+free/strgroup (a group filled across its subordinates with a
+POINTER, then the overflow), oracle agreeing; NC217A (82 tests)
+matches; the suite 284 of 303 compile, 6538 of 6580 pass, none fail,
+281 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)

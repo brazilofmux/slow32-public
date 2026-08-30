@@ -4908,8 +4908,9 @@ static void parse_string(void)
     for (int i = 0; i < n; i++) if (!has_delim[i]) { memset(&delims[i], 0, sizeof delims[i]); delims[i].kind = O_ALL; has_delim[i] = 1; }
     expect_word("into");
     Ref dst; parse_ref(&dst);
-    if (dst.sym->is_group || dst.sym->pi.category == PIC_NUMERIC)
-        die_at(dst.line, "the STRING receiver must be an elementary alphanumeric item");
+    /* the receiver: not edited, not JUSTIFIED (X3.23 6.24.2); a group is alphanumeric */
+    if (!dst.sym->is_group && (dst.sym->pi.category == PIC_NUMERIC || dst.sym->pi.edited || dst.sym->just))
+        die_at(dst.line, "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED");
     if (dst.rm) die_at(dst.line, "a reference-modified STRING receiver is not implemented");
     Ref ptr; int has_ptr = 0;
     if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; if (!is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item"); }
