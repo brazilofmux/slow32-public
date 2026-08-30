@@ -24,8 +24,10 @@
  * half -- RD with PAGE LIMIT / HEADING / FIRST and LAST DETAIL, PAGE
  * HEADING and DETAIL groups, LINE / COLUMN / SOURCE / VALUE, INITIATE /
  * GENERATE / TERMINATE, rendered per GENERATE site against a page engine
- * in libcob (docs/report-writer.md).  Unimplemented is a diagnostic,
- * never silence.
+ * in libcob (docs/report-writer.md).  Stage 8: SCREEN SECTION -- a table
+ * of slots per 01, DISPLAY paints and ACCEPT runs the focus loop, on the
+ * term service (docs/screen.md).  Unimplemented is a diagnostic, never
+ * silence.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,7 +37,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.7 (stage 7)"
+#define VERSION "0.8 (stage 8)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -513,6 +515,13 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
     return found;
 }
 
+static Sym *sym_lookup_quiet(const char *name)
+{
+    for (int i = 0; i < g_nsym; i++)
+        if (!g_sym[i].is_filler && !strcmp(g_sym[i].name, name)) return &g_sym[i];
+    return NULL;
+}
+
 static char g_progid[64];
 
 /* ---- files: SELECT + FD ------------------------------------------------ */
@@ -568,6 +577,29 @@ typedef struct {
 } Report;
 
 static Report *g_reports; static int g_nreport, g_rcap;
+
+/* ---- screens: SCREEN SECTION 01s as slot tables ------------------------ */
+
+typedef struct {
+    int kind, flags, line, col, width, srcline;
+    Tok *value;
+    int has_pic; char pic[PIC_MAXPAT]; PicInfo pi; int blank_zero;
+    Sym *item;
+} SField;
+
+typedef struct {
+    char name[64];
+    int line, blank_screen;
+    SField *f; int nf, fcap;
+} Screen;
+
+static Screen *g_screens; static int g_nscreen, g_scrcap;
+
+static Screen *screen_find(const char *name)
+{
+    for (int i = 0; i < g_nscreen; i++) if (!strcmp(g_screens[i].name, name)) return &g_screens[i];
+    return NULL;
+}
 
 static Report *report_find(const char *name)
 {
@@ -2024,10 +2056,38 @@ static Para *expect_para(void)
 
 /* ---- DISPLAY ---------------------------------------------------------- */
 
+static void emit_screen_addr(const char *reg, Screen *sc)
+{
+    char lab[32]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, (int)(sc - g_screens));
+    emit_la(reg, lab);
+}
+
+static void parse_accept(void)
+{
+    Tok *t = cur();
+    if (t->kind == T_WORD) {
+        Screen *sc = screen_find(t->s);
+        if (sc) { advance(); emit_screen_addr("r3", sc); emit_call("cob_screen_accept"); return; }
+    }
+    Ref r; parse_ref(&r);
+    if (accept_word("from")) {
+        if (at_word("argument-value") || at_word("argument-number") || at_word("command-line"))
+            die_at(cur()->line, "ACCEPT FROM %s is not implemented yet (after v1)", cur()->s);
+        if (at_word("date") || at_word("day") || at_word("time") || at_word("day-of-week"))
+            die_at(cur()->line, "ACCEPT FROM %s is not implemented yet; FUNCTION CURRENT-DATE is stage 9", cur()->s);
+        die_at(cur()->line, "ACCEPT FROM %s is not implemented", tok_desc(cur()));
+    }
+    die_at(r.line, "ACCEPT from the console is not implemented; ACCEPT a screen");
+}
+
 static void parse_display(void)
 {
     int line = cur()->line;
     int n = 0, no_adv = 0;
+    if (cur()->kind == T_WORD) {
+        Screen *sc = screen_find(cur()->s);
+        if (sc) { advance(); emit_screen_addr("r3", sc); emit_call("cob_screen_display"); return; }
+    }
     for (;;) {
         Tok *t = cur();
         if (t->kind == T_WORD && (!strcmp(t->s, "upon"))) die_at(t->line, "DISPLAY UPON is not implemented yet");
@@ -3364,6 +3424,7 @@ static void parse_statement(void)
     if (!strcmp(v, "string")) { advance(); parse_string(); return; }
     if (!strcmp(v, "call")) { advance(); parse_call(); return; }
     if (!strcmp(v, "initiate")) { advance(); parse_initiate(); return; }
+    if (!strcmp(v, "accept")) { advance(); parse_accept(); return; }
     if (!strcmp(v, "generate")) { advance(); parse_generate(); return; }
     if (!strcmp(v, "terminate")) { advance(); parse_terminate(); return; }
     if (!strcmp(v, "cancel")) {
@@ -3397,7 +3458,7 @@ static void parse_statement(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     static const struct { const char *verb; const char *when; } later[] = {
-        { "accept", "stage 8" }, { "evaluate", "stage 9" },
+        { "evaluate", "stage 9" },
         { "inspect", "stage 9" }, { "initialize", "stage 9" },
         { "unstring", "after v1" }, { "search", "after v1" }, { "sort", "after v1" },
         { "merge", "after v1" }, { "release", "after v1" }, { "return", "after v1" },
@@ -3506,10 +3567,8 @@ static void parse_procedure_division(void)
         emit("\tstw sp+0, lr");
         emit_call("cob_init");
         emit("\tjal r31, %s", entry);
-        emit("\taddi r1, r0, 0");
-        emit("\tldw lr, sp+0");
-        emit("\taddi sp, sp, 16");
-        emit("\tjalr r0, r31, 0");
+        emit_li("r3", 0);
+        emit_call("cob_stop_run");          /* flushes, restores the terminal, exits */
     }
 
     g_saw_end_program = 0;
@@ -3908,6 +3967,100 @@ static void parse_rd(void)
     }
 }
 
+/* 01 screen-name. then slot entries at deeper levels, each with LINE /
+ * COLUMN / VALUE / PIC FROM|TO|USING / attributes */
+static void parse_screen_section(void)
+{
+    while (cur()->kind == T_NUM && !strcmp(cur()->s, "01")) {
+        int line = cur()->line; advance();
+        if (cur()->kind != T_WORD) die_at(line, "expected a screen-name after 01");
+        if (g_nscreen == g_scrcap) { g_scrcap = g_scrcap ? g_scrcap * 2 : 4; g_screens = realloc(g_screens, g_scrcap * sizeof *g_screens); }
+        Screen *sc = &g_screens[g_nscreen++];
+        memset(sc, 0, sizeof *sc);
+        sc->line = line;
+        snprintf(sc->name, sizeof sc->name, "%s", cur()->s); advance();
+        if (sym_lookup_quiet(sc->name)) die_at(line, "'%s' is both a data item and a screen", sc->name);
+        while (cur()->kind != T_PERIOD) {
+            if (accept_word("blank")) { expect_word("screen"); sc->blank_screen = 1; continue; }
+            die_at(cur()->line, "unexpected %s on screen '%s' (v1 takes BLANK SCREEN on the 01, fields below it)", tok_desc(cur()), sc->name);
+        }
+        expect_period();
+        while (cur()->kind == T_NUM && strcmp(cur()->s, "01")) {
+            int fl = parse_level(); int fline = cur()->line; advance();
+            if (fl <= 1 || fl > 49) die_at(fline, "bad level %d in a screen", fl);
+            if (cur()->kind == T_WORD && !at_word("blank") && !at_word("line") && !at_word("column") && !at_word("col") &&
+                !at_word("value") && !at_word("pic") && !at_word("picture") && !at_word("highlight") && !at_word("underline") &&
+                !at_word("auto") && !at_word("reverse-video") && !at_word("from") && !at_word("to") && !at_word("using"))
+                advance();                                       /* a name on the slot */
+            if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 16; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
+            SField *f = &sc->f[sc->nf];
+            memset(f, 0, sizeof *f);
+            f->srcline = fline; f->kind = -1;
+            int blank_screen_entry = 0;
+            while (cur()->kind != T_PERIOD) {
+                Tok *t = cur();
+                if (accept_word("blank")) {
+                    if (accept_word("screen")) { blank_screen_entry = 1; sc->blank_screen = 1; continue; }
+                    if (accept_word("line")) die_at(t->line, "BLANK LINE is not implemented");
+                    accept_word("when"); if (!(accept_word("zero") || accept_word("zeros") || accept_word("zeroes"))) die_at(t->line, "expected ZERO after BLANK WHEN");
+                    f->blank_zero = 1; continue;
+                }
+                if (accept_word("line")) {
+                    accept_word("number"); accept_word("is");
+                    if (at_word("plus")) die_at(t->line, "LINE PLUS in a screen is not implemented; give the line");
+                    if (cur()->kind != T_NUM) die_at(t->line, "expected a number after LINE");
+                    f->line = atoi(cur()->s); advance(); continue;
+                }
+                if (accept_word("column") || accept_word("col")) {
+                    accept_word("number"); accept_word("is");
+                    if (at_word("plus")) die_at(t->line, "COLUMN PLUS in a screen is not implemented; give the column");
+                    if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
+                    f->col = atoi(cur()->s); advance(); continue;
+                }
+                if (accept_word("value")) {
+                    accept_word("is");
+                    if (cur()->kind != T_STR) die_at(t->line, "a screen VALUE needs a nonnumeric literal");
+                    f->value = cur(); advance(); f->kind = COB_SCR_VALUE; continue;
+                }
+                if (accept_word("pic") || accept_word("picture")) {
+                    if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
+                    f->has_pic = 1;
+                    snprintf(f->pic, sizeof f->pic, "%s", cur()->s);
+                    if (pic_analyse(f->pic, &f->pi) < 0) die_at(t->line, "screen field: %s", f->pi.err);
+                    advance(); continue;
+                }
+                if (at_word("from") || at_word("to") || at_word("using")) {
+                    int kind = at_word("from") ? COB_SCR_FROM : at_word("to") ? COB_SCR_TO : COB_SCR_USING;
+                    advance();
+                    if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name");
+                    f->item = sym_lookup(cur()->s, NULL, 0, t->line); advance();
+                    if (cur()->kind == T_LP) die_at(t->line, "a subscripted screen item is not implemented");
+                    if (f->item->ndims) die_at(t->line, "screen item '%s' is a table item; give it a subscript is not implemented", f->item->name);
+                    if (g_sym[f->item->record].is_linkage) die_at(t->line, "a LINKAGE item cannot be a screen item yet");
+                    f->kind = kind; continue;
+                }
+                if (accept_word("highlight")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
+                if (accept_word("underline")) { f->flags |= COB_SF_UNDERLINE; continue; }
+                if (accept_word("auto") || accept_word("auto-skip")) { f->flags |= COB_SF_AUTO; continue; }
+                if (accept_word("reverse-video")) { f->flags |= COB_SF_REVERSE; continue; }
+                if (accept_word("bell") || accept_word("beep")) continue;
+                if (accept_word("erase")) { accept_word("eol"); accept_word("eos"); continue; }
+                if (accept_word("foreground-color") || accept_word("background-color")) { accept_word("is"); if (cur()->kind == T_NUM) advance(); continue; }
+                if (accept_word("secure") || accept_word("required") || accept_word("full") || accept_word("lowlight") || accept_word("blink"))
+                    die_at(t->line, "the %s clause is not implemented", t->s);
+                die_at(t->line, "unexpected %s in screen '%s'", tok_desc(t), sc->name);
+            }
+            expect_period();
+            if (blank_screen_entry && f->kind < 0 && !f->has_pic) continue;   /* just BLANK SCREEN */
+            if (f->kind < 0) die_at(fline, "a screen slot needs VALUE, or PIC with FROM, TO or USING");
+            if (f->kind == COB_SCR_VALUE) { if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE"); f->width = f->value->len; }
+            else { if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE"); f->width = f->pi.bytes; }
+            if (!f->line || !f->col) die_at(fline, "a screen slot needs LINE and COLUMN");
+            sc->nf++;
+        }
+    }
+}
+
 static void parse_data_division(void)
 {
     if (!accept_word("data")) { finish_data_division(); return; }
@@ -3936,8 +4089,13 @@ static void parse_data_division(void)
             while (at_word("rd")) parse_rd();
             continue;
         }
-        if ((at_word("screen") || at_word("communication")) && is_word(peek(1), "section"))
-            die_at(cur()->line, "the %s SECTION is not implemented yet", cur()->s);
+        if (at_word("screen") && is_word(peek(1), "section")) {
+            advance(); advance(); expect_period();
+            parse_screen_section();
+            continue;
+        }
+        if (at_word("communication") && is_word(peek(1), "section"))
+            die_at(cur()->line, "the COMMUNICATION SECTION is deliberately out");
         break;
     }
     if (!at_division() && cur()->kind != T_EOF) die_at(cur()->line, "unexpected %s in the DATA DIVISION", tok_desc(cur()));
@@ -3987,6 +4145,41 @@ static void emit_unit_data(void)
         if (f->key_sym) { emit("\t.word %d", f->key_sym->offset); emit("\t.word %d", f->key_sym->size); }
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
+    }
+    for (int i = 0; i < g_nscreen; i++) {
+        Screen *sc = &g_screens[i];
+        emit("\t.p2align 2");
+        emit(".Lscrf%d_%d:\t# screen %s slots", g_unit, i, sc->name);
+        for (int k = 0; k < sc->nf; k++) {
+            SField *f = &sc->f[k];
+            emit("\t.byte %d,%d", f->kind, f->flags);
+            emit("\t.short %d", f->line); emit("\t.short %d", f->col);
+            emit("\t.short 0");                    /* pad: width is word-aligned in cob_scr_field */
+            emit("\t.word %d", f->width);
+            if (f->kind == COB_SCR_VALUE) emit("\t.word %s", lit_label((unsigned char *)f->value->s, f->value->len)); else emit("\t.word 0");
+            if (f->has_pic) {
+                Desc d; memset(&d, 0, sizeof d);
+                switch (f->pi.category) {
+                case PIC_ALPHABETIC: d.cat = COB_ALPHA; break;
+                case PIC_ALPHANUMERIC: d.cat = COB_ALNUM; break;
+                case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;
+                case PIC_NUMERIC: d.cat = COB_NUM; break;
+                default: d.cat = COB_NUM_ED; break;
+                }
+                d.usage = COB_U_DISPLAY; d.digits = (unsigned char)f->pi.digits; d.scale = (signed char)f->pi.scale;
+                if (f->pi.is_signed) d.flags |= COB_F_SIGNED;
+                if (f->blank_zero) d.flags |= COB_F_BLANKZ;
+                if (f->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", f->pi.pat);
+                d.size = f->pi.bytes;
+                emit("\t.word .Ld%d", desc_add(&d));
+            } else emit("\t.word 0");
+            if (f->item) { emit("\t.word %s+%d", g_sym[f->item->record].label, f->item->offset); emit("\t.word .Ld%d", sym_desc(f->item)); }
+            else { emit("\t.word 0"); emit("\t.word 0"); }
+        }
+        emit(".Lscr%d_%d:\t# screen %s", g_unit, i, sc->name);
+        emit("\t.word %d", sc->nf);
+        emit("\t.word %d", sc->blank_screen);
+        emit("\t.word .Lscrf%d_%d", g_unit, i);
     }
     for (int i = 0; i < g_nreport; i++) {
         Report *r = &g_reports[i];
@@ -4073,7 +4266,7 @@ int main(int argc, char **argv)
     for (;;) {
         /* one program unit; a source file may hold several, each closed
          * by END PROGRAM */
-        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_last_item = -1; g_cur_fd = -1; g_in_linkage = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();

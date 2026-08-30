@@ -50,7 +50,9 @@ emu_run() {   # emu_run prog.s32x > stdout: the guest's output only
     # The emulator writes one empty line of its own before "Program halted.";
     # hold each line back one step so that line can be dropped and a
     # program's own trailing blank line kept.
-    (cd "$W/run" && "$EMU" "$1" 2>/dev/null) | awk '
+    # a .keys file beside the test is typed into the program (the term
+    # service reads keys from the emulator's stdin)
+    (cd "$W/run" && "$EMU" "$1" 2>/dev/null < "${2:-/dev/null}") | awk '
         /^Starting execution/ { capture = 1; held = 0; next }
         /^HALT at|^Program halted|^Exit code/ { if (held && prev != "") print prev; capture = 0; held = 0 }
         capture { if (held) print prev; prev = $0; held = 1 }
@@ -92,7 +94,8 @@ for fmt in fixed free; do
             report "$fmt/$name" 1 "$(grep -m1 -i "error" "$W/$name.err" "$W/$name.log" | head -1 | sed 's/^[^:]*://')"; continue
         fi
         fresh_workdir
-        emu_run "$W/$name.s32x" > "$W/$name.out"
+        keys=/dev/null; [ -f "${src%.cbl}.keys" ] && keys="${src%.cbl}.keys"
+        emu_run "$W/$name.s32x" "$keys" > "$W/$name.out"
         if [ ! -f "$exp" ]; then
             report "$fmt/$name" 1 "no .expected file"; continue
         fi
@@ -101,9 +104,11 @@ for fmt in fixed free; do
             diff "$exp" "$W/$name.out" | head -8
             continue
         fi
-        # oracle: GnuCOBOL on the same source, when present
+        # oracle: GnuCOBOL on the same source, when present.  A program whose
+        # comments say "no oracle" (screens need a tty there) is ours alone.
         note=""
-        if [ -n "$ORACLE" ]; then
+        if grep -qi "no oracle" "$src"; then note="no oracle: reviewed by hand"; ORACLE_SKIP=1; else ORACLE_SKIP=0; fi
+        if [ -n "$ORACLE" ] && [ "$ORACLE_SKIP" = 0 ]; then
             std="-std=cobol85"
             grep -qi "default dialect" "$src" && std=""
             if (cd "$W" && "$ORACLE" -x $std $flag -o "$W/$name.orc" "$src" "${extra[@]+"${extra[@]}"}") >"$W/$name.orclog" 2>&1; then

@@ -1,15 +1,17 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **Stage 7 landed** (2026-08-29) -- **the first product claim
+Status: **Stage 8 landed** (2026-08-29) -- **the first product claim
 holds**: gl022, gl023 and gl030 compile unchanged, run in place on
 SLOW-32, and all six of their reports are byte-identical to
-`~/majesty/reports_cobol/`. The language so far: the Data Division as a tree,
+`~/majesty/reports_cobol/`; usescreen paints and accepts on the term
+service. The language so far: the Data Division as a tree,
 the whole MOVE matrix including editing and de-editing, COMPUTE and the
 arithmetic verbs with ROUNDED / SIZE ERROR / REMAINDER, conditions, IF
 and every PERFORM form, line sequential, fixed sequential and indexed
 files, STRING, CALL / LINKAGE / USING on the SLOW-32 C ABI, Report
-Writer's cheap half; 29/29 tests with GnuCOBOL agreeing on each
-program's output. Stages in [docs/plan.md](docs/plan.md).
+Writer's cheap half, SCREEN SECTION; 30/30 tests, GnuCOBOL agreeing
+on every program that can run without a tty. Stages in
+[docs/plan.md](docs/plan.md).
 
 A host cross-compiler in the tree's ordinary universe (like `fortran/`
 and `clip/`, not `selfhost/`). It reads COBOL 85 plus the implementor

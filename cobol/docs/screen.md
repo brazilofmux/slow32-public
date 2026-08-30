@@ -97,3 +97,54 @@ in [lowering.md](lowering.md).
 If `UNDERLINE` is missing from `term.h` when this is implemented,
 menu still has to be usable; the words remain visible without the
 attribute.
+
+## The eventual target (the user's RM and Micro Focus experience)
+
+Recorded 2026-08-29 so it outlives the conversation. What a COBOL
+screen does on those systems, and what this one should grow into:
+
+- **TAB order**: fields taken in declaration order; TAB and Enter move
+  to the next.
+- **Enter as submit** on the last field (or a commit key).
+- **In-place editing**: numeric fields anchored on the decimal point,
+  or right-aligned; text fields left-aligned; typing edits the value
+  where it sits rather than clearing it.
+- **AUTO**: some fields advance by themselves when full.
+- **SECURE**: some fields echo `*` (passwords).
+- Field look: underline, or more commonly **reverse video**.
+
+That set is reachable with dBase today, but dBase makes the program
+manage it by hand; the point of the SCREEN SECTION is that the
+compiler does. (dBase note: the user's 1986 teacher's-pet code still
+runs on `dbase/`.)
+
+## As built (Stage 8)
+
+`libcob` compiles each `01` into a slot table (`cob_screen` /
+`cob_scr_field` in `cobrt.h`): kind (VALUE / FROM / TO / USING), LINE,
+COLUMN, width, the literal or the item with its descriptor and the
+slot's PICTURE descriptor, attribute flags. `DISPLAY screen` paints
+every slot inside `term_begin_update` / `term_end_update` (so the
+emulator emits only changed cells); `ACCEPT screen` paints, then runs
+the focus loop over the TO and USING slots in order: printable keys
+overwrite and advance, Backspace erases, Enter and TAB go to the next
+field (Enter on the last one submits), Escape or end of input ends
+the ACCEPT, AUTO advances when the field fills; every input field's
+text is then `MOVE`d into its item through the ordinary conversion
+matrix -- which is where usescreen's `PIC X(6)` to `COMP-5` lands,
+now parsed as GnuCOBOL does (blanks, sign, digits, point). HIGHLIGHT
+is bold, REVERSE-VIDEO reverse; **UNDERLINE is painted plain** because
+`term.h` has no such attribute yet. `CBL_GET_SCR_SIZE` is
+`term_get_size`. The main wrapper leaves through `cob_stop_run`, which
+restores the terminal.
+
+Not yet, against the target above: numeric anchoring on the point,
+`SECURE`, underline, `REQUIRED`/`FULL`, colour (parsed, ignored),
+`LINE PLUS` / `COLUMN PLUS`, nested screen groups, subscripted or
+LINKAGE items in a slot.
+
+Testing: `tests/free/screen.cbl` is driven by `screen.keys` on the
+emulator's stdin and its expected output is the ANSI stream, reviewed
+by hand -- GnuCOBOL's screens need a real tty, so this is the one
+test class without an oracle run (`no oracle` in the source tells
+the harness).

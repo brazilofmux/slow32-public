@@ -12,13 +12,15 @@
  * SIZE ERROR, COMPUTE's operators.  Stage 4: line sequential and fixed
  * sequential files, STRING, the case intrinsics.  Stage 5: indexed files
  * on the default path (docs/indexed.md).  Stage 7: Report Writer, the
- * cheap half (docs/report-writer.md).
+ * cheap half (docs/report-writer.md).  Stage 8: SCREEN SECTION on the
+ * term service (docs/screen.md).
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "cobrt.h"
 #include "cobedit.h"
+#include <term.h>
 
 /* ---- output: DISPLAY goes to stdout, buffered by us ------------------ */
 
@@ -59,9 +61,21 @@ void cob_init(void)
     out_n = 0;
 }
 
+static int term_up;      /* the terminal service is initialised and raw */
+
+static void term_down(void)
+{
+    if (!term_up) return;
+    term_set_attr(0);
+    term_set_raw(0);
+    term_cleanup();
+    term_up = 0;
+}
+
 void cob_stop_run(int code)
 {
     out_flush();
+    term_down();
     exit(code);
 }
 
@@ -320,15 +334,25 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
         return;
     }
 
-    /* alphanumeric (or group) to numeric: not a standard-conforming MOVE;
-     * GnuCOBOL performs it as a numeric conversion of the text, treating
-     * the sender as an unsigned DISPLAY integer of its own length. */
-    cob_desc td = *sd;
-    td.cat = COB_NUM; td.usage = COB_U_DISPLAY; td.scale = 0; td.flags = 0;
+    /* alphanumeric (or group) to numeric: not a standard-conforming MOVE.
+     * GnuCOBOL (measured) reads the text as a decimal number -- blanks
+     * skipped, an optional sign, digits, an optional point and fraction,
+     * anything else ending it, no digits at all meaning zero -- and stores
+     * it with the receiver's scale and digits.  usescreen's typed amount
+     * relies on exactly this. */
     const char *s = src;
-    if (td.size > 18) { s += td.size - 18; td.size = 18; }
-    td.digits = (unsigned char)td.size;
-    cob_put_num(dst, dd, cob_get_num(s, &td), 0);
+    unsigned n = sd->size, i = 0;
+    while (i < n && s[i] == ' ') i++;
+    int neg = 0;
+    if (i < n && (s[i] == '+' || s[i] == '-')) { neg = (s[i] == '-'); i++; }
+    long long v = 0; int scale = 0, seen_point = 0, digits = 0;
+    for (; i < n; i++) {
+        char c = s[i];
+        if (c >= '0' && c <= '9') { if (digits < 18) { v = v * 10 + (c - '0'); digits++; if (seen_point) scale++; } }
+        else if (c == '.' && !seen_point) seen_point = 1;
+        else break;
+    }
+    cob_put_num(dst, dd, neg ? -v : v, scale);
 }
 
 void cob_fill(void *dst, int n, int c) { memset(dst, c, n); }
@@ -1086,4 +1110,133 @@ void cob_rw_line_write(cob_report *r, int abs, int plus, int body_first)
 void cob_rw_terminate(cob_report *r)
 {
     if (r->page_counter > 0) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
+}
+
+/* ====================================================================== */
+/* SCREEN SECTION                                                          */
+/* ====================================================================== */
+
+/* DISPLAY paints every slot; ACCEPT paints, then runs the focus loop
+ * over the TO and USING slots in order (dBase Stage 4's READ, on the
+ * same term service): printable keys overwrite and advance, Backspace
+ * erases, Enter and Tab move to the next field, Escape ends the ACCEPT,
+ * AUTO advances when the field fills.  Each input field's text is then
+ * MOVEd into its item through the ordinary conversion matrix.
+ * UNDERLINE has no term.h attribute yet: painted plain (screen.md). */
+
+static void term_need(void)
+{
+    if (term_up) return;
+    out_flush();
+    if (term_init() != 0) cob_fatal("the terminal service is not available (run under an emulator with the term service)");
+    term_set_raw(1);
+    term_up = 1;
+}
+
+void cbl_get_scr_size(unsigned char *lines, unsigned char *cols)
+{
+    int r = 24, c = 80;
+    term_need();
+    term_get_size(&r, &c);
+    *lines = (unsigned char)(r > 255 ? 255 : r);
+    *cols = (unsigned char)(c > 255 ? 255 : c);
+}
+
+static void scr_attr(const cob_scr_field *f)
+{
+    if (f->flags & COB_SF_REVERSE) term_set_attr(7);
+    else if (f->flags & COB_SF_HIGHLIGHT) term_set_attr(1);
+    else term_set_attr(0);
+}
+
+static void scr_puts_n(const char *p, unsigned n)
+{
+    for (unsigned i = 0; i < n; i++) term_putc(p[i]);
+}
+
+/* render a FROM/USING item through its picture into buf (width bytes) */
+static void scr_render(const cob_scr_field *f, char *buf)
+{
+    if (f->kind == COB_SCR_VALUE) { memcpy(buf, f->value, f->width); return; }
+    if (f->kind == COB_SCR_TO) { memset(buf, ' ', f->width); return; }
+    cob_move(f->item, (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
+}
+
+static void scr_paint_field(const cob_scr_field *f)
+{
+    char buf[512];
+    if (f->width > sizeof buf) cob_fatal("screen field wider than 512");
+    scr_render(f, buf);
+    term_gotoxy(f->line, f->col);
+    scr_attr(f);
+    scr_puts_n(buf, f->width);
+    term_set_attr(0);
+}
+
+void cob_screen_display(const cob_screen *s)
+{
+    term_need();
+    term_begin_update();
+    if (s->blank_screen) term_clear(0);
+    for (unsigned i = 0; i < s->nfields; i++) scr_paint_field(&s->fields[i]);
+    term_end_update();
+}
+
+void cob_screen_accept(const cob_screen *s)
+{
+    cob_screen_display(s);
+    /* edit buffers for the input fields */
+    unsigned nin = 0;
+    for (unsigned i = 0; i < s->nfields; i++)
+        if (s->fields[i].kind == COB_SCR_TO || s->fields[i].kind == COB_SCR_USING) nin++;
+    if (!nin) { term_getkey(); return; }        /* nothing to type into: wait for a key */
+    char **ed = malloc(nin * sizeof *ed);
+    unsigned *idx = malloc(nin * sizeof *idx);
+    if (!ed || !idx) cob_fatal("out of memory");
+    unsigned k = 0;
+    for (unsigned i = 0; i < s->nfields; i++) {
+        const cob_scr_field *f = &s->fields[i];
+        if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING) continue;
+        ed[k] = malloc(f->width + 1);
+        if (!ed[k]) cob_fatal("out of memory");
+        scr_render(f, ed[k]);
+        idx[k++] = i;
+    }
+    unsigned cur = 0, pos = 0;
+    int done = 0;
+    while (!done) {
+        const cob_scr_field *f = &s->fields[idx[cur]];
+        term_gotoxy(f->line, f->col + (int)pos);
+        int key = term_getkey();
+        if (key == -1 || key == 27) { done = 1; break; }             /* EOF / Escape ends the ACCEPT */
+        if (key == '\r' || key == '\n' || key == '\t') {
+            if (cur + 1 < nin) { cur++; pos = 0; } else done = 1;
+            continue;
+        }
+        if (key == 8 || key == 127) {
+            if (pos > 0) { pos--; ed[cur][pos] = ' '; term_gotoxy(f->line, f->col + (int)pos); term_putc(' '); }
+            continue;
+        }
+        if (key >= 32 && key < 127) {
+            if (pos < f->width) {
+                ed[cur][pos] = (char)key;
+                term_putc((char)key);
+                pos++;
+                if (pos >= f->width && (f->flags & COB_SF_AUTO)) {
+                    if (cur + 1 < nin) { cur++; pos = 0; } else done = 1;
+                }
+            }
+            continue;
+        }
+        /* other control keys are ignored */
+    }
+    /* commit every input field into its item as alphanumeric text */
+    for (unsigned i = 0; i < nin; i++) {
+        const cob_scr_field *f = &s->fields[idx[i]];
+        cob_desc td; memset(&td, 0, sizeof td);
+        td.cat = COB_ALNUM; td.usage = COB_U_DISPLAY; td.size = f->width;
+        cob_move(ed[i], &td, f->item, (const cob_desc *)f->item_desc);
+        free(ed[i]);
+    }
+    free(ed); free(idx);
 }

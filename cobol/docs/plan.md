@@ -260,13 +260,28 @@ then the group's lines; `libcob` owns the page model
 `CONTROL`, `SUM`, footing and heading types beyond PH, `GROUP
 INDICATE`, `NEXT GROUP`, summary `GENERATE`, subscripted `SOURCE`.
 
-## Stage 8 — SCREEN SECTION, first screen **M**
+## Stage 8 — SCREEN SECTION, first screen **M** — DONE 2026-08-29
 
 - [screen.md](screen.md) against `term.h`
 - `CBL_GET_SCR_SIZE`; `USAGE BINARY-CHAR [UNSIGNED]`
 - The `PIC X(6)` → `PIC S9(3)V99 COMP-5` `MOVE` usescreen makes
 
 Done: `usescreen.cbl` runs.
+
+What landed: the SCREEN SECTION as slot tables (`screen.md`, "As
+built"), `DISPLAY screen` and `ACCEPT screen` on the term service
+with the dBase-Stage-4 focus loop, `CBL_GET_SCR_SIZE`, the
+alphanumeric-to-numeric `MOVE` cell as GnuCOBOL measures it (blanks,
+sign, digits, point), the main wrapper leaving through `cob_stop_run`
+so the terminal is restored. `usescreen.cbl` compiles unchanged and,
+with `42.25` typed into it on the emulator's stdin, paints
+`$ 42.25` on line 3 under `slow32-fast` and `slow32-dbt`. The harness
+gained `.keys` (typed into the program) and a `no oracle` marker;
+`tests/free/screen.cbl`'s expected output is the ANSI stream,
+reviewed by hand. The eventual target the user described (TAB order,
+Enter as submit, numeric anchoring, AUTO, SECURE, underline / reverse
+video) is written in `screen.md`; numeric anchoring, SECURE and
+underline are not there yet.
 
 ## Stage 9 — the menu, and what it drags in **L**
 

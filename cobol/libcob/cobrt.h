@@ -54,6 +54,28 @@ typedef struct {
     int body_seen;            /* a body group has been presented on this page */
 } cob_report;
 
+/* a SCREEN SECTION 01: a table of slots (docs/screen.md).  kind: 0 VALUE,
+ * 1 FROM, 2 TO, 3 USING.  flags: 1 HIGHLIGHT, 2 UNDERLINE, 4 AUTO,
+ * 8 REVERSE-VIDEO. */
+enum { COB_SCR_VALUE = 0, COB_SCR_FROM = 1, COB_SCR_TO = 2, COB_SCR_USING = 3 };
+enum { COB_SF_HIGHLIGHT = 1, COB_SF_UNDERLINE = 2, COB_SF_AUTO = 4, COB_SF_REVERSE = 8 };
+
+typedef struct {
+    unsigned char kind, flags;
+    unsigned short line, col;
+    unsigned int width;          /* characters painted */
+    const char *value;           /* VALUE literal (width bytes) */
+    const void *pic;             /* cob_desc of the PICTURE, or 0 */
+    void *item;                  /* the FROM/TO/USING item */
+    const void *item_desc;
+} cob_scr_field;
+
+typedef struct {
+    unsigned int nfields;
+    unsigned int blank_screen;
+    cob_scr_field *fields;
+} cob_screen;
+
 typedef struct {
     unsigned char cat;
     unsigned char usage;
