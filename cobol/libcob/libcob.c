@@ -329,9 +329,14 @@ void cob_move_alnum(const void *src, int slen, void *dst, int dlen, int just)
 
 /* The digits of a numeric item as unsigned DISPLAY characters (what a
  * numeric-to-alphanumeric MOVE sends: no sign, no point). */
+/* the digits of a numeric item as an alphanumeric sending item: the
+ * sign and the point unrepresented, and P positions as zeros (NC114M:
+ * S9P(17) holding 1 reads 100000000000000000) */
 static int num_to_digits(const void *p, const cob_desc *d, char *out)
 {
-    if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) {
+    int np = 0, lead_p = 0;
+    if (d->pic) { for (const char *q = d->pic; *q; q++) if (*q == 'P') np++; lead_p = np && (d->pic[0] == 'P' || (d->pic[0] == 'S' && d->pic[1] == 'P')); }
+    if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && !np) {
         memcpy(out, p, d->size);
         int sk = (d->flags & COB_F_LEAD) ? 0 : (int)d->size - 1;
         unsigned char last = (unsigned char)out[sk];
@@ -341,6 +346,15 @@ static int num_to_digits(const void *p, const cob_desc *d, char *out)
     long long v = cob_get_num(p, d);
     unsigned long long mag = v < 0 ? (unsigned long long)(-v) : (unsigned long long)v;
     int digits = (d->flags & COB_F_NOTRUNC) ? capacity_digits(d->size) : d->digits;
+    if (np) {
+        /* the stored digits, the P positions zeros on the side they sit */
+        int stored = digits - np, o = 0;
+        if (lead_p) for (int i = 0; i < np; i++) out[o++] = '0';
+        for (int i = stored - 1; i >= 0; i--) { out[o + i] = (char)('0' + mag % 10); mag /= 10; }
+        o += stored;
+        if (!lead_p) for (int i = 0; i < np; i++) out[o++] = '0';
+        return o;
+    }
     for (int i = digits - 1; i >= 0; i--) { out[i] = (char)('0' + mag % 10); mag /= 10; }
     return digits;
 }
@@ -373,7 +387,10 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
     }
 
     if (!dnum) {
-        if (!snum || dd->cat == COB_GROUP) {
+        /* a numeric-edited sending item is alphanumeric to an alphanumeric
+         * receiver: its edited characters as they are (NC124A's ZZZPP to X(5));
+         * only a numeric one sends its digits */
+        if (sd->cat != COB_NUM || dd->cat == COB_GROUP) {
             cob_move_alnum(src, (int)sd->size, dst, (int)dd->size, dd->flags & COB_F_JUST);
         } else {
             int n = num_to_digits(src, sd, tmp);
@@ -399,6 +416,11 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
     int neg = 0;
     if (i < n && (s[i] == '+' || s[i] == '-')) { neg = (s[i] == '-'); i++; }
     long long v = 0; int scale = 0, seen_point = 0, digits = 0;
+    /* a run of digits longer than the receiver's integer positions: the
+     * rightmost are the ones that survive (an unsigned integer moved to a
+     * numeric item, X3.23 6.18.2; NC105A moves 28 digits into 9(10)) */
+    unsigned run_end = i; while (run_end < n && s[run_end] >= '0' && s[run_end] <= '9') run_end++;
+    if (run_end - i > 18 && (run_end == n || s[run_end] != '.')) i = run_end - 18;
     for (; i < n; i++) {
         char c = s[i];
         if (c >= '0' && c <= '9') { if (digits < 18) { v = v * 10 + (c - '0'); digits++; if (seen_point) scale++; } }

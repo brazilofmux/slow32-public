@@ -222,7 +222,7 @@ open only so the difference is on record; not worth matching.
 `tests/ccvs-histogram.sh` over the extracted modules in
 `~/gnucobol-svn/tests/cobol85` (X-cards already substituted there).
 4 → 202 of 303 in one day; `tests/ccvs-run.sh` then runs and scores
-them by their own reports: **6959 of 7001 tests pass, none fail, 286
+them by their own reports: **7289 of 7335 tests pass, none fail, 290
 programs match GnuCOBOL's tally exactly** (IC, RL, RW and IX complete) (Stage 23; alternate keys
 made IX 29 of 29, LINAGE the SQ page tests, COPY REPLACING/REPLACE
 made SM 12 of 13, DECIMAL-POINT IS COMMA 13 of 13; the IC bin was
@@ -248,11 +248,11 @@ AFTER` levels~~ (done, with WITH TEST AFTER across levels: NC201A,
 NC233A, NC243A match), ~~a multi-character `CLASS` literal~~ (done, with
 switches from the environment and SET groups: NC174A, NC254A match),
 ~~`CURRENCY SIGN`~~ (done, with BLANK WHEN ZERO on a plain numeric item
-and procedure-names of digits: NC107A, NC108M match). **What the 14
-refused programs stop on now (2026-08-31):** a non-integer numeric
-MOVEd to an alphanumeric item (NC105A, NC114M, NC124A: forbidden by the
-85 text, GnuCOBOL allows it -- the user's ruling is to stay with the
-text, so these stay refused),  ~~"too many operands" (NC106A, NC176A)~~ (done: 64 operands, Stage 51),
+and procedure-names of digits: NC107A, NC108M match). **What the 10
+refused programs stop on now (2026-08-31):** ~~a non-integer numeric
+MOVEd to an alphanumeric item (NC105A, NC114M, NC124A)~~ (done, Stage
+53: the user reversed the text-first ruling -- the NIST cases are the
+standard's executable form and win where they and the text differ),  ~~"too many operands" (NC106A, NC176A)~~ (done: 64 operands, Stage 51),
 ~~abbreviated combined relations (NC205A, NC211A, NC225A)~~ (done, Stage 44),
 ~~ACCEPT FROM DATE/DAY/TIME (NC214M)~~ (done, Stage 46), ~~a literal continued in a way the
 reader refuses (NC215A)~~ (done: a doubled quote split at column 72, Stage 52), ~~a STRING receiver that is a group (NC217A)~~ (done, Stage 48),

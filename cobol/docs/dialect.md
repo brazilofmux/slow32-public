@@ -390,6 +390,19 @@ given, because majesty's `.prn` oracles were produced under it.
   reader's balance count would have closed it (NC215A's alphabet
   literal `..."8J"` at column 72, then `-    ""9K...`). Only at column
   72 exactly: a shorter line ending in a quote closes its literal.
+- **MOVE, four rules the NIST cases settled** (Stage 53). A non-integer
+  numeric item MOVEd to an alphanumeric one: the 85 text forbids it,
+  NC105A, NC114M and NC124A want it, and the cases win (the user's
+  ruling, 2026-08-31, reversing the text-first one): the digits as
+  stored, sign and point unrepresented, P positions as zeros
+  (`S9P(17)` holding 1 reads `100000000000000000`). A *group* sending
+  item is an alphanumeric-to-alphanumeric move whatever the receiver
+  -- no conversion, no editing (6.18.2). A numeric-edited sending item
+  is alphanumeric to an alphanumeric receiver: its edited characters
+  as they are. An alphanumeric of more digits than a numeric receiver
+  holds keeps the rightmost (an unsigned integer moved). And a
+  floating insertion picture with no `9` shows spaces for a zero
+  value, the point and the currency sign included (NC124A).
 - **`REPLACE ==a== BY ==b== ...`** / **`REPLACE OFF`**: the same
   machinery over the source that follows the statement, until the
   next `REPLACE`; runs after every `COPY` has been expanded, so it

@@ -88,8 +88,9 @@ static int cob_edit_apply(const char *pat, const char *digs, int neg, int blank_
     if (blank_zero && zero) { memset(out, ' ', width); return width; }
 
     if (fl) {
-        if (first_sig < 0) {
-            /* every digit position floats and the value is zero: spaces */
+        if (first_sig < 0 || (zero && !has9)) {
+            /* every digit position floats and the value is zero: spaces
+             * (the decimal point and the currency symbol too) */
             memset(out, ' ', width);
         } else {
             int pos = first_sig - 1;

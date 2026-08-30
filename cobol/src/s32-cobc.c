@@ -3419,6 +3419,15 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
+    if (src->kind == O_REF && src->ref.sym->is_group && !src->ref.rm && !dst->rm && !src->ref.sym->is_cond) {
+        /* a group sending item: an alphanumeric-to-alphanumeric move whatever
+         * the receiver -- no conversion, no editing (X3.23 6.18.2; NC105A
+         * moves a group to numeric and to edited items and reads the bytes) */
+        Sym *s = src->ref.sym;
+        Arg a[4] = { arg_ref(&src->ref), arg_imm(s->size), arg_ref(dst), arg_imm(d->size) };
+        emit_args(a, 4); emit_li("r7", d->just); emit_call("cob_move_alnum");
+        return;
+    }
     if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) {
         int ned = d->pi.category == PIC_NUMERIC_EDITED;
         if (src->kind == O_FIG && !ned) {
@@ -3507,11 +3516,20 @@ static void emit_move(Opnd *src, Ref *dst)
         default: {
             Sym *s = src->ref.sym;
             if (s->is_cond) die_at(src->line, "'%s' is a condition-name and cannot be moved", s->name);
-            if (is_numeric_sym(s) && s->pi.scale != 0)
-                die_at(src->line, "MOVE of the non-integer numeric item '%s' to the alphanumeric item '%s' is not valid COBOL", s->name, d->name);
+            /* a non-integer numeric item to an alphanumeric one: the 85 text
+             * forbids it, the NIST cases (NC105A, NC114M, NC124A) want it --
+             * the digits as stored, the sign and the point unrepresented; the
+             * cases win (the user's ruling, 2026-08-31) */
             if (!is_numeric_sym(s) && s->size == d->size && !d->just) {
                 Arg a[3] = { arg_ref(dst), arg_ref(&src->ref), arg_imm(d->size) };
                 emit_args(a, 3); emit_call("memcpy");
+                return;
+            }
+            if (d->is_group) {
+                /* a group receiving item: an alphanumeric-to-alphanumeric move
+                 * (a group sending item was taken above) */
+                Arg a[4] = { arg_ref(&src->ref), arg_imm(s->size), arg_ref(dst), arg_imm(d->size) };
+                emit_args(a, 4); emit_li("r7", d->just); emit_call("cob_move_alnum");
                 return;
             }
             Arg a[4] = { arg_ref(&src->ref), arg_desc(sym_desc(s)), arg_ref(dst), arg_desc(sym_desc(d)) };

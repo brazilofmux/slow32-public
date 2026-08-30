@@ -1100,6 +1100,26 @@ the join then reads `""` as one embedded quote. tests/fixed/litcont
 NC215A matches; the suite 289 of 303 compile, 6959 of 7001 pass, none
 fail, 286 match.
 
+## Stage 53 — the MOVE rules the NIST cases settled **M** — DONE 2026-08-31
+
+The user reversed the text-first ruling: where the 85 text and the
+NIST cases differ, the cases win. The refusal of a non-integer
+numeric item MOVEd to an alphanumeric one came out, and the three
+programs then showed four more MOVE rules: a group sending item is a
+plain alphanumeric move whatever the receiver (emit_move now decides
+that first, before the edited-receiver path); a numeric-edited
+sending item is alphanumeric to an alphanumeric receiver (cob_move's
+"numeric" test for that branch is COB_NUM alone); an alphanumeric of
+more digits than the numeric receiver holds keeps the rightmost (28
+digits into 9(10)); a P item's digits expand its P positions to
+zeros (`num_to_digits`); and a floating picture with no 9 shows
+spaces for zero, point and currency included (cobedit). free/numalnum
+(the oracle refuses the MOVE outright, noted in oracles.md); NC105A,
+NC114M and NC124A match, and an ST program that had stopped on the
+same MOVE; the harness's bad/nonint-to-alnum test, which encoded the
+refusal, is gone; the suite 293 of 303 compile, 7289 of 7335 pass,
+none fail, 290 match.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
