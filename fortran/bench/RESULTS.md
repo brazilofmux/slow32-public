@@ -637,3 +637,48 @@ a class:
 
 Day cumulative: LINPACK 1.98× → 1.22×, mandel 3.26× → 1.16×.  28/28
 tests; all engines agree.  F77_SR_DEBUG=1 traces derivations.
+
+## The gap investigated; one swapped operand worth 7% (1.22× → 1.13×)
+
+2026-08-30, evening.  Three findings from actually profiling instead
+of theorizing (bench/prof.py: parses the .s32x symbol table, streams
+a slow32 -t trace, buckets instructions per function; run it on a
+REPS=2 copy of the kernel):
+
+1. **Inlining STILL loses, re-measured with today's optimizer**:
+   F77_INLINE_MAX=12 gives 2.31×, =40 gives 1.224× (vs 1.217× off).
+   The old verdict survives even though its old reason (dummy loads
+   stay in memory) has expired -- the h_ld_ro hoisting works inside
+   spliced bodies too.  Non-monotonic and never profitable; stays
+   off.
+
+2. **The profile**: DAXPY is 82% of f77's instructions.  And clang
+   spends 13.6% of its total in MEMSET (its per-rep matrix re-init),
+   so clang's pure compute is even tighter than the headline ratio
+   -- worth remembering when reading these numbers.
+
+3. **The real hot clang loop is 12/iter, not the 15 previously
+   cited** (that was a cold dgesl loop rebuilding a lui/addi global
+   address every iteration).  Clang's 12: one shared byte-offset IV,
+   two address adds in-body, and a FUSED end-compare branch.  Our 13
+   differed only in the trip test: slt + bne.
+
+The fix: the compare-branch fuser handled SGT/SGTU/SLE/SLEU by
+materializing the flag (slt r1; bne r1) -- two instructions --
+when a > b is simply blt b,a with the operands swapped, and a <= b
+is bge b,a.  One bcond now.  Every rotated loop's trip test
+(SGT(t,0) -> blt r0,t) drops an instruction per iteration, and so
+does every > or <= in an IF.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 610,206,374 (1.217×) | 27,271,028 (1.162×) |
+| after | 566,760,085 (**1.130×**) | 26,120,168 (**1.113×**) |
+
+DAXPY's loop is 12 per iteration -- clang's number.  Day cumulative:
+LINPACK 1.98× → 1.13×, mandel 3.26× → 1.11×.  28/28 tests; residual
+verified.  What remains vs clang on LINPACK is mostly DAXPY's call
+overhead (prologue/epilogue × ~2000 calls/rep) and clang's memset
+handicap partially offsetting it; the honest next levers are
+save-fewer-registers shapes or revisiting inlining WITH a fix for
+whatever makes it 2.3× at threshold 12.

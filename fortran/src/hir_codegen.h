@@ -2302,22 +2302,19 @@ static void hcg_inst(int idx) {
                 hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
                 return;
             }
-            if (ck == HI_SGT || ck == HI_SGTU) {
-                /* a > b => r1 = (b < a); condition true when r1 != 0 */
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-                if (ck == HI_SGT) brop = "slt"; else brop = "sltu";
-                cg_rrr(brop, 1, ra, rb);
-                hcg_condbr_finish(idx, "bne", "beq", 1, 0);
-                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
-                return;
-            }
-            /* HI_SLE / HI_SLEU: a <= b => r1 = (b < a); true when r1 == 0 */
+            /* DIVERGENCE (f77, port upstream): SGT/SGTU/SLE/SLEU fuse
+             * to ONE bcond by swapping operands -- a > b is blt b,a
+             * and a <= b is bge b,a -- instead of materializing the
+             * slt and branching on the flag.  Every rotated loop's
+             * trip test (SGT(t,0) -> blt r0,t) drops an instruction
+             * per iteration. */
             ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
             rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-            if (ck == HI_SLE) brop = "slt"; else brop = "sltu";
-            cg_rrr(brop, 1, ra, rb);
-            hcg_condbr_finish(idx, "beq", "bne", 1, 0);
+            if (ck == HI_SGT)       { bropt = "blt";  brop = "bge"; }
+            else if (ck == HI_SGTU) { bropt = "bltu"; brop = "bgeu"; }
+            else if (ck == HI_SLE)  { bropt = "bge";  brop = "blt"; }
+            else                    { bropt = "bgeu"; brop = "bltu"; }
+            hcg_condbr_finish(idx, bropt, brop, ra, rb);
             hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
             return;
         }
