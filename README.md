@@ -173,6 +173,8 @@ slow-32/
 │   └── include/        #   C standard library headers
 ├── selfhost/           # Self-hosting bootstrap chain (stage00..stage08 +
 │                       #   cross-compilers targeting x86-64 and AArch64)
+├── fortran/            # Fortran 77 compiler (f77 → SLOW-32 assembly)
+├── cobol/              # COBOL 85 compiler (s32-cobc)
 │
 ├── llvm-backend/       # LLVM backend for native clang/llc support
 ├── clang-target/       # Clang driver/target definitions
@@ -280,6 +282,12 @@ int main() {
   byval struct-argument convention — with no known divergence, so stage08 and
   clang objects link and interoperate in both directions
   (`selfhost/stage08/run-interop-llvm.sh` gates it)
+- ✅ **Fortran 77** - `fortran/` is a one-pass F77 compiler with its own
+  SSA/BURG backend; LINPACK runs within 13% of the clang-built binary's
+  instruction count, mandel within 7% (`fortran/bench/RESULTS.md`), and the
+  suite is differential-tested against gfortran
+- ✅ **COBOL 85** - `cobol/` (`s32-cobc`) compiles and runs real batch COBOL
+  on SLOW-32, validated against GnuCOBOL
 - ✅ **Graphics** - the tube service, all three modes landed: vector
   (`asteroids/`), framebuffer (`doom/`), and PPU/tile (`ppu-reel/`, spec frozen
   against a 14-frame conformance reel).  Golden-hash regression coverage,
