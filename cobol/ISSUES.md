@@ -18,7 +18,7 @@ every change, and majesty's batch (twelve reports byte-identical) as
 the regression gate before a push. Corpus programs are not rewritten
 from this side; they are majesty's.
 
-State on 2026-08-31: harness **89/89**; CCVS-85 **348 of 348 compile**,
+State on 2026-08-31: harness **91/91**; CCVS-85 **348 of 348 compile**,
 **8049 of 8160** tests pass with none failing (ISSUES-17); majesty
 `batch.sh` runs every COBOL report step on SLOW-32 with all twelve
 reports byte-identical; **every program in `~/majesty/src/cobol`

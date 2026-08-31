@@ -15,7 +15,7 @@ REPORTS ARE out by choice), SCREEN SECTION, EVALUATE / INSPECT /
 INITIALIZE / reference modification / every X3.23a-1989 intrinsic
 function, sequential mode V behind the IBM RDW that tapemgr
 round-trips, COPY, the command line, OCCURS DEPENDING ON, SEARCH;
-89/89 tests, GnuCOBOL agreeing on every program that can run without
+91/91 tests, GnuCOBOL agreeing on every program that can run without
 a tty, and the NIST CCVS-85 at 348 of 348 compiling, 8049 of 8160
 tests passing. Stages in [docs/plan.md](docs/plan.md);
 what the rest of the corpus needs, in
