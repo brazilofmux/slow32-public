@@ -592,3 +592,48 @@ sufficient.
 Day cumulative: LINPACK 1.98× → 1.41×, mandel 3.26× → 1.21×.  28/28
 tests; slow32, slow32-fast and slow32-dbt agree.  The gate machinery
 (f77_dstore_n) is deleted, not parked -- splitting supersedes it.
+
+## Derived induction variables (LINPACK 1.41× → 1.22×, mandel 1.21× → 1.16×)
+
+2026-08-30, strength reduction as real SSA surgery.  licm_strred
+(per natural loop, after hoisting and splitting): a header phi with
+one back edge and an invariant step is a base IV; an in-body
+SLL(iv,k) / MUL(iv,m) / ADD(iv,m) with invariant k/m becomes its own
+phi -- init computed once in the preheader, its own increment in the
+latch, uses rewritten, the original NOPped.  Two rounds, so
+ADD(base, p) over a first-round derived p becomes a POINTER
+induction variable.  ADDI candidates are excluded on purpose:
+trailing displacement ADDIs fold into memory offsets, and deriving
+them would unfold that.  Original IVs left with no use but their own
+increment are swept, phi and all.
+
+DAXPY's loop is now 13 instructions per iteration -- an 8-instruction
+body (4 ldw, fmul.d, fadd.d, 2 stw, displacements folded) and a
+5-instruction latch (trip decrement, TWO POINTER BUMPS, compare,
+branch).  No shift, no address adds.  The clang loop this chases
+carries 15 including a lui/addi global-address rebuild.
+
+Three bugs found and fixed on the way, all recorded because each is
+a class:
+- LICM defers its global reference rewrite to the end of hir_licm
+  but NOPs hoisted originals immediately -- so at strred time, users
+  of a hoisted computation still name the original.  Deriving from
+  the clone rewrote nothing; the deferred rewrite then pointed users
+  at the NOPped clone.  Every operand comparison in strred now
+  resolves one licm_map hop (sr_res).
+- The same deferral hid the SLL's hoisted shift CONSTANT (kind
+  checked as NOP, candidate silently skipped -- DAXPY got no SR at
+  all until the operands were resolved too).
+- split_frame seeded only from surviving ALLOCAs; in a function
+  whose allocas were all promoted away, the first split slot landed
+  on the frontend's reserved fp-4 -- the SAVED RETURN ADDRESS.
+  SCALE stored J over r31's save and returned to J (slice9,
+  latent since the splitting commit).  The seed now starts at 8.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 707,773,312 (1.412×) | 28,421,688 (1.211×) |
+| after | 610,206,374 (**1.217×**) | 27,271,028 (**1.162×**) |
+
+Day cumulative: LINPACK 1.98× → 1.22×, mandel 3.26× → 1.16×.  28/28
+tests; all engines agree.  F77_SR_DEBUG=1 traces derivations.

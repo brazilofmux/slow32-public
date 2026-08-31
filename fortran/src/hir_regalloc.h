@@ -716,6 +716,25 @@ static void ra_assign_spills(void) {
         i = i + 1;
     }
 
+    if (getenv("F77_RA_TRACE")) {
+        i = atoi(getenv("F77_RA_TRACE"));
+        if (i >= 0 && i < h_ninst) {
+            fprintf(stderr, "TRACE inst=%d kind=%d blk=%d pos=%d reg=%d slot=%d node=%d\n",
+                    i, h_kind[i], h_blk[i], ra_pos[i], ra_reg[i],
+                    ra_spill_off[i], gc_node[i]);
+        }
+    }
+    if (getenv("F77_RA_DEBUG")) {
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] != HI_NOP && hi_has_value(h_kind[i]) &&
+                !hi_inst_remat(i) && ra_reg[i] < 0 && ra_pos[i] < 0) {
+                fprintf(stderr, "ORPHAN inst=%d kind=%d blk=%d\n",
+                        i, h_kind[i], h_blk[i]);
+            }
+            i = i + 1;
+        }
+    }
     /* Assign spill slots for non-allocated, non-remat value-producing instructions */
     i = 0;
     while (i < h_ninst) {

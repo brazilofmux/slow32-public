@@ -571,6 +571,419 @@ static void licm_split(int header) {
     }
 }
 
+/* --- Derived induction variables (DIVERGENCE f77, port upstream) ---
+ *
+ * Strength reduction.  For a loop phi iv with a single back edge and
+ * an invariant step, an in-body SLL(iv, k) / MUL(iv, m) / ADD(iv, m)
+ * with invariant k/m is itself an induction variable: give it its
+ * own phi (init computed once in the preheader, its own increment in
+ * the latch) and rewrite the uses.  Run twice, so ADD(base, p) over
+ * a first-round derived p becomes a POINTER induction variable --
+ * the clang shape: no shift, no add, just a bumped address.  ADDI
+ * candidates are deliberately excluded: trailing displacement ADDIs
+ * fold into load/store offsets, and deriving them would unfold that.
+ * Original IVs whose only remaining use is their own increment are
+ * swept afterwards. */
+#define SR_MAX_IV 16
+static int sr_phi[SR_MAX_IV];
+static int sr_init[SR_MAX_IV];
+static int sr_step[SR_MAX_IV];      /* step VALUE (inst id) */
+static int sr_inc[SR_MAX_IV];
+static int sr_niv;
+
+static int sr_arg_of(int phi, int blk) {
+    int j;
+    j = 0;
+    while (j < h_pcnt[phi]) {
+        if (h_pblk[h_pbase[phi] + j] == blk) return h_pval[h_pbase[phi] + j];
+        j = j + 1;
+    }
+    return -1;
+}
+
+static int sr_invariant(int v) {
+    if (v < 0) return 0;
+    if (hi_is_remat(h_kind[v])) return 1;
+    if (h_blk[v] < 0 || h_blk[v] >= bb_nblk) return 0;
+    return !ssa_vis[h_blk[v]];
+}
+
+/* Is value x one of the recorded IVs?  Returns record index or -1. */
+static int sr_find(int x) {
+    int i;
+    i = 0;
+    while (i < sr_niv) {
+        if (sr_phi[i] == x) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+/* Resolve a reference one hop through licm_map: LICM NOPs hoisted
+ * originals immediately but defers the global reference rewrite to
+ * the end of hir_licm, so at strength-reduction time users of a
+ * hoisted computation still name the ORIGINAL.  (This cost a day-one
+ * bug: deriving from a clone rewrote zero references, and the
+ * deferred rewrite then pointed users at the clone we had NOPped.) */
+static int sr_res(int x) {
+    if (x >= 0 && licm_map[x] >= 0) return licm_map[x];
+    return x;
+}
+
+/* All uses of j inside the loop body (and none in phi pools outside)? */
+static int sr_uses_local(int j) {
+    int i;
+    int k;
+    int x;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP || i == j) { i = i + 1; continue; }
+        x = 0;
+        if (sr_res(h_src1[i]) == j) x = 1;
+        if (sr_res(h_src2[i]) == j && ho_src2_is_ref(k)) x = 1;
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            int q;
+            q = 0;
+            while (q < h_val[i]) {
+                if (sr_res(h_carg[h_cbase[i] + q]) == j) x = 1;
+                q = q + 1;
+            }
+        }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            int q;
+            q = 0;
+            while (q < h_pcnt[i]) {
+                if (sr_res(h_pval[h_pbase[i] + q]) == j) return 0;
+                q = q + 1;
+            }
+        }
+        if (x) {
+            if (h_blk[i] < 0 || h_blk[i] >= bb_nblk || !ssa_vis[h_blk[i]])
+                return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+/* Count references to `old` that sr_rewrite would see (operands,
+ * call args, phi pool), resolving one licm_map hop like the rewrite
+ * does.  A candidate with zero VISIBLE references must not be
+ * derived: either it is dead (nothing to gain) or it has a user
+ * behind an aliasing form this pass does not know, and retiring it
+ * would hand that user a NOP. */
+static int sr_count_refs(int old) {
+    int i;
+    int k;
+    int q;
+    int n;
+    n = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+        if (sr_res(h_src1[i]) == old) n = n + 1;
+        if (sr_res(h_src2[i]) == old && ho_src2_is_ref(k)) n = n + 1;
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            q = 0;
+            while (q < h_val[i]) {
+                if (sr_res(h_carg[h_cbase[i] + q]) == old) n = n + 1;
+                q = q + 1;
+            }
+        }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            q = 0;
+            while (q < h_pcnt[i]) {
+                if (sr_res(h_pval[h_pbase[i] + q]) == old) n = n + 1;
+                q = q + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+/* Rewrite every reference to old with nw. */
+static int sr_rewrite_n;
+static void sr_rewrite(int old, int nw) {
+    int i;
+    int k;
+    int q;
+    sr_rewrite_n = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP || i == nw) { i = i + 1; continue; }
+        if (sr_res(h_src1[i]) == old) { h_src1[i] = nw; sr_rewrite_n = sr_rewrite_n + 1; }
+        if (sr_res(h_src2[i]) == old && ho_src2_is_ref(k)) { h_src2[i] = nw; sr_rewrite_n = sr_rewrite_n + 1; }
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            q = 0;
+            while (q < h_val[i]) {
+                if (sr_res(h_carg[h_cbase[i] + q]) == old) {
+                    h_carg[h_cbase[i] + q] = nw;
+                    sr_rewrite_n = sr_rewrite_n + 1;
+                }
+                q = q + 1;
+            }
+        }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            q = 0;
+            while (q < h_pcnt[i]) {
+                if (sr_res(h_pval[h_pbase[i] + q]) == old) {
+                    h_pval[h_pbase[i] + q] = nw;
+                    sr_rewrite_n = sr_rewrite_n + 1;
+                }
+                q = q + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+static int licm_stat_sr;
+
+static void licm_strred(int header, int latch) {
+    int pre;
+    int phi;
+    int i;
+    int rec;
+    int round;
+    int nderived;
+
+    pre = ssa_idom[header];
+    if (pre < 0 || pre >= bb_nblk || ssa_vis[pre]) return;
+
+    /* Base IVs: two-arg phis of the header whose latch arg is an
+     * ADD/ADDI of the phi by an invariant step. */
+    sr_niv = 0;
+    phi = ssa_phi_head[header];
+    while (phi >= 0 && sr_niv < SR_MAX_IV) {
+        if (h_kind[phi] == HI_PHI && h_pcnt[phi] == 2) {
+            int a_l;
+            int a_0;
+            a_l = sr_arg_of(phi, latch);
+            a_0 = -1;
+            i = 0;
+            while (i < 2) {
+                if (h_pblk[h_pbase[phi] + i] != latch)
+                    a_0 = h_pval[h_pbase[phi] + i];
+                i = i + 1;
+            }
+            if (a_l >= 0 && a_0 >= 0) {
+                int stepv;
+                stepv = -1;
+                if (h_kind[a_l] == HI_ADDI && h_src1[a_l] == phi) {
+                    /* materialize the constant step as an ICONST */
+                    if (h_ninst < HIR_MAX_INST) {
+                        stepv = sp_new_inst(HI_ICONST, TY_INT, -1, -1,
+                                            h_val[a_l], pre);
+                    }
+                } else if (h_kind[a_l] == HI_ADD) {
+                    if (h_src1[a_l] == phi &&
+                        sr_invariant(sr_res(h_src2[a_l])))
+                        stepv = sr_res(h_src2[a_l]);
+                    else if (h_src2[a_l] == phi &&
+                             sr_invariant(sr_res(h_src1[a_l])))
+                        stepv = sr_res(h_src1[a_l]);
+                }
+                if (stepv >= 0 && ssa_vis[h_blk[a_l]]) {
+                    sr_phi[sr_niv] = phi;
+                    sr_init[sr_niv] = sr_res(a_0);
+                    sr_step[sr_niv] = stepv;
+                    sr_inc[sr_niv] = a_l;
+                    sr_niv = sr_niv + 1;
+                }
+            }
+        }
+        phi = ssa_phi_next[phi];
+    }
+    if (sr_niv == 0) return;
+
+    nderived = 0;
+    round = 0;
+    while (round < 2) {
+        int lim;
+        lim = h_ninst;
+        i = 0;
+        while (i < lim && nderived < 6) {
+            int k;
+            int r;
+            int other;
+            int knd;
+            k = h_kind[i];
+            r = -1;
+            other = -1;
+            knd = 0;
+            if (h_blk[i] >= 0 && h_blk[i] < bb_nblk && ssa_vis[h_blk[i]]) {
+                int o1;
+                int o2;
+                o1 = sr_res(h_src1[i]);
+                o2 = sr_res(h_src2[i]);
+                if (k == HI_SLL && o2 >= 0 &&
+                    h_kind[o2] == HI_ICONST &&
+                    h_val[o2] >= 1 && h_val[o2] <= 20) {
+                    r = sr_find(o1);
+                    other = o2;
+                    knd = 1;
+                } else if (k == HI_MUL) {
+                    if (sr_find(o1) >= 0 && sr_invariant(o2)) {
+                        r = sr_find(o1); other = o2; knd = 2;
+                    } else if (sr_find(o2) >= 0 && sr_invariant(o1)) {
+                        r = sr_find(o2); other = o1; knd = 2;
+                    }
+                } else if (k == HI_ADD) {
+                    if (sr_find(o1) >= 0 && sr_invariant(o2)) {
+                        r = sr_find(o1); other = o2; knd = 3;
+                    } else if (sr_find(o2) >= 0 && sr_invariant(o1)) {
+                        r = sr_find(o2); other = o1; knd = 3;
+                    }
+                }
+            }
+            if (r >= 0 && other >= 0 && getenv("F77_SR_DEBUG") &&
+                !sr_uses_local(i))
+                fprintf(stderr, "SR reject cand=%d kind=%d (nonlocal use)\n", i, k);
+            if (r >= 0 && other >= 0 && sr_uses_local(i) &&
+                sr_count_refs(i) > 0 &&
+                sr_niv < SR_MAX_IV && h_ninst + 4 < HIR_MAX_INST) {
+                int ninit;
+                int nstep;
+                int nphi;
+                int nnext;
+                int okind;
+                okind = (knd == 1) ? HI_SLL : ((knd == 2) ? HI_MUL : HI_ADD);
+                /* init = op(iv.init, other), in the preheader */
+                ninit = sp_new_inst(okind, h_ty[i], sr_init[r], other, 0, pre);
+                if (licm_tail[pre] >= 0) licm_next[licm_tail[pre]] = ninit;
+                else licm_head[pre] = ninit;
+                licm_tail[pre] = ninit;
+                /* step' = step<<k / step*m / step (for ADD) */
+                if (knd == 3) {
+                    nstep = sr_step[r];
+                } else {
+                    nstep = sp_new_inst(okind, TY_INT, sr_step[r], other, 0, pre);
+                    licm_next[licm_tail[pre]] = nstep;
+                    licm_tail[pre] = nstep;
+                }
+                /* the new phi, in the header's list */
+                nphi = sp_new_inst(HI_PHI, h_ty[i], -1, -1, 0, header);
+                if (h_nparg + 2 > HIR_MAX_PARG) return;
+                h_pbase[nphi] = h_nparg;
+                h_pcnt[nphi] = 2;
+                {
+                    int q;
+                    q = 0;
+                    while (q < 2) {
+                        h_pblk[h_nparg] = h_pblk[h_pbase[sr_phi[r]] + q];
+                        h_pval[h_nparg] =
+                            (h_pblk[h_nparg] == latch) ? -1 : ninit;
+                        h_nparg = h_nparg + 1;
+                        q = q + 1;
+                    }
+                }
+                ssa_phi_next[nphi] = ssa_phi_head[header];
+                ssa_phi_head[header] = nphi;
+                /* increment in the latch */
+                nnext = sp_new_inst(HI_ADD, h_ty[i], nphi, nstep, 0, latch);
+                if (licm_tail[latch] >= 0) licm_next[licm_tail[latch]] = nnext;
+                else licm_head[latch] = nnext;
+                licm_tail[latch] = nnext;
+                {
+                    int q;
+                    q = 0;
+                    while (q < 2) {
+                        if (h_pblk[h_pbase[nphi] + q] == latch)
+                            h_pval[h_pbase[nphi] + q] = nnext;
+                        q = q + 1;
+                    }
+                }
+                if (getenv("F77_SR_DEBUG"))
+                    fprintf(stderr, "SR hdr=%d latch=%d pre=%d: cand=%d kind=%d iv=%d init=%d step=%d -> ninit=%d nstep=%d nphi=%d nnext=%d\n",
+                            header, latch, pre, i, k, sr_phi[r], sr_init[r], sr_step[r], ninit, nstep, nphi, nnext);
+                /* rewrite and retire the original computation */
+                sr_rewrite(i, nphi);
+                if (getenv("F77_SR_DEBUG"))
+                    fprintf(stderr, "SR rewrote %d refs of %d\n", sr_rewrite_n, i);
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                /* register as an IV for round 2 */
+                sr_phi[sr_niv] = nphi;
+                sr_init[sr_niv] = ninit;
+                sr_step[sr_niv] = nstep;
+                sr_inc[sr_niv] = nnext;
+                sr_niv = sr_niv + 1;
+                nderived = nderived + 1;
+                licm_stat_sr = licm_stat_sr + 1;
+            }
+            i = i + 1;
+        }
+        round = round + 1;
+    }
+
+    /* Sweep original IVs whose only remaining use is their own
+     * increment (the subscripts were their only consumers). */
+    i = 0;
+    while (i < sr_niv) {
+        int phi2;
+        int inc2;
+        int j;
+        int k;
+        int used;
+        phi2 = sr_phi[i];
+        inc2 = sr_inc[i];
+        if (h_kind[phi2] != HI_PHI) { i = i + 1; continue; }
+        used = 0;
+        j = 0;
+        while (j < h_ninst && !used) {
+            k = h_kind[j];
+            if (k == HI_NOP || j == inc2) { j = j + 1; continue; }
+            if (h_src1[j] == phi2 || h_src1[j] == inc2) used = 1;
+            if (!used && ho_src2_is_ref(k) &&
+                (h_src2[j] == phi2 || h_src2[j] == inc2)) used = 1;
+            if (!used && (k == HI_CALL || k == HI_CALLP) && h_cbase[j] >= 0) {
+                int q;
+                q = 0;
+                while (q < h_val[j]) {
+                    if (h_carg[h_cbase[j] + q] == phi2 ||
+                        h_carg[h_cbase[j] + q] == inc2) used = 1;
+                    q = q + 1;
+                }
+            }
+            if (!used && k == HI_PHI && j != phi2 && h_pbase[j] >= 0) {
+                int q;
+                q = 0;
+                while (q < h_pcnt[j]) {
+                    if (h_pval[h_pbase[j] + q] == phi2 ||
+                        h_pval[h_pbase[j] + q] == inc2) used = 1;
+                    q = q + 1;
+                }
+            }
+            j = j + 1;
+        }
+        if (getenv("F77_SR_DEBUG"))
+            fprintf(stderr, "SWEEP hdr=%d rec=%d phi=%d inc=%d used=%d\n",
+                    header, i, phi2, inc2, used);
+        if (!used) {
+            /* unlink the phi from the header's list, NOP both */
+            int pp;
+            if (ssa_phi_head[header] == phi2) {
+                ssa_phi_head[header] = ssa_phi_next[phi2];
+            } else {
+                pp = ssa_phi_head[header];
+                while (pp >= 0 && ssa_phi_next[pp] != phi2) pp = ssa_phi_next[pp];
+                if (pp >= 0) ssa_phi_next[pp] = ssa_phi_next[phi2];
+            }
+            h_kind[phi2] = HI_NOP;
+            h_pcnt[phi2] = 0;
+            h_kind[inc2] = HI_NOP;
+            h_src1[inc2] = -1;
+            h_src2[inc2] = -1;
+        }
+        i = i + 1;
+    }
+}
+
 static void hir_licm(void) {
     int b;
     int i;
@@ -588,8 +1001,15 @@ static void hir_licm(void) {
         split_head[b] = -1;
         b = b + 1;
     }
-    /* Frame high-water for split slots: below every existing ALLOCA. */
-    split_frame = 0;
+    /* Frame high-water for split slots: below every existing ALLOCA,
+     * and never above fp-8 -- the frontend reserves the top 8 bytes
+     * of the frame for the saved r31/r30 (f77_frame starts at 8; the
+     * same ps_stack = 8 convention as the C compiler).  In a function
+     * whose allocas were all promoted away, the scan alone sees
+     * nothing and the first slot would land ON the saved return
+     * address (SCALE in slice9: J overwrote r31's save; RETURN
+     * jumped to J). */
+    split_frame = 8;
     i = 0;
     while (i < h_ninst) {
         if (h_kind[i] == HI_ALLOCA && h_val[i] < 0 &&
@@ -628,6 +1048,7 @@ static void hir_licm(void) {
                 licm_mark(body_count);
                 licm_hoist(s, body_count);
                 licm_split(s);
+                licm_strred(s, b);
             }
             si = si + 1;
         }
