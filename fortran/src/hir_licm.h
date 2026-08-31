@@ -33,6 +33,12 @@ static int licm_map[HIR_MAX_INST];    /* old index -> clone index, -1 = not hois
  * after hir_licm (ssa_vis is per-loop scratch).  Consumed by
  * hcg_mark_loop_consts. */
 static int licm_in_any_loop[HIR_MAX_BLOCK];
+/* DIVERGENCE (f77, port upstream): nesting depth per block -- each
+ * natural-loop body found below increments its blocks, so an inner
+ * loop's blocks count every enclosing loop.  Consumed by the spill
+ * cost in hir_regalloc: a value used in an inner loop is far more
+ * expensive to spill than its static use count says. */
+static int licm_depth[HIR_MAX_BLOCK];
 
 /* --- Stats --- */
 static int licm_stat_hoisted;
@@ -219,6 +225,7 @@ static int licm_clone(int orig) {
 
     h_val[cl] = h_val[orig];
     h_name[cl] = h_name[orig];
+    h_ld_ro[cl] = h_ld_ro[orig];   /* direct writes bypass hi_emit's clear */
     h_cbase[cl] = -1;
     h_pbase[cl] = -1;
     h_pcnt[cl] = 0;
@@ -351,6 +358,7 @@ static void hir_licm(void) {
         licm_head[b] = -1;
         licm_tail[b] = -1;
         licm_in_any_loop[b] = 0;
+        licm_depth[b] = 0;
         b = b + 1;
     }
     i = 0;
@@ -375,7 +383,10 @@ static void hir_licm(void) {
                     int lb;
                     lb = 0;
                     while (lb < bb_nblk) {
-                        if (ssa_vis[lb]) licm_in_any_loop[lb] = 1;
+                        if (ssa_vis[lb]) {
+                            licm_in_any_loop[lb] = 1;
+                            licm_depth[lb] = licm_depth[lb] + 1;
+                        }
                         lb = lb + 1;
                     }
                 }

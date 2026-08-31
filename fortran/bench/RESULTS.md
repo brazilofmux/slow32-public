@@ -472,3 +472,40 @@ instructions (was 15 plus 4 of loop overhead plus 2 copies).  All
 28 tests green throughout; every step measured, three experiments
 reverted on measurement (ADDI affinity, hir_opt reassociation,
 rotation).
+
+## Pair machinery made coalesce-safe; the rotation blocker re-diagnosed
+
+2026-08-30, evening.  Went in expecting pair-phi coalescing to be the
+rotation blocker.  It is not: measurements show pair-phi copies were
+already coalescing after the morning's crossing exemption.  What the
+investigation DID fix, and what it found:
+
+- **Alias-blind pair machinery** (kept; measured neutral today,
+  correct by construction): ra_pair_claim looked up partners through
+  raw gc_node[] and pinned the un-aliased node -- after any coalesce
+  involving a pair half, the pin landed on a node select never
+  visits, and the pair fell back to scratch shuffles.  Pair identity
+  now lives at NODE level (gc_pair_inst, propagated in gc_combine),
+  partner lookup and pinning go through gc_get_alias, and the select
+  pass filters and share-fate test key on the merged node.
+
+- **Loop-depth-weighted spill cost** (kept; the right model): spill
+  choice used STATIC use counts, so an innermost-loop phi looked as
+  cheap to spill as an entry-block temp.  LICM now records
+  licm_depth[] per block (each natural-loop body increments its
+  blocks), and gc_select_spill weighs each use 1/10/100/1000 by the
+  using block's depth.  Neutral on these two kernels, strictly
+  better information.  F77_RA_DEBUG=1 dumps final spills.
+
+- **The real rotation blocker, measured**: rotated and unrotated
+  mandel both spill ~11 values -- but unrotated spills OUTER-loop
+  phis (depth 1) while rotated spills INNER-loop phis and latch
+  arithmetic (depth 3, the -140/-148 slots feeding the slow
+  parallel-copy path).  The rotated form's innermost loop exceeds
+  the 18-color callee pool by a node or two, and once any back-edge
+  phi spills, hcg_phi_copies abandons its fast path for the whole
+  edge.  Rotation needs LIVE-RANGE SPLITTING (spill outside the
+  loop, reload at the preheader) or loop-aware coloring order --
+  not better coalescing.  It stays parked; ctl_body[] still waits.
+
+State: LINPACK 1.49×, mandel 1.52×, 28/28 tests.

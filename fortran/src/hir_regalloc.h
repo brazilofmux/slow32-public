@@ -926,6 +926,12 @@ static void gc_add_move(int a, int b) {
     gc_add_move_tag(a, b, 0);
 }
 
+/* Tentatively re-declared: defined with the pair machinery below,
+ * needed by gc_build/gc_combine above it. */
+static int ra_pair_of[HIR_MAX_INST];
+static int ra_pair_lo[HIR_MAX_INST];
+static int gc_pair_inst[GC_MAX_NODE];
+
 static void gc_build(void) {
     int i, j, inst, k, n, ni, aj, nact, p;
     int act[GC_MAX_NODE];
@@ -955,6 +961,7 @@ static void gc_build(void) {
                 gc_alias[n] = n;
                 gc_color[n] = -1;
                 gc_nmlist_head[n] = -1;
+                gc_pair_inst[n] = (ra_pair_of[inst] >= 0) ? inst : -1;
                 gc_nnode = gc_nnode + 1;
             }
         }
@@ -1139,6 +1146,7 @@ static void gc_combine(int u, int v) {
     int e, t;
     gc_wl[v] = GC_WL_COALESCED;
     gc_alias[v] = u;
+    if (gc_pair_inst[u] < 0) gc_pair_inst[u] = gc_pair_inst[v];
 
     e = gc_nmlist_head[v];
     while (e >= 0) {
@@ -1253,6 +1261,69 @@ static int gc_freeze(void) {
     return 0;
 }
 
+/* DIVERGENCE (f77, port upstream): dynamic-use estimate for the spill
+ * cost.  bg_uses is a STATIC count; a value touched twice in an
+ * innermost loop looked exactly as cheap to spill as an entry-block
+ * temp, and a rotated loop's IV/trip phis went to stack slots while
+ * the slow parallel-copy path pushed the rest -- +71% on mandel.
+ * Each USE is weighted 1/10/100/1000 by its block's natural-loop
+ * nesting depth (licm_depth, computed during LICM), and the def adds
+ * its own weight (a spilled def pays its store where it is defined). */
+static int ra_wuses[HIR_MAX_INST];
+
+static int ra_depth_w(int b) {
+    int d;
+    if (b < 0 || b >= bb_nblk) return 1;
+    d = licm_depth[b];
+    if (d <= 0) return 1;
+    if (d == 1) return 10;
+    if (d == 2) return 100;
+    return 1000;
+}
+
+static void ra_build_wuses(void) {
+    int i;
+    int w;
+    int j;
+    int base;
+    int cnt;
+    int k;
+    i = 0;
+    while (i < h_ninst) { ra_wuses[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+        w = ra_depth_w(h_blk[i]);
+        if (h_src1[i] >= 0) ra_wuses[h_src1[i]] = ra_wuses[h_src1[i]] + w;
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k))
+            ra_wuses[h_src2[i]] = ra_wuses[h_src2[i]] + w;
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0)
+                    ra_wuses[h_carg[base + j]] = ra_wuses[h_carg[base + j]] + w;
+                j = j + 1;
+            }
+        }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            j = 0;
+            while (j < h_pcnt[i]) {
+                if (h_pval[h_pbase[i] + j] >= 0)
+                    ra_wuses[h_pval[h_pbase[i] + j]] =
+                        ra_wuses[h_pval[h_pbase[i] + j]] + w;
+                j = j + 1;
+            }
+        }
+        if (hi_has_value(k))
+            ra_wuses[i] = ra_wuses[i] + w;
+        if (ra_wuses[i] > 1000000) ra_wuses[i] = 1000000;
+        i = i + 1;
+    }
+}
+
 static int gc_select_spill(void) {
     int n, best, best_cost, cost, inst;
     best = -1;
@@ -1262,12 +1333,12 @@ static int gc_select_spill(void) {
     while (n < gc_nnode) {
         if (gc_wl[n] == GC_WL_SPILL) {
             inst = gc_inst[n];
-            /* cost = uses * 100 / (degree + 1).  Lower = cheaper to spill.
-             * Non-call-crossing values get a +50 penalty in the cost (making
-             * them *less* likely to be chosen for spill) because they have
-             * access to the larger color pool (caller + callee when knob=8)
-             * and are therefore easier to color successfully if left in simplify. */
-            cost = (bg_uses[inst] * 100) / (gc_degree[n] + 1);
+            /* cost = weighted uses * 100 / (degree + 1).  Lower =
+             * cheaper to spill.  Non-call-crossing values get a +50
+             * penalty in the cost (making them *less* likely to be
+             * chosen for spill) because they have access to the larger
+             * color pool and are easier to color if left in simplify. */
+            cost = (ra_wuses[inst] * 100) / (gc_degree[n] + 1);
             if (!ra_crosses_call[inst]) cost = cost + 50;
             if (cost < best_cost) {
                 best_cost = cost;
@@ -1386,6 +1457,15 @@ static void ra_build_pairs(void) {
  * interfering values the same. */
 static int gc_pin[GC_MAX_NODE];
 
+/* DIVERGENCE (f77, port upstream): pair identity at NODE level.
+ * ra_pair_of marks INSTRUCTIONS, but coalescing merges nodes -- a phi
+ * half coalesced with its fp64 argument must keep the pair identity,
+ * and the partner must be looked up through gc_get_alias, or the pin
+ * lands on a node that is never selected and the pair misaligns into
+ * scratch shuffles.  gc_pair_inst[n] is a pair-marked member
+ * instruction of node n (or -1), propagated in gc_combine. */
+static int gc_pair_inst[GC_MAX_NODE];
+
 /* Claim an aligned register pair for `inst` and pin its partner to the
  * other half.  Returns this node's colour, or -1.
  *
@@ -1399,13 +1479,18 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
     int c;
     int lo_c;
     int hi_c;
+    int pinst;
 
-    partner = ra_pair_of[inst];
+    pinst = gc_pair_inst[n];
+    if (pinst < 0) return -1;
+    partner = ra_pair_of[pinst];
     if (partner < 0) return -1;
     ra_pc_dbg[0]++;                       /* had a partner */
     pn = gc_node[partner];
     if (pn < 0) { ra_pc_dbg[1]++; return -1; }        /* partner not a node */
-    if (gc_color[gc_get_alias(pn)] >= 0) { ra_pc_dbg[2]++; return -1; }
+    pn = gc_get_alias(pn);
+    if (pn == n) { ra_pc_dbg[1]++; return -1; }       /* degenerate merge */
+    if (gc_color[pn] >= 0) { ra_pc_dbg[2]++; return -1; }
 
     c = 0;
     while (c + 1 < maxc) {
@@ -1415,12 +1500,13 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
         p1 = ra_get_phys(c + 1);
         if (p0 >= 0 && p1 == p0 + 1 && (p0 & 1) == 0 && p0 + 1 < 31 &&
             !used[c] && !used[c + 1]) {
-            if (ra_pair_lo[inst]) { lo_c = c; hi_c = c + 1; }
-            else                  { lo_c = c + 1; hi_c = c; }
-            /* Respect the caller/callee split for both halves. */
-            if (lo_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(inst))
+            if (ra_pair_lo[pinst]) { lo_c = c; hi_c = c + 1; }
+            else                   { lo_c = c + 1; hi_c = c; }
+            /* Respect the caller/callee split for both halves, judged
+             * on the merged nodes' representatives. */
+            if (lo_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[n]))
                 { c = c + 1; continue; }
-            if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(partner))
+            if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[pn]))
                 { c = c + 1; continue; }
             gc_pin[pn] = hi_c;
             ra_pc_dbg[4]++;
@@ -1482,9 +1568,9 @@ static void gc_select(void) {
             /* Skip nodes that do not belong in this pass */
             if (pass == 0 && h_kind[inst] != HI_PARAM) { i = i - 1; continue; }
             if (pass == 1 && (h_kind[inst] == HI_PARAM ||
-                              ra_pair_of[inst] < 0)) { i = i - 1; continue; }
+                              gc_pair_inst[n] < 0)) { i = i - 1; continue; }
             if (pass == 2 && (h_kind[inst] == HI_PARAM ||
-                              ra_pair_of[inst] >= 0)) { i = i - 1; continue; }
+                              gc_pair_inst[n] >= 0)) { i = i - 1; continue; }
 
             /* Zero only the active portion of the used[] mask */
             c = 0;
@@ -1517,7 +1603,7 @@ static void gc_select(void) {
                 if (pw >= 0) {
                     gc_color[n] = pw;
                     ra_stat_pair_pref = ra_stat_pair_pref + 1;
-                } else if (ra_pair_of[inst] >= 0 && ra_pair_share_fate) {
+                } else if (gc_pair_inst[n] >= 0 && ra_pair_share_fate) {
                     /* SHARE FATE.  Colouring the halves of a double
                      * independently is the worst outcome available: one
                      * lands in a register and the other spills, so the
@@ -1886,6 +1972,11 @@ static void gc_writeback(void) {
                 ra_stat_caller_used = ra_stat_caller_used + 1;
             else
                 ra_stat_callee_used = ra_stat_callee_used + 1;
+        } else if (getenv("F77_RA_DEBUG")) {
+            fprintf(stderr, "SPILL inst=%d kind=%d blk=%d depth=%d wuses=%d deg=%d\n",
+                    inst, h_kind[inst], h_blk[inst],
+                    (h_blk[inst] >= 0 && h_blk[inst] < bb_nblk) ? licm_depth[h_blk[inst]] : -1,
+                    ra_wuses[inst], gc_degree[n]);
         }
         n = n + 1;
     }
@@ -1964,6 +2055,7 @@ static void hir_regalloc(void) {
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
     { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
+    ra_build_wuses();      /* loop-depth-weighted use counts for spill cost */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();
