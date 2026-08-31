@@ -168,12 +168,41 @@ echo "[5/6] Recompile libc with gen1 (HIR/SSA ABI)"
 LIBC_OUT_DIR="$SCRIPT_DIR/lib"
 mkdir -p "$LIBC_OUT_DIR"
 
+# gen1's codegen (fallthrough-chain layout) emits single-bcond branch
+# shapes and relies on assembler relaxation for targets beyond +-4096
+# bytes.  stage07's s32-as predates relaxation and silently wraps the
+# displacement -- dtoa_r got a truncated branch and snprintf("%f")
+# span forever in the [6/6] smoke.  Build the stage08 assembler (its
+# own .s is stage07 output, so stage07 tools may build it) and use it
+# for everything gen1 compiles.  Same rule as run-tests.sh's
+# fixed-point gate: stage08 codegen requires stage08 tool features.
+STAGE8_AS="$WORKDIR/g1-s32-as.s32x"
+"$EMU" "$STAGE7_CC" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/g1-s32-as.s" >"$WORKDIR/g1-s32-as.cc.log" 2>&1
+assemble "$WORKDIR/g1-s32-as.s" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/g1-s32-as.as.log"
+"$EMU" "$STAGE7_LD" -o "$STAGE8_AS" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/builtins64.s32o" "$WORKDIR/builtins_fp64.s32o" \
+    $LIBC_OBJS >"$WORKDIR/g1-s32-as.ld.log" 2>&1
+[[ -s "$STAGE8_AS" ]] || { echo "failed to build stage08 assembler for gen1 output" >&2; exit 1; }
+
+assemble_gen1() {
+    local src="$1" obj="$2" log="$3"
+    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$STAGE8_AS" "$src" "$obj" >"$log" 2>&1
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "assemble (stage08 as) failed (rc=$rc): $src" >&2
+        tail -n 5 "$log" >&2
+        return 1
+    fi
+    [[ -s "$obj" ]] || { echo "assemble produced no output: $src" >&2; return 1; }
+}
+
 for name in string_extra string_more ctype convert stdio malloc; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
-    assemble "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
+    assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
 compile_gen1 "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.cc.log"
-assemble "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_start.as.log"
+assemble_gen1 "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_start.as.log"
 # printf: David Gay's dtoa + the enhanced printf family, the SAME
 # sources the clang runtime builds — %f/%e/%g and width flags print
 # byte-identically across the two libcs.  Gay's config knobs
@@ -184,11 +213,11 @@ assemble "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_start.as.
 RUNTIME_DIR="$ROOT_DIR/runtime"
 DTOA_FLAGS="-DIEEE_8087 -DOmit_Private_Memory -DNo_Hex_NaN -DNO_ERRNO -DBad_float_h"
 compile_gen1 "$RUNTIME_DIR/dtoa.c" "$WORKDIR/g1_dtoa.s" "$WORKDIR/g1_dtoa.cc.log"     $DTOA_FLAGS "-I$SCRIPT_DIR/include"
-assemble "$WORKDIR/g1_dtoa.s" "$LIBC_OUT_DIR/dtoa.s32o" "$WORKDIR/g1_dtoa.as.log"
+assemble_gen1 "$WORKDIR/g1_dtoa.s" "$LIBC_OUT_DIR/dtoa.s32o" "$WORKDIR/g1_dtoa.as.log"
 compile_gen1 "$RUNTIME_DIR/printf_enhanced.c" "$WORKDIR/g1_pe.s" "$WORKDIR/g1_pe.cc.log"     "-I$SCRIPT_DIR/include"
-assemble "$WORKDIR/g1_pe.s" "$LIBC_OUT_DIR/printf_enhanced.s32o" "$WORKDIR/g1_pe.as.log"
+assemble_gen1 "$WORKDIR/g1_pe.s" "$LIBC_OUT_DIR/printf_enhanced.s32o" "$WORKDIR/g1_pe.as.log"
 compile_gen1 "$RUNTIME_DIR/convert.c" "$WORKDIR/g1_convert_rt.s" "$WORKDIR/g1_convert_rt.cc.log"     "-I$SCRIPT_DIR/include"
-assemble "$WORKDIR/g1_convert_rt.s" "$LIBC_OUT_DIR/convert_rt.s32o" "$WORKDIR/g1_convert_rt.as.log"
+assemble_gen1 "$WORKDIR/g1_convert_rt.s" "$LIBC_OUT_DIR/convert_rt.s32o" "$WORKDIR/g1_convert_rt.as.log"
 rm -f "$LIBC_OUT_DIR/printf_varargs.s32o"
 
 # Runtime asm objects are ABI-neutral (hand-written assembly)
