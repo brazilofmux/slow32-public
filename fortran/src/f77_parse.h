@@ -80,6 +80,36 @@ static int  f77_split_on = -1;
 /* Static storage flags: member of a COMMON block / named in SAVE. */
 static int  f77_scom[F77_MAX_SYM];
 static int  f77_ssaved[F77_MAX_SYM];
+
+/* Read-only dummy-load tracking, for LICM's h_ld_ro assertion.  F77
+ * 15.9.3.6: while a subprogram executes, its scalar dummies cannot
+ * legally be modified through any other name -- so a load of one is
+ * loop-invariant even across stores and calls, UNLESS this unit
+ * itself stores to it (assignment, DO variable, READ target, or its
+ * address passed onward).  One-pass compilation means the store may
+ * be seen after the load, so loads are recorded and the flag is
+ * RETRACTED at unit end for every symbol that got stored. */
+static int  f77_sstored[F77_MAX_SYM];
+#define F77_MAX_LDRO 4096
+static int  f77_ldro_inst[F77_MAX_LDRO];
+static int  f77_ldro_sym[F77_MAX_LDRO];
+static int  f77_ldro_n;
+
+static void f77_ldro_note(int inst, int s) {
+    if (inst < 0 || f77_ldro_n >= F77_MAX_LDRO) return;
+    h_ld_ro[inst] = 1;
+    f77_ldro_inst[f77_ldro_n] = inst;
+    f77_ldro_sym[f77_ldro_n] = s;
+    f77_ldro_n = f77_ldro_n + 1;
+}
+
+static void f77_ldro_finalize(void) {
+    int i;
+    for (i = 0; i < f77_ldro_n; i++) {
+        if (f77_sstored[f77_ldro_sym[i]])
+            h_ld_ro[f77_ldro_inst[i]] = 0;
+    }
+}
 static int  f77_sgidx[F77_MAX_SYM];    /* ps_g* index once bound static */
 
 /* PARAMETER named constants: no storage, value folded at parse time.
@@ -140,6 +170,7 @@ static int f77_sym(char *nm) {
     f77_sgidx[f77_nsym] = -1;
     f77_sparam[f77_nsym] = 0;
     f77_styped[f77_nsym] = 0;
+    f77_sstored[f77_nsym] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
@@ -184,6 +215,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sgidx[s] = -1;
     f77_sparam[s] = 0;
     f77_styped[s] = 0;
+    f77_sstored[s] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
@@ -598,6 +630,8 @@ static int f77_subscript_addr(int s) {
             if (f77_sextsym[s][k] >= 0) {
                 e = f77_load_at(f77_sval[f77_sextsym[s][k]],
                                 f77_sty[f77_sextsym[s][k]]);
+                if (f77_sarg[f77_sextsym[s][k]])
+                    f77_ldro_note(e, f77_sextsym[s][k]);
                 if (vstride >= 0) {
                     vstride = hi_emit(HI_MUL, TY_INT, vstride, e, 0, NULL);
                 } else if (cstride == 1) {
@@ -649,10 +683,16 @@ static int f77_load_sym(int s) {
         ex_hi = hi_emit(HI_LOAD, TY_INT, f77_shi[s], -1, 0, NULL);
         return v;
     }
-    return f77_load_at(f77_sval[s], f77_sty[s]);
+    v = f77_load_at(f77_sval[s], f77_sty[s]);
+    if (f77_sarg[s] && f77_srank[s] == 0) {
+        f77_ldro_note(v, s);
+        if (f77_sty[s] == TY_DOUBLE && ex_hi >= 0) f77_ldro_note(ex_hi, s);
+    }
+    return v;
 }
 
 static void f77_store_sym_val(int s, int v, int vty, int vhi) {
+    f77_sstored[s] = 1;
     if (f77_shi[s] >= 0) {
         v = f77_cvt(v, &vhi, vty, f77_sty[s]);
         hi_emit(HI_STORE, TY_INT, f77_sval[s], v, 0, NULL);
@@ -1455,6 +1495,7 @@ static void f77_scan_from(int off) {
 }
 
 static void f77_store_sym(int s, int v, int vty, int vhi) {
+    f77_sstored[s] = 1;
     v = f77_cvt(v, &vhi, vty, f77_sty[s]);
     if (f77_sty[s] == TY_DOUBLE) {
         int addr4;
@@ -2358,6 +2399,7 @@ static void f77_open_do(void) {
         }
 
         /* var = m1 in the DO variable's type */
+        f77_sstored[s] = 1;
         if (vty == TY_DOUBLE) {
             int addr4;
             hi_emit(HI_STORE, TY_INT, f77_sval[s], m1, 0, NULL);
@@ -2593,6 +2635,7 @@ static int f77_actual_addr(void) {
          * hi slot is an address-taking use, which the promotion scan
          * rejects; DCE removes it afterwards, so it costs nothing in
          * the emitted code. */
+        if (f77_srank[s] == 0) f77_sstored[s] = 1;   /* address escapes */
         if (f77_shi[s] >= 0)
             hi_emit(HI_ADDI, HL_ADDR_TY, f77_shi[s], -1, 0, NULL);
         return f77_sval[s];
@@ -3075,6 +3118,7 @@ static void f77_bind_unit(int u) {
     f77_save_all = 0;
     f77_sv_n = 0;
     f77_di_n = 0;
+    f77_ldro_n = 0;
 
     /* Reset the implicit-typing map to the default rule. */
     {
@@ -3229,6 +3273,7 @@ static int f77_rd_target(int *tyo) {
         *tyo = TY_INT;
         return f77_iconst(0);
     }
+    f77_sstored[s] = 1;
     f77_tok();
     *tyo = f77_sty[s];
     if (lx_t == T_LP && f77_srank[s] > 0) {
@@ -3443,6 +3488,7 @@ static void f77_wr_one(void) {
                 m3 = f77_iconst(1);
             }
 
+            f77_sstored[sv] = 1;
             hi_emit(HI_STORE, TY_INT, f77_sval[sv], m1, 0, NULL);
             t1 = hi_emit(HI_SUB, TY_INT, m2, m1, 0, NULL);
             t2 = hi_emit(HI_ADD, TY_INT, t1, m3, 0, NULL);

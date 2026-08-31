@@ -218,6 +218,10 @@ static void hl_func(Node *fn) {
 
     if (f77_cur_blk_live) f77_emit_return();
 
+    /* The HIR is complete: retract the read-only-load assertion for
+     * every dummy this unit turned out to store (see f77_ldro_note). */
+    f77_ldro_finalize();
+
     fn->locals_size = f77_frame;
 }
 

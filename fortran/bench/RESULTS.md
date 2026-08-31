@@ -408,3 +408,34 @@ DAXPY's body: addi/slli/add/add + 6 memory ops became slli/add/add +
 | after | 829,784,866 (**1.66×**) | 35.7M (1.52×, no subscripts in its loop) |
 
 Cumulative for the day: LINPACK 1.98× → 1.66×, mandel 3.26× → 1.52×.
+
+## Scalar dummy loads hoist out of loops (1.66× → 1.50×)
+
+2026-08-30.  The copy-in experiment failed twice for the same reason:
+a function-lifetime copy raises pressure.  The right scope is the
+LOOP: F77 15.9.3.6 says a scalar dummy cannot legally be modified
+through any other name while the subprogram executes, so a load of
+one is loop-invariant even across the body's stores and calls -- the
+aliasing knowledge is the FRONTEND's, and LICM has the machinery.
+
+Mechanism: hi_emit grows a frontend-set flag, h_ld_ro; f77 sets it on
+loads of scalar dummies (and of adjustable-dimension extents like
+LDA, which are dummies too), and LICM treats a flagged LOAD with an
+invariant address like a pure instruction.  One-pass compilation
+means the disqualifying store may be seen AFTER the load, so flagged
+loads are recorded per symbol and the flag is RETRACTED at unit end
+for every dummy the unit stores: assignment, DO variable, READ
+target, or its address passed onward to a callee.  Speculation is
+safe -- the address is a dummy the caller already dereferenced.
+
+DAXPY's DA now loads once in the preheader and lives in a
+callee-saved pair; the body is 11 instructions:
+
+    slli/add/ldw/ldw/add/ldw/ldw/fmul.d/fadd.d/stw/stw
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 829,784,866 (1.66×) | 35.7M (1.52×) |
+| after | 749,974,866 (**1.50×**) | 35.7M (no dummies in its loop) |
+
+Cumulative for the day: LINPACK 1.98× → 1.50×, mandel 3.26× → 1.52×.

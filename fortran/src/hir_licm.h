@@ -173,7 +173,13 @@ static void licm_mark(int body_count) {
             i = bb_start[b];
             while (i < bb_end[b]) {
                 k = h_kind[i];
-                if (!ho_use[i] && hi_is_pure(k)) {
+                /* DIVERGENCE (f77): a LOAD carrying the frontend's
+                 * read-only assertion (h_ld_ro) hoists like a pure
+                 * instruction once its address is invariant.  The
+                 * speculation is safe: the address is a dummy
+                 * argument the caller already dereferenced. */
+                if (!ho_use[i] &&
+                    (hi_is_pure(k) || (k == HI_LOAD && h_ld_ro[i]))) {
                     /* Check all operands */
                     if (licm_operand_ok(h_src1[i]) &&
                         (ho_src2_is_ref(k) ? licm_operand_ok(h_src2[i]) : 1)) {
