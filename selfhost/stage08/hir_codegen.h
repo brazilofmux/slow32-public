@@ -117,6 +117,9 @@ static int hcg_blk_lbl[HIR_MAX_BLOCK];
  * neighbor once trampolines stop being emitted. */
 static int hcg_fwd[HIR_MAX_BLOCK];
 static int hcg_next_emit[HIR_MAX_BLOCK];
+static int hcg_emit_ord[HIR_MAX_BLOCK];   /* layout order (see compute_fwd) */
+static int hcg_nord;
+static char hcg_placed[HIR_MAX_BLOCK];
 static int hcg_skip[HIR_MAX_BLOCK]; /* (always 0 now; see hcg_compute_fwd) */
 static int hcg_blk_pos[HIR_MAX_BLOCK]; /* estimated byte offset, over-estimated */
 
@@ -725,6 +728,30 @@ static int hcg_phi_const_val[SSA_MAX_PROMO];
 static int hcg_phi_src_reg[SSA_MAX_PROMO];
 static int hcg_phi_dst_reg[SSA_MAX_PROMO];
 static int hcg_phi_active[SSA_MAX_PROMO];
+static int hcg_phi_src_inst[SSA_MAX_PROMO];
+
+/* DIVERGENCE (f77, port upstream candidate): is the (from -> to) edge
+ * free of REAL phi copies?  The direct conditional-branch shapes used
+ * to demand phi-free targets; after coalescing, a rotated loop's back
+ * edge usually carries only no-op copies (source and destination
+ * coalesced into the same register), and refusing the direct shape
+ * cost a jal per iteration.  A constant or spilled phi source still
+ * needs a real copy and keeps the trampoline. */
+static int hcg_edge_nocopy(int from_blk, int to_blk) {
+    int i;
+    int v;
+    i = ssa_phi_head[to_blk];
+    while (i >= 0) {
+        if (h_kind[i] == HI_PHI) {
+            if (ra_reg[i] < 0) return 0;
+            v = ssa_phi_find_arg(i, from_blk);
+            if (v < 0 || ra_reg[v] < 0) return 0;
+            if (ra_reg[v] != ra_reg[i]) return 0;
+        }
+        i = ssa_phi_next[i];
+    }
+    return 1;
+}
 
 static void hcg_phi_copies(int from_blk, int to_blk) {
     int i;
@@ -757,32 +784,92 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     if (n == 0) return;
 
 
-    /* Fast path: all destinations and non-constant sources are in registers.
-     * Emit cycle-safe parallel copies without runtime stack traffic. */
+    /* Fast path.  DIVERGENCE (f77, port upstream): spilled phis no
+     * longer force the whole edge onto the push/pop slow path -- one
+     * spilled back-edge phi used to cost every value on the edge a
+     * push and a pop per iteration.  A memory DESTINATION can never
+     * be part of a register cycle, so those copies are emitted first
+     * (through the r2 temp); a memory SOURCE behaves like a constant
+     * (hcg_is_const == 2), loaded straight into its destination when
+     * that register falls free.  The remaining true hazards keep the
+     * slow path: a slot both read and written on the same edge (a
+     * spilled phi feeding another phi), a far (>12-bit) destination
+     * slot, or r2 itself appearing as a copy endpoint. */
     fast_ok = 1;
     j = 0;
     while (j < n) {
         phi = hcg_phi_tmp[j];
-        if (ra_reg[phi] < 0) { fast_ok = 0; break; }
-        hcg_phi_dst_reg[j] = ra_reg[phi];
-        if (hcg_phi_dst_reg[j] == 2) { fast_ok = 0; break; } /* keep r2 as temp */
         v = ssa_phi_find_arg(phi, from_blk);
+        hcg_phi_src_inst[j] = v;
+        hcg_phi_active[j] = 1;
+        hcg_phi_dst_reg[j] = ra_reg[phi];
         if (hcg_const_imm_inst(v, &c)) {
             hcg_phi_is_const[j] = 1;
             hcg_phi_const_val[j] = c;
             hcg_phi_src_reg[j] = -1;
-        } else {
-            if (v < 0 || ra_reg[v] < 0) { fast_ok = 0; break; }
+        } else if (v < 0) {
+            fast_ok = 0;
+            break;
+        } else if (ra_reg[v] >= 0) {
             if (ra_reg[v] == 2) { fast_ok = 0; break; }
             hcg_phi_is_const[j] = 0;
             hcg_phi_src_reg[j] = ra_reg[v];
+        } else {
+            /* memory (or remat) source: const-like, no register held */
+            hcg_phi_is_const[j] = 2;
+            hcg_phi_src_reg[j] = -1;
         }
-        hcg_phi_active[j] = 1;
+        if (ra_reg[phi] < 0) {
+            off = ra_spill_off[phi];
+            if (off < -2048 || off > 2047) { fast_ok = 0; break; }
+            /* Slot written here and read by another copy on this
+             * edge?  (The reader's source can only be this phi.) */
+            i = 0;
+            while (i < n) {
+                if (i != j &&
+                    ssa_phi_find_arg(hcg_phi_tmp[i], from_blk) == phi &&
+                    ra_reg[phi] < 0) { fast_ok = 0; break; }
+                i = i + 1;
+            }
+            if (!fast_ok) break;
+        } else if (ra_reg[phi] == 2) {
+            fast_ok = 0;
+            break;
+        }
         j = j + 1;
     }
 
     if (fast_ok) {
+        /* Memory destinations first: cycle-free by construction. */
         rem = n;
+        j = 0;
+        while (j < n) {
+            phi = hcg_phi_tmp[j];
+            if (hcg_phi_dst_reg[j] < 0) {
+                off = ra_spill_off[phi];
+                v = hcg_phi_src_inst[j];
+                if (off == 0) {
+                    /* no slot: the value is never read; drop the copy */
+                } else if (hcg_phi_is_const[j] == 0) {
+                    cg_s("    stw r30, r");
+                    cg_n(hcg_phi_src_reg[j]);
+                    cg_s(", ");
+                    cg_n(off);
+                    cg_c(10);
+                } else if (hcg_phi_is_const[j] == 2 && v >= 0 &&
+                           ra_spill_off[v] == off) {
+                    /* same slot: no-op */
+                } else {
+                    hcg_into(2, v);
+                    cg_s("    stw r30, r2, ");
+                    cg_n(off);
+                    cg_c(10);
+                }
+                hcg_phi_active[j] = 0;
+                rem = rem - 1;
+            }
+            j = j + 1;
+        }
         while (rem > 0) {
             progress = 0;
             j = 0;
@@ -813,7 +900,10 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                     }
                 }
                 if (!blocked) {
-                    if (hcg_phi_is_const[j]) {
+                    if (hcg_phi_is_const[j] == 2) {
+                        /* memory/remat source: load straight into dst */
+                        hcg_into(dst, hcg_phi_src_inst[j]);
+                    } else if (hcg_phi_is_const[j]) {
                         c = hcg_phi_const_val[j];
                         if (c == 0) cg_rri("addi", dst, 0, 0);
                         else if (hcg_is_i12(c)) cg_rri("addi", dst, 0, c);
@@ -1039,11 +1129,16 @@ static void hcg_emit_epilogue_inline(void) {
 
 /* Conservatively: can a conditional branch in block a reach block b? */
 static int hcg_bnear(int a, int b) {
-    int d;
+    /* DIVERGENCE (f77, port with the assembler prerequisite): always
+     * near.  The range gate predates assembler branch relaxation
+     * (GitHub #22): a bcond emitted directly to a target beyond
+     * +/-4096 is now rewritten by the assembler into the inverted
+     * branch over a jal -- exactly the fallback shape this gate used
+     * to force codegen to emit -- so the direct shape is never worse
+     * and usually one instruction better.  The phi-free target
+     * checks at the call sites still guard correctness. */
     if (a < 0 || b < 0 || a >= bb_nblk || b >= bb_nblk) return 0;
-    d = hcg_blk_pos[a] - hcg_blk_pos[b];
-    if (d < 0) d = 0 - d;
-    return d < 2000;
+    return 1;
 }
 
 /* --- Shared conditional-branch tail ---
@@ -1070,7 +1165,7 @@ static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
     ff = hcg_fwd[f];
     ne = hcg_next_emit[hcg_cur_blk];
 
-    if (ssa_phi_head[t] < 0 && ssa_phi_head[f] < 0) {
+    if (hcg_edge_nocopy(hcg_cur_blk, t) && hcg_edge_nocopy(hcg_cur_blk, f)) {
         if (ft == ne && hcg_bnear(hcg_cur_blk, ff)) {
             cg_s("    ");
             cg_s(bf);
@@ -1183,9 +1278,19 @@ static void hcg_push_stack_args(int base, int nargs) {
  * with a trailing r0 like the wrappers and the f32 emitters. */
 static int hcg_fp64_kind(char *nm) {
     if (!nm) return -1;
+    /* DIVERGENCE FROM selfhost (fortran/ only): __fp32_sqrt and
+     * __fp64_sqrt are recognised here so SQRT/DSQRT reach the hardware
+     * FSQRT.S / FSQRT.D instructions.  The C compiler routes sqrt
+     * through HI_FSQRT, which this backend does not implement -- and
+     * silently emits NOTHING for -- so Fortran would otherwise have to
+     * call a libm function whose entire body is one instruction. */
+    if (nm[0] == '_' && nm[1] == '_' && nm[2] == 'f' && nm[3] == 'p' &&
+        nm[4] == '3' && nm[5] == '2' && nm[6] == '_' &&
+        strcmp(nm + 7, "sqrt") == 0) return 15;
     if (nm[0] != '_' || nm[1] != '_' || nm[2] != 'f' || nm[3] != 'p' ||
         nm[4] != '6' || nm[5] != '4' || nm[6] != '_') return -1;
     nm = nm + 7;
+    if (strcmp(nm, "sqrt") == 0) return 14;
     if (strcmp(nm, "add") == 0) return 0;
     if (strcmp(nm, "sub") == 0) return 1;
     if (strcmp(nm, "mul") == 0) return 2;
@@ -1203,7 +1308,7 @@ static int hcg_fp64_kind(char *nm) {
     return -1;
 }
 
-/* fp64 aligned-pair support.
+/* DIVERGENCE FROM selfhost (fortran/ only), part 2 of 2.
  *
  * fadd.d/fmul.d etc. address a register PAIR (r_n, r_n+1) and require n
  * even (CHECK_F64_REG).  The helper-call shape forced every operand
@@ -1289,6 +1394,21 @@ static void hcg_fp64_emit(int fpk, int base) {
         }
         return;
     }
+    /* Square root, f64: pair r4:r5 (see the divergence note above). */
+    if (fpk == 14) {
+        hcg_into(4, h_carg[base + 0]);
+        hcg_into(5, h_carg[base + 1]);
+        cg_rrr("fsqrt.d", 4, 4, 0);
+        cg_rri("addi", 1, 4, 0);
+        cg_rri("addi", 2, 5, 0);
+        return;
+    }
+    /* Square root, f32: single word. */
+    if (fpk == 15) {
+        hcg_into(3, h_carg[base + 0]);
+        cg_rrr("fsqrt.s", 1, 3, 0);
+        return;
+    }
     /* Negate: pair r4:r5 */
     if (fpk == 4) {
         hcg_into(4, h_carg[base + 0]);
@@ -1339,7 +1459,13 @@ static int hcg_addi_lnt(int i) {
 }
 
 static int hcg_dbg_addi[6];
+static int hcg_addi_folds_away_d(int idx, int depth);
+
 static int hcg_addi_folds_away(int idx) {
+    return hcg_addi_folds_away_d(idx, 0);
+}
+
+static int hcg_addi_folds_away_d(int idx, int depth) {
     int i;
     int users;
     int folded;
@@ -1348,6 +1474,7 @@ static int hcg_addi_folds_away(int idx) {
     int lnt_i;
 
     hcg_dbg_addi[0]++;
+    if (depth > 4) return 0;
     if (h_kind[idx] != HI_ADDI) return 0;
     if (ra_reg[idx] < 0) { hcg_dbg_addi[1]++; return 0; }
     if (bg_uses[idx] <= 0) { hcg_dbg_addi[2]++; return 0; }
@@ -1364,6 +1491,15 @@ static int hcg_addi_folds_away(int idx) {
             if (lnt_i != BG_FADDR && lnt_i != BG_SADDR &&
                 hcg_addr_base_off(idx, &base_i, &off) && hcg_is_i12(off))
                 folded = folded + 1;
+        } else if (h_src1[i] == idx && k2 == HI_ADDI) {
+            /* DIVERGENCE (f77, port upstream): an ADDI stacked on an
+             * ADDI -- a double's +4 hi-word address on top of a folded
+             * subscript displacement -- counts as folded exactly when
+             * the whole chain above it folds.  The address-fold walk
+             * (hcg_addr_base_off) already sees through chains; this
+             * predicate refused them and materialized dead ADDIs. */
+            users = users + 1;
+            if (hcg_addi_folds_away_d(i, depth + 1)) folded = folded + 1;
         } else if (h_src1[i] == idx || h_src2[i] == idx) {
             hcg_dbg_addi[3]++;
             return 0;                        /* used as a value somewhere */
@@ -2151,6 +2287,14 @@ static void hcg_inst(int idx) {
             ca = h_src1[cmp_idx];
             cb = h_src2[cmp_idx];
 
+            if (ck == HI_CALL) {
+                /* fp64 compare pseudo-call: the flag is still in r1
+                 * (its home move was suppressed). */
+                hcg_condbr_finish(idx, "bne", "beq", 1, 0);
+                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
+                return;
+            }
+
             if (ck == HI_SEQ || ck == HI_SNE || ck == HI_SLT ||
                 ck == HI_SGE || ck == HI_SLTU || ck == HI_SGEU) {
                 if (ck == HI_SEQ) { bropt = "beq"; brop = "bne"; }
@@ -2165,22 +2309,19 @@ static void hcg_inst(int idx) {
                 hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
                 return;
             }
-            if (ck == HI_SGT || ck == HI_SGTU) {
-                /* a > b => r1 = (b < a); condition true when r1 != 0 */
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-                if (ck == HI_SGT) brop = "slt"; else brop = "sltu";
-                cg_rrr(brop, 1, ra, rb);
-                hcg_condbr_finish(idx, "bne", "beq", 1, 0);
-                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
-                return;
-            }
-            /* HI_SLE / HI_SLEU: a <= b => r1 = (b < a); true when r1 == 0 */
+            /* DIVERGENCE (f77, port upstream): SGT/SGTU/SLE/SLEU fuse
+             * to ONE bcond by swapping operands -- a > b is blt b,a
+             * and a <= b is bge b,a -- instead of materializing the
+             * slt and branching on the flag.  Every rotated loop's
+             * trip test (SGT(t,0) -> blt r0,t) drops an instruction
+             * per iteration. */
             ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
             rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
-            if (ck == HI_SLE) brop = "slt"; else brop = "sltu";
-            cg_rrr(brop, 1, ra, rb);
-            hcg_condbr_finish(idx, "beq", "bne", 1, 0);
+            if (ck == HI_SGT)       { bropt = "blt";  brop = "bge"; }
+            else if (ck == HI_SGTU) { bropt = "bltu"; brop = "bgeu"; }
+            else if (ck == HI_SLE)  { bropt = "bge";  brop = "blt"; }
+            else                    { bropt = "bgeu"; brop = "bltu"; }
+            hcg_condbr_finish(idx, bropt, brop, ra, rb);
             hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
             return;
         }
@@ -2273,6 +2414,7 @@ static void hcg_inst(int idx) {
             hcg_fp64_dst = -1;
             hcg_fp64_emit(fpk, base);
             if (hcg_fp64_dst >= 0) return;   /* already in its home pair */
+            if (hcg_cmp_fused[idx]) return;  /* flag stays in r1 for the BRC */
             /* Result is in r4:r5.  If it is going to be spilled anyway,
              * store straight from there rather than moving it through
              * the r1:r2 call-return convention first -- two fewer
@@ -2284,7 +2426,6 @@ static void hcg_inst(int idx) {
                 hcg_spill_from(idx + 1, 5);
                 return;
             }
-
         } else {
 
         /* ABI walk: aligned f64 pairs, back-filled ints, ordered
@@ -2445,7 +2586,12 @@ static void hcg_mark_loop_consts(void) {
 
     i = 0;
     while (i < h_ninst) {
-        h_no_remat[i] = 0;
+        /* licm_fp64_consts placed these ICONST clones in a loop
+         * preheader precisely so they could hold a register pair
+         * across the loop; pinning is the second half of that deal.
+         * Pinning entry-block constants instead was measured 2.8x
+         * WORSE (whole-function ranges starved the loop pairs). */
+        h_no_remat[i] = licm_cpin[i];
         i = i + 1;
     }
 
@@ -2521,7 +2667,7 @@ static void hcg_compute_fwd(void) {
 
     b = 1;
     while (b < bb_nblk) {
-        if (ssa_phi_head[b] < 0 && licm_head[b] < 0) {
+        if (ssa_phi_head[b] < 0 && licm_head[b] < 0 && split_head[b] < 0) {
             tgt = -1;
             ok = 1;
             i = bb_start[b];
@@ -2561,11 +2707,69 @@ static void hcg_compute_fwd(void) {
      * trampoline is 4 dead bytes of .text, and keeping it makes
      * implicit fallthrough and branch-range questions moot.  (An
      * earlier revision skipped them; the complexity wasn't worth
-     * four bytes.) */
+     * four bytes.)
+     *
+     * DIVERGENCE (f77, port upstream candidate): blocks are LAID OUT
+     * by greedy fallthrough chains instead of creation order.  The
+     * frontend creates a DO loop's exit block before the loop body
+     * exists, so creation order put the exit stub INSIDE the loop and
+     * the body paid a taken jal over it every iteration.  Each placed
+     * block is followed by its preferred successor when still
+     * unplaced (BR target; BRC then-arm, the frontends' fallthrough
+     * arm), otherwise by the lowest-numbered unplaced block.  Block 0
+     * stays first (the prologue falls into it).  Branch-range safety
+     * is unchanged: hcg_bnear gates bcond shapes on the recomputed
+     * positions, and the assembler now relaxes any bcond that still
+     * ends up long. */
     b = 0;
     while (b < bb_nblk) {
         hcg_skip[b] = 0;
-        hcg_next_emit[b] = b + 1;
+        hcg_placed[b] = 0;
+        b = b + 1;
+    }
+    {
+        int cur;
+        int pick;
+        int term;
+        int scan;
+        hcg_nord = 0;
+        cur = 0;
+        while (cur >= 0) {
+            hcg_emit_ord[hcg_nord] = cur;
+            hcg_nord = hcg_nord + 1;
+            hcg_placed[cur] = 1;
+            /* Preferred successor: where control falls if this block
+             * ends in a branch. */
+            pick = -1;
+            term = -1;
+            i = bb_end[cur] - 1;
+            while (i >= bb_start[cur]) {
+                if (hi_is_terminator(h_kind[i])) { term = i; break; }
+                i = i - 1;
+            }
+            if (term >= 0 && h_kind[term] == HI_BR) {
+                scan = hcg_fwd[h_val[term]];
+                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+            } else if (term >= 0 && h_kind[term] == HI_BRC) {
+                scan = hcg_fwd[h_src2[term]];        /* then-arm */
+                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+                if (pick < 0) {
+                    scan = hcg_fwd[h_val[term]];     /* else-arm */
+                    if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+                }
+            }
+            if (pick < 0) {
+                scan = 0;
+                while (scan < bb_nblk && hcg_placed[scan]) scan = scan + 1;
+                pick = (scan < bb_nblk) ? scan : -1;
+            }
+            cur = pick;
+        }
+    }
+    b = 0;
+    while (b < bb_nblk) {
+        hcg_next_emit[hcg_emit_ord[b]] =
+            (b + 1 < bb_nblk) ? hcg_emit_ord[b + 1] : bb_nblk;
         b = b + 1;
     }
 
@@ -2582,10 +2786,12 @@ static void hcg_compute_fwd(void) {
     nxt = 0;
     b = 0;
     while (b < bb_nblk) {
-        hcg_blk_pos[b] = nxt;
+        int ob;
+        ob = hcg_emit_ord[b];            /* positions follow LAYOUT order */
+        hcg_blk_pos[ob] = nxt;
         nxt = nxt + 32;
-        i = bb_start[b];
-        while (i < bb_end[b]) {
+        i = bb_start[ob];
+        while (i < bb_end[ob]) {
             k = h_kind[i];
             if (k != HI_NOP) {
                 if (k == HI_CALL || k == HI_CALLP) {
@@ -2596,12 +2802,17 @@ static void hcg_compute_fwd(void) {
             }
             i = i + 1;
         }
-        i = licm_head[b];
+        i = licm_head[ob];
         while (i >= 0) {
             nxt = nxt + 24;
             i = licm_next[i];
         }
-        i = ssa_phi_head[b];
+        i = split_head[ob];
+        while (i >= 0) {
+            nxt = nxt + 24;
+            i = licm_next[i];
+        }
+        i = ssa_phi_head[ob];
         while (i >= 0) {
             nxt = nxt + 24;
             i = ssa_phi_next[i];
@@ -2624,6 +2835,13 @@ static void hcg_block(int b) {
     /* Skipped trampoline: every reference was redirected to its
      * final target and nothing falls into it — emit only the label. */
     if (hcg_skip[b]) return;
+
+    /* Split-pass reloads: top of block, before every use. */
+    i = split_head[b];
+    while (i >= 0) {
+        hcg_inst(i);
+        i = licm_next[i];
+    }
 
     /* Find the terminator (last non-NOP: BR/BRC/RET/JMPTAB) */
     term = -1;
@@ -2716,6 +2934,10 @@ static void hcg_func(Node *fn) {
     hir_opt();
 
     /* Loop-invariant code motion */
+    licm_loopopt = 1;   /* SLOW-32 regalloc/codegen walk the split and
+                         * clone lists these passes create; the cross
+                         * backends sharing hir_licm.h do not, and leave
+                         * this off. */
     hir_licm();
 
     /* Promote big loop-used constants out of remat (needs the loop
@@ -2734,6 +2956,11 @@ static void hcg_func(Node *fn) {
 
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
+    if (getenv("HIR_RA_DEBUG")) {
+        fdputs("RA fn=", 2);
+        fdputs(fn->name, 2);
+        fdputc(10, 2);
+    }
     hir_regalloc();
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */
@@ -2874,10 +3101,10 @@ static void hcg_func(Node *fn) {
         i = i + 1;
     }
 
-    /* Emit all basic blocks */
+    /* Emit all basic blocks, in layout order */
     b = 0;
     while (b < bb_nblk) {
-        hcg_block(b);
+        hcg_block(hcg_emit_ord[b]);
         b = b + 1;
     }
 
@@ -2979,6 +3206,13 @@ static void gen_data(void) {
             int reli;
             int relend;
             int off;
+            /* DIVERGENCE (f77): word-align every emitted global.  The
+             * string literals just above are byte streams of arbitrary
+             * length, so a global emitted after an odd-length FORMAT
+             * text would land misaligned -- f77's DATA images carry
+             * word and doubleword values.  Candidate to port upstream:
+             * stage08's gen_data has the same latent hazard. */
+            cg_s(".align 2\n");
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n");
@@ -3059,6 +3293,8 @@ static void gen_data(void) {
         } else if (ps_ginit_start[i] >= 0) {
             /* Already emitted in .data */
         } else if (ps_gsize[i] > 0) {
+            /* DIVERGENCE (f77): word-align, as in the .data walk. */
+            cg_s(".align 2\n");
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space ");

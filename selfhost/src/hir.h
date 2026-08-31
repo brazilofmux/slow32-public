@@ -265,6 +265,15 @@ static void hl_switch_block(int blk) {
     bb_end[blk] = h_ninst;
 }
 
+/* DIVERGENCE (f77, port upstream candidate): a LOAD the FRONTEND
+ * asserts reads storage no store in this unit can legally alias --
+ * F77 scalar dummies under 15.9.3.6 -- may be hoisted by LICM like a
+ * pure instruction.  The frontend sets the flag at emission and must
+ * RETRACT it (at unit end) for any symbol the unit itself stores.
+ * Nothing in a C-compiler frontend sets it, so the mechanism is inert
+ * when ported. */
+static char h_ld_ro[HIR_MAX_INST];
+
 static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
     idx = h_ninst;
@@ -272,6 +281,7 @@ static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
         fdputs("s12cc: too many HIR instructions\n", 2);
         exit(1);
     }
+    h_ld_ro[idx] = 0;
     h_kind[idx] = kind;
     h_ty[idx] = ty;
     h_src1[idx] = s1;

@@ -23,6 +23,14 @@
 
 /* --- Per-block hoisted instruction lists (append order: defs before uses) --- */
 static int licm_head[HIR_MAX_BLOCK];  /* first hoisted inst, -1 = none */
+
+/* Loop-optimisation gate.  licm_split parks values in split_head[]
+ * TOP-of-block lists and licm_strred/licm_fp64_consts append clones
+ * that only the SLOW-32 regalloc/codegen know how to walk; the x64
+ * and a64 cross backends share this file but not that plumbing, so
+ * the passes run only where the target's driver turns them on
+ * (hir_codegen.h sets it before calling hir_licm). */
+static int licm_loopopt;
 static int licm_tail[HIR_MAX_BLOCK];  /* last hoisted inst, for O(1) append */
 static int licm_next[HIR_MAX_INST];   /* next hoisted inst, -1 = end */
 
@@ -107,10 +115,24 @@ static int licm_in_loop(int inst) {
  * - defined outside the loop
  * - rematerializable (ICONST, ALLOCA, etc.)
  * - already marked as invariant (ho_use[inst] == 1) */
+static int licm_cur_header = -1;
+
 static int licm_operand_ok(int inst) {
     if (inst < 0) return 1;
-    if (!licm_in_loop(inst)) return 1;
     if (hi_is_remat(h_kind[inst])) return 1;
+    if (!licm_in_loop(inst)) {
+        /* Outside the body is NOT enough: original SSA guarantees an
+         * outside def dominates the header, but licm_split's reloads
+         * are multiple non-SSA defs of one value scattered in
+         * post-inner-loop blocks.  Hoisting a user of one of those to
+         * this loop's preheader read the slot before any reload ran
+         * (s12cc's own ra_mark_call_crossing lost its loop counter to
+         * exactly that -- gen2 span forever).  Demand dominance. */
+        if (licm_cur_header >= 0 &&
+            h_blk[inst] >= 0 && h_blk[inst] < bb_nblk &&
+            !licm_dominates(h_blk[inst], licm_cur_header)) return 0;
+        return 1;
+    }
     if (ho_use[inst]) return 1;
     return 0;
 }
@@ -266,6 +288,7 @@ static int licm_clone(int orig) {
     /* Clones are never themselves hoisted; mark so rewrite skips them */
     licm_map[cl] = -1;
     licm_cpin[cl] = 0;   /* the index may be reused across functions */
+    ho_use[cl] = 0;      /* same stale-flag hazard as sp_new_inst */
 
     h_ninst = h_ninst + 1;
 
@@ -407,6 +430,15 @@ static int sp_new_inst(int kind, int ty, int s1, int s2, int val, int blk) {
     h_no_remat[cl] = 0;
     licm_map[cl] = -1;
     licm_next[cl] = -1;
+    licm_cpin[cl] = 0;
+    /* Appended instructions are OUTSIDE every bb_start..bb_end range,
+     * so licm_mark's per-body clear never reaches them -- a stale
+     * ho_use count left by the PREVIOUS function's hir_opt at this
+     * index reads as "marked invariant" and lets a later loop hoist a
+     * user of this instruction illegally (s12cc's ra_mark_call_crossing
+     * lost its loop counter to a hoisted increment that read a split
+     * reload; gen2 span forever).  Clear it at birth. */
+    ho_use[cl] = 0;
     h_ninst = h_ninst + 1;
     return cl;
 }
@@ -844,9 +876,14 @@ static void licm_strred(int header, int latch) {
                     }
                 }
             }
-            if (r >= 0 && other >= 0 && getenv("F77_SR_DEBUG") &&
-                !sr_uses_local(i))
-                fprintf(stderr, "SR reject cand=%d kind=%d (nonlocal use)\n", i, k);
+            if (r >= 0 && other >= 0 && getenv("HIR_SR_DEBUG") &&
+                !sr_uses_local(i)) {
+                fdputs("SR reject cand=", 2);
+                fdputuint(2, (unsigned)i);
+                fdputs(" kind=", 2);
+                fdputuint(2, (unsigned)k);
+                fdputs(" (nonlocal use)\n", 2);
+            }
             if (r >= 0 && other >= 0 && sr_uses_local(i) &&
                 sr_count_refs(i) > 0 &&
                 sr_niv < SR_MAX_IV && h_ninst + 4 < HIR_MAX_INST) {
@@ -901,13 +938,42 @@ static void licm_strred(int header, int latch) {
                         q = q + 1;
                     }
                 }
-                if (getenv("F77_SR_DEBUG"))
-                    fprintf(stderr, "SR hdr=%d latch=%d pre=%d: cand=%d kind=%d iv=%d init=%d step=%d -> ninit=%d nstep=%d nphi=%d nnext=%d\n",
-                            header, latch, pre, i, k, sr_phi[r], sr_init[r], sr_step[r], ninit, nstep, nphi, nnext);
+                if (getenv("HIR_SR_DEBUG")) {
+                fdputs("SR hdr=", 2);
+                    fdputuint(2, (unsigned)(header));
+                    fdputs(" latch=", 2);
+                    fdputuint(2, (unsigned)(latch));
+                    fdputs(" pre=", 2);
+                    fdputuint(2, (unsigned)(pre));
+                    fdputs(": cand=", 2);
+                    fdputuint(2, (unsigned)(i));
+                    fdputs(" kind=", 2);
+                    fdputuint(2, (unsigned)(k));
+                    fdputs(" iv=", 2);
+                    fdputuint(2, (unsigned)(sr_phi[r]));
+                    fdputs(" init=", 2);
+                    fdputuint(2, (unsigned)(sr_init[r]));
+                    fdputs(" step=", 2);
+                    fdputuint(2, (unsigned)(sr_step[r]));
+                    fdputs(" -> ninit=", 2);
+                    fdputuint(2, (unsigned)(ninit));
+                    fdputs(" nstep=", 2);
+                    fdputuint(2, (unsigned)(nstep));
+                    fdputs(" nphi=", 2);
+                    fdputuint(2, (unsigned)(nphi));
+                    fdputs(" nnext=", 2);
+                    fdputuint(2, (unsigned)(nnext));
+                    fdputc(10, 2);
+                }
                 /* rewrite and retire the original computation */
                 sr_rewrite(i, nphi);
-                if (getenv("F77_SR_DEBUG"))
-                    fprintf(stderr, "SR rewrote %d refs of %d\n", sr_rewrite_n, i);
+                if (getenv("HIR_SR_DEBUG")) {
+                    fdputs("SR rewrote ", 2);
+                    fdputuint(2, (unsigned)sr_rewrite_n);
+                    fdputs(" refs of ", 2);
+                    fdputuint(2, (unsigned)i);
+                    fdputc(10, 2);
+                }
                 h_kind[i] = HI_NOP;
                 h_src1[i] = -1;
                 h_src2[i] = -1;
@@ -965,9 +1031,19 @@ static void licm_strred(int header, int latch) {
             }
             j = j + 1;
         }
-        if (getenv("F77_SR_DEBUG"))
-            fprintf(stderr, "SWEEP hdr=%d rec=%d phi=%d inc=%d used=%d\n",
-                    header, i, phi2, inc2, used);
+        if (getenv("HIR_SR_DEBUG")) {
+        fdputs("SWEEP hdr=", 2);
+            fdputuint(2, (unsigned)(header));
+            fdputs(" rec=", 2);
+            fdputuint(2, (unsigned)(i));
+            fdputs(" phi=", 2);
+            fdputuint(2, (unsigned)(phi2));
+            fdputs(" inc=", 2);
+            fdputuint(2, (unsigned)(inc2));
+            fdputs(" used=", 2);
+            fdputuint(2, (unsigned)(used));
+            fdputc(10, 2);
+        }
         if (!used) {
             /* unlink the phi from the header's list, NOP both */
             int pp;
@@ -1104,7 +1180,7 @@ static void licm_fp64_consts(int header, int latch) {
                             dcl[nd] = fl;
                             dch[nd] = fh;
                             nd = nd + 1;
-                            if (getenv("F77_CP_DEBUG")) {
+                            if (getenv("HIR_CP_DEBUG")) {
                                 fdputs("cpin: pin pair hi=", 2);
                                 fdputuint(2, (unsigned)h_val[fh]);
                                 fdputs(" ph=", 2);
@@ -1188,10 +1264,13 @@ static void hir_licm(void) {
                         lb = lb + 1;
                     }
                 }
+                licm_cur_header = s;
                 licm_mark(body_count);
                 licm_hoist(s, body_count);
-                licm_split(s);
-                licm_strred(s, b);
+                if (licm_loopopt) {
+                    licm_split(s);
+                    licm_strred(s, b);
+                }
             }
             si = si + 1;
         }
@@ -1203,16 +1282,18 @@ static void hir_licm(void) {
      * licm_rewrite conceptually, but the pass resolves licm_map at
      * every operand read, so either side works; it adds mappings of
      * its own only via direct carg rewrites. */
-    b = 0;
-    while (b < bb_nblk) {
-        si = 0;
-        while (si < ssa_nsucc[b]) {
-            s = ssa_succ[ssa_soff[b] + si];
-            if (s >= 0 && s < bb_nblk && licm_dominates(s, b))
-                licm_fp64_consts(s, b);
-            si = si + 1;
+    if (licm_loopopt) {
+        b = 0;
+        while (b < bb_nblk) {
+            si = 0;
+            while (si < ssa_nsucc[b]) {
+                s = ssa_succ[ssa_soff[b] + si];
+                if (s >= 0 && s < bb_nblk && licm_dominates(s, b))
+                    licm_fp64_consts(s, b);
+                si = si + 1;
+            }
+            b = b + 1;
         }
-        b = b + 1;
     }
 
     /* Global rewrite of all references */

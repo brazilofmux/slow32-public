@@ -508,6 +508,29 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
     echo "=== Step 3d: Fixed-point gate (gen2 == gen3) ==="
     TOTAL=$((TOTAL + 1))
 
+    # gen2/gen3 are STAGE08 codegen output: since the fallthrough-chain
+    # layout landed, that codegen emits every conditional branch in the
+    # single-bcond shape and relies on ASSEMBLER RELAXATION for the rare
+    # target beyond +-4096 bytes.  stage07's frozen s32-as predates
+    # relaxation and silently truncates the displacement (fp-gen2
+    # jumped into string data at PC=0x20627572).  Build the stage08
+    # assembler first and assemble gen2/gen3 with it; gen1 itself is
+    # stage07 output and stays with stage07 tools.
+    FP_AS_EXE="$WORKDIR/fp-s32-as.s32x"
+    run_exe "$STAGE7_CC" "$WORKDIR/fp-s32-as-compile.log" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/fp-s32-as.s"
+    if [[ -s "$WORKDIR/fp-s32-as.s" ]]; then
+        run_exe "$AS_EXE" "$WORKDIR/fp-s32-as-assemble.log" "$WORKDIR/fp-s32-as.s" "$WORKDIR/fp-s32-as.s32o"
+        run_exe "$LD_EXE" "$WORKDIR/fp-s32-as-link.log" \
+            -o "$FP_AS_EXE" --mmio 64K \
+            "$RUNTIME_CRT0" "$WORKDIR/fp-s32-as.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+            $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
+    fi
+    if [[ ! -s "$FP_AS_EXE" ]]; then
+        printf "  %-30s FAIL (fp assembler build)\n" "fixed-point:"
+        FAIL=$((FAIL + 1))
+        FP_AS_EXE=""
+    fi
+
     run_exe "$GEN1_CC_EXE" "$WORKDIR/fp-gen2-compile.log" "$STAGE_CC_SRC" "$WORKDIR/fp-gen2.s"
     if [[ ! -s "$WORKDIR/fp-gen2.s" ]]; then
         printf "  %-30s FAIL (compile)\n" "fixed-point:"
@@ -517,7 +540,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
             echo "  gen2 self-compile stats:"
             grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^  ' "$WORKDIR/fp-gen2-compile.log" | head -n 36
         fi
-        run_exe "$AS_EXE" "$WORKDIR/fp-gen2-assemble.log" "$WORKDIR/fp-gen2.s" "$WORKDIR/fp-gen2.s32o"
+        run_exe "$FP_AS_EXE" "$WORKDIR/fp-gen2-assemble.log" "$WORKDIR/fp-gen2.s" "$WORKDIR/fp-gen2.s32o"
         if [[ ! -s "$WORKDIR/fp-gen2.s32o" ]]; then
             printf "  %-30s FAIL (assemble)\n" "fixed-point:"
             FAIL=$((FAIL + 1))
@@ -539,7 +562,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
                         echo "  gen3 self-compile stats:"
                         grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^  ' "$WORKDIR/fp-gen3-compile.log" | head -n 36
                     fi
-                    run_exe "$AS_EXE" "$WORKDIR/fp-gen3-assemble.log" "$WORKDIR/fp-gen3.s" "$WORKDIR/fp-gen3.s32o"
+                    run_exe "$FP_AS_EXE" "$WORKDIR/fp-gen3-assemble.log" "$WORKDIR/fp-gen3.s" "$WORKDIR/fp-gen3.s32o"
                     if [[ ! -s "$WORKDIR/fp-gen3.s32o" ]]; then
                         printf "  %-30s FAIL (gen3 assemble)\n" "fixed-point:"
                         FAIL=$((FAIL + 1))

@@ -2935,6 +2935,10 @@ static void hcg_func(Node *fn) {
     hir_opt();
 
     /* Loop-invariant code motion */
+    licm_loopopt = 1;   /* SLOW-32 regalloc/codegen walk the split and
+                         * clone lists these passes create; the cross
+                         * backends sharing hir_licm.h do not, and leave
+                         * this off. */
     hir_licm();
 
     /* Promote big loop-used constants out of remat (needs the loop
@@ -2953,7 +2957,7 @@ static void hcg_func(Node *fn) {
 
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
-    if (getenv("F77_RA_DEBUG")) {
+    if (getenv("HIR_RA_DEBUG")) {
         fdputs("RA fn=", 2);
         fdputs(fn->name, 2);
         fdputc(10, 2);

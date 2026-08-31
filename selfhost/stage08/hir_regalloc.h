@@ -59,6 +59,8 @@ static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved 
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
+static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
  * Index 0..17  → r11..r28 (callee)
@@ -341,6 +343,18 @@ static void ra_compute_pos(void) {
         }
 
         /* Regular instructions up to (not including) the terminator */
+        /* Split-pass reloads run at the TOP of the block. */
+        i = split_head[b];
+        while (i >= 0) {
+            if (h_kind[i] != HI_NOP) {
+                ra_pos[i] = pos;
+                ra_order[ra_norder] = i;
+                ra_norder = ra_norder + 1;
+                pos = pos + 1;
+            }
+            i = licm_next[i];
+        }
+
         i = bb_start[b];
         while (i < bb_end[b]) {
             if (i == term) break;
@@ -703,6 +717,42 @@ static void ra_assign_spills(void) {
         i = i + 1;
     }
 
+    if (getenv("HIR_RA_TRACE")) {
+        i = atoi(getenv("HIR_RA_TRACE"));
+        if (i >= 0 && i < h_ninst) {
+            fdputs("TRACE inst=", 2);
+            fdputuint(2, (unsigned)i);
+            fdputs(" kind=", 2);
+            fdputuint(2, (unsigned)h_kind[i]);
+            fdputs(" blk=", 2);
+            fdputuint(2, (unsigned)h_blk[i]);
+            fdputs(" pos=", 2);
+            fdputuint(2, (unsigned)ra_pos[i]);
+            fdputs(" reg=", 2);
+            fdputuint(2, (unsigned)ra_reg[i]);
+            fdputs(" slot=", 2);
+            fdputuint(2, (unsigned)ra_spill_off[i]);
+            fdputs(" node=", 2);
+            fdputuint(2, (unsigned)gc_node[i]);
+            fdputc(10, 2);
+        }
+    }
+    if (getenv("HIR_RA_DEBUG")) {
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] != HI_NOP && hi_has_value(h_kind[i]) &&
+                !hi_inst_remat(i) && ra_reg[i] < 0 && ra_pos[i] < 0) {
+                fdputs("ORPHAN inst=", 2);
+                fdputuint(2, (unsigned)i);
+                fdputs(" kind=", 2);
+                fdputuint(2, (unsigned)h_kind[i]);
+                fdputs(" blk=", 2);
+                fdputuint(2, (unsigned)h_blk[i]);
+                fdputc(10, 2);
+            }
+            i = i + 1;
+        }
+    }
     /* Assign spill slots for non-allocated, non-remat value-producing instructions */
     i = 0;
     while (i < h_ninst) {
@@ -766,6 +816,12 @@ static void ra_extend_fused_cmp(void) {
             i = i + 1;
             continue;
         }
+
+        /* A fused fp64 compare CALL is NOT re-emitted at the BRC: the
+         * call site itself emits flt.d into r1 and the adjacent BRC
+         * reads it.  Keep the call fully visible to the allocator --
+         * its carg ranges and call-crossing effects stand as-is. */
+        if (h_kind[cmp] == HI_CALL) { i = i + 1; continue; }
 
         ca = h_src1[cmp];
         cb = h_src2[cmp];
@@ -899,16 +955,408 @@ static int gc_k(int n) {
  * IRC algorithmic core (Chunk 3 — dead code, C89 declaration style)
  * ================================================================= */
 
-static void gc_add_move(int a, int b) {
+/* DIVERGENCE (f77, port upstream candidate): moves that come from a
+ * PHI are tagged.  A loop-carried phi crosses the body's fp64 calls
+ * while its increment usually does not, and the blanket crossing-
+ * mismatch refusal in gc_coalesce left every such loop paying copies
+ * each iteration; a phi move may coalesce across the mismatch because
+ * the merged node keeps the CROSSING side's palette (the swap in
+ * gc_coalesce puts the crossing node in u before gc_combine(u, v)). */
+static char gc_mv_phi[GC_MAX_MOVE];
+
+static void gc_add_move_tag(int a, int b, int is_phi) {
     int mv;
     if (gc_nmove >= GC_MAX_MOVE) return;
     mv = gc_nmove;
     gc_mv_a[mv] = a;
     gc_mv_b[mv] = b;
     gc_mv_status[mv] = GC_MV_WORKLIST;
+    gc_mv_phi[mv] = (char)is_phi;
     gc_nmove = gc_nmove + 1;
     gc_add_node_move(a, mv);
     gc_add_node_move(b, mv);
+}
+
+static void gc_add_move(int a, int b) {
+    gc_add_move_tag(a, b, 0);
+}
+
+/* Tentatively re-declared: defined with the pair machinery below,
+ * needed by gc_build/gc_combine above it. */
+static int ra_pair_of[HIR_MAX_INST];
+static int ra_pair_lo[HIR_MAX_INST];
+static int gc_pair_inst[GC_MAX_NODE];
+
+/* =================================================================
+ * Per-block liveness (DIVERGENCE f77, port upstream candidate)
+ *
+ * The linear-interval model treats a value as live at every position
+ * between its def and its last use IN LINEARIZED ORDER -- including
+ * whole blocks on unrelated CFG paths that happen to sit in between.
+ * Every value in those blocks picks up a false interference edge, and
+ * in a function with several loops laid end to end (an inlined DAXPY,
+ * say) the false pressure is what spills: inlining measured 2.3x
+ * WORSE under intervals with the spill dump blaming exactly this.
+ *
+ * This is the classic fix: iterative backward dataflow to a fixpoint
+ * gives live-in/live-out per block, then one backward walk per block
+ * builds interference edges and the call-crossing marks from the
+ * exact set of values live at each point.  Everything downstream --
+ * IRC coalescing, pair claiming, weighted spill costs, select -- is
+ * untouched; only where edges COME FROM changes.  The interval code
+ * stays for its other consumers (fusion extends, dumps) and as the
+ * HIR_LINEAR_LIVE=1 fallback.
+ *
+ * Bitsets are indexed by a dense id assigned in ra_order; the arrays
+ * are statically sized for the worst case (8MB bss) but only
+ * bb_nblk x lv_nw words are ever touched.
+ * ================================================================= */
+/* GC_MAX_NODE / 32: ids beyond the node cap could never be coloured
+ * anyway, so functions that large stay on intervals. */
+#define LV_W 128
+/* Flattened [HIR_MAX_BLOCK][LV_W]: the selfhost dialect has no 2D
+ * static arrays, and the bound must be a literal (2048 * 128).  Kept
+ * to 1MB apiece -- the selfhost assembler has a cumulative BSS
+ * budget, and 4MB versions of these were what first blew it. */
+static unsigned int lv_in[262144];
+static unsigned int lv_out[262144];
+static unsigned int lv_live[LV_W];
+static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
+static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
+static int lv_nid;
+static int lv_nw;                  /* words in use: (lv_nid+31)/32 */
+static int lv_bstart[HIR_MAX_BLOCK];  /* ra_order index range per block */
+static int lv_bend[HIR_MAX_BLOCK];
+static int lv_on;
+
+static int lv_tracked(int inst) {
+    if (inst < 0) return 0;
+    if (lv_id[inst] < 0) return 0;
+    return 1;
+}
+
+/* Enumerate the register-read operands of one instruction -- the
+ * same set the interval builder extends: src1, src2 when it is a
+ * reference, the base a BURG fold reaches through (Issue #31), call
+ * arguments, and a fused BRC's comparison operands (the compare was
+ * NOPed; the branch re-emits it).  PHI arguments are NOT here; they
+ * are uses at the end of the predecessor and the dataflow adds them
+ * on the edge.  Returns the count in lv_ubuf. */
+static int lv_ubuf[128];
+static int lv_uses(int inst) {
+    int nu;
+    int k;
+    int j;
+    int a;
+    int cmp;
+
+    nu = 0;
+    k = h_kind[inst];
+    if (h_src1[inst] >= 0) { lv_ubuf[nu] = h_src1[inst]; nu = nu + 1; }
+    if (h_src2[inst] >= 0 && ho_src2_is_ref(k)) {
+        lv_ubuf[nu] = h_src2[inst];
+        nu = nu + 1;
+    }
+    if (ra_codegen_fold_base(inst, &a)) { lv_ubuf[nu] = a; nu = nu + 1; }
+    if ((k == HI_CALL || k == HI_CALLP) && h_cbase[inst] >= 0) {
+        j = 0;
+        while (j < h_val[inst] && nu < 120) {
+            a = h_carg[h_cbase[inst] + j];
+            if (a >= 0) { lv_ubuf[nu] = a; nu = nu + 1; }
+            j = j + 1;
+        }
+    }
+    if (k == HI_BRC && hcg_brc_fuse[inst] >= 0) {
+        cmp = hcg_brc_fuse[inst];
+        /* Only the int form: the compare is NOPed and re-emitted as a
+         * bcond reading its operands here.  A fused fp64 compare CALL
+         * stays a real instruction and its reads count at its own
+         * site. */
+        if (h_kind[cmp] == HI_NOP) {
+            if (h_src1[cmp] >= 0) { lv_ubuf[nu] = h_src1[cmp]; nu = nu + 1; }
+            if (h_src2[cmp] >= 0) { lv_ubuf[nu] = h_src2[cmp]; nu = nu + 1; }
+        }
+    }
+    return nu;
+}
+
+static int lv_is_callkind(int k) {
+    return k == HI_CALL || k == HI_CALLP || k == HI_CALLHI ||
+           k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE;
+}
+
+/* Transform lv_live from live-out of b to live-in of b. */
+static void lv_transfer(int b) {
+    int oi;
+    int inst;
+    int nu;
+    int j;
+    int u;
+
+    oi = lv_bend[b];
+    while (oi > lv_bstart[b]) {
+        oi = oi - 1;
+        inst = ra_order[oi];
+        if (lv_tracked(inst))
+            lv_live[lv_id[inst] >> 5] =
+                lv_live[lv_id[inst] >> 5] & ~(1u << (lv_id[inst] & 31));
+        nu = lv_uses(inst);
+        j = 0;
+        while (j < nu) {
+            u = lv_ubuf[j];
+            if (lv_tracked(u))
+                lv_live[lv_id[u] >> 5] =
+                    lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
+            j = j + 1;
+        }
+    }
+}
+
+/* live-out(b) = union over successors s of live-in(s), plus every phi
+ * argument s's phis receive along the b->s edge.  Built into lv_live. */
+static void lv_out_of(int b) {
+    int w;
+    int si;
+    int s;
+    int phi;
+    int j;
+    int a;
+
+    w = 0;
+    while (w < lv_nw) { lv_live[w] = 0; w = w + 1; }
+    si = 0;
+    while (si < ssa_nsucc[b]) {
+        s = ssa_succ[ssa_soff[b] + si];
+        if (s >= 0 && s < bb_nblk) {
+            w = 0;
+            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[(s << 7) + w]; w = w + 1; }
+            phi = ssa_phi_head[s];
+            while (phi >= 0) {
+                if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
+                    j = 0;
+                    while (j < h_pcnt[phi]) {
+                        if (h_pblk[h_pbase[phi] + j] == b) {
+                            a = h_pval[h_pbase[phi] + j];
+                            if (lv_tracked(a))
+                                lv_live[lv_id[a] >> 5] =
+                                    lv_live[lv_id[a] >> 5] | (1u << (lv_id[a] & 31));
+                        }
+                        j = j + 1;
+                    }
+                }
+                phi = ssa_phi_next[phi];
+            }
+        }
+        si = si + 1;
+    }
+}
+
+static void lv_prepare(void) {
+    int i;
+    int b;
+    int inst;
+    int k;
+    int w;
+    int ri;
+    int changed;
+    int sweeps;
+
+    lv_on = 0;
+    if (getenv("HIR_LINEAR_LIVE")) return;
+
+    /* Dense ids for allocatable values, in ra_order. */
+    i = 0;
+    while (i < h_ninst) { lv_id[i] = -1; i = i + 1; }
+    lv_nid = 0;
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
+            lv_id[inst] = lv_nid;
+            lv_rev[lv_nid] = inst;
+            lv_nid = lv_nid + 1;
+        }
+        i = i + 1;
+    }
+    if (lv_nid > GC_MAX_NODE) return;   /* stay on intervals */
+    lv_nw = (lv_nid + 31) / 32;
+    if (lv_nw == 0) lv_nw = 1;
+
+    /* ra_order index range per block (blocks are contiguous runs). */
+    b = 0;
+    while (b < bb_nblk) {
+        lv_bstart[b] = 0;
+        lv_bend[b] = 0;
+        w = 0;
+        while (w < lv_nw) { lv_in[(b << 7) + w] = 0; lv_out[(b << 7) + w] = 0; w = w + 1; }
+        b = b + 1;
+    }
+    i = 0;
+    while (i < ra_norder) {
+        b = h_blk[ra_order[i]];
+        if (b >= 0 && b < bb_nblk) {
+            if (lv_bend[b] == 0) lv_bstart[b] = i;   /* first entry */
+            lv_bend[b] = i + 1;
+        }
+        i = i + 1;
+    }
+
+    /* Backward dataflow to fixpoint, reverse-RPO sweeps. */
+    changed = 1;
+    sweeps = 0;
+    while (changed && sweeps < 64) {
+        changed = 0;
+        ri = ssa_rpo_cnt;
+        while (ri > 0) {
+            ri = ri - 1;
+            b = ssa_rpo_ord[ri];
+            if (b < 0 || b >= bb_nblk) continue;
+            lv_out_of(b);
+            w = 0;
+            while (w < lv_nw) { lv_out[(b << 7) + w] = lv_live[w]; w = w + 1; }
+            lv_transfer(b);
+            w = 0;
+            while (w < lv_nw) {
+                if (lv_in[(b << 7) + w] != lv_live[w]) {
+                    lv_in[(b << 7) + w] = lv_live[w];
+                    changed = 1;
+                }
+                w = w + 1;
+            }
+        }
+        sweeps = sweeps + 1;
+    }
+    if (changed) return;   /* did not converge: stay on intervals */
+
+    lv_on = 1;
+}
+
+/* Interference edges and call-crossing marks from exact liveness.
+ * One backward walk per block from lv_out.  The dying-src1 exception
+ * falls out naturally (a source dead after the instruction is not in
+ * the live set), so for the kinds where sharing is NOT known safe the
+ * edge is added back explicitly -- the same conservative scope as the
+ * interval builder: only ALU/ADDI/COPY may share with a dying src1,
+ * everything else keeps all its edges. */
+static void lv_build_edges(void) {
+    int b;
+    int oi;
+    int inst;
+    int k;
+    int ni;
+    int w;
+    int bit;
+    int id;
+    int nu;
+    int j;
+    int u;
+    int dying_ok;
+    int p1;
+    int p2;
+
+    b = 0;
+    while (b < bb_nblk) {
+        w = 0;
+        while (w < lv_nw) { lv_live[w] = lv_out[(b << 7) + w]; w = w + 1; }
+        oi = lv_bend[b];
+        while (oi > lv_bstart[b]) {
+            oi = oi - 1;
+            inst = ra_order[oi];
+            k = h_kind[inst];
+            ni = -1;
+            if (lv_tracked(inst)) ni = gc_node[inst];
+            if (lv_tracked(inst)) {
+                id = lv_id[inst];
+                lv_live[id >> 5] = lv_live[id >> 5] & ~(1u << (id & 31));
+            }
+            if (ni >= 0) {
+                w = 0;
+                while (w < lv_nw) {
+                    unsigned int bits;
+                    bits = lv_live[w];
+                    bit = 0;
+                    while (bits != 0 && bit < 32) {
+                        if (bits & (1u << bit)) {
+                            bits = bits & ~(1u << bit);
+                            /* A respilled or unpinned value keeps its
+                             * liveness bit but has no node this round. */
+                            if (gc_node[lv_rev[(w << 5) + bit]] >= 0)
+                                gc_add_edge(ni, gc_node[lv_rev[(w << 5) + bit]]);
+                        }
+                        bit = bit + 1;
+                    }
+                    w = w + 1;
+                }
+                /* Dying uses: only s1 of the single-instruction
+                 * three-operand kinds may share the result register. */
+                nu = lv_uses(inst);
+                j = 0;
+                while (j < nu) {
+                    u = lv_ubuf[j];
+                    if (lv_tracked(u) &&
+                        !(lv_live[lv_id[u] >> 5] & (1u << (lv_id[u] & 31)))) {
+                        dying_ok = 0;
+                        if (u == h_src1[inst] &&
+                            ((k >= HI_ADD && k <= HI_SRL) ||
+                             k == HI_ADDI || k == HI_COPY))
+                            dying_ok = 1;
+                        if (!dying_ok && gc_node[u] >= 0)
+                            gc_add_edge(ni, gc_node[u]);
+                    }
+                    j = j + 1;
+                }
+            }
+            nu = lv_uses(inst);
+            j = 0;
+            while (j < nu) {
+                u = lv_ubuf[j];
+                if (lv_tracked(u))
+                    lv_live[lv_id[u] >> 5] =
+                        lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
+                j = j + 1;
+            }
+            if (lv_is_callkind(k)) {
+                /* Marked AFTER the uses are re-added: textbook liveness
+                 * says a call's arguments die at the call and do not
+                 * cross it, but the emitter marshals arguments into
+                 * r3..r10 one move at a time, so a source parked in a
+                 * caller-saved register is clobbered before it is read
+                 * (trans1's DLOG(DEXP(X)) lost the hi word to exactly
+                 * that).  Arguments count as crossing, as they always
+                 * did under intervals. */
+                w = 0;
+                while (w < lv_nw) {
+                    unsigned int bits;
+                    bits = lv_live[w];
+                    bit = 0;
+                    while (bits != 0 && bit < 32) {
+                        if (bits & (1u << bit)) {
+                            bits = bits & ~(1u << bit);
+                            ra_crosses_call[lv_rev[(w << 5) + bit]] = 1;
+                        }
+                        bit = bit + 1;
+                    }
+                    w = w + 1;
+                }
+            }
+        }
+        /* PHI defs of one block are written by one parallel copy:
+         * they must never share a register, live or not. */
+        p1 = ssa_phi_head[b];
+        while (p1 >= 0) {
+            if (h_kind[p1] == HI_PHI && gc_node[p1] >= 0) {
+                p2 = ssa_phi_next[p1];
+                while (p2 >= 0) {
+                    if (h_kind[p2] == HI_PHI && gc_node[p2] >= 0)
+                        gc_add_edge(gc_node[p1], gc_node[p2]);
+                    p2 = ssa_phi_next[p2];
+                }
+            }
+            p1 = ssa_phi_next[p1];
+        }
+        b = b + 1;
+    }
 }
 
 static void gc_build(void) {
@@ -930,7 +1378,8 @@ static void gc_build(void) {
     while (i < ra_norder) {
         inst = ra_order[i];
         k = h_kind[inst];
-        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
+        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP &&
+            !ra_mem_forced[inst]) {
             if (gc_nnode < GC_MAX_NODE) {
                 n = gc_nnode;
                 gc_inst[n] = inst;
@@ -940,10 +1389,34 @@ static void gc_build(void) {
                 gc_alias[n] = n;
                 gc_color[n] = -1;
                 gc_nmlist_head[n] = -1;
+                gc_pair_inst[n] = (ra_pair_of[inst] >= 0) ? inst : -1;
                 gc_nnode = gc_nnode + 1;
             }
         }
         i = i + 1;
+    }
+
+    if (lv_on) {
+        /* Exact per-block liveness: edges and call-crossing marks both
+         * come from the same walk (the interval-based crossing pass
+         * ran earlier; overwrite its answer with the precise one). */
+        i = 0;
+        while (i < h_ninst) { ra_crosses_call[i] = 0; i = i + 1; }
+        lv_build_edges();
+        if (getenv("HIR_RA_DEBUG")) {
+            int fsp;
+            fsp = 0;
+            i = 0;
+            while (i < gc_nnode) { if (gc_force_spill[i]) fsp = fsp + 1; i = i + 1; }
+            fdputs("RA nodes=", 2);
+            fdputuint(2, (unsigned)gc_nnode);
+            fdputs(" edges=", 2);
+            fdputuint(2, (unsigned)gc_nedge);
+            fdputs(" forced=", 2);
+            fdputuint(2, (unsigned)fsp);
+            fdputc(10, 2);
+        }
+        return;
     }
 
     nact = 0;
@@ -980,7 +1453,14 @@ static void gc_build(void) {
         if (ni >= 0) {
             int skip_node;
             skip_node = -1;
+            /* DIVERGENCE (f77, port upstream): HI_ADDI (opcode 40)
+             * sits outside the contiguous ALU range but is the same
+             * single three-operand shape -- and it is exactly what a
+             * DO loop's trip decrement emits, so without it every
+             * counted loop paid one uncoalesceable copy per
+             * iteration. */
             if ((h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) ||
+                h_kind[inst] == HI_ADDI ||
                 h_kind[inst] == HI_COPY) {
                 int two_s1;
                 two_s1 = h_src1[inst];
@@ -1030,7 +1510,7 @@ static void gc_find_moves(void) {
                 a = h_pval[h_pbase[inst] + j];
                 if (a >= 0) {
                     na = gc_node[a];
-                    if (na >= 0) gc_add_move(nd, na);
+                    if (na >= 0) gc_add_move_tag(nd, na, 1);
                 }
                 j = j + 1;
             }
@@ -1117,6 +1597,7 @@ static void gc_combine(int u, int v) {
     int e, t;
     gc_wl[v] = GC_WL_COALESCED;
     gc_alias[v] = u;
+    if (gc_pair_inst[u] < 0) gc_pair_inst[u] = gc_pair_inst[v];
 
     e = gc_nmlist_head[v];
     while (e >= 0) {
@@ -1179,7 +1660,14 @@ static int gc_coalesce(void) {
                 gc_wl[v] = GC_WL_SIMPLIFY;
             return 1;
         }
-        if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]]) {
+        if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]] &&
+            !gc_mv_phi[mv]) {
+            /* DIVERGENCE (f77): a phi move may coalesce across the
+             * crossing mismatch -- u is the crossing node (swapped
+             * above), so the merged node keeps the callee-saved
+             * palette and correctness is unchanged; the non-crossing
+             * value merely lives in the register it was going to be
+             * copied into anyway. */
             gc_mv_status[mv] = GC_MV_CONSTRAINED;
             return 1;
         }
@@ -1224,6 +1712,69 @@ static int gc_freeze(void) {
     return 0;
 }
 
+/* DIVERGENCE (f77, port upstream): dynamic-use estimate for the spill
+ * cost.  bg_uses is a STATIC count; a value touched twice in an
+ * innermost loop looked exactly as cheap to spill as an entry-block
+ * temp, and a rotated loop's IV/trip phis went to stack slots while
+ * the slow parallel-copy path pushed the rest -- +71% on mandel.
+ * Each USE is weighted 1/10/100/1000 by its block's natural-loop
+ * nesting depth (licm_depth, computed during LICM), and the def adds
+ * its own weight (a spilled def pays its store where it is defined). */
+static int ra_wuses[HIR_MAX_INST];
+
+static int ra_depth_w(int b) {
+    int d;
+    if (b < 0 || b >= bb_nblk) return 1;
+    d = licm_depth[b];
+    if (d <= 0) return 1;
+    if (d == 1) return 10;
+    if (d == 2) return 100;
+    return 1000;
+}
+
+static void ra_build_wuses(void) {
+    int i;
+    int w;
+    int j;
+    int base;
+    int cnt;
+    int k;
+    i = 0;
+    while (i < h_ninst) { ra_wuses[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+        w = ra_depth_w(h_blk[i]);
+        if (h_src1[i] >= 0) ra_wuses[h_src1[i]] = ra_wuses[h_src1[i]] + w;
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k))
+            ra_wuses[h_src2[i]] = ra_wuses[h_src2[i]] + w;
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0)
+                    ra_wuses[h_carg[base + j]] = ra_wuses[h_carg[base + j]] + w;
+                j = j + 1;
+            }
+        }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            j = 0;
+            while (j < h_pcnt[i]) {
+                if (h_pval[h_pbase[i] + j] >= 0)
+                    ra_wuses[h_pval[h_pbase[i] + j]] =
+                        ra_wuses[h_pval[h_pbase[i] + j]] + w;
+                j = j + 1;
+            }
+        }
+        if (hi_has_value(k))
+            ra_wuses[i] = ra_wuses[i] + w;
+        if (ra_wuses[i] > 1000000) ra_wuses[i] = 1000000;
+        i = i + 1;
+    }
+}
+
 static int gc_select_spill(void) {
     int n, best, best_cost, cost, inst;
     best = -1;
@@ -1233,13 +1784,19 @@ static int gc_select_spill(void) {
     while (n < gc_nnode) {
         if (gc_wl[n] == GC_WL_SPILL) {
             inst = gc_inst[n];
-            /* cost = uses * 100 / (degree + 1).  Lower = cheaper to spill.
-             * Non-call-crossing values get a +50 penalty in the cost (making
-             * them *less* likely to be chosen for spill) because they have
-             * access to the larger color pool (caller + callee when knob=8)
-             * and are therefore easier to color successfully if left in simplify. */
-            cost = (bg_uses[inst] * 100) / (gc_degree[n] + 1);
+            /* cost = weighted uses * 100 / (degree + 1).  Lower =
+             * cheaper to spill.  Non-call-crossing values get a +50
+             * penalty in the cost (making them *less* likely to be
+             * chosen for spill) because they have access to the larger
+             * color pool and are easier to color if left in simplify. */
+            cost = (ra_wuses[inst] * 100) / (gc_degree[n] + 1);
             if (!ra_crosses_call[inst]) cost = cost + 50;
+            /* DIVERGENCE (f77, port upstream): a pinned loop constant
+             * (hcg_mark_loop_consts) is the CHEAPEST possible spill --
+             * losing its register just reverts it to rematerialization
+             * (writeback clears h_no_remat), no slot, no loads.  Prefer
+             * it over anything that would pay real memory traffic. */
+            if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) cost = 0;
             if (cost < best_cost) {
                 best_cost = cost;
                 best = n;
@@ -1290,7 +1847,7 @@ static void gc_irc(void) {
      * gc_select / gc_writeback via gc_force_spill or degree >= K. */
 }
 
-/* --- fp64 aligned-pair allocation ---
+/* --- fp64 pair preference (DIVERGENCE from selfhost, fortran/ only) ---
  *
  * fadd.d and friends address a register PAIR (r_n, r_n+1) with n even.
  * Nothing in the IR says which two values form a double, so the
@@ -1351,11 +1908,55 @@ static void ra_build_pairs(void) {
     }
 }
 
+/* DIVERGENCE (f77, port upstream): the buddy colour completing an
+ * aligned physical pair with c, or -1.  Used to steer SINGLES away
+ * from virgin pairs: a single placed into an untouched aligned pair
+ * fragments it for every later fp64 claim. */
+static int ra_color_buddy(int c) {
+    int p0;
+    p0 = ra_get_phys(c);
+    if (p0 < 0) return -1;
+    if ((p0 & 1) == 0) {
+        if (p0 + 1 < 31 && ra_get_phys(c + 1) == p0 + 1) return c + 1;
+        return -1;
+    }
+    if (c > 0 && ra_get_phys(c - 1) == p0 - 1) return c - 1;
+    return -1;
+}
+
+/* First free colour in [lo, hi), preferring one that does NOT break a
+ * virgin aligned pair (its buddy already used or nonexistent). */
+static int ra_first_free_pairfriendly(int lo, int hi, int *used) {
+    int c;
+    int cany;
+    int b;
+    cany = -1;
+    c = lo;
+    while (c < hi) {
+        if (!used[c]) {
+            if (cany < 0) cany = c;
+            b = ra_color_buddy(c);
+            if (b < 0 || b >= hi || used[b]) return c;
+        }
+        c = c + 1;
+    }
+    return cany;
+}
+
 /* Pinned colour for a node whose fp64 partner already claimed a pair.
  * -1 = unpinned.  A pin is honoured only if it is still conflict-free
  * for the pinned node's own neighbours, so it can never colour two
  * interfering values the same. */
 static int gc_pin[GC_MAX_NODE];
+
+/* DIVERGENCE (f77, port upstream): pair identity at NODE level.
+ * ra_pair_of marks INSTRUCTIONS, but coalescing merges nodes -- a phi
+ * half coalesced with its fp64 argument must keep the pair identity,
+ * and the partner must be looked up through gc_get_alias, or the pin
+ * lands on a node that is never selected and the pair misaligns into
+ * scratch shuffles.  gc_pair_inst[n] is a pair-marked member
+ * instruction of node n (or -1), propagated in gc_combine. */
+static int gc_pair_inst[GC_MAX_NODE];
 
 /* Claim an aligned register pair for `inst` and pin its partner to the
  * other half.  Returns this node's colour, or -1.
@@ -1363,18 +1964,25 @@ static int gc_pin[GC_MAX_NODE];
  * The earlier version only looked for an ALREADY-coloured partner,
  * which never fired: select colours one node at a time and the partner
  * is almost always still uncoloured (measured: 33 misses, 0 hits). */
+static int ra_pc_dbg[6];
 static int ra_pair_claim(int n, int inst, int maxc, int *used) {
     int partner;
     int pn;
     int c;
     int lo_c;
     int hi_c;
+    int pinst;
 
-    partner = ra_pair_of[inst];
+    pinst = gc_pair_inst[n];
+    if (pinst < 0) return -1;
+    partner = ra_pair_of[pinst];
     if (partner < 0) return -1;
+    ra_pc_dbg[0]++;                       /* had a partner */
     pn = gc_node[partner];
-    if (pn < 0) return -1;
-    if (gc_color[gc_get_alias(pn)] >= 0) return -1;   /* already placed */
+    if (pn < 0) { ra_pc_dbg[1]++; return -1; }        /* partner not a node */
+    pn = gc_get_alias(pn);
+    if (pn == n) { ra_pc_dbg[1]++; return -1; }       /* degenerate merge */
+    if (gc_color[pn] >= 0) { ra_pc_dbg[2]++; return -1; }
 
     c = 0;
     while (c + 1 < maxc) {
@@ -1384,18 +1992,21 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
         p1 = ra_get_phys(c + 1);
         if (p0 >= 0 && p1 == p0 + 1 && (p0 & 1) == 0 && p0 + 1 < 31 &&
             !used[c] && !used[c + 1]) {
-            if (ra_pair_lo[inst]) { lo_c = c; hi_c = c + 1; }
-            else                  { lo_c = c + 1; hi_c = c; }
-            /* Respect the caller/callee split for both halves. */
-            if (lo_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(inst))
+            if (ra_pair_lo[pinst]) { lo_c = c; hi_c = c + 1; }
+            else                   { lo_c = c + 1; hi_c = c; }
+            /* Respect the caller/callee split for both halves, judged
+             * on the merged nodes' representatives. */
+            if (lo_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[n]))
                 { c = c + 1; continue; }
-            if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(partner))
+            if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[pn]))
                 { c = c + 1; continue; }
             gc_pin[pn] = hi_c;
+            ra_pc_dbg[4]++;
             return lo_c;
         }
         c = c + 1;
     }
+    ra_pc_dbg[3]++;                       /* no free aligned pair */
     return -1;
 }
 
@@ -1449,9 +2060,9 @@ static void gc_select(void) {
             /* Skip nodes that do not belong in this pass */
             if (pass == 0 && h_kind[inst] != HI_PARAM) { i = i - 1; continue; }
             if (pass == 1 && (h_kind[inst] == HI_PARAM ||
-                              ra_pair_of[inst] < 0)) { i = i - 1; continue; }
+                              gc_pair_inst[n] < 0)) { i = i - 1; continue; }
             if (pass == 2 && (h_kind[inst] == HI_PARAM ||
-                              ra_pair_of[inst] >= 0)) { i = i - 1; continue; }
+                              gc_pair_inst[n] >= 0)) { i = i - 1; continue; }
 
             /* Zero only the active portion of the used[] mask */
             c = 0;
@@ -1484,7 +2095,7 @@ static void gc_select(void) {
                 if (pw >= 0) {
                     gc_color[n] = pw;
                     ra_stat_pair_pref = ra_stat_pair_pref + 1;
-                } else if (ra_pair_of[inst] >= 0 && ra_pair_share_fate) {
+                } else if (gc_pair_inst[n] >= 0 && ra_pair_share_fate) {
                     /* SHARE FATE.  Colouring the halves of a double
                      * independently is the worst outcome available: one
                      * lands in a register and the other spills, so the
@@ -1499,7 +2110,6 @@ static void gc_select(void) {
                     continue;
                 }
             }
-
 
             /* Src1 reuse for destructive binary ops.
              * For ADD, SUB, AND, OR, XOR, shifts, etc. the result can
@@ -1720,12 +2330,9 @@ static void gc_select(void) {
                         }
                         ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     } else {
-                        /* No biased color available — fall back to plain first-free */
-                        c = RA_NCALLEE;
-                        while (c < maxc) {
-                            if (!used[c]) { gc_color[n] = c; break; }
-                            c = c + 1;
-                        }
+                        /* No biased color available — first-free, but
+                         * pair-friendly: keep virgin aligned pairs whole. */
+                        gc_color[n] = ra_first_free_pairfriendly(RA_NCALLEE, maxc, used);
                     }
                 }
             }
@@ -1736,11 +2343,8 @@ static void gc_select(void) {
                     gc_color[n] = pref;
                     ra_stat_param_preferred = ra_stat_param_preferred + 1;
                 } else {
-                    c = 0;
-                    while (c < RA_NCALLEE) {
-                        if (!used[c]) { gc_color[n] = c; break; }
-                        c = c + 1;
-                    }
+                    /* Pair-friendly first-free in the callee pool. */
+                    gc_color[n] = ra_first_free_pairfriendly(0, RA_NCALLEE, used);
                 }
             }
 
@@ -1854,16 +2458,130 @@ static void gc_writeback(void) {
                 ra_stat_caller_used = ra_stat_caller_used + 1;
             else
                 ra_stat_callee_used = ra_stat_callee_used + 1;
+        } else {
+            /* Uncolored pinned loop constant: revert to remat rather
+             * than taking a frame slot -- every use materializes it
+             * inline (the phi-copy fast path handles wide constants
+             * via hcg_li), and the register it was competing for goes
+             * to a value that actually needs one. */
+            if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
+                h_no_remat[inst] = 0;
+            } else if (getenv("HIR_RA_DEBUG")) {
+                fdputs("SPILL inst=", 2);
+                fdputuint(2, (unsigned)inst);
+                fdputs(" kind=", 2);
+                fdputuint(2, (unsigned)h_kind[inst]);
+                fdputs(" blk=", 2);
+                fdputuint(2, (unsigned)h_blk[inst]);
+                fdputs(" depth=", 2);
+                if (h_blk[inst] >= 0 && h_blk[inst] < bb_nblk)
+                    fdputuint(2, (unsigned)licm_depth[h_blk[inst]]);
+                else
+                    fdputs("-1", 2);
+                fdputs(" wuses=", 2);
+                fdputuint(2, (unsigned)ra_wuses[inst]);
+                fdputs(" deg=", 2);
+                fdputuint(2, (unsigned)gc_degree[n]);
+                fdputc(10, 2);
+            }
         }
         n = n + 1;
     }
 }
 
+/* =================================================================
+ * Iterated spilling (DIVERGENCE f77, port upstream candidate)
+ *
+ * gc_select's optimistic coloring means a coloring FAILURE lands on
+ * whichever node happens to pop with its palette exhausted -- which
+ * under real pressure is usually a value deep in the hottest loop,
+ * not the cheapest one (the inlined DGEFA spilled its daxpy pointer
+ * IVs, weight 3000, while weight-11 setup values kept registers).
+ * Chaitin's answer: when a node fails, spill the CHEAPEST value in
+ * its conflict neighborhood instead, rebuild the graph without it,
+ * and color again.  Spilled values keep the existing memory model
+ * (reload at use), so no new instructions or nodes appear; a pinned
+ * constant victim is unpinned back to remat instead, and a pair half
+ * takes its partner along (share fate).
+ * ================================================================= */
+static int gc_respill(void) {
+    int n;
+    int nv;
+    int e;
+    int a;
+    int inst;
+    int best;
+    int bcost;
+    int cost;
+
+    nv = 0;
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_color[n] < 0 || gc_force_spill[n]) {
+            /* Cheapest of the failed node and its neighbors. */
+            best = n;
+            bcost = ra_wuses[gc_inst[n]];
+            if (h_kind[gc_inst[n]] == HI_ICONST && h_no_remat[gc_inst[n]])
+                bcost = 0;
+            e = gc_adj_head[n];
+            while (e >= 0) {
+                a = gc_get_alias(gc_adj_peer[e]);
+                inst = gc_inst[a];
+                if (!ra_mem_forced[inst]) {
+                    cost = ra_wuses[inst];
+                    if (h_kind[inst] == HI_ICONST && h_no_remat[inst])
+                        cost = 0;
+                    if (cost < bcost) { best = a; bcost = cost; }
+                }
+                e = gc_adj_next[e];
+            }
+            inst = gc_inst[best];
+            if (!ra_mem_forced[inst]) {
+                if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
+                    h_no_remat[inst] = 0;   /* back to remat, no slot */
+                } else {
+                    ra_mem_forced[inst] = 1;
+                }
+                if (ra_pair_of[inst] >= 0) {
+                    a = ra_pair_of[inst];
+                    if (h_kind[a] == HI_ICONST && h_no_remat[a])
+                        h_no_remat[a] = 0;
+                    else
+                        ra_mem_forced[a] = 1;
+                }
+                nv = nv + 1;
+                if (getenv("HIR_RA_DEBUG")) {
+                    fdputs("RESPILL victim=", 2);
+                    fdputuint(2, (unsigned)inst);
+                    fdputs(" wuses=", 2);
+                    fdputuint(2, (unsigned)ra_wuses[inst]);
+                    fdputs(" for=", 2);
+                    fdputuint(2, (unsigned)gc_inst[n]);
+                    fdputc(10, 2);
+                }
+            }
+        }
+        n = n + 1;
+    }
+    return nv;
+}
+
 static void gc_alloc(void) {
-    gc_build();
-    gc_find_moves();
-    gc_irc();
-    gc_select();
+    int iter;
+
+    iter = 0;
+    for (;;) {
+        /* Node ids are reassigned every build; a pair pin left by the
+         * previous round would point at an unrelated node. */
+        { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+        gc_build();
+        gc_find_moves();
+        gc_irc();
+        gc_select();
+        if (iter >= 32) break;
+        if (gc_respill() == 0) break;
+        iter = iter + 1;
+    }
     gc_writeback();
 }
 
@@ -1932,10 +2650,13 @@ static void hir_regalloc(void) {
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
     { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
+    ra_build_wuses();      /* loop-depth-weighted use counts for spill cost */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
+    lv_prepare();          /* per-block liveness; lv_on gates gc_build */
+    { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; z = z + 1; } }
     /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 
     ra_stat_caller_used = 0;
@@ -2003,6 +2724,25 @@ static void ra_dump_intervals(char *fname) {
         fdputs(" x=", 2);
         ra_dump_signed(ra_crosses_call[i]);
         fdputc(10, 2);
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PHI && h_pbase[i] >= 0) {
+            int q;
+            fdputs("PHIARGS i=", 2);
+            fdputuint(2, (unsigned)i);
+            q = 0;
+            while (q < h_pcnt[i]) {
+                fdputs(" [b", 2);
+                ra_dump_signed(h_pblk[h_pbase[i] + q]);
+                fdputs("]=", 2);
+                ra_dump_signed(h_pval[h_pbase[i] + q]);
+                q = q + 1;
+            }
+            fdputc(10, 2);
+        }
         i = i + 1;
     }
 }

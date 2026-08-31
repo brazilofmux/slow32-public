@@ -279,7 +279,7 @@ int main(int argc, char **argv) {
 
     gen_program(&f77_program);
 
-    if (getenv("F77_PAIR_STATS")) {
+    if (getenv("HIR_PAIR_STATS")) {
         int z;
         fdputs("split doubles: ", 2);
         fdputuint(2, (unsigned int)f77_split_count);

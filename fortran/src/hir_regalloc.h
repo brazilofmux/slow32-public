@@ -61,6 +61,7 @@ static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved 
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
 static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
  * Index 0..17  → r11..r28 (callee)
@@ -717,21 +718,38 @@ static void ra_assign_spills(void) {
         i = i + 1;
     }
 
-    if (getenv("F77_RA_TRACE")) {
-        i = atoi(getenv("F77_RA_TRACE"));
+    if (getenv("HIR_RA_TRACE")) {
+        i = atoi(getenv("HIR_RA_TRACE"));
         if (i >= 0 && i < h_ninst) {
-            fprintf(stderr, "TRACE inst=%d kind=%d blk=%d pos=%d reg=%d slot=%d node=%d\n",
-                    i, h_kind[i], h_blk[i], ra_pos[i], ra_reg[i],
-                    ra_spill_off[i], gc_node[i]);
+            fdputs("TRACE inst=", 2);
+            fdputuint(2, (unsigned)i);
+            fdputs(" kind=", 2);
+            fdputuint(2, (unsigned)h_kind[i]);
+            fdputs(" blk=", 2);
+            fdputuint(2, (unsigned)h_blk[i]);
+            fdputs(" pos=", 2);
+            fdputuint(2, (unsigned)ra_pos[i]);
+            fdputs(" reg=", 2);
+            fdputuint(2, (unsigned)ra_reg[i]);
+            fdputs(" slot=", 2);
+            fdputuint(2, (unsigned)ra_spill_off[i]);
+            fdputs(" node=", 2);
+            fdputuint(2, (unsigned)gc_node[i]);
+            fdputc(10, 2);
         }
     }
-    if (getenv("F77_RA_DEBUG")) {
+    if (getenv("HIR_RA_DEBUG")) {
         i = 0;
         while (i < h_ninst) {
             if (h_kind[i] != HI_NOP && hi_has_value(h_kind[i]) &&
                 !hi_inst_remat(i) && ra_reg[i] < 0 && ra_pos[i] < 0) {
-                fprintf(stderr, "ORPHAN inst=%d kind=%d blk=%d\n",
-                        i, h_kind[i], h_blk[i]);
+                fdputs("ORPHAN inst=", 2);
+                fdputuint(2, (unsigned)i);
+                fdputs(" kind=", 2);
+                fdputuint(2, (unsigned)h_kind[i]);
+                fdputs(" blk=", 2);
+                fdputuint(2, (unsigned)h_blk[i]);
+                fdputc(10, 2);
             }
             i = i + 1;
         }
@@ -988,15 +1006,21 @@ static int gc_pair_inst[GC_MAX_NODE];
  * IRC coalescing, pair claiming, weighted spill costs, select -- is
  * untouched; only where edges COME FROM changes.  The interval code
  * stays for its other consumers (fusion extends, dumps) and as the
- * F77_LINEAR_LIVE=1 fallback.
+ * HIR_LINEAR_LIVE=1 fallback.
  *
  * Bitsets are indexed by a dense id assigned in ra_order; the arrays
  * are statically sized for the worst case (8MB bss) but only
  * bb_nblk x lv_nw words are ever touched.
  * ================================================================= */
-#define LV_W (HIR_MAX_INST / 32)
-static unsigned int lv_in[HIR_MAX_BLOCK][LV_W];
-static unsigned int lv_out[HIR_MAX_BLOCK][LV_W];
+/* GC_MAX_NODE / 32: ids beyond the node cap could never be coloured
+ * anyway, so functions that large stay on intervals. */
+#define LV_W 128
+/* Flattened [HIR_MAX_BLOCK][LV_W]: the selfhost dialect has no 2D
+ * static arrays, and the bound must be a literal (2048 * 128).  Kept
+ * to 1MB apiece -- the selfhost assembler has a cumulative BSS
+ * budget, and 4MB versions of these were what first blew it. */
+static unsigned int lv_in[262144];
+static unsigned int lv_out[262144];
 static unsigned int lv_live[LV_W];
 static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
 static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
@@ -1106,7 +1130,7 @@ static void lv_out_of(int b) {
         s = ssa_succ[ssa_soff[b] + si];
         if (s >= 0 && s < bb_nblk) {
             w = 0;
-            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[s][w]; w = w + 1; }
+            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[(s << 7) + w]; w = w + 1; }
             phi = ssa_phi_head[s];
             while (phi >= 0) {
                 if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
@@ -1139,7 +1163,7 @@ static void lv_prepare(void) {
     int sweeps;
 
     lv_on = 0;
-    if (getenv("F77_LINEAR_LIVE")) return;
+    if (getenv("HIR_LINEAR_LIVE")) return;
 
     /* Dense ids for allocatable values, in ra_order. */
     i = 0;
@@ -1156,6 +1180,7 @@ static void lv_prepare(void) {
         }
         i = i + 1;
     }
+    if (lv_nid > GC_MAX_NODE) return;   /* stay on intervals */
     lv_nw = (lv_nid + 31) / 32;
     if (lv_nw == 0) lv_nw = 1;
 
@@ -1165,7 +1190,7 @@ static void lv_prepare(void) {
         lv_bstart[b] = 0;
         lv_bend[b] = 0;
         w = 0;
-        while (w < lv_nw) { lv_in[b][w] = 0; lv_out[b][w] = 0; w = w + 1; }
+        while (w < lv_nw) { lv_in[(b << 7) + w] = 0; lv_out[(b << 7) + w] = 0; w = w + 1; }
         b = b + 1;
     }
     i = 0;
@@ -1190,12 +1215,12 @@ static void lv_prepare(void) {
             if (b < 0 || b >= bb_nblk) continue;
             lv_out_of(b);
             w = 0;
-            while (w < lv_nw) { lv_out[b][w] = lv_live[w]; w = w + 1; }
+            while (w < lv_nw) { lv_out[(b << 7) + w] = lv_live[w]; w = w + 1; }
             lv_transfer(b);
             w = 0;
             while (w < lv_nw) {
-                if (lv_in[b][w] != lv_live[w]) {
-                    lv_in[b][w] = lv_live[w];
+                if (lv_in[(b << 7) + w] != lv_live[w]) {
+                    lv_in[(b << 7) + w] = lv_live[w];
                     changed = 1;
                 }
                 w = w + 1;
@@ -1234,7 +1259,7 @@ static void lv_build_edges(void) {
     b = 0;
     while (b < bb_nblk) {
         w = 0;
-        while (w < lv_nw) { lv_live[w] = lv_out[b][w]; w = w + 1; }
+        while (w < lv_nw) { lv_live[w] = lv_out[(b << 7) + w]; w = w + 1; }
         oi = lv_bend[b];
         while (oi > lv_bstart[b]) {
             oi = oi - 1;
@@ -1379,7 +1404,7 @@ static void gc_build(void) {
         i = 0;
         while (i < h_ninst) { ra_crosses_call[i] = 0; i = i + 1; }
         lv_build_edges();
-        if (getenv("F77_RA_DEBUG")) {
+        if (getenv("HIR_RA_DEBUG")) {
             int fsp;
             fsp = 0;
             i = 0;
@@ -2442,11 +2467,23 @@ static void gc_writeback(void) {
              * to a value that actually needs one. */
             if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
                 h_no_remat[inst] = 0;
-            } else if (getenv("F77_RA_DEBUG")) {
-                fprintf(stderr, "SPILL inst=%d kind=%d blk=%d depth=%d wuses=%d deg=%d\n",
-                        inst, h_kind[inst], h_blk[inst],
-                        (h_blk[inst] >= 0 && h_blk[inst] < bb_nblk) ? licm_depth[h_blk[inst]] : -1,
-                        ra_wuses[inst], gc_degree[n]);
+            } else if (getenv("HIR_RA_DEBUG")) {
+                fdputs("SPILL inst=", 2);
+                fdputuint(2, (unsigned)inst);
+                fdputs(" kind=", 2);
+                fdputuint(2, (unsigned)h_kind[inst]);
+                fdputs(" blk=", 2);
+                fdputuint(2, (unsigned)h_blk[inst]);
+                fdputs(" depth=", 2);
+                if (h_blk[inst] >= 0 && h_blk[inst] < bb_nblk)
+                    fdputuint(2, (unsigned)licm_depth[h_blk[inst]]);
+                else
+                    fdputs("-1", 2);
+                fdputs(" wuses=", 2);
+                fdputuint(2, (unsigned)ra_wuses[inst]);
+                fdputs(" deg=", 2);
+                fdputuint(2, (unsigned)gc_degree[n]);
+                fdputc(10, 2);
             }
         }
         n = n + 1;
@@ -2514,7 +2551,7 @@ static int gc_respill(void) {
                         ra_mem_forced[a] = 1;
                 }
                 nv = nv + 1;
-                if (getenv("F77_RA_DEBUG")) {
+                if (getenv("HIR_RA_DEBUG")) {
                     fdputs("RESPILL victim=", 2);
                     fdputuint(2, (unsigned)inst);
                     fdputs(" wuses=", 2);
@@ -2688,6 +2725,25 @@ static void ra_dump_intervals(char *fname) {
         fdputs(" x=", 2);
         ra_dump_signed(ra_crosses_call[i]);
         fdputc(10, 2);
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PHI && h_pbase[i] >= 0) {
+            int q;
+            fdputs("PHIARGS i=", 2);
+            fdputuint(2, (unsigned)i);
+            q = 0;
+            while (q < h_pcnt[i]) {
+                fdputs(" [b", 2);
+                ra_dump_signed(h_pblk[h_pbase[i] + q]);
+                fdputs("]=", 2);
+                ra_dump_signed(h_pval[h_pbase[i] + q]);
+                q = q + 1;
+            }
+            fdputc(10, 2);
+        }
         i = i + 1;
     }
 }
