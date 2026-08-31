@@ -2539,18 +2539,28 @@ static void f77_close_do(int lab) {
 /* --- subprograms ------------------------------------------------------ */
 
 #define F77_MAX_INLINE_DEPTH 3
-/* Default 0 = inlining OFF.  It is a MEASURED PESSIMISATION on the
- * LINPACK kernel at every threshold tried (2.30x clang with it off;
- * 2.79x at 12 statements, 3.55x at 16, 6.09x at 40).  See the note on
- * f77_inline_unit_body for why.  The machinery is kept and gated on
- * F77_INLINE_MAX so the experiment is repeatable. */
-#define F77_INLINE_MAX_STMTS 0
+/* Default 12 = inlining ON.  For most of this compiler's life the
+ * default was 0: inlining measured 2.3x WORSE on LINPACK at every
+ * threshold, and the frame note below blamed the by-reference
+ * convention.  The convention was never the whole story.  The loss
+ * was three register-allocator defects stacked: linear-interval
+ * liveness inventing cross-loop interference, coloring failures
+ * landing on the hottest nodes because nothing chose spill victims,
+ * and pair pins leaking across gc_build rounds once iteration
+ * existed.  With per-block liveness + iterated spilling (hir_regalloc)
+ * those are gone and threshold 12 measures LINPACK 563M -> 526M
+ * (1.048x clang).  F77_INLINE_MAX=<n> still overrides; 0 disables. */
+#define F77_INLINE_MAX_STMTS 12
 
 static int f77_inline_depth;
 static int f77_inline_unit[F77_MAX_INLINE_DEPTH];
 static int f77_inline_ret_blk;       /* where RETURN branches to */
 static int f77_inline_result;        /* FUNCTION result symbol, or -1 */
 static int f77_ustmts[F77_MAX_UNIT]; /* statement count per unit */
+static int f77_unosplice[F77_MAX_UNIT]; /* unit holds scope-stateful
+    declarations (COMMON/IMPLICIT/DATA/...) that cannot be re-parsed in
+    an executable context: never inline it.  A false positive (DATAX=5
+    prefix-matches DATA) only costs a missed inline. */
 static int f77_inline_count;         /* diagnostics */
 
 
@@ -2745,6 +2755,7 @@ static int f77_can_inline(int u) {
     if (f77_ukind[u] == F77_UNIT_PROGRAM) return 0;
     if (f77_inline_depth >= F77_MAX_INLINE_DEPTH) return 0;
     if (f77_ustmts[u] > f77_inline_max) return 0;
+    if (f77_unosplice[u]) return 0;
     if (u == f77_cur_unit) return 0;
     i = 0;
     while (i < f77_inline_depth) {

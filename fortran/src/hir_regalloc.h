@@ -60,6 +60,7 @@ static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved 
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
+static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
  * Index 0..17  → r11..r28 (callee)
@@ -969,6 +970,371 @@ static int ra_pair_of[HIR_MAX_INST];
 static int ra_pair_lo[HIR_MAX_INST];
 static int gc_pair_inst[GC_MAX_NODE];
 
+/* =================================================================
+ * Per-block liveness (DIVERGENCE f77, port upstream candidate)
+ *
+ * The linear-interval model treats a value as live at every position
+ * between its def and its last use IN LINEARIZED ORDER -- including
+ * whole blocks on unrelated CFG paths that happen to sit in between.
+ * Every value in those blocks picks up a false interference edge, and
+ * in a function with several loops laid end to end (an inlined DAXPY,
+ * say) the false pressure is what spills: inlining measured 2.3x
+ * WORSE under intervals with the spill dump blaming exactly this.
+ *
+ * This is the classic fix: iterative backward dataflow to a fixpoint
+ * gives live-in/live-out per block, then one backward walk per block
+ * builds interference edges and the call-crossing marks from the
+ * exact set of values live at each point.  Everything downstream --
+ * IRC coalescing, pair claiming, weighted spill costs, select -- is
+ * untouched; only where edges COME FROM changes.  The interval code
+ * stays for its other consumers (fusion extends, dumps) and as the
+ * F77_LINEAR_LIVE=1 fallback.
+ *
+ * Bitsets are indexed by a dense id assigned in ra_order; the arrays
+ * are statically sized for the worst case (8MB bss) but only
+ * bb_nblk x lv_nw words are ever touched.
+ * ================================================================= */
+#define LV_W (HIR_MAX_INST / 32)
+static unsigned int lv_in[HIR_MAX_BLOCK][LV_W];
+static unsigned int lv_out[HIR_MAX_BLOCK][LV_W];
+static unsigned int lv_live[LV_W];
+static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
+static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
+static int lv_nid;
+static int lv_nw;                  /* words in use: (lv_nid+31)/32 */
+static int lv_bstart[HIR_MAX_BLOCK];  /* ra_order index range per block */
+static int lv_bend[HIR_MAX_BLOCK];
+static int lv_on;
+
+static int lv_tracked(int inst) {
+    if (inst < 0) return 0;
+    if (lv_id[inst] < 0) return 0;
+    return 1;
+}
+
+/* Enumerate the register-read operands of one instruction -- the
+ * same set the interval builder extends: src1, src2 when it is a
+ * reference, the base a BURG fold reaches through (Issue #31), call
+ * arguments, and a fused BRC's comparison operands (the compare was
+ * NOPed; the branch re-emits it).  PHI arguments are NOT here; they
+ * are uses at the end of the predecessor and the dataflow adds them
+ * on the edge.  Returns the count in lv_ubuf. */
+static int lv_ubuf[128];
+static int lv_uses(int inst) {
+    int nu;
+    int k;
+    int j;
+    int a;
+    int cmp;
+
+    nu = 0;
+    k = h_kind[inst];
+    if (h_src1[inst] >= 0) { lv_ubuf[nu] = h_src1[inst]; nu = nu + 1; }
+    if (h_src2[inst] >= 0 && ho_src2_is_ref(k)) {
+        lv_ubuf[nu] = h_src2[inst];
+        nu = nu + 1;
+    }
+    if (ra_codegen_fold_base(inst, &a)) { lv_ubuf[nu] = a; nu = nu + 1; }
+    if ((k == HI_CALL || k == HI_CALLP) && h_cbase[inst] >= 0) {
+        j = 0;
+        while (j < h_val[inst] && nu < 120) {
+            a = h_carg[h_cbase[inst] + j];
+            if (a >= 0) { lv_ubuf[nu] = a; nu = nu + 1; }
+            j = j + 1;
+        }
+    }
+    if (k == HI_BRC && hcg_brc_fuse[inst] >= 0) {
+        cmp = hcg_brc_fuse[inst];
+        /* Only the int form: the compare is NOPed and re-emitted as a
+         * bcond reading its operands here.  A fused fp64 compare CALL
+         * stays a real instruction and its reads count at its own
+         * site. */
+        if (h_kind[cmp] == HI_NOP) {
+            if (h_src1[cmp] >= 0) { lv_ubuf[nu] = h_src1[cmp]; nu = nu + 1; }
+            if (h_src2[cmp] >= 0) { lv_ubuf[nu] = h_src2[cmp]; nu = nu + 1; }
+        }
+    }
+    return nu;
+}
+
+static int lv_is_callkind(int k) {
+    return k == HI_CALL || k == HI_CALLP || k == HI_CALLHI ||
+           k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE;
+}
+
+/* Transform lv_live from live-out of b to live-in of b. */
+static void lv_transfer(int b) {
+    int oi;
+    int inst;
+    int nu;
+    int j;
+    int u;
+
+    oi = lv_bend[b];
+    while (oi > lv_bstart[b]) {
+        oi = oi - 1;
+        inst = ra_order[oi];
+        if (lv_tracked(inst))
+            lv_live[lv_id[inst] >> 5] =
+                lv_live[lv_id[inst] >> 5] & ~(1u << (lv_id[inst] & 31));
+        nu = lv_uses(inst);
+        j = 0;
+        while (j < nu) {
+            u = lv_ubuf[j];
+            if (lv_tracked(u))
+                lv_live[lv_id[u] >> 5] =
+                    lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
+            j = j + 1;
+        }
+    }
+}
+
+/* live-out(b) = union over successors s of live-in(s), plus every phi
+ * argument s's phis receive along the b->s edge.  Built into lv_live. */
+static void lv_out_of(int b) {
+    int w;
+    int si;
+    int s;
+    int phi;
+    int j;
+    int a;
+
+    w = 0;
+    while (w < lv_nw) { lv_live[w] = 0; w = w + 1; }
+    si = 0;
+    while (si < ssa_nsucc[b]) {
+        s = ssa_succ[ssa_soff[b] + si];
+        if (s >= 0 && s < bb_nblk) {
+            w = 0;
+            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[s][w]; w = w + 1; }
+            phi = ssa_phi_head[s];
+            while (phi >= 0) {
+                if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
+                    j = 0;
+                    while (j < h_pcnt[phi]) {
+                        if (h_pblk[h_pbase[phi] + j] == b) {
+                            a = h_pval[h_pbase[phi] + j];
+                            if (lv_tracked(a))
+                                lv_live[lv_id[a] >> 5] =
+                                    lv_live[lv_id[a] >> 5] | (1u << (lv_id[a] & 31));
+                        }
+                        j = j + 1;
+                    }
+                }
+                phi = ssa_phi_next[phi];
+            }
+        }
+        si = si + 1;
+    }
+}
+
+static void lv_prepare(void) {
+    int i;
+    int b;
+    int inst;
+    int k;
+    int w;
+    int ri;
+    int changed;
+    int sweeps;
+
+    lv_on = 0;
+    if (getenv("F77_LINEAR_LIVE")) return;
+
+    /* Dense ids for allocatable values, in ra_order. */
+    i = 0;
+    while (i < h_ninst) { lv_id[i] = -1; i = i + 1; }
+    lv_nid = 0;
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
+            lv_id[inst] = lv_nid;
+            lv_rev[lv_nid] = inst;
+            lv_nid = lv_nid + 1;
+        }
+        i = i + 1;
+    }
+    lv_nw = (lv_nid + 31) / 32;
+    if (lv_nw == 0) lv_nw = 1;
+
+    /* ra_order index range per block (blocks are contiguous runs). */
+    b = 0;
+    while (b < bb_nblk) {
+        lv_bstart[b] = 0;
+        lv_bend[b] = 0;
+        w = 0;
+        while (w < lv_nw) { lv_in[b][w] = 0; lv_out[b][w] = 0; w = w + 1; }
+        b = b + 1;
+    }
+    i = 0;
+    while (i < ra_norder) {
+        b = h_blk[ra_order[i]];
+        if (b >= 0 && b < bb_nblk) {
+            if (lv_bend[b] == 0) lv_bstart[b] = i;   /* first entry */
+            lv_bend[b] = i + 1;
+        }
+        i = i + 1;
+    }
+
+    /* Backward dataflow to fixpoint, reverse-RPO sweeps. */
+    changed = 1;
+    sweeps = 0;
+    while (changed && sweeps < 64) {
+        changed = 0;
+        ri = ssa_rpo_cnt;
+        while (ri > 0) {
+            ri = ri - 1;
+            b = ssa_rpo_ord[ri];
+            if (b < 0 || b >= bb_nblk) continue;
+            lv_out_of(b);
+            w = 0;
+            while (w < lv_nw) { lv_out[b][w] = lv_live[w]; w = w + 1; }
+            lv_transfer(b);
+            w = 0;
+            while (w < lv_nw) {
+                if (lv_in[b][w] != lv_live[w]) {
+                    lv_in[b][w] = lv_live[w];
+                    changed = 1;
+                }
+                w = w + 1;
+            }
+        }
+        sweeps = sweeps + 1;
+    }
+    if (changed) return;   /* did not converge: stay on intervals */
+
+    lv_on = 1;
+}
+
+/* Interference edges and call-crossing marks from exact liveness.
+ * One backward walk per block from lv_out.  The dying-src1 exception
+ * falls out naturally (a source dead after the instruction is not in
+ * the live set), so for the kinds where sharing is NOT known safe the
+ * edge is added back explicitly -- the same conservative scope as the
+ * interval builder: only ALU/ADDI/COPY may share with a dying src1,
+ * everything else keeps all its edges. */
+static void lv_build_edges(void) {
+    int b;
+    int oi;
+    int inst;
+    int k;
+    int ni;
+    int w;
+    int bit;
+    int id;
+    int nu;
+    int j;
+    int u;
+    int dying_ok;
+    int p1;
+    int p2;
+
+    b = 0;
+    while (b < bb_nblk) {
+        w = 0;
+        while (w < lv_nw) { lv_live[w] = lv_out[b][w]; w = w + 1; }
+        oi = lv_bend[b];
+        while (oi > lv_bstart[b]) {
+            oi = oi - 1;
+            inst = ra_order[oi];
+            k = h_kind[inst];
+            ni = -1;
+            if (lv_tracked(inst)) ni = gc_node[inst];
+            if (lv_tracked(inst)) {
+                id = lv_id[inst];
+                lv_live[id >> 5] = lv_live[id >> 5] & ~(1u << (id & 31));
+            }
+            if (ni >= 0) {
+                w = 0;
+                while (w < lv_nw) {
+                    unsigned int bits;
+                    bits = lv_live[w];
+                    bit = 0;
+                    while (bits != 0 && bit < 32) {
+                        if (bits & (1u << bit)) {
+                            bits = bits & ~(1u << bit);
+                            /* A respilled or unpinned value keeps its
+                             * liveness bit but has no node this round. */
+                            if (gc_node[lv_rev[(w << 5) + bit]] >= 0)
+                                gc_add_edge(ni, gc_node[lv_rev[(w << 5) + bit]]);
+                        }
+                        bit = bit + 1;
+                    }
+                    w = w + 1;
+                }
+                /* Dying uses: only s1 of the single-instruction
+                 * three-operand kinds may share the result register. */
+                nu = lv_uses(inst);
+                j = 0;
+                while (j < nu) {
+                    u = lv_ubuf[j];
+                    if (lv_tracked(u) &&
+                        !(lv_live[lv_id[u] >> 5] & (1u << (lv_id[u] & 31)))) {
+                        dying_ok = 0;
+                        if (u == h_src1[inst] &&
+                            ((k >= HI_ADD && k <= HI_SRL) ||
+                             k == HI_ADDI || k == HI_COPY))
+                            dying_ok = 1;
+                        if (!dying_ok && gc_node[u] >= 0)
+                            gc_add_edge(ni, gc_node[u]);
+                    }
+                    j = j + 1;
+                }
+            }
+            nu = lv_uses(inst);
+            j = 0;
+            while (j < nu) {
+                u = lv_ubuf[j];
+                if (lv_tracked(u))
+                    lv_live[lv_id[u] >> 5] =
+                        lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
+                j = j + 1;
+            }
+            if (lv_is_callkind(k)) {
+                /* Marked AFTER the uses are re-added: textbook liveness
+                 * says a call's arguments die at the call and do not
+                 * cross it, but the emitter marshals arguments into
+                 * r3..r10 one move at a time, so a source parked in a
+                 * caller-saved register is clobbered before it is read
+                 * (trans1's DLOG(DEXP(X)) lost the hi word to exactly
+                 * that).  Arguments count as crossing, as they always
+                 * did under intervals. */
+                w = 0;
+                while (w < lv_nw) {
+                    unsigned int bits;
+                    bits = lv_live[w];
+                    bit = 0;
+                    while (bits != 0 && bit < 32) {
+                        if (bits & (1u << bit)) {
+                            bits = bits & ~(1u << bit);
+                            ra_crosses_call[lv_rev[(w << 5) + bit]] = 1;
+                        }
+                        bit = bit + 1;
+                    }
+                    w = w + 1;
+                }
+            }
+        }
+        /* PHI defs of one block are written by one parallel copy:
+         * they must never share a register, live or not. */
+        p1 = ssa_phi_head[b];
+        while (p1 >= 0) {
+            if (h_kind[p1] == HI_PHI && gc_node[p1] >= 0) {
+                p2 = ssa_phi_next[p1];
+                while (p2 >= 0) {
+                    if (h_kind[p2] == HI_PHI && gc_node[p2] >= 0)
+                        gc_add_edge(gc_node[p1], gc_node[p2]);
+                    p2 = ssa_phi_next[p2];
+                }
+            }
+            p1 = ssa_phi_next[p1];
+        }
+        b = b + 1;
+    }
+}
+
 static void gc_build(void) {
     int i, j, inst, k, n, ni, aj, nact, p;
     int act[GC_MAX_NODE];
@@ -988,7 +1354,8 @@ static void gc_build(void) {
     while (i < ra_norder) {
         inst = ra_order[i];
         k = h_kind[inst];
-        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
+        if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP &&
+            !ra_mem_forced[inst]) {
             if (gc_nnode < GC_MAX_NODE) {
                 n = gc_nnode;
                 gc_inst[n] = inst;
@@ -1003,6 +1370,29 @@ static void gc_build(void) {
             }
         }
         i = i + 1;
+    }
+
+    if (lv_on) {
+        /* Exact per-block liveness: edges and call-crossing marks both
+         * come from the same walk (the interval-based crossing pass
+         * ran earlier; overwrite its answer with the precise one). */
+        i = 0;
+        while (i < h_ninst) { ra_crosses_call[i] = 0; i = i + 1; }
+        lv_build_edges();
+        if (getenv("F77_RA_DEBUG")) {
+            int fsp;
+            fsp = 0;
+            i = 0;
+            while (i < gc_nnode) { if (gc_force_spill[i]) fsp = fsp + 1; i = i + 1; }
+            fdputs("RA nodes=", 2);
+            fdputuint(2, (unsigned)gc_nnode);
+            fdputs(" edges=", 2);
+            fdputuint(2, (unsigned)gc_nedge);
+            fdputs(" forced=", 2);
+            fdputuint(2, (unsigned)fsp);
+            fdputc(10, 2);
+        }
+        return;
     }
 
     nact = 0;
@@ -2063,11 +2453,99 @@ static void gc_writeback(void) {
     }
 }
 
+/* =================================================================
+ * Iterated spilling (DIVERGENCE f77, port upstream candidate)
+ *
+ * gc_select's optimistic coloring means a coloring FAILURE lands on
+ * whichever node happens to pop with its palette exhausted -- which
+ * under real pressure is usually a value deep in the hottest loop,
+ * not the cheapest one (the inlined DGEFA spilled its daxpy pointer
+ * IVs, weight 3000, while weight-11 setup values kept registers).
+ * Chaitin's answer: when a node fails, spill the CHEAPEST value in
+ * its conflict neighborhood instead, rebuild the graph without it,
+ * and color again.  Spilled values keep the existing memory model
+ * (reload at use), so no new instructions or nodes appear; a pinned
+ * constant victim is unpinned back to remat instead, and a pair half
+ * takes its partner along (share fate).
+ * ================================================================= */
+static int gc_respill(void) {
+    int n;
+    int nv;
+    int e;
+    int a;
+    int inst;
+    int best;
+    int bcost;
+    int cost;
+
+    nv = 0;
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_color[n] < 0 || gc_force_spill[n]) {
+            /* Cheapest of the failed node and its neighbors. */
+            best = n;
+            bcost = ra_wuses[gc_inst[n]];
+            if (h_kind[gc_inst[n]] == HI_ICONST && h_no_remat[gc_inst[n]])
+                bcost = 0;
+            e = gc_adj_head[n];
+            while (e >= 0) {
+                a = gc_get_alias(gc_adj_peer[e]);
+                inst = gc_inst[a];
+                if (!ra_mem_forced[inst]) {
+                    cost = ra_wuses[inst];
+                    if (h_kind[inst] == HI_ICONST && h_no_remat[inst])
+                        cost = 0;
+                    if (cost < bcost) { best = a; bcost = cost; }
+                }
+                e = gc_adj_next[e];
+            }
+            inst = gc_inst[best];
+            if (!ra_mem_forced[inst]) {
+                if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
+                    h_no_remat[inst] = 0;   /* back to remat, no slot */
+                } else {
+                    ra_mem_forced[inst] = 1;
+                }
+                if (ra_pair_of[inst] >= 0) {
+                    a = ra_pair_of[inst];
+                    if (h_kind[a] == HI_ICONST && h_no_remat[a])
+                        h_no_remat[a] = 0;
+                    else
+                        ra_mem_forced[a] = 1;
+                }
+                nv = nv + 1;
+                if (getenv("F77_RA_DEBUG")) {
+                    fdputs("RESPILL victim=", 2);
+                    fdputuint(2, (unsigned)inst);
+                    fdputs(" wuses=", 2);
+                    fdputuint(2, (unsigned)ra_wuses[inst]);
+                    fdputs(" for=", 2);
+                    fdputuint(2, (unsigned)gc_inst[n]);
+                    fdputc(10, 2);
+                }
+            }
+        }
+        n = n + 1;
+    }
+    return nv;
+}
+
 static void gc_alloc(void) {
-    gc_build();
-    gc_find_moves();
-    gc_irc();
-    gc_select();
+    int iter;
+
+    iter = 0;
+    for (;;) {
+        /* Node ids are reassigned every build; a pair pin left by the
+         * previous round would point at an unrelated node. */
+        { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+        gc_build();
+        gc_find_moves();
+        gc_irc();
+        gc_select();
+        if (iter >= 32) break;
+        if (gc_respill() == 0) break;
+        iter = iter + 1;
+    }
     gc_writeback();
 }
 
@@ -2141,6 +2619,8 @@ static void hir_regalloc(void) {
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
+    lv_prepare();          /* per-block liveness; lv_on gates gc_build */
+    { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; z = z + 1; } }
     /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 
     ra_stat_caller_used = 0;

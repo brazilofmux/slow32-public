@@ -61,7 +61,7 @@ static void f77_scan_units(void) {
 
     f77_nunit = 0;
     f77_nformat = 0;
-    { int z; z = 0; while (z < F77_MAX_UNIT) { f77_ustmts[z] = 0; z = z + 1; } }
+    { int z; z = 0; while (z < F77_MAX_UNIT) { f77_ustmts[z] = 0; f77_unosplice[z] = 0; z = z + 1; } }
     started = 0;
     pos = lx_pos;
     line = lx_line;
@@ -77,7 +77,14 @@ static void f77_scan_units(void) {
                 f77_intern_str(lx_stmt + 6, lx_stmt_len - 6);
             f77_nformat = f77_nformat + 1;
         }
-        if (started && f77_nunit > 0) f77_ustmts[f77_nunit - 1]++;
+        if (started && f77_nunit > 0) {
+            f77_ustmts[f77_nunit - 1]++;
+            if (f77_starts("COMMON") || f77_starts("IMPLICIT") ||
+                f77_starts("DATA") || f77_starts("SAVE") ||
+                f77_starts("EQUIVALENCE") || f77_starts("PARAMETER") ||
+                f77_starts("ENTRY") || f77_starts("EXTERNAL"))
+                f77_unosplice[f77_nunit - 1] = 1;
+        }
         rty = f77_unit_header_ty();
         if (f77_starts("SUBROUTINE") || rty >= 0) {
             if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }

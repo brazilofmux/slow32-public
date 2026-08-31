@@ -764,3 +764,56 @@ doesn't move — its hot compares are against variables.  The z-loop
 is 17/iteration: 11 fp64 ops, one fused compare-branch, five of
 latch.  f77 now emits measurably BETTER scalar-double loop code than
 clang/LLVM does for this ISA.
+
+## Per-block liveness + iterated spilling: INLINING FLIPS TO A WIN
+
+The DAXPY call-overhead profile said ~22% of LINPACK's instructions
+were prologue/epilogue/setup, and clang pays none of it (it inlines
+everything into main).  Our inlining was OFF as a measured 2.3x
+pessimisation, diagnosed "blocked on per-block liveness."  That
+diagnosis was a third of the story.  Three allocator defects stacked:
+
+1. **Linear-interval liveness**: a value's interval spans every
+   block LINEARIZED between def and last use, inventing interference
+   with unrelated loops laid end to end — exactly an inlined
+   function's shape.  Replaced (`lv_*`, hir_regalloc) with textbook
+   backward dataflow to a fixpoint and per-block backward walks that
+   emit interference edges and call-crossing marks from exact live
+   sets.  IRC, pair claiming, weighted costs, select: all untouched.
+   `F77_LINEAR_LIVE=1` falls back.  Two porting traps, both caught by
+   the suite: call ARGUMENTS must count as crossing even though
+   textbook liveness kills them at the call — the emitter marshals
+   args into r3..r10 one move at a time, so a source parked in a
+   caller-saved register is clobbered before it is read (trans1's
+   DLOG(DEXP(X)) lost its hi word); and the dying-src exception the
+   backward walk gives "for free" must be re-restricted to the
+   ALU/ADDI/COPY s1 case the interval builder allowed.
+
+2. **Nothing chose spill victims**: gc_select's optimistic coloring
+   drops whoever pops with an exhausted palette — under real
+   pressure, the hottest node (the inlined daxpy's pointer-IV phis,
+   weight 3000, lost to weight-11 setup values).  `gc_respill` now
+   does Chaitin's iteration: on failure, spill the CHEAPEST value in
+   the failed node's neighborhood, rebuild, recolor (spilled values
+   keep the existing reload-at-use model, so no new instructions).
+
+3. **Stale pair pins across rounds**: gc_pin is indexed by NODE ID,
+   and gc_build renumbers nodes every round.  Round 2+ inherited
+   round 1's pins pointing at unrelated nodes — mandel cascaded from
+   zero spills to 59.5M instructions before the per-round clear.
+
+Also: units holding COMMON/IMPLICIT/DATA/SAVE/EQUIVALENCE/PARAMETER/
+ENTRY/EXTERNAL cannot be re-parsed in an executable context; the
+splice gate now refuses them (f77_unosplice) instead of erroring.
+
+| LINPACK | insns | vs clang |
+|---|---:|---:|
+| baseline before | 565,063,102 | 1.127× |
+| + lv + respill, no inline | 563,081,721 | 1.123× |
+| + inline 12 (NEW DEFAULT) | **525,683,212** | **1.048×** |
+| inline 40 | 559,252,024 | 1.115× |
+
+mandel unchanged at 20,365,637 (**0.868×**, output byte-identical).
+28/28 with inlining on and off.  The old frame note blaming the
+by-reference convention for inlining's loss is retracted in place;
+the convention costs something, but the allocator was the blocker.

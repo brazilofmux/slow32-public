@@ -2953,6 +2953,11 @@ static void hcg_func(Node *fn) {
 
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
+    if (getenv("F77_RA_DEBUG")) {
+        fdputs("RA fn=", 2);
+        fdputs(fn->name, 2);
+        fdputc(10, 2);
+    }
     hir_regalloc();
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */
