@@ -262,6 +262,10 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
 /* --- entry points called by compiled Fortran ------------------------ */
 
 void f77_wr_begin(int unit, const char *fmt) {
+    if (unit != 6 && unit != 5 && unit != 0) {
+        fprintf(stderr, "f77: WRITE to unit %d is not supported\n", unit);
+        exit(2);
+    }
     fio_unit = unit;
     fio_len = 0;
     fio_gdepth = 0;
@@ -296,6 +300,12 @@ void f77_wr_i(int v) {
     }
     d = fio_want();
     if (d == 0) return;
+    if (d == 'L') {
+        if (fio_w > 1) fio_pad(fio_w - 1);
+        fio_putc(v ? 'T' : 'F');
+        fio_consumed();
+        return;
+    }
     snprintf(buf, sizeof buf, "%d", v);
     fio_field(buf, fio_w);
     fio_consumed();
@@ -319,7 +329,33 @@ void f77_wr_d(double v) {
     } else if (d == 'F') {
         snprintf(cf, sizeof cf, "%%.%df", fio_d);
         snprintf(buf, sizeof buf, cf, v);
-    } else if (d == 'E' || d == 'D' || d == 'G') {
+    } else if (d == 'G') {
+        /* Gw.d: F form when 0.1 <= |v| < 10^d, else E. The F form
+         * occupies w-4 columns and is followed by four blanks. */
+        double a = v < 0 ? -v : v;
+        double lim = 1.0;
+        int i;
+        int use_f = 0;
+        int nd = fio_d > 0 ? fio_d : 1;
+        for (i = 0; i < nd; i++) lim *= 10.0;
+        if (a == 0.0 || (a >= 0.1 && a < lim)) use_f = 1;
+        if (use_f) {
+            int fw = fio_w >= 4 ? fio_w - 4 : fio_w;
+            int k = 0;
+            double t = a;
+            if (t >= 1.0) {
+                while (t >= 10.0 && k < nd) { t /= 10.0; k++; }
+                k++;
+            }
+            snprintf(cf, sizeof cf, "%%.%df", nd - k > 0 ? nd - k : 0);
+            snprintf(buf, sizeof buf, cf, v);
+            fio_field(buf, fw);
+            fio_pad(fio_w >= 4 ? 4 : 0);
+            fio_consumed();
+            return;
+        }
+        fio_efmt(buf, sizeof buf, v, nd, 'E');
+    } else if (d == 'E' || d == 'D') {
         fio_efmt(buf, sizeof buf, v, fio_d, d);
     } else {
         snprintf(buf, sizeof buf, "%g", v);

@@ -72,6 +72,7 @@ static void f77_scan_units(void) {
         if (f77_starts("FORMAT") && lx_stmt_label >= 0 &&
             f77_nformat < F77_MAX_FORMAT) {
             f77_flabel[f77_nformat] = lx_stmt_label;
+            f77_funit[f77_nformat] = started ? f77_nunit - 1 : 0;
             f77_fstr[f77_nformat] =
                 f77_intern_str(lx_stmt + 6, lx_stmt_len - 6);
             f77_nformat = f77_nformat + 1;
@@ -82,16 +83,72 @@ static void f77_scan_units(void) {
             if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
             f77_upos[f77_nunit] = pos;
             f77_uline[f77_nunit] = line;
+            f77_unit_name(f77_nunit);
             if (rty >= 0) {
                 f77_ukind[f77_nunit] = F77_UNIT_FUNC;
-                f77_urty[f77_nunit] = rty;
+                /* Bare FUNCTION uses the I-N rule; a later type
+                 * statement of the function name overrides it. */
+                if (f77_starts("FUNCTION"))
+                    f77_urty[f77_nunit] = f77_implicit_ty(f77_uname[f77_nunit]);
+                else
+                    f77_urty[f77_nunit] = rty;
             } else {
                 f77_ukind[f77_nunit] = F77_UNIT_SUBR;
                 f77_urty[f77_nunit] = TY_INT;
             }
-            f77_unit_name(f77_nunit);
             f77_nunit = f77_nunit + 1;
             started = 1;
+        } else if (started && f77_nunit > 0 &&
+                   f77_ukind[f77_nunit - 1] == F77_UNIT_FUNC) {
+            int ty;
+            int skip;
+            ty = -1;
+            skip = 0;
+            if (f77_starts("INTEGER")) { ty = TY_INT; skip = 7; }
+            else if (f77_starts("LOGICAL")) { ty = TY_INT; skip = 7; }
+            else if (f77_starts("DOUBLEPRECISION")) { ty = TY_DOUBLE; skip = 15; }
+            else if (f77_starts("REAL")) { ty = TY_FLOAT; skip = 4; }
+            if (ty >= 0) {
+                f77_scan_from(skip);
+                if (lx_t == T_STAR) {
+                    f77_tok();
+                    if (lx_t == T_ICON) {
+                        if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
+                        f77_tok();
+                    }
+                }
+                while (lx_t == T_NAME) {
+                    int is_fn;
+                    is_fn = strcmp(lex_name, f77_uname[f77_nunit - 1]) == 0;
+                    f77_tok();
+                    if (lx_t == T_STAR) {
+                        f77_tok();
+                        if (lx_t == T_ICON) {
+                            if (is_fn) {
+                                if (lex_ival == 8 && ty == TY_FLOAT)
+                                    f77_urty[f77_nunit - 1] = TY_DOUBLE;
+                                else
+                                    f77_urty[f77_nunit - 1] = ty;
+                            }
+                            f77_tok();
+                        }
+                    } else if (is_fn) {
+                        f77_urty[f77_nunit - 1] = ty;
+                    }
+                    if (lx_t == T_LP) {
+                        int depth;
+                        depth = 1;
+                        f77_tok();
+                        while (lx_t != T_EOF && depth > 0) {
+                            if (lx_t == T_LP) depth = depth + 1;
+                            else if (lx_t == T_RP) depth = depth - 1;
+                            f77_tok();
+                        }
+                    }
+                    if (lx_t != T_COMMA) break;
+                    f77_tok();
+                }
+            }
         } else if (!started) {
             /* Statements before any subprogram header belong to the
              * main program, whether or not a PROGRAM card is present. */

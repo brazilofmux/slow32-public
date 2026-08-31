@@ -18,6 +18,9 @@ static const unsigned long long gu[2] = { 1ULL, 10ULL };
 static const int gi[3] = { 1, 10, -5 };
 static const long long gexpr[2] = { 3 * 7, -(2 + 3) };
 static const long long gpow[5] = { 1LL, 10LL, 100LL, 1000LL, 10000000000LL };
+static long long gparen = (5000000000LL);
+static long long gparenneg = -(5000000000LL);
+static long long ghexu = 0x80000000U;
 
 int failed;
 
@@ -42,5 +45,12 @@ int main(void) {
     check(gpow[4] / gpow[1] == 1000000000LL, 11);
     check(la[0] == 1 && la[1] == 10 && la[2] == -5, 12);
     check((int)(gbig[0] >> 32) == 1 && (int)(gbig[1] >> 32) == -2, 13);
+    check(gparen == big, 14);
+    check(gparenneg == -big, 15);
+    check(ghexu == 2147483648LL, 16);
+    {
+        static long long xs = 5000000000LL;
+        check(xs == big, 17);
+    }
     return failed;
 }

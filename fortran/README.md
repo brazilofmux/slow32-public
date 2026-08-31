@@ -1,7 +1,9 @@
 # fortran — Fortran 77 for SLOW-32
 
-Status: skeleton. The code generator is in place and proven; the
-Fortran frontend is not written yet.
+Status: working F77 subset (2026-08-27). Vertical slice, arrays,
+subprograms, FORMAT, and LINPACK run on SLOW-32 and match gfortran.
+Still refused (honestly): `READ`, `OPEN`, `COMMON`, `EQUIVALENCE`,
+`CHARACTER`, `COMPLEX`, `DATA`, computed/assigned `GOTO`.
 
 See [`../docs/plans/fortran77.md`](../docs/plans/fortran77.md) for the
 plan, the rulings behind it, and the milestone list.

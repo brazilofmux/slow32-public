@@ -1,7 +1,8 @@
 # Fortran 77 on SLOW-32
 
-Status: **started 2026-08-27.** Backend detached and proven; frontend
-not yet begun.
+Status: **working subset 2026-08-27.** Backend, frontend, FORMAT, and
+LINPACK all run. Still refused: `READ`, `OPEN`, `COMMON`, `EQUIVALENCE`,
+`CHARACTER`, `COMPLEX`, `DATA`.
 
 ## Why this one
 

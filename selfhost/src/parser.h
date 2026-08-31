@@ -1660,14 +1660,17 @@ static int parse_const_primary(void) {
     int ci;
     int ty;
 
-    pc_wide = 0;
-    pc_nleaf = pc_nleaf + 1;
     if (lex_tok == TK_LPAREN) {
+        /* Grouping parens are not a leaf: (5000000000LL) is still one
+         * literal. Counting them as a leaf made parse_const_ll_hi
+         * sign-extend the low word (GitHub #17). */
         next();
         ci = parse_const_int();
         expect(TK_RPAREN);
         return ci;
     }
+    pc_wide = 0;
+    pc_nleaf = pc_nleaf + 1;
     if (lex_tok == TK_SIZEOF) {
         next();
         if (lex_tok != TK_LPAREN) {
@@ -1716,7 +1719,12 @@ static int parse_const_primary(void) {
     }
     if (lex_tok == TK_NUM || lex_tok == TK_CHARLIT) {
         ci = lex_val;
-        if (lex_tok == TK_NUM && (lex_val_hi != 0 || lex_val_ll)) {
+        if (lex_tok == TK_NUM &&
+            (lex_val_hi != 0 || lex_val_ll || lex_val_u ||
+             (lex_val_hi == 0 && lex_val < 0))) {
+            /* U/LL, a high word, or a 32-bit value with bit 31 set
+             * (0x80000000 / 2147483648): keep high word 0 rather than
+             * sign-extending into a long long (GitHub #17). */
             pc_hi = lex_val_hi;
             pc_wide = 1;
         }
@@ -4390,6 +4398,10 @@ static Node *parse_stmt(void) {
                     ps_ginit_begin(sl_gi);
                     parse_global_init_struct_at(ty, sl_gi, 0);
                     ps_ginit_finish(sl_gi);
+                } else if (ty_is_llong(ty)) {
+                    int glo;
+                    ps_ginit_hi[sl_gi] = parse_const_ll_hi(&glo);
+                    ps_ginit[sl_gi] = glo;
                 } else {
                     ps_ginit[sl_gi] = parse_const_int();
                 }
@@ -4417,7 +4429,13 @@ static Node *parse_stmt(void) {
                 ps_glocal[sl_gi] = 1;
                 if (lex_tok == TK_ASSIGN) {
                     next();
-                    ps_ginit[sl_gi] = parse_const_int();
+                    if (ty_is_llong(ty)) {
+                        int glo;
+                        ps_ginit_hi[sl_gi] = parse_const_ll_hi(&glo);
+                        ps_ginit[sl_gi] = glo;
+                    } else {
+                        ps_ginit[sl_gi] = parse_const_int();
+                    }
                 }
             }
             expect(TK_SEMI);

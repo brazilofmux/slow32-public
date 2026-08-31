@@ -261,15 +261,28 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (stream->flags & FLAG_MEMSTREAM)
         return __memstream_read(stream, ptr, total) / size;
 
+    unsigned char *dest = ptr;
+    size_t remaining = total;
+    size_t bytes_copied = 0;
+
+    /* as-if-by-fgetc: a pending ungetc is the first byte */
+    if (stream->ungetc_char >= 0) {
+        *dest++ = (unsigned char)stream->ungetc_char;
+        stream->ungetc_char = -1;
+        remaining--;
+        bytes_copied++;
+        if (remaining == 0)
+            return size == 1 ? bytes_copied : bytes_copied / size;
+    }
+
     if (stream == stdin) {
-        unsigned char *p = ptr;
-        for (size_t i = 0; i < total; i++) {
+        for (size_t i = 0; i < remaining; i++) {
             int c = getchar();
             if (c == EOF) {
                 stream->eof = 1;
-                return i / size;
+                return (bytes_copied + i) / size;
             }
-            p[i] = (unsigned char)c;
+            dest[i] = (unsigned char)c;
         }
         return nmemb;
     }
@@ -277,10 +290,6 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (stream->buf_len == 0 && stream->buf_pos > 0) {
         fflush(stream);
     }
-
-    unsigned char *dest = ptr;
-    size_t remaining = total;
-    size_t bytes_copied = 0;
 
     while (remaining > 0) {
         size_t avail = stream->buf_len - stream->buf_pos;
@@ -419,6 +428,7 @@ int fseek(FILE *stream, long offset, int whence) {
     fflush(stream);
     stream->buf_pos = 0;
     stream->buf_len = 0;
+    stream->ungetc_char = -1;
 
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     data_buffer[0] = (unsigned char)whence;
@@ -456,7 +466,10 @@ long ftell(FILE *stream) {
     } else if (stream->buf_len > 0) {
         pos -= (stream->buf_len - stream->buf_pos);
     }
-    
+    if (stream->ungetc_char >= 0) {
+        pos -= 1;
+    }
+
     return pos;
 }
 

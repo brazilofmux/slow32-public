@@ -18,11 +18,12 @@ every change, and majesty's batch (twelve reports byte-identical) as
 the regression gate before a push. Corpus programs are not rewritten
 from this side; they are majesty's.
 
-State on 2026-08-31: harness 49/49; CCVS-85 210 of 303 compile, and of those 4062 of 4097 tests pass with none failing, 207 programs matching GnuCOBOL (ISSUES-17) with the GnuCOBOL oracle agreeing
-on every program that has one; majesty `batch.sh` runs every COBOL
-report step on SLOW-32 with all twelve reports byte-identical; **every
-program in `~/majesty/src/cobol` compiles, 56 of 56** (2026-08-30 evening). The sweep that
-measures the last number is one line, run from `~/majesty`:
+State on 2026-08-31: harness **89/89**; CCVS-85 **348 of 348 compile**,
+**8049 of 8160** tests pass with none failing (ISSUES-17); majesty
+`batch.sh` runs every COBOL report step on SLOW-32 with all twelve
+reports byte-identical; **every program in `~/majesty/src/cobol`
+compiles, 56 of 56**. The sweep that measures the last number is one
+line, run from `~/majesty`:
 
     for f in src/cobol/*.cbl; do ~/slow-32/cobol/out/s32-cobc -free -m -I src/copy -o /dev/null $f; done
 

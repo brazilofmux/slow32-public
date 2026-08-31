@@ -666,11 +666,42 @@ static int cmp_bytes(const unsigned char *a, int na, const unsigned char *b, int
     return 0;
 }
 
+static unsigned long long cob_mag(long long v)
+{
+    return v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v;
+}
+
+/* Can v be multiplied by 10^k without signed 64-bit overflow? */
+static int cob_fits_mul10(long long v, int k)
+{
+    unsigned long long a;
+    if (k <= 0) return 1;
+    if (k > 18) return 0;
+    a = cob_mag(v);
+    if (a == 0) return 1;
+    return a <= (unsigned long long)0x7fffffffffffffffLL / (unsigned long long)pow10tab[k];
+}
+
+static long long cob_rescale(long long v, int from, int to)
+{
+    int k;
+    if (from == to) return v;
+    if (from > to) {
+        k = from - to;
+        if (k > 18) return 0;
+        return v / pow10tab[k];
+    }
+    k = to - from;
+    if (!cob_fits_mul10(v, k))
+        return v < 0 ? -0x7fffffffffffffffLL : 0x7fffffffffffffffLL;
+    return v * pow10tab[k];
+}
+
 static int cmp_scaled(long long a, int sa, long long b, int sb)
 {
-    if (sa < sb) a *= pow10tab[sb - sa];
-    else if (sb < sa) b *= pow10tab[sa - sb];
-    return a < b ? -1 : a > b ? 1 : 0;
+    long long aa = cob_rescale(a, sa, sa > sb ? sa : sb);
+    long long bb = cob_rescale(b, sb, sa > sb ? sa : sb);
+    return aa < bb ? -1 : aa > bb ? 1 : 0;
 }
 
 /* -1, 0, 1 */
@@ -747,9 +778,20 @@ void cob_push_lit(long long v, int scale)
 
 static void align2(cob_num *a, cob_num *b)
 {
-    if (a->scale < b->scale) { a->v *= pow10tab[b->scale - a->scale]; a->scale = b->scale; }
-    else if (b->scale < a->scale) { b->v *= pow10tab[a->scale - b->scale]; b->scale = a->scale; }
+    /* Prefer scaling the smaller magnitude up. If that would overflow
+     * i64, shed a fraction digit from the other instead (GitHub #21). */
+    while (a->scale != b->scale) {
+        if (a->scale < b->scale) {
+            if (cob_fits_mul10(a->v, 1)) { a->v *= 10; a->scale++; }
+            else { b->v /= 10; b->scale--; }
+        } else {
+            if (cob_fits_mul10(b->v, 1)) { b->v *= 10; b->scale++; }
+            else { a->v /= 10; a->scale--; }
+        }
+    }
 }
+
+static int div0;        /* a size error happened in this statement (div0 or overflow) */
 
 void cob_nadd(void) { cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1]; align2(a, b); a->v += b->v; nsp--; }
 void cob_nsub(void) { cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1]; align2(a, b); a->v -= b->v; nsp--; }
@@ -768,6 +810,15 @@ void cob_nmul(void)
         if (w->scale == 0) break;                    /* nothing left to shed: the store's size error catches it */
         w->v /= 10; w->scale--;
     }
+    {
+    unsigned long long ua = a->v < 0 ? 0 - (unsigned long long)a->v : (unsigned long long)a->v;
+    unsigned long long ub = b->v < 0 ? 0 - (unsigned long long)b->v : (unsigned long long)b->v;
+    if (ub && ua > 0x7fffffffffffffffULL / ub) {
+        div0 = 1;                                   /* size error: product does not fit i64 */
+        nsp--;
+        return;
+    }
+    }
     a->v *= b->v; a->scale += b->scale; nsp--;
 }
 
@@ -775,8 +826,6 @@ void cob_nmul(void)
  * receiver with a wider scale than either operand still gets its digits;
  * the store truncates.  (The 85 intermediate rules are implementor-defined;
  * this is the stage-2 rule and stage 3 may tighten it.) */
-static int div0;        /* a division by zero happened in this statement */
-
 void cob_ndiv(void)
 {
     cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
@@ -3063,18 +3112,18 @@ char *cob_fn_num(int which, int n)
         for (int i = 0; i < n; i++) if (a[i].scale > sc) sc = a[i].scale;
         long long hi = 0, lo = 0, sum = 0; int ihi = 0, ilo = 0;
         for (int i = 0; i < n; i++) {
-            long long v = a[i].v * pow10tab[sc - a[i].scale];
+            long long v = cob_rescale(a[i].v, a[i].scale, sc);
             if (i == 0 || v > hi) { hi = v; ihi = i; }
             if (i == 0 || v < lo) { lo = v; ilo = i; }
             sum += v;
         }
         long long r9;
         switch (which) {
-        case COB_FN_MAX: r9 = hi * pow10tab[9 - sc]; break;
-        case COB_FN_MIN: r9 = lo * pow10tab[9 - sc]; break;
-        case COB_FN_SUM: r9 = sum * pow10tab[9 - sc]; break;
-        case COB_FN_RANGE: r9 = (hi - lo) * pow10tab[9 - sc]; break;
-        case COB_FN_MIDRANGE: r9 = (hi + lo) * pow10tab[9 - sc] / 2; break;
+        case COB_FN_MAX: r9 = cob_rescale(hi, sc, 9); break;
+        case COB_FN_MIN: r9 = cob_rescale(lo, sc, 9); break;
+        case COB_FN_SUM: r9 = cob_rescale(sum, sc, 9); break;
+        case COB_FN_RANGE: r9 = cob_rescale(hi - lo, sc, 9); break;
+        case COB_FN_MIDRANGE: r9 = cob_rescale(hi + lo, sc, 9) / 2; break;
         case COB_FN_ORD_MAX: r9 = ihi + 1; break;
         default: r9 = ilo + 1; break;
         }
@@ -3091,10 +3140,10 @@ char *cob_fn_num(int which, int n)
     }
     case COB_FN_REM: {                          /* a - b * INTEGER-PART(a / b), exact at the common scale */
         int sc = a[0].scale > a[1].scale ? a[0].scale : a[1].scale;
-        long long x = a[0].v * pow10tab[sc - a[0].scale], y = a[1].v * pow10tab[sc - a[1].scale];
+        long long x = cob_rescale(a[0].v, a[0].scale, sc), y = cob_rescale(a[1].v, a[1].scale, sc);
         if (y == 0) cob_fatal("FUNCTION REM with a zero divisor");
         long long q = x / y;                    /* truncation is INTEGER-PART */
-        res = fn_signed18((x - q * y) * pow10tab[9 - sc]);
+        res = fn_signed18(cob_rescale(x - q * y, sc, 9));
         break;
     }
     case COB_FN_INTEGER: {                      /* the greatest integer not greater */
@@ -3109,7 +3158,7 @@ char *cob_fn_num(int which, int n)
         break;
     case COB_FN_FACTORIAL: {
         long long k = a[0].v / pow10tab[a[0].scale], r = 1;
-        if (k < 0 || k > 20) cob_fatal("FUNCTION FACTORIAL of a value outside 0-20");
+        if (k < 0 || k > 19) cob_fatal("FUNCTION FACTORIAL of a value outside 0-19");
         for (long long i = 2; i <= k; i++) r *= i;
         res = fn_signed18(r);
         break;

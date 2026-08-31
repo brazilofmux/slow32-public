@@ -43,7 +43,7 @@
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
-#define VERSION "0.15 (stage 15: SEARCH)"
+#define VERSION "0.63 (stage 63: IF module)"
 
 /* ====================================================================== */
 /* Diagnostics                                                             */
@@ -4054,6 +4054,7 @@ static void check_numeric_opnd(Opnd *o)
 {
     if (o->kind == O_STR || o->kind == O_ALL) die_at(o->line, "an arithmetic operand must be numeric");
     if (o->kind == O_FIG && strncmp(o->tok->s, "zero", 4)) die_at(o->line, "an arithmetic operand must be numeric");
+    if (o->kind == O_REF && o->ref.rm) die_at(o->line, "a reference-modified item is not numeric");
     if (o->kind == O_REF && !is_numeric_sym(o->ref.sym)) die_at(o->line, "'%s' is not numeric", o->ref.sym->name);
 }
 
@@ -4106,6 +4107,36 @@ static int all_hot(Opnd *ops, int n)
 static int refs_hot(Ref *rs, int n)
 {
     for (int i = 0; i < n; i++) if (!is_hot_int(rs[i].sym)) return 0;
+    return 1;
+}
+
+/* 32-bit hot-path sum stays correct only if every partial sum fits a
+ * signed word. S9(9) COMP with three max operands does not (GitHub #18). */
+static long long hot_opnd_mag(Opnd *o)
+{
+    if (o->kind == O_NUM) {
+        long long v = numlit_int(&o->num);
+        return v < 0 ? -v : v;
+    }
+    if (o->kind == O_FIG) return 0;
+    if (o->kind == O_REF) {
+        int d = o->ref.sym->pi.digits;
+        if (d > 0 && d < 10) return pow10l(d) - 1;
+        if (o->ref.sym->size == 1) return o->ref.sym->pi.is_signed ? 127 : 255;
+        if (o->ref.sym->size == 2) return o->ref.sym->pi.is_signed ? 32767 : 65535;
+        return 2147483647;
+    }
+    return 2147483647;
+}
+
+static int hot_sum_fits(Opnd *ops, int n)
+{
+    long long bound = 0;
+    int i;
+    for (i = 0; i < n; i++) {
+        bound += hot_opnd_mag(&ops[i]);
+        if (bound > 2147483647LL) return 0;
+    }
     return 1;
 }
 
@@ -4171,6 +4202,13 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
                 emit(subtract ? "\tsub r1, r1, r2" : "\tadd r1, r1, r2");
             }
             emit_trunc(d);
+            if (!d->pi.is_signed) {
+                /* unsigned takes the magnitude, matching cob_put_num_x */
+                int Lpos = new_label();
+                emit("\tbge r1, r0, .L%d", Lpos);
+                emit("\tsub r1, r0, r1");
+                emit_label(Lpos);
+            }
             emit_store_int(d, "r3", "r1");
         } else {
             emit_top_op(&rs[i], giving ? "cob_top_store" : subtract ? "cob_top_subfrom" : "cob_top_addto", opts);
@@ -4204,7 +4242,7 @@ static void parse_add(void)
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
     int size_err = at_size_error_clause();
 
-    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) && refs_hot(rs, nr);
+    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) && refs_hot(rs, nr) && hot_sum_fits(ops, n);
     if (hot) emit_hot_sum(ops, n);
     else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err);
@@ -4233,7 +4271,9 @@ static void parse_subtract(void)
     if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
     int size_err = at_size_error_clause();
 
-    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) && refs_hot(rs, nr) && (!giving || opnd_hot_int(&minuend));
+    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
+              refs_hot(rs, nr) && (!giving || opnd_hot_int(&minuend)) &&
+              hot_sum_fits(ops, n);
     if (hot) {
         emit_hot_sum(ops, n);
         if (giving) {

@@ -231,14 +231,17 @@ static int f77_label_blk(int n) {
  * for why this cannot be expanded inline. */
 #define F77_MAX_FORMAT 256
 static int f77_flabel[F77_MAX_FORMAT];
+static int f77_funit[F77_MAX_FORMAT];   /* owning program unit */
 static int f77_fstr[F77_MAX_FORMAT];    /* string-pool index */
 static int f77_nformat;
+static int f77_cur_unit;               /* set while compiling a unit */
 
 static int f77_find_format(int label) {
     int i;
     i = 0;
     while (i < f77_nformat) {
-        if (f77_flabel[i] == label) return f77_fstr[i];
+        if (f77_flabel[i] == label && f77_funit[i] == f77_cur_unit)
+            return f77_fstr[i];
         i = i + 1;
     }
     return -1;
@@ -254,6 +257,7 @@ static int ctl_kind[F77_MAX_CTL];
 static int ctl_label[F77_MAX_CTL];   /* DO: terminal statement label */
 static int ctl_var[F77_MAX_CTL];     /* DO: symbol index */
 static int ctl_step[F77_MAX_CTL];    /* DO: HIR value of the step */
+static int ctl_stephi[F77_MAX_CTL];  /* DO: hi word of a DOUBLE step */
 static int ctl_trip[F77_MAX_CTL];    /* DO: alloca holding the trip count */
 static int ctl_test[F77_MAX_CTL];    /* DO: test block */
 static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
@@ -282,7 +286,6 @@ static int f77_load_at(int addr, int ty);
 static int f77_load_sym(int s);
 static void f77_store_sym_val(int s, int v, int vty, int vhi);
 static void f77_store_at(int addr, int ty, int v, int vty, int vhi);
-static int f77_cur_unit;
 static int f77_can_inline(int u);
 static int f77_inline_unit_body(int u, int *addrs, int nargs);
 static int f77_find_unit(char *nm);
@@ -583,6 +586,10 @@ static int f77_select(int cond, int a, int b) {
 #define IN_DBLE   7
 #define IN_SQRT   8
 #define IN_SIGN   9
+#define IN_MAX1   10   /* real args, integer result */
+#define IN_MIN1   11
+#define IN_AMAX0  12   /* integer args, real result */
+#define IN_AMIN0  13
 
 /* F77 intrinsic names are type-decorated (ABS/IABS/DABS, MAX0/AMAX1/
  * DMAX1); the operation is the same and the operand types decide the
@@ -591,11 +598,13 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "ABS") == 0 || strcmp(nm, "IABS") == 0 ||
         strcmp(nm, "DABS") == 0) return IN_ABS;
     if (strcmp(nm, "MAX") == 0 || strcmp(nm, "MAX0") == 0 ||
-        strcmp(nm, "AMAX1") == 0 || strcmp(nm, "DMAX1") == 0 ||
-        strcmp(nm, "AMAX0") == 0 || strcmp(nm, "MAX1") == 0) return IN_MAX;
+        strcmp(nm, "AMAX1") == 0 || strcmp(nm, "DMAX1") == 0) return IN_MAX;
+    if (strcmp(nm, "MAX1") == 0) return IN_MAX1;
+    if (strcmp(nm, "AMAX0") == 0) return IN_AMAX0;
     if (strcmp(nm, "MIN") == 0 || strcmp(nm, "MIN0") == 0 ||
-        strcmp(nm, "AMIN1") == 0 || strcmp(nm, "DMIN1") == 0 ||
-        strcmp(nm, "AMIN0") == 0 || strcmp(nm, "MIN1") == 0) return IN_MIN;
+        strcmp(nm, "AMIN1") == 0 || strcmp(nm, "DMIN1") == 0) return IN_MIN;
+    if (strcmp(nm, "MIN1") == 0) return IN_MIN1;
+    if (strcmp(nm, "AMIN0") == 0) return IN_AMIN0;
     if (strcmp(nm, "MOD") == 0 || strcmp(nm, "AMOD") == 0 ||
         strcmp(nm, "DMOD") == 0) return IN_MOD;
     if (strcmp(nm, "INT") == 0 || strcmp(nm, "IDINT") == 0 ||
@@ -734,8 +743,10 @@ static int f77_primary(void) {
                 f77_tok();
                 b = f77_expr(); bty = ex_ty; bhi = ex_hi;
                 rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
-                if (in == IN_MAX || in == IN_MIN) {
-                    a = f77_minmax(in == IN_MAX, a, ahi, b, bhi, rty, &ahi);
+                if (in == IN_MAX || in == IN_MAX1 || in == IN_AMAX0 ||
+                    in == IN_MIN || in == IN_MIN1 || in == IN_AMIN0) {
+                    a = f77_minmax(in == IN_MAX || in == IN_MAX1 || in == IN_AMAX0,
+                                   a, ahi, b, bhi, rty, &ahi);
                 } else if (in == IN_MOD) {
                     if (rty == TY_INT) {
                         a = hi_emit(HI_REM, TY_INT, a, b, 0, NULL);
@@ -779,6 +790,13 @@ static int f77_primary(void) {
                 aty = rty;
             }
             if (lx_t == T_RP) f77_tok(); else f77_error("expected ) after intrinsic");
+            if (in == IN_MAX1 || in == IN_MIN1) {
+                a = f77_cvt(a, &ahi, aty, TY_INT);
+                aty = TY_INT;
+            } else if (in == IN_AMAX0 || in == IN_AMIN0) {
+                a = f77_cvt(a, &ahi, aty, TY_FLOAT);
+                aty = TY_FLOAT;
+            }
             ex_ty = aty; ex_hi = ahi;
             return a;
         }
@@ -844,6 +862,44 @@ static int f77_primary(void) {
             f77_tok();
             addr = f77_subscript_addr(s);
             return f77_load_at(addr, f77_sty[s]);
+        }
+        if (lx_t == T_LP) {
+            /* Not an array and not a FUNCTION in this file: an
+             * external function reference. Leaving the ( unconsumed
+             * used to drop the rest of the expression (GitHub #20). */
+            int cb;
+            int nargs;
+            int r;
+            int addrs[64];
+            int ai;
+            int rty;
+            nargs = 0;
+            f77_tok();
+            if (lx_t != T_RP) {
+                for (;;) {
+                    if (nargs < 64) addrs[nargs] = f77_actual_addr();
+                    else f77_actual_addr();
+                    nargs = nargs + 1;
+                    if (lx_t != T_COMMA) break;
+                    f77_tok();
+                }
+            }
+            if (lx_t != T_RP) f77_error("expected ) after arguments");
+            else f77_tok();
+            cb = h_ncarg;
+            ai = 0;
+            while (ai < nargs) {
+                h_carg[h_ncarg] = addrs[ai];
+                h_carg_tag[h_ncarg] = 0;
+                h_ncarg = h_ncarg + 1;
+                ai = ai + 1;
+            }
+            rty = f77_implicit_ty(nm);
+            r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty, -1, -1,
+                        nargs, nm);
+            h_cbase[r] = cb;
+            ex_ty = rty;
+            return r;
         }
         return f77_load_sym(s);
     }
@@ -1258,6 +1314,14 @@ static void f77_parse_dims(int s) {
 static void f77_stmt_decl(int ty, int skip) {
     int s;
     f77_scan_from(skip);
+    /* Type-level length: REAL*8 X. Per-name REAL X*8 is below. */
+    if (lx_t == T_STAR) {
+        f77_tok();
+        if (lx_t == T_ICON) {
+            if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
+            f77_tok();
+        }
+    }
     for (;;) {
         if (lx_t != T_NAME) break;
         s = f77_sym(lex_name);
@@ -1285,6 +1349,8 @@ static void f77_open_do(void) {
     int trip_alloca;
     int b_test, b_body, b_exit;
     int c;
+    int step_hi;
+    step_hi = 0;
 
     f77_scan_from(f77_do_body);
     if (lx_t != T_ICON) { f77_error("DO needs a terminal statement label"); return; }
@@ -1296,27 +1362,57 @@ static void f77_open_do(void) {
     f77_tok();
     if (lx_t != T_ASSIGN) { f77_error("expected = in DO"); return; }
     f77_tok();
-    m1 = f77_expr(); m1 = f77_cvt(m1, &ex_hi, ex_ty, TY_INT);
-    if (lx_t != T_COMMA) { f77_error("expected , in DO"); return; }
-    f77_tok();
-    m2 = f77_expr(); m2 = f77_cvt(m2, &ex_hi, ex_ty, TY_INT);
-    if (lx_t == T_COMMA) {
+    {
+        int vty;
+        int m1hi;
+        int m2hi;
+        int m3hi;
+        m3hi = 0;
+        vty = f77_sty[s];
+        m1 = f77_expr(); m1hi = ex_hi; m1 = f77_cvt(m1, &m1hi, ex_ty, vty);
+        if (lx_t != T_COMMA) { f77_error("expected , in DO"); return; }
         f77_tok();
-        m3 = f77_expr(); m3 = f77_cvt(m3, &ex_hi, ex_ty, TY_INT);
-    } else {
-        m3 = f77_iconst(1);
+        m2 = f77_expr(); m2hi = ex_hi; m2 = f77_cvt(m2, &m2hi, ex_ty, vty);
+        if (lx_t == T_COMMA) {
+            f77_tok();
+            m3 = f77_expr(); m3hi = ex_hi; m3 = f77_cvt(m3, &m3hi, ex_ty, vty);
+        } else {
+            m3 = (vty == TY_FLOAT) ? f77_rconst(1.0) :
+                 (vty == TY_DOUBLE) ? f77_dconst(1.0, &m3hi) : f77_iconst(1);
+        }
+
+        /* var = m1 in the DO variable's type */
+        if (vty == TY_DOUBLE) {
+            int addr4;
+            hi_emit(HI_STORE, TY_INT, f77_sval[s], m1, 0, NULL);
+            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, addr4, m1hi, 0, NULL);
+        } else {
+            hi_emit(HI_STORE, vty, f77_sval[s], m1, 0, NULL);
+        }
+
+        /* Trip count MAX(0, INT((m2-m1+m3)/m3)), then counted as INT. */
+        if (vty == TY_FLOAT) {
+            t1 = hi_emit(HI_FSUB, TY_FLOAT, m2, m1, 0, NULL);
+            t2 = hi_emit(HI_FADD, TY_FLOAT, t1, m3, 0, NULL);
+            t3 = hi_emit(HI_FDIV, TY_FLOAT, t2, m3, 0, NULL);
+            t3 = hi_emit(HI_FCVT_FtoI, TY_INT, t3, -1, 0, NULL);
+        } else if (vty == TY_DOUBLE) {
+            {
+                int dhi;
+                int thi;
+                t1 = f77_fp64_call2("__fp64_sub", m2, m2hi, m1, m1hi, &dhi);
+                t2 = f77_fp64_call2("__fp64_add", t1, dhi, m3, m3hi, &thi);
+                t3 = f77_fp64_call2("__fp64_div", t2, thi, m3, m3hi, &dhi);
+                t3 = f77_cvt(t3, &dhi, TY_DOUBLE, TY_INT);
+            }
+        } else {
+            t1 = hi_emit(HI_SUB, TY_INT, m2, m1, 0, NULL);
+            t2 = hi_emit(HI_ADD, TY_INT, t1, m3, 0, NULL);
+            t3 = hi_emit(HI_DIV, TY_INT, t2, m3, 0, NULL);
+        }
+        step_hi = m3hi;
     }
-
-    /* var = m1 */
-    hi_emit(HI_STORE, TY_INT, f77_sval[s], m1, 0, NULL);
-
-    /* F77 trip count, computed once: MAX(0, (m2 - m1 + m3) / m3).
-     * Doing it this way rather than testing the variable each time is
-     * what makes a negative or variable step work without knowing its
-     * sign at compile time, and it is what the standard specifies. */
-    t1 = hi_emit(HI_SUB, TY_INT, m2, m1, 0, NULL);
-    t2 = hi_emit(HI_ADD, TY_INT, t1, m3, 0, NULL);
-    t3 = hi_emit(HI_DIV, TY_INT, t2, m3, 0, NULL);
 
     f77_frame = f77_frame + 4;
     trip_alloca = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
@@ -1343,6 +1439,7 @@ static void f77_open_do(void) {
     ctl_label[ctl_n] = lab;
     ctl_var[ctl_n] = s;
     ctl_step[ctl_n] = m3;
+    ctl_stephi[ctl_n] = step_hi;
     ctl_trip[ctl_n] = trip_alloca;
     ctl_test[ctl_n] = b_test;
     ctl_exit[ctl_n] = b_exit;
@@ -1359,9 +1456,30 @@ static void f77_close_do(int lab) {
         ctl_n = ctl_n - 1;
         s = ctl_var[ctl_n];
         if (f77_cur_blk_live) {
-            v = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
-            v = hi_emit(HI_ADD, TY_INT, v, ctl_step[ctl_n], 0, NULL);
-            hi_emit(HI_STORE, TY_INT, f77_sval[s], v, 0, NULL);
+            int vty;
+            vty = f77_sty[s];
+            if (vty == TY_FLOAT) {
+                v = hi_emit(HI_LOAD, TY_FLOAT, f77_sval[s], -1, 0, NULL);
+                v = hi_emit(HI_FADD, TY_FLOAT, v, ctl_step[ctl_n], 0, NULL);
+                hi_emit(HI_STORE, TY_FLOAT, f77_sval[s], v, 0, NULL);
+            } else if (vty == TY_DOUBLE) {
+                int vlo;
+                int vhi;
+                int shi;
+                int addr4;
+                vlo = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
+                addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 4, NULL);
+                vhi = hi_emit(HI_LOAD, TY_INT, addr4, -1, 0, NULL);
+                shi = ctl_stephi[ctl_n];
+                vlo = f77_fp64_call2("__fp64_add", vlo, vhi,
+                                     ctl_step[ctl_n], shi, &vhi);
+                hi_emit(HI_STORE, TY_INT, f77_sval[s], vlo, 0, NULL);
+                hi_emit(HI_STORE, TY_INT, addr4, vhi, 0, NULL);
+            } else {
+                v = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
+                v = hi_emit(HI_ADD, TY_INT, v, ctl_step[ctl_n], 0, NULL);
+                hi_emit(HI_STORE, TY_INT, f77_sval[s], v, 0, NULL);
+            }
             t = hi_emit(HI_LOAD, TY_INT, ctl_trip[ctl_n], -1, 0, NULL);
             t = hi_emit(HI_ADDI, TY_INT, t, -1, -1, NULL);
             hi_emit(HI_STORE, TY_INT, ctl_trip[ctl_n], t, 0, NULL);
@@ -2104,6 +2222,88 @@ static int f77_implied_do_spans(int open, int *close_off, int *eq_off,
     return 1;
 }
 
+/* Column-major expansion of an unsubscripted array in an I/O list. */
+static void f77_wr_whole_array(int s) {
+    int rank;
+    int k;
+    int iv[F77_MAX_RANK];
+    int trip[F77_MAX_RANK];
+    int b_test[F77_MAX_RANK];
+    int b_body[F77_MAX_RANK];
+    int b_exit[F77_MAX_RANK];
+    int c;
+    int t;
+    int idx;
+    int off;
+    int byte;
+    int addr;
+    int v;
+    int vhi;
+    int cstride;
+
+    rank = f77_srank[s];
+    for (k = 0; k < rank; k++) {
+        if (f77_sextsym[s][k] >= 0) {
+            f77_error("whole-array I/O needs constant extents");
+            return;
+        }
+    }
+    for (k = rank - 1; k >= 0; k--) {
+        f77_frame = f77_frame + 4;
+        iv[k] = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
+        hl_ainst[hl_nalloca] = iv[k];
+        hl_aoff[hl_nalloca] = 0 - f77_frame;
+        hl_nalloca = hl_nalloca + 1;
+        f77_frame = f77_frame + 4;
+        trip[k] = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
+        hl_ainst[hl_nalloca] = trip[k];
+        hl_aoff[hl_nalloca] = 0 - f77_frame;
+        hl_nalloca = hl_nalloca + 1;
+        hi_emit(HI_STORE, TY_INT, iv[k], f77_iconst(f77_slo[s][k]), 0, NULL);
+        hi_emit(HI_STORE, TY_INT, trip[k], f77_iconst(f77_sext[s][k]), 0, NULL);
+        b_test[k] = hir_new_block();
+        b_body[k] = hir_new_block();
+        b_exit[k] = hir_new_block();
+        f77_goto_blk(b_test[k]);
+        f77_begin_blk(b_test[k]);
+        c = hi_emit(HI_LOAD, TY_INT, trip[k], -1, 0, NULL);
+        c = hi_emit(HI_SGT, TY_INT, c, f77_iconst(0), 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, c, b_body[k], b_exit[k], NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_body[k]);
+    }
+    off = f77_iconst(0);
+    cstride = 1;
+    for (k = 0; k < rank; k++) {
+        idx = hi_emit(HI_LOAD, TY_INT, iv[k], -1, 0, NULL);
+        if (f77_slo[s][k] != 0)
+            idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 0 - f77_slo[s][k], NULL);
+        if (cstride != 1)
+            idx = hi_emit(HI_MUL, TY_INT, idx, f77_iconst(cstride), 0, NULL);
+        off = hi_emit(HI_ADD, TY_INT, off, idx, 0, NULL);
+        cstride = cstride * f77_sext[s][k];
+    }
+    t = ty_size(f77_sty[s]);
+    if (t == 4) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(2), 0, NULL);
+    else if (t == 8) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
+    else byte = hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
+    addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
+    v = f77_load_at(addr, f77_sty[s]);
+    vhi = ex_hi;
+    f77_wr_item(v, f77_sty[s], vhi);
+    for (k = 0; k < rank; k++) {
+        idx = hi_emit(HI_LOAD, TY_INT, iv[k], -1, 0, NULL);
+        idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 1, NULL);
+        hi_emit(HI_STORE, TY_INT, iv[k], idx, 0, NULL);
+        t = hi_emit(HI_LOAD, TY_INT, trip[k], -1, 0, NULL);
+        t = hi_emit(HI_ADDI, TY_INT, t, -1, -1, NULL);
+        hi_emit(HI_STORE, TY_INT, trip[k], t, 0, NULL);
+        hi_emit(HI_BR, TY_VOID, -1, -1, b_test[k], NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_exit[k]);
+    }
+}
+
 /* One element of an output list: an expression, a character constant,
  * or an implied-DO `(items, VAR = e1, e2 [, e3])`, which becomes a real
  * loop around the item calls. */
@@ -2127,6 +2327,18 @@ static void f77_wr_one(void) {
         h_cbase[r] = cb;
         f77_tok();
         return;
+    }
+    if (lx_t == T_NAME) {
+        int s;
+        int after;
+        s = f77_sym(lex_name);
+        after = (int)(lx_rte - lx_stmt);
+        if (f77_srank[s] > 0 &&
+            (after >= lx_stmt_len || lx_stmt[after] != '(')) {
+            f77_tok();
+            f77_wr_whole_array(s);
+            return;
+        }
     }
 
     /* Implied-DO: `(items, VAR = e1, e2 [, e3])`.  The loop control sits
@@ -2492,9 +2704,21 @@ static void f77_statement(void) {
 
     if ((n = f77_starts("STOP")) != 0) {
         int v;
+        int cb;
+        int r;
         f77_scan_from(n);
         v = (lx_t == T_ICON) ? f77_iconst(lex_ival) : f77_iconst(0);
-        if (f77_cur_blk_live) hi_emit(HI_RET, TY_INT, v, -1, 0, NULL);
+        if (f77_cur_blk_live) {
+            /* Process exit, not a function return -- STOP in a
+             * SUBROUTINE must terminate the program (GitHub #20). */
+            cb = h_ncarg;
+            h_carg[h_ncarg] = v;
+            h_carg_tag[h_ncarg] = 0;
+            h_ncarg = h_ncarg + 1;
+            r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "exit");
+            h_cbase[r] = cb;
+            hi_emit(HI_RET, TY_INT, v, -1, 0, NULL);
+        }
         f77_cur_blk_live = 0;
         goto done;
     }
