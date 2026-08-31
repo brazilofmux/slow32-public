@@ -2003,6 +2003,8 @@ static int line_branch(const char *l, char *op, char *ops, char *target)
     memcpy(ops, sp + 1, (size_t)(last - sp - 1)); ops[last - sp - 1] = 0;   /* "r1, r0" */
     while (*++last == ' ') ;
     snprintf(target, 64, "%s", last);
+    for (char *e = target; *e; e++)                 /* a trailing comment or blank is not the label's name */
+        if (*e == ' ' || *e == '\t' || *e == '#') { *e = 0; break; }
     return 1;
 }
 
@@ -2026,7 +2028,9 @@ static void relax_branches(void)
     long *pos = xmalloc((size_t)g_nasm * sizeof *pos);
     LabelPos *labels = xmalloc((size_t)g_nasm * sizeof *labels);
     char name[128], op[8], ops[64], target[64];
-    for (int pass = 0; pass < 8; pass++) {
+    /* islong only ever grows, so this terminates in at most one pass per
+     * branch; a fixed cap left a long chain half-relaxed (GitHub #22) */
+    for (;;) {
         /* positions: .text only; a label's position is the next instruction's */
         int in_text = 0, nl = 0; long at = 0;
         for (int i = 0; i < g_nasm; i++) {
@@ -2053,6 +2057,7 @@ static void relax_branches(void)
         for (int k = 0; k < nl; k++) free(labels[k].name);
         if (!changed) break;
     }
+
     for (int i = 0; i < g_nasm; i++) {
         if (islong[i] && line_branch(g_asm[i], op, ops, target)) {
             int L = new_label();
