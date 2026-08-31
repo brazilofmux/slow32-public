@@ -901,6 +901,183 @@ static void ssa_rename(void) {
 /* Main entry point                                              */
 /* ------------------------------------------------------------ */
 
+
+/* =================================================================
+ * Pair-alloca splitting (DIVERGENCE: SLOW-32 targets only)
+ *
+ * On SLOW-32, hir_lower reads a double or long long local as two
+ * TY_INT word accesses: LOAD [A] for the lo half and LOAD [ADDI(A,4)]
+ * for the hi half.  ssa_find_promo sees the ADDI as address-taken and
+ * the width mismatch as a pun, so no 8-byte local was ever promoted
+ * -- every fp64 operation in a C loop reloaded and re-stored both
+ * halves through the frame, and the register allocator's pair
+ * machinery (which took LINPACK-F77 to 1.048x clang) never saw C
+ * doubles at all.
+ *
+ * Split each conforming 8-byte alloca into two independent TY_INT
+ * allocas: A keeps the lo half (retyped), a fresh sibling at
+ * offset+4 takes the hi half, the ADDI(+4) nodes' loads and stores
+ * are redirected to the sibling and the ADDIs NOPed.  The existing
+ * scalar mem2reg then promotes both halves, phis form per word, and
+ * ra_build_pairs pairs them back up at every fp64 pseudo-call.
+ *
+ * Conformity: every reference to A must be a LOAD/STORE of size 4 at
+ * displacement 0, or an ADDI(A, 4) whose own uses are all such
+ * LOAD/STOREs.  Any other use -- address passed to a call, stored as
+ * a value, referenced by a phi, a different displacement -- rejects
+ * the alloca untouched.  The x64/a64 crosses share this file but
+ * lower 8-byte locals natively; they leave ssa_split_pairs unset.
+ * ================================================================= */
+static int ssa_split_pairs;
+
+static void ssa_split_pair_allocas(void) {
+    int j;
+    int i;
+    int k;
+    int q;
+    int a_inst;
+    int nhi;
+    int hi_nodes[8];
+
+    j = 0;
+    while (j < hl_nalloca) {
+        int ok;
+        int ah;
+        a_inst = hl_ainst[j];
+        if (a_inst < 0 || h_kind[a_inst] != HI_ALLOCA ||
+            ty_size(h_ty[a_inst]) != 8 || ty_is_struct(h_ty[a_inst])) {
+            j = j + 1;
+            continue;
+        }
+
+        ok = 1;
+        nhi = 0;
+        i = 0;
+        while (i < h_ninst && ok) {
+            k = h_kind[i];
+            if (k == HI_NOP) { i = i + 1; continue; }
+            if (h_src1[i] == a_inst) {
+                if ((k == HI_LOAD || k == HI_STORE) &&
+                    ty_size(h_ty[i]) == 4 && !ty_is_fp(h_ty[i]) &&
+                    h_val[i] == 0) {
+                    /* lo-half access: stays on A */
+                } else if (k == HI_ADDI && h_val[i] == 4) {
+                    if (nhi >= 8) { ok = 0; }
+                    else { hi_nodes[nhi] = i; nhi = nhi + 1; }
+                } else {
+                    ok = 0;
+                }
+            }
+            if (ok && h_src2[i] == a_inst &&
+                k != HI_BR && k != HI_BRC && k != HI_PHI)
+                ok = 0;
+            if (ok && (k == HI_CALL || k == HI_CALLP ||
+                       k == HI_A64_DBT_TRAMPOLINE ||
+                       k == HI_X64_DBT_TRAMPOLINE) && h_cbase[i] >= 0) {
+                q = 0;
+                while (q < h_val[i]) {
+                    if (h_carg[h_cbase[i] + q] == a_inst) ok = 0;
+                    q = q + 1;
+                }
+            }
+            if (ok && k == HI_PHI && h_pbase[i] >= 0) {
+                q = 0;
+                while (q < h_pcnt[i]) {
+                    if (h_pval[h_pbase[i] + q] == a_inst) ok = 0;
+                    q = q + 1;
+                }
+            }
+            i = i + 1;
+        }
+
+        /* The hi-address nodes must feed only word loads/stores. */
+        q = 0;
+        while (q < nhi && ok) {
+            int hn;
+            hn = hi_nodes[q];
+            i = 0;
+            while (i < h_ninst && ok) {
+                k = h_kind[i];
+                if (k == HI_NOP || i == hn) { i = i + 1; continue; }
+                if (h_src1[i] == hn) {
+                    if (!((k == HI_LOAD || k == HI_STORE) &&
+                          ty_size(h_ty[i]) == 4 && !ty_is_fp(h_ty[i]) &&
+                          h_val[i] == 0))
+                        ok = 0;
+                }
+                if (ok && h_src2[i] == hn &&
+                    k != HI_BR && k != HI_BRC && k != HI_PHI)
+                    ok = 0;
+                if (ok && (k == HI_CALL || k == HI_CALLP ||
+                           k == HI_A64_DBT_TRAMPOLINE ||
+                           k == HI_X64_DBT_TRAMPOLINE) && h_cbase[i] >= 0) {
+                    int p;
+                    p = 0;
+                    while (p < h_val[i]) {
+                        if (h_carg[h_cbase[i] + p] == hn) ok = 0;
+                        p = p + 1;
+                    }
+                }
+                if (ok && k == HI_PHI && h_pbase[i] >= 0) {
+                    int p;
+                    p = 0;
+                    while (p < h_pcnt[i]) {
+                        if (h_pval[h_pbase[i] + p] == hn) ok = 0;
+                        p = p + 1;
+                    }
+                }
+                i = i + 1;
+            }
+            q = q + 1;
+        }
+
+        if (!ok || hl_nalloca >= HL_MAX_ALLOCA || h_ninst >= HIR_MAX_INST) {
+            j = j + 1;
+            continue;
+        }
+
+        /* Mint the hi-half alloca (same 8-byte slot, upper word). */
+        ah = h_ninst;
+        h_kind[ah] = HI_ALLOCA;
+        h_ty[ah] = TY_INT;
+        h_src1[ah] = -1;
+        h_src2[ah] = -1;
+        h_val[ah] = hl_aoff[j] + 4;
+        h_name[ah] = 0;
+        h_blk[ah] = h_blk[a_inst];
+        h_cbase[ah] = -1;
+        h_pbase[ah] = -1;
+        h_pcnt[ah] = 0;
+        h_ld_ro[ah] = 0;
+        h_no_remat[ah] = 0;
+        h_ninst = h_ninst + 1;
+        hl_aoff[hl_nalloca] = hl_aoff[j] + 4;
+        hl_ainst[hl_nalloca] = ah;
+        hl_nalloca = hl_nalloca + 1;
+
+        h_ty[a_inst] = TY_INT;
+
+        q = 0;
+        while (q < nhi) {
+            int hn;
+            hn = hi_nodes[q];
+            i = 0;
+            while (i < h_ninst) {
+                if (h_kind[i] != HI_NOP && h_src1[i] == hn &&
+                    (h_kind[i] == HI_LOAD || h_kind[i] == HI_STORE))
+                    h_src1[i] = ah;
+                i = i + 1;
+            }
+            h_kind[hn] = HI_NOP;
+            h_src1[hn] = -1;
+            h_src2[hn] = -1;
+            q = q + 1;
+        }
+
+        j = j + 1;
+    }
+}
+
 static void hir_ssa_construct(void) {
     int b;
 
@@ -912,6 +1089,8 @@ static void hir_ssa_construct(void) {
         ssa_phi_base = h_ninst;
         return;
     }
+
+    if (ssa_split_pairs) ssa_split_pair_allocas();
 
     ssa_build_cfg();
     ssa_compute_rpo();

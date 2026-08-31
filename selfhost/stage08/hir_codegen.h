@@ -2928,6 +2928,10 @@ static void hcg_func(Node *fn) {
     hl_func(fn);
 
     /* Run SSA construction */
+    ssa_split_pairs = 1;   /* SLOW-32 lowers 8-byte locals as word
+                            * pairs; split them so mem2reg promotes
+                            * both halves.  The crosses lower natively
+                            * and leave this unset. */
     hir_ssa_construct();
 
     /* Run SSA optimizations */

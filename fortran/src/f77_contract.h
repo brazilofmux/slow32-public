@@ -73,6 +73,9 @@ static int ty_is_fp(int ty) {
     return ty_is_float(ty) || ty_is_double(ty);
 }
 static int ty_is_ptr(int ty) { return (ty & TY_PTR_MASK) != 0; }
+/* Fortran 77 has no derived types; the shared ssa pair-split pass
+ * asks, so answer no. */
+static int ty_is_struct(int ty) { (void)ty; return 0; }
 
 static int ty_size(int ty) {
     if (ty & TY_PTR_MASK) return ty_ptr_size;
