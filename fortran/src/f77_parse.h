@@ -560,8 +560,18 @@ static int f77_subscript_addr(int s) {
     int t;
     int byte;
     int e;
+    int coff;         /* compile-time part: -sum(lo_k * stride_k) */
+    int addr;
 
-    off = f77_iconst(0);
+    /* A constant lower bound over a CONSTANT stride contributes a
+     * compile-time byte offset, accumulated in coff and emitted as one
+     * trailing ADDI on the final address -- which BURG folds into each
+     * load/store's 12-bit displacement, so Fortran's 1-based (I-1)
+     * subtraction costs nothing at run time.  A lower bound over a
+     * RUNTIME stride (adjustable dimensions) keeps the subtraction on
+     * the index, as before. */
+    off = -1;
+    coff = 0;
     cstride = 1;
     vstride = -1;
     k = 0;
@@ -569,13 +579,17 @@ static int f77_subscript_addr(int s) {
         idx = f77_expr();
         idx = f77_cvt(idx, &ex_hi, ex_ty, TY_INT);
         if (k < f77_srank[s]) {
-            if (f77_slo[s][k] != 0)
-                idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 0 - f77_slo[s][k], NULL);
+            if (f77_slo[s][k] != 0) {
+                if (vstride >= 0)
+                    idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 0 - f77_slo[s][k], NULL);
+                else
+                    coff = coff - f77_slo[s][k] * cstride;
+            }
             if (vstride >= 0)
                 idx = hi_emit(HI_MUL, TY_INT, idx, vstride, 0, NULL);
             else if (cstride != 1)
                 idx = hi_emit(HI_MUL, TY_INT, idx, f77_iconst(cstride), 0, NULL);
-            off = hi_emit(HI_ADD, TY_INT, off, idx, 0, NULL);
+            off = (off < 0) ? idx : hi_emit(HI_ADD, TY_INT, off, idx, 0, NULL);
 
             /* Advance the stride by this dimension's extent.  Once any
              * extent is a run-time value the stride becomes one too;
@@ -606,12 +620,22 @@ static int f77_subscript_addr(int s) {
     else f77_tok();
     if (k != f77_srank[s]) f77_error("wrong number of subscripts");
 
+    if (off < 0) off = f77_iconst(0);
     t = ty_size(f77_sty[s]);
     if (t == 1) byte = off;
     else if (t == 4) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(2), 0, NULL);
     else if (t == 8) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
     else byte = hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
-    return hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
+    addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
+    if (coff != 0) {
+        int cb;
+        cb = coff * t;
+        if (cb >= -2048 && cb <= 2047)
+            addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, cb, NULL);
+        else
+            addr = hi_emit(HI_ADD, HL_ADDR_TY, addr, f77_iconst(cb), 0, NULL);
+    }
+    return addr;
 }
 
 /* Load a scalar symbol.  When it has a paired hi slot, both halves are

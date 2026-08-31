@@ -378,3 +378,33 @@ range correctness.
 
 Cumulative for the day: LINPACK 1.98× → 1.73×, mandel 3.26× → 1.52×.
 f77 suite 28/28; LINPACK residual and mandel output verified.
+
+## 1-based subscripts stop costing instructions (1.73× → 1.66×)
+
+2026-08-30, two halves.  FRONTEND: f77_subscript_addr now accumulates
+every constant lower bound × constant stride at COMPILE time and
+emits it as one trailing ADDI on the final address -- so Fortran's
+(I-1)*8 becomes I*8 with a -8 displacement, and multi-dimension
+constant bounds fold into a single number.  Adjustable dimensions
+keep the subtraction on the index, as they must.  BACKEND: BURG's
+displacement fold already walked ADDI chains, but hcg_addi_folds_away
+refused an ADDI whose user is another ADDI ("used as a value") -- the
+exact shape a double's +4 hi-word address makes on top of the new
+displacement ADDI -- and materialized dead address arithmetic.  The
+predicate now recurses down the chain.
+
+An hir_opt reassociation pass was tried first and REVERTED (+3.3M):
+the in-place rewrite framework cannot insert nodes, so its ADD rule
+needed the ADDI single-use -- and the (I-1)*8 value is shared by
+both arrays in every copy loop, precisely where it mattered.  The
+frontend owns the information; the frontend emits the shape.
+
+DAXPY's body: addi/slli/add/add + 6 memory ops became slli/add/add +
+6 memory ops with -8/-4 displacements.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 867,099,154 (1.73×) | 35.7M (1.52×) |
+| after | 829,784,866 (**1.66×**) | 35.7M (1.52×, no subscripts in its loop) |
+
+Cumulative for the day: LINPACK 1.98× → 1.66×, mandel 3.26× → 1.52×.

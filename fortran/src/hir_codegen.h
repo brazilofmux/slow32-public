@@ -1368,7 +1368,13 @@ static int hcg_addi_lnt(int i) {
 }
 
 static int hcg_dbg_addi[6];
+static int hcg_addi_folds_away_d(int idx, int depth);
+
 static int hcg_addi_folds_away(int idx) {
+    return hcg_addi_folds_away_d(idx, 0);
+}
+
+static int hcg_addi_folds_away_d(int idx, int depth) {
     int i;
     int users;
     int folded;
@@ -1377,6 +1383,7 @@ static int hcg_addi_folds_away(int idx) {
     int lnt_i;
 
     hcg_dbg_addi[0]++;
+    if (depth > 4) return 0;
     if (h_kind[idx] != HI_ADDI) return 0;
     if (ra_reg[idx] < 0) { hcg_dbg_addi[1]++; return 0; }
     if (bg_uses[idx] <= 0) { hcg_dbg_addi[2]++; return 0; }
@@ -1393,6 +1400,15 @@ static int hcg_addi_folds_away(int idx) {
             if (lnt_i != BG_FADDR && lnt_i != BG_SADDR &&
                 hcg_addr_base_off(idx, &base_i, &off) && hcg_is_i12(off))
                 folded = folded + 1;
+        } else if (h_src1[i] == idx && k2 == HI_ADDI) {
+            /* DIVERGENCE (f77, port upstream): an ADDI stacked on an
+             * ADDI -- a double's +4 hi-word address on top of a folded
+             * subscript displacement -- counts as folded exactly when
+             * the whole chain above it folds.  The address-fold walk
+             * (hcg_addr_base_off) already sees through chains; this
+             * predicate refused them and materialized dead ADDIs. */
+            users = users + 1;
+            if (hcg_addi_folds_away_d(i, depth + 1)) folded = folded + 1;
         } else if (h_src1[i] == idx || h_src2[i] == idx) {
             hcg_dbg_addi[3]++;
             return 0;                        /* used as a value somewhere */
