@@ -4,9 +4,10 @@ Status: working F77 subset (2026-08-30). Vertical slice, arrays,
 subprograms, FORMAT, `READ` (formatted and list-directed, with
 `END=`), `OPEN`/`CLOSE`/`REWIND` (sequential formatted files),
 `COMMON`/`SAVE`, `DATA`/`PARAMETER`, `IMPLICIT` (including `NONE`),
-computed `GOTO`, and LINPACK run on SLOW-32 and match gfortran.
-Still refused (honestly): `EQUIVALENCE`, `CHARACTER`, `COMPLEX`,
-assigned `GOTO`, arithmetic `IF`, `**`, `BACKSPACE`, `ENDFILE`,
+computed `GOTO`, arithmetic `IF`, `**` with INTEGER exponents, and
+LINPACK run on SLOW-32 and match gfortran. Still refused (honestly):
+`EQUIVALENCE`, `CHARACTER`, `COMPLEX`, assigned `GOTO`, `**` with a
+real exponent (needs the transcendentals), `BACKSPACE`, `ENDFILE`,
 unformatted and direct-access I/O.
 
 See [`../docs/plans/fortran77.md`](../docs/plans/fortran77.md) for the

@@ -324,6 +324,7 @@ static int ex_ty;     /* type of the value most recently produced */
 static int ex_hi;     /* its hi word, when ex_ty is TY_DOUBLE */
 
 static int f77_expr(void);
+static int f77_power(void);
 static int f77_find_func(char *nm);
 static int f77_actual_addr(void);
 static int f77_urty_of(int u);
@@ -719,7 +720,12 @@ static int f77_primary(void) {
     if (lx_t == T_MINUS) {
         int vhi;
         f77_tok();
-        v = f77_primary();
+        /* Negation binds LOOSER than ** in F77: -X**2 is -(X**2), so
+         * the operand is a power, not a primary.  For every other
+         * operator the difference is invisible ((-a)*b == -(a*b)),
+         * which is how binding at primary level survived until **
+         * landed. */
+        v = f77_power();
         save = ex_ty;
         vhi = ex_hi;
         if (save == TY_DOUBLE) {
@@ -729,7 +735,7 @@ static int f77_primary(void) {
         if (save == TY_FLOAT) return hi_emit(HI_FNEG, TY_FLOAT, v, -1, 0, NULL);
         return hi_emit(HI_NEG, TY_INT, v, -1, 0, NULL);
     }
-    if (lx_t == T_PLUS) { f77_tok(); return f77_primary(); }
+    if (lx_t == T_PLUS) { f77_tok(); return f77_power(); }
     if (lx_t == T_NAME) {
         char nm[F77_MAX_NAME];
         int u;
@@ -965,31 +971,52 @@ static int f77_primary(void) {
     return f77_iconst(0);
 }
 
-/* ** is right-associative in F77. */
+/* ** is right-associative in F77.  An INTEGER exponent goes to the
+ * runtime's binary-exponentiation helpers (f77_ipow / f77_rpow_i /
+ * f77_dpow_i -- real calls, unlike the __fp64_* names the backend
+ * inlines, so the arguments carry real ABI tags).  A real exponent
+ * needs EXP/LOG and stays refused until the transcendentals land. */
 static int f77_power(void) {
     int a;
     int b;
     int aty;
     int bty;
+    int ahi;
+    int cb;
+    int r;
     a = f77_primary();
     aty = ex_ty;
+    ahi = ex_hi;
     if (lx_t == T_POWER) {
         f77_tok();
         b = f77_power();
         bty = ex_ty;
-        /* Integer**integer stays integer; anything else is REAL and
-         * goes through powf.  Only the integer case is lowered inline
-         * for the slice. */
-        if (aty == TY_INT && bty == TY_INT) {
-            f77_error("integer ** not implemented in the slice");
-            ex_ty = TY_INT;
+        if (bty != TY_INT) {
+            f77_error("** with a real exponent needs the transcendental intrinsics (not implemented)");
+            ex_ty = aty;
             return a;
         }
-        f77_error("real ** not implemented in the slice");
+        cb = h_ncarg;
+        if (aty == TY_DOUBLE) {
+            h_carg[h_ncarg] = a;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = ahi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = b;   h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+            r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_dpow_i");
+            h_cbase[r] = cb;
+            ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+            ex_ty = TY_DOUBLE;
+            return r;
+        }
+        h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = b; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, aty == TY_FLOAT ? TY_FLOAT : TY_INT, -1, -1, 2,
+                    aty == TY_FLOAT ? "f77_rpow_i" : "f77_ipow");
+        h_cbase[r] = cb;
         ex_ty = aty;
-        return a;
+        return r;
     }
     ex_ty = aty;
+    ex_hi = ahi;
     return a;
 }
 
@@ -3705,6 +3732,60 @@ static void f77_statement(void) {
 
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
     if (cls == S_DO)       { f77_open_do();     goto done; }
+
+    if (cls == S_IF_LOGIC &&
+        f77_if_tail < lx_stmt_len &&
+        lx_stmt[f77_if_tail] >= '0' && lx_stmt[f77_if_tail] <= '9') {
+        /* Arithmetic IF: IF (e) l1, l2, l3 -- branch on the sign of e.
+         * No statement can begin with a digit, so a digit after the
+         * closing paren can only be the first label.  Both compares
+         * are emitted up front in the current block (which dominates
+         * the middle one), then two conditional branches chain. */
+        int v;
+        int vty;
+        int vhi;
+        int c_neg;
+        int c_eq;
+        int l1, l2, l3;
+        int b_mid;
+        f77_scan_from(2);
+        v = f77_expr();          /* parses the (e) as a parenthesised primary */
+        vty = ex_ty;
+        vhi = ex_hi;
+        if (lx_t != T_ICON) { f77_error("arithmetic IF needs three labels"); goto done; }
+        l1 = lex_ival; f77_tok();
+        if (lx_t != T_COMMA) { f77_error("arithmetic IF needs three labels"); goto done; }
+        f77_tok();
+        if (lx_t != T_ICON) { f77_error("arithmetic IF needs three labels"); goto done; }
+        l2 = lex_ival; f77_tok();
+        if (lx_t != T_COMMA) { f77_error("arithmetic IF needs three labels"); goto done; }
+        f77_tok();
+        if (lx_t != T_ICON) { f77_error("arithmetic IF needs three labels"); goto done; }
+        l3 = lex_ival; f77_tok();
+
+        if (vty == TY_DOUBLE) {
+            int z;
+            int zhi;
+            z = f77_dconst(0.0, &zhi);
+            c_neg = f77_fp64_call2("__fp64_lt", v, vhi, z, zhi, NULL);
+            c_eq = f77_fp64_call2("__fp64_eq", v, vhi, z, zhi, NULL);
+        } else if (vty == TY_FLOAT) {
+            int z;
+            z = f77_rconst(0.0);
+            c_neg = hi_emit(HI_FLT, TY_INT, v, z, 0, NULL);
+            c_eq = hi_emit(HI_FEQ, TY_INT, v, z, 0, NULL);
+        } else {
+            c_neg = hi_emit(HI_SLT, TY_INT, v, f77_iconst(0), 0, NULL);
+            c_eq = hi_emit(HI_SEQ, TY_INT, v, f77_iconst(0), 0, NULL);
+        }
+        b_mid = hir_new_block();
+        hi_emit(HI_BRC, TY_VOID, c_neg, f77_label_blk(l1), b_mid, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_mid);
+        hi_emit(HI_BRC, TY_VOID, c_eq, f77_label_blk(l2), f77_label_blk(l3), NULL);
+        f77_cur_blk_live = 0;
+        goto done;
+    }
 
     if (cls == S_IF_LOGIC) {
         /* IF (e) stmt -- execute stmt only when e is true. */

@@ -813,6 +813,57 @@ void f77_rd_end(void) {
     fio_reading = 0;
 }
 
+/* --- ** with an INTEGER exponent -------------------------------------- */
+
+/* Binary exponentiation, the same shape gcc's __builtin_powi uses, so
+ * rounding of the multiply chain matches a reference compiler's.  A
+ * negative INTEGER exponent follows F77 integer division: 1/I**n,
+ * which is 0 for |I| > 1.  Real bases take the reciprocal at the end
+ * (one rounding, like powi). */
+int f77_ipow(int a, int n) {
+    int r;
+    if (n < 0) {
+        if (a == 1) return 1;
+        if (a == -1) return (n & 1) ? -1 : 1;
+        return 0;               /* |a| > 1 truncates; 0**negative is 0 */
+    }
+    r = 1;
+    while (n > 0) {
+        if (n & 1) r = r * a;
+        a = a * a;
+        n = n >> 1;
+    }
+    return r;
+}
+
+double f77_dpow_i(double a, int n) {
+    double r = 1.0;
+    int neg = 0;
+    unsigned int m;
+    if (n < 0) { neg = 1; m = (unsigned int)0 - (unsigned int)n; }
+    else m = (unsigned int)n;
+    while (m) {
+        if (m & 1u) r = r * a;
+        a = a * a;
+        m = m >> 1;
+    }
+    return neg ? 1.0 / r : r;
+}
+
+float f77_rpow_i(float a, int n) {
+    float r = 1.0f;
+    int neg = 0;
+    unsigned int m;
+    if (n < 0) { neg = 1; m = (unsigned int)0 - (unsigned int)n; }
+    else m = (unsigned int)n;
+    while (m) {
+        if (m & 1u) r = r * a;
+        a = a * a;
+        m = m >> 1;
+    }
+    return neg ? 1.0f / r : r;
+}
+
 /* --- OPEN / CLOSE / REWIND -------------------------------------------- */
 
 /* OPEN (u, FILE='name' [, STATUS='OLD'|'NEW'|'UNKNOWN']).

@@ -2,9 +2,11 @@
 
 Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
 OPEN/CLOSE/REWIND, COMMON/SAVE, DATA/PARAMETER, IMPLICIT (incl. NONE),
-computed GOTO, and LINPACK all run. Still refused: `EQUIVALENCE`,
-`CHARACTER`, `COMPLEX`, assigned `GOTO`, arithmetic `IF`, `**`,
-`BACKSPACE`, `ENDFILE`, unformatted and direct-access I/O.
+computed GOTO, arithmetic IF, `**` with INTEGER exponents, and LINPACK
+all run. Still refused: `EQUIVALENCE`, `CHARACTER`, `COMPLEX`,
+assigned `GOTO`, `**` with a real exponent (needs the
+transcendentals), `BACKSPACE`, `ENDFILE`, unformatted and
+direct-access I/O.
 
 ## Why this one
 
@@ -429,6 +431,39 @@ No linker change is required, and none should be added for this.
    STATUS='NEW' open of the same name succeeding right after.
    Mutation-proven: a dead REWIND and a dead DELETE each abort the
    run (EOF on the reread; NEW finding the file still there).
+
+   **Arithmetic IF and `**` landed 2026-08-30.**  Arithmetic IF is
+   classified by one fact: no statement can begin with a digit, so a
+   digit after the IF's closing paren can only be the first label.
+   Both sign compares are emitted up front (the entry side dominates
+   the middle block), then two conditional branches chain; INTEGER,
+   REAL and DOUBLE selectors all work, through the same compare
+   machinery the relationals use.
+
+   `**` with an INTEGER exponent calls binary-exponentiation helpers
+   in the runtime (f77_ipow / f77_rpow_i / f77_dpow_i) -- REAL calls
+   with proper ABI tags, unlike the `__fp64_*` names the backend
+   inlines.  The multiply chain is the same shape gcc's
+   __builtin_powi uses, so rounding matches the reference.  A
+   negative INTEGER exponent follows F77 integer division (1/I**n:
+   0 for |I| > 1); real bases take one reciprocal at the end.  A real
+   exponent stays refused until EXP/LOG land.
+
+   Landing `**` exposed a precedence bug that had been invisible:
+   unary minus bound at PRIMARY level, so -X**2 would have parsed as
+   (-X)**2.  For every other operator the difference cannot be
+   observed -- (-a)*b equals -(a*b) -- which is exactly why it
+   survived until an operator with parity arrived.  Negation now
+   binds a power, making -X**2 = -(X**2) per the standard.
+
+   Gated by `tests/f77/arith1.f`, all values exact in binary so both
+   compilers must agree to the bit: -2**2 = -4 pins the precedence
+   fix, 2**3**2 = 512 pins right-associativity, 2**(-1) = 0 and
+   (-1)**(-3) = -1 pin negative-exponent semantics, and the
+   arithmetic IFs walk all three INTEGER branches, take the zero
+   branch on an exact DOUBLE difference, and the negative branch on
+   REAL.  Mutation-proven: re-binding negation to primary trips STOP
+   7; flipping the arithmetic IF's sign compare trips STOP 13.
 6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,
    arbitrary lower bounds (`R(0:9)`, `A(-5:5)`), up to rank 7, elements
    of any type including DOUBLE PRECISION, the `DIMENSION` statement,
