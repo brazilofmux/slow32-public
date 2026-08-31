@@ -509,3 +509,51 @@ investigation DID fix, and what it found:
   not better coalescing.  It stays parked; ctl_body[] still waits.
 
 State: LINPACK 1.49×, mandel 1.52×, 28/28 tests.
+
+## Spilled phis stop poisoning edges; rotation ships, gated (1.49× → 1.41×, mandel 1.52× → 1.50×)
+
+2026-08-30, the splitting session's first installment.  Four changes,
+each measured:
+
+- **Spill-to-remat for pinned loop constants** (small): a wide
+  constant pinned into a register by hcg_mark_loop_consts could
+  SPILL, paying a frame slot while displacing values that needed the
+  register.  gc_select_spill now treats pinned constants as the
+  cheapest spill (cost 0), and writeback reverts an uncolored one to
+  plain rematerialization -- no slot, no loads, register released.
+  The rotated-mandel constant spills (6 of 12) vanished.
+
+- **THE BIG ONE -- spilled phis no longer force the push/pop slow
+  path** (rotated mandel 61.2M → 38.2M): hcg_phi_copies bailed to
+  runtime-stack parallel copies if ANY phi on the edge was spilled.
+  But a memory DESTINATION can never be part of a register cycle
+  (emit it first, through r2), and a memory SOURCE is const-like
+  (loaded straight into its destination register when it falls
+  free).  Only a slot both read and written on the same edge, a far
+  destination slot, or r2 as an endpoint still take the slow path.
+
+- **Pair-friendly single placement** (small): the final first-free
+  color scans now prefer a color whose aligned buddy is already
+  used, so singles stop fragmenting virgin pairs.  Hot-pairs-first
+  claiming was also tried and measured EXACTLY ZERO -- the failing
+  claims fail because interference covers every aligned pair, not
+  because of ordering -- and was reverted.
+
+- **Rotation ships, gated on the frontend's pressure knowledge**: a
+  loop whose body stores a scalar DOUBLE carries fp64 pair phis on
+  its back edge, and rotating those loops loses (measured twice).
+  f77_dstore_n counts scalar-double stores; close_do rotates only
+  when the count is unchanged across the body and the DO variable is
+  not itself a double.  DAXPY/DGEFA rotate; mandel's z-iteration does
+  not.  The gate dissolves when live-range splitting lands.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 748,228,640 (1.49×) | 35,684,791 (1.52×) |
+| after | 708,789,275 (**1.414×**) | 35,199,587 (**1.500×**) |
+
+Both kernels at their best form simultaneously.  Day cumulative:
+LINPACK 1.98× → 1.41×, mandel 3.26× → 1.50×.  28/28 tests; all
+engines agree.  Still owed: live-range splitting (the two mandel pair
+phis and two latch values that genuinely exceed the callee pool),
+then ungating rotation, IV strength reduction, DGEFA shapes.

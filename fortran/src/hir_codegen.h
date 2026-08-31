@@ -729,6 +729,7 @@ static int hcg_phi_const_val[SSA_MAX_PROMO];
 static int hcg_phi_src_reg[SSA_MAX_PROMO];
 static int hcg_phi_dst_reg[SSA_MAX_PROMO];
 static int hcg_phi_active[SSA_MAX_PROMO];
+static int hcg_phi_src_inst[SSA_MAX_PROMO];
 
 /* DIVERGENCE (f77, port upstream candidate): is the (from -> to) edge
  * free of REAL phi copies?  The direct conditional-branch shapes used
@@ -784,32 +785,92 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     if (n == 0) return;
 
 
-    /* Fast path: all destinations and non-constant sources are in registers.
-     * Emit cycle-safe parallel copies without runtime stack traffic. */
+    /* Fast path.  DIVERGENCE (f77, port upstream): spilled phis no
+     * longer force the whole edge onto the push/pop slow path -- one
+     * spilled back-edge phi used to cost every value on the edge a
+     * push and a pop per iteration.  A memory DESTINATION can never
+     * be part of a register cycle, so those copies are emitted first
+     * (through the r2 temp); a memory SOURCE behaves like a constant
+     * (hcg_is_const == 2), loaded straight into its destination when
+     * that register falls free.  The remaining true hazards keep the
+     * slow path: a slot both read and written on the same edge (a
+     * spilled phi feeding another phi), a far (>12-bit) destination
+     * slot, or r2 itself appearing as a copy endpoint. */
     fast_ok = 1;
     j = 0;
     while (j < n) {
         phi = hcg_phi_tmp[j];
-        if (ra_reg[phi] < 0) { fast_ok = 0; break; }
-        hcg_phi_dst_reg[j] = ra_reg[phi];
-        if (hcg_phi_dst_reg[j] == 2) { fast_ok = 0; break; } /* keep r2 as temp */
         v = ssa_phi_find_arg(phi, from_blk);
+        hcg_phi_src_inst[j] = v;
+        hcg_phi_active[j] = 1;
+        hcg_phi_dst_reg[j] = ra_reg[phi];
         if (hcg_const_imm_inst(v, &c)) {
             hcg_phi_is_const[j] = 1;
             hcg_phi_const_val[j] = c;
             hcg_phi_src_reg[j] = -1;
-        } else {
-            if (v < 0 || ra_reg[v] < 0) { fast_ok = 0; break; }
+        } else if (v < 0) {
+            fast_ok = 0;
+            break;
+        } else if (ra_reg[v] >= 0) {
             if (ra_reg[v] == 2) { fast_ok = 0; break; }
             hcg_phi_is_const[j] = 0;
             hcg_phi_src_reg[j] = ra_reg[v];
+        } else {
+            /* memory (or remat) source: const-like, no register held */
+            hcg_phi_is_const[j] = 2;
+            hcg_phi_src_reg[j] = -1;
         }
-        hcg_phi_active[j] = 1;
+        if (ra_reg[phi] < 0) {
+            off = ra_spill_off[phi];
+            if (off < -2048 || off > 2047) { fast_ok = 0; break; }
+            /* Slot written here and read by another copy on this
+             * edge?  (The reader's source can only be this phi.) */
+            i = 0;
+            while (i < n) {
+                if (i != j &&
+                    ssa_phi_find_arg(hcg_phi_tmp[i], from_blk) == phi &&
+                    ra_reg[phi] < 0) { fast_ok = 0; break; }
+                i = i + 1;
+            }
+            if (!fast_ok) break;
+        } else if (ra_reg[phi] == 2) {
+            fast_ok = 0;
+            break;
+        }
         j = j + 1;
     }
 
     if (fast_ok) {
+        /* Memory destinations first: cycle-free by construction. */
         rem = n;
+        j = 0;
+        while (j < n) {
+            phi = hcg_phi_tmp[j];
+            if (hcg_phi_dst_reg[j] < 0) {
+                off = ra_spill_off[phi];
+                v = hcg_phi_src_inst[j];
+                if (off == 0) {
+                    /* no slot: the value is never read; drop the copy */
+                } else if (hcg_phi_is_const[j] == 0) {
+                    cg_s("    stw r30, r");
+                    cg_n(hcg_phi_src_reg[j]);
+                    cg_s(", ");
+                    cg_n(off);
+                    cg_c(10);
+                } else if (hcg_phi_is_const[j] == 2 && v >= 0 &&
+                           ra_spill_off[v] == off) {
+                    /* same slot: no-op */
+                } else {
+                    hcg_into(2, v);
+                    cg_s("    stw r30, r2, ");
+                    cg_n(off);
+                    cg_c(10);
+                }
+                hcg_phi_active[j] = 0;
+                rem = rem - 1;
+            }
+            j = j + 1;
+        }
         while (rem > 0) {
             progress = 0;
             j = 0;
@@ -840,7 +901,10 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                     }
                 }
                 if (!blocked) {
-                    if (hcg_phi_is_const[j]) {
+                    if (hcg_phi_is_const[j] == 2) {
+                        /* memory/remat source: load straight into dst */
+                        hcg_into(dst, hcg_phi_src_inst[j]);
+                    } else if (hcg_phi_is_const[j]) {
                         c = hcg_phi_const_val[j];
                         if (c == 0) cg_rri("addi", dst, 0, 0);
                         else if (hcg_is_i12(c)) cg_rri("addi", dst, 0, c);

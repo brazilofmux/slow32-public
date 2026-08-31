@@ -1340,6 +1340,12 @@ static int gc_select_spill(void) {
              * color pool and are easier to color if left in simplify. */
             cost = (ra_wuses[inst] * 100) / (gc_degree[n] + 1);
             if (!ra_crosses_call[inst]) cost = cost + 50;
+            /* DIVERGENCE (f77, port upstream): a pinned loop constant
+             * (hcg_mark_loop_consts) is the CHEAPEST possible spill --
+             * losing its register just reverts it to rematerialization
+             * (writeback clears h_no_remat), no slot, no loads.  Prefer
+             * it over anything that would pay real memory traffic. */
+            if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) cost = 0;
             if (cost < best_cost) {
                 best_cost = cost;
                 best = n;
@@ -1449,6 +1455,41 @@ static void ra_build_pairs(void) {
         }
         i = i + 1;
     }
+}
+
+/* DIVERGENCE (f77, port upstream): the buddy colour completing an
+ * aligned physical pair with c, or -1.  Used to steer SINGLES away
+ * from virgin pairs: a single placed into an untouched aligned pair
+ * fragments it for every later fp64 claim. */
+static int ra_color_buddy(int c) {
+    int p0;
+    p0 = ra_get_phys(c);
+    if (p0 < 0) return -1;
+    if ((p0 & 1) == 0) {
+        if (p0 + 1 < 31 && ra_get_phys(c + 1) == p0 + 1) return c + 1;
+        return -1;
+    }
+    if (c > 0 && ra_get_phys(c - 1) == p0 - 1) return c - 1;
+    return -1;
+}
+
+/* First free colour in [lo, hi), preferring one that does NOT break a
+ * virgin aligned pair (its buddy already used or nonexistent). */
+static int ra_first_free_pairfriendly(int lo, int hi, int *used) {
+    int c;
+    int cany;
+    int b;
+    cany = -1;
+    c = lo;
+    while (c < hi) {
+        if (!used[c]) {
+            if (cany < 0) cany = c;
+            b = ra_color_buddy(c);
+            if (b < 0 || b >= hi || used[b]) return c;
+        }
+        c = c + 1;
+    }
+    return cany;
 }
 
 /* Pinned colour for a node whose fp64 partner already claimed a pair.
@@ -1838,12 +1879,9 @@ static void gc_select(void) {
                         }
                         ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     } else {
-                        /* No biased color available — fall back to plain first-free */
-                        c = RA_NCALLEE;
-                        while (c < maxc) {
-                            if (!used[c]) { gc_color[n] = c; break; }
-                            c = c + 1;
-                        }
+                        /* No biased color available — first-free, but
+                         * pair-friendly: keep virgin aligned pairs whole. */
+                        gc_color[n] = ra_first_free_pairfriendly(RA_NCALLEE, maxc, used);
                     }
                 }
             }
@@ -1854,11 +1892,8 @@ static void gc_select(void) {
                     gc_color[n] = pref;
                     ra_stat_param_preferred = ra_stat_param_preferred + 1;
                 } else {
-                    c = 0;
-                    while (c < RA_NCALLEE) {
-                        if (!used[c]) { gc_color[n] = c; break; }
-                        c = c + 1;
-                    }
+                    /* Pair-friendly first-free in the callee pool. */
+                    gc_color[n] = ra_first_free_pairfriendly(0, RA_NCALLEE, used);
                 }
             }
 
@@ -1972,11 +2007,20 @@ static void gc_writeback(void) {
                 ra_stat_caller_used = ra_stat_caller_used + 1;
             else
                 ra_stat_callee_used = ra_stat_callee_used + 1;
-        } else if (getenv("F77_RA_DEBUG")) {
-            fprintf(stderr, "SPILL inst=%d kind=%d blk=%d depth=%d wuses=%d deg=%d\n",
-                    inst, h_kind[inst], h_blk[inst],
-                    (h_blk[inst] >= 0 && h_blk[inst] < bb_nblk) ? licm_depth[h_blk[inst]] : -1,
-                    ra_wuses[inst], gc_degree[n]);
+        } else {
+            /* Uncolored pinned loop constant: revert to remat rather
+             * than taking a frame slot -- every use materializes it
+             * inline (the phi-copy fast path handles wide constants
+             * via hcg_li), and the register it was competing for goes
+             * to a value that actually needs one. */
+            if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
+                h_no_remat[inst] = 0;
+            } else if (getenv("F77_RA_DEBUG")) {
+                fprintf(stderr, "SPILL inst=%d kind=%d blk=%d depth=%d wuses=%d deg=%d\n",
+                        inst, h_kind[inst], h_blk[inst],
+                        (h_blk[inst] >= 0 && h_blk[inst] < bb_nblk) ? licm_depth[h_blk[inst]] : -1,
+                        ra_wuses[inst], gc_degree[n]);
+            }
         }
         n = n + 1;
     }
