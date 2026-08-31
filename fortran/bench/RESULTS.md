@@ -439,3 +439,36 @@ callee-saved pair; the body is 11 instructions:
 | after | 749,974,866 (**1.50×**) | 35.7M (no dummies in its loop) |
 
 Cumulative for the day: LINPACK 1.98× → 1.50×, mandel 3.26× → 1.52×.
+
+## Branch shapes unlocked; loop rotation tried and parked (→ 1.49×)
+
+2026-08-30, closing the day.  Two emission-level gates were opened,
+both enabled by the morning's assembler branch relaxation (GitHub
+#22):
+
+- `hcg_bnear` now always says near.  Its 2000-estimated-byte bound
+  (≈330 real bytes, positions are over-estimated ~6×) predates the
+  assembler relaxing long bconds; a direct bcond that ends up out of
+  range is now rewritten by the assembler into exactly the fallback
+  shape the gate used to force, so the direct shape is never worse.
+- The direct conditional-branch shapes required PHI-FREE targets;
+  they now require COPY-FREE EDGES (hcg_edge_nocopy): after
+  coalescing, an integer loop's back-edge phi copies are no-ops, and
+  refusing the direct shape cost a branch-over-jump per iteration.
+
+LOOP ROTATION (bottom-test DO back edge) was implemented, measured,
+and REVERTED: LINPACK 748.0M -> 707.4M (1.41×, DAXPY at its ideal 15
+per iteration) but mandel 35.7M -> 61.2M (+71%).  The rotated back
+edge carries the fp64 PAIR phis, and their copies do not coalesce
+the way integer IV/trip phis do -- four register moves per iteration
+per loop, plus knock-on allocation damage.  Rotation is a win
+exactly when the back edge's phi copies coalesce to nothing; until
+pair phis do, it stays out.  ctl_body[] remains recorded for the
+retry.
+
+End of day: LINPACK 748,228,640 (**1.49×**), mandel 35,684,791
+(**1.52×**), from 1.98× and 3.26× this morning.  DAXPY's body is 11
+instructions (was 15 plus 4 of loop overhead plus 2 copies).  All
+28 tests green throughout; every step measured, three experiments
+reverted on measurement (ADDI affinity, hir_opt reassociation,
+rotation).

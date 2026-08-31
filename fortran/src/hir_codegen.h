@@ -730,6 +730,29 @@ static int hcg_phi_src_reg[SSA_MAX_PROMO];
 static int hcg_phi_dst_reg[SSA_MAX_PROMO];
 static int hcg_phi_active[SSA_MAX_PROMO];
 
+/* DIVERGENCE (f77, port upstream candidate): is the (from -> to) edge
+ * free of REAL phi copies?  The direct conditional-branch shapes used
+ * to demand phi-free targets; after coalescing, a rotated loop's back
+ * edge usually carries only no-op copies (source and destination
+ * coalesced into the same register), and refusing the direct shape
+ * cost a jal per iteration.  A constant or spilled phi source still
+ * needs a real copy and keeps the trampoline. */
+static int hcg_edge_nocopy(int from_blk, int to_blk) {
+    int i;
+    int v;
+    i = ssa_phi_head[to_blk];
+    while (i >= 0) {
+        if (h_kind[i] == HI_PHI) {
+            if (ra_reg[i] < 0) return 0;
+            v = ssa_phi_find_arg(i, from_blk);
+            if (v < 0 || ra_reg[v] < 0) return 0;
+            if (ra_reg[v] != ra_reg[i]) return 0;
+        }
+        i = ssa_phi_next[i];
+    }
+    return 1;
+}
+
 static void hcg_phi_copies(int from_blk, int to_blk) {
     int i;
     int n;
@@ -1043,11 +1066,16 @@ static void hcg_emit_epilogue_inline(void) {
 
 /* Conservatively: can a conditional branch in block a reach block b? */
 static int hcg_bnear(int a, int b) {
-    int d;
+    /* DIVERGENCE (f77, port with the assembler prerequisite): always
+     * near.  The range gate predates assembler branch relaxation
+     * (GitHub #22): a bcond emitted directly to a target beyond
+     * +/-4096 is now rewritten by the assembler into the inverted
+     * branch over a jal -- exactly the fallback shape this gate used
+     * to force codegen to emit -- so the direct shape is never worse
+     * and usually one instruction better.  The phi-free target
+     * checks at the call sites still guard correctness. */
     if (a < 0 || b < 0 || a >= bb_nblk || b >= bb_nblk) return 0;
-    d = hcg_blk_pos[a] - hcg_blk_pos[b];
-    if (d < 0) d = 0 - d;
-    return d < 2000;
+    return 1;
 }
 
 /* --- Shared conditional-branch tail ---
@@ -1074,7 +1102,7 @@ static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
     ff = hcg_fwd[f];
     ne = hcg_next_emit[hcg_cur_blk];
 
-    if (ssa_phi_head[t] < 0 && ssa_phi_head[f] < 0) {
+    if (hcg_edge_nocopy(hcg_cur_blk, t) && hcg_edge_nocopy(hcg_cur_blk, f)) {
         if (ft == ne && hcg_bnear(hcg_cur_blk, ff)) {
             cg_s("    ");
             cg_s(bf);

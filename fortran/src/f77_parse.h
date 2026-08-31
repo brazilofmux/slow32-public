@@ -337,6 +337,7 @@ static int ctl_step[F77_MAX_CTL];    /* DO: HIR value of the step */
 static int ctl_stephi[F77_MAX_CTL];  /* DO: hi word of a DOUBLE step */
 static int ctl_trip[F77_MAX_CTL];    /* DO: alloca holding the trip count */
 static int ctl_test[F77_MAX_CTL];    /* DO: test block */
+static int ctl_body[F77_MAX_CTL];    /* DO: body head, the rotated back edge */
 static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
 static int ctl_else[F77_MAX_CTL];    /* IF: pending else block */
 static int ctl_n;
@@ -2460,6 +2461,7 @@ static void f77_open_do(void) {
     ctl_stephi[ctl_n] = step_hi;
     ctl_trip[ctl_n] = trip_alloca;
     ctl_test[ctl_n] = b_test;
+    ctl_body[ctl_n] = b_body;
     ctl_exit[ctl_n] = b_exit;
     ctl_n = ctl_n + 1;
 }
