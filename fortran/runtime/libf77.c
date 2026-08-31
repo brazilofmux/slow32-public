@@ -39,6 +39,7 @@ static int   fio_w, fio_d;       /* width and digits of the active one */
 static int   fio_gstart[FIO_MAXGROUP];
 static int   fio_gcount[FIO_MAXGROUP];
 static int   fio_gdepth;
+static int   fio_scale;    /* the kP scale factor in force */
 
 /* Where the last TOP-LEVEL group began, for format reversion. */
 static int   fio_revert;
@@ -89,6 +90,7 @@ static int fio_next_desc(void) {
     int c;
     int n;
     int item_start;
+    int nneg;
     int guard = 0;
 
     for (;;) {
@@ -135,6 +137,8 @@ static int fio_next_desc(void) {
         }
 
         item_start = fio_pos;
+        nneg = 0;
+        if (c == '-' && fio_isdigit(fio_fmt[fio_pos + 1])) { fio_pos++; nneg = 1; c = fio_fmt[fio_pos]; }
         n = fio_isdigit(c) ? fio_number() : 1;
         c = fio_fmt[fio_pos];
 
@@ -160,7 +164,7 @@ static int fio_next_desc(void) {
             while (n-- > 0 && fio_fmt[fio_pos]) fio_putc(fio_fmt[fio_pos++]);
             continue;
         }
-        if (c == 'P' || c == 'p') { fio_pos++; continue; }   /* scale: ignored */
+        if (c == 'P' || c == 'p') { fio_pos++; fio_scale = nneg ? -n : n; continue; }   /* kP: sticky until the next P (13.5.9) */
 
         /* Data descriptors */
         if (c=='I'||c=='i'||c=='F'||c=='f'||c=='E'||c=='e'||
@@ -216,9 +220,15 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
     int neg;
     int i;
     int n;
+    int k;
+    int nsig;
 
     if (nd <= 0) nd = 6;
-    snprintf(cf, sizeof cf, "%%.%dE", nd - 1);
+    k = fio_scale;
+    if (k <= -nd || k >= nd + 2) k = 0;             /* out of 13.5.9's range: no effect */
+    nsig = k > 0 ? nd + 1 : nd + k;                 /* significant digits shown */
+    if (nsig < 1) nsig = 1;
+    snprintf(cf, sizeof cf, "%%.%dE", nsig - 1);
     snprintf(tmp, sizeof tmp, cf, v);
 
     p = tmp;
@@ -242,9 +252,17 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
 
     q = out;
     if (neg) *q++ = '-';
-    *q++ = '0';
-    *q++ = '.';
-    for (i = 0; i < n && (q - out) < outsz - 8; i++) *q++ = tmp[40 + i];
+    if (k > 0) {                                    /* k digits ahead of the point */
+        for (i = 0; i < k && i < n; i++) *q++ = tmp[40 + i];
+        *q++ = '.';
+        for (; i < n && (q - out) < outsz - 8; i++) *q++ = tmp[40 + i];
+    } else {
+        *q++ = '0';
+        *q++ = '.';
+        for (i = k; i < 0 && (q - out) < outsz - 8; i++) *q++ = '0';   /* |k| leading zeros */
+        for (i = 0; i < n && (q - out) < outsz - 8; i++) *q++ = tmp[40 + i];
+    }
+    expv = expv - k;
     *q++ = (char)letter;
     if (expv < 0) { *q++ = '-'; expv = -expv; }
     else *q++ = '+';
@@ -269,6 +287,7 @@ void f77_wr_begin(int unit, const char *fmt) {
     fio_unit = unit;
     fio_len = 0;
     fio_gdepth = 0;
+    fio_scale = 0;
     fio_rep = 0;
     fio_desc = 0;
     fio_first_item = 1;
@@ -327,8 +346,12 @@ void f77_wr_d(double v) {
     if (d == 'I') {
         snprintf(buf, sizeof buf, "%d", (int)v);
     } else if (d == 'F') {
+        double fv = v;
+        int k = fio_scale;
+        while (k > 0) { fv *= 10.0; k--; }
+        while (k < 0) { fv /= 10.0; k++; }
         snprintf(cf, sizeof cf, "%%.%df", fio_d);
-        snprintf(buf, sizeof buf, cf, v);
+        snprintf(buf, sizeof buf, cf, fv);
     } else if (d == 'G') {
         /* Gw.d: F form when 0.1 <= |v| < 10^d, else E. The F form
          * occupies w-4 columns and is followed by four blanks. */

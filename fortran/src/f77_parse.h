@@ -895,10 +895,16 @@ static int f77_primary(void) {
                 ai = ai + 1;
             }
             rty = f77_implicit_ty(nm);
+            /* nm is this frame's buffer and hi_emit keeps the pointer:
+             * the callee's name must outlive the parse (GitHub #20 --
+             * the call came out as "EN", whatever the buffer held by
+             * codegen time). */
             r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty, -1, -1,
-                        nargs, nm);
+                        nargs, strdup(nm));
             h_cbase[r] = cb;
             ex_ty = rty;
+            ex_hi = -1;
+            if (rty == TY_DOUBLE) ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             return r;
         }
         return f77_load_sym(s);
