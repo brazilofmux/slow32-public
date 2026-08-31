@@ -348,3 +348,33 @@ iteration, plus copy-in/copy-out overhead per call.  1.983× → 2.001×.
 Off by default, still `F77_COPYIN=1` to re-run.
 
 Both engines and the oracle agree on every output; f77 suite 28/28.
+
+## Blocks laid out by fallthrough chains (1.81× → 1.73×, mandel 1.57× → 1.52×)
+
+2026-08-30. Emission order was CREATION order, and the frontend
+creates a DO loop's exit block before the loop body exists -- so the
+exit stub sat INSIDE the loop, and the body paid a taken jal over it
+every iteration:
+
+    .L46: body...            .L49: body...
+          jal r0, .L48   →         (falls through)
+    .L47: exit stub          .L51: increment
+    .L48: increment          ...exit stub placed after the loop
+
+hcg_compute_fwd now lays blocks out by greedy fallthrough chains:
+each placed block is followed by its preferred successor (BR target;
+BRC then-arm, the frontends' fallthrough arm) when unplaced,
+otherwise the lowest-numbered unplaced block.  Block 0 stays first
+(the prologue falls into it).  hcg_next_emit and hcg_blk_pos follow
+the layout, so the existing fallthrough elision and bnear range
+gating do the rest -- and the assembler's new branch relaxation makes
+a long bcond safe rather than fatal, so layout changes cannot break
+range correctness.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 907,765,619 (1.81×) | 36.9M (1.57×) |
+| after | 867,099,154 (**1.73×**) | 35.7M (**1.52×**) |
+
+Cumulative for the day: LINPACK 1.98× → 1.73×, mandel 3.26× → 1.52×.
+f77 suite 28/28; LINPACK residual and mandel output verified.

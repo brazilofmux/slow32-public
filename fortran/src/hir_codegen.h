@@ -118,6 +118,9 @@ static int hcg_blk_lbl[HIR_MAX_BLOCK];
  * neighbor once trampolines stop being emitted. */
 static int hcg_fwd[HIR_MAX_BLOCK];
 static int hcg_next_emit[HIR_MAX_BLOCK];
+static int hcg_emit_ord[HIR_MAX_BLOCK];   /* layout order (see compute_fwd) */
+static int hcg_nord;
+static char hcg_placed[HIR_MAX_BLOCK];
 static int hcg_skip[HIR_MAX_BLOCK]; /* (always 0 now; see hcg_compute_fwd) */
 static int hcg_blk_pos[HIR_MAX_BLOCK]; /* estimated byte offset, over-estimated */
 
@@ -2586,11 +2589,69 @@ static void hcg_compute_fwd(void) {
      * trampoline is 4 dead bytes of .text, and keeping it makes
      * implicit fallthrough and branch-range questions moot.  (An
      * earlier revision skipped them; the complexity wasn't worth
-     * four bytes.) */
+     * four bytes.)
+     *
+     * DIVERGENCE (f77, port upstream candidate): blocks are LAID OUT
+     * by greedy fallthrough chains instead of creation order.  The
+     * frontend creates a DO loop's exit block before the loop body
+     * exists, so creation order put the exit stub INSIDE the loop and
+     * the body paid a taken jal over it every iteration.  Each placed
+     * block is followed by its preferred successor when still
+     * unplaced (BR target; BRC then-arm, the frontends' fallthrough
+     * arm), otherwise by the lowest-numbered unplaced block.  Block 0
+     * stays first (the prologue falls into it).  Branch-range safety
+     * is unchanged: hcg_bnear gates bcond shapes on the recomputed
+     * positions, and the assembler now relaxes any bcond that still
+     * ends up long. */
     b = 0;
     while (b < bb_nblk) {
         hcg_skip[b] = 0;
-        hcg_next_emit[b] = b + 1;
+        hcg_placed[b] = 0;
+        b = b + 1;
+    }
+    {
+        int cur;
+        int pick;
+        int term;
+        int scan;
+        hcg_nord = 0;
+        cur = 0;
+        while (cur >= 0) {
+            hcg_emit_ord[hcg_nord] = cur;
+            hcg_nord = hcg_nord + 1;
+            hcg_placed[cur] = 1;
+            /* Preferred successor: where control falls if this block
+             * ends in a branch. */
+            pick = -1;
+            term = -1;
+            i = bb_end[cur] - 1;
+            while (i >= bb_start[cur]) {
+                if (hi_is_terminator(h_kind[i])) { term = i; break; }
+                i = i - 1;
+            }
+            if (term >= 0 && h_kind[term] == HI_BR) {
+                scan = hcg_fwd[h_val[term]];
+                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+            } else if (term >= 0 && h_kind[term] == HI_BRC) {
+                scan = hcg_fwd[h_src2[term]];        /* then-arm */
+                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+                if (pick < 0) {
+                    scan = hcg_fwd[h_val[term]];     /* else-arm */
+                    if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+                }
+            }
+            if (pick < 0) {
+                scan = 0;
+                while (scan < bb_nblk && hcg_placed[scan]) scan = scan + 1;
+                pick = (scan < bb_nblk) ? scan : -1;
+            }
+            cur = pick;
+        }
+    }
+    b = 0;
+    while (b < bb_nblk) {
+        hcg_next_emit[hcg_emit_ord[b]] =
+            (b + 1 < bb_nblk) ? hcg_emit_ord[b + 1] : bb_nblk;
         b = b + 1;
     }
 
@@ -2607,10 +2668,12 @@ static void hcg_compute_fwd(void) {
     nxt = 0;
     b = 0;
     while (b < bb_nblk) {
-        hcg_blk_pos[b] = nxt;
+        int ob;
+        ob = hcg_emit_ord[b];            /* positions follow LAYOUT order */
+        hcg_blk_pos[ob] = nxt;
         nxt = nxt + 32;
-        i = bb_start[b];
-        while (i < bb_end[b]) {
+        i = bb_start[ob];
+        while (i < bb_end[ob]) {
             k = h_kind[i];
             if (k != HI_NOP) {
                 if (k == HI_CALL || k == HI_CALLP) {
@@ -2621,12 +2684,12 @@ static void hcg_compute_fwd(void) {
             }
             i = i + 1;
         }
-        i = licm_head[b];
+        i = licm_head[ob];
         while (i >= 0) {
             nxt = nxt + 24;
             i = licm_next[i];
         }
-        i = ssa_phi_head[b];
+        i = ssa_phi_head[ob];
         while (i >= 0) {
             nxt = nxt + 24;
             i = ssa_phi_next[i];
@@ -2899,10 +2962,10 @@ static void hcg_func(Node *fn) {
         i = i + 1;
     }
 
-    /* Emit all basic blocks */
+    /* Emit all basic blocks, in layout order */
     b = 0;
     while (b < bb_nblk) {
-        hcg_block(b);
+        hcg_block(hcg_emit_ord[b]);
         b = b + 1;
     }
 
