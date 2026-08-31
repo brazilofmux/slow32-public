@@ -1,6 +1,6 @@
 # cobol — COBOL 85 for SLOW-32
 
-Status: **v1 done and then some** (2026-08-29, Stages 1-15). majesty's
+Status: **v1 done and then some** (2026-08-30, Stages 1-63). majesty's
 `batch.sh` now runs *every* COBOL report step on SLOW-32 -- charts,
 journal, balances and activity pipelines, eighteen programs -- and all
 twelve of its reports come out byte-identical to the all-GnuCOBOL run;
@@ -10,11 +10,14 @@ Division as a tree, the whole MOVE matrix including editing and
 de-editing, COMPUTE and the arithmetic verbs with ROUNDED / SIZE ERROR
 / REMAINDER, conditions, IF and every PERFORM form, line sequential,
 fixed sequential and indexed files, STRING, CALL / LINKAGE / USING on
-the SLOW-32 C ABI, Report Writer's cheap half, SCREEN SECTION,
-EVALUATE / INSPECT / INITIALIZE / reference modification / the 1989
-intrinsics taskdt uses, sequential mode V behind the IBM RDW that
-tapemgr round-trips, COPY, the command line, OCCURS DEPENDING ON, SEARCH; 39/39 tests, GnuCOBOL agreeing on every program
-that can run without a tty. Stages in [docs/plan.md](docs/plan.md);
+the SLOW-32 C ABI, the Report Writer entire (Stage 62; CODE and
+REPORTS ARE out by choice), SCREEN SECTION, EVALUATE / INSPECT /
+INITIALIZE / reference modification / every X3.23a-1989 intrinsic
+function, sequential mode V behind the IBM RDW that tapemgr
+round-trips, COPY, the command line, OCCURS DEPENDING ON, SEARCH;
+89/89 tests, GnuCOBOL agreeing on every program that can run without
+a tty, and the NIST CCVS-85 at 348 of 348 compiling, 8049 of 8160
+tests passing. Stages in [docs/plan.md](docs/plan.md);
 what the rest of the corpus needs, in
 [docs/majesty-corpus.md](docs/majesty-corpus.md) "Stage 12+".
 
