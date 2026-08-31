@@ -2691,7 +2691,7 @@ static int f77_actual_addr(void) {
     return tmp;
 }
 
-/* --- inlining (OFF by default -- see the measurement below) -----------
+/* --- inlining (ON by default since the allocator rework) --------------
  *
  * f77 is one-pass with no AST, so a callee's body is not sitting in a
  * data structure waiting to be spliced.  What IS available is its
@@ -2711,29 +2711,21 @@ static int f77_actual_addr(void) {
  * assembled statement is saved, and so is the token scanner's own state,
  * or a nested splice resumes the outer call mid-nowhere.
  *
- * WHY IT IS OFF BY DEFAULT.  Measured on the LINPACK kernel it makes
- * things WORSE at every threshold: 2.30x clang with inlining off, 2.79x
- * inlining at 12 statements, 3.55x at 16, 6.09x at 40.  At the 12-
- * statement setting it produced 17% more instructions and 26% more
- * load/store traffic.
+ * HISTORY: this shipped OFF for most of the compiler's life, measured
+ * 2.30x-off / 2.79x-at-12 / 6.09x-at-40 vs clang on LINPACK, and a
+ * long note here blamed the by-reference convention (a dummy stays an
+ * address when spliced, so the splice "only buys call/return").  That
+ * explanation is RETRACTED: the loss was the register allocator, not
+ * the convention -- linear-interval liveness invented interference
+ * between loops laid end to end, coloring failures landed on the
+ * hottest nodes, and pair pins leaked across allocation rounds.  With
+ * per-block liveness and iterated spilling (see hir_regalloc.h) the
+ * same splice at the same threshold 12 measures LINPACK at 1.048x
+ * clang against 1.123x with inlining off.  h_ld_ro (F77 15.9.3.6)
+ * already hoists the loads the old note said needed scalar
+ * replacement.
  *
- * The reason is Fortran's calling convention.  Arguments are BY
- * REFERENCE, so a dummy is an address whether or not the body is
- * spliced -- inlining DAXPY does not turn DA into a value, and the
- * inner loop still loads through the address every iteration.  So the
- * splice buys only the call and return, amortised over the callee's own
- * loop and therefore nearly nothing, while paying more live values and
- * more spilling in a larger function.  C wins here because inlining
- * lets the optimiser see `da` as a value; Fortran needs SCALAR
- * REPLACEMENT of the dummy first, which is an analysis this compiler
- * does not have.
- *
- * There is also less on offer than in C to begin with: Fortran's tiny
- * hot operations are INTRINSICS (DABS, DMAX1), already emitted inline,
- * so what remains in user subprograms is loop bodies -- the shape where
- * inlining pays least.
- *
- * Enable with F77_INLINE_MAX=<statements> to re-run the experiment.
+ * F77_INLINE_MAX=<n> overrides the threshold; 0 disables.
  */
 
 /* Is `u` worth and safe to inline here?  Recursion is excluded by
