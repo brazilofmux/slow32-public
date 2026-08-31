@@ -383,9 +383,26 @@ static void f77_emit_copyout(void);
  * The hi word must be captured immediately after each subexpression:
  * the next emission overwrites the side channel. */
 
+/* Is this lo/hi value pair the fp64 constant +2.0 (0x4000000000000000)? */
+static int f77_fp64_is_two(int lo, int hi) {
+    return lo >= 0 && hi >= 0 &&
+           h_kind[lo] == HI_ICONST && h_val[lo] == 0 &&
+           h_kind[hi] == HI_ICONST && h_val[hi] == 1073741824;
+}
+
 static int f77_fp64_call2(char *name, int alo, int ahi, int blo, int bhi, int *rhi) {
     int cb;
     int r;
+    /* 2.0*X and X*2.0 are exactly X+X in IEEE (scaling by a power of
+     * two never rounds), and the rewrite deletes the constant: in a
+     * loop that is two fewer remat instructions every iteration. */
+    if (strcmp(name, "__fp64_mul") == 0) {
+        if (f77_fp64_is_two(alo, ahi)) {
+            alo = blo; ahi = bhi; name = "__fp64_add";
+        } else if (f77_fp64_is_two(blo, bhi)) {
+            blo = alo; bhi = ahi; name = "__fp64_add";
+        }
+    }
     cb = h_ncarg;
     h_carg[h_ncarg] = alo; h_ncarg = h_ncarg + 1;
     h_carg[h_ncarg] = ahi; h_ncarg = h_ncarg + 1;

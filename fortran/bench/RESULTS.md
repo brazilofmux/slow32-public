@@ -713,3 +713,54 @@ fuses, as does the iteration-count check.  LINPACK barely moves --
 its hot loops' compares were already the int trip tests fused last
 round.  28/28 tests; mandel output byte-identical to the clang
 build; LINPACK residual check passes.
+
+## Morning after: mandel goes UNDER clang (2.0*X = X+X, and constant pairs)
+
+Two changes, both aimed at mandel's last visible fat — per-iteration
+fp64 constants.
+
+**`2.0*X -> X+X`** (`f77_fp64_call2`): scaling by two is exact in
+IEEE, so the rewrite is bit-identical — and it doesn't just swap a
+mul for an add, it deletes the 2.0 constant, which was two remat
+instructions inside the z-loop.  24,985,251 -> 22,715,443.
+
+**fp64 constant pairs pinned in leaf-loop preheaders**
+(`licm_fp64_consts` + `licm_cpin`): an fp64 pseudo-call reads
+operands as aligned register PAIRS; a constant operand whose lo word
+is 0 (i12) stayed half-remat, so no pair ever formed and the emitter
+marshalled through scratch every iteration.  Clone both ICONST halves
+into the loop preheader's hoist list, pin them (h_no_remat), and the
+allocator hands them a real pair — mandel's `.GT. 4.0` became
+`flt.d r1, r26, r14`.  22,715,443 -> 20,525,637.
+
+Placement was three experiments, and the FIRST TWO WERE 2-3x
+REGRESSIONS, not neutral:
+| placement | mandel |
+|---|---:|
+| pin entry-block originals | 63,653,191 |
+| pin where licm_hoist left them (outermost) | 47,603,337 |
+| innermost, LEAF loops only | **20,525,637** |
+Under linear-interval liveness a constant pinned above the nest
+spans every enclosing loop, and pairs are coloured first, so the
+constants starved the real loop pairs into spills.  A loop with a
+nested loop gets NOTHING pinned (its constants are touched once per
+outer iteration but would sit on the register file across the whole
+inner nest).  Leaf loops touch the use every iteration, so the pair
+pays.  Spill-to-remat still unpins at zero cost if the leaf is tight.
+
+Also the deferred-rewrite trap hit a FOURTH time: in-loop constants
+were already hoisted+NOPed by licm_hoist, cargs still named the NOPed
+originals, and the h_kind==ICONST test silently failed.  Every
+operand read in a post-hoist pass resolves through licm_map, no
+exceptions — this is now a rule, not a lesson.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 565,071,284 (1.127×) | 24,985,251 (1.065×) |
+| after | 565,063,102 (1.127×) | **20,525,637 (0.875×)** |
+
+Mandel output stays byte-identical to the clang build.  LINPACK
+doesn't move — its hot compares are against variables.  The z-loop
+is 17/iteration: 11 fp64 ops, one fused compare-branch, five of
+latch.  f77 now emits measurably BETTER scalar-double loop code than
+clang/LLVM does for this ISA.

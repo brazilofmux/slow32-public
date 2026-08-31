@@ -2587,7 +2587,12 @@ static void hcg_mark_loop_consts(void) {
 
     i = 0;
     while (i < h_ninst) {
-        h_no_remat[i] = 0;
+        /* licm_fp64_consts placed these ICONST clones in a loop
+         * preheader precisely so they could hold a register pair
+         * across the loop; pinning is the second half of that deal.
+         * Pinning entry-block constants instead was measured 2.8x
+         * WORSE (whole-function ranges starved the loop pairs). */
+        h_no_remat[i] = licm_cpin[i];
         i = i + 1;
     }
 

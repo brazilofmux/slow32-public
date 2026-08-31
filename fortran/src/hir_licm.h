@@ -28,6 +28,9 @@ static int licm_next[HIR_MAX_INST];   /* next hoisted inst, -1 = end */
 
 /* --- Old-to-clone mapping --- */
 static int licm_map[HIR_MAX_INST];    /* old index -> clone index, -1 = not hoisted */
+static int licm_cpin[HIR_MAX_INST];   /* ICONST clone placed in a preheader by
+                                       * licm_fp64_consts; codegen pins it
+                                       * (h_no_remat) so it can keep a pair */
 
 /* Blocks belonging to ANY natural loop in this function — persists
  * after hir_licm (ssa_vis is per-loop scratch).  Consumed by
@@ -262,6 +265,7 @@ static int licm_clone(int orig) {
 
     /* Clones are never themselves hoisted; mark so rewrite skips them */
     licm_map[cl] = -1;
+    licm_cpin[cl] = 0;   /* the index may be reused across functions */
 
     h_ninst = h_ninst + 1;
 
@@ -984,6 +988,144 @@ static void licm_strred(int header, int latch) {
     }
 }
 
+/* =================================================================
+ * fp64 constant pairs into the INNERMOST loop preheader
+ *
+ * An fp64 pseudo-call reads each operand as an aligned register PAIR;
+ * a constant operand is two ICONSTs, and a double's lo word is often
+ * 0 (i12), so remat left the pair split and the emitter marshalled
+ * through scratch -- two instructions EVERY iteration (mandel paid 4
+ * per z-step before 2.0*X became X+X).  Clone both halves into the
+ * INNERMOST enclosing loop's preheader hoist list and rewrite just
+ * those carg slots; codegen pins the clones (h_no_remat via
+ * licm_cpin) so the allocator can give them a pair.  If it cannot,
+ * spill-to-remat unpins at zero cost and the remattable clone in the
+ * hoist list emits nothing: exactly the status quo.
+ *
+ * Placement is the point, not the pin.  Two rejected placements, both
+ * measured 2.8x WORSE: pinning the entry-block originals, and pinning
+ * where licm_hoist leaves constants -- it chain-hoists them to the
+ * OUTERMOST preheader, and under linear-interval liveness either way
+ * gives a range spanning every enclosing loop; pairs being coloured
+ * first, the constants starved the real loop pairs into spills.
+ * Innermost placement re-materializes once per loop ENTRY (outer
+ * iteration) to keep the pinned range one loop deep.
+ *
+ * Runs as a second scan after all loops are processed: licm_depth is
+ * final, so "this loop is the call's innermost" is one compare; carg
+ * slots still name NOPed hoisted originals until licm_rewrite, so
+ * every operand read resolves one hop through licm_map (the deferred
+ * -rewrite trap, hit a FOURTH time before this line was written).
+ * ================================================================= */
+static void licm_fp64_consts(int header, int latch) {
+    int target;
+    int body_count;
+    int bi;
+    int b;
+    int i;
+    int n;
+    int j;
+    int a;
+    int p;
+    int d;
+    int fl;
+    int fh;
+    int dl[16];
+    int dh[16];
+    int dcl[16];
+    int dch[16];
+    int nd;
+
+    target = ssa_idom[header];
+    if (target < 0 || target >= bb_nblk) return;
+    body_count = licm_find_body(header, latch);
+    nd = 0;
+
+    /* LEAF loops only.  A loop containing a nested loop gets nothing:
+     * its constants are touched once per OUTER iteration, but the
+     * pinned pair would sit on the register file across the whole
+     * inner nest -- measured 2.1x worse on mandel (the 100.0 scale
+     * divisor pinned across the z-loop).  In a leaf, every iteration
+     * touches the use, so the pair pays for itself. */
+    bi = 0;
+    while (bi < body_count) {
+        if (licm_depth[licm_body[bi]] != licm_depth[header]) return;
+        bi = bi + 1;
+    }
+
+    bi = 0;
+    while (bi < body_count) {
+        b = licm_body[bi];
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            n = h_val[i];
+            if (h_kind[i] == HI_CALL && h_name[i] != NULL &&
+                strncmp(h_name[i], "__fp64_", 7) == 0 &&
+                h_cbase[i] >= 0 && (n == 2 || n == 4)) {
+                j = 0;
+                while (j + 1 < n) {
+                    a = h_carg[h_cbase[i] + j];
+                    p = h_carg[h_cbase[i] + j + 1];
+                    if (a >= 0 && licm_map[a] >= 0) a = licm_map[a];
+                    if (p >= 0 && licm_map[p] >= 0) p = licm_map[p];
+                    if (a >= 0 && p >= 0 &&
+                        h_kind[a] == HI_ICONST && h_kind[p] == HI_ICONST &&
+                        !licm_cpin[a] && !licm_cpin[p]) {
+                        /* One clone pair per distinct constant per loop. */
+                        fl = -1;
+                        fh = -1;
+                        d = 0;
+                        while (d < nd) {
+                            if (dl[d] == h_val[a] && dh[d] == h_val[p]) {
+                                fl = dcl[d];
+                                fh = dch[d];
+                                break;
+                            }
+                            d = d + 1;
+                        }
+                        if (fl < 0 && nd < 16) {
+                            fl = licm_clone(a);
+                            fh = licm_clone(p);
+                            if (fl < 0 || fh < 0) return;
+                            h_blk[fl] = target;
+                            h_blk[fh] = target;
+                            licm_cpin[fl] = 1;
+                            licm_cpin[fh] = 1;
+                            licm_next[fl] = -1;
+                            licm_next[fh] = -1;
+                            if (licm_tail[target] >= 0)
+                                licm_next[licm_tail[target]] = fl;
+                            else
+                                licm_head[target] = fl;
+                            licm_next[fl] = fh;
+                            licm_tail[target] = fh;
+                            dl[nd] = h_val[a];
+                            dh[nd] = h_val[p];
+                            dcl[nd] = fl;
+                            dch[nd] = fh;
+                            nd = nd + 1;
+                            if (getenv("F77_CP_DEBUG")) {
+                                fdputs("cpin: pin pair hi=", 2);
+                                fdputuint(2, (unsigned)h_val[fh]);
+                                fdputs(" ph=", 2);
+                                fdputuint(2, (unsigned)target);
+                                fdputc(10, 2);
+                            }
+                        }
+                        if (fl >= 0 && fh >= 0) {
+                            h_carg[h_cbase[i] + j] = fl;
+                            h_carg[h_cbase[i] + j + 1] = fh;
+                        }
+                    }
+                    j = j + 2;
+                }
+            }
+            i = i + 1;
+        }
+        bi = bi + 1;
+    }
+}
+
 static void hir_licm(void) {
     int b;
     int i;
@@ -1020,6 +1162,7 @@ static void hir_licm(void) {
     while (i < h_ninst) {
         licm_map[i] = -1;
         licm_next[i] = -1;
+        licm_cpin[i] = 0;
         ho_use[i] = 0;  /* clear stale use counts before reusing as invariant flag */
         i = i + 1;
     }
@@ -1050,6 +1193,23 @@ static void hir_licm(void) {
                 licm_split(s);
                 licm_strred(s, b);
             }
+            si = si + 1;
+        }
+        b = b + 1;
+    }
+
+    /* Second back-edge scan: licm_depth is final only now, so this is
+     * the earliest "innermost loop" can be decided.  Must run before
+     * licm_rewrite conceptually, but the pass resolves licm_map at
+     * every operand read, so either side works; it adds mappings of
+     * its own only via direct carg rewrites. */
+    b = 0;
+    while (b < bb_nblk) {
+        si = 0;
+        while (si < ssa_nsucc[b]) {
+            s = ssa_succ[ssa_soff[b] + si];
+            if (s >= 0 && s < bb_nblk && licm_dominates(s, b))
+                licm_fp64_consts(s, b);
             si = si + 1;
         }
         b = b + 1;
