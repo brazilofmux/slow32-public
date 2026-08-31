@@ -55,7 +55,7 @@ for m in $MODULES; do
         exp="$(grep "^$name.CBL" "$CCVS/$m.txt" 2>/dev/null | head -1 | awk '{print $2, $3, $4, $5}')"
         # compile-only programs (report.pl's comp_only) may CALL programs the
         # suite never supplies (IC401M's FIC401M): compile and assemble, no link
-        case "$name" in NC401M|RL301M|RL401M|IC401M|IX301M|IX401M|SQ303M|SQ401M|ST301M|SM401M|RW301M|RW302M|DB205A|OB401M|DB301M|DB302M|DB303M|DB304M|DB305M|SG301M|CM301M|CM401M)
+        case "$name" in NC401M|RL301M|RL401M|IC401M|IX301M|IX401M|SQ303M|SQ401M|ST301M|SM401M|RW301M|RW302M|DB205A|OB401M|DB301M|DB302M|DB303M|DB304M|DB305M|SG301M|CM301M|CM401M|IF401M|IF402M|IF403M)
             if "$CDIR/out/s32-cobc" -fixed -I "$CCVS/copy" -o "$run/$lc.s" "$run/$lc.cbl" >"$run/$name.compile.log" 2>&1 &&
                "$ROOT/tools/assembler/slow32asm" "$run/$lc.s" "$run/$lc.s32o" >>"$run/$name.compile.log" 2>&1; then
                 printf '  %-7s %3d/%3d  fail %2d  del %2d   %s\n' "$name" 1 1 0 0 "= GnuCOBOL (compile only)"
@@ -72,7 +72,7 @@ for m in $MODULES; do
             continue
         fi
         # compile-only programs (report.pl's comp_only): a compile is the pass
-        case "$name" in NC401M|RL301M|RL401M|IC401M|IX301M|IX401M|SQ303M|SQ401M|ST301M|SM401M|RW301M|RW302M|DB205A|OB401M|DB301M|DB302M|DB303M|DB304M|DB305M|SG301M|CM301M|CM401M)
+        case "$name" in NC401M|RL301M|RL401M|IC401M|IX301M|IX401M|SQ303M|SQ401M|ST301M|SM401M|RW301M|RW302M|DB205A|OB401M|DB301M|DB302M|DB303M|DB304M|DB305M|SG301M|CM301M|CM401M|IF401M|IF402M|IF403M)
             printf '  %-7s %3d/%3d  fail %2d  del %2d   %s\n' "$name" 1 1 0 0 "= GnuCOBOL (compile only)"
             t_all=$((t_all+1)); t_pass=$((t_pass+1)); t_progok=$((t_progok+1)); continue ;;
         esac

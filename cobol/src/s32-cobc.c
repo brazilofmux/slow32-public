@@ -35,6 +35,7 @@
  * through -I.  Unimplemented is a diagnostic, never silence.
  */
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
@@ -263,16 +264,20 @@ typedef struct {
     int len;        /* literal byte length (literals may hold NULs) */
     const char *file;
     int dbg;        /* from a debugging line: matched by COPY REPLACING, then dropped */
+    unsigned char after_comma;   /* a separator comma or semicolon stood before this token */
 } Tok;
 
 static Tok *g_tok;
 static int g_ntok, g_tcap;
 static int g_tok_dbg;
 
+static int g_pending_comma;
+
 static Tok *push_tok(int kind, int line, const char *s, int len)
 {
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
+    t->after_comma = (unsigned char)g_pending_comma; g_pending_comma = 0;
     t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg;
     return t;
 }
@@ -411,7 +416,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 push_tok(T_OP, line, ",", 1); p++; continue;
             }
             if (c == ',' || c == ';') {
-                if (p[1] == 0 || p[1] == ' ' || p[1] == '\t') { p++; continue; }
+                if (p[1] == 0 || p[1] == ' ' || p[1] == '\t') { g_pending_comma = 1; p++; continue; }
                 die_at(line, "'%c' is a separator only when followed by a space", c);
             }
             if (c == '(') { push_tok(T_LP, line, "(", 1); p++; continue; }
@@ -2127,6 +2132,15 @@ static int num_desc(int digits)
     return desc_add(&d);
 }
 
+/* an intrinsic's result: a sign and 18 DISPLAY digits at the given scale */
+static int numfn_desc(int scale)
+{
+    Desc d; memset(&d, 0, sizeof d);
+    d.cat = COB_NUM; d.usage = COB_U_DISPLAY; d.digits = 18; d.scale = (signed char)scale;
+    d.flags = COB_F_SIGNED | COB_F_SEPLEAD; d.size = 19;
+    return desc_add(&d);
+}
+
 /* a numeric literal: DISPLAY digits with a separate leading sign */
 static const char *num_lit_label(const NumLit *n, int *desc)
 {
@@ -2231,6 +2245,9 @@ typedef struct Opnd_ {
     int line;
     int e_start, e_end; /* O_EXPR: token range, re-parsed when emitted */
     int fn; struct Opnd_ *farg; int fsize;   /* O_FUNC: intrinsic, its argument, result width */
+    int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
+    struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
+    int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
 } Opnd;
 
 static int is_int_item(Sym *s)
@@ -2297,7 +2314,7 @@ static void parse_ref(Ref *r)
     /* an unsubscripted item's parenthesis holding a ':' is a reference
      * modification, not a subscript list */
     int lead_rm = 0;
-    if (cur()->kind == T_LP && r->sym->ndims == 0) {
+    if (cur()->kind == T_LP && !cur()->after_comma && r->sym->ndims == 0) {
         int depth = 0;
         for (int i = g_tp; i < g_ntok; i++) {
             if (g_tok[i].kind == T_LP) depth++;
@@ -2306,7 +2323,7 @@ static void parse_ref(Ref *r)
             else if (g_tok[i].kind == T_PERIOD) break;
         }
     }
-    if (cur()->kind == T_LP && !lead_rm) {
+    if (cur()->kind == T_LP && !cur()->after_comma && !lead_rm) {   /* MAX(B, (C + 1) / 2): the comma detaches the paren */
         advance();
         for (;;) {
             if (r->nsub >= MAXDIM) die_at(cur()->line, "too many subscripts");
@@ -2438,6 +2455,118 @@ static void operand_odo_length(Opnd *o)
 static void parse_operand_raw(Opnd *o);
 static void parse_operand(Opnd *o) { parse_operand_raw(o); operand_odo_length(o); }
 
+/* the 1989 amendment's functions: argument shapes FK_NUMS (a list of
+ * numerics onto the stack), FK_INT (one integer by value), FK_ALNUM
+ * (one string), FK_NONE.  Results: numeric digit strings (scale 0 or
+ * 9), or a string buffer. */
+enum { FK_NUMS, FK_INT, FK_ALNUM, FK_NONE, FK_ALNUMS };
+static const struct { const char *name; int id, kind, scale, minargs, maxargs, fsize; } g_fn89[] = {
+    { "max", COB_FN_MAX, FK_NUMS, 9, 1, 99, 19 },
+    { "min", COB_FN_MIN, FK_NUMS, 9, 1, 99, 19 },
+    { "ord-max", COB_FN_ORD_MAX, FK_NUMS, 0, 1, 99, 19 },
+    { "ord-min", COB_FN_ORD_MIN, FK_NUMS, 0, 1, 99, 19 },
+    { "sum", COB_FN_SUM, FK_NUMS, 9, 1, 99, 19 },
+    { "range", COB_FN_RANGE, FK_NUMS, 9, 1, 99, 19 },
+    { "midrange", COB_FN_MIDRANGE, FK_NUMS, 9, 1, 99, 19 },
+    { "mean", COB_FN_MEAN, FK_NUMS, 9, 1, 99, 19 },
+    { "median", COB_FN_MEDIAN, FK_NUMS, 9, 1, 99, 19 },
+    { "variance", COB_FN_VARIANCE, FK_NUMS, 9, 1, 99, 19 },
+    { "standard-deviation", COB_FN_STDDEV, FK_NUMS, 9, 1, 99, 19 },
+    { "mod", COB_FN_MOD, FK_NUMS, 0, 2, 2, 19 },
+    { "rem", COB_FN_REM, FK_NUMS, 9, 2, 2, 19 },
+    { "integer", COB_FN_INTEGER, FK_NUMS, 0, 1, 1, 19 },
+    { "integer-part", COB_FN_INTEGER_PART, FK_NUMS, 0, 1, 1, 19 },
+    { "factorial", COB_FN_FACTORIAL, FK_NUMS, 0, 1, 1, 19 },
+    { "sqrt", COB_FN_SQRT, FK_NUMS, 9, 1, 1, 19 },
+    { "log", COB_FN_LOG, FK_NUMS, 9, 1, 1, 19 },
+    { "log10", COB_FN_LOG10, FK_NUMS, 9, 1, 1, 19 },
+    { "sin", COB_FN_SIN, FK_NUMS, 9, 1, 1, 19 },
+    { "cos", COB_FN_COS, FK_NUMS, 9, 1, 1, 19 },
+    { "tan", COB_FN_TAN, FK_NUMS, 9, 1, 1, 19 },
+    { "asin", COB_FN_ASIN, FK_NUMS, 9, 1, 1, 19 },
+    { "acos", COB_FN_ACOS, FK_NUMS, 9, 1, 1, 19 },
+    { "atan", COB_FN_ATAN, FK_NUMS, 9, 1, 1, 19 },
+    { "annuity", COB_FN_ANNUITY, FK_NUMS, 9, 2, 2, 19 },
+    { "present-value", COB_FN_PRESENT_VALUE, FK_NUMS, 9, 2, 99, 19 },
+    { "random", COB_FN_RANDOM, FK_NUMS, 9, 0, 1, 19 },
+    { "char", -2, FK_INT, -1, 1, 1, 1 },
+    { "ord", -3, FK_ALNUM, 0, 1, 1, 19 },
+    { "reverse", -4, FK_ALNUM, -1, 1, 1, 0 },
+    { "numval", -5, FK_ALNUM, 9, 1, 1, 19 },
+    { "numval-c", -6, FK_ALNUM, 9, 1, 2, 19 },
+    { NULL, 0, 0, 0, 0, 0, 0 }
+};
+
+static void parse_operand(Opnd *o);
+static Opnd expr_opnd(void);
+static int at_arith_op(void);
+
+/* one function argument: an expression, an item, a literal -- or a
+ * one-dimension table with the subscript ALL, every element an argument */
+static Opnd *fn89_arg(const char *fname)
+{
+    Opnd *x = xmalloc(sizeof *x);
+    if (cur()->kind == T_WORD && peek(1)->kind == T_LP && !peek(1)->after_comma && is_word(peek(2), "all") && peek(3)->kind == T_RP) {
+        memset(x, 0, sizeof *x);
+        x->kind = O_REF; x->line = cur()->line;
+        x->ref.sym = sym_lookup(cur()->s, NULL, 0, cur()->line);
+        if (x->ref.sym->ndims != 1) die_at(cur()->line, "FUNCTION %s: the ALL subscript takes a one-dimension table", fname);
+        x->all_sub = 1;
+        advance(); advance(); advance(); advance();
+        return x;
+    }
+    if (cur()->kind == T_LP) { *x = expr_opnd(); return x; }   /* SIN((3 * PI) / 2) */
+    int start = g_tp;
+    parse_operand(x);
+    if (at_arith_op()) { g_tp = start; *x = expr_opnd(); }
+    return x;
+}
+
+static int fn89_parse(Opnd *o, Tok *n)
+{
+    int f = -1;
+    for (int i = 0; g_fn89[i].name; i++) if (!strcmp(n->s, g_fn89[i].name)) { f = i; break; }
+    if (f < 0) return 0;
+    advance();
+    o->fnid = g_fn89[f].id; o->fkind = g_fn89[f].kind; o->fscale = g_fn89[f].scale;
+    o->fsize = g_fn89[f].fsize; o->fn = -1;
+    o->nfargs = 0;
+    if (cur()->kind == T_LP) {
+        advance();
+        o->fargs = xmalloc(16 * sizeof *o->fargs);
+        while (cur()->kind != T_RP) {
+            if (o->nfargs == 16) die_at(n->line, "FUNCTION %s: more than 16 arguments", n->s);
+            o->fargs[o->nfargs++] = fn89_arg(n->s);   /* the tokenizer drops the decorative commas */
+        }
+        advance();
+    }
+    if (o->nfargs < g_fn89[f].minargs || o->nfargs > g_fn89[f].maxargs)
+        die_at(n->line, "FUNCTION %s takes %d to %d arguments", n->s, g_fn89[f].minargs, g_fn89[f].maxargs);
+    if (g_fn89[f].kind == FK_ALNUM) {
+        Opnd *x = o->fargs[0];
+        if (x->kind != O_REF && x->kind != O_STR && x->kind != O_FUNC)
+            die_at(n->line, "FUNCTION %s takes an alphanumeric item or literal", n->s);
+        if (o->fsize == 0)
+            o->fsize = x->kind == O_REF ? (int)x->ref.sym->size : x->kind == O_FUNC ? x->fsize : x->tok->len;   /* REVERSE: the argument's width */
+    }
+    if (g_fn89[f].kind == FK_NUMS &&
+        (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN)) {
+        int alnum = 0, w = 0;
+        for (int i = 0; i < o->nfargs; i++) {
+            Opnd *x = o->fargs[i];
+            int aw = x->kind == O_STR ? x->tok->len
+                   : x->kind == O_REF && !x->all_sub && !is_numeric_sym(x->ref.sym) ? (int)x->ref.sym->size : 0;
+            if (aw) { alnum = 1; if (aw > w) w = aw; }
+        }
+        if (alnum) {                        /* the largest ARGUMENT, as a string */
+            o->fkind = FK_ALNUMS;
+            if (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN) { o->fscale = -1; o->fsize = w; }
+        }
+    }
+    o->kind = O_FUNC;
+    return 1;
+}
+
 static void parse_operand_raw(Opnd *o)
 {
     memset(o, 0, sizeof *o);
@@ -2459,6 +2588,21 @@ static void parse_operand_raw(Opnd *o)
         advance();
         Tok *n = cur();
         if (n->kind != T_WORD) die_at(n->line, "expected an intrinsic function name");
+        if (!strcmp(n->s, "when-compiled")) {
+            advance();
+            static Tok wc; static char wcbuf[24];
+            if (!wcbuf[0]) {
+                time_t now = time(0);
+                struct tm *t = localtime(&now);
+                long off = t->tm_gmtoff; int oneg = off < 0; if (oneg) off = -off;
+                snprintf(wcbuf, sizeof wcbuf, "%04d%02d%02d%02d%02d%02d00%c%02ld%02ld",
+                         t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+                         t->tm_hour, t->tm_min, t->tm_sec, oneg ? '-' : '+', off / 3600, (off % 3600) / 60);
+                wc.kind = T_STR; wc.s = wcbuf; wc.len = 21;
+            }
+            o->kind = O_STR; o->tok = &wc;
+            return;
+        }
         if (!strcmp(n->s, "upper-case")) o->fn = FN_UPPER;
         else if (!strcmp(n->s, "lower-case")) o->fn = FN_LOWER;
         else if (!strcmp(n->s, "current-date")) {
@@ -2483,6 +2627,8 @@ static void parse_operand_raw(Opnd *o)
             o->kind = O_FUNC; o->fn = fn;
             o->fsize = fn == FN_DATEINT ? 8 : fn == FN_DAYINT ? 7 : 10;   /* DISPLAYed directly: yyyymmdd, yyyyddd, or ten digits, as GnuCOBOL shows them */
             return;
+        } else if (fn89_parse(o, n)) {
+            return;
         } else if (!strcmp(n->s, "length")) {
             /* known at compile time, except for a variable reference modification */
             advance();
@@ -2503,12 +2649,13 @@ static void parse_operand_raw(Opnd *o)
         advance();
         o->farg = xmalloc(sizeof *o->farg);
         parse_operand(o->farg);
-        if (o->farg->kind != O_REF && o->farg->kind != O_STR)
+        if (o->farg->kind != O_REF && o->farg->kind != O_STR && o->farg->kind != O_FUNC)
             die_at(n->line, "FUNCTION %s takes an alphanumeric item or literal", n->s);
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
         advance();
         o->kind = O_FUNC;
-        o->fsize = o->farg->kind == O_REF ? o->farg->ref.sym->size : o->farg->tok->len;
+        o->fsize = o->farg->kind == O_REF ? (int)o->farg->ref.sym->size
+                 : o->farg->kind == O_FUNC ? o->farg->fsize : o->farg->tok->len;
         return;
     }
     if (t->kind == T_STR) { o->kind = O_STR; o->tok = t; advance(); return; }
@@ -2667,6 +2814,9 @@ static Arg arg_rdesc(const Ref *r) { Arg a = { A_RDESC, r, 0, 0, 0, 0 }; return 
 static Arg arg_rlen(const Ref *r)  { Arg a = { A_RLEN, r, 0, 0, 0, 0 }; return a; }
 static int g_slot_base;             /* staged operands of nested evaluations use higher slots */
 
+static void emit_fn_value(Opnd *f);
+static void emit_push_opnd(Opnd *o);
+
 static Arg arg_ref(const Ref *r)   { Arg a = { A_REF, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_label(const char *l){ Arg a = { A_LABEL, 0, l, 0, 0, 0 }; return a; }
 static Arg arg_desc(int d)         { Arg a = { A_DESC, 0, 0, d, 0, 0 }; return a; }
@@ -2746,21 +2896,7 @@ static void emit_args(const Arg *a, int n)
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_FUNC) {
-            /* an intrinsic: evaluate into libcob's buffer, park the pointer */
-            Opnd *f = a[i].fn, *x = f->farg;
-            if (f->fn == FN_CURDATE) emit_call("cob_fn_current_date");
-            else if (fn_is_numeric(f->fn)) {
-                if (x->kind == O_REF && is_hot_int(x->ref.sym)) { emit_ref_addr(&x->ref, "r3"); emit_load_int(x->ref.sym, "r3", "r1"); }
-                else if (x->kind == O_REF) { emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
-                else emit_li("r1", (long)numlit_int(&x->num));
-                emit("\tadd r3, r1, r0");
-                emit_call(fn_runtime_name(f->fn));
-            } else {
-                if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
-                else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
-                emit_li("r4", f->fsize);
-                emit_call(f->fn == FN_UPPER ? "cob_fn_upper" : "cob_fn_lower");
-            }
+            emit_fn_value(a[i].fn);        /* r1 = the result buffer */
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         }
@@ -2779,6 +2915,78 @@ static void emit_args(const Arg *a, int n)
     g_slot_base = base;
 }
 
+/* evaluate an intrinsic into libcob's buffer; r1 holds the pointer */
+static void emit_fn_value(Opnd *f)
+{
+    Opnd *x = f->farg;
+    if (f->fn == -1) {
+        if (f->fkind == FK_NUMS) {
+            int cnt = 0;
+            for (int i = 0; i < f->nfargs; i++) {
+                Opnd *ax = f->fargs[i];
+                if (ax->all_sub) {
+                    Sym *sym = ax->ref.sym;
+                    for (int k = 0; k < sym->dim_count[0]; k++) {
+                        emit_item_addr("r3", sym, sym->offset + k * sym->dim_stride[0]);
+                        emit_desc_addr("r4", sym_desc(sym));
+                        emit_call("cob_push");
+                        cnt++;
+                    }
+                } else { emit_push_opnd(ax); cnt++; }
+            }
+            emit_li("r3", f->fnid);
+            emit_li("r4", cnt);
+            emit_call("cob_fn_num");
+            return;
+        }
+        if (f->fkind == FK_ALNUMS) {                    /* MAX/MIN over strings */
+            for (int i = 0; i < f->nfargs; i++) {
+                Opnd *ax = f->fargs[i];
+                if (ax->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); emit_li("r4", ax->tok->len); }
+                else if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); emit_li("r4", ax->fsize); }
+                else { emit_ref_addr(&ax->ref, "r3"); emit_li("r4", (long)ax->ref.sym->size); }
+                emit_call("cob_fn_al_arg");
+            }
+            emit_li("r3", f->fnid);
+            emit_li("r4", f->fsize);
+            emit_call("cob_fn_al");
+            return;
+        }
+        if (f->fkind == FK_INT) {                       /* CHAR: one integer, by value */
+            emit_push_opnd(f->fargs[0]);
+            emit_call("cob_pop_int");
+            emit("\tadd r3, r1, r0");
+            emit_call("cob_fn_char");
+            return;
+        }
+        Opnd *ax = f->fargs[0];                         /* the string functions */
+        int alen;
+        if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); alen = ax->fsize; }
+        else if (ax->kind == O_REF) { emit_ref_addr(&ax->ref, "r3"); alen = (int)ax->ref.sym->size; }
+        else { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); alen = ax->tok->len; }
+        switch (f->fnid) {
+        case -3: emit_call("cob_fn_ord"); break;
+        case -4: emit_li("r4", alen); emit_call("cob_fn_reverse"); break;
+        default: emit_li("r4", alen); emit_li("r5", f->fnid == -6); emit_call("cob_fn_numval"); break;
+        }
+        return;
+    }
+    if (f->fn == FN_CURDATE) { emit_call("cob_fn_current_date"); return; }
+    if (fn_is_numeric(f->fn)) {
+        if (x->kind == O_REF && is_hot_int(x->ref.sym)) { emit_ref_addr(&x->ref, "r3"); emit_load_int(x->ref.sym, "r3", "r1"); }
+        else if (x->kind == O_REF) { emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
+        else emit_li("r1", (long)numlit_int(&x->num));
+        emit("\tadd r3, r1, r0");
+        emit_call(fn_runtime_name(f->fn));
+        return;
+    }
+    if (x->kind == O_FUNC) { emit_fn_value(x); emit("\tadd r3, r1, r0"); }
+    else if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
+    else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
+    emit_li("r4", f->fsize);
+    emit_call(f->fn == FN_UPPER ? "cob_fn_upper" : "cob_fn_lower");
+}
+
 /* address + descriptor of an operand, as two Args.  Figuratives need the
  * other operand's size and are expanded by the caller. */
 static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_numeric)
@@ -2792,7 +3000,8 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
         return;
     case O_FUNC:
         *addr = arg_func(o);
-        *desc = arg_desc(fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
+        if (o->fn == -1) *desc = arg_desc(o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize));
+        else *desc = arg_desc(fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
         return;
     case O_STR:
         *addr = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
@@ -3055,8 +3264,7 @@ static Cond *parse_simple(void)
         die_at(line, "expected a relational operator, found %s", tok_desc(t));
     }
     Opnd y = parse_cond_operand();
-    if (x.kind != O_REF && y.kind != O_REF && x.kind != O_EXPR && y.kind != O_EXPR)
-        die_at(line, "a condition needs at least one data item");
+
     g_abbr_x = x; g_abbr_op = op; g_abbr_neg = neg;
     return cond_rel(&x, op, &y, neg);
 }
@@ -3853,6 +4061,14 @@ static void check_numeric_opnd(Opnd *o)
 static void emit_push(Opnd *o)
 {
     if (o->kind == O_EXPR) die_at(o->line, "internal: expression pushed as an operand");
+    if (o->kind == O_FUNC) {
+        emit_fn_value(o);
+        emit("\tadd r3, r1, r0");
+        emit_desc_addr("r4", o->fn == -1 ? (o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize))
+                            : fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
+        emit_call("cob_push");
+        return;
+    }
     if (o->kind == O_NUM || o->kind == O_FIG) {
         long long v = o->kind == O_NUM ? numlit_scaled(&o->num) : 0;
         int scale = o->kind == O_NUM ? o->num.scale : 0;

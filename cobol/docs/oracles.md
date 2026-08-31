@@ -129,3 +129,13 @@ concurring) wins:
   text only from the named details (free/rptuse).
 - A sum counter after TERMINATE: GnuCOBOL leaves the final value;
   2.20.4(8) resets it with its footing's processing (free/rptctl).
+
+## Intrinsic functions, Stage 63 (2026-08-30)
+
+- The ALL subscript (X3.23a-1989: `FUNCTION SUM(TBL(ALL))`) is refused
+  by GnuCOBOL 4 outright (`unexpected ALL`); ours expands the table's
+  elements at compile time (free/fnall). NIST never exercises it.
+- Result precision is implementor-defined; ours is a signed 18-digit
+  decimal, scale 9 for the fractional class. GnuCOBOL computes in long
+  double. Every NIST window and every value in free/intrinsics agrees
+  after the receiver's truncation.

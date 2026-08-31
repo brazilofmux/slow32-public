@@ -151,7 +151,23 @@ clauses in any order, PAGE FOOTING, FOOTING, LINE-COUNTER/PAGE-COUNTER
 as items -- 6 of 6 match GnuCOBOL; CONTROL/SUM/NEXT GROUP/GROUP
 INDICATE/RH/RF/USE BEFORE REPORTING remain here.
 
-### 22. The IF module: X3.23a-1989 intrinsic functions (queued 2026-08-30)
+### 22. ~~The IF module: X3.23a-1989 intrinsic functions~~ — RESOLVED 2026-08-30 (Stage 63)
+All 42 functions of the amendment are in; the IF module extracted and
+run: **45 of 45 programs, 735 of 735 tests, 45 matching GnuCOBOL's
+tally exactly** (IF401M-403M compile-only, as report.pl has them).
+The numeric family goes through the numeric stack into one runtime
+entry returning a signed 18-digit string (scale 0 for the integer
+class, 9 for the fractional; doubles via libm where the math needs
+them -- the DBT runs those natively); MAX/MIN over strings return the
+winning argument; NUMVAL/NUMVAL-C parse the 85 shapes with detached
+signs and currency; CHAR/ORD are inverses; WHEN-COMPILED is a
+compile-time literal; RANDOM is PCG-XSH-RR-64/32 (tinymux's
+generator).  The suite smoked out three latent stack-arithmetic
+hazards (S9V9(17) operands): cob_nmul overflow, cob_ndiv minting
+scale 19, cob_npow overflowing on SQRT(10) ** 2 -- all hardened.  A
+separator comma now detaches a following parenthesis (MAX(B, (C+1)/2)
+is not a subscript).  GnuCOBOL 4 refuses the ALL subscript the
+amendment defines (free/fnall documents it).  The original entry:
 The 1989 amendment is the one COBOL-85-adjacent standard, and its
 test module sits in the same CCVS-85 suite, unextracted
 (`ccvs-run.sh` prints `IF not extracted` every run): 45 programs,

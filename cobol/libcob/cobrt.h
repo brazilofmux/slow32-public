@@ -86,6 +86,20 @@ typedef struct {
     unsigned int rpos, rlen;  /* ... the next byte in it, and how many it holds */
 } cob_file;
 
+
+/* FUNCTION: the numeric intrinsics cob_fn_num computes over the top n
+ * of the numeric stack.  Integer-class results have scale 0, the rest
+ * scale 9; every result is a sign and 18 digits (SIGN LEADING SEPARATE). */
+enum {
+    COB_FN_MAX = 1, COB_FN_MIN, COB_FN_ORD_MAX, COB_FN_ORD_MIN, COB_FN_SUM,
+    COB_FN_RANGE, COB_FN_MIDRANGE, COB_FN_MEAN, COB_FN_MEDIAN,
+    COB_FN_VARIANCE, COB_FN_STDDEV, COB_FN_MOD, COB_FN_REM,
+    COB_FN_INTEGER, COB_FN_INTEGER_PART, COB_FN_FACTORIAL,
+    COB_FN_SQRT, COB_FN_LOG, COB_FN_LOG10, COB_FN_SIN, COB_FN_COS,
+    COB_FN_TAN, COB_FN_ASIN, COB_FN_ACOS, COB_FN_ATAN,
+    COB_FN_ANNUITY, COB_FN_PRESENT_VALUE, COB_FN_RANDOM
+};
+
 /* a report (RD), as the compiler described it; the counters are the
  * runtime's.  Lines are rendered into a buffer and written through the
  * report's print file, one line-sequential record per physical line. */

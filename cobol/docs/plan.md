@@ -1283,6 +1283,33 @@ and cobc370's IKFCBL00-corroborated derivations winning. rptctl,
 rptnext, rptuse (.oracle-expected each); harness 87; NIST and majesty
 unchanged. Out by choice: CODE, REPORTS ARE.
 
+## Stage 63 — the IF module: every 1989 intrinsic function **M** — DONE 2026-08-30
+
+ISSUES-22, at the user's ask ("time to be greedy again").  The module
+extracted from newcob.val with EXEC85 rebuilt in the oracle container
+(the old host binary linked the retired GnuCOBOL).  32 functions
+added to the 10 majesty had: the numeric family (MAX/MIN/ORD-MAX/
+ORD-MIN/SUM/RANGE/MIDRANGE/MEAN/MEDIAN/VARIANCE/STANDARD-DEVIATION
+exact on the stack where possible; MOD/REM/INTEGER/INTEGER-PART/
+FACTORIAL exact i64; SQRT/LOG/LOG10/SIN/COS/TAN/ASIN/ACOS/ATAN/
+ANNUITY/PRESENT-VALUE via libm doubles, which the DBT hot-swaps
+native) through one runtime entry popping the numeric stack and
+returning a sign plus 18 digits, scale 0 or 9; MAX/MIN over strings
+(the winning argument); CHAR/ORD; REVERSE; NUMVAL/NUMVAL-C (detached
+signs, spaced currency); WHEN-COMPILED as a compile-time literal;
+RANDOM as PCG-XSH-RR-64/32 from ~/tinymux's svdrand.  Arguments are
+expressions, nested functions, or a table's elements via the ALL
+subscript (compile-time unrolled); a condition may be functions
+alone.  Found and fixed on the way: a separator comma must detach a
+following parenthesis (MAX(B, (C+1)/2)); and three latent stack
+hazards under S9V9(17) operands -- cob_nmul overflow (sheds fraction
+digits first), cob_ndiv minting scale 19 (capped 18, and at least
+nine guard digits so TAN(1/180)'s argument survives), cob_npow
+overflow on SQRT(10) ** 2 (pre-reduces).  **IF: 45 of 45 programs,
+735 of 735 tests, 45 matching GnuCOBOL exactly.** free/intrinsics
+(oracle agrees on every value) and free/fnall (GnuCOBOL refuses the
+amendment's ALL subscript; documented).  The harness is 89.
+
 ## After v1 (not scheduled, each when a program asks)
 
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
