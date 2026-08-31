@@ -89,10 +89,26 @@ static int    f77_sparam[F77_MAX_SYM];
 static int    f77_spival[F77_MAX_SYM];
 static double f77_spdval[F77_MAX_SYM];
 
-/* F77 implicit typing: I-N are INTEGER, everything else REAL. */
+/* Explicitly typed by a type declaration (or a typed FUNCTION
+ * header): what IMPLICIT NONE checks, and what an IMPLICIT statement
+ * must not retype. */
+static int    f77_styped[F77_MAX_SYM];
+
+/* Per-unit implicit typing map, letter -> type.  bind_unit resets it
+ * to the default rule (I-N INTEGER, the rest REAL) and the IMPLICIT
+ * statement rewrites ranges; before the first bind (the phase-1 unit
+ * scan) the default rule applies directly. */
+static int f77_imp_map[26];
+static int f77_imp_ready;
+static int f77_imp_none;
+
+/* Defined (tentatively) again beside their own logic further down. */
+static int f77_decls_open;
+
 static int f77_implicit_ty(char *nm) {
     int c;
     c = nm[0];
+    if (f77_imp_ready && c >= 'A' && c <= 'Z') return f77_imp_map[c - 'A'];
     if (c >= 'I' && c <= 'N') return TY_INT;
     return TY_FLOAT;
 }
@@ -107,6 +123,13 @@ static int f77_sym(char *nm) {
         i = i + 1;
     }
     if (f77_nsym >= F77_MAX_SYM) { f77_error("too many symbols"); return 0; }
+    if (f77_imp_none && !f77_decls_open) {
+        /* A name first seen in executable code has no declaration. */
+        static char msg[F77_MAX_NAME + 40];
+        strcpy(msg, nm);
+        strcat(msg, " is not declared (IMPLICIT NONE)");
+        f77_error(msg);
+    }
     strcpy(f77_sname[f77_nsym], nm);
     f77_sty[f77_nsym] = f77_implicit_ty(nm);
     f77_srank[f77_nsym] = 0;
@@ -116,6 +139,7 @@ static int f77_sym(char *nm) {
     f77_ssaved[f77_nsym] = 0;
     f77_sgidx[f77_nsym] = -1;
     f77_sparam[f77_nsym] = 0;
+    f77_styped[f77_nsym] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
@@ -159,6 +183,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_ssaved[s] = 0;
     f77_sgidx[s] = -1;
     f77_sparam[s] = 0;
+    f77_styped[s] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
@@ -1467,7 +1492,10 @@ static void f77_stmt_decl(int ty, int skip) {
     for (;;) {
         if (lx_t != T_NAME) break;
         s = f77_sym(lex_name);
-        if (ty >= 0) f77_sty[s] = ty;   /* declaration overrides implicit typing */
+        if (ty >= 0) {                  /* declaration overrides implicit typing */
+            f77_sty[s] = ty;
+            f77_styped[s] = 1;
+        }
         f77_tok();
         if (lx_t == T_STAR) {           /* REAL*8 X -- length specifier */
             f77_tok();
@@ -1671,6 +1699,84 @@ static void f77_stmt_save(int skip) {
         }
         if (lx_t != T_COMMA) break;
         f77_tok();
+    }
+}
+
+/* IMPLICIT NONE, or IMPLICIT type (letter-ranges), ... -- rewrite the
+ * per-unit letter map.  Symbols that already exist untyped (dummies,
+ * created at bind time under the default rule) are retyped to the new
+ * map, with one guarded exception: the FUNCTION result's type was
+ * fixed in phase 1 for every caller to see, so an IMPLICIT that would
+ * change it is refused rather than silently splitting the ABI. */
+static void f77_stmt_implicit(int skip) {
+    int ty;
+    int s;
+    int c;
+    int lo;
+    int hi;
+
+    if (!f77_decls_open) {
+        f77_error("IMPLICIT after the first executable statement");
+        return;
+    }
+    f77_scan_from(skip);
+    if (lx_t == T_NAME && strcmp(lex_name, "NONE") == 0) {
+        f77_imp_none = 1;
+        f77_tok();
+        return;
+    }
+    for (;;) {
+        if (lx_t != T_NAME) { f77_error("IMPLICIT needs a type"); return; }
+        if (strcmp(lex_name, "INTEGER") == 0) ty = TY_INT;
+        else if (strcmp(lex_name, "REAL") == 0) ty = TY_FLOAT;
+        else if (strcmp(lex_name, "DOUBLEPRECISION") == 0) ty = TY_DOUBLE;
+        else if (strcmp(lex_name, "LOGICAL") == 0) ty = TY_INT;
+        else { f77_error("IMPLICIT type not supported"); return; }
+        f77_tok();
+        if (lx_t != T_LP) { f77_error("IMPLICIT needs (letter-ranges)"); return; }
+        f77_tok();
+        for (;;) {
+            if (lx_t != T_NAME || lex_name[1] != 0) {
+                f77_error("IMPLICIT range needs single letters");
+                return;
+            }
+            lo = lex_name[0];
+            hi = lo;
+            f77_tok();
+            if (lx_t == T_MINUS) {
+                f77_tok();
+                if (lx_t != T_NAME || lex_name[1] != 0) {
+                    f77_error("IMPLICIT range needs single letters");
+                    return;
+                }
+                hi = lex_name[0];
+                f77_tok();
+            }
+            if (lo < 'A' || hi > 'Z' || lo > hi) {
+                f77_error("bad IMPLICIT letter range");
+                return;
+            }
+            for (c = lo; c <= hi; c++) f77_imp_map[c - 'A'] = ty;
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        if (lx_t != T_RP) { f77_error("expected ) in IMPLICIT"); return; }
+        f77_tok();
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+
+    /* Retype symbols the default rule already created. */
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (f77_styped[s] || f77_sparam[s]) continue;
+        ty = f77_imp_map[f77_sname[s][0] - 'A'];
+        if (ty == f77_sty[s]) continue;
+        if (s == f77_result_sym) {
+            f77_error("IMPLICIT would change the FUNCTION result type; declare it in the header");
+            return;
+        }
+        f77_sty[s] = ty;
+        if (!f77_sarg[s]) f77_realloc_sym(s);
     }
 }
 
@@ -1908,6 +2014,22 @@ static void f77_layout_static(void) {
     int blk;
     int sz;
     int boff[F77_MAX_CBLK];
+
+    /* IMPLICIT NONE: every symbol created during the declaration part
+     * (dummies included) must have been explicitly typed by now.
+     * Names first seen in executable code are caught in f77_sym. */
+    if (f77_imp_none) {
+        for (s = f77_scope_base; s < f77_nsym; s++) {
+            if (f77_styped[s] || f77_sparam[s]) continue;
+            {
+                static char msg[F77_MAX_NAME + 40];
+                strcpy(msg, f77_sname[s]);
+                strcat(msg, " is not declared (IMPLICIT NONE)");
+                f77_error(msg);
+            }
+            return;
+        }
+    }
 
     for (i = 0; i < f77_ncblk; i++) boff[i] = 0;
 
@@ -2744,6 +2866,15 @@ static void f77_bind_unit(int u) {
     f77_sv_n = 0;
     f77_di_n = 0;
 
+    /* Reset the implicit-typing map to the default rule. */
+    {
+        int c;
+        for (c = 0; c < 26; c++)
+            f77_imp_map[c] = (c >= 'I' - 'A' && c <= 'N' - 'A') ? TY_INT : TY_FLOAT;
+    }
+    f77_imp_ready = 1;
+    f77_imp_none = 0;
+
     if (f77_ukind[u] == F77_UNIT_PROGRAM) {
         hl_param_nflat = 0;
         hl_nparams = 0;
@@ -2814,6 +2945,11 @@ static void f77_bind_unit(int u) {
     if (f77_ukind[u] == F77_UNIT_FUNC) {
         f77_result_sym = f77_sym(f77_uname[u]);
         f77_sty[f77_result_sym] = f77_urty[u];
+        /* A typed header (INTEGER FUNCTION F...) is an explicit
+         * declaration; a bare FUNCTION F relies on implicit typing,
+         * which a later IMPLICIT may not change (phase 1 already told
+         * every caller the result type). */
+        f77_styped[f77_result_sym] = (skip != 8) ? 1 : 0;
         f77_realloc_sym(f77_result_sym);
     }
 }
@@ -3461,6 +3597,7 @@ static void f77_statement(void) {
     if ((n = f77_starts("SAVE")) != 0)   { f77_stmt_save(n);   goto done; }
     if ((n = f77_starts("PARAMETER")) != 0) { f77_stmt_parameter(n); goto done; }
     if ((n = f77_starts("DATA")) != 0)   { f77_stmt_data(n);   goto done; }
+    if ((n = f77_starts("IMPLICIT")) != 0) { f77_stmt_implicit(n); goto done; }
 
     if (f77_starts("ELSEIF")) {
         /* ELSE IF (e) THEN -- close the current arm, open a new test in
@@ -3517,7 +3654,46 @@ static void f77_statement(void) {
 
     if ((n = f77_starts("GOTO")) != 0) {
         f77_scan_from(n);
-        if (lx_t != T_ICON) { f77_error("GOTO needs a label"); goto done; }
+        if (lx_t == T_LP) {
+            /* Computed GOTO: GOTO (l1, l2, ...) [,] e -- jump to the
+             * e'th label, fall through when e is outside [1, n].  One
+             * unsigned compare covers both ends (e-1 underflows), and
+             * the dispatch itself is a jump table, the machinery
+             * switch statements already proved. */
+            int targets[64];
+            int nt;
+            int v;
+            int b_tab;
+            int b_next;
+            nt = 0;
+            f77_tok();
+            for (;;) {
+                if (lx_t != T_ICON) { f77_error("computed GOTO needs statement labels"); goto done; }
+                if (nt >= 64) { f77_error("too many labels in computed GOTO"); goto done; }
+                targets[nt] = f77_label_blk(lex_ival);
+                nt = nt + 1;
+                f77_tok();
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+            }
+            if (lx_t != T_RP) { f77_error("expected ) in computed GOTO"); goto done; }
+            f77_tok();
+            if (lx_t == T_COMMA) f77_tok();
+            v = f77_expr();
+            v = f77_cvt(v, &ex_hi, ex_ty, TY_INT);
+            v = hi_emit(HI_ADDI, TY_INT, v, -1, -1, NULL);
+            b_tab = hir_new_block();
+            b_next = hir_new_block();
+            c = hi_emit(HI_SGTU, TY_INT, f77_iconst(nt), v, 0, NULL);
+            hi_emit(HI_BRC, TY_VOID, c, b_tab, b_next, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_tab);
+            hi_emit_jmptab(v, b_next, targets, nt);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_next);
+            goto done;
+        }
+        if (lx_t != T_ICON) { f77_error("GOTO needs a label (assigned GOTO is not supported)"); goto done; }
         f77_goto_blk(f77_label_blk(lex_ival));
         goto done;
     }

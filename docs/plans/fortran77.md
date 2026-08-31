@@ -1,8 +1,9 @@
 # Fortran 77 on SLOW-32
 
 Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
-COMMON/SAVE, DATA/PARAMETER, and LINPACK all run. Still refused:
-`OPEN`, `EQUIVALENCE`, `CHARACTER`, `COMPLEX`, `IMPLICIT`.
+COMMON/SAVE, DATA/PARAMETER, IMPLICIT (incl. NONE), computed GOTO, and
+LINPACK all run. Still refused: `OPEN`, `EQUIVALENCE`, `CHARACTER`,
+`COMPLEX`, assigned `GOTO`, arithmetic `IF`, `**`.
 
 ## Why this one
 
@@ -361,6 +362,35 @@ No linker change is required, and none should be added for this.
    entry-block-store lowering would produce.  Mutation-proven:
    breaking the evaluator's multiply trips STOP 1, freezing the DATA
    element cursor trips STOP 3.
+
+   **IMPLICIT and computed GOTO landed 2026-08-30.**  IMPLICIT is a
+   per-unit letter->type map that `f77_implicit_ty` now reads (reset
+   to the I-N rule at bind; phase 1's unit scan still uses the
+   default rule directly).  Ranges retype symbols that already exist
+   untyped -- which in practice means DUMMIES, created at bind time
+   under the default rule; a unit's own variables are created at
+   first use, after the map is already rewritten.  The mutation run
+   taught exactly that: killing the retype loop tripped the
+   retyped-dummy check (STOP 7), not the local-variable one.  One
+   guarded refusal: an IMPLICIT that would change a bare FUNCTION's
+   result type is rejected -- phase 1 already told every caller the
+   result type, so retyping it here would split the ABI.  IMPLICIT
+   NONE is enforced in two places: names first seen in executable
+   code error in `f77_sym`, and declaration-part survivors (dummies
+   included) are checked when the declaration part closes.
+
+   Computed GOTO reuses the switch machinery: index-1, one unsigned
+   compare (`SGTU(n, v-1)` covers both ends, since 0 underflows), and
+   an `HI_JMPTAB` dispatch, falling through when the index is outside
+   [1, n].  Assigned GOTO stays refused, now by name.
+
+   Gated by `tests/f77/impgoto1.f`: `DY = 1D0/3D0` must round-trip at
+   1D-12, which single precision fails by ~1E-8 -- so the IMPLICIT
+   DOUBLE actually being double has teeth -- plus a retyped dummy, an
+   IMPLICIT NONE unit, the digit-signature walk 1-2-3 through the
+   computed GOTO's arms, and fall-through at index 4 and 0.
+   Mutation-proven: dropping the index-1 trips STOP 3, dropping the
+   retype loop trips STOP 7.
 6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,
    arbitrary lower bounds (`R(0:9)`, `A(-5:5)`), up to rank 7, elements
    of any type including DOUBLE PRECISION, the `DIMENSION` statement,
