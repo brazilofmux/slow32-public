@@ -387,6 +387,64 @@ static int f77_fp64_call1(char *name, int alo, int *rhi) {
     return r;
 }
 
+/* --- libm calls by their C names ---------------------------------------
+ *
+ * The transcendentals are REAL calls, and the name IS the contract:
+ * slow32 and slow32-fast execute the Newton-series SLOW-32 code that
+ * libs32.s32a links in, while slow32-dbt and qemu-tcg find these names
+ * in the .s32x symbol table and substitute the host's native routines
+ * at translation time.  A wrapper name would starve that machinery, so
+ * these emit `sin`, `atan2`, `pow`, ... verbatim -- and, unlike the
+ * __fp64_* pseudo-calls the backend inlines, they carry real ABI tags
+ * (aligned pairs for doubles). */
+
+static int f77_libm_d1(char *name, int a, int ahi, int *rhi) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = a;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = ahi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, name);
+    h_cbase[r] = cb;
+    *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    return r;
+}
+
+static int f77_libm_d2(char *name, int a, int ahi, int b, int bhi, int *rhi) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = a;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = ahi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = b;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = bhi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, name);
+    h_cbase[r] = cb;
+    *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    return r;
+}
+
+static int f77_libm_f1(char *name, int a) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_FLOAT, -1, -1, 1, name);
+    h_cbase[r] = cb;
+    return r;
+}
+
+static int f77_libm_f2(char *name, int a, int b) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = b; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_FLOAT, -1, -1, 2, name);
+    h_cbase[r] = cb;
+    return r;
+}
+
 /* A DOUBLE literal is just its two words as constants. */
 static int f77_dconst(double d, int *hi) {
     int w[2];
@@ -636,6 +694,20 @@ static int f77_select(int cond, int a, int b) {
 #define IN_MIN1   11
 #define IN_AMAX0  12   /* integer args, real result */
 #define IN_AMIN0  13
+/* Transcendentals: contiguous ids, range-tested in the lowering. */
+#define IN_SIN    14
+#define IN_COS    15
+#define IN_TAN    16
+#define IN_ASIN   17
+#define IN_ACOS   18
+#define IN_ATAN   19
+#define IN_ATAN2  20
+#define IN_EXP    21
+#define IN_LOG    22
+#define IN_LOG10  23
+#define IN_SINH   24
+#define IN_COSH   25
+#define IN_TANH   26
 
 /* F77 intrinsic names are type-decorated (ABS/IABS/DABS, MAX0/AMAX1/
  * DMAX1); the operation is the same and the operand types decide the
@@ -661,7 +733,39 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "SQRT") == 0 || strcmp(nm, "DSQRT") == 0) return IN_SQRT;
     if (strcmp(nm, "SIGN") == 0 || strcmp(nm, "ISIGN") == 0 ||
         strcmp(nm, "DSIGN") == 0) return IN_SIGN;
+    if (strcmp(nm, "SIN") == 0 || strcmp(nm, "DSIN") == 0) return IN_SIN;
+    if (strcmp(nm, "COS") == 0 || strcmp(nm, "DCOS") == 0) return IN_COS;
+    if (strcmp(nm, "TAN") == 0 || strcmp(nm, "DTAN") == 0) return IN_TAN;
+    if (strcmp(nm, "ASIN") == 0 || strcmp(nm, "DASIN") == 0) return IN_ASIN;
+    if (strcmp(nm, "ACOS") == 0 || strcmp(nm, "DACOS") == 0) return IN_ACOS;
+    if (strcmp(nm, "ATAN") == 0 || strcmp(nm, "DATAN") == 0) return IN_ATAN;
+    if (strcmp(nm, "ATAN2") == 0 || strcmp(nm, "DATAN2") == 0) return IN_ATAN2;
+    if (strcmp(nm, "EXP") == 0 || strcmp(nm, "DEXP") == 0) return IN_EXP;
+    if (strcmp(nm, "LOG") == 0 || strcmp(nm, "ALOG") == 0 ||
+        strcmp(nm, "DLOG") == 0) return IN_LOG;
+    if (strcmp(nm, "LOG10") == 0 || strcmp(nm, "ALOG10") == 0 ||
+        strcmp(nm, "DLOG10") == 0) return IN_LOG10;
+    if (strcmp(nm, "SINH") == 0 || strcmp(nm, "DSINH") == 0) return IN_SINH;
+    if (strcmp(nm, "COSH") == 0 || strcmp(nm, "DCOSH") == 0) return IN_COSH;
+    if (strcmp(nm, "TANH") == 0 || strcmp(nm, "DTANH") == 0) return IN_TANH;
     return IN_NONE;
+}
+
+/* The libm name for a transcendental, by result width. */
+static char *f77_tr_name(int in, int dbl) {
+    if (in == IN_SIN)   return dbl ? "sin"   : "sinf";
+    if (in == IN_COS)   return dbl ? "cos"   : "cosf";
+    if (in == IN_TAN)   return dbl ? "tan"   : "tanf";
+    if (in == IN_ASIN)  return dbl ? "asin"  : "asinf";
+    if (in == IN_ACOS)  return dbl ? "acos"  : "acosf";
+    if (in == IN_ATAN)  return dbl ? "atan"  : "atanf";
+    if (in == IN_ATAN2) return dbl ? "atan2" : "atan2f";
+    if (in == IN_EXP)   return dbl ? "exp"   : "expf";
+    if (in == IN_LOG)   return dbl ? "log"   : "logf";
+    if (in == IN_LOG10) return dbl ? "log10" : "log10f";
+    if (in == IN_SINH)  return dbl ? "sinh"  : "sinhf";
+    if (in == IN_COSH)  return dbl ? "cosh"  : "coshf";
+    return dbl ? "tanh" : "tanhf";
 }
 
 /* |x|: for FP just clear the sign bit; for an integer use the standard
@@ -786,6 +890,42 @@ static int f77_primary(void) {
                     ex_ty = TY_FLOAT;
                     return f77_fp64_call1("__fp32_sqrt", a, NULL);
                 }
+            }
+
+            if (in >= IN_SIN && in <= IN_TANH) {
+                /* A D-prefixed specific name (DSIN, DATAN2, ...) forces
+                 * the double path even for a non-double argument; the
+                 * generic names dispatch on the argument's type. */
+                int dbl;
+                dbl = (aty == TY_DOUBLE) || (nm[0] == 'D');
+                if (in == IN_ATAN2) {
+                    if (lx_t != T_COMMA) {
+                        f77_error("ATAN2 needs two arguments");
+                        return f77_iconst(0);
+                    }
+                    f77_tok();
+                    b = f77_expr(); bty = ex_ty; bhi = ex_hi;
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    if (dbl || bty == TY_DOUBLE) {
+                        a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
+                        b = f77_cvt(b, &bhi, bty, TY_DOUBLE);
+                        ex_ty = TY_DOUBLE;
+                        return f77_libm_d2("atan2", a, ahi, b, bhi, &ex_hi);
+                    }
+                    a = f77_cvt(a, &ahi, aty, TY_FLOAT);
+                    b = f77_cvt(b, &bhi, bty, TY_FLOAT);
+                    ex_ty = TY_FLOAT;
+                    return f77_libm_f2("atan2f", a, b);
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                if (dbl) {
+                    a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
+                    ex_ty = TY_DOUBLE;
+                    return f77_libm_d1(f77_tr_name(in, 1), a, ahi, &ex_hi);
+                }
+                a = f77_cvt(a, &ahi, aty, TY_FLOAT);
+                ex_ty = TY_FLOAT;
+                return f77_libm_f1(f77_tr_name(in, 0), a);
             }
 
             /* Binary and n-ary forms: MAX/MIN fold pairwise. */
@@ -988,13 +1128,25 @@ static int f77_power(void) {
     aty = ex_ty;
     ahi = ex_hi;
     if (lx_t == T_POWER) {
+        int bhi;
         f77_tok();
         b = f77_power();
         bty = ex_ty;
+        bhi = ex_hi;
         if (bty != TY_INT) {
-            f77_error("** with a real exponent needs the transcendental intrinsics (not implemented)");
-            ex_ty = aty;
-            return a;
+            /* Real exponent: pow / powf, by the libm names the DBT and
+             * qemu intercept.  An INTEGER base promotes to the
+             * exponent's type (F77: the result is real). */
+            if (aty == TY_DOUBLE || bty == TY_DOUBLE) {
+                a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
+                b = f77_cvt(b, &bhi, bty, TY_DOUBLE);
+                ex_ty = TY_DOUBLE;
+                return f77_libm_d2("pow", a, ahi, b, bhi, &ex_hi);
+            }
+            a = f77_cvt(a, &ahi, aty, TY_FLOAT);
+            b = f77_cvt(b, &bhi, bty, TY_FLOAT);
+            ex_ty = TY_FLOAT;
+            return f77_libm_f2("powf", a, b);
         }
         cb = h_ncarg;
         if (aty == TY_DOUBLE) {

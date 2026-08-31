@@ -2,11 +2,12 @@
 
 Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
 OPEN/CLOSE/REWIND, COMMON/SAVE, DATA/PARAMETER, IMPLICIT (incl. NONE),
-computed GOTO, arithmetic IF, `**` with INTEGER exponents, and LINPACK
-all run. Still refused: `EQUIVALENCE`, `CHARACTER`, `COMPLEX`,
-assigned `GOTO`, `**` with a real exponent (needs the
-transcendentals), `BACKSPACE`, `ENDFILE`, unformatted and
-direct-access I/O.
+computed GOTO, arithmetic IF, `**` (INTEGER and real exponents), the
+transcendental intrinsics, and LINPACK all run. Still refused:
+`EQUIVALENCE`, `CHARACTER`, `COMPLEX`, assigned `GOTO`, `BACKSPACE`,
+`ENDFILE`, unformatted and direct-access I/O.  `tests/f77-pending/` is
+empty: `sumsq.f`, its founding resident, moved into the suite when
+ATAN2 landed.
 
 ## Why this one
 
@@ -464,6 +465,44 @@ No linker change is required, and none should be added for this.
    branch on an exact DOUBLE difference, and the negative branch on
    REAL.  Mutation-proven: re-binding negation to primary trips STOP
    7; flipping the arithmetic IF's sign compare trips STOP 13.
+
+   **The transcendentals landed 2026-08-30** -- SIN/COS/TAN,
+   ASIN/ACOS/ATAN/ATAN2, EXP/LOG/LOG10, SINH/COSH/TANH, the generic
+   and D-specific names, ALOG/ALOG10, and `**` with a real exponent
+   (pow/powf).  This is the section above ("Which universe this lives
+   in") cashing out, and the mechanism deserves stating precisely,
+   because it is the 8087 coprocessor arrangement without the bus:
+
+   - The intrinsics lower to REAL calls **by their C libm names** --
+     `sin`, `atan2`, `pow` -- with proper ABI pair tags (unlike the
+     `__fp64_*` pseudo-calls the backend inlines).  The name IS the
+     contract, and a wrapper name would break it.
+   - `slow32` and `slow32-fast` provide no transcendental hardware:
+     they execute the Newton-series SLOW-32 code that linking
+     `libs32.s32a` puts INSIDE the binary (math_soft.c -- the same
+     routines that beat CORDIC when profiled).
+   - `slow32-dbt` and `qemu-tcg` read the `.s32x` SYMTAB, find the
+     well-known names, and substitute the host's native routines at
+     translation time -- the same machinery that already intercepts
+     memcpy and strlen.  Same binary, native transcendentals wherever
+     the engine can provide them, soft fallback everywhere else, no
+     communication overhead in either case.
+   - Archive granularity works FOR the trick: pulling one math symbol
+     links the whole math_soft member, so every interceptable name
+     lands in the symbol table (the harness's math-libcalls report
+     now shows the full set -- and gained `-n 3`, since strings'
+     default minimum silently hid sin/cos/exp/log/pow).
+
+   Verified as the trick demands: `trans1.f` produces identical
+   output under slow32 (Newton), slow32-fast (Newton), and slow32-dbt
+   (native substitution), and matches gfortran+glibc to every printed
+   digit -- the Newton series really are that close.  Gated by
+   `trans1.f` (mathematical identities: Pythagorean, exp/log round
+   trip, cosh^2 - sinh^2, ATAN2 quadrants, cube roots via real **)
+   and by `sumsq.f`, which finally moved out of `f77-pending/` --
+   ATAN2 was the last thing it was waiting for.  Mutation-proven:
+   remapping DSIN's name to "cos" trips the Pythagorean STOP 6;
+   swapping pow's operands trips the cube-root STOP 15.
 6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,
    arbitrary lower bounds (`R(0:9)`, `A(-5:5)`), up to rank 7, elements
    of any type including DOUBLE PRECISION, the `DIMENSION` statement,

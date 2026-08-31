@@ -140,7 +140,7 @@ fi
 # land this list will legitimately grow.  It is printed rather than
 # enforced so that adding them is not blocked by a rule that was never
 # this directory's to begin with.
-INTERCEPTABLE="sqrt sqrtf sin cos tan asin acos atan sinh cosh tanh exp log log10 ceil floor round trunc fabs fmod fmodf sinf cosf tanf asinf acosf atanf sinhf coshf tanhf expf logf log10f ceilf floorf roundf truncf fabsf"
+INTERCEPTABLE="sqrt sqrtf sin cos tan asin acos atan atan2 atan2f sinh cosh tanh exp log log10 pow powf ceil floor round trunc fabs fmod fmodf sinf cosf tanf asinf acosf atanf sinhf coshf tanhf expf logf log10f ceilf floorf roundf truncf fabsf"
 leaked=""
 for f in "$HERE"/f77/*.f; do
     [ -e "$f" ] || continue
@@ -151,7 +151,8 @@ for f in "$HERE"/f77/*.f; do
           "$FDIR/runtime/libf77.s32o" \
           "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null 2>&1 || continue
     for n in $INTERCEPTABLE; do
-        if strings -a "$W/$b.lm.s32x" 2>/dev/null | grep -qx "$n"; then
+        # -n 3: sin/cos/exp/log/pow are 3 chars, below strings' default
+        if strings -a -n 3 "$W/$b.lm.s32x" 2>/dev/null | grep -qx "$n"; then
             leaked="$leaked $b:$n"
         fi
     done

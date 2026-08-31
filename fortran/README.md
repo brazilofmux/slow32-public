@@ -4,11 +4,20 @@ Status: working F77 subset (2026-08-30). Vertical slice, arrays,
 subprograms, FORMAT, `READ` (formatted and list-directed, with
 `END=`), `OPEN`/`CLOSE`/`REWIND` (sequential formatted files),
 `COMMON`/`SAVE`, `DATA`/`PARAMETER`, `IMPLICIT` (including `NONE`),
-computed `GOTO`, arithmetic `IF`, `**` with INTEGER exponents, and
+computed `GOTO`, arithmetic `IF`, `**` (INTEGER and real exponents),
+the transcendental intrinsics (SIN/COS/TAN, ASIN/ACOS/ATAN/ATAN2,
+EXP/LOG/LOG10, SINH/COSH/TANH, generic and D-specific names), and
 LINPACK run on SLOW-32 and match gfortran. Still refused (honestly):
-`EQUIVALENCE`, `CHARACTER`, `COMPLEX`, assigned `GOTO`, `**` with a
-real exponent (needs the transcendentals), `BACKSPACE`, `ENDFILE`,
-unformatted and direct-access I/O.
+`EQUIVALENCE`, `CHARACTER`, `COMPLEX`, assigned `GOTO`, `BACKSPACE`,
+`ENDFILE`, unformatted and direct-access I/O.
+
+The transcendentals are calls by their C libm names, on purpose:
+slow32 and slow32-fast execute the Newton-series SLOW-32 code linked
+from `libs32.s32a`, while slow32-dbt and qemu-tcg find those names in
+the `.s32x` symbol table and substitute the host's native routines at
+translation time -- the 8087 coprocessor arrangement, without the bus:
+same binary everywhere, native transcendentals wherever the engine can
+provide them, and the fallback ships inside the binary itself.
 
 See [`../docs/plans/fortran77.md`](../docs/plans/fortran77.md) for the
 plan, the rulings behind it, and the milestone list.
