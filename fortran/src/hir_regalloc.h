@@ -342,6 +342,18 @@ static void ra_compute_pos(void) {
         }
 
         /* Regular instructions up to (not including) the terminator */
+        /* Split-pass reloads run at the TOP of the block. */
+        i = split_head[b];
+        while (i >= 0) {
+            if (h_kind[i] != HI_NOP) {
+                ra_pos[i] = pos;
+                ra_order[ra_norder] = i;
+                ra_norder = ra_norder + 1;
+                pos = pos + 1;
+            }
+            i = licm_next[i];
+        }
+
         i = bb_start[b];
         while (i < bb_end[b]) {
             if (i == term) break;

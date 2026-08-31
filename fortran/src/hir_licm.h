@@ -43,6 +43,36 @@ static int licm_depth[HIR_MAX_BLOCK];
 /* --- Stats --- */
 static int licm_stat_hoisted;
 
+/* --- Live-range splitting around loops (DIVERGENCE f77, port
+ * upstream candidate) ---------------------------------------------
+ *
+ * A value LIVE THROUGH a loop but unused inside it still occupies a
+ * register for the whole loop under linear-interval liveness -- and
+ * under pressure it is exactly the register an inner-loop phi
+ * needed.  Split it: store it to a fresh frame slot in the
+ * preheader, end its register life there, and reload it at the top
+ * of each post-loop block that uses it.  Cost: one store per loop
+ * entry plus one load per use block; benefit: a callee-saved
+ * register freed for the entire loop.
+ *
+ * split_head[b] is a TOP-of-block list (chained through licm_next,
+ * memberships are disjoint from licm_head's): unlike LICM's hoists,
+ * which run after a block's body, reloads must run before the uses
+ * in their block.  Consumed by ra_order, hcg_block and the layout
+ * size estimate; a block carrying reloads must never be forwarded.
+ *
+ * Safety: candidates are defined in a block dominating the header,
+ * have NO use in the body, at least one use in a block dominated by
+ * the preheader, and no use anywhere else (a use neither clearly
+ * before nor clearly after the loop disqualifies).  CALL/CALLHI
+ * values are excluded (their result-pair linkage is positional). */
+static int split_head[HIR_MAX_BLOCK];
+static int split_frame;
+static int licm_stat_split;
+static char sp_inbody[HIR_MAX_INST];
+static char sp_post[HIR_MAX_INST];
+static char sp_bad[HIR_MAX_INST];
+
 /* --- Scratch for loop body --- */
 #define LICM_MAX_BODY 2048
 static int licm_body[LICM_MAX_BODY];
@@ -345,6 +375,202 @@ static void licm_rewrite(void) {
  * Main entry point
  * ---------------------------------------------------------------- */
 
+/* Classify one use of value v occurring in block ub, for licm_split. */
+static void sp_use(int v, int ub, int pre, int header) {
+    if (v < 0) return;
+    if (ub < 0 || ub >= bb_nblk) { sp_bad[v] = 1; return; }
+    if (ssa_vis[ub]) { sp_inbody[v] = 1; return; }
+    if (ub == pre || licm_dominates(ub, header)) return;   /* pre-loop */
+    if (licm_dominates(pre, ub)) { sp_post[v] = 1; return; }
+    sp_bad[v] = 1;
+}
+
+static int sp_new_inst(int kind, int ty, int s1, int s2, int val, int blk) {
+    int cl;
+    cl = h_ninst;
+    if (cl >= HIR_MAX_INST) return -1;
+    h_kind[cl] = kind;
+    h_ty[cl] = ty;
+    h_src1[cl] = s1;
+    h_src2[cl] = s2;
+    h_val[cl] = val;
+    h_name[cl] = 0;
+    h_blk[cl] = blk;
+    h_cbase[cl] = -1;
+    h_pbase[cl] = -1;
+    h_pcnt[cl] = 0;
+    h_ld_ro[cl] = 0;
+    h_no_remat[cl] = 0;
+    licm_map[cl] = -1;
+    licm_next[cl] = -1;
+    h_ninst = h_ninst + 1;
+    return cl;
+}
+
+static void licm_split(int header) {
+    int pre;
+    int i;
+    int j;
+    int k;
+    int v;
+    int lim;
+    int nsplit;
+    int a_inst;
+    int s_inst;
+    int lb[8];
+    int li[8];
+    int nlb;
+
+    pre = ssa_idom[header];
+    if (pre < 0 || pre >= bb_nblk || ssa_vis[pre]) return;
+
+    lim = h_ninst;
+    i = 0;
+    while (i < lim) {
+        sp_inbody[i] = 0;
+        sp_post[i] = 0;
+        sp_bad[i] = 0;
+        i = i + 1;
+    }
+
+    /* Classify every use */
+    i = 0;
+    while (i < lim) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            j = 0;
+            while (j < h_pcnt[i]) {
+                sp_use(h_pval[h_pbase[i] + j], h_pblk[h_pbase[i] + j],
+                       pre, header);
+                j = j + 1;
+            }
+        } else {
+            if (h_src1[i] >= 0) sp_use(h_src1[i], h_blk[i], pre, header);
+            if (h_src2[i] >= 0 && ho_src2_is_ref(k))
+                sp_use(h_src2[i], h_blk[i], pre, header);
+            if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+                j = 0;
+                while (j < h_val[i]) {
+                    sp_use(h_carg[h_cbase[i] + j], h_blk[i], pre, header);
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    nsplit = 0;
+    v = 0;
+    while (v < lim && nsplit < 8) {
+        k = h_kind[v];
+        if (k == HI_NOP || !hi_has_value(k) || hi_inst_remat(v) ||
+            k == HI_CALL || k == HI_CALLHI ||
+            sp_inbody[v] || sp_bad[v] || !sp_post[v] ||
+            h_blk[v] < 0 || h_blk[v] >= bb_nblk || ssa_vis[h_blk[v]] ||
+            !licm_dominates(h_blk[v], header)) { v = v + 1; continue; }
+
+        if (h_ninst + 2 >= HIR_MAX_INST) return;
+
+        split_frame = split_frame + 4;
+        a_inst = sp_new_inst(HI_ALLOCA, TY_INT, -1, -1, 0 - split_frame, pre);
+        s_inst = sp_new_inst(HI_STORE, TY_INT, a_inst, v, 0, pre);
+        if (a_inst < 0 || s_inst < 0) return;
+
+        /* The store runs in the preheader, after any hoisted clones
+         * (which may themselves read v). */
+        if (licm_tail[pre] >= 0) licm_next[licm_tail[pre]] = s_inst;
+        else licm_head[pre] = s_inst;
+        licm_tail[pre] = s_inst;
+
+        /* Rewrite each post-loop use through a per-block reload. */
+        nlb = 0;
+        i = 0;
+        while (i < lim) {
+            k = h_kind[i];
+            if (k == HI_NOP) { i = i + 1; continue; }
+            if (k == HI_PHI && h_pbase[i] >= 0) {
+                j = 0;
+                while (j < h_pcnt[i]) {
+                    if (h_pval[h_pbase[i] + j] == v) {
+                        int ub;
+                        ub = h_pblk[h_pbase[i] + j];
+                        if (ub >= 0 && ub < bb_nblk && !ssa_vis[ub] &&
+                            ub != pre && !licm_dominates(ub, header) &&
+                            licm_dominates(pre, ub)) {
+                            int ld;
+                            int x;
+                            ld = -1;
+                            x = 0;
+                            while (x < nlb) { if (lb[x] == ub) { ld = li[x]; break; } x = x + 1; }
+                            if (ld < 0 && nlb < 8) {
+                                ld = sp_new_inst(HI_LOAD, TY_INT, a_inst, -1, 0, ub);
+                                if (ld < 0) return;
+                                licm_next[ld] = split_head[ub];
+                                split_head[ub] = ld;
+                                lb[nlb] = ub; li[nlb] = ld; nlb = nlb + 1;
+                            }
+                            if (ld >= 0) h_pval[h_pbase[i] + j] = ld;
+                        }
+                    }
+                    j = j + 1;
+                }
+                i = i + 1;
+                continue;
+            }
+            {
+                int ub;
+                int ld;
+                int x;
+                int refs;
+                ub = h_blk[i];
+                refs = 0;
+                if (h_src1[i] == v) refs = 1;
+                if (h_src2[i] == v && ho_src2_is_ref(k)) refs = 1;
+                if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+                    j = 0;
+                    while (j < h_val[i]) {
+                        if (h_carg[h_cbase[i] + j] == v) refs = 1;
+                        j = j + 1;
+                    }
+                }
+                if (!refs || ub < 0 || ub >= bb_nblk || ssa_vis[ub] ||
+                    ub == pre || licm_dominates(ub, header) ||
+                    !licm_dominates(pre, ub)) {
+                    i = i + 1;
+                    continue;
+                }
+                ld = -1;
+                x = 0;
+                while (x < nlb) { if (lb[x] == ub) { ld = li[x]; break; } x = x + 1; }
+                if (ld < 0 && nlb < 8) {
+                    ld = sp_new_inst(HI_LOAD, TY_INT, a_inst, -1, 0, ub);
+                    if (ld < 0) return;
+                    licm_next[ld] = split_head[ub];
+                    split_head[ub] = ld;
+                    lb[nlb] = ub; li[nlb] = ld; nlb = nlb + 1;
+                }
+                if (ld >= 0) {
+                    if (h_src1[i] == v) h_src1[i] = ld;
+                    if (h_src2[i] == v && ho_src2_is_ref(k)) h_src2[i] = ld;
+                    if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+                        j = 0;
+                        while (j < h_val[i]) {
+                            if (h_carg[h_cbase[i] + j] == v)
+                                h_carg[h_cbase[i] + j] = ld;
+                            j = j + 1;
+                        }
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        licm_stat_split = licm_stat_split + 1;
+        nsplit = nsplit + 1;
+        v = v + 1;
+    }
+}
+
 static void hir_licm(void) {
     int b;
     int i;
@@ -359,7 +585,16 @@ static void hir_licm(void) {
         licm_tail[b] = -1;
         licm_in_any_loop[b] = 0;
         licm_depth[b] = 0;
+        split_head[b] = -1;
         b = b + 1;
+    }
+    /* Frame high-water for split slots: below every existing ALLOCA. */
+    split_frame = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ALLOCA && h_val[i] < 0 &&
+            0 - h_val[i] > split_frame) split_frame = 0 - h_val[i];
+        i = i + 1;
     }
     i = 0;
     while (i < h_ninst) {
@@ -392,6 +627,7 @@ static void hir_licm(void) {
                 }
                 licm_mark(body_count);
                 licm_hoist(s, body_count);
+                licm_split(s);
             }
             si = si + 1;
         }

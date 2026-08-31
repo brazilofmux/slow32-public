@@ -557,3 +557,38 @@ LINPACK 1.98× → 1.41×, mandel 3.26× → 1.50×.  28/28 tests; all
 engines agree.  Still owed: live-range splitting (the two mandel pair
 phis and two latch values that genuinely exceed the callee pool),
 then ungating rotation, IV strength reduction, DGEFA shapes.
+
+## Live-range splitting lands; the rotation gate dissolves (mandel 1.50× → 1.21×)
+
+2026-08-30, the payoff.  A value LIVE THROUGH a loop but unused
+inside it occupied a register for the whole loop under linear-
+interval liveness -- exactly the register an inner-loop phi needed.
+licm_split (running per natural loop, after hoisting, on the same
+ssa_vis machinery) now stores such a value to a fresh frame slot in
+the preheader and reloads it at the top of each post-loop use block,
+rewriting the uses.  Candidates must be defined in a block
+dominating the header, unused in the body, used only in blocks
+dominated by the preheader; CALL/CALLHI results are excluded (their
+pair linkage is positional).  The reloads live in split_head[b], a
+new TOP-of-block list (LICM's lists run after a block's body, which
+is right for hoists and wrong for reloads); ra_order, hcg_block, the
+layout size estimate and the forwarding guard all learned about it.
+
+Alone, splitting measured near-neutral (mandel −41K, LINPACK +0.6M
+of store/load overshoot where pressure was already fine).  Its value
+was never standalone: with registers freed across loops, the
+scalar-double rotation gate came OFF -- and rotated mandel went
+35.2M → **28.4M with ZERO register spills in the whole program**.
+The chain that had to line up: phi coalescing across the crossing
+divide, spilled-phi edge copies, spill-to-remat constants, weighted
+spill costs, and splitting -- each necessary, only the ensemble
+sufficient.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 708,789,275 (1.414×) | 35,199,587 (1.500×) |
+| after | 707,773,312 (**1.412×**) | 28,421,688 (**1.211×**) |
+
+Day cumulative: LINPACK 1.98× → 1.41×, mandel 3.26× → 1.21×.  28/28
+tests; slow32, slow32-fast and slow32-dbt agree.  The gate machinery
+(f77_dstore_n) is deleted, not parked -- splitting supersedes it.

@@ -2657,7 +2657,7 @@ static void hcg_compute_fwd(void) {
 
     b = 1;
     while (b < bb_nblk) {
-        if (ssa_phi_head[b] < 0 && licm_head[b] < 0) {
+        if (ssa_phi_head[b] < 0 && licm_head[b] < 0 && split_head[b] < 0) {
             tgt = -1;
             ok = 1;
             i = bb_start[b];
@@ -2797,6 +2797,11 @@ static void hcg_compute_fwd(void) {
             nxt = nxt + 24;
             i = licm_next[i];
         }
+        i = split_head[ob];
+        while (i >= 0) {
+            nxt = nxt + 24;
+            i = licm_next[i];
+        }
         i = ssa_phi_head[ob];
         while (i >= 0) {
             nxt = nxt + 24;
@@ -2820,6 +2825,13 @@ static void hcg_block(int b) {
     /* Skipped trampoline: every reference was redirected to its
      * final target and nothing falls into it — emit only the label. */
     if (hcg_skip[b]) return;
+
+    /* Split-pass reloads: top of block, before every use. */
+    i = split_head[b];
+    while (i >= 0) {
+        hcg_inst(i);
+        i = licm_next[i];
+    }
 
     /* Find the terminator (last non-NOP: BR/BRC/RET/JMPTAB) */
     term = -1;

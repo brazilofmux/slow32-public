@@ -338,17 +338,7 @@ static int ctl_stephi[F77_MAX_CTL];  /* DO: hi word of a DOUBLE step */
 static int ctl_trip[F77_MAX_CTL];    /* DO: alloca holding the trip count */
 static int ctl_test[F77_MAX_CTL];    /* DO: test block */
 static int ctl_body[F77_MAX_CTL];    /* DO: body head, the rotated back edge */
-static int ctl_dsnap[F77_MAX_CTL];   /* scalar-double store count at DO open */
 
-/* Scalar DOUBLE stores emitted so far -- the rotation gate.  A loop
- * whose body stores a scalar double carries fp64 PAIR phis on its
- * back edge; measured twice (mandel +71% then +7% after the copy
- * fixes), rotating those loops loses: the pairs cannot claim aligned
- * registers under inner-loop pressure and the edge pays slot traffic
- * every iteration.  Integer/array loops (DAXPY, DGEFA) rotate and
- * win.  Until live-range splitting lands, rotation is gated on this
- * count not changing across the loop body. */
-static int f77_dstore_n;
 static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
 static int ctl_else[F77_MAX_CTL];    /* IF: pending else block */
 static int ctl_n;
@@ -705,8 +695,6 @@ static int f77_load_sym(int s) {
 
 static void f77_store_sym_val(int s, int v, int vty, int vhi) {
     f77_sstored[s] = 1;
-    if (f77_sty[s] == TY_DOUBLE && f77_srank[s] == 0)
-        f77_dstore_n = f77_dstore_n + 1;
     if (f77_shi[s] >= 0) {
         v = f77_cvt(v, &vhi, vty, f77_sty[s]);
         hi_emit(HI_STORE, TY_INT, f77_sval[s], v, 0, NULL);
@@ -1510,8 +1498,6 @@ static void f77_scan_from(int off) {
 
 static void f77_store_sym(int s, int v, int vty, int vhi) {
     f77_sstored[s] = 1;
-    if (f77_sty[s] == TY_DOUBLE && f77_srank[s] == 0)
-        f77_dstore_n = f77_dstore_n + 1;
     v = f77_cvt(v, &vhi, vty, f77_sty[s]);
     if (f77_sty[s] == TY_DOUBLE) {
         int addr4;
@@ -2478,7 +2464,6 @@ static void f77_open_do(void) {
     ctl_test[ctl_n] = b_test;
     ctl_body[ctl_n] = b_body;
     ctl_exit[ctl_n] = b_exit;
-    ctl_dsnap[ctl_n] = f77_dstore_n;
     ctl_n = ctl_n + 1;
 }
 
@@ -2519,16 +2504,15 @@ static void f77_close_do(int lab) {
             t = hi_emit(HI_LOAD, TY_INT, ctl_trip[ctl_n], -1, 0, NULL);
             t = hi_emit(HI_ADDI, TY_INT, t, -1, -1, NULL);
             hi_emit(HI_STORE, TY_INT, ctl_trip[ctl_n], t, 0, NULL);
-            if (f77_dstore_n == ctl_dsnap[ctl_n] && vty != TY_DOUBLE) {
-                /* Rotated back edge: test the freshly decremented
-                 * trip here and branch straight to the body.  The
-                 * header test still guards the zero-trip entry.
-                 * Gated: see f77_dstore_n. */
-                v = hi_emit(HI_SGT, TY_INT, t, f77_iconst(0), 0, NULL);
-                hi_emit(HI_BRC, TY_VOID, v, ctl_body[ctl_n], ctl_exit[ctl_n], NULL);
-            } else {
-                hi_emit(HI_BR, TY_VOID, -1, -1, ctl_test[ctl_n], NULL);
-            }
+            /* Rotated back edge: test the freshly decremented trip
+             * here and branch straight to the body; the header test
+             * still guards the zero-trip entry.  The scalar-double
+             * gate that once protected fp64-phi loops is gone:
+             * live-range splitting (licm_split) frees the registers
+             * those loops needed, and rotated double loops now win
+             * too (mandel 35.2M -> 28.4M with ZERO spills). */
+            v = hi_emit(HI_SGT, TY_INT, t, f77_iconst(0), 0, NULL);
+            hi_emit(HI_BRC, TY_VOID, v, ctl_body[ctl_n], ctl_exit[ctl_n], NULL);
         }
         f77_cur_blk_live = 0;
         f77_begin_blk(ctl_exit[ctl_n]);
