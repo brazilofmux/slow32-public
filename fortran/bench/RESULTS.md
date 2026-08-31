@@ -682,3 +682,34 @@ overhead (prologue/epilogue × ~2000 calls/rep) and clang's memset
 handicap partially offsetting it; the honest next levers are
 save-fewer-registers shapes or revisiting inlining WITH a fix for
 whatever makes it 2.3× at threshold 12.
+
+## FP-compare branch fusion (the last two-instruction compare)
+
+Every fp64 relational (`__fp64_eq/lt/le` pseudo-calls, inlined as
+feq.d/flt.d/fle.d) put its flag in r1, moved it to a home register,
+and then the BRC tested that register: three instructions where two
+suffice.  Now, when the compare pseudo-call is the branch condition's
+only user and sits immediately before the BRC (no intervening
+instructions, no copy chain, no LICM list on the block), the fuser
+marks it and the BRC reads r1 directly: `flt.d r1,pa,pb; bne r1,r0`.
+The r1 -> home move is suppressed.
+
+The bug that cost a debugging session: `ra_extend_fused_cmp` NOPs
+every fused comparison, because for INT compares the BRC re-emits the
+compare as a bcond.  An fp64 compare is NOT re-emitted -- the call
+site itself must still emit the flt.d -- so regalloc NOPed the call
+and the branch read a stale r1 (10 tests failed, every `.GT.`
+tolerance check).  Fix: regalloc now leaves a fused HI_CALL compare
+fully intact (live ranges, call-crossing effects); only the emission
+changes.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 566,760,085 (1.130×) | 26,120,168 (1.113×) |
+| after | 565,071,284 (**1.127×**) | 24,985,251 (**1.065×**) |
+
+Mandel is the winner (-4.3%): its inner loop's `X*X+Y*Y .GT. 4.0`
+fuses, as does the iteration-count check.  LINPACK barely moves --
+its hot loops' compares were already the int trip tests fused last
+round.  28/28 tests; mandel output byte-identical to the clang
+build; LINPACK residual check passes.

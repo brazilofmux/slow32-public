@@ -896,6 +896,8 @@ static int hcg_is_cmp(int k) {
     return (k >= HI_SEQ && k <= HI_SGEU);
 }
 
+static int hcg_fp64_kind(char *nm);   /* defined in hir_codegen.h */
+
 static void hcg_identify_fusions(void) {
     int i;
     int k;
@@ -935,6 +937,36 @@ static void hcg_identify_fusions(void) {
         if (!ok || root < 0) { i = i + 1; continue; }
 
         rk = h_kind[root];
+
+        /* DIVERGENCE (f77, port upstream): an fp64 compare pseudo-call
+         * (__fp64_eq/lt/le) leaves its flag in r1; when it is the
+         * branch's only user, sits immediately before the BRC (nothing
+         * whose emission could touch r1 in between -- so no copies, no
+         * intervening instructions, and no LICM list on the block,
+         * which emits between body and terminator), the BRC reads r1
+         * directly and the r1 -> home-register move is skipped. */
+        if (rk == HI_CALL && root == h_src1[i] &&
+            hcg_fp64_kind(h_name[root]) >= 5 &&
+            hcg_fp64_kind(h_name[root]) <= 7 &&
+            bg_uses[root] == 1 && h_blk[root] == h_blk[i] &&
+            licm_head[h_blk[i]] < 0) {
+            int gap;
+            int adj;
+            adj = 1;
+            gap = root + 1;
+            while (gap < i) {
+                if (h_kind[gap] != HI_NOP) { adj = 0; break; }
+                gap = gap + 1;
+            }
+            if (adj) {
+                hcg_brc_fuse[i] = root;
+                hcg_cmp_fused[root] = 1;
+                hcg_cmp_kind[root] = HI_CALL;   /* sentinel: flag in r1 */
+                i = i + 1;
+                continue;
+            }
+        }
+
         if (!hcg_is_cmp(rk)) { i = i + 1; continue; }
         if (bg_uses[root] != 1) { i = i + 1; continue; }
         if (h_blk[root] != h_blk[i]) { i = i + 1; continue; }

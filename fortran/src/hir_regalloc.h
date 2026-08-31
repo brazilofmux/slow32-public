@@ -799,6 +799,12 @@ static void ra_extend_fused_cmp(void) {
             continue;
         }
 
+        /* A fused fp64 compare CALL is NOT re-emitted at the BRC: the
+         * call site itself emits flt.d into r1 and the adjacent BRC
+         * reads it.  Keep the call fully visible to the allocator --
+         * its carg ranges and call-crossing effects stand as-is. */
+        if (h_kind[cmp] == HI_CALL) { i = i + 1; continue; }
+
         ca = h_src1[cmp];
         cb = h_src2[cmp];
 

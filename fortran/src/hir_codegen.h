@@ -2288,6 +2288,14 @@ static void hcg_inst(int idx) {
             ca = h_src1[cmp_idx];
             cb = h_src2[cmp_idx];
 
+            if (ck == HI_CALL) {
+                /* fp64 compare pseudo-call: the flag is still in r1
+                 * (its home move was suppressed). */
+                hcg_condbr_finish(idx, "bne", "beq", 1, 0);
+                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
+                return;
+            }
+
             if (ck == HI_SEQ || ck == HI_SNE || ck == HI_SLT ||
                 ck == HI_SGE || ck == HI_SLTU || ck == HI_SGEU) {
                 if (ck == HI_SEQ) { bropt = "beq"; brop = "bne"; }
@@ -2407,6 +2415,7 @@ static void hcg_inst(int idx) {
             hcg_fp64_dst = -1;
             hcg_fp64_emit(fpk, base);
             if (hcg_fp64_dst >= 0) return;   /* already in its home pair */
+            if (hcg_cmp_fused[idx]) return;  /* flag stays in r1 for the BRC */
             /* Result is in r4:r5.  If it is going to be spilled anyway,
              * store straight from there rather than moving it through
              * the r1:r2 call-return convention first -- two fewer
