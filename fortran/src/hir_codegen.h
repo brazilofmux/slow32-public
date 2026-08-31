@@ -37,6 +37,12 @@ static void cg_n(int v) {
     int neg;
     if (v == 0) { cg_c(48); return; }
     neg = 0;
+    if (v == -2147483647 - 1) {
+        /* 0 - INT_MIN overflows back to INT_MIN and the digit loop
+         * never runs: a global holding 0x80000000 emitted ".word -" */
+        cg_s("-2147483648");
+        return;
+    }
     if (v < 0) { neg = 1; v = 0 - v; }
     i = 0;
     while (v > 0) {

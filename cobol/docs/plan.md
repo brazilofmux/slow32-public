@@ -1315,10 +1315,9 @@ amendment's ALL subscript; documented).  The harness is 89.
 The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
 (2026-08-30); what follows is the list as written at v1.
 
-- Rest of majesty batch (`gl024`–`gl043`, relative I-O, `w001`)
-- In-program `SORT` (`dist01`, `gl008`, `glacpost`, `ldglentry`)
-- Nucleus Level 2 at full width (`CORRESPONDING`, abbreviated
-  conditions, nested programs, `REPLACE`, `INSPECT REPLACING`)
+- ~~Rest of majesty batch~~ (done, Stages 19-21)
+- ~~In-program `SORT`~~ (done, Stages 19-21 and ISSUES-4a)
+- ~~Nucleus Level 2 at full width~~ (done, Stages 26-56)
 - The rest of the corpus rewrite: the pure-COBOL date-function family
   (`fielded_to_linear.cbl`, `linear_to_fielded.cbl`, `isvaliddate`,
   `isleapyear`, `floor-div`, `floor-divmod`, `holidays`' inner units)
@@ -1326,10 +1325,10 @@ The ranked, maintained form of this list is [../ISSUES.md](../ISSUES.md)
   conditions and need hoisted temporaries, and nothing on `batch.sh`
   reaches them -- do it when `jerm`/`exgltrans` are compiled, with a
   test plan of its own
-- Report Writer `CONTROL`/`SUM`
-- Alternate keys
+- ~~Report Writer `CONTROL`/`SUM`~~ (done, Stage 62)
+- ~~Alternate keys~~ (done, ISSUES-12)
 - dBase-compatible writer filter
-- CCVS-85 NC/SQ/IC as a pass/fail suite
+- ~~CCVS-85 NC/SQ/IC as a pass/fail suite~~ (done, all nine modules: ccvs-run.sh)
 - `rs.c`, `csvgen.c`, `crc.c` on SLOW-32, when a program calls them
 
 Queued 2026-08-30, after the suite and the screen (ISSUES-22, 23):

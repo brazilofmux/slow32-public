@@ -281,17 +281,25 @@ and what `cobol/`, `clip/` and `dbase/` learned from it. The project
 name and `~/majesty/...` paths are already public and fine. What must
 not cross, in files **or commit messages**:
 
-- ledger codes and the report file names built on them
-  (`*-<code>.prn`); say "the activity report", "one balance sheet";
+- ledger codes and the report file names built on them (the
+  `*-<code>.prn` shape); say "the activity report", "one balance
+  sheet".  The codes themselves stay out of this file too -- the
+  public copy of this section must be crossable verbatim;
 - account numbers, transaction ids, amounts and dates from the ledger
   or from majesty's test fixtures (`tests/cases/*`);
 - vendor, payee and receipt names; family names other than the user's;
 - anything under `cobol/out/` (gitignored here; it has held real data).
 
 When a commit message here carries one of those, reword it on the way
-over rather than skipping the commit. Known: `59c8fe53` (cobol Stage
-16) quotes two fixture account numbers. `cobol/tests/data` is synthetic
-(checked 2026-08-30 against the real files) and may cross as is.
+over rather than skipping the commit -- and grep every message in the
+range being synced rather than relying on a known list (three of the
+Stage 16-56 batch needed rewording, not the one that was listed).
+Scrub each commit BEFORE it is created on the public side: a
+redaction commit later in the same batch cannot remove what ordered
+replay already published, because history is immutable (GitHub #12).
+`cobol/tests/data` is synthetic (checked 2026-08-30 against the real
+files); its fixture codes were renamed to neutral ones on both sides
+(AAA/BBB/ccc) so the trees converge.
 
 ## Issue Tracking — two channels, two numbering spaces
 

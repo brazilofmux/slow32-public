@@ -77,6 +77,12 @@ static void fdputuint(int f, int v) {
     int neg;
     if (v == 0) { write(f, "0", 1); return; }
     neg = 0;
+    if (v == -2147483647 - 1) {
+        /* 0 - INT_MIN overflows back to INT_MIN and the digit loop
+         * never runs; this printer only serves diagnostics */
+        write(f, "-2147483648", 11);
+        return;
+    }
     if (v < 0) { neg = 1; v = 0 - v; }
     i = 0;
     while (v > 0) {

@@ -54,10 +54,10 @@ per program unit; the test beside `NUMERIC` in `parse_simple`;
 (one line of stdin, moved as text) and `LENGTH OF`; both landed, and
 damm's output is byte-identical to GnuCOBOL's over seven inputs
 including the check-digit fixtures majesty's tests use. gl008's declarations were
-unused and were removed on the majesty side. Other SPECIAL-NAMES
-clauses (`CURRENCY SIGN`, `SYMBOLIC`) stay refused by name until a
-program asks; switches landed in Stage 23 and `DECIMAL-POINT IS
-COMMA` in Stage 27 (a token post-pass, not the scanner).
+unused and were removed on the majesty side. The other SPECIAL-NAMES
+clauses all landed later: switches (Stage 23), `DECIMAL-POINT IS
+COMMA` (Stage 27, a token post-pass), `CURRENCY SIGN` (Stage 43),
+`SYMBOLIC CHARACTERS` (Stage 54), `CRT STATUS` (Stage 59).
 
 ### 4. ~~`SD` and file `SORT` (glacpost; ldglentry)~~ — RESOLVED 2026-08-30
 Stage 21. The SD is a `cob_file` of organization SORT; a SORT
@@ -326,12 +326,9 @@ STOP literal~~ (done, Stage 55: NC compiles 95 of 95), ~~SYMBOLIC CHARACTERS
 (NC401M)~~ (done, Stage 54; NC401M then wants ALTER, as NC303M does); ~~ADVANCING ZERO (SQ101M), CODE-SET (SQ111A), a record qualified by its
 file (SQ207M), OPEN REVERSED (SQ303M, SQ401M), SORT [COLLATING] SEQUENCE
 (ST139A, ST140A)~~ (done, Stage 56; RL's last program was the abbreviated
-condition)., `MOVE/ADD CORRESPONDING` (4; ISSUES-10), `BY CONTENT` (2),
-more than three `VARYING ... AFTER` levels (2), clauses on an 01
-report group (2), `EXTERNAL` (2), a multi-character `CLASS` literal
-(2), `CURRENCY SIGN` (1). Then the real gate: run each compiled
-program and read its own PASS/FAIL lines (the IF module wants
-`make IF` there first).
+condition). The real gate ran too: every compiled program's own
+PASS/FAIL lines are the tally above (the IF module joined at Stage
+63, extracted with EXEC85 rebuilt in the oracle container).
 
 ### 18. Building on a host without LLVM
 `cctool.sh` (b96c4aff, Kagura) falls back to the self-hosted stage08
