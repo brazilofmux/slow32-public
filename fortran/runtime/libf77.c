@@ -47,6 +47,17 @@ static int   fio_revert;
 static int   fio_listed;         /* 1 = list-directed (FMT=*) */
 static int   fio_first_item;
 
+/* Input state.  The format walker is shared between WRITE and READ;
+ * fio_reading flips the direction of the record-affecting descriptors
+ * (literals, X, /, end-of-format reversion). */
+static int   fio_reading;        /* 1 = READ in progress */
+static char  fio_rec[FIO_MAXLINE];  /* current input record */
+static int   fio_rlen;
+static int   fio_rpos;
+static int   fio_ldone;          /* list-directed: '/' seen, rest untouched */
+static int   fio_l_pending;      /* list-directed r*c: repeats left on fio_ltok */
+static char  fio_ltok[128];
+
 static void fio_putc(int c) {
     if (fio_len < FIO_MAXLINE - 1) fio_line[fio_len++] = (char)c;
 }
@@ -76,6 +87,28 @@ static void fio_field(const char *s, int w) {
 
 static int fio_isdigit(int c) { return c >= '0' && c <= '9'; }
 
+/* Fetch the next input record.  Returns 1 at end of file.  A record
+ * shorter than the fields read from it behaves as if blank-padded,
+ * which fio_field_in provides by supplying blanks past fio_rlen. */
+static int fio_getrec(void) {
+    if (!fgets(fio_rec, FIO_MAXLINE, stdin)) return 1;
+    fio_rlen = (int)strlen(fio_rec);
+    while (fio_rlen > 0 &&
+           (fio_rec[fio_rlen - 1] == '\n' || fio_rec[fio_rlen - 1] == '\r'))
+        fio_rlen--;
+    fio_rpos = 0;
+    return 0;
+}
+
+/* Mid-statement end of file is an error: END= is checked only when the
+ * READ begins, which covers the read-until-EOF idiom. */
+static void fio_next_record(void) {
+    if (fio_getrec()) {
+        fprintf(stderr, "f77: end of file on READ\n");
+        exit(2);
+    }
+}
+
 static int fio_number(void) {
     int v = 0;
     while (fio_isdigit(fio_fmt[fio_pos]))
@@ -99,27 +132,42 @@ static int fio_next_desc(void) {
 
         if (c == 0) {
             /* End of format.  If items remain, revert to the last
-             * top-level group; otherwise the record is done. */
+             * top-level group; otherwise the record is done.  On input,
+             * a new record is taken where output would start a new
+             * line. */
             if (fio_gdepth > 0) { fio_gdepth = 0; }
             if (fio_revert < 0) return 0;
             fio_pos = fio_revert;
             if (fio_fmt[fio_pos] == 0) return 0;
-            fio_flush_line();
+            if (fio_reading) fio_next_record();
+            else fio_flush_line();
             continue;
         }
         if (c == ' ' || c == ',') { fio_pos++; continue; }
 
-        if (c == '/') { fio_pos++; fio_flush_line(); continue; }
+        if (c == '/') {
+            fio_pos++;
+            if (fio_reading) fio_next_record();
+            else fio_flush_line();
+            continue;
+        }
 
         if (c == '\'') {
+            /* Apostrophe editing is output-only in F77; on input the
+             * text is skipped rather than transferred. */
             fio_pos++;
             while (fio_fmt[fio_pos]) {
                 if (fio_fmt[fio_pos] == '\'') {
-                    if (fio_fmt[fio_pos + 1] == '\'') { fio_putc('\''); fio_pos += 2; continue; }
+                    if (fio_fmt[fio_pos + 1] == '\'') {
+                        if (!fio_reading) fio_putc('\'');
+                        fio_pos += 2;
+                        continue;
+                    }
                     fio_pos++;
                     break;
                 }
-                fio_putc(fio_fmt[fio_pos++]);
+                if (!fio_reading) fio_putc(fio_fmt[fio_pos]);
+                fio_pos++;
             }
             continue;
         }
@@ -158,10 +206,18 @@ static int fio_next_desc(void) {
             }
             continue;
         }
-        if (c == 'X' || c == 'x') { fio_pos++; fio_pad(n); continue; }
+        if (c == 'X' || c == 'x') {
+            fio_pos++;
+            if (fio_reading) fio_rpos += n;   /* skip columns */
+            else fio_pad(n);
+            continue;
+        }
         if (c == 'H' || c == 'h') {
             fio_pos++;
-            while (n-- > 0 && fio_fmt[fio_pos]) fio_putc(fio_fmt[fio_pos++]);
+            while (n-- > 0 && fio_fmt[fio_pos]) {
+                if (!fio_reading) fio_putc(fio_fmt[fio_pos]);
+                fio_pos++;
+            }
             continue;
         }
         if (c == 'P' || c == 'p') { fio_pos++; fio_scale = nneg ? -n : n; continue; }   /* kP: sticky until the next P (13.5.9) */
@@ -284,6 +340,7 @@ void f77_wr_begin(int unit, const char *fmt) {
         fprintf(stderr, "f77: WRITE to unit %d is not supported\n", unit);
         exit(2);
     }
+    fio_reading = 0;
     fio_unit = unit;
     fio_len = 0;
     fio_gdepth = 0;
@@ -427,4 +484,297 @@ void f77_wr_end(void) {
         fio_revert = save_revert;
     }
     fio_flush_line();
+}
+
+/* --- formatted input ------------------------------------------------- */
+
+/* Copy the next `w` columns of the record into `buf` with every blank
+ * squeezed out (F77's default BLANK='NULL' for preconnected units: a
+ * blank is no character at all, and an all-blank field is zero).
+ * Columns past the end of the record read as blanks. */
+static void fio_field_in(char *buf, int w) {
+    int i;
+    int c;
+    int n = 0;
+    for (i = 0; i < w; i++) {
+        c = (fio_rpos + i < fio_rlen) ? fio_rec[fio_rpos + i] : ' ';
+        if (c != ' ' && c != '\t' && n < FIO_MAXLINE - 1) buf[n++] = (char)c;
+    }
+    buf[n] = 0;
+    fio_rpos += w;
+}
+
+static int fio_in_int(int w) {
+    char buf[FIO_MAXLINE];
+    fio_field_in(buf, w);
+    if (!buf[0]) return 0;
+    return (int)strtol(buf, 0, 10);
+}
+
+static int fio_in_logical(int w) {
+    char buf[FIO_MAXLINE];
+    int i = 0;
+    fio_field_in(buf, w);
+    if (buf[i] == '.') i++;
+    if (buf[i] == 'T' || buf[i] == 't') return 1;
+    if (buf[i] == 'F' || buf[i] == 'f') return 0;
+    if (buf[i] == 0) return 0;             /* all-blank field */
+    fprintf(stderr, "f77: bad LOGICAL input field '%s'\n", buf);
+    exit(2);
+    return 0;   /* not reached; -fno-builtin hides exit's noreturn */
+}
+
+/* F/E/D/G input.  The field is normalised into one string that strtod
+ * parses in a single call -- building the string rather than scaling
+ * the value keeps the conversion correctly rounded, which is what lets
+ * the digits match a reference Fortran after formatting.
+ *
+ * Rules folded in: D/Q exponent letters mean E; a bare +/- after the
+ * mantissa starts an exponent ('1.5+3'); a field with no decimal point
+ * has its rightmost `d` mantissa digits taken as fractional; the kP
+ * scale factor divides by 10^k, but only when the field itself has no
+ * exponent. */
+static double fio_in_real(int w, int d) {
+    char raw[FIO_MAXLINE];
+    char mant[FIO_MAXLINE];     /* mantissa digits only, no sign, no point */
+    char num[FIO_MAXLINE + 16];
+    int i;
+    int n;
+    int neg = 0;
+    int has_point = 0;
+    int has_exp = 0;
+    int pfrac = 0;              /* mantissa digits after the point so far */
+    int expv = 0;
+    int esign = 1;
+    int intlen;
+    int k;
+
+    fio_field_in(raw, w);
+    if (!raw[0]) return 0.0;
+
+    i = 0;
+    if (raw[i] == '+') i++;
+    else if (raw[i] == '-') { neg = 1; i++; }
+
+    n = 0;
+    for (; raw[i] && !has_exp; i++) {
+        int c = raw[i];
+        if (c == '.') { has_point = 1; continue; }
+        if (fio_isdigit(c)) {
+            if (n < FIO_MAXLINE - 1) mant[n++] = (char)c;
+            if (has_point) pfrac++;
+            continue;
+        }
+        if (c == 'E' || c == 'e' || c == 'D' || c == 'd' ||
+            c == 'Q' || c == 'q') {
+            has_exp = 1;
+            if (raw[i + 1] == '+') i++;
+            else if (raw[i + 1] == '-') { esign = -1; i++; }
+            continue;
+        }
+        if (c == '+' || c == '-') {         /* bare signed exponent */
+            has_exp = 1;
+            if (c == '-') esign = -1;
+            continue;
+        }
+        break;                              /* junk: stop, keep what parsed */
+    }
+    if (has_exp) {
+        for (; raw[i]; i++)
+            if (fio_isdigit(raw[i])) expv = expv * 10 + (raw[i] - '0');
+        expv = expv * esign;
+    }
+    mant[n] = 0;
+    if (n == 0) return 0.0;
+
+    /* Where does the point go?  Explicit point: pfrac digits are
+     * fractional.  No point: the rightmost d are. */
+    intlen = has_point ? n - pfrac : n - d;
+    if (!has_exp) expv = expv - fio_scale;
+
+    k = 0;
+    if (neg) num[k++] = '-';
+    if (intlen <= 0) {
+        num[k++] = '0';
+        num[k++] = '.';
+        for (i = intlen; i < 0; i++) num[k++] = '0';
+        for (i = 0; i < n; i++) num[k++] = mant[i];
+    } else {
+        for (i = 0; i < intlen && i < n; i++) num[k++] = mant[i];
+        num[k++] = '.';
+        for (; i < n; i++) num[k++] = mant[i];
+    }
+    snprintf(num + k, sizeof num - k, "E%d", expv);
+    return strtod(num, 0);
+}
+
+/* --- list-directed input --------------------------------------------- */
+
+/* Next list-directed value into fio_ltok.  Returns 0 with the token
+ * filled, or 1 for the `/` terminator.  Handles r*c repeats and value
+ * lists spanning records.  Null values (`1,,3`) are refused honestly
+ * rather than mis-assigned. */
+static int fio_list_tok(void) {
+    int c;
+    int n;
+    int comma_seen = 0;
+
+    if (fio_l_pending > 0) { fio_l_pending--; return 0; }
+
+    for (;;) {
+        if (fio_rpos >= fio_rlen) { fio_next_record(); comma_seen = 0; continue; }
+        c = fio_rec[fio_rpos];
+        if (c == ' ' || c == '\t') { fio_rpos++; continue; }
+        if (c == ',') {
+            if (comma_seen) {
+                fprintf(stderr, "f77: null value in list-directed input is not supported\n");
+                exit(2);
+            }
+            comma_seen = 1;
+            fio_rpos++;
+            continue;
+        }
+        break;
+    }
+    if (c == '/') { fio_rpos++; return 1; }
+
+    n = 0;
+    while (fio_rpos < fio_rlen) {
+        c = fio_rec[fio_rpos];
+        if (c == ' ' || c == '\t' || c == ',' || c == '/') break;
+        if (n < (int)sizeof fio_ltok - 1) fio_ltok[n++] = (char)c;
+        fio_rpos++;
+    }
+    fio_ltok[n] = 0;
+
+    /* r*value: unsigned repeat count, a star, then the value. */
+    n = 0;
+    while (fio_isdigit(fio_ltok[n])) n++;
+    if (n > 0 && fio_ltok[n] == '*') {
+        int r = (int)strtol(fio_ltok, 0, 10);
+        if (r > 1) fio_l_pending = r - 1;
+        memmove(fio_ltok, fio_ltok + n + 1, strlen(fio_ltok + n + 1) + 1);
+    }
+    return 0;
+}
+
+static double fio_list_real(void) {
+    char num[sizeof fio_ltok];
+    int i;
+    for (i = 0; fio_ltok[i]; i++) {
+        int c = fio_ltok[i];
+        if (c == 'D' || c == 'd' || c == 'Q' || c == 'q') c = 'E';
+        num[i] = (char)c;
+    }
+    num[i] = 0;
+    return strtod(num, 0);
+}
+
+/* --- READ entry points ------------------------------------------------ */
+
+/* Begin a READ.  Returns 1 at end of file when the statement carries
+ * END= (has_end); without END=, end of file is fatal here.  The first
+ * record is fetched now, which is what makes the read-until-EOF idiom
+ * (`READ (5, *, END=99) X` in a loop) work; end of file in the middle
+ * of a statement is always fatal (see fio_next_record). */
+int f77_rd_begin(int unit, const char *fmt, int has_end) {
+    if (unit != 5 && unit != 0) {
+        fprintf(stderr, "f77: READ from unit %d is not supported\n", unit);
+        exit(2);
+    }
+    fio_reading = 1;
+    fio_ldone = 0;
+    fio_l_pending = 0;
+    fio_gdepth = 0;
+    fio_scale = 0;
+    fio_rep = 0;
+    fio_desc = 0;
+    fio_len = 0;
+    fio_listed = (fmt == 0);
+    fio_fmt = fmt ? fmt : "";
+    fio_pos = 0;
+    fio_revert = -1;
+    if (!fio_listed) {
+        while (fio_fmt[fio_pos] == ' ') fio_pos++;
+        if (fio_fmt[fio_pos] == '(') { fio_revert = fio_pos; fio_pos++; }
+    }
+    if (fio_getrec()) {
+        fio_reading = 0;
+        if (has_end) return 1;
+        fprintf(stderr, "f77: end of file on READ\n");
+        exit(2);
+    }
+    return 0;
+}
+
+/* INTEGER and LOGICAL targets share TY_INT in the compiler, so both
+ * arrive here; the format descriptor (or the token's first character,
+ * list-directed) says which conversion applies. */
+void f77_rd_i(int *p) {
+    int d;
+    if (fio_listed) {
+        int c0;
+        if (fio_ldone) return;
+        if (fio_list_tok()) { fio_ldone = 1; return; }
+        c0 = fio_ltok[0];
+        if (c0 == '.' || c0 == 'T' || c0 == 't' || c0 == 'F' || c0 == 'f') {
+            int i = (c0 == '.') ? 1 : 0;
+            *p = (fio_ltok[i] == 'T' || fio_ltok[i] == 't') ? 1 : 0;
+            return;
+        }
+        *p = (int)strtol(fio_ltok, 0, 10);
+        return;
+    }
+    d = fio_want();
+    if (d == 0) return;
+    if (d == 'L') *p = fio_in_logical(fio_w);
+    else if (d == 'I') *p = fio_in_int(fio_w);
+    else if (d == 'A') {
+        fprintf(stderr, "f77: A editing on READ needs CHARACTER (not implemented)\n");
+        exit(2);
+    }
+    else *p = (int)fio_in_real(fio_w, fio_d);
+    fio_consumed();
+}
+
+void f77_rd_d(double *p) {
+    int d;
+    if (fio_listed) {
+        if (fio_ldone) return;
+        if (fio_list_tok()) { fio_ldone = 1; return; }
+        *p = fio_list_real();
+        return;
+    }
+    d = fio_want();
+    if (d == 0) return;
+    if (d == 'I') *p = (double)fio_in_int(fio_w);
+    else if (d == 'A' || d == 'L') {
+        fprintf(stderr, "f77: %c editing does not match a numeric READ item\n", d);
+        exit(2);
+    }
+    else *p = fio_in_real(fio_w, fio_d);
+    fio_consumed();
+}
+
+void f77_rd_r(float *p) {
+    int d;
+    if (fio_listed) {
+        if (fio_ldone) return;
+        if (fio_list_tok()) { fio_ldone = 1; return; }
+        *p = (float)fio_list_real();
+        return;
+    }
+    d = fio_want();
+    if (d == 0) return;
+    if (d == 'I') *p = (float)fio_in_int(fio_w);
+    else if (d == 'A' || d == 'L') {
+        fprintf(stderr, "f77: %c editing does not match a numeric READ item\n", d);
+        exit(2);
+    }
+    else *p = (float)fio_in_real(fio_w, fio_d);
+    fio_consumed();
+}
+
+void f77_rd_end(void) {
+    fio_reading = 0;
 }

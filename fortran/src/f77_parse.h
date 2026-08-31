@@ -2166,7 +2166,14 @@ static void f77_bind_unit(int u) {
     }
 }
 
-/* --- formatted output ------------------------------------------------ */
+/* --- formatted I/O ---------------------------------------------------- */
+
+/* WRITE and READ share the list walkers (f77_wr_one and friends):
+ * implied-DOs, whole arrays, and the comma structure are identical in
+ * both directions.  f77_io_rd flips the leaves -- a WRITE leaf loads a
+ * value and hands it to f77_wr_*, a READ leaf takes the item's ADDRESS
+ * and hands it to f77_rd_*, which stores through it. */
+static int f77_io_rd;
 
 /* Emit the call that hands one item to the runtime, choosing the entry
  * point by the item's type.  Doubles travel as an aligned register pair
@@ -2187,6 +2194,47 @@ static void f77_wr_item(int v, int vty, int vhi) {
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_i");
     }
     h_cbase[r] = cb;
+}
+
+/* READ leaf: hand the runtime the item's address to store through.
+ * INTEGER and LOGICAL both travel as TY_INT; the runtime tells I and L
+ * apart by the format descriptor, not the type. */
+static void f77_rd_item(int addr, int ty) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    if (ty == TY_DOUBLE)
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_d");
+    else if (ty == TY_FLOAT)
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_r");
+    else
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_i");
+    h_cbase[r] = cb;
+}
+
+/* A READ list item must be a variable or an array element -- somewhere
+ * to store.  Same address recipe as f77_actual_addr's simple path,
+ * including the address-taking escape on a split double's hi slot: the
+ * runtime stores 8 contiguous bytes through the lo address, so both
+ * halves must stay in memory. */
+static int f77_rd_target(int *tyo) {
+    int s;
+    if (lx_t != T_NAME) {
+        f77_error("READ list item must be a variable or array element");
+        *tyo = TY_INT;
+        return f77_iconst(0);
+    }
+    s = f77_sym(lex_name);
+    f77_tok();
+    *tyo = f77_sty[s];
+    if (lx_t == T_LP && f77_srank[s] > 0) {
+        f77_tok();
+        return f77_subscript_addr(s);
+    }
+    if (f77_shi[s] >= 0)
+        hi_emit(HI_ADDI, HL_ADDR_TY, f77_shi[s], -1, 0, NULL);
+    return f77_sval[s];
 }
 
 /* Does the parenthesised group starting at `open` look like an
@@ -2294,9 +2342,13 @@ static void f77_wr_whole_array(int s) {
     else if (t == 8) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
     else byte = hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
     addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
-    v = f77_load_at(addr, f77_sty[s]);
-    vhi = ex_hi;
-    f77_wr_item(v, f77_sty[s], vhi);
+    if (f77_io_rd) {
+        f77_rd_item(addr, f77_sty[s]);
+    } else {
+        v = f77_load_at(addr, f77_sty[s]);
+        vhi = ex_hi;
+        f77_wr_item(v, f77_sty[s], vhi);
+    }
     for (k = 0; k < rank; k++) {
         idx = hi_emit(HI_LOAD, TY_INT, iv[k], -1, 0, NULL);
         idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 1, NULL);
@@ -2324,6 +2376,10 @@ static void f77_wr_one(void) {
 
     if (lx_t == T_SCON) {
         int sa;
+        if (f77_io_rd) {
+            f77_error("a character constant cannot be a READ list item");
+            return;
+        }
         sa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, lex_sidx, NULL);
         cb = h_ncarg;
         h_carg[h_ncarg] = sa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
@@ -2435,6 +2491,13 @@ static void f77_wr_one(void) {
         }
     }
 
+    if (f77_io_rd) {
+        int a;
+        a = f77_rd_target(&vty);
+        f77_rd_item(a, vty);
+        return;
+    }
+
     v = f77_expr();
     vty = ex_ty;
     vhi = ex_hi;
@@ -2512,6 +2575,95 @@ static void f77_stmt_print(int skip) {
     f77_wr_begin(f77_iconst(6), fmt_label);
     f77_wr_list();
     f77_wr_finish();
+}
+
+/* READ (unit, fmt [, END=label]) list  --  or  READ fmt, list.
+ *
+ * The unit may be `*` or 5 (stdin); fmt is a FORMAT label or `*` for
+ * list-directed.  END= names the statement to branch to at end of
+ * file, checked when the READ begins -- which is what the standard
+ * read-until-EOF loop exercises.  ERR= and IOSTAT= are refused
+ * honestly, as is unformatted `READ (u)`. */
+static void f77_stmt_read(int skip) {
+    int unit_val;
+    int fmt_label;
+    int end_label;
+    int cb;
+    int r;
+    int fs;
+    int fa;
+    int c;
+
+    f77_scan_from(skip);
+    fmt_label = -1;
+    end_label = -1;
+
+    if (lx_t == T_LP) {
+        f77_tok();
+        if (lx_t == T_STAR) { unit_val = f77_iconst(5); f77_tok(); }
+        else { unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT); }
+        if (lx_t != T_COMMA) {
+            f77_error("unformatted READ is not supported -- needs (unit, format)");
+            return;
+        }
+        f77_tok();
+        if (lx_t == T_STAR) f77_tok();
+        else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else { f77_error("only a FORMAT label or * is supported"); return; }
+        while (lx_t == T_COMMA) {
+            f77_tok();
+            if (lx_t == T_NAME && strcmp(lex_name, "END") == 0) {
+                f77_tok();
+                if (lx_t != T_ASSIGN) { f77_error("END needs =label"); return; }
+                f77_tok();
+                if (lx_t != T_ICON) { f77_error("END= needs a statement label"); return; }
+                end_label = lex_ival;
+                f77_tok();
+            } else {
+                f77_error("only END= is supported in the READ control list");
+                return;
+            }
+        }
+        if (lx_t != T_RP) { f77_error("expected ) after READ control list"); return; }
+        f77_tok();
+    } else {
+        /* READ fmt, list  --  always unit 5. */
+        unit_val = f77_iconst(5);
+        if (lx_t == T_STAR) f77_tok();
+        else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else { f77_error("READ needs a FORMAT label or *"); return; }
+        if (lx_t == T_COMMA) f77_tok();
+    }
+
+    cb = h_ncarg;
+    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    if (fmt_label >= 0) {
+        fs = f77_find_format(fmt_label);
+        if (fs < 0) { f77_error("no FORMAT statement with that label"); fs = 0; }
+        fa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, fs, NULL);
+    } else {
+        fa = f77_iconst(0);
+    }
+    h_carg[h_ncarg] = fa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = f77_iconst(end_label >= 0 ? 1 : 0);
+    h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_rd_begin");
+    h_cbase[r] = cb;
+
+    if (end_label >= 0) {
+        int b_cont;
+        b_cont = hir_new_block();
+        c = hi_emit(HI_SNE, TY_INT, r, f77_iconst(0), 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, c, f77_label_blk(end_label), b_cont, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_cont);
+    }
+
+    f77_io_rd = 1;
+    f77_wr_list();
+    f77_io_rd = 0;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 0, "f77_rd_end");
+    h_cbase[r] = h_ncarg;
 }
 
 /* Is this statement part of the declaration part (so the scalar dummy
@@ -2622,6 +2774,7 @@ static void f77_statement(void) {
 
     if ((n = f77_starts("WRITE")) != 0) { f77_stmt_write(n); goto done; }
     if ((n = f77_starts("PRINT")) != 0) { f77_stmt_print(n); goto done; }
+    if ((n = f77_starts("READ")) != 0)  { f77_stmt_read(n);  goto done; }
 
 
     if (f77_starts("SUBROUTINE") || f77_unit_header_ty() >= 0) {

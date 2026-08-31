@@ -1,7 +1,7 @@
 # Fortran 77 on SLOW-32
 
-Status: **working subset 2026-08-27.** Backend, frontend, FORMAT, and
-LINPACK all run. Still refused: `READ`, `OPEN`, `COMMON`, `EQUIVALENCE`,
+Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
+and LINPACK all run. Still refused: `OPEN`, `COMMON`, `EQUIVALENCE`,
 `CHARACTER`, `COMPLEX`, `DATA`.
 
 ## Why this one
@@ -249,6 +249,39 @@ No linker change is required, and none should be added for this.
    governs, to be parsed from its own offset first so the loop could be
    opened before the items were emitted into its body.
 
+   **READ landed 2026-08-30** (GitHub #23's first item), as the input
+   side of the same engine.  The format walker is shared, with a
+   `fio_reading` flag flipping the record-affecting descriptors:
+   literals are skipped rather than transferred (apostrophe editing is
+   output-only in F77), `nX` skips columns, `/` and end-of-format
+   reversion take a fresh record where output would start a new line.
+   The compiler side shares the list walkers too -- implied-DOs, whole
+   arrays and the comma structure are direction-independent --  with
+   `f77_io_rd` flipping the leaves: a WRITE leaf loads a value, a READ
+   leaf takes the item's *address* (the `f77_actual_addr` recipe,
+   including the address-taking escape on a split double's hi slot)
+   and the runtime stores through it.
+
+   Covered: formatted input for I/F/E/D/G/L with blanks-as-null
+   fields, the implied decimal point (`Fw.d` with no point in the
+   field), D and bare-signed exponents, the kP scale factor on input;
+   list-directed input with blank/comma separators, values spanning
+   records, `r*c` repeats, and the `/` terminator leaving the rest of
+   the list untouched; `READ (u, fmt)`, `READ (*, *)`, parenless
+   `READ fmt, list`, and `END=` -- checked when the READ begins, which
+   is what the read-until-EOF idiom exercises; end of file anywhere
+   else is a fatal error, as is `ERR=`/`IOSTAT=` (refused), null
+   list values (`1,,3`), unformatted `READ (u)`, and `A` editing on
+   input until CHARACTER exists.  Units: 5/`*` only -- OPEN is its own
+   milestone.  Building the strtod string rather than scaling the
+   value keeps conversion correctly rounded, so digits match gfortran
+   through dtoa on the way back out.
+
+   Gated by `tests/f77/read1.f` (formatted) and `read2.f`
+   (list-directed + END=), differential against gfortran with a
+   sibling `.in` file as stdin (`oracle.sh` gained `-i`); both proven
+   non-vacuous by mutation -- breaking the implied point trips read1's
+   STOP 4, dropping one repeat trips read2's STOP 3.
 
 5. **Subprograms.** `SUBROUTINE`/`FUNCTION`, by-reference arguments,
    `COMMON`, `SAVE`, `EXTERNAL`.

@@ -37,4 +37,6 @@ if ! "$ENGINE" image exists "$IMAGE" 2>/dev/null && \
     exit 2
 fi
 
-exec "$ENGINE" run --rm -v "$DIR:/work" "$IMAGE" "/work/$BASE" "$@"
+# -i wires the caller's stdin through to the program, which is how
+# READ-under-test gets its input; with no redirection it is harmless.
+exec "$ENGINE" run --rm -i -v "$DIR:/work" "$IMAGE" "/work/$BASE" "$@"
