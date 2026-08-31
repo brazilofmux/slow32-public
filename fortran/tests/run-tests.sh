@@ -133,13 +133,11 @@ fi
 # symbols is therefore sanctioned, not a cheat -- sbasic.s32x carries
 # sqrt/atan2/floor and runs them on the host under the DBT by design.
 #
-# What this reports is a code-quality fact worth watching: today f77
-# needs NO math libcall, because every FP operation it emits is a
-# SLOW-32 hardware instruction.  EXP, LOG, ATAN2, the trig functions
-# and real-exponent ** have no instruction behind them, so when they
-# land this list will legitimately grow.  It is printed rather than
-# enforced so that adding them is not blocked by a rule that was never
-# this directory's to begin with.
+# What this reports is a code-quality fact worth watching.  Arithmetic
+# and SQRT stay hardware instructions; EXP, LOG, ATAN2, the trig
+# functions and real-exponent ** emit libm names so the DBT can
+# intercept them (trans1.f, sumsq.f).  The LINPACK kernel still has
+# none.  Printed rather than enforced.
 INTERCEPTABLE="sqrt sqrtf sin cos tan asin acos atan atan2 atan2f sinh cosh tanh exp log log10 pow powf ceil floor round trunc fabs fmod fmodf sinf cosf tanf asinf acosf atanf sinhf coshf tanhf expf logf log10f ceilf floorf roundf truncf fabsf"
 leaked=""
 for f in "$HERE"/f77/*.f; do

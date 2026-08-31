@@ -2555,8 +2555,8 @@ f77_rd_i:                               # @f77_rd_i
 	lui r1, %hi(stderr)
 	addi r1, r1, %lo(stderr)
 	ldw r3, r1+0
-	lui r4, %hi(.L.str.29)
-	addi r4, r4, %lo(.L.str.29)
+	lui r4, %hi(.L.str.30)
+	addi r4, r4, %lo(.L.str.30)
 	jal r31, fprintf
 	addi r3, r0, 2
 	jal r31, exit
@@ -2660,29 +2660,29 @@ fio_list_tok:                           # @fio_list_tok
 	stw sp+28, r19
 	stw sp+24, r20
 	stw sp+20, r21
-	lui r13, %hi(fio_l_pending)
-	addi r13, r13, %lo(fio_l_pending)
-	ldw r1, r13+0
-	addi r17, r0, 0
-	ble r1, r17, .LBB12_2
+	lui r15, %hi(fio_l_pending)
+	addi r15, r15, %lo(fio_l_pending)
+	ldw r1, r15+0
+	addi r18, r0, 0
+	ble r1, r18, .LBB12_2
 .LBB12_1:
 	addi r1, r1, -1
-	stw r13+0, r1
+	stw r15+0, r1
 	addi r1, r0, 0
-	jal r0, .LBB12_27
+	jal r0, .LBB12_29
 .LBB12_2:
-	addi r18, r0, 1
-	lui r19, %hi(fio_rlen)
-	addi r19, r19, %lo(fio_rlen)
-	lui r14, %hi(fio_rpos)
-	addi r14, r14, %lo(fio_rpos)
-	lui r15, %hi(fio_rec)
-	addi r15, r15, %lo(fio_rec)
-	addi r16, r0, 38
-	lui r20, %hi(.LJTI12_0)
-	addi r20, r20, %lo(.LJTI12_0)
-	lui r21, %hi(stderr)
-	addi r21, r21, %lo(stderr)
+	addi r19, r0, 1
+	lui r20, %hi(fio_rlen)
+	addi r20, r20, %lo(fio_rlen)
+	lui r13, %hi(fio_rpos)
+	addi r13, r13, %lo(fio_rpos)
+	lui r14, %hi(fio_rec)
+	addi r14, r14, %lo(fio_rec)
+	addi r17, r0, 38
+	lui r21, %hi(.LJTI12_0)
+	addi r21, r21, %lo(.LJTI12_0)
+	lui r16, %hi(stderr)
+	addi r16, r16, %lo(stderr)
 	lui r12, %hi(.L.str.28)
 	addi r12, r12, %lo(.L.str.28)
 	addi r11, r0, 2
@@ -2690,47 +2690,47 @@ fio_list_tok:                           # @fio_list_tok
 .LBB12_3:
 	jal r31, fio_next_record
 .LBB12_4:
-	add r3, r18, r0
+	add r3, r19, r0
 .LBB12_5:
-	ldw r1, r19+0
-	ldw r4, r14+0
+	ldw r1, r20+0
+	ldw r4, r13+0
 	bge r4, r1, .LBB12_3
 .LBB12_6:
-	add r5, r4, r15
+	add r5, r4, r14
 	ldbu r5, r5+0
 	addi r5, r5, -9
-	bgtu r5, r16, .LBB12_12
+	bgtu r5, r17, .LBB12_12
 .LBB12_7:
 	slli r5, r5, 2
-	add r5, r20, r5
+	add r5, r21, r5
 	ldw r5, r5+0
 	jalr r0, r5, 0
 .LBB12_8:
 	addi r4, r4, 1
-	stw r14+0, r4
+	stw r13+0, r4
 	bne r1, r4, .LBB12_6
 	jal r0, .LBB12_3
 .LBB12_9:
 	andi r1, r3, 1
-	bne r1, r17, .LBB12_11
+	bne r1, r18, .LBB12_11
 .LBB12_10:
-	ldw r3, r21+0
+	ldw r3, r16+0
 	add r4, r12, r0
 	jal r31, fprintf
 	add r3, r11, r0
 	jal r31, exit
 .LBB12_11:
-	ldw r1, r14+0
+	ldw r1, r13+0
 	addi r1, r1, 1
-	stw r14+0, r1
-	add r3, r17, r0
+	stw r13+0, r1
+	add r3, r18, r0
 	jal r0, .LBB12_5
 .LBB12_12:
-	ldw r4, r14+0
-	addi r17, r0, 0
+	ldw r4, r13+0
+	addi r18, r0, 0
 	lui r3, %hi(fio_ltok)
 	addi r3, r3, %lo(fio_ltok)
-	add r5, r17, r0
+	add r5, r18, r0
 	bge r4, r1, .LBB12_19
 .LBB12_13:
 	addi r5, r0, 0
@@ -2740,13 +2740,13 @@ fio_list_tok:                           # @fio_list_tok
 	jal r0, .LBB12_15
 .LBB12_14:
 	addi r4, r4, 1
-	stw r14+0, r4
+	stw r13+0, r4
 	beq r1, r4, .LBB12_19
 .LBB12_15:
-	add r8, r4, r15
+	add r8, r4, r14
 	ldbu r8, r8+0
 	addi r9, r8, -9
-	bgtu r9, r16, .LBB12_17
+	bgtu r9, r17, .LBB12_17
 .LBB12_16:
 	slli r9, r9, 2
 	add r9, r7, r9
@@ -2762,35 +2762,45 @@ fio_list_tok:                           # @fio_list_tok
 	jal r0, .LBB12_14
 .LBB12_19:
 	add r1, r5, r3
-	stb r1+0, r17
+	stb r1+0, r18
 	addi r1, r0, -11
 .LBB12_20:
-	add r4, r17, r3
+	add r4, r18, r3
 	ldb r4, r4+0
 	addi r5, r4, -58
-	addi r17, r17, 1
+	addi r18, r18, 1
 	bgtu r5, r1, .LBB12_20
 .LBB12_21:
 	addi r1, r0, 0
 	addi r3, r0, 1
-	beq r17, r3, .LBB12_27
+	beq r18, r3, .LBB12_29
 .LBB12_22:
 	addi r3, r0, 42
-	bne r4, r3, .LBB12_27
+	bne r4, r3, .LBB12_29
 .LBB12_23:
 	lui r12, %hi(fio_ltok)
 	addi r12, r12, %lo(fio_ltok)
-	addi r4, r0, 0
+	addi r14, r0, 0
 	addi r5, r0, 10
 	add r3, r12, r0
-	add r14, r4, r0
+	add r4, r14, r0
 	jal r31, strtol
-	blt r1, r11, .LBB12_25
+	add r13, r1, r0
+	bne r1, r14, .LBB12_25
 .LBB12_24:
-	addi r1, r1, -1
-	stw r13+0, r1
+	ldw r3, r16+0
+	lui r4, %hi(.L.str.29)
+	addi r4, r4, %lo(.L.str.29)
+	jal r31, fprintf
+	addi r3, r0, 2
+	jal r31, exit
 .LBB12_25:
-	add r11, r17, r12
+	blt r13, r11, .LBB12_27
+.LBB12_26:
+	addi r1, r13, -1
+	stw r15+0, r1
+.LBB12_27:
+	add r11, r18, r12
 	add r3, r11, r0
 	jal r31, strlen
 	addi r5, r1, 1
@@ -2798,12 +2808,12 @@ fio_list_tok:                           # @fio_list_tok
 	add r4, r11, r0
 	jal r31, memmove
 	add r1, r14, r0
-	jal r0, .LBB12_27
-.LBB12_26:
+	jal r0, .LBB12_29
+.LBB12_28:
 	addi r1, r4, 1
-	stw r14+0, r1
+	stw r13+0, r1
 	addi r1, r0, 1
-.LBB12_27:
+.LBB12_29:
 	ldw r21, sp+20
 	ldw r20, sp+24
 	ldw r19, sp+28
@@ -2862,7 +2872,7 @@ fio_list_tok:                           # @fio_list_tok
 	.word	.LBB12_9
 	.word	.LBB12_12
 	.word	.LBB12_12
-	.word	.LBB12_26
+	.word	.LBB12_28
 	.size	.LJTI12_0, 156
 	.type	.LJTI12_1,@object
 .LJTI12_1:
@@ -3300,8 +3310,8 @@ fio_in_real:                            # @fio_in_real
 	add r3, r11, r1
 	addi r4, r0, 1040
 	sub r4, r4, r1
-	lui r5, %hi(.L.str.30)
-	addi r5, r5, %lo(.L.str.30)
+	lui r5, %hi(.L.str.31)
+	addi r5, r5, %lo(.L.str.31)
 	jal r31, snprintf
 	addi r4, r0, 0
 	add r3, r11, r0
@@ -4938,13 +4948,18 @@ fio_next_record:                        # @fio_next_record
 
 	.type	.L.str.29,@object               # @.str.29
 .L.str.29:
-	.asciz	"f77: bad LOGICAL input field '%s'\n"
-	.size	.L.str.29, 35
+	.asciz	"f77: zero repeat count in list-directed input is not supported\n"
+	.size	.L.str.29, 64
 
 	.type	.L.str.30,@object               # @.str.30
 .L.str.30:
+	.asciz	"f77: bad LOGICAL input field '%s'\n"
+	.size	.L.str.30, 35
+
+	.type	.L.str.31,@object               # @.str.31
+.L.str.31:
 	.asciz	"E%d"
-	.size	.L.str.30, 4
+	.size	.L.str.31, 4
 
 	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e507704cf3c4d36284ffcb21f50e8531ceb63f7f)"
 	.section	".note.GNU-stack","",@progbits

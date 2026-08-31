@@ -37,6 +37,12 @@ C     DATA in a subprogram: initialized once, then it counts.
       IF (K2 .NE. 102) STOP 13
       IF (K3 .NE. 103) STOP 14
 
+C     A PARAMETER as an actual is a named constant, not a variable:
+C     the callee must see 5, not whatever sat in PARAMETER's leftover
+C     alloca.  N+0 already took the temp path; the bare name must too.
+      CALL ADDT(N, K1)
+      IF (K1 .NE. 6) STOP 15
+
       WRITE (6, 100) M, COUNTS(2), K3
   100 FORMAT ('OK', 3I5)
       WRITE (6, 110) A(3), B(N), D
@@ -49,5 +55,11 @@ C     DATA in a subprogram: initialized once, then it counts.
       DATA KOUNT /100/
       KOUNT = KOUNT + 1
       K = KOUNT
+      RETURN
+      END
+
+      SUBROUTINE ADDT(A, B)
+      INTEGER A, B
+      B = A + 1
       RETURN
       END

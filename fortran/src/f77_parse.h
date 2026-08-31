@@ -1198,7 +1198,7 @@ static int f77_primary(void) {
  * runtime's binary-exponentiation helpers (f77_ipow / f77_rpow_i /
  * f77_dpow_i -- real calls, unlike the __fp64_* names the backend
  * inlines, so the arguments carry real ABI tags).  A real exponent
- * needs EXP/LOG and stays refused until the transcendentals land. */
+ * is pow / powf, by the libm names the DBT intercepts. */
 static int f77_power(void) {
     int a;
     int b;
@@ -1422,6 +1422,13 @@ static int f77_starts(char *kw) {
     if (lx_stmt_len < n) return 0;
     if (strncmp(lx_stmt, kw, n) != 0) return 0;
     return n;
+}
+
+/* The unit terminator is the statement END, exactly. A prefix match
+ * swallows ENDIF/ENDFILE and was the slice2 vacuous-pass bug; the
+ * inliner still had the prefix form. */
+static int f77_is_unit_end(void) {
+    return f77_starts("END") && lx_stmt_len == 3;
 }
 
 /* Offset of the first `c` at paren depth zero, or -1.  Character
@@ -2661,22 +2668,27 @@ static int f77_actual_addr(void) {
          * path: without it the leading NAME would be taken as the whole
          * actual, N's address passed, and `-K+1` left unconsumed. */
         s = f77_sym(lex_name);
-        f77_tok();
-        if (lx_t == T_LP && f77_srank[s] > 0) {
+        /* A PARAMETER is a named constant, not a variable.  Passing
+         * its leftover alloca would hand the callee garbage; fall
+         * through and evaluate into a temp, like N+0 already does. */
+        if (!f77_sparam[s]) {
             f77_tok();
-            return f77_subscript_addr(s);
+            if (lx_t == T_LP && f77_srank[s] > 0) {
+                f77_tok();
+                return f77_subscript_addr(s);
+            }
+            /* Taking the address of a split double escapes BOTH halves.
+             * The promoter sees the lo alloca in h_carg and rejects it, but
+             * the hi alloca appears nowhere -- it would stay promoted while
+             * the callee read stale memory at offset+4.  A dead ADDI on the
+             * hi slot is an address-taking use, which the promotion scan
+             * rejects; DCE removes it afterwards, so it costs nothing in
+             * the emitted code. */
+            if (f77_srank[s] == 0) f77_sstored[s] = 1;   /* address escapes */
+            if (f77_shi[s] >= 0)
+                hi_emit(HI_ADDI, HL_ADDR_TY, f77_shi[s], -1, 0, NULL);
+            return f77_sval[s];
         }
-        /* Taking the address of a split double escapes BOTH halves.
-         * The promoter sees the lo alloca in h_carg and rejects it, but
-         * the hi alloca appears nowhere -- it would stay promoted while
-         * the callee read stale memory at offset+4.  A dead ADDI on the
-         * hi slot is an address-taking use, which the promotion scan
-         * rejects; DCE removes it afterwards, so it costs nothing in
-         * the emitted code. */
-        if (f77_srank[s] == 0) f77_sstored[s] = 1;   /* address escapes */
-        if (f77_shi[s] >= 0)
-            hi_emit(HI_ADDI, HL_ADDR_TY, f77_shi[s], -1, 0, NULL);
-        return f77_sval[s];
     }
 
     v = f77_expr();
@@ -2890,7 +2902,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     /* Body. */
     for (;;) {
         if (!f77_next_stmt()) break;
-        if (f77_starts("END")) break;
+        if (f77_is_unit_end()) break;
         if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) break;
         f77_statement();
     }
@@ -3949,8 +3961,11 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("DOUBLEPRECISION")) return 1;
     if (f77_starts("LOGICAL")) return 1;
     if (f77_starts("CHARACTER")) return 1;
+    if (f77_starts("COMPLEX")) return 1;
     if (f77_starts("DIMENSION")) return 1;
     if (f77_starts("COMMON")) return 1;
+    if (f77_starts("EQUIVALENCE")) return 1;
+    if (f77_starts("BLOCKDATA")) return 1;
     if (f77_starts("EXTERNAL")) return 1;
     if (f77_starts("INTRINSIC")) return 1;
     if (f77_starts("SAVE")) return 1;
@@ -4107,6 +4122,15 @@ static void f77_statement(void) {
     if ((n = f77_starts("CLOSE")) != 0) { f77_stmt_close(n); goto done; }
     if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }
     if (f77_starts("BACKSPACE")) { f77_error("BACKSPACE is not supported"); goto done; }
+    if (f77_starts("EQUIVALENCE")) { f77_error("EQUIVALENCE is not supported"); goto done; }
+    if (f77_starts("CHARACTER")) { f77_error("CHARACTER is not supported"); goto done; }
+    if (f77_starts("COMPLEX")) { f77_error("COMPLEX is not supported"); goto done; }
+    if (f77_starts("BLOCKDATA")) { f77_error("BLOCK DATA is not supported"); goto done; }
+    if (f77_starts("EXTERNAL")) { f77_error("EXTERNAL is not supported"); goto done; }
+    if (f77_starts("INTRINSIC")) { f77_error("INTRINSIC is not supported"); goto done; }
+    if (f77_starts("ASSIGN")) { f77_error("ASSIGN / assigned GOTO is not supported"); goto done; }
+    if (f77_starts("PAUSE")) { f77_error("PAUSE is not supported"); goto done; }
+    if (f77_starts("ENTRY")) { f77_error("ENTRY is not supported"); goto done; }
 
 
     if (f77_starts("SUBROUTINE") || f77_unit_header_ty() >= 0) {
@@ -4263,7 +4287,7 @@ static void f77_statement(void) {
         goto done;
     }
 
-    if (f77_starts("END") && lx_stmt_len == 3) {
+    if (f77_is_unit_end()) {
         if (f77_cur_blk_live) hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
         f77_cur_blk_live = 0;
         goto done;

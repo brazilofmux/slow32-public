@@ -86,7 +86,9 @@ static void f77_scan_units(void) {
                 f77_unosplice[f77_nunit - 1] = 1;
         }
         rty = f77_unit_header_ty();
-        if (f77_starts("SUBROUTINE") || rty >= 0) {
+        if (f77_starts("BLOCKDATA")) {
+            f77_error("BLOCK DATA is not supported");
+        } else if (f77_starts("SUBROUTINE") || rty >= 0) {
             if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
             f77_upos[f77_nunit] = pos;
             f77_uline[f77_nunit] = line;
@@ -218,7 +220,7 @@ static void hl_func(Node *fn) {
          * match here swallowed everything after the first ENDIF -- the
          * unit ended there, fell off returning 0, and slice2 passed
          * vacuously against the oracle for a full day. */
-        if (f77_starts("END") && lx_stmt_len == 3) break;
+        if (f77_is_unit_end()) break;
         if (!f77_next_stmt()) break;
         if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) break;
     }

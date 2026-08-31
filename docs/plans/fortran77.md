@@ -59,25 +59,15 @@ Two consequences for f77, both settled by this:
   permanent. f77 is a cross-compiler in the ordinary universe and is
   not required to self-host, so it needs none of the machinery stage08
   built to avoid exactly that (`lex_p10`/`lex_p5`, Dekker `twoProd`).
-- Lowering an intrinsic to a guest libm call will be a legitimate
-  option when `EXP`, `LOG`, `ATAN2`, the trig functions and
-  real-exponent `**` arrive.
+- Lowering an intrinsic to a guest libm call is legitimate: `EXP`,
+  `LOG`, `ATAN2`, the trig functions and real-exponent `**` now do
+  that, by their C names, so the DBT can intercept them.
 
-As it happens f77 needs **no math libcall at all today**: every FP
-operation it emits is a SLOW-32 hardware instruction — `fadd.d`,
-`fsub.d`, `fmul.d`, `fdiv.d`, `fneg.d`, `feq.d`, `flt.d`, `fle.d`,
-`fcvt.*`, `fsqrt.d`, `fsqrt.s`. The LINPACK binary's only symbols are
-`main`, `DAXPY`, `DGEFA` and its own routines, and it gives an
-identical answer under `slow32`, `slow32-fast` and `slow32-dbt`. The
-harness reports this as a code-quality fact (`math-libcalls`) rather
-than enforcing it, so that adding the missing transcendentals is not
-blocked by a rule that was never this directory's.
-
-**Consequence for the intrinsics still to come:** `**` with a real
-exponent, `ATAN2`, `EXP`, `LOG` and the trig functions have no SLOW-32
-instruction behind them, so each will be either inline guest code or a
-call into the SLOW-32 libc — the latter being legitimate here (see
-"Which universe this lives in").
+Arithmetic and `SQRT` stay hardware instructions (`fadd.d` … `fsqrt.d`).
+The LINPACK kernel still has no libm names. Transcendental tests
+(`trans1.f`, `sumsq.f`) emit `sin`/`pow`/… ; slow32 runs the Newton
+code in `libs32.s32a`, slow32-dbt substitutes the host. The harness
+`math-libcalls` line reports that as a code-quality fact.
 
 ## Two rulings that shape the design
 
@@ -421,11 +411,19 @@ No linker change is required, and none should be added for this.
    and `slice2` had passed vacuously since block-IF landed: the
    truncated main fell off returning 0, exactly matching the real
    STOP 0, with empty stdout on both sides.  The terminator now
-   requires the statement to be exactly END, and slice2 prints a
+   requires the statement to be exactly END (`f77_is_unit_end`: prefix
+   END and `lx_stmt_len == 3`), and slice2 prints a
    sentinel after its ENDIFs so a recurrence shows in the diff.  The
    standing lesson from the differential-vacuity note applies with a
    new twist: agreement plus exit-0 is still not coverage when the
    failure mode reproduces the success signature.
+
+   The inliner had the same prefix form: a callee small enough to
+   splice (threshold 12) stopped at its first ENDIF and dropped the
+   rest of the body.  slice15 is a 6-statement SUBROUTINE with ENDIF
+   then `N = N + 100`; without the exact-END test the caller sees 2
+   instead of 102.  Unit loop, inliner, and dispatcher now share the
+   helper.
 
    Gated by `tests/f77/file1.f`: write/close/reopen-OLD/read-back
    with END=, REWIND-and-reread, and CLOSE DELETE proven by the

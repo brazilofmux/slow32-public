@@ -689,6 +689,13 @@ static int fio_list_tok(void) {
     while (fio_isdigit(fio_ltok[n])) n++;
     if (n > 0 && fio_ltok[n] == '*') {
         int r = (int)strtol(fio_ltok, 0, 10);
+        if (r == 0) {
+            /* F77's 0*c is a null value.  gfortran rejects it at
+             * runtime ("Zero repeat count"); so do we, like 1,,3,
+             * rather than silently assigning c once. */
+            fprintf(stderr, "f77: zero repeat count in list-directed input is not supported\n");
+            exit(2);
+        }
         if (r > 1) fio_l_pending = r - 1;
         memmove(fio_ltok, fio_ltok + n + 1, strlen(fio_ltok + n + 1) + 1);
     }

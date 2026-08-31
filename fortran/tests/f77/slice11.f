@@ -7,7 +7,7 @@ C     REAL DO, whole-array WRITE, LOGICAL L, Gw.d.
       LOGICAL L1, L2
       INTEGER V(4)
       D = 1.0D0 / 3.0D0
-      IF (D .LT. 0.33333333D0) STOP 151
+      IF (ABS(D * 3.0D0 - 1.0D0) .GT. 1.0D-12) STOP 151
       X = MAX1(1.2, 1.8)
       IF (X .NE. 1.0) STOP 152
       Y = AMAX0(3, 9)
