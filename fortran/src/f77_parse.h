@@ -77,6 +77,10 @@ static int  f77_shi[F77_MAX_SYM];
 static int  f77_split_count;
 static int  f77_split_on = -1;
 
+/* Static storage flags: member of a COMMON block / named in SAVE. */
+static int  f77_scom[F77_MAX_SYM];
+static int  f77_ssaved[F77_MAX_SYM];
+
 /* F77 implicit typing: I-N are INTEGER, everything else REAL. */
 static int f77_implicit_ty(char *nm) {
     int c;
@@ -100,6 +104,8 @@ static int f77_sym(char *nm) {
     f77_srank[f77_nsym] = 0;
     f77_sarg[f77_nsym] = 0;
     f77_shi[f77_nsym] = -1;
+    f77_scom[f77_nsym] = 0;
+    f77_ssaved[f77_nsym] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
@@ -139,6 +145,8 @@ static int f77_sym_param(char *nm, int index) {
     f77_srank[s] = 0;
     f77_sarg[s] = 1;
     f77_shi[s] = -1;
+    f77_scom[s] = 0;
+    f77_ssaved[s] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
@@ -1347,6 +1355,261 @@ static void f77_stmt_decl(int ty, int skip) {
     }
 }
 
+/* --- COMMON and SAVE --------------------------------------------------
+ *
+ * COMMON blocks are a compiler problem, not a linker problem (see the
+ * plan): each block is emitted as ONE named .bss object through the
+ * ps_g* tables gen_data() walks, and every unit that declares the
+ * block lays its own members over that same object.  The block table
+ * is therefore global to the compilation; sizes take the max across
+ * units.
+ *
+ * Layout cannot happen at the COMMON statement itself: F77 lets the
+ * type and DIMENSION statements that decide each member's size come
+ * before OR after it.  So the COMMON statement only records
+ * membership, and f77_layout_static() -- run when the declaration part
+ * closes, alongside the dummy copy-in -- assigns the offsets, rebinds
+ * each member's f77_sval to GADDR(block)+offset, and drops any split
+ * hi slot so doubles are stored contiguously.  The member's original
+ * alloca is simply abandoned, the same trade f77_realloc_sym already
+ * makes.  SAVE rides the same mechanism: a saved local becomes its own
+ * one-symbol .bss object. */
+
+#define F77_MAX_CBLK 64
+#define F77_MAX_CMEM 256
+#define F77_GPOOL_MAX 16384
+
+/* Defined (tentatively) again further down, next to their own logic;
+ * repeated here because COMMON/SAVE parsing needs them earlier. */
+static int f77_decls_open;
+static int f77_result_sym;
+
+static char f77_cblk_name[F77_MAX_CBLK][F77_MAX_NAME + 8];  /* mangled */
+static int  f77_cblk_gidx[F77_MAX_CBLK];   /* index into ps_g* */
+static int  f77_ncblk;
+
+/* Per-unit COMMON membership, in declaration order. */
+static int f77_cm_sym[F77_MAX_CMEM];
+static int f77_cm_blk[F77_MAX_CMEM];
+static int f77_cm_n;
+
+/* Per-unit SAVE state. */
+static int f77_save_all;
+static int f77_sv_sym[F77_MAX_CMEM];
+static int f77_sv_n;
+
+/* Names handed to HI_GADDR are kept by pointer, so they need storage
+ * that outlives the statement buffer. */
+static char f77_gpool[F77_GPOOL_MAX];
+static int  f77_gpool_n;
+
+static char *f77_gpool_name(char *a, char *b, char *c, char *d) {
+    char *p;
+    int need;
+    need = (int)(strlen(a) + strlen(b) + strlen(c) + strlen(d)) + 1;
+    if (f77_gpool_n + need > F77_GPOOL_MAX) {
+        f77_error("too many static names");
+        return f77_gpool;   /* garbage but safe */
+    }
+    p = f77_gpool + f77_gpool_n;
+    strcpy(p, a);
+    strcat(p, b);
+    strcat(p, c);
+    strcat(p, d);
+    f77_gpool_n = f77_gpool_n + need;
+    return p;
+}
+
+/* One zero-initialized .bss object in the tables gen_data() walks.
+ * Every field is set explicitly: the parser owns these entries, and a
+ * default-zero ps_ginit_start would read as an initializer list. */
+static int f77_g_add(char *name, int size) {
+    int i;
+    i = ps_nglobals;
+    if (i >= P_MAX_GLOBALS) { f77_error("too many globals"); return 0; }
+    ps_gname[i] = name;
+    ps_gtype[i] = TY_INT;
+    ps_gsize[i] = size;
+    ps_ginit[i] = 0;
+    ps_ginit_hi[i] = 0;
+    ps_gstr[i] = -1;
+    ps_glocal[i] = 1;
+    ps_gextern[i] = 0;
+    ps_ginit_start[i] = -1;
+    ps_ginit_count[i] = 0;
+    ps_girel_start[i] = 0;
+    ps_girel_count[i] = 0;
+    ps_nglobals = i + 1;
+    return i;
+}
+
+/* Find or create a COMMON block.  `nm` is the Fortran name; "" is
+ * blank COMMON.  The mangled name is what the .bss label carries. */
+static int f77_cblk_find(char *nm) {
+    int i;
+    char mangled[F77_MAX_NAME + 8];
+    strcpy(mangled, "f77c_");
+    strcat(mangled, nm);
+    i = 0;
+    while (i < f77_ncblk) {
+        if (strcmp(f77_cblk_name[i], mangled) == 0) return i;
+        i = i + 1;
+    }
+    if (f77_ncblk >= F77_MAX_CBLK) { f77_error("too many COMMON blocks"); return 0; }
+    strcpy(f77_cblk_name[f77_ncblk], mangled);
+    f77_cblk_gidx[f77_ncblk] = f77_g_add(f77_cblk_name[f77_ncblk], 0);
+    f77_ncblk = f77_ncblk + 1;
+    return f77_ncblk - 1;
+}
+
+/* COMMON [/name/] a, b /name2/ c ...  -- also blank COMMON via // or a
+ * bare list.  Members may carry their dimensions here. */
+static void f77_stmt_common(int skip) {
+    int blk;
+    int s;
+    char bname[F77_MAX_NAME];
+
+    if (!f77_decls_open) {
+        f77_error("COMMON after the first executable statement");
+        return;
+    }
+    f77_scan_from(skip);
+    blk = -1;                           /* bare list = blank COMMON */
+    for (;;) {
+        if (lx_t == T_EOF) break;
+        if (lx_t == T_CONCAT) {         /* // -- blank COMMON */
+            blk = -1;
+            f77_tok();
+        } else if (lx_t == T_SLASH) {
+            f77_tok();
+            if (lx_t == T_SLASH) {      /* / / -- blank COMMON */
+                blk = -1;
+                f77_tok();
+            } else if (lx_t == T_NAME) {
+                strcpy(bname, lex_name);
+                f77_tok();
+                if (lx_t != T_SLASH) { f77_error("expected / after COMMON block name"); return; }
+                f77_tok();
+                blk = f77_cblk_find(bname);
+            } else {
+                f77_error("bad COMMON block name");
+                return;
+            }
+        }
+        if (lx_t != T_NAME) { f77_error("expected a variable in COMMON"); return; }
+        if (blk < 0) blk = f77_cblk_find("");
+        s = f77_sym(lex_name);
+        if (f77_sarg[s]) { f77_error("a dummy argument cannot be in COMMON"); return; }
+        if (f77_scom[s]) { f77_error("variable appears in COMMON twice"); return; }
+        f77_tok();
+        if (lx_t == T_LP) {             /* dimensions declared here */
+            f77_parse_dims(s);
+            f77_realloc_sym(s);
+        }
+        f77_scom[s] = 1;
+        if (f77_cm_n >= F77_MAX_CMEM) { f77_error("too many COMMON members"); return; }
+        f77_cm_sym[f77_cm_n] = s;
+        f77_cm_blk[f77_cm_n] = blk;
+        f77_cm_n = f77_cm_n + 1;
+        if (lx_t == T_COMMA) f77_tok();
+    }
+}
+
+/* SAVE           -- every local becomes static
+ * SAVE a, /b/, c -- listed variables (a named block is already static,
+ *                   so /b/ is recognised and skipped) */
+static void f77_stmt_save(int skip) {
+    if (!f77_decls_open) {
+        f77_error("SAVE after the first executable statement");
+        return;
+    }
+    f77_scan_from(skip);
+    if (lx_t == T_EOF) { f77_save_all = 1; return; }
+    for (;;) {
+        if (lx_t == T_SLASH) {          /* /block/ -- nothing to do */
+            f77_tok();
+            if (lx_t == T_NAME) f77_tok();
+            if (lx_t != T_SLASH) { f77_error("expected / after SAVE block name"); return; }
+            f77_tok();
+        } else if (lx_t == T_NAME) {
+            if (f77_sv_n >= F77_MAX_CMEM) { f77_error("too many SAVE names"); return; }
+            f77_sv_sym[f77_sv_n] = f77_sym(lex_name);
+            f77_sv_n = f77_sv_n + 1;
+            f77_tok();
+        } else {
+            f77_error("bad SAVE list");
+            return;
+        }
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+}
+
+/* Rebind symbol `s` to static storage at `name`+`off`.  The GADDR (and
+ * ADDI) land in whatever block is current -- the declaration part, so
+ * the entry block, which dominates every use. */
+static void f77_bind_static(int s, char *name, int off) {
+    int ga;
+    ga = hi_emit(HI_GADDR, HL_ADDR_TY, -1, -1, 0, name);
+    if (off != 0) ga = hi_emit(HI_ADDI, HL_ADDR_TY, ga, -1, off, NULL);
+    f77_sval[s] = ga;
+    f77_shi[s] = -1;    /* doubles live contiguously in static storage */
+}
+
+/* Run once per unit when the declaration part closes: lay out this
+ * unit's COMMON members and convert SAVEd locals to statics. */
+static void f77_layout_static(void) {
+    int i;
+    int k;
+    int s;
+    int blk;
+    int sz;
+    int boff[F77_MAX_CBLK];
+
+    for (i = 0; i < f77_ncblk; i++) boff[i] = 0;
+
+    for (i = 0; i < f77_cm_n; i++) {
+        s = f77_cm_sym[i];
+        blk = f77_cm_blk[i];
+        for (k = 0; k < f77_srank[s]; k++) {
+            if (f77_sextsym[s][k] >= 0) {
+                f77_error("adjustable dimensions cannot appear in COMMON");
+                return;
+            }
+        }
+        f77_bind_static(s, f77_cblk_name[blk], boff[blk]);
+        sz = ty_size(f77_sty[s]) * f77_sym_nelem(s);
+        boff[blk] = boff[blk] + sz;
+    }
+    for (i = 0; i < f77_ncblk; i++) {
+        if (boff[i] > ps_gsize[f77_cblk_gidx[i]])
+            ps_gsize[f77_cblk_gidx[i]] = boff[i];
+    }
+
+    if (f77_save_all) {
+        for (s = f77_scope_base; s < f77_nsym; s++) f77_ssaved[s] = 1;
+    }
+    for (i = 0; i < f77_sv_n; i++) f77_ssaved[f77_sv_sym[i]] = 1;
+
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (!f77_ssaved[s]) continue;
+        if (f77_sarg[s] || f77_scom[s] || s == f77_result_sym) continue;
+        for (k = 0; k < f77_srank[s]; k++) {
+            if (f77_sextsym[s][k] >= 0) {
+                f77_error("adjustable dimensions cannot be SAVEd");
+                return;
+            }
+        }
+        {
+            char *nm;
+            nm = f77_gpool_name("f77s_", f77_uname[f77_cur_unit], "_",
+                                f77_sname[s]);
+            f77_g_add(nm, ty_size(f77_sty[s]) * f77_sym_nelem(s));
+            f77_bind_static(s, nm, 0);
+        }
+    }
+}
+
 static void f77_open_do(void) {
     int lab;
     int s;
@@ -1984,6 +2247,9 @@ static int f77_copyin_on = -1;
 
 static void f77_emit_copyin(void) {
     int i;
+    /* The declaration part is closing: every member's type and shape
+     * is final, so COMMON blocks and SAVEd locals can be laid out. */
+    f77_layout_static();
     if (f77_copyin_on < 0) f77_copyin_on = getenv("F77_COPYIN") ? 1 : 0;
     if (!f77_copyin_on) { f77_decls_open = 0; f77_ci_n = 0; return; }
     int s;
@@ -2091,6 +2357,9 @@ static void f77_bind_unit(int u) {
     f77_unit_nparams = 0;
     f77_ci_n = 0;
     f77_decls_open = 1;
+    f77_cm_n = 0;
+    f77_save_all = 0;
+    f77_sv_n = 0;
 
     if (f77_ukind[u] == F77_UNIT_PROGRAM) {
         hl_param_nflat = 0;
@@ -2800,6 +3069,8 @@ static void f77_statement(void) {
     if (f77_starts("DOUBLEPRECISION")) { f77_stmt_decl(TY_DOUBLE, 15); goto done; }
     if (f77_starts("DIMENSION")) { f77_stmt_decl(-1, 9); goto done; }
     if (f77_starts("REAL"))     { f77_stmt_decl(TY_FLOAT, 4); goto done; }
+    if ((n = f77_starts("COMMON")) != 0) { f77_stmt_common(n); goto done; }
+    if ((n = f77_starts("SAVE")) != 0)   { f77_stmt_save(n);   goto done; }
 
     if (f77_starts("ELSEIF")) {
         /* ELSE IF (e) THEN -- close the current arm, open a new test in

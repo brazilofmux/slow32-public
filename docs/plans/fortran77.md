@@ -1,7 +1,7 @@
 # Fortran 77 on SLOW-32
 
 Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
-and LINPACK all run. Still refused: `OPEN`, `COMMON`, `EQUIVALENCE`,
+COMMON/SAVE, and LINPACK all run. Still refused: `OPEN`, `EQUIVALENCE`,
 `CHARACTER`, `COMPLEX`, `DATA`.
 
 ## Why this one
@@ -285,6 +285,42 @@ No linker change is required, and none should be added for this.
 
 5. **Subprograms.** `SUBROUTINE`/`FUNCTION`, by-reference arguments,
    `COMMON`, `SAVE`, `EXTERNAL`.
+
+   **COMMON and SAVE landed 2026-08-30**, exactly on the plan's ruling
+   above: each block is ONE named `.bss` object emitted through the
+   `ps_g*` tables `gen_data()` already walks -- f77 is their first
+   user -- and no linker change was needed.  The COMMON statement only
+   records membership, because F77 lets the type and DIMENSION
+   statements that decide member sizes come before *or* after it;
+   layout runs when the declaration part closes (beside the dummy
+   copy-in), assigns offsets in declaration order with no padding (the
+   standard's exact storage sequence), rebinds each member's
+   `f77_sval` to `GADDR(block)+offset` -- rematerializable, emitted in
+   the entry block, so it dominates every use -- and drops any split
+   hi slot so doubles live contiguously.  The member's original alloca
+   is abandoned, the same trade `f77_realloc_sym` already makes.
+   Blocks are global to the compilation; a block declared with
+   different sizes takes the max.  SAVE (bare and listed) rides the
+   same mechanism: a saved local becomes its own one-symbol `.bss`
+   object named `f77s_<unit>_<var>`.  Members and saved locals are
+   never mem2reg candidates -- they are not allocas -- so stores are
+   visible across units, which is the point.  Refused honestly:
+   dummies in COMMON, adjustable dimensions in COMMON or SAVE,
+   COMMON/SAVE after the first executable statement (matters because
+   inlining re-lexes callee bodies mid-function).  `EQUIVALENCE` and
+   `BLOCK DATA` stay refused; `EXTERNAL` is still open.
+
+   Gated by `tests/f77/common1.f`: two units view /MIX/ through
+   different splits -- a flat `INTEGER IX(8)` view whose `IX(3)` lands
+   on the third member proves the offsets, not merely the sharing --
+   plus blank COMMON, dimensions declared inside the COMMON statement,
+   types declared after it, and bare SAVE persisting across calls.
+   Mutation-proven: dropping the offset accumulation trips the flat
+   view's STOP 11; dropping SAVE binding trips STOP 7.  One oracle
+   quirk worth remembering: gfortran pads a double-holding block's
+   size to 8 alignment and *warns* when another unit's view computes
+   smaller, and that warning lands in the diffed output -- the test
+   keeps every view 32 bytes so the warning never fires.
 6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,
    arbitrary lower bounds (`R(0:9)`, `A(-5:5)`), up to rank 7, elements
    of any type including DOUBLE PRECISION, the `DIMENSION` statement,

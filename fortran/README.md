@@ -2,8 +2,8 @@
 
 Status: working F77 subset (2026-08-30). Vertical slice, arrays,
 subprograms, FORMAT, `READ` (formatted and list-directed, from stdin,
-with `END=`), and LINPACK run on SLOW-32 and match gfortran.
-Still refused (honestly): `OPEN`, `COMMON`, `EQUIVALENCE`,
+with `END=`), `COMMON`/`SAVE`, and LINPACK run on SLOW-32 and match
+gfortran. Still refused (honestly): `OPEN`, `EQUIVALENCE`,
 `CHARACTER`, `COMPLEX`, `DATA`, computed/assigned `GOTO`.
 
 See [`../docs/plans/fortran77.md`](../docs/plans/fortran77.md) for the
