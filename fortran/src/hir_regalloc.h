@@ -900,16 +900,30 @@ static int gc_k(int n) {
  * IRC algorithmic core (Chunk 3 — dead code, C89 declaration style)
  * ================================================================= */
 
-static void gc_add_move(int a, int b) {
+/* DIVERGENCE (f77, port upstream candidate): moves that come from a
+ * PHI are tagged.  A loop-carried phi crosses the body's fp64 calls
+ * while its increment usually does not, and the blanket crossing-
+ * mismatch refusal in gc_coalesce left every such loop paying copies
+ * each iteration; a phi move may coalesce across the mismatch because
+ * the merged node keeps the CROSSING side's palette (the swap in
+ * gc_coalesce puts the crossing node in u before gc_combine(u, v)). */
+static char gc_mv_phi[GC_MAX_MOVE];
+
+static void gc_add_move_tag(int a, int b, int is_phi) {
     int mv;
     if (gc_nmove >= GC_MAX_MOVE) return;
     mv = gc_nmove;
     gc_mv_a[mv] = a;
     gc_mv_b[mv] = b;
     gc_mv_status[mv] = GC_MV_WORKLIST;
+    gc_mv_phi[mv] = (char)is_phi;
     gc_nmove = gc_nmove + 1;
     gc_add_node_move(a, mv);
     gc_add_node_move(b, mv);
+}
+
+static void gc_add_move(int a, int b) {
+    gc_add_move_tag(a, b, 0);
 }
 
 static void gc_build(void) {
@@ -981,7 +995,14 @@ static void gc_build(void) {
         if (ni >= 0) {
             int skip_node;
             skip_node = -1;
+            /* DIVERGENCE (f77, port upstream): HI_ADDI (opcode 40)
+             * sits outside the contiguous ALU range but is the same
+             * single three-operand shape -- and it is exactly what a
+             * DO loop's trip decrement emits, so without it every
+             * counted loop paid one uncoalesceable copy per
+             * iteration. */
             if ((h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) ||
+                h_kind[inst] == HI_ADDI ||
                 h_kind[inst] == HI_COPY) {
                 int two_s1;
                 two_s1 = h_src1[inst];
@@ -1031,7 +1052,7 @@ static void gc_find_moves(void) {
                 a = h_pval[h_pbase[inst] + j];
                 if (a >= 0) {
                     na = gc_node[a];
-                    if (na >= 0) gc_add_move(nd, na);
+                    if (na >= 0) gc_add_move_tag(nd, na, 1);
                 }
                 j = j + 1;
             }
@@ -1180,7 +1201,14 @@ static int gc_coalesce(void) {
                 gc_wl[v] = GC_WL_SIMPLIFY;
             return 1;
         }
-        if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]]) {
+        if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]] &&
+            !gc_mv_phi[mv]) {
+            /* DIVERGENCE (f77): a phi move may coalesce across the
+             * crossing mismatch -- u is the crossing node (swapped
+             * above), so the merged node keeps the callee-saved
+             * palette and correctness is unchanged; the non-crossing
+             * value merely lives in the register it was going to be
+             * copied into anyway. */
             gc_mv_status[mv] = GC_MV_CONSTRAINED;
             return 1;
         }

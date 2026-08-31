@@ -2945,18 +2945,25 @@ static void f77_emit_copyin(void) {
         s = f77_ci_sym[i];
         a = f77_ci_addr[i];
         if (f77_srank[s] == 0) {
-            /* Give the symbol real local storage and seed it. */
+            /* Give the symbol real local storage and seed it --
+             * through f77_realloc_sym, so a double copy gets the
+             * SPLIT lo/hi slots every declared local gets.  The
+             * 2026-08-27 measurement that sank copy-in predates the
+             * split: the copy was one 8-byte alloca, reached by
+             * ADDI base,4, address-taken, never promoted -- so no
+             * load was saved while the extra live values spilled. */
             hi = -1;
             v = f77_load_at(a, f77_sty[s]);
             hi = ex_hi;
             f77_sarg[s] = 0;
-            f77_frame = f77_frame + ty_size(f77_sty[s]);
-            f77_sval[s] = hi_emit(HI_ALLOCA, f77_sty[s], -1, -1,
+            f77_frame = f77_frame + 4;
+            f77_sval[s] = hi_emit(HI_ALLOCA, TY_INT, -1, -1,
                                   0 - f77_frame, NULL);
             hl_ainst[hl_nalloca] = f77_sval[s];
             hl_aoff[hl_nalloca] = 0 - f77_frame;
             hl_nalloca = hl_nalloca + 1;
-            f77_store_at(f77_sval[s], f77_sty[s], v, f77_sty[s], hi);
+            f77_realloc_sym(s);
+            f77_store_sym_val(s, v, f77_sty[s], hi);
             i = i + 1;
         } else {
             /* An array dummy keeps its by-reference binding. */

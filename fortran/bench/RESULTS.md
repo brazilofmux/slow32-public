@@ -293,3 +293,58 @@ badly. Any throughput claim needs the correction above.
 ## Reproduce
 
     ./run-bench.sh
+
+## Loop-carried phis coalesce across the call-crossing divide (1.98× → 1.81×, mandel 3.26× → 1.57×)
+
+2026-08-30. Every counted loop was paying register copies per
+iteration for its induction variable and trip count -- DAXPY's
+increment block was four instructions where it should be two:
+
+    addi r3, r22, 1        addi r22, r22, 1
+    addi r4, r24, -1   →   addi r24, r24, -1
+    addi r24, r4, 0
+    addi r22, r3, 0
+
+The phi-affinity moves existed and the dying-src1 exception was in
+place; the blocker was `gc_coalesce`'s blanket refusal to coalesce a
+move whose sides disagree on `ra_crosses_call`.  A loop-carried phi
+ALWAYS crosses the body's fp64 pseudo-calls, and its increment
+(defined after the last call, live only to the back edge) never does
+-- so precisely the moves that matter most were all CONSTRAINED.
+
+The refusal exists to keep non-crossing values eligible for cheap
+caller-saved registers, which is right for ALU-affinity moves.  For a
+PHI move it is backwards: the increment's value is about to be COPIED
+into the phi's callee-saved register anyway, so coalescing costs
+nothing and saves the copy.  Phi moves are now tagged at collection
+and exempted from the mismatch refusal; the swap at the top of
+gc_coalesce already puts the crossing node in `u`, so the merged node
+keeps the callee-saved palette and correctness is unchanged.
+
+| | LINPACK | mandel |
+|---|---:|---:|
+| before | 994,221,844 (1.98×) | 76.3M (3.26×) |
+| after | 907,765,619 (**1.81×**) | 36.9M (**1.57×**) |
+
+mandel halves because its hot loop is ALL loop-carried doubles: four
+phi pairs, each paying two copies per iteration, all constrained by
+the same rule.
+
+Also kept from the same investigation: the dying-src1 interference
+exception now covers HI_ADDI (opcode 40, outside the contiguous ALU
+range the check tested) -- worth −1.6M on LINPACK alone.  Registering
+ADDI *affinity moves*, by contrast, was measured at +26M and dropped:
+flooding the move worklist with every address `+4` biases coloring
+toward reusing base registers and loses more than it saves.
+
+Two experiments that did NOT survive measurement, recorded per house
+rule: scalar-dummy copy-in REVISITED with split lo/hi locals (the
+2026-08-27 objection -- the copy was an unpromotable 8-byte alloca --
+no longer applies).  The per-iteration win is real (DA's two loads
+leave the loop), but keeping DA+N in callee-saved pairs for the whole
+function raises pressure until the DY-hi address ADDI, live across
+the fp64 pseudo-calls, spills INSIDE the loop: net zero per
+iteration, plus copy-in/copy-out overhead per call.  1.983× → 2.001×.
+Off by default, still `F77_COPYIN=1` to re-run.
+
+Both engines and the oracle agree on every output; f77 suite 28/28.
