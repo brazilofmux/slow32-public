@@ -80,6 +80,14 @@ static int  f77_split_on = -1;
 /* Static storage flags: member of a COMMON block / named in SAVE. */
 static int  f77_scom[F77_MAX_SYM];
 static int  f77_ssaved[F77_MAX_SYM];
+static int  f77_sgidx[F77_MAX_SYM];    /* ps_g* index once bound static */
+
+/* PARAMETER named constants: no storage, value folded at parse time.
+ * The value is kept in both domains and converted per the symbol's
+ * type at each use. */
+static int    f77_sparam[F77_MAX_SYM];
+static int    f77_spival[F77_MAX_SYM];
+static double f77_spdval[F77_MAX_SYM];
 
 /* F77 implicit typing: I-N are INTEGER, everything else REAL. */
 static int f77_implicit_ty(char *nm) {
@@ -106,6 +114,8 @@ static int f77_sym(char *nm) {
     f77_shi[f77_nsym] = -1;
     f77_scom[f77_nsym] = 0;
     f77_ssaved[f77_nsym] = 0;
+    f77_sgidx[f77_nsym] = -1;
+    f77_sparam[f77_nsym] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + ty_size(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym], -1, -1,
@@ -147,6 +157,8 @@ static int f77_sym_param(char *nm, int index) {
     f77_shi[s] = -1;
     f77_scom[s] = 0;
     f77_ssaved[s] = 0;
+    f77_sgidx[s] = -1;
+    f77_sparam[s] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
@@ -865,6 +877,12 @@ static int f77_primary(void) {
         }
         s = f77_sym(nm);
         f77_tok();
+        if (f77_sparam[s]) {            /* named constant: fold in place */
+            ex_ty = f77_sty[s];
+            if (ex_ty == TY_DOUBLE) return f77_dconst(f77_spdval[s], &ex_hi);
+            if (ex_ty == TY_FLOAT) return f77_rconst(f77_spdval[s]);
+            return f77_iconst(f77_spival[s]);
+        }
         if (lx_t == T_LP && f77_srank[s] > 0) {
             int addr;
             f77_tok();
@@ -1241,6 +1259,7 @@ static void f77_stmt_assign(void) {
     f77_scan_from(0);
     if (lx_t != T_NAME) { f77_error("expected variable on the left of ="); return; }
     s = f77_sym(lex_name);
+    if (f77_sparam[s]) { f77_error("cannot assign to a PARAMETER"); return; }
     f77_tok();
     addr = f77_sval[s];
     if (lx_t == T_LP && f77_srank[s] > 0) {
@@ -1271,18 +1290,127 @@ static int f77_dim_bound(void) {
     return neg ? 0 - v : v;
 }
 
-/* One dimension bound: an integer constant, `*` (assumed size), or the
- * name of an integer variable (an adjustable dimension).  Returns the
- * constant value, or sets *sym to a symbol index for the runtime case. */
+/* --- constant expressions (PARAMETER, DATA, dimension bounds) --------
+ *
+ * Evaluated at compile time on the host -- f77 is a cross-compiler in
+ * the ordinary universe, so host doubles are the sanctioned tool.  The
+ * value is carried as (type, ival, dval): integer arithmetic stays
+ * exact in ival, anything real is done in dval, and mixed operands
+ * promote the usual way. */
+static int    f77_cx_ty;
+static int    f77_cx_i;
+static double f77_cx_d;
+
+static void f77_cexpr(void);
+
+static void f77_cprimary(void) {
+    if (lx_t == T_ICON) { f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); return; }
+    if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); return; }
+    if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); return; }
+    if (lx_t == T_TRUE)  { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; f77_tok(); return; }
+    if (lx_t == T_FALSE) { f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; f77_tok(); return; }
+    if (lx_t == T_LP) {
+        f77_tok();
+        f77_cexpr();
+        if (lx_t != T_RP) { f77_error("expected ) in constant expression"); return; }
+        f77_tok();
+        return;
+    }
+    if (lx_t == T_MINUS) {
+        f77_tok();
+        f77_cprimary();
+        f77_cx_i = 0 - f77_cx_i;
+        f77_cx_d = 0.0 - f77_cx_d;
+        return;
+    }
+    if (lx_t == T_PLUS) { f77_tok(); f77_cprimary(); return; }
+    if (lx_t == T_NAME) {
+        int s;
+        s = f77_sym(lex_name);
+        if (!f77_sparam[s]) {
+            f77_error("only PARAMETER constants may appear in a constant expression");
+            f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0;
+            f77_tok();
+            return;
+        }
+        f77_cx_ty = f77_sty[s];
+        f77_cx_i = f77_spival[s];
+        f77_cx_d = f77_spdval[s];
+        f77_tok();
+        return;
+    }
+    f77_error("bad constant expression");
+    f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0;
+}
+
+static int f77_cx_promote(int a, int b) {
+    if (a == TY_DOUBLE || b == TY_DOUBLE) return TY_DOUBLE;
+    if (a == TY_FLOAT || b == TY_FLOAT) return TY_FLOAT;
+    return TY_INT;
+}
+
+static void f77_cterm(void) {
+    int ty; int iv; double dv; int mul;
+    f77_cprimary();
+    for (;;) {
+        if (lx_t == T_STAR) mul = 1;
+        else if (lx_t == T_SLASH) mul = 0;
+        else return;
+        ty = f77_cx_ty; iv = f77_cx_i; dv = f77_cx_d;
+        f77_tok();
+        f77_cprimary();
+        f77_cx_ty = f77_cx_promote(ty, f77_cx_ty);
+        if (mul) {
+            f77_cx_i = iv * f77_cx_i;
+            f77_cx_d = dv * f77_cx_d;
+        } else if (f77_cx_ty == TY_INT) {
+            if (f77_cx_i == 0) { f77_error("division by zero in constant expression"); f77_cx_i = 1; }
+            f77_cx_i = iv / f77_cx_i;
+        } else {
+            if (f77_cx_d == 0.0) { f77_error("division by zero in constant expression"); f77_cx_d = 1.0; }
+            f77_cx_d = dv / f77_cx_d;
+        }
+        if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
+        else f77_cx_i = (int)f77_cx_d;
+    }
+}
+
+static void f77_cexpr(void) {
+    int ty; int iv; double dv; int add;
+    f77_cterm();
+    for (;;) {
+        if (lx_t == T_PLUS) add = 1;
+        else if (lx_t == T_MINUS) add = 0;
+        else return;
+        ty = f77_cx_ty; iv = f77_cx_i; dv = f77_cx_d;
+        f77_tok();
+        f77_cterm();
+        f77_cx_ty = f77_cx_promote(ty, f77_cx_ty);
+        if (add) { f77_cx_i = iv + f77_cx_i; f77_cx_d = dv + f77_cx_d; }
+        else     { f77_cx_i = iv - f77_cx_i; f77_cx_d = dv - f77_cx_d; }
+        if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
+        else f77_cx_i = (int)f77_cx_d;
+    }
+}
+
+/* One dimension bound: `*` (assumed size), a non-PARAMETER name (an
+ * adjustable dimension), or a constant expression -- which is where a
+ * PARAMETER bound like A(N) or A(2*N+1) resolves. */
 static int f77_bound(int *sym) {
     *sym = -1;
     if (lx_t == T_STAR) { f77_tok(); return 1; }   /* assumed size */
     if (lx_t == T_NAME) {
-        *sym = f77_sym(lex_name);
-        f77_tok();
-        return 1;
+        int s;
+        s = f77_sym(lex_name);
+        if (!f77_sparam[s]) {          /* adjustable dimension */
+            *sym = s;
+            f77_tok();
+            return 1;
+        }
     }
-    return f77_dim_bound();
+    f77_cexpr();
+    if (f77_cx_ty != TY_INT) { f77_error("dimension bound must be an integer constant"); return 1; }
+    return f77_cx_i;
 }
 
 /* Parse `(d1[,d2...])` after a name, each dimension `[lo:]hi`. */
@@ -1500,6 +1628,7 @@ static void f77_stmt_common(int skip) {
         if (blk < 0) blk = f77_cblk_find("");
         s = f77_sym(lex_name);
         if (f77_sarg[s]) { f77_error("a dummy argument cannot be in COMMON"); return; }
+        if (f77_sparam[s]) { f77_error("a PARAMETER cannot be in COMMON"); return; }
         if (f77_scom[s]) { f77_error("variable appears in COMMON twice"); return; }
         f77_tok();
         if (lx_t == T_LP) {             /* dimensions declared here */
@@ -1542,6 +1671,220 @@ static void f77_stmt_save(int skip) {
         }
         if (lx_t != T_COMMA) break;
         f77_tok();
+    }
+}
+
+/* PARAMETER (name = cexpr, ...) -- named constants, no storage.  The
+ * symbol's type (declared or implicit, fixed by this point per F77's
+ * ordering rules) decides which domain the value is served from. */
+static void f77_stmt_parameter(int skip) {
+    int s;
+    if (!f77_decls_open) {
+        f77_error("PARAMETER after the first executable statement");
+        return;
+    }
+    f77_scan_from(skip);
+    if (lx_t != T_LP) { f77_error("PARAMETER needs a parenthesised list"); return; }
+    f77_tok();
+    for (;;) {
+        if (lx_t != T_NAME) { f77_error("PARAMETER needs a name"); return; }
+        s = f77_sym(lex_name);
+        if (f77_sarg[s] || f77_scom[s] || f77_srank[s] > 0) {
+            f77_error("this name cannot be a PARAMETER");
+            return;
+        }
+        f77_tok();
+        if (lx_t != T_ASSIGN) { f77_error("expected = in PARAMETER"); return; }
+        f77_tok();
+        f77_cexpr();
+        f77_sparam[s] = 1;
+        if (f77_sty[s] == TY_INT) {
+            f77_spival[s] = (f77_cx_ty == TY_INT) ? f77_cx_i : (int)f77_cx_d;
+            f77_spdval[s] = (double)f77_spival[s];
+        } else {
+            f77_spdval[s] = (f77_cx_ty == TY_INT) ? (double)f77_cx_i : f77_cx_d;
+            if (f77_sty[s] == TY_FLOAT)
+                f77_spdval[s] = (double)(float)f77_spdval[s];
+            f77_spival[s] = (int)f77_spdval[s];
+        }
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) f77_error("expected ) after PARAMETER list");
+}
+
+/* --- DATA -------------------------------------------------------------
+ *
+ * DATA gives a variable an initial value, which in F77 means STATIC
+ * storage initialized at load -- so a DATA'd variable takes the SAVE
+ * path, and its values are poured into the ps_ginit pool when the
+ * declaration part closes and the object exists.  Parsing flattens
+ * each nlist/clist pair immediately (F77 requires the shape to be
+ * declared before the DATA statement, so element counts are known):
+ * one (symbol, element, value) triple per initialized element. */
+#define F77_MAX_DINIT 8192
+static int    f77_di_sym[F77_MAX_DINIT];
+static int    f77_di_elem[F77_MAX_DINIT];
+static int    f77_di_ty[F77_MAX_DINIT];
+static int    f77_di_i[F77_MAX_DINIT];
+static double f77_di_d[F77_MAX_DINIT];
+static int    f77_di_n;
+
+/* One DATA constant: sign, literal, .TRUE./.FALSE., or a PARAMETER
+ * name.  NOT f77_cexpr: `/` is the value-list delimiter here, and the
+ * evaluator would read it as division. */
+static void f77_data_const(void) {
+    int neg;
+    neg = 0;
+    if (lx_t == T_MINUS) { neg = 1; f77_tok(); }
+    else if (lx_t == T_PLUS) f77_tok();
+    if (lx_t == T_ICON) { f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); }
+    else if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); }
+    else if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); }
+    else if (lx_t == T_TRUE)  { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; f77_tok(); }
+    else if (lx_t == T_FALSE) { f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; f77_tok(); }
+    else if (lx_t == T_NAME) {
+        int s;
+        s = f77_sym(lex_name);
+        if (!f77_sparam[s]) { f77_error("DATA value must be a constant"); f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; return; }
+        f77_cx_ty = f77_sty[s];
+        f77_cx_i = f77_spival[s];
+        f77_cx_d = f77_spdval[s];
+        f77_tok();
+    } else {
+        f77_error("DATA value must be a constant");
+        f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0;
+        return;
+    }
+    if (neg) { f77_cx_i = 0 - f77_cx_i; f77_cx_d = 0.0 - f77_cx_d; }
+}
+
+static void f77_stmt_data(int skip) {
+    int tsym[64];
+    int tstart[64];
+    int tcount[64];
+    int ntgt;
+    int s;
+    int k;
+
+    if (!f77_decls_open) {
+        f77_error("DATA after the first executable statement");
+        return;
+    }
+    f77_scan_from(skip);
+    for (;;) {
+        /* --- the variable list, up to the opening / --- */
+        ntgt = 0;
+        for (;;) {
+            if (lx_t != T_NAME) {
+                if (lx_t == T_LP) f77_error("implied-DO in DATA is not supported");
+                else f77_error("expected a variable in DATA");
+                return;
+            }
+            s = f77_sym(lex_name);
+            if (f77_sarg[s]) { f77_error("a dummy argument cannot appear in DATA"); return; }
+            if (f77_sparam[s]) { f77_error("a PARAMETER cannot appear in DATA"); return; }
+            if (f77_scom[s]) {
+                f77_error("DATA for a COMMON member needs BLOCK DATA, which is not supported");
+                return;
+            }
+            f77_tok();
+            if (ntgt >= 64) { f77_error("too many DATA items"); return; }
+            tsym[ntgt] = s;
+            if (lx_t == T_LP) {
+                /* Constant subscripts -> one element. */
+                int elem;
+                int stride;
+                int d;
+                if (f77_srank[s] == 0) { f77_error("subscript on a scalar in DATA"); return; }
+                elem = 0;
+                stride = 1;
+                d = 0;
+                f77_tok();
+                for (;;) {
+                    for (k = 0; k < f77_srank[s]; k++) {
+                        if (f77_sextsym[s][k] >= 0) { f77_error("adjustable array in DATA"); return; }
+                    }
+                    f77_cexpr();
+                    if (f77_cx_ty != TY_INT) { f77_error("DATA subscript must be an integer constant"); return; }
+                    if (d >= f77_srank[s]) { f77_error("too many DATA subscripts"); return; }
+                    if (f77_cx_i < f77_slo[s][d] ||
+                        f77_cx_i >= f77_slo[s][d] + f77_sext[s][d]) {
+                        f77_error("DATA subscript out of bounds");
+                        return;
+                    }
+                    elem = elem + (f77_cx_i - f77_slo[s][d]) * stride;
+                    stride = stride * f77_sext[s][d];
+                    d = d + 1;
+                    if (lx_t != T_COMMA) break;
+                    f77_tok();
+                }
+                if (lx_t != T_RP) { f77_error("expected ) after DATA subscripts"); return; }
+                if (d != f77_srank[s]) { f77_error("wrong number of DATA subscripts"); return; }
+                f77_tok();
+                tstart[ntgt] = elem;
+                tcount[ntgt] = 1;
+            } else if (f77_srank[s] > 0) {
+                for (k = 0; k < f77_srank[s]; k++) {
+                    if (f77_sextsym[s][k] >= 0) { f77_error("adjustable array in DATA"); return; }
+                }
+                tstart[ntgt] = 0;
+                tcount[ntgt] = f77_sym_nelem(s);
+            } else {
+                tstart[ntgt] = 0;
+                tcount[ntgt] = 1;
+            }
+            f77_ssaved[s] = 1;          /* DATA implies static storage */
+            ntgt = ntgt + 1;
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        if (lx_t != T_SLASH) { f77_error("expected / before DATA values"); return; }
+        f77_tok();
+
+        /* --- the value list, poured across the targets in order --- */
+        {
+            int ti;       /* target index */
+            int te;       /* elements consumed within target ti */
+            int rep;
+            ti = 0;
+            te = 0;
+            for (;;) {
+                if (lx_t == T_SLASH) break;
+                f77_data_const();
+                rep = 1;
+                if (lx_t == T_STAR) {   /* r*c: what we parsed was the count */
+                    if (f77_cx_ty != TY_INT || f77_cx_i <= 0) {
+                        f77_error("DATA repeat count must be a positive integer");
+                        return;
+                    }
+                    rep = f77_cx_i;
+                    f77_tok();
+                    f77_data_const();
+                }
+                while (rep > 0) {
+                    while (ti < ntgt && te >= tcount[ti]) { ti = ti + 1; te = 0; }
+                    if (ti >= ntgt) { f77_error("more DATA values than variables"); return; }
+                    if (f77_di_n >= F77_MAX_DINIT) { f77_error("too many DATA initializers"); return; }
+                    f77_di_sym[f77_di_n] = tsym[ti];
+                    f77_di_elem[f77_di_n] = tstart[ti] + te;
+                    f77_di_ty[f77_di_n] = f77_cx_ty;
+                    f77_di_i[f77_di_n] = f77_cx_i;
+                    f77_di_d[f77_di_n] = f77_cx_d;
+                    f77_di_n = f77_di_n + 1;
+                    te = te + 1;
+                    rep = rep - 1;
+                }
+                if (lx_t == T_COMMA) { f77_tok(); continue; }
+                break;
+            }
+            while (ti < ntgt && te >= tcount[ti]) { ti = ti + 1; te = 0; }
+            if (ti < ntgt) { f77_error("fewer DATA values than variables"); return; }
+        }
+        if (lx_t != T_SLASH) { f77_error("expected / after DATA values"); return; }
+        f77_tok();
+        if (lx_t == T_COMMA) f77_tok();
+        if (lx_t == T_EOF) break;
     }
 }
 
@@ -1604,8 +1947,47 @@ static void f77_layout_static(void) {
             char *nm;
             nm = f77_gpool_name("f77s_", f77_uname[f77_cur_unit], "_",
                                 f77_sname[s]);
-            f77_g_add(nm, ty_size(f77_sty[s]) * f77_sym_nelem(s));
+            f77_sgidx[s] = f77_g_add(nm, ty_size(f77_sty[s]) * f77_sym_nelem(s));
             f77_bind_static(s, nm, 0);
+        }
+    }
+
+    /* Pour DATA values into the init pool, now that every DATA'd
+     * variable is a static object of known size.  A touched object
+     * moves from .bss to .data whole: its image is reserved and
+     * zeroed first, then each triple lands at element*size. */
+    for (i = 0; i < f77_di_n; i++) {
+        int g;
+        int esz;
+        int off;
+        s = f77_di_sym[i];
+        g = f77_sgidx[s];
+        if (g < 0) continue;            /* parse already errored */
+        if (ps_ginit_start[g] < 0) {
+            if (ps_ginit_pool_len + ps_gsize[g] > PS_MAX_INIT_POOL) {
+                f77_error("DATA initializer pool overflow");
+                return;
+            }
+            ps_ginit_start[g] = ps_ginit_pool_len;
+            ps_ginit_count[g] = ps_gsize[g];
+            for (k = 0; k < ps_gsize[g]; k++)
+                ps_ginit_pool[ps_ginit_pool_len + k] = 0;
+            ps_ginit_pool_len = ps_ginit_pool_len + ps_gsize[g];
+        }
+        esz = ty_size(f77_sty[s]);
+        off = ps_ginit_start[g] + f77_di_elem[i] * esz;
+        if (f77_sty[s] == TY_DOUBLE) {
+            union { double d; unsigned char b[8]; } u;
+            u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_di_d[i];
+            for (k = 0; k < 8; k++) ps_ginit_pool[off + k] = u.b[k];
+        } else if (f77_sty[s] == TY_FLOAT) {
+            union { float f; unsigned char b[4]; } u;
+            u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
+            for (k = 0; k < 4; k++) ps_ginit_pool[off + k] = u.b[k];
+        } else {
+            int v;
+            v = (f77_di_ty[i] == TY_INT) ? f77_di_i[i] : (int)f77_di_d[i];
+            for (k = 0; k < 4; k++) ps_ginit_pool[off + k] = (unsigned char)((v >> (k * 8)) & 255);
         }
     }
 }
@@ -2360,6 +2742,7 @@ static void f77_bind_unit(int u) {
     f77_cm_n = 0;
     f77_save_all = 0;
     f77_sv_n = 0;
+    f77_di_n = 0;
 
     if (f77_ukind[u] == F77_UNIT_PROGRAM) {
         hl_param_nflat = 0;
@@ -2495,6 +2878,11 @@ static int f77_rd_target(int *tyo) {
         return f77_iconst(0);
     }
     s = f77_sym(lex_name);
+    if (f77_sparam[s]) {
+        f77_error("cannot READ into a PARAMETER");
+        *tyo = TY_INT;
+        return f77_iconst(0);
+    }
     f77_tok();
     *tyo = f77_sty[s];
     if (lx_t == T_LP && f77_srank[s] > 0) {
@@ -3071,6 +3459,8 @@ static void f77_statement(void) {
     if (f77_starts("REAL"))     { f77_stmt_decl(TY_FLOAT, 4); goto done; }
     if ((n = f77_starts("COMMON")) != 0) { f77_stmt_common(n); goto done; }
     if ((n = f77_starts("SAVE")) != 0)   { f77_stmt_save(n);   goto done; }
+    if ((n = f77_starts("PARAMETER")) != 0) { f77_stmt_parameter(n); goto done; }
+    if ((n = f77_starts("DATA")) != 0)   { f77_stmt_data(n);   goto done; }
 
     if (f77_starts("ELSEIF")) {
         /* ELSE IF (e) THEN -- close the current arm, open a new test in

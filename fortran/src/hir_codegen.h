@@ -3004,6 +3004,13 @@ static void gen_data(void) {
             int reli;
             int relend;
             int off;
+            /* DIVERGENCE (f77): word-align every emitted global.  The
+             * string literals just above are byte streams of arbitrary
+             * length, so a global emitted after an odd-length FORMAT
+             * text would land misaligned -- f77's DATA images carry
+             * word and doubleword values.  Candidate to port upstream:
+             * stage08's gen_data has the same latent hazard. */
+            cg_s(".align 2\n");
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n");
@@ -3084,6 +3091,8 @@ static void gen_data(void) {
         } else if (ps_ginit_start[i] >= 0) {
             /* Already emitted in .data */
         } else if (ps_gsize[i] > 0) {
+            /* DIVERGENCE (f77): word-align, as in the .data walk. */
+            cg_s(".align 2\n");
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space ");

@@ -1,8 +1,8 @@
 # Fortran 77 on SLOW-32
 
 Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
-COMMON/SAVE, and LINPACK all run. Still refused: `OPEN`, `EQUIVALENCE`,
-`CHARACTER`, `COMPLEX`, `DATA`.
+COMMON/SAVE, DATA/PARAMETER, and LINPACK all run. Still refused:
+`OPEN`, `EQUIVALENCE`, `CHARACTER`, `COMPLEX`, `IMPLICIT`.
 
 ## Why this one
 
@@ -321,6 +321,46 @@ No linker change is required, and none should be added for this.
    size to 8 alignment and *warns* when another unit's view computes
    smaller, and that warning lands in the diffed output -- the test
    keeps every view 32 bytes so the warning never fires.
+
+   **DATA and PARAMETER landed 2026-08-30.**  PARAMETER is a
+   compile-time constant evaluator on the host (f77 is a
+   cross-compiler in the ordinary universe, so host doubles are the
+   sanctioned tool): `+ - * /`, parens, prior parameters, promotion,
+   value kept in both integer and double domains and served per the
+   symbol's type at each use -- folded in `f77_primary`, so a
+   parameter never has storage.  Dimension bounds now run through the
+   same evaluator, which is where `A(N)` and `A(2*N+1)` resolve; a
+   non-PARAMETER name still means an adjustable dimension, decided by
+   a flag test before the evaluator runs.
+
+   DATA gives a variable static storage initialized at load: the
+   variable takes the SAVE path, and its values are poured into the
+   ps_ginit pool at declaration close, moving the object whole from
+   .bss to .data (zero-filled image, triples landing at element*size,
+   IEEE bit images for REAL/DOUBLE via host unions -- the LE host is
+   already enforced by the assembler).  Parsing flattens each
+   nlist/clist pair immediately, legal because F77 requires the shape
+   declared before the DATA statement: scalars, whole arrays, constant
+   subscripts (bounds-checked), `r*c` repeats with PARAMETER counts,
+   signed values, cross-type conversion.  Values may not use
+   `f77_cexpr`: `/` is the clist delimiter and the evaluator would
+   read it as division -- `f77_data_const` exists for exactly that.
+   Refused honestly: implied-DO in DATA, DATA for COMMON members
+   (BLOCK DATA territory), dummies, adjustable arrays.
+
+   One backend DIVERGENCE came with this (marked in hir_codegen.h,
+   candidate to port upstream): gen_data now word-aligns every emitted
+   global.  String literals are byte streams of arbitrary length, so a
+   DATA image emitted after an odd-length FORMAT text landed
+   misaligned; stage08's gen_data has the same latent hazard.
+
+   Gated by `tests/f77/data1.f`, whose sharpest tooth is semantic:
+   a subroutine counter seeded by `DATA KOUNT /100/` must return 101,
+   102, 103 across three calls -- load-time initialization, not a
+   per-call store, which is exactly the wrong implementation an
+   entry-block-store lowering would produce.  Mutation-proven:
+   breaking the evaluator's multiply trips STOP 1, freezing the DATA
+   element cursor trips STOP 3.
 6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,
    arbitrary lower bounds (`R(0:9)`, `A(-5:5)`), up to rank 7, elements
    of any type including DOUBLE PRECISION, the `DIMENSION` statement,
