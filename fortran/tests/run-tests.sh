@@ -18,7 +18,11 @@ LD="$ROOT/tools/linker/s32-ld"
 EMU="${EMU:-$ROOT/tools/emulator/slow32}"
 
 W="$(mktemp -d /tmp/f77-tests.XXXXXX)"
-trap 'rm -rf "$W"' EXIT
+# The oracle runs on a COPY in a $HOME-based scratch dir: podman's
+# macOS VM does not share /tmp, and a test that OPENs files must never
+# scribble them into tests/f77/ (the mounted directory).
+OW="$(mktemp -d "$HOME/.f77-oracle.XXXXXX")"
+trap 'rm -rf "$W" "$OW"' EXIT
 
 PASS=0; FAIL=0
 
@@ -84,7 +88,8 @@ else
         # otherwise, so a runaway READ cannot hang on the terminal.
         IN="/dev/null"
         [ -f "$HERE/f77/$b.in" ] && IN="$HERE/f77/$b.in"
-        "$HERE/oracle.sh" "$f" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
+        cp "$f" "$OW/$b.f"
+        "$HERE/oracle.sh" "$OW/$b.f" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
         # our compiler -> .s -> .s32o -> .s32x -> emulator
         if ! "$F77" "$f" "$W/$b.s" >"$W/$b.cc.log" 2>&1; then
             report "diff:$b" 1 "f77 compile"; continue
@@ -96,10 +101,11 @@ else
               "$FDIR/runtime/libf77.s32o" \
               "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" \
               >/dev/null 2>&1 || { report "diff:$b" 1 "link"; continue; }
-        "$EMU" "$W/$b.s32x" < "$IN" 2>/dev/null \
+        # cwd inside $W so files a test OPENs land in scratch space.
+        (cd "$W" && "$EMU" "$W/$b.s32x" < "$IN" 2>/dev/null) \
             | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO|^Exit code" \
             > "$W/$b.got"
-        "$EMU" "$W/$b.s32x" < "$IN" >/dev/null 2>&1; grc=$?
+        (cd "$W" && "$EMU" "$W/$b.s32x" < "$IN" >/dev/null 2>&1); grc=$?
         # Agreement is necessary but NOT sufficient.  Every program in
         # f77/ is self-checking and ends in STOP 0, so a non-zero exit
         # means an assertion tripped -- and if the oracle trips the same

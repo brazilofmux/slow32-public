@@ -1,11 +1,13 @@
 # fortran — Fortran 77 for SLOW-32
 
 Status: working F77 subset (2026-08-30). Vertical slice, arrays,
-subprograms, FORMAT, `READ` (formatted and list-directed, from stdin,
-with `END=`), `COMMON`/`SAVE`, `DATA`/`PARAMETER`, `IMPLICIT`
-(including `NONE`), computed `GOTO`, and LINPACK run on SLOW-32 and
-match gfortran. Still refused (honestly): `OPEN`, `EQUIVALENCE`,
-`CHARACTER`, `COMPLEX`, assigned `GOTO`, arithmetic `IF`, `**`.
+subprograms, FORMAT, `READ` (formatted and list-directed, with
+`END=`), `OPEN`/`CLOSE`/`REWIND` (sequential formatted files),
+`COMMON`/`SAVE`, `DATA`/`PARAMETER`, `IMPLICIT` (including `NONE`),
+computed `GOTO`, and LINPACK run on SLOW-32 and match gfortran.
+Still refused (honestly): `EQUIVALENCE`, `CHARACTER`, `COMPLEX`,
+assigned `GOTO`, arithmetic `IF`, `**`, `BACKSPACE`, `ENDFILE`,
+unformatted and direct-access I/O.
 
 See [`../docs/plans/fortran77.md`](../docs/plans/fortran77.md) for the
 plan, the rulings behind it, and the milestone list.

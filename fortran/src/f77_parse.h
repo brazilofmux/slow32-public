@@ -3459,6 +3459,200 @@ static void f77_stmt_read(int skip) {
     h_cbase[r] = h_ncarg;
 }
 
+/* --- OPEN / CLOSE / REWIND -------------------------------------------- */
+
+/* The unit in an OPEN/CLOSE control list: an integer constant, a
+ * scalar variable, a PARAMETER, or UNIT=expr.  A leading NAME must be
+ * peeked past to tell a keyword item from a positional unit, so a
+ * name-led unit is restricted to a bare scalar -- OPEN (NU+1, ...) is
+ * not worth the rewind machinery it would need. */
+static int f77_io_unit_after_name(char *nm) {
+    int s;
+    s = f77_sym(nm);
+    if (f77_sparam[s]) return f77_iconst(f77_spival[s]);
+    return f77_load_sym(s);
+}
+
+/* OPEN (unit, FILE='name' [, STATUS='...']) -- FILE must be a
+ * character constant until CHARACTER variables exist.  Everything
+ * else in the standard's control list is refused honestly. */
+static void f77_stmt_open(int skip) {
+    int unit_val;
+    int have_unit;
+    int file_sidx; int file_slen;
+    int stat_sidx; int stat_slen;
+    char kw[F77_MAX_NAME];
+    int cb;
+    int r;
+    int a;
+
+    f77_scan_from(skip);
+    have_unit = 0;
+    unit_val = -1;
+    file_sidx = -1; file_slen = 0;
+    stat_sidx = -1; stat_slen = 0;
+    if (lx_t != T_LP) { f77_error("OPEN needs a control list"); return; }
+    f77_tok();
+    for (;;) {
+        if (lx_t == T_NAME) {
+            strcpy(kw, lex_name);
+            f77_tok();
+            if (lx_t == T_ASSIGN) {
+                f77_tok();
+                if (strcmp(kw, "UNIT") == 0) {
+                    unit_val = f77_expr();
+                    unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                    have_unit = 1;
+                } else if (strcmp(kw, "FILE") == 0) {
+                    if (lx_t != T_SCON) {
+                        f77_error("FILE= needs a character constant (CHARACTER variables are not supported)");
+                        return;
+                    }
+                    file_sidx = lex_sidx;
+                    file_slen = lex_slen;
+                    f77_tok();
+                } else if (strcmp(kw, "STATUS") == 0) {
+                    if (lx_t != T_SCON) {
+                        f77_error("STATUS= needs a character constant");
+                        return;
+                    }
+                    stat_sidx = lex_sidx;
+                    stat_slen = lex_slen;
+                    f77_tok();
+                } else {
+                    f77_error("only UNIT=, FILE= and STATUS= are supported in OPEN");
+                    return;
+                }
+            } else if (!have_unit) {
+                unit_val = f77_io_unit_after_name(kw);
+                unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                have_unit = 1;
+            } else {
+                f77_error("bad OPEN control list");
+                return;
+            }
+        } else if (!have_unit) {
+            unit_val = f77_expr();
+            unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+            have_unit = 1;
+        } else {
+            f77_error("bad OPEN control list");
+            return;
+        }
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after OPEN control list"); return; }
+    f77_tok();
+    if (!have_unit) { f77_error("OPEN needs a unit"); return; }
+    if (file_sidx < 0) { f77_error("OPEN needs FILE="); return; }
+
+    cb = h_ncarg;
+    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    a = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, file_sidx, NULL);
+    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = f77_iconst(file_slen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    if (stat_sidx >= 0) a = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, stat_sidx, NULL);
+    else a = f77_iconst(0);
+    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = f77_iconst(stat_slen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 5, "f77_open");
+    h_cbase[r] = cb;
+}
+
+/* CLOSE (unit [, STATUS='KEEP'|'DELETE']) */
+static void f77_stmt_close(int skip) {
+    int unit_val;
+    int have_unit;
+    int stat_sidx; int stat_slen;
+    char kw[F77_MAX_NAME];
+    int cb;
+    int r;
+    int a;
+
+    f77_scan_from(skip);
+    have_unit = 0;
+    unit_val = -1;
+    stat_sidx = -1; stat_slen = 0;
+    if (lx_t != T_LP) { f77_error("CLOSE needs a control list"); return; }
+    f77_tok();
+    for (;;) {
+        if (lx_t == T_NAME) {
+            strcpy(kw, lex_name);
+            f77_tok();
+            if (lx_t == T_ASSIGN) {
+                f77_tok();
+                if (strcmp(kw, "UNIT") == 0) {
+                    unit_val = f77_expr();
+                    unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                    have_unit = 1;
+                } else if (strcmp(kw, "STATUS") == 0) {
+                    if (lx_t != T_SCON) {
+                        f77_error("STATUS= needs a character constant");
+                        return;
+                    }
+                    stat_sidx = lex_sidx;
+                    stat_slen = lex_slen;
+                    f77_tok();
+                } else {
+                    f77_error("only UNIT= and STATUS= are supported in CLOSE");
+                    return;
+                }
+            } else if (!have_unit) {
+                unit_val = f77_io_unit_after_name(kw);
+                unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                have_unit = 1;
+            } else {
+                f77_error("bad CLOSE control list");
+                return;
+            }
+        } else if (!have_unit) {
+            unit_val = f77_expr();
+            unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+            have_unit = 1;
+        } else {
+            f77_error("bad CLOSE control list");
+            return;
+        }
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after CLOSE control list"); return; }
+    f77_tok();
+    if (!have_unit) { f77_error("CLOSE needs a unit"); return; }
+
+    cb = h_ncarg;
+    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    if (stat_sidx >= 0) a = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, stat_sidx, NULL);
+    else a = f77_iconst(0);
+    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = f77_iconst(stat_slen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_close");
+    h_cbase[r] = cb;
+}
+
+/* REWIND u  --  or REWIND (u). */
+static void f77_stmt_rewind(int skip) {
+    int unit_val;
+    int paren;
+    int cb;
+    int r;
+
+    f77_scan_from(skip);
+    paren = 0;
+    if (lx_t == T_LP) { paren = 1; f77_tok(); }
+    unit_val = f77_expr();
+    unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+    if (paren) {
+        if (lx_t != T_RP) { f77_error("expected ) after REWIND unit"); return; }
+        f77_tok();
+    }
+    cb = h_ncarg;
+    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rewind");
+    h_cbase[r] = cb;
+}
+
 /* Is this statement part of the declaration part (so the scalar dummy
  * copies must not be emitted yet)? */
 static int f77_stmt_is_declaration(int cls) {
@@ -3568,6 +3762,10 @@ static void f77_statement(void) {
     if ((n = f77_starts("WRITE")) != 0) { f77_stmt_write(n); goto done; }
     if ((n = f77_starts("PRINT")) != 0) { f77_stmt_print(n); goto done; }
     if ((n = f77_starts("READ")) != 0)  { f77_stmt_read(n);  goto done; }
+    if ((n = f77_starts("OPEN")) != 0)  { f77_stmt_open(n);  goto done; }
+    if ((n = f77_starts("CLOSE")) != 0) { f77_stmt_close(n); goto done; }
+    if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }
+    if (f77_starts("BACKSPACE")) { f77_error("BACKSPACE is not supported"); goto done; }
 
 
     if (f77_starts("SUBROUTINE") || f77_unit_header_ty() >= 0) {
@@ -3719,7 +3917,12 @@ static void f77_statement(void) {
         goto done;
     }
 
-    if (f77_starts("END")) {
+    if (f77_starts("ENDFILE")) {        /* must precede the END match */
+        f77_error("ENDFILE is not supported");
+        goto done;
+    }
+
+    if (f77_starts("END") && lx_stmt_len == 3) {
         if (f77_cur_blk_live) hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
         f77_cur_blk_live = 0;
         goto done;

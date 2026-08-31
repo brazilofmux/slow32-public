@@ -1,9 +1,10 @@
 # Fortran 77 on SLOW-32
 
 Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
-COMMON/SAVE, DATA/PARAMETER, IMPLICIT (incl. NONE), computed GOTO, and
-LINPACK all run. Still refused: `OPEN`, `EQUIVALENCE`, `CHARACTER`,
-`COMPLEX`, assigned `GOTO`, arithmetic `IF`, `**`.
+OPEN/CLOSE/REWIND, COMMON/SAVE, DATA/PARAMETER, IMPLICIT (incl. NONE),
+computed GOTO, and LINPACK all run. Still refused: `EQUIVALENCE`,
+`CHARACTER`, `COMPLEX`, assigned `GOTO`, arithmetic `IF`, `**`,
+`BACKSPACE`, `ENDFILE`, unformatted and direct-access I/O.
 
 ## Why this one
 
@@ -391,6 +392,43 @@ No linker change is required, and none should be added for this.
    computed GOTO's arms, and fall-through at index 4 and 0.
    Mutation-proven: dropping the index-1 trips STOP 3, dropping the
    retype loop trips STOP 7.
+
+   **OPEN/CLOSE/REWIND landed 2026-08-30**, the file side of the same
+   runtime.  A unit table (1-31; 0/5/6 preconnected as
+   stderr/stdin/stdout, matching gfortran) sits under the MMIO libc's
+   stdio, and rd/wr_begin resolve through it, so every existing READ
+   and WRITE form works on files unchanged.  `OPEN (u, FILE='name'
+   [, STATUS=...])`: OLD must exist ("r+", read-only fallback), NEW
+   must not, UNKNOWN is OLD-if-exists (deliberately NOT truncating)
+   else NEW.  FILE= takes a character constant until CHARACTER
+   exists.  `CLOSE (u [, STATUS='KEEP'|'DELETE'])` -- closing an
+   unopened unit is a no-op per the standard; `REWIND u` is fseek-0.
+   Refused honestly: ERR=, IOSTAT=, FORM=, ACCESS=, RECL=, SCRATCH,
+   BACKSPACE, ENDFILE.  The harness grew scratch-space isolation for
+   this: the oracle compiles a COPY in a $HOME temp dir (podman's VM
+   does not share /tmp, and a test's files must never land in the
+   mounted tests/f77/), and the emulator runs with cwd in the /tmp
+   work dir.  file1.f is deliberately re-runnable in one directory,
+   because the harness executes each binary twice (stdout pass, then
+   exit-status pass).
+
+   **A day-one bug fell out of adding the ENDFILE refusal**: the
+   unit-body loop ended a unit on `f77_starts("END")` -- a PREFIX
+   match -- so every unit was silently truncated at its first ENDIF,
+   and `slice2` had passed vacuously since block-IF landed: the
+   truncated main fell off returning 0, exactly matching the real
+   STOP 0, with empty stdout on both sides.  The terminator now
+   requires the statement to be exactly END, and slice2 prints a
+   sentinel after its ENDIFs so a recurrence shows in the diff.  The
+   standing lesson from the differential-vacuity note applies with a
+   new twist: agreement plus exit-0 is still not coverage when the
+   failure mode reproduces the success signature.
+
+   Gated by `tests/f77/file1.f`: write/close/reopen-OLD/read-back
+   with END=, REWIND-and-reread, and CLOSE DELETE proven by the
+   STATUS='NEW' open of the same name succeeding right after.
+   Mutation-proven: a dead REWIND and a dead DELETE each abort the
+   run (EOF on the reread; NEW finding the file still there).
 6. **Arrays.** ✅ **MOSTLY DONE 2026-08-27.** Column-major, 1-based,
    arbitrary lower bounds (`R(0:9)`, `A(-5:5)`), up to rank 7, elements
    of any type including DOUBLE PRECISION, the `DIMENSION` statement,

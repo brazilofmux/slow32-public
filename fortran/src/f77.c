@@ -207,7 +207,11 @@ static void hl_func(Node *fn) {
 
     for (;;) {
         f77_statement();
-        if (f77_starts("END")) break;
+        /* The unit terminator is the statement END, exactly: a prefix
+         * match here swallowed everything after the first ENDIF -- the
+         * unit ended there, fell off returning 0, and slice2 passed
+         * vacuously against the oracle for a full day. */
+        if (f77_starts("END") && lx_stmt_len == 3) break;
         if (!f77_next_stmt()) break;
         if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) break;
     }

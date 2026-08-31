@@ -24,5 +24,11 @@ C     Nested DO, block IF with ELSE IF / ELSE, logical IF.
          N = 2
       ENDIF
       IF (N .NE. 2) STOP 23
+C     Printed sentinel: the compiler once silently ended the unit at
+C     the first ENDIF, and this test passed vacuously (both sides
+C     exited 0 with empty stdout).  Output after the ENDIFs makes any
+C     recurrence visible in the diff.
+      WRITE (6, 90) ACC + N
+   90 FORMAT ('S', I4)
       STOP 0
       END

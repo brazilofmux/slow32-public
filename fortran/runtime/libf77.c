@@ -58,6 +58,45 @@ static int   fio_ldone;          /* list-directed: '/' seen, rest untouched */
 static int   fio_l_pending;      /* list-directed r*c: repeats left on fio_ltok */
 static char  fio_ltok[128];
 
+/* Open units.  0/5/6 are preconnected (stderr/stdin/stdout, matching
+ * gfortran) and may not be OPENed; everything else goes through the
+ * table.  The name is kept for CLOSE (STATUS='DELETE'). */
+#define FIO_MAXUNIT 32
+#define FIO_MAXNAME 256
+static FILE *fio_ufile[FIO_MAXUNIT];
+static char  fio_ufname[FIO_MAXUNIT][FIO_MAXNAME];
+static FILE *fio_in;             /* stream of the READ in progress */
+static FILE *fio_out;            /* stream of the WRITE in progress */
+
+static FILE *fio_resolve(int unit, int writing) {
+    if (unit >= 0 && unit < FIO_MAXUNIT && fio_ufile[unit]) return fio_ufile[unit];
+    if (writing) {
+        if (unit == 6) return stdout;
+        if (unit == 0) return stderr;
+        if (unit == 5) return stdout;    /* tolerated historically */
+    } else {
+        if (unit == 5 || unit == 0) return stdin;
+    }
+    fprintf(stderr, "f77: unit %d is not open for %s\n",
+            unit, writing ? "WRITE" : "READ");
+    exit(2);
+    return 0;
+}
+
+/* Case-insensitive match of a counted, possibly blank-padded Fortran
+ * string against a keyword. */
+static int fio_str_is(const char *s, int len, const char *kw) {
+    int i;
+    for (i = 0; i < len && kw[i]; i++) {
+        int c = s[i];
+        if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
+        if (c != kw[i]) return 0;
+    }
+    if (kw[i]) return 0;
+    for (; i < len; i++) if (s[i] != ' ') return 0;
+    return 1;
+}
+
 static void fio_putc(int c) {
     if (fio_len < FIO_MAXLINE - 1) fio_line[fio_len++] = (char)c;
 }
@@ -67,9 +106,10 @@ static void fio_puts(const char *s) {
 }
 
 static void fio_flush_line(void) {
+    FILE *f = fio_out ? fio_out : stdout;
     fio_line[fio_len] = 0;
-    fputs(fio_line, stdout);
-    fputc('\n', stdout);
+    fputs(fio_line, f);
+    fputc('\n', f);
     fio_len = 0;
 }
 
@@ -91,7 +131,7 @@ static int fio_isdigit(int c) { return c >= '0' && c <= '9'; }
  * shorter than the fields read from it behaves as if blank-padded,
  * which fio_field_in provides by supplying blanks past fio_rlen. */
 static int fio_getrec(void) {
-    if (!fgets(fio_rec, FIO_MAXLINE, stdin)) return 1;
+    if (!fgets(fio_rec, FIO_MAXLINE, fio_in ? fio_in : stdin)) return 1;
     fio_rlen = (int)strlen(fio_rec);
     while (fio_rlen > 0 &&
            (fio_rec[fio_rlen - 1] == '\n' || fio_rec[fio_rlen - 1] == '\r'))
@@ -336,10 +376,7 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
 /* --- entry points called by compiled Fortran ------------------------ */
 
 void f77_wr_begin(int unit, const char *fmt) {
-    if (unit != 6 && unit != 5 && unit != 0) {
-        fprintf(stderr, "f77: WRITE to unit %d is not supported\n", unit);
-        exit(2);
-    }
+    fio_out = fio_resolve(unit, 1);
     fio_reading = 0;
     fio_unit = unit;
     fio_len = 0;
@@ -678,10 +715,7 @@ static double fio_list_real(void) {
  * (`READ (5, *, END=99) X` in a loop) work; end of file in the middle
  * of a statement is always fatal (see fio_next_record). */
 int f77_rd_begin(int unit, const char *fmt, int has_end) {
-    if (unit != 5 && unit != 0) {
-        fprintf(stderr, "f77: READ from unit %d is not supported\n", unit);
-        exit(2);
-    }
+    fio_in = fio_resolve(unit, 0);
     fio_reading = 1;
     fio_ldone = 0;
     fio_l_pending = 0;
@@ -777,4 +811,90 @@ void f77_rd_r(float *p) {
 
 void f77_rd_end(void) {
     fio_reading = 0;
+}
+
+/* --- OPEN / CLOSE / REWIND -------------------------------------------- */
+
+/* OPEN (u, FILE='name' [, STATUS='OLD'|'NEW'|'UNKNOWN']).
+ * Sequential formatted access, the only kind this runtime does.
+ *   OLD:     the file must exist ("r+", read-only "r" as fallback).
+ *   NEW:     the file must NOT exist; created "w+".
+ *   UNKNOWN: OLD if it exists (no truncation!), otherwise NEW.
+ * An OPEN on an already-open unit closes it first. */
+void f77_open(int unit, const char *name, int nlen,
+              const char *status, int slen) {
+    FILE *f;
+    char nm[FIO_MAXNAME];
+
+    if (unit <= 0 || unit >= FIO_MAXUNIT || unit == 5 || unit == 6) {
+        fprintf(stderr, "f77: cannot OPEN unit %d\n", unit);
+        exit(2);
+    }
+    if (nlen <= 0 || nlen >= FIO_MAXNAME) {
+        fprintf(stderr, "f77: bad FILE= name in OPEN\n");
+        exit(2);
+    }
+    memcpy(nm, name, nlen);
+    nm[nlen] = 0;
+    while (nlen > 0 && nm[nlen - 1] == ' ') nm[--nlen] = 0;   /* Fortran pads */
+
+    if (fio_ufile[unit]) { fclose(fio_ufile[unit]); fio_ufile[unit] = 0; }
+
+    if (status && slen > 0 && fio_str_is(status, slen, "OLD")) {
+        f = fopen(nm, "r+");
+        if (!f) f = fopen(nm, "r");
+        if (!f) {
+            fprintf(stderr, "f77: OPEN STATUS='OLD': no such file '%s'\n", nm);
+            exit(2);
+        }
+    } else if (status && slen > 0 && fio_str_is(status, slen, "NEW")) {
+        f = fopen(nm, "r");
+        if (f) {
+            fclose(f);
+            fprintf(stderr, "f77: OPEN STATUS='NEW': '%s' already exists\n", nm);
+            exit(2);
+        }
+        f = fopen(nm, "w+");
+        if (!f) {
+            fprintf(stderr, "f77: OPEN cannot create '%s'\n", nm);
+            exit(2);
+        }
+    } else if (!status || slen <= 0 ||
+               fio_str_is(status, slen, "UNKNOWN")) {
+        f = fopen(nm, "r+");
+        if (!f) f = fopen(nm, "w+");
+        if (!f) {
+            fprintf(stderr, "f77: OPEN cannot open '%s'\n", nm);
+            exit(2);
+        }
+    } else {
+        fprintf(stderr, "f77: OPEN STATUS value is not supported\n");
+        exit(2);
+    }
+    fio_ufile[unit] = f;
+    strcpy(fio_ufname[unit], nm);
+}
+
+/* CLOSE (u [, STATUS='KEEP'|'DELETE']).  Closing a unit that is not
+ * open is permitted and does nothing, as the standard says. */
+void f77_close(int unit, const char *status, int slen) {
+    int del;
+    if (unit < 0 || unit >= FIO_MAXUNIT || !fio_ufile[unit]) return;
+    del = (status && slen > 0 && fio_str_is(status, slen, "DELETE"));
+    if (status && slen > 0 && !del && !fio_str_is(status, slen, "KEEP")) {
+        fprintf(stderr, "f77: CLOSE STATUS value is not supported\n");
+        exit(2);
+    }
+    fclose(fio_ufile[unit]);
+    fio_ufile[unit] = 0;
+    if (del) remove(fio_ufname[unit]);
+    fio_ufname[unit][0] = 0;
+}
+
+void f77_rewind(int unit) {
+    if (unit < 0 || unit >= FIO_MAXUNIT || !fio_ufile[unit]) {
+        fprintf(stderr, "f77: REWIND: unit %d is not open\n", unit);
+        exit(2);
+    }
+    fseek(fio_ufile[unit], 0L, SEEK_SET);
 }
