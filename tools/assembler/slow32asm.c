@@ -53,6 +53,7 @@ typedef struct {
     bool is_global;
     bool is_defined;
     bool force_local;   // .local: never export, even via .comm
+    bool is_absolute;   // .equ/.set constant: not an address, never shifted
 } label_t;
 
 typedef struct {
@@ -413,6 +414,18 @@ typedef struct {
     // Hash tables for O(1) lookups
     s32_hashmap_t label_map;
     s32_hashmap_t string_map;
+
+    // Branch relaxation bookkeeping (see relax_branches).
+    // Code ranges covered by an already-emitted FDE: growing them would
+    // invalidate the baked pc_range/advance_loc bytes.
+    uint32_t *cfi_range_start;
+    uint32_t *cfi_range_end;
+    int num_cfi_ranges;
+    int cfi_ranges_cap;
+    // Highest code offset that a .align/.p2align/.balign stronger than 4
+    // bytes promised to keep aligned; inserting words below it breaks it.
+    uint32_t code_strict_align_max;
+    bool code_has_strict_align;
 } assembler_t;
 
 typedef enum {
@@ -926,6 +939,22 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
             return false;
         }
         emit_fde(as);
+        // Remember the code range this FDE measured: branch relaxation must
+        // not grow it (the pc_range/advance_loc bytes are already baked).
+        if (as->num_cfi_ranges >= as->cfi_ranges_cap) {
+            as->cfi_ranges_cap = as->cfi_ranges_cap ? as->cfi_ranges_cap * 2 : 16;
+            as->cfi_range_start = realloc(as->cfi_range_start,
+                                          as->cfi_ranges_cap * sizeof(uint32_t));
+            as->cfi_range_end = realloc(as->cfi_range_end,
+                                        as->cfi_ranges_cap * sizeof(uint32_t));
+            if (!as->cfi_range_start || !as->cfi_range_end) {
+                fprintf(stderr, "Memory allocation failed\n");
+                exit(1);
+            }
+        }
+        as->cfi_range_start[as->num_cfi_ranges] = as->cfi_func_start;
+        as->cfi_range_end[as->num_cfi_ranges] = as->code_size;
+        as->num_cfi_ranges++;
         as->cfi_in_proc = false;
         return true;
     }
@@ -1164,6 +1193,7 @@ static void add_label(assembler_t *as, const char *name, uint32_t addr) {
     as->labels[as->num_labels].is_global = false;  // Default to local
     as->labels[as->num_labels].is_defined = true;
     as->labels[as->num_labels].force_local = false;
+    as->labels[as->num_labels].is_absolute = false;
     s32_hashmap_put(&as->label_map, as->labels[as->num_labels].name, as->num_labels);
     as->num_labels++;
 }
@@ -1372,9 +1402,137 @@ static uint32_t encode_j(uint32_t op, int rd, int imm) {
     int imm_19_12 = (imm >> 12) & 0xFF;
     int imm_11 = (imm >> 11) & 1;
     int imm_10_1 = (imm >> 1) & 0x3FF;
-    
-    return op | (rd << 7) | (imm_19_12 << 12) | 
+
+    return op | (rd << 7) | (imm_19_12 << 12) |
            (imm_11 << 20) | (imm_10_1 << 21) | (imm_20 << 31);
+}
+
+// ============================================================================
+// Branch relaxation
+//
+// A conditional branch reaches only +/-4096 bytes. When a bcond targets a
+// local label further away than that, rewrite
+//
+//     beq  rs1, rs2, far          bne  rs1, rs2, .+8   (condition inverted)
+//                            ->   jal  r0, far         (+/-1MB reach)
+//
+// The six bcond opcodes (0x48-0x4D) pair up so that inverting a condition is
+// a flip of opcode bit 0: beq/bne, blt/bge, bltu/bgeu.
+//
+// This is the one place the assembler rewrites the program instead of
+// encoding it verbatim: the inserted word shifts every later code address,
+// so labels, relocations and diff fixups are shifted with it, and the shift
+// can push *other* branches out of range - hence iteration to a fixed point
+// (each branch relaxes at most once, so it terminates). --no-relax restores
+// the old refuse-and-error behavior.
+//
+// Branches to undefined (external) symbols are left to the linker's range
+// check, as before: their distance is unknown here.
+// ============================================================================
+
+static bool relax_branches(assembler_t *as) {
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (int i = 0; i < as->num_instructions; i++) {
+            instruction_t *br = &as->instructions[i];
+            if (br->is_data_byte || br->section != SECTION_CODE) continue;
+            if (!br->has_label_ref) continue;
+            if (br->opcode < 0x48 || br->opcode > 0x4D) continue;
+
+            int li = find_label_index(as, br->label_ref);
+            if (li < 0) continue;   // external symbol: linker range-checks
+            label_t *lab = &as->labels[li];
+            if (!lab->is_defined || lab->is_absolute ||
+                lab->section != SECTION_CODE) continue;
+
+            int32_t offset = (int32_t)(lab->address - (br->address + 4));
+            if (offset >= -4096 && offset <= 4094) continue;
+
+            uint32_t ins_addr = br->address + 4;
+
+            // Growing code inside an already-emitted FDE would invalidate
+            // its baked pc_range/advance_loc bytes. Only llc emits CFI, and
+            // llc pre-relaxes its branches, so this should never fire.
+            for (int r = 0; r < as->num_cfi_ranges; r++) {
+                if (ins_addr > as->cfi_range_start[r] &&
+                    ins_addr <= as->cfi_range_end[r]) {
+                    fprintf(stderr, "Error: branch at 0x%08X to '%s' (%d bytes away) is out of range,\n"
+                                    "       but relaxing it would grow a .cfi_startproc/.cfi_endproc region\n"
+                                    "       whose FDE is already emitted. Relax the branch in the producer.\n",
+                            br->address, br->label_ref, offset);
+                    return false;
+                }
+            }
+            // Alignment padding stronger than one word is already
+            // materialized; a 4-byte insertion below it would break it.
+            if (as->code_has_strict_align && ins_addr <= as->code_strict_align_max) {
+                fprintf(stderr, "Error: branch at 0x%08X to '%s' (%d bytes away) is out of range,\n"
+                                "       but relaxing it would break a later .align/.p2align stronger\n"
+                                "       than 4 bytes in the code section.\n",
+                        br->address, br->label_ref, offset);
+                return false;
+            }
+
+            // Invert the condition and hop over the new jal: the branch
+            // target is PC+8, encoded relative to PC+4.
+            char target[MAX_SYMBOL_LEN];
+            copy_string(target, MAX_SYMBOL_LEN, br->label_ref);
+            br->opcode ^= 1;
+            br->instruction = ((br->instruction ^ 1) & 0x01FFF07F) |
+                              (encode_b(0, 0, 0, 4) & 0xFE000F80);
+            br->has_label_ref = false;
+
+            // Shift everything in the code section at or past the insertion
+            // point. .equ/.set constants (is_absolute) are not addresses.
+            for (int j = 0; j < as->num_instructions; j++) {
+                instruction_t *p = &as->instructions[j];
+                if (p->section == SECTION_CODE && p->address >= ins_addr)
+                    p->address += 4;
+            }
+            for (int j = 0; j < as->num_labels; j++) {
+                label_t *l = &as->labels[j];
+                if (l->is_defined && !l->is_absolute &&
+                    l->section == SECTION_CODE && l->address >= ins_addr)
+                    l->address += 4;
+            }
+            for (int j = 0; j < as->num_relocations; j++) {
+                if (as->relocations[j].section == SECTION_CODE &&
+                    as->relocations[j].offset >= ins_addr)
+                    as->relocations[j].offset += 4;
+            }
+            for (int j = 0; j < as->num_label_diffs; j++) {
+                if (as->label_diffs[j].instruction_index > i)
+                    as->label_diffs[j].instruction_index++;
+            }
+            for (int j = 0; j < as->num_uleb_diffs; j++) {
+                if (as->uleb_diffs[j].instruction_index > i)
+                    as->uleb_diffs[j].instruction_index++;
+            }
+            for (int r = 0; r < as->num_cfi_ranges; r++) {
+                if (as->cfi_range_start[r] >= ins_addr) as->cfi_range_start[r] += 4;
+                if (as->cfi_range_end[r] >= ins_addr) as->cfi_range_end[r] += 4;
+            }
+            as->code_size += 4;
+
+            // Insert `jal r0, target` right behind the branch.
+            ensure_instruction_capacity(as, 1);   // may move the array
+            memmove(&as->instructions[i + 2], &as->instructions[i + 1],
+                    (size_t)(as->num_instructions - (i + 1)) * sizeof(instruction_t));
+            instruction_t *jal = &as->instructions[i + 1];
+            memset(jal, 0, sizeof(*jal));
+            jal->opcode = 0x40;
+            jal->instruction = encode_j(0x40, 0, 0);
+            jal->address = ins_addr;
+            jal->section = SECTION_CODE;
+            jal->has_label_ref = true;
+            copy_string(jal->label_ref, MAX_SYMBOL_LEN, target);
+            as->num_instructions++;
+
+            changed = true;
+        }
+    }
+    return true;
 }
 
 static bool assemble_line(assembler_t *as, char *line) {
@@ -1692,8 +1850,17 @@ static bool assemble_line(assembler_t *as, char *line) {
                 padding = align_bytes - (int)(as->current_addr & (uint32_t)align_mask);
             }
             // GAS: if more than max bytes would be needed, do not align at all.
+            bool align_suppressed = false;
             if (max_padding >= 0 && padding > max_padding) {
                 padding = 0;
+                align_suppressed = true;
+            }
+            if (!align_suppressed && align_bytes > 4 &&
+                as->current_section == SECTION_CODE) {
+                uint32_t here = as->current_addr + (uint32_t)padding;
+                if (!as->code_has_strict_align || here > as->code_strict_align_max)
+                    as->code_strict_align_max = here;
+                as->code_has_strict_align = true;
             }
             ensure_instruction_capacity(as, padding);
             for (int p = 0; p < padding; p++) {
@@ -1731,6 +1898,13 @@ static bool assemble_line(assembler_t *as, char *line) {
                 padding = align_bytes - (as->current_addr & align_mask);
             }
 
+            if (align_bytes > 4 && as->current_section == SECTION_CODE) {
+                uint32_t here = as->current_addr + (uint32_t)padding;
+                if (!as->code_has_strict_align || here > as->code_strict_align_max)
+                    as->code_strict_align_max = here;
+                as->code_has_strict_align = true;
+            }
+
             // Add padding bytes
             ensure_instruction_capacity(as, padding);
             for (int p = 0; p < padding; p++) {
@@ -1757,13 +1931,20 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             int align_bytes = 1 << align_power;
             int align_mask = align_bytes - 1;
-            
+
             // Calculate padding needed
             int padding = 0;
             if (as->current_addr & align_mask) {
                 padding = align_bytes - (as->current_addr & align_mask);
             }
-            
+
+            if (align_bytes > 4 && as->current_section == SECTION_CODE) {
+                uint32_t here = as->current_addr + (uint32_t)padding;
+                if (!as->code_has_strict_align || here > as->code_strict_align_max)
+                    as->code_strict_align_max = here;
+                as->code_has_strict_align = true;
+            }
+
             // Add NOP instructions (0x00000000) or zero bytes as padding
             ensure_instruction_capacity(as, padding);
             for (int p = 0; p < padding; p++) {
@@ -1989,10 +2170,12 @@ static bool assemble_line(assembler_t *as, char *line) {
                 // Update existing label
                 label->address = value;
                 label->is_defined = true;
+                label->is_absolute = true;
             } else {
                 // Add new label
                 add_label(as, symbol, value);
                 as->labels[as->num_labels - 1].is_defined = true;
+                as->labels[as->num_labels - 1].is_absolute = true;
             }
             return true;
         } else if (strcmp(tokens[0], ".comm") == 0 && num_tokens >= 3) {
@@ -3237,7 +3420,18 @@ int main(int argc, char *argv[]) {
 
     int opt;
     const char *output_file = NULL;
-    
+    bool no_relax = false;
+
+    // getopt() has no long options; peel off --no-relax before it runs.
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--no-relax") == 0) {
+            no_relax = true;
+            for (int j = i; j < argc - 1; j++) argv[j] = argv[j + 1];
+            argc--;
+            i--;
+        }
+    }
+
     // Parse command-line options
     while ((opt = getopt(argc, argv, "ho:")) != -1) {
         switch (opt) {
@@ -3247,6 +3441,7 @@ int main(int argc, char *argv[]) {
                 printf("  Use s32-ld to link object files into executables\n");
                 printf("Options:\n");
                 printf("  -o <file>   Specify output file (alternative to positional arg)\n");
+                printf("  --no-relax  Error on out-of-range branches instead of relaxing them\n");
                 printf("  -h          Show this help\n");
                 return 0;
             case 'o':
@@ -3321,7 +3516,13 @@ int main(int argc, char *argv[]) {
         }
     }
     fclose(input);
-    
+
+    // Relax out-of-range conditional branches (invert + jal) before any
+    // relocation or label math: addresses are final after this point.
+    if (!no_relax && !relax_branches(&as)) {
+        return 1;
+    }
+
     // Process all symbol references (%hi, %lo, %pcrel_hi, %pcrel_lo)
     for (int i = 0; i < as.num_instructions; i++) {
         instruction_t *inst = &as.instructions[i];

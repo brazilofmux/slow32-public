@@ -76,6 +76,11 @@ static char g_lin_minus[128];
 static int g_lin_has_plus;
 static int g_lin_has_minus;
 
+/* Highest .text offset that a .align/.balign stronger than 4 bytes
+ * promised to keep aligned; branch relaxation must not insert below it. */
+static int g_text_strict_align_max;
+static int g_text_has_strict_align;
+
 int find_lbl(char *name);
 
 char *trim(char *s) {
@@ -584,6 +589,11 @@ int do_align(int p) {
         if (emit8(0) != 0) return -1;
         n = n + 1;
     }
+    if (g_sec == SEC_TEXT && a > 4) {
+        if (!g_text_has_strict_align || n > g_text_strict_align_max)
+            g_text_strict_align_max = n;
+        g_text_has_strict_align = 1;
+    }
     return 0;
 }
 
@@ -594,6 +604,11 @@ int do_balign(int bytes, int fill) {
     while ((n % bytes) != 0) {
         if (emit8(fill & 255) != 0) return -1;
         n = n + 1;
+    }
+    if (g_sec == SEC_TEXT && bytes > 4) {
+        if (!g_text_has_strict_align || n > g_text_strict_align_max)
+            g_text_strict_align_max = n;
+        g_text_has_strict_align = 1;
     }
     return 0;
 }
@@ -1353,6 +1368,103 @@ int build_syms(int text_idx, int rodata_idx, int data_idx, int init_array_idx, i
     return 0;
 }
 
+/* Branch relaxation: a bcond reaches only +/-4096 bytes. When a local
+ * text-to-text branch is further away than that, invert the condition
+ * (the opcode pairs 0x48/0x49, 0x4A/0x4B, 0x4C/0x4D differ in bit 0)
+ * and hop over an inserted `jal r0, target` (+/-1MB reach):
+ *
+ *     beq  rs1, rs2, far    ->    bne  rs1, rs2, .+8
+ *                                 jal  r0, far
+ *
+ * This is the one pass that rewrites code instead of encoding it
+ * verbatim. The inserted word shifts every later text offset, which can
+ * push other branches out of range, so iterate to a fixed point (each
+ * branch relaxes at most once, so it terminates). Branches to undefined
+ * symbols keep their reloc and are range-checked by the linker. */
+int relax_text_branches() {
+    int changed;
+    int i;
+    int j;
+    int li;
+    int off;
+    int ins;
+    int disp;
+    int inst;
+    int rs1;
+    int rs2;
+    int op;
+
+    changed = 1;
+    while (changed) {
+        changed = 0;
+        for (i = 0; i < g_nrel; i = i + 1) {
+            if (g_rel_sec[i] != SEC_TEXT) continue;
+            if (g_rel_typ[i] != S32O_REL_BRANCH) continue;
+            li = g_rel_sym[i];
+            if (li >= g_nlbl) continue;
+            if (!g_lbl_defd[li]) continue;
+            if (g_lbl_abs[li]) continue;
+            if (g_lbl_sec[li] != SEC_TEXT) continue;
+            off = g_rel_off[i];
+            disp = g_lbl_val[li] + g_rel_add[i] - off - 4;
+            if (disp >= -4096 && disp <= 4094) continue;
+
+            /* Alignment padding stronger than one word is already
+             * materialized; a 4-byte insertion below it would break it. */
+            if (g_text_has_strict_align && off + 4 <= g_text_strict_align_max) {
+                fdputs("s32-as: cannot relax branch below .align > 4 in .text: ", 2);
+                fdputs(g_lbl_name_pool + g_lbl_name_off[li], 2);
+                fdputc(10, 2);
+                return -1;
+            }
+            if (g_tsz + 4 > MAX_TEXT) {
+                fdputs("s32-as: text overflow during branch relaxation\n", 2);
+                return -1;
+            }
+
+            /* open a 4-byte slot right after the branch */
+            ins = off + 4;
+            j = g_tsz;
+            while (j > ins) {
+                j = j - 1;
+                g_text[j + 4] = g_text[j];
+            }
+            g_tsz = g_tsz + 4;
+
+            /* invert the condition; hop over the new jal (target PC+8,
+             * encoded relative to PC+4) */
+            inst = rd32(g_text + off);
+            rs1 = (inst >> 15) & 31;
+            rs2 = (inst >> 20) & 31;
+            op = (inst & 127) ^ 1;
+            wr32(g_text + off, enc_b(0, rs1, rs2, 4) | op);
+            wr32(g_text + ins, enc_j(0x40, 0, 0));
+
+            /* the branch's reloc now describes the jal */
+            g_rel_typ[i] = S32O_REL_JAL;
+            g_rel_off[i] = ins;
+
+            /* shift text labels and fixups at or past the slot
+             * (.equ/.set constants are not addresses) */
+            for (j = 0; j < g_nlbl; j = j + 1) {
+                if (g_lbl_defd[j] && !g_lbl_abs[j] &&
+                    g_lbl_sec[j] == SEC_TEXT && g_lbl_val[j] >= ins)
+                    g_lbl_val[j] = g_lbl_val[j] + 4;
+            }
+            for (j = 0; j < g_nrel; j = j + 1) {
+                if (j != i && g_rel_sec[j] == SEC_TEXT && g_rel_off[j] >= ins)
+                    g_rel_off[j] = g_rel_off[j] + 4;
+            }
+            for (j = 0; j < g_ndiff; j = j + 1) {
+                if (g_diff_sec[j] == SEC_TEXT && g_diff_off[j] >= ins)
+                    g_diff_off[j] = g_diff_off[j] + 4;
+            }
+            changed = 1;
+        }
+    }
+    return 0;
+}
+
 int resolve_local_text_relocs() {
     int i;
     int out;
@@ -1770,6 +1882,11 @@ int main(int argc, char **argv) {
     }
     fdclose(g_in);
     g_in = 0;
+
+    if (relax_text_branches() != 0) {
+        fdputs("branch relaxation failed\n", 2);
+        return 1;
+    }
 
     if (resolve_diff_fixups() != 0) {
         fdputs("resolve label-diff fixups failed\n", 2);

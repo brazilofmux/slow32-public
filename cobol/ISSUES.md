@@ -272,6 +272,11 @@ positions are exact, and a branch that cannot reach becomes its
 inverse over a `jal` (±1 MB), iterated to a fixed point. gl008 needs
 four; tests/free/farbranch two. Found only because the corpus's
 biggest program finally compiled -- the sweep's value again.
+Follow-up (GitHub #22, 2026-08-30): both assemblers (`slow32asm` and
+the selfhost `s32-as`) now do the same relaxation at the right layer,
+so this pass is belt-and-suspenders; it can be retired whenever
+touching the compiler next, since the assembler catches whatever it
+would have.
 
 ### 21. MOVE from a numeric-edited item holding malformed text
 Feeding ldglentry a lines file of the wrong schema put `000066C00000`

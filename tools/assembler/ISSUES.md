@@ -84,3 +84,32 @@ The `.long` handler duplicated `.word` logic but used the old `parse_immediate_o
 
 - **Problem**: `.long (sym1 - sym2)` silently produced garbage while `.word (sym1 - sym2)` worked correctly.
 - **Status**: Fixed. `.long` is now handled by the same codepath as `.word`, supporting label-diffs and all other `.word` features. The unused `parse_immediate_or_symbol_ex` function was removed.
+
+### 12. Branch Relaxation (Added — GitHub issue 22)
+Conditional branches reach only ±4096 bytes; the assembler used to refuse a
+local target further away, so every producer (cobc, handwritten `.s`) had to
+relax its own branches — llc pre-relaxes, but nothing else did.
+
+- **Status**: Implemented (Aug 2026), in both `slow32asm` and the selfhost
+  `s32-as`. After parsing, an out-of-range bcond to a defined code-section
+  label is rewritten as the inverted condition (opcode pairs 0x48/0x49,
+  0x4A/0x4B, 0x4C/0x4D differ in bit 0) hopping over an inserted
+  `jal r0, target`. The inserted word shifts all later code addresses
+  (labels, relocations, diff fixups), which can push other branches out of
+  range, so the pass iterates to a fixed point. This is the one place the
+  assembler rewrites the program instead of encoding it verbatim;
+  `--no-relax` (slow32asm) restores the old refuse-and-error behavior.
+- **Deliberate limits**, both loud errors, neither reachable from current
+  producers: relaxation refuses to grow a `.cfi_startproc`/`.cfi_endproc`
+  region (the FDE's pc_range/advance_loc bytes are baked at parse time, and
+  only llc emits CFI — pre-relaxed), and refuses to insert below a
+  code-section `.align`/`.p2align` stronger than 4 bytes (padding is already
+  materialized). `.equ`/`.set` constants are flagged `is_absolute` and never
+  shifted.
+- **Still not relaxed**: branches to undefined (external) symbols keep their
+  `REL_BRANCH` relocation and are range-checked by the linker; their distance
+  is unknown at assembly time.
+- **Tests**: `regression/tests/asm-branch-relax` (forward + backward, near
+  branch untouched) and `asm-branch-relax-cascade` (a branch in range by one
+  word until another relaxation pushes it out — fails to assemble if the
+  fixed-point iteration breaks).
