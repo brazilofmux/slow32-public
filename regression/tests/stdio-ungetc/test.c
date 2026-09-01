@@ -52,6 +52,11 @@ int main(void) {
     }
     fclose(f);
 
+    /* Clean up (stdio-buffering and stdlib-memstream do the same):
+     * this runs with the harness's cwd, so a leftover lands in
+     * regression/ as an untracked stray. */
+    remove("ug.txt");
+
     if (fails) {
         printf("FAIL %d\n", fails);
         return 1;
