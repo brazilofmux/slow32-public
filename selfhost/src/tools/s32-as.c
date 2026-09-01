@@ -399,10 +399,79 @@ int parse_reloc_expr(char *s, char *prefix, char *out, int out_sz) {
     return i > 0;
 }
 
-int find_lbl(char *name) {
+/* --- Label lookup ---------------------------------------------------
+ *
+ * find_lbl used to be a linear scan, which is quadratic in the label
+ * count: s12cc.c's own assembly carries 15,681 labels, so assembling it
+ * spent ~123 MILLION strcmp calls just deciding whether each label was
+ * new.  That was most of the 10 s (emulated) / 1.9 s (native) it took
+ * to assemble one file, and it is a capacity limit in TIME rather than
+ * size.  The host assembler has always hashed; this brings the
+ * self-hosted one in line.
+ *
+ * Open addressing, linear probing, buckets holding INDEX+1 so that 0
+ * means empty.  Buckets store indices rather than pointers on purpose:
+ * the name pool is grow-on-demand and moves under realloc, so every
+ * comparison re-reads `g_lbl_name_pool + g_lbl_name_off[idx]` and
+ * nothing caches a name pointer.  Label indices keep their append
+ * order, so the emitted object is unchanged -- byte-identical output is
+ * the acceptance test.
+ *
+ * Insertion happens in get_lbl AFTER all the growth for this label, in
+ * its own function, per the mark_refd discipline: never touch a
+ * growable global across a call that can move it. */
+static int *g_lbl_ht;      /* bucket -> label index + 1; 0 = empty */
+static int  g_lbl_ht_cap;  /* power of two; 0 = not yet allocated */
+
+static int lbl_hash(char *s) {
+    int h;
+    h = 0;
+    while (*s) {
+        h = h * 31 + *s;   /* wraps; that is fine for a hash */
+        s = s + 1;
+    }
+    if (h < 0) h = 0 - h;
+    if (h < 0) h = 0;      /* the one value that stays negative */
+    return h;
+}
+
+static void ht_put(int idx) {
+    int b;
+    b = lbl_hash(g_lbl_name_pool + g_lbl_name_off[idx]) & (g_lbl_ht_cap - 1);
+    while (g_lbl_ht[b] != 0) {
+        b = b + 1;
+        if (b == g_lbl_ht_cap) b = 0;
+    }
+    g_lbl_ht[b] = idx + 1;
+}
+
+/* Reallocate to newcap (a power of two), clear, and reinsert every
+ * existing label. */
+static void ht_rebuild(int newcap) {
     int i;
-    for (i = 0; i < g_nlbl; i = i + 1) {
-        if (strcmp(g_lbl_name_pool + g_lbl_name_off[i], name) == 0) return i;
+    if (g_lbl_ht == 0) g_lbl_ht = (int *)malloc(newcap * 4);
+    else g_lbl_ht = (int *)realloc((char *)g_lbl_ht, newcap * 4);
+    if (g_lbl_ht == 0) {
+        fdputs("s32-as: out of memory (label hash)\n", 2);
+        exit(1);
+    }
+    g_lbl_ht_cap = newcap;
+    i = 0;
+    while (i < newcap) { g_lbl_ht[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < g_nlbl) { ht_put(i); i = i + 1; }
+}
+
+int find_lbl(char *name) {
+    int b;
+    int idx;
+    if (g_lbl_ht_cap == 0) return -1;
+    b = lbl_hash(name) & (g_lbl_ht_cap - 1);
+    while (g_lbl_ht[b] != 0) {
+        idx = g_lbl_ht[b] - 1;
+        if (strcmp(g_lbl_name_pool + g_lbl_name_off[idx], name) == 0) return idx;
+        b = b + 1;
+        if (b == g_lbl_ht_cap) b = 0;
     }
     return -1;
 }
@@ -427,6 +496,14 @@ int get_lbl(char *name) {
     g_lbl_abs[g_nlbl] = 0;
     i = g_nlbl;
     g_nlbl = g_nlbl + 1;
+    /* Keep the load factor under 1/2.  A rebuild reinserts everything,
+     * including the label just appended. */
+    if (g_nlbl * 2 > g_lbl_ht_cap) {
+        if (g_lbl_ht_cap == 0) ht_rebuild(1024);
+        else ht_rebuild(g_lbl_ht_cap * 2);
+    } else {
+        ht_put(i);
+    }
     return i;
 }
 
