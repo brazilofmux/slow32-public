@@ -3335,9 +3335,16 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             if (rs1 == 0 && rs2 == 0) {
                 emit_xor_r32_r32(e, RAX, RAX);
             } else if (rs1 == 0) {
+                // Bcc rs1, rs2 needs the flags of (rs1 - rs2) = (0 - rs2).
+                // TEST h2,h2 yields the flags of (rs2 - 0) -- the REVERSED
+                // compare.  ZF is the same either way, so BEQ/BNE survived it,
+                // but SF/OF/CF are not, so BLT/BGE/BLTU/BGEU came out inverted.
+                // Materialize the zero and compare in the correct direction.
                 x64_reg_t h2 = rc_read(ctx, rs2);
-                emit_test_r32_r32(e, h2, h2);
+                emit_xor_r32_r32(e, RAX, RAX);
+                emit_cmp_r32_r32(e, RAX, h2);
             } else if (rs2 == 0) {
+                // (rs1 - 0): TEST is exact here (CF=OF=0, as for CMP rs1,0).
                 x64_reg_t h1 = rc_read(ctx, rs1);
                 emit_test_r32_r32(e, h1, h1);
             } else {
@@ -3349,8 +3356,10 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         
             emit_xor_r32_r32(e, RAX, RAX);
         } else if (rs1 == 0) {
-            emit_load_guest_reg(ctx, RAX, rs2);
-            emit_test_r32_r32(e, RAX, RAX);
+            // See above: compare 0 against rs2, not rs2 against 0.
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_xor_r32_r32(e, RAX, RAX);
+            emit_cmp_r32_r32(e, RAX, RCX);
         } else if (rs2 == 0) {
             emit_load_guest_reg(ctx, RAX, rs1);
             emit_test_r32_r32(e, RAX, RAX);

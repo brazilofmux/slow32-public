@@ -349,3 +349,45 @@ kernels, s32 +31%/instruction on Xeon kernels, ~parity on Xeon dbase — and no 
 bounded, optional question. Provenance of the old "~9.5 BIPS (x86-64)": a Stage-5
 profiling note ("0.03s, ~9.5 BIPS") — the 285M sprint on an unrecorded host — laundered
 into EMULATORS.md by the 2026-07-02 doc-reconcile. Retired there with a full note.
+
+## 15. x86-64 Branch-Against-Zero Compared Backwards (FIXED 2026-09-01)
+
+**Severity**: silent wrong answer, x86-64 back end only, every config
+(`-1`/`-C`/`-P` all reproduced). Invisible to the whole regression suite.
+
+The self-hosted kit's `printf`/`sprintf`/`snprintf` produced literal text with
+every conversion dropped — `"R=%d-%s"` with `(7, "ok")` printed `R=-`. The
+reference interpreter and `slow32-fast` on the *same host* were correct, and so
+was the AArch64 translator on the same binary, so this was `translate.c` alone.
+
+**Root cause**: `translate_branch_common()` special-cased a zero operand to
+`TEST` instead of `CMP`. `Bcc rs1, rs2` needs the flags of `rs1 - rs2`:
+
+- `rs2 == 0` → `TEST h1,h1` is exact (`CMP rs1,0` also leaves CF=OF=0).
+- `rs1 == 0` → the code emitted `TEST h2,h2`, which is the flags of
+  `rs2 - 0` — the **reversed** comparison.
+
+ZF is symmetric, so BEQ/BNE survived it; SF/OF/CF are not, so BLT/BGE/BLTU/BGEU
+came out **inverted**. The failing block was two instructions:
+
+```
+0x2f00: addi r13, r1, 0
+0x2f04: bge  zero, r11, 0x2ff8   ; r11 = 1, so 0 >= 1 is FALSE
+```
+
+`--paranoid-lite` pinned it precisely: every register matched, only PC diverged
+(shadow `0x2f08`, DBT `0x2ff8`). Fix: materialize the zero and compare in the
+correct direction (`XOR EAX,EAX; CMP EAX,h2`). Cache slots never alias RAX/RCX,
+so RAX is safe scratch. `translate_a64.c` already did exactly this
+(`emit_cmp_w32_w32(e, WZR, s)`, "flags must reflect (0 - rs2)"), which is why
+AArch64 was unaffected. The `bne_compact`/`beq_compact` copies of the same
+pattern are ZF-only and stay as they are.
+
+**Why nothing caught it**: the differential harness runs only *clang*-built
+binaries, and clang never emits `bge zero, rX` — it uses the other operand
+order. The stage08 self-hosted compiler does emit it. The suite passed 82/82 on
+this host both before and after the fix. **The coverage gap is the real
+finding: kit-built binaries were never differentially tested.**
+
+**Cost**: one extra `XOR` only on the `rs1 == 0` path. `benchmark_core`
+unchanged at 0.07 s, checksum 0x8d70b2b.
