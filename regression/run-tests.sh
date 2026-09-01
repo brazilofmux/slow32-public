@@ -91,8 +91,13 @@ run_test() {
     elif [ -f "$test_path/test.s" ]; then
         asm_source="s"
     else
-        echo -e "${YELLOW}SKIP${NC} (no test.c or test.s)"
-        SKIPPED=$((SKIPPED + 1))
+        # A test directory with no source is a broken test, not an absent
+        # one: something committed the expectations and lost the case.
+        # This used to be a SKIP, which is how four cases sat inert --
+        # .gitignore's blanket "test*.s" swallowed their sources and the
+        # runner reported nothing louder than a yellow line.
+        echo -e "${RED}FAIL${NC} (no test.c or test.s -- source missing?)"
+        FAILED=$((FAILED + 1))
         return
     fi
     
@@ -209,6 +214,11 @@ run_test() {
         dump_env+=(S32_TUBE_DUMP="$dump_dir" S32_TUBE_DUMP_FULL=1)
     fi
     if [ -f "$test_path/inject.py" ]; then
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo -e "${YELLOW}SKIP${NC} (python3 unavailable)"
+            SKIPPED=$((SKIPPED + 1))
+            return
+        fi
         run_timeout=5
         rm -f "$result_path/tube.port"
         python3 "$test_path/inject.py" "$result_path/tube.port" \
@@ -217,6 +227,15 @@ run_test() {
     elif [ -f "$test_path/viewer" ]; then
         if [ ! -x "$S32_CRT" ]; then
             echo -e "${YELLOW}SKIP${NC} (s32-crt not built)"
+            SKIPPED=$((SKIPPED + 1))
+            return
+        fi
+        # Executable is not the same as runnable: in the toolchain container
+        # the host-built s32-crt is on the mount but its shared libraries are
+        # not, and exec fails with "required file not found". That is a gap in
+        # the environment, not a defect in the test.
+        if ! "$S32_CRT" --help >/dev/null 2>&1; then
+            echo -e "${YELLOW}SKIP${NC} (s32-crt present but not runnable here)"
             SKIPPED=$((SKIPPED + 1))
             return
         fi
@@ -331,8 +350,15 @@ echo "================================================="
 echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped (of $TOTAL)"
 echo ""
 
-if [ $FAILED -eq 0 ]; then
+if [ $FAILED -eq 0 ] && [ $SKIPPED -eq 0 ]; then
     echo -e "${GREEN}All tests passed!${NC}"
+    exit 0
+elif [ $FAILED -eq 0 ]; then
+    # Skips are legitimate here (a box without clang/llc runs only the
+    # assembly cases), but they are not passes -- saying "All tests
+    # passed" over a run that was mostly skipped is how a silently
+    # inert case survives.
+    echo -e "${GREEN}$PASSED passed${NC}, $SKIPPED skipped, none failed"
     exit 0
 else
     echo -e "${RED}Some tests failed${NC}"

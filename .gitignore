@@ -39,6 +39,13 @@ verify*.o
 !tests/*.s
 !examples/*.s
 
+# Hand-written regression case sources live one level deeper, in
+# regression/tests/<name>/test.s -- which the blanket "test*.s" rule
+# above matched at any depth.  A case committed without its source does
+# not fail: run-tests.sh reports SKIP (no test.c or test.s) and the run
+# still ends "All tests passed".  Four cases were inert this way.
+!regression/tests/*/test.s
+
 # Generated assembly from C sources in runtime/
 # Hand-written .s files (intrinsics.s, crt0.s, etc.) are tracked;
 # generated ones (from .c -> .ll -> .s) are build artifacts.

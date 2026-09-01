@@ -172,8 +172,12 @@ run_test() {
     printf "%-34s " "$test_name:"
 
     if [ ! -f "$test_path/test.c" ] && [ ! -f "$test_path/test.s" ]; then
-        echo -e "${YELLOW}SKIP${NC} (no test source)"
-        SKIPPED=$((SKIPPED + 1))
+        # Same rule as run-tests.sh: a case directory with no source is a
+        # broken case, not an absent one, and a yellow line is not loud
+        # enough to notice.
+        echo -e "${RED}DIVERGE${NC} (no test source -- source missing?)"
+        DIVERGED=$((DIVERGED + 1))
+        DIVERGED_TESTS+=("$test_name")
         return
     fi
 
