@@ -259,6 +259,14 @@ cd ~/slow-32/regression && ./run-differential.sh
 # diffs every engine. Needs a kit: KIT=<dir> (default ~/s32x).
 cd ~/slow-32/regression && ./run-kit-differential.sh
 
+# And a third, complementary to (not a replacement for) the second: drive the
+# kit TOOLS themselves -- cc/as/ld/ar/dis/dump -- over their own sources and
+# byte-compare the artifacts each engine produced. Sharp for artifact drift
+# (an artificial SLTU fault diverges 12/21 checks), but MEASURED BLIND to
+# DBT-15, which the small-corpus harness above catches. Neither subsumes the
+# other; the script header carries the mutation-test numbers. ~27s.
+cd ~/slow-32/regression && ./run-kit-tools-differential.sh
+
 # Analyze binaries
 ./tools/utilities/slow32dump file.s32o    # Dump object file
 ./tools/utilities/slow32dump file.s32x    # Dump executable
