@@ -13,10 +13,15 @@
 #include "memory_manager.h"
 #include "mmio_ring.h"
 
-// Enable to trap on unaligned LD/ST (recommended for a strict ISA)
-#ifndef S32_ALLOW_UNALIGNED
-#define S32_TRAP_ON_UNALIGNED 1
-#endif
+// Unaligned LD/ST are PERMITTED by the architecture -- see "Alignment"
+// in docs/INSTRUCTION-SET.md.  x86-64, AArch64 and RISC-V all allow
+// them, and requiring alignment would make memcpy both harder and
+// slower for no benefit here.
+//
+// This used to define S32_TRAP_ON_UNALIGNED, described as "recommended
+// for a strict ISA" -- and then never referenced it.  Dead code that
+// implied the opposite of the actual contract, which is how a linker
+// bug that produced an unaligned .bss base went unnoticed.
 
 // Enable to trap on odd register numbers for f64 operations.
 // The ISA requires even-numbered registers for double-precision pairs.

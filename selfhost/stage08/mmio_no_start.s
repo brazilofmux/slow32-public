@@ -729,35 +729,61 @@ strlen:
     jalr r0, lr, 0
 
 .global memset
+# Same idea: splat the byte across a word and store words.  The low
+# byte of r4 stays the original value, so the byte tail still works.
 memset:
-    add r1, r3, r0
-    addi r3, r0, 0
-    beq r5, r3, .Lmemset_done
-    add r6, r1, r0
-.Lmemset_loop:
+    add  r1, r3, r0          # return value: original dst
+    add  r6, r3, r0          # cursor
+    andi r4, r4, 255
+    slli r7, r4, 8
+    or   r4, r4, r7
+    slli r7, r4, 16
+    or   r4, r4, r7          # r4 = the byte, four times
+    addi r8, r0, 4
+.Lmemset_w:
+    blt  r5, r8, .Lmemset_tail
+    stw  r6, r4, 0
+    addi r6, r6, 4
+    addi r5, r5, -4
+    jal  r0, .Lmemset_w
+.Lmemset_tail:
+    beq  r5, r0, .Lmemset_done
+.Lmemset_b:
+    stb  r6, r4, 0
+    addi r6, r6, 1
     addi r5, r5, -1
-    addi r7, r6, 1
-    stb r6, r4, 0
-    add r6, r7, r0
-    bne r5, r3, .Lmemset_loop
+    bne  r5, r0, .Lmemset_b
 .Lmemset_done:
     jalr r0, lr, 0
 
 .global memcpy
+# Word-at-a-time, with no alignment checks: unaligned LDW/STW are
+# permitted (docs/INSTRUCTION-SET.md, "Alignment").  That is the whole
+# point of allowing them -- an aligned-only memcpy has to special-case
+# every source/destination alignment pair and is still slower.
+# Byte tail handles the last 0-3.
 memcpy:
-    add r1, r3, r0
-    addi r3, r0, 0
-    beq r5, r3, .Lmemcpy_done
-    add r6, r1, r0
-.Lmemcpy_loop:
+    add  r1, r3, r0          # return value: original dst
+    add  r6, r3, r0          # dst cursor
+    add  r7, r4, r0          # src cursor
+    addi r8, r0, 4
+.Lmemcpy_w:
+    blt  r5, r8, .Lmemcpy_tail
+    ldw  r9, r7, 0
+    stw  r6, r9, 0
+    addi r6, r6, 4
+    addi r7, r7, 4
+    addi r5, r5, -4
+    jal  r0, .Lmemcpy_w
+.Lmemcpy_tail:
+    beq  r5, r0, .Lmemcpy_done
+.Lmemcpy_b:
+    ldbu r9, r7, 0
+    stb  r6, r9, 0
+    addi r6, r6, 1
+    addi r7, r7, 1
     addi r5, r5, -1
-    addi r7, r4, 1
-    ldbu r4, r4, 0
-    addi r8, r6, 1
-    stb r6, r4, 0
-    add r4, r7, r0
-    add r6, r8, r0
-    bne r5, r3, .Lmemcpy_loop
+    bne  r5, r0, .Lmemcpy_b
 .Lmemcpy_done:
     jalr r0, lr, 0
 

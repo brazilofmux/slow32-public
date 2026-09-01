@@ -328,6 +328,39 @@ selection, data definition, and symbol control.
 
 ## Memory Model
 
+### Alignment
+
+**Unaligned loads and stores are permitted.** `LDW`/`STW` at an address
+that is not a multiple of 4, and `LDH`/`STH` at an odd address, access
+the requested bytes and are not an error.
+
+This is a deliberate choice, and it follows the machines worth caring
+about: x86-64, AArch64 and RISC-V all permit unaligned access to normal
+memory.  The architectures that fault instead -- MIPS, 68000, SPARC,
+29k -- push the cost onto software, and the cost is real: a `memcpy`
+restricted to aligned accesses has to special-case every combination of
+source and destination alignment, and it still ends up slower than one
+that just moves words.
+
+Alignment remains a **performance preference**.  Compilers, linkers and
+hand-written assembly should align naturally-sized objects, and the
+toolchain does: the assembler honours `.align`, and both linkers place
+section bases on 4-byte boundaries.  But nothing may *depend* on
+alignment for correctness.
+
+All five execution engines implement this consistently (verified by a
+deliberately misaligned store: `slow32`, `slow32-fast` and `slow32-dbt`
+all execute it).
+
+> **Known gap — `fpga/rtl/`.** The RTL does not implement this.  Its
+> `OP_STW` asserts all four byte enables and ignores `addr[1:0]`, so an
+> unaligned word store silently writes the containing aligned word;
+> loads have the matching problem.  That is the one behaviour worse than
+> either alternative -- neither correct nor a clean trap.  A hardware
+> implementation must either split an unaligned access into two bus
+> cycles and merge, or trap it; it must not silently truncate the
+> address.
+
 - **Code**: `0x00000000 - 0x000FFFFF` (1MB, Execute-only)
 - **Data**: `0x00100000 - 0x0FFFFFFF` (255MB, Read/Write)
 - **MMIO**: `0x10000000+`
