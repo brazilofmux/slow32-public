@@ -1697,7 +1697,7 @@ cc-x64), `s32fast-hir` reproduces at the identical 55,045 text bytes.
 the checked-in file is anything other than your change plus `#line` churn, stop —
 that's new drift.**
 
-### 59. [OPEN] `cc_fp_varargs` fails when `cc-a64` is built by GCC 14 (musl/alpine); passes when built by clang (macOS)
+### 59. [RESOLVED-BY-INVESTIGATION 2026-09-01] `cc_fp_varargs` fails when `cc-a64` is built by GCC 14 (musl/alpine); passes when built by clang (macOS)
 
 `stage08-cross-a64/tests/cc_fp_varargs.c` (added 2026-08-08 with the dual FP varargs
 work) exits 1 (`one_double` leg) when the compiling `cc-a64` binary was built by
@@ -1710,6 +1710,32 @@ bug (uninitialized local / UB in the compiler's own source that one host optimiz
 exploits and another doesn't). Suspect first: uninitialized fields in the new
 FP-varargs frame-control-block codegen paths (`hir_codegen_a64.h`, 523af572).
 Repro: alpine:3.21, `make && make test-cc` in `stage08-cross-a64`.
+
+**2026-09-01: does not reproduce at HEAD.** Rebuilt under the exact recorded
+conditions -- alpine:3.21, gcc 14.2.0, musl, native aarch64 (podman on the M-series
+Mac, so no emulation) -- and `cc_fp_varargs (--hir): ok`. The full suite is 36/36,
+including the cc-a64-vs-gcc differential. The test is not vacuous: it returns 1 on the
+`one_double` leg and 2 on `sum_mix`, and `ok` means exit 0.
+
+The specific fixing commit was NOT identified, so "fixed" is an inference from the
+symptom being gone, not a proven cause. `aa00380f` (init unused SIB arrays to -1) has
+the right shape but predates the report by two months.
+
+**What the investigation did find is more useful than the original symptom.** The
+issue's own hypothesis was UB in the compiler's own source that one host optimizer
+exploits and another does not. Running `cc-a64` under ASan+UBSan over the whole
+44-source test corpus found exactly that -- twice, and neither in the suspected file:
+
+- `a64_encode.h` shifted into the sign bit of a signed `int` in the logical-immediate
+  encoder: `elem << r` (UBSan: "left shift of 2 by 30 places") and `(1 << ones) - 1`
+  with `ones` reaching 31. The surrounding code masks the result, so the wrapping
+  unsigned shift was always the intent. **Fixed** -- the rotate and mask now run in
+  `unsigned int`; 36/36 still passes under gcc 14/musl.
+- The shared lexer invokes signed overflow on any hex literal with the high bit set.
+  Filed as ISSUES-64.
+
+So the UB class this issue pointed at was real and still live at HEAD; it simply was
+not where the report guessed, and no longer manifests as this particular failure.
 
 ### 60. [RESOLVED 2026-08-09] stage08 `cc.s32x` sum pinned a stale (pre-PP-predefs) build
 
@@ -1866,3 +1892,38 @@ differentials green.
 Related: `tools/dbt/ISSUES.md` DBT-15 and `tools/emulator/ISSUES.md` 12
 are the same *shape* of defect in the engines -- a capacity or
 special-case path that fails silently instead of loudly.
+
+### 64. [OPEN] Shared lexer invokes signed overflow on any hex literal with the high bit set
+
+`selfhost/src/c_lexer.rl` accumulates numeric literals into a signed
+`long long val`:
+
+```c
+if (ch >= 48 && ch <= 57) val = val * 16 + (ch - 48);
+```
+
+Any literal that crosses 2^63 overflows a signed type, which is undefined.
+This is not a garbage-input case -- it fires on ordinary 64-bit masks.
+`stage08-cross-a64/tests/cc_alu_imm.c` line 11 has
+
+```c
+unsigned long mask_low12(unsigned long p) { return p & 0xFFFFFFFFFFFFF000UL; }
+```
+
+and UBSan reports `c_lexer.rl:354:57: signed integer overflow:
+1152921504606846720 * 16 cannot be represented in type 'long long'`. All three
+accumulator loops are affected (hex x16, octal x8, decimal x10).
+
+Found 2026-09-01 by running `cc-a64` under ASan+UBSan over its own test corpus
+while investigating ISSUES-59; it is the same UB class that issue suspected.
+
+**Fix**: accumulate in `unsigned long long` and convert once at the end --
+wrapping is defined there, and it is what the code already assumes.
+`unsigned long long` is accepted by stage08 cc (checked), so the construct is
+expressible in the dialect.
+
+**Blast radius is bounded**: the frozen stages 05/06/07 keep their OWN
+`c_lexer_gen.c`, so regenerating `src/c_lexer_gen.c` (ragel is installed)
+touches only stage08 and the two cross trees. It still means rebuilding
+stage08 cc and redeploying the kit, which is why it was filed rather than
+done at the tail of a long session.

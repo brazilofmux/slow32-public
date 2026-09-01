@@ -208,15 +208,26 @@ static int a64_encode_logical_imm32(int val, int *encoded) {
             if (r == 0) rotated = elem & mask;
             else {
                 int lo; int hi;
-                lo = (elem << r) & mask;
+                unsigned int ue; unsigned int um;
+                /* Do the rotate in unsigned: `elem` holds a bit pattern up
+                 * to 32 bits wide, so `elem << r` shifts into (and past) the
+                 * sign bit of a signed int, which is undefined -- UBSan
+                 * catches it as "left shift of 2 by 30 places".  The mask
+                 * below already discards the overflow, so the intent was
+                 * always the wrapping unsigned shift; this just says so. */
+                ue = (unsigned int)elem;
+                um = (unsigned int)mask;
+                lo = (int)((ue << r) & um);
                 /* unsigned right shift via mask */
-                hi = (elem >> (esz - r)) & ((1 << r) - 1);
-                rotated = (lo | hi) & mask;
+                hi = (int)((ue >> (esz - r)) & (((unsigned int)1 << r) - 1u));
+                rotated = (int)(((unsigned int)lo | (unsigned int)hi) & um);
             }
             if (rotated != 0) {
                 ones = a64_ctz_ones(rotated);
                 if (ones < esz) {
-                    expected = (1 << ones) - 1;
+                    /* ones can reach 31 here (guarded by ones < esz <= 32),
+                     * and 1 << 31 overflows a signed int. */
+                    expected = (int)(((unsigned int)1 << ones) - 1u);
                     if (rotated == expected) {
                         s = ones - 1;
                         immr = r;
