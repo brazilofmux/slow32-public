@@ -408,6 +408,11 @@ int fdwrite(const char *buf, int sz, int count, int fd) {
     return n / sz;
 }
 
+/* NOTE: lseek semantics -- returns the RESULTING OFFSET, not 0/-1 like
+ * fseek.  Callers must test `< 0` for failure.  Testing `!= 0` treats
+ * every non-empty file as an error, which silently broke slow32dis,
+ * slow32dump and every read path of s32-ar for as long as they have
+ * existed. */
 int fdseek(int fd, int off, int whence) {
     return lseek(fd, off, whence);
 }

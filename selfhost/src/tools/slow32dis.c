@@ -267,7 +267,7 @@ int main(int argc, char **argv) {
         fdputs("cannot open input\n", 2);
         return 1;
     }
-    if (fdseek(f, 0, SEEK_END) != 0) {
+    if (fdseek(f, 0, SEEK_END) < 0) {
         fdclose(f);
         return 1;
     }
@@ -276,7 +276,7 @@ int main(int argc, char **argv) {
         fdclose(f);
         return 1;
     }
-    if (fdseek(f, 0, SEEK_SET) != 0) {
+    if (fdseek(f, 0, SEEK_SET) < 0) {
         fdclose(f);
         return 1;
     }

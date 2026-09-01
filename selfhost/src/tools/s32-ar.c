@@ -253,7 +253,7 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
 
     in = fdopen_path(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, 0, SEEK_END) != 0) {
+    if (fdseek(in, 0, SEEK_END) < 0) {
         fdclose(in);
         return 0;
     }
@@ -263,7 +263,7 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
         return 0;
     }
     file_size = end_pos;
-    if (fdseek(in, 0, SEEK_SET) != 0) {
+    if (fdseek(in, 0, SEEK_SET) < 0) {
         fdclose(in);
         return 0;
     }
@@ -303,7 +303,7 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
         return 0;
     }
 
-    if (fdseek(in, in_str_off, SEEK_SET) != 0) {
+    if (fdseek(in, in_str_off, SEEK_SET) < 0) {
         fdclose(in);
         return 0;
     }
@@ -317,7 +317,7 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
     i = 0;
     while (i < in_nmembers) {
         ent_off = in_mem_off + i * 24;
-        if (fdseek(in, ent_off, SEEK_SET) != 0) {
+        if (fdseek(in, ent_off, SEEK_SET) < 0) {
             fdclose(in);
             return 0;
         }
@@ -387,7 +387,7 @@ int extract_one(char *archive_path, int midx) {
     out_name = basename_ptr(name);
     in = fdopen_path(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, g_arc_members[midx].data_off, SEEK_SET) != 0) {
+    if (fdseek(in, g_arc_members[midx].data_off, SEEK_SET) < 0) {
         fdclose(in);
         return 0;
     }
@@ -474,7 +474,7 @@ int print_one(char *archive_path, int midx) {
 
     in = fdopen_path(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, g_arc_members[midx].data_off, SEEK_SET) != 0) {
+    if (fdseek(in, g_arc_members[midx].data_off, SEEK_SET) < 0) {
         fdclose(in);
         return 0;
     }
@@ -755,7 +755,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
 
     in = fdopen_path(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, 0, SEEK_END) != 0) {
+    if (fdseek(in, 0, SEEK_END) < 0) {
         fdclose(in);
         return 0;
     }
@@ -765,7 +765,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
         return 0;
     }
     file_size = end_pos;
-    if (fdseek(in, 0, SEEK_SET) != 0) {
+    if (fdseek(in, 0, SEEK_SET) < 0) {
         fdclose(in);
         return 0;
     }
@@ -805,7 +805,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
         return 0;
     }
 
-    if (fdseek(in, in_str_off, SEEK_SET) != 0) {
+    if (fdseek(in, in_str_off, SEEK_SET) < 0) {
         fdclose(in);
         return 0;
     }
@@ -820,7 +820,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
     i = 0;
     while (i < in_nmembers) {
         ent_off = in_mem_off + i * 24;
-        if (fdseek(in, ent_off, SEEK_SET) != 0) {
+        if (fdseek(in, ent_off, SEEK_SET) < 0) {
             fdclose(in);
             return 0;
         }
@@ -845,7 +845,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
             fdclose(in);
             return 0;
         }
-        if (fdseek(in, data_off, SEEK_SET) != 0) {
+        if (fdseek(in, data_off, SEEK_SET) < 0) {
             fdclose(in);
             return 0;
         }
