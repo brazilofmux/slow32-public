@@ -95,8 +95,28 @@ slow32 prog.s32x
 
 ## Kit vintage
 
-No known issues in the current kit. Four bugs have been fixed since the
-first kit; if your `cc.s32x` predates the commit named, the bug is live.
+No known issues in the current kit. Several bugs have been fixed since
+the first kit; if your kit predates the commit named, the bug is live.
+Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
+argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
+bug even beside a fresh compiler.
+
+Fixed 2026-09-01 (`a3cb6cf5`) -- capacity, and one that bites at the
+command line:
+
+- **Guest argv was silently capped at 32 arguments and 4KB
+  (`libc.s32a`).** The startup code fetched argv into a fixed blob, and
+  *any* overflow -- too many arguments or too many bytes -- fell
+  through with `argc = 0`, so the program saw no arguments at all and
+  said nothing about why. `s32-ar rc lib.s32a <50 files>` printed its
+  usage banner instead of building an archive; so did any other tool
+  handed a wide glob. Now sized from what the host staged, with a
+  chunked fetch (one request moves at most 48KB; the host cap is 64KB).
+- **`s32-ar` dropped symbol-index entries past 8192 silently
+  (`s32-ar.s32x`).** An archive with more globals than that linked with
+  phantom "undefined symbol" errors that pointed nowhere near the
+  archiver. Its other ceilings (128 members, 64KB string tables, a flat
+  4MB data buffer) now grow on demand too, matching the host `s32-ar`.
 
 Fixed 2026-08-30 (the return-side twin of #6):
 
