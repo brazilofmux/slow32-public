@@ -51,8 +51,15 @@ for f in "$EMU" "$STAGE7_CC" "$STAGE7_AS" "$STAGE7_LD" \
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage08-tools.XXXXXX)"
-trap 'rm -rf "$WORKDIR"' EXIT
+# Intermediate objects are normally scratch, but a per-object bisect needs
+# them to survive: set WORKDIR to keep every .s32o from a build, so two
+# builds can be linked against each other one object at a time.
+if [ -n "${WORKDIR:-}" ]; then
+    mkdir -p "$WORKDIR"
+else
+    WORKDIR="$(mktemp -d /tmp/stage08-tools.XXXXXX)"
+    trap 'rm -rf "$WORKDIR"' EXIT
+fi
 
 cd "$ROOT_DIR"
 

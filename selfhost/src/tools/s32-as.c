@@ -623,6 +623,33 @@ int emit_word_list(char *p) {
  * argument held live across the growth call, 300 iterations) is clean
  * under stage07.  The trigger needs handle()'s real size and call graph.
  *
+ * 2026-09-01, BISECTED to a single function.  Both bisects were
+ * mutation-controlled (the unswapped baseline reproduces):
+ *
+ *  - Per-OBJECT, linking the stage07 build with one stage08 object swapped
+ *    in: swapping s32-as.s32o alone FIXES it.  All seven libc objects
+ *    (string_extra, string_more, ctype, convert, stdio, malloc, start)
+ *    leave it broken, so the runtime is not implicated.  Swapping malloc
+ *    yields a THIRD output size rather than a fix -- it moves the symptom,
+ *    consistent with a fault sensitive to allocation layout, which is what
+ *    made this look like an allocator problem for so long.
+ *  - Per-FUNCTION, splicing stage08's code for one function into stage07's
+ *    assembly: handle() FIXES it.  add_reloc_ex and grow_rel -- the two
+ *    functions the conversion actually touches -- do NOT.  get_lbl moves
+ *    the symptom without fixing it.
+ *
+ * So stage07 miscompiles handle(), and the conversion is only the trigger:
+ * it adds the first call that perturbs whatever handle() gets wrong.
+ *
+ * NOT the cause, checked: frame under-allocation.  Both compilers are
+ * self-consistent -- stage07 allocates 1468 bytes and uses offsets down to
+ * -1468, stage08 allocates 580 and uses down to -580.
+ *
+ * The lead worth following: in handle(), stage07 uses 238 distinct stack
+ * slots to stage08's 17 (326 vs 25 frame stores, 973 vs 338 reloads) and
+ * emits 8968 lines against 5822.  It is spilling nearly everything in this
+ * one very large function, so its spill/reload path is where to look.
+ *
  * Method notes for whoever picks this up: source-level probes are
  * UNRELIABLE here -- the probe's own fdputs/fdputuint calls write to the
  * same stack addresses being examined, and probe readings disagreed with
