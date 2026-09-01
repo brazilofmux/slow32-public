@@ -72,3 +72,54 @@ Read fault messages lacked PC and SP context that write faults already included.
 
 - **Status**: Fixed. Added in the same commit that brought FTRUNCATE, service
   negotiation, and the term service to the QEMU backend.
+
+### 12. QEMU Fused Compare-Branch Clobbered Its Own Operand (Resolved)
+
+**Severity**: silent wrong answer, `qemu-system-slow32` only, default machine.
+Every negative `%d`/`%lld` printed by the self-hosted libc came out with a
+doubled sign — `sprintf("%lld", -1)` gave `--1`.
+
+`printf_enhanced.c` hoists an already-present sign into a prefix:
+
+```c
+if (is_negative && conv_str[0] == '-') {
+    /* already has minus sign */
+} else if (is_negative && is_signed_conv) {
+    prefix[prefix_len++] = '-';
+}
+```
+
+Under QEMU the first test was false even though `conv_str[0]` *was* `'-'`, so
+the sign was added a second time. The magnitude was always right, which ruled
+out the 64-bit paths — a probe confirmed the negation itself was correct
+(`neg_lo=1 neg_hi=0`, matching the interpreter).
+
+**Root cause**: `slow32_emit_cmp_and_branch()` in `target/slow32/translate.c`.
+`load_gpr()` returns the `cpu_regs[]` TCG global *itself*, not a copy, so
+materializing the queued compare into `rd` clobbers `lhs`/`rhs` whenever `rd`
+aliases one of them. The fused branch then tested the freshly stored 0/1
+instead of the original operand. The trigger is a same-register compare:
+
+```
+xori r3, r10, 45     ; r3 = (c ^ '-')  -> 0 when equal
+seq  r3, r3, r0      ; queued: rd == lhs == r3
+beq  r3, r0, .L8     ; fuses -> branches on the CLOBBERED r3
+```
+
+`slow32_flush_pending_cmp()` (the unfused path) was always safe, because
+`store_cond()` computes into a temp before assigning `rd`; only the fused path
+reads its operands *after* that assignment. Fix: snapshot an operand that
+aliases `rd` into a temp before storing the condition.
+
+**Why nothing caught it**: clang emits a compare-and-branch here; only the
+stage08 self-hosted compiler emits the `xori`/`seq`/`beq` triple with
+`rd == lhs`. The clang differential passed with QEMU in the roster throughout.
+Found on the first full run of `regression/run-kit-differential.sh`, which
+builds the stage08 corpus with the kit toolchain and diffs every engine —
+44/44 agree after the fix, and the clang suite is unchanged (the same four
+known qemu intrinsic-bounds fault-reporting divergences, nothing new).
+
+This is the second bug of the same family found the same day: DBT-15 was the
+x86-64 translator mistranslating `bge zero, rX`, also a selfhost-only pattern,
+also a fused/special-cased compare path. Both were invisible to a suite built
+entirely from clang output.

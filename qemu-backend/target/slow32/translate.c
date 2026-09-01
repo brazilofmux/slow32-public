@@ -441,6 +441,28 @@ static void slow32_emit_cmp_and_branch(DisasContext *ctx, TCGCond cond,
     }
 
     if (cmp->rd != SLOW32_REG_ZERO) {
+        /*
+         * load_gpr() hands back the cpu_regs[] global itself, not a copy, so
+         * materializing the condition into rd CLOBBERS lhs/rhs whenever rd
+         * aliases one of them -- e.g. "seq r3, r3, r0", where the fused
+         * branch below would then test the freshly stored 0/1 instead of the
+         * original operand. Snapshot the aliased operand first.
+         *
+         * slow32_flush_pending_cmp() is safe without this because store_cond()
+         * computes into a temp before assigning rd; here the branch reads the
+         * operands *after* that assignment.
+         */
+        if (cmp->rd == cmp->lhs) {
+            TCGv_i32 keep = tcg_temp_new_i32();
+            tcg_gen_mov_i32(keep, lhs);
+            lhs = keep;
+        }
+        if (!cmp->rhs_is_imm && cmp->rd == cmp->rhs) {
+            TCGv_i32 keep = tcg_temp_new_i32();
+            tcg_gen_mov_i32(keep, rhs_val);
+            rhs_val = keep;
+        }
+
         if (cmp->rhs_is_imm) {
             store_condi(cmp->rd, cmp->cond, lhs, cmp->imm);
         } else {
