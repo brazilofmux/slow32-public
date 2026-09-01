@@ -6,7 +6,13 @@
  */
 
 /* --- Alloca map: fp-offset → HIR instruction --- */
-#define HL_MAX_ALLOCA 256
+/* Raised from 256 for inlining: every inline instance mints fresh
+ * parameter and result slots, so a function with many inlined call
+ * sites needs far more entries than a hand-written one.  (dtoa.c hit
+ * the old ceiling immediately.)  hl_inl_candidate also refuses to
+ * inline once capacity runs low, so exhausting this is a missed
+ * optimisation rather than a failed compile. */
+#define HL_MAX_ALLOCA 2048
 static int hl_aoff[HL_MAX_ALLOCA];
 static int hl_ainst[HL_MAX_ALLOCA];
 static int hl_nalloca;
@@ -78,6 +84,48 @@ static int hl_addr(Node *n);
 static void hl_stmt(Node *n);
 
 /* --- Helpers --- */
+
+/* =================================================================
+ * Function inlining (SLOW-32 and the crosses; gated by hl_inline_max)
+ *
+ * Not an AST transform: the callee's body AST is LOWERED AGAIN at the
+ * call site, with its frame shifted into the caller's.  That buys three
+ * things a clone-and-splice would not.  Evaluation order and
+ * conditionality are preserved for free -- a call inside `a && f(b)` is
+ * lowered where the && already put it, so no call-position whitelist is
+ * needed.  No AST cloning means no node renaming and no aliasing
+ * hazards.  And the callee's locals become ordinary allocas in the
+ * caller's frame, so mem2reg (and ssa_split_pair_allocas for its
+ * doubles) promotes them exactly like the caller's own.
+ *
+ * The frame is relocated by ONE constant shift rather than a
+ * per-variable map: reserve locals_size bytes in the caller and map
+ * every callee offset to `off - shift`.  Arrays and structs come along
+ * without needing their sizes, and 8-alignment survives because the
+ * shift is a multiple of 8.
+ *
+ * `return` inside an inlined body stores to a result slot and branches
+ * to a continuation block (hl_inl_ret_blk) instead of emitting HI_RET.
+ *
+ * Refused: varargs, struct parameters or struct return, bodies
+ * containing labels or goto (label scoping is per-function), recursion
+ * (direct or mutual, via the active stack), and anything over budget.
+ * ================================================================= */
+#define HL_INL_MAX_DEPTH 3
+static Node *hl_prog;            /* program root; set by the codegen driver */
+static int   hl_inline_max;      /* node budget; 0 disables inlining */
+static int   hl_inl_depth;
+static Node *hl_inl_stack[HL_INL_MAX_DEPTH];
+static int   hl_inl_shift;       /* callee frame -> caller frame */
+static int   hl_inl_ret_blk;     /* continuation block for `return` */
+static int   hl_inl_res;         /* result alloca, -1 when void */
+static int   hl_inl_res_ty;
+static int   hl_stat_inlined;
+
+/* Callee offsets are relocated by one constant; 0 when not inlining. */
+static int hl_map_off(int off) {
+    return off - hl_inl_shift;
+}
 
 static int hl_get_alloca(int offset, int ty) {
     int i;
@@ -550,7 +598,9 @@ static int hl_addr(Node *n) {
 
     if (n->kind == ND_VAR) {
         if (n->is_local) {
-            return hl_get_alloca(n->offset, n->ty);
+            /* hl_map_off relocates an inlined callee's frame; identity
+             * when not inlining. */
+            return hl_get_alloca(hl_map_off(n->offset), n->ty);
         }
         /* Global variable address */
         return hi_emit(HI_GADDR, TY_PTR + (n->ty & TY_BASE_MASK), -1, -1, 0, n->name);
@@ -762,6 +812,283 @@ static int hl_ll_op(int op, int uns, int lv, int lv_hi, int rv, int rv_hi) {
 #endif
 
 /* --- Expression lowering --- */
+
+/* Bounded node count: returns a value > limit as soon as it exceeds it,
+ * so a huge callee costs a short walk rather than a full traversal. */
+static int hl_inl_size(Node *n, int limit) {
+    int c;
+    if (!n) return 0;
+    c = 1;
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->lhs, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->rhs, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->cond, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->body, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->init, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->step, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->els, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->args, limit - c);
+    if (c > limit) return c;
+    c = c + hl_inl_size(n->next, limit - c);
+    return c;
+}
+
+/* Labels and goto are function-scoped in the lowering's fixup table, so
+ * a spliced copy would collide with the caller's. */
+static int hl_inl_has_labels(Node *n) {
+    if (!n) return 0;
+    if (n->kind == ND_GOTO || n->kind == ND_LABEL) return 1;
+    if (hl_inl_has_labels(n->lhs)) return 1;
+    if (hl_inl_has_labels(n->rhs)) return 1;
+    if (hl_inl_has_labels(n->cond)) return 1;
+    if (hl_inl_has_labels(n->body)) return 1;
+    if (hl_inl_has_labels(n->init)) return 1;
+    if (hl_inl_has_labels(n->step)) return 1;
+    if (hl_inl_has_labels(n->els)) return 1;
+    if (hl_inl_has_labels(n->args)) return 1;
+    if (hl_inl_has_labels(n->next)) return 1;
+    return 0;
+}
+
+/* A callee that is itself a loop amortises its own call overhead over
+ * its iterations, so inlining it buys almost nothing while inflating
+ * the caller (LINPACK's daxpy: inlining it cost 3%, refusing it saved
+ * 2.4%).  This is the same shape f77 recorded -- user subprograms are
+ * loop bodies, the case inlining helps least. */
+static int hl_inl_has_loop(Node *n) {
+    if (!n) return 0;
+    if (n->kind == ND_WHILE || n->kind == ND_FOR) return 1;
+    if (hl_inl_has_loop(n->lhs)) return 1;
+    if (hl_inl_has_loop(n->rhs)) return 1;
+    if (hl_inl_has_loop(n->cond)) return 1;
+    if (hl_inl_has_loop(n->body)) return 1;
+    if (hl_inl_has_loop(n->init)) return 1;
+    if (hl_inl_has_loop(n->step)) return 1;
+    if (hl_inl_has_loop(n->els)) return 1;
+    if (hl_inl_has_loop(n->args)) return 1;
+    if (hl_inl_has_loop(n->next)) return 1;
+    return 0;
+}
+
+static Node *hl_inl_find(char *name) {
+    Node *f;
+    if (!name || !hl_prog) return NULL;
+    f = hl_prog->body;
+    while (f) {
+        if (f->kind == ND_FUNC && f->name && strcmp(f->name, name) == 0 && f->body)
+            return f;
+        f = f->next;
+    }
+    return NULL;
+}
+
+/* Is `fn` worth and safe to inline at this point? */
+static Node *hl_inl_candidate(Node *call) {
+    Node *fn;
+    Node *pp;
+    int i;
+
+    if (hl_inline_max <= 0) return NULL;
+    if (hl_inl_depth >= HL_INL_MAX_DEPTH) return NULL;
+    fn = hl_inl_find(call->name);
+    if (!fn) return NULL;
+    if (fn->is_varargs) return NULL;
+    if (ty_is_struct(fn->ty)) return NULL;
+    /* Recursion, direct or mutual. */
+    i = 0;
+    while (i < hl_inl_depth) {
+        if (hl_inl_stack[i] == fn) return NULL;
+        i = i + 1;
+    }
+    pp = fn->args;
+    while (pp) {
+        if (ty_is_struct(pp->ty)) return NULL;
+        pp = pp->next;
+    }
+    /* Argument count must match the parameter list exactly; a mismatch
+     * means an unprototyped or wrongly-called function, and the
+     * out-of-line call keeps whatever behaviour it had. */
+    {
+        Node *a;
+        int na;
+        int np;
+        na = 0; a = call->args;  while (a)  { na = na + 1; a = a->next; }
+        np = 0; pp = fn->args;   while (pp) { np = np + 1; pp = pp->next; }
+        if (na != np) return NULL;
+    }
+    if (hl_inl_has_labels(fn->body)) return NULL;
+    {
+        int sz;
+        sz = hl_inl_size(fn->body, hl_inline_max);
+        if (sz > hl_inline_max) return NULL;
+        if (hl_inl_has_loop(fn->body)) return NULL;
+        /* Degrade gracefully rather than failing the compile.  The HIR
+         * headroom is proportional to what this splice will emit --
+         * a flat margin let s12cc.c's biggest functions run the arrays
+         * out and abort the build. */
+        if (hl_nalloca + 64 >= HL_MAX_ALLOCA) return NULL;
+        /* Reserve generously: SSA phi insertion and the LICM split /
+         * strength-reduction passes all APPEND to h_ninst after
+         * lowering finishes, so the budget has to cover them too. */
+        /* Already-huge callers get nothing: they are the functions
+         * where inlining pays least and costs most, and exact
+         * accounting for what a splice will emit is not worth it
+         * (s12cc's own hcg_inst, a 1000-line switch, overran the block
+         * ceiling mid-splice under a proportional-only rule). */
+        if (h_ninst > HIR_MAX_INST / 2) return NULL;
+        if (bb_nblk > HIR_MAX_BLOCK / 2) return NULL;
+        if (h_ninst + sz * 16 + 4096 >= HIR_MAX_INST) return NULL;
+        /* Blocks too: every splice adds the callee's control flow plus
+         * a continuation, and hir_regalloc's liveness bitsets are sized
+         * against HIR_MAX_BLOCK, so this ceiling must not be raised
+         * casually. */
+        if (bb_nblk + sz + 64 >= HIR_MAX_BLOCK) return NULL;
+    }
+    return fn;
+}
+
+/* Lower a call by splicing the callee's body in.  Returns the result
+ * value (and sets hl_hi for 64-bit results), or -1 for void. */
+static int hl_inline_call(Node *call, Node *fn) {
+    int av[32];
+    int av_hi[32];
+    int nargs;
+    int save_shift;
+    int save_ret_blk;
+    int save_res;
+    int save_res_ty;
+    int save_loop;
+    int save_sw;
+    int frame;
+    int ret_blk;
+    int res;
+    int rv;
+    Node *a;
+    Node *pp;
+    int i;
+
+    /* 1. Actuals are evaluated in the CALLER's frame, before the shift
+     *    moves offsets, and in argument order. */
+    nargs = 0;
+    a = call->args;
+    while (a) {
+        if (nargs >= 32) return -1;
+        av[nargs] = hl_expr(a);
+        av_hi[nargs] = (ty_is_llong(a->ty) || ty_is_double(a->ty)) ? hl_hi : -1;
+        nargs = nargs + 1;
+        a = a->next;
+    }
+
+    /* 2. Reserve the callee's frame in the caller, 8-aligned so its
+     *    doubles keep their alignment. */
+    frame = fn->locals_size;
+    if (frame < 0) frame = 0;
+    frame = ((frame + 7) / 8) * 8;
+    hl_temp_stack = ((hl_temp_stack + 7) / 8) * 8;
+
+    save_shift = hl_inl_shift;
+    save_ret_blk = hl_inl_ret_blk;
+    save_res = hl_inl_res;
+    save_res_ty = hl_inl_res_ty;
+    save_loop = hl_loop_depth;
+    save_sw = hl_sw_depth;
+
+    /* Shift by the high-water mark BEFORE reserving, so the callee's
+     * offsets (which run [-locals_size, 0)) land INSIDE the region we
+     * are about to claim.  Taking the post-bump value put them below
+     * the reserved area -- outside the frame the prologue allocates --
+     * where they collided with later temps and with the caller's saved
+     * registers.  LINPACK's residual check caught it only once a
+     * callee big enough to allocate temps afterwards was inlined. */
+    hl_inl_shift = hl_temp_stack;
+    hl_temp_stack = hl_temp_stack + frame;
+    hl_inl_stack[hl_inl_depth] = fn;
+    hl_inl_depth = hl_inl_depth + 1;
+    hl_inl_depth_dbg = hl_inl_depth;
+    /* A `break` in the callee must not bind to a caller loop. */
+    hl_loop_depth = 0;
+    hl_sw_depth = 0;
+
+    /* 3. Result slot (mem2reg promotes it straight back out). */
+    res = -1;
+    if (fn->ty != TY_VOID) {
+        hl_temp_stack = hl_temp_stack + 8;
+        res = hl_emit_temp_alloca(fn->ty, 0 - hl_temp_stack);
+    }
+    ret_blk = hir_new_block();
+    hl_inl_ret_blk = ret_blk;
+    hl_inl_res = res;
+    hl_inl_res_ty = fn->ty;
+
+    /* 4. Bind parameters: store each actual into the (shifted) slot the
+     *    callee's body already refers to. */
+    pp = fn->args;
+    i = 0;
+    while (pp) {
+        int slot;
+        if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) {
+#ifdef S12CC_X64_HOST
+            slot = hl_get_alloca(hl_map_off(pp->offset), pp->ty);
+            hi_emit(HI_STORE, pp->ty, slot, av[i], 0, NULL);
+#else
+            slot = hl_get_alloca(hl_map_off(pp->offset), TY_INT);
+            hi_emit(HI_STORE, TY_INT, slot, av[i], 0, NULL);
+            {
+                int a4;
+                a4 = hi_emit(HI_ADDI, TY_INT, slot, -1, 4, NULL);
+                hi_emit(HI_STORE, TY_INT, a4, av_hi[i], 0, NULL);
+            }
+#endif
+        } else {
+            slot = hl_get_alloca(hl_map_off(pp->offset), pp->ty);
+            hi_emit(HI_STORE, pp->ty, slot, av[i], 0, NULL);
+        }
+        i = i + 1;
+        pp = pp->next;
+    }
+
+    /* 5. The body.  ND_RETURN inside now stores to `res` and branches. */
+    hl_stmt(fn->body);
+    if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, ret_blk, NULL);
+    hl_switch_block(ret_blk);
+
+    /* 6. Read the result back. */
+    rv = -1;
+    hl_hi = -1;
+    if (res >= 0) {
+        if (ty_is_llong(fn->ty) || ty_is_double(fn->ty)) {
+#ifdef S12CC_X64_HOST
+            rv = hi_emit(HI_LOAD, fn->ty, res, -1, 0, NULL);
+#else
+            {
+                int a4;
+                rv = hi_emit(HI_LOAD, TY_INT, res, -1, 0, NULL);
+                a4 = hi_emit(HI_ADDI, TY_INT, res, -1, 4, NULL);
+                hl_hi = hi_emit(HI_LOAD, TY_INT, a4, -1, 0, NULL);
+            }
+#endif
+        } else {
+            rv = hi_emit(HI_LOAD, fn->ty, res, -1, 0, NULL);
+        }
+    }
+
+    hl_inl_depth = hl_inl_depth - 1;
+    hl_inl_shift = save_shift;
+    hl_inl_ret_blk = save_ret_blk;
+    hl_inl_res = save_res;
+    hl_inl_res_ty = save_res_ty;
+    hl_loop_depth = save_loop;
+    hl_sw_depth = save_sw;
+    hl_stat_inlined = hl_stat_inlined + 1;
+    return rv;
+}
 
 static int hl_expr(Node *n) {
     int lv;
@@ -2354,6 +2681,11 @@ static int hl_expr(Node *n) {
     if (n->kind == ND_CALL) {
         int av[32];
         int av_hi[32];
+        {
+            Node *inl_fn;
+            inl_fn = hl_inl_candidate(n);
+            if (inl_fn) return hl_inline_call(n, inl_fn);
+        }
         int is64[32];   /* 0 = word, 1 = llong pair, 2 = double pair.
                            (No extra arrays: hl_expr's frame is near
                            stage07's 12-bit offset ceiling.) */
@@ -2584,6 +2916,33 @@ static void hl_stmt(Node *n) {
 
     /* Return */
     if (n->kind == ND_RETURN) {
+        /* Inside an inlined body a return is an assignment to the
+         * result slot plus a branch to the continuation. */
+        if (hl_inl_depth > 0) {
+            if (n->lhs && hl_inl_res >= 0) {
+                lv = hl_expr(n->lhs);
+                if (ty_is_llong(hl_inl_res_ty) || ty_is_double(hl_inl_res_ty)) {
+#ifdef S12CC_X64_HOST
+                    hi_emit(HI_STORE, hl_inl_res_ty, hl_inl_res, lv, 0, NULL);
+#else
+                    {
+                        int a4;
+                        int vhi;
+                        vhi = hl_hi;
+                        hi_emit(HI_STORE, TY_INT, hl_inl_res, lv, 0, NULL);
+                        a4 = hi_emit(HI_ADDI, TY_INT, hl_inl_res, -1, 4, NULL);
+                        hi_emit(HI_STORE, TY_INT, a4, vhi, 0, NULL);
+                    }
+#endif
+                } else {
+                    hi_emit(HI_STORE, hl_inl_res_ty, hl_inl_res, lv, 0, NULL);
+                }
+            } else if (n->lhs) {
+                (void)hl_expr(n->lhs);   /* void context: side effects only */
+            }
+            hi_emit(HI_BR, 0, -1, -1, hl_inl_ret_blk, NULL);
+            return;
+        }
         if (n->lhs && hl_struct_ret && ty_is_struct(n->lhs->ty)) {
             /* Struct return: copy struct to hidden __retptr, then return ptr */
             {
@@ -2924,6 +3283,7 @@ static void hl_stmt(Node *n) {
 
 static void hl_func(Node *fn) {
     int entry;
+    hl_cur_fn_dbg = fn->name;
     int pi;
     int param_inst;
     int param_alloca;

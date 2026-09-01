@@ -117,7 +117,11 @@ int fdputuint(int f, int v);
 #define DATA_BUFSZ   1048576
 #define RODATA_BUFSZ 262144
 #define FILE_BUFSZ   1048576
-#define MAX_FILE_SYM 2048
+/* Raised from 2048: s12cc.c crossed it simply by growing (the stage08
+ * inliner's ~7 functions were enough), and a per-object symbol ceiling
+ * is a poor thing to fail a self-host on.  Costs one int array --
+ * sym_map, 8KB -> 32KB. */
+#define MAX_FILE_SYM 8192
 #define MAX_MEMBERS  512
 #define OUT_STRTAB_SZ 32768
 

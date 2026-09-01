@@ -101,6 +101,18 @@
 #define HI_JMPTAB   70
 
 /* --- Limits --- */
+
+/* s12cc.c is built without -I, so these come from the implicit
+ * declaration everywhere they are used for truthiness (HIR_*_DEBUG
+ * gates).  The inline budget needs getenv's real return type, and a
+ * later prototype would conflict with the earlier implicit int -- so
+ * declare both here, ahead of every use in the HIR headers. */
+static int hl_inl_depth_dbg;
+static char *hl_cur_fn_dbg;
+
+char *getenv(const char *name);
+int atoi(const char *nptr);
+
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
 #define HIR_MAX_CARG   4096
@@ -249,7 +261,11 @@ static int hir_new_block(void) {
     int b;
     b = bb_nblk;
     if (b >= HIR_MAX_BLOCK) {
-        fdputs("s12cc: too many HIR blocks\n", 2);
+        fdputs("s12cc: too many HIR blocks (fn=", 2);
+        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
+        fdputs(" inl_depth=", 2);
+        fdputuint(2, (unsigned)hl_inl_depth_dbg);
+        fdputs(")\n", 2);
         exit(1);
     }
     bb_start[b] = -1;  /* set lazily when block becomes current */
@@ -278,7 +294,11 @@ static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
     idx = h_ninst;
     if (idx >= HIR_MAX_INST) {
-        fdputs("s12cc: too many HIR instructions\n", 2);
+        fdputs("s12cc: too many HIR instructions (inl_depth=", 2);
+        fdputuint(2, (unsigned)hl_inl_depth_dbg);
+        fdputs(" fn=", 2);
+        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
+        fdputs(")\n", 2);
         exit(1);
     }
     h_ld_ro[idx] = 0;

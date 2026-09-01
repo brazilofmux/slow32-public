@@ -15,7 +15,14 @@ static int  cg_olen;
 /* --- Asm emission helpers --- */
 
 static void cg_c(int ch) {
-    if (cg_olen < CG_MAX_OUT - 1) {
+    if (cg_olen >= CG_MAX_OUT - 1) {
+        /* Was a silent drop: the assembly came out truncated and the
+         * failure surfaced much later as a mangled .s.  Inlining made
+         * it reachable, but the landmine predates it. */
+        fdputs("s12cc: output buffer overflow (assembly too large)\n", 2);
+        exit(1);
+    }
+    {
         cg_out[cg_olen] = ch;
         cg_olen = cg_olen + 1;
     }
@@ -3324,6 +3331,31 @@ static void gen_data(void) {
 
 static void gen_program(Node *prog) {
     Node *fn;
+    {
+        /* Inlining needs the program list to find callee bodies, and a
+         * node budget.
+         *
+         * DEFAULT OFF, and the reason is capacity, not correctness.
+         * Small callees are a measured win (LINPACK-C -2.4% at a
+         * budget of 20, mandel-C unchanged, torture test green at every
+         * budget) -- but inlining s12cc.c makes the compiler exceed the
+         * FROZEN BOOTSTRAP TOOLS' fixed ceilings, and self-hosting is
+         * not negotiable.  Four were hit in sequence: HL_MAX_ALLOCA
+         * (raised 256 -> 2048 here), HIR_MAX_BLOCK (guarded), the 4MB
+         * cg_out buffer (now a hard error instead of silent
+         * truncation), and stage07 s32-ld's MAX_FILE_SYM of 2048, which
+         * inlining blows through because each splice mints fresh block
+         * labels.
+         *
+         * Raising them one at a time just finds the next one; the fix
+         * is the toolchain capacity work (grow-on-demand instead of
+         * fixed arrays).  Until then S12CC_INLINE=<n> enables it for
+         * experiments and everything below is live and tested. */
+        char *e;
+        hl_prog = prog;
+        e = getenv("S12CC_INLINE");
+        hl_inline_max = e ? atoi(e) : 0;
+    }
 
     cg_njt = 0;
     cg_njt_ent = 0;
