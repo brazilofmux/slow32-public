@@ -29,17 +29,33 @@ void exit(int status);
 #define SEC_INIT_ARRAY 3
 #define SEC_BSS  4
 
-static char g_lbl_name_pool[524288];
-static int g_lbl_name_off[32768];
-static int g_lbl_name_ptr;
-static int g_lbl_sec[32768];
-static int g_lbl_val[32768];
-static char g_lbl_defd[32768];
-static char g_lbl_glob[32768];
-static char g_lbl_refd[32768];
-static char g_lbl_abs[32768];
+static char *g_lbl_name_pool;  static int g_lbl_pool_cap;
+static int  *g_lbl_name_off;
+static int   g_lbl_name_ptr;
+static int  *g_lbl_sec;
+static int  *g_lbl_val;
+static char *g_lbl_defd;
+static char *g_lbl_glob;
+static char *g_lbl_refd;
+static char *g_lbl_abs;
+static int   g_lbl_cap;
+
+static void grow_lbl(int need) {
+    int c;
+    if (need <= g_lbl_cap) return;
+    c = g_lbl_cap; g_lbl_name_off = (int *)sv_grow((char *)g_lbl_name_off, &c, need, 4, "labels");
+    c = g_lbl_cap; g_lbl_sec      = (int *)sv_grow((char *)g_lbl_sec,      &c, need, 4, "labels");
+    c = g_lbl_cap; g_lbl_val      = (int *)sv_grow((char *)g_lbl_val,      &c, need, 4, "labels");
+    c = g_lbl_cap; g_lbl_defd     = sv_grow(g_lbl_defd, &c, need, 1, "labels");
+    c = g_lbl_cap; g_lbl_glob     = sv_grow(g_lbl_glob, &c, need, 1, "labels");
+    c = g_lbl_cap; g_lbl_refd     = sv_grow(g_lbl_refd, &c, need, 1, "labels");
+    c = g_lbl_cap; g_lbl_abs      = sv_grow(g_lbl_abs,  &c, need, 1, "labels");
+    g_lbl_cap = c;
+}
 static int g_nlbl;
 
+/* NOT converted -- see the note on mark_refd.  23% used, so there is
+ * room to wait for a root cause. */
 static int g_rel_sec[65536];
 static int g_rel_off[65536];
 static int g_rel_typ[65536];
@@ -396,9 +412,10 @@ int get_lbl(char *name) {
     int n;
     i = find_lbl(name);
     if (i >= 0) return i;
-    if (g_nlbl >= MAX_LBL) return -1;
+    grow_lbl(g_nlbl + 1);
     n = strlen(name) + 1;
-    if (g_lbl_name_ptr + n > LBL_POOL_SZ) return -1;
+    g_lbl_name_pool = sv_grow(g_lbl_name_pool, &g_lbl_pool_cap,
+                              g_lbl_name_ptr + n, 1, "label names");
     g_lbl_name_off[g_nlbl] = g_lbl_name_ptr;
     memcpy(g_lbl_name_pool + g_lbl_name_ptr, name, n);
     g_lbl_name_ptr = g_lbl_name_ptr + n;
@@ -479,12 +496,33 @@ int emit_word_list(char *p) {
     }
 }
 
+/* Discipline for growable tables: write through the global in its own
+ * function, so the base is necessarily read AFTER any call that could
+ * have moved it.  Cheap, and it removes a whole class of stale-base
+ * hazard from the conversions that follow.
+ *
+ * Converting the RELOCATION tables as well makes the assembler emit one
+ * spurious empty symbol -- but only in stage07-compiled, on-target
+ * builds, and only once the reloc array actually grows (131 relocations
+ * fail, 57 do not).  Eliminated so far: the vector primitive (passes a
+ * 12-table interleaved stress test on target), the selfhost realloc
+ * (same), pointer casts (verified on target), and stage07 failing to
+ * reload globals across calls (verified: it reloads correctly).  A
+ * native build of the identical source is correct and ASan-clean.
+ * Mechanism still unknown, so the reloc tables stay fixed -- they are
+ * only 23% used.  Do not "fix" this by reordering until the cause is
+ * actually understood; reordering makes it disappear, which is not the
+ * same thing. */
+static void mark_refd(int li) {
+    g_lbl_refd[li] = 1;
+}
+
 int add_reloc_ex(int typ, int off, char *name, int add) {
     int li;
     if (g_nrel >= MAX_REL) return -1;
     li = get_lbl(name);
     if (li < 0) return -1;
-    g_lbl_refd[li] = 1;
+    mark_refd(li);
     g_rel_sec[g_nrel] = g_sec;
     g_rel_off[g_nrel] = off;
     g_rel_typ[g_nrel] = typ;
