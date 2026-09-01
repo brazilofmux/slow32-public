@@ -352,14 +352,18 @@ All five execution engines implement this consistently (verified by a
 deliberately misaligned store: `slow32`, `slow32-fast` and `slow32-dbt`
 all execute it).
 
-> **Known gap — `fpga/rtl/`.** The RTL does not implement this.  Its
+> **Note for a future hardware implementation — `fpga/rtl/`.** The RTL
+> is an unused experiment (a working 5-stage scalar core, not part of
+> any build or test), so this is a design note rather than a live bug.
+> It does not implement unaligned access: its
 > `OP_STW` asserts all four byte enables and ignores `addr[1:0]`, so an
 > unaligned word store silently writes the containing aligned word;
-> loads have the matching problem.  That is the one behaviour worse than
-> either alternative -- neither correct nor a clean trap.  A hardware
-> implementation must either split an unaligned access into two bus
-> cycles and merge, or trap it; it must not silently truncate the
-> address.
+> loads have the matching problem -- neither correct nor a clean trap.
+> Whoever takes the RTL further must either split an unaligned access
+> into two bus cycles and merge, or trap it; silently truncating the
+> address is the one option to avoid.  Note this got sharper when
+> `memcpy` became word-at-a-time: it now relies on unaligned access, so
+> truncation would corrupt memory rather than merely run slowly.
 
 - **Code**: `0x00000000 - 0x000FFFFF` (1MB, Execute-only)
 - **Data**: `0x00100000 - 0x0FFFFFFF` (255MB, Read/Write)
