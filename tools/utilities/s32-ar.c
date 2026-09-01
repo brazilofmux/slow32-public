@@ -403,13 +403,23 @@ static void write_archive(archive_state_t *state, const char *output) {
     
     // Write member table
     for (size_t i = 0; i < state->nmembers; i++) {
+        /* Deterministic archives: mtime, uid and gid are written as
+         * zero.  Embedding them made the same inputs produce different
+         * bytes on every run and on every machine, which is worth
+         * avoiding in a tree whose central gate is a byte-identical
+         * self-rebuild.  Nothing consumes these fields -- neither
+         * linker reads them; only this tool's own `t v` listing prints
+         * the date.  The self-hosted archiver has always written zeros
+         * (it has no clock or getuid), so this also makes the two
+         * implementations agree byte-for-byte.  GNU ar made the same
+         * move: its deterministic mode is now the common default. */
         s32a_member_t mem = {
             .name_offset = member_name_offsets[i],
             .offset = member_offsets[i],
             .size = state->members[i].size,
-            .timestamp = state->members[i].timestamp,
-            .uid = getuid(),
-            .gid = getgid()
+            .timestamp = 0,
+            .uid = 0,
+            .gid = 0
         };
         fwrite(&mem, sizeof(mem), 1, f);
     }
