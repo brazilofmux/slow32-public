@@ -597,34 +597,40 @@ int emit_word_list(char *p) {
  * only 23% used.  Do not "fix" it by reordering: reordering hides it,
  * which is not the same thing.
  *
- * 2026-09-01, root cause LOCATED (not yet fixed).  It is NOT an
- * assembler logic bug and not the vector primitive:
+ * 2026-09-01, NARROWED but NOT root-caused.  Established facts, all
+ * from artifacts rather than instrumentation:
  *
  *  - The symbol is not "empty".  Its name is the single byte 0x04, which
- *    dumps render as blank -- which is why every probe testing for an
- *    empty name failed to fire.  The string table grows by exactly 2
- *    bytes (one char + NUL), not 1.
+ *    dumps render as blank.  The string table grows by 2 bytes (one char
+ *    + NUL), not 1.  Probes testing for an empty name therefore never
+ *    fire -- that mis-description cost two rounds of debugging.
  *  - The SAME converted source compiled by the CURRENT stage08 cc is
- *    byte-identical to the unconverted build.  Only stage07-generated
- *    code is wrong, so this is codegen, not logic.
- *  - The corruption is a stack frame OVERLAP.  Measured on target:
- *        handle()'s   sym  = 0x0FFFFEFC   (its 128-byte operand buffer)
- *        handle()'s   tok  = 0x0FFFFFB4
- *        handle()'s   line = 0x0FFFFFD4   (parameter)
- *        add_reloc_ex's li = 0x0FFFFFC4   <-- BETWEEN tok and line
- *    add_reloc_ex is a CALLEE of handle, so its frame must lie below
- *    handle's sp; instead it sits inside handle's frame.  sp is back up
- *    near handle's fp by the time the callee runs.
- *  - So the overlap pre-exists the conversion; adding grow_rel() merely
- *    supplies the first call that WRITES into it, clobbering the operand
- *    name (verified directly: the buffer goes 46,76 -> 0,0 across the
- *    grow_rel call), after which get_lbl() interns the garbage as a new
- *    label and mark_refd() makes it a symbol.  That also accounts for
- *    the extra relocation that comes with the extra symbol.
+ *    byte-identical to the unconverted build; only stage07-generated
+ *    code is wrong.  So this is CODEGEN, not assembler logic, and the
+ *    fix belongs in stage07 (repair in place), not in this file.
+ *  - One extra symbol comes with exactly one extra relocation.
  *
- * Next step is to find which frame in handle -> ... -> add_reloc_ex
- * restores sp wrongly in stage07's output; the fix belongs in stage07
- * (repair in place), not in this file. */
+ * Retracted: an earlier version of this note claimed the cause was a
+ * stack frame overlap, on the strength of printing &li in add_reloc_ex
+ * and comparing it with handle's locals.  That evidence does not hold up
+ * -- taking &li forces a spill and changes the frame, a minimal stage07
+ * test of caller/callee frame ordering is CORRECT, and the emulator
+ * watchpoint contradicts the probe's own byte readings.  Do not build on
+ * it.
+ *
+ * What also did NOT reproduce, so do not re-try these: a faithful
+ * minimal reproducer (sv_grow + five parallel int tables + a pointer
+ * argument held live across the growth call, 300 iterations) is clean
+ * under stage07.  The trigger needs handle()'s real size and call graph.
+ *
+ * Method notes for whoever picks this up: source-level probes are
+ * UNRELIABLE here -- the probe's own fdputs/fdputuint calls write to the
+ * same stack addresses being examined, and probe readings disagreed with
+ * the watchpoint.  Prefer artifact diffing and the emulator watchpoint,
+ * and note the watchpoint prints to STDERR (2>/dev/null silently hides
+ * it).  A 9-line .s file with one %hi/%lo pair and a jal is enough to
+ * trigger the first growth, which makes watch runs fast.
+ */
 static void mark_refd(int li) {
     g_lbl_refd[li] = 1;
 }
