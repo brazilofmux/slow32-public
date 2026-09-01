@@ -17,6 +17,23 @@
 # QEMU is NOT in the roster: -kernel provides no guest argv, and every tool
 # here needs arguments. That is a stated limitation, not an oversight.
 #
+# WHAT THIS DOES AND DOES NOT CATCH -- it does NOT supersede
+# run-kit-differential.sh, and the two are not ranked. Measured by mutation on
+# x86-64, 2026-09-01:
+#
+#   * Reintroducing DBT-15 (the "bge zero, rX" inversion): this harness
+#     reported 21/21 AGREE -- it MISSED it entirely. run-kit-differential.sh
+#     caught it with 4 divergences. Bigger binaries did not mean better
+#     pattern coverage: the three sources here simply never exercise that
+#     pattern in a way that reaches an artifact.
+#   * An artificial SLTU fault (setb -> setbe): 12 of 21 checks diverged,
+#     with byte counts, across all four produced artifacts.
+#
+# So this harness is the sharp detector for *artifact drift* -- any engine
+# fault that perturbs an emitted byte anywhere in a 259KB compile is a hard
+# mismatch -- while its instruction-pattern coverage is bounded by whatever
+# these particular sources compile to. Run BOTH.
+#
 # Usage: ./run-kit-tools-differential.sh [source.c ...]
 #   With no arguments, uses the default source list below.
 #
