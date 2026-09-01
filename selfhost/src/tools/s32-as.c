@@ -1,5 +1,14 @@
 #include "s32_formats_min.h"
 
+/* Grow-on-demand section buffers (s32vec.h).  Declared explicitly:
+ * this file is built without headers and would otherwise inherit the
+ * implicit int return, which cannot hold a pointer. */
+char *malloc(int size);
+char *realloc(char *ptr, int size);
+void exit(int status);
+
+#include "s32vec.h"
+
 #define MAX_LINE 65536
 #define MAX_TOK 8
 #define MAX_LBL 32768
@@ -46,9 +55,12 @@ static int g_diff_add[16384];
 static int g_diff_wide[16384];
 static int g_ndiff;
 
-static char g_text[1048576];
-static char g_rodata[1048576];
-static char g_data[1048576];
+/* Section images, grown on demand instead of 1 MB of BSS apiece.
+ * cc.s32x's .text was already at 52% of the old fixed ceiling, and the
+ * three arrays cost 3 MB of BSS that crt0 memset before every run. */
+static char *g_text;     static int g_text_cap;
+static char *g_rodata;   static int g_rodata_cap;
+static char *g_data;     static int g_data_cap;
 static char g_init_array[262144];
 static int g_tsz;
 static int g_rsz;
@@ -411,15 +423,15 @@ int cur_off() {
 
 int emit8(int b) {
     if (g_sec == SEC_TEXT) {
-        if (g_tsz >= MAX_TEXT) return -1;
+        g_text = sv_grow(g_text, &g_text_cap, g_tsz + 1, 1, "text");
         g_text[g_tsz] = b;
         g_tsz = g_tsz + 1;
     } else if (g_sec == SEC_RODATA) {
-        if (g_rsz >= MAX_RODATA) return -1;
+        g_rodata = sv_grow(g_rodata, &g_rodata_cap, g_rsz + 1, 1, "rodata");
         g_rodata[g_rsz] = b;
         g_rsz = g_rsz + 1;
     } else if (g_sec == SEC_DATA) {
-        if (g_dsz >= MAX_DATA) return -1;
+        g_data = sv_grow(g_data, &g_data_cap, g_dsz + 1, 1, "data");
         g_data[g_dsz] = b;
         g_dsz = g_dsz + 1;
     } else if (g_sec == SEC_INIT_ARRAY) {
@@ -1417,10 +1429,7 @@ int relax_text_branches() {
                 fdputc(10, 2);
                 return -1;
             }
-            if (g_tsz + 4 > MAX_TEXT) {
-                fdputs("s32-as: text overflow during branch relaxation\n", 2);
-                return -1;
-            }
+            g_text = sv_grow(g_text, &g_text_cap, g_tsz + 4, 1, "text");
 
             /* open a 4-byte slot right after the branch */
             ins = off + 4;

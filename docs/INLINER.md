@@ -85,3 +85,45 @@ semantic torture test covering early return, loops and `break` in the
 callee, side-effect ordering, short-circuit conditionality, nesting,
 recursion refusal, per-instance locals, address-taken locals, doubles,
 and array locals — green at every budget tried.
+
+---
+
+## Capacity: the follow-on project
+
+The ceiling table above is the argument for making toolchain capacity
+grow rather than be rationed.  Measured headroom at the time (2026-08-31):
+
+| ceiling | limit | actual | used |
+|---|---:|---:|---:|
+| `s32-ld` `MAX_FILE_SYM` | 2048 | **2053** | **100.2% — broke the build** |
+| `s32-as` `MAX_TEXT` | 1,048,576 | 549,936 | 52% |
+| `s32-as` `MAX_LBL` | 32,768 | 15,681 | 48% |
+| `s32-as` `MAX_REL` | 65,536 | 15,375 | 23% |
+| `s32-ar` `MAX_MEMBERS` | 128 | 13 | 10% |
+
+Two of these were within one compiler-doubling of failing, which is why
+the work goes bottom-up (assembler, librarian, linker) rather than
+compiler-first: the compiler is what *produces* the pressure, and
+enlarging it while the consumers stay fixed just relocates the failure.
+
+`s32vec.h` is the primitive — grow-on-demand arrays, not an arena.
+Arenas suit many small same-lifetime objects (the compiler's AST/HIR
+nodes); the tools' symbol, relocation and section tables are
+homogeneous indexed arrays that want `realloc`.
+
+**Landed:** the assembler's three section images (`.text`/`.rodata`/
+`.data`).  Output is byte-identical across nine inputs including the
+2 MB compiler self-compile, the ceiling is gone, and 3 MB of BSS goes
+with it — which also cuts startup, since crt0 memsets BSS before every
+run (the ILP trace measured 83 M instructions clearing 16.7 MB).
+
+**Not landed — open bug.** Converting the label and relocation tables
+makes the assembler emit **one spurious empty symbol** (string table
+grows by exactly one NUL; the object gains a symbol with an empty
+name).  Bisected: sections-only is byte-identical, so it is isolated to
+`get_lbl`/`add_reloc_ex`.  It is *not* the obvious dangling-pointer
+hazard — snapshotting the name into a local buffer before growing the
+pool did not fix it — and it is not the vector primitive, which passes
+a 5,000-element on-target unit test for both element types.  Whatever
+it is, it predates or is exposed by the growth and deserves a proper
+root-cause rather than a guess.
