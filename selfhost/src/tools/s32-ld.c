@@ -999,6 +999,16 @@ void layout_sections() {
     t = page_align(rodata_va + rodata_sz);
     data_va = t;
     t = data_va + data_sz;
+    /* Align the BSS BASE, not merely each contribution's offset within
+     * the merged section.  Contributions are placed at align_to(cur_sz,
+     * salign) -- an offset relative to bss_va -- so an unaligned bss_va
+     * carries straight through to every object in it.  The host linker
+     * has always aligned the absolute address here; this one did not,
+     * and a real link put .bss at 0x2384D.  It went unnoticed because
+     * nothing enforces alignment: every engine permits unaligned word
+     * access, and the emulator's S32_TRAP_ON_UNALIGNED is defined but
+     * never referenced. */
+    t = align4(t);
     bss_va = t;
     t = bss_va + bss_sz;
     bss_end_va = t;

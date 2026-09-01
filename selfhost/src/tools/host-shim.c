@@ -21,6 +21,12 @@ int fdwrite(const char *buf, int sz, int count, int fd) {
     return (int)write(fd, buf, (size_t)sz * (size_t)count);
 }
 int fdtell(int fd) { return (int)lseek(fd, 0, SEEK_CUR); }
+int fdread(char *buf, int sz, int count, int fd) {
+    return (int)read(fd, buf, (size_t)sz * (size_t)count);
+}
+int fdseek(int fd, int off, int whence) {
+    return (int)lseek(fd, off, whence);
+}
 char *fdgets(char *buf, int n, int fd) {
     int i = 0; char c;
     while (i < n - 1) {
