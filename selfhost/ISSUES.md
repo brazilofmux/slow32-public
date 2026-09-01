@@ -1809,3 +1809,60 @@ global stores two words from it.  `tests/test_phase33.c`; suite 58/58 with
 `--fixed-point`; the COBOL harness runs 46/46 with libcob and its C bridge built
 by `cc.s32x` through `cctool.sh`'s fallback (`LLVM_BIN=/nonexistent`).  The kit
 `~/s32x/cc.s32x` carries this once rebuilt.
+
+### 63. [RESOLVED 2026-09-01] Guest argv silently capped at 32 arguments, and the librarian's ceilings
+
+Two ceilings on the same path, found by lifting the lower one and
+discovering it was never reachable.
+
+**`s32-ar` (selfhost/src/tools/s32-ar.c).** Fixed arrays: 128 members,
+three 64KB string tables, a flat 4MB data buffer, and an 8192-entry
+symbol index -- 4.3MB of BSS that crt0 memset at every startup whether
+the archive needed it or not. All are now grow-on-demand via
+`s32vec.h`, which is what the HOST `s32-ar` has always done; this is
+parity, not a new policy.
+
+The symbol index was the live bug: past 8192 entries it **silently
+dropped** the rest.
+
+```c
+if (g_nsidx < MAX_SIDX) {        /* else: entry discarded, nothing said */
+```
+
+An archive with more global symbols than that linked with phantom
+"undefined symbol" errors and nothing pointed at the archiver.
+Reproducer: 100 members x 100 globals = 10,000 entries. Before,
+408,164 bytes; after, 422,628 -- byte-identical to the host archiver.
+
+**`start.c` (selfhost/stage08/libc), the ceiling underneath.** With the
+member limit lifted, `s32-ar rc lib.s32a <50 files>` still printed its
+usage banner. The guest startup fetched argv into a fixed 4KB blob with
+`MAX_ARGC 32`, and *any* overflow -- too many arguments or too many
+bytes -- fell through the guard with `argc = 0`:
+
+```c
+if (arg_count > 0 && total > 0 && total <= ARGS_BLOB_SIZE && arg_count <= MAX_ARGC) {
+```
+
+So the program saw no arguments at all and said nothing about why. The
+128-member ceiling had never been reachable from a command line. Both
+buffers are now sized from what the host actually staged, and the blob
+is fetched in chunks: one `ARGS_DATA` request moves at most
+`S32_MMIO_DATA_CAPACITY` (48KB), the 4th argument of
+`s32_mmio_request` lands in the descriptor's `status` word, which the
+handler reads as the source offset. The host cap is 64KB
+(`S32_MMIO_ARGS_MAX_BYTES`), so a single chunk was never enough by
+construction.
+
+Verified: 3/50/280-member archives all build on target and the
+280-member and 10,000-symbol archives are byte-identical to the host
+archiver's. Old and new agree byte-for-byte *under* the old ceiling, so
+the change is backward compatible. Built by the frozen stage07
+compiler (`sizeof` and pointer casts are accepted by both it and the
+kit compiler; `sizeof(member_t)`=24, `sizeof(arc_member_t)`=12 verified
+before use). Full stage08 `make`, 84/84 regression, and all three
+differentials green.
+
+Related: `tools/dbt/ISSUES.md` DBT-15 and `tools/emulator/ISSUES.md` 12
+are the same *shape* of defect in the engines -- a capacity or
+special-case path that fails silently instead of loudly.

@@ -20,9 +20,15 @@
 
 #include "s32ar_min.h"
 
-#define MAX_MEMBERS 128
-#define MAX_STRTAB 65536
-#define MAX_DATA 4194304
+/* Grow-on-demand tables (s32vec.h).  Declared explicitly: this file is
+ * built without headers and would otherwise inherit the implicit int
+ * return, which cannot hold a pointer. */
+char *malloc(int size);
+char *realloc(char *ptr, int size);
+void exit(int status);
+
+#include "s32vec.h"
+
 #define SRC_FILE 1
 #define SRC_BUFFER 2
 
@@ -47,25 +53,119 @@ typedef struct arc_member arc_member_t;
 
 /* --- Global arrays --- */
 
-member_t g_members[MAX_MEMBERS];
-member_t g_members_tmp[MAX_MEMBERS];
-arc_member_t g_arc_members[MAX_MEMBERS];
-char g_strtab[MAX_STRTAB];
-char g_old_strtab[MAX_STRTAB];
-char g_arc_strtab[MAX_STRTAB];
-char g_data[MAX_DATA];
+/* These were fixed arrays: 128 members, three 64KB string tables and a
+ * flat 4MB data buffer -- 4.3MB of BSS that crt0 memset at every startup
+ * whether the archive needed it or not.  They now start empty and grow to
+ * what the input actually needs.  The HOST s32-ar has always grown on
+ * demand; this brings the self-hosted one to parity rather than inventing
+ * a new policy. */
+member_t *g_members;
+int g_members_cap;
+member_t *g_members_tmp;
+int g_members_tmp_cap;
+arc_member_t *g_arc_members;
+int g_arc_members_cap;
+char *g_strtab;
+int g_strtab_cap;
+char *g_old_strtab;
+int g_old_strtab_cap;
+char *g_arc_strtab;
+int g_arc_strtab_cap;
+char *g_data;
+int g_data_cap;
 int g_data_used;
 
 /* Symbol index arrays */
-#define MAX_SIDX 8192
-int g_sidx_name[MAX_SIDX];
-int g_sidx_member[MAX_SIDX];
+int *g_sidx_name;
+int *g_sidx_member;
+int g_sidx_cap;
 int g_nsidx;
 
 /* Temp buffers (hoisted from local arrays) */
 char g_hdr[32];
 char g_ent[24];
-char g_req_found[MAX_MEMBERS];
+char *g_req_found;
+int g_req_found_cap;
+
+/* --- Table growth ---
+ *
+ * sv_grow() is a no-op once capacity suffices and exits on OOM, so these
+ * never fail and callers need no error path.  Element sizes come from
+ * sizeof: both the kit compiler and the frozen stage07 one compute
+ * sizeof(member_t)=24 and sizeof(arc_member_t)=12, verified before use. */
+
+void ensure_members(int need) {
+    int c;
+    c = g_members_cap;
+    g_members = (member_t *)sv_grow((char *)g_members, &c, need,
+                                    sizeof(member_t), "archive members");
+    g_members_cap = c;
+}
+
+void ensure_members_tmp(int need) {
+    int c;
+    c = g_members_tmp_cap;
+    g_members_tmp = (member_t *)sv_grow((char *)g_members_tmp, &c, need,
+                                        sizeof(member_t), "archive members");
+    g_members_tmp_cap = c;
+}
+
+void ensure_arc_members(int need) {
+    int c;
+    c = g_arc_members_cap;
+    g_arc_members = (arc_member_t *)sv_grow((char *)g_arc_members, &c, need,
+                                            sizeof(arc_member_t),
+                                            "archive members");
+    g_arc_members_cap = c;
+}
+
+void ensure_req_found(int need) {
+    int c;
+    c = g_req_found_cap;
+    g_req_found = sv_grow(g_req_found, &c, need, 1, "requested members");
+    g_req_found_cap = c;
+}
+
+void ensure_strtab(int need) {
+    int c;
+    c = g_strtab_cap;
+    g_strtab = sv_grow(g_strtab, &c, need, 1, "string table");
+    g_strtab_cap = c;
+}
+
+void ensure_old_strtab(int need) {
+    int c;
+    c = g_old_strtab_cap;
+    g_old_strtab = sv_grow(g_old_strtab, &c, need, 1, "string table");
+    g_old_strtab_cap = c;
+}
+
+void ensure_arc_strtab(int need) {
+    int c;
+    c = g_arc_strtab_cap;
+    g_arc_strtab = sv_grow(g_arc_strtab, &c, need, 1, "string table");
+    g_arc_strtab_cap = c;
+}
+
+void ensure_data(int need) {
+    int c;
+    c = g_data_cap;
+    g_data = sv_grow(g_data, &c, need, 1, "member data");
+    g_data_cap = c;
+}
+
+/* Both index arrays share one capacity, so each call starts from the same
+ * old value and the new one is stored once. */
+void ensure_sidx(int need) {
+    int c;
+    c = g_sidx_cap;
+    g_sidx_name = (int *)sv_grow((char *)g_sidx_name, &c, need, 4,
+                                 "symbol index");
+    c = g_sidx_cap;
+    g_sidx_member = (int *)sv_grow((char *)g_sidx_member, &c, need, 4,
+                                   "symbol index");
+    g_sidx_cap = c;
+}
 
 /* --- Helper functions --- */
 
@@ -184,9 +284,9 @@ int append_strtab(char *s, int *str_used) {
     }
     /* Append new string */
     off = *str_used;
+    ensure_strtab(off + strlen(s) + 1);
     i = 0;
     while (s[i]) {
-        if (off + i + 2 > MAX_STRTAB) return -1;
         g_strtab[off + i] = s[i];
         i = i + 1;
     }
@@ -282,14 +382,6 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
     in_str_off = r32(g_hdr + 24);
     in_str_sz = r32(g_hdr + 28);
 
-    if (in_nmembers > MAX_MEMBERS) {
-        fdclose(in);
-        return 0;
-    }
-    if (in_str_sz > MAX_STRTAB) {
-        fdclose(in);
-        return 0;
-    }
     if (in_nmembers < 0 || in_nmembers > (file_size / 24)) {
         fdclose(in);
         return 0;
@@ -307,6 +399,8 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
         fdclose(in);
         return 0;
     }
+    ensure_arc_strtab(in_str_sz + 1);
+    ensure_arc_members(in_nmembers + 1);
     if (in_str_sz > 0) {
         if (fdread(g_arc_strtab, 1, in_str_sz, in) != in_str_sz) {
             fdclose(in);
@@ -429,7 +523,7 @@ int extract_archive(char *archive_path, int reqc, char **reqv) {
     int j;
     char *name;
 
-    if (reqc > MAX_MEMBERS) return 0;
+    ensure_req_found(reqc);
     if (!load_archive_view(archive_path, &nmembers, &file_size, &str_size)) return 0;
     i = 0;
     while (i < reqc) {
@@ -549,10 +643,7 @@ int load_file_to_data(int midx) {
     while (1) {
         ch = fdgetc(f);
         if (ch == EOF) break;
-        if (off + sz >= MAX_DATA) {
-            fdclose(f);
-            return 0;
-        }
+        if (off + sz + 1 > g_data_cap) ensure_data(off + sz + 1);
         g_data[off + sz] = ch;
         sz = sz + 1;
     }
@@ -629,13 +720,12 @@ int build_symbol_index(int nmembers, int *str_used) {
             if (bind == S32O_BIND_GLOBAL && sec_idx != 0) {
                 if (name_off < str_sz) {
                     sym_name = g_data + base + str_off + name_off;
-                    if (g_nsidx < MAX_SIDX) {
-                        soff = append_strtab(sym_name, str_used);
-                        if (soff != -1) {
-                            g_sidx_name[g_nsidx] = soff;
-                            g_sidx_member[g_nsidx] = i;
-                            g_nsidx = g_nsidx + 1;
-                        }
+                    ensure_sidx(g_nsidx + 1);
+                    soff = append_strtab(sym_name, str_used);
+                    if (soff != -1) {
+                        g_sidx_name[g_nsidx] = soff;
+                        g_sidx_member[g_nsidx] = i;
+                        g_nsidx = g_nsidx + 1;
                     }
                 }
             }
@@ -784,14 +874,6 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
     in_str_off = r32(g_hdr + 24);
     in_str_sz = r32(g_hdr + 28);
 
-    if (in_nmembers > MAX_MEMBERS) {
-        fdclose(in);
-        return 0;
-    }
-    if (in_str_sz > MAX_STRTAB) {
-        fdclose(in);
-        return 0;
-    }
     if (in_nmembers < 0 || in_nmembers > (file_size / 24)) {
         fdclose(in);
         return 0;
@@ -809,6 +891,9 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
         fdclose(in);
         return 0;
     }
+    ensure_old_strtab(in_str_sz + 1);
+    ensure_members(in_nmembers + 1);
+    ensure_members_tmp(in_nmembers + 1);
     if (in_str_sz > 0) {
         if (fdread(g_old_strtab, 1, in_str_sz, in) != in_str_sz) {
             fdclose(in);
@@ -841,10 +926,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
             fdclose(in);
             return 0;
         }
-        if (g_data_used + size > MAX_DATA) {
-            fdclose(in);
-            return 0;
-        }
+        ensure_data(g_data_used + size + 1);
         if (fdseek(in, data_off, SEEK_SET) < 0) {
             fdclose(in);
             return 0;
@@ -895,8 +977,9 @@ int delete_members(char *archive_path, int reqc, char **reqv) {
     out_n = 0;
 
     if (reqc <= 0) return 0;
-    if (reqc > MAX_MEMBERS) return 0;
+    ensure_req_found(reqc);
 
+    ensure_strtab(1);
     g_strtab[0] = 0;
     g_data_used = 0;
     if (!load_existing_archive(archive_path, &nmembers, &str_used)) return 0;
@@ -959,8 +1042,9 @@ int move_members(char *archive_path, int reqc, char **reqv) {
     out_n = 0;
 
     if (reqc <= 0) return 0;
-    if (reqc > MAX_MEMBERS) return 0;
+    ensure_req_found(reqc);
 
+    ensure_strtab(1);
     g_strtab[0] = 0;
     g_data_used = 0;
     if (!load_existing_archive(archive_path, &nmembers, &str_used)) return 0;
@@ -1119,6 +1203,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    ensure_strtab(1);
     g_strtab[0] = 0;
     g_data_used = 0;
 
@@ -1153,7 +1238,8 @@ int main(int argc, char **argv) {
             g_members[idx].src_kind = SRC_FILE;
             g_members[idx].src_off = 0;
         } else {
-            if (nmembers >= MAX_MEMBERS) return 1;
+            ensure_members(nmembers + 1);
+            ensure_members_tmp(nmembers + 1);
             off = append_strtab(name, &str_used);
             if (off == -1) return 1;
 

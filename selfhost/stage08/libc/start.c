@@ -24,16 +24,26 @@ void __stdio_init(void);
 int s32_mmio_request(int opcode, int length, int offset, int fd);
 char *memcpy(char *dst, const char *src, unsigned int n);
 char *__get_mmio_data(void);
+char *malloc(int size);
 
-#define ARGS_BLOB_SIZE 4096
-#define MAX_ARGC 32
-#define MAX_ARGV_SLOTS 33
 #define MMIO_ARGS_INFO_SIZE 16
 #define MMIO_OP_ARGS_INFO 96
 #define MMIO_OP_ARGS_DATA 97
 
-static char args_blob[ARGS_BLOB_SIZE];
-static char *args_argv[MAX_ARGV_SLOTS];
+/* One ARGS_DATA request may move at most S32_MMIO_DATA_CAPACITY (48KB)
+ * bytes, so a larger blob is fetched in chunks.  The 4th argument of
+ * s32_mmio_request lands in the descriptor's `status` word, which
+ * ARGS_DATA reads as the SOURCE offset into the host's argv blob. */
+#define MMIO_ARGS_CHUNK 32768
+
+/* argv used to be a fixed 4KB blob and 32 slots, and ANY overflow --
+ * too many arguments or too many bytes -- fell through silently with
+ * argc = 0, so the program saw no arguments at all and said nothing
+ * about why.  "s32-ar rc lib.s32a *.o" over 50 files printed its usage
+ * banner.  Both are now sized from what the host actually staged. */
+static char *args_blob;
+static char **args_argv;
+static char *empty_argv[1];
 
 static int rd32_at(char *p) {
     int v;
@@ -52,11 +62,14 @@ void __slow32_start(void) {
     int total;
     int i;
     int offset;
+    int copied;
+    int chunk;
 
     __stdio_init();
 
     argc = 0;
-    args_argv[0] = (char *)0;
+    empty_argv[0] = (char *)0;
+    args_argv = empty_argv;
 
     data_buf = __get_mmio_data();
 
@@ -66,25 +79,40 @@ void __slow32_start(void) {
         arg_count = rd32_at(data_buf);
         total = rd32_at(data_buf + 4);
 
-        if (arg_count > 0 && total > 0 && total <= ARGS_BLOB_SIZE && arg_count <= MAX_ARGC) {
-            /* Fetch the args blob */
-            status = s32_mmio_request(MMIO_OP_ARGS_DATA, total, 0, 0);
-            if (status == 0) {
-                memcpy(args_blob, data_buf, (unsigned int)total);
-
-                /* Parse NUL-separated strings into argv array */
-                offset = 0;
-                i = 0;
-                while (i < arg_count) {
-                    args_argv[i] = args_blob + offset;
-                    while (offset < total && args_blob[offset] != 0)
-                        offset = offset + 1;
-                    if (offset < total)
-                        offset = offset + 1;
-                    i = i + 1;
+        if (arg_count > 0 && total > 0) {
+            args_blob = malloc(total);
+            args_argv = (char **)malloc((arg_count + 1) * 4);
+            if (args_blob == (char *)0 || args_argv == (char **)0) {
+                args_argv = empty_argv;
+            } else {
+                /* Fetch the blob, in as many chunks as it takes. */
+                copied = 0;
+                while (copied < total) {
+                    chunk = total - copied;
+                    if (chunk > MMIO_ARGS_CHUNK) chunk = MMIO_ARGS_CHUNK;
+                    status = s32_mmio_request(MMIO_OP_ARGS_DATA, chunk, 0, copied);
+                    if (status != 0) break;
+                    memcpy(args_blob + copied, data_buf, (unsigned int)chunk);
+                    copied = copied + chunk;
                 }
-                args_argv[arg_count] = (char *)0;
-                argc = arg_count;
+
+                if (copied == total) {
+                    /* Parse NUL-separated strings into argv array */
+                    offset = 0;
+                    i = 0;
+                    while (i < arg_count) {
+                        args_argv[i] = args_blob + offset;
+                        while (offset < total && args_blob[offset] != 0)
+                            offset = offset + 1;
+                        if (offset < total)
+                            offset = offset + 1;
+                        i = i + 1;
+                    }
+                    args_argv[arg_count] = (char *)0;
+                    argc = arg_count;
+                } else {
+                    args_argv = empty_argv;
+                }
             }
         }
     }
