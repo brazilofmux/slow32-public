@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <math.h>
 #include "slow32.h"
+#include "ilp.h"
 #include "s32x_loader.h"
 #include "memory_manager.h"
 #include "mmio_ring.h"
@@ -462,7 +463,9 @@ void cpu_step(cpu_state_t *cpu) {
     if (cpu->halted) return;
     
     instruction_t inst = decode_instruction(raw_inst);
-    
+
+    if (g_ilp.enabled) ilp_record(&inst, cpu->regs, cpu->inst_count);
+
     if (cpu->debug.trace_instructions) {
         printf("[%08" PRIx64 "] PC=%08X: %08X ", cpu->cycle_count, cpu->pc, raw_inst);
     }
@@ -1148,7 +1151,7 @@ int main(int argc, char *argv[]) {
 
     mmio_ring_set_emulator(argv[0]);
 
-    while ((opt = getopt(argc, argv, "+hstrc:b:w:q")) != -1) {
+    while ((opt = getopt(argc, argv, "+hstrc:b:w:qI")) != -1) {
         switch (opt) {
             case 'h':
                 print_usage(argv[0]);
@@ -1175,6 +1178,9 @@ int main(int argc, char *argv[]) {
                     cpu.debug.breakpoints[cpu.debug.num_breakpoints++] = strtoul(optarg, NULL, 0);
                     cpu.debug.enabled = true;
                 }
+                break;
+            case 'I':
+                ilp_init();
                 break;
             case 'q':
                 quiet = 1;
@@ -1254,6 +1260,8 @@ int main(int argc, char *argv[]) {
         printf("Performance: %.2f MIPS\n", mips);
     }
     
+    if (g_ilp.enabled) ilp_report();
+
     int exit_code = cpu.regs[1];
     cpu_destroy(&cpu);
     return exit_code;
