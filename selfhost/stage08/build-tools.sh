@@ -23,9 +23,19 @@ if [[ -z "$EMU" ]]; then
     EMU="$SELFHOST_DIR/stage00/s32-emu"
 fi
 
-STAGE7_CC="$SELFHOST_DIR/stage07/cc.s32x"
-STAGE7_AS="$SELFHOST_DIR/stage07/s32-as.s32x"
-STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
+# The bootstrap compiler is selectable so the same recipe can build this
+# tree twice -- once with stage07, once with another compiler -- and the
+# two results be compared.  That is what
+# regression/run-stage07-differential.sh does; stage07 is otherwise only
+# ever exercised indirectly, and its bugs surface as downstream mysteries.
+# Defaults are unchanged, so a plain run is exactly what it always was.
+STAGE7_CC="${STAGE7_CC:-$SELFHOST_DIR/stage07/cc.s32x}"
+STAGE7_AS="${STAGE7_AS:-$SELFHOST_DIR/stage07/s32-as.s32x}"
+STAGE7_LD="${STAGE7_LD:-$SELFHOST_DIR/stage07/s32-ld.s32x}"
+
+# Where the built tools land (default: next to this script, as before).
+OUT_DIR="${OUT_DIR:-$SCRIPT_DIR}"
+mkdir -p "$OUT_DIR"
 
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
@@ -109,61 +119,61 @@ assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 echo "[3/5] Build s32-as.s32x"
 compile "$TOOLS_DIR/s32-as.c" "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.cc.log"
 assemble "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.s32o" "$WORKDIR/s32-as.as.log"
-link_exe "$WORKDIR/s32-as.link.log" -o "$SCRIPT_DIR/s32-as.s32x" --mmio 64K \
+link_exe "$WORKDIR/s32-as.link.log" -o "$OUT_DIR/s32-as.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-as.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
-[[ -s "$SCRIPT_DIR/s32-as.s32x" ]] || { echo "s32-as link failed" >&2; exit 1; }
-echo "  OK: s32-as.s32x ($(wc -c < "$SCRIPT_DIR/s32-as.s32x") bytes)"
+[[ -s "$OUT_DIR/s32-as.s32x" ]] || { echo "s32-as link failed" >&2; exit 1; }
+echo "  OK: s32-as.s32x ($(wc -c < "$OUT_DIR/s32-as.s32x") bytes)"
 
 # --- Build archiver ---
 echo "[4/5] Build s32-ar.s32x"
 compile "$TOOLS_DIR/s32-ar.c" "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.cc.log"
 assemble "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.s32o" "$WORKDIR/s32-ar.as.log"
-link_exe "$WORKDIR/s32-ar.link.log" -o "$SCRIPT_DIR/s32-ar.s32x" --mmio 64K \
+link_exe "$WORKDIR/s32-ar.link.log" -o "$OUT_DIR/s32-ar.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ar.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
-[[ -s "$SCRIPT_DIR/s32-ar.s32x" ]] || { echo "s32-ar link failed" >&2; exit 1; }
-echo "  OK: s32-ar.s32x ($(wc -c < "$SCRIPT_DIR/s32-ar.s32x") bytes)"
+[[ -s "$OUT_DIR/s32-ar.s32x" ]] || { echo "s32-ar link failed" >&2; exit 1; }
+echo "  OK: s32-ar.s32x ($(wc -c < "$OUT_DIR/s32-ar.s32x") bytes)"
 
 # --- Build linker ---
 echo "[5/7] Build s32-ld.s32x"
 compile "$TOOLS_DIR/s32-ld.c" "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.cc.log"
 assemble "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.s32o" "$WORKDIR/s32-ld.as.log"
-link_exe "$WORKDIR/s32-ld.link.log" -o "$SCRIPT_DIR/s32-ld.s32x" --mmio 64K \
+link_exe "$WORKDIR/s32-ld.link.log" -o "$OUT_DIR/s32-ld.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ld.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
-[[ -s "$SCRIPT_DIR/s32-ld.s32x" ]] || { echo "s32-ld link failed" >&2; exit 1; }
-echo "  OK: s32-ld.s32x ($(wc -c < "$SCRIPT_DIR/s32-ld.s32x") bytes)"
+[[ -s "$OUT_DIR/s32-ld.s32x" ]] || { echo "s32-ld link failed" >&2; exit 1; }
+echo "  OK: s32-ld.s32x ($(wc -c < "$OUT_DIR/s32-ld.s32x") bytes)"
 
 # --- Build dumper ---
 echo "[6/7] Build slow32dump.s32x"
 compile "$TOOLS_DIR/slow32dump.c" "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.cc.log"
 assemble "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.s32o" "$WORKDIR/slow32dump.as.log"
-link_exe "$WORKDIR/slow32dump.link.log" -o "$SCRIPT_DIR/slow32dump.s32x" --mmio 64K \
+link_exe "$WORKDIR/slow32dump.link.log" -o "$OUT_DIR/slow32dump.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dump.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
-[[ -s "$SCRIPT_DIR/slow32dump.s32x" ]] || { echo "slow32dump link failed" >&2; exit 1; }
-echo "  OK: slow32dump.s32x ($(wc -c < "$SCRIPT_DIR/slow32dump.s32x") bytes)"
+[[ -s "$OUT_DIR/slow32dump.s32x" ]] || { echo "slow32dump link failed" >&2; exit 1; }
+echo "  OK: slow32dump.s32x ($(wc -c < "$OUT_DIR/slow32dump.s32x") bytes)"
 
 # --- Build disassembler ---
 echo "[7/7] Build slow32dis.s32x"
 compile "$TOOLS_DIR/slow32dis.c" "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.cc.log"
 assemble "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.s32o" "$WORKDIR/slow32dis.as.log"
-link_exe "$WORKDIR/slow32dis.link.log" -o "$SCRIPT_DIR/slow32dis.s32x" --mmio 64K \
+link_exe "$WORKDIR/slow32dis.link.log" -o "$OUT_DIR/slow32dis.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dis.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
-[[ -s "$SCRIPT_DIR/slow32dis.s32x" ]] || { echo "slow32dis link failed" >&2; exit 1; }
-echo "  OK: slow32dis.s32x ($(wc -c < "$SCRIPT_DIR/slow32dis.s32x") bytes)"
+[[ -s "$OUT_DIR/slow32dis.s32x" ]] || { echo "slow32dis link failed" >&2; exit 1; }
+echo "  OK: slow32dis.s32x ($(wc -c < "$OUT_DIR/slow32dis.s32x") bytes)"
 
 echo ""
 echo "All tools built successfully."
