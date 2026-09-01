@@ -99,7 +99,14 @@ static int g_sym_sec[32768];
 static char g_sym_bind[32768];
 
 static char g_str[131072];
-static char g_line[1024];
+/* fdgets is told how much it may write, so this bound must be the
+ * BUFFER's size, not MAX_LINE -- they were 1024 and 65536, which let a
+ * long enough input line write 64KB into a 1KB buffer and straight
+ * through whatever BSS followed it.  No input in the tree comes close
+ * (the longest line the compilers emit is 85 chars), so this never
+ * fired; it was a latent smash waiting for a wide enough line. */
+#define G_LINE_SIZE 1024
+static char g_line[G_LINE_SIZE];
 static int g_ssz;
 static int g_in;
 static int g_out;
@@ -584,17 +591,40 @@ int emit_word_list(char *p) {
  * hazard from the conversions that follow.
  *
  * Converting the RELOCATION tables as well makes the assembler emit one
- * spurious empty symbol -- but only in stage07-compiled, on-target
- * builds, and only once the reloc array actually grows (131 relocations
- * fail, 57 do not).  Eliminated so far: the vector primitive (passes a
- * 12-table interleaved stress test on target), the selfhost realloc
- * (same), pointer casts (verified on target), and stage07 failing to
- * reload globals across calls (verified: it reloads correctly).  A
- * native build of the identical source is correct and ASan-clean.
- * Mechanism still unknown, so the reloc tables stay fixed -- they are
- * only 23% used.  Do not "fix" this by reordering until the cause is
- * actually understood; reordering makes it disappear, which is not the
- * same thing. */
+ * spurious symbol -- but only in stage07-compiled, on-target builds, and
+ * only once the reloc array actually grows (131 relocations fail, 57 do
+ * not).  The tables stay fixed until this is fixed properly; they are
+ * only 23% used.  Do not "fix" it by reordering: reordering hides it,
+ * which is not the same thing.
+ *
+ * 2026-09-01, root cause LOCATED (not yet fixed).  It is NOT an
+ * assembler logic bug and not the vector primitive:
+ *
+ *  - The symbol is not "empty".  Its name is the single byte 0x04, which
+ *    dumps render as blank -- which is why every probe testing for an
+ *    empty name failed to fire.  The string table grows by exactly 2
+ *    bytes (one char + NUL), not 1.
+ *  - The SAME converted source compiled by the CURRENT stage08 cc is
+ *    byte-identical to the unconverted build.  Only stage07-generated
+ *    code is wrong, so this is codegen, not logic.
+ *  - The corruption is a stack frame OVERLAP.  Measured on target:
+ *        handle()'s   sym  = 0x0FFFFEFC   (its 128-byte operand buffer)
+ *        handle()'s   tok  = 0x0FFFFFB4
+ *        handle()'s   line = 0x0FFFFFD4   (parameter)
+ *        add_reloc_ex's li = 0x0FFFFFC4   <-- BETWEEN tok and line
+ *    add_reloc_ex is a CALLEE of handle, so its frame must lie below
+ *    handle's sp; instead it sits inside handle's frame.  sp is back up
+ *    near handle's fp by the time the callee runs.
+ *  - So the overlap pre-exists the conversion; adding grow_rel() merely
+ *    supplies the first call that WRITES into it, clobbering the operand
+ *    name (verified directly: the buffer goes 46,76 -> 0,0 across the
+ *    grow_rel call), after which get_lbl() interns the garbage as a new
+ *    label and mark_refd() makes it a symbol.  That also accounts for
+ *    the extra relocation that comes with the extra symbol.
+ *
+ * Next step is to find which frame in handle -> ... -> add_reloc_ex
+ * restores sp wrongly in stage07's output; the fix belongs in stage07
+ * (repair in place), not in this file. */
 static void mark_refd(int li) {
     g_lbl_refd[li] = 1;
 }
@@ -1998,7 +2028,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    while (fdgets(g_line, MAX_LINE, g_in)) {
+    while (fdgets(g_line, G_LINE_SIZE, g_in)) {
         lno = lno + 1;
         if (handle(g_line) != 0) {
             fdputs("assemble error at line ", 2);
