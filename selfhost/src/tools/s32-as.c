@@ -38,6 +38,11 @@ static char *g_lbl_defd;
 static char *g_lbl_glob;
 static char *g_lbl_refd;
 static char *g_lbl_abs;
+/* Indexed by LABEL index, so it grows with the label tables below.  It
+ * was a fixed 32,768 back when MAX_LBL capped labels at that same
+ * number; once labels became unbounded, that pairing silently turned
+ * into a buffer overflow waiting for a big enough input. */
+static int  *g_lbl_to_sym;
 static int   g_lbl_cap;
 
 static void grow_lbl(int need) {
@@ -50,6 +55,7 @@ static void grow_lbl(int need) {
     c = g_lbl_cap; g_lbl_glob     = sv_grow(g_lbl_glob, &c, need, 1, "labels");
     c = g_lbl_cap; g_lbl_refd     = sv_grow(g_lbl_refd, &c, need, 1, "labels");
     c = g_lbl_cap; g_lbl_abs      = sv_grow(g_lbl_abs,  &c, need, 1, "labels");
+    c = g_lbl_cap; g_lbl_to_sym   = (int *)sv_grow((char *)g_lbl_to_sym, &c, need, 4, "labels");
     g_lbl_cap = c;
 }
 static int g_nlbl;
@@ -85,7 +91,6 @@ static int g_isz;
 static int g_bsz;
 static int g_sec;
 
-static int g_lbl_to_sym[32768];
 static int g_nsym;
 static int g_sym_lbl[32768];
 static int g_sym_name[32768];

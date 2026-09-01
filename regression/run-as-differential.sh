@@ -91,6 +91,25 @@ if [ ${#corpus[@]} -eq 0 ]; then
             fi
         done
     fi
+    # A generated CAPACITY case: more labels than any fixed ceiling the
+    # assembler used to have.  This is not hypothetical -- removing
+    # MAX_LBL left g_lbl_to_sym[32768] indexed by an unbounded label
+    # count, and 40k labels overflowed it (found by ASan, fixed by
+    # growing it with the label tables).
+    {
+        echo ".text"
+        echo ".globl big"
+        echo "big:"
+        i=0
+        while [ $i -lt 40000 ]; do
+            echo ".L$i:"
+            echo "    addi r1, r1, 1"
+            i=$((i+1))
+        done
+        echo "    jalr r0, r31, 0"
+    } > "$W/gen_manylabels.s"
+    corpus+=("$W/gen_manylabels.s")
+
     # ...and stage08 cc's own output, the other producer.
     if [ -f "$ROOT/selfhost/stage08/cc.s32x" ]; then
         n=0
