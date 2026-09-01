@@ -1407,6 +1407,31 @@ static uint32_t encode_j(uint32_t op, int rd, int imm) {
            (imm_11 << 20) | (imm_10_1 << 21) | (imm_20 << 31);
 }
 
+// Immediate bits for the two PC-relative formats, matching encode_b/encode_j
+// above: B puts imm[11] at 7, imm[4:1] at 8-11, imm[10:5] at 25-30, imm[12]
+// at 31; J puts imm[19:12] at 12-19, imm[11] at 20, imm[10:1] at 21-30,
+// imm[20] at 31.
+#define B_IMM_MASK 0xFE000F80u
+#define J_IMM_MASK 0xFFFFF000u
+
+static int32_t decode_b_imm(uint32_t ins) {
+    int32_t imm = (int32_t)((((ins >> 7)  & 1u)    << 11) |
+                            (((ins >> 8)  & 0xFu)  << 1)  |
+                            (((ins >> 25) & 0x3Fu) << 5)  |
+                            (((ins >> 31) & 1u)    << 12));
+    if (imm & 0x1000) imm |= ~0x1FFF;   // sign-extend from bit 12
+    return imm;
+}
+
+static int32_t decode_j_imm(uint32_t ins) {
+    int32_t imm = (int32_t)((((ins >> 12) & 0xFFu)  << 12) |
+                            (((ins >> 20) & 1u)     << 11) |
+                            (((ins >> 21) & 0x3FFu) << 1)  |
+                            (((ins >> 31) & 1u)     << 20));
+    if (imm & 0x100000) imm |= ~0x1FFFFF;   // sign-extend from bit 20
+    return imm;
+}
+
 // ============================================================================
 // Branch relaxation
 //
@@ -1482,6 +1507,67 @@ static bool relax_branches(assembler_t *as) {
             br->instruction = ((br->instruction ^ 1) & 0x01FFF07F) |
                               (encode_b(0, 0, 0, 4) & 0xFE000F80);
             br->has_label_ref = false;
+
+            // A NUMERIC (non-label) PC-relative displacement is baked into
+            // the encoding at parse time, so none of the shifts below touch
+            // it. If the insertion point falls between such an instruction
+            // and its target, the displacement itself has to move by four --
+            // otherwise the branch silently lands four bytes off. Computed
+            // with pre-shift addresses, so this must run before the loops
+            // that move them.
+            //
+            // The branch being relaxed (index i) is excluded: its encoding
+            // was just rewritten to hop the jal that is about to be
+            // inserted, and is already correct for the post-insertion layout.
+            for (int j = 0; j < as->num_instructions; j++) {
+                if (j == i) continue;
+                instruction_t *p = &as->instructions[j];
+                if (p->is_data_byte || p->section != SECTION_CODE) continue;
+                if (p->has_label_ref) continue;
+
+                int32_t d;
+                bool is_b;
+                if (p->opcode >= 0x48 && p->opcode <= 0x4D) {
+                    d = decode_b_imm(p->instruction); is_b = true;
+                } else if (p->opcode == 0x40) {
+                    d = decode_j_imm(p->instruction); is_b = false;
+                } else {
+                    continue;
+                }
+
+                // The two formats do NOT share a base: a conditional branch
+                // targets PC+4+imm (emulator: next_pc += imm, next_pc = pc+4)
+                // while JAL targets PC+imm (next_pc = pc + imm).
+                uint32_t a     = p->address;
+                uint32_t base  = is_b ? a + 4u : a;
+                uint32_t t     = base + (uint32_t)d;
+                uint32_t a2    = a + (a >= ins_addr ? 4u : 0u);
+                uint32_t base2 = is_b ? a2 + 4u : a2;
+                uint32_t t2    = t + (t >= ins_addr ? 4u : 0u);
+                int32_t  d2    = (int32_t)(t2 - base2);
+                if (d2 == d) continue;
+
+                if (is_b && (d2 < -4096 || d2 > 4094)) {
+                    fprintf(stderr, "Error: relaxation pushed the numeric branch at 0x%08X\n"
+                                    "       out of range (%d bytes). Use a label.\n",
+                            p->address, d2);
+                    return false;
+                }
+                if (!is_b && (d2 < -1048576 || d2 > 1048574)) {
+                    fprintf(stderr, "Error: relaxation pushed the numeric jump at 0x%08X\n"
+                                    "       out of range (%d bytes). Use a label.\n",
+                            p->address, d2);
+                    return false;
+                }
+
+                if (is_b) {
+                    p->instruction = (p->instruction & ~B_IMM_MASK) |
+                                     (encode_b(0, 0, 0, d2) & B_IMM_MASK);
+                } else {
+                    p->instruction = (p->instruction & ~J_IMM_MASK) |
+                                     (encode_j(0, 0, d2) & J_IMM_MASK);
+                }
+            }
 
             // Shift everything in the code section at or past the insertion
             // point. .equ/.set constants (is_absolute) are not addresses.
