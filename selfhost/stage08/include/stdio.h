@@ -46,4 +46,46 @@ int   fprintf(FILE *f, char *fmt, ...);
 int   snprintf(char *buf, int size, char *fmt, ...);
 void  perror(char *s);
 
+/* --- Declarations that were missing -------------------------------
+ *
+ * These are all DEFINED in libc/stdio.c but were never declared here,
+ * so every caller got an implicit declaration returning int.  On a
+ * 32-bit target an int happens to hold a pointer, which is why
+ * fopen() and fgets() appeared to work -- and is exactly the hazard
+ * that produced the fdseek bug: fdseek returns lseek's offset, callers
+ * assumed fseek's 0-on-success, and nothing type-checked the gap.
+ * An audit found 51 of 107 libc functions undeclared; these are the
+ * public ones. */
+FILE *fopen(const char *path, const char *mode);
+FILE *tmpfile(void);
+int   puts(const char *s);
+int   getc(FILE *fp);
+int   putc(int c, FILE *fp);
+int   ungetc(int c, FILE *fp);
+void  rewind(FILE *fp);
+int   remove(const char *path);
+int   rename(const char *oldpath, const char *newpath);
+int   setvbuf(FILE *fp, char *buf, int mode, unsigned int size);
+int   feof(FILE *fp);
+int   ferror(FILE *fp);
+void  clearerr(FILE *fp);
+int   fileno(FILE *fp);
+char *fgets(char *buf, int n, FILE *fp);
+int   sprintf(char *str, const char *format, ...);
+
+/* The fd-based file layer the self-hosted tools are built on.
+ * fdseek has LSEEK semantics: it returns the resulting offset, not
+ * fseek's 0-on-success.  Test `< 0` for failure. */
+int   fdopen_path(const char *path, const char *mode);
+int   fdclose(int fd);
+int   fdgetc(int fd);
+char *fdgets(char *buf, int n, int fd);
+int   fdread(const char *buf, int sz, int count, int fd);
+int   fdwrite(const char *buf, int sz, int count, int fd);
+int   fdseek(int fd, int off, int whence);
+int   fdtell(int fd);
+int   fdputc(int c, int fd);
+int   fdputs(const char *s, int fd);
+void  fdputuint(int fd, unsigned int v);
+
 #endif
