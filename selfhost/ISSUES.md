@@ -1893,7 +1893,7 @@ Related: `tools/dbt/ISSUES.md` DBT-15 and `tools/emulator/ISSUES.md` 12
 are the same *shape* of defect in the engines -- a capacity or
 special-case path that fails silently instead of loudly.
 
-### 64. [OPEN] Shared lexer invokes signed overflow on any hex literal with the high bit set
+### 64. [RESOLVED 2026-09-01] Shared lexer invoked signed overflow on any hex literal with the high bit set
 
 `selfhost/src/c_lexer.rl` accumulates numeric literals into a signed
 `long long val`:
@@ -1922,8 +1922,44 @@ wrapping is defined there, and it is what the code already assumes.
 `unsigned long long` is accepted by stage08 cc (checked), so the construct is
 expressible in the dialect.
 
-**Blast radius is bounded**: the frozen stages 05/06/07 keep their OWN
-`c_lexer_gen.c`, so regenerating `src/c_lexer_gen.c` (ragel is installed)
-touches only stage08 and the two cross trees. It still means rebuilding
-stage08 cc and redeploying the kit, which is why it was filed rather than
-done at the tail of a long session.
+**Blast radius was bounded**: the frozen stages 05/06/07 keep their OWN
+`c_lexer_gen.c`, so regenerating `src/c_lexer_gen.c` touched only stage08 and
+the two cross trees.
+
+**Fixed** as filed -- the accumulator is now `unsigned long long`, one line in
+`src/c_lexer.rl` and the corresponding line in the regenerated
+`src/c_lexer_gen.c`. The two extractions (`(int)val`, `(int)(val >> 32)`) were
+left alone: they already assumed wrapping, and against an unsigned accumulator
+`>> 32` is now a defined logical shift rather than an implementation-defined
+arithmetic one.
+
+Notes for anyone repeating this:
+
+- **Ragel drift was checked first.** Regenerating with no source change
+  reproduced the checked-in `c_lexer_gen.c` byte-for-byte (ragel 6.10), so the
+  post-change diff is provably just the change. The comment was deliberately
+  kept to a single line: a multi-line one shifts every `#line` in the generated
+  file and buries a one-line fix under ~150 lines of renumbering.
+- **stage07 -- not stage08 -- is the compiler that had to accept it.**  The
+  original filing checked stage08 cc, but `stage08/c_lexer_gen.c` is a symlink
+  to `src/`, and stage08 is built by the frozen stage07. Verified directly:
+  stage07 both parses `unsigned long long` and lowers it correctly, calling
+  `__muldi3` for the multiply -- the *same* helper the previous signed code
+  called, so the fix adds no new runtime dependency -- and folding `>> 32` to a
+  high-word load.
+- **The UB was latent, not a live miscompile.** Verified in both directions: a
+  sanitized build of the OLD lexer reproduces the reported
+  `c_lexer.rl:354:57: signed integer overflow` on
+  `stage08-cross-a64/tests/cc_alu_imm.c`, and the fixed build is clean. Old and
+  new compilers then emitted **byte-identical objects for all 68 test sources
+  across both cross trees**, and a full stage08 rebuild produced a `cc.s32x`
+  byte-identical to the deployed kit's. The anticipated kit redeploy was
+  therefore a no-op, and `crt0.s32o` matched too. gcc happened to wrap the way
+  the code assumed; the fix removes the license for it not to.
+
+Validated: stage08 58/58, regression 85/85, kit differential 44/44, kit-tools
+differential 21/21, stage07 differential clean, cross-engine differential 81
+agree with only the four documented qemu-only `bug-dbt-intrinsic-bounds*`
+entries on the harness's own `KNOWN_DIVERGENT` list (AUDIT-2026-08, unrelated
+and pre-existing). cc-a64's `test-elf` fails on macOS for exec-format reasons
+only -- it runs Linux AArch64 ELF -- which is expected here, not a regression.

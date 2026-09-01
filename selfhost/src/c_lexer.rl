@@ -336,7 +336,7 @@ static void lex_count_nl(char *from, char *to) {
 /* === Helper: parse number from ts..te range === */
 
 static void lex_parse_num(char *ts, char *te) {
-    long long val;     /* 64-bit accumulator — preserves literals > 2^32 */
+    unsigned long long val;  /* 64-bit accumulator; unsigned since 64-bit masks overflow signed (UB) */
     int ch;
     char *np;
     int n_l;
