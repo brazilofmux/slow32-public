@@ -735,14 +735,28 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         TCGv_i32 numer = load_gpr(rs1);
         TCGv_i32 result = tcg_temp_new_i32();
         TCGLabel *div_by_zero = gen_new_label();
+        TCGLabel *overflow = gen_new_label();
+        TCGLabel *do_div = gen_new_label();
         TCGLabel *done = gen_new_label();
 
         tcg_gen_brcondi_i32(TCG_COND_EQ, denom, 0, div_by_zero);
+        /* INT_MIN / -1 is not representable. The ISA defines it as INT_MIN,
+         * matching the reference emulator (tools/emulator/slow32.c OP_DIV)
+         * and the DBT. Handing this pair to the host divide is a trap rather
+         * than merely a wrong value: x86-64 idiv raises #DE on it. */
+        tcg_gen_brcondi_i32(TCG_COND_NE, denom, -1, do_div);
+        tcg_gen_brcondi_i32(TCG_COND_EQ, numer, INT32_MIN, overflow);
+
+        gen_set_label(do_div);
         tcg_gen_div_i32(result, numer, denom);
         tcg_gen_br(done);
 
         gen_set_label(div_by_zero);
         tcg_gen_movi_i32(result, -1);
+        tcg_gen_br(done);
+
+        gen_set_label(overflow);
+        tcg_gen_movi_i32(result, INT32_MIN);
 
         gen_set_label(done);
         store_gpr(rd, result);
@@ -753,14 +767,26 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         TCGv_i32 numer = load_gpr(rs1);
         TCGv_i32 result = tcg_temp_new_i32();
         TCGLabel *mod_by_zero = gen_new_label();
+        TCGLabel *overflow = gen_new_label();
+        TCGLabel *do_rem = gen_new_label();
         TCGLabel *done = gen_new_label();
 
         tcg_gen_brcondi_i32(TCG_COND_EQ, denom, 0, mod_by_zero);
+        /* INT_MIN % -1 is 0, and traps on the host for the same reason as
+         * the divide above. See tools/emulator/slow32.c OP_REM. */
+        tcg_gen_brcondi_i32(TCG_COND_NE, denom, -1, do_rem);
+        tcg_gen_brcondi_i32(TCG_COND_EQ, numer, INT32_MIN, overflow);
+
+        gen_set_label(do_rem);
         tcg_gen_rem_i32(result, numer, denom);
         tcg_gen_br(done);
 
         gen_set_label(mod_by_zero);
         tcg_gen_mov_i32(result, numer);
+        tcg_gen_br(done);
+
+        gen_set_label(overflow);
+        tcg_gen_movi_i32(result, 0);
 
         gen_set_label(done);
         store_gpr(rd, result);
