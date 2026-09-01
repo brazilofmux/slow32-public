@@ -267,6 +267,18 @@ cd ~/slow-32/regression && ./run-kit-differential.sh
 # other; the script header carries the mutation-test numbers. ~27s.
 cd ~/slow-32/regression && ./run-kit-tools-differential.sh
 
+# And a fourth, on a different axis: the three above vary the ENGINE; this
+# varies the COMPILER. stage07 is the frozen compiler that builds stage08's
+# libc and tools, is never exercised directly, and so its bugs surface as
+# downstream mysteries (the spurious-symbol bug went unexplained for weeks;
+# the decisive experiment turned out to be one line -- compile the same
+# source with stage08 cc instead). This builds stage08's tools twice, once
+# with each compiler, under the same emulator, and byte-compares what the
+# two tool sets produce. Mutation-tested: the reloc conversion stage07
+# miscompiles shows up as "s32-as -> .s32o: 16956 bytes differ". Run it
+# after touching stage07 or anything it compiles. ~2 builds, a few minutes.
+cd ~/slow-32/regression && ./run-stage07-differential.sh
+
 # Analyze binaries
 ./tools/utilities/slow32dump file.s32o    # Dump object file
 ./tools/utilities/slow32dump file.s32x    # Dump executable
