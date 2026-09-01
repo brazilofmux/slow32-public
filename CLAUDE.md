@@ -246,6 +246,19 @@ cd ~/slow-32/regression && ./run-tests.sh feature-arithmetic
 # Run after ANY emulator/DBT change.
 cd ~/slow-32/regression && ./run-differential.sh
 
+# ...but that suite is built ENTIRELY BY CLANG, so it never executes a byte of
+# stage08 self-hosted output. The two compilers choose visibly different
+# instruction sequences, and an engine bug in a pattern only one of them emits
+# is invisible to a suite built from the other. On 2026-09-01 that gap was
+# hiding two wrong-code bugs at once: DBT-15 (x86-64 translating "bge zero, rX"
+# backwards) and the qemu fused compare-branch clobbering its own operand on
+# "seq r3, r3, r0". Both engines passed the clang suite throughout.
+#
+# So run BOTH after any emulator/DBT/qemu change. This one builds the stage08
+# corpus with the kit toolchain (cc.s32x -> s32-as.s32x -> s32-ld.s32x) and
+# diffs every engine. Needs a kit: KIT=<dir> (default ~/s32x).
+cd ~/slow-32/regression && ./run-kit-differential.sh
+
 # Analyze binaries
 ./tools/utilities/slow32dump file.s32o    # Dump object file
 ./tools/utilities/slow32dump file.s32x    # Dump executable
