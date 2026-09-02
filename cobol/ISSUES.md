@@ -352,6 +352,16 @@ Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
   dropped (GnuCOBOL 4 splits it into two records with 06).
 - `CALL` by name folds case (`'twice'` finds `TWICE`), as the static
   link does; GnuCOBOL's dynamic lookup is case-sensitive.
+- A `MOVE` of a non-integer numeric item to an alphanumeric receiver is
+  **accepted**, moving the digits as stored with the sign and the point
+  unrepresented; GnuCOBOL calls it "invalid MOVE" and refuses it in
+  every dialect. The 1985 text forbids it too, but the NIST cases
+  (NC105A, NC114M, NC124A) require it, and the cases won -- Stage 53,
+  the user's ruling of 2026-08-31 (086ee808). free/numalnum, which
+  therefore has no oracle and whose `.expected` is the cases' answer.
+  This entry was missing until 2026-09-02: `docs/dialect.md` still
+  claimed we refused it, and the harness reporting an oracle refusal as
+  a pass (1a4ce2d1) is what kept the contradiction from surfacing.
 
 ## D. Harness and infrastructure
 

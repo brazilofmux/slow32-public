@@ -115,7 +115,13 @@ given, because majesty's `.prn` oracles were produced under it.
   out as spaces there). Tests compiled with `-std=cobol85` must not
   read an item before setting it.
 - **MOVE of a non-integer numeric item to an alphanumeric item** is
-  refused, as the standard and GnuCOBOL both do ("invalid MOVE").
+  accepted: the digits as stored, the sign and the point
+  unrepresented. The 1985 text forbids it and GnuCOBOL refuses it in
+  every dialect ("invalid MOVE"), but the NIST cases -- NC105A, NC114M,
+  NC124A -- require it, and the cases win (Stage 53, the user's ruling
+  of 2026-08-31, 086ee808). free/numalnum; ISSUES.md section C. This
+  line said the opposite until 2026-09-02, describing a refusal that
+  Stage 53 had already removed.
 - **LINE SEQUENTIAL** (implementor module; measured against GnuCOBOL
   4.0-early-dev): a record is payload then `\n`; trailing spaces are
   removed on WRITE (an all-space record is an empty line); on READ the
