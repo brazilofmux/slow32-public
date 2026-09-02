@@ -4696,6 +4696,222 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
     if (!hot) emit_call("cob_drop");
 }
 
+/* ---- the scaled ADD, in line ----------------------------------------------
+ *
+ * After #27, #29's three shapes and #30, the batch's largest remaining
+ * runtime line item was cob_top_addto: 208,889 calls, every one of them a
+ * COMP-3 receiver of eleven digits at scale 2 taking a same-scale operand,
+ * DISPLAY 9(9)V99 or the same COMP-3 picture (ws-debits, ws-total-debits,
+ * yt-debits(i)), at ~900 instructions each -- two cob_get_num, a 64-bit
+ * alignment, cob_put_num_x with its digit loop.  ~12% of the batch.
+ *
+ * With the scales equal there is nothing to align: the two digit strings
+ * add column-wise.  Each item is read into two limbs in base 10^9 -- hi for
+ * the digits above the low nine, lo for the low nine -- and a sign; the
+ * limbs add or subtract as sign-magnitude with one carry or borrow between
+ * them; the result is brought inside the receiver's picture by one REM on
+ * the limb the picture ends in; and it is written back as digits or
+ * nibbles.  No call, no descriptor, no 64-bit arithmetic: everything fits a
+ * word because a limb is below 10^9 and a sum of two is below 2^31.
+ * Eighteen digits is the ceiling, two limbs.
+ *
+ * What it takes: ADD x TO r and SUBTRACT x FROM r, one operand, one or more
+ * receivers, both DISPLAY (digits exactly the bytes, a trailing overpunch
+ * sign or none) or COMP-3, the operand's scale the receiver's.  ROUNDED is
+ * admitted because with one scale it has nothing to do.  SIZE ERROR is
+ * not: that needs the overflow detected, and the generic path has it.
+ * Literals and GIVING stay generic too -- the batch had 12k stores against
+ * 209k adds, and a literal is a different decode.  The 85 rule for an
+ * unsigned receiver, the magnitude, is kept; a zero result is positive.
+ *
+ * Registers: the values live in r5-r10 across the sequence, which holds no
+ * call -- so a subscript that needs cob_load_int (r3-r10 clobbered) bars
+ * the path.  r1/r2 scratch, r4 a constant, r3 the address, r11 untouched
+ * (the subscript accumulator: see emit_display_decode).  GitHub #29. */
+
+/* an item the inline decimal add can read and write */
+static int sym_dec_ok(Sym *s)
+{
+    if (s->is_group || s->is_cond || s->pi.category != PIC_NUMERIC) return 0;
+    if (s->sign_sep || s->sign_lead || s->blank_zero || s->pi.edited || strchr(s->pi.pat, 'P')) return 0;
+    if (s->pi.digits < 1 || s->pi.digits > 18) return 0;
+    if (s->usage == U_DISPLAY) return (int)s->size == s->pi.digits;
+    if (s->usage == U_PACKED) return (int)s->size == (s->pi.digits + 2) / 2;
+    return 0;
+}
+
+/* a reference whose address the sequence can form without a call */
+static int ref_dec_addr_ok(const Ref *r)
+{
+    if (r->rm) return 0;
+    for (int i = 0; i < r->nsub; i++) if (r->sub[i].sym && !is_hot_int(r->sub[i].sym)) return 0;
+    return 1;
+}
+
+/* acc = acc * 10 with r2 scratch and no constant register */
+static void emit_mul10(const char *acc)
+{
+    emit("\tslli r2, %s, 3", acc);
+    emit("\tslli %s, %s, 1", acc, acc);
+    emit("\tadd %s, %s, r2", acc, acc);
+}
+
+/* item s at areg -> limbs hi (digits above the low nine) and lo (the low
+ * nine), sg = 1 if negative.  Digit d of D (0 the most significant) goes
+ * to hi while d < D - 9. */
+static void emit_dec_load(Sym *s, const char *areg, const char *hi, const char *lo, const char *sg)
+{
+    int D = s->pi.digits, split = D > 9 ? D - 9 : 0;
+    emit("\tadd %s, r0, r0", hi);
+    emit("\tadd %s, r0, r0", lo);
+    if (s->usage == U_DISPLAY) {
+        for (int d = 0; d < D; d++) {
+            const char *acc = d < split ? hi : lo;
+            if (d != 0 && d != split) emit_mul10(acc);
+            emit("\tldbu r2, %s+%d", areg, d);
+            emit("\tandi r2, r2, 15");            /* '0'..'9' and the overpunch 'p'..'y' alike */
+            emit("\tadd %s, %s, r2", acc, acc);
+        }
+        if (s->pi.is_signed) {
+            emit("\tldbu r2, %s+%d", areg, D - 1);
+            emit("\tsltiu %s, r2, 112", sg);      /* below 'p': positive */
+            emit("\txori %s, %s, 1", sg, sg);
+        } else emit("\tadd %s, r0, r0", sg);
+    } else {
+        /* 2*size nibbles: a zero pad first when D is even, the D digits,
+         * the sign last */
+        int k0 = 2 * (int)s->size - 1 - D, curbyte = -1;
+        for (int d = 0; d < D; d++) {
+            int k = k0 + d, b = k / 2;
+            const char *acc = d < split ? hi : lo;
+            if (b != curbyte) { emit("\tldbu r1, %s+%d", areg, b); curbyte = b; }
+            if (d != 0 && d != split) emit_mul10(acc);
+            if (k % 2 == 0) emit("\tsrli r2, r1, 4"); else emit("\tandi r2, r1, 15");
+            emit("\tadd %s, %s, r2", acc, acc);
+        }
+        if (s->pi.is_signed) {
+            if (curbyte != (int)s->size - 1) emit("\tldbu r1, %s+%d", areg, (int)s->size - 1);
+            emit("\tandi r2, r1, 15");
+            emit("\txori r2, r2, 13");            /* 0xD: negative; C, F or anything else: not */
+            emit("\tseq %s, r2, r0", sg);
+        } else emit("\tadd %s, r0, r0", sg);
+    }
+}
+
+/* (hi,lo,sg) += (oh,ol,os), sign-magnitude in limbs of base 10^9 */
+static void emit_dec_add(const char *hi, const char *lo, const char *sg, const char *oh, const char *ol, const char *os)
+{
+    int Lsame = new_label(), Lless = new_label(), Lsub = new_label(), Ldone = new_label(), Lnz = new_label();
+    emit_li("r4", 1000000000);
+    emit("\tbeq %s, %s, .L%d", sg, os, Lsame);
+    emit("\tbltu %s, %s, .L%d", hi, oh, Lless);
+    emit("\tbne %s, %s, .L%d", hi, oh, Lsub);
+    emit("\tbltu %s, %s, .L%d", lo, ol, Lless);
+    emit_label(Lsub);                              /* |x| >= |y|: x - y, x's sign */
+    emit("\tsltu r2, %s, %s", lo, ol);
+    emit("\tsub %s, %s, %s", lo, lo, ol);
+    emit("\tsub %s, %s, %s", hi, hi, oh);
+    emit("\tsub %s, %s, r2", hi, hi);
+    emit("\tbeq r2, r0, .L%d", Ldone);
+    emit("\tadd %s, %s, r4", lo, lo);
+    emit("\tjal r0, .L%d", Ldone);
+    emit_label(Lless);                             /* |y| > |x|: y - x, y's sign */
+    emit("\tsltu r2, %s, %s", ol, lo);
+    emit("\tsub %s, %s, %s", lo, ol, lo);
+    emit("\tsub %s, %s, %s", hi, oh, hi);
+    emit("\tsub %s, %s, r2", hi, hi);
+    emit("\tadd %s, %s, r0", sg, os);
+    emit("\tbeq r2, r0, .L%d", Ldone);
+    emit("\tadd %s, %s, r4", lo, lo);
+    emit("\tjal r0, .L%d", Ldone);
+    emit_label(Lsame);                             /* one sign: x + y */
+    emit("\tadd %s, %s, %s", lo, lo, ol);
+    emit("\tadd %s, %s, %s", hi, hi, oh);
+    emit("\tbltu %s, r4, .L%d", lo, Ldone);
+    emit("\tsub %s, %s, r4", lo, lo);
+    emit("\taddi %s, %s, 1", hi, hi);
+    emit_label(Ldone);
+    emit("\tadd r2, %s, %s", hi, lo);              /* zero is positive */
+    emit("\tbne r2, r0, .L%d", Lnz);
+    emit("\tadd %s, r0, r0", sg);
+    emit_label(Lnz);
+}
+
+/* bring (hi,lo) inside s's picture: the high-order digits past it go */
+static void emit_dec_trunc(Sym *s, const char *hi, const char *lo)
+{
+    int D = s->pi.digits;
+    if (D > 9) { emit_li("r2", pow10l(D - 9)); emit("\trem %s, %s, r2", hi, hi); }
+    else { emit_li("r2", pow10l(D)); emit("\trem %s, %s, r2", lo, lo); emit("\tadd %s, r0, r0", hi); }
+}
+
+/* (hi,lo,sg), already inside the picture -> item s at areg */
+static void emit_dec_store(Sym *s, const char *areg, const char *hi, const char *lo, const char *sg)
+{
+    int D = s->pi.digits, split = D > 9 ? D - 9 : 0, d = D - 1;
+    emit_li("r4", 10);
+    /* the next digit, least significant first, into reg; the limb is
+     * divided down unless this was its last digit */
+#define DEC_DIGIT(reg) do { const char *src_ = d < split ? hi : lo; \
+        emit("\trem %s, %s, r4", reg, src_); \
+        if (d != split && d != 0) emit("\tdiv %s, %s, r4", src_, src_); d--; } while (0)
+    if (s->usage == U_DISPLAY) {
+        while (d >= 0) {
+            int at = d;
+            DEC_DIGIT("r2");
+            emit("\taddi r2, r2, 48");
+            emit("\tstb %s+%d, r2", areg, at);
+        }
+        if (s->pi.is_signed) {
+            int L = new_label();
+            emit("\tbeq %s, r0, .L%d", sg, L);
+            emit("\tldbu r2, %s+%d", areg, D - 1);
+            emit("\taddi r2, r2, 64");             /* '0'..'9' -> 'p'..'y' */
+            emit("\tstb %s+%d, r2", areg, D - 1);
+            emit_label(L);
+        }
+    } else {
+        for (int b = (int)s->size - 1; b >= 0; b--) {
+            if (b == (int)s->size - 1) {
+                if (s->pi.is_signed) emit("\taddi r2, %s, 12", sg);   /* C, or D when negative */
+                else emit("\taddi r2, r0, 15");
+            } else DEC_DIGIT("r2");
+            if (d >= 0) { DEC_DIGIT("r1"); emit("\tslli r1, r1, 4"); emit("\tadd r2, r2, r1"); }
+            emit("\tstb %s+%d, r2", areg, b);
+        }
+    }
+#undef DEC_DIGIT
+}
+
+static int dec_add_ok(Opnd *ops, int n, Ref *rs, int nr, int size_err)
+{
+    if (size_err || n != 1 || ops[0].kind != O_REF || ops[0].all_sub) return 0;
+    if (!sym_dec_ok(ops[0].ref.sym) || !ref_dec_addr_ok(&ops[0].ref)) return 0;
+    for (int i = 0; i < nr; i++) {
+        if (!sym_dec_ok(rs[i].sym) || !ref_dec_addr_ok(&rs[i])) return 0;
+        if (rs[i].sym->pi.scale != ops[0].ref.sym->pi.scale) return 0;
+    }
+    return 1;
+}
+
+static void emit_dec_addto(Opnd *op, Ref *rs, int nr, int subtract)
+{
+    for (int i = 0; i < nr; i++) {
+        Sym *d = rs[i].sym;
+        emit_ref_addr(&rs[i], "r3");
+        emit("\tstw sp+%d, r3", SLOT_A);
+        emit_ref_addr(&op->ref, "r3");
+        emit_dec_load(op->ref.sym, "r3", "r8", "r9", "r10");
+        if (subtract) emit("\txori r10, r10, 1");
+        emit("\tldw r3, sp+%d", SLOT_A);
+        emit_dec_load(d, "r3", "r5", "r6", "r7");
+        emit_dec_add("r5", "r6", "r7", "r8", "r9", "r10");
+        emit_dec_trunc(d, "r5", "r6");
+        if (!d->pi.is_signed) emit("\tadd r7, r0, r0");   /* an unsigned receiver takes the magnitude */
+        emit_dec_store(d, "r3", "r5", "r6", "r7");
+    }
+}
+
 static void parse_add(void)
 {
     if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
@@ -4724,6 +4940,11 @@ static void parse_add(void)
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 0, ops_all_nonneg(ops, n)) && hot_sum_fits(ops, n);
     if (hot) emit_hot_sum(ops, n);
+    else if (!giving && dec_add_ok(ops, n, rs, nr, size_err)) {
+        emit_dec_addto(&ops[0], rs, nr, 0);
+        parse_size_error_clauses(size_err, "end-add");
+        return;
+    }
     else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
     parse_size_error_clauses(size_err, "end-add");
@@ -4754,6 +4975,11 @@ static void parse_subtract(void)
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 1, 0) && (!giving || opnd_hot_int(&minuend)) &&
               hot_sum_fits(ops, n);
+    if (!hot && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
+        emit_dec_addto(&ops[0], rs, nr, 1);
+        parse_size_error_clauses(size_err, "end-subtract");
+        return;
+    }
     if (hot) {
         emit_hot_sum(ops, n);
         if (giving) {

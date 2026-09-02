@@ -522,6 +522,39 @@ The counted estimate was ~90M; the batch gave back 80M. cobol/tests
 99/99 with the oracle agreeing on the new case, CCVS-85 unchanged,
 majesty's reports identical. What remains of #29 is the scaled ADD.
 
+**The scaled ADD, landed 2026-09-02 -- and it was not the shape the
+benches measured.** Keyed by descriptor, all 208,889 `cob_top_addto`
+calls were a **COMP-3** receiver of eleven digits at scale 2 with a
+same-scale operand: DISPLAY 9(9)V99 (42%), the same COMP-3 picture
+signed (25%) or unsigned (26%). `ws-debits`, `ws-total-debits`,
+`yt-debits(i)`, `ws-detail-balance`. Same scale, so nothing to align --
+and that is what makes it a word-sized problem: each item is read into
+two limbs of base 10^9 and a sign, the limbs add or subtract as
+sign-magnitude with one carry, one REM brings the result inside the
+picture, and it is written back as nibbles or digits. No call, no
+descriptor, no 64-bit arithmetic; eighteen digits is the ceiling.
+`sym_dec_ok` / `emit_dec_load` / `emit_dec_add` / `emit_dec_store`,
+for ADD x TO r and SUBTRACT x FROM r with one operand, DISPLAY (trailing
+overpunch or unsigned) or COMP-3 both sides, ROUNDED admitted (nothing
+to round), SIZE ERROR, GIVING and literals left generic.
+
+    per ADD, the batch's shape (bp)          919 -> 176
+    batch, guest instructions   1,439,926,783 -> 1,292,295,055  (-10.3%)
+    gl038 173M -> 122M, gl034 226M -> 188M, gl036 220M -> 181M
+
+free/decadd pins signs crossing zero both ways, a zero result's sign,
+the carry between the limbs, truncation past the picture (the 85
+magnitude rule for an unsigned receiver, kept), an even digit count's
+pad nibble, the DISPLAY receiver's overpunch, eighteen digits, a
+subscripted receiver, two receivers, an item added to itself, ROUNDED.
+Thirty lines, GnuCOBOL identical on all of them. cobol/tests 100/100,
+CCVS-85 unchanged, majesty's reports identical.
+
+Today's three inline shapes together: the batch 1.520 G -> 1.292 G,
+-15%. What the runtime still does per batch: 260k `cob_move`, 12k
+`cob_top_store` with a literal (gl036), and the file I/O. #29's levers
+are spent.
+
 ### 25. ~~An unsigned COMP-5 value past 2^31 is stored as its magnitude~~ — GitHub #28, RESOLVED 2026-09-02
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
 is a plain unsigned word, but a value with the top bit set was treated
