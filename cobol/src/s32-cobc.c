@@ -1956,7 +1956,11 @@ static void finish_data_division(void)
 static FILE *g_out;
 static int g_nlabel;
 
-typedef struct { char label[32]; unsigned char *bytes; int len; } Lit;
+/* label is heap-allocated, NOT an array in this struct.  lit_label hands
+ * its pointer to callers who hold it while building an Arg list, and
+ * g_lit is realloc'd -- an inline array would move out from under them.
+ * See the comment on lit_label. */
+typedef struct { char *label; unsigned char *bytes; int len; } Lit;
 static Lit *g_lit; static int g_nlit, g_lcap;
 
 /* descriptors: emitted into .rodata at the end */
@@ -2076,13 +2080,35 @@ static void relax_branches(void)
 
 static int new_label(void) { return g_nlabel++; }
 
+/* The returned pointer MUST outlive further calls to this function.
+ *
+ * Callers hold it: opnd_args stores it in an Arg, and a statement builds
+ * several Args before emit_args consumes them -- parse_inspect_range does
+ * exactly that, one pattern_args per BEFORE/AFTER phrase.  While the label
+ * lived in an array inside g_lit, the second call could realloc the table
+ * and leave the first caller's pointer dangling; the Arg then emitted
+ * `%hi()` with no symbol, which the assembler resolves to address 0.
+ *
+ * That is CCVS NC122A: `REPLACING ALL "A" BY "E"` searched for whatever
+ * byte sits at address 0 instead of "A", so nothing was replaced.  It
+ * needs the table to cross a power of two between the two calls, which is
+ * why it took a program with ~80 literals to show and why every small
+ * reproduction of the statement looked fine.  #29 shape (2) did not create
+ * it -- it changed how many literals a comparison emits, which moved the
+ * boundary onto this pair.  It was latent for as long as Args have been
+ * built before being emitted.
+ *
+ * So the label is allocated separately and never moves. */
 static const char *lit_label(const unsigned char *bytes, int len)
 {
     for (int i = 0; i < g_nlit; i++)
         if (g_lit[i].len == len && !memcmp(g_lit[i].bytes, bytes, len)) return g_lit[i].label;
     if (g_nlit == g_lcap) { g_lcap = g_lcap ? g_lcap * 2 : 32; g_lit = realloc(g_lit, g_lcap * sizeof *g_lit); }
     Lit *l = &g_lit[g_nlit++];
-    snprintf(l->label, sizeof l->label, ".Lstr%d", g_nlit - 1);
+    char buf[32];
+    snprintf(buf, sizeof buf, ".Lstr%d", g_nlit - 1);
+    size_t n = strlen(buf) + 1;
+    l->label = xmalloc(n); memcpy(l->label, buf, n);
     l->bytes = xmalloc(len); memcpy(l->bytes, bytes, len); l->len = len;
     return l->label;
 }
