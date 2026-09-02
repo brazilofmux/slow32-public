@@ -28,6 +28,16 @@
 #   COBC_SRC=/tmp/buggy.c ./run-cobc-asan.sh NC     # must FAIL
 #   ./run-cobc-asan.sh NC                           # must PASS
 #
+# EXIT CODES, following run-differential.sh: 0 the check ran and was clean,
+# 1 the check ran and ASan reported, 2 THE CHECK COULD NOT RUN -- a module was
+# missing, so the corpus never reaches the growth boundary this exists for.
+# 2 rather than 0 because the colour tells a human and the exit code tells a
+# machine: measured on kagura, which has no newcob.val, this script compiled
+# 83 files and returned green on the very compiler it was written to catch.
+# A caller that wants to tolerate a host without the corpus can treat 2 as a
+# skip -- but it has to decide that, rather than inherit a pass it did not
+# earn.  Nothing consumes the code today; this is for the day something does.
+#
 # Usage: ./run-cobc-asan.sh [module ...]        default: NC
 #   Modules are CCVS-85 directories (NC SQ RL IX ST SM IC RW IF).  The
 #   cobol/tests fixed and free sources are always compiled as well.
@@ -115,9 +125,9 @@ if [ "$reports" -eq 0 ]; then
         echo "${YELLOW}$total compiles, no sanitizer reports"
         echo "  -- but $skipped module(s) were skipped, and cobol/tests alone is"
         echo "     NOT enough to reach the growth boundary this check exists for."
-        echo "     Set CCVS85 to a tree with the modules extracted before"
-        echo "     reading this as a pass.${NC}"
-        exit 0
+        echo "     Set CCVS85 to a tree with the modules extracted.${NC}" >&2
+        echo "ERROR: corpus incomplete; this run did not perform the check" >&2
+        exit 2
     fi
     echo "${GREEN}$total compiles, no sanitizer reports${NC}"
     exit 0
