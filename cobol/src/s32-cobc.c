@@ -3165,6 +3165,47 @@ static int opnd_hot_int(Opnd *o)
  * and '2' is 0x32).  So are the separate-sign forms, whose sign character
  * sorts against a digit, and BLANK WHEN ZERO, whose spaces are not digits.
  * GitHub #29. */
+/* The flag test.  After #29's three shapes, 99.7% of the batch's remaining
+ * cob_cmp calls were one shape: a one-byte alphanumeric item against another
+ * or against a one-character literal -- "PERFORM UNTIL ws-eof-flag = 'Y'",
+ * act-crdb, d-lin-type -- 1.06M calls at 84 instructions each, in every
+ * program.  A one-byte alphanumeric relation under the native collating
+ * sequence is a byte load and one compare: no padding (both sides are one
+ * byte), and byte value IS collating order.  Ordering is unsigned, as
+ * cmp_bytes orders it.  Bars: a PROGRAM COLLATING SEQUENCE (the runtime
+ * compares through its table; the text says a unit without one is native,
+ * and that is what this emits), groups, 88s, reference modification, and a
+ * numeric class on either side (that is a digits-as-characters compare with
+ * its own rules).  Both sides literal is a constant, left to the runtime.
+ * GitHub #29, ISSUES-26. */
+static int opnd_onebyte_alnum(Opnd *o)
+{
+    if (o->kind == O_REF) {
+        Sym *s = o->ref.sym;
+        if (o->ref.rm || s->is_group || s->is_cond) return 0;
+        if (s->pi.category != PIC_ALPHANUMERIC && s->pi.category != PIC_ALPHABETIC) return 0;
+        if (s->pi.edited || s->size != 1) return 0;
+        return 1;
+    }
+    if (o->kind == O_STR || o->kind == O_ALL) return o->tok->len == 1;
+    if (o->kind == O_FIG) return strncmp(o->tok->s, "null", 4) != 0;
+    return 0;
+}
+
+static int cmp_is_onebyte(Opnd *x, Opnd *y)
+{
+    if (g_collate >= 0) return 0;
+    if (x->kind != O_REF && y->kind != O_REF) return 0;
+    return opnd_onebyte_alnum(x) && opnd_onebyte_alnum(y);
+}
+
+/* r1 = the byte of a one-byte operand (cmp_is_onebyte admitted it) */
+static void emit_onebyte_value(Opnd *o)
+{
+    if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit("\tldbu r1, r3+0"); return; }
+    emit_li("r1", o->kind == O_FIG ? fig_byte(o->tok->s) : (o->tok->s[0] & 255));
+}
+
 static int cmp_is_bytewise(Opnd *x, Opnd *y)
 {
     if (x->kind != O_REF || y->kind != O_REF) return 0;
@@ -3602,7 +3643,20 @@ static void emit_cond_value(Cond *c)
         if (c->neg) emit("\txori r1, r1, 1");
         return;
     }
-    if (cmp_is_bytewise(&c->x, &c->y)) {
+    if (cmp_is_onebyte(&c->x, &c->y)) {
+        emit_onebyte_value(&c->x);
+        emit("\tstw sp+%d, r1", SLOT_A);
+        emit_onebyte_value(&c->y);
+        emit("\tldw r2, sp+%d", SLOT_A);
+        switch (c->op) {
+        case R_EQ: emit("\tseq r1, r2, r1"); break;
+        case R_NE: emit("\tsne r1, r2, r1"); break;
+        case R_LT: emit("\tsltu r1, r2, r1"); break;
+        case R_GT: emit("\tsgtu r1, r2, r1"); break;
+        case R_LE: emit("\tsleu r1, r2, r1"); break;
+        case R_GE: emit("\tsgeu r1, r2, r1"); break;
+        }
+    } else if (cmp_is_bytewise(&c->x, &c->y)) {
         Arg a[3] = { arg_ref(&c->x.ref), arg_ref(&c->y.ref), arg_imm(c->x.ref.sym->size) };
         emit_args(a, 3); emit_call("memcmp");
         switch (c->op) {

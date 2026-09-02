@@ -502,6 +502,26 @@ programs, needs 64-bit inline scaled arithmetic) and the one-byte
 alphanumeric compare (~6%, every program, needs almost nothing).
 Neither is proposed here.
 
+**The one-byte alphanumeric compare, landed 2026-09-02.** `cmp_is_onebyte`:
+a one-byte alphanumeric or alphabetic item against another, a
+one-character literal, `ALL 'x'` or a figurative, under the native
+collating sequence, is a `ldbu` and one SEQ/SNE/SLTU. No padding (both
+sides are one byte) and byte value is collating order, so it is exact
+by construction rather than by choice, unlike shape (1). Bars: a
+PROGRAM COLLATING SEQUENCE (the runtime compares through its table),
+groups, 88s, reference modification, a numeric class on either side,
+both sides literal. free/cmp1byte pins every operator, the ordering
+('a' above 'Z', space below '0'), the figuratives, a subscripted
+element, and the two shapes that must stay on the runtime path and pad
+(`PIC XX` against `'Y'`, `PIC X` against `'Y '`).
+
+    per compare, guest instructions (bx)      91 -> 14
+    batch, guest instructions        1,520,311,792 -> 1,439,926,783  (-5.3%)
+
+The counted estimate was ~90M; the batch gave back 80M. cobol/tests
+99/99 with the oracle agreeing on the new case, CCVS-85 unchanged,
+majesty's reports identical. What remains of #29 is the scaled ADD.
+
 ### 25. ~~An unsigned COMP-5 value past 2^31 is stored as its magnitude~~ — GitHub #28, RESOLVED 2026-09-02
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
 is a plain unsigned word, but a value with the top bit set was treated
