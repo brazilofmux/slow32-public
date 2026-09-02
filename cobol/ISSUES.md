@@ -328,6 +328,55 @@ corpus**, and never on one engine. Otherwise the next person re-sweeps on
 b3big on an arm64 box and moves the constant to 0 with good evidence and
 a worse result.
 
+### 26. Comparison cost — a DISPLAY numeric relation was a runtime call — GitHub #29, shape (1) landed 2026-09-02
+#27 widened the inline compare to four-byte unsigned BINARY items and
+stopped there, because `opnd_hot_cmp` requires *both* operands to be
+`is_hot_int` and that bails on `U_DISPLAY`. So every relation touching
+a DISPLAY numeric still built two descriptors and called `cob_cmp`.
+Measured on the corpus afterwards, `cob_cmp` was called 2,365,352 times
+against `cob_move`'s 271,445 -- comparisons outnumber generic moves 8.7
+to 1, and #27 had optimised the moves.
+
+Shape (1): a relation between two items of one byte-identical **unsigned
+DISPLAY** descriptor, no editing and no P, lowers to `memcmp`. Same
+length, digits and scale, so the points line up and byte order is
+algebraic order.
+
+    per compare, guest instructions       536 -> 73
+    b5big, slow32-fast                  34.2s -> 3.8s
+    b5big, slow32-dbt                   2.83s -> 0.32s
+    corpus batch.sh (kagura)            2.03s -> 1.79s, reports identical
+
+**Signed is excluded as a correctness condition, not a precaution.** An
+overpunched last byte does not order like its digit: `'001B'` against
+`'0012'`, GnuCOBOL and gcobol both say *less*, `memcmp` says *greater*
+(`B` is 0x42, `2` is 0x32). Two independent implementations against the
+byte order. The separate-sign forms and BLANK WHEN ZERO are out for the
+same reason -- a sign character or a space sorting against a digit.
+
+**What it is not: a conformance fix.** An earlier draft said so on
+GnuCOBOL's evidence alone and was wrong. The text compares the
+*algebraic value* of numeric operands whatever their usage, and for
+canonical fields of one descriptor byte order and algebraic order
+coincide -- so the two readings cannot disagree on any datum the
+standard admits. They part only on a numeric item holding non-digits,
+which the text does not define, and there three compilers give three
+answers ('  12' against '0012'): GnuCOBOL compares bytes, gcobol 15.3.0
+and s32-cobc-before decode. We moved onto GnuCOBOL's answer -- which is
+the implementation ranked *last* for grounds, so note that the byte
+compare is taken on its own merits (exact on every defined value, ~7x
+cheaper) and the agreement is a side effect. free/cmpbytes pins it so a
+later change is visible.
+
+Do not reason from this to #27's identical-descriptor MOVE or back. Same
+surface shape, different footing: a MOVE between identical descriptors
+is byte movement and all three implementations agree on exactly the
+bytes that split them here.
+
+Not done: shapes (2) and (3) of the issue -- an unsigned DISPLAY integer
+against a binary or literal operand (gl024's and gl036's hot path), and
+ADD/SUBTRACT on DISPLAY and packed at 896 instructions.
+
 ### 25. An unsigned COMP-5 value past 2^31 is stored as its magnitude — GitHub #28
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
 is a plain unsigned word, but both store paths treat a value with the

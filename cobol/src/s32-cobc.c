@@ -3080,6 +3080,67 @@ static int opnd_hot_int(Opnd *o)
     return 0;
 }
 
+/* Two operands whose descriptors are byte-identical and are unsigned
+ * DISPLAY numeric with no editing and no P positions: the comparison is a
+ * memcmp.  Same length, same digit count, same scale, so the decimal points
+ * line up and every character of a canonical field is '0'..'9' -- byte order
+ * IS numeric order.
+ *
+ * It is exact for every value the standard defines, and NOT a conformance
+ * fix -- an earlier draft of this comment claimed it was, on GnuCOBOL's
+ * evidence alone, and that is wrong.  The 1985 text has a numeric relation
+ * condition compare the *algebraic value* of the operands, whatever their
+ * usage; for two canonical fields of one descriptor, byte order and
+ * algebraic order coincide, so the two readings cannot disagree on any
+ * datum the standard admits.
+ *
+ * They disagree only on a numeric item holding non-digits, which the
+ * standard does not define, and there nothing is authoritative -- measured
+ * 2026-09-02, three compilers give three answers.  A PIC 9(4) holding
+ * '  12' against one holding '0012':
+ *
+ *      GnuCOBOL   differs, and LESS   (a byte compare; ' ' is 0x20)
+ *      gcobol     equal               (decodes, reading a space as zero)
+ *      us, before equal               (the same decode)
+ *      us, now    differs, and LESS   (GnuCOBOL's answer)
+ *
+ * So this moves us off gcobol's answer and onto GnuCOBOL's on data that is
+ * already outside the language.  Note which way that goes: gcobol's decode
+ * is the literal reading of the text, and it is not the implementation we
+ * would follow by preference.  The byte compare is adopted because it is
+ * exact on every defined value and much cheaper -- NOT because GnuCOBOL
+ * does it -- and matching GnuCOBOL here is a side effect, not a warrant.
+ * It is a choice on undefined input; free/cmpbytes records it so that
+ * changing it later is visible rather than silent.
+ *
+ * Do not reason from here to the identical-descriptor MOVE of #27, or back.
+ * They look alike and rest on different ground: a MOVE between identical
+ * descriptors is byte movement, and all three implementations agree on it
+ * for exactly the bytes that split them here.  A numeric relation is
+ * defined on the algebraic VALUE, which is why implementations diverge as
+ * soon as the bytes are not one.
+ *
+ * Signed is excluded, and that is a correctness condition rather than
+ * caution: an overpunched last byte does not order like its digit, and
+ * memcmp lands on the opposite side of GnuCOBOL's answer ('001B' against
+ * '0012' -- GnuCOBOL says less, memcmp says greater, because 'B' is 0x42
+ * and '2' is 0x32).  So are the separate-sign forms, whose sign character
+ * sorts against a digit, and BLANK WHEN ZERO, whose spaces are not digits.
+ * GitHub #29. */
+static int cmp_is_bytewise(Opnd *x, Opnd *y)
+{
+    if (x->kind != O_REF || y->kind != O_REF) return 0;
+    if (x->ref.rm || y->ref.rm) return 0;
+    Sym *a = x->ref.sym, *b = y->ref.sym;
+    if (a->is_group || b->is_group || a->is_cond || b->is_cond) return 0;
+    if (sym_desc(a) != sym_desc(b)) return 0;
+    const Desc *d = &g_desc[sym_desc(a)];
+    if (d->cat != COB_NUM || d->usage != COB_U_DISPLAY) return 0;
+    if (d->flags & (COB_F_SIGNED | COB_F_SEPLEAD | COB_F_SEPTRAIL | COB_F_LEAD | COB_F_BLANKZ)) return 0;
+    if (d->picstr[0]) return 0;          /* an edited picture, or P scaling */
+    return 1;
+}
+
 /* Comparison is more permissive than arithmetic.  opnd_hot_int bars the
  * four-byte unsigned item because no signed SLT can order a value that uses
  * the top bit, and a partial sum of such operands overflows a word -- both
@@ -3397,7 +3458,18 @@ static void emit_cond_value(Cond *c)
         if (c->neg) emit("\txori r1, r1, 1");
         return;
     }
-    if (opnd_hot_cmp(&c->x) && opnd_hot_cmp(&c->y)) {
+    if (cmp_is_bytewise(&c->x, &c->y)) {
+        Arg a[3] = { arg_ref(&c->x.ref), arg_ref(&c->y.ref), arg_imm(c->x.ref.sym->size) };
+        emit_args(a, 3); emit_call("memcmp");
+        switch (c->op) {
+        case R_EQ: emit("\tseq r1, r1, r0"); break;
+        case R_NE: emit("\tsne r1, r1, r0"); break;
+        case R_LT: emit("\tslt r1, r1, r0"); break;
+        case R_GT: emit("\tsgt r1, r1, r0"); break;
+        case R_LE: emit("\tsle r1, r1, r0"); break;
+        case R_GE: emit("\tsge r1, r1, r0"); break;
+        }
+    } else if (opnd_hot_cmp(&c->x) && opnd_hot_cmp(&c->y)) {
         /* unsigned ordering whenever neither side can be negative: it is
          * equally correct for the operands a signed compare would also have
          * handled, and it is the only correct one when a four-byte unsigned
