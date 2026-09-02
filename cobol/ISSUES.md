@@ -430,14 +430,44 @@ instructions self-hosted against 718 under LLVM.
 **Lesson, and it is the cheap one: ask which compiler builds the thing you
 are optimising before you optimise around its output.**
 
-### 25. An unsigned COMP-5 value past 2^31 is stored as its magnitude — GitHub #28
+### 25. ~~An unsigned COMP-5 value past 2^31 is stored as its magnitude~~ — GitHub #28, RESOLVED 2026-09-02
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
-is a plain unsigned word, but both store paths treat a value with the
-top bit set as negative and store `|v|`. GnuCOBOL keeps the value.
-Nothing in the corpus reaches it -- every unsigned item built from a
-picture holds at most 999999999 -- which is also why free/hotarith
-cannot prove its unsigned compare is *necessary* rather than merely
-equivalent. Filed rather than fixed: it wants its own CCVS-85 pass.
+is a plain unsigned word, but a value with the top bit set was treated
+as negative and stored as `|v|`. `ADD 2000000000 TO` a `PIC 9(9) COMP-5`
+holding 2000000000 gave 294967296.
+
+**One site, not two.** The filing named `cob_put_num_x` as well, and it
+was never wrong: `cob_get_num` reads an unsigned binary item unsigned,
+so the generic path holds the true 64-bit value and 4000000000 is
+simply 4000000000 there (`ADD v5 TO u5` with two such items was correct
+throughout). The defect was the hot path alone, where the sum is a
+*word* and 0xEE6B2800 is 4000000000 and -294967296 at once; its sign
+fixup chose the latter. The fix is `ref_hot_store`: a four-byte
+unsigned NOTRUNC receiver stays hot only for an ADD of non-negative
+operands, where the result cannot be negative and the word is stored
+as it is; a SUBTRACT, SET DOWN, or a possibly-negative operand takes
+the generic path, where the rule below is decidable. Narrower COMP-5
+items keep a genuine sign in a word and are unchanged.
+
+**The rule, and where GnuCOBOL leaves it.** The filing's "taken modulo
+2^32 -- stored as-is" and the 85 text's "an unsigned receiver takes the
+magnitude" coincide on the headline case and part on a negative result.
+Measured (free/notrunc, both compilers): on every MOVE both take the
+magnitude, as the text says. On arithmetic GnuCOBOL 4.0 takes the
+magnitude for `SUBTRACT s9 FROM u5 GIVING u5` and the value modulo 2^32
+for `SUBTRACT s9 FROM u5` -- the same operands, the same result, two
+answers, split by the presence of GIVING (and `COMPUTE u5 = s9 - 10`
+one way, `COMPUTE u5 = u5 - 10` the other). That is a native-binary
+fast path leaking, not a semantics, so the text's rule stands
+everywhere and the seven lines where GnuCOBOL wraps are in
+`notrunc.oracle-expected` (docs/oracles.md). Consistent with the
+COBOL 85 authority order: GnuCOBOL is oracle where it agrees with
+the text, and here it does not even agree with itself.
+
+free/notrunc also carries the compare free/hotarith could not: two
+values past 2^31 ordered by SLTU, and PERFORM VARYING stepping across
+it. Validated: cobol/tests with the oracle, CCVS-85 unchanged
+(8049 of 8160, 0 fail), majesty's corpus green.
 
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 

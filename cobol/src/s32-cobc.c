@@ -4469,10 +4469,26 @@ static int all_hot(Opnd *ops, int n)
     return 1;
 }
 
-static int refs_hot(Ref *rs, int n)
+/* May this receiver take the hot path's word?  A four-byte unsigned NOTRUNC
+ * item uses its top bit for value, so the sign fixup in emit_store_receivers
+ * cannot tell 4000000000 from -294967296 -- it negated the former, and
+ * "ADD 2000000000 TO" a PIC 9(9) COMP-5 holding 2000000000 stored 294967296
+ * (GitHub #28).  It stays hot only where the result cannot be negative, an
+ * ADD of non-negative operands; a SUBTRACT, or an operand that may be
+ * negative, takes the generic path, where cob_put_num_x has all 64 bits and
+ * the 85 rule (an unsigned receiver takes the magnitude) is decidable.  The
+ * narrower COMP-5 items keep their sign in a word and need none of this. */
+static int ref_hot_store(Ref *r, int subtract, int nonneg)
 {
-    for (int i = 0; i < n; i++)
-        if (!is_hot_int(rs[i].sym) && !is_display_int(rs[i].sym)) return 0;
+    Sym *s = r->sym;
+    if (!is_hot_int(s) && !is_display_int(s)) return 0;
+    if (!s->pi.is_signed && s->size == 4 && sym_notrunc(s) && (subtract || !nonneg)) return 0;
+    return 1;
+}
+
+static int refs_hot(Ref *rs, int n, int subtract, int nonneg)
+{
+    for (int i = 0; i < n; i++) if (!ref_hot_store(&rs[i], subtract, nonneg)) return 0;
     return 1;
 }
 
@@ -4599,7 +4615,11 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
              * that stores one truncates, so adding a bounded non-negative
              * sum to it lands below twice the limit and cannot go negative. */
             long long bound = -1; int nonneg = 0;
-            if (sum_mag >= 0 && !subtract) {
+            if (!subtract && !d->pi.is_signed && d->size == 4 && sym_notrunc(d)) {
+                /* the whole word is value (ref_hot_store admitted it only
+                 * with non-negative operands): no picture, no sign fixup */
+                nonneg = sum_nonneg;
+            } else if (sum_mag >= 0 && !subtract) {
                 if (giving) { bound = sum_mag; nonneg = sum_nonneg; }
                 else if (!d->pi.is_signed && (d->usage == U_BINARY || is_display_int(d)) &&
                          d->pi.digits > 0 && d->pi.digits < 19) {
@@ -4647,7 +4667,8 @@ static void parse_add(void)
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
     int size_err = at_size_error_clause();
 
-    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) && refs_hot(rs, nr) && hot_sum_fits(ops, n);
+    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
+              refs_hot(rs, nr, 0, ops_all_nonneg(ops, n)) && hot_sum_fits(ops, n);
     if (hot) emit_hot_sum(ops, n);
     else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
@@ -4677,7 +4698,7 @@ static void parse_subtract(void)
     int size_err = at_size_error_clause();
 
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
-              refs_hot(rs, nr) && (!giving || opnd_hot_int(&minuend)) &&
+              refs_hot(rs, nr, 1, 0) && (!giving || opnd_hot_int(&minuend)) &&
               hot_sum_fits(ops, n);
     if (hot) {
         emit_hot_sum(ops, n);
@@ -5227,7 +5248,7 @@ static void emit_body(Body *b)
 static void emit_add_to_ref(Opnd *by, Ref *var)
 {
     Opnd ops[1] = { *by }; Ref rs[1] = { *var };
-    int hot = opnd_hot_int(by) && (is_hot_int(var->sym) || is_display_int(var->sym));
+    int hot = opnd_hot_int(by) && ref_hot_store(var, 0, ops_all_nonneg(ops, 1));
     int rd[1] = { 0 };
     if (hot) emit_hot_sum(ops, 1);
     else emit_push(by);
@@ -5448,7 +5469,7 @@ static void parse_set(void)
     Opnd v; parse_operand(&v); check_numeric_opnd(&v);
     for (int i = 0; i < nr; i++) {
         Opnd ops[1] = { v };
-        int hot = opnd_hot_int(&v) && (is_hot_int(rs[i].sym) || is_display_int(rs[i].sym));
+        int hot = opnd_hot_int(&v) && ref_hot_store(&rs[i], down, ops_all_nonneg(ops, 1));
         int rd[1] = { 0 };
         if (hot) emit_hot_sum(ops, 1); else emit_push(&v);
         emit_store_receivers(&rs[i], rd, 1, hot, 0, down, 0, ops_sum_mag(ops, 1), ops_all_nonneg(ops, 1));

@@ -8,9 +8,8 @@
 *> Not covered here: a four-byte unsigned item holding more than 2^31,
 *> where the unsigned ordering is necessary rather than merely equivalent.
 *> Every such item built from a picture holds at most 999999999, below the
-*> sign bit, so only COMP-5 reaches past it -- and storing such a value is
-*> itself broken today (GitHub #28), so there is no way to set one up here.
-*> Re-add the case with that fix.
+*> sign bit, so only COMP-5 reaches past it; free/notrunc has that case
+*> (GitHub #28, the store that used to lose it).
 identification division.
 program-id. hotarith.
 data division.
