@@ -122,39 +122,11 @@ static const char digit_pairs[201] =
     "90919293949596979899";
 
 /* the low n digits of mag as characters, the least significant at out[n-1] */
-/* a / d and a % d for a 32-bit divisor, without the 64-bit divide.
- *
- * The generic __udivdi3 on this target is a 64-iteration restoring-division
- * bit loop -- about 1300 instructions -- and mag_to_digits ran one per
- * stored value, which was half the cost of an ADD into a scaled DISPLAY
- * receiver (GitHub #29; the profile blamed __ashrdi3, see
- * tools/utilities/ISSUES.md 11).  Here the high half goes through the
- * hardware 32-bit divide, and only the low half needs a loop -- 32
- * iterations of 32-bit work, because the remainder stays below d.
- *
- * Requires d < 2^31 so that (r << 1) cannot overflow: r < d, so r*2+1 <
- * 2^32.  Every divisor this is used with is a power of ten no larger than
- * 10^9, comfortably inside that. */
-static unsigned long long udiv_small(unsigned long long a, unsigned d, unsigned *rem)
-{
-    unsigned hi = (unsigned)(a >> 32), lo = (unsigned)a;
-    unsigned qhi = 0, r = 0;
-    if (hi) { qhi = hi / d; r = hi % d; }
-    unsigned qlo = 0;
-    for (int i = 31; i >= 0; i--) {
-        r = (r << 1) | ((lo >> i) & 1u);
-        qlo <<= 1;
-        if (r >= d) { r -= d; qlo |= 1u; }
-    }
-    *rem = r;
-    return ((unsigned long long)qhi << 32) | qlo;
-}
-
 static void mag_to_digits(unsigned long long mag, char *out, int n)
 {
     while (n > 0) {
         unsigned lo; int take;
-        if (mag >> 32) { unsigned r; unsigned long long q = udiv_small(mag, 1000000000u, &r); lo = r; mag = q; take = 9; }
+        if (mag >> 32) { unsigned long long q = mag / 1000000000ULL; lo = (unsigned)(mag - q * 1000000000ULL); mag = q; take = 9; }
         else { lo = (unsigned)mag; mag = 0; take = n; }
         if (take > n) take = n;
         n -= take;
@@ -170,7 +142,6 @@ static unsigned long long udiv_pow10(unsigned long long a, int m, unsigned long 
     unsigned long long q;
     if (m <= 0) { *rem = 0; return a; }
     if (!(a >> 32) && m <= 9) { unsigned x = (unsigned)a, d = (unsigned)pow10tab[m], qq = x / d; *rem = x - qq * d; return qq; }
-    if (m <= 9) { unsigned r; unsigned long long qq = udiv_small(a, (unsigned)pow10tab[m], &r); *rem = r; return qq; }
     switch (m) {
     case 1: q = a / 10ULL; break;
     case 2: q = a / 100ULL; break;
