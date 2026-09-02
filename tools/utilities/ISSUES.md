@@ -74,3 +74,31 @@ The current tool primarily supports `c` (create/replace) and `t` (list).
 `slow32dis` showed the raw hex address for branch targets.
 
 - **Status**: Fixed. The disassembler now reads the symbol table from both `.s32x` (SYMTAB/STRTAB sections) and `.s32o` (header symbol table) files. Function labels are printed before instructions at symbol addresses, and JAL/branch targets are annotated with symbol names when available.
+
+### 11. `s32-hotspots.py` charges a static function to the global before it
+The map `s32-ld --print-map` writes lists **global** symbols only, and the
+script says so in its own docstring -- "a static function is charged to the
+global before it". That is easy to read past and expensive to hit.
+
+Chasing the cost of `ADD PIC 9(9)V99 TO PIC S9(11)V99` (GitHub #29) the
+profile read:
+
+    53.15%  3189281  __ashrdi3
+    20.12%  1207296  cob_get_num
+    10.18%   610722  mag_to_digits
+
+`__ashrdi3` is a 64-bit arithmetic shift and had no business being half of a
+decimal add. It was not: its body ends at 0x15dd4, and the hot PCs were
+0x15e48-0x15ea4 -- a *static* 64-iteration restoring-division bit loop
+sitting after it, the shared worker behind `__udivdi3`. The real finding was
+one 64-bit divide per store, about 1300 of the 2532 instructions. Reading
+the profile at face value would have sent someone to optimise a shift.
+
+- **Check before trusting an attribution**: disassemble around the hot PCs
+  and look for a function prologue between the named symbol's entry and
+  them. `grep -c` on the symbol name in the disassembly is a quick tell --
+  `__ashrdi3` appeared exactly twice, as one label and one call site, which
+  cannot account for 53% of a run.
+- **Recommendation**: emit local symbols into the map (or a `--local` flag),
+  and failing that, have the script mark an attribution as suspect when the
+  charged PCs lie beyond the next prologue it can find.
