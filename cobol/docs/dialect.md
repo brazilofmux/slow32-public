@@ -470,7 +470,23 @@ given, because majesty's `.prn` oracles were produced under it.
   C-ABI item shows the field's full capacity (3, 5, 10, 19 digits),
   not the picture's digits; DISPLAY of a COMP item shows the picture's.
 - **Numeric DISPLAY sign**: trailing overpunch; a negative last digit
-  is `p`..`y` (X'70'..X'79'). `SIGN SEPARATE` is not implemented yet.
+  is `p`..`y` (X'70'..X'79'), a positive one the plain digit. That is a
+  *choice*, not a rule: the ASCII overpunch is not standardised and
+  compilers differ. `p`..`y` is GnuCOBOL's and Micro Focus's convention
+  and we write the same bytes as GnuCOBOL for every value (measured
+  2026-09-02, `0012` / `001r` / `001p` for +12 / -12 / -10). Data
+  converted from an EBCDIC mainframe carries the other convention --
+  zone C over a digit is +0..+9 (`{ABCDEFGHI`), zone D is -0..-9
+  (`}JKLMNOPQR`) -- and **we do not read it**: `cob_get_num`'s fallback
+  takes the low nibble, which is accidentally right for `A`..`I` and
+  wrong for `{`, `}` and `J`..`R`, where it also loses the sign. Neither
+  we nor GnuCOBOL implement that convention (GnuCOBOL substitutes a zero
+  digit). Reading it has never been asked for; the comment at that line
+  in `libcob/libcob.c` says what a fix would need. GitHub #29.
+- **`SIGN IS SEPARATE`** is implemented, LEADING and TRAILING, and
+  agrees with GnuCOBOL byte for byte: `s9(4) SIGN TRAILING SEPARATE`
+  holds `0012-` / `0012+`, LEADING holds `-0012`. (This line said "not
+  implemented yet" until 2026-09-02, long after it was.)
 - **DISPLAY of a numeric item**: a leading `+`/`-` when the picture is
   signed, every digit of the picture, and a `.` inserted where `V`
   falls (`pic 9(3)v99 value 1.5` displays `001.50`).
