@@ -167,7 +167,7 @@ __udivmoddi3:
 .Ludm_ge:
     # The divisor fits 32 bits: every power of ten to 10^9, so every
     # decimal rescale and every mag_to_digits() step.
-    bne  r6, r0, .Ludm_slow
+    bne  r6, r0, .Ludm_big
     beq  r5, r0, .Ludm_slow
     bne  r4, r0, .Ludm_f64
 
@@ -360,6 +360,90 @@ __udivmoddi3:
     ldw  r18, r29, 28
     addi r29, r29, 32
     jalr r0, r31, 0
+
+.Ludm_big:
+    # A divisor of 2^32 or more.  The loop below still does the division --
+    # this only starts it in the right place.  num >= den here and den_hi
+    # is non-zero, so num_hi is too, and the quotient is under 2^32: only
+    #   sr = msb(num) - msb(den) + 1 = nlz32(den_hi) - nlz32(num_hi) + 1
+    # rounds can set a quotient bit, and 1 <= sr <= 32.  The rounds before
+    # those cannot: at round i the remainder is num >> (i+1), which for
+    # i >= sr is below 2^msb(den) and so below den, meaning every one of
+    # them shifts a zero bit in and subtracts nothing.  Seeding the loop
+    # with that remainder and that counter reaches the same state without
+    # executing them.  libcob divides a 15-digit magnitude by 10^13 on
+    # every numeric MOVE that truncates; there sr is 1, against 64 rounds.
+    addi r9, r6, 0
+    addi r7, r0, 0
+    srli r8, r9, 16
+    bne  r8, r0, .Lnzd_16
+    addi r7, r7, 16
+    slli r9, r9, 16
+.Lnzd_16:
+    srli r8, r9, 24
+    bne  r8, r0, .Lnzd_8
+    addi r7, r7, 8
+    slli r9, r9, 8
+.Lnzd_8:
+    srli r8, r9, 28
+    bne  r8, r0, .Lnzd_4
+    addi r7, r7, 4
+    slli r9, r9, 4
+.Lnzd_4:
+    srli r8, r9, 30
+    bne  r8, r0, .Lnzd_2
+    addi r7, r7, 2
+    slli r9, r9, 2
+.Lnzd_2:
+    blt  r9, r0, .Lnzd_1
+    addi r7, r7, 1
+.Lnzd_1:
+    addi r9, r4, 0
+    addi r10, r0, 0
+    srli r8, r9, 16
+    bne  r8, r0, .Lnzn_16
+    addi r10, r10, 16
+    slli r9, r9, 16
+.Lnzn_16:
+    srli r8, r9, 24
+    bne  r8, r0, .Lnzn_8
+    addi r10, r10, 8
+    slli r9, r9, 8
+.Lnzn_8:
+    srli r8, r9, 28
+    bne  r8, r0, .Lnzn_4
+    addi r10, r10, 4
+    slli r9, r9, 4
+.Lnzn_4:
+    srli r8, r9, 30
+    bne  r8, r0, .Lnzn_2
+    addi r10, r10, 2
+    slli r9, r9, 2
+.Lnzn_2:
+    blt  r9, r0, .Lnzn_1
+    addi r10, r10, 1
+.Lnzn_1:
+    sub  r7, r7, r10
+    addi r7, r7, 1              # r7 = sr
+    # remainder = num >> sr
+    addi r8, r0, 32
+    beq  r7, r8, .Lbig_sr32
+    sub  r8, r8, r7
+    srl  r11, r3, r7
+    sll  r9, r4, r8
+    or   r11, r11, r9
+    srl  r12, r4, r7
+    jal  r0, .Lbig_seed
+.Lbig_sr32:
+    addi r11, r4, 0
+    addi r12, r0, 0
+.Lbig_seed:
+    addi r13, r0, 0
+    addi r14, r0, 0
+    addi r15, r3, 0
+    addi r16, r4, 0
+    addi r17, r7, -1            # bit counter = sr - 1
+    jal  r0, .Ludm_loop
 
 .Ludm_slow:
 

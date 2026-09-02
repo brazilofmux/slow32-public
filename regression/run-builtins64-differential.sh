@@ -18,6 +18,12 @@
 # ~85000 vectors.  The two link lines differ in nothing else, so a mismatch is
 # a real disagreement between the two implementations of the same routine.
 #
+# WHAT IT DOES NOT CHECK IS COST.  It compares answers.  As of the sr-seeding
+# change, builtins64.s is FASTER than runtime/builtins.c for a divisor of 2^32
+# or more -- the C still runs all 64 rounds there -- so a passing run no longer
+# means the two are the same routine written twice.  It means they agree on
+# every answer.  Do not read a green here as "the copies have not drifted".
+#
 # The vectors cover every class the dispatch splits on, since a fast path is
 # exactly where a divide routine goes wrong: 26x26 edge pairs (0, 1, 2^31,
 # 2^32, 2^63, ~0, and neighbours), 40000 PRNG pairs with both operands
