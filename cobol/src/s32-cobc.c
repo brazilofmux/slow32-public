@@ -3195,14 +3195,29 @@ static int opnd_display_int(Opnd *o)
  * stays positive.  An unsigned item cannot hold a negative and cob_put_num
  * would never write those bytes, so that is undefined input on both sides.
  * GitHub #29. */
+/* NOTHING HERE MAY TOUCH r11.  r11 is the subscript accumulator, and
+ * emit_ref_addr holds a partial sum in it across the reference-modification
+ * start expression -- which goes through emit_expr_tokens, emit_push and so
+ * reaches this function.  The first version of this loop kept the constant
+ * ten in r11 and silently miscompiled `e(i)(d - 1:2)`: the accumulator
+ * became 10, so the subscript resolved to the wrong element.  It read
+ * correctly in testing only because the table's element size was also 10.
+ * That was CCVS NC122A's regression.  Hence the multiply by ten as
+ * (x << 3) + (x << 1), which needs no register beyond r2 and the
+ * accumulator: two more instructions per digit than a `mul`, against the
+ * ~28 per digit this replaces, and no invariant to remember. */
 static void emit_display_decode(int n, const char *areg, const char *dreg)
 {
-    if (n > 1) emit_li("r11", 10);
     for (int i = 0; i < n; i++) {
+        if (i) {
+            emit("\tslli r2, %s, 3", dreg);        /* x * 8 */
+            emit("\tslli %s, %s, 1", dreg, dreg);  /* x * 2 */
+            emit("\tadd %s, %s, r2", dreg, dreg);  /* x * 10 */
+        }
         emit("\tldbu r2, %s+%d", areg, i);
         emit("\tandi r2, r2, 15");
         if (i == 0) emit("\tadd %s, r2, r0", dreg);
-        else { emit("\tmul %s, %s, r11", dreg, dreg); emit("\tadd %s, %s, r2", dreg, dreg); }
+        else emit("\tadd %s, %s, r2", dreg, dreg);
     }
 }
 
@@ -3212,12 +3227,18 @@ static void emit_display_decode(int n, const char *areg, const char *dreg)
  * plain radix loop and vreg may be consumed.  GitHub #29 shape (3). */
 static void emit_display_encode(int n, const char *areg, const char *vreg)
 {
-    emit_li("r11", 10);
+    /* Ten has to live in a register -- there is no divide-immediate -- and by
+     * the rule above it must not be r11.  r4 is an argument register: caller
+     * saved, dead outside a call's setup, and this sequence contains no call.
+     * The store paths that reach here (emit_store_receivers' hot branch and
+     * emit_move's) have finished with emit_ref_addr before calling, so no
+     * argument is live either. */
+    emit_li("r4", 10);
     for (int i = n - 1; i >= 0; i--) {
-        emit("\trem r2, %s, r11", vreg);
+        emit("\trem r2, %s, r4", vreg);
         emit("\taddi r2, r2, 48");
         emit("\tstb %s+%d, r2", areg, i);
-        if (i) emit("\tdiv %s, %s, r11", vreg, vreg);
+        if (i) emit("\tdiv %s, %s, r4", vreg, vreg);
     }
 }
 
