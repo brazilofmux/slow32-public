@@ -20,7 +20,6 @@ declare -A FILES_TO_SYNC=(
     ["runtime/Makefile"]="runtime/Makefile"
     ["runtime/debug_char.s"]="runtime/debug_char.s"
     ["Makefile"]="Makefile"
-    ["tools/compile-c.sh"]="tools/compile-c.sh"
     ["CLAUDE.md"]="CLAUDE.md"
     ["tests/test_64bit_div_args.c"]="tests/test_64bit_div_args.c"
 )

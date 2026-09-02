@@ -126,7 +126,7 @@ ninja -C build
 ```bash
 # Build a SLOW-32 binary (using the toolchain)
 cd slow-32
-./tools/compile-c.sh examples/hello.c hello.s32x
+./scripts/compile.sh examples/hello.c hello.s32x
 
 # Run in reference emulator
 ./tools/emulator/slow32 hello.s32x
@@ -252,7 +252,7 @@ See `slow-32/tools/emulator/s32x_loader.h` for format details.
 
 - **Always link with `crt0.s32o` first** - Contains `_start` entry point at address 0
 - Link order: `crt0.s32o` → program objects → `libc_mmio.s32a` (or `libc_debug.s32a`) → `libs32.s32a` — libc before libs32, matching the root CLAUDE.md
-- Use `slow-32/tools/compile-c.sh` helper script for correct linking
+- Use `slow-32/scripts/compile.sh` helper script for correct linking
 
 ### Memory Protection
 
