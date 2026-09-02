@@ -192,7 +192,17 @@ JSON
                     continue
                 fi
             else
-                note="oracle refused it: $(grep -m1 error "$W/$name.orclog" | cut -c1-60)"
+                # An oracle refusal used to be a note on a PASS, which is how
+                # free/identmove -- the test carrying a conformance argument
+                # that is *about* what GnuCOBOL does -- went green for a day
+                # without GnuCOBOL ever compiling it (COMP-3 under
+                # -std=cobol85).  A test the oracle cannot build is a test
+                # with no oracle, and that has to be a decision someone wrote
+                # down: say "default dialect" if it needs GnuCOBOL's own
+                # dialect, or "no oracle" if it cannot be checked there at all.
+                report "$fmt/$name" 1 "oracle refused it: $(grep -m1 error "$W/$name.orclog" | cut -c1-60)"
+                sed -n '1,3p' "$W/$name.orclog"
+                continue
             fi
         fi
         report "$fmt/$name" 0 "$note"
