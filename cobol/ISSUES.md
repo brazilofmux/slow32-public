@@ -373,9 +373,42 @@ surface shape, different footing: a MOVE between identical descriptors
 is byte movement and all three implementations agree on exactly the
 bytes that split them here.
 
-Not done: shapes (2) and (3) of the issue -- an unsigned DISPLAY integer
-against a binary or literal operand (gl024's and gl036's hot path), and
-ADD/SUBTRACT on DISPLAY and packed at 896 instructions.
+**Shape (2), landed 2026-09-02.** An unsigned DISPLAY integer of at most
+nine digits -- below 10^9, so it fits a word -- decodes in line on the
+compare path and compares in a register. This is the MIXED case, `PIC
+9(8)` against a binary or a literal, which shape (1) cannot reach by
+construction, and the Macbook's per-program numbers had already
+identified it: after shape (1), gl025 went 1.00x -> 1.55x while gl024
+stayed at 39,504,167 instructions to the byte, because gl024 and gl036
+compare `PIC 9(8)` DISPLAY against a `usage signed-int`.
+
+    per compare, guest instructions   498 -> 39
+    b6big, slow32-dbt               2.865s -> 0.141s
+
+The decode masks with `& 15` rather than subtracting `'0'`, which is what
+`cob_get_num` does -- digits mask to themselves, a space masks to 0
+(cob_get_num's space-is-zero rule), anything else to its low nibble (its
+fallback). So unlike shapes (1) and (3) this one has no undefined-input
+divergence at all. It was free; it would have been careless not to take.
+
+**Shape (3), landed 2026-09-02.** The operand half was worth 2% and the
+receiver half was worth 12x, which is worth knowing in that order: `ADD 1
+TO` a `PIC 9(7)` DISPLAY cost 644 instructions because `cob_top_addto`
+does a `cob_get_num` *and* a `cob_put_num` on the receiver. With
+`emit_load_int` decoding a DISPLAY integer and `emit_store_int` encoding
+one, the existing hot machinery works unchanged and it costs 54.
+PERFORM VARYING and SET UP/DOWN BY on a DISPLAY index reach it too.
+
+Two semantics had to survive, and free/hotdisp pins them: a DISPLAY item
+is *exactly* its digits, with none of the slack that lets
+`emit_trunc_bounded` skip a binary field, so 999 + 1 in a `PIC 9(3)` is
+000; and an unsigned receiver takes the magnitude, so 3 - 5 is 002. All
+nine lines agree with GnuCOBOL 4.0 *and* gcobol 15.3.0.
+
+**Still out of reach**, and it is the issue's headline number: `ADD PIC
+9(9)V99 TO PIC S9(11)V99` at 896. Eleven digits with a scale is not a
+word; it needs 64-bit inline arithmetic. gl036 does one per detail line,
+so that is what would move gl036, and nothing here does.
 
 ### 25. An unsigned COMP-5 value past 2^31 is stored as its magnitude — GitHub #28
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
