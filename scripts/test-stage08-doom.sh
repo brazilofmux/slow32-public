@@ -37,6 +37,14 @@ done
 
 # __muldi3 lives in stage08's builtins64.s (libs32 lacks it); everything
 # else 64-bit/unsigned-div comes from libs32.  fp64 wrappers for doubles.
+#
+# READ THAT AS A STATEMENT ABOUT *THIS SCRIPT'S* LINK LINE, NOT THE TREE.
+# It is true here because this link has libs32 behind it.  It is FALSE of
+# selfhost/stage08/run-tests.sh and build-s12cc.sh, which link
+# builtins64.s32o with no libs32 at all and depend on its divide routines.
+# Two of us read this comment as licence to delete the redundant routines
+# from builtins64.s -- it would have broken the bootstrap.  GitHub #30
+# carries the per-consumer table.
 python3 - "$ROOT/selfhost/stage08/builtins64.s" "$WORK/muldi3.s" <<'PYEOF'
 import sys
 src = open(sys.argv[1]).read().split("\n")
