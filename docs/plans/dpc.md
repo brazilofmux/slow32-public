@@ -87,6 +87,17 @@ retrofit.
 Fixed partitions and no dynamic allocation mean resources are declared
 statically, which keeps the whole thing analyzable.
 
+The principle under all of it: threads, calls, stacks and memory are
+kept separate, each with the mechanism that suits it. A thread is an
+instance. A call happens inside one. A stack is the instance's own.
+Memory is never shared. General-purpose OS design lets all four mix
+and pushes the discipline into ABIs and conventions, where it is not
+enforced; here the opinion lives in one enforced place, the ring
+layout, and there is nothing else. Erlang, QNX and ARINC 653 are the
+lineage. The first place the separation gets tested is a request that
+needs a reply -- the second demo, after the timer -- because that is
+where a call will try to come back in through the queue.
+
 ## What I want from the first session
 
 Don't write a scheduler, and don't build multi-instance. Start with:
