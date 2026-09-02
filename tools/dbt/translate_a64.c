@@ -3795,6 +3795,72 @@ static bool emit_native_memcpy_stub_a64(translate_ctx_t *ctx, translated_block_t
     return !e->overflow;
 }
 
+/* The guest's memcmp returns *p1 - *p2 at the first difference, not merely
+ * a sign.  C only promises the sign, but the differential harnesses compare
+ * engine outputs byte for byte, so the stub has to return what the guest
+ * code would have returned rather than what the host's memcmp happens to.
+ * Mirrors s32_memcmp_exact in translate.c; regression/tests/stdlib-memcmp-order
+ * pins the contract and fails on an inverted sign or a skipped byte 0. */
+static int s32_memcmp_exact_a64(const unsigned char *a, const unsigned char *b, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++)
+        if (a[i] != b[i]) return (int)a[i] - (int)b[i];
+    return 0;
+}
+
+// memcmp stub
+// Guest: r3=a, r4=b, r5=n -> r1=result
+// Both operands are reads, so both range checks are loads.  COBOL routes
+// every comparison of two identical unsigned DISPLAY descriptors here (#29),
+// which is what makes this a hot entry point rather than a libc convenience.
+static bool emit_native_memcmp_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_a64_stub_prologue(e);
+
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));   // a
+    emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(4));   // b
+    emit_ldr_w32_imm(e, W2, W20, GUEST_REG_OFFSET(5));   // n
+
+    // n == 0 compares equal and reads nothing, so it must not fault even on
+    // an out-of-range pointer: store the result first, then skip the checks.
+    emit_mov_w32_imm32(e, W3, 0);
+    emit_str_w32_imm(e, W3, W20, GUEST_REG_OFFSET(1));
+    size_t done_patch = emit_offset(e);
+    emit_cbz_w32(e, W2, 0);
+
+    size_t fault_a_patches[8];
+    int fault_a_count = 0;
+    size_t fault_b_patches[8];
+    int fault_b_count = 0;
+    emit_stub_range_check_a64(ctx, W0, W2, false, fault_a_patches, &fault_a_count);
+    emit_stub_range_check_a64(ctx, W1, W2, false, fault_b_patches, &fault_b_count);
+
+    // Bounds OK - convert guest addresses to host pointers
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+    emit_add_x64_x64_w32_uxtw(e, W1, W21, W1);
+
+    emit_a64_call_host(e, (void *)s32_memcmp_exact_a64);
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));   // r1 = result
+
+    size_t done_offset = emit_offset(e);
+    patch_imm19_branches(e, &done_patch, 1, done_offset);
+    emit_a64_stub_epilogue(ctx);
+
+    // Each operand reports its own address, as memcpy's two exits do.
+    size_t fault_a_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_LOAD, W0);
+
+    size_t fault_b_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_LOAD, W1);
+
+    patch_imm19_branches(e, fault_a_patches, fault_a_count, fault_a_offset);
+    patch_imm19_branches(e, fault_b_patches, fault_b_count, fault_b_offset);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
 // memset stub
 // Guest: r3=dest, r4=value(byte), r5=count, r1=return(dest)
 static bool emit_native_memset_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
@@ -4344,6 +4410,8 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
         emitter = emit_native_strlen_stub_a64;
     } else if (cpu->intrinsic_memswap && guest_pc == cpu->intrinsic_memswap) {
         emitter = emit_native_memswap_stub_a64;
+    } else if (cpu->intrinsic_memcmp && guest_pc == cpu->intrinsic_memcmp) {
+        emitter = emit_native_memcmp_stub_a64;
     } else {
         // Check math intercept table
         for (int i = 0; i < cpu->num_intercepts; i++) {
@@ -4386,6 +4454,7 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
     else if (emitter == emit_native_memset_stub_a64) name = "memset";
     else if (emitter == emit_native_strlen_stub_a64) name = "strlen";
     else if (emitter == emit_native_memswap_stub_a64) name = "memswap";
+    else if (emitter == emit_native_memcmp_stub_a64) name = "memcmp";
     else if (is_memmove) name = "memmove";
     else name = "memcpy";
 

@@ -1195,14 +1195,16 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
                 uint32_t addr = s32x_symtab_lookup(&st, *n);
                 if (addr) { cpu->intrinsic_memswap = addr; break; }
             }
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
             /* Only where a stub exists.  Leaving this zero on other hosts is
              * not just tidiness: shadow_interp's is_intrinsic_block skips
              * verification for any address listed here, so claiming memcmp
              * on a backend that does not stub it would silently drop shadow
              * coverage of the guest memcmp instead of gaining anything.
-             * translate_a64.c wants the matching stub; until it has one this
-             * stays x86-64. */
+             * Both backends now have one (translate.c
+             * emit_native_memcmp_stub, translate_a64.c
+             * emit_native_memcmp_stub_a64); a third host would need its own
+             * before being added here. */
             for (const char **n = memcmp_names; *n; n++) {
                 uint32_t addr = s32x_symtab_lookup(&st, *n);
                 if (addr) { cpu->intrinsic_memcmp = addr; break; }
