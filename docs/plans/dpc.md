@@ -36,8 +36,16 @@ What exists today, so you don't rediscover it:
   deterministic points. A YIELD that finds nothing new is a spin, and
   the DBT warns after three.
 - The contract already reserves a high-priority response ring "for
-  timers and async signals" and says the host should drain it first.
-  Nothing behind that reservation exists.
+  timers and async signals" and says the host should drain it first,
+  and it already numbers the requests this needs:
+  `S32_MMIO_OP_TIMER_START` (0x32, "arm timer, host completes on HP
+  ring"), `S32_MMIO_OP_TIMER_CANCEL` (0x33) and `S32_MMIO_OP_POLL`
+  (0x34, "poll()/select()-style wait"), all marked future. Nothing
+  behind them exists.
+- The ring service is one file, `tools/emulator/mmio_ring.c`, linked
+  by the reference interpreter, slow32-fast and the DBT alike. Only
+  qemu carries its own copy (`target/slow32/mmio.c`). A new request
+  lands once for three engines and once more for qemu.
 - The ISA has no interrupt vector, no privilege modes, no trap return.
   Code is execute-only, no self-modifying code, the heap is fixed at
   link time. Any new opcode costs five engines plus the assembler and
@@ -58,9 +66,11 @@ The only native thing is the interrupt handler on the host. It turns
 an interrupt into a DPC. **A DPC is not a function. It is a queue
 entry**: a descriptor in an input queue the instance owns. Nothing is
 called into, nothing is reflected into translated code, no entry
-address is registered, no context is saved on the guest's behalf. The
-instance sees the entry when it looks, or YIELDs until there is
-something to see. Above the host's interrupt stub, everything is
+address is registered, no context is saved on the guest's behalf. The instance sees the entry when it looks. When it has nothing to do
+until one arrives, it says so the same way it says everything else:
+it enqueues a request -- sleep until my queue has something -- and
+YIELDs. YIELD keeps its one meaning, service the rings; whether the
+instance resumes is the host's decision, made from that entry. Above the host's interrupt stub, everything is
 machine-independent, and the instance's own dispatch loop is ordinary
 guest code.
 
@@ -88,15 +98,19 @@ Give me that first, and tell me what it forces into the emulator that
 isn't there today. My own list, which you should check rather than
 accept:
 
-- **YIELD gains a second meaning.** Today it is "service the rings and
-  continue." It needs "and if nothing arrived for me, block until
-  something does." That is the one semantic change on the
-  guest-visible surface, and it must land in the reference interpreter
-  and slow32-fast as well as the DBT, or the harnesses can't cover it.
-- **A timer is a host-side request**, armed through the existing
+- **No change to the guest-visible surface at all.** YIELD keeps its
+  one meaning. "Sleep until my queue has something" is a request in
+  the request ring -- the reserved `POLL`, 0x34 -- and the host,
+  servicing that ring at the YIELD, does not resume the instance until
+  its high-priority ring is non-empty. That is a host-side decision
+  made from a queue entry, which is the whole design in one place.
+- **A timer is the reserved `TIMER_START`, 0x32**, armed through the
   request ring, delivered as a descriptor in the high-priority ring.
   The guest's polling read of that ring is an ordinary load of a head
   word; the ring contract's release and acquire rules already cover it.
+- **Both land in `mmio_ring.c`**, so the reference interpreter,
+  slow32-fast and the DBT get them together and the differential
+  harnesses cover them from the first commit. qemu's copy follows.
 - **The asynchronous piece is the host writing a descriptor while the
   guest runs.** The host is one thread, so the writer is a signal
   handler or a helper thread. Keep it to one producer per ring.
@@ -113,6 +127,8 @@ accept:
   poll at block boundaries. It was proposed and declined: it is the
   hot path, and the model doesn't need it.
 - A DPC as a callback. See above.
+- A second meaning for YIELD. It was proposed and declined: the wait
+  is a queue entry too.
 - New opcodes, until a demo shows one is unavoidable.
 - Multi-instance, thread pools, shared code pages. Named here so the
   reader knows they are the second step and not the first.
