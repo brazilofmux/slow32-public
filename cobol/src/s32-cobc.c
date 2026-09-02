@@ -3141,6 +3141,61 @@ static int cmp_is_bytewise(Opnd *x, Opnd *y)
     return 1;
 }
 
+/* An unsigned DISPLAY integer narrow enough to decode into a word: at most
+ * nine digits, so its value is below 10^9 and fits a signed 32-bit register
+ * with room to spare.  No scale (a scaled operand would have to be aligned
+ * against the other side before comparing), no sign in any of its forms, no
+ * editing and no P, and the picture's digits must fill the item exactly so
+ * that digit i really is byte i.
+ *
+ * This is the compare path only.  Arithmetic keeps is_hot_int: a partial sum
+ * of these can still leave the word, and the encode side is a different
+ * problem from the decode side.  GitHub #29 shape (2). */
+static int is_display_int(Sym *s)
+{
+    if (s->is_group || s->pi.category != PIC_NUMERIC) return 0;
+    if (s->usage != U_DISPLAY) return 0;
+    if (s->pi.scale != 0 || s->pi.is_signed || s->sign_sep || s->sign_lead) return 0;
+    if (s->blank_zero || s->pi.edited || strchr(s->pi.pat, 'P')) return 0;
+    if (s->pi.digits < 1 || s->pi.digits > 9) return 0;
+    return s->size == s->pi.digits;
+}
+
+static int opnd_display_int(Opnd *o)
+{
+    return o->kind == O_REF && !o->ref.rm && is_display_int(o->ref.sym);
+}
+
+/* r1 = the value of such an item, decoded in line: a load, a mask and a
+ * multiply-accumulate per digit, against cob_cmp's ~28 per digit through
+ * cob_get_num.  The first digit needs no multiply.  r3 holds the address and
+ * r11 the constant ten; emit_ref_addr has finished with r11 by then.
+ *
+ * The mask is `& 15`, not `- '0'`, and that is not a micro-optimisation: it
+ * is what cob_get_num does, so the inline decode agrees with the runtime on
+ * bytes that are not digits as well as on those that are.  '0'..'9' mask to
+ * 0..9; a space (0x20) masks to 0, which is cob_get_num's explicit
+ * space-is-zero rule; anything else masks to its low nibble, which is
+ * cob_get_num's fallback.  Subtracting '0' would have agreed on digits and
+ * diverged on everything else, which is a divergence worth not having for
+ * free.  One case is left: cob_get_num reads 'p'..'y' as a NEGATIVE
+ * overpunch even in an unsigned item, where this reads the low nibble and
+ * stays positive.  An unsigned item cannot hold a negative and cob_put_num
+ * would never write those bytes, so that is undefined input on both sides.
+ * GitHub #29. */
+static void emit_display_value(const Ref *r)
+{
+    int n = r->sym->pi.digits;
+    emit_ref_addr(r, "r3");
+    if (n > 1) emit_li("r11", 10);
+    for (int i = 0; i < n; i++) {
+        emit("\tldbu r2, r3+%d", i);
+        emit("\tandi r2, r2, 15");
+        if (i == 0) emit("\tadd r1, r2, r0");
+        else { emit("\tmul r1, r1, r11"); emit("\tadd r1, r1, r2"); }
+    }
+}
+
 /* Comparison is more permissive than arithmetic.  opnd_hot_int bars the
  * four-byte unsigned item because no signed SLT can order a value that uses
  * the top bit, and a partial sum of such operands overflows a word -- both
@@ -3155,8 +3210,16 @@ static int cmp_is_bytewise(Opnd *x, Opnd *y)
  * opnd_hot_int; only the relation condition uses this. */
 static int opnd_hot_cmp(Opnd *o)
 {
+    if (opnd_display_int(o)) return 1;
     if (o->kind == O_REF) return !o->ref.rm && is_hot_int(o->ref.sym);
     return opnd_hot_int(o);
+}
+
+/* r1 = the operand's value on the compare path */
+static void emit_cmp_value(Opnd *o)
+{
+    if (opnd_display_int(o)) { emit_display_value(&o->ref); return; }
+    emit_hot_value(o);
 }
 
 /* the operand cannot be negative, so an unsigned compare orders it */
@@ -3475,9 +3538,9 @@ static void emit_cond_value(Cond *c)
          * handled, and it is the only correct one when a four-byte unsigned
          * item uses the top bit.  EQ and NE do not care either way. */
         int u = opnd_nonneg(&c->x) && opnd_nonneg(&c->y);
-        emit_hot_value(&c->x);
+        emit_cmp_value(&c->x);
         emit("\tstw sp+%d, r1", SLOT_A);
-        emit_hot_value(&c->y);
+        emit_cmp_value(&c->y);
         emit("\tldw r2, sp+%d", SLOT_A);
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r2, r1"); break;
@@ -4282,6 +4345,21 @@ static void emit_push(Opnd *o)
         emit_li("r3", (long)(int)(v & 0xFFFFFFFF));
         emit_li("r4", (long)(int)(v >> 32));
         emit_li("r5", scale);
+        emit_call("cob_push_lit");
+        return;
+    }
+    if (opnd_display_int(o)) {
+        /* GitHub #29 shape (3): an unsigned DISPLAY integer reaches the
+         * numeric stack through the same inline decode the compare path
+         * uses, instead of cob_push -> cob_get_num's digit loop.  The value
+         * is below 10^9 so the high word is zero and the scale is zero;
+         * everything above this -- the 64-bit arithmetic, the receiver's
+         * truncation, ROUNDED, ON SIZE ERROR -- is untouched, which is what
+         * keeps this a decode change rather than an arithmetic one. */
+        emit_display_value(&o->ref);
+        emit("\tadd r3, r1, r0");
+        emit_li("r4", 0);
+        emit_li("r5", 0);
         emit_call("cob_push_lit");
         return;
     }
