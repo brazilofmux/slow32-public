@@ -34,6 +34,13 @@
  * COPY (the Library module) as token-stream inclusion, copybooks found
  * through -I.  Unimplemented is a diagnostic, never silence.
  */
+/* localtime()'s tm_gmtoff (FUNCTION WHEN-COMPILED's zone offset) is a BSD
+ * extension that POSIX only standardised in 2024.  Apple's headers expose it
+ * under -std=c99; glibc's hide it unless a feature-test macro asks, so
+ * without this the compiler does not build on Linux at all. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
