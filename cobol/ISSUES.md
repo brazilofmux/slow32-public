@@ -456,6 +456,27 @@ with its digit loop), and it is what a "shape (4)" would be measured
 against. The three inline shapes hold on both legs to the instruction,
 as they should: they do not touch libcob.
 
+**Counted 2026-09-02, the batch's runtime calls after #27/#29/#30** (libcob
+instrumented locally, not committed; MacBook, LLVM leg, slow32-dbt for the
+counts and slow32-fast for the totals). The batch is now **1.52 billion
+guest instructions** (2.05 before #27).
+
+    calls across the batch     cob_cmp 1,066,377   cob_move 259,662
+                               cob_top_addto 208,889   cob_top_store 14,420
+                               cob_nmul 11,998 (all gl036)   cob_nsub 2,760
+    cob_top_addto by program   gl034 57,243   gl036 56,190   gl038 55,258
+                               gl040 39,766   (the rest under 500)
+    instructions by program    gl034 235M  gl036 228M  gl035 214M  gl038 173M
+                               gl030 169M  gl037 136M  gl042 115M  gl040 78M
+
+So the scaled ADD is **~190M of the 1.52B, about 12%**, and a shape (4)
+that took it from ~900 to the DISPLAY-integer shape's ~65 would buy at
+most ~11% of the batch, in four programs. The residual `cob_cmp` is the
+larger pool: 1.07M calls (2.37M before #29) at the 300-540 the issue
+measured is 20-35% of the batch, and *which* shapes those are -- signed
+DISPLAY, unequal scales, PIC X of unequal length -- is the question to
+answer before choosing between the two. Neither is proposed here.
+
 ### 25. ~~An unsigned COMP-5 value past 2^31 is stored as its magnitude~~ — GitHub #28, RESOLVED 2026-09-02
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
 is a plain unsigned word, but a value with the top bit set was treated
