@@ -5,3 +5,4 @@ b2out.dat
 *.s
 *.s32o
 *.s32x
+*.map
