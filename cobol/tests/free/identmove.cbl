@@ -7,7 +7,8 @@
 *> COMP-3 lost its 0xF sign nibble, and the COMP was truncated to its four
 *> digits.  The two binary cases are checked by comparing the destination
 *> bytes with the source bytes, so the test does not depend on either
-*> system's COMP byte order.
+*> system's COMP byte order.  COMP-3: default dialect (-std=cobol85
+*> rejects the usage, so the oracle never sees this program without it).
 identification division.
 program-id. identmove.
 data division.
