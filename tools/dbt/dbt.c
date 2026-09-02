@@ -1173,6 +1173,7 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
             static const char *memmove_names[] = { "memmove", NULL };
             static const char *strlen_names[] = { "strlen", NULL };
             static const char *memswap_names[] = { "memswap", NULL };
+            static const char *memcmp_names[] = { "memcmp", NULL };
 
             for (const char **n = memcpy_names; *n; n++) {
                 uint32_t addr = s32x_symtab_lookup(&st, *n);
@@ -1194,6 +1195,21 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
                 uint32_t addr = s32x_symtab_lookup(&st, *n);
                 if (addr) { cpu->intrinsic_memswap = addr; break; }
             }
+#if defined(__x86_64__)
+            /* Only where a stub exists.  Leaving this zero on other hosts is
+             * not just tidiness: shadow_interp's is_intrinsic_block skips
+             * verification for any address listed here, so claiming memcmp
+             * on a backend that does not stub it would silently drop shadow
+             * coverage of the guest memcmp instead of gaining anything.
+             * translate_a64.c wants the matching stub; until it has one this
+             * stays x86-64. */
+            for (const char **n = memcmp_names; *n; n++) {
+                uint32_t addr = s32x_symtab_lookup(&st, *n);
+                if (addr) { cpu->intrinsic_memcmp = addr; break; }
+            }
+#else
+            (void)memcmp_names;
+#endif
 
             // Populate math function intercept table
             cpu->num_intercepts = 0;
@@ -2282,6 +2298,7 @@ int main(int argc, char **argv) {
         if (cpu.intrinsics_enabled) {
             fprintf(stderr, "  Intrinsics:   enabled\n");
             if (cpu.intrinsic_memcpy)  fprintf(stderr, "    memcpy:  0x%08X\n", cpu.intrinsic_memcpy);
+            if (cpu.intrinsic_memcmp)  fprintf(stderr, "    memcmp:  0x%08X\n", cpu.intrinsic_memcmp);
             if (cpu.intrinsic_memset)  fprintf(stderr, "    memset:  0x%08X\n", cpu.intrinsic_memset);
             if (cpu.intrinsic_memmove) fprintf(stderr, "    memmove: 0x%08X\n", cpu.intrinsic_memmove);
             if (cpu.intrinsic_strlen)  fprintf(stderr, "    strlen:  0x%08X\n", cpu.intrinsic_strlen);

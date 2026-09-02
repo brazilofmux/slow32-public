@@ -5304,6 +5304,50 @@ static bool emit_native_memcpy_stub(translate_ctx_t *ctx, translated_block_t *bl
 // Emit a native memset stub:
 //   guest r3=dest, r4=value(byte), r5=count → host memset
 //   returns dest in guest r1, jumps to guest r31
+/* The guest's memcmp returns *p1 - *p2 at the first difference, not merely a
+ * sign.  C only promises the sign, but the differential harnesses compare
+ * engine outputs byte for byte, so the stub has to return what the guest
+ * code would have returned rather than what the host's memcmp happens to.
+ * Hence this rather than a call straight to memcmp(3). */
+static int s32_memcmp_exact(const unsigned char *a, const unsigned char *b, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++)
+        if (a[i] != b[i]) return (int)a[i] - (int)b[i];
+    return 0;
+}
+
+/* memcmp: r3 = a, r4 = b, r5 = n, result in r1.  COBOL routes every
+ * comparison of two identical unsigned DISPLAY descriptors here (#29), so
+ * this is now a hot entry point and not just a libc convenience. */
+static bool emit_native_memcmp_stub(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // eax = a
+    emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(4));   // ecx = b
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = n
+
+    // both sides are read, with a dynamic length
+    emit_mem_access_check_dynamic(ctx, RAX, RDX, EXIT_FAULT_LOAD, false);
+    emit_mem_access_check_dynamic(ctx, RCX, RDX, EXIT_FAULT_LOAD, false);
+
+    // rdi = r14 + a, rsi = r14 + b, rdx = n
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+    emit_mov_r64_r64(e, RSI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RCX, RSI));
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)s32_memcmp_exact);
+    emit_call_r64(e, RAX);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);   // r1 = result
+    emit_pop_r64(e, RAX);
+
+    emit_intrinsic_return(ctx);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
 static bool emit_native_memset_stub(translate_ctx_t *ctx, translated_block_t *block) {
     emit_ctx_t *e = &ctx->emit;
 
@@ -6004,6 +6048,8 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
         emitter = emit_native_strlen_stub;
     } else if (cpu->intrinsic_memswap && guest_pc == cpu->intrinsic_memswap) {
         emitter = emit_native_memswap_stub;
+    } else if (cpu->intrinsic_memcmp && guest_pc == cpu->intrinsic_memcmp) {
+        emitter = emit_native_memcmp_stub;
     } else {
         // Check math intercept table
         void *math_fn = NULL;
