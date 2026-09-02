@@ -1,0 +1,7 @@
+# Everything the bench generates: the synthetic input, the compiler's
+# intermediates, and the linked programs.  Only the sources are tracked.
+bench.dat
+b2out.dat
+*.s
+*.s32o
+*.s32x

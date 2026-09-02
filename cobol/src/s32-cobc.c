@@ -2267,6 +2267,10 @@ static int is_int_item(Sym *s)
     return is_numeric_sym(s) && s->pi.scale == 0;
 }
 
+/* COMP-5 and the C-ABI types keep the binary field's capacity rather than
+ * the picture's digit count (COB_F_NOTRUNC in the descriptor) */
+static int sym_notrunc(Sym *s) { return s->usage == U_COMP5 || usage_is_native(s->usage); }
+
 /* a "hot" integer: binary, at most 4 bytes, no scale */
 static int is_hot_int(Sym *s)
 {
@@ -3076,6 +3080,32 @@ static int opnd_hot_int(Opnd *o)
     return 0;
 }
 
+/* Comparison is more permissive than arithmetic.  opnd_hot_int bars the
+ * four-byte unsigned item because no signed SLT can order a value that uses
+ * the top bit, and a partial sum of such operands overflows a word -- both
+ * true, and both about arithmetic.  A comparison has neither problem: the
+ * unsigned SLTU family orders the whole 32-bit range exactly, and a COBOL
+ * unsigned item never holds a negative, so when every operand is
+ * non-negative the unsigned compare is the right one for all of them.
+ *
+ * The bar cost a call: "PERFORM UNTIL ws-i > 56164" with ws-i PIC 9(9) COMP
+ * built a descriptor for the literal and went through cob_cmp -- about 440
+ * instructions for what is one SGTU.  GitHub #27.  Arithmetic keeps
+ * opnd_hot_int; only the relation condition uses this. */
+static int opnd_hot_cmp(Opnd *o)
+{
+    if (o->kind == O_REF) return !o->ref.rm && is_hot_int(o->ref.sym);
+    return opnd_hot_int(o);
+}
+
+/* the operand cannot be negative, so an unsigned compare orders it */
+static int opnd_nonneg(Opnd *o)
+{
+    if (o->kind == O_REF) return !o->ref.sym->pi.is_signed;
+    if (o->kind == O_NUM) return numlit_int(&o->num) >= 0;
+    return 1;   /* ZERO */
+}
+
 /* r1 = integer value of a hot operand; uses r3 (address) and r1/r2/r11 */
 static void emit_hot_value(Opnd *o)
 {
@@ -3087,15 +3117,34 @@ static void emit_hot_value(Opnd *o)
 
 static long pow10l(int n) { long v = 1; while (n-- > 0) v *= 10; return v; }
 
-/* truncate r1 to the receiver's picture when it is a COMP item (COMP-5 and
- * the C types keep the binary field's capacity) */
-static void emit_trunc(Sym *s)
+/* Truncate r1 to the receiver's picture when it is a COMP item (COMP-5 and
+ * the C types keep the binary field's capacity).
+ *
+ * bound is an upper bound on |r1|, or -1 when the caller does not know one;
+ * nonneg says r1 cannot be negative.  With a bound the divide usually goes:
+ * a value that cannot reach the picture's limit needs no truncation at all,
+ * and one that can pass it only once -- "ADD 1 TO" an item already inside
+ * its picture, which is every PERFORM VARYING step -- wraps with a compare
+ * and a subtract.  REM is a divide, ~30 cycles where the compare is one, and
+ * it sat in the hottest loop COBOL has.  GitHub #27. */
+static void emit_trunc_bounded(Sym *s, long long bound, int nonneg)
 {
     if (s->usage != U_BINARY) return;
     if (s->pi.digits >= capacity_digits(s->size)) return;
-    emit_li("r2", pow10l(s->pi.digits));
+    long long lim = pow10l(s->pi.digits);
+    if (bound >= 0 && bound < lim) return;                  /* cannot reach it */
+    emit_li("r2", lim);
+    if (bound >= 0 && nonneg && bound < 2 * lim) {           /* at most one wrap */
+        int L = new_label();
+        emit("\tbltu r1, r2, .L%d", L);
+        emit("\tsub r1, r1, r2");
+        emit_label(L);
+        return;
+    }
     emit("\trem r1, r1, r2");
 }
+
+static void emit_trunc(Sym *s) { emit_trunc_bounded(s, -1, 0); }
 
 
 /* ====================================================================== */
@@ -3348,7 +3397,12 @@ static void emit_cond_value(Cond *c)
         if (c->neg) emit("\txori r1, r1, 1");
         return;
     }
-    if (opnd_hot_int(&c->x) && opnd_hot_int(&c->y)) {
+    if (opnd_hot_cmp(&c->x) && opnd_hot_cmp(&c->y)) {
+        /* unsigned ordering whenever neither side can be negative: it is
+         * equally correct for the operands a signed compare would also have
+         * handled, and it is the only correct one when a four-byte unsigned
+         * item uses the top bit.  EQ and NE do not care either way. */
+        int u = opnd_nonneg(&c->x) && opnd_nonneg(&c->y);
         emit_hot_value(&c->x);
         emit("\tstw sp+%d, r1", SLOT_A);
         emit_hot_value(&c->y);
@@ -3356,10 +3410,10 @@ static void emit_cond_value(Cond *c)
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r2, r1"); break;
         case R_NE: emit("\tsne r1, r2, r1"); break;
-        case R_LT: emit("\tslt r1, r2, r1"); break;
-        case R_GT: emit("\tsgt r1, r2, r1"); break;
-        case R_LE: emit("\tsle r1, r2, r1"); break;
-        case R_GE: emit("\tsge r1, r2, r1"); break;
+        case R_LT: emit(u ? "\tsltu r1, r2, r1" : "\tslt r1, r2, r1"); break;
+        case R_GT: emit(u ? "\tsgtu r1, r2, r1" : "\tsgt r1, r2, r1"); break;
+        case R_LE: emit(u ? "\tsleu r1, r2, r1" : "\tsle r1, r2, r1"); break;
+        case R_GE: emit(u ? "\tsgeu r1, r2, r1" : "\tsge r1, r2, r1"); break;
         }
     } else {
         Arg a[4];
@@ -3731,6 +3785,49 @@ static void parse_display(void)
 
 /* ---- MOVE ------------------------------------------------------------- */
 
+/* A copy whose length the compiler knows.  memcpy is a call that saves five
+ * registers, and then -- whenever the two addresses are not congruent mod 4,
+ * which is the ordinary case for fields packed into a record -- copies a byte
+ * at a time: about 90 instructions to move the ten bytes of a PIC 9(10).
+ * Below the threshold the same copy is 2n inline instructions and needs no
+ * alignment analysis at all, which is what makes it unconditionally safe;
+ * above it, the loop earns its prologue back and memcpy is still the answer.
+ * a[0] is the destination and a[1] the source, already staged as Args so the
+ * subscripted and reference-modified forms marshal the way they always do.
+ * GitHub #27. */
+/* The threshold, swept on bench/b3 (twelve MOVEs x 2.2M) 2026-09-01.  The
+ * engines disagree, because slow32-dbt recognises the memcpy entry point by
+ * name and substitutes a native stub, while the interpreters execute every
+ * instruction the call runs:
+ *
+ *      COPY_INLINE_MAX      0      8     16     24     40
+ *      slow32-fast (s)  15.61  12.76   8.75   8.51   6.33
+ *      slow32-dbt  (s)   0.230  0.220  0.310  0.310  0.450
+ *
+ * 8 is the only setting that beats memcpy-always on both -- it is the DBT's
+ * best point and still takes 18% off the interpreters -- so a copy of 8 bytes
+ * or fewer goes inline and the rest keeps the call.  Larger values buy the
+ * interpreters a lot at the DBT's expense, and the DBT is what runs the
+ * corpus.  Sweep it again with bench/sweep.sh before changing it. */
+#ifndef COPY_INLINE_MAX
+#define COPY_INLINE_MAX 8
+#endif
+
+static void emit_copy_fixed(const Arg *a, int n)
+{
+    if (n <= 0) return;
+    if (n > COPY_INLINE_MAX) {
+        Arg b[3] = { a[0], a[1], arg_imm(n) };
+        emit_args(b, 3); emit_call("memcpy");
+        return;
+    }
+    emit_args(a, 2);            /* r3 = destination, r4 = source */
+    for (int i = 0; i < n; i++) {
+        emit("\tldbu r1, r4+%d", i);
+        emit("\tstb r3+%d, r1", i);
+    }
+}
+
 /* does a group's length depend on an OCCURS DEPENDING ON below it?  One
  * occurrence of the table itself (always subscripted) is fixed-length. */
 static int has_odo(Sym *s)
@@ -3777,6 +3874,27 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
+    /* Sending and receiving items with byte-identical descriptors -- same
+     * category, usage, size, digit count, scale, flags and PICTURE -- so the
+     * move is a byte copy.  Descriptors are deduplicated by a whole-struct
+     * memcmp, which is why identity is one integer compare here.
+     *
+     * This is a conformance fix that happens to be fast.  Measured against
+     * the oracle 2026-09-01: GnuCOBOL passes the bytes through unchanged,
+     * including bytes cob_put_num would never write -- spaces in a numeric
+     * field nothing has filled in, an 0xF sign nibble on a COMP-3 record
+     * from a foreign system, a COMP holding more than its picture's digits.
+     * The generic path decoded and re-encoded all three, so ' 12 45abc '
+     * arrived as '0120451230' where GnuCOBOL delivered it verbatim.  The
+     * cost went with it: a PIC 9(10) to PIC 9(10) MOVE ran a digit loop out
+     * through cob_get_num and a divide loop back through cob_put_num, 646
+     * instructions to copy ten bytes.  GitHub #27; tests/free/identmove. */
+    if (src->kind == O_REF && !src->ref.rm && !dst->rm && !src->ref.sym->is_cond &&
+        sym_desc(src->ref.sym) == sym_desc(d)) {
+        Arg a[2] = { arg_ref(dst), arg_ref(&src->ref) };
+        emit_copy_fixed(a, d->size);
+        return;
+    }
     if (src->kind == O_REF && src->ref.sym->is_group && !src->ref.rm && !dst->rm && !src->ref.sym->is_cond) {
         /* a group sending item: an alphanumeric-to-alphanumeric move whatever
          * the receiver -- no conversion, no editing (X3.23 6.18.2; NC105A
@@ -3846,8 +3964,8 @@ static void emit_move(Opnd *src, Ref *dst)
             if (src->kind == O_NUM) { memcpy(dig, src->num.digits, src->num.ndigits); txt = dig; len = src->num.ndigits; }
             const char *l = lit_label((unsigned char *)txt, len);
             if (len == d->size && !d->just) {
-                Arg a[3] = { arg_ref(dst), arg_label(l), arg_imm(len) };
-                emit_args(a, 3); emit_call("memcpy");
+                Arg a[2] = { arg_ref(dst), arg_label(l) };
+                emit_copy_fixed(a, len);
             } else {
                 Arg a[5] = { arg_label(l), arg_imm(len), arg_ref(dst), arg_imm(d->size), arg_imm(d->just) };
                 emit_args(a, 5); emit_call("cob_move_alnum");
@@ -3879,8 +3997,8 @@ static void emit_move(Opnd *src, Ref *dst)
              * the digits as stored, the sign and the point unrepresented; the
              * cases win (the user's ruling, 2026-08-31) */
             if (!is_numeric_sym(s) && s->size == d->size && !d->just) {
-                Arg a[3] = { arg_ref(dst), arg_ref(&src->ref), arg_imm(d->size) };
-                emit_args(a, 3); emit_call("memcpy");
+                Arg a[2] = { arg_ref(dst), arg_ref(&src->ref) };
+                emit_copy_fixed(a, d->size);
                 return;
             }
             if (d->is_group) {
@@ -3944,7 +4062,8 @@ static void emit_move(Opnd *src, Ref *dst)
  * are searched further; MOVE moves a pair when at least one is
  * elementary, ADD/SUBTRACT act on a pair of elementary numeric items.
  * The operands' own subscripts and qualification carry to every pair. */
-static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err);
+static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err,
+                                 long long sum_mag, int sum_nonneg);
 static void emit_push(Opnd *o);
 static Opnd ref_opnd(const Ref *r);
 static int at_size_error_clause(void);
@@ -3975,7 +4094,7 @@ static int corr_walk(Ref *a, Ref *b, int mode, int rounded, int size_err)
             Opnd o = ref_opnd(&r1);
             emit_push(&o);
             int rd = rounded;
-            emit_store_receivers(&r2, &rd, 1, 0, 0, mode == 2, size_err);
+            emit_store_receivers(&r2, &rd, 1, 0, 0, mode == 2, size_err, -1, 0);
             if (size_err) {         /* the size error of any pair is the statement's */
                 emit("\tldw r1, sp+%d", SLOT_B); emit("\tldw r2, sp+%d", SLOT_A);
                 emit("\tor r1, r1, r2"); emit("\tstw sp+%d, r1", SLOT_A);
@@ -4141,6 +4260,30 @@ static long long hot_opnd_mag(Opnd *o)
     return 2147483647;
 }
 
+/* The staged sum's magnitude bound, or -1 when there is not a sound one.
+ *
+ * hot_opnd_mag bounds an item by its PICTURE, which a COMP-5 or C-ABI item
+ * does not obey -- it keeps the binary field's whole capacity.  hot_sum_fits
+ * has always taken that bound at face value; this does not, because the
+ * truncation it feeds would then wrap by a compare and a subtract where the
+ * value needs a REM.  One NOTRUNC operand and the bound is unknown. */
+static long long ops_sum_mag(Opnd *ops, int n)
+{
+    long long bound = 0;
+    for (int i = 0; i < n; i++) {
+        if (ops[i].kind == O_REF && sym_notrunc(ops[i].ref.sym)) return -1;
+        bound += hot_opnd_mag(&ops[i]);
+        if (bound > 2147483647LL) return -1;
+    }
+    return bound;
+}
+
+static int ops_all_nonneg(Opnd *ops, int n)
+{
+    for (int i = 0; i < n; i++) if (!opnd_nonneg(&ops[i])) return 0;
+    return 1;
+}
+
 static int hot_sum_fits(Opnd *ops, int n)
 {
     long long bound = 0;
@@ -4199,7 +4342,11 @@ static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)
 static int any_rounded(const int *r, int n) { for (int i = 0; i < n; i++) if (r[i]) return 1; return 0; }
 
 /* store the sum on the stack top (general) or in SLOT_A (hot) to receivers */
-static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err)
+/* sum_mag bounds |the staged sum| (-1: unknown) and sum_nonneg says it cannot
+ * be negative; together with the receiver's own picture they bound the value
+ * being stored, which is what lets the truncation and the sign fixup go. */
+static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err,
+                                 long long sum_mag, int sum_nonneg)
 {
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
@@ -4213,8 +4360,19 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
                 emit("\tldw r2, sp+%d", SLOT_A);
                 emit(subtract ? "\tsub r1, r1, r2" : "\tadd r1, r1, r2");
             }
-            emit_trunc(d);
-            if (!d->pi.is_signed) {
+            /* An unsigned COMP receiver holds 0 .. 10^digits-1: every path
+             * that stores one truncates, so adding a bounded non-negative
+             * sum to it lands below twice the limit and cannot go negative. */
+            long long bound = -1; int nonneg = 0;
+            if (sum_mag >= 0 && !subtract) {
+                if (giving) { bound = sum_mag; nonneg = sum_nonneg; }
+                else if (!d->pi.is_signed && d->usage == U_BINARY &&
+                         d->pi.digits > 0 && d->pi.digits < 19) {
+                    bound = pow10l(d->pi.digits) - 1 + sum_mag; nonneg = sum_nonneg;
+                }
+            }
+            emit_trunc_bounded(d, bound, nonneg);
+            if (!d->pi.is_signed && !nonneg) {
                 /* unsigned takes the magnitude, matching cob_put_num_x */
                 int Lpos = new_label();
                 emit("\tbge r1, r0, .L%d", Lpos);
@@ -4257,7 +4415,7 @@ static void parse_add(void)
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) && refs_hot(rs, nr) && hot_sum_fits(ops, n);
     if (hot) emit_hot_sum(ops, n);
     else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
-    emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err);
+    emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
     parse_size_error_clauses(size_err, "end-add");
 }
 
@@ -4299,7 +4457,7 @@ static void parse_subtract(void)
         for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
         if (giving) emit_call("cob_nsub");
     }
-    emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err);
+    emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err, -1, 0);
     parse_size_error_clauses(size_err, "end-subtract");
 }
 
@@ -4318,7 +4476,7 @@ static void parse_multiply(void)
         if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
         int size_err = at_size_error_clause();
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
-        emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+        emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
         parse_size_error_clauses(size_err, "end-multiply");
         return;
     }
@@ -4388,7 +4546,7 @@ static void parse_divide(void)
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
             int size_err = size_error_after_remainder();
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
-            emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+            emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
             emit_remainder(&b, &rs[0], rd[0], &a, size_err);
             parse_size_error_clauses(size_err, "end-divide");
             return;
@@ -4413,7 +4571,7 @@ static void parse_divide(void)
     if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
     int size_err = size_error_after_remainder();
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
-    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     emit_remainder(&a, &rs[0], rd[0], &b, size_err);
     parse_size_error_clauses(size_err, "end-divide");
 }
@@ -4529,7 +4687,7 @@ static void parse_compute(void)
     advance();
     parse_expr();
     int size_err = at_size_error_clause();
-    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err);
+    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     parse_size_error_clauses(size_err, "end-compute");
 }
 
@@ -4838,7 +4996,7 @@ static void emit_add_to_ref(Opnd *by, Ref *var)
     int rd[1] = { 0 };
     if (hot) emit_hot_sum(ops, 1);
     else emit_push(by);
-    emit_store_receivers(rs, rd, 1, hot, 0, 0, 0);
+    emit_store_receivers(rs, rd, 1, hot, 0, 0, 0, ops_sum_mag(ops, 1), ops_all_nonneg(ops, 1));
 }
 
 typedef struct { Ref var; Opnd from, by; Cond *until; } Vary;
@@ -5058,7 +5216,7 @@ static void parse_set(void)
         int hot = opnd_hot_int(&v) && is_hot_int(rs[i].sym);
         int rd[1] = { 0 };
         if (hot) emit_hot_sum(ops, 1); else emit_push(&v);
-        emit_store_receivers(&rs[i], rd, 1, hot, 0, down, 0);
+        emit_store_receivers(&rs[i], rd, 1, hot, 0, down, 0, ops_sum_mag(ops, 1), ops_all_nonneg(ops, 1));
     }
 }
 

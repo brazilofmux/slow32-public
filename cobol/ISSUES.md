@@ -229,6 +229,85 @@ group -- variable-location items are refused by name; free/odonest).
 free/odomove; GnuCOBOL's receiving length is the current one --
 documented divergence (oracles.md).
 
+### 24. Statement cost — the generic runtime call where a copy would do — GitHub #27, mostly RESOLVED 2026-09-01
+Section B had no performance items until the majesty side profiled
+`batch.sh` and found the COBOL report path spending ~70% of one join
+step in `cob_move` and `cob_cmp`. Three compile-time fixes landed, plus a
+fourth the first one exposed:
+
+- **A `MOVE` between byte-identical descriptors is a `memcpy`.** It was
+  going through `cob_move`, which for numeric-to-numeric decodes with a
+  digit loop and re-encodes with a divide loop -- 646 instructions to
+  copy the ten bytes of a `PIC 9(10)` (see the table below). This is also a
+  *conformance* fix, which is the surprise: GnuCOBOL passes the bytes
+  through, and the round trip did not. A numeric item holding bytes
+  `cob_put_num` would never write -- spaces in a field nothing filled
+  in, an `0xF` sign nibble on a COMP-3 record from a foreign system, a
+  COMP past its picture -- arrived rewritten. free/identmove.
+- **A four-byte unsigned item may use the hot compare.** It was barred
+  because no signed SLT orders a value with the top bit set, which is
+  true of arithmetic and not of comparison: the SLTU family orders the
+  whole range, and COBOL unsigned items are never negative. `PERFORM
+  UNTIL ws-i > 56164` was building a descriptor for the literal and
+  calling `cob_cmp`, ~440 instructions for one SGTU. free/hotarith.
+- **Truncation to the picture uses the range it already knows.** `ADD 1
+  TO` an item already inside its picture can pass the limit once, so it
+  wraps with a compare and a subtract instead of `REM` -- a divide, and
+  it sat in the hottest loop COBOL has. Where the value cannot reach the
+  limit at all the truncation goes entirely, and with it the sign fixup.
+
+Measured on kagura (see `bench/`, which is self-contained -- `bgen`
+writes its own synthetic input, so nothing private is needed):
+
+    per statement, guest instructions   before   after
+    PERFORM VARYING iteration              485      32
+    numeric MOVE, PIC 9(10) -> 9(10)       646      75
+    PIC X MOVE (average of five)           116      93
+
+(`after` is the shipped COPY_INLINE_MAX of 8.  At 16 the two MOVE rows are
+20 and 82 instead, because a ten-byte field then goes inline -- but that
+costs the DBT 41% on MOVE-heavy code, which is the trade the next paragraph
+is about.  Quoting the 16 numbers as the result would be quoting a build
+nobody runs.)
+
+`majesty`'s twelve reports stay byte-identical, which is the gate; its
+`batch.sh` went 2.62s -> 2.03s there, and the COBOL programs in it
+1.99s -> 1.49s summed. Note that batch's wall time is not all COBOL:
+much of it is the shell, the sorts, and one process per step.
+
+Not done, and the reason section 24 is only *mostly* resolved: a
+relation against a *literal* still builds a descriptor whenever either
+side is not a hot integer, and the group `MOVE` + `WRITE` path (974
+instructions per 75-byte record) has not been looked at. Neither is
+scheduled; the corpus stopped asking.
+
+- **A copy of a size the compiler knows goes inline, up to
+  `COPY_INLINE_MAX` bytes,** instead of calling `memcpy`. See the
+  threshold note below: it is 8, and which number it is matters.
+
+**Why the threshold is 8 and not larger.** The engines disagree:
+`slow32-dbt` recognises the `memcpy`
+entry point by name and substitutes a native stub, so a call there is
+nearly free, while the interpreters execute every instruction of it.
+Swept on `bench/b3big`, 8 is the only value that beats memcpy-always on
+both; 16 is a 41% DBT regression on MOVE-heavy code, worse than before
+this work, to buy the interpreters a 2x. The DBT is what runs the corpus
+-- re-sweep with `bench/sweep.sh` before changing it, and never tune it
+on one engine.
+
+    COPY_INLINE_MAX      0      8     16     24     40
+    slow32-fast (s)  15.61  12.76   8.75   8.51   6.33
+    slow32-dbt  (s)   0.230  0.220  0.310  0.310  0.450
+
+### 25. An unsigned COMP-5 value past 2^31 is stored as its magnitude — GitHub #28
+Found writing free/hotarith, and older than the tests: a NOTRUNC field
+is a plain unsigned word, but both store paths treat a value with the
+top bit set as negative and store `|v|`. GnuCOBOL keeps the value.
+Nothing in the corpus reaches it -- every unsigned item built from a
+picture holds at most 999999999 -- which is also why free/hotarith
+cannot prove its unsigned compare is *necessary* rather than merely
+equivalent. Filed rather than fixed: it wants its own CCVS-85 pass.
+
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
 Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
