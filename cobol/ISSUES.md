@@ -430,6 +430,32 @@ instructions self-hosted against 718 under LLVM.
 **Lesson, and it is the cheap one: ask which compiler builds the thing you
 are optimising before you optimise around its output.**
 
+**Re-measured 2026-09-02, after GitHub #30 landed on both legs** (b774e514
+put the sr-seeded loop into `runtime/builtins.c` too). The bench set,
+guest instructions per statement on the MacBook, loop floor subtracted;
+the LLVM leg links `libs32.s32a`, the self-hosted leg (`LLVM_BIN` hidden
+so `cctool.sh` takes the kit) links the tree's `builtins64.s`:
+
+    statement                                   llvm   self-hosted
+    compare, identical unsigned DISPLAY (b5)      73       73
+    compare, DISPLAY vs binary/literal (b6)       48       48
+    ADD 1 TO PIC 9(7) DISPLAY (b8)                65       65
+    ADD DISPLAY ints TO S9(11)V99 (b7, x3)       548     1020
+    ADD 9(9)V99 TO S9(11)V99 (c3, #30's bench)   893     1119
+    ADD 9(9)V99 TO S9(11)V99 (b9a, the headline) 930     1250
+    MOVE S9(13)V99 TO S9(11)V99 (c9)             715     1149
+    loop floor, per iteration (b0)                40       40
+
+What #30 bought: the self-hosted scaled ADD went from 2532 to 1119 and
+the scaled MOVE from 2195 to 1149, and the two legs are now within
+1.25-1.6x of each other where they were 2.8-3x apart. What it could
+not buy: the LLVM leg's 893 is unchanged, because LLVM never called the
+helper -- that number was always the cost of `cob_top_addto` itself
+(two `cob_get_num`, `cmp_scaled`-style 64-bit alignment, `cob_put_num_x`
+with its digit loop), and it is what a "shape (4)" would be measured
+against. The three inline shapes hold on both legs to the instruction,
+as they should: they do not touch libcob.
+
 ### 25. ~~An unsigned COMP-5 value past 2^31 is stored as its magnitude~~ — GitHub #28, RESOLVED 2026-09-02
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
 is a plain unsigned word, but a value with the top bit set was treated
