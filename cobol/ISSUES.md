@@ -477,6 +477,31 @@ measured is 20-35% of the batch, and *which* shapes those are -- signed
 DISPLAY, unequal scales, PIC X of unequal length -- is the question to
 answer before choosing between the two. Neither is proposed here.
 
+**The residual `cob_cmp`, classified 2026-09-02** (cob_cmp keyed locally
+by both descriptors' cat/usage/size/digits/scale/flags; not committed):
+
+    1,062,732  99.7%  PIC X against PIC X, one byte each, identical descriptors
+        1,918   0.2%  S9(11)V99 COMP-3 against the same
+          937   0.1%  S9(11)V99 COMP-3 against a one-digit literal
+          483         PIC XX against PIC XX
+          303         9(11)V99 COMP-3 against a one-digit literal
+    1,066,377  total
+
+It is one shape, and it is not a numeric one: the flag test.
+`ws-accounts-eof-flag PIC X VALUE 'N'` ... `PERFORM UNTIL ... = 'Y'`,
+`act-crdb`, `act-class`, `d-lin-type`, every program, 58k-190k each
+(gl030 190k, gl037 160k, gl038 148k, gl034/gl036/gl035 ~114k). At the 84
+instructions #29 measured for `PIC X = PIC X` that is ~90M of the
+batch's 1.52B, about 6% -- *less* than the scaled ADD's ~12%, because
+the per-call cost is a quarter of a numeric compare's. The inline form
+is a byte load and an SEQ. The numeric shapes #29 left are, to the
+batch, gone: 3,158 calls in all.
+
+So the two levers, sized: the scaled ADD (shape 4, ~12%, four
+programs, needs 64-bit inline scaled arithmetic) and the one-byte
+alphanumeric compare (~6%, every program, needs almost nothing).
+Neither is proposed here.
+
 ### 25. ~~An unsigned COMP-5 value past 2^31 is stored as its magnitude~~ — GitHub #28, RESOLVED 2026-09-02
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
 is a plain unsigned word, but a value with the top bit set was treated
