@@ -104,41 +104,28 @@ static uint64_t udivmoddi3_core(uint64_t n, uint64_t d, uint64_t *rem) {
         return ((uint64_t)qhi << 32) | qlo;
     }
     
-    // Special case: divisor is power of 2
-    if ((d & (d - 1)) == 0) {
-        // Find shift amount
-        int shift = 0;
-        uint64_t temp = d;
-        while (temp > 1) {
-            temp >>= 1;
-            shift++;
-        }
-        if (rem)
-            *rem = n & (d - 1);
-        return n >> shift;
-    }
-    
-    // Long division algorithm
-    du_int quotient_parts;
-    quotient_parts.ll = 0;
-    uint64_t remainder = 0;
-    
-    for (int i = 63; i >= 0; i--) {
+    // The divisor is 64 bits wide (so is the dividend, since n >= d), and
+    // the quotient fits in 32.  Start the shift-subtract loop where the
+    // quotient starts: only sr = msb(n) - msb(d) + 1 rounds can set a
+    // quotient bit, and the top 64 - sr bits of n seed the remainder below
+    // d, which is the invariant the loop needs.  This mirrors what
+    // selfhost/stage08/builtins64.s does (GitHub #30); before this the C
+    // ran all 64 rounds for such a divisor, and the ledger's truncating
+    // MOVE divides by 10^13 on every scaled-decimal store.
+    int sr = nlz32((uint32_t)(d >> 32)) - nlz32((uint32_t)(n >> 32)) + 1;
+    uint64_t remainder = n >> sr;
+    uint32_t q = 0;
+    for (int i = sr - 1; i >= 0; i--) {
         remainder = (remainder << 1) | ((n >> i) & 1);
         if (remainder >= d) {
             remainder -= d;
-            unsigned bit = (unsigned)i;
-            if (bit >= 32) {
-                quotient_parts.s.hi |= ((uint32_t)1u) << (bit - 32);
-            } else {
-                quotient_parts.s.lo |= ((uint32_t)1u) << bit;
-            }
+            q |= 1u << i;
         }
     }
-    
+
     if (rem)
         *rem = remainder;
-    return quotient_parts.ll;
+    return q;
 }
 
 // 64-bit unsigned division
