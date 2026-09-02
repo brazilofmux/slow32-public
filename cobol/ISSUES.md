@@ -445,6 +445,40 @@ Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
   claimed we refused it, and the harness reporting an oracle refusal as
   a pass (1a4ce2d1) is what kept the contradiction from surfacing.
 
+### 27. Run s32-cobc under AddressSanitizer, with its tables forced to grow
+`lit_label` returned a pointer into `g_lit`, a table it reallocates, and
+callers hold that pointer while building an Arg list. It produced
+`lui r5, %hi()` -- a reference to no symbol, resolving to address 0 --
+and cost a CCVS regression (NC122A) that took two machines a day to
+find, because:
+
+- it needs the table to cross a power of two *between* two `lit_label`
+  calls, so it takes a program with ~80 literals and no small
+  reproduction of the statement shows it;
+- it is a use-after-free, so whether it shows at all depends on the
+  allocator. macOS returned an empty string; glibc quietly returned the
+  old bytes, and the same compiler on the same source was correct on one
+  host and wrong on the other.
+
+Neither the harness nor CCVS nor the corpus can be relied on to catch
+the next one: the corpus stayed byte-identical throughout.
+
+What does catch it, in a minute:
+
+    sed 's|if (g_nlit == g_lcap) { g_lcap = g_lcap ? g_lcap * 2 : 32; ...|
+          { g_lcap = g_nlit + 1; g_lit = realloc(...); }|' src/s32-cobc.c > /tmp/f.c
+    cc -std=c99 -O1 -g -fsanitize=address -Isrc -o /tmp/cobc-asan /tmp/f.c \
+        src/picture.c src/picture_scan.c
+    /tmp/cobc-asan -free -o /tmp/x.s tests/free/<anything with an INSPECT>
+
+Forcing the realloc turns a boundary-dependent latent bug into a certain
+one, and ASan then names the holder. Expect a leak report either way --
+the compiler never frees its tables and does not need to.
+
+The same shape exists wherever a `static const char *` points into a
+growable array; `g_lit` is fixed, `g_files[fd].name` has not been
+audited.
+
 ## D. Harness and infrastructure
 
 ### 15. ~~The oracle vanished with the host GnuCOBOL~~ — RESOLVED 2026-08-30
