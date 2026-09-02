@@ -483,21 +483,32 @@ find, because:
 Neither the harness nor CCVS nor the corpus can be relied on to catch
 the next one: the corpus stayed byte-identical throughout.
 
-What does catch it, in a minute:
+What catches it: **`regression/run-cobc-asan.sh`** (the Macbook's, cfc6c5ab)
+-- s32-cobc built with `-fsanitize=address` and pointed at a real corpus.
+It tests the *invariant* (no held pointer into a growable table) rather
+than any one arrangement that exposes a violation, so it does not go
+stale the way a pinned test would. A forced-realloc build is **not**
+needed, which an earlier draft of this entry wrongly said: ASan poisons
+the old block on every realloc that moves, so plain ASan is enough.
 
-    sed 's|if (g_nlit == g_lcap) { g_lcap = g_lcap ? g_lcap * 2 : 32; ...|
-          { g_lcap = g_nlit + 1; g_lit = realloc(...); }|' src/s32-cobc.c > /tmp/f.c
-    cc -std=c99 -O1 -g -fsanitize=address -Isrc -o /tmp/cobc-asan /tmp/f.c \
-        src/picture.c src/picture_scan.c
-    /tmp/cobc-asan -free -o /tmp/x.s tests/free/<anything with an INSPECT>
+It is self-validating -- `COBC_SRC` aims the build at any revision:
 
-Forcing the realloc turns a boundary-dependent latent bug into a certain
-one, and ASan then names the holder. Expect a leak report either way --
-the compiler never frees its tables and does not need to.
+    git show 18fcb42c:cobol/src/s32-cobc.c > /tmp/buggy.c
+    COBC_SRC=/tmp/buggy.c regression/run-cobc-asan.sh NC   # must FAIL
+    regression/run-cobc-asan.sh NC                         # must PASS
 
-The same shape exists wherever a `static const char *` points into a
-growable array; `g_lit` is fixed, `g_files[fd].name` has not been
-audited.
+**A clean run is worth exactly what the corpus was.** Measured on kagura
+2026-09-02: with the CCVS modules skipped, `cobol/tests` alone (83
+compiles) does not reach lit_label's growth boundary, and the script
+returns green *on the buggy compiler*. It now says so in its summary
+rather than printing a green line. Run it where `newcob.val` is.
+
+Which also means the `g_files[fd].name` shape -- the same
+`static const char *` into a growable array -- is **unaudited, not
+exonerated**. The Macbook's clean 453-compile run does not reach it;
+nothing in either corpus opens enough files to grow `g_files` while a
+name is held. Closing it needs a source that does, and the harness will
+catch it the day one exists, but it will not invent one.
 
 ## D. Harness and infrastructure
 

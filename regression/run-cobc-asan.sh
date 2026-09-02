@@ -62,7 +62,7 @@ fi
 # halt_on_error=0 so one report does not hide the rest of the corpus.
 export ASAN_OPTIONS="halt_on_error=0:detect_leaks=0:log_path=$W/asan"
 
-total=0; reports=0; failed=()
+total=0; reports=0; skipped=0; failed=()
 
 compile_one() {   # compile_one <format> <label> <source> [extra args...]
     fmt=$1; label=$2; src=$3; shift 3
@@ -82,6 +82,7 @@ for m in $MODULES; do
     d="$CCVS/$m"
     if [ ! -d "$d" ]; then
         printf '  %-28s %sSKIP%s (no %s -- set CCVS85)\n' "$m" "$YELLOW" "$NC" "$d"
+        skipped=$((skipped + 1))
         continue
     fi
     echo "CCVS-85 $m:"
@@ -104,6 +105,20 @@ done
 echo
 echo "================================================="
 if [ "$reports" -eq 0 ]; then
+    # A clean run is only worth what the corpus was.  Measured on kagura
+    # 2026-09-02: with the CCVS modules skipped, cobol/tests alone (83
+    # compiles) does NOT reach lit_label's growth boundary, and this script
+    # returns green on the very compiler it was written to catch --
+    # COBC_SRC=<18fcb42c's s32-cobc.c> passes.  So say what was covered
+    # rather than let the colour speak.
+    if [ "$skipped" -gt 0 ]; then
+        echo "${YELLOW}$total compiles, no sanitizer reports"
+        echo "  -- but $skipped module(s) were skipped, and cobol/tests alone is"
+        echo "     NOT enough to reach the growth boundary this check exists for."
+        echo "     Set CCVS85 to a tree with the modules extracted before"
+        echo "     reading this as a pass.${NC}"
+        exit 0
+    fi
     echo "${GREEN}$total compiles, no sanitizer reports${NC}"
     exit 0
 fi
