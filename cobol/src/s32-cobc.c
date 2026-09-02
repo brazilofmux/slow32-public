@@ -1635,13 +1635,8 @@ static int layout(int si, int base)
         if (sz <= 0) die_at(ch->line, "'%s' has no size", ch->name);
         int cend = cbase + sz * (ch->occurs ? ch->occurs : 1);
         if (ch->redefines < 0) off = cend;
+        /* A REDEFINES larger than the original is allowed: the group grows. */
         if (cend > end) end = cend;
-        if (ch->redefines >= 0) {
-            Sym *r = &g_sym[ch->redefines];
-            int rsz = r->size * (r->occurs ? r->occurs : 1);
-            if (sz * (ch->occurs ? ch->occurs : 1) > rsz && s->level != 0)
-                ; /* larger than the redefined item: allowed here, the group grows */
-        }
     }
     s->size = end - base;
     return s->size;
@@ -2632,14 +2627,32 @@ static void parse_operand_raw(Opnd *o)
         if (n->kind != T_WORD) die_at(n->line, "expected an intrinsic function name");
         if (!strcmp(n->s, "when-compiled")) {
             advance();
-            static Tok wc; static char wcbuf[24];
+            static Tok wc; static char wcbuf[22];
             if (!wcbuf[0]) {
                 time_t now = time(0);
                 struct tm *t = localtime(&now);
+                int y = t->tm_year + 1900, mo = t->tm_mon + 1, da = t->tm_mday;
+                int hh = t->tm_hour, mm = t->tm_min, ss = t->tm_sec;
                 long off = t->tm_gmtoff; int oneg = off < 0; if (oneg) off = -off;
-                snprintf(wcbuf, sizeof wcbuf, "%04d%02d%02d%02d%02d%02d00%c%02ld%02ld",
-                         t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-                         t->tm_hour, t->tm_min, t->tm_sec, oneg ? '-' : '+', off / 3600, (off % 3600) / 60);
+                int zh = (int)(off / 3600), zm = (int)((off % 3600) / 60);
+                if (y < 0) y = 0;
+                if (y > 9999) y = 9999;
+                if (mo < 1) mo = 1;
+                if (mo > 12) mo = 12;
+                if (da < 1) da = 1;
+                if (da > 31) da = 31;
+                if (hh < 0) hh = 0;
+                if (hh > 23) hh = 23;
+                if (mm < 0) mm = 0;
+                if (mm > 59) mm = 59;
+                if (ss < 0) ss = 0;
+                if (ss > 59) ss = 59;
+                if (zh < 0) zh = 0;
+                if (zh > 99) zh = 99;
+                if (zm < 0) zm = 0;
+                if (zm > 59) zm = 59;
+                snprintf(wcbuf, sizeof wcbuf, "%04d%02d%02d%02d%02d%02d00%c%02d%02d",
+                         y, mo, da, hh, mm, ss, oneg ? '-' : '+', zh, zm);
                 wc.kind = T_STR; wc.s = wcbuf; wc.len = 21;
             }
             o->kind = O_STR; o->tok = &wc;
@@ -4852,9 +4865,12 @@ static void emit_dec_store(Sym *s, const char *areg, const char *hi, const char 
     emit_li("r4", 10);
     /* the next digit, least significant first, into reg; the limb is
      * divided down unless this was its last digit */
-#define DEC_DIGIT(reg) do { const char *src_ = d < split ? hi : lo; \
+#define DEC_DIGIT(reg) do { \
+        const char *src_ = d < split ? hi : lo; \
         emit("\trem %s, %s, r4", reg, src_); \
-        if (d != split && d != 0) emit("\tdiv %s, %s, r4", src_, src_); d--; } while (0)
+        if (d != split && d != 0) emit("\tdiv %s, %s, r4", src_, src_); \
+        d--; \
+    } while (0)
     if (s->usage == U_DISPLAY) {
         while (d >= 0) {
             int at = d;
@@ -5597,7 +5613,6 @@ static int times_follows(void)
 
 static void parse_perform(void)
 {
-    int line = cur()->line;
     Body body; memset(&body, 0, sizeof body);
     if (at_para_name(cur()) && para_find(cur()->s)) {
         body.from = expect_para();
@@ -7201,7 +7216,8 @@ static void init_mask(Sym *s, int top_off, int disp, unsigned char *mask, int li
 static void parse_initialize(void)
 {
     Ref rs[MAXOPS]; int n = 0;
-    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0 }, tok_space = { T_WORD, 0, "spaces", 6, NULL, 0 };
+    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0 };
+    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0 };
     Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand()) {
@@ -8092,7 +8108,8 @@ static void parse_environment_division(void)
                                 if (ord < 1 || ord > 256) die_at(cur()->line, "SYMBOLIC CHARACTERS: the ordinal position is 1 through 256");
                                 if (g_nsymch == 32) die_at(cur()->line, "too many SYMBOLIC CHARACTERS");
                                 if (symch_find(names[ni]) >= 0) die_at(cur()->line, "SYMBOLIC CHARACTERS: '%s' is named twice", names[ni]);
-                                snprintf(g_symch[g_nsymch].name, 64, "%s", names[ni]); g_symch[g_nsymch].byte = ord - 1; g_nsymch++;
+                                memcpy(g_symch[g_nsymch].name, names[ni], sizeof g_symch[0].name);
+                                g_symch[g_nsymch].byte = ord - 1; g_nsymch++;
                                 ni++; advance();
                             }
                             if (ni != nn) die_at(cur()->line, "SYMBOLIC CHARACTERS: %d names but %d integers", nn, ni);

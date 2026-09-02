@@ -16,6 +16,11 @@
 #include <string.h>
 #include "picture.h"
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#pragma GCC diagnostic ignored "-Wunused-const-variable"
+#endif
+
 %%{
     machine picscan;
     write data;

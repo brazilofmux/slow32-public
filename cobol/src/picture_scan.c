@@ -18,6 +18,11 @@
 #include <string.h>
 #include "picture.h"
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#pragma GCC diagnostic ignored "-Wunused-const-variable"
+#endif
+
 
 #line 23 "/Users/sdennis/slow-32/cobol/src/picture_scan.c"
 static const int picscan_start = 7;
