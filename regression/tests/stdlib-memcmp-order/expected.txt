@@ -1,0 +1,22 @@
+equal                        0
+length 0                     0
+a<b                          -1
+b>a                          1
+differs at 0 only            -1
+first diff not last          -1
+0x80 vs 0x01                 127
+0x01 vs 0x80                 -127
+0xff vs 0x00                 255
+magnitude 32                 32
+magnitude 253                253
+diff at index 0              -9
+diff at index 1              -8
+diff at index 3              -6
+diff at index 4              -5
+diff at index 7              -2
+diff at index 8              -1
+diff at index 9              9
+diff at last byte            -1
+diff at index 63 of 64       -1
+64 equal                     0
+difference past n            0
