@@ -2704,8 +2704,14 @@ static int ref_static_len(const Ref *r)
 }
 
 /* load the integer value of a hot item at address in areg into dreg */
+static void emit_display_decode(int n, const char *areg, const char *dreg);
+static void emit_display_encode(int n, const char *areg, const char *vreg);
+static int is_display_int(Sym *s);
+static int opnd_display_int(Opnd *o);
+
 static void emit_load_int(Sym *s, const char *areg, const char *dreg)
 {
+    if (is_display_int(s)) { emit_display_decode(s->pi.digits, areg, dreg); return; }
     int sg = s->pi.is_signed;
     if (s->size == 1) emit("\t%s %s, %s+0", sg ? "ldb" : "ldbu", dreg, areg);
     else if (s->size == 2) emit("\t%s %s, %s+0", sg ? "ldh" : "ldhu", dreg, areg);
@@ -2714,6 +2720,7 @@ static void emit_load_int(Sym *s, const char *areg, const char *dreg)
 
 static void emit_store_int(Sym *s, const char *areg, const char *vreg)
 {
+    if (is_display_int(s)) { emit_display_encode(s->pi.digits, areg, vreg); return; }
     if (s->size == 1) emit("\tstb %s+0, %s", areg, vreg);
     else if (s->size == 2) emit("\tsth %s+0, %s", areg, vreg);
     else emit("\tstw %s+0, %s", areg, vreg);
@@ -3074,6 +3081,11 @@ static Arg arg_len(Opnd *o)
  * integer literal that fits a word */
 static int opnd_hot_int(Opnd *o)
 {
+    /* An unsigned DISPLAY integer of <= 9 digits joins the hot path now that
+     * emit_load_int decodes one and emit_store_int encodes one: its value is
+     * below 10^9, so every partial sum hot_sum_fits admits still fits a word.
+     * GitHub #29 shape (3). */
+    if (opnd_display_int(o)) return 1;
     if (o->kind == O_REF) return !o->ref.rm && is_hot_int(o->ref.sym) && !(o->ref.sym->size == 4 && !o->ref.sym->pi.is_signed);
     if (o->kind == O_NUM) return numlit_is_int(&o->num) && numlit_int(&o->num) <= 2147483647LL && numlit_int(&o->num) >= -2147483647LL;
     if (o->kind == O_FIG) return !strncmp(o->tok->s, "zero", 4);
@@ -3183,17 +3195,36 @@ static int opnd_display_int(Opnd *o)
  * stays positive.  An unsigned item cannot hold a negative and cob_put_num
  * would never write those bytes, so that is undefined input on both sides.
  * GitHub #29. */
-static void emit_display_value(const Ref *r)
+static void emit_display_decode(int n, const char *areg, const char *dreg)
 {
-    int n = r->sym->pi.digits;
-    emit_ref_addr(r, "r3");
     if (n > 1) emit_li("r11", 10);
     for (int i = 0; i < n; i++) {
-        emit("\tldbu r2, r3+%d", i);
+        emit("\tldbu r2, %s+%d", areg, i);
         emit("\tandi r2, r2, 15");
-        if (i == 0) emit("\tadd r1, r2, r0");
-        else { emit("\tmul r1, r1, r11"); emit("\tadd r1, r1, r2"); }
+        if (i == 0) emit("\tadd %s, r2, r0", dreg);
+        else { emit("\tmul %s, %s, r11", dreg, dreg); emit("\tadd %s, %s, r2", dreg, dreg); }
     }
+}
+
+/* The other direction: vreg's value as n digit characters.  The caller has
+ * already brought it inside the picture (emit_trunc_bounded) and made it
+ * non-negative, which is what cob_put_num_x would have done, so this is a
+ * plain radix loop and vreg may be consumed.  GitHub #29 shape (3). */
+static void emit_display_encode(int n, const char *areg, const char *vreg)
+{
+    emit_li("r11", 10);
+    for (int i = n - 1; i >= 0; i--) {
+        emit("\trem r2, %s, r11", vreg);
+        emit("\taddi r2, r2, 48");
+        emit("\tstb %s+%d, r2", areg, i);
+        if (i) emit("\tdiv %s, %s, r11", vreg, vreg);
+    }
+}
+
+static void emit_display_value(const Ref *r)
+{
+    emit_ref_addr(r, "r3");
+    emit_display_decode(r->sym->pi.digits, "r3", "r1");
 }
 
 /* Comparison is more permissive than arithmetic.  opnd_hot_int bars the
@@ -3253,8 +3284,11 @@ static long pow10l(int n) { long v = 1; while (n-- > 0) v *= 10; return v; }
  * it sat in the hottest loop COBOL has.  GitHub #27. */
 static void emit_trunc_bounded(Sym *s, long long bound, int nonneg)
 {
-    if (s->usage != U_BINARY) return;
-    if (s->pi.digits >= capacity_digits(s->size)) return;
+    int disp = is_display_int(s);
+    if (!disp && s->usage != U_BINARY) return;
+    /* a binary field wider than its picture needs no truncation; a DISPLAY
+     * item is exactly its digits, so it always does */
+    if (!disp && s->pi.digits >= capacity_digits(s->size)) return;
     long long lim = pow10l(s->pi.digits);
     if (bound >= 0 && bound < lim) return;                  /* cannot reach it */
     emit_li("r2", lim);
@@ -4390,7 +4424,8 @@ static int all_hot(Opnd *ops, int n)
 
 static int refs_hot(Ref *rs, int n)
 {
-    for (int i = 0; i < n; i++) if (!is_hot_int(rs[i].sym)) return 0;
+    for (int i = 0; i < n; i++)
+        if (!is_hot_int(rs[i].sym) && !is_display_int(rs[i].sym)) return 0;
     return 1;
 }
 
@@ -4519,7 +4554,7 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
             long long bound = -1; int nonneg = 0;
             if (sum_mag >= 0 && !subtract) {
                 if (giving) { bound = sum_mag; nonneg = sum_nonneg; }
-                else if (!d->pi.is_signed && d->usage == U_BINARY &&
+                else if (!d->pi.is_signed && (d->usage == U_BINARY || is_display_int(d)) &&
                          d->pi.digits > 0 && d->pi.digits < 19) {
                     bound = pow10l(d->pi.digits) - 1 + sum_mag; nonneg = sum_nonneg;
                 }
@@ -5145,7 +5180,7 @@ static void emit_body(Body *b)
 static void emit_add_to_ref(Opnd *by, Ref *var)
 {
     Opnd ops[1] = { *by }; Ref rs[1] = { *var };
-    int hot = opnd_hot_int(by) && is_hot_int(var->sym);
+    int hot = opnd_hot_int(by) && (is_hot_int(var->sym) || is_display_int(var->sym));
     int rd[1] = { 0 };
     if (hot) emit_hot_sum(ops, 1);
     else emit_push(by);
@@ -5366,7 +5401,7 @@ static void parse_set(void)
     Opnd v; parse_operand(&v); check_numeric_opnd(&v);
     for (int i = 0; i < nr; i++) {
         Opnd ops[1] = { v };
-        int hot = opnd_hot_int(&v) && is_hot_int(rs[i].sym);
+        int hot = opnd_hot_int(&v) && (is_hot_int(rs[i].sym) || is_display_int(rs[i].sym));
         int rd[1] = { 0 };
         if (hot) emit_hot_sum(ops, 1); else emit_push(&v);
         emit_store_receivers(&rs[i], rd, 1, hot, 0, down, 0, ops_sum_mag(ops, 1), ops_all_nonneg(ops, 1));
