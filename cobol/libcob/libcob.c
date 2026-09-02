@@ -252,7 +252,28 @@ long long cob_get_num(const void *vp, const cob_desc *d)
                     unsigned char ch = p[i];
                     if (ch >= 'p' && ch <= 'y') { c = ch - 'p'; neg = 1; }     /* overpunch: last digit, or first with SIGN LEADING */
                     else if (ch == ' ') c = 0;              /* a space counts as zero */
-                    else c = ch & 15;                       /* GnuCOBOL: low nibble */
+                    /* Anything else: the low nibble.  This comment used to
+                     * say "GnuCOBOL: low nibble", asserting a parity we do
+                     * not have -- measured 2026-09-02, GnuCOBOL substitutes
+                     * a zero digit here, so '001B' reads 10 there and 12
+                     * here, and '001{' reads 10 there and 21 here.
+                     *
+                     * Neither is the EBCDIC overpunch, which is what a file
+                     * converted from a mainframe carries: zone C over a
+                     * digit is +0..+9 ({ABCDEFGHI), zone D is -0..-9
+                     * (}JKLMNOPQR).  The low nibble happens to give the
+                     * right digit for A..I and nothing else -- for { } and
+                     * J..R it yields 10..13, impossible digit values that
+                     * then corrupt the whole accumulated number through
+                     * w = w * 10 + c, and it drops the sign of J..R
+                     * entirely.  The ASCII overpunch is not standardised;
+                     * p..y for -0..-9 is GnuCOBOL's and Micro Focus's
+                     * choice and is the one we write, so nothing this
+                     * toolchain produces reaches this line.  Reading
+                     * EBCDIC-derived data is not a requirement anyone has
+                     * asked for; if it becomes one, this is the line, and
+                     * it needs the zone, not the nibble. */
+                    else c = ch & 15;
                 }
                 w = w * 10 + c;
             }
