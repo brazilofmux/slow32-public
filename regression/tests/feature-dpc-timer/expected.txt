@@ -1,0 +1,9 @@
+wait with nothing armed: nothing can arrive
+armed ids 0 1
+dpc kind=32 id=1 cookie=b2
+dpc kind=32 id=0 cookie=a1
+queue empty
+cancelled: nothing can arrive
+seen without waiting: cookie=e5
+reused id 0
+done cookie=f6

@@ -1905,11 +1905,13 @@ void* mmio_ring_map(mmio_ring_state_t *mmio) {
     // Skip head/tail registers at offset 0
     mmio->req_ring = (io_descriptor_t*)(base + S32_MMIO_REQ_RING_OFFSET);
     mmio->resp_ring = (io_descriptor_t*)(base + S32_MMIO_RESP_RING_OFFSET);
+    mmio->dpc_ring = (io_descriptor_t*)(base + S32_MMIO_DPC_RING_OFFSET);
     mmio->data_buffer = base + S32_MMIO_DATA_BUFFER_OFFSET;
     
     // Clear rings
     memset(mmio->req_ring, 0, S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES);
     memset(mmio->resp_ring, 0, S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES);
+    memset(mmio->dpc_ring, 0, S32_MMIO_DPC_ENTRIES * S32_MMIO_DESC_BYTES);
     
     return mmio_mem;
 }
@@ -2056,8 +2058,17 @@ uint32_t mmio_ring_read(mmio_ring_state_t *mmio, uint32_t addr, int size) {
             return mmio->resp_head;
         case S32_MMIO_RESP_TAIL_OFFSET:
             return mmio->resp_tail;
+        case S32_MMIO_DPC_HEAD_OFFSET:
+            return mmio->dpc_head;
+        case S32_MMIO_DPC_TAIL_OFFSET:
+            return mmio->dpc_tail;
         default:
             // Reading from rings or data buffer
+            if (rel >= S32_MMIO_DPC_RING_OFFSET &&
+                rel < S32_MMIO_DPC_RING_OFFSET + S32_MMIO_DPC_ENTRIES * S32_MMIO_DESC_BYTES) {
+                uint32_t offset = (rel - S32_MMIO_DPC_RING_OFFSET) / 4;
+                return ((uint32_t*)mmio->dpc_ring)[offset];
+            }
             if (rel >= S32_MMIO_REQ_RING_OFFSET &&
                 rel < S32_MMIO_REQ_RING_OFFSET + S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES) {
                 uint32_t offset = (rel - S32_MMIO_REQ_RING_OFFSET) / 4;
@@ -2107,6 +2118,12 @@ void mmio_ring_write(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, uint32_t ad
         case S32_MMIO_RESP_TAIL_OFFSET:
             mmio->resp_tail = value % S32_MMIO_RING_ENTRIES;
             break;
+        case S32_MMIO_DPC_HEAD_OFFSET:
+            mmio->dpc_head = value % S32_MMIO_DPC_ENTRIES;
+            break;
+        case S32_MMIO_DPC_TAIL_OFFSET:
+            mmio->dpc_tail = value % S32_MMIO_DPC_ENTRIES;
+            break;
         default:
             // Writing to rings or data buffer
             if (rel >= S32_MMIO_REQ_RING_OFFSET &&
@@ -2126,6 +2143,99 @@ void mmio_ring_write(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, uint32_t ad
             }
             break;
     }
+}
+
+// ---- timers and the DPC ring (docs/plans/dpc.md) ------------------------
+//
+// The interrupt-to-DPC path, hosted.  The "interrupt" is a deadline passing
+// on the host clock; the DPC is an entry in the guest's DPC ring; the guest
+// reads it when it looks, or asks to sleep until one is there (OP_POLL).
+// Nothing is delivered while the guest runs: deadlines are checked at every
+// service point -- on the way into and out of mmio_ring_process, so a timer
+// that expires during a SLEEP is queued before the guest resumes -- and
+// during a POLL.  One host thread, no signal handler: the asynchronous
+// write into a running guest's memory is the step this deliberately does
+// not take yet.
+
+static uint64_t mmio_mono_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static bool mmio_dpc_push(mmio_ring_state_t *mmio, const io_descriptor_t *e) {
+    uint32_t next = (mmio->dpc_head + 1u) % S32_MMIO_DPC_ENTRIES;
+    if (next == mmio->dpc_tail) return false;          // full: the timer stays armed
+    mmio->dpc_ring[mmio->dpc_head] = *e;
+    mmio->dpc_head = next;
+    return true;
+}
+
+// the earliest armed deadline; false when nothing is armed
+static bool mmio_timer_earliest(mmio_ring_state_t *mmio, uint64_t *deadline) {
+    bool any = false;
+    for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++) {
+        if (!mmio->timers[i].armed) continue;
+        if (!any || mmio->timers[i].deadline_ns < *deadline) *deadline = mmio->timers[i].deadline_ns;
+        any = true;
+    }
+    return any;
+}
+
+// queue every timer whose deadline has passed, earliest first
+static void mmio_deliver_timers(mmio_ring_state_t *mmio) {
+    uint64_t now = mmio_mono_ns();
+    for (;;) {
+        int best = -1;
+        for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++) {
+            if (!mmio->timers[i].armed || mmio->timers[i].deadline_ns > now) continue;
+            if (best < 0 || mmio->timers[i].deadline_ns < mmio->timers[best].deadline_ns) best = (int)i;
+        }
+        if (best < 0) return;
+        io_descriptor_t e = { S32_MMIO_OP_TIMER_START, 0u, (uint32_t)best, mmio->timers[best].cookie };
+        if (!mmio_dpc_push(mmio, &e)) return;
+        mmio->timers[best].armed = false;
+    }
+}
+
+static void mmio_timer_start(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
+    if (req->length < sizeof(s32_mmio_timepair64_t)) { mmio_fail(resp, EINVAL); return; }
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    if (offset > S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_timepair64_t)) { mmio_fail(resp, EINVAL); return; }
+    s32_mmio_timepair64_t interval;
+    memcpy(&interval, mmio->data_buffer + offset, sizeof(interval));
+    if (interval.nanoseconds >= 1000000000u) { mmio_fail(resp, EINVAL); return; }
+    int slot = -1;
+    for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++) if (!mmio->timers[i].armed) { slot = (int)i; break; }
+    if (slot < 0) { mmio_fail(resp, EAGAIN); return; }
+    uint64_t secs = ((uint64_t)interval.seconds_hi << 32) | interval.seconds_lo;
+    mmio->timers[slot].armed = true;
+    mmio->timers[slot].deadline_ns = mmio_mono_ns() + secs * 1000000000ull + interval.nanoseconds;
+    mmio->timers[slot].cookie = req->status;
+    resp->status = (uint32_t)slot;
+}
+
+static void mmio_timer_cancel(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
+    if (req->status >= S32_MMIO_TIMER_MAX || !mmio->timers[req->status].armed) { mmio_fail(resp, EINVAL); return; }
+    mmio->timers[req->status].armed = false;
+    resp->status = S32_MMIO_STATUS_OK;
+}
+
+// sleep until the DPC ring has something: the guest asked to
+static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *resp) {
+    mmio_deliver_timers(mmio);
+    if (mmio->dpc_head == mmio->dpc_tail) {
+        uint64_t deadline;
+        if (!mmio_timer_earliest(mmio, &deadline)) { mmio_fail(resp, EAGAIN); return; }
+        uint64_t now = mmio_mono_ns();
+        if (deadline > now) {
+            uint64_t wait = deadline - now;
+            struct timespec ts = { (time_t)(wait / 1000000000ull), (long)(wait % 1000000000ull) };
+            while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
+        }
+        mmio_deliver_timers(mmio);
+    }
+    resp->status = (mmio->dpc_head + S32_MMIO_DPC_ENTRIES - mmio->dpc_tail) % S32_MMIO_DPC_ENTRIES;
 }
 
 // Process a single request
@@ -2672,6 +2782,18 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             resp.status = S32_MMIO_STATUS_OK;
             break;
         }
+
+        case S32_MMIO_OP_TIMER_START:
+            mmio_timer_start(mmio, req, &resp);
+            break;
+
+        case S32_MMIO_OP_TIMER_CANCEL:
+            mmio_timer_cancel(mmio, req, &resp);
+            break;
+
+        case S32_MMIO_OP_POLL:
+            mmio_poll(mmio, &resp);
+            break;
 
         case S32_MMIO_OP_SLEEP: {
             if (req->length < sizeof(s32_mmio_timepair64_t)) {
@@ -3851,10 +3973,12 @@ write_response:
 
 // Process pending requests
 void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu) {
+    mmio_deliver_timers(mmio);
     while (!ring_empty(mmio->req_head, mmio->req_tail)) {
         io_descriptor_t *req = &mmio->req_ring[mmio->req_tail];
         process_request(mmio, cpu, req);
         mmio->req_tail = ring_next(mmio->req_tail);
         mmio->total_requests++;
     }
+    mmio_deliver_timers(mmio);   // a deadline that passed during a request (SLEEP) is queued before the guest resumes
 }

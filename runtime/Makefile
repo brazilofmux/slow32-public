@@ -42,7 +42,7 @@ LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
                        stat_mmio.s32o args_mmio.s32o exit_mmio.s32o \
                        envp_mmio.s32o fs_mmio.s32o dirent_mmio.s32o \
                        term_mmio.s32o net_mmio.s32o exec_mmio.s32o \
-                       tube_mmio.s32o
+                       tube_mmio.s32o dpc_mmio.s32o
 
 # Debug-only extras (fallback stubs)
 LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \
@@ -73,7 +73,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             emutls.c atomic.c \
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c \
             term_mmio.c term_stub.c net_mmio.c net_stub.c \
-            exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c \
+            exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             math_hw.c math_soft.c math_cordic.c \
             unwind.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 

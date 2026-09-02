@@ -132,6 +132,54 @@ accept:
   how it gets a clock. This is the item to argue with first, because
   it decides whether the work can be regression-tested at all.
 
+## The first demo, landed 2026-09-02
+
+One timer source, one DPC, one instance observing it, on all four
+engines, with no change to the ISA and no new opcode number: the two
+reserved ones got implementations.
+
+- **The DPC ring** lives at `S32_MMIO_DPC_*` in `common/mmio_ring_layout.h`:
+  head and tail words at 0x0010/0x0014 and 64 entries at 0x0800, in the
+  page below the request ring, which was unused. Host produces, guest
+  consumes, one producer per ring. An entry is a descriptor: for a timer,
+  `{opcode TIMER_START, length 0, offset id, status cookie}`.
+- **`OP_TIMER_START`** arms one of `S32_MMIO_TIMER_MAX` (8) one-shot
+  timers -- a fixed partition, EAGAIN when full -- with an interval and a
+  guest cookie; `OP_TIMER_CANCEL` disarms. **`OP_POLL`** sleeps until the
+  ring is non-empty, and answers EAGAIN when the ring is empty and nothing
+  is armed, so an instance is never left asleep for something that cannot
+  come.
+- **Delivery is at service points only**: on the way into and out of the
+  ring service (so a deadline that passes during a SLEEP is queued before
+  the guest resumes), and during a POLL. One host thread, no signal
+  handler, nothing written into a running guest's memory.
+- **Guest side** is `runtime/include/s32dpc.h`: `s32_timer_start`,
+  `s32_timer_cancel`, `s32_dpc_poll` (a load of the head word, no host
+  involvement) and `s32_dpc_wait` (poll, else ask to sleep, repeat).
+- **Where it landed**: `tools/emulator/mmio_ring.c` once, for the reference
+  interpreter, slow32-fast and the DBT (which also mirrors the new head
+  and tail in its index sync); and qemu's `target/slow32/mmio.c` once
+  more. qemu's SLEEP had been a stub that returned EINTR at once; it
+  sleeps now, because a timer armed before a SLEEP longer than its
+  interval must have fired when the guest looks.
+
+**What it forced, against the list above.** Less than the list feared.
+No guest-visible semantic change at all. The determinism question
+answered itself once the wait became a queue entry: the guest observes a
+timer only by waiting for it or by looking after a sleep longer than its
+interval, never by counting, so `feature-dpc-timer`'s output is the same
+on every run and every engine although the clock is not. The one thing
+the emulator did not have and now does is a notion of a deadline and a
+place to put its consequence.
+
+**What it did not do**, and what the next step is: the host never
+writes a DPC into a running guest. A timer that expires while the
+instance is computing is queued at its next YIELD, not before. Making
+that asynchronous -- a signal handler or helper thread as the producer,
+the guest's plain loads reading a head word another thread wrote -- is
+the second demo's question, together with the request that needs a
+reply.
+
 ## What is deliberately out
 
 - Preemption of any kind inside an instance, including a pending-event

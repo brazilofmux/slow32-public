@@ -59,6 +59,14 @@ typedef struct {
     int deny_count;
 } svc_policy_t;
 
+// A one-shot timer (docs/plans/dpc.md): armed by OP_TIMER_START, it becomes
+// a DPC ring entry when its deadline passes and a service point comes.
+typedef struct {
+    bool armed;
+    uint64_t deadline_ns;   // CLOCK_MONOTONIC
+    uint32_t cookie;
+} mmio_timer_t;
+
 // MMIO ring buffer state
 struct mmio_ring_state {
     // Ring indices
@@ -66,6 +74,9 @@ struct mmio_ring_state {
     uint32_t req_tail;      // Request consumer (device reads)
     uint32_t resp_head;     // Response producer (device writes)
     uint32_t resp_tail;     // Response consumer (CPU reads)
+    uint32_t dpc_head;      // DPC producer (device writes)
+    uint32_t dpc_tail;      // DPC consumer (CPU reads)
+    mmio_timer_t timers[S32_MMIO_TIMER_MAX];
 
     // Base address of the MMIO window in guest memory
     uint32_t base_addr;
@@ -84,6 +95,7 @@ struct mmio_ring_state {
     // Ring buffers (allocated as part of MMIO memory)
     io_descriptor_t *req_ring;
     io_descriptor_t *resp_ring;
+    io_descriptor_t *dpc_ring;
     uint8_t *data_buffer;
 
     // Statistics

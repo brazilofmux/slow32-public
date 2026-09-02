@@ -901,6 +901,7 @@ static void dbt_init_mmio(dbt_cpu_state_t *cpu) {
     uint8_t *mmio_mem = cpu->mem_base + cpu->mmio_base;
     mmio_state.req_ring = (io_descriptor_t*)(mmio_mem + S32_MMIO_REQ_RING_OFFSET);
     mmio_state.resp_ring = (io_descriptor_t*)(mmio_mem + S32_MMIO_RESP_RING_OFFSET);
+    mmio_state.dpc_ring = (io_descriptor_t*)(mmio_mem + S32_MMIO_DPC_RING_OFFSET);
     mmio_state.data_buffer = mmio_mem + S32_MMIO_DATA_BUFFER_OFFSET;
     mmio_state.base_addr = cpu->mmio_base;
 
@@ -925,6 +926,7 @@ static inline void mmio_sync_from_guest(dbt_cpu_state_t *cpu) {
     mmio_state.req_tail = mmio_mem[S32_MMIO_REQ_TAIL_OFFSET / 4];
     mmio_state.resp_head = mmio_mem[S32_MMIO_RESP_HEAD_OFFSET / 4];
     mmio_state.resp_tail = mmio_mem[S32_MMIO_RESP_TAIL_OFFSET / 4];
+    mmio_state.dpc_tail = mmio_mem[S32_MMIO_DPC_TAIL_OFFSET / 4];   // the guest consumes; the head is the host's
 }
 
 // Sync MMIO indices from host state back to guest memory
@@ -936,6 +938,7 @@ static inline void mmio_sync_to_guest(dbt_cpu_state_t *cpu) {
     mmio_mem[S32_MMIO_REQ_TAIL_OFFSET / 4] = mmio_state.req_tail;
     mmio_mem[S32_MMIO_RESP_HEAD_OFFSET / 4] = mmio_state.resp_head;
     mmio_mem[S32_MMIO_RESP_TAIL_OFFSET / 4] = mmio_state.resp_tail;
+    mmio_mem[S32_MMIO_DPC_HEAD_OFFSET / 4] = mmio_state.dpc_head;
 }
 
 // Handle YIELD instruction - process MMIO ring buffers

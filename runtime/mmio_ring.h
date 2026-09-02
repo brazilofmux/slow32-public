@@ -36,6 +36,9 @@ static inline volatile uint8_t *s32_mmio_reg8_ptr(uint32_t offset) {
 #define S32_MMIO_REQ_RING (s32_mmio_reg32_ptr(S32_MMIO_REQ_RING_OFFSET))
 #define S32_MMIO_RESP_RING (s32_mmio_reg32_ptr(S32_MMIO_RESP_RING_OFFSET))
 #define S32_MMIO_DATA_BUFFER (s32_mmio_reg8_ptr(S32_MMIO_DATA_BUFFER_OFFSET))
+#define S32_MMIO_DPC_HEAD (*s32_mmio_reg32_ptr(S32_MMIO_DPC_HEAD_OFFSET))
+#define S32_MMIO_DPC_TAIL (*s32_mmio_reg32_ptr(S32_MMIO_DPC_TAIL_OFFSET))
+#define S32_MMIO_DPC_RING (s32_mmio_reg32_ptr(S32_MMIO_DPC_RING_OFFSET))
 
 int s32_mmio_request(unsigned int opcode,
                      unsigned int length,

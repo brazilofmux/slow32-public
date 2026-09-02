@@ -12,12 +12,21 @@ enum {
     S32_MMIO_RESP_TAIL_OFFSET   = 0x2004u,
     S32_MMIO_RESP_RING_OFFSET   = 0x3000u,
     S32_MMIO_DATA_BUFFER_OFFSET = 0x4000u,
+    // The DPC ring: host -> guest, asynchronous completions (a timer that
+    // fired).  A DPC is a queue entry, not a function: the guest reads it
+    // when it looks, or asks (OP_POLL) to sleep until one is there.  Sits in
+    // the page below the request ring, which was unused.  docs/plans/dpc.md.
+    S32_MMIO_DPC_HEAD_OFFSET    = 0x0010u,   // host produces
+    S32_MMIO_DPC_TAIL_OFFSET    = 0x0014u,   // guest consumes
+    S32_MMIO_DPC_RING_OFFSET    = 0x0800u,   // S32_MMIO_DPC_ENTRIES x 16 bytes, to 0x0BFF
 };
 
 // Ring configuration constants
 enum {
     S32_MMIO_RING_ENTRIES = 256u,
     S32_MMIO_DESC_WORDS   = 4u,
+    S32_MMIO_DPC_ENTRIES  = 64u,   // the DPC ring's depth
+    S32_MMIO_TIMER_MAX    = 8u,    // one-shot timers an instance may have armed: a fixed partition
 };
 
 #define S32_MMIO_DESC_BYTES   (S32_MMIO_DESC_WORDS * sizeof(uint32_t))
@@ -87,9 +96,18 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_GETTIME     = 0x30,  // Returns wall-clock time (64-bit seconds + nanos)
     S32_MMIO_OP_SLEEP       = 0x31,  // nanosleep() + remainder reporting (64-bit seconds)
     S32_MMIO_OP_GETTZ       = 0x35,  // Returns host timezone info for a queried UTC time
-    S32_MMIO_OP_TIMER_START = 0x32,  // Arm timer, host completes on HP ring (future)
-    S32_MMIO_OP_TIMER_CANCEL= 0x33,  // Cancel timer (future)
-    S32_MMIO_OP_POLL        = 0x34,  // poll()/select()-style wait (future)
+    // Timers and the DPC ring.  A one-shot timer: interval as a timepair64 at
+    // req->offset, req->status the guest's cookie; resp->status the timer id
+    // (0..S32_MMIO_TIMER_MAX-1), or ERR/EAGAIN when all are armed.  When it
+    // fires the host queues a DPC entry {opcode TIMER_START, length 0,
+    // offset id, status cookie} -- at the next service point, or during a
+    // POLL.  The id is free again once the entry is queued.
+    S32_MMIO_OP_TIMER_START = 0x32,
+    S32_MMIO_OP_TIMER_CANCEL= 0x33,  // req->status the id; a cancelled timer never queues
+    // Sleep until the DPC ring is non-empty.  resp->status = entries waiting.
+    // ERR/EAGAIN when the ring is empty and nothing is armed: nothing could
+    // ever arrive, so the guest is not left asleep for good.
+    S32_MMIO_OP_POLL        = 0x34,
 
     // 0x40 - 0x4F : Networking / IPC
     // v1 is IPv4 TCP only. No DNS, no UDP, no Unix sockets.

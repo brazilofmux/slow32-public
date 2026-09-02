@@ -38,6 +38,13 @@
 #define S32_MMIO_RESP_TAIL_OFFSET   0x2004u
 #define S32_MMIO_RESP_RING_OFFSET   0x3000u
 #define S32_MMIO_DATA_BUFFER_OFFSET 0x4000u
+/* The DPC ring, host -> guest (slow-32 docs/plans/dpc.md): a DPC is a
+ * queue entry the guest reads when it looks, or sleeps for with OP_POLL. */
+#define S32_MMIO_DPC_HEAD_OFFSET    0x0010u
+#define S32_MMIO_DPC_TAIL_OFFSET    0x0014u
+#define S32_MMIO_DPC_RING_OFFSET    0x0800u
+#define S32_MMIO_DPC_ENTRIES        64u
+#define S32_MMIO_TIMER_MAX          8u
 
 #define S32_MMIO_RING_ENTRIES 256u
 #define S32_MMIO_DESC_WORDS   4u
@@ -82,6 +89,9 @@
 
 #define S32_MMIO_OP_GETTIME   0x30
 #define S32_MMIO_OP_SLEEP     0x31
+#define S32_MMIO_OP_TIMER_START  0x32
+#define S32_MMIO_OP_TIMER_CANCEL 0x33
+#define S32_MMIO_OP_POLL         0x34
 #define S32_MMIO_OP_GETTZ     0x35
 
 #define S32_MMIO_OP_SOCKET      0x40
@@ -269,10 +279,18 @@ typedef struct {
     int deny_count;
 } Slow32SvcPolicy;
 
+typedef struct {
+    bool armed;
+    int64_t deadline_us;    /* g_get_monotonic_time() */
+    uint32_t cookie;
+} Slow32Timer;
+
 struct Slow32MMIOContext {
     bool enabled;
     uint32_t req_tail;
     uint32_t resp_head;
+    uint32_t dpc_head;
+    Slow32Timer timers[S32_MMIO_TIMER_MAX];
     uint32_t args_argc;
     uint32_t args_total_bytes;
     GByteArray *args_blob;
@@ -1191,6 +1209,8 @@ static void slow32_mmio_apply_reset(Slow32CPU *cpu, bool clear_window_first)
 
     ctx->req_tail = 0;
     ctx->resp_head = 0;
+    ctx->dpc_head = 0;
+    memset(ctx->timers, 0, sizeof(ctx->timers));
     slow32_mmio_reset_fd_table(ctx);
     slow32_mmio_cleanup_services(ctx);
     ctx->next_dynamic_opcode = 0x80;
@@ -1199,6 +1219,8 @@ static void slow32_mmio_apply_reset(Slow32CPU *cpu, bool clear_window_first)
     slow32_mmio_writel(env, S32_MMIO_REQ_TAIL_OFFSET, 0);
     slow32_mmio_writel(env, S32_MMIO_RESP_HEAD_OFFSET, 0);
     slow32_mmio_writel(env, S32_MMIO_RESP_TAIL_OFFSET, 0);
+    slow32_mmio_writel(env, S32_MMIO_DPC_HEAD_OFFSET, 0);
+    slow32_mmio_writel(env, S32_MMIO_DPC_TAIL_OFFSET, 0);
 }
 
 void slow32_mmio_reset(Slow32CPU *cpu)
@@ -1477,15 +1499,165 @@ static void slow32_mmio_handle_gettime(const CPUSlow32State *env,
     resp->status = S32_MMIO_STATUS_OK;
 }
 
+/* ---- timers and the DPC ring (slow-32 docs/plans/dpc.md) ----------------
+ * Mirrors tools/emulator/mmio_ring.c: a deadline passing is the interrupt,
+ * the DPC ring entry is the DPC, and the guest reads it when it looks.
+ * Deadlines are checked at every service point and during a POLL; nothing
+ * is written into a running guest. */
+
+static bool slow32_dpc_push(Slow32MMIOContext *ctx, const CPUSlow32State *env,
+                            const Slow32MMIODesc *e)
+{
+    uint32_t tail = slow32_mmio_readl(env, S32_MMIO_DPC_TAIL_OFFSET);
+    uint32_t next = (ctx->dpc_head + 1u) % S32_MMIO_DPC_ENTRIES;
+
+    if (next == tail) {
+        return false;
+    }
+    slow32_mmio_write_desc(env, ctx->dpc_head, S32_MMIO_DPC_RING_OFFSET, e);
+    ctx->dpc_head = next;
+    slow32_mmio_writel(env, S32_MMIO_DPC_HEAD_OFFSET, ctx->dpc_head);
+    return true;
+}
+
+static bool slow32_timer_earliest(Slow32MMIOContext *ctx, int64_t *deadline)
+{
+    bool any = false;
+
+    for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++) {
+        if (!ctx->timers[i].armed) {
+            continue;
+        }
+        if (!any || ctx->timers[i].deadline_us < *deadline) {
+            *deadline = ctx->timers[i].deadline_us;
+        }
+        any = true;
+    }
+    return any;
+}
+
+static void slow32_deliver_timers(Slow32MMIOContext *ctx, const CPUSlow32State *env)
+{
+    int64_t now = g_get_monotonic_time();
+
+    for (;;) {
+        int best = -1;
+
+        for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++) {
+            if (!ctx->timers[i].armed || ctx->timers[i].deadline_us > now) {
+                continue;
+            }
+            if (best < 0 || ctx->timers[i].deadline_us < ctx->timers[best].deadline_us) {
+                best = (int)i;
+            }
+        }
+        if (best < 0) {
+            return;
+        }
+        Slow32MMIODesc e = { S32_MMIO_OP_TIMER_START, 0u, (uint32_t)best,
+                             ctx->timers[best].cookie };
+        if (!slow32_dpc_push(ctx, env, &e)) {
+            return;
+        }
+        ctx->timers[best].armed = false;
+    }
+}
+
+static void slow32_mmio_handle_timer_start(Slow32MMIOContext *ctx,
+                                           const CPUSlow32State *env,
+                                           const Slow32MMIODesc *req,
+                                           Slow32MMIODesc *resp)
+{
+    s32_mmio_timepair64_t interval = {0};
+
+    if (req->length < sizeof(interval) ||
+        req->offset % S32_MMIO_DATA_CAPACITY > S32_MMIO_DATA_CAPACITY - sizeof(interval)) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+    slow32_mmio_copy_from_guest(env, req->offset % S32_MMIO_DATA_CAPACITY,
+                                (uint8_t *)&interval, sizeof(interval));
+    if (interval.nanoseconds >= 1000000000u) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+    int slot = -1;
+    for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++) {
+        if (!ctx->timers[i].armed) {
+            slot = (int)i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        slow32_mmio_fail(resp, EAGAIN);
+        return;
+    }
+    uint64_t secs = ((uint64_t)interval.seconds_hi << 32) | interval.seconds_lo;
+    ctx->timers[slot].armed = true;
+    ctx->timers[slot].deadline_us = g_get_monotonic_time() +
+        (int64_t)(secs * 1000000ull + interval.nanoseconds / 1000u);
+    ctx->timers[slot].cookie = req->status;
+    resp->status = (uint32_t)slot;
+}
+
+static void slow32_mmio_handle_timer_cancel(Slow32MMIOContext *ctx,
+                                            const Slow32MMIODesc *req,
+                                            Slow32MMIODesc *resp)
+{
+    if (req->status >= S32_MMIO_TIMER_MAX || !ctx->timers[req->status].armed) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+    ctx->timers[req->status].armed = false;
+    resp->status = S32_MMIO_STATUS_OK;
+}
+
+static void slow32_mmio_handle_poll(Slow32MMIOContext *ctx,
+                                    const CPUSlow32State *env,
+                                    Slow32MMIODesc *resp)
+{
+    slow32_deliver_timers(ctx, env);
+    uint32_t tail = slow32_mmio_readl(env, S32_MMIO_DPC_TAIL_OFFSET);
+
+    if (ctx->dpc_head == tail) {
+        int64_t deadline;
+
+        if (!slow32_timer_earliest(ctx, &deadline)) {
+            slow32_mmio_fail(resp, EAGAIN);
+            return;
+        }
+        int64_t now = g_get_monotonic_time();
+        if (deadline > now) {
+            g_usleep((gulong)(deadline - now));
+        }
+        slow32_deliver_timers(ctx, env);
+    }
+    resp->status = (ctx->dpc_head + S32_MMIO_DPC_ENTRIES - tail) % S32_MMIO_DPC_ENTRIES;
+}
+
 static void slow32_mmio_handle_sleep(const CPUSlow32State *env,
                                      const Slow32MMIODesc *req,
                                      Slow32MMIODesc *resp)
 {
+    /* Was a stub that returned EINTR at once.  It sleeps now, as the other
+     * three engines do: a timer armed before a SLEEP longer than its
+     * interval must have fired by the time the guest resumes. */
+    s32_mmio_timepair64_t interval = {0};
     s32_mmio_timepair64_t remainder = {0};
+
+    if (req->length >= sizeof(interval) &&
+        req->offset % S32_MMIO_DATA_CAPACITY <= S32_MMIO_DATA_CAPACITY - sizeof(interval)) {
+        slow32_mmio_copy_from_guest(env, req->offset % S32_MMIO_DATA_CAPACITY,
+                                    (uint8_t *)&interval, sizeof(interval));
+        if (interval.nanoseconds < 1000000000u) {
+            uint64_t secs = ((uint64_t)interval.seconds_hi << 32) | interval.seconds_lo;
+            g_usleep((gulong)(secs * 1000000ull + interval.nanoseconds / 1000u));
+        }
+    }
     slow32_mmio_copy_to_guest(env, req->offset,
                               (const uint8_t *)&remainder, sizeof(remainder));
     resp->length = sizeof(remainder);
-    resp->status = S32_MMIO_STATUS_EINTR;
+    resp->status = S32_MMIO_STATUS_OK;
 }
 
 static void slow32_mmio_handle_gettz(const CPUSlow32State *env,
@@ -1894,6 +2066,18 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
     case S32_MMIO_OP_SLEEP:
         slow32_mmio_handle_sleep(env, req, resp);
+        break;
+
+    case S32_MMIO_OP_TIMER_START:
+        slow32_mmio_handle_timer_start(ctx, env, req, resp);
+        break;
+
+    case S32_MMIO_OP_TIMER_CANCEL:
+        slow32_mmio_handle_timer_cancel(ctx, req, resp);
+        break;
+
+    case S32_MMIO_OP_POLL:
+        slow32_mmio_handle_poll(ctx, env, resp);
         break;
 
     case S32_MMIO_OP_GETTZ:
@@ -2618,6 +2802,8 @@ void slow32_mmio_process(Slow32CPU *cpu)
         return;
     }
 
+    slow32_deliver_timers(ctx, env);
+
     uint32_t req_head = slow32_mmio_readl(env, S32_MMIO_REQ_HEAD_OFFSET);
     uint32_t req_tail = ctx->req_tail;
 
@@ -2646,4 +2832,6 @@ void slow32_mmio_process(Slow32CPU *cpu)
         slow32_mmio_writel(env, S32_MMIO_REQ_TAIL_OFFSET, req_tail);
         req_head = slow32_mmio_readl(env, S32_MMIO_REQ_HEAD_OFFSET);
     }
+    /* a deadline that passed during a request is queued before the guest resumes */
+    slow32_deliver_timers(ctx, env);
 }
