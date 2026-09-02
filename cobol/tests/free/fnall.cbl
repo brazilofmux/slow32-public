@@ -1,8 +1,9 @@
 *> The ALL subscript of the 1989 amendment: every element of a table
 *> as one argument of a numeric function. GnuCOBOL 4 refuses the form
-*> altogether (unexpected ALL), so the oracle's refusal is the
-*> documented state of the art; the values are checked against the
-*> same sums taken element by element in free/intrinsics.
+*> altogether (unexpected ALL) in every dialect, so there is no oracle
+*> for this one -- the refusal is the documented state of the art, and
+*> the values are checked against the same sums taken element by
+*> element in free/intrinsics.
 identification division.
 program-id. fnall.
 data division.

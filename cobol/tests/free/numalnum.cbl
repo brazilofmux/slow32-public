@@ -1,3 +1,9 @@
+      *> A non-integer numeric DISPLAY or COMP item sent to an alphanumeric
+      *> receiver: the digits as stored, the sign and the point
+      *> unrepresented.  Stage 53 settled this on the NIST cases against the
+      *> text (086ee808, the user's ruling of 2026-08-31).  GnuCOBOL calls it
+      *> "invalid MOVE" and refuses it in every dialect, so there is
+      *> no oracle for this one; the .expected file is the cases' answer.
        IDENTIFICATION DIVISION.
        PROGRAM-ID. NUMALNUM.
        DATA DIVISION.
