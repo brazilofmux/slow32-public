@@ -285,19 +285,48 @@ scheduled; the corpus stopped asking.
   `COPY_INLINE_MAX` bytes,** instead of calling `memcpy`. See the
   threshold note below: it is 8, and which number it is matters.
 
-**Why the threshold is 8 and not larger.** The engines disagree:
-`slow32-dbt` recognises the `memcpy`
-entry point by name and substitutes a native stub, so a call there is
-nearly free, while the interpreters execute every instruction of it.
-Swept on `bench/b3big`, 8 is the only value that beats memcpy-always on
-both; 16 is a 41% DBT regression on MOVE-heavy code, worse than before
-this work, to buy the interpreters a 2x. The DBT is what runs the corpus
--- re-sweep with `bench/sweep.sh` before changing it, and never tune it
-on one engine.
+**Why the threshold is 8, and why the corpus decides it.** The engines
+disagree: `slow32-dbt` recognises the `memcpy` entry point by name and
+substitutes a native stub, so a call there is nearly free, while the
+interpreters execute every instruction of it. `bench/sweep.sh` on
+`bench/b3big`, both hosts (arm64 DBT re-timed at four decimals):
 
     COPY_INLINE_MAX      0      8     16     24     40
-    slow32-fast (s)  15.61  12.76   8.75   8.51   6.33
-    slow32-dbt  (s)   0.230  0.220  0.310  0.310  0.450
+    kagura fast (s)  15.61  12.76   8.75   8.51   6.33
+    kagura dbt  (s)  0.230  0.220  0.310  0.310  0.450
+    arm64  fast (s)   7.96   6.59   4.05   4.05   2.83
+    arm64  dbt  (s)  0.0725 0.0781 0.3215 0.3225 0.4710
+
+Same shape on both -- interpreters want it big, the DBT falls off a cliff
+between 8 and 16, and the cliff is in the same place -- so one constant is
+right rather than one per host. But note that b3big's DBT column does
+**not** agree with itself across hosts at the 0/8 boundary: kagura
+prefers 8, arm64 prefers 0 by ~8%. A tiebreak of "the DBT is what runs
+the corpus" reads off b3big as 0 on arm64.
+
+It shouldn't, and the corpus itself is why. Every threshold, majesty's
+s32x rebuilt from each, reports byte-identical at all of them (arm64):
+
+    COPY_INLINE_MAX      0            8           16           40
+    guest instructions   2099450533   2046857172  1983245824   1963697060
+    batch.sh (s)         0.40         0.40        0.42         0.43
+
+8 uses 2.5% *fewer* guest instructions than 0 and ties it on wall time,
+so 8 is right on arm64 too -- for the opposite reason b3big gives. And 16
+is a 5% wall regression on the corpus, not the 4.4x b3big predicts.
+
+The useful part is the inversion: from 8 upward guest instructions go
+**down** while wall time goes **up**. The inline copy really is fewer
+instructions; it just costs more than the DBT's native stub. So
+instruction count is the wrong metric for tuning *this constant*, though
+it is the right one for the rest of section 24. b3big amplifies that
+until it flips the 0/8 answer, because a MOVE-only loop is nothing but
+the thing being measured.
+
+So: re-sweep with `bench/sweep.sh` if you like, but **decide on the
+corpus**, and never on one engine. Otherwise the next person re-sweeps on
+b3big on an arm64 box and moves the constant to 0 with good evidence and
+a worse result.
 
 ### 25. An unsigned COMP-5 value past 2^31 is stored as its magnitude — GitHub #28
 Found writing free/hotarith, and older than the tests: a NOTRUNC field

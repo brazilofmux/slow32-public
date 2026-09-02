@@ -26,6 +26,23 @@ REPS=${REPS:-7}
 base="${SRC%.cbl}"
 cd "$HERE"
 med() { sort -n | awk '{v[NR]=$1} END{printf "%.3f", v[int((NR+1)/2)]}'; }
+# A subsecond clock.  Not `/usr/bin/time -f %e`: -f is a GNU extension and
+# macOS ships BSD time, so the script whose whole purpose is to be re-swept
+# per host would not run on the other host.  `date +%s%N` is GNU-only too
+# (BSD date prints a literal N).  python3 and perl both have one and one of
+# them is on every machine this tree builds on; if neither is, say so rather
+# than silently timing in whole seconds.
+if python3 -c 'import time' 2>/dev/null; then
+    now() { python3 -c 'import time; print(time.time())'; }
+elif perl -MTime::HiRes -e1 2>/dev/null; then
+    now() { perl -MTime::HiRes -e 'print Time::HiRes::time()'; }
+else
+    echo "sweep.sh: no subsecond clock (need python3 or perl)" >&2; exit 1
+fi
+elapsed() {   # elapsed CMD ARG... -> wall seconds, three decimals
+    _t0=$(now); "$@" >/dev/null 2>&1; _t1=$(now)
+    awk -v a="$_t0" -v b="$_t1" 'BEGIN{printf "%.3f", b-a}'
+}
 printf '%-8s %14s %10s %10s\n' thresh 'fast insns' 'fast s' 'dbt s'
 for n in "${@:-0 8 16 24 40}"; do
     $CC -std=c99 -O1 -w -DCOPY_INLINE_MAX="$n" -I"$CDIR/src" -o "$CDIR/out/s32-cobc-sweep" \
@@ -40,8 +57,8 @@ for n in "${@:-0 8 16 24 40}"; do
         "$ROOT/runtime/crt0.s32o" "$base-$n.s32o" "$CDIR/libcob/libcob.s32o" $extra \
         "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null
     insns=$("$FAST" "$base-$n.s32x" | awk '/Instructions executed/{print $3}')
-    ft=$(i=0; while [ $i -lt "$REPS" ]; do /usr/bin/time -f %e "$FAST" "$base-$n.s32x" 2>&1 >/dev/null | tail -1; i=$((i+1)); done | med)
-    dt=$(i=0; while [ $i -lt "$REPS" ]; do /usr/bin/time -f %e "$DBT"  "$base-$n.s32x" 2>&1 >/dev/null | tail -1; i=$((i+1)); done | med)
+    ft=$(i=0; while [ $i -lt "$REPS" ]; do elapsed "$FAST" "$base-$n.s32x"; echo; i=$((i+1)); done | med)
+    dt=$(i=0; while [ $i -lt "$REPS" ]; do elapsed "$DBT"  "$base-$n.s32x"; echo; i=$((i+1)); done | med)
     printf '%-8s %14s %10s %10s\n' "$n" "$insns" "$ft" "$dt"
 done
 rm -f "$CDIR/out/s32-cobc-sweep"

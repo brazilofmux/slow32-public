@@ -3795,20 +3795,23 @@ static void parse_display(void)
  * a[0] is the destination and a[1] the source, already staged as Args so the
  * subscripted and reference-modified forms marshal the way they always do.
  * GitHub #27. */
-/* The threshold, swept on bench/b3 (twelve MOVEs x 2.2M) 2026-09-01.  The
- * engines disagree, because slow32-dbt recognises the memcpy entry point by
- * name and substitutes a native stub, while the interpreters execute every
- * instruction the call runs:
+/* The threshold, 2026-09-01.  The engines disagree, because slow32-dbt
+ * recognises the memcpy entry point by name and substitutes a native stub,
+ * while the interpreters execute every instruction the call runs.  Both hosts
+ * put the DBT's cliff between 8 and 16, so one constant is right -- but do
+ * NOT settle it on bench/b3big, which is a MOVE-only loop and therefore
+ * nothing but the thing being measured: at the 0/8 boundary it says 8 on
+ * x86-64 and 0 on arm64.  The corpus decides, and says 8 on both.
  *
- *      COPY_INLINE_MAX      0      8     16     24     40
- *      slow32-fast (s)  15.61  12.76   8.75   8.51   6.33
- *      slow32-dbt  (s)   0.230  0.220  0.310  0.310  0.450
+ *      COPY_INLINE_MAX      0            8           16           40
+ *      corpus insns         2099450533   2046857172  1983245824   1963697060
+ *      corpus batch.sh (s)  0.40         0.40        0.42         0.43
  *
- * 8 is the only setting that beats memcpy-always on both -- it is the DBT's
- * best point and still takes 18% off the interpreters -- so a copy of 8 bytes
- * or fewer goes inline and the rest keeps the call.  Larger values buy the
- * interpreters a lot at the DBT's expense, and the DBT is what runs the
- * corpus.  Sweep it again with bench/sweep.sh before changing it. */
+ * Note the inversion: past 8, guest instructions go down while wall time goes
+ * up.  The inline copy is fewer instructions and still slower than the DBT's
+ * stub, so instruction count is the wrong metric for this one constant.
+ * cobol/ISSUES.md section 24 carries both hosts' tables and the reasoning;
+ * bench/sweep.sh re-runs the microbenchmark, but decide on the corpus. */
 #ifndef COPY_INLINE_MAX
 #define COPY_INLINE_MAX 8
 #endif
