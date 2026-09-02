@@ -410,6 +410,26 @@ nine lines agree with GnuCOBOL 4.0 *and* gcobol 15.3.0.
 word; it needs 64-bit inline arithmetic. gl036 does one per detail line,
 so that is what would move gl036, and nothing here does.
 
+**And the lever for it is not in `cobol/` at all — GitHub #30.** Profiling
+that ADD on a host without LLVM put ~1300 of its 2532 instructions in one
+64-bit divide. Fixing it *here* (a `udiv_small` in libcob, 0f83d5c2) was a
+47% win on the self-hosted build and a **60% regression** on the LLVM one,
+because LLVM strength-reduces the constant divisor and never calls a
+helper; reverted in e29fb799. `libcob.s32o` is gitignored and every host
+builds its own from this shared source, so a source-level workaround for
+one compiler's codegen is a trap for whoever measures next.
+
+The real defect: `selfhost/stage08/builtins64.s`'s `__udivmoddi3` is still
+a 64-round shift-subtract loop, while `runtime/builtins.c`'s `__udivdi3`
+has had the 32-bit-divisor fast path since the work in
+`docs/performance.md`. `builtins64.s32o` links before `libs32.s32a` and
+first definition wins, so hosts without clang get the slow copy with the
+fast one sitting in the archive behind it. Same COBOL `MOVE`: 2195
+instructions self-hosted against 718 under LLVM.
+
+**Lesson, and it is the cheap one: ask which compiler builds the thing you
+are optimising before you optimise around its output.**
+
 ### 25. An unsigned COMP-5 value past 2^31 is stored as its magnitude — GitHub #28
 Found writing free/hotarith, and older than the tests: a NOTRUNC field
 is a plain unsigned word, but both store paths treat a value with the
