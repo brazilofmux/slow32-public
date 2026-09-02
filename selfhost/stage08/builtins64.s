@@ -143,6 +143,226 @@ __udivmoddi3:
     stw  r29, r17, 24
     stw  r29, r18, 28
 
+    # ------------- fast paths mirrored from runtime/builtins.c -------------
+    # udivmoddi3_core() has taken these since it was written and this file
+    # never did, so every 64-bit divide on a host without LLVM paid 64
+    # shift-subtract rounds even though the archive behind us held the fast
+    # copy (GitHub #30).  Anything not caught here -- a divisor of 2^32 or
+    # more, and division by zero, whose ~0 quotient the loop produces --
+    # falls through to that loop, which is left exactly as it was.
+
+    # num < den: quotient 0, remainder num.  The loop's own answer, 64
+    # rounds sooner; checked first, as udivmoddi3_core() checks it.
+    sltu r17, r4, r6
+    bne  r17, r0, .Ludm_lt
+    bne  r4, r6, .Ludm_ge
+    sltu r17, r3, r5
+    beq  r17, r0, .Ludm_ge
+.Ludm_lt:
+    addi r1, r0, 0
+    addi r2, r0, 0
+    addi r11, r3, 0
+    addi r12, r4, 0
+    jal  r0, .Ludm_fret
+.Ludm_ge:
+    # The divisor fits 32 bits: every power of ten to 10^9, so every
+    # decimal rescale and every mag_to_digits() step.
+    bne  r6, r0, .Ludm_slow
+    beq  r5, r0, .Ludm_slow
+    bne  r4, r0, .Ludm_f64
+
+    # num < 2^32 too: a single unsigned 32/32 divide.
+    addi r2, r0, 0
+    addi r12, r0, 0
+    or   r17, r3, r5
+    blt  r17, r0, .Lf32_big
+    div  r1, r3, r5
+    rem  r11, r3, r5
+    jal  r0, .Ludm_fret
+.Lf32_big:
+    blt  r5, r0, .Lf32_bigd
+    # dividend >= 2^31, divisor < 2^31: halve, divide, double, correct once
+    srli r17, r3, 1
+    div  r17, r17, r5
+    slli r1, r17, 1
+    mul  r18, r1, r5
+    sub  r11, r3, r18
+    bltu r11, r5, .Ludm_fret
+    addi r1, r1, 1
+    sub  r11, r11, r5
+    jal  r0, .Ludm_fret
+.Lf32_bigd:
+    # divisor >= 2^31: the quotient is 0 or 1
+    sltu r1, r3, r5
+    xori r1, r1, 1
+    mul  r18, r1, r5
+    sub  r11, r3, r18
+    jal  r0, .Ludm_fret
+
+.Ludm_f64:
+    # q_hi = num_hi / den, r11 = num_hi % den  (so r11 < den, as divlu2 wants)
+    or   r17, r4, r5
+    blt  r17, r0, .Lfq_big
+    div  r2, r4, r5
+    rem  r11, r4, r5
+    jal  r0, .Ludm_divlu
+.Lfq_big:
+    blt  r5, r0, .Lfq_bigd
+    srli r17, r4, 1
+    div  r17, r17, r5
+    slli r2, r17, 1
+    mul  r18, r2, r5
+    sub  r11, r4, r18
+    bltu r11, r5, .Ludm_divlu
+    addi r2, r2, 1
+    sub  r11, r11, r5
+    jal  r0, .Ludm_divlu
+.Lfq_bigd:
+    sltu r2, r4, r5
+    xori r2, r2, 1
+    mul  r18, r2, r5
+    sub  r11, r4, r18
+
+.Ludm_divlu:
+    # (r11:r3) / r5 with r11 < r5 -- Hacker's Delight divlu2 in base 2^16,
+    # the same two-divisions-and-a-correction shape as runtime/builtins.c's
+    # divlu32().  All arithmetic wraps modulo 2^32, as the algorithm intends.
+    #   r6 = s   r7 = vn1  r8 = vn0  r9 = un32  r10 = un1  r13 = un0
+    #   r14 = q1  r15 = rhat  r16 = un21  r17,r18 = temps
+    # s = nlz32(v)
+    addi r6, r0, 0
+    addi r17, r5, 0
+    srli r18, r17, 16
+    bne  r18, r0, .Lnlz1
+    addi r6, r6, 16
+    slli r17, r17, 16
+.Lnlz1:
+    srli r18, r17, 24
+    bne  r18, r0, .Lnlz2
+    addi r6, r6, 8
+    slli r17, r17, 8
+.Lnlz2:
+    srli r18, r17, 28
+    bne  r18, r0, .Lnlz3
+    addi r6, r6, 4
+    slli r17, r17, 4
+.Lnlz3:
+    srli r18, r17, 30
+    bne  r18, r0, .Lnlz4
+    addi r6, r6, 2
+    slli r17, r17, 2
+.Lnlz4:
+    blt  r17, r0, .Lnlz5
+    addi r6, r6, 1
+.Lnlz5:
+    # v <<= s; vn1 = v >> 16; vn0 = v & 0xFFFF
+    sll  r5, r5, r6
+    srli r7, r5, 16
+    slli r8, r5, 16
+    srli r8, r8, 16
+    # un32 = s ? (u1 << s) | (u0 >> (32 - s)) : u1
+    beq  r6, r0, .Lun32_s0
+    sll  r9, r11, r6
+    addi r18, r0, 32
+    sub  r18, r18, r6
+    srl  r18, r3, r18
+    or   r9, r9, r18
+    jal  r0, .Lun32_done
+.Lun32_s0:
+    addi r9, r11, 0
+.Lun32_done:
+    # un10 = u0 << s; un1 = un10 >> 16; un0 = un10 & 0xFFFF
+    sll  r17, r3, r6
+    srli r10, r17, 16
+    slli r13, r17, 16
+    srli r13, r13, 16
+
+    # --- first base-2^16 digit: q1 = un32 / vn1, rhat = un32 % vn1 ---
+    blt  r9, r0, .Lq1_big
+    div  r14, r9, r7
+    rem  r15, r9, r7
+    jal  r0, .Lq1_fix
+.Lq1_big:
+    srli r17, r9, 1
+    div  r17, r17, r7
+    slli r14, r17, 1
+    mul  r18, r14, r7
+    sub  r15, r9, r18
+    bltu r15, r7, .Lq1_fix
+    addi r14, r14, 1
+    sub  r15, r15, r7
+.Lq1_fix:
+    # while (q1 >= b || q1*vn0 > b*rhat + un1) { q1--; rhat += vn1;
+    #                                            if (rhat >= b) break; }
+    srli r17, r14, 16
+    bne  r17, r0, .Lq1_dec
+    mul  r17, r14, r8
+    slli r18, r15, 16
+    add  r18, r18, r10
+    sltu r18, r18, r17
+    beq  r18, r0, .Lq1_done
+.Lq1_dec:
+    addi r14, r14, -1
+    add  r15, r15, r7
+    srli r17, r15, 16
+    beq  r17, r0, .Lq1_fix
+.Lq1_done:
+    # un21 = un32*b + un1 - q1*v
+    slli r16, r9, 16
+    add  r16, r16, r10
+    mul  r17, r14, r5
+    sub  r16, r16, r17
+
+    # --- second digit: q0 = un21 / vn1, rhat = un21 % vn1 ---
+    blt  r16, r0, .Lq0_big
+    div  r1, r16, r7
+    rem  r15, r16, r7
+    jal  r0, .Lq0_fix
+.Lq0_big:
+    srli r17, r16, 1
+    div  r17, r17, r7
+    slli r1, r17, 1
+    mul  r18, r1, r7
+    sub  r15, r16, r18
+    bltu r15, r7, .Lq0_fix
+    addi r1, r1, 1
+    sub  r15, r15, r7
+.Lq0_fix:
+    srli r17, r1, 16
+    bne  r17, r0, .Lq0_dec
+    mul  r17, r1, r8
+    slli r18, r15, 16
+    add  r18, r18, r13
+    sltu r18, r18, r17
+    beq  r18, r0, .Lq0_done
+.Lq0_dec:
+    addi r1, r1, -1
+    add  r15, r15, r7
+    srli r17, r15, 16
+    beq  r17, r0, .Lq0_fix
+.Lq0_done:
+    # rem = (un21*b + un0 - q0*v) >> s ; quotient_lo = q1*b + q0
+    slli r17, r16, 16
+    add  r17, r17, r13
+    mul  r18, r1, r5
+    sub  r17, r17, r18
+    srl  r11, r17, r6
+    slli r18, r14, 16
+    add  r1, r1, r18
+    addi r12, r0, 0
+
+.Ludm_fret:
+    ldw  r13, r29, 8
+    ldw  r14, r29, 12
+    ldw  r15, r29, 16
+    ldw  r16, r29, 20
+    ldw  r17, r29, 24
+    ldw  r18, r29, 28
+    addi r29, r29, 32
+    jalr r0, r31, 0
+
+.Ludm_slow:
+
     # r11:r12 = remainder (starts at 0)
     addi r11, r0, 0
     addi r12, r0, 0
