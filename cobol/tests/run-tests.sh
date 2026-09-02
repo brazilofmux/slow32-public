@@ -29,8 +29,24 @@ EMU="${EMU:-$ROOT/tools/emulator/slow32}"
 COBC="$CDIR/out/s32-cobc"
 LIBCOB="$CDIR/libcob/libcob.s32o"
 # The oracle: host cobc if present, else GnuCOBOL in a container.
+# ORACLE=0 turns it off.  The container oracle is TWO `docker run`s per
+# test, ~200 for the suite, and what that costs is a property of the HOST
+# rather than of the suite: measured the same day on the same images and
+# the same harness, one box starts a container in 0.145s and finishes the
+# oracle-backed suite in 29 seconds, while another takes ~24s per start
+# and over an hour.  On the second, the oracle is not part of the run, it
+# is the run.  So two machines can split the gate: the fast one keeps the
+# oracle, the slow one drops it, and between them the suite is covered.
+#
+# What is left without it is still the full comparison against our own
+# expected outputs.  What is dropped is "and GnuCOBOL agrees", so the
+# summary line says so -- an ORACLE=0 run must not be mistakable in a log
+# for a full one, which is the same trap as an oracle that refuses and
+# reports a pass.
 ORACLE_ENGINE=""
-if command -v cobc >/dev/null 2>&1; then
+if [ "${ORACLE:-1}" = 0 ]; then
+    :
+elif command -v cobc >/dev/null 2>&1; then
     ORACLE_ENGINE=host
 else
     for e in podman docker; do
@@ -228,9 +244,17 @@ done
 
 echo
 case "$ORACLE_ENGINE" in
-    "")   echo "cobol: NO ORACLE -- neither a host cobc nor a gnucobol:4.0-builder image; .expected files were checked against us alone" ;;
+    "")   if [ "${ORACLE:-1}" = 0 ]; then
+              echo "cobol: NO ORACLE -- switched off by ORACLE=0; .expected files were checked against us alone"
+          else
+              echo "cobol: NO ORACLE -- neither a host cobc nor a gnucobol:4.0-builder image; .expected files were checked against us alone"
+          fi ;;
     host) echo "cobol: oracle is the host cobc" ;;
     *)    echo "cobol: oracle is gnucobol:4.0-builder / $ORACLE_RUN_IMAGE under $ORACLE_ENGINE" ;;
 esac
-echo "cobol: $PASS passed, $FAIL failed"
+if [ "${ORACLE:-1}" = 0 ]; then
+    echo "cobol: $PASS passed, $FAIL failed (ORACLE=0: expected output only, GnuCOBOL not consulted)"
+else
+    echo "cobol: $PASS passed, $FAIL failed"
+fi
 [ "$FAIL" = "0" ]
