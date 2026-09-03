@@ -119,17 +119,66 @@ process table. Shared RX code, separate data and MMIO, a dead
 instance must not take the others. `hose.md` said not to start
 here (“one bug kills the desk”); that was the bootstrap order.
 It is now the second step, after isolation is real. Measure
-against level 3 before declaring it faster.
+against level 3 before declaring it faster — and now there is a
+measurement (see “The overhead, measured” below): what level 2 buys
+is the deletion of level 3’s fixed per-process startup, which is the
+whole of the fine-grained plateau. Worth its cost only when a
+workload needs fine-grained parallelism at high core counts; coarse
+work does not.
 
 **3. Multiple emulator processes, one machine.** Today’s product.
-Gaps: `socketpair` so two guests on one box do not pretend to be
-the internet; a desk file that starts N emulators, pre-wires
-hoses, gives exactly one the terminal; `EXEC` that can complete
-via DPC (spawn, parent continues, status later).
+A first desk file landed: `examples/csvbench/cluster.sh` splits a
+file list across N validator instances, runs them in parallel, and
+merges in file order — the host composing machines, one bug in one
+worker not taking the desk. It beats the serial instance (criterion
+3), and the measurement is below. Remaining gaps: `socketpair` so two
+guests on one box do not pretend to be the internet; a desk file that
+gives exactly one guest the terminal; `EXEC` that can complete via DPC
+(spawn, parent continues, status later) so a *guest* coordinator, not
+a shell, can compose them.
 
 **4. Multiple machines.** Numeric IPv4 already leaves. `--deny net`
 that actually means it is [SERVICE_NEGOTIATION.md](../SERVICE_NEGOTIATION.md)
 step 3, still the sandbox. DNS, UDP, a BSD stack stay out.
+
+## The overhead, measured
+
+The CSV validator (`examples/validatecsv_sched.c`, the level-1 scheduler
+slice) distributed across level-3 worker processes
+(`examples/csvbench/`, `make`-able and re-runnable), 64 files on 18
+cores, best of five:
+
+```
+             fine files (112 KB)      coarse files (448 KB)
+serial          480 ms  1.00x          1886 ms  1.00x
+-j 4            160 ms  3.01x  eff 75%   533 ms  3.54x  eff 88%
+-j 8            111 ms  4.31x  eff 54%   314 ms  6.00x  eff 75%
+-j 18           102 ms  4.69x  eff 26%   206 ms  9.15x  eff 51%
+```
+
+The finding, and it is the one the whole shape lives or dies by:
+**coordination is a fixed per-worker cost** — process spawn plus emulator
+init plus the merge, a couple of milliseconds a worker — so on
+fine-grained work it dominates and caps the win near 4.5x no matter how
+many cores, and on coarser work it amortizes and scales to 9x+ and
+climbing. Granularity, work per instance, is the knob; a real
+coordinator hands each worker a fat slice, never one small file, which
+is why the native code batches to threads too.
+
+This is the honest boundary against threads. Threads share memory, so
+their coordination is nearly free; this shape refuses shared memory and
+pays a real tax for it. The bet pays only when the work per unit buries
+the tax — and then isolation and no-shared-state come free on top of
+competitive parallelism. Below that line, threads win; the shape is not
+for fine-grained work on a warm cache.
+
+Two levers, both now scoreable by `bench.sh` rather than guessed:
+reduce the fixed cost (a pre-forked emulator pool, smaller worker
+binaries, or **level 2** — load the code once, share it, no per-process
+startup), or raise the work per worker (batching, coarser chunks).
+Level 2 is the one that deletes the plateau; build it when a workload
+needs fine-grained parallelism at a core count the tax is eating, and
+not before.
 
 ## What “could build an OS, then don’t” forbids
 
