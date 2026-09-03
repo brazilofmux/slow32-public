@@ -135,6 +135,13 @@ task that awaits it. “Do not write a scheduler,” below, meant the OS
 scheduler with a native tick, not this reactor; the reactor was always
 Level 1. Overlap I/O across instances still needs level 2.
 
+Its named cost: cooperative scheduling means a task that does not
+yield starves the others in its instance, and `S32_YIELD` makes that
+discipline documented but unenforced — structurally the same shape of
+obligation as “remember not to share,” differing in blast radius (one
+instance) and symptom (latency, not corruption). Stated in
+[seam.md](seam.md) rather than left to be discovered.
+
 Posted read (`OP_POST_READ`, 0x0E) is the second DPC demo: a reply
 comes back as a queue entry, the instance never becomes a reader
 thread. A would-block fd occupies a `POST_MAX` slot and completes at
@@ -195,6 +202,19 @@ climbing. Granularity, work per instance, is the knob; a real
 coordinator hands each worker a fat slice, never one small file, which
 is why the native code batches to threads too.
 
+**Read that finding with its topology attached.** `cluster.sh` splits
+a *file list*: every worker opens its own files and writes its own
+output, and nothing crosses between workers but a name on argv and an
+exit status. That is embarrassingly parallel fan-out — the shape with
+no messages in it — so the only coordination cost it can expose is the
+fixed one. There is a second tax it cannot see: **per byte, per hop**,
+the copy across a seam, which scales with data volume rather than
+worker count and is amortized by nothing. It matters because the lever
+above makes it *worse*: a fatter slice amortizes the spawn cost and
+moves proportionally more bytes. Granularity is the knob, but there is
+an optimum, not a monotone. The unmeasured axis and the benchmark that
+would settle it are [seam.md](seam.md).
+
 This is the honest boundary against threads, and it is worth stating
 in the right currency. Threads look free because their *spawn* is
 free; their coordination is not, it is only unbudgeted. A shared line
@@ -219,6 +239,15 @@ startup), or raise the work per worker (batching, coarser chunks).
 Level 2 is the one that deletes the plateau; build it when a workload
 needs fine-grained parallelism at a core count the tax is eating, and
 not before.
+
+That "not before" is now contingent. Level 2 also converts a seam
+crossing from two kernel copies into one host `memcpy` — no pipe, no
+syscall, and the law untouched, since the host is still the mover and
+guests still cannot address each other's RAM. If the per-byte tax
+dominates on a pipeline, level 2 stops being a fix for fine-grained
+fan-out and becomes the fix for pipelines, which is a much larger
+class of program. Settle that with [seam.md](seam.md)'s benchmark
+before scheduling level 2, because it changes what level 2 is *for*.
 
 ## What “could build an OS, then don’t” forbids
 
