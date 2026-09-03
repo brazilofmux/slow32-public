@@ -245,8 +245,16 @@ run_test() {
             >"$result_path/viewer.txt" 2>"$result_path/viewer.err" &
         viewer_pid=$!
     fi
-    env "${dump_env[@]}" timeout $run_timeout $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
-         >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
+    if [ -f "$test_path/stdin.sh" ]; then
+        # The test's stdin is a pipe fed by stdin.sh, which may pause before
+        # it writes: an fd that is not readable yet, for wait-for-any tests.
+        run_timeout=5
+        env "${dump_env[@]}" timeout $run_timeout $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
+             < <(bash "$test_path/stdin.sh") >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
+    else
+        env "${dump_env[@]}" timeout $run_timeout $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
+             >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
+    fi
     if [ -n "$viewer_pid" ]; then
         wait "$viewer_pid" 2>/dev/null || true
         viewer_pid=""

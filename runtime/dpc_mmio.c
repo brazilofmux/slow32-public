@@ -51,3 +51,16 @@ int s32_post_read(int fd, void *buf, unsigned n, unsigned cookie) {
                                                          (unsigned int)fd);
     return status == S32_MMIO_STATUS_ERR ? -1 : 0;
 }
+
+int s32_dpc_wait_on(const int *fds, unsigned nfds, s32_dpc_t *out) {
+    if (nfds > S32_DPC_MAX_FDS) { errno = EINVAL; return -1; }
+    for (;;) {
+        if (s32_dpc_poll(out)) return 1;
+        /* the fds go in the payload each time: the host keeps nothing
+         * between one wait and the next */
+        volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+        if (nfds) memcpy((void *)data_buffer, fds, nfds * sizeof(int));
+        unsigned int status = (unsigned int)s32_mmio_request(S32_MMIO_OP_POLL, nfds * 4u, 0u, 0u);
+        if (status == S32_MMIO_STATUS_ERR) return -1;
+    }
+}

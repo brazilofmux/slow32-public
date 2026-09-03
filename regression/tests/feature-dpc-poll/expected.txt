@@ -1,0 +1,9 @@
+timer first: id=0 cookie=11
+fd 0 readable
+read 3: hi
+fd 0 readable at eof
+read 0
+file ready before the long timer
+fd 77 not open
+nothing to wait for
+too many fds

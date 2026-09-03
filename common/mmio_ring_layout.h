@@ -28,7 +28,19 @@ enum {
     S32_MMIO_DPC_ENTRIES  = 64u,   // the DPC ring's depth
     S32_MMIO_TIMER_MAX    = 8u,    // one-shot timers an instance may have armed: a fixed partition
     S32_MMIO_POST_MAX     = 8u,    // posted reads in flight: the same kind of partition
+    S32_MMIO_POLL_MAX_FDS = 8u,    // fds one POLL may name for readiness: a partition too
 };
+// The status word of a readiness DPC entry (opcode POLL): why the fd woke
+// the guest.  poll(2)'s vocabulary, renumbered so the guest never sees a
+// host's bit layout.  Distinct from POST_READ, which is completion not
+// readiness (docs/plans/dpc.md).
+enum {
+    S32_MMIO_POLL_IN   = 1u << 0,   // readable, or at end of file
+    S32_MMIO_POLL_HUP  = 1u << 1,   // the writer went away
+    S32_MMIO_POLL_ERR  = 1u << 2,   // error condition on the host fd
+    S32_MMIO_POLL_NVAL = 1u << 3,   // not an open guest fd
+};
+
 
 #define S32_MMIO_DESC_BYTES   (S32_MMIO_DESC_WORDS * sizeof(uint32_t))
 #define S32_MMIO_DATA_CAPACITY (48u * 1024u)  // Total bytes available in data buffer

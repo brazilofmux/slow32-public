@@ -2349,45 +2349,73 @@ static void mmio_timer_cancel(mmio_ring_state_t *mmio, io_descriptor_t *req, io_
 }
 
 // sleep until the DPC ring has something: the guest asked to
-static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *resp) {
+/* Wait-for-any: sleep until the DPC ring has something.  What can put an
+ * entry there is a timer firing, a posted read completing, or -- the
+ * readiness path (distinct from POST_READ) -- one of the guest fds named in
+ * this request becoming readable, delivered as a S32_DPC_READY entry.  The
+ * named fds are req->length/4 uint32 at req->offset.  Level-triggered, so an
+ * fd the guest has not drained is reported again (docs/plans/dpc.md). */
+static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
+    uint32_t nnamed = req->length / 4u;
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    if (req->length % 4u || nnamed > S32_MMIO_POLL_MAX_FDS ||
+        offset > S32_MMIO_DATA_CAPACITY - req->length) { mmio_fail(resp, EINVAL); return; }
+    uint32_t named[S32_MMIO_POLL_MAX_FDS];
+    if (req->length) memcpy(named, mmio->data_buffer + offset, req->length);
+    for (uint32_t i = 0; i < nnamed; i++) {          // not-open fds: reported at once
+        if (host_fd_for_guest(mmio, named[i]) < 0) {
+            io_descriptor_t e = { S32_MMIO_OP_POLL, 0u, named[i], S32_MMIO_POLL_NVAL };
+            mmio_dpc_push(mmio, &e);
+        }
+    }
+
     mmio_deliver_timers(mmio);
     mmio_deliver_posts(mmio);
-    if (mmio->dpc_head == mmio->dpc_tail) {
+    while (mmio->dpc_head == mmio->dpc_tail) {
         uint64_t deadline = 0;
         bool timed = mmio_timer_earliest(mmio, &deadline);
         bool posted = mmio_posts_any(mmio);
-        if (!timed && !posted) { mmio_fail(resp, EAGAIN); return; }
-        if (posted) {
-            struct pollfd pf[S32_MMIO_POST_MAX];
-            nfds_t np = 0;
-            for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
-                if (!mmio->posts[i].pending) continue;
-                int h = host_fd_for_guest(mmio, mmio->posts[i].guest_fd);
-                if (h < 0) continue;
-                pf[np].fd = h;
-                pf[np].events = POLLIN;
-                np++;
-            }
-            int timeout = -1;
-            if (timed) {
-                uint64_t now = mmio_mono_ns();
-                if (deadline > now) {
-                    uint64_t ms = (deadline - now) / 1000000ull;
-                    timeout = ms > 86400000ull ? 86400000 : (int)ms;
-                } else timeout = 0;
-            }
-            if (np > 0) while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
-            else if (timeout > 0) {
-                struct timespec ts = { timeout / 1000, (long)(timeout % 1000) * 1000000L };
-                while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
-            }
-        } else {
+        if (!timed && !posted && nnamed == 0) { mmio_fail(resp, EAGAIN); return; }
+
+        /* one wait set: pending-post fds (so a post completes) and named fds
+         * (so a readiness is reported), together */
+        struct pollfd pf[S32_MMIO_POST_MAX + S32_MMIO_POLL_MAX_FDS];
+        nfds_t np = 0;
+        for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+            if (!mmio->posts[i].pending) continue;
+            int h = host_fd_for_guest(mmio, mmio->posts[i].guest_fd);
+            if (h < 0) continue;
+            pf[np].fd = h; pf[np].events = POLLIN; pf[np].revents = 0; np++;
+        }
+        nfds_t named_start = np;
+        for (uint32_t i = 0; i < nnamed; i++) {
+            pf[np].fd = host_fd_for_guest(mmio, named[i]);   /* <0: poll skips it, revents 0 */
+            pf[np].events = POLLIN; pf[np].revents = 0; np++;
+        }
+        int timeout = -1;
+        if (timed) {
             uint64_t now = mmio_mono_ns();
             if (deadline > now) {
-                uint64_t wait = deadline - now;
-                struct timespec ts = { (time_t)(wait / 1000000000ull), (long)(wait % 1000000000ull) };
-                while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
-            }
+                uint64_t ms = (deadline - now) / 1000000ull;
+                timeout = ms > 86400000ull ? 86400000 : (int)ms;
+            } else timeout = 0;
+        }
+        if (np > 0) while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
+        else if (timeout > 0) {
+            struct timespec ts = { timeout / 1000, (long)(timeout % 1000) * 1000000L };
+            while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
+        }
+
+        for (uint32_t i = 0; i < nnamed; i++) {          /* named fd readiness -> DPC */
+            struct pollfd *pp = &pf[named_start + i];
+            uint32_t why = 0;
+            if (pp->revents & POLLIN)   why |= S32_MMIO_POLL_IN;
+            if (pp->revents & POLLHUP)  why |= S32_MMIO_POLL_HUP;
+            if (pp->revents & POLLERR)  why |= S32_MMIO_POLL_ERR;
+            if (pp->revents & POLLNVAL) why |= S32_MMIO_POLL_NVAL;
+            if (why == 0) continue;
+            io_descriptor_t e = { S32_MMIO_OP_POLL, 0u, named[i], why };
+            if (!mmio_dpc_push(mmio, &e)) break;
         }
         mmio_deliver_timers(mmio);
         mmio_deliver_posts(mmio);
@@ -2954,7 +2982,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             break;
 
         case S32_MMIO_OP_POLL:
-            mmio_poll(mmio, &resp);
+            mmio_poll(mmio, req, &resp);
             break;
 
         case S32_MMIO_OP_SLEEP: {

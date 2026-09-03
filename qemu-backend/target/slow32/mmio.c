@@ -46,6 +46,11 @@
 #define S32_MMIO_DPC_ENTRIES        64u
 #define S32_MMIO_TIMER_MAX          8u
 #define S32_MMIO_POST_MAX           8u
+#define S32_MMIO_POLL_MAX_FDS       8u
+#define S32_MMIO_POLL_IN            (1u << 0)
+#define S32_MMIO_POLL_HUP           (1u << 1)
+#define S32_MMIO_POLL_ERR           (1u << 2)
+#define S32_MMIO_POLL_NVAL          (1u << 3)
 
 #define S32_MMIO_RING_ENTRIES 256u
 #define S32_MMIO_DESC_WORDS   4u
@@ -1707,58 +1712,92 @@ static void slow32_mmio_handle_timer_cancel(Slow32MMIOContext *ctx,
     resp->status = S32_MMIO_STATUS_OK;
 }
 
+/* Wait-for-any: timers, posted-read completions, and the readiness path --
+ * guest fds named in req, delivered as S32_DPC_READY entries (distinct from
+ * POST_READ). Mirrors mmio_poll in slow-32 tools/emulator/mmio_ring.c. */
 static void slow32_mmio_handle_poll(Slow32MMIOContext *ctx,
                                     const CPUSlow32State *env,
+                                    const Slow32MMIODesc *req,
                                     Slow32MMIODesc *resp)
 {
+    uint32_t nnamed = req->length / 4u;
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    uint32_t named[S32_MMIO_POLL_MAX_FDS];
+
+    if (req->length % 4u || nnamed > S32_MMIO_POLL_MAX_FDS ||
+        offset > S32_MMIO_DATA_CAPACITY - req->length) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+    if (req->length) {
+        slow32_mmio_copy_from_guest(env, offset, (uint8_t *)named, req->length);
+    }
+    for (uint32_t i = 0; i < nnamed; i++) {
+        if (slow32_mmio_host_fd_for_guest(ctx, named[i]) < 0) {
+            Slow32MMIODesc e = { S32_MMIO_OP_POLL, 0u, named[i], S32_MMIO_POLL_NVAL };
+            slow32_dpc_push(ctx, env, &e);
+        }
+    }
+
     slow32_deliver_timers(ctx, env);
     slow32_deliver_posts(ctx, env);
     uint32_t tail = slow32_mmio_readl(env, S32_MMIO_DPC_TAIL_OFFSET);
-
-    if (ctx->dpc_head == tail) {
+    while (ctx->dpc_head == tail) {
         int64_t deadline = 0;
         bool timed = slow32_timer_earliest(ctx, &deadline);
         bool posted = slow32_posts_any(ctx);
-
-        if (!timed && !posted) {
+        if (!timed && !posted && nnamed == 0) {
             slow32_mmio_fail(resp, EAGAIN);
             return;
         }
-        if (posted) {
-            struct pollfd pf[S32_MMIO_POST_MAX];
-            unsigned np = 0;
-            for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
-                if (!ctx->posts[i].pending) {
-                    continue;
-                }
-                int h = slow32_mmio_host_fd_for_guest(ctx, ctx->posts[i].guest_fd);
-                if (h < 0) {
-                    continue;
-                }
-                pf[np].fd = h;
-                pf[np].events = POLLIN;
-                np++;
+
+        struct pollfd pf[S32_MMIO_POST_MAX + S32_MMIO_POLL_MAX_FDS];
+        unsigned np = 0;
+        for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+            if (!ctx->posts[i].pending) {
+                continue;
             }
-            int timeout = -1;
-            if (timed) {
-                int64_t now = g_get_monotonic_time();
-                if (deadline > now) {
-                    int64_t ms = (deadline - now) / 1000;
-                    timeout = ms > 86400000 ? 86400000 : (int)ms;
-                } else {
-                    timeout = 0;
-                }
+            int h = slow32_mmio_host_fd_for_guest(ctx, ctx->posts[i].guest_fd);
+            if (h < 0) {
+                continue;
             }
-            if (np > 0) {
-                while (poll(pf, np, timeout) == -1 && errno == EINTR) {
-                }
-            } else if (timeout > 0) {
-                g_usleep((gulong)timeout * 1000);
-            }
-        } else {
+            pf[np].fd = h; pf[np].events = POLLIN; pf[np].revents = 0; np++;
+        }
+        unsigned named_start = np;
+        for (uint32_t i = 0; i < nnamed; i++) {
+            pf[np].fd = slow32_mmio_host_fd_for_guest(ctx, named[i]);
+            pf[np].events = POLLIN; pf[np].revents = 0; np++;
+        }
+        int timeout = -1;
+        if (timed) {
             int64_t now = g_get_monotonic_time();
             if (deadline > now) {
-                g_usleep((gulong)(deadline - now));
+                int64_t ms = (deadline - now) / 1000;
+                timeout = ms > 86400000 ? 86400000 : (int)ms;
+            } else {
+                timeout = 0;
+            }
+        }
+        if (np > 0) {
+            while (poll(pf, np, timeout) == -1 && errno == EINTR) {
+            }
+        } else if (timeout > 0) {
+            g_usleep((gulong)timeout * 1000);
+        }
+
+        for (uint32_t i = 0; i < nnamed; i++) {
+            struct pollfd *pp = &pf[named_start + i];
+            uint32_t why = 0;
+            if (pp->revents & POLLIN)   why |= S32_MMIO_POLL_IN;
+            if (pp->revents & POLLHUP)  why |= S32_MMIO_POLL_HUP;
+            if (pp->revents & POLLERR)  why |= S32_MMIO_POLL_ERR;
+            if (pp->revents & POLLNVAL) why |= S32_MMIO_POLL_NVAL;
+            if (why == 0) {
+                continue;
+            }
+            Slow32MMIODesc e = { S32_MMIO_OP_POLL, 0u, named[i], why };
+            if (!slow32_dpc_push(ctx, env, &e)) {
+                break;
             }
         }
         slow32_deliver_timers(ctx, env);
@@ -2260,7 +2299,7 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         break;
 
     case S32_MMIO_OP_POLL:
-        slow32_mmio_handle_poll(ctx, env, resp);
+        slow32_mmio_handle_poll(ctx, env, req, resp);
         break;
 
     case S32_MMIO_OP_GETTZ:

@@ -147,16 +147,27 @@ bug-dbt-intrinsic-bounds-memcpy
 bug-dbt-intrinsic-bounds-memset
 bug-dbt-intrinsic-bounds-strlen"
 
+with_stdin() {
+    # Run "$@" with the test's stdin: /dev/null, unless the test has a
+    # stdin.sh, whose output is piped in (it may pause before writing: an
+    # fd that is not readable yet, for wait-for-any tests).
+    if [ -n "$STDIN_SH" ]; then
+        "$@" < <(bash "$STDIN_SH")
+    else
+        "$@" </dev/null
+    fi
+}
+
 run_engine() {
     # $1 engine name, $2 engine path, $3 s32x, $4 out-file, then guest args
     local name="$1" path="$2" s32x="$3" out="$4"
     shift 4
     local rc=0
     if [ "$name" = "qemu" ]; then
-        timeout "$TIMEOUT" "$path" -machine slow32-tcg -nographic -monitor none \
-            -kernel "$s32x" </dev/null >"$out" 2>&1 || rc=$?
+        with_stdin timeout "$TIMEOUT" "$path" -machine slow32-tcg -nographic -monitor none \
+            -kernel "$s32x" >"$out" 2>&1 || rc=$?
     else
-        timeout "$TIMEOUT" "$path" "$s32x" "$@" </dev/null >"$out" 2>&1 || rc=$?
+        with_stdin timeout "$TIMEOUT" "$path" "$s32x" "$@" >"$out" 2>&1 || rc=$?
     fi
     echo "$rc"
 }
@@ -190,6 +201,10 @@ run_test() {
         fi
     fi
 
+    STDIN_SH=""
+    if [ -f "$test_path/stdin.sh" ]; then
+        STDIN_SH="$test_path/stdin.sh"
+    fi
     local run_args=()
     if [ -f "$test_path/args.txt" ]; then
         while IFS= read -r line || [ -n "$line" ]; do

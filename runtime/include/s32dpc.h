@@ -13,7 +13,7 @@ extern "C" {
 #endif
 
 typedef struct {
-    unsigned int kind;      /* TIMER_START or POST_READ */
+    unsigned int kind;      /* TIMER_START, POST_READ, or POLL (readiness) */
     unsigned int length;    /* 0 for a timer; bytes transferred for POST_READ */
     unsigned int id;        /* timer id, or guest address of a POST_READ dest */
     unsigned int cookie;    /* what the guest posted with the request */
@@ -43,6 +43,23 @@ int s32_dpc_wait(s32_dpc_t *out);
  * on an already-ready fd).  A would-block fd occupies a POST_MAX slot and
  * completes at a later service point -- the instance is not parked. */
 int s32_post_read(int fd, void *buf, unsigned n, unsigned cookie);
+
+/* Wait-for-any (readiness, not completion): sleep until a timer fires, a
+ * posted read completes, or one of nfds fds (at most S32_DPC_MAX_FDS) is
+ * readable.  A readable fd arrives as a DPC {kind S32_DPC_READY, id=fd,
+ * cookie=S32_DPC_IN/HUP/ERR/NVAL}; it is level-triggered, so an fd not
+ * drained is reported again.  Use it when you frame your own reads (kermit,
+ * a key poll) rather than posting a flow.  1 with *out filled, or -1 (errno
+ * EAGAIN when nothing is armed and nfds is 0; EINVAL for too many fds). */
+int s32_dpc_wait_on(const int *fds, unsigned nfds, s32_dpc_t *out);
+#define S32_DPC_TIMER 0x32u     /* a timer fired */
+#define S32_DPC_POST  0x0Eu     /* a posted read completed (bytes in the caller's buffer) */
+#define S32_DPC_READY 0x34u     /* a named fd is readable (s32_dpc_wait_on) */
+#define S32_DPC_IN    1u        /* readable, or at end of file */
+#define S32_DPC_HUP   2u        /* the writer went away */
+#define S32_DPC_ERR   4u        /* error condition on the fd */
+#define S32_DPC_NVAL  8u        /* not an open fd */
+#define S32_DPC_MAX_FDS 8       /* fds one wait may name */
 
 #ifdef __cplusplus
 }
