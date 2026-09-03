@@ -1,5 +1,12 @@
 # Thread Service Routines (TSR) - Alternative to Interrupts
 
+**Archaeology.** Extra CPU contexts sharing an instance’s memory is
+the design that lost. A host interrupt becomes a DPC (a queue entry),
+concurrency is between instances, and translated code is not
+interruptible — [plans/dpc.md](plans/dpc.md),
+[plans/hosting.md](plans/hosting.md). Kept so the rejected alternative
+is still readable. Do not implement this.
+
 ## Concept
 
 Instead of traditional interrupts that save/restore context and preempt execution, Thread Service Routines are **separate hardware threads** that run in response to events. The emulator maintains multiple CPU contexts that can execute independently.

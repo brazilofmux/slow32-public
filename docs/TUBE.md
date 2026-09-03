@@ -186,8 +186,10 @@ is a host file of the same 4-byte records, preloaded into the queue
 at `OPEN` (then `KEYE` from a viewer appends). No viewer is required.
 
 There is no vsync and no timer interrupt (this machine has no
-interrupts). Guests pace with `GETTIME`/`SLEEP`. Those are host wall
-clock and host `nanosleep` — they are **not** deterministic.
+guest interrupts; a timer is a DPC, [plans/dpc.md](plans/dpc.md)).
+Guests pace with `GETTIME`/`SLEEP`, or arm `TIMER_START` and
+`POLL` the DPC ring. `GETTIME`/`SLEEP` are host wall clock and host
+`nanosleep` — they are **not** deterministic.
 Whole-frame presentation only; the era's per-scanline tricks are out
 of scope and out of character.
 

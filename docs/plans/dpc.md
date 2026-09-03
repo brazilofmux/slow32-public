@@ -13,6 +13,16 @@ them, and an OS becomes possible later without being the price of
 admission now. The shapes in mind are message passing: QNX, Minix,
 Erlang.
 
+The timer opcodes exist because a scheduler needs a tick, not because
+the guest needs an IRQ. Bare metal would take a timer interrupt in
+**native** code; that handler would host SLOW-32 instances. Hosted, the
+emulator is that handler. The instance sees a DPC. Translated code is
+never interruptible on purpose: the DBT converts large sections and
+chains them until YIELD, which is why it is about five times QEMU TCG
+([benchmarks.md](../benchmarks.md), [hosting.md](hosting.md)). The four
+levels of composition (tasks / in-process instances / processes /
+machines) live in hosting.md; this file is the tick.
+
 ## Context
 
 A SLOW-32 instance is one thread of control and nothing else. No
@@ -179,6 +189,20 @@ that asynchronous -- a signal handler or helper thread as the producer,
 the guest's plain loads reading a head word another thread wrote -- is
 the second demo's question, together with the request that needs a
 reply.
+
+## The second demo, landed 2026-09-02
+
+A request that needs a reply comes back through the queue, not as a
+call into the instance. `OP_POST_READ` (0x0E): the response is “the
+flow was taken”; the bytes arrive as a DPC `{POST_READ, nbytes, dest,
+cookie}`. If the fd would block, the request fails with EAGAIN — we
+do not park a thread on it. Delivery is still at the posting YIELD
+(the file is ready). `regression/tests/feature-dpc-post-read`.
+
+That is the anti-thread lesson in one opcode: the instance has one
+set of registers and one stack; work is a flow; the fabric is the
+DPC ring. A helper thread writing the ring while the guest is in
+translated code is still not this demo.
 
 ## What is deliberately out
 

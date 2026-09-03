@@ -70,6 +70,15 @@ SLOW-32 code to x86-64 (or AArch64) native code. Features include:
   plus math functions (via symbol table lookup) and replaces them with native
   host calls
 
+It is faster than QEMU TCG (about 5× on `benchmark_core`,
+[benchmarks.md](benchmarks.md)) because it converts **larger**
+sections and does not try to be interruptible. Control returns to
+the host at YIELD, HALT, DEBUG, or a fault. A timer is a DPC queued
+at the next service point, never a vector into translated code
+([plans/dpc.md](plans/dpc.md), [plans/hosting.md](plans/hosting.md)).
+QEMU TCG keeps blocks small so a guest IRQ can be delivered;
+SLOW-32 has no guest IRQ, and the DBT does not apologize for that.
+
 Architecture support:
 
 | Host Arch | Status | Notes |

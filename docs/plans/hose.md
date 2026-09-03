@@ -28,7 +28,9 @@ filesystem the guest already has is a costume.
   `.s32x` is a confused deputy. The host already is the OS.
 - DNS, IPv6, UDP, or a BSD stack. Name-to-IP is a later service.
 - In-process threads sharing one emulator. One bug kills the desk.
-  Start as separate processes.
+  Start as separate processes. Many instances in one process is
+  level 2 of [hosting.md](hosting.md), after isolation is real; it is
+  not “threads inside one instance.”
 
 ## Bootstrap
 

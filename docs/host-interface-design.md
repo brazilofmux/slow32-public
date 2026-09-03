@@ -1,5 +1,13 @@
 # SLOW-32 Host Interface Design
 
+The instance/message-passing rule in “Multi-Instance vs
+Multi-Threading” still holds. Timers, DPCs, and the four hosting
+levels are [plans/dpc.md](plans/dpc.md) and
+[plans/hosting.md](plans/hosting.md). Some queue offsets and
+device-register sketches below are older than the ring in
+`common/mmio_ring_layout.h`; the opcode registry is
+[mmio/opcode-map.md](mmio/opcode-map.md).
+
 ## Core Philosophy
 "SLOW-32 has no I/O" - All I/O operations are delegated to the host through a clean interface.
 

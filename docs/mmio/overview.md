@@ -1,5 +1,11 @@
 # SLOW-32 MMIO Device Framework Design
 
+**Superseded as a device-register map.** I/O is the ring in
+`common/mmio_ring_layout.h`, not a timer device at `0x10002000` with
+an interrupt-enable bit. The live registry is
+[opcode-map.md](opcode-map.md); timers are DPCs
+([plans/dpc.md](../plans/dpc.md)). Kept as the first sketch.
+
 ## Overview
 Replace the DEBUG instruction hack with proper memory-mapped I/O devices, enabling real stdin/stdout/stderr and eventually files.
 

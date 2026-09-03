@@ -163,6 +163,12 @@ typedef struct {
 
 ### Exception Vector Table Section
 
+**Not the live timer path.** `S32X_INT_TIMER` / `ERET` were the
+“Xinu needs a tick” sketch. A timer is a DPC, faults halt or report,
+there is no guest IRQ
+([plans/dpc.md](plans/dpc.md), [plans/hosting.md](plans/hosting.md)).
+The layout below is historical.
+
 When `S32X_FLAG_HAS_EVT` is set, there's an EVT section containing exception handlers.
 The EVT is **not** mapped into memory - it's metadata used by the emulator to handle exceptions.
 
@@ -214,6 +220,12 @@ When an exception occurs:
 6. Return with special instruction (TBD: ERET?)
 
 ### Thread Service Routines (TSR) Section
+
+**Not the current model.** Extra in-binary vectors and cooperative
+extra CPUs were an early alternative to interrupts; the live design
+is a DPC ring and one thread of control per instance
+([plans/dpc.md](plans/dpc.md), [plans/hosting.md](plans/hosting.md)).
+The layout below is historical.
 
 As mentioned in the architecture docs, TSR is an alternative to interrupts for thread-friendly 
 embedded use. TSR handlers are **cooperative** - they're called at safe points, not preemptively.
