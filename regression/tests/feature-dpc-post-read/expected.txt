@@ -5,6 +5,14 @@ posted b
 dpc kind=e n=11 cookie=b2
 bytes=hello-flow
 queue empty
-would-block refused
+posted blocked
+closed blocked
+dpc kind=e n=0 cookie=c3
+queue empty
 nothing can arrive
+listen-ok
+posted peer
+wrote peer
+dpc kind=e n=11 cookie=d4
+bytes=hello-flow
 done

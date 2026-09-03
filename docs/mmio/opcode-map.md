@@ -117,13 +117,17 @@ thread parked in `read()`. Policy name `fs`.
   `READ_DIRECT`). Cookie is four bytes at `DATA_BUFFER[0]` — request
   scratch only, live for this YIELD, not the dest.
 - **Response**: `status = OK` if the flow was taken. The bytes are
-  **not** in this response. If the fd would block, `ERR`/`EAGAIN` and
-  no DPC — we refuse the flow rather than sit on the fd. Dest in the
-  code window is `EFAULT`/`EINVAL`.
+  **not** in this response. If the fd would block, the flow occupies a
+  `POST_MAX` slot (the same kind of fixed partition as timers) and
+  completes at a later service point — still no parked thread.
+  `ERR`/`EAGAIN` only when that partition is full, the dest is already
+  in flight, or the DPC ring is full on an already-ready fd. Dest in
+  the code window is `EINVAL`.
 - **DPC**: `{opcode POST_READ, length nbytes, offset guest_addr,
-  status cookie}`. Queued at this service point. Those bytes are
-  host-owned until the guest harvests that DPC. A `printf` in between
-  cannot eat them: they are not in the MMIO bounce.
+  status cookie}`. Queued at this service point if the fd is ready,
+  otherwise when it becomes readable (or the fd is closed: 0 bytes).
+  Those bytes are host-owned until the guest harvests that DPC. A
+  `printf` in between cannot eat them: they are not in the MMIO bounce.
 - **Runtime**: `s32_post_read(fd, buf, n, cookie)` in `s32dpc.h`. Test:
   `regression/tests/feature-dpc-post-read`.
 
@@ -145,12 +149,12 @@ four engines.
 |---|---|---|
 | `TIMER_START` (0x32) | `offset` → `timepair64` interval; `status` = guest cookie | `resp.status` = timer id `0 .. TIMER_MAX-1`, or `ERR`/`EAGAIN` if the partition is full. When the interval elapses, a DPC `{TIMER_START, 0, id, cookie}` is queued **at the next service point** (or during a `POLL`). The id is then free. |
 | `TIMER_CANCEL` (0x33) | `status` = id | A cancelled timer never queues. |
-| `POLL` (0x34) | none | Sleep until the DPC ring is non-empty. `resp.status` = entries waiting. `ERR`/`EAGAIN` if the ring is empty **and** nothing is armed, so an instance is never left asleep for something that cannot come. |
+| `POLL` (0x34) | none | Sleep until the DPC ring is non-empty. `resp.status` = entries waiting. `ERR`/`EAGAIN` if the ring is empty **and** nothing is armed (no timer, no pending post), so an instance is never left asleep for something that cannot come. A pending post is armed the same way a timer is: the host may `poll(2)` those host fds while the instance is in this opcode. |
 
-`S32_MMIO_TIMER_MAX` is 8: a fixed partition. `POLL` here is “sleep
-until my DPC ring has something,” not POSIX `poll(2)` on guest fds.
-That wait is still future work ([plans/hosting.md](../plans/hosting.md)
-level 1).
+`S32_MMIO_TIMER_MAX` and `S32_MMIO_POST_MAX` are both 8: fixed
+partitions. `POLL` here is “sleep until my DPC ring has something,”
+not a guest POSIX `poll(2)` on its fds. That guest opcode is still
+future work ([plans/hosting.md](../plans/hosting.md) level 1).
 
 Delivery is at service points only. The host does not write a DPC
 into a running guest. A timer that expires while the instance is in

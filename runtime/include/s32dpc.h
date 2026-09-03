@@ -31,15 +31,17 @@ int s32_timer_cancel(int id);
 int s32_dpc_poll(s32_dpc_t *out);
 
 /* Take the next DPC, sleeping until there is one.  1 with *out filled, or
- * -1 (errno EAGAIN) when nothing is armed and so nothing could arrive. */
+ * -1 (errno EAGAIN) when nothing is armed (no timer, no pending post) and
+ * so nothing could arrive. */
 int s32_dpc_wait(s32_dpc_t *out);
 
 /* Post a read as a flow into buf (the caller's own memory, not the MMIO
  * bounce).  Cookie travels in the request scratch.  Bytes are host-owned
  * until the matching DPC is harvested (kind POST_READ, id=(guest)buf,
  * length=nbytes, cookie=cookie).  Returns 0 if the flow was taken, -1 if
- * refused (would block, bad fd, dest in the code window, DPC ring full).
- * The instance is not parked on the fd. */
+ * refused (partition full, bad fd, dest in the code window, DPC ring full
+ * on an already-ready fd).  A would-block fd occupies a POST_MAX slot and
+ * completes at a later service point -- the instance is not parked. */
 int s32_post_read(int fd, void *buf, unsigned n, unsigned cookie);
 
 #ifdef __cplusplus

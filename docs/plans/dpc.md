@@ -197,9 +197,12 @@ call into the instance. `OP_POST_READ` (0x0E): the response is “the
 flow was taken”; the bytes arrive as a DPC `{POST_READ, nbytes,
 guest_addr, cookie}` in the **caller's own buffer**, not the MMIO
 bounce (that bounce is stdio scratch; a flow owns its mailbox). If
-the fd would block, the request fails with EAGAIN — we do not park a
-thread on it. Delivery is still at the posting YIELD (the file is
-ready). `regression/tests/feature-dpc-post-read`.
+the fd is ready, delivery is at this service point. If it would
+block, the flow occupies a `POST_MAX` slot (timer-shaped, 8) and
+completes at a later service point when the fd is readable, or with
+0 bytes if the fd is closed. `OP_POLL` treats a pending post like an
+armed timer. Same opcode; still one stack. EAGAIN only if the
+partition is full. `regression/tests/feature-dpc-post-read`.
 
 That is the anti-thread lesson in one opcode: the instance has one
 set of registers and one stack; work is a flow; the fabric is the

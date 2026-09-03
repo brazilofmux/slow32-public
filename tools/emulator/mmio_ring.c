@@ -2201,10 +2201,62 @@ static bool mmio_dpc_full(const mmio_ring_state_t *mmio) {
     return ((mmio->dpc_head + 1u) % S32_MMIO_DPC_ENTRIES) == mmio->dpc_tail;
 }
 
+static bool mmio_fd_readable(int host_fd) {
+    if (host_fd < 0) return true;
+    struct pollfd p = { .fd = host_fd, .events = POLLIN };
+    int pr = poll(&p, 1, 0);
+    if (pr < 0) return true;
+    return pr > 0 && (p.revents & (POLLIN | POLLHUP | POLLERR)) != 0;
+}
+
+static bool mmio_posts_any(const mmio_ring_state_t *mmio) {
+    for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++)
+        if (mmio->posts[i].pending) return true;
+    return false;
+}
+
+/* Read into dest and push a DPC. false if the DPC ring is full (leave pending). */
+static bool mmio_post_finish(mmio_ring_state_t *mmio, uint32_t dest, uint32_t n,
+                             uint32_t cookie, int host_fd) {
+    if (mmio_dpc_full(mmio)) return false;
+    uint32_t total = 0;
+    if (host_fd >= 0) {
+        int fl = fcntl(host_fd, F_GETFL);
+        if (fl >= 0) fcntl(host_fd, F_SETFL, fl | O_NONBLOCK);
+        uint8_t tmp[4096];
+        while (total < n) {
+            uint32_t chunk = n - total < sizeof tmp ? n - total : (uint32_t)sizeof tmp;
+            ssize_t got = read(host_fd, tmp, chunk);
+            if (got < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                if (total == 0) total = 0;
+                break;
+            }
+            if (got == 0) break;
+            if (mmio_guest_write(mmio, dest + total, tmp, (size_t)got) != 0) break;
+            total += (uint32_t)got;
+            if ((uint32_t)got < chunk) break;
+        }
+        if (fl >= 0) fcntl(host_fd, F_SETFL, fl);
+    }
+    io_descriptor_t e = { S32_MMIO_OP_POST_READ, total, dest, cookie };
+    return mmio_dpc_push(mmio, &e);
+}
+
+static void mmio_deliver_posts(mmio_ring_state_t *mmio) {
+    for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+        mmio_post_t *p = &mmio->posts[i];
+        if (!p->pending) continue;
+        int host_fd = host_fd_for_guest(mmio, p->guest_fd);
+        if (host_fd >= 0 && !mmio_fd_readable(host_fd)) continue;
+        if (mmio_post_finish(mmio, p->dest, p->maxn, p->cookie, host_fd))
+            p->pending = false;
+    }
+}
+
 /* A read as a flow: the response is "taken", the bytes arrive as a DPC.
- * The instance is not a thread blocked in read(); it posted work and will
- * look when it looks. If the fd would block we refuse (EAGAIN) rather than
- * sit on it -- that would be the thread we are not creating. */
+ * Ready fds complete at this service point. A would-block fd occupies a
+ * POST_MAX slot and completes later -- still no parked thread. */
 static void mmio_post_read(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
     int host_fd = host_fd_for_guest(mmio, req->status);
     uint32_t dest = req->offset;
@@ -2213,39 +2265,36 @@ static void mmio_post_read(mmio_ring_state_t *mmio, io_descriptor_t *req, io_des
         mmio_fail(resp, host_fd < 0 ? EBADF : EINVAL);
         return;
     }
-    if (mmio_dpc_full(mmio)) { mmio_fail(resp, EAGAIN); return; }
-
-    struct pollfd p = { .fd = host_fd, .events = POLLIN };
-    int pr = poll(&p, 1, 0);
-    if (pr < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
-    if (pr == 0 || !(p.revents & (POLLIN | POLLHUP | POLLERR))) {
-        mmio_fail(resp, EAGAIN);
+    if (mmio->guest_code_limit != 0 && dest < mmio->guest_code_limit) {
+        mmio_fail(resp, EINVAL);
         return;
     }
-
     uint32_t cookie;
     memcpy(&cookie, mmio->data_buffer, 4);
 
-    uint8_t tmp[4096];
-    uint32_t total = 0;
-    while (total < n) {
-        uint32_t chunk = n - total < sizeof tmp ? n - total : (uint32_t)sizeof tmp;
-        ssize_t got = read(host_fd, tmp, chunk);
-        if (got < 0) {
-            if (total == 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
-            break;
-        }
-        if (got == 0) break;
-        if (mmio_guest_write(mmio, dest + total, tmp, (size_t)got) != 0) {
-            mmio_fail(resp, EFAULT);
+    if (mmio_fd_readable(host_fd)) {
+        if (!mmio_post_finish(mmio, dest, n, cookie, host_fd)) {
+            mmio_fail(resp, EAGAIN);
             return;
         }
-        total += (uint32_t)got;
-        if ((uint32_t)got < chunk) break;
+        resp->status = S32_MMIO_STATUS_OK;
+        return;
     }
 
-    io_descriptor_t e = { S32_MMIO_OP_POST_READ, total, dest, cookie };
-    if (!mmio_dpc_push(mmio, &e)) { mmio_fail(resp, EAGAIN); return; }
+    int slot = -1;
+    for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+        if (mmio->posts[i].pending && mmio->posts[i].dest == dest) {
+            mmio_fail(resp, EAGAIN);
+            return;
+        }
+        if (!mmio->posts[i].pending && slot < 0) slot = (int)i;
+    }
+    if (slot < 0) { mmio_fail(resp, EAGAIN); return; }
+    mmio->posts[slot].pending = true;
+    mmio->posts[slot].guest_fd = req->status;
+    mmio->posts[slot].dest = dest;
+    mmio->posts[slot].maxn = n;
+    mmio->posts[slot].cookie = cookie;
     resp->status = S32_MMIO_STATUS_OK;
 }
 
@@ -2302,16 +2351,46 @@ static void mmio_timer_cancel(mmio_ring_state_t *mmio, io_descriptor_t *req, io_
 // sleep until the DPC ring has something: the guest asked to
 static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *resp) {
     mmio_deliver_timers(mmio);
+    mmio_deliver_posts(mmio);
     if (mmio->dpc_head == mmio->dpc_tail) {
         uint64_t deadline = 0;
-        if (!mmio_timer_earliest(mmio, &deadline)) { mmio_fail(resp, EAGAIN); return; }
-        uint64_t now = mmio_mono_ns();
-        if (deadline > now) {
-            uint64_t wait = deadline - now;
-            struct timespec ts = { (time_t)(wait / 1000000000ull), (long)(wait % 1000000000ull) };
-            while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
+        bool timed = mmio_timer_earliest(mmio, &deadline);
+        bool posted = mmio_posts_any(mmio);
+        if (!timed && !posted) { mmio_fail(resp, EAGAIN); return; }
+        if (posted) {
+            struct pollfd pf[S32_MMIO_POST_MAX];
+            nfds_t np = 0;
+            for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+                if (!mmio->posts[i].pending) continue;
+                int h = host_fd_for_guest(mmio, mmio->posts[i].guest_fd);
+                if (h < 0) continue;
+                pf[np].fd = h;
+                pf[np].events = POLLIN;
+                np++;
+            }
+            int timeout = -1;
+            if (timed) {
+                uint64_t now = mmio_mono_ns();
+                if (deadline > now) {
+                    uint64_t ms = (deadline - now) / 1000000ull;
+                    timeout = ms > 86400000ull ? 86400000 : (int)ms;
+                } else timeout = 0;
+            }
+            if (np > 0) while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
+            else if (timeout > 0) {
+                struct timespec ts = { timeout / 1000, (long)(timeout % 1000) * 1000000L };
+                while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
+            }
+        } else {
+            uint64_t now = mmio_mono_ns();
+            if (deadline > now) {
+                uint64_t wait = deadline - now;
+                struct timespec ts = { (time_t)(wait / 1000000000ull), (long)(wait % 1000000000ull) };
+                while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
+            }
         }
         mmio_deliver_timers(mmio);
+        mmio_deliver_posts(mmio);
     }
     resp->status = (mmio->dpc_head + S32_MMIO_DPC_ENTRIES - mmio->dpc_tail) % S32_MMIO_DPC_ENTRIES;
 }
@@ -2542,6 +2621,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
 
             mmio->host_fds[guest_fd] = -1;
             mmio->host_fd_owned[guest_fd] = false;
+            mmio_deliver_posts(mmio);
 
             if (rc == 0) {
                 resp.status = S32_MMIO_STATUS_OK;
@@ -4056,6 +4136,7 @@ write_response:
 // Process pending requests
 void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu) {
     mmio_deliver_timers(mmio);
+    mmio_deliver_posts(mmio);
     while (!ring_empty(mmio->req_head, mmio->req_tail)) {
         io_descriptor_t *req = &mmio->req_ring[mmio->req_tail];
         process_request(mmio, cpu, req);
@@ -4063,4 +4144,5 @@ void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu) {
         mmio->total_requests++;
     }
     mmio_deliver_timers(mmio);   // a deadline that passed during a request (SLEEP) is queued before the guest resumes
+    mmio_deliver_posts(mmio);
 }

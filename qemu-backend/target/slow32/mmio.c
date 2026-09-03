@@ -45,6 +45,7 @@
 #define S32_MMIO_DPC_RING_OFFSET    0x0800u
 #define S32_MMIO_DPC_ENTRIES        64u
 #define S32_MMIO_TIMER_MAX          8u
+#define S32_MMIO_POST_MAX           8u
 
 #define S32_MMIO_RING_ENTRIES 256u
 #define S32_MMIO_DESC_WORDS   4u
@@ -286,12 +287,21 @@ typedef struct {
     uint32_t cookie;
 } Slow32Timer;
 
+typedef struct {
+    bool pending;
+    uint32_t guest_fd;
+    uint32_t dest;
+    uint32_t maxn;
+    uint32_t cookie;
+} Slow32Post;
+
 struct Slow32MMIOContext {
     bool enabled;
     uint32_t req_tail;
     uint32_t resp_head;
     uint32_t dpc_head;
     Slow32Timer timers[S32_MMIO_TIMER_MAX];
+    Slow32Post posts[S32_MMIO_POST_MAX];
     uint32_t args_argc;
     uint32_t args_total_bytes;
     GByteArray *args_blob;
@@ -1212,6 +1222,7 @@ static void slow32_mmio_apply_reset(Slow32CPU *cpu, bool clear_window_first)
     ctx->resp_head = 0;
     ctx->dpc_head = 0;
     memset(ctx->timers, 0, sizeof(ctx->timers));
+    memset(ctx->posts, 0, sizeof(ctx->posts));
     slow32_mmio_reset_fd_table(ctx);
     slow32_mmio_cleanup_services(ctx);
     ctx->next_dynamic_opcode = 0x80;
@@ -1527,6 +1538,83 @@ static bool slow32_dpc_full(Slow32MMIOContext *ctx, const CPUSlow32State *env)
     return ((ctx->dpc_head + 1u) % S32_MMIO_DPC_ENTRIES) == tail;
 }
 
+static bool slow32_fd_readable(int host_fd)
+{
+    if (host_fd < 0) {
+        return true;
+    }
+    struct pollfd p = { .fd = host_fd, .events = POLLIN };
+    int pr = poll(&p, 1, 0);
+    if (pr < 0) {
+        return true;
+    }
+    return pr > 0 && (p.revents & (POLLIN | POLLHUP | POLLERR)) != 0;
+}
+
+static bool slow32_posts_any(const Slow32MMIOContext *ctx)
+{
+    for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+        if (ctx->posts[i].pending) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool slow32_post_finish(Slow32MMIOContext *ctx, const CPUSlow32State *env,
+                               uint32_t dest, uint32_t n, uint32_t cookie,
+                               int host_fd)
+{
+    if (slow32_dpc_full(ctx, env)) {
+        return false;
+    }
+    uint32_t total = 0;
+    if (host_fd >= 0) {
+        int fl = fcntl(host_fd, F_GETFL);
+        if (fl >= 0) {
+            fcntl(host_fd, F_SETFL, fl | O_NONBLOCK);
+        }
+        while (total < n) {
+            uint32_t chunk = MIN(n - total, (uint32_t)S32_MMIO_DATA_CAPACITY);
+            ssize_t nread = read(host_fd, ctx->scratch, chunk);
+            if (nread < 0) {
+                break;
+            }
+            if (nread == 0) {
+                break;
+            }
+            physical_memory_write((hwaddr)(dest + total), ctx->scratch,
+                                  (uint32_t)nread);
+            total += (uint32_t)nread;
+            if ((uint32_t)nread < chunk) {
+                break;
+            }
+        }
+        if (fl >= 0) {
+            fcntl(host_fd, F_SETFL, fl);
+        }
+    }
+    Slow32MMIODesc e = { S32_MMIO_OP_POST_READ, total, dest, cookie };
+    return slow32_dpc_push(ctx, env, &e);
+}
+
+static void slow32_deliver_posts(Slow32MMIOContext *ctx, const CPUSlow32State *env)
+{
+    for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+        Slow32Post *p = &ctx->posts[i];
+        if (!p->pending) {
+            continue;
+        }
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, p->guest_fd);
+        if (host_fd >= 0 && !slow32_fd_readable(host_fd)) {
+            continue;
+        }
+        if (slow32_post_finish(ctx, env, p->dest, p->maxn, p->cookie, host_fd)) {
+            p->pending = false;
+        }
+    }
+}
+
 static bool slow32_timer_earliest(Slow32MMIOContext *ctx, int64_t *deadline)
 {
     bool any = false;
@@ -1624,20 +1712,57 @@ static void slow32_mmio_handle_poll(Slow32MMIOContext *ctx,
                                     Slow32MMIODesc *resp)
 {
     slow32_deliver_timers(ctx, env);
+    slow32_deliver_posts(ctx, env);
     uint32_t tail = slow32_mmio_readl(env, S32_MMIO_DPC_TAIL_OFFSET);
 
     if (ctx->dpc_head == tail) {
-        int64_t deadline;
+        int64_t deadline = 0;
+        bool timed = slow32_timer_earliest(ctx, &deadline);
+        bool posted = slow32_posts_any(ctx);
 
-        if (!slow32_timer_earliest(ctx, &deadline)) {
+        if (!timed && !posted) {
             slow32_mmio_fail(resp, EAGAIN);
             return;
         }
-        int64_t now = g_get_monotonic_time();
-        if (deadline > now) {
-            g_usleep((gulong)(deadline - now));
+        if (posted) {
+            struct pollfd pf[S32_MMIO_POST_MAX];
+            unsigned np = 0;
+            for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+                if (!ctx->posts[i].pending) {
+                    continue;
+                }
+                int h = slow32_mmio_host_fd_for_guest(ctx, ctx->posts[i].guest_fd);
+                if (h < 0) {
+                    continue;
+                }
+                pf[np].fd = h;
+                pf[np].events = POLLIN;
+                np++;
+            }
+            int timeout = -1;
+            if (timed) {
+                int64_t now = g_get_monotonic_time();
+                if (deadline > now) {
+                    int64_t ms = (deadline - now) / 1000;
+                    timeout = ms > 86400000 ? 86400000 : (int)ms;
+                } else {
+                    timeout = 0;
+                }
+            }
+            if (np > 0) {
+                while (poll(pf, np, timeout) == -1 && errno == EINTR) {
+                }
+            } else if (timeout > 0) {
+                g_usleep((gulong)timeout * 1000);
+            }
+        } else {
+            int64_t now = g_get_monotonic_time();
+            if (deadline > now) {
+                g_usleep((gulong)(deadline - now));
+            }
         }
         slow32_deliver_timers(ctx, env);
+        slow32_deliver_posts(ctx, env);
     }
     resp->status = (ctx->dpc_head + S32_MMIO_DPC_ENTRIES - tail) % S32_MMIO_DPC_ENTRIES;
 }
@@ -1837,50 +1962,39 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             slow32_mmio_fail(resp, EINVAL);
             break;
         }
-        if (slow32_dpc_full(ctx, env)) {
-            slow32_mmio_fail(resp, EAGAIN);
-            break;
-        }
-        struct pollfd p = { .fd = host_fd, .events = POLLIN };
-        int pr = poll(&p, 1, 0);
-        if (pr < 0) {
-            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
-            break;
-        }
-        if (pr == 0 || !(p.revents & (POLLIN | POLLHUP | POLLERR))) {
-            slow32_mmio_fail(resp, EAGAIN);
-            break;
-        }
         uint32_t cookie = 0;
         slow32_mmio_copy_from_guest(env, 0, (uint8_t *)&cookie, 4);
-        uint32_t total = 0;
-        int read_err = 0;
-        while (total < n) {
-            uint32_t chunk = MIN(n - total, (uint32_t)S32_MMIO_DATA_CAPACITY);
-            ssize_t nread = read(host_fd, ctx->scratch, chunk);
-            if (nread < 0) {
-                read_err = errno > 0 ? errno : EIO;
+        if (slow32_fd_readable(host_fd)) {
+            if (!slow32_post_finish(ctx, env, dest, n, cookie, host_fd)) {
+                slow32_mmio_fail(resp, EAGAIN);
                 break;
             }
-            if (nread == 0) {
-                break;
-            }
-            physical_memory_write((hwaddr)(dest + total), ctx->scratch,
-                                  (uint32_t)nread);
-            total += (uint32_t)nread;
-            if ((uint32_t)nread < chunk) {
-                break;
-            }
-        }
-        if (read_err && total == 0) {
-            slow32_mmio_fail(resp, read_err);
+            resp->status = S32_MMIO_STATUS_OK;
             break;
         }
-        Slow32MMIODesc e = { S32_MMIO_OP_POST_READ, total, dest, cookie };
-        if (!slow32_dpc_push(ctx, env, &e)) {
+        int slot = -1;
+        for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+            if (ctx->posts[i].pending && ctx->posts[i].dest == dest) {
+                slow32_mmio_fail(resp, EAGAIN);
+                slot = -2;
+                break;
+            }
+            if (!ctx->posts[i].pending && slot < 0) {
+                slot = (int)i;
+            }
+        }
+        if (slot == -2) {
+            break;
+        }
+        if (slot < 0) {
             slow32_mmio_fail(resp, EAGAIN);
             break;
         }
+        ctx->posts[slot].pending = true;
+        ctx->posts[slot].guest_fd = req->status;
+        ctx->posts[slot].dest = dest;
+        ctx->posts[slot].maxn = n;
+        ctx->posts[slot].cookie = cookie;
         resp->status = S32_MMIO_STATUS_OK;
         break;
     }
@@ -1931,6 +2045,7 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
         ctx->host_fds[guest_fd] = -1;
         ctx->host_fd_owned[guest_fd] = false;
+        slow32_deliver_posts(ctx, env);
 
         resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
         resp->length = 0;
@@ -2871,6 +2986,7 @@ void slow32_mmio_process(Slow32CPU *cpu)
     }
 
     slow32_deliver_timers(ctx, env);
+    slow32_deliver_posts(ctx, env);
 
     uint32_t req_head = slow32_mmio_readl(env, S32_MMIO_REQ_HEAD_OFFSET);
     uint32_t req_tail = ctx->req_tail;
@@ -2902,4 +3018,5 @@ void slow32_mmio_process(Slow32CPU *cpu)
     }
     /* a deadline that passed during a request is queued before the guest resumes */
     slow32_deliver_timers(ctx, env);
+    slow32_deliver_posts(ctx, env);
 }

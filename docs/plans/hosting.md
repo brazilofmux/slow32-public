@@ -99,9 +99,11 @@ I/O by running two instances.
 
 Posted read (`OP_POST_READ`, 0x0E) is the second DPC demo: a reply
 comes back as a queue entry, the instance never becomes a reader
-thread. POSIX `poll` on guest fds (timer *or* hose) and a host
-producer that writes the ring while the guest is in translated code
-are still missing.
+thread. A would-block fd occupies a `POST_MAX` slot and completes at
+a later service point; `OP_POLL` treats that pending post like an
+armed timer. POSIX `poll` as a **guest** opcode (timer *or* hose)
+and a host producer that writes the ring while the guest is in
+translated code are still missing.
 
 **2. Multiple instances, one emulator process.** The Nintendo
 process table. Shared RX code, separate data and MMIO, a dead
@@ -133,15 +135,17 @@ step 3, still the sandbox. DNS, UDP, a BSD stack stay out.
 What it requires: every new capability is a **service**, a **hose**,
 or another **instance**. Host-native code may take interrupts and
 may only **enqueue**. Fixed partitions where we can
-(`S32_MMIO_TIMER_MAX` is the template).
+(`S32_MMIO_TIMER_MAX` and `S32_MMIO_POST_MAX` are the template).
 
 ## Order of demos
 
 Do not write a scheduler. Do not start with multi-instance.
 
 1. ~~DPC second demo (reply-shaped request).~~ Landed: `POST_READ`,
-   `feature-dpc-post-read`. `feature-dpc-timer` stays.
-2. POSIX `poll` on guest fds, completion as DPC or response ring.
+   pending slot, `feature-dpc-post-read`. `feature-dpc-timer` stays.
+2. POSIX `poll` as a **guest** opcode on arbitrary fds (timer *or*
+   hose), completion as DPC or response ring. Host `poll(2)` of
+   pending `POST_READ` fds during `OP_POLL` is not that opcode.
 3. `socketpair` hose + a desk file.
 4. `EXEC` completing via DPC.
 5. Only then level 2: split `mmio_state`, N instances, shared RX.

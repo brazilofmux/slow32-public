@@ -67,6 +67,16 @@ typedef struct {
     uint32_t cookie;
 } mmio_timer_t;
 
+/* A posted read that was not ready at POST (docs/plans/dpc.md). Completes
+ * at a service point when the fd is readable, as a DPC, still one stack. */
+typedef struct {
+    bool pending;
+    uint32_t guest_fd;
+    uint32_t dest;
+    uint32_t maxn;
+    uint32_t cookie;
+} mmio_post_t;
+
 // MMIO ring buffer state
 struct mmio_ring_state {
     // Ring indices
@@ -77,6 +87,7 @@ struct mmio_ring_state {
     uint32_t dpc_head;      // DPC producer (device writes)
     uint32_t dpc_tail;      // DPC consumer (CPU reads)
     mmio_timer_t timers[S32_MMIO_TIMER_MAX];
+    mmio_post_t posts[S32_MMIO_POST_MAX];
 
     // Base address of the MMIO window in guest memory
     uint32_t base_addr;

@@ -27,6 +27,7 @@ enum {
     S32_MMIO_DESC_WORDS   = 4u,
     S32_MMIO_DPC_ENTRIES  = 64u,   // the DPC ring's depth
     S32_MMIO_TIMER_MAX    = 8u,    // one-shot timers an instance may have armed: a fixed partition
+    S32_MMIO_POST_MAX     = 8u,    // posted reads in flight: the same kind of partition
 };
 
 #define S32_MMIO_DESC_BYTES   (S32_MMIO_DESC_WORDS * sizeof(uint32_t))
@@ -83,7 +84,9 @@ enum s32_mmio_opcode {
      * only; dest is the caller's own memory, like READ_DIRECT).
      * resp.status=0 if the flow was taken. A DPC {POST_READ, nbytes,
      * guest_addr, cookie} is queued at this service point. If the fd
-     * would block, EAGAIN and no DPC -- we do not park a thread on the fd.
+     * would block, the flow is kept in a POST_MAX slot and completes at a
+     * later service point -- still no parked thread. EAGAIN only if the
+     * partition is full.
      * docs/plans/dpc.md, docs/plans/hosting.md. */
     S32_MMIO_OP_POST_READ   = 0x0E,
 
@@ -114,8 +117,9 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_TIMER_START = 0x32,
     S32_MMIO_OP_TIMER_CANCEL= 0x33,  // req->status the id; a cancelled timer never queues
     // Sleep until the DPC ring is non-empty.  resp->status = entries waiting.
-    // ERR/EAGAIN when the ring is empty and nothing is armed: nothing could
-    // ever arrive, so the guest is not left asleep for good.
+    // ERR/EAGAIN when the ring is empty and nothing is armed (no timer, no
+    // pending post): nothing could ever arrive, so the guest is not left
+    // asleep for good. A pending post is armed the same way a timer is.
     S32_MMIO_OP_POLL        = 0x34,
 
     // 0x40 - 0x4F : Networking / IPC
