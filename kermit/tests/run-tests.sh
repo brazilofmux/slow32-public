@@ -29,6 +29,11 @@ trap cleanup EXIT
 
 fail=0
 
+# RECV_OPTS / SEND_OPTS: knobs passed to each side, word-split on purpose
+# (-t SECS shortens the packet timer, -x N loses the Nth outgoing packet).
+RECV_OPTS="${RECV_OPTS:-}"
+SEND_OPTS="${SEND_OPTS:-}"
+
 transfer() { # transfer <label> <file...>  (paths relative to $work/out)
     local label="$1"
     shift
@@ -36,7 +41,8 @@ transfer() { # transfer <label> <file...>  (paths relative to $work/out)
     mkdir -p "$inbox"
     rm -f "$inbox/kermit.port"
 
-    (cd "$inbox" && "$EMU" "$KERMIT" -r) \
+    # shellcheck disable=SC2086
+    (cd "$inbox" && "$EMU" "$KERMIT" -r $RECV_OPTS) \
         >"$inbox/recv.out" 2>"$inbox/recv.err" &
     recv_pid=$!
 
@@ -55,7 +61,8 @@ transfer() { # transfer <label> <file...>  (paths relative to $work/out)
         return
     fi
 
-    (cd "$work/out" && "$EMU" "$KERMIT" -s "$port" "$@") \
+    # shellcheck disable=SC2086
+    (cd "$work/out" && "$EMU" "$KERMIT" -s $SEND_OPTS "$port" "$@") \
         >"$work/send.out" 2>"$work/send.err" || true
     wait "$recv_pid" || true
     recv_pid=""
@@ -96,6 +103,32 @@ transfer binary allbytes.bin
 transfer quoting hashes.txt
 transfer big big.bin
 transfer multi notes.txt allbytes.bin hashes.txt
+
+# Lossy wire.  Both sides advertise TIME=1 so a lost packet costs a second,
+# and each side's timeout path is provoked in turn: the sender loses its 5th
+# packet (a D), so the receiver must time out and NAK; then the receiver
+# loses its 4th packet (a Y), so the sender must time out and resend, and
+# the receiver must re-ACK the duplicate.  The transfer must still be
+# intact, and the side that should have timed out must say so -- a lossless
+# run would pass the cmp on its own.
+RECV_OPTS="-t 1" SEND_OPTS="-t 1 -x 5" transfer drop-data big.bin
+if grep -q "timeout after 1 s" "$work/in-drop-data/recv.err" && \
+   grep -q "dropping packet 5" "$work/send.err"; then
+    echo "  OK  drop-data: receiver timed out and recovered"
+else
+    echo "  FAIL drop-data: the receiver's timeout path did not run"
+    cat "$work/send.err" "$work/in-drop-data/recv.err"
+    fail=1
+fi
+RECV_OPTS="-t 1 -x 4" SEND_OPTS="-t 1" transfer drop-ack big.bin
+if grep -q "timeout after 1 s" "$work/send.err" && \
+   grep -q "dropping packet 4" "$work/in-drop-ack/recv.err"; then
+    echo "  OK  drop-ack: sender timed out and recovered"
+else
+    echo "  FAIL drop-ack: the sender's timeout path did not run"
+    cat "$work/send.err" "$work/in-drop-ack/recv.err"
+    fail=1
+fi
 
 if grep -q "OK (4096 bytes)" "$work/in-binary/recv.out"; then
     echo "  OK  receiver reported 4096 bytes"

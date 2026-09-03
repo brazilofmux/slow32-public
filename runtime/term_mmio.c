@@ -4,6 +4,7 @@
 
 #include "mmio_ring.h"
 #include "include/term.h"
+#include "include/s32dpc.h"
 
 static uint32_t term_base_opcode = 0;
 static int term_initialized = 0;
@@ -104,6 +105,28 @@ int term_getkey(void) {
 int term_kbhit(void) {
     if (!term_initialized) return 0;
     return s32_mmio_request(term_base_opcode + 6, 0, 0, 0);
+}
+
+int term_wait_key(int ms) {
+    static unsigned cookie = 0;     /* a timer we stopped caring about may still queue: its cookie differs */
+    int fd = 0, timer = -1;
+    s32_dpc_t d;
+    if (!term_initialized) return 0;
+    if (ms == 0) return term_kbhit();
+    if (ms > 0) {
+        cookie++;
+        timer = s32_timer_start((unsigned)ms / 1000u, ((unsigned)ms % 1000u) * 1000000u, cookie);
+    }
+    for (;;) {
+        if (s32_dpc_wait_on(&fd, 1, &d) < 0) return 0;
+        if (d.kind == S32_DPC_TIMER) {
+            if (timer >= 0 && d.cookie == cookie) return 0;     /* ours: nothing came */
+            continue;                                            /* stale */
+        }
+        if (d.kind == S32_DPC_READY && d.id == 0u) break;
+    }
+    if (timer >= 0) s32_timer_cancel(timer);    /* -1 if it already fired: stale entry, dropped above next time */
+    return (d.cookie & S32_DPC_NVAL) ? 0 : 1;   /* readable, or EOF: the read says which */
 }
 
 void term_set_color(int fg, int bg) {

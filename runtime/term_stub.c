@@ -38,6 +38,11 @@ int term_kbhit(void) {
     return 0;
 }
 
+int term_wait_key(int ms) {
+    (void)ms;
+    return 0;
+}
+
 void term_set_color(int fg, int bg) {
     (void)fg;
     (void)bg;

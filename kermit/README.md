@@ -27,6 +27,13 @@ names travel as basenames and the receiver refuses paths and dotfiles).
 `-r` listens on `127.0.0.1:0`, writes the port to `kermit.port`, and
 receives one session into the cwd.
 
+Timeouts: each side advertises TIME (default 5 s, `-t SECS`) and waits
+for the other's packets with a timer armed beside the socket -- the
+emulator's wait-for-any (`s32_dpc_wait_on`, docs/plans/dpc.md), not a
+spin. A silent peer is NAKed or resent to, MAXTRY times, then given
+up on. `-x N` loses our Nth outgoing packet, once, so the tests can
+provoke both timeout paths on a real wire.
+
 Protocol subset: S/F/D/Z/B/Y/N/E packets, MAXL 94, ctl-quoting.
 No 8th-bit quoting (the hose is 8-bit clean), no repeat counts, no
 sliding windows — long packets and windows are what made real Kermit

@@ -1296,18 +1296,10 @@ int screen_inkey(double timeout) {
             /* Wait forever (INKEY(0) in dBase = wait forever) */
             key = read_dbase_key();
         } else {
-            /* Wait up to timeout seconds.
-             * We poll in a loop since we don't have select/alarm. */
-            int ticks = (int)(timeout * 100); /* ~10ms granularity */
-            int i;
-            key = 0;
-            for (i = 0; i < ticks; i++) {
-                if (term_kbhit()) {
-                    key = read_dbase_key();
-                    break;
-                }
-                /* Small busy-wait — no usleep available on SLOW-32 */
-            }
+            /* Wait up to timeout seconds: a timer beside the keyboard in
+             * the host, whichever comes first (term_wait_key).  This was
+             * a loop of key-available requests with no clock behind it. */
+            key = term_wait_key((int)(timeout * 1000.0)) ? read_dbase_key() : 0;
         }
 
         term_set_raw(0);

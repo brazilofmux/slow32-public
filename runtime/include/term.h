@@ -30,6 +30,11 @@ int  term_getkey(void);
 /* Non-blocking key poll. Returns 1 if key available, 0 otherwise. */
 int  term_kbhit(void);
 
+/* Wait up to ms milliseconds for a key: 1 if one is available, 0 on
+ * timeout or EOF.  ms 0 is term_kbhit; ms < 0 waits forever.  The wait
+ * is in the host (a timer beside stdin, docs/plans/dpc.md), not a spin. */
+int  term_wait_key(int ms);
+
 /* Set foreground and background color (ANSI 0-7). */
 void term_set_color(int fg, int bg);
 

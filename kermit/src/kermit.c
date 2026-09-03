@@ -17,11 +17,19 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include "s32dpc.h"
 
 #define SOH   0x01
 #define MAXL  94            /* max LEN field value we offer */
 #define QCTL  '#'
 #define MAXTRY 10
+#define DEFTIME 5           /* seconds we ask the peer to wait for us */
+
+/* Test knobs (-x N drops our Nth outgoing packet once; -t S is the TIME
+ * we advertise, and our own until the peer's arrives). */
+static int opt_drop = 0;
+static int opt_time = DEFTIME;
 
 #define tochar(x) ((x) + 32)
 #define unchar(c) ((c) - 32)
@@ -33,11 +41,55 @@ typedef struct {
     int rlen, rpos;
     int maxl;               /* peer's max packet length */
     int qctl;               /* peer's control-quote char */
+    int timeout;            /* seconds to wait for the peer: its TIME */
+    int timer;              /* the armed packet timer's id, or -1 */
+    unsigned cookie;        /* what it was armed with: stale entries differ */
 } link_t;
 
+/* The packet timer.  Armed once per packet read; the wait below sleeps
+ * until the socket is readable or it fires, whichever comes first
+ * (docs/plans/dpc.md: the reply is a DPC ring entry either way).  A timer
+ * that fired after we stopped caring leaves a stale entry in the ring;
+ * its cookie will not match, and the wait drops it. */
+static void link_arm(link_t *lk) {
+    lk->timer = -1;
+    if (lk->timeout > 0) {
+        lk->cookie++;
+        lk->timer = s32_timer_start((unsigned)lk->timeout, 0u, lk->cookie);
+    }
+}
+
+static void link_disarm(link_t *lk) {
+    if (lk->timer >= 0) {
+        s32_timer_cancel(lk->timer);    /* -1 if it already fired: stale entry, ignored later */
+        lk->timer = -1;
+    }
+}
+
+/* One byte from the peer: -1 on link death, -2 on timeout. */
 static int link_getc(link_t *lk) {
     if (lk->rpos >= lk->rlen) {
-        int n = recv(lk->fd, (char *)lk->rbuf, (int)sizeof(lk->rbuf), 0);
+        s32_dpc_t d;
+        int n;
+        for (;;) {
+            if (s32_dpc_wait_on(&lk->fd, 1, &d) < 0) {
+                return -1;
+            }
+            if (d.kind == S32_DPC_TIMER) {
+                if (d.cookie == lk->cookie && lk->timer >= 0) {
+                    lk->timer = -1;     /* fired: the id is free again */
+                    return -2;
+                }
+                continue;               /* a timer we stopped caring about */
+            }
+            if (d.kind == S32_DPC_READY && (int)d.id == lk->fd) {
+                if (d.cookie & S32_DPC_NVAL) {
+                    return -1;
+                }
+                break;                  /* readable, or at EOF: recv says which */
+            }
+        }
+        n = recv(lk->fd, (char *)lk->rbuf, (int)sizeof(lk->rbuf), 0);
         if (n <= 0) {
             return -1;
         }
@@ -78,8 +130,13 @@ static int check1(const unsigned char *p, int n) {
 
 static int send_pkt(link_t *lk, int seq, int type,
                     const unsigned char *data, int dlen) {
+    static int sent = 0;
     unsigned char buf[128 + 8];
     int n = 0;
+    if (++sent == opt_drop) {
+        fprintf(stderr, "kermit: (test) dropping packet %d, type %c\n", sent, type);
+        return 0;                       /* into the void, as if sent */
+    }
     buf[n++] = SOH;
     buf[n++] = (unsigned char)tochar(dlen + 3);
     buf[n++] = (unsigned char)tochar(seq & 63);
@@ -93,22 +150,23 @@ static int send_pkt(link_t *lk, int seq, int type,
 }
 
 /* Read one packet.  Returns 0 on success, -1 on link death, 1 on a
- * damaged packet (caller NAKs). */
-static int read_pkt(link_t *lk, pkt_t *p) {
+ * damaged packet (caller NAKs), 2 on timeout (caller resends or NAKs). */
+#define LINK_ERR(c) ((c) == -2 ? 2 : -1)
+static int read_pkt_timed(link_t *lk, pkt_t *p) {
     unsigned char raw[128 + 4];
     int c, len, i, n;
 
     do {
         c = link_getc(lk);
         if (c < 0) {
-            return -1;
+            return LINK_ERR(c);
         }
     } while (c != SOH);
 
     n = 0;
     c = link_getc(lk);
     if (c < 0) {
-        return -1;
+        return LINK_ERR(c);
     }
     raw[n++] = (unsigned char)c;
     len = unchar(c);
@@ -118,7 +176,7 @@ static int read_pkt(link_t *lk, pkt_t *p) {
     for (i = 0; i < len; i++) {
         c = link_getc(lk);
         if (c < 0) {
-            return -1;
+            return LINK_ERR(c);
         }
         if (c == SOH) {         /* a fresh start mid-packet: damaged */
             return 1;
@@ -135,11 +193,23 @@ static int read_pkt(link_t *lk, pkt_t *p) {
     return 0;
 }
 
+/* The timer covers the whole packet, not each byte. */
+static int read_pkt(link_t *lk, pkt_t *p) {
+    int r;
+    link_arm(lk);
+    r = read_pkt_timed(lk, p);
+    link_disarm(lk);
+    if (r == 2) {
+        fprintf(stderr, "kermit: timeout after %d s\n", lk->timeout);
+    }
+    return r;
+}
+
 /* ---- init parameters ---------------------------------------------- */
 
 static void my_params(unsigned char *d, int *dlen) {
     d[0] = tochar(MAXL);    /* MAXL */
-    d[1] = tochar(5);       /* TIME */
+    d[1] = tochar(opt_time); /* TIME: how long to wait for us */
     d[2] = tochar(0);       /* NPAD */
     d[3] = ctl(0);          /* PADC */
     d[4] = tochar(13);      /* EOL  */
@@ -156,9 +226,24 @@ static void take_params(link_t *lk, const pkt_t *p) {
             lk->maxl = m;
         }
     }
+    if (p->dlen >= 2) {
+        int t = unchar(p->data[1]);     /* TIME: how long the peer wants us to wait for it */
+        if (t >= 1 && t <= 94) {
+            lk->timeout = t;
+        }
+    }
     if (p->dlen >= 6 && p->data[5] > 32 && p->data[5] < 127) {
         lk->qctl = p->data[5];
     }
+}
+
+static void link_init(link_t *lk, int fd) {
+    memset(lk, 0, sizeof(*lk));
+    lk->fd = fd;
+    lk->maxl = MAXL;
+    lk->qctl = QCTL;
+    lk->timeout = opt_time;
+    lk->timer = -1;
 }
 
 /* ---- sender ------------------------------------------------------- */
@@ -171,7 +256,7 @@ static int wait_ack(link_t *lk, int seq) {
             return -1;
         }
         if (r > 0) {
-            return 1;               /* damaged: resend */
+            return 1;               /* damaged or timed out: resend */
         }
         if (p.type == 'N') {
             return 1;
@@ -292,10 +377,7 @@ static int do_send(const char *host, int port, char **files, int nfiles) {
     unsigned char data[128];
     int dlen, seq, i;
 
-    memset(&lk, 0, sizeof(lk));
-    lk.maxl = MAXL;
-    lk.qctl = QCTL;
-    lk.fd = socket(AF_INET, SOCK_STREAM, 0);
+    link_init(&lk, socket(AF_INET, SOCK_STREAM, 0));
     if (lk.fd < 0) {
         fprintf(stderr, "kermit: socket failed\n");
         return 1;
@@ -397,7 +479,7 @@ static int do_receive(void) {
     pkt_t p;
     unsigned char data[128];
     int dlen;
-    int expect = 0, done = 0;
+    int expect = 0, done = 0, tries = 0;
     long total = 0;
     char fname[96];
 
@@ -428,10 +510,7 @@ static int do_receive(void) {
     printf("Kermit ready on 127.0.0.1:%u\n", (unsigned)ntohs(addr.sin_port));
     fflush(stdout);
 
-    memset(&lk, 0, sizeof(lk));
-    lk.maxl = MAXL;
-    lk.qctl = QCTL;
-    lk.fd = accept(listen_fd, 0, 0);
+    link_init(&lk, accept(listen_fd, 0, 0));
     if (lk.fd < 0) {
         fprintf(stderr, "kermit: accept failed\n");
         return 1;
@@ -447,9 +526,20 @@ static int do_receive(void) {
             return 1;
         }
         if (r > 0) {
+            /* Damaged, or nothing came: NAK what we expect.  A peer that
+             * stays silent for MAXTRY timeouts is gone. */
+            if (r == 2 && ++tries >= MAXTRY) {
+                fprintf(stderr, "kermit: peer silent, giving up\n");
+                send_pkt(&lk, expect, 'E', NULL, 0);
+                if (out) {
+                    fclose(out);
+                }
+                return 1;
+            }
             send_pkt(&lk, expect, 'N', NULL, 0);
             continue;
         }
+        tries = 0;
         if (p.type == 'S') {
             /* Fresh or retransmitted Send-Init: (re-)answer with params. */
             take_params(&lk, &p);
@@ -524,13 +614,32 @@ static int do_receive(void) {
 
 /* ---- main --------------------------------------------------------- */
 
+/* -x N and -t S may follow -r or -s; returns the index after them. */
+static int knobs(int argc, char **argv, int i) {
+    while (i + 1 < argc) {
+        if (strcmp(argv[i], "-x") == 0) {
+            opt_drop = atoi(argv[i + 1]);
+        } else if (strcmp(argv[i], "-t") == 0) {
+            opt_time = atoi(argv[i + 1]);
+            if (opt_time < 0 || opt_time > 94) {
+                opt_time = DEFTIME;
+            }
+        } else {
+            break;
+        }
+        i += 2;
+    }
+    return i;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "-r") == 0) {
+        knobs(argc, argv, 2);
         return do_receive();
     }
     if (argc >= 2 && strcmp(argv[1], "-s") == 0) {
         const char *host = "127.0.0.1";
-        int i = 2, port;
+        int i = knobs(argc, argv, 2), port;
         if (i + 1 < argc && strcmp(argv[i], "-h") == 0) {
             host = argv[i + 1];
             i += 2;
@@ -545,7 +654,9 @@ int main(int argc, char **argv) {
         return do_send(host, port, argv + i, argc - i);
     }
 usage:
-    printf("usage: kermit -r\n");
-    printf("       kermit -s [-h A.B.C.D] PORT FILE...\n");
+    printf("usage: kermit -r [-t SECS]\n");
+    printf("       kermit -s [-t SECS] [-h A.B.C.D] PORT FILE...\n");
+    printf("  -t SECS  how long the peer should wait for us (TIME, default %d; 0 = forever)\n", DEFTIME);
+    printf("  -x N     testing: lose our Nth outgoing packet\n");
     return 1;
 }
