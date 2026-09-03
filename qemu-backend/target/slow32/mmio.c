@@ -73,6 +73,7 @@
 #define S32_MMIO_OP_FLUSH     0x0B
 #define S32_MMIO_OP_READ_DIRECT 0x0C
 #define S32_MMIO_OP_FTRUNCATE   0x0D
+#define S32_MMIO_OP_POST_READ   0x0E
 
 #define S32_MMIO_OP_UNLINK    0x20
 #define S32_MMIO_OP_RENAME    0x21
@@ -1520,6 +1521,12 @@ static bool slow32_dpc_push(Slow32MMIOContext *ctx, const CPUSlow32State *env,
     return true;
 }
 
+static bool slow32_dpc_full(Slow32MMIOContext *ctx, const CPUSlow32State *env)
+{
+    uint32_t tail = slow32_mmio_readl(env, S32_MMIO_DPC_TAIL_OFFSET);
+    return ((ctx->dpc_head + 1u) % S32_MMIO_DPC_ENTRIES) == tail;
+}
+
 static bool slow32_timer_earliest(Slow32MMIOContext *ctx, int64_t *deadline)
 {
     bool any = false;
@@ -1814,6 +1821,48 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             resp->length = (uint32_t)nread;
             resp->status = (uint32_t)nread;
         }
+        break;
+    }
+
+    case S32_MMIO_OP_POST_READ: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        uint32_t dest = req->offset % S32_MMIO_DATA_CAPACITY;
+        uint32_t n = req->length;
+        if (host_fd < 0 || n == 0 || n > S32_MMIO_DATA_CAPACITY ||
+            dest > S32_MMIO_DATA_CAPACITY - n || dest > S32_MMIO_DATA_CAPACITY - 4u) {
+            slow32_mmio_fail(resp, host_fd < 0 ? EBADF : EINVAL);
+            break;
+        }
+        if (slow32_dpc_full(ctx, env)) {
+            slow32_mmio_fail(resp, EAGAIN);
+            break;
+        }
+        struct pollfd p = { .fd = host_fd, .events = POLLIN };
+        int pr = poll(&p, 1, 0);
+        if (pr == 0) {
+            slow32_mmio_fail(resp, EAGAIN);
+            break;
+        }
+        if (pr < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        uint32_t cookie = 0;
+        slow32_mmio_copy_from_guest(env, dest, (uint8_t *)&cookie, 4);
+        ssize_t nread = read(host_fd, ctx->scratch, n);
+        if (nread < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        if (nread > 0) {
+            slow32_mmio_copy_to_guest(env, dest, ctx->scratch, (uint32_t)nread);
+        }
+        Slow32MMIODesc e = { S32_MMIO_OP_POST_READ, (uint32_t)nread, dest, cookie };
+        if (!slow32_dpc_push(ctx, env, &e)) {
+            slow32_mmio_fail(resp, EAGAIN);
+            break;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
         break;
     }
 

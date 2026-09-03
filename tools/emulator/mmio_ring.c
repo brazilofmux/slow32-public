@@ -1845,6 +1845,7 @@ static const char *legacy_opcode_service(uint32_t opcode) {
     if (opcode == 0x0B) return "fs";   // FLUSH (file flush)
     if (opcode == 0x0C) return "fs";   // READ_DIRECT
     if (opcode == 0x0D) return "fs";   // FTRUNCATE
+    if (opcode == 0x0E) return "fs";   // POST_READ (completion is a DPC)
     if (opcode >= 0x20 && opcode <= 0x2B) return "fs";  // FS metadata (through REWINDDIR)
     if (opcode >= 0x30 && opcode <= 0x3F) return "time";
     if (opcode == 0x10) return "exec";
@@ -2171,6 +2172,40 @@ static bool mmio_dpc_push(mmio_ring_state_t *mmio, const io_descriptor_t *e) {
     return true;
 }
 
+static bool mmio_dpc_full(const mmio_ring_state_t *mmio) {
+    return ((mmio->dpc_head + 1u) % S32_MMIO_DPC_ENTRIES) == mmio->dpc_tail;
+}
+
+/* A read as a flow: the response is "taken", the bytes arrive as a DPC.
+ * The instance is not a thread blocked in read(); it posted work and will
+ * look when it looks. If the fd would block we refuse (EAGAIN) rather than
+ * sit on it -- that would be the thread we are not creating. */
+static void mmio_post_read(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
+    int host_fd = host_fd_for_guest(mmio, req->status);
+    uint32_t dest = req->offset % S32_MMIO_DATA_CAPACITY;
+    uint32_t n = req->length;
+    if (host_fd < 0 || n == 0 || n > S32_MMIO_DATA_CAPACITY ||
+        dest > S32_MMIO_DATA_CAPACITY - n || dest > S32_MMIO_DATA_CAPACITY - 4u) {
+        mmio_fail(resp, host_fd < 0 ? EBADF : EINVAL);
+        return;
+    }
+    if (mmio_dpc_full(mmio)) { mmio_fail(resp, EAGAIN); return; }
+
+    struct pollfd p = { .fd = host_fd, .events = POLLIN };
+    int pr = poll(&p, 1, 0);
+    if (pr == 0) { mmio_fail(resp, EAGAIN); return; }
+    if (pr < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+
+    uint32_t cookie;
+    memcpy(&cookie, mmio->data_buffer + dest, 4);
+    ssize_t got = read(host_fd, mmio->data_buffer + dest, n);
+    if (got < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+
+    io_descriptor_t e = { S32_MMIO_OP_POST_READ, (uint32_t)got, dest, cookie };
+    if (!mmio_dpc_push(mmio, &e)) { mmio_fail(resp, EAGAIN); return; }
+    resp->status = S32_MMIO_STATUS_OK;
+}
+
 // the earliest armed deadline; false when nothing is armed
 static bool mmio_timer_earliest(mmio_ring_state_t *mmio, uint64_t *deadline) {
     bool any = false;
@@ -2225,7 +2260,7 @@ static void mmio_timer_cancel(mmio_ring_state_t *mmio, io_descriptor_t *req, io_
 static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *resp) {
     mmio_deliver_timers(mmio);
     if (mmio->dpc_head == mmio->dpc_tail) {
-        uint64_t deadline;
+        uint64_t deadline = 0;
         if (!mmio_timer_earliest(mmio, &deadline)) { mmio_fail(resp, EAGAIN); return; }
         uint64_t now = mmio_mono_ns();
         if (deadline > now) {
@@ -2782,6 +2817,10 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             resp.status = S32_MMIO_STATUS_OK;
             break;
         }
+
+        case S32_MMIO_OP_POST_READ:
+            mmio_post_read(mmio, req, &resp);
+            break;
 
         case S32_MMIO_OP_TIMER_START:
             mmio_timer_start(mmio, req, &resp);

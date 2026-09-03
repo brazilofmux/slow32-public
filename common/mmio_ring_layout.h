@@ -77,6 +77,15 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_FLUSH   = 0x0B,
     S32_MMIO_OP_READ_DIRECT = 0x0C, // Direct read into guest memory (zero-copy)
     S32_MMIO_OP_FTRUNCATE   = 0x0D, // Truncate open file to specified length
+    /* A read that completes as a DPC, not as this request's response.
+     * req: length=max bytes, offset=dest in DATA_BUFFER, status=fd.
+     * The first four bytes at dest are the cookie (guest-written); the host
+     * saves them and then reads into dest. resp.status=0 if the flow was
+     * taken. A DPC {POST_READ, nbytes, dest, cookie} is queued at this
+     * service point. If the fd would block, the request fails with EAGAIN
+     * and no DPC is queued -- we do not park a thread on the fd.
+     * docs/plans/dpc.md, docs/plans/hosting.md. */
+    S32_MMIO_OP_POST_READ   = 0x0E,
 
     // 0x20 - 0x2F : Filesystem metadata operations
     S32_MMIO_OP_UNLINK   = 0x20,  // unlink/remove - delete a file
