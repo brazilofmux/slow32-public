@@ -1826,11 +1826,15 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
     case S32_MMIO_OP_POST_READ: {
         int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
-        uint32_t dest = req->offset % S32_MMIO_DATA_CAPACITY;
+        uint32_t dest = req->offset;
         uint32_t n = req->length;
-        if (host_fd < 0 || n == 0 || n > S32_MMIO_DATA_CAPACITY ||
-            dest > S32_MMIO_DATA_CAPACITY - n || dest > S32_MMIO_DATA_CAPACITY - 4u) {
+        if (host_fd < 0 || n == 0) {
             slow32_mmio_fail(resp, host_fd < 0 ? EBADF : EINVAL);
+            break;
+        }
+        if (env->mem_size == 0 || dest >= env->mem_size ||
+            (uint64_t)dest + n > env->mem_size) {
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
         if (slow32_dpc_full(ctx, env)) {
@@ -1839,25 +1843,40 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         }
         struct pollfd p = { .fd = host_fd, .events = POLLIN };
         int pr = poll(&p, 1, 0);
-        if (pr == 0) {
-            slow32_mmio_fail(resp, EAGAIN);
-            break;
-        }
         if (pr < 0) {
             slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
             break;
         }
-        uint32_t cookie = 0;
-        slow32_mmio_copy_from_guest(env, dest, (uint8_t *)&cookie, 4);
-        ssize_t nread = read(host_fd, ctx->scratch, n);
-        if (nread < 0) {
-            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        if (pr == 0 || !(p.revents & (POLLIN | POLLHUP | POLLERR))) {
+            slow32_mmio_fail(resp, EAGAIN);
             break;
         }
-        if (nread > 0) {
-            slow32_mmio_copy_to_guest(env, dest, ctx->scratch, (uint32_t)nread);
+        uint32_t cookie = 0;
+        slow32_mmio_copy_from_guest(env, 0, (uint8_t *)&cookie, 4);
+        uint32_t total = 0;
+        int read_err = 0;
+        while (total < n) {
+            uint32_t chunk = MIN(n - total, (uint32_t)S32_MMIO_DATA_CAPACITY);
+            ssize_t nread = read(host_fd, ctx->scratch, chunk);
+            if (nread < 0) {
+                read_err = errno > 0 ? errno : EIO;
+                break;
+            }
+            if (nread == 0) {
+                break;
+            }
+            physical_memory_write((hwaddr)(dest + total), ctx->scratch,
+                                  (uint32_t)nread);
+            total += (uint32_t)nread;
+            if ((uint32_t)nread < chunk) {
+                break;
+            }
         }
-        Slow32MMIODesc e = { S32_MMIO_OP_POST_READ, (uint32_t)nread, dest, cookie };
+        if (read_err && total == 0) {
+            slow32_mmio_fail(resp, read_err);
+            break;
+        }
+        Slow32MMIODesc e = { S32_MMIO_OP_POST_READ, total, dest, cookie };
         if (!slow32_dpc_push(ctx, env, &e)) {
             slow32_mmio_fail(resp, EAGAIN);
             break;

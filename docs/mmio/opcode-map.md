@@ -112,18 +112,19 @@ A read that completes as a DPC, not as this request’s response. The
 instance posts a flow and keeps its stack; it does not become a
 thread parked in `read()`. Policy name `fs`.
 
-- **Request**: `status` = fd, `length` = max bytes, `offset` = dest in
-  `DATA_BUFFER`. The guest writes a 32-bit cookie into the first four
-  bytes at dest; the host saves it and then reads into dest. dest must
-  not overlap the stdio bounce at offset 0 while other MMIO is in
-  flight — that buffer is shared scratch, not per-flow memory.
+- **Request**: `status` = fd, `length` = max bytes, `offset` = guest
+  address of the dest buffer (the caller's own memory, like
+  `READ_DIRECT`). Cookie is four bytes at `DATA_BUFFER[0]` — request
+  scratch only, live for this YIELD, not the dest.
 - **Response**: `status = OK` if the flow was taken. The bytes are
   **not** in this response. If the fd would block, `ERR`/`EAGAIN` and
-  no DPC — we refuse the flow rather than sit on the fd.
-- **DPC**: `{opcode POST_READ, length nbytes, offset dest, status cookie}`.
-  Queued at this service point. The dest bytes are host-owned until
-  the guest harvests that DPC.
-- **Runtime**: `s32_post_read` in `s32dpc.h`. Test:
+  no DPC — we refuse the flow rather than sit on the fd. Dest in the
+  code window is `EFAULT`/`EINVAL`.
+- **DPC**: `{opcode POST_READ, length nbytes, offset guest_addr,
+  status cookie}`. Queued at this service point. Those bytes are
+  host-owned until the guest harvests that DPC. A `printf` in between
+  cannot eat them: they are not in the MMIO bounce.
+- **Runtime**: `s32_post_read(fd, buf, n, cookie)` in `s32dpc.h`. Test:
   `regression/tests/feature-dpc-post-read`.
 
 This is the second DPC demo ([plans/dpc.md](../plans/dpc.md)): a

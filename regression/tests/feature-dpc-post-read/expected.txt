@@ -1,8 +1,9 @@
 posted a
-dpc kind=e dest=256 n=11 cookie=a1
+dpc kind=e n=11 cookie=a1
 bytes=hello-flow
 posted b
-dpc kind=e dest=320 n=11 cookie=b2
+dpc kind=e n=11 cookie=b2
+bytes=hello-flow
 queue empty
 would-block refused
 nothing can arrive

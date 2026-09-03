@@ -194,10 +194,12 @@ reply.
 
 A request that needs a reply comes back through the queue, not as a
 call into the instance. `OP_POST_READ` (0x0E): the response is “the
-flow was taken”; the bytes arrive as a DPC `{POST_READ, nbytes, dest,
-cookie}`. If the fd would block, the request fails with EAGAIN — we
-do not park a thread on it. Delivery is still at the posting YIELD
-(the file is ready). `regression/tests/feature-dpc-post-read`.
+flow was taken”; the bytes arrive as a DPC `{POST_READ, nbytes,
+guest_addr, cookie}` in the **caller's own buffer**, not the MMIO
+bounce (that bounce is stdio scratch; a flow owns its mailbox). If
+the fd would block, the request fails with EAGAIN — we do not park a
+thread on it. Delivery is still at the posting YIELD (the file is
+ready). `regression/tests/feature-dpc-post-read`.
 
 That is the anti-thread lesson in one opcode: the instance has one
 set of registers and one stack; work is a flow; the fabric is the

@@ -123,6 +123,11 @@ static int slow32_fast_mmio_guest_read(void *ctx, uint32_t addr, void *dest, siz
     return mm_read(&cpu->mm, addr, dest, size);
 }
 
+static int slow32_fast_mmio_guest_write(void *ctx, uint32_t addr, const void *src, size_t size) {
+    fast_cpu_state_t *cpu = (fast_cpu_state_t *)ctx;
+    return mm_write(&cpu->mm, addr, src, (uint32_t)size);
+}
+
 // MMIO initialization
 static void cpu_init_mmio(fast_cpu_state_t *cpu) {
     if (cpu->mmio.initialized || !cpu->mmio.enabled) {
@@ -167,6 +172,7 @@ static void cpu_init_mmio(fast_cpu_state_t *cpu) {
     mmio_region->host_addr = cpu->mmio.mem;
     cpu->mmio.state->base_addr = cpu->mmio.base;
     cpu->mmio.state->guest_read = slow32_fast_mmio_guest_read;
+    cpu->mmio.state->guest_write = slow32_fast_mmio_guest_write;
     cpu->mmio.state->guest_read_ctx = cpu;
     cpu->mmio.state->guest_code_limit = cpu->code_limit;
     cpu->mmio.initialized = true;

@@ -118,6 +118,31 @@ static int mmio_guest_read(mmio_ring_state_t *mmio, uint32_t addr,
     return -1;
 }
 
+/* Direct write into guest RAM (POST_READ). Code window is execute-only. */
+static int mmio_guest_write(mmio_ring_state_t *mmio, uint32_t addr,
+                            const void *src, size_t size) {
+    if (size == 0) {
+        return 0;
+    }
+    if ((uint64_t)addr + size < addr) {
+        return -1;
+    }
+    if (mmio->guest_code_limit != 0 && addr < mmio->guest_code_limit) {
+        return -1;
+    }
+    if (mmio->guest_write) {
+        return mmio->guest_write(mmio->guest_read_ctx, addr, src, size);
+    }
+    if (!mmio->guest_mem_base) {
+        return -1;
+    }
+    if ((uint64_t)addr + size > mmio->guest_mem_size) {
+        return -1;
+    }
+    memcpy((uint8_t *)mmio->guest_mem_base + addr, src, size);
+    return 0;
+}
+
 static void reset_fd_table(mmio_ring_state_t *mmio) {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
         mmio->host_fds[i] = -1;
@@ -2182,10 +2207,9 @@ static bool mmio_dpc_full(const mmio_ring_state_t *mmio) {
  * sit on it -- that would be the thread we are not creating. */
 static void mmio_post_read(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
     int host_fd = host_fd_for_guest(mmio, req->status);
-    uint32_t dest = req->offset % S32_MMIO_DATA_CAPACITY;
+    uint32_t dest = req->offset;
     uint32_t n = req->length;
-    if (host_fd < 0 || n == 0 || n > S32_MMIO_DATA_CAPACITY ||
-        dest > S32_MMIO_DATA_CAPACITY - n || dest > S32_MMIO_DATA_CAPACITY - 4u) {
+    if (host_fd < 0 || n == 0) {
         mmio_fail(resp, host_fd < 0 ? EBADF : EINVAL);
         return;
     }
@@ -2193,15 +2217,34 @@ static void mmio_post_read(mmio_ring_state_t *mmio, io_descriptor_t *req, io_des
 
     struct pollfd p = { .fd = host_fd, .events = POLLIN };
     int pr = poll(&p, 1, 0);
-    if (pr == 0) { mmio_fail(resp, EAGAIN); return; }
     if (pr < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+    if (pr == 0 || !(p.revents & (POLLIN | POLLHUP | POLLERR))) {
+        mmio_fail(resp, EAGAIN);
+        return;
+    }
 
     uint32_t cookie;
-    memcpy(&cookie, mmio->data_buffer + dest, 4);
-    ssize_t got = read(host_fd, mmio->data_buffer + dest, n);
-    if (got < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+    memcpy(&cookie, mmio->data_buffer, 4);
 
-    io_descriptor_t e = { S32_MMIO_OP_POST_READ, (uint32_t)got, dest, cookie };
+    uint8_t tmp[4096];
+    uint32_t total = 0;
+    while (total < n) {
+        uint32_t chunk = n - total < sizeof tmp ? n - total : (uint32_t)sizeof tmp;
+        ssize_t got = read(host_fd, tmp, chunk);
+        if (got < 0) {
+            if (total == 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+            break;
+        }
+        if (got == 0) break;
+        if (mmio_guest_write(mmio, dest + total, tmp, (size_t)got) != 0) {
+            mmio_fail(resp, EFAULT);
+            return;
+        }
+        total += (uint32_t)got;
+        if ((uint32_t)got < chunk) break;
+    }
+
+    io_descriptor_t e = { S32_MMIO_OP_POST_READ, total, dest, cookie };
     if (!mmio_dpc_push(mmio, &e)) { mmio_fail(resp, EAGAIN); return; }
     resp->status = S32_MMIO_STATUS_OK;
 }

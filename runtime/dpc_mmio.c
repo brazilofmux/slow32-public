@@ -43,14 +43,11 @@ int s32_dpc_wait(s32_dpc_t *out) {
     }
 }
 
-int s32_post_read(int fd, unsigned dest, unsigned n, unsigned cookie) {
-    if (fd < 0 || n == 0 || dest > S32_MMIO_DATA_CAPACITY - 4u) return -1;
-    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
-    memcpy((void *)(data_buffer + dest), &cookie, 4);
-    unsigned int status = (unsigned int)s32_mmio_request(S32_MMIO_OP_POST_READ, n, dest, (unsigned int)fd);
+int s32_post_read(int fd, void *buf, unsigned n, unsigned cookie) {
+    if (fd < 0 || !buf || n == 0) return -1;
+    memcpy((void *)S32_MMIO_DATA_BUFFER, &cookie, 4);
+    unsigned int status = (unsigned int)s32_mmio_request(S32_MMIO_OP_POST_READ, n,
+                                                         (unsigned int)(unsigned long)buf,
+                                                         (unsigned int)fd);
     return status == S32_MMIO_STATUS_ERR ? -1 : 0;
-}
-
-void s32_post_copy(unsigned dest, void *buf, unsigned n) {
-    memcpy(buf, (const void *)(S32_MMIO_DATA_BUFFER + dest), n);
 }
