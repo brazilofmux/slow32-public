@@ -149,12 +149,13 @@ four engines.
 |---|---|---|
 | `TIMER_START` (0x32) | `offset` → `timepair64` interval; `status` = guest cookie | `resp.status` = timer id `0 .. TIMER_MAX-1`, or `ERR`/`EAGAIN` if the partition is full. When the interval elapses, a DPC `{TIMER_START, 0, id, cookie}` is queued **at the next service point** (or during a `POLL`). The id is then free. |
 | `TIMER_CANCEL` (0x33) | `status` = id | A cancelled timer never queues. |
-| `POLL` (0x34) | none | Sleep until the DPC ring is non-empty. `resp.status` = entries waiting. `ERR`/`EAGAIN` if the ring is empty **and** nothing is armed (no timer, no pending post), so an instance is never left asleep for something that cannot come. A pending post is armed the same way a timer is: the host may `poll(2)` those host fds while the instance is in this opcode. |
+| `POLL` (0x34) | optional: `length/4` guest fds at `offset` (at most `POLL_MAX_FDS`, POLLIN only) | Sleep until the DPC ring is non-empty. `resp.status` = entries waiting. Length 0 is the original wait. A named readable fd is a DPC `{POLL, 0, fd, why}` (`IN`/`HUP`/`ERR`/`NVAL`); NVAL is reported at once. A pending `POST_READ` owns that fd: no READY, the POST completion is the wake. `ERR`/`EAGAIN` if the ring is empty **and** nothing is armed (no timer, no pending post, nfds 0). |
 
-`S32_MMIO_TIMER_MAX` and `S32_MMIO_POST_MAX` are both 8: fixed
-partitions. `POLL` here is “sleep until my DPC ring has something,”
-not a guest POSIX `poll(2)` on its fds. That guest opcode is still
-future work ([plans/hosting.md](../plans/hosting.md) level 1).
+`S32_MMIO_TIMER_MAX`, `S32_MMIO_POST_MAX`, and `S32_MMIO_POLL_MAX_FDS`
+are all 8: fixed partitions. Length-0 `POLL` is “sleep until my DPC
+ring has something.” A non-zero payload is wait-for-any on named fds
+([plans/hosting.md](../plans/hosting.md) demo 2). Not POSIX `poll(2)`:
+no POLLOUT, no per-fd event mask.
 
 Delivery is at service points only. The host does not write a DPC
 into a running guest. A timer that expires while the instance is in

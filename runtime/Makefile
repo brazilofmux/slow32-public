@@ -74,6 +74,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c \
             term_mmio.c term_stub.c net_mmio.c net_stub.c \
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
+            sched_mmio.c \
             math_hw.c math_soft.c math_cordic.c \
             unwind.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 

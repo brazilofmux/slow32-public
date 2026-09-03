@@ -22,7 +22,18 @@ int s32_timer_cancel(int id) {
     return status == S32_MMIO_STATUS_ERR ? -1 : 0;
 }
 
+#define S32_DPC_STASH 16
+static s32_dpc_t stash[S32_DPC_STASH];
+static unsigned stash_rd;
+static unsigned stash_n;
+
 int s32_dpc_poll(s32_dpc_t *out) {
+    if (stash_n) {
+        *out = stash[stash_rd];
+        stash_rd = (stash_rd + 1u) % S32_DPC_STASH;
+        stash_n--;
+        return 1;
+    }
     unsigned int head = S32_MMIO_DPC_HEAD, tail = S32_MMIO_DPC_TAIL;
     if (head == tail) return 0;
     volatile uint32_t *ring = S32_MMIO_DPC_RING;
@@ -33,6 +44,14 @@ int s32_dpc_poll(s32_dpc_t *out) {
     out->cookie = ring[d + 3];
     S32_MMIO_DPC_TAIL = (tail + 1u) % S32_MMIO_DPC_ENTRIES;
     return 1;
+}
+
+int s32_dpc_unread(const s32_dpc_t *d) {
+    if (!d || stash_n >= S32_DPC_STASH) { errno = EAGAIN; return -1; }
+    unsigned w = (stash_rd + stash_n) % S32_DPC_STASH;
+    stash[w] = *d;
+    stash_n++;
+    return 0;
 }
 
 int s32_dpc_wait(s32_dpc_t *out) {

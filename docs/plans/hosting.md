@@ -109,9 +109,10 @@ Posted read (`OP_POST_READ`, 0x0E) is the second DPC demo: a reply
 comes back as a queue entry, the instance never becomes a reader
 thread. A would-block fd occupies a `POST_MAX` slot and completes at
 a later service point; `OP_POLL` treats that pending post like an
-armed timer. POSIX `poll` as a **guest** opcode (timer *or* hose)
-and a host producer that writes the ring while the guest is in
-translated code are still missing.
+armed timer. Wait-for-any (named fds on the same `OP_POLL`) is the
+readiness path; a pending post owns its fd so READY cannot steal the
+bytes. A host producer that writes the ring while the guest is in
+translated code is still missing.
 
 **2. Multiple instances, one emulator process.** The Nintendo
 process table. Shared RX code, separate data and MMIO, a dead

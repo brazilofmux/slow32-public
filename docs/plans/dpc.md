@@ -220,15 +220,15 @@ is exactly right: the host's `poll(2)` of pending POST_READ fds during
 
 `OP_POLL` gained a payload: up to `S32_MMIO_POLL_MAX_FDS` (8) guest fds the
 instance names to wait on, beside the timers and the pending posts it
-already waited on. A readable named fd is delivered as a DPC
-`{kind POLL, id=fd, cookie=S32_MMIO_POLL_IN/HUP/ERR/NVAL}`, level-triggered;
-a not-open fd is reported at once so a wait cannot hang on it. Guest side is
-`s32_dpc_wait_on(fds, nfds, out)`. Landed in `mmio_poll` for the three C
-engines and qemu's `handle_poll`; `feature-dpc-poll` drives it with a
-delayed-pipe `stdin.sh` fixture and all four engines agree. Its consumers
-are kermit (a receive timeout: wait on the socket *or* a timer) and dBase's
-`INKEY` (a key *or* a deadline), which replaced a counted key-available
-busy-wait.
+already waited on. POLLIN only. A pending `POST_READ` owns that fd: no
+READY DPC, so the completion's bytes are not stolen. A readable named fd
+is delivered as a DPC `{kind POLL, id=fd, cookie=S32_MMIO_POLL_IN/HUP/ERR/NVAL}`,
+level-triggered; a not-open fd is reported at once so a wait cannot hang
+on it. Guest side is `s32_dpc_wait_on`. An inline waiter that is not the
+sole consumer puts unmatched entries back with `s32_dpc_unread` (stale
+timers are dropped, not unread). `feature-dpc-poll` drives it with a
+delayed-pipe `stdin.sh` fixture. Consumers: kermit receive timeout and
+dBase `INKEY`.
 
 ## The fourth demo, landed 2026-09-02: the cooperative scheduler
 
@@ -241,10 +241,13 @@ in `hosting.md` is respected. `runtime/include/s32sched.h`,
 `runtime/sched_mmio.c`.
 
 `S32_AWAIT_TIMER` arms a timer, `S32_AWAIT_READ` posts a read into the
-task's own buffer (POST_READ), `S32_YIELD` gives a compute-bound task a turn
-to the host via the plain YIELD instruction. The scheduler steps every
-runnable task, routes each DPC to the task that awaits it by `(kind, id)`,
-and blocks on the ring only when every task is blocked. `feature-dpc-sched`
+task's own buffer (POST_READ), `S32_AWAIT_READY` waits for a named fd,
+`S32_YIELD` gives a compute-bound task a turn to the host via the plain
+YIELD instruction. A refused post or timer fails the task
+(`S32_TASK_FAIL`) instead of parking on a DPC that will never arrive.
+The scheduler steps every runnable task, routes each DPC to the task
+that awaits it by `(kind, id)`, and blocks on the ring only when every
+task is blocked. `feature-dpc-sched`
 runs a reader, a timer ticker, and a yielding worker together; the ticks all
 fire while the read is in flight, proving overlap, deterministically, on all
 four engines. It also gated the DBT's YIELD-spin warning on

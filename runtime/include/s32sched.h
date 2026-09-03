@@ -29,13 +29,14 @@ extern "C" {
 #define S32_TASK_DONE  0   /* finished; the slot frees */
 #define S32_TASK_WAIT  1   /* blocked on t->wk/t->wid until its DPC arrives */
 #define S32_TASK_YIELD 2   /* gave up the CPU; run me again, the host was serviced */
+#define S32_TASK_FAIL  3   /* post/timer refused; s32_sched_run returns -1 */
 
 typedef struct s32_task {
     int (*fn)(struct s32_task *t);
     void *arg;              /* the task's own state; survives awaits */
     int line;               /* protothread resume point (0 = start) */
-    unsigned wk;            /* what it awaits: S32_DPC_TIMER / _AIO / _READY */
-    unsigned wid;           /* the id it awaits: timer id, aio id, or fd */
+    unsigned wk;            /* S32_DPC_TIMER / S32_DPC_POST / S32_DPC_READY */
+    unsigned wid;           /* timer id, dest address, or fd */
     s32_dpc_t done;         /* the completion, filled before the task resumes */
     unsigned char active;
     unsigned char runnable;
@@ -63,22 +64,34 @@ int s32_sched_run(void);
 /* Arm a one-shot timer and suspend until it fires. */
 #define S32_AWAIT_TIMER(t, sec, nsec)                                     \
     do {                                                                  \
+        int _id = s32_timer_start((sec), (nsec), 0u);                     \
+        if (_id < 0) { (t)->line = -1; return S32_TASK_FAIL; }            \
         (t)->wk = S32_DPC_TIMER;                                          \
-        (t)->wid = (unsigned)s32_timer_start((sec), (nsec), 0u);          \
+        (t)->wid = (unsigned)_id;                                         \
         (t)->line = __LINE__; return S32_TASK_WAIT; case __LINE__: ;      \
     } while (0)
 
 /* Post a read into buf (the caller's own memory) and suspend until it
  * completes; *pbytes gets the byte count (0 = end of file).  The bytes are
- * in buf when the task resumes -- POST_READ writes it directly, so no copy
- * out of a bounce buffer.  The completion is routed by the dest address. */
+ * in buf when the task resumes.  Routed by dest address. */
 #define S32_AWAIT_READ(t, fd, buf, n, pbytes)                             \
     do {                                                                  \
         (t)->wk = S32_DPC_POST;                                           \
         (t)->wid = (unsigned)(unsigned long)(buf);                        \
-        s32_post_read((fd), (buf), (n), 0u);                              \
+        if (s32_post_read((fd), (buf), (n), 0u) != 0) {                   \
+            (t)->line = -1; return S32_TASK_FAIL;                         \
+        }                                                                 \
         (t)->line = __LINE__; return S32_TASK_WAIT; case __LINE__: ;      \
         *(pbytes) = (int)(t)->done.length;                                \
+    } while (0)
+
+/* Suspend until fd is readable (wait-for-any).  The task frames its own
+ * read after it resumes. */
+#define S32_AWAIT_READY(t, fd)                                            \
+    do {                                                                  \
+        (t)->wk = S32_DPC_READY;                                          \
+        (t)->wid = (unsigned)(fd);                                        \
+        (t)->line = __LINE__; return S32_TASK_WAIT; case __LINE__: ;      \
     } while (0)
 
 /* Give up the CPU: the host is serviced (async reads advance, timers are

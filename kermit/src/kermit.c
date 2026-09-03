@@ -80,7 +80,7 @@ static int link_getc(link_t *lk) {
                     lk->timer = -1;     /* fired: the id is free again */
                     return -2;
                 }
-                continue;               /* a timer we stopped caring about */
+                continue;               /* stale: do not unread */
             }
             if (d.kind == S32_DPC_READY && (int)d.id == lk->fd) {
                 if (d.cookie & S32_DPC_NVAL) {
@@ -88,6 +88,7 @@ static int link_getc(link_t *lk) {
                 }
                 break;                  /* readable, or at EOF: recv says which */
             }
+            s32_dpc_unread(&d);         /* POST or another fd */
         }
         n = recv(lk->fd, (char *)lk->rbuf, (int)sizeof(lk->rbuf), 0);
         if (n <= 0) {

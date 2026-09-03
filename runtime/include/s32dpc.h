@@ -27,8 +27,14 @@ int s32_timer_start(unsigned int seconds, unsigned int nanoseconds, unsigned int
 int s32_timer_cancel(int id);
 
 /* Take the next DPC without waiting.  1 with *out filled, 0 if the ring is
- * empty.  No host involvement: a load of the ring's head word. */
+ * empty.  Guest-side unread entries are returned first. */
 int s32_dpc_poll(s32_dpc_t *out);
+
+/* Put a harvested DPC back so a later poll/wait sees it first.  For an
+ * inline waiter that is not the sole consumer (a POST or someone else's
+ * READY).  Stale timers are dropped, not unread -- they would loop.
+ * 0, or -1 (errno EAGAIN) if the stash is full. */
+int s32_dpc_unread(const s32_dpc_t *d);
 
 /* Take the next DPC, sleeping until there is one.  1 with *out filled, or
  * -1 (errno EAGAIN) when nothing is armed (no timer, no pending post) and
@@ -46,11 +52,11 @@ int s32_post_read(int fd, void *buf, unsigned n, unsigned cookie);
 
 /* Wait-for-any (readiness, not completion): sleep until a timer fires, a
  * posted read completes, or one of nfds fds (at most S32_DPC_MAX_FDS) is
- * readable.  A readable fd arrives as a DPC {kind S32_DPC_READY, id=fd,
- * cookie=S32_DPC_IN/HUP/ERR/NVAL}; it is level-triggered, so an fd not
- * drained is reported again.  Use it when you frame your own reads (kermit,
- * a key poll) rather than posting a flow.  1 with *out filled, or -1 (errno
- * EAGAIN when nothing is armed and nfds is 0; EINVAL for too many fds). */
+ * readable.  POLLIN only.  A pending POST_READ owns that fd: the host
+ * does not also emit READY, so the bytes are not stolen.  A readable fd
+ * arrives as {kind S32_DPC_READY, id=fd, cookie=S32_DPC_IN/HUP/ERR/NVAL},
+ * level-triggered.  1 with *out filled, or -1 (errno EAGAIN when nothing
+ * is armed and nfds is 0; EINVAL for too many fds). */
 int s32_dpc_wait_on(const int *fds, unsigned nfds, s32_dpc_t *out);
 #define S32_DPC_TIMER 0x32u     /* a timer fired */
 #define S32_DPC_POST  0x0Eu     /* a posted read completed (bytes in the caller's buffer) */

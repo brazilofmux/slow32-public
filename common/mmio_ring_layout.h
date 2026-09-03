@@ -128,10 +128,12 @@ enum s32_mmio_opcode {
     // POLL.  The id is free again once the entry is queued.
     S32_MMIO_OP_TIMER_START = 0x32,
     S32_MMIO_OP_TIMER_CANCEL= 0x33,  // req->status the id; a cancelled timer never queues
-    // Sleep until the DPC ring is non-empty.  resp->status = entries waiting.
-    // ERR/EAGAIN when the ring is empty and nothing is armed (no timer, no
-    // pending post): nothing could ever arrive, so the guest is not left
-    // asleep for good. A pending post is armed the same way a timer is.
+    // Sleep until the DPC ring is non-empty.  length 0: the old wait.
+    // length/4 guest fds at offset: wait-for-any (POLLIN). A pending
+    // POST_READ owns that fd -- no READY DPC, the POST completion is
+    // the wake. resp->status = entries waiting. ERR/EAGAIN when the
+    // ring is empty and nothing is armed (no timer, no pending post,
+    // nfds 0).
     S32_MMIO_OP_POLL        = 0x34,
 
     // 0x40 - 0x4F : Networking / IPC

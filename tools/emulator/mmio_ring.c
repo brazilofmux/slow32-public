@@ -2215,6 +2215,13 @@ static bool mmio_posts_any(const mmio_ring_state_t *mmio) {
     return false;
 }
 
+static bool mmio_post_owns(const mmio_ring_state_t *mmio, uint32_t guest_fd) {
+    for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++)
+        if (mmio->posts[i].pending && mmio->posts[i].guest_fd == guest_fd)
+            return true;
+    return false;
+}
+
 // docs/plans/dpc.md: a YIELD that finds no new request is not a spin while
 // the host still owes the guest something -- a timer armed, a posted read
 // in flight, or a DPC already queued.  POLL's "nothing can arrive" notion,
@@ -2360,13 +2367,8 @@ static void mmio_timer_cancel(mmio_ring_state_t *mmio, io_descriptor_t *req, io_
     resp->status = S32_MMIO_STATUS_OK;
 }
 
-// sleep until the DPC ring has something: the guest asked to
-/* Wait-for-any: sleep until the DPC ring has something.  What can put an
- * entry there is a timer firing, a posted read completing, or -- the
- * readiness path (distinct from POST_READ) -- one of the guest fds named in
- * this request becoming readable, delivered as a S32_DPC_READY entry.  The
- * named fds are req->length/4 uint32 at req->offset.  Level-triggered, so an
- * fd the guest has not drained is reported again (docs/plans/dpc.md). */
+/* POLL: length 0 sleeps until the ring is non-empty. length/4 fds at
+ * offset are wait-for-any (POLLIN). A pending POST owns that fd: no READY. */
 static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
     uint32_t nnamed = req->length / 4u;
     uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
@@ -2418,7 +2420,8 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
             while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
         }
 
-        for (uint32_t i = 0; i < nnamed; i++) {          /* named fd readiness -> DPC */
+        for (uint32_t i = 0; i < nnamed; i++) {
+            if (mmio_post_owns(mmio, named[i])) continue;
             struct pollfd *pp = &pf[named_start + i];
             uint32_t why = 0;
             if (pp->revents & POLLIN)   why |= S32_MMIO_POLL_IN;

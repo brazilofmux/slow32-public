@@ -69,6 +69,8 @@ int s32_sched_run(void) {
                 g_tasks[i].active = 0;
             } else if (r == S32_TASK_YIELD) {
                 g_tasks[i].runnable = 1;   /* run again next pass */
+            } else if (r == S32_TASK_FAIL) {
+                return -1;
             }
             /* S32_TASK_WAIT leaves it blocked on wk/wid */
             ran++;

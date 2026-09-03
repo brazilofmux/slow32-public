@@ -121,9 +121,10 @@ int term_wait_key(int ms) {
         if (s32_dpc_wait_on(&fd, 1, &d) < 0) return 0;
         if (d.kind == S32_DPC_TIMER) {
             if (timer >= 0 && d.cookie == cookie) return 0;     /* ours: nothing came */
-            continue;                                            /* stale */
+            continue;                                            /* stale: do not unread */
         }
         if (d.kind == S32_DPC_READY && d.id == 0u) break;
+        s32_dpc_unread(&d);                                      /* POST or another fd */
     }
     if (timer >= 0) s32_timer_cancel(timer);    /* -1 if it already fired: stale entry, dropped above next time */
     return (d.cookie & S32_DPC_NVAL) ? 0 : 1;   /* readable, or EOF: the read says which */

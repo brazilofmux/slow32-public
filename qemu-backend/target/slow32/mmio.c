@@ -1566,6 +1566,16 @@ static bool slow32_posts_any(const Slow32MMIOContext *ctx)
     return false;
 }
 
+static bool slow32_post_owns(const Slow32MMIOContext *ctx, uint32_t guest_fd)
+{
+    for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
+        if (ctx->posts[i].pending && ctx->posts[i].guest_fd == guest_fd) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool slow32_post_finish(Slow32MMIOContext *ctx, const CPUSlow32State *env,
                                uint32_t dest, uint32_t n, uint32_t cookie,
                                int host_fd)
@@ -1786,6 +1796,9 @@ static void slow32_mmio_handle_poll(Slow32MMIOContext *ctx,
         }
 
         for (uint32_t i = 0; i < nnamed; i++) {
+            if (slow32_post_owns(ctx, named[i])) {
+                continue;
+            }
             struct pollfd *pp = &pf[named_start + i];
             uint32_t why = 0;
             if (pp->revents & POLLIN)   why |= S32_MMIO_POLL_IN;
