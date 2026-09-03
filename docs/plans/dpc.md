@@ -209,6 +209,73 @@ set of registers and one stack; work is a flow; the fabric is the
 DPC ring. A helper thread writing the ring while the guest is in
 translated code is still not this demo.
 
+## The third demo, landed 2026-09-02: wait-for-any (readiness)
+
+The completion form (POST_READ) reads *for* you. This is the readiness
+form -- tell me *when* an fd is readable and I will frame my own read --
+which is what a guest with its own packet loop needs. It is the guest
+`poll` opcode `hosting.md`'s order of demos calls for, and the note there
+is exactly right: the host's `poll(2)` of pending POST_READ fds during
+`OP_POLL` was not it; this is.
+
+`OP_POLL` gained a payload: up to `S32_MMIO_POLL_MAX_FDS` (8) guest fds the
+instance names to wait on, beside the timers and the pending posts it
+already waited on. A readable named fd is delivered as a DPC
+`{kind POLL, id=fd, cookie=S32_MMIO_POLL_IN/HUP/ERR/NVAL}`, level-triggered;
+a not-open fd is reported at once so a wait cannot hang on it. Guest side is
+`s32_dpc_wait_on(fds, nfds, out)`. Landed in `mmio_poll` for the three C
+engines and qemu's `handle_poll`; `feature-dpc-poll` drives it with a
+delayed-pipe `stdin.sh` fixture and all four engines agree. Its consumers
+are kermit (a receive timeout: wait on the socket *or* a timer) and dBase's
+`INKEY` (a key *or* a deadline), which replaced a counted key-available
+busy-wait.
+
+## The fourth demo, landed 2026-09-02: the cooperative scheduler
+
+Built at direction, and it is the Level-1 reactor of `hosting.md` made
+concrete rather than the OS scheduler that doc rightly forbids: **one
+stack, one waiter, no preemption.** Tasks are protothreads -- guest
+functions that run to an await and return, their resume line kept by a
+`switch` -- so there are no extra stacks and the fibers-as-two-waiters line
+in `hosting.md` is respected. `runtime/include/s32sched.h`,
+`runtime/sched_mmio.c`.
+
+`S32_AWAIT_TIMER` arms a timer, `S32_AWAIT_READ` posts a read into the
+task's own buffer (POST_READ), `S32_YIELD` gives a compute-bound task a turn
+to the host via the plain YIELD instruction. The scheduler steps every
+runnable task, routes each DPC to the task that awaits it by `(kind, id)`,
+and blocks on the ring only when every task is blocked. `feature-dpc-sched`
+runs a reader, a timer ticker, and a yielding worker together; the ticks all
+fire while the read is in flight, proving overlap, deterministically, on all
+four engines. It also gated the DBT's YIELD-spin warning on
+`mmio_async_pending` so a task yielding to let I/O progress is not mistaken
+for a stuck spin.
+
+## The asynchronous producer, and why it is last
+
+Delivering a DPC into a *running* guest -- a host thread writing the entry
+and then the head word while translated code runs -- is the remaining step,
+deferred for a reason that is a finding about the ISA. The ISA has no fence
+and the DBT emits plain host loads: the guest reads the head word and then
+the entry with no address dependency between them, so on an arm64 host a
+cross-thread producer can be seen as new head, stale entry. The interpreters
+could fix it with acquire loads and qemu goes through a callback, but the
+DBT cannot know at translation time which loads hit the ring. So the
+asynchronous producer is really the decision on the ISA's first
+memory-ordering instruction, and it is argued as that -- and, per
+`hosting.md`, it is the same decision as the level-2 thread pool. Neither
+should land without the other.
+
+## Multi-instance, and the wager
+
+The destination -- many instances, shared read-only code, a thread pool,
+and the same message shape reaching across processes and machines -- and the
+reason the discipline is worth keeping, live in
+[hosting.md](hosting.md): the four levels, what is already law, what
+"build an OS, then don't" forbids, and the wager that a cut which is a
+message everywhere can be *moved* rather than committed to. This file is the
+mechanics and the demo log; that file is the strategy.
+
 ## What is deliberately out
 
 - Preemption of any kind inside an instance, including a pending-event
@@ -218,5 +285,5 @@ translated code is still not this demo.
 - A second meaning for YIELD. It was proposed and declined: the wait
   is a queue entry too.
 - New opcodes, until a demo shows one is unavoidable.
-- Multi-instance, thread pools, shared code pages. Named here so the
-  reader knows they are the second step and not the first.
+- Multi-instance, thread pools, shared code pages -- the second step, laid
+  out in [hosting.md](hosting.md). Deliberately out until an app asks.

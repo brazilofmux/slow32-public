@@ -94,8 +94,16 @@ it looks; when it has nothing it enqueues `POLL` and YIELDs.
 “Tasks” are guest functions in that loop, not a second register
 file. A guest fiber library (several stacks, explicit switch) is
 out of bounds unless those fibers never appear to the emulator as
-two waiters — `dpc.md`’s “a stack is the instance’s own.” Overlap
-I/O by running two instances.
+two waiters — `dpc.md`’s “a stack is the instance’s own.”
+
+Landed 2026-09-02 (`runtime/s32sched.h`, `sched_mmio.c`): the reactor
+as a **stackless protothread** scheduler — one stack, one waiter, no
+preemption, tasks are guest functions whose resume line is kept by a
+`switch`, exactly the fibers-free shape this paragraph requires. It
+awaits timers, posted reads, and readiness, and routes each DPC to the
+task that awaits it. “Do not write a scheduler,” below, meant the OS
+scheduler with a native tick, not this reactor; the reactor was always
+Level 1. Overlap I/O across instances still needs level 2.
 
 Posted read (`OP_POST_READ`, 0x0E) is the second DPC demo: a reply
 comes back as a queue entry, the instance never becomes a reader
@@ -137,15 +145,43 @@ or another **instance**. Host-native code may take interrupts and
 may only **enqueue**. Fixed partitions where we can
 (`S32_MMIO_TIMER_MAX` and `S32_MMIO_POST_MAX` are the template).
 
+## The wager
+
+Message passing makes a chunk *safe to run*; it does not find the cut,
+and auto-decomposition of general code is a graveyard. So the goal is
+not a compiler that finds the cut. It is to make a wrong cut **cheap to
+try and safe to be wrong about** — cheap instances, no shared state,
+let-it-crash — so iteration replaces upfront genius. Erlang never chose
+anyone's supervision tree; it made reshaping it cheap.
+
+That is why the bare-metal discipline is kept although bare metal never
+ships: a fixed-partition, allocation-free, execute-only, message-only
+instance is disciplined enough to run bare, which is what makes it a
+small, **relocatable** unit. Because the seam is a message at every
+level, a cut can be *moved* — task, to co-resident instance, to process,
+to remote machine — as you learn where a problem's real independence
+lives, without rewriting either side. The cut becomes a placement
+decision, not a one-way commitment.
+
+And the fit is the workload with nowhere else to go: GPUs help only code
+that vectorizes; ledgers, batch, COBOL do not, but they decompose along
+seams the domain already has — accounts, transactions, report streams.
+The general message-passing bet is a poor fit for graphics and a natural
+fit for exactly the business logic the vector machines cannot touch.
+
 ## Order of demos
 
 Do not write a scheduler. Do not start with multi-instance.
 
 1. ~~DPC second demo (reply-shaped request).~~ Landed: `POST_READ`,
    pending slot, `feature-dpc-post-read`. `feature-dpc-timer` stays.
-2. POSIX `poll` as a **guest** opcode on arbitrary fds (timer *or*
-   hose), completion as DPC or response ring. Host `poll(2)` of
-   pending `POST_READ` fds during `OP_POLL` is not that opcode.
+2. ~~POSIX `poll` as a **guest** opcode on arbitrary fds (timer *or*
+   hose), completion as DPC.~~ Landed as **wait-for-any**: `OP_POLL`
+   takes guest fds to wait on and delivers a readable one as a
+   `{POLL, fd, why}` DPC, beside timers and pending posts. Distinct
+   from the host `poll(2)` of `POST_READ` fds, as noted.
+   `s32_dpc_wait_on`; consumers are kermit's receive timeout and
+   dBase's `INKEY`. `feature-dpc-poll`.
 3. `socketpair` hose + a desk file.
 4. `EXEC` completing via DPC.
 5. Only then level 2: split `mmio_state`, N instances, shared RX.
