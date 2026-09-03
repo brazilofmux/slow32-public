@@ -1,0 +1,6 @@
+tick 1 (reader pending)
+tick 2 (reader pending)
+tick 3 (reader pending)
+reader done: 14 bytes: async payload
+worker sum=1783293664
+scheduler: 3 ticks, reader done, rc=0

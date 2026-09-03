@@ -956,7 +956,7 @@ static void dbt_handle_yield(dbt_cpu_state_t *cpu) {
     // Detect spin (no new requests)
     if (mmio_state.req_head == last_req_head && mmio_state.req_tail == last_req_tail) {
         yield_spin_count++;
-        if (yield_spin_count == 3) {
+        if (yield_spin_count == 3 && !mmio_async_pending(&mmio_state)) {
             uint32_t *mmio_mem = (uint32_t*)(cpu->mem_base + cpu->mmio_base);
             fprintf(stderr, "DBT: YIELD spin detected! (3 yields with no new requests)\n");
             fprintf(stderr, "  host:  req h=%u t=%u, resp h=%u t=%u\n",

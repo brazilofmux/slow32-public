@@ -199,6 +199,11 @@ void mmio_ring_clear_envp(mmio_ring_state_t *mmio);
 void mmio_set_policy(mmio_ring_state_t *mmio, const svc_policy_t *policy);
 void mmio_cleanup_services(mmio_ring_state_t *mmio);
 bool mmio_policy_allows(mmio_ring_state_t *mmio, const char *service_name);
+
+// True when something the host will deliver is still outstanding (a timer
+// armed, a posted read in flight, or a DPC queued): a YIELD that finds no
+// new request is not a spin while this holds (docs/plans/dpc.md).
+bool mmio_async_pending(mmio_ring_state_t *mmio);
 void mmio_ring_set_emulator(const char *argv0);
 
 #endif // MMIO_RING_H

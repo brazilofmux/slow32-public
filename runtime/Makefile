@@ -42,7 +42,7 @@ LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
                        stat_mmio.s32o args_mmio.s32o exit_mmio.s32o \
                        envp_mmio.s32o fs_mmio.s32o dirent_mmio.s32o \
                        term_mmio.s32o net_mmio.s32o exec_mmio.s32o \
-                       tube_mmio.s32o dpc_mmio.s32o
+                       tube_mmio.s32o dpc_mmio.s32o sched_mmio.s32o
 
 # Debug-only extras (fallback stubs)
 LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \

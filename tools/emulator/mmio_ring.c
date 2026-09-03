@@ -2215,6 +2215,18 @@ static bool mmio_posts_any(const mmio_ring_state_t *mmio) {
     return false;
 }
 
+// docs/plans/dpc.md: a YIELD that finds no new request is not a spin while
+// the host still owes the guest something -- a timer armed, a posted read
+// in flight, or a DPC already queued.  POLL's "nothing can arrive" notion,
+// reused by the DBT's spin detector.
+bool mmio_async_pending(mmio_ring_state_t *mmio) {
+    if (mmio->dpc_head != mmio->dpc_tail) return true;
+    if (mmio_posts_any(mmio)) return true;
+    for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++)
+        if (mmio->timers[i].armed) return true;
+    return false;
+}
+
 /* Read into dest and push a DPC. false if the DPC ring is full (leave pending). */
 static bool mmio_post_finish(mmio_ring_state_t *mmio, uint32_t dest, uint32_t n,
                              uint32_t cookie, int host_fd) {
