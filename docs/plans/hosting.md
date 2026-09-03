@@ -53,10 +53,17 @@ does not handle them in translated code at all.
 
 Control returns to the host at YIELD, HALT, DEBUG, or a fault —
 the vocabulary in `tools/dbt/cpu_state.h`. That is the whole
-preemption story. It is why, on `benchmark_core`, slow32-dbt is
-about five times QEMU TCG (5.1× on the 2026-02-05 Ryzen
-measurement in [benchmarks.md](../benchmarks.md); later hosts move
-the BIPS, not the ratio’s cause).
+preemption story. It is why slow32-dbt is about five times QEMU
+TCG on `benchmark_core` (5.1× on the 2026-02-05 Ryzen measurement
+in [benchmarks.md](../benchmarks.md); later hosts move the BIPS, not
+the ratio’s cause).
+
+Cite the other number in the same breath, because a skeptic will find
+it: on `validatecsv_ragel` the same pair is **3.0×**. The ratio
+narrows as a workload gets closer to real — more I/O, more YIELDs,
+more service points, less time inside a chained superblock. 5.1× is
+the compute-bound ceiling; 3.0× is what the product does on a
+103.6 MB CSV. Both are the same effect measured at two duty cycles.
 
 Peeking at a DPC head on every translated block, or shrinking
 superblocks “just in case,” would spend that ratio to buy an OS
@@ -87,6 +94,29 @@ TSR/EVT notes in [file-formats.md](../file-formats.md) are
 archaeology: shared-memory extra CPUs inside one instance. DPC won.
 
 ## The four levels
+
+They are a cost gradient, and the measurement below prices it. They
+are also a **failure-domain gradient, and it runs the other way**:
+
+| Level | Cost of a cut | What dies together |
+|---|---|---|
+| 1 task | a function call, ns | everything — one stack, one instance |
+| 2 in-process instance | *unbuilt* | every instance in that process, on a host fault or an OOM kill |
+| 3 process | ~2 ms, measured | nothing else (`cluster.sh` demonstrates it) |
+| 4 machine | ms + RTT | nothing — but partitions arrive, so timeouts replace exit statuses |
+
+So promoting a cut from level 3 to level 2 to delete the startup tax
+**silently weakens the isolation the wager rests on**. Relocation is
+free in *interface* and not in *guarantee*. That is the stronger
+reason to keep the `mmio_state` split rigorous when level 2 lands —
+but note that rigor cannot close the gap, only narrow it. However
+clean the split, a host-side fault, an `abort()` or an OOM kill takes
+the process and every instance in it. Level 2 has a shared fate at
+process granularity that no amount of separation removes; level 3
+does not. That residual is the thing to declare, not engineer away.
+The enforcement — a role that declares the isolation it requires, and
+a host that refuses a manifest asking to co-locate it — is in
+[supervision.md](supervision.md).
 
 **1. Tasks within an instance.** Still one waiter. A reactor: work
 arrives as DPC / response-ring descriptors; the instance looks when
@@ -165,12 +195,22 @@ climbing. Granularity, work per instance, is the knob; a real
 coordinator hands each worker a fat slice, never one small file, which
 is why the native code batches to threads too.
 
-This is the honest boundary against threads. Threads share memory, so
-their coordination is nearly free; this shape refuses shared memory and
-pays a real tax for it. The bet pays only when the work per unit buries
-the tax — and then isolation and no-shared-state come free on top of
-competitive parallelism. Below that line, threads win; the shape is not
-for fine-grained work on a warm cache.
+This is the honest boundary against threads, and it is worth stating
+in the right currency. Threads look free because their *spawn* is
+free; their coordination is not, it is only unbudgeted. A shared line
+under contention is cache-line ping-pong and false sharing, and that
+cost is variable, invisible in the source text, and worst at exactly
+the scale the threads were bought for — it surfaces as “why did adding
+cores make it slower,” which is a question with no line item. The tax
+in the table above is the opposite kind: fixed, visible, per worker,
+and on a graph, which is why granularity can be aimed at it.
+
+That is the trade, and it is not a claim to win every case. Below the
+line where work per unit buries the fixed cost, threads win outright;
+this shape is not for fine-grained work on a warm cache. Above it,
+isolation and no-shared-state come free on top of competitive
+parallelism — and the tax that remains is one you can see, price, and
+amortize rather than discover.
 
 Two levers, both now scoreable by `bench.sh` rather than guessed:
 reduce the fixed cost (a pre-forked emulator pool, smaller worker
@@ -211,7 +251,9 @@ small, **relocatable** unit. Because the seam is a message at every
 level, a cut can be *moved* — task, to co-resident instance, to process,
 to remote machine — as you learn where a problem's real independence
 lives, without rewriting either side. The cut becomes a placement
-decision, not a one-way commitment.
+decision, not a one-way commitment — a decision about latency in one
+direction and about isolation in the other, which is why the levels
+table above prices both.
 
 And the fit is the workload with nowhere else to go: GPUs help only code
 that vectorizes; ledgers, batch, COBOL do not, but they decompose along
