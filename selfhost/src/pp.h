@@ -746,13 +746,42 @@ static void pp_define(void) {
     if ((c >= 48 && c <= 57) || c == 45) {
         int save_pos;
         int tail;
+        int wide;
+        int k;
+        int nd;
         save_pos = lex_pos;
         val = pp_read_int();
+        /* The folded value is a 32-bit int, so a literal that carries a
+         * U/L/LL suffix or has more digits than an int holds must stay
+         * TEXT and be re-lexed with the full 64-bit state.  libutf's
+         * `#define FP_INIT 1469598103934665603ULL` came back as the
+         * sign-extended low word and every fingerprint's high half was
+         * wrong. */
+        wide = 0;
+        nd = 0;
+        k = save_pos;
+        if (lex_src[k] == 45) k = k + 1;
+        if (lex_src[k] == 48 && (lex_src[k + 1] == 120 || lex_src[k + 1] == 88)) {
+            k = k + 2;
+            while (lex_src[k] == 48) k = k + 1;   /* leading zeros are free */
+            while ((lex_src[k] >= 48 && lex_src[k] <= 57) ||
+                   (lex_src[k] >= 97 && lex_src[k] <= 102) ||
+                   (lex_src[k] >= 65 && lex_src[k] <= 70)) { nd = nd + 1; k = k + 1; }
+            if (nd > 7) wide = 1;
+        } else {
+            while (lex_src[k] >= 48 && lex_src[k] <= 57) { nd = nd + 1; k = k + 1; }
+            if (nd > 9) wide = 1;
+        }
+        while (k < lex_pos) {
+            if (lex_src[k] == 117 || lex_src[k] == 85 ||
+                lex_src[k] == 108 || lex_src[k] == 76) wide = 1;
+            k = k + 1;
+        }
         pp_skip_ws();
         tail = lex_src[lex_pos];
-        if (tail != 10 && tail != 13 && tail != 0 &&
+        if (wide || (tail != 10 && tail != 13 && tail != 0 &&
             !(tail == 47 && (lex_src[lex_pos + 1] == 47 ||
-                             lex_src[lex_pos + 1] == 42))) {
+                             lex_src[lex_pos + 1] == 42)))) {
             /* More than a number: store the full text body. */
             lex_pos = save_pos;
             bi = pp_read_body_text(pp_def_body);

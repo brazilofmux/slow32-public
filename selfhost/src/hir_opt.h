@@ -1023,6 +1023,82 @@ static void ho_mem_set(int addr, int val, int ty) {
     }
 }
 
+/* Resolve an address value to (base, byte offset).  Returns 1 for a
+ * frame slot (base = the HI_ALLOCA), 2 for a global (base = the
+ * HI_GADDR; compare by h_name, two GADDRs of one symbol are distinct
+ * ids), 0 when the base is unknown (a pointer from anywhere). */
+static int ho_addr_resolve(int id, int *base, int *off) {
+    int depth;
+    int k;
+    *off = 0;
+    depth = 0;
+    while (id >= 0 && depth < 64) {
+        k = h_kind[id];
+        if (k == HI_ALLOCA) { *base = id; return 1; }
+        if (k == HI_GADDR) { *base = id; return 2; }
+        if (k == HI_ADDI) { *off = *off + h_val[id]; id = h_src1[id]; }
+        else if (k == HI_COPY) { id = h_src1[id]; }
+        else if (k == HI_ADD && h_src2[id] >= 0 && h_kind[h_src2[id]] == HI_ICONST) {
+            *off = *off + h_val[h_src2[id]]; id = h_src1[id];
+        } else if (k == HI_ADD && h_src1[id] >= 0 && h_kind[h_src1[id]] == HI_ICONST) {
+            *off = *off + h_val[h_src1[id]]; id = h_src2[id];
+        } else return 0;
+        depth = depth + 1;
+    }
+    return 0;
+}
+
+static int ho_acc_size(int ty) {
+    int sz;
+    sz = ty_size(ty);
+    if (sz <= 0) sz = 4;
+    return sz;
+}
+
+/* May a `sza`-byte access at address value `a` touch the same bytes as
+ * a `szb`-byte access at `b`?  Sound in the conservative direction: any
+ * base we cannot resolve may alias anything. */
+static int ho_may_alias(int a, int sza, int b, int szb) {
+    int ba; int oa; int ka;
+    int bb; int ob; int kb;
+    if (a == b) return 1;
+    ka = ho_addr_resolve(a, &ba, &oa);
+    kb = ho_addr_resolve(b, &bb, &ob);
+    if (ka == 0 || kb == 0) return 1;
+    if (ka != kb) return 0;               /* a frame slot vs a global */
+    if (ba != bb) {
+        if (ka == 1) return 0;            /* two distinct frame slots */
+        if (h_name[ba] == NULL || h_name[bb] == NULL) return 1;
+        if (strcmp(h_name[ba], h_name[bb]) != 0) return 0;
+    }
+    /* same object: byte ranges */
+    if (oa + sza <= ob) return 0;
+    if (ob + szb <= oa) return 0;
+    return 1;
+}
+
+/* A STORE to `addr` of `sz` bytes: forget every remembered value whose
+ * bytes it may overwrite.  Entries keyed by a different address value
+ * used to survive any store -- `*p = 10; *q = 20; return *p;` returned
+ * 10 when p == q, a union's short store vanished under its word, and a
+ * struct returned by value lost a member stored after its compound-
+ * literal init (libutf's co_cs_bg). */
+static void ho_mem_kill_aliases(int addr, int sz) {
+    int k;
+    k = 0;
+    while (k < ho_mem_cnt) {
+        if (ho_mem_addr[k] != addr &&
+            ho_may_alias(addr, sz, ho_mem_addr[k], ho_acc_size(ho_mem_ty[k]))) {
+            ho_mem_cnt = ho_mem_cnt - 1;
+            ho_mem_addr[k] = ho_mem_addr[ho_mem_cnt];
+            ho_mem_val[k] = ho_mem_val[ho_mem_cnt];
+            ho_mem_ty[k] = ho_mem_ty[ho_mem_cnt];
+        } else {
+            k = k + 1;
+        }
+    }
+}
+
 static int ho_mem_fwd(void) {
     int changed;
     int i;
@@ -1060,7 +1136,9 @@ static int ho_mem_fwd(void) {
                     changed = 1;
                     ho_stat_lse = ho_stat_lse + 1;
                 } else {
-                    /* Record: after this STORE, addr holds val */
+                    /* Record: after this STORE, addr holds val -- and
+                     * nothing it may overlap is known any more. */
+                    ho_mem_kill_aliases(addr, ho_acc_size(h_ty[i]));
                     ho_mem_set(addr, val, h_ty[i]);
                 }
             }

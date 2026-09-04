@@ -665,12 +665,37 @@ static void lex_parse_fnum(char *ts, char *te) {
 
 /* === Helper: parse string literal from ts..te (includes quotes) === */
 
+/* Identical string literals share one pool entry (one .rodata copy, one
+ * address), as clang and gcc do.  Returns the existing index, or -1.
+ * Only for literals that were not truncated at LEX_STR_SZ, so equal
+ * recorded lengths mean equal literals. */
+static int lex_str_intern(int pool_start, int slen) {
+    int k;
+    int j;
+    int a;
+    int b;
+    if (slen >= LEX_STR_SZ - 1) return -1;
+    k = 0;
+    while (k < lex_str_count) {
+        if (lex_str_len[k] == slen) {
+            a = lex_str_off[k];
+            b = pool_start;
+            j = 0;
+            while (j < slen && lex_strpool[a + j] == lex_strpool[b + j]) j = j + 1;
+            if (j == slen) return k;
+        }
+        k = k + 1;
+    }
+    return -1;
+}
+
 static void lex_parse_str(char *ts, char *te) {
     int pool_start;
     int slen;
     int ch;
     int pos;
     int end;
+    int dup;
     pool_start = lex_strpool_len;
     slen = 0;
     pos = 1;  /* skip opening quote */
@@ -698,6 +723,13 @@ static void lex_parse_str(char *ts, char *te) {
     }
     lex_str[slen] = 0;
     lex_slen = slen;
+    dup = lex_str_intern(pool_start, slen);
+    if (dup >= 0) {
+        lex_strpool_len = pool_start;   /* give the bytes back */
+        lex_val = dup;
+        lex_tok = TK_STRING;
+        return;
+    }
     if (lex_str_count < LEX_POOL_MAX) {
         lex_str_off[lex_str_count] = pool_start;
         lex_str_len[lex_str_count] = slen;

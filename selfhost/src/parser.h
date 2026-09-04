@@ -339,12 +339,34 @@ static void next(void) {
     }
 }
 
+/* Print the text of the stream line the lexer is on, so a diagnostic
+ * carries the offending source and not just a token number.  lex_pos is
+ * just past the current token; walk back to the line start. */
+static void p_show_line(void) {
+    int b;
+    int e;
+    int n;
+    b = lex_pos;
+    if (b > lex_len) b = lex_len;
+    while (b > 0 && lex_src[b - 1] != 10) b = b - 1;
+    e = b;
+    n = 0;
+    fdputs("  | ", 2);
+    while (e < lex_len && lex_src[e] != 10 && n < 200) {
+        fdputc(lex_src[e], 2);
+        e = e + 1;
+        n = n + 1;
+    }
+    fdputc(10, 2);
+}
+
 static void p_error(char *msg) {
     fdputs("s12cc:", 2);
     fdputuint(2, lex_line);
     fdputs(": error: ", 2);
     fdputs(msg, 2);
     fdputc(10, 2);
+    p_show_line();
     exit(1);
 }
 
@@ -357,6 +379,7 @@ static void expect(int tok) {
         fdputs(" got ", 2);
         fdputuint(2, lex_tok);
         fdputc(10, 2);
+        p_show_line();
         exit(1);
     }
     next();
@@ -1463,9 +1486,10 @@ static int add_local(char *name, int ty) {
     }
     sz = ty_size(ty);
     require_complete_type(ty, "incomplete type for local");
-    /* Round up to multiple of 4 */
-    sz = ((sz + 3) / 4) * 4;
-    ps_stack = ps_stack + sz;
+    /* The frame slot is rounded up to a multiple of 4, but the
+     * recorded size is the true one: sizeof(local) reads ps_lsize,
+     * and a 5-byte struct is 5, not 8. */
+    ps_stack = ps_stack + ((sz + 3) / 4) * 4;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
     ps_loff[idx] = 0 - ps_stack;
@@ -1491,9 +1515,10 @@ static int add_local_array(char *name, int elem_ty, int count) {
     elem_sz = ty_size(elem_ty);
     require_complete_type(elem_ty, "incomplete element type");
     total = elem_sz * count;
-    /* Round up to multiple of 4 */
-    total = ((total + 3) / 4) * 4;
-    ps_stack = ps_stack + total;
+    /* Frame slot rounded to 4; ps_lsize keeps the true byte count so
+     * sizeof(char x[] = {5 bytes}) is 5, not 8 (libutf's harness passed
+     * the padded size into co_right/co_reverse and both misbehaved). */
+    ps_stack = ps_stack + ((total + 3) / 4) * 4;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
     ps_loff[idx] = 0 - ps_stack;
@@ -2653,6 +2678,11 @@ static int parse_string_literal(void) {
     }
     lex_strpool[lex_strpool_len] = 0;
     lex_strpool_len = lex_strpool_len + 1;
+    i = lex_str_intern(start, total);
+    if (i >= 0) {
+        lex_strpool_len = start;    /* identical literal already pooled */
+        return i;
+    }
     lex_str_off[lex_str_count] = start;
     lex_str_len[lex_str_count] = total;
     lex_str_count = lex_str_count + 1;
@@ -4177,7 +4207,7 @@ static Node *parse_stmt(void) {
         sa_expr = parse_assign();
         sa_val = (sa_expr && sa_expr->kind == ND_NUM) ? sa_expr->val : 1;
         expect(TK_COMMA);
-        if (lex_tok == TK_STRING) next();
+        while (lex_tok == TK_STRING) next(); /* message may be adjacent literals */
         expect(TK_RPAREN);
         expect(TK_SEMI);
         if (sa_val == 0) p_error("_Static_assert failed");
@@ -4822,7 +4852,7 @@ static Node *parse_top_decl(void) {
         /* Evaluate constant expression — only supports ND_NUM for now */
         sa_val = (sa_expr && sa_expr->kind == ND_NUM) ? sa_expr->val : 1;
         expect(TK_COMMA);
-        if (lex_tok == TK_STRING) next(); /* skip message string */
+        while (lex_tok == TK_STRING) next(); /* message may be adjacent literals */
         expect(TK_RPAREN);
         expect(TK_SEMI);
         if (sa_val == 0) p_error("_Static_assert failed");

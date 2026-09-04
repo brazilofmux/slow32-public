@@ -1963,3 +1963,75 @@ agree with only the four documented qemu-only `bug-dbt-intrinsic-bounds*`
 entries on the harness's own `KNOWN_DIVERGENT` list (AUDIT-2026-08, unrelated
 and pre-existing). cc-a64's `test-elf` fails on macOS for exec-format reasons
 only -- it runs Linux AArch64 ELF -- which is expected here, not a regression.
+
+### 65. [RESOLVED 2026-09-03] Six stage08 defects surfaced by libutf's 503-test harness on SLOW-32
+
+`~/utf` (libutf, Unicode 16) was built with stage08 cc and its stress
+harness `tests/test_color_ops.c` (4,628 lines, 503 checks) run on SLOW-32
+against the host build. The harness first would not compile, then ran to
+485/503, then 501, 502, 503 -- one defect at a time, each one a construct
+ordinary programs here never exercised. All six are pinned by
+`stage08/tests/test_libutf_bugs.c` (runner) and the same file as
+`stage08-cross-a64/tests/cc_libutf_bugs.c`; the exit code names the bit that
+failed (1 sizeof, 2 define, 4 alias, 16 pool; the `_Static_assert` case is a
+compile-time failure). The old kit compiler fails the test with exit 23.
+
+1. **`_Static_assert(expr, "a" "b")` was a parse error.** Both handlers
+   skipped one `TK_STRING` and demanded `)`. Ragel and table generators
+   write the message as adjacent literals. Now `while (lex_tok == TK_STRING)`.
+   Found only after the diagnostic was improved: `expected token 51 got 2`
+   at "stream line 6946" mapped to nothing bisectable, so `expect()` and
+   `p_error()` now print the offending stream line under the message.
+
+2. **`sizeof` of a block-scope array with inferred size was rounded up to
+   the frame slot** (5 bytes reported as 8, 9 as 12). `add_local` /
+   `add_local_array` stored the 4-rounded slot size in `ps_lsize`, which
+   `ps_sizeof_node` reads. The harness passed `sizeof(utf8)` = 12 for a
+   9-byte string: `co_right` returned the 3 padding bytes ("length 7,
+   expected 4"), and `co_reverse` met a padding NUL, which is a Ragel error
+   state that returns its input pointer unmoved -- an infinite loop that
+   walked a stack array to 0x10000000. The frame bump stays rounded; the
+   recorded size is now the true one (a 5-byte struct is 5, too).
+
+3. **A `#define` whose body is one literal was folded to a 32-bit int**, so
+   `#define FP_INIT 1469598103934665603ULL` expanded to its sign-extended
+   low word. Every 64-bit fingerprint had the right low half and the wrong
+   high half (multiplication never feeds high bits back into low ones, so
+   the chain preserved the pattern). `pp_define` now keeps the text body --
+   re-lexed with the full 64-bit state -- whenever the literal carries a
+   U/L suffix or has more digits than an int holds (>9 decimal, >7 hex).
+
+4. **`ho_mem_fwd` (store-to-load forwarding) keyed entries by address
+   VALUE and never invalidated on a store through a different value.**
+   Unsound for any aliasing: `*p = 10; *q = 20; return *p;` returned 10
+   with p == q; a union's `short` store vanished under its word; a byte
+   store inside a word was lost; a struct returned by value lost a member
+   stored after its compound-literal init (libutf's `co_cs_bg`: the
+   return copy reused the register stored before the `sth`). Fix:
+   `ho_addr_resolve` (ALLOCA / GADDR base + constant offset through ADDI,
+   ADD-with-ICONST, COPY), `ho_may_alias` (unknown base aliases anything;
+   distinct frame slots and frame-vs-global are disjoint; same object by
+   byte range), and `ho_mem_kill_aliases` on every STORE.
+
+5. **Identical string literals were not pooled.** The harness compares
+   `co_search("abcdef", ...)` against `"abcdef" + 4` -- a second copy of
+   the same literal -- which passes under clang and gcc because they pool.
+   `lex_str_intern` now returns an existing pool entry with identical bytes
+   (both from `lex_parse_str` and the parser's adjacent-literal concat);
+   the pool bytes are given back. Not applied to literals truncated at
+   `LEX_STR_SZ`, where equal recorded lengths would not mean equal text.
+
+6. (Earlier the same day, df429e5d.) **Quoted includes were not resolved
+   relative to the including file's directory**, so `utf/color_ops.h`
+   including `"utf_types.h"` failed unless the header dir was on `-I`.
+   `pp_splice_file` brackets each spliced file with `#s12cc_pushdir` /
+   `#s12cc_popdir` marker directives that maintain a directory stack.
+
+Result: 503/503 identical to the host under `-s 12345`; `sort_lines`,
+`strip_color` x4 targets and `nearest_color` byte-identical to the host;
+`nfc_check` 15/15. The a64 cross build passed the wide-define check with a
+mistyped expected constant once while gen1 caught it -- the runner's gen1
+verdict was the correct one, and the hand checks that agreed with it were
+found to be vacuous (see runtime ISSUES-13: DEBUG-libc `exit` dropped
+main's status, so `echo $?` was always 0). Validated: stage08 59/59, a64
+36/36 + cc tests, stage07 differential 5/5 agree, regression 90/90.
