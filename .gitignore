@@ -92,6 +92,8 @@ runtime/exec_mmio.s
 runtime/exec_stub.s
 runtime/term_mmio.s
 runtime/term_stub.s
+runtime/dpc_mmio.s
+runtime/sched_mmio.s
 
 # Generated assembly from C sources in examples/
 # (hand-written examples like hello_clean.s, test_comparisons.s are still tracked)
@@ -196,6 +198,9 @@ tools/dbt/.probe_*.c
 
 # Generated article HTML (markdown is the source of truth)
 articles/*.html
+
+# regression/tests/feature-dpc-post-read writes this into its CWD
+flow.txt
 
 # net/ two-guest echo rendezvous and run logs
 net/echo.port

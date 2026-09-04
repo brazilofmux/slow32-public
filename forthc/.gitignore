@@ -3,3 +3,6 @@
 *.s32o
 *.s32x
 !demo/ship.s32x
+
+# demo/build.sh concatenates the tracked sources into this
+demo/ship.fth
