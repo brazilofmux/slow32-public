@@ -39,6 +39,15 @@ static int pp_dep;                 /* ifdef nesting depth */
 static int pp_taken[PP_MAX_IF];   /* 1 if any branch taken at this depth */
 
 static char pp_sdir[256];         /* source directory prefix for includes */
+/* Directory stack of the files currently being spliced.  A quoted #include
+   resolves against the directory of the file that contains it (C's rule),
+   not the top-level source's.  The splice is textual, so that context would
+   otherwise be lost: pp_splice_file brackets each spliced file with
+   #s12cc_pushdir / #s12cc_popdir marker lines that maintain this stack as
+   the lexer reaches them -- the same idea as cpp's "# N file" lines. */
+#define PP_MAX_INCDEPTH 16
+static char pp_incdir[PP_MAX_INCDEPTH * 256];
+static int pp_incdepth;
 #define PP_MAX_IDIRS 16
 #define PP_IDIR_LEN  256
 /* Flat layout (stage06's parser accepts only literal-int array dimensions
@@ -903,6 +912,14 @@ static void pp_splice_file(char *path) {
     int tail_len;
     int i;
     char *tmp;
+    char pre[300];
+    int plen;
+    char *tag;
+    char *suf;
+    int slen;
+    int total;
+    int last_slash;
+    int room;
 
     fd = open(path, 0);
     if (fd < 0) {
@@ -916,23 +933,66 @@ static void pp_splice_file(char *path) {
         fdputs("s12cc: out of memory for include\n", 2);
         exit(1);
     }
-    n = read(fd, tmp, LEX_SRC_SZ - lex_len - 1);
+
+    /* Marker lines: "#s12cc_pushdir <dir>\n" before the file's text and
+       "\n#s12cc_popdir\n" after it, so a quoted #include inside the file
+       resolves against the file's own directory (see pp_incdir).  <dir> is
+       the path up to and including its last '/', or empty. */
+    last_slash = -1;
+    i = 0;
+    while (path[i] != 0) {
+        if (path[i] == 47) last_slash = i;  /* '/' */
+        i = i + 1;
+    }
+    tag = "#s12cc_pushdir ";
+    plen = 0;
+    i = 0;
+    while (tag[i] != 0) {
+        pre[plen] = tag[i];
+        plen = plen + 1;
+        i = i + 1;
+    }
+    i = 0;
+    while (i <= last_slash && plen < 290) {
+        pre[plen] = path[i];
+        plen = plen + 1;
+        i = i + 1;
+    }
+    pre[plen] = 10;  /* '\n' */
+    plen = plen + 1;
+    suf = "\n#s12cc_popdir\n";
+    slen = strlen(suf);
+
+    room = LEX_SRC_SZ - lex_len - 1 - plen - slen;
+    if (room < 0) room = 0;
+    n = read(fd, tmp, room);
     close(fd);
     if (n < 0) n = 0;
+    total = plen + n + slen;
 
-    /* Splice: shift tail right by n, insert file content */
+    /* Splice: shift tail right by total, insert marker + content + marker */
     tail_len = lex_len - lex_pos;
     i = tail_len - 1;
     while (i >= 0) {
-        lex_src[lex_pos + n + i] = lex_src[lex_pos + i];
+        lex_src[lex_pos + total + i] = lex_src[lex_pos + i];
         i = i - 1;
     }
     i = 0;
-    while (i < n) {
-        lex_src[lex_pos + i] = tmp[i];
+    while (i < plen) {
+        lex_src[lex_pos + i] = pre[i];
         i = i + 1;
     }
-    lex_len = lex_len + n;
+    i = 0;
+    while (i < n) {
+        lex_src[lex_pos + plen + i] = tmp[i];
+        i = i + 1;
+    }
+    i = 0;
+    while (i < slen) {
+        lex_src[lex_pos + plen + n + i] = suf[i];
+        i = i + 1;
+    }
+    lex_len = lex_len + total;
     lex_src[lex_len] = 0;
     free(tmp);
     pp_sync();
@@ -1009,9 +1069,33 @@ static void pp_include(void) {
         fdputc(10, 2);
         exit(1);
     } else {
-        /* Quoted: search the source directory first, then fall back to
-         * the -I directories like a real C preprocessor (vecscope's
-         * quoted "tube.h" lives in -Iruntime/include). */
+        /* Quoted: the including file's own directory first (C's rule --
+         * libutf's include/utf/nfc.h does #include "utf_types.h" for a
+         * sibling), then the top-level source directory, then the -I
+         * directories like a real C preprocessor (vecscope's quoted
+         * "tube.h" lives in -Iruntime/include). */
+        if (pp_incdepth > 0 && pp_incdepth <= PP_MAX_INCDEPTH) {
+            pi = 0;
+            fi = 0;
+            while (pp_incdir[(pp_incdepth - 1) * 256 + fi] != 0) {
+                path[pi] = pp_incdir[(pp_incdepth - 1) * 256 + fi];
+                pi = pi + 1;
+                fi = fi + 1;
+            }
+            fi = 0;
+            while (fname[fi] != 0) {
+                path[pi] = fname[fi];
+                pi = pi + 1;
+                fi = fi + 1;
+            }
+            path[pi] = 0;
+            fd = open(path, 0);
+            if (fd >= 0) {
+                close(fd);
+                pp_splice_file(path);
+                return;
+            }
+        }
         pi = 0;
         fi = 0;
         while (pp_sdir[fi] != 0) {
@@ -1351,6 +1435,7 @@ static int pp_ev_expr(void) {
 
 static void pp_directive(void) {
     char name[256];
+    int i;
 
     pp_skip_ws();
     pp_read_name(name);
@@ -1508,6 +1593,30 @@ static void pp_directive(void) {
         }
         fdputc(10, 2);
         exit(1);
+    }
+
+    /* Internal markers written by pp_splice_file (see pp_incdir). */
+    if (strcmp(name, "s12cc_pushdir") == 0) {
+        pp_skip_ws();
+        if (pp_incdepth < PP_MAX_INCDEPTH) {
+            i = 0;
+            while (lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0 && i < 255) {
+                pp_incdir[pp_incdepth * 256 + i] = lex_src[lex_pos];
+                i = i + 1;
+                lex_pos = lex_pos + 1;
+            }
+            pp_incdir[pp_incdepth * 256 + i] = 0;
+        }
+        pp_incdepth = pp_incdepth + 1;  /* counted past the cap too, so pops balance */
+        pp_skip_line();
+        pp_sync();
+        return;
+    }
+    if (strcmp(name, "s12cc_popdir") == 0) {
+        if (pp_incdepth > 0) pp_incdepth = pp_incdepth - 1;
+        pp_skip_line();
+        pp_sync();
+        return;
     }
 
     /* Unknown directive (#line, #pragma, etc.) — skip */
