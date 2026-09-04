@@ -39,7 +39,10 @@ make
 
 - 32 registers: r0=0, r1-r2=return, r3-r10=args, r29=sp, r30=fp, r31=lr
 - No condition codes - comparisons return 0/1 in registers
-- W^X protection - code segment is execute-only (0x0-0xFFFFF)
+- W^X protection - code segment is execute-only, based at 0x0.  Its size is a
+  linker default (1MB), not an architectural limit: `s32-ld --code-size` raises
+  it, `--rodata-size`/`--data-size` likewise (1MB each), and the emulator takes
+  the limits from the .s32x header.  256MB total address space.
 - Stack at 0x0FFFFFF0 growing down
 - DEBUG instruction outputs character; MMIO ring buffers for full I/O (files, args, env)
 - Five emulators from ~50 MIPS to ~8.3 BIPS (M5 Max, 2026-08-23) — see [docs/EMULATORS.md](docs/EMULATORS.md)

@@ -9,8 +9,11 @@
 #define NUM_REGS 32
 #define DEFAULT_MEM_SIZE (256 * 1024 * 1024)  // Default 256MB to match architecture spec
 #define MAX_MEM_SIZE (256 * 1024 * 1024)      // Maximum 256MB
-#define CODE_SIZE (2 * 1024 * 1024)           // First 2MB is code (execute-only)
-#define DATA_START CODE_SIZE                   // Data starts after code
+// No fixed code/data split here: the segment limits come from the .s32x
+// header at load time and are passed to mm_protect_regions().  The linker
+// picks them (s32-ld --code-size / --rodata-size / --data-size, each 1MB
+// by default).  Two dead constants asserting a 2MB code segment used to
+// sit here, contradicting that default and used by nothing.
 
 #define REG_ZERO 0
 #define REG_SP   29
