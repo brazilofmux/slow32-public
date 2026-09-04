@@ -21,6 +21,13 @@ int main(void) {
     int in = 0;
     int nfd;
 
+    /* A portable "always readable, reads EOF" fd: an empty regular file.
+     * NOT /dev/null -- that is a character device, and macOS poll() reports
+     * it POLLNVAL rather than POLLIN, so a POST or readiness wait on it never
+     * completes there. */
+    { int c = open("dpc_empty.tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      if (c >= 0) close(c); }
+
     /* 1: a short timer beats an fd that is not readable yet */
     s32_timer_start(0, 20000000u, 0x11);
     if (s32_dpc_wait_on(&in, 1, &d) == 1 && d.kind == S32_DPC_TIMER)
@@ -29,8 +36,8 @@ int main(void) {
 
     /* 2: a POST already queued is harvested by wait_on; unread puts it
      *    back so a later poll recovers it instead of dropping it. */
-    nfd = open("/dev/null", O_RDONLY);
-    if (nfd < 0) { printf("BAD: /dev/null\n"); return 1; }
+    nfd = open("dpc_empty.tmp", O_RDONLY);
+    if (nfd < 0) { printf("BAD: empty file\n"); return 1; }
     memset(pbuf, 0, sizeof pbuf);
     if (s32_post_read(nfd, pbuf, 4, 0x88) != 0) { printf("BAD: post null\n"); return 1; }
     if (s32_dpc_wait_on(&in, 1, &d) == 1 && d.kind == S32_DPC_POST) {
@@ -63,7 +70,7 @@ int main(void) {
     /* 5: readiness beats a long timer when both could arrive: a file is
      *    always readable.  The armed timer is cancelled after. */
     {
-        int f = open("/dev/null", O_RDONLY);
+        int f = open("dpc_empty.tmp", O_RDONLY);
         int t = s32_timer_start(2, 0, 0x44);
         if (s32_dpc_wait_on(&f, 1, &d) == 1 && d.kind == S32_DPC_READY && (int)d.id == f)
             printf("file ready before the long timer\n");
@@ -87,5 +94,6 @@ int main(void) {
         int many[S32_DPC_MAX_FDS + 1];
         if (s32_dpc_wait_on(many, S32_DPC_MAX_FDS + 1, &d) < 0) printf("too many fds\n");
     }
+    unlink("dpc_empty.tmp");
     return 0;
 }
