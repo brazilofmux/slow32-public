@@ -3055,10 +3055,20 @@ static void hcg_func(Node *fn) {
     }
     hcg_epilog = cg_label();
 
-    /* Function label */
-    cg_s(".global ");
-    cg_s(fn->name);
-    cg_c(10);
+    /* Function label.  A `static` function has internal linkage: emit no
+       .global, so the assembler leaves it STB_LOCAL (slow32asm defaults
+       labels to local) and the linker keeps it out of the global
+       namespace.  Without this every TU that emits an out-of-line copy
+       of a static inline helper from a shared header exports it, and two
+       such objects in one archive collide -- which is how term_mmio and
+       dpc_mmio both came to export s32_mmio_base_addr from
+       runtime/mmio_ring.h.  stage08-cross-x64 already does this
+       (cg_func_is_local); this is the SLOW-32 backend catching up. */
+    if (!fn->is_static) {
+        cg_s(".global ");
+        cg_s(fn->name);
+        cg_c(10);
+    }
     cg_s(fn->name);
     cg_s(":\n");
 
