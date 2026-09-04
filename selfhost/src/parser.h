@@ -1856,13 +1856,60 @@ static int parse_const_shift(void) {
     return v;
 }
 
-static int parse_const_band(void) {
+/* Relational and equality sit between shift and `&` in C's precedence
+   ladder.  They were missing entirely: the chain jumped from shift
+   straight to `&`, so any file-scope initializer using a comparison or a
+   ternary failed with "expected constant integer" -- while the very same
+   expression inside a function compiled, because that path uses the full
+   expression parser.  libutf's xterm-256 palette is built by
+   XC(v) = ((v) == 0 ? 0 : 55 + 40 * (v)) in a static table, which is how
+   this surfaced. */
+static int parse_const_rel(void) {
     int v;
 
     v = parse_const_shift();
+    while (lex_tok == TK_LT || lex_tok == TK_GT ||
+           lex_tok == TK_LE || lex_tok == TK_GE) {
+        if (lex_tok == TK_LT) {
+            next();
+            v = (v < parse_const_shift());
+        } else if (lex_tok == TK_GT) {
+            next();
+            v = (v > parse_const_shift());
+        } else if (lex_tok == TK_LE) {
+            next();
+            v = (v <= parse_const_shift());
+        } else {
+            next();
+            v = (v >= parse_const_shift());
+        }
+    }
+    return v;
+}
+
+static int parse_const_eq(void) {
+    int v;
+
+    v = parse_const_rel();
+    while (lex_tok == TK_EQ || lex_tok == TK_NE) {
+        if (lex_tok == TK_EQ) {
+            next();
+            v = (v == parse_const_rel());
+        } else {
+            next();
+            v = (v != parse_const_rel());
+        }
+    }
+    return v;
+}
+
+static int parse_const_band(void) {
+    int v;
+
+    v = parse_const_eq();
     while (lex_tok == TK_AMP) {
         next();
-        v = v & parse_const_shift();
+        v = v & parse_const_eq();
     }
     return v;
 }
@@ -1878,8 +1925,7 @@ static int parse_const_bxor(void) {
     return v;
 }
 
-/* Parse a compile-time constant integer (for initializers and array sizes) */
-static int parse_const_int(void) {
+static int parse_const_bor(void) {
     int v;
 
     v = parse_const_bxor();
@@ -1888,6 +1934,55 @@ static int parse_const_int(void) {
         v = v | parse_const_bxor();
     }
     return v;
+}
+
+static int parse_const_land(void) {
+    int v;
+
+    v = parse_const_bor();
+    while (lex_tok == TK_LAND) {
+        next();
+        v = (parse_const_bor() != 0 && v != 0);
+    }
+    return v;
+}
+
+static int parse_const_lor(void) {
+    int v;
+
+    v = parse_const_land();
+    while (lex_tok == TK_LOR) {
+        next();
+        v = (parse_const_land() != 0 || v != 0);
+    }
+    return v;
+}
+
+/* Both arms are parsed -- their tokens have to be consumed either way --
+   and the selected one is returned.  So this does not short-circuit: a
+   `1 ? 0 : (1/0)` still reports division by zero.  Constant expressions
+   have no side effects, so that is the only visible difference, and it
+   only rejects code that did not compile at all before. */
+static int parse_const_cond(void) {
+    int c;
+    int a;
+    int b;
+
+    c = parse_const_lor();
+    if (lex_tok == TK_QMARK) {
+        next();
+        a = parse_const_cond();
+        expect(TK_COLON);
+        b = parse_const_cond();
+        if (c != 0) return a;
+        return b;
+    }
+    return c;
+}
+
+/* Parse a compile-time constant integer (for initializers and array sizes) */
+static int parse_const_int(void) {
+    return parse_const_cond();
 }
 
 /* a constant for an 8-byte integer initializer: one long long literal's

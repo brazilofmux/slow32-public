@@ -853,6 +853,11 @@ static void pp_set_source_file(char *path) {
 static void pp_install_predefs(void) {
     pp_add("__STDC__", 1);
     pp_add("__S12CC__", 1);
+    /* C11 7.17.1: a freestanding implementation may omit <stdatomic.h> and
+       must then define this.  We have no atomics and no threads to need
+       them, so say so -- portable code keys off this to pick a plain-flag
+       path instead of failing to find the header. */
+    pp_add("__STDC_NO_ATOMICS__", 1);
     /* Arch-specific macros also installed from parse_program when the
      * target is known (S12CC_TARGET_A64, ty_ptr_size, …). */
 }
