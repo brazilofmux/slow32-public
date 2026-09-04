@@ -2467,9 +2467,110 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
     }
 }
 
+/* A cast in an initializer position: `(const unsigned char *)"abc"`.
+   The cast cannot change the value -- the target type comes from the
+   declaration being initialized -- so consume it and let the dispatch
+   below see the real token.  Without this a cast string literal fell past
+   every pointer case to the integer folder and died as "expected constant
+   integer", which is what libutf's generated tables hit:
+       const co_string_desc tr_nfd_ott[2045] =
+           { { 3, 2, (const unsigned char *)"\x41\xCC\x80" }, ... };
+   while the same initializer without the cast worked.  Same save-and-probe
+   as parse_const_unary, since `(` may instead open a parenthesized
+   constant expression. */
+static int skip_init_cast(void) {
+    int sv_tok;
+    int sv_val;
+    int sv_slen;
+    int sv_rcs;
+    int sv_ract;
+    char *sv_rp;
+    char *sv_rts;
+    char *sv_rte;
+    char sv_str[256];
+
+    if (lex_tok != TK_LPAREN) return 0;
+    sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
+    sv_rcs = lex_rcs; sv_ract = lex_ract;
+    sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
+    memcpy(sv_str, lex_str, lex_slen + 1);
+    next();
+    if (is_type()) {
+        parse_type();
+        while (lex_tok == TK_STAR) next();
+        skip_decl_qualifiers();
+        expect(TK_RPAREN);
+        return 1;
+    }
+    lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
+    lex_rcs = sv_rcs; lex_ract = sv_ract;
+    lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
+    memcpy(lex_str, sv_str, sv_slen + 1);
+    return 0;
+}
+
+/* Casts and grouping parens wrapping a *string* initializer.  Returns the
+   number of grouping parens still needing a close, or -1 with the lexer
+   restored if what follows is not a wrapped string literal.  libutf's
+   generated NFD table spells its entries T(x) = ((const unsigned char *)(x)),
+   so both wrapper kinds nest.  Probing rather than blanket paren-stripping
+   matters: `(1 + 2) * 3` is also a parenthesized initializer, and eating its
+   parens would strand the `* 3`. */
+static int init_string_wrappers(void) {
+    int depth;
+    int sv_tok;
+    int sv_val;
+    int sv_slen;
+    int sv_rcs;
+    int sv_ract;
+    char *sv_rp;
+    char *sv_rts;
+    char *sv_rte;
+    char sv_str[256];
+
+    sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
+    sv_rcs = lex_rcs; sv_ract = lex_ract;
+    sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
+    memcpy(sv_str, lex_str, lex_slen + 1);
+
+    depth = 0;
+    while (lex_tok == TK_LPAREN) {
+        next();
+        if (is_type()) {
+            parse_type();
+            while (lex_tok == TK_STAR) next();
+            skip_decl_qualifiers();
+            if (lex_tok != TK_RPAREN) break;
+            next();                 /* a cast closes itself */
+        } else {
+            depth = depth + 1;      /* grouping paren, still open */
+        }
+    }
+    if (lex_tok == TK_STRING) return depth;
+
+    lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
+    lex_rcs = sv_rcs; lex_ract = sv_ract;
+    lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
+    memcpy(lex_str, sv_str, sv_slen + 1);
+    return -1;
+}
+
 static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_off) {
     int v;
     int sp_idx;
+    int wrap;
+
+    if (ty_is_ptr(ty) && lex_tok == TK_LPAREN) {
+        wrap = init_string_wrappers();
+        if (wrap >= 0) {
+            sp_idx = parse_string_literal();
+            while (wrap > 0) { expect(TK_RPAREN); wrap = wrap - 1; }
+            ps_ginit_add_reloc_at(gidx, rel_off, GIRELOC_STRING, sp_idx,
+                                  ty_size(ty));
+            return;
+        }
+    }
+    skip_init_cast();
 
     if (arr_count != 0 && ty_is_ptr(ty)) {
         parse_global_init_array_at(ty_deref(ty), arr_count, gidx, rel_off);
