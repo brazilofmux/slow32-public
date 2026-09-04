@@ -1020,10 +1020,16 @@ static void gen_func(Node *fn) {
     /* Allocate a unique epilog label for this function */
     cg_epilog = cg_label();
 
-    /* Function label */
-    cg_s(".global ");
-    cg_s(fn->name);
-    cg_c(10);
+    /* Function label.  A `static` function has internal linkage: emit no
+       .global so the assembler leaves it STB_LOCAL, matching stage08's
+       hir_codegen.h fix (a static inline helper emitted out-of-line in two
+       TUs would otherwise export the same symbol from both and collide in
+       one archive). */
+    if (!fn->is_static) {
+        cg_s(".global ");
+        cg_s(fn->name);
+        cg_c(10);
+    }
     cg_s(fn->name);
     cg_s(":\n");
 
