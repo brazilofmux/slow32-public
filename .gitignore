@@ -46,6 +46,17 @@ verify*.o
 # still ends "All tests passed".  Four cases were inert this way.
 !regression/tests/*/test.s
 
+# Generated assembly from C sources in the app trees.  These four
+# builds compile src/*.c -> .ll -> .s -> .s32o; the .ll and .s32o are
+# already covered by the blanket rules above, but the "/*.s" rule only
+# reaches the repository root, so the .s files were surfacing as
+# untracked after every rebuild.  None of these directories carries a
+# hand-written .s (asteroids/src does, and is deliberately not listed).
+lisp/src/*.s
+lua/src/*.s
+prolog/src/*.s
+zork/src/*.s
+
 # Generated assembly from C sources in runtime/
 # Hand-written .s files (intrinsics.s, crt0.s, etc.) are tracked;
 # generated ones (from .c -> .ll -> .s) are build artifacts.
