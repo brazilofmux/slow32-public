@@ -368,6 +368,7 @@ static int is_type(void) {
     if (lex_tok == TK_CHAR) return 1;
     if (lex_tok == TK_STRUCT) return 1;
     if (lex_tok == TK_UNION) return 1;
+    if (lex_tok == TK_ENUM) return 1;
     if (lex_tok == TK_UNSIGNED) return 1;
     if (lex_tok == TK_SIGNED) return 1;
     if (lex_tok == TK_LONG) return 1;
@@ -526,37 +527,6 @@ static int find_or_add_label(char *name) {
     ps_lblid[ps_nlabels] = cg_label();
     ps_nlabels = ps_nlabels + 1;
     return ps_lblid[ps_nlabels - 1];
-}
-
-static void parse_enum_def(void) {
-    int val;
-    /* Skip optional tag name */
-    if (lex_tok == TK_IDENT) {
-        next();
-    }
-    expect(TK_LBRACE);
-    val = 0;
-    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-        if (lex_tok != TK_IDENT) {
-            p_error("expected enum constant name");
-        }
-        if (ps_nconsts >= PS_MAX_CONSTS) {
-            p_error("too many enum constants");
-        }
-        ps_cname[ps_nconsts] = strdup(lex_str);
-        next();
-        if (lex_tok == TK_ASSIGN) {
-            next();
-            val = parse_const_int();
-        }
-        ps_cval[ps_nconsts] = val;
-        ps_nconsts = ps_nconsts + 1;
-        val = val + 1;
-        if (lex_tok == TK_COMMA) {
-            next();
-        }
-    }
-    expect(TK_RBRACE);
 }
 
 /* --- Struct helpers --- */
@@ -4294,14 +4264,6 @@ static Node *parse_stmt(void) {
         return parse_block();
     }
 
-    /* enum definition inside function body */
-    if (lex_tok == TK_ENUM) {
-        next();
-        parse_enum_def();
-        expect(TK_SEMI);
-        return nd_block(NULL);
-    }
-
     /* Track static qualifier before local declarations */
     {
     int is_static;
@@ -4331,9 +4293,17 @@ static Node *parse_stmt(void) {
 
     /* local variable declaration */
     if (is_type()) {
+        int was_enum;
+        was_enum = (lex_tok == TK_ENUM);
         ty = parse_type();
         tdac = ps_type_arrcount;
         skip_decl_qualifiers();
+        /* Bare tag definition as a statement: `enum { A, B };` or
+           `struct S { ... };` -- no declarator follows. */
+        if (lex_tok == TK_SEMI && (ty_is_struct(ty) || was_enum)) {
+            next();
+            return nd_block(NULL);
+        }
         /* Function pointer declaration: type (*name)(args); */
         if (lex_tok == TK_LPAREN) {
             next();
@@ -4723,6 +4693,7 @@ static Node *parse_top_decl(void) {
     int i;
     int count;
     int g2cols;
+    int was_enum;
     int neg;
     int idx;
     int si;
@@ -4784,28 +4755,17 @@ static Node *parse_top_decl(void) {
         return NULL;
     }
 
-    /* Enum definition at top level.  `enum {...} name;` also declares
-     * an int variable of the anonymous enum type (doom's main_e /
-     * specials_e). */
-    if (lex_tok == TK_ENUM) {
-        next();
-        parse_enum_def();
-        if (lex_tok == TK_IDENT) {
-            memcpy(nm, lex_str, lex_slen + 1);
-            next();
-            add_defined_global(nm, TY_INT, 0);
-        }
-        expect(TK_SEMI);
-        return NULL;
-    }
-
     /* Parse return type / variable type */
+    was_enum = (lex_tok == TK_ENUM);
     ty = parse_type();
     g2cols = ps_type_arrcount;  /* reuse: typedef'd array element count */
     skip_decl_qualifiers();
 
-    /* Bare struct definition: struct Foo { ... }; */
-    if (lex_tok == TK_SEMI && ty_is_struct(ty)) {
+    /* Bare tag definition with no declarator: `struct Foo { ... };` or
+       `enum { A, B };`.  An enum decays to TY_INT, so the type alone
+       cannot tell it from a declarator-less `int;` -- hence the token
+       captured above. */
+    if (lex_tok == TK_SEMI && (ty_is_struct(ty) || was_enum)) {
         next();
         return NULL;
     }
