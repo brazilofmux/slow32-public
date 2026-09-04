@@ -34,6 +34,9 @@ float fabsf(float x);
 double sqrt(double x);
 float sqrtf(float x);
 
+double cbrt(double x);
+float cbrtf(float x);
+
 double pow(double x, double y);
 float powf(float x, float y);
 

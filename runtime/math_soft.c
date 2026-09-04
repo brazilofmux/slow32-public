@@ -275,6 +275,27 @@ double pow(double x, double y) {
     return exp(y * log(x));
 }
 
+/* Cube root.  exp(log(|x|)/3) gets within a few ulp; two Newton steps on
+ * y^3 = a then pin it (each step roughly doubles the correct bits).  Sign is
+ * carried separately so negative arguments work, unlike pow(x, 1.0/3).
+ * libutf's cie97 (CIELAB) is the caller that made this necessary. */
+double cbrt(double x) {
+    double a, y;
+    int neg;
+    if (x != x) return x;             /* NaN */
+    if (x == 0.0) return x;           /* +-0 */
+    if (x == mk_inf() || x == mk_ninf()) return x;
+    neg = 0;
+    a = x;
+    if (a < 0.0) { a = -a; neg = 1; }
+    y = exp(log(a) / 3.0);
+    y = y - (y * y * y - a) / (3.0 * y * y);
+    y = y - (y * y * y - a) / (3.0 * y * y);
+    return neg ? -y : y;
+}
+
+float cbrtf(float x) { return (float)cbrt((double)x); }
+
 /* ================================================================
  * Trigonometric — Taylor series with range reduction (Default)
  *              or CORDIC (if USE_CORDIC is defined)

@@ -87,3 +87,27 @@ The current `TIMER` uses 1-second resolution `time()`.
 
 - **Status**: Fixed. `free` rejects out-of-heap pointers, already-free
   blocks, and impossible sizes before coalescing.
+
+### 13. DEBUG-libc `exit` dropped main's return value (Resolved 2026-09-03)
+
+Every emulator reports r1 at `halt` as its process exit status
+(`slow32.c`: `int exit_code = cpu.regs[1]; return exit_code;`, the same in
+slow32-fast and the DBT's `.exit_status = &cpu->regs[1]`). `__slow32_start`
+does pass main's return to `exit(rc)`, but `exit_debug.c` discarded it --
+`(void)status;` then `halt()` *as a function call*, so r1 held whatever the
+last call happened to return. Every program linked against `libc_debug.s32a`
+exited 0, whatever main returned; `libc_mmio.s32a` was unaffected because its
+`exit` posts `OP_EXIT` with the status through the ring, and the stage08 libc
+only works by accident (its `exit:` is a bare `halt`, executed with main's
+return still sitting in r1).
+
+Fix: `exit` moves the status into r1 with inline assembly and halts in the
+same statement (`add r1, %0, r0 ; halt`). Verified: a clang-built program
+returning 15 yields status 15 under slow32, slow32-fast and slow32-dbt, with
+and without `--mmio`; the `libc_mmio` path still yields 15; a program
+returning 0 still yields 0.
+
+Found while verifying a stage08 regression test by `echo $?`: every hand
+check agreed with itself and disagreed with the stage08 runner (which links
+the stage08 libc). The runner was right. The regression suite compares
+stdout, so it never noticed either.
