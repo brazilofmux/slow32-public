@@ -37,6 +37,7 @@ typedef struct {
     xs_src *src; unsigned nsrc;   /* the merge in progress */
     unsigned *heap; unsigned hn;
     int finished, inmem;
+    int presorted;                /* the run being collected is already in order (a MERGE input): flush unsorted */
     unsigned pos;                 /* in-memory cursor */
 } xsort;
 
@@ -111,7 +112,8 @@ static char *xs_run_name(xsort *xs)
 static void xs_flush_run(xsort *xs)
 {
     if (!xs->n) return;
-    xs_sort_run(xs);
+    if (xs->presorted) for (unsigned i = 0; i < xs->n; i++) xs->order[i] = i;
+    else xs_sort_run(xs);
     char *name = xs_run_name(xs);
     FILE *fp = fopen(name, "wb");
     if (!fp) xs_die(xs, "SORT: cannot create a work file");
@@ -130,6 +132,15 @@ static void xs_put(xsort *xs, const void *key, const void *rec)
     memcpy(e + xs->klen, rec, xs->esize - xs->klen);
     xs->n++;
 }
+
+/* MERGE: a USING file is already in key order.  Its entries are put
+ * between xs_source_begin and xs_source_end and go to run files in
+ * arrival order -- a large file becomes several runs, each in order --
+ * so the merge at the end is the merge, not a sort.  The trailing
+ * arrival number on the key keeps equal keys in USING order across
+ * files, which is what the standard asks of MERGE. */
+static void xs_source_begin(xsort *xs) { xs_flush_run(xs); xs->presorted = 1; }
+static void xs_source_end(xsort *xs) { xs_flush_run(xs); xs->presorted = 0; }
 
 /* ---- the k-way merge over runs[first .. first+count) ---- */
 

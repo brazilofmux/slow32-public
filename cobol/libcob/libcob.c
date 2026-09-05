@@ -1704,6 +1704,23 @@ void cob_sort_using(cob_file *sd, cob_file *in)
     cob_close(in);
 }
 
+/* MERGE USING: a file already in key order joins as presorted runs */
+void cob_merge_using(cob_file *sd, cob_file *in)
+{
+    cob_sorter *so = sorter_of(sd, "MERGE USING");
+    xs_source_begin(&so->xs);
+    if (cob_open(in, COB_OPEN_INPUT) == 2) cob_fatal("MERGE USING: cannot open the input file");
+    for (;;) {
+        int r = cob_read(in);
+        if (r == 1) break;
+        if (r == 2) cob_fatal("MERGE USING: read failed");
+        sort_copy(sd->record, sd->recsize, in->record, in->last_len ? in->last_len : in->recsize);
+        cob_release(sd);
+    }
+    cob_close(in);
+    xs_source_end(&so->xs);
+}
+
 void cob_sort_perform(cob_file *sd)
 {
     cob_sorter *so = sorter_of(sd, "SORT");

@@ -1,0 +1,25 @@
+-- merge 2 files giving
+A001    100.00 one       
+A001    100.00 two       
+A001     75.00 two       
+A001     50.00 one       
+B002     10.00 one       
+C003      1.00 two       
+C003     -1.00 two       
+D004     -5.00 one       
+E005      0.00 two       
+-- merge 3 files, output procedure
+A000    999.99 three     
+A001    100.00 one       
+A001    100.00 two       
+A001    100.00 three     
+A001     75.00 two       
+A001     50.00 one       
+B002     10.00 one       
+B002     10.00 three     
+C003      1.00 two       
+C003     -1.00 two       
+D004     -5.00 one       
+E005      0.00 two       
+E005      0.00 three     
+F006    -99.99 three     

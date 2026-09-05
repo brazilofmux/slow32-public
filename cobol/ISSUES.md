@@ -71,8 +71,13 @@ covers USING/GIVING, INPUT/OUTPUT PROCEDURE with RELEASE and RETURN
 ... INTO, two keys in opposite directions and DUPLICATES IN ORDER;
 GnuCOBOL agrees. glacpost (stdout, `sorted.tmp`, the new master) and
 crglentry → ldglentry → exglentry are byte-identical to GnuCOBOL.
-Not done: MERGE, COLLATING SEQUENCE, a spill to disk (the corpus
-sorts thousands of records, not millions).
+Not done then: MERGE, a spill to disk (the corpus sorts thousands of
+records, not millions). Done 2026-09-04: the sort runs on one normalized
+key per record (memcmp), spills budgeted runs beside the SD and merges
+them k ways (`libcob/xsort.h`; S32_SORT_MEMORY, S32_SORT_FAN), and MERGE
+merges its USING files as presorted runs instead of sorting their
+concatenation. tests/free/sortkeys, sortspill, mergefile; bench/bsort.
+COLLATING SEQUENCE landed earlier (the alphabet's ranks go into the key).
 
 ### 4a. ~~Table `SORT` (gl008, dist01) — GitHub #10~~ — RESOLVED 2026-08-30 by rewrite
 Ruling: rewritten in majesty to COBOL 85 -- insertion sorts through a

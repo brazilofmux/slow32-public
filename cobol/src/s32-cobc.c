@@ -5408,7 +5408,8 @@ static void parse_condition_clauses(const char *w1, const char *w2, const char *
  *   {GIVING file... | OUTPUT PROCEDURE IS para [THRU para]}
  * The records live in memory for the statement's duration; the sort is
  * stable whether or not DUPLICATES IN ORDER is written. */
-static int g_is_merge;    /* parse_sort is parsing MERGE: USING of two or more files, no INPUT PROCEDURE */
+static int g_is_merge;    /* parse_sort is parsing MERGE: USING of two or more files, no INPUT PROCEDURE;
+                             each is already in key order and joins the merge as presorted runs (cob_merge_using) */
 
 static void parse_sort(void)
 {
@@ -5461,7 +5462,7 @@ static void parse_sort(void)
         while (cur()->kind == T_WORD && !at_word("giving") && !at_word("output")) {
             File *in = expect_file();
             if (in->org == COB_ORG_SORT) die_at(line, "%s USING names a sort file", verb);
-            emit_file_addr("r3", sd); emit_file_addr("r4", in); emit_call("cob_sort_using"); n++;
+            emit_file_addr("r3", sd); emit_file_addr("r4", in); emit_call(g_is_merge ? "cob_merge_using" : "cob_sort_using"); n++;
         }
         if (!n) die_at(cur()->line, "expected a file-name after USING");
         if (g_is_merge && n < 2) die_at(line, "MERGE USING needs at least two files");
