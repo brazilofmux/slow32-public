@@ -179,7 +179,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_anon_nested_struct_exe \
          $(OUT)/cc_flex_array_exe \
          $(OUT)/cc_decl_dialect_exe \
-         $(OUT)/cc_multi_include_exe $(OUT)/cc_incdir_sibling_exe $(OUT)/cc_libutf_bugs_exe \
+         $(OUT)/cc_multi_include_exe $(OUT)/cc_incdir_sibling_exe $(OUT)/cc_libutf_bugs_exe $(OUT)/cc_decl_list_exe \
          $(OUT)/cc_inline_asm_a64_exe \
          $(OUT)/cc_dbt_c_forms_exe \
          $(OUT)/cc_tail_call_exe \
@@ -215,6 +215,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_multi_include_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_multi_include: ok (exit=1)"; else echo "cc_multi_include: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_incdir_sibling_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_incdir_sibling: ok (exit=1)"; else echo "cc_incdir_sibling: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_libutf_bugs_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_libutf_bugs: ok (exit=0)"; else echo "cc_libutf_bugs: FAIL (exit=$$rc, bits name the defect)"; exit 1; fi
+	@$(OUT)/cc_decl_list_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_decl_list: ok (exit=0)"; else echo "cc_decl_list: FAIL (exit=$$rc, bits name the shape)"; exit 1; fi
 	@$(OUT)/cc_inline_asm_a64_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_inline_asm_a64: ok (exit=1)"; else echo "cc_inline_asm_a64: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_dbt_c_forms_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_dbt_c_forms: ok (exit=1)"; else echo "cc_dbt_c_forms: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_tail_call_exe; rc=$$?; if [ $$rc -eq 7 ]; then echo "cc_tail_call: ok (exit=7)"; else echo "cc_tail_call: FAIL (exit=$$rc, expected 7)"; exit 1; fi
@@ -402,7 +403,7 @@ clean:
 	      $(OUT)/cc_macro_line_cont.o $(OUT)/cc_macro_line_cont_exe \
 	      $(OUT)/cc_anon_nested_struct.o $(OUT)/cc_anon_nested_struct_exe \
 	      $(OUT)/cc_multi_include.o $(OUT)/cc_multi_include_exe \
-	      $(OUT)/cc_incdir_sibling.o $(OUT)/cc_incdir_sibling_exe $(OUT)/cc_libutf_bugs.o $(OUT)/cc_libutf_bugs_exe \
+	      $(OUT)/cc_incdir_sibling.o $(OUT)/cc_incdir_sibling_exe $(OUT)/cc_libutf_bugs.o $(OUT)/cc_libutf_bugs_exe $(OUT)/cc_decl_list.o $(OUT)/cc_decl_list_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
 	      $(OUT)/cc_fp_varargs.o $(OUT)/cc_fp_varargs_exe \
 	      $(OUT)/cc_libc_extra.o $(OUT)/cc_libc_extra_exe \

@@ -4958,10 +4958,15 @@ static Node *parse_top_decl(void) {
         return NULL;
     }
     g2cols = 0;
+    xty = ty;
 
+    /* Global declarators: a comma-separated list of scalars and arrays --
+     * `int a, b[3], *c, d[2][4];` (GitHub #31: an array declarator used
+     * to end the list). Each pass handles one kind and, on a comma, reads
+     * the next name and goes round. */
+    while (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN || lex_tok == TK_COMMA || lex_tok == TK_LBRACK) {
     /* Global scalar(s): type name; type name = expr; or type a, b = expr; */
     if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN || lex_tok == TK_COMMA) {
-        xty = ty;
         while (1) {
             decl_had_init = (lex_tok == TK_ASSIGN);
             if (ty_is_struct(xty)) {
@@ -5032,7 +5037,9 @@ static Node *parse_top_decl(void) {
             memcpy(nm, lex_str, lex_slen + 1);
             next();
             skip_gnu_decl_suffixes();
+            if (lex_tok == TK_LBRACK) break;        /* an array declarator: the branch below */
         }
+        if (lex_tok == TK_LBRACK) continue;
         expect(TK_SEMI);
         return NULL;
     }
@@ -5065,21 +5072,18 @@ static Node *parse_top_decl(void) {
                 p_error("expected { in 2D array init");
                 return NULL;
             }
-            require_complete_type(ty, "incomplete element type");
-            idx = add_defined_global(nm, ty + TY_PTR, 0);
+            require_complete_type(xty, "incomplete element type");
+            idx = add_defined_global(nm, xty + TY_PTR, 0);
             if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
             ps_gcols[idx] = g2cols;
             ps_ginit_begin(idx);
-            count = parse_global_init_array2d_at(ty, (count >= 0) ? count / g2cols : -1,
+            count = parse_global_init_array2d_at(xty, (count >= 0) ? count / g2cols : -1,
                                                  g2cols, idx, 0);
             count = count * g2cols;
-            ps_gsize[idx] = ty_size(ty) * count;
+            ps_gsize[idx] = ty_size(xty) * count;
             ps_ginit_ensure_len(idx, ps_gsize[idx]);
             ps_ginit_finish(idx);
-            expect(TK_SEMI);
-            return NULL;
-        }
-        if (lex_tok == TK_ASSIGN) {
+        } else if (lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok == TK_STRING) {
                 /* String array init: char s[N] = "str" or char s[] = "str"
@@ -5087,8 +5091,8 @@ static Node *parse_top_decl(void) {
                 sp_idx = parse_string_literal();
                 slen = lex_str_len[sp_idx];
                 if (count < 0) count = slen + 1;
-                require_complete_type(ty, "incomplete element type");
-                idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
+                require_complete_type(xty, "incomplete element type");
+                idx = add_defined_global(nm, xty + TY_PTR, ty_size(xty) * count);
                 if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
                 ps_ginit_begin(idx);
                 /* parse_string_literal already consumed the literal, so emit
@@ -5107,12 +5111,12 @@ static Node *parse_top_decl(void) {
                 }
                 ps_ginit_finish(idx);
             } else if (lex_tok == TK_LBRACE) {
-                idx = add_defined_global(nm, ty + TY_PTR, 0);
+                idx = add_defined_global(nm, xty + TY_PTR, 0);
                 if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
                 ps_ginit_begin(idx);
-                count = parse_global_init_array_at(ty, count, idx, 0);
-                require_complete_type(ty, "incomplete element type");
-                ps_gsize[idx] = ty_size(ty) * count;
+                count = parse_global_init_array_at(xty, count, idx, 0);
+                require_complete_type(xty, "incomplete element type");
+                ps_gsize[idx] = ty_size(xty) * count;
                 ps_ginit_ensure_len(idx, ps_gsize[idx]);
                 ps_ginit_finish(idx);
             } else {
@@ -5127,14 +5131,31 @@ static Node *parse_top_decl(void) {
                 }
                 count = 1;
             }
-            require_complete_type(ty, "incomplete element type");
-            if (is_extern) idx = add_extern_global(nm, ty + TY_PTR, ty_size(ty) * count);
-            else           idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
+            require_complete_type(xty, "incomplete element type");
+            if (is_extern) idx = add_extern_global(nm, xty + TY_PTR, ty_size(xty) * count);
+            else           idx = add_defined_global(nm, xty + TY_PTR, ty_size(xty) * count);
             if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
             ps_gcols[idx] = g2cols;
         }
-        expect(TK_SEMI);
-        return NULL;
+        if (lex_tok != TK_COMMA) {
+            expect(TK_SEMI);
+            return NULL;
+        }
+        /* another declarator in the same declaration */
+        next();
+        xty = ty;
+        while (ty_is_ptr(xty)) xty = ty_deref(xty);
+        while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); }
+        skip_decl_qualifiers();
+        if (lex_tok != TK_IDENT) {
+            p_error("expected name in declaration");
+            return NULL;
+        }
+        memcpy(nm, lex_str, lex_slen + 1);
+        next();
+        skip_gnu_decl_suffixes();
+        continue;
+    }
     }
 
     /* Function: type name(params) { body } or type name(params); */

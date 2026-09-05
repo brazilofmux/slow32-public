@@ -1587,7 +1587,8 @@ typedef struct {
  * S32_SORT_MEMORY (bytes, or with a K/M suffix) -- there is no sbrk,
  * so this is a share of a fixed pool, not a request for more.  The
  * fan-in is S32_SORT_FAN, default 32 (the emulator has 128 descriptors). */
-extern char __heap_start[], __heap_end[];
+extern char __heap_start[];
+extern char __heap_end[];
 static size_t sort_budget(void)
 {
     const char *e = getenv("S32_SORT_MEMORY");

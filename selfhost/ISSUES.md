@@ -2035,3 +2035,27 @@ verdict was the correct one, and the hand checks that agreed with it were
 found to be vacuous (see runtime ISSUES-13: DEBUG-libc `exit` dropped
 main's status, so `echo $?` was always 0). Validated: stage08 59/59, a64
 36/36 + cc tests, stage07 differential 5/5 agree, regression 90/90.
+
+### 66. [RESOLVED 2026-09-05] stage08 cc: a file-scope declarator list ended at an array declarator (GitHub #31)
+
+`int a[3], b[2];` and `extern char ha[], hb[];` were parse errors
+(`expected token 56 got 57`: `;` wanted, `,` found), while `extern int
+a, b;` and every block-scope form were fine. In `parse_top_decl` the
+scalar branch had a comma loop and the array branch ended with
+`expect(TK_SEMI)`; and the scalar loop, on reading the next name, could
+not hand a following `[` to the array branch. Found by the self-hosted
+leg of the COBOL suite (`LLVM_BIN=/nonexistent cobol/build.sh`, the leg
+kagura runs): libcob.c had gained `extern char __heap_start[],
+__heap_end[];` for the sort budget, LLVM accepted it, stage08 did not,
+and the suite's earlier "105 passed" on that leg had run on the stale
+LLVM object -- the build failure was in the log, not in the verdict.
+
+Fix: both branches sit in one declarator loop; on a comma either branch
+reads the next name (stars, qualifiers) and goes round; the scalar loop
+breaks out to the array branch when the new name is followed by `[`;
+the array branch uses the declarator's own type (`xty`), so `int *p,
+a[3]` types each name. The 2-D initializer path joins the common exit.
+Test: stage08/tests/test_decl_list.c and cross-a64 cc_decl_list (five
+shapes, exit code names the failing one). libcob.c and dfsort keep the
+one-declaration-per-line form so a kit with the old compiler still
+builds them.
