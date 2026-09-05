@@ -27,6 +27,7 @@
 #include "cobedit.h"
 #include <term.h>
 #include <time.h>
+#include "xsort.h"
 
 /* ---- output: DISPLAY goes to stdout, buffered by us ------------------ */
 
@@ -1574,11 +1575,35 @@ static int rel_start(cob_file *f, int op)
 typedef struct {
     const cob_sort_key *keys; int nkeys;
     const unsigned char *coll;      /* SORT ... COLLATING SEQUENCE: the alphabet's ranks, or 0 */
-    char *buf; unsigned n, cap;       /* n records of recsize bytes */
-    unsigned char *nk; unsigned klen; /* one normalized key of klen bytes per record (below) */
-    unsigned *order;                  /* after cob_sort_perform: record indices in key order */
-    unsigned pos;                     /* next RETURN */
+    unsigned klen;                  /* the normalized key (below) */
+    unsigned char *kbuf;            /* one key, built at RELEASE */
+    unsigned n;                     /* records released: the arrival number */
+    xsort xs;                       /* the engine: entries of klen + recsize */
+    int sorted;                     /* cob_sort_perform ran */
 } cob_sorter;
+
+/* The sort's memory: half the heap the program was linked with, or
+ * S32_SORT_MEMORY (bytes, or with a K/M suffix) -- there is no sbrk,
+ * so this is a share of a fixed pool, not a request for more.  The
+ * fan-in is S32_SORT_FAN, default 32 (the emulator has 128 descriptors). */
+extern char __heap_start[], __heap_end[];
+static size_t sort_budget(void)
+{
+    const char *e = getenv("S32_SORT_MEMORY");
+    if (e && *e) {
+        char *end; unsigned long v = strtoul(e, &end, 10);
+        if (*end == 'K' || *end == 'k') v <<= 10; else if (*end == 'M' || *end == 'm') v <<= 20;
+        if (v >= 4096) return v;
+    }
+    size_t heap = (size_t)(__heap_end - __heap_start);
+    return heap / 2;
+}
+static unsigned sort_fan(void)
+{
+    const char *e = getenv("S32_SORT_FAN");
+    unsigned f = e && *e ? (unsigned)atoi(e) : 32;
+    return f < 2 ? 2 : f > 100 ? 100 : f;
+}
 
 /* The normalized key: every SORT key rendered as bytes whose unsigned
  * byte order IS the COBOL order, so one memcmp compares a record on all
@@ -1634,6 +1659,9 @@ void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups,
     if (!so) cob_fatal("SORT: out of memory");
     so->keys = keys; so->nkeys = nkeys; so->coll = coll;
     so->klen = sort_klen(so);
+    so->kbuf = malloc(so->klen);
+    if (!so->kbuf) cob_fatal("SORT: out of memory");
+    xs_init(&so->xs, so->klen + sd->recsize, so->klen, sort_budget(), sort_fan(), file_name(sd), cob_fatal);
     sd->idx = so; sd->open_mode = COB_OPEN_IO; sd->at_eof = 0;
 }
 
@@ -1647,15 +1675,8 @@ static cob_sorter *sorter_of(cob_file *sd, const char *what)
 void cob_release(cob_file *sd)
 {
     cob_sorter *so = sorter_of(sd, "RELEASE");
-    if (so->n == so->cap) {
-        so->cap = so->cap ? so->cap * 2 : 256;
-        so->buf = realloc(so->buf, (size_t)so->cap * sd->recsize);
-        if (!so->buf) cob_fatal("SORT: out of memory");
-        so->nk = realloc(so->nk, (size_t)so->cap * so->klen);
-        if (!so->nk) cob_fatal("SORT: out of memory");
-    }
-    memcpy(so->buf + (size_t)so->n * sd->recsize, sd->record, sd->recsize);
-    sort_key_build(so, so->buf + (size_t)so->n * sd->recsize, so->n, so->nk + (size_t)so->n * so->klen);
+    sort_key_build(so, sd->record, so->n, so->kbuf);
+    xs_put(&so->xs, so->kbuf, sd->record);
     so->n++;
 }
 
@@ -1683,38 +1704,11 @@ void cob_sort_using(cob_file *sd, cob_file *in)
     cob_close(in);
 }
 
-static cob_file *sort_sd; static cob_sorter *sort_so;
-
-static int sort_cmp(unsigned a, unsigned b)
-{
-    /* the trailing arrival number makes every key distinct: never 0 */
-    return memcmp(sort_so->nk + (size_t)a * sort_so->klen, sort_so->nk + (size_t)b * sort_so->klen, sort_so->klen);
-}
-
-static void sort_merge(unsigned *v, unsigned *tmp, unsigned lo, unsigned hi)
-{
-    if (hi - lo < 2) return;
-    unsigned mid = lo + (hi - lo) / 2;
-    sort_merge(v, tmp, lo, mid); sort_merge(v, tmp, mid, hi);
-    unsigned i = lo, j = mid, k = lo;
-    while (i < mid && j < hi) tmp[k++] = sort_cmp(v[i], v[j]) <= 0 ? v[i++] : v[j++];
-    while (i < mid) tmp[k++] = v[i++];
-    while (j < hi) tmp[k++] = v[j++];
-    memcpy(v + lo, tmp + lo, (size_t)(hi - lo) * sizeof *v);
-}
-
 void cob_sort_perform(cob_file *sd)
 {
     cob_sorter *so = sorter_of(sd, "SORT");
-    so->order = malloc(((size_t)so->n + 1) * sizeof *so->order);
-    unsigned *tmp = malloc(((size_t)so->n + 1) * sizeof *tmp);
-    if (!so->order || !tmp) cob_fatal("SORT: out of memory");
-    for (unsigned i = 0; i < so->n; i++) so->order[i] = i;
-    sort_sd = sd; sort_so = so;
-    /* the collating sequence went into the keys as they were released */
-    sort_merge(so->order, tmp, 0, so->n);
-    free(tmp);
-    so->pos = 0; sd->at_eof = 0;
+    xs_finish(&so->xs);
+    so->sorted = 1; sd->at_eof = 0;
 }
 
 /* GIVING: the sorted records, written as that file writes */
@@ -1722,8 +1716,9 @@ void cob_sort_giving(cob_file *sd, cob_file *out)
 {
     cob_sorter *so = sorter_of(sd, "SORT GIVING");
     if (cob_open(out, COB_OPEN_OUTPUT) == 2) cob_fatal("SORT GIVING: cannot open the output file");
-    for (unsigned i = 0; i < so->n; i++) {
-        sort_copy(out->record, out->recsize, so->buf + (size_t)so->order[i] * sd->recsize, sd->recsize);
+    const unsigned char *e;
+    while ((e = xs_next(&so->xs)) != 0) {
+        sort_copy(out->record, out->recsize, (const char *)e + so->klen, sd->recsize);
         if (cob_write(out, 0, 0, 0) == 2) cob_fatal("SORT GIVING: write failed");
     }
     cob_close(out);
@@ -1733,9 +1728,10 @@ void cob_sort_giving(cob_file *sd, cob_file *out)
 int cob_return(cob_file *sd)
 {
     cob_sorter *so = sorter_of(sd, "RETURN");
-    if (!so->order) cob_fatal("RETURN before the sort (RETURN belongs in the OUTPUT PROCEDURE)");
-    if (so->pos >= so->n) { sd->at_eof = 1; return file_result(sd, "10", ""); }
-    memcpy(sd->record, so->buf + (size_t)so->order[so->pos++] * sd->recsize, sd->recsize);
+    if (!so->sorted) cob_fatal("RETURN before the sort (RETURN belongs in the OUTPUT PROCEDURE)");
+    const unsigned char *e = xs_next(&so->xs);
+    if (!e) { sd->at_eof = 1; return file_result(sd, "10", ""); }
+    memcpy(sd->record, e + so->klen, sd->recsize);
     sd->last_len = sd->recsize;
     return file_result(sd, "00", "");
 }
@@ -1743,7 +1739,7 @@ int cob_return(cob_file *sd)
 void cob_sort_end(cob_file *sd)
 {
     cob_sorter *so = sorter_of(sd, "SORT");
-    free(so->buf); free(so->nk); free(so->order); free(so);
+    xs_free(&so->xs); free(so->kbuf); free(so);
     sd->idx = 0; sd->open_mode = 0;
 }
 

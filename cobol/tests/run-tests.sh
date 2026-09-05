@@ -108,8 +108,9 @@ emu_run() {   # emu_run prog.s32x > stdout: the guest's output only
     # program's own trailing blank line kept.
     # a .keys file beside the test is typed into the program (the term
     # service reads keys from the emulator's stdin)
-    # a .args file beside the test is the program's command line
-    (cd "$W/run" && "$EMU" "$1" $PROG_ARGS 2>/dev/null < "${2:-/dev/null}") | awk '
+    # a .args file beside the test is the program's command line;
+    # a .env file beside it is the guest's environment (S32_SORT_MEMORY=24K ...)
+    (cd "$W/run" && env $PROG_ENV "$EMU" "$1" $PROG_ARGS 2>/dev/null < "${2:-/dev/null}") | awk '
         /^Starting execution/ { capture = 1; held = 0; next }
         /^HALT at|^Program halted|^Exit code/ { if (held && prev != "") print prev; capture = 0; held = 0 }
         capture { if (held) print prev; prev = $0; held = 1 }
@@ -153,6 +154,7 @@ for fmt in fixed free; do
         fresh_workdir
         keys=/dev/null; [ -f "${src%.cbl}.keys" ] && keys="${src%.cbl}.keys"
         PROG_ARGS=""; [ -f "${src%.cbl}.args" ] && PROG_ARGS="$(cat "${src%.cbl}.args")"
+        PROG_ENV=""; [ -f "${src%.cbl}.env" ] && PROG_ENV="$(tr "\n" " " < "${src%.cbl}.env")"
         emu_run "$W/$name.s32x" "$keys" > "$W/$name.out"
         if [ ! -f "$exp" ]; then
             report "$fmt/$name" 1 "no .expected file"; continue
