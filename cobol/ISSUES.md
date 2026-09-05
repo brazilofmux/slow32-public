@@ -639,6 +639,40 @@ The tree is host-testable (tests/bt_test.c, Gate 1b: random inserts,
 removals by slot and exact, seeks and scans against a model, six shapes,
 under the sanitizers when built by hand).
 
+### 26. Where majesty's batch spent its time, and what moved it (2026-09-05)
+
+The batch on host sorts ran in 0.36s; with every sort on s32sort and every
+join on the B+tree it ran in 0.88s. Profiled to 0.26s. What was true:
+
+- **Process startup is not the cost.** An empty program starts in under
+  10ms under any engine; the interpreter is 25x slower overall. Timers
+  built on perl or python add 10-20ms per step and inflate every profile;
+  a shell trace with timestamps does not.
+- **The ring is cheap in bulk, dear per call.** 4,000 round trips move a
+  55,000-line file in under 10ms; 50,000 of them cost 100ms. The indexed
+  writer seeked (and so flushed) before every record: 24,584 records were
+  49,000 syscalls. `slot_write` now tracks the stream position and the
+  next slot is one buffered fwrite. Random reads went through a 1K stream
+  buffer, two round trips each; an INPUT open now reads the data file
+  into memory when it fits a quarter of the heap (`idx_cache_load`),
+  write-through on WRITE/REWRITE.
+- **s32sort's own read path cost more than its sort.** The automatic
+  record-length pass read the input with getc: 4.47M calls for one file,
+  4,000 instructions a record, found by llvm-cov counts on the host build
+  after three wrong guesses. Blocks now. The engine was also linked with
+  the 1M default heap and spilled every batch sort; 64M.
+- **The legs were serialized by a dependency that no longer existed**
+  (the balance leg's sorted files). Running the three at once was the
+  single largest win, 0.45 -> 0.26.
+- **Five sort steps folded into their consumers** as SD SORT USING with
+  an OUTPUT PROCEDURE, on the same engine: fewer processes and file
+  round trips on the critical path. The COBOL heap is 64M for that.
+
+Left on the table: libcob's line-sequential read and write cost ~2,200
+instructions a record and a keyed join ~5,400; the DBT runs both at
+~8 BIPS. The critical path is now two legs of five programs each at
+35-50ms; the next lever is that per-record cost, not structure.
+
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
 Kept in `docs/oracles.md` and `docs/dialect.md`, each with a

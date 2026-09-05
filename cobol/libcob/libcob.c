@@ -1939,6 +1939,9 @@ typedef struct {
     unsigned char cur[BT_KEYMAX + 4];   /* next (key, arrival) to deliver, inclusive */
     int last_slot;          /* slot the last READ delivered, for REWRITE/DELETE; -1 */
     unsigned char *tmp;     /* a record's worth of scratch */
+    unsigned char *cache;   /* the data file's slots in memory (write-through), or 0 */
+    unsigned cache_slots;   /* slots the cache holds */
+    long fpos;              /* the stream's position, -1 unknown: a write to the next slot needs no seek */
 } cob_idx;
 
 #define KEYMAGIC1 "S32KEY01"
@@ -1961,20 +1964,68 @@ static const char *key_file_name(cob_file *f)
     return name;
 }
 
+/* The data file's records.  Every random READ used to be an fseek and an
+ * fread through the libc's 1K stream buffer -- two round trips through
+ * the MMIO ring per record, which was most of a 55,000-line keyed join.
+ * When the file fits a share of the heap (there is no sbrk: a quarter of
+ * it), OPEN reads it whole and READ serves from memory; WRITE and REWRITE
+ * go to both.  Larger files keep the stream path.  fseek flushes pending
+ * writes, so slot_write no longer flushes per record. */
 static int slot_read_to(cob_file *f, unsigned slot, unsigned char *buf)
 {
+    cob_idx *x = f->idx;
+    if (x && x->cache && slot < x->cache_slots) { memcpy(buf, x->cache + (size_t)slot * f->recsize, f->recsize); return 1; }
     FILE *fp = (FILE *)f->fp;
-    if (fseek(fp, (long)slot * (long)f->recsize, 0) != 0) return 0;
-    return fread(buf, 1, f->recsize, fp) == f->recsize;
+    long at = (long)slot * (long)f->recsize;
+    if (!x || x->fpos != at) { if (fseek(fp, at, 0) != 0) return 0; }
+    int ok = fread(buf, 1, f->recsize, fp) == f->recsize;
+    if (x) x->fpos = ok ? at + (long)f->recsize : -1;
+    return ok;
 }
 static int slot_read(cob_file *f, unsigned slot) { return slot_read_to(f, slot, (unsigned char *)f->record); }
 static int slot_write(cob_file *f, unsigned slot)
 {
+    cob_idx *x = f->idx;
     FILE *fp = (FILE *)f->fp;
-    if (fseek(fp, (long)slot * (long)f->recsize, 0) != 0) return 0;
-    if (fwrite(f->record, 1, f->recsize, fp) != f->recsize) return 0;
-    fflush(fp);
+    long at = (long)slot * (long)f->recsize;
+    /* a seek flushes the stream: 24,584 records written in slot order used
+     * to be 24,584 seeks and as many short writes.  The position is tracked
+     * so the common case, the next slot, is one buffered fwrite. */
+    if (!x || x->fpos != at) { if (fseek(fp, at, 0) != 0) return 0; }
+    if (fwrite(f->record, 1, f->recsize, fp) != f->recsize) { if (x) x->fpos = -1; return 0; }
+    if (x) {
+        x->fpos = at + (long)f->recsize;
+        if (x->cache) {
+            if (slot >= x->cache_slots) {              /* grow, or give the cache up */
+                unsigned want = x->cache_slots ? x->cache_slots : 256;
+                while (want <= slot) want *= 2;
+                size_t heap = (size_t)(__heap_end - __heap_start);
+                unsigned char *nc = (size_t)want * f->recsize <= heap / 4 ? realloc(x->cache, (size_t)want * f->recsize) : 0;
+                if (!nc) { free(x->cache); x->cache = 0; x->cache_slots = 0; return 1; }
+                x->cache = nc; x->cache_slots = want;
+            }
+            memcpy(x->cache + (size_t)slot * f->recsize, f->record, f->recsize);
+        }
+    }
     return 1;
+}
+
+/* the data file into the cache, if it fits a quarter of the heap */
+static void idx_cache_load(cob_file *f, cob_idx *x)
+{
+    FILE *fp = (FILE *)f->fp;
+    if (!fp || !f->recsize) return;
+    if (fseek(fp, 0, 2) != 0) return;
+    long sz = ftell(fp);
+    if (sz < 0) return;
+    size_t heap = (size_t)(__heap_end - __heap_start);
+    if ((size_t)sz > heap / 4) { fseek(fp, 0, 0); return; }
+    unsigned slots = (unsigned)(sz / f->recsize);
+    size_t bytes = (size_t)slots * f->recsize;
+    unsigned char *c = malloc(bytes ? bytes : 1);
+    if (!c) { fseek(fp, 0, 0); return; }
+    if (fseek(fp, 0, 0) != 0 || (bytes && fread(c, 1, bytes, fp) != bytes)) { free(c); fseek(fp, 0, 0); return; }
+    x->cache = c; x->cache_slots = slots; x->fpos = -1;
 }
 
 /* The page cache: S32_INDEX_CACHE pages, else a sixteenth of the heap the
@@ -2175,7 +2226,7 @@ static cob_idx *idx_new(cob_file *f)
 {
     cob_idx *x = calloc(1, sizeof *x);
     if (!x) cob_fatal("out of memory");
-    x->bt.fd = -1;
+    x->bt.fd = -1; x->fpos = -1;
     x->last_slot = -1; x->ref = 0; x->have_cur = 0;
     x->tmp = malloc(f->recsize ? f->recsize : 1);
     if (!x->tmp) cob_fatal("out of memory");
@@ -2186,7 +2237,7 @@ static void idx_free(cob_idx *x)
 {
     if (!x) return;
     if (x->bt.fd >= 0) bt_close(&x->bt, 0);
-    free(x->tmp); free(x);
+    free(x->cache); free(x->tmp); free(x);
 }
 
 static int idx_open(cob_file *f, int mode)
@@ -2219,6 +2270,7 @@ static int idx_open(cob_file *f, int mode)
         }
         f->fp = fp;
         if (!idx_load(f, x, 0)) { fclose(fp); f->fp = 0; idx_free(x); return file_result(f, "39", "key file missing or does not match the FD"); }
+        idx_cache_load(f, x);
     }
     f->fp = fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0;
     return file_result(f, "00", name);

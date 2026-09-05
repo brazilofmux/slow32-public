@@ -10,7 +10,7 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"; D="$HERE/decks"; W="$HERE/tmp"; mkdir -p "$W"
 EMU="${EMU:-$ROOT/tools/dbt/slow32-dbt}"
 cc -std=c99 -O1 -w -o "$W/s32sort_host" "$HERE/../s32sort.c" || { echo "host build failed"; exit 1; }
-"$ROOT/slow32cc" --libc=mmio -O2 "$HERE/../s32sort.c" -o "$W/s32sort.s32x" >/dev/null 2>&1 || { echo "guest build failed"; exit 1; }
+"$ROOT/slow32cc" --libc=mmio -O2 --heap-size 64M --stack-size 256K "$HERE/../s32sort.c" -o "$W/s32sort.s32x" >/dev/null 2>&1 || { echo "guest build failed"; exit 1; }
 pass=0; fail=0
 for ctl in "$D"/*.ctl; do
     n="$(basename "$ctl" .ctl)"; ins=""

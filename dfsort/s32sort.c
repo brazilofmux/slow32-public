@@ -8,8 +8,10 @@
  *   SORT  FIELDS=(p,l,f,o[,p,l,f,o]...)   MERGE FIELDS=(...)   SORT FIELDS=COPY
  *   RECORD TYPE={F|L},LENGTH=n            F: fixed n-byte records (default, n from
  *                                         the first SORTIN's size if absent);
- *                                         L: text lines, padded with blanks to n
- *                                         for the sort, trailing blanks trimmed out
+ *                                         L: text lines, padded with blanks to n for
+ *                                         the sort and written back at their own
+ *                                         length (a reformatted record is trimmed);
+ *                                         LENGTH omitted: the longest input line
  *   INCLUDE COND=(p,l,f,op,{p,l,f|C'..'|X'..'|[+-]n}[,{AND|OR},...])
  *   OMIT    COND=(...)                    op: EQ NE GT GE LT LE
  *   SUM     FIELDS=(p,l,f,...) | NONE     records equal on the sort fields collapse
@@ -54,6 +56,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 
 static void fatal(const char *m) { fprintf(stderr, "s32sort: %s\n", m); exit(16); }
 #include "../cobol/libcob/xsort.h"
@@ -81,6 +84,10 @@ static cond conds[MAXF]; static unsigned nconds; static int cond_is_omit;
 
 static unsigned rec_len, in_len;           /* record length after INREC / raw input length */
 static int rec_text;                       /* RECORD TYPE=L */
+#define LTAG 2                              /* TYPE=L: the line's own length, after the padded record */
+static unsigned slot_of(unsigned len) { return rec_text ? len + LTAG : len; }
+static unsigned line_len(const unsigned char *rec, unsigned len) { return rec_text ? (unsigned)(rec[len] | (rec[len + 1] << 8)) : len; }
+static void set_line_len(unsigned char *rec, unsigned len, unsigned n) { if (rec_text) { rec[len] = (unsigned char)n; rec[len + 1] = (unsigned char)(n >> 8); } }
 static size_t mainsize;
 
 /* data sets: NAME=path from the command line */
@@ -572,22 +579,83 @@ static unsigned char *inbuf, *recbuf, *keybuf, *outbuf;
 static unsigned long long n_in, n_sel, n_out;
 static xsort xs; static unsigned klen;
 
-/* one raw record from a fixed or line file; 0 at end */
+/* Records move in 64K blocks.  Under the emulator a character through the
+ * stream costs more than the sort does: copying 55,000 lines with fgets and
+ * an fwrite each was 7,000 instructions a record, the sort itself 2,400. */
+#define IOBLK 65536u
+typedef struct { FILE *fp; unsigned char *b; unsigned n, i; int eof; } inblk;
+static inblk rd;
+static void in_open(FILE *fp) { rd.fp = fp; rd.n = rd.i = 0; rd.eof = 0; if (!rd.b) { rd.b = malloc(IOBLK); if (!rd.b) fatal("out of memory"); } }
+static int in_fill(void)
+{
+    if (rd.eof) return 0;
+    if (rd.i < rd.n) memmove(rd.b, rd.b + rd.i, rd.n - rd.i);
+    rd.n -= rd.i; rd.i = 0;
+    size_t got = fread(rd.b + rd.n, 1, IOBLK - rd.n, rd.fp);
+    if (!got) rd.eof = 1;
+    rd.n += (unsigned)got;
+    return got > 0;
+}
+/* one raw record from a fixed or line file into buf (slot_of(in_len) bytes); 0 at end */
 static int read_record(FILE *fp, unsigned char *buf)
 {
-    if (!rec_text) return fread(buf, 1, in_len, fp) == in_len;
-    int c; unsigned n = 0;
-    if ((c = getc(fp)) == EOF) return 0;
-    for (; c != EOF && c != '\n'; c = getc(fp)) if (n < in_len) buf[n++] = (unsigned char)c;
-    if (n && buf[n - 1] == '\r') n--;
-    memset(buf + n, ' ', in_len - n);
-    return 1;
+    (void)fp;
+    if (!rec_text) {
+        while (rd.n - rd.i < in_len) if (!in_fill()) return 0;
+        memcpy(buf, rd.b + rd.i, in_len); rd.i += in_len;
+        return 1;
+    }
+    /* a text line: up to the newline, however long; the record keeps in_len */
+    for (;;) {
+        unsigned char *p = rd.b + rd.i, *e = rd.b + rd.n, *nl = p;
+        while (nl < e && *nl != '\n') nl++;
+        if (nl < e || rd.eof) {
+            if (p == e && rd.eof) return 0;
+            unsigned n = (unsigned)(nl - p), take = n;
+            if (take && p[take - 1] == '\r') take--;
+            if (take > in_len) take = in_len;
+            memcpy(buf, p, take);
+            memset(buf + take, ' ', in_len - take);
+            set_line_len(buf, in_len, take);
+            rd.i += n + (nl < e ? 1 : 0);
+            return 1;
+        }
+        if (rd.n - rd.i >= IOBLK) {                    /* a line longer than the block: keep its head */
+            memcpy(buf, p, in_len < IOBLK ? in_len : IOBLK); set_line_len(buf, in_len, in_len);
+            memset(buf + (in_len < IOBLK ? in_len : IOBLK), ' ', in_len > IOBLK ? in_len - IOBLK : 0);
+            rd.i = rd.n; int c; while ((c = getc(rd.fp)) != EOF && c != '\n') { }
+            return 1;
+        }
+        if (!in_fill()) { if (rd.i >= rd.n) return 0; }
+    }
 }
-static void write_record(FILE *fp, const unsigned char *rec, unsigned len)
+typedef struct { FILE *fp; unsigned char *b; unsigned n; } outblk;
+static outblk wr[40]; static unsigned nwr;
+static outblk *out_of(FILE *fp)
 {
-    if (!rec_text) { if (fwrite(rec, 1, len, fp) != len) fatal("SORTOUT: write failed"); return; }
-    while (len && rec[len - 1] == ' ') len--;
-    if ((len && fwrite(rec, 1, len, fp) != len) || putc('\n', fp) == EOF) fatal("SORTOUT: write failed");
+    for (unsigned i = 0; i < nwr; i++) if (wr[i].fp == fp) return &wr[i];
+    if (nwr >= 40) fatal("too many output files");
+    wr[nwr].fp = fp; wr[nwr].n = 0; wr[nwr].b = malloc(IOBLK); if (!wr[nwr].b) fatal("out of memory");
+    return &wr[nwr++];
+}
+static void out_flush(outblk *o) { if (o->n && fwrite(o->b, 1, o->n, o->fp) != o->n) fatal("SORTOUT: write failed"); o->n = 0; }
+static void out_flush_all(void) { for (unsigned i = 0; i < nwr; i++) out_flush(&wr[i]); }
+static void out_put(outblk *o, const unsigned char *p, unsigned n)
+{
+    if (o->n + n > IOBLK) { out_flush(o); if (n > IOBLK) { if (fwrite(p, 1, n, o->fp) != n) fatal("SORTOUT: write failed"); return; } }
+    memcpy(o->b + o->n, p, n); o->n += n;
+}
+/* a record out: fixed as is; a text line at its own length, or trimmed when it was
+ * built by a reformat (exact < 0) */
+static void write_record(FILE *fp, const unsigned char *rec, unsigned len, int exact)
+{
+    outblk *o = out_of(fp);
+    if (!rec_text) { out_put(o, rec, len); return; }
+    if (exact >= 0) len = (unsigned)exact;
+    else while (len && rec[len - 1] == ' ') len--;
+    out_put(o, rec, len);
+    if (o->n + 1 > IOBLK) out_flush(o);
+    o->b[o->n++] = '\n';
 }
 
 static void take(const unsigned char *raw, unsigned seq)
@@ -596,7 +664,7 @@ static void take(const unsigned char *raw, unsigned seq)
     if (!selected(raw)) return;
     n_sel++;
     const unsigned char *rec = raw;
-    if (ninrec) { reformat(raw, in_len, recbuf, inrec, ninrec); rec = recbuf; }
+    if (ninrec) { reformat(raw, in_len, recbuf, inrec, ninrec); rec = recbuf; set_line_len(recbuf, rec_len, 0xFFFF); }
     key_build(rec, seq, keybuf);
     xs_put(&xs, keybuf, rec);
 }
@@ -607,8 +675,10 @@ static void emit(FILE *out, const unsigned char *rec)
 {
     n_out++;
     const unsigned char *r = rec;
-    if (noutrec) { reformat(rec, rec_len, outbuf, outrec, noutrec); r = outbuf; }
-    if (out) write_record(out, r, out_len);
+    int exact = rec_text ? (int)line_len(rec, rec_len) : -1;      /* the line's own length, 0xFFFF = built, trim */
+    if (exact == 0xFFFF) exact = -1;
+    if (noutrec) { reformat(rec, rec_len, outbuf, outrec, noutrec); r = outbuf; exact = -1; }
+    if (out) write_record(out, r, out_len, exact);
     int taken = 0; outfil *saver = 0;
     for (unsigned i = 0; i < nofs; i++) {
         outfil *o = &ofs[i];
@@ -617,17 +687,17 @@ static void emit(FILE *out, const unsigned char *rec)
         if (o->seen < o->startrec || o->seen > o->endrec) continue;
         if (!selected_by(r, o->conds, o->nconds, o->omit)) continue;
         taken = 1;
-        const unsigned char *w = r; unsigned wl = out_len;
-        if (o->nitems) { reformat(r, out_len, o->buf, o->items, o->nitems); w = o->buf; wl = reformat_len(o->items, o->nitems); }
-        if (o->split) { write_record(o->fp[o->next], w, wl); if (++o->written % o->split == 0) o->next = (o->next + 1) % o->nnames; }
-        else for (unsigned k = 0; k < o->nnames; k++) write_record(o->fp[k], w, wl);
+        const unsigned char *w = r; unsigned wl = out_len; int ex = exact;
+        if (o->nitems) { reformat(r, out_len, o->buf, o->items, o->nitems); w = o->buf; wl = reformat_len(o->items, o->nitems); ex = -1; }
+        if (o->split) { write_record(o->fp[o->next], w, wl, ex); if (++o->written % o->split == 0) o->next = (o->next + 1) % o->nnames; }
+        else for (unsigned k = 0; k < o->nnames; k++) write_record(o->fp[k], w, wl, ex);
         n_outfil++;
     }
     if (saver && !taken) {
         outfil *o = saver;
-        const unsigned char *w = r; unsigned wl = out_len;
-        if (o->nitems) { reformat(r, out_len, o->buf, o->items, o->nitems); w = o->buf; wl = reformat_len(o->items, o->nitems); }
-        for (unsigned k = 0; k < o->nnames; k++) write_record(o->fp[k], w, wl);
+        const unsigned char *w = r; unsigned wl = out_len; int ex = exact;
+        if (o->nitems) { reformat(r, out_len, o->buf, o->items, o->nitems); w = o->buf; wl = reformat_len(o->items, o->nitems); ex = -1; }
+        for (unsigned k = 0; k < o->nnames; k++) write_record(o->fp[k], w, wl, ex);
         n_outfil++;
     }
 }
@@ -655,7 +725,7 @@ static void join_emit(const unsigned char *r1, const unsigned char *r2, char ind
     (void)seq_dummy;
     static unsigned char *jb; static unsigned jbl;
     unsigned need = 0; for (unsigned i = 0; i < nreform; i++) need += reform[i].len;
-    if (jbl < need) { free(jb); jb = malloc(need ? need : 1); jbl = need; if (!jb) fatal("out of memory"); }
+    if (jbl < need) { free(jb); jb = malloc(slot_of(need ? need : 1)); jbl = need; if (!jb) fatal("out of memory"); }
     unsigned char *o = jb;
     for (unsigned i = 0; i < nreform; i++) {
         const rfitem *f = &reform[i];
@@ -667,6 +737,7 @@ static void join_emit(const unsigned char *r1, const unsigned char *r2, char ind
         o += f->len;
     }
     static unsigned jseq;
+    set_line_len(jb, need, 0xFFFF);
     take(jb, jseq++);
 }
 
@@ -679,10 +750,11 @@ static void run_join(void)
     unsigned k1 = jkey_len(&jk[0]), k2 = jkey_len(&jk[1]);
     if (k1 != k2) fatal("JOINKEYS: F1 and F2 FIELDS must have the same total length");
     xsort x1, x2; char base[600];
+    l1 = l1; l2 = l2;
     const char *jb0 = dd_path("SORTOUT") ? dd_path("SORTOUT") : nofs && dd_path(ofs[0].names[0]) ? dd_path(ofs[0].names[0]) : "s32sort";
-    snprintf(base, sizeof base, "%s.j1", jb0); xs_init(&x1, k1 + l1, k1, mainsize / 2, 32, base, fatal);
-    snprintf(base, sizeof base, "%s.j2", jb0); xs_init(&x2, k2 + l2, k2, mainsize / 2, 32, base, fatal);
-    unsigned char *rb = malloc(l1 > l2 ? l1 : l2), *kb = malloc(k1);
+    snprintf(base, sizeof base, "%s.j1", jb0); xs_init(&x1, k1 + slot_of(l1), k1, mainsize / 2, 32, base, fatal);
+    snprintf(base, sizeof base, "%s.j2", jb0); xs_init(&x2, k2 + slot_of(l2), k2, mainsize / 2, 32, base, fatal);
+    unsigned char *rb = malloc(slot_of(l1 > l2 ? l1 : l2)), *kb = malloc(k1);
     if (!rb || !kb) fatal("out of memory");
     for (int s = 0; s < 2; s++) {
         const char *path = s ? p2 : p1; unsigned len = s ? l2 : l1; xsort *x = s ? &x2 : &x1; joinside *j = &jk[s];
@@ -690,6 +762,7 @@ static void run_join(void)
         unsigned saved = in_len; in_len = len;
         unsigned seq = 0;
         if (j->sorted) xs_source_begin(x);
+        in_open(f);
         while (read_record(f, rb)) { jkey_build(j, rb, seq++, kb); xs_put(x, kb, rb); }
         if (j->sorted) xs_source_end(x);
         in_len = saved; fclose(f);
@@ -698,7 +771,7 @@ static void run_join(void)
     unsigned kc = k1 - 4;                                   /* the key without the arrival number */
     const unsigned char *e2 = xs_next(&x2);
     unsigned char *gkey = malloc(kc ? kc : 1); if (!gkey) fatal("out of memory");
-    grp_cap = 64; grp = malloc((size_t)grp_cap * l2); grp_n = 0; if (!grp) fatal("out of memory");
+    grp_cap = 64; grp = malloc((size_t)grp_cap * l2); grp_n = 0; if (!grp) fatal("out of memory");   /* the group keeps records without their tag */
     int have_grp = 0, grp_paired = 0;
     const unsigned char *e1;
     while ((e1 = xs_next(&x1)) != 0) {
@@ -757,8 +830,42 @@ int main(int argc, char **argv)
     if (is_merge && nin < 2 && !copy_only) fprintf(stderr, "s32sort: MERGE of one SORTIN\n");
 
     /* the input record length: RECORD LENGTH, else the first file's size for F (one record), 256 for L */
+    if (!in_len && rec_text) {
+        /* the longest line across every input; a small extra pass */
+        const char *scan[66]; unsigned ns = 0;
+        for (unsigned i = 0; i < nin; i++) scan[ns++] = sortin[i];
+        if (have_join) { const char *a = dd_path(jk[0].dd), *b2 = dd_path(jk[1].dd); if (a) scan[ns++] = a; if (b2) scan[ns++] = b2; }
+        unsigned longest = 0;
+        for (unsigned i = 0; i < ns; i++) {
+            FILE *f = fopen(scan[i], "rb"); if (!f) { char m[300]; snprintf(m, sizeof m, "cannot open %s", scan[i]); fatal(m); }
+            /* in blocks: a getc per character cost more than the sort did */
+            static unsigned char *sb; if (!sb) { sb = malloc(IOBLK); if (!sb) fatal("out of memory"); }
+            unsigned n = 0; size_t got;
+            while ((got = fread(sb, 1, IOBLK, f)) > 0) {
+                unsigned char *p = sb, *e = sb + got;
+                for (;;) {
+                    unsigned char *nl = p; while (nl < e && *nl != '\n') nl++;
+                    n += (unsigned)(nl - p);
+                    if (nl == e) break;
+                    if (n > longest) longest = n; n = 0; p = nl + 1;
+                }
+            }
+            if (n > longest) longest = n;
+            fclose(f);
+        }
+        /* at least what the fields reach (an empty input has no longest line;
+         * a CH field may run past the record and is clipped, so its start
+         * is what must fit) */
+        unsigned need = 1;
+        for (unsigned i = 0; i < nsortf; i++) { unsigned e = sortf[i].fmt == F_CH ? sortf[i].pos + 1 : sortf[i].pos + sortf[i].len; if (e > need) need = e; }
+        for (unsigned i = 0; i < nsumf; i++) if (sumf[i].pos + sumf[i].len > need) need = sumf[i].pos + sumf[i].len;
+        for (unsigned i = 0; i < nconds; i++) { unsigned e = conds[i].a.fmt == F_CH ? conds[i].a.pos + 1 : conds[i].a.pos + conds[i].a.len; if (e > need) need = e; if (conds[i].rhs_is_field) { e = conds[i].b.fmt == F_CH ? conds[i].b.pos + 1 : conds[i].b.pos + conds[i].b.len; if (e > need) need = e; } }
+        for (unsigned i = 0; i < ninrec; i++) if (inrec[i].kind == 0 && inrec[i].pos + inrec[i].len > need) need = inrec[i].pos + inrec[i].len;
+        in_len = longest > need ? longest : need;
+        if (have_join) { if (!jk[0].len) jk[0].len = in_len; if (!jk[1].len) jk[1].len = in_len; }
+    }
     if (!in_len) {
-        if (rec_text || have_join) in_len = 256;
+        if (have_join) in_len = 256;
         else { FILE *f = fopen(sortin[0], "rb"); if (!f) fatal("cannot open SORTIN"); fseek(f, 0, SEEK_END); long sz = ftell(f); fclose(f); if (sz <= 0) fatal("RECORD LENGTH needed: SORTIN is empty"); in_len = (unsigned)sz; fprintf(stderr, "s32sort: RECORD LENGTH not given; taking the whole first SORTIN as one record (%u bytes)\n", in_len); }
     }
     unsigned side_len = in_len;                              /* the F1/F2 record length when joining */
@@ -775,12 +882,21 @@ int main(int argc, char **argv)
             o->fp[k] = fopen(path, rec_text ? "w" : "wb"); if (!o->fp[k]) { char m[300]; snprintf(m, sizeof m, "cannot open %s", path); fatal(m); }
         }
     }
-    /* every field must fit */
-    for (unsigned i = 0; i < nsortf; i++) if (sortf[i].pos + sortf[i].len > rec_len) fatal("a SORT field lies past the record");
+    /* every field must fit; a CH field that runs past the record is clipped to
+     * it -- `1,256,CH,A` as a last key means "the rest of the record", whatever
+     * the record's length turned out to be */
+    for (unsigned i = 0; i < nsortf; i++) if (sortf[i].pos + sortf[i].len > rec_len) {
+        if (sortf[i].fmt != F_CH || sortf[i].pos >= rec_len) fatal("a SORT field lies past the record");
+        sortf[i].len = rec_len - sortf[i].pos;
+    }
     for (unsigned i = 0; i < nsumf; i++) if (sumf[i].pos + sumf[i].len > rec_len) fatal("a SUM field lies past the record");
-    for (unsigned i = 0; i < nconds; i++) { if (conds[i].a.pos + conds[i].a.len > in_len || (conds[i].rhs_is_field && conds[i].b.pos + conds[i].b.len > in_len)) fatal("an INCLUDE/OMIT field lies past the record"); }
+    for (unsigned i = 0; i < nconds; i++) {
+        cond *c = &conds[i];
+        if (c->a.pos + c->a.len > in_len) { if (c->a.fmt != F_CH || c->a.pos >= in_len) fatal("an INCLUDE/OMIT field lies past the record"); c->a.len = in_len - c->a.pos; }
+        if (c->rhs_is_field && c->b.pos + c->b.len > in_len) { if (c->b.fmt != F_CH || c->b.pos >= in_len) fatal("an INCLUDE/OMIT field lies past the record"); c->b.len = in_len - c->b.pos; }
+    }
 
-    inbuf = malloc(in_len); recbuf = malloc(rec_len ? rec_len : 1); outbuf = malloc(noutrec ? reformat_len(outrec, noutrec) : 1);
+    inbuf = malloc(slot_of(in_len)); recbuf = malloc(slot_of(rec_len ? rec_len : 1)); outbuf = malloc(noutrec ? reformat_len(outrec, noutrec) : 1);
     klen = key_len(); keybuf = malloc(klen);
     if (!inbuf || !recbuf || !outbuf || !keybuf) fatal("out of memory");
     if (!mainsize) {
@@ -799,9 +915,10 @@ int main(int argc, char **argv)
     if (mainsize < 65536) mainsize = 65536;
     /* run files go beside SORTOUT, or beside the first OUTFIL when there is no SORTOUT */
     const char *base = sortout ? sortout : nofs ? dd_path(ofs[0].names[0]) : "s32sort";
-    xs_init(&xs, klen + rec_len, klen, mainsize, 32, base ? base : "s32sort", fatal);
+    xs_init(&xs, klen + slot_of(rec_len), klen, mainsize, 32, base ? base : "s32sort", fatal);
 
     /* in */
+    int stats = getenv("S32SORT_STATS") != 0; clock_t t0 = clock(), t1, t2, t3;
     unsigned seq = 0;
     if (have_join) {
         unsigned saved = in_len; in_len = side_len; run_join(); in_len = saved;
@@ -809,11 +926,14 @@ int main(int argc, char **argv)
         FILE *f = fopen(sortin[i], "rb");
         if (!f) { char m[300]; snprintf(m, sizeof m, "cannot open SORTIN %s", sortin[i]); fatal(m); }
         if (is_merge) xs_source_begin(&xs);
+        in_open(f);
         while (read_record(f, inbuf)) take(inbuf, seq++);
         if (is_merge) xs_source_end(&xs);
         fclose(f);
     }
+    t1 = clock();
     xs_finish(&xs);
+    t2 = clock();
 
     /* out */
     FILE *out = 0;
@@ -823,7 +943,7 @@ int main(int argc, char **argv)
         while ((e = xs_next(&xs)) != 0) emit(out, e + klen);
     } else {
         /* records equal on the sort fields collapse: the first stays, SUM fields accumulate */
-        unsigned char *held = malloc(rec_len), *hk = malloc(klen); int have = 0;
+        unsigned char *held = malloc(slot_of(rec_len)), *hk = malloc(klen); int have = 0;
         if (!held || !hk) fatal("out of memory");
         unsigned kcmp = klen - 4;                                       /* the key without the arrival number */
         while ((e = xs_next(&xs)) != 0) {
@@ -832,10 +952,14 @@ int main(int argc, char **argv)
                 continue;
             }
             if (have) emit(out, held);
-            memcpy(hk, e, klen); memcpy(held, e + klen, rec_len); have = 1;
+            memcpy(hk, e, klen); memcpy(held, e + klen, slot_of(rec_len)); have = 1;
         }
         if (have) emit(out, held);
     }
+    out_flush_all();
+    t3 = clock();
+    if (stats) fprintf(stderr, "s32sort: read %ld ms, sort %ld ms, write %ld ms (klen %u, slot %u, inmem %d)\n",
+        (long)((t1 - t0) * 1000 / CLOCKS_PER_SEC), (long)((t2 - t1) * 1000 / CLOCKS_PER_SEC), (long)((t3 - t2) * 1000 / CLOCKS_PER_SEC), klen, slot_of(rec_len), xs.inmem);
     if (out && fclose(out)) fatal("SORTOUT: close failed");
     for (unsigned i = 0; i < nofs; i++) for (unsigned k = 0; k < ofs[i].nnames; k++) if (fclose(ofs[i].fp[k])) fatal("OUTFIL: close failed");
     xs_free(&xs);

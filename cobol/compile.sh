@@ -52,6 +52,6 @@ if [ -n "$builtins" ]; then link+=("$builtins"); fi
 for f in "${objs[@]+"${objs[@]}"}"; do link+=("$f"); done
 # The MMIO libc: files (fopen and friends) live only there, and the
 # linker's --mmio gives the emulator the ring buffers to serve them.
-"$ROOT/tools/linker/s32-ld" --mmio 64K --stack-size 128K --heap-size 8M -o "$out" "$ROOT/runtime/crt0.s32o" "${link[@]}" \
+"$ROOT/tools/linker/s32-ld" --mmio 64K --stack-size 256K --heap-size 64M -o "$out" "$ROOT/runtime/crt0.s32o" "${link[@]}" \
     "$HERE/libcob/libcob.s32o" "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null
 echo "$out"

@@ -29,7 +29,7 @@ checked-in `.expected`.
     REFORMAT FIELDS=(F1:p,l | F2:p,l | ? ...)[,FILL=C'c'|X'hh']
     *  comment
 
-`p` counts from 1. `o` is `A` or `D`. Formats: `CH` (bytes; `AC`, `AQ`
+`p` counts from 1. `o` is `A` or `D`. A `CH` field that runs past the record is clipped to it, so `1,256,CH,A` as a last key means the rest of the record. Formats: `CH` (bytes; `AC`, `AQ`
 the same), `ZD` (zoned decimal: overpunched sign, trailing or leading
 `-`, EBCDIC zones), `PD` (packed), `BI` (unsigned big-endian binary),
 `FI` (signed), `FS`/`CSF` (a signed decimal string).
