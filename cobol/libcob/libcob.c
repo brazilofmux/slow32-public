@@ -1575,9 +1575,56 @@ typedef struct {
     const cob_sort_key *keys; int nkeys;
     const unsigned char *coll;      /* SORT ... COLLATING SEQUENCE: the alphabet's ranks, or 0 */
     char *buf; unsigned n, cap;       /* n records of recsize bytes */
+    unsigned char *nk; unsigned klen; /* one normalized key of klen bytes per record (below) */
     unsigned *order;                  /* after cob_sort_perform: record indices in key order */
     unsigned pos;                     /* next RETURN */
 } cob_sorter;
+
+/* The normalized key: every SORT key rendered as bytes whose unsigned
+ * byte order IS the COBOL order, so one memcmp compares a record on all
+ * its keys at once (what DFSORT does; cob_cmp per key per comparison
+ * was the sort's whole cost).  A numeric key becomes its cob_get_num
+ * value as eight big-endian bytes with the sign bit flipped -- every
+ * record of a key shares the descriptor, so the scale is common and
+ * needs no alignment, and cob_cmp on two numerics is exactly this
+ * order.  Any other key is its bytes through the collating sequence,
+ * which is cmp_bytes on equal lengths.  A DESCENDING key's bytes are
+ * complemented.  The arrival number trails every key, so equal keys
+ * stay in RELEASE order: WITH DUPLICATES IN ORDER for free, and the
+ * merge needs no tie-break of its own. */
+static unsigned sort_klen(const cob_sorter *so)
+{
+    unsigned k = 4;
+    for (int i = 0; i < so->nkeys; i++) {
+        const cob_desc *d = so->keys[i].desc;
+        k += d->cat == COB_NUM || d->cat == COB_NUM_ED ? 8 : d->size;
+    }
+    return k;
+}
+
+static void sort_key_build(const cob_sorter *so, const char *rec, unsigned seq, unsigned char *out)
+{
+    const unsigned char *t = so->coll ? so->coll : cob_collating;
+    for (int i = 0; i < so->nkeys; i++) {
+        const cob_sort_key *k = &so->keys[i];
+        const cob_desc *d = k->desc;
+        unsigned char *o = out;
+        if (d->cat == COB_NUM || d->cat == COB_NUM_ED) {
+            unsigned long long u = (unsigned long long)cob_get_num(rec + k->offset, d) ^ (1ULL << 63);
+            for (int b = 7; b >= 0; b--) { o[b] = (unsigned char)u; u >>= 8; }
+            out += 8;
+        } else {
+            const unsigned char *p = (const unsigned char *)rec + k->offset;
+            unsigned n = d->size;
+            if (t) for (unsigned b = 0; b < n; b++) o[b] = t[p[b]];
+            else memcpy(o, p, n);
+            out += n;
+        }
+        if (k->descending) for (unsigned char *q = o; q < out; q++) *q = (unsigned char)~*q;
+    }
+    out[0] = (unsigned char)(seq >> 24); out[1] = (unsigned char)(seq >> 16);
+    out[2] = (unsigned char)(seq >> 8);  out[3] = (unsigned char)seq;
+}
 
 void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups, const unsigned char *coll)
 {
@@ -1586,6 +1633,7 @@ void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups,
     cob_sorter *so = calloc(1, sizeof *so);
     if (!so) cob_fatal("SORT: out of memory");
     so->keys = keys; so->nkeys = nkeys; so->coll = coll;
+    so->klen = sort_klen(so);
     sd->idx = so; sd->open_mode = COB_OPEN_IO; sd->at_eof = 0;
 }
 
@@ -1603,8 +1651,11 @@ void cob_release(cob_file *sd)
         so->cap = so->cap ? so->cap * 2 : 256;
         so->buf = realloc(so->buf, (size_t)so->cap * sd->recsize);
         if (!so->buf) cob_fatal("SORT: out of memory");
+        so->nk = realloc(so->nk, (size_t)so->cap * so->klen);
+        if (!so->nk) cob_fatal("SORT: out of memory");
     }
     memcpy(so->buf + (size_t)so->n * sd->recsize, sd->record, sd->recsize);
+    sort_key_build(so, so->buf + (size_t)so->n * sd->recsize, so->n, so->nk + (size_t)so->n * so->klen);
     so->n++;
 }
 
@@ -1636,13 +1687,8 @@ static cob_file *sort_sd; static cob_sorter *sort_so;
 
 static int sort_cmp(unsigned a, unsigned b)
 {
-    const char *ra = sort_so->buf + (size_t)a * sort_sd->recsize, *rb = sort_so->buf + (size_t)b * sort_sd->recsize;
-    for (int i = 0; i < sort_so->nkeys; i++) {
-        const cob_sort_key *k = &sort_so->keys[i];
-        int c = cob_cmp(ra + k->offset, (const cob_desc *)k->desc, rb + k->offset, (const cob_desc *)k->desc);
-        if (c) return k->descending ? -c : c;
-    }
-    return a < b ? -1 : a > b ? 1 : 0;      /* equal keys keep their order */
+    /* the trailing arrival number makes every key distinct: never 0 */
+    return memcmp(sort_so->nk + (size_t)a * sort_so->klen, sort_so->nk + (size_t)b * sort_so->klen, sort_so->klen);
 }
 
 static void sort_merge(unsigned *v, unsigned *tmp, unsigned lo, unsigned hi)
@@ -1665,11 +1711,8 @@ void cob_sort_perform(cob_file *sd)
     if (!so->order || !tmp) cob_fatal("SORT: out of memory");
     for (unsigned i = 0; i < so->n; i++) so->order[i] = i;
     sort_sd = sd; sort_so = so;
-    /* the statement's collating sequence for the alphanumeric keys, the program's back afterwards */
-    const unsigned char *old_coll = cob_collating;
-    if (so->coll) cob_collating = so->coll;
+    /* the collating sequence went into the keys as they were released */
     sort_merge(so->order, tmp, 0, so->n);
-    cob_collating = old_coll;
     free(tmp);
     so->pos = 0; sd->at_eof = 0;
 }
@@ -1700,7 +1743,7 @@ int cob_return(cob_file *sd)
 void cob_sort_end(cob_file *sd)
 {
     cob_sorter *so = sorter_of(sd, "SORT");
-    free(so->buf); free(so->order); free(so);
+    free(so->buf); free(so->nk); free(so->order); free(so);
     sd->idx = 0; sd->open_mode = 0;
 }
 
