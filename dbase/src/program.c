@@ -415,6 +415,7 @@ static program_t *prog_load(const char *filename) {
 }
 
 static void prog_free(program_t *prog) {
+    if (prog) { free(prog->procs); prog->procs = NULL; }
     int i;
     if (!prog) return;
     if (prog->lines) {
@@ -546,6 +547,43 @@ static int line_is_kw(const char *line, const char *kw);
 
 static int find_procedure(program_t *prog, const char *name) {
     int i;
+    if (prog->procs == NULL) {
+        /* First lookup in this program: scan the text once and remember every
+         * definition.  Before this, every UDF call rescanned (copied and
+         * macro-expanded) every line of the program and the procedure file;
+         * majesty's import made 166k such calls over ~400 lines each. */
+        int cap = 16;
+        prog->procs = malloc(cap * sizeof(prog->procs[0]));
+        prog->nprocs = 0;
+        for (i = 0; prog->procs && i < prog->nlines; i++) {
+            char line[MAX_LINE_LEN];
+            char *p, *rest;
+            int j, is_func;
+            str_copy(line, prog->lines[i], MAX_LINE_LEN);
+            prog_preprocess(line, cmd_get_memvar_store());
+            p = skip_ws(line);
+            if (line_is_kw(p, "PROCEDURE")) is_func = 0;
+            else if (line_is_kw(p, "FUNCTION")) is_func = 1;
+            else continue;
+            if (prog->nprocs == cap) {
+                void *n = realloc(prog->procs, cap * 2 * sizeof(prog->procs[0]));
+                if (!n) break;
+                prog->procs = n; cap *= 2;
+            }
+            rest = skip_ws(p + (is_func ? 8 : 9));
+            j = 0;
+            while (is_ident_char(*rest) && j < 63) prog->procs[prog->nprocs].name[j++] = *rest++;
+            prog->procs[prog->nprocs].name[j] = '\0';
+            prog->procs[prog->nprocs].line = i;
+            prog->nprocs++;
+        }
+    }
+    if (prog->procs) {
+        for (i = 0; i < prog->nprocs; i++)
+            if (str_icmp(prog->procs[i].name, name) == 0) return prog->procs[i].line;
+        return -1;
+    }
+    /* table allocation failed: fall back to the scan */
     for (i = 0; i < prog->nlines; i++) {
         char line[MAX_LINE_LEN];
         char *p;

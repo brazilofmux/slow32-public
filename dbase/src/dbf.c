@@ -262,6 +262,11 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
     if (!db->fp) return -1;
     if (recno < 1 || recno > db->record_count) return -1;
 
+    /* A dirty buffer holds exactly this record's pending contents: flushing
+     * and re-reading would return the same bytes for two seeks and a write. */
+    if (recno == db->current_record && db->record_dirty)
+        return 0;
+
     /* Flush current if dirty */
     if (db->record_dirty)
         dbf_flush_record(db);
@@ -301,6 +306,15 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
     db->current_record = recno;
     db->record_dirty = 0;
     return 0;
+}
+
+/* Move to EOF (the phantom record past the last).  A dirty record is written
+ * first: with REPLACE no longer flushing eagerly, a bare assignment here would
+ * leave the record to be flushed at the EOF position on close. */
+void dbf_move_eof(dbf_t *db) {
+    if (db->record_dirty)
+        dbf_flush_record(db);
+    db->current_record = db->record_count + 1;
 }
 
 int dbf_flush_record(dbf_t *db) {

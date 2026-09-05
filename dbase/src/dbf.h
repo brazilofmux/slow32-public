@@ -56,6 +56,7 @@ int  dbf_is_open(const dbf_t *db);
 int  dbf_append_blank(dbf_t *db);
 int  dbf_read_record(dbf_t *db, uint32_t recno);
 int  dbf_flush_record(dbf_t *db);
+void dbf_move_eof(dbf_t *db);   /* to the phantom record past the last, flushing first */
 int  dbf_find_field(const dbf_t *db, const char *name);
 int  dbf_get_field_raw(const dbf_t *db, int idx, char *buf, int bufsize);
 int  dbf_set_field_raw(dbf_t *db, int idx, const char *value);

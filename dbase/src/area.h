@@ -37,4 +37,7 @@ dbf_t *area_lookup_dbf(const char *alias);
 /* Invalidate cache for all work areas using specified filename */
 void area_invalidate_all(const char *filename);
 
+/* Number of work areas with this file open. */
+int area_open_count(const char *filename);
+
 #endif

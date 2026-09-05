@@ -93,6 +93,16 @@ dbf_t *area_lookup_dbf(const char *alias) {
     return NULL;
 }
 
+/* How many work areas have this file open (the same .DBF may be USEd twice). */
+int area_open_count(const char *filename) {
+    int i, n = 0;
+    for (i = 0; i < MAX_AREAS; i++) {
+        dbf_t *db = &areas[i].db;
+        if (dbf_is_open(db) && str_icmp(db->filename, filename) == 0) n++;
+    }
+    return n;
+}
+
 void area_invalidate_all(const char *filename) {
     int i;
     for (i = 0; i < MAX_AREAS; i++) {

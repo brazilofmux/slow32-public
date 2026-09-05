@@ -193,3 +193,37 @@ Major completed areas (not exhaustive):
 - UNIQUE indexes and two-phase constraint checking
 - Date arithmetic, path normalization, cross-area cache invalidation
 - Stress test suite (strings, recursion, big DB, indexes, work areas)
+
+### Procedure lookup rescanned the source on every UDF call — RESOLVED 2026-09-05
+
+majesty's `run_dbase_s32.sh` took 46 s against 0.26 s for the same books in
+COBOL. A native build of the interpreter (host `qsort_r` takes BSD argument
+order, so a shim is needed) ran the import in 8.3 s, so the guest was only the
+usual ~3.3x of native: the time was the interpreter's own algorithms.
+
+- `find_procedure` walked every line of the current program and then the
+  procedure file on every user-function call, copying and macro-expanding each
+  line to see whether it began with PROCEDURE or FUNCTION. The import's index
+  build evaluates three PAD_ZERO calls per record over 55k records. Now each
+  `program_t` builds a name/line table on its first lookup (the text never
+  changes after load). Half the native samples were here.
+- REPLACE re-read the current record from disk before replacing it, then
+  flushed after every field: two seeks, a read, a write and a flush per field,
+  eleven fields per record in the merge join. `dbf_read_record` now returns at
+  once when asked for the current record while it is dirty (the buffer holds
+  exactly those bytes), and `replace_cb` leaves the record dirty unless an
+  index is open (the UNIQUE rollback re-reads the disk copy) or the same file
+  is open in another work area (which reads the disk; `test_stress_workarea`
+  caught this one). Every movement flushes first; the six places in command.c
+  that moved to EOF by assigning `current_record` now go through
+  `dbf_move_eof`, which flushes -- a bare assignment left the dirty record to
+  be written one slot past the end on close (every file grew by one record in
+  the first prototype). That hole was latent while nothing was ever dirty at
+  SKIP.
+
+Gate: tests 102/102 before and after; majesty's 12 dBASE reports and the
+FLATLINE/TXNS/LINES data files and FLATACCT index byte-identical. Runner
+46.5 s -> 26.9 s; the REPLACE change is under a second of that on the guest.
+What remains is structural: every statement is re-lexed on each execution and
+`memvar_find` scans all 256 slots with a case-insensitive compare.
+

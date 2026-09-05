@@ -18,6 +18,10 @@ typedef struct {
     char **lines;           /* malloc'd array of strdup'd lines */
     int nlines;
     char filename[64];
+    /* PROCEDURE/FUNCTION definitions, found once on the first lookup (the
+     * text never changes after load); NULL = not built yet */
+    struct { char name[64]; int line; } *procs;
+    int nprocs;
 } program_t;
 
 /* Call stack frame */

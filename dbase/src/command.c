@@ -284,7 +284,7 @@ static void follow_relations(void) {
                         if (rec > 0)
                             dbf_read_record(&child->db, rec);
                         else
-                            child->db.current_record = child->db.record_count + 1;
+                            dbf_move_eof(&child->db);
                     }
                 } else {
                     /* No index: record number search */
@@ -292,7 +292,7 @@ static void follow_relations(void) {
                     if (rec >= 1 && rec <= child->db.record_count)
                         dbf_read_record(&child->db, rec);
                     else
-                        child->db.current_record = child->db.record_count + 1;
+                        dbf_move_eof(&child->db);
                 }
             }
         }
@@ -792,7 +792,7 @@ static void cmd_go(dbf_t *db, const char *arg) {
                 while (rec > 0 && (!check_filter(db) || skip_deleted(db->record_buf))) {
                     if (index_next(idx) < 0) {
                         expr_ctx.eof_flag = 1;
-                        db->current_record = db->record_count + 1;
+                        dbf_move_eof(db);
                         return;
                     }
                     rec = index_current_recno(idx);
@@ -809,7 +809,7 @@ static void cmd_go(dbf_t *db, const char *arg) {
                 }
                 if (r > db->record_count) {
                     expr_ctx.eof_flag = 1;
-                    db->current_record = db->record_count + 1;
+                    dbf_move_eof(db);
                     return;
                 }
             }
@@ -904,7 +904,7 @@ static void cmd_skip(dbf_t *db, const char *arg) {
                     if (index_next(idx) < 0) {
                         expr_ctx.eof_flag = 1;
                         expr_ctx.bof_flag = 0;
-                        db->current_record = db->record_count + 1;
+                        dbf_move_eof(db);
                         return;
                     }
                     rec = index_current_recno(idx);
@@ -975,7 +975,7 @@ static void cmd_skip(dbf_t *db, const char *arg) {
             if ((uint32_t)target > db->record_count) {
                 expr_ctx.eof_flag = 1;
                 expr_ctx.bof_flag = 0;
-                db->current_record = db->record_count + 1;
+                dbf_move_eof(db);
                 return;
             }
             dbf_read_record(db, (uint32_t)target);
@@ -1988,7 +1988,14 @@ static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
         }
     }
 
-    dbf_flush_record(db);
+    /* The record may stay dirty: every movement (read, GOTO, APPEND, the EOF
+     * move) and CLOSE flushes it first, so eleven REPLACEs on one record cost
+     * one write instead of eleven.  Two cases keep the write eager: indexes
+     * open (the UNIQUE rollback above re-reads the disk copy), and the same
+     * file open in another work area (which reads the disk, not this buffer;
+     * the flush invalidates its cache). */
+    if (has_indexes || area_open_count(db->filename) > 1)
+        dbf_flush_record(db);
     return REC_CONTINUE;
 }
 
