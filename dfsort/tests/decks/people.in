@@ -1,0 +1,6 @@
+smith    acct 00120 -45
+jones    acct 00007  30
+smith    sale 00120  12
+adams    acct 00099   0
+jones    sale 00001 -30
+smith    acct 00003 -45

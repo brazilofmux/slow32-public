@@ -234,3 +234,5 @@ doom/.savegame/
 cobol/out/
 cobol/libcob/*.s
 cobol/bench/tmp/
+dfsort/out/
+dfsort/tests/tmp/
