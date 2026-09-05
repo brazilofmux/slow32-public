@@ -28,6 +28,7 @@
 #include <term.h>
 #include <time.h>
 #include "xsort.h"
+#include "btree.h"
 
 /* ---- output: DISPLAY goes to stdout, buffered by us ------------------ */
 
@@ -1901,26 +1902,21 @@ char *cob_fn_lower(const char *s, int n)
 /* Indexed files: the default path                                          */
 /* ====================================================================== */
 
-/* On disk: the data file named by ASSIGN holds fixed slots of recsize
- * bytes (payload only -- no RDW, no delete byte), written in arrival
- * order; beside it, "<name>.key" holds the key tables.  In memory each
- * table is an array of (key bytes, u32 slot, u32 seq) kept sorted by key
- * then seq -- seq is the arrival order, which is the order duplicates are
- * retrieved in -- so a random READ is a binary search and READ NEXT walks
- * the table of the key of reference.  The prime key's table has no
- * duplicates; an ALTERNATE RECORD KEY has one table each, WITH DUPLICATES
- * or not.  DELETE removes the entries and leaves the slot unused.  The
- * key file is rewritten on CLOSE.
- *
- *   key file: "S32KEY02" | u32 recsize | u32 keyoff | u32 keylen | u32 count
- *             | u32 nslots | u32 seq | u32 0 | count x (key, u32 slot, u32 seq)
- *             | u32 nalt | nalt x ( u32 offset | u32 len | u32 dups | u32 count | entries )
- *
- * An "S32KEY01" file (prime table only, entries of key + slot) still
- * loads; its alternate tables are rebuilt from the records.  A btree can
- * replace the arrays without changing the program-visible behaviour;
- * docs/indexed.md keeps the format's description. */
+/* ====================================================================== */
+/* INDEXED files.  The data file named by ASSIGN holds recsize-byte slots  */
+/* in arrival order; beside it "<name>.key" holds one B+tree per key in a  */
+/* 4K-paged file (libcob/btree.h): the RECORD KEY's tree and one for each  */
+/* ALTERNATE RECORD KEY, entries of (key bytes, arrival number, slot) in    */
+/* key-then-arrival order, a bitmap of the live slots so a DELETEd slot is */
+/* reused, and a free chain of pages.  docs/indexed.md describes it.       */
+/*                                                                         */
+/* Until 2026-09-04 the key file was a sorted array per key ("S32KEY01",   */
+/* prime key only; "S32KEY02", alternates too) loaded whole at OPEN.  Such */
+/* a file is still read, once: OPEN converts it to the tree in place.      */
+/* ====================================================================== */
 
+/* The legacy key table, kept only to read an S32KEY01/02 file once and
+ * convert it to the tree (below). */
 typedef struct {
     unsigned char *e;       /* count entries of (klen bytes, u32 slot, u32 seq), sorted by key then seq */
     unsigned count, cap;
@@ -1928,13 +1924,18 @@ typedef struct {
     int dups;               /* WITH DUPLICATES */
 } cob_ktab;
 
+/* The indexed file's keys live in `<data>.key`, one B+tree per key in a
+ * 4K-paged file (libcob/btree.h; docs/indexed.md).  Program-visible
+ * behaviour is what the sorted arrays gave: a random READ finds the key,
+ * READ NEXT walks the key of reference, START positions, duplicates
+ * come back in arrival order, and the status codes follow the 1985 text.
+ * The cursor is the (key, arrival) of the next entry to deliver, so a
+ * WRITE, REWRITE or DELETE between two READ NEXTs needs no fixing up. */
 typedef struct {
-    cob_ktab prime;
-    cob_ktab *alt; unsigned nalt;
-    unsigned nslots;        /* slots present in the data file */
-    unsigned seq;           /* arrival counter, for the order of duplicates */
+    btf bt;                 /* the key file: bt.k[0] the prime key, bt.k[i] the i-th alternate */
     int ref;                /* key of reference: 0 the prime key, i the i-th alternate */
-    int pos;                /* next entry in the reference table for READ NEXT; -1 none */
+    int have_cur;           /* the cursor is set (else READ NEXT starts at the front) */
+    unsigned char cur[BT_KEYMAX + 4];   /* next (key, arrival) to deliver, inclusive */
     int last_slot;          /* slot the last READ delivered, for REWRITE/DELETE; -1 */
     unsigned char *tmp;     /* a record's worth of scratch */
 } cob_idx;
@@ -1948,7 +1949,6 @@ static void put_u32(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1
 static unsigned get_u32(const unsigned char *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24); }
 static unsigned tab_slot(const cob_ktab *t, unsigned i) { return get_u32(tab_entry(t, i) + t->klen); }
 static unsigned tab_seq(const cob_ktab *t, unsigned i) { return get_u32(tab_entry(t, i) + t->klen + 4); }
-static cob_ktab *idx_table(cob_idx *x, int ki) { return ki <= 0 ? &x->prime : &x->alt[ki - 1]; }
 
 static const char *key_file_name(cob_file *f)
 {
@@ -1958,67 +1958,6 @@ static const char *key_file_name(cob_file *f)
     if (n > 290) n = 290;
     memcpy(name, d, n); memcpy(name + n, ".key", 5);
     return name;
-}
-
-/* binary search: index of the first entry whose first len bytes are >= k;
- * *found says equal on those bytes (len < klen: a leading part of the key) */
-static unsigned tab_find(const cob_ktab *t, const unsigned char *k, unsigned len, int *found)
-{
-    unsigned lo = 0, hi = t->count;
-    while (lo < hi) {
-        unsigned mid = (lo + hi) / 2;
-        int c = memcmp(tab_entry(t, mid), k, len);
-        if (c < 0) lo = mid + 1; else hi = mid;
-    }
-    *found = (lo < t->count && !memcmp(tab_entry(t, lo), k, len));
-    return lo;
-}
-
-/* the index just past every entry equal to k on len bytes, from at */
-static unsigned tab_after_equal(const cob_ktab *t, unsigned at, const unsigned char *k, unsigned len)
-{
-    while (at < t->count && !memcmp(tab_entry(t, at), k, len)) at++;
-    return at;
-}
-
-static void tab_grow(cob_ktab *t)
-{
-    if (t->count < t->cap) return;
-    unsigned ncap = t->cap ? t->cap * 2 : 256;
-    unsigned char *ne = realloc(t->e, (size_t)ncap * tab_esize(t));
-    if (!ne) cob_fatal("out of memory for a key table");
-    t->e = ne; t->cap = ncap;
-}
-
-/* insert (k, slot, seq) after every entry with the same key: arrival order */
-static void tab_insert(cob_ktab *t, const unsigned char *k, unsigned slot, unsigned seq)
-{
-    int found;
-    unsigned at = tab_find(t, k, t->klen, &found);
-    if (found) at = tab_after_equal(t, at, k, t->klen);
-    tab_grow(t);
-    unsigned es = tab_esize(t);
-    memmove(tab_entry(t, at + 1), tab_entry(t, at), (size_t)(t->count - at) * es);
-    unsigned char *e = tab_entry(t, at);
-    memcpy(e, k, t->klen); put_u32(e + t->klen, slot); put_u32(e + t->klen + 4, seq);
-    t->count++;
-}
-
-/* remove the entry with key k that names slot; the index removed, or -1 */
-static int tab_remove(cob_ktab *t, const unsigned char *k, unsigned slot)
-{
-    int found;
-    unsigned at = tab_find(t, k, t->klen, &found);
-    if (!found) return -1;
-    unsigned end = tab_after_equal(t, at, k, t->klen);
-    for (unsigned i = at; i < end; i++)
-        if (tab_slot(t, i) == slot) {
-            unsigned es = tab_esize(t);
-            memmove(tab_entry(t, i), tab_entry(t, i + 1), (size_t)(t->count - i - 1) * es);
-            t->count--;
-            return (int)i;
-        }
-    return -1;
 }
 
 static int slot_read_to(cob_file *f, unsigned slot, unsigned char *buf)
@@ -2037,54 +1976,81 @@ static int slot_write(cob_file *f, unsigned slot)
     return 1;
 }
 
-/* the alternate tables as the FD declares them, empty */
-static void idx_alt_setup(cob_file *f, cob_idx *x)
+/* The page cache: S32_INDEX_CACHE pages, else a sixteenth of the heap the
+ * program was linked with, 16..256 pages -- there is no sbrk. */
+static unsigned idx_cache_pages(void)
 {
-    x->nalt = f->naltkeys;
-    x->alt = x->nalt ? calloc(x->nalt, sizeof *x->alt) : 0;
-    if (x->nalt && !x->alt) cob_fatal("out of memory for the key tables");
-    for (unsigned i = 0; i < x->nalt; i++) {
+    const char *e = getenv("S32_INDEX_CACHE");
+    if (e && *e) { unsigned v = (unsigned)atoi(e); return v < BT_MINCACHE ? BT_MINCACHE : v; }
+    size_t heap = (size_t)(__heap_end - __heap_start);
+    unsigned n = (unsigned)(heap / 16 / BT_PAGE);
+    return n < BT_MINCACHE ? BT_MINCACHE : n > 256 ? 256 : n;
+}
+
+/* the keys as the FD declares them: bt.k[0] prime, then the alternates */
+static unsigned idx_fd_keys(cob_file *f, btkey *keys)
+{
+    unsigned n = f->naltkeys < BT_MAXKEYS - 1 ? f->naltkeys : BT_MAXKEYS - 1;
+    /* the prime entry carries each alternate's arrival number, so a DELETE or
+     * a REWRITE that moves an alternate key removes its entry exactly */
+    keys[0].off = f->keyoff; keys[0].klen = f->keylen; keys[0].dups = 0; keys[0].root = 0; keys[0].count = 0; keys[0].extra = 4 * n;
+    for (unsigned i = 0; i < n; i++) {
         const cob_altkey *a = &f->altkeys[i];
-        x->alt[i].off = a->offset; x->alt[i].klen = a->len; x->alt[i].dups = (int)a->dups;
+        keys[i + 1].off = a->offset; keys[i + 1].klen = a->len; keys[i + 1].dups = (unsigned)a->dups; keys[i + 1].root = 0; keys[i + 1].count = 0; keys[i + 1].extra = 0;
     }
+    return n + 1;
 }
 
-/* the alternate tables from the records themselves (an old key file, or
- * one whose alternates do not match the FD) */
-static void idx_alt_rebuild(cob_file *f, cob_idx *x)
+static int idx_keys_match(cob_file *f, const btf *b)
 {
-    for (unsigned i = 0; i < x->nalt; i++) { free(x->alt[i].e); x->alt[i].e = 0; x->alt[i].count = x->alt[i].cap = 0; }
-    for (unsigned i = 0; i < x->prime.count; i++) {
-        unsigned slot = tab_slot(&x->prime, i), seq = tab_seq(&x->prime, i);
-        if (!slot_read_to(f, slot, x->tmp)) continue;
-        for (unsigned a = 0; a < x->nalt; a++) tab_insert(&x->alt[a], x->tmp + x->alt[a].off, slot, seq);
-    }
+    btkey keys[BT_MAXKEYS];
+    unsigned n = idx_fd_keys(f, keys);
+    if (b->recsize != f->recsize || b->keyoff != f->keyoff || b->keylen != f->keylen) return 0;
+    if (b->nkeys != n) return 0;
+    for (unsigned i = 0; i < n; i++)
+        if (b->k[i].off != keys[i].off || b->k[i].klen != keys[i].klen || b->k[i].dups != keys[i].dups || b->k[i].extra != keys[i].extra) return 0;
+    return 1;
 }
 
-static int idx_load(cob_file *f, cob_idx *x)
+/* --- reading an S32KEY01/02 file, once, to convert it --- */
+
+static unsigned tab_find(const cob_ktab *t, const unsigned char *k, unsigned len, int *found)
 {
-    FILE *kf = fopen(key_file_name(f), "rb");
-    if (!kf) return 0;
-    unsigned char h[32];
-    if (fread(h, 1, 32, kf) != 32 || get_u32(h + 8) != f->recsize ||
-        get_u32(h + 12) != f->keyoff || get_u32(h + 16) != f->keylen) { fclose(kf); return 0; }
+    unsigned lo = 0, hi = t->count;
+    while (lo < hi) {
+        unsigned mid = (lo + hi) / 2;
+        int c = memcmp(tab_entry(t, mid), k, len);
+        if (c < 0) lo = mid + 1; else hi = mid;
+    }
+    *found = (lo < t->count && !memcmp(tab_entry(t, lo), k, len));
+    return lo;
+}
+
+static int old_load(cob_file *f, FILE *kf, const unsigned char *h, cob_ktab *prime, cob_ktab **alt_out, unsigned *nalt_out, unsigned *nslots, unsigned *seq)
+{
+    if (get_u32(h + 8) != f->recsize || get_u32(h + 12) != f->keyoff || get_u32(h + 16) != f->keylen) return 0;
     int v2 = !memcmp(h, KEYMAGIC2, 8);
-    if (!v2 && memcmp(h, KEYMAGIC1, 8)) { fclose(kf); return 0; }
-    x->prime.count = get_u32(h + 20); x->nslots = get_u32(h + 24);
-    x->prime.cap = x->prime.count ? x->prime.count : 1;
-    x->prime.e = malloc((size_t)x->prime.cap * tab_esize(&x->prime));
-    if (!x->prime.e) cob_fatal("out of memory for the key table");
+    memset(prime, 0, sizeof *prime);
+    prime->off = f->keyoff; prime->klen = f->keylen;
+    prime->count = get_u32(h + 20); *nslots = get_u32(h + 24);
+    prime->cap = prime->count ? prime->count : 1;
+    prime->e = malloc((size_t)prime->cap * tab_esize(prime));
+    if (!prime->e) cob_fatal("out of memory for the key table");
+    unsigned nalt = f->naltkeys;
+    cob_ktab *alt = nalt ? calloc(nalt, sizeof *alt) : 0;
+    if (nalt && !alt) cob_fatal("out of memory for the key tables");
+    for (unsigned i = 0; i < nalt; i++) { alt[i].off = f->altkeys[i].offset; alt[i].klen = f->altkeys[i].len; alt[i].dups = (int)f->altkeys[i].dups; }
     int alts_ok = 0;
     if (v2) {
-        x->seq = get_u32(h + 28);
-        size_t want = (size_t)x->prime.count * tab_esize(&x->prime);
-        if (fread(x->prime.e, 1, want, kf) != want) { fclose(kf); return 0; }
+        *seq = get_u32(h + 28);
+        size_t want = (size_t)prime->count * tab_esize(prime);
+        if (fread(prime->e, 1, want, kf) != want) return 0;
         unsigned char ah[4];
-        if (fread(ah, 1, 4, kf) == 4 && get_u32(ah) == x->nalt) {
+        if (fread(ah, 1, 4, kf) == 4 && get_u32(ah) == nalt) {
             alts_ok = 1;
-            for (unsigned a = 0; a < x->nalt && alts_ok; a++) {
+            for (unsigned a = 0; a < nalt && alts_ok; a++) {
                 unsigned char th[16];
-                cob_ktab *t = &x->alt[a];
+                cob_ktab *t = &alt[a];
                 if (fread(th, 1, 16, kf) != 16 || get_u32(th) != t->off || get_u32(th + 4) != t->klen || get_u32(th + 8) != (unsigned)t->dups) { alts_ok = 0; break; }
                 t->count = get_u32(th + 12); t->cap = t->count ? t->count : 1;
                 t->e = malloc((size_t)t->cap * tab_esize(t));
@@ -2094,71 +2060,148 @@ static int idx_load(cob_file *f, cob_idx *x)
             }
         }
     } else {
-        /* the 01 layout: key + slot; seq is the entry's order */
-        for (unsigned i = 0; i < x->prime.count; i++) {
-            unsigned char *e = tab_entry(&x->prime, i);
-            if (fread(e, 1, f->keylen + 4, kf) != f->keylen + 4) { fclose(kf); return 0; }
+        for (unsigned i = 0; i < prime->count; i++) {
+            unsigned char *e = tab_entry(prime, i);
+            if (fread(e, 1, f->keylen + 4, kf) != f->keylen + 4) return 0;
             put_u32(e + f->keylen + 4, i);
         }
-        x->seq = x->prime.count;
+        *seq = prime->count;
     }
-    fclose(kf);
-    if (!alts_ok && x->nalt) idx_alt_rebuild(f, x);
+    *alt_out = alt; *nalt_out = alts_ok ? nalt : 0;    /* 0: the alternates are rebuilt from the records */
     return 1;
 }
 
-static int idx_save(cob_file *f, cob_idx *x)
+/* the alternate trees from the records the prime tree names */
+static void idx_alt_rebuild(cob_file *f, cob_idx *x)
 {
-    FILE *kf = fopen(key_file_name(f), "wb");
+    btf *b = &x->bt;
+    unsigned char zero[BT_KEYMAX + 4], ka[BT_KEYMAX + 4];
+    memset(zero, 0, sizeof zero);
+    unsigned page, ix;
+    if (!bt_first_ge(b, 0, zero, b->k[0].klen + 4, &page, &ix)) return;
+    unsigned char ex[4 * BT_MAXKEYS];
+    do {
+        unsigned slot = bt_read(b, 0, page, ix, ka), seq = bt_getbe(ka + b->k[0].klen);
+        if (!slot_read_to(f, slot, x->tmp)) continue;
+        for (unsigned a = 1; a < b->nkeys; a++) { bt_insert(b, a, x->tmp + b->k[a].off, seq, slot); bt_putbe(ex + 4 * (a - 1), seq); }
+        if (b->nkeys > 1) bt_extra_set(b, 0, page, ix, ex);
+    } while (bt_step(b, &page, &ix));
+}
+
+/* an old key file becomes a tree file in place */
+static int idx_migrate(cob_file *f, cob_idx *x, FILE *kf, const unsigned char *h)
+{
+    cob_ktab prime, *alt = 0; unsigned nalt = 0, nslots = 0, seq = 0;
+    int ok = old_load(f, kf, h, &prime, &alt, &nalt, &nslots, &seq);
+    fclose(kf);
+    if (!ok) { free(prime.e); if (alt) { for (unsigned a = 0; a < f->naltkeys; a++) free(alt[a].e); free(alt); } return 0; }
+    btkey keys[BT_MAXKEYS];
+    unsigned nkeys = idx_fd_keys(f, keys);
+    if (!bt_create(&x->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) return 0;
+    btf *b = &x->bt;
+    b->nslots = nslots; b->seq = seq;
+    unsigned maxslot = nslots;
+    for (unsigned i = 0; i < prime.count; i++) if (tab_slot(&prime, i) >= maxslot) maxslot = tab_slot(&prime, i) + 1;
+    unsigned char *ex = 0;
+    if (nalt) {                                      /* slot -> each alternate's arrival, from the old tables */
+        ex = calloc((size_t)maxslot, 4 * nalt);
+        if (!ex) cob_fatal("out of memory converting the key file");
+        for (unsigned a = 0; a < nalt; a++)
+            for (unsigned i = 0; i < alt[a].count; i++) bt_putbe(ex + (size_t)tab_slot(&alt[a], i) * 4 * nalt + 4 * a, tab_seq(&alt[a], i));
+    }
+    for (unsigned i = 0; i < prime.count; i++) {
+        unsigned slot = tab_slot(&prime, i);
+        bt_insert_x(b, 0, tab_entry(&prime, i), tab_seq(&prime, i), slot, ex ? ex + (size_t)slot * 4 * nalt : 0);
+        bt_slot_set(b, slot, 1);
+        if (slot >= b->nslots) b->nslots = slot + 1;
+    }
+    if (nalt) for (unsigned a = 0; a < nalt; a++)
+        for (unsigned i = 0; i < alt[a].count; i++) bt_insert(b, a + 1, tab_entry(&alt[a], i), tab_seq(&alt[a], i), tab_slot(&alt[a], i));
+    else idx_alt_rebuild(f, x);
+    free(ex);
+    b->hdr_dirty = 1;
+    free(prime.e); if (alt) { for (unsigned a = 0; a < f->naltkeys; a++) free(alt[a].e); free(alt); }
+    return 1;
+}
+
+/* the FD's alternates differ from the key file's: rebuild the key file
+ * from its prime tree and the records */
+static int idx_rekey(cob_file *f, cob_idx *x)
+{
+    btf old = x->bt;
+    char tmpname[320];
+    snprintf(tmpname, sizeof tmpname, "%s.new", key_file_name(f));
+    btkey keys[BT_MAXKEYS];
+    unsigned nkeys = idx_fd_keys(f, keys);
+    btf nb;
+    if (!bt_create(&nb, tmpname, idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) return 0;
+    nb.nslots = old.nslots; nb.seq = old.seq;
+    unsigned char zero[BT_KEYMAX + 4], ka[BT_KEYMAX + 4];
+    memset(zero, 0, sizeof zero);
+    unsigned page, ix;
+    if (bt_first_ge(&old, 0, zero, old.k[0].klen + 4, &page, &ix)) {
+        do {
+            unsigned slot = bt_read(&old, 0, page, ix, ka);
+            bt_insert(&nb, 0, ka, bt_getbe(ka + old.k[0].klen), slot);
+            bt_slot_set(&nb, slot, 1);
+        } while (bt_step(&old, &page, &ix));
+    }
+    bt_close(&old, 0);
+    x->bt = nb;
+    idx_alt_rebuild(f, x);
+    bt_close(&x->bt, 1);
+    if (rename(tmpname, key_file_name(f)) != 0) return 0;
+    return bt_open(&x->bt, key_file_name(f), 0, idx_cache_pages(), cob_fatal);
+}
+
+/* the key file for an existing data file: ours, or an old one converted; 0 = 39 */
+static int idx_load(cob_file *f, cob_idx *x, int rdonly)
+{
+    const char *kn = key_file_name(f);
+    if (bt_open(&x->bt, kn, rdonly, idx_cache_pages(), cob_fatal)) {
+        if (idx_keys_match(f, &x->bt)) return 1;
+        if (x->bt.recsize != f->recsize || x->bt.keyoff != f->keyoff || x->bt.keylen != f->keylen) { bt_close(&x->bt, 0); return 0; }
+        return idx_rekey(f, x);                       /* the alternates changed under the file */
+    }
+    FILE *kf = fopen(kn, "rb");
     if (!kf) return 0;
     unsigned char h[32];
-    memset(h, 0, 32); memcpy(h, KEYMAGIC2, 8);
-    put_u32(h + 8, f->recsize); put_u32(h + 12, f->keyoff); put_u32(h + 16, f->keylen);
-    put_u32(h + 20, x->prime.count); put_u32(h + 24, x->nslots); put_u32(h + 28, x->seq);
-    fwrite(h, 1, 32, kf);
-    size_t n = (size_t)x->prime.count * tab_esize(&x->prime);
-    if (n && fwrite(x->prime.e, 1, n, kf) != n) { fclose(kf); return 0; }
-    unsigned char ah[4]; put_u32(ah, x->nalt); fwrite(ah, 1, 4, kf);
-    for (unsigned a = 0; a < x->nalt; a++) {
-        cob_ktab *t = &x->alt[a];
-        unsigned char th[16]; put_u32(th, t->off); put_u32(th + 4, t->klen); put_u32(th + 8, (unsigned)t->dups); put_u32(th + 12, t->count);
-        fwrite(th, 1, 16, kf);
-        n = (size_t)t->count * tab_esize(t);
-        if (n && fwrite(t->e, 1, n, kf) != n) { fclose(kf); return 0; }
-    }
-    fclose(kf);
-    return 1;
+    if (fread(h, 1, 32, kf) != 32 || (memcmp(h, KEYMAGIC1, 8) && memcmp(h, KEYMAGIC2, 8))) { fclose(kf); return 0; }
+    return idx_migrate(f, x, kf, h);
 }
 
 static cob_idx *idx_new(cob_file *f)
 {
     cob_idx *x = calloc(1, sizeof *x);
     if (!x) cob_fatal("out of memory");
-    x->prime.off = f->keyoff; x->prime.klen = f->keylen; x->prime.dups = 0;
-    x->pos = -1; x->last_slot = -1; x->ref = 0;
+    x->bt.fd = -1;
+    x->last_slot = -1; x->ref = 0; x->have_cur = 0;
     x->tmp = malloc(f->recsize ? f->recsize : 1);
     if (!x->tmp) cob_fatal("out of memory");
-    idx_alt_setup(f, x);
     return x;
 }
 
 static void idx_free(cob_idx *x)
 {
-    free(x->prime.e);
-    for (unsigned a = 0; a < x->nalt; a++) free(x->alt[a].e);
-    free(x->alt); free(x->tmp); free(x);
+    if (!x) return;
+    if (x->bt.fd >= 0) bt_close(&x->bt, 0);
+    free(x->tmp); free(x);
 }
 
 static int idx_open(cob_file *f, int mode)
 {
     const char *name = file_name(f);
-    if (f->keylen == 0 || f->keylen > 255) cob_fatal("RECORD KEY must be 1 to 255 bytes");
+    if (f->keylen == 0 || f->keylen > BT_KEYMAX) cob_fatal("RECORD KEY must be 1 to 255 bytes");
+    if (f->naltkeys > BT_MAXKEYS - 1) cob_fatal("more than 16 ALTERNATE RECORD KEYs");
     if (f->locked) return file_result(f, "38", "OPEN of a file closed WITH LOCK");
     cob_idx *x = idx_new(f);
     FILE *fp;
     if (mode == COB_OPEN_OUTPUT) {
         fp = fopen(name, "w+b");
         if (!fp) { idx_free(x); return file_result(f, "30", name); }
+        btkey keys[BT_MAXKEYS];
+        unsigned nkeys = idx_fd_keys(f, keys);
+        if (!bt_create(&x->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) { fclose(fp); idx_free(x); return file_result(f, "30", "key file"); }
     } else {
         fp = fopen(name, mode == COB_OPEN_INPUT ? "rb" : "r+b");
         if (!fp) {
@@ -2167,11 +2210,14 @@ static int idx_open(cob_file *f, int mode)
             /* OPTIONAL, absent, I-O or EXTEND: the file comes into being, empty */
             fp = fopen(name, "w+b");
             if (!fp) { idx_free(x); return file_result(f, "30", name); }
+            btkey keys[BT_MAXKEYS];
+            unsigned nkeys = idx_fd_keys(f, keys);
+            if (!bt_create(&x->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) { fclose(fp); idx_free(x); return file_result(f, "30", "key file"); }
             f->fp = fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0;
             return file_result(f, "05", name);
         }
         f->fp = fp;
-        if (!idx_load(f, x)) { fclose(fp); f->fp = 0; idx_free(x); return file_result(f, "39", "key file missing or does not match the FD"); }
+        if (!idx_load(f, x, 0)) { fclose(fp); f->fp = 0; idx_free(x); return file_result(f, "39", "key file missing or does not match the FD"); }
     }
     f->fp = fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0;
     return file_result(f, "00", name);
@@ -2180,14 +2226,25 @@ static int idx_open(cob_file *f, int mode)
 static int idx_close(cob_file *f)
 {
     cob_idx *x = f->idx;
-    int ok = 1;
     if (x) {
-        if (f->open_mode != COB_OPEN_INPUT) ok = idx_save(f, x);
+        if (x->bt.fd >= 0) bt_close(&x->bt, 1);
         idx_free(x);
     }
     if (f->fp) fclose((FILE *)f->fp);
     f->fp = 0; f->idx = 0; f->open_mode = 0; f->at_eof = 0;
-    return file_result(f, ok ? "00" : "30", "key file");
+    return file_result(f, "00", "key file");
+}
+
+/* the first entry of key ki whose key equals k (on the whole key); page/ix out */
+static int idx_find(cob_idx *x, unsigned ki, const unsigned char *k, unsigned *page, unsigned *ix)
+{
+    btf *b = &x->bt;
+    unsigned kl = b->k[ki].klen;
+    unsigned char ka[BT_KEYMAX + 4];
+    memcpy(ka, k, kl); memset(ka + kl, 0, 4);
+    if (!bt_first_ge(b, ki, ka, kl + 4, page, ix)) return 0;
+    bt_read(b, ki, *page, *ix, ka);
+    return memcmp(ka, k, kl) == 0;
 }
 
 /* an alternate key that would duplicate an existing record's, at a slot
@@ -2195,39 +2252,61 @@ static int idx_close(cob_file *f)
  * 02 is remembered */
 static int alt_check(cob_idx *x, const unsigned char *rec, unsigned skip, int *dup02)
 {
-    for (unsigned a = 0; a < x->nalt; a++) {
-        cob_ktab *t = &x->alt[a];
-        int found;
-        unsigned at = tab_find(t, rec + t->off, t->klen, &found);
-        if (!found) continue;
+    btf *b = &x->bt;
+    for (unsigned a = 1; a < b->nkeys; a++) {
+        unsigned page, ix, kl = b->k[a].klen;
+        if (!idx_find(x, a, rec + b->k[a].off, &page, &ix)) continue;
         int other = 0;
-        for (unsigned i = at; i < t->count && !memcmp(tab_entry(t, i), rec + t->off, t->klen); i++)
-            if (tab_slot(t, i) != skip) other = 1;
+        unsigned char ka[BT_KEYMAX + 4];
+        do {
+            unsigned slot = bt_read(b, a, page, ix, ka);
+            if (memcmp(ka, rec + b->k[a].off, kl) != 0) break;
+            if (slot != skip) other = 1;
+        } while (!other && bt_step(b, &page, &ix));
         if (!other) continue;
-        if (!t->dups) return 0;
+        if (!b->k[a].dups) return 0;
         *dup02 = 1;
     }
     return 1;
+}
+
+/* the cursor: deliver from (key, arrival) on */
+static void idx_cursor_at(cob_idx *x, unsigned ki, unsigned page, unsigned ix)
+{
+    bt_read(&x->bt, ki, page, ix, x->cur);
+    x->have_cur = 1;
+}
+/* ... after the entry just delivered */
+static void idx_cursor_after(cob_idx *x, unsigned ki, const unsigned char *ka)
+{
+    unsigned kl = x->bt.k[ki].klen;
+    memcpy(x->cur, ka, kl + 4);
+    bt_putbe(x->cur + kl, bt_getbe(ka + kl) + 1);
+    x->have_cur = 1;
 }
 
 static int idx_write(cob_file *f)
 {
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "48", "WRITE to an OPTIONAL file that is absent");
+    btf *b = &x->bt;
     const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
-    int found;
-    unsigned at = tab_find(&x->prime, k, x->prime.klen, &found);
-    if (f->access == 0 && x->prime.count && (found || at != x->prime.count))
-        return file_result(f, "21", "");                        /* sequential access: keys must ascend (an equal one is out of sequence too) */
-    if (found) return file_result(f, "22", "");                 /* duplicate prime key */
+    unsigned page, ix;
+    if (f->access == 0 && b->k[0].count) {                       /* sequential access: keys must ascend */
+        unsigned char last[BT_KEYMAX + 4];
+        bt_last(b, 0, &page, &ix); bt_read(b, 0, page, ix, last);
+        if (memcmp(last, k, f->keylen) >= 0) return file_result(f, "21", "");
+    }
+    if (idx_find(x, 0, k, &page, &ix)) return file_result(f, "22", "");    /* duplicate prime key */
     int dup02 = 0;
     if (!alt_check(x, (const unsigned char *)f->record, (unsigned)-1, &dup02)) return file_result(f, "22", "");
-    unsigned slot = x->nslots;
-    if (!slot_write(f, slot)) return file_result(f, "30", "write failed");
-    x->nslots++;
-    unsigned seq = x->seq++;
-    tab_insert(&x->prime, k, slot, seq);
-    for (unsigned a = 0; a < x->nalt; a++) tab_insert(&x->alt[a], (const unsigned char *)f->record + x->alt[a].off, slot, seq);
+    unsigned slot = bt_slot_alloc(b);
+    if (!slot_write(f, slot)) { bt_slot_set(b, slot, 0); return file_result(f, "30", "write failed"); }
+    unsigned seq = b->seq++; b->hdr_dirty = 1;
+    unsigned char ex[4 * BT_MAXKEYS];
+    for (unsigned a = 1; a < b->nkeys; a++) bt_putbe(ex + 4 * (a - 1), seq);
+    bt_insert_x(b, 0, k, seq, slot, ex);
+    for (unsigned a = 1; a < b->nkeys; a++) bt_insert(b, a, (const unsigned char *)f->record + b->k[a].off, seq, slot);
     x->last_slot = -1;
     return file_result(f, dup02 ? "02" : "00", "");
 }
@@ -2242,17 +2321,16 @@ int cob_read_key(cob_file *f, int ki)
     if (f->org != COB_ORG_INDEXED) cob_fatal("READ ... KEY on a file that is not INDEXED");
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
-    if (ki < 0 || (unsigned)ki > x->nalt) cob_fatal("READ ... KEY: no such key");
-    cob_ktab *t = idx_table(x, ki);
-    unsigned char key[256];
-    memcpy(key, f->record + t->off, t->klen);
-    int found;
-    unsigned at = tab_find(t, key, t->klen, &found);
-    if (!found) { x->last_slot = -1; return file_result(f, "23", ""); }
-    unsigned slot = tab_slot(t, at);
+    btf *b = &x->bt;
+    if (ki < 0 || (unsigned)ki >= b->nkeys) cob_fatal("READ ... KEY: no such key");
+    unsigned kl = b->k[ki].klen, page, ix;
+    unsigned char key[BT_KEYMAX], ka[BT_KEYMAX + 4], nk[BT_KEYMAX + 4];
+    memcpy(key, f->record + b->k[ki].off, kl);
+    if (!idx_find(x, ki, key, &page, &ix)) { x->last_slot = -1; return file_result(f, "23", ""); }
+    unsigned slot = bt_read(b, ki, page, ix, ka);
     if (!slot_read(f, slot)) return file_result(f, "30", "read failed");
-    x->ref = ki; x->pos = (int)at + 1; x->last_slot = (int)slot; f->at_eof = 0; f->eof_seen = 0;
-    int more = t->dups && at + 1 < t->count && !memcmp(tab_entry(t, at + 1), key, t->klen);
+    x->ref = ki; idx_cursor_after(x, ki, ka); x->last_slot = (int)slot; f->at_eof = 0; f->eof_seen = 0;
+    int more = b->k[ki].dups && bt_step(b, &page, &ix) && (bt_read(b, ki, page, ix, nk), !memcmp(nk, key, kl));
     return file_result(f, more ? "02" : "00", "");
 }
 
@@ -2263,13 +2341,15 @@ static int idx_read_next(cob_file *f)
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "10", "");
     if (f->at_eof) { if (f->eof_seen) return file_result(f, "46", ""); f->eof_seen = 1; return file_result(f, "10", ""); }
-    cob_ktab *t = idx_table(x, x->ref);
-    if (x->pos < 0) x->pos = 0;
-    if ((unsigned)x->pos >= t->count) { f->at_eof = 1; f->eof_seen = 1; x->last_slot = -1; return file_result(f, "10", ""); }
-    unsigned i = (unsigned)x->pos, slot = tab_slot(t, i);
+    btf *b = &x->bt;
+    unsigned ki = (unsigned)x->ref, kl = b->k[ki].klen, page, ix;
+    if (!x->have_cur) { memset(x->cur, 0, kl + 4); x->have_cur = 1; }
+    if (!bt_first_ge(b, ki, x->cur, kl + 4, &page, &ix)) { f->at_eof = 1; f->eof_seen = 1; x->last_slot = -1; return file_result(f, "10", ""); }
+    unsigned char ka[BT_KEYMAX + 4], nk[BT_KEYMAX + 4];
+    unsigned slot = bt_read(b, ki, page, ix, ka);
     if (!slot_read(f, slot)) return file_result(f, "30", "read failed");
-    x->last_slot = (int)slot; x->pos++;
-    int more = t->dups && i + 1 < t->count && !memcmp(tab_entry(t, i + 1), tab_entry(t, i), t->klen);
+    x->last_slot = (int)slot; idx_cursor_after(x, ki, ka);
+    int more = b->k[ki].dups && bt_step(b, &page, &ix) && (bt_read(b, ki, page, ix, nk), !memcmp(nk, ka, kl));
     return file_result(f, more ? "02" : "00", "");
 }
 
@@ -2284,22 +2364,29 @@ int cob_start(cob_file *f, int op, int ki, int len)
     if (f->org != COB_ORG_INDEXED) cob_fatal("START on a file that is not INDEXED");
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
-    if (ki < 0 || (unsigned)ki > x->nalt) cob_fatal("START ... KEY: no such key");
-    cob_ktab *t = idx_table(x, ki);
-    unsigned n = (len > 0 && (unsigned)len < t->klen) ? (unsigned)len : t->klen;
-    const unsigned char *k = (const unsigned char *)f->record + t->off;
-    int found;
-    unsigned at = tab_find(t, k, n, &found);
-    int pos = -1;
+    btf *b = &x->bt;
+    if (ki < 0 || (unsigned)ki >= b->nkeys) cob_fatal("START ... KEY: no such key");
+    unsigned kl = b->k[ki].klen;
+    unsigned n = (len > 0 && (unsigned)len < kl) ? (unsigned)len : kl;
+    const unsigned char *k = (const unsigned char *)f->record + b->k[ki].off;
+    unsigned char target[BT_KEYMAX + 4], ka[BT_KEYMAX + 4];
+    memset(target, 0, sizeof target); memcpy(target, k, n);
+    unsigned page, ix;
+    int got = bt_first_ge(b, ki, target, kl + 4, &page, &ix);       /* first entry whose leading n bytes >= k */
+    int found = got && (bt_read(b, ki, page, ix, ka), !memcmp(ka, k, n));
+    int pos = 0;
     switch (op) {
-    case 0: if (found) pos = (int)at; break;
-    case 1: { unsigned e = found ? tab_after_equal(t, at, k, n) : at; if (e < t->count) pos = (int)e; break; }
-    case 2: if (at < t->count) pos = (int)at; break;
-    case 3: if (at > 0) pos = (int)at - 1; break;
-    case 4: { unsigned e = found ? tab_after_equal(t, at, k, n) : at; if (e > 0) pos = (int)e - 1; break; }
+    case 0: pos = found; break;
+    case 2: pos = got; break;
+    case 1: case 4:                                                  /* past every entry equal on n bytes */
+        if (found) { do { if (!bt_step(b, &page, &ix)) { got = 0; break; } bt_read(b, ki, page, ix, ka); } while (!memcmp(ka, k, n)); }
+        if (op == 1) pos = got;
+        else pos = got ? bt_back(b, &page, &ix) : bt_last(b, ki, &page, &ix);
+        break;
+    case 3: pos = got ? bt_back(b, &page, &ix) : bt_last(b, ki, &page, &ix); break;
     }
-    if (pos < 0) return file_result(f, "23", "");
-    x->ref = ki; x->pos = pos; x->last_slot = -1; f->at_eof = 0; f->eof_seen = 0;
+    if (!pos) return file_result(f, "23", "");
+    x->ref = ki; idx_cursor_at(x, ki, page, ix); x->last_slot = -1; f->at_eof = 0; f->eof_seen = 0;
     return file_result(f, "00", "");
 }
 
@@ -2310,25 +2397,30 @@ int cob_start(cob_file *f, int op, int ki, int len)
 static int idx_rewrite(cob_file *f)
 {
     cob_idx *x = f->idx;
+    btf *b = &x->bt;
     const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
-    int found;
-    unsigned at = tab_find(&x->prime, k, x->prime.klen, &found);
+    unsigned page, ix;
+    int found = idx_find(x, 0, k, &page, &ix);
+    unsigned slot = found ? bt_read(b, 0, page, ix, 0) : 0;
     if (f->access == 0) {
         if (x->last_slot < 0) return file_result(f, "43", "");
-        if (!found || tab_slot(&x->prime, at) != (unsigned)x->last_slot) return file_result(f, "21", "");
+        if (!found || slot != (unsigned)x->last_slot) return file_result(f, "21", "");
     } else if (!found) return file_result(f, "23", "");
-    unsigned slot = tab_slot(&x->prime, at);
     if (!slot_read_to(f, slot, x->tmp)) return file_result(f, "30", "read failed");
     int dup02 = 0;
     if (!alt_check(x, (const unsigned char *)f->record, slot, &dup02)) return file_result(f, "22", "");
-    unsigned seq = x->seq++;
-    for (unsigned a = 0; a < x->nalt; a++) {
-        cob_ktab *t = &x->alt[a];
-        if (memcmp(x->tmp + t->off, f->record + t->off, t->klen) == 0) continue;
-        int r = tab_remove(t, x->tmp + t->off, slot);
-        if (r >= 0 && x->ref == (int)a + 1 && x->pos > r) x->pos--;
-        tab_insert(t, (const unsigned char *)f->record + t->off, slot, seq);
+    unsigned seq = b->seq++; b->hdr_dirty = 1;
+    unsigned char ex[4 * BT_MAXKEYS];
+    int moved = 0;
+    if (b->nkeys > 1) bt_extra_get(b, 0, page, ix, ex);
+    for (unsigned a = 1; a < b->nkeys; a++) {
+        unsigned off = b->k[a].off, kl = b->k[a].klen;
+        if (memcmp(x->tmp + off, f->record + off, kl) == 0) continue;
+        if (!bt_remove_exact(b, a, x->tmp + off, bt_getbe(ex + 4 * (a - 1)))) bt_remove(b, a, x->tmp + off, slot);
+        bt_insert(b, a, (const unsigned char *)f->record + off, seq, slot);
+        bt_putbe(ex + 4 * (a - 1), seq); moved = 1;
     }
+    if (moved) bt_extra_set(b, 0, page, ix, ex);
     if (!slot_write(f, slot)) return file_result(f, "30", "write failed");
     return file_result(f, dup02 ? "02" : "00", "");
 }
@@ -2368,7 +2460,8 @@ int cob_rewrite(cob_file *f, int reclen)
 }
 
 /* DELETE: the record whose prime key is in the record area (random) or
- * the one last read (sequential access); every key table forgets it */
+ * the one last read (sequential access); every key forgets it and the
+ * slot is free for a later WRITE */
 int cob_delete(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "49", "DELETE of a file not open");
@@ -2376,24 +2469,24 @@ int cob_delete(cob_file *f)
     if (f->org == COB_ORG_RELATIVE) return rel_delete(f);
     if (f->org != COB_ORG_INDEXED) cob_fatal("DELETE on a file that is not INDEXED");
     cob_idx *x = f->idx;
-    unsigned slot;
+    btf *b = &x->bt;
+    unsigned slot, page, ix;
     if (f->access == 0) {
         if (x->last_slot < 0) return file_result(f, "43", "");
         slot = (unsigned)x->last_slot;
+        if (!slot_read_to(f, slot, x->tmp)) return file_result(f, "30", "read failed");
+        if (!idx_find(x, 0, x->tmp + f->keyoff, &page, &ix)) return file_result(f, "23", "");
     } else {
-        int found;
-        unsigned at = tab_find(&x->prime, (const unsigned char *)f->record + f->keyoff, x->prime.klen, &found);
-        if (!found) return file_result(f, "23", "");
-        slot = tab_slot(&x->prime, at);
+        if (!idx_find(x, 0, (const unsigned char *)f->record + f->keyoff, &page, &ix)) return file_result(f, "23", "");
+        slot = bt_read(b, 0, page, ix, 0);
+        if (!slot_read_to(f, slot, x->tmp)) return file_result(f, "30", "read failed");
     }
-    if (!slot_read_to(f, slot, x->tmp)) return file_result(f, "30", "read failed");
-    int r = tab_remove(&x->prime, x->tmp + x->prime.off, slot);
-    if (r >= 0 && x->ref == 0 && x->pos > r) x->pos--;
-    for (unsigned a = 0; a < x->nalt; a++) {
-        cob_ktab *t = &x->alt[a];
-        r = tab_remove(t, x->tmp + t->off, slot);
-        if (r >= 0 && x->ref == (int)a + 1 && x->pos > r) x->pos--;
-    }
+    unsigned char ex[4 * BT_MAXKEYS];
+    if (b->nkeys > 1) bt_extra_get(b, 0, page, ix, ex);
+    for (unsigned a = 1; a < b->nkeys; a++)
+        if (!bt_remove_exact(b, a, x->tmp + b->k[a].off, bt_getbe(ex + 4 * (a - 1)))) bt_remove(b, a, x->tmp + b->k[a].off, slot);
+    bt_remove(b, 0, x->tmp + f->keyoff, slot);
+    bt_slot_set(b, slot, 0);
     x->last_slot = -1;
     return file_result(f, "00", "");
 }

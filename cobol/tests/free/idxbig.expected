@@ -1,0 +1,11 @@
+first BLU: key=000839 fs=02
+start GRN fs=00
+GRN count=       622
+start code > 899000 fs=00
+  code 899001 key 000999
+  code 899002 key 000998
+  code 899003 key 000997
+codes above 899000=       999
+read deleted 14 fs=23
+rewrite deleted 14 fs=02
+records=      2573 checksum= 151957861

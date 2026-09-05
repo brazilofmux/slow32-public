@@ -599,6 +599,46 @@ values past 2^31 ordered by SLTU, and PERFORM VARYING stepping across
 it. Validated: cobol/tests with the oracle, CCVS-85 unchanged
 (8049 of 8160, 0 fail), majesty's corpus green.
 
+### 25. Indexed files: the key file is a B+tree, not a sorted array (2026-09-04)
+
+Memory was the reason. SLOW-32 has no sbrk: a program's heap is what it
+was linked with, and the indexed key tables were arrays loaded whole at
+OPEN, one per key, growing with the file. An out-of-order WRITE shifted
+the array's tail, so a shuffled load was quadratic; DELETE left its slot
+dead for good; CLOSE rewrote the whole key file. Fine for gl039's 3,113
+descriptions, a wall at a few hundred thousand.
+
+Now (`libcob/btree.h`, docs/indexed.md "As built"): one `<data>.key` of
+4K pages, one B+tree per key, fixed-width entries of (key, arrival
+number, slot) ordered by key then arrival -- every entry distinct, so
+duplicates need no special case and come back in arrival order; leaves
+linked both ways; a bitmap of live slots so a DELETEd slot is reused;
+pages through a pinned LRU cache (S32_INDEX_CACHE, else a sixteenth of
+the heap, 16..256 pages) over lseek/read/write. The cursor is the (key,
+arrival) of the next record to deliver, a lower bound, so a WRITE,
+REWRITE or DELETE between READ NEXTs needs none of the position fixups
+the arrays did. The prime entry carries each alternate's arrival number,
+so DELETE and a REWRITE that moves an alternate remove exactly instead of
+walking the duplicate run -- the first cut walked it and was still
+quadratic on a duplicates-heavy key. No key compression (it raises leaf
+fan-out and rarely lowers the height), no rebalancing beyond freeing a
+page that empties. An S32KEY01/02 file is converted in place on OPEN.
+
+Program-visible behaviour is unchanged: tests 105/105 (idxbig new: 3,000
+records, two alternates, shuffled load, random reads, START/READ NEXT
+scans, DELETE/REWRITE churn, slot reuse, under a 16-page cache), NIST IX
+438/439 with 29 programs matching GnuCOBOL exactly -- identical to the
+array build's tally -- and majesty's gate PASS. bench/bidx, shuffled
+load plus churn, guest instructions:
+
+    records     arrays        tree
+      3,000   1,025 M       228 M
+     30,000  92,070 M     2,925 M
+
+The tree is host-testable (tests/bt_test.c, Gate 1b: random inserts,
+removals by slot and exact, seeks and scans against a model, six shapes,
+under the sanitizers when built by hand).
+
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
 Kept in `docs/oracles.md` and `docs/dialect.md`, each with a

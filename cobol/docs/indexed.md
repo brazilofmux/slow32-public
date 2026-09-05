@@ -54,27 +54,52 @@ On disk, v1 default: a data file of fixed slots (payload only, no
 RDW, no delete byte) plus a key file. The key file's format is
 ours. It does not have to be `.NDX`.
 
-**As built (Stage 5, `libcob/libcob.c`):** the data file named by
-`ASSIGN` holds `recsize`-byte slots in arrival order; beside it
-`<name>.key` holds the key table:
+**As built (Stage 5, 2026-08-30; the key file rebuilt as a B+tree 2026-09-04,
+`libcob/btree.h`):** the data file named by `ASSIGN` holds `recsize`-byte
+slots in arrival order; beside it `<name>.key` holds the keys, one B+tree per
+key in a file of 4K pages:
 
-    "S32KEY01" | u32 recsize | u32 keyoff | u32 keylen | u32 count
-             | u32 nslots | u32 0 | u32 0 | count x (key bytes, u32 slot)
+    page 0   "S32BT001" | u32 pagesize | u32 recsize | u32 keyoff | u32 keylen
+             | u32 nslots | u32 seq | u32 npages | u32 free_head | u32 nkeys
+             | u32 bitmap_first | nkeys x (u32 off | u32 klen | u32 dups | u32 root | u32 count)
+    page     u8 type (1 leaf, 2 node, 3 bitmap, 0 free) | u8 | u16 count
+             | u32 next | u32 prev | entries of (key bytes, u32 arrival big-endian, u32 ptr)
 
-all little-endian, entries sorted by key (byte order, i.e. ASCII).
-While open the table is an in-memory array: a random `READ` is a
-binary search, `READ NEXT` walks it, `WRITE` of an ascending key
-appends and an out-of-order key inserts in place, `DELETE` removes
-the entry and leaves the slot unused, `CLOSE` rewrites the key file.
+Entries are ordered by (key, arrival), so every entry is distinct and
+equal keys come back in arrival order -- WITH DUPLICATES needs no special
+case.  In a leaf `ptr` is the record's slot; in a node it is the child
+page, and entry 0's key is minus infinity.  Leaves are linked both ways.
+A page holds `(4096 - 16) / (klen + 8)` entries: 145 for a 20-byte key,
+so three levels cover 1.7 million records and four cover 200 million.
+No key compression (it raises leaf fan-out and almost never lowers the
+height), no rebalancing on delete beyond freeing a page that empties.
+Bitmap pages carry one bit per slot of the data file; a DELETEd slot is
+reused by a later WRITE.
+
+A random `READ` descends to the leaf and binary-searches it; `READ NEXT`
+delivers the first entry at or after a cursor that is the (key, arrival)
+of the next record to deliver -- a lower bound, not a position, so a
+WRITE, REWRITE or DELETE between two READ NEXTs needs no fixing up;
+`START` sets that cursor; `WRITE` inserts into every key's tree and
+splits pages upward as needed; `DELETE` removes from every tree and
+frees a leaf that empties.  Pages move through a small LRU cache with
+pin counts -- `S32_INDEX_CACHE` pages, else a sixteenth of the linked
+heap, 16..256 -- and reach the file through `lseek`/`read`/`write`,
+never through stdio's 1K stream buffer.  There is no sbrk on SLOW-32:
+the cache is the index's whole memory, whatever the file's size.
 `OPEN` refuses (status 39) a key file whose recsize/keyoff/keylen do
-not match the FD. A btree can replace the array without changing
-program-visible behaviour; gl039's 3,113 descriptions take 0.13 s
-under `slow32-fast` as it is. Status codes follow the text: 22
-duplicate, 23 not found, 21 sequence error under ACCESS SEQUENTIAL,
-10 at end, 35/39 on OPEN.
+not match the FD; a key file whose alternates differ from the FD is
+rebuilt from its prime tree and the records.  Status codes follow the
+text: 22 duplicate, 23 not found, 21 sequence error under ACCESS
+SEQUENTIAL, 10 at end, 35/39 on OPEN.
 
-`DELETE` removes the key and frees the slot. A subsequent `READ` by
-that key is invalid key. No `PACK` step.
+The earlier format -- one sorted array per key, `"S32KEY01"` (prime key
+only) or `"S32KEY02"` (alternates too), loaded whole at OPEN -- is still
+read, once: OPEN converts such a file to the tree in place.  Its layout
+was `magic | u32 recsize | u32 keyoff | u32 keylen | u32 count | u32
+nslots | u32 seq | u32 0 | count x (key bytes, u32 slot, u32 seq)`, then
+for `S32KEY02` `u32 nalt` and per alternate `u32 offset | len | dups |
+count` and its entries.
 
 ### Alternate keys (2026-08-31)
 

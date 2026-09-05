@@ -135,6 +135,18 @@ else
     fi
 fi
 
+# --- Gate 1b: the key-file B+tree (host, libcob/btree.h) ---------------
+if ! cc -std=c99 -I"$CDIR/libcob" -O1 -w -o "$W/bt_test" "$HERE/bt_test.c" 2>"$W/cc.log"; then
+    report "bt_test" 1 "host build"
+else
+    btfail=0
+    for ex in 0 8; do for args in "200 4000 20000" "20 30000 40000" "3 5000 20000"; do
+        (cd "$W" && EXTRA=$ex ./bt_test $args) > "$W/bt.out" 2>&1 || btfail=1
+        grep -q 'root-is-empty-leaf=1' "$W/bt.out" || btfail=1
+    done; done
+    if [ $btfail = 0 ]; then report "bt_test" 0 "6 shapes"; else report "bt_test" 1 "$(tail -1 "$W/bt.out")"; fi
+fi
+
 # --- Gate 2: programs --------------------------------------------------
 for fmt in fixed free; do
     for src in "$HERE/$fmt"/*.cbl; do
