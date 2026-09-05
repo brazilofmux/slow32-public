@@ -1,0 +1,6 @@
+C002 00250 chair 
+C001 00100 lamp  
+C005 00999 sofa  
+C002 00050 rug   
+C001 00075 book  
+C002 00010 pen   

@@ -21,6 +21,12 @@ checked-in `.expected`.
     SUM     FIELDS=(p,l,f,...) | FIELDS=NONE
     INREC   FIELDS=(item,...)                 OUTREC FIELDS=(item,...)   item: p,l | nX | C'..' | X'..'
     OPTION  ...                               accepted; EQUALS is always in effect
+    OUTFIL  FNAMES=(dd,...)[,INCLUDE=(..)|OMIT=(..)|SAVE][,OUTREC=(items)]
+            [,STARTREC=n][,ENDREC=n][,SPLIT|SPLITBY=n]
+    JOINKEYS F1=dd,FIELDS=(p,l,o,...)[,SORTED][,LENGTH=n]
+    JOINKEYS F2=dd,FIELDS=(p,l,o,...)[,SORTED][,LENGTH=n]
+    JOIN    UNPAIRED[,F1][,F2][,ONLY]
+    REFORMAT FIELDS=(F1:p,l | F2:p,l | ? ...)[,FILL=C'c'|X'hh']
     *  comment
 
 `p` counts from 1. `o` is `A` or `D`. Formats: `CH` (bytes; `AC`, `AQ`
@@ -35,10 +41,30 @@ an RDW. `SUM` collapses records equal on the sort fields into the first,
 with the named numeric fields summed (`NONE`: kept as is). `INREC`
 reformats before the sort, `OUTREC` after.
 
+**OUTFIL**: any number of statements. After the sort (and SUM and the
+main OUTREC), every record goes to each OUTFIL whose INCLUDE/OMIT it
+passes and whose STARTREC..ENDREC window (counted over the sorted
+records) it falls in; `SAVE` takes the records no other OUTFIL took;
+`SPLIT` rotates the FNAMES one record at a time, `SPLITBY=n` n at a time;
+an OUTFIL's own OUTREC reformats what it writes. SORTOUT, when given,
+still receives everything. The FNAMES are data sets named on the command
+line, `NAME=path`.
+
+**JOINKEYS**: F1 and F2 are each sorted on their FIELDS (skipped for a
+side marked SORTED), then paired by equal keys -- every F1 record of a key
+with every F2 record of it. `JOIN UNPAIRED,F1` adds the F1 records with no
+match (F2 fields filled), `UNPAIRED,F2` likewise, `UNPAIRED` both, `ONLY`
+drops the paired ones. REFORMAT builds the joined record from F1 and F2
+fields and `?`, the indicator `B`, `1` or `2`. The joined records then run
+through the main task: `SORT FIELDS=COPY` keeps them in key order, or sort
+them, INCLUDE them, SUM them, OUTFIL them. F1/F2 record lengths default to
+RECORD LENGTH; `LENGTH=n` on a JOINKEYS statement sets one side's.
+
 Messages and the record counts go to stderr; exit 16 on any error.
 
 ## Not there
 
-Column positions in OUTREC (`c:`), `OUTFIL`, `JOINKEYS`, `ICETOOL`,
-`ALTSEQ`, symbols, `Y2x` formats, `VLSHRT`. Each is a day's work when a
-job needs it; nothing does yet.
+Column positions in OUTREC (`c:`), OUTFIL `OUTREC` overlays and reports
+(HEADER/TRAILER/SECTIONS), JOINKEYS INCLUDE/OMIT (filter in a pass
+before), `ICETOOL`, `ALTSEQ`, symbols, `Y2x` formats, `VLSHRT`. Each is
+a day's work when a job needs it; nothing does yet.

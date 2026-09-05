@@ -17,6 +17,22 @@
  *   INREC   FIELDS=(item,...)             reformat before the sort
  *   OUTREC  FIELDS=(item,...)             reformat after; item = p,l | nX | C'..' | X'..'
  *   OPTION  ...                           EQUALS is always on; the rest is accepted
+ *   OUTFIL  FNAMES=(dd,...)[,INCLUDE=(..)|OMIT=(..)|SAVE][,OUTREC=(items)]
+ *           [,STARTREC=n][,ENDREC=n][,SPLIT|SPLITBY=n]
+ *                                         any number; every sorted record goes to each
+ *                                         OUTFIL whose selection passes; SAVE takes what
+ *                                         no other OUTFIL took; SPLIT rotates the FNAMES;
+ *                                         SORTOUT, when given, still receives everything
+ *   JOINKEYS F1=dd,FIELDS=(p,l,o,...)[,SORTED][,LENGTH=n]     JOINKEYS F2=dd,FIELDS=(...)
+ *   JOIN    UNPAIRED[,F1][,F2][,ONLY]     default: paired records only (inner join)
+ *   REFORMAT FIELDS=(F1:p,l | F2:p,l | ? ...)[,FILL=C'.'|X'..']
+ *                                         the joined record enters the main task (SORT,
+ *                                         INCLUDE, SUM, OUTREC, OUTFIL apply to it); ? is
+ *                                         the pairing indicator B, 1 or 2
+ *
+ * Data sets are named on the command line, DFSORT's DD names as NAME=path:
+ * SORTIN (repeatable), SORTOUT, SYSIN, and whatever OUTFIL FNAMES and
+ * JOINKEYS F1/F2 name.
  *
  * Formats: CH (bytes), ZD (zoned decimal, overpunched or trailing/leading
  * sign), PD (packed decimal), BI (unsigned big-endian binary), FI (signed
@@ -66,6 +82,31 @@ static cond conds[MAXF]; static unsigned nconds; static int cond_is_omit;
 static unsigned rec_len, in_len;           /* record length after INREC / raw input length */
 static int rec_text;                       /* RECORD TYPE=L */
 static size_t mainsize;
+
+/* data sets: NAME=path from the command line */
+typedef struct { char name[32]; const char *path; } ddent;
+static ddent dds[128]; static unsigned ndds;
+static const char *dd_path(const char *name)
+{
+    for (unsigned i = 0; i < ndds; i++) if (!strcmp(dds[i].name, name)) return dds[i].path;
+    return 0;
+}
+
+/* OUTFIL */
+typedef struct {
+    char names[16][32]; unsigned nnames; FILE *fp[16];
+    cond conds[MAXF]; unsigned nconds; int omit; int save;
+    ritem items[MAXF]; unsigned nitems; unsigned char *buf;
+    unsigned long long startrec, endrec; unsigned split; unsigned next; unsigned long long seen, written;
+} outfil;
+static outfil ofs[32]; static unsigned nofs;
+
+/* JOINKEYS */
+typedef struct { const char *dd; field keys[MAXF]; unsigned nkeys; unsigned len; int sorted; } joinside;
+static joinside jk[2]; static int have_join;
+static int join_unpaired1, join_unpaired2, join_only;
+typedef struct { int side; unsigned pos, len; } rfitem;    /* side 1/2, 0 = the ? indicator */
+static rfitem reform[MAXF]; static unsigned nreform; static unsigned char join_fill = ' ';
 
 /* ---------------------------------------------------------------- */
 /* numeric decoding                                                  */
@@ -311,12 +352,12 @@ static void parse_items(ritem *it, unsigned *n)
     expect(')');
 }
 
-static void parse_cond(void)
+static void parse_cond_into(cond *cs, unsigned *ncs)
 {
     expect('(');
     for (;;) {
-        if (nconds >= MAXF) syntax("too many conditions");
-        cond *c = &conds[nconds]; memset(c, 0, sizeof *c);
+        if (*ncs >= MAXF) syntax("too many conditions");
+        cond *c = &cs[*ncs]; memset(c, 0, sizeof *c);
         parse_plf(&c->a); expect(',');
         char w[8]; if (!word(w, sizeof w)) syntax("expected a comparison");
         static const char *ops[] = { "EQ", "NE", "GT", "GE", "LT", "LE", 0 }; int op = -1;
@@ -334,7 +375,7 @@ static void parse_cond(void)
                 cp = save; c->rhs_is_field = 1; parse_plf(&c->b);
             } else { c->is_num = 1; c->num = neg ? -(long long)v : (long long)v; if (c->a.fmt == F_CH) { c->litlen = (unsigned)snprintf((char *)c->lit, sizeof c->lit, "%lld", c->num); } }
         } else syntax("expected a field or a constant");
-        nconds++;
+        (*ncs)++;
         skipws();
         if (*cp == ')') { cp++; break; }
         expect(',');
@@ -342,6 +383,133 @@ static void parse_cond(void)
         if (!strcmp(w, "AND")) c->conn = 1; else if (!strcmp(w, "OR")) c->conn = 2; else syntax("expected AND or OR");
         expect(',');
     }
+}
+static void parse_cond(void) { parse_cond_into(conds, &nconds); }
+
+/* the selection of an arbitrary condition list */
+static int selected_by(const unsigned char *rec, const cond *cs, unsigned n, int omit)
+{
+    if (!n) return 1;
+    int any = 0, cur = 1;
+    for (unsigned i = 0; i < n; i++) {
+        cur = cur && cond_eval(rec, &cs[i]);
+        if (i + 1 == n || cs[i].conn == 2) { any = any || cur; cur = 1; }
+    }
+    return omit ? !any : any;
+}
+
+/* a parenthesised list of names: (A,B) or a single name */
+static void parse_names(char names[][32], unsigned *n, unsigned cap)
+{
+    int paren = accept('(');
+    do {
+        skipws(); unsigned k = 0;
+        while (isalnum((unsigned char)*cp) || *cp == '_' || *cp == '#' || *cp == '@' || *cp == '$' || *cp == '-') { if (k < 31) names[*n][k++] = (char)toupper((unsigned char)*cp); cp++; }
+        names[*n][k] = 0;
+        if (!k) syntax("expected a data set name");
+        if (*n >= cap) syntax("too many names");
+        (*n)++;
+    } while (paren && accept(','));
+    if (paren) expect(')');
+}
+
+static void parse_outfil(void)
+{
+    if (nofs >= 32) syntax("too many OUTFIL statements");
+    outfil *o = &ofs[nofs]; memset(o, 0, sizeof *o);
+    o->endrec = ~0ULL; o->startrec = 1;
+    char w[32];
+    for (;;) {
+        if (!word(w, sizeof w)) break;
+        if (!strcmp(w, "FNAMES") || !strcmp(w, "FILES")) { expect('='); parse_names(o->names, &o->nnames, 16); }
+        else if (!strcmp(w, "INCLUDE")) { expect('='); parse_cond_into(o->conds, &o->nconds); o->omit = 0; }
+        else if (!strcmp(w, "OMIT")) { expect('='); parse_cond_into(o->conds, &o->nconds); o->omit = 1; }
+        else if (!strcmp(w, "SAVE")) o->save = 1;
+        else if (!strcmp(w, "OUTREC") || !strcmp(w, "BUILD")) { expect('='); parse_items(o->items, &o->nitems); }
+        else if (!strcmp(w, "STARTREC")) { expect('='); o->startrec = number(); }
+        else if (!strcmp(w, "ENDREC")) { expect('='); o->endrec = number(); }
+        else if (!strcmp(w, "SPLIT")) o->split = 1;
+        else if (!strcmp(w, "SPLITBY")) { expect('='); o->split = number(); if (!o->split) syntax("SPLITBY needs a count"); }
+        else syntax("unknown OUTFIL keyword");
+        if (!accept(',')) break;
+    }
+    if (!o->nnames) syntax("OUTFIL needs FNAMES");
+    nofs++;
+}
+
+static void parse_joinkeys(void)
+{
+    char w[32]; joinside *j = 0;
+    for (;;) {
+        if (!word(w, sizeof w)) break;
+        if (!strcmp(w, "F1") || !strcmp(w, "F2") || !strcmp(w, "FILE") || !strcmp(w, "FILES")) {
+            int side = w[1] == '2' ? 1 : 0;
+            expect('='); char nm[1][32]; unsigned n = 0; parse_names(nm, &n, 1);
+            j = &jk[side]; j->dd = strdup(nm[0]);
+        } else if (!strcmp(w, "FIELDS")) {
+            if (!j) syntax("JOINKEYS: FIELDS before F1/F2");
+            expect('=');
+            expect('(');
+            do {
+                if (j->nkeys >= MAXF) syntax("too many join keys");
+                field *f = &j->keys[j->nkeys]; parse_pl(f); f->fmt = F_CH; f->desc = 0;
+                expect(','); char o[8]; if (!word(o, sizeof o)) syntax("expected A or D");
+                if (!strcmp(o, "D")) f->desc = 1; else if (strcmp(o, "A")) syntax("expected A or D");
+                j->nkeys++;
+            } while (accept(','));
+            expect(')');
+        } else if (!strcmp(w, "SORTED")) { if (j) j->sorted = 1; }
+        else if (!strcmp(w, "NOSEQCK") || !strcmp(w, "SEQCK") || !strcmp(w, "TASKID")) { if (accept('=')) word(w, sizeof w); }
+        else if (!strcmp(w, "LENGTH")) { expect('='); if (j) j->len = number(); }
+        else if (!strcmp(w, "INCLUDE") || !strcmp(w, "OMIT")) syntax("JOINKEYS INCLUDE/OMIT is not supported: filter with a separate pass");
+        else syntax("unknown JOINKEYS keyword");
+        if (!accept(',')) break;
+    }
+    if (!j || !j->dd || !j->nkeys) syntax("JOINKEYS needs F1= or F2= and FIELDS=");
+    have_join = 1;
+}
+
+static void parse_join(void)
+{
+    char w[32];
+    while (word(w, sizeof w)) {
+        if (!strcmp(w, "UNPAIRED")) { join_unpaired1 = join_unpaired2 = 1; }
+        else if (!strcmp(w, "F1")) { join_unpaired2 = 0; join_unpaired1 = 1; }
+        else if (!strcmp(w, "F2")) { if (join_unpaired1 && !join_unpaired2 && 0) {} join_unpaired2 = 1; }
+        else if (!strcmp(w, "ONLY")) join_only = 1;
+        else syntax("unknown JOIN keyword");
+        if (!accept(',')) break;
+    }
+}
+
+static void parse_reformat(void)
+{
+    char w[32];
+    for (;;) {
+        if (!word(w, sizeof w)) break;
+        if (!strcmp(w, "FIELDS") || !strcmp(w, "BUILD")) {
+            expect('='); expect('(');
+            do {
+                if (nreform >= MAXF) syntax("too many REFORMAT items");
+                rfitem *r = &reform[nreform]; memset(r, 0, sizeof *r);
+                skipws();
+                if (*cp == '?') { cp++; r->side = 0; r->len = 1; }
+                else {
+                    if (!word(w, sizeof w) || (strcmp(w, "F1") && strcmp(w, "F2"))) syntax("REFORMAT item is F1:p,l, F2:p,l or ?");
+                    r->side = w[1] == '2' ? 2 : 1; expect(':');
+                    unsigned p = number(); if (!p) syntax("position starts at 1"); r->pos = p - 1; expect(','); r->len = number();
+                }
+                nreform++;
+            } while (accept(','));
+            expect(')');
+        } else if (!strcmp(w, "FILL")) {
+            expect('='); skipws(); unsigned char b[4]; unsigned n = 0;
+            if (*cp == 'C' || *cp == 'c') { cp++; n = parse_lit(b, 1, 0); } else if (*cp == 'X' || *cp == 'x') { cp++; n = parse_lit(b, 1, 1); } else syntax("FILL=C'c' or X'hh'");
+            if (n) join_fill = b[0];
+        } else syntax("unknown REFORMAT keyword");
+        if (!accept(',')) break;
+    }
+    if (!nreform) syntax("REFORMAT needs FIELDS");
 }
 
 static void parse_control(void)
@@ -388,7 +556,11 @@ static void parse_control(void)
             if (in) parse_items(inrec, &ninrec); else parse_items(outrec, &noutrec);
         } else if (!strcmp(w, "OPTION")) {
             for (;;) { if (!word(w, sizeof w)) break; if (accept('=')) { skipws(); if (*cp == '(') { int d = 0; do { if (*cp == '(') d++; else if (*cp == ')') d--; cp++; } while (d && *cp); } else word(w, sizeof w); } if (!accept(',')) break; }
-        } else if (!strcmp(w, "END")) { break; }
+        } else if (!strcmp(w, "OUTFIL")) parse_outfil();
+        else if (!strcmp(w, "JOINKEYS")) parse_joinkeys();
+        else if (!strcmp(w, "JOIN")) parse_join();
+        else if (!strcmp(w, "REFORMAT")) parse_reformat();
+        else if (!strcmp(w, "END")) { break; }
         else syntax("unknown statement");
     }
 }
@@ -429,26 +601,148 @@ static void take(const unsigned char *raw, unsigned seq)
     xs_put(&xs, keybuf, rec);
 }
 
+static unsigned out_len;                   /* after the main OUTREC */
+static unsigned long long n_outfil;
 static void emit(FILE *out, const unsigned char *rec)
 {
     n_out++;
-    if (noutrec) { reformat(rec, rec_len, outbuf, outrec, noutrec); write_record(out, outbuf, reformat_len(outrec, noutrec)); }
-    else write_record(out, rec, rec_len);
+    const unsigned char *r = rec;
+    if (noutrec) { reformat(rec, rec_len, outbuf, outrec, noutrec); r = outbuf; }
+    if (out) write_record(out, r, out_len);
+    int taken = 0; outfil *saver = 0;
+    for (unsigned i = 0; i < nofs; i++) {
+        outfil *o = &ofs[i];
+        o->seen++;
+        if (o->save) { saver = o; continue; }
+        if (o->seen < o->startrec || o->seen > o->endrec) continue;
+        if (!selected_by(r, o->conds, o->nconds, o->omit)) continue;
+        taken = 1;
+        const unsigned char *w = r; unsigned wl = out_len;
+        if (o->nitems) { reformat(r, out_len, o->buf, o->items, o->nitems); w = o->buf; wl = reformat_len(o->items, o->nitems); }
+        if (o->split) { write_record(o->fp[o->next], w, wl); if (++o->written % o->split == 0) o->next = (o->next + 1) % o->nnames; }
+        else for (unsigned k = 0; k < o->nnames; k++) write_record(o->fp[k], w, wl);
+        n_outfil++;
+    }
+    if (saver && !taken) {
+        outfil *o = saver;
+        const unsigned char *w = r; unsigned wl = out_len;
+        if (o->nitems) { reformat(r, out_len, o->buf, o->items, o->nitems); w = o->buf; wl = reformat_len(o->items, o->nitems); }
+        for (unsigned k = 0; k < o->nnames; k++) write_record(o->fp[k], w, wl);
+        n_outfil++;
+    }
+}
+
+/* ---------------------------------------------------------------- */
+/* JOINKEYS: sort each side on its keys, then pair equal-key groups   */
+
+static unsigned jkey_len(const joinside *j) { unsigned k = 4; for (unsigned i = 0; i < j->nkeys; i++) k += j->keys[i].len; return k; }
+static void jkey_build(const joinside *j, const unsigned char *rec, unsigned seq, unsigned char *out)
+{
+    for (unsigned i = 0; i < j->nkeys; i++) {
+        const field *f = &j->keys[i];
+        memcpy(out, rec + f->pos, f->len);
+        if (f->desc) for (unsigned b = 0; b < f->len; b++) out[b] = (unsigned char)~out[b];
+        out += f->len;
+    }
+    out[0] = (unsigned char)(seq >> 24); out[1] = (unsigned char)(seq >> 16); out[2] = (unsigned char)(seq >> 8); out[3] = (unsigned char)seq;
+}
+
+/* the F2 group with one key value, held while F1 records of that key pair with it */
+static unsigned char *grp; static unsigned grp_n, grp_cap;
+
+static void join_emit(const unsigned char *r1, const unsigned char *r2, char ind, unsigned l1, unsigned l2, unsigned seq_dummy)
+{
+    (void)seq_dummy;
+    static unsigned char *jb; static unsigned jbl;
+    unsigned need = 0; for (unsigned i = 0; i < nreform; i++) need += reform[i].len;
+    if (jbl < need) { free(jb); jb = malloc(need ? need : 1); jbl = need; if (!jb) fatal("out of memory"); }
+    unsigned char *o = jb;
+    for (unsigned i = 0; i < nreform; i++) {
+        const rfitem *f = &reform[i];
+        if (f->side == 0) { o[0] = (unsigned char)ind; }
+        else {
+            const unsigned char *src = f->side == 1 ? r1 : r2; unsigned sl = f->side == 1 ? l1 : l2;
+            for (unsigned k = 0; k < f->len; k++) o[k] = src && f->pos + k < sl ? src[f->pos + k] : join_fill;
+        }
+        o += f->len;
+    }
+    static unsigned jseq;
+    take(jb, jseq++);
+}
+
+static void run_join(void)
+{
+    const char *p1 = dd_path(jk[0].dd), *p2 = dd_path(jk[1].dd);
+    if (!p1 || !p2) fatal("JOINKEYS: F1/F2 data sets not named on the command line (NAME=path)");
+    unsigned l1 = jk[0].len ? jk[0].len : in_len, l2 = jk[1].len ? jk[1].len : in_len;
+    for (int s = 0; s < 2; s++) for (unsigned i = 0; i < jk[s].nkeys; i++) if (jk[s].keys[i].pos + jk[s].keys[i].len > (s ? l2 : l1)) fatal("a JOINKEYS field lies past the record");
+    unsigned k1 = jkey_len(&jk[0]), k2 = jkey_len(&jk[1]);
+    if (k1 != k2) fatal("JOINKEYS: F1 and F2 FIELDS must have the same total length");
+    xsort x1, x2; char base[600];
+    const char *jb0 = dd_path("SORTOUT") ? dd_path("SORTOUT") : nofs && dd_path(ofs[0].names[0]) ? dd_path(ofs[0].names[0]) : "s32sort";
+    snprintf(base, sizeof base, "%s.j1", jb0); xs_init(&x1, k1 + l1, k1, mainsize / 2, 32, base, fatal);
+    snprintf(base, sizeof base, "%s.j2", jb0); xs_init(&x2, k2 + l2, k2, mainsize / 2, 32, base, fatal);
+    unsigned char *rb = malloc(l1 > l2 ? l1 : l2), *kb = malloc(k1);
+    if (!rb || !kb) fatal("out of memory");
+    for (int s = 0; s < 2; s++) {
+        const char *path = s ? p2 : p1; unsigned len = s ? l2 : l1; xsort *x = s ? &x2 : &x1; joinside *j = &jk[s];
+        FILE *f = fopen(path, "rb"); if (!f) { char m[300]; snprintf(m, sizeof m, "cannot open %s", path); fatal(m); }
+        unsigned saved = in_len; in_len = len;
+        unsigned seq = 0;
+        if (j->sorted) xs_source_begin(x);
+        while (read_record(f, rb)) { jkey_build(j, rb, seq++, kb); xs_put(x, kb, rb); }
+        if (j->sorted) xs_source_end(x);
+        in_len = saved; fclose(f);
+    }
+    xs_finish(&x1); xs_finish(&x2);
+    unsigned kc = k1 - 4;                                   /* the key without the arrival number */
+    const unsigned char *e2 = xs_next(&x2);
+    unsigned char *gkey = malloc(kc ? kc : 1); if (!gkey) fatal("out of memory");
+    grp_cap = 64; grp = malloc((size_t)grp_cap * l2); grp_n = 0; if (!grp) fatal("out of memory");
+    int have_grp = 0, grp_paired = 0;
+    const unsigned char *e1;
+    while ((e1 = xs_next(&x1)) != 0) {
+        /* bring the F2 group up to e1's key, emitting groups that fall below as unpaired F2 */
+        for (;;) {
+            if (!have_grp) {
+                if (!e2) break;
+                memcpy(gkey, e2, kc); grp_n = 0;
+                while (e2 && !memcmp(e2, gkey, kc)) {
+                    if (grp_n == grp_cap) { grp_cap *= 2; unsigned char *ng = realloc(grp, (size_t)grp_cap * l2); if (!ng) fatal("JOINKEYS: out of memory for an F2 key group"); grp = ng; }
+                    memcpy(grp + (size_t)grp_n * l2, e2 + k2, l2); grp_n++;
+                    e2 = xs_next(&x2);
+                }
+                have_grp = 1; grp_paired = 0;
+            }
+            int c = memcmp(gkey, e1, kc);
+            if (c < 0) { if (join_unpaired2 && !grp_paired) for (unsigned g = 0; g < grp_n; g++) join_emit(0, grp + (size_t)g * l2, '2', l1, l2, 0); have_grp = 0; continue; }
+            break;
+        }
+        if (have_grp && !memcmp(gkey, e1, kc)) {
+            grp_paired = 1;
+            if (!join_only) for (unsigned g = 0; g < grp_n; g++) join_emit(e1 + k1, grp + (size_t)g * l2, 'B', l1, l2, 0);
+        } else if (join_unpaired1) join_emit(e1 + k1, 0, '1', l1, l2, 0);
+    }
+    if (join_unpaired2) {
+        if (have_grp && !grp_paired) for (unsigned g = 0; g < grp_n; g++) join_emit(0, grp + (size_t)g * l2, '2', l1, l2, 0);
+        while (e2) { join_emit(0, e2 + k2, '2', l1, l2, 0); e2 = xs_next(&x2); }
+    }
+    xs_free(&x1); xs_free(&x2); free(rb); free(kb); free(gkey); free(grp);
 }
 
 int main(int argc, char **argv)
 {
     const char *sortin[64]; unsigned nin = 0; const char *sortout = 0, *sysin = 0;
     for (int i = 1; i < argc; i++) {
-        const char *a = argv[i];
-        if (!strncmp(a, "SORTIN=", 7) || !strncmp(a, "sortin=", 7)) { if (nin < 64) sortin[nin++] = a + 7; }
-        else if (!strncmp(a, "SORTOUT=", 8) || !strncmp(a, "sortout=", 8)) sortout = a + 8;
-        else if (!strncmp(a, "SYSIN=", 6) || !strncmp(a, "sysin=", 6)) sysin = a + 6;
-        else if (!strncmp(a, "MAINSIZE=", 9)) { char *e; unsigned long v = strtoul(a + 9, &e, 10); if (*e == 'K' || *e == 'k') v <<= 10; else if (*e == 'M' || *e == 'm') v <<= 20; mainsize = v; }
-        else { fprintf(stderr, "usage: s32sort SORTIN=file [SORTIN=file...] SORTOUT=file [SYSIN=ctl] [MAINSIZE=nM]\n"); return 16; }
+        const char *a = argv[i]; const char *eq = strchr(a, '=');
+        if (!eq || eq == a || (size_t)(eq - a) > 31) { fprintf(stderr, "usage: s32sort SORTIN=file [SORTIN=file...] SORTOUT=file [SYSIN=ctl] [MAINSIZE=nM] [NAME=file ...]\n"); return 16; }
+        char name[32]; for (int k = 0; k < eq - a; k++) name[k] = (char)toupper((unsigned char)a[k]); name[eq - a] = 0;
+        if (!strcmp(name, "MAINSIZE")) { char *e; unsigned long v = strtoul(eq + 1, &e, 10); if (*e == 'K' || *e == 'k') v <<= 10; else if (*e == 'M' || *e == 'm') v <<= 20; mainsize = v; continue; }
+        if (!strcmp(name, "SORTIN")) { if (nin < 64) sortin[nin++] = eq + 1; }
+        else if (!strcmp(name, "SORTOUT")) sortout = eq + 1;
+        else if (!strcmp(name, "SYSIN")) sysin = eq + 1;
+        if (ndds < 128) { strcpy(dds[ndds].name, name); dds[ndds].path = eq + 1; ndds++; }
     }
-    if (!nin) fatal("no SORTIN");
-    if (!sortout) fatal("no SORTOUT");
 
     /* control statements */
     FILE *cf = sysin ? fopen(sysin, "rb") : stdin;
@@ -457,14 +751,30 @@ int main(int argc, char **argv)
     if (sysin) fclose(cf);
     parse_control();
     if (!copy_only && !nsortf) fatal("no SORT or MERGE FIELDS");
+    if (have_join) { if (!jk[0].dd || !jk[1].dd) fatal("JOINKEYS needs both F1 and F2"); if (!nreform) fatal("JOINKEYS needs a REFORMAT statement"); if (is_merge) fatal("JOINKEYS with MERGE is not supported"); }
+    else if (!nin) fatal("no SORTIN");
+    if (!sortout && !nofs) fatal("no SORTOUT and no OUTFIL");
     if (is_merge && nin < 2 && !copy_only) fprintf(stderr, "s32sort: MERGE of one SORTIN\n");
 
     /* the input record length: RECORD LENGTH, else the first file's size for F (one record), 256 for L */
     if (!in_len) {
-        if (rec_text) in_len = 256;
+        if (rec_text || have_join) in_len = 256;
         else { FILE *f = fopen(sortin[0], "rb"); if (!f) fatal("cannot open SORTIN"); fseek(f, 0, SEEK_END); long sz = ftell(f); fclose(f); if (sz <= 0) fatal("RECORD LENGTH needed: SORTIN is empty"); in_len = (unsigned)sz; fprintf(stderr, "s32sort: RECORD LENGTH not given; taking the whole first SORTIN as one record (%u bytes)\n", in_len); }
     }
+    unsigned side_len = in_len;                              /* the F1/F2 record length when joining */
+    if (have_join) { in_len = 0; for (unsigned i = 0; i < nreform; i++) in_len += reform[i].len; }   /* the main task sees REFORMAT records */
     rec_len = ninrec ? reformat_len(inrec, ninrec) : in_len;
+    out_len = noutrec ? reformat_len(outrec, noutrec) : rec_len;
+    for (unsigned i = 0; i < nofs; i++) {
+        outfil *o = &ofs[i];
+        for (unsigned c = 0; c < o->nconds; c++) if (o->conds[c].a.pos + o->conds[c].a.len > out_len || (o->conds[c].rhs_is_field && o->conds[c].b.pos + o->conds[c].b.len > out_len)) fatal("an OUTFIL INCLUDE/OMIT field lies past the record");
+        o->buf = malloc(o->nitems ? reformat_len(o->items, o->nitems) : 1); if (!o->buf) fatal("out of memory");
+        for (unsigned k = 0; k < o->nnames; k++) {
+            const char *path = dd_path(o->names[k]);
+            if (!path) { char m[100]; snprintf(m, sizeof m, "OUTFIL %s: not named on the command line (%s=path)", o->names[k], o->names[k]); fatal(m); }
+            o->fp[k] = fopen(path, rec_text ? "w" : "wb"); if (!o->fp[k]) { char m[300]; snprintf(m, sizeof m, "cannot open %s", path); fatal(m); }
+        }
+    }
     /* every field must fit */
     for (unsigned i = 0; i < nsortf; i++) if (sortf[i].pos + sortf[i].len > rec_len) fatal("a SORT field lies past the record");
     for (unsigned i = 0; i < nsumf; i++) if (sumf[i].pos + sumf[i].len > rec_len) fatal("a SUM field lies past the record");
@@ -487,11 +797,15 @@ int main(int argc, char **argv)
 #endif
     }
     if (mainsize < 65536) mainsize = 65536;
-    xs_init(&xs, klen + rec_len, klen, mainsize, 32, sortout, fatal);
+    /* run files go beside SORTOUT, or beside the first OUTFIL when there is no SORTOUT */
+    const char *base = sortout ? sortout : nofs ? dd_path(ofs[0].names[0]) : "s32sort";
+    xs_init(&xs, klen + rec_len, klen, mainsize, 32, base ? base : "s32sort", fatal);
 
     /* in */
     unsigned seq = 0;
-    for (unsigned i = 0; i < nin; i++) {
+    if (have_join) {
+        unsigned saved = in_len; in_len = side_len; run_join(); in_len = saved;
+    } else for (unsigned i = 0; i < nin; i++) {
         FILE *f = fopen(sortin[i], "rb");
         if (!f) { char m[300]; snprintf(m, sizeof m, "cannot open SORTIN %s", sortin[i]); fatal(m); }
         if (is_merge) xs_source_begin(&xs);
@@ -502,8 +816,8 @@ int main(int argc, char **argv)
     xs_finish(&xs);
 
     /* out */
-    FILE *out = fopen(sortout, rec_text ? "w" : "wb");
-    if (!out) fatal("cannot open SORTOUT");
+    FILE *out = 0;
+    if (sortout) { out = fopen(sortout, rec_text ? "w" : "wb"); if (!out) fatal("cannot open SORTOUT"); }
     const unsigned char *e;
     if (!have_sum) {
         while ((e = xs_next(&xs)) != 0) emit(out, e + klen);
@@ -522,8 +836,10 @@ int main(int argc, char **argv)
         }
         if (have) emit(out, held);
     }
-    if (fclose(out)) fatal("SORTOUT: close failed");
+    if (out && fclose(out)) fatal("SORTOUT: close failed");
+    for (unsigned i = 0; i < nofs; i++) for (unsigned k = 0; k < ofs[i].nnames; k++) if (fclose(ofs[i].fp[k])) fatal("OUTFIL: close failed");
     xs_free(&xs);
-    fprintf(stderr, "s32sort: %llu records in, %llu selected, %llu out\n", n_in, n_sel, n_out);
+    if (nofs) fprintf(stderr, "s32sort: %llu records in, %llu selected, %llu out, %llu to OUTFIL\n", n_in, n_sel, n_out, n_outfil);
+    else fprintf(stderr, "s32sort: %llu records in, %llu selected, %llu out\n", n_in, n_sel, n_out);
     return 0;
 }
