@@ -617,6 +617,7 @@ void *cob_external(const char *name, unsigned size)
         if (!strcmp(cob_exts[i].name, name)) {
             if (size > cob_exts[i].size) {
                 void *q = calloc(size, 1);
+                if (!q) cob_fatal("out of memory for an EXTERNAL item");
                 memcpy(q, cob_exts[i].p, cob_exts[i].size);
                 cob_exts[i].p = q; cob_exts[i].size = size;
             }
@@ -624,6 +625,7 @@ void *cob_external(const char *name, unsigned size)
         }
     if (cob_nexts == 128) cob_fatal("more than 128 EXTERNAL items");
     cob_exts[cob_nexts].name = name; cob_exts[cob_nexts].p = calloc(size ? size : 1, 1); cob_exts[cob_nexts].size = size;
+    if (!cob_exts[cob_nexts].p) cob_fatal("out of memory for an EXTERNAL item");
     return cob_exts[cob_nexts++].p;
 }
 static struct { const char *name; cob_file *f; } cob_extf[64]; static int cob_nextf;
