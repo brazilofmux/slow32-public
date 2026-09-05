@@ -57,6 +57,13 @@ int main(int argc, char **argv) {
         } else {                                               /* seek: first >= random key prefix, compare with ref */
             unsigned char key[BT_KEYMAX + 4]; memset(key, 0, sizeof key); mkkey(key, rnd() % (N / 2));
             unsigned page, ix; int got = bt_first_ge(&b, 0, key, KL + 4, &page, &ix);
+            { /* the remembered-position lookup must agree with the plain one */
+                static btpos hint; unsigned hp, hi; int hgot = bt_first_ge_near(&b, 0, key, KL + 4, &hint, &hp, &hi);
+                if (hgot != got || (got && (hp != page || hi != ix))) {
+                    unsigned char k1[BT_KEYMAX + 4], k2[BT_KEYMAX + 4]; if (got) bt_read(&b, 0, page, ix, k1); if (hgot) bt_read(&b, 0, hp, hi, k2);
+                    printf("NEAR MISMATCH at op %u: plain got=%d (%u,%u) near got=%d (%u,%u) same-entry=%d\n", o, got, page, ix, hgot, hp, hi, got && hgot && !memcmp(k1, k2, KL + 4)); return 1;
+                }
+            }
             unsigned i = 0; while (i < nref && memcmp(ref[i].ka, key, KL + 4) < 0) i++;
             if (got != (i < nref)) { printf("seek presence mismatch at op %u\n", o); return 1; }
             if (got) { unsigned char ka[BT_KEYMAX + 4]; unsigned sl = bt_read(&b, 0, page, ix, ka); if (memcmp(ka, ref[i].ka, KL + 4)) { printf("seek mismatch at op %u\n", o); return 1; }

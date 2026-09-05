@@ -673,6 +673,28 @@ instructions a record and a keyed join ~5,400; the DBT runs both at
 ~8 BIPS. The critical path is now two legs of five programs each at
 35-50ms; the next lever is that per-record cost, not structure.
 
+**The keyed join, last (2026-09-05).** After the record cache the join
+consumers (a transaction-line file READ by key against a 55k-record master,
+in key order) still spent their time in the B+tree descent: root to leaf,
+one binary search per level, for every lookup, though 98% of them land
+within a step of the previous one. `bt_first_ge_near()` keeps the last
+(page, index) per open file plus the tree's modification count; if nothing
+changed it pins that leaf and tries the neighbours of the remembered index
+before falling back to `bt_first_ge()`. Measured with `S32_IDX_STATS=1`:
+55,268 lookups, 54,542 answered from the hint, 726 full descents. The two
+join programs went 27 -> 19 ms and 27 -> 17 ms; the batch itself stays at
+about 0.25 s because it is already at the process-startup floor.
+
+The first version was wrong, and the stress test said so before anything
+was committed: at the front of a leaf it accepted entry 0 as the answer
+whenever it was >= the target, but an earlier leaf may hold entries between
+the target and that one, so a target smaller than the leaf's first key must
+either match it exactly or fall through to the descent. Symptom on real
+data: the join wrote 35,409 of 55,268 records and reported the rest as not
+found. `tests/bt_test.c` now cross-checks the hinted lookup against the
+plain one on every seek; that check is what caught it (three shapes, all
+mismatching), and it is the reason this shipped correct rather than fast.
+
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
 Kept in `docs/oracles.md` and `docs/dialect.md`, each with a

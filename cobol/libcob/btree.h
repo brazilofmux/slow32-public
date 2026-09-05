@@ -62,6 +62,7 @@ typedef struct {
     unsigned char *dirty, *pin;
     unsigned ncache, clock;
     unsigned bm_hint;             /* no free slot below this (not persisted) */
+    unsigned mod;                 /* bumped by every insert and removal: a remembered position is stale after */
     unsigned short *hmap;         /* pno -> frame guess, direct-mapped */
     void (*fatal)(const char *);
 } btf;
@@ -411,6 +412,45 @@ static void bt_extra_set(btf *b, unsigned ki, unsigned page, unsigned ix, const 
     bt_dirty(b, page); bt_unpin(b, page);
 }
 
+/* A lookup that remembers where it was.  Keyed reads in a batch arrive
+ * grouped -- the same key again, or the next one -- so before descending
+ * from the root (about fifteen memcmp calls for a two-level tree, each a
+ * native-stub transition under the DBT) try the entry delivered last, then
+ * its neighbour, then a binary search of the same leaf if its range covers
+ * the target.  Only then the full descent.  Valid while b->mod is what it
+ * was when the position was taken. */
+typedef struct { unsigned ki, page, ix, mod; int valid; unsigned long n_look, n_near, n_full; } btpos;
+
+static int bt_first_ge_near(btf *b, unsigned ki, const unsigned char *target, unsigned n, btpos *hint, unsigned *page, unsigned *ix)
+{
+    hint->n_look++;
+    if (hint->valid && hint->ki == ki && hint->mod == b->mod) {
+        unsigned es = bt_lsize(b, ki), pno = hint->page;
+        unsigned char *p = bt_pin(b, pno);
+        unsigned c = bt_count(p);
+        if (p[0] == BT_LEAF && c) {
+            unsigned i = hint->ix < c ? hint->ix : c - 1;
+            int r = memcmp(bt_ent(p, es, i), target, n);
+            /* entry i is the answer when it is >= target and the entry before it is
+             * below; at the front of the leaf only an exact match will do -- an
+             * earlier leaf may hold entries between the target and this one */
+            if (r >= 0 && (i > 0 ? memcmp(bt_ent(p, es, i - 1), target, n) < 0 : r == 0)) { bt_unpin(b, pno); *page = pno; *ix = i; hint->ix = i; hint->n_near++; return 1; }
+            if (r < 0 && i + 1 < c && memcmp(bt_ent(p, es, i + 1), target, n) >= 0) { bt_unpin(b, pno); *page = pno; *ix = i + 1; hint->ix = i + 1; hint->n_near++; return 1; }
+            /* the leaf's range: first entry <= target <= last entry */
+            if (memcmp(bt_ent(p, es, 0), target, n) <= 0 && memcmp(bt_ent(p, es, c - 1), target, n) >= 0) {
+                unsigned j = bt_lower(p, es, target, n);
+                bt_unpin(b, pno); *page = pno; *ix = j; hint->ix = j; hint->n_near++; return 1;
+            }
+        }
+        bt_unpin(b, pno);
+    }
+    hint->n_full++;
+    int got = bt_first_ge(b, ki, target, n, page, ix);
+    if (got) { hint->valid = 1; hint->ki = ki; hint->page = *page; hint->ix = *ix; hint->mod = b->mod; }
+    else hint->valid = 0;
+    return got;
+}
+
 /* ---- insert ---- */
 
 /* put (ka, ptr) into page at ix, shifting; the page must have room */
@@ -461,7 +501,7 @@ static void bt_insert_x(btf *b, unsigned ki, const unsigned char *key, unsigned 
     unsigned ix = bt_lower(p, bt_lsize(b, ki), ka, kl + 4), c = bt_count(p), lcap = bt_cap_of(b, ki, p);
     bt_unpin(b, leaf);
     bt_put_at(b, ki, leaf, ix, ka, slot, extra);
-    b->k[ki].count++; b->hdr_dirty = 1;
+    b->k[ki].count++; b->hdr_dirty = 1; b->mod++;
     if (c + 1 < lcap) return;
     /* split up the path */
     unsigned page = leaf, child = bt_split(b, ki, page, sep);
@@ -493,6 +533,7 @@ static void bt_insert(btf *b, unsigned ki, const unsigned char *key, unsigned ar
 
 static void bt_remove_at(btf *b, unsigned ki, unsigned page, unsigned ix)
 {
+    b->mod++;
     unsigned char *p = bt_pin(b, page);
     unsigned es = bt_psize(b, ki, p), c = bt_count(p);
     memmove(bt_ent(p, es, ix), bt_ent(p, es, ix + 1), (size_t)(c - ix - 1) * es);

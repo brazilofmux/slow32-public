@@ -1939,6 +1939,7 @@ typedef struct {
     unsigned char cur[BT_KEYMAX + 4];   /* next (key, arrival) to deliver, inclusive */
     int last_slot;          /* slot the last READ delivered, for REWRITE/DELETE; -1 */
     unsigned char *tmp;     /* a record's worth of scratch */
+    btpos hint;             /* where the last lookup landed (bt_first_ge_near) */
     unsigned char *cache;   /* the data file's slots in memory (write-through), or 0 */
     unsigned cache_slots;   /* slots the cache holds */
     long fpos;              /* the stream's position, -1 unknown: a write to the next slot needs no seek */
@@ -2279,6 +2280,8 @@ static int idx_open(cob_file *f, int mode)
 static int idx_close(cob_file *f)
 {
     cob_idx *x = f->idx;
+    if (x && getenv("S32_IDX_STATS"))
+        fprintf(stderr, "libcob: %s: %lu keyed lookups, %lu near the last one, %lu full descents\n", file_name(f), x->hint.n_look, x->hint.n_near, x->hint.n_full);
     if (x) {
         if (x->bt.fd >= 0) bt_close(&x->bt, 1);
         idx_free(x);
@@ -2295,7 +2298,7 @@ static int idx_find(cob_idx *x, unsigned ki, const unsigned char *k, unsigned *p
     unsigned kl = b->k[ki].klen;
     unsigned char ka[BT_KEYMAX + 4];
     memcpy(ka, k, kl); memset(ka + kl, 0, 4);
-    if (!bt_first_ge(b, ki, ka, kl + 4, page, ix)) return 0;
+    if (!bt_first_ge_near(b, ki, ka, kl + 4, &x->hint, page, ix)) return 0;
     bt_read(b, ki, *page, *ix, ka);
     return memcmp(ka, k, kl) == 0;
 }
