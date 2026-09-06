@@ -1093,7 +1093,9 @@ static void prog_run(void) {
         str_copy(line, state.current_prog->lines[state.pc], MAX_LINE_LEN);
 
         /* Preprocess: comments and macro substitution */
-        prog_preprocess(line, cmd_get_memvar_store());
+        /* both things preprocessing does start with '&': a macro-free line is its own executable text */
+        if (strchr(line, '&'))
+            prog_preprocess(line, cmd_get_memvar_store());
 
         p = skip_ws(line);
         {

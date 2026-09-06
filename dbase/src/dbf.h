@@ -37,6 +37,13 @@ typedef struct {
     int cache_capacity;              /* max records to cache */
     uint32_t cache_next;       /* record a sequential scan would ask for next; 0 = none */
     int last_op;               /* last stdio op on fp: 0 none/unknown, 1 read, 2 write (seek elision) */
+    /* Windows for non-sequential reads (SEEK, SKIP in index order), direct-
+     * mapped by record block so a report that visits an account's records
+     * twice hits the second time.  nwin is sized to the file (<= 4MB). */
+    char *win_buf;             /* nwin x DBF_CACHE_JUMP_RECORDS records, or NULL */
+    uint32_t *win_start;       /* first record in each window; 0 = empty */
+    int *win_count;
+    int nwin;
 
     /* Memo (.DBT) support */
     FILE *memo_fp;                   /* .DBT file handle (NULL if none) */

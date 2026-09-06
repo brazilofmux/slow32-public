@@ -10,6 +10,7 @@
 
 #define DBF_CACHE_RECORDS 256
 #define DBF_CACHE_JUMP_RECORDS 8   /* window read on a non-sequential miss */
+#define DBF_CACHE_WINDOWS_MAX 2048  /* direct-mapped windows, at most (4MB of 252-byte records) */
 
 void dbf_init(dbf_t *db) {
     memset(db, 0, sizeof(*db));
@@ -20,8 +21,10 @@ void dbf_init(dbf_t *db) {
 }
 
 void dbf_cache_invalidate(dbf_t *db) {
+    int i;
     db->cache_start = 0;
     db->cache_count = 0;
+    for (i = 0; i < db->nwin; i++) db->win_count[i] = 0;
 }
 
 static void dbf_cache_free(dbf_t *db) {
@@ -29,6 +32,15 @@ static void dbf_cache_free(dbf_t *db) {
         free(db->cache_buf);
         db->cache_buf = NULL;
     }
+    if (db->win_buf) {
+        free(db->win_buf);
+        free(db->win_start);
+        free(db->win_count);
+        db->win_buf = NULL;
+        db->win_start = NULL;
+        db->win_count = NULL;
+    }
+    db->nwin = 0;
     db->cache_capacity = 0;
     dbf_cache_invalidate(db);
 }
@@ -47,6 +59,17 @@ static void dbf_cache_init(dbf_t *db) {
     if (!db->cache_buf) {
         db->cache_capacity = 0;
         return;
+    }
+    /* windows: one per block of DBF_CACHE_JUMP_RECORDS records, capped */
+    db->nwin = (int)(db->record_count / DBF_CACHE_JUMP_RECORDS) + 1;
+    if (db->nwin > DBF_CACHE_WINDOWS_MAX) db->nwin = DBF_CACHE_WINDOWS_MAX;
+    db->win_buf = (char *)malloc((size_t)db->record_size * DBF_CACHE_JUMP_RECORDS * (size_t)db->nwin);
+    db->win_start = (uint32_t *)calloc((size_t)db->nwin, sizeof(uint32_t));
+    db->win_count = (int *)calloc((size_t)db->nwin, sizeof(int));
+    if (!db->win_buf || !db->win_start || !db->win_count) {
+        free(db->win_buf); free(db->win_start); free(db->win_count);
+        db->win_buf = NULL; db->win_start = NULL; db->win_count = NULL;
+        db->nwin = 0;
     }
     dbf_cache_invalidate(db);
 }
@@ -262,6 +285,24 @@ int dbf_append_blank_ex(dbf_t *db, int eager) {
     return 0;
 }
 
+/* The window slot for recno's block; a window holds the block starting at a
+ * multiple of DBF_CACHE_JUMP_RECORDS (records are 1-based). */
+static int dbf_win_slot(const dbf_t *db, uint32_t recno) {
+    return (int)(((recno - 1) / DBF_CACHE_JUMP_RECORDS) % (uint32_t)db->nwin);
+}
+static uint32_t dbf_win_block_start(uint32_t recno) {
+    return ((recno - 1) / DBF_CACHE_JUMP_RECORDS) * DBF_CACHE_JUMP_RECORDS + 1;
+}
+/* Which window holds recno, or -1. */
+static int dbf_win_find(const dbf_t *db, uint32_t recno) {
+    int w;
+    if (!db->win_buf) return -1;
+    w = dbf_win_slot(db, recno);
+    if (db->win_count[w] > 0 && recno >= db->win_start[w] && recno < db->win_start[w] + (uint32_t)db->win_count[w])
+        return w;
+    return -1;
+}
+
 int dbf_read_record(dbf_t *db, uint32_t recno) {
     long pos;
     uint32_t start;
@@ -287,29 +328,54 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
         int idx = (int)(recno - db->cache_start);
         memcpy(db->record_buf, db->cache_buf + idx * db->record_size, db->record_size);
         db->record_buf[db->record_size] = '\0';
+    } else if (db->cache_buf && db->cache_capacity > 0 && recno != db->cache_next && db->win_buf &&
+               dbf_win_find(db, recno) >= 0) {
+        /* one of the small windows holds it */
+        int w = dbf_win_find(db, recno);
+        memcpy(db->record_buf, db->win_buf + ((size_t)w * DBF_CACHE_JUMP_RECORDS + (recno - db->win_start[w])) * db->record_size,
+               db->record_size);
+        db->record_buf[db->record_size] = '\0';
     } else if (db->cache_buf && db->cache_capacity > 0) {
+        char *dest;
+        int w = -1;
         start = recno;
         available = db->record_count - start + 1;
         /* A sequential scan (the record after the last block) earns the full
-         * block; a jump (SEEK, SKIP in index order) reads a small window --
-         * the activity report visits 55k records in index order, and each
-         * miss used to pull 256 records (64KB) to use one. */
-        to_read = (recno == db->cache_next) ? db->cache_capacity : DBF_CACHE_JUMP_RECORDS;
+         * block; a jump (SEEK, SKIP in index order) reads a small window into
+         * the least recently used slot -- the activity report visits 55k
+         * records in index order, and each miss used to pull 256 records
+         * (64KB) to use one. */
+        if (recno == db->cache_next || !db->win_buf) {
+            to_read = db->cache_capacity;
+            dest = db->cache_buf;
+        } else {
+            /* the aligned block holding recno, into its own slot */
+            start = dbf_win_block_start(recno);
+            available = db->record_count - start + 1;
+            to_read = DBF_CACHE_JUMP_RECORDS;
+            w = dbf_win_slot(db, recno);
+            dest = db->win_buf + (size_t)w * DBF_CACHE_JUMP_RECORDS * db->record_size;
+        }
         if (to_read > (int)available) to_read = (int)available;
         bytes = (size_t)db->record_size * (size_t)to_read;
 
         pos = db->header_size + (long)(start - 1) * db->record_size;
         if (!(db->file_pos == pos && db->last_op == 1))
             fseek(db->fp, pos, 0);
-        if (fread(db->cache_buf, 1, bytes, db->fp) != bytes)
+        if (fread(dest, 1, bytes, db->fp) != bytes)
             return -1;
         db->file_pos = pos + (long)bytes;
         db->last_op = 1;
-        db->cache_start = start;
-        db->cache_count = to_read;
-        db->cache_next = start + (uint32_t)to_read;
+        if (w < 0) {
+            db->cache_start = start;
+            db->cache_count = to_read;
+            db->cache_next = start + (uint32_t)to_read;
+        } else {
+            db->win_start[w] = start;
+            db->win_count[w] = to_read;
+        }
 
-        memcpy(db->record_buf, db->cache_buf, db->record_size);
+        memcpy(db->record_buf, dest + (size_t)(recno - start) * db->record_size, db->record_size);
         db->record_buf[db->record_size] = '\0';
     } else {
         pos = db->header_size + (long)(recno - 1) * db->record_size;
@@ -361,6 +427,12 @@ int dbf_flush_record(dbf_t *db) {
         int ci = (int)(db->current_record - db->cache_start);
         memcpy(db->cache_buf + ci * db->record_size,
                db->record_buf, db->record_size);
+    }
+    if (db->win_buf) {
+        int w = dbf_win_find(db, db->current_record);
+        if (w >= 0)
+            memcpy(db->win_buf + ((size_t)w * DBF_CACHE_JUMP_RECORDS + (db->current_record - db->win_start[w])) * db->record_size,
+                   db->record_buf, db->record_size);
     }
 
     /* Invalidate other work areas that have the same file open.  Not our

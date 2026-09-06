@@ -70,10 +70,13 @@ int read_line(char *buf, int size) {
 }
 
 void str_copy(char *dst, const char *src, int n) {
-    int i;
-    for (i = 0; i < n - 1 && src[i]; i++)
-        dst[i] = src[i];
-    dst[i] = '\0';
+    /* length + memcpy: the byte loop showed in every profile (lines, names,
+     * values are copied constantly), and memcpy is the optimised routine */
+    size_t len = strlen(src);
+    if (n <= 0) return;
+    if (len > (size_t)(n - 1)) len = (size_t)(n - 1);
+    memcpy(dst, src, len);
+    dst[len] = '\0';
 }
 
 void path_normalize(char *s) {

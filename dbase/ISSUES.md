@@ -293,3 +293,24 @@ indexes byte-identical to the previous binary's.
   four-character rule); it now rejects on the first letter first, which is
   most calls. `dbf_find_field` likewise (field names are upper-case).
 
+**Seventh round (2026-09-05):** runner 13.2 s -> 12.7 s; native report step
+sys time halved.
+- Record windows beside the sequential block: a non-sequential read fills the
+  aligned 8-record block holding the record into a direct-mapped slot
+  (`nwin` = blocks in the file, <= 2048, so <= 4MB); the activity report's
+  second pass over an account now hits what the first pass read. (A first
+  version with 64 LRU windows gained nothing: an account's history runs to
+  thousands of lines and evicted itself.)
+- `str_copy` was a byte loop and showed in every profile: length + memcpy.
+- `prog_run` ran `prog_preprocess` on every line; both things it does (the
+  `&&` comment and `&macro`) start with `&`, so a macro-free line is skipped.
+
+Where it stands: 46.5 s -> 12.7 s over the day, every round gated on
+102/102 and byte-identical reports, data files and indexes. What is left is
+per-statement: each executed line is copied, classified, dispatched and its
+clauses re-lexed (REPLACE re-parses "field WITH" for every record), and every
+modified record is written through on its own (one write per record in a
+REPLACE-then-SKIP loop, one per APPEND). The next steps of size would be a
+parsed-statement cache per line and a write-back cache block; both are
+design changes rather than fixes.
+
