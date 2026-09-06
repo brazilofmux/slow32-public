@@ -1575,7 +1575,7 @@ void prog_if(const char *arg) {
         return;
     }
 
-    if (expr_eval_str(ctx, arg, &val) != 0) {
+    if (ast_eval_dynamic(arg, ctx, &val) != 0) {
         if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
         state.pc++;
         return;
@@ -2155,7 +2155,7 @@ void prog_return(const char *arg) {
     if (arg && *arg) {
         expr_ctx_t *ctx = cmd_get_expr_ctx();
         value_t val;
-        if (expr_eval_str(ctx, arg, &val) == 0) {
+        if (ast_eval_dynamic(arg, ctx, &val) == 0) {
             udf_return_val = val;
         }
     }

@@ -56,6 +56,10 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result);
    Used for expressions containing &macros that must re-expand each time. */
 int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result);
 
+/* Evaluate the expression at *pp through the compiled-expression cache and
+   advance *pp past it (the advancing form of ast_eval_dynamic). */
+int ast_eval_adv(expr_ctx_t *ctx, const char **pp, value_t *result);
+
 /* Free AST recursively.  Safe to call with NULL. */
 void ast_free(ast_node_t *node);
 

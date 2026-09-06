@@ -247,3 +247,22 @@ data files byte-identical, 102/102.
 What leads the native profile now is the lexer: every statement is re-lexed
 each time it executes.
 
+**Third and fourth rounds (2026-09-05):** runner 21.8 s -> ~17 s.
+- `func_call` walked the 124-entry builtin table with strcmp on every call
+  (a user-defined function had to miss all of it first): hashed on first use.
+- `lexer_init_ext` zeroed 2.4KB per statement and sub-clause, most of it the
+  macro stack read only below `macro_depth`: now the token and a few fields.
+- Index page cache 64 -> 512 pages (FLATACCT is ~600 pages; every SEEK
+  missed on its leaf).
+- Compiled-expression cache (`ast_cached` in ast.c, 1024 entries keyed by the
+  expression text): `ast_eval_dynamic` no longer compiles, evaluates and frees
+  on every call, and IF, RETURN, STORE, SEEK, `?` and assignment -- the fresh
+  recursive-descent parse in expr.c on every execution -- go through it
+  (`ast_eval_adv` is the advancing form). The two rules from 2.1/2.2 hold:
+  text with `&` is never cached; the cache is dropped whenever an array is
+  declared or freed (`memvar_array_gen`), because name(...) is an array or a
+  call according to what exists at compile time. Trees are never written
+  during evaluation, so one tree serves every work-area context.
+Gate each round: dbase tests 102/102; majesty's 12 reports, data files and
+indexes byte-identical to the previous binary's.
+

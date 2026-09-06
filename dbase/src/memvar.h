@@ -28,6 +28,10 @@ typedef struct memvar_store {
     int current_depth;  /* updated on push/pop frame */
 } memvar_store_t;
 
+/* Bumped whenever an array is declared or freed: name(...) resolves to an array
+ * or a function call at compile time, so cached expression trees are dropped. */
+extern unsigned memvar_array_gen;
+
 void memvar_init(memvar_store_t *store);
 int  memvar_find(const memvar_store_t *store, const char *name, value_t *val);
 int  memvar_set(memvar_store_t *store, const char *name, const value_t *val);

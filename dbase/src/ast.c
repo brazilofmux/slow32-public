@@ -800,11 +800,84 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     return -1;
 }
 
+/* ----------------------------------------------------------------
+ *  Compiled-expression cache, keyed by the expression text.
+ *
+ *  Every statement re-parsed its expressions on every execution (the
+ *  evaluating parser in expr.c, or compile-eval-free here).  The tree for a
+ *  given text is the same each time except in two cases, both handled: a
+ *  macro (&) expands at compile time, so such text is never cached (2.1);
+ *  name(...) is an array or a call according to what exists at compile time
+ *  (2.2), so the cache is dropped whenever memvar_array_gen moves.  Trees are
+ *  not written during evaluation, so one tree serves every context.
+ * ---------------------------------------------------------------- */
+#define AST_CACHE_SIZE 1024
+typedef struct { char *text; ast_node_t *ast; int consumed; } ast_cache_entry_t;
+static ast_cache_entry_t ast_cache[AST_CACHE_SIZE];
+static unsigned ast_cache_gen;
+
+static unsigned ast_text_hash(const char *s) {
+    unsigned h = 2166136261u;
+    while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
+    return h;
+}
+
+static void ast_cache_flush(void) {
+    int i;
+    for (i = 0; i < AST_CACHE_SIZE; i++) {
+        if (ast_cache[i].text) { free(ast_cache[i].text); ast_free(ast_cache[i].ast); ast_cache[i].text = NULL; ast_cache[i].ast = NULL; }
+    }
+}
+
+/* The tree for `text` (the whole string, or a leading expression of it when
+ * adv), compiling on a miss.  NULL: not cacheable or does not compile; the
+ * caller falls back to the parser that reports the error. */
+static ast_node_t *ast_cached(const char *text, memvar_store_t *store, int adv, int *consumed) {
+    ast_cache_entry_t *e;
+    if (strchr(text, '&')) return NULL;
+    if (ast_cache_gen != memvar_array_gen) { ast_cache_flush(); ast_cache_gen = memvar_array_gen; }
+    e = &ast_cache[ast_text_hash(text) & (AST_CACHE_SIZE - 1)];
+    if (e->text && strcmp(e->text, text) == 0 && (adv ? e->consumed >= 0 : e->consumed < 0)) {
+        if (consumed) *consumed = e->consumed;
+        return e->ast;
+    }
+    {
+        const char *error;
+        ast_node_t *ast;
+        int used = -1;
+        if (adv) {
+            const char *pp = text;
+            ast = ast_compile_adv(&pp, store, &error);
+            used = (int)(pp - text);
+        } else {
+            ast = ast_compile(text, store, &error);
+        }
+        if (!ast) return NULL;
+        if (e->text) { free(e->text); ast_free(e->ast); }
+        e->text = strdup(text);
+        if (!e->text) { ast_free(ast); e->ast = NULL; return NULL; }
+        e->ast = ast;
+        e->consumed = used;
+        if (consumed) *consumed = used;
+        return ast;
+    }
+}
+
 int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result) {
-    const char *error;
-    ast_node_t *ast = ast_compile(expr, ctx->vars, &error);
+    ast_node_t *ast = ast_cached(expr, ctx->vars, 0, NULL);
     if (!ast) return expr_eval_str(ctx, expr, result);
-    int rc = ast_eval(ast, ctx, result);
-    ast_free(ast);
+    return ast_eval(ast, ctx, result);
+}
+
+/* Evaluate the expression at *pp and advance *pp past it, like expr_eval(). */
+int ast_eval_adv(expr_ctx_t *ctx, const char **pp, value_t *result) {
+    int used = 0;
+    ast_node_t *ast = ast_cached(*pp, ctx->vars, 1, &used);
+    int rc;
+    if (!ast) return expr_eval(ctx, pp, result);
+    ctx->error = NULL;
+    *result = val_nil();
+    rc = ast_eval(ast, ctx, result);
+    *pp += used;
     return rc;
 }

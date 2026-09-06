@@ -5,7 +5,10 @@
 #include "program.h"
 #include "util.h"
 
+unsigned memvar_array_gen;
+
 static void array_free(array_t *arr) {
+    memvar_array_gen++;
     if (!arr) return;
     if (arr->elements) free(arr->elements);
     free(arr);
@@ -202,6 +205,7 @@ int memvar_declare_array(memvar_store_t *store, const char *name, int rows, int 
 
     v.type = VAL_ARRAY;
     v.array = arr;
+    memvar_array_gen++;
     if (memvar_set(store, name, &v) < 0) {
         free(arr->elements);
         free(arr);

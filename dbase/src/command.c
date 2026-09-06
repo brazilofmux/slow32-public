@@ -2631,7 +2631,7 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     expr_str[len] = '\0';
     trim_right(expr_str);
 
-    if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
+    if (ast_eval_dynamic(expr_str, &expr_ctx, &val) != 0) {
         report_expr_error();
         return;
     }
@@ -3080,7 +3080,7 @@ static void cmd_print_expr(const char *arg, int newline) {
         p = skip_ws(p);
         if (*p == '\0') break;
 
-        if (expr_eval(&expr_ctx, &p, &val) != 0) {
+        if (ast_eval_adv(&expr_ctx, &p, &val) != 0) {
             report_expr_error();
             return;
         }
@@ -4651,7 +4651,7 @@ static void cmd_seek(dbf_t *db, const char *arg) {
         return;
     }
 
-    if (expr_eval_str(&expr_ctx, p, &val) != 0) {
+    if (ast_eval_dynamic(p, &expr_ctx, &val) != 0) {
         report_expr_error();
         return;
     }
@@ -6586,7 +6586,7 @@ int cmd_execute(dbf_t *db, char *line) {
                 }
                 value_t val;
                 const char *next_p = al.token_start + 1; /* skip = */
-                if (expr_eval(&expr_ctx, &next_p, &val) != 0) {
+                if (ast_eval_adv(&expr_ctx, &next_p, &val) != 0) {
                     report_expr_error();
                     return 0;
                 }
