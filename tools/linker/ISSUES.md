@@ -77,3 +77,16 @@ Many errors (like "Relocation offset out of bounds") do not print the filename o
 The `-s` flag is only partially implemented. It prevents global symbols from being written to the output, but the symbol table logic still spends time processing them.
 
 - **Recommendation**: Optimize the symbol table pass to ignore non-essential symbols earlier when stripping is enabled.
+
+### 11. A JAL reaches +/-1MB and there are no veneers (2026-09-06)
+
+SQLite is the first program to hit it: at -O2 the library is 995KB of code,
+and with it linked before libc, main's calls into libc were past 1MB
+(`Error: JAL offset out of range`). The backend has no large code model
+(`-mcmodel` is refused for the target), so the only remedies today are
+size (-Os: 697KB, which fits) and link order. The fix of size is linker
+veneers: when a JAL relocation is out of range, emit a `lui`/`jalr` stub in
+a trampoline area at the end of .text and retarget the JAL to it, the way
+ARM and RISC-V linkers do. Until then a program's callers must all sit within
+1MB of their callees, i.e. programs are ~1MB of code at most.
+

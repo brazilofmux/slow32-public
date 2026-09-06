@@ -1,6 +1,7 @@
 #ifndef LLVM_LIB_TARGET_SLOW32_SLOW32FRAMELOWERING_H
 #define LLVM_LIB_TARGET_SLOW32_SLOW32FRAMELOWERING_H
 
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
 
 namespace llvm {
@@ -21,6 +22,19 @@ public:
   /// arguments sit below the fixed LR/FP save slots at SP+0/+4.
   bool hasReservedCallFrame(const MachineFunction &MF) const override {
     return false;
+  }
+
+  /// PEI's replaceFrameIndices is the walk that turns ADJCALLSTACK* into
+  /// the SP adjustments hasReservedCallFrame()=false relies on. Its default
+  /// gate is hasStackObjects(), and the fixed LR/FP saves are not frame
+  /// objects, so a function with no locals whose call passes arguments on
+  /// the stack never got the walk: the pseudos were dropped silently and
+  /// the outgoing argument was stored at SP+0, over the saved LR.
+  /// sqlite3_create_function forwarding its eight arguments plus a ninth to
+  /// sqlite3_create_function_v2 returned to address 0 (2026-09-06).
+  bool needsFrameIndexResolution(const MachineFunction &MF) const override {
+    const MachineFrameInfo &MFI = MF.getFrameInfo();
+    return MFI.hasStackObjects() || MFI.adjustsStack();
   }
 
   // NOTE: canSimplifyCallFramePseudos is deliberately NOT overridden.
