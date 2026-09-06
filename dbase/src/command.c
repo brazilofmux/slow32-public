@@ -41,6 +41,7 @@ static void cmd_display(dbf_t *db, lexer_t *l);
 static void cmd_display_structure(dbf_t *db);
 static void cmd_display_status(void);
 static void cmd_replace(dbf_t *db, lexer_t *l);
+static int wa_writes_eager(dbf_t *db);
 static void cmd_report_form(dbf_t *db, lexer_t *l);
 static void cmd_count(dbf_t *db, lexer_t *l);
 static void cmd_sum(dbf_t *db, lexer_t *l);
@@ -749,7 +750,7 @@ static void cmd_append_blank(dbf_t *db) {
         return;
     }
 
-    if (dbf_append_blank(db) < 0) {
+    if (dbf_append_blank_ex(db, wa_writes_eager(db)) < 0) {
         prog_error(ERR_FILE_IO, "Error appending record");
         return;
     }
@@ -1902,6 +1903,13 @@ static int replace_capture_expr(lexer_t *l, char *out, int out_size) {
     return 0;
 }
 
+/* Writes must reach the disk at once when an index is open (the UNIQUE
+ * rollback re-reads the disk copy) or the same file is open in another work
+ * area (which reads the disk; the flush invalidates its cache). */
+static int wa_writes_eager(dbf_t *db) {
+    return cur_wa()->num_indexes > 0 || area_open_count(db->filename) > 1;
+}
+
 static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
     replace_ctx_t *rctx = userdata;
     char formatted[256];
@@ -1994,7 +2002,7 @@ static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
      * open (the UNIQUE rollback above re-reads the disk copy), and the same
      * file open in another work area (which reads the disk, not this buffer;
      * the flush invalidates its cache). */
-    if (has_indexes || area_open_count(db->filename) > 1)
+    if (wa_writes_eager(db))
         dbf_flush_record(db);
     return REC_CONTINUE;
 }
@@ -3614,7 +3622,7 @@ static int append_row_cb(int line, const csv_row_t *row, void *ud) {
 
     (void)line;
 
-    dbf_append_blank(db);
+    dbf_append_blank_ex(db, wa_writes_eager(db));
 
     /* Fill fields positionally: CSV field 0 -> DB field 0, etc. */
     nf = row->num_fields;

@@ -9,6 +9,7 @@
 #include "util.h"
 
 #define DBF_CACHE_RECORDS 256
+#define DBF_CACHE_JUMP_RECORDS 8   /* window read on a non-sequential miss */
 
 void dbf_init(dbf_t *db) {
     memset(db, 0, sizeof(*db));
@@ -226,7 +227,12 @@ int dbf_is_open(const dbf_t *db) {
     return db->fp != NULL;
 }
 
-int dbf_append_blank(dbf_t *db) {
+int dbf_append_blank(dbf_t *db) { return dbf_append_blank_ex(db, 1); }
+
+/* eager=0: the blank record stays in the buffer (dirty) and the header count
+ * is written at close.  Callers pass eager=0 only with no index open and the
+ * file open in one work area -- the two cases that read the disk copy. */
+int dbf_append_blank_ex(dbf_t *db, int eager) {
     if (!db->fp) return -1;
 
     /* Flush current record if dirty */
@@ -243,6 +249,10 @@ int dbf_append_blank(dbf_t *db) {
     /* Write blank record to disk immediately — deferred write breaks the
        unique-index rollback path which re-reads from disk */
     db->record_dirty = 1;
+    if (!eager) {
+        db->header_dirty = 1;
+        return 0;
+    }
     dbf_flush_record(db);
 
     /* Update header counts */
@@ -280,7 +290,11 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
     } else if (db->cache_buf && db->cache_capacity > 0) {
         start = recno;
         available = db->record_count - start + 1;
-        to_read = db->cache_capacity;
+        /* A sequential scan (the record after the last block) earns the full
+         * block; a jump (SEEK, SKIP in index order) reads a small window --
+         * the activity report visits 55k records in index order, and each
+         * miss used to pull 256 records (64KB) to use one. */
+        to_read = (recno == db->cache_next) ? db->cache_capacity : DBF_CACHE_JUMP_RECORDS;
         if (to_read > (int)available) to_read = (int)available;
         bytes = (size_t)db->record_size * (size_t)to_read;
 
@@ -291,6 +305,7 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
         db->file_pos = pos + (long)bytes;
         db->cache_start = start;
         db->cache_count = to_read;
+        db->cache_next = start + (uint32_t)to_read;
 
         memcpy(db->record_buf, db->cache_buf, db->record_size);
         db->record_buf[db->record_size] = '\0';

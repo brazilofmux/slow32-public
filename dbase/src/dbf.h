@@ -35,6 +35,7 @@ typedef struct {
     uint32_t cache_start;            /* first record number in cache */
     int cache_count;                 /* number of records cached */
     int cache_capacity;              /* max records to cache */
+    uint32_t cache_next;       /* record a sequential scan would ask for next; 0 = none */
 
     /* Memo (.DBT) support */
     FILE *memo_fp;                   /* .DBT file handle (NULL if none) */
@@ -54,6 +55,7 @@ int  dbf_open(dbf_t *db, const char *filename);
 void dbf_close(dbf_t *db);
 int  dbf_is_open(const dbf_t *db);
 int  dbf_append_blank(dbf_t *db);
+int  dbf_append_blank_ex(dbf_t *db, int eager);   /* eager=0: buffer only, header count at close */
 int  dbf_read_record(dbf_t *db, uint32_t recno);
 int  dbf_flush_record(dbf_t *db);
 void dbf_move_eof(dbf_t *db);   /* to the phantom record past the last, flushing first */

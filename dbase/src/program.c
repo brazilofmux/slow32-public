@@ -958,7 +958,14 @@ static int push_frame(program_t *new_prog, int start_line) {
     }
 
     frame = &state.call_stack[state.call_depth];
-    memset(frame, 0, sizeof(call_frame_t));
+    /* The frame is 27KB (saved_vals, with_args); zeroing it on every call was
+     * a third of the memset time on majesty's import. Readers walk the value
+     * arrays up to private_count / with_argc and test the first byte of the
+     * name arrays, so those are what a fresh frame needs. */
+    frame->private_count = 0;
+    frame->with_argc = 0;
+    memset(frame->with_ref_names, 0, sizeof(frame->with_ref_names));
+    memset(frame->param_names, 0, sizeof(frame->param_names));
     frame->caller_prog = state.current_prog;
     frame->caller_line = state.pc;
     frame->prog = new_prog;

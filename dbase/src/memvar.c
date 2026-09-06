@@ -11,17 +11,39 @@ static void array_free(array_t *arr) {
     free(arr);
 }
 
+/* FNV-1a over the upper-case name.  Slots are ~300 bytes, so a lookup that
+ * walked all 256 with a case-insensitive compare touched 77KB; now it walks
+ * the live prefix and compares one word per slot. */
+static unsigned name_hash(const char *s) {
+    unsigned h = 2166136261u;
+    while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
+    return h;
+}
+
+static void hw_grow(memvar_store_t *store, int i) { if (i + 1 > store->hw) store->hw = i + 1; }
+static void hw_shrink(memvar_store_t *store) { while (store->hw > 0 && !store->vars[store->hw - 1].used) store->hw--; }
+
 void memvar_init(memvar_store_t *store) {
     int i;
     for (i = 0; i < MEMVAR_MAX; i++)
         store->vars[i].used = 0;
     store->count = 0;
+    store->hw = 0;
 }
 
 int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
     int i;
-    for (i = 0; i < MEMVAR_MAX; i++) {
-        if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
+    char uname[64];
+    /* Stored names are upper-case (memvar_set, memvar_set_local): one
+     * upper-casing of the query and a first-byte reject replace a
+     * case-insensitive compare against every used slot. */
+    unsigned h;
+    str_copy(uname, name, sizeof(uname));
+    str_upper(uname);
+    h = name_hash(uname);
+    for (i = 0; i < store->hw; i++) {
+        if (store->vars[i].used && store->vars[i].hash == h &&
+            strcmp(store->vars[i].name, uname) == 0) {
             /* LOCAL vars only visible at exact creation scope */
             if (store->vars[i].is_local &&
                 store->vars[i].scope_depth != store->current_depth)
@@ -40,9 +62,11 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
     str_copy(uname, name, MEMVAR_NAMELEN);
     str_upper(uname);
 
+    unsigned h = name_hash(uname);
+
     /* Update existing */
-    for (i = 0; i < MEMVAR_MAX; i++) {
-        if (store->vars[i].used && str_icmp(store->vars[i].name, uname) == 0) {
+    for (i = 0; i < store->hw; i++) {
+        if (store->vars[i].used && store->vars[i].hash == h && strcmp(store->vars[i].name, uname) == 0) {
             /* LOCAL vars only writable at exact creation scope */
             if (store->vars[i].is_local &&
                 store->vars[i].scope_depth != store->current_depth)
@@ -58,11 +82,13 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (!store->vars[i].used) {
             str_copy(store->vars[i].name, uname, MEMVAR_NAMELEN);
+            store->vars[i].hash = name_hash(store->vars[i].name);
             store->vars[i].val = *val;
             store->vars[i].used = 1;
             store->vars[i].scope_depth = store->current_depth;
             store->vars[i].is_local = 0;
             store->count++;
+            hw_grow(store, i);
             return 0;
         }
     }
@@ -82,11 +108,13 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (!store->vars[i].used) {
             str_copy(store->vars[i].name, uname, MEMVAR_NAMELEN);
+            store->vars[i].hash = name_hash(store->vars[i].name);
             store->vars[i].val = *val;
             store->vars[i].used = 1;
             store->vars[i].scope_depth = store->current_depth;
             store->vars[i].is_local = 1;
             store->count++;
+            hw_grow(store, i);
             return 0;
         }
     }
@@ -97,12 +125,18 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
 
 int memvar_release(memvar_store_t *store, const char *name) {
     int i;
-    for (i = 0; i < MEMVAR_MAX; i++) {
-        if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
+    char uname[64];
+    unsigned h;
+    str_copy(uname, name, sizeof(uname));
+    str_upper(uname);
+    h = name_hash(uname);
+    for (i = 0; i < store->hw; i++) {
+        if (store->vars[i].used && store->vars[i].hash == h && strcmp(store->vars[i].name, uname) == 0) {
             if (store->vars[i].val.type == VAL_ARRAY)
                 array_free(store->vars[i].val.array);
             store->vars[i].used = 0;
             store->count--;
+            hw_shrink(store);
             return 0;
         }
     }
@@ -120,6 +154,7 @@ void memvar_release_all(memvar_store_t *store) {
         store->vars[i].used = 0;
         store->count--;
     }
+    hw_shrink(store);
 }
 
 /* Case-insensitive wildcard match: '*' and '?' */
@@ -142,6 +177,7 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
             count++;
         }
     }
+    hw_shrink(store);
     return count;
 }
 

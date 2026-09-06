@@ -227,3 +227,23 @@ FLATLINE/TXNS/LINES data files and FLATACCT index byte-identical. Runner
 What remains is structural: every statement is re-lexed on each execution and
 `memvar_find` scans all 256 slots with a case-insensitive compare.
 
+**Second round (2026-09-05, same day):** runner 26.9 s -> 21.8 s, reports and
+data files byte-identical, 102/102.
+- `push_frame` zeroed the whole 27KB frame (saved_vals, with_args) on every
+  call; now the two counters and the two name arrays that readers test.
+- A random cache miss read 256 records (64KB) to use one; the activity
+  report visits 55k records in index order. A jump now reads 8, a
+  sequential miss still the full block (`cache_next`).
+- `memvar_find` walked all 256 ~300-byte slots with a case-insensitive
+  compare (77KB per lookup; majesty's names mostly share a first letter, so a
+  first-byte reject did little). Stored names are upper-case already: the
+  query is upper-cased once, each slot carries an FNV hash of its name, and
+  the walk stops at a high-water mark maintained on every fill and release.
+- APPEND BLANK wrote the blank record and the header count at once, then the
+  REPLACEs dirtied it again: one write per record became three (blank,
+  header, flush). `dbf_append_blank_ex(db, eager)` keeps the record in the
+  buffer and the count for close; `wa_writes_eager()` (index open, or file
+  open in another area) is the one rule REPLACE and APPEND now share.
+What leads the native profile now is the lexer: every statement is re-lexed
+each time it executes.
+

@@ -16,6 +16,7 @@ typedef struct {
     char name[MEMVAR_NAMELEN];
     value_t val;
     int used;
+    unsigned hash;      /* of the (upper-case) name: rejects a slot without a string compare */
     int scope_depth;    /* call_depth at which this var was created */
     int is_local;       /* 1 = LOCAL variable, only visible at exact scope */
 } memvar_t;
@@ -23,6 +24,7 @@ typedef struct {
 typedef struct memvar_store {
     memvar_t vars[MEMVAR_MAX];
     int count;
+    int hw;             /* slots at or above this index are unused: a lookup walks hw slots, not 256 */
     int current_depth;  /* updated on push/pop frame */
 } memvar_store_t;
 
