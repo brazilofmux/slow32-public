@@ -923,3 +923,23 @@ Gate: cobol suite 109/109 (oracle agrees on the four); NIST NC 95 compile,
 4375/4384, 0 fail, unchanged. What the corpus hits next is the positioned
 DISPLAY/ACCEPT (#32, #33): GLACRPT, GLPKACT, CRGENTBL, GENACT all stop there.
 
+### 29. The Open Systems suite: RM/COBOL positioned DISPLAY/ACCEPT — RESOLVED 2026-09-05
+
+GitHub #32 and #33, the wall the suite hit after the four small ones (item
+28): 121 DISPLAYs and 86 ACCEPTs in GL alone carry LINE / POSITION / ERASE /
+PROMPT / SIZE / HIGH / LOW / UPDATE / NO BEEP, and the 1983 utilities use
+`AT rrcc`. Lowered to a one-statement screen on the Stage 58 runtime, as the
+issue proposed; docs/screen.md has the shape. Two things the corpus taught on
+the way: `ERASE SCREEN` (GLACGL) is the whole-screen form, and a plain
+DISPLAY after positioned ones goes to the next line at column 1 (RM's rule,
+and GLTRIAL's "ACCOUNT NUMBERS FROM" depends on it). The look-ahead that
+decides a DISPLAY is positioned must stop at an enclosing statement's
+phrases -- the suite's compute and lineseq tests caught `NOT ON SIZE ERROR`
+and `NOT AT END` being read as SIZE and AT.
+
+GL: 30 of 32 programs compile (17 with the clauses stripped by hand before,
+0 as written); the two left, GLPKACT and GLPRTACT, compile and fail at link
+on CALL "SH" and CALL "VAR:ID", the tag-file sort path, which is the
+corpus's own next item. Gate: suite 110/110 (rmscreen pins the ANSI stream,
+no oracle: screens need a tty); NIST NC unchanged.
+

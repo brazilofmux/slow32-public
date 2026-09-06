@@ -126,6 +126,14 @@ enum { COB_SCR_VALUE = 0, COB_SCR_FROM = 1, COB_SCR_TO = 2, COB_SCR_USING = 3 };
 enum { COB_SF_HIGHLIGHT = 1, COB_SF_UNDERLINE = 2, COB_SF_AUTO = 4, COB_SF_REVERSE = 8,
        COB_SF_SECURE = 16, COB_SF_REQUIRED = 32, COB_SF_FULL = 64, COB_SF_LOWLIGHT = 128 };
 
+/* ext: RM/COBOL's positioned DISPLAY/ACCEPT (GitHub #32/#33), lowered to a
+ * one-statement screen.  POS: line 0 is the line after the last positioned
+ * statement, col 0 is column 1; CONT: this slot follows the one painted
+ * before it; PROMPT: an input slot shows `prompt` where it holds a space;
+ * ERASE_*: clear before painting; NOBEEP: no bell on a rejected key. */
+enum { COB_SX_POS = 1, COB_SX_PROMPT = 2, COB_SX_ERASE_EOS = 4, COB_SX_ERASE_EOL = 8,
+       COB_SX_ERASE_ALL = 16, COB_SX_NOBEEP = 32, COB_SX_CONT = 64 };
+
 typedef struct {
     unsigned char kind, flags;
     unsigned short line, col;
@@ -135,7 +143,11 @@ typedef struct {
     const void *pic;             /* cob_desc of the PICTURE, or 0 */
     void *item;                  /* the FROM/TO/USING item */
     const void *item_desc;
-} cob_scr_field;
+    unsigned char ext, prompt;   /* COB_SX_* bits; the PROMPT character */
+    unsigned short rsv;
+} cob_scr_field;                 /* 32 bytes on the guest: the compiler lays slots out by that */
+
+void cob_scr_at(cob_scr_field *f, int rrcc);   /* AT rrcc from an identifier: line rr, column cc */
 
 typedef struct {
     unsigned int nfields;

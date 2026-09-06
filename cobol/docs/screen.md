@@ -235,3 +235,31 @@ emulator's stdin and its expected output is the ANSI stream, reviewed
 by hand -- GnuCOBOL's screens need a real tty, so this is the one
 test class without an oracle run (`no oracle` in the source tells
 the harness).
+
+## RM/COBOL's positioned DISPLAY / ACCEPT (2026-09-05)
+
+The Open Systems suite (`~/open`, 1978-83 RM/COBOL) never had a SCREEN
+SECTION: every screen is painted with `DISPLAY x LINE n, POSITION m, ERASE
+EOS, HIGH, SIZE k` and read with `ACCEPT x LINE n, POSITION m, PROMPT,
+UPDATE, NO BEEP`, plus the 1983 `DISPLAY x AT rrcc [WITH ERASE EOS]`
+spelling (GitHub #32, #33). Each such statement becomes a screen of its own,
+one slot per operand, on this runtime; the slot record grew by a word for
+it (`ext`, `prompt`; 32 bytes on the guest, `SCRF_SIZE` in the compiler):
+
+- `COB_SX_POS`: LINE 0 is the line after the last positioned statement,
+  POSITION 0 is column 1 (a SCREEN SECTION slot keeps its numbers);
+  `COB_SX_CONT`: a second operand follows the first on its line;
+- `COB_SX_ERASE_EOS` / `_EOL` / `_ALL` (`ERASE`, `ERASE SCREEN`): cleared
+  before painting, from the slot's position;
+- `COB_SX_PROMPT`: an input slot shows `prompt` (`_`, or `PROMPT "c"`)
+  where it holds a space; `UPDATE` makes the slot USING;
+- `COB_SX_NOBEEP`: no bell on a rejected key;
+- HIGH / LOW / REVERSE are the HIGHLIGHT / LOWLIGHT / REVERSE-VIDEO flags.
+
+LINE, POSITION and AT given as identifiers are stored into the slot by the
+statement before the call (`cob_scr_at` splits rrcc). Once a positioned
+statement has painted, a plain DISPLAY is positioned too, on the next line
+at column 1 (RM's rule); a SCREEN SECTION program keeps its stdout stream.
+ECHO, OFF, TAB, CONVERT, BLINK, BEEP, UNIT and CONTROL are accepted and
+ignored. tests/fixed/rmscreen pins the stream.
+

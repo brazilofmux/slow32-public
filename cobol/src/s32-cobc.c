@@ -1147,6 +1147,8 @@ typedef struct {
     Sym *item;
     int ref_tp, dyn;            /* the reference's token position; dyn: its address is computed at ACCEPT/DISPLAY */
     long stat_off;              /* static references (literal subscripts included): the resolved offset */
+int ext, prompt;            /* positioned DISPLAY/ACCEPT: COB_SX_* bits, the PROMPT character */
+int line_tp, col_tp, at_tp; /* LINE / POSITION / AT given as identifiers: token positions, stored at run time */
 } SField;
 
 typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested group: a window into the slot table */
@@ -3965,6 +3967,233 @@ static Para *expect_para(void)
 
 /* ---- DISPLAY ---------------------------------------------------------- */
 
+/* ---- RM/COBOL positioned DISPLAY / ACCEPT (GitHub #32, #33) ------------
+ *   DISPLAY x LINE n [,] POSITION m [,] ERASE [EOS|EOL] [,] HIGH|LOW|REVERSE
+ *           [,] SIZE n ...        DISPLAY x AT rrcc [WITH ERASE EOS|EOL]
+ *   ACCEPT  x LINE n POSITION m PROMPT [UPDATE] [NO BEEP] [ECHO] [TAB] ...
+ *           ACCEPT x AT rrcc [WITH PROMPT]
+ * The Open Systems suite (~/open) paints every screen this way: RM never
+ * had a SCREEN SECTION.  Each statement becomes a screen of its own, one
+ * slot per operand, on the SCREEN SECTION runtime.  LINE/POSITION are the
+ * slot's line/col -- 0 when absent, which the runtime reads as "the line
+ * after the last positioned statement" / column 1 -- and an identifier's
+ * value is stored into the slot before the call (AT rrcc likewise, split by
+ * cob_scr_at).  SIZE is the width; ERASE, PROMPT and NO BEEP are the slot's
+ * ext bits; UPDATE makes the ACCEPT slot USING; HIGH/LOW/REVERSE are the
+ * flags slots already carry.  ECHO, OFF, TAB, CONVERT, BLINK, BEEP, UNIT
+ * and CONTROL are accepted and ignored. */
+#define SCRF_SIZE 32               /* sizeof(cob_scr_field) on the guest */
+
+static int pos_word_at(int i)      /* token i begins a positioning clause */
+{
+    Tok *t = &g_tok[i];
+    if (t->kind != T_WORD) return 0;
+    static const char *strong[] = { "line", "position", "erase", "prompt", "size", "high", "low", "reverse", "update", "at", NULL };
+    for (int k = 0; strong[k]; k++) if (!strcmp(t->s, strong[k])) return 1;
+    if (!strcmp(t->s, "no") && is_word(&g_tok[i + 1], "beep")) return 1;
+    if (!strcmp(t->s, "with") && (is_word(&g_tok[i + 1], "erase") || is_word(&g_tok[i + 1], "prompt") ||
+                                  (is_word(&g_tok[i + 1], "no") && is_word(&g_tok[i + 2], "beep")))) return 1;
+    return 0;
+}
+
+/* does the DISPLAY/ACCEPT at g_tp carry a positioning clause?  A look ahead
+ * to the end of the sentence: a period, the next verb, or a terminator. */
+static int stmt_positioned(void)
+{
+    for (int i = g_tp; i < g_ntok; i++) {
+        Tok *t = &g_tok[i];
+        if (t->kind == T_PERIOD || t->kind == T_EOF) return 0;
+        if (t->kind == T_WORD && i > g_tp && (is_verb(t->s) || is_terminator(t->s))) return 0;
+        if (t->kind == T_WORD) {
+            /* the phrases of an enclosing statement end the DISPLAY/ACCEPT:
+             * READ ... AT END DISPLAY x NOT AT END ..., COMPUTE ... ON SIZE
+             * ERROR DISPLAY x NOT ON SIZE ERROR ... (the suite's compute and
+             * lineseq tests), IF ... ELSE, EVALUATE ... WHEN */
+            static const char *stop[] = { "not", "on", "else", "when", "invalid", "exception", "overflow", "end-of-page", "eop", "also", NULL };
+            for (int k = 0; stop[k]; k++) if (!strcmp(t->s, stop[k])) return 0;
+            if (!strcmp(t->s, "at") && (is_word(&g_tok[i + 1], "end") || is_word(&g_tok[i + 1], "end-of-page") || is_word(&g_tok[i + 1], "eop"))) return 0;
+            if (!strcmp(t->s, "size") && is_word(&g_tok[i + 1], "error")) return 0;
+        }
+        if (pos_word_at(i)) return 1;
+    }
+    return 0;
+}
+
+/* LINE n / POSITION n: an integer literal, or an identifier whose value the
+ * statement stores into the slot at run time (tp: where it sits) */
+static void pos_int(int *val, int *tp, const char *what)
+{
+    accept_word("is"); accept_word("number");
+    if (cur()->kind == T_NUM) { *val = atoi(cur()->s); advance(); return; }
+    if (cur()->kind != T_WORD || !tp) die_at(cur()->line, "%s needs an integer%s", what, tp ? " or a numeric identifier" : "");
+    *tp = g_tp;
+    Ref r; parse_ref(&r);
+    if (!is_numeric_sym(r.sym)) die_at(r.line, "%s needs a numeric identifier", what);
+}
+
+static void parse_pos_clauses(SField *f, int is_accept)
+{
+    for (;;) {
+        if (accept_word("with")) continue;
+        if (accept_word("line")) { pos_int(&f->line, &f->line_tp, "LINE"); continue; }
+        if (accept_word("position") || accept_word("column") || accept_word("col")) { pos_int(&f->col, &f->col_tp, "POSITION"); continue; }
+        if (accept_word("at")) {
+            if (accept_word("line")) {
+                pos_int(&f->line, &f->line_tp, "AT LINE");
+                if (accept_word("position") || accept_word("column") || accept_word("col")) pos_int(&f->col, &f->col_tp, "COLUMN");
+                continue;
+            }
+            if (cur()->kind == T_NUM) { int v = atoi(cur()->s); advance(); f->line = v / 100; f->col = v % 100; continue; }
+            if (cur()->kind != T_WORD) die_at(cur()->line, "AT needs rrcc or a numeric identifier");
+            f->at_tp = g_tp;
+            { Ref r; parse_ref(&r); if (!is_numeric_sym(r.sym)) die_at(r.line, "AT needs a numeric identifier"); }
+            continue;
+        }
+        if (accept_word("erase")) {
+            if (accept_word("eos")) f->ext |= COB_SX_ERASE_EOS;
+            else if (accept_word("eol")) f->ext |= COB_SX_ERASE_EOL;
+            else { accept_word("screen"); f->ext |= COB_SX_ERASE_ALL; }   /* ERASE [SCREEN]: the whole screen */
+            continue;
+        }
+        if (accept_word("prompt")) { f->ext |= COB_SX_PROMPT; if (cur()->kind == T_STR) { f->prompt = (unsigned char)cur()->s[0]; advance(); } continue; }
+        if (accept_word("size")) { pos_int(&f->width, NULL, "SIZE"); continue; }
+        if (accept_word("high")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
+        if (accept_word("low")) { f->flags |= COB_SF_LOWLIGHT; continue; }
+        if (accept_word("reverse") || accept_word("reverse-video")) { f->flags |= COB_SF_REVERSE; continue; }
+        if (accept_word("update")) { if (is_accept) f->kind = COB_SCR_USING; continue; }
+        if (accept_word("no")) { expect_word("beep"); f->ext |= COB_SX_NOBEEP; continue; }
+        if (accept_word("blink") || accept_word("echo") || accept_word("off") || accept_word("tab") || accept_word("convert") || accept_word("beep")) continue;
+        if (accept_word("unit") || accept_word("control")) { Opnd o; parse_operand(&o); continue; }
+        break;
+    }
+}
+
+static Screen *screen_synth(void)
+{
+    if (g_nscreen == g_scrcap) { g_scrcap = g_scrcap ? g_scrcap * 2 : 4; g_screens = realloc(g_screens, g_scrcap * sizeof *g_screens); }
+    Screen *sc = &g_screens[g_nscreen++];
+    memset(sc, 0, sizeof *sc);
+    snprintf(sc->name, sizeof sc->name, "(positioned %d)", g_nscreen);   /* not a word: screen_ref never matches it */
+    return sc;
+}
+
+static SField *screen_synth_field(Screen *sc)
+{
+    if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 4; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
+    SField *f = &sc->f[sc->nf++];
+    memset(f, 0, sizeof *f);
+    f->fg = f->bg = 255; f->ext = COB_SX_POS; f->srcline = cur()->line;
+    return f;
+}
+
+/* a literal of width bytes: len bytes of text padded with fill, or, fill
+ * < 0, the text repeated (a figurative constant, ALL) */
+static Tok *pos_literal(const char *bytes, int len, int width, int fill)
+{
+    Tok *t = xmalloc(sizeof *t); memset(t, 0, sizeof *t);
+    t->kind = T_STR; t->s = xmalloc(width + 1); t->len = width;
+    for (int i = 0; i < width; i++) t->s[i] = i < len ? bytes[i] : fill < 0 ? bytes[i % len] : (char)fill;
+    t->s[width] = 0;
+    return t;
+}
+
+static void emit_pos_int(int tp)   /* r1 = the integer value of the identifier at tp */
+{
+    int save = g_tp; g_tp = tp;
+    Opnd n; parse_operand(&n);
+    g_tp = save;
+    if (opnd_hot_int(&n)) emit_hot_value(&n);
+    else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+}
+
+/* the statement: item addresses and run-time positions into the slots, then the runtime */
+static void emit_pos_stmt(int si, const char *fn)
+{
+    Screen *sc = &g_screens[si];
+    emit_screen_dyn_fill(sc, 0, sc->nf);
+    char rec[48]; snprintf(rec, sizeof rec, ".Lscrf%d_%d", g_unit, si);
+    for (int k = 0; k < sc->nf; k++) {
+        SField *f = &sc->f[k];
+        if (f->line_tp) { emit_pos_int(f->line_tp); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
+        if (f->col_tp)  { emit_pos_int(f->col_tp);  emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1"); }
+        if (f->at_tp)   { emit_pos_int(f->at_tp); emit("\tadd r4, r0, r1"); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
+    }
+    char lab[48]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, si);
+    emit_la("r3", lab); emit_call(fn);
+}
+
+static void parse_display_positioned(void)
+{
+    int si = (int)(screen_synth() - g_screens);
+    int first = 1;
+    for (;;) {
+        Tok *t = cur();
+        if (t->kind == T_PERIOD || t->kind == T_EOF) break;
+        if (!at_operand() && !(t->kind == T_WORD && (is_figurative(t->s) || !strcmp(t->s, "all")))) break;
+        int tp = g_tp;
+        Opnd o; parse_operand(&o);
+        SField *f = screen_synth_field(&g_screens[si]);
+        if (!first) f->ext |= COB_SX_CONT;
+        first = 0;
+        parse_pos_clauses(f, 0);
+        switch (o.kind) {
+        case O_REF:
+            if (o.ref.rm) die_at(o.line, "reference modification in a positioned DISPLAY is not implemented");
+            f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1; f->ref_tp = tp;
+            if (!f->width) f->width = o.ref.sym->size;
+            f->has_pic = 1; f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width;
+            break;
+        case O_STR:
+            f->kind = COB_SCR_VALUE;
+            if (!f->width || f->width == o.tok->len) { f->value = o.tok; f->width = o.tok->len; }
+            else f->value = pos_literal(o.tok->s, o.tok->len, f->width, ' ');
+            break;
+        case O_NUM: {
+            char txt[48]; int k = 0;
+            if (o.num.neg) txt[k++] = '-';
+            for (int i = 0; i < o.num.ndigits; i++) {
+                if (o.num.scale && i == o.num.ndigits - o.num.scale) txt[k++] = g_dp_comma ? ',' : '.';
+                txt[k++] = o.num.digits[i];
+            }
+            f->kind = COB_SCR_VALUE; if (!f->width) f->width = k;
+            f->value = pos_literal(txt, k, f->width, ' ');
+            break; }
+        case O_FIG: case O_ALL: {
+            int len = o.kind == O_ALL ? o.tok->len : 1;
+            char one = o.kind == O_ALL ? 0 : (char)fig_byte(o.tok->s);
+            f->kind = COB_SCR_VALUE; if (!f->width) f->width = len;
+            f->value = pos_literal(o.kind == O_ALL ? o.tok->s : &one, len, f->width, -1);
+            break; }
+        default: die_at(o.line, "a positioned DISPLAY takes identifiers and literals");
+        }
+    }
+    emit_pos_stmt(si, "cob_screen_display");
+}
+
+static void parse_accept_positioned(Ref *r, int tp)
+{
+    int si = (int)(screen_synth() - g_screens);
+    SField *f = screen_synth_field(&g_screens[si]);
+    if (r->rm) die_at(r->line, "reference modification in a positioned ACCEPT is not implemented");
+    f->kind = COB_SCR_TO; f->item = r->sym; f->dyn = 1; f->ref_tp = tp;
+    parse_pos_clauses(f, 1);
+    if (!f->width) f->width = r->sym->size;
+    f->has_pic = 1;
+    if (r->sym->is_group || !r->sym->pi.bytes) { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width; }
+    else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
+    if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
+        Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, r->line);
+        if (g_sym[cs->record].is_linkage) die_at(r->line, "a LINKAGE item cannot be the CRT STATUS yet");
+        char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
+        emit_la("r3", b);
+        snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
+        emit_la("r4", b);
+        emit_call("cob_crt_status");
+    }
+    emit_pos_stmt(si, "cob_screen_accept");
+    accept_word("end-accept");
+}
+
 static void parse_accept(void)
 {
     Tok *t = cur();
@@ -3986,7 +4215,9 @@ static void parse_accept(void)
             emit_la("r3", scrlab); emit_call("cob_screen_accept"); return;
         }
     }
+    int ref_tp = g_tp;
     Ref r; parse_ref(&r);
+    if (stmt_positioned()) { parse_accept_positioned(&r, ref_tp); return; }
     if (accept_word("from")) {
         if (at_word("argument-number") || at_word("argument-value") || at_word("command-line")) {
             const char *fn = at_word("argument-number") ? "cob_accept_argnum"
@@ -4039,6 +4270,7 @@ static void parse_display(void)
         if (scp) { advance(); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
     }
     /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
+    if (stmt_positioned()) { parse_display_positioned(); return; }
     if (is_word(peek(1), "upon") && is_word(peek(2), "argument-number")) {
         Opnd o; parse_operand(&o);
         if (!opnd_hot_int(&o)) {
@@ -9101,6 +9333,7 @@ static void emit_unit_data(void)
             if (f->item && f->dyn) { emit("\t.word .Lsdyn%d_%d_%d", g_unit, i, k); emit("\t.word .Ld%d", sym_desc(f->item)); }
             else if (f->item) { emit("\t.word %s+%ld", g_sym[f->item->record].label, f->stat_off); emit("\t.word .Ld%d", sym_desc(f->item)); }
             else { emit("\t.word 0"); emit("\t.word 0"); }
+            emit("\t.byte %d,%d", f->ext, f->prompt ? f->prompt : '_'); emit("\t.short 0");   /* ext, prompt, rsv */
         }
         emit(".Lscr%d_%d:\t# screen %s", g_unit, i, sc->name);
         emit("\t.word %d", sc->nf);
@@ -9110,7 +9343,7 @@ static void emit_unit_data(void)
             emit(".Lscrg%d_%d_%d:\t# screen %s group %s", g_unit, i, j, sc->name, sc->sub[j].name);
             emit("\t.word %d", sc->sub[j].count);
             emit("\t.word 0");
-            emit("\t.word .Lscrf%d_%d+%d", g_unit, i, sc->sub[j].first * 28);   /* 28 = sizeof(cob_scr_field) on the guest */
+            emit("\t.word .Lscrf%d_%d+%d", g_unit, i, sc->sub[j].first * SCRF_SIZE);
         }
         for (int k = 0; k < sc->nf; k++)
             if (sc->f[k].dyn) { emit(".Lsdyn%d_%d_%d:\t# %s: the address, computed at ACCEPT/DISPLAY", g_unit, i, k, sc->f[k].item->name); emit("\t.word 0"); }

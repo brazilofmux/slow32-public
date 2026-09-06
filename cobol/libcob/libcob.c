@@ -42,8 +42,29 @@ static void out_flush(void)
     if (out_n) { fwrite(out_buf, 1, out_n, stdout); fflush(stdout); out_n = 0; }
 }
 
+/* Once a program has painted with RM's positioned DISPLAY/ACCEPT, a plain
+ * DISPLAY is positioned too: RM puts it on the line after the last
+ * positioned statement, at column 1, and a DISPLAY's newline moves that
+ * line down.  A SCREEN SECTION program (no positioned statement) keeps the
+ * stdout stream it has always had. */
+static int term_up;                     /* defined with the terminal service below */
+static int scr_rm_mode;                 /* set by the first positioned slot painted */
+static int scr_next_line;               /* the line a LINE-less statement takes; see scr_pos */
+static int con_col = 1, con_rows;
+static void con_write(const char *p, int n)
+{
+    if (!con_rows) { int r = 24, c = 80; term_get_size(&r, &c); con_rows = r > 0 ? r : 24; }
+    for (int i = 0; i < n; i++) {
+        if (p[i] == '\n') { con_col = 1; if (scr_next_line < con_rows) scr_next_line++; continue; }
+        if (p[i] == '\r') { con_col = 1; continue; }
+        if (con_col == 1 || i == 0) term_gotoxy(scr_next_line ? scr_next_line : 1, con_col);
+        term_putc(p[i]); con_col++;
+    }
+}
+
 static void out_bytes(const char *p, int n)
 {
+    if (term_up && scr_rm_mode) { con_write(p, n); return; }
     while (n > 0) {
         int room = (int)sizeof out_buf - out_n;
         int k = n < room ? n : room;
@@ -2785,13 +2806,40 @@ static void scr_render(const cob_scr_field *f, char *buf)
     cob_move(scr_item(f), (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
 }
 
+/* Where a positioned slot (COB_SX_POS) goes: LINE 0 is the line after the
+ * last positioned statement, POSITION 0 is column 1, and a CONT slot follows
+ * the slot painted before it.  A SCREEN SECTION slot keeps its numbers. */
+static int scr_last_line = 1, scr_last_col = 1, scr_last_width = 0;   /* scr_next_line: above, with the console path */
+
+static void scr_pos(const cob_scr_field *f, int *line, int *col)
+{
+    *line = f->line; *col = f->col;
+    if (!(f->ext & COB_SX_POS)) return;
+    if (f->ext & COB_SX_CONT) { if (!*line) *line = scr_last_line; if (!*col) *col = scr_last_col + scr_last_width; }
+    if (!*line) *line = scr_next_line ? scr_next_line : 1;
+    if (!*col) *col = 1;
+}
+
+void cob_scr_at(cob_scr_field *f, int rrcc)
+{
+    f->line = (unsigned short)(rrcc / 100); f->col = (unsigned short)(rrcc % 100);
+}
+
 static void scr_paint_text(const cob_scr_field *f, const char *buf)
 {
-    term_gotoxy(f->line, f->col);
+    int line, col;
+    scr_pos(f, &line, &col);
+    if (f->ext & COB_SX_ERASE_ALL) term_clear(0);
+    term_gotoxy(line, col);
+    if (f->ext & COB_SX_ERASE_EOS) term_clear(2);
+    else if (f->ext & COB_SX_ERASE_EOL) term_clear(1);
     scr_attr(f);
+    int prompt = (f->ext & COB_SX_PROMPT) && (scr_kind(f) == COB_SCR_TO || scr_kind(f) == COB_SCR_USING) ? f->prompt : 0;
     if (f->flags & COB_SF_SECURE) { for (unsigned i = 0; i < f->width; i++) term_putc(buf[i] == ' ' ? ' ' : '*'); }
+    else if (prompt) { for (unsigned i = 0; i < f->width; i++) term_putc(buf[i] == ' ' ? prompt : buf[i]); }
     else scr_puts_n(buf, f->width);
     scr_attr_off(f);
+    if (f->ext & COB_SX_POS) { scr_rm_mode = 1; con_col = 1; scr_last_line = line; scr_last_col = col; scr_last_width = (int)f->width; scr_next_line = line + 1; }
 }
 
 static void scr_paint_field(const cob_scr_field *f)
@@ -2946,7 +2994,7 @@ static unsigned scr_num_cursor(const scr_edit *e)
     return (unsigned)e->point;
 }
 
-static void scr_beep(void) { term_putc(7); }
+static void scr_beep_f(const cob_scr_field *f) { if (!(f->ext & COB_SX_NOBEEP)) term_putc(7); }   /* NO BEEP: silent */
 
 /* entering a field: the cursor at its start; a numeric field takes the
  * next digit as a fresh entry (Enter alone keeps what it shows) */
@@ -3000,7 +3048,7 @@ void cob_screen_accept(const cob_screen *s)
     while (!done) {
         scr_edit *e = &ed[cur];
         const cob_scr_field *f = e->f;
-        term_gotoxy(f->line, f->col + (int)(e->numeric ? scr_num_cursor(e) : e->pos));
+        { int ln, cl; scr_pos(f, &ln, &cl); term_gotoxy(ln, cl + (int)(e->numeric ? scr_num_cursor(e) : e->pos)); }
         int key = scr_key();
         if (key == K_EOF) { done = 1; break; }
         if (key == K_ESC) { done = 1; abandon = 1; fret = 2005; break; }
@@ -3009,7 +3057,7 @@ void cob_screen_accept(const cob_screen *s)
             done = 1; break;
         }
         if (key == '\r' || key == '\n' || key == '\t' || key == K_DOWN) {
-            if (!scr_may_leave(e)) { scr_beep(); continue; }
+            if (!scr_may_leave(e)) { scr_beep_f(e->f); continue; }
             if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); }
             else if (key == '\r' || key == '\n') done = 1;
             else { cur = 0; scr_focus(&ed[0]); }
@@ -3023,18 +3071,18 @@ void cob_screen_accept(const cob_screen *s)
                 if (!e->touched) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; }
             }
             if (key >= '0' && key <= '9') {
-                if (e->infrac) { if (e->nf < e->nf_max) e->fbuf[e->nf++] = (char)key; else { scr_beep(); continue; } }
+                if (e->infrac) { if (e->nf < e->nf_max) e->fbuf[e->nf++] = (char)key; else { scr_beep_f(e->f); continue; } }
                 else if (e->ni < e->ni_max) e->ibuf[e->ni++] = (char)key;
-                else { scr_beep(); continue; }
+                else { scr_beep_f(e->f); continue; }
                 scr_num_render(e); scr_paint_text(f, e->buf);
                 if ((f->flags & COB_SF_AUTO) && (e->infrac ? e->nf == e->nf_max : e->nf_max == 0 && e->ni == e->ni_max)) {
                     if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
                 }
                 continue;
             }
-            if (key == dp) { if (e->nf_max) e->infrac = 1; else scr_beep(); continue; }
+            if (key == dp) { if (e->nf_max) e->infrac = 1; else scr_beep_f(e->f); continue; }
             if (key == '-' || key == '+') {
-                if (!(d->flags & COB_F_SIGNED)) { scr_beep(); continue; }
+                if (!(d->flags & COB_F_SIGNED)) { scr_beep_f(e->f); continue; }
                 e->neg = key == '-' ? !e->neg : 0;
                 scr_num_render(e); scr_paint_text(f, e->buf); continue;
             }
@@ -3071,7 +3119,7 @@ void cob_screen_accept(const cob_screen *s)
             scr_attr(f); term_putc((f->flags & COB_SF_SECURE) ? '*' : key); scr_attr_off(f);
             if (e->pos + 1 < f->width) e->pos++;
             else if (f->flags & COB_SF_AUTO) {
-                if (!scr_may_leave(e)) { scr_beep(); continue; }
+                if (!scr_may_leave(e)) { scr_beep_f(e->f); continue; }
                 if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
             }
             continue;
