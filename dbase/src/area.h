@@ -37,6 +37,9 @@ dbf_t *area_lookup_dbf(const char *alias);
 /* Invalidate cache for all work areas using specified filename */
 void area_invalidate_all(const char *filename);
 
+/* Same, but leave `except` alone (the file that just wrote and synced its own cache). */
+void area_invalidate_others(const char *filename, const dbf_t *except);
+
 /* Number of work areas with this file open. */
 int area_open_count(const char *filename);
 

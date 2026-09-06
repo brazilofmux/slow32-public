@@ -36,6 +36,7 @@ typedef struct {
     int cache_count;                 /* number of records cached */
     int cache_capacity;              /* max records to cache */
     uint32_t cache_next;       /* record a sequential scan would ask for next; 0 = none */
+    int last_op;               /* last stdio op on fp: 0 none/unknown, 1 read, 2 write (seek elision) */
 
     /* Memo (.DBT) support */
     FILE *memo_fp;                   /* .DBT file handle (NULL if none) */

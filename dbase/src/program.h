@@ -22,6 +22,9 @@ typedef struct {
      * text never changes after load); NULL = not built yet */
     struct { char name[64]; int line; } *procs;
     int nprocs;
+    /* What each line begins with, decided once (0 = not yet); lines holding a
+     * macro character are never cached, their text can change per execution */
+    unsigned char *kind;
 } program_t;
 
 /* Call stack frame */

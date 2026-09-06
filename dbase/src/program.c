@@ -416,6 +416,7 @@ static program_t *prog_load(const char *filename) {
 
 static void prog_free(program_t *prog) {
     if (prog) { free(prog->procs); prog->procs = NULL; }
+    if (prog) { free(prog->kind); prog->kind = NULL; }
     int i;
     if (!prog) return;
     if (prog->lines) {
@@ -1037,6 +1038,39 @@ static void pop_frame(void) {
 }
 
 /* ---- Execute program lines ---- */
+/* ---- Line kinds: the control-flow tests prog_run makes on every line ---- */
+enum { LK_UNKNOWN = 0, LK_OTHER, LK_COMMENT, LK_EMPTY, LK_PROC, LK_IF, LK_ENDIF, LK_ELSE,
+       LK_TEXT, LK_DOCASE, LK_CASE, LK_OTHERWISE, LK_ENDCASE };
+
+/* Classify the preprocessed text of a line with the very tests prog_run used
+ * to run on each execution. */
+static int line_kind_of(const char *p) {
+    if (*p == '*' || str_imatch(p, "NOTE")) return LK_COMMENT;
+    if (*p == '\0') return LK_EMPTY;
+    if (line_is_kw(p, "PROCEDURE") || line_is_kw(p, "FUNCTION")) return LK_PROC;
+    if (line_is_kw(p, "IF")) return LK_IF;
+    if (line_is_kw(p, "ENDIF")) return LK_ENDIF;
+    if (line_is_kw(p, "ELSE")) return LK_ELSE;
+    if (str_imatch(p, "TEXT")) return LK_TEXT;
+    if (line_is_do_kw(p, "CASE")) return LK_DOCASE;
+    if (line_is_kw(p, "CASE")) return LK_CASE;
+    if (line_is_kw(p, "OTHERWISE")) return LK_OTHERWISE;
+    if (line_is_kw(p, "ENDCASE")) return LK_ENDCASE;
+    return LK_OTHER;
+}
+
+/* The kind of line `pc` of `prog`, whose preprocessed text starts at `p`.
+ * Cached per line unless the raw line holds a macro character. */
+static int prog_line_kind(program_t *prog, int pc, const char *p) {
+    if (strchr(prog->lines[pc], '&')) return line_kind_of(p);
+    if (!prog->kind) {
+        prog->kind = calloc((size_t)prog->nlines + 1, 1);
+        if (!prog->kind) return line_kind_of(p);
+    }
+    if (prog->kind[pc] == LK_UNKNOWN) prog->kind[pc] = (unsigned char)line_kind_of(p);
+    return prog->kind[pc];
+}
+
 static void prog_run(void) {
     int run_slot = state.call_depth;
     char *line;
@@ -1062,6 +1096,8 @@ static void prog_run(void) {
         prog_preprocess(line, cmd_get_memvar_store());
 
         p = skip_ws(line);
+        {
+            int lk = prog_line_kind(state.current_prog, state.pc, p);
 
         /* SET ESCAPE: check for Esc keypress */
         if (cmd_get_escape() && screen_check_escape()) {
@@ -1075,13 +1111,13 @@ static void prog_run(void) {
             printf("[%s:%d] %s\n", state.current_prog->filename, state.pc + 1, p);
 
         /* Full-line comment: * or NOTE */
-        if (*p == '*' || str_imatch(p, "NOTE")) {
+        if (lk == LK_COMMENT) {
             state.pc++;
             continue;
         }
 
         /* Empty line after preprocessing */
-        if (*p == '\0') {
+        if (lk == LK_EMPTY) {
             state.pc++;
             continue;
         }
@@ -1090,7 +1126,7 @@ static void prog_run(void) {
            Exception: if this is the first executable line in the file
            (Clipper convention — first PROCEDURE is the entry point),
            just skip the declaration line and execute the body. */
-        if (line_is_kw(p, "PROCEDURE") || line_is_kw(p, "FUNCTION")) {
+        if (lk == LK_PROC) {
             if (state.call_depth == 0) {
                 /* Check if all prior lines were comments/blank */
                 int all_comments = 1;
@@ -1138,21 +1174,21 @@ static void prog_run(void) {
         /* Handle IF/ELSE/ENDIF/DO CASE/CASE/OTHERWISE/ENDCASE skip mode */
         if (if_skip > 0) {
             /* Counting nesting while skipping */
-            if (line_is_kw(p, "IF")) {
+            if (lk == LK_IF) {
                 if_skip++;
-            } else if (line_is_kw(p, "ENDIF")) {
+            } else if (lk == LK_ENDIF) {
                 if_skip--;
                 if (if_skip == 0) {
                     /* We've found matching ENDIF */
                     if (if_depth > 0) if_depth--;
                 }
-            } else if (if_skip == 1 && line_is_kw(p, "ELSE")) {
+            } else if (if_skip == 1 && lk == LK_ELSE) {
                 /* At our nesting level, found ELSE */
                 if (if_depth > 0 && !if_done[if_depth - 1]) {
                     if_skip = 0; /* start executing ELSE branch */
                     if_done[if_depth - 1] = 1;
                 }
-            } else if (str_imatch(p, "TEXT")) {
+            } else if (lk == LK_TEXT) {
                 /* Skip TEXT...ENDTEXT block */
                 state.pc++;
                 while (state.pc < state.current_prog->nlines) {
@@ -1167,14 +1203,14 @@ static void prog_run(void) {
 
         if (case_skip) {
             /* Inside DO CASE, skipping to next CASE/OTHERWISE/ENDCASE */
-            if (line_is_do_kw(p, "CASE")) {
+            if (lk == LK_DOCASE) {
                 /* nested DO CASE - skip the whole thing */
                 int target = scan_endcase(state.current_prog, state.pc);
                 if (target >= 0) {
                     state.pc = target + 1;
                     continue;
                 }
-            } else if (str_imatch(p, "TEXT")) {
+            } else if (lk == LK_TEXT) {
                 /* Skip TEXT...ENDTEXT block */
                 state.pc++;
                 while (state.pc < state.current_prog->nlines) {
@@ -1184,7 +1220,7 @@ static void prog_run(void) {
                 }
                 state.pc++;
                 continue;
-            } else if (line_is_kw(p, "CASE")) {
+            } else if (lk == LK_CASE) {
                 if (!case_done) {
                     /* Evaluate this CASE condition */
                     char *cond = skip_ws(p + 4);
@@ -1200,14 +1236,14 @@ static void prog_run(void) {
                 }
                 state.pc++;
                 continue;
-            } else if (line_is_kw(p, "OTHERWISE")) {
+            } else if (lk == LK_OTHERWISE) {
                 if (!case_done) {
                     case_skip = 0;
                     case_done = 1;
                 }
                 state.pc++;
                 continue;
-            } else if (line_is_kw(p, "ENDCASE")) {
+            } else if (lk == LK_ENDCASE) {
                 case_skip = 0;
                 case_active = 0;
                 case_done = 0;
@@ -1219,6 +1255,7 @@ static void prog_run(void) {
         }
 
         /* Normal execution */
+        }
         quit = prog_execute_line(line);
         if (quit) {
             state.running = 0;

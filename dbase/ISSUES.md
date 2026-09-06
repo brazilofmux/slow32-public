@@ -266,3 +266,16 @@ each time it executes.
 Gate each round: dbase tests 102/102; majesty's 12 reports, data files and
 indexes byte-identical to the previous binary's.
 
+**Fifth round (2026-09-05):** runner 17.1 s -> 15.4 s.
+- `dbf_flush_record` synced its own cache and then called
+  `area_invalidate_all`, which dropped it again: every REPLACE-then-SKIP loop
+  read a full block per record. `area_invalidate_others(filename, db)`.
+- Seek elision: `file_pos` plus `last_op` (read/write) skip the `fseek` when
+  the stream already sits at the record and the last operation was of the
+  same kind (a seek is still needed to switch between reading and writing).
+- `prog_run` made its comment / PROCEDURE / IF / CASE / TEXT tests on every
+  line on every execution (`line_is_kw` tokenises the line each time).
+  `prog_line_kind()` decides once per line (`program_t.kind`), with the same
+  predicates in the same relative order; a line holding `&` is classified
+  fresh each time because its text can change.
+

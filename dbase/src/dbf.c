@@ -16,7 +16,7 @@ void dbf_init(dbf_t *db) {
     db->memo_fp = NULL;
     db->next_memo_block = 0;
     db->has_memo = 0;
-    db->file_pos = -1;
+    db->file_pos = -1; db->last_op = 0;
 }
 
 void dbf_cache_invalidate(dbf_t *db) {
@@ -189,7 +189,7 @@ int dbf_open(dbf_t *db, const char *filename) {
 
     db->current_record = 0;
     db->record_dirty = 0;
-    db->file_pos = -1;
+    db->file_pos = -1; db->last_op = 0;
     dbf_cache_init(db);
 
     /* Check for memo fields */
@@ -299,10 +299,12 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
         bytes = (size_t)db->record_size * (size_t)to_read;
 
         pos = db->header_size + (long)(start - 1) * db->record_size;
-        fseek(db->fp, pos, 0);
+        if (!(db->file_pos == pos && db->last_op == 1))
+            fseek(db->fp, pos, 0);
         if (fread(db->cache_buf, 1, bytes, db->fp) != bytes)
             return -1;
         db->file_pos = pos + (long)bytes;
+        db->last_op = 1;
         db->cache_start = start;
         db->cache_count = to_read;
         db->cache_next = start + (uint32_t)to_read;
@@ -311,10 +313,12 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
         db->record_buf[db->record_size] = '\0';
     } else {
         pos = db->header_size + (long)(recno - 1) * db->record_size;
-        fseek(db->fp, pos, 0);
+        if (!(db->file_pos == pos && db->last_op == 1))
+            fseek(db->fp, pos, 0);
         if (fread(db->record_buf, 1, db->record_size, db->fp) != db->record_size)
             return -1;
         db->file_pos = pos + db->record_size;
+        db->last_op = 1;
         db->record_buf[db->record_size] = '\0';
     }
 
@@ -339,10 +343,15 @@ int dbf_flush_record(dbf_t *db) {
         return 0;
 
     pos = db->header_size + (long)(db->current_record - 1) * db->record_size;
-    fseek(db->fp, pos, 0);
+    /* Sequential writes (the merge join, an import) land where the last one
+     * ended: no seek then.  A seek is still required to switch between reading
+     * and writing on a stdio stream. */
+    if (!(db->file_pos == pos && db->last_op == 2))
+        fseek(db->fp, pos, 0);
     fwrite(db->record_buf, 1, db->record_size, db->fp);
     fflush(db->fp);
     db->file_pos = pos + db->record_size;
+    db->last_op = 2;
     db->record_dirty = 0;
 
     /* Sync our own cache so subsequent reads don't restore stale data */
@@ -354,8 +363,10 @@ int dbf_flush_record(dbf_t *db) {
                db->record_buf, db->record_size);
     }
 
-    /* Invalidate other work areas that have the same file open */
-    area_invalidate_all(db->filename);
+    /* Invalidate other work areas that have the same file open.  Not our
+     * own cache, synced just above: dropping it made every REPLACE-then-SKIP
+     * loop read a full block per record. */
+    area_invalidate_others(db->filename, db);
 
     return 0;
 }
@@ -419,7 +430,7 @@ int dbf_write_header_counts(dbf_t *db) {
     fseek(db->fp, 4, 0);
     write_le32(buf, db->record_count);
     fwrite(buf, 1, 4, db->fp);
-    db->file_pos = -1;
+    db->file_pos = -1; db->last_op = 0;
     return 0;
 }
 

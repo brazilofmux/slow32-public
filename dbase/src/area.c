@@ -103,6 +103,15 @@ int area_open_count(const char *filename) {
     return n;
 }
 
+void area_invalidate_others(const char *filename, const dbf_t *except) {
+    int i;
+    for (i = 0; i < MAX_AREAS; i++) {
+        dbf_t *db = &areas[i].db;
+        if (db != except && dbf_is_open(db) && str_icmp(db->filename, filename) == 0)
+            dbf_cache_invalidate(db);
+    }
+}
+
 void area_invalidate_all(const char *filename) {
     int i;
     for (i = 0; i < MAX_AREAS; i++) {
