@@ -895,3 +895,31 @@ same evening; probed 2026-08-30 through the kit's own cc/as/ld.
 - **tapemgr dropped `binary`/`codepage` on extract** — a majesty bug
   the V round trip found, fixed there (249292b). None found in
   cobc370 yet; when one is, it is filed in `~/cobc370`.
+
+### 28. The Open Systems suite (~/open): the four small refusals — RESOLVED 2026-09-05
+
+GitHub #34-#37, filed from the 1978-83 Open Systems RM/COBOL accounting
+suite (228 programs). Each fix carries a corpus-shaped test in tests/fixed,
+and GnuCOBOL agrees on all four.
+
+- **#37 comment-entries.** AUTHOR., INSTALLATION., DATE-WRITTEN.,
+  DATE-COMPILED., SECURITY., REMARKS.: the text to the next paragraph or
+  division is a comment-entry, any characters. The tokenizer saw the
+  apostrophes in GLACRPT's prose as an unterminated literal. A pass over the
+  source lines before tokenizing (`strip_comment_entries`) keeps the header
+  and blanks the rest. (cment)
+- **#36 ALTER inside IF/ELSE.** The prescan gathered ALTER targets only at
+  sentence start; GENSRT19's polyphase merge alters inside IF/ELSE. ALTER
+  is reserved, so it is matched anywhere. GENSRT19 compiles now. (alter3)
+- **#34 ASSIGN.** RM's device word before the name (RANDOM, PRINT, DISK,
+  ...) is accepted and ignored when a name follows, refused when bare as
+  before; a group item may name the file (it is alphanumeric by the
+  standard's rules). (assign2)
+- **#35 STOP RUN {identifier | RETURNING n}.** One numeric operand into the
+  exit status; SJCLCODE ends every program with STOP RUN JCL-CODE and the
+  menu scripts branch on it. (stoprc)
+
+Gate: cobol suite 109/109 (oracle agrees on the four); NIST NC 95 compile,
+4375/4384, 0 fail, unchanged. What the corpus hits next is the positioned
+DISPLAY/ACCEPT (#32, #33): GLACRPT, GLPKACT, CRGENTBL, GENACT all stop there.
+

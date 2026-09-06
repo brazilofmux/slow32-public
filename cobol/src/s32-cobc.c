@@ -47,6 +47,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <strings.h>
 #include "picture.h"
 #include "../libcob/cobrt.h"
 
@@ -707,9 +708,40 @@ static void expand_copies(int depth)
     }
 }
 
+/* Identification Division comment-entries (GitHub #37).  The text after
+ * AUTHOR., INSTALLATION., DATE-WRITTEN., DATE-COMPILED., SECURITY. or
+ * REMARKS., up to the next paragraph or division header, is a comment-entry
+ * in the 1985 text: any characters, an apostrophe included, so it must not
+ * reach the tokenizer (which saw an unterminated literal).  The header keeps
+ * its name and period; the rest of that line and the lines after it are
+ * blanked. */
+static void strip_comment_entries(SrcLine *lines, int n)
+{
+    static const char *paras[] = { "author", "installation", "date-written", "date-compiled", "security", "remarks", NULL };
+    int in_entry = 0;
+    for (int li = 0; li < n; li++) {
+        char *p = lines[li].text;
+        while (*p == ' ' || *p == '\t') p++;
+        char w[32]; int wl = 0;
+        while (is_wordch((unsigned char)p[wl]) && wl < (int)sizeof w - 1) { w[wl] = (char)tolower((unsigned char)p[wl]); wl++; }
+        w[wl] = 0;
+        char *q = p + wl;
+        while (*q == ' ' || *q == '\t') q++;
+        int next_is_division = !strncasecmp(q, "division", 8) && !is_wordch((unsigned char)q[8]);
+        if (wl && next_is_division && (!strcmp(w, "identification") || !strcmp(w, "id") || !strcmp(w, "environment") ||
+                                       !strcmp(w, "data") || !strcmp(w, "procedure"))) { in_entry = 0; continue; }
+        if (wl && *q == '.' && !strcmp(w, "program-id")) { in_entry = 0; continue; }
+        int is_para = 0;
+        for (int i = 0; wl && paras[i]; i++) if (!strcmp(w, paras[i])) is_para = 1;
+        if (is_para && *q == '.') { q[1] = 0; in_entry = 1; continue; }     /* keep "AUTHOR." */
+        if (in_entry) *p = 0;
+    }
+}
+
 static void tokenize(void)
 {
     g_tok_file = g_file;
+    strip_comment_entries(g_lines, g_nlines);
     tokenize_lines(g_lines, g_nlines);
     expand_copies(0);
     apply_replace();
@@ -1851,7 +1883,9 @@ static void finish_data_division(void)
         if (f->assign_name[0]) {
             f->assign_sym = sym_lookup(f->assign_name, NULL, 0, f->line);
             if (g_sym[f->assign_sym->record].is_linkage) die_at(f->line, "ASSIGN TO '%s': a LINKAGE item cannot name a file", f->assign_name);
-            if (f->assign_sym->is_group || f->assign_sym->pi.category == PIC_NUMERIC)
+            /* a group is alphanumeric by the standard's own rules: the suite
+             * builds "GENTBL." + module suffix that way (GitHub #34) */
+            if (!f->assign_sym->is_group && f->assign_sym->pi.category == PIC_NUMERIC)
                 die_at(f->line, "ASSIGN TO '%s': the data-name must be alphanumeric", f->assign_name);
         }
         if (f->status_name[0]) {
@@ -3870,8 +3904,10 @@ static void prescan_paragraphs(int from)
     for (int i = from; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
         if (t->kind == T_EOF) break;
-        if (sentence_start && t->kind == T_WORD && !strcmp(t->s, "alter")) {
-            /* ALTER p1 TO [PROCEED TO] p2 [p3 TO [PROCEED TO] p4]... */
+        if (t->kind == T_WORD && !strcmp(t->s, "alter")) {
+            /* ALTER p1 TO [PROCEED TO] p2 [p3 TO [PROCEED TO] p4]... -- anywhere
+             * in a sentence: GENSRT19's sit inside IF/ELSE (GitHub #36).  ALTER
+             * is a reserved word, so the match cannot be a data-name. */
             for (int j = i + 1; j + 2 < g_ntok && g_tok[j].kind == T_WORD && is_word(&g_tok[j + 1], "to"); ) {
                 if (g_naltname < 64) snprintf(g_altname[g_naltname++], 64, "%s", g_tok[j].s);
                 j += 2;
@@ -7452,7 +7488,23 @@ static void parse_statement(void)
     if (!strcmp(v, "set")) { advance(); parse_set(); return; }
     if (!strcmp(v, "stop")) {
         advance();
-        if (accept_word("run")) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
+        if (accept_word("run")) {
+            /* STOP RUN [RETURNING] {integer | identifier}: the process exit
+             * status.  Neither form is in the 1985 text (RETURNING is 2002; the
+             * bare identifier is RM/COBOL, the Open Systems suite's SJCLCODE
+             * copybook ends every program with STOP RUN JCL-CODE), and both are
+             * one operand on the exit path that exists (GitHub #35). */
+            accept_word("returning");
+            if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand()) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
+            { Opnd n; parse_operand(&n); check_numeric_opnd(&n);
+              if (opnd_hot_int(&n)) emit_hot_value(&n);
+              else {
+                  if (n.kind != O_REF) die_at(t->line, "STOP RUN needs an integer or a numeric identifier");
+                  Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
+                  emit_args(a, 2); emit_call("cob_load_int");
+              }
+              emit("\tadd r3, r0, r1"); emit_call("cob_stop_run"); return; }
+        }
         /* STOP literal (obsolete): the literal to the operator, who would
          * resume the run -- displayed, and the run goes on */
         if (cur()->kind != T_STR && cur()->kind != T_NUM) die_at(t->line, "STOP needs RUN or a literal");
@@ -7908,9 +7960,24 @@ static void parse_select(void)
             else if (cur()->kind == T_PERIOD || at_word("file") || at_word("organization") || at_word("organisation") || at_word("access") || at_word("record") || at_word("status"))
                 has_assign = -1;                        /* nothing named: allowed for an EXTERNAL file */
             else if (cur()->kind == T_WORD) {
-                if (at_word("disk") || at_word("keyboard") || at_word("display") || at_word("printer"))
+                /* RM/COBOL's device word before the name -- ASSIGN TO RANDOM
+                 * "GLMAST.GLDATA", ASSIGN TO PRINT "PRINTER" -- says nothing on
+                 * this machine: accepted and ignored, as SHARING is (GitHub #34).
+                 * A device word with nothing after it is still refused. */
+                static const char *devs[] = { "random", "print", "printer", "disk", "input", "output", "input-output",
+                                              "display", "keyboard", "tape", "cassette", NULL };
+                static const char *clauses[] = { "organization", "organisation", "access", "record", "status", "file",
+                                                 "sequential", "indexed", "relative", "line", "lock", "sharing", "key",
+                                                 "alternate", "reserve", "padding", "data", "block", NULL };
+                int dev = 0, clause_next = peek(1)->kind != T_STR && peek(1)->kind != T_WORD;
+                for (int i = 0; devs[i]; i++) if (at_word(devs[i])) dev = 1;
+                for (int i = 0; clauses[i]; i++) if (is_word(peek(1), clauses[i])) clause_next = 1;
+                if (dev && !clause_next) advance();
+                else if (dev)
                     die_at(t->line, "ASSIGN TO %s (a device) is not supported; name a file", cur()->s);
-                snprintf(f->assign_name, sizeof f->assign_name, "%s", cur()->s); advance();
+                if (cur()->kind == T_STR) { f->assign_lit = cur(); advance(); }
+                else if (cur()->kind == T_WORD) { snprintf(f->assign_name, sizeof f->assign_name, "%s", cur()->s); advance(); }
+                else die_at(t->line, "expected a literal or data-name after ASSIGN TO");
             } else die_at(t->line, "expected a literal or data-name after ASSIGN TO");
             has_assign = 1;
             continue;
