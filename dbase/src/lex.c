@@ -11,7 +11,13 @@ void lexer_init(lexer_t *l, const char *input) {
 }
 
 void lexer_init_ext(lexer_t *l, const char *input, memvar_store_t *store) {
-    memset(l, 0, sizeof(*l));
+    /* Not memset(l, 0, sizeof *l): the struct is 2.4KB, most of it the macro
+     * stack, which is only read below macro_depth; a lexer is initialised for
+     * every statement and most sub-clauses. */
+    memset(&l->current, 0, sizeof(l->current));
+    l->token_start = NULL;
+    l->prev_type = (token_type_t)0;
+    l->macro_depth = 0;
     l->input = input;
     l->p = input;
     l->store = store;

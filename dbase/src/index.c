@@ -465,7 +465,7 @@ void index_init(index_t *idx) {
     memset(idx, 0, sizeof(index_t));
     idx->iter_page = -1;
     idx->iter_pos = -1;
-    idx->cache_capacity = 64;
+    idx->cache_capacity = 512;   /* pages, allocated on demand; 64 missed on every leaf of a 600-page index */
     idx->key_ast = NULL;
     idx->key_has_macro = 0;
     idx->for_expr[0] = '\0';

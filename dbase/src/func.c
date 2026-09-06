@@ -2349,6 +2349,36 @@ static const func_entry_t func_table[] = {
     { NULL, NULL }
 };
 
+/* The builtin table has 124 entries and every call -- including every call of
+ * a user-defined function, which must miss the whole table first -- walked it
+ * with strcmp.  Open-addressed hash over the names, built on the first call. */
+#define FUNC_HASH_SIZE 512
+static const func_entry_t *func_hash[FUNC_HASH_SIZE];
+static int func_hash_built;
+static unsigned func_name_hash(const char *s) {
+    unsigned h = 2166136261u;
+    while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
+    return h;
+}
+static const func_entry_t *func_lookup(const char *upper) {
+    unsigned i;
+    if (!func_hash_built) {
+        const func_entry_t *e;
+        for (e = func_table; e->name; e++) {
+            i = func_name_hash(e->name) & (FUNC_HASH_SIZE - 1);
+            while (func_hash[i]) i = (i + 1) & (FUNC_HASH_SIZE - 1);
+            func_hash[i] = e;
+        }
+        func_hash_built = 1;
+    }
+    i = func_name_hash(upper) & (FUNC_HASH_SIZE - 1);
+    while (func_hash[i]) {
+        if (strcmp(func_hash[i]->name, upper) == 0) return func_hash[i];
+        i = (i + 1) & (FUNC_HASH_SIZE - 1);
+    }
+    return NULL;
+}
+
 static udf_callback_t udf_callback;
 
 void func_set_udf_callback(udf_callback_t cb) {
@@ -2372,10 +2402,9 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     }
     upper[i] = '\0';
 
-    for (e = func_table; e->name; e++) {
-        if (strcmp(upper, e->name) == 0)
-            return e->fn(ctx, args, nargs, result);
-    }
+    e = func_lookup(upper);
+    if (e)
+        return e->fn(ctx, args, nargs, result);
 
     /* Try user-defined function.
        Callback returns: 0=handled, >0=not found, <0=execution error. */
