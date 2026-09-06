@@ -279,3 +279,17 @@ indexes byte-identical to the previous binary's.
   predicates in the same relative order; a line holding `&` is classified
   fresh each time because its text can change.
 
+**Sixth round (2026-09-05):** runner 15.4 s -> 13.2 s.
+- **The index page cache never worked for a work-area index.** `index_init()`
+  sets the capacity, but the command layer never calls it: the slots in
+  `areas[]` are zeroed, so `cache_capacity` was 0 and `cache_evict()` freed
+  every unpinned page after each fetch -- a SEEK re-read its whole
+  root-to-leaf path on every call, and a build evicted as it went. The
+  earlier "64 -> 512 pages" change therefore changed nothing.
+  `index_cache_setup()` applies the capacity at open (`index_read`) and at
+  build. Found by the profile still showing a page read per SEEK on a
+  five-page index after that change.
+- `is_keyword` measured both strings on every call before comparing (the
+  four-character rule); it now rejects on the first letter first, which is
+  most calls. `dbf_find_field` likewise (field names are upper-case).
+

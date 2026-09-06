@@ -327,7 +327,14 @@ token_type_t lex_peek(lexer_t *l) {
 }
 
 int is_keyword(const char *ident, const char *kw) {
-    int ident_len = strlen(ident);
+    int ident_len;
+    /* keywords are upper-case; most calls fail on the first letter */
+    {
+        char c = ident[0];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c != kw[0]) return 0;
+    }
+    ident_len = strlen(ident);
     int kw_len = strlen(kw);
     int min_len = (kw_len < 4) ? kw_len : 4;
     if (ident_len < min_len) return 0;

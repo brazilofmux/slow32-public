@@ -14,6 +14,15 @@ static ndx_page_t *hash_lookup(index_t *idx, int page_no);
 static ndx_page_t *page_get(index_t *idx, int page_no);
 static void page_put(ndx_page_t *p);
 
+/* Page cache capacity.  Work-area index slots are zeroed, and index_init() is
+ * not on the open path, so this was 0 there: cache_evict() then freed every
+ * unpinned page after each fetch, and a SEEK re-read its whole root-to-leaf
+ * path from disk on every call (a build likewise).  Applied at open and build. */
+#define INDEX_CACHE_PAGES 512
+static void index_cache_setup(index_t *idx) {
+    if (idx->cache_capacity <= 0) idx->cache_capacity = INDEX_CACHE_PAGES;
+}
+
 void index_clear_key_ast(index_t *idx) {
     if (idx->key_ast) {
         ast_free(idx->key_ast);
@@ -465,7 +474,7 @@ void index_init(index_t *idx) {
     memset(idx, 0, sizeof(index_t));
     idx->iter_page = -1;
     idx->iter_pos = -1;
-    idx->cache_capacity = 512;   /* pages, allocated on demand; 64 missed on every leaf of a 600-page index */
+    idx->cache_capacity = INDEX_CACHE_PAGES;
     idx->key_ast = NULL;
     idx->key_has_macro = 0;
     idx->for_expr[0] = '\0';
@@ -1413,6 +1422,7 @@ static void index_build_incremental(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
 /* ---- Build index from database ---- */
 int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename,
                 const char *for_expr, int descending) {
+    index_cache_setup(idx);
     uint32_t i;
     dbf_t *saved_db;
     int max_len = 0;
@@ -1866,6 +1876,8 @@ int index_read(index_t *idx, const char *filename) {
     FILE *fp;
     uint32_t magic;
     char norm_path[64];
+
+    index_cache_setup(idx);
 
     str_copy(norm_path, filename, sizeof(norm_path));
     path_normalize(norm_path);

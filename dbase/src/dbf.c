@@ -373,8 +373,10 @@ int dbf_flush_record(dbf_t *db) {
 
 int dbf_find_field(const dbf_t *db, const char *name) {
     int i;
+    char c0 = name[0];
+    if (c0 >= 'a' && c0 <= 'z') c0 -= 32;   /* field names are stored upper-case */
     for (i = 0; i < db->field_count; i++) {
-        if (str_icmp(db->fields[i].name, name) == 0)
+        if (db->fields[i].name[0] == c0 && str_icmp(db->fields[i].name, name) == 0)
             return i;
     }
     return -1;
