@@ -3,7 +3,8 @@
       * Two ASSIGN shapes of the Open Systems suite (GitHub #34):
       * RM/COBOL's device word before the name (RANDOM, PRINT), which
       * says nothing here and is ignored, and a group item as the
-      * file-name -- "ASG2B." plus a module suffix. Default dialect.
+      * file-name -- "ASG2B." plus a module suffix; and UNLOCK, RM's
+      * record locking released, a no-op here. Default dialect.
        ENVIRONMENT DIVISION.
        INPUT-OUTPUT SECTION.
        FILE-CONTROL.
@@ -25,7 +26,8 @@
        PROCEDURE DIVISION.
        MAIN.
            MOVE "GL" TO APPL-NAME.
-           OPEN OUTPUT F1. MOVE "FIRST" TO R1. WRITE R1. CLOSE F1.
+           OPEN OUTPUT F1. MOVE "FIRST" TO R1. WRITE R1.
+           UNLOCK F1 RECORD. CLOSE F1.
            OPEN OUTPUT F2. MOVE "SECOND" TO R2. WRITE R2. CLOSE F2.
            OPEN INPUT F1. READ F1 INTO W. CLOSE F1. DISPLAY W.
            OPEN INPUT F2. READ F2 INTO W. CLOSE F2. DISPLAY W.

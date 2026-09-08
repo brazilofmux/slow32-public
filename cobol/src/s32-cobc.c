@@ -3793,7 +3793,7 @@ static int is_verb(const char *w)
         "enter", "evaluate", "exit", "generate", "go", "goback", "if", "initialize",
         "initiate", "inspect", "merge", "move", "multiply", "open", "perform", "purge",
         "read", "receive", "release", "return", "rewrite", "search", "send", "set",
-        "sort", "start", "stop", "string", "subtract", "suppress", "terminate",
+        "sort", "start", "stop", "string", "subtract", "suppress", "terminate", "unlock",
         "unstring", "use", "write", "next", NULL };
     for (int i = 0; verbs[i]; i++) if (!strcmp(w, verbs[i])) return 1;
     return 0;
@@ -7724,6 +7724,15 @@ static void parse_statement(void)
     if (!strcmp(v, "perform")) { advance(); parse_perform(); return; }
     if (!strcmp(v, "go")) { advance(); parse_goto(); return; }
     if (!strcmp(v, "set")) { advance(); parse_set(); return; }
+    if (!strcmp(v, "unlock")) {
+        /* UNLOCK file [RECORD|RECORDS|ALL RECORDS]: RM/COBOL's record
+         * locking, released.  One user here: nothing was locked. */
+        advance();
+        if (cur()->kind != T_WORD) die_at(t->line, "UNLOCK needs a file-name");
+        advance();
+        accept_word("all"); accept_word("record"); accept_word("records");
+        return;
+    }
     if (!strcmp(v, "stop")) {
         advance();
         if (accept_word("run")) {

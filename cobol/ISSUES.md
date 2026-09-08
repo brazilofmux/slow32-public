@@ -962,3 +962,19 @@ of the runtime that no test had asked for:
 The chart print now produces its dated heading page and detail lines from
 a master built by GLACGL under a key script. The suite is unchanged (110).
 
+### 31. The Open Systems suite: AP and IN (2026-09-06)
+
+The two modules together, as the user asked (AP interacts heavily with IN).
+Census as they stood: AP 12 of 38 compile, IN 3 of 17; three walls, none a
+screen matter: a bare `END PROGRAM.` (26 programs), COMP-1 with a PICTURE
+(RM's two-byte binary integer, a float elsewhere), and a doubled period
+after a VALUE that RM's reader let through. With those, and `UNLOCK` as a
+no-op (RM record locking, one user here), and the tag-file rewrite carried
+over to their copybooks -- two sort copybooks per module, one on OSTAGS as in
+GL and one on APTAGS/INTAGS -- plus OASIS's `PIN.COMMAND:S` (the task number,
+a lock owner) made a constant in SAPTRCTL: AP 37 of 38, IN 16 of 17. The one
+left in each is CPINVBIL, whose SEXINV copybook exists nowhere in the corpus,
+and APENTER needs its subprogram APENTP compiled beside it. Test rmend (no
+oracle: GnuCOBOL's COMP-1 is a float in every dialect it offers); UNLOCK in
+assign2, where the oracle agrees. Suite 111/111.
+
