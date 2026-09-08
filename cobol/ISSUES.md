@@ -1037,3 +1037,32 @@ the G/L journal.  No compiler or runtime change.  Two things learned:
   record drops the entry number: "BAD READ" in every program that reads
   the records the sorted tags name.  Now sized from the tag file.  The AP
   and IN papers were unaffected (one record each) but the sources are fixed.
+
+### 35. PA module: the runtime's PERFORM exit, a stale record copybook (~/open/pa, 2026-09-07)
+
+49 programs compile (SPACHKR.COB is a copybook; PA941/PA9412 exist only as
+RM object files, no source).  Two compiler gaps closed on the way: OTHER as a
+declared data name, END PROGRAM as the last line without a period.
+`pa/s32/run.sh` pins 17 papers: the time ticket through the posted check,
+the registers, the withholding reports, the W-2 and a balanced G/L journal.
+Three findings, one of them a runtime rule:
+
+- `cob_perform_exit` checked only the top frame of the perform stack.
+  PAPOST's 745-READ-TABLE does `INVALID KEY GO TO 750-GET-TABLE-EXIT` from
+  inside `PERFORM 745` while `PERFORM 705 THRU 750` is active: the inner
+  frame is abandoned, 750's own return was refused, and control fell through
+  760..800 into the error copybook ("<< INVALID ENTRY >>" after POSTING).
+  The exit now searches down the stack for its range and drops the frames
+  above it -- the per-paragraph return slots of the classic runtimes, which
+  this code was written against.  Test `perfexit`.  It never showed in
+  production because the path only opens when a company's FICA exclusion
+  table is missing.
+- `SPACHK` (the FD copy of the check record) names two year-to-date cells
+  where `SPACHKR` (the LINKAGE copy) still had one FILLER; every routine
+  taking the record by LINKAGE saw the withholding group four bytes early,
+  so PAAUX zeroed the wrong cell and the auxiliary withholding kept its
+  space-fill, printed as 20202.02 (three spaces and a comma, read as packed
+  decimal).  SPACHKR aligned in the corpus.
+- Open, not fixed: a positioned DISPLAY of a numeric item (COMP-3 here)
+  shows its raw bytes; RM converts it.  Seen only through my own debug
+  displays, no corpus statement found relying on it yet.

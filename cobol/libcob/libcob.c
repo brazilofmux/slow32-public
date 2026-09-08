@@ -1029,7 +1029,13 @@ void cob_perform_push(int exit_id, void *ret)
 
 void *cob_perform_exit(int id)
 {
-    if (psp > 0 && pstk[psp - 1].exit_id == id) return pstk[--psp].ret;
+    /* The innermost frame first; below it only when a GO TO left a performed
+     * paragraph for the enclosing range's exit (Open Systems PAPOST: 745's
+     * INVALID KEY GO TO 750 inside PERFORM 705 THRU 750).  The abandoned
+     * frames above the match are dropped, as the per-paragraph return slots
+     * of the classic runtimes would have them. */
+    for (int k = psp - 1; k >= 0; k--)
+        if (pstk[k].exit_id == id) { void *r = pstk[k].ret; psp = k; return r; }
     return 0;
 }
 
