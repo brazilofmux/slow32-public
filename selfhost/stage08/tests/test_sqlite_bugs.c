@@ -32,6 +32,24 @@ static int t_tentative(void) { return tentative_v == 7 ? 0 : 2; }
     && defined(NOT_D) && defined(NOT_E)
 #define CONT_WRONG 1
 #endif
+/* GitHub issue 39: a comment in an #if expression is whitespace.
+ * Without that, 1 then a block comment then && 0 yields 1. */
+#if 1 /*c*/ && 0
+#define IF_COMMENT_TRUE 1
+#endif
+#define IFC_A 1
+#define IFC_B 1
+#if defined(IFC_A) /*x*/ && defined(IFC_B)
+#define IFC_BOTH 1
+#endif
+#if 1 // not division
+#define IF_SLASHSLASH 1
+#endif
+static int t_if_line_mark = __LINE__;
+#if 1 \
+    && 1
+#endif
+static int t_if_line_after = __LINE__;
 static int t_if_continuation(void) {
 #ifndef CONT_SELECTED
     return 4;
@@ -39,6 +57,18 @@ static int t_if_continuation(void) {
 #ifdef CONT_WRONG
     return 4;
 #endif
+#ifdef IF_COMMENT_TRUE
+    return 4;
+#endif
+#ifndef IFC_BOTH
+    return 4;
+#endif
+#ifndef IF_SLASHSLASH
+    return 4;
+#endif
+    /* mark, #if, continued, #endif, after: 4 lines.  A splice that
+     * does not bump lex_line makes after-mark 3. */
+    if (t_if_line_after - t_if_line_mark != 4) return 4;
     return 0;
 }
 

@@ -87,15 +87,48 @@ static int pp_nidirs;
 /* --- Text helpers (read from lex_src[lex_pos]) --- */
 
 static void pp_skip_ws(void) {
-    while (1) {
+    /* Space, tab, comments, and line splices.  #if walks lex_src as
+     * raw bytes, so a comment left in place is a token: 1 then a block
+     * comment then && 0 was 1, and defined(A) then a comment then &&
+     * defined(B) dropped the && (GitHub issue 39).  Consuming a splice
+     * without bumping lex_line is the documented few-hundred-line drift
+     * on continued directives. */
+    while (lex_pos < lex_len) {
         if (lex_src[lex_pos] == 32 || lex_src[lex_pos] == 9) {
             lex_pos = lex_pos + 1;
         } else if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
-            /* Backslash-newline continues the logical line.  An #if
-             * expression that stopped at the physical newline saw only
-             * its first line: SQLite's `#if defined(A) \ + defined(B)
-             * ... == 0` never chose its allocator. */
             lex_pos = lex_pos + 2;
+            lex_line = lex_line + 1;
+        } else if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 13 &&
+                   lex_src[lex_pos + 2] == 10) {
+            lex_pos = lex_pos + 3;
+            lex_line = lex_line + 1;
+        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < lex_len &&
+                   lex_src[lex_pos + 1] == 42) {
+            lex_pos = lex_pos + 2;
+            while (lex_pos + 1 < lex_len &&
+                   !(lex_src[lex_pos] == 42 && lex_src[lex_pos + 1] == 47)) {
+                if (lex_src[lex_pos] == 10) lex_line = lex_line + 1;
+                lex_pos = lex_pos + 1;
+            }
+            if (lex_pos + 1 < lex_len) lex_pos = lex_pos + 2;
+        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < lex_len &&
+                   lex_src[lex_pos + 1] == 47) {
+            lex_pos = lex_pos + 2;
+            while (lex_pos < lex_len && lex_src[lex_pos] != 10) {
+                if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
+                    lex_pos = lex_pos + 2;
+                    lex_line = lex_line + 1;
+                    continue;
+                }
+                if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 13 &&
+                    lex_src[lex_pos + 2] == 10) {
+                    lex_pos = lex_pos + 3;
+                    lex_line = lex_line + 1;
+                    continue;
+                }
+                lex_pos = lex_pos + 1;
+            }
         } else {
             break;
         }
