@@ -1023,6 +1023,14 @@ static int psp;
 
 void cob_perform_push(int exit_id, void *ret)
 {
+    /* A range already on the stack was left by a GO TO (GLENTER: the S
+     * command inside PERFORM 600-GET-ENTRY THRU 690-GET-EXIT goes back to
+     * the screen); COBOL forbids performing an active range, so that frame
+     * and everything above it are abandoned.  Replacing it keeps the stack
+     * bounded by the number of distinct ranges, as the per-paragraph return
+     * slots of the classic runtimes are. */
+    for (int k = psp - 1; k >= 0; k--)
+        if (pstk[k].exit_id == exit_id) { psp = k; break; }
     if (psp >= 256) cob_fatal("PERFORM nesting too deep");
     pstk[psp].exit_id = exit_id; pstk[psp].ret = ret; psp++;
 }

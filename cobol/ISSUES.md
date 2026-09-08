@@ -1080,3 +1080,15 @@ the platform, in order: two runtime rules (ISSUES-30), an indexed-file
 registration (32), the tag SD sizing (34), the PERFORM exit rule and two
 parser gaps (35).  What it cannot do: PA941 (object only), CPINVBIL (a
 copybook the corpus never had).
+
+### 37. Abandoned PERFORM frames accumulated (GLENTER's S command, 2026-09-07)
+
+A GO TO out of a performed range to somewhere outside every range -- the S
+command in GLENTER's 600-GET-ENTRY, and 900-BRANCH-S/X in the errors
+copybook, a routine idiom across the suite -- left its frame on the perform
+stack for good; 300 of them and the runtime stopped with "PERFORM nesting
+too deep".  The push now replaces an existing frame for the same range and
+drops what sat above it (an active range cannot be performed again, so those
+frames are abandoned).  The stack is bounded by the number of distinct
+ranges, as the classic per-paragraph return slots are.  Test `perfgoto`.
+Raised by an outside review of GLENTER.COB that read the idiom off the page.
