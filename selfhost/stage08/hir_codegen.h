@@ -11,16 +11,32 @@
 
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
+static int  cg_fd = -1;
+static int  cg_long_calls;  /* -mlong-calls: direct calls form the address; a jal reaches +/-1MB, SQLite's library is 1.2MB */     /* the output file, once the driver has opened it: a full buffer is flushed to it */
+
+/* Emission only appends -- nothing is patched after the fact -- so the
+ * buffer is a window on the file, not the file.  SQLite's assembly is
+ * over 16MB; holding it whole was the last per-file ceiling. */
+static void cg_flush(void) {
+    if (cg_fd >= 0 && cg_olen > 0) {
+        write(cg_fd, cg_out, cg_olen);
+        cg_olen = 0;
+    }
+}
 
 /* --- Asm emission helpers --- */
 
 static void cg_c(int ch) {
     if (cg_olen >= CG_MAX_OUT - 1) {
-        /* Was a silent drop: the assembly came out truncated and the
-         * failure surfaced much later as a mangled .s.  Inlining made
-         * it reachable, but the landmine predates it. */
-        fdputs("s12cc: output buffer overflow (assembly too large)\n", 2);
-        exit(1);
+        if (cg_fd >= 0) {
+            cg_flush();
+        } else {
+            /* Was a silent drop: the assembly came out truncated and the
+             * failure surfaced much later as a mangled .s.  Inlining made
+             * it reachable, but the landmine predates it. */
+            fdputs("s12cc: output buffer overflow (assembly too large)\n", 2);
+            exit(1);
+        }
     }
     {
         cg_out[cg_olen] = ch;
@@ -137,8 +153,8 @@ static int hcg_blk_pos[HIR_MAX_BLOCK]; /* estimated byte offset, over-estimated 
  * unique block-label numbers (hcg_blk_lbl values), which stay valid after
  * the per-function hcg_blk_lbl[] array is overwritten because cg_lbl is
  * monotonic. */
-#define CG_MAX_JT      512
-#define CG_MAX_JT_ENT  32768
+#define CG_MAX_JT      4096   /* was 512 */
+#define CG_MAX_JT_ENT  262144   /* was 32768 */
 static int cg_jt_id[CG_MAX_JT];      /* .LJT label number */
 static int cg_jt_base[CG_MAX_JT];    /* base into cg_jt_ent */
 static int cg_jt_span[CG_MAX_JT];    /* entry count */
@@ -371,6 +387,15 @@ static int hcg_is_i12(int v) {
 
 static int hcg_is_u12(int v) {
     return (v >= 0 && v <= 4095);
+}
+
+/* An immediate for a compare.  slti sign-extends its 12 bits; sltiu
+ * ZERO-extends them (the emulator's decode, and the assembler warns),
+ * so `x <u -1` folded to sltiu compared against 4095: SQLite's 64-bit
+ * compares tripped it four times, `x <u -8` once. */
+static int hcg_cmp_imm(int k, int c) {
+    if (k == HI_SLT || k == HI_SGT || k == HI_SGE || k == HI_SLE) return hcg_is_i12(c);
+    return hcg_is_u12(c);
 }
 
 static int hcg_const_is_zero(int inst) {
@@ -955,6 +980,13 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     npush = 0;
     j = 0;
     while (j < n) {
+        if (ra_reg[hcg_phi_tmp[j]] < 0 && ra_spill_off[hcg_phi_tmp[j]] == 0) {
+            /* neither register nor slot: the value is never read */
+            hcg_phi_is_const[j] = 3;
+            hcg_phi_push_ix[j] = -1;
+            j = j + 1;
+            continue;
+        }
         v = ssa_phi_find_arg(hcg_phi_tmp[j], from_blk);
         if (hcg_const_imm_inst(v, &c)) {
             hcg_phi_is_const[j] = 1;
@@ -974,6 +1006,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     j = n - 1;
     while (j >= 0) {
         phi = hcg_phi_tmp[j];
+        if (hcg_phi_is_const[j] == 3) { j = j - 1; continue; }
         if (hcg_phi_is_const[j]) {
             c = hcg_phi_const_val[j];
             if (ra_reg[phi] >= 0) {
@@ -1778,14 +1811,14 @@ static void hcg_inst(int idx) {
         int have_imm;
         imm_opp = 0;
         have_imm = 0;
-        if (hcg_const_imm_inst(s2, &c) && hcg_is_i12(c)) {
+        if (hcg_const_imm_inst(s2, &c) && hcg_cmp_imm(k, c)) {
             imm_opp = 1;
             have_imm = 1;
             off = c;
         }
         if (!have_imm && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
             c = h_val[s2];
-            if (hcg_is_i12(c)) {
+            if (hcg_cmp_imm(k, c)) {
                 imm_opp = 1;
                 have_imm = 1;
                 off = c;
@@ -1818,13 +1851,13 @@ static void hcg_inst(int idx) {
         const_valid = 0;
         const_res = 0;
 
-        if ((k == HI_SGT || k == HI_SGTU) && hcg_const_imm_inst(s1, &c) && hcg_is_i12(c)) {
+        if ((k == HI_SGT || k == HI_SGTU) && hcg_const_imm_inst(s1, &c) && hcg_cmp_imm(k, c)) {
             /* c > x   => x < c */
             imm_opp = 1;
             have_imm = 1;
             off = c;
             rs1 = hcg_src(s2, 2);
-        } else if ((k == HI_SGE || k == HI_SGEU) && hcg_const_imm_inst(s2, &c) && hcg_is_i12(c)) {
+        } else if ((k == HI_SGE || k == HI_SGEU) && hcg_const_imm_inst(s2, &c) && hcg_cmp_imm(k, c)) {
             /* x >= c  => !(x < c) */
             imm_opp = 1;
             have_imm = 1;
@@ -1841,7 +1874,7 @@ static void hcg_inst(int idx) {
             } else if (k == HI_SGTU && c == -1) {
                 const_valid = 1;
                 const_res = 0;
-            } else if (hcg_is_i12(c + 1)) {
+            } else if (hcg_cmp_imm(k, c + 1)) {
                 have_imm = 1;
                 off = c + 1;
                 rs1 = hcg_src(s1, 1);
@@ -1857,13 +1890,13 @@ static void hcg_inst(int idx) {
             } else if (k == HI_SLEU && c == -1) {
                 const_valid = 1;
                 const_res = 1;
-            } else if (hcg_is_i12(c + 1)) {
+            } else if (hcg_cmp_imm(k, c + 1)) {
                 have_imm = 1;
                 off = c + 1;
                 rs1 = hcg_src(s1, 1);
             }
         } else if ((k == HI_SLE || k == HI_SLEU) &&
-                   hcg_const_imm_inst(s1, &c) && hcg_is_i12(c)) {
+                   hcg_const_imm_inst(s1, &c) && hcg_cmp_imm(k, c)) {
             /* c <= x => !(x < c) */
             imm_opp = 1;
             have_imm = 1;
@@ -1873,7 +1906,7 @@ static void hcg_inst(int idx) {
         } else if (pat >= 0 && lnt == BG_IMM && rnt == BG_REG &&
                    (k == HI_SGT || k == HI_SGTU || k == HI_SLE || k == HI_SLEU)) {
             c = h_val[s1];
-            if (hcg_is_i12(c)) {
+            if (hcg_cmp_imm(k, c)) {
                 imm_opp = 1;
                 have_imm = 1;
                 off = c;
@@ -1883,7 +1916,7 @@ static void hcg_inst(int idx) {
         } else if (pat >= 0 && lnt == BG_REG && rnt == BG_IMM &&
                    (k == HI_SGE || k == HI_SGEU)) {
             c = h_val[s2];
-            if (hcg_is_i12(c)) {
+            if (hcg_cmp_imm(k, c)) {
                 imm_opp = 1;
                 have_imm = 1;
                 off = c;
@@ -1900,7 +1933,7 @@ static void hcg_inst(int idx) {
             } else if ((k == HI_SLE && c == 2147483647) || (k == HI_SLEU && c == -1)) {
                 const_valid = 1;
                 const_res = 1;
-            } else if (hcg_is_i12(c + 1)) {
+            } else if (hcg_cmp_imm(k, c + 1)) {
                 have_imm = 1;
                 off = c + 1;
                 rs1 = hcg_src(s1, 1);
@@ -2452,9 +2485,14 @@ static void hcg_inst(int idx) {
         if (is_tail) {
             /* Tail call: epilogue + jump (no link) */
             hcg_emit_epilogue_inline();
-            cg_s("    jal r0, ");
-            cg_s(h_name[idx]);
-            cg_c(10);
+            if (cg_long_calls) {
+                hcg_la(2, h_name[idx]);
+                cg_s("    jalr r0, r2, 0\n");
+            } else {
+                cg_s("    jal r0, ");
+                cg_s(h_name[idx]);
+                cg_c(10);
+            }
             hcg_stat_tailcall = hcg_stat_tailcall + 1;
             return;
         }
@@ -2462,9 +2500,15 @@ static void hcg_inst(int idx) {
         /* Normal call: push stack args, call with link */
         hcg_push_stack_args(base, nargs);
 
-        cg_s("    jal r31, ");
-        cg_s(h_name[idx]);
-        cg_c(10);
+        if (cg_long_calls) {
+            /* r2 is free here: args sit in r3-r10, results come back in r1/r2 */
+            hcg_la(2, h_name[idx]);
+            cg_s("    jalr r31, r2, 0\n");
+        } else {
+            cg_s("    jal r31, ");
+            cg_s(h_name[idx]);
+            cg_c(10);
+        }
 
         hcg_pop_stack_args(nstk * 4);
 
@@ -2949,7 +2993,7 @@ static void hcg_func(Node *fn) {
                          * clone lists these passes create; the cross
                          * backends sharing hir_licm.h do not, and leave
                          * this off. */
-    hir_licm();
+    if (ho_mask & 1024) hir_licm();
 
     /* Promote big loop-used constants out of remat (needs the loop
      * map hir_licm just built; must precede regalloc node creation) */

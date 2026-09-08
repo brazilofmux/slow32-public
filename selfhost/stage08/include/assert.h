@@ -11,7 +11,11 @@ void abort(void);
 #ifdef NDEBUG
 #define assert(cond) ((void)0)
 #else
-#define assert(cond) ((cond) ? (void)0 : abort())
+void __assert_fail(const char *expr, const char *file, int line);
+/* Says which assertion, and where (the line is the preprocessor's count,
+ * which runs ahead of the source in a big file -- the expression text is
+ * what to grep for). */
+#define assert(cond) ((cond) ? (void)0 : __assert_fail(#cond, __FILE__, __LINE__))
 #endif
 
 #endif

@@ -113,10 +113,10 @@ static char *hl_cur_fn_dbg;
 char *getenv(const char *name);
 int atoi(const char *nptr);
 
-#define HIR_MAX_INST   16384
-#define HIR_MAX_BLOCK  2048
-#define HIR_MAX_CARG   4096
-#define HIR_MAX_PARG   32768
+#define HIR_MAX_INST   262144   /* was 16384 */
+#define HIR_MAX_BLOCK  16384   /* was 2048 */
+#define HIR_MAX_CARG   32768   /* was 4096 */
+#define HIR_MAX_PARG 2097152   /* was 262144; SQLite's debug build (asserts add blocks) overflowed it */   /* was 32768 */
 
 /* --- Diagnostic flags --- */
 static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
@@ -220,7 +220,7 @@ static int   h_ncarg;
  * hjt_target[hjt_base[i] .. hjt_base[i]+hjt_span[i]) are the destination
  * block numbers for index 0..span-1.  Kept separate from h_carg because
  * these are block numbers, not value instructions. */
-#define HIR_MAX_JT  8192
+#define HIR_MAX_JT  32768   /* was 8192 */
 static int   hjt_target[HIR_MAX_JT];
 static int   hjt_base[HIR_MAX_INST];
 static int   hjt_span[HIR_MAX_INST];

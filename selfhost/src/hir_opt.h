@@ -11,6 +11,7 @@
 
 /* Use count per instruction */
 static int ho_use[HIR_MAX_INST];
+static char ho_phi_vouched[HIR_MAX_INST];   /* ho_count_uses: this live phi has counted its args */
 
 /* Resolve COPY chains: follow src1 until non-COPY */
 static int ho_resolve(int inst) {
@@ -735,10 +736,12 @@ static void ho_count_uses(void) {
     int k;
     int base;
     int cnt;
+    int changed;
 
     i = 0;
     while (i < h_ninst) {
         ho_use[i] = 0;
+        ho_phi_vouched[i] = 0;
         i = i + 1;
     }
 
@@ -769,26 +772,42 @@ static void ho_count_uses(void) {
             }
         }
 
-        /* PHI arguments.  A phi's reference to ITSELF (loop back edge:
-         * x = phi(pre, x)) is not a real use — counting it kept dead
-         * loop phis alive forever, and a pile of dead phis at one join
-         * all get the same free color (empty ranges never interfere),
-         * so their parallel-copy at the join edge stomped a live value
-         * sharing that register (dtoa_r's `s` died at Roundup).  The
-         * ho_dce fixpoint loop cascades chains once self-uses are
-         * ignored. */
-        if (k == HI_PHI && h_pbase[i] >= 0) {
-            j = 0;
-            while (j < h_pcnt[i]) {
-                if (h_pval[h_pbase[i] + j] >= 0 &&
-                    h_pval[h_pbase[i] + j] != i)
-                    ho_use[h_pval[h_pbase[i] + j]] =
-                        ho_use[h_pval[h_pbase[i] + j]] + 1;
-                j = j + 1;
-            }
-        }
+        /* PHI arguments are counted below, and only from live phis. */
 
         i = i + 1;
+    }
+
+    /* PHI arguments.  A use from a phi is real only if the phi itself
+     * is live.  Counting every phi's arguments kept dead phis alive
+     * through each other: a loop header's phi feeds the join after the
+     * switch in its body, whose phi feeds the header, and neither has a
+     * real reader.  The SSA is minimal, not pruned, so sqlite3VdbeExec
+     * carried one such pair per case-local -- 384 phis at one join,
+     * each copied on every one of ~190 edges: three quarters of the
+     * function.  (A phi's reference to ITSELF, x = phi(pre, x), is
+     * likewise not a use.)  So: seed with the uses from real
+     * instructions, then let each live phi vouch for its arguments,
+     * to a fixpoint. */
+    changed = 1;
+    while (changed) {
+        changed = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_PHI && h_pbase[i] >= 0 && ho_use[i] > 0 &&
+                !ho_phi_vouched[i]) {
+                ho_phi_vouched[i] = 1;
+                changed = 1;
+                j = 0;
+                while (j < h_pcnt[i]) {
+                    if (h_pval[h_pbase[i] + j] >= 0 &&
+                        h_pval[h_pbase[i] + j] != i)
+                        ho_use[h_pval[h_pbase[i] + j]] =
+                            ho_use[h_pval[h_pbase[i] + j]] + 1;
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
     }
 }
 
@@ -1376,6 +1395,12 @@ static int ho_promote_single_store_alloca(void) {
 /* Cumulative count of HIR instructions eliminated across all functions */
 static int ho_stat_elim;
 
+/* -fopt=MASK (s12cc.c): which passes run; a bisection aid.  Bits: 1 copy
+ * propagation, 2 constant folding, 4 CSE, 8 branch simplification,
+ * 16 dead blocks, 32 phi simplification, 64 DSE, 128 store-load forwarding,
+ * 256 single-store alloca promotion, 512 DCE, 1024 LICM. */
+static int ho_mask = -1;
+
 static void hir_opt(void) {
     int changed;
     int iter;
@@ -1395,16 +1420,16 @@ static void hir_opt(void) {
     changed = 1;
     while (changed && iter < 10) {
         changed = 0;
-        changed = changed | ho_copy_prop();
-        changed = changed | ho_const_fold();
-        changed = changed | ho_cse();
-        changed = changed | ho_branch_simplify();
-        changed = changed | ho_dead_blocks();
-        changed = changed | ho_phi_simplify();
-        changed = changed | ho_dse_pass();
-        changed = changed | ho_mem_fwd();
-        changed = changed | ho_promote_single_store_alloca();
-        changed = changed | ho_dce();
+        if (ho_mask & 1)   changed = changed | ho_copy_prop();
+        if (ho_mask & 2)   changed = changed | ho_const_fold();
+        if (ho_mask & 4)   changed = changed | ho_cse();
+        if (ho_mask & 8)   changed = changed | ho_branch_simplify();
+        if (ho_mask & 16)  changed = changed | ho_dead_blocks();
+        if (ho_mask & 32)  changed = changed | ho_phi_simplify();
+        if (ho_mask & 64)  changed = changed | ho_dse_pass();
+        if (ho_mask & 128) changed = changed | ho_mem_fwd();
+        if (ho_mask & 256) changed = changed | ho_promote_single_store_alloca();
+        if (ho_mask & 512) changed = changed | ho_dce();
         iter = iter + 1;
     }
 

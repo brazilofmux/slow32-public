@@ -132,10 +132,10 @@ void fdputuint(int f, int v);
 
 /* === Lexer globals === */
 
-#define LEX_SRC_SZ   1100000
+#define LEX_SRC_SZ   12000000   /* was 1100000 */
 #define LEX_STR_SZ   256
-#define LEX_POOL_SZ  524288
-#define LEX_POOL_MAX 16384
+#define LEX_POOL_SZ  4194304   /* was 524288 */
+#define LEX_POOL_MAX 65536   /* was 16384 */
 
 static char lex_src[LEX_SRC_SZ];
 static int  lex_len;

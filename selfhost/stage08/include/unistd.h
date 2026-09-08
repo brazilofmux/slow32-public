@@ -26,4 +26,11 @@ int   getpid(void);
 int   isatty(int fd);
 int   unlink(char *path);
 
+int access(const char *path, int mode);
+int ftruncate(int fd, int length);
+/* access() modes, as the MMIO host takes them */
+#define F_OK 0
+#define X_OK 1
+#define W_OK 2
+#define R_OK 4
 #endif

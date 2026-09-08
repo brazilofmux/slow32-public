@@ -122,7 +122,7 @@ fi
 # --- Build libc (compiled by stage07 s12cc) ---
 echo "[2/4] Build libc"
 LIBC_OBJS=""
-for name in string_extra string_more ctype convert stdio malloc; do
+for name in string_extra string_more ctype convert stdio malloc posix_more; do
     compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
@@ -131,9 +131,35 @@ compile "$LIBC_DIR/start.c" "$WORKDIR/start.s" "$WORKDIR/start.cc.log"
 assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
 # --- Compile compiler with stage07 compiler ---
+# span forever in the [6/6] smoke.  Build the stage08 assembler (its
+# own .s is stage07 output, so stage07 tools may build it) and use it
+# for everything gen1 compiles.  Same rule as run-tests.sh's
+# fixed-point gate: stage08 codegen requires stage08 tool features.
+STAGE8_AS="$WORKDIR/g1-s32-as.s32x"
+"$EMU" "$STAGE7_CC" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/g1-s32-as.s" >"$WORKDIR/g1-s32-as.cc.log" 2>&1
+assemble "$WORKDIR/g1-s32-as.s" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/g1-s32-as.as.log"
+"$EMU" "$STAGE7_LD" -o "$STAGE8_AS" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/builtins64.s32o" "$WORKDIR/builtins_fp64.s32o" \
+    $LIBC_OBJS >"$WORKDIR/g1-s32-as.ld.log" 2>&1
+[[ -s "$STAGE8_AS" ]] || { echo "failed to build stage08 assembler for gen1 output" >&2; exit 1; }
+
+assemble_gen1() {
+    local src="$1" obj="$2" log="$3"
+    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$STAGE8_AS" "$src" "$obj" >"$log" 2>&1
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "assemble (stage08 as) failed (rc=$rc): $src" >&2
+        tail -n 5 "$log" >&2
+        return 1
+    fi
+    [[ -s "$obj" ]] || { echo "assemble produced no output: $src" >&2; return 1; }
+}
 echo "[3/4] Compile compiler"
 compile "$SCRIPT_DIR/s12cc.c" "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.cc.log"
-assemble "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"
+# the stage07 assembler caps BSS at 16MB; the compiler's tables pass that now, so its own
+# assembly goes through the gen1 stage08 assembler (built above, stage07 output still)
+assemble_gen1 "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"
 
 # --- Link cc.s32x ---
 echo "[4/6] Link cc.s32x (gen1, tree-walk ABI)"
@@ -172,36 +198,15 @@ mkdir -p "$LIBC_OUT_DIR"
 # shapes and relies on assembler relaxation for targets beyond +-4096
 # bytes.  stage07's s32-as predates relaxation and silently wraps the
 # displacement -- dtoa_r got a truncated branch and snprintf("%f")
-# span forever in the [6/6] smoke.  Build the stage08 assembler (its
-# own .s is stage07 output, so stage07 tools may build it) and use it
-# for everything gen1 compiles.  Same rule as run-tests.sh's
-# fixed-point gate: stage08 codegen requires stage08 tool features.
-STAGE8_AS="$WORKDIR/g1-s32-as.s32x"
-"$EMU" "$STAGE7_CC" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/g1-s32-as.s" >"$WORKDIR/g1-s32-as.cc.log" 2>&1
-assemble "$WORKDIR/g1-s32-as.s" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/g1-s32-as.as.log"
-"$EMU" "$STAGE7_LD" -o "$STAGE8_AS" --mmio 64K \
-    "$WORKDIR/crt0.s32o" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/start.s32o" \
-    "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/builtins64.s32o" "$WORKDIR/builtins_fp64.s32o" \
-    $LIBC_OBJS >"$WORKDIR/g1-s32-as.ld.log" 2>&1
-[[ -s "$STAGE8_AS" ]] || { echo "failed to build stage08 assembler for gen1 output" >&2; exit 1; }
 
-assemble_gen1() {
-    local src="$1" obj="$2" log="$3"
-    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$STAGE8_AS" "$src" "$obj" >"$log" 2>&1
-    local rc=$?
-    if [[ $rc -ne 0 ]]; then
-        echo "assemble (stage08 as) failed (rc=$rc): $src" >&2
-        tail -n 5 "$log" >&2
-        return 1
-    fi
-    [[ -s "$obj" ]] || { echo "assemble produced no output: $src" >&2; return 1; }
-}
-
-for name in string_extra string_more ctype convert stdio malloc; do
+for name in string_extra string_more ctype convert stdio malloc posix_more; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
-compile_gen1 "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.cc.log"
+# -mlong-calls: the runtime's one call into the program (main) forms
+# the address, since a program may put more than a jal's +/-1MB between
+# its main and the libc behind it (SQLite built by stage08 does).
+compile_gen1 "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.cc.log" -mlong-calls
 assemble_gen1 "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_start.as.log"
 # printf: David Gay's dtoa + the enhanced printf family, the SAME
 # sources the clang runtime builds — %f/%e/%g and width flags print

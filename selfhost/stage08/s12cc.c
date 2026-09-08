@@ -192,6 +192,20 @@ int main(int argc, char **argv) {
                 s12_cmd_defs[s12_ncmd_defs] = argv[argi] + 2;
                 s12_ncmd_defs = s12_ncmd_defs + 1;
             }
+        } else if (argv[argi][0] == 45 && argv[argi][1] == 102 && argv[argi][2] == 111 &&
+                   argv[argi][3] == 112 && argv[argi][4] == 116 && argv[argi][5] == 61) {
+            /* -fopt=MASK: which optimizer passes run (hir_opt.h) */
+            ho_mask = 0;
+            {
+                int k;
+                k = 6;
+                while (argv[argi][k] >= 48 && argv[argi][k] <= 57) {
+                    ho_mask = ho_mask * 10 + (argv[argi][k] - 48);
+                    k = k + 1;
+                }
+            }
+        } else if (strcmp(argv[argi], "-mlong-calls") == 0) {
+            cg_long_calls = 1;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 100 && argv[argi][2] == 0) {
             /* "-d" — dump regalloc intervals to stderr (Issue #31 diagnostic) */
             s12cc_dump_intervals = 1;
@@ -232,6 +246,7 @@ int main(int argc, char **argv) {
 
     /* Init preprocessor state */
     pp_ndefs = 0;
+    pp_hash_reset();
     pp_skip = 0;
     pp_dep = 0;
     ps_ntypedefs = 0;
@@ -287,9 +302,8 @@ int main(int argc, char **argv) {
 
     /* Codegen (cg_lbl not reset — parser may have allocated goto labels) */
     cg_olen = 0;
-    gen_program(prog);
-
-    /* Write output */
+    /* The output is opened before code generation: the emitter flushes
+     * its buffer to it whenever the buffer fills. */
     fd = open(outfile, 26);  /* O_WRONLY | O_CREAT | O_TRUNC */
     if (fd < 0) {
         fdputs("s12cc: cannot open output: ", 2);
@@ -297,7 +311,11 @@ int main(int argc, char **argv) {
         fdputc(10, 2);
         return 1;
     }
-    write(fd, cg_out, cg_olen);
+    cg_fd = fd;
+    gen_program(prog);
+
+    /* Write what remains */
+    cg_flush();
     close(fd);
 
     /* Print optimization stats to stderr */

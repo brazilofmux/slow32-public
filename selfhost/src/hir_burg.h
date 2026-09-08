@@ -49,7 +49,7 @@ static int bg_nchain;
 /* Per-instruction labeling: 8192 * 5 = 40960 entries.
  * Covers functions up to 8192 HIR instructions.
  * Functions exceeding this skip BURG (codegen falls back). */
-#define BG_MAX_INST 8192
+#define BG_MAX_INST 262144   /* was 8192 */
 #define BG_COST_SZ 40960
 static int bg_cost[BG_COST_SZ];
 static int bg_rule[BG_COST_SZ];

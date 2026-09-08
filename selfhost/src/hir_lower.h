@@ -12,7 +12,7 @@
  * the old ceiling immediately.)  hl_inl_candidate also refuses to
  * inline once capacity runs low, so exhausting this is a missed
  * optimisation rather than a failed compile. */
-#define HL_MAX_ALLOCA 2048
+#define HL_MAX_ALLOCA 8192   /* was 2048 */
 static int hl_aoff[HL_MAX_ALLOCA];
 static int hl_ainst[HL_MAX_ALLOCA];
 static int hl_nalloca;
@@ -21,14 +21,14 @@ static int hl_nalloca;
 static int hl_temp_stack;
 
 /* --- Loop break/continue targets --- */
-#define HL_MAX_LOOP 16
+#define HL_MAX_LOOP 64   /* was 16 */
 static int hl_break_blk[HL_MAX_LOOP];
 static int hl_cont_blk[HL_MAX_LOOP];
 static int hl_loop_depth;
 
 /* --- Switch state --- */
-#define HL_MAX_SW_DEPTH 8
-#define HL_MAX_CASE 256
+#define HL_MAX_SW_DEPTH 32   /* was 8 */
+#define HL_MAX_CASE 1024   /* was 256 */
 static int hl_sw_val[HL_MAX_CASE];
 static int hl_sw_blk[HL_MAX_CASE];
 static int hl_sw_base[HL_MAX_SW_DEPTH];
@@ -46,7 +46,7 @@ static int hl_sw_ord[HL_MAX_CASE];
 static int hl_jt_tgt[HL_JT_MAX_SPAN];   /* per-index target block (build buffer) */
 
 /* --- Goto label map --- */
-#define HL_MAX_GOTO 512
+#define HL_MAX_GOTO 4096   /* was 512 */
 static int hl_goto_id[HL_MAX_GOTO];
 static int hl_goto_blk[HL_MAX_GOTO];
 static int hl_ngoto;
@@ -1048,7 +1048,7 @@ static int hl_inline_call(Node *call, Node *fn) {
 #endif
         } else {
             slot = hl_get_alloca(hl_map_off(pp->offset), pp->ty);
-            hi_emit(HI_STORE, pp->ty, slot, av[i], 0, NULL);
+            hi_emit(HI_STORE, pp->ty, slot, hl_narrow(pp->ty, av[i]), 0, NULL);
         }
         i = i + 1;
         pp = pp->next;
@@ -1089,6 +1089,36 @@ static int hl_inline_call(Node *call, Node *fn) {
     hl_stat_inlined = hl_stat_inlined + 1;
     return rv;
 }
+
+/* Narrow a value to a char or short type.  C converts on assignment, on
+ * parameter passing and on return; a local of that type promoted to a
+ * register kept the wide value (sqlite3StrIHash's u8 accumulator came
+ * back as 5443, and a column's stored hash never matched again). */
+static int hl_narrow(int ty, int lv) {
+    int tmp;
+    if (ty_is_ptr(ty)) return lv;
+    if ((ty & TY_BASE_MASK) == TY_CHAR) {
+        if (ty & TY_UNSIGNED) {
+            tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 255, NULL);
+            return hi_emit(HI_AND, TY_INT, lv, tmp, 0, NULL);
+        }
+        tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 24, NULL);
+        lv = hi_emit(HI_SLL, TY_INT, lv, tmp, 0, NULL);
+        return hi_emit(HI_SRA, TY_INT, lv, tmp, 0, NULL);
+    }
+    if ((ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED) {
+            tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 65535, NULL);
+            return hi_emit(HI_AND, TY_INT, lv, tmp, 0, NULL);
+        }
+        tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 16, NULL);
+        lv = hi_emit(HI_SLL, TY_INT, lv, tmp, 0, NULL);
+        return hi_emit(HI_SRA, TY_INT, lv, tmp, 0, NULL);
+    }
+    return lv;
+}
+
+static int hl_ret_ty;   /* the current function's return type, for hl_narrow at return */
 
 static int hl_expr(Node *n) {
     int lv;
@@ -1405,6 +1435,7 @@ static int hl_expr(Node *n) {
 #endif
         }
         val = hl_expr(n->rhs);
+        val = hl_narrow(n->ty, val);
         addr = hl_addr(n->lhs);
         hi_emit(HI_STORE, n->ty, addr, val, 0, NULL);
         return val;
@@ -2923,6 +2954,7 @@ static void hl_stmt(Node *n) {
                 lv = hl_expr(n->lhs);
                 if (ty_is_llong(hl_inl_res_ty) || ty_is_double(hl_inl_res_ty)) {
 #ifdef S12CC_X64_HOST
+                    lv = hl_narrow(hl_inl_res_ty, lv);
                     hi_emit(HI_STORE, hl_inl_res_ty, hl_inl_res, lv, 0, NULL);
 #else
                     {
@@ -2935,6 +2967,7 @@ static void hl_stmt(Node *n) {
                     }
 #endif
                 } else {
+                    lv = hl_narrow(hl_inl_res_ty, lv);
                     hi_emit(HI_STORE, hl_inl_res_ty, hl_inl_res, lv, 0, NULL);
                 }
             } else if (n->lhs) {
@@ -2975,6 +3008,7 @@ static void hl_stmt(Node *n) {
             }
         } else if (n->lhs) {
             lv = hl_expr(n->lhs);
+            lv = hl_narrow(hl_ret_ty, lv);   /* both targets: a u8 function returns a u8 */
 #ifdef S12CC_X64_HOST
             hi_emit(HI_RET, 0, lv, -1, 0, NULL);
 #else
@@ -3297,6 +3331,7 @@ static void hl_func(Node *fn) {
     hl_sw_depth = 0;
     hl_ngoto = 0;
     hl_struct_ret = ty_is_struct(fn->ty) ? 1 : 0;
+    hl_ret_ty = fn->ty;
     hl_retptr_alloca = -1;
     hl_ret_size = hl_struct_ret ? ty_size(fn->ty) : 0;
 
@@ -3442,6 +3477,7 @@ static void hl_func(Node *fn) {
 #else
                 param_inst = hl_pp_inst[phys_idx];
                 param_alloca = hl_get_alloca(pp->offset, TY_INT);
+                param_inst = hl_narrow(pp->ty, param_inst);   /* a u8 arrives as the caller left it */
                 hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
 #endif
                 phys_idx = phys_idx + 1;

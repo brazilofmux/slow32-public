@@ -21,16 +21,16 @@
 #define TY_FLOAT  5       /* float (32-bit IEEE 754) */
 #define TY_DOUBLE 6       /* double (64-bit IEEE 754) */
 #define TY_I128   7       /* __int128 / __uint128_t (128-bit integer) */
-#define TY_STRUCT_BASE 8  /* struct index i → type = 8+i; fits 8..255 */
-#define TY_PTR  256   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
+#define TY_STRUCT_BASE 8  /* struct index i → type = 8+i; fits 8..4095 (SQLite declares ~600 structs; 255 was the ceiling) */
+#define TY_PTR  0x1000   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
 
-#define TY_UNSIGNED  0x4000  /* flag bit: unsigned qualifier */
-#define TY_BASE_MASK 0x00FF  /* bits 0-7: base type */
-#define TY_PTR_MASK  0x3F00  /* bits 8-13: pointer depth */
+#define TY_UNSIGNED  0x40000  /* flag bit: unsigned qualifier */
+#define TY_BASE_MASK 0x0FFF  /* bits 0-11: base type */
+#define TY_PTR_MASK  0x3F000  /* bits 12-17: pointer depth */
 
 /* --- Struct definition tables --- */
-#define ST_MAX_STRUCTS 256
-#define ST_MAX_MEMBERS 2048
+#define ST_MAX_STRUCTS 4096
+#define ST_MAX_MEMBERS 32768
 
 static char *st_name[ST_MAX_STRUCTS];
 static int   st_nfields[ST_MAX_STRUCTS];

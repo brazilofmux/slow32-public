@@ -18,7 +18,7 @@ void exit(int status);
 #define MAX_RODATA 1048576
 #define MAX_DATA 1048576
 #define MAX_INIT_ARRAY 262144
-#define MAX_BSS 16777216
+#define MAX_BSS 251658240   /* BSS is only counted here; the 256MB address space less 16MB is the bound (stage08 cc with SQLite-sized tables asks for >16MB) */
 #define MAX_STR 131072
 #define LBL_POOL_SZ 524288
 #define MAX_DIFF 16384
@@ -1084,6 +1084,15 @@ int handle(char *line) {
             if (n != 2) return -1;
             cnt = parse_num_or_abs(tok[1], &ok);
             if (!ok || cnt < 0) return -1;
+            if (g_sec == SEC_BSS) {
+                /* Counted, not stored.  A byte at a time, the 129MB of
+                 * tables in stage08's own cc took the assembler eleven
+                 * minutes under stage00's emulator: the build's longest
+                 * step by far. */
+                if (g_bsz + cnt > MAX_BSS) return -1;
+                g_bsz = g_bsz + cnt;
+                return 0;
+            }
             for (i = 0; i < cnt; i = i + 1) {
                 if (emit8(0) != 0) return -1;
             }

@@ -859,3 +859,15 @@ exit:
 .global errno
 errno:
     .space 4
+
+# The MMIO data buffer's address, for C.  stage07, which compiles this
+# libc, turns any extern object declaration (`extern int __mmio_base;`,
+# array or scalar) into a definition, and that overrode the linker's
+# absolute symbol: every MMIO request then polled ordinary memory
+# forever.  So C asks here (selfhost ISSUES-67).
+.text
+.global __s32_mmio_data
+__s32_mmio_data:
+    lui  r1, %hi(__mmio_base+16384)
+    addi r1, r1, %lo(__mmio_base+16384)
+    jalr r0, lr, 0

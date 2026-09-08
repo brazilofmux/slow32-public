@@ -283,7 +283,7 @@ fi
 
 # Build libc with stage07 compiler
 LIBC_OBJS=""
-for name in string_extra string_more ctype convert stdio malloc; do
+for name in string_extra string_more ctype convert stdio malloc posix_more; do
     run_exe "$STAGE7_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
     [[ -s "$WORKDIR/${name}.s" ]] || { echo "failed to compile ${name}.c" >&2; exit 1; }
     run_exe "$AS_EXE" "$WORKDIR/${name}.as.log" "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o"
@@ -306,6 +306,20 @@ BUILTINS_FP64_OBJ=""
 if [[ -s "$WORKDIR/builtins_fp64.s32o" ]]; then
     BUILTINS_FP64_OBJ="$WORKDIR/builtins_fp64.s32o"
 fi
+# The stage07 assembler caps BSS at 16MB and the compiler's tables pass that
+# now (the SQLite-sized ceilings), so the compiler's own assembly goes through
+# a stage08 assembler built here with stage07's compiler -- stage07 output,
+# so stage07 tools may build it; the same step build-s12cc.sh takes.
+BIG_AS="$WORKDIR/big-s32-as.s32x"
+run_exe "$STAGE7_CC" "$WORKDIR/big-s32-as.cc.log" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/big-s32-as.s"
+[[ -s "$WORKDIR/big-s32-as.s" ]] || { echo "failed to compile tools/s32-as.c for the big assembler" >&2; exit 1; }
+run_exe "$AS_EXE" "$WORKDIR/big-s32-as.as.log" "$WORKDIR/big-s32-as.s" "$WORKDIR/big-s32-as.s32o"
+[[ -s "$WORKDIR/big-s32-as.s32o" ]] || { echo "failed to assemble the big assembler" >&2; exit 1; }
+run_exe "$LD_EXE" "$WORKDIR/big-s32-as.ld.log" -o "$BIG_AS" --mmio 64K \
+    "$RUNTIME_CRT0" "$WORKDIR/big-s32-as.s32o" "$WORKDIR/start.s32o" "$RUNTIME_MMIO_NO_START_OBJ" \
+    $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
+[[ -s "$BIG_AS" ]] || { echo "failed to link the big assembler" >&2; exit 1; }
+
 LIBC_START_OBJ="$WORKDIR/start.s32o"
 STAGE7_LIBC_OBJS="$LIBC_OBJS"
 STAGE7_LIBC_START_OBJ="$LIBC_START_OBJ"
@@ -339,7 +353,7 @@ if [[ ! -s "$WORKDIR/gen1_cc.s" ]]; then
     tail -n 20 "$WORKDIR/gen1_cc-compile.log" >&2
     FAIL=$((FAIL + 1))
 else
-    run_exe "$AS_EXE" "$WORKDIR/gen1_cc-assemble.log" "$WORKDIR/gen1_cc.s" "$WORKDIR/gen1_cc.s32o"
+    run_exe "$BIG_AS" "$WORKDIR/gen1_cc-assemble.log" "$WORKDIR/gen1_cc.s" "$WORKDIR/gen1_cc.s32o"
     if [[ ! -s "$WORKDIR/gen1_cc.s32o" ]]; then
         printf "  %-30s FAIL (assemble)\n" "gen1_cc-build:"
         FAIL=$((FAIL + 1))
@@ -377,7 +391,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     # printf comes from Gay dtoa + printf_enhanced + runtime convert
     # (same trio as build-s12cc.sh's gen1 lib; printf_varargs retired)
     G1_RT_SRCS="dtoa printf_enhanced convert_rt"
-    for name in string_extra string_more ctype convert stdio malloc $G1_RT_SRCS; do
+    for name in string_extra string_more ctype convert stdio malloc posix_more $G1_RT_SRCS; do
         case "$name" in
           dtoa)
             run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
@@ -407,7 +421,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     done
 
     if [[ -n "$G1_LIBC_OBJS" ]]; then
-        run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s"
+        run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_start.cc.log" -mlong-calls "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s"   # see build-s12cc.sh
         if [[ -s "$WORKDIR/g1_start.s" ]]; then
             run_exe "$AS_EXE" "$WORKDIR/g1_start.as.log" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.s32o"
             if [[ -s "$WORKDIR/g1_start.s32o" ]]; then
@@ -434,7 +448,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -443,6 +457,9 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         EXTRA_CC_ARGS=""
         if [[ "$tname" == "test_phase26" ]]; then
             EXTRA_CC_ARGS="-I $SCRIPT_DIR/include"
+        fi
+        if [[ "$tname" == "test_sqlite_bugs" ]]; then
+            EXTRA_CC_ARGS="-mlong-calls"    # every direct call address-forming
         fi
         run_exe "$GEN1_CC_EXE" "$WORKDIR/${tname}-gen1_cc.log" $EXTRA_CC_ARGS "$tst" "$WORKDIR/${tname}.s"
         if [[ ! -s "$WORKDIR/${tname}.s" ]]; then

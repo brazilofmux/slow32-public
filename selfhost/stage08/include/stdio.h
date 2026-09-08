@@ -88,4 +88,5 @@ int   fdputc(int c, int fd);
 int   fdputs(const char *s, int fd);
 void  fdputuint(int fd, unsigned int v);
 
+#define FILENAME_MAX 4096
 #endif

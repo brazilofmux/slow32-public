@@ -16,12 +16,12 @@
  * count / HL_JT_MAX_SPAN).  4096 (the old 2-per-block bound) could be
  * exhausted by one large switch plus ordinary control flow, so allow ample
  * headroom; ssa_build_cfg still range-checks and aborts cleanly on overflow. */
-#define SSA_SUCC_SZ 16384
+#define SSA_SUCC_SZ 131072   /* was 16384 */
 static int ssa_succ[SSA_SUCC_SZ];
 static int ssa_nsucc[HIR_MAX_BLOCK];
 static int ssa_soff[HIR_MAX_BLOCK];
 
-#define SSA_MAX_PRED 8192
+#define SSA_MAX_PRED 65536   /* was 8192 */
 static int ssa_pred[SSA_MAX_PRED];
 static int ssa_pbase[HIR_MAX_BLOCK];
 static int ssa_npred[HIR_MAX_BLOCK];
@@ -36,12 +36,12 @@ static int ssa_idom[HIR_MAX_BLOCK];
 
 /* --- Dominance frontier (fixed width per block) --- */
 #define SSA_DF_W 32
-#define SSA_DF_SZ 65536
+#define SSA_DF_SZ 524288   /* was 65536 */
 static int ssa_df[SSA_DF_SZ];
 static int ssa_dfc[HIR_MAX_BLOCK];
 
 /* --- Promotable variables --- */
-#define SSA_MAX_PROMO 256
+#define SSA_MAX_PROMO 4096   /* was 256 */
 static int ssa_promo[SSA_MAX_PROMO];
 static int ssa_npromo;
 static int ssa_phi_base; /* h_ninst before phi insertion */
@@ -53,7 +53,7 @@ static int ssa_phi_next[HIR_MAX_INST];
 /* hl_nparams defined in hir_lower.h (shared) */
 
 /* --- Dom tree children (flat) --- */
-#define SSA_DTC_MAX 8192
+#define SSA_DTC_MAX 65536   /* was 8192 */
 static int ssa_dtc[SSA_DTC_MAX];
 static int ssa_dtc_base[HIR_MAX_BLOCK];
 static int ssa_dtc_cnt[HIR_MAX_BLOCK];
@@ -64,19 +64,19 @@ static int ssa_dtc_cnt[HIR_MAX_BLOCK];
  * deeply-nested functions in tools/dbt (block_cache.c) hit the cap.
  * 256 leaves comfortable headroom; the cost is just static memory in
  * the compiler. */
-#define SSA_VD 256
-#define SSA_VSTK_SZ 65536
+#define SSA_VD 1024   /* was 256 */
+#define SSA_VSTK_SZ 4194304   /* was 65536 */
 static int ssa_vstk[SSA_VSTK_SZ];
 static int ssa_vtop[SSA_MAX_PROMO];
 
 /* --- Rename: DFS stack --- */
-#define SSA_DFS 2048
+#define SSA_DFS 16384   /* was 2048 */
 static int ssa_rblk[SSA_DFS];
 static int ssa_rci[SSA_DFS];
 static int ssa_rmark[SSA_DFS];
 
 /* --- Rename: push log for backtracking --- */
-#define SSA_PLOG 8192
+#define SSA_PLOG 65536   /* was 8192 */
 static int ssa_plog[SSA_PLOG];
 static int ssa_plog_n;
 

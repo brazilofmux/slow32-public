@@ -117,6 +117,8 @@ void __slow32_start(void) {
         }
     }
 
+    /* Built with -mlong-calls (build-s12cc.sh): main may sit more than
+     * a jal's +/-1MB from here. */
     i = main(argc, args_argv);
     exit(i);
 }

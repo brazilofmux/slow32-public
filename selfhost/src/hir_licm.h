@@ -80,7 +80,7 @@ static char sp_post[HIR_MAX_INST];
 static char sp_bad[HIR_MAX_INST];
 
 /* --- Scratch for loop body --- */
-#define LICM_MAX_BODY 2048
+#define LICM_MAX_BODY 16384   /* was 2048 */
 static int licm_body[LICM_MAX_BODY];
 
 /* --- Helpers --- */

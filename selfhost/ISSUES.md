@@ -2059,3 +2059,105 @@ Test: stage08/tests/test_decl_list.c and cross-a64 cc_decl_list (five
 shapes, exit code names the failing one). libcob.c and dfsort keep the
 one-declaration-per-line form so a kit with the old compiler still
 builds them.
+
+### 67. [OPEN 2026-09-08] stage08 cc builds SQLite 3.51.0: nineteen front-end, optimizer and back-end defects, one still open
+
+The pristine amalgamation (9.4MB, 265,876 lines, `sqlite/build.sh`'s
+defines) is the largest input stage08 has taken.  It now compiles in
+under a minute under slow32-dbt, assembles, links against the selfhost
+libc, and runs; the first statement still dies (see the open item).
+Every fix below is generic; `tests/test_sqlite_bugs.c` covers the
+front-end and back-end ones and is compiled with `-mlong-calls`.
+
+Preprocessor (pp.h):
+- `#if` expressions stopped at the physical newline: SQLite's allocator
+  selection spans four continued lines and was never chosen.
+  `pp_skip_ws` now splices backslash-newline.
+- `pp_skip_line` and `pp_read_body_text` ended at the physical line
+  inside a continued `#error` message or a block comment.
+- Macro expansion copied the whole 9MB tail per expansion, the macro
+  table was a linear scan, and `#define vfsList GLOBAL(...,vfsList)`
+  expanded a million times: expansion runs backwards into the consumed
+  prefix, the table is hashed, and a macro's own name is disabled
+  while its expansion is rescanned.
+- The disable list is keyed by buffer position; a backwards expansion
+  reuses prefix that a finished expansion's entry still covered
+  (ROUND8 inside assert, right after a ROUND8) -- entries ending
+  strictly before the call are dropped.  And C pre-expands arguments:
+  `ROUND8(SZ_VDBECURSOR(n))`, where the argument's expansion holds a
+  ROUND8, must expand it.  Substituted argument text is recorded as
+  regions the disable check exempts.
+- Stringizing a two-line argument left a raw newline in the string;
+  whitespace runs now fold to one space (C11 6.10.3.2).
+- A text-bodied macro (ten-digit `SQLITE_MAX_LENGTH`) was not
+  substituted in `#if`.
+
+Parser (parser.h):
+- Nested function-pointer struct members (`void (*(*xDlSym)(...))(void)`),
+  functions returning function pointers, arrays of function pointers at
+  file scope, abstract function-pointer declarators in casts and
+  sizeof, unnamed function-pointer parameters, multiple stars,
+  qualifiers after the base type and after stars, unary plus, a bare
+  `signed` (as a cast and as a declaration), `offsetof` in constant
+  expressions.
+- A tentative definition followed by the real one emitted the label
+  twice (`sqlite3WhereTrace`).
+- Block-scope statics with string, floating-point or address-constant
+  initializers (`static const char *zFormat1 = "..."`).
+- Type encoding: SQLite declares ~600 structs; the base-type field and
+  struct table were widened (TY_PTR 0x1000, TY_UNSIGNED 0x40000).
+
+Optimizer and back end:
+- Dead-code elimination counted every phi's arguments as uses, so a
+  loop-header phi and a switch-join phi feeding each other never died.
+  The SSA is minimal, so sqlite3VdbeExec carried one such pair per
+  case-local -- 384 phis at one join copied on ~190 edges, three
+  quarters of the function (829K instructions -> 57K).  Uses from a phi
+  now count only once the phi is proven live.
+- `sltiu` zero-extends its immediate: `x <u -1` folded to a compare
+  against 4095 (four sites in SQLite's 64-bit compares).
+- A char or short local promoted to a register kept its wide value:
+  `sqlite3StrIHash`'s u8 accumulator returned 5443, so a column's stored
+  hash never matched.  Values are narrowed at assignment, at return
+  and at parameter entry (hl_narrow).  Without it the parser takes a
+  wrong reduce on its second action of CREATE TABLE.
+- `-mlong-calls`: a jal reaches +/-1MB and the library alone is 1.2MB.
+  Direct calls form the address in r2 (free at a call).  Both crt0s and
+  the libc's call to main do the same, so the layout crt0, program,
+  library, libc links.  Linker veneers (linker ISSUES-11) remain the
+  general fix.
+- Liveness sets: static, budgeted (8MB each, intervals beyond); grown
+  on the heap they stranded every earlier size in the 64MB heap the
+  stage07 linker fixes, and the debug build ran it dry.
+- `-fopt=MASK` selects optimizer passes (a bisection aid).
+- Capacity: ~40 ceilings raised (lexer buffer 12MB, phi args 2M,
+  SSA stacks, codegen edge table); the assembly output streams to the
+  file instead of being held whole; s32-as counts BSS instead of
+  emitting it a byte at a time (129MB of tables took eleven minutes).
+
+Toolchain and libc:
+- stage07 emits any extern object declaration (`extern int x;` or
+  `extern char x[];`) as a one-byte definition.  In the libc that
+  overrode the linker's absolute `__mmio_base`, and every MMIO request
+  polled ordinary memory forever.  C in this libc gets the data buffer
+  from `__s32_mmio_data` in mmio_no_start.s instead.
+- posix_more.c: access, ftruncate, time, localtime/gmtime (via the
+  GETTZ op), fabs, strspn, strcspn, abort, and an assert that names its
+  expression; headers fcntl.h, sys/stat.h (struct stat as the asm
+  fstat fills it), struct tm, F_OK.., FILENAME_MAX.
+- The preprocessor's reported line numbers drift by a few hundred
+  lines in a big file (both directions); usable, not exact.
+
+OPEN: the stage08-built smoke test dies in the first statement.  The
+schema-load query's program opens cursor 0 and rewinds it; the rewind
+finds the cursor slot null because the dispatch tree sends the two
+OpenRead/OpenWrite case labels (113, 114, one shared body) to a block
+that is only a phi parallel copy jumping back to the loop head.  The
+parse matches clang's exactly (reduce sequences compared from traces),
+the same block shape exists in a build without assignment narrowing
+that does open the cursor, and no function falls back to the interval
+allocator, so it is an optimizer-pass interaction on the changed code
+shapes.  Compiles with passes masked off do not finish in useful time,
+so the pass bisection needs a smaller reproducer.  Whether the original
+SELECT hang (the parser looping on the COMMIT rule) survives that fix
+is unknown.

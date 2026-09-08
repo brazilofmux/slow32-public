@@ -9,7 +9,7 @@
  * pp_install_predefs / next() specials).  Map: docs/DIALECT.md.
  */
 
-#define PP_MAX_DEFS  2048  /* doom's header web defines >512 macros */
+#define PP_MAX_DEFS  8192   /* was 2048 */  /* doom's header web defines >512 macros */
 #define PP_MAX_IF    16
 
 static char *pp_dname[PP_MAX_DEFS];
@@ -18,6 +18,33 @@ static char *pp_dbody[PP_MAX_DEFS];   /* body text (strdup'd), NULL = int-only *
 static int   pp_dnpar[PP_MAX_DEFS];   /* param count, -1 = object-like */
 static char *pp_dparm[PP_MAX_DEFS];   /* packed param names "a\0b\0" (strdup'd) */
 static int   pp_dvar[PP_MAX_DEFS];    /* 1 = variadic macro (.../__VA_ARGS__) */
+/* A hash index over the table: SQLite defines 2,800 macros, and a linear
+ * scan with strcmp on every identifier token was 93% of its compile
+ * (the DBT's PC probe: strcmp 62%, pp_find 31%).  Chains run newest
+ * first, so a redefinition still wins as the backward scan did. */
+#define PP_HASH_SZ 16384
+static int   pp_hhead[PP_HASH_SZ];
+static int   pp_dnext[PP_MAX_DEFS];
+static int   pp_hash_ready;
+
+static int pp_hash(char *name) {
+    unsigned int h;
+    int i;
+    h = 5381;
+    i = 0;
+    while (name[i] != 0) {
+        h = h * 33 + (unsigned char)name[i];
+        i = i + 1;
+    }
+    return (int)(h & (PP_HASH_SZ - 1));
+}
+
+static void pp_hash_reset(void) {
+    int i;
+    i = 0;
+    while (i < PP_HASH_SZ) { pp_hhead[i] = -1; i = i + 1; }
+    pp_hash_ready = 1;
+}
 static int   pp_ndefs;
 
 /* Current translation-unit path for __FILE__ (main input; includes do not
@@ -60,13 +87,55 @@ static int pp_nidirs;
 /* --- Text helpers (read from lex_src[lex_pos]) --- */
 
 static void pp_skip_ws(void) {
-    while (lex_src[lex_pos] == 32 || lex_src[lex_pos] == 9) {
-        lex_pos = lex_pos + 1;
+    while (1) {
+        if (lex_src[lex_pos] == 32 || lex_src[lex_pos] == 9) {
+            lex_pos = lex_pos + 1;
+        } else if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
+            /* Backslash-newline continues the logical line.  An #if
+             * expression that stopped at the physical newline saw only
+             * its first line: SQLite's `#if defined(A) \ + defined(B)
+             * ... == 0` never chose its allocator. */
+            lex_pos = lex_pos + 2;
+        } else {
+            break;
+        }
     }
 }
 
 static void pp_skip_line(void) {
-    while (lex_pos < lex_len && lex_src[lex_pos] != 10) {
+    /* To the end of the logical line: a backslash before the newline
+     * continues it (SQLite's `# error "...\` messages inside a skipped
+     * branch -- stopping at the physical newline left the message's tail
+     * as text, and its closing quote opened a string that swallowed the
+     * #endif). The final newline is left for the caller, as before. */
+    while (lex_pos < lex_len) {
+        if (lex_src[lex_pos] == 10) {
+            if (lex_pos > 0 && lex_src[lex_pos - 1] == 92) {
+                lex_pos = lex_pos + 1;
+                lex_line = lex_line + 1;
+                continue;
+            }
+            if (lex_pos > 1 && lex_src[lex_pos - 1] == 13 && lex_src[lex_pos - 2] == 92) {
+                lex_pos = lex_pos + 1;
+                lex_line = lex_line + 1;
+                continue;
+            }
+            return;
+        }
+        /* A block comment on the directive's tail may run past the newline
+         * (SQLite's `#define PGHDR_NEED_SYNC 0x008 /* ...` continues on
+         * the next line); it is consumed whole, as the standard's
+         * comment replacement would have done before the directive. */
+        if (lex_src[lex_pos] == 47 && lex_pos + 1 < lex_len && lex_src[lex_pos + 1] == 42) {
+            lex_pos = lex_pos + 2;
+            while (lex_pos + 1 < lex_len &&
+                   !(lex_src[lex_pos] == 42 && lex_src[lex_pos + 1] == 47)) {
+                if (lex_src[lex_pos] == 10) lex_line = lex_line + 1;
+                lex_pos = lex_pos + 1;
+            }
+            if (lex_pos + 1 < lex_len) lex_pos = lex_pos + 2;
+            continue;
+        }
         lex_pos = lex_pos + 1;
     }
 }
@@ -260,7 +329,23 @@ static int pp_read_body_text(char *buf) {
         c = lex_src[lex_pos];
         if (!in_str && !in_chr && c == 47) {
             if (lex_src[lex_pos + 1] == 47) break;
-            if (lex_src[lex_pos + 1] == 42) break;
+            if (lex_src[lex_pos + 1] == 42) {
+                /* A block comment is a space in the body, and may run past
+                 * the newline (SQLite: `#define PGHDR_NEED_SYNC 0x008 /* ...`
+                 * continued on the next line).  Stopping here as a trailing
+                 * comment cut the body short and left the comment's second
+                 * line as source. */
+                lex_pos = lex_pos + 2;
+                while (lex_pos + 1 < lex_len &&
+                       !(lex_src[lex_pos] == 42 && lex_src[lex_pos + 1] == 47)) {
+                    if (lex_src[lex_pos] == 10) lex_line = lex_line + 1;
+                    lex_pos = lex_pos + 1;
+                }
+                lex_pos = lex_pos + 2;
+                buf[bi] = 32;
+                bi = bi + 1;
+                continue;
+            }
         }
         buf[bi] = c;
         bi = bi + 1;
@@ -286,10 +371,11 @@ static int pp_read_body_text(char *buf) {
 
 static int pp_find(char *name) {
     int i;
-    i = pp_ndefs - 1;
+    if (!pp_hash_ready) pp_hash_reset();
+    i = pp_hhead[pp_hash(name)];
     while (i >= 0) {
         if (pp_dname[i] != 0 && strcmp(name, pp_dname[i]) == 0) return i;
-        i = i - 1;
+        i = pp_dnext[i];
     }
     return -1;
 }
@@ -315,6 +401,10 @@ static void pp_add(char *name, int val) {
     pp_dnpar[pp_ndefs] = -1;
     pp_dparm[pp_ndefs] = 0;
     pp_dvar[pp_ndefs] = 0;
+    if (!pp_hash_ready) pp_hash_reset();
+    i = pp_hash(name);
+    pp_dnext[pp_ndefs] = pp_hhead[i];
+    pp_hhead[i] = pp_ndefs;
     pp_ndefs = pp_ndefs + 1;
 }
 
@@ -341,9 +431,123 @@ static void pp_add_func(char *name, int npar, char *parms, int parm_len,
 static void pp_sync(void) {
     lex_rp = lex_src + lex_pos;
     lex_rpe = lex_src + lex_len;
+    /* Every caller stands at a token boundary, so the scanner restarts
+     * with no token in progress.  A stale token start from the scan that
+     * found the macro name made it emit the bytes between that start and
+     * the resumed position as an identifier ("SM" from "SMALL" once the
+     * expansion was laid down backwards). */
+    lex_rcs = c_lexer_start;
+    lex_rts = 0;
+    lex_rte = 0;
+    lex_ract = 0;
 }
 
 /* --- Macro expansion --- */
+
+/* C99 6.10.3.4p2: while a macro's replacement is being rescanned, that
+ * macro's name is not expanded again.  Each expansion records the buffer
+ * position where its replacement ends; a name whose macro is on the stack
+ * stays an identifier until the scan passes that end.  Without this,
+ * SQLite's `#define vfsList GLOBAL(sqlite3_vfs *, vfsList)` expanded a
+ * million times and the compile looked like a hang. */
+/* The parser peeks past a '(' to tell a cast from a grouping paren, saving
+ * the scanner and restoring it: a restore re-lexes from the saved pointer,
+ * so while a peek is live an expansion must replace the name in place (the
+ * shift) rather than run backwards into the prefix. */
+static int pp_peek_depth;
+
+#define PP_DIS_MAX 64
+#define PP_DIS_ARGS 8
+static int pp_dis_di[PP_DIS_MAX];
+static int pp_dis_end[PP_DIS_MAX];
+/* Where substituted ARGUMENT text sits inside each expansion.  C expands
+ * a macro's arguments before substituting them, so the macro's own name
+ * inside an argument is expanded (ROUND8(SZ_VDBECURSOR(n)), where
+ * SZ_VDBECURSOR's body holds a ROUND8); this expander substitutes raw
+ * text and rescans, and the rescan must not paint those regions blue. */
+static int pp_dis_nreg[PP_DIS_MAX];
+static int pp_dis_rlo[PP_DIS_MAX * PP_DIS_ARGS];
+static int pp_dis_rhi[PP_DIS_MAX * PP_DIS_ARGS];
+static int pp_ndis;
+
+/* Argument regions of the expansion being built, as pp_exp offsets. */
+static int pp_sub_lo[PP_DIS_ARGS];
+static int pp_sub_hi[PP_DIS_ARGS];
+static int pp_nsub;
+
+/* `base` is where pp_exp[0] landed in lex_src. */
+static void pp_dis_push(int di, int end, int base) {
+    int j;
+    if (pp_ndis < PP_DIS_MAX) {
+        pp_dis_di[pp_ndis] = di;
+        pp_dis_end[pp_ndis] = end;
+        pp_dis_nreg[pp_ndis] = pp_nsub;
+        j = 0;
+        while (j < pp_nsub) {
+            pp_dis_rlo[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_lo[j];
+            pp_dis_rhi[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_hi[j];
+            j = j + 1;
+        }
+        pp_ndis = pp_ndis + 1;
+    }
+    pp_nsub = 0;
+}
+
+/* The tail of the buffer was shifted by delta at ins: keep the ends true. */
+static void pp_dis_shift(int ins, int delta) {
+    int k;
+    int j;
+    k = 0;
+    while (k < pp_ndis) {
+        if (pp_dis_end[k] > ins) pp_dis_end[k] = pp_dis_end[k] + delta;
+        j = 0;
+        while (j < pp_dis_nreg[k]) {
+            if (pp_dis_rlo[k * PP_DIS_ARGS + j] > ins) pp_dis_rlo[k * PP_DIS_ARGS + j] = pp_dis_rlo[k * PP_DIS_ARGS + j] + delta;
+            if (pp_dis_rhi[k * PP_DIS_ARGS + j] > ins) pp_dis_rhi[k * PP_DIS_ARGS + j] = pp_dis_rhi[k * PP_DIS_ARGS + j] + delta;
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+}
+
+/* A call ending at `pos` was expanded backwards to start at `start`:
+ * an argument region the call lay in now begins there too. */
+static void pp_dis_backfill(int pos, int start) {
+    int k;
+    int j;
+    k = 0;
+    while (k < pp_ndis) {
+        j = 0;
+        while (j < pp_dis_nreg[k]) {
+            if (pos > pp_dis_rlo[k * PP_DIS_ARGS + j] && pos <= pp_dis_rhi[k * PP_DIS_ARGS + j] &&
+                start < pp_dis_rlo[k * PP_DIS_ARGS + j])
+                pp_dis_rlo[k * PP_DIS_ARGS + j] = start;
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+}
+
+static int pp_disabled(int di, int at) {
+    int k;
+    int j;
+    int inarg;
+    while (pp_ndis > 0 && pp_dis_end[pp_ndis - 1] <= at) pp_ndis = pp_ndis - 1;
+    k = 0;
+    while (k < pp_ndis) {
+        if (pp_dis_di[k] == di) {
+            inarg = 0;
+            j = 0;
+            while (j < pp_dis_nreg[k]) {
+                if (at >= pp_dis_rlo[k * PP_DIS_ARGS + j] && at < pp_dis_rhi[k * PP_DIS_ARGS + j]) inarg = 1;
+                j = j + 1;
+            }
+            if (!inarg) return 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
 
 static int pp_expand_func(int di) {
     int pos;
@@ -393,6 +597,33 @@ static int pp_expand_func(int di) {
         while (1) {
             c = lex_src[pos];
             if (c == 0) break;
+            /* String and character literals, and comments, are opaque to
+             * the paren count (C99 6.10.3p11 collects arguments from
+             * preprocessing tokens).  Counting the '(' in SQLite's
+             * assert( z[0]=='(' ) left the scan unbalanced to the end of
+             * the 9MB buffer, hundreds of times over; and a ')' inside a
+             * literal ended an argument early and swallowed real code. */
+            if (c == 34 || c == 39) {
+                int q;
+                q = c;
+                pos = pos + 1;
+                while (lex_src[pos] != 0 && lex_src[pos] != q) {
+                    if (lex_src[pos] == 92 && lex_src[pos + 1] != 0) pos = pos + 1;
+                    pos = pos + 1;
+                }
+                if (lex_src[pos] == q) pos = pos + 1;
+                continue;
+            }
+            if (c == 47 && lex_src[pos + 1] == 42) {
+                pos = pos + 2;
+                while (lex_src[pos] != 0 && !(lex_src[pos] == 42 && lex_src[pos + 1] == 47)) pos = pos + 1;
+                if (lex_src[pos] != 0) pos = pos + 2;
+                continue;
+            }
+            if (c == 47 && lex_src[pos + 1] == 47) {
+                while (lex_src[pos] != 0 && lex_src[pos] != 10) pos = pos + 1;
+                continue;
+            }
             if (c == 40) {  /* '(' */
                 depth = depth + 1;
                 pos = pos + 1;
@@ -481,10 +712,29 @@ static int pp_expand_func(int di) {
                 exp_len = exp_len + 1;
             }
             if (matched >= 0 && matched < nargs) {
+                int pend_sp;    /* whitespace seen, not yet emitted */
+                int any;        /* a non-blank character has been emitted */
+                pend_sp = 0;
+                any = 0;
                 k = 0;
                 while (k < arg_len[matched]) {
                     int ch;
                     ch = lex_src[arg_start[matched] + k];
+                    /* A run of whitespace, newlines included, becomes one
+                     * space; leading and trailing runs vanish (C11
+                     * 6.10.3.2).  An assert whose expression spanned two
+                     * lines put a raw newline inside the string. */
+                    if (ch == 32 || ch == 9 || ch == 10 || ch == 13) {
+                        pend_sp = 1;
+                        k = k + 1;
+                        continue;
+                    }
+                    if (pend_sp && any && exp_len < PP_EXP_SZ - 1) {
+                        pp_exp[exp_len] = 32;
+                        exp_len = exp_len + 1;
+                    }
+                    pend_sp = 0;
+                    any = 1;
                     if ((ch == 34 || ch == 92) && exp_len < PP_EXP_SZ - 2) {
                         pp_exp[exp_len] = 92;  /* '\\' */
                         exp_len = exp_len + 1;
@@ -533,7 +783,8 @@ static int pp_expand_func(int di) {
             }
 
             if (matched >= 0 && matched < nargs) {
-                /* Substitute argument text */
+                /* Substitute argument text, remembering where it went */
+                if (pp_nsub < PP_DIS_ARGS) pp_sub_lo[pp_nsub] = exp_len;
                 k = 0;
                 while (k < arg_len[matched]) {
                     if (exp_len < PP_EXP_SZ - 1) {
@@ -541,6 +792,10 @@ static int pp_expand_func(int di) {
                         exp_len = exp_len + 1;
                     }
                     k = k + 1;
+                }
+                if (pp_nsub < PP_DIS_ARGS) {
+                    pp_sub_hi[pp_nsub] = exp_len;
+                    pp_nsub = pp_nsub + 1;
                 }
             } else if (pp_dvar[di] && strcmp(iname, "__VA_ARGS__") == 0) {
                 /* Substitute variadic arguments (all args from npar onwards) */
@@ -592,6 +847,31 @@ static int pp_expand_func(int di) {
     delta = exp_len - remove_len;
     tail_len = lex_len - pos;
 
+    /* As in pp_expand_obj: the expansion ends at `pos`, where the call's
+     * closing paren ended, and runs backwards into the consumed prefix. */
+    if (pp_peek_depth == 0 && ins_pos >= delta) {
+        ins_pos = pos - exp_len;
+        i = 0;
+        while (i < exp_len) {
+            lex_src[ins_pos + i] = pp_exp[i];
+            i = i + 1;
+        }
+        /* Entries that ended at or before `pos` belong to finished
+         * expansions; the scan is about to move back over the prefix
+         * they sit in, and pp_disabled would still honour them there
+         * (SQLite: ROUND8 inside an assert, right after a ROUND8). */
+        /* Strictly before: an entry ending exactly at `pos` is the
+         * enclosing expansion whose last token is this very call
+         * (`#define SELF SELF`), and it must stay disabled. */
+        while (pp_ndis > 0 && pp_dis_end[pp_ndis - 1] < pos) pp_ndis = pp_ndis - 1;
+        pp_dis_backfill(pos, ins_pos);
+        pp_dis_push(di, pos, ins_pos);
+        lex_pos = ins_pos;
+        pp_sync();
+        return 1;
+    }
+    pp_dis_shift(pos, delta);
+    pp_dis_push(di, pos + delta, pos + delta - exp_len);
     if (delta > 0) {
         i = tail_len - 1;
         while (i >= 0) {
@@ -639,6 +919,31 @@ static void pp_expand_obj(int di) {
     tail_len = lex_len - ins_pos;
     delta = body_len - remove_len;
 
+    /* The expansion ends where the macro name ended and runs BACKWARDS into
+     * the consumed prefix, which nothing reads again; the unread tail stays
+     * where it is.  Shifting the tail to make room cost a copy of the whole
+     * remainder of the source per macro use -- on SQLite's 9MB amalgamation
+     * that was trillions of byte moves and looked like a hang (the DBT's
+     * PC probe put every sample in these loops).  The shift remains only
+     * for the first bytes of a file, where the prefix is too short. */
+    if (pp_peek_depth == 0 && start_pos >= delta) {
+        start_pos = ins_pos - body_len;
+        i = 0;
+        while (i < body_len) {
+            lex_src[start_pos + i] = body[i];
+            i = i + 1;
+        }
+        while (pp_ndis > 0 && pp_dis_end[pp_ndis - 1] < ins_pos) pp_ndis = pp_ndis - 1;   /* as above */
+        pp_dis_backfill(ins_pos, start_pos);
+        pp_nsub = 0;                      /* an object-like macro has no arguments */
+        pp_dis_push(di, ins_pos, start_pos);
+        lex_pos = start_pos;
+        pp_sync();
+        return;
+    }
+    pp_dis_shift(ins_pos, delta);
+    pp_nsub = 0;
+    pp_dis_push(di, ins_pos + delta, ins_pos + delta - body_len);
     if (delta > 0) {
         /* Shift tail right when the expansion is longer than the name. */
         i = tail_len - 1;
@@ -1181,6 +1486,7 @@ static void pp_include(void) {
 /* Forward declarations for recursive descent */
 static int pp_ev_or(void);
 
+static int pp_ev_depth;
 static int pp_ev_primary(void) {
     int val;
     int c;
@@ -1235,7 +1541,30 @@ static int pp_ev_primary(void) {
         }
         /* Regular macro — expand to value, or 0 if undefined */
         val = pp_find(name);
-        if (val >= 0) return pp_dval[val];
+        if (val >= 0) {
+            if (pp_dbody[val] != 0 && pp_dnpar[val] < 0 && pp_ev_depth < 32) {
+                /* A text body (SQLite's SQLITE_MAX_LENGTH 1000000000 has ten
+                 * digits, so it is not an int-only macro; (-2000) and A+1
+                 * bodies likewise): substitute it at the name, as the
+                 * preprocessor would, and read on.  The body ends where the
+                 * name ended and runs backwards over the consumed part of
+                 * the directive line. */
+                int blen;
+                int bstart;
+                blen = 0;
+                while (pp_dbody[val][blen] != 0) blen = blen + 1;
+                bstart = lex_pos - blen;
+                if (bstart >= 0) {
+                    memcpy(lex_src + bstart, pp_dbody[val], blen);
+                    lex_pos = bstart;
+                    pp_ev_depth = pp_ev_depth + 1;
+                    val = pp_ev_primary();
+                    pp_ev_depth = pp_ev_depth - 1;
+                    return val;
+                }
+            }
+            return pp_dval[val];
+        }
         return 0;
     }
     /* Unknown — return 0 */

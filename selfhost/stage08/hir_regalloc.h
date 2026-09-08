@@ -238,9 +238,9 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
  * IRC data structures (Chunk 3 — dead code until wiring step)
  * ================================================================= */
 
-#define GC_MAX_NODE  4096
-#define GC_MAX_EDGE  262144   /* lowered for selfhost toolchain (BSS + assembler limits) */
-#define GC_MAX_MOVE  8192
+#define GC_MAX_NODE  65536   /* was 4096 */
+#define GC_MAX_EDGE  2097152   /* was 262144 */   /* lowered for selfhost toolchain (BSS + assembler limits) */
+#define GC_MAX_MOVE  65536   /* was 8192 */
 
 static int gc_nnode;
 static int gc_inst[GC_MAX_NODE];
@@ -264,7 +264,7 @@ static int gc_nmove;
 #define GC_MV_CONSTRAINED 4
 static int gc_mv_status[GC_MAX_MOVE];
 
-#define GC_MAX_NMLIST 16384   /* lowered for selfhost */
+#define GC_MAX_NMLIST 262144   /* was 16384 */   /* lowered for selfhost */
 static int gc_nmlist_mv[GC_MAX_NMLIST];
 static int gc_nmlist_next[GC_MAX_NMLIST];
 static int gc_nmlist_head[GC_MAX_NODE];
@@ -1018,9 +1018,29 @@ static int gc_pair_inst[GC_MAX_NODE];
  * static arrays, and the bound must be a literal (2048 * 128).  Kept
  * to 1MB apiece -- the selfhost assembler has a cumulative BSS
  * budget, and 4MB versions of these were what first blew it. */
-static unsigned int lv_in[262144];
-static unsigned int lv_out[262144];
-static unsigned int lv_live[LV_W];
+/* The live-in/out sets are bb_nblk rows of lv_w words, sized per
+ * function and grown as needed (SQLite's sqlite3VdbeExec has tens of
+ * thousands of values; 128 words per row was 4,096 and the row stride
+ * was a fixed shift). */
+static unsigned int *lv_in;
+static unsigned int *lv_out;
+static unsigned int *lv_live;
+static int lv_w;                   /* row stride in words, = lv_nw */
+#define LV_BUDGET_WORDS 2097152    /* 8MB per liveness set; past it, intervals */
+static unsigned int lv_pool_in[LV_BUDGET_WORDS];
+static unsigned int lv_pool_out[LV_BUDGET_WORDS];
+
+static void lv_putn(int n) {       /* decimal to stderr, for the diagnostic */
+    char b[12];
+    int i;
+    i = 11;
+    b[i] = 0;
+    if (n == 0) { i = i - 1; b[i] = 48; }
+    while (n > 0) { i = i - 1; b[i] = 48 + n % 10; n = n / 10; }
+    fdputs(b + i, 2);
+}
+static int lv_cap;                 /* words allocated in lv_in and lv_out each */
+static int lv_live_cap;            /* words allocated in lv_live */
 static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
 static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
 static int lv_nid;
@@ -1129,7 +1149,7 @@ static void lv_out_of(int b) {
         s = ssa_succ[ssa_soff[b] + si];
         if (s >= 0 && s < bb_nblk) {
             w = 0;
-            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[(s << 7) + w]; w = w + 1; }
+            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[(s * lv_w) + w]; w = w + 1; }
             phi = ssa_phi_head[s];
             while (phi >= 0) {
                 if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
@@ -1182,6 +1202,23 @@ static void lv_prepare(void) {
     if (lv_nid > GC_MAX_NODE) return;   /* stay on intervals */
     lv_nw = (lv_nid + 31) / 32;
     if (lv_nw == 0) lv_nw = 1;
+    lv_w = lv_nw;
+    /* Two bitsets of blocks x values: SQLite's sqlite3VdbeExec with
+     * asserts on wanted more than the heap holds.  Past the budget the
+     * function stays on intervals, like one with too many nodes. */
+    if (bb_nblk * lv_w > LV_BUDGET_WORDS) return;
+    /* Static, not heap: by code generation the whole file's syntax tree
+     * fills the heap (stage07's linker fixes it at 64MB), and SQLite's
+     * debug build could not get a 10MB pair from what was left. */
+    lv_in = lv_pool_in;
+    lv_out = lv_pool_out;
+    lv_cap = LV_BUDGET_WORDS;
+    if (lv_w > lv_live_cap) {
+        if (lv_live) free(lv_live);
+        lv_live_cap = lv_w + 256;
+        lv_live = malloc(lv_live_cap * 4);
+        if (!lv_live) { fdputs("s12cc: out of memory for liveness sets\n", 2); exit(1); }
+    }
 
     /* ra_order index range per block (blocks are contiguous runs). */
     b = 0;
@@ -1189,7 +1226,7 @@ static void lv_prepare(void) {
         lv_bstart[b] = 0;
         lv_bend[b] = 0;
         w = 0;
-        while (w < lv_nw) { lv_in[(b << 7) + w] = 0; lv_out[(b << 7) + w] = 0; w = w + 1; }
+        while (w < lv_nw) { lv_in[(b * lv_w) + w] = 0; lv_out[(b * lv_w) + w] = 0; w = w + 1; }
         b = b + 1;
     }
     i = 0;
@@ -1214,12 +1251,12 @@ static void lv_prepare(void) {
             if (b < 0 || b >= bb_nblk) continue;
             lv_out_of(b);
             w = 0;
-            while (w < lv_nw) { lv_out[(b << 7) + w] = lv_live[w]; w = w + 1; }
+            while (w < lv_nw) { lv_out[(b * lv_w) + w] = lv_live[w]; w = w + 1; }
             lv_transfer(b);
             w = 0;
             while (w < lv_nw) {
-                if (lv_in[(b << 7) + w] != lv_live[w]) {
-                    lv_in[(b << 7) + w] = lv_live[w];
+                if (lv_in[(b * lv_w) + w] != lv_live[w]) {
+                    lv_in[(b * lv_w) + w] = lv_live[w];
                     changed = 1;
                 }
                 w = w + 1;
@@ -1258,7 +1295,7 @@ static void lv_build_edges(void) {
     b = 0;
     while (b < bb_nblk) {
         w = 0;
-        while (w < lv_nw) { lv_live[w] = lv_out[(b << 7) + w]; w = w + 1; }
+        while (w < lv_nw) { lv_live[w] = lv_out[(b * lv_w) + w]; w = w + 1; }
         oi = lv_bend[b];
         while (oi > lv_bstart[b]) {
             oi = oi - 1;
