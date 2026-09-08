@@ -1015,3 +1015,25 @@ recorded because every key script depends on them:
 
 The date mask in all four harnesses now also takes `Z9/99/99` headings
 (` 9/07/26`), which the AR reports print; gl/ap/in were re-pinned with it.
+
+### 34. SO module: reconstituted from source alone (~/open/so, 2026-09-07)
+
+19 programs, all compile after the module rewrite (SSOCNTRL's task number a
+constant, TGSOSORT sorting SOTAGS in COBOL).  The corpus note said SO could
+not run without its menu scripts and a sample order file; neither was
+needed: the create program builds the order file, and the cycle order is
+legible from the program names.  `so/s32/run.sh` pins 10 papers and closes
+the suite's loop: the order posts into AR's open invoices, the inventory and
+the G/L journal.  No compiler or runtime change.  Two things learned:
+
+- The entry program's screen is chosen by SWITCHES 1 and 3, not by its own
+  menu: switch 3 on is the verify pass that marks an order shipped.  Its
+  "ORDER # TAKEN" message is reached by falling through 135-CHECK-ORDER-NO
+  when the order's totals record exists -- it means "complete", and I
+  chased it as a compiler bug (a replica of the loop is exact) before
+  reading the fall-through.
+- The SD SORT-TAGS record I add to sorting programs was X(19) everywhere;
+  SOTAGS, APTAGS and INTAGS are 24 bytes, and a sort through the shorter
+  record drops the entry number: "BAD READ" in every program that reads
+  the records the sorted tags name.  Now sized from the tag file.  The AP
+  and IN papers were unaffected (one record each) but the sources are fixed.
