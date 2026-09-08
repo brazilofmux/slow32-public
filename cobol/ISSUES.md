@@ -943,3 +943,22 @@ on CALL "SH" and CALL "VAR:ID", the tag-file sort path, which is the
 corpus's own next item. Gate: suite 110/110 (rmscreen pins the ANSI stream,
 no oracle: screens need a tty); NIST NC unchanged.
 
+### 30. The Open Systems suite, running: two runtime rules the paper needed (2026-09-06)
+
+With every GL program compiling (item 29 and the tag-file rewrite in the
+corpus), the first paper -- GLPRTCHR's chart of accounts -- needed two things
+of the runtime that no test had asked for:
+
+- **STOP RUN closes open files.** GLPRTCHR's tie-up closes the master and
+  leaves PRINTER.TXT open; RM/COBOL and GnuCOBOL close it at STOP RUN, we
+  dropped its buffered pages. libcob keeps a registry of every file OPENed
+  and closes what is still open in `cob_stop_run` (and on the exit below).
+- **End of input on a screen ACCEPT ends the run.** An RM program
+  re-prompts on a bad answer; a scripted run whose keys run out therefore
+  repainted its prompt forever (a 330MB stream before it was caught).
+  `scr_key` at EOF closes the files, restores the terminal, says
+  "end of input on ACCEPT" on stderr and exits 2.
+
+The chart print now produces its dated heading page and detail lines from
+a master built by GLACGL under a key script. The suite is unchanged (110).
+

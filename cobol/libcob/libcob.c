@@ -109,8 +109,32 @@ static void term_down(void)
     term_up = 0;
 }
 
+/* Every file that has been OPENed, so that STOP RUN (and the end-of-input
+ * exit) can close what the program left open: RM/COBOL and GnuCOBOL close
+ * open files at STOP RUN, and the suite's print programs count on it --
+ * GLPRTCHR's tie-up closes the master and leaves PRINTER.TXT to the run's
+ * end, whose buffered pages were lost. */
+static cob_file **open_files; static int n_open_files, cap_open_files;
+static void remember_file(cob_file *f)
+{
+    for (int i = 0; i < n_open_files; i++) if (open_files[i] == f) return;
+    if (n_open_files == cap_open_files) {
+        cap_open_files = cap_open_files ? cap_open_files * 2 : 32;
+        open_files = realloc(open_files, cap_open_files * sizeof *open_files);
+        if (!open_files) cob_fatal("out of memory");
+    }
+    open_files[n_open_files++] = f;
+}
+int cob_close(cob_file *f);
+static void close_open_files(void)
+{
+    for (int i = 0; i < n_open_files; i++)
+        if (open_files[i]->open_mode) cob_close(open_files[i]);
+}
+
 void cob_stop_run(int code)
 {
+    close_open_files();
     out_flush();
     term_down();
     exit(code);
@@ -1120,7 +1144,7 @@ int cob_open(cob_file *f, int mode)
         if (!f->optional) return file_result(f, "35", name);
         fp = fopen(name, "w+b");
         if (fp) {
-            f->fp = fp; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
+            remember_file(f); f->fp = fp; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
             if (f->org == COB_ORG_RELATIVE) { f->rel_pos = 1; f->rel_last = 0; }
             return file_result(f, "05", name);
         }
@@ -1135,13 +1159,13 @@ int cob_open(cob_file *f, int mode)
     if (!fp) {
         if (mode == COB_OPEN_INPUT && f->optional) {
             /* OPTIONAL and absent: open succeeds, the first READ is at end */
-            f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1;
+            remember_file(f); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1;
             return file_result(f, "05", name);
         }
         if (mode == COB_OPEN_INPUT) return file_result(f, "35", name);
         return file_result(f, "30", name);
     }
-    f->fp = fp; f->open_mode = (unsigned char)mode;
+    remember_file(f); f->fp = fp; f->open_mode = (unsigned char)mode;
     if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0) { long e = ftell(fp); f->fpos = e > 0 ? (unsigned)e : 0; }
     if (f->linage) { lin_values(f); f->lin_counter = 1; f->lin_needs_top = 1; f->lin_eop = 0; }
     return file_result(f, "00", name);
@@ -2280,7 +2304,7 @@ static int idx_open(cob_file *f, int mode)
         fp = fopen(name, mode == COB_OPEN_INPUT ? "rb" : "r+b");
         if (!fp) {
             if (!f->optional) { idx_free(x); return file_result(f, "35", name); }
-            if (mode == COB_OPEN_INPUT) { idx_free(x); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
+            if (mode == COB_OPEN_INPUT) { idx_free(x); remember_file(f); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
             /* OPTIONAL, absent, I-O or EXTEND: the file comes into being, empty */
             fp = fopen(name, "w+b");
             if (!fp) { idx_free(x); return file_result(f, "30", name); }
@@ -2871,6 +2895,15 @@ static int scr_key(void)
 {
     if (scr_pending != -2) { int k = scr_pending; scr_pending = -2; return k; }
     int k = term_getkey();
+    if (k == K_EOF) {
+        /* a scripted run (keys on stdin) has run out: RM programs re-prompt
+         * on a bad answer, so an ACCEPT that kept returning nothing would
+         * repaint forever.  End the run, say so. */
+        close_open_files();
+        out_flush(); term_down();
+        fprintf(stderr, "libcob: end of input on ACCEPT\n");
+        exit(2);
+    }
     if (k != 27) return k;
     if (!term_kbhit()) return K_ESC;
     int c = term_getkey();
