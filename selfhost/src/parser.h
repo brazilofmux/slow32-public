@@ -117,6 +117,30 @@ static void skip_decl_qualifiers(void) {
     }
 }
 
+/* Grouping parens around a declarator: `char *(name[])` is `char *name[]`,
+ * not a function pointer.  After '(' the current token is the identifier;
+ * if the next raw byte is '[' or ')', blank the matching ')' so the rest
+ * of the declarator parses as ordinary.  Returns 1 if grouped. */
+static int ps_try_grouping_paren(void) {
+    char *q;
+    int depth;
+    if (lex_tok != TK_IDENT) return 0;
+    q = lex_rp;
+    while (*q == 32 || *q == 9 || *q == 10) q = q + 1;
+    if (*q != 91 && *q != 41) return 0;          /* '[' or ')' */
+    depth = 0;
+    while (*q) {
+        if (*q == 40 || *q == 91) depth = depth + 1;
+        else if (*q == 93) depth = depth - 1;
+        else if (*q == 41) {
+            if (depth == 0) { *q = 32; return 1; }
+            depth = depth - 1;
+        }
+        q = q + 1;
+    }
+    return 1;
+}
+
 static void skip_gnu_attributes(void) {
     int depth;
 
@@ -4711,8 +4735,15 @@ static Node *parse_stmt(void) {
         }
         /* Function pointer declaration: type (*name)(args); */
         if (lex_tok == TK_LPAREN) {
+            int nstars;
+            int has_params;
             next();
-            while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+            if (ps_try_grouping_paren()) goto local_plain_name;
+            nstars = 0;
+            while (lex_tok == TK_STAR) {     /* (**name)(...) */
+                nstars = nstars + 1;
+                next();
+            }
             if (lex_tok != TK_IDENT) {
                 p_error("expected identifier in fn ptr decl");
                 return nd_num(0);
@@ -4722,7 +4753,8 @@ static Node *parse_stmt(void) {
             /* Array of function pointers: type (*name[N])(args)
              * (f_wipe's static wipes[] table).  Elements are word-
              * sized; a static one lives in .data with symbol-reloc
-             * initializers. */
+             * initializers.  Without (params), T (*name[N]) is T *name[N]
+             * (GitHub issue 47). */
             if (lex_tok == TK_LBRACK) {
                 int fpcount;
                 int fpi;
@@ -4732,10 +4764,64 @@ static Node *parse_stmt(void) {
                 if (lex_tok != TK_RBRACK) fpcount = parse_const_int();
                 expect(TK_RBRACK);
                 expect(TK_RPAREN);
+                has_params = 0;
                 if (lex_tok == TK_LPAREN) {
+                    has_params = 1;
                     next();
                     while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                     expect(TK_RPAREN);
+                }
+                if (!has_params) {
+                    while (nstars > 0) {
+                        ty = ty + TY_PTR;
+                        nstars = nstars - 1;
+                    }
+                    if (is_static) {
+                        ps_mangle_static(ps_cur_func, nm);
+                        sl_gi = add_global(ps_sl_buf, ty + TY_PTR,
+                                           (fpcount >= 0) ? ty_size(ty) * fpcount : 0);
+                        ps_glocal[sl_gi] = 1;
+                        if (lex_tok == TK_ASSIGN) {
+                            next();
+                            ps_ginit_begin(sl_gi);
+                            fpcount = parse_global_init_array_at(ty, fpcount, sl_gi, 0);
+                            ps_gsize[sl_gi] = ty_size(ty) * fpcount;
+                            ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
+                            ps_ginit_finish(sl_gi);
+                        } else if (fpcount < 0) {
+                            p_error("array size required without initializer");
+                            return nd_num(0);
+                        }
+                        expect(TK_SEMI);
+                        sl_li = ps_nlocals;
+                        if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
+                        ps_lname[sl_li] = strdup(nm);
+                        ps_loff[sl_li] = 0;
+                        ps_ltype[sl_li] = ty + TY_PTR;
+                        ps_larr[sl_li] = 1;
+                        ps_lcols[sl_li] = 0;
+                        ps_lstatic[sl_li] = 1;
+                        ps_lsname[sl_li] = strdup(ps_sl_buf);
+                        ps_nlocals = ps_nlocals + 1;
+                        return nd_block(NULL);
+                    }
+                    if (lex_tok == TK_ASSIGN) {
+                        next();
+                        local_init_begin(nm, 0, ty + TY_PTR, 1);
+                        count = parse_local_init_array_at(ty, fpcount, 0);
+                        head = ps_li_head;
+                        off = add_local_array(nm, ty, count);
+                        local_init_patch_offsets(head, nm, off);
+                        expect(TK_SEMI);
+                        return nd_block(head);
+                    }
+                    if (fpcount < 0) {
+                        p_error("array size required without initializer");
+                        return nd_num(0);
+                    }
+                    add_local_array(nm, ty, fpcount);
+                    expect(TK_SEMI);
+                    return nd_block(NULL);
                 }
                 if (!is_static) {
                     p_error("non-static local fn-ptr arrays unsupported");
@@ -4805,6 +4891,7 @@ static Node *parse_stmt(void) {
             expect(TK_SEMI);
             return nd_block(NULL);
         }
+local_plain_name:
         if (lex_tok != TK_IDENT) {
             p_error("expected identifier in declaration");
             return nd_num(0);
@@ -5127,6 +5214,8 @@ static void parse_type_and_stars(int *out_ty) {
 static Node *parse_top_decl(void) {
     int fp_is_arr;
     int fp_count;
+    int fp_nstars;
+    int fp_has_params;
     int fn_ret_fnptr;
     Node *fn;
     Node *phead;
@@ -5225,33 +5314,12 @@ static Node *parse_top_decl(void) {
     fp_count = -1;
     if (lex_tok == TK_LPAREN) {
         next();
-        if (lex_tok == TK_IDENT) {
-            /* A grouping paren, not a function pointer: SQLite's shell
-             * declares `static const char *(azHelp[]) = {..}`, which is
-             * `char *azHelp[]`.  The lexer has no pushback, but the
-             * preprocessor already splices lex_src in place, so blank the
-             * matching ')' in the buffer and fall into the plain path with
-             * the name as the current token.  (name)(params) -- a function
-             * with a parenthesised name -- is left to the fn-ptr path. */
-            char *q;
-            int depth;
-            q = lex_rp;
-            while (*q == 32 || *q == 9 || *q == 10) q = q + 1;
-            if (*q == 91 || *q == 41) {          /* '[' or ')' */
-                depth = 0;
-                while (*q) {
-                    if (*q == 40 || *q == 91) depth = depth + 1;
-                    else if (*q == 93) depth = depth - 1;
-                    else if (*q == 41) {
-                        if (depth == 0) { *q = 32; break; }
-                        depth = depth - 1;
-                    }
-                    q = q + 1;
-                }
-                goto plain_name;
-            }
+        if (ps_try_grouping_paren()) goto plain_name;
+        fp_nstars = 0;
+        while (lex_tok == TK_STAR) {         /* (**name)(...) */
+            fp_nstars = fp_nstars + 1;
+            next();
         }
-        while (lex_tok == TK_STAR) next();   /* (**name)(...) */
         skip_decl_qualifiers();              /* (*const name)(...) */
         if (lex_tok != TK_IDENT) {
             p_error("expected name in fn ptr decl");
@@ -5276,12 +5344,29 @@ static Node *parse_top_decl(void) {
             goto function_decl;
         }
         expect(TK_RPAREN);
+        fp_has_params = 0;
         if (lex_tok == TK_LPAREN) {
+            fp_has_params = 1;
             next();
             while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
             expect(TK_RPAREN);
         }
         skip_gnu_decl_suffixes();
+        /* T (*name[N]) with no (params) is T *name[N], not an array of
+         * function pointers (GitHub issue 47).  SQLite's shell writes
+         * char *(azHelp[]) (star outside, grouping hack above); the
+         * ordinary spelling is char (*azHelp[]). */
+        if (fp_is_arr && !fp_has_params) {
+            i = 0;
+            while (i < fp_nstars) {
+                ty = ty + TY_PTR;
+                i = i + 1;
+            }
+            xty = ty;
+            count = fp_count;
+            g2cols = 0;
+            goto array_after_brackets;
+        }
         if (fp_is_arr) {
             if (lex_tok == TK_ASSIGN) {
                 next();
@@ -5452,6 +5537,7 @@ plain_name:
             expect(TK_RBRACK);
         }
         skip_gnu_decl_suffixes();
+array_after_brackets:
         if (g2cols > 0 && lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok != TK_LBRACE) {
