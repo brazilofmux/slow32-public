@@ -416,6 +416,10 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 if (p[1] == 0 || p[1] == ' ' || p[1] == '\t' || (p[1] == '*' && p[2] == '>') || (p[1] == '=' && p[2] == '=')) {   /* ".==": a period ending pseudo-text */
                     push_tok(T_PERIOD, line, ".", 1); p++; continue;
                 }
+                if (p[1] == '.' && (p[2] == 0 || p[2] == ' ' || p[2] == '\t')) {
+                    /* a doubled period, one separator: RM's reader let "VALUE 12370121.." through (APENTER) */
+                    push_tok(T_PERIOD, line, ".", 1); p += 2; continue;
+                }
                 die_at(line, "a period must be followed by a space or the end of the line");
             }
             if (c == ',' && p > t && isdigit((unsigned char)p[-1]) && isdigit((unsigned char)p[1])) {
@@ -1455,7 +1459,9 @@ static void parse_data_item(void)
         }
         else if (!strcmp(t->s, "pointer")) u = U_POINTER;
         else if (!strcmp(t->s, "index")) u = U_INDEX;
-        else if (!strcmp(t->s, "comp-1") || !strcmp(t->s, "comp-2") || !strcmp(t->s, "float-short") || !strcmp(t->s, "float-long"))
+        else if (!strcmp(t->s, "comp-1"))
+            u = U_BINARY;   /* RM/COBOL: a binary integer with a PICTURE (S9(4) in two bytes), not a float; the Open Systems suite's COMP-1 items all carry one */
+        else if (!strcmp(t->s, "comp-2") || !strcmp(t->s, "float-short") || !strcmp(t->s, "float-long"))
             die_at(t->line, "floating-point USAGE %s is not implemented", t->s);
         if (u >= 0) {
             if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
@@ -8108,9 +8114,14 @@ static void parse_procedure_division(void)
     g_saw_end_program = 0;
     if (accept_word("end")) {
         expect_word("program");
-        if (cur()->kind != T_WORD || strcmp(cur()->s, g_progid))
-            die_at(cur()->line, "END PROGRAM names '%s' but the program is '%s'", cur()->s, g_progid);
-        advance();
+        if (cur()->kind == T_PERIOD) {
+            /* a bare END PROGRAM. -- RM/COBOL; the Open Systems AP and IN
+             * modules end every program that way */
+        } else {
+            if (cur()->kind != T_WORD || strcmp(cur()->s, g_progid))
+                die_at(cur()->line, "END PROGRAM names '%s' but the program is '%s'", cur()->s, g_progid);
+            advance();
+        }
         expect_period();
         g_saw_end_program = 1;
     }
