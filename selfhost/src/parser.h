@@ -2112,15 +2112,65 @@ static int parse_const_add(void) {
 
 static int parse_const_shift(void) {
     int v;
+    int s;
+    int op;
+    int lo;
+    int hi;
+    int wide;
+    int sh;
+    unsigned ulo;
+    unsigned uhi;
 
     v = parse_const_add();
     while (lex_tok == TK_LSHIFT || lex_tok == TK_RSHIFT) {
-        if (lex_tok == TK_LSHIFT) {
-            next();
-            v = v << parse_const_add();
+        op = lex_tok;
+        /* The right-hand addend is another leaf and would clear pc_wide
+         * before we can use the left operand's high word.  Save first.
+         * A 32-bit `1 << 40` drops the bit; 1LL << 32 must land in pc_hi
+         * (GitHub issue 49). */
+        lo = v;
+        wide = pc_wide;
+        hi = wide ? pc_hi : 0;
+        next();
+        s = parse_const_add();
+        if (!wide && s >= 0 && s < 32) {
+            if (op == TK_LSHIFT) v = lo << s;
+            else v = lo >> s;
         } else {
-            next();
-            v = v >> parse_const_add();
+            sh = s;
+            if (sh < 0) sh = 0;
+            ulo = lo;
+            uhi = hi;
+            if (op == TK_LSHIFT) {
+                if (sh >= 64) {
+                    ulo = 0;
+                    uhi = 0;
+                } else if (sh >= 32) {
+                    uhi = ulo << (sh - 32);
+                    ulo = 0;
+                } else if (sh != 0) {
+                    uhi = (uhi << sh) | (ulo >> (32 - sh));
+                    ulo = ulo << sh;
+                }
+            } else if (sh >= 64) {
+                if (wide && hi < 0) {
+                    ulo = -1;
+                    uhi = -1;
+                } else {
+                    ulo = 0;
+                    uhi = 0;
+                }
+            } else if (sh >= 32) {
+                ulo = ((int)uhi) >> (sh - 32);
+                if (wide && hi < 0) uhi = -1;
+                else uhi = 0;
+            } else if (sh != 0) {
+                ulo = (ulo >> sh) | (uhi << (32 - sh));
+                uhi = ((int)uhi) >> sh;
+            }
+            v = ulo;
+            pc_hi = uhi;
+            pc_wide = 1;
         }
     }
     return v;
@@ -2259,11 +2309,12 @@ static int parse_const_int(void) {
  * own high word, otherwise the 32-bit constant expression sign-extended */
 static int parse_const_ll_hi(int *lo) {
     int v;
-    int n0;
-    n0 = pc_nleaf;
     v = parse_const_int();
     *lo = v;
-    if (pc_wide && pc_nleaf == n0 + 1) return pc_hi;
+    /* A wide literal, unary on one, or a shift of one (1LL << 32)
+     * leaves pc_wide set.  The old nleaf == n0+1 test dropped pc_hi
+     * after a shift, because the count is a second leaf. */
+    if (pc_wide) return pc_hi;
     if (v < 0) return -1;
     return 0;
 }

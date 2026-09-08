@@ -170,7 +170,8 @@ static unsigned t10_u = ~0u;
 static int t10_n = !0;
 static int t10_z = !5;
 static long long t10_ll = ~0LL;
-static int t10_hi = !(1LL << 40);
+static int t10_hi = !(1LL << 32);
+static int t10_hi2 = !(0x100000000LL);
 static int t10_case(int v) {
     switch (v) {
     case ~1: return 1;
@@ -186,6 +187,7 @@ static int t_const_unary(void) {
     if (t10_n != 1 || t10_z != 0) ok = 0;
     if (t10_ll != -1LL) ok = 0;
     if (t10_hi != 0) ok = 0;
+    if (t10_hi2 != 0) ok = 0;
     if (t10_case(-2) != 1 || t10_case(2) != 2 || t10_case(3) != 0) ok = 0;
     return ok ? 0 : 512;
 }

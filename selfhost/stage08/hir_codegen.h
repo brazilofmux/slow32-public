@@ -3435,13 +3435,15 @@ static void gen_data(void) {
             cg_s(":\n    .space ");
             cg_n(ps_gsize[i]);
             cg_c(10);
-        } else if ((ty_is_llong(ps_gtype[i]) || ty_is_double(ps_gtype[i])) &&
-                   ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
-            /* 64-bit uninitialized global (llong or double: an 8-byte
-             * store to a 4-byte slot stomps the next global) */
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n    .space 8\n");
+        } else if (ty_is_llong(ps_gtype[i]) || ty_is_double(ps_gtype[i])) {
+            /* 64-bit: uninitialized -> 8-byte BSS.  Initialized (including
+             * lo==0, hi!=0 from 1LL<<32) was already emitted in .data;
+             * the 4-byte fallback below used to duplicate the label. */
+            if (ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
+                if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+                cg_s(ps_gname[i]);
+                cg_s(":\n    .space 8\n");
+            }
         } else if (ps_ginit[i] == 0 && ps_gstr[i] < 0) {
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
