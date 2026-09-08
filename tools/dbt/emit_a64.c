@@ -988,7 +988,13 @@ void emit_patch_b26(uint32_t *patch_site, uint32_t *target) {
 void emit_patch_rel32(emit_ctx_t *ctx, size_t patch_offset, size_t target_offset) {
     int32_t byte_diff = (int32_t)(target_offset - patch_offset);
     int32_t imm26 = byte_diff >> 2;
-    // Rewrite the B instruction at patch_offset
+    // Rewrite the B instruction at patch_offset.  A site past the capacity
+    // belongs to a block that already overflowed (emit32 suppressed it);
+    // writing there is a write past the mapping, so flag and skip.
+    if (patch_offset + 4 > ctx->capacity) {
+        ctx->overflow = true;
+        return;
+    }
     uint8_t *p = ctx->buf + patch_offset;
     uint32_t inst = 0x14000000 | (imm26 & 0x03FFFFFF);
     p[0] = (inst >>  0) & 0xFF;

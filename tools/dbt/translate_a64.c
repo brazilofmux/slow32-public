@@ -4499,6 +4499,23 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
     emit_ctx_t *e = &ctx->emit;
     bool saved_superblock_enabled = ctx->superblock_enabled;
     bool forced_no_superblock = false;
+    bool overflow_retry = false;
+
+    // Flush if hash table is too full (prevents infinite loop in linear probing)
+    if (cache_needs_flush(cache)) {
+        cache_flush(cache);
+    }
+
+    // Flush if the remaining code buffer cannot hold a worst-case block, so the
+    // emitter cannot overflow mid-block near the end of the buffer.  (The x64
+    // translator has had both guards; the a64 one had neither, and the first
+    // guest big enough to fill the 4MB buffer -- the stage08-built SQLite
+    // shell, 1.9MB of guest code -- emitted a truncated block whose branch
+    // patches wrote past the mapping: SIGSEGV in emit_patch_rel32.  DBT-16.)
+    if ((uint64_t)cache->code_buffer_used + DBT_MAX_BLOCK_HOST_BYTES >
+        cache->code_buffer_size) {
+        cache_flush(cache);
+    }
 
     // Allocate a block
     translated_block_t *block = cache_alloc_block(cache, guest_pc);
@@ -4684,6 +4701,31 @@ cached_done:
     block->guest_size = (ctx->inst_count + 1) * 4;
     block->reg_cache_hits = ctx->reg_cache_hits;
     block->reg_cache_misses = ctx->reg_cache_misses;
+
+    // Code-buffer overflow guard: the emitter ran past the remaining buffer,
+    // so the block is truncated.  Do NOT commit or execute it.  Flush once to
+    // reclaim the whole buffer and retry; if it still doesn't fit, the block
+    // is larger than the entire buffer -- bail.  (Mirrors translate.c.)
+    if (e->overflow) {
+        if (!overflow_retry) {
+            overflow_retry = true;
+            cache_flush(cache);
+            block = cache_alloc_block(cache, guest_pc);
+            code_start = cache_get_code_ptr(cache);
+            if (!block || !code_start) {
+                fprintf(stderr, "DBT: alloc failed after code-buffer overflow flush\n");
+                dbt_jit_writable_end();
+                return NULL;
+            }
+            ctx->superblock_enabled = saved_superblock_enabled && !forced_no_superblock;
+            goto retry_translate;
+        }
+        fprintf(stderr,
+                "DBT: block at PC=0x%08X does not fit in code buffer; aborting\n",
+                guest_pc);
+        dbt_jit_writable_end();
+        return NULL;
+    }
 
     if (ctx->avoid_backedge_extend && ctx->superblock_enabled &&
         ctx->side_exit_emitted > 0 && !forced_no_superblock) {

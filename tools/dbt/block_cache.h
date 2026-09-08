@@ -70,7 +70,7 @@ _Static_assert(sizeof(compact_entry_t) == 16, "compact_entry_t must be 16 bytes"
 #define BLOCK_CACHE_MASK (BLOCK_CACHE_SIZE - 1)
 
 // Code buffer size for translated code
-#define CODE_BUFFER_SIZE (4 * 1024 * 1024)  // 4MB
+#define CODE_BUFFER_SIZE (32 * 1024 * 1024) // 32MB: 4MB flushed 3x on a 1.9MB guest (SQLite shell); mmap commits lazily
 
 // Conservative upper bound on the host bytes one translated block can emit
 // (<= MAX_BLOCK_INSTS guest insts plus deferred side-exit stubs). When fewer

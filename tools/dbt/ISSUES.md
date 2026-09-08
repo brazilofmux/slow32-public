@@ -391,3 +391,35 @@ finding: kit-built binaries were never differentially tested.**
 
 **Cost**: one extra `XOR` only on the `rs1 == 0` path. `benchmark_core`
 unchanged at 0.07 s, checksum 0x8d70b2b.
+
+## 16. AArch64 Code-Buffer Overflow Unguarded (FIXED 2026-09-08)
+
+**Symptom**: the stage08-built SQLite shell (`sqlite/build-stage08.sh`,
+1.9MB of guest code) died with SIGSEGV inside the translator itself --
+`emit_patch_rel32` writing a branch patch at a page boundary -- while the
+reference emulator, slow32-fast and the same guest under `--paranoid-lite`
+all ran it to a clean halt with the right output.
+
+**Cause**: the code buffer was 4MB and the AArch64 `translate_block_cached`
+never checked the emitter's `overflow` flag.  Near the end of the buffer a
+block's emits are silently dropped (emit32 sets the flag and returns), the
+patch writes are unconditional and land past the mapping, and the truncated
+block would otherwise have been committed and executed.  `translate.c`
+(x86-64) has had both guards -- a headroom flush before translation and a
+flush-and-retry on overflow -- since its own overflow work; the a64 port
+never received them.  The shell translates to 6.5MB of host code, so it is
+simply the first guest big enough to get there; every earlier workload fit.
+
+**Fix**: the two x64 guards, ported verbatim (`cache_needs_flush`, the
+`DBT_MAX_BLOCK_HOST_BYTES` headroom flush, and the overflow flush-and-retry
+with a bail if a single block cannot fit); `emit_patch_rel32` refuses a site
+past the capacity and sets the flag instead of writing.  And the buffer is
+32MB (`CODE_BUFFER_SIZE`): at 4MB the shell flushed three times on a
+seven-statement script, retranslating its working set each time; mmap
+commits lazily, so small guests pay nothing.
+
+**Verification**: shell output identical to the clang build's under the
+DBT; `run-differential.sh` 88 agree with the four known qemu-only intrinsic
+divergences; `run-kit-differential.sh` all engines agree.  Same lesson as
+DBT-15: the clang-built suite never produced a guest this large.
+
