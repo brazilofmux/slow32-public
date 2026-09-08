@@ -1066,3 +1066,17 @@ Three findings, one of them a runtime rule:
 - Open, not fixed: a positioned DISPLAY of a numeric item (COMP-3 here)
   shows its raw bytes; RM converts it.  Seen only through my own debug
   displays, no corpus statement found relying on it yet.
+
+### 36. JO module, and the suite complete (~/open/jo, 2026-09-07)
+
+21 programs, all compile after the module rewrite (its tag file is named
+TAGS, 24 bytes).  `jo/s32/run.sh` pins 8 papers: the job and phase, the
+adjustment log with the overhead it accrues, the four reports, and the
+accrued overhead posted into the G/L journal.  No compiler or runtime change.
+With it the Open Systems suite is complete on SLOW-32: gl 4, in 7, ap 12,
+ar 22, so 10, pa 17, jo 8 -- 80 papers from seven harnesses, every one
+produced from empty files by the programs themselves.  What the suite cost
+the platform, in order: two runtime rules (ISSUES-30), an indexed-file
+registration (32), the tag SD sizing (34), the PERFORM exit rule and two
+parser gaps (35).  What it cannot do: PA941 (object only), CPINVBIL (a
+copybook the corpus never had).
