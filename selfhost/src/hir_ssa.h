@@ -425,7 +425,16 @@ static void ssa_compute_df(void) {
                     if (ssa_df[base + di] == b) { dup = 1; }
                     di = di + 1;
                 }
-                if (!dup && ssa_dfc[runner] < SSA_DF_W) {
+                if (!dup) {
+                    if (ssa_dfc[runner] >= SSA_DF_W) {
+                        /* Dropping the entry costs a phi, and a missing
+                         * phi is a wrong reaching definition that nothing
+                         * downstream can notice -- the one ceiling in this
+                         * file that used to fail silently (GitHub issue
+                         * 53).  Every other one stops here. */
+                        fdputs("s12cc: too many dominance-frontier entries\n", 2);
+                        exit(1);
+                    }
                     ssa_df[base + ssa_dfc[runner]] = b;
                     ssa_dfc[runner] = ssa_dfc[runner] + 1;
                 }

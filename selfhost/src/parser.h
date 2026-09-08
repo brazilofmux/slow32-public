@@ -1193,9 +1193,14 @@ static int parse_type(void) {
                     stm_isfp[stm_count] = is_fn_ptr_member != 0;
                     next();
                     if (is_fn_ptr_member == 2) {
+                        /* T (*(*name)(callparams))(...): the list right
+                         * after the name is the one a call through the
+                         * member uses, so record it.  Skipping it left
+                         * sqlite3_vfs.xDlSym with no signature, and an
+                         * i64 argument went one word (GitHub issue 41). */
                         expect(TK_RPAREN);
                         expect(TK_LPAREN);
-                        p_skip_to_rparen();
+                        stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
                     }
                     if (is_fn_ptr_member) {
                         expect(TK_RPAREN);
@@ -1486,9 +1491,14 @@ static int parse_type(void) {
                     stm_isfp[stm_count] = is_fn_ptr_member != 0;
                     next();
                     if (is_fn_ptr_member == 2) {
+                        /* T (*(*name)(callparams))(...): the list right
+                         * after the name is the one a call through the
+                         * member uses, so record it.  Skipping it left
+                         * sqlite3_vfs.xDlSym with no signature, and an
+                         * i64 argument went one word (GitHub issue 41). */
                         expect(TK_RPAREN);
                         expect(TK_LPAREN);
-                        p_skip_to_rparen();
+                        stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
                     }
                     if (is_fn_ptr_member) {
                         expect(TK_RPAREN);

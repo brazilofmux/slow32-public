@@ -277,6 +277,35 @@ static int t_int_to_ptr(void) {
  * t_grouped_declarator and t_fnptr_member_deref all reported 0 however
  * they failed.  Return the number of the FIRST failing block instead --
  * it always fits, and it names the block. */
+
+/* 14. A NESTED function-pointer member -- T (*(*name)(args))(...), the
+ * sqlite3_vfs.xDlSym spelling -- must record the signature of the list a
+ * call through it uses.  It was skipped, so an i64 argument went as one
+ * word and the callee read whatever the high register held (GitHub
+ * issue 41).  The prior call leaves a nonzero high word on purpose:
+ * with a zero there the bug is invisible. */
+static long long t14_seen;
+static void t14_inner(void) { }
+struct t14_V {
+    void (*(*xDlSym)(long long))(void);
+    int (*xSimple)(long long);
+};
+static void (*t14_dlsym(long long v))(void) { t14_seen = v; return t14_inner; }
+static int t14_simple(long long v) { t14_seen = v; return 0; }
+static struct t14_V t14_v = { t14_dlsym, t14_simple };
+static int t_nested_fnptr_sig(void) {
+    struct t14_V *p = &t14_v;
+    p->xSimple(0x7FFFFFFF00000000LL);      /* dirty the argument pair */
+    if (t14_seen != 0x7FFFFFFF00000000LL) return 14;
+    p->xDlSym(0);                          /* literal 0 must arrive 64-bit */
+    if (t14_seen != 0) return 14;
+    p->xSimple(0x123456789LL);
+    if (t14_seen != 0x123456789LL) return 14;
+    p->xSimple(0);
+    if (t14_seen != 0) return 14;
+    return 0;
+}
+
 int main(void) {
     if (t_big_literal())        return 1;
     if (t_unsigned_cmp_imm(5))  return 2;
@@ -290,5 +319,6 @@ int main(void) {
     if (t_grouped_declarator()) return 10;
     if (t_fnptr_member_deref()) return 11;
     if (t_int_to_ptr())         return 13;
+    if (t_nested_fnptr_sig())   return 14;
     return 0;
 }

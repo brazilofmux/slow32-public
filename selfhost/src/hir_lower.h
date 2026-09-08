@@ -2930,6 +2930,14 @@ static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
     while (cs) {
         if (cs->kind == ND_CASE) {
             sw_n = hl_sw_count[sw_d];
+            if (sw_b + sw_n >= HL_MAX_CASE) {
+                /* Recursing into nested statements found more labels than
+                 * the flat walk ever could, and this write had no bound:
+                 * past HL_MAX_CASE it ran off hl_sw_val/hl_sw_blk into
+                 * whatever follows them (GitHub issue 51). */
+                fdputs("s12cc: too many case labels in one switch\n", 2);
+                exit(1);
+            }
             hl_sw_val[sw_b + sw_n] = cs->val;
             hl_sw_blk[sw_b + sw_n] = hir_new_block();
             hl_sw_count[sw_d] = sw_n + 1;
