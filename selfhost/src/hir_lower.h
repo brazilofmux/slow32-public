@@ -1090,10 +1090,13 @@ static int hl_inline_call(Node *call, Node *fn) {
     return rv;
 }
 
-/* Narrow a value to a char or short type.  C converts on assignment, on
- * parameter passing and on return; a local of that type promoted to a
- * register kept the wide value (sqlite3StrIHash's u8 accumulator came
- * back as 5443, and a column's stored hash never matched again). */
+/* Narrow a value to a char or short type.  C converts on assignment
+ * (including += and ++/--), on parameter passing and on return; a
+ * local of that type promoted to a register kept the wide value
+ * (sqlite3StrIHash's u8 accumulator came back as 5443, and a column's
+ * stored hash never matched again).  Return-site narrowing hid that
+ * for `return h`; a compare of the local after `h += c` still saw 260
+ * (GitHub issue 43). */
 static int hl_narrow(int ty, int lv) {
     int tmp;
     if (ty_is_ptr(ty)) return lv;
@@ -2256,6 +2259,9 @@ static int hl_expr(Node *n) {
 #else
         new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
 #endif
+        /* Prefix ++ is this node.  Wrap before the store so a promoted
+         * u8/u16 local is 4 after 250+10, not 260 (GitHub issue 43). */
+        new_val = hl_narrow(n->ty, new_val);
         hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
         return new_val;
     }
@@ -2337,6 +2343,7 @@ static int hl_expr(Node *n) {
         } else {
             new_val = hi_emit(HI_SUB, n->ty, old_val, scale, 0, NULL);
         }
+        new_val = hl_narrow(n->ty, new_val);
         hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
         return old_val;
     }
