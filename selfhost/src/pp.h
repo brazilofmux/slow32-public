@@ -93,7 +93,9 @@ static void pp_skip_ws(void) {
      * defined(B) dropped the && (GitHub issue 39).  Consuming a splice
      * without bumping lex_line is the documented few-hundred-line drift
      * on continued directives. */
-    while (lex_pos < lex_len) {
+    /* Bound by the buffer, not lex_len: #if text-macro expansions park
+     * past the file (GitHub issue 45). */
+    while (lex_pos < LEX_SRC_SZ && lex_src[lex_pos] != 0) {
         if (lex_src[lex_pos] == 32 || lex_src[lex_pos] == 9) {
             lex_pos = lex_pos + 1;
         } else if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
@@ -103,19 +105,19 @@ static void pp_skip_ws(void) {
                    lex_src[lex_pos + 2] == 10) {
             lex_pos = lex_pos + 3;
             lex_line = lex_line + 1;
-        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < lex_len &&
+        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < LEX_SRC_SZ &&
                    lex_src[lex_pos + 1] == 42) {
             lex_pos = lex_pos + 2;
-            while (lex_pos + 1 < lex_len &&
+            while (lex_pos + 1 < LEX_SRC_SZ &&
                    !(lex_src[lex_pos] == 42 && lex_src[lex_pos + 1] == 47)) {
                 if (lex_src[lex_pos] == 10) lex_line = lex_line + 1;
                 lex_pos = lex_pos + 1;
             }
-            if (lex_pos + 1 < lex_len) lex_pos = lex_pos + 2;
-        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < lex_len &&
+            if (lex_pos + 1 < LEX_SRC_SZ) lex_pos = lex_pos + 2;
+        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < LEX_SRC_SZ &&
                    lex_src[lex_pos + 1] == 47) {
             lex_pos = lex_pos + 2;
-            while (lex_pos < lex_len && lex_src[lex_pos] != 10) {
+            while (lex_pos < LEX_SRC_SZ && lex_src[lex_pos] != 10) {
                 if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
                     lex_pos = lex_pos + 2;
                     lex_line = lex_line + 1;
@@ -1520,6 +1522,46 @@ static void pp_include(void) {
 static int pp_ev_or(void);
 
 static int pp_ev_depth;
+static int pp_ev_park;          /* grow-down parking in unused lex_src tail */
+static int pp_ev_dis[32];       /* macros being expanded in this #if */
+static int pp_ev_ndis;
+
+/* Evaluate a text-bodied object-like macro as its own expression.
+ * Overlaying the body onto lex_src at (lex_pos - strlen(body)) clobbered
+ * the #if line and only ran pp_ev_primary, so 1+2 * 3 was 1+(2*3) and a
+ * 10-digit body with a 1-char name near the start of a file was 0
+ * (GitHub issue 45). */
+static int pp_ev_from_text(char *body) {
+    int blen;
+    int i;
+    int place;
+    int saved_pos;
+    int saved_park;
+    int val;
+
+    blen = 0;
+    while (body[blen] != 0) blen = blen + 1;
+    if (blen < 1) return 0;
+    if (pp_ev_park == 0) pp_ev_park = LEX_SRC_SZ;
+    place = pp_ev_park - blen - 2;
+    if (place <= lex_len) return 0;
+    i = 0;
+    while (i < blen) {
+        lex_src[place + i] = body[i];
+        i = i + 1;
+    }
+    lex_src[place + blen] = 10;
+    lex_src[place + blen + 1] = 0;
+    saved_park = pp_ev_park;
+    pp_ev_park = place;
+    saved_pos = lex_pos;
+    lex_pos = place;
+    val = pp_ev_or();
+    lex_pos = saved_pos;
+    pp_ev_park = saved_park;
+    return val;
+}
+
 static int pp_ev_primary(void) {
     int val;
     int c;
@@ -1576,25 +1618,24 @@ static int pp_ev_primary(void) {
         val = pp_find(name);
         if (val >= 0) {
             if (pp_dbody[val] != 0 && pp_dnpar[val] < 0 && pp_ev_depth < 32) {
-                /* A text body (SQLite's SQLITE_MAX_LENGTH 1000000000 has ten
-                 * digits, so it is not an int-only macro; (-2000) and A+1
-                 * bodies likewise): substitute it at the name, as the
-                 * preprocessor would, and read on.  The body ends where the
-                 * name ended and runs backwards over the consumed part of
-                 * the directive line. */
-                int blen;
-                int bstart;
-                blen = 0;
-                while (pp_dbody[val][blen] != 0) blen = blen + 1;
-                bstart = lex_pos - blen;
-                if (bstart >= 0) {
-                    memcpy(lex_src + bstart, pp_dbody[val], blen);
-                    lex_pos = bstart;
-                    pp_ev_depth = pp_ev_depth + 1;
-                    val = pp_ev_primary();
-                    pp_ev_depth = pp_ev_depth - 1;
-                    return val;
+                /* Text body: park it in the unused lex_src tail and parse
+                 * as a full expression (GitHub issue 45). */
+                int k;
+                int di;
+                di = val;
+                k = 0;
+                while (k < pp_ev_ndis) {
+                    if (pp_ev_dis[k] == di) return pp_dval[di];
+                    k = k + 1;
                 }
+                if (pp_ev_ndis >= 32) return pp_dval[di];
+                pp_ev_dis[pp_ev_ndis] = di;
+                pp_ev_ndis = pp_ev_ndis + 1;
+                pp_ev_depth = pp_ev_depth + 1;
+                val = pp_ev_from_text(pp_dbody[di]);
+                pp_ev_depth = pp_ev_depth - 1;
+                pp_ev_ndis = pp_ev_ndis - 1;
+                return val;
             }
             return pp_dval[val];
         }
@@ -1816,6 +1857,7 @@ static int pp_ev_or(void) {
 
 static int pp_ev_expr(void) {
     int val;
+    pp_ev_ndis = 0;
     val = pp_ev_or();
     pp_skip_line();
     pp_sync();

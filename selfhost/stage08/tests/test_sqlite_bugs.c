@@ -50,6 +50,19 @@ static int t_if_line_mark = __LINE__;
     && 1
 #endif
 static int t_if_line_after = __LINE__;
+#define PP_BIG 1000000000
+#if PP_BIG == 1000000000
+#define PP_BIG_OK 1
+#endif
+#define PP_SUM 1+2
+#if PP_SUM * 3 == 9
+#define PP_SUM_OK 1
+#endif
+#define PP_INNER 1+2
+#define PP_OUTER PP_INNER * 3
+#if PP_OUTER == 9
+#define PP_NEST_OK 1
+#endif
 static int t_if_continuation(void) {
 #ifndef CONT_SELECTED
     return 4;
@@ -69,6 +82,15 @@ static int t_if_continuation(void) {
     /* mark, #if, continued, #endif, after: 4 lines.  A splice that
      * does not bump lex_line makes after-mark 3. */
     if (t_if_line_after - t_if_line_mark != 4) return 4;
+#ifndef PP_BIG_OK
+    return 4;
+#endif
+#ifndef PP_SUM_OK
+    return 4;
+#endif
+#ifndef PP_NEST_OK
+    return 4;
+#endif
     return 0;
 }
 
