@@ -597,11 +597,22 @@ void cache_record_exit(block_cache_t *cache, translated_block_t *block,
         uint8_t *base = cache->code_buffer;
         uint8_t *limit = cache->code_buffer + cache->code_buffer_size;
         if (patch_site < base || patch_site + 4 > limit) {
+            /* The block overflowed: its exit patch site is at or past the
+             * end of the buffer.  DROP the exit rather than record it --
+             * chaining would later write four bytes through that pointer.
+             * (The block itself is discarded by the overflow check before
+             * it can be committed, so this is belt and braces, but a
+             * recorded exit that can never be patched is still garbage.)
+             * Warn once per run: a small buffer makes this fire in the
+             * hundreds and the message is not per-site news. */
             cache->patch_oob_count++;
-            fprintf(stderr,
-                    "DBT: cache_record_exit patch_site OOB block=0x%08X exit=%d target=0x%08X patch=%p range=[%p,%p)\n",
-                    block ? block->guest_pc : 0, exit_idx, target_pc,
-                    (void *)patch_site, (void *)base, (void *)limit);
+            if (cache->patch_oob_count == 1) {
+                fprintf(stderr,
+                        "DBT: cache_record_exit patch_site OOB block=0x%08X exit=%d target=0x%08X patch=%p range=[%p,%p) (further occurrences counted, not printed)\n",
+                        block ? block->guest_pc : 0, exit_idx, target_pc,
+                        (void *)patch_site, (void *)base, (void *)limit);
+            }
+            return;
         }
         if (cache_exit_validate_enabled()) {
             block_exit_t *slot = &block->exits[exit_idx];

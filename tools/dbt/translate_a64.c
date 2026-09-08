@@ -19,6 +19,28 @@
 #include <string.h>
 #include <stdlib.h>  // for getenv
 
+/* Patch target for an instruction already emitted at `off`.
+ *
+ * emit_inst stops WRITING when the block overflows but the translator
+ * keeps recording patch offsets, and emit_offset() can equal capacity
+ * exactly -- so the offset is in range while the four-byte write at it
+ * is not, and the patch lands on the page after the mapping.  That is a
+ * SIGSEGV inside the translator, not a bad guest: the stage08-built
+ * SQLite shell hit it in emit_mem_access_check (GitHub issue 52; the
+ * emit_patch_rel32 half was DBT-16).  Hand back a scratch word instead
+ * and flag the overflow -- the block is discarded before it can be
+ * committed or executed. */
+static uint32_t a64_patch_trash;
+
+static inline uint32_t *a64_patch_ptr(emit_ctx_t *e, size_t off) {
+    if (off + 4 > e->capacity) {
+        e->overflow = true;
+        return &a64_patch_trash;
+    }
+    return (uint32_t *)(e->buf + off);
+}
+
+
 // Debug flag - set to 1 to enable translation tracing
 #ifndef DBT_TRACE
 #define DBT_TRACE 0
@@ -782,7 +804,7 @@ static bool try_pending_flags_fusion(translate_ctx_t *ctx, uint8_t rs1, uint8_t 
     }
 
     // Patch the ALU instruction: OR-in the S-bit mask. SUB → SUBS, AND → ANDS.
-    uint32_t *inst = (uint32_t *)(ctx->emit.buf + ctx->pending_flags.host_offset);
+    uint32_t *inst = a64_patch_ptr(&ctx->emit, ctx->pending_flags.host_offset);
     *inst |= ctx->pending_flags.s_bit_mask;
     ctx->pending_flags.valid = false;
     flag_branch_fusion_count++;
@@ -1212,7 +1234,7 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
         {
             size_t here = emit_offset(e);
             int32_t rel = (int32_t)(here - bne_miss);
-            uint32_t *inst = (uint32_t *)(e->buf + bne_miss);
+            uint32_t *inst = a64_patch_ptr(e, bne_miss);
             int32_t imm19 = rel >> 2;
             *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
         }
@@ -1293,7 +1315,7 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
         // Patch B.cond imm19 to point here
         size_t bcond_off = ctx->deferred_exits[i].jmp_patch_offset;
         int32_t rel = (int32_t)(cold_offset - bcond_off);
-        uint32_t *inst = (uint32_t *)(e->buf + bcond_off);
+        uint32_t *inst = a64_patch_ptr(e, bcond_off);
         int32_t imm19 = rel >> 2;
         *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
 
@@ -1376,7 +1398,7 @@ static void emit_inline_lookup(translate_ctx_t *ctx, a64_reg_t target_reg) {
     {
         size_t here = emit_offset(e);
         int32_t rel = (int32_t)(here - bne_miss);
-        uint32_t *inst = (uint32_t *)(e->buf + bne_miss);
+        uint32_t *inst = a64_patch_ptr(e, bne_miss);
         int32_t imm19 = rel >> 2;
         *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
@@ -1600,7 +1622,7 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
         size_t patch = fault_patches[i];
         int32_t rel = (int32_t)(fault_offset - patch);
         // Patch B.cond: bits [23:5] = imm19 = rel/4
-        uint32_t *inst = (uint32_t *)(e->buf + patch);
+        uint32_t *inst = a64_patch_ptr(e, patch);
         int32_t imm19 = rel >> 2;
         *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
@@ -2887,7 +2909,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     size_t taken_offset = emit_offset(e);
     {
         int32_t rel = (int32_t)(taken_offset - bcond_patch);
-        uint32_t *inst = (uint32_t *)(e->buf + bcond_patch);
+        uint32_t *inst = a64_patch_ptr(e, bcond_patch);
         int32_t imm19 = rel >> 2;
         *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
@@ -2964,7 +2986,7 @@ void translate_assert_eq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2) {
     size_t success_offset = emit_offset(e);
     {
         int32_t rel = (int32_t)(success_offset - beq_patch);
-        uint32_t *inst = (uint32_t *)(e->buf + beq_patch);
+        uint32_t *inst = a64_patch_ptr(e, beq_patch);
         int32_t imm19 = rel >> 2;
         *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
@@ -3642,7 +3664,7 @@ static void emit_a64_store_f64_result(emit_ctx_t *e) {
 static void patch_imm19_branches(emit_ctx_t *e, size_t *offsets, int count, size_t target) {
     for (int i = 0; i < count; i++) {
         int32_t rel = (int32_t)(target - offsets[i]);
-        uint32_t *patch = (uint32_t *)(e->buf + offsets[i]);
+        uint32_t *patch = a64_patch_ptr(e, offsets[i]);
         int32_t imm19 = rel >> 2;
         *patch = (*patch & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
@@ -3964,13 +3986,13 @@ static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t
 
     // Patch the B.HS to jump here
     int32_t fault_rel1 = (int32_t)(fault_offset - fault_patch_offset);
-    uint32_t *patch1 = (uint32_t *)(e->buf + fault_patch_offset);
+    uint32_t *patch1 = a64_patch_ptr(e, fault_patch_offset);
     int32_t imm19_1 = fault_rel1 >> 2;
     *patch1 = (*patch1 & ~(0x7FFFF << 5)) | ((imm19_1 & 0x7FFFF) << 5);
 
     // Patch the CBZ to jump here
     int32_t fault_rel2 = (int32_t)(fault_offset - null_patch_offset);
-    uint32_t *patch2 = (uint32_t *)(e->buf + null_patch_offset);
+    uint32_t *patch2 = a64_patch_ptr(e, null_patch_offset);
     int32_t imm19_2 = fault_rel2 >> 2;
     *patch2 = (*patch2 & ~(0x7FFFF << 5)) | ((imm19_2 & 0x7FFFF) << 5);
 
@@ -4052,7 +4074,7 @@ static bool emit_native_memswap_stub_a64(translate_ctx_t *ctx, translated_block_
     // .Ldone: patch CBZ
     size_t done_offset = emit_offset(e);
     int32_t cbz_rel = (int32_t)(done_offset - cbz_offset);
-    uint32_t *cbz_patch = (uint32_t *)(e->buf + cbz_offset);
+    uint32_t *cbz_patch = a64_patch_ptr(e, cbz_offset);
     int32_t cbz_imm19 = cbz_rel >> 2;
     *cbz_patch = (*cbz_patch & ~(0x7FFFF << 5)) | ((cbz_imm19 & 0x7FFFF) << 5);
 
@@ -4444,7 +4466,12 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
     }
 
     emit_ctx_t *e = &ctx->emit;
-    emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
+    /* Capacity from the ALIGNED start, not from code_buffer_used:
+     * cache_get_code_ptr rounds up, so the difference (up to 15 bytes)
+     * was capacity the emitter did not have. */
+    emit_init(e, code_start,
+              cache->code_buffer_size -
+              (uint32_t)(code_start - cache->code_buffer));
     memset(block, 0, sizeof(*block));
     block->guest_pc = guest_pc;
     block->host_code = code_start;
@@ -4469,6 +4496,14 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
 
     if (!ok) return NULL;
 
+    /* A stub emitted into a buffer tail truncates exactly the way a
+     * translated block does, and committing it runs the patch writers
+     * past the mapping (GitHub issue 52).  Decline instead: the caller
+     * falls through to a normal translation of the same PC, which is
+     * slower and correct.  The block slot is not inserted, so dropping
+     * it costs nothing but the slot, which the next flush reclaims. */
+    if (e->overflow) return NULL;
+
     native_stub_count++;
     block->host_size = emit_offset(e);
     if (DBT_TRACE) {
@@ -4489,17 +4524,14 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
 translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_pc) {
     dbt_jit_writable_begin();
 
-    // Check for intrinsic recognition before normal translation
-    translated_block_t *intrinsic_block = try_emit_intrinsic_a64(ctx, guest_pc);
-    if (intrinsic_block) { dbt_jit_writable_end(); return intrinsic_block; }
-
     dbt_cpu_state_t *cpu = ctx->cpu;
 
     block_cache_t *cache = ctx->cache;
-    emit_ctx_t *e = &ctx->emit;
-    bool saved_superblock_enabled = ctx->superblock_enabled;
-    bool forced_no_superblock = false;
-    bool overflow_retry = false;
+    if (!cache) {
+        fprintf(stderr, "DBT: translate_block_cached called without cache!\n");
+        dbt_jit_writable_end();
+        return NULL;
+    }
 
     // Flush if hash table is too full (prevents infinite loop in linear probing)
     if (cache_needs_flush(cache)) {
@@ -4512,16 +4544,39 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
     // guest big enough to fill the 4MB buffer -- the stage08-built SQLite
     // shell, 1.9MB of guest code -- emitted a truncated block whose branch
     // patches wrote past the mapping: SIGSEGV in emit_patch_rel32.  DBT-16.)
+    //
+    // BOTH guards run before the intrinsic attempt, as they do on x64:
+    // an intrinsic stub emitted into the tail truncates the same way, and
+    // that path used to commit without ever testing overflow (issue 52).
     if ((uint64_t)cache->code_buffer_used + DBT_MAX_BLOCK_HOST_BYTES >
         cache->code_buffer_size) {
         cache_flush(cache);
     }
 
-    // Allocate a block
+    // Check for intrinsic recognition before normal translation
+    translated_block_t *intrinsic_block = try_emit_intrinsic_a64(ctx, guest_pc);
+    if (intrinsic_block) { dbt_jit_writable_end(); return intrinsic_block; }
+
+    emit_ctx_t *e = &ctx->emit;
+    bool saved_superblock_enabled = ctx->superblock_enabled;
+    bool forced_no_superblock = false;
+    bool overflow_retry = false;
+
+    // Allocate a block, flushing once if the pool is exhausted (x64 order).
     translated_block_t *block = cache_alloc_block(cache, guest_pc);
-    if (!block) { dbt_jit_writable_end(); return NULL; }
+    if (!block) {
+        cache_flush(cache);
+        block = cache_alloc_block(cache, guest_pc);
+        if (!block) { dbt_jit_writable_end(); return NULL; }
+    }
 
     uint8_t *code_start = cache_get_code_ptr(cache);
+    if (!code_start) {
+        cache_flush(cache);
+        block = cache_alloc_block(cache, guest_pc);
+        code_start = cache_get_code_ptr(cache);
+        if (!block || !code_start) { dbt_jit_writable_end(); return NULL; }
+    }
     void *entry = code_start;
     uint32_t code_avail = 0;
 

@@ -423,3 +423,45 @@ DBT; `run-differential.sh` 88 agree with the four known qemu-only intrinsic
 divergences; `run-kit-differential.sh` all engines agree.  Same lesson as
 DBT-15: the clang-built suite never produced a guest this large.
 
+## 17. AArch64 In-Place Branch Patches Were Unbounded (FIXED 2026-09-08)
+
+DBT-16 guarded `emit_patch_rel32` and taught `translate_block_cached` to
+flush for headroom and to discard an overflowed block.  It missed that
+`translate_a64.c` patches branches in eleven *other* places by writing
+straight through `e->buf + off`, and it left the intrinsic path outside
+both guards.
+
+**Symptom**: the stage08-built SQLite shell, run with a deliberately small
+code buffer, SIGSEGVs in `emit_mem_access_check` -- a translator crash, not
+a bad guest.
+
+**Cause**: `emit_inst` stops *writing* once a block overflows but does not
+advance `offset`, so `emit_offset()` saturates at `capacity`. A patch
+offset recorded there is itself in range while the four-byte write at it is
+not, and it lands on the page after the mapping. Separately,
+`try_emit_intrinsic_a64` ran before the flush checks, sized its emit
+capacity from the unaligned `code_buffer_used` (up to 15 bytes too
+generous), and committed without ever testing `overflow`.
+
+**Fix**: every in-place patch goes through `a64_patch_ptr`, which returns a
+scratch word and sets `overflow` rather than writing out of bounds; both
+flushes run before the intrinsic attempt (the x64 order); the intrinsic
+path sizes capacity from the aligned start and declines on overflow, so the
+caller falls through to a normal translation; block and code-pointer
+allocation retry once after a flush; and `cache_record_exit` drops an
+out-of-range exit instead of recording one that chaining would later write
+through, warning once rather than per site.
+
+**Verification**: with `CODE_BUFFER_SIZE` cut to 256KB and
+`DBT_MAX_BLOCK_HOST_BYTES` to 1KB -- a mutation that makes the buffer tail
+genuinely reachable -- the shell went from SIGSEGV to correct output.  At
+production sizes it is a no-op: `sqlite3.c` through the stage08 compiler is
+44s both before and after, with identical block, chain and flush counts and
+byte-identical assembly output; `benchmark_core` 0.03s, checksum 0x8d70b2b.
+
+**Process note**: two intermediate readings during this work looked like a
+17x regression and were reported as one. Both were the machine thrashing
+under orphaned jobs left by cancelled verification runs, not the code. Kill
+the children, not just the shell, and re-measure on an idle box before
+believing a performance delta.
+
