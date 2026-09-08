@@ -1124,6 +1124,7 @@ int cob_open(cob_file *f, int mode)
     }
     f->open_try = (unsigned)mode;
     if (f->open_mode) return file_result(f, "41", "OPEN of a file already open");
+    remember_file(f);          /* every organisation: STOP RUN closes what is left open */
     if (f->org == COB_ORG_INDEXED) return idx_open(f, mode);
     const char *name = file_name(f);
     const char *fm = mode == COB_OPEN_INPUT ? "rb" : mode == COB_OPEN_OUTPUT ? "wb"
@@ -1144,7 +1145,7 @@ int cob_open(cob_file *f, int mode)
         if (!f->optional) return file_result(f, "35", name);
         fp = fopen(name, "w+b");
         if (fp) {
-            remember_file(f); f->fp = fp; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
+            f->fp = fp; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
             if (f->org == COB_ORG_RELATIVE) { f->rel_pos = 1; f->rel_last = 0; }
             return file_result(f, "05", name);
         }
@@ -1159,13 +1160,13 @@ int cob_open(cob_file *f, int mode)
     if (!fp) {
         if (mode == COB_OPEN_INPUT && f->optional) {
             /* OPTIONAL and absent: open succeeds, the first READ is at end */
-            remember_file(f); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1;
+            f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1;
             return file_result(f, "05", name);
         }
         if (mode == COB_OPEN_INPUT) return file_result(f, "35", name);
         return file_result(f, "30", name);
     }
-    remember_file(f); f->fp = fp; f->open_mode = (unsigned char)mode;
+    f->fp = fp; f->open_mode = (unsigned char)mode;
     if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0) { long e = ftell(fp); f->fpos = e > 0 ? (unsigned)e : 0; }
     if (f->linage) { lin_values(f); f->lin_counter = 1; f->lin_needs_top = 1; f->lin_eop = 0; }
     return file_result(f, "00", name);
@@ -2304,7 +2305,7 @@ static int idx_open(cob_file *f, int mode)
         fp = fopen(name, mode == COB_OPEN_INPUT ? "rb" : "r+b");
         if (!fp) {
             if (!f->optional) { idx_free(x); return file_result(f, "35", name); }
-            if (mode == COB_OPEN_INPUT) { idx_free(x); remember_file(f); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
+            if (mode == COB_OPEN_INPUT) { idx_free(x); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
             /* OPTIONAL, absent, I-O or EXTEND: the file comes into being, empty */
             fp = fopen(name, "w+b");
             if (!fp) { idx_free(x); return file_result(f, "30", name); }

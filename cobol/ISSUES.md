@@ -978,3 +978,15 @@ and APENTER needs its subprogram APENTP compiled beside it. Test rmend (no
 oracle: GnuCOBOL's COMP-1 is a float in every dialect it offers); UNLOCK in
 assign2, where the oracle agrees. Suite 111/111.
 
+### 32. An indexed file left open at STOP RUN lost its writes (2026-09-07)
+
+Item 30's close-at-STOP-RUN registered files at the two sequential OPEN
+sites; the indexed OPEN takes its own path and was never registered, so a
+program that left an indexed file open at STOP RUN (or at the end-of-input
+exit) lost every record and key it had written: the record cache and the
+B+tree pages are written at close. GENACT, the suite's table editor, is the
+first program to do it -- it confirmed the write, returned to its key
+prompt, and the tables file stayed empty; six lines reproduce it. Every
+file is now registered at `cob_open`'s entry, whatever its organisation.
+Suite 111/111.
+
