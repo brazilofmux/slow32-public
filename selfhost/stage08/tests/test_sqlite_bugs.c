@@ -108,8 +108,11 @@ static int t_frontend_forms(void) {
 #define EMPTY_INIT
 EMPTY_INIT;
 
-/* 8. A literal with bit 31 set is unsigned int; as a signed int it
- *    sign-extended into the high word of a 64-bit flags field. */
+/* 8. A hex/octal literal with bit 31 set is unsigned int; as a signed
+ *    int it sign-extended into the high word of a 64-bit flags field.
+ *    Unsuffixed decimal 2147483648 is long long, not unsigned int
+ *    (C11 6.4.4.1 / GitHub issue 40): `2147483648 > -1` is true
+ *    signed and false if the same bits are unsigned. */
 typedef unsigned long long u64;
 static int t_big_literal(void) {
     u64 f = 0;
@@ -123,6 +126,9 @@ static int t_big_literal(void) {
     if ((unsigned)(g >> 32) != 0) return 128;
     if (!(0x80000000 > 5) || !(0xFFFFFFFF > 0)) return 128;
     if ((f & 0xFFFFFFFF80000000ULL) != 0x80000000ULL) return 128;
+    if (!(2147483648 > -1)) return 128;
+    if (0x80000000 > -1) return 128;
+    if (020000000000 > -1) return 128;
     return 0;
 }
 

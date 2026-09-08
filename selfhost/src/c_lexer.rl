@@ -130,10 +130,10 @@ void fdputuint(int f, int v);
 
 /* === Lexer globals === */
 
-#define LEX_SRC_SZ   1100000
+#define LEX_SRC_SZ   12000000   /* was 1100000 */
 #define LEX_STR_SZ   256
-#define LEX_POOL_SZ  524288
-#define LEX_POOL_MAX 16384
+#define LEX_POOL_SZ  4194304   /* was 524288 */
+#define LEX_POOL_MAX 65536   /* was 16384 */
 
 static char lex_src[LEX_SRC_SZ];
 static int  lex_len;
@@ -144,6 +144,7 @@ static int  lex_val;
 static int  lex_val_hi;    /* high 32 bits for 64-bit integer literals */
 static int  lex_val_ll;    /* 1 if the literal had an LL/ll suffix */
 static int  lex_val_u;     /* 1 if the literal had a U/u suffix */
+static int  lex_val_hexoct; /* 1 if the literal was hex or octal (C11 6.4.4.1) */
 static int  lex_fval_hi;   /* high 32 bits for double literals */
 static int  lex_fty;       /* TY_FLOAT or TY_DOUBLE for float literals */
 static char lex_str[LEX_STR_SZ];
@@ -341,6 +342,7 @@ static void lex_parse_num(char *ts, char *te) {
     char *np;
     int n_l;
     val = 0;
+    lex_val_hexoct = 0;
     np = ts;
     ch = *np & 255;
     if (ch == 48) {
@@ -348,6 +350,7 @@ static void lex_parse_num(char *ts, char *te) {
         if (np < te) {
             ch = *np & 255;
             if (ch == 120 || ch == 88) {
+                lex_val_hexoct = 1;
                 np = np + 1;
                 while (np < te) {
                     ch = *np & 255;
@@ -358,6 +361,7 @@ static void lex_parse_num(char *ts, char *te) {
                     np = np + 1;
                 }
             } else if (ch >= 48 && ch <= 55) {
+                lex_val_hexoct = 1;
                 while (np < te) {
                     ch = *np & 255;
                     if (ch < 48 || ch > 55) break;

@@ -96,6 +96,10 @@ static void opt_fold(Node *n) {
     /* Fold binary on two constants */
     if (n->kind == ND_BINOP && n->lhs && n->rhs &&
         n->lhs->kind == ND_NUM && n->rhs->kind == ND_NUM) {
+        /* Compare result type is int, so the llong skip above does not
+         * fire.  Folding 2147483648 > -1 in 32 bits treats the left as
+         * INT_MIN and yields 0. */
+        if (ty_is_llong(n->lhs->ty) || ty_is_llong(n->rhs->ty)) return;
         lv = n->lhs->val;
         rv = n->rhs->val;
         result = 0;

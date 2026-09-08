@@ -314,6 +314,7 @@ static void next(void) {
                 lex_val_hi = 0;
                 lex_val_ll = 0;
                 lex_val_u = 0;
+                lex_val_hexoct = 0;
                 return;
             }
             if (strcmp(lex_str, "__FILE__") == 0) {
@@ -342,6 +343,7 @@ static void next(void) {
                 lex_val_hi = 0;
                 lex_val_ll = 0;
                 lex_val_u = 0;
+                lex_val_hexoct = 0;
                 return;
             }
         }
@@ -3122,10 +3124,12 @@ static Node *parse_primary(void) {
         int v_hi;
         int v_ll;
         int v_u;
+        int v_hexoct;
         v    = lex_val;
         v_hi = lex_val_hi;
         v_ll = lex_val_ll;
         v_u  = lex_val_u;
+        v_hexoct = lex_val_hexoct;
         next();
         /* Promote to long long when the literal had an LL/LLU suffix or
          * its high 32 bits aren't zero — otherwise treat as int (and let
@@ -3139,16 +3143,19 @@ static Node *parse_primary(void) {
             if (v_u) t = t | TY_UNSIGNED;
             return nd_num64(v, v_hi, t);
         }
+        /* Unsuffixed decimal that does not fit int goes to long long
+         * (C11 6.4.4.1); it is never unsigned int.  Hex/octal that does
+         * not fit int becomes unsigned int.  2147483648 stored in a
+         * 32-bit int looks negative, which is how the hex case was
+         * detected — and why decimal 2147483648 was typed unsigned
+         * (GitHub issue 40).  SQLite's `db->flags |= 0x80000000` is the
+         * hex path: as a signed int it sign-extended into the high word
+         * of the 64-bit flags. */
+        if (!v_u && !v_hexoct && v < 0)
+            return nd_num64(v, 0, TY_LLONG);
         {
             Node *nn;
             nn = nd_num(v);
-            /* A literal with bit 31 set has no int representation: C
-             * makes a hex or octal one unsigned int (a decimal one long,
-             * which the same typing serves here).  As a signed int it
-             * sign-extended when widened: SQLite's default
-             * `db->flags |= SQLITE_EnableView` (0x80000000) filled the
-             * high word of the 64-bit flags and set CorruptRdOnly, and
-             * every statement then failed as "malformed". */
             if (v_u || v < 0) nn->ty = TY_INT | TY_UNSIGNED;
             return nn;
         }
