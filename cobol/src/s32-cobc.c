@@ -3838,6 +3838,11 @@ static int at_operand(void)
         "extend", "lock", "rewind", "end-string", "returning", "reference", "content",
         "exception", "end-call", "also", "when", "other", "tallying", "replacing", "converting",
         "characters", "leading", "first", "initial", "true", "false", "any", "end-search", NULL };
+    /* OTHER, TRUE, FALSE, ANY became reserved with COBOL-85; RM/COBOL 2
+     * programs declare data items by those names (PAACEMP: MOVE ... TO OTHER (QY)).
+     * A declared item wins over the clause word. */
+    if ((!strcmp(t->s, "other") || !strcmp(t->s, "true") || !strcmp(t->s, "false") || !strcmp(t->s, "any"))
+        && sym_lookup_quiet(t->s)) return 1;
     for (int i = 0; clause[i]; i++) if (!strcmp(t->s, clause[i])) return 0;
     return 1;
 }
@@ -8133,15 +8138,16 @@ static void parse_procedure_division(void)
     g_saw_end_program = 0;
     if (accept_word("end")) {
         expect_word("program");
-        if (cur()->kind == T_PERIOD) {
+        if (cur()->kind == T_PERIOD || cur()->kind == T_EOF) {
             /* a bare END PROGRAM. -- RM/COBOL; the Open Systems AP and IN
-             * modules end every program that way */
+             * modules end every program that way (PA's CRPACHK without
+             * even the period, as the last line of the file) */
         } else {
             if (cur()->kind != T_WORD || strcmp(cur()->s, g_progid))
                 die_at(cur()->line, "END PROGRAM names '%s' but the program is '%s'", cur()->s, g_progid);
             advance();
         }
-        expect_period();
+        if (cur()->kind != T_EOF) expect_period();
         g_saw_end_program = 1;
     }
 }
