@@ -282,6 +282,16 @@ cd ~/slow-32/regression && ./run-kit-tools-differential.sh
 # after touching stage07 or anything it compiles. ~2 builds, a few minutes.
 cd ~/slow-32/regression && ./run-stage07-differential.sh
 
+# And a fifth, the one that matters for stage08 FRONT-END changes: build
+# pristine SQLite 3.51.0 (265,876 lines) with clang and with stage08 and
+# require the two programs to print the SAME BYTES. The small suite is 60
+# tiny programs and stays green through defects the amalgamation dies on --
+# the GitHub-issue-39 batch (Sep 2026) made `#elif !defined(X) /* comment */`
+# select the right branch at last, which changed which SQLITE_INT_TO_PTR
+# spelling SQLite uses, and sqlite3.c stopped compiling with run-tests.sh
+# still 60/60. ~2 minutes.
+cd ~/slow-32/sqlite && ./check-stage08.sh
+
 # Analyze binaries
 ./tools/utilities/slow32dump file.s32o    # Dump object file
 ./tools/utilities/slow32dump file.s32x    # Dump executable

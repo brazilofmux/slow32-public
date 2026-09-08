@@ -47,6 +47,10 @@ pristine sources:
 
     ./build-stage08.sh    # out/stage08/{libsqlite3.s32a,sqlite3_test.s32x,sqlite3.s32x}
 
+`./check-stage08.sh` is the acceptance test: it builds both ways and
+diffs the two programs' output, so there are no golden files to go stale.
+Run it after any stage08 front-end change.
+
 It compiles under `slow32-dbt` (about a minute for the amalgamation),
 assembles and links with the host tools, and uses stage08's own libc and
 crt0 rather than the runtime's.  The smoke test and the shell print output

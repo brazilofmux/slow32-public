@@ -249,18 +249,46 @@ static int t_fnptr_member_deref(void) {
     return ok ? 0 : 2048;
 }
 
+
+/* 13. SQLITE_INT_TO_PTR(X) is ((void*)&((char*)0)[X]) -- an integer
+ * constant wearing a pointer.  Every aBuiltinFunc entry is one.  The
+ * #elif that spells it this way is the branch a compiler defining
+ * neither __PTRDIFF_TYPE__ nor __GNUC__ takes, i.e. ours, but its
+ * trailing comment made #if take the #else until GitHub issue 39. */
+#define T13_INT_TO_PTR(X) ((void*)&((char*)0)[X])
+struct t13_F { int n; void *p; };
+static struct t13_F t13_file[] = {
+    {2, T13_INT_TO_PTR(7)},
+    {3, T13_INT_TO_PTR(0)},
+};
+static int t_int_to_ptr(void) {
+    /* block scope, as SQLite's aBuiltinFunc is */
+    static struct t13_F t13_blk[] = { {4, T13_INT_TO_PTR(9)} };
+    static void *t13_scaled = &((int *)0)[3];   /* scales by sizeof(int) */
+    if ((int)t13_file[0].p != 7) return 13;
+    if ((int)t13_file[1].p != 0) return 13;
+    if ((int)t13_blk[0].p != 9) return 13;
+    if ((int)t13_scaled != 12) return 13;
+    return 0;
+}
+
+/* The exit status is 8 bits, so the old `r |= t_block()` bitmask went
+ * vacuous the moment a block returned 512 or more: t_const_unary,
+ * t_grouped_declarator and t_fnptr_member_deref all reported 0 however
+ * they failed.  Return the number of the FIRST failing block instead --
+ * it always fits, and it names the block. */
 int main(void) {
-    int r = 0;
-    r |= t_big_literal();
-    r |= t_unsigned_cmp_imm(5);
-    r |= t_tentative();
-    r |= t_if_continuation();
-    r |= t_local_static_init();
-    r |= t_stringize_lines();
-    r |= t_reexpand(13);
-    r |= t_frontend_forms();
-    r |= t_const_unary();
-    r |= t_grouped_declarator();
-    r |= t_fnptr_member_deref();
-    return r;
+    if (t_big_literal())        return 1;
+    if (t_unsigned_cmp_imm(5))  return 2;
+    if (t_tentative())          return 3;
+    if (t_if_continuation())    return 4;
+    if (t_local_static_init())  return 5;
+    if (t_stringize_lines())    return 6;
+    if (t_reexpand(13))         return 7;
+    if (t_frontend_forms())     return 8;
+    if (t_const_unary())        return 9;
+    if (t_grouped_declarator()) return 10;
+    if (t_fnptr_member_deref()) return 11;
+    if (t_int_to_ptr())         return 13;
+    return 0;
 }

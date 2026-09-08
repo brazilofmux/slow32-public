@@ -1858,6 +1858,9 @@ static int ps_sizeof_node(Node *n) {
 static int pc_hi;
 static int pc_wide;
 static int pc_nleaf;
+/* The pointee type of the most recent (T*) cast the constant
+ * evaluator consumed, so &((T*)K)[i] can scale i.  -1 = none. */
+static int pc_cast_ty;
 
 /* After the offsetof keyword: ( type , member ) -> the member's byte
  * offset.  Shared by the expression parser and the constant evaluator
@@ -2049,6 +2052,42 @@ static int parse_const_unary(void) {
         }
         return 0 - nv;
     }
+    if (lex_tok == TK_AMP) {
+        /* &((T*)K)[i] -- an integer constant wearing a pointer, folded to
+         * K + i * sizeof(T).  SQLite spells SQLITE_INT_TO_PTR(X) as
+         * ((void*)&((char*)0)[X]) on a compiler that defines neither
+         * __PTRDIFF_TYPE__ nor __GNUC__, which is us, and every
+         * aBuiltinFunc entry is one.  (Until GitHub issue 39 was fixed
+         * the trailing comment on that #elif made us take the #else
+         * instead, so this shape never reached the evaluator.)
+         *
+         * & over a real symbol is a relocation and does not come here:
+         * an initializer tries parse_global_init_symbol_reloc_at first.
+         * &(sym) with redundant parens still fails there (GitHub
+         * issue 59). */
+        int base;
+        int idx;
+        int esz;
+        next();
+        pc_cast_ty = -1;
+        base = parse_const_unary();
+        esz = 1;
+        if (pc_cast_ty >= 0 && ty_is_ptr(pc_cast_ty)) {
+            esz = ty_size(ty_deref(pc_cast_ty));
+            if (esz <= 0) esz = 1;
+        }
+        pc_wide = 0;
+        pc_hi = 0;
+        if (lex_tok == TK_LBRACK) {
+            next();
+            idx = parse_const_int();
+            expect(TK_RBRACK);
+            pc_wide = 0;
+            pc_hi = 0;
+            return base + idx * esz;
+        }
+        return base;
+    }
     if (lex_tok == TK_LPAREN) {
         sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
         sv_rcs = lex_rcs; sv_ract = lex_ract;
@@ -2063,6 +2102,7 @@ static int parse_const_unary(void) {
             skip_decl_qualifiers();
             expect(TK_RPAREN);
             pp_peek_depth = pp_peek_depth - 1;
+            pc_cast_ty = ty;
             return parse_const_unary();
         }
         lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
@@ -2483,18 +2523,46 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     int gi2;
     int esz;
     int sidx;
+    int sv_tok;
+    int sv_val;
+    int sv_slen;
+    int sv_rcs;
+    int sv_ract;
+    char *sv_rp;
+    char *sv_rts;
+    char *sv_rte;
+    char sv_str[256];
 
     while (try_consume_type_cast()) {
     }
     amp = 0;
     if (lex_tok == TK_AMP) {
+        /* Speculative: only a & over a NAME is a relocation.  The other
+         * shape is an integer constant wearing a pointer --
+         * &((char*)0)[i], SQLite's SQLITE_INT_TO_PTR -- which used to
+         * hard-error here.  Rewind and let the caller constant-fold it
+         * (parse_const_unary folds the same form).  pp_peek_depth keeps
+         * a macro expansion in place while the rewind point is live. */
+        sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
+        sv_rcs = lex_rcs; sv_ract = lex_ract;
+        sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
+        memcpy(sv_str, lex_str, lex_slen + 1);
+        pp_peek_depth = pp_peek_depth + 1;
         amp = 1;
         next();
         while (try_consume_type_cast()) {
         }
+        if (lex_tok != TK_IDENT) {
+            lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
+            lex_rcs = sv_rcs; lex_ract = sv_ract;
+            lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
+            memcpy(lex_str, sv_str, sv_slen + 1);
+            pp_peek_depth = pp_peek_depth - 1;
+            return 0;
+        }
+        pp_peek_depth = pp_peek_depth - 1;
     }
     if (lex_tok != TK_IDENT) {
-        if (amp) p_error("expected symbol after & in initializer");
         return 0;
     }
     ci = find_const(lex_str);
@@ -2515,6 +2583,18 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
         ps_girel_add[ps_girel_last_pos] = sidx * esz;
     }
     return 1;
+}
+
+/* A pointer object's initializer: a relocation when it names a symbol,
+ * otherwise an address constant folded to an integer -- SQLite's
+ * SQLITE_INT_TO_PTR(X), ((void*)&((char*)0)[X]).  Erroring instead was
+ * fine only while GitHub issue 39 kept that #elif branch unselected. */
+static void ps_ptr_init_at(int gidx, int ty) {
+    ps_ginit_begin(gidx);
+    if (!parse_global_init_symbol_reloc_at(gidx, 0, ty_size(ty)))
+        ps_ginit_store_int_at(gidx, 0, parse_const_int(), ty_size(ty));
+    ps_ginit_ensure_len(gidx, ty_size(ty));
+    ps_ginit_finish(gidx);
 }
 
 static void parse_global_init_value(int ty, int gidx);
@@ -5033,11 +5113,7 @@ local_plain_name:
                            (lex_tok == TK_AMP ||
                             (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
                              find_global(lex_str) >= 0))) {
-                    ps_ginit_begin(sl_gi);
-                    if (!parse_global_init_symbol_reloc_at(sl_gi, 0, ty_size(ty)))
-                        p_error("bad pointer initializer");
-                    ps_ginit_ensure_len(sl_gi, ty_size(ty));
-                    ps_ginit_finish(sl_gi);
+                    ps_ptr_init_at(sl_gi, ty);
                 } else {
                     ps_set_scalar_init(sl_gi, parse_const_int(), 0);
                 }
@@ -5083,11 +5159,7 @@ local_plain_name:
                                (lex_tok == TK_AMP ||
                                 (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
                                  find_global(lex_str) >= 0))) {
-                        ps_ginit_begin(sl_gi);
-                        if (!parse_global_init_symbol_reloc_at(sl_gi, 0, ty_size(ty)))
-                            p_error("bad pointer initializer");
-                        ps_ginit_ensure_len(sl_gi, ty_size(ty));
-                        ps_ginit_finish(sl_gi);
+                        ps_ptr_init_at(sl_gi, ty);
                     } else {
                         ps_set_scalar_init(sl_gi, parse_const_int(), 0);
                     }
@@ -5538,11 +5610,7 @@ plain_name:
                     /* Pointer global initialized with an address constant:
                      * `const fixed_t *finecosine = &finesine[FINEANGLES/4];`
                      * Route through the init-pool reloc machinery. */
-                    ps_ginit_begin(idx);
-                    if (!parse_global_init_symbol_reloc_at(idx, 0, ty_size(xty)))
-                        p_error("bad pointer initializer");
-                    ps_ginit_ensure_len(idx, ty_size(xty));
-                    ps_ginit_finish(idx);
+                    ps_ptr_init_at(idx, xty);
                 } else {
                     if (ty_is_llong(xty)) {
                         /* a long long global: the literal's own high word */

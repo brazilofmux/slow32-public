@@ -2220,6 +2220,23 @@ tracing under the reference emulator and symbolizing):
   code-buffer overflow guard (DBT-16).  The shell is the first guest
   large enough to fill it.
 
+Follow-on 2026-09-08, from the GitHub-issue-39 batch: fixing `#if`
+whitespace so a trailing comment no longer ends the expression changed
+which branch SQLite's `SQLITE_INT_TO_PTR` chain selects.  Every `#elif`
+there carries one, so the compiler had been falling through to the
+`#else` (`((void*)(X))`) and now correctly takes `!defined(__GNUC__)`
+(`((void*)&((char*)0)[X])`) -- which the constant evaluator could not
+fold, and `sqlite3.c` stopped compiling at `aBuiltinFunc` with the
+suite still 60/60.  `parse_const_unary` now folds `&((T*)K)[i]` to
+`K + i * sizeof(T)`, the symbol-reloc path rewinds instead of erroring
+when `&` is not over a name, and the three pointer-initializer sites
+fall back to a folded constant (`ps_ptr_init_at`).
+
+`sqlite/check-stage08.sh` is now the gate: it builds the amalgamation
+with both compilers and requires the two programs to print the same
+bytes.  The small suite cannot stand in for it -- 265,876 lines of
+someone else's C is what finds this class of defect.
+
 Still open: `getenv` in this libc is a stub returning NULL (the shell
 warns that it cannot find the home directory; the clang build's libc
 answers from the host), and the preprocessor's reported line numbers
