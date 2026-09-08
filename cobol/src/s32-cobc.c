@@ -4027,10 +4027,19 @@ static int stmt_positioned(void)
 
 /* LINE n / POSITION n: an integer literal, or an identifier whose value the
  * statement stores into the slot at run time (tp: where it sits) */
+static SField *g_pos_field;    /* the slot pos_int is filling: an explicit 0 marks it CONT */
 static void pos_int(int *val, int *tp, const char *what)
 {
     accept_word("is"); accept_word("number");
-    if (cur()->kind == T_NUM) { *val = atoi(cur()->s); advance(); return; }
+    if (cur()->kind == T_NUM) {
+        *val = atoi(cur()->s); advance();
+        /* RM: LINE 0 / POSITION 0 is "where the cursor is", the position after
+         * the last thing painted (APPKJRNL builds a title from three DISPLAYs);
+         * an omitted clause is the next line / column 1.  The runtime's
+         * continue-after-the-last-slot rule covers the explicit zero. */
+        if (*val == 0 && g_pos_field) g_pos_field->ext |= COB_SX_CONT;
+        return;
+    }
     if (cur()->kind != T_WORD || !tp) die_at(cur()->line, "%s needs an integer%s", what, tp ? " or a numeric identifier" : "");
     *tp = g_tp;
     Ref r; parse_ref(&r);
@@ -4039,6 +4048,7 @@ static void pos_int(int *val, int *tp, const char *what)
 
 static void parse_pos_clauses(SField *f, int is_accept)
 {
+    g_pos_field = f;
     for (;;) {
         if (accept_word("with")) continue;
         if (accept_word("line")) { pos_int(&f->line, &f->line_tp, "LINE"); continue; }

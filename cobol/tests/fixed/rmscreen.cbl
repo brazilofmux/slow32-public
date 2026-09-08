@@ -4,7 +4,8 @@
       * AT rrcc spelling (#33), as the Open Systems suite paints every
       * screen: LINE/POSITION literal and computed, ERASE EOS/EOL/SCREEN,
       * SIZE, HIGH, PROMPT, UPDATE, NO BEEP, and a plain DISPLAY once
-      * the screen is in use (the next line, column 1). Screens need a
+      * the screen is in use (the next line, column 1), and LINE 0
+      * POSITION 0, the cursor's own position. Screens need a
       * tty: no oracle. The keys come from rmscreen.keys; the ANSI
       * stream is the expected output.
        DATA DIVISION.
@@ -29,5 +30,8 @@
            ACCEPT NAME-IN LINE 7, POSITION 3, PROMPT, UPDATE.
            DISPLAY CODE-IN LINE 9 POSITION 1 SIZE 3.
            DISPLAY "GOT " NAME-IN.
+           DISPLAY "PRINT " LINE 15 POSITION 1.
+           DISPLAY "PURCHASES" LINE 0 POSITION 0.
+           DISPLAY " JOURNAL" LINE 0 POSITION 0.
            DISPLAY SPACE ERASE SCREEN.
            STOP RUN.
