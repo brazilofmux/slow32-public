@@ -990,3 +990,28 @@ prompt, and the tables file stayed empty; six lines reproduce it. Every
 file is now registered at `cob_open`'s entry, whatever its organisation.
 Suite 111/111.
 
+
+### 33. AR module census and cycle (~/open/ar, 2026-09-07)
+
+51 programs, all compile after the same rewrite as gl/ap/in (tag-file shell
+calls, the OASIS task number, SD SORT-TAGS in the ten sorting programs;
+arenter builds with arentp+arenter2, arpymts with arpymts2).  `ar/s32/run.sh`
+runs the whole daily cycle from empty files and pins 22 papers, including the
+cash receipt applied to the invoice and the G/L journal with both postings.
+No compiler or runtime change was needed.  Two things the screens taught,
+recorded because every key script depends on them:
+
+- SERRORS' `900-DISPLAY-MESS` ACCEPTs a key after every message, so an
+  `<< INVALID ENTRY >>` eats the keystroke that follows it; a wrong key
+  cascades.  The pressed key is then run through `900-CHECK-COMMAND`, which
+  is how the operator leaves a forced field: a junk entry, then `M`, then `Y`.
+- ARTRAN (relative) carries a per-task backout slot in its control record:
+  the first line item write marks the transaction, the totals write clears
+  it, and the next program that opens the file (SARTRCTL) deletes a marked
+  transaction.  A key script one `P` short of the totals loses the invoice
+  silently -- the journal pick then reports `**NO RECORDS PICKED**`.  It is
+  the system working as designed, not a file-system fault (a six-line
+  relative-file replay of the read/rewrite/write pattern is exact).
+
+The date mask in all four harnesses now also takes `Z9/99/99` headings
+(` 9/07/26`), which the AR reports print; gl/ap/in were re-pinned with it.
