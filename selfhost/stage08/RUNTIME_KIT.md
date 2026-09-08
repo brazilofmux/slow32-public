@@ -95,11 +95,47 @@ slow32 prog.s32x
 
 ## Kit vintage
 
-No known issues in the current kit. Several bugs have been fixed since
-the first kit; if your kit predates the commit named, the bug is live.
+Known in the current kit: `getenv` in `libc.s32a` is a stub that returns
+NULL (selfhost ISSUES-68); a program that reads its environment sees none.
+Otherwise no known issues. Several bugs have been fixed since the first
+kit; if your kit predates the commit named, the bug is live.
 Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
+
+Fixed 2026-09-08 (`796d09b0`, `fdbe49b7`) -- what it took for this
+compiler to build pristine SQLite 3.51.0 (selfhost ISSUES-67 has the
+whole list; `sqlite/build-stage08.sh` is the acceptance test, its output
+byte-identical to the clang build's).  All in `cc.s32x` unless noted:
+
+- **Silent miscompiles.** A `char`/`short` local promoted to a register
+  kept its wide value (an 8-bit hash accumulator returned 5443).  A
+  `long long` literal 0 passed through a function-pointer struct member
+  went as one word.  `0x80000000` was typed signed and sign-extended
+  into a 64-bit target.  `(*p->m)(args)` through a function-pointer
+  member jumped through the code word the pointer named.  `x <u -1`
+  folded to a compare against 4095.  Dead-code elimination kept every
+  phi alive through a phi-to-phi cycle (code bloat, not wrong code).
+  Case labels nested inside another case's braces were dropped by the
+  switch pre-scan.  Functions past 8192 instructions read the BURG cost
+  table off its end and emitted garbage symbol names.
+- **Refused inputs.** `#if` expressions continued across lines; a
+  macro's own name inside its expansion; nested function-pointer
+  declarators, functions returning function pointers, `signed` alone,
+  `offsetof` in constants; `~`/`!` in constant expressions; a
+  parenthesised declarator `char *(name[])`; a stray file-scope `;`;
+  more than 64 adjacent string literals; block-scope statics with
+  string or floating initializers.
+- **Capacity and speed.** Macro expansion no longer copies the file's
+  tail per expansion (the 9MB amalgamation compiles in a minute);
+  ~40 ceilings raised.  `-mlong-calls` for programs whose callees sit
+  more than 1MB away.
+- **`libc.s32a` / `include/`.** stat, lstat, mkdir, chdir, opendir,
+  readdir, closedir, getrusage, gettimeofday, signal, strtod, atof,
+  strtoll, strtoull, sscanf, time, localtime, gmtime, access,
+  ftruncate; headers sys/types.h, sys/stat.h, dirent.h, limits.h,
+  memory.h, errno values, `_IONBF`, `BUFSIZ`.
+- **`s32-as.s32x`.** BSS is counted, not emitted a byte at a time.
 
 Fixed 2026-09-01 (`a3cb6cf5`) -- capacity, and one that bites at the
 command line:

@@ -2060,6 +2060,24 @@ shapes, exit code names the failing one). libcob.c and dfsort keep the
 one-declaration-per-line form so a kit with the old compiler still
 builds them.
 
+### 68. [OPEN 2026-09-08] stage08 libc: getenv is a stub returning NULL
+
+`libc/start.c` defines `getenv` as a stub that always returns NULL,
+with a comment that the MMIO bootstrap exposes argv but no envp.  The
+host side does answer environment queries (the GETENV request, op 0x64,
+which the clang runtime's `libc_mmio` uses), so the stub is a gap in
+this libc, not in the emulators.  Seen from SQLite's shell, built by
+stage08 (ISSUES-67): it warns "cannot find home directory; cannot read
+~/.sqliterc" on every run, where the clang build reads HOME.  Any
+program that configures itself from the environment sees none.
+
+One thing to settle first: the stub was deliberate for the compiler's
+own binary, so that debug environment variables the sources consult
+stay inert in `cc.s32x`.  A real `getenv` in the libc needs those
+consultations to go through something the compiler build can disable
+(or the variables retired), or the kit compiler's behaviour will
+depend on the caller's environment.  Not yet started.
+
 ### 67. [RESOLVED 2026-09-08] stage08 cc builds SQLite 3.51.0: the library, the smoke test and the shell, byte-identical to the clang build
 
 The pristine amalgamation (9.4MB, 265,876 lines, `sqlite/build.sh`'s
