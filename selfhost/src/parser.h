@@ -206,6 +206,7 @@ static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
 static int   ps_glocal[P_MAX_GLOBALS]; /* 1 = static local (suppress .global) */
 static int   ps_gextern[P_MAX_GLOBALS]; /* 1 = declaration only, no storage */
 static int   ps_gcols[P_MAX_GLOBALS];   /* 2D arrays: last-dim count (0 = 1D) */
+static int   ps_ghasinit[P_MAX_GLOBALS]; /* 1 = completed initializer (incl. = 0) */
 static int   ps_nglobals;
 
 /* Static local variable state */
@@ -1702,6 +1703,7 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_glocal[idx] = 0;
     ps_gextern[idx] = 0;
     ps_gcols[idx] = 0;
+    ps_ghasinit[idx] = 0;
     ps_nglobals = ps_nglobals + 1;
     return idx;
 }
@@ -1714,6 +1716,26 @@ static void ps_reset_global_init(int idx) {
     ps_ginit_count[idx] = 0;
     ps_girel_start[idx] = -1;
     ps_girel_count[idx] = 0;
+    ps_ghasinit[idx] = 0;
+}
+
+/* Record that this object now has a completed initializer.  A second
+ * initializer is a redefinition (int x = 1; int x = 2;).  int x = 0
+ * must count: ps_ginit==0 is also the tentative-definition default. */
+static void ps_mark_global_init(int idx) {
+    if (ps_ghasinit[idx]) p_error("redefinition of global");
+    ps_ghasinit[idx] = 1;
+}
+
+static void ps_set_scalar_init(int idx, int lo, int hi) {
+    ps_mark_global_init(idx);
+    ps_ginit[idx] = lo;
+    ps_ginit_hi[idx] = hi;
+}
+
+static void ps_set_str_init(int idx, int sp) {
+    ps_mark_global_init(idx);
+    ps_gstr[idx] = sp;
 }
 
 static int add_extern_global(char *name, int ty, int size_bytes) {
@@ -1732,12 +1754,18 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
         /* An extern declaration being defined, or a tentative definition
          * (`u32 sqlite3WhereTrace;`) followed by the real one
          * (`u32 sqlite3WhereTrace = 0;`): one object, one label.  Keeping
-         * both emitted the label twice. */
+         * both emitted the label twice.
+         *
+         * The other legal C order is a definition then a tentative
+         * (`int x = 7; int x;`): keep the initializer.  Unconditionally
+         * resetting here zeroed it (GitHub issue 46).  Two initializers
+         * are a redefinition; ps_mark_global_init rejects that. */
         ps_gtype[idx] = ty;
         ps_gsize[idx] = size_bytes;
         ps_glocal[idx] = 0;
         ps_gextern[idx] = 0;
-        ps_reset_global_init(idx);
+        if (!ps_ghasinit[idx])
+            ps_reset_global_init(idx);
         return idx;
     }
     return add_global(name, ty, size_bytes);
@@ -2247,6 +2275,7 @@ static void ps_ginit_store_int_at(int gidx, int rel_off, int v, int sz) {
 }
 
 static void ps_ginit_begin(int gidx) {
+    ps_mark_global_init(gidx);
     ps_ginit_start[gidx] = ps_ginit_pool_len;
     ps_ginit_count[gidx] = 0;
     ps_girel_start[gidx] = ps_ngirelocs;
@@ -4834,12 +4863,13 @@ static Node *parse_stmt(void) {
                     ps_ginit_finish(sl_gi);
                 } else if (ty_is_llong(ty)) {
                     int glo;
-                    ps_ginit_hi[sl_gi] = parse_const_ll_hi(&glo);
-                    ps_ginit[sl_gi] = glo;
+                    int ghi;
+                    ghi = parse_const_ll_hi(&glo);
+                    ps_set_scalar_init(sl_gi, glo, ghi);
                 } else if (lex_tok == TK_STRING) {
                     /* static const char *zFormat1 = "..." (SQLite's
                      * sqlite3VdbePrintOp): a string, like a file-scope pointer's. */
-                    ps_gstr[sl_gi] = parse_string_literal();
+                    ps_set_str_init(sl_gi, parse_string_literal());
                 } else if (ty_is_fp(ty)) {
                     ps_ginit_begin(sl_gi);
                     ps_fp_init_store_at(ty, sl_gi, 0);
@@ -4855,7 +4885,7 @@ static Node *parse_stmt(void) {
                     ps_ginit_ensure_len(sl_gi, ty_size(ty));
                     ps_ginit_finish(sl_gi);
                 } else {
-                    ps_ginit[sl_gi] = parse_const_int();
+                    ps_set_scalar_init(sl_gi, parse_const_int(), 0);
                 }
             }
             /* Register, then loop on comma for further declarators:
@@ -4883,12 +4913,13 @@ static Node *parse_stmt(void) {
                     next();
                     if (ty_is_llong(ty)) {
                         int glo;
-                        ps_ginit_hi[sl_gi] = parse_const_ll_hi(&glo);
-                        ps_ginit[sl_gi] = glo;
+                        int ghi;
+                        ghi = parse_const_ll_hi(&glo);
+                        ps_set_scalar_init(sl_gi, glo, ghi);
                     } else if (lex_tok == TK_STRING) {
                         /* static const char *zFormat1 = "..." (SQLite's
                          * sqlite3VdbePrintOp): a string, like a file-scope pointer's. */
-                        ps_gstr[sl_gi] = parse_string_literal();
+                        ps_set_str_init(sl_gi, parse_string_literal());
                     } else if (ty_is_fp(ty)) {
                         ps_ginit_begin(sl_gi);
                         ps_fp_init_store_at(ty, sl_gi, 0);
@@ -4904,7 +4935,7 @@ static Node *parse_stmt(void) {
                         ps_ginit_ensure_len(sl_gi, ty_size(ty));
                         ps_ginit_finish(sl_gi);
                     } else {
-                        ps_ginit[sl_gi] = parse_const_int();
+                        ps_set_scalar_init(sl_gi, parse_const_int(), 0);
                     }
                 }
             }
@@ -5278,7 +5309,7 @@ static Node *parse_top_decl(void) {
                 ps_ginit_ensure_len(idx, 4);
                 ps_ginit_finish(idx);
             } else {
-                ps_ginit[idx] = parse_const_int();
+                ps_set_scalar_init(idx, parse_const_int(), 0);
             }
         }
         expect(TK_SEMI);
@@ -5339,7 +5370,7 @@ plain_name:
                     parse_global_init_value(xty, idx);
                     ps_ginit_finish(idx);
                 } else if (lex_tok == TK_STRING) {
-                    ps_gstr[idx] = parse_string_literal();
+                    ps_set_str_init(idx, parse_string_literal());
                 } else if (ty_is_fp(xty)) {
                     /* float/double global initializer: FP literal or
                      * integer constant, converted at full precision
@@ -5364,10 +5395,11 @@ plain_name:
                     if (ty_is_llong(xty)) {
                         /* a long long global: the literal's own high word */
                         int glo;
-                        ps_ginit_hi[idx] = parse_const_ll_hi(&glo);
-                        ps_ginit[idx] = glo;
+                        int ghi;
+                        ghi = parse_const_ll_hi(&glo);
+                        ps_set_scalar_init(idx, glo, ghi);
                     } else {
-                        ps_ginit[idx] = parse_const_int();
+                        ps_set_scalar_init(idx, parse_const_int(), 0);
                     }
                 }
             }
