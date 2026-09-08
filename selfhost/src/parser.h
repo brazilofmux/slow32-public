@@ -339,6 +339,7 @@ static void next(void) {
                 lex_val_ll = 0;
                 lex_val_u = 0;
                 lex_val_hexoct = 0;
+                lex_val_macro = 1;
                 return;
             }
             if (strcmp(lex_str, "__FILE__") == 0) {
@@ -363,11 +364,15 @@ static void next(void) {
                 lex_tok = TK_NUM;
                 lex_val = pp_dval[di];
                 /* #define values are 32-bit int; clear the 64-bit state
-                 * so a preceding 64-bit literal's flags don't bleed in. */
+                 * so a preceding 64-bit literal's flags don't bleed in.
+                 * lex_val_macro keeps `#define N -5` as a signed int:
+                 * issue 40's "v < 0 means 2147483648" rule is only for
+                 * lexer-originated decimal tokens. */
                 lex_val_hi = 0;
                 lex_val_ll = 0;
                 lex_val_u = 0;
                 lex_val_hexoct = 0;
+                lex_val_macro = 1;
                 return;
             }
         }
@@ -1970,10 +1975,12 @@ static int parse_const_primary(void) {
         ci = lex_val;
         if (lex_tok == TK_NUM &&
             (lex_val_hi != 0 || lex_val_ll || lex_val_u ||
-             (lex_val_hi == 0 && lex_val < 0))) {
+             (lex_val_hi == 0 && lex_val < 0 && !lex_val_macro))) {
             /* U/LL, a high word, or a 32-bit value with bit 31 set
              * (0x80000000 / 2147483648): keep high word 0 rather than
-             * sign-extending into a long long (GitHub #17). */
+             * sign-extending into a long long (GitHub #17).  A #define
+             * that stored -5 as an int is lex_val_macro and must still
+             * sign-extend. */
             pc_hi = lex_val_hi;
             pc_wide = 1;
         }
@@ -3200,11 +3207,13 @@ static Node *parse_primary(void) {
         int v_ll;
         int v_u;
         int v_hexoct;
+        int v_macro;
         v    = lex_val;
         v_hi = lex_val_hi;
         v_ll = lex_val_ll;
         v_u  = lex_val_u;
         v_hexoct = lex_val_hexoct;
+        v_macro = lex_val_macro;
         next();
         /* Promote to long long when the literal had an LL/LLU suffix or
          * its high 32 bits aren't zero — otherwise treat as int (and let
@@ -3226,7 +3235,7 @@ static Node *parse_primary(void) {
          * (GitHub issue 40).  SQLite's `db->flags |= 0x80000000` is the
          * hex path: as a signed int it sign-extended into the high word
          * of the 64-bit flags. */
-        if (!v_u && !v_hexoct && v < 0)
+        if (!v_u && !v_hexoct && !v_macro && v < 0)
             return nd_num64(v, 0, TY_LLONG);
         {
             Node *nn;
