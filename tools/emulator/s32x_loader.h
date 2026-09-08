@@ -84,9 +84,12 @@ static s32x_load_result_t load_s32x_header(const char *filename) {
     }
 
     // Validate code limit
-    if (header.code_limit > 0x200000) {
+    /* A sanity bound, not an architectural one: the memory map is set up
+     * from the header (mm_setup_from_s32x).  2MB was the old ceiling;
+     * SQLite's debug build under stage08 cc is just over it. */
+    if (header.code_limit > 0x4000000) {
         snprintf(result.error_msg, sizeof(result.error_msg),
-                 "Code limit exceeds 2MB boundary: 0x%08X", header.code_limit);
+                 "Code limit exceeds 64MB boundary: 0x%08X", header.code_limit);
         return result;
     }
 
@@ -162,9 +165,12 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
     }
     
     // Validate memory layout
-    if (header.code_limit > 0x200000) {
+    /* A sanity bound, not an architectural one: the memory map is set up
+     * from the header (mm_setup_from_s32x).  2MB was the old ceiling;
+     * SQLite's debug build under stage08 cc is just over it. */
+    if (header.code_limit > 0x4000000) {
         snprintf(result.error_msg, sizeof(result.error_msg),
-                 "Code limit exceeds 2MB boundary: 0x%08X", header.code_limit);
+                 "Code limit exceeds 64MB boundary: 0x%08X", header.code_limit);
         fclose(f);
         return result;
     }

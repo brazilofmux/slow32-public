@@ -638,12 +638,78 @@ static void hcg_emit_sym(int inst) {
         cg_s(".LS");
         cg_n(h_val[base]);
     } else {
+        if (!h_name[base]) {
+            /* A symbol operand whose base has no name: the BURG cost
+             * table was once sized for 8192 instructions and larger
+             * functions read past it here (selfhost ISSUES-67). */
+            fdputs("s12cc: internal error: nameless symbol operand in ", 2);
+            fdputs(hl_cur_fn_dbg, 2); fdputc(10, 2);
+            exit(1);
+        }
         cg_s(h_name[base]);
     }
     if (off != 0) {
         cg_s("+");
         cg_n(off);
     }
+}
+
+/* -dhir=NAME (s12cc.c): dump one function's HIR after the optimizer.
+ * One line per instruction: index, block, kind, src1, src2, val, name;
+ * a phi lists its (value@block) arguments. */
+static char *hd_fn;
+
+static void hd_n(int v) {
+    char b[12];
+    int i;
+    int neg;
+    neg = 0;
+    if (v < 0) { neg = 1; v = 0 - v; }
+    i = 11;
+    b[i] = 0;
+    if (v == 0) { i = i - 1; b[i] = 48; }
+    while (v > 0) { i = i - 1; b[i] = 48 + v % 10; v = v / 10; }
+    if (neg) { i = i - 1; b[i] = 45; }
+    fdputs(b + i, 2);
+}
+
+static void hir_dump(char *tag) {
+    int i;
+    int j;
+    if (hd_fn == 0) return;
+    if (strcmp(hd_fn, hl_cur_fn_dbg) != 0) return;
+    fdputs(tag, 2); fdputc(32, 2); fdputs(hl_cur_fn_dbg, 2); fdputs(" ninst=", 2); hd_n(h_ninst); fdputs(" nblk=", 2); hd_n(bb_nblk); fdputc(10, 2);
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) {
+            hd_n(i); fdputs(" b", 2); hd_n(h_blk[i]); fdputc(32, 2); fdputs(bg_op_name(h_kind[i]), 2);
+            fdputs(" s1=", 2); hd_n(h_src1[i]); fdputs(" s2=", 2); hd_n(h_src2[i]); fdputs(" v=", 2); hd_n(h_val[i]);
+            if (h_name[i] && (unsigned)h_name[i] >= 4096) { fdputc(32, 2); fdputs(h_name[i], 2); }
+            if (h_kind[i] == HI_PHI && h_pbase[i] >= 0) {
+                j = 0;
+                while (j < h_pcnt[i]) {
+                    fdputs(" (", 2); hd_n(h_pval[h_pbase[i] + j]); fdputc(64, 2); hd_n(h_pblk[h_pbase[i] + j]); fdputc(41, 2);
+                    j = j + 1;
+                }
+            }
+            fdputc(10, 2);
+        }
+        i = i + 1;
+    }
+}
+
+
+/* The selector's symbol-address label on a child is trusted only when
+ * the child really carries a symbol base: a handful of SQLite's
+ * sqlite3VdbeExec loads were selected in the symbol form with an addi
+ * of a phi, a plain add or a deleted instruction underneath, and the
+ * emitted name was whatever the null name pointer pointed at. */
+static int hcg_has_sym_base(int inst) {
+    int base;
+    if (inst < 0) return 0;
+    base = bg_ssym[inst];
+    if (base < 0) base = inst;
+    return bg_is_sym(h_kind[base]);
 }
 
 /* Emit load from symbol address: lui r1, %hi(sym); ldX rd, r1, %lo(sym) */
@@ -2171,7 +2237,7 @@ static void hcg_inst(int idx) {
                 cg_rrr("add", rd, 30, rd);
                 hcg_load_mem(rd, rd, ty);
             }
-        } else if (lnt == BG_SADDR) {
+        } else if (lnt == BG_SADDR && hcg_has_sym_base(s1)) {
             /* LOAD(saddr): lui + ldw with %lo */
             hcg_load_saddr(rd, s1, ty);
         } else {
@@ -2202,7 +2268,7 @@ static void hcg_inst(int idx) {
                 cg_rrr("add", 1, 30, 1);
                 hcg_store_mem(1, vreg, ty);
             }
-        } else if (lnt == BG_SADDR) {
+        } else if (lnt == BG_SADDR && hcg_has_sym_base(s1)) {
             /* STORE(saddr, reg): lui + stw with %lo */
             if (hcg_const_is_zero(s2)) vreg = 0;
             else vreg = hcg_src(s2, 2);
@@ -2999,6 +3065,9 @@ static void hcg_func(Node *fn) {
      * map hir_licm just built; must precede regalloc node creation) */
     hcg_mark_loop_consts();
 
+    /* -dhir=NAME: the function's HIR after the optimizer, to stderr */
+    hir_dump("HIR");
+
     /* BURG instruction selection: labels + selects patterns */
     hir_burg();
 
@@ -3009,6 +3078,7 @@ static void hcg_func(Node *fn) {
     /* Spill slots must not overlap lowering-introduced allocas. */
     hl_temp_stack = hcg_hir_frame_base(fn);
 
+    hir_dump("HIR2");
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
     if (getenv("HIR_RA_DEBUG")) {

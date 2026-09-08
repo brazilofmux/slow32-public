@@ -54,6 +54,9 @@ static int   stm_synth[ST_MAX_MEMBERS]; /* 1 = lookup alias from anonymous aggre
  * stm_bit_off is the bit position within that unit (LSB=0). */
 static int   stm_bit_off[ST_MAX_MEMBERS];
 static int   stm_bit_width[ST_MAX_MEMBERS];
+static int   stm_fpbase[ST_MAX_MEMBERS];   /* function-pointer member: base into ps_fptypes, -1 = none */
+static int   stm_fpn[ST_MAX_MEMBERS];      /* ... and its declared parameter count */
+static int   stm_isfp[ST_MAX_MEMBERS];     /* 1 = a function-pointer member, T (*name)(...), signature known or not */
 static int   stm_count;
 
 /* --- Type helpers --- */
@@ -224,6 +227,7 @@ struct Node {
     int offset;       /* VAR: stack offset from fp (locals) */
     int is_local;     /* VAR: 1=local, 0=global */
     int is_array;     /* VAR: 1=array (address, no load) */
+    int is_fnptr;     /* MEMBER: a function-pointer member; (*p->m)(args) strips the star */
     int arr_cols;     /* VAR/MEMBER: 2D array column count (0 = 1D/scalar) */
     int nparams;      /* FUNC: number of parameters */
     int is_varargs;   /* FUNC: 1 if variadic (...) */
@@ -472,6 +476,8 @@ static Node *nd_member(Node *lhs, int offset, int mty, int is_arr, int arr_size,
     n = nd_new(ND_MEMBER);
     n->lhs = lhs;
     n->val = offset;
+    n->offset = -1;      /* MEMBER: function-pointer signature base (ps_fptypes), -1 = none */
+    n->nparams = 0;      /* MEMBER: ... and its parameter count */
     n->ty = mty;
     n->is_array = is_arr;
     n->val_hi = arr_size;

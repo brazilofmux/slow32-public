@@ -33,4 +33,9 @@ int ftruncate(int fd, int length);
 #define X_OK 1
 #define W_OK 2
 #define R_OK 4
+int chdir(const char *path);
+int fsync(int fd);
+int getpid(void);
+int getuid(void);
+int isatty(int fd);
 #endif

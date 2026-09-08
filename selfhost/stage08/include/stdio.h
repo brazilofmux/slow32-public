@@ -65,6 +65,10 @@ int   ungetc(int c, FILE *fp);
 void  rewind(FILE *fp);
 int   remove(const char *path);
 int   rename(const char *oldpath, const char *newpath);
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
+#define BUFSIZ 1024
 int   setvbuf(FILE *fp, char *buf, int mode, unsigned int size);
 int   feof(FILE *fp);
 int   ferror(FILE *fp);

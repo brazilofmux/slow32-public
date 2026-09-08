@@ -2060,14 +2060,18 @@ shapes, exit code names the failing one). libcob.c and dfsort keep the
 one-declaration-per-line form so a kit with the old compiler still
 builds them.
 
-### 67. [OPEN 2026-09-08] stage08 cc builds SQLite 3.51.0: nineteen front-end, optimizer and back-end defects, one still open
+### 67. [RESOLVED 2026-09-08] stage08 cc builds SQLite 3.51.0: the library, the smoke test and the shell, byte-identical to the clang build
 
 The pristine amalgamation (9.4MB, 265,876 lines, `sqlite/build.sh`'s
-defines) is the largest input stage08 has taken.  It now compiles in
-under a minute under slow32-dbt, assembles, links against the selfhost
-libc, and runs; the first statement still dies (see the open item).
-Every fix below is generic; `tests/test_sqlite_bugs.c` covers the
-front-end and back-end ones and is compiled with `-mlong-calls`.
+defines) is the largest input stage08 has taken.  It compiles in under
+a minute under slow32-dbt, assembles, links against the selfhost libc
+and crt0, and runs: `sqlite/build-stage08.sh` builds the library, the
+smoke test and SQLite's own shell, and both programs print output
+byte-identical to the clang build's under all three engines.  Every
+fix below is generic; `tests/test_sqlite_bugs.c` covers the front-end
+and back-end ones (twelve blocks) and is compiled with `-mlong-calls`.
+The first nineteen fixes landed in 796d09b0 with the smoke test still
+failing; the rest are what it took from there.
 
 Preprocessor (pp.h):
 - `#if` expressions stopped at the physical newline: SQLite's allocator
@@ -2148,16 +2152,57 @@ Toolchain and libc:
 - The preprocessor's reported line numbers drift by a few hundred
   lines in a big file (both directions); usable, not exact.
 
-OPEN: the stage08-built smoke test dies in the first statement.  The
-schema-load query's program opens cursor 0 and rewinds it; the rewind
-finds the cursor slot null because the dispatch tree sends the two
-OpenRead/OpenWrite case labels (113, 114, one shared body) to a block
-that is only a phi parallel copy jumping back to the loop head.  The
-parse matches clang's exactly (reduce sequences compared from traces),
-the same block shape exists in a build without assignment narrowing
-that does open the cursor, and no function falls back to the interval
-allocator, so it is an optimizer-pass interaction on the changed code
-shapes.  Compiles with passes masked off do not finish in useful time,
-so the pass bisection needs a smaller reproducer.  Whether the original
-SELECT hang (the parser looping on the COMMIT rule) survives that fix
-is unknown.
+After 796d09b0 (each found by running the stage08-built programs,
+tracing under the reference emulator and symbolizing):
+- The switch pre-scan registered case labels only at the top level of
+  the body: OpenRead/OpenWrite's labels sit inside OP_ReopenIdx's
+  braces, so the dispatch tree sent them to the loop head and the
+  cursor was never opened (the OPEN item above).  hl_sw_prescan
+  descends into nested statements, stopping at an inner switch.
+- `BG_COST_SZ` was a literal 40960, the old 8192-instruction ceiling
+  times the nonterminal count, while BG_MAX_INST had grown to 262144:
+  functions past 8192 instructions read costs, rules, folds and symbol
+  bases off the end of the table, and the emitter printed `%hi(` over
+  bytes of whatever lay there.  Sized from the ceiling; the labeling
+  and frame-offset passes run on demand (bg_label_one, bg_foff_one),
+  folding is restricted to foldable kinds, and a nameless symbol base
+  is an internal error rather than garbage output.
+- The return-value narrowing had landed inside `#ifdef S12CC_X64_HOST`.
+- An `sqlite3_int64` literal 0 passed through a function-pointer
+  member (`pMethods->xTruncate(pFile, 0)`) went as one word; the
+  callee read the high register as it lay, memdb saw a grow, and the
+  in-memory database was "malformed".  Function-pointer members now
+  record their parameter types (ps_parse_fp_params; ND_MEMBER carries
+  the base in `offset`) and sema converts the arguments as for a
+  direct call.
+- `0x80000000` was typed int and sign-extended into the high word of
+  `db->flags`, setting SQLITE_CorruptRdOnly; literals with bit 31 set
+  are unsigned (C11 6.4.4.1).
+- `(*pCtx->pFunc->xSFunc)(...)` (OP_Function): a function-pointer
+  member is pointer-typed, so the rule that strips the no-op star
+  before a call missed it and the call went through the code word the
+  pointer named.  Members are flagged (is_fnptr) and the star is
+  stripped for them.  Only the shell reaches OP_Function.
+- `~` and `!` in constant expressions (`static long ctrlMask = ~0L`);
+  a parenthesised declarator, `char *(azHelp[])`, at file scope; a
+  stray `;` at file scope; 1024 adjacent string literals (was 64; the
+  index array is static, since 4KB per frame of the recursive
+  expression parser overran the compiler's stack).
+- `-dhir=NAME` dumps one function's HIR after the optimizer and again
+  before register allocation.
+- libc: stat/lstat/mkdir/chdir/opendir/readdir/closedir over the MMIO
+  ops, getrusage, gettimeofday, signal, fsync/utimes stubs, strtod/atof
+  over dtoa (its own file: the gen1 tools link the libc without dtoa),
+  and the runtime's sscanf.c and convert_extra.c (strtoll, strtoull)
+  compiled as they are; headers sys/types.h, limits.h, memory.h,
+  errno values, S_IS*, struct rusage, _IONBF/BUFSIZ.
+- The emulator loader capped the code segment at 2MB regardless of the
+  header; the debug build of the library needs more.  64MB.
+- Not a compiler bug, found by the same run: the a64 DBT had no
+  code-buffer overflow guard (DBT-16).  The shell is the first guest
+  large enough to fill it.
+
+Still open: `getenv` in this libc is a stub returning NULL (the shell
+warns that it cannot find the home directory; the clang build's libc
+answers from the host), and the preprocessor's reported line numbers
+drift.

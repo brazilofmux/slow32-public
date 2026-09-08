@@ -22,4 +22,9 @@ long strtol(char *nptr, char **endptr, int base);
 int rand(void);
 void srand(unsigned int seed);
 
+char *getenv(const char *name);
+long long strtoll(const char *s, char **end, int base);
+unsigned long long strtoull(const char *s, char **end, int base);
+double strtod(const char *s, char **end);
+double atof(const char *s);
 #endif

@@ -102,8 +102,96 @@ static int t_frontend_forms(void) {
     return 0;
 }
 
+/* 9. A stray `;` at file scope (SQLite's shell: SQLITE_EXTENSION_INIT1; with
+ *    the macro empty). */
+;
+#define EMPTY_INIT
+EMPTY_INIT;
+
+/* 8. A literal with bit 31 set is unsigned int; as a signed int it
+ *    sign-extended into the high word of a 64-bit flags field. */
+typedef unsigned long long u64;
+static int t_big_literal(void) {
+    u64 f = 0;
+    unsigned int u = 0xFFFFFFFF;
+    u64 g;
+    f |= 0x80000000;
+    if ((unsigned)(f >> 32) != 0) return 128;
+    g = 0x80000000;
+    if ((unsigned)(g >> 32) != 0 || (unsigned)g != 0x80000000) return 128;
+    g = u;
+    if ((unsigned)(g >> 32) != 0) return 128;
+    if (!(0x80000000 > 5) || !(0xFFFFFFFF > 0)) return 128;
+    if ((f & 0xFFFFFFFF80000000ULL) != 0x80000000ULL) return 128;
+    return 0;
+}
+
+
+/* 10. ~ and ! in constant expressions (shell.c: static long ctrlMask = ~0L) */
+static long t10_mask = ~0L;
+static int t10_c = ~0;
+static unsigned t10_u = ~0u;
+static int t10_n = !0;
+static int t10_z = !5;
+static long long t10_ll = ~0LL;
+static int t10_hi = !(1LL << 40);
+static int t10_case(int v) {
+    switch (v) {
+    case ~1: return 1;
+    case !0 + 1: return 2;
+    }
+    return 0;
+}
+static int t_const_unary(void) {
+    int ok = 1;
+    if (t10_mask != -1L) ok = 0;
+    if (t10_c != -1) ok = 0;
+    if (t10_u != 0xFFFFFFFFu) ok = 0;
+    if (t10_n != 1 || t10_z != 0) ok = 0;
+    if (t10_ll != -1LL) ok = 0;
+    if (t10_hi != 0) ok = 0;
+    if (t10_case(-2) != 1 || t10_case(2) != 2 || t10_case(3) != 0) ok = 0;
+    return ok ? 0 : 512;
+}
+
+
+/* 11. grouping parens around a file-scope declarator (shell.c: char *(azHelp[])) */
+static const char *(t11_help[]) = { "alpha", "beta", "gamma" };
+static int (t11_n) = 3;
+static int t_grouped_declarator(void) {
+    int ok = 1;
+    if (t11_n != 3) ok = 0;
+    if (sizeof(t11_help) / sizeof(t11_help[0]) != 3) ok = 0;
+    if (t11_help[2][0] != 'g') ok = 0;
+    return ok ? 0 : 1024;
+}
+
+
+/* 12. (*p->m)(args) through a function-pointer member (OP_Function's
+ * (*pCtx->pFunc->xSFunc)(pCtx, argc, argv)); the member is pointer-typed,
+ * so the "strip the no-op star" rule missed it and the call went through
+ * the code word the pointer named. */
+struct t12_F { int nArg; void (*xSFunc)(int, int); };
+struct t12_C { struct t12_F *pFunc; int argc; };
+static int t12_got;
+static void t12_fn(int a, int b) { t12_got = a * 100 + b; }
+static struct t12_F t12_f = { 2, t12_fn };
+static struct t12_C t12_c = { &t12_f, 7 };
+static int t_fnptr_member_deref(void) {
+    struct t12_C *p = &t12_c;
+    void (*g)(int, int) = t12_fn;
+    int ok = 1;
+    (*p->pFunc->xSFunc)(1, 2); if (t12_got != 102) ok = 0;
+    (p->pFunc->xSFunc)(3, 4);  if (t12_got != 304) ok = 0;
+    p->pFunc->xSFunc(5, 6);    if (t12_got != 506) ok = 0;
+    (*g)(7, 8);                if (t12_got != 708) ok = 0;
+    (*t12_c.pFunc->xSFunc)(9, 1); if (t12_got != 901) ok = 0;
+    return ok ? 0 : 2048;
+}
+
 int main(void) {
     int r = 0;
+    r |= t_big_literal();
     r |= t_unsigned_cmp_imm(5);
     r |= t_tentative();
     r |= t_if_continuation();
@@ -111,5 +199,8 @@ int main(void) {
     r |= t_stringize_lines();
     r |= t_reexpand(13);
     r |= t_frontend_forms();
+    r |= t_const_unary();
+    r |= t_grouped_declarator();
+    r |= t_fnptr_member_deref();
     return r;
 }

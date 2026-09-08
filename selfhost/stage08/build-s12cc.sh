@@ -223,6 +223,13 @@ compile_gen1 "$RUNTIME_DIR/printf_enhanced.c" "$WORKDIR/g1_pe.s" "$WORKDIR/g1_pe
 assemble_gen1 "$WORKDIR/g1_pe.s" "$LIBC_OUT_DIR/printf_enhanced.s32o" "$WORKDIR/g1_pe.as.log"
 compile_gen1 "$RUNTIME_DIR/convert.c" "$WORKDIR/g1_convert_rt.s" "$WORKDIR/g1_convert_rt.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_convert_rt.s" "$LIBC_OUT_DIR/convert_rt.s32o" "$WORKDIR/g1_convert_rt.as.log"
+# sscanf / strtoll / strtoull for SQLite's shell (stage08 compiles them as they are)
+compile_gen1 "$RUNTIME_DIR/sscanf.c" "$WORKDIR/g1_sscanf.s" "$WORKDIR/g1_sscanf.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_sscanf.s" "$LIBC_OUT_DIR/sscanf.s32o" "$WORKDIR/g1_sscanf.as.log"
+compile_gen1 "$RUNTIME_DIR/convert_extra.c" "$WORKDIR/g1_convert_extra.s" "$WORKDIR/g1_convert_extra.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_convert_extra.s" "$LIBC_OUT_DIR/convert_extra.s32o" "$WORKDIR/g1_convert_extra.as.log"
+compile_gen1 "$LIBC_DIR/strtod.c" "$WORKDIR/g1_strtod.s" "$WORKDIR/g1_strtod.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_strtod.s" "$LIBC_OUT_DIR/strtod.s32o" "$WORKDIR/g1_strtod.as.log"
 rm -f "$LIBC_OUT_DIR/printf_varargs.s32o"
 
 # Runtime asm objects are ABI-neutral (hand-written assembly)

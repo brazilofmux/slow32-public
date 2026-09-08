@@ -1,15 +1,7 @@
-/* dirent.h -- s12cc-compatible stub
- *
- * mmio_ring.h tracks DIR* per host fd; on AArch64 the directory I/O
- * path isn't wired up yet, so DIR is opaque and the helpers are
- * unimplemented (but link OK because nothing in dbt's code path
- * actually opens a directory).
- */
+/* dirent.h -- directory streams over the MMIO ring (libc/posix_more.c) */
 #ifndef _DIRENT_H
 #define _DIRENT_H
-
-typedef struct __dir_stream DIR;
-
+typedef struct __dir_stream { int dd_fd; int dd_loc; } DIR;
 struct dirent {
     long d_ino;
     long d_off;
@@ -17,9 +9,15 @@ struct dirent {
     unsigned char  d_type;
     char d_name[256];
 };
-
-DIR *opendir(char *name);
-int  closedir(DIR *dirp);
+#define DT_UNKNOWN 0
+#define DT_FIFO 1
+#define DT_CHR 2
+#define DT_DIR 4
+#define DT_BLK 6
+#define DT_REG 8
+#define DT_LNK 10
+#define DT_SOCK 12
+DIR *opendir(const char *name);
 struct dirent *readdir(DIR *dirp);
-
+int closedir(DIR *dirp);
 #endif

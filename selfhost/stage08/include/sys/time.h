@@ -25,4 +25,5 @@ int setitimer(int which, struct itimerval *new, struct itimerval *old);
 int getitimer(int which, struct itimerval *cur);
 int gettimeofday(struct timeval *tv, void *tz);
 
+int utimes(const char *path, const struct timeval times[2]);
 #endif

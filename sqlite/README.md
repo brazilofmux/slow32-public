@@ -40,6 +40,23 @@ users, and `isatty` says no, so it reads standard input as a script.
 `.mode box`, `.schema`, `.tables`, `explain query plan`, `pragma
 integrity_check` and the rest work as on the host.
 
+## Built by stage08
+
+The self-hosted compiler builds the same three artifacts from the same
+pristine sources:
+
+    ./build-stage08.sh    # out/stage08/{libsqlite3.s32a,sqlite3_test.s32x,sqlite3.s32x}
+
+It compiles under `slow32-dbt` (about a minute for the amalgamation),
+assembles and links with the host tools, and uses stage08's own libc and
+crt0 rather than the runtime's.  The smoke test and the shell print output
+byte-identical to the clang build's; a diff of the two shells over a script
+is the acceptance test (selfhost ISSUES-67 lists what it took: the
+amalgamation is the largest input stage08 has taken).  Two differences to
+know about: `-mlong-calls` everywhere, since stage08 has no -Os and the
+library is 1.2MB of code; and stage08's `getenv` is a stub, so the shell
+warns that it cannot find a home directory before it runs.
+
 ## What it found
 
 Bringing the shell up exposed a backend bug: a function with no locals that

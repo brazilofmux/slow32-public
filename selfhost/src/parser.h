@@ -397,6 +397,55 @@ static void p_skip_to_rparen(void) {
     }
 }
 
+
+/* Parameter types of a function-pointer declarator, entered just after
+ * its '('; consumes through the ')'.  Returns a base into ps_fptypes
+ * (ps_fp_store) with the count in *np_out, or -1 when the list is not
+ * a prototype.  Only the marshalling class matters to the consumer
+ * (sema's argument conversion), so declarators are reduced to base
+ * type plus pointer depth.  SQLite's xTruncate(sqlite3_file*,
+ * sqlite3_int64) received a literal 0 as one word without this. */
+static int ps_parse_fp_params(int *np_out) {
+    int ptys[64];
+    int np;
+    int ty;
+    np = 0;
+    *np_out = 0;
+    if (lex_tok == TK_RPAREN) { next(); return ps_fp_store(ptys, 0); }
+    while (lex_tok != TK_EOF) {
+        if (lex_tok == TK_ELLIPSIS) { next(); break; }
+        if (!is_type()) { p_skip_to_rparen(); return -1; }
+        ty = parse_type();
+        while (lex_tok == TK_STAR || lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT) {
+            if (lex_tok == TK_STAR) ty = ty + TY_PTR;
+            next();
+        }
+        if (lex_tok == TK_LPAREN) {
+            /* a function-pointer parameter: (*name)(...) -- a pointer */
+            next();
+            p_skip_to_rparen();
+            if (lex_tok == TK_LPAREN) { next(); p_skip_to_rparen(); }
+            ty = TY_INT + TY_PTR;
+        } else {
+            if (lex_tok == TK_IDENT) next();
+            while (lex_tok == TK_LBRACK) {
+                next();
+                while (lex_tok != TK_RBRACK && lex_tok != TK_EOF) next();
+                next();
+                ty = ty + TY_PTR;    /* an array parameter is a pointer */
+            }
+        }
+        if (np < 64) { ptys[np] = ty; np = np + 1; }
+        if (lex_tok == TK_COMMA) { next(); continue; }
+        break;
+    }
+    while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+    if (lex_tok == TK_RPAREN) next();
+    if (np == 1 && ptys[0] == TY_VOID) np = 0;
+    *np_out = np;
+    return ps_fp_store(ptys, np);
+}
+
 static void expect(int tok) {
     if (lex_tok != tok) {
         fdputs("s12cc:", 2);
@@ -723,6 +772,9 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
     }
 
     stm_name[stm_count] = strdup("");
+    stm_fpbase[stm_count] = -1;
+    stm_fpn[stm_count] = 0;
+    stm_isfp[stm_count] = 0;
     stm_type[stm_count] = nested_ty;
     stm_off[stm_count] = base_off;
     stm_is_arr[stm_count] = 0;
@@ -743,6 +795,9 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
                 return;
             }
             stm_name[stm_count] = strdup(stm_name[i]);
+            stm_fpbase[stm_count] = stm_fpbase[i];
+            stm_fpn[stm_count] = stm_fpn[i];
+            stm_isfp[stm_count] = stm_isfp[i];
             stm_type[stm_count] = stm_type[i];
             stm_off[stm_count] = base_off + stm_off[i];
             stm_is_arr[stm_count] = stm_is_arr[i];
@@ -1101,6 +1156,9 @@ static int parse_type(void) {
                         return TY_INT;
                     }
                     stm_name[stm_count] = strdup(lex_str);
+                    stm_fpbase[stm_count] = -1;
+                    stm_fpn[stm_count] = 0;
+                    stm_isfp[stm_count] = is_fn_ptr_member != 0;
                     next();
                     if (is_fn_ptr_member == 2) {
                         expect(TK_RPAREN);
@@ -1111,7 +1169,10 @@ static int parse_type(void) {
                         expect(TK_RPAREN);
                         if (lex_tok == TK_LPAREN) {
                             next();
-                            p_skip_to_rparen();
+                            if (is_fn_ptr_member == 1)
+                                stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
+                            else
+                                p_skip_to_rparen();
                         } else if (lex_tok == TK_LBRACK) {
                             /* Pointer-to-array member: T (*name)[N] — a
                              * 4-byte pointer whose [i] selects row i
@@ -1388,6 +1449,9 @@ static int parse_type(void) {
                         return TY_INT;
                     }
                     stm_name[stm_count] = strdup(lex_str);
+                    stm_fpbase[stm_count] = -1;
+                    stm_fpn[stm_count] = 0;
+                    stm_isfp[stm_count] = is_fn_ptr_member != 0;
                     next();
                     if (is_fn_ptr_member == 2) {
                         expect(TK_RPAREN);
@@ -1398,7 +1462,10 @@ static int parse_type(void) {
                         expect(TK_RPAREN);
                         if (lex_tok == TK_LPAREN) {
                             next();
-                            p_skip_to_rparen();
+                            if (is_fn_ptr_member == 1)
+                                stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
+                            else
+                                p_skip_to_rparen();
                         } else if (lex_tok == TK_LBRACK) {
                             /* Pointer-to-array member: T (*name)[N] — a
                              * 4-byte pointer whose [i] selects row i
@@ -1893,10 +1960,22 @@ static int parse_const_unary(void) {
         next();
         return parse_const_unary();
     }
-    if (lex_tok == TK_PLUS) {
-        /* unary plus (SQLite: sgn = +1) */
+    if (lex_tok == TK_TILDE) {
+        /* ~0L (SQLite shell's ctrlMask); invert the high word too */
+        int nv;
         next();
-        return parse_const_unary();
+        nv = parse_const_unary();
+        if (pc_wide) pc_hi = ~pc_hi;
+        return ~nv;
+    }
+    if (lex_tok == TK_BANG) {
+        int nv;
+        next();
+        nv = parse_const_unary();
+        if (pc_wide && pc_hi != 0) nv = 1;
+        pc_wide = 0;
+        pc_hi = 0;
+        return nv == 0;
     }
     if (lex_tok == TK_MINUS) {
         int nv;
@@ -2797,7 +2876,7 @@ static void parse_global_init_value(int ty, int gidx) {
 }
 
 static int parse_string_literal(void) {
-    int idxs[64];
+    static int idxs[1024];   /* was a 64-entry local: SQLite's shell builds one SQL statement from hundreds of adjacent literals; static because 4KB per frame of the recursive expression parser overran the stack */
     int nidx;
     int total;
     int start;
@@ -2808,7 +2887,7 @@ static int parse_string_literal(void) {
     nidx = 0;
     total = 0;
     while (lex_tok == TK_STRING) {
-        if (nidx >= 64) p_error("too many adjacent string literals");
+        if (nidx >= 1024) p_error("too many adjacent string literals");
         idxs[nidx] = lex_val;
         total = total + lex_str_len[lex_val];
         nidx = nidx + 1;
@@ -3031,7 +3110,19 @@ static Node *parse_primary(void) {
             if (v_u) t = t | TY_UNSIGNED;
             return nd_num64(v, v_hi, t);
         }
-        return nd_num(v);
+        {
+            Node *nn;
+            nn = nd_num(v);
+            /* A literal with bit 31 set has no int representation: C
+             * makes a hex or octal one unsigned int (a decimal one long,
+             * which the same typing serves here).  As a signed int it
+             * sign-extended when widened: SQLite's default
+             * `db->flags |= SQLITE_EnableView` (0x80000000) filled the
+             * high word of the 64-bit flags and set CorruptRdOnly, and
+             * every statement then failed as "malformed". */
+            if (v_u || v < 0) nn->ty = TY_INT | TY_UNSIGNED;
+            return nn;
+        }
     }
 
     /* Float/double literal */
@@ -3341,8 +3432,13 @@ static Node *parse_postfix(void) {
              * operand is a genuine element load (wipes[i] loads the
              * slot; stripping it called the slot's ADDRESS). */
             while (n->kind == ND_UNARY && n->op == TK_STAR &&
-                   n->lhs != NULL && !ty_is_ptr(n->lhs->ty))
-                n = n->lhs;
+                   n->lhs != NULL &&
+                   (!ty_is_ptr(n->lhs->ty) ||
+                    (n->lhs->kind == ND_MEMBER && n->lhs->is_fnptr)))
+                n = n->lhs;   /* a fn-ptr MEMBER is typed as a pointer;
+                               * (*pCtx->pFunc->xSFunc)(..) (OP_Function)
+                               * loaded the code word the pointer named
+                               * and jumped to it */
             n = nd_call_ptr(n, ahead, anargs);
         } else if (lex_tok == TK_LBRACK) {
             next();
@@ -3389,6 +3485,9 @@ static Node *parse_postfix(void) {
             }
             n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
                           stm_bit_off[mi], stm_bit_width[mi]);
+            n->offset = stm_fpbase[mi];
+            n->nparams = stm_fpn[mi];
+            n->is_fnptr = stm_isfp[mi];
             n->arr_cols = stm_arr_cols[mi];
         } else if (lex_tok == TK_ARROW) {
             next();
@@ -3413,6 +3512,9 @@ static Node *parse_postfix(void) {
             }
             n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
                           stm_bit_off[mi], stm_bit_width[mi]);
+            n->offset = stm_fpbase[mi];
+            n->nparams = stm_fpn[mi];
+            n->is_fnptr = stm_isfp[mi];
             n->arr_cols = stm_arr_cols[mi];
         } else if (lex_tok == TK_INC) {
             next();
@@ -5085,6 +5187,32 @@ static Node *parse_top_decl(void) {
     fp_count = -1;
     if (lex_tok == TK_LPAREN) {
         next();
+        if (lex_tok == TK_IDENT) {
+            /* A grouping paren, not a function pointer: SQLite's shell
+             * declares `static const char *(azHelp[]) = {..}`, which is
+             * `char *azHelp[]`.  The lexer has no pushback, but the
+             * preprocessor already splices lex_src in place, so blank the
+             * matching ')' in the buffer and fall into the plain path with
+             * the name as the current token.  (name)(params) -- a function
+             * with a parenthesised name -- is left to the fn-ptr path. */
+            char *q;
+            int depth;
+            q = lex_rp;
+            while (*q == 32 || *q == 9 || *q == 10) q = q + 1;
+            if (*q == 91 || *q == 41) {          /* '[' or ')' */
+                depth = 0;
+                while (*q) {
+                    if (*q == 40 || *q == 91) depth = depth + 1;
+                    else if (*q == 93) depth = depth - 1;
+                    else if (*q == 41) {
+                        if (depth == 0) { *q = 32; break; }
+                        depth = depth - 1;
+                    }
+                    q = q + 1;
+                }
+                goto plain_name;
+            }
+        }
         while (lex_tok == TK_STAR) next();   /* (**name)(...) */
         skip_decl_qualifiers();              /* (*const name)(...) */
         if (lex_tok != TK_IDENT) {
@@ -5158,6 +5286,7 @@ static Node *parse_top_decl(void) {
     }
 
     /* Name */
+plain_name:
     if (lex_tok != TK_IDENT) {
         p_error("expected name in declaration");
         return NULL;
@@ -5697,6 +5826,9 @@ static Node *parse_program(void) {
     fhead = NULL;
     ftail = NULL;
     while (lex_tok != TK_EOF) {
+        /* A stray `;` at file scope: SQLite's shell has `SQLITE_EXTENSION_INIT1;`
+         * with the macro empty.  Every compiler accepts it. */
+        if (lex_tok == TK_SEMI) { next(); continue; }
         f = parse_top_decl();
         if (f) {
             if (fhead == NULL) {

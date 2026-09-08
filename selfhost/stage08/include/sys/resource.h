@@ -9,6 +9,7 @@
  */
 #ifndef _SYS_RESOURCE_H
 #define _SYS_RESOURCE_H
+#include <sys/time.h>
 
 /* Resource codes — match the Linux ABI. */
 #define RLIMIT_CPU     0
@@ -36,4 +37,10 @@ struct rlimit {
 int getrlimit(int resource, struct rlimit *rlim);
 int setrlimit(int resource, struct rlimit *rlim);
 
+#define RUSAGE_SELF 0
+struct rusage {
+    struct timeval ru_utime;    /* user CPU time used */
+    struct timeval ru_stime;    /* system CPU time used */
+};
+int getrusage(int who, struct rusage *r);
 #endif

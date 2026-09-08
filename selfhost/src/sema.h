@@ -164,7 +164,35 @@ static void sema_expr(Node *n) {
         }
         return;
     }
-    /* ND_CALL_PTR: stays TY_INT (no return type info for indirect calls) */
+    /* ND_CALL_PTR through a function-pointer struct member: the member
+     * carries its declared parameter types (stm_fpbase / stm_fpn, from
+     * ps_parse_fp_params), so the same conversions apply.  SQLite's
+     * pMethods->xTruncate(pFile, 0) passed the sqlite3_int64 as one
+     * word and the callee read the high register as it lay; memdb then
+     * saw a "grow" and reported the database malformed. */
+    if (n->kind == ND_CALL_PTR && n->lhs && n->lhs->kind == ND_MEMBER && n->lhs->offset >= 0) {
+        idx = 0;
+        prev = NULL;
+        a = n->args;
+        while (a) {
+            pt = (idx < n->lhs->nparams) ? ps_fptypes[n->lhs->offset + idx] : -1;
+            if (pt >= 0 &&
+                sema_arg_class(a->ty) != sema_arg_class(pt) &&
+                sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
+                cast = nd_cast(a, pt);
+                cast->next = a->next;
+                a->next = NULL;
+                if (prev) prev->next = cast;
+                else n->args = cast;
+                a = cast;
+            }
+            prev = a;
+            idx = idx + 1;
+            a = a->next;
+        }
+        return;
+    }
+    /* ND_CALL_PTR otherwise: stays TY_INT (no return type info) */
     /* ND_CAST: preserve parser-assigned type */
     /* ND_MEMBER: preserve member type */
 }

@@ -20,6 +20,16 @@ void *memcpy(void *d, const void *s, unsigned int n);
 #define MMIO_OP_ACCESS      0x25
 #define MMIO_OP_GETTIME     0x30
 #define MMIO_OP_GETTZ       0x35
+#define MMIO_OP_STAT        0x0A
+#define MMIO_OP_MKDIR       0x22
+#define MMIO_OP_LSTAT       0x24
+#define MMIO_OP_CHDIR       0x26
+#define MMIO_OP_OPENDIR     0x28
+#define MMIO_OP_READDIR     0x29
+#define MMIO_OP_CLOSEDIR    0x2A
+#define MMIO_OP_GETENV      0x64
+#define MMIO_STATUS_EOF     (-3)
+#define MMIO_STAT_PATH      (-1)
 
 int access(const char *path, int mode) {
     unsigned int len;
@@ -254,4 +264,121 @@ void __assert_fail(const char *expr, const char *file, int line) {
     af_puts(num + i);
     af_puts(")\n");
     abort();
+}
+
+/* --- getrusage: no per-process accounting on the host side; zero
+ * times (SQLite's shell .timer shows 0.000). --- */
+struct pm_timeval { long tv_sec; long tv_usec; };
+struct pm_rusage { struct pm_timeval ru_utime; struct pm_timeval ru_stime; };
+int getrusage(int who, struct pm_rusage *r) {
+    (void)who;
+    if (r) {
+        r->ru_utime.tv_sec = 0; r->ru_utime.tv_usec = 0;
+        r->ru_stime.tv_sec = 0; r->ru_stime.tv_usec = 0;
+    }
+    return 0;
+}
+
+/* --- stat, lstat, mkdir, chdir (ported from runtime/fs_mmio.c,
+ * stat_mmio.c): the path goes in the data buffer, the reply is the
+ * stat record struct stat mirrors. --- */
+
+void *malloc(unsigned int n);
+void free(void *p);
+
+static int pm_path_request(int op, const char *path, int arg) {
+    unsigned int len;
+    if (path == 0) return -1;
+    len = strlen(path) + 1;
+    if (len > MMIO_DATA_CAPACITY) return -1;
+    memcpy(MMIO_DATA, path, len);
+    return s32_mmio_request(op, len, 0, arg);
+}
+
+int stat(const char *path, void *st) {
+    if (st == 0 || pm_path_request(MMIO_OP_STAT, path, MMIO_STAT_PATH) != 0) return -1;
+    memcpy(st, MMIO_DATA, 112);
+    return 0;
+}
+
+int lstat(const char *path, void *st) {
+    if (st == 0 || pm_path_request(MMIO_OP_LSTAT, path, MMIO_STAT_PATH) != 0) return -1;
+    memcpy(st, MMIO_DATA, 112);
+    return 0;
+}
+
+int mkdir(const char *path, unsigned int mode) {
+    return pm_path_request(MMIO_OP_MKDIR, path, mode) == 0 ? 0 : -1;
+}
+
+int chdir(const char *path) {
+    return pm_path_request(MMIO_OP_CHDIR, path, 0) == 0 ? 0 : -1;
+}
+
+int fsync(int fd) { (void)fd; return 0; }               /* the host writes through */
+int utimes(const char *path, const void *times) { (void)path; (void)times; return 0; }
+
+/* --- directory streams (runtime/dirent_mmio.c) --- */
+struct pm_dir { int dd_fd; int dd_loc; };
+struct pm_dirent { long d_ino; long d_off; unsigned short d_reclen; unsigned char d_type; char d_name[256]; };
+static struct pm_dirent pm_cur_dirent;
+
+struct pm_dir *opendir(const char *name) {
+    int r;
+    struct pm_dir *d;
+    r = pm_path_request(MMIO_OP_OPENDIR, name, 0);
+    if (r == -1) return 0;
+    d = (struct pm_dir *)malloc(sizeof(struct pm_dir));
+    if (d == 0) { s32_mmio_request(MMIO_OP_CLOSEDIR, 0, 0, r); return 0; }
+    d->dd_fd = r;
+    d->dd_loc = 0;
+    return d;
+}
+
+struct pm_dirent *readdir(struct pm_dir *d) {
+    int r;
+    unsigned int *w;
+    if (d == 0 || d->dd_fd < 0) return 0;
+    r = s32_mmio_request(MMIO_OP_READDIR, 272, 0, d->dd_fd);
+    if (r != 0) return 0;              /* EOF or error */
+    w = (unsigned int *)MMIO_DATA;     /* d_ino lo/hi, d_type, d_namlen, d_name[256] */
+    pm_cur_dirent.d_ino = (long)w[0];
+    pm_cur_dirent.d_off = d->dd_loc;
+    pm_cur_dirent.d_reclen = sizeof(struct pm_dirent);
+    pm_cur_dirent.d_type = (unsigned char)w[2];
+    memcpy(pm_cur_dirent.d_name, (char *)MMIO_DATA + 16, 256);
+    pm_cur_dirent.d_name[255] = 0;
+    d->dd_loc = d->dd_loc + 1;
+    return &pm_cur_dirent;
+}
+
+int closedir(struct pm_dir *d) {
+    int r;
+    if (d == 0) return -1;
+    r = s32_mmio_request(MMIO_OP_CLOSEDIR, 0, 0, d->dd_fd);
+    free(d);
+    return r == 0 ? 0 : -1;
+}
+
+/* gettimeofday over the same GETTIME request as time(); the shell's
+ * .timer uses it.  tz is ignored (SQLite passes 0). */
+struct pm_timeval { long tv_sec; long tv_usec; };
+int gettimeofday(struct pm_timeval *tv, void *tz) {
+    unsigned int *p;
+    (void)tz;
+    if (s32_mmio_request(MMIO_OP_GETTIME, 16, 0, 0) == -1) return -1;
+    p = (unsigned int *)MMIO_DATA;
+    if (tv) {
+        tv->tv_sec = (long)p[0];
+        tv->tv_usec = (long)(p[2] / 1000u);
+    }
+    return 0;
+}
+
+/* signal: no signals are ever delivered on SLOW-32; accept the handler
+ * (the shell installs one for SIGINT) and report the previous as default. */
+typedef void (*pm_sighandler)(int);
+pm_sighandler signal(int sig, pm_sighandler fn) {
+    (void)sig; (void)fn;
+    return (pm_sighandler)0;
 }

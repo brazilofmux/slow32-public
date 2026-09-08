@@ -204,6 +204,9 @@ int main(int argc, char **argv) {
                     k = k + 1;
                 }
             }
+        } else if (argv[argi][0] == 45 && argv[argi][1] == 100 && argv[argi][2] == 104 &&
+                   argv[argi][3] == 105 && argv[argi][4] == 114 && argv[argi][5] == 61) {
+            hd_fn = argv[argi] + 6;     /* -dhir=NAME */
         } else if (strcmp(argv[argi], "-mlong-calls") == 0) {
             cg_long_calls = 1;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 100 && argv[argi][2] == 0) {

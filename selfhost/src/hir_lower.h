@@ -2914,6 +2914,28 @@ static int hl_expr(Node *n) {
 
 /* --- Statement lowering --- */
 
+
+/* Register every case/default label reachable in this statement list
+ * without crossing into an inner switch (which owns its own labels).
+ * Same traversal order as hl_stmt: a statement's body, then its else. */
+static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
+    int sw_n;
+    while (cs) {
+        if (cs->kind == ND_CASE) {
+            sw_n = hl_sw_count[sw_d];
+            hl_sw_val[sw_b + sw_n] = cs->val;
+            hl_sw_blk[sw_b + sw_n] = hir_new_block();
+            hl_sw_count[sw_d] = sw_n + 1;
+        } else if (cs->kind == ND_DEFAULT) {
+            hl_sw_def[sw_d] = hir_new_block();
+        } else if (cs->kind != ND_SWITCH) {
+            if (cs->body) hl_sw_prescan(cs->body, sw_d, sw_b);
+            if (cs->els) hl_sw_prescan(cs->els, sw_d, sw_b);
+        }
+        cs = cs->next;
+    }
+}
+
 static void hl_stmt(Node *n) {
     int cv;
     int lv;
@@ -3148,20 +3170,13 @@ static void hl_stmt(Node *n) {
         hl_sw_count[sw_d] = 0;
         hl_sw_def[sw_d] = -1;
 
-        /* Pre-scan body for case/default, allocate blocks */
+        /* Pre-scan body for case/default, allocate blocks.  Labels can
+         * sit at any statement depth below the switch (SQLite's
+         * OP_OpenRead/OP_OpenWrite are inside OP_ReopenIdx's braces, which
+         * fall into them; Duff's device puts them in a do-while), so the
+         * scan descends, in the order hl_stmt will visit. */
         if (n->body && n->body->kind == ND_BLOCK) {
-            cs = n->body->body;
-            while (cs) {
-                if (cs->kind == ND_CASE) {
-                    sw_n = hl_sw_count[sw_d];
-                    hl_sw_val[sw_b + sw_n] = cs->val;
-                    hl_sw_blk[sw_b + sw_n] = hir_new_block();
-                    hl_sw_count[sw_d] = sw_n + 1;
-                } else if (cs->kind == ND_DEFAULT) {
-                    hl_sw_def[sw_d] = hir_new_block();
-                }
-                cs = cs->next;
-            }
+            hl_sw_prescan(n->body->body, sw_d, sw_b);
         }
 
         brk_blk = hir_new_block();
