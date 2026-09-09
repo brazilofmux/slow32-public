@@ -62,6 +62,8 @@ static void sema_expr(Node *n) {
     int rty;
     int idx;
     int pt;
+    int fpbase;
+    int fpn;
 
     if (!n) return;
 
@@ -164,33 +166,41 @@ static void sema_expr(Node *n) {
         }
         return;
     }
-    /* ND_CALL_PTR through a function-pointer struct member: the member
-     * carries its declared parameter types (stm_fpbase / stm_fpn, from
-     * ps_parse_fp_params), so the same conversions apply.  SQLite's
-     * pMethods->xTruncate(pFile, 0) passed the sqlite3_int64 as one
-     * word and the callee read the high register as it lay; memdb then
-     * saw a "grow" and reported the database malformed. */
-    if (n->kind == ND_CALL_PTR && n->lhs && n->lhs->kind == ND_MEMBER && n->lhs->offset >= 0) {
-        idx = 0;
-        prev = NULL;
-        a = n->args;
-        while (a) {
-            pt = (idx < n->lhs->nparams) ? ps_fptypes[n->lhs->offset + idx] : -1;
-            if (pt >= 0 &&
-                sema_arg_class(a->ty) != sema_arg_class(pt) &&
-                sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
-                cast = nd_cast(a, pt);
-                cast->next = a->next;
-                a->next = NULL;
-                if (prev) prev->next = cast;
-                else n->args = cast;
-                a = cast;
-            }
-            prev = a;
-            idx = idx + 1;
-            a = a->next;
+    /* ND_CALL_PTR: convert args from a recorded signature (fpbase/nparams).
+     * Members store those on the ND_MEMBER node; locals/typedefs/globals
+     * hang them on the side tables (GitHub issue 41). */
+    if (n->kind == ND_CALL_PTR && n->lhs) {
+        fpbase = -1;
+        fpn = 0;
+        if (n->lhs->kind == ND_MEMBER && n->lhs->offset >= 0) {
+            fpbase = n->lhs->offset;
+            fpn = n->lhs->nparams;
+        } else if (n->lhs->kind == ND_VAR && n->lhs->is_fnptr) {
+            fpbase = n->lhs->val;
+            fpn = n->lhs->nparams;
         }
-        return;
+        if (fpbase >= 0) {
+            idx = 0;
+            prev = NULL;
+            a = n->args;
+            while (a) {
+                pt = (idx < fpn) ? ps_fptypes[fpbase + idx] : -1;
+                if (pt >= 0 &&
+                    sema_arg_class(a->ty) != sema_arg_class(pt) &&
+                    sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
+                    cast = nd_cast(a, pt);
+                    cast->next = a->next;
+                    a->next = NULL;
+                    if (prev) prev->next = cast;
+                    else n->args = cast;
+                    a = cast;
+                }
+                prev = a;
+                idx = idx + 1;
+                a = a->next;
+            }
+            return;
+        }
     }
     /* ND_CALL_PTR otherwise: stays TY_INT (no return type info) */
     /* ND_CAST: preserve parser-assigned type */

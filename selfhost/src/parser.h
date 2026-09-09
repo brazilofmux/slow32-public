@@ -213,6 +213,8 @@ static int   ps_lcols[P_MAX_LOCALS];  /* 2D arrays: last-dim count (0 = 1D) */
 static int   ps_lsize[P_MAX_LOCALS];  /* total byte size (arrays: elem_sz*count) */
 static int   ps_lstatic[P_MAX_LOCALS]; /* 1 = static local, 0 = normal */
 static char *ps_lsname[P_MAX_LOCALS];  /* mangled name (static locals only) */
+static int   ps_lfpbase[P_MAX_LOCALS]; /* function-pointer local: base into ps_fptypes, -1 = none */
+static int   ps_lfpn[P_MAX_LOCALS];
 static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
 static int   ps_nparams;              /* params in current func */
@@ -231,6 +233,8 @@ static int   ps_glocal[P_MAX_GLOBALS]; /* 1 = static local (suppress .global) */
 static int   ps_gextern[P_MAX_GLOBALS]; /* 1 = declaration only, no storage */
 static int   ps_gcols[P_MAX_GLOBALS];   /* 2D arrays: last-dim count (0 = 1D) */
 static int   ps_ghasinit[P_MAX_GLOBALS]; /* 1 = completed initializer (incl. = 0) */
+static int   ps_gfpbase[P_MAX_GLOBALS]; /* function-pointer global: base into ps_fptypes */
+static int   ps_gfpn[P_MAX_GLOBALS];
 static int   ps_nglobals;
 
 /* Static local variable state */
@@ -275,12 +279,16 @@ static int   ps_nconsts;
 static char *ps_tdname[PS_MAX_TYPEDEFS];
 static int   ps_tdtype[PS_MAX_TYPEDEFS];
 static int   ps_tdarr[PS_MAX_TYPEDEFS];  /* array typedefs: element count (0 = scalar) */
+static int   ps_tdfpbase[PS_MAX_TYPEDEFS]; /* function-pointer typedef: ps_fptypes base */
+static int   ps_tdfpn[PS_MAX_TYPEDEFS];
 static int   ps_ntypedefs;
 /* Set by parse_type: element count when the type came from an array
  * typedef (typedef byte sha1_digest_t[20]); a declaration of that
  * type must create a real array, not the decayed pointer (SHA1_Final
  * wrote its digest through an uninitialized 4-byte 'pointer'). */
 static int   ps_type_arrcount;
+static int   ps_type_fpbase;  /* function-pointer typedef: signature of this parse_type */
+static int   ps_type_fpn;
 
 /* Function signature table (return type, variadic flag, and declared
  * parameter types).  Param types drive implicit argument conversion at
@@ -550,6 +558,8 @@ static void add_typedef(char *name, int ty) {
     ps_tdname[ps_ntypedefs] = strdup(name);
     ps_tdtype[ps_ntypedefs] = ty;
     ps_tdarr[ps_ntypedefs] = 0;
+    ps_tdfpbase[ps_ntypedefs] = -1;
+    ps_tdfpn[ps_ntypedefs] = 0;
     ps_ntypedefs = ps_ntypedefs + 1;
 }
 
@@ -952,6 +962,8 @@ static int parse_type(void) {
     mtdac = 0;
     (void)mtdac;
     ps_type_arrcount = 0;
+    ps_type_fpbase = -1;
+    ps_type_fpn = 0;
     saw_signed = 0;
     /* Skip const/volatile/signed/restrict qualifiers */
     while (1) {
@@ -1629,6 +1641,8 @@ static int parse_type(void) {
         if (tdi < 0) { p_error("expected type"); return TY_INT; }
         ty = ps_tdtype[tdi];
         ps_type_arrcount = ps_tdarr[tdi];
+        ps_type_fpbase = ps_tdfpbase[tdi];
+        ps_type_fpn = ps_tdfpn[tdi];
         next();
     }
     else if (saw_signed) { ty = TY_INT; }   /* bare `signed`, as in (signed)sizeof(unsigned) */
@@ -1636,7 +1650,7 @@ static int parse_type(void) {
     /* qualifiers after the base type: char const *z (SQLite) */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || is_gnu_qual_ident()) next();
     while (lex_tok == TK_STAR) {
-        ty = ty + TY_PTR; ps_type_arrcount = 0; next();
+        ty = ty + TY_PTR; ps_type_arrcount = 0; ps_type_fpbase = -1; next();
         while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT || is_gnu_qual_ident()) next();   /* u8 * const p */
     }
     return ty;
@@ -1686,6 +1700,12 @@ static int add_local(char *name, int ty) {
     ps_lsize[idx] = sz;
     ps_lstatic[idx] = 0;
     ps_lsname[idx] = NULL;
+    ps_lfpbase[idx] = -1;
+    ps_lfpn[idx] = 0;
+    if (ps_type_fpbase >= 0) {
+        ps_lfpbase[idx] = ps_type_fpbase;
+        ps_lfpn[idx] = ps_type_fpn;
+    }
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
 }
@@ -1720,6 +1740,8 @@ static int add_local_array(char *name, int elem_ty, int count) {
      * became D_Display.menuactivestate.1). */
     ps_lstatic[idx] = 0;
     ps_lsname[idx] = NULL;
+    ps_lfpbase[idx] = -1;
+    ps_lfpn[idx] = 0;
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
 }
@@ -1745,6 +1767,12 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gextern[idx] = 0;
     ps_gcols[idx] = 0;
     ps_ghasinit[idx] = 0;
+    ps_gfpbase[idx] = -1;
+    ps_gfpn[idx] = 0;
+    if (ps_type_fpbase >= 0) {
+        ps_gfpbase[idx] = ps_type_fpbase;
+        ps_gfpn[idx] = ps_type_fpn;
+    }
     ps_nglobals = ps_nglobals + 1;
     return idx;
 }
@@ -3430,12 +3458,19 @@ static Node *parse_primary(void) {
                 n->is_local = 0;
                 n->is_array = ps_larr[li];
                 n->arr_cols = ps_lcols[li];
-                return n;
+            } else {
+                n = nd_var(nm, ps_loff[li], ps_ltype[li]);
+                n->is_local = 1;
+                n->is_array = ps_larr[li];
+                n->arr_cols = ps_lcols[li];
             }
-            n = nd_var(nm, ps_loff[li], ps_ltype[li]);
-            n->is_local = 1;
-            n->is_array = ps_larr[li];
-            n->arr_cols = ps_lcols[li];
+            /* Locals are popped before sema, so the signature has to
+             * live on the node (GitHub issue 41). val is unused on VAR. */
+            if (ps_lfpbase[li] >= 0) {
+                n->is_fnptr = 1;
+                n->val = ps_lfpbase[li];
+                n->nparams = ps_lfpn[li];
+            }
             return n;
         }
 
@@ -3446,6 +3481,11 @@ static Node *parse_primary(void) {
             n->is_local = 0;
             n->is_array = (ps_gsize[gi] > 0) ? 1 : 0;
             n->arr_cols = ps_gcols[gi];
+            if (ps_gfpbase[gi] >= 0) {
+                n->is_fnptr = 1;
+                n->val = ps_gfpbase[gi];
+                n->nparams = ps_gfpn[gi];
+            }
             return n;
         }
 
@@ -4618,11 +4658,21 @@ static void parse_typedef_decl(void) {
             memcpy(nm, lex_str, lex_slen + 1);
             next();
             expect(TK_RPAREN);
-            /* Skip argument list */
-            expect(TK_LPAREN);
-            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
-            expect(TK_RPAREN);
-            add_typedef(nm, TY_INT);  /* treat function pointers as int-sized */
+            /* Record the parameter list so a call through this typedef
+             * converts i64 args (GitHub issue 41). */
+            {
+                int tfpb;
+                int tfpn;
+                tfpb = -1;
+                tfpn = 0;
+                if (lex_tok == TK_LPAREN) {
+                    next();
+                    tfpb = ps_parse_fp_params(&tfpn);
+                }
+                add_typedef(nm, TY_INT);
+                ps_tdfpbase[ps_ntypedefs - 1] = tfpb;
+                ps_tdfpn[ps_ntypedefs - 1] = tfpn;
+            }
             expect(TK_SEMI);
             return;
         }
@@ -5014,6 +5064,8 @@ static Node *parse_stmt(void) {
                         ps_lcols[sl_li] = 0;
                         ps_lstatic[sl_li] = 1;
                         ps_lsname[sl_li] = strdup(ps_sl_buf);
+                        ps_lfpbase[sl_li] = -1;
+                        ps_lfpn[sl_li] = 0;
                         ps_nlocals = ps_nlocals + 1;
                         return nd_block(NULL);
                     }
@@ -5082,17 +5134,27 @@ static Node *parse_stmt(void) {
                 ps_lcols[sl_li] = 0;
                 ps_lstatic[sl_li] = 1;
                 ps_lsname[sl_li] = strdup(ps_sl_buf);
+                ps_lfpbase[sl_li] = -1;
+                ps_lfpn[sl_li] = 0;
                 ps_nlocals = ps_nlocals + 1;
                 return nd_block(NULL);
             }
             expect(TK_RPAREN);
-            /* Skip parameter list */
-            if (lex_tok == TK_LPAREN) {
-                next();
-                while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
-                expect(TK_RPAREN);
+            /* Record the parameter list so a call through this local
+             * converts i64 args (GitHub issue 41). */
+            {
+                int lfpb;
+                int lfpn;
+                lfpb = -1;
+                lfpn = 0;
+                if (lex_tok == TK_LPAREN) {
+                    next();
+                    lfpb = ps_parse_fp_params(&lfpn);
+                }
+                off = add_local(nm, TY_INT);
+                ps_lfpbase[ps_nlocals - 1] = lfpb;
+                ps_lfpn[ps_nlocals - 1] = lfpn;
             }
-            off = add_local(nm, TY_INT);
             if (lex_tok == TK_ASSIGN) {
                 next();
                 n = nd_assign(nd_var(nm, off, TY_INT), parse_assign());
@@ -5201,6 +5263,12 @@ local_plain_name:
                 ps_larr[sl_li] = 0;
                 ps_lstatic[sl_li] = 1;
                 ps_lsname[sl_li] = strdup(ps_sl_buf);
+                ps_lfpbase[sl_li] = -1;
+                ps_lfpn[sl_li] = 0;
+                if (ps_type_fpbase >= 0) {
+                    ps_lfpbase[sl_li] = ps_type_fpbase;
+                    ps_lfpn[sl_li] = ps_type_fpn;
+                }
                 ps_nlocals = ps_nlocals + 1;
                 if (lex_tok != TK_COMMA) break;
                 next();
@@ -5316,6 +5384,8 @@ local_plain_name:
             ps_lcols[sl_li] = lcols2;
             ps_lstatic[sl_li] = 1;
             ps_lsname[sl_li] = strdup(ps_sl_buf);
+            ps_lfpbase[sl_li] = -1;
+            ps_lfpn[sl_li] = 0;
             ps_nlocals = ps_nlocals + 1;
             return nd_block(NULL);
         }
@@ -5549,11 +5619,12 @@ static Node *parse_top_decl(void) {
         }
         expect(TK_RPAREN);
         fp_has_params = 0;
+        fp_n = 0;
+        fp_tys[0] = -1;
         if (lex_tok == TK_LPAREN) {
             fp_has_params = 1;
             next();
-            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
-            expect(TK_RPAREN);
+            fp_tys[0] = ps_parse_fp_params(&fp_n);
         }
         skip_gnu_decl_suffixes();
         /* T (*name[N]) with no (params) is T *name[N], not an array of
@@ -5594,6 +5665,8 @@ static Node *parse_top_decl(void) {
         if (is_extern) idx = add_extern_global(nm, TY_INT, 0);
         else           idx = add_defined_global(nm, TY_INT, 0);
         if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
+        ps_gfpbase[idx] = fp_tys[0];
+        ps_gfpn[idx] = fp_n;
         if (lex_tok == TK_ASSIGN) {
             /* fn-ptr global initializer: NULL/0 or a function name
              * (sbasic: env_deftype_hook = NULL) */
