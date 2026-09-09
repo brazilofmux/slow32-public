@@ -594,46 +594,64 @@ static int bg_is_sym(int k) {
 }
 
 static char bg_fdone[HIR_MAX_INST];   /* bg_foff_one: computed this function */
+static int  bg_walk[HIR_MAX_INST];    /* explicit stack: operand chains are not host recursion (GitHub issue 56) */
 
 /* Frame offset and symbol base of one instruction; an addi's operand
  * first, since the SSA pass appends allocas after their users. */
-static void bg_foff_one(int i) {
+static void bg_foff_one(int start) {
+    int sp;
+    int i;
     int k;
     int s1;
     int sk;
-    if (bg_fdone[i]) return;
-    bg_fdone[i] = 1;
-    k = h_kind[i];
-    s1 = h_src1[i];
-    if (k == HI_ADDI && s1 >= 0 && s1 < h_ninst && !bg_fdone[s1]) bg_foff_one(s1);
-    if (k == HI_ALLOCA) {
-        bg_foff[i] = h_val[i];
-    } else if (k == HI_ADDI) {
-        sk = -1;
-        if (s1 >= 0) sk = h_kind[s1];
-        if (sk == HI_ALLOCA || sk == HI_ADDI) {
-            bg_foff[i] = bg_foff[s1] + h_val[i];
+    if (bg_fdone[start]) return;
+    sp = 0;
+    bg_walk[sp] = start;
+    sp = sp + 1;
+    while (sp > 0) {
+        i = bg_walk[sp - 1];
+        if (!bg_fdone[i]) {
+            bg_fdone[i] = 1;
+            k = h_kind[i];
+            s1 = h_src1[i];
+            if (k == HI_ADDI && s1 >= 0 && s1 < h_ninst && !bg_fdone[s1]) {
+                bg_walk[sp] = s1;
+                sp = sp + 1;
+                continue;
+            }
+        }
+        k = h_kind[i];
+        s1 = h_src1[i];
+        if (k == HI_ALLOCA) {
+            bg_foff[i] = h_val[i];
+        } else if (k == HI_ADDI) {
+            sk = -1;
+            if (s1 >= 0) sk = h_kind[s1];
+            if (sk == HI_ALLOCA || sk == HI_ADDI) {
+                bg_foff[i] = bg_foff[s1] + h_val[i];
+            } else {
+                bg_foff[i] = 0;
+            }
         } else {
             bg_foff[i] = 0;
         }
-    } else {
-        bg_foff[i] = 0;
-    }
-    /* Symbol offsets for SADDR chains */
-    if (bg_is_sym(k)) {
-        bg_ssym[i] = i;
-        bg_soff[i] = 0;
-    } else if (k == HI_ADDI) {
-        if (s1 >= 0 && bg_ssym[s1] >= 0) {
-            bg_ssym[i] = bg_ssym[s1];
-            bg_soff[i] = bg_soff[s1] + h_val[i];
+        /* Symbol offsets for SADDR chains */
+        if (bg_is_sym(k)) {
+            bg_ssym[i] = i;
+            bg_soff[i] = 0;
+        } else if (k == HI_ADDI) {
+            if (s1 >= 0 && bg_ssym[s1] >= 0) {
+                bg_ssym[i] = bg_ssym[s1];
+                bg_soff[i] = bg_soff[s1] + h_val[i];
+            } else {
+                bg_ssym[i] = -1;
+                bg_soff[i] = 0;
+            }
         } else {
             bg_ssym[i] = -1;
             bg_soff[i] = 0;
         }
-    } else {
-        bg_ssym[i] = -1;
-        bg_soff[i] = 0;
+        sp = sp - 1;
     }
 }
 
@@ -661,7 +679,7 @@ static int bg_src2_is_value(int k) {
     return 1;
 }
 
-static void bg_label_one(int i) {
+static void bg_label_one(int start) {
     int k;
     int pi;
     int pat;
@@ -673,22 +691,51 @@ static void bg_label_one(int i) {
     int s2;
     int base_idx;
     int dst;
-    if (bg_done[i]) return;
-    bg_done[i] = 1;
+    int sp;
+    int i;
+    int pushed;
+    if (bg_done[start]) return;
+    sp = 0;
+    bg_walk[sp] = start;
+    sp = sp + 1;
+    while (sp > 0) {
+    i = bg_walk[sp - 1];
+    if (!bg_done[i]) {
+        bg_done[i] = 1;
+        k = h_kind[i];
+        if (k == HI_NOP || k < 0 || k > BG_MAX_OP) {
+            sp = sp - 1;
+            continue;
+        }
+        s1 = h_src1[i];
+        s2 = h_src2[i];
+        /* Operands defined AFTER their user -- the allocas the SSA pass
+         * appends, the phis at the end of the array -- are labeled first,
+         * or this instruction sees only infinite costs, gets no rule, and
+         * the emitter reads a nonterminal off the end of a table (SQLite's
+         * sqlite3VdbeExec loaded db->aDb through a symbol named by garbage).
+         * Walk them with bg_walk, not host recursion: a 50k ADDI chain
+         * blew the stack (GitHub issue 56). */
+        pushed = 0;
+        if (s1 >= 0 && s1 < h_ninst && !bg_done[s1]) {
+            bg_walk[sp] = s1;
+            sp = sp + 1;
+            pushed = 1;
+        }
+        if (s2 >= 0 && s2 < h_ninst && bg_src2_is_value(k) && !bg_done[s2]) {
+            bg_walk[sp] = s2;
+            sp = sp + 1;
+            pushed = 1;
+        }
+        if (pushed) continue;
+    }
     k = h_kind[i];
-    if (k == HI_NOP) return;
-    if (k < 0 || k > BG_MAX_OP) return;
-
+    if (k == HI_NOP || k < 0 || k > BG_MAX_OP) {
+        sp = sp - 1;
+        continue;
+    }
     s1 = h_src1[i];
     s2 = h_src2[i];
-
-    /* Operands defined AFTER their user -- the allocas the SSA pass
-     * appends, the phis at the end of the array -- are labeled first,
-     * or this instruction sees only infinite costs, gets no rule, and
-     * the emitter reads a nonterminal off the end of a table (SQLite's
-     * sqlite3VdbeExec loaded db->aDb through a symbol named by garbage). */
-    if (s1 >= 0 && s1 < h_ninst && !bg_done[s1]) bg_label_one(s1);
-    if (s2 >= 0 && s2 < h_ninst && bg_src2_is_value(k) && !bg_done[s2]) bg_label_one(s2);
 
     /* Try all patterns for this operator */
     pi = 0;
@@ -750,6 +797,9 @@ static void bg_label_one(int i) {
             }
         }
         ci = ci + 1;
+    }
+
+    sp = sp - 1;
     }
 
 }
