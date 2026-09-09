@@ -6024,6 +6024,13 @@ static bool emit_native_math_stub(translate_ctx_t *ctx, translated_block_t *bloc
     }
 }
 
+/* Capacity from the ALIGNED start, not from code_buffer_used:
+ * cache_get_code_ptr rounds up, so the difference (up to 15 bytes)
+ * was capacity the emitter did not have (GitHub issue 63). */
+static size_t cache_emit_capacity(block_cache_t *cache, uint8_t *code_start) {
+    return cache->code_buffer_size - (size_t)(code_start - cache->code_buffer);
+}
+
 // Check if guest_pc matches a known intrinsic and emit native stub
 // Returns the block if handled, NULL if not an intrinsic
 static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t guest_pc) {
@@ -6083,7 +6090,7 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
         }
 
         emit_ctx_t *e = &ctx->emit;
-        emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
+        emit_init(e, code_start, cache_emit_capacity(cache, code_start));
         memset(block, 0, sizeof(*block));
         block->guest_pc = guest_pc;
         block->host_code = code_start;
@@ -6099,6 +6106,9 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
         ctx->pending_write.valid = saved_pw;
         ctx->pending_cond.valid = saved_pc;
         if (!ok) return NULL;
+        /* Truncated stub: decline so the caller falls through to a
+         * normal translation of the same PC (GitHub issue 63). */
+        if (e->overflow) return NULL;
 
         native_stub_count++;
         block->host_size = emit_offset(e);
@@ -6129,7 +6139,7 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
 
     // Initialize
     emit_ctx_t *e = &ctx->emit;
-    emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
+    emit_init(e, code_start, cache_emit_capacity(cache, code_start));
     memset(block, 0, sizeof(*block));
     block->guest_pc = guest_pc;
     block->host_code = code_start;
@@ -6152,6 +6162,9 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
     ctx->pending_cond.valid = saved_pc;
 
     if (!ok) return NULL;
+    /* Truncated stub: decline so the caller falls through to a
+     * normal translation of the same PC (GitHub issue 63). */
+    if (e->overflow) return NULL;
 
     native_stub_count++;
     block->host_size = emit_offset(e);
@@ -6224,7 +6237,7 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
 
 retry_translate:
     // Initialize emitter to write into cache code buffer
-    emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
+    emit_init(e, code_start, cache_emit_capacity(cache, code_start));
     e->trace_enabled = emit_trace_enabled &&
                        (!emit_trace_pc_has_filter || emit_trace_pc == guest_pc);
     e->trace_tag = NULL;
