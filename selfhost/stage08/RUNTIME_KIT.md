@@ -103,6 +103,39 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-09-09, third batch (`2db38549`..`4a2116ae`) -- a second review
+pass, and the bootstrap compiler behind it:
+
+- **`getenv` works.** It was a stub returning NULL; a program on an older
+  kit sees no environment at all.  It now goes through the GETENV request
+  the host has always implemented, so `$HOME`, `$PATH` and the rest reach
+  the guest.  This is the one change here that a program can notice
+  without being a compiler.
+- **Silent drops became diagnostics.** A `#define` body over 4096 bytes,
+  a macro nesting past 64, more than 32 argument regions, a switch
+  nested past the depth limit, and a BSS `.space` whose running total
+  would wrap `int` in `s32-as` -- each of these used to continue with a
+  wrong answer and now stops.  A short `write` of the streamed assembly
+  is retried rather than silently truncating the `.s`.
+- **Address constants.** `&(sym)` and `&(((T*)K)[i])` are the same
+  address constants as their unparenthesised forms and now fold; the
+  second is how SQLite spells `SQLITE_INT_TO_PTR` once a macro adds a
+  layer of grouping.
+- **`__VA_ARGS__` and the 9th macro argument** are recorded as argument
+  regions, so a macro named inside them still expands.
+- **Jump tables** no longer treat a Duff's device as fall-through-free;
+  a case label nested inside another statement now forces the
+  conservative lowering.
+- **`ST_MAX_STRUCTS`** stops below `TY_PTR` -- struct 4088 and up used
+  to encode as a pointer type.
+- **The instruction selector** labels operand chains with an explicit
+  stack instead of host recursion, bounded.
+- **The bootstrap.** stage07, which compiles this compiler, left the high
+  register untouched when a `long long` function returned a narrower
+  expression.  Repaired in place; measured byte-identical output for the
+  one file it compiles here, so nothing in this kit changed because of
+  it -- it only unblocks future work.
+
 Fixed 2026-09-08, second batch (`be9b3786`..`a1ec1606`) -- a review pass
 over the SQLite work, then the defects that pass exposed:
 

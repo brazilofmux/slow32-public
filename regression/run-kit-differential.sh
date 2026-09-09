@@ -125,6 +125,7 @@ normalize_output() {
         -e '/^Cycles:/d' \
         -e '/instructions\/second/d' \
         -e '/^slow32: native intrinsics detected:/d' \
+        -e '/^slow32: math intercepts:/d' \
         -e '/^  mem[a-z]*:  *0x[0-9a-f]*$/d' \
         -e '/^  strlen:  *0x[0-9a-f]*$/d' \
     | awk '
