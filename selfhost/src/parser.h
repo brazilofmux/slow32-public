@@ -1921,13 +1921,33 @@ static int ps_abstract_fnptr(int ty) {
 static int parse_const_primary(void) {
     int ci;
     int ty;
+    int idx;
+    int esz;
 
     if (lex_tok == TK_LPAREN) {
         /* Grouping parens are not a leaf: (5000000000LL) is still one
          * literal. Counting them as a leaf made parse_const_ll_hi
-         * sign-extend the low word (GitHub #17). */
+         * sign-extend the low word (GitHub issue 17).
+         *
+         * Postfix [] binds to the parenthesized expression, so
+         * ((T*)K)[i] and (((T*)K)[i]) are the same address constant.
+         * Without consuming [i] here, expect(')') hits the '['
+         * (GitHub issue 62). */
         next();
         ci = parse_const_int();
+        esz = 1;
+        if (pc_cast_ty >= 0 && ty_is_ptr(pc_cast_ty)) {
+            esz = ty_size(ty_deref(pc_cast_ty));
+            if (esz <= 0) esz = 1;
+        }
+        while (lex_tok == TK_LBRACK) {
+            next();
+            idx = parse_const_int();
+            expect(TK_RBRACK);
+            ci = ci + idx * esz;
+            pc_wide = 0;
+            pc_hi = 0;
+        }
         expect(TK_RPAREN);
         return ci;
     }
@@ -2072,9 +2092,10 @@ static int parse_const_unary(void) {
          * instead, so this shape never reached the evaluator.)
          *
          * & over a real symbol is a relocation and does not come here:
-         * an initializer tries parse_global_init_symbol_reloc_at first.
-         * &(sym) with redundant parens still fails there (GitHub
-         * issue 59). */
+         * an initializer tries parse_global_init_symbol_reloc_at first,
+         * including &(sym) (GitHub issue 59). Extra grouping around
+         * this fold, &(((T*)K)[i]), is postfix [] inside grouping
+         * parens (GitHub issue 62). */
         int base;
         int idx;
         int esz;
