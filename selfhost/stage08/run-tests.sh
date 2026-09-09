@@ -138,6 +138,31 @@ check_noop_addi_self() {
     return 0
 }
 
+# -mlong-calls forms the callee address in r2 then jalr; a plain jal
+# only reaches +/-1MB and is what SQLite's 1.2MB library breaks
+# (selfhost ISSUES-67 / GitHub issue 42).  start.c's call to main is
+# the load-bearing site (crt0, program, library, libc).
+check_long_calls() {
+    local asm="$1"
+    local tag="$2"
+    local log="$WORKDIR/${tag}-longcall.log"
+
+    if ! grep -qE '^[[:space:]]*lui r2, %hi\(' "$asm"; then
+        echo "  $tag: FAIL (no lui r2, %hi(...) -- -mlong-calls address form)" >&2
+        return 1
+    fi
+    if ! grep -qE '^[[:space:]]*jalr r31, r2, 0$' "$asm"; then
+        echo "  $tag: FAIL (no jalr r31, r2, 0 -- -mlong-calls call)" >&2
+        return 1
+    fi
+    if grep -nE '^[[:space:]]*jal r31, [A-Za-z_]' "$asm" >"$log"; then
+        echo "  $tag: FAIL (short jal r31, sym -- -mlong-calls not applied)" >&2
+        cat "$log" >&2
+        return 1
+    fi
+    return 0
+}
+
 check_missed_immediate_ops() {
     local asm="$1"
     local tag="$2"
@@ -423,6 +448,17 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     if [[ -n "$G1_LIBC_OBJS" ]]; then
         run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_start.cc.log" -mlong-calls "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s"   # see build-s12cc.sh
         if [[ -s "$WORKDIR/g1_start.s" ]]; then
+            TOTAL=$((TOTAL + 1))
+            if ! check_long_calls "$WORKDIR/g1_start.s" "g1_start"; then
+                printf "  %-30s FAIL (long-call shape)\n" "g1_start:"
+                FAIL=$((FAIL + 1))
+            elif ! grep -qE '^[[:space:]]*lui r2, %hi\(main\)$' "$WORKDIR/g1_start.s"; then
+                printf "  %-30s FAIL (no %%hi(main))\n" "g1_start:"
+                FAIL=$((FAIL + 1))
+            else
+                printf "  %-30s PASS\n" "g1_start:"
+                PASS=$((PASS + 1))
+            fi
             run_exe "$AS_EXE" "$WORKDIR/g1_start.as.log" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.s32o"
             if [[ -s "$WORKDIR/g1_start.s32o" ]]; then
                 G1_LIBC_START_OBJ="$WORKDIR/g1_start.s32o"
@@ -477,6 +513,13 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             printf "  %-30s FAIL (imm shape)\n" "$tname:"
             FAIL=$((FAIL + 1))
             continue
+        fi
+        if [[ "$tname" == "test_sqlite_bugs" ]]; then
+            if ! check_long_calls "$WORKDIR/${tname}.s" "$tname"; then
+                printf "  %-30s FAIL (long-call shape)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
         fi
 
         # Assemble
