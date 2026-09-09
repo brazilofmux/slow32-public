@@ -289,11 +289,14 @@ static void pp_read_name(char *buf) {
     buf[i] = 0;
 }
 
-static int pp_read_int(void) {
-    int val;
+/* #if arithmetic is intmax_t (GitHub issue 60).  Accumulate in
+ * unsigned long long so 2147483648 and 0x80000000 do not wrap to
+ * a negative int; the signed result is what C11 6.10.1 uses. */
+static long long pp_read_int(void) {
+    unsigned long long uval;
     int neg;
     int c;
-    val = 0;
+    uval = 0;
     neg = 0;
     pp_skip_ws();
     if (lex_src[lex_pos] == 45) {  /* '-' */
@@ -308,11 +311,11 @@ static int pp_read_int(void) {
         c = lex_src[lex_pos];
         while ((c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)) {
             if (c >= 97) {
-                val = val * 16 + (c - 97 + 10);
+                uval = uval * 16 + (unsigned long long)(c - 97 + 10);
             } else if (c >= 65) {
-                val = val * 16 + (c - 65 + 10);
+                uval = uval * 16 + (unsigned long long)(c - 65 + 10);
             } else {
-                val = val * 16 + (c - 48);
+                uval = uval * 16 + (unsigned long long)(c - 48);
             }
             lex_pos = lex_pos + 1;
             c = lex_src[lex_pos];
@@ -320,7 +323,7 @@ static int pp_read_int(void) {
     } else {
         /* Decimal */
         while (c >= 48 && c <= 57) {
-            val = val * 10 + (c - 48);
+            uval = uval * 10 + (unsigned long long)(c - 48);
             lex_pos = lex_pos + 1;
             c = lex_src[lex_pos];
         }
@@ -331,8 +334,8 @@ static int pp_read_int(void) {
         lex_pos = lex_pos + 1;
         c = lex_src[lex_pos];
     }
-    if (neg) val = 0 - val;
-    return val;
+    if (neg) return -(long long)uval;
+    return (long long)uval;
 }
 
 static void pp_body_putc(char *buf, int *bi, int c) {
@@ -1113,7 +1116,7 @@ static void pp_define(void) {
         int k;
         int nd;
         save_pos = lex_pos;
-        val = pp_read_int();
+        val = (int)pp_read_int();
         /* The folded value is a 32-bit int, so a literal that carries a
          * U/L/LL suffix or has more digits than a signed int holds must
          * stay TEXT and be re-lexed with the full 64-bit state.
@@ -1543,8 +1546,13 @@ static void pp_include(void) {
 
 /* --- #if expression evaluator --- */
 
+/* Arithmetic is long long (GitHub issue 60).  The public result of
+ * pp_ev_expr stays an int 0/1 so a `#if` condition does not depend
+ * on a long-long return ABI; defined() still returns 1 as long long
+ * inside the evaluator, which stage07 now wraps (cd14ef67). */
+
 /* Forward declarations for recursive descent */
-static int pp_ev_or(void);
+static long long pp_ev_or(void);
 
 static int pp_ev_depth;
 static int pp_ev_park;          /* grow-down parking in unused lex_src tail */
@@ -1556,13 +1564,13 @@ static int pp_ev_ndis;
  * the #if line and only ran pp_ev_primary, so 1+2 * 3 was 1+(2*3) and a
  * 10-digit body with a 1-char name near the start of a file was 0
  * (GitHub issue 45). */
-static int pp_ev_from_text(char *body) {
+static long long pp_ev_from_text(char *body) {
     int blen;
     int i;
     int place;
     int saved_pos;
     int saved_park;
-    int val;
+    long long val;
 
     blen = 0;
     while (body[blen] != 0) blen = blen + 1;
@@ -1587,8 +1595,8 @@ static int pp_ev_from_text(char *body) {
     return val;
 }
 
-static int pp_ev_primary(void) {
-    int val;
+static long long pp_ev_primary(void) {
+    long long val;
     int c;
     char name[256];
     pp_skip_ws();
@@ -1670,7 +1678,7 @@ static int pp_ev_primary(void) {
     return 0;
 }
 
-static int pp_ev_unary(void) {
+static long long pp_ev_unary(void) {
     int c;
     pp_skip_ws();
     c = lex_src[lex_pos];
@@ -1697,8 +1705,8 @@ static int pp_ev_unary(void) {
     return pp_ev_primary();
 }
 
-static int pp_ev_mul(void) {
-    int val;
+static long long pp_ev_mul(void) {
+    long long val;
     int c;
     val = pp_ev_unary();
     pp_skip_ws();
@@ -1707,12 +1715,12 @@ static int pp_ev_mul(void) {
         lex_pos = lex_pos + 1;
         if (c == 42) val = val * pp_ev_unary();
         else if (c == 47) {
-            int d;
+            long long d;
             d = pp_ev_unary();
             if (d != 0) val = val / d;
             else val = 0;
         } else {
-            int d;
+            long long d;
             d = pp_ev_unary();
             if (d != 0) val = val % d;
             else val = 0;
@@ -1723,8 +1731,8 @@ static int pp_ev_mul(void) {
     return val;
 }
 
-static int pp_ev_add(void) {
-    int val;
+static long long pp_ev_add(void) {
+    long long val;
     int c;
     val = pp_ev_mul();
     pp_skip_ws();
@@ -1739,8 +1747,8 @@ static int pp_ev_add(void) {
     return val;
 }
 
-static int pp_ev_shift(void) {
-    int val;
+static long long pp_ev_shift(void) {
+    long long val;
     int c;
     val = pp_ev_add();
     pp_skip_ws();
@@ -1748,16 +1756,16 @@ static int pp_ev_shift(void) {
     while ((c == 60 && lex_src[lex_pos + 1] == 60) ||
            (c == 62 && lex_src[lex_pos + 1] == 62)) {  /* '<<', '>>' */
         lex_pos = lex_pos + 2;
-        if (c == 60) val = val << pp_ev_add();
-        else val = val >> pp_ev_add();
+        if (c == 60) val = val << (int)pp_ev_add();
+        else val = val >> (int)pp_ev_add();
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
     return val;
 }
 
-static int pp_ev_rel(void) {
-    int val;
+static long long pp_ev_rel(void) {
+    long long val;
     int c;
     int c2;
     val = pp_ev_shift();
@@ -1788,8 +1796,8 @@ static int pp_ev_rel(void) {
     return val;
 }
 
-static int pp_ev_eq(void) {
-    int val;
+static long long pp_ev_eq(void) {
+    long long val;
     int c;
     val = pp_ev_rel();
     pp_skip_ws();
@@ -1805,8 +1813,8 @@ static int pp_ev_eq(void) {
     return val;
 }
 
-static int pp_ev_bitand(void) {
-    int val;
+static long long pp_ev_bitand(void) {
+    long long val;
     int c;
     val = pp_ev_eq();
     pp_skip_ws();
@@ -1820,8 +1828,8 @@ static int pp_ev_bitand(void) {
     return val;
 }
 
-static int pp_ev_bitxor(void) {
-    int val;
+static long long pp_ev_bitxor(void) {
+    long long val;
     int c;
     val = pp_ev_bitand();
     pp_skip_ws();
@@ -1835,8 +1843,8 @@ static int pp_ev_bitxor(void) {
     return val;
 }
 
-static int pp_ev_bitor(void) {
-    int val;
+static long long pp_ev_bitor(void) {
+    long long val;
     int c;
     val = pp_ev_bitxor();
     pp_skip_ws();
@@ -1850,8 +1858,8 @@ static int pp_ev_bitor(void) {
     return val;
 }
 
-static int pp_ev_and(void) {
-    int val;
+static long long pp_ev_and(void) {
+    long long val;
     int c;
     val = pp_ev_bitor();
     pp_skip_ws();
@@ -1865,8 +1873,8 @@ static int pp_ev_and(void) {
     return val;
 }
 
-static int pp_ev_or(void) {
-    int val;
+static long long pp_ev_or(void) {
+    long long val;
     int c;
     val = pp_ev_and();
     pp_skip_ws();
@@ -1881,12 +1889,12 @@ static int pp_ev_or(void) {
 }
 
 static int pp_ev_expr(void) {
-    int val;
+    long long val;
     pp_ev_ndis = 0;
     val = pp_ev_or();
     pp_skip_line();
     pp_sync();
-    return val;
+    return val != 0;
 }
 
 /* --- Directives --- */
