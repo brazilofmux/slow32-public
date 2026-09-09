@@ -103,6 +103,25 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-09-09, fourth batch (`e10709eb`..`88811360`):
+
+- **A silent ABI miscompile, and the last of it.** An i64 argument on a
+  call through a function pointer went as ONE word unless the pointer was
+  a plain struct member -- the callee then read whatever the high
+  register happened to hold.  A local, a typedef'd pointer, a global, an
+  array slot (`methods[i](0)`), and a function returning a
+  function-pointer typedef (`getf(0)(0)`) all took that path.  All of
+  them now carry the declared signature and convert.  This is the one
+  change here that can silently change what an existing program computes,
+  and it is a fix in every case: the old behaviour was never right.
+- **`#if` arithmetic is 64-bit.**  `#if BIG > 0` with
+  `#define BIG 2147483648` was false because the value wrapped to a
+  negative int; `0x80000000` likewise, and a `1000000000 * 4`
+  intermediate.  Signed comparison and `#define N -5` are unchanged.
+
+Nothing else in this batch reaches the kit: the rest is test coverage
+and a Fortran front-end fix.
+
 Fixed 2026-09-09, third batch (`2db38549`..`4a2116ae`) -- a second review
 pass, and the bootstrap compiler behind it:
 
