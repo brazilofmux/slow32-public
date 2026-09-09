@@ -175,9 +175,10 @@ static void sema_expr(Node *n) {
         if (n->lhs->kind == ND_MEMBER && n->lhs->offset >= 0) {
             fpbase = n->lhs->offset;
             fpn = n->lhs->nparams;
-        } else if (n->lhs->kind == ND_VAR && n->lhs->is_fnptr) {
+        } else if (n->lhs->is_fnptr) {
             fpbase = n->lhs->val;
             fpn = n->lhs->nparams;
+            if (n->lhs->kind == ND_CALL) fpn = n->lhs->val_hi;
         }
         if (fpbase >= 0) {
             idx = 0;

@@ -301,9 +301,13 @@ static int   ps_ftype[PS_MAX_FUNCS];
 static int   ps_fvar[PS_MAX_FUNCS];   /* 1 = variadic (affects f64 arg ABI) */
 static int   ps_fpbase[PS_MAX_FUNCS]; /* base into ps_fptypes, -1 = unknown */
 static int   ps_fpn[PS_MAX_FUNCS];    /* declared param count */
+static int   ps_fretfpbase[PS_MAX_FUNCS]; /* return type is a function pointer */
+static int   ps_fretfpn[PS_MAX_FUNCS];
 static int   ps_fptypes[PS_MAX_FPARAM];
 static int   ps_nfptypes;
 static int   ps_nfuncs;
+static int   ps_pending_retfpbase = -1;
+static int   ps_pending_retfpn;
 
 /* Forward declarations */
 static Node *parse_expr(void);
@@ -622,6 +626,8 @@ static void add_func_type(char *name, int ty, int *ptys, int np) {
                 ps_fpbase[i] = ps_fp_store(ptys, np);
                 ps_fpn[i] = (ps_fpbase[i] >= 0) ? np : 0;
             }
+            ps_fretfpbase[i] = ps_pending_retfpbase;
+            ps_fretfpn[i] = ps_pending_retfpn;
             return;
         }
         i = i - 1;
@@ -632,6 +638,8 @@ static void add_func_type(char *name, int ty, int *ptys, int np) {
     ps_fvar[ps_nfuncs] = ps_is_varargs;
     ps_fpbase[ps_nfuncs] = (np >= 0) ? ps_fp_store(ptys, np) : -1;
     ps_fpn[ps_nfuncs] = (ps_fpbase[ps_nfuncs] >= 0) ? np : 0;
+    ps_fretfpbase[ps_nfuncs] = ps_pending_retfpbase;
+    ps_fretfpn[ps_nfuncs] = ps_pending_retfpn;
     ps_nfuncs = ps_nfuncs + 1;
 }
 
@@ -3380,6 +3388,7 @@ static Node *parse_primary(void) {
     int li;
     int gi;
     int ci;
+    int i;
 
     /* Number literal */
     if (lex_tok == TK_NUM) {
@@ -3470,6 +3479,7 @@ static Node *parse_primary(void) {
                 n->is_fnptr = 1;
                 n->val = ps_lfpbase[li];
                 n->nparams = ps_lfpn[li];
+                n->val_hi = ps_lfpn[li];
             }
             return n;
         }
@@ -3485,6 +3495,7 @@ static Node *parse_primary(void) {
                 n->is_fnptr = 1;
                 n->val = ps_gfpbase[gi];
                 n->nparams = ps_gfpn[gi];
+                n->val_hi = ps_gfpn[gi];
             }
             return n;
         }
@@ -3586,6 +3597,18 @@ static Node *parse_primary(void) {
             expect(TK_RPAREN);
             n = nd_call(nm, head, nargs);
             n->ty = find_func_type(nm);
+            i = 0;
+            while (i < ps_nfuncs) {
+                if (strcmp(nm, ps_fname[i]) == 0) {
+                    if (ps_fretfpbase[i] >= 0) {
+                        n->is_fnptr = 1;
+                        n->val = ps_fretfpbase[i];
+                        n->val_hi = ps_fretfpn[i];
+                    }
+                    break;
+                }
+                i = i + 1;
+            }
             return n;
         }
 
@@ -3776,9 +3799,24 @@ static Node *parse_postfix(void) {
                     n->arr_cols = row_cols;
                 }
             } else {
-                /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling */
-                n = nd_binop(TK_PLUS, n, idx);
-                n = nd_unary(TK_STAR, n);
+                /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling.
+                 * A function-pointer array's slot keeps the signature so
+                 * methods[i](0) still converts i64 args (GitHub issue 41). */
+                {
+                    int fpb;
+                    int fpn;
+                    fpb = n->is_fnptr ? n->val : -1;
+                    fpn = n->is_fnptr ? n->nparams : 0;
+                    if (n->kind == ND_CALL) fpn = n->val_hi;
+                    n = nd_binop(TK_PLUS, n, idx);
+                    n = nd_unary(TK_STAR, n);
+                    if (fpb >= 0) {
+                        n->is_fnptr = 1;
+                        n->val = fpb;
+                        n->nparams = fpn;
+                        n->val_hi = fpn;
+                    }
+                }
             }
         } else if (lex_tok == TK_DOT) {
             next();
@@ -5020,9 +5058,13 @@ static Node *parse_stmt(void) {
             if (lex_tok == TK_LBRACK) {
                 int fpcount;
                 int fpi;
+                int afpb;
+                int afpn;
                 char fpn[256];
                 next();
                 fpcount = -1;
+                afpb = -1;
+                afpn = 0;
                 if (lex_tok != TK_RBRACK) fpcount = parse_const_int();
                 expect(TK_RBRACK);
                 expect(TK_RPAREN);
@@ -5030,8 +5072,7 @@ static Node *parse_stmt(void) {
                 if (lex_tok == TK_LPAREN) {
                     has_params = 1;
                     next();
-                    while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
-                    expect(TK_RPAREN);
+                    afpb = ps_parse_fp_params(&afpn);
                 }
                 if (!has_params) {
                     while (nstars > 0) {
@@ -5134,8 +5175,10 @@ static Node *parse_stmt(void) {
                 ps_lcols[sl_li] = 0;
                 ps_lstatic[sl_li] = 1;
                 ps_lsname[sl_li] = strdup(ps_sl_buf);
-                ps_lfpbase[sl_li] = -1;
-                ps_lfpn[sl_li] = 0;
+                ps_lfpbase[sl_li] = afpb;
+                ps_lfpn[sl_li] = afpn;
+                ps_gfpbase[sl_gi] = afpb;
+                ps_gfpn[sl_gi] = afpn;
                 ps_nlocals = ps_nlocals + 1;
                 return nd_block(NULL);
             }
@@ -5567,10 +5610,13 @@ static Node *parse_top_decl(void) {
         return NULL;
     }
 
+
     /* Parse return type / variable type */
     was_enum = (lex_tok == TK_ENUM);
     ty = parse_type();
     g2cols = ps_type_arrcount;  /* reuse: typedef'd array element count */
+    ps_pending_retfpbase = ps_type_fpbase;
+    ps_pending_retfpn = ps_type_fpn;
     skip_decl_qualifiers();
 
     /* Bare tag definition with no declarator: `struct Foo { ... };` or
@@ -5659,6 +5705,8 @@ static Node *parse_top_decl(void) {
                 else           idx = add_defined_global(nm, TY_INT + TY_PTR, 4 * fp_count);
                 if (is_static) ps_glocal[idx] = 1;
             }
+            ps_gfpbase[idx] = fp_tys[0];
+            ps_gfpn[idx] = fp_n;
             expect(TK_SEMI);
             return NULL;
         }
