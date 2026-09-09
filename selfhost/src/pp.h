@@ -500,7 +500,7 @@ static void pp_sync(void) {
 static int pp_peek_depth;
 
 #define PP_DIS_MAX 64
-#define PP_DIS_ARGS 8
+#define PP_DIS_ARGS 32   /* was 8; a 9th parameter stayed painted (GitHub issue 48) */
 static int pp_dis_di[PP_DIS_MAX];
 static int pp_dis_end[PP_DIS_MAX];
 /* Where substituted ARGUMENT text sits inside each expansion.  C expands
@@ -521,18 +521,22 @@ static int pp_nsub;
 /* `base` is where pp_exp[0] landed in lex_src. */
 static void pp_dis_push(int di, int end, int base) {
     int j;
-    if (pp_ndis < PP_DIS_MAX) {
-        pp_dis_di[pp_ndis] = di;
-        pp_dis_end[pp_ndis] = end;
-        pp_dis_nreg[pp_ndis] = pp_nsub;
-        j = 0;
-        while (j < pp_nsub) {
-            pp_dis_rlo[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_lo[j];
-            pp_dis_rhi[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_hi[j];
-            j = j + 1;
-        }
-        pp_ndis = pp_ndis + 1;
+    if (pp_ndis >= PP_DIS_MAX) {
+        /* Dropping the entry and still emitting the body is the vfsList
+         * infinite-expansion class, now silent (GitHub issue 48). */
+        fdputs("s12cc: too many nested macro expansions\n", 2);
+        exit(1);
     }
+    pp_dis_di[pp_ndis] = di;
+    pp_dis_end[pp_ndis] = end;
+    pp_dis_nreg[pp_ndis] = pp_nsub;
+    j = 0;
+    while (j < pp_nsub) {
+        pp_dis_rlo[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_lo[j];
+        pp_dis_rhi[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_hi[j];
+        j = j + 1;
+    }
+    pp_ndis = pp_ndis + 1;
     pp_nsub = 0;
 }
 
@@ -827,7 +831,11 @@ static int pp_expand_func(int di) {
 
             if (matched >= 0 && matched < nargs) {
                 /* Substitute argument text, remembering where it went */
-                if (pp_nsub < PP_DIS_ARGS) pp_sub_lo[pp_nsub] = exp_len;
+                if (pp_nsub >= PP_DIS_ARGS) {
+                    fdputs("s12cc: too many macro argument regions\n", 2);
+                    exit(1);
+                }
+                pp_sub_lo[pp_nsub] = exp_len;
                 k = 0;
                 while (k < arg_len[matched]) {
                     if (exp_len < PP_EXP_SZ - 1) {
@@ -836,13 +844,18 @@ static int pp_expand_func(int di) {
                     }
                     k = k + 1;
                 }
-                if (pp_nsub < PP_DIS_ARGS) {
-                    pp_sub_hi[pp_nsub] = exp_len;
-                    pp_nsub = pp_nsub + 1;
-                }
+                pp_sub_hi[pp_nsub] = exp_len;
+                pp_nsub = pp_nsub + 1;
             } else if (pp_dvar[di] && strcmp(iname, "__VA_ARGS__") == 0) {
-                /* Substitute variadic arguments (all args from npar onwards) */
+                /* Substitute variadic arguments (all args from npar onwards).
+                 * Record the whole splice as one argument region so a
+                 * self-name inside __VA_ARGS__ still expands (GitHub issue 48). */
                 int va;
+                if (pp_nsub >= PP_DIS_ARGS) {
+                    fdputs("s12cc: too many macro argument regions\n", 2);
+                    exit(1);
+                }
+                pp_sub_lo[pp_nsub] = exp_len;
                 va = pp_dnpar[di];
                 while (va < nargs) {
                     if (va > pp_dnpar[di]) {
@@ -864,6 +877,8 @@ static int pp_expand_func(int di) {
                     }
                     va = va + 1;
                 }
+                pp_sub_hi[pp_nsub] = exp_len;
+                pp_nsub = pp_nsub + 1;
             } else {
                 /* Copy identifier as-is */
                 k = 0;
