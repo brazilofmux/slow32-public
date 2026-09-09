@@ -1092,8 +1092,10 @@ static void pp_define(void) {
         save_pos = lex_pos;
         val = pp_read_int();
         /* The folded value is a 32-bit int, so a literal that carries a
-         * U/L/LL suffix or has more digits than an int holds must stay
-         * TEXT and be re-lexed with the full 64-bit state.  libutf's
+         * U/L/LL suffix or has more digits than a signed int holds must
+         * stay TEXT and be re-lexed with the full 64-bit state.
+         * Decimal nd > 9 is 10+ digits: 1000000000 still fits, but
+         * 2147483648 does not (GitHub issue 60).  libutf's
          * `#define FP_INIT 1469598103934665603ULL` came back as the
          * sign-extended low word and every fingerprint's high half was
          * wrong. */
