@@ -674,13 +674,24 @@ EOF
 int main(void){int i;int x;int y;x=1234;y=77;for(i=0;i<40;i=i+1){x=((x<<2)+(x>>3))-(y<<1); y=(y+3)^(x&31);}return (x+y)&255;}
 EOF
 
+    # A long long function returning a narrower expression.  stage07 left
+    # the pair's high register untouched (stage08's GitHub issue 13, ported
+    # back to stage07's sema): f() came back as 1 with garbage above it.
+    # This is the one shape that makes the two compilers disagree on a
+    # program with no libc, so it belongs here rather than in a stage08
+    # test -- stage08 has been right about it since 2026-08-30.
+    cat > "$WORKDIR/sem_eq_13.c" <<'EOF'
+long long f(void){return 1;} long long g(int a){return a+1;} int main(void){long long x;x=f();if(x!=1)return 1;x=g(41);if(x!=42)return 2;if(f()+g(0)!=2)return 3;return 0;}
+EOF
+
     for src in \
         "$WORKDIR/sem_eq_01.c" \
         "$WORKDIR/sem_eq_02.c" \
         "$WORKDIR/sem_eq_03.c" \
         "$WORKDIR/sem_eq_04.c" \
         "$WORKDIR/sem_eq_05.c" \
-        "$WORKDIR/sem_eq_06.c"; do
+        "$WORKDIR/sem_eq_06.c" \
+        "$WORKDIR/sem_eq_13.c"; do
         name="$(basename "$src" .c)"
         TOTAL=$((TOTAL + 1))
 

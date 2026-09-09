@@ -11,6 +11,18 @@ static int sema_ret_ty;   /* current function's return type */
 
 /* --- Helpers --- */
 
+/* How a value is handed across a call boundary.  Only the coarse class
+ * matters: 1 (long long) occupies a register PAIR, everything else in
+ * class 0 occupies one. */
+static int sema_arg_class(int ty) {
+    if (ty_is_struct(ty)) return 4;
+    if (ty_is_ptr(ty)) return 0;
+    if (ty_is_double(ty)) return 2;
+    if (ty_is_float(ty)) return 3;
+    if (ty_is_llong(ty)) return 1;
+    return 0;
+}
+
 static int sema_arith_type(int lty, int rty) {
     if (ty_is_ptr(lty)) return lty;
     if (ty_is_ptr(rty)) return rty;
@@ -131,6 +143,24 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_RETURN) {
         sema_expr(n->lhs);
+        /* The value's marshalling class must be the function's: a 32-bit
+         * value returned from a long long function is otherwise handed
+         * back with the pair's high register untouched.  This is stage08's
+         * GitHub issue 13 fix, ported back -- stage07 still builds gen1
+         * and the libc, and dtoa.c returns narrower expressions from long
+         * long functions, so the bug was live in the bootstrap.  It also
+         * blocked widening the #if evaluator (GitHub issue 60), which is
+         * how it was found.
+         *
+         * The argument-side twin (issue 6) is NOT ported: it needs the
+         * parser to record parameter types, which this registry does not
+         * do.  stage08's sources are int-only C, so no call in them
+         * passes a class-1 value. */
+        if (n->lhs && sema_ret_ty >= 0 &&
+            sema_arg_class(n->lhs->ty) != sema_arg_class(sema_ret_ty) &&
+            sema_arg_class(n->lhs->ty) != 4 && sema_arg_class(sema_ret_ty) != 4) {
+            n->lhs = nd_cast(n->lhs, sema_ret_ty);
+        }
         return;
     }
 
