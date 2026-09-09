@@ -34,11 +34,17 @@ echo "=== stage08 build"
 "$SCRIPT_DIR/build-stage08.sh" > "$WORK/s8.log" 2>&1 || { tail -20 "$WORK/s8.log"; echo "stage08 build failed" >&2; exit 1; }
 
 # Each program writes its own database: the shell's output depends on it.
-run() {  # run <exe> <dbname> [stdin]
-    local exe="$1" db="$WORK/$2" sql="${3:-}"
+# stdout goes to <outfile>; the emulator's exit status is returned
+# (GitHub issue 61: a pipe used to discard it).
+run() {  # run <exe> <dbname> <outfile> [stdin]
+    local exe="$1" db="$WORK/$2" out="$3" sql="${4:-}" rc=0
     rm -f "$db"
-    if [ -n "$sql" ]; then timeout 300 "$EMU" "$exe" "$db" < "$sql" 2>&1
-    else timeout 300 "$EMU" "$exe" 2>&1; fi
+    set +e
+    if [ -n "$sql" ]; then timeout 300 "$EMU" "$exe" "$db" < "$sql" > "$out" 2>&1
+    else timeout 300 "$EMU" "$exe" > "$out" 2>&1; fi
+    rc=$?
+    set -e
+    return "$rc"
 }
 # The stage08 libc has no getenv (selfhost ISSUES-68), so its shell warns
 # about ~/.sqliterc where the clang build reads HOME.  Drop that one line;
@@ -46,22 +52,36 @@ run() {  # run <exe> <dbname> [stdin]
 strip() { grep -v "cannot find home directory" || true; }
 
 echo "=== smoke test"
-run "$SCRIPT_DIR/out/sqlite3_test.s32x"         clang.db | strip > "$WORK/smoke.clang"
-run "$SCRIPT_DIR/out/stage08/sqlite3_test.s32x" s8.db    | strip > "$WORK/smoke.s8"
+rc_clang=0; rc_s8=0
+run "$SCRIPT_DIR/out/sqlite3_test.s32x"         clang.db "$WORK/smoke.clang.raw" || rc_clang=$?
+run "$SCRIPT_DIR/out/stage08/sqlite3_test.s32x" s8.db    "$WORK/smoke.s8.raw"    || rc_s8=$?
+strip < "$WORK/smoke.clang.raw" > "$WORK/smoke.clang"
+strip < "$WORK/smoke.s8.raw"    > "$WORK/smoke.s8"
 if diff -q "$WORK/smoke.clang" "$WORK/smoke.s8" > /dev/null; then
     echo "  smoke:  IDENTICAL ($(wc -l < "$WORK/smoke.clang") lines)"
 else
     echo "  smoke:  DIFFERS"; diff "$WORK/smoke.clang" "$WORK/smoke.s8" | head -20; FAIL=1
 fi
+if [ "$rc_clang" -ne "$rc_s8" ]; then
+    echo "  smoke:  EXIT STATUS DIFFERS (clang=$rc_clang stage08=$rc_s8)"; FAIL=1
+elif [ "$rc_clang" -ne 0 ]; then
+    echo "  smoke:  EXIT STATUS $rc_clang (expected 0)"; FAIL=1
+fi
 
 if [ -f "$SCRIPT_DIR/out/stage08/sqlite3.s32x" ]; then
     echo "=== shell over tests/acceptance.sql"
-    run "$SCRIPT_DIR/out/sqlite3.s32x"         clangsh.db "$SQL" | strip > "$WORK/shell.clang"
-    run "$SCRIPT_DIR/out/stage08/sqlite3.s32x" s8sh.db    "$SQL" | strip > "$WORK/shell.s8"
+    rc_clang=0; rc_s8=0
+    run "$SCRIPT_DIR/out/sqlite3.s32x"         clangsh.db "$WORK/shell.clang.raw" "$SQL" || rc_clang=$?
+    run "$SCRIPT_DIR/out/stage08/sqlite3.s32x" s8sh.db    "$WORK/shell.s8.raw"    "$SQL" || rc_s8=$?
+    strip < "$WORK/shell.clang.raw" > "$WORK/shell.clang"
+    strip < "$WORK/shell.s8.raw"    > "$WORK/shell.s8"
     if diff -q "$WORK/shell.clang" "$WORK/shell.s8" > /dev/null; then
         echo "  shell:  IDENTICAL ($(wc -l < "$WORK/shell.clang") lines)"
     else
         echo "  shell:  DIFFERS"; diff "$WORK/shell.clang" "$WORK/shell.s8" | head -30; FAIL=1
+    fi
+    if [ "$rc_clang" -ne "$rc_s8" ]; then
+        echo "  shell:  EXIT STATUS DIFFERS (clang=$rc_clang stage08=$rc_s8)"; FAIL=1
     fi
     # A shell that dies on statement one still "agrees" on the lines it
     # reached, so require the last statement's output too.
