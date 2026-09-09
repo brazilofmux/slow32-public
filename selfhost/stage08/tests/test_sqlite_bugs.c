@@ -1,8 +1,8 @@
 /* stage08 defects and gaps surfaced by compiling SQLite 3.51.0's
- * amalgamation (2026-09-08).  Each block returns its own bit so a failure
- * names itself in the exit code; 0 means all hold.  The suite compiles
- * this file with -mlong-calls, so every direct call here also exercises
- * the address-forming call sequence. */
+ * amalgamation (2026-09-08).  main returns the number of the first
+ * failing block; 0 means all hold.  The suite compiles this file with
+ * -mlong-calls, so every direct call here also exercises the
+ * address-forming call sequence. */
 
 /* 1. sltiu zero-extends its immediate, so `x <u -1` folded to an
  *    immediate compared against 4095.  SQLite's 64-bit compares hit it. */
@@ -12,6 +12,18 @@ static int t_unsigned_cmp_imm(unsigned x) {
     if (!(x < (unsigned)-8)) return 1;     /* 5 <u 0xFFFFFFF8 */
     if (x > (unsigned)-1) return 1;
     if (!(all >= (unsigned)-8)) return 1;
+    return 0;
+}
+
+/* sltiu zero-extends its 12-bit immediate.  Folding `x <u -1` to a
+ * compare against 4095 makes 4096 <u 0xFFFFFFFF look false.
+ * The argument 5 cannot see that: 5 <u 4095 is also true. */
+static volatile unsigned t15_v;
+static int t_sltiu_u12(void) {
+    t15_v = 4096;
+    if (!(t15_v < 0xFFFFFFFFu)) return 15;
+    if (t15_v < 4095u) return 15;
+    if (!(t15_v < (unsigned)-8)) return 15;
     return 0;
 }
 
@@ -306,9 +318,48 @@ static int t_nested_fnptr_sig(void) {
     return 0;
 }
 
+/* 15. Nested case inside another case's braces — SQLite's OpenRead
+ * inside OP_ReopenIdx.  Jump-table fall-through is GitHub issue 51;
+ * this pin is that the nested label is still a case of the outer
+ * switch. */
+static int t_nested_case(int op) {
+    int r;
+    r = 0;
+    switch (op) {
+    case 1: {
+        r = 10;
+        case 2:
+            r = r + 1;
+            break;
+    }
+    case 3:
+        r = 30;
+        break;
+    }
+    return r;
+}
+static int t_nested_case_sw(void) {
+    if (t_nested_case(1) != 11) return 16;
+    if (t_nested_case(2) != 1) return 16;
+    if (t_nested_case(3) != 30) return 16;
+    return 0;
+}
+
+/* 16. offsetof in a constant initializer (SQLite sizes arrays with
+ * offsetof(KeyInfo, aColl)). */
+struct t17_T { int a; char b; int c; };
+static int t17_off = __builtin_offsetof(struct t17_T, c);
+static int t_offsetof_init(void) {
+    if (t17_off != 8) return 17;
+    if (__builtin_offsetof(struct t17_T, a) != 0) return 17;
+    if (__builtin_offsetof(struct t17_T, b) != 4) return 17;
+    return 0;
+}
+
 int main(void) {
     if (t_big_literal())        return 1;
     if (t_unsigned_cmp_imm(5))  return 2;
+    if (t_sltiu_u12())          return 15;
     if (t_tentative())          return 3;
     if (t_if_continuation())    return 4;
     if (t_local_static_init())  return 5;
@@ -320,5 +371,7 @@ int main(void) {
     if (t_fnptr_member_deref()) return 11;
     if (t_int_to_ptr())         return 13;
     if (t_nested_fnptr_sig())   return 14;
+    if (t_nested_case_sw())     return 16;
+    if (t_offsetof_init())      return 17;
     return 0;
 }
