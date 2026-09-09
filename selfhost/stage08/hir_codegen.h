@@ -1940,9 +1940,9 @@ static void hcg_inst(int idx) {
             } else if (k == HI_SGTU && c == -1) {
                 const_valid = 1;
                 const_res = 0;
-            } else if (hcg_cmp_imm(k, c + 1)) {
+            } else if (hcg_cmp_imm(k, (int)((unsigned)c + 1u))) {
                 have_imm = 1;
-                off = c + 1;
+                off = (int)((unsigned)c + 1u);
                 rs1 = hcg_src(s1, 1);
                 invert = 1;
             }
@@ -1956,9 +1956,9 @@ static void hcg_inst(int idx) {
             } else if (k == HI_SLEU && c == -1) {
                 const_valid = 1;
                 const_res = 1;
-            } else if (hcg_cmp_imm(k, c + 1)) {
+            } else if (hcg_cmp_imm(k, (int)((unsigned)c + 1u))) {
                 have_imm = 1;
-                off = c + 1;
+                off = (int)((unsigned)c + 1u);
                 rs1 = hcg_src(s1, 1);
             }
         } else if ((k == HI_SLE || k == HI_SLEU) &&
@@ -1999,9 +1999,9 @@ static void hcg_inst(int idx) {
             } else if ((k == HI_SLE && c == 2147483647) || (k == HI_SLEU && c == -1)) {
                 const_valid = 1;
                 const_res = 1;
-            } else if (hcg_cmp_imm(k, c + 1)) {
+            } else if (hcg_cmp_imm(k, (int)((unsigned)c + 1u))) {
                 have_imm = 1;
-                off = c + 1;
+                off = (int)((unsigned)c + 1u);
                 rs1 = hcg_src(s1, 1);
                 if (k == HI_SGT || k == HI_SGTU) invert = 1;
             }

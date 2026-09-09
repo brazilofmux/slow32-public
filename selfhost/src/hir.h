@@ -116,7 +116,7 @@ int atoi(const char *nptr);
 #define HIR_MAX_INST   262144   /* was 16384 */
 #define HIR_MAX_BLOCK  16384   /* was 2048 */
 #define HIR_MAX_CARG   32768   /* was 4096 */
-#define HIR_MAX_PARG 2097152   /* was 262144; SQLite's debug build (asserts add blocks) overflowed it */   /* was 32768 */
+#define HIR_MAX_PARG 2097152   /* was 32768, then 262144; SQLite's debug build (asserts add blocks) overflowed it */
 
 /* --- Diagnostic flags --- */
 static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */

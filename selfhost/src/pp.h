@@ -57,7 +57,8 @@ static char pp_exp[PP_EXP_SZ];
 
 /* Static buffers for pp_define — kept out of stack to avoid
    exceeding the 12-bit addi immediate limit in tree-walk codegen */
-static char pp_def_body[4096];
+#define PP_DEF_BODY_SZ 4096
+static char pp_def_body[PP_DEF_BODY_SZ];
 static char pp_def_parms[1024];
 
 static int pp_skip;                /* 1 = skipping tokens (ifdef false branch) */
@@ -334,6 +335,15 @@ static int pp_read_int(void) {
     return val;
 }
 
+static void pp_body_putc(char *buf, int *bi, int c) {
+    if (*bi >= PP_DEF_BODY_SZ - 1) {
+        fdputs("s12cc: #define body too long\n", 2);
+        exit(1);
+    }
+    buf[*bi] = c;
+    *bi = *bi + 1;
+}
+
 static int pp_read_body_text(char *buf) {
     int bi;
     int c;
@@ -377,13 +387,11 @@ static int pp_read_body_text(char *buf) {
                     lex_pos = lex_pos + 1;
                 }
                 lex_pos = lex_pos + 2;
-                buf[bi] = 32;
-                bi = bi + 1;
+                pp_body_putc(buf, &bi, 32);
                 continue;
             }
         }
-        buf[bi] = c;
-        bi = bi + 1;
+        pp_body_putc(buf, &bi, c);
         lex_pos = lex_pos + 1;
         if (esc) {
             esc = 0;
