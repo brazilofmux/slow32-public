@@ -2533,6 +2533,8 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     int gi2;
     int esz;
     int sidx;
+    int nparen;
+    int got_idx;
     int sv_tok;
     int sv_val;
     int sv_slen;
@@ -2546,13 +2548,20 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     while (try_consume_type_cast()) {
     }
     amp = 0;
+    nparen = 0;
     if (lex_tok == TK_AMP) {
         /* Speculative: only a & over a NAME is a relocation.  The other
          * shape is an integer constant wearing a pointer --
          * &((char*)0)[i], SQLite's SQLITE_INT_TO_PTR -- which used to
          * hard-error here.  Rewind and let the caller constant-fold it
          * (parse_const_unary folds the same form).  pp_peek_depth keeps
-         * a macro expansion in place while the rewind point is live. */
+         * a macro expansion in place while the rewind point is live.
+         *
+         * Grouping parens around the name are the same address constant:
+         * &(A) and &((A)) are &A (GitHub issue 59).  Extra parens around
+         * a cast-of-zero (&(((char*)0)[i]), GitHub issue 62) do not
+         * leave an identifier here, so we rewind and let the fold path
+         * take them. */
         sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
         sv_rcs = lex_rcs; sv_ract = lex_ract;
         sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
@@ -2561,6 +2570,10 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
         amp = 1;
         next();
         while (try_consume_type_cast()) {
+        }
+        while (lex_tok == TK_LPAREN) {
+            next();
+            nparen = nparen + 1;
         }
         if (lex_tok != TK_IDENT) {
             lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
@@ -2576,13 +2589,41 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
         return 0;
     }
     ci = find_const(lex_str);
-    if (ci >= 0) return 0;
+    if (ci >= 0) {
+        /* &(SOME_ENUM): not a relocation.  Restore the '&' so the
+         * constant-fold path still sees the grouping parens. */
+        if (nparen > 0) {
+            lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
+            lex_rcs = sv_rcs; lex_ract = sv_ract;
+            lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
+            memcpy(lex_str, sv_str, sv_slen + 1);
+        }
+        return 0;
+    }
     memcpy(nm, lex_str, lex_slen + 1);
     next();
     ps_ginit_add_sym_reloc_at(gidx, rel_off, nm, sz);
     /* &sym[const]: address constant with a byte addend
-     * (tables.c: const fixed_t *finecosine = &finesine[FINEANGLES/4]) */
+     * (tables.c: const fixed_t *finecosine = &finesine[FINEANGLES/4]).
+     * The subscript may sit inside grouping (&(sym[i])) or after it
+     * (&sym[i], &(sym)[i] -- postfix [] binds tighter than unary &). */
+    got_idx = 0;
     if (amp && lex_tok == TK_LBRACK) {
+        next();
+        sidx = parse_const_int();
+        expect(TK_RBRACK);
+        esz = 4;
+        gi2 = find_global(nm);
+        if (gi2 >= 0 && ty_is_ptr(ps_gtype[gi2]))
+            esz = ty_size(ty_deref(ps_gtype[gi2]));
+        ps_girel_add[ps_girel_last_pos] = sidx * esz;
+        got_idx = 1;
+    }
+    while (nparen > 0) {
+        expect(TK_RPAREN);
+        nparen = nparen - 1;
+    }
+    if (amp && !got_idx && lex_tok == TK_LBRACK) {
         next();
         sidx = parse_const_int();
         expect(TK_RBRACK);
