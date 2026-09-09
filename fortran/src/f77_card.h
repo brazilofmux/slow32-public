@@ -51,6 +51,15 @@ static char  lx_stmt[F77_MAX_STMT];
 static int   lx_stmt_len;
 static int   lx_stmt_label; /* -1 when the statement carries no label */
 static int   lx_stmt_line;  /* line number of the initial line */
+/* lx_brk[i] is 1 iff a blank was squeezed out immediately before
+ * lx_stmt[i] -- i.e. i starts a space-delimited token in the original
+ * card.  Leading blanks (column-7 indent) do not set this; only a
+ * blank between two copied characters does.  The FUNCTION-header
+ * classifier uses it so INTEGER FUNCTIONAL stays one name while
+ * INTEGER FUNCTION F and the no-space INTEGERFUNCTIONF(X) both still
+ * open a FUNCTION unit (GitHub issue 25). */
+static unsigned char lx_brk[F77_MAX_STMT];
+static int lx_after_blank;
 
 static void f77_error(char *msg);    /* supplied by the driver */
 
@@ -150,8 +159,10 @@ static void lx_put(int c) {
         f77_error("statement too long");
         return;
     }
+    lx_brk[lx_stmt_len] = lx_after_blank ? 1 : 0;
     lx_stmt[lx_stmt_len] = (char)c;
     lx_stmt_len = lx_stmt_len + 1;
+    lx_after_blank = 0;
 }
 
 /* Was the text just emitted an unsigned integer immediately preceded by
@@ -189,6 +200,7 @@ static int f77_next_stmt(void) {
 
     lx_stmt_len = 0;
     lx_stmt_label = -1;
+    lx_after_blank = 0;
     first = 1;
     inq = 0;
 
@@ -235,7 +247,14 @@ static int f77_next_stmt(void) {
                 col = col + 1;
                 continue;
             }
-            if (c == ' ' || c == '\t') { p = p + 1; col = col + 1; continue; }
+            if (c == ' ' || c == '\t') {
+                /* A blank between copied characters is a token
+                 * boundary; leading indent is not. */
+                if (lx_stmt_len > 0) lx_after_blank = 1;
+                p = p + 1;
+                col = col + 1;
+                continue;
+            }
             if (c == '!') break;                  /* trailing comment */
             if (c == '\'') { inq = 1; lx_put(c); p = p + 1; col = col + 1; continue; }
             if (lx_upper(c) == 'H') {

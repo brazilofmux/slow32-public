@@ -2574,17 +2574,143 @@ static int f77_inline_count;         /* diagnostics */
 
 static int f77_result_sym;    /* FUNCTION: the symbol named after the unit */
 
+static int f77_ident_cont(int c) {
+    return lx_isalpha(c) || (c >= '0' && c <= '9');
+}
+
+/* Length of the identifier at `off`, or 0. */
+static int f77_name_at(int off) {
+    int n;
+    if (off >= lx_stmt_len || !lx_isalpha(lx_stmt[off])) return 0;
+    n = 1;
+    while (off + n < lx_stmt_len && f77_ident_cont(lx_stmt[off + n]))
+        n = n + 1;
+    return n;
+}
+
+/* True if a blank was squeezed out somewhere in [lo, hi).  Index 0 is
+ * the start of the statement, not a squeezed blank. */
+static int f77_has_brk(int lo, int hi) {
+    int i;
+    i = lo;
+    if (i < 1) i = 1;
+    while (i < hi && i < lx_stmt_len) {
+        if (lx_brk[i]) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+/* Match `kw` at `off` as a complete token: the letters match, and the
+ * next character is not glued onto a longer identifier.  A squeezed
+ * blank before that next character (lx_brk) counts as a delimiter, so
+ * FUNCTION is complete in `INTEGER FUNCTION F` but not in
+ * `INTEGER FUNCTIONAL`.  Returns the offset just past `kw`, or -1. */
+static int f77_kw_at(int off, char *kw) {
+    int i;
+    int k;
+    k = 0;
+    i = off;
+    while (kw[k] != 0) {
+        if (i >= lx_stmt_len) return -1;
+        if (lx_stmt[i] != kw[k]) return -1;
+        k = k + 1;
+        i = i + 1;
+    }
+    if (i < lx_stmt_len && f77_ident_cont(lx_stmt[i]) && lx_brk[i] == 0)
+        return -1;
+    return i;
+}
+
+/* If the statement starts with `kw` as a complete token, or glued
+ * specifically to FUNCTION (the INTEGERFUNCTIONF spelling), return
+ * strlen(kw); else 0. */
+static int f77_type_before_function(char *kw) {
+    int n;
+    n = (int)strlen(kw);
+    if (lx_stmt_len < n) return 0;
+    if (strncmp(lx_stmt, kw, n) != 0) return 0;
+    if (f77_kw_at(0, kw) >= 0) return n;
+    if (lx_stmt_len >= n + 8 && strncmp(lx_stmt + n, "FUNCTION", 8) == 0)
+        return n;
+    return 0;
+}
+
+/* Offset just past `[type] FUNCTION` if this is a function header
+ * (`name (` follows); else -1.  Sets *ty_out to the result type.
+ *
+ * Two spellings, one rule: FUNCTION must be a complete token after
+ * the type-spec (gfortran tokenizes on remaining spaces, so
+ * FUNCTIONAL stays one name), except the fully squeezed no-space
+ * form INTEGERFUNCTIONF(X) which the blank-squeeze was chosen for.
+ * A FUNCTION statement also requires the dummy-list parenthesis
+ * (F77 8.5); INTEGER FUNCTION G without parens is not a header. */
+static int f77_function_kw_end(int *ty_out) {
+    int off;
+    int fn;
+    int n;
+    int ty;
+
+    ty = TY_INT;
+    off = 0;
+    n = f77_type_before_function("DOUBLEPRECISION");
+    if (n > 0) { off = n; ty = TY_DOUBLE; }
+    else {
+        n = f77_type_before_function("INTEGER");
+        if (n > 0) { off = n; ty = TY_INT; }
+        else {
+            n = f77_type_before_function("LOGICAL");
+            if (n > 0) { off = n; ty = TY_INT; }
+            else {
+                n = f77_type_before_function("REAL");
+                if (n > 0) { off = n; ty = TY_FLOAT; }
+            }
+        }
+    }
+
+    fn = f77_kw_at(off, "FUNCTION");
+    if (fn < 0) {
+        /* No-space spelling: only when no blank was squeezed in the
+         * prefix through the name, so INTEGER FUNCTIONAL(N) (a blank
+         * after INTEGER, FUNCTIONAL one word) is not INTEGER
+         * FUNCTION AL(N). */
+        if (off + 8 > lx_stmt_len) return -1;
+        if (strncmp(lx_stmt + off, "FUNCTION", 8) != 0) return -1;
+        n = f77_name_at(off + 8);
+        if (n == 0) return -1;
+        fn = off + 8;
+        if (f77_has_brk(0, fn + n)) return -1;
+    } else {
+        n = f77_name_at(fn);
+        if (n == 0) return -1;
+    }
+    /* F77 8.5: the dummy list in parens is required, and nothing
+     * follows it.  FUNCTIONAL(1)=10 is an array assignment, not
+     * FUNCTION AL with dummy 1. */
+    if (fn + n >= lx_stmt_len || lx_stmt[fn + n] != '(') return -1;
+    if (f77_match_paren(fn + n) != lx_stmt_len) return -1;
+    *ty_out = ty;
+    return fn;
+}
+
 /* If this statement is a `[type] FUNCTION name(...)` header, return the
  * result type; otherwise -1.  Checked before the type-declaration
  * keywords, because `REAL FUNCTION F(X)` squeezes to REALFUNCTIONF(X)
  * and would otherwise parse as a REAL declaration. */
 static int f77_unit_header_ty(void) {
-    if (f77_starts("FUNCTION"))                return TY_INT;   /* implicit */
-    if (f77_starts("INTEGERFUNCTION"))         return TY_INT;
-    if (f77_starts("LOGICALFUNCTION"))         return TY_INT;
-    if (f77_starts("REALFUNCTION"))            return TY_FLOAT;
-    if (f77_starts("DOUBLEPRECISIONFUNCTION")) return TY_DOUBLE;
-    return -1;
+    int ty;
+    if (f77_function_kw_end(&ty) < 0) return -1;
+    return ty;
+}
+
+/* Characters to skip to reach the function name on a header we have
+ * already classified.  8 is the bare-FUNCTION fallback. */
+static int f77_function_skip(void) {
+    int ty;
+    int n;
+    n = f77_function_kw_end(&ty);
+    if (n < 0) return 8;
+    return n;
 }
 
 /* Emit the unit's return.  A FUNCTION returns the variable named after
@@ -2794,6 +2920,7 @@ static void f77_statement(void);
  * or -1 for a SUBROUTINE. */
 static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     char save_stmt[F77_MAX_STMT];
+    unsigned char save_brk[F77_MAX_STMT];
     int save_len;
     int save_label;
     int save_line;
@@ -2832,6 +2959,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
 
     /* Checkpoint everything the callee will disturb. */
     memcpy(save_stmt, lx_stmt, lx_stmt_len + 1);
+    memcpy(save_brk, lx_brk, lx_stmt_len);
     save_len = lx_stmt_len;
     save_label = lx_stmt_label;
     save_line = lx_line;
@@ -2868,11 +2996,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     lx_line = f77_uline[u];
     if (!f77_next_stmt()) { f77_error("inline: empty unit"); }
     if (f77_ukind[u] == F77_UNIT_SUBR) skip = 10;
-    else if (f77_starts("DOUBLEPRECISIONFUNCTION")) skip = 23;
-    else if (f77_starts("INTEGERFUNCTION"))    skip = 15;
-    else if (f77_starts("LOGICALFUNCTION"))    skip = 15;
-    else if (f77_starts("REALFUNCTION"))       skip = 12;
-    else                                       skip = 8;
+    else skip = f77_function_skip();
     f77_scan_from(skip);
     if (lx_t == T_NAME) f77_tok();
     i = 0;
@@ -2926,6 +3050,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     lx_pos = save_pos;
     lx_line = save_line;
     memcpy(lx_stmt, save_stmt, save_len + 1);
+    memcpy(lx_brk, save_brk, save_len);
     lx_stmt_len = save_len;
     lx_stmt_label = save_label;
     lx_rp = save_rp; lx_rpe = save_rpe; lx_rts = save_rts; lx_rte = save_rte;
@@ -3132,11 +3257,7 @@ static int f77_find_func(char *nm) {
 static void f77_unit_name(int u) {
     int skip;
     if (f77_starts("SUBROUTINE")) skip = 10;
-    else if (f77_starts("DOUBLEPRECISIONFUNCTION")) skip = 23;
-    else if (f77_starts("INTEGERFUNCTION")) skip = 15;
-    else if (f77_starts("LOGICALFUNCTION")) skip = 15;
-    else if (f77_starts("REALFUNCTION")) skip = 12;
-    else skip = 8;
+    else skip = f77_function_skip();
     f77_scan_from(skip);
     if (lx_t == T_NAME) strcpy(f77_uname[u], lex_name);
     else { f77_error("subprogram needs a name"); strcpy(f77_uname[u], "unnamed"); }
@@ -3183,11 +3304,7 @@ static void f77_bind_unit(int u) {
     if (f77_ukind[u] == F77_UNIT_SUBR) skip = 10;              /* SUBROUTINE */
     else {
         rty = f77_unit_header_ty();
-        if (f77_starts("DOUBLEPRECISIONFUNCTION")) skip = 23;
-        else if (f77_starts("INTEGERFUNCTION"))    skip = 15;
-        else if (f77_starts("LOGICALFUNCTION"))    skip = 15;
-        else if (f77_starts("REALFUNCTION"))       skip = 12;
-        else                                       skip = 8;   /* FUNCTION */
+        skip = f77_function_skip();
         (void)rty;
     }
     f77_scan_from(skip);
