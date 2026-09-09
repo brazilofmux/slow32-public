@@ -18,10 +18,22 @@ static int  cg_long_calls;  /* -mlong-calls: direct calls form the address; a ja
  * buffer is a window on the file, not the file.  SQLite's assembly is
  * over 16MB; holding it whole was the last per-file ceiling. */
 static void cg_flush(void) {
-    if (cg_fd >= 0 && cg_olen > 0) {
-        write(cg_fd, cg_out, cg_olen);
-        cg_olen = 0;
+    int off;
+    int n;
+    if (cg_fd < 0 || cg_olen <= 0) return;
+    /* A short write used to drop the rest of the window with no
+     * error; the assembler then saw a truncated .s (GitHub issue 57).
+     * SQLite's assembly is over 16MB, so this path is the file. */
+    off = 0;
+    while (off < cg_olen) {
+        n = write(cg_fd, &cg_out[off], cg_olen - off);
+        if (n <= 0) {
+            fdputs("s12cc: write failed\n", 2);
+            exit(1);
+        }
+        off = off + n;
     }
+    cg_olen = 0;
 }
 
 /* --- Asm emission helpers --- */
