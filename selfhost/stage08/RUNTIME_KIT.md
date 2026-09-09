@@ -103,6 +103,38 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-09-08, second batch (`be9b3786`..`a1ec1606`) -- a review pass
+over the SQLite work, then the defects that pass exposed:
+
+- **Silent miscompiles.** A `char`/`short` local kept its wide value
+  through `+=` and `++`/`--` (only plain assignment, return and parameter
+  copy-in were narrowed).  `int x = 7; int x;` zeroed the initializer --
+  C keeps it, and two initialized definitions are now a redefinition.
+  Constant shifts were 32-bit, so `1LL << 32` was 1.  A dominance
+  frontier wider than 32 entries dropped the rest, losing phis with no
+  diagnostic; it now stops.  A nested function-pointer member,
+  `T (*(*name)(args))(...)` (`sqlite3_vfs.xDlSym`), had no recorded
+  signature, so an i64 argument through it went as one word.
+- **Preprocessor.** `#if` treated a comment as a token, so
+  `#elif !defined(__GNUC__)  /* comment */` evaluated wrong -- SQLite has
+  three of those in a row selecting `SQLITE_INT_TO_PTR`.  Backslash-CRLF
+  and line counting on continued directives.  A text-bodied macro in
+  `#if` is now expanded as a full expression, not a primary.
+- **Refused or mis-parsed inputs.** `char (*a[])` is an array of
+  pointers, not of function pointers.  Unsuffixed decimal `2147483648`
+  is a `long long` (but a numeric `#define` past INT_MAX still is not --
+  GitHub issue 60).  `&((T*)K)[i]` folds as an address constant, which
+  is how SQLite spells `SQLITE_INT_TO_PTR`; `&(sym)` with grouping
+  parens still does not (GitHub issue 59).
+- **Bounds.** The switch pre-scan wrote case labels past `HL_MAX_CASE`.
+  `c_lexer.rl` carried pre-SQLite buffer sizes.
+
+`sqlite/check-stage08.sh` is now the acceptance gate for this compiler:
+it builds pristine SQLite 3.51.0 with clang and with stage08 and requires
+the two programs to print the same bytes.  The 60-program suite stayed
+green through a batch that left `sqlite3.c` uncompilable, which is what
+that script exists to catch.
+
 Fixed 2026-09-08 (`796d09b0`, `fdbe49b7`) -- what it took for this
 compiler to build pristine SQLite 3.51.0 (selfhost ISSUES-67 has the
 whole list; `sqlite/build-stage08.sh` is the acceptance test, its output
