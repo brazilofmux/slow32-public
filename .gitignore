@@ -236,3 +236,11 @@ cobol/libcob/*.s
 cobol/bench/tmp/
 dfsort/out/
 dfsort/tests/tmp/
+
+# SQLite build output.  Both builds write here -- sqlite/build.sh (clang)
+# and sqlite/build-stage08.sh (self-hosted, into out/stage08) -- and
+# everything in it is derived, including the sqlite3.h that build.sh
+# copies from the tracked amalgamation beside it.  The blanket rules
+# above cover the .s32x and .ll but not the .s32o/.s32a/.s/.h/.log, so
+# the directory surfaced as untracked after every acceptance run.
+sqlite/out/
