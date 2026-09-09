@@ -95,10 +95,10 @@ slow32 prog.s32x
 
 ## Kit vintage
 
-Known in the current kit: `getenv` in `libc.s32a` is a stub that returns
-NULL (selfhost ISSUES-68); a program that reads its environment sees none.
-Otherwise no known issues. Several bugs have been fixed since the first
-kit; if your kit predates the commit named, the bug is live.
+No known issues in the current kit. (`getenv` was a stub returning NULL
+through 2026-09-08; a kit older than that sees no environment at all.)
+Several bugs have been fixed since the first kit; if your kit predates
+the commit named, the bug is live.
 Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.

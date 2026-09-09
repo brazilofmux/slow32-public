@@ -2060,23 +2060,35 @@ shapes, exit code names the failing one). libcob.c and dfsort keep the
 one-declaration-per-line form so a kit with the old compiler still
 builds them.
 
-### 68. [OPEN 2026-09-08] stage08 libc: getenv is a stub returning NULL
+### 68. [RESOLVED 2026-09-09] stage08 libc: getenv is a stub returning NULL
 
-`libc/start.c` defines `getenv` as a stub that always returns NULL,
+`libc/start.c` defined `getenv` as a stub that always returned NULL,
 with a comment that the MMIO bootstrap exposes argv but no envp.  The
-host side does answer environment queries (the GETENV request, op 0x64,
-which the clang runtime's `libc_mmio` uses), so the stub is a gap in
-this libc, not in the emulators.  Seen from SQLite's shell, built by
-stage08 (ISSUES-67): it warns "cannot find home directory; cannot read
-~/.sqliterc" on every run, where the clang build reads HOME.  Any
-program that configures itself from the environment sees none.
+host side did answer environment queries all along -- the GETENV
+request, op 0x64, which the clang runtime's `libc_mmio` uses -- so the
+stub was a gap in this libc, not in the emulators.  Seen from SQLite's
+shell built by stage08: it warned "cannot find home directory; cannot
+read ~/.sqliterc" on every run where the clang build read HOME, and
+`sqlite/check-stage08.sh` had to filter that line out before diffing.
 
-One thing to settle first: the stub was deliberate for the compiler's
-own binary, so that debug environment variables the sources consult
-stay inert in `cc.s32x`.  A real `getenv` in the libc needs those
-consultations to go through something the compiler build can disable
-(or the variables retired), or the kit compiler's behaviour will
-depend on the caller's environment.  Not yet started.
+The thing that had to be settled first was whether a real lookup could
+make the compiler's OUTPUT depend on the environment: this compiler
+consults `HIR_SR_DEBUG`, `HIR_CP_DEBUG` and `CC_X64_PROMO_DEBUG` in its
+own sources.  Checked, and all five of those gates guard `fdputs` to
+stderr and nothing else -- none reaches a transformation -- so
+byte-identical rebuilds still hold and the question dissolved.
+
+`getenv` now lives in `libc/posix_more.c` beside the other MMIO calls:
+the name and its NUL go in the data buffer, the reply is the value at
+the same offset with its length as the status, and a static buffer
+grown with `realloc` holds the returned string.  Names containing `=`
+and the empty name return NULL without a request (C11 7.22.4.6).
+
+The payoff beyond the warning: `check-stage08.sh` no longer filters
+anything, so the two shells are now compared byte for byte including
+their environment handling -- a strictly stronger gate than before.
+`tests/test_getenv.c` pins it, with the harness setting
+`S32_SELFTEST_ENV=ok`; unset it and the test returns 1.
 
 ### 67. [RESOLVED 2026-09-08] stage08 cc builds SQLite 3.51.0: the library, the smoke test and the shell, byte-identical to the clang build
 
@@ -2237,7 +2249,5 @@ with both compilers and requires the two programs to print the same
 bytes.  The small suite cannot stand in for it -- 265,876 lines of
 someone else's C is what finds this class of defect.
 
-Still open: `getenv` in this libc is a stub returning NULL (the shell
-warns that it cannot find the home directory; the clang build's libc
-answers from the host), and the preprocessor's reported line numbers
-drift.
+Still open: the preprocessor's reported line numbers drift.  (`getenv`
+was the other item here; resolved 2026-09-09, selfhost ISSUES-68.)

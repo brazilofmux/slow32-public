@@ -13,6 +13,7 @@ int strlen(const char *s);
 int write(int fd, const void *buf, int n);
 void exit(int status);
 void *memcpy(void *d, const void *s, unsigned int n);
+char *realloc(char *ptr, int size);
 
 #define MMIO_DATA           (__s32_mmio_data())
 #define MMIO_DATA_CAPACITY  (48 * 1024)
@@ -381,4 +382,51 @@ typedef void (*pm_sighandler)(int);
 pm_sighandler signal(int sig, pm_sighandler fn) {
     (void)sig; (void)fn;
     return (pm_sighandler)0;
+}
+
+/* getenv over the GETENV request (selfhost ISSUES-68, GitHub issue 55).
+ * The stub returned NULL unconditionally, so SQLite's shell warned that it
+ * could not find a home directory on every run and check-stage08.sh had to
+ * strip that line before diffing against the clang build.
+ *
+ * The worry about making this real was that this compiler consults the
+ * environment itself -- HIR_SR_DEBUG, HIR_CP_DEBUG, CC_X64_PROMO_DEBUG.
+ * All five of those gates gate stderr diagnostics only, never a
+ * transformation, so a real lookup cannot make generated code depend on
+ * the environment and byte-identical rebuilds still hold.
+ *
+ * Protocol: the name (with its NUL) goes in the data buffer, length is the
+ * byte count; the reply puts the value at the same offset and returns its
+ * length, or fails when the name is not set. */
+static char *pm_env_buf;
+static int   pm_env_cap;
+
+char *getenv(const char *name) {
+    unsigned int len;
+    int vlen;
+    const char *p;
+    char *nb;
+
+    if (name == 0 || name[0] == 0) return (char *)0;
+    /* A name containing '=' can never be set (C11 7.22.4.6). */
+    p = name;
+    while (*p != 0) {
+        if (*p == 61) return (char *)0;
+        p = p + 1;
+    }
+    len = strlen(name) + 1;
+    if (len > MMIO_DATA_CAPACITY) return (char *)0;
+    memcpy(MMIO_DATA, name, len);
+    vlen = s32_mmio_request(MMIO_OP_GETENV, len, 0, 0);
+    if (vlen < 0) return (char *)0;          /* not set */
+    if (vlen > MMIO_DATA_CAPACITY) return (char *)0;
+    if (vlen >= pm_env_cap) {
+        nb = realloc(pm_env_buf, vlen + 1);
+        if (nb == 0) return (char *)0;
+        pm_env_buf = nb;
+        pm_env_cap = vlen + 1;
+    }
+    memcpy(pm_env_buf, MMIO_DATA, vlen);
+    pm_env_buf[vlen] = 0;
+    return pm_env_buf;
 }

@@ -46,17 +46,17 @@ run() {  # run <exe> <dbname> <outfile> [stdin]
     set -e
     return "$rc"
 }
-# The stage08 libc has no getenv (selfhost ISSUES-68), so its shell warns
-# about ~/.sqliterc where the clang build reads HOME.  Drop that one line;
-# everything else must match byte for byte.
-strip() { grep -v "cannot find home directory" || true; }
+# Nothing is filtered any more: the two shells agree byte for byte,
+# including the ~/.sqliterc handling, since stage08's libc got a real
+# getenv (GitHub issue 55).  This used to drop the one line where the
+# stage08 shell warned that it could not find a home directory.
 
 echo "=== smoke test"
 rc_clang=0; rc_s8=0
 run "$SCRIPT_DIR/out/sqlite3_test.s32x"         clang.db "$WORK/smoke.clang.raw" || rc_clang=$?
 run "$SCRIPT_DIR/out/stage08/sqlite3_test.s32x" s8.db    "$WORK/smoke.s8.raw"    || rc_s8=$?
-strip < "$WORK/smoke.clang.raw" > "$WORK/smoke.clang"
-strip < "$WORK/smoke.s8.raw"    > "$WORK/smoke.s8"
+mv "$WORK/smoke.clang.raw" "$WORK/smoke.clang"
+mv "$WORK/smoke.s8.raw"    "$WORK/smoke.s8"
 if diff -q "$WORK/smoke.clang" "$WORK/smoke.s8" > /dev/null; then
     echo "  smoke:  IDENTICAL ($(wc -l < "$WORK/smoke.clang") lines)"
 else
@@ -73,8 +73,8 @@ if [ -f "$SCRIPT_DIR/out/stage08/sqlite3.s32x" ]; then
     rc_clang=0; rc_s8=0
     run "$SCRIPT_DIR/out/sqlite3.s32x"         clangsh.db "$WORK/shell.clang.raw" "$SQL" || rc_clang=$?
     run "$SCRIPT_DIR/out/stage08/sqlite3.s32x" s8sh.db    "$WORK/shell.s8.raw"    "$SQL" || rc_s8=$?
-    strip < "$WORK/shell.clang.raw" > "$WORK/shell.clang"
-    strip < "$WORK/shell.s8.raw"    > "$WORK/shell.s8"
+    mv "$WORK/shell.clang.raw" "$WORK/shell.clang"
+    mv "$WORK/shell.s8.raw"    "$WORK/shell.s8"
     if diff -q "$WORK/shell.clang" "$WORK/shell.s8" > /dev/null; then
         echo "  shell:  IDENTICAL ($(wc -l < "$WORK/shell.clang") lines)"
     else

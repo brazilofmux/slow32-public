@@ -515,6 +515,32 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         fi
     done
 
+    # GitHub issue 55: getenv reaches the host environment.  Needs a
+    # variable actually set, so it cannot ride the plain test loop.
+    TOTAL=$((TOTAL + 1))
+    set +e
+    run_exe_rc "$GEN1_CC_EXE" "$WORKDIR/test_getenv-cc.log" \
+        "$TESTS_DIR/test_getenv.c" "$WORKDIR/test_getenv.s"
+    GE_RC=$?
+    if [[ "$GE_RC" -eq 0 ]]; then
+        GE_EXE=$(compile_and_link "test_getenv" "$TESTS_DIR/test_getenv.c" \
+                     "$GEN1_CC_EXE" "$AS_EXE" "$LD_EXE")
+        GE_RC=$?
+        if [[ "$GE_RC" -eq 0 ]]; then
+            S32_SELFTEST_ENV=ok run_exe_rc "$GE_EXE" "$WORKDIR/test_getenv.run.log"
+            GE_RC=$?
+        fi
+    fi
+    set -e
+    if [[ "$GE_RC" -eq 0 ]]; then
+        printf "  %-30s PASS\n" "test_getenv:"
+        PASS=$((PASS + 1))
+    else
+        printf "  %-30s FAIL (rc=%d)\n" "test_getenv:" "$GE_RC"
+        tail -n 20 "$WORKDIR/test_getenv.run.log" >&2 || true
+        FAIL=$((FAIL + 1))
+    fi
+
     # GitHub issue 46: two initialized definitions are a redefinition.
     # p_error runs during parse, before the output file is opened.
     # test_two_init_zero is the case a `ps_ginit != 0` check would miss.

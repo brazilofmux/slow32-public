@@ -48,8 +48,9 @@ pristine sources:
     ./build-stage08.sh    # out/stage08/{libsqlite3.s32a,sqlite3_test.s32x,sqlite3.s32x}
 
 `./check-stage08.sh` is the acceptance test: it builds both ways and
-diffs the two programs' output, so there are no golden files to go stale.
-Run it after any stage08 front-end change.
+diffs the two programs' output -- unfiltered, byte for byte -- so there
+are no golden files to go stale.  Run it after any stage08 front-end
+change.
 
 It compiles under `slow32-dbt` (about a minute for the amalgamation),
 assembles and links with the host tools, and uses stage08's own libc and
@@ -58,8 +59,7 @@ byte-identical to the clang build's; a diff of the two shells over a script
 is the acceptance test (selfhost ISSUES-67 lists what it took: the
 amalgamation is the largest input stage08 has taken).  Two differences to
 know about: `-mlong-calls` everywhere, since stage08 has no -Os and the
-library is 1.2MB of code; and stage08's `getenv` is a stub, so the shell
-warns that it cannot find a home directory before it runs.
+library is 1.2MB of code.
 
 ## What it found
 

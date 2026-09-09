@@ -123,11 +123,5 @@ void __slow32_start(void) {
     exit(i);
 }
 
-/* getenv stub: stage08's MMIO bootstrap exposes argv but no envp,
- * so environment lookups always fail.  Returning NULL matches the
- * standard "name not present" semantics, which leaves debug gates
- * like `if (getenv("CC_X64_PROMO_DEBUG"))` correctly disabled. */
-char *getenv(const char *name) {
-    (void)name;
-    return (char *)0;
-}
+/* getenv lives in posix_more.c now, over the GETENV request
+ * (selfhost ISSUES-68 / GitHub issue 55). */
