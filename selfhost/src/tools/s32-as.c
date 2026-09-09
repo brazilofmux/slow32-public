@@ -1076,8 +1076,10 @@ int handle(char *line) {
             g_lbl_sec[li] = SEC_BSS;
             g_lbl_val[li] = g_bsz;
             g_lbl_abs[li] = 0;
+            /* Subtract, don't add: g_bsz + cnt is signed int and can
+             * wrap past MAX_BSS (GitHub issue 58). */
+            if (cnt > MAX_BSS - g_bsz) return -1;
             g_bsz = g_bsz + cnt;
-            if (g_bsz > MAX_BSS) return -1;
             return 0;
         }
         if (strcmp(tok[0], ".space") == 0 || strcmp(tok[0], ".zero") == 0) {
@@ -1088,8 +1090,9 @@ int handle(char *line) {
                 /* Counted, not stored.  A byte at a time, the 129MB of
                  * tables in stage08's own cc took the assembler eleven
                  * minutes under stage00's emulator: the build's longest
-                 * step by far. */
-                if (g_bsz + cnt > MAX_BSS) return -1;
+                 * step by far.  Subtract, don't add: g_bsz + cnt is
+                 * signed int and can wrap past MAX_BSS (GitHub issue 58). */
+                if (cnt > MAX_BSS - g_bsz) return -1;
                 g_bsz = g_bsz + cnt;
                 return 0;
             }
