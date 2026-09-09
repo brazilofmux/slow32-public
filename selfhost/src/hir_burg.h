@@ -596,6 +596,21 @@ static int bg_is_sym(int k) {
 static char bg_fdone[HIR_MAX_INST];   /* bg_foff_one: computed this function */
 static int  bg_walk[HIR_MAX_INST];    /* explicit stack: operand chains are not host recursion (GitHub issue 56) */
 
+/* Push onto bg_walk with a bound.  A node is marked done when it first
+ * reaches the TOP, not when it is pushed, so a shared operand can sit on
+ * the stack more than once and the depth is bounded by 2*h_ninst, not by
+ * h_ninst.  Measured max over all of sqlite3.c is 5 -- HIR operand trees
+ * are shallow -- so this never fires on real code; it is here because an
+ * unbounded write into a static array is how silent corruption starts. */
+static int bg_walk_push(int sp, int v) {
+    if (sp >= HIR_MAX_INST) {
+        fdputs("s12cc: burg walk stack overflow\n", 2);
+        exit(1);
+    }
+    bg_walk[sp] = v;
+    return sp + 1;
+}
+
 /* Frame offset and symbol base of one instruction; an addi's operand
  * first, since the SSA pass appends allocas after their users. */
 static void bg_foff_one(int start) {
@@ -606,8 +621,7 @@ static void bg_foff_one(int start) {
     int sk;
     if (bg_fdone[start]) return;
     sp = 0;
-    bg_walk[sp] = start;
-    sp = sp + 1;
+    sp = bg_walk_push(sp, start);
     while (sp > 0) {
         i = bg_walk[sp - 1];
         if (!bg_fdone[i]) {
@@ -615,8 +629,7 @@ static void bg_foff_one(int start) {
             k = h_kind[i];
             s1 = h_src1[i];
             if (k == HI_ADDI && s1 >= 0 && s1 < h_ninst && !bg_fdone[s1]) {
-                bg_walk[sp] = s1;
-                sp = sp + 1;
+                sp = bg_walk_push(sp, s1);
                 continue;
             }
         }
@@ -696,8 +709,7 @@ static void bg_label_one(int start) {
     int pushed;
     if (bg_done[start]) return;
     sp = 0;
-    bg_walk[sp] = start;
-    sp = sp + 1;
+    sp = bg_walk_push(sp, start);
     while (sp > 0) {
     i = bg_walk[sp - 1];
     if (!bg_done[i]) {
@@ -718,13 +730,11 @@ static void bg_label_one(int start) {
          * blew the stack (GitHub issue 56). */
         pushed = 0;
         if (s1 >= 0 && s1 < h_ninst && !bg_done[s1]) {
-            bg_walk[sp] = s1;
-            sp = sp + 1;
+            sp = bg_walk_push(sp, s1);
             pushed = 1;
         }
         if (s2 >= 0 && s2 < h_ninst && bg_src2_is_value(k) && !bg_done[s2]) {
-            bg_walk[sp] = s2;
-            sp = sp + 1;
+            sp = bg_walk_push(sp, s2);
             pushed = 1;
         }
         if (pushed) continue;
