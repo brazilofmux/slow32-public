@@ -207,6 +207,19 @@ static int hl_stmt_terminates(Node *s) {
     return 0;
 }
 
+/* A case/default nested under this statement list (not an inner switch). */
+static int hl_sw_has_nested_label(Node *cs) {
+    while (cs) {
+        if (cs->kind == ND_CASE || cs->kind == ND_DEFAULT) return 1;
+        if (cs->kind != ND_SWITCH) {
+            if (cs->body && hl_sw_has_nested_label(cs->body)) return 1;
+            if (cs->els && hl_sw_has_nested_label(cs->els)) return 1;
+        }
+        cs = cs->next;
+    }
+    return 0;
+}
+
 /* Conservatively report whether any case in the switch body falls through
  * into the next case/default label.  Jump tables target case blocks
  * directly, so a fall-through (which gives a case block a second
@@ -226,6 +239,12 @@ static int hl_switch_has_fallthrough(Node *body) {
         if (s->kind == ND_CASE || s->kind == ND_DEFAULT) {
             if (seen_label && !hl_stmt_terminates(prev)) return 1;
             seen_label = 1;
+        } else if (s->kind != ND_SWITCH) {
+            /* Nested labels are not the next top-level sibling, so they
+             * are fall-through from the enclosing statement (Duff's
+             * device; GitHub issue 51). */
+            if (s->body && hl_sw_has_nested_label(s->body)) return 1;
+            if (s->els && hl_sw_has_nested_label(s->els)) return 1;
         }
         prev = s;
         s = s->next;
@@ -3177,6 +3196,10 @@ static void hl_stmt(Node *n) {
     /* Switch */
     if (n->kind == ND_SWITCH) {
         sw_d = hl_sw_depth;
+        if (sw_d >= HL_MAX_SW_DEPTH) {
+            fdputs("s12cc: switch nesting too deep\n", 2);
+            exit(1);
+        }
         sw_b = 0;
         if (sw_d > 0) {
             sw_b = hl_sw_base[sw_d - 1] + hl_sw_count[sw_d - 1];
