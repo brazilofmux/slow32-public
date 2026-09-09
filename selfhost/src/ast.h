@@ -29,7 +29,9 @@
 #define TY_PTR_MASK  0x3F000  /* bits 12-17: pointer depth */
 
 /* --- Struct definition tables --- */
-#define ST_MAX_STRUCTS 4096
+/* TY_STRUCT_BASE + i must stay below TY_PTR (0x1000).  4096 let i >= 4088
+ * encode as a pointer (GitHub issue 50). */
+#define ST_MAX_STRUCTS (TY_PTR - TY_STRUCT_BASE)
 #define ST_MAX_MEMBERS 32768
 
 static char *st_name[ST_MAX_STRUCTS];
