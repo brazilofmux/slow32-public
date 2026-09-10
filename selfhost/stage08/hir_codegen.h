@@ -135,6 +135,11 @@ static int hcg_frame;      /* total frame size */
 static int hcg_frame_escapes; /* an alloca's address may reach a callee:
                                  tail calls must not pop the frame first */
 static int hcg_epilog;     /* epilog label */
+/* GitHub issue 73 telemetry: frame traffic is 2.35x clang on SQLite and 23%
+ * of the whole instruction excess.  Split it by who emits it. */
+static int hcg_stat_reload;    /* ldw from a spill slot */
+static int hcg_stat_spillst;   /* stw to a spill slot */
+static int hcg_stat_csave;     /* prologue saves + epilogue restores */
 static int hcg_va_save_size; /* varargs register save area size */
 
 /* Block labels */
@@ -330,6 +335,7 @@ static void hcg_into(int reg, int inst) {
     /* Spilled: load from spill slot */
     off = ra_spill_off[inst];
     if (off != 0) {
+        hcg_stat_reload = hcg_stat_reload + 1;
         if (off >= -2048 && off <= 2047) {
             cg_s("    ldw r");
             cg_n(reg);
@@ -613,6 +619,7 @@ static void hcg_spill_from(int idx, int reg) {
     if (hi_inst_remat(idx)) return;
     off = ra_spill_off[idx];
     if (off == 0) return;
+    hcg_stat_spillst = hcg_stat_spillst + 1;
     if (off >= -2048 && off <= 2047) {
         cg_s("    stw r30, r");
         cg_n(reg);
@@ -635,6 +642,7 @@ static void hcg_maybe_spill(int idx) {
     if (hi_inst_remat(idx)) return;
     off = ra_spill_off[idx];
     if (off == 0) return;
+    hcg_stat_spillst = hcg_stat_spillst + 1;
     if (off >= -2048 && off <= 2047) {
         cg_s("    stw r30, r1, ");
         cg_n(off);
@@ -3328,6 +3336,7 @@ static void hcg_block(int b) {
 /* --- Save/restore callee-saved register at fp+off --- */
 
 static void hcg_save_reg(int reg, int off) {
+    hcg_stat_csave = hcg_stat_csave + 1;
     if (off >= -2048 && off <= 2047) {
         cg_s("    stw r30, r");
         cg_n(reg);
@@ -3344,6 +3353,7 @@ static void hcg_save_reg(int reg, int off) {
 }
 
 static void hcg_restore_reg(int reg, int off) {
+    hcg_stat_csave = hcg_stat_csave + 1;
     if (off >= -2048 && off <= 2047) {
         cg_s("    ldw r");
         cg_n(reg);

@@ -379,6 +379,15 @@ int main(int argc, char **argv) {
     fdputs(" imm_base=", 2);
     fdputuint(2, ra_stat_imm_base_reuse);
     fdputs("\n", 2);
+    fdputs("frame_traffic: reload=", 2);
+    fdputuint(2, hcg_stat_reload);
+    fdputs(" spill_st=", 2);
+    fdputuint(2, hcg_stat_spillst);
+    fdputs(" csave_restore=", 2);
+    fdputuint(2, hcg_stat_csave);
+    fdputs(" retpin=", 2);
+    fdputuint(2, hcg_stat_retpin);
+    fdputs("\n", 2);
     fdputs("hir_imm_sel: add ", 2);
     fdputuint(2, hcg_stat_imm_hit_add);
     fdputs("/", 2);
