@@ -3006,8 +3006,18 @@ static int hl_expr(Node *n) {
             }
             i = i + 1;
         }
-        i = hi_emit(HI_CALLP, TY_INT, callee, -1, phys_count2, NULL);
+        i = hi_emit(HI_CALLP, n->ty, callee, -1, phys_count2, NULL);
         h_cbase[i] = carg_base;
+#ifdef S12CC_X64_HOST
+        /* x64: 64-bit return is a single value, no CALLHI needed */
+#else
+        /* Same as the direct-call path: a long long or double return is
+         * a lo/hi pair.  Without CALLHI the lo word was treated as an
+         * int and later converted with fcvt.d.w (GitHub issue 69). */
+        if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
+            hl_hi = hi_emit(HI_CALLHI, TY_INT, i, -1, 0, NULL);
+        }
+#endif
         return i;
     }
 

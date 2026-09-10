@@ -15,11 +15,8 @@
  * double specifically, and nothing in the suite passed one that was
  * still live after the call.
  *
- * The same shape through a function pointer is deliberately NOT tested
- * here: an indirect call returning a double is separately miscompiled
- * (the return value is run through fcvt.d.w as if it were an int), which
- * reproduces with no split in sight and on the pre-#67 kit compiler.
- * See GitHub issue 69.
+ * Indirect calls returning double are in test_fnptr_double.c
+ * (GitHub issue 69).
  *
  * Returns the index of the first failing block, 0 if all pass. */
 

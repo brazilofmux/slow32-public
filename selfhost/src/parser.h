@@ -304,6 +304,7 @@ static int   ps_fpn[PS_MAX_FUNCS];    /* declared param count */
 static int   ps_fretfpbase[PS_MAX_FUNCS]; /* return type is a function pointer */
 static int   ps_fretfpn[PS_MAX_FUNCS];
 static int   ps_fptypes[PS_MAX_FPARAM];
+static int   ps_fpret[PS_MAX_FPARAM];  /* return type of the fnptr signature at this base; 0 = TY_INT */
 static int   ps_nfptypes;
 static int   ps_nfuncs;
 static int   ps_pending_retfpbase = -1;
@@ -612,6 +613,27 @@ static int ps_fp_store(int *ptys, int np) {
         i = i + 1;
     }
     return base;
+}
+
+/* Return type of a function-pointer signature.  Indexed by the same
+ * base ps_parse_fp_params returns.  Unset (BSS 0) is TY_INT, which is
+ * what ND_CALL_PTR used to hard-code — GitHub issue 69. */
+static void ps_fp_set_ret(int base, int ret_ty) {
+    if (base >= 0 && base < PS_MAX_FPARAM) ps_fpret[base] = ret_ty;
+}
+
+static int ps_fp_get_ret(int base) {
+    if (base < 0 || base >= PS_MAX_FPARAM) return TY_INT;
+    return ps_fpret[base];
+}
+
+static int ps_fp_ret_of_callee(Node *lhs) {
+    int fpb;
+    if (!lhs) return TY_INT;
+    fpb = -1;
+    if (lhs->kind == ND_MEMBER && lhs->offset >= 0) fpb = lhs->offset;
+    else if (lhs->is_fnptr) fpb = lhs->val;
+    return ps_fp_get_ret(fpb);
 }
 
 static void add_func_type(char *name, int ty, int *ptys, int np) {
@@ -1221,14 +1243,16 @@ static int parse_type(void) {
                         expect(TK_RPAREN);
                         expect(TK_LPAREN);
                         stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
+                        ps_fp_set_ret(stm_fpbase[stm_count], TY_PTR + TY_INT);
                     }
                     if (is_fn_ptr_member) {
                         expect(TK_RPAREN);
                         if (lex_tok == TK_LPAREN) {
                             next();
-                            if (is_fn_ptr_member == 1)
+                            if (is_fn_ptr_member == 1) {
                                 stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
-                            else
+                                ps_fp_set_ret(stm_fpbase[stm_count], dty);
+                            } else
                                 p_skip_to_rparen();
                         } else if (lex_tok == TK_LBRACK) {
                             /* Pointer-to-array member: T (*name)[N] — a
@@ -1519,14 +1543,16 @@ static int parse_type(void) {
                         expect(TK_RPAREN);
                         expect(TK_LPAREN);
                         stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
+                        ps_fp_set_ret(stm_fpbase[stm_count], TY_PTR + TY_INT);
                     }
                     if (is_fn_ptr_member) {
                         expect(TK_RPAREN);
                         if (lex_tok == TK_LPAREN) {
                             next();
-                            if (is_fn_ptr_member == 1)
+                            if (is_fn_ptr_member == 1) {
                                 stm_fpbase[stm_count] = ps_parse_fp_params(&stm_fpn[stm_count]);
-                            else
+                                ps_fp_set_ret(stm_fpbase[stm_count], dty);
+                            } else
                                 p_skip_to_rparen();
                         } else if (lex_tok == TK_LBRACK) {
                             /* Pointer-to-array member: T (*name)[N] — a
@@ -3775,6 +3801,7 @@ static Node *parse_postfix(void) {
                                * loaded the code word the pointer named
                                * and jumped to it */
             n = nd_call_ptr(n, ahead, anargs);
+            n->ty = ps_fp_ret_of_callee(n->lhs);
         } else if (lex_tok == TK_LBRACK) {
             next();
             idx = parse_expr();
@@ -4706,6 +4733,7 @@ static void parse_typedef_decl(void) {
                 if (lex_tok == TK_LPAREN) {
                     next();
                     tfpb = ps_parse_fp_params(&tfpn);
+                    ps_fp_set_ret(tfpb, ty);
                 }
                 add_typedef(nm, TY_INT);
                 ps_tdfpbase[ps_ntypedefs - 1] = tfpb;
@@ -5073,6 +5101,7 @@ static Node *parse_stmt(void) {
                     has_params = 1;
                     next();
                     afpb = ps_parse_fp_params(&afpn);
+                    ps_fp_set_ret(afpb, ty);
                 }
                 if (!has_params) {
                     while (nstars > 0) {
@@ -5193,6 +5222,7 @@ static Node *parse_stmt(void) {
                 if (lex_tok == TK_LPAREN) {
                     next();
                     lfpb = ps_parse_fp_params(&lfpn);
+                    ps_fp_set_ret(lfpb, ty);
                 }
                 off = add_local(nm, TY_INT);
                 ps_lfpbase[ps_nlocals - 1] = lfpb;
@@ -5671,6 +5701,7 @@ static Node *parse_top_decl(void) {
             fp_has_params = 1;
             next();
             fp_tys[0] = ps_parse_fp_params(&fp_n);
+            ps_fp_set_ret(fp_tys[0], ty);
         }
         skip_gnu_decl_suffixes();
         /* T (*name[N]) with no (params) is T *name[N], not an array of
@@ -6097,6 +6128,8 @@ function_decl:
             /* Function pointer param: type (*name)(args) */
             if (lex_tok == TK_LPAREN) {
                 int nested_fp;
+                int fp_ret_ty;
+                fp_ret_ty = pty;  /* T in T (*name)(params) */
                 next();
                 while (lex_tok == TK_STAR) next();   /* (**name)(...) */
                 /* T (*(*name)(params))(params), as in a struct member: the
@@ -6122,11 +6155,29 @@ function_decl:
                     expect(TK_RPAREN);
                     expect(TK_LPAREN);
                     p_skip_to_rparen();
+                    fp_ret_ty = TY_PTR + TY_INT;
                 }
                 expect(TK_RPAREN);
                 if (lex_tok == TK_LPAREN) {
+                    int pfpb;
+                    int pfn;
                     next();
-                    p_skip_to_rparen();
+                    if (nested_fp) {
+                        p_skip_to_rparen();
+                    } else {
+                        /* Record the signature so a call through this
+                         * parameter keeps the return type (GitHub issue 69)
+                         * and converts i64 args (GitHub issue 41). */
+                        pfpb = ps_parse_fp_params(&pfn);
+                        ps_fp_set_ret(pfpb, fp_ret_ty);
+                        if (p != NULL) {
+                            ps_lfpbase[ps_nlocals - 1] = pfpb;
+                            ps_lfpn[ps_nlocals - 1] = pfn;
+                            p->is_fnptr = 1;
+                            p->val = pfpb;
+                            p->nparams = pfn;
+                        }
+                    }
                 }
                 pty = TY_INT;  /* record fn-ptr param as a word */
             } else if (lex_tok == TK_LBRACK) {

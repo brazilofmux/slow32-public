@@ -200,6 +200,7 @@ static void sema_expr(Node *n) {
                 idx = idx + 1;
                 a = a->next;
             }
+            n->ty = ps_fp_get_ret(fpbase);
             return;
         }
     }
