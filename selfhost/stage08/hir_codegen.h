@@ -518,6 +518,111 @@ static int hcg_pe_src[8];
 static int hcg_pe_active[8];
 static int hcg_argmap[HIR_MAX_CARG]; /* per-call ABI register map */
 
+/* --- Parallel-copy sequencer for outgoing register arguments (issue 67) ---
+ *
+ * Marshalling used to walk the arguments in index order and move each into
+ * its ABI register.  That is only safe while no argument VALUE lives in an
+ * argument register: otherwise moving argument 0 into r3 can clobber the
+ * register argument 1 still has to be read from.  Today nothing lives in
+ * r3-r10 across a call (ra_mark_call_crossing bans it), so the naive order
+ * happens to be correct and this sequencer is a no-op -- it must produce
+ * byte-identical output until that ban is relaxed, which is how it is
+ * verified in isolation.
+ *
+ * The rule is the standard one: emit a move only when its destination is
+ * not still needed as somebody else's source.  A cycle (a<-b, b<-a) has no
+ * such move, so one destination is parked in the r1 scratch and everyone
+ * reading it is redirected there.  r1/r2 are the established spill scratch
+ * and are dead here -- results come back in them, and the long-call target
+ * address goes into r2 only after the arguments are in place. */
+#define HCG_ARGSHUF_MAX 16
+static int hcg_shuf_dst[HCG_ARGSHUF_MAX];
+static int hcg_shuf_src[HCG_ARGSHUF_MAX];   /* physical reg, -1 = materialize */
+static int hcg_shuf_val[HCG_ARGSHUF_MAX];
+static int hcg_shuf_done[HCG_ARGSHUF_MAX];
+static int hcg_stat_argshuf;                /* cycles broken via the scratch */
+
+static void hcg_marshal_reg_args(int base, int nargs) {
+    int i;
+    int j;
+    int k;
+    int n;
+    int v;
+    int left;
+    int progress;
+    int blocked;
+    int d;
+
+    n = 0;
+    i = 0;
+    while (i < nargs) {
+        if (hcg_argmap[i] >= 0) {
+            if (n >= HCG_ARGSHUF_MAX) {
+                /* More register arguments than the ABI has registers:
+                 * cannot happen, but never silently emit a wrong order. */
+                fdputs("s12cc: too many register arguments\n", 2);
+                exit(1);
+            }
+            v = h_carg[base + i];
+            hcg_shuf_dst[n] = hcg_argmap[i];
+            hcg_shuf_val[n] = v;
+            if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
+            else hcg_shuf_src[n] = -1;
+            hcg_shuf_done[n] = 0;
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+
+    left = n;
+    while (left > 0) {
+        progress = 0;
+        j = 0;
+        while (j < n) {
+            if (!hcg_shuf_done[j]) {
+                blocked = 0;
+                k = 0;
+                while (k < n) {
+                    if (k != j && !hcg_shuf_done[k] &&
+                        hcg_shuf_src[k] == hcg_shuf_dst[j]) {
+                        blocked = 1;
+                        k = n;
+                    } else {
+                        k = k + 1;
+                    }
+                }
+                if (!blocked) {
+                    if (hcg_shuf_src[j] >= 0) {
+                        if (hcg_shuf_src[j] != hcg_shuf_dst[j]) {
+                            cg_rri("addi", hcg_shuf_dst[j], hcg_shuf_src[j], 0);
+                        }
+                    } else {
+                        hcg_into(hcg_shuf_dst[j], hcg_shuf_val[j]);
+                    }
+                    hcg_shuf_done[j] = 1;
+                    left = left - 1;
+                    progress = 1;
+                }
+            }
+            j = j + 1;
+        }
+        if (!progress) {
+            /* Every pending destination is still someone's source: a cycle.
+             * Park one destination in r1 and redirect its readers there. */
+            j = 0;
+            while (j < n && hcg_shuf_done[j]) j = j + 1;
+            d = hcg_shuf_dst[j];
+            cg_rri("addi", 1, d, 0);
+            k = 0;
+            while (k < n) {
+                if (!hcg_shuf_done[k] && hcg_shuf_src[k] == d) hcg_shuf_src[k] = 1;
+                k = k + 1;
+            }
+            hcg_stat_argshuf = hcg_stat_argshuf + 1;
+        }
+    }
+}
+
 static void hcg_emit_param_entry(void) {
     int i;
     int j;
@@ -2550,12 +2655,9 @@ static void hcg_inst(int idx) {
          * stack spill (matches clang's CC_SLOW32). */
         nstk = hi_abi_assign(&h_carg_tag[base], nargs, hcg_argmap);
 
-        /* Load register args */
-        i = 0;
-        while (i < nargs) {
-            if (hcg_argmap[i] >= 0) hcg_into(hcg_argmap[i], h_carg[base + i]);
-            i = i + 1;
-        }
+        /* Load register args, ordered so no destination is written before
+         * its source is read (issue 67). */
+        hcg_marshal_reg_args(base, nargs);
 
         /* Check for tail call BEFORE emitting stack args or jal */
         is_tail = (nstk == 0) && hcg_is_tailcall(idx);
