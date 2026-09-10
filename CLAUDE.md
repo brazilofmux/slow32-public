@@ -238,6 +238,11 @@ The Makefile passes `--hir` automatically.
 ## Testing Commands
 
 ```bash
+# After a stage08 frontend change: host-compile the cross drivers
+# (parser.h is shared by symlink; clang rejects implicit statics that
+# s12cc accepts — GitHub issue 71).
+bash selfhost/check-host-frontend.sh
+
 # IMPORTANT: Run regression tests before committing any backend changes!
 cd ~/slow-32/regression && ./run-tests.sh
 

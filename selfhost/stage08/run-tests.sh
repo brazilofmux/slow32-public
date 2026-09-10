@@ -74,6 +74,13 @@ fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
+# Shared frontend is also compiled by host CC into cc-x64 / cc-a64.
+# stage07 accepts a static used before its definition; clang does not
+# (GitHub issue 71).  Skip only when there is no host compiler.
+if command -v "${HOSTCC:-cc}" >/dev/null 2>&1; then
+    bash "$SELFHOST_DIR/check-host-frontend.sh"
+fi
+
 WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage08.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT

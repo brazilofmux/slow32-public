@@ -317,6 +317,10 @@ static Node *parse_assign(void);
 static Node *parse_postfix(void);
 static Node *parse_gnu_asm_stmt(void);
 static Node *parse_block(void);
+/* ps_parse_fp_params sits above these and calls them (GitHub issue 71). */
+static int is_type(void);
+static int parse_type(void);
+static int ps_fp_store(int *ptys, int np);
 
 /* --- Utilities --- */
 

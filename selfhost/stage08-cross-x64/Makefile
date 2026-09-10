@@ -31,7 +31,15 @@ CC_DEPS = cc-x64.c hir_regalloc_x64.h hir_codegen_x64.h hir_burg_x64.h \
           ../src/parser.h ../src/ast.h ../src/sema.h \
           ../src/optimize.h ../src/pp.h c_lexer_gen.c ../src/c_lexer_gen.c ../src/c_lexer.rl
 
-.PHONY: all test bench clean libc diff-test
+.PHONY: all test bench clean libc diff-test check-frontend
+
+# GitHub issue 71: the shared frontend is compiled here by host CC,
+# which rejects a static used before its definition.  stage08's own
+# compiler accepts that, so this is the gate the other suites miss.
+check-frontend:
+	$(CC) -std=c11 -O0 -fno-builtin -fsyntax-only \
+	    -Werror=implicit-function-declaration -Werror=implicit-int \
+	    -Wno-comment cc-x64.c
 
 all: $(OUT)/cc-x64 $(OUT)/s32fast-hir
 

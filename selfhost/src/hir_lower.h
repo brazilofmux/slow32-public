@@ -86,6 +86,8 @@ static int hl_nparams;
 static int hl_expr(Node *n);
 static int hl_addr(Node *n);
 static void hl_stmt(Node *n);
+/* Used by the inliner before its definition (GitHub issue 71). */
+static int hl_narrow(int ty, int lv);
 
 /* --- Helpers --- */
 

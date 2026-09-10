@@ -12,7 +12,13 @@ CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast dbt bench clean diff-test
+.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast dbt bench clean diff-test check-frontend
+
+# GitHub issue 71: same shared frontend as cc-x64; host CC is the gate.
+check-frontend:
+	$(CC) -std=c11 -O0 -fno-builtin -fsyntax-only \
+	    -Werror=implicit-function-declaration -Werror=implicit-int \
+	    -Wno-comment cc-a64.c
 
 all: $(OUT)/cc-a64 $(OUT)/ld-a64 $(OUT)/ar-a64 \
      test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive
