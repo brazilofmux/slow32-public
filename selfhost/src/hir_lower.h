@@ -237,7 +237,12 @@ static int hl_switch_has_fallthrough(Node *body) {
     s = body->body;
     while (s) {
         if (s->kind == ND_CASE || s->kind == ND_DEFAULT) {
-            if (seen_label && !hl_stmt_terminates(prev)) return 1;
+            /* case-after-case shares a block (hl_sw_prescan), so it adds no
+             * edge and is not fall-through.  default keeps its own block, so
+             * a case falling into it still is. */
+            int coalesced;
+            coalesced = (s->kind == ND_CASE && prev && prev->kind == ND_CASE);
+            if (seen_label && !coalesced && !hl_stmt_terminates(prev)) return 1;
             seen_label = 1;
         } else if (s->kind != ND_SWITCH) {
             /* Nested labels are not the next top-level sibling, so they
@@ -2946,6 +2951,8 @@ static int hl_expr(Node *n) {
  * Same traversal order as hl_stmt: a statement's body, then its else. */
 static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
     int sw_n;
+    int prev_case;
+    prev_case = 0;
     while (cs) {
         if (cs->kind == ND_CASE) {
             sw_n = hl_sw_count[sw_d];
@@ -2958,13 +2965,31 @@ static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
                 exit(1);
             }
             hl_sw_val[sw_b + sw_n] = cs->val;
-            hl_sw_blk[sw_b + sw_n] = hir_new_block();
+            /* `case A: case B:` -- labels with no statement between them --
+             * SHARE one block rather than getting one each.  Giving each its
+             * own made the first fall through to the second, so the second had
+             * two predecessors and hl_switch_has_fallthrough had to refuse the
+             * whole switch: no jump table was ever emitted for real code (zero
+             * across all of SQLite, against clang's 54, and vappendf came out
+             * 29x clang's size).  Sharing keeps one CFG edge -- the jump-table
+             * successor walk already dedups identical targets for exactly this
+             * reason -- so the block stays single-predecessor and phi-free. */
+            if (prev_case && sw_n > 0) {
+                hl_sw_blk[sw_b + sw_n] = hl_sw_blk[sw_b + sw_n - 1];
+            } else {
+                hl_sw_blk[sw_b + sw_n] = hir_new_block();
+            }
             hl_sw_count[sw_d] = sw_n + 1;
+            prev_case = 1;
         } else if (cs->kind == ND_DEFAULT) {
             hl_sw_def[sw_d] = hir_new_block();
+            prev_case = 0;
         } else if (cs->kind != ND_SWITCH) {
             if (cs->body) hl_sw_prescan(cs->body, sw_d, sw_b);
             if (cs->els) hl_sw_prescan(cs->els, sw_d, sw_b);
+            prev_case = 0;
+        } else {
+            prev_case = 0;
         }
         cs = cs->next;
     }
@@ -3294,6 +3319,10 @@ static void hl_stmt(Node *n) {
         ci = hl_sw_cur[cd];
         case_blk = hl_sw_blk[hl_sw_base[cd] + ci];
         hl_sw_cur[cd] = ci + 1;
+        /* A label coalesced with the previous one (see hl_sw_prescan) maps to
+         * the block we are already in: no branch, and no hl_switch_block --
+         * that resets bb_start/bb_end and would drop what is already here. */
+        if (case_blk == hl_cur_blk) return;
         /* Fall-through from previous block */
         if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, case_blk, NULL);
         hl_switch_block(case_blk);
