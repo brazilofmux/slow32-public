@@ -496,7 +496,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -529,6 +529,22 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         if [[ "$tname" == "test_sqlite_bugs" ]]; then
             if ! check_long_calls "$WORKDIR/${tname}.s" "$tname"; then
                 printf "  %-30s FAIL (long-call shape)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
+        # GitHub issue 64: top-level fall-through still emits a jump table;
+        # Duff's device (nested labels) must not.
+        if [[ "$tname" == "test_jt_fallthrough" ]]; then
+            if ! grep -qE '\.LJT' "$WORKDIR/${tname}.s"; then
+                printf "  %-30s FAIL (no jump table)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
+        if [[ "$tname" == "test_duff_jt" ]]; then
+            if grep -qE '\.LJT' "$WORKDIR/${tname}.s"; then
+                printf "  %-30s FAIL (duff got a jump table)\n" "$tname:"
                 FAIL=$((FAIL + 1))
                 continue
             fi

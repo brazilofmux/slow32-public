@@ -37,6 +37,10 @@ static int hl_sw_def[HL_MAX_SW_DEPTH];
 static int hl_sw_cur[HL_MAX_SW_DEPTH];
 static int hl_sw_depth;
 static int hl_sw_ord[HL_MAX_CASE];
+static char hl_sw_ft[HL_MAX_CASE];     /* 1 if this case slot is a fall-through target */
+static int  hl_jt_tr_blk[HL_MAX_CASE]; /* trampoline block per unique fall-through dest */
+static int  hl_jt_tr_dst[HL_MAX_CASE];
+static int  hl_jt_ntr;
 
 /* --- Jump-table lowering (issue #32) --- */
 /* Max span (case-value range hi-lo+1) we will materialise as a jump table.
@@ -220,41 +224,53 @@ static int hl_sw_has_nested_label(Node *cs) {
     return 0;
 }
 
-/* Conservatively report whether any case in the switch body falls through
- * into the next case/default label.  Jump tables target case blocks
- * directly, so a fall-through (which gives a case block a second
- * predecessor and thus a possible phi) would need a phi copy on the
- * un-splittable jump-table edge.  When this returns true we decline the
- * jump table and use the comparison tree, whose per-edge BRCs carry phi
- * copies normally. */
-static int hl_switch_has_fallthrough(Node *body) {
+/* Nested case labels (Duff's device) still refuse a jump table
+ * (GitHub issue 51 / test_duff_jt.c).  Top-level sibling fall-through
+ * is handled by per-case trampolines (GitHub issue 64). */
+static int hl_switch_nested_labels(Node *body) {
+    Node *s;
+    if (!body || body->kind != ND_BLOCK) return 1;  /* unknown shape: be safe */
+    s = body->body;
+    while (s) {
+        if (s->kind != ND_SWITCH) {
+            if (s->body && hl_sw_has_nested_label(s->body)) return 1;
+            if (s->els && hl_sw_has_nested_label(s->els)) return 1;
+        }
+        s = s->next;
+    }
+    return 0;
+}
+
+/* Mark case slots entered by fall-through from the previous top-level
+ * statement.  `case A: case B:` is coalesced (one block, no extra edge). */
+static void hl_sw_mark_ft(Node *body, int sw_b, int sw_n) {
     Node *s;
     Node *prev;
     int seen_label;
-    if (!body || body->kind != ND_BLOCK) return 1;  /* unknown shape: be safe */
+    int idx;
+    int i;
+    i = 0;
+    while (i < sw_n) { hl_sw_ft[sw_b + i] = 0; i = i + 1; }
+    if (!body || body->kind != ND_BLOCK) return;
     prev = NULL;
     seen_label = 0;
+    idx = 0;
     s = body->body;
     while (s) {
-        if (s->kind == ND_CASE || s->kind == ND_DEFAULT) {
-            /* case-after-case shares a block (hl_sw_prescan), so it adds no
-             * edge and is not fall-through.  default keeps its own block, so
-             * a case falling into it still is. */
+        if (s->kind == ND_CASE) {
             int coalesced;
-            coalesced = (s->kind == ND_CASE && prev && prev->kind == ND_CASE);
-            if (seen_label && !coalesced && !hl_stmt_terminates(prev)) return 1;
+            coalesced = (prev && prev->kind == ND_CASE);
+            if (seen_label && !coalesced && !hl_stmt_terminates(prev)) {
+                if (idx < sw_n) hl_sw_ft[sw_b + idx] = 1;
+            }
             seen_label = 1;
-        } else if (s->kind != ND_SWITCH) {
-            /* Nested labels are not the next top-level sibling, so they
-             * are fall-through from the enclosing statement (Duff's
-             * device; GitHub issue 51). */
-            if (s->body && hl_sw_has_nested_label(s->body)) return 1;
-            if (s->els && hl_sw_has_nested_label(s->els)) return 1;
+            idx = idx + 1;
+        } else if (s->kind == ND_DEFAULT) {
+            seen_label = 1;
         }
         prev = s;
         s = s->next;
     }
-    return 0;
 }
 
 static int hl_sw_less_val(int a, int b, int is_unsigned) {
@@ -356,18 +372,23 @@ static void hl_sw_emit_bsearch(int lv, int def_blk, int lt_kind, int lo, int hi)
 /* Try to lower the switch as an O(1) jump table.  Returns 1 if emitted,
  * 0 if it declined (caller falls back to the comparison tree).
  *
- * Requires the caller to have already verified there is no fall-through
- * (so every case block has the dispatch as its sole predecessor and thus
- * no phi from the jump-table edge).  Table holes route through one
- * trampoline (BR default), itself single-predecessor.  The bounds-check
- * BRC reaches the default via a normal edge that carries any phi copies.
+ * JMPTAB edges cannot carry phi copies, so every table target must be
+ * single-predecessor.  Table holes already route through one trampoline
+ * (BR default).  A case entered by fall-through from the previous case
+ * gets its own trampoline (GitHub issue 64): the table points at a
+ * block that only the JMPTAB reaches, and that block BRs to the real
+ * case, which is a normal edge and can carry copies.  Cases that are
+ * only reached from the table stay direct, so the common path costs
+ * nothing.
  *
  * Emits in the CURRENT block:
  *     idx = lv - lo                  (skipped when lo == 0)
  *     if ((unsigned)idx < span) -> jt_blk else -> def_blk
  *   jt_blk:  JMPTAB idx -> table[idx]
- *   dtramp:  BR def_blk              (only when there are holes) */
-static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n) {
+ *   dtramp:  BR def_blk              (only when there are holes)
+ *   ctramp:  BR case_blk             (per fall-through case) */
+static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n,
+                                Node *body) {
     int i;
     int lo;
     int hi;
@@ -381,6 +402,9 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n) {
     int hole_tgt;
     int has_holes;
     unsigned urange;
+    int dest;
+    int t;
+    int tramp;
 
     lo = hl_sw_val[sw_b];
     hi = lo;
@@ -412,12 +436,32 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n) {
         hole_tgt = dtramp;
     }
 
-    /* Build the per-index target table: holes -> trampoline, cases -> block. */
+    hl_sw_mark_ft(body, sw_b, sw_n);
+    hl_jt_ntr = 0;
+
+    /* Build the per-index target table: holes -> hole trampoline,
+     * fall-through cases -> per-case trampoline, others -> case block. */
     i = 0;
     while (i < span) { hl_jt_tgt[i] = hole_tgt; i = i + 1; }
     i = 0;
     while (i < sw_n) {
-        hl_jt_tgt[hl_sw_val[sw_b + i] - lo] = hl_sw_blk[sw_b + i];
+        dest = hl_sw_blk[sw_b + i];
+        tramp = dest;
+        if (hl_sw_ft[sw_b + i]) {
+            tramp = -1;
+            t = 0;
+            while (t < hl_jt_ntr) {
+                if (hl_jt_tr_dst[t] == dest) { tramp = hl_jt_tr_blk[t]; break; }
+                t = t + 1;
+            }
+            if (tramp < 0) {
+                tramp = hir_new_block();
+                hl_jt_tr_blk[hl_jt_ntr] = tramp;
+                hl_jt_tr_dst[hl_jt_ntr] = dest;
+                hl_jt_ntr = hl_jt_ntr + 1;
+            }
+        }
+        hl_jt_tgt[hl_sw_val[sw_b + i] - lo] = tramp;
         i = i + 1;
     }
 
@@ -444,6 +488,12 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n) {
     if (has_holes) {
         hl_switch_block(dtramp);
         hi_emit(HI_BR, 0, -1, -1, def_blk, NULL);
+    }
+    i = 0;
+    while (i < hl_jt_ntr) {
+        hl_switch_block(hl_jt_tr_blk[i]);
+        hi_emit(HI_BR, 0, -1, -1, hl_jt_tr_dst[i], NULL);
+        i = i + 1;
     }
     return 1;
 }
@@ -2967,13 +3017,8 @@ static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
             hl_sw_val[sw_b + sw_n] = cs->val;
             /* `case A: case B:` -- labels with no statement between them --
              * SHARE one block rather than getting one each.  Giving each its
-             * own made the first fall through to the second, so the second had
-             * two predecessors and hl_switch_has_fallthrough had to refuse the
-             * whole switch: no jump table was ever emitted for real code (zero
-             * across all of SQLite, against clang's 54, and vappendf came out
-             * 29x clang's size).  Sharing keeps one CFG edge -- the jump-table
-             * successor walk already dedups identical targets for exactly this
-             * reason -- so the block stays single-predecessor and phi-free. */
+             * own made the first fall through to the second.  Jump-table
+             * successor walk already dedups identical targets. */
             if (prev_case && sw_n > 0) {
                 hl_sw_blk[sw_b + sw_n] = hl_sw_blk[sw_b + sw_n - 1];
             } else {
@@ -3271,12 +3316,11 @@ static void hl_stmt(Node *n) {
         else lt_kind = HI_SLT;
 
         /* Issue #32 dispatch selection:
-         *   1. dense, non-fall-through switch  -> O(1) jump table
+         *   1. dense switch without nested labels -> O(1) jump table
+         *      (top-level fall-through uses per-case trampolines,
+         *      GitHub issue 64; Duff's device still refuses)
          *   2. >= 6 cases                       -> balanced binary tree
          *   3. otherwise                        -> linear comparison chain
-         * The jump table needs single-predecessor case blocks, so it is
-         * only attempted when no case falls through (see
-         * hl_switch_has_fallthrough).
          *
          * HI_JMPTAB codegen exists for the native SLOW-32 target (hir_codegen.h)
          * and the x64 cross backend (hir_codegen_x64.h).  The a64 cross backend
@@ -3286,8 +3330,8 @@ static void hl_stmt(Node *n) {
          * comparison-chain paths below, which are correct). */
         use_jt = 0;
 #ifndef S12CC_TARGET_A64
-        if (sw_n >= 5 && !hl_switch_has_fallthrough(n->body)) {
-            use_jt = hl_sw_emit_jumptable(lv, def_blk, sw_b, sw_n);
+        if (sw_n >= 5 && !hl_switch_nested_labels(n->body)) {
+            use_jt = hl_sw_emit_jumptable(lv, def_blk, sw_b, sw_n, n->body);
         }
 #endif
         if (!use_jt) {

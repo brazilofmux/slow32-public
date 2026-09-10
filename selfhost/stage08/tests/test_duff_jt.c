@@ -1,6 +1,7 @@
-/* GitHub issue 51: nested case labels are fall-through.  Five cases so
- * a jump table is eligible if hl_switch_has_fallthrough only walks
- * top-level siblings (case 0, then the do-while). */
+/* GitHub issue 51 / 64: nested case labels (Duff's device).  Five cases
+ * so a jump table is eligible if nested labels are ignored.  The
+ * harness checks the assembly has no .LJT — trampolines cover
+ * top-level fall-through only. */
 static int duff(int c) {
     int n;
     n = 0;

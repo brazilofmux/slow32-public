@@ -193,6 +193,9 @@ compile_gen1() {
 echo "[5/6] Recompile libc with gen1 (HIR/SSA ABI)"
 LIBC_OUT_DIR="$SCRIPT_DIR/lib"
 mkdir -p "$LIBC_OUT_DIR"
+# posix_more.c was split (GitHub issue 65); drop the old object so
+# `ls lib/*.s32o` archives do not define access twice.
+rm -f "$LIBC_OUT_DIR/posix_more.s32o"
 
 # gen1's codegen (fallthrough-chain layout) emits single-bcond branch
 # shapes and relies on assembler relaxation for targets beyond +-4096
