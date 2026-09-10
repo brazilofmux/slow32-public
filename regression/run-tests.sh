@@ -295,9 +295,17 @@ run_test() {
 
         # Check expected output (strip trailing whitespace/newlines for comparison)
         if [ -f "$test_path/expected.txt" ]; then
-            # Strip trailing whitespace and newlines for comparison
-            tr -d '\n' < "$result_path/output.txt" > "$result_path/output_stripped.txt"
-            tr -d '\n' < "$test_path/expected.txt" > "$result_path/expected_stripped.txt"
+            # Strip trailing whitespace and newlines for comparison.
+            # Fault PC is a code address that moves whenever the linked
+            # runtime changes (GitHub issue 68).  The signal on the
+            # bug-dbt-intrinsic-bounds* tests is the fault address, size,
+            # and direction; SP has been stable, PC has not.
+            tr -d '\n' < "$result_path/output.txt" \
+                | sed -E 's/PC=0x[0-9A-Fa-f]+/PC=*/g' \
+                > "$result_path/output_stripped.txt"
+            tr -d '\n' < "$test_path/expected.txt" \
+                | sed -E 's/PC=0x[0-9A-Fa-f]+/PC=*/g' \
+                > "$result_path/expected_stripped.txt"
 
             if diff -q "$result_path/expected_stripped.txt" "$result_path/output_stripped.txt" >/dev/null 2>&1; then
                 if [ -f "$test_path/expected.hash" ]; then
