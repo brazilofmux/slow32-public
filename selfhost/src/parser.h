@@ -1684,7 +1684,13 @@ static int parse_type(void) {
     /* qualifiers after the base type: char const *z (SQLite) */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || is_gnu_qual_ident()) next();
     while (lex_tok == TK_STAR) {
-        ty = ty + TY_PTR; ps_type_arrcount = 0; ps_type_fpbase = -1; next();
+        /* ps_type_fpbase is kept: `dfn *tab` and `dfn tab[N]` reach the
+         * side tables with the identical type (elem + TY_PTR, arrays
+         * having decayed), so the signature has to survive the star for
+         * tab[0](x) and (*tab)(x) to resolve (GitHub issue 70).  It
+         * describes what one [] or unary * yields, and is only ever read
+         * through those, so a pointer carrying it is not callable. */
+        ty = ty + TY_PTR; ps_type_arrcount = 0; next();
         while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT || is_gnu_qual_ident()) next();   /* u8 * const p */
     }
     return ty;
@@ -1776,6 +1782,14 @@ static int add_local_array(char *name, int elem_ty, int count) {
     ps_lsname[idx] = NULL;
     ps_lfpbase[idx] = -1;
     ps_lfpn[idx] = 0;
+    /* An array of function pointers keeps the element signature, the
+     * same way add_local/add_global do -- without it a LOCAL `dfn t[2]`
+     * lost what the global `dfn gtab[2]` kept, and t[0](x) fell back to
+     * the TY_INT default (GitHub issue 70). */
+    if (ps_type_fpbase >= 0) {
+        ps_lfpbase[idx] = ps_type_fpbase;
+        ps_lfpn[idx] = ps_type_fpn;
+    }
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
 }
@@ -3948,9 +3962,22 @@ static Node *parse_unary(void) {
     }
     /* Dereference */
     if (lex_tok == TK_STAR) {
+        int dfpb;
+        int dfpn;
         next();
         n = parse_unary();
-        return nd_unary(TK_STAR, n);
+        dfpb = n->is_fnptr ? n->val : -1;
+        dfpn = n->is_fnptr ? n->nparams : 0;
+        n = nd_unary(TK_STAR, n);
+        /* (*tab)(x), the deref twin of the tab[0](x) case the subscript
+         * path already handles (GitHub issue 70). */
+        if (dfpb >= 0) {
+            n->is_fnptr = 1;
+            n->val = dfpb;
+            n->nparams = dfpn;
+            n->val_hi = dfpn;
+        }
+        return n;
     }
     /* Address-of */
     if (lex_tok == TK_AMP) {
