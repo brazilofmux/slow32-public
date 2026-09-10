@@ -68,6 +68,19 @@ int test_mixed10(void) {
     return 0;
 }
 
+/* Issue 67: y is a register param and the 9th (stack) argument.
+ * Marshalling r4 with the constant 1 must not clobber y before the
+ * stack store. */
+int wrap9(int x, int y) {
+    return sum9(x, 1, 2, 3, 4, 5, 6, 7, y);
+}
+
+int test_wrap9(void) {
+    if (wrap9(10, 256) != 294) return 1;
+    if (wrap9(0, 0) != 28) return 2;
+    return 0;
+}
+
 int main(void) {
     int fail;
     fail = 0;
@@ -77,6 +90,8 @@ int main(void) {
     else { print_fail("sum12 (12 args)"); fail = 1; }
     if (test_ptr_outparams() == 0) print_ok("9-arg ptr out-params");
     else { print_fail("9-arg ptr out-params"); fail = 1; }
+    if (test_wrap9() == 0) print_ok("wrap9 (stack arg vs marshal)");
+    else { print_fail("wrap9 (stack arg vs marshal)"); fail = 1; }
     if (test_mixed10() == 0) print_ok("mixed10 (10 args)");
     else { print_fail("mixed10 (10 args)"); fail = 1; }
     return fail;

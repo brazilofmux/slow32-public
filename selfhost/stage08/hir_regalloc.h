@@ -200,6 +200,61 @@ static int ra_param_preferred_color(int inst) {
     return -1;
 }
 
+/* Preferred physical register for a value used as a call argument
+ * (issue 67).  -1 if none.  Last call site wins. */
+static int ra_arg_pref_phys[HIR_MAX_INST];
+static int ra_abi_map[256];
+
+static void ra_mark_arg_prefs(void) {
+    int i;
+    int j;
+    int n;
+    int base;
+    int v;
+    i = 0;
+    while (i < h_ninst) { ra_arg_pref_phys[i] = -1; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
+            h_cbase[i] >= 0) {
+            n = h_val[i];
+            base = h_cbase[i];
+            if (n > 0 && n <= 256) {
+                hi_abi_assign(&h_carg_tag[base], n, ra_abi_map);
+                j = 0;
+                while (j < n) {
+                    v = h_carg[base + j];
+                    if (v >= 0 && ra_abi_map[j] >= 0)
+                        ra_arg_pref_phys[v] = ra_abi_map[j];
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+}
+
+static int ra_argsite_preferred_color(int inst) {
+    int phys;
+    int slot;
+    int nactive;
+    if (inst < 0 || inst >= h_ninst) return -1;
+    phys = ra_arg_pref_phys[inst];
+    if (phys < 0) return -1;
+    ra_init_phys_regs();
+    nactive = ra_num_active_slots();
+    slot = 0;
+    while (slot < nactive) {
+        if (ra_phys_reg[slot] == phys) {
+            if (ra_is_callee[slot]) return slot;
+            if (ra_prefers_caller_for_inst(inst)) return slot;
+            return -1;
+        }
+        slot = slot + 1;
+    }
+    return -1;
+}
+
 /* --- Output arrays --- */
 static int ra_reg[HIR_MAX_INST];    /* physical register, -1 = spilled/remat */
 static int ra_spill_off[HIR_MAX_INST]; /* spill slot (negative fp offset), 0 = none */
@@ -1344,24 +1399,13 @@ static void lv_build_edges(void) {
                     j = j + 1;
                 }
             }
-            nu = lv_uses(inst);
-            j = 0;
-            while (j < nu) {
-                u = lv_ubuf[j];
-                if (lv_tracked(u))
-                    lv_live[lv_id[u] >> 5] =
-                        lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
-                j = j + 1;
-            }
+            /* Textbook liveness: a call's arguments die at the call and
+             * do not cross it.  The emitter used to marshal one move at
+             * a time, so a source in r3-r10 was clobbered before it was
+             * read (trans1's DLOG(DEXP(X))); arguments were therefore
+             * marked crossing.  The parallel-copy sequencer (issue 67)
+             * removes that hazard, so mark BEFORE re-adding uses. */
             if (lv_is_callkind(k)) {
-                /* Marked AFTER the uses are re-added: textbook liveness
-                 * says a call's arguments die at the call and do not
-                 * cross it, but the emitter marshals arguments into
-                 * r3..r10 one move at a time, so a source parked in a
-                 * caller-saved register is clobbered before it is read
-                 * (trans1's DLOG(DEXP(X)) lost the hi word to exactly
-                 * that).  Arguments count as crossing, as they always
-                 * did under intervals. */
                 w = 0;
                 while (w < lv_nw) {
                     unsigned int bits;
@@ -1376,6 +1420,15 @@ static void lv_build_edges(void) {
                     }
                     w = w + 1;
                 }
+            }
+            nu = lv_uses(inst);
+            j = 0;
+            while (j < nu) {
+                u = lv_ubuf[j];
+                if (lv_tracked(u))
+                    lv_live[lv_id[u] >> 5] =
+                        lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
+                j = j + 1;
             }
         }
         /* PHI defs of one block are written by one parallel copy:
@@ -2148,6 +2201,14 @@ static void gc_select(void) {
                 }
             }
 
+            /* Argument-register targeting (issue 67) before src1 reuse. */
+            if (gc_color[n] < 0) {
+                int ap2;
+                ap2 = ra_argsite_preferred_color(inst);
+                if (ap2 >= 0 && ap2 < maxc && !used[ap2])
+                    gc_color[n] = ap2;
+            }
+
             /* Src1 reuse for destructive binary ops.
              * For ADD, SUB, AND, OR, XOR, shifts, etc. the result can
              * usually live in the same physical register as the first
@@ -2247,15 +2308,23 @@ static void gc_select(void) {
              * marked used, so temporaries naturally avoid stealing them.
              */
             if (ra_prefers_caller_for_inst(inst)) {
-                /* Give operand reuse (src1/src2) higher priority in the cheap
-                 * caller-saved pool.  When a value is allowed to live in r3-r10,
-                 * we first try to keep it there by reusing an operand (with the
-                 * lowest-physical bias).  Only if that fails do we fall back to
-                 * the PARAM ABI preference.
-                 */
-                int best_col = -1;
-                int best_phys = 999;
-                int best_is_src2 = 0;
+                int best_col;
+                int best_phys;
+                int best_is_src2;
+                int ap;
+                /* Argument-register targeting (issue 67) before src1 reuse:
+                 * `u = x + 1` feeding argument 0 used to inherit x's
+                 * register and skip the ABI preference. */
+                if (gc_color[n] < 0) {
+                    ap = ra_argsite_preferred_color(inst);
+                    if (ap >= 0 && ap < maxc && !used[ap])
+                        gc_color[n] = ap;
+                }
+                /* Operand reuse in the cheap caller-saved pool, then
+                 * PARAM ABI preference. */
+                best_col = -1;
+                best_phys = 999;
+                best_is_src2 = 0;
 
                 if (ra_can_reuse_src1(k)) {
                     int s1 = h_src1[inst];
@@ -2693,6 +2762,7 @@ static void hir_regalloc(void) {
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
     lv_prepare();          /* per-block liveness; lv_on gates gc_build */
+    ra_mark_arg_prefs();
     { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; z = z + 1; } }
     /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 

@@ -520,21 +520,12 @@ static int hcg_argmap[HIR_MAX_CARG]; /* per-call ABI register map */
 
 /* --- Parallel-copy sequencer for outgoing register arguments (issue 67) ---
  *
- * Marshalling used to walk the arguments in index order and move each into
- * its ABI register.  That is only safe while no argument VALUE lives in an
- * argument register: otherwise moving argument 0 into r3 can clobber the
- * register argument 1 still has to be read from.  Today nothing lives in
- * r3-r10 across a call (ra_mark_call_crossing bans it), so the naive order
- * happens to be correct and this sequencer is a no-op -- it must produce
- * byte-identical output until that ban is relaxed, which is how it is
- * verified in isolation.
- *
- * The rule is the standard one: emit a move only when its destination is
- * not still needed as somebody else's source.  A cycle (a<-b, b<-a) has no
- * such move, so one destination is parked in the r1 scratch and everyone
- * reading it is redirected there.  r1/r2 are the established spill scratch
- * and are dead here -- results come back in them, and the long-call target
- * address goes into r2 only after the arguments are in place. */
+ * Emit a move only when its destination is not still needed as somebody
+ * else's source.  A cycle (a<-b, b<-a) parks one destination in the r1
+ * scratch.  Stack arguments are stored before register marshalling so a
+ * stack slot whose value lives in r3-r10 is written before that register
+ * is overwritten.  r1/r2 are spill scratch and dead here -- results come
+ * back in them, and the long-call target goes into r2 after arguments. */
 #define HCG_ARGSHUF_MAX 16
 static int hcg_shuf_dst[HCG_ARGSHUF_MAX];
 static int hcg_shuf_src[HCG_ARGSHUF_MAX];   /* physical reg, -1 = materialize */
@@ -542,37 +533,14 @@ static int hcg_shuf_val[HCG_ARGSHUF_MAX];
 static int hcg_shuf_done[HCG_ARGSHUF_MAX];
 static int hcg_stat_argshuf;                /* cycles broken via the scratch */
 
-static void hcg_marshal_reg_args(int base, int nargs) {
-    int i;
+/* Run the sequencer over hcg_shuf_[dst,src,val,done][0..n). */
+static void hcg_parallel_copy(int n) {
     int j;
     int k;
-    int n;
-    int v;
     int left;
     int progress;
     int blocked;
     int d;
-
-    n = 0;
-    i = 0;
-    while (i < nargs) {
-        if (hcg_argmap[i] >= 0) {
-            if (n >= HCG_ARGSHUF_MAX) {
-                /* More register arguments than the ABI has registers:
-                 * cannot happen, but never silently emit a wrong order. */
-                fdputs("s12cc: too many register arguments\n", 2);
-                exit(1);
-            }
-            v = h_carg[base + i];
-            hcg_shuf_dst[n] = hcg_argmap[i];
-            hcg_shuf_val[n] = v;
-            if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
-            else hcg_shuf_src[n] = -1;
-            hcg_shuf_done[n] = 0;
-            n = n + 1;
-        }
-        i = i + 1;
-    }
 
     left = n;
     while (left > 0) {
@@ -621,6 +589,52 @@ static void hcg_marshal_reg_args(int base, int nargs) {
             hcg_stat_argshuf = hcg_stat_argshuf + 1;
         }
     }
+}
+
+static void hcg_move_vals(int *dst, int *vals, int n) {
+    int i;
+    int v;
+    i = 0;
+    while (i < n) {
+        if (i >= HCG_ARGSHUF_MAX) {
+            fdputs("s12cc: too many parallel moves\n", 2);
+            exit(1);
+        }
+        v = vals[i];
+        hcg_shuf_dst[i] = dst[i];
+        hcg_shuf_val[i] = v;
+        if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[i] = ra_reg[v];
+        else hcg_shuf_src[i] = -1;
+        hcg_shuf_done[i] = 0;
+        i = i + 1;
+    }
+    hcg_parallel_copy(n);
+}
+
+static void hcg_marshal_reg_args(int base, int nargs) {
+    int i;
+    int n;
+    int v;
+
+    n = 0;
+    i = 0;
+    while (i < nargs) {
+        if (hcg_argmap[i] >= 0) {
+            if (n >= HCG_ARGSHUF_MAX) {
+                fdputs("s12cc: too many register arguments\n", 2);
+                exit(1);
+            }
+            v = h_carg[base + i];
+            hcg_shuf_dst[n] = hcg_argmap[i];
+            hcg_shuf_val[n] = v;
+            if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
+            else hcg_shuf_src[n] = -1;
+            hcg_shuf_done[n] = 0;
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    hcg_parallel_copy(n);
 }
 
 static void hcg_emit_param_entry(void) {
@@ -1491,11 +1505,11 @@ static void hcg_push_stack_args(int base, int nargs) {
  * Lowering synthesizes doubles as HI_CALLs to one-instruction wrappers
  * in builtins_fp64.s (fadd.d behind a jal).  Codegen recognises those
  * names and emits the SLOW-32 FP instruction inline instead.  The
- * HI_CALL keeps call clobber semantics for the allocator, and every
- * argument value is call-crossing (ra_mark_call_crossing sees it live
- * AT the call, so it is never colored r3-r10) — marshalling into the
- * even-aligned scratch pairs r4:r5 / r6:r7 therefore cannot disturb
- * an argument's home register.  Results land in r1 (lo) / r2 (hi) so
+ * HI_CALL keeps call clobber semantics for the allocator.  Argument
+ * values may now live in r3-r10 (issue 67); scratch marshalling into
+ * r4:r5 / r6:r7 goes through the parallel-copy sequencer so a source
+ * parked in a scratch register is read before it is overwritten.
+ * Results land in r1 (lo) / r2 (hi) so
  * the shared post-call result path runs unchanged.  f64 instructions
  * take EVEN base registers (rd:rd+1); 2-operand forms are written
  * with a trailing r0 like the wrappers and the f32 emitters. */
@@ -1570,23 +1584,28 @@ static void hcg_fp64_emit(int fpk, int base) {
         pa = hcg_pair_reg(h_carg[base + 0], h_carg[base + 1]);
         pb = hcg_pair_reg(h_carg[base + 2], h_carg[base + 3]);
 
-        /* The right operand's scratch pair is r6:r7; if the left operand
-         * already lives there, move it out first so loading the right
-         * cannot clobber it. */
-        if (pa == 6 && pb < 0) {
-            cg_rri("addi", 4, 6, 0);
-            cg_rri("addi", 5, 7, 0);
-            pa = 4;
-        }
-        if (pa < 0) {
-            hcg_into(4, h_carg[base + 0]);
-            hcg_into(5, h_carg[base + 1]);
-            pa = 4;
-        }
-        if (pb < 0) {
-            hcg_into(6, h_carg[base + 2]);
-            hcg_into(7, h_carg[base + 3]);
-            pb = 6;
+        /* Fill scratch pairs with a parallel copy (issue 67).  Prefer
+         * r4:r5 for the left and r6:r7 for the right, but swap if the
+         * other operand already lives in that pair. */
+        {
+            int md[4];
+            int mv[4];
+            int mn;
+            mn = 0;
+            if (pa < 0) {
+                pa = 4;
+                if (pb == 4) pa = 6;
+                md[mn] = pa;     mv[mn] = h_carg[base + 0]; mn = mn + 1;
+                md[mn] = pa + 1; mv[mn] = h_carg[base + 1]; mn = mn + 1;
+            }
+            if (pb < 0) {
+                pb = 6;
+                if (pa == 6) pb = 4;
+                if (pb == pa) pb = 8;
+                md[mn] = pb;     mv[mn] = h_carg[base + 2]; mn = mn + 1;
+                md[mn] = pb + 1; mv[mn] = h_carg[base + 3]; mn = mn + 1;
+            }
+            if (mn > 0) hcg_move_vals(md, mv, mn);
         }
 
         if (fpk == 5) { cg_rrr("feq.d", 1, pa, pb); return; }
@@ -1619,11 +1638,26 @@ static void hcg_fp64_emit(int fpk, int base) {
     }
     /* Square root, f64: pair r4:r5 (see the divergence note above). */
     if (fpk == 14) {
-        hcg_into(4, h_carg[base + 0]);
-        hcg_into(5, h_carg[base + 1]);
-        cg_rrr("fsqrt.d", 4, 4, 0);
-        cg_rri("addi", 1, 4, 0);
-        cg_rri("addi", 2, 5, 0);
+        {
+            int md[2];
+            int mv[2];
+            int pr;
+            pr = hcg_pair_reg(h_carg[base + 0], h_carg[base + 1]);
+            if (pr < 0) {
+                md[0] = 4; mv[0] = h_carg[base + 0];
+                md[1] = 5; mv[1] = h_carg[base + 1];
+                hcg_move_vals(md, mv, 2);
+                pr = 4;
+            }
+            cg_rrr("fsqrt.d", pr, pr, 0);
+            if (pr != 4) {
+                cg_rri("addi", 1, pr, 0);
+                cg_rri("addi", 2, pr + 1, 0);
+            } else {
+                cg_rri("addi", 1, 4, 0);
+                cg_rri("addi", 2, 5, 0);
+            }
+        }
         return;
     }
     /* Square root, f32: single word. */
@@ -1634,11 +1668,21 @@ static void hcg_fp64_emit(int fpk, int base) {
     }
     /* Negate: pair r4:r5 */
     if (fpk == 4) {
-        hcg_into(4, h_carg[base + 0]);
-        hcg_into(5, h_carg[base + 1]);
-        cg_rrr("fneg.d", 4, 4, 0);
-        cg_rri("addi", 1, 4, 0);
-        cg_rri("addi", 2, 5, 0);
+        {
+            int md[2];
+            int mv[2];
+            int pr;
+            pr = hcg_pair_reg(h_carg[base + 0], h_carg[base + 1]);
+            if (pr < 0) {
+                md[0] = 4; mv[0] = h_carg[base + 0];
+                md[1] = 5; mv[1] = h_carg[base + 1];
+                hcg_move_vals(md, mv, 2);
+                pr = 4;
+            }
+            cg_rrr("fneg.d", pr, pr, 0);
+            cg_rri("addi", 1, pr, 0);
+            cg_rri("addi", 2, pr + 1, 0);
+        }
         return;
     }
     /* int/float word → double pair */
@@ -1652,19 +1696,39 @@ static void hcg_fp64_emit(int fpk, int base) {
     }
     /* double pair → int/float word */
     if (fpk == 10 || fpk == 11) {
-        hcg_into(4, h_carg[base + 0]);
-        hcg_into(5, h_carg[base + 1]);
-        if (fpk == 10) cg_rrr("fcvt.w.d", 1, 4, 0);
-        else cg_rrr("fcvt.s.d", 1, 4, 0);
+        {
+            int md[2];
+            int mv[2];
+            int pr;
+            pr = hcg_pair_reg(h_carg[base + 0], h_carg[base + 1]);
+            if (pr < 0) {
+                md[0] = 4; mv[0] = h_carg[base + 0];
+                md[1] = 5; mv[1] = h_carg[base + 1];
+                hcg_move_vals(md, mv, 2);
+                pr = 4;
+            }
+            if (fpk == 10) cg_rrr("fcvt.w.d", 1, pr, 0);
+            else cg_rrr("fcvt.s.d", 1, pr, 0);
+        }
         return;
     }
     /* llong pair ↔ double pair */
-    hcg_into(4, h_carg[base + 0]);
-    hcg_into(5, h_carg[base + 1]);
-    if (fpk == 12) cg_rrr("fcvt.d.l", 4, 4, 0);
-    else cg_rrr("fcvt.l.d", 4, 4, 0);
-    cg_rri("addi", 1, 4, 0);
-    cg_rri("addi", 2, 5, 0);
+    {
+        int md[2];
+        int mv[2];
+        int pr;
+        pr = hcg_pair_reg(h_carg[base + 0], h_carg[base + 1]);
+        if (pr < 0) {
+            md[0] = 4; mv[0] = h_carg[base + 0];
+            md[1] = 5; mv[1] = h_carg[base + 1];
+            hcg_move_vals(md, mv, 2);
+            pr = 4;
+        }
+        if (fpk == 12) cg_rrr("fcvt.d.l", pr, pr, 0);
+        else cg_rrr("fcvt.l.d", pr, pr, 0);
+        cg_rri("addi", 1, pr, 0);
+        cg_rri("addi", 2, pr + 1, 0);
+    }
 }
 
 /* True when this ADDI is only ever consumed as the address of a
@@ -2655,14 +2719,10 @@ static void hcg_inst(int idx) {
          * stack spill (matches clang's CC_SLOW32). */
         nstk = hi_abi_assign(&h_carg_tag[base], nargs, hcg_argmap);
 
-        /* Load register args, ordered so no destination is written before
-         * its source is read (issue 67). */
-        hcg_marshal_reg_args(base, nargs);
-
-        /* Check for tail call BEFORE emitting stack args or jal */
         is_tail = (nstk == 0) && hcg_is_tailcall(idx);
 
         if (is_tail) {
+            hcg_marshal_reg_args(base, nargs);
             /* Tail call: epilogue + jump (no link) */
             hcg_emit_epilogue_inline();
             if (cg_long_calls) {
@@ -2677,8 +2737,11 @@ static void hcg_inst(int idx) {
             return;
         }
 
-        /* Normal call: push stack args, call with link */
+        /* Stack args first: a stack slot whose value lives in r3-r10
+         * must be stored before marshalling overwrites that register
+         * (issue 67).  Then register args, sequenced. */
         hcg_push_stack_args(base, nargs);
+        hcg_marshal_reg_args(base, nargs);
 
         if (cg_long_calls) {
             /* r2 is free here: args sit in r3-r10, results come back in r1/r2 */
@@ -2732,16 +2795,13 @@ static void hcg_inst(int idx) {
 
         nstk = hi_abi_assign(&h_carg_tag[base], nargs, hcg_argmap);
 
-        i = 0;
-        while (i < nargs) {
-            if (hcg_argmap[i] >= 0) hcg_into(hcg_argmap[i], h_carg[base + i]);
-            i = i + 1;
-        }
-
+        /* Save the callee pointer before any marshalling: it may live
+         * in an argument register (test_phase9).  Then stack args,
+         * then sequenced register args (issue 67). */
         hcg_into(1, s1);
         cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
-
         hcg_push_stack_args(base, nargs);
+        hcg_marshal_reg_args(base, nargs);
 
         if (nstk * 4 <= 2047) {
             cg_s("    ldw r2, r29, ");
