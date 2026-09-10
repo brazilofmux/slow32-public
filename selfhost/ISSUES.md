@@ -2078,7 +2078,8 @@ own sources.  Checked, and all five of those gates guard `fdputs` to
 stderr and nothing else -- none reaches a transformation -- so
 byte-identical rebuilds still hold and the question dissolved.
 
-`getenv` now lives in `libc/posix_more.c` beside the other MMIO calls:
+`getenv` now lives in `libc/posix_proc.c` (GitHub issue 65 split
+`posix_more.c` so a getenv-only program does not link `fabs`):
 the name and its NUL go in the data buffer, the reply is the value at
 the same offset with its length as the status, and a static buffer
 grown with `realloc` holds the returned string.  Names containing `=`
@@ -2175,10 +2176,12 @@ Toolchain and libc:
   overrode the linker's absolute `__mmio_base`, and every MMIO request
   polled ordinary memory forever.  C in this libc gets the data buffer
   from `__s32_mmio_data` in mmio_no_start.s instead.
-- posix_more.c: access, ftruncate, time, localtime/gmtime (via the
-  GETTZ op), fabs, strspn, strcspn, abort, and an assert that names its
-  expression; headers fcntl.h, sys/stat.h (struct stat as the asm
-  fstat fills it), struct tm, F_OK.., FILENAME_MAX.
+- posix_fs.c / posix_time.c / posix_math.c / posix_proc.c (split from
+  posix_more.c, GitHub issue 65): access, ftruncate, time, localtime/gmtime (via the
+  GETTZ op), fabs, abort, getenv, and an assert that names its
+  expression; strspn/strcspn live in string_more.c; headers fcntl.h,
+  sys/stat.h (struct stat as the asm fstat fills it), struct tm, F_OK..,
+  FILENAME_MAX.
 - The preprocessor's reported line numbers drift by a few hundred
   lines in a big file (both directions); usable, not exact.
 

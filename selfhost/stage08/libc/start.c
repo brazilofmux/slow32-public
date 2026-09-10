@@ -123,5 +123,5 @@ void __slow32_start(void) {
     exit(i);
 }
 
-/* getenv lives in posix_more.c now, over the GETENV request
+/* getenv lives in posix_proc.c, over the GETENV request
  * (selfhost ISSUES-68 / GitHub issue 55). */

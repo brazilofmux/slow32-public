@@ -308,7 +308,7 @@ fi
 
 # Build libc with stage07 compiler
 LIBC_OBJS=""
-for name in string_extra string_more ctype convert stdio malloc posix_more; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc; do
     run_exe "$STAGE7_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
     [[ -s "$WORKDIR/${name}.s" ]] || { echo "failed to compile ${name}.c" >&2; exit 1; }
     run_exe "$AS_EXE" "$WORKDIR/${name}.as.log" "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o"
@@ -416,7 +416,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     # printf comes from Gay dtoa + printf_enhanced + runtime convert
     # (same trio as build-s12cc.sh's gen1 lib; printf_varargs retired)
     G1_RT_SRCS="dtoa printf_enhanced convert_rt"
-    for name in string_extra string_more ctype convert stdio malloc posix_more $G1_RT_SRCS; do
+    for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc $G1_RT_SRCS; do
         case "$name" in
           dtoa)
             run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
@@ -463,6 +463,18 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             if [[ -s "$WORKDIR/g1_start.s32o" ]]; then
                 G1_LIBC_START_OBJ="$WORKDIR/g1_start.s32o"
                 echo "  gen1-compiled libc ready (HIR/SSA ABI, r11-r28 callee-saved)"
+            fi
+            # GitHub issue 65: getenv's object must not carry fabs.
+            TOTAL=$((TOTAL + 1))
+            if strings -a -n 4 "$WORKDIR/g1_posix_proc.s32o" | grep -qx fabs; then
+                printf "  %-30s FAIL (fabs in posix_proc)\n" "posix-split:"
+                FAIL=$((FAIL + 1))
+            elif ! strings -a -n 4 "$WORKDIR/g1_posix_math.s32o" | grep -qx fabs; then
+                printf "  %-30s FAIL (no fabs in posix_math)\n" "posix-split:"
+                FAIL=$((FAIL + 1))
+            else
+                printf "  %-30s PASS\n" "posix-split:"
+                PASS=$((PASS + 1))
             fi
         fi
     fi

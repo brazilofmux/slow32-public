@@ -1,4 +1,4 @@
-/* dirent.h -- directory streams over the MMIO ring (libc/posix_more.c) */
+/* dirent.h -- directory streams over the MMIO ring (libc/posix_fs.c) */
 #ifndef _DIRENT_H
 #define _DIRENT_H
 typedef struct __dir_stream { int dd_fd; int dd_loc; } DIR;

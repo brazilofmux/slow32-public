@@ -1,6 +1,6 @@
 /* sys/stat.h -- struct stat is the MMIO stat reply (s32_mmio_stat_result_t)
  * laid out in place: the asm fstat (stage01/mmio_minimal.s) copies its
- * first 52 bytes word for word, stat/lstat (libc/posix_more.c) copy it
+ * first 52 bytes word for word, stat/lstat (libc/posix_fs.c) copy it
  * whole. */
 #ifndef _SYS_STAT_H
 #define _SYS_STAT_H

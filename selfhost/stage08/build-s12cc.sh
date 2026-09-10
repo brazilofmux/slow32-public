@@ -122,7 +122,7 @@ fi
 # --- Build libc (compiled by stage07 s12cc) ---
 echo "[2/4] Build libc"
 LIBC_OBJS=""
-for name in string_extra string_more ctype convert stdio malloc posix_more; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc; do
     compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
@@ -199,7 +199,7 @@ mkdir -p "$LIBC_OUT_DIR"
 # bytes.  stage07's s32-as predates relaxation and silently wraps the
 # displacement -- dtoa_r got a truncated branch and snprintf("%f")
 
-for name in string_extra string_more ctype convert stdio malloc posix_more; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done

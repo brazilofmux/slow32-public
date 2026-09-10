@@ -114,6 +114,32 @@ char *strncpy(char *dst, char *src, int n) {
     return dst;
 }
 
+int strspn(const char *s, const char *accept) {
+    int n;
+    const char *a;
+    n = 0;
+    while (s[n]) {
+        a = accept;
+        while (*a && *a != s[n]) a = a + 1;
+        if (*a == 0) return n;
+        n = n + 1;
+    }
+    return n;
+}
+
+int strcspn(const char *s, const char *reject) {
+    int n;
+    const char *r;
+    n = 0;
+    while (s[n]) {
+        r = reject;
+        while (*r && *r != s[n]) r = r + 1;
+        if (*r) return n;
+        n = n + 1;
+    }
+    return n;
+}
+
 int atoi(char *s) {
     int neg;
     int val;
