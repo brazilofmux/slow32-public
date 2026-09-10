@@ -19,7 +19,7 @@
  * here: an indirect call returning a double is separately miscompiled
  * (the return value is run through fcvt.d.w as if it were an int), which
  * reproduces with no split in sight and on the pre-#67 kit compiler.
- * See selfhost ISSUES -- fp64 return from an indirect call.
+ * See GitHub issue 69.
  *
  * Returns the index of the first failing block, 0 if all pass. */
 
