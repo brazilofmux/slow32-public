@@ -101,11 +101,26 @@ int chain_across(int a) {
     return a + r;
 }
 
+/* After-uses in successor blocks the call dominates, not in the call
+ * block itself.  The first split pass only rewired same-block uses
+ * and successor-phi args; a miss left `a` live-out (still crossing)
+ * and dropped the split. */
+int after_branch(int a, int c) {
+    int r;
+    r = bump(a);
+    if (c)
+        return a + r;
+    return a + r + 1;
+}
+
 int test_keep_across(void) {
     if (keep_across(10) != 21) return 1;
     if (keep_across(0) != 1) return 2;
     if (chain_across(10) != 22) return 3;
     if (chain_across(1) != 4) return 4;
+    if (after_branch(10, 1) != 21) return 5;
+    if (after_branch(10, 0) != 22) return 6;
+    if (after_branch(0, 1) != 1) return 7;
     return 0;
 }
 

@@ -70,6 +70,7 @@ static int ra_stat_csplit;
 static int ra_after_stamp[HIR_MAX_INST];
 static int ra_after_tick;
 static char ra_is_csplit[HIR_MAX_INST];   /* COPY dest of a call split: always callee-saved */
+static int ra_dom_wl[HIR_MAX_BLOCK];      /* dom-tree walk for after-use rewire */
 static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
@@ -2796,18 +2797,111 @@ static int ra_after_has(int v) {
     return ra_after_stamp[v] == ra_after_tick;
 }
 
-/* Mark values used after `call` in this block, or as a phi arg on an
- * outgoing edge.  O(block) per call, not O(function). */
-static void ra_mark_after_uses(int call) {
-    int i;
+/* nw < 0: mark uses.  nw >= 0: rewrite old -> nw. */
+static void ra_csplit_on_inst(int i, int old, int nw) {
     int j;
     int n;
     int base;
-    int cb;
+    int sp;
+    if (nw < 0) {
+        if (h_src1[i] >= 0) ra_after_mark(h_src1[i]);
+        if (h_src2[i] >= 0 && ho_src2_is_ref(h_kind[i]))
+            ra_after_mark(h_src2[i]);
+    } else {
+        if (h_src1[i] == old) h_src1[i] = nw;
+        if (h_src2[i] == old && ho_src2_is_ref(h_kind[i])) h_src2[i] = nw;
+    }
+    if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
+        h_cbase[i] >= 0) {
+        n = h_val[i];
+        base = h_cbase[i];
+        j = 0;
+        while (j < n) {
+            if (nw < 0) ra_after_mark(h_carg[base + j]);
+            else if (h_carg[base + j] == old) h_carg[base + j] = nw;
+            j = j + 1;
+        }
+    }
+    sp = ra_csplit_head[i];
+    while (sp >= 0) {
+        if (nw < 0) ra_after_mark(h_src1[sp]);
+        else if (h_src1[sp] == old) h_src1[sp] = nw;
+        sp = ra_csplit_next[sp];
+    }
+}
+
+/* Phi args on edges that are after the call: the predecessor is the
+ * call block, or is strictly dominated by it (every path through that
+ * pred already went through the call). */
+static void ra_csplit_on_phis(int b, int cb, int old, int nw) {
+    int phi;
+    int j;
+    int pred;
+    int a;
+    phi = ssa_phi_head[b];
+    while (phi >= 0) {
+        if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
+            j = 0;
+            while (j < h_pcnt[phi]) {
+                pred = h_pblk[h_pbase[phi] + j];
+                if (pred == cb ||
+                    (pred >= 0 && pred < bb_nblk &&
+                     licm_dominates(cb, pred))) {
+                    a = h_pval[h_pbase[phi] + j];
+                    if (nw < 0) {
+                        if (a >= 0) ra_after_mark(a);
+                    } else if (a == old) {
+                        h_pval[h_pbase[phi] + j] = nw;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        phi = ssa_phi_next[phi];
+    }
+}
+
+/* Blocks strictly dominated by the call's block: every path to them
+ * went through the call, so uses there are after-uses.  A miss used
+ * to cost the split (V stayed live-out and still crossed) rather
+ * than correctness. */
+static void ra_csplit_on_dom(int cb, int old, int nw) {
+    int nwl;
+    int i;
+    int b;
+    int inst;
+    nwl = 0;
+    i = 0;
+    while (i < ssa_dtc_cnt[cb] && nwl < HIR_MAX_BLOCK) {
+        ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[cb] + i];
+        nwl = nwl + 1;
+        i = i + 1;
+    }
+    while (nwl > 0) {
+        nwl = nwl - 1;
+        b = ra_dom_wl[nwl];
+        if (b >= 0 && b < bb_nblk) {
+            inst = bb_start[b];
+            while (inst < bb_end[b]) {
+                ra_csplit_on_inst(inst, old, nw);
+                inst = inst + 1;
+            }
+            ra_csplit_on_phis(b, cb, old, nw);
+            i = 0;
+            while (i < ssa_dtc_cnt[b] && nwl < HIR_MAX_BLOCK) {
+                ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
+                nwl = nwl + 1;
+                i = i + 1;
+            }
+        }
+    }
+}
+
+static void ra_mark_after_uses(int call) {
+    int i;
     int si;
     int s;
-    int phi;
-    int sp;
+    int cb;
     ra_after_tick = ra_after_tick + 1;
     if (ra_after_tick <= 0) {
         i = 0;
@@ -2818,45 +2912,16 @@ static void ra_mark_after_uses(int call) {
     if (cb < 0) return;
     i = call + 1;
     while (i < bb_end[cb]) {
-        if (h_src1[i] >= 0) ra_after_mark(h_src1[i]);
-        if (h_src2[i] >= 0 && ho_src2_is_ref(h_kind[i]))
-            ra_after_mark(h_src2[i]);
-        if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
-            h_cbase[i] >= 0) {
-            n = h_val[i];
-            base = h_cbase[i];
-            j = 0;
-            while (j < n) {
-                ra_after_mark(h_carg[base + j]);
-                j = j + 1;
-            }
-        }
-        sp = ra_csplit_head[i];
-        while (sp >= 0) {
-            ra_after_mark(h_src1[sp]);
-            sp = ra_csplit_next[sp];
-        }
+        ra_csplit_on_inst(i, -1, -1);
         i = i + 1;
     }
     si = 0;
     while (si < ssa_nsucc[cb]) {
         s = ssa_succ[ssa_soff[cb] + si];
-        if (s >= 0 && s < bb_nblk) {
-            phi = ssa_phi_head[s];
-            while (phi >= 0) {
-                if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
-                    j = 0;
-                    while (j < h_pcnt[phi]) {
-                        if (h_pblk[h_pbase[phi] + j] == cb)
-                            ra_after_mark(h_pval[h_pbase[phi] + j]);
-                        j = j + 1;
-                    }
-                }
-                phi = ssa_phi_next[phi];
-            }
-        }
+        if (s >= 0 && s < bb_nblk) ra_csplit_on_phis(s, cb, -1, -1);
         si = si + 1;
     }
+    ra_csplit_on_dom(cb, -1, -1);
 }
 
 static int ra_new_split_copy(int src, int blk) {
@@ -2877,12 +2942,24 @@ static int ra_new_split_copy(int src, int blk) {
     h_no_remat[cl] = 0;
     bg_sel[cl] = -1;
     bg_uses[cl] = 0;
+    bg_fold[cl] = 0;
+    bg_foff[cl] = 0;
+    bg_ssym[cl] = -1;     /* 0 would mean "instruction 0" */
+    bg_soff[cl] = 0;
+    bg_iconst_seen_use[cl] = 0;
+    bg_iconst_seen_nonimm[cl] = 0;
     licm_next[cl] = -1;
     licm_cpin[cl] = 0;
     licm_map[cl] = -1;
     ho_use[cl] = 0;
+    ho_cse_next[cl] = -1;
+    ho_phi_vouched[cl] = 0;
     hcg_brc_fuse[cl] = -1;
     hcg_cmp_fused[cl] = 0;
+    hcg_cmp_kind[cl] = 0;
+    hjt_base[cl] = -1;
+    hjt_span[cl] = 0;
+    ssa_phi_next[cl] = -1;
     ra_csplit_head[cl] = -1;
     ra_csplit_next[cl] = -1;
     ra_pair_of[cl] = -1;
@@ -2894,56 +2971,22 @@ static int ra_new_split_copy(int src, int blk) {
 
 static void ra_rewire_after(int old, int nw, int call) {
     int i;
-    int j;
-    int n;
-    int base;
     int cb;
     int si;
     int s;
-    int phi;
-    int sp;
     cb = h_blk[call];
     i = call + 1;
     while (i < bb_end[cb]) {
-        if (h_src1[i] == old) h_src1[i] = nw;
-        if (h_src2[i] == old && ho_src2_is_ref(h_kind[i])) h_src2[i] = nw;
-        if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
-            h_cbase[i] >= 0) {
-            n = h_val[i];
-            base = h_cbase[i];
-            j = 0;
-            while (j < n) {
-                if (h_carg[base + j] == old) h_carg[base + j] = nw;
-                j = j + 1;
-            }
-        }
-        sp = ra_csplit_head[i];
-        while (sp >= 0) {
-            if (h_src1[sp] == old) h_src1[sp] = nw;
-            sp = ra_csplit_next[sp];
-        }
+        ra_csplit_on_inst(i, old, nw);
         i = i + 1;
     }
     si = 0;
     while (si < ssa_nsucc[cb]) {
         s = ssa_succ[ssa_soff[cb] + si];
-        if (s >= 0 && s < bb_nblk) {
-            phi = ssa_phi_head[s];
-            while (phi >= 0) {
-                if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
-                    j = 0;
-                    while (j < h_pcnt[phi]) {
-                        if (h_pval[h_pbase[phi] + j] == old &&
-                            h_pblk[h_pbase[phi] + j] == cb)
-                            h_pval[h_pbase[phi] + j] = nw;
-                        j = j + 1;
-                    }
-                }
-                phi = ssa_phi_next[phi];
-            }
-        }
+        if (s >= 0 && s < bb_nblk) ra_csplit_on_phis(s, cb, old, nw);
         si = si + 1;
     }
+    ra_csplit_on_dom(cb, old, nw);
 }
 
 static int ra_split_pairing = 0;  /* guards the fp64 partner recursion below */
