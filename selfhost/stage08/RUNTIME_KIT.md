@@ -103,6 +103,31 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-09-09, fifth batch (`7cce2b2f`..`0b65ae29`) -- call-boundary
+register allocation (GitHub issue 67) and two fp64 return bugs it exposed.
+All in `cc.s32x`:
+
+- **A double passed to a call and still live after it filled the HIR
+  instruction table.**  Live-range splitting recursed onto the fp64 pair
+  partner and bounced back, so six lines of C became 1.3M lines of
+  assembly and the assembler died on "Instruction buffer size overflow".
+  In SQLite it took out `dekkerMul2`, `kahanBabuskaNeumaierStep`,
+  `absFunc` and `strftimeFunc`.  A kit built from `4ce2473c` or
+  `09078277` cannot compile such a function at all -- the failure is
+  loud, not silent.
+- **An indirect call returning `double` was typed `int`**, so no CALLHI
+  was emitted and the lo word of the `r1:r2` pair was run back through
+  `fcvt.d.w` as an integer.  Silent wrong answers.  Fixed for every
+  callee shape: a parameter, a typedef, a local variable, a struct member
+  through `.` and `->`, a pointer returned from another call, a local or
+  global array slot, and a pointer-to-function-pointer subscripted or
+  dereferenced.  `long long` returns took the same path and are fixed
+  with it.  This one is live in every kit before `0b65ae29`.
+- **Arguments now live in `r3`-`r10`.**  Behaviour-neutral, but it moves
+  code: the sqlite3 shell's `.text` and its executed instruction count
+  both changed, so a kit mixing old and new objects is fine while
+  size/perf numbers taken across the boundary are not comparable.
+
 Fixed 2026-09-09, fourth batch (`e10709eb`..`88811360`):
 
 - **A silent ABI miscompile, and the last of it.** An i64 argument on a
