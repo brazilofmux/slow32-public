@@ -447,7 +447,156 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
  * Returns the physical register for the result.
  * If allocated, returns the physical register.
  * If spilled, returns r1 (caller must store r1 to spill slot). */
+/* GitHub issue 72: return-value pinning.
+ *
+ * A value whose ONLY use is the RET of its own block gets computed
+ * straight into r1 instead of into an allocated register that the RET
+ * then copies out ("add r3,r3,r4; addi r1,r3,0" -> "add r1,r3,r4").
+ * r1 is not a color -- the allocatable pool is r3-r28 -- so this cannot
+ * be an allocator preference the way issue 67's argument targeting was;
+ * it is decided here, after allocation, and only where r1 is provably
+ * untouched between the definition and the RET. */
+static char hcg_ret_direct[HIR_MAX_INST];
+static char hcg_usecnt[HIR_MAX_INST];   /* saturates at 2; we only need "exactly 1" */
+static int  hcg_stat_retpin;
+
+static void hcg_use_bump(int v) {
+    if (v < 0 || v >= h_ninst) return;
+    if (hcg_usecnt[v] < 2) hcg_usecnt[v] = hcg_usecnt[v] + 1;
+}
+
+/* Every reader of a value, in the same shape as ra_csplit_on_inst:
+ * src1, src2 (when it is a value reference), call arguments, phi args,
+ * and the issue-67 split copies that hang off an instruction. */
+static void hcg_build_usecnt(void) {
+    int i;
+    int j;
+    int n;
+    int base;
+    int sp;
+    i = 0;
+    while (i < h_ninst) { hcg_usecnt[i] = 0; hcg_ret_direct[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) {
+            hcg_use_bump(h_src1[i]);
+            if (ho_src2_is_ref(h_kind[i])) hcg_use_bump(h_src2[i]);
+            if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) && h_cbase[i] >= 0) {
+                n = h_val[i];
+                base = h_cbase[i];
+                j = 0;
+                while (j < n) { hcg_use_bump(h_carg[base + j]); j = j + 1; }
+            }
+            if (h_kind[i] == HI_PHI && h_pbase[i] >= 0) {
+                j = 0;
+                while (j < h_pcnt[i]) { hcg_use_bump(h_pval[h_pbase[i] + j]); j = j + 1; }
+            }
+            sp = ra_csplit_head[i];
+            while (sp >= 0) { hcg_use_bump(h_src1[sp]); sp = ra_csplit_next[sp]; }
+        }
+        i = i + 1;
+    }
+}
+
+/* Kinds whose emission writes hcg_dst(idx) and nothing else.  Deliberately
+ * narrow: address forms fold into their consumer, ICONST is rematerialized
+ * into r1 by the RET already, calls land in r1 on their own, and fp64
+ * values are register PAIRS that r1 cannot hold. */
+static int hcg_retpin_kind_ok(int k) {
+    if (k == HI_ADD || k == HI_SUB || k == HI_MUL) return 1;
+    if (k == HI_AND || k == HI_OR || k == HI_XOR) return 1;
+    if (k == HI_SLL || k == HI_SRA || k == HI_SRL) return 1;
+    if (k >= HI_SEQ && k <= HI_SGEU) return 1;
+    if (k == HI_NEG || k == HI_NOT || k == HI_BNOT) return 1;
+    if (k == HI_LOAD || k == HI_ADDI || k == HI_COPY) return 1;
+    return 0;
+}
+
+/* r1 is the emitter's scratch: a value with no register is emitted into
+ * it (hcg_dst falls back to 1), a call returns in it, and the argument
+ * marshaller stages stack arguments through it.  Anything of that sort
+ * between the definition and the RET makes pinning unsafe. */
+static int hcg_retpin_clobbers_r1(int e) {
+    int k;
+    int j;
+    int n;
+    int base;
+    int v;
+    k = h_kind[e];
+    if (k == HI_NOP) return 0;
+    if (k == HI_CALL || k == HI_CALLP || k == HI_CALLHI) return 1;
+    if (ra_reg[e] < 0) return 1;      /* its own result is emitted through r1 */
+    if (ra_reg[e] == 1 || ra_reg[e] == 2) return 1;
+    /* An OPERAND with no register is staged through the caller's scratch,
+     * and every caller in this file passes 1: hcg_src(v, 1) does
+     * hcg_into(1, v).  Checking only the destination above missed that
+     * and let a spilled operand overwrite the pinned return value --
+     * caught by reading hcg_src, not by any gate: the whole suite,
+     * the FP differential and byte-identical SQLite all passed with it. */
+    v = h_src1[e];
+    if (v >= 0 && v < h_ninst && ra_reg[v] < 0) return 1;
+    if (ho_src2_is_ref(k)) {
+        v = h_src2[e];
+        if (v >= 0 && v < h_ninst && ra_reg[v] < 0) return 1;
+    }
+    if (h_cbase[e] >= 0) {
+        n = h_val[e];
+        base = h_cbase[e];
+        j = 0;
+        while (j < n) {
+            v = h_carg[base + j];
+            if (v >= 0 && v < h_ninst && ra_reg[v] < 0) return 1;
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
+static void hcg_mark_ret_direct(void) {
+    int r;
+    int d;
+    int b;
+    int e;
+    int sp;
+    int ok;
+    hcg_build_usecnt();
+    r = 0;
+    while (r < h_ninst) {
+        if (h_kind[r] == HI_RET && h_src2[r] < 0) {
+            d = h_src1[r];
+            b = h_blk[r];
+            if (d >= 0 && d < h_ninst && b >= 0 &&
+                h_blk[d] == b && d < r &&
+                ra_reg[d] >= 2 &&              /* has a real allocated register */
+                hcg_usecnt[d] == 1 &&          /* the RET is its only reader */
+                !ra_is_csplit[d] &&
+                hcg_retpin_kind_ok(h_kind[d])) {
+                ok = 1;
+                e = d + 1;
+                while (e < r) {
+                    if (hcg_retpin_clobbers_r1(e)) { ok = 0; break; }
+                    sp = ra_csplit_head[e];
+                    while (sp >= 0) {
+                        if (hcg_retpin_clobbers_r1(sp)) { ok = 0; }
+                        sp = ra_csplit_next[sp];
+                    }
+                    if (!ok) break;
+                    e = e + 1;
+                }
+                /* LICM hoists into the gap before the terminator too. */
+                if (ok && licm_head[b] >= 0) ok = 0;
+                if (ok) {
+                    hcg_ret_direct[d] = 1;
+                    hcg_stat_retpin = hcg_stat_retpin + 1;
+                }
+            }
+        }
+        r = r + 1;
+    }
+}
+
 static int hcg_dst(int idx) {
+    if (hcg_ret_direct[idx]) return 1;   /* issue 72 */
     if (ra_reg[idx] >= 0) return ra_reg[idx];
     return 1;
 }
@@ -2630,7 +2779,7 @@ static void hcg_inst(int idx) {
                 if (off == 0) cg_rri("addi", 1, 0, 0);
                 else if (hcg_is_i12(off)) cg_rri("addi", 1, 0, off);
                 else hcg_li(1, off);
-            } else {
+            } else if (!hcg_ret_direct[s1]) {
                 hcg_into(1, s1);
             }
         }
@@ -3350,6 +3499,10 @@ static void hcg_func(Node *fn) {
         b = b + 1;
     }
     hcg_epilog = cg_label();
+
+    /* Decide which returned values are computed straight into r1 (issue 72).
+     * After allocation, before any block is emitted. */
+    hcg_mark_ret_direct();
 
     /* Function label.  A `static` function has internal linkage: emit no
        .global, so the assembler leaves it STB_LOCAL (slow32asm defaults

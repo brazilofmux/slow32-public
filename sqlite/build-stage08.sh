@@ -26,11 +26,15 @@ OPTS="-DSQLITE_OS_OTHER=1 -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_WAL=1 -DSQLITE_OMI
       -DSQLITE_OMIT_COMPILEOPTION_DIAGS=1 -DSQLITE_DEFAULT_MEMSTATUS=0
       -DSQLITE_DQS=0 -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_CORE -DSQLITE_BYTEORDER=0"
 
+# Call-model override for measurement (GitHub issue 74): LONGCALLS= builds
+# with short calls so the two models can be compared on identical sources.
+LONGCALLS="${LONGCALLS--mlong-calls}"
+
 cc8() {   # cc8 name.c [flags...] -> out/stage08/name.s32o
     local src="$1"; shift
     local b="$(basename "$src" .c)"
     echo "  $b.c"
-    "$EMU" "$CC" -I "$STAGE08/include" -I "$SCRIPT_DIR" $OPTS -mlong-calls "$@" \
+    "$EMU" "$CC" -I "$STAGE08/include" -I "$SCRIPT_DIR" $OPTS $LONGCALLS "$@" \
         "$src" "$OUTDIR/$b.s" > "$OUTDIR/$b.cc.log" 2>&1 \
         || { tail -5 "$OUTDIR/$b.cc.log" >&2; echo "stage08 cc failed: $src" >&2; exit 1; }
     "$TOOLCHAIN/assembler/slow32asm" "$OUTDIR/$b.s" "$OUTDIR/$b.s32o" > "$OUTDIR/$b.as.log" 2>&1 \
