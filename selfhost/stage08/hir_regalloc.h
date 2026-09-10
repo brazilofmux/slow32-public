@@ -2946,6 +2946,8 @@ static void ra_rewire_after(int old, int nw, int call) {
     }
 }
 
+static int ra_split_pairing = 0;  /* guards the fp64 partner recursion below */
+
 static int ra_split_one(int v, int call) {
     int cp;
     int w;
@@ -2961,10 +2963,29 @@ static int ra_split_one(int v, int call) {
     ra_csplit_next[cp] = ra_csplit_head[call];
     ra_csplit_head[call] = cp;
     ra_rewire_after(v, cp, call);
+    /* v's after-uses now all name cp, so v has none left.  Clear the
+     * stamp or the next ra_split_one(v, call) at this same call sees a
+     * stale "has after-uses" and splits v again into a copy nothing
+     * reads: an fp64 argument occupies TWO adjacent h_carg slots, so
+     * the argument loop calls us once per half and the second call
+     * re-split both halves. */
+    ra_after_stamp[v] = 0;
     ra_stat_csplit = ra_stat_csplit + 1;
     w = ra_pair_of[v];
-    if (w >= 0 && w != v && ra_pair_of[cp] < 0) {
+    /* Split the fp64 partner too, but NEVER let that inner call take
+     * this branch again: ra_pair_of[w] still names v (the cp<->cpw
+     * pairing below is what finally replaces it), so re-entering here
+     * would split v a second time, then w again, ... until
+     * ra_new_split_copy runs the instruction table out.  A double
+     * passed to a call and used after it filled all HIR_MAX_INST
+     * slots -- 6 lines of C became 1.3M lines of asm, and sqlite's
+     * dekkerMul2/kahanBabuskaNeumaierStep/absFunc/strftimeFunc each
+     * hit it (the assembler died on "Instruction buffer size
+     * overflow"). */
+    if (w >= 0 && w != v && ra_pair_of[cp] < 0 && !ra_split_pairing) {
+        ra_split_pairing = 1;
         cpw = ra_split_one(w, call);
+        ra_split_pairing = 0;
         if (cpw >= 0) {
             ra_pair_of[cp] = cpw;
             ra_pair_of[cpw] = cp;
