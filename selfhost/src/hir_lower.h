@@ -437,6 +437,28 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n,
     }
 
     hl_sw_mark_ft(body, sw_b, sw_n);
+
+    /* A coalesced label shares its block with the one before it
+     * (hl_sw_prescan).  If that block is a fall-through target then EVERY
+     * slot naming it has to go through the trampoline, not just the slot
+     * the fall-through lands on.  Marking only the first left
+     * `case 0: r++; case 1: case 2: ...` with table[2] pointing straight
+     * at the shared block -- a second predecessor reached by a JMPTAB
+     * edge, which cannot carry the phi copy -- and f(2) returned 4
+     * instead of 2. */
+    i = 0;
+    while (i < sw_n) {
+        if (hl_sw_ft[sw_b + i]) {
+            t = 0;
+            while (t < sw_n) {
+                if (hl_sw_blk[sw_b + t] == hl_sw_blk[sw_b + i]) {
+                    hl_sw_ft[sw_b + t] = 1;
+                }
+                t = t + 1;
+            }
+        }
+        i = i + 1;
+    }
     hl_jt_ntr = 0;
 
     /* Build the per-index target table: holes -> hole trampoline,
