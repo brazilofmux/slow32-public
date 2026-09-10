@@ -35,8 +35,19 @@ static int ssa_rpo_cnt;
 static int ssa_idom[HIR_MAX_BLOCK];
 
 /* --- Dominance frontier (fixed width per block) --- */
-#define SSA_DF_W 32
-#define SSA_DF_SZ 524288   /* was 65536 */
+/* Per-block dominance-frontier width, and the flat array it indexes as
+ * block * SSA_DF_W.  The two must be raised together: SSA_DF_SZ is
+ * exactly HIR_MAX_BLOCK * SSA_DF_W, so bumping the width alone silently
+ * shortens how many blocks are addressable.
+ *
+ * Raised 32 -> 64 because stage08 could no longer compile its own
+ * source: some block in s12cc.c has a dominance frontier wider than 32,
+ * and gen1 died with "too many dominance-frontier entries", failing the
+ * (opt-in) fixed-point gate.  Dropping the entry instead would cost a
+ * phi and silently produce a wrong reaching definition, so stopping is
+ * right -- the ceiling just has to be big enough. */
+#define SSA_DF_W 64
+#define SSA_DF_SZ 1048576   /* HIR_MAX_BLOCK * SSA_DF_W; was 524288 at W=32 */
 static int ssa_df[SSA_DF_SZ];
 static int ssa_dfc[HIR_MAX_BLOCK];
 
