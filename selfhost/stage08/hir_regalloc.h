@@ -60,6 +60,16 @@ static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved 
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
 static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+/* COPY insts emitted immediately before a call to split a live range
+ * that is used as a call argument (or CALLP callee) and also lives
+ * after the call.  Chained through ra_csplit_next. */
+static int ra_csplit_head[HIR_MAX_INST];
+static int ra_csplit_next[HIR_MAX_INST];
+static int ra_split_orig;
+static int ra_stat_csplit;
+static int ra_after_stamp[HIR_MAX_INST];
+static int ra_after_tick;
+static char ra_is_csplit[HIR_MAX_INST];   /* COPY dest of a call split: always callee-saved */
 static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
@@ -154,6 +164,7 @@ static int ra_prefers_caller_for_inst(int inst) {
      * Values whose live range does *not* cross any call are allowed to use
      * the cheap caller-saved registers (r3-r10).  Values that cross calls
      * must stay in the callee-saved pool (r11-r28). */
+    if (ra_is_csplit[inst]) return 0;
     return !ra_crosses_call[inst];
 }
 
@@ -413,6 +424,19 @@ static void ra_compute_pos(void) {
         i = bb_start[b];
         while (i < bb_end[b]) {
             if (i == term) break;
+            {
+                int sp;
+                sp = ra_csplit_head[i];
+                while (sp >= 0) {
+                    if (h_kind[sp] != HI_NOP) {
+                        ra_pos[sp] = pos;
+                        ra_order[ra_norder] = sp;
+                        ra_norder = ra_norder + 1;
+                        pos = pos + 1;
+                    }
+                    sp = ra_csplit_next[sp];
+                }
+            }
             if (h_kind[i] != HI_NOP) {
                 ra_pos[i] = pos;
                 ra_order[ra_norder] = i;
@@ -862,6 +886,10 @@ static void ra_extend_fused_cmp(void) {
 
     i = 0;
     while (i < h_ninst) {
+        /* Only BRC carries a fuse; extra insts appended after
+         * hcg_identify_fusions (call-split COPYs) keep the BSS 0
+         * in hcg_brc_fuse[], which would NOP instruction 0. */
+        if (h_kind[i] != HI_BRC) { i = i + 1; continue; }
         cmp = hcg_brc_fuse[i];
         if (cmp < 0) { i = i + 1; continue; }
 
@@ -1748,6 +1776,14 @@ static int gc_coalesce(void) {
                 gc_wl[u] = GC_WL_SIMPLIFY;
             if (!gc_move_related(v) && gc_degree[v] < gc_k(v) && gc_wl[v] == GC_WL_FREEZE)
                 gc_wl[v] = GC_WL_SIMPLIFY;
+            return 1;
+        }
+        /* A call-split COPY exists to separate the pre-call half
+         * (caller-saved, maybe the ABI arg register) from the
+         * post-call half (callee-saved).  Merging them back would
+         * undo the split. */
+        if (ra_is_csplit[gc_inst[u]] || ra_is_csplit[gc_inst[v]]) {
+            gc_mv_status[mv] = GC_MV_CONSTRAINED;
             return 1;
         }
         if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]] &&
@@ -2751,11 +2787,237 @@ static void ra_mark_call_crossing(void) {
     }
 }
 
+static void ra_after_mark(int v) {
+    if (v >= 0 && v < HIR_MAX_INST) ra_after_stamp[v] = ra_after_tick;
+}
+
+static int ra_after_has(int v) {
+    if (v < 0 || v >= HIR_MAX_INST) return 0;
+    return ra_after_stamp[v] == ra_after_tick;
+}
+
+/* Mark values used after `call` in this block, or as a phi arg on an
+ * outgoing edge.  O(block) per call, not O(function). */
+static void ra_mark_after_uses(int call) {
+    int i;
+    int j;
+    int n;
+    int base;
+    int cb;
+    int si;
+    int s;
+    int phi;
+    int sp;
+    ra_after_tick = ra_after_tick + 1;
+    if (ra_after_tick <= 0) {
+        i = 0;
+        while (i < HIR_MAX_INST) { ra_after_stamp[i] = 0; i = i + 1; }
+        ra_after_tick = 1;
+    }
+    cb = h_blk[call];
+    if (cb < 0) return;
+    i = call + 1;
+    while (i < bb_end[cb]) {
+        if (h_src1[i] >= 0) ra_after_mark(h_src1[i]);
+        if (h_src2[i] >= 0 && ho_src2_is_ref(h_kind[i]))
+            ra_after_mark(h_src2[i]);
+        if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
+            h_cbase[i] >= 0) {
+            n = h_val[i];
+            base = h_cbase[i];
+            j = 0;
+            while (j < n) {
+                ra_after_mark(h_carg[base + j]);
+                j = j + 1;
+            }
+        }
+        sp = ra_csplit_head[i];
+        while (sp >= 0) {
+            ra_after_mark(h_src1[sp]);
+            sp = ra_csplit_next[sp];
+        }
+        i = i + 1;
+    }
+    si = 0;
+    while (si < ssa_nsucc[cb]) {
+        s = ssa_succ[ssa_soff[cb] + si];
+        if (s >= 0 && s < bb_nblk) {
+            phi = ssa_phi_head[s];
+            while (phi >= 0) {
+                if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
+                    j = 0;
+                    while (j < h_pcnt[phi]) {
+                        if (h_pblk[h_pbase[phi] + j] == cb)
+                            ra_after_mark(h_pval[h_pbase[phi] + j]);
+                        j = j + 1;
+                    }
+                }
+                phi = ssa_phi_next[phi];
+            }
+        }
+        si = si + 1;
+    }
+}
+
+static int ra_new_split_copy(int src, int blk) {
+    int cl;
+    cl = h_ninst;
+    if (cl >= HIR_MAX_INST) return -1;
+    h_kind[cl] = HI_COPY;
+    h_ty[cl] = h_ty[src];
+    h_src1[cl] = src;
+    h_src2[cl] = -1;
+    h_val[cl] = 0;
+    h_name[cl] = 0;
+    h_blk[cl] = blk;
+    h_cbase[cl] = -1;
+    h_pbase[cl] = -1;
+    h_pcnt[cl] = 0;
+    h_ld_ro[cl] = 0;
+    h_no_remat[cl] = 0;
+    bg_sel[cl] = -1;
+    bg_uses[cl] = 0;
+    licm_next[cl] = -1;
+    licm_cpin[cl] = 0;
+    licm_map[cl] = -1;
+    ho_use[cl] = 0;
+    hcg_brc_fuse[cl] = -1;
+    hcg_cmp_fused[cl] = 0;
+    ra_csplit_head[cl] = -1;
+    ra_csplit_next[cl] = -1;
+    ra_pair_of[cl] = -1;
+    ra_pair_lo[cl] = 0;
+    ra_is_csplit[cl] = 1;
+    h_ninst = h_ninst + 1;
+    return cl;
+}
+
+static void ra_rewire_after(int old, int nw, int call) {
+    int i;
+    int j;
+    int n;
+    int base;
+    int cb;
+    int si;
+    int s;
+    int phi;
+    int sp;
+    cb = h_blk[call];
+    i = call + 1;
+    while (i < bb_end[cb]) {
+        if (h_src1[i] == old) h_src1[i] = nw;
+        if (h_src2[i] == old && ho_src2_is_ref(h_kind[i])) h_src2[i] = nw;
+        if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
+            h_cbase[i] >= 0) {
+            n = h_val[i];
+            base = h_cbase[i];
+            j = 0;
+            while (j < n) {
+                if (h_carg[base + j] == old) h_carg[base + j] = nw;
+                j = j + 1;
+            }
+        }
+        sp = ra_csplit_head[i];
+        while (sp >= 0) {
+            if (h_src1[sp] == old) h_src1[sp] = nw;
+            sp = ra_csplit_next[sp];
+        }
+        i = i + 1;
+    }
+    si = 0;
+    while (si < ssa_nsucc[cb]) {
+        s = ssa_succ[ssa_soff[cb] + si];
+        if (s >= 0 && s < bb_nblk) {
+            phi = ssa_phi_head[s];
+            while (phi >= 0) {
+                if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
+                    j = 0;
+                    while (j < h_pcnt[phi]) {
+                        if (h_pval[h_pbase[phi] + j] == old &&
+                            h_pblk[h_pbase[phi] + j] == cb)
+                            h_pval[h_pbase[phi] + j] = nw;
+                        j = j + 1;
+                    }
+                }
+                phi = ssa_phi_next[phi];
+            }
+        }
+        si = si + 1;
+    }
+}
+
+static int ra_split_one(int v, int call) {
+    int cp;
+    int w;
+    int cpw;
+    if (v < 0 || v >= h_ninst) return -1;
+    if (v == call) return -1;
+    if (hi_is_remat(h_kind[v])) return -1;
+    if (h_kind[v] == HI_NOP) return -1;
+    if (h_blk[v] == h_blk[call] && v >= call) return -1;
+    if (!ra_after_has(v)) return -1;
+    cp = ra_new_split_copy(v, h_blk[call]);
+    if (cp < 0) return -1;
+    ra_csplit_next[cp] = ra_csplit_head[call];
+    ra_csplit_head[call] = cp;
+    ra_rewire_after(v, cp, call);
+    ra_stat_csplit = ra_stat_csplit + 1;
+    w = ra_pair_of[v];
+    if (w >= 0 && w != v && ra_pair_of[cp] < 0) {
+        cpw = ra_split_one(w, call);
+        if (cpw >= 0) {
+            ra_pair_of[cp] = cpw;
+            ra_pair_of[cpw] = cp;
+            ra_pair_lo[cp] = ra_pair_lo[v];
+            ra_pair_lo[cpw] = ra_pair_lo[w];
+        }
+    }
+    return cp;
+}
+
+static void ra_split_at_calls(void) {
+    int i;
+    int j;
+    int n;
+    int base;
+    int v;
+    int c;
+    ra_stat_csplit = 0;
+    ra_split_orig = h_ninst;
+    i = 0;
+    while (i < h_ninst) {
+        ra_csplit_head[i] = -1;
+        ra_csplit_next[i] = -1;
+        ra_is_csplit[i] = 0;
+        i = i + 1;
+    }
+    c = ra_split_orig - 1;
+    while (c >= 0) {
+        if (h_kind[c] == HI_CALL || h_kind[c] == HI_CALLP) {
+            ra_mark_after_uses(c);
+            if (h_cbase[c] >= 0) {
+                n = h_val[c];
+                base = h_cbase[c];
+                j = 0;
+                while (j < n) {
+                    v = h_carg[base + j];
+                    if (v >= 0) ra_split_one(v, c);
+                    j = j + 1;
+                }
+            }
+            if (h_kind[c] == HI_CALLP && h_src1[c] >= 0)
+                ra_split_one(h_src1[c], c);
+        }
+        c = c - 1;
+    }
+}
+
 static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
     { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
+    ra_split_at_calls();   /* chop crossing webs so the pre-call half can use r3-r10 */
     ra_build_wuses();      /* loop-depth-weighted use counts for spill cost */
     ra_compute_pos();
     ra_compute_ends();

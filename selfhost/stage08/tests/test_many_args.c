@@ -81,6 +81,34 @@ int test_wrap9(void) {
     return 0;
 }
 
+/* Live-range split at calls: param `a` is passed to bump() and used after.
+ * bump returns x+1 so a clobber of `a` with the return value cannot
+ * accidentally pass.  Without a split, a is callee-saved from the
+ * prologue and copied into r3 at the call.  With a split, a stays in
+ * r3, a COPY saves it across the call, and the return uses the copy. */
+int bump(int x) { return x + 1; }
+
+int keep_across(int a) {
+    int r;
+    r = bump(a);
+    return a + r;
+}
+
+int chain_across(int a) {
+    int r;
+    r = bump(a);
+    r = bump(r);
+    return a + r;
+}
+
+int test_keep_across(void) {
+    if (keep_across(10) != 21) return 1;
+    if (keep_across(0) != 1) return 2;
+    if (chain_across(10) != 22) return 3;
+    if (chain_across(1) != 4) return 4;
+    return 0;
+}
+
 int main(void) {
     int fail;
     fail = 0;
@@ -92,6 +120,8 @@ int main(void) {
     else { print_fail("9-arg ptr out-params"); fail = 1; }
     if (test_wrap9() == 0) print_ok("wrap9 (stack arg vs marshal)");
     else { print_fail("wrap9 (stack arg vs marshal)"); fail = 1; }
+    if (test_keep_across() == 0) print_ok("keep_across (split at call)");
+    else { print_fail("keep_across (split at call)"); fail = 1; }
     if (test_mixed10() == 0) print_ok("mixed10 (10 args)");
     else { print_fail("mixed10 (10 args)"); fail = 1; }
     return fail;

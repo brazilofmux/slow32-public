@@ -3151,6 +3151,14 @@ static void hcg_block(int b) {
     i = bb_start[b];
     while (i < bb_end[b]) {
         if (i == term) break;
+        {
+            int sp;
+            sp = ra_csplit_head[i];
+            while (sp >= 0) {
+                hcg_inst(sp);
+                sp = ra_csplit_next[sp];
+            }
+        }
         hcg_inst(i);
         i = i + 1;
     }
