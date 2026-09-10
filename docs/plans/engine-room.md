@@ -621,6 +621,8 @@ benchmark_core through stage08 cc (`cc.s32x` under the DBT):
   3–4 uncoalesced phi copies per trip. Same three levers the x64
   cross already climbed to gcc parity; the slow32 backend
   (hir_regalloc.h/hir_codegen.h) never got the June work.
+  **All three are closed and the mountain is behind us — see
+  "Scoreboard 2026-09-10" below before acting on this bullet.**
 - New divergence: stage08 cc emits `extern` globals as .bss
   DEFINITIONS (stdio.h → stdin/stdout/stderr defined per TU);
   stage08's linker merges common-style, the host linker correctly
@@ -642,6 +644,77 @@ LICM-of-constants, branch layout into the slow32 backend; scoreboard
 is inst/iter — ≤35 makes apps viable, 28.5 is parity), extern-def
 fix folded in, then apps smallest-teeth-first, DOOM last, HW FP
 when the first double-using app or the ABI gate forces the issue.
+
+**Scoreboard 2026-09-10: 26.9 inst/iter — stage08 is now BELOW
+LLVM.** Measured at `189d4370`, both sides rebuilt from source, same
+checksum 0x8d70b2b:
+
+| | executed | inst/iter |
+|---|---|---|
+| clang -O2 | 285,025,916 | 28.50 |
+| **stage08** | **268,764,771** | **26.88** |
+| GCC-rv32 (reference) | — | 24.9 |
+
+The survey's three named defects are gone from bench_arith: constants
+are hoisted to the preheader, the exit test branches straight to the
+epilogue, and no phi copies remain — nine instructions per trip. The
+campaign-order scoreboard ("≤35 makes apps viable, 28.5 is parity") is
+met and passed; loop rotation and LFTR, named as the remaining distance
+after the second strike, were not needed to get here.
+
+**This does NOT mean the backend is done — it means the benchmark
+stopped being the right instrument.** stage08 wins on a tight
+loop-carried kernel and still spends 1.91x clang on a large real
+program (SQLite, 337,898 instructions vs 176,648). Whole-program
+excess, measured the same day:
+
+**COUNT MOVES ACROSS BOTH IDIOMS OR THE TABLE LIES.** stage08 spells a
+register move `addi rX, rY, 0`; clang spells it `add rX, rY, r0`
+(25,561 of them in sqlite3.s). A per-opcode diff that does not fold
+those together reports `addi` at 3.7x and "clang emits no moves", and
+both are artifacts. Folded together, and with `addi rX, r0, 0` counted
+as the constant materialization it is rather than a move:
+
+| op | stage08 | clang | excess | share |
+|---|---|---|---|---|
+| `addi` (non-move) | 65,126 | 24,053 | 41,073 | 25.5% |
+| `ldw` | 57,309 | 31,141 | 26,168 | 16.2% |
+| `lui` | 29,840 | 4,415 | 25,425 | 15.8% |
+| `stw` | 43,503 | 19,004 | 24,499 | 15.2% |
+| moves + const-zero | 45,720 | 31,504 | 14,216 | 8.8% |
+| `add` (non-move) | 19,293 | 5,720 | 13,573 | 8.4% |
+| `jalr` | 14,598 | 2,039 | 12,559 | 7.8% |
+
+Three things to know before chasing that 1.91x:
+
+- **~25,000 instructions (15%) are not a codegen defect.** The SQLite
+  build gives stage08 `-mlong-calls` and clang `-Os` for JAL reach, so
+  every stage08 call is `lui+addi+jalr` where clang emits one `jal`.
+  That is the whole 6.8x `lui` and 7.2x `jalr` ratio. It is also
+  self-feeding: larger code forces long calls, which enlarge code. Any
+  honest size comparison has to settle this first.
+- **Register moves are NOT the outlier they look like.** Real moves:
+  stage08 37,631 vs clang 25,561 — **1.47x, excess 12,070, only 7.5%
+  of the total excess**, i.e. roughly in line with the 1.91x overall
+  ratio rather than ahead of it. By role, though, the ratios differ
+  sharply and that is where the signal is:
+
+  | role | stage08 | clang | excess | ratio |
+  |---|---|---|---|---|
+  | argument (r3-r10) | 23,059 | 17,242 | 5,817 | 1.34x |
+  | general (r11-r28) | 9,772 | 7,218 | 2,554 | 1.35x |
+  | **return (r1/r2)** | **4,800** | **1,101** | **3,699** | **4.36x** |
+
+  Argument and general moves are already near parity after issue 67.
+  Return moves are the one role still far out of line.
+- **Memory traffic is the largest coherent codegen category:**
+  `ldw`+`stw` 100,812 vs 50,145, 2.0x, 31% of the excess. That is
+  spilling, and nothing has been aimed at it yet.
+
+Leaf-frame elision (591 of SQLite's 2,365 functions never call
+anything, yet all build a frame and save `r31`) and the 1,024 `jal`
+instructions that jump to the very next label are real but total ~5,200
+instructions, 3%. Size the prize before taking it.
 
 **Second strike (445afa1c): 34.4 → 30.1 inst/iter** — branch
 trampolines replaced by direct branch shapes + a forwarding map,
