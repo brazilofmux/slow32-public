@@ -1618,16 +1618,27 @@ static int hcg_phi_src_inst[SSA_MAX_PROMO];
  * coalesced into the same register), and refusing the direct shape
  * cost a jal per iteration.  A constant or spilled phi source still
  * needs a real copy and keeps the trampoline. */
+/* Physical register a value is emitted in: r1 when a return web
+ * pinned it (GitHub issue 72), else its color.  The allocator's
+ * coalescing put signext's `v` phi in r3 with its PARAM arm; the pin
+ * then moved the phi to r1, and comparing colors alone declared the
+ * PARAM edge copy-free -- r1 arrived holding remat scratch, and the
+ * stage08-built disassembler printed every immediate as 1. */
+static int hcg_eff_reg(int v) {
+    if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) return 1;
+    return ra_reg[v];
+}
+
 static int hcg_edge_nocopy(int from_blk, int to_blk) {
     int i;
     int v;
     i = ssa_phi_head[to_blk];
     while (i >= 0) {
         if (h_kind[i] == HI_PHI) {
-            if (ra_reg[i] < 0) return 0;
+            if (hcg_eff_reg(i) < 0) return 0;
             v = ssa_phi_find_arg(i, from_blk);
-            if (v < 0 || ra_reg[v] < 0) return 0;
-            if (ra_reg[v] != ra_reg[i]) return 0;
+            if (v < 0 || hcg_eff_reg(v) < 0) return 0;
+            if (hcg_eff_reg(v) != hcg_eff_reg(i)) return 0;
         }
         i = ssa_phi_next[i];
     }
