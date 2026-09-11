@@ -37,22 +37,28 @@ needing their sizes, and 8-alignment survives because the shift is a
 multiple of 8.  `return` inside an inlined body stores to a result slot
 and branches to a continuation block.
 
-Refused: varargs, struct parameters or return, bodies containing labels
-or `goto`, recursion (direct or mutual), argument-count mismatches, and
-**callees containing loops** — a loop amortises its own call overhead, so
-inlining it inflates the caller for nothing (measured: refusing daxpy
-turned a 3% loss into a 2.4% win).
+Refused: **non-statics** (DCE cannot drop the out-of-line copy),
+address-taken, varargs, struct parameters or return, bodies containing
+labels or `goto`, recursion (direct or mutual), argument-count
+mismatches, and statics whose whole-TU copy count would grow `.text`
+(GitHub issue 73).  Loops are allowed when that rule says the body
+will vanish.  The earlier blanket `no loops` refusal was measured on
+LINPACK's daxpy — a non-static loop kernel, the shape the new policy
+already excludes.
 
 ## Measured
 
 | | inlining off | on (budget 20) |
 |---|---:|---:|
-| LINPACK-C | 1,000,445,397 | **976,654,747** (−2.4%) |
-| mandel-C | 35,262,855 | 35,262,855 (no inlinable calls) |
+| LINPACK-C (dynamic insns) | 1,000,445,397 | **976,654,747** (−2.4%) |
+| mandel-C (dynamic insns) | 35,262,855 | 35,262,855 (no inlinable calls) |
+| sqlite 3.51.0 `.s` size (GitHub issue 73, same compiler) | 328,885 | **326,649** (−0.68%, −246 statics) |
 
-Budget sweep on LINPACK-C shows the classic inlining curve — small
+LINPACK/mandel were measured under the previous policy (non-statics
+inlined, loops refused).  Budget sweep showed the classic curve — small
 callees win, generous budgets lose: 25 → −2.4%, 50 → −1.9%, 100 → +2.5%,
-400 → +3.1%.  The `no loops` rule is what separates the two regimes.
+400 → +3.1%.  The whole-TU static rule now does the job the `no loops`
+refusal did: daxpy-shaped kernels stay out of line.
 
 ## Why it ships off: four fixed ceilings
 

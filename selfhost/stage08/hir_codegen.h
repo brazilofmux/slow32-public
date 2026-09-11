@@ -4024,15 +4024,17 @@ static void gen_program(Node *prog) {
     Node *fn;
     {
         /* Inlining + dead-static DCE (GitHub issue 73).  S12CC_INLINE=<n>
-         * splices callees up to that AST-node budget; unreferenced
-         * statics are then dropped.  Default 0: budget 20 is a net
-         * loss on SQLite (4978 splices, only 363 statics become dead,
-         * +13% insns) because the inliner refuses loops. */
+         * splices statics up to that AST-node budget when the whole-TU
+         * copy count is a size win; DCE then drops the out-of-line
+         * body.  Default 0: budget 20 is a measured -0.68% on sqlite,
+         * not yet on by default (bootstrap ceilings). */
         char *e;
         hl_prog = prog;
         hl_stat_inlined = 0;
+        hl_stat_inl_sel = 0;
         e = getenv("S12CC_INLINE");
         hl_inline_max = e ? atoi(e) : 0;
+        hl_inl_prepare(prog);
     }
 
     cg_njt = 0;

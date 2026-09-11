@@ -2,19 +2,19 @@
  * ordering, short-circuit conditionality, nesting, recursion refusal,
  * locals with distinct instances, doubles, address-taken locals. */
 int g_seq;
-int tick(int v) { g_seq = g_seq * 10 + v; return v; }
+static int tick(int v) { g_seq = g_seq * 10 + v; return v; }
 
-int early(int x) { if (x > 3) return 100; return x; }
+static int early(int x) { if (x > 3) return 100; return x; }
 
-int sumto(int n) { int i, s; s = 0; for (i = 0; i < n; i++) { if (i == 7) break; s = s + i; } return s; }
+static int sumto(int n) { int i, s; s = 0; for (i = 0; i < n; i++) { if (i == 7) break; s = s + i; } return s; }
 
-int viaptr(int x) { int loc; int *p; loc = x; p = &loc; *p = *p + 5; return loc; }
+static int viaptr(int x) { int loc; int *p; loc = x; p = &loc; *p = *p + 5; return loc; }
 
-double dscale(double v, double k) { return v * k + 1.0; }
+static double dscale(double v, double k) { return v * k + 1.0; }
 
-int fact(int n) { if (n <= 1) return 1; return n * fact(n - 1); }
+static int fact(int n) { if (n <= 1) return 1; return n * fact(n - 1); }
 
-int arr7(int k) { int a[8]; int i; for (i = 0; i < 8; i++) a[i] = i * k; return a[7]; }
+static int arr7(int k) { int a[8]; int i; for (i = 0; i < 8; i++) a[i] = i * k; return a[7]; }
 
 int main(void) {
     int fails = 0;

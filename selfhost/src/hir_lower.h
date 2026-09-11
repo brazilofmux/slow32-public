@@ -113,11 +113,21 @@ static int hl_narrow(int ty, int lv);
  * `return` inside an inlined body stores to a result slot and branches
  * to a continuation block (hl_inl_ret_blk) instead of emitting HI_RET.
  *
- * Refused: varargs, struct parameters or struct return, bodies
- * containing labels or goto (label scoping is per-function), recursion
- * (direct or mutual, via the active stack), and anything over budget.
+ * Refused: non-statics (DCE cannot drop the out-of-line copy, so a
+ * splice is pure duplication), address-taken, varargs, struct
+ * parameters or struct return, bodies containing labels or goto
+ * (label scoping is per-function), recursion (direct or mutual, via
+ * the active stack), anything over budget, and statics whose whole-TU
+ * copy count would grow .text (GitHub issue 73).
+ *
+ * Loops are allowed when the whole-TU rule says the body will vanish.
+ * The earlier blanket refusal was measured on LINPACK's daxpy -- a
+ * non-static loop kernel with many dynamic iterations, the shape this
+ * policy already excludes.  Small one-site statics that happen to
+ * contain a loop are the helpers clang -Os deletes and we did not.
  * ================================================================= */
 #define HL_INL_MAX_DEPTH 3
+#define HL_INL_MAX_SYM   8192
 static Node *hl_prog;            /* program root; set by the codegen driver */
 static int   hl_inline_max;      /* node budget; 0 disables inlining */
 static int   hl_inl_depth;
@@ -127,6 +137,18 @@ static int   hl_inl_ret_blk;     /* continuation block for `return` */
 static int   hl_inl_res;         /* result alloca, -1 when void */
 static int   hl_inl_res_ty;
 static int   hl_stat_inlined;
+static int   hl_stat_inl_sel;    /* statics selected for whole-TU splice */
+
+/* Whole-TU picture, filled by hl_inl_prepare.  Direct ND_CALL counts,
+ * address-taken (ND_FUNC_REF and data relocs), and a per-function ok
+ * bit: only those statics are spliced, so DCE can drop the body. */
+static int   hl_inl_nsym;
+static char *hl_inl_name[HL_INL_MAX_SYM];
+static Node *hl_inl_fn[HL_INL_MAX_SYM];
+static int   hl_inl_ncalls[HL_INL_MAX_SYM];
+static char  hl_inl_taken[HL_INL_MAX_SYM];
+static char  hl_inl_recur[HL_INL_MAX_SYM];
+static char  hl_inl_ok[HL_INL_MAX_SYM];
 
 /* Callee offsets are relocated by one constant; 0 when not inlining. */
 static int hl_map_off(int off) {
@@ -957,36 +979,130 @@ static int hl_inl_has_labels(Node *n) {
     return 0;
 }
 
-/* A callee that is itself a loop amortises its own call overhead over
- * its iterations, so inlining it buys almost nothing while inflating
- * the caller (LINPACK's daxpy: inlining it cost 3%, refusing it saved
- * 2.4%).  This is the same shape f77 recorded -- user subprograms are
- * loop bodies, the case inlining helps least. */
-static int hl_inl_has_loop(Node *n) {
-    if (!n) return 0;
-    if (n->kind == ND_WHILE || n->kind == ND_FOR) return 1;
-    if (hl_inl_has_loop(n->lhs)) return 1;
-    if (hl_inl_has_loop(n->rhs)) return 1;
-    if (hl_inl_has_loop(n->cond)) return 1;
-    if (hl_inl_has_loop(n->body)) return 1;
-    if (hl_inl_has_loop(n->init)) return 1;
-    if (hl_inl_has_loop(n->step)) return 1;
-    if (hl_inl_has_loop(n->els)) return 1;
-    if (hl_inl_has_loop(n->args)) return 1;
-    if (hl_inl_has_loop(n->next)) return 1;
-    return 0;
+static int hl_inl_find_sym(char *name, int add) {
+    int i;
+    if (!name) return -1;
+    i = 0;
+    while (i < hl_inl_nsym) {
+        if (strcmp(hl_inl_name[i], name) == 0) return i;
+        i = i + 1;
+    }
+    if (!add || hl_inl_nsym >= HL_INL_MAX_SYM) return -1;
+    hl_inl_name[hl_inl_nsym] = name;
+    hl_inl_fn[hl_inl_nsym] = 0;
+    hl_inl_ncalls[hl_inl_nsym] = 0;
+    hl_inl_taken[hl_inl_nsym] = 0;
+    hl_inl_recur[hl_inl_nsym] = 0;
+    hl_inl_ok[hl_inl_nsym] = 0;
+    hl_inl_nsym = hl_inl_nsym + 1;
+    return hl_inl_nsym - 1;
 }
 
-static Node *hl_inl_find(char *name) {
-    Node *f;
-    if (!name || !hl_prog) return NULL;
-    f = hl_prog->body;
-    while (f) {
-        if (f->kind == ND_FUNC && f->name && strcmp(f->name, name) == 0 && f->body)
-            return f;
-        f = f->next;
+/* Iterate `next` rather than recurse: VdbeExec's statement list is
+ * thousands long and would blow the guest stack. */
+static void hl_inl_walk(Node *n, char *cur) {
+    int k;
+    while (n) {
+        if (n->kind == ND_CALL && n->name) {
+            k = hl_inl_find_sym(n->name, 1);
+            if (k >= 0) {
+                hl_inl_ncalls[k] = hl_inl_ncalls[k] + 1;
+                if (cur && strcmp(cur, n->name) == 0)
+                    hl_inl_recur[k] = 1;
+            }
+        }
+        if (n->kind == ND_FUNC_REF && n->name) {
+            k = hl_inl_find_sym(n->name, 1);
+            if (k >= 0) hl_inl_taken[k] = 1;
+        }
+        hl_inl_walk(n->lhs, cur);
+        hl_inl_walk(n->rhs, cur);
+        hl_inl_walk(n->cond, cur);
+        hl_inl_walk(n->body, cur);
+        hl_inl_walk(n->init, cur);
+        hl_inl_walk(n->step, cur);
+        hl_inl_walk(n->els, cur);
+        hl_inl_walk(n->args, cur);
+        n = n->next;
     }
-    return NULL;
+}
+
+/* Whole-TU size model: splice every site and drop the original iff
+ * extra copies of the body cost less than the prologue plus the call
+ * overhead we no longer emit.  ncalls==1 always wins (the body just
+ * moves).  Units are AST nodes, not instructions -- close enough to
+ * refuse the 10-site helpers that turned an unfiltered budget 20 into
+ * a 13% sqlite loss.  Same-compiler A/B on sqlite: -0.68% / -122
+ * functions vs inliner off. */
+static int hl_inl_sel_one(Node *fn, int k) {
+    Node *pp;
+    int sz;
+    int ncalls;
+    int extra;
+    int saved;
+    if (!fn || k < 0) return 0;
+    if (!fn->is_static || !fn->body) return 0;
+    if (hl_inl_taken[k] || hl_inl_recur[k]) return 0;
+    if (fn->is_varargs) return 0;
+    if (ty_is_struct(fn->ty)) return 0;
+    pp = fn->args;
+    while (pp) {
+        if (ty_is_struct(pp->ty)) return 0;
+        pp = pp->next;
+    }
+    ncalls = hl_inl_ncalls[k];
+    if (ncalls < 1) return 0;
+    if (hl_inl_has_labels(fn->body)) return 0;
+    sz = hl_inl_size(fn->body, hl_inline_max);
+    if (sz > hl_inline_max) return 0;
+    if (ncalls > 1) {
+        extra = (ncalls - 1) * sz;
+        saved = 8 + ncalls * 6;
+        if (extra >= saved) return 0;
+    }
+    return 1;
+}
+
+static void hl_inl_prepare(Node *prog) {
+    Node *fn;
+    int i;
+    int k;
+    hl_inl_nsym = 0;
+    hl_stat_inl_sel = 0;
+    if (!prog || hl_inline_max <= 0) return;
+    fn = prog->body;
+    while (fn) {
+        if (fn->kind == ND_FUNC && fn->name) {
+            k = hl_inl_find_sym(fn->name, 1);
+            if (k >= 0) hl_inl_fn[k] = fn;
+        }
+        fn = fn->next;
+    }
+    fn = prog->body;
+    while (fn) {
+        if (fn->kind == ND_FUNC)
+            hl_inl_walk(fn->body, fn->name);
+        fn = fn->next;
+    }
+    i = 0;
+    while (i < ps_ngirelocs) {
+        if (ps_girel_kind[i] != GIRELOC_STRING) {
+            if (ps_girel_name[i]) {
+                k = hl_inl_find_sym(ps_girel_name[i], 1);
+                if (k >= 0) hl_inl_taken[k] = 1;
+            } else if (ps_girel_idx[i] >= 0 && ps_girel_idx[i] < ps_nglobals) {
+                k = hl_inl_find_sym(ps_gname[ps_girel_idx[i]], 1);
+                if (k >= 0) hl_inl_taken[k] = 1;
+            }
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < hl_inl_nsym) {
+        hl_inl_ok[i] = (char)hl_inl_sel_one(hl_inl_fn[i], i);
+        if (hl_inl_ok[i]) hl_stat_inl_sel = hl_stat_inl_sel + 1;
+        i = i + 1;
+    }
 }
 
 /* Is `fn` worth and safe to inline at this point? */
@@ -994,23 +1110,22 @@ static Node *hl_inl_candidate(Node *call) {
     Node *fn;
     Node *pp;
     int i;
+    int k;
+    int sz;
 
     if (hl_inline_max <= 0) return NULL;
     if (hl_inl_depth >= HL_INL_MAX_DEPTH) return NULL;
-    fn = hl_inl_find(call->name);
+    if (!call || !call->name) return NULL;
+    k = hl_inl_find_sym(call->name, 0);
+    if (k < 0 || !hl_inl_ok[k]) return NULL;
+    fn = hl_inl_fn[k];
     if (!fn) return NULL;
-    if (fn->is_varargs) return NULL;
-    if (ty_is_struct(fn->ty)) return NULL;
-    /* Recursion, direct or mutual. */
+    /* Recursion, direct or mutual -- the prepare bit catches self
+     * recursion; the stack catches A-inlines-B-inlines-A. */
     i = 0;
     while (i < hl_inl_depth) {
         if (hl_inl_stack[i] == fn) return NULL;
         i = i + 1;
-    }
-    pp = fn->args;
-    while (pp) {
-        if (ty_is_struct(pp->ty)) return NULL;
-        pp = pp->next;
     }
     /* Argument count must match the parameter list exactly; a mismatch
      * means an unprototyped or wrongly-called function, and the
@@ -1023,34 +1138,25 @@ static Node *hl_inl_candidate(Node *call) {
         np = 0; pp = fn->args;   while (pp) { np = np + 1; pp = pp->next; }
         if (na != np) return NULL;
     }
-    if (hl_inl_has_labels(fn->body)) return NULL;
-    {
-        int sz;
-        sz = hl_inl_size(fn->body, hl_inline_max);
-        if (sz > hl_inline_max) return NULL;
-        if (hl_inl_has_loop(fn->body)) return NULL;
-        /* Degrade gracefully rather than failing the compile.  The HIR
-         * headroom is proportional to what this splice will emit --
-         * a flat margin let s12cc.c's biggest functions run the arrays
-         * out and abort the build. */
-        if (hl_nalloca + 64 >= HL_MAX_ALLOCA) return NULL;
-        /* Reserve generously: SSA phi insertion and the LICM split /
-         * strength-reduction passes all APPEND to h_ninst after
-         * lowering finishes, so the budget has to cover them too. */
-        /* Already-huge callers get nothing: they are the functions
-         * where inlining pays least and costs most, and exact
-         * accounting for what a splice will emit is not worth it
-         * (s12cc's own hcg_inst, a 1000-line switch, overran the block
-         * ceiling mid-splice under a proportional-only rule). */
-        if (h_ninst > HIR_MAX_INST / 2) return NULL;
-        if (bb_nblk > HIR_MAX_BLOCK / 2) return NULL;
-        if (h_ninst + sz * 16 + 4096 >= HIR_MAX_INST) return NULL;
-        /* Blocks too: every splice adds the callee's control flow plus
-         * a continuation, and hir_regalloc's liveness bitsets are sized
-         * against HIR_MAX_BLOCK, so this ceiling must not be raised
-         * casually. */
-        if (bb_nblk + sz + 64 >= HIR_MAX_BLOCK) return NULL;
-    }
+    sz = hl_inl_size(fn->body, hl_inline_max);
+    /* Degrade gracefully rather than failing the compile.  The HIR
+     * headroom is proportional to what this splice will emit --
+     * a flat margin let s12cc.c's biggest functions run the arrays
+     * out and abort the build.  The old "already-huge callers get
+     * nothing" /2 cutoff refused every splice into VdbeExec and left
+     * residual jals that kept the out-of-line copy.  Limits have
+     * grown since (HIR_MAX_INST 262144); proportional headroom is
+     * enough, and a missed splice here is a missed DCE. */
+    if (hl_nalloca + 64 >= HL_MAX_ALLOCA) return NULL;
+    /* Reserve generously: SSA phi insertion and the LICM split /
+     * strength-reduction passes all APPEND to h_ninst after
+     * lowering finishes, so the budget has to cover them too. */
+    if (h_ninst + sz * 16 + 4096 >= HIR_MAX_INST) return NULL;
+    /* Blocks too: every splice adds the callee's control flow plus
+     * a continuation, and hir_regalloc's liveness bitsets are sized
+     * against HIR_MAX_BLOCK, so this ceiling must not be raised
+     * casually. */
+    if (bb_nblk + sz + 64 >= HIR_MAX_BLOCK) return NULL;
     return fn;
 }
 

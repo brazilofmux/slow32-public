@@ -9,9 +9,10 @@
 # the amalgamation takes about a minute.  Assembly and linking use the host
 # tools.  Default is short `jal`; s32-ld veneers sites past ±1MB (GitHub
 # issue 74).  LONGCALLS=-mlong-calls is the lui+addi+jalr A/B.
-# S12CC_INLINE=<n> splices small statics and DCE drops the out-of-line
-# copy (GitHub issue 73); default off — budget 20 is a net loss on
-# sqlite until the inliner accepts loops.
+# S12CC_INLINE=<n> splices small statics whose whole-TU copy count is a
+# size win; DCE drops the out-of-line copy (GitHub issue 73).  Default
+# off.  Budget 20 is a measured -0.68% on sqlite vs the same compiler
+# with inlining off; bootstrap ceilings keep it opt-in.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/.."

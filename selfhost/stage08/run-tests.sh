@@ -561,15 +561,26 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
                 continue
             fi
         fi
-        # GitHub issue 73: inlined static add1 is dropped; address-taken id stays.
+        # GitHub issue 73: inlined static add1/dec dropped; address-taken
+        # id and the too-many-sites many stay.
         if [[ "$tname" == "test_dce_inline" ]]; then
             if grep -qE '^add1:' "$WORKDIR/${tname}.s"; then
                 printf "  %-30s FAIL (add1 not DCE'd)\n" "$tname:"
                 FAIL=$((FAIL + 1))
                 continue
             fi
+            if grep -qE '^dec:' "$WORKDIR/${tname}.s"; then
+                printf "  %-30s FAIL (dec not DCE'd)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
             if ! grep -qE '^id:' "$WORKDIR/${tname}.s"; then
                 printf "  %-30s FAIL (id dropped)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+            if ! grep -qE '^many:' "$WORKDIR/${tname}.s"; then
+                printf "  %-30s FAIL (many dropped)\n" "$tname:"
                 FAIL=$((FAIL + 1))
                 continue
             fi

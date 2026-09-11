@@ -391,6 +391,8 @@ int main(int argc, char **argv) {
     fdputs("\n", 2);
     fdputs("inline: splices=", 2);
     fdputuint(2, hl_stat_inlined);
+    fdputs(" sel=", 2);
+    fdputuint(2, hl_stat_inl_sel);
     fdputs(" dce_keep=", 2);
     fdputuint(2, cg_stat_dce_keep);
     fdputs(" dce_drop=", 2);
