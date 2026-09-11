@@ -2040,6 +2040,7 @@ static void hcg_emit_epilogue_inline(void) {
         cg_rri("addi", 29, 29, fs);
     } else {
         if (hcg_omit_fp) {
+            /* Tail call: args sit in r3-r10, nothing is in r1 yet. */
             hcg_li(1, fs);
             cg_rrr("add", 29, 29, 1);
         } else {
@@ -4267,8 +4268,12 @@ static void hcg_func(Node *fn) {
             cg_rri("addi", 29, 29, fs);
         } else {
             if (hcg_omit_fp) {
-                hcg_li(1, fs);
-                cg_rrr("add", 29, 29, 1);
+                /* r1/r2 carry the return value here; r3 is dead at a
+                 * return (caller-saved, no args live).  Popping through
+                 * r1 clobbered sqlite3VdbeExec's rc on every statement
+                 * once r30 took a color on its 24KB frame. */
+                hcg_li(3, fs);
+                cg_rrr("add", 29, 29, 3);
             } else {
                 cg_rri("addi", 29, 30, 0);
             }
