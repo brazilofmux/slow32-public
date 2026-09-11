@@ -1778,7 +1778,10 @@ static void slide_addrs(linker_state_t *ld, uint32_t from, uint32_t delta) {
     }
     for (int i = 0; i < ld->num_symbols; i++) {
         uint32_t v = ld->symbols[i].value;
-        if (ld->symbols[i].defined_in_file != -1 && v >= from && v < cap) {
+        /* Inclusive of cap: __heap_start is injected at heap_base, and
+         * heap_base itself uses <=.  Strict < skipped that symbol on the
+         * prepend island (from=0). */
+        if (ld->symbols[i].defined_in_file != -1 && v >= from && v <= cap) {
             ld->symbols[i].value += delta;
         }
     }

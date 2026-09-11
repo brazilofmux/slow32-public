@@ -78,17 +78,19 @@ The `-s` flag is only partially implemented. It prevents global symbols from bei
 
 - **Recommendation**: Optimize the symbol table pass to ignore non-essential symbols earlier when stripping is enabled.
 
-### 11. JAL ±1MB veneers (GitHub issue 74) — partial
+### 11. JAL ±1MB veneers (GitHub issue 74) — resolved
 
 s32-ld can punch 32KB islands at the start and end of .text and fill
 them with `lui`/`addi`/`jalr` stubs for out-of-range JAL/CALL relocs.
 The assembler leaves a JAL reloc when a same-file offset is past ±1MB
 instead of erroring. `tools/linker/test-veneer.sh` covers a 1MB+ `.space`
-gap (rc=42).
+gap (rc=42) and checks `__heap_start` stays locked to the header
+`heap_base` after the prepend island.
 
-stage08 SQLite still defaults to `-mlong-calls`: a short-JAL link
-succeeds (114 veneers) but the smoke dies in the tokenizer
-(`near "TABLE"`). Do not flip the default until that is green.
-`LONGCALLS=` on `sqlite/build-stage08.sh` is the instruction-count A/B
-(24,222 insns / 15% of the clang excess).
+Prepend used `v < heap_base` for symbols but `v <= heap_base` for the
+header field, so `__heap_start` stayed 32KB low. malloc's arena started
+in .data and wiped SQLite's parse tables (`near "TABLE"` with a working
+tokenizer). Inclusive slide of that symbol; stage08 SQLite defaults to
+short `jal`. `LONGCALLS=-mlong-calls` on `sqlite/build-stage08.sh` is
+the instruction-count A/B (24,222 insns / 15% of the clang excess).
 

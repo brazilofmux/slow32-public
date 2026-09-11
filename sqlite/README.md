@@ -58,9 +58,9 @@ crt0 rather than the runtime's.  The smoke test and the shell print output
 byte-identical to the clang build's; a diff of the two shells over a script
 is the acceptance test (selfhost ISSUES-67 lists what it took: the
 amalgamation is the largest input stage08 has taken).  Two differences to
-know about: stage08 still has no `-Os`. Far calls are `-mlong-calls`
-(`lui`+`addi`+`jalr`). s32-ld can veneer a short `jal` that sits outside
-±1MB (GitHub issue 74); `LONGCALLS=` on `build-stage08.sh` is the A/B.
+know about: stage08 still has no `-Os`. Far calls are short `jal` with
+s32-ld veneers past ±1MB (GitHub issue 74); `LONGCALLS=-mlong-calls` on
+`build-stage08.sh` is the lui+addi+jalr A/B.
 
 ## What it found
 

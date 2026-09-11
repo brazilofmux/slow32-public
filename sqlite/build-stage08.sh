@@ -7,9 +7,8 @@
 #
 # The compiler runs under an emulator (SELFHOST_EMU, default slow32-dbt);
 # the amalgamation takes about a minute.  Assembly and linking use the host
-# tools.  Default remains -mlong-calls: s32-ld can veneer short JALs
-# (GitHub issue 74) but the sqlite smoke is not yet green on that path.
-# LONGCALLS= builds short JALs for instruction-count A/B.
+# tools.  Default is short `jal`; s32-ld veneers sites past ±1MB (GitHub
+# issue 74).  LONGCALLS=-mlong-calls is the lui+addi+jalr A/B.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/.."
@@ -27,9 +26,9 @@ OPTS="-DSQLITE_OS_OTHER=1 -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_WAL=1 -DSQLITE_OMI
       -DSQLITE_OMIT_COMPILEOPTION_DIAGS=1 -DSQLITE_DEFAULT_MEMSTATUS=0
       -DSQLITE_DQS=0 -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_CORE -DSQLITE_BYTEORDER=0"
 
-# Call-model override (GitHub issue 74): default -mlong-calls.
-# LONGCALLS= selects short JALs (linker veneers out-of-range sites).
-LONGCALLS="${LONGCALLS--mlong-calls}"
+# Call-model override (GitHub issue 74): default short jal + linker veneers.
+# LONGCALLS=-mlong-calls restores lui+addi+jalr for instruction-count A/B.
+LONGCALLS="${LONGCALLS-}"
 
 cc8() {   # cc8 name.c [flags...] -> out/stage08/name.s32o
     local src="$1"; shift
