@@ -3677,17 +3677,16 @@ int main(int argc, char *argv[]) {
                 case FMT_J:
                     // JAL is PC relative (not PC+4)
                     offset = label_addr - inst->address;
-                    // Check if offset fits in 20-bit signed immediate (even values only)
+                    // Fits in 20-bit signed immediate (even values only).
+                    // Out of range: leave a JAL reloc for the linker to
+                    // veneer (GitHub issue 74 / linker ISSUES-11).
                     if (offset < -1048576 || offset > 1048574) {
-                        fprintf(stderr, "Error: JAL offset out of range at address 0x%08X\n", inst->address);
-                        fprintf(stderr, "       Target label '%s' at 0x%08X is %d bytes away\n",
-                                inst->label_ref, label_addr, offset);
-                        fprintf(stderr, "       JAL instructions can only reach +/-1MB\n");
-                        label_error = true;
-                        break;
+                        add_relocation(&as, inst->address, inst->label_ref,
+                                       S32O_REL_JAL, 0, inst->section);
+                    } else {
+                        inst->instruction = (inst->instruction & 0x00000FFF) |
+                            (encode_j(0, 0, offset) & 0xFFFFF000);
                     }
-                    inst->instruction = (inst->instruction & 0x00000FFF) |
-                        (encode_j(0, 0, offset) & 0xFFFFF000);
                     break;
                 default:
                     break;

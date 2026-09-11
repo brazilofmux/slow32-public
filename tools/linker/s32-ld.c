@@ -69,6 +69,14 @@ typedef struct {
     section_part_t *parts;
     int num_parts;
     int parts_cap;
+
+    /* Veneer islands (GitHub issue 74 / linker ISSUES-11): holes punched
+     * in .text so an out-of-range JAL can jump to a nearby lui/addi/jalr
+     * stub.  gap_off[] is in *original* packed-file coordinates. */
+    uint32_t gap_off[8];
+    uint32_t gap_size[8];
+    uint32_t gap_used[8];
+    int ngaps;
 } combined_section_t;
 
 // Symbol table entry
@@ -83,6 +91,12 @@ typedef struct {
     bool is_weak;
     bool is_used;
 } symbol_entry_t;
+
+typedef struct {
+    uint32_t target;
+    uint32_t vaddr;
+    int gap;
+} veneer_ent_t;
 
 // Relocation entry
 typedef struct {
@@ -112,6 +126,11 @@ typedef struct {
     relocation_entry_t *relocations;
     int num_relocations;
     int relocations_cap;
+
+    /* One veneer per (target, island).  lui+addi+jalr, 12 bytes. */
+    veneer_ent_t *veneers;
+    int nveneers;
+    int veneers_cap;
 
     char *string_table;
     uint32_t string_table_size;
@@ -734,6 +753,10 @@ static int find_or_create_section(linker_state_t *ld, const char *name,
     sec->parts_cap = 0;
     sec->parts = NULL;
     sec->data = NULL;
+    sec->ngaps = 0;
+    memset(sec->gap_off, 0, sizeof(sec->gap_off));
+    memset(sec->gap_size, 0, sizeof(sec->gap_size));
+    memset(sec->gap_used, 0, sizeof(sec->gap_used));
 
     s32_hashmap_put(&ld->section_map, sec->name, ld->num_sections);
     return ld->num_sections++;
@@ -1671,6 +1694,240 @@ static void populate_eh_frame_hdr(linker_state_t *ld) {
     free(entries);
 }
 
+/* JAL is PC-relative ±1MB, even offsets only (LSB dropped). */
+#define S32_JAL_MIN (-1048576)
+#define S32_JAL_MAX  1048574
+#define S32_VENEER_BYTES 12
+#define S32_VENEER_ISLAND 0x00008000u   /* 32KB per island */
+
+static int jal_fits(int32_t off) {
+    return ((off & 1) == 0) && off >= S32_JAL_MIN && off <= S32_JAL_MAX;
+}
+
+static uint32_t pack_jal_off(uint32_t word, int32_t off) {
+    uint32_t imm20    = ((uint32_t)off >> 20) & 1;
+    uint32_t imm19_12 = ((uint32_t)off >> 12) & 0xFF;
+    uint32_t imm11    = ((uint32_t)off >> 11) & 1;
+    uint32_t imm10_1  = ((uint32_t)off >> 1)  & 0x3FF;
+    return (word & 0x00000FFF)
+         | (imm19_12 << 12)
+         | (imm11    << 20)
+         | (imm10_1  << 21)
+         | (imm20    << 31);
+}
+
+static uint32_t make_lui(int rd, uint32_t abs) {
+    uint32_t lo12 = abs & 0xFFF;
+    uint32_t hi20 = (abs >> 12) & 0xFFFFF;
+    if (lo12 & 0x800) {
+        hi20 = (hi20 + 1) & 0xFFFFF;
+    }
+    return 0x20u | ((uint32_t)rd << 7) | (hi20 << 12);
+}
+
+static uint32_t make_addi_lo(int rd, int rs, uint32_t abs) {
+    uint32_t imm = abs & 0xFFF;
+    return 0x10u | ((uint32_t)rd << 7) | ((uint32_t)rs << 15) | (imm << 20);
+}
+
+static uint32_t make_jalr0(int rs) {
+    return 0x41u | ((uint32_t)rs << 15);
+}
+
+static uint32_t map_file_off(const combined_section_t *sec, uint32_t raw) {
+    uint32_t off = raw;
+    for (int i = 0; i < sec->ngaps; i++) {
+        if (raw >= sec->gap_off[i]) {
+            off += sec->gap_size[i];
+        }
+    }
+    return off;
+}
+
+static uint32_t gap_phys(const combined_section_t *sec, int gi) {
+    uint32_t off = sec->gap_off[gi];
+    for (int i = 0; i < sec->ngaps; i++) {
+        if (sec->gap_off[i] < sec->gap_off[gi]) {
+            off += sec->gap_size[i];
+        }
+    }
+    return off;
+}
+
+static combined_section_t *find_code_section(linker_state_t *ld) {
+    for (int i = 0; i < ld->num_sections; i++) {
+        if (ld->sections[i].type == S32_SEC_CODE && ld->sections[i].data) {
+            return &ld->sections[i];
+        }
+    }
+    return NULL;
+}
+
+static void slide_addrs(linker_state_t *ld, uint32_t from, uint32_t delta) {
+    /* Only the loaded image (code/rodata/data/bss/heap start).  Stack and
+     * MMIO live at high addresses and must not move. */
+    uint32_t cap = ld->heap_base;
+    if (cap == 0 || cap < from) {
+        cap = 0xFFFFFFFFu;
+    }
+    for (int i = 0; i < ld->num_sections; i++) {
+        if (ld->sections[i].type == S32_SEC_CODE) continue;
+        if (ld->sections[i].vaddr >= from && ld->sections[i].vaddr < cap) {
+            ld->sections[i].vaddr += delta;
+        }
+    }
+    for (int i = 0; i < ld->num_symbols; i++) {
+        uint32_t v = ld->symbols[i].value;
+        if (ld->symbols[i].defined_in_file != -1 && v >= from && v < cap) {
+            ld->symbols[i].value += delta;
+        }
+    }
+    if (ld->code_limit >= from && ld->code_limit <= cap) ld->code_limit += delta;
+    if (ld->rodata_base >= from && ld->rodata_base < cap) ld->rodata_base += delta;
+    if (ld->rodata_limit >= from && ld->rodata_limit <= cap) ld->rodata_limit += delta;
+    if (ld->data_base >= from && ld->data_base < cap) ld->data_base += delta;
+    if (ld->data_limit >= from && ld->data_limit <= cap) ld->data_limit += delta;
+    if (ld->bss_limit >= from && ld->bss_limit <= cap) ld->bss_limit += delta;
+    if (ld->heap_base >= from && ld->heap_base <= cap) ld->heap_base += delta;
+}
+
+static int insert_code_gap(linker_state_t *ld, combined_section_t *sec,
+                           uint32_t orig_off, uint32_t gap_size) {
+    if (sec->ngaps >= 8) {
+        fprintf(stderr, "Error: too many JAL veneer islands\n");
+        return -1;
+    }
+    uint32_t phys = map_file_off(sec, orig_off);
+    uint8_t *nbuf = realloc(sec->data, sec->size + gap_size);
+    if (!nbuf) {
+        fprintf(stderr, "Error: out of memory inserting JAL veneer island\n");
+        return -1;
+    }
+    sec->data = nbuf;
+    memmove(sec->data + phys + gap_size, sec->data + phys, sec->size - phys);
+    memset(sec->data + phys, 0, gap_size);
+    sec->size += gap_size;
+    slide_addrs(ld, sec->vaddr + orig_off, gap_size);
+    sec->gap_off[sec->ngaps] = orig_off;
+    sec->gap_size[sec->ngaps] = gap_size;
+    sec->gap_used[sec->ngaps] = 0;
+    sec->ngaps++;
+    return 0;
+}
+
+/* Islands at the start and end of .text — never in the middle of a
+ * translation unit (sqlite3.c is one 1.2MB object).  A JAL from the
+ * low half reaches the prepended pool; a JAL from the high half
+ * reaches the appended pool.  GitHub issue 74. */
+static int jal_needs_islands(linker_state_t *ld, combined_section_t *sec) {
+    for (int i = 0; i < ld->num_relocations; i++) {
+        relocation_entry_t *rel = &ld->relocations[i];
+        if (rel->type != S32O_REL_JAL && rel->type != S32O_REL_CALL) continue;
+        if (rel->combined_section < 0) continue;
+        combined_section_t *rs = &ld->sections[rel->combined_section];
+        if (rs != sec || !rs->data) continue;
+        input_file_t *inf = &ld->input_files[rel->file_idx];
+        uint32_t off = inf->section_base[rel->section_idx] + rel->offset;
+        uint32_t pc = rs->vaddr + off;
+        symbol_entry_t *sym = &ld->symbols[rel->symbol_idx];
+        uint32_t value = sym->value + rel->addend;
+        int32_t d = (int32_t)(value - pc);
+        if (!jal_fits(d)) return 1;
+    }
+    return 0;
+}
+
+static void insert_veneer_islands(linker_state_t *ld) {
+    combined_section_t *sec = find_code_section(ld);
+    if (!sec || !sec->data) return;
+    if (!jal_needs_islands(ld, sec)) return;
+    uint32_t orig = sec->size;
+    /* Append first so orig still names the packed end; then prepend,
+     * which slides the appended island up with the file.  Never punch
+     * a hole in the middle of a translation unit (sqlite3.c is 1.2MB). */
+    if (insert_code_gap(ld, sec, orig, S32_VENEER_ISLAND) != 0) {
+        exit(1);
+    }
+    if (insert_code_gap(ld, sec, 0, S32_VENEER_ISLAND) != 0) {
+        exit(1);
+    }
+    for (int i = 0; i < sec->ngaps; i++) {
+        if (sec->gap_off[i] == 0) {
+            sec->gap_used[i] = 4;
+        }
+    }
+    if (ld->verbose) {
+        printf("JAL veneer islands: start+end %u bytes in '%s'\n",
+               S32_VENEER_ISLAND, sec->name);
+    }
+}
+
+static int alloc_veneer(linker_state_t *ld, combined_section_t *sec,
+                        uint32_t target, uint32_t from_pc, int rd,
+                        uint32_t *out_vaddr) {
+    for (int i = 0; i < ld->nveneers; i++) {
+        if (ld->veneers[i].target == target &&
+            jal_fits((int32_t)(ld->veneers[i].vaddr - from_pc))) {
+            *out_vaddr = ld->veneers[i].vaddr;
+            return 0;
+        }
+    }
+    int gi = -1;
+    uint32_t vaddr = 0;
+    for (int i = 0; i < sec->ngaps; i++) {
+        if (sec->gap_used[i] + S32_VENEER_BYTES > sec->gap_size[i]) continue;
+        uint32_t phys = gap_phys(sec, i) + sec->gap_used[i];
+        uint32_t va = sec->vaddr + phys;
+        if (jal_fits((int32_t)(va - from_pc))) {
+            gi = i;
+            vaddr = va;
+            break;
+        }
+    }
+    if (gi < 0) {
+        fprintf(stderr,
+                "Error: JAL offset out of range at 0x%08X (no reachable veneer)\n",
+                from_pc);
+        return -1;
+    }
+    int scratch = (rd == 1) ? 2 : 1;
+    uint32_t *slot = (uint32_t *)(sec->data + gap_phys(sec, gi) + sec->gap_used[gi]);
+    slot[0] = make_lui(scratch, target);
+    slot[1] = make_addi_lo(scratch, scratch, target);
+    slot[2] = make_jalr0(scratch);
+    sec->gap_used[gi] += S32_VENEER_BYTES;
+    DARR_PUSH(ld->veneers, ld->nveneers, ld->veneers_cap, veneer_ent_t);
+    ld->veneers[ld->nveneers].target = target;
+    ld->veneers[ld->nveneers].vaddr = vaddr;
+    ld->veneers[ld->nveneers].gap = gi;
+    ld->nveneers++;
+    *out_vaddr = vaddr;
+    return 0;
+}
+
+static int apply_jal(linker_state_t *ld, combined_section_t *sec,
+                     uint32_t *word, uint32_t pc, uint32_t value) {
+    int32_t off = (int32_t)(value - pc);
+    if (off & 1) {
+        fprintf(stderr, "Error: JAL target misaligned (odd offset) at 0x%08X\n", pc);
+        return -1;
+    }
+    if (jal_fits(off)) {
+        *word = pack_jal_off(*word, off);
+        return 0;
+    }
+    int rd = (int)((*word >> 7) & 31);
+    uint32_t vaddr;
+    if (alloc_veneer(ld, sec, value, pc, rd, &vaddr) != 0) return -1;
+    off = (int32_t)(vaddr - pc);
+    if (!jal_fits(off)) {
+        fprintf(stderr, "Error: JAL veneer unreachable from 0x%08X\n", pc);
+        return -1;
+    }
+    *word = pack_jal_off(*word, off);
+    return 0;
+}
+
 // Load section data
 static void load_section_data(linker_state_t *ld) {
     for (int i = 0; i < ld->num_sections; i++) {
@@ -1762,6 +2019,9 @@ static bool find_pcrel_hi_pc(linker_state_t *ld, relocation_entry_t *rel, uint32
         input_file_t *inf_other = &ld->input_files[other->file_idx];
         combined_section_t *sec_other = &ld->sections[other->combined_section];
         uint32_t combined_offset_other = inf_other->section_base[other->section_idx] + other->offset;
+        if (sec_other->ngaps) {
+            combined_offset_other = map_file_off(sec_other, combined_offset_other);
+        }
         if (combined_offset_other + 4 > sec_other->size) continue;
         *hi_pc_out = sec_other->vaddr + combined_offset_other;
         return true;
@@ -1791,6 +2051,9 @@ static void apply_relocations(linker_state_t *ld) {
         // Calculate relocation offset in combined section
         input_file_t *inf = &ld->input_files[rel->file_idx];
         uint32_t combined_offset = inf->section_base[rel->section_idx] + rel->offset;
+        if (sec->ngaps) {
+            combined_offset = map_file_off(sec, combined_offset);
+        }
         
         if (combined_offset + 4 > sec->size) {
             fprintf(stderr, "Error: Relocation offset 0x%X out of bounds (section '%s' size 0x%X) in %s\n",
@@ -1906,57 +2169,9 @@ static void apply_relocations(linker_state_t *ld) {
                 break;
                 
             case S32O_REL_JAL:
-                // J-format: PC relative (not PC+4)
-                {
-                    int32_t off = value - pc;  // JAL is PC-relative (not PC+4)
-                    if (off & 1) {
-                        fprintf(stderr, "Error: JAL target misaligned (odd offset) at 0x%08X\n", pc);
-                        reloc_errors++;
-                        continue;
-                    }
-                    if (off < -1048576 || off > 1048574) { // even offsets only
-                        fprintf(stderr, "Error: JAL offset out of range at 0x%08X\n", pc);
-                        reloc_errors++;
-                        continue;
-                    }
-                    // J-format bit packing: imm[20|10:1|11|19:12] at 31:12
-                    uint32_t imm20    = (off >> 20) & 1;
-                    uint32_t imm19_12 = (off >> 12) & 0xFF;
-                    uint32_t imm11    = (off >> 11) & 1;
-                    uint32_t imm10_1  = (off >> 1)  & 0x3FF;
-                    
-                    *target = (*target & 0x00000FFF)  // Keep rd/opcode
-                            | (imm19_12 << 12)
-                            | (imm11    << 20)
-                            | (imm10_1  << 21)
-                            | (imm20    << 31);
-                }
-                break;
-                
             case S32O_REL_CALL:
-                // Treat like a JAL to 'value' (PC-relative). If out of range,
-                // the assembler should have emitted an LUI/ADDI+JALR pair instead.
-                {
-                    int32_t off = value - pc;
-                    if (off & 1) {
-                        fprintf(stderr, "Error: CALL target misaligned (odd offset) at 0x%08X\n", pc);
-                        reloc_errors++;
-                        continue;
-                    }
-                    if (off < -1048576 || off > 1048574) {
-                        fprintf(stderr, "Error: CALL offset out of range at 0x%08X (use HI20/LO12+JALR sequence)\n", pc);
-                        reloc_errors++;
-                        continue;
-                    }
-                    uint32_t imm20    = (off >> 20) & 1;
-                    uint32_t imm19_12 = (off >> 12) & 0xFF;
-                    uint32_t imm11    = (off >> 11) & 1;
-                    uint32_t imm10_1  = (off >> 1)  & 0x3FF;
-                    *target = (*target & 0x00000FFF)
-                            | (imm19_12 << 12)
-                            | (imm11    << 20)
-                            | (imm10_1  << 21)
-                            | (imm20    << 31);
+                if (apply_jal(ld, sec, target, pc, value) != 0) {
+                    reloc_errors++;
                 }
                 break;
                 
@@ -2030,6 +2245,10 @@ static void apply_relocations(linker_state_t *ld) {
         }
     }
     
+    if (ld->nveneers > 0) {
+        fprintf(stderr, "s32-ld: %d JAL veneers (%d bytes)\n",
+                ld->nveneers, ld->nveneers * S32_VENEER_BYTES);
+    }
     if (unresolved > 0)
         fprintf(stderr, "Error: %d unresolved symbols\n", unresolved);
     if (reloc_errors > 0)
@@ -2413,6 +2632,7 @@ static void cleanup(linker_state_t *ld) {
     free(ld->sections);
     free(ld->symbols);
     free(ld->relocations);
+    free(ld->veneers);
     free(ld->string_table);
 
     s32_hashmap_free(&ld->symbol_map);
@@ -2604,6 +2824,7 @@ int main(int argc, char *argv[]) {
     inject_eh_frame_symbols(&ld);   // Add exception handling frame symbols
     collect_relocations(&ld);
     load_section_data(&ld);
+    insert_veneer_islands(&ld);
     apply_relocations(&ld);
     populate_eh_frame_hdr(&ld);
     

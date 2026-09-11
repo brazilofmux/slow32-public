@@ -23,10 +23,10 @@ files: the host's `sqlite3` reads what the guest writes and vice versa.
 Double-quoted string literals are off (`SQLITE_DQS=0`): quote strings with
 single quotes.
 
-Built at -Os: a JAL reaches +/-1MB and the linker has no veneers, so every
-caller in the program must sit within 1MB of its callee. The library is
-697KB of code at -Os and 995KB at -O2, and at -O2 the libc behind it was
-out of reach (tools/linker/ISSUES.md).
+Built at -Os: a JAL reaches +/-1MB. The clang backend has no large
+code model, so -O2 (995KB library) put libc out of main's reach;
+-Os is 697KB and fits. s32-ld can veneer out-of-range JALs (GitHub
+issue 74); the clang build still uses -Os.
 
 ## The shell
 
@@ -58,8 +58,9 @@ crt0 rather than the runtime's.  The smoke test and the shell print output
 byte-identical to the clang build's; a diff of the two shells over a script
 is the acceptance test (selfhost ISSUES-67 lists what it took: the
 amalgamation is the largest input stage08 has taken).  Two differences to
-know about: `-mlong-calls` everywhere, since stage08 has no -Os and the
-library is 1.2MB of code.
+know about: stage08 still has no `-Os`. Far calls are `-mlong-calls`
+(`lui`+`addi`+`jalr`). s32-ld can veneer a short `jal` that sits outside
+±1MB (GitHub issue 74); `LONGCALLS=` on `build-stage08.sh` is the A/B.
 
 ## What it found
 

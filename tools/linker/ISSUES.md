@@ -78,15 +78,17 @@ The `-s` flag is only partially implemented. It prevents global symbols from bei
 
 - **Recommendation**: Optimize the symbol table pass to ignore non-essential symbols earlier when stripping is enabled.
 
-### 11. A JAL reaches +/-1MB and there are no veneers (2026-09-06)
+### 11. JAL ±1MB veneers (GitHub issue 74) — partial
 
-SQLite is the first program to hit it: at -O2 the library is 995KB of code,
-and with it linked before libc, main's calls into libc were past 1MB
-(`Error: JAL offset out of range`). The backend has no large code model
-(`-mcmodel` is refused for the target), so the only remedies today are
-size (-Os: 697KB, which fits) and link order. The fix of size is linker
-veneers: when a JAL relocation is out of range, emit a `lui`/`jalr` stub in
-a trampoline area at the end of .text and retarget the JAL to it, the way
-ARM and RISC-V linkers do. Until then a program's callers must all sit within
-1MB of their callees, i.e. programs are ~1MB of code at most.
+s32-ld can punch 32KB islands at the start and end of .text and fill
+them with `lui`/`addi`/`jalr` stubs for out-of-range JAL/CALL relocs.
+The assembler leaves a JAL reloc when a same-file offset is past ±1MB
+instead of erroring. `tools/linker/test-veneer.sh` covers a 1MB+ `.space`
+gap (rc=42).
+
+stage08 SQLite still defaults to `-mlong-calls`: a short-JAL link
+succeeds (114 veneers) but the smoke dies in the tokenizer
+(`near "TABLE"`). Do not flip the default until that is green.
+`LONGCALLS=` on `sqlite/build-stage08.sh` is the instruction-count A/B
+(24,222 insns / 15% of the clang excess).
 
