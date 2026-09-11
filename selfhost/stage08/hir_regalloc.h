@@ -25,9 +25,9 @@
  */
 
 /* --- Configuration (SLOW-32) --- */
-#define RA_NPHY      18   /* r11..r28 */
+#define RA_NPHY      19   /* r11..r28 + optional r30 */
 #define RA_FIRST_REG 11   /* lowest allocatable register */
-#define RA_NCALLEE   18   /* all allocatable registers are callee-saved */
+#define RA_NCALLEE   18   /* r11..r28; r30 is extra when ra_r30_alloc */
 
 /* --- Full register classification (hard item — disabled until wired) ---
  * Goal: match the official LLVM SLOW32 ABI so short-lived values can use
@@ -47,13 +47,21 @@
  * dimension (parser.h:1496/1918 — no parenthesized expressions).  Hard-code
  * the sum so `static int ra_phys_reg[RA_NPHY_TOTAL]` below parses under the
  * bootstrap compiler.  Keep in sync with RA_NCALLEE + RA_NCALLER above. */
-#define RA_NPHY_TOTAL 26   /* RA_NCALLEE (18) + RA_NCALLER (8) */
+#define RA_NPHY_TOTAL 27   /* RA_NCALLEE (18) + r30 + RA_NCALLER (8) */
 
 /* Knob: how many caller-saved registers the allocator may use right now.
  * 0 = current production behavior (18 callee only).
  * 8 = full pool (r3-r10 + r11-r28) for values that do not cross calls.
  */
 static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved only). 8 = enable r3-r10 for non-call-crossing values. */
+
+/* GitHub issue 73: r30 is the frame pointer when the function keeps
+ * one (varargs, or a large frame that did not take the extra color).
+ * On the omit-fp path it is an extra callee-saved GPR.  Set per
+ * function before hir_regalloc(); ra_init_phys_regs rebuilds the map. */
+static int ra_r30_alloc;
+static int ra_ncal = 18;             /* 18 or 19; set by ra_init_phys_regs */
+static int ra_stat_r30;              /* values colored to r30 */
 
 /* Cross-call liveness tracking — must be declared extremely early because
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
@@ -81,32 +89,36 @@ static int ra_phys_reg[RA_NPHY_TOTAL];
 static int ra_is_callee[RA_NPHY_TOTAL];
 
 /* Initialize the physical register map and callee/caller classification.
- * Called once at startup of the allocator (or lazily on first use).
- * This is the single source of truth for "which physicals are callee-saved".
+ * Rebuilt per function so r30 can join the callee pool when ra_r30_alloc.
  */
 static void ra_init_phys_regs(void) {
-    static int inited = 0;
     int i;
+    int ncal;
 
-    if (inited) return;
-    inited = 1;
-
-    /* Callee-saved pool: r11..r28 (indices 0..17) */
+    /* Callee-saved pool: r11..r28 (indices 0..17), then r30 if enabled. */
     for (i = 0; i < RA_NCALLEE; i = i + 1) {
         ra_phys_reg[i] = RA_FIRST_REG + i;   /* 11 .. 28 */
         ra_is_callee[i] = 1;
     }
+    ncal = RA_NCALLEE;
+    if (ra_r30_alloc) {
+        ra_phys_reg[ncal] = 30;
+        ra_is_callee[ncal] = 1;
+        ncal = ncal + 1;
+    }
+    ra_ncal = ncal;
 
-    /* Caller-saved pool: r3..r10 (indices 18..25) */
+    /* Caller-saved pool: r3..r10, immediately after the callee slots. */
     for (i = 0; i < RA_NCALLER; i = i + 1) {
-        ra_phys_reg[RA_NCALLEE + i] = 3 + i; /* 3 .. 10 */
-        ra_is_callee[RA_NCALLEE + i] = 0;
+        ra_phys_reg[ncal + i] = 3 + i; /* 3 .. 10 */
+        ra_is_callee[ncal + i] = 0;
     }
 }
 
 /* Query helpers (safe even when knob == 0) */
 static int ra_num_callee_saved(void) {
-    return RA_NCALLEE;
+    ra_init_phys_regs();
+    return ra_ncal;
 }
 
 static int ra_num_caller_saved_enabled(void) {
@@ -114,7 +126,8 @@ static int ra_num_caller_saved_enabled(void) {
 }
 
 static int ra_num_active_slots(void) {
-    return RA_NCALLEE + ra_caller_saved_enabled_count;
+    ra_init_phys_regs();
+    return ra_ncal + ra_caller_saved_enabled_count;
 }
 
 static int ra_phys_is_callee_saved(int phys) {
@@ -846,9 +859,8 @@ static void ra_assign_spills(void) {
     }
 
     /* Assign callee-save slots.
-     * Only colors 0 .. RA_NCALLEE-1 (r11..r28) ever need to be saved/restored.
-     * Caller-saved colors (when enabled) are deliberately excluded — that is
-     * the whole point of the classification work.
+     * Only callee colors (r11..r28, and r30 when allocated) need to be
+     * saved/restored.  Caller-saved colors are deliberately excluded.
      *
      * Track the bytes we charge here in ra_csave_bytes so the leaf-frame
      * reclaim in hir_codegen can subtract them by name instead of assuming
@@ -856,11 +868,11 @@ static void ra_assign_spills(void) {
     ra_ncsave = 0;
     ra_csave_bytes = 0;
     r = 0;
-    while (r < RA_NCALLEE) {
+    while (r < ra_ncal) {
         if (ra_used[r]) {
             hl_temp_stack = hl_temp_stack + 4;
             ra_csave_bytes = ra_csave_bytes + 4;
-            ra_csave_reg[ra_ncsave] = ra_get_phys(r);  /* r11..r28 */
+            ra_csave_reg[ra_ncsave] = ra_get_phys(r);  /* r11..r28, maybe r30 */
             ra_csave_off[ra_ncsave] = 0 - hl_temp_stack;
             ra_ncsave = ra_ncsave + 1;
         }
@@ -2123,9 +2135,9 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
             else                   { lo_c = c + 1; hi_c = c; }
             /* Respect the caller/callee split for both halves, judged
              * on the merged nodes' representatives. */
-            if (lo_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[n]))
+            if (lo_c >= ra_ncal && !ra_prefers_caller_for_inst(gc_inst[n]))
                 { c = c + 1; continue; }
-            if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[pn]))
+            if (hi_c >= ra_ncal && !ra_prefers_caller_for_inst(gc_inst[pn]))
                 { c = c + 1; continue; }
             gc_pin[pn] = hi_c;
             ra_pc_dbg[4]++;
@@ -2263,7 +2275,7 @@ static void gc_select(void) {
                              * caller-saved color from its operand — the
                              * call clobbers r3-r10 (W_LumpNameHash's
                              * xor temp died across toupper()). */
-                            if (col >= RA_NCALLEE &&
+                            if (col >= ra_ncal &&
                                 !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 gc_color[n] = col;
@@ -2295,7 +2307,7 @@ static void gc_select(void) {
                         int s1_node = gc_node[s1];
                         if (s1_node >= 0) {
                             int col = gc_color[s1_node];
-                            if (col >= RA_NCALLEE &&
+                            if (col >= ra_ncal &&
                                 !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
@@ -2314,7 +2326,7 @@ static void gc_select(void) {
                         int s2_node = gc_node[s2];
                         if (s2_node >= 0) {
                             int col = gc_color[s2_node];
-                            if (col >= RA_NCALLEE &&
+                            if (col >= ra_ncal &&
                                 !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
@@ -2369,7 +2381,7 @@ static void gc_select(void) {
                         int s1_node = gc_node[s1];
                         if (s1_node >= 0) {
                             int col = gc_color[s1_node];
-                            if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                            if (col >= ra_ncal && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
                                 if (phys < best_phys) {
                                     best_col = col;
@@ -2387,7 +2399,7 @@ static void gc_select(void) {
                         int s2_node = gc_node[s2];
                         if (s2_node >= 0) {
                             int col = gc_color[s2_node];
-                            if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                            if (col >= ra_ncal && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
                                 if (phys < best_phys) {
                                     best_col = col;
@@ -2418,7 +2430,7 @@ static void gc_select(void) {
                  */
                 if (gc_color[n] < 0) {
                     int pref = ra_param_preferred_color(inst);
-                    if (pref >= RA_NCALLEE && pref < maxc && !used[pref]) {
+                    if (pref >= ra_ncal && pref < maxc && !used[pref]) {
                         gc_color[n] = pref;
                         ra_stat_param_preferred = ra_stat_param_preferred + 1;
                     }
@@ -2442,7 +2454,7 @@ static void gc_select(void) {
                             int s1_node = gc_node[s1];
                             if (s1_node >= 0) {
                                 int col = gc_color[s1_node];
-                                if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                if (col >= ra_ncal && col < maxc && !used[col]) {
                                     biased = col;
                                     biased_is_src2 = 0;
                                 }
@@ -2457,7 +2469,7 @@ static void gc_select(void) {
                             int s2_node = gc_node[s2];
                             if (s2_node >= 0) {
                                 int col = gc_color[s2_node];
-                                if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                if (col >= ra_ncal && col < maxc && !used[col]) {
                                     biased = col;
                                     biased_is_src2 = 1;
                                 }
@@ -2475,23 +2487,23 @@ static void gc_select(void) {
                     } else {
                         /* No biased color available — first-free, but
                          * pair-friendly: keep virgin aligned pairs whole. */
-                        gc_color[n] = ra_first_free_pairfriendly(RA_NCALLEE, maxc, used);
+                        gc_color[n] = ra_first_free_pairfriendly(ra_ncal, maxc, used);
                     }
                 }
             }
 
             if (gc_color[n] < 0) {
                 int pref = ra_param_preferred_color(inst);
-                if (pref >= 0 && pref < RA_NCALLEE && !used[pref]) {
+                if (pref >= 0 && pref < ra_ncal && !used[pref]) {
                     gc_color[n] = pref;
                     ra_stat_param_preferred = ra_stat_param_preferred + 1;
                 } else {
                     /* Pair-friendly first-free in the callee pool. */
-                    gc_color[n] = ra_first_free_pairfriendly(0, RA_NCALLEE, used);
+                    gc_color[n] = ra_first_free_pairfriendly(0, ra_ncal, used);
                 }
             }
 
-            if (s12cc_dump_intervals && gc_color[n] >= RA_NCALLEE &&
+            if (s12cc_dump_intervals && gc_color[n] >= ra_ncal &&
                 ra_crosses_call[inst]) {
                 fdputs("XVIOL select inst=", 2);
                 ra_dump_signed(inst);
@@ -2513,7 +2525,7 @@ static void gc_select(void) {
         if (gc_wl[i] == GC_WL_COALESCED) {
             gc_color[i] = gc_color[gc_get_alias(i)];
             if (s12cc_dump_intervals && ra_crosses_call[gc_inst[i]] &&
-                gc_color[i] >= RA_NCALLEE) {
+                gc_color[i] >= ra_ncal) {
                 fdputs("XVIOL coalesce inst=", 2);
                 ra_dump_signed(gc_inst[i]);
                 fdputs(" rep=", 2);
@@ -2597,10 +2609,11 @@ static void gc_writeback(void) {
             if (phys >= 0) ra_used[c] = 1;
 
             /* Record class usage for diagnostics */
-            if (c >= RA_NCALLEE)
+            if (c >= ra_ncal)
                 ra_stat_caller_used = ra_stat_caller_used + 1;
             else
                 ra_stat_callee_used = ra_stat_callee_used + 1;
+            if (phys == 30) ra_stat_r30 = ra_stat_r30 + 1;
         } else {
             /* Uncolored pinned loop constant: revert to remat rather
              * than taking a frame slot -- every use materializes it

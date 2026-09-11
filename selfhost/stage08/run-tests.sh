@@ -599,8 +599,9 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             fi
         fi
         # GitHub issue 73: frameless leaf add1 has no r31/r30 save;
-        # sumarr's array keeps an SP-relative frame (no r30);
-        # withcall saves lr but not the frame pointer.
+        # sumarr's array keeps an SP-relative frame (no FP setup);
+        # withcall saves lr but not the frame pointer.  r30 may appear
+        # as a GPR on the omit-fp path.
         if [[ "$tname" == "test_leaf_frame" ]]; then
             if awk '/^add1:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'stw r29, r31'; then
                 printf "  %-30s FAIL (add1 kept a frame)\n" "$tname:"
@@ -612,8 +613,8 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
                 FAIL=$((FAIL + 1))
                 continue
             fi
-            if awk '/^sumarr:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'r30'; then
-                printf "  %-30s FAIL (sumarr still uses r30)\n" "$tname:"
+            if awk '/^sumarr:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'addi r30, r29'; then
+                printf "  %-30s FAIL (sumarr still sets up r30 as fp)\n" "$tname:"
                 FAIL=$((FAIL + 1))
                 continue
             fi
@@ -622,8 +623,8 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
                 FAIL=$((FAIL + 1))
                 continue
             fi
-            if awk '/^withcall:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'r30'; then
-                printf "  %-30s FAIL (withcall still uses r30)\n" "$tname:"
+            if awk '/^withcall:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'addi r30, r29'; then
+                printf "  %-30s FAIL (withcall still sets up r30 as fp)\n" "$tname:"
                 FAIL=$((FAIL + 1))
                 continue
             fi

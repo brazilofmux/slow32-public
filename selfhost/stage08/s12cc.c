@@ -368,6 +368,8 @@ int main(int argc, char **argv) {
     fdputuint(2, ra_stat_caller_used);
     fdputs(" callee=", 2);
     fdputuint(2, ra_stat_callee_used);
+    fdputs(" r30=", 2);
+    fdputuint(2, ra_stat_r30);
     fdputs(" param_pref=", 2);
     fdputuint(2, ra_stat_param_preferred);
     fdputs(" op_reuse=", 2);

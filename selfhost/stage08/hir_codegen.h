@@ -2028,10 +2028,16 @@ static void hcg_emit_epilogue_inline(void) {
         }
         cg_rri("addi", 29, 29, fs);
     } else {
-        cg_rri("addi", 29, 30, 0);
+        if (hcg_omit_fp) {
+            hcg_li(1, fs);
+            cg_rrr("add", 29, 29, 1);
+        } else {
+            cg_rri("addi", 29, 30, 0);
+        }
         if (hcg_save_lr)
             cg_s("    ldw r31, r29, -4\n");
-        cg_s("    ldw r30, r29, -8\n");
+        if (!hcg_omit_fp)
+            cg_s("    ldw r30, r29, -8\n");
     }
 }
 
@@ -4027,6 +4033,11 @@ static void hcg_func(Node *fn) {
     hl_temp_stack = hcg_hir_frame_base(fn);
 
     hir_dump("HIR2");
+    /* GitHub issue 73: r30 is an extra callee-saved color when we will
+     * not need it as a frame pointer.  Varargs keeps r30 as FP.
+     * Large frames that actually take the color omit FP too (li+sub). */
+    ra_r30_alloc = 0;
+    if (!fn->is_varargs) ra_r30_alloc = 1;
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
     if (getenv("HIR_RA_DEBUG")) {
@@ -4062,9 +4073,17 @@ static void hcg_func(Node *fn) {
     hcg_frame = fs;
     hcg_sp_delta = 0;
     hcg_omit_fp = 0;
-    if (!hcg_frameless && !fn->is_varargs && fs > 0 && fs <= 2047) {
-        hcg_omit_fp = 1;
-        hcg_stat_omit_fp = hcg_stat_omit_fp + 1;
+    if (!hcg_frameless && !fn->is_varargs) {
+        if (fs > 0 && fs <= 2047) hcg_omit_fp = 1;
+        else if (fs > 2047) {
+            /* r30 is a GPR: cannot also be FP.  SP-relative with li+sub. */
+            i = 0;
+            while (i < ra_ncsave) {
+                if (ra_csave_reg[i] == 30) hcg_omit_fp = 1;
+                i = i + 1;
+            }
+        }
+        if (hcg_omit_fp) hcg_stat_omit_fp = hcg_stat_omit_fp + 1;
     }
 
     /* Frame-escape scan for the tail-call guard.  A tail call pops this
@@ -4190,8 +4209,10 @@ static void hcg_func(Node *fn) {
         } else {
             if (hcg_save_lr)
                 cg_s("    stw r29, r31, -4\n");
-            cg_s("    stw r29, r30, -8\n");
-            cg_rri("addi", 30, 29, 0);
+            if (!hcg_omit_fp) {
+                cg_s("    stw r29, r30, -8\n");
+                cg_rri("addi", 30, 29, 0);
+            }
             hcg_li(1, fs);
             cg_rrr("sub", 29, 29, 1);
         }
@@ -4234,10 +4255,16 @@ static void hcg_func(Node *fn) {
             }
             cg_rri("addi", 29, 29, fs);
         } else {
-            cg_rri("addi", 29, 30, 0);
+            if (hcg_omit_fp) {
+                hcg_li(1, fs);
+                cg_rrr("add", 29, 29, 1);
+            } else {
+                cg_rri("addi", 29, 30, 0);
+            }
             if (hcg_save_lr)
                 cg_s("    ldw r31, r29, -4\n");
-            cg_s("    ldw r30, r29, -8\n");
+            if (!hcg_omit_fp)
+                cg_s("    ldw r30, r29, -8\n");
         }
         if (hcg_va_save_size > 0) {
             cg_rri("addi", 29, 29, hcg_va_save_size);
