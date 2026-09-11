@@ -1,4 +1,5 @@
-/* GitHub issue 73: leaf/FP elision.
+/* GitHub issue 73: leaf/FP elision.  GitHub issue 72: last RET falls
+ * into the epilogue (withcall must not jal r0 to the next label).
  * add1 is a pure register leaf — no frame.
  * sumarr has a local array: frame but no r30 (SP-relative).
  * ident is a called leaf; withcall has a local and a call — saves lr,

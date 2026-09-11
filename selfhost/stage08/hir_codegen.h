@@ -2927,6 +2927,13 @@ static void hcg_inst(int idx) {
             cg_s("    jalr r0, r31, 0\n");
             return;
         }
+        /* GitHub issue 72: a RET in the last laid-out block falls into
+         * the epilogue.  The jal to the next label was 902 of these
+         * on sqlite. */
+        if (hcg_nord > 0 && h_blk[idx] == hcg_emit_ord[hcg_nord - 1]) {
+            hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            return;
+        }
         cg_s("    jal r0, ");
         cg_lref(hcg_epilog);
         cg_c(10);

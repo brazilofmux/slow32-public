@@ -627,6 +627,11 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
                 FAIL=$((FAIL + 1))
                 continue
             fi
+            if awk '/^withcall:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'jal r0,'; then
+                printf "  %-30s FAIL (withcall jal to next label)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
         fi
 
         # Assemble
