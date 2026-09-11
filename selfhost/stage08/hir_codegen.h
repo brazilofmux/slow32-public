@@ -2799,9 +2799,11 @@ static void hcg_inst(int idx) {
 
     /* Jump-table dispatch (issue #32).  src1 = index, already normalised to
      * [0,span) and bounds-checked by the preceding BRC, so the table lookup
-     * always lands on a valid entry.  No phi copies: the lowering routes every
-     * JMPTAB edge to a single-predecessor block.  r1/r2 are never allocated to
-     * values (the allocatable pool is r3-r28), so they are free scratch. */
+     * always lands on a valid entry.  No phi copies: lowering trampolines
+     * fall-through cases (issue 64) and SSA splits any remaining multi-pred
+     * table target (issue 75, Ragel goto into a case).  r1/r2 are never
+     * allocated to values (the allocatable pool is r3-r28), so they are
+     * free scratch. */
     if (k == HI_JMPTAB) {
         int jtid;
         int base;

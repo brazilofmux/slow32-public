@@ -1098,12 +1098,76 @@ static void ssa_split_pair_allocas(void) {
     }
 }
 
+/* JMPTAB edges cannot carry phi copies (hir_codegen.h).  Lowering already
+ * trampolines C switch fall-through (GitHub issue 64), but a goto into a
+ * case -- Ragel `st15:` falling into `case 15:` in lex_next -- is another
+ * predecessor that only shows up once the whole function is lowered.
+ * Split those table targets: JMPTAB -> trampoline BR -> case, so the
+ * case's extra edge is a normal BR and can shuffle.  GitHub issue 75. */
+static int ssa_jmptab_split_multi(void) {
+    int b;
+    int term;
+    int k;
+    int base;
+    int span;
+    int t;
+    int u;
+    int tgt;
+    int tramp;
+    int saved;
+    int changed;
+    int seen;
+
+    changed = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        if (bb_start[b] >= 0 && bb_start[b] < bb_end[b]) {
+            term = bb_start[b];
+            while (term < bb_end[b]) {
+                k = h_kind[term];
+                if (hi_is_terminator(k)) break;
+                term = term + 1;
+            }
+            if (term < bb_end[b] && h_kind[term] == HI_JMPTAB) {
+                base = hjt_base[term];
+                span = hjt_span[term];
+                t = 0;
+                while (t < span) {
+                    tgt = hjt_target[base + t];
+                    seen = 0;
+                    u = 0;
+                    while (u < t) {
+                        if (hjt_target[base + u] == tgt) { seen = 1; break; }
+                        u = u + 1;
+                    }
+                    if (!seen && tgt >= 0 && tgt < bb_nblk && ssa_npred[tgt] > 1) {
+                        tramp = hir_new_block();
+                        saved = hl_cur_blk;
+                        hl_cur_blk = tramp;
+                        bb_start[tramp] = h_ninst;
+                        bb_end[tramp] = h_ninst;
+                        hi_emit(HI_BR, 0, -1, -1, tgt, NULL);
+                        hl_cur_blk = saved;
+                        u = t;
+                        while (u < span) {
+                            if (hjt_target[base + u] == tgt) {
+                                hjt_target[base + u] = tramp;
+                            }
+                            u = u + 1;
+                        }
+                        changed = 1;
+                    }
+                    t = t + 1;
+                }
+            }
+        }
+        b = b + 1;
+    }
+    return changed;
+}
+
 static void hir_ssa_construct(void) {
     int b;
-
-    /* Always init phi linked lists (codegen uses them even with 0 promos) */
-    b = 0;
-    while (b < bb_nblk) { ssa_phi_head[b] = -1; b = b + 1; }
 
     if (bb_nblk < 1) {
         ssa_phi_base = h_ninst;
@@ -1113,6 +1177,15 @@ static void hir_ssa_construct(void) {
     if (ssa_split_pairs) ssa_split_pair_allocas();
 
     ssa_build_cfg();
+    if (ssa_jmptab_split_multi()) {
+        ssa_build_cfg();
+    }
+
+    /* Always init phi linked lists (codegen uses them even with 0 promos).
+     * After the JMPTAB split so trampoline blocks are included. */
+    b = 0;
+    while (b < bb_nblk) { ssa_phi_head[b] = -1; b = b + 1; }
+
     ssa_compute_rpo();
     ssa_compute_idom();
     ssa_compute_df();

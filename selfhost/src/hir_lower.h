@@ -381,7 +381,9 @@ static void hl_sw_emit_bsearch(int lv, int def_blk, int lt_kind, int lo, int hi)
  * block that only the JMPTAB reaches, and that block BRs to the real
  * case, which is a normal edge and can carry copies.  Cases that are
  * only reached from the table stay direct, so the common path costs
- * nothing.
+ * nothing.  A goto into a case (Ragel `st15:` falling into `case 15:`)
+ * is a second predecessor that this pass cannot see yet; SSA splits
+ * those after the CFG is complete (GitHub issue 75).
  *
  * Emits in the CURRENT block:
  *     idx = lv - lo                  (skipped when lo == 0)
