@@ -14,6 +14,67 @@ static int  cg_olen;
 static int  cg_fd = -1;
 static int  cg_long_calls;  /* -mlong-calls: direct calls form the address; a jal reaches +/-1MB, SQLite's library is 1.2MB */     /* the output file, once the driver has opened it: a full buffer is flushed to it */
 
+/* Dead-static DCE (GitHub issue 73): record .text file offsets per
+ * function, then rewrite the file dropping unreferenced statics. */
+#define CG_MAX_FN  8192
+#define CG_MAX_REF 16384
+static int   cg_file_pos;          /* bytes already written to cg_fd */
+static char *cg_outpath;
+static int   cg_nfn;
+static int   cg_fn_start[CG_MAX_FN];
+static int   cg_fn_end[CG_MAX_FN];
+static char *cg_fn_name[CG_MAX_FN];
+static int   cg_fn_local[CG_MAX_FN];
+static int   cg_fn_jt0[CG_MAX_FN];
+static int   cg_fn_jt1[CG_MAX_FN];
+static int   cg_fn_live[CG_MAX_FN];
+static int   cg_nref;
+static char *cg_ref[CG_MAX_REF];
+static int   cg_ref_full;
+static int   cg_stat_dce_drop;
+static int   cg_stat_dce_keep;
+static int   cg_cur_fn;
+static int   cg_nedge;
+static int   cg_edge_from[CG_MAX_REF];
+static char *cg_edge_to[CG_MAX_REF];
+
+static void cg_mark_ref(char *name) {
+    int i;
+    if (!name || name[0] == 0) return;
+    if (cg_cur_fn >= 0) {
+        if (cg_nedge < CG_MAX_REF) {
+            cg_edge_from[cg_nedge] = cg_cur_fn;
+            cg_edge_to[cg_nedge] = name;
+            cg_nedge = cg_nedge + 1;
+        } else {
+            cg_ref_full = 1;
+        }
+        return;
+    }
+    i = 0;
+    while (i < cg_nref) {
+        if (strcmp(cg_ref[i], name) == 0) return;
+        i = i + 1;
+    }
+    if (cg_nref >= CG_MAX_REF) {
+        cg_ref_full = 1;
+        return;
+    }
+    cg_ref[cg_nref] = name;
+    cg_nref = cg_nref + 1;
+}
+
+static int cg_name_refd(char *name) {
+    int i;
+    if (!name) return 1;
+    i = 0;
+    while (i < cg_nref) {
+        if (strcmp(cg_ref[i], name) == 0) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
 /* Emission only appends -- nothing is patched after the fact -- so the
  * buffer is a window on the file, not the file.  SQLite's assembly is
  * over 16MB; holding it whole was the last per-file ceiling. */
@@ -32,11 +93,16 @@ static void cg_flush(void) {
             exit(1);
         }
         off = off + n;
+        cg_file_pos = cg_file_pos + n;
     }
     cg_olen = 0;
 }
 
 /* --- Asm emission helpers --- */
+
+static int cg_pos(void) {
+    return cg_file_pos + cg_olen;
+}
 
 static void cg_c(int ch) {
     if (cg_olen >= CG_MAX_OUT - 1) {
@@ -256,6 +322,7 @@ static void hcg_li(int reg, int v) {
 
 /* Load address of symbol into register */
 static void hcg_la(int reg, char *sym) {
+    cg_mark_ref(sym);
     cg_s("    lui r");
     cg_n(reg);
     cg_s(", %hi(");
@@ -934,6 +1001,7 @@ static void hcg_emit_sym(int inst) {
             fdputs(hl_cur_fn_dbg, 2); fdputc(10, 2);
             exit(1);
         }
+        cg_mark_ref(h_name[base]);
         cg_s(h_name[base]);
     }
     if (off != 0) {
@@ -2888,6 +2956,7 @@ static void hcg_inst(int idx) {
                 hcg_la(2, h_name[idx]);
                 cg_s("    jalr r0, r2, 0\n");
             } else {
+                cg_mark_ref(h_name[idx]);
                 cg_s("    jal r0, ");
                 cg_s(h_name[idx]);
                 cg_c(10);
@@ -2907,6 +2976,7 @@ static void hcg_inst(int idx) {
             hcg_la(2, h_name[idx]);
             cg_s("    jalr r31, r2, 0\n");
         } else {
+            cg_mark_ref(h_name[idx]);
             cg_s("    jal r31, ");
             cg_s(h_name[idx]);
             cg_c(10);
@@ -3617,6 +3687,150 @@ static void hcg_func(Node *fn) {
     cg_s("    jalr r0, r31, 0\n\n");
 }
 
+static void cg_mark_data_refs(void) {
+    int i;
+    int reli;
+    int relend;
+    i = 0;
+    while (i < ps_nglobals) {
+        reli = ps_girel_start[i];
+        relend = reli + ps_girel_count[i];
+        while (reli < relend) {
+            if (ps_girel_kind[reli] != GIRELOC_STRING) {
+                if (ps_girel_name[reli] != 0)
+                    cg_mark_ref(ps_girel_name[reli]);
+                else
+                    cg_mark_ref(ps_gname[ps_girel_idx[reli]]);
+            }
+            reli = reli + 1;
+        }
+        i = i + 1;
+    }
+}
+
+static void cg_dce_rewrite_text(void) {
+    int i;
+    int n;
+    int off;
+    int total;
+    int hdr;
+    char *buf;
+    int fd;
+    cg_stat_dce_drop = 0;
+    cg_stat_dce_keep = 0;
+    i = 0;
+    while (i < cg_nfn) {
+        if (cg_ref_full || !cg_fn_local[i] || cg_name_refd(cg_fn_name[i]))
+            cg_fn_live[i] = 1;
+        else
+            cg_fn_live[i] = 0;
+        i = i + 1;
+    }
+    {
+        int changed;
+        int e;
+        int t;
+        changed = 1;
+        while (changed) {
+            changed = 0;
+            e = 0;
+            while (e < cg_nedge) {
+                if (cg_fn_live[cg_edge_from[e]]) {
+                    t = 0;
+                    while (t < cg_nfn) {
+                        if (!cg_fn_live[t] && cg_fn_name[t] &&
+                            strcmp(cg_fn_name[t], cg_edge_to[e]) == 0) {
+                            cg_fn_live[t] = 1;
+                            changed = 1;
+                        }
+                        t = t + 1;
+                    }
+                }
+                e = e + 1;
+            }
+        }
+    }
+    i = 0;
+    while (i < cg_nfn) {
+        if (cg_fn_live[i])
+            cg_stat_dce_keep = cg_stat_dce_keep + 1;
+        else
+            cg_stat_dce_drop = cg_stat_dce_drop + 1;
+        i = i + 1;
+    }
+    if (cg_stat_dce_drop == 0 || !cg_outpath || cg_fd < 0) return;
+    cg_flush();
+    total = cg_file_pos;
+    if (total <= 0) return;
+    buf = malloc(total);
+    if (!buf) return;
+    close(cg_fd);
+    fd = open(cg_outpath, 1); /* O_RDONLY */
+    if (fd < 0) {
+        free(buf);
+        fdputs("s12cc: dce: cannot reopen output\n", 2);
+        exit(1);
+    }
+    off = 0;
+    while (off < total) {
+        n = read(fd, buf + off, total - off);
+        if (n <= 0) {
+            close(fd);
+            free(buf);
+            fdputs("s12cc: dce: read failed\n", 2);
+            exit(1);
+        }
+        off = off + n;
+    }
+    close(fd);
+    fd = open(cg_outpath, 26); /* O_WRONLY|O_CREAT|O_TRUNC */
+    if (fd < 0) {
+        free(buf);
+        fdputs("s12cc: dce: cannot rewrite output\n", 2);
+        exit(1);
+    }
+    cg_fd = fd;
+    cg_file_pos = 0;
+    hdr = 0;
+    if (cg_nfn > 0) hdr = cg_fn_start[0];
+    if (hdr > 0) {
+        n = write(cg_fd, buf, hdr);
+        if (n != hdr) {
+            fdputs("s12cc: dce: write failed\n", 2);
+            exit(1);
+        }
+        cg_file_pos = cg_file_pos + n;
+    }
+    i = 0;
+    while (i < cg_nfn) {
+        if (cg_fn_live[i]) {
+            off = cg_fn_start[i];
+            n = cg_fn_end[i] - off;
+            if (n > 0) {
+                if (write(cg_fd, buf + off, n) != n) {
+                    fdputs("s12cc: dce: write failed\n", 2);
+                    exit(1);
+                }
+                cg_file_pos = cg_file_pos + n;
+            }
+        }
+        i = i + 1;
+    }
+    free(buf);
+}
+
+static int cg_jt_keep(int ji) {
+    int i;
+    if (cg_nfn == 0 || cg_ref_full) return 1;
+    i = 0;
+    while (i < cg_nfn) {
+        if (cg_fn_live[i] && ji >= cg_fn_jt0[i] && ji < cg_fn_jt1[i])
+            return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
 /* --- Emit .data and .bss sections --- */
 
 static void gen_data(void) {
@@ -3635,6 +3849,10 @@ static void gen_data(void) {
         cg_s(".align 2\n");
         i = 0;
         while (i < cg_njt) {
+            if (!cg_jt_keep(i)) {
+                i = i + 1;
+                continue;
+            }
             cg_s(".LJT");
             cg_n(cg_jt_id[i]);
             cg_s(":\n");
@@ -3805,39 +4023,49 @@ static void gen_data(void) {
 static void gen_program(Node *prog) {
     Node *fn;
     {
-        /* Inlining needs the program list to find callee bodies, and a
-         * node budget.
-         *
-         * DEFAULT OFF, and the reason is capacity, not correctness.
-         * Small callees are a measured win (LINPACK-C -2.4% at a
-         * budget of 20, mandel-C unchanged, torture test green at every
-         * budget) -- but inlining s12cc.c makes the compiler exceed the
-         * FROZEN BOOTSTRAP TOOLS' fixed ceilings, and self-hosting is
-         * not negotiable.  Four were hit in sequence: HL_MAX_ALLOCA
-         * (raised 256 -> 2048 here), HIR_MAX_BLOCK (guarded), the 4MB
-         * cg_out buffer (now a hard error instead of silent
-         * truncation), and stage07 s32-ld's MAX_FILE_SYM of 2048, which
-         * inlining blows through because each splice mints fresh block
-         * labels.
-         *
-         * Raising them one at a time just finds the next one; the fix
-         * is the toolchain capacity work (grow-on-demand instead of
-         * fixed arrays).  Until then S12CC_INLINE=<n> enables it for
-         * experiments and everything below is live and tested. */
+        /* Inlining + dead-static DCE (GitHub issue 73).  S12CC_INLINE=<n>
+         * splices callees up to that AST-node budget; unreferenced
+         * statics are then dropped.  Default 0: budget 20 is a net
+         * loss on SQLite (4978 splices, only 363 statics become dead,
+         * +13% insns) because the inliner refuses loops. */
         char *e;
         hl_prog = prog;
+        hl_stat_inlined = 0;
         e = getenv("S12CC_INLINE");
         hl_inline_max = e ? atoi(e) : 0;
     }
 
     cg_njt = 0;
     cg_njt_ent = 0;
+    cg_nfn = 0;
+    cg_nref = 0;
+    cg_nedge = 0;
+    cg_cur_fn = -1;
+    cg_ref_full = 0;
+    cg_file_pos = 0;
     cg_s(".text\n\n");
     fn = prog->body;
     while (fn) {
+        if (cg_nfn < CG_MAX_FN) {
+            cg_fn_start[cg_nfn] = cg_pos();
+            cg_fn_name[cg_nfn] = fn->name;
+            cg_fn_local[cg_nfn] = fn->is_static;
+            cg_fn_jt0[cg_nfn] = cg_njt;
+        } else {
+            cg_ref_full = 1;
+        }
+        cg_cur_fn = (cg_nfn < CG_MAX_FN) ? cg_nfn : -1;
         hcg_func(fn);
+        cg_cur_fn = -1;
+        if (cg_nfn < CG_MAX_FN) {
+            cg_fn_jt1[cg_nfn] = cg_njt;
+            cg_fn_end[cg_nfn] = cg_pos();
+            cg_nfn = cg_nfn + 1;
+        }
         fn = fn->next;
     }
+    cg_mark_data_refs();
+    cg_dce_rewrite_text();
 
     gen_data();
 }

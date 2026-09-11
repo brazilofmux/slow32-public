@@ -315,6 +315,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     cg_fd = fd;
+    cg_outpath = outfile;
     gen_program(prog);
 
     /* Write what remains */
@@ -387,6 +388,13 @@ int main(int argc, char **argv) {
     fdputuint(2, hcg_stat_csave);
     fdputs(" retpin=", 2);
     fdputuint(2, hcg_stat_retpin);
+    fdputs("\n", 2);
+    fdputs("inline: splices=", 2);
+    fdputuint(2, hl_stat_inlined);
+    fdputs(" dce_keep=", 2);
+    fdputuint(2, cg_stat_dce_keep);
+    fdputs(" dce_drop=", 2);
+    fdputuint(2, cg_stat_dce_drop);
     fdputs("\n", 2);
     fdputs("hir_imm_sel: add ", 2);
     fdputuint(2, hcg_stat_imm_hit_add);
