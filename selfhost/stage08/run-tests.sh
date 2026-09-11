@@ -16,7 +16,14 @@ TESTS_DIR="$SCRIPT_DIR/tests"
 EMU="${SELFHOST_EMU:-}"
 EMU_EXPLICIT=0
 KEEP_ARTIFACTS=0
-RUN_FIXED_POINT=0
+# The fixed-point gate (gen1 -> gen2 -> gen3, gen2 == gen3) is ON by
+# default.  It is the only check that has stage08 compile stage08, and it
+# was opt-in when GitHub issue 75 shipped: gen1 passed all five normal
+# gates -- 82/82 here, the FP differential bit-identical, regression 92/0,
+# SQLite byte-identical across 265k lines -- while unable to rebuild
+# itself.  --no-fixed-point skips it for quick iteration; --fixed-point is
+# kept as a no-op for existing callers.
+RUN_FIXED_POINT=1
 STRICT_SHAPE=0
 
 choose_default_emu() {
@@ -32,7 +39,10 @@ choose_default_emu() {
 
 usage() {
     cat <<USAGE
-Usage: $0 [--emu <path>] [--keep-artifacts] [--fixed-point] [--strict-shape]
+Usage: $0 [--emu <path>] [--keep-artifacts] [--no-fixed-point] [--strict-shape]
+
+  --no-fixed-point   skip the gen2 == gen3 self-rebuild gate (on by default;
+                     --fixed-point is accepted and is a no-op)
 
 Stage compiler tests: s12cc compiler + toolchain tests (bootstrapped from stage07)
 USAGE
@@ -51,6 +61,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fixed-point)
             RUN_FIXED_POINT=1
+            ;;
+        --no-fixed-point)
+            RUN_FIXED_POINT=0
             ;;
         --strict-shape)
             STRICT_SHAPE=1

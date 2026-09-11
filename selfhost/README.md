@@ -58,7 +58,7 @@ Manual per-stage entry points:
 - `stage05` (optimized toolchain): `selfhost/stage05/run-tests.sh --emu ./tools/emulator/slow32-fast`
 - `stage06` (next-cycle toolchain): `selfhost/stage06/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
 - `stage07` (full-libc toolchain): `selfhost/stage07/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
-- `stage08` (active head, fork of stage07): `selfhost/stage08/run-tests.sh --emu ./tools/emulator/slow32-fast` (add `--fixed-point` to gate gen2 == gen3)
+- `stage08` (active head, fork of stage07): `selfhost/stage08/run-tests.sh --emu ./tools/emulator/slow32-fast` (the gen2 == gen3 fixed-point gate is ON by default here; `--no-fixed-point` skips it for quick iteration)
 - `stage08-cross-x64` (x86-64 cross): `make -C selfhost/stage08-cross-x64 && make -C selfhost/stage08-cross-x64 test` (then `make bench` to time `s32fast-hir`)
 - `stage08-cross-a64` (AArch64 cross): `make -C selfhost/stage08-cross-a64 && make -C selfhost/stage08-cross-a64 test`
 

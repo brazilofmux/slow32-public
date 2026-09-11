@@ -243,6 +243,14 @@ The Makefile passes `--hir` automatically.
 # s12cc accepts — GitHub issue 71).
 bash selfhost/check-host-frontend.sh
 
+# stage08's own suite, INCLUDING the self-rebuild gate (gen1 -> gen2 ->
+# gen3, gen2 == gen3), which is on by default since GitHub issue 75: the
+# compiler passed every other gate here -- 82/82, FP differential
+# bit-identical, regression 92/0, SQLite byte-identical -- while unable to
+# rebuild itself, and the one check that would have said so was opt-in.
+# --no-fixed-point skips it when iterating; do not commit on that run.
+cd ~/slow-32/selfhost/stage08 && ./run-tests.sh
+
 # IMPORTANT: Run regression tests before committing any backend changes!
 cd ~/slow-32/regression && ./run-tests.sh
 
