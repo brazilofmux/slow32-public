@@ -799,6 +799,117 @@ static void ra_compute_ends(void) {
  * (Used by the IRC allocator)
  * ================================================================= */
 
+/* --- Spill-slot sharing (GitHub issue 77) ---
+ * A spilled value occupies its slot from the store after its def to
+ * its last reload: the register interval [ra_pos, ra_iend].  A spilled
+ * PHI is different -- its slot is written by the edge copies at the
+ * end of EVERY predecessor, which on a back edge is a position far
+ * after the phi's own, so the slot range is widened to cover each
+ * predecessor's terminator.  That also keeps a phi apart from the
+ * values still live at those terminators (the copies read them). */
+static int ra_shead[HIR_MAX_INST];      /* per start position: first value */
+static int ra_snext[HIR_MAX_INST];      /* next value with the same start */
+static int ra_slot_end[HIR_MAX_INST];   /* per slot: occupant's end position */
+static int ra_stat_sslots;              /* cumulative slots after sharing */
+
+static int ra_spill_wants_slot(int i) {
+    if (ra_reg[i] >= 0) return 0;
+    if (h_kind[i] == HI_NOP) return 0;
+    if (!hi_has_value(h_kind[i])) return 0;
+    if (hi_inst_remat(i)) return 0;
+    return 1;
+}
+
+static void ra_slot_range(int v, int *ps, int *pe) {
+    int s;
+    int e;
+    int j;
+    int pred;
+    int term;
+    s = ra_pos[v];
+    e = ra_iend[v];
+    if (e < s) e = s;
+    if (h_kind[v] == HI_PHI && h_pbase[v] >= 0) {
+        j = 0;
+        while (j < h_pcnt[v]) {
+            pred = h_pblk[h_pbase[v] + j];
+            if (pred >= 0 && pred < bb_nblk) {
+                term = bb_end[pred] - 1;
+                while (term >= bb_start[pred] && h_kind[term] == HI_NOP)
+                    term = term - 1;
+                if (term >= bb_start[pred] && ra_pos[term] >= 0) {
+                    if (ra_pos[term] < s) s = ra_pos[term];
+                    if (ra_pos[term] > e) e = ra_pos[term];
+                }
+            }
+            j = j + 1;
+        }
+    }
+    *ps = s;
+    *pe = e;
+}
+
+static void ra_assign_spill_slots(void) {
+    int i;
+    int v;
+    int s;
+    int e;
+    int p;
+    int k;
+    int nslot;
+    int base;
+    int npos;
+    npos = ra_norder;
+    p = 0;
+    while (p < npos) { ra_shead[p] = -1; p = p + 1; }
+    /* Bucket the spilled values by slot start; values with no
+     * position (unreachable) are handled after the scan. */
+    i = h_ninst - 1;
+    while (i >= 0) {
+        if (ra_spill_wants_slot(i) && ra_pos[i] >= 0 && ra_pos[i] < npos) {
+            ra_slot_range(i, &s, &e);
+            if (s < 0) s = 0;
+            if (s >= npos) s = npos - 1;
+            ra_snext[i] = ra_shead[s];
+            ra_shead[s] = i;
+        }
+        i = i - 1;
+    }
+    base = hl_temp_stack;
+    nslot = 0;
+    p = 0;
+    while (p < npos) {
+        v = ra_shead[p];
+        while (v >= 0) {
+            ra_slot_range(v, &s, &e);
+            /* First fit: lowest slot whose occupant ended strictly
+             * before this value starts (equal positions can be a
+             * reload feeding the def that would overwrite it). */
+            k = 0;
+            while (k < nslot && ra_slot_end[k] >= p) k = k + 1;
+            if (k == nslot) nslot = nslot + 1;
+            ra_slot_end[k] = e;
+            ra_spill_off[v] = 0 - (base + 4 * (k + 1));
+            ra_stat_spills = ra_stat_spills + 1;
+            v = ra_snext[v];
+        }
+        p = p + 1;
+    }
+    hl_temp_stack = base + 4 * nslot;
+    ra_stat_sslots = ra_stat_sslots + nslot;
+    /* Unreachable values: private slots, as before. */
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_spill_wants_slot(i) && !(ra_pos[i] >= 0 && ra_pos[i] < npos)) {
+            hl_temp_stack = hl_temp_stack + 4;
+            ra_spill_off[i] = 0 - hl_temp_stack;
+            ra_stat_spills = ra_stat_spills + 1;
+            ra_stat_sslots = ra_stat_sslots + 1;
+        }
+        i = i + 1;
+    }
+}
+
 static void ra_assign_spills(void) {
     int i;
     int r;
@@ -846,17 +957,16 @@ static void ra_assign_spills(void) {
             i = i + 1;
         }
     }
-    /* Assign spill slots for non-allocated, non-remat value-producing instructions */
-    i = 0;
-    while (i < h_ninst) {
-        if (ra_reg[i] < 0 && h_kind[i] != HI_NOP &&
-            hi_has_value(h_kind[i]) && !hi_inst_remat(i)) {
-            hl_temp_stack = hl_temp_stack + 4;
-            ra_spill_off[i] = 0 - hl_temp_stack;
-            ra_stat_spills = ra_stat_spills + 1;
-        }
-        i = i + 1;
-    }
+    /* Assign spill slots for non-allocated, non-remat value-producing
+     * instructions.  GitHub issue 77: slots are SHARED by live range.
+     * One private slot per spilled value gave sqlite3VdbeExec 4,683
+     * slots (a 22,572-byte frame against clang's 400), and a slot past
+     * +/-2047 costs lui+addi+add on every access.  Linear scan over
+     * the spilled values in start order: a slot whose occupant ended
+     * strictly before this value starts is reused, else the frame
+     * grows by one.  Values the linearization never reached keep a
+     * private slot as before. */
+    ra_assign_spill_slots();
 
     /* Assign callee-save slots.
      * Only callee colors (r11..r28, and r30 when allocated) need to be

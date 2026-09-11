@@ -364,6 +364,8 @@ int main(int argc, char **argv) {
     fdputuint(2, bg_stat_burg_skipped);
     fdputs(" spills=", 2);
     fdputuint(2, ra_stat_spills);
+    fdputs(" slots=", 2);
+    fdputuint(2, ra_stat_sslots);
     fdputs(" caller=", 2);
     fdputuint(2, ra_stat_caller_used);
     fdputs(" callee=", 2);
