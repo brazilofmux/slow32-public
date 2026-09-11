@@ -40,7 +40,9 @@ store to a result slot and branch to a continuation so SSA can phi.
 
 A leaf with no live alloca, no spill and no callee-save omits the
 r31/r30 frame entirely (GitHub issue 73).  A leaf that still needs
-stack keeps the frame but does not save lr.
+stack keeps the frame but does not save lr.  Non-varargs functions
+with a frame of at most 2047 bytes elide the frame pointer and
+address slots SP-relative, so r30 is unused there.
 
 Refused: **non-statics** (DCE cannot drop the out-of-line copy),
 address-taken, varargs, struct parameters or return, bodies containing
@@ -57,7 +59,7 @@ already excludes.
 |---|---:|---:|
 | LINPACK-C (dynamic insns) | 1,000,445,397 | **976,654,747** (−2.4%) |
 | mandel-C (dynamic insns) | 35,262,855 | 35,262,855 (no inlinable calls) |
-| sqlite 3.51.0 `.s` size (GitHub issue 73, same compiler) | 326,153 (leaf elision, inliner off) | **324,494** (−0.51% more; −246 statics) |
+| sqlite 3.51.0 `.s` size (GitHub issue 73, same compiler) | 319,568 (leaf + FP elision, inliner off) | **318,455** (−0.35% more; −246 statics) |
 
 LINPACK/mandel were measured under the previous policy (non-statics
 inlined, loops refused).  Budget sweep showed the classic curve — small

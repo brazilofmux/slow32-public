@@ -392,6 +392,8 @@ int main(int argc, char **argv) {
     fdputuint(2, hcg_stat_frameless);
     fdputs(" leaf_nolr=", 2);
     fdputuint(2, hcg_stat_leaf_nolr);
+    fdputs(" omit_fp=", 2);
+    fdputuint(2, hcg_stat_omit_fp);
     fdputs("\n", 2);
     fdputs("inline: splices=", 2);
     fdputuint(2, hl_stat_inlined);
