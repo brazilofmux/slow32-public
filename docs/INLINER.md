@@ -34,8 +34,13 @@ The frame is relocated by **one constant shift** rather than a
 per-variable map: reserve `locals_size` bytes in the caller and map every
 callee offset to `off - shift`.  Arrays and structs come along without
 needing their sizes, and 8-alignment survives because the shift is a
-multiple of 8.  `return` inside an inlined body stores to a result slot
-and branches to a continuation block.
+multiple of 8.  A callee whose only `return` is the last statement
+falls through with the value in a HIR inst; multiple returns still
+store to a result slot and branch to a continuation so SSA can phi.
+
+A leaf with no live alloca, no spill and no callee-save omits the
+r31/r30 frame entirely (GitHub issue 73).  A leaf that still needs
+stack keeps the frame but does not save lr.
 
 Refused: **non-statics** (DCE cannot drop the out-of-line copy),
 address-taken, varargs, struct parameters or return, bodies containing
@@ -52,7 +57,7 @@ already excludes.
 |---|---:|---:|
 | LINPACK-C (dynamic insns) | 1,000,445,397 | **976,654,747** (−2.4%) |
 | mandel-C (dynamic insns) | 35,262,855 | 35,262,855 (no inlinable calls) |
-| sqlite 3.51.0 `.s` size (GitHub issue 73, same compiler) | 328,885 | **326,649** (−0.68%, −246 statics) |
+| sqlite 3.51.0 `.s` size (GitHub issue 73, same compiler) | 326,153 (leaf elision, inliner off) | **324,494** (−0.51% more; −246 statics) |
 
 LINPACK/mandel were measured under the previous policy (non-statics
 inlined, loops refused).  Budget sweep showed the classic curve — small

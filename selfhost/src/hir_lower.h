@@ -136,8 +136,12 @@ static int   hl_inl_shift;       /* callee frame -> caller frame */
 static int   hl_inl_ret_blk;     /* continuation block for `return` */
 static int   hl_inl_res;         /* result alloca, -1 when void */
 static int   hl_inl_res_ty;
+static int   hl_inl_direct;      /* 1: single tail return, no slot/cont */
+static int   hl_inl_rv;          /* captured return value for direct */
+static int   hl_inl_rv_hi;
 static int   hl_stat_inlined;
 static int   hl_stat_inl_sel;    /* statics selected for whole-TU splice */
+static int   hl_stat_inl_direct; /* splices that skipped the result slot */
 
 /* Whole-TU picture, filled by hl_inl_prepare.  Direct ND_CALL counts,
  * address-taken (ND_FUNC_REF and data relocs), and a per-function ok
@@ -1160,6 +1164,36 @@ static Node *hl_inl_candidate(Node *call) {
     return fn;
 }
 
+static int hl_inl_count_returns(Node *n) {
+    int c;
+    if (!n) return 0;
+    c = 0;
+    if (n->kind == ND_RETURN) c = 1;
+    c = c + hl_inl_count_returns(n->lhs);
+    c = c + hl_inl_count_returns(n->rhs);
+    c = c + hl_inl_count_returns(n->cond);
+    c = c + hl_inl_count_returns(n->body);
+    c = c + hl_inl_count_returns(n->init);
+    c = c + hl_inl_count_returns(n->step);
+    c = c + hl_inl_count_returns(n->els);
+    c = c + hl_inl_count_returns(n->args);
+    c = c + hl_inl_count_returns(n->next);
+    return c;
+}
+
+/* One `return` and it is the last statement: the spliced body can fall
+ * through with the value in a HIR inst.  No result alloca, no
+ * continuation block, no extra BR.  `if (x) return a; return b` has
+ * two returns and keeps the slot+phi path. */
+static int hl_inl_is_tail_ret(Node *body) {
+    Node *s;
+    if (hl_inl_count_returns(body) != 1) return 0;
+    s = body;
+    if (s && s->kind == ND_BLOCK) s = s->body;
+    while (s && s->next) s = s->next;
+    return s && s->kind == ND_RETURN;
+}
+
 /* Lower a call by splicing the callee's body in.  Returns the result
  * value (and sets hl_hi for 64-bit results), or -1 for void. */
 static int hl_inline_call(Node *call, Node *fn) {
@@ -1170,11 +1204,15 @@ static int hl_inline_call(Node *call, Node *fn) {
     int save_ret_blk;
     int save_res;
     int save_res_ty;
+    int save_direct;
+    int save_rv;
+    int save_rv_hi;
     int save_loop;
     int save_sw;
     int frame;
     int ret_blk;
     int res;
+    int direct;
     int rv;
     Node *a;
     Node *pp;
@@ -1203,6 +1241,9 @@ static int hl_inline_call(Node *call, Node *fn) {
     save_ret_blk = hl_inl_ret_blk;
     save_res = hl_inl_res;
     save_res_ty = hl_inl_res_ty;
+    save_direct = hl_inl_direct;
+    save_rv = hl_inl_rv;
+    save_rv_hi = hl_inl_rv_hi;
     save_loop = hl_loop_depth;
     save_sw = hl_sw_depth;
 
@@ -1222,13 +1263,22 @@ static int hl_inline_call(Node *call, Node *fn) {
     hl_loop_depth = 0;
     hl_sw_depth = 0;
 
-    /* 3. Result slot (mem2reg promotes it straight back out). */
+    /* 3. Result: a single tail `return` falls through with the value
+     *    in a HIR inst (GitHub issue 73 splice quality).  Multiple
+     *    returns still use a slot + continuation so SSA can phi. */
     res = -1;
-    if (fn->ty != TY_VOID) {
-        hl_temp_stack = hl_temp_stack + 8;
-        res = hl_emit_temp_alloca(fn->ty, 0 - hl_temp_stack);
+    ret_blk = -1;
+    direct = hl_inl_is_tail_ret(fn->body);
+    hl_inl_direct = direct;
+    hl_inl_rv = -1;
+    hl_inl_rv_hi = -1;
+    if (!direct) {
+        if (fn->ty != TY_VOID) {
+            hl_temp_stack = hl_temp_stack + 8;
+            res = hl_emit_temp_alloca(fn->ty, 0 - hl_temp_stack);
+        }
+        ret_blk = hir_new_block();
     }
-    ret_blk = hir_new_block();
     hl_inl_ret_blk = ret_blk;
     hl_inl_res = res;
     hl_inl_res_ty = fn->ty;
@@ -1260,15 +1310,22 @@ static int hl_inline_call(Node *call, Node *fn) {
         pp = pp->next;
     }
 
-    /* 5. The body.  ND_RETURN inside now stores to `res` and branches. */
+    /* 5. The body.  ND_RETURN inside now stores to `res` and branches,
+     *    or (direct) captures the value and falls through. */
     hl_stmt(fn->body);
-    if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, ret_blk, NULL);
-    hl_switch_block(ret_blk);
+    if (ret_blk >= 0) {
+        if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, ret_blk, NULL);
+        hl_switch_block(ret_blk);
+    }
 
-    /* 6. Read the result back. */
+    /* 6. Result. */
     rv = -1;
     hl_hi = -1;
-    if (res >= 0) {
+    if (direct) {
+        rv = hl_inl_rv;
+        hl_hi = hl_inl_rv_hi;
+        hl_stat_inl_direct = hl_stat_inl_direct + 1;
+    } else if (res >= 0) {
         if (ty_is_llong(fn->ty) || ty_is_double(fn->ty)) {
 #ifdef S12CC_X64_HOST
             rv = hi_emit(HI_LOAD, fn->ty, res, -1, 0, NULL);
@@ -1290,6 +1347,9 @@ static int hl_inline_call(Node *call, Node *fn) {
     hl_inl_ret_blk = save_ret_blk;
     hl_inl_res = save_res;
     hl_inl_res_ty = save_res_ty;
+    hl_inl_direct = save_direct;
+    hl_inl_rv = save_rv;
+    hl_inl_rv_hi = save_rv_hi;
     hl_loop_depth = save_loop;
     hl_sw_depth = save_sw;
     hl_stat_inlined = hl_stat_inlined + 1;
@@ -3218,6 +3278,18 @@ static void hl_stmt(Node *n) {
         /* Inside an inlined body a return is an assignment to the
          * result slot plus a branch to the continuation. */
         if (hl_inl_depth > 0) {
+            if (hl_inl_direct) {
+                if (n->lhs) {
+                    lv = hl_expr(n->lhs);
+                    if (hl_inl_res_ty != TY_VOID)
+                        lv = hl_narrow(hl_inl_res_ty, lv);
+                    hl_inl_rv = lv;
+                    hl_inl_rv_hi = hl_hi;
+                }
+                /* Tail return: fall through.  A leftover terminator
+                 * would be a BR to a block we never created. */
+                return;
+            }
             if (n->lhs && hl_inl_res >= 0) {
                 lv = hl_expr(n->lhs);
                 if (ty_is_llong(hl_inl_res_ty) || ty_is_double(hl_inl_res_ty)) {

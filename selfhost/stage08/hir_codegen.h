@@ -200,12 +200,16 @@ static int hcg_locals;     /* fn->locals_size (original) */
 static int hcg_frame;      /* total frame size */
 static int hcg_frame_escapes; /* an alloca's address may reach a callee:
                                  tail calls must not pop the frame first */
+static int hcg_frameless;  /* leaf, no stack: omit prologue/epilogue */
+static int hcg_save_lr;    /* 0 on leaves: incoming r31 stays the return */
 static int hcg_epilog;     /* epilog label */
 /* GitHub issue 73 telemetry: frame traffic is 2.35x clang on SQLite and 23%
  * of the whole instruction excess.  Split it by who emits it. */
 static int hcg_stat_reload;    /* ldw from a spill slot */
 static int hcg_stat_spillst;   /* stw to a spill slot */
 static int hcg_stat_csave;     /* prologue saves + epilogue restores */
+static int hcg_stat_frameless;
+static int hcg_stat_leaf_nolr;
 static int hcg_va_save_size; /* varargs register save area size */
 
 /* Block labels */
@@ -1573,16 +1577,19 @@ static void hcg_emit_epilogue_inline(void) {
 
     /* Restore r31, r30, adjust sp */
     if (fs <= 2047) {
-        cg_s("    ldw r31, r29, ");
-        cg_n(fs - 4);
-        cg_c(10);
+        if (hcg_save_lr) {
+            cg_s("    ldw r31, r29, ");
+            cg_n(fs - 4);
+            cg_c(10);
+        }
         cg_s("    ldw r30, r29, ");
         cg_n(fs - 8);
         cg_c(10);
         cg_rri("addi", 29, 29, fs);
     } else {
         cg_rri("addi", 29, 30, 0);
-        cg_s("    ldw r31, r29, -4\n");
+        if (hcg_save_lr)
+            cg_s("    ldw r31, r29, -4\n");
         cg_s("    ldw r30, r29, -8\n");
     }
 }
@@ -2859,6 +2866,10 @@ static void hcg_inst(int idx) {
                 hcg_into(1, s1);
             }
         }
+        if (hcg_frameless) {
+            cg_s("    jalr r0, r31, 0\n");
+            return;
+        }
         cg_s("    jal r0, ");
         cg_lref(hcg_epilog);
         cg_c(10);
@@ -3447,6 +3458,66 @@ static void hcg_restore_reg(int reg, int off) {
     }
 }
 
+/* Real jal, not an FP libcall that codegen emits as a hardware op.
+ * Those keep HI_CALL for allocator clobbers but do not touch r31. */
+static int hcg_call_saves_lr(int i) {
+    int k;
+    k = h_kind[i];
+    if (k == HI_CALLP) return 1;
+    if (k != HI_CALL) return 0;
+    if (hcg_fp64_kind(h_name[i]) >= 0) return 0;
+    return 1;
+}
+
+/* GitHub issue 73: after inlining, many callers become leaves and still
+ * paid a 6-insn r31/r30 frame.  A leaf with no spill, no csave and no
+ * live alloca needs nothing; a leaf that still has stack data keeps the
+ * frame but not the lr save. */
+static void hcg_classify_frame(Node *fn) {
+    int i;
+    int k;
+    int need_stack;
+    hcg_frameless = 0;
+    hcg_save_lr = 1;
+    if (fn->is_varargs) return;
+    i = 0;
+    while (i < h_ninst) {
+        if (hcg_call_saves_lr(i)) return;
+        i = i + 1;
+    }
+    /* Leaf. */
+    hcg_save_lr = 0;
+    need_stack = 0;
+    if (ra_ncsave > 0) need_stack = 1;
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_spill_off[i] != 0) need_stack = 1;
+        k = h_kind[i];
+        if (k == HI_GETFP) need_stack = 1;
+        if (k == HI_ALLOCA) {
+            int j;
+            int jk;
+            j = 0;
+            while (j < h_ninst) {
+                jk = h_kind[j];
+                if (jk != HI_NOP && jk != HI_PHI) {
+                    if (h_src1[j] == i) need_stack = 1;
+                    if (h_src2[j] == i && jk != HI_BR && jk != HI_BRC)
+                        need_stack = 1;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (!need_stack) {
+        hcg_frameless = 1;
+        hcg_stat_frameless = hcg_stat_frameless + 1;
+    } else {
+        hcg_stat_leaf_nolr = hcg_stat_leaf_nolr + 1;
+    }
+}
+
 /* --- Generate one function --- */
 
 static void hcg_func(Node *fn) {
@@ -3521,6 +3592,8 @@ static void hcg_func(Node *fn) {
      * the allocator could not avoid). */
     fs = hl_temp_stack;
     fs = ((fs + 3) / 4) * 4;
+    hcg_classify_frame(fn);
+    if (hcg_frameless) fs = 0;
     hcg_locals = fn->locals_size;
     hcg_frame = fs;
 
@@ -3628,22 +3701,28 @@ static void hcg_func(Node *fn) {
         }
     }
 
-    /* Prologue — handle large frames (>2047 bytes) */
-    if (fs <= 2047) {
-        cg_rri("addi", 29, 29, 0 - fs);
-        cg_s("    stw r29, r31, ");
-        cg_n(fs - 4);
-        cg_c(10);
-        cg_s("    stw r29, r30, ");
-        cg_n(fs - 8);
-        cg_c(10);
-        cg_rri("addi", 30, 29, fs);
-    } else {
-        cg_s("    stw r29, r31, -4\n");
-        cg_s("    stw r29, r30, -8\n");
-        cg_rri("addi", 30, 29, 0);
-        hcg_li(1, fs);
-        cg_rrr("sub", 29, 29, 1);
+    /* Prologue — handle large frames (>2047 bytes).  Frameless leaves
+     * omit it entirely (GitHub issue 73). */
+    if (!hcg_frameless) {
+        if (fs <= 2047) {
+            cg_rri("addi", 29, 29, 0 - fs);
+            if (hcg_save_lr) {
+                cg_s("    stw r29, r31, ");
+                cg_n(fs - 4);
+                cg_c(10);
+            }
+            cg_s("    stw r29, r30, ");
+            cg_n(fs - 8);
+            cg_c(10);
+            cg_rri("addi", 30, 29, fs);
+        } else {
+            if (hcg_save_lr)
+                cg_s("    stw r29, r31, -4\n");
+            cg_s("    stw r29, r30, -8\n");
+            cg_rri("addi", 30, 29, 0);
+            hcg_li(1, fs);
+            cg_rrr("sub", 29, 29, 1);
+        }
     }
 
     /* Save callee-saved registers (after fp is set up) */
@@ -3660,31 +3739,39 @@ static void hcg_func(Node *fn) {
         b = b + 1;
     }
 
-    /* Epilogue: restore callee-saved registers */
-    cg_ldef(hcg_epilog);
-    i = 0;
-    while (i < ra_ncsave) {
-        hcg_restore_reg(ra_csave_reg[i], ra_csave_off[i]);
-        i = i + 1;
-    }
+    /* Epilogue: restore callee-saved registers.  Frameless RETs already
+     * emitted jalr r0, r31, 0, so there is nothing to restore. */
+    if (!hcg_frameless) {
+        cg_ldef(hcg_epilog);
+        i = 0;
+        while (i < ra_ncsave) {
+            hcg_restore_reg(ra_csave_reg[i], ra_csave_off[i]);
+            i = i + 1;
+        }
 
-    if (fs <= 2047) {
-        cg_s("    ldw r31, r29, ");
-        cg_n(fs - 4);
-        cg_c(10);
-        cg_s("    ldw r30, r29, ");
-        cg_n(fs - 8);
-        cg_c(10);
-        cg_rri("addi", 29, 29, fs);
+        if (fs <= 2047) {
+            if (hcg_save_lr) {
+                cg_s("    ldw r31, r29, ");
+                cg_n(fs - 4);
+                cg_c(10);
+            }
+            cg_s("    ldw r30, r29, ");
+            cg_n(fs - 8);
+            cg_c(10);
+            cg_rri("addi", 29, 29, fs);
+        } else {
+            cg_rri("addi", 29, 30, 0);
+            if (hcg_save_lr)
+                cg_s("    ldw r31, r29, -4\n");
+            cg_s("    ldw r30, r29, -8\n");
+        }
+        if (hcg_va_save_size > 0) {
+            cg_rri("addi", 29, 29, hcg_va_save_size);
+        }
+        cg_s("    jalr r0, r31, 0\n\n");
     } else {
-        cg_rri("addi", 29, 30, 0);
-        cg_s("    ldw r31, r29, -4\n");
-        cg_s("    ldw r30, r29, -8\n");
+        cg_c(10);
     }
-    if (hcg_va_save_size > 0) {
-        cg_rri("addi", 29, 29, hcg_va_save_size);
-    }
-    cg_s("    jalr r0, r31, 0\n\n");
 }
 
 static void cg_mark_data_refs(void) {
@@ -4032,6 +4119,7 @@ static void gen_program(Node *prog) {
         hl_prog = prog;
         hl_stat_inlined = 0;
         hl_stat_inl_sel = 0;
+        hl_stat_inl_direct = 0;
         e = getenv("S12CC_INLINE");
         hl_inline_max = e ? atoi(e) : 0;
         hl_inl_prepare(prog);

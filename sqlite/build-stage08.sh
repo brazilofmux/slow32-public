@@ -11,8 +11,8 @@
 # issue 74).  LONGCALLS=-mlong-calls is the lui+addi+jalr A/B.
 # S12CC_INLINE=<n> splices small statics whose whole-TU copy count is a
 # size win; DCE drops the out-of-line copy (GitHub issue 73).  Default
-# off.  Budget 20 is a measured -0.68% on sqlite vs the same compiler
-# with inlining off; bootstrap ceilings keep it opt-in.
+# off.  Leaf frame elision is always on.  Budget 20 is a further
+# measured -0.51% on sqlite; bootstrap ceilings keep inlining opt-in.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/.."

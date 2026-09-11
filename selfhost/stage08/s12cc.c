@@ -388,11 +388,17 @@ int main(int argc, char **argv) {
     fdputuint(2, hcg_stat_csave);
     fdputs(" retpin=", 2);
     fdputuint(2, hcg_stat_retpin);
+    fdputs(" frameless=", 2);
+    fdputuint(2, hcg_stat_frameless);
+    fdputs(" leaf_nolr=", 2);
+    fdputuint(2, hcg_stat_leaf_nolr);
     fdputs("\n", 2);
     fdputs("inline: splices=", 2);
     fdputuint(2, hl_stat_inlined);
     fdputs(" sel=", 2);
     fdputuint(2, hl_stat_inl_sel);
+    fdputs(" direct=", 2);
+    fdputuint(2, hl_stat_inl_direct);
     fdputs(" dce_keep=", 2);
     fdputuint(2, cg_stat_dce_keep);
     fdputs(" dce_drop=", 2);
