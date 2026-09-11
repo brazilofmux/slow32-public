@@ -1092,3 +1092,60 @@ drops what sat above it (an active range cannot be performed again, so those
 frames are abandoned).  The stack is bounded by the number of distinct
 ranges, as the classic per-paragraph return slots are.  Test `perfgoto`.
 Raised by an outside review of GLENTER.COB that read the idiom off the page.
+
+### 38. ~~Report Writer pages are taller than majesty's C++ generator~~ — GitHub issue 76, RESOLVED 2026-09-10
+
+Comparing `reports_cpp/` to `reports_cobol/` (same data) and both through
+virtual1403 (green bar, 132 columns): C++ and MVS 3.8j look right; COBOL 85
+has more lines, more pages, and headings that sit lower after the first page.
+The five printers (C++, two dBase, MVS 74, COBOL 85) used to agree on page
+*shape* — not byte-identical, but the same 61-line numbered band. That
+agreement broke. It did not break because someone bumped PAGE LIMIT.
+
+The 85 RDs still copy the 74 numbers: PAGE LIMIT 61 on chart/journal/activity
+and **66** on the balance sheet and profit-and-loss. 66 is the 1403 form
+(11" at 6 LPI). 61 is the printable band after JES2's 5-line top skip —
+virtual1403 `default-green`, C++ `lineCount >= 60` then pad to 61, dBase
+pad-to-60. MVS keeps PAGE LIMIT 66 because ASA skip-to-channel-1 *is* that
+skip: 66 names the form, not 66 newline records.
+
+**Where the deviation came from.** The 74 print file is `ASSIGN TO UT-S-PROUT`
+(printer, ASA). The 85 print file became `ORGANIZATION IS LINE SEQUENTIAL`
+the day the reports first produced populated output (majesty, 2025-05-20:
+gl022 `03a5b1d`, gl042 `0dad6e8`; gl043 born that way 2025-12-04). GnuCOBOL's
+RW on a line-sequential disk file materializes PAGE LIMIT as physical
+records, no form feed — measured on majesty's `.prn` and written into
+`docs/report-writer.md` at Stage 7 (`8def6bd5`). s32-cobc then matched that
+geometry byte-for-byte (Stage 7 on the 61-line reports, Stage 15 `68e23237`
+on the 66-line ones). So the compiler did not drift from GnuCOBOL; it
+**locked in** a GnuCOBOL-on-LINE-SEQUENTIAL reading of 66 that MVS-on-ASA
+never had.
+
+On virtual1403 `default-green` that is fatal: skip 5, then 61 numbered lines.
+A 61-record page (C++, 85 chart/journal/activity) fills the band and the
+next heading is the first record of the next form. A 66-record page walks
+five pad lines onto the next form, so page 2's heading starts five lines
+lower, page 3 lower still. Occupancy: the two 66-line reports are +5 per
+page vs C++ (66 vs 61; two-page files 132 vs 122). The 61-line RDs still
+match C++ in *count*.
+
+Grounded in the Drive PDFs (2026-09-10, `default-green`, report-text Y
+ignoring the form's line numbers): MVS `2026-08-J663-BATCH.pdf` — 87 of 88
+pages start at 58pt (~line 6). C++ every page of every report at 58pt.
+COBOL 85 PAGE LIMIT 61 reports stay at 58pt. The 66-line ones: page 1 at
+58pt, page 2 at 118pt (exactly +5 lines at 6 LPI), then an empty form.
+dBase is not part of this comparison.
+
+`tests/compare_reports.sh` strips headers, so a green data compare never
+saw the shape break. Stage 32 (`9accf951`) the next day changed when
+TERMINATE pads (`page_started` vs `page_counter`); that is a possible
+last-page tweak, not the 66-vs-61.
+
+Adopted: change the 85 RDs, not the page engine. Majesty `gl042` /
+`gl043` are now `PAGE LIMIT 61` with the page heading packed to the C++
+line slots (`FIRST DETAIL 5` / `6`). GnuCOBOL 4.0 and s32-cobc were
+already byte-identical on the old 66-line RD (LINE SEQUENTIAL, no
+ORGANIZATION, and `ASSIGN TO PRINTER` alike); MVS keeps 66 because ASA
+still means form size. Remaining occupancy diffs on the balance sheet
+are body blanks (C++ extra `OutputLine` after a class), not page length.
+Details on GitHub issue 76.
