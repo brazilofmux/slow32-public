@@ -103,6 +103,39 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-09-11, sixth batch (`877afcf1`..`f4e09a25`) -- self-hosting
+restored, and the whole-program size work.  All in `cc.s32x` unless noted:
+
+- **stage08 could not rebuild itself, and no default gate said so.**  Two
+  defects, one hiding the other.  `SSA_DF_W` (32) was too small for the
+  compiler's own source, so gen1 died with "too many dominance-frontier
+  entries" -- raised to 64.  Behind that, a `goto` into a `case` label
+  (Ragel's `st15` falling into `case 15` in `lex_next`) gave a jump-table
+  target a second predecessor that JMPTAB edges cannot carry a phi copy
+  for; the lexer entered with a stale register and every input compiled
+  to 18 empty bytes.  Table targets with more than one predecessor are
+  now trampolined through a `BR`.  A kit built from `4ce2473c` through
+  `877afcf1` produces a working compiler for user programs but NOT a
+  working gen2; only the fixed-point gate could see it, and that gate is
+  now on by default (`run-tests.sh`, GitHub issue 75).
+- **Short calls by default, with linker veneers.**  `s32-ld` (host) now
+  punches 32KB islands at each end of `.text` and emits
+  `lui`/`addi`/`jalr` stubs for any JAL past +/-1MB, failing loudly if
+  none is reachable.  SQLite no longer needs `-mlong-calls`: 24,222
+  instructions, 15% of the excess over clang (GitHub issue 74).  This
+  lives in the HOST linker, not in the kit's `s32-ld.s32x`; a kit user
+  linking a >1MB program with the kit linker still needs `-mlong-calls`.
+- **Frame elision.**  A leaf with no live stack omits its prologue; any
+  non-varargs function with a frame of at most 2047 bytes addresses its
+  slots SP-relative and skips the `r30` save -- 1,929 of SQLite's 2,365
+  functions.  Behaviour-neutral by every gate, but it moves code: size
+  and perf numbers across this boundary are not comparable.
+- **Dead statics dropped after inlining** (`S12CC_INLINE=<n>`, still
+  opt-in) and **return values computed straight into `r1`**.  Small on
+  their own; recorded so the numbers add up.
+
+Net on SQLite: 337,898 -> 304,522 instructions, 1.91x -> 1.72x clang.
+
 Fixed 2026-09-09, fifth batch (`7cce2b2f`..`0b65ae29`) -- call-boundary
 register allocation (GitHub issue 67) and two fp64 return bugs it exposed.
 All in `cc.s32x`:
