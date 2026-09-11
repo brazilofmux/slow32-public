@@ -516,7 +516,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c "$TESTS_DIR"/test_retpin.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -629,6 +629,25 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             fi
             if awk '/^withcall:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'jal r0,'; then
                 printf "  %-30s FAIL (withcall jal to next label)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
+        # GitHub issue 72: afterloop accumulator lives in r1 — no copy at the ret.
+        # diamond's join phi is r1 (each arm writes r1, no copy at the join).
+        if [[ "$tname" == "test_retpin" ]]; then
+            if awk '/^afterloop:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'addi r1, r[3-9], 0|addi r1, r1[0-9], 0|addi r1, r2[0-8], 0'; then
+                printf "  %-30s FAIL (afterloop still copies to r1)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+            if ! awk '/^afterloop:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'add r1, r1,'; then
+                printf "  %-30s FAIL (afterloop accumulator not in r1)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+            if awk '/^diamond:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE 'addi r1, r[3-9], 0|addi r1, r1[0-9], 0|addi r1, r2[0-8], 0'; then
+                printf "  %-30s FAIL (diamond still copies to r1)\n" "$tname:"
                 FAIL=$((FAIL + 1))
                 continue
             fi

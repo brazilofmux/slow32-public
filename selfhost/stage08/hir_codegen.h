@@ -358,6 +358,9 @@ static void hcg_la(int reg, char *sym) {
     cg_s(")\n");
 }
 
+/* GitHub issue 72: return-only values computed straight into r1. */
+static char hcg_ret_direct[HIR_MAX_INST];
+
 /* --- Materialize a HIR value into a specific register --- */
 
 static void hcg_into(int reg, int inst) {
@@ -366,6 +369,11 @@ static void hcg_into(int reg, int inst) {
 
     if (inst < 0) {
         cg_rri("addi", reg, 0, 0);
+        return;
+    }
+
+    if (inst < HIR_MAX_INST && hcg_ret_direct[inst]) {
+        if (reg != 1) cg_rri("addi", reg, 1, 0);
         return;
     }
 
@@ -461,6 +469,7 @@ static void hcg_into(int reg, int inst) {
  * If inst is rematerializable or spilled, loads into scratch and returns scratch. */
 static int hcg_src(int inst, int scratch) {
     if (inst < 0) return 0;
+    if (inst < HIR_MAX_INST && hcg_ret_direct[inst]) return 1;
     if (ra_reg[inst] >= 0) return ra_reg[inst];
     hcg_into(scratch, inst);
     return scratch;
@@ -558,10 +567,17 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
  * r1 is not a color -- the allocatable pool is r3-r28 -- so this cannot
  * be an allocator preference the way issue 67's argument targeting was;
  * it is decided here, after allocation, and only where r1 is provably
- * untouched between the definition and the RET. */
-static char hcg_ret_direct[HIR_MAX_INST];
+ * untouched while the return-only web is live. */
 static char hcg_usecnt[HIR_MAX_INST];   /* saturates at 2; we only need "exactly 1" */
 static int  hcg_stat_retpin;
+#define HCG_RP_MAX 512
+static int  hcg_rp_tick;
+static int  hcg_rp_stamp[HIR_MAX_INST];
+static int  hcg_rp_reach[HIR_MAX_BLOCK];
+static int  hcg_rp_path[HIR_MAX_BLOCK];
+static int  hcg_rp_s[HCG_RP_MAX];
+static int  hcg_rp_ns;
+static int  hcg_rp_wl[HIR_MAX_BLOCK];
 
 static void hcg_use_bump(int v) {
     if (v < 0 || v >= h_ninst) return;
@@ -625,23 +641,53 @@ static int hcg_retpin_clobbers_r1(int e) {
     int n;
     int base;
     int v;
+    int cmp;
+    int ck;
+    int ca;
+    int cb;
     k = h_kind[e];
-    if (k == HI_NOP) return 0;
-    if (k == HI_CALL || k == HI_CALLP || k == HI_CALLHI) return 1;
-    if (ra_reg[e] < 0) return 1;      /* its own result is emitted through r1 */
+    if (k == HI_NOP || k == HI_BR || k == HI_RET || k == HI_PHI) return 0;
+    /* Remat defs (ICONST/GADDR/...) are not emitted at the def site.
+     * diamond's `t = x + 1` keeps the ICONST 1 in the arm block. */
+    if (hi_inst_remat(e)) return 0;
+    /* JMPTAB forms the target in r1.  Calls return in r1. */
+    if (k == HI_CALL || k == HI_CALLP || k == HI_CALLHI || k == HI_JMPTAB) return 1;
+    /* An earlier RET in this function already pinned this def to r1. */
+    if (e < HIR_MAX_INST && hcg_ret_direct[e]) return 1;
+    /* Fused BRC: the compare is NOPed (ra_reg < 0) and re-emitted as a
+     * bcond.  src1 of the BRC is that NOP -- treating it as a scratch
+     * operand refused afterloop/diamond.  The bcond stages one compare
+     * operand through scratch 1 (the other through 2); SGT/SLE swap. */
+    if (k == HI_BRC) {
+        cmp = hcg_brc_fuse[e];
+        if (cmp >= 0) {
+            ck = hcg_cmp_kind[cmp];
+            if (ck == HI_CALL) return 0;   /* flag already in r1; CALL clobbers itself */
+            ca = h_src1[cmp];
+            cb = h_src2[cmp];
+            if (ck == HI_SGT || ck == HI_SGTU || ck == HI_SLE || ck == HI_SLEU)
+                v = cb;
+            else
+                v = ca;
+            if (v >= 0 && v < h_ninst && ra_reg[v] < 0 && !hcg_const_is_zero(v))
+                return 1;
+            return 0;
+        }
+        v = h_src1[e];
+        if (v >= 0 && v < h_ninst && ra_reg[v] < 0) return 1;
+        return 0;
+    }
+    /* A value-producing inst with no register is emitted through r1.
+     * Terminators and stores have no dest register; they may still
+     * stage an ADDRESS through r1 (operand check below). */
+    if (hi_has_value(k) && ra_reg[e] < 0) return 1;
     if (ra_reg[e] == 1 || ra_reg[e] == 2) return 1;
-    /* An OPERAND with no register is staged through the caller's scratch,
-     * and every caller in this file passes 1: hcg_src(v, 1) does
-     * hcg_into(1, v).  Checking only the destination above missed that
-     * and let a spilled operand overwrite the pinned return value --
-     * caught by reading hcg_src, not by any gate: the whole suite,
-     * the FP differential and byte-identical SQLite all passed with it. */
+    /* src1 is staged through scratch 1 (hcg_src(v, 1)).  src2 uses
+     * scratch 2, so a remat ICONST there is not an r1 clobber:
+     * afterloop's i=i+1 is ADD with ICONST 1 as src2, diamond's
+     * `x > 0` is SGT with ICONST 0 as src2. */
     v = h_src1[e];
     if (v >= 0 && v < h_ninst && ra_reg[v] < 0) return 1;
-    if (ho_src2_is_ref(k)) {
-        v = h_src2[e];
-        if (v >= 0 && v < h_ninst && ra_reg[v] < 0) return 1;
-    }
     if (h_cbase[e] >= 0) {
         n = h_val[e];
         base = h_cbase[e];
@@ -655,42 +701,383 @@ static int hcg_retpin_clobbers_r1(int e) {
     return 0;
 }
 
+static int hcg_rp_kind_ok(int k) {
+    if (hcg_retpin_kind_ok(k)) return 1;
+    if (k == HI_PHI || k == HI_CALL || k == HI_CALLP) return 1;
+    return 0;
+}
+
+static int hcg_inst_uses(int u, int a) {
+    int j;
+    int n;
+    int base;
+    int sp;
+    int cmp;
+    if (h_src1[u] == a) return 1;
+    if (ho_src2_is_ref(h_kind[u]) && h_src2[u] == a) return 1;
+    /* Fused BRC: the compare is NOPed, but the bcond still reads its
+     * operands.  Without this, afterloop's i looks unused outside the
+     * s=s+i web and gets pinned to r1 next to s. */
+    if (h_kind[u] == HI_BRC && hcg_brc_fuse[u] >= 0) {
+        cmp = hcg_brc_fuse[u];
+        if (h_src1[cmp] == a || h_src2[cmp] == a) return 1;
+    }
+    if ((h_kind[u] == HI_CALL || h_kind[u] == HI_CALLP) && h_cbase[u] >= 0) {
+        n = h_val[u];
+        base = h_cbase[u];
+        j = 0;
+        while (j < n) {
+            if (h_carg[base + j] == a) return 1;
+            j = j + 1;
+        }
+    }
+    if (h_kind[u] == HI_PHI && h_pbase[u] >= 0) {
+        j = 0;
+        while (j < h_pcnt[u]) {
+            if (h_pval[h_pbase[u] + j] == a) return 1;
+            j = j + 1;
+        }
+    }
+    sp = ra_csplit_head[u];
+    while (sp >= 0) {
+        if (h_src1[sp] == a) return 1;
+        sp = ra_csplit_next[sp];
+    }
+    return 0;
+}
+
+static int hcg_rp_all_uses_in_s(int a, int ret_inst) {
+    int u;
+    int saw;
+    saw = 0;
+    u = 0;
+    while (u < h_ninst) {
+        if (h_kind[u] != HI_NOP && hcg_inst_uses(u, a)) {
+            saw = 1;
+            if (u != ret_inst && hcg_rp_stamp[u] != hcg_rp_tick) return 0;
+        }
+        u = u + 1;
+    }
+    return saw;
+}
+
+static void hcg_rp_prune(int ret_inst) {
+    int pruned;
+    int i;
+    int v;
+    pruned = 1;
+    while (pruned) {
+        pruned = 0;
+        i = 0;
+        while (i < hcg_rp_ns) {
+            v = hcg_rp_s[i];
+            if (hcg_rp_stamp[v] == hcg_rp_tick &&
+                !hcg_rp_all_uses_in_s(v, ret_inst)) {
+                hcg_rp_stamp[v] = 0;
+                pruned = 1;
+            }
+            i = i + 1;
+        }
+    }
+}
+
+/* r1 holds one value.  A closed web can still contain two simultaneously
+ * live names (fib's t=a+b, mixed10's s1+s2).  Drop extra S operands of
+ * a non-PHI, and extra S phis in the same block, then re-prune.  The
+ * RET source is kept if it still has a closed web of its own. */
+static void hcg_rp_shrink(int ret_src, int ret_inst) {
+    int changed;
+    int i;
+    int v;
+    int k;
+    int a;
+    int b;
+    int ns;
+    int p;
+    int bblk;
+    changed = 1;
+    while (changed) {
+        changed = 0;
+        i = 0;
+        while (i < hcg_rp_ns) {
+            v = hcg_rp_s[i];
+            if (hcg_rp_stamp[v] == hcg_rp_tick) {
+                k = h_kind[v];
+                if (k != HI_PHI && k != HI_CALL && k != HI_CALLP) {
+                    a = h_src1[v];
+                    b = -1;
+                    if (ho_src2_is_ref(k)) b = h_src2[v];
+                    ns = 0;
+                    if (a >= 0 && a < h_ninst && hcg_rp_stamp[a] == hcg_rp_tick)
+                        ns = ns + 1;
+                    if (b >= 0 && b < h_ninst && b != a &&
+                        hcg_rp_stamp[b] == hcg_rp_tick)
+                        ns = ns + 1;
+                    if (ns >= 2) {
+                        if (a != ret_src && a >= 0 &&
+                            hcg_rp_stamp[a] == hcg_rp_tick) {
+                            hcg_rp_stamp[a] = 0;
+                            changed = 1;
+                        }
+                        if (b != ret_src && b >= 0 &&
+                            hcg_rp_stamp[b] == hcg_rp_tick) {
+                            hcg_rp_stamp[b] = 0;
+                            changed = 1;
+                        }
+                    }
+                    /* src1 remat/spill is staged through r1 (hcg_src(a, 1))
+                     * before src2 is read.  Pinning src2 to r1 then
+                     * rematting a GADDR into r1 produced
+                     * `slli r1, idx, 2; lui r1, %hi(ra_reg); add r1, r1, r1`
+                     * in hcg_dst -- gen2 DCE dropped 58 functions. */
+                    if (b >= 0 && hcg_rp_stamp[b] == hcg_rp_tick &&
+                        a >= 0 && a < h_ninst && ra_reg[a] < 0 &&
+                        !hcg_const_is_zero(a)) {
+                        hcg_rp_stamp[b] = 0;
+                        changed = 1;
+                    }
+                }
+                if (k == HI_PHI) {
+                    bblk = h_blk[v];
+                    if (bblk >= 0 && bblk < bb_nblk) {
+                        p = bb_start[bblk];
+                        while (p < bb_end[bblk]) {
+                            if (h_kind[p] == HI_PHI && p != v &&
+                                hcg_rp_stamp[p] == hcg_rp_tick) {
+                                if (v != ret_src) {
+                                    hcg_rp_stamp[v] = 0;
+                                    changed = 1;
+                                }
+                                if (p != ret_src) {
+                                    hcg_rp_stamp[p] = 0;
+                                    changed = 1;
+                                }
+                            }
+                            p = p + 1;
+                        }
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        if (changed) hcg_rp_prune(ret_inst);
+    }
+}
+
+static void hcg_rp_flood_add(int a) {
+    int k;
+    if (a < 0 || a >= h_ninst) return;
+    if (hcg_rp_stamp[a] == hcg_rp_tick) return;
+    k = h_kind[a];
+    if (k == HI_PARAM || k == HI_ICONST || k == HI_NOP) return;
+    if (ty_is_llong(h_ty[a]) || ty_is_double(h_ty[a])) return;
+    if (!hcg_rp_kind_ok(k)) return;
+    if (ra_reg[a] < 2) return;
+    if (ra_is_csplit[a]) return;
+    if (hcg_rp_ns >= HCG_RP_MAX) return;
+    hcg_rp_stamp[a] = hcg_rp_tick;
+    hcg_rp_s[hcg_rp_ns] = a;
+    hcg_rp_ns = hcg_rp_ns + 1;
+}
+
+static int hcg_rp_block_clobbers(int b) {
+    int i;
+    int sp;
+    if (b < 0 || b >= bb_nblk) return 0;
+    i = bb_start[b];
+    while (i < bb_end[b]) {
+        if (h_kind[i] != HI_NOP && hcg_rp_stamp[i] != hcg_rp_tick) {
+            if (h_kind[i] == HI_RET) { i = i + 1; continue; }
+            if (hcg_retpin_clobbers_r1(i)) return 1;
+            sp = ra_csplit_head[i];
+            while (sp >= 0) {
+                if (hcg_retpin_clobbers_r1(sp)) return 1;
+                sp = ra_csplit_next[sp];
+            }
+        }
+        i = i + 1;
+    }
+    i = licm_head[b];
+    while (i >= 0) {
+        if (hcg_rp_stamp[i] != hcg_rp_tick && hcg_retpin_clobbers_r1(i)) return 1;
+        i = licm_next[i];
+    }
+    i = split_head[b];
+    while (i >= 0) {
+        if (hcg_rp_stamp[i] != hcg_rp_tick && hcg_retpin_clobbers_r1(i)) return 1;
+        i = licm_next[i];
+    }
+    return 0;
+}
+
+/* Slow-path phi copies push through r1.  A pinned return phi that
+ * shares its join with a spilled phi would take that path and the
+ * push would clobber the value.  Refuse the pin; fast-path copies
+ * (afterloop's s and i both in registers) are fine. */
+static int hcg_rp_phi_roommates_ok(void) {
+    int i;
+    int v;
+    int b;
+    int p;
+    i = 0;
+    while (i < hcg_rp_ns) {
+        v = hcg_rp_s[i];
+        if (h_kind[v] == HI_PHI) {
+            b = h_blk[v];
+            if (b >= 0 && b < bb_nblk) {
+                p = bb_start[b];
+                while (p < bb_end[b]) {
+                    if (h_kind[p] == HI_PHI && p != v && ra_reg[p] < 0) return 0;
+                    p = p + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+static int hcg_rp_paths_clean(int ret_blk) {
+    int i;
+    int nwl;
+    int b;
+    int p;
+    int s;
+    int j;
+    /* Blocks that can reach the RET. */
+    nwl = 0;
+    hcg_rp_reach[ret_blk] = hcg_rp_tick;
+    hcg_rp_wl[0] = ret_blk;
+    nwl = 1;
+    i = 0;
+    while (i < nwl) {
+        b = hcg_rp_wl[i];
+        j = 0;
+        while (j < ssa_npred[b]) {
+            p = ssa_pred[ssa_pbase[b] + j];
+            if (p >= 0 && p < bb_nblk && hcg_rp_reach[p] != hcg_rp_tick) {
+                hcg_rp_reach[p] = hcg_rp_tick;
+                if (nwl < HIR_MAX_BLOCK) {
+                    hcg_rp_wl[nwl] = p;
+                    nwl = nwl + 1;
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    /* Blocks reachable from an S-def that still reach the RET. */
+    nwl = 0;
+    i = 0;
+    while (i < hcg_rp_ns) {
+        b = h_blk[hcg_rp_s[i]];
+        if (b >= 0 && b < bb_nblk && hcg_rp_path[b] != hcg_rp_tick &&
+            hcg_rp_reach[b] == hcg_rp_tick) {
+            hcg_rp_path[b] = hcg_rp_tick;
+            hcg_rp_wl[nwl] = b;
+            nwl = nwl + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < nwl) {
+        b = hcg_rp_wl[i];
+        if (hcg_rp_block_clobbers(b)) return 0;
+        j = 0;
+        while (j < ssa_nsucc[b]) {
+            s = ssa_succ[ssa_soff[b] + j];
+            if (s >= 0 && s < bb_nblk && hcg_rp_path[s] != hcg_rp_tick &&
+                hcg_rp_reach[s] == hcg_rp_tick) {
+                hcg_rp_path[s] = hcg_rp_tick;
+                if (nwl < HIR_MAX_BLOCK) {
+                    hcg_rp_wl[nwl] = s;
+                    nwl = nwl + 1;
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
 static void hcg_mark_ret_direct(void) {
     int r;
     int d;
-    int b;
-    int e;
-    int sp;
-    int ok;
+    int i;
+    int v;
+    int j;
     hcg_build_usecnt();
     r = 0;
     while (r < h_ninst) {
         if (h_kind[r] == HI_RET && h_src2[r] < 0) {
             d = h_src1[r];
-            b = h_blk[r];
-            if (d >= 0 && d < h_ninst && b >= 0 &&
-                h_blk[d] == b && d < r &&
-                ra_reg[d] >= 2 &&              /* has a real allocated register */
-                hcg_usecnt[d] == 1 &&          /* the RET is its only reader */
-                !ra_is_csplit[d] &&
-                hcg_retpin_kind_ok(h_kind[d])) {
-                ok = 1;
-                e = d + 1;
-                while (e < r) {
-                    if (hcg_retpin_clobbers_r1(e)) { ok = 0; break; }
-                    sp = ra_csplit_head[e];
-                    while (sp >= 0) {
-                        if (hcg_retpin_clobbers_r1(sp)) { ok = 0; }
-                        sp = ra_csplit_next[sp];
+            if (d >= 0 && d < h_ninst && h_blk[r] >= 0) {
+                hcg_rp_tick = hcg_rp_tick + 1;
+                if (hcg_rp_tick == 0) {
+                    i = 0;
+                    while (i < HIR_MAX_INST) { hcg_rp_stamp[i] = 0; i = i + 1; }
+                    i = 0;
+                    while (i < HIR_MAX_BLOCK) {
+                        hcg_rp_reach[i] = 0;
+                        hcg_rp_path[i] = 0;
+                        i = i + 1;
                     }
-                    if (!ok) break;
-                    e = e + 1;
+                    hcg_rp_tick = 1;
                 }
-                /* LICM hoists into the gap before the terminator too. */
-                if (ok && licm_head[b] >= 0) ok = 0;
-                if (ok) {
-                    hcg_ret_direct[d] = 1;
-                    hcg_stat_retpin = hcg_stat_retpin + 1;
+                hcg_rp_ns = 0;
+                hcg_rp_flood_add(d);
+                i = 0;
+                while (i < hcg_rp_ns) {
+                    v = hcg_rp_s[i];
+                    if (h_kind[v] == HI_PHI && h_pbase[v] >= 0) {
+                        j = 0;
+                        while (j < h_pcnt[v]) {
+                            hcg_rp_flood_add(h_pval[h_pbase[v] + j]);
+                            j = j + 1;
+                        }
+                    } else if (h_kind[v] != HI_CALL && h_kind[v] != HI_CALLP) {
+                        /* Do not flood call arguments: pinning them to r1
+                         * fights the ABI marshaller (r3-r10).  The CALL
+                         * itself stays in S so its result skips the home
+                         * copy; args keep their allocated registers. */
+                        hcg_rp_flood_add(h_src1[v]);
+                        if (ho_src2_is_ref(h_kind[v]))
+                            hcg_rp_flood_add(h_src2[v]);
+                    }
+                    i = i + 1;
+                }
+                /* Drop anything used outside the web (or the RET), then
+                 * shrink so r1 is never asked to hold two live names. */
+                hcg_rp_prune(r);
+                hcg_rp_shrink(d, r);
+                j = 0;
+                i = 0;
+                while (i < hcg_rp_ns) {
+                    v = hcg_rp_s[i];
+                    if (hcg_rp_stamp[v] == hcg_rp_tick) {
+                        hcg_rp_s[j] = v;
+                        j = j + 1;
+                    }
+                    i = i + 1;
+                }
+                hcg_rp_ns = j;
+                if (hcg_rp_ns > 0 && hcg_rp_stamp[d] == hcg_rp_tick &&
+                    hcg_rp_paths_clean(h_blk[r]) &&
+                    hcg_rp_phi_roommates_ok()) {
+                    i = 0;
+                    while (i < hcg_rp_ns) {
+                        v = hcg_rp_s[i];
+                        if (h_kind[v] == HI_CALL || h_kind[v] == HI_CALLP) {
+                            /* Result already lands in r1; skip the home copy. */
+                            hcg_ret_direct[v] = 1;
+                            hcg_stat_retpin = hcg_stat_retpin + 1;
+                        } else {
+                            hcg_ret_direct[v] = 1;
+                            hcg_stat_retpin = hcg_stat_retpin + 1;
+                        }
+                        i = i + 1;
+                    }
                 }
             }
         }
@@ -863,7 +1250,8 @@ static void hcg_move_vals(int *dst, int *vals, int n) {
         v = vals[i];
         hcg_shuf_dst[i] = dst[i];
         hcg_shuf_val[i] = v;
-        if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[i] = ra_reg[v];
+        if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[i] = 1;
+        else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[i] = ra_reg[v];
         else hcg_shuf_src[i] = -1;
         hcg_shuf_done[i] = 0;
         i = i + 1;
@@ -887,7 +1275,8 @@ static void hcg_marshal_reg_args(int base, int nargs) {
             v = h_carg[base + i];
             hcg_shuf_dst[n] = hcg_argmap[i];
             hcg_shuf_val[n] = v;
-            if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
+            if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[n] = 1;
+            else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
             else hcg_shuf_src[n] = -1;
             hcg_shuf_done[n] = 0;
             n = n + 1;
@@ -1294,7 +1683,8 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
         v = ssa_phi_find_arg(phi, from_blk);
         hcg_phi_src_inst[j] = v;
         hcg_phi_active[j] = 1;
-        hcg_phi_dst_reg[j] = ra_reg[phi];
+        if (hcg_ret_direct[phi]) hcg_phi_dst_reg[j] = 1;
+        else hcg_phi_dst_reg[j] = ra_reg[phi];
         if (hcg_const_imm_inst(v, &c)) {
             hcg_phi_is_const[j] = 1;
             hcg_phi_const_val[j] = c;
@@ -1302,6 +1692,9 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
         } else if (v < 0) {
             fast_ok = 0;
             break;
+        } else if (hcg_ret_direct[v]) {
+            hcg_phi_is_const[j] = 0;
+            hcg_phi_src_reg[j] = 1;
         } else if (ra_reg[v] >= 0) {
             if (ra_reg[v] == 2) { fast_ok = 0; break; }
             hcg_phi_is_const[j] = 0;
@@ -1474,8 +1867,8 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
         if (hcg_phi_is_const[j] == 3) { j = j - 1; continue; }
         if (hcg_phi_is_const[j]) {
             c = hcg_phi_const_val[j];
-            if (ra_reg[phi] >= 0) {
-                dreg = ra_reg[phi];
+            if (hcg_ret_direct[phi] || ra_reg[phi] >= 0) {
+                dreg = hcg_ret_direct[phi] ? 1 : ra_reg[phi];
                 if (c == 0) cg_rri("addi", dreg, 0, 0);
                 else if (hcg_is_i12(c)) cg_rri("addi", dreg, 0, c);
                 else hcg_li(dreg, c);
@@ -1508,9 +1901,9 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                     }
                 }
             }
-        } else if (ra_reg[phi] >= 0) {
+        } else if (hcg_ret_direct[phi] || ra_reg[phi] >= 0) {
             /* Load pushed value directly into physical register. */
-            dreg = ra_reg[phi];
+            dreg = hcg_ret_direct[phi] ? 1 : ra_reg[phi];
             cg_s("    ldw r");
             cg_n(dreg);
             cg_s(", r29, ");
