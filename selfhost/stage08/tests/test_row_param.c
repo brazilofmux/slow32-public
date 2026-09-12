@@ -2,11 +2,11 @@
  * one pointer level, and a[i] selects row i without loading through it.
  * It used to become `T **`, and regal's CSV row callback passed the
  * first row's BYTES to strcasecmp as a pointer (memory fault at
- * "Clea" of "Cleared").  The `T (*p)[M]` spelling of the same type is
- * still not parsed in a parameter list. */
+ * "Clea" of "Cleared").  `T (*p)[M]` is the same type spelled out. */
 #include <string.h>
 #define NF 4
 #define FL 16
+static int len2(char (*rows)[FL], int k);
 static int row_cb(int n, char fields[NF][FL], int *hits) {
     int i;
     if (n < 2) return 0;
@@ -15,12 +15,14 @@ static int row_cb(int n, char fields[NF][FL], int *hits) {
     if (sizeof(fields[1]) != FL) return 2;
     return 0;
 }
+static int len2(char (*rows)[FL], int k) { return (int)strlen(rows[k]) + (int)sizeof(rows[k]) - FL; }
 int main(void) {
     char f[NF][FL];
     int hits = 0;
     strcpy(f[0], "Cleared"); strcpy(f[1], "2025-10-03"); strcpy(f[2], ""); strcpy(f[3], "12.34");
     if (row_cb(4, f, &hits) != 0) return 10;
     if (hits != 15) return 20;
+    if (len2(f, 3) != 5) return 30;
     strcpy(f[0], "Pending");
     if (row_cb(4, f, &hits) != 1) return 40;
     return 0;

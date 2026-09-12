@@ -6227,11 +6227,28 @@ function_decl:
                 p_skip_to_rparen();
             }
             expect(TK_RPAREN);
+            if (lex_tok == TK_LBRACK && !nested_fp) {
+                /* T (*name)[M]: a pointer to a row of M elements -- the
+                 * spelled-out form of `T name[][M]`.  Retype the local
+                 * (added above as a word) and record the row width. */
+                next();
+                pcols = parse_const_int();
+                expect(TK_RBRACK);
+                if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
+                pty = pty + TY_PTR;
+                if (p != NULL) {
+                    ps_ltype[ps_nlocals - 1] = pty;
+                    ps_lcols[ps_nlocals - 1] = pcols;
+                    p->ty = pty;
+                    p->arr_cols = pcols;
+                }
+            } else {
             if (lex_tok == TK_LPAREN) {
                 next();
                 p_skip_to_rparen();
             }
             pty = TY_INT;  /* record fn-ptr param as a word */
+            }
         } else if (lex_tok == TK_LBRACK) {
             ps_parse_param_dims(&pty);
             p = NULL;
@@ -6311,6 +6328,22 @@ function_decl:
                     fp_ret_ty = TY_PTR + TY_INT;
                 }
                 expect(TK_RPAREN);
+                if (lex_tok == TK_LBRACK && !nested_fp) {
+                    /* T (*name)[M]: a pointer to a row of M elements -- the
+                     * spelled-out form of `T name[][M]`.  Retype the local
+                     * (added above as a word) and record the row width. */
+                    next();
+                    pcols = parse_const_int();
+                    expect(TK_RBRACK);
+                    if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
+                    pty = pty + TY_PTR;
+                    if (p != NULL) {
+                        ps_ltype[ps_nlocals - 1] = pty;
+                        ps_lcols[ps_nlocals - 1] = pcols;
+                        p->ty = pty;
+                        p->arr_cols = pcols;
+                    }
+                } else {
                 if (lex_tok == TK_LPAREN) {
                     int pfpb;
                     int pfn;
@@ -6333,6 +6366,7 @@ function_decl:
                     }
                 }
                 pty = TY_INT;  /* record fn-ptr param as a word */
+                }
             } else if (lex_tok == TK_LBRACK) {
                 ps_parse_param_dims(&pty);
                 p = NULL;
