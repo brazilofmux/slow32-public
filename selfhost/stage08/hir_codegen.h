@@ -4630,8 +4630,9 @@ static void gen_program(Node *prog) {
         /* Inlining + dead-static DCE (GitHub issue 73).  S12CC_INLINE=<n>
          * splices statics up to that AST-node budget when the whole-TU
          * copy count is a size win; DCE then drops the out-of-line
-         * body.  Default 0: budget 20 is a measured -0.68% on sqlite,
-         * not yet on by default (bootstrap ceilings). */
+         * body.  Default 0: budget 20 is -0.52% / -1,294 insns on
+         * sqlite at c6e6a7ab.  sqlite/build-stage08.sh opts in.
+         * Default-on makes the gen2 self-compile of s12cc.c too slow. */
         char *e;
         hl_prog = prog;
         hl_stat_inlined = 0;

@@ -9,12 +9,13 @@
 # the amalgamation takes about a minute.  Assembly and linking use the host
 # tools.  Default is short `jal`; s32-ld veneers sites past ±1MB (GitHub
 # issue 74).  LONGCALLS=-mlong-calls is the lui+addi+jalr A/B.
-# S12CC_INLINE=<n> splices small statics whose whole-TU copy count is a
-# size win; DCE drops the out-of-line copy (GitHub issue 73).  Default
-# off.  Leaf and frame-pointer elision are always on.  Budget 20 is a
-# further measured -0.35% on sqlite; bootstrap ceilings keep inlining
-# opt-in.
+# S12CC_INLINE=<n> splices statics whose whole-TU copy count is a size
+# win; DCE drops the out-of-line copy (GitHub issue 73).  Compiler
+# default is off (self-compile of s12cc.c); this script opts in at 20.
+# Leaf and frame-pointer elision are always on.
 set -e
+S12CC_INLINE="${S12CC_INLINE-20}"
+export S12CC_INLINE
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/.."
 TOOLCHAIN="$PROJECT_DIR/tools"
