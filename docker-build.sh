@@ -7,15 +7,18 @@ set -e
 echo "Building SLOW-32 Docker containers..."
 echo "======================================"
 
-# Build toolchain container
-echo ""
-echo "Building toolchain container..."
-docker build -f Dockerfile.toolchain -t slow32:toolchain .
-
-# Build emulator container  
+# The images are a chain -- emulator -> base -> toolchain -- so the order matters.
 echo ""
 echo "Building emulator container..."
 docker build -f Dockerfile.emulator -t slow32:emulator .
+
+echo ""
+echo "Building base container (emulator + as/ld/ar/utilities + runtime)..."
+docker build -f Dockerfile.base -t slow32:base .
+
+echo ""
+echo "Building toolchain container (base + LLVM + FPC + cc-x64/cc-a64)..."
+docker build -f Dockerfile.toolchain -t slow32:toolchain .
 
 echo ""
 echo "Build complete!"

@@ -1,0 +1,54 @@
+# SLOW-32 Base Image: everything that is language-independent.
+#
+#   slow32:emulator   the four engines (slow32, slow32-fast, slow32-dbt,
+#                     qemu-system-slow32) + s32run          (Dockerfile.emulator)
+#     -> slow32:base  + assembler, linker, librarian, slow32dump/slow32dis,
+#                     + the runtime archives and headers    (this file)
+#        -> slow32:toolchain  + LLVM/clang, Free Pascal, cc-x64/cc-a64
+#                                                           (Dockerfile.toolchain)
+#        -> per-language images (COBOL 85, Fortran 77, Forth) build FROM base:
+#           they need as/ld/ar and the runtime, not the LLVM layer.
+#
+# Build order: emulator, then base, then toolchain.  ~/builder does this per
+# arch (jobs/slow32.sh) with the arch-tagged parents passed as build args.
+ARG EMULATOR_IMAGE=slow32:emulator
+
+# Stage 1: the host tools, compiled fresh for this image's arch and libc
+FROM alpine:3.21 AS tools-builder
+RUN apk add --no-cache gcc make musl-dev
+WORKDIR /build
+COPY common /build/common
+COPY tools/assembler /build/tools/assembler
+COPY tools/linker /build/tools/linker
+COPY tools/utilities /build/tools/utilities
+RUN make -C tools/assembler clean && make -C tools/assembler && \
+    make -C tools/linker clean && make -C tools/linker && \
+    make -C tools/utilities clean && make -C tools/utilities
+
+# Stage 2: layer them onto the emulator image
+FROM ${EMULATOR_IMAGE}
+RUN mkdir -p /opt/slow32/bin /opt/slow32/lib /opt/slow32/include
+COPY --from=tools-builder \
+     /build/tools/assembler/slow32asm \
+     /build/tools/linker/s32-ld \
+     /build/tools/utilities/s32-ar \
+     /build/tools/utilities/slow32dump \
+     /build/tools/utilities/slow32dis \
+     /opt/slow32/bin/
+
+# Runtime: the tracked guest archives (.s32o/.s32a are host-independent and
+# committed alongside their sources).  slow32:toolchain rebuilds them from
+# source with its own LLVM and overwrites these; images built FROM base link
+# against exactly what the repository ships.
+COPY runtime/crt0.s32o runtime/libs32.s32a runtime/libc_debug.s32a runtime/libc_mmio.s32a \
+     /opt/slow32/lib/
+COPY runtime/include /opt/slow32/include
+
+ENV PATH="/opt/slow32/bin:${PATH}"
+ENV SLOW32_HOME="/opt/slow32"
+ENV SLOW32_INCLUDE="${SLOW32_HOME}/include"
+ENV SLOW32_LIB="${SLOW32_HOME}/lib"
+
+# Working directory is the /data mount, as in the parent; the parent's CMD
+# (run every .s32x in /data) is inherited.
+WORKDIR /data

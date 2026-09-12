@@ -1,6 +1,9 @@
 # SLOW-32 Toolchain Docker Image
 # This image contains the complete toolchain for building SLOW-32 executables
-# Includes: clang, llc, assembler, linker, ar, objdump, etc.
+# Includes: clang, llc, Free Pascal, cc-x64/cc-a64 -- layered on slow32:base,
+# which already carries the assembler, linker, librarian, utilities, the
+# runtime and the four emulators (see Dockerfile.base for the chain).
+ARG BASE_IMAGE=slow32:base
 
 # Stage 1: Build LLVM/Clang with SLOW-32 backend
 FROM alpine:3.21 AS llvm-builder
@@ -177,10 +180,12 @@ RUN cd /build/selfhost/stage08-cross-x64 && rm -rf out && mkdir -p out && \
 RUN cd /build/selfhost/stage08-cross-a64 && rm -rf out && mkdir -p out && \
     make out/cc-a64 out/ld-a64 out/ar-a64 out/crt0.o libc
 
-# Stage 3: Build SLOW-32 native tools and create final image
-FROM alpine:3.21
+# Stage 3: layer LLVM, FPC and the cross-compilers onto slow32:base
+# (base = emulators + slow32asm/s32-ld/s32-ar/slow32dump/slow32dis + runtime)
+FROM ${BASE_IMAGE}
 
-# Install runtime dependencies
+# Host compilers stay in this image: the runtime is rebuilt below, and users
+# build host-side helpers (test oracles, generators) in here.
 RUN apk add --no-cache \
     gcc \
     g++ \
@@ -191,40 +196,20 @@ RUN apk add --no-cache \
 # Copy LLVM installation from builder
 COPY --from=llvm-builder /opt/llvm /opt/llvm
 
-# Copy SLOW-32 source for building native tools
+# Rebuild the runtime from source with THIS image's LLVM and replace the
+# tracked archives base installed.  The tracked .s32o/.s32a come along in the
+# context now (base needs them), so `clean` first: make must not skip the
+# rebuild because a committed archive happens to be newer than its source.
 WORKDIR /slow32-build
 COPY common /slow32-build/common
-COPY tools/assembler /slow32-build/tools/assembler
-COPY tools/linker /slow32-build/tools/linker
-COPY tools/utilities /slow32-build/tools/utilities
 COPY runtime /slow32-build/runtime
 COPY Makefile /slow32-build/
-
-# Ensure runtime build finds LLVM toolchain installed in /opt/llvm
 ENV LLVM_BIN="/opt/llvm/bin"
-
-# Build SLOW-32 native tools (clean first to ensure fresh builds with musl)
-RUN make -C tools/assembler clean && make -C tools/assembler && \
-    make -C tools/linker clean && make -C tools/linker && \
-    make -C tools/utilities clean && make -C tools/utilities
-
-# Build runtime libraries
-RUN make -C runtime
-
-# Create installation directory structure
-RUN mkdir -p /opt/slow32/bin /opt/slow32/lib /opt/slow32/include
-
-# Install tools
-RUN cp tools/assembler/slow32asm /opt/slow32/bin/ && \
-    cp tools/linker/s32-ld /opt/slow32/bin/ && \
-    cp tools/utilities/s32-ar /opt/slow32/bin/ && \
-    cp tools/utilities/slow32dump /opt/slow32/bin/ && \
-    cp tools/utilities/slow32dis /opt/slow32/bin/
-
-# Install runtime libraries and headers
-RUN cp runtime/*.s32o /opt/slow32/lib/ && \
+RUN make -C runtime clean && \
+    make -C runtime ASSEMBLER=/opt/slow32/bin/slow32asm ARCHIVER=/opt/slow32/bin/s32-ar && \
+    cp runtime/*.s32o /opt/slow32/lib/ && \
     cp runtime/*.s32a /opt/slow32/lib/ && \
-    cp -r runtime/include/* /opt/slow32/include/ 2>/dev/null || true
+    cp -r runtime/include/* /opt/slow32/include/
 
 # Install FPC cross-compiler and RTL
 RUN mkdir -p /opt/slow32/lib/fpc
@@ -265,11 +250,8 @@ COPY --from=selfhost-builder \
 COPY docker/bin/cc-x64 docker/bin/cc-a64 /opt/slow32/bin/
 RUN chmod +x /opt/slow32/bin/cc-x64 /opt/slow32/bin/cc-a64
 
-# Set up environment
-ENV PATH="/opt/llvm/bin:/opt/slow32/bin:${PATH}"
-ENV SLOW32_HOME="/opt/slow32"
-ENV SLOW32_INCLUDE="${SLOW32_HOME}/include"
-ENV SLOW32_LIB="${SLOW32_HOME}/lib"
+# Set up environment (SLOW32_HOME/INCLUDE/LIB and /opt/slow32/bin come from base)
+ENV PATH="/opt/llvm/bin:${PATH}"
 
 # Working directory should be /data (mounted volume)
 WORKDIR /data

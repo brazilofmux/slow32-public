@@ -54,9 +54,10 @@ tools/emulator/slow32
 tools/emulator/slow32-fast
 tools/dbt/slow32-dbt
 
-# Pre-built runtime artifacts (must be rebuilt with container's clang/llc)
-runtime/*.s32o
-runtime/*.s32a
+# Runtime: the tracked .s32o/.s32a stay IN the context -- slow32:base installs
+# them as-is (guest archives are host-independent).  slow32:toolchain still
+# rebuilds them from source with its own LLVM (`make clean` first, so a
+# committed archive newer than its source cannot short-circuit the rebuild).
 runtime/*.llc.s
 
 # Self-host build outputs (rebuilt fresh in-container for musl/Alpine)

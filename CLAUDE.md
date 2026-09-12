@@ -119,19 +119,25 @@ int sum_to_n(int n) {
 
 ## Container Support (podman/docker)
 
-Containers provide a clean baseline for testing. Two images, repo:tag
-naming (`slow32:toolchain`, `slow32:emulator`) — the same names
-~/builder's jobs build per-arch and the ECR mirror serves. Podman is
-the local engine of choice; the commands below work with `docker`
-substituted 1:1.
+Containers provide a clean baseline for testing. Three images in a
+chain, repo:tag naming — the same names ~/builder's jobs build per-arch
+and the ECR mirror serves. Podman is the local engine of choice; the
+commands below work with `docker` substituted 1:1.
 
-- `slow32:toolchain`: Full development environment with LLVM 22
-- `slow32:emulator`: Lightweight runtime for testing executables (includes slow32, slow32-fast, qemu-system-slow32)
+- `slow32:emulator`: the four engines (slow32, slow32-fast, slow32-dbt,
+  qemu-system-slow32) + `s32run`. ~38 MB. No compilers.
+- `slow32:base` (FROM emulator): + slow32asm, s32-ld, s32-ar, slow32dump,
+  slow32dis, and the runtime archives/headers under /opt/slow32. Everything
+  language-independent; per-language images (COBOL 85, Fortran 77, Forth)
+  build FROM this, not from the LLVM image.
+- `slow32:toolchain` (FROM base): + LLVM 22/clang, Free Pascal `ppcs32`,
+  cc-x64/cc-a64. The big one (~2.9 GB).
 
 ```bash
-# Build images (if not already built)
+# Build images (if not already built) -- in this order, it is a chain
+podman build -t slow32:emulator  -f Dockerfile.emulator  .
+podman build -t slow32:base      -f Dockerfile.base      .
 podman build -t slow32:toolchain -f Dockerfile.toolchain .
-podman build -t slow32:emulator -f Dockerfile.emulator .
 
 # Run programs with the emulator container (easy wrapper script;
 # auto-detects podman/docker and falls back to the legacy
