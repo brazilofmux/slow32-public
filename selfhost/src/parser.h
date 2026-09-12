@@ -4320,7 +4320,25 @@ static void local_init_zero_at(int ty, int arr_count, int rel_off) {
     int mi;
     int field_ty;
     int field_arr_count;
+    int total;
+    Node *a;
+    Node *args;
 
+    /* A big region (a whole array or struct of 32+ bytes) is one
+     * memset call, not one store per scalar: regal's
+     * `ReconcileResult result = {0};` is 16KB and became 4,100 stores,
+     * each on a far frame slot (lui+addi+add+stw). */
+    total = ty_size(ty);
+    if (arr_count != 0 && ty_is_ptr(ty)) total = arr_count * ty_size(ty_deref(ty));
+    if (total >= 32) {
+        a = local_init_lvalue(rel_off, TY_CHAR, 0);
+        args = nd_unary(TK_AMP, a);
+        args->next = nd_num(0);
+        args->next->next = nd_num(total);
+        a = nd_call("memset", args, 3);
+        local_init_append(nd_expr_stmt(a));
+        return;
+    }
     if (arr_count != 0 && ty_is_ptr(ty)) {
         elem_ty = ty_deref(ty);
         i = 0;

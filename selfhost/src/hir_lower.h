@@ -796,6 +796,46 @@ static int hl_addr(Node *n) {
     return -1;
 }
 
+/* Copy sz bytes from src_addr to dst_addr.  Small blocks are copied
+ * inline a word at a time; anything over HL_COPY_INLINE bytes calls
+ * memcpy.  Unrolled copies were quadratic in disguise: regal's
+ * 16KB ReconcileResult returned by value became 4,100 word copies,
+ * each lui+addi+add+ldw / lui+addi+add+stw on a far frame slot --
+ * reconcile() alone was 178,000 instructions, 100x clang's file. */
+#define HL_COPY_INLINE 32
+static void hl_copy_block(int dst_addr, int src_addr, int sz) {
+    int off;
+    int sp;
+    int dp;
+    int tmp;
+    int cb;
+    int r;
+    if (sz > HL_COPY_INLINE) {
+        cb = h_ncarg;
+        h_carg[h_ncarg] = dst_addr; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = src_addr; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = hi_emit(HI_ICONST, TY_INT, -1, -1, sz, NULL); h_ncarg = h_ncarg + 1;
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "memcpy");
+        h_cbase[r] = cb;
+        return;
+    }
+    off = 0;
+    while (off + 4 <= sz) {
+        sp = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, off, NULL);
+        tmp = hi_emit(HI_LOAD, TY_INT, sp, -1, 0, NULL);
+        dp = hi_emit(HI_ADDI, HL_ADDR_TY, dst_addr, -1, off, NULL);
+        hi_emit(HI_STORE, TY_INT, dp, tmp, 0, NULL);
+        off = off + 4;
+    }
+    while (off < sz) {
+        sp = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, off, NULL);
+        tmp = hi_emit(HI_LOAD, TY_CHAR, sp, -1, 0, NULL);
+        dp = hi_emit(HI_ADDI, HL_ADDR_TY, dst_addr, -1, off, NULL);
+        hi_emit(HI_STORE, TY_CHAR, dp, tmp, 0, NULL);
+        off = off + 1;
+    }
+}
+
 #ifndef S12CC_X64_HOST
 /* Byval struct argument (clang's SLOW-32 convention): the caller copies
  * the struct into a fresh temp in its own frame and passes the temp's
@@ -813,21 +853,7 @@ static int hl_byval_arg(int src_addr, int sz) {
 
     hl_temp_stack = hl_temp_stack + ((sz + 3) / 4) * 4;
     tmp = hl_emit_temp_alloca(HL_ADDR_TY, 0 - hl_temp_stack);
-    ci = 0;
-    while (ci + 4 <= sz) {
-        so = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, ci, NULL);
-        tv = hi_emit(HI_LOAD, TY_INT, so, -1, 0, NULL);
-        dn = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, ci, NULL);
-        hi_emit(HI_STORE, TY_INT, dn, tv, 0, NULL);
-        ci = ci + 4;
-    }
-    while (ci < sz) {
-        so = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, ci, NULL);
-        tv = hi_emit(HI_LOAD, TY_CHAR, so, -1, 0, NULL);
-        dn = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, ci, NULL);
-        hi_emit(HI_STORE, TY_CHAR, dn, tv, 0, NULL);
-        ci = ci + 1;
-    }
+    hl_copy_block(tmp, src_addr, sz);
     return tmp;
 }
 #endif
@@ -1664,21 +1690,7 @@ static int hl_expr(Node *n) {
             sa = hl_expr(n->rhs);  /* address of source (works for vars, calls, members) */
             da = hl_addr(n->lhs);
             sz = ty_size(n->ty);
-            off = 0;
-            while (off + 4 <= sz) {
-                sp = hi_emit(HI_ADDI, HL_ADDR_TY, sa, -1, off, NULL);
-                tmp = hi_emit(HI_LOAD, TY_INT, sp, -1, 0, NULL);
-                dp = hi_emit(HI_ADDI, HL_ADDR_TY, da, -1, off, NULL);
-                hi_emit(HI_STORE, TY_INT, dp, tmp, 0, NULL);
-                off = off + 4;
-            }
-            while (off < sz) {
-                sp = hi_emit(HI_ADDI, HL_ADDR_TY, sa, -1, off, NULL);
-                tmp = hi_emit(HI_LOAD, TY_CHAR, sp, -1, 0, NULL);
-                dp = hi_emit(HI_ADDI, HL_ADDR_TY, da, -1, off, NULL);
-                hi_emit(HI_STORE, TY_CHAR, dp, tmp, 0, NULL);
-                off = off + 1;
-            }
+            hl_copy_block(da, sa, sz);
             return da;
         }
 #ifdef S12CC_X64_HOST
@@ -3362,21 +3374,8 @@ static void hl_stmt(Node *n) {
                 src_addr = hl_addr(n->lhs);
                 dst_addr = hi_emit(HI_LOAD, HL_ADDR_TY, hl_retptr_alloca, -1, 0, NULL);
                 copy_sz = hl_ret_size;
-                copy_i = 0;
-                while (copy_i + 4 <= copy_sz) {
-                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, copy_i, NULL);
-                    tmp = hi_emit(HI_LOAD, TY_INT, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, dst_addr, -1, copy_i, NULL);
-                    hi_emit(HI_STORE, TY_INT, dst_off, tmp, 0, NULL);
-                    copy_i = copy_i + 4;
-                }
-                while (copy_i < copy_sz) {
-                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, copy_i, NULL);
-                    tmp = hi_emit(HI_LOAD, TY_CHAR, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, dst_addr, -1, copy_i, NULL);
-                    hi_emit(HI_STORE, TY_CHAR, dst_off, tmp, 0, NULL);
-                    copy_i = copy_i + 1;
-                }
+                copy_i = copy_sz;
+                hl_copy_block(dst_addr, src_addr, copy_sz);
                 hi_emit(HI_RET, 0, dst_addr, -1, 0, NULL);
             }
         } else if (n->lhs) {
@@ -3813,21 +3812,8 @@ static void hl_func(Node *fn) {
                 param_ptr = hl_pp_inst[phys_idx];
                 local_addr = hl_get_alloca_id(pp->offset, pp->ty, pp->slot_id);
                 copy_sz = ty_size(pp->ty);
-                copy_i = 0;
-                while (copy_i + 4 <= copy_sz) {
-                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, param_ptr, -1, copy_i, NULL);
-                    tmp = hi_emit(HI_LOAD, TY_INT, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, local_addr, -1, copy_i, NULL);
-                    hi_emit(HI_STORE, TY_INT, dst_off, tmp, 0, NULL);
-                    copy_i = copy_i + 4;
-                }
-                while (copy_i < copy_sz) {
-                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, param_ptr, -1, copy_i, NULL);
-                    tmp = hi_emit(HI_LOAD, TY_CHAR, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, local_addr, -1, copy_i, NULL);
-                    hi_emit(HI_STORE, TY_CHAR, dst_off, tmp, 0, NULL);
-                    copy_i = copy_i + 1;
-                }
+                copy_i = copy_sz;
+                hl_copy_block(local_addr, param_ptr, copy_sz);
                 phys_idx = phys_idx + 1;
             } else if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) {
 #ifdef S12CC_X64_HOST
