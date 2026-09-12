@@ -207,16 +207,19 @@ static int licm_find_body(int header, int latch) {
  * so a value hoisted for one case is live across every iteration and
  * spills, and chacha_block's 16 `&x[k]` addresses (ALLOCA+const, one
  * instruction each) took 16 registers.  Two rules, on by default
- * (S12CC_LICM_GREEDY=1 restores the old marking for A/B, and
- * S12CC_NO_LICM=1 skips hoisting altogether):
+ * (S12CC_LICM_GREEDY=1 restores the old marking for A/B, S12CC_LICM_NODOM
+ * / S12CC_LICM_NOCHEAP disable one rule, S12CC_NO_LICM=1 skips hoisting):
  *   DOM:   only hoist from blocks that dominate the latch -- code that
  *          runs on every iteration.  A conditional path's invariants
  *          stay put; hoisting them is speculation that only pays if
  *          that path is hot, and costs a register always.
- *   CHEAP: a marked instruction whose operands are all rematerializable
- *          (ICONST/ALLOCA/GADDR) and that feeds no other hoisted
- *          instruction is one instruction to recompute -- the same as a
- *          reload -- so it stays in the loop.
+ *   CHEAP: a marked instruction whose operands are all one-instruction
+ *          leaves (a frame address, or a constant that fits an
+ *          immediate) and that feeds no other hoisted instruction is one
+ *          instruction to recompute -- the same as a reload -- so it
+ *          stays in the loop.  Global addresses and wide constants are
+ *          lui+addi and do not count (LINPACK-as-Fortran lost 7% when
+ *          they did).
  * Measured (same compiler, sqlite 3.51.0 at S12CC_INLINE=20; LINPACK
  * and mandel kernels from fortran/bench compiled as C):
  *                      sqlite static  sqlite dyn   LINPACK dyn
@@ -230,9 +233,15 @@ static int licm_find_body(int header, int latch) {
  * Unmarking must keep the closure valid: a marked instruction whose
  * in-loop operand is no longer marked is unmarked too (it would read a
  * loop value from the preheader), iterated to a fixpoint. */
+/* One-instruction operands: a frame address (sp+off) or a constant that
+ * fits an immediate.  A global address or a wide constant is lui+addi,
+ * so a leaf built on one is NOT cheap -- LINPACK's COMMON-array bases
+ * hoisted that way are worth their register (pruning them cost 7%). */
 static int licm_operand_cheap(int inst) {
     if (inst < 0) return 1;
-    return hi_is_remat(h_kind[inst]);
+    if (h_kind[inst] == HI_ALLOCA) return 1;
+    if (h_kind[inst] == HI_ICONST && h_val[inst] >= -2048 && h_val[inst] <= 2047) return 1;
+    return 0;
 }
 
 static int licm_operand_hoistable(int inst) {
@@ -246,14 +255,18 @@ static int licm_operand_hoistable(int inst) {
 static void licm_prune(int body_count) {
     int dom;
     int cheap;
+    int cheap_min;
+    int nmarked;
     int changed;
     int bi;
     int b;
     int i;
     int k;
     if (getenv("S12CC_LICM_GREEDY")) return;
-    dom = 1;
-    cheap = 1;
+    dom = getenv("S12CC_LICM_NODOM") == NULL;      /* A/B: disable one rule */
+    cheap = getenv("S12CC_LICM_NOCHEAP") == NULL;
+    cheap_min = 8;
+    if (getenv("S12CC_LICM_CHEAP_MIN")) cheap_min = atoi(getenv("S12CC_LICM_CHEAP_MIN"));
     if (dom && licm_cur_latch >= 0) {
         bi = 0;
         while (bi < body_count) {
@@ -264,6 +277,22 @@ static void licm_prune(int body_count) {
             }
             bi = bi + 1;
         }
+    }
+    /* CHEAP trades a register for one recompute per iteration.  That
+     * wins only when the loop would have spilled anyway; in a small
+     * loop with registers to spare it is a pure loss (LINPACK-as-
+     * Fortran: +7% dynamic).  Apply it only when this loop hoists
+     * more than cheap_min values. */
+    if (cheap) {
+        nmarked = 0;
+        bi = 0;
+        while (bi < body_count) {
+            b = licm_body[bi];
+            i = bb_start[b];
+            while (i < bb_end[b]) { if (ho_use[i]) nmarked = nmarked + 1; i = i + 1; }
+            bi = bi + 1;
+        }
+        if (nmarked <= cheap_min) cheap = 0;
     }
     changed = 1;
     while (changed) {
