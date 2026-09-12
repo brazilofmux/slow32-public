@@ -14,6 +14,7 @@
  * optimisation rather than a failed compile. */
 #define HL_MAX_ALLOCA 8192   /* was 2048 */
 static int hl_aoff[HL_MAX_ALLOCA];
+static int hl_aslot[HL_MAX_ALLOCA];  /* Node->slot_id; 0 = temp keyed by offset */
 static int hl_ainst[HL_MAX_ALLOCA];
 static int hl_nalloca;
 
@@ -159,11 +160,11 @@ static int hl_map_off(int off) {
     return off - hl_inl_shift;
 }
 
-static int hl_get_alloca(int offset, int ty) {
+static int hl_get_alloca_id(int offset, int ty, int slot_id) {
     int i;
     i = 0;
     while (i < hl_nalloca) {
-        if (hl_aoff[i] == offset) return hl_ainst[i];
+        if (hl_aslot[i] == slot_id && hl_aoff[i] == offset) return hl_ainst[i];
         i = i + 1;
     }
     if (hl_nalloca >= HL_MAX_ALLOCA) {
@@ -171,9 +172,14 @@ static int hl_get_alloca(int offset, int ty) {
         exit(1);
     }
     hl_aoff[hl_nalloca] = offset;
+    hl_aslot[hl_nalloca] = slot_id;
     hl_ainst[hl_nalloca] = hi_emit(HI_ALLOCA, ty, -1, -1, offset, NULL);
     hl_nalloca = hl_nalloca + 1;
     return hl_ainst[hl_nalloca - 1];
+}
+
+static int hl_get_alloca(int offset, int ty) {
+    return hl_get_alloca_id(offset, ty, 0);
 }
 
 static int hl_alloc_temp(void) {
@@ -194,6 +200,7 @@ static int hl_emit_temp_alloca(int ty, int offset) {
     inst = hi_emit(HI_ALLOCA, ty, -1, -1, offset, NULL);
     if (hl_nalloca < HL_MAX_ALLOCA) {
         hl_aoff[hl_nalloca] = offset;
+        hl_aslot[hl_nalloca] = 0;
         hl_ainst[hl_nalloca] = inst;
         hl_nalloca = hl_nalloca + 1;
     }
@@ -726,7 +733,7 @@ static int hl_addr(Node *n) {
         if (n->is_local) {
             /* hl_map_off relocates an inlined callee's frame; identity
              * when not inlining. */
-            return hl_get_alloca(hl_map_off(n->offset), n->ty);
+            return hl_get_alloca_id(hl_map_off(n->offset), n->ty, n->slot_id);
         }
         /* Global variable address */
         return hi_emit(HI_GADDR, TY_PTR + (n->ty & TY_BASE_MASK), -1, -1, 0, n->name);
@@ -1291,10 +1298,10 @@ static int hl_inline_call(Node *call, Node *fn) {
         int slot;
         if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) {
 #ifdef S12CC_X64_HOST
-            slot = hl_get_alloca(hl_map_off(pp->offset), pp->ty);
+            slot = hl_get_alloca_id(hl_map_off(pp->offset), pp->ty, pp->slot_id);
             hi_emit(HI_STORE, pp->ty, slot, av[i], 0, NULL);
 #else
-            slot = hl_get_alloca(hl_map_off(pp->offset), TY_INT);
+            slot = hl_get_alloca_id(hl_map_off(pp->offset), TY_INT, pp->slot_id);
             hi_emit(HI_STORE, TY_INT, slot, av[i], 0, NULL);
             {
                 int a4;
@@ -1303,7 +1310,7 @@ static int hl_inline_call(Node *call, Node *fn) {
             }
 #endif
         } else {
-            slot = hl_get_alloca(hl_map_off(pp->offset), pp->ty);
+            slot = hl_get_alloca_id(hl_map_off(pp->offset), pp->ty, pp->slot_id);
             hi_emit(HI_STORE, pp->ty, slot, hl_narrow(pp->ty, av[i]), 0, NULL);
         }
         i = i + 1;
@@ -3774,7 +3781,7 @@ static void hl_func(Node *fn) {
                 int tmp;
 
                 param_ptr = hl_pp_inst[phys_idx];
-                local_addr = hl_get_alloca(pp->offset, pp->ty);
+                local_addr = hl_get_alloca_id(pp->offset, pp->ty, pp->slot_id);
                 copy_sz = ty_size(pp->ty);
                 copy_i = 0;
                 while (copy_i + 4 <= copy_sz) {
@@ -3795,14 +3802,14 @@ static void hl_func(Node *fn) {
             } else if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) {
 #ifdef S12CC_X64_HOST
                 param_inst = hl_pp_inst[phys_idx];
-                param_alloca = hl_get_alloca(pp->offset, pp->ty);
+                param_alloca = hl_get_alloca_id(pp->offset, pp->ty, pp->slot_id);
                 hi_emit(HI_STORE, pp->ty, param_alloca, param_inst, 0, NULL);
                 phys_idx = phys_idx + 1;
 #else
                 /* Both llong and double arrive as a lo/hi word pair. */
                 param_inst = hl_pp_inst[phys_idx];
                 param_hi = hl_pp_inst[phys_idx + 1];
-                param_alloca = hl_get_alloca(pp->offset, TY_INT);
+                param_alloca = hl_get_alloca_id(pp->offset, TY_INT, pp->slot_id);
                 hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
                 a4 = hi_emit(HI_ADDI, TY_INT, param_alloca, -1, 4, NULL);
                 hi_emit(HI_STORE, TY_INT, a4, param_hi, 0, NULL);
@@ -3812,11 +3819,11 @@ static void hl_func(Node *fn) {
 #ifdef S12CC_X64_HOST
                 /* x64: preserve pointer types (8 bytes) vs int (4 bytes) */
                 param_inst = hl_pp_inst[phys_idx];
-                param_alloca = hl_get_alloca(pp->offset, pp->ty);
+                param_alloca = hl_get_alloca_id(pp->offset, pp->ty, pp->slot_id);
                 hi_emit(HI_STORE, pp->ty, param_alloca, param_inst, 0, NULL);
 #else
                 param_inst = hl_pp_inst[phys_idx];
-                param_alloca = hl_get_alloca(pp->offset, TY_INT);
+                param_alloca = hl_get_alloca_id(pp->offset, TY_INT, pp->slot_id);
                 param_inst = hl_narrow(pp->ty, param_inst);   /* a u8 arrives as the caller left it */
                 hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
 #endif

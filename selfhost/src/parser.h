@@ -217,6 +217,10 @@ static int   ps_lfpbase[P_MAX_LOCALS]; /* function-pointer local: base into ps_f
 static int   ps_lfpn[P_MAX_LOCALS];
 static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
+static int   ps_stack_max;            /* high-water mark (fn->locals_size) */
+static int   ps_lslot[P_MAX_LOCALS];  /* per-declaration id; never reused */
+static int   ps_slot_gen;
+static int   ps_li_slot;              /* slot_id of the local being initialized */
 static int   ps_nparams;              /* params in current func */
 static int   ps_is_varargs;           /* 1 if current func has ... */
 static int   ps_struct_ret;           /* 1 if current func returns struct via hidden ptr */
@@ -1735,9 +1739,12 @@ static int add_local(char *name, int ty) {
      * recorded size is the true one: sizeof(local) reads ps_lsize,
      * and a 5-byte struct is 5, not 8. */
     ps_stack = ps_stack + ((sz + 3) / 4) * 4;
+    if (ps_stack > ps_stack_max) ps_stack_max = ps_stack;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
     ps_loff[idx] = 0 - ps_stack;
+    ps_slot_gen = ps_slot_gen + 1;
+    ps_lslot[idx] = ps_slot_gen;
     ps_ltype[idx] = ty;
     ps_larr[idx] = 0;
     ps_lcols[idx] = 0;
@@ -1752,6 +1759,14 @@ static int add_local(char *name, int ty) {
     }
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
+}
+
+/* Stamp a VAR node with the live local's slot_id (GitHub issue 77). */
+static void ps_bind_var(Node *n, int li) {
+    n->is_local = 1;
+    n->slot_id = ps_lslot[li];
+    n->is_array = ps_larr[li];
+    n->arr_cols = ps_lcols[li];
 }
 
 /* Add a local array. Returns offset of start of array. */
@@ -1770,9 +1785,12 @@ static int add_local_array(char *name, int elem_ty, int count) {
      * sizeof(char x[] = {5 bytes}) is 5, not 8 (libutf's harness passed
      * the padded size into co_right/co_reverse and both misbehaved). */
     ps_stack = ps_stack + ((total + 3) / 4) * 4;
+    if (ps_stack > ps_stack_max) ps_stack_max = ps_stack;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
     ps_loff[idx] = 0 - ps_stack;
+    ps_slot_gen = ps_slot_gen + 1;
+    ps_lslot[idx] = ps_slot_gen;
     ps_ltype[idx] = elem_ty + TY_PTR;  /* array decays to pointer */
     ps_larr[idx] = 1;
     ps_lcols[idx] = 0;
@@ -3513,9 +3531,7 @@ static Node *parse_primary(void) {
                 n->arr_cols = ps_lcols[li];
             } else {
                 n = nd_var(nm, ps_loff[li], ps_ltype[li]);
-                n->is_local = 1;
-                n->is_array = ps_larr[li];
-                n->arr_cols = ps_lcols[li];
+                ps_bind_var(n, li);
             }
             /* Locals are popped before sema, so the signature has to
              * live on the node (GitHub issue 41). val is unused on VAR. */
@@ -4188,6 +4204,9 @@ static Node *ps_li_tail;
 static void local_init_begin(char *nm, int off, int base_ty, int base_is_array) {
     ps_li_name = nm;
     ps_li_off = off;
+    ps_li_slot = 0;
+    if (off != 0 && ps_nlocals > 0 && ps_loff[ps_nlocals - 1] == off)
+        ps_li_slot = ps_lslot[ps_nlocals - 1];
     ps_li_base_ty = base_ty;
     ps_li_base_is_array = base_is_array;
     ps_li_head = NULL;
@@ -4244,6 +4263,7 @@ static Node *local_init_base(void) {
     n = nd_var(ps_li_name, ps_li_off, ps_li_base_ty);
     n->is_local = 1;
     n->is_array = ps_li_base_is_array;
+    n->slot_id = ps_li_slot;
     return n;
 }
 
@@ -4311,6 +4331,7 @@ static void local_init_patch_offsets(Node *n, char *nm, int off) {
     if (n->kind == ND_VAR && n->is_local && n->offset == 0 &&
         strcmp(n->name, nm) == 0) {
         n->offset = off;
+        if (ps_nlocals > 0) n->slot_id = ps_lslot[ps_nlocals - 1];
     }
     local_init_patch_offsets(n->lhs, nm, off);
     local_init_patch_offsets(n->rhs, nm, off);
@@ -4503,8 +4524,7 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
             head = zhead;
         }
         result = nd_var(nm, off, ty + TY_PTR);
-        result->is_local = 1;
-        result->is_array = 1;
+        ps_bind_var(result, ps_nlocals - 1);
         return local_init_list_expr(head, result);
     }
 
@@ -4522,7 +4542,7 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
         expect(TK_RBRACE);
     }
     result = nd_var(nm, off, ty);
-    result->is_local = 1;
+    ps_bind_var(result, ps_nlocals - 1);
     return local_init_list_expr(ps_li_head, result);
 }
 
@@ -4602,8 +4622,7 @@ static Node *parse_local_declarator(char *nm, int ty) {
                 ci = 0;
                 while (ci < slen && ci < count) {
                     n = nd_var(nm, off, ty + TY_PTR);
-                    n->is_local = 1;
-                    n->is_array = 1;
+                    ps_bind_var(n, ps_nlocals - 1);
                     a = nd_binop(TK_PLUS, n, nd_num(ci));
                     a = nd_unary(TK_STAR, a);
                     a = nd_assign(a, nd_num(sp[ci] & 255));
@@ -4615,8 +4634,7 @@ static Node *parse_local_declarator(char *nm, int ty) {
                 if (ci < count) {
                     /* null terminator */
                     n = nd_var(nm, off, ty + TY_PTR);
-                    n->is_local = 1;
-                    n->is_array = 1;
+                    ps_bind_var(n, ps_nlocals - 1);
                     a = nd_binop(TK_PLUS, n, nd_num(ci));
                     a = nd_unary(TK_STAR, a);
                     a = nd_assign(a, nd_num(0));
@@ -4655,8 +4673,7 @@ static Node *parse_local_declarator(char *nm, int ty) {
                     cv = 0;
                     while (cv < lcols2) {
                         n = nd_var(nm, off, ty + TY_PTR);
-                        n->is_local = 1;
-                        n->is_array = 1;
+                        ps_bind_var(n, ps_nlocals - 1);
                         a = nd_binop(TK_PLUS, n, nd_num(ci * lcols2 + cv));
                         a = nd_unary(TK_STAR, a);
                         a = nd_assign(a, nd_num((cv < slen) ? (sp[cv] & 255) : 0));
@@ -4724,7 +4741,7 @@ static Node *parse_local_declarator(char *nm, int ty) {
         } else {
             n = nd_assign(nd_var(nm, off, ty), parse_assign());
         }
-        n->lhs->is_local = 1;
+        ps_bind_var(n->lhs, ps_nlocals - 1);
         return nd_expr_stmt(n);
     }
     return NULL;
@@ -4825,6 +4842,7 @@ static Node *parse_stmt(void) {
     int count2;
     int lcols2;
     int ci;
+    int ci_stack;
     int cv;
     int neg;
     int si;
@@ -4934,6 +4952,7 @@ static Node *parse_stmt(void) {
         next();
         expect(TK_LPAREN);
         ci = ps_nlocals;  /* save scope for for-init declarations */
+        ci_stack = ps_stack;
         /* init */
         if (lex_tok == TK_SEMI) {
             next();
@@ -4957,7 +4976,7 @@ static Node *parse_stmt(void) {
             if (lex_tok == TK_ASSIGN) {
                 next();
                 n = nd_assign(nd_var(nm, off, ty), parse_assign());
-                n->lhs->is_local = 1;
+                ps_bind_var(n->lhs, ps_nlocals - 1);
             } else {
                 n = NULL;
             }
@@ -4984,7 +5003,8 @@ static Node *parse_stmt(void) {
         }
         /* body */
         t = parse_stmt();
-        ps_nlocals = ci;  /* restore scope */
+        ps_nlocals = ci;
+        ps_stack = ci_stack;
         return nd_for(n, c, e, t);
     }
 
@@ -5262,7 +5282,7 @@ static Node *parse_stmt(void) {
             if (lex_tok == TK_ASSIGN) {
                 next();
                 n = nd_assign(nd_var(nm, off, TY_INT), parse_assign());
-                n->lhs->is_local = 1;
+                ps_bind_var(n->lhs, ps_nlocals - 1);
                 expect(TK_SEMI);
                 return nd_expr_stmt(n);
             }
@@ -5561,9 +5581,11 @@ static Node *parse_block(void) {
     Node *tail;
     Node *s;
     int saved_nlocals;
+    int saved_stack;
 
     expect(TK_LBRACE);
     saved_nlocals = ps_nlocals;
+    saved_stack = ps_stack;
     head = NULL;
     tail = NULL;
     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
@@ -5578,6 +5600,7 @@ static Node *parse_block(void) {
     }
     expect(TK_RBRACE);
     ps_nlocals = saved_nlocals;
+    ps_stack = saved_stack;
     return nd_block(head);
 }
 
@@ -6026,6 +6049,8 @@ function_decl:
     }
     ps_nlocals = 0;
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
+    ps_stack_max = 8;
+    ps_slot_gen = 0;
     ps_nparams = 0;
     ps_is_varargs = 0;
     ps_struct_ret = 0;
@@ -6082,7 +6107,7 @@ function_decl:
             if (lex_tok == TK_IDENT) {
                 off = add_local(lex_str, TY_INT);
                 p = nd_var(lex_str, off, TY_INT);
-                p->is_local = 1;
+                ps_bind_var(p, ps_nlocals - 1);
                 next();
             } else {
                 /* an unnamed function-pointer parameter in a prototype:
@@ -6130,7 +6155,7 @@ function_decl:
             }
             off = add_local(pnm, pty);
             p = nd_var(pnm, off, pty);
-            p->is_local = 1;
+            ps_bind_var(p, ps_nlocals - 1);
         }
         skip_gnu_decl_suffixes();
         if (fp_n < 64) { fp_tys[fp_n] = pty; fp_n = fp_n + 1; }
@@ -6174,7 +6199,7 @@ function_decl:
                 if (lex_tok == TK_IDENT) {
                     off = add_local(lex_str, TY_INT);
                     p = nd_var(lex_str, off, TY_INT);
-                    p->is_local = 1;
+                    ps_bind_var(p, ps_nlocals - 1);
                     next();
                 } else {
                     /* an unnamed function-pointer parameter in a prototype:
@@ -6240,7 +6265,7 @@ function_decl:
                 }
                 off = add_local(pnm, pty);
                 p = nd_var(pnm, off, pty);
-                p->is_local = 1;
+                ps_bind_var(p, ps_nlocals - 1);
             }
             skip_gnu_decl_suffixes();
             if (phead == NULL) {
@@ -6286,7 +6311,7 @@ params_done:
     fn->offset = ps_struct_ret ? ps_retptr_off : 0; /* hidden __retptr offset */
     ps_cur_func = fn->name;
     fn->body = parse_block();
-    fn->locals_size = ps_stack;
+    fn->locals_size = ps_stack_max;
 
     return fn;
 }

@@ -227,6 +227,7 @@ struct Node {
     int val_hi;       /* FNUM: hi 32 bits for f64 literal */
     char *name;       /* VAR/FUNC/CALL: name */
     int offset;       /* VAR: stack offset from fp (locals) */
+    int slot_id;      /* VAR: per-declaration identity (GitHub issue 77) */
     int is_local;     /* VAR: 1=local, 0=global */
     int is_array;     /* VAR: 1=array (address, no load) */
     int is_fnptr;     /* MEMBER: a function-pointer member; (*p->m)(args) strips the star */

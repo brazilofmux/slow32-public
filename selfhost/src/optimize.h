@@ -27,6 +27,7 @@ static void opt_copy_node(Node *dst, Node *src) {
     dst->val = src->val;
     dst->name = src->name;
     dst->offset = src->offset;
+    dst->slot_id = src->slot_id;
     dst->is_local = src->is_local;
     dst->is_array = src->is_array;
     dst->nparams = src->nparams;

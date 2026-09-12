@@ -516,7 +516,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c "$TESTS_DIR"/test_retpin.c "$TESTS_DIR"/test_bigframe_r30.c "$TESTS_DIR"/test_spill_slots.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c "$TESTS_DIR"/test_retpin.c "$TESTS_DIR"/test_bigframe_r30.c "$TESTS_DIR"/test_spill_slots.c "$TESTS_DIR"/test_block_slots.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -639,6 +639,16 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         # GitHub issue 77: four non-overlapping phases of 30 call-crossing
         # values spill 56 values into ~15 shared slots.  Private slots put
         # the frame at 448 bytes; shared, 284.
+        # GitHub issue 77: sibling 80-int arrays share one 320-byte slot.
+        # Without reuse the frame is ~640; with it, one array plus scalars.
+        if [[ "$tname" == "test_block_slots" ]]; then
+            fsz=$(awk '/^sibling:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -m1 -oE 'addi r29, r29, -[0-9]+' | grep -oE '[0-9]+$')
+            if [[ -z "$fsz" || "$fsz" -gt 400 ]]; then
+                printf "  %-30s FAIL (sibling frame is ${fsz:-?} bytes; block slots not reused)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
         if [[ "$tname" == "test_spill_slots" ]]; then
             fsz=$(awk '/^phases:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -m1 -oE 'addi r29, r29, -[0-9]+' | grep -oE '[0-9]+$')
             if [[ -z "$fsz" || "$fsz" -gt 320 ]]; then
