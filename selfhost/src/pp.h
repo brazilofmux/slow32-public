@@ -320,6 +320,18 @@ static long long pp_read_int(void) {
             lex_pos = lex_pos + 1;
             c = lex_src[lex_pos];
         }
+    } else if (c == 48 && lex_src[lex_pos + 1] >= 48 && lex_src[lex_pos + 1] <= 55) {
+        /* Octal: 0...  A numeric #define body is folded here and re-emitted
+         * as its value, so `#define S_IFREG 0100000` in sys/stat.h came
+         * back as decimal 100000 and S_ISREG() was false for every regular
+         * file (regal's template loader found no templates). */
+        lex_pos = lex_pos + 1;
+        c = lex_src[lex_pos];
+        while (c >= 48 && c <= 55) {
+            uval = uval * 8 + (unsigned long long)(c - 48);
+            lex_pos = lex_pos + 1;
+            c = lex_src[lex_pos];
+        }
     } else {
         /* Decimal */
         while (c >= 48 && c <= 57) {
@@ -715,6 +727,31 @@ static int pp_expand_func(int di) {
     j = 0;
     while (body[j] != 0) {
         c = body[j];
+        /* A string or character literal in the body is copied whole: a
+         * parameter name inside it is text, not a parameter (C99
+         * 6.10.3p10 substitutes preprocessing tokens, and a literal is
+         * one token).  regal's TEST_EQ_STR(r, actual, expected, msg)
+         * printed "(got '%s', expected '%s')" -- and `expected` inside
+         * that string came out as the argument, "2025-10-15". */
+        if (c == 34 || c == 39) {
+            int q;
+            q = c;
+            if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = c; exp_len = exp_len + 1; }
+            j = j + 1;
+            while (body[j] != 0 && body[j] != q) {
+                if (body[j] == 92 && body[j + 1] != 0) {
+                    if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = body[j]; exp_len = exp_len + 1; }
+                    j = j + 1;
+                }
+                if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = body[j]; exp_len = exp_len + 1; }
+                j = j + 1;
+            }
+            if (body[j] == q) {
+                if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = q; exp_len = exp_len + 1; }
+                j = j + 1;
+            }
+            continue;
+        }
 
         /* Token paste: ## — drop operator and adjacent body whitespace so
          * the preceding and following tokens abut. */
@@ -902,6 +939,15 @@ static int pp_expand_func(int di) {
         }
     }
     pp_exp[exp_len] = 0;
+    if (getenv("S12CC_PP_DUMP")) {   /* trace every function-like expansion */
+        int q;
+        fdputs("PP_EXPAND ", 2); fdputs(pp_dname[di], 2); fdputs(" ins_pos=", 2); fdputuint(2, (unsigned)ins_pos);
+        fdputs(" pos=", 2); fdputuint(2, (unsigned)pos); fdputs(" exp_len=", 2); fdputuint(2, (unsigned)exp_len);
+        fdputs(" nargs=", 2); fdputuint(2, (unsigned)nargs); fdputs("\n  BEFORE: [", 2);
+        q = ins_pos - 40; if (q < 0) q = 0;
+        while (q < pos) { fdputc(lex_src[q] == 10 ? 124 : lex_src[q], 2); q = q + 1; }
+        fdputs("]\n  EXP: [", 2); fdputs(pp_exp, 2); fdputs("]\n", 2);
+    }
 
     /* Splice pp_exp into lex_src, replacing lex_src[ins_pos..pos) */
     remove_len = pos - ins_pos;

@@ -1910,6 +1910,31 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
     return add_global(name, ty, size_bytes);
 }
 
+/* Array dimensions on a parameter.  `T a[N]` is `T *a`; `T a[N][M]` is a
+ * pointer to a row of M elements, ONE pointer level with the row width
+ * recorded so a[i] scales by the row and stays a row pointer (the
+ * same shape as a pointer-to-array struct member).  It used to add a
+ * pointer level per `[`, making `char fields[4][16]` a `char **`, and
+ * regal's CSV callback passed the first row's bytes to strcasecmp as
+ * a pointer.  Returns the row width (0 when not 2D). */
+static int ps_parse_param_dims(int *pty) {
+    int ndims;
+    int last;
+    ndims = 0;
+    last = 0;
+    while (lex_tok == TK_LBRACK) {
+        next();
+        last = 0;
+        if (lex_tok != TK_RBRACK) last = parse_const_int();
+        expect(TK_RBRACK);
+        ndims = ndims + 1;
+    }
+    if (ndims > 2) p_error("parameter arrays of more than 2 dimensions unsupported");
+    if (ndims > 0) *pty = *pty + TY_PTR;
+    if (ndims == 2) return last;
+    return 0;
+}
+
 /* Build mangled name for a static local: funcname.varname.N */
 static void ps_mangle_static(char *func, char *var) {
     int i;
@@ -3846,7 +3871,7 @@ static Node *parse_postfix(void) {
                  * scaling of both additions stays in codegen. */
                 idx = nd_binop(TK_STAR, idx, nd_num(n->arr_cols));
                 n = nd_binop(TK_PLUS, n, idx);
-            } else if (n->kind == ND_MEMBER && !n->is_array &&
+            } else if ((n->kind == ND_MEMBER || n->kind == ND_VAR) && !n->is_array &&
                        n->arr_cols > 0 && ty_is_ptr(n->ty)) {
                 /* Pointer-to-array member: p[i] selects row i — scale
                  * by the row width, keep the value a row pointer (no
@@ -4648,15 +4673,63 @@ static Node *parse_local_declarator(char *nm, int ty) {
                  * row gets its string's bytes, zero-padded to cols;
                  * a string of exactly cols chars drops its NUL (C
                  * semantics — doom's "spida1d1" needs this). */
-                if ((ty & TY_BASE_MASK) != TY_CHAR || (ty & TY_PTR_MASK) != 0 || count < 0) {
-                    p_error("2D local array initializers support only char[N][M] with string rows");
+                next();
+                if ((ty & TY_BASE_MASK) != TY_CHAR || (ty & TY_PTR_MASK) != 0 ||
+                    lex_tok != TK_STRING) {
+                    /* Numeric rows: T a[N][M] = { {..}, {..} } (regal's
+                     * valuation.c: double augmented[3][4] with runtime
+                     * values).  Each row is an M-element array
+                     * initializer at its own byte offset; the same
+                     * parse-then-patch shape as the 1D brace path
+                     * below, zero-filled first.  A row may elide its
+                     * braces (bounded by M). */
+                    local_init_begin(nm, 0, ty + TY_PTR, 1);
+                    ci = 0;
+                    cv = 0;   /* rows seen */
+                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                        if (ci > 0) {
+                            expect(TK_COMMA);
+                            if (lex_tok == TK_RBRACE) break;
+                        }
+                        if (count >= 0 && ci * lcols2 >= count) {
+                            p_error("too many initializers");
+                            return nd_num(0);
+                        }
+                        parse_local_init_array_at(ty, lcols2, ci * lcols2 * ty_size(ty));
+                        ci = ci + 1;
+                        cv = ci;
+                    }
+                    if (lex_tok == TK_COMMA) next();
+                    expect(TK_RBRACE);
+                    if (count < 0) count = cv * lcols2;
+                    head = ps_li_head;
+                    tail = ps_li_tail;
+                    off = add_local_array(nm, ty, count);
+                    ps_lcols[ps_nlocals - 1] = lcols2;
+                    local_init_patch_offsets(head, nm, off);
+                    local_init_begin(nm, off, ty + TY_PTR, 1);
+                    local_init_zero_at(ty + TY_PTR, count, 0);
+                    zhead = ps_li_head;
+                    ztail = ps_li_tail;
+                    if (zhead != NULL) {
+                        if (ztail == NULL) {
+                            ztail = zhead;
+                            while (ztail->next != NULL) ztail = ztail->next;
+                        }
+                        ztail->next = head;
+                        head = zhead;
+                        if (tail == NULL) tail = ztail;
+                    }
+                    return head;
+                }
+                if (count < 0) {
+                    p_error("array size required for char[][M] string rows");
                     return nd_num(0);
                 }
                 off = add_local_array(nm, ty, count);
                 ps_lcols[ps_nlocals - 1] = lcols2;
                 head = NULL;
                 tail = NULL;
-                next();
                 ci = 0;
                 while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                     if (ci > 0) {
@@ -5435,6 +5508,10 @@ local_plain_name:
 
         /* Static local array: emit as global with mangled name */
         if (lex_tok == TK_LBRACK && is_static) {
+          /* A static array declarator list: `static char a[4096],
+           * b[4096];` (regal's test_keyword.c).  Each name gets its own
+           * mangled global; the list stays arrays. */
+          while (1) {
             parse_local_array_dims(&count, &lcols2);
             sp_idx = -1;
             neg = 0;
@@ -5498,7 +5575,6 @@ local_plain_name:
                 ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
                 ps_ginit_finish(sl_gi);
             }
-            expect(TK_SEMI);
             sl_li = ps_nlocals;
             if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
             ps_lname[sl_li] = strdup(nm);
@@ -5511,6 +5587,17 @@ local_plain_name:
             ps_lfpbase[sl_li] = -1;
             ps_lfpn[sl_li] = 0;
             ps_nlocals = ps_nlocals + 1;
+            if (lex_tok != TK_COMMA) break;
+            next();
+            if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            if (lex_tok != TK_LBRACK) {
+                p_error("static declarator list: arrays only after an array");
+                return nd_num(0);
+            }
+          }
+            expect(TK_SEMI);
             return nd_block(NULL);
         }
 
@@ -5624,6 +5711,7 @@ static Node *parse_top_decl(void) {
     Node *p;
     char nm[256];
     char pnm[256];
+    int pcols;
     int ty;
     int pty;
     int fp_tys[64];
@@ -6127,12 +6215,7 @@ function_decl:
             }
             pty = TY_INT;  /* record fn-ptr param as a word */
         } else if (lex_tok == TK_LBRACK) {
-            while (lex_tok == TK_LBRACK) {
-                pty = pty + TY_PTR;
-                next();
-                if (lex_tok != TK_RBRACK) parse_const_int();
-                expect(TK_RBRACK);
-            }
+            ps_parse_param_dims(&pty);
             p = NULL;
             saw_unnamed_param = 1;
         } else if (lex_tok != TK_IDENT) {
@@ -6147,13 +6230,9 @@ function_decl:
             require_complete_type(pty, "incomplete parameter type");
             memcpy(pnm, lex_str, lex_slen + 1);
             next();
-            while (lex_tok == TK_LBRACK) {
-                pty = pty + TY_PTR;
-                next();
-                if (lex_tok != TK_RBRACK) parse_const_int();
-                expect(TK_RBRACK);
-            }
+            pcols = ps_parse_param_dims(&pty);
             off = add_local(pnm, pty);
+            ps_lcols[ps_nlocals - 1] = pcols;
             p = nd_var(pnm, off, pty);
             ps_bind_var(p, ps_nlocals - 1);
         }
@@ -6237,12 +6316,7 @@ function_decl:
                 }
                 pty = TY_INT;  /* record fn-ptr param as a word */
             } else if (lex_tok == TK_LBRACK) {
-                while (lex_tok == TK_LBRACK) {
-                    pty = pty + TY_PTR;
-                    next();
-                    if (lex_tok != TK_RBRACK) parse_const_int();
-                    expect(TK_RBRACK);
-                }
+                ps_parse_param_dims(&pty);
                 p = NULL;
                 saw_unnamed_param = 1;
             } else if (lex_tok != TK_IDENT) {
@@ -6257,13 +6331,9 @@ function_decl:
                 require_complete_type(pty, "incomplete parameter type");
                 memcpy(pnm, lex_str, lex_slen + 1);
                 next();
-                while (lex_tok == TK_LBRACK) {
-                    pty = pty + TY_PTR;
-                    next();
-                    if (lex_tok != TK_RBRACK) parse_const_int();
-                    expect(TK_RBRACK);
-                }
+                pcols = ps_parse_param_dims(&pty);
                 off = add_local(pnm, pty);
+                ps_lcols[ps_nlocals - 1] = pcols;
                 p = nd_var(pnm, off, pty);
                 ps_bind_var(p, ps_nlocals - 1);
             }
