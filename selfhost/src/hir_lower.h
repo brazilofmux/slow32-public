@@ -139,6 +139,13 @@ static int hl_narrow(int ty, int lv);
 #define HL_INL_MAX_SYM   8192
 static Node *hl_prog;            /* program root; set by the codegen driver */
 static int   hl_inline_max;      /* node budget; 0 disables inlining */
+/* GitHub issue 73: a static with ONE call site just moves, so it gets
+ * its own, larger budget (hl_inl_move_max) -- except into a huge caller
+ * (body over hl_inl_huge nodes), where a medium body is refused: the
+ * splice there only grows a frame that is already the worst one. */
+static int   hl_inl_move_max;    /* budget for ncalls==1 statics */
+static int   hl_inl_huge;        /* caller size above which medium bodies are refused */
+static int   hl_inl_caller_sz;   /* current function's body size, capped at hl_inl_huge+1 */
 static int   hl_inl_depth;
 static Node *hl_inl_stack[HL_INL_MAX_DEPTH];
 static int   hl_inl_shift;       /* callee frame -> caller frame */
@@ -1056,6 +1063,7 @@ static void hl_inl_walk(Node *n, char *cur) {
 static int hl_inl_sel_one(Node *fn, int k) {
     Node *pp;
     int sz;
+    int lim;
     int ncalls;
     int extra;
     int saved;
@@ -1072,8 +1080,10 @@ static int hl_inl_sel_one(Node *fn, int k) {
     ncalls = hl_inl_ncalls[k];
     if (ncalls < 1) return 0;
     if (hl_inl_has_labels(fn->body)) return 0;
-    sz = hl_inl_size(fn->body, hl_inline_max);
-    if (sz > hl_inline_max) return 0;
+    lim = hl_inline_max;
+    if (ncalls == 1 && hl_inl_move_max > lim) lim = hl_inl_move_max;
+    sz = hl_inl_size(fn->body, lim);
+    if (sz > lim) return 0;
     if (ncalls > 1) {
         extra = (ncalls - 1) * sz;
         saved = 8 + ncalls * 6;
@@ -1131,6 +1141,7 @@ static Node *hl_inl_candidate(Node *call) {
     int i;
     int k;
     int sz;
+    int lim;
 
     if (hl_inline_max <= 0) return NULL;
     if (hl_inl_depth >= HL_INL_MAX_DEPTH) return NULL;
@@ -1157,7 +1168,13 @@ static Node *hl_inl_candidate(Node *call) {
         np = 0; pp = fn->args;   while (pp) { np = np + 1; pp = pp->next; }
         if (na != np) return NULL;
     }
-    sz = hl_inl_size(fn->body, hl_inline_max);
+    lim = hl_inline_max;
+    if (hl_inl_move_max > lim) lim = hl_inl_move_max;
+    sz = hl_inl_size(fn->body, lim);
+    /* A medium body (over the ordinary budget) does not go into a huge
+     * caller; the out-of-line copy stays for that site (DCE keeps any
+     * body still referenced). */
+    if (sz > hl_inline_max && hl_inl_caller_sz > hl_inl_huge) return NULL;
     /* Degrade gracefully rather than failing the compile.  The HIR
      * headroom is proportional to what this splice will emit --
      * a flat margin let s12cc.c's biggest functions run the arrays
@@ -3680,6 +3697,8 @@ static void hl_func(Node *fn) {
 
     hir_reset();
     hl_nalloca = 0;
+    hl_inl_caller_sz = 0;
+    if (hl_inline_max > 0) hl_inl_caller_sz = hl_inl_size(fn->body, hl_inl_huge + 1);
     hl_nparams = fn->nparams;  /* will be updated by param expansion for llong */
     hl_hi = -1;
     hl_temp_stack = fn->locals_size;

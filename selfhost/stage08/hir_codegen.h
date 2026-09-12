@@ -4640,6 +4640,17 @@ static void gen_program(Node *prog) {
         hl_stat_inl_direct = 0;
         e = getenv("S12CC_INLINE");
         hl_inline_max = e ? atoi(e) : 0;
+        /* Single-site statics get S12CC_INLINE_MOVE (default 400) and
+         * are refused into callers over S12CC_INLINE_HUGE nodes (default
+         * 500).  Swept on sqlite at budget 20 (248,466 without):
+         *   MOVE 200/no guard 250,328 (VdbeExec +5,156 -- the sink)
+         *   MOVE 200/2000 246,498   MOVE 200/500 246,216
+         *   MOVE 400/2000 246,121   MOVE 400/500 245,840   MOVE 400/250 246,682
+         *   MOVE 800/500 245,778    MOVE 1600/500 246,933 */
+        e = getenv("S12CC_INLINE_MOVE");
+        hl_inl_move_max = e ? atoi(e) : 400;
+        e = getenv("S12CC_INLINE_HUGE");
+        hl_inl_huge = e ? atoi(e) : 500;
         hl_inl_prepare(prog);
     }
 
