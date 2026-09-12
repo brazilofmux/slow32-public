@@ -202,7 +202,7 @@ rm -f "$LIBC_OUT_DIR/posix_more.s32o"
 # bytes.  stage07's s32-as predates relaxation and silently wraps the
 # displacement -- dtoa_r got a truncated branch and snprintf("%f")
 
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc string_case qsort math_hw; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
@@ -232,6 +232,13 @@ assemble_gen1 "$WORKDIR/g1_sscanf.s" "$LIBC_OUT_DIR/sscanf.s32o" "$WORKDIR/g1_ss
 compile_gen1 "$RUNTIME_DIR/convert_extra.c" "$WORKDIR/g1_convert_extra.s" "$WORKDIR/g1_convert_extra.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_convert_extra.s" "$LIBC_OUT_DIR/convert_extra.s32o" "$WORKDIR/g1_convert_extra.as.log"
 compile_gen1 "$LIBC_DIR/strtod.c" "$WORKDIR/g1_strtod.s" "$WORKDIR/g1_strtod.cc.log"     "-I$SCRIPT_DIR/include"
+# Soft-float transcendentals (pow, exp, log, sin, ...) and their CORDIC
+# core, from the clang runtime: regal calls pow.  slow32-dbt hot-swaps
+# these by name where it has native versions.
+compile_gen1 "$RUNTIME_DIR/math_soft.c" "$WORKDIR/g1_math_soft.s" "$WORKDIR/g1_math_soft.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_math_soft.s" "$LIBC_OUT_DIR/math_soft.s32o" "$WORKDIR/g1_math_soft.as.log"
+compile_gen1 "$RUNTIME_DIR/math_cordic.c" "$WORKDIR/g1_math_cordic.s" "$WORKDIR/g1_math_cordic.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_math_cordic.s" "$LIBC_OUT_DIR/math_cordic.s32o" "$WORKDIR/g1_math_cordic.as.log"
 assemble_gen1 "$WORKDIR/g1_strtod.s" "$LIBC_OUT_DIR/strtod.s32o" "$WORKDIR/g1_strtod.as.log"
 rm -f "$LIBC_OUT_DIR/printf_varargs.s32o"
 
