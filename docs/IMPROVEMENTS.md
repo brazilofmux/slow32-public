@@ -80,9 +80,12 @@ for all future codegen). None blocking — parity is reached.
   `info_reg` was W0 (overwrote the fault address with e.g. 7). Fixed by
   writing `exit_info` before reusing W0 as scratch. Differential
   `bug-dbt-intrinsic-bounds*` addresses now match the reference.
-- **QEMU fault reporting**: qemu-system-slow32 may still under-report
-  out-of-bounds intrinsic accesses relative to `slow32` (verify when a
-  local `qemu-system-slow32` is available).
+- **QEMU fault reporting**: qemu-system-slow32 under-reports out-of-bounds
+  intrinsic accesses relative to `slow32` -- verified 2026-09-12 with the
+  local build: on all four `bug-dbt-intrinsic-bounds*` tests the reference,
+  slow32-fast and slow32-dbt print `FAULT addr=...` and qemu prints
+  nothing.  Those four are the expected divergences in
+  `run-differential.sh` until qemu's intrinsic stubs report the fault.
 - **QEMU guest exit codes**: `helper.c` now exits with guest `r1` via
   `qemu_system_shutdown_request_with_code` — re-check differential CI;
   the previous “does not propagate” note is likely stale.

@@ -94,9 +94,26 @@ char *strstr(const char *haystack, const char *needle) {
     return NULL;
 }
 
+/* Word-wise: slow32-dbt and qemu replace this function with a native
+ * stub by name, so only the interpreters (slow32, slow32-fast) ever run
+ * it -- and there the byte loop cost regal 4.4M instructions per start
+ * just to zero 1.18MB of .bss from crt0.  Bytes to a word boundary,
+ * four words at a time, then the tail.  Compiled with -fno-builtin so
+ * clang does not turn the loop back into a call to memset. */
 void *memset(void *s, int c, size_t n) {
     unsigned char *p = s;
-    while (n--) *p++ = (unsigned char)c;
+    unsigned char b = (unsigned char)c;
+    unsigned int w;
+    unsigned int *wp;
+    while (n != 0 && (((unsigned int)(size_t)p) & 3) != 0) { *p++ = b; n--; }
+    if (n >= 4) {
+        w = (unsigned int)b * 0x01010101u;
+        wp = (unsigned int *)p;
+        while (n >= 16) { wp[0] = w; wp[1] = w; wp[2] = w; wp[3] = w; wp += 4; n -= 16; }
+        while (n >= 4) { *wp++ = w; n -= 4; }
+        p = (unsigned char *)wp;
+    }
+    while (n != 0) { *p++ = b; n--; }
     return s;
 }
 
