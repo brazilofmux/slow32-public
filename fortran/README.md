@@ -34,7 +34,8 @@ plan, the rulings behind it, and the milestone list.
 
 `src/hir.h`, `hir_ssa.h`, `hir_opt.h`, `hir_licm.h`, `hir_burg.h`,
 `hir_regalloc.h` and `hir_codegen.h` are **copies** of the stage08
-backend, taken at commit `849dd791`. They are copies on purpose:
+backend, taken at commit `849dd791` (`hir_licm.h` re-synced at
+`1fd968dd` for the pruned hoisting; each file's header is authoritative). They are copies on purpose:
 `selfhost/` must be free to evolve without breaking f77, so these are
 deliberately NOT symlinks into `../selfhost/src` the way cc-x64 and
 cc-a64 do it.
