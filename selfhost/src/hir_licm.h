@@ -111,6 +111,8 @@ static int licm_in_loop(int inst) {
  * - rematerializable (ICONST, ALLOCA, etc.)
  * - already marked as invariant (ho_use[inst] == 1) */
 static int licm_cur_header = -1;
+static int licm_cur_latch = -1;      /* back-edge source of the loop being hoisted */
+static int licm_ucnt[HIR_MAX_INST];  /* marked in-loop users, for the cheap-leaf rule */
 
 static int licm_operand_ok(int inst) {
     if (inst < 0) return 1;
@@ -199,6 +201,122 @@ static int licm_find_body(int header, int latch) {
 /* Mark loop-invariant instructions.  Iterates to fixpoint.
  * Uses ho_use[] as the invariant flag (0=not invariant, 1=invariant).
  * ssa_vis[] must be set for loop body blocks. */
+/* --- Hoist policy (GitHub issue 73/77 follow-up) ---
+ * Marking alone hoisted 18k instructions out of sqlite's loops and cost
+ * 7% of the program: sqlite3VdbeExec's opcode loop is a 200-case switch,
+ * so a value hoisted for one case is live across every iteration and
+ * spills, and chacha_block's 16 `&x[k]` addresses (ALLOCA+const, one
+ * instruction each) took 16 registers.  Two rules, on by default
+ * (S12CC_LICM_GREEDY=1 restores the old marking for A/B, and
+ * S12CC_NO_LICM=1 skips hoisting altogether):
+ *   DOM:   only hoist from blocks that dominate the latch -- code that
+ *          runs on every iteration.  A conditional path's invariants
+ *          stay put; hoisting them is speculation that only pays if
+ *          that path is hot, and costs a register always.
+ *   CHEAP: a marked instruction whose operands are all rematerializable
+ *          (ICONST/ALLOCA/GADDR) and that feeds no other hoisted
+ *          instruction is one instruction to recompute -- the same as a
+ *          reload -- so it stays in the loop.
+ * Measured (same compiler, sqlite 3.51.0 at S12CC_INLINE=20; LINPACK
+ * and mandel kernels from fortran/bench compiled as C):
+ *                      sqlite static  sqlite dyn   LINPACK dyn
+ *   greedy (before)        245,840      1.227M       990.6M
+ *   DOM only               229,597      1.130M       961.0M
+ *   CHEAP only             237,107      1.176M       961.1M
+ *   DOM + CHEAP (now)      228,595      1.131M       961.0M
+ *   no LICM at all         227,809      1.131M       990.6M
+ * Greedy hoisting was worth nothing on LINPACK and cost 7% on sqlite;
+ * pruned, it is 3% on LINPACK and neutral on mandel.
+ * Unmarking must keep the closure valid: a marked instruction whose
+ * in-loop operand is no longer marked is unmarked too (it would read a
+ * loop value from the preheader), iterated to a fixpoint. */
+static int licm_operand_cheap(int inst) {
+    if (inst < 0) return 1;
+    return hi_is_remat(h_kind[inst]);
+}
+
+static int licm_operand_hoistable(int inst) {
+    /* An in-loop operand must itself be hoisted for the user to be. */
+    if (inst < 0) return 1;
+    if (!licm_in_loop(inst)) return 1;
+    if (hi_is_remat(h_kind[inst])) return 1;
+    return ho_use[inst];
+}
+
+static void licm_prune(int body_count) {
+    int dom;
+    int cheap;
+    int changed;
+    int bi;
+    int b;
+    int i;
+    int k;
+    if (getenv("S12CC_LICM_GREEDY")) return;
+    dom = 1;
+    cheap = 1;
+    if (dom && licm_cur_latch >= 0) {
+        bi = 0;
+        while (bi < body_count) {
+            b = licm_body[bi];
+            if (!licm_dominates(b, licm_cur_latch)) {
+                i = bb_start[b];
+                while (i < bb_end[b]) { ho_use[i] = 0; i = i + 1; }
+            }
+            bi = bi + 1;
+        }
+    }
+    changed = 1;
+    while (changed) {
+        changed = 0;
+        /* Marked in-loop users of each instruction. */
+        bi = 0;
+        while (bi < body_count) {
+            b = licm_body[bi];
+            i = bb_start[b];
+            while (i < bb_end[b]) { licm_ucnt[i] = 0; i = i + 1; }
+            bi = bi + 1;
+        }
+        bi = 0;
+        while (bi < body_count) {
+            b = licm_body[bi];
+            i = bb_start[b];
+            while (i < bb_end[b]) {
+                if (ho_use[i]) {
+                    k = h_kind[i];
+                    if (h_src1[i] >= 0 && licm_in_loop(h_src1[i]))
+                        licm_ucnt[h_src1[i]] = licm_ucnt[h_src1[i]] + 1;
+                    if (ho_src2_is_ref(k) && h_src2[i] >= 0 && licm_in_loop(h_src2[i]))
+                        licm_ucnt[h_src2[i]] = licm_ucnt[h_src2[i]] + 1;
+                }
+                i = i + 1;
+            }
+            bi = bi + 1;
+        }
+        bi = 0;
+        while (bi < body_count) {
+            b = licm_body[bi];
+            i = bb_start[b];
+            while (i < bb_end[b]) {
+                if (ho_use[i]) {
+                    k = h_kind[i];
+                    if (cheap && licm_ucnt[i] == 0 &&
+                        licm_operand_cheap(h_src1[i]) &&
+                        (ho_src2_is_ref(k) ? licm_operand_cheap(h_src2[i]) : 1)) {
+                        ho_use[i] = 0;
+                        changed = 1;
+                    } else if (!licm_operand_hoistable(h_src1[i]) ||
+                               (ho_src2_is_ref(k) && !licm_operand_hoistable(h_src2[i]))) {
+                        ho_use[i] = 0;
+                        changed = 1;
+                    }
+                }
+                i = i + 1;
+            }
+            bi = bi + 1;
+        }
+    }
+}
+
 static void licm_mark(int body_count) {
     int changed;
     int bi;
@@ -248,6 +366,7 @@ static void licm_mark(int body_count) {
             bi = bi + 1;
         }
     }
+    licm_prune(body_count);
 }
 
 /* Clone an instruction at h_ninst.  Returns clone index. */
@@ -1260,8 +1379,9 @@ static void hir_licm(void) {
                     }
                 }
                 licm_cur_header = s;
+                licm_cur_latch = b;
                 licm_mark(body_count);
-                licm_hoist(s, body_count);
+                if (!getenv("S12CC_NO_LICM")) licm_hoist(s, body_count);   /* A/B knob */
                 if (licm_loopopt) {
                     licm_split(s);
                     licm_strred(s, b);
