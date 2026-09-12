@@ -26,6 +26,14 @@ static int hl_temp_stack;
 static int hl_break_blk[HL_MAX_LOOP];
 static int hl_cont_blk[HL_MAX_LOOP];
 static int hl_loop_depth;
+/* Depth the current inlined body started at (GitHub issue 73): its
+ * loops and switches push ABOVE the caller's, so a callee `break`
+ * can only see the callee's own targets.  Resetting the depth to 0
+ * instead made a callee loop overwrite hl_break_blk[0] -- the
+ * caller's outermost loop -- and a caller `break` after the splice
+ * jumped to the callee loop's exit (sqlite's balance() hung). */
+static int hl_inl_loop_base;
+static int hl_inl_sw_base;
 
 /* --- Switch state --- */
 #define HL_MAX_SW_DEPTH 32   /* was 8 */
@@ -1251,8 +1259,8 @@ static int hl_inline_call(Node *call, Node *fn) {
     save_direct = hl_inl_direct;
     save_rv = hl_inl_rv;
     save_rv_hi = hl_inl_rv_hi;
-    save_loop = hl_loop_depth;
-    save_sw = hl_sw_depth;
+    save_loop = hl_inl_loop_base;
+    save_sw = hl_inl_sw_base;
 
     /* Shift by the high-water mark BEFORE reserving, so the callee's
      * offsets (which run [-locals_size, 0)) land INSIDE the region we
@@ -1266,9 +1274,10 @@ static int hl_inline_call(Node *call, Node *fn) {
     hl_inl_stack[hl_inl_depth] = fn;
     hl_inl_depth = hl_inl_depth + 1;
     hl_inl_depth_dbg = hl_inl_depth;
-    /* A `break` in the callee must not bind to a caller loop. */
-    hl_loop_depth = 0;
-    hl_sw_depth = 0;
+    /* A `break` in the callee must not bind to a caller loop: fence
+     * the depths rather than zero them (see hl_inl_loop_base). */
+    hl_inl_loop_base = hl_loop_depth;
+    hl_inl_sw_base = hl_sw_depth;
 
     /* 3. Result: a single tail `return` falls through with the value
      *    in a HIR inst (GitHub issue 73 splice quality).  Multiple
@@ -1357,8 +1366,8 @@ static int hl_inline_call(Node *call, Node *fn) {
     hl_inl_direct = save_direct;
     hl_inl_rv = save_rv;
     hl_inl_rv_hi = save_rv_hi;
-    hl_loop_depth = save_loop;
-    hl_sw_depth = save_sw;
+    hl_inl_loop_base = save_loop;
+    hl_inl_sw_base = save_sw;
     hl_stat_inlined = hl_stat_inlined + 1;
     return rv;
 }
@@ -3605,14 +3614,14 @@ static void hl_stmt(Node *n) {
 
     /* Break */
     if (n->kind == ND_BREAK) {
-        if (hl_loop_depth < 1) p_error("break outside loop/switch");
+        if (hl_loop_depth < 1 + hl_inl_loop_base) p_error("break outside loop/switch");
         hi_emit(HI_BR, 0, -1, -1, hl_break_blk[hl_loop_depth - 1], NULL);
         return;
     }
 
     /* Continue */
     if (n->kind == ND_CONTINUE) {
-        if (hl_loop_depth < 1 || hl_cont_blk[hl_loop_depth - 1] < 0)
+        if (hl_loop_depth < 1 + hl_inl_loop_base || hl_cont_blk[hl_loop_depth - 1] < 0)
             p_error("continue outside loop");
         hi_emit(HI_BR, 0, -1, -1, hl_cont_blk[hl_loop_depth - 1], NULL);
         return;
@@ -3676,6 +3685,8 @@ static void hl_func(Node *fn) {
     hl_temp_stack = fn->locals_size;
     hl_loop_depth = 0;
     hl_sw_depth = 0;
+    hl_inl_loop_base = 0;
+    hl_inl_sw_base = 0;
     hl_ngoto = 0;
     hl_struct_ret = ty_is_struct(fn->ty) ? 1 : 0;
     hl_ret_ty = fn->ty;
