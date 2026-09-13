@@ -139,6 +139,11 @@ commands below work with `docker` substituted 1:1.
 - `slow32:fortran` (FROM base): + `f77`, `libf77.s32o` and the `s32f77`
   driver (`s32f77 prog.f -o prog.s32x`, then `s32run prog.s32x`). Same
   shape as cobol: built in a stage FROM toolchain, no C compiler inside.
+- `slow32:forth` (FROM base): the DTC kernel (assembled and linked from
+  `forth/kernel.s` in a stage FROM base -- no C anywhere) with prelude and
+  tube words, plus forthc, the native Forth compiler. `s32forth` is the
+  interactive kernel (`podman run -i`), `s32forthc [--hosted] prog.fth`
+  compiles a closed-world program to a standalone `.s32x`.
 
 ```bash
 # Build images (if not already built) -- in this order, it is a chain
@@ -147,6 +152,7 @@ podman build -t slow32:base      -f Dockerfile.base      .
 podman build -t slow32:toolchain -f Dockerfile.toolchain .
 podman build -t slow32:cobol     -f Dockerfile.cobol     .
 podman build -t slow32:fortran   -f Dockerfile.fortran   .
+podman build -t slow32:forth     -f Dockerfile.forth     .
 
 # Run programs with the emulator container (easy wrapper script;
 # auto-detects podman/docker and falls back to the legacy

@@ -33,3 +33,19 @@ links under crt0 + libc_mmio with the tube words as the kernel's own
 C-call wrappers; `demo/ship.fth` is the compiled flyable ship, and
 `tests/run-tube-frames.sh` proves it: the same scene script through
 DTC and compiled worlds produces **hash-identical tube frames**.
+
+## Container
+
+`slow32:forth` carries `forthc.fth`, `prelude-fc.fth` and `compile.sh`
+under `/opt/slow32/forthc`, next to the kernel under `/opt/slow32/forth`.
+`s32forthc` is `compile.sh` pointed at that install through
+`S32_FORTH_KERNEL`, `S32_FORTH_PRELUDE`, `S32_AS`, `S32_LD`, `S32_RT` and
+`EMU`, the same knobs `tests/run-tests.sh` (plus `S32_ENGINES`, the engine
+list) and `tests/run-differential.sh` honour:
+
+    podman run --rm -v $(pwd):/data slow32:forth s32forthc prog.fth prog.s32x
+    podman run --rm -v $(pwd):/data slow32:forth s32run prog.s32x
+
+The three gates -- the kernel suite, this suite across three engines, and
+the DTC-vs-compiled differential -- all run inside the image in ~/builder
+before it is pushed.

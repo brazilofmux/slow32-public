@@ -7,9 +7,9 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FC_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT="$(dirname "$FC_DIR")"
-EMU="$ROOT/tools/emulator/slow32-fast"
-KERNEL="$ROOT/forth/kernel.s32x"
-PRELUDE="$ROOT/forth/prelude.fth"
+EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"
+KERNEL="${S32_FORTH_KERNEL:-$ROOT/forth/kernel.s32x}"
+PRELUDE="${S32_FORTH_PRELUDE:-$ROOT/forth/prelude.fth}"
 
 WORK="$(mktemp -d /tmp/forthc-diff.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT

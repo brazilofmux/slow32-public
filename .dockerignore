@@ -41,6 +41,15 @@
 !fortran/src/
 !fortran/runtime/
 
+# Forth image (Dockerfile.forth): the kernel source and the Forth sources.
+!forth/build.sh
+!forth/kernel.s
+!forth/prelude.fth
+!forth/tube.fth
+!forthc/compile.sh
+!forthc/forthc.fth
+!forthc/prelude-fc.fth
+
 # Emulator build needs:
 !tools/emulator/
 !tools/dbt/

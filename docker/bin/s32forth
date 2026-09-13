@@ -1,0 +1,7 @@
+#!/bin/bash
+# s32forth -- the SLOW-32 DTC Forth kernel with the prelude loaded.
+#   s32forth [file.fth ...]      loads the files, then reads stdin
+#   podman run -i ... s32forth   an interactive session
+# EMU selects the engine (default slow32-fast; slow32-dbt is faster still).
+EMU="${EMU:-slow32-fast}"
+cat /opt/slow32/forth/prelude.fth "$@" - | exec "$EMU" /opt/slow32/forth/kernel.s32x

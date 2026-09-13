@@ -7,9 +7,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FORTH_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$FORTH_DIR")"
-EMULATOR="$ROOT_DIR/tools/emulator/slow32"
-KERNEL="$FORTH_DIR/kernel.s32x"
-PRELUDE="$FORTH_DIR/prelude.fth"
+# Tree paths by default; EMU / S32_FORTH_KERNEL / S32_FORTH_PRELUDE point at
+# an installed copy (the slow32:forth image: /opt/slow32/forth).
+EMULATOR="${EMU:-$ROOT_DIR/tools/emulator/slow32}"
+KERNEL="${S32_FORTH_KERNEL:-$FORTH_DIR/kernel.s32x}"
+PRELUDE="${S32_FORTH_PRELUDE:-$FORTH_DIR/prelude.fth}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

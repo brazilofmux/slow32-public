@@ -1,0 +1,13 @@
+#!/bin/bash
+# s32forthc -- forthc, the native Forth compiler, inside slow32:forth.
+#   s32forthc [--hosted] prog.fth [prog.s32x]
+# Standalone by default (links alone); --hosted links under crt0 + the
+# MMIO libc so the program can call the C runtime (tube words, MS, files).
+# Then `s32run prog.s32x`.
+export S32_FORTH_KERNEL=/opt/slow32/forth/kernel.s32x
+export S32_FORTH_PRELUDE=/opt/slow32/forth/prelude.fth
+export S32_AS=/opt/slow32/bin/slow32asm
+export S32_LD=/opt/slow32/bin/s32-ld
+export S32_RT=/opt/slow32/lib
+export EMU="${EMU:-slow32-fast}"
+exec /opt/slow32/forthc/compile.sh "$@"

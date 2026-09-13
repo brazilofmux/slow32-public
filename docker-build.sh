@@ -29,6 +29,10 @@ echo "Building Fortran 77 container (base + f77 + libf77)..."
 docker build -f Dockerfile.fortran -t slow32:fortran .
 
 echo ""
+echo "Building Forth container (base + kernel + forthc)..."
+docker build -f Dockerfile.forth -t slow32:forth .
+
+echo ""
 echo "Build complete!"
 echo ""
 echo "Usage examples (ephemeral containers with /data mount):"
@@ -57,7 +61,11 @@ echo "7. Compile and run a Fortran 77 program:"
 echo "   docker run --rm -v \$(pwd)/data:/data slow32:fortran s32f77 prog.f -o prog.s32x"
 echo "   docker run --rm -v \$(pwd)/data:/data slow32:fortran s32run prog.s32x"
 echo ""
-echo "8. Interactive session (for debugging):"
+echo "8. Forth: an interactive kernel session, or compile with forthc:"
+echo "   docker run --rm -i -v \$(pwd)/data:/data slow32:forth s32forth"
+echo "   docker run --rm -v \$(pwd)/data:/data slow32:forth s32forthc prog.fth prog.s32x"
+echo ""
+echo "9. Interactive session (for debugging):"
 echo "   docker run --rm -it -v \$(pwd)/data:/data slow32:toolchain bash"
 echo "   docker run --rm -it -v \$(pwd)/data:/data slow32:emulator bash"
 echo ""

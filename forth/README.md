@@ -113,3 +113,19 @@ intact. The arcade stays on while you rewire it.
 - **Blank line EOF**: Empty lines (just `\n`) were treated as EOF. Fixed ACCEPT to return -1 on true EOF, and cold_start to check for -1 instead of 0.
 - **INVERT 12-bit**: `not` pseudo-instruction used `xori rd, rs, -1` which only XORs bottom 12 bits (XORI uses zero-extended immediate). Fixed to use `addi r2, r0, -1` then `xor`.
 - **MMIO output buffering**: Switched all output to `debug` instruction (immediate, unbuffered).
+
+## Container
+
+`slow32:forth` (`Dockerfile.forth` at the tree root, FROM `slow32:base`)
+carries this kernel -- assembled and linked in the image from `kernel.s`
+by `build.sh`, which honours `S32_AS`, `S32_LD`, `S32_RT` and
+`FORTH_RUN=0` -- with `prelude.fth` and `tube.fth`, and forthc (see
+`../forthc/README.md`).  `s32forth` runs the kernel with the prelude
+loaded, any files named, then stdin:
+
+    podman run --rm -i slow32:forth s32forth              # a session
+    podman run --rm -v $(pwd):/data slow32:forth s32forth prog.fth
+
+`tests/run-tests.sh` honours `EMU`, `S32_FORTH_KERNEL` and
+`S32_FORTH_PRELUDE`, which is how ~/builder runs it inside the image
+before pushing.

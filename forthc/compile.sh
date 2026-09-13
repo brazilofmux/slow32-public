@@ -9,6 +9,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"
+# Tree paths by default; the slow32:forth image sets these to /opt/slow32
+# (the same knobs the two test harnesses honour).
+KERNEL="${S32_FORTH_KERNEL:-$ROOT/forth/kernel.s32x}"
+PRELUDE="${S32_FORTH_PRELUDE:-$ROOT/forth/prelude.fth}"
+AS="${S32_AS:-$ROOT/tools/assembler/slow32asm}"
+LD="${S32_LD:-$ROOT/tools/linker/s32-ld}"
+RT="${S32_RT:-$ROOT/runtime}"
 
 HOSTED=0
 if [ "${1:-}" = "--hosted" ]; then HOSTED=1; shift; fi
@@ -26,16 +33,16 @@ cat "$SCRIPT_DIR/prelude-fc.fth" "$SRC" > "$FULLSRC"
 MODE=""
 [ "$HOSTED" = 1 ] && MODE="HOSTED "
 printf '%sS" %s" S" %s" FORTHC BYE\n' "$MODE" "$FULLSRC" "$ASM" \
-    | cat "$ROOT/forth/prelude.fth" "$SCRIPT_DIR/forthc.fth" - \
-    | "$EMU" "$ROOT/forth/kernel.s32x" \
+    | cat "$PRELUDE" "$SCRIPT_DIR/forthc.fth" - \
+    | "$EMU" "$KERNEL" \
     | grep -E "^forthc:" || true
 [ -s "$ASM" ] || { echo "compile.sh: forthc produced no assembly"; exit 1; }
-"$ROOT/tools/assembler/slow32asm" "$ASM" "$OBJ" >/dev/null
+"$AS" "$ASM" "$OBJ" >/dev/null
 if [ "$HOSTED" = 1 ]; then
-    "$ROOT/tools/linker/s32-ld" --mmio 64K -o "$OUT" \
-        "$ROOT/runtime/crt0.s32o" "$OBJ" \
-        "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a"
+    "$LD" --mmio 64K -o "$OUT" \
+        "$RT/crt0.s32o" "$OBJ" \
+        "$RT/libc_mmio.s32a" "$RT/libs32.s32a"
 else
-    "$ROOT/tools/linker/s32-ld" -o "$OUT" "$OBJ"
+    "$LD" -o "$OUT" "$OBJ"
 fi
 echo "compile.sh: $OUT"

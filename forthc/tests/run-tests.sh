@@ -23,9 +23,11 @@ for src in "$SCRIPT_DIR"/*.fth; do
         continue
     fi
     FIRST=""
-    for e in "$ROOT/tools/emulator/slow32" \
-             "$ROOT/tools/emulator/slow32-fast" \
-             "$ROOT/tools/dbt/slow32-dbt"; do
+    # S32_ENGINES: colon-separated engine paths, when they are not in the
+    # tree (inside the slow32:forth image: /usr/local/bin/...).
+    ENGINES="${S32_ENGINES:-$ROOT/tools/emulator/slow32:$ROOT/tools/emulator/slow32-fast:$ROOT/tools/dbt/slow32-dbt}"
+    IFS=: read -r -a ENGINE_LIST <<< "$ENGINES"
+    for e in "${ENGINE_LIST[@]}"; do
         [ -x "$e" ] || continue
         en="$(basename "$e")"
         "$e" "$WORK/$name.s32x" 2>/dev/null | filter > "$WORK/$name.$en"
