@@ -156,6 +156,51 @@ static void reset_fd_table(mmio_ring_state_t *mmio) {
     mmio->host_fds[2] = STDERR_FILENO;
 }
 
+/* S32_STDIN_PREFIX=FILE: what the guest reads from fd 0 comes from FILE
+ * first, then from the real stdin.  A launcher can put a prelude in front
+ * of an interactive session with the emulator as the ONLY process on the
+ * terminal.  The alternative, `cat prelude - | emu`, leaves cat holding the
+ * tty: after the guest exits the shell waits for cat, and under a
+ * container's -t the two readers never behave the same way twice. */
+static int g_stdin_prefix_fd = -2;   /* -2 not looked up, -1 none or exhausted */
+
+static void stdin_prefix_open(void) {
+    if (g_stdin_prefix_fd == -2) {
+        const char *path = getenv("S32_STDIN_PREFIX");
+        g_stdin_prefix_fd = (path && path[0]) ? open(path, O_RDONLY) : -1;
+    }
+}
+
+/* >0 bytes served from the prefix; -1 when there is (no longer) a prefix. */
+static ssize_t stdin_prefix_read(void *buf, size_t n) {
+    stdin_prefix_open();
+    if (g_stdin_prefix_fd < 0) return -1;
+    ssize_t r = read(g_stdin_prefix_fd, buf, n);
+    if (r <= 0) {
+        close(g_stdin_prefix_fd);
+        g_stdin_prefix_fd = -1;
+        return -1;
+    }
+    return r;
+}
+
+static bool stdin_prefix_active(void) {
+    struct stat st;
+    stdin_prefix_open();
+    if (g_stdin_prefix_fd < 0) return false;
+    if (fstat(g_stdin_prefix_fd, &st) != 0) return false;
+    return lseek(g_stdin_prefix_fd, 0, SEEK_CUR) < st.st_size;
+}
+
+/* read(2) on a guest fd's host fd, with the stdin prefix in front of fd 0. */
+static ssize_t host_read(int host_fd, void *buf, size_t n) {
+    if (host_fd == STDIN_FILENO) {
+        ssize_t r = stdin_prefix_read(buf, n);
+        if (r > 0) return r;
+    }
+    return read(host_fd, buf, n);
+}
+
 static int alloc_guest_fd(mmio_ring_state_t *mmio, int host_fd, bool owned) {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
         if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
@@ -576,7 +621,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
         case S32_TERM_READ_KEY: {
             // Blocking read of one byte
             unsigned char ch;
-            ssize_t n = read(STDIN_FILENO, &ch, 1);
+            ssize_t n = stdin_prefix_read(&ch, 1);
+            if (n != 1) n = read(STDIN_FILENO, &ch, 1);
             if (n == 1) {
                 mmio->data_buffer[offset] = ch;
                 resp->length = 1;
@@ -590,8 +636,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
         case S32_TERM_KEY_AVAIL: {
             // Non-blocking poll: returns 1 if key available, 0 if not
             struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
-            int ret = poll(&pfd, 1, 0);
-            resp->status = (ret > 0 && (pfd.revents & POLLIN)) ? 1 : 0;
+            int ret = stdin_prefix_active() ? 1 : poll(&pfd, 1, 0);
+            resp->status = (ret > 0 && (stdin_prefix_active() || (pfd.revents & POLLIN))) ? 1 : 0;
             break;
         }
         case S32_TERM_SET_COLOR: {
@@ -2245,7 +2291,7 @@ static bool mmio_post_finish(mmio_ring_state_t *mmio, uint32_t dest, uint32_t n,
         uint8_t tmp[4096];
         while (total < n) {
             uint32_t chunk = n - total < sizeof tmp ? n - total : (uint32_t)sizeof tmp;
-            ssize_t got = read(host_fd, tmp, chunk);
+            ssize_t got = host_read(host_fd, tmp, chunk);
             if (got < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) break;
                 if (total == 0) total = 0;
@@ -2414,7 +2460,13 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
                 timeout = ms > 86400000ull ? 86400000 : (int)ms;
             } else timeout = 0;
         }
+        /* A prefixed stdin is readable now, whatever the real fd 0 says. */
+        bool prefix_in = false;
+        if (stdin_prefix_active()) {
+            for (int i = 0; i < np; i++) if (pf[i].fd == STDIN_FILENO) { prefix_in = true; timeout = 0; }
+        }
         if (np > 0) while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
+        if (prefix_in) for (int i = 0; i < np; i++) if (pf[i].fd == STDIN_FILENO) pf[i].revents |= POLLIN;
         else if (timeout > 0) {
             struct timespec ts = { timeout / 1000, (long)(timeout % 1000) * 1000000L };
             while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
@@ -2512,7 +2564,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 to_read = max_bytes;
             }
 
-            ssize_t read_count = read(host_fd, mmio->data_buffer + offset, to_read);
+            ssize_t read_count = host_read(host_fd, mmio->data_buffer + offset, to_read);
             if (read_count < 0) {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
                 if (trace_io_enabled) {
@@ -2572,7 +2624,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
 
             void *dest = (uint8_t *)mmio->guest_mem_base + guest_addr;
             
-            ssize_t read_count = read(host_fd, dest, count);
+            ssize_t read_count = host_read(host_fd, dest, count);
             
             if (read_count < 0) {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
@@ -2732,7 +2784,8 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         }
 
         case S32_MMIO_OP_GETCHAR: {
-            int ch = fgetc(stdin);
+            unsigned char pc;
+            int ch = (stdin_prefix_read(&pc, 1) == 1) ? (int)pc : fgetc(stdin);
             if (ch != EOF) {
                 mmio->data_buffer[req->offset % S32_MMIO_DATA_CAPACITY] = (uint8_t)ch;
                 resp.length = 1;

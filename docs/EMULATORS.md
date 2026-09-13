@@ -209,3 +209,14 @@ Two containers provide clean environments without requiring local builds:
 ./scripts/run-in-docker.sh --fast program.s32x        # slow32-fast
 ./scripts/run-in-docker.sh --qemu program.s32x        # QEMU TCG
 ```
+
+## Putting a file in front of stdin (`S32_STDIN_PREFIX`)
+
+The C++ engines (`slow32`, `slow32-fast`, `slow32-dbt`) read
+`S32_STDIN_PREFIX=FILE`: the guest's reads of fd 0 are served from FILE
+first, then from the real stdin. It exists for interactive sessions that
+need a prelude, such as the Forth kernel: with the prefix the emulator is
+the only process on the terminal, so BYE or Ctrl-D ends the session cleanly.
+`cat prelude - | emu` had a second reader holding the terminal after the
+guest exited. `qemu-system-slow32` has its own MMIO implementation and does
+not read the variable.

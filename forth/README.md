@@ -74,7 +74,7 @@ Loaded automatically from `prelude.fth` at startup:
 ## Bootstrap Mechanism
 The `prelude.fth` file is piped to stdin before interactive input:
 ```bash
-cat prelude.fth - | emulator kernel.s32x
+S32_STDIN_PREFIX=prelude.fth emulator kernel.s32x   # prelude first, then your terminal
 ```
 During prelude loading, prompts are suppressed (`var_prompt_enabled=0`). The prelude's last line runs `PROMPTS-ON` to enable the "ok> " prompt for interactive use.
 
@@ -93,7 +93,7 @@ the display list, bumps the generation, and wipes for the next frame.
 `GLASS-KEY` polls the viewer's make/break queue (key-downs only).
 
 ```bash
-cat prelude.fth tube.fth - | ../tools/emulator/slow32-fast kernel.s32x
+cat prelude.fth tube.fth > /tmp/pre.fth; S32_STDIN_PREFIX=/tmp/pre.fth ../tools/emulator/slow32-fast kernel.s32x
 # in another terminal: ../tools/s32-crt-mac   (or s32-crt)
 ```
 ```forth
@@ -114,6 +114,19 @@ intact. The arcade stays on while you rewire it.
 - **INVERT 12-bit**: `not` pseudo-instruction used `xori rd, rs, -1` which only XORs bottom 12 bits (XORI uses zero-extended immediate). Fixed to use `addi r2, r0, -1` then `xor`.
 - **MMIO output buffering**: Switched all output to `debug` instruction (immediate, unbuffered).
 
+## Interactive use: the prelude goes in front of stdin, not through a pipe
+
+The C++ engines (slow32, slow32-fast, slow32-dbt) honour `S32_STDIN_PREFIX=FILE`:
+the guest's reads of fd 0 are served from FILE first, then from the real
+stdin. So `S32_STDIN_PREFIX=prelude.fth emu kernel.s32x` gives a kernel with
+the prelude loaded and your terminal behind it, and the emulator is the only
+process on that terminal: BYE or Ctrl-D ends it, nothing lingers. The older
+`cat prelude.fth - | emu kernel.s32x` left `cat` holding the terminal after
+BYE (a shell waits for every member of a pipeline), and inside a container's
+`-t` the two readers did not behave the same way twice. Pipes of files that
+end (the test harnesses) are unaffected. qemu-system-slow32 has its own MMIO
+implementation and no prefix; `s32forth` uses slow32-fast.
+
 ## Container
 
 `slow32:forth` (`Dockerfile.forth` at the tree root, FROM `slow32:base`)
@@ -126,6 +139,8 @@ loaded, any files named, then stdin:
     podman run --rm -i slow32:forth s32forth              # a session
     podman run --rm -v $(pwd):/data slow32:forth s32forth prog.fth
 
+`s32forth` is the emulator alone on the terminal with
+`S32_STDIN_PREFIX` pointing at the prelude (plus any files named).
 `tests/run-tests.sh` honours `EMU`, `S32_FORTH_KERNEL` and
 `S32_FORTH_PRELUDE`, which is how ~/builder runs it inside the image
 before pushing.

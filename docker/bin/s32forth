@@ -1,18 +1,19 @@
 #!/bin/bash
 # s32forth -- the SLOW-32 DTC Forth kernel with the prelude loaded.
 #   s32forth [file.fth ...]      loads the files, then reads stdin
-#   podman run -i ... s32forth   an interactive session
+#   podman run -it ... s32forth  an interactive session
+# The emulator is the only process on the terminal: the prelude (and any
+# files) reach the kernel through the emulator's S32_STDIN_PREFIX, which it
+# serves before the real stdin.  No pipe, no second reader, so Ctrl-D and
+# BYE both end the session and the container with it.
 # EMU selects the engine (default slow32-fast; slow32-dbt is faster still).
 EMU="${EMU:-slow32-fast}"
-# Through a FIFO, not a pipe: `cat - | emu` would leave cat reading stdin
-# after the kernel exits on BYE, and the container would not end until EOF.
-fifo="$(mktemp -u /tmp/forth.XXXXXX)"
-mkfifo "$fifo"
-# exec: the subshell becomes the stdin reader, so the kill reaches it.
-# <&3: background jobs get /dev/null as stdin unless explicitly
-# redirected; hand the reader the real one (the -i/-it stdin).
-exec 3<&0
-( cat /opt/slow32/forth/prelude.fth "$@"; exec cat ) <&3 > "$fifo" &
-feeder=$!
-trap 'kill "$feeder" 2>/dev/null || true; rm -f "$fifo"' EXIT
-"$EMU" /opt/slow32/forth/kernel.s32x < "$fifo"
+if [ $# -eq 0 ]; then
+    S32_STDIN_PREFIX=/opt/slow32/forth/prelude.fth exec "$EMU" /opt/slow32/forth/kernel.s32x
+fi
+prefix="$(mktemp /tmp/forth.XXXXXX)"
+cat /opt/slow32/forth/prelude.fth "$@" > "$prefix"
+S32_STDIN_PREFIX="$prefix" "$EMU" /opt/slow32/forth/kernel.s32x
+rc=$?
+rm -f "$prefix"
+exit $rc
