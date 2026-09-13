@@ -405,7 +405,7 @@ static void slow32_cpu_realizefn(DeviceState *dev, Error **errp)
 
     cpu->env.mmio_base = 0;
 
-    cpu_exec_realizefn(cs, &local_err);
+    cpu_common_realize(cs, &local_err);
     if (local_err) {
         error_propagate(errp, local_err);
         return;
