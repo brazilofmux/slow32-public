@@ -20,5 +20,5 @@ COPY kit/ /opt/slow32/kit/
 COPY bin/s32kcc /opt/slow32/bin/s32kcc
 
 # Usage:  s32kcc prog.c [-I dir]... [-o prog.s32x]; s32run prog.s32x
-#         s32run /opt/slow32/kit/lua.s32x script.lua
+#         s32run /opt/slow32/kit/lua.s32x < script.lua   (the port reads stdin)
 WORKDIR /data
