@@ -153,6 +153,9 @@ else
 fi
 
 # --- Gate 1b: the key-file B+tree (host, libcob/btree.h) ---------------
+# Six shapes, ~8s of silence on a fast host and more on a busy one -- say so,
+# or the pause after pictest reads as a hang (it was reported as one).
+[ -n "$SKIPPED" ] || printf "  %-28s running 6 shapes (host, ~10s)...\n" "bt_test:"
 if [ -n "$SKIPPED" ]; then
     :
 elif ! "$HOSTCC" -std=c99 -I"$CDIR/libcob" -O1 -w -o "$W/bt_test" "$HERE/bt_test.c" 2>"$W/cc.log"; then

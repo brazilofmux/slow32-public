@@ -4,4 +4,12 @@
 #   podman run -i ... s32forth   an interactive session
 # EMU selects the engine (default slow32-fast; slow32-dbt is faster still).
 EMU="${EMU:-slow32-fast}"
-cat /opt/slow32/forth/prelude.fth "$@" - | exec "$EMU" /opt/slow32/forth/kernel.s32x
+# Through a FIFO, not a pipe: `cat - | emu` would leave cat reading stdin
+# after the kernel exits on BYE, and the container would not end until EOF.
+fifo="$(mktemp -u /tmp/forth.XXXXXX)"
+mkfifo "$fifo"
+# exec: the subshell becomes the stdin reader, so the kill reaches it.
+( cat /opt/slow32/forth/prelude.fth "$@"; exec cat ) > "$fifo" &
+feeder=$!
+trap 'kill "$feeder" 2>/dev/null || true; rm -f "$fifo"' EXIT
+"$EMU" /opt/slow32/forth/kernel.s32x < "$fifo"

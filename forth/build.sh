@@ -21,6 +21,20 @@ $LD --mmio 64K --heap-size 8M --stack-size 256K --pack-sections \
 
 [ "${FORTH_RUN:-1}" = 0 ] && exit 0
 
-# Run (pipe prelude then interactive stdin)
+# Run: the prelude, then interactive stdin.  Not a plain pipe: `cat - | emu`
+# leaves cat reading the terminal after the kernel has exited on BYE, and the
+# shell waits for every member of a pipeline, so the prompt never comes back
+# until the next typed line hits the closed pipe.  Feed through a FIFO from a
+# background reader and kill that reader when the kernel exits.
 echo "Running..."
-cat prelude.fth - | $EMU kernel.s32x
+fifo="$(mktemp -u "${TMPDIR:-/tmp}/forth.XXXXXX")"
+mkfifo "$fifo"
+# `exec cat`: the subshell BECOMES the terminal reader, so killing $feeder
+# kills the reader itself (killing a subshell leaves its child cat orphaned,
+# still holding the terminal -- that was the original symptom in another
+# guise).  It may already be gone (EPIPE on its next write); either way it
+# must not survive us, and neither must the FIFO.
+( cat prelude.fth; exec cat ) > "$fifo" &
+feeder=$!
+trap 'kill "$feeder" 2>/dev/null || true; rm -f "$fifo"' EXIT
+$EMU kernel.s32x < "$fifo"
