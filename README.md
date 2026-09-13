@@ -72,3 +72,10 @@ ZIP is geographically precise, so it wins when known; the area code is the
 fallback (and the only signal for the handful of multi-zone NPAs, where it
 returns the majority zone). `tz_lookup_codes(zip, npa)` / `tz_lookup(zip_str,
 phone_str)` return `NULL` when neither input resolves.
+
+## License
+
+MIT (see `LICENSE`). The tables in `gen/tz_data.h` are derived from
+timezone-boundary-builder (ODbL, from OpenStreetMap), GeoNames (CC BY 4.0)
+and a public area-code database; `NOTICE` carries the attributions and must
+travel with the generated tables.
