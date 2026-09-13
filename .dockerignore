@@ -35,6 +35,12 @@
 !cobol/src/
 !cobol/libcob/
 
+# Fortran 77 image (Dockerfile.fortran); libf77's built outputs excluded below.
+!fortran/build.sh
+!fortran/compile.sh
+!fortran/src/
+!fortran/runtime/
+
 # Emulator build needs:
 !tools/emulator/
 !tools/dbt/
@@ -72,6 +78,11 @@ runtime/*.llc.s
 cobol/libcob/*.s32o
 cobol/libcob/*.ll
 cobol/libcob/*.s
+
+# libf77 outputs (rebuilt in the fortran-builder stage with the image's clang)
+fortran/runtime/*.s32o
+fortran/runtime/*.ll
+fortran/runtime/*.s
 
 # Self-host build outputs (rebuilt fresh in-container for musl/Alpine)
 selfhost/stage08-cross-x64/out/

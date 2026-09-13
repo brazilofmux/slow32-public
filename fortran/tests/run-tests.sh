@@ -13,9 +13,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 FDIR="$(cd "$HERE/.." && pwd)"
 ROOT="$(cd "$FDIR/.." && pwd)"
 LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
-AS="$ROOT/tools/assembler/slow32asm"
-LD="$ROOT/tools/linker/s32-ld"
+# Tree paths by default; the S32_* knobs compile.sh honours point the suite
+# at an installed copy (the slow32:fortran image: /opt/slow32).
+AS="${S32_AS:-$ROOT/tools/assembler/slow32asm}"
+LD="${S32_LD:-$ROOT/tools/linker/s32-ld}"
+RT="${S32_RT:-$ROOT/runtime}"
+HOSTCC="${HOSTCC:-gcc}"
 EMU="${EMU:-$ROOT/tools/emulator/slow32}"
+SKIPPED=""
 
 W="$(mktemp -d /tmp/f77-tests.XXXXXX)"
 # The oracle runs on a COPY in a $HOME-based scratch dir: podman's
@@ -32,17 +37,23 @@ report() {
 }
 
 # --- Gate 1: backend slice -------------------------------------------
-if ! gcc -I"$FDIR/src" -O1 -w -o "$W/slice" "$HERE/backend_slice.c" 2>"$W/cc.log"; then
+# Gates 1 and 2 build host programs, and gate 1 also needs clang for its
+# driver.  Without them (the slow32:fortran image has neither) they are
+# SKIPPED by name, and the summary says so.
+if ! command -v "$HOSTCC" >/dev/null 2>&1 || [ ! -x "$LLVM_BIN/clang" ]; then
+    printf "  %-24s SKIP (no host C compiler / clang)\n" "backend-slice:"
+    SKIPPED="$SKIPPED backend-slice"
+elif ! "$HOSTCC" -I"$FDIR/src" -O1 -w -o "$W/slice" "$HERE/backend_slice.c" 2>"$W/cc.log"; then
     report "backend-slice" 1 "host build"
 else
     "$W/slice" "$W/slice.s" 2>/dev/null
     "$AS" "$W/slice.s" "$W/slice.s32o" >/dev/null 2>&1
     "$LLVM_BIN/clang" -target slow32-unknown-none -S -emit-llvm -O1 \
-        -I"$ROOT/runtime/include" "$HERE/backend_slice_drv.c" -o "$W/drv.ll" 2>/dev/null
+        -I"$RT/include" "$HERE/backend_slice_drv.c" -o "$W/drv.ll" 2>/dev/null
     "$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$W/drv.ll" -o "$W/drv.s" 2>/dev/null
     "$AS" "$W/drv.s" "$W/drv.s32o" >/dev/null 2>&1
-    "$LD" -o "$W/slice.s32x" "$ROOT/runtime/crt0.s32o" "$W/drv.s32o" "$W/slice.s32o" \
-        "$ROOT/runtime/libc_debug.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null 2>&1
+    "$LD" -o "$W/slice.s32x" "$RT/crt0.s32o" "$W/drv.s32o" "$W/slice.s32o" \
+        "$RT/libc_debug.s32a" "$RT/libs32.s32a" >/dev/null 2>&1
     "$EMU" "$W/slice.s32x" 2>/dev/null \
         | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO" \
         > "$W/slice.out"
@@ -55,7 +66,10 @@ else
 fi
 
 # --- Gate 2: card image + tokenizer ----------------------------------
-if ! gcc -I"$FDIR/src" -O1 -w -o "$W/lexdump" "$HERE/lexdump.c" 2>"$W/lex.log"; then
+if ! command -v "$HOSTCC" >/dev/null 2>&1; then
+    printf "  %-24s SKIP (no host C compiler)\n" "lex-torture:"
+    SKIPPED="$SKIPPED lex-torture"
+elif ! "$HOSTCC" -I"$FDIR/src" -O1 -w -o "$W/lexdump" "$HERE/lexdump.c" 2>"$W/lex.log"; then
     report "lex-torture" 1 "host build"
 else
     "$W/lexdump" "$HERE/torture.f" > "$W/torture.out" 2>&1
@@ -73,13 +87,24 @@ fi
 # (actual).  stdout and exit status must both match.  gfortran sends the
 # `STOP n` message to stderr and the code to the exit status, so stdout
 # stays clean for diffing.
-F77="$FDIR/out/f77"
+F77="${S32_F77:-$FDIR/out/f77}"
+LIBF77="${S32_LIBF77:-$FDIR/runtime/libf77.s32o}"
+# Without the oracle (no podman, or no slow32:fortran-oracle image -- the
+# case inside the slow32:fortran image) the programs still run: each is
+# self-checking and ends in STOP 0, so "compiles, runs, exits 0" is a real
+# gate, just not the differential.  Reported as such, never as the full one.
+ORACLE=1
+if ! "$HERE/oracle.sh" --check >/dev/null 2>&1 && \
+   ! podman image exists slow32:fortran-oracle 2>/dev/null; then
+    ORACLE=0
+fi
 if [ ! -x "$F77" ]; then
     printf "  %-24s SKIP (no compiler yet -- milestone 3)\n" "differential:"
-elif ! "$HERE/oracle.sh" --check >/dev/null 2>&1 && \
-     ! podman image exists slow32:fortran-oracle 2>/dev/null; then
-    printf "  %-24s SKIP (oracle image absent)\n" "differential:"
 else
+    if [ "$ORACLE" = 0 ]; then
+        printf "  %-24s SELF-CHECK ONLY (oracle image absent: exit 0 required, output not diffed)\n" "differential:"
+        SKIPPED="$SKIPPED oracle-diff"
+    fi
     for f in "$HERE"/f77/*.f; do
         [ -e "$f" ] || continue
         b="$(basename "$f" .f)"
@@ -88,8 +113,10 @@ else
         # otherwise, so a runaway READ cannot hang on the terminal.
         IN="/dev/null"
         [ -f "$HERE/f77/$b.in" ] && IN="$HERE/f77/$b.in"
-        cp "$f" "$OW/$b.f"
-        "$HERE/oracle.sh" "$OW/$b.f" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
+        if [ "$ORACLE" = 1 ]; then
+            cp "$f" "$OW/$b.f"
+            "$HERE/oracle.sh" "$OW/$b.f" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
+        fi
         # our compiler -> .s -> .s32o -> .s32x -> emulator
         if ! "$F77" "$f" "$W/$b.s" >"$W/$b.cc.log" 2>&1; then
             report "diff:$b" 1 "f77 compile"; continue
@@ -97,9 +124,9 @@ else
         "$AS" "$W/$b.s" "$W/$b.s32o" >/dev/null 2>&1 || { report "diff:$b" 1 "assemble"; continue; }
         # --mmio + libc_mmio is what propagates the guest exit status out
         # of the emulator, which is how STOP n is checked.
-        "$LD" -o "$W/$b.s32x" --mmio 64K "$ROOT/runtime/crt0.s32o" "$W/$b.s32o" \
-              "$FDIR/runtime/libf77.s32o" \
-              "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" \
+        "$LD" -o "$W/$b.s32x" --mmio 64K "$RT/crt0.s32o" "$W/$b.s32o" \
+              "$LIBF77" \
+              "$RT/libc_mmio.s32a" "$RT/libs32.s32a" \
               >/dev/null 2>&1 || { report "diff:$b" 1 "link"; continue; }
         # cwd inside $W so files a test OPENs land in scratch space.
         (cd "$W" && "$EMU" "$W/$b.s32x" < "$IN" 2>/dev/null) \
@@ -114,7 +141,9 @@ else
         # That happened: slice6 asserted FLAT(2)==21 against a fill of
         # I+10*J, stopped at its second check on BOTH compilers, and
         # reported PASS for several commits.  So require exit 0 too.
-        if ! diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 || [ "$wrc" != "$grc" ]; then
+        if [ "$ORACLE" = 0 ]; then
+            if [ "$grc" = "0" ]; then report "self:$b" 0; else report "self:$b" 1 "STOP $grc -- an assertion tripped"; fi
+        elif ! diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 || [ "$wrc" != "$grc" ]; then
             report "diff:$b" 1 "output/exit differs (ours=$grc oracle=$wrc)"
             diff "$W/$b.want" "$W/$b.got" | head -8
         elif [ "$grc" != "0" ]; then
@@ -145,9 +174,9 @@ for f in "$HERE"/f77/*.f; do
     b="$(basename "$f" .f)"
     "$F77" "$f" "$W/$b.lm.s" >/dev/null 2>&1 || continue
     "$AS" "$W/$b.lm.s" "$W/$b.lm.s32o" >/dev/null 2>&1 || continue
-    "$LD" -o "$W/$b.lm.s32x" --mmio 64K "$ROOT/runtime/crt0.s32o" "$W/$b.lm.s32o" \
-          "$FDIR/runtime/libf77.s32o" \
-          "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null 2>&1 || continue
+    "$LD" -o "$W/$b.lm.s32x" --mmio 64K "$RT/crt0.s32o" "$W/$b.lm.s32o" \
+          "$LIBF77" \
+          "$RT/libc_mmio.s32a" "$RT/libs32.s32a" >/dev/null 2>&1 || continue
     for n in $INTERCEPTABLE; do
         # -n 3: sin/cos/exp/log/pow are 3 chars, below strings' default
         if strings -a -n 3 "$W/$b.lm.s32x" 2>/dev/null | grep -qx "$n"; then
@@ -163,4 +192,5 @@ fi
 
 echo
 echo "$PASS passed, $FAIL failed"
+[ -z "$SKIPPED" ] || echo "fortran: SKIPPED:$SKIPPED -- no host compiler / oracle for them here; this is not a full run"
 [ "$FAIL" -eq 0 ]

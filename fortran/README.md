@@ -79,6 +79,33 @@ It is a separate image on purpose: `slow32:toolchain` and
 gfortran. Sources must live under `$HOME` (podman's macOS VM does not
 share `/tmp`).
 
+## Building and compiling
+
+    ./build.sh                       # out/f77 (host cc) + runtime/libf77.s32o (clang)
+    ./compile.sh prog.f -o prog.s32x # f77 -> slow32asm -> s32-ld, libf77 + MMIO libc
+    ../tools/dbt/slow32-dbt prog.s32x
+
+`compile.sh`, `runtime/build.sh` and `tests/run-tests.sh` honour
+`S32_F77`, `S32_LIBF77`, `S32_AS`, `S32_LD`, `S32_RT` and
+`S32_RT_INCLUDE`, so an installed copy can be pointed at instead of the
+tree.
+
+## Container
+
+`slow32:fortran` (`Dockerfile.fortran` at the tree root, FROM
+`slow32:base`) carries `f77`, `libf77.s32o` and `s32f77`, which is
+`compile.sh` pointed at the `/opt/slow32` install:
+
+    podman run --rm -v $(pwd):/data slow32:fortran s32f77 prog.f -o prog.s32x
+    podman run --rm -v $(pwd):/data slow32:fortran s32run prog.s32x
+
+f77 and libf77 are built in a stage FROM `slow32:toolchain`; the image
+itself has no C compiler and no gfortran, so the suite inside it runs in
+self-check mode (every test program ends in STOP 0, so exit 0 is
+required; output is not diffed against the oracle) and reports the two
+host-compiler gates as SKIPPED.  That is the gate ~/builder runs before
+pushing it.
+
 ## Tests
 
     ./tests/run-tests.sh

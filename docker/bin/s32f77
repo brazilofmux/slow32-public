@@ -1,0 +1,12 @@
+#!/bin/bash
+# s32f77 -- compile fixed-form Fortran 77 to a SLOW-32 executable inside
+# slow32:fortran.
+#   s32f77 prog.f [-o prog.s32x]
+# Runs the tree's fortran/compile.sh against the /opt/slow32 install.  Then
+# `s32run prog.s32x` (STOP n comes out as the exit status).
+export S32_F77=/opt/slow32/bin/f77
+export S32_LIBF77=/opt/slow32/lib/libf77.s32o
+export S32_AS=/opt/slow32/bin/slow32asm
+export S32_LD=/opt/slow32/bin/s32-ld
+export S32_RT=/opt/slow32/lib
+exec /opt/slow32/fortran/compile.sh "$@"

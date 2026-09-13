@@ -1,0 +1,33 @@
+# SLOW-32 Fortran 77 Image: f77 + libf77 on slow32:base.
+#
+#   slow32:base   emulators + as/ld/ar/utilities + runtime
+#     -> slow32:fortran   + f77 (host compiler), libf77.s32o (guest
+#                         runtime), and `s32f77`, the compile driver.
+#
+# f77 is a host C program; libf77 is guest C and needs a SLOW-32 C compiler,
+# so both are built in a stage FROM slow32:toolchain (gcc + clang) and only
+# the results are layered onto base.  The final image has no C compiler.
+ARG BASE_IMAGE=slow32:base
+ARG TOOLCHAIN_IMAGE=slow32:toolchain
+
+# Stage 1: build the compiler and the runtime with the toolchain image
+FROM ${TOOLCHAIN_IMAGE} AS fortran-builder
+WORKDIR /build/fortran
+COPY fortran/build.sh fortran/compile.sh /build/fortran/
+COPY fortran/src /build/fortran/src
+COPY fortran/runtime /build/fortran/runtime
+RUN CC=gcc LLVM_BIN=/opt/llvm/bin \
+    S32_AS=/opt/slow32/bin/slow32asm S32_RT_INCLUDE=/opt/slow32/include \
+    ./build.sh
+
+# Stage 2: layer onto base
+FROM ${BASE_IMAGE}
+COPY --from=fortran-builder /build/fortran/out/f77 /opt/slow32/bin/
+COPY --from=fortran-builder /build/fortran/runtime/libf77.s32o /opt/slow32/lib/
+COPY fortran/compile.sh /opt/slow32/fortran/
+COPY docker/bin/s32f77 /opt/slow32/bin/
+RUN chmod +x /opt/slow32/bin/s32f77 /opt/slow32/fortran/compile.sh
+
+# Usage:  s32f77 prog.f [-o prog.s32x]
+#         s32run prog.s32x
+WORKDIR /data
