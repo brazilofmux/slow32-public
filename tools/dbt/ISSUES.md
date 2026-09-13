@@ -465,3 +465,61 @@ under orphaned jobs left by cancelled verification runs, not the code. Kill
 the children, not just the shell, and re-measure on an idle box before
 believing a performance delta.
 
+### 2026-09-13 review with fresh eyes: where the a64 translator's time goes, kernel by kernel
+
+Measured, not read (Apple M-series, `examples/benchmark_core.c` split into one-kernel
+binaries at BENCH_ITERS=300M via the `*_iters = 1u` trick; best of 3-5; `~/riscv`'s
+`rv32-run` built from the same source with the header's gcc line). Guest instruction
+counts from `slow32-fast`: arith 2.40G, branch 5.25G, mem 0.90G.
+
+| kernel | slow32-dbt | rv32-run | slow32-dbt -U | -S | -U -S | -2 / -3 |
+|---|---|---|---|---|---|---|
+| arith  | 0.36 s | 0.36 s | 0.36 | | | |
+| branch | 0.64 s | 0.47 s | 0.55 | 0.59 | 0.58 | 0.63 / 0.63 |
+| mem    | 0.05 s | 0.04 s | 0.04 | | | |
+
+So the "unexplained 21%" above is one kernel: **branch**. Arith is at parity and
+dependency-chain bound (8 host insns for 8 guest, `-d` shows the loop as
+`add; lsl; eor(shifted); lsr; eor(shifted); add; subs; b.ne` -- the two shifts are
+dead temporaries kept alive because the block cannot see the redefinition; 1 of 8).
+Mem runs 0.9G guest insns in 53 ms, correct checksum, ~3 cycles an iteration for a
+load, a store and two bounds checks: the core swallows it, and `-U` buys nothing there.
+
+**Branch, read from `-d 100` host dumps (objdump in the toolchain container):** the
+loop body inside a block is 21 host insns for 17 guest. What costs is leaving the
+block, which the kernel does every other iteration (its `r5 += 3 & 7` parity
+alternates paths). A transition is: flush 5 cached regs, store the PC, then either a
+direct `B` (if the target was already translated when this exit was emitted) or the
+compact-table probe -- `mov; add; ldr; mov; cmp; b.ne; ldr x4; br x4` -- and the
+target's prologue reloads all its cached regs (7 `ldr`). Two transitions per even
+iteration, ~60 host insns against 21 on odd ones.
+
+**The one structural finding:** `emit_exit_chained` (a64) emits a direct `B` only
+when the target already exists; otherwise it emits the probe and leaves the *fallback*
+`b` after the probe as the patch site. When the target is translated later, the probe
+is never upgraded: `-S -d 100` on the branch kernel shows both edges of the
+`andi; bne` block still going through the probe and an indirect `br` at the end of a
+300M-iteration run. Every edge whose target came second pays ~9 instructions and an
+indirect branch per traversal for the life of the process. Upgrading the patch to
+overwrite the probe's first instruction with the direct `B` (the pending-patch
+machinery and `cache_record_exit` already exist) is the obvious thing; whether the
+prologue reload can be skipped on a chained entry with a compatible register set is
+the larger design question the riscv sibling's warm-entry answers and this static
+prescan design does not.
+
+**Smaller, from the same dumps:** `sub rd, zero, rs` is `mov w0,#0; sub` (2) where
+`neg` is 1; `seq/sne` + negate is `cset; mov; sub` (3) where `csetm` is 1 -- both in
+the branch loop; a bounds check materialises each limit with `mov+movk` (4 of 9
+insns) where a pinned register or a single unsigned range compare would do -- but
+measured cost on these kernels is nil, so it is a code-size point only.
+
+**Unexplained and left alone:** `-U` makes the memory-free branch kernel 14% faster
+and superblocks off (`-S`) 8% faster; the likely reason is code layout shifting
+the hot loop (cc-x64's study measured layout:run-noise at ~25:1), not the checks.
+
+**Tooling gaps hit on the way:** `-d`'s "hottest blocks" ranking counts dispatcher
+entries, so a chained loop shows 0 executions and a `ret` stub shows as hottest;
+`-Q` only samples whole seconds; `-X` prints nothing unless `-d` or `-O` is also
+given; the host disassembly shells out to `objdump` and fails on macOS (the raw
+`/tmp/slow32-dbt-host-*.bin` files are still written -- feed them to
+`objdump -D -b binary -m aarch64` in the `slow32:toolchain` container).
