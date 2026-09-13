@@ -68,9 +68,9 @@ else
     echo "   No changes"
 fi
 
-# 5. Compiler driver and utilities (pp.pas, psystem.pas, fpc.pp, ppudump.pp, dbgdwarf.pas)
+# 5. Compiler driver and utilities (pp.pas, psystem.pas, fpc.pp, mks32reg.pp, ppudump.pp, dbgdwarf.pas)
 echo "5. Generating compiler driver/utilities patch..."
-git diff $BASE -- compiler/pp.pas compiler/psystem.pas compiler/utils/fpc.pp compiler/utils/ppuutils/ppudump.pp compiler/dbgdwarf.pas > "$PATCHES_DIR/05-compiler-driver.patch" 2>/dev/null || true
+git diff $BASE -- compiler/pp.pas compiler/psystem.pas compiler/utils/fpc.pp compiler/utils/mks32reg.pp compiler/utils/ppuutils/ppudump.pp compiler/dbgdwarf.pas > "$PATCHES_DIR/05-compiler-driver.patch" 2>/dev/null || true
 if [ -s "$PATCHES_DIR/05-compiler-driver.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/05-compiler-driver.patch")
     echo "   Created: 05-compiler-driver.patch ($lines lines)"

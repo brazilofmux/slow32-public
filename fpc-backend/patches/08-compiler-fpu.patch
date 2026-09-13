@@ -1,8 +1,8 @@
 diff --git a/compiler/defutil.pas b/compiler/defutil.pas
-index 529e5242b1..6b88aff284 100644
+index 947776d93d..061c0e8a91 100644
 --- a/compiler/defutil.pas
 +++ b/compiler/defutil.pas
-@@ -1764,6 +1764,10 @@       TDefListItem = record
+@@ -1770,6 +1770,10 @@       TDefListItem = record
                or not(tfloatdef(def).floattype=s32real)
                or not(FPUXTENSA_SINGLE in fpu_capabilities[current_settings.fputype])
  {$endif xtensa}
@@ -14,10 +14,10 @@ index 529e5242b1..6b88aff284 100644
                result:=int_cgsize(def.size)
              else
 diff --git a/compiler/nld.pas b/compiler/nld.pas
-index 5b76b2be1c..70af7c95f2 100644
+index eff75707a2..c03dd9efde 100644
 --- a/compiler/nld.pas
 +++ b/compiler/nld.pas
-@@ -863,6 +863,11 @@ implementation
+@@ -867,6 +867,11 @@ implementation
  {$ifdef xtensa}
                  and not((FPUXTENSA_SINGLE in fpu_capabilities[current_settings.fputype]) xor
                    (FPUXTENSA_DOUBLE in fpu_capabilities[current_settings.fputype]))

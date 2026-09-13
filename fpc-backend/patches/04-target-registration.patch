@@ -88,10 +88,10 @@ index 8ec19c5e88..797c97837d 100644
  end.
  
 diff --git a/compiler/systems/t_embed.pas b/compiler/systems/t_embed.pas
-index 361ae82bf0..b3b1c084bb 100644
+index 29de50872d..0979e0d393 100644
 --- a/compiler/systems/t_embed.pas
 +++ b/compiler/systems/t_embed.pas
-@@ -2379,4 +2379,9 @@ initialization
+@@ -2387,4 +2387,9 @@ initialization
    RegisterExport(system_wasm32_embedded, texportlibwasi);
    RegisterLinker(ld_embedded, TLinkerEmbedded_Wasm);
  {$endif wasm32}
