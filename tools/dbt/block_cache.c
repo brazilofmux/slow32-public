@@ -717,6 +717,14 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
                 continue;
             }
             translated_block_t *b = &cache->block_pool[block_idx];
+            if (getenv("DBT_CHAIN_TRACE")) {   /* one line per resolved pending chain */
+                uint32_t cidx = compact_hash(target_pc);
+                fprintf(stderr, "CHAIN block=0x%08X exit=%u -> target=0x%08X host=%p compact=%p%s patch_site=%p\n",
+                        b->guest_pc, exit_idx, target_pc, (void *)target_host_code,
+                        (void *)cache->compact_table[cidx].native_code,
+                        cache->compact_table[cidx].native_code == target_host_code ? "" : " MISMATCH",
+                        (void *)b->exits[exit_idx].patch_site);
+            }
 
             if (cache_exit_validate_enabled()) {
                 block_exit_t *ex = &b->exits[exit_idx];

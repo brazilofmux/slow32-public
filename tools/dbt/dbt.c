@@ -2369,6 +2369,16 @@ int main(int argc, char **argv) {
             dbt_cpu_destroy(&cpu);
             return 1;
         }
+        {   /* DBT_LAYOUT_PAD=N shifts every translated block by N*16 bytes
+             * in the code buffer.  A measurement aid, not a tuning knob: a
+             * change to emitted code must be timed across several pads
+             * (ISSUES.md, 2026-09-13) -- one placement of a hot loop can be
+             * 10% faster than the next on an Apple core, and a single A/B
+             * measures the placement, not the change.  Guest-side padding
+             * does not move host code; only this does. */
+            const char *lp = getenv("DBT_LAYOUT_PAD");
+            if (lp) cache.code_buffer_used += (uint32_t)atoi(lp) * 16u;
+        }
         g_dbt_code_base = (uintptr_t)cache.code_buffer;
         g_dbt_code_limit = (uintptr_t)(cache.code_buffer + cache.code_buffer_size);
         // Stage 3: Set up inline lookup table pointer in CPU state

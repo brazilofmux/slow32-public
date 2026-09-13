@@ -1210,7 +1210,15 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
         }
     } else {
         // Target not yet translated — probe compact table first, then
-        // fall back to shared_branch_exit (patchable for later chaining).
+        // fall back to shared_branch_exit.  The PATCH SITE is the probe's
+        // first instruction, not the fallback B after it: when the target is
+        // translated later, cache_patch_jmp rewrites that instruction into a
+        // direct B and the probe becomes dead code.  Recording the fallback
+        // instead left every edge whose target came second paying the probe
+        // (8 instructions and an indirect BR) for the life of the process --
+        // measured 2026-09-13 as the whole of the branch kernel's gap to the
+        // riscv sibling (ISSUES.md).
+        uint8_t *probe_head = emit_ptr(e);
         uint32_t hash_offset = compact_hash(target_pc) << 4;
 
         // Compute entry pointer: X2 = X22 + hash_offset
@@ -1239,13 +1247,13 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
             *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
         }
 
-        // Fall through to shared_branch_exit (patchable)
-        uint8_t *patch_site = emit_ptr(e);
-        int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - patch_site);
+        // Fall through to shared_branch_exit (the unpatched path's miss exit)
+        uint8_t *miss_site = emit_ptr(e);
+        int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - miss_site);
         emit_b(e, (int32_t)rel);
 
         if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
-            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, probe_head);
             cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
         }
     }

@@ -513,9 +513,23 @@ the branch loop; a bounds check materialises each limit with `mov+movk` (4 of 9
 insns) where a pinned register or a single unsigned range compare would do -- but
 measured cost on these kernels is nil, so it is a code-size point only.
 
-**Unexplained and left alone:** `-U` makes the memory-free branch kernel 14% faster
-and superblocks off (`-S`) 8% faster; the likely reason is code layout shifting
-the hot loop (cc-x64's study measured layout:run-noise at ~25:1), not the checks.
+**The probe upgrade, done and measured (same day).** `emit_exit_chained` now records
+the probe's first instruction as the pending patch site, so a later-translated
+target turns the probe into a direct `B` (`-S -d 100` shows it). The measurement
+was the lesson: a plain A/B on the full benchmark said the change was 17% SLOWER,
+reproducibly, across five guest-side paddings -- and the guest paddings never
+moved the host code. `DBT_LAYOUT_PAD` (new, dbt.c) shifts the translated blocks
+by N*16 bytes; over eight pads the unpatched build is 0.28 s at pads 0 and 64
+and 0.31 everywhere else, the patched one 0.30-0.33 everywhere: **a 64-byte
+placement effect of ~10% on the hot loop, and the change itself neutral within
+noise.** The `-U`/`-S` "speedups" recorded above were the same placement luck.
+Rule, as for cc-x64: time emitted-code changes across pads and compare medians;
+one placement is not a measurement. The probe upgrade stays because it is
+strictly less code on the path (no probe, no indirect branch) and correct
+(checksums, gates), not because the benchmark rewarded it -- the remaining
+transition cost is the flush and the prologue reload, which this does not touch.
+`DBT_CHAIN_TRACE=1` prints every resolved pending chain (source block, exit,
+target, host entry, compact-table entry) and was what showed the hot edges.
 
 **Tooling gaps hit on the way:** `-d`'s "hottest blocks" ranking counts dispatcher
 entries, so a chained loop shows 0 executions and a `ret` stub shows as hottest;
