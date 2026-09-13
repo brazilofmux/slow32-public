@@ -1,0 +1,40 @@
+#!/bin/bash
+# s32kcc -- C to a SLOW-32 executable with the SELF-HOSTED toolchain: the
+# kit's cc.s32x, s32-as.s32x and s32-ld.s32x, themselves SLOW-32 programs,
+# run on the emulator.  (s32cc in slow32:toolchain is the LLVM route.)
+#   s32kcc prog.c [-I dir]... [-o prog.s32x]
+# EMU selects the engine the tools run on (default slow32-dbt).
+set -eu
+KIT=/opt/slow32/kit
+SH=$KIT/selfhost
+EMU="${EMU:-slow32-dbt}"
+src=""; out=""; incs=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift ;;
+        -I) incs+=("-I$2"); shift ;;
+        -I*) incs+=("$1") ;;
+        *.c) src="$1" ;;
+        *) echo "s32kcc: what is $1?" >&2; exit 2 ;;
+    esac
+    shift
+done
+[ -n "$src" ] || { echo "usage: s32kcc prog.c [-I dir]... [-o prog.s32x]" >&2; exit 2; }
+[ -n "$out" ] || out="${src%.c}.s32x"
+base="${out%.s32x}"
+# cc.s32x narrates its optimiser counters on stderr: keep them for a failure.
+if ! "$EMU" "$KIT/cc.s32x" -I"$SH/include" "${incs[@]+"${incs[@]}"}" "$src" "$base.s" >/dev/null 2>"$base.cclog"; then
+    cat "$base.cclog" >&2; exit 1
+fi
+rm -f "$base.cclog"
+# The assembler and linker narrate too ("Loading: ..."); same treatment.
+for step in as ld; do
+    if [ "$step" = as ]; then
+        "$EMU" "$KIT/s32-as.s32x" "$base.s" "$base.s32o" >"$base.$step.log" 2>&1 && continue
+    else
+        "$EMU" "$KIT/s32-ld.s32x" -o "$out" --mmio 64K "$SH/crt0.s32o" "$base.s32o" "$SH/libc.s32a" >"$base.$step.log" 2>&1 && continue
+    fi
+    cat "$base.$step.log" >&2; exit 1
+done
+rm -f "$base.as.log" "$base.ld.log"
+echo "$out"

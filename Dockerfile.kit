@@ -1,0 +1,24 @@
+# SLOW-32 Kit Image: slow32:base + the self-hosted kit (~/s32x).
+#
+#   slow32:base   emulators + as/ld/ar/utilities + runtime
+#     -> slow32:kit   + /opt/slow32/kit: the SELF-HOSTED toolchain (cc.s32x,
+#                     s32-as/ld/ar.s32x, slow32dis/dump.s32x, selfhost/
+#                     {include,crt0.s32o,libc.s32a}) and the built apps
+#                     (lua, nano, prolog, sbasic, dbase, lisp, sqlite3, the
+#                     Forth kernel, ...), plus `s32kcc`, C -> .s32x through
+#                     that toolchain running on the emulator.
+#
+# The context is NOT the tree: it is a staged copy of the kit made by
+# scripts/build-kit-image.sh, which also applies the exclusion list (the
+# kit is hand-curated build products, not in git, so ~/builder cannot make
+# this image from a clean clone; the script builds and pushes both arches
+# from a machine that has the kit).  COPY-only on purpose: a COPY-only
+# Dockerfile builds for the other architecture without emulation.
+ARG BASE_IMAGE=slow32:base
+FROM ${BASE_IMAGE}
+COPY kit/ /opt/slow32/kit/
+COPY bin/s32kcc /opt/slow32/bin/s32kcc
+
+# Usage:  s32kcc prog.c [-I dir]... [-o prog.s32x]; s32run prog.s32x
+#         s32run /opt/slow32/kit/lua.s32x script.lua
+WORKDIR /data

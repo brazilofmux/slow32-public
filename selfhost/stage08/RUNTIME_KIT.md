@@ -351,6 +351,16 @@ sign extension of negatives, the reverse `long long`-to-`int` parameter hazard,
 list mixing scalars, arrays and brace initializers, and a file-scope
 `long long` table read back as a 64-bit quotient.
 
+## Container
+
+`slow32:kit` (`Dockerfile.kit` at the tree root, FROM `slow32:base`) is
+this kit at `/opt/slow32/kit` with `s32kcc`, the three-step compile above
+as one command on the image's emulator. `scripts/build-kit-image.sh`
+stages `~/s32x` (minus `regal.s32x`), builds, runs both kit differentials
+inside the image, and with `--push` builds both architectures and pushes
+them for `~/builder/manifest.sh` to stitch. It runs where the kit is; the
+kit is not in git.
+
 ## Regenerating
 
 From `slow-32/selfhost/stage08` after `make`, into the kit at `~/s32x/selfhost/`:
