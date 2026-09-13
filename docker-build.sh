@@ -21,6 +21,10 @@ echo "Building toolchain container (base + LLVM + FPC + cc-x64/cc-a64)..."
 docker build -f Dockerfile.toolchain -t slow32:toolchain .
 
 echo ""
+echo "Building COBOL 85 container (base + s32-cobc + libcob)..."
+docker build -f Dockerfile.cobol -t slow32:cobol .
+
+echo ""
 echo "Build complete!"
 echo ""
 echo "Usage examples (ephemeral containers with /data mount):"
@@ -41,7 +45,11 @@ echo ""
 echo "5. Run with debugging options:"
 echo "   docker run --rm -v \$(pwd)/data:/data slow32:emulator slow32 -t /data/program.s32x"
 echo ""
-echo "6. Interactive session (for debugging):"
+echo "6. Compile and run a COBOL 85 program:"
+echo "   docker run --rm -v \$(pwd)/data:/data slow32:cobol s32cob -free prog.cbl -o prog.s32x"
+echo "   docker run --rm -v \$(pwd)/data:/data slow32:cobol s32run prog.s32x"
+echo ""
+echo "7. Interactive session (for debugging):"
 echo "   docker run --rm -it -v \$(pwd)/data:/data slow32:toolchain bash"
 echo "   docker run --rm -it -v \$(pwd)/data:/data slow32:emulator bash"
 echo ""

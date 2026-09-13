@@ -1,0 +1,13 @@
+#!/bin/bash
+# s32cob -- compile COBOL 85 to a SLOW-32 executable inside slow32:cobol.
+#   s32cob [-free|-fixed] main.cbl [sub.cbl ...] [x.s32o ...] [-I dir]... [-o prog.s32x]
+# Runs the tree's cobol/compile.sh against the /opt/slow32 install.  Then
+# `s32run prog.s32x`.  A `.c` input needs a SLOW-32 C compiler, which this
+# image does not carry (use slow32:toolchain).
+export S32_COBC=/opt/slow32/bin/s32-cobc
+export S32_LIBCOB=/opt/slow32/lib/libcob.s32o
+export S32_AS=/opt/slow32/bin/slow32asm
+export S32_LD=/opt/slow32/bin/s32-ld
+export S32_RT=/opt/slow32/lib
+export S32_RT_INCLUDE=/opt/slow32/include
+exec /opt/slow32/cobol/compile.sh "$@"

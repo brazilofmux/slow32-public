@@ -132,12 +132,17 @@ commands below work with `docker` substituted 1:1.
   build FROM this, not from the LLVM image.
 - `slow32:toolchain` (FROM base): + LLVM 22/clang, Free Pascal `ppcs32`,
   cc-x64/cc-a64. The big one (~2.9 GB).
+- `slow32:cobol` (FROM base): + `s32-cobc`, `libcob.s32o` and the `s32cob`
+  driver (`s32cob -free prog.cbl -o prog.s32x`, then `s32run prog.s32x`).
+  Built in a stage FROM toolchain; carries no C compiler, so `.c` inputs
+  need the toolchain image.
 
 ```bash
 # Build images (if not already built) -- in this order, it is a chain
 podman build -t slow32:emulator  -f Dockerfile.emulator  .
 podman build -t slow32:base      -f Dockerfile.base      .
 podman build -t slow32:toolchain -f Dockerfile.toolchain .
+podman build -t slow32:cobol     -f Dockerfile.cobol     .
 
 # Run programs with the emulator container (easy wrapper script;
 # auto-detects podman/docker and falls back to the legacy

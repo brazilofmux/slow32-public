@@ -27,6 +27,14 @@
 !selfhost/
 !docker/
 
+# COBOL 85 image (Dockerfile.cobol) needs the compiler source, the runtime
+# source and the drivers; libcob's built outputs are excluded below.
+!cobol/build.sh
+!cobol/cctool.sh
+!cobol/compile.sh
+!cobol/src/
+!cobol/libcob/
+
 # Emulator build needs:
 !tools/emulator/
 !tools/dbt/
@@ -59,6 +67,11 @@ tools/dbt/slow32-dbt
 # rebuilds them from source with its own LLVM (`make clean` first, so a
 # committed archive newer than its source cannot short-circuit the rebuild).
 runtime/*.llc.s
+
+# libcob outputs (rebuilt in the cobol-builder stage with the image's clang)
+cobol/libcob/*.s32o
+cobol/libcob/*.ll
+cobol/libcob/*.s
 
 # Self-host build outputs (rebuilt fresh in-container for musl/Alpine)
 selfhost/stage08-cross-x64/out/

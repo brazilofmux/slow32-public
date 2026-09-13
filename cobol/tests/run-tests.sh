@@ -23,11 +23,20 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CDIR="$(cd "$HERE/.." && pwd)"
 ROOT="$(cd "$CDIR/.." && pwd)"
-AS="$ROOT/tools/assembler/slow32asm"
-LD="$ROOT/tools/linker/s32-ld"
+# Tree paths by default; the same S32_* knobs compile.sh honours point the
+# suite at an installed copy (the slow32:cobol image: /opt/slow32).
+AS="${S32_AS:-$ROOT/tools/assembler/slow32asm}"
+LD="${S32_LD:-$ROOT/tools/linker/s32-ld}"
 EMU="${EMU:-$ROOT/tools/emulator/slow32}"
-COBC="$CDIR/out/s32-cobc"
-LIBCOB="$CDIR/libcob/libcob.s32o"
+COBC="${S32_COBC:-$CDIR/out/s32-cobc}"
+LIBCOB="${S32_LIBCOB:-$CDIR/libcob/libcob.s32o}"
+HOSTCC="${HOSTCC:-cc}"
+# Is there a SLOW-32 C compiler at all (cctool.sh's two backends)?  A test
+# whose .link names a .c file needs one; without it the test is SKIPPED,
+# named, and counted in the summary, not failed.
+HAVE_S32_CC=0
+[ -x "${LLVM_BIN:-$HOME/llvm-project/build/bin}/clang" ] && HAVE_S32_CC=1
+[ -f "${S32_KIT:-$HOME/s32x}/cc.s32x" ] && HAVE_S32_CC=1
 # The oracle: host cobc if present, else GnuCOBOL in a container.
 # ORACLE=0 turns it off.  The container oracle is TWO `docker run`s per
 # test, ~200 for the suite, and what that costs is a property of the HOST
@@ -122,7 +131,15 @@ if [ ! -x "$COBC" ] || [ ! -f "$LIBCOB" ]; then
 fi
 
 # --- Gate 1: PICTURE ---------------------------------------------------
-if ! cc -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
+# Gates 1 and 1b build host programs.  Without a host C compiler (the
+# slow32:cobol image has none) they are SKIPPED, and the summary says so:
+# a run that silently dropped two gates would read as a full one.
+SKIPPED=""
+if ! command -v "$HOSTCC" >/dev/null 2>&1; then
+    SKIPPED=" pictest bt_test"
+    echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
+    echo "SKIP  bt_test  (no host C compiler: $HOSTCC)"
+elif ! "$HOSTCC" -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
         "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
     report "pictest" 1 "host build"
 else
@@ -136,7 +153,9 @@ else
 fi
 
 # --- Gate 1b: the key-file B+tree (host, libcob/btree.h) ---------------
-if ! cc -std=c99 -I"$CDIR/libcob" -O1 -w -o "$W/bt_test" "$HERE/bt_test.c" 2>"$W/cc.log"; then
+if [ -n "$SKIPPED" ]; then
+    :
+elif ! "$HOSTCC" -std=c99 -I"$CDIR/libcob" -O1 -w -o "$W/bt_test" "$HERE/bt_test.c" 2>"$W/cc.log"; then
     report "bt_test" 1 "host build"
 else
     btfail=0
@@ -156,9 +175,17 @@ for fmt in fixed free; do
         flag="-$fmt"
         # a .link file beside the test names further sources (subprogram
         # .cbl, .c) relative to tests/, for us and for the oracle
-        extra=()
+        extra=(); needs_cc=0
         if [ -f "${src%.cbl}.link" ]; then
-            for e in $(cat "${src%.cbl}.link"); do extra+=("$HERE/$e"); done
+            for e in $(cat "${src%.cbl}.link"); do
+                extra+=("$HERE/$e")
+                case "$e" in *.c) needs_cc=1 ;; esac
+            done
+        fi
+        if [ "$needs_cc" = 1 ] && [ "$HAVE_S32_CC" = 0 ]; then
+            echo "SKIP  $fmt/$name  (links a .c file; no SLOW-32 C compiler here)"
+            SKIPPED="$SKIPPED $fmt/$name"
+            continue
         fi
         if ! "$CDIR/compile.sh" $flag -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" -o "$W/$name.s32x" >"$W/$name.log" 2>"$W/$name.err"; then
             report "$fmt/$name" 1 "$(grep -m1 -i "error" "$W/$name.err" "$W/$name.log" | head -1 | sed 's/^[^:]*://')"; continue
@@ -271,4 +298,5 @@ if [ "${ORACLE:-1}" = 0 ]; then
 else
     echo "cobol: $PASS passed, $FAIL failed"
 fi
+[ -z "$SKIPPED" ] || echo "cobol: SKIPPED:$SKIPPED -- no C compiler for them here; this is not a full run"
 [ "$FAIL" = "0" ]

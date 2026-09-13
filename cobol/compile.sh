@@ -27,18 +27,26 @@ done
 [ ${#mains[@]} -eq 1 ] || { echo "usage: compile.sh [-free|-fixed] main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-o prog.s32x]" >&2; exit 2; }
 main="${mains[0]}"
 [ -n "$out" ] || out="${main%.cbl}.s32x"
-[ -x "$HERE/out/s32-cobc" ] && [ -f "$HERE/libcob/libcob.s32o" ] || "$HERE/build.sh" >/dev/null
+# Where the pieces are.  Defaults are the tree; the slow32:cobol image sets
+# S32_COBC/S32_LIBCOB/S32_AS/S32_LD/S32_RT to its /opt/slow32 install (the
+# same knobs cctool.sh and tests/run-tests.sh honour).
+: "${S32_COBC:=$HERE/out/s32-cobc}"
+: "${S32_LIBCOB:=$HERE/libcob/libcob.s32o}"
+: "${S32_AS:=$ROOT/tools/assembler/slow32asm}"
+: "${S32_LD:=$ROOT/tools/linker/s32-ld}"
+: "${S32_RT:=$ROOT/runtime}"
+[ -x "$S32_COBC" ] && [ -f "$S32_LIBCOB" ] || "$HERE/build.sh" >/dev/null
 . "$HERE/cctool.sh"
 base="${out%.s32x}"
 link=()
-"$HERE/out/s32-cobc" $fmt $incs -o "$base.s" "$main"
-"$ROOT/tools/assembler/slow32asm" "$base.s" "$base.s32o" >/dev/null
+"$S32_COBC" $fmt $incs -o "$base.s" "$main"
+"$S32_AS" "$base.s" "$base.s32o" >/dev/null
 link+=("$base.s32o")
 i=0
 for f in "${subs[@]+"${subs[@]}"}"; do
     i=$((i+1))
-    "$HERE/out/s32-cobc" $fmt $incs -m -o "$base-$i.s" "$f"
-    "$ROOT/tools/assembler/slow32asm" "$base-$i.s" "$base-$i.s32o" >/dev/null
+    "$S32_COBC" $fmt $incs -m -o "$base-$i.s" "$f"
+    "$S32_AS" "$base-$i.s" "$base-$i.s32o" >/dev/null
     link+=("$base-$i.s32o")
 done
 for f in "${cs[@]+"${cs[@]}"}"; do
@@ -52,6 +60,6 @@ if [ -n "$builtins" ]; then link+=("$builtins"); fi
 for f in "${objs[@]+"${objs[@]}"}"; do link+=("$f"); done
 # The MMIO libc: files (fopen and friends) live only there, and the
 # linker's --mmio gives the emulator the ring buffers to serve them.
-"$ROOT/tools/linker/s32-ld" --mmio 64K --stack-size 256K --heap-size 64M -o "$out" "$ROOT/runtime/crt0.s32o" "${link[@]}" \
-    "$HERE/libcob/libcob.s32o" "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null
+"$S32_LD" --mmio 64K --stack-size 256K --heap-size 64M -o "$out" "$S32_RT/crt0.s32o" "${link[@]}" \
+    "$S32_LIBCOB" "$S32_RT/libc_mmio.s32a" "$S32_RT/libs32.s32a" >/dev/null
 echo "$out"

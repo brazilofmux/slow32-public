@@ -119,3 +119,21 @@ as it already does to GnuCOBOL.
    draft missed, and the corpus rewrite that answers it
 4. [docs/plan.md](docs/plan.md) — stages
 5. The rest, as the stage needs them
+
+## Container
+
+`slow32:cobol` (`Dockerfile.cobol` at the tree root, FROM `slow32:base`)
+carries `s32-cobc`, `libcob.s32o` and `s32cob`, which is `compile.sh`
+pointed at the `/opt/slow32` install through the `S32_COBC`, `S32_LIBCOB`,
+`S32_AS`, `S32_LD`, `S32_RT` and `S32_RT_INCLUDE` knobs that `compile.sh`,
+`cctool.sh` and `tests/run-tests.sh` all honour:
+
+    podman run --rm -v $(pwd):/data slow32:cobol s32cob -free prog.cbl -o prog.s32x
+    podman run --rm -v $(pwd):/data slow32:cobol s32run prog.s32x
+
+The image has no C compiler (s32-cobc and libcob are built in a stage FROM
+`slow32:toolchain`), so a `.c` input to `s32cob` is refused there; use the
+toolchain image for those.  The suite runs inside the image with the tree
+mounted -- `ORACLE=0 EMU=/usr/local/bin/slow32` plus the knobs above -- and
+reports the two host-compiler gates as SKIPPED, which is what ~/builder
+does before pushing it.
