@@ -1,5 +1,5 @@
 diff --git a/llvm/include/llvm/TargetParser/Triple.h b/llvm/include/llvm/TargetParser/Triple.h
-index 18634a8bbe6f..101a588bfe06 100644
+index b369b66960b1..81c5d1576b57 100644
 --- a/llvm/include/llvm/TargetParser/Triple.h
 +++ b/llvm/include/llvm/TargetParser/Triple.h
 @@ -80,6 +80,7 @@ public:
@@ -10,7 +10,7 @@ index 18634a8bbe6f..101a588bfe06 100644
      sparc,       // Sparc: sparc
      sparcv9,     // Sparcv9: Sparcv9
      sparcel,     // Sparc: (endianness = little). NB: 'Sparcle' is a CPU variant
-@@ -1177,6 +1178,9 @@ public:
+@@ -1179,6 +1180,9 @@ public:
    /// Tests whether the target is RISC-V (32- and 64-bit).
    bool isRISCV() const { return isRISCV32() || isRISCV64(); }
  
@@ -20,7 +20,7 @@ index 18634a8bbe6f..101a588bfe06 100644
    /// Tests whether the target is 32-bit SPARC (little and big endian).
    bool isSPARC32() const {
      return getArch() == Triple::sparc || getArch() == Triple::sparcel;
-@@ -1272,7 +1276,8 @@ public:
+@@ -1303,7 +1307,8 @@ public:
    /// Note: Android API level 29 (10) introduced ELF TLS.
    bool hasDefaultEmulatedTLS() const {
      return (isAndroid() && isAndroidVersionLT(29)) || isOSOpenBSD() ||
@@ -30,11 +30,27 @@ index 18634a8bbe6f..101a588bfe06 100644
    }
  
    /// True if the target uses TLSDESC by default.
+diff --git a/llvm/lib/TargetParser/TargetDataLayout.cpp b/llvm/lib/TargetParser/TargetDataLayout.cpp
+index c4de5d50bb8e..376f77af3fb0 100644
+--- a/llvm/lib/TargetParser/TargetDataLayout.cpp
++++ b/llvm/lib/TargetParser/TargetDataLayout.cpp
+@@ -643,6 +643,11 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
+     return computeX86DataLayout(*this);
+   case Triple::xcore:
+     return "e-m:e-p:32:32-i1:8:32-i8:8:32-i16:16:32-i64:32-f64:32-a:0:32-n32";
++  case Triple::slow32:
++    // i64:32:32 = i64 has 32-bit ABI alignment (no native 64-bit load/store).
++    // S128 = 16-byte stack alignment, matching SLOW32FrameLowering.
++    return "e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-"
++           "f32:32:32-f64:32:32-n8:16:32-S128";
+   case Triple::xtensa:
+     return "e-m:e-p:32:32-i8:8:32-i16:16:32-i64:64-n32";
+   case Triple::nvptx:
 diff --git a/llvm/lib/TargetParser/Triple.cpp b/llvm/lib/TargetParser/Triple.cpp
-index 1e421c428d8b..636cbc7c68c0 100644
+index ceabfe403e9c..bbb7223a9ac2 100644
 --- a/llvm/lib/TargetParser/Triple.cpp
 +++ b/llvm/lib/TargetParser/Triple.cpp
-@@ -122,6 +122,8 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
+@@ -121,6 +121,8 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
      return "riscv64be";
    case shave:
      return "shave";
@@ -43,7 +59,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
    case sparc:
      return "sparc";
    case sparcel:
-@@ -483,6 +485,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
+@@ -484,6 +486,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
        .Case("r600", r600)
        .Case("riscv32", riscv32)
        .Case("riscv64", riscv64)
@@ -51,7 +67,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
        .Case("riscv32be", riscv32be)
        .Case("riscv64be", riscv64be)
        .Case("hexagon", hexagon)
-@@ -636,6 +639,7 @@ Triple::ArchType Triple::parseArch(StringRef ArchName) {
+@@ -638,6 +641,7 @@ Triple::ArchType Triple::parseArch(StringRef ArchName) {
            .Case("r600", Triple::r600)
            .Case("riscv32", Triple::riscv32)
            .Case("riscv64", Triple::riscv64)
@@ -59,7 +75,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
            .Case("riscv32be", Triple::riscv32be)
            .Case("riscv64be", Triple::riscv64be)
            .Case("hexagon", Triple::hexagon)
-@@ -991,6 +995,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
+@@ -996,6 +1000,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
    case Triple::riscv32be:
    case Triple::riscv64be:
    case Triple::shave:
@@ -67,7 +83,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
    case Triple::sparc:
    case Triple::sparcel:
    case Triple::sparcv9:
-@@ -1757,6 +1762,7 @@ unsigned Triple::getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
+@@ -1762,6 +1767,7 @@ unsigned Triple::getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
    case llvm::Triple::riscv32:
    case llvm::Triple::riscv32be:
    case llvm::Triple::shave:
@@ -75,7 +91,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
    case llvm::Triple::sparc:
    case llvm::Triple::sparcel:
    case llvm::Triple::spir:
-@@ -1868,6 +1874,7 @@ Triple Triple::get32BitArchVariant() const {
+@@ -1873,6 +1879,7 @@ Triple Triple::get32BitArchVariant() const {
    case Triple::riscv32:
    case Triple::riscv32be:
    case Triple::shave:
@@ -83,7 +99,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
    case Triple::sparc:
    case Triple::sparcel:
    case Triple::spir:
-@@ -1960,6 +1967,7 @@ Triple Triple::get64BitArchVariant() const {
+@@ -1965,6 +1972,7 @@ Triple Triple::get64BitArchVariant() const {
    case Triple::msp430:
    case Triple::r600:
    case Triple::shave:
@@ -91,7 +107,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
    case Triple::sparcel:
    case Triple::tce:
    case Triple::xcore:
-@@ -2090,6 +2098,7 @@ Triple Triple::getBigEndianArchVariant() const {
+@@ -2095,6 +2103,7 @@ Triple Triple::getBigEndianArchVariant() const {
    case Triple::renderscript32:
    case Triple::renderscript64:
    case Triple::shave:
@@ -99,7 +115,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
    case Triple::spir64:
    case Triple::spir:
    case Triple::spirv:
-@@ -2234,6 +2243,7 @@ bool Triple::isLittleEndian() const {
+@@ -2239,6 +2248,7 @@ bool Triple::isLittleEndian() const {
    case Triple::riscv32:
    case Triple::riscv64:
    case Triple::shave:
@@ -107,7 +123,7 @@ index 1e421c428d8b..636cbc7c68c0 100644
    case Triple::sparcel:
    case Triple::spir64:
    case Triple::spir:
-@@ -2500,6 +2510,7 @@ ExceptionHandling Triple::getDefaultExceptionHandling() const {
+@@ -2505,6 +2515,7 @@ ExceptionHandling Triple::getDefaultExceptionHandling() const {
    case Triple::systemz:
    case Triple::xcore:
    case Triple::xtensa:

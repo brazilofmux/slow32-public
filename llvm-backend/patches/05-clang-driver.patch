@@ -1,8 +1,8 @@
 diff --git a/clang/include/clang/Options/Options.td b/clang/include/clang/Options/Options.td
-index cf66ee3e52f2..2a8ef5f86476 100644
+index 56194af32f68..6c750417d7f2 100644
 --- a/clang/include/clang/Options/Options.td
 +++ b/clang/include/clang/Options/Options.td
-@@ -5563,6 +5563,10 @@ def mguard_EQ : Joined<["-"], "mguard=">, Group<m_Group>,
+@@ -5632,6 +5632,10 @@ def mguard_EQ : Joined<["-"], "mguard=">, Group<m_Group>,
    Values<"none,cf,cf-nochecks">;
  def mmcu_EQ : Joined<["-"], "mmcu=">, Group<m_Group>;
  def msim : Flag<["-"], "msim">, Group<m_Group>;
@@ -26,7 +26,7 @@ index 506536cdc04f..878d4f95ac73 100644
    ToolChains/PPCLinux.cpp
    ToolChains/PPCFreeBSD.cpp
 diff --git a/clang/lib/Driver/Driver.cpp b/clang/lib/Driver/Driver.cpp
-index 3b5d0c0aad98..ceb63594a428 100644
+index 7a742e404bf5..acb0c2c20eb6 100644
 --- a/clang/lib/Driver/Driver.cpp
 +++ b/clang/lib/Driver/Driver.cpp
 @@ -51,6 +51,7 @@
@@ -37,7 +37,7 @@ index 3b5d0c0aad98..ceb63594a428 100644
  #include "ToolChains/XCore.h"
  #include "ToolChains/ZOS.h"
  #include "clang/Basic/DiagnosticDriver.h"
-@@ -7322,6 +7323,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
+@@ -6351,6 +6352,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
        case llvm::Triple::xcore:
          TC = std::make_unique<toolchains::XCoreToolChain>(*this, Target, Args);
          break;
@@ -48,10 +48,10 @@ index 3b5d0c0aad98..ceb63594a428 100644
        case llvm::Triple::wasm64:
          TC = std::make_unique<toolchains::WebAssembly>(*this, Target, Args);
 diff --git a/clang/lib/Driver/ToolChains/CommonArgs.cpp b/clang/lib/Driver/ToolChains/CommonArgs.cpp
-index 883296e43111..67e29a69b352 100644
+index 64859a318485..9d6b8e3d37a5 100644
 --- a/clang/lib/Driver/ToolChains/CommonArgs.cpp
 +++ b/clang/lib/Driver/ToolChains/CommonArgs.cpp
-@@ -121,6 +121,10 @@ static bool useFramePointerForTargetByDefault(const llvm::opt::ArgList &Args,
+@@ -119,6 +119,10 @@ static bool useFramePointerForTargetByDefault(const llvm::opt::ArgList &Args,
    case llvm::Triple::mips64el:
    case llvm::Triple::mips:
    case llvm::Triple::mipsel:

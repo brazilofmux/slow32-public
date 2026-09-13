@@ -45,7 +45,7 @@ bool SLOW32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
 
   // Need a stable frame pointer when SP moves, the frame is realigned, the
   // address of the frame is taken, or the user disabled FP elimination.
-  return MF.getTarget().Options.DisableFramePointerElim(MF) ||
+  return MF.disableFramePointerElim() ||
          RegInfo->hasStackRealignment(MF) || MFI.hasVarSizedObjects() ||
          MFI.isFrameAddressTaken() || MFI.hasStackMap() ||
          MFI.hasPatchPoint();

@@ -15,6 +15,7 @@
 
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TargetOptions.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -75,8 +76,9 @@ public:
     // f64:32:32 = double has 32-bit alignment (simpler than 64-bit)
     // n8:16:32 = native integer widths are 8, 16, 32
     // S128 = 16-byte stack alignment (matches SLOW32FrameLowering)
-    resetDataLayout("e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-"
-                    "f32:32:32-f64:32:32-n8:16:32-S128");
+    // The string itself lives in Triple::computeDataLayout()
+    // (llvm/lib/TargetParser/TargetDataLayout.cpp).
+    resetDataLayout();
   }
 
   void getTargetDefines(const LangOptions &Opts,

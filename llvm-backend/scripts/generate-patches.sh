@@ -28,9 +28,15 @@ fi
 echo "Upstream base (merge-base HEAD origin/main): $(git log --oneline -1 $BASE)"
 echo ""
 
-# 1. Triple.h and Triple.cpp (LLVM core architecture support)
+# 1. Triple.h, Triple.cpp, TargetDataLayout.cpp (LLVM core architecture support;
+#    since Sep 2026 upstream keeps every target's data-layout string in
+#    Triple::computeDataLayout(), so the slow32 case lives there too)
 echo "1. Generating LLVM Triple patch..."
-git diff $BASE HEAD -- llvm/include/llvm/TargetParser/Triple.h llvm/lib/TargetParser/Triple.cpp > "$PATCHES_DIR/01-llvm-triple.patch" 2>/dev/null || true
+git diff $BASE HEAD -- \
+    llvm/include/llvm/TargetParser/Triple.h \
+    llvm/lib/TargetParser/Triple.cpp \
+    llvm/lib/TargetParser/TargetDataLayout.cpp \
+    > "$PATCHES_DIR/01-llvm-triple.patch" 2>/dev/null || true
 
 if [ -s "$PATCHES_DIR/01-llvm-triple.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/01-llvm-triple.patch")

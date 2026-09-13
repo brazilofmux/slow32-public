@@ -24,21 +24,13 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSLOW32Target() {
   initializeSLOW32LoadAddrOptPass(*PassRegistry::getPassRegistry());
 }
 
-static std::string computeDataLayout() {
-  // Match clang/lib/Basic/Targets/SLOW32.h.
-  // i64:32:32 = i64 has 32-bit ABI alignment (no native 64-bit load/store).
-  // S128 = 16-byte stack alignment, matching SLOW32FrameLowering.
-  return "e-m:e-p:32:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-"
-         "f32:32:32-f64:32:32-n8:16:32-S128";
-}
-
 SLOW32TargetMachine::SLOW32TargetMachine(const Target &T, const Triple &TT,
                                            StringRef CPU, StringRef FS,
                                            const TargetOptions &Options,
                                            std::optional<Reloc::Model> RM,
                                            std::optional<CodeModel::Model> CM,
                                            CodeGenOptLevel OL, bool JIT)
-    : CodeGenTargetMachineImpl(T, computeDataLayout(), TT, CPU, FS, Options,
+    : CodeGenTargetMachineImpl(T, TT.computeDataLayout(), TT, CPU, FS, Options,
                                RM.value_or(Reloc::Static),
                                CM.value_or(CodeModel::Small), OL),
       TLOF(std::make_unique<TargetLoweringObjectFileELF>()),

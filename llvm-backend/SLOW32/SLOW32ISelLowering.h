@@ -141,11 +141,13 @@ public:
   
   // Exception handling registers
   Register
-  getExceptionPointerRegister(const Constant *PersonalityFn) const override {
+  getExceptionPointerRegister(ExceptionHandling EH,
+                              const Constant *PersonalityFn) const override {
     return SLOW32::R3;
   }
   Register
-  getExceptionSelectorRegister(const Constant *PersonalityFn) const override {
+  getExceptionSelectorRegister(ExceptionHandling EH,
+                               const Constant *PersonalityFn) const override {
     return SLOW32::R4;
   }
 
