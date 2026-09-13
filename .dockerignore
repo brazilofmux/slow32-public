@@ -22,6 +22,8 @@
 !tools/utilities/
 !runtime/
 !Makefile
+!LICENSE
+!NOTICE
 
 # Self-hosted cross-compilers need (shared frontend tree + container wrappers):
 !selfhost/

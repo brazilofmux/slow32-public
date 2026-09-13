@@ -35,7 +35,10 @@ cc1() {   # cc1 name.c [cflags...] -> out/name.s32o
     local src="$1"; shift
     local b="$(basename "$src" .c)"
     echo "  $b.c"
-    $CLANG $CFLAGS $OPTS "$@" "$src" -o "$OUTDIR/$b.ll"
+    # Compile from the source's own directory by a bare name: __FILE__
+    # (shell.c's asserts) would otherwise bake this machine's absolute
+    # build path into a binary that is distributed (the kit image).
+    (cd "$(dirname "$src")" && $CLANG $CFLAGS $OPTS "$@" "$(basename "$src")" -o "$OUTDIR/$b.ll")
     $LLC -mtriple=slow32-unknown-none "$OUTDIR/$b.ll" -o "$OUTDIR/$b.s"
     "$TOOLCHAIN/assembler/slow32asm" "$OUTDIR/$b.s" "$OUTDIR/$b.s32o"
 }

@@ -43,6 +43,8 @@ COPY --from=tools-builder \
 COPY runtime/crt0.s32o runtime/libs32.s32a runtime/libc_debug.s32a runtime/libc_mmio.s32a \
      /opt/slow32/lib/
 COPY runtime/include /opt/slow32/include
+# The licence travels with the binaries: an image is a distribution.
+COPY LICENSE NOTICE /opt/slow32/
 
 ENV PATH="/opt/slow32/bin:${PATH}"
 ENV SLOW32_HOME="/opt/slow32"
