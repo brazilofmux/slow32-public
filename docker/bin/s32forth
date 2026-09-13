@@ -9,7 +9,10 @@ EMU="${EMU:-slow32-fast}"
 fifo="$(mktemp -u /tmp/forth.XXXXXX)"
 mkfifo "$fifo"
 # exec: the subshell becomes the stdin reader, so the kill reaches it.
-( cat /opt/slow32/forth/prelude.fth "$@"; exec cat ) > "$fifo" &
+# <&3: background jobs get /dev/null as stdin unless explicitly
+# redirected; hand the reader the real one (the -i/-it stdin).
+exec 3<&0
+( cat /opt/slow32/forth/prelude.fth "$@"; exec cat ) <&3 > "$fifo" &
 feeder=$!
 trap 'kill "$feeder" 2>/dev/null || true; rm -f "$fifo"' EXIT
 "$EMU" /opt/slow32/forth/kernel.s32x < "$fifo"

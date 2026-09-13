@@ -34,7 +34,11 @@ mkfifo "$fifo"
 # still holding the terminal -- that was the original symptom in another
 # guise).  It may already be gone (EPIPE on its next write); either way it
 # must not survive us, and neither must the FIFO.
-( cat prelude.fth; exec cat ) > "$fifo" &
+# <&3: a background job in a non-interactive shell gets stdin from
+# /dev/null unless explicitly redirected -- without this the reader sees
+# EOF at once and the kernel halts right after the prelude.
+exec 3<&0
+( cat prelude.fth; exec cat ) <&3 > "$fifo" &
 feeder=$!
 trap 'kill "$feeder" 2>/dev/null || true; rm -f "$fifo"' EXIT
 $EMU kernel.s32x < "$fifo"
