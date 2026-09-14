@@ -4542,6 +4542,16 @@ static Node *local_init_list_expr(Node *stmts, Node *result) {
     return nd_comma(expr, result);
 }
 
+/* A compound literal builds its hidden local through the same
+ * local_init_* machinery a declarator uses, and that machinery keeps its
+ * in-progress state in the ps_li_* globals.  A literal that appears
+ * INSIDE another local's initializer -- `int *q = &(int){ 7 };`,
+ * `int y = 3 + (int){ 7 };`, `struct pair *p = &(struct pair){ i, i*i }`
+ * -- therefore clobbered the outer declarator's list and slot, and the
+ * outer local was initialized from the wrong list or not at all
+ * (GitHub issue 79: d25/d26 in the cross-compiler corpus, and the same
+ * on SLOW-32; the assignment form `q = &(int){7}` was never affected).
+ * Save the outer state on entry and put it back on every return. */
 static Node *parse_compound_literal_expr(int ty, int arr_count) {
     char nm[256];
     int off;
@@ -4549,6 +4559,23 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
     Node *zhead;
     Node *ztail;
     Node *result;
+    Node *expr;
+    int li;
+    char *sv_name;
+    int sv_off;
+    int sv_slot;
+    int sv_base_ty;
+    int sv_base_is_array;
+    Node *sv_head;
+    Node *sv_tail;
+
+    sv_name = ps_li_name;
+    sv_off = ps_li_off;
+    sv_slot = ps_li_slot;
+    sv_base_ty = ps_li_base_ty;
+    sv_base_is_array = ps_li_base_is_array;
+    sv_head = ps_li_head;
+    sv_tail = ps_li_tail;
 
     ps_make_compound_literal_name(nm);
     if (arr_count != 0) {
@@ -4568,25 +4595,35 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
         }
         result = nd_var(nm, off, ty + TY_PTR);
         ps_bind_var(result, ps_nlocals - 1);
-        return local_init_list_expr(head, result);
+        expr = local_init_list_expr(head, result);
+    } else {
+        off = add_local(nm, ty);
+        li = ps_nlocals - 1;   /* before the initializer: it may nest another literal */
+        local_init_begin(nm, off, ty, 0);
+        local_init_zero_at(ty, 0, 0);
+        if (ty_is_struct(ty)) {
+            parse_local_init_struct_at(ty, 0);
+        } else {
+            expect(TK_LBRACE);
+            if (lex_tok != TK_RBRACE) {
+                parse_local_init_value_at(ty, 0, 0);
+                if (lex_tok == TK_COMMA) next();
+            }
+            expect(TK_RBRACE);
+        }
+        result = nd_var(nm, off, ty);
+        ps_bind_var(result, li);
+        expr = local_init_list_expr(ps_li_head, result);
     }
 
-    off = add_local(nm, ty);
-    local_init_begin(nm, off, ty, 0);
-    local_init_zero_at(ty, 0, 0);
-    if (ty_is_struct(ty)) {
-        parse_local_init_struct_at(ty, 0);
-    } else {
-        expect(TK_LBRACE);
-        if (lex_tok != TK_RBRACE) {
-            parse_local_init_value_at(ty, 0, 0);
-            if (lex_tok == TK_COMMA) next();
-        }
-        expect(TK_RBRACE);
-    }
-    result = nd_var(nm, off, ty);
-    ps_bind_var(result, ps_nlocals - 1);
-    return local_init_list_expr(ps_li_head, result);
+    ps_li_name = sv_name;
+    ps_li_off = sv_off;
+    ps_li_slot = sv_slot;
+    ps_li_base_ty = sv_base_ty;
+    ps_li_base_is_array = sv_base_is_array;
+    ps_li_head = sv_head;
+    ps_li_tail = sv_tail;
+    return expr;
 }
 
 /* --- Block-scope declarators --- */
@@ -4816,6 +4853,13 @@ static Node *parse_local_declarator(char *nm, int ty) {
     /* Scalar or struct: type name; or type name = expr; */
     off = add_local(nm, ty);
     if (lex_tok == TK_ASSIGN) {
+        /* Bind to THIS local, captured before the initializer is parsed:
+         * a compound literal inside it adds a hidden local of its own,
+         * and "the most recent local" is then the literal's, not ours
+         * (GitHub issue 79 -- `int *q = &(int){ 7 };` bound q to the
+         * literal's slot and read garbage). */
+        int li;
+        li = ps_nlocals - 1;
         next();
         if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
             local_init_begin(nm, off, ty, 0);
@@ -4832,7 +4876,7 @@ static Node *parse_local_declarator(char *nm, int ty) {
         } else {
             n = nd_assign(nd_var(nm, off, ty), parse_assign());
         }
-        ps_bind_var(n->lhs, ps_nlocals - 1);
+        ps_bind_var(n->lhs, li);
         return nd_expr_stmt(n);
     }
     return NULL;
@@ -5065,9 +5109,11 @@ static Node *parse_stmt(void) {
             next();
             off = add_local(nm, ty);
             if (lex_tok == TK_ASSIGN) {
+                int li;
+                li = ps_nlocals - 1;   /* before the initializer (issue 79) */
                 next();
                 n = nd_assign(nd_var(nm, off, ty), parse_assign());
-                ps_bind_var(n->lhs, ps_nlocals - 1);
+                ps_bind_var(n->lhs, li);
             } else {
                 n = NULL;
             }
@@ -5371,9 +5417,11 @@ static Node *parse_stmt(void) {
                 ps_lfpn[ps_nlocals - 1] = lfpn;
             }
             if (lex_tok == TK_ASSIGN) {
+                int li;
+                li = ps_nlocals - 1;   /* before the initializer (issue 79) */
                 next();
                 n = nd_assign(nd_var(nm, off, TY_INT), parse_assign());
-                ps_bind_var(n->lhs, ps_nlocals - 1);
+                ps_bind_var(n->lhs, li);
                 expect(TK_SEMI);
                 return nd_expr_stmt(n);
             }

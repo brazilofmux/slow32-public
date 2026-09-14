@@ -3,8 +3,12 @@
  * Tests that the codegen handles labels reached from multiple sources
  * — exactly the multi-predecessor PHI shape that the gc_combine
  * edge-transfer bug latched onto. */
+/* x is unsigned: the LCG step overflows, and as signed int that is
+ * undefined -- gcc -O2 on aarch64 folded the later `x < 0` test on it
+ * and answered 93 where -O0, -fwrapv, clang, cc-a64 and cc.s32x all
+ * answer 27 (GitHub issue 79's a64 run).  The merge shape is unchanged. */
 static int labyrinth(int seed) {
-    int x = seed;
+    unsigned int x = (unsigned int)seed;
     int trips = 0;
 
 start:
@@ -30,11 +34,11 @@ bump_high:
     goto merge;
 
 merge:
-    if (x < 0) x = -x;
+    if (x & 0x80000000u) x = 0u - x;
     goto start;
 
 done:
-    return x ^ trips;
+    return (int)(x ^ (unsigned int)trips);
 }
 
 int main(void) {
