@@ -77,6 +77,39 @@ for testfile in "$BASDIR"/tests/*.txt; do
     fi
 done
 
+# Timed INKEY needs the term service (wait-for-any on stdin). The rest of
+# the suite denies term so @SAY stays line-mode. DO a .PRG so the program
+# text is a file; S32_STDIN_PREFIX is only the DO line; keys are real stdin.
+run_inkey() {
+    local name=$1
+    local prg=$2
+    local keys=$3
+    local want=$4
+    TOTAL=$((TOTAL + 1))
+    local prefix="$BASDIR/tests/.$name.dot"
+    printf 'DO %s\n' "$prg" > "$prefix"
+    local actual
+    if [ -n "$keys" ]; then
+        actual=$( cd "$BASDIR/tests" && env S32_STDIN_PREFIX="$prefix" \
+            timeout 5 "$EMU" "$DBASE" < <(sleep 0.3; printf '%s' "$keys") 2>&1 | filter_output )
+    else
+        actual=$( cd "$BASDIR/tests" && env S32_STDIN_PREFIX="$prefix" \
+            timeout 5 "$EMU" "$DBASE" </dev/null 2>&1 | filter_output )
+    fi
+    rm -f "$prefix"
+    if echo "$actual" | grep -q "$want"; then
+        echo "  PASS: $name"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: $name (want /$want/)"
+        echo "$actual" | head -8 | sed 's/^/      /'
+        FAIL=$((FAIL + 1))
+    fi
+}
+run_inkey test_inkey_poll INKPOLL.PRG "" $'^\. 0$'
+run_inkey test_inkey_timeout INKWAIT.PRG "" $'^\. 0$'
+run_inkey test_inkey_key INKWAIT.PRG "A" $'^\. 65$'
+
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
     "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT
