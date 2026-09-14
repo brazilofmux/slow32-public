@@ -987,6 +987,12 @@ static void gc_remove_edge(int u, int v) {
  * implicit copies at the predecessor terminator after out-of-SSA, so
  * they're consistent with phi-result/phi-arg coalescing. */
 static int gc_has_nonphi_user[HIR_MAX_INST];
+static int gc_last_nonphi_use[HIR_MAX_INST]; /* max ra position of a non-PHI use, -1 if none */
+
+static void gc_mark_use(int s, int pos) {
+    gc_has_nonphi_user[s] = 1;
+    if (pos > gc_last_nonphi_use[s]) gc_last_nonphi_use[s] = pos;
+}
 
 static void gc_compute_nonphi_users(void) {
     int i;
@@ -996,7 +1002,11 @@ static void gc_compute_nonphi_users(void) {
     int s;
 
     i = 0;
-    while (i < h_ninst) { gc_has_nonphi_user[i] = 0; i = i + 1; }
+    while (i < h_ninst) {
+        gc_has_nonphi_user[i] = 0;
+        gc_last_nonphi_use[i] = -1;
+        i = i + 1;
+    }
 
     i = 0;
     while (i < ra_norder) {
@@ -1005,11 +1015,11 @@ static void gc_compute_nonphi_users(void) {
         if (k == HI_PHI) { i = i + 1; continue; }
 
         s = h_src1[inst];
-        if (s >= 0) gc_has_nonphi_user[s] = 1;
+        if (s >= 0) gc_mark_use(s, i);
 
         s = h_src2[inst];
         if (s >= 0 && (ho_src2_is_ref(k) || k == HI_LOAD)) {
-            gc_has_nonphi_user[s] = 1;
+            gc_mark_use(s, i);
         }
 
         if ((k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) &&
@@ -1017,16 +1027,16 @@ static void gc_compute_nonphi_users(void) {
             j = 0;
             while (j < h_val[inst]) {
                 s = h_carg[h_cbase[inst] + j];
-                if (s >= 0) gc_has_nonphi_user[s] = 1;
+                if (s >= 0) gc_mark_use(s, i);
                 j = j + 1;
             }
         }
 
         if (k == HI_STORE && hx_sib_index[inst] >= 0) {
-            gc_has_nonphi_user[hx_sib_index[inst]] = 1;
+            gc_mark_use(hx_sib_index[inst], i);
         }
         if (hx_alu_sib_idx[inst] >= 0) {
-            gc_has_nonphi_user[hx_alu_sib_idx[inst]] = 1;
+            gc_mark_use(hx_alu_sib_idx[inst], i);
         }
 
         i = i + 1;
@@ -1075,6 +1085,20 @@ static void gc_drop_phi_edges(void) {
                          * coalesced `start`'s value with the loop
                          * phi.) */
                         if (gc_has_nonphi_user[arg]) { j = j + 1; continue; }
+                        /* The mirror case: the PHI-RESULT is still read
+                         * after the phi-arg is defined.  A post-increment
+                         * through a loop-carried pointer lowers to
+                         *     old = phi; new = old + 1; ... = LOAD old
+                         * so `old` and `new` overlap inside the body,
+                         * and coalescing them emits `add x4,x4,#1` before
+                         * `ldrb [x4]` -- the load reads the incremented
+                         * pointer.  (GitHub issue 80: libutf's
+                         * RunIntegerDFA_u16 was fed its input shifted by
+                         * one byte, so utf_nfc_is_nfc said U+0958 was
+                         * NFC.)  `>` not `>=`: a last read *as the operand
+                         * of* the arg's own definition is the destructive
+                         * 2-address form, and sharing is fine there. */
+                        if (gc_last_nonphi_use[inst] > ra_pos[arg]) { j = j + 1; continue; }
                         arg_n = gc_node[arg];
                         if (arg_n >= 0) gc_remove_edge(phi_n, arg_n);
                     }

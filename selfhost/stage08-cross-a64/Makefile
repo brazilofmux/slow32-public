@@ -197,7 +197,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_tail_call_exe \
          $(OUT)/cc_tail_call_hir_exe \
          $(OUT)/cc_alu_imm_exe \
-         $(OUT)/cc_alu_imm_hir_exe \
+         $(OUT)/cc_alu_imm_hir_exe $(OUT)/cc_phi_postinc_hir_exe \
          $(OUT)/cc_fp_arith_exe \
          $(OUT)/cc_fp_varargs_exe \
          $(OUT)/cc_string_exe \
@@ -234,6 +234,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_tail_call_hir_exe; rc=$$?; if [ $$rc -eq 7 ]; then echo "cc_tail_call (--hir): ok (exit=7)"; else echo "cc_tail_call (--hir): FAIL (exit=$$rc, expected 7)"; exit 1; fi
 	@$(OUT)/cc_alu_imm_exe; rc=$$?; if [ $$rc -eq 8 ]; then echo "cc_alu_imm: ok (exit=8)"; else echo "cc_alu_imm: FAIL (exit=$$rc, expected 8)"; exit 1; fi
 	@$(OUT)/cc_alu_imm_hir_exe; rc=$$?; if [ $$rc -eq 8 ]; then echo "cc_alu_imm (--hir): ok (exit=8)"; else echo "cc_alu_imm (--hir): FAIL (exit=$$rc, expected 8)"; exit 1; fi
+	@$(OUT)/cc_phi_postinc_hir_exe; rc=$$?; if [ $$rc -eq 54 ]; then echo "cc_phi_postinc (--hir): ok (exit=54)"; else echo "cc_phi_postinc (--hir): FAIL (exit=$$rc, expected 54)"; exit 1; fi
 	@$(OUT)/cc_fp_arith_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_fp_arith (--hir): ok"; else echo "cc_fp_arith (--hir): FAIL (exit=$$rc; bitfield: 1=fadd 2=fsub 4=fmul 8=fdiv 16=fneg 32=fcalc 64=fadd-neg 128=six 256=add_one 512=halfneg 1024=unenc 2048=pi 4096=combo)"; exit 1; fi
 	@$(OUT)/cc_fp_varargs_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_fp_varargs (--hir): ok"; else echo "cc_fp_varargs (--hir): FAIL (exit=$$rc, expected 0; 1=one_double 2=sum_mix)"; exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
@@ -402,6 +403,7 @@ clean:
 	      $(OUT)/cc_fwd_struct.o $(OUT)/cc_fwd_struct_exe \
 	      $(OUT)/cc_typedef_enum.o $(OUT)/cc_typedef_enum_exe \
 	      $(OUT)/cc_enum_type.o $(OUT)/cc_enum_type_exe \
+	      $(OUT)/cc_phi_postinc.o \
 	      $(OUT)/cc_proto_unnamed.o $(OUT)/cc_proto_unnamed_exe \
 	      $(OUT)/cc_bool.o $(OUT)/cc_bool_exe \
 	      $(OUT)/cc_ifdef_aarch64.o $(OUT)/cc_ifdef_aarch64_exe \
