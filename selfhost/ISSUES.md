@@ -2091,6 +2091,43 @@ their environment handling -- a strictly stronger gate than before.
 `tests/test_getenv.c` pins it, with the harness setting
 `S32_SELFTEST_ENV=ok`; unset it and the test returns 1.
 
+### 69. [RESOLVED 2026-09-13] cc-x64 / cc-a64: 32-bit values flowing into 64-bit slots kept a zero upper half (GitHub issue 82)
+
+Found by running the self-hosted DBT again.  `make dbt` in both cross
+trees had not compiled since ba2b9125 (2026-08-24) because dbt.c began
+reading `uc_mcontext.pc` and the selfhost `<ucontext.h>` was an opaque
+blob; nothing built it.  Once the header carried glibc's real layouts
+and the libcs the four symbols the DBT had grown to need, `dbt-a64`
+produced the right benchmark checksum but printed "AArch64 B offset
+out of range" for every chain patch and exited 43.  The gcc build was
+silent.  Reduced to three shared-lowering defects on the 64-bit hosts,
+none of which SLOW-32 has (its long long is a word pair and every path
+below widened it explicitly):
+
+1. `p - q` was `HI_SUB TY_INT`, a 32-bit `sub w` / `sub %esi,%edi`.
+   sema types the difference as a pointer, so `(long long)(p - q)` was
+   a no-op on top and `>> 2` of a negative difference came out as an
+   unsigned 32-bit shift.  The SUB and the element-size DIV are
+   TY_LLONG on those hosts now.
+2. `(int)(ll >> 2)` returned the 64-bit value unchanged ("truncate:
+   just use the lo word").  Both back ends size a compare by the
+   producers of its operands, so `imm26 < -(1 << 25)` became a 64-bit
+   `cmp` against a constant materialised with a 32-bit mov, i.e. zero-
+   extended to +4261412864.  A truncating cast now emits SEXT32 /
+   ZEXT32 typed as the destination (then char/short narrowing).
+3. `long long d = -16;` -- and `d = x`, `d += x`, `d = f ? i : ll`,
+   `return x` from a long long function, an inlined return -- stored
+   the int without widening: 0x00000000FFFFFFF0.  `hl_widen_native64`
+   (SEXT32 / ZEXT32 by signedness; pointers and long long pass) sits
+   at every one of those sites.  This one is not exotic; it had been
+   hiding behind values that were positive or only ever read at 32
+   bits.
+
+`diff-test/corpus/d37_int64_widen.c` covers all three against gcc on
+both hosts.  `cc_ucontext_layout` checks the header's offsets on
+aarch64.  `dbt` is in `all` in both cross trees so the combination is
+built on every `make`.
+
 ### 67. [RESOLVED 2026-09-08] stage08 cc builds SQLite 3.51.0: the library, the smoke test and the shell, byte-identical to the clang build
 
 The pristine amalgamation (9.4MB, 265,876 lines, `sqlite/build.sh`'s

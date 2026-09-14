@@ -84,6 +84,25 @@ static void hl_widen64(int val, int from_ty, int *out_lo, int *out_hi) {
     }
 }
 
+#ifdef S12CC_X64_HOST
+/* The 64-bit hosts' counterpart of hl_widen64: an int-class value
+ * (int, char, short; not a pointer, which is already 64 bits wide
+ * there, and not long long) becomes a full 64-bit register value by
+ * SEXT32 / ZEXT32 according to its signedness.  Every place a 32-bit
+ * value flows into a 64-bit slot must go through this: a `sub w` or
+ * `mov w` leaves the upper half zero, so `int64_t d = -16;`,
+ * `d = x;`, `d += x;`, `return x;` from a long long function and a
+ * mixed ternary all stored 0x00000000FFFFFFF0 (GitHub issue 82, found
+ * when the self-hosted DBT first ran through cc-a64 again). */
+static int hl_widen_native64(int val, int from_ty) {
+    if (ty_is_llong(from_ty)) return val;
+    if (ty_is_ptr(from_ty)) return val;
+    if (ty_is_fp(from_ty)) return val;
+    if (from_ty & TY_UNSIGNED) return hi_emit(HI_ZEXT32, TY_LLONG, val, -1, 0, NULL);
+    return hi_emit(HI_SEXT32, TY_LLONG, val, -1, 0, NULL);
+}
+#endif
+
 /* Promote a 32-bit value (int or float) to f64 twin pair via helper call.
  * After return, hl_hi holds the hi word. */
 static int hl_promote_to_f64(int val, int from_ty);
@@ -1696,6 +1715,7 @@ static int hl_expr(Node *n) {
 #ifdef S12CC_X64_HOST
         if (ty_is_llong(n->ty)) {
             val = hl_expr(n->rhs);
+            val = hl_widen_native64(val, n->rhs->ty);
             addr = hl_addr(n->lhs);
             hi_emit(HI_STORE, TY_LLONG, addr, val, 0, NULL);
             return val;
@@ -2260,13 +2280,26 @@ static int hl_expr(Node *n) {
          * every W_GetNumForName bombed as not-found. */
         if (n->op == TK_MINUS && ty_is_ptr(n->lhs->ty) && ty_is_ptr(n->rhs->ty)) {
             int diff;
+            int diff_ty;
             elem_sz = ty_size(ty_deref(n->lhs->ty));
             lv = hl_expr(n->lhs);
             rv = hl_expr(n->rhs);
-            diff = hi_emit(HI_SUB, TY_INT, lv, rv, 0, NULL);
+            /* The difference is as wide as a pointer.  On the 64-bit
+             * hosts a TY_INT SUB is a 32-bit `sub w`, whose result has
+             * a zeroed upper half; sema types p - q as a pointer, so
+             * `(int64_t)(p - q)` was a no-op on top of that and
+             * `(int64_t)(p - q) >> 2` came out as an unsigned 32-bit
+             * shift (GitHub issue 82: the self-hosted DBT's chain-patch
+             * range check said every branch was out of range). */
+#ifdef S12CC_X64_HOST
+            diff_ty = TY_LLONG;
+#else
+            diff_ty = TY_INT;
+#endif
+            diff = hi_emit(HI_SUB, diff_ty, lv, rv, 0, NULL);
             if (elem_sz > 1) {
-                scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
-                diff = hi_emit(HI_DIV, TY_INT, diff, scale, 0, NULL);
+                scale = hi_emit(HI_ICONST, diff_ty, -1, -1, elem_sz, NULL);
+                diff = hi_emit(HI_DIV, diff_ty, diff, scale, 0, NULL);
             }
             return diff;
         }
@@ -2568,6 +2601,7 @@ static int hl_expr(Node *n) {
             new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
         }
 #else
+        if (ty_is_llong(n->ty) && n->rhs) rv = hl_widen_native64(rv, n->rhs->ty);
         new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
 #endif
         /* Prefix ++ is this node.  Wrap before the store so a promoted
@@ -2750,11 +2784,17 @@ static int hl_expr(Node *n) {
 
         hl_switch_block(then_blk);
         val = hl_expr(n->lhs);
+#ifdef S12CC_X64_HOST
+        if (ty_is_llong(n->ty)) val = hl_widen_native64(val, n->lhs->ty);
+#endif
         hi_emit(HI_STORE, n->ty, tmp, val, 0, NULL);
         hi_emit(HI_BR, 0, -1, -1, join_blk, NULL);
 
         hl_switch_block(else_blk);
         val = hl_expr(n->rhs);
+#ifdef S12CC_X64_HOST
+        if (ty_is_llong(n->ty)) val = hl_widen_native64(val, n->rhs->ty);
+#endif
         hi_emit(HI_STORE, n->ty, tmp, val, 0, NULL);
         hi_emit(HI_BR, 0, -1, -1, join_blk, NULL);
 
@@ -2791,6 +2831,23 @@ static int hl_expr(Node *n) {
             return lv;
         }
         if (!dst_is_native64 && !ty_is_double(n->ty) && src_is_native64) {
+#ifdef S12CC_X64_HOST
+            /* Truncate 64->32 on a 64-bit host.  The value is one
+             * register; "just use it" left a 64-bit producer behind the
+             * int-typed result, and both back ends size a compare by
+             * its operands' producers, so `(int32_t)(d >> 2) < -(1 << 25)`
+             * became a 64-bit compare against a zero-extended 32-bit
+             * constant (GitHub issue 82).  Re-produce the value at 32
+             * bits: sxtw/movslq (or a zeroing mov for unsigned) typed
+             * as the destination, then char/short narrowing as usual. */
+            if (!ty_is_fp(n->ty)) {
+                if (n->ty & TY_UNSIGNED)
+                    lv = hi_emit(HI_ZEXT32, n->ty, lv, -1, 0, NULL);
+                else
+                    lv = hi_emit(HI_SEXT32, n->ty, lv, -1, 0, NULL);
+                return hl_narrow(n->ty, lv);
+            }
+#endif
             /* Truncate 64->32: just use lo word */
             return lv;
         }
@@ -3328,6 +3385,9 @@ static void hl_stmt(Node *n) {
                     lv = hl_expr(n->lhs);
                     if (hl_inl_res_ty != TY_VOID)
                         lv = hl_narrow(hl_inl_res_ty, lv);
+#ifdef S12CC_X64_HOST
+                    if (ty_is_llong(hl_inl_res_ty)) lv = hl_widen_native64(lv, n->lhs->ty);
+#endif
                     hl_inl_rv = lv;
                     hl_inl_rv_hi = hl_hi;
                 }
@@ -3340,6 +3400,7 @@ static void hl_stmt(Node *n) {
                 if (ty_is_llong(hl_inl_res_ty) || ty_is_double(hl_inl_res_ty)) {
 #ifdef S12CC_X64_HOST
                     lv = hl_narrow(hl_inl_res_ty, lv);
+                    if (ty_is_llong(hl_inl_res_ty)) lv = hl_widen_native64(lv, n->lhs->ty);
                     hi_emit(HI_STORE, hl_inl_res_ty, hl_inl_res, lv, 0, NULL);
 #else
                     {
@@ -3382,6 +3443,7 @@ static void hl_stmt(Node *n) {
             lv = hl_expr(n->lhs);
             lv = hl_narrow(hl_ret_ty, lv);   /* both targets: a u8 function returns a u8 */
 #ifdef S12CC_X64_HOST
+            if (ty_is_llong(hl_ret_ty)) lv = hl_widen_native64(lv, n->lhs->ty);
             hi_emit(HI_RET, 0, lv, -1, 0, NULL);
 #else
             if (ty_is_llong(n->lhs->ty) || ty_is_double(n->lhs->ty)) {
