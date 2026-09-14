@@ -47,7 +47,7 @@ check-frontend:
 	    -Werror=implicit-function-declaration -Werror=implicit-int \
 	    -Wno-comment cc-x64.c
 
-all: $(OUT)/cc-x64 $(OUT)/s32fast-hir
+all: $(OUT)/cc-x64 $(OUT)/s32fast-hir $(OUT)/dbt-x64
 
 $(OUT):
 	mkdir -p $(OUT)
@@ -97,7 +97,8 @@ $(OUT)/s32fast-hir: $(OUT)/s32fast-hir.o $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/
 
 # --- dbt-x64 — SLOW-32 dynamic binary translator, compiled by cc-x64 --hir ---
 # x86-64-relevant subset of tools/dbt/.  emit_a64.c and translate_a64.c are
-# excluded (those are the AArch64 backend).  The MMIO ring is provided by
+# excluded (those are the AArch64 backend); stage5_codegen.c went with the
+# dead Stage 5 in ba2b9125.  The MMIO ring is provided by
 # libc_x64/mmio_ring_x64.c (a focused stub of tools/emulator/mmio_ring.c).
 
 DBT_DIR = ../../tools/dbt
@@ -105,8 +106,7 @@ DBT_SRCS = $(DBT_DIR)/dbt.c $(DBT_DIR)/emit_x64.c $(DBT_DIR)/translate.c \
            $(DBT_DIR)/block_cache.c $(DBT_DIR)/shadow_interp.c \
            $(DBT_DIR)/stage5_lift.c $(DBT_DIR)/stage5_burg.c \
            $(DBT_DIR)/stage5_ssa.c $(DBT_DIR)/stage5_ra.c \
-           $(DBT_DIR)/stage5_mir.c $(DBT_DIR)/stage5_lir_opt.c \
-           $(DBT_DIR)/stage5_codegen.c
+           $(DBT_DIR)/stage5_mir.c $(DBT_DIR)/stage5_lir_opt.c
 DBT_OBJS = $(patsubst $(DBT_DIR)/%.c,$(OUT)/dbt_%.o,$(DBT_SRCS))
 
 $(OUT)/dbt_%.o: $(DBT_DIR)/%.c $(OUT)/cc-x64

@@ -89,3 +89,32 @@ int tolower(int c) {
     if (c >= 'A' && c <= 'Z') return c + 32;
     return c;
 }
+
+/* __assert_fail — what <assert.h>'s assert() calls on a false condition.
+ * tools/dbt/block_cache.c asserts; the self-hosted DBT would not link
+ * without it (GitHub issue 82).  "assertion failed: EXPR (FILE:LINE)"
+ * on fd 2, then abort(). */
+static void af_puts(char *s) {
+    int n = 0;
+    while (s[n]) n = n + 1;
+    write(2, s, n);
+}
+void __assert_fail(char *expr, char *file, int line) {
+    char digits[16];
+    int i = 15;
+    digits[i] = 0;
+    if (line == 0) { i = i - 1; digits[i] = 48; }
+    while (line > 0) {
+        i = i - 1;
+        digits[i] = 48 + line % 10;
+        line = line / 10;
+    }
+    af_puts("assertion failed: ");
+    af_puts(expr);
+    af_puts(" (");
+    af_puts(file);
+    af_puts(":");
+    af_puts(digits + i);
+    af_puts(")\n");
+    abort();
+}

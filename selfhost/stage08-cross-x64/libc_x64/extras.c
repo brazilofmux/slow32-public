@@ -544,3 +544,11 @@ int vsnprintf(char *buf, int sz, char *fmt, va_list ap) {
     }
     return pos;
 }
+
+/* strtok — the classic single-threaded tokenizer, strtok_r over one
+ * static saveptr.  tools/dbt/block_cache.c's S32_DBT_DUMP_PC parser
+ * uses it (GitHub issue 82: the self-hosted DBT would not link). */
+static char *strtok_save;
+char *strtok(char *s, char *delim) {
+    return strtok_r(s, delim, &strtok_save);
+}

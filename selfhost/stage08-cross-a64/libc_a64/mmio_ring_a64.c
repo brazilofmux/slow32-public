@@ -525,3 +525,20 @@ void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu) {
         mmio->total_requests = mmio->total_requests + 1;
     }
 }
+
+/* mmio_ring_set_emulator — the full ring records the emulator's own path
+ * so MMIO exec can launch another .s32x through it (f8bdedd9).  This
+ * stub has no exec, so there is nothing to record; the entry point
+ * exists so the self-hosted DBT links (GitHub issue 82). */
+void mmio_ring_set_emulator(const char *argv0) {
+    (void)argv0;
+}
+
+/* mmio_async_pending — the full ring answers "is a DPC, a completed
+ * post or an armed timer waiting?" so the DBT's YIELD-spin detector
+ * knows a quiet guest is waiting on async work (8036f774).  This stub
+ * has none of that machinery, so nothing is ever pending. */
+bool mmio_async_pending(mmio_ring_state_t *mmio) {
+    (void)mmio;
+    return false;
+}

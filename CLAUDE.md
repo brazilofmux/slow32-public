@@ -195,6 +195,8 @@ It has its own Makefile. The HIR pipeline is the default since GitHub issue 81 (
 cd selfhost/stage08-cross-x64
 
 # Build everything: cc-x64 (compiler) + s32fast-hir (emulator compiled by cc-x64)
+# + dbt-x64 (the DBT compiled by cc-x64; in `all` since GitHub issue 82, when
+# it had silently stopped building against the selfhost <ucontext.h>)
 make
 
 # Run all tests (23 tests)

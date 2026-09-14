@@ -591,3 +591,11 @@ float copysignf(float x, float y) {
     if (x < 0) return 0 - x;
     return x;
 }
+
+/* strtok — the classic single-threaded tokenizer, strtok_r over one
+ * static saveptr.  tools/dbt/block_cache.c's S32_DBT_DUMP_PC parser
+ * uses it (GitHub issue 82: the self-hosted DBT would not link). */
+static char *strtok_save;
+char *strtok(char *s, char *delim) {
+    return strtok_r(s, delim, &strtok_save);
+}
