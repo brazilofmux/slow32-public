@@ -15,6 +15,12 @@ OUT = out
 .PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast dbt bench clean diff-test check-frontend
 
 # GitHub issue 71: same shared frontend as cc-x64; host CC is the gate.
+# check-frontend sits above `all` so it reads first, which made it make's
+# default goal: bare `make` ran the syntax gate, exited green, and never
+# rebuilt the compiler -- so the suite silently tested a stale binary after
+# every frontend change.  Pin the goal explicitly; then rule order is free.
+.DEFAULT_GOAL := all
+
 check-frontend:
 	$(CC) -std=c11 -O0 -fno-builtin -fsyntax-only \
 	    -Werror=implicit-function-declaration -Werror=implicit-int \

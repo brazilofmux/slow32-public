@@ -36,6 +36,12 @@ CC_DEPS = cc-x64.c hir_regalloc_x64.h hir_codegen_x64.h hir_burg_x64.h \
 # GitHub issue 71: the shared frontend is compiled here by host CC,
 # which rejects a static used before its definition.  stage08's own
 # compiler accepts that, so this is the gate the other suites miss.
+# check-frontend sits above `all` so it reads first, which made it make's
+# default goal: bare `make` ran the syntax gate, exited green, and never
+# rebuilt the compiler -- so the suite silently tested a stale binary after
+# every frontend change.  Pin the goal explicitly; then rule order is free.
+.DEFAULT_GOAL := all
+
 check-frontend:
 	$(CC) -std=c11 -O0 -fno-builtin -fsyntax-only \
 	    -Werror=implicit-function-declaration -Werror=implicit-int \
