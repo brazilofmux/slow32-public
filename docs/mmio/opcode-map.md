@@ -219,8 +219,9 @@ endian, `family = 2` (`S32_AF_INET`).
 closes the guest fd. Policy name is `net` (legacy opcode range
 `0x40–0x4F`); default policy allows it.
 
-Unix `socketpair` as a same-machine hose, and POSIX `poll` on guest
-fds, are hosting work, not new families here.
+Unix `socketpair` as a same-machine hose is still hosting work, not a
+new family here. Wait-for-any on guest fds is `OP_POLL` with a payload
+(POLLIN only); see Timers and `POLL` above.
 
 ## Host environment (`0x60–0x64`)
 

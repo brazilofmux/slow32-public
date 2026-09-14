@@ -82,11 +82,11 @@ Do not reopen lightly. Full sentences live in the cited docs.
 | One instance = one thread of control. A host interrupt becomes a queue entry, never a vector. Concurrency is **between** instances. | [dpc.md](dpc.md) |
 
 Level 3 is partly landed: `EXEC` (COMMAND.COM, BBS doors), IPv4 TCP
-hose (`net/`, opcodes `0x40–0x48`). Level 1’s timer→DPC path is
-landed; the request-that-needs-a-reply is not. Level 2 is named in
-`dpc.md` as the second step and is not built (`mmio_state` is still
-global — [AUDIT-2026-08.md](../AUDIT-2026-08.md)). Level 4 is TCP
-that has left the box; policy and a desk file whose far end is an
+hose (`net/`, opcodes `0x40–0x48`). Level 1’s timer→DPC path, posted
+read (`POST_READ`), and wait-for-any on `OP_POLL` are landed. Level 2
+is named in `dpc.md` as the second step and is not built (`mmio_state`
+is still global — [AUDIT-2026-08.md](../AUDIT-2026-08.md)). Level 4 is
+TCP that has left the box; policy and a desk file whose far end is an
 IP are the missing work, not a new protocol.
 
 [thread-service-routines.md](../thread-service-routines.md) and the

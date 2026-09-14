@@ -79,12 +79,13 @@ metadata, `EXEC`, `GETTIME`/`SLEEP`/`GETTZ`, and the DPC timers are
 in `common/mmio_ring_layout.h` and [opcode-map.md](mmio/opcode-map.md).
 What is left is hosting work, not new IRQ-shaped opcodes:
 
-- DPC second demo: a request that needs a reply; optionally a host
-  producer that writes the ring while the guest is in translated
-  code ([plans/dpc.md](plans/dpc.md), [plans/hosting.md](plans/hosting.md)).
-- POSIX `poll` on guest fds (timer *or* hose), which is not
-  `OP_POLL` (sleep until the DPC ring is non-empty).
-- `socketpair` hose and a desk file (level 3); then multi-instance
-  in one process (level 2).
+- ~~DPC second demo / POSIX `poll` as a guest opcode.~~ Landed:
+  `POST_READ` (completion into the caller's buffer, pending slot)
+  and wait-for-any as a payload on the same `OP_POLL` (POLLIN,
+  named fds; `s32_dpc_wait_on`). A host producer that writes the
+  DPC ring while the guest is in translated code is still missing
+  ([plans/dpc.md](plans/dpc.md), [plans/hosting.md](plans/hosting.md)).
+- `socketpair` hose and a desk file (level 3); `EXEC` completing
+  as a DPC; then multi-instance in one process (level 2).
 
 ~~Flesh out the high-priority response ring contract (entry count, opcodes) and teach the emulator to drain it before normal completions to guarantee low-latency delivery of timers and async signals.~~ Landed 2026-09-02 as the **DPC ring** (`S32_MMIO_DPC_*`, 64 entries in the page below the request ring): `OP_TIMER_START` / `OP_TIMER_CANCEL` arm one-shot timers, a fired timer is queued as an entry the guest reads with `s32_dpc_poll`, and `OP_POLL` sleeps until the ring is non-empty. Delivery happens at service points only, never into a running guest -- the design in `docs/plans/dpc.md`. Guest API in `runtime/include/s32dpc.h`; `regression/tests/feature-dpc-timer` runs it on all four engines. A timer is not a guest interrupt.
