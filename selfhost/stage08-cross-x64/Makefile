@@ -152,6 +152,13 @@ DIFF_GCC  := $(shell command -v x86_64-linux-gnu-gcc 2>/dev/null)
 # binaries directly (run.sh falls back to a ulimit-honoring direct exec).
 DIFF_QEMU := $(shell command -v qemu-x86_64-static 2>/dev/null)
 DIFF_NATIVE := $(shell [ "$$(uname -sm)" = "Linux x86_64" ] && echo yes)
+# A native x86-64 Linux host's own gcc is the reference when the
+# cross-named one is absent (Alpine's toolchain image, the AWS builder).
+ifeq ($(DIFF_GCC),)
+ifeq ($(DIFF_NATIVE),yes)
+DIFF_GCC := $(shell command -v gcc 2>/dev/null)
+endif
+endif
 
 diff-test: $(OUT)/cc-x64 $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
 	@echo ""
@@ -161,7 +168,7 @@ diff-test: $(OUT)/cc-x64 $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
 		echo "         non-x86-64 hosts (install binutils-x86-64-linux-gnu +"; \
 		echo "         gcc-x86-64-linux-gnu + qemu-user-static)"; \
 	else \
-		diff-test/run.sh; \
+		GCC="$(DIFF_GCC)" diff-test/run.sh; \
 	fi
 
 # --- Benchmark ---
