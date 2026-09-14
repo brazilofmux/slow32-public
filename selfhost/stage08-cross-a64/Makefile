@@ -127,7 +127,7 @@ test-crt0: $(OUT)/test_crt0 $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o
 
 # Compile a single .c under tests/ via cc-a64.
 $(OUT)/cc_%.o: tests/cc_%.c $(OUT)/cc-a64
-	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -c $< -o $@ >/dev/null
 
 # --hir variant: same source, compiled through the HIR pipeline so we can
 # assert codegen-quality features (TCE, regalloc, BURG) on the same test.
@@ -165,11 +165,11 @@ $(OUT)/cc_fp_varargs_exe: $(OUT)/cc_fp_varargs.o $(OUT)/crt0.o $(OUT)/crt0_stubs
 
 $(OUT)/cc_multi_include.o: tests/cc_multi_include.c $(OUT)/cc-a64 \
                            tests/inc_one/one.h tests/inc_two/two.h
-	@$(OUT)/cc-a64 -Itests/inc_one -Itests/inc_two -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -Itests/inc_one -Itests/inc_two -c $< -o $@ >/dev/null
 
 $(OUT)/cc_incdir_sibling.o: tests/cc_incdir_sibling.c $(OUT)/cc-a64 \
                             tests/inc_sib/sub/outer.h tests/inc_sib/sub/inner.h
-	@$(OUT)/cc-a64 -Itests/inc_sib -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -Itests/inc_sib -c $< -o $@ >/dev/null
 
 $(OUT)/cc_%_exe: $(OUT)/cc_%.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
 	@ld -o $@ $(OUT)/crt0.o $< $(OUT)/crt0_stubs.o
@@ -252,13 +252,13 @@ $(OUT)/crt0.o: $(OUT)/cc-a64
 # ld-a64, run the result. quadruple(10) = double_it(double_it(10)) = 40.
 
 $(OUT)/cc_lib_a.o: tests/cc_lib_a.c $(OUT)/cc-a64
-	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -c $< -o $@ >/dev/null
 
 $(OUT)/cc_lib_b.o: tests/cc_lib_b.c $(OUT)/cc-a64
-	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -c $< -o $@ >/dev/null
 
 $(OUT)/cc_uses_lib.o: tests/cc_uses_lib.c $(OUT)/cc-a64
-	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -c $< -o $@ >/dev/null
 
 $(OUT)/lib_helper.a: $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/ar-a64
 	@$(OUT)/ar-a64 rcs $@ $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o >/dev/null 2>&1
@@ -274,13 +274,13 @@ test-toolchain: $(OUT)/cc_uses_lib_exe
 		else echo "test-toolchain: FAIL (exit=$$rc, expected 40)"; exit 1; fi
 
 $(OUT)/cc_dup_foo_a.o: tests/cc_dup_foo_a.c $(OUT)/cc-a64
-	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -c $< -o $@ >/dev/null
 
 $(OUT)/cc_dup_foo_b.o: tests/cc_dup_foo_b.c $(OUT)/cc-a64
-	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -c $< -o $@ >/dev/null
 
 $(OUT)/cc_dup_foo_main.o: tests/cc_dup_foo_main.c $(OUT)/cc-a64
-	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+	@$(OUT)/cc-a64 --tree -c $< -o $@ >/dev/null
 
 $(OUT)/libdup.a: $(OUT)/cc_dup_foo_a.o $(OUT)/cc_dup_foo_b.o $(OUT)/ar-a64
 	@$(OUT)/ar-a64 rcs $@ $(OUT)/cc_dup_foo_a.o $(OUT)/cc_dup_foo_b.o >/dev/null 2>&1

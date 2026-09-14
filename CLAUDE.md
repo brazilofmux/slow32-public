@@ -189,7 +189,7 @@ podman run --rm -v $(pwd):/workspace slow32:toolchain bash -c "cd /workspace && 
 
 The cross-compiler (`selfhost/stage08-cross-x64/`) compiles C to native x86-64 ELF.
 It pulls its C frontend (parser/sema/HIR/etc.) via symlinks from `../stage08/`.
-It has its own Makefile. **Always use `--hir` when compiling with cc-x64** (the Makefile does this).
+It has its own Makefile. The HIR pipeline is the default since GitHub issue 81 (`--hir` is accepted and is a no-op); `--tree` selects the old tree-walk codegen, which the a64 Makefile still uses as a reference in its plain smoke tests and which is known to miscompile `*p++`.
 
 ```bash
 cd selfhost/stage08-cross-x64
@@ -259,9 +259,9 @@ Key files for codegen performance:
 - `hir_burg_x64.h` — BURG instruction selection patterns
 - `x64_encode.h` — raw x86-64 instruction encoding
 
-**CRITICAL**: The `--hir` flag selects the HIR codegen path (with regalloc, SIB folds, LICM).
-Without it, cc-x64 falls back to the tree-walk codegen which is 2x slower.
-The Makefile passes `--hir` automatically.
+**HIR is the default** (regalloc, SIB folds, LICM). `--tree` falls back to the tree-walk
+codegen, 2x slower and a known-buggy reference (`*p++` on a parameter pointer, GitHub
+issue 81); nothing should ask for it except the a64 Makefile's plain smoke rules.
 
 ## Testing Commands
 

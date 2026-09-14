@@ -143,13 +143,14 @@ int main(int argc, char **argv) {
     outfile = 0;
     compile_only = 0;
     crt0_mode = 0;
-    hir_mode = 0;
+    hir_mode = 1;   /* the HIR pipeline is the compiler; --tree is the old tree-walk reference (GitHub issue 81) */
     argi = 1;
 
     while (argi < argc) {
         if (argv[argi][0] == 45 && argv[argi][1] == 45) {
             if (strcmp(argv[argi], "--crt0") == 0) crt0_mode = 1;
             else if (strcmp(argv[argi], "--hir") == 0) hir_mode = 1;
+            else if (strcmp(argv[argi], "--tree") == 0) hir_mode = 0;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 99 && argv[argi][2] == 0) {
             compile_only = 1;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 73) {
