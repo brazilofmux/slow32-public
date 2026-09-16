@@ -525,6 +525,7 @@ static void slow32_mmio_cleanup_services(Slow32MMIOContext *ctx)
 #define TERM_MAX_ROWS 256
 #define TERM_MAX_COLS 256
 #define TERM_MAX_SAVE_DEPTH 8
+#define TERM_MAX_PENDING_CLEARS 8
 
 typedef struct {
     uint8_t ch;
@@ -559,6 +560,13 @@ typedef struct {
     Slow32TermCell *prev_cells;   /* snapshot taken at begin_update */
     int prev_cur_row, prev_cur_col;
     int prev_cur_attr, prev_cur_fg, prev_cur_bg;
+    /* Clears asked for inside an update.  The shadow cannot know what
+     * another process left on the physical screen (a shell's menu before
+     * the program started), so a clear is not a diff: it is replayed on
+     * the terminal at end_update, ahead of the repaint, and the snapshot
+     * is blanked over its range so the repaint covers it. */
+    int n_pending_clears;
+    struct { int mode, row, col; } pending_clears[TERM_MAX_PENDING_CLEARS];
 } Slow32TermState;
 
 static void *slow32_term_create(void)
@@ -659,6 +667,16 @@ static void slow32_term_shadow_putc(Slow32TermState *ts, int ch)
     if (ts->cur_col >= ts->cols) {
         ts->cur_col = 0;
         ts->cur_row++;
+    }
+}
+
+static void slow32_term_blank_cells(Slow32TermCell *cells, int start, int end)
+{
+    for (int i = start; i < end; i++) {
+        cells[i].ch = ' ';
+        cells[i].attr = 0;
+        cells[i].fg = 7;
+        cells[i].bg = 0;
     }
 }
 
@@ -788,6 +806,15 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                 slow32_console_printf("\033[2J\033[H");
                 break;
             }
+        } else if (ts->n_pending_clears < TERM_MAX_PENDING_CLEARS) {
+            ts->pending_clears[ts->n_pending_clears].mode = (int)req->status;
+            ts->pending_clears[ts->n_pending_clears].row = ts->cur_row;
+            ts->pending_clears[ts->n_pending_clears].col = ts->cur_col;
+            ts->n_pending_clears++;
+        } else {
+            /* too many to replay: one full clear stands for all of them */
+            ts->n_pending_clears = 1;
+            ts->pending_clears[0].mode = 0;
         }
         slow32_term_shadow_clear(ts, (int)req->status);
         resp->status = S32_MMIO_STATUS_OK;
@@ -977,6 +1004,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         ts->prev_cur_attr = ts->cur_attr;
         ts->prev_cur_fg = ts->cur_fg;
         ts->prev_cur_bg = ts->cur_bg;
+        ts->n_pending_clears = 0;
         ts->in_update = true;
         resp->status = S32_MMIO_STATUS_OK;
         break;
@@ -994,6 +1022,27 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         int out_bg = ts->prev_cur_bg;
         int out_row = ts->prev_cur_row;
         int out_col = ts->prev_cur_col;
+        /* The clears first, on the terminal itself, in the order asked;
+         * the snapshot forgets what they covered so the diff repaints it. */
+        for (int i = 0; i < ts->n_pending_clears; i++) {
+            int mode = ts->pending_clears[i].mode;
+            int r = ts->pending_clears[i].row, c = ts->pending_clears[i].col;
+            int ncells = ts->rows * ts->cols;
+            if (mode == 1 || mode == 2) {
+                slow32_console_printf("\033[%d;%dH%s", r + 1, c + 1,
+                                      mode == 1 ? "\033[K" : "\033[J");
+                slow32_term_blank_cells(ts->prev_cells, r * ts->cols + c,
+                                        mode == 1 ? (r + 1) * ts->cols : ncells);
+                out_row = r;
+                out_col = c;
+            } else {
+                slow32_console_printf("\033[2J\033[H");
+                slow32_term_blank_cells(ts->prev_cells, 0, ncells);
+                out_row = 0;
+                out_col = 0;
+            }
+        }
+        ts->n_pending_clears = 0;
         for (int r = 0; r < ts->rows; r++) {
             for (int c = 0; c < ts->cols; c++) {
                 int idx = r * ts->cols + c;

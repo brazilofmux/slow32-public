@@ -1160,3 +1160,26 @@ text-name upper-cased as well, in each directory and with each extension
 (a literal text-name still arrives as written).  Test `copyupper`, on
 `tests/copy/SUPPER`.  The seven ~/open harnesses run clean on Linux with
 this, every pinned report byte-identical.
+
+### 40. A clear inside a screen update never reached the terminal (2026-09-15)
+
+Entering a program from the Software Fitness Program's shell menus left the
+menu on the screen under the program's fields.  The term service paints a
+positioned DISPLAY inside begin_update/end_update and emits, at the end, the
+difference between its shadow and the snapshot it took at the start; a
+`TERM_CLEAR` inside the bracket only blanked the shadow, and the diff of blank
+against blank is nothing.  The shadow cannot know what another process left
+on the physical screen -- the shell's menu -- so a clear is not a diff.  It is
+now recorded during the update and replayed on the terminal at end_update,
+ahead of the repaint (`ESC[2J ESC[H`, or the cursor position and `ESC[J` /
+`ESC[K` for EOS / EOL), and the snapshot is blanked over its range so the
+repaint covers it.  The six screen tests' expected files changed by exactly
+the inserted clears and the repaints after them; rendered to a screen image
+they are identical to before, except `screen3`, whose old image kept a stray
+`]` past a BLANK SCREEN -- the bug, pinned.  The same change is in the qemu
+backend's copy of the service (not built here).  Regression and differential
+suites agree across the interpreter, fast and DBT.
+
+Separately, an RM program that never clears (GLENTER opens with an ERASE EOS
+from line 16 and paints over lines 1-13) relied on runcobol clearing the
+screen at start; the deployment's runcobol shim does that, not the runtime.
