@@ -102,6 +102,28 @@ cd ~/slow-32/qemu-backend/scripts
 
 **Warning**: This overwrites files in `~/qemu`!
 
+### Pulling a Change That Landed Here First
+
+A machine without a `~/qemu` tree (the Lenovo, and the container
+hosts) edits the copy under `qemu-backend/` directly and commits it
+unbuilt. After pulling such a commit on a machine that does have
+`~/qemu`, the flow runs in reverse and a rebuild alone will not pick
+the change up:
+
+```bash
+cd ~/slow-32/qemu-backend/scripts
+./restore.sh                     # qemu-backend -> ~/qemu (prompts)
+cd ~/qemu
+git add target/slow32/ hw/slow32/ && git commit   # cite the slow-32 commit
+cd build && ninja qemu-system-slow32
+cd ~/slow-32/regression && ./run-differential.sh
+```
+
+`diff -rq ~/slow-32/qemu-backend/target/slow32 ~/qemu/target/slow32`
+(and the same for `hw/slow32`) is the check that the two trees agree
+afterwards. First needed 2026-09-15 for the cobol ISSUES-40 term
+service change.
+
 ## Files Managed
 
 ### Patches (modifications to existing QEMU files)
