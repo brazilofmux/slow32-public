@@ -1,0 +1,6 @@
+      * An uppercase, extensionless copybook, the Open Systems shape
+      * (SCONFIG, SGLMAST, TAGSFILE): a bare-word COPY names it in any
+      * case and must find it on a case-sensitive filesystem.
+       01  UPPER-ITEM.
+           05  UPPER-TEXT   PIC X(12) VALUE "from SUPPER".
+           05  UPPER-NUM    PIC 9(3)  VALUE 7.

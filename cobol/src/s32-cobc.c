@@ -456,14 +456,22 @@ static const char *g_incdirs[16]; static int g_nincdir;
 static int copy_open(const char *name, SrcLine **lines, int *n, char *found, size_t foundsz)
 {
     static const char *exts[] = { "", ".cpy", ".CPY", ".cbl", ".CBL", NULL };
+    /* A text-name is case-insensitive and the tokenizer lowercased it; a
+     * copybook kept under its uppercase name (Open Systems' SCONFIG,
+     * TAGSFILE) is found on a case-sensitive filesystem by trying the
+     * name upper-cased too -- a literal text-name arrives as written. */
+    char upper[256]; snprintf(upper, sizeof upper, "%s", name);
+    for (char *k = upper; *k; k++) *k = (char)toupper((unsigned char)*k);
+    const char *names[] = { name, strcmp(upper, name) ? upper : NULL, NULL };
     char srcdir[1024]; snprintf(srcdir, sizeof srcdir, "%s", g_file);
     char *sl = strrchr(srcdir, '/'); if (sl) *sl = 0; else strcpy(srcdir, ".");
     for (int d = -1; d < g_nincdir; d++) {
         const char *dir = d < 0 ? srcdir : g_incdirs[d];
-        for (int e = 0; exts[e]; e++) {
-            snprintf(found, foundsz, "%s/%s%s", dir, name, exts[e]);
-            if (read_lines(found, lines, n)) return 1;
-        }
+        for (int v = 0; names[v]; v++)
+            for (int e = 0; exts[e]; e++) {
+                snprintf(found, foundsz, "%s/%s%s", dir, names[v], exts[e]);
+                if (read_lines(found, lines, n)) return 1;
+            }
     }
     return 0;
 }
@@ -662,7 +670,7 @@ static void expand_copies(int depth)
         char qual[512]; int ok = 0;
         if (lib[0]) { snprintf(qual, sizeof qual, "%s/%s", lib, name); ok = copy_open(qual, &lines, &n, found, sizeof found); }
         if (!ok && !copy_open(name, &lines, &n, found, sizeof found))
-            die_at(line, "COPY: cannot find '%s' (looked beside the source and in the -I directories, as %s, %s.cpy, %s.cbl)", name, name, name, name);
+            die_at(line, "COPY: cannot find '%s' (looked beside the source and in the -I directories, as %s, %s.cpy, %s.cbl, and upper-cased)", name, name, name, name);
 
         /* tokenize the copybook into its own vector, then splice */
         Tok *save_tok = g_tok; int save_n = g_ntok, save_cap = g_tcap;

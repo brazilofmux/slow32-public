@@ -1149,3 +1149,14 @@ ORGANIZATION, and `ASSIGN TO PRINTER` alike); MVS keeps 66 because ASA
 still means form size. Remaining occupancy diffs on the balance sheet
 are body blanks (C++ extra `OutputLine` after a class), not page length.
 Details on GitHub issue 76.
+
+### 39. COPY of an uppercase copybook failed on a case-sensitive filesystem (~/open on Linux, 2026-09-15)
+
+The tokenizer lowercases every word, so `COPY SCONFIG.` looked for
+`sconfig`.  On the MacBook's case-insensitive filesystem that found the
+Open Systems copybook `SCONFIG`; on Linux every program in ~/open was
+refused with "COPY: cannot find 'sconfig'".  `copy_open` now tries the
+text-name upper-cased as well, in each directory and with each extension
+(a literal text-name still arrives as written).  Test `copyupper`, on
+`tests/copy/SUPPER`.  The seven ~/open harnesses run clean on Linux with
+this, every pinned report byte-identical.
