@@ -29,11 +29,19 @@ Reference docs:
 
 ## Ordered Stage Walk
 
-For a clean checkout sanity pass:
+For a clean checkout sanity pass, build the stages first, then walk them:
 
 ```bash
+make -C selfhost        # stage00 -> stage08, each compiled by the one before
 selfhost/run-stages.sh
 ```
+
+`run-stages.sh` only validates: it expects each stage's `.s32x` artifacts
+(gitignored, so a `git pull` leaves old ones in place) to exist, and on a
+bare checkout it fails at the first missing one (stage01's generated
+`test1.s`, then stage02's `s32-as.s32x`).  `SELFHOST_EMU` selects the
+emulator for the build; `tools/dbt/slow32-dbt` makes the chain about twelve
+minutes on a Raspberry Pi 4.
 
 `run-stages.sh` walks `stage00` → `stage08` (use `--from`/`--to` to scope, e.g. `--to stage04`). The cross-compiler trees have their own entry points (below). For faster local loops, you can skip the selfhost-kernel regen gate:
 

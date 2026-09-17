@@ -11,4 +11,5 @@ exec "$SELFHOST_DIR/stage03/run-abi-conformance.sh" \
     --ld "$SELFHOST_DIR/stage03/s32-ld.s32x" \
     --runtime-dir "$SCRIPT_DIR" \
     --libc-dir "$SCRIPT_DIR/libc" \
+    --no-varargs \
     "$@"

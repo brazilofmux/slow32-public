@@ -9,6 +9,12 @@ TEST_DIR="$SCRIPT_DIR/tests/abi"
 EMU="${SELFHOST_EMU:-}"
 EMU_EXPLICIT=0
 KEEP_ARTIFACTS=0
+# Tests 3/4 need va_start/va_arg, which enter the dialect at stage05.  The
+# stage03 and stage04 compilers have no such builtins and their parsers do
+# not recover from the unknown `va_arg(ap, int)`: they loop forever on the
+# line (GitHub issue 83).  Off for stage03's own compiler; stage04's wrapper
+# passes --no-varargs; --varargs forces the tests on.
+VARARGS=""
 
 CC_EXE="$SCRIPT_DIR/cc.s32x"
 AS_EXE="$SCRIPT_DIR/s32-as.s32x"
@@ -39,6 +45,8 @@ Options:
   --libc-dir <path>      Directory containing libc sources
   --emu <path>           Emulator (default: dbt if present, else stage00/s32-emu)
   --keep-artifacts       Keep workdir
+  --varargs              Run the varargs tests 3/4 (default: unless --cc is stage03's)
+  --no-varargs           Skip them (stage03/stage04 dialect has no va_arg)
   -h, --help             Show this help
 USAGE
 }
@@ -52,6 +60,8 @@ while [[ $# -gt 0 ]]; do
         --libc-dir) shift; LIBC_DIR="$1" ;;
         --emu) shift; EMU="$1"; EMU_EXPLICIT=1 ;;
         --keep-artifacts) KEEP_ARTIFACTS=1 ;;
+        --varargs) VARARGS=1 ;;
+        --no-varargs) VARARGS=0 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
     esac
@@ -60,6 +70,9 @@ done
 
 if [[ "$EMU_EXPLICIT" -eq 0 && -z "$EMU" ]]; then
     EMU="$(choose_default_emu)"
+fi
+if [[ -z "$VARARGS" ]]; then
+    if [[ "$CC_EXE" == "$SCRIPT_DIR/cc.s32x" ]]; then VARARGS=0; else VARARGS=1; fi
 fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
@@ -231,6 +244,7 @@ link_and_run_expect_zero "abi-arg-pass-10" \
     "$WORKDIR/arg_probe_main.s32o" "$WORKDIR/arg_caller.s32o" "$WORKDIR/arg_probe.s32o"
 
 # Test 3: varargs over register + stack argument paths.
+if [[ "$VARARGS" -eq 1 ]]; then
 compile_c "$TEST_DIR/varargs_reg_stack.c" "$WORKDIR/varargs_reg_stack.s" "$WORKDIR/varargs_reg_stack.cc.log"
 assemble_s "$WORKDIR/varargs_reg_stack.s" "$WORKDIR/varargs_reg_stack.s32o" "$WORKDIR/varargs_reg_stack.as.log"
 link_and_run_expect_zero "abi-varargs-reg-stack" \
@@ -241,6 +255,10 @@ compile_c "$TEST_DIR/varargs_promotions.c" "$WORKDIR/varargs_promotions.s" "$WOR
 assemble_s "$WORKDIR/varargs_promotions.s" "$WORKDIR/varargs_promotions.s32o" "$WORKDIR/varargs_promotions.as.log"
 link_and_run_expect_zero "abi-varargs-promotions" \
     "$WORKDIR/varargs_promotions.s32o"
+else
+    printf "  %-26s SKIP (no varargs in this compiler's dialect)\n" "abi-varargs-reg-stack:"
+    printf "  %-26s SKIP (no varargs in this compiler's dialect)\n" "abi-varargs-promotions:"
+fi
 
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
