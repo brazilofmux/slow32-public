@@ -470,7 +470,7 @@ SMOKE_OBJ="$WORKDIR/selfhost-smoke.s32o"
 SMOKE_EXE="$WORKDIR/selfhost-smoke.s32x"
 
 TOTAL=$((TOTAL + 1))
-run_exe "$GEN2_S32CC_EXE" "$WORKDIR/selfhost-smoke-compile.log" "$SMOKE_SRC" "$SMOKE_ASM"
+run_exe "$GEN2_CC_EXE" "$WORKDIR/selfhost-smoke-compile.log" "$SMOKE_SRC" "$SMOKE_ASM"
 if [[ ! -s "$SMOKE_ASM" ]]; then
     echo "  Smoke test: FAIL (Gen2 produced no assembly)" >&2
     FAIL=$((FAIL + 1))
