@@ -348,4 +348,17 @@ second compiler, the graphics stack, DOOM — came after.
 
 ## License
 
-Educational project - free to use for learning purposes.
+Original work in this repository — the ISA, toolchain, self-hosted
+compiler, COBOL 85 compiler, and everything else written here by
+Stephen Dennis — is under the **MIT License**. See [LICENSE](LICENSE).
+
+“Educational” in the purpose line above is what the project is for.
+It is not a separate license. MIT already covers use, modification,
+redistribution, and commercial use.
+
+Third-party files keep their own terms; the notices live in
+[NOTICE](NOTICE). The one that is not MIT is David M. Gay’s
+`runtime/dtoa.c` (Lucent, 1991/2000/2001): free to use, copy, modify,
+and distribute for any purpose without fee, provided that entire
+notice is kept with copies. Lua (`lua/src`) is MIT from Lua.org;
+SQLite amalgamation is public domain; Doom under `doom/` is GPLv2.

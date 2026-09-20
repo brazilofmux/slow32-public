@@ -137,3 +137,9 @@ toolchain image for those.  The suite runs inside the image with the tree
 mounted -- `ORACLE=0 EMU=/usr/local/bin/slow32` plus the knobs above -- and
 reports the two host-compiler gates as SKIPPED, which is what ~/builder
 does before pushing it.
+
+## License
+
+MIT, same as the rest of this repository ([`LICENSE`](../LICENSE)).
+David M. Gay's `dtoa` in the SLOW-32 runtime is the Lucent notice,
+not MIT; see [`NOTICE`](../NOTICE).
