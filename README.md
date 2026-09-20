@@ -361,4 +361,6 @@ Third-party files keep their own terms; the notices live in
 `runtime/dtoa.c` (Lucent, 1991/2000/2001): free to use, copy, modify,
 and distribute for any purpose without fee, provided that entire
 notice is kept with copies. Lua (`lua/src`) is MIT from Lua.org;
-SQLite amalgamation is public domain; Doom under `doom/` is GPLv2.
+the SQLite amalgamation is public domain; MojoZork (`zork/src`) is
+zlib.  Doom under `doom/` (doomgeneric) is GPLv2 and stands alone:
+it is a separate program, and nothing under MIT here links against it.
