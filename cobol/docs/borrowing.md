@@ -39,9 +39,75 @@ parser is shared.
   approximations.
 - **V-record RDW cell in front of the record.** Same four bytes
   tapemgr writes. The QSAM around it does not travel.
+- **Report every error, not only the first.** cobc370 did this
+  (its #41) with a recipe that transfers as a design: recover at the
+  next period, whether the error was inside a sentence or inside a
+  data entry; drop the failed sentence or entry; generate nothing once
+  anything has failed; cap the listing (thirty there); keep the
+  jump-out path for what cannot be recovered. See ISSUES-41 here.
+- **Scale equality is the guard on every in-place fast path**, and an
+  unsigned zoned compare may use a byte compare with one documented
+  behavioural difference. Both are cobc370 audit findings and both
+  bear on ISSUES-24 and ISSUES-26, where the fast paths here live.
+- **Every truncation path must be fatal, not absorbed**, and a limit
+  whose reason was never tested hides other bugs. Three silent
+  truncations sat behind one literal-continuation bug there. Bears on
+  ISSUES-27 (this compiler under AddressSanitizer with its tables
+  forced to grow).
 - **Language survey before Nucleus Level 2.** cobc370 implemented
   what the corpus used, then closed the standard. Majesty *is* the
   corpus here. CCVS-85 is later.
+
+## Measured 74/85 differences (cobc370, 2026-08/09)
+
+cobc370 is now a finished compiler with an IBM oracle, and its record
+states the places where the two standard years part. These are the
+crossover list: in each, *this* compiler must do the other thing.
+
+- **`VALUE` in, or under, `OCCURS`.** Illegal in '74, legal in '85.
+  cobc370 refuses both forms (IKF2149I, measured on TK5). Here both
+  are accepted and every occurrence is initialised, which GnuCOBOL
+  agrees with. Do not copy that refusal.
+- **`PERFORM VARYING ... AFTER` reset order.** '85 reversed it.
+  Already in Damning below; cobc370 followed the 1974 text against
+  GnuCOBOL, which means GnuCOBOL was right for *us*.
+- **`OCCURS DEPENDING ON` on a receiving group.** '74 uses the current
+  count, '85 the maximum. Already in Damning.
+- **Table nesting.** Three levels in '74, seven in '85.
+- **Spellings '85 added**: `FILE STATUS` against a bare `STATUS IS`,
+  `PADDING CHARACTER`, `RECORD DELIMITER`, `NOT INVALID KEY`,
+  `CALL ... BY REFERENCE`, `ADVANCING` by identifier. cobc370 refuses
+  them by policy ("a CCVS failure that is a correct refusal of a
+  COBOL-85 spelling is a pass"); they are ours to implement.
+- **The oracle flips.** cobc370 corrected GnuCOBOL four times by
+  following the 1974 text. In the first three items above GnuCOBOL
+  follows '85, so for this compiler GnuCOBOL turns from the oracle
+  that was wrong into the oracle that was right. Its disagreements
+  still have to be adjudicated, but the prior is reversed.
+- **`COMP-1` / `COMP-2` is a dialect collision, not a gap.** Neither
+  standard year defines them. cobc370 implements IBM hexadecimal
+  floating point (#40). Here `COMP-1` is RM/COBOL's binary integer
+  with a PICTURE, because the Open Systems suite's items carry one,
+  and `COMP-2`/`FLOAT-SHORT`/`FLOAT-LONG` are refused with a message.
+  A program written for IBM means something different here, silently.
+  Real floating point, when a program asks, is SLOW-32's IEEE
+  hardware, not hex.
+
+## Confirmed by running their tests here
+
+`tests/inspect3.cbl` compiles and runs unmodified under `s32-cobc`
+(`-fixed`) and under GnuCOBOL `-std=cobol85`, and both reproduce
+cobc370's `inspect3.expected` byte for byte, all seven lines. That
+matters in both directions: their expectations were hand-derived from
+II-68 to II-70 because IKFCBL00 has `EXAMINE` and no `INSPECT`, and
+ours were reached separately (Stage 35, ISSUES-17: a per-phrase
+runtime regressed twelve NIST tests before the one-pass rule was
+right). Two readings of the same paragraphs, one answer. Recorded as
+cobc370 issue 42.
+
+The discriminator, if either runtime is ever restructured:
+`INSPECT` of `'AABAA'` `TALLYING c1 FOR ALL 'A' c2 FOR ALL 'AA'` gives
+`c1=4 c2=0` under one pass and `c1=4 c2=2` under a pass per phrase.
 
 ## Damning (do not copy)
 

@@ -872,6 +872,41 @@ through `cc.s32x`) it runs 46/46 with the oracle agreeing. The kit
 `~/s32x/cc.s32x` (and kagura's copy) was rebuilt with both fixes the
 same evening; probed 2026-08-30 through the kit's own cc/as/ld.
 
+### 41. The compiler reports the first error and stops (2026-09-26)
+
+Not scheduled. Every diagnostic in `s32-cobc` goes through `die_at()`,
+which prints one message and calls `exit(1)`: **582 call sites in 9,508
+lines**. A program with three mistakes yields one message, the author
+fixes it, compiles again, and finds the second. Nothing is wrong with
+any individual message -- the refusals are precise, and gate 3 of the
+harness checks thirteen of them -- but the compile is one error long.
+
+Found by comparing against cobc370, which solved it as its own #41 on
+2026-09-26, and whose recipe transfers as a design even though no line
+of its code can:
+
+- an error inside a **sentence** or inside a **data entry** is reported
+  and parsing resumes at the next period (or where it stands, when the
+  error came after the period, as an entry's checks do);
+- the failed sentence or entry is dropped;
+- **nothing is generated once anything has failed**, so a partial
+  object never escapes;
+- a cap (thirty there) stops a cascade from filling the listing;
+- everywhere else an error is still the end: `setjmp` around the two
+  loops, `longjmp` in the fatal path. The recovery is deliberately
+  narrow, at the two places the language gives an unambiguous
+  resynchronisation point.
+
+Their fixture is `bad-multi`, three mistakes expecting three messages.
+The same shape would work here, alongside the existing `tests/bad/*`.
+
+Why it is not scheduled: no program has asked. The corpus compiles 56
+of 56, CCVS-85 compiles 303 of 303, and the Open Systems suite is in;
+a one-error compile costs an author iterations, not correctness. It
+belongs on the list because 582 fatal sites is the kind of thing that
+only gets more expensive, and because the two trees now disagree on a
+point of craft where the other one is right.
+
 ## E. Closed, with the lesson
 
 - **Out-of-line `PERFORM` swallowed the enclosing `END-PERFORM`**
