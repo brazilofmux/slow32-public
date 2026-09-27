@@ -13,9 +13,9 @@ harnesses prove the engines agree on it.
 
 That makes this compiler a different animal from the two free COBOLs
 people already use. gcobol (the GCC front end) and GnuCOBOL both
-compile to native code for the host at hand. They have speed, dialect
-breadth and a community, and this compiler should not chase them on
-any of the three. What it has by construction instead:
+compile to native code for the host at hand. They have dialect breadth
+and a community, and this compiler should not chase them on either.
+What it has by construction instead:
 
 - **One artifact, run identically everywhere.** No recompiling per
   host, and no host C library or GMP underneath.
@@ -25,6 +25,18 @@ any of the three. What it has by construction instead:
 - **A sandbox.** The program reaches only what the MMIO rings expose.
 - **No dependencies at the target**, the property that made cobc370
   welcome on MVS 3.8j.
+
+**Speed is not conceded.** Running on an emulated ISA does not make
+this compiler the slow one. A native COBOL still pays for its runtime
+model: GnuCOBOL routes MOVE, decimal arithmetic and editing through
+generic `libcob` calls that inspect field types and pictures at run
+time, with GMP under the decimals. This compiler knows both fields'
+shapes when it lowers a statement and emits the specialized sequence,
+and the DBT keeps SLOW-32 close to native. Compile-time specialization
+is the lever, and every stage below keeps it: a feature that can only
+be implemented through a generic run-time path is a cost to weigh, not
+a free addition. Performance work is recorded in
+[performance.md](performance.md).
 
 The aim is to be the better answer to the questions those properties
 answer, not to take users from anyone. Where this compiler finds
