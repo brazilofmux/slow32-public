@@ -18,6 +18,10 @@
 # Gate 3 (refusals): every tests/bad/*.cbl must be refused, and the message
 #   must contain the text in its .expected file.  Unimplemented is a
 #   diagnostic, never silence.
+# Gate 4 (behavior points): every tests/warn/*.cbl must compile under
+#   -warn-74 with exactly the [BP-..] ids its .expected lists (an empty
+#   file: none), and must compile with no stderr at all without the flag.
+#   The ids are docs/behavior-points.md's.
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -284,6 +288,27 @@ for src in "$HERE/bad"/*.cbl; do
     else
         report "bad/$name" 1 "wrong message: $(head -1 "$W/$name.err")"
     fi
+done
+
+# --- Gate 4: behavior points -------------------------------------------
+for src in "$HERE/warn"/*.cbl; do
+    [ -e "$src" ] || continue
+    name="$(basename "$src" .cbl)"
+    exp="${src%.cbl}.expected"
+    flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
+    if ! "$COBC" $flag -warn-74 -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.warn"; then
+        report "warn/$name" 1 "refused: $(head -1 "$W/$name.warn")"; continue
+    fi
+    got="$(grep -o '\[BP-[A-Z][0-9]*\]' "$W/$name.warn" | sort -u)"
+    want="$(sort -u "$exp")"
+    if [ "$got" != "$want" ]; then
+        report "warn/$name" 1 "ids: got [$(echo $got)] want [$(echo $want)]"; continue
+    fi
+    "$COBC" $flag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.quiet"
+    if [ -s "$W/$name.quiet" ]; then
+        report "warn/$name" 1 "not silent without -warn-74: $(head -1 "$W/$name.quiet")"; continue
+    fi
+    report "warn/$name" 0 "$(echo $got | wc -w) point(s), silent by default"
 done
 
 echo

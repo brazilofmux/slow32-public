@@ -107,7 +107,7 @@ PATH install (optional, for majesty and friends):
                                                  # gnucobol:4.0-builder/-runtime
                                                  # (podman/docker), or a host cobc
 
-`s32-cobc [-free|-fixed] [-o out.s] source.cbl`. Fixed format is the
+`s32-cobc [-free|-fixed] [-std=85] [-warn-74] [-o out.s] source.cbl`. Fixed format is the
 default (the standard's reference format); majesty passes `-free`,
 as it already does to GnuCOBOL.
 
@@ -120,7 +120,9 @@ as it already does to GnuCOBOL.
 4. [docs/plan.md](docs/plan.md) — stages
 5. [docs/standards.md](docs/standards.md) — after v1: standards first,
    dialects second, COBOL 2002's practical half, OO deferred
-6. The rest, as the stage needs them
+6. [docs/behavior-points.md](docs/behavior-points.md) — the `bp()`
+   registry behind `-std` and `-warn-74`
+7. The rest, as the stage needs them
 
 ## Container
 

@@ -119,13 +119,12 @@ between 74 *programs* and 74 *semantics*.
   receipts ([borrowing.md](borrowing.md)); full 74 conformance is its
   job, on the machine of that era.
 
-**The hazard to close.** Silent is the problem, not the difference. A
-future diagnostic -- say `-warn-74` -- would flag the two shapes whose
-meaning changed: a `VARYING ... AFTER` whose inner initial value depends
-on an outer control variable, and a MOVE into a group containing an ODO
-table. A 74-era corpus then says out loud where it needs checking by
-hand. Nothing in the Open Systems suite is known to depend on either
-difference, but that has not been audited.
+**The hazard, and how it is closed.** Silent is the problem, not the
+difference. `-warn-74` flags both shapes whose meaning changed, and the
+obsolete elements a 74 program carries, so a 74-era corpus says out
+loud where it needs updating. The points, their ids and the audit of
+the Open Systems suite (no class M hits in 217 programs) are in
+[behavior-points.md](behavior-points.md).
 
 If `s32-cobc.c` (9,500 lines) outgrows navigation, the answer is to
 split it into files within this one compiler, not to fork the

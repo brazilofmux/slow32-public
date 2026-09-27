@@ -126,6 +126,42 @@ static void die_at(int line, const char *fmt, ...)
     exit(1);
 }
 
+/* Behavior points (docs/behavior-points.md).  Every place the compiler
+ * meets a construct whose treatment depends on the standard year calls
+ * bp() with its point; the policy -- silent, warn -- lives here, in one
+ * table keyed by -std and -warn-74, never at the site.  Class 'M': COBOL 85
+ * changed what the construct means and the 85 meaning is applied (a 74
+ * program compiles and silently computes something else).  Class 'O': an
+ * obsolete element of the 1985 text, deleted in COBOL 2002, accepted here.
+ * The ids are stable: the docs, the messages and the tests all cite them. */
+enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
+       BP_O1_ALTER, BP_O2_COMMENT_ENTRY, BP_O3_STOP_LITERAL, BP_O4_REVERSED,
+       BP_O5_MEMORY_SIZE, BP_O6_LABEL_RECORDS, BP_O7_VALUE_OF, BP_O8_DATA_RECORDS,
+       BP_COUNT };
+static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
+    { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
+                    "resetting this one, COBOL 74 did the reverse, so a 74 program's loop bounds change here" },
+    { "BP-M2", 'M', "the receiving group holds an OCCURS DEPENDING ON table and takes its maximum length "
+                    "(COBOL 85); COBOL 74 used the current length" },
+    { "BP-O1", 'O', "ALTER is obsolete in COBOL 85 and deleted in COBOL 2002; use GO TO ... DEPENDING ON or EVALUATE" },
+    { "BP-O2", 'O', "comment-entries are obsolete in COBOL 85 and deleted in COBOL 2002; use comment lines" },
+    { "BP-O3", 'O', "STOP literal is obsolete in COBOL 85 and deleted in COBOL 2002; DISPLAY the literal" },
+    { "BP-O4", 'O', "OPEN ... REVERSED is obsolete in COBOL 85 and deleted in COBOL 2002" },
+    { "BP-O5", 'O', "MEMORY SIZE is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+    { "BP-O6", 'O', "LABEL RECORDS is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+    { "BP-O7", 'O', "VALUE OF is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+    { "BP-O8", 'O', "DATA RECORDS is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+};
+static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
+static void bp(int point, int line)
+{
+    static int last_point = -1, last_line = -1;
+    if (!g_warn74) return;
+    if (point == last_point && line == last_line) return;     /* one per point per line */
+    last_point = point; last_line = line;
+    fprintf(stderr, "%s:%d: warning: [%s] %s\n", diag_file(line), line, g_bp[point].id, g_bp[point].msg);
+}
+
 static void *xmalloc(size_t n)
 {
     void *p = calloc(1, n ? n : 1);
@@ -4434,6 +4470,8 @@ static Sym *odo_table_below(Sym *s)
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
+    /* BP-M2: before the ODO-source path returns, so a group-to-group MOVE counts */
+    if (d->is_group && !dst->rm && !dst->nsub && has_odo(d)) bp(BP_M2_ODO_RECEIVE, dst->line);
     /* a receiving group holding an OCCURS DEPENDING ON table has its
      * maximum length (the 1985 rule), which is how it is laid out */
     if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym) && !src->ref.rm_odo && !src->ref.rm && !src->ref.nsub) {
@@ -5936,6 +5974,9 @@ static void parse_perform(void)
             parse_ref(&v[nv].var);
             if (!is_numeric_sym(v[nv].var.sym)) die_at(v[nv].var.line, "the VARYING item must be numeric");
             expect_word("from"); parse_operand(&v[nv].from); check_numeric_opnd(&v[nv].from);
+            if (nv > 0 && v[nv].from.kind == O_REF)          /* BP-M1: the 74/85 reset order shows here */
+                for (int k = 0; k < nv; k++)
+                    if (v[k].var.sym == v[nv].from.ref.sym) { bp(BP_M1_VARYING_AFTER, v[nv].from.line); break; }
             expect_word("by"); parse_operand(&v[nv].by); check_numeric_opnd(&v[nv].by);
             expect_word("until"); v[nv].until = parse_cond();
             nv++;
@@ -6105,6 +6146,7 @@ static void parse_open(void)
             File *f = expect_file();
             int reversed = 0;
             if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
+            if (at_word("reversed")) bp(BP_O4_REVERSED, cur()->line);
             if (accept_word("reversed")) {          /* obsolete: read from the last record back (SQ303M, SQ401M) */
                 if (mode != COB_OPEN_INPUT) die_at(cur()->line, "REVERSED goes with OPEN INPUT");
                 reversed = 8;
@@ -7778,6 +7820,7 @@ static void parse_statement(void)
         /* STOP literal (obsolete): the literal to the operator, who would
          * resume the run -- displayed, and the run goes on */
         if (cur()->kind != T_STR && cur()->kind != T_NUM) die_at(t->line, "STOP needs RUN or a literal");
+        bp(BP_O3_STOP_LITERAL, t->line);
         { Arg a[2] = { arg_label(lit_label((unsigned char *)cur()->s, cur()->len)), arg_imm(cur()->len) }; emit_args(a, 2); emit_call("cob_display"); emit_call("cob_display_nl"); }
         advance();
         return;
@@ -7794,6 +7837,7 @@ static void parse_statement(void)
     if (!strcmp(v, "next")) die_at(t->line, "NEXT SENTENCE is only valid inside IF (or SEARCH)");
     if (!strcmp(v, "alter")) {
         /* ALTER p1 TO [PROCEED TO] p2 ...: p1's GO TO now goes to p2 */
+        bp(BP_O1_ALTER, t->line);
         advance();
         for (;;) {
             Para *p1 = expect_para();
@@ -8195,6 +8239,7 @@ static void parse_identification_division(void)
         int known = 0;
         for (int i = 0; paras[i]; i++) if (is_word(t, paras[i])) known = 1;
         if (!known) die_at(t->line, "unexpected %s in the IDENTIFICATION DIVISION", tok_desc(t));
+        bp(BP_O2_COMMENT_ENTRY, t->line);
         advance(); expect_period();
         while (!at_division() && cur()->kind != T_EOF) {
             int hdr = 0;
@@ -8373,6 +8418,7 @@ static void parse_environment_division(void)
                 expect_period();
                 while ((cur()->kind == T_WORD || cur()->kind == T_NUM) && !at_word("special-names") && !at_word("input-output") &&
                        !at_word("source-computer") && !at_word("object-computer") && !at_division()) {   /* MEMORY SIZE 64000 CHARACTERS: obsolete, no effect */
+                    if (at_word("memory")) bp(BP_O5_MEMORY_SIZE, cur()->line);
                     if (accept_word("collating")) {         /* [PROGRAM] COLLATING SEQUENCE IS alphabet-name */
                         accept_word("sequence"); accept_word("is");
                         if (cur()->kind != T_WORD) die_at(cur()->line, "expected an alphabet-name after COLLATING SEQUENCE");
@@ -8649,7 +8695,9 @@ static void parse_fd(void)
             accept_word("characters");
             continue;
         }
+        if (at_word("label")) bp(BP_O6_LABEL_RECORDS, cur()->line);
         if (accept_word("label")) { accept_word("record"); accept_word("records"); accept_word("is"); accept_word("are"); accept_word("standard"); accept_word("omitted"); continue; }
+        if (at_word("data")) bp(BP_O8_DATA_RECORDS, cur()->line);
         if (accept_word("data")) { accept_word("record"); accept_word("records"); accept_word("is"); accept_word("are"); while (cur()->kind == T_WORD && !at_word("block") && !at_word("record") && !at_word("label") && !at_word("report") && !at_word("value")) advance(); continue; }
         if (accept_word("report") || accept_word("reports")) {
             accept_word("is"); accept_word("are");
@@ -8663,6 +8711,7 @@ static void parse_fd(void)
             if (accept_word("v")) { f->varying = 1; continue; }
             die_at(t->line, "RECORDING MODE %s is refused (U and S are tapemgr's business; docs/framing.md)", cur()->s);
         }
+        if (at_word("value")) bp(BP_O7_VALUE_OF, cur()->line);
         if (accept_word("value")) { expect_word("of"); while (cur()->kind != T_PERIOD && !at_word("block") && !at_word("record") && !at_word("data")) advance(); continue; }
         if (accept_word("is")) continue;
         if (accept_word("global")) { f->global = 1; continue; }
@@ -9446,7 +9495,9 @@ static void usage(void)
         "  -fixed   reference format (columns 7/8-72); the default\n"
         "  -free    free format (GnuCOBOL -free; majesty)\n"
         "  -m       module: no main entry, every unit a subprogram\n"
-        "  -I dir   where COPY looks for copybooks (repeatable)\n", VERSION);
+        "  -I dir   where COPY looks for copybooks (repeatable)\n"
+        "  -std=85  X3.23-1985 and the 1989 intrinsics; the default and, today, the only one\n"
+        "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n", VERSION);
     exit(2);
 }
 
@@ -9461,6 +9512,18 @@ int main(int argc, char **argv)
         else if (!strncmp(argv[i], "-I", 2) && argv[i][2]) { if (g_nincdir < 16) g_incdirs[g_nincdir++] = argv[i] + 2; }
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
         else if (!strcmp(argv[i], "--version")) { printf("s32-cobc %s\n", VERSION); return 0; }
+        else if (!strcmp(argv[i], "-warn-74")) g_warn74 = 1;
+        else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) { }
+        else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {
+            fprintf(stderr, "s32-cobc: there is no -std=74: 74 programs compile as 85, and -warn-74 flags where their "
+                            "meaning changed; full COBOL 74 is cobc370's job (docs/standards.md)\n");
+            return 2;
+        }
+        else if (!strncmp(argv[i], "-std=", 5)) {
+            fprintf(stderr, "s32-cobc: %s is not implemented; -std=85 is the only standard today "
+                            "(COBOL 2002 is Stage B of docs/standards.md)\n", argv[i]);
+            return 2;
+        }
         else if (argv[i][0] == '-') usage();
         else if (in) usage();
         else in = argv[i];
