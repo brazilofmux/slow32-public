@@ -118,7 +118,9 @@ as it already does to GnuCOBOL.
 3. [docs/functions.md](docs/functions.md) — the finding the first
    draft missed, and the corpus rewrite that answers it
 4. [docs/plan.md](docs/plan.md) — stages
-5. The rest, as the stage needs them
+5. [docs/standards.md](docs/standards.md) — after v1: standards first,
+   dialects second, COBOL 2002's practical half, OO deferred
+6. The rest, as the stage needs them
 
 ## Container
 
