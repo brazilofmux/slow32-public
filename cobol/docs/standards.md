@@ -99,12 +99,33 @@ The focus a fork would give comes from a switch instead:
   suggests they will.
 - If 2014 or 2023 earn a value later, they are more rows in the table.
 
-**There is no `-std=74`.** COBOL 74 conformance is cobc370's job, and it
-does it on the machine of that era. Hardly anyone wants 74 conformance
-on a modern target; the people who do want the 74 language want it on
-MVS 3.8j, and cobc370 is already there. Programs written to 74 that
-compile under 85 unchanged are welcome; the 74/85 semantic differences
-are not emulated.
+**There is no `-std=74`, but 74-era programs are welcome.** The line is
+between 74 *programs* and 74 *semantics*.
+
+- **74 programs mostly compile as 85.** The 1985 text kept the old
+  constructs as obsolete elements, still in the standard: `ALTER`,
+  comment-entries (`AUTHOR.`, `REMARKS.` ...), `STOP literal`,
+  `READ ... REVERSED`. This compiler implements them, CCVS-85 tests
+  them, and that is how the Open Systems suite -- 228 programs of
+  1978-83 RM/COBOL, a 74-era dialect -- came in (ISSUES.md 28).
+- **RM/COBOL's extensions are a dialect, taken like any other**:
+  positioned `DISPLAY`/`ACCEPT` ([screen.md](screen.md)), the device
+  word in `ASSIGN`, `STOP RUN identifier`. If RM earns more, it can be a
+  `-std` row of its own, layered on 85 the way `SCREEN SECTION` is.
+- **What is not emulated is where 85 changed a 74 meaning**: the
+  `PERFORM VARYING ... AFTER` reset order and the size of a receiving
+  group containing ODO. Those are the only places a 74 program compiles
+  cleanly here and silently computes something else. cobc370 has the
+  receipts ([borrowing.md](borrowing.md)); full 74 conformance is its
+  job, on the machine of that era.
+
+**The hazard to close.** Silent is the problem, not the difference. A
+future diagnostic -- say `-warn-74` -- would flag the two shapes whose
+meaning changed: a `VARYING ... AFTER` whose inner initial value depends
+on an outer control variable, and a MOVE into a group containing an ODO
+table. A 74-era corpus then says out loud where it needs checking by
+hand. Nothing in the Open Systems suite is known to depend on either
+difference, but that has not been audited.
 
 If `s32-cobc.c` (9,500 lines) outgrows navigation, the answer is to
 split it into files within this one compiler, not to fork the

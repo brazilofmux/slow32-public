@@ -16,7 +16,7 @@ Three COBOL dialects sit in this orbit. They are not interchangeable.
 | `COMP` > 9 digits | refused | i64 | GnuCOBOL |
 | `PERFORM … AFTER` | 74 reset order | 85 reset order | 85 |
 | ODO receiving group | current count (74) | maximum (85) | 85 |
-| ALTER | implemented (74) | gone from 85; refuse | unused |
+| ALTER | implemented (74) | implemented: an obsolete element in the 85 text (CCVS-85 NC303M, NC401M; the Open Systems suite) | unused |
 | user-defined `FUNCTION-ID` (2002) | no | **no — corpus rewritten to `CALL`** | yes, today |
 | `CALL … BY VALUE / RETURNING` | no | yes, C-ABI implementor only | yes |
 | `CALL … BY CONTENT` | yes | yes (Stage 31) | yes |
