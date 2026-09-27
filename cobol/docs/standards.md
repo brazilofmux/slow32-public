@@ -65,6 +65,51 @@ behaviour switch multiplies a test matrix nobody can exercise whole.
 This compiler stays narrow the way cobc370 did, and takes a dialect
 when a real program needs it.
 
+## One compiler, a `-std` switch
+
+2002 goes in this directory, not a fork of it. The test is whether two
+standards disagree or one extends the other. COBOL 74 and 85 disagree:
+`PERFORM … AFTER` resets in a different order and a receiving ODO group
+sizes differently, so the same source means different things, and
+[borrowing.md](borrowing.md) is right that one parser for both is a
+defect factory. COBOL 85 and 2002 mostly extend: `RECURSIVE`,
+`LOCAL-STORAGE`, `NATIONAL`, `FUNCTION-ID` and exception handling are
+new constructs, not new meanings for old ones. A 2002 fork would start
+as a copy of the whole 85 compiler and need every later fix to the
+shared core applied twice -- the drift the selfhost stages already
+taught.
+
+The focus a fork would give comes from a switch instead:
+
+| switch | accepts | refuses |
+|---|---|---|
+| `-std=85` | X3.23-1985, the X3.23a-1989 intrinsics, and the implementor extensions already taken (free format, `SCREEN SECTION`, RM/COBOL positioned I/O, `USAGE POINTER`, the C-ABI `CALL`) | 2002 constructs, with a message naming the standard they need |
+| `-std=2002` | all of the above, plus each Stage B module as it lands | modules not yet implemented, with a message, and OO |
+
+- **`-std=85` is the default**, and majesty and CCVS-85 stay pinned to
+  it. Nothing Stage B adds can change what an 85 program compiles to.
+- **Refusal is part of the switch.** Under `-std=85` a 2002 construct
+  is a diagnostic, never silently accepted, the way cobc370 refuses 85.
+- **2002 gets its own suite**, `tests/2002/` beside `fixed/` and
+  `free/`, and its own pass count.
+- **Where 2002 changes 85 behaviour rather than extending it**, the
+  difference goes behind the switch with a test on each side and is
+  recorded here. If those ever pile up the way the 74/85 differences
+  did, that is the signal to reconsider the fork. Nothing known yet
+  suggests they will.
+- If 2014 or 2023 earn a value later, they are more rows in the table.
+
+**There is no `-std=74`.** COBOL 74 conformance is cobc370's job, and it
+does it on the machine of that era. Hardly anyone wants 74 conformance
+on a modern target; the people who do want the 74 language want it on
+MVS 3.8j, and cobc370 is already there. Programs written to 74 that
+compile under 85 unchanged are welcome; the 74/85 semantic differences
+are not emulated.
+
+If `s32-cobc.c` (9,500 lines) outgrows navigation, the answer is to
+split it into files within this one compiler, not to fork the
+directory.
+
 ## Stage A — finish COBOL 85
 
 X3.23-1985 plus the X3.23a-1989 intrinsic functions is the current
