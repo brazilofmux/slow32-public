@@ -1,6 +1,6 @@
 #!/bin/bash
 # compile.sh -- COBOL source(s), C source(s) and objects to a SLOW-32 executable.
-#   ./compile.sh [-free|-fixed] main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-I dir]... [-o prog.s32x]
+#   ./compile.sh [-free|-fixed] [-std=85|-std=2002] main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-I dir]... [-o prog.s32x]
 # The first .cbl is the main program; further .cbl are subprogram
 # modules (-m); .c files are built by the SLOW-32 C toolchain, which is
 # how dateutil.c joins gl030 (docs/lowering.md: one convention, the C
@@ -9,11 +9,12 @@
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
-fmt="-fixed"; out=""; incs=""
+fmt="-fixed"; std=""; out=""; incs=""
 mains=(); subs=(); cs=(); objs=()
 while [ $# -gt 0 ]; do
     case "$1" in
         -free|-fixed) fmt="$1" ;;
+        -std=*) std="$1" ;;
         -o) out="$2"; shift ;;
         -I) incs="$incs -I$2"; shift ;;
         -I*) incs="$incs $1" ;;
@@ -39,13 +40,13 @@ main="${mains[0]}"
 . "$HERE/cctool.sh"
 base="${out%.s32x}"
 link=()
-"$S32_COBC" $fmt $incs -o "$base.s" "$main"
+"$S32_COBC" $fmt $std $incs -o "$base.s" "$main"
 "$S32_AS" "$base.s" "$base.s32o" >/dev/null
 link+=("$base.s32o")
 i=0
 for f in "${subs[@]+"${subs[@]}"}"; do
     i=$((i+1))
-    "$S32_COBC" $fmt $incs -m -o "$base-$i.s" "$f"
+    "$S32_COBC" $fmt $std $incs -m -o "$base-$i.s" "$f"
     "$S32_AS" "$base-$i.s" "$base-$i.s32o" >/dev/null
     link+=("$base-$i.s32o")
 done

@@ -1135,6 +1135,7 @@ typedef struct Sym {
     unsigned cv_all;                 /* bit i: value i is ALL literal */
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
+    int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
     int  is_rename;                 /* level 66: another name for a range of the record, resolved after layout */
@@ -1171,6 +1172,10 @@ static Sym *sym_new(void)
 }
 
 static int sym_idx(Sym *s) { return (int)(s - g_sym); }
+/* a record reached through a cell holding its address, not by its label:
+ * LINKAGE (the caller's), LOCAL-STORAGE (the activation's), EXTERNAL */
+static int rec_indirect(const Sym *rec) { return rec->is_linkage || rec->is_local || rec->is_external; }
+static const char *indirect_kind(const Sym *rec) { return rec->is_linkage ? "LINKAGE" : rec->is_local ? "LOCAL-STORAGE" : "EXTERNAL"; }
 
 /* name [OF|IN qualifier]...: the unique item that matches */
 static void unit_range(int level, int *from, int *to);   /* an ancestor's symbol range */
@@ -1534,6 +1539,7 @@ static int parse_level(void)
 static int g_last_item = -1;        /* the previous non-88 item, for 88s */
 static int g_no_values;             /* building an INITIALIZE template: VALUE clauses do not apply */
 static int g_in_linkage = 0;        /* parsing the LINKAGE SECTION */
+static int g_in_local = 0;          /* parsing the LOCAL-STORAGE SECTION */
 
 /* Where a parse resumes after an error in a data entry: the entry's
  * period, unless something that plainly starts the next entry or section
@@ -1572,7 +1578,7 @@ static void parse_data_item(void)
             /* a FILLER PIC X stands in its place, so the record keeps its
              * shape: a group whose only item failed is still a group */
             Sym *f = sym_new();
-            f->level = lv; f->line = g_tok[start].line; f->usage = U_DISPLAY; f->is_linkage = g_in_linkage;
+            f->level = lv; f->line = g_tok[start].line; f->usage = U_DISPLAY; f->is_linkage = g_in_linkage; f->is_local = g_in_local;
             f->is_filler = 1; snprintf(f->name, sizeof f->name, "filler");
             f->has_pic = 1; snprintf(f->pic, sizeof f->pic, "x"); pic_analyse(f->pic, &f->pi);
             if (g_cur_fd >= 0 && lv == 1) {
@@ -1609,6 +1615,7 @@ static void parse_data_item1(void)
     Sym *s = sym_new();
     s->level = level; s->line = line; s->usage = U_DISPLAY;
     s->is_linkage = g_in_linkage;
+    s->is_local = g_in_local;
     if (accept_word("filler")) {
         s->is_filler = 1;
         snprintf(s->name, sizeof s->name, "filler");
@@ -2074,6 +2081,7 @@ static void finish_data_division(void)
         set_dims(i, 0, zero, zero);
         s->record = i;
         if (s->is_linkage) snprintf(s->label, sizeof s->label, ".Llk%d_%d", g_unit, nrec++);
+        else if (s->is_local) snprintf(s->label, sizeof s->label, ".Lls%d_%d", g_unit, nrec++);
         else if (s->is_external) snprintf(s->label, sizeof s->label, ".Lex%d_%d", g_unit, nrec++);
         else snprintf(s->label, sizeof s->label, "ws%d_%d", g_unit, nrec++);
     }
@@ -2153,7 +2161,8 @@ static void finish_data_division(void)
         if (f->rec < 0 && !f->report_name[0]) die_at(f->line, "file '%s' has no FD", f->name);
         if (f->assign_name[0]) {
             f->assign_sym = sym_lookup(f->assign_name, NULL, 0, f->line);
-            if (g_sym[f->assign_sym->record].is_linkage) die_at(f->line, "ASSIGN TO '%s': a LINKAGE item cannot name a file", f->assign_name);
+            if (rec_indirect(&g_sym[f->assign_sym->record]))
+                die_at(f->line, "ASSIGN TO '%s': a %s item cannot name a file", f->assign_name, indirect_kind(&g_sym[f->assign_sym->record]));
             /* a group is alphanumeric by the standard's own rules: the suite
              * builds "GENTBL." + module suffix that way (GitHub #34) */
             if (!f->assign_sym->is_group && f->assign_sym->pi.category == PIC_NUMERIC)
@@ -2181,7 +2190,8 @@ static void finish_data_division(void)
         if (f->dep_name[0]) {
             f->dep_sym = sym_lookup(f->dep_name, NULL, 0, f->line);
             if (!is_int_item(f->dep_sym)) die_at(f->line, "DEPENDING ON '%s' must be an integer item", f->dep_name);
-            if (g_sym[f->dep_sym->record].is_linkage) die_at(f->line, "DEPENDING ON '%s' cannot be a LINKAGE item", f->dep_name);
+            if (rec_indirect(&g_sym[f->dep_sym->record]))
+                die_at(f->line, "DEPENDING ON '%s' cannot be a %s item", f->dep_name, indirect_kind(&g_sym[f->dep_sym->record]));
             if (!f->maxlen) f->maxlen = f->recsize;
             if (f->maxlen > f->recsize) die_at(f->line, "FD %s: VARYING TO %d is larger than its record area (%d)", f->name, f->maxlen, f->recsize);
         }
@@ -2205,6 +2215,8 @@ static void finish_data_division(void)
                 if (f->lin_name[w][0]) {
                     f->lin_sym[w] = sym_lookup(f->lin_name[w], NULL, 0, f->line);
                     if (!is_int_item(f->lin_sym[w])) die_at(f->line, "LINAGE: '%s' must be an integer item", f->lin_name[w]);
+                    if (rec_indirect(&g_sym[f->lin_sym[w]->record]))
+                        die_at(f->line, "LINAGE: '%s' cannot be a %s item", f->lin_name[w], indirect_kind(&g_sym[f->lin_sym[w]->record]));
                 }
         }
         for (int a = 0; a < f->nalt; a++) {
@@ -2226,7 +2238,8 @@ static void finish_data_division(void)
                 if (!is_int_item(k)) die_at(f->line, "RELATIVE KEY '%s' must be an unsigned integer item", f->relkey_name);
                 if (f->rec >= 0 && k->record == g_sym[f->rec].record)
                     die_at(f->line, "RELATIVE KEY '%s' must not be an item of file '%s' (the record number lives outside the record)", f->relkey_name, f->name);
-                if (g_sym[k->record].is_linkage) die_at(f->line, "RELATIVE KEY '%s' cannot be a LINKAGE item", f->relkey_name);
+                if (rec_indirect(&g_sym[k->record]))
+                    die_at(f->line, "RELATIVE KEY '%s' cannot be a %s item", f->relkey_name, indirect_kind(&g_sym[k->record]));
                 f->relkey_sym = k;
             } else if (f->access != 0)
                 die_at(f->line, "file '%s': ACCESS RANDOM or DYNAMIC on a RELATIVE file needs a RELATIVE KEY", f->name);
@@ -2549,6 +2562,7 @@ static void emit_bytes(const unsigned char *b, int n)
 #define SLOT_DP     100         /* the caller's decimal point, under DECIMAL-POINT IS COMMA */
 #define SLOT_CUR    104         /* the caller's currency sign, under CURRENCY SIGN */
 #define SLOT_PBASE  108         /* the caller's PERFORM frame base (cob_perform_enter) */
+#define SLOT_ACT    84          /* this activation's saved words and LOCAL-STORAGE (cob_act_enter, -std=2002) */
 #define SLOT(i)     (8 + 4 * (i))
 #define NSLOTS      16
 #define SLOT_A      (8 + 4 * NSLOTS)
@@ -3072,11 +3086,11 @@ static void emit_store_int(Sym *s, const char *areg, const char *vreg)
 
 /* reg = address of item s plus off: WORKING-STORAGE by label, a LINKAGE
  * item through its cell, which the entry sequence filled from the
- * caller's argument register */
+ * caller's argument register (LOCAL-STORAGE and EXTERNAL likewise) */
 static void emit_item_addr(const char *reg, Sym *s, int off)
 {
     Sym *rec = &g_sym[s->record];
-    if (!rec->is_linkage && !rec->is_external) { emit_la_off(reg, rec->label, off); return; }
+    if (!rec_indirect(rec)) { emit_la_off(reg, rec->label, off); return; }
     emit_la(reg, rec->label);
     emit("\tldw %s, %s+0", reg, reg);
     if (off >= -2048 && off <= 2047) { if (off) emit("\taddi %s, %s, %d", reg, reg, off); }
@@ -3144,7 +3158,7 @@ static void sfield_resolve(SField *f)
     g_tp = save_tp;
     if (rr.rm) die_at(f->srcline, "reference modification in a screen item is not implemented");
     f->item = rr.sym;
-    if (g_sym[rr.sym->record].is_linkage || g_sym[rr.sym->record].is_external || ref_has_runtime_sub(&rr))
+    if (rec_indirect(&g_sym[rr.sym->record]) || ref_has_runtime_sub(&rr))
         f->dyn = 1;
     long off = rr.sym->offset;
     for (int si = 0; si < rr.nsub; si++)
@@ -4468,7 +4482,7 @@ static void parse_accept_positioned(Ref *r, int tp)
     else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
     if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
         Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, r->line);
-        if (g_sym[cs->record].is_linkage) die_at(r->line, "a LINKAGE item cannot be the CRT STATUS yet");
+        if (rec_indirect(&g_sym[cs->record])) die_at(r->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
         char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
         emit_la("r3", b);
         snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
@@ -4490,7 +4504,7 @@ static void parse_accept(void)
             emit_screen_dyn_fill(scp, sfirst, scount);
             if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
                 Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line);
-                if (g_sym[cs->record].is_linkage) die_at(t->line, "a LINKAGE item cannot be the CRT STATUS yet");
+                if (rec_indirect(&g_sym[cs->record])) die_at(t->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
                 char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
                 emit_la("r3", b);
                 snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
@@ -5974,6 +5988,7 @@ static void emit_use_dispatch(File *f, int has_clause)
 /* ---- PERFORM ---------------------------------------------------------- */
 
 static int g_ncnt;      /* TIMES counters */
+static int *g_cnt_unit; static int g_cnt_cap;   /* the unit each counter belongs to */
 
 typedef struct { Para *from, *thru; int inline_body; } Body;
 
@@ -6243,6 +6258,8 @@ static void parse_perform(void)
     } else if (at_operand() && times_follows()) {
         Opnd n; parse_operand(&n); check_numeric_opnd(&n);
         expect_word("times");
+        if (g_ncnt == g_cnt_cap) { g_cnt_cap = g_cnt_cap ? 2 * g_cnt_cap : 64; g_cnt_unit = realloc(g_cnt_unit, (size_t)g_cnt_cap * sizeof *g_cnt_unit); }
+        g_cnt_unit[g_ncnt] = g_unit;
         char cnt[32]; snprintf(cnt, sizeof cnt, ".Lcnt%d", g_ncnt++);
         if (opnd_hot_int(&n)) emit_hot_value(&n);
         else {
@@ -8151,6 +8168,8 @@ static void emit_exit_check(int id)
 
 static int g_saw_end_program;
 static int g_initial;               /* PROGRAM-ID ... IS INITIAL: WORKING-STORAGE fresh on every CALL */
+static int g_recursive;             /* PROGRAM-ID ... IS RECURSIVE, or contained in such a program (COBOL 2002) */
+static int g_std = 85;              /* -std=85 (the default) or -std=2002: Stage B, docs/standards.md */
 
 /* everything a unit keeps in globals, saved while a contained program is compiled */
 struct UnitSave {
@@ -8159,7 +8178,7 @@ struct UnitSave {
     int nreport, nscreen, screen_base, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
     char collate_name[64];
     char crtname[64];
-    int nuse, in_decl, cur_sec_id, saw_end, initial, nsorttab;
+    int nuse, in_decl, cur_sec_id, saw_end, initial, recursive, nsorttab;
     UseEntry use[64];
     File *io_file;
     UClass cls[16]; SwitchName sw[32]; Alphabet alph[16]; Mnemonic mn[16]; int same[8][16], nsame[8];
@@ -8174,6 +8193,7 @@ static void parse_identification_division(void);
 static void parse_environment_division(void);
 static void parse_data_division(void);
 static void emit_unit_data(void);
+static void emit_act_desc(void);
 static void parse_procedure_division(void);
 
 /* IDENTIFICATION DIVISION inside a program: a contained program.  It is
@@ -8195,7 +8215,7 @@ static void compile_nested_unit(void)
     memcpy(u->collate_name, g_collate_name, sizeof u->collate_name);
     memcpy(u->crtname, g_crt_status_name, sizeof u->crtname);
     u->nuse = g_nuse; memcpy(u->use, g_use, sizeof u->use); u->in_decl = g_in_decl; u->cur_sec_id = g_cur_sec_id;
-    u->saw_end = g_saw_end_program; u->initial = g_initial; u->io_file = g_io_file;
+    u->saw_end = g_saw_end_program; u->initial = g_initial; u->recursive = g_recursive; u->io_file = g_io_file;
     memcpy(u->cls, g_class, sizeof u->cls); memcpy(u->sw, g_switch, sizeof u->sw); memcpy(u->alph, g_alphabet, sizeof u->alph);
     memcpy(u->mn, g_mnemonic, sizeof u->mn); memcpy(u->same, g_same, sizeof u->same); memcpy(u->nsame, g_nsame, sizeof u->nsame);
     u->nsorttab = g_nsorttab; u->sorttab = xmalloc((size_t)(g_nsorttab + 1) * sizeof *g_sorttab);
@@ -8208,6 +8228,8 @@ static void compile_nested_unit(void)
     g_nreport = 0; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
     g_nsame_groups = 0; g_npoison = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
     g_nsorttab = 0; g_initial = 0;
+    /* a program contained in a recursive program is recursive (2023 11.10.4 rule 4) */
+    g_recursive = u->recursive;
     parse_identification_division();
     parse_environment_division();
     parse_data_division();
@@ -8226,7 +8248,7 @@ static void compile_nested_unit(void)
     memcpy(g_collate_name, u->collate_name, sizeof g_collate_name);
     memcpy(g_crt_status_name, u->crtname, sizeof g_crt_status_name);
     g_nuse = u->nuse; memcpy(g_use, u->use, sizeof g_use); g_in_decl = u->in_decl; g_cur_sec_id = u->cur_sec_id;
-    g_saw_end_program = u->saw_end; g_initial = u->initial; g_io_file = u->io_file;
+    g_saw_end_program = u->saw_end; g_initial = u->initial; g_recursive = u->recursive; g_io_file = u->io_file;
     memcpy(g_class, u->cls, sizeof g_class); memcpy(g_switch, u->sw, sizeof g_switch); memcpy(g_alphabet, u->alph, sizeof g_alphabet);
     memcpy(g_mnemonic, u->mn, sizeof g_mnemonic); memcpy(g_same, u->same, sizeof g_same); memcpy(g_nsame, u->nsame, sizeof g_nsame);
     g_nsorttab = u->nsorttab;
@@ -8286,10 +8308,22 @@ static void parse_procedure_division(void)
      * below clobbers the argument registers (a USING program with DECIMAL-
      * POINT IS COMMA, CURRENCY SIGN, a COLLATING SEQUENCE or IS INITIAL
      * used to take its addresses from what those calls left there) */
-    for (int i = 0; i < nusing; i++) {
-        emit_la("r1", g_sym[using[i]->record].label);
-        emit("\tstw r1+0, %s", argreg(i));
-    }
+    if (g_std >= 2002) {
+        /* the arguments wait in the frame while cob_act_enter saves the
+         * cells they are about to overwrite (a RECURSIVE caller's own) */
+        for (int i = 0; i < nusing; i++) emit("\tstw sp+%d, %s", SLOT(i), argreg(i));
+        char lab[32]; snprintf(lab, sizeof lab, ".Lact%d", g_unit);
+        emit_la("r3", lab); emit_call("cob_act_enter"); emit("\tstw sp+%d, r1", SLOT_ACT);
+        for (int i = 0; i < nusing; i++) {
+            emit_la("r1", g_sym[using[i]->record].label);
+            emit("\tldw r2, sp+%d", SLOT(i));
+            emit("\tstw r1+0, r2");
+        }
+    } else
+        for (int i = 0; i < nusing; i++) {
+            emit_la("r1", g_sym[using[i]->record].label);
+            emit("\tstw r1+0, %s", argreg(i));
+        }
     emit_call("cob_perform_enter"); emit("\tstw sp+%d, r1", SLOT_PBASE);   /* this activation's PERFORM frames */
     if (g_collate >= 0) {       /* PROGRAM COLLATING SEQUENCE: this unit's table, the caller's kept */
         char lab[32]; snprintf(lab, sizeof lab, ".Lcoll%d", g_unit);
@@ -8304,7 +8338,7 @@ static void parse_procedure_division(void)
         File *f = &g_files[i];
         if (!f->status_sym) continue;
         Sym *rec = &g_sym[f->status_sym->record];
-        if (!rec->is_linkage && !rec->is_external) continue;
+        if (!rec_indirect(rec)) continue;
         emit_item_addr("r1", f->status_sym, f->status_sym->offset);
         char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
         emit_la("r2", lab);
@@ -8428,6 +8462,10 @@ static void parse_procedure_division(void)
             emit_call("cob_ext_file_exit");
         }
     emit("\tldw r3, sp+%d", SLOT_PBASE); emit_call("cob_perform_leave");
+    if (g_std >= 2002) {
+        char lab[32]; snprintf(lab, sizeof lab, ".Lact%d", g_unit);
+        emit_la("r3", lab); emit("\tldw r4, sp+%d", SLOT_ACT); emit_call("cob_act_leave");
+    }
     if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
     if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
     if (g_currency && g_currency != '$') { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_set_currency"); }
@@ -8449,7 +8487,7 @@ static void parse_procedure_division(void)
         emit("\tstw sp+0, lr");
         for (int i = g_sym_base; i < g_nsym; i++) {
             Sym *s = &g_sym[i];
-            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_linkage || s->is_external) continue;
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s)) continue;
             emit_la("r3", s->label);
             char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
             emit_la("r4", il);
@@ -8530,10 +8568,22 @@ static void parse_identification_division(void)
     advance();
     accept_word("is");
     for (;;) {
-        if (accept_word("initial")) g_initial = 1;              /* fresh WORKING-STORAGE on every CALL */
+        int line = cur()->line;
+        if (accept_word("initial")) {
+            g_initial = 1;                                       /* fresh WORKING-STORAGE on every CALL */
+            if (g_recursive)
+                die_at(line, "INITIAL: a program that is, or is contained in, a RECURSIVE program cannot be INITIAL (2023 11.10.3 rule 5)");
+        }
         else if (accept_word("common")) { }                      /* callable by the siblings too: every program here is */
+        else if (accept_word("recursive")) {
+            if (g_std < 2002) die_at(line, "RECURSIVE is COBOL 2002; compile with -std=2002 (docs/standards.md, Stage B)");
+            for (int k = 0; k < g_udepth; k++)
+                if (g_ustack[k]->initial) die_at(line, "RECURSIVE: a program contained in an INITIAL program cannot be RECURSIVE (2023 11.10.3 rule 6)");
+            g_recursive = 1;
+        }
         else break;
     }
+    if (g_initial && g_recursive) die_at(cur()->line, "a program cannot be both INITIAL and RECURSIVE");
     accept_word("program");
     expect_period();
 
@@ -9565,6 +9615,16 @@ static void parse_data_division(void)
             while (cur()->kind == T_NUM) parse_data_item();
             continue;
         }
+        if (at_word("local-storage") && is_word(peek(1), "section")) {
+            /* COBOL 2002: automatic data, a fresh copy for every activation
+             * (2023 8.6.4), reached through a cell like a LINKAGE record */
+            if (g_std < 2002) die_at(cur()->line, "the LOCAL-STORAGE SECTION is COBOL 2002; compile with -std=2002 (docs/standards.md, Stage B)");
+            advance(); advance(); expect_period();
+            g_in_local = 1;
+            while (cur()->kind == T_NUM) parse_data_item();
+            g_in_local = 0;
+            continue;
+        }
         if (at_word("linkage") && is_word(peek(1), "section")) {
             advance(); advance(); expect_period();
             g_in_linkage = 1;
@@ -9596,6 +9656,54 @@ static void parse_data_division(void)
 /* Driver                                                                  */
 /* ====================================================================== */
 
+/* The activation descriptor (-std=2002; cobol ISSUES-49).  cob_act_enter
+ * reads it at every entry: the active count, whether the program is
+ * RECURSIVE, its name for the EC-PROGRAM-RECURSIVE-CALL message, the words
+ * an activation owns but which live in static cells -- LINKAGE and
+ * LOCAL-STORAGE cells, FILE STATUS pointers into them, TIMES counters --
+ * saved on entry and restored on return, and each LOCAL-STORAGE record's
+ * cell, initial image and size, a fresh copy per activation (2023 8.6.4).
+ * Only a RECURSIVE program can be re-entered, so only its words are saved. */
+static void emit_act_desc(void)
+{
+    char words[256][48]; int nw = 0;
+    if (g_recursive) {
+        for (int i = g_sym_base; i < g_nsym; i++) {
+            Sym *s = &g_sym[i];
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0) continue;
+            if ((s->is_linkage || s->is_local) && nw < 256) snprintf(words[nw++], sizeof words[0], "%s", s->label);
+        }
+        for (int i = g_file_base; i < g_nfile; i++) {
+            File *f = &g_files[i];
+            if (f->status_sym && (g_sym[f->status_sym->record].is_linkage || g_sym[f->status_sym->record].is_local) && nw < 256)
+                snprintf(words[nw++], sizeof words[0], ".Lf%d_%d+16", f->unit, i);
+        }
+        for (int k = 0; k < g_ncnt; k++)
+            if (g_cnt_unit[k] == g_unit && nw < 256) snprintf(words[nw++], sizeof words[0], ".Lcnt%d", k);
+        if (nw == 256) die_at(0, "internal: more than 256 per-activation words in '%s'", g_progid);
+    }
+    int nl = 0;
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!(s->is_cond || s->parent >= 0 || s->redefines >= 0) && s->is_local) nl++;
+    }
+    char nm[80]; snprintf(nm, sizeof nm, "%s", g_progid);
+    const char *nlab = lit_label((const unsigned char *)nm, (int)strlen(nm) + 1);
+    emit("\t.p2align 2");
+    emit(".Lact%d:\t# activation descriptor", g_unit);
+    emit("\t.word 0");                              /* active instances */
+    emit("\t.word %d", g_recursive);
+    emit("\t.word %s", nlab);
+    emit("\t.word %d", nw);
+    for (int k = 0; k < nw; k++) emit("\t.word %s", words[k]);
+    emit("\t.word %d", nl);
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || !s->is_local) continue;
+        emit("\t.word %s", s->label); emit("\t.word %s_i", s->label); emit("\t.word %d", s->image_size);
+    }
+}
+
 static void emit_unit_data(void)
 {
     emit("");
@@ -9603,6 +9711,19 @@ static void emit_unit_data(void)
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0) continue;
+        if (s->is_local) {
+            /* a cell for the activation's copy, and the copy's initial state
+             * (cob_act_enter makes a fresh one on every entry) */
+            emit("\t.p2align 2");
+            emit("%s:\t# local-storage %02d %s (%d bytes, the activation's)", s->label, s->level, s->name, s->image_size);
+            emit("\t.word 0");
+            emit("\t.section .rodata");
+            emit("\t.p2align 3");
+            emit("%s_i:", s->label);
+            emit_bytes(s->image, s->image_size);
+            emit("\t.data");
+            continue;
+        }
         if (s->is_linkage || s->is_external) {
             emit("\t.p2align 2");
             emit("%s:\t# %s %02d %s (%d bytes %s)", s->label, s->is_linkage ? "linkage" : "external", s->level, s->name, s->image_size,
@@ -9620,6 +9741,7 @@ static void emit_unit_data(void)
         emit_bytes(s->image, s->image_size);
         emit("\t.data");
     }
+    if (g_std >= 2002) emit_act_desc();
     for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         emit("\t.p2align 2");
@@ -9628,7 +9750,7 @@ static void emit_unit_data(void)
         emit("\t.word 0");
         if (f->rec >= 0 && !f->external) emit("\t.word %s", g_sym[g_sym[f->rec].record].label); else emit("\t.word 0");   /* an EXTERNAL file's record area is set at entry */
         emit("\t.word %d", f->recsize);
-        if (f->status_sym && !g_sym[f->status_sym->record].is_linkage && !g_sym[f->status_sym->record].is_external)
+        if (f->status_sym && !rec_indirect(&g_sym[f->status_sym->record]))
             emit("\t.word %s+%d", g_sym[f->status_sym->record].label, f->status_sym->offset);
         else emit("\t.word 0");                            /* a LINKAGE or EXTERNAL status item: its address is stored at entry */
         if (f->assign_lit) {
@@ -9825,15 +9947,16 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
         else if (!strcmp(argv[i], "--version")) { printf("s32-cobc %s\n", VERSION); return 0; }
         else if (!strcmp(argv[i], "-warn-74")) g_warn74 = 1;
-        else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) { }
+        else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
+        else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) g_std = 2002;
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {
             fprintf(stderr, "s32-cobc: there is no -std=74: 74 programs compile as 85, and -warn-74 flags where their "
                             "meaning changed; full COBOL 74 is cobc370's job (docs/standards.md)\n");
             return 2;
         }
         else if (!strncmp(argv[i], "-std=", 5)) {
-            fprintf(stderr, "s32-cobc: %s is not implemented; -std=85 is the only standard today "
-                            "(COBOL 2002 is Stage B of docs/standards.md)\n", argv[i]);
+            fprintf(stderr, "s32-cobc: %s is not implemented; -std=85 (the default) and -std=2002 "
+                            "(COBOL 2002, Stage B of docs/standards.md, as its modules land)\n", argv[i]);
             return 2;
         }
         else if (argv[i][0] == '-') usage();
@@ -9866,7 +9989,7 @@ int main(int argc, char **argv)
          * by END PROGRAM */
         g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
-        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_nsymch = 0;
+        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();

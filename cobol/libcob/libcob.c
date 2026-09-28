@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <math.h>
 #include <ctype.h>
 #include "cobrt.h"
@@ -1031,6 +1032,55 @@ static int pbase;       /* the first frame of the running program's activation *
  * a RECURSIVE program's activations are kept apart the same way. */
 int cob_perform_enter(void) { int old = pbase; pbase = psp; return old; }
 void cob_perform_leave(int old) { psp = pbase; pbase = old; }
+
+/* ---- activations (COBOL 2002, -std=2002) --------------------------------- */
+
+/* The compiler's activation descriptor (s32-cobc.c emit_act_desc): active
+ * count, RECURSIVE flag, program name, the static words an activation owns
+ * (saved here and restored on return), then each LOCAL-STORAGE record as
+ * cell, initial image, size.  The block holds the saved words and the
+ * records; the cells point into it, so a LOCAL-STORAGE item's address may
+ * be passed on and stays this activation's (2023 8.6.4). */
+typedef struct { int active, recursive; const char *name; int nwords; } cob_act_hdr;
+
+void *cob_act_enter(int *desc)
+{
+    cob_act_hdr *h = (cob_act_hdr *)desc;
+    if (h->active && !h->recursive) {
+        char m[160];
+        snprintf(m, sizeof m, "EC-PROGRAM-RECURSIVE-CALL: '%s' was called while active and is not RECURSIVE", h->name);
+        cob_fatal(m);
+    }
+    int **words = (int **)(desc + 4);
+    int *loc = desc + 4 + h->nwords, nl = loc[0];
+    size_t size = (size_t)h->nwords * sizeof(int);
+    for (int k = 0; k < nl; k++) size = ((size + 7) & ~(size_t)7) + (size_t)loc[1 + 3 * k + 2];
+    h->active++;
+    if (!size) return 0;
+    char *b = malloc(size);
+    if (!b) cob_fatal("EC-STORAGE-NOT-AVAIL: no storage for an activation's LOCAL-STORAGE");
+    for (int k = 0; k < h->nwords; k++) ((int *)b)[k] = *words[k];
+    size_t at = (size_t)h->nwords * sizeof(int);
+    for (int k = 0; k < nl; k++) {
+        char **cell = (char **)(intptr_t)loc[1 + 3 * k];
+        const char *image = (const char *)(intptr_t)loc[1 + 3 * k + 1];
+        int n = loc[1 + 3 * k + 2];
+        at = (at + 7) & ~(size_t)7;
+        memcpy(b + at, image, (size_t)n);
+        *cell = b + at;
+        at += (size_t)n;
+    }
+    return b;
+}
+
+void cob_act_leave(int *desc, void *block)
+{
+    cob_act_hdr *h = (cob_act_hdr *)desc;
+    int **words = (int **)(desc + 4);
+    for (int k = 0; k < h->nwords; k++) *words[k] = ((int *)block)[k];
+    free(block);
+    h->active--;
+}
 
 void cob_perform_push(int exit_id, void *ret)
 {

@@ -1574,3 +1574,57 @@ the corpora is luck, not rarity.
 audit of what it already does. Both bugs were on the call path; the
 corpora passed the first because of which paragraph numbers happened
 to line up.
+
+### 49. Stage B, first module: `RECURSIVE` and `LOCAL-STORAGE` (2026-09-28)
+
+The first COBOL 2002 module, and the first use of `-std=2002`.
+docs/standards.md has the summary; this is the record.
+
+**What an activation owns** was found by an audit of every piece of
+static state the generated code and libcob keep. Three would be
+clobbered by a second activation of the same program: the LINKAGE
+address cells, a FILE STATUS pointer stored into the file block when
+the status item is in LINKAGE, and the `PERFORM ... TIMES` counters
+(one static word per statement). The PERFORM return stack was the
+fourth, fixed first as ISSUES-48. Everything else is statement-scoped
+(no CALL can happen inside it), constant, or program state the
+standard makes static: file connectors, sort files, reports,
+index-names (and ALTER state, where that 85 element is still accepted).
+
+**How.** Under `-std=2002` every program gets an activation descriptor:
+its active count, whether it is RECURSIVE, its name, the words an
+activation owns, and each LOCAL-STORAGE record's cell, initial image
+and size. `cob_act_enter` checks for re-entry, saves the words into a
+malloc'd block, copies each LOCAL-STORAGE image into the block and
+points the record's cell at it; `cob_act_leave` restores the words and
+frees the block. LOCAL-STORAGE is reached through its cell the way
+LINKAGE is (one load), so a local item's address can be passed BY
+REFERENCE and stays that activation's -- copying locals out and back
+instead would have broken exactly that, which recshape tests. The
+argument registers wait in frame slots while `cob_act_enter` runs.
+Only a RECURSIVE program's words are saved, since only it can be
+re-entered.
+
+Tests, all agreeing with GnuCOBOL `-std=cobol2002`: 2002/recfact
+(factorial; fresh LOCAL-STORAGE per activation, LINKAGE intact after
+the inner call), 2002/recshape (a TIMES loop around a recursive CALL,
+7 activations; a local passed BY REFERENCE to a program that re-enters
+the caller), 2002/localfresh (LOCAL-STORAGE fresh on every CALL of a
+program that is not recursive, WORKING-STORAGE kept), 2002/recnot
+(EC-PROGRAM-RECURSIVE-CALL). Refusals: bad/recursive-85,
+bad/local-storage-85, bad/std2002-initial-recursive (2023 11.10.3
+rule 5). The harness runs tests/2002 under `-std=2002`; a bad fixture
+named `std2002-*` compiles under it too.
+
+`-std=85` output is byte-identical to before on all 227 Open Systems
+programs and the majesty programs, with one intended exception found on
+the way: ASSIGN, file DEPENDING ON, RELATIVE KEY, LINAGE and CRT STATUS
+items were checked against LINKAGE only, and an EXTERNAL item there
+compiled to the address of its cell instead of its data. They are now
+refused for LINKAGE, LOCAL-STORAGE and EXTERNAL alike; no program in
+any corpus used one.
+
+**Lesson.** The audit came before the design, and the design came out
+smaller for it: a descriptor per program and one block per activation,
+rather than frame-relative addressing threaded through every
+statement.

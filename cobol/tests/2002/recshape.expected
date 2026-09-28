@@ -1,0 +1,7 @@
+walk activations: 007
+hold 0 sets outer
+peek before: outer
+hold 1 sets inner
+hold 1 still inner
+peek after:  outer
+hold 0 still outer

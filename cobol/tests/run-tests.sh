@@ -3,7 +3,8 @@
 #
 # Gate 1 (pictest): pic_analyse over tests/pictures.txt against an expected
 #   file checked by hand against the 1985 PICTURE clause text.
-# Gate 2 (programs): every tests/fixed/*.cbl and tests/free/*.cbl compiled by
+# Gate 2 (programs): every tests/fixed/*.cbl and tests/free/*.cbl (and
+#   tests/2002/*.cbl, under -std=2002 and the oracle's -std=cobol2002) compiled by
 #   s32-cobc, assembled, linked with libcob and the SLOW-32 libc, run on the
 #   emulator; stdout must match the .expected file.  The same source is also
 #   compiled and run under GnuCOBOL and diffed, so the .expected files are
@@ -179,12 +180,15 @@ else
 fi
 
 # --- Gate 2: programs --------------------------------------------------
-for fmt in fixed free; do
+# tests/2002 is Stage B (docs/standards.md): free format, compiled with
+# -std=2002, the oracle with -std=cobol2002.  fixed/ and free/ are -std=85.
+for fmt in fixed free 2002; do
     for src in "$HERE/$fmt"/*.cbl; do
         [ -e "$src" ] || continue
         name="$(basename "$src" .cbl)"
         exp="${src%.cbl}.expected"
-        flag="-$fmt"
+        flag="-$fmt"; stdflag=""; ostd="-std=cobol85"
+        [ "$fmt" = 2002 ] && { flag="-free"; stdflag="-std=2002"; ostd="-std=cobol2002"; }
         # a .link file beside the test names further sources (subprogram
         # .cbl, .c) relative to tests/, for us and for the oracle
         extra=(); needs_cc=0
@@ -199,7 +203,7 @@ for fmt in fixed free; do
             SKIPPED="$SKIPPED $fmt/$name"
             continue
         fi
-        if ! "$CDIR/compile.sh" $flag -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" -o "$W/$name.s32x" >"$W/$name.log" 2>"$W/$name.err"; then
+        if ! "$CDIR/compile.sh" $flag $stdflag -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" -o "$W/$name.s32x" >"$W/$name.log" 2>"$W/$name.err"; then
             report "$fmt/$name" 1 "$(grep -m1 -i "error" "$W/$name.err" "$W/$name.log" | head -1 | sed 's/^[^:]*://')"; continue
         fi
         fresh_workdir
@@ -246,7 +250,7 @@ JSON
         note=""
         if grep -qi "no oracle" "$src"; then note="no oracle: reviewed by hand"; ORACLE_SKIP=1; else ORACLE_SKIP=0; fi
         if [ -n "$ORACLE_ENGINE" ] && [ "$ORACLE_SKIP" = 0 ]; then
-            std="-std=cobol85"
+            std="$ostd"
             grep -qi "default dialect" "$src" && std=""
             if oracle_cc "$W/$name.orc" $std $flag -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" >"$W/$name.orclog" 2>&1; then
                 fresh_workdir
@@ -287,7 +291,8 @@ for src in "$HERE/bad"/*.cbl; do
     exp="${src%.cbl}.expected"
     flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
     [ "$name" = "mixed-format" ] && flag="-fixed"
-    if "$COBC" $flag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
+    stdflag=""; case "$name" in std2002-*) stdflag="-std=2002" ;; esac   # a Stage B refusal
+    if "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
         report "bad/$name" 1 "was accepted"; continue
     fi
     # one line of .expected per error, and no

@@ -217,6 +217,22 @@ Each feature lands the way every stage here has: refused with a
 message until implemented, then tested against the text, with
 GnuCOBOL as the oracle where it agrees with the text.
 
+**Landed.** `-std=2002` exists; its tests are `tests/2002/`, run
+against GnuCOBOL's `-std=cobol2002`, and under `-std=85` each module is
+refused with a message naming the switch.
+
+- **`RECURSIVE` and `LOCAL-STORAGE`** (2026-09-28, ISSUES-49). Each
+  activation gets a fresh LOCAL-STORAGE set to its VALUEs, its own
+  LINKAGE, PERFORM control and TIMES counters; a LOCAL-STORAGE item's
+  address may be passed on and stays that activation's (2023 8.6.4).
+  WORKING-STORAGE, file connectors, sort files, reports, index-names
+  (and ALTER state) belong to the program and are shared by its
+  activations, as static data is. A program contained in a recursive
+  one is recursive. Calling an active program that is not RECURSIVE is
+  EC-PROGRAM-RECURSIVE-CALL, fatal. How: an activation descriptor per
+  program, read by `cob_act_enter`/`cob_act_leave` at entry and
+  return; under `-std=85` none is emitted, and 85 output is unchanged.
+
 ## Deferred — object orientation
 
 COBOL 2002's classes, `INVOKE`, interfaces, `FACTORY`, method
