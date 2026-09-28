@@ -774,6 +774,14 @@ Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
   This entry was missing until 2026-09-02: `docs/dialect.md` still
   claimed we refused it, and the harness reporting an oracle refusal as
   a pass (1a4ce2d1) is what kept the contradiction from surfacing.
+- `COB_CURRENT_DATE` fixes the clock completely (ISSUES-45). GnuCOBOL
+  4.0 fixes every date field the same way, but lets the real clock
+  through elsewhere: the time of day under the date-only form, the
+  hundredths under `YYYY/MM/DD hh:mm:ss`. Here the missing fields read
+  zero and CURRENT-DATE's offset reads +0000, so a fixed run prints the
+  same bytes every time. GnuCOBOL accepts and ignores a trailing offset
+  or fraction; here anything but the two documented forms is fatal.
+  free/fixclock shows the fields both agree on.
 
 ### 27. Run s32-cobc under AddressSanitizer, with its tables forced to grow
 `lit_label` returned a pointer into `g_lit`, a table it reallocates, and
@@ -1303,4 +1311,37 @@ now gate 5 of `tests/run-tests.sh`: the totals line must equal
 `tests/ccvs-baseline.txt` exactly, a better total included, so a
 change in either direction is recorded on purpose. No NIST tree is
 reported as NOT RUN, never passed over.
+
+### 45. `COB_CURRENT_DATE`: a fixed clock for reproducible paper (2026-09-27)
+The Open Systems AR cash-flow paper drifted with the calendar
+(ISSUES-44): an invoice takes the run date and ages against fixed dates
+in the key script, so the same 60.00 lands in a different column
+depending on the day the suite runs. Preservation needs the same paper
+every day, and GnuCOBOL already names the answer.
+
+`COB_CURRENT_DATE=YYYY/MM/DD` or `YYYY/MM/DD hh:mm:ss` now fixes the
+clock that ACCEPT FROM DATE, DAY, TIME, DAY-OF-WEEK and FUNCTION
+CURRENT-DATE read, through one function (`cob_clock`) where there were
+two copies of the clock read. Every date field was measured against
+GnuCOBOL 4.0 on four values -- an ordinary Monday, a leap day that is
+a Thursday, a Sunday at a year boundary, the date-only form -- and
+agrees. Where GnuCOBOL lets the real clock through, this one stays
+fixed (section C). A malformed value is fatal with the value quoted:
+quietly running on the real date would defeat the reason to set it.
+
+`tests/free/fixclock` fixes 2024/02/29 23:59:59 through a `.env` and
+prints what GnuCOBOL prints; without the variable it reads today and
+fails. The harness now keeps a `.env` line whole (a value may hold a
+space) and gives it to the oracle as well, which is what lets a fixed-
+clock test have an oracle at all.
+
+In `~/open` every module's `run.sh` sets
+`COB_CURRENT_DATE=2026/09/07`, the day all seven modules' paper was
+pinned, overridable from outside. **All 80 papers match** (AP 12, AR
+22, GL 4, IN 7, JO 8, PA 17, SO 10), the cash-flow report included.
+
+Correction: ISSUES-44 and its commit (a8ef2f12) report the Open
+Systems suite as "100 of 101 papers"; there are 80, and the right
+figure that day was 79 of 80. The count was not taken from the
+harness output, and it should have been.
 

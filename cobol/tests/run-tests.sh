@@ -93,8 +93,9 @@ oracle_cc() {   # oracle_cc out.orc [cobc args...]: compile under GnuCOBOL, cwd 
 oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/run,
                 # standard input from $keys (the test's .keys file, or nothing)
     case "$ORACLE_ENGINE" in
-        host) (cd "$W/run" && "$@" < "$keys") ;;
-        *)    "$ORACLE_ENGINE" run --rm -i -v "$ROOT:$ROOT" -w "$W/run" "$ORACLE_RUN_IMAGE" timeout 60 "$@" < "$keys" ;;
+        host) (cd "$W/run" && env ${PROG_ENV[@]+"${PROG_ENV[@]}"} "$@" < "$keys") ;;
+        *)    local ef=(); for x in ${PROG_ENV[@]+"${PROG_ENV[@]}"}; do ef+=(-e "$x"); done
+              "$ORACLE_ENGINE" run --rm -i ${ef[@]+"${ef[@]}"} -v "$ROOT:$ROOT" -w "$W/run" "$ORACLE_RUN_IMAGE" timeout 60 "$@" < "$keys" ;;
     esac
 }
 # (timeout: an oracle that hangs -- GnuCOBOL 4.0-early-dev does on an OPEN
@@ -125,8 +126,9 @@ emu_run() {   # emu_run prog.s32x > stdout: the guest's output only
     # a .keys file beside the test is typed into the program (the term
     # service reads keys from the emulator's stdin)
     # a .args file beside the test is the program's command line;
-    # a .env file beside it is the guest's environment (S32_SORT_MEMORY=24K ...)
-    (cd "$W/run" && env $PROG_ENV "$EMU" "$1" $PROG_ARGS 2>/dev/null < "${2:-/dev/null}") | awk '
+    # a .env file beside it is the guest's environment (S32_SORT_MEMORY=24K ...),
+    # and the oracle's: GnuCOBOL ignores the S32_ names and reads COB_ ones
+    (cd "$W/run" && env ${PROG_ENV[@]+"${PROG_ENV[@]}"} "$EMU" "$1" $PROG_ARGS 2>/dev/null < "${2:-/dev/null}") | awk '
         /^Starting execution/ { capture = 1; held = 0; next }
         /^HALT at|^Program halted|^Exit code/ { if (held && prev != "") print prev; capture = 0; held = 0 }
         capture { if (held) print prev; prev = $0; held = 1 }
@@ -203,7 +205,9 @@ for fmt in fixed free; do
         fresh_workdir
         keys=/dev/null; [ -f "${src%.cbl}.keys" ] && keys="${src%.cbl}.keys"
         PROG_ARGS=""; [ -f "${src%.cbl}.args" ] && PROG_ARGS="$(cat "${src%.cbl}.args")"
-        PROG_ENV=""; [ -f "${src%.cbl}.env" ] && PROG_ENV="$(tr "\n" " " < "${src%.cbl}.env")"
+        # one VAR=value per line, kept whole: a value may hold spaces
+        # (COB_CURRENT_DATE=2026/09/07 13:45:10); GnuCOBOL gets it too
+        PROG_ENV=(); if [ -f "${src%.cbl}.env" ]; then while IFS= read -r l || [ -n "$l" ]; do [ -n "$l" ] && PROG_ENV+=("$l"); done < "${src%.cbl}.env"; fi
         emu_run "$W/$name.s32x" "$keys" > "$W/$name.out"
         if [ ! -f "$exp" ]; then
             report "$fmt/$name" 1 "no .expected file"; continue

@@ -3672,16 +3672,59 @@ char *cob_fn_integer_of_day(long yddd)
     return fn_digits(civil_to_days(y, 1, 1) + doy - 1, 10);
 }
 
+/* The clock, for ACCEPT FROM DATE/DAY/TIME/DAY-OF-WEEK and FUNCTION
+ * CURRENT-DATE.  COB_CURRENT_DATE, GnuCOBOL's name and its two forms,
+ * YYYY/MM/DD or YYYY/MM/DD hh:mm:ss, fixes it: the run then sees that
+ * moment and no other, so a program whose output depends on the date
+ * prints the same paper every day it is run.  Every date field is
+ * GnuCOBOL's.  Where GnuCOBOL 4.0 lets the real clock through -- the
+ * time of day under the date-only form, the hundredths under the other
+ * -- this clock stays fixed (missing fields read zero), and the offset
+ * reads +0000; the point is reproducibility (cobol ISSUES-45, and the
+ * divergence in section C).  A malformed value is fatal: silently
+ * running on the real date would defeat the reason to set it. */
+static int clk_state = -1;              /* -1 not yet read, 0 the real clock, 1 fixed */
+static struct tm clk_tm;
+static void cob_clock(struct tm *out, int *hund, long *gmtoff)
+{
+    if (clk_state < 0) {
+        clk_state = 0;
+        const char *e = getenv("COB_CURRENT_DATE");
+        if (e && *e) {
+            int y, mo, d, h = 0, mi = 0, sc = 0, used = 0, k;
+            if (sscanf(e, "%4d/%2d/%2d%n", &y, &mo, &d, &used) != 3) used = -1;
+            else if (e[used] == ' ' && sscanf(e + used, " %2d:%2d:%2d%n", &h, &mi, &sc, &k) == 3) used += k;
+            if (used < 0 || e[used] != '\0' || !valid_date(y, mo, d) || h > 23 || mi > 59 || sc > 59 || h < 0 || mi < 0 || sc < 0) {
+                fprintf(stderr, "libcob: COB_CURRENT_DATE='%s': expected YYYY/MM/DD or YYYY/MM/DD hh:mm:ss\n", e);
+                exit(1);
+            }
+            long n = civil_to_days(y, mo, d);            /* 1601-01-01 is day 1, a Monday */
+            memset(&clk_tm, 0, sizeof clk_tm);
+            clk_tm.tm_year = y - 1900; clk_tm.tm_mon = mo - 1; clk_tm.tm_mday = d;
+            clk_tm.tm_hour = h; clk_tm.tm_min = mi; clk_tm.tm_sec = sc;
+            clk_tm.tm_yday = (int)(n - civil_to_days(y, 1, 1));
+            clk_tm.tm_wday = (int)(((n - 1) % 7 + 1) % 7);   /* tm's: 0 Sunday */
+            clk_state = 1;
+        }
+    }
+    if (clk_state == 1) { *out = clk_tm; *hund = 0; *gmtoff = 0; return; }
+    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 0;
+    *hund = 0;
+    if (clock_gettime(0, &ts) == 0) *hund = (int)(ts.tv_nsec / 10000000);   /* CLOCK_REALTIME: the hundredths */
+    else ts.tv_sec = time(0);
+    time_t now = (time_t)ts.tv_sec;
+    struct tm *t = localtime(&now);
+    *out = *t; *gmtoff = t->tm_gmtoff;
+}
+
 /* ACCEPT ... FROM DATE (YYMMDD) | DAY (YYDDD) | TIME (HHMMSShh) |
  * DAY-OF-WEEK (1 Monday .. 7 Sunday): the text's unsigned integer,
  * moved to the item by the MOVE rules (X3.23 6.2.4) */
 void cob_accept_datetime(int which, void *dst, const cob_desc *dd)
 {
-    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 0;
-    int hund = 0;
-    if (clock_gettime(0, &ts) == 0) hund = (int)(ts.tv_nsec / 10000000); else ts.tv_sec = time(0);
-    time_t now = (time_t)ts.tv_sec;
-    struct tm *t = localtime(&now);
+    struct tm tmv; int hund; long off;
+    cob_clock(&tmv, &hund, &off);
+    struct tm *t = &tmv;
     char b[16]; int n;
     switch (which) {
     case 0: n = snprintf(b, sizeof b, "%02d%02d%02d", t->tm_year % 100, t->tm_mon + 1, t->tm_mday); break;
@@ -3697,14 +3740,10 @@ void cob_accept_datetime(int which, void *dst, const cob_desc *dd)
 char *cob_fn_current_date(void)
 {
     char *b = fn_buffer(21);
-    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 0;
-    int hund = 0;
-    if (clock_gettime(0, &ts) == 0) hund = (int)(ts.tv_nsec / 10000000);   /* CLOCK_REALTIME: the hundredths */
-    else ts.tv_sec = time(0);
-    time_t now = (time_t)ts.tv_sec;
-    struct tm *t = localtime(&now);
+    struct tm tmv; int hund; long off;
+    cob_clock(&tmv, &hund, &off);
+    struct tm *t = &tmv;
     int y = t->tm_year + 1900, mo = t->tm_mon + 1, d = t->tm_mday;
-    long off = t->tm_gmtoff;
     int neg = off < 0; if (neg) off = -off;
     int oh = (int)(off / 3600), om = (int)((off % 3600) / 60);
     char tmp[32];
