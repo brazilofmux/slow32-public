@@ -8027,22 +8027,28 @@ static void parse_call(void)
      * does not demand the program; without it, the linker resolves it. */
     int has_clause = at_word("on") || at_word("exception") || at_word("overflow") ||
                      (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "exception") || is_word(peek(1), "overflow")));
+    /* EC-PROGRAM-NOT-FOUND (2023 14.9.4 general rule 3b; cobol ISSUES-59):
+     * with checking on and no ON EXCEPTION phrase, the CALL resolves at run
+     * time, and a missing program raises the condition (fatal) */
+    int on_phrase = at_word("on") || at_word("exception") || at_word("overflow");
+    int ecnf = !on_phrase && ec_on_name("EC-PROGRAM-NOT-FOUND");
     int Lcall = new_label(), Lafter = new_label();
-    if (dynamic || has_clause) {
+    if (dynamic || has_clause || ecnf) {
         if (dynamic) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
         else { emit_la("r3", lit_label((const unsigned char *)t->s, t->len)); emit_li("r4", t->len); }
-        emit_li("r5", !has_clause);                     /* no clause: the runtime stops on a missing program */
+        emit_li("r5", !has_clause && !ecnf);            /* no clause: the runtime stops on a missing program */
         emit_call("cob_resolve");
         emit("\tadd r12, r0, r1");                      /* callee-saved; the compiler uses no other of r12-r28 */
-        if (has_clause) {
+        if (has_clause || ecnf) {
             emit("\tbne r12, r0, .L%d", Lcall);
+            if (ecnf) emit_ec_raise(ec_find("EC-PROGRAM-NOT-FOUND", 0));
             emit_li("r1", 1); emit("\tstw sp+%d, r1", SLOT_C);
             emit_jump(Lafter);
             emit_label(Lcall);
         }
     }
     emit_args(a, n);
-    if (dynamic || has_clause) emit("\tjalr r31, r12, 0");
+    if (dynamic || has_clause || ecnf) emit("\tjalr r31, r12, 0");
     else emit("\tjal r31, %s", link_name(name));
     if (ncontent) {                 /* the BY CONTENT copies go, the result kept */
         emit("\tstw sp+%d, r1", SLOT_C);
@@ -8063,6 +8069,7 @@ static void parse_call(void)
             emit_call("cob_store_int");
         }
     }
+    if (ecnf && !has_clause) emit_label(Lafter);    /* reached only past a raise that returned, which a fatal one never does */
     if (has_clause) {
         emit("\tstw sp+%d, r0", SLOT_C);
         emit_label(Lafter);

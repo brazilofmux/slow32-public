@@ -260,8 +260,9 @@ refused with a message naming the switch.
   at compile time, and a program that never turns checking on compiles
   as before. EC-SIZE from the arithmetic statements followed (ISSUES-55),
   then EC-BOUND-SUBSCRIPT and EC-BOUND-REF-MOD (ISSUES-56), then EC-I-O
-  from the I-O status (ISSUES-58). Still to come: program-not-found,
-  EC-BOUND-ODO and the rest, TURN for one file, the
+  from the I-O status (ISSUES-58), then EC-PROGRAM-NOT-FOUND (ISSUES-59).
+  Still to come: EC-BOUND-ODO, EC-PROGRAM-RECURSIVE-CALL through the
+  caller's declarative, the rest, TURN for one file, the
   variable-length EXCEPTION-LOCATION and EXCEPTION-FILE, and 2023's
   exception-checking PERFORM. No oracle: GnuCOBOL 4 does not implement
   exception declaratives.

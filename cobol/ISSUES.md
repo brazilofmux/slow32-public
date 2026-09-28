@@ -1932,3 +1932,23 @@ program -- equivalent code, but the byte-identical gate caught it (224
 of 227 Open Systems programs "differed"). Allocated only when needed,
 -std=85 output is byte-identical again on all 227. Harness 178/178;
 majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
+
+### 59. Exception handling, part five: EC-PROGRAM-NOT-FOUND (2026-09-28)
+
+With checking on and no ON EXCEPTION phrase, a CALL resolves its program
+at run time through the registry, as a CALL with the phrase already did,
+and a program the run unit does not hold raises EC-PROGRAM-NOT-FOUND
+(2023 14.9.4 general rule 3b; fatal: the declarative, then the end). A
+lone NOT ON EXCEPTION phrase does not count as handling it. As with the
+phrase, the link then no longer needs the program.
+
+2002/ecpgm: a found program, a missing one taken by the ON EXCEPTION
+phrase, then a missing one raising the condition. No oracle.
+
+Not done: EC-PROGRAM-RECURSIVE-CALL through the caller's declarative.
+The re-entry is detected in the called program's prologue
+(cob_act_enter), which ends the run whether or not checking is on;
+the condition belongs to the CALL statement, and routing it there needs
+the caller to learn the callee's active state before the call.
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS.
