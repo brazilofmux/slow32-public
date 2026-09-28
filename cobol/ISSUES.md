@@ -713,7 +713,8 @@ reserved words used as names are `CLASS` (four payroll programs) and
 `CLASS` and `OTHER` are accepted, with `TRUE`, `FALSE` and `ANY` that
 91e6807f took with `OTHER`, as behavior point BP-N1, a new class N in
 docs/behavior-points.md; `-warn-74` names them. SPECIAL-NAMES names
-(mnemonic, alphabet, class, symbolic) are not checked yet.
+(class, alphabet, symbolic character, mnemonic) are checked too, since
+the same day's follow-up (`tests/bad/rw-class`); the corpora use none.
 
 The original entry:
 Open, unscheduled. `s32-cobc` accepted `SELECT FD ...` and a record

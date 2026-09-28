@@ -55,8 +55,13 @@ item must know the oracle can be wrong there.
   <https://nvlpubs.nist.gov/nistpubs/Legacy/FIPS/fipspub21-2.pdf>.
   Cite it by the standard's own page numbers (VII-54 is Sequential
   I-O, the WRITE statement). The 1974 text is FIPS PUB 21-1 at the
-  same place, which is where cobc370 reads its standard; FIPS 21-3 and
-  21-4 are the later adoptions. Found 2026-09-27, before which rulings
+  same place, which is where cobc370 reads its standard. **FIPS PUB
+  21-3** is the full text of ANSI X3.23a-1989, the Intrinsic Function
+  Module (88 pages): `fipspub21-3.pdf`, same place. FIPS 21-4 (1995) is
+  a 12-page adoption notice only; the 1993 corrections amendment
+  (X3.23b-1993) is not public, and neither is any later standard
+  (2002, 2014, 2023 are sold, the INCITS adoptions on the ANSI
+  webstore). Found 2026-09-27, before which rulings
   here rested on the NIST cases and GnuCOBOL with the text cited from
   knowledge.
 - Implementor modules (LINE SEQUENTIAL, SCREEN SECTION, COMP-5)

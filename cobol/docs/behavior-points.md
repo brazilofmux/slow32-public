@@ -66,7 +66,8 @@ numbers (Segmentation), and `ENTER` with the Communication module.
 
 A reserved word is never a user-defined word (X3.23-1985), and the
 compiler refuses one wherever a program names a data item, index, file,
-paragraph or section (cobol ISSUES-43; the list is GnuCOBOL's
+paragraph or section, or a SPECIAL-NAMES class, alphabet, symbolic
+character or mnemonic (cobol ISSUES-43; the list is GnuCOBOL's
 `-std=cobol85`, 348 words). The exception is a word the 1985 text newly
 reserved that 74-era programs really use as a name. They are accepted,
 and `-warn-74` names them so the program can be updated.

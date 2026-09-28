@@ -112,7 +112,8 @@ typedef struct { char name[64]; int kind; } Mnemonic;
 /* The COBOL 85 reserved words (X3.23-1985 as GnuCOBOL's -std=cobol85
  * lists them, 348), sorted for bsearch.  A reserved word is never a
  * user-defined word; user_word() refuses one where a program names a
- * data item, index, file, paragraph or section (cobol ISSUES-43). */
+ * data item, index, file, paragraph or section, or a SPECIAL-NAMES
+ * class, alphabet, symbolic character or mnemonic (cobol ISSUES-43). */
 static const char *const g_rw85[] = {
     "accept", "access", "add", "advancing", "after", "all", "alphabet",
     "alphabetic", "alphabetic-lower", "alphabetic-upper", "alphanumeric",
@@ -8543,6 +8544,7 @@ static void parse_environment_division(void)
                     if (accept_word("class")) {
                         if (cur()->kind != T_WORD) die_at(cur()->line, "expected a class-name after CLASS");
                         if (g_nclass == (int)(sizeof g_class / sizeof g_class[0])) die_at(cur()->line, "too many CLASS clauses");
+                        user_word(cur()->s, cur()->line, "a class");
                         UClass *uc = &g_class[g_nclass++];
                         memset(uc, 0, sizeof *uc);
                         snprintf(uc->name, sizeof uc->name, "%s", cur()->s); advance();
@@ -8594,6 +8596,7 @@ static void parse_environment_division(void)
                             char names[32][64]; int nn = 0;
                             while (cur()->kind == T_WORD && !at_word("is") && !at_word("are") && !at_word("in")) {
                                 if (nn == 32) die_at(cur()->line, "SYMBOLIC CHARACTERS: too many names in one list");
+                                user_word(cur()->s, cur()->line, "a symbolic character");
                                 snprintf(names[nn++], 64, "%s", cur()->s); advance();
                             }
                             if (!nn) die_at(cur()->line, "SYMBOLIC CHARACTERS: expected a name");
@@ -8639,6 +8642,7 @@ static void parse_environment_division(void)
                     if (accept_word("alphabet")) {
                         if (cur()->kind != T_WORD) die_at(cur()->line, "expected an alphabet-name after ALPHABET");
                         if (g_nalphabet == 16) die_at(cur()->line, "too many ALPHABET clauses");
+                        user_word(cur()->s, cur()->line, "an alphabet");
                         Alphabet *a = &g_alphabet[g_nalphabet++];
                         snprintf(a->name, sizeof a->name, "%s", cur()->s); advance();
                         accept_word("is");
@@ -8691,6 +8695,7 @@ static void parse_environment_division(void)
                             advance(); accept_word("is");
                             if (cur()->kind != T_WORD) die_at(cur()->line, "expected a mnemonic-name after the device name");
                             if (g_nmnemonic == 16) die_at(cur()->line, "too many mnemonic-names");
+                            user_word(cur()->s, cur()->line, "a mnemonic");
                             Mnemonic *m = &g_mnemonic[g_nmnemonic++];
                             snprintf(m->name, sizeof m->name, "%s", cur()->s); m->kind = mk; advance();
                             continue;
