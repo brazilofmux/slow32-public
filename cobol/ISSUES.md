@@ -1793,7 +1793,7 @@ std2002-intrinsic-module now uses CHAR-NATIONAL, since EXCEPTION-STATUS
 exists. -std=85 byte-identical on all 227 Open Systems programs;
 majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
 
-### 54. Reference modification of a function result is refused (open, 2026-09-28)
+### 54. Reference modification of a function result was refused (2026-09-28, fixed the same day)
 
 `FUNCTION CURRENT-DATE(1:8)` fails with "expected a statement, found
 '('". X3.23a-1989 gives reference modification of a function-identifier
@@ -1802,3 +1802,19 @@ FUNCTION function-name-1 [(argument-1 ...)] (leftmost:[length])), so
 this is a COBOL 85 conformance gap, and a common idiom in real code.
 Found writing 2002/ecturn. No corpus program uses it (checked: majesty,
 Open Systems); CCVS-85 does not exercise it.
+
+**Fixed.** After an alphanumeric function, a `(leftmost:[length])` with
+literal positions is a reference modification: the function is
+evaluated at its full width and the operand becomes the part (the
+address moved, the width narrowed), so it serves every use a function
+already had -- DISPLAY, MOVE, comparison, and as another function's
+argument. A numeric function is refused; an expression for the position
+or length is refused as not implemented yet (the width would be known
+only at run time, which the function machinery does not carry).
+free/fnrefmod, agreeing with GnuCOBOL -std=cobol85;
+bad/fn-refmod-numeric.
+
+Found with it: `DISPLAY FUNCTION REVERSE(...)` was taken for a positioned
+DISPLAY, REVERSE being one of RM/COBOL's video attributes; a word after
+FUNCTION is a function's name now. -std=85 byte-identical on all 227
+Open Systems programs; CCVS-85 unchanged; majesty PASS.

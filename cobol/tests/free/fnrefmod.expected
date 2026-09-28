@@ -1,0 +1,7 @@
+date 20260928
+time 134510
+upper-case(abcdef)(2:3) [BCD       ]
+reverse(abcde)(3:) [cba]
+length of current-date(1:4) = 0004
+the year compares
+ord(of the second letter) = 0090

@@ -2733,6 +2733,7 @@ typedef struct Opnd_ {
     int line;
     int e_start, e_end; /* O_EXPR: token range, re-parsed when emitted */
     int fn; struct Opnd_ *farg; int fsize;   /* O_FUNC: intrinsic, its argument, result width */
+    int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
@@ -2945,7 +2946,44 @@ static void operand_odo_length(Opnd *o)
 }
 
 static void parse_operand_raw(Opnd *o);
-static void parse_operand(Opnd *o) { parse_operand_raw(o); operand_odo_length(o); }
+/* FUNCTION name [(args)] (leftmost:[length]) -- a reference modification
+ * of an alphanumeric function's result (X3.23a-1989, the reference-
+ * modifier format; cobol ISSUES-54).  Literal positions: the function is
+ * evaluated at its full width and the operand is the part. */
+static void function_refmod(Opnd *o)
+{
+    if (o->kind != O_FUNC || cur()->kind != T_LP) return;
+    int d = 0, colon = 0;
+    for (int k = g_tp; k < g_ntok && g_tok[k].kind != T_EOF; k++) {
+        if (g_tok[k].kind == T_LP) d++;
+        else if (g_tok[k].kind == T_RP) { if (--d == 0) break; }
+        else if (g_tok[k].kind == T_COLON && d == 1) { colon = 1; break; }
+    }
+    if (!colon) return;
+    int line = cur()->line;
+    int numeric = o->fn == -1 ? o->fscale >= 0 : fn_is_numeric(o->fn);
+    if (numeric) die_at(line, "a numeric function cannot be reference-modified");
+    advance();
+    if (cur()->kind != T_NUM || peek(1)->kind != T_COLON)
+        die_at(line, "reference modification of a function with an expression position is not implemented yet");
+    NumLit a; numlit_parse(cur(), &a);
+    long start = numlit_is_int(&a) && !a.neg ? (long)numlit_int(&a) : 0;
+    if (start < 1 || start > o->fsize) die_at(line, "the reference modification starts outside the function's %d characters", o->fsize);
+    advance(); advance();
+    long len = o->fsize - start + 1;
+    if (cur()->kind != T_RP) {
+        if (cur()->kind != T_NUM || peek(1)->kind != T_RP)
+            die_at(line, "reference modification of a function with an expression length is not implemented yet");
+        NumLit b; numlit_parse(cur(), &b);
+        len = numlit_is_int(&b) && !b.neg ? (long)numlit_int(&b) : 0;
+        if (len < 1 || start + len - 1 > o->fsize) die_at(line, "the reference modification runs outside the function's %d characters", o->fsize);
+        advance();
+    }
+    advance();
+    if (!o->ffull) o->ffull = o->fsize;
+    o->frm += (int)start - 1; o->fsize = (int)len;
+}
+static void parse_operand(Opnd *o) { parse_operand_raw(o); function_refmod(o); operand_odo_length(o); }
 
 /* the 1989 amendment's functions: argument shapes FK_NUMS (a list of
  * numerics onto the stack), FK_INT (one integer by value), FK_ALNUM
@@ -3816,7 +3854,18 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
 
 
 /* evaluate an intrinsic into libcob's buffer; r1 holds the pointer */
+static void emit_fn_value_raw(Opnd *f);
+/* a function's value in libcob's buffer, r1 its address -- evaluated at
+ * its full width, the address then moved to a reference modification's part */
 static void emit_fn_value(Opnd *f)
+{
+    if (!f->ffull) { emit_fn_value_raw(f); return; }
+    int part = f->fsize;
+    f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
+    if (f->frm) emit("\taddi r1, r1, %d", f->frm);
+}
+
+static void emit_fn_value_raw(Opnd *f)
 {
     Opnd *x = f->farg;
     if (f->fn == -1) {
@@ -4821,6 +4870,7 @@ static int pos_word_at(int i)      /* token i begins a positioning clause */
 {
     Tok *t = &g_tok[i];
     if (t->kind != T_WORD) return 0;
+    if (i > 0 && is_word(&g_tok[i - 1], "function")) return 0;   /* FUNCTION REVERSE is the function, not reverse video */
     static const char *strong[] = { "line", "position", "erase", "prompt", "size", "high", "low", "reverse", "update", "at", NULL };
     for (int k = 0; strong[k]; k++) if (!strcmp(t->s, strong[k])) return 1;
     if (!strcmp(t->s, "no") && is_word(&g_tok[i + 1], "beep")) return 1;
