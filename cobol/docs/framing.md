@@ -93,6 +93,11 @@ or the maximum record, strip a trailing `\r` if present so CRLF
 hosts do not pollute the last byte. A record longer than the FD
 is an error (file status), not a silent split.
 
+A line sequential file whose records are national (PIC N, a national
+group) is UTF-8 text, not UTF-16: the runtime converts on each WRITE
+and READ (national.md, "Files"). The other organizations carry a
+national record's bytes as they are.
+
 ## Sequential F
 
 `ORGANIZATION IS SEQUENTIAL` (not LINE), recording mode F:

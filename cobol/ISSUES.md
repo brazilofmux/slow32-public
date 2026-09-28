@@ -2385,3 +2385,37 @@ INSPECT. bad/std2002-nat-edited, which was the refusal, now checks the
 UNSTRING rule. Harness 222/222; -std=85 byte-identical on all 227 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+### 74. NATIONAL, part three: national records in files (2026-09-28)
+
+- **Record sequential, relative, indexed.** Nothing to do: records are
+  bytes, so a national record goes out as UTF-16BE, and a national
+  RECORD KEY orders by code unit, which is its byte order. The test
+  shows both.
+- **Line sequential: UTF-8 text** (my call; the text leaves the
+  character set to the implementor, 2023 12.4.5.10 general rule 2, and
+  anticipates national records, 14.9.30 rule 15 and 14.9.51 rules
+  21-23). The alternative, UTF-16 bytes in a text file, breaks on a 0A
+  byte inside a character. WRITE encodes the record with trailing
+  national spaces dropped, and fails with 71 on a lone surrogate. READ
+  decodes and pads with national spaces: 09 when a byte is not UTF-8
+  (U+FFFD), 04 when the line holds more characters than the record.
+- **How.** `ls_read_national` and `ls_write_national` run the ordinary
+  line sequential code once over a UTF-8 buffer, so the printer and
+  LINAGE paths, CRLF and ADVANCING come along unchanged. The compiler
+  marks such a file with `varying = 2`, a field only record sequential
+  files read, rather than adding a field to `cob_file`: that would
+  change the image of every file in every program, and the -std=85
+  byte-identity gate with it. A file mixing national and alphanumeric
+  records is refused.
+
+A note from the test: DISPLAY of a record holding X'FF' writes that
+byte, and macOS sed stops at it ("illegal byte sequence"); the test
+reports that line without displaying the byte.
+
+2002/natfiles (no oracle): line sequential written and read both as
+national and through an alphanumeric view of the same file, statuses
+09, 04 and 71, record sequential bytes, an indexed national key in
+code-unit order and by key. bad/std2002-nat-ls-mixed. Harness 224/224;
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

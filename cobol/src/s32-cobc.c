@@ -11718,6 +11718,17 @@ static void emit_unit_data(void)
     if (g_std >= 2002) emit_act_desc();
     for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
+        /* a line sequential file of national records holds UTF-8 text:
+         * the runtime converts, told by varying = 2 (cobol ISSUES-74) */
+        int varying = f->varying;
+        if (f->org == COB_ORG_LINESEQ) {
+            int nrec = 0, arec = 0;
+            for (int k = g_sym_base; k < g_nsym; k++)
+                if (g_sym[k].level == 1 && g_sym[k].fd == i) { if (sym_is_national(&g_sym[k])) nrec = k + 1; else arec = k + 1; }
+            if (nrec && arec)
+                die_at(f->line, "the line sequential file '%s' has national and alphanumeric records; they are all one or the other here", f->name);
+            if (nrec) varying = 2;
+        }
         emit("\t.p2align 2");
         emit(".Lf%d_%d:\t# %s", f->unit, i, f->name);
         emit("\t.byte %d,%d,%d,0", f->org, f->access, f->optional);
@@ -11740,7 +11751,7 @@ static void emit_unit_data(void)
         if (f->key_sym) { emit("\t.word %d", f->key_sym->offset); emit("\t.word %d", f->key_sym->size); }
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
-        emit("\t.word %d", f->varying);
+        emit("\t.word %d", varying);
         emit("\t.word %d", f->minlen);
         if (f->dep_sym) { emit("\t.word %s+%d", g_sym[f->dep_sym->record].label, f->dep_sym->offset); emit("\t.word .Ld%d", sym_desc(f->dep_sym)); }
         else { emit("\t.word 0"); emit("\t.word 0"); }

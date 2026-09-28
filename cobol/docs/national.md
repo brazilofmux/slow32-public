@@ -163,6 +163,30 @@ national space, zero and stroke in theirs. A figurative constant or ALL
 literal is expanded to the item's length and edited too. It is not a
 STRING or UNSTRING receiver (14.9.43.3 rule 5, 14.9.48.3 rule 4).
 
+## Files (ISSUES-74)
+
+A record sequential, relative or indexed file holds a national
+record's bytes, UTF-16 big-endian -- the interchange form -- and a
+national RECORD KEY orders by code unit, which is its byte order.
+
+A line sequential file of national records is UTF-8 text, as every
+text file here is. The text leaves the character set of a line
+sequential file to the implementor (2023 12.4.5.10 general rule 2) and allows
+for national records (14.9.30 rule 15, 14.9.51 rules 21-23):
+
+- WRITE encodes the record as UTF-8, trailing national spaces dropped.
+  A lone surrogate has no UTF-8 form: the WRITE fails with status 71.
+- READ decodes a line into national characters, padded with national
+  spaces. A byte that begins no UTF-8 character becomes U+FFFD and the
+  status is 09; a line of more characters than the record holds is
+  truncated, 04.
+
+UTF-16 in a text file would also carry a 0A byte inside a character
+(U+0A00, U+010A ...), which a line reader takes for the end of the
+line. A file's records are all national or all alphanumeric; a mix is
+refused. An alphanumeric record holding national fields is bytes, as
+any alphanumeric record is.
+
 ## Case (ISSUES-66)
 
 UPPER-CASE and LOWER-CASE take national arguments and return national

@@ -1,0 +1,14 @@
+lone surrogate: 71
+on disk: [山田  東京          ]
+on disk: [Ann                     ]
+on disk: [ab] X'FF' [c]
+on disk: [123456789               ]
+national 00: [山田  東京  ]
+national 00: [Ann     ]
+national 09: [ab�c    ]
+national 04: [12345678]
+record sequential: UTF-16BE bytes
+indexed: [A ] [lat]
+indexed: [あ ] [hir]
+indexed: [ﾜ ] [hal]
+by key: 00 [hir]

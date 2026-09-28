@@ -1588,11 +1588,64 @@ int cob_close(cob_file *f)
     return file_result(f, "00", "");
 }
 
+/* A line sequential file whose records are national (cobol ISSUES-74;
+ * the compiler marks it varying = 2, a field line sequential files do
+ * not otherwise use) holds UTF-8 text, as every text file here does.
+ * READ decodes a line into national characters, padded with national
+ * spaces (2023 14.9.30 rule 15): a byte that is not UTF-8 becomes U+FFFD
+ * and the status is 09, a line of more characters than the record holds
+ * is truncated, 04.  WRITE encodes the record, trailing national spaces
+ * dropped as spaces are (14.9.51 rule 21); a lone surrogate has no UTF-8
+ * form, and the WRITE fails with 71 (rule 23).  Each runs the ordinary
+ * line sequential code once over a UTF-8 buffer, marked varying = 3. */
+int cob_read(cob_file *f);
+int cob_write(cob_file *f, int before, int after, int reclen);
+static int ls_national(cob_file *f) { return f->org == COB_ORG_LINESEQ && f->varying == 2; }
+
+static int ls_read_national(cob_file *f)
+{
+    char *rec = f->record; unsigned n = f->recsize, nch = n / 2, cap = nch * 4 + 8;
+    char *t = malloc(cap); if (!t) cob_fatal("out of memory");
+    f->record = t; f->recsize = cap; f->varying = 3;
+    int r = cob_read(f);
+    f->record = rec; f->recsize = n; f->varying = 2;
+    if (f->last_len == 0 && f->at_eof) { free(t); return r; }   /* 10, 46: nothing read */
+    int trunc = io_st[0] == '0' && io_st[1] == '4';
+    unsigned short *u = malloc((size_t)(cap + 1) * sizeof *u); if (!u) cob_fatal("out of memory");
+    int save = nat_bad; nat_bad = 0;
+    int k = utf8_to_nat((const unsigned char *)t, (int)f->last_len, u, (int)cap);
+    int bad = nat_bad; nat_bad = save;
+    if (k > (int)nch) { k = (int)nch; trunc = 1; }
+    for (int i = 0; i < (int)nch; i++) nat_put((unsigned char *)rec, i, i < k ? u[i] : 0x20);
+    f->last_len = (unsigned)(2 * k);
+    free(u); free(t);
+    return file_result(f, trunc ? "04" : bad ? "09" : "00", "");
+}
+
+static int ls_write_national(cob_file *f, int before, int after, int reclen)
+{
+    const unsigned char *rec = (const unsigned char *)f->record; unsigned n = f->recsize, nch = n / 2;
+    for (unsigned i = 0; i < nch; i++) {
+        unsigned u = nat_at(rec, (int)i);
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < nch && nat_at(rec, (int)i + 1) >= 0xDC00 && nat_at(rec, (int)i + 1) <= 0xDFFF) { i++; continue; }
+        if (u >= 0xD800 && u <= 0xDFFF) return file_result(f, "71", "a lone surrogate has no UTF-8 form");
+    }
+    char *t = malloc((size_t)nch * 3 + 1); if (!t) cob_fatal("out of memory");
+    unsigned k = (unsigned)nat_to_utf8(rec, (int)nch, t);
+    char *save = f->record;
+    f->record = t; f->recsize = k; f->varying = 3;
+    int r = cob_write(f, before, after, reclen);
+    f->record = save; f->recsize = n; f->varying = 2;
+    free(t);
+    return r;
+}
+
 int cob_read(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
     if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)
         return file_result(f, "47", "READ of a file open for output");
+    if (ls_national(f)) return ls_read_national(f);
     if (f->org == COB_ORG_INDEXED) return idx_read_next(f);
     if (f->org == COB_ORG_RELATIVE) return rel_read_next(f);
     if (f->at_eof) {
@@ -1747,6 +1800,7 @@ int cob_write(cob_file *f, int before, int after, int reclen)
         return file_result(f, "48", "WRITE of a sequential file open I-O");
     if (f->org == COB_ORG_INDEXED) return idx_write(f);
     if (f->org == COB_ORG_RELATIVE) return rel_write(f, reclen);
+    if (ls_national(f)) return ls_write_national(f, before, after, reclen);
     if (f->linage) return lin_write(f, before, after);
     FILE *fp = (FILE *)f->fp;
     const char *rec = f->record;
