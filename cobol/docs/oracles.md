@@ -65,7 +65,10 @@ item must know the oracle can be wrong there.
   here rested on the NIST cases and GnuCOBOL with the text cited from
   knowledge.
 - Implementor modules (LINE SEQUENTIAL, SCREEN SECTION, COMP-5)
-  have no ISO text. GnuCOBOL's behaviour plus a note in
+  have no ISO text in 1985. LINE SEQUENTIAL and SCREEN SECTION do in
+  ISO/IEC 1989:2023 (a licensed copy is held outside the tree; COMP-5
+  is still absent), which makes 2023 a second source for them --
+  cited by clause, never quoted at length. GnuCOBOL's behaviour plus a note in
   [dialect.md](dialect.md) is the spec, until we write a tighter
   one. Divergences from GnuCOBOL on those modules are product
   decisions and must be listed.

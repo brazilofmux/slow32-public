@@ -1448,3 +1448,32 @@ start the way both compilers' LINAGE files do. GnuCOBOL's plain print
 files alone start a line lower, unlike its own LINAGE files. Ruled:
 kept.
 
+### 47. Obsolete 1985 elements the registry missed; MOVE ALL "digits" computes the wrong value (2026-09-28)
+Found checking docs/behavior-points.md against the texts (the 1985
+Obsolete Language Element List, FIPS PUB 21-2 XVII-81 ff, and
+ISO/IEC 1989:2023). The registry's own claims held or were corrected
+there; these are what it did not cover. Open, unscheduled; no
+preserved program uses any of them.
+
+- **`MOVE ALL "digits"` to a numeric item computes the wrong value.**
+  Obsolete element 2, which a conforming implementation must still
+  support. The 1985 list gives X3J4 interpretation B-23's results:
+  `MOVE ALL "99"` and `MOVE ALL "123"` to `PIC 99V99` give 99.00 and
+  31.00 -- the literal repeated to the receiver's size in characters
+  ("1231") and moved as an integer, truncating on the high-order side.
+  Here they give 99.99 and 11.11; GnuCOBOL gives 99.00 and 12.00, so
+  it agrees with the text on the first and not the second. No program
+  in majesty or the Open Systems suite uses the form.
+- **Accepted silently, not yet behavior points**: that `MOVE ALL`
+  (item 2), `RERUN` (item 5), `MULTIPLE FILE TAPE` (item 6), and
+  debugging lines with `D` in column 7 (item 18). `-warn-74` should
+  name each, as it does ALTER and the rest of class O.
+- **`USE FOR DEBUGGING` is refused with a parse error**, "expected
+  'after', found 'for'", where the rule is a message naming what is not
+  implemented: the Debug module, obsolete element 18.
+
+Also recorded from the same check: 2023 removed `CLOSE ... WITH LOCK`
+and file status 38 (Annex E), both implemented here, and marks the
+fixed-form continuation indicator obsolete (Annex F) -- matters only to
+a future 2023 switch, and the preserved corpora all rely on it.
+

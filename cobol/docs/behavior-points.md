@@ -42,25 +42,45 @@ BP-M1 is detected by the same symbol only. An outer item reached
 through `REDEFINES` or `RENAMES` would change the bounds just the same
 and is not flagged yet.
 
-## Class O — obsolete in COBOL 85, deleted in COBOL 2002
+## Class O — obsolete in COBOL 85, deleted by the next revision
 
-Accepted under `-std=85`, as the 1985 text requires. They are what a
-74-era program most often carries, and none survives into 2002, so
-`-warn-74` names them to encourage the update.
+Accepted under `-std=85`, as the 1985 text requires: a conforming
+implementation must support its obsolete elements. They are what a
+74-era program most often carries, so `-warn-74` names them to
+encourage the update.
+
+Checked 2026-09-28 against the texts. Each row is an item of the 1985
+text's Obsolete Language Element List (FIPS PUB 21-2, XVII-81 ff; the
+item number is in the construct column). That list says obsolete
+elements "will be deleted from the next revision", which was 2002. None
+of them appears anywhere in ISO/IEC 1989:2023, and none is among 2023's
+own removals from 2014 (its Annex E), so each was gone by 2014 at the
+latest. That 2002 itself deleted them is the 1985 text's schedule; the
+2002 edition is not held here to confirm it.
 
 | id | construct | effect here |
 |---|---|---|
-| BP-O1 | `ALTER` (and the bare `GO TO` it rewrites) | implemented |
-| BP-O2 | comment-entries: `AUTHOR.`, `INSTALLATION.`, `DATE-WRITTEN.`, `DATE-COMPILED.`, `SECURITY.` (and `REMARKS.`) | comments |
-| BP-O3 | `STOP literal` | the literal is displayed and the run goes on |
-| BP-O4 | `OPEN ... REVERSED` | implemented |
-| BP-O5 | `MEMORY SIZE` | no effect |
-| BP-O6 | `LABEL RECORDS` | no effect |
-| BP-O7 | `VALUE OF` | no effect |
-| BP-O8 | `DATA RECORDS` | no effect |
+| BP-O1 | `ALTER` (item 10), and the bare `GO TO` it rewrites (item 14) | implemented |
+| BP-O2 | comment-entries: `AUTHOR.`, `INSTALLATION.`, `DATE-WRITTEN.`, `DATE-COMPILED.`, `SECURITY.` (item 3), and `REMARKS.` (a 74-era paragraph taken with them) | comments |
+| BP-O3 | `STOP literal` (item 16) | the literal is displayed and the run goes on |
+| BP-O4 | `OPEN ... REVERSED` (item 15) | implemented |
+| BP-O5 | `MEMORY SIZE` (item 4) | no effect |
+| BP-O6 | `LABEL RECORDS` (item 7) | no effect |
+| BP-O7 | `VALUE OF` (item 8) | no effect |
+| BP-O8 | `DATA RECORDS` (item 9) | no effect |
 
 Already refused rather than accepted, so not points: section segment
-numbers (Segmentation), and `ENTER` with the Communication module.
+numbers (Segmentation, item 17), `ENTER` (item 13) with the
+Communication module (items 11 and 12), and `USE FOR DEBUGGING` (the
+Debug module, item 18) -- though that one is refused with a parse
+error, not a message naming it (ISSUES-47).
+
+**On the 1985 list, accepted, and not points yet** (found by the same
+check; ISSUES-47): `MOVE ALL "digits"` to a numeric item (item 2, which
+also computes the wrong value here), `RERUN` (item 5), `MULTIPLE FILE
+TAPE` (item 6), and debugging lines, `D` in column 7 (item 18). Each is
+accepted silently; `-warn-74` should name them. Item 1, double
+character substitution, does not arise on an ASCII machine.
 
 ## Class N — a word COBOL 85 reserved, used as a name
 
@@ -89,21 +109,29 @@ recorded so the day a stricter switch arrives (`-std=2002`, or a
 pedantic 85), deciding each one is a row here, not an archaeology dig.
 They do not call `bp()` yet.
 
-| construct | source | in a later standard |
+| construct | source | in ISO/IEC 1989:2023 |
 |---|---|---|
-| free-format source | GnuCOBOL / majesty | COBOL 2002 |
-| `SCREEN SECTION` | Micro Focus | COBOL 2002 |
-| positioned `DISPLAY` / `ACCEPT` (`LINE`, `POSITION`, `AT rrcc`) | RM/COBOL | no |
-| the device word in `ASSIGN` (`RANDOM`, `PRINT`, `DISK`) | RM/COBOL | no |
-| `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | `RETURNING` form in 2002 |
-| `COMP-1` as a binary integer with a PICTURE | RM/COBOL | no (IBM means hex float) |
-| `USAGE POINTER` | GnuCOBOL / majesty | COBOL 2002 |
-| `COMP-5`, `BINARY-CHAR` and kin | GnuCOBOL / majesty | partly, 2002 |
-| `CALL ... BY VALUE ... RETURNING` to C | C-ABI implementor module | `BY VALUE` / `RETURNING` in 2002 |
+| free-format source | GnuCOBOL / majesty | yes, free-form reference format |
+| `SCREEN SECTION` | Micro Focus | yes |
+| positioned `DISPLAY` / `ACCEPT` (`LINE`, `POSITION`, `AT rrcc`) | RM/COBOL | no: RM's `LINE ... POSITION` form does not appear (`AT rrcc` not checked) |
+| the device word in `ASSIGN` (`RANDOM`, `PRINT`, `DISK`) | RM/COBOL | not an extension: `ASSIGN TO device-name` is standard syntax in 1985 and 2023 (12.4.5), and device-names are implementor-defined; RM's names are this implementation's choice |
+| `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | no: the standard form is `STOP RUN WITH {ERROR / NORMAL} STATUS [identifier / literal]` (14.9.42); neither `RETURNING` nor a bare identifier |
+| `COMP-1` as a binary integer with a PICTURE | RM/COBOL | no; `COMP-1` does not appear (the standard's floating types are `FLOAT-SHORT` and kin) |
+| `USAGE POINTER` | GnuCOBOL / majesty | yes |
+| `COMP-5`, `BINARY-CHAR` and kin | GnuCOBOL / majesty | `BINARY-CHAR` and kin yes; `COMP-5` no |
+| `CALL ... BY VALUE ... RETURNING` to C | C-ABI implementor module | `BY VALUE` and `RETURNING` yes |
 
-The "later standard" column comes from general knowledge of the 2002
-text and has not been checked line by line; standards.md schedules that
-survey before Stage B.
+Checked 2026-09-28 against ISO/IEC 1989:2023 (a licensed copy, held
+outside the tree; clause numbers are 2023's). The column used to say
+"COBOL 2002" from general knowledge; what 2002 itself had is not
+verified here, only that 2023 has it or not.
+
+**What 2023 marks archaic or obsolete** (its Annex F), for the day a
+2023 switch needs points of its own: archaic, `EXIT PROGRAM` and `NEXT
+SENTENCE`; obsolete, `MOVE ALL "digits"` to an integer item, and the
+fixed-form continuation indicator (a hyphen in column 7), on which every
+fixed-format program in the preserved corpora relies. 2023 also removed
+`CLOSE ... WITH LOCK` and its status 38, both implemented here (Annex E).
 
 ## Adding a point
 
