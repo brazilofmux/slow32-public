@@ -2407,19 +2407,105 @@ char *cob_fn_char_national(int k)
     return (char *)b;
 }
 
-char *cob_fn_upper(const char *s, int n)
+/* ---- UPPER-CASE, LOWER-CASE (cobol ISSUES-66) --------------------------- */
+
+/* Unicode's simple, one-to-one case mappings (2002 Annex D note 1: use
+ * UnicodeData.txt), generated from libutf's copy by gen_casemap.py.  With
+ * no locale the result is the argument's length (E.13.2.4), so a letter
+ * whose other case would not fit in the same space is left as it is. */
+#include "casemap.h"
+
+static unsigned case_map(const cob_caserun *t, int n, unsigned cp)
 {
+    int lo = 0, hi = n - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (cp < t[mid].lo) hi = mid - 1;
+        else if (cp > t[mid].hi) lo = mid + 1;
+        else return (cp - t[mid].lo) % t[mid].stride ? cp : (unsigned)((int)cp + t[mid].delta);
+    }
+    return cp;
+}
+#define CASE_TABLE(up) ((up) ? cob_case_upper : cob_case_lower)
+#define CASE_COUNT(up) ((up) ? (int)(sizeof cob_case_upper / sizeof *cob_case_upper) : (int)(sizeof cob_case_lower / sizeof *cob_case_lower))
+
+/* one well-formed UTF-8 sequence at p (at most n bytes): its code point,
+ * and its length -- 0 when the bytes begin none */
+static int utf8_one(const unsigned char *p, int n, unsigned *cp)
+{
+    unsigned c = p[0];
+    int len = c >= 0xC2 && c <= 0xDF ? 2 : c >= 0xE0 && c <= 0xEF ? 3 : c >= 0xF0 && c <= 0xF4 ? 4 : 0;
+    if (!len || len > n) return 0;
+    unsigned v = c & (0xFF >> (len + 1));
+    for (int k = 1; k < len; k++) { if ((p[k] & 0xC0) != 0x80) return 0; v = v << 6 | (p[k] & 0x3F); }
+    static const unsigned least[5] = { 0, 0, 0x80, 0x800, 0x10000 };
+    if (v < least[len] || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) return 0;
+    *cp = v;
+    return len;
+}
+
+static int utf8_put(unsigned cp, char *out)
+{
+    if (cp < 0x80) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800) { out[0] = (char)(0xC0 | cp >> 6); out[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) { out[0] = (char)(0xE0 | cp >> 12); out[1] = (char)(0x80 | (cp >> 6 & 0x3F)); out[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
+    out[0] = (char)(0xF0 | cp >> 18); out[1] = (char)(0x80 | (cp >> 12 & 0x3F)); out[2] = (char)(0x80 | (cp >> 6 & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+/* alphanumeric: UTF-8 text (README ruling 5).  ASCII letters as always;
+ * a well-formed multi-byte character mapped when its other case has the
+ * same byte length; any other byte unchanged */
+static char *fn_case(const char *s, int n, int up)
+{
+    const unsigned char *p = (const unsigned char *)s;
     char *b = fn_buffer(n);
-    for (int i = 0; i < n; i++) b[i] = (s[i] >= 'a' && s[i] <= 'z') ? (char)(s[i] - 32) : s[i];
+    memcpy(b, s, (size_t)n);
+    for (int i = 0; i < n; ) {
+        unsigned c = p[i], cp;
+        if (c < 0x80) {
+            if (up ? (c >= 'a' && c <= 'z') : (c >= 'A' && c <= 'Z')) b[i] = (char)(c ^ 0x20);
+            i++;
+            continue;
+        }
+        int len = utf8_one(p + i, n - i, &cp);
+        if (!len) { i++; continue; }
+        unsigned m = case_map(CASE_TABLE(up), CASE_COUNT(up), cp);
+        char out[4];
+        if (m != cp && utf8_put(m, out) == len) memcpy(b + i, out, (size_t)len);
+        i += len;
+    }
+    fn_var_len = n;
     return b;
 }
 
-char *cob_fn_lower(const char *s, int n)
+/* national: each code unit, and a surrogate pair as its character */
+static char *fn_case_nat(const char *s, int nbytes, int up)
 {
-    char *b = fn_buffer(n);
-    for (int i = 0; i < n; i++) b[i] = (s[i] >= 'A' && s[i] <= 'Z') ? (char)(s[i] + 32) : s[i];
-    return b;
+    const unsigned char *p = (const unsigned char *)s;
+    int nch = nbytes / 2;
+    unsigned char *b = (unsigned char *)fn_buffer(nbytes);
+    memcpy(b, s, (size_t)nbytes);
+    for (int i = 0; i < nch; i++) {
+        unsigned u = nat_at(p, i);
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < nch && nat_at(p, i + 1) >= 0xDC00 && nat_at(p, i + 1) <= 0xDFFF) {
+            unsigned cp = 0x10000 + ((u - 0xD800) << 10) + (nat_at(p, i + 1) - 0xDC00);
+            unsigned m = case_map(CASE_TABLE(up), CASE_COUNT(up), cp);
+            if (m >= 0x10000) { m -= 0x10000; nat_put(b, i, 0xD800 + (m >> 10)); nat_put(b, i + 1, 0xDC00 + (m & 0x3FF)); }
+            i++;
+        } else if (u < 0xD800 || u > 0xDFFF) {
+            unsigned m = case_map(CASE_TABLE(up), CASE_COUNT(up), u);
+            if (m < 0x10000) nat_put(b, i, m);
+        }
+    }
+    fn_var_len = nbytes;
+    return (char *)b;
 }
+
+char *cob_fn_upper(const char *s, int n) { return fn_case(s, n, 1); }
+char *cob_fn_lower(const char *s, int n) { return fn_case(s, n, 0); }
+char *cob_fn_upper_nat(const char *s, int n) { return fn_case_nat(s, n, 1); }
+char *cob_fn_lower_nat(const char *s, int n) { return fn_case_nat(s, n, 0); }
 
 /* ====================================================================== */
 /* Indexed files: the default path                                          */

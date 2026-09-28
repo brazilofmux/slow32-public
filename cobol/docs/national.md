@@ -76,6 +76,20 @@ comparison, a DISPLAY, and FUNCTION LENGTH (characters) and BYTE-LENGTH
 could exceed 8190 bytes is refused. Reference modification of such a
 result is refused for now.
 
+## Case (ISSUES-66)
+
+UPPER-CASE and LOWER-CASE take national arguments and return national
+results (15.78, 15.52), and treat alphanumeric text as UTF-8. The
+mappings are Unicode's simple, one-to-one ones from UnicodeData.txt,
+which is what 2002 Annex D note 1 advises. With no locale the result
+has the argument's length (E.13.2.4), so there is no full case mapping:
+sharp s stays, final sigma becomes capital sigma, and U+0130 becomes i.
+A supplementary letter (a surrogate pair) maps as one character and
+stays two positions. In alphanumeric text, a letter is mapped only when
+its other case takes the same number of UTF-8 bytes (e-acute does;
+dotless i, two bytes against I's one, does not), and a byte that begins
+no UTF-8 character is left alone. For ASCII text nothing changes.
+
 ## Oracle
 
 None. GnuCOBOL 4.0-early-dev marks its national data unfinished, and

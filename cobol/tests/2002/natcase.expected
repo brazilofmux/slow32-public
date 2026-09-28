@@ -1,0 +1,9 @@
+national upper: [STRAßE CAFÉ ]
+national lower: [àéî σασ ii  ]
+a CJK character whose bytes are letters: [A慢B         ]
+sigma, dotless, Deseret: [ΣΣ I 𐐀X    ]
+Deseret round trip: [𐐨          ] 2
+alphanumeric: [CAFÉ       ]
+not the same width: [ı ⱥ Z    ]
+a Latin-1 byte: unchanged
+of a national-of: [NAÏVE       ] 000000005

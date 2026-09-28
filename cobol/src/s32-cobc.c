@@ -2950,6 +2950,7 @@ typedef struct Opnd_ {
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
 } Opnd;
 static int opnd_is_national(const Opnd *o);
+static int ref_static_len(const Ref *r);
 static void nat_fig_opnd(Opnd *o, int nbytes);
 
 static int is_int_item(Sym *s)
@@ -3610,8 +3611,15 @@ static void parse_operand_raw(Opnd *o)
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
         advance();
         o->kind = O_FUNC;
-        o->fsize = o->farg->kind == O_REF ? (int)o->farg->ref.sym->size
-                 : o->farg->kind == O_FUNC ? o->farg->fsize : o->farg->tok->len;
+        Opnd *a = o->farg;
+        if (a->kind == O_REF && a->ref.rm && ref_static_len(&a->ref) <= 0)
+            die_at(n->line, "FUNCTION %s of a reference modification with a variable length is not implemented", n->s);
+        o->fsize = a->kind == O_REF ? (a->ref.rm ? ref_static_len(&a->ref) : (int)a->ref.sym->size)
+                 : a->kind == O_FUNC ? a->fsize : a->tok->len;
+        /* a national argument, a national result (2002 15.78, 15.52); an
+         * argument of run-time length, a result of the same length */
+        o->fnat = opnd_is_national(a);
+        o->fvar = a->kind == O_FUNC && a->fvar;
         return;
     }
     if (t->kind == T_STR) { o->kind = O_STR; o->tok = t; advance(); return; }
@@ -4351,11 +4359,15 @@ static void emit_fn_value_raw(Opnd *f)
         emit_call(fn_runtime_name(f->fn));
         return;
     }
-    if (x->kind == O_FUNC) { emit_fn_value(x); emit("\tadd r3, r1, r0"); }
-    else if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
-    else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
-    emit_li("r4", f->fsize);
-    emit_call(f->fn == FN_UPPER ? "cob_fn_upper" : "cob_fn_lower");
+    if (f->fvar) emit_str_arg(x);
+    else {
+        if (x->kind == O_FUNC) { emit_fn_value(x); emit("\tadd r3, r1, r0"); }
+        else if (x->kind == O_REF) emit_ref_addr(&x->ref, "r3");
+        else emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len));
+        emit_li("r4", f->fsize);
+    }
+    emit_call(f->fn == FN_UPPER ? (f->fnat ? "cob_fn_upper_nat" : "cob_fn_upper")
+                                : (f->fnat ? "cob_fn_lower_nat" : "cob_fn_lower"));
 }
 
 /* address + descriptor of an operand, as two Args.  Figuratives need the

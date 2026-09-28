@@ -2127,3 +2127,39 @@ ISSUES-53 left open.
 2002/ecloc (no oracle); bad/excloc-85. Harness 199/199; -std=85
 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 66. UPPER-CASE and LOWER-CASE on national and UTF-8 text (2026-09-28)
+
+2002 15.78 and 15.52 give a national argument a national result. Before
+this, a national argument was cased as bytes and its result taken as
+alphanumeric: `UPPER-CASE(N"a慢b")` gave " AA", because 慢 is U+6162,
+whose bytes are "ab", and the six bytes were then read back as UTF-8.
+Now:
+
+- **The mappings.** Unicode's simple mappings, UnicodeData.txt fields 12
+  and 13, as 2002 Annex D note 1 advises. They are taken from libutf's
+  copy (Unicode 16.0), so the two agree. `libcob/gen_casemap.py` writes
+  `libcob/casemap.h`: 205 upper and 187 lower runs of {lo, hi, stride,
+  delta}, searched by bisection. The generator checks that its runs
+  reproduce the mappings exactly and that no mapping crosses between the
+  BMP and the supplementary planes, which the national path relies on.
+- **National data.** A code unit maps as itself, and a surrogate pair as
+  its character.
+- **Alphanumeric data** is UTF-8 text (README ruling 5). A well-formed
+  multi-byte character is mapped when its other case has the same byte
+  length; with no locale the result keeps the argument's length
+  (E.13.2.4). Any other byte is left as it is. ASCII behaves as before.
+  GnuCOBOL cases bytes in the C locale, so it differs only on non-ASCII
+  text.
+- **Run-time-length arguments.** An argument whose length is known only
+  at run time (UPPER-CASE of NATIONAL-OF) gives a result of the same
+  run-time length.
+- **Reference-modified arguments** (found on the way). The function took
+  the whole item's size as the length, so `UPPER-CASE(a(2:3))` returned
+  ten characters from the second byte of a ten-byte item. It now returns
+  the three selected. free/casermod (the oracle agrees). A reference
+  modification whose length is an expression is refused.
+
+2002/natcase (no oracle), free/casermod. Harness 202/202; -std=85
+byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

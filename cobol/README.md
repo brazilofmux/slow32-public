@@ -98,6 +98,10 @@ under `docs/`.
                       digits, scale, flags, size, picture)
     libcob/cobedit.h  the software edit descriptor, applied and reversed
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
+    libcob/casemap.h  Unicode simple case mappings for UPPER-CASE and
+                      LOWER-CASE, generated and checked in;
+                      gen_casemap.py regenerates it from libutf's
+                      UnicodeData.txt
     ISSUES.md         open items, ranked, and closed ones with the lesson
     tests/            run-tests.sh; fixed/ free/ programs with .expected;
                       ccvs-histogram.sh ranks NIST CCVS-85 first refusals
