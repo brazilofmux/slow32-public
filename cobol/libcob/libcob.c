@@ -1194,13 +1194,18 @@ void cob_perform_leave(int old) { psp = pbase; pbase = old; }
  * rest -- whether checking is on, which declarative runs, fatality. */
 static char *fn_buffer(int n);
 static char ec_last[31], ec_stmt[63];
+static const char *ec_loc, *ec_file;   /* EXCEPTION-LOCATION's string (WITH LOCATION), EC-I-O's file-name */
+static char ec_io[2];                   /* EC-I-O's I-O status */
+static char io_st[2];
 static int ec_any;
 
-void cob_ec_raise(const char *name, const char *stmt)
+void cob_ec_raise(const char *name, const char *stmt, const char *loc, const char *file)
 {
     memset(ec_last, ' ', sizeof ec_last); memset(ec_stmt, ' ', sizeof ec_stmt);
     for (int i = 0; name[i] && i < 31; i++) ec_last[i] = (char)toupper((unsigned char)name[i]);
     if (stmt) for (int i = 0; stmt[i] && i < 63; i++) ec_stmt[i] = stmt[i];
+    ec_loc = loc; ec_file = file;
+    if (file) { ec_io[0] = io_st[0]; ec_io[1] = io_st[1]; }
     ec_any = 1;
 }
 
@@ -1237,6 +1242,31 @@ char *cob_fn_exception_statement(void)
     char *b = fn_buffer(63);
     if (ec_any) memcpy(b, ec_stmt, 63); else memset(b, ' ', 63);
     return b;
+}
+
+static int fn_var_len;
+static char *fn_var_result(const char *s, int n, int national);
+
+/* EXCEPTION-FILE[-N] (2002 15.23, 15.24): the I-O status and the file-name
+ * as written in SELECT when the last exception status is EC-I-O, else two
+ * zeros; as long as its contents */
+char *cob_fn_exception_file(int national)
+{
+    char t[80]; int n = 2;
+    if (ec_any && ec_file) {
+        t[0] = ec_io[0]; t[1] = ec_io[1];
+        for (int i = 0; ec_file[i] && n < (int)sizeof t; i++) t[n++] = ec_file[i];
+    } else t[0] = t[1] = '0';
+    return fn_var_result(t, n, national);
+}
+
+/* EXCEPTION-LOCATION[-N] (2002 15.25, 15.26): "program; paragraph OF
+ * section; line" when checking was turned on WITH LOCATION, else one
+ * space -- this implementation saves no location without it */
+char *cob_fn_exception_location(int national)
+{
+    if (!ec_any || !ec_loc) return fn_var_result(" ", 1, national);
+    return fn_var_result(ec_loc, (int)strlen(ec_loc), national);
 }
 
 /* ---- activations (COBOL 2002, -std=2002) --------------------------------- */
@@ -2279,10 +2309,29 @@ static char *fn_buffer(int n)
 /* NATIONAL-OF and DISPLAY-OF return as many characters as their argument
  * converts to.  The compiler takes the length of the one just evaluated
  * from here, as a descriptor for a CALL-style operand or as a count. */
-static int fn_var_len;
 static int fn_conv_bad;                         /* a checked conversion substituted: EC-DATA-CONVERSION */
 
 int cob_fn_last_len(void) { return fn_var_len; }
+
+/* a run-time-length result from text: alphanumeric as it is, or national
+ * decoded from UTF-8 */
+static char *fn_var_result(const char *s, int n, int national)
+{
+    if (!national) {
+        char *b = fn_buffer(n);
+        memcpy(b, s, (size_t)n);
+        fn_var_len = n;
+        return b;
+    }
+    unsigned short u[256];
+    int save = nat_bad;
+    int k = utf8_to_nat((const unsigned char *)s, n, u, 256);
+    nat_bad = save;
+    unsigned char *b = (unsigned char *)fn_buffer(2 * k);
+    for (int i = 0; i < k; i++) nat_put(b, i, u[i]);
+    fn_var_len = 2 * k;
+    return (char *)b;
+}
 int cob_fn_conv_bad(void) { int b = fn_conv_bad; fn_conv_bad = 0; return b; }
 
 const cob_desc *cob_fn_var_desc(int national)

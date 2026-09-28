@@ -564,6 +564,7 @@ typedef struct {
     int dbg;        /* from a debugging line: matched by COPY REPLACING, then dropped without DEBUGGING MODE */
     unsigned char after_comma;   /* a separator comma or semicolon stood before this token */
     unsigned char nat;           /* T_STR: a national literal, its bytes UTF-16 big-endian (cobol ISSUES-62) */
+    char *orig;                  /* T_WORD: as written, before lowercasing; 0 when the same */
 } Tok;
 
 static Tok *g_tok;
@@ -577,11 +578,23 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
     t->after_comma = (unsigned char)g_pending_comma; g_pending_comma = 0;
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0; t->orig = 0;
     return t;
 }
 
 static int is_wordch(int c) { return isalnum(c) || c == '-' || c == '_'; }
+
+/* a word is matched lowercased; its spelling is kept for the names the
+ * program can see at run time (EXCEPTION-LOCATION, EXCEPTION-FILE) */
+static void word_lower(Tok *w)
+{
+    int up = 0;
+    for (char *k = w->s; *k; k++) if (isupper((unsigned char)*k)) up = 1;
+    if (!up) return;
+    w->orig = xstrndup(w->s, (int)strlen(w->s));
+    for (char *k = w->s; *k; k++) *k = (char)tolower((unsigned char)*k);
+}
+static const char *tok_orig(const Tok *t) { return t->orig ? t->orig : t->s; }
 
 /* UTF-8 source text to national bytes, UTF-16 big-endian, as libcob's
  * utf8_to_nat does it; returns the bytes written, 2 per code unit, or -1
@@ -743,7 +756,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                     if (c == '.') die_at(line, "a period must be followed by a space or the end of the line");
                     e = p; while (is_wordch((unsigned char)*e)) e++;
                     Tok *w = push_tok(T_WORD, line, p, (int)(e - p));
-                    for (char *k = w->s; *k; k++) *k = (char)tolower((unsigned char)*k);
+                    word_lower(w);
                     p = e;
                     continue;
                 }
@@ -756,7 +769,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 const char *e = p;
                 while (is_wordch((unsigned char)*e)) e++;
                 Tok *w = push_tok(T_WORD, line, p, (int)(e - p));
-                for (char *k = w->s; *k; k++) *k = (char)tolower((unsigned char)*k);
+                word_lower(w);
                 if (!strcmp(w->s, "pic") || !strcmp(w->s, "picture")) pic_ctx = 1;
                 p = e;
                 if (pic_ctx) {
@@ -1439,12 +1452,12 @@ static Sym *sym_lookup_quiet(const char *name)
     return NULL;
 }
 
-static char g_progid[64];
+static char g_progid[64], g_progid_orig[64];    /* the program-name, and as written */
 
 /* ---- files: SELECT + FD ------------------------------------------------ */
 
 typedef struct {
-    char name[64];
+    char name[64], oname[64];        /* the file-name, and as written (EXCEPTION-FILE) */
     int  line, org, access, optional;
     Tok *assign_lit;                 /* ASSIGN TO literal ... */
     char assign_name[64];            /* ... or to a data-name */
@@ -2900,6 +2913,8 @@ static struct Sym *odo_table_for(struct Sym *s);
 static void emit_ec_raise(int i);
 static int ec_find(const char *w, int line);
 static char g_cur_stmt[16];              /* the statement being compiled, for EXCEPTION-STATEMENT */
+static const Tok *g_stmt_tok;            /* its first token: the line EXCEPTION-LOCATION names */
+static const char *g_ec_file;            /* EC-I-O being raised: the file-name as written, for EXCEPTION-FILE */
 static int g_recursive, g_std, g_cond_depth;   /* defined below */
 static int g_fnsig_only;                /* -fnsig: write the functions' .s32fn files, compile nothing */
 static void skip_unit_body(void);
@@ -3103,7 +3118,7 @@ static void parse_ref(Ref *r)
 }
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
-       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN };
+       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC };
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
 static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN; }
@@ -3277,7 +3292,8 @@ static int fn89_known(const char *w)
 {
     static const char *named[] = { "when-compiled", "upper-case", "lower-case", "current-date", "integer-of-date",
         "date-of-integer", "day-of-integer", "integer-of-day", "length", "byte-length", "highest-algebraic",
-        "lowest-algebraic", "exception-status", "exception-statement", "national-of", "display-of", "char-national", NULL };
+        "lowest-algebraic", "exception-status", "exception-statement", "national-of", "display-of", "char-national",
+        "exception-file", "exception-file-n", "exception-location", "exception-location-n", NULL };
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(w, g_fn89[i].name)) return 1;
     for (int i = 0; named[i]; i++) if (!strcmp(w, named[i])) return 1;
     return 0;
@@ -3336,8 +3352,6 @@ static void fn_refuse(Tok *n)
 {
     static const struct { const char *name, *why; } later[] = {
         { "boolean-of-integer", "the BOOLEAN module" }, { "integer-of-boolean", "the BOOLEAN module" },
-        { "exception-file", "EC-I-O checking (cobol ISSUES-53 has what is done)" }, { "exception-file-n", "EC-I-O checking" },
-        { "exception-location", "a variable-length result (cobol ISSUES-53)" }, { "exception-location-n", "a variable-length result" },
 
         { "locale-compare", "locale support" }, { "locale-date", "locale support" }, { "locale-time", "locale support" },
         { "locale-time-from-seconds", "locale support" }, { "standard-compare", "the ISO/IEC 14651 ordering" },
@@ -3501,6 +3515,16 @@ static void parse_operand_raw(Opnd *o)
             int st = !strcmp(n->s, "exception-status");
             advance();
             o->kind = O_FUNC; o->fn = st ? FN_EXCSTATUS : FN_EXCSTMT; o->fsize = st ? 31 : 63;
+            return;
+        }
+        else if (!strcmp(n->s, "exception-file") || !strcmp(n->s, "exception-file-n") ||
+                 !strcmp(n->s, "exception-location") || !strcmp(n->s, "exception-location-n")) {
+            /* COBOL 2002 15.23-15.26: as long as their contents (cobol ISSUES-65) */
+            if (g_std < 2002) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
+            int file = !strncmp(n->s, "exception-file", 14), nat = n->s[strlen(n->s) - 2] == '-';
+            advance();
+            o->kind = O_FUNC; o->fn = file ? FN_EXCFILE : FN_EXCLOC; o->fvar = 1; o->fnat = nat; o->fnid = nat;
+            o->fsize = (file ? 2 + 64 : 255) * (nat ? 2 : 1);   /* the file-name, the location string: their bounds */
             return;
         }
         else if (!strcmp(n->s, "current-date")) {
@@ -4314,6 +4338,11 @@ static void emit_fn_value_raw(Opnd *f)
     if (f->fn == FN_CURDATE) { emit_call("cob_fn_current_date"); return; }
     if (f->fn == FN_EXCSTATUS) { emit_call("cob_fn_exception_status"); return; }
     if (f->fn == FN_EXCSTMT) { emit_call("cob_fn_exception_statement"); return; }
+    if (f->fn == FN_EXCFILE || f->fn == FN_EXCLOC) {
+        emit_li("r3", f->fnid);
+        emit_call(f->fn == FN_EXCFILE ? "cob_fn_exception_file" : "cob_fn_exception_location");
+        return;
+    }
     if (fn_is_numeric(f->fn)) {
         if (x->kind == O_REF && is_hot_int(x->ref.sym)) { emit_ref_addr(&x->ref, "r3"); emit_load_int(x->ref.sym, "r3", "r1"); }
         else if (x->kind == O_REF) { emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
@@ -5123,7 +5152,7 @@ static int g_sentence_label = -1;   /* NEXT SENTENCE target, made on demand */
 
 /* ---- paragraphs ------------------------------------------------------- */
 
-typedef struct { char name[64]; int id, is_section, line, section, unit; } Para;   /* section: id of the enclosing section, 0 none; unit: where it is */
+typedef struct { char name[64], oname[64]; int id, is_section, line, section, unit; } Para;   /* oname: as written */   /* section: id of the enclosing section, 0 none; unit: where it is */
 static Para *g_para; static int g_npara, g_pcap;
 
 static int g_cur_sec_id;            /* the section being parsed (or prescanned), -1 outside one */
@@ -5148,7 +5177,7 @@ static Para *para_find(const char *name)
     return found;
 }
 
-static Para *para_add(const char *name, int is_section, int line)
+static Para *para_add(const char *name, const char *oname, int is_section, int line)
 {
     user_word(name, line, is_section ? "a section" : "a paragraph");
     if (is_section) { for (int i = g_para_base; i < g_npara; i++) if (!strcmp(g_para[i].name, name)) die_at(line, "the procedure-name '%s' is declared twice", name); }
@@ -5156,6 +5185,7 @@ static Para *para_add(const char *name, int is_section, int line)
     if (g_npara == g_pcap) { g_pcap = g_pcap ? g_pcap * 2 : 64; g_para = realloc(g_para, g_pcap * sizeof *g_para); }
     Para *p = &g_para[g_npara];
     snprintf(p->name, sizeof p->name, "%s", name);
+    snprintf(p->oname, sizeof p->oname, "%s", oname);
     p->id = g_npara + 1; p->is_section = is_section; p->line = line; p->unit = g_unit;
     p->section = is_section ? 0 : (g_cur_sec_id >= 0 ? g_cur_sec_id : 0);
     if (is_section) g_cur_sec_id = p->id;
@@ -5201,15 +5231,15 @@ static void prescan_paragraphs(int from)
         }
         if (sentence_start && t->kind == T_NUM && !strchr(t->s, '.') && !strchr(t->s, '+') && !strchr(t->s, '-')) {
             /* a procedure-name of digits only (NC107A's paragraphs 3, 4, 5) */
-            if (g_tok[i + 1].kind == T_PERIOD) para_add(t->s, 0, t->line);
-            else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, 1, t->line);
+            if (g_tok[i + 1].kind == T_PERIOD) para_add(t->s, tok_orig(t), 0, t->line);
+            else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, tok_orig(t), 1, t->line);
         }
         if (sentence_start && t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s)) {
             if (!strcmp(t->s, "declaratives")) { }
             else if (!strcmp(t->s, "end") && (is_word(&g_tok[i + 1], "declaratives") || is_word(&g_tok[i + 1], "program"))) { if (is_word(&g_tok[i + 1], "program")) break; }
             else if ((!strcmp(t->s, "identification") || !strcmp(t->s, "id")) && is_word(&g_tok[i + 1], "division")) break;   /* a contained program's */
-            else if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, 0, t->line); }
-            else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, 1, t->line);
+            else if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, tok_orig(t), 0, t->line); }
+            else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, tok_orig(t), 1, t->line);
         }
         sentence_start = (t->kind == T_PERIOD);
     }
@@ -7368,7 +7398,9 @@ static void emit_use_dispatch(File *f, int has_clause)
             int Lnext = new_label();
             emit_li("r2", ecio[k].digit);
             emit("\tbne r1, r2, .L%d", Lnext);
+            g_ec_file = f->oname;
             emit_ec_raise(ec_find(ecio[k].name, 0));      /* a fatal one ends the run here */
+            g_ec_file = NULL;
             emit_jump(Ldone);
             emit_label(Lnext);
         }
@@ -7384,7 +7416,9 @@ static void emit_use_dispatch(File *f, int has_clause)
         emit_label(Lwarn);
         emit_call("cob_io_class");
         emit("\tbne r1, r0, .L%d", Ldone);
+        g_ec_file = f->oname;
         emit_ec_raise(ec_find("EC-I-O-WARNING", 0));
+        g_ec_file = NULL;
     }
     emit_label(Ldone);
 }
@@ -7800,12 +7834,37 @@ static int ec_on_name(const char *name) { return g_std >= 2002 && g_ec_on[ec_fin
 
 /* raise condition i here: the last exception status, the statement's
  * name when WITH LOCATION turned it on, then the declarative and fatality */
+/* EXCEPTION-LOCATION's string (2002 15.25.2 rule 2b), known here: the
+ * program-name; the paragraph, OF its section, or the section; the line.
+ * The line is implementor-defined: its number, and the copybook's name
+ * before it when the statement came from one. */
+static void ec_location(char *b, size_t n)
+{
+    int k = snprintf(b, n, "%s; ", g_progid_orig);
+    Para *p = g_cur_para;
+    if (p && !p->is_section && p->section > 0)
+        k += snprintf(b + k, n - (size_t)k, "%s OF %s; ", p->oname, g_para[p->section - 1].oname);
+    else if (p) k += snprintf(b + k, n - (size_t)k, "%s; ", p->oname);
+    else k += snprintf(b + k, n - (size_t)k, "; ");
+    const Tok *t = g_stmt_tok;
+    if (t && t->file && g_ntok && g_tok[0].file && strcmp(t->file, g_tok[0].file)) {
+        const char *base = strrchr(t->file, '/');
+        snprintf(b + k, n - (size_t)k, "%s:%d", base ? base + 1 : t->file, t->line);
+    } else snprintf(b + k, n - (size_t)k, "%d", t ? t->line : 0);
+}
+
 static void emit_ec_raise(int i)
 {
     char nm[64]; snprintf(nm, sizeof nm, "%s", ec_name(i));
     emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
     if (g_ec_loc[i] && g_cur_stmt[0]) emit_la("r4", lit_label((const unsigned char *)g_cur_stmt, (int)strlen(g_cur_stmt) + 1));
     else emit_li("r4", 0);
+    if (g_ec_loc[i]) {
+        char loc[256]; ec_location(loc, sizeof loc);
+        emit_la("r5", lit_label((const unsigned char *)loc, (int)strlen(loc) + 1));
+    } else emit_li("r5", 0);
+    if (g_ec_file) emit_la("r6", lit_label((const unsigned char *)g_ec_file, (int)strlen(g_ec_file) + 1));
+    else emit_li("r6", 0);
     emit_call("cob_ec_raise");
     emit_ec_dispatch(i);
 }
@@ -9380,8 +9439,8 @@ static void init_mask(Sym *s, int top_off, int disp, unsigned char *mask, int li
 static void parse_initialize(void)
 {
     Ref rs[MAXOPS]; int n = 0;
-    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0 };
-    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0 };
+    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0 };
+    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0 };
     Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand()) {
@@ -9560,7 +9619,10 @@ static void parse_statement_1(void);
 static void parse_statement(void)
 {
     int outer = g_stmt_convcheck;
+    char stmt[16]; memcpy(stmt, g_cur_stmt, sizeof stmt);
+    const Tok *stok = g_stmt_tok;
     g_stmt_convcheck = 0;
+    g_stmt_tok = cur();
     parse_statement_1();
     if (g_stmt_convcheck) {
         int Lok = new_label();
@@ -9570,6 +9632,7 @@ static void parse_statement(void)
         emit_label(Lok);
     }
     g_stmt_convcheck = outer;
+    memcpy(g_cur_stmt, stmt, sizeof stmt); g_stmt_tok = stok;
 }
 
 static void parse_statement_1(void)
@@ -9738,7 +9801,7 @@ static int g_std = 85;              /* -std=85 (the default) or -std=2002: Stage
 /* everything a unit keeps in globals, saved while a contained program is compiled */
 struct UnitSave {
     int unit, sym_base, sym_end, file_base, file_end, para_base, para_end, use_end;
-    char progid[64];
+    char progid[64], progid_orig[64];
     int nreport, nscreen, screen_base, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
     char collate_name[64];
     char crtname[64];
@@ -9772,7 +9835,7 @@ static void compile_nested_unit(void)
     UnitSave *u = xmalloc(sizeof *u);
     u->unit = g_unit; u->sym_base = g_sym_base; u->sym_end = g_nsym; u->file_base = g_file_base; u->file_end = g_nfile;
     u->para_base = g_para_base; u->para_end = g_npara; u->use_end = g_nuse;
-    memcpy(u->progid, g_progid, sizeof u->progid);
+    memcpy(u->progid, g_progid, sizeof u->progid); memcpy(u->progid_orig, g_progid_orig, sizeof u->progid_orig);
     u->nreport = g_nreport; u->nscreen = g_nscreen; u->screen_base = g_screen_base; u->nclass = g_nclass; u->nswitch = g_nswitch; u->nalphabet = g_nalphabet;
     u->nmnemonic = g_nmnemonic; u->last_item = g_last_item; u->nsame_groups = g_nsame_groups; u->collate = g_collate;
     u->lowval = g_lowval; u->highval = g_highval; u->cur_fd = g_cur_fd; u->in_linkage = g_in_linkage;
@@ -9805,7 +9868,7 @@ static void compile_nested_unit(void)
     g_udepth--;
     g_unit = u->unit; g_sym_base = u->sym_base; g_nsym = u->sym_end; g_file_base = u->file_base; g_nfile = u->file_end;
     g_para_base = u->para_base; g_npara = u->para_end;
-    memcpy(g_progid, u->progid, sizeof g_progid);
+    memcpy(g_progid, u->progid, sizeof g_progid); memcpy(g_progid_orig, u->progid_orig, sizeof g_progid_orig);
     g_nreport = u->nreport; g_nscreen = u->nscreen; g_screen_base = u->screen_base; g_nclass = u->nclass; g_nswitch = u->nswitch; g_nalphabet = u->nalphabet;
     g_nmnemonic = u->nmnemonic; g_last_item = u->last_item; g_nsame_groups = u->nsame_groups; g_collate = u->collate;
     g_lowval = u->lowval; g_highval = u->highval; g_cur_fd = u->cur_fd; g_in_linkage = u->in_linkage;
@@ -9997,6 +10060,7 @@ static void parse_procedure_division(void)
 
     int cur_par = -1, cur_sec = -1;
     int Ldecl_end = -1;
+    g_cur_para = NULL;
     if (!g_udepth) g_nuse = 0;              /* a contained unit's USE entries follow the enclosing units' */
     g_cur_sec_id = -1; g_in_decl = 0;
     if (accept_word("declaratives")) {
@@ -10211,6 +10275,7 @@ static void parse_identification_division(void)
     expect_period();
     if (cur()->kind != T_WORD) die_at(cur()->line, "expected a program-name");
     snprintf(g_progid, sizeof g_progid, "%s", cur()->s);
+    snprintf(g_progid_orig, sizeof g_progid_orig, "%s", tok_orig(cur()));
     advance();
     if (g_is_function) {
         if (accept_word("as")) die_at(cur()->line, "FUNCTION-ID ... AS literal is not implemented yet");
@@ -10279,6 +10344,7 @@ static void parse_select(void)
     if (file_find(cur()->s)) die_at(line, "file '%s' is SELECTed twice", cur()->s);
     user_word(cur()->s, line, "a file");
     snprintf(f->name, sizeof f->name, "%s", cur()->s);
+    snprintf(f->oname, sizeof f->oname, "%s", tok_orig(cur()));
     advance();
     int has_assign = 0;
     while (cur()->kind != T_PERIOD) {

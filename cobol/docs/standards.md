@@ -262,9 +262,9 @@ refused with a message naming the switch.
   then EC-BOUND-SUBSCRIPT and EC-BOUND-REF-MOD (ISSUES-56), then EC-I-O
   from the I-O status (ISSUES-58), then EC-PROGRAM-NOT-FOUND (ISSUES-59).
   and EC-PROGRAM-RECURSIVE-CALL at the caller (ISSUES-60), and
-  EC-BOUND-ODO (ISSUES-61). Still to come: the rest of Table 13's
-  conditions, TURN for one file, the
-  variable-length EXCEPTION-LOCATION and EXCEPTION-FILE, and 2023's
+  EC-BOUND-ODO (ISSUES-61), and EXCEPTION-LOCATION and EXCEPTION-FILE
+  with their national forms (ISSUES-65). Still to come: the rest of
+  Table 13's conditions, TURN for one file, and 2023's
   exception-checking PERFORM. No oracle: GnuCOBOL 4 does not implement
   exception declaratives.
 - **NATIONAL, part one** (2026-09-28, ISSUES-62): PICTURE N and national

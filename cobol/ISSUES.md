@@ -2094,3 +2094,36 @@ machine's character set, never a refusal of non-ASCII text. It now names
 the mainframe data formats that do not carry over unchanged: packed-decimal
 sign nibbles are IBM's bytes, zoned DISPLAY signs are not, and
 COMP-1/COMP-2 cannot mean IBM hexadecimal floating point.
+
+### 65. EXCEPTION-LOCATION and EXCEPTION-FILE (2026-09-28)
+
+2002 15.23-15.26, with their national forms (-N), on ISSUES-64's
+run-time-length results. The last two of the exception-status functions
+ISSUES-53 left open.
+
+- **EXCEPTION-LOCATION** is "program; paragraph OF section; line", or
+  "section; line" in a section with no paragraph, or "; line" with
+  neither (15.25.2 rule 2b). The string is known at compile time and
+  passed to `cob_ec_raise` as a literal, only when checking for the
+  condition was turned on WITH LOCATION. Otherwise, and before any
+  condition, the result is one space: the text leaves saving the
+  location without LOCATION to the implementor, and this one does not.
+  The line identifier is implementor-defined: the statement's line
+  number, or `copybook:number` for a statement copied in.
+- **EXCEPTION-FILE** is the I-O status and the file-name when the last
+  condition is EC-I-O, and two zeros otherwise. The EC-I-O path passes
+  the file-name to `cob_ec_raise`, which takes the status from the I-O
+  statement's own.
+- **Names as written.** Both functions return names "exactly as
+  specified in the source", and the tokenizer lowercased every word, so
+  a word now keeps its spelling (`Tok.orig`, set only when it differs).
+  Paragraphs, sections, the program-name and SELECT's file-name carry
+  it.
+- **EXCEPTION-STATEMENT.** The statement's name and first token are now
+  saved around a nested statement and restored after it, so a condition
+  raised at the end of a statement names that statement, not the last
+  one nested inside it.
+
+2002/ecloc (no oracle); bad/excloc-85. Harness 199/199; -std=85
+byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.
