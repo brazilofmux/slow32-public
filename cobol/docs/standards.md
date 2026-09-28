@@ -288,6 +288,9 @@ refused with a message naming the switch.
   INTEGER-OF-BOOLEAN. Part two (ISSUES-77): boolean expressions in
   COMPUTE and conditions. Part three (ISSUES-78): USAGE BIT, packed at
   bit positions, and GROUP-USAGE BIT. docs/boolean.md.
+- **TYPEDEF and TYPE** (2026-09-28, ISSUES-79): type declarations,
+  expanded over the tokens as the text defines them. STRONG is refused
+  by name. docs/typedef.md.
 
 ## Deferred — object orientation
 

@@ -2562,3 +2562,38 @@ now check OCCURS and the bit group's rule 2. New: std2002-bit-pic-x,
 -bit-refmod, -bit-inspect. Harness 248/248; -std=85 byte-identical on
 all 227 Open Systems programs; majesty PASS; majesty-functions PASS;
 Open Systems paper unchanged.
+
+### 79. TYPEDEF and TYPE (2026-09-28)
+
+2023 13.18.58 and 13.18.57 format 1. The TYPE clause is defined by
+substitution, "as though the data description identified by type-name-1
+had been coded in place of the TYPE clause". `expand_types()` does that
+over the tokens after COPY/REPLACE and before parsing:
+
+- It records a TYPEDEF entry (01 or 77) and its subordinates and drops
+  them, since a type has no storage.
+- It replaces `TYPE [TO] name` with the type's clauses, and puts the
+  type's subordinate entries after the entry, levels rebased (rule 2b),
+  88s included.
+- A type may use an earlier type, and the entry's own clauses (OCCURS,
+  VALUE) stay.
+
+The `>>TURN` directives' token positions are remapped. The pass runs
+only under -std=2002, and only when the source says TYPEDEF or TYPE TO;
+-std=85 names the switch instead.
+
+**Why tokens, and why before parsing.** Splicing tokens into g_tok
+mid-parse would move tokens that symbols already point into (a VALUE
+clause's token, for one).
+
+**Refused:** TYPEDEF STRONG (strongly-typed groups), a TYPE TO name not
+declared before the entry, a group type for a level 77 item (rule 7),
+and an expansion past level 49.
+
+The test is 2002/typedecl, not typedef: GnuCOBOL refuses a source whose
+base name is a C keyword. It is no oracle anyway, measured: no TYPEDEF
+under -std=cobol2002, and under its default dialect, no type inside a
+type. Refusals: std2002-typedef-strong, -type-unknown, -type-77-group,
+typedef-85. Harness 253/253; -std=85 byte-identical on all 227 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.

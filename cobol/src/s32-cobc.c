@@ -1151,6 +1151,159 @@ static void strip_comment_entries(SrcLine *lines, int n)
 static int is_word(Tok *t, const char *w);
 static struct { int pos; Tok tok; } *g_dir; static int g_ndir, g_dircap, g_ndir_done;   /* >>TURN directives, by token position */
 
+/* ---- TYPEDEF and TYPE (COBOL 2002 13.18.58, 13.18.57; cobol ISSUES-79) ----
+ * The TYPE clause is "as though the data description identified by
+ * type-name-1 had been coded in place of the TYPE clause", subordinate
+ * level-numbers adjusted (13.18.57.4 rules 1-2): so it is expanded here,
+ * over the tokens, before anything is parsed.  A TYPEDEF entry and its
+ * subordinates are recorded -- its clauses without TYPEDEF, GLOBAL and the
+ * name, its subordinate entries with levels relative to it -- and dropped:
+ * a type declaration has no storage (13.18.58.4 rule 2).  Each TYPE [TO]
+ * name is replaced by the type's clauses, and its subordinate entries
+ * follow the entry.  Types are defined before use, and a type's own
+ * TYPE clauses are expanded as it is recorded. */
+typedef struct { char name[64]; Tok *clause; int nclause; Tok *sub; int nsub; int *sublvl; int level; } TypeDef;
+static TypeDef *g_types; static int g_ntypes, g_typecap;
+static Tok *g_xt; static int g_nxt, g_xtcap;
+static void xt_push(const Tok *t)
+{
+    if (g_nxt == g_xtcap) { g_xtcap = g_xtcap ? g_xtcap * 2 : 1024; g_xt = realloc(g_xt, (size_t)g_xtcap * sizeof *g_xt); }
+    g_xt[g_nxt++] = *t;
+}
+static int tok_is(const Tok *t, const char *w) { return t->kind == T_WORD && !strcmp(t->s, w); }
+static int tok_level(const Tok *t)
+{
+    if (t->kind != T_NUM || strlen(t->s) > 2) return -1;
+    for (const char *k = t->s; *k; k++) if (!isdigit((unsigned char)*k)) return -1;
+    return atoi(t->s);
+}
+static TypeDef *type_find(const char *name)
+{
+    for (int i = 0; i < g_ntypes; i++) if (!strcmp(g_types[i].name, name)) return &g_types[i];
+    return NULL;
+}
+static Tok level_tok(const Tok *like, int level)
+{
+    Tok t = *like; char b[8]; snprintf(b, sizeof b, "%02d", level);
+    t.kind = T_NUM; t.s = xstrndup(b, (int)strlen(b)); t.len = (int)strlen(b); t.orig = 0;
+    return t;
+}
+/* one entry's tokens [a, e] (e its period) to the output, TYPE clauses
+ * expanded; the expansion's subordinate entries follow, at level + rel */
+static void type_emit_entry(const Tok *tk, int a, int e, int level)
+{
+    TypeDef *used = NULL;
+    for (int i = a; i <= e; i++) {
+        if (i > a + 1 && tok_is(&tk[i], "type") && i + 1 < e) {
+            int j = i + 1;
+            if (tok_is(&tk[j], "to") && j + 1 < e) j++;
+            TypeDef *ty = tk[j].kind == T_WORD ? type_find(tk[j].s) : NULL;
+            if (!ty && j > i + 1 && tk[j].kind == T_WORD)          /* TYPE TO: a type-name, not Report Writer's TYPE */
+                die_at(tk[j].line, "'%s' is not a type declared before this entry (TYPEDEF)", tk[j].s);
+            if (ty) {
+                if (used) die_at(tk[i].line, "two TYPE clauses in one entry");
+                used = ty;
+                for (int k = 0; k < ty->nclause; k++) xt_push(&ty->clause[k]);
+                i = j;
+                continue;
+            }
+        }
+        xt_push(&tk[i]);
+    }
+    if (!used) return;
+    if (level == 77 && used->nsub) die_at(tk[a].line, "a level 77 item takes an elementary type (2023 13.18.57.3 rule 7)");
+    for (int k = 0; k < used->nsub; k++) {
+        if (used->sublvl[k] >= 0) {
+            int lv = used->sublvl[k] >= 66 ? used->sublvl[k] : level + used->sublvl[k];
+            if (lv > 49 && lv < 66) die_at(tk[a].line, "the type '%s' expands past level 49 here, which is not implemented", used->name);
+            Tok lt = level_tok(&used->sub[k], lv); xt_push(&lt);
+        } else xt_push(&used->sub[k]);
+    }
+}
+static void expand_types(void)
+{
+    if (g_std < 2002) return;
+    int any = 0;
+    for (int i = 0; i < g_ntok; i++)
+        if (tok_is(&g_tok[i], "typedef") || (tok_is(&g_tok[i], "type") && i + 1 < g_ntok && tok_is(&g_tok[i + 1], "to"))) { any = 1; break; }
+    if (!any) return;
+    int *map = xmalloc((size_t)(g_ntok + 1) * sizeof *map);
+    g_nxt = 0; g_ntypes = 0;
+    int in_data = 0;
+    for (int i = 0; i < g_ntok; ) {
+        Tok *t = &g_tok[i];
+        if (tok_is(t, "data") && i + 1 < g_ntok && tok_is(&g_tok[i + 1], "division")) in_data = 1;
+        if (tok_is(t, "procedure") && i + 1 < g_ntok && tok_is(&g_tok[i + 1], "division")) in_data = 0;
+        int lv = tok_level(t);
+        int at_entry = in_data && lv >= 1 && i > 0 && g_tok[i - 1].kind == T_PERIOD && i + 1 < g_ntok;
+        if (!at_entry) { map[i] = g_nxt; xt_push(t); i++; continue; }
+        int e = i; while (e < g_ntok && g_tok[e].kind != T_PERIOD && g_tok[e].kind != T_EOF) e++;
+        int td = -1;
+        for (int k = i + 1; k < e; k++) if (tok_is(&g_tok[k], "typedef")) td = k;
+        if (td < 0) {
+            for (int k = i; k <= e && k < g_ntok; k++) map[k] = g_nxt;
+            type_emit_entry(g_tok, i, e, lv);
+            i = e + 1;
+            continue;
+        }
+        /* a type declaration: recorded, not emitted */
+        if (td + 1 < e && tok_is(&g_tok[td + 1], "strong"))
+            die_at(g_tok[td].line, "TYPEDEF STRONG (strongly-typed groups) is not implemented yet");
+        if (g_tok[i + 1].kind != T_WORD) die_at(t->line, "a TYPEDEF entry needs a name");
+        if (lv != 1 && lv != 77) die_at(t->line, "a type declaration here is a level 01 or 77 entry");
+        if (g_ntypes == g_typecap) { g_typecap = g_typecap ? g_typecap * 2 : 16; g_types = realloc(g_types, (size_t)g_typecap * sizeof *g_types); }
+        TypeDef *ty = &g_types[g_ntypes]; memset(ty, 0, sizeof *ty);
+        snprintf(ty->name, sizeof ty->name, "%s", g_tok[i + 1].s);
+        ty->level = lv;
+        /* its own clauses, TYPE clauses expanded, without TYPEDEF, IS
+         * before it, and GLOBAL */
+        int save = g_nxt;
+        type_emit_entry(g_tok, i, e, lv);
+        int n = g_nxt - save;
+        ty->clause = xmalloc((size_t)(n + 1) * sizeof *ty->clause);
+        for (int k = save + 2; k < g_nxt - 1; k++) {           /* past the level and name, before the period */
+            Tok *c = &g_xt[k];
+            if (tok_is(c, "typedef") || tok_is(c, "global")) continue;
+            if (tok_is(c, "is") && k + 1 < g_nxt && tok_is(&g_xt[k + 1], "typedef")) continue;
+            ty->clause[ty->nclause++] = *c;
+        }
+        /* a TYPE clause inside a type: its subordinates follow, already emitted after the period */
+        int tail = g_nxt;
+        for (int k = save; k < g_nxt; k++) if (g_xt[k].kind == T_PERIOD) { tail = k + 1; break; }
+        /* the subordinate entries: to the next entry at this level or above */
+        int j = e + 1, subst = tail;              /* a TYPE clause's expansion is its first subordinates */
+        while (j < g_ntok) {
+            int sl = tok_level(&g_tok[j]);
+            if (sl < 0 || g_tok[j - 1].kind != T_PERIOD) break;
+            if (sl != 66 && sl != 88 && sl <= lv) break;
+            if (sl == 77) break;
+            int se = j; while (se < g_ntok && g_tok[se].kind != T_PERIOD && g_tok[se].kind != T_EOF) se++;
+            type_emit_entry(g_tok, j, se, sl);
+            j = se + 1;
+        }
+        int ns = g_nxt - subst;
+        ty->sub = xmalloc((size_t)(ns + 1) * sizeof *ty->sub); ty->sublvl = xmalloc((size_t)(ns + 1) * sizeof *ty->sublvl);
+        for (int k = 0; k < ns; k++) {
+            Tok *c = &g_xt[subst + k];
+            ty->sub[ty->nsub] = *c;
+            /* a level-number opens each subordinate entry: made relative */
+            int at = (subst + k == subst) || g_xt[subst + k - 1].kind == T_PERIOD;
+            int l2 = at ? tok_level(c) : -1;
+            ty->sublvl[ty->nsub] = l2 < 0 ? -1 : (l2 == 66 || l2 == 88) ? l2 : l2 - lv;
+            ty->nsub++;
+        }
+        g_nxt = save;                                   /* no storage: nothing of it stays */
+        g_ntypes++;
+        for (int k = i; k < j; k++) map[k] = g_nxt;
+        i = j;
+    }
+    map[g_ntok] = g_nxt;
+    for (int d = 0; d < g_ndir; d++) g_dir[d].pos = g_dir[d].pos <= g_ntok ? map[g_dir[d].pos] : g_nxt;
+    free(g_tok); g_tok = g_xt; g_ntok = g_nxt; g_tcap = g_xtcap;
+    g_xt = NULL; g_nxt = g_xtcap = 0;
+    free(map);
+}
+
 static void tokenize(void)
 {
     g_tok_file = g_file;
@@ -2048,6 +2201,8 @@ static void parse_data_item1(void)
             continue;
         }
         else if (g_std >= 2002 && !strcmp(t->s, "bit")) u = U_BIT;
+        else if (g_std < 2002 && (!strcmp(t->s, "typedef") || (!strcmp(t->s, "type") && is_word(peek(1), "to"))))
+            die_at(t->line, "%s is COBOL 2002; compile with -std=2002", !strcmp(t->s, "typedef") ? "TYPEDEF" : "TYPE TO");
         else if (!strcmp(t->s, "group-usage")) {
             /* GROUP-USAGE IS NATIONAL (2023 13.18.29): the group is treated
              * as one national item; checked once the tree is built */
@@ -12478,6 +12633,7 @@ int main(int argc, char **argv)
     }
     read_source(in);
     tokenize();
+    expand_types();
 
     if (g_fnsig_only) g_noemit = 1;         /* signatures only: no code, no output file */
     else {
