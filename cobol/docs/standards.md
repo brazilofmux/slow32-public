@@ -239,6 +239,14 @@ refused with a message naming the switch.
   specialized. Proven on majesty's original 2002 date family
   (`tests/majesty-functions.sh`). docs/functions.md has the design and
   what is still refused.
+- **Free-form reference format**, checked against the text (2026-09-28,
+  ISSUES-51). Free format was already here as an implementor extension;
+  what 2002 adds is now implemented under `-std=2002`: `>>SOURCE FORMAT
+  IS FIXED | FREE` switching mid-text, and literal continuation with the
+  floating indicator `"-` or `'-` in either format, comment lines allowed
+  between the parts. The floating comment `*>` stays accepted in both
+  standards, as majesty needs. Other compiler directives (`>>DEFINE`,
+  `>>IF`, `>>D` ...) are refused by name.
 
 ## Deferred — object orientation
 

@@ -1687,3 +1687,33 @@ Refusals: function-id-85, and std2002-fn-argcount, -byref,
 -returning-ws, -nosig, -varying-by. `-std=85` output is byte-identical
 on all 227 Open Systems programs; majesty PASS; Open Systems paper
 unchanged.
+
+### 51. Free-form reference format checked against the text (2026-09-28)
+
+Stage B's free-form row: free format was implemented long ago as a
+GnuCOBOL-style extension, and had never been read against COBOL 2002's
+own rules (2023 6.2-6.5, the same text). Probing each rule found two
+gaps and one diagnostics bug:
+
+- **Floating literal continuation** (`"-` / `'-` ending an unterminated
+  literal, the next line resuming after a matching quote; 6.2.3, 6.4.2)
+  was not recognised. Implemented in the line reader for both formats,
+  comment and blank lines skipped between the parts, a missing quote on
+  the continuation line refused (6.2.3.2 rule 6). Under `-std=85` it is
+  refused by name.
+- **`>>SOURCE FORMAT IS FIXED | FREE`** (7.3) was not recognised; it now
+  switches the format for the rest of the text. Other directives are
+  refused by name (conditional compilation is its own module), and all
+  of them under `-std=85`. No corpus uses one.
+- An error raised while lines were being read named the file `?` (the
+  tokenizer's file was not set yet); the reader names its own file now.
+
+Floating comments (`*>`), already accepted in both formats, conform.
+
+Tests: 2002/freeform (both quote forms, a comment line inside a
+continued literal, a three-line literal with a doubled quote, a switch
+to fixed form and back), agreeing with GnuCOBOL -std=cobol2002.
+Refusals: directive-85, floating-continuation-85,
+std2002-directive-unknown, std2002-continuation-quote. `-std=85` output
+byte-identical on all 227 Open Systems programs; CCVS-85 unchanged;
+majesty PASS; tests/majesty-functions.sh PASS.

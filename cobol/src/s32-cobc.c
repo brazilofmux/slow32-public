@@ -64,6 +64,7 @@ static const char *g_tok_file = "?";    /* the file being tokenized (a copybook,
 static int g_free = 0;              /* -free: majesty; default is fixed */
 static const char *diag_file(int line);
 static int g_module = 0;            /* -m: no main entry; every unit is a subprogram */
+static int g_std;                   /* -std=85 or 2002; set in main (defined with the program state) */
 static int g_unit = 0;              /* program unit being compiled, for label spaces */
 
 /* the cob_file image (cobrt.h): the byte offset of lin_counter, which a
@@ -301,10 +302,13 @@ static char *xstrndup(const char *s, int n)
 /* ====================================================================== */
 
 /* Fixed: columns 1-6 sequence, 7 indicator, 8-72 program text, 73+ ignored.
- * Free (GnuCOBOL -free, majesty): the whole line is text.  Comments:
- * '*' or '/' in column 7 (fixed); '*>' to end of line (both -- the floating
- * comment is post-85 but majesty is written with it and it is harmless).
- * A program is one format or the other, chosen on the command line. */
+ * Free (GnuCOBOL -free, majesty; COBOL 2002 6.4): the whole line is text.
+ * Comments: '*' or '/' in column 7 (fixed); '*>' to end of line (both --
+ * the floating comment is 2002 but majesty is written with it and it is
+ * harmless).  The format is chosen on the command line; under -std=2002 a
+ * >>SOURCE FORMAT line changes it for the rest of the text, and a literal
+ * may be continued with the floating indicator "- or '- in either format
+ * (cobol ISSUES-51). */
 
 typedef struct { char *text; int line; int dbg; } SrcLine;   /* dbg: a D in column 7 */
 static SrcLine *g_lines;
@@ -327,14 +331,51 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
     int cap = 256, n = 0;
     SrcLine *lines = xmalloc(cap * sizeof *lines);
     int lineno = 0;
+    const char *save_file = g_tok_file;
+    g_tok_file = path;              /* an error while reading names this file */
     char *p = buf;
+    int free_form = g_free;         /* >>SOURCE FORMAT changes it for the rest of this text */
+    char pending = 0;               /* a literal continued by a floating indicator ("- or '-) */
     while (*p) {
         char *e = strchr(p, '\n');
         int len = e ? (int)(e - p) : (int)strlen(p);
         lineno++;
         if (len && p[len - 1] == '\r') len--;
         char *text = NULL; int dbg = 0;
-        if (g_free) {
+        /* a compiler-directive line (COBOL 2002 7.3): >> as the first
+         * non-blank, in free form anywhere, in fixed form from column 7 */
+        {
+            int from = free_form ? 0 : 6;
+            const char *d = p + (len > from ? from : len), *de = p + len;
+            while (d < de && (*d == ' ' || *d == '\t')) d++;
+            if (de - d >= 2 && d[0] == '>' && d[1] == '>') {
+                if (g_std < 2002) die_at(lineno, "compiler directives (>>) are COBOL 2002; compile with -std=2002");
+                d += 2; while (d < de && *d == ' ') d++;
+                char w[4][32]; int nw = 0;
+                while (d < de && nw < 4) {
+                    int k = 0;
+                    while (d < de && *d != ' ' && *d != '\t' && k < 31) w[nw][k++] = (char)tolower((unsigned char)*d++);
+                    w[nw++][k] = 0;
+                    while (d < de && (*d == ' ' || *d == '\t')) d++;
+                    if (d + 1 < de && d[0] == '*' && d[1] == '>') break;      /* an inline comment ends it */
+                }
+                int k = 1;
+                if (nw && !strcmp(w[0], "source")) {
+                    if (k < nw && !strcmp(w[k], "format")) k++;
+                    if (k < nw && !strcmp(w[k], "is")) k++;
+                    if (k < nw && !strcmp(w[k], "free")) free_form = 1;
+                    else if (k < nw && !strcmp(w[k], "fixed")) free_form = 0;
+                    else die_at(lineno, ">>SOURCE FORMAT needs FIXED or FREE");
+                    if (k + 1 < nw) die_at(lineno, "unexpected '%s' after >>SOURCE FORMAT", w[k + 1]);
+                } else if (nw && !strcmp(w[0], "d")) {
+                    die_at(lineno, "the >>D debugging indicator is not implemented (debugging lines were removed in COBOL 2014)");
+                } else die_at(lineno, "the compiler directive >>%s is not implemented yet", nw ? w[0] : "");
+                if (!e) break;
+                p = e + 1;
+                continue;
+            }
+        }
+        if (free_form) {
             text = xstrndup(p, len);
         } else {
             if (len > 6) {
@@ -396,6 +437,52 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                 }
             }
         }
+        /* a floating literal continuation (COBOL 2002 6.2.3, 6.4.2): the
+         * line before ended an open literal with "- (or '-); this one
+         * resumes it after the same quote.  Comment and blank lines may
+         * come between. */
+        if (text) {
+            const char *c = text;
+            while (*c == ' ' || *c == '\t') c++;
+            int comment = c[0] == '*' && c[1] == '>';
+            if (pending && (comment || !*c)) { free(text); text = NULL; }   /* between the parts of the literal */
+            else if (pending) {
+                if (*c != pending) die_at(lineno, "the continuation of a literal must begin with its quote (%c)", pending);
+                char *prev = lines[n - 1].text;
+                size_t pl = strlen(prev), cl = strlen(c + 1);
+                char *joined = xmalloc(pl + cl + 1);
+                memcpy(joined, prev, pl); memcpy(joined + pl, c + 1, cl); joined[pl + cl] = 0;
+                free(prev); free(text);
+                lines[n - 1].text = joined;
+                text = NULL;
+                pending = 0;
+                /* the joined line may itself end in a continuation */
+                char *t = lines[n - 1].text;
+                size_t tl = strlen(t);
+                while (tl && (t[tl - 1] == ' ' || t[tl - 1] == '\t')) tl--;
+                char open = 0;
+                for (size_t q = 0; q + 2 < tl; q++) {
+                    if (open) { if (t[q] == open) open = 0; }
+                    else if (t[q] == '"' || t[q] == '\'') open = t[q];
+                }
+                if (open && tl >= 2 && t[tl - 1] == '-' && t[tl - 2] == open) {
+                    if (g_std < 2002) die_at(lineno, "a floating literal continuation (\"- or '-) is COBOL 2002; compile with -std=2002");
+                    t[tl - 2] = 0; pending = open;
+                }
+            } else if (!comment && *c) {
+                size_t tl = strlen(text);
+                while (tl && (text[tl - 1] == ' ' || text[tl - 1] == '\t')) tl--;
+                char open = 0;
+                for (size_t q = 0; q + 2 < tl; q++) {
+                    if (open) { if (text[q] == open) open = 0; }
+                    else if (text[q] == '"' || text[q] == '\'') open = text[q];
+                }
+                if (open && tl >= 2 && text[tl - 1] == '-' && text[tl - 2] == open) {
+                    if (g_std < 2002) die_at(lineno, "a floating literal continuation (\"- or '-) is COBOL 2002; compile with -std=2002");
+                    text[tl - 2] = 0; pending = open;
+                }
+            }
+        }
         if (text) {
             if (n == cap) { cap *= 2; lines = realloc(lines, cap * sizeof *lines); }
             lines[n].text = text;
@@ -406,6 +493,8 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
         if (!e) break;
         p = e + 1;
     }
+    if (pending) die_at(lineno, "the text ends inside a continued literal");
+    g_tok_file = save_file;
     free(buf);
     *out = lines; *nout = n;
     return 1;
