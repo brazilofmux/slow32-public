@@ -3801,10 +3801,11 @@ void cob_inspect_range(const char *bp, int bl, const char *ap, int al)
 {
     ci_before = bp; ci_blen = bl; ci_after = ap; ci_alen = al;
 }
+static int ci_w = 1;                   /* a character's bytes: 2 for a national item */
 static int ci_find(const char *p, int n, const char *x, int xl)
 {
     if (xl < 1) return -1;
-    for (int i = 0; i + xl <= n; i++) if (!memcmp(p + i, x, xl)) return i;
+    for (int i = 0; i + xl <= n; i += ci_w) if (!memcmp(p + i, x, xl)) return i;
     return -1;
 }
 static struct {
@@ -3819,6 +3820,7 @@ static char ci_copy[4096];
 void cob_inspect_begin(char *item, int n, const cob_desc *d)
 {
     cin.item = item; cin.n = n; cin.np = 0; cin.real = NULL; cin.signpos = -1; cin.neg = 0;
+    ci_w = d && d->cat == COB_NATIONAL ? 2 : 1;     /* positions are characters (2023 14.9.22.4 rule 3) */
     if (d && d->cat == COB_NUM && d->usage == COB_U_DISPLAY && (d->flags & COB_F_SIGNED) && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && n > 0 && n <= (int)sizeof ci_copy) {
         int sp = (d->flags & COB_F_LEAD) ? 0 : n - 1;
         unsigned char c = (unsigned char)item[sp];
@@ -3836,7 +3838,7 @@ void cob_inspect_phrase(int tallying, int kind, const char *pat, int plen, const
     if (hi < lo) hi = lo;
     ci_before = ci_after = NULL; ci_blen = ci_alen = 0;
     cin.ph[cin.np].tallying = tallying; cin.ph[cin.np].kind = kind; cin.ph[cin.np].pat = pat;
-    cin.ph[cin.np].plen = kind == 0 ? 1 : plen; cin.ph[cin.np].rep = rep;
+    cin.ph[cin.np].plen = kind == 0 ? ci_w : plen; cin.ph[cin.np].rep = rep;
     cin.ph[cin.np].lo = lo; cin.ph[cin.np].hi = hi; cin.ph[cin.np].done = 0; cin.ph[cin.np].count = 0;
     cin.np++;
 }
@@ -3857,7 +3859,7 @@ void cob_inspect_run(void)
          * this position is over */
         for (int k = 0; k < cin.np; k++)
             if (cin.ph[k].kind == 2 && !cin.ph[k].done && pos >= cin.ph[k].lo && taker != k) cin.ph[k].done = 1;
-        pos += took ? took : 1;
+        pos += took ? took : ci_w;
     }
     if (cin.real) {
         memcpy(cin.real, cin.item, (size_t)cin.n);
@@ -3873,9 +3875,9 @@ int cob_inspect_count(int k) { return cin.ph[k].count; }
 void cob_inspect_convert(const char *from, int n, const char *to)
 {
     const char *bp = ci_before, *ap = ci_after; int bl = ci_blen, al = ci_alen;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i + ci_w <= n; i += ci_w) {
         ci_before = bp; ci_after = ap; ci_blen = bl; ci_alen = al;
-        cob_inspect_phrase(0, 1, from + i, 1, to + i);
+        cob_inspect_phrase(0, 1, from + i, ci_w, to + i);
     }
 }
 

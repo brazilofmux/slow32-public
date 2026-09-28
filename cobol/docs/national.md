@@ -47,8 +47,8 @@ bytes, INITIALIZE with REPLACING NATIONAL.
 A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
-Refused until later parts: STRING, UNSTRING, INSPECT and ACCEPT of
-national items; numeric and edited national
+Refused until later parts: STRING, UNSTRING and ACCEPT of national
+items; numeric and edited national
 pictures; national groups (GROUP-USAGE NATIONAL); national fields in
 Report Writer and SCREEN SECTION.
 
@@ -87,6 +87,19 @@ character positions, and so do the compile-time range checks: `n(4:2)`
 on a PIC N(4) is refused, though its eight bytes would hold two more.
 A position is a code unit, so a part can split a surrogate pair, as the
 text's one-position-per-code-unit rule implies.
+
+## INSPECT (ISSUES-68)
+
+INSPECT of a national item (2023 14.9.22) scans character positions,
+two bytes each: TALLYING counts characters, CHARACTERS takes one at a
+time, and a pattern matches only at a character boundary, so no match
+straddles two characters. Every operand is national (syntax rule 4):
+N literals, national items, and figurative constants, each one
+national character (rule 3). An alphanumeric operand beside a national
+item is refused, as is a national operand beside an item that is not
+national. The runtime takes the character width from the inspected
+item's descriptor; a reference-modified national item passes a
+national one.
 
 ## Case (ISSUES-66)
 

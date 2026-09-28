@@ -2197,3 +2197,31 @@ whose length is an expression is refused for alphanumeric items too.
 Harness 203/203; -std=85 byte-identical on all 227 Open Systems
 programs; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+### 68. NATIONAL, part three: INSPECT (2026-09-28)
+
+INSPECT of a national item (2023 14.9.22), all three forms (TALLYING,
+REPLACING, CONVERTING) with BEFORE and AFTER, on a whole item or a
+reference-modified one.
+
+- **Runtime.** The INSPECT engine was byte-wise; it now takes a
+  character width, 1 or 2, from the item's descriptor in
+  `cob_inspect_begin`. The scan steps by characters, CHARACTERS takes
+  one character, a BEFORE/AFTER search and a match succeed only at a
+  character boundary, and CONVERTING pairs characters. So N"AB" (bytes
+  00 41 00 42) does not contain NX"4100", which a byte scan would find
+  at offset 1.
+- **Compiler.** Syntax rule 4: beside a national item every operand is
+  national, and beside any other item none is. Both are refused with the
+  rule's number. Before this, a national literal in INSPECT of an
+  alphanumeric item was compared as bytes, silently. A figurative
+  constant is one national character (rule 3), including the one
+  CONVERTING stretches to the length of its other operand.
+- **Byte identity.** Nothing changes for an item that is not national:
+  width 1 is the old code path.
+
+2002/natinspect (no oracle). bad/std2002-nat-inspect, which was the
+refusal, now checks rule 4 on a national item; bad/std2002-inspect-natop
+checks it on an alphanumeric one. Harness 205/205; -std=85
+byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

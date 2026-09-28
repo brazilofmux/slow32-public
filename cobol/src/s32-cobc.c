@@ -9243,10 +9243,21 @@ static void parse_evaluate(void)
 
 /* ---- INSPECT ----------------------------------------------------------- */
 
-/* a pattern operand: address and length as Args */
+static int g_insp_nat;                  /* the inspected item is national (cobol ISSUES-68) */
+
+/* a pattern operand: address and length as Args.  Beside a national item
+ * every operand is national, and a figurative constant is one national
+ * character (2023 14.9.22.3 rules 3 and 4) */
 static void pattern_args(Opnd *o, Arg *addr, Arg *len)
 {
+    if (o->kind == O_FIG && g_insp_nat) {
+        unsigned u = nat_fig(o->tok->s); unsigned char two[2] = { (unsigned char)(u >> 8), (unsigned char)u };
+        *addr = arg_label(lit_label(two, 2)); *len = arg_imm(2); return;
+    }
     if (o->kind == O_FIG) { unsigned char c = (unsigned char)fig_byte(o->tok->s); *addr = arg_label(lit_label(&c, 1)); *len = arg_imm(1); return; }
+    if (opnd_is_national(o) != g_insp_nat)
+        die_at(o->line, g_insp_nat ? "INSPECT of a national item: every operand must be national (2023 14.9.22.3 rule 4)"
+                                   : "INSPECT of an item that is not national: a national operand is not allowed (2023 14.9.22.3 rule 4)");
     Arg d; opnd_args(o, addr, &d, 0, 0);
     *len = arg_len(o);
 }
@@ -9305,29 +9316,33 @@ static void emit_inspect_tallies(Ref *tallies, int *tally_ph, int nt)
 static void parse_inspect_1(void);
 static void parse_inspect(void)
 {
-    g_nat_forbid = "INSPECT"; parse_inspect_1(); g_nat_forbid = NULL;
+    parse_inspect_1(); g_insp_nat = 0;
 }
 static void parse_inspect_1(void)
 {
     Ref item; parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
+    g_insp_nat = !item.sym->is_group && item.sym->pi.category == PIC_NATIONAL;
+    int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     Opnd itemo = ref_opnd(&item);
     operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
     /* the phrases are registered with the runtime, which makes the one pass
      * the text describes (cob_inspect_run); then each tally is added.  A
      * statement with both TALLYING and REPLACING is two statements, the
      * tallying pass first (X3.23 general rule): two begin/run rounds. */
-    { Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? arg_imm(0) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin"); }
+    { Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin"); }
     Ref tallies[32]; int tally_ph[32], nt = 0, np = 0, any = 0;
     if (accept_word("converting")) {
         Opnd from, to; parse_operand(&from); expect_word("to"); parse_operand(&to);
-        int fl = from.kind == O_FIG ? 1 : opnd_size(&from), tl = to.kind == O_FIG ? 1 : opnd_size(&to);
+        int fl = from.kind == O_FIG ? w : opnd_size(&from), tl = to.kind == O_FIG ? w : opnd_size(&to);
         if (fl > 0 && tl > 0 && fl != tl && to.kind != O_FIG) die_at(to.line, "INSPECT CONVERTING: the two operands must be the same length");
         parse_inspect_range();
         Arg a[3], x;
-        if (to.kind == O_FIG && fl > 1) {
+        if (to.kind == O_FIG && fl > w) {
             /* CONVERTING "abc" TO SPACE: the figurative is as long as the other */
-            unsigned char *f = xmalloc((size_t)fl); memset(f, fig_byte(to.tok->s), (size_t)fl);
+            unsigned char *f = xmalloc((size_t)fl);
+            if (g_insp_nat) { unsigned u = nat_fig(to.tok->s); for (int i = 0; i + 1 < fl; i += 2) { f[i] = (unsigned char)(u >> 8); f[i + 1] = (unsigned char)u; } }
+            else memset(f, fig_byte(to.tok->s), (size_t)fl);
             a[2] = arg_label(lit_label(f, fl)); free(f);
         } else pattern_args(&to, &a[2], &x);
         pattern_args(&from, &a[0], &a[1]);
@@ -9376,7 +9391,7 @@ static void parse_inspect_1(void)
         emit_call("cob_inspect_run");
         emit_inspect_tallies(tallies, tally_ph, nt);
         nt = 0; np = 0;
-        Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? arg_imm(0) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin");
+        Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin");
     }
     if (accept_word("replacing")) {
         any = 1;
@@ -9393,7 +9408,7 @@ static void parse_inspect_1(void)
                 if (kind) parse_operand(&pat);
                 expect_word("by"); parse_operand(&rep);
                 if (kind) {
-                    int pl = pat.kind == O_FIG ? 1 : opnd_size(&pat), rl = rep.kind == O_FIG ? 1 : opnd_size(&rep);
+                    int pl = pat.kind == O_FIG ? w : opnd_size(&pat), rl = rep.kind == O_FIG ? w : opnd_size(&rep);
                     if (pl > 0 && rl > 0 && pl != rl) die_at(rep.line, "INSPECT REPLACING: the two operands must be the same length");
                 }
                 parse_inspect_range();

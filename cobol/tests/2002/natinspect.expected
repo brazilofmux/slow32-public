@@ -1,0 +1,12 @@
+all 日本: 03, characters: 04
+before 語: 02
+after 語: 01
+spaces: 01
+misaligned bytes: 00
+leading spaces: 02
+replacing: [にほのにほごだにほ ]
+leading: [ニほのにほごだにほ ]
+characters after だ: [ニほのにほごだ***]
+converting: [abのab語だ日本 ]
+converting to space: [abのab  日本 ]
+reference-modified: [xyyx  ]

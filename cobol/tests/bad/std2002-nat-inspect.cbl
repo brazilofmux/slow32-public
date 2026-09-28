@@ -1,7 +1,7 @@
 identification division.
 program-id. natinsp.
-*> INSPECT, STRING, UNSTRING and ACCEPT of national items come later;
-*> until then they are refused rather than treated as bytes.
+*> INSPECT of a national item takes national operands only (2023
+*> 14.9.22.3 rule 4): "a" is an alphanumeric literal; N"a" is its form.
 data division.
 working-storage section.
 01  n pic n(4).
