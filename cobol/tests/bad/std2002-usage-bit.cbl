@@ -1,9 +1,10 @@
 identification division.
-program-id. boolbit.
-*> USAGE BIT comes in a later part; refused by name.
+program-id. bitocc.
+*> OCCURS on a USAGE BIT item comes later; refused by name.
 data division.
 working-storage section.
-01  b pic 1(4) usage bit.
+01  t.
+    05 b pic 1 usage bit occurs 8.
 procedure division.
 
     stop run.

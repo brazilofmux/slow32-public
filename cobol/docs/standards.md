@@ -286,7 +286,8 @@ refused with a message naming the switch.
   DISPLAY and NATIONAL, B and BX literals, VALUE, MOVE, comparison, the
   boolean condition and class test, INITIALIZE, BOOLEAN-OF-INTEGER and
   INTEGER-OF-BOOLEAN. Part two (ISSUES-77): boolean expressions in
-  COMPUTE and conditions. USAGE BIT follows. docs/boolean.md.
+  COMPUTE and conditions. Part three (ISSUES-78): USAGE BIT, packed at
+  bit positions, and GROUP-USAGE BIT. docs/boolean.md.
 
 ## Deferred — object orientation
 

@@ -1,0 +1,15 @@
+f1 1 f2 011 f3 101010
+layout: 61 BA 80 7A
+lengths: 6 4 8
+f2 moved, neighbours kept: 61 FA 80 7A
+f2 xor 101: 010
+f3 = 101010
+f1 is on
+f1 is off
+integer-of-boolean(f3): 000000000000000042
+boolean-of-integer(5, 3): 101
+from alphanumeric: 01100000
+to alphanumeric: [101010  ]
+bit group: 11110000 = 1111 0000
+to a DISPLAY boolean: 0000
+is boolean

@@ -255,19 +255,37 @@ static __attribute__((noinline)) long long get_num_edited(const unsigned char *p
  * a scratch DISPLAY copy, and a receiver is written there and widened
  * back.  A code unit above U+00FF narrows to X'7F', which is no digit. */
 #define NATNUM_MAX 256
-static int is_natnum(const cob_desc *d) { return d->usage == COB_U_NATIONAL; }
+/* ... and boolean USAGE BIT (cobol ISSUES-78) is the DISPLAY form packed:
+ * size bits from the scale-th bit of the first byte, 1 for '1'.  Widening
+ * it sets or clears only its own bits. */
+static int is_natnum(const cob_desc *d) { return d->usage == COB_U_NATIONAL || d->usage == COB_U_BIT; }
 static const unsigned char *nat_narrow(const void *vp, const cob_desc *d, unsigned char *buf, cob_desc *nd)
 {
     const unsigned char *p = vp;
+    *nd = *d; nd->usage = COB_U_DISPLAY;
+    if (d->usage == COB_U_BIT) {
+        int n = (int)d->size, o = d->scale;
+        if (n > NATNUM_MAX) cob_fatal("USAGE BIT item longer than 256 bits");
+        for (int i = 0; i < n; i++) buf[i] = (unsigned char)('0' + ((p[(o + i) / 8] >> (7 - (o + i) % 8)) & 1));
+        nd->scale = 0;
+        return buf;
+    }
     int n = (int)d->size / 2;
     if (n > NATNUM_MAX) cob_fatal("numeric national item longer than 256 characters");
-    *nd = *d; nd->usage = COB_U_DISPLAY; nd->size = (unsigned)n;
+    nd->size = (unsigned)n;
     for (int i = 0; i < n; i++) buf[i] = p[2 * i] ? 0x7F : p[2 * i + 1];
     return buf;
 }
-static void nat_widen(void *vp, const unsigned char *buf, int n)
+static void nat_widen(void *vp, const cob_desc *d, const unsigned char *buf, int n)
 {
     unsigned char *p = vp;
+    if (d->usage == COB_U_BIT) {
+        for (int i = 0; i < n; i++) {
+            int b = d->scale + i; unsigned char m = (unsigned char)(0x80 >> (b % 8));
+            if (buf[i] == '1') p[b / 8] |= m; else p[b / 8] &= (unsigned char)~m;
+        }
+        return;
+    }
     for (int i = 0; i < n; i++) { p[2 * i] = 0; p[2 * i + 1] = buf[i]; }
 }
 
@@ -368,7 +386,7 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
         unsigned char b[NATNUM_MAX]; cob_desc nd;
         nat_narrow(vp, d, b, &nd);
         int r = cob_put_num_x(b, &nd, v, vscale, opts);
-        nat_widen(vp, b, (int)nd.size);
+        nat_widen(vp, d, b, (int)nd.size);
         return r;
     }
     unsigned char *p = vp;
@@ -699,7 +717,7 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
         unsigned char b[NATNUM_MAX]; cob_desc nd;
         nat_narrow(dst, dd, b, &nd);
         cob_move(src, sd, b, &nd);
-        nat_widen(dst, b, (int)nd.size);
+        nat_widen(dst, dd, b, (int)nd.size);
         return;
     }
     if (dd->cat == COB_BOOLEAN) {
@@ -2580,7 +2598,7 @@ void cob_bpush(const void *p, const cob_desc *d)
 {
     unsigned char t[NATNUM_MAX]; cob_desc nd;
     const unsigned char *q = p; int n = (int)d->size;
-    if (d->usage == COB_U_NATIONAL) { q = nat_narrow(p, d, t, &nd); n = (int)nd.size; }
+    if (is_natnum(d)) { q = nat_narrow(p, d, t, &nd); n = (int)nd.size; }
     char *v = malloc((size_t)n + 1); if (!v) cob_fatal("out of memory");
     for (int i = 0; i < n; i++) v[i] = q[i] == '1' ? '1' : '0';
     bstk_push(v, n);
@@ -2670,7 +2688,7 @@ char *cob_fn_integer_of_boolean(const void *p, const cob_desc *d)
 {
     unsigned char t[NATNUM_MAX]; cob_desc nd;
     const unsigned char *q = p; int n = (int)d->size;
-    if (d->usage == COB_U_NATIONAL) { q = nat_narrow(p, d, t, &nd); n = (int)nd.size; }
+    if (is_natnum(d)) { q = nat_narrow(p, d, t, &nd); n = (int)nd.size; }
     unsigned long long u = 0;
     for (int i = 0; i < n; i++) u = (u << 1) | (q[i] == '1');
     char *b = fn_buffer(18);

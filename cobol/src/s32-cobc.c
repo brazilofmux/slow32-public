@@ -1334,14 +1334,15 @@ static int numlit_align(const NumLit *n, int digits, int scale, char *out)
 enum {
     U_DISPLAY, U_BINARY, U_PACKED, U_COMP5,
     U_SINT, U_UINT, U_SSHORT, U_USHORT, U_BCHAR, U_UBCHAR, U_POINTER, U_INDEX,
-    U_NATIONAL                      /* numeric and numeric-edited USAGE NATIONAL (cobol ISSUES-72); PIC N keeps U_DISPLAY */
+    U_NATIONAL,                     /* numeric and numeric-edited USAGE NATIONAL (cobol ISSUES-72); PIC N keeps U_DISPLAY */
+    U_BIT                           /* boolean USAGE BIT: bits, packed (cobol ISSUES-78) */
 };
 
 static const char *usage_name(int u)
 {
     static const char *n[] = { "display", "comp", "comp-3", "comp-5", "signed-int",
         "unsigned-int", "signed-short", "unsigned-short", "binary-char",
-        "binary-char unsigned", "pointer", "index", "national" };
+        "binary-char unsigned", "pointer", "index", "national", "bit" };
     return n[u];
 }
 
@@ -1386,6 +1387,8 @@ typedef struct Sym {
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
     int  nat_usage;                 /* USAGE NATIONAL was written (cobol ISSUES-62) */
     int  natgroup;                  /* GROUP-USAGE NATIONAL, written or inherited: a national group (cobol ISSUES-71) */
+    int  bitgroup;                  /* GROUP-USAGE BIT, written (2) or inherited (1): a bit group (cobol ISSUES-78) */
+    int  bits, bitoff;              /* USAGE BIT and bit groups: boolean positions, and the first bit's place in the first byte */
     int  standin;                   /* the FILLER PIC X put in place of an entry refused with an error */
     int  in_natgroup;               /* an elementary item of a national group */
     int  ftemp_scan;                /* ... made while scanning ahead (no code): must never be emitted */
@@ -1707,6 +1710,16 @@ static void sym_finish(Sym *s)
         if (pi->category != PIC_NUMERIC && pi->category != PIC_NUMERIC_EDITED && pi->category != PIC_BOOLEAN)
             die_at(s->line, "'%s': USAGE NATIONAL takes a PICTURE of N, or a numeric, numeric-edited or boolean one (2023 13.18.66.3 rule 12)", s->name);
         u = s->usage = U_NATIONAL;
+    }
+    if (u == U_BIT) {
+        /* boolean positions as bits (2023 13.18.66); the bit offset and the
+         * bytes spanned come with the layout (8.5.1.6.3) */
+        if (pi->category != PIC_BOOLEAN) die_at(s->line, "'%s': USAGE BIT needs a boolean PICTURE (1)", s->name);
+        if (s->occurs) die_at(s->line, "'%s': OCCURS on a USAGE BIT item is not implemented yet", s->name);
+        if (s->redefines >= 0) die_at(s->line, "'%s': REDEFINES of a USAGE BIT item is not implemented yet", s->name);
+        if (s->sync) die_at(s->line, "'%s': SYNCHRONIZED on a USAGE BIT item is not implemented yet", s->name);
+        s->bits = pi->bytes; s->size = (s->bits + 7) / 8;
+        return;
     }
     switch (u) {
     case U_DISPLAY: case U_NATIONAL:
@@ -2034,14 +2047,13 @@ static void parse_data_item1(void)
             s->usage = u; s->has_usage = 1;
             continue;
         }
-        else if (g_std >= 2002 && !strcmp(t->s, "bit"))
-            die_at(t->line, "USAGE BIT is not implemented yet (boolean items are USAGE DISPLAY or NATIONAL here)");
+        else if (g_std >= 2002 && !strcmp(t->s, "bit")) u = U_BIT;
         else if (!strcmp(t->s, "group-usage")) {
             /* GROUP-USAGE IS NATIONAL (2023 13.18.29): the group is treated
              * as one national item; checked once the tree is built */
             if (g_std < 2002) die_at(t->line, "GROUP-USAGE is COBOL 2002; compile with -std=2002");
             advance(); accept_word("is");
-            if (accept_word("bit")) die_at(t->line, "GROUP-USAGE BIT needs the BOOLEAN module, not implemented yet");
+            if (accept_word("bit")) { s->bitgroup = 2; continue; }     /* 2023 13.18.29.4 rule 1 */
             if (!accept_word("national")) die_at(t->line, "expected NATIONAL or BIT after GROUP-USAGE");
             s->natgroup = 2;                    /* 2: written here; 1: inherited */
             continue;
@@ -2220,6 +2232,15 @@ static void build_tree(void)
          * own; its subordinate groups are national groups and its
          * elementary items national.  Parents precede children here. */
         if (s->natgroup == 2 && !s->is_group) die_at(s->line, "GROUP-USAGE: '%s' is not a group (2023 13.18.29.3 rule 1)", s->name);
+        if (s->bitgroup == 2 && !s->is_group) die_at(s->line, "GROUP-USAGE: '%s' is not a group (2023 13.18.29.3 rule 1)", s->name);
+        if (s->bitgroup == 2 && s->has_usage) die_at(s->line, "GROUP-USAGE BIT: '%s' cannot have a USAGE clause too (2023 13.18.29.3 rule 2)", s->name);
+        if (!s->bitgroup && s->parent >= 0 && g_sym[s->parent].bitgroup) {
+            /* a bit group's subordinates are bit groups and USAGE BIT items (rule 2) */
+            if (s->is_group) s->bitgroup = 1;
+            else if (s->has_usage && s->usage != U_BIT)
+                die_at(s->line, "'%s' is in the bit group '%s' and must be USAGE BIT (2023 13.18.29.3 rule 2)", s->name, g_sym[s->parent].name);
+            else { s->usage = U_BIT; s->has_usage = 1; }
+        }
         if (s->natgroup == 2 && (s->has_usage || s->nat_usage)) die_at(s->line, "GROUP-USAGE NATIONAL: '%s' cannot have a USAGE clause too (2023 13.18.29.3 rule 3)", s->name);
         if (!s->natgroup && s->parent >= 0 && g_sym[s->parent].natgroup) {
             if (s->is_group) s->natgroup = 1;
@@ -2272,28 +2293,56 @@ static int align_of(Sym *s)
 }
 
 /* lay out s at `base` (offset within the record); returns one occurrence's size */
+/* a bit item or a bit group: laid out at bit positions (cobol ISSUES-78) */
+static int sym_bitlike(const Sym *s) { return (!s->is_group && s->usage == U_BIT) || s->bitgroup; }
+static int g_lay_bit;                   /* the bit offset the next layout() call starts at */
+
 static int layout(int si, int base)
 {
     Sym *s = &g_sym[si];
+    int bo = g_lay_bit; g_lay_bit = 0;
     s->offset = base;
-    if (!s->is_group) return s->size;
+    if (sym_bitlike(s)) s->bitoff = bo;
+    if (!s->is_group) {
+        if (s->usage == U_BIT) s->size = (s->bitoff + s->bits + 7) / 8;
+        return s->size;
+    }
+    if (s->bitgroup && (s->occurs || s->redefines >= 0))
+        die_at(s->line, "'%s': OCCURS or REDEFINES on a bit group is not implemented yet", s->name);
     int off = base, end = base;
+    /* bit items and bit groups that follow one another at a level take
+     * the next bit position; anything else the next byte (8.5.1.6.3) --
+     * inside a bit group, from the group's own first bit */
+    int run = s->bitgroup != 0, cur = s->bitgroup ? s->bitoff : 0;
     for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
         Sym *ch = &g_sym[c];
-        int cbase;
+        int cbase, isbit = sym_bitlike(ch) && ch->redefines < 0;
         if (ch->redefines >= 0) {
+            if (sym_bitlike(&g_sym[ch->redefines])) die_at(ch->line, "REDEFINES of a bit item or bit group is not implemented yet");
             cbase = g_sym[ch->redefines].offset;
+        } else if (isbit && run) {
+            cbase = off; g_lay_bit = cur;
         } else {
+            if (run && cur) off++;          /* leave the partly used byte */
+            run = 0; cur = 0;
             int a = align_of(ch);
             cbase = (off + a - 1) / a * a;
         }
         int sz = layout(c, cbase);
         if (sz <= 0) die_at(ch->line, "'%s' has no size", ch->name);
-        int cend = cbase + sz * (ch->occurs ? ch->occurs : 1);
-        if (ch->redefines < 0) off = cend;
+        int cend;
+        if (isbit) {
+            int tot = ch->bitoff + ch->bits;
+            off = cbase + tot / 8; cur = tot % 8; run = 1;
+            cend = cbase + (tot + 7) / 8;
+        } else {
+            cend = cbase + sz * (ch->occurs ? ch->occurs : 1);
+            if (ch->redefines < 0) off = cend;
+        }
         /* A REDEFINES larger than the original is allowed: the group grows. */
         if (cend > end) end = cend;
     }
+    if (s->bitgroup) s->bits = (off - base) * 8 + cur - s->bitoff;
     s->size = end - base;
     return s->size;
 }
@@ -2352,6 +2401,7 @@ static void init_one(Sym *rec, int si, int base, int defaults)
     Sym *s = &g_sym[si];
     unsigned char *p = rec->image + base;
     if (s->is_group) {
+        if (s->bitgroup && s->value_tok && !g_no_values) die_at(s->value_tok->line, "a VALUE on the bit group '%s' is not implemented yet", s->name);
         if (s->natgroup && s->value_tok && !g_no_values) {
             init_national(s, p, 1);                 /* a national literal, as for PIC N (13.18.63 rule 5) */
             defaults = 0;
@@ -2378,6 +2428,23 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
 {
     int numeric = is_numeric_sym(s);
     if (s->pi.category == PIC_NATIONAL) { init_national(s, p, defaults); return; }
+    if (s->usage == U_BIT) {
+        /* bits: initialized as the DISPLAY form, then packed at the item's
+         * bit offset, the bits around it left as they are (cobol ISSUES-78) */
+        int n = s->bits;
+        unsigned char *t = xmalloc((size_t)n + 1);
+        for (int i = 0; i < n; i++) { int b = s->bitoff + i; t[i] = (unsigned char)('0' + ((p[b / 8] >> (7 - b % 8)) & 1)); }
+        int sz = s->size;
+        s->usage = U_DISPLAY; s->size = n;
+        init_elem(s, t, defaults);
+        s->usage = U_BIT; s->size = sz;
+        for (int i = 0; i < n; i++) {
+            int b = s->bitoff + i; unsigned char m = (unsigned char)(0x80 >> (b % 8));
+            if (t[i] == '1') p[b / 8] |= m; else p[b / 8] &= (unsigned char)~m;
+        }
+        free(t);
+        return;
+    }
     if (s->pi.category == PIC_BOOLEAN && s->usage == U_DISPLAY) {
         /* boolean: zeros by default; a VALUE is a boolean literal or ZERO,
          * aligned left and zero-filled (2023 13.18.63; 14.6.8.6) */
@@ -2880,6 +2947,12 @@ static int sym_desc(Sym *s)
     if (s->desc_id >= 0) return s->desc_id;
     Desc d; memset(&d, 0, sizeof d);
     if (s->natgroup) { d.cat = COB_NATIONAL; d.usage = COB_U_DISPLAY; }   /* treated as PIC N(m) (13.18.29.4 rule 2b) */
+    else if (s->bitgroup || s->usage == U_BIT) {
+        /* bits: size the boolean positions, scale the first bit's place */
+        d.cat = COB_BOOLEAN; d.usage = COB_U_BIT; d.size = s->bits; d.scale = (signed char)s->bitoff;
+        s->desc_id = desc_add(&d);
+        return s->desc_id;
+    }
     else if (s->is_group) { d.cat = COB_GROUP; d.usage = COB_U_DISPLAY; }
     else {
         switch (s->pi.category) {
@@ -3127,7 +3200,7 @@ static void nat_fig_opnd(Opnd *o, int nbytes);
 /* national: an elementary PIC N item, or a national group, which is
  * treated as one (2023 13.18.29.4 rule 2b) */
 static int sym_is_national(const Sym *s) { return s->natgroup || (!s->is_group && s->pi.category == PIC_NATIONAL); }
-static int sym_is_boolean(const Sym *s) { return !s->is_group && s->pi.category == PIC_BOOLEAN; }
+static int sym_is_boolean(const Sym *s) { return s->bitgroup || (!s->is_group && s->pi.category == PIC_BOOLEAN); }
 
 static int is_int_item(Sym *s)
 {
@@ -3257,8 +3330,9 @@ static void parse_ref(Ref *r)
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
         advance();
         r->rm = 1; r->rm_l0 = -1;
-        if (!r->sym->is_group && r->sym->usage == U_NATIONAL)
-            die_at(r->line, "reference modification of the USAGE NATIONAL item '%s' is not implemented yet", r->sym->name);
+        if ((!r->sym->is_group && (r->sym->usage == U_NATIONAL || r->sym->usage == U_BIT)) || r->sym->bitgroup)
+            die_at(r->line, "reference modification of the USAGE %s item '%s' is not implemented yet",
+                   r->sym->usage == U_NATIONAL ? "NATIONAL" : "BIT", r->sym->name);
         r->rm_nat = sym_is_national(r->sym);   /* 2023 8.4.2.4: character positions; a national group as elementary */
         if (cur()->kind == T_NUM && peek(1)->kind == T_COLON) {
             NumLit n; numlit_parse(cur(), &n);
@@ -3778,6 +3852,8 @@ static void parse_operand_raw(Opnd *o)
             if (len < 0) die_at(n->line, "FUNCTION LENGTH of a reference modification with a variable length is not implemented");
             if (opnd_is_national(&x) || (x.kind == O_REF && x.ref.sym->usage == U_NATIONAL))
                 len /= 2;                               /* national: character positions, two bytes each */
+            if (x.kind == O_REF && !x.ref.rm && (x.ref.sym->usage == U_BIT || x.ref.sym->bitgroup))
+                len = x.ref.sym->bits;                  /* bits: boolean positions */
             o->kind = O_NUM; numlit_from_int(&o->num, len);
             return;
         }
@@ -6207,6 +6283,13 @@ static int opnd_is_national(const Opnd *o)
 
 static int ref_is_national(const Ref *r) { return sym_is_national(r->sym); }
 
+/* bits in a statement whose runtime works on characters */
+static void no_bits(const Opnd *o, const char *stmt)
+{
+    if (o->kind == O_REF && (o->ref.sym->usage == U_BIT || o->ref.sym->bitgroup))
+        die_at(o->line, "a USAGE BIT item in %s is not implemented yet", stmt);
+}
+
 /* STRING, UNSTRING: when one operand is national all are (2023 14.9.43.3
  * rule 1, 14.9.48.3 rule 3); a figurative constant takes the class */
 static void nat_class_check(const Opnd *o, int nat, const char *stmt, const char *rule)
@@ -6339,7 +6422,7 @@ static int emit_move_national(Opnd *src, Ref *dst)
 }
 
 /* boolean positions of a boolean item */
-static int bool_positions(const Sym *s) { return s->usage == U_NATIONAL ? s->size / 2 : s->size; }
+static int bool_positions(const Sym *s) { return (s->usage == U_BIT || s->bitgroup) ? s->bits : s->usage == U_NATIONAL ? s->size / 2 : s->size; }
 
 /* a figurative constant or ALL literal beside a boolean operand of n
  * positions: ZERO is boolean zeros, ALL B"..." its value repeated; any
@@ -6380,6 +6463,13 @@ static int emit_move_boolean(Opnd *src, Ref *dst)
     int db = sym_is_boolean(d), sb = opnd_is_boolean(src);
     if (!db && !sb) return 0;
     if (!db) {
+        if (d->is_group && src->kind == O_REF && (src->ref.sym->usage == U_BIT || src->ref.sym->bitgroup)) {
+            /* bits to a group: the boolean value, as characters (14.9.25 rule 5a) */
+            Arg a[4]; opnd_args(src, &a[0], &a[1], d->size, 0);
+            a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
+            emit_args(a, 4); emit_call("cob_move");
+            return 1;
+        }
         if (d->is_group) return 0;                          /* a group receives the bytes */
         int c = d->pi.category;
         if (c == PIC_ALPHANUMERIC || c == PIC_ALPHANUMERIC_EDITED || c == PIC_NATIONAL) return 0;   /* as its characters */
@@ -8894,6 +8984,8 @@ static void parse_string_1(void)
     /* national operands (cobol ISSUES-69): characters of two bytes throughout */
     int nat = ref_is_national(&dst);
     static const char *srule = "14.9.43.3 rule 1";
+    for (int i = 0; i < n; i++) { no_bits(&srcs[i], "STRING"); no_bits(&delims[i], "STRING"); }
+    { Opnd dq; memset(&dq, 0, sizeof dq); dq.kind = O_REF; dq.ref = dst; dq.line = dst.line; no_bits(&dq, "STRING"); }
     for (int i = 0; i < n; i++) {
         nat_class_check(&srcs[i], nat, "STRING", srule);
         if (delims[i].kind != O_ALL) nat_class_check(&delims[i], nat, "STRING", srule);   /* O_ALL: SIZE */
@@ -9006,6 +9098,8 @@ static void parse_unstring_1(void)
      * receivers and DELIMITER IN items all national, or none */
     int nat = opnd_is_national(&src);
     static const char *urule = "14.9.48.3 rule 3";
+    no_bits(&src, "UNSTRING");
+    for (int i = 0; i < n; i++) { Opnd rq; memset(&rq, 0, sizeof rq); rq.kind = O_REF; rq.ref = rcv[i]; rq.line = rcv[i].line; no_bits(&rq, "UNSTRING"); }
     for (int i = 0; i < nd; i++) nat_class_check(&delims[i], nat, "UNSTRING", urule);
     for (int i = 0; i < n; i++) {
         Opnd ro; memset(&ro, 0, sizeof ro); ro.kind = O_REF; ro.ref = rcv[i]; ro.line = rcv[i].line;
@@ -9910,6 +10004,7 @@ static void parse_inspect_1(void)
     Ref item; parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
     /* a numeric USAGE NATIONAL item's characters are national too */
+    { Opnd io; memset(&io, 0, sizeof io); io.kind = O_REF; io.ref = item; io.line = item.line; no_bits(&io, "INSPECT"); }
     g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     Opnd itemo = ref_opnd(&item);

@@ -2525,3 +2525,40 @@ conditions. Refusals: std2002-bexpr-numeric, -bexpr-mixed,
 -bexpr-shift, -bexpr-dangling, -bexpr-cond-wide. Harness 244/244;
 -std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 78. BOOLEAN, part three: USAGE BIT and GROUP-USAGE BIT (2026-09-28)
+
+The first data in this compiler that is not byte-addressed.
+
+- **Layout** (8.5.1.6.3). `layout()` carries a bit cursor: a bit item or
+  bit group after one at the same level takes the next bit position;
+  anything else, or the first bit item after a non-bit, starts on the
+  next byte. A bit item's `bitoff` is its first bit's place in its first
+  byte, and its `size` the bytes it spans. A bit group lays its
+  subordinates out from its own first bit, and its `bits` is their sum.
+  Items that are not bits lay out exactly as before: -std=85 output is
+  byte-identical.
+- **Descriptor.** `COB_U_BIT`, with `size` the bits and `scale` the
+  first bit's place. libcob's USAGE NATIONAL narrowing (ISSUES-72)
+  gains a BIT branch: read the bits as characters 0 and 1, and write
+  back only the item's own bits. So MOVE, comparison, DISPLAY, the
+  class test, the boolean stack and both functions take bits unchanged.
+  `nat_widen` now takes the descriptor.
+- **Compiler.** `USAGE BIT` on a boolean picture, `GROUP-USAGE BIT`
+  (rules 1 and 2, inheritance as for national groups). Initial values
+  are made in the DISPLAY form and packed into the record image. A bit
+  sender to a group goes through `cob_move`, so the group gets the
+  characters, not the packed bytes. LENGTH counts bits.
+- **Refused by name:** OCCURS, REDEFINES, SYNCHRONIZED and reference
+  modification of a bit item or bit group; VALUE on a bit group; bit
+  items in INSPECT, STRING and UNSTRING.
+
+2002/boolbit (no oracle): a record packing 1, 3 and 6 bits after a byte
+and before a byte, checked byte by byte (61 BA 80 7A); a MOVE to one bit
+item leaving its neighbours' bits; an expression, the condition, the
+functions, alphanumeric in and out; a bit group and its parts.
+std2002-usage-bit and std2002-groupusage-bit, which were the refusals,
+now check OCCURS and the bit group's rule 2. New: std2002-bit-pic-x,
+-bit-refmod, -bit-inspect. Harness 248/248; -std=85 byte-identical on
+all 227 Open Systems programs; majesty PASS; majesty-functions PASS;
+Open Systems paper unchanged.

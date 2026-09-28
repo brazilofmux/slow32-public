@@ -12,7 +12,7 @@ decides the storage (Annex D.10):
 - USAGE NATIONAL: one national character a position, U+0030 or U+0031,
   as numeric USAGE NATIONAL is its DISPLAY form widened
   (docs/national.md).
-- USAGE BIT: bits. Not implemented yet; refused by name.
+- USAGE BIT: bits, packed (ISSUES-78, below).
 
 Literals: `B"0101"`, and `BX"5"`, each hexadecimal digit four positions
 (8.3.3.4). The compiler holds both as characters 0 and 1.
@@ -53,10 +53,29 @@ MOVE rules. In a condition an expression compares with a boolean
 operand, and alone it is a simple boolean condition when every operand
 is one position. ALL literal operands are not implemented.
 
+## USAGE BIT and bit groups (ISSUES-78)
+
+Bit items that follow one another at a level take the next bit position;
+any other item, and a bit item after one, starts on the next byte, the
+unused bits of the last byte being implicit filler (8.5.1.6.3). A level
+01 or 77 bit item starts on a byte. Within a byte the first bit is the
+most significant. `GROUP-USAGE BIT` makes a group one boolean item of
+all its bits; its subordinate groups are bit groups and its elementary
+items USAGE BIT, by implication or written (13.18.29.3 rule 2).
+
+A bit item's descriptor holds its bit count and its first bit's place,
+and libcob reads it as the DISPLAY form and writes back only its own
+bits, so every boolean operation takes bits as it takes characters.
+
+Not implemented, refused by name: OCCURS, REDEFINES, SYNCHRONIZED and
+reference modification of a bit item or bit group; a VALUE on a bit
+group; bit items in INSPECT, STRING and UNSTRING, whose runtimes work on
+characters.
+
 ## Not yet
 
-USAGE BIT and GROUP-USAGE BIT; reference modification of a USAGE
-NATIONAL boolean or numeric item; ALL in a boolean expression.
+Reference modification of a USAGE NATIONAL or USAGE BIT item; ALL in a
+boolean expression; the items listed under USAGE BIT.
 
 ## Oracle
 

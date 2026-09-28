@@ -15,7 +15,9 @@ enum { COB_ALNUM = 0, COB_ALPHA = 1, COB_ALNUM_ED = 2, COB_NUM = 3, COB_NUM_ED =
        COB_BOOLEAN = 7 };    /* boolean: a character 0 or 1 per boolean position (cobol ISSUES-76) */
 
 /* usage (runtime view: COMP-5 and the C-ABI types are BINARY + NOTRUNC) */
-enum { COB_U_DISPLAY = 0, COB_U_BINARY = 1, COB_U_PACKED = 2, COB_U_NATIONAL = 3 };   /* NATIONAL: numeric and numeric-edited only (cobol ISSUES-72) */
+enum { COB_U_DISPLAY = 0, COB_U_BINARY = 1, COB_U_PACKED = 2,
+       COB_U_NATIONAL = 3,   /* numeric, numeric-edited and boolean USAGE NATIONAL (cobol ISSUES-72) */
+       COB_U_BIT = 4 };      /* boolean USAGE BIT: size the bits, scale the first bit's place (cobol ISSUES-78) */
 
 /* flags */
 enum {
