@@ -335,6 +335,20 @@ elif [ -d "$CCVS_TREE" ]; then
     else
         report "ccvs/totals" 1 "got [$got] want [$want]; if better, update tests/ccvs-baseline.txt"
     fi
+    # SQ101M's 57 tests are the suite's visual inspection of WRITE
+    # ADVANCING; the program states where every line must land, so the
+    # print file is rendered as a printer would and checked (ISSUES-46)
+    if command -v python3 >/dev/null 2>&1; then
+        CCVS_KEEP=1 CCVS_ONLY=SQ101M "$HERE/ccvs-run.sh" SQ >/dev/null 2>&1
+        sqd="$(ls -dt "$CDIR"/out/ccvsrun.* 2>/dev/null | head -1)"
+        if [ -n "$sqd" ] && [ -f "$sqd/SQ/REPORT" ]; then
+            if lay="$(python3 "$HERE/sq101m-layout.py" "$sqd/SQ/REPORT")"; then report "ccvs/sq101m-layout" 0 "$(echo "$lay" | tail -1)"
+            else report "ccvs/sq101m-layout" 1 "$(echo "$lay" | tail -1): $(echo "$lay" | head -1)"; fi
+        else report "ccvs/sq101m-layout" 1 "SQ101M wrote no REPORT"; fi
+        [ -n "$sqd" ] && rm -rf "$sqd"
+    else
+        CCVS_NOTE="cobol: SQ101M layout NOT CHECKED -- no python3"
+    fi
 else
     CCVS_NOTE="cobol: CCVS-85 NOT RUN -- no tree at $CCVS_TREE (set CCVS85)"
 fi

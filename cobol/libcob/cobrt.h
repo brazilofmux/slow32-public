@@ -81,7 +81,7 @@ typedef struct {
     unsigned int lin_needs_top;   /* the top margin has not been written yet */
     char *saved_status;       /* EXTERNAL: the entering program's own image keeps the shared connector's previous status item here */
     unsigned int reversed;    /* OPEN INPUT ... REVERSED: fixed-length records read from the last back */
-    unsigned int nl_pending;  /* line sequential: the last record went out without its newline (BEFORE ADVANCING ZERO) */
+    unsigned int pr_state;    /* line sequential: the printer's cursor (libcob.c, PR_TOP..PR_INK) */
     char *rbuf;               /* line sequential input: the runtime's read buffer ... */
     unsigned int rpos, rlen;  /* ... the next byte in it, and how many it holds */
 } cob_file;

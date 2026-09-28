@@ -166,6 +166,15 @@ marked for visual inspection, both the same as GnuCOBOL's. What is
 left of the stage is those 91 read by a person against the text, and
 the conformance gaps the suite does not test (ISSUES-43 is the first).
 
+The 91 were read on 2026-09-27 (ISSUES-46): 24 print what GnuCOBOL
+prints byte for byte; SQ101M and SQ207M state their own layout and
+every claim holds, once print files became a line printer; SM106A
+differs from GnuCOBOL only in where the file starts; NC114M inspects a
+compiler listing, which this compiler does not produce. Two rulings
+remain to be read against the text: where a print file's first line
+falls, and the ADVANCING default. What is left of Stage A is those two
+and ISSUES-43.
+
 ## Stage B — COBOL 2002, the practical half
 
 The standard is treated as modules, not one block. These parts of

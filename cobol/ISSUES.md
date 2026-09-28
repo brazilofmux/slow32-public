@@ -782,6 +782,14 @@ Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
   same bytes every time. GnuCOBOL accepts and ignores a trailing offset
   or fraction; here anything but the two documented forms is fatal.
   free/fixclock shows the fields both agree on.
+- A print file is a line printer (ISSUES-46): an overprint is a carriage
+  return, so the second record lies over the first; GnuCOBOL appends it
+  to the line, which leaves it 120 columns to the right. A WRITE with no
+  ADVANCING advances one line, as SQ101M requires; GnuCOBOL does not
+  advance at all. GnuCOBOL starts a print file one line lower, before
+  the first record; this runtime prints the first record on the first
+  line (a ruling, not yet read against the text). free/printer shows
+  all three, with GnuCOBOL's layout in printer.oracle-expected.
 
 ### 27. Run s32-cobc under AddressSanitizer, with its tables forced to grow
 `lit_label` returned a pointer into `g_lit`, a table it reallocates, and
@@ -1344,4 +1352,63 @@ Correction: ISSUES-44 and its commit (a8ef2f12) report the Open
 Systems suite as "100 of 101 papers"; there are 80, and the right
 figure that day was 79 of 80. The count was not taken from the
 harness output, and it should have been.
+
+### 46. A print file is a line printer; the 91 inspection tests read (2026-09-27)
+**The inspection survey.** CCVS-85's 91 visual-inspection tests are in
+eight programs. Each was run here and under GnuCOBOL and the printed
+output compared:
+
+| programs | tests | result |
+|---|---|---|
+| SQ201M SQ208M SQ209M SQ210M | 24 | byte-identical to GnuCOBOL |
+| SQ101M | 57 | all 64 of its layout claims hold (GnuCOBOL: 60) |
+| SQ207M | 8 | all 12 of its layout claims hold (GnuCOBOL: 8) |
+| SM106A | 1 | identical but for GnuCOBOL's leading blank line |
+| NC114M | 1 | the thing to inspect is a compiler listing; none is produced |
+
+SQ101M and SQ207M say where each of their lines must land ("THIS LINE
+SHOULD BE 1 LINES BELOW AND 8 LINES ABOVE THE BRACKETING WRT-TEST
+LINES", "SHOULD APPEAR AT THE TOP OF A NEW PAGE", "ONLY FIVE OF THE
+LETTERS A AND B SHOULD BE JUMBLED"). `tests/sq101m-layout.py` renders a
+print file as a printer would -- newline, form feed, carriage return
+with overlay -- and checks each claim; gate 5 runs it on SQ101M.
+
+**What it found.** The runtime wrote each record's newline with the
+record, which is right only while every WRITE is AFTER. A printer's
+cursor sits on the line last printed: AFTER n moves it and prints, BEFORE
+n prints where it is and then moves it. So BEFORE after AFTER landed a
+line too low, AFTER after BEFORE a line too high, and ADVANCING 0 could
+never overprint, the newline being on disk already. SQ101M held 38 of
+its 64 claims. Also found: a count taken from an item holding zero was
+encoded as -1, which is PAGE (SQ101M's LONG-ZERO: three extra form
+feeds); and the zero-advance flag was never reset at OPEN nor its line
+ended at CLOSE.
+
+**Fixed.** The runtime keeps the printer's cursor in the cob_file word
+that held the flag (`pr_state`, no layout change): a record's newline
+goes out when the cursor next moves, and printing on a line that
+already has ink writes a carriage return first -- the user's choice,
+over GnuCOBOL's appending, because a printer, a terminal or col(1) lays
+the records over each other as the text means. The compiler marks a
+BEFORE phrase (before = -3) so BEFORE 1 is no longer AFTER 1 to the
+runtime, and maps a zero count from an item to zero lines. Streams of
+AFTER writes come out byte for byte as before.
+
+**Preserved programs.** Five Open Systems programs use ADVANCING 0 --
+ARINVCS, ARSTMTS and SOINVCS for a forms-alignment line, APPRTCKS for
+the check form, SOPSLIP for the slip header; their paper is unchanged
+(the harness answers the alignment prompt yes the first time, so
+nothing is overprinted). One paper moved, PA's W-2 forms, and the move
+is the fix: the form is 22 lines (W2-LINE-1..22) and PAW2 prints its
+alignment line BEFORE ADVANCING 21, so the first real form belongs one
+form length below it. The new paper puts the first control number 66
+lines below the alignment's, three forms exactly; the pin had it at
+65. Re-pinned in `~/open`. 79 of 80 papers unchanged; majesty passes.
+
+**Open.** GnuCOBOL misses four SQ101M claims and four of SQ207M's:
+it appends an overprint instead of overlaying it, and it does not
+advance for a WRITE with no ADVANCING phrase (SQ101M tests 19 and 20
+say "2 LINES BELOW"). A report upstream would need the text's wording
+on the default read first. The first-line placement is a ruling, not
+yet read against the text either.
 

@@ -1160,12 +1160,13 @@ int cob_open(cob_file *f, int mode)
         fp = fopen(name, "w+b");
         if (fp) {
             f->fp = fp; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
+            f->pr_state = 0;
             if (f->org == COB_ORG_RELATIVE) { f->rel_pos = 1; f->rel_last = 0; }
             return file_result(f, "05", name);
         }
     }
     f->at_eof = 0; f->eof_seen = 0; f->last_len = 0; f->fpos = 0;
-    f->rpos = f->rlen = 0;
+    f->rpos = f->rlen = 0; f->pr_state = 0;
     if (fp && f->org == COB_ORG_RELATIVE) {
         f->rel_pos = 1; f->rel_last = 0;
         if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0)
@@ -1207,6 +1208,8 @@ int cob_close(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "42", "CLOSE of a file not open");
     if (f->org == COB_ORG_INDEXED) return idx_close(f);
+    if (f->fp && f->pr_state >= 2) fputc('\n', (FILE *)f->fp);   /* the printer's last line (pr_advance) */
+    f->pr_state = 0;
     if (f->fp) fclose((FILE *)f->fp);
     f->fp = 0; f->open_mode = 0; f->at_eof = 0;
     if (f->rbuf) { free(f->rbuf); f->rbuf = 0; }
@@ -1394,18 +1397,50 @@ int cob_write(cob_file *f, int before, int after, int reclen)
         f->fpos += n; f->last_len = 0;
         return file_result(f, "00", "");
     }
-    /* ADVANCING: n extra newlines before or after; -1 is PAGE, a form feed;
-     * -2 is ZERO LINES -- BEFORE ADVANCING ZERO leaves the record without
-     * its newline, the next record's AFTER supplying one (SQ101M) */
-    if (f->nl_pending) { fputc('\n', fp); f->fpos++; f->nl_pending = 0; }   /* the line the last record left open */
-    if (before == -1) { fputc('\f', fp); f->fpos++; }
-    for (int i = 0; i < before; i++) { fputc('\n', fp); f->fpos++; }
+    /* A print file is a line printer (cobol ISSUES-46).  The cursor sits on
+     * the line last printed: AFTER n moves it n lines and prints there,
+     * BEFORE n prints where it is and then moves it.  So a record's
+     * newline is not written with it but when the cursor next moves --
+     * by then it is known whether the next record goes below it or on
+     * top of it.  Printing on a line that already carries ink is an
+     * overprint, written as a carriage return: a printer, a terminal or
+     * col(1) lays the second record over the first (SQ101M's WRITE
+     * ADVANCING 0 tests; the forms-alignment line of ARINVCS and its
+     * kind).  Where a file begins, and after BEFORE PAGE, the cursor is
+     * above the first line: the first AFTER n lands n-1 lines down, so a
+     * file opens on its first record as it always has here (GnuCOBOL
+     * starts one line lower; a ruling, not yet read against the text).
+     *
+     * Encoding from the compiler: before = AFTER's count - 1, after =
+     * BEFORE's, -1 for PAGE, -2 for zero lines; before = -3 marks a
+     * BEFORE phrase, whose count is then in after; 0/0 is no ADVANCING,
+     * which prints as AFTER 1. */
+    enum { PR_TOP, PR_FRESH, PR_OPEN, PR_INK };
+    int is_before = before == -3 || (before == 0 && after != 0);
+    int k = is_before ? after : before;
+    int cnt = k == -1 ? -1 : k == -2 ? 0 : k + 1;
+    if (before == 0 && after == 0) cnt = 1;
+    unsigned st = f->pr_state;
+    #define PR_PUT(c) do { fputc((c), fp); f->fpos++; } while (0)
+    if (!is_before) {
+        if (cnt == -1) { if (st >= PR_OPEN) PR_PUT('\n'); PR_PUT('\f'); st = PR_OPEN; }
+        else if (st == PR_TOP) { for (int i = 1; i < cnt; i++) PR_PUT('\n'); st = PR_OPEN; }
+        else if (cnt == 0) { if (st == PR_INK) PR_PUT('\r'); else st = PR_OPEN; }
+        else { for (int i = 0; i < cnt; i++) PR_PUT('\n'); st = PR_OPEN; }
+    } else {
+        if (st == PR_INK) PR_PUT('\r');
+        else st = PR_OPEN;
+    }
     while (n > 0 && rec[n - 1] == ' ') n--;
     if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
     f->fpos += n;
-    if (after != -2) { fputc('\n', fp); f->fpos++; } else f->nl_pending = 1;
-    if (after == -1) { fputc('\f', fp); f->fpos++; }
-    for (int i = 0; i < after; i++) { fputc('\n', fp); f->fpos++; }
+    if (n) st = PR_INK;
+    if (is_before) {
+        if (cnt == -1) { PR_PUT('\n'); PR_PUT('\f'); st = PR_TOP; }
+        else if (cnt > 0) { for (int i = 0; i < cnt; i++) PR_PUT('\n'); st = PR_FRESH; }
+    }
+    #undef PR_PUT
+    f->pr_state = st;
     f->last_len = 0;
     return file_result(f, "00", "");
 }

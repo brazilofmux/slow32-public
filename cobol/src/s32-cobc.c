@@ -6314,6 +6314,11 @@ static void parse_write(void)
         accept_word("line"); accept_word("lines");
     }
 advancing_done:;
+    /* a BEFORE phrase on a print file (not LINAGE, which counts its own):
+     * before = -3 marks it, so BEFORE 1 is not taken for AFTER 1 -- the
+     * runtime's printer needs to know which side of the record the move
+     * falls on (libcob.c; cobol ISSUES-46) */
+    if (adv && !after_kw && !f->linage) before = -3;
     /* a file written WITH ADVANCING and no ORGANIZATION clause is a print
      * file: its records are lines (GnuCOBOL's "line advancing" file).  The
      * phrase decides, not its count: AFTER 1 is zero newlines beyond the
@@ -6329,11 +6334,13 @@ advancing_done:;
     if (dyn) {
         if (is_hot_int(n.ref.sym)) emit_hot_value(&n);
         else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-        if (!f->linage) emit("\taddi r1, r1, -1");
+        /* the runtime's counts are n-1, and zero lines is -2: a zero in the
+         * item must not become -1, which is PAGE (SQ101M's LONG-ZERO) */
+        if (!f->linage) { emit("\tseq r2, r1, r0"); emit("\taddi r1, r1, -1"); emit("\tsub r1, r1, r2"); }
         emit("\tstw sp+%d, r1", SLOT_C);
         emit_file_addr("r3", f);
         if (after_kw) { emit("\tldw r4, sp+%d", SLOT_C); emit_li("r5", 0); }
-        else { emit_li("r4", 0); emit("\tldw r5, sp+%d", SLOT_C); }
+        else { emit_li("r4", f->linage ? 0 : -3); emit("\tldw r5, sp+%d", SLOT_C); }
     } else {
         emit_file_addr("r3", f); emit_li("r4", before); emit_li("r5", after);
     }
@@ -9357,7 +9364,7 @@ static void emit_unit_data(void)
         for (int w = 0; w < 7; w++) emit("\t.word 0");    /* lin_lines lin_foot lin_top lin_bot lin_counter lin_eop lin_needs_top */
         emit("\t.word 0");                                 /* saved_status (EXTERNAL) */
         emit("\t.word 0");                                 /* reversed (OPEN INPUT ... REVERSED) */
-        emit("\t.word 0");                                 /* nl_pending (BEFORE ADVANCING ZERO) */
+        emit("\t.word 0");                                 /* pr_state (the print file's cursor) */
         emit("\t.word 0");                                 /* rbuf, rpos, rlen: the runtime's line-sequential read buffer */
         emit("\t.word 0");
         emit("\t.word 0");
