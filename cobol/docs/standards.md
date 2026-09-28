@@ -270,6 +270,8 @@ refused with a message naming the switch.
 - **NATIONAL, part one** (2026-09-28, ISSUES-62): PICTURE N and national
   literals, stored UTF-16 big-endian, alphanumeric read as UTF-8; VALUE,
   MOVE, comparison, DISPLAY, LENGTH and INITIALIZE. docs/national.md.
+  Part two (ISSUES-64): NATIONAL-OF, DISPLAY-OF and CHAR-NATIONAL, and
+  with them function results whose length is known only at run time.
 
 ## Deferred — object orientation
 

@@ -50,8 +50,31 @@ DISPLAY-OF converts); a group receives its bytes (general rule 4).
 Refused until later parts: STRING, UNSTRING, INSPECT, ACCEPT and
 reference modification of national items; numeric and edited national
 pictures; national groups (GROUP-USAGE NATIONAL); national fields in
-Report Writer and SCREEN SECTION; the NATIONAL-OF, DISPLAY-OF and
-CHAR-NATIONAL functions.
+Report Writer and SCREEN SECTION.
+
+## What part two covers (ISSUES-64)
+
+FUNCTION NATIONAL-OF (15.66), DISPLAY-OF (15.26) and CHAR-NATIONAL
+(15.16). NATIONAL-OF decodes its alphanumeric argument as UTF-8,
+DISPLAY-OF encodes its national argument as UTF-8, and a surrogate pair
+becomes one four-byte sequence and back. What does not convert -- a
+byte that begins no UTF-8 sequence, a lone surrogate -- becomes the
+substitution character (argument-2: one national character for
+NATIONAL-OF, one alphanumeric character for DISPLAY-OF), or U+FFFD
+without one; then, with EC-DATA-CONVERSION checked, the statement
+raises it when it completes (15.66.4 rule 3, 15.26.4 rule 3), not in
+the middle of its operands. CHAR-NATIONAL(k) is code unit k-1, as
+CHAR(k) is byte k-1.
+
+The result of NATIONAL-OF and DISPLAY-OF is as long as the conversion
+makes it, known only at run time: `café` is five bytes and four
+national characters. libcob keeps the length of the last one evaluated,
+and the compiler takes it from there -- for the source of a MOVE or a
+comparison, a DISPLAY, and FUNCTION LENGTH (characters) and BYTE-LENGTH
+(bytes). The compile-time bound is 2 bytes per argument byte
+(NATIONAL-OF) or 3 per national character (DISPLAY-OF); a result that
+could exceed 8190 bytes is refused. Reference modification of such a
+result is refused for now.
 
 ## Oracle
 

@@ -562,6 +562,7 @@ static void move_alnum_edited(const char *s, int n, char *dst, const cob_desc *d
  * set, for EC-DATA-CONVERSION (14.9.25 general rule 6).
  * Returns the code units written (at most max). */
 static int nat_bad;
+static unsigned nat_repl = 0xFFFD;              /* what a malformed byte becomes: NATIONAL-OF's argument-2 */
 int cob_nat_conv_bad(void) { int b = nat_bad; nat_bad = 0; return b; }
 static int utf8_to_nat(const unsigned char *p, int n, unsigned short *out, int max)
 {
@@ -576,7 +577,7 @@ static int utf8_to_nat(const unsigned char *p, int n, unsigned short *out, int m
             cp = ((c & 0x07) << 18) | ((p[i + 1] & 0x3F) << 12) | ((p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F); len = 4;
             if (cp < 0x10000 || cp > 0x10FFFF) { cp = 0xFFFD; len = 1; }
         }
-        if (cp == 0xFFFD && len == 1) nat_bad = 1;
+        if (cp == 0xFFFD && len == 1) { nat_bad = 1; cp = nat_repl; }
         i += len;
         if (cp >= 0x10000) {                            /* a surrogate pair: two character positions */
             cp -= 0x10000;
@@ -2263,14 +2264,98 @@ void cob_store_int(void *p, const cob_desc *d, int v) { cob_put_num(p, d, v, 0);
 /* Intrinsic functions                                                     */
 /* ====================================================================== */
 
-static char fnbuf[4][1024];
+static char fnbuf[4][8192];
 static int fnrot;
 
 static char *fn_buffer(int n)
 {
-    if (n > 1024) cob_fatal("intrinsic function argument longer than 1024");
+    if (n > 8192) cob_fatal("intrinsic function result longer than 8192 bytes");
     char *b = fnbuf[fnrot++ & 3];
     return b;
+}
+
+/* ---- run-time-length results (COBOL 2002; cobol ISSUES-64) ------------ */
+
+/* NATIONAL-OF and DISPLAY-OF return as many characters as their argument
+ * converts to.  The compiler takes the length of the one just evaluated
+ * from here, as a descriptor for a CALL-style operand or as a count. */
+static int fn_var_len;
+static int fn_conv_bad;                         /* a checked conversion substituted: EC-DATA-CONVERSION */
+
+int cob_fn_last_len(void) { return fn_var_len; }
+int cob_fn_conv_bad(void) { int b = fn_conv_bad; fn_conv_bad = 0; return b; }
+
+const cob_desc *cob_fn_var_desc(int national)
+{
+    static cob_desc pool[8];
+    static int rot;
+    cob_desc *d = &pool[rot++ & 7];
+    memset(d, 0, sizeof *d);
+    d->cat = national ? COB_NATIONAL : COB_ALNUM;
+    d->usage = COB_U_DISPLAY;
+    d->size = (unsigned)fn_var_len;
+    return d;
+}
+
+/* LENGTH (characters) or BYTE-LENGTH of the result just evaluated */
+char *cob_fn_last_len_digits(int national)
+{
+    char *b = fn_buffer(9);
+    int v = national ? fn_var_len / 2 : fn_var_len;
+    for (int i = 8; i >= 0; i--) { b[i] = (char)('0' + v % 10); v /= 10; }
+    return b;
+}
+
+/* NATIONAL-OF (15.66): alphanumeric UTF-8 to national.  A byte that
+ * begins no valid sequence becomes the substitution character, argument-2,
+ * or U+FFFD without one -- and then, when track is set (checking on),
+ * EC-DATA-CONVERSION at the end of the statement (15.66.4 rule 3) */
+char *cob_fn_national_of(const char *p, int n, const char *sub, int track)
+{
+    unsigned short stk[256], *u = stk;
+    if (n > 256) { u = malloc((size_t)n * sizeof *u); if (!u) cob_fatal("out of memory"); }
+    int save = nat_bad;
+    nat_bad = 0;
+    if (sub) nat_repl = nat_at((const unsigned char *)sub, 0);
+    int k = utf8_to_nat((const unsigned char *)p, n, u, n);
+    nat_repl = 0xFFFD;
+    if (nat_bad && !sub && track) fn_conv_bad = 1;
+    nat_bad = save;
+    unsigned char *b = (unsigned char *)fn_buffer(2 * k);
+    for (int i = 0; i < k; i++) nat_put(b, i, u[i]);
+    if (u != stk) free(u);
+    fn_var_len = 2 * k;
+    return (char *)b;
+}
+
+/* DISPLAY-OF (15.26): national to alphanumeric UTF-8.  A lone surrogate
+ * has no UTF-8 form: it becomes the substitution character, argument-2,
+ * or U+FFFD without one, and EC-DATA-CONVERSION as above (15.26.4 rule 3) */
+char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track)
+{
+    const unsigned char *q = (const unsigned char *)p;
+    int nch = nbytes / 2, k = 0;
+    char *b = fn_buffer(3 * nch);
+    for (int i = 0; i < nch; i++) {
+        unsigned u = nat_at(q, i);
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < nch && nat_at(q, i + 1) >= 0xDC00 && nat_at(q, i + 1) <= 0xDFFF) {
+            k += nat_to_utf8(q + 2 * i, 2, b + k); i++;          /* a pair: four bytes where two units took six */
+        } else if (u >= 0xD800 && u <= 0xDFFF) {
+            if (sub) b[k++] = sub[0];
+            else { k += nat_to_utf8(q + 2 * i, 1, b + k); if (track) fn_conv_bad = 1; }
+        } else k += nat_to_utf8(q + 2 * i, 1, b + k);
+    }
+    fn_var_len = k;
+    return b;
+}
+
+/* CHAR-NATIONAL (15.16): the national character at ordinal position k,
+ * one code unit, as CHAR is one byte */
+char *cob_fn_char_national(int k)
+{
+    unsigned char *b = (unsigned char *)fn_buffer(2);
+    nat_put(b, 0, (unsigned)(k - 1) & 0xFFFF);
+    return (char *)b;
 }
 
 char *cob_fn_upper(const char *s, int n)

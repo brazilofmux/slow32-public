@@ -6,7 +6,7 @@ Three COBOL dialects sit in this orbit. They are not interchangeable.
 |---|---|---|---|
 | standard | X3.23-1974 | X3.23-1985 | GnuCOBOL's 85-shaped dialect |
 | source | fixed format | fixed **and** free | free (`*> ` comments, lowercase) |
-| character set | EBCDIC CP037 | ASCII | ASCII |
+| character set | EBCDIC CP037 | UTF-8 source; bytes, native collating; national UTF-16BE | ASCII |
 | packed hardware | yes | no (library) | host GnuCOBOL |
 | I-O | QSAM, ISAM, VSAM | framing in [framing.md](framing.md) | line sequential + indexed + relative |
 | X3.23a-1989 intrinsic functions (all 42) | amendment | yes | yes |

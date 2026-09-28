@@ -2050,3 +2050,47 @@ code unit, a supplementary character two (the text, 8.5.1.4, and IBM's
 Language Reference agree). docs/national.md, docs/dialect.md. Harness
 189/189; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+### 64. NATIONAL, part two: NATIONAL-OF, DISPLAY-OF, CHAR-NATIONAL (2026-09-28)
+
+The three conversion functions of 2002's national module, and the first
+function results whose length is known only at run time. `café` gives
+four national characters from five bytes; "日本語" gives nine bytes from
+three characters. The compiler knows an upper bound (2 bytes per byte
+for NATIONAL-OF, 3 per character for DISPLAY-OF; a bound past 8190
+bytes is refused), and the length itself comes from libcob when the
+function is evaluated:
+
+- the O_FUNC operand carries `fvar` (run-time length) and `fnat`
+  (national result);
+- a string argument (MOVE source, comparison, DISPLAY) takes r4 from
+  `cob_fn_last_len`, and a CALL-style descriptor operand from
+  `cob_fn_var_desc`, evaluated right after the function;
+- FUNCTION LENGTH and BYTE-LENGTH of such a result become a run-time
+  count (`cob_fn_last_len_digits`);
+- `opnd_size` refuses them, so no path can silently use the bound as
+  the length; reference modification of one is refused for now.
+
+What does not convert becomes the substitution character (argument-2)
+or U+FFFD. Without argument-2 and with EC-DATA-CONVERSION checked,
+libcob notes the substitution and the statement raises the condition
+when it completes (15.66.4 rule 3, 15.26.4 rule 3). A first cut raised
+it inside the function's evaluation, in the middle of the statement's
+operands, where a declarative that returns would have run with the
+operands already staged. libcob's intrinsic buffers grew from 1024
+bytes to 8192 for these results.
+
+This is the machinery EXCEPTION-LOCATION and EXCEPTION-FILE (ISSUES-53)
+and 2014's TRIM were waiting on. 2002/natfuncs (no oracle: GnuCOBOL 4
+has no DISPLAY-OF); eight refusal fixtures. The fixture that used
+CHAR-NATIONAL as an example of an unimplemented module now uses
+BOOLEAN-OF-INTEGER. Harness 198/198; -std=85 output byte-identical on
+all 227 Open Systems programs; majesty PASS; majesty-functions PASS;
+Open Systems paper unchanged.
+
+README ruling 5 was reworded at the same time, at the user's direction:
+"UTF-8 sources. No EBCDIC on this ISA." It was always about the
+machine's character set, never a refusal of non-ASCII text. It now names
+the mainframe data formats that do not carry over unchanged: packed-decimal
+sign nibbles are IBM's bytes, zoned DISPLAY signs are not, and
+COMP-1/COMP-2 cannot mean IBM hexadecimal floating point.

@@ -2927,8 +2927,9 @@ typedef struct Opnd_ {
     NumLit num;         /* O_NUM */
     int line;
     int e_start, e_end; /* O_EXPR: token range, re-parsed when emitted */
-    int fn; struct Opnd_ *farg; int fsize;   /* O_FUNC: intrinsic, its argument, result width */
+    int fn; struct Opnd_ *farg, *farg2; int fsize;   /* O_FUNC: intrinsic, its argument(s), result width */
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
+    int fvar, fnat;                          /* O_FUNC: length known only at run time (fsize its maximum); a national result */
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
@@ -3101,10 +3102,11 @@ static void parse_ref(Ref *r)
             die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
 }
 
-enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT };
+enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
+       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN };
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
-static int fn_is_numeric(int fn) { return fn >= FN_INTDATE && fn <= FN_INTDAY; }
+static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN; }
 static const char *fn_runtime_name(int fn)
 {
     switch (fn) {
@@ -3164,6 +3166,7 @@ static void function_refmod(Opnd *o)
     int line = cur()->line;
     int numeric = o->fn == -1 ? o->fscale >= 0 : fn_is_numeric(o->fn);
     if (numeric) die_at(line, "a numeric function cannot be reference-modified");
+    if (o->fvar) die_at(line, "reference modification of a function whose length is known only at run time is not implemented yet");
     advance();
     if (cur()->kind != T_NUM || peek(1)->kind != T_COLON)
         die_at(line, "reference modification of a function with an expression position is not implemented yet");
@@ -3274,7 +3277,7 @@ static int fn89_known(const char *w)
 {
     static const char *named[] = { "when-compiled", "upper-case", "lower-case", "current-date", "integer-of-date",
         "date-of-integer", "day-of-integer", "integer-of-day", "length", "byte-length", "highest-algebraic",
-        "lowest-algebraic", "exception-status", "exception-statement", NULL };
+        "lowest-algebraic", "exception-status", "exception-statement", "national-of", "display-of", "char-national", NULL };
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(w, g_fn89[i].name)) return 1;
     for (int i = 0; named[i]; i++) if (!strcmp(w, named[i])) return 1;
     return 0;
@@ -3332,7 +3335,6 @@ static int ufn_named(const char *w);
 static void fn_refuse(Tok *n)
 {
     static const struct { const char *name, *why; } later[] = {
-        { "char-national", "the NATIONAL module" }, { "display-of", "the NATIONAL module" }, { "national-of", "the NATIONAL module" },
         { "boolean-of-integer", "the BOOLEAN module" }, { "integer-of-boolean", "the BOOLEAN module" },
         { "exception-file", "EC-I-O checking (cobol ISSUES-53 has what is done)" }, { "exception-file-n", "EC-I-O checking" },
         { "exception-location", "a variable-length result (cobol ISSUES-53)" }, { "exception-location-n", "a variable-length result" },
@@ -3457,6 +3459,42 @@ static void parse_operand_raw(Opnd *o)
         }
         if (!strcmp(n->s, "upper-case")) o->fn = FN_UPPER;
         else if (!strcmp(n->s, "lower-case")) o->fn = FN_LOWER;
+        else if (!strcmp(n->s, "national-of") || !strcmp(n->s, "display-of") || !strcmp(n->s, "char-national")) {
+            /* COBOL 2002 15.66, 15.26, 15.16 (cobol ISSUES-64) */
+            if (g_std < 2002) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
+            int natof = !strcmp(n->s, "national-of"), dispof = !strcmp(n->s, "display-of");
+            advance();
+            if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
+            advance();
+            Opnd *a1 = xmalloc(sizeof *a1); parse_operand(a1);
+            Opnd *a2 = NULL;
+            if (cur()->kind != T_RP && (natof || dispof)) { a2 = xmalloc(sizeof *a2); parse_operand(a2); }
+            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the arguments of FUNCTION %s", n->s);
+            advance();
+            o->kind = O_FUNC; o->farg = a1; o->farg2 = a2; o->line = n->line;
+            if (natof) {
+                if (opnd_is_national(a1) || a1->kind == O_NUM || (a1->kind == O_REF && is_numeric_sym(a1->ref.sym)))
+                    die_at(n->line, "FUNCTION NATIONAL-OF takes an alphanumeric argument (15.66.3)");
+                if (a2 && !(opnd_is_national(a2) && a2->kind != O_FUNC && opnd_size(a2) == 2))
+                    die_at(n->line, "FUNCTION NATIONAL-OF: the substitution character is one national character (15.66.3)");
+                o->fn = FN_NATOF; o->fnat = 1; o->fvar = 1;
+                /* at most one national character per alphanumeric byte */
+                o->fsize = 2 * (a1->kind == O_FUNC ? a1->fsize : opnd_size(a1));
+            } else if (dispof) {
+                if (!opnd_is_national(a1)) die_at(n->line, "FUNCTION DISPLAY-OF takes a national argument (15.26.3)");
+                if (a2 && (opnd_is_national(a2) || a2->kind == O_NUM || a2->kind == O_FUNC || opnd_size(a2) != 1))
+                    die_at(n->line, "FUNCTION DISPLAY-OF: the substitution character is one alphanumeric character (15.26.3)");
+                o->fn = FN_DISPOF; o->fvar = 1;
+                /* at most three UTF-8 bytes per national character */
+                o->fsize = 3 * ((a1->kind == O_FUNC ? a1->fsize : opnd_size(a1)) / 2);
+            } else {
+                if (a1->kind != O_NUM && !(a1->kind == O_REF && is_int_item(a1->ref.sym)))
+                    die_at(n->line, "FUNCTION CHAR-NATIONAL takes an integer (15.16.3)");
+                o->fn = FN_CHARNAT; o->fnat = 1; o->fsize = 2;
+            }
+            if (o->fsize > 8190) die_at(n->line, "FUNCTION %s: the result could exceed 8190 bytes", n->s);
+            return;
+        }
         else if (!strcmp(n->s, "exception-status") || !strcmp(n->s, "exception-statement")) {
             /* COBOL 2002 15.32-15.33: the last exception status */
             if (g_std < 2002) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
@@ -3498,6 +3536,13 @@ static void parse_operand_raw(Opnd *o)
             if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
             advance();
             if (x.kind != O_REF && x.kind != O_STR && x.kind != O_FUNC) die_at(n->line, "FUNCTION LENGTH takes an item or a literal");
+            if (x.kind == O_FUNC && x.fvar) {       /* the length of a result known only at run time */
+                Opnd *fx = xmalloc(sizeof *fx); *fx = x;
+                memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = FN_VARLEN; o->farg = fx; o->fsize = 9;
+                o->fnid = x.fnat;                   /* characters of a national result */
+                o->line = n->line;
+                return;
+            }
             int len = opnd_size(&x);
             if (len < 0) die_at(n->line, "FUNCTION LENGTH of a reference modification with a variable length is not implemented");
             if (opnd_is_national(&x)) len /= 2;         /* national: character positions, two bytes each */
@@ -3516,6 +3561,12 @@ static void parse_operand_raw(Opnd *o)
             advance();
             if (bytes) {
                 if (x.kind != O_REF && x.kind != O_STR && x.kind != O_FUNC) die_at(n->line, "FUNCTION BYTE-LENGTH takes an item or a literal");
+                if (x.kind == O_FUNC && x.fvar) {
+                    Opnd *fx = xmalloc(sizeof *fx); *fx = x;
+                    memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = FN_VARLEN; o->farg = fx; o->fsize = 9; o->fnid = 0;
+                    o->line = n->line;
+                    return;
+                }
                 int len = opnd_size(&x);
                 if (len < 0) die_at(n->line, "FUNCTION BYTE-LENGTH of a reference modification with a variable length is not implemented");
                 o->kind = O_NUM; numlit_from_int(&o->num, len);
@@ -3734,11 +3785,12 @@ static void emit_screen_dyn_fill(Screen *sc, int first, int count)
 
 /* ---- argument staging ------------------------------------------------- */
 
-enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT };
+enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT, A_FDESC };
 typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; Opnd *fn; } Arg;
 static Arg arg_func(Opnd *o)       { Arg a = { A_FUNC, 0, 0, 0, 0, o }; return a; }
 static Arg arg_value(Opnd *o)      { Arg a = { A_VALUE, 0, 0, 0, 0, o }; return a; }
 static Arg arg_content(Opnd *o)    { Arg a = { A_CONTENT, 0, 0, 0, 0, o }; return a; }   /* BY CONTENT: a copy's address */
+static Arg arg_fdesc(Opnd *o)      { Arg a = { A_FDESC, 0, 0, 0, 0, o }; return a; }   /* the descriptor of the function result just evaluated */
 static Arg arg_rdesc(const Ref *r) { Arg a = { A_RDESC, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_rlen(const Ref *r)  { Arg a = { A_RLEN, r, 0, 0, 0, 0 }; return a; }
 static int g_slot_base;             /* staged operands of nested evaluations use higher slots */
@@ -3846,6 +3898,14 @@ static void emit_args(const Arg *a, int n)
             slotted[i] = 1;
         } else if (a[i].kind == A_FUNC) {
             emit_fn_value(a[i].fn);        /* r1 = the result buffer */
+            emit("\tstw sp+%d, r1", SLOT(base + i));
+            slotted[i] = 1;
+        } else if (a[i].kind == A_FDESC) {
+            /* a result whose length is known only now: its descriptor, taken
+             * while it is still the last function evaluated (the A_FUNC
+             * before this one) */
+            emit_li("r3", a[i].fn->fnat);
+            emit_call("cob_fn_var_desc");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         }
@@ -4115,6 +4175,8 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
 
 
 /* evaluate an intrinsic into libcob's buffer; r1 holds the pointer */
+static int g_stmt_convcheck;            /* this statement evaluated a checked NATIONAL-OF / DISPLAY-OF */
+
 static void emit_fn_value_raw(Opnd *f);
 /* a function's value in libcob's buffer, r1 its address -- evaluated at
  * its full width, the address then moved to a reference modification's part */
@@ -4126,9 +4188,66 @@ static void emit_fn_value(Opnd *f)
     if (f->frm) emit("\taddi r1, r1, %d", f->frm);
 }
 
+/* r3 = a string argument's address, r4 its length in bytes -- a
+ * run-time-length function's taken from libcob as it is evaluated */
+static void emit_str_arg(Opnd *x)
+{
+    if (x->kind == O_FUNC) {
+        emit_fn_value(x);
+        if (x->fvar) {
+            emit("\tadd r12, r1, r0");
+            emit_call("cob_fn_last_len");
+            emit("\tadd r4, r1, r0");
+            emit("\tadd r3, r12, r0");
+        } else { emit("\tadd r3, r1, r0"); emit_li("r4", x->fsize); }
+        return;
+    }
+    if (x->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len)); emit_li("r4", x->tok->len); return; }
+    if (x->kind != O_REF || (x->ref.rm && ref_static_len(&x->ref) <= 0))
+        die_at(x->line, "this function's argument must be an item or a literal of known length");
+    emit_ref_addr(&x->ref, "r3");
+    emit_li("r4", x->ref.rm ? ref_static_len(&x->ref) : (long)x->ref.sym->size);
+}
+
 static void emit_fn_value_raw(Opnd *f)
 {
     Opnd *x = f->farg;
+    if (f->fn == FN_NATOF || f->fn == FN_DISPOF) {
+        /* the substitution character's address first, into a frame slot */
+        int slot = g_slot_base++;
+        if (f->farg2) {
+            Opnd *s2 = f->farg2;
+            if (s2->kind == O_STR) emit_la("r1", lit_label((unsigned char *)s2->tok->s, s2->tok->len));
+            else emit_ref_addr(&s2->ref, "r1");
+        } else emit_li("r1", 0);
+        emit("\tstw sp+%d, r1", SLOT(slot));
+        emit_str_arg(x);
+        emit("\tldw r5, sp+%d", SLOT(slot));
+        g_slot_base--;
+        /* no substitution character and checking on: libcob notes a
+         * substitution (15.66.4 rule 3, 15.26.4 rule 3), and the statement
+         * raises EC-DATA-CONVERSION when it completes -- not here, in the
+         * middle of its operands, where a declarative that returns would
+         * leave the operands already staged behind it */
+        int track = !f->farg2 && ec_on_name("EC-DATA-CONVERSION");
+        emit_li("r6", track);
+        if (track && !g_noemit) g_stmt_convcheck = 1;
+        emit_call(f->fn == FN_NATOF ? "cob_fn_national_of" : "cob_fn_display_of");
+        return;
+    }
+    if (f->fn == FN_CHARNAT) {
+        emit_push_opnd(x);
+        emit_call("cob_pop_int");
+        emit("\tadd r3, r1, r0");
+        emit_call("cob_fn_char_national");
+        return;
+    }
+    if (f->fn == FN_VARLEN) {
+        emit_fn_value(x);                        /* its length is libcob's now */
+        emit_li("r3", f->fnid);
+        emit_call("cob_fn_last_len_digits");
+        return;
+    }
     if (f->fn == -1) {
         if (f->fkind == FK_NUMS) {
             int cnt = 0;
@@ -4223,6 +4342,8 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
         return;
     case O_FUNC:
         *addr = arg_func(o);
+        if (o->fvar) { *desc = arg_fdesc(o); return; }
+        if (o->fnat) { *desc = arg_desc(nat_desc(o->fsize)); return; }
         if (o->fn == -1) *desc = arg_desc(o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize));
         else *desc = arg_desc(fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
         return;
@@ -4252,13 +4373,19 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
     }
 }
 
+/* a size to expand a figurative constant to: a run-time-length function
+ * result's maximum, else the operand's size */
+static int opnd_size_bound(Opnd *o) { return o->kind == O_FUNC && o->fvar ? o->fsize : opnd_size(o); }
+
 static int opnd_size(Opnd *o)
 {
     switch (o->kind) {
     case O_REF: return ref_static_len(&o->ref);
     case O_STR: return o->tok->len;
     case O_NUM: return o->num.ndigits;
-    case O_FUNC: return o->fsize;
+    case O_FUNC:
+        if (o->fvar) die_at(o->line, "a function whose length is known only at run time is not supported here yet");
+        return o->fsize;
     default: return 0;
     }
 }
@@ -4872,9 +4999,9 @@ static void emit_cond_value(Cond *c)
         Arg a[4];
         /* a figurative constant or ALL literal against a national operand
          * is national itself: HIGH-VALUE is U+FFFF, not the byte FF */
-        if (opnd_is_national(&c->x)) nat_fig_opnd(&c->y, opnd_size(&c->x));
-        if (opnd_is_national(&c->y)) nat_fig_opnd(&c->x, opnd_size(&c->y));
-        int xs = opnd_size(&c->x), ys = opnd_size(&c->y);
+        if (opnd_is_national(&c->x)) nat_fig_opnd(&c->y, opnd_size_bound(&c->x));
+        if (opnd_is_national(&c->y)) nat_fig_opnd(&c->x, opnd_size_bound(&c->y));
+        int xs = opnd_size_bound(&c->x), ys = opnd_size_bound(&c->y);
         int xn = opnd_numeric(&c->x), yn = opnd_numeric(&c->y);
         opnd_args(&c->x, &a[0], &a[1], ys, yn);
         opnd_args(&c->y, &a[2], &a[3], xs, xn);
@@ -5603,6 +5730,7 @@ static void emit_move_all_numeric(Opnd *src, Ref *dst, int n)
  * bytes, general rule 4).  Returns 0 when neither side is national. */
 static int opnd_is_national(const Opnd *o)
 {
+    if (o->kind == O_FUNC) return o->fnat;
     if (o->kind == O_STR || o->kind == O_ALL) return o->tok && o->tok->nat;
     return o->kind == O_REF && !o->ref.sym->is_group && o->ref.sym->pi.category == PIC_NATIONAL;
 }
@@ -9426,8 +9554,25 @@ static void parse_search(void)
 /* ---- dispatch ---------------------------------------------------------- */
 
 static void parse_raise(void);
+static void parse_statement_1(void);
 
+/* a statement, then the EC-DATA-CONVERSION its conversion functions noted */
 static void parse_statement(void)
+{
+    int outer = g_stmt_convcheck;
+    g_stmt_convcheck = 0;
+    parse_statement_1();
+    if (g_stmt_convcheck) {
+        int Lok = new_label();
+        emit_call("cob_fn_conv_bad");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-DATA-CONVERSION", 0));
+        emit_label(Lok);
+    }
+    g_stmt_convcheck = outer;
+}
+
+static void parse_statement_1(void)
 {
     apply_dirs();                           /* a >>TURN before this statement */
     Tok *t = cur();

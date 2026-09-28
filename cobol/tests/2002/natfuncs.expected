@@ -1,0 +1,15 @@
+national-of: [café  ] 000000004 000000008
+lengths: 000000004 000000008
+bytes: UTF-16BE
+compare: equal
+display-of: [日本語] 000000009
+char-national(66): [A     ]
+char-national(12354): [ぁ     ]
+substituted: [ab?c  ]
+unchecked: [ab�c  ]
+lone, substituted: [x#z]
+  declarative: EC-DATA-CONVERSION             
+checked: [ab�c  ]
+checked, substituted: [ab?c  ]
+lone, checked: [x�z]
+  declarative: EC-DATA-CONVERSION             

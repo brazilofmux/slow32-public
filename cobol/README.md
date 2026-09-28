@@ -57,7 +57,21 @@ under `docs/`.
 4. **Not SSA/BURG.** COBOL is a data-description language with verbs,
    not an Algol. The IR is the symbol table. See
    [docs/architecture.md](docs/architecture.md).
-5. **ASCII.** `HIGH-VALUE` is `0xFF`. No EBCDIC on this ISA.
+5. **UTF-8 sources. No EBCDIC on this ISA.** Source text is UTF-8;
+   fixed-form columns count code points (`-fixed-columns=bytes` for
+   byte columns). Alphanumeric data is bytes in the native collating
+   sequence -- `HIGH-VALUE` is `0xFF` -- and text in it is UTF-8 by
+   convention; national data (`PIC N`) is UTF-16 big-endian. COBOL 85
+   on the PC side was ASCII, and without national data there was no
+   point in code pages; the ruling was always about the character set
+   of the machine, not a refusal of non-ASCII text. Data formats that
+   cross from the mainframe are tricky and are settled one at a time:
+   packed-decimal sign nibbles (`C`/`D`/`F`) are the same bytes as
+   IBM's, zoned DISPLAY signs are not (ASCII overpunch `p`..`y`, not
+   EBCDIC zones), and COMP-1/COMP-2 cannot mean what they mean on
+   z/OS, whose floating point is IBM hexadecimal, not IEEE (COMP-1 here
+   is RM/COBOL's binary integer; COMP-2 is refused). See
+   [docs/dialect.md](docs/dialect.md) and [docs/national.md](docs/national.md).
 6. **Framing is an FD fact.** Line sequential, RDW-framed V, fixed
    sequential, relative, and indexed are different. Do not conflate a
    newline with a record length. See [docs/framing.md](docs/framing.md).
