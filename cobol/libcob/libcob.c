@@ -2565,6 +2565,87 @@ char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track)
     return b;
 }
 
+/* ---- boolean expressions (2023 8.8.2; cobol ISSUES-77) -----------------
+ * A stack of boolean values, each a string of characters 0 and 1.  Binary
+ * operations extend the shorter operand on the right with zeros (rule 9);
+ * a shift keeps its operand's length (rule 8); B-NOT its operand's. */
+static struct { char *v; int n; } bstk[32];
+static int bsp;
+static void bstk_push(char *v, int n)
+{
+    if (bsp == 32) cob_fatal("boolean expression too deep");
+    bstk[bsp].v = v; bstk[bsp].n = n; bsp++;
+}
+void cob_bpush(const void *p, const cob_desc *d)
+{
+    unsigned char t[NATNUM_MAX]; cob_desc nd;
+    const unsigned char *q = p; int n = (int)d->size;
+    if (d->usage == COB_U_NATIONAL) { q = nat_narrow(p, d, t, &nd); n = (int)nd.size; }
+    char *v = malloc((size_t)n + 1); if (!v) cob_fatal("out of memory");
+    for (int i = 0; i < n; i++) v[i] = q[i] == '1' ? '1' : '0';
+    bstk_push(v, n);
+}
+void cob_bnot(void)
+{
+    char *v = bstk[bsp - 1].v;
+    for (int i = 0; i < bstk[bsp - 1].n; i++) v[i] = v[i] == '1' ? '0' : '1';
+}
+static void bbin(int op)
+{
+    if (bsp < 2) cob_fatal("boolean stack underflow");
+    int na = bstk[bsp - 2].n, nb = bstk[bsp - 1].n, n = na > nb ? na : nb;
+    char *a = bstk[bsp - 2].v, *b = bstk[bsp - 1].v, *r = malloc((size_t)n + 1);
+    if (!r) cob_fatal("out of memory");
+    for (int i = 0; i < n; i++) {
+        int x = i < na && a[i] == '1', y = i < nb && b[i] == '1';
+        r[i] = (char)('0' + (op == 0 ? (x & y) : op == 1 ? (x | y) : (x ^ y)));
+    }
+    free(a); free(b); bsp -= 2;
+    bstk_push(r, n);
+}
+void cob_band(void) { bbin(0); }
+void cob_bor(void) { bbin(1); }
+void cob_bxor(void) { bbin(2); }
+/* kind 0 left, 1 right, 2 circular left, 3 circular right */
+void cob_bshift(int kind, int count)
+{
+    int n = bstk[bsp - 1].n;
+    char *v = bstk[bsp - 1].v;
+    if (n == 0 || count <= 0) return;
+    char *t = malloc((size_t)n); if (!t) cob_fatal("out of memory");
+    for (int i = 0; i < n; i++) {
+        int src;
+        switch (kind) {
+        case 0: src = i + count; t[i] = src < n ? v[src] : '0'; break;
+        case 1: src = i - count; t[i] = src >= 0 ? v[src] : '0'; break;
+        case 2: t[i] = v[(i + count) % n]; break;
+        default: t[i] = v[((i - count) % n + n) % n]; break;
+        }
+    }
+    memcpy(v, t, (size_t)n); free(t);
+}
+/* the top value into a receiver, by the MOVE rules (14.6.8.6) */
+void cob_bstore(void *p, const cob_desc *d)
+{
+    cob_desc sd; memset(&sd, 0, sizeof sd);
+    sd.cat = COB_BOOLEAN; sd.usage = COB_U_DISPLAY; sd.size = (unsigned)bstk[bsp - 1].n;
+    cob_move(bstk[bsp - 1].v, &sd, p, d);
+}
+void cob_bdrop(void) { if (bsp) free(bstk[--bsp].v); }
+/* the top two compared (8.8.4.2.8), both dropped */
+int cob_bcmp(void)
+{
+    if (bsp < 2) cob_fatal("boolean stack underflow");
+    int na = bstk[bsp - 2].n, nb = bstk[bsp - 1].n, r = 0;
+    const char *a = bstk[bsp - 2].v, *b = bstk[bsp - 1].v;
+    for (int i = 0; i < na || i < nb; i++) {
+        char x = i < na ? a[i] : '0', y = i < nb ? b[i] : '0';
+        if (x != y) { r = x < y ? -1 : 1; break; }
+    }
+    cob_bdrop(); cob_bdrop();
+    return r;
+}
+
 /* BOOLEAN-OF-INTEGER (2023 15.13): argument-1, from the numeric stack,
  * as n boolean positions, the low-order binary digit rightmost, zero-
  * filled or truncated on the left (cobol ISSUES-76) */

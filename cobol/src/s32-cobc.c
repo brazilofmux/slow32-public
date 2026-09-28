@@ -3102,7 +3102,7 @@ static FnSig g_fnsig[128]; static int g_nfnsig;
 static char g_repo_fn[32][64]; static int g_nrepo_fn;
 static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
 
-enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC };
+enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR };   /* O_BEXPR: a boolean expression, e_start..e_end, fsize its widest operand */
 
 typedef struct Opnd_ {
     int kind;
@@ -4981,6 +4981,8 @@ static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); memset(c, 0, siz
 
 static int opnd_is_boolean(const Opnd *o);
 static void bool_fig_opnd(Opnd *o, int n);
+static int at_operand(void);
+static int is_verb(const char *w);
 static int bool_positions(const Sym *s);
 static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
@@ -5006,9 +5008,154 @@ static int paren_is_condition(void);
 static int at_arith_op(void);
 static void emit_push_opnd(Opnd *o);
 
+/* ---- boolean expressions (2023 8.8.2; cobol ISSUES-77) ------------------
+ * Parsed and emitted in one pass, as parse_expr is: operands are pushed on
+ * libcob's boolean stack, operators applied to it, in the order a shunting
+ * yard gives -- B-NOT, then B-AND, B-XOR, B-OR, left to right; a shift
+ * takes the precedence of the operation before it, B-AND's if none (rule
+ * 7b), and carries its integer count with it.  Under g_noemit it only
+ * scans.  Returns the widest operand's boolean positions. */
+enum { BO_AND = 1, BO_OR, BO_XOR, BO_NOT, BO_SL, BO_SR, BO_SLC, BO_SRC, BO_PAREN };
+static int bool_op(const Tok *t)
+{
+    if (g_std < 2002 || t->kind != T_WORD) return 0;
+    static const char *w[] = { "", "b-and", "b-or", "b-xor", "b-not", "b-shift-l", "b-shift-r", "b-shift-lc", "b-shift-rc" };
+    for (int i = 1; i <= 8; i++) if (!strcmp(t->s, w[i])) return i;
+    return 0;
+}
+static int bool_opnd_len(const Opnd *o)
+{
+    if (o->kind == O_STR) return o->tok->len;
+    if (o->kind == O_FUNC) return o->fsize;
+    if (o->kind == O_REF) return o->ref.rm ? (o->ref.rm_len ? (int)o->ref.rm_len : 1) : bool_positions(o->ref.sym);
+    return 1;
+}
+static void bool_emit_op(int op, Opnd *cnt)
+{
+    if (op == BO_NOT) { emit_call("cob_bnot"); return; }
+    if (op <= BO_XOR) { emit_call(op == BO_AND ? "cob_band" : op == BO_OR ? "cob_bor" : "cob_bxor"); return; }
+    emit_push_opnd(cnt);
+    emit_call("cob_pop_int");
+    emit("\tadd r4, r1, r0");
+    emit_li("r3", op - BO_SL);                   /* 0 L, 1 R, 2 LC, 3 RC */
+    emit_call("cob_bshift");
+}
+static void bool_emit_operand(Opnd *o)
+{
+    Arg a[2];
+    opnd_args(o, &a[0], &a[1], 0, 0);
+    emit_args(a, 2);
+    emit_call("cob_bpush");
+}
+static int parse_bexpr(void)
+{
+    struct { int op, prec; Opnd cnt; } st[64]; int sp = 0;
+    int lastprec[32], lv = 0; lastprec[0] = 0;
+    int want = 1, width = 0, line = cur()->line;
+    static const int prec[] = { 0, 3, 1, 2, 4 };
+    for (;;) {
+        Tok *t = cur(); int op = bool_op(t);
+        if (want) {
+            if (op == BO_NOT) { advance(); st[sp].op = BO_NOT; st[sp].prec = 4; sp++; continue; }
+            if (t->kind == T_LP) {
+                advance();
+                if (sp == 64 || lv == 31) die_at(t->line, "a boolean expression nested too deeply");
+                st[sp].op = BO_PAREN; st[sp].prec = 0; sp++; lastprec[++lv] = 0; continue;
+            }
+            if (op) die_at(t->line, "a boolean operand is expected before %s (2023 8.8.2, Table 4)", t->s);
+            if (!at_operand() || (t->kind == T_WORD && is_verb(t->s))) die_at(line, "a boolean expression ends without an operand (2023 8.8.2 rule 2)");
+            Opnd o; parse_operand(&o);
+            if (o.kind == O_ALL) die_at(o.line, "ALL in a boolean expression is not implemented");
+            if (o.kind == O_FIG) bool_fig_opnd(&o, 1);            /* ZERO: a boolean zero, extended as needed */
+            if (!opnd_is_boolean(&o)) die_at(o.line, "a boolean expression takes boolean operands (2023 8.8.2)");
+            bool_emit_operand(&o);
+            int w = bool_opnd_len(&o); if (w > width) width = w;
+            want = 0;
+            continue;
+        }
+        if (t->kind == T_RP && lv > 0) {
+            advance();
+            while (sp && st[sp - 1].op != BO_PAREN) { sp--; bool_emit_op(st[sp].op, &st[sp].cnt); }
+            sp--; lv--;
+            continue;
+        }
+        if (op == BO_AND || op == BO_OR || op == BO_XOR) {
+            advance();
+            int p = prec[op];
+            while (sp && st[sp - 1].op != BO_PAREN && st[sp - 1].prec >= p) { sp--; bool_emit_op(st[sp].op, &st[sp].cnt); }
+            if (sp == 64) die_at(t->line, "a boolean expression too long");
+            st[sp].op = op; st[sp].prec = p; sp++;
+            lastprec[lv] = p; want = 1;
+            continue;
+        }
+        if (op >= BO_SL && op <= BO_SRC) {
+            advance();
+            int p = lastprec[lv] ? lastprec[lv] : 3;
+            Opnd cnt; parse_operand(&cnt);
+            if (!((cnt.kind == O_NUM && numlit_is_int(&cnt.num) && !cnt.num.neg) || (cnt.kind == O_REF && is_int_item(cnt.ref.sym))))
+                die_at(cnt.line, "a boolean shift takes an integer (2023 8.8.2 rule 5)");
+            while (sp && st[sp - 1].op != BO_PAREN && st[sp - 1].prec >= p) { sp--; bool_emit_op(st[sp].op, &st[sp].cnt); }
+            bool_emit_op(op, &cnt);
+            continue;
+        }
+        break;
+    }
+    if (want) die_at(line, "a boolean expression ends without an operand");
+    while (sp) {
+        sp--;
+        if (st[sp].op == BO_PAREN) die_at(line, "unbalanced parentheses in a boolean expression");
+        bool_emit_op(st[sp].op, &st[sp].cnt);
+    }
+    return width;
+}
+
+/* does the parenthesis at the cursor open a boolean expression: a boolean
+ * operator before its match */
+static int paren_is_boolean(void)
+{
+    int depth = 0;
+    for (int i = g_tp; i < g_ntok; i++) {
+        if (g_tok[i].kind == T_LP) depth++;
+        else if (g_tok[i].kind == T_RP) { if (--depth == 0) return 0; }
+        else if (g_tok[i].kind == T_PERIOD) return 0;
+        else if (bool_op(&g_tok[i])) return 1;
+    }
+    return 0;
+}
+
+/* a boolean expression as a condition operand, re-parsed when emitted */
+static Opnd bexpr_opnd(void)
+{
+    Opnd o; memset(&o, 0, sizeof o);
+    o.kind = O_BEXPR; o.line = cur()->line; o.e_start = g_tp;
+    g_noemit++; o.fsize = parse_bexpr(); g_noemit--;
+    o.e_end = g_tp;
+    return o;
+}
+
+/* push any boolean operand, an expression's value included */
+static void bool_push(Opnd *o)
+{
+    if (o->kind == O_BEXPR) { int save = g_tp; g_tp = o->e_start; parse_bexpr(); g_tp = save; return; }
+    bool_emit_operand(o);
+}
+
 /* a condition operand: a plain operand, or an arithmetic expression */
 static Opnd parse_cond_operand(void)
 {
+    if (g_std >= 2002) {
+        /* a boolean expression: B-NOT, a parenthesis holding a boolean
+         * operator, or a boolean operand followed by one */
+        if (bool_op(cur()) == BO_NOT) return bexpr_opnd();
+        if (cur()->kind == T_LP && !paren_is_condition() && paren_is_boolean()) return bexpr_opnd();
+        int start = g_tp;
+        if ((cur()->kind == T_WORD || cur()->kind == T_STR) && at_operand()) {
+            g_noemit++; Opnd x; parse_operand(&x); g_noemit--;
+            int op = bool_op(cur());
+            g_tp = start;
+            if (op && op != BO_NOT && opnd_is_boolean(&x)) return bexpr_opnd();
+        }
+    }
     if (cur()->kind == T_LP && !paren_is_condition()) return expr_opnd();
     if (cur()->kind == T_OP && (!strcmp(cur()->s, "-") || !strcmp(cur()->s, "+"))) return expr_opnd();   /* a unary sign begins an expression */
     int start = g_tp;
@@ -5147,7 +5294,8 @@ static Cond *parse_simple(void)
     if (op < 0 && opnd_is_boolean(&x)) {
         /* a simple boolean condition (2023 8.8.4.3): one boolean position,
          * true when it is 1 */
-        int len = x.kind == O_STR ? x.tok->len : x.ref.rm ? (int)x.ref.rm_len : bool_positions(x.ref.sym);
+        int len = x.kind == O_BEXPR ? x.fsize : x.kind == O_STR ? x.tok->len : x.kind == O_FUNC ? x.fsize :
+                  x.ref.rm ? (int)x.ref.rm_len : bool_positions(x.ref.sym);
         if (len != 1) die_at(line, "a boolean condition takes a boolean item of one position (2023 8.8.4.3.3 rule 1)");
         Tok *one = xmalloc(sizeof *one); memset(one, 0, sizeof *one);
         one->kind = T_STR; one->s = "1"; one->len = 1; one->boolv = 1; one->line = line;
@@ -5228,6 +5376,21 @@ static void emit_cond_value(Cond *c)
         return;
     }
     /* C_REL */
+    if (c->x.kind == O_BEXPR || c->y.kind == O_BEXPR) {
+        bool_push(&c->x);
+        bool_push(&c->y);
+        emit_call("cob_bcmp");
+        switch (c->op) {
+        case R_EQ: emit("\tseq r1, r1, r0"); break;
+        case R_NE: emit("\tsne r1, r1, r0"); break;
+        case R_LT: emit("\tslt r1, r1, r0"); break;
+        case R_GT: emit("\tsgt r1, r1, r0"); break;
+        case R_LE: emit("\tsle r1, r1, r0"); break;
+        case R_GE: emit("\tsge r1, r1, r0"); break;
+        }
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
     if (c->x.kind == O_EXPR || c->y.kind == O_EXPR) {
         emit_push_opnd(&c->x);
         emit_push_opnd(&c->y);
@@ -6202,6 +6365,7 @@ static int opnd_is_boolean(const Opnd *o)
 {
     if (o->kind == O_STR || o->kind == O_ALL) return o->tok && o->tok->boolv;
     if (o->kind == O_FUNC) return o->fbool;
+    if (o->kind == O_BEXPR) return 1;
     return o->kind == O_REF && sym_is_boolean(o->ref.sym);
 }
 
@@ -6758,7 +6922,8 @@ static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)
         parse_ref(&rs[n]);
         Sym *d = rs[n].sym;
         if (rs[n].rm) die_at(rs[n].line, "a reference-modified item cannot be an arithmetic receiver");
-        if (d->is_group || (d->pi.category != PIC_NUMERIC && !(edited_ok && d->pi.category == PIC_NUMERIC_EDITED)))
+        if (d->is_group || (d->pi.category != PIC_NUMERIC && !(edited_ok && d->pi.category == PIC_NUMERIC_EDITED) &&
+                            !(edited_ok == 2 && sym_is_boolean(d))))    /* 2: COMPUTE, whose format 2 stores a boolean */
             die_at(rs[n].line, "'%s' is not numeric", d->name);
         rounded[n] = 0;
         if (accept_word("rounded")) {
@@ -7352,10 +7517,27 @@ static int paren_is_condition(void)
 static void parse_compute(void)
 {
     Ref rs[MAXOPS]; int rd[MAXOPS];
-    int nr = parse_ref_list(rs, rd, MAXOPS, 1);
+    int nr = parse_ref_list(rs, rd, MAXOPS, 2);
     if (!nr) die_at(cur()->line, "COMPUTE needs a receiving item");
     if (!at_op("=")) die_at(cur()->line, "expected '=' in COMPUTE, found %s", tok_desc(cur()));
     advance();
+    int nb = 0;
+    for (int i = 0; i < nr; i++) nb += sym_is_boolean(rs[i].sym);
+    if (nb) {
+        /* a boolean-compute (2023 14.9.8, format 2): the expression's
+         * value stored in each receiver by the MOVE rules */
+        if (nb != nr) die_at(rs[0].line, "COMPUTE: boolean and numeric receivers cannot be mixed (2023 14.9.8.3)");
+        for (int i = 0; i < nr; i++) if (rd[i]) die_at(rs[i].line, "ROUNDED does not apply to a boolean receiver");
+        parse_bexpr();
+        for (int i = 0; i < nr; i++) {
+            Arg a[2] = { arg_ref(&rs[i]), rs[i].rm ? (rs[i].rm_len ? arg_desc(bool_desc((int)rs[i].rm_len)) : arg_rdesc(&rs[i])) : arg_desc(sym_desc(rs[i].sym)) };
+            emit_args(a, 2);
+            emit_call("cob_bstore");
+        }
+        emit_call("cob_bdrop");
+        accept_word("end-compute");
+        return;
+    }
     parse_expr();
     int size_err = at_size_error_clause() || ec_size_on();
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);

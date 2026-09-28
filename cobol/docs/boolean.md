@@ -40,11 +40,23 @@ Literals: `B"0101"`, and `BX"5"`, each hexadecimal digit four positions
   BOOLEAN-OF-INTEGER with a length item returns a result whose length
   is known at run time (the ISSUES-64 machinery).
 
+## Expressions (ISSUES-77)
+
+`B-NOT`, `B-AND`, `B-XOR`, `B-OR` and the shifts `B-SHIFT-L`, `-R`,
+`-LC`, `-RC` (8.8.2), in COMPUTE's format 2 (14.9.8) and in conditions.
+Precedence is B-NOT, B-AND, B-XOR, B-OR, left to right; a shift takes
+the precedence of the operation before it, or B-AND's (rule 7b), and its
+count is an integer literal or item. A binary operation extends the
+shorter operand with zeros on the right; a shift keeps its operand's
+length (rules 8, 9). COMPUTE stores the value in each receiver by the
+MOVE rules. In a condition an expression compares with a boolean
+operand, and alone it is a simple boolean condition when every operand
+is one position. ALL literal operands are not implemented.
+
 ## Not yet
 
-Boolean expressions (B-AND, B-OR, B-XOR, B-NOT, the shifts) and COMPUTE
-of a boolean; USAGE BIT and GROUP-USAGE BIT; reference modification of
-a USAGE NATIONAL boolean or numeric item.
+USAGE BIT and GROUP-USAGE BIT; reference modification of a USAGE
+NATIONAL boolean or numeric item; ALL in a boolean expression.
 
 ## Oracle
 

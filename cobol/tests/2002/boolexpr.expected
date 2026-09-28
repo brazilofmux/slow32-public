@@ -1,0 +1,23 @@
+and:   0100
+or:    1101
+xor:   1001
+not:   0011
+sl 3:  0000
+sr 3:  0001
+slc 3: 0110
+src k: 1001
+D.10 not:   1100
+D.10 sl 2:  0000
+D.10 src 3: 1001
+D.10 or 8:  1011
+or before and: 1100
+parenthesized: 0100
+xor, then or:  1001
+shift at or's precedence: 1010
+unequal lengths: 110000
+two receivers: 111100 11
+condition: a b-and b = 0100
+condition: b-not a > 0010
+not (p and q)
+p or q
+not (p xor p)

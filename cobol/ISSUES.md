@@ -2489,3 +2489,39 @@ boolean.
 -usage-bit, -bool-literal-digit, boolean-85. Harness 238/238; -std=85
 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 77. BOOLEAN, part two: boolean expressions (2026-09-28)
+
+B-NOT, B-AND, B-XOR, B-OR and the four shifts (2023 8.8.2), in COMPUTE
+format 2 (14.9.8) and in conditions.
+
+- **Parsing** is a shunting yard that emits as it resolves, like
+  `parse_expr`: operands are pushed, operators applied in postfix order.
+  A shift's precedence is the preceding operation's at its level of
+  parentheses, B-AND's when there is none (rule 7b), and it carries its
+  integer count.
+- **Runtime.** A stack of boolean values, as strings of 0 and 1:
+  `cob_bpush` (narrowing USAGE NATIONAL operands), `cob_bnot`,
+  `cob_band`/`bor`/`bxor` (the shorter operand zero-extended, rule 9),
+  `cob_bshift` (the operand's length kept, rule 8), `cob_bstore` (by the
+  MOVE rules), `cob_bcmp`.
+- **COMPUTE** takes boolean receivers, not mixed with numeric ones;
+  `parse_ref_list` gets a mode that admits them for COMPUTE alone.
+- **Conditions.** A boolean expression is an O_BEXPR operand, re-parsed
+  at emission as arithmetic expressions are. Alone, it is a simple
+  boolean condition when all its operands are one position.
+
+A regression on the way: the first cut peeked at every condition
+operand for a following boolean operator, ahead of the unary-sign check,
+so a condition beginning with `-` died in `parse_operand`. free/unaryexpr
+and one CCVS program failed. The peek now runs only under -std=2002, at
+a word or literal. The dangling-operator refusal also named the next
+statement's verb ("'stop' is not declared"), and now names the rule.
+
+2002/boolexpr (no oracle): Table A.2 row by row, the Annex D.10
+examples, precedence and parentheses, the shift-precedence rule, unequal
+lengths, two receivers, a USAGE NATIONAL operand, and expressions in
+conditions. Refusals: std2002-bexpr-numeric, -bexpr-mixed,
+-bexpr-shift, -bexpr-dangling, -bexpr-cond-wide. Harness 244/244;
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.
