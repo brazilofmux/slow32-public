@@ -1983,3 +1983,40 @@ frame first. (The subscript check needs no such entry: on success it
 touches only r2, and its failing path never returns.) Harness 181/181;
 -std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS.
+
+### 62. NATIONAL, part one (2026-09-28)
+
+Stage B's NATIONAL module begins. The user ruled the two implementor
+choices: a national character is a UTF-16 code unit stored big-endian
+(IBM's representation), and alphanumeric text becoming national is
+UTF-8 (a byte that begins no valid sequence stands for its Latin-1
+character). docs/national.md has the design.
+
+- libcob: a national descriptor category (COB_NATIONAL); MOVE into a
+  national item decodes UTF-8 (or takes numeric digits, or national
+  code units) and pads with national spaces, JUSTIFIED honoured;
+  comparisons with a national operand compare code units, padding with
+  national spaces; DISPLAY writes UTF-8; cob_fill_nat for figuratives.
+- The compiler: PICTURE N (recognized before pic_analyse, which does not
+  know N), USAGE NATIONAL, N"..." and NX"..." literals (a national flag on
+  the token), VALUE per 13.18.63 syntax rule 5, national routing ahead
+  of every MOVE fast path, figuratives and ALL literals made national
+  beside a national operand, LENGTH in characters, INITIALIZE ...
+  REPLACING NATIONAL.
+- Refused, not silently treated as bytes: STRING, UNSTRING, INSPECT,
+  ACCEPT and reference modification of national items; numeric and
+  edited national; national in reports and screens. A MOVE of national
+  to an elementary alphanumeric or numeric item is refused as the text
+  does (use DISPLAY-OF, part two).
+
+2002/national; refusals national-85, std2002-nat-value-alnum,
+std2002-nat-to-alnum, std2002-nat-inspect, std2002-nat-refmod. No
+oracle: GnuCOBOL 4's national data is unfinished (docs/national.md).
+Harness 187/187; -std=85 byte-identical on all 227 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.
+
+Next (part two): NATIONAL-OF, DISPLAY-OF, CHAR-NATIONAL, whose results'
+lengths are known only at run time -- the variable-length function
+result machinery EXCEPTION-LOCATION, EXCEPTION-FILE, TRIM and CONCAT
+also wait on.

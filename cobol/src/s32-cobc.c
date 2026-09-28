@@ -534,6 +534,7 @@ typedef struct {
     const char *file;
     int dbg;        /* from a debugging line: matched by COPY REPLACING, then dropped without DEBUGGING MODE */
     unsigned char after_comma;   /* a separator comma or semicolon stood before this token */
+    unsigned char nat;           /* T_STR: a national literal, its bytes UTF-16 big-endian (cobol ISSUES-62) */
 } Tok;
 
 static Tok *g_tok;
@@ -547,11 +548,38 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
     t->after_comma = (unsigned char)g_pending_comma; g_pending_comma = 0;
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0;
     return t;
 }
 
 static int is_wordch(int c) { return isalnum(c) || c == '-' || c == '_'; }
+
+/* UTF-8 source text to national bytes, UTF-16 big-endian (as libcob's
+ * utf8_to_nat: a byte that begins no valid sequence is its Latin-1
+ * character); returns the bytes written, 2 per code unit */
+static int utf8_to_utf16be(const unsigned char *p, int n, unsigned char *out)
+{
+    int k = 0, i = 0;
+    while (i < n) {
+        unsigned c = p[i], cp = c; int len = 1;
+        if (c >= 0xC2 && c <= 0xDF && i + 1 < n && (p[i + 1] & 0xC0) == 0x80) { cp = ((c & 0x1F) << 6) | (p[i + 1] & 0x3F); len = 2; }
+        else if (c >= 0xE0 && c <= 0xEF && i + 2 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80) {
+            cp = ((c & 0x0F) << 12) | ((p[i + 1] & 0x3F) << 6) | (p[i + 2] & 0x3F); len = 3;
+            if (cp < 0x800) { cp = c; len = 1; }
+        } else if (c >= 0xF0 && c <= 0xF4 && i + 3 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80 && (p[i + 3] & 0xC0) == 0x80) {
+            cp = ((c & 0x07) << 18) | ((p[i + 1] & 0x3F) << 12) | ((p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F); len = 4;
+            if (cp < 0x10000 || cp > 0x10FFFF) { cp = c; len = 1; }
+        }
+        i += len;
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            unsigned hi = 0xD800 + (cp >> 10), lo = 0xDC00 + (cp & 0x3FF);
+            out[k++] = (unsigned char)(hi >> 8); out[k++] = (unsigned char)hi;
+            out[k++] = (unsigned char)(lo >> 8); out[k++] = (unsigned char)lo;
+        } else { out[k++] = (unsigned char)(cp >> 8); out[k++] = (unsigned char)cp; }
+    }
+    return k;
+}
 
 static int hexval(int c)
 {
@@ -612,7 +640,37 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 p = e + 1;
                 continue;
             }
-            if ((c == 'z' || c == 'Z' || c == 'n' || c == 'N') && (p[1] == '\'' || p[1] == '"'))
+            /* National literals (2023 8.3.3.5): N"..." in the source's
+             * UTF-8, NX"..." as hexadecimal code units; both stored UTF-16BE */
+            if ((c == 'n' || c == 'N') && (p[1] == '\'' || p[1] == '"' ||
+                ((p[1] == 'x' || p[1] == 'X') && (p[2] == '\'' || p[2] == '"')))) {
+                if (g_std < 2002) die_at(line, "national literals (N\"...\") are COBOL 2002; compile with -std=2002");
+                int hex = p[1] == 'x' || p[1] == 'X';
+                char q = p[hex ? 2 : 1];
+                const char *s = p + (hex ? 3 : 2);
+                char *raw = xmalloc(strlen(p) + 1); int rn = 0;
+                for (;;) {
+                    if (!*s) die_at(line, "unterminated national literal");
+                    if (*s == q) { if (!hex && s[1] == q) { raw[rn++] = q; s += 2; continue; } break; }
+                    raw[rn++] = *s++;
+                }
+                char *out; int on;
+                if (hex) {
+                    if (rn % 4) die_at(line, "NX\"...\" needs four hexadecimal digits for each national character");
+                    out = xmalloc((size_t)rn / 2 + 1); on = rn / 2;
+                    for (int i = 0; i < rn; i += 2) {
+                        int h = hexval(raw[i]), l = hexval(raw[i + 1]);
+                        if (h < 0 || l < 0) die_at(line, "bad hexadecimal digit in a national literal");
+                        out[i / 2] = (char)(h * 16 + l);
+                    }
+                } else { out = xmalloc((size_t)rn * 4 + 1); on = utf8_to_utf16be((const unsigned char *)raw, rn, (unsigned char *)out); }
+                Tok *nt = push_tok(T_STR, line, out, on);
+                nt->nat = 1;
+                free(raw); free(out);
+                p = s + 1;
+                continue;
+            }
+            if ((c == 'z' || c == 'Z') && (p[1] == '\'' || p[1] == '"'))
                 die_at(line, "%c'...' literals are not in COBOL 85", toupper(c));
 
             /* Nonnumeric literal, with the doubled-quote escape */
@@ -1250,6 +1308,7 @@ typedef struct Sym {
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
+    int  nat_usage;                 /* USAGE NATIONAL was written (cobol ISSUES-62) */
     int  ftemp_scan;                /* ... made while scanning ahead (no code): must never be emitted */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
@@ -1563,6 +1622,8 @@ static void sym_finish(Sym *s)
     }
 
     const PicInfo *pi = &s->pi;
+    if (s->nat_usage && pi->category != PIC_NATIONAL)
+        die_at(s->line, "'%s': USAGE NATIONAL with a PICTURE other than N (numeric or edited national) is not implemented yet", s->name);
     switch (u) {
     case U_DISPLAY:
         s->size = pi->bytes;
@@ -1716,6 +1777,29 @@ static void parse_data_item(void)
     g_recover = outer;
 }
 
+/* PICTURE N...: a national item (COBOL 2002 13.18.40), N(k) and N
+ * repeated, each character two bytes.  Other pictures are pic_analyse's. */
+static int nat_picture(const char *pic, PicInfo *pi, int line)
+{
+    int n = 0;
+    for (const char *p = pic; *p; ) {
+        if (*p != 'n' && *p != 'N') return 0;
+        p++;
+        if (*p == '(') {
+            char *e; long k = strtol(p + 1, &e, 10);
+            if (*e != ')' || k < 1) return 0;
+            n += (int)k; p = e + 1;
+        } else n++;
+    }
+    if (!n) return 0;
+    if (g_std < 2002) die_at(line, "PICTURE N (national) is COBOL 2002; compile with -std=2002");
+    memset(pi, 0, sizeof *pi);
+    pi->category = PIC_NATIONAL; pi->bytes = 2 * n;
+    pi->patlen = n < PIC_MAXPAT - 1 ? n : PIC_MAXPAT - 1;
+    memset(pi->pat, 'N', (size_t)pi->patlen);
+    return 1;
+}
+
 static void parse_data_item1(void)
 {
     int line = cur()->line;
@@ -1808,6 +1892,7 @@ static void parse_data_item1(void)
             if (s->has_pic) die_at(t->line, "'%s' has two PICTURE clauses", s->name);
             s->has_pic = 1;
             snprintf(s->pic, sizeof s->pic, "%s", cur()->s);
+            if (nat_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (pic_analyse(s->pic, &s->pi) < 0) die_at(t->line, "'%s': %s", s->name, s->pi.err);
             advance();
             continue;
@@ -1828,6 +1913,11 @@ static void parse_data_item1(void)
             if (u == U_BCHAR) accept_word("signed");
             s->usage = u; s->has_usage = 1;
             continue;
+        }
+        else if (!strcmp(t->s, "national")) {
+            /* USAGE NATIONAL (COBOL 2002): here with a PICTURE of N only */
+            if (g_std < 2002) die_at(t->line, "USAGE NATIONAL is COBOL 2002; compile with -std=2002");
+            s->nat_usage = 1; advance(); continue;
         }
         else if (!strcmp(t->s, "pointer")) u = U_POINTER;
         else if (!strcmp(t->s, "index")) u = U_INDEX;
@@ -2072,6 +2162,37 @@ static void set_dims(int si, int ndims, const int *counts, const int *strides)
 /* write VALUE / default initialisation for one instance of s at image+base */
 static void init_instance(Sym *rec, int si, int base, int defaults);
 
+/* a national figurative constant's character (2023 8.3.3.6) */
+static unsigned nat_fig(const char *w)
+{
+    if (!strncmp(w, "zero", 4)) return 0x30;
+    if (!strncmp(w, "space", 5)) return 0x20;
+    if (!strncmp(w, "quote", 5)) return 0x22;
+    if (!strncmp(w, "high-value", 10)) return 0xFFFF;
+    return 0;                                       /* LOW-VALUE */
+}
+
+/* a national item's initial value: national spaces by default; a VALUE
+ * must be a national literal no longer than the item, or a figurative
+ * constant (2023 13.18.63 syntax rule 5) */
+static void init_national(Sym *s, unsigned char *p, int defaults)
+{
+    int n = s->size / 2;
+    if (defaults) for (int i = 0; i < n; i++) { p[2 * i] = 0; p[2 * i + 1] = 0x20; }
+    if (!s->value_tok || g_no_values) return;
+    Tok *v = s->value_tok;
+    if (s->value_fig) {
+        unsigned u = nat_fig(v->s);
+        for (int i = 0; i < n; i++) { p[2 * i] = (unsigned char)(u >> 8); p[2 * i + 1] = (unsigned char)u; }
+        return;
+    }
+    if (v->kind != T_STR || !v->nat) die_at(v->line, "the VALUE of the national item '%s' must be a national literal (N\"...\") or a figurative constant", s->name);
+    if (s->value_all) { for (int i = 0; i < s->size; i++) p[i] = (unsigned char)v->s[i % v->len]; return; }
+    if (v->len > s->size) die_at(v->line, "VALUE literal (%d national characters) is longer than '%s' (%d)", v->len / 2, s->name, n);
+    memcpy(p, v->s, (size_t)v->len);
+    for (int i = v->len / 2; i < n; i++) { p[2 * i] = 0; p[2 * i + 1] = 0x20; }
+}
+
 static void init_one(Sym *rec, int si, int base, int defaults)
 {
     Sym *s = &g_sym[si];
@@ -2093,6 +2214,7 @@ static void init_one(Sym *rec, int si, int base, int defaults)
         return;
     }
     int numeric = is_numeric_sym(s);
+    if (s->pi.category == PIC_NATIONAL) { init_national(s, p, defaults); return; }
     if (defaults) {
         if (s->usage == U_DISPLAY && !numeric) memset(p, ' ', s->size);
         else if (s->usage == U_DISPLAY) {
@@ -2560,6 +2682,7 @@ static int sym_desc(Sym *s)
         case PIC_ALPHANUMERIC: d.cat = COB_ALNUM; break;
         case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;
         case PIC_NUMERIC: d.cat = COB_NUM; break;
+        case PIC_NATIONAL: d.cat = COB_NATIONAL; break;
         default: d.cat = COB_NUM_ED; break;
         }
         switch (s->usage) {
@@ -2587,6 +2710,33 @@ static int str_desc(int len)
     Desc d; memset(&d, 0, sizeof d);
     d.cat = COB_ALNUM; d.usage = COB_U_DISPLAY; d.size = len;
     return desc_add(&d);
+}
+
+/* a national literal's descriptor: len bytes, len / 2 characters */
+static int nat_desc(int len)
+{
+    Desc d; memset(&d, 0, sizeof d);
+    d.cat = COB_NATIONAL; d.usage = COB_U_DISPLAY; d.size = len;
+    return desc_add(&d);
+}
+
+/* national bytes (UTF-16BE) back to UTF-8, for DISPLAY of a literal */
+static int utf16be_to_utf8(const unsigned char *p, int nbytes, char *out)
+{
+    int k = 0, n = nbytes / 2;
+    for (int i = 0; i < n; i++) {
+        unsigned u = (unsigned)p[2 * i] << 8 | p[2 * i + 1];
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < n) {
+            unsigned l = (unsigned)p[2 * i + 2] << 8 | p[2 * i + 3];
+            if (l >= 0xDC00 && l <= 0xDFFF) { u = 0x10000 + ((u - 0xD800) << 10) + (l - 0xDC00); i++; }
+        }
+        if (u >= 0xD800 && u <= 0xDFFF) u = 0xFFFD;
+        if (u < 0x80) out[k++] = (char)u;
+        else if (u < 0x800) { out[k++] = (char)(0xC0 | u >> 6); out[k++] = (char)(0x80 | (u & 0x3F)); }
+        else if (u < 0x10000) { out[k++] = (char)(0xE0 | u >> 12); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
+        else { out[k++] = (char)(0xF0 | u >> 18); out[k++] = (char)(0x80 | (u >> 12 & 0x3F)); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
+    }
+    return k;
 }
 
 /* an unsigned integer of n DISPLAY digits (a calendar function's result) */
@@ -2708,6 +2858,7 @@ static void emit_expr_tokens(int s0, int s1);
 static void emit_ucalls(int from, int to);
 static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */
 static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
+static const char *g_nat_forbid;        /* the statement a national item may not appear in yet, or NULL */
 static int ec_size_on(void);
 static void emit_ec_size(void);
 static int ec_on_name(const char *name);
@@ -2749,6 +2900,8 @@ typedef struct Opnd_ {
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
 } Opnd;
+static int opnd_is_national(const Opnd *o);
+static void nat_fig_opnd(Opnd *o, int nbytes);
 
 static int is_int_item(Sym *s)
 {
@@ -2815,6 +2968,8 @@ static void parse_ref(Ref *r)
         advance();
     }
     r->sym = sym_lookup(name, quals, nq, t->line);
+    if (g_nat_forbid && !r->sym->is_group && r->sym->pi.category == PIC_NATIONAL)
+        die_at(t->line, "a national item in %s is not implemented yet", g_nat_forbid);
     /* an unsubscripted item's parenthesis holding a ':' is a reference
      * modification, not a subscript list */
     int lead_rm = 0;
@@ -2876,6 +3031,8 @@ static void parse_ref(Ref *r)
     }
     if (is_rm) {
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
+        if (!r->sym->is_group && r->sym->pi.category == PIC_NATIONAL)
+            die_at(r->line, "reference modification of a national item is not implemented yet");
         advance();
         r->rm = 1; r->rm_l0 = -1;
         if (cur()->kind == T_NUM && peek(1)->kind == T_COLON) {
@@ -3310,6 +3467,7 @@ static void parse_operand_raw(Opnd *o)
             if (x.kind != O_REF && x.kind != O_STR && x.kind != O_FUNC) die_at(n->line, "FUNCTION LENGTH takes an item or a literal");
             int len = opnd_size(&x);
             if (len < 0) die_at(n->line, "FUNCTION LENGTH of a reference modification with a variable length is not implemented");
+            if (opnd_is_national(&x)) len /= 2;         /* national: character positions, two bytes each */
             o->kind = O_NUM; numlit_from_int(&o->num, len);
             return;
         }
@@ -4037,7 +4195,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
         return;
     case O_STR:
         *addr = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
-        *desc = arg_desc(str_desc(o->tok->len)); return;
+        *desc = arg_desc(o->tok->nat ? nat_desc(o->tok->len) : str_desc(o->tok->len)); return;
     case O_NUM: {
         int d; const char *l = num_lit_label(&o->num, &d);
         *addr = arg_label(l); *desc = arg_desc(d); return;
@@ -4679,6 +4837,10 @@ static void emit_cond_value(Cond *c)
         }
     } else {
         Arg a[4];
+        /* a figurative constant or ALL literal against a national operand
+         * is national itself: HIGH-VALUE is U+FFFF, not the byte FF */
+        if (opnd_is_national(&c->x)) nat_fig_opnd(&c->y, opnd_size(&c->x));
+        if (opnd_is_national(&c->y)) nat_fig_opnd(&c->x, opnd_size(&c->y));
         int xs = opnd_size(&c->x), ys = opnd_size(&c->y);
         int xn = opnd_numeric(&c->x), yn = opnd_numeric(&c->y);
         opnd_args(&c->x, &a[0], &a[1], ys, yn);
@@ -4788,7 +4950,14 @@ static int at_operand(void)
 }
 
 static void parse_statement(void);
-static void parse_statements(void) { while (!at_scope_end()) parse_statement(); }
+static void parse_statements(void)
+{
+    /* the statements in a phrase (ON OVERFLOW ...) are their own, free of
+     * the enclosing statement's restrictions */
+    const char *nf = g_nat_forbid; g_nat_forbid = NULL;
+    while (!at_scope_end()) parse_statement();
+    g_nat_forbid = nf;
+}
 
 static int g_sentence_label = -1;   /* NEXT SENTENCE target, made on demand */
 
@@ -5157,7 +5326,12 @@ static void parse_accept_positioned(Ref *r, int tp)
     accept_word("end-accept");
 }
 
+static void parse_accept_1(void);
 static void parse_accept(void)
+{
+    g_nat_forbid = "ACCEPT"; parse_accept_1(); g_nat_forbid = NULL;
+}
+static void parse_accept_1(void)
 {
     Tok *t = cur();
     if (t->kind == T_WORD) {
@@ -5265,6 +5439,12 @@ static void parse_display(void)
         n++;
         switch (o.kind) {
         case O_STR: {
+            if (o.tok->nat) {                       /* a national literal: written as UTF-8 */
+                char *u = xmalloc((size_t)o.tok->len * 2 + 1);
+                int un = utf16be_to_utf8((const unsigned char *)o.tok->s, o.tok->len, u);
+                Arg a[2] = { arg_label(lit_label((unsigned char *)u, un)), arg_imm(un) };
+                emit_args(a, 2); emit_call("cob_display"); free(u); break;
+            }
             Arg a[2] = { arg_label(lit_label((unsigned char *)o.tok->s, o.tok->len)), arg_imm(o.tok->len) };
             emit_args(a, 2); emit_call("cob_display"); break;
         }
@@ -5383,6 +5563,74 @@ static void emit_move_all_numeric(Opnd *src, Ref *dst, int n)
     emit_move(&lit, dst);
 }
 
+/* national data in a MOVE (COBOL 2002 14.9.25; cobol ISSUES-62).  A
+ * national receiver takes anything alphanumeric, numeric or national,
+ * converted by libcob (UTF-8 to UTF-16BE, national-space padding); a
+ * national sender reaches only a national receiver or a group (moved as
+ * bytes, general rule 4).  Returns 0 when neither side is national. */
+static int opnd_is_national(const Opnd *o)
+{
+    if (o->kind == O_STR || o->kind == O_ALL) return o->tok && o->tok->nat;
+    return o->kind == O_REF && !o->ref.sym->is_group && o->ref.sym->pi.category == PIC_NATIONAL;
+}
+
+/* a figurative constant or ALL literal, as the national literal of nbytes
+ * it stands for beside a national operand */
+static void nat_fig_opnd(Opnd *o, int nbytes)
+{
+    if (o->kind != O_FIG && o->kind != O_ALL) return;
+    if (nbytes < 2) nbytes = 2;
+    unsigned char *b = xmalloc((size_t)nbytes);
+    if (o->kind == O_FIG) {
+        unsigned u = nat_fig(o->tok->s);
+        for (int i = 0; i + 1 < nbytes; i += 2) { b[i] = (unsigned char)(u >> 8); b[i + 1] = (unsigned char)u; }
+    } else {
+        const unsigned char *lit = (const unsigned char *)o->tok->s; int len = o->tok->len;
+        unsigned char *conv = NULL;
+        if (!o->tok->nat) { conv = xmalloc((size_t)len * 4 + 2); len = utf8_to_utf16be(lit, len, conv); lit = conv; }
+        for (int i = 0; i < nbytes; i++) b[i] = lit[i % len];
+        free(conv);
+    }
+    Tok *t = xmalloc(sizeof *t); *t = *o->tok;
+    t->kind = T_STR; t->s = (char *)b; t->len = nbytes & ~1; t->nat = 1;
+    o->kind = O_STR; o->tok = t;
+}
+
+static int emit_move_national(Opnd *src, Ref *dst)
+{
+    Sym *d = dst->sym;
+    int dn = !d->is_group && d->pi.category == PIC_NATIONAL, sn = opnd_is_national(src);
+    if (!dn && !sn) return 0;
+    if ((src->kind == O_REF && src->ref.rm && sn) || (dn && dst->rm))
+        die_at(dst->line, "reference modification of a national item is not implemented yet");
+    if (!dn) {
+        if (d->is_group) return 0;                  /* a group receives the bytes (14.9.25 general rule 4) */
+        die_at(dst->line, "a national item cannot be moved to the %s item '%s' (2023 14.9.25): use FUNCTION DISPLAY-OF",
+               is_numeric_sym(d) ? "numeric" : "alphanumeric", d->name);
+    }
+    int n = d->size / 2;
+    if (src->kind == O_FIG) {
+        Arg a[3] = { arg_ref(dst), arg_imm(n), arg_imm((long)nat_fig(src->tok->s)) };
+        emit_args(a, 3); emit_call("cob_fill_nat");
+        return 1;
+    }
+    if (src->kind == O_ALL) {
+        /* ALL literal: its national characters repeated */
+        const unsigned char *lit = (const unsigned char *)src->tok->s; int len = src->tok->len;
+        unsigned char *conv = NULL;
+        if (!src->tok->nat) { conv = xmalloc((size_t)len * 4 + 2); len = utf8_to_utf16be(lit, len, conv); lit = conv; }
+        Arg a[4] = { arg_ref(dst), arg_imm(d->size), arg_label(lit_label(lit, len)), arg_imm(len) };
+        emit_args(a, 4); emit_call("cob_fill_all");
+        free(conv);
+        return 1;
+    }
+    Arg a[4];
+    opnd_args(src, &a[0], &a[1], d->size, 0);
+    a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
+    emit_args(a, 4); emit_call("cob_move");
+    return 1;
+}
+
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
@@ -5411,6 +5659,7 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
+    if (emit_move_national(src, dst)) return;
     /* Sending and receiving items with byte-identical descriptors -- same
      * category, usage, size, digit count, scale, flags and PICTURE -- so the
      * move is a byte copy.  Descriptors are deduplicated by a whole-struct
@@ -7784,7 +8033,12 @@ static void parse_start(void)
 
 /* ---- STRING ------------------------------------------------------------ */
 
+static void parse_string_1(void);
 static void parse_string(void)
+{
+    g_nat_forbid = "STRING"; parse_string_1(); g_nat_forbid = NULL;
+}
+static void parse_string_1(void)
 {
     Opnd srcs[MAXOPS]; Opnd delims[MAXOPS]; int has_delim[MAXOPS];
     int n = 0, pending = 0;
@@ -7875,7 +8129,12 @@ static void parse_string(void)
 /* UNSTRING src [DELIMITED BY [ALL] d [OR [ALL] d]...] INTO {r [DELIMITER IN
  * r] [COUNT IN r]}... [WITH POINTER p] [TALLYING IN t] [[NOT] ON OVERFLOW]
  * [END-UNSTRING]; the runtime does the scanning (cob_unstr_*) */
+static void parse_unstring_1(void);
 static void parse_unstring(void)
+{
+    g_nat_forbid = "UNSTRING"; parse_unstring_1(); g_nat_forbid = NULL;
+}
+static void parse_unstring_1(void)
 {
     int line = cur()->line;
     Opnd src; parse_operand(&src);
@@ -8788,7 +9047,12 @@ static void emit_inspect_tallies(Ref *tallies, int *tally_ph, int nt)
     }
 }
 
+static void parse_inspect_1(void);
 static void parse_inspect(void)
+{
+    g_nat_forbid = "INSPECT"; parse_inspect_1(); g_nat_forbid = NULL;
+}
+static void parse_inspect_1(void)
 {
     Ref item; parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
@@ -8941,8 +9205,8 @@ static void init_mask(Sym *s, int top_off, int disp, unsigned char *mask, int li
 static void parse_initialize(void)
 {
     Ref rs[MAXOPS]; int n = 0;
-    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0 };
-    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0 };
+    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0 };
+    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0 };
     Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand()) {
@@ -8993,7 +9257,9 @@ static void parse_initialize(void)
             else if (accept_word("numeric")) cat = PIC_NUMERIC;
             else if (accept_word("alphanumeric-edited")) cat = PIC_ALPHANUMERIC_EDITED;
             else if (accept_word("numeric-edited")) cat = PIC_NUMERIC_EDITED;
-            else die_at(line, "INITIALIZE REPLACING: expected ALPHABETIC, ALPHANUMERIC, NUMERIC, ALPHANUMERIC-EDITED or NUMERIC-EDITED");
+            else if (g_std >= 2002 && accept_word("national")) cat = PIC_NATIONAL;
+            else die_at(line, "INITIALIZE REPLACING: expected ALPHABETIC, ALPHANUMERIC, NUMERIC, ALPHANUMERIC-EDITED, NUMERIC-EDITED%s",
+                        g_std >= 2002 ? " or NATIONAL" : "");
             accept_word("data"); expect_word("by");
             Opnd value; parse_operand(&value);
             if (value.kind != O_REF && value.kind != O_STR && value.kind != O_NUM && value.kind != O_FIG)
@@ -9595,7 +9861,7 @@ static void parse_procedure_division(void)
         if (setjmp(jb)) {
             g_recover = outer;
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge;
-            g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
+            g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL; g_nat_forbid = NULL;
             resync_sentence(start);
             continue;
         }

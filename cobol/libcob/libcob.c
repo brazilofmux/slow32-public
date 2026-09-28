@@ -452,9 +452,18 @@ static void emit_scaled(unsigned long long mag, int neg, int digits, int scale, 
     }
 }
 
+static int nat_to_utf8(const unsigned char *p, int nch, char *out);
 void cob_display_field(const void *vp, const cob_desc *d)
 {
     const unsigned char *p = vp;
+    if (d->cat == COB_NATIONAL) {                   /* national: written as UTF-8 */
+        int n = (int)d->size / 2;
+        char stk[768], *t = n * 4 <= (int)sizeof stk ? stk : malloc((size_t)n * 4);
+        if (!t) cob_fatal("out of memory");
+        out_bytes(t, nat_to_utf8(p, n, t));
+        if (t != stk) free(t);
+        return;
+    }
     if (d->cat != COB_NUM) { out_bytes((const char *)p, (int)d->size); return; }
     if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && d->digits == d->size) {
         /* the digits as stored (a picture with P positions takes the general path) */
@@ -543,8 +552,99 @@ static void move_alnum_edited(const char *s, int n, char *dst, const cob_desc *d
     }
 }
 
+/* ---- national data (COBOL 2002; cobol ISSUES-62) ------------------------ */
+
+/* A national character is one UTF-16 code unit, stored big-endian, two
+ * bytes (2023 8.5.1.4: no special handling of surrogates or composites).
+ * Alphanumeric text is read as UTF-8 when it becomes national; a byte
+ * that does not start a valid sequence stands for its Latin-1 character.
+ * Returns the code units written (at most max). */
+static int utf8_to_nat(const unsigned char *p, int n, unsigned short *out, int max)
+{
+    int k = 0, i = 0;
+    while (i < n && k < max) {
+        unsigned c = p[i], cp = c; int len = 1;
+        if (c >= 0xC2 && c <= 0xDF && i + 1 < n && (p[i + 1] & 0xC0) == 0x80) { cp = ((c & 0x1F) << 6) | (p[i + 1] & 0x3F); len = 2; }
+        else if (c >= 0xE0 && c <= 0xEF && i + 2 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80) {
+            cp = ((c & 0x0F) << 12) | ((p[i + 1] & 0x3F) << 6) | (p[i + 2] & 0x3F); len = 3;
+            if (cp < 0x800) { cp = c; len = 1; }
+        } else if (c >= 0xF0 && c <= 0xF4 && i + 3 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80 && (p[i + 3] & 0xC0) == 0x80) {
+            cp = ((c & 0x07) << 18) | ((p[i + 1] & 0x3F) << 12) | ((p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F); len = 4;
+            if (cp < 0x10000 || cp > 0x10FFFF) { cp = c; len = 1; }
+        }
+        i += len;
+        if (cp >= 0x10000) {                            /* a surrogate pair: two character positions */
+            cp -= 0x10000;
+            out[k++] = (unsigned short)(0xD800 + (cp >> 10));
+            if (k < max) out[k++] = (unsigned short)(0xDC00 + (cp & 0x3FF));
+        } else out[k++] = (unsigned short)cp;
+    }
+    return k;
+}
+
+static unsigned nat_at(const unsigned char *p, int i) { return (unsigned)p[2 * i] << 8 | p[2 * i + 1]; }
+static void nat_put(unsigned char *p, int i, unsigned u) { p[2 * i] = (unsigned char)(u >> 8); p[2 * i + 1] = (unsigned char)u; }
+
+/* national characters to UTF-8; an unpaired surrogate becomes U+FFFD */
+static int nat_to_utf8(const unsigned char *p, int nch, char *out)
+{
+    int k = 0;
+    for (int i = 0; i < nch; i++) {
+        unsigned u = nat_at(p, i);
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < nch && nat_at(p, i + 1) >= 0xDC00 && nat_at(p, i + 1) <= 0xDFFF) {
+            u = 0x10000 + ((u - 0xD800) << 10) + (nat_at(p, i + 1) - 0xDC00); i++;
+        } else if (u >= 0xD800 && u <= 0xDFFF) u = 0xFFFD;
+        if (u < 0x80) out[k++] = (char)u;
+        else if (u < 0x800) { out[k++] = (char)(0xC0 | u >> 6); out[k++] = (char)(0x80 | (u & 0x3F)); }
+        else if (u < 0x10000) { out[k++] = (char)(0xE0 | u >> 12); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
+        else { out[k++] = (char)(0xF0 | u >> 18); out[k++] = (char)(0x80 | (u >> 12 & 0x3F)); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
+    }
+    return k;
+}
+
+/* an operand as national characters: a national one as it is, an
+ * alphanumeric one decoded from UTF-8, a numeric one as its digits */
+static int as_national(const void *p, const cob_desc *d, unsigned short *out, int max)
+{
+    if (d->cat == COB_NATIONAL) {
+        int n = (int)d->size / 2; if (n > max) n = max;
+        for (int i = 0; i < n; i++) out[i] = (unsigned short)nat_at(p, i);
+        return n;
+    }
+    if (d->cat == COB_NUM) {
+        char t[40]; int n = num_to_digits(p, d, t);
+        return utf8_to_nat((const unsigned char *)t, n, out, max);
+    }
+    return utf8_to_nat(p, (int)d->size, out, max);
+}
+
+/* a national receiver: aligned left, or right under JUSTIFIED, padded
+ * with national spaces (14.6.8) */
+static void move_to_national(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd)
+{
+    int dn = (int)dd->size / 2;
+    unsigned short stk[256], *u = stk;
+    int max = sd->cat == COB_NATIONAL ? (int)sd->size / 2 : (int)sd->size + 2;
+    if (max > 256) { u = malloc((size_t)max * sizeof *u); if (!u) cob_fatal("out of memory"); }
+    int n = as_national(src, sd, u, max);
+    unsigned char *q = dst;
+    int just = dd->flags & COB_F_JUST, off = 0;
+    if (just && n < dn) off = dn - n;
+    const unsigned short *from = u;
+    if (n > dn) { if (just) from = u + (n - dn); n = dn; }
+    for (int i = 0; i < dn; i++) nat_put(q, i, (i >= off && i - off < n) ? from[i - off] : 0x20);
+    if (u != stk) free(u);
+}
+
+void cob_fill_nat(void *dst, int nch, int unit)
+{
+    unsigned char *q = dst;
+    for (int i = 0; i < nch; i++) nat_put(q, i, (unsigned)unit);
+}
+
 void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd)
 {
+    if (dd->cat == COB_NATIONAL) { move_to_national(src, sd, dst, dd); return; }
     char tmp[40];
     int dnum = dd->cat == COB_NUM || dd->cat == COB_NUM_ED;
     int snum = sd->cat == COB_NUM || sd->cat == COB_NUM_ED;
@@ -791,6 +891,21 @@ static int cmp_scaled(long long a, int sa, long long b, int sb)
 /* -1, 0, 1 */
 int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd)
 {
+    if (ad->cat == COB_NATIONAL || bd->cat == COB_NATIONAL) {
+        /* national against anything: both as national characters, the
+         * shorter padded with national spaces, as for nonnumeric operands */
+        int ma = ad->cat == COB_NATIONAL ? (int)ad->size / 2 : (int)ad->size + 2;
+        int mb = bd->cat == COB_NATIONAL ? (int)bd->size / 2 : (int)bd->size + 2;
+        unsigned short *ua = malloc((size_t)(ma + 1) * 2), *ub = malloc((size_t)(mb + 1) * 2);
+        if (!ua || !ub) cob_fatal("out of memory");
+        int na = as_national(a, ad, ua, ma), nb = as_national(b, bd, ub, mb), r = 0;
+        for (int i = 0; i < na || i < nb; i++) {
+            unsigned x = i < na ? ua[i] : 0x20, y = i < nb ? ub[i] : 0x20;
+            if (x != y) { r = x < y ? -1 : 1; break; }
+        }
+        free(ua); free(ub);
+        return r;
+    }
     int an = ad->cat == COB_NUM, bn = bd->cat == COB_NUM;
     if (an && bn) return cmp_scaled(cob_get_num(a, ad), ad->scale, cob_get_num(b, bd), bd->scale);
     char ta[40], tb[40];

@@ -267,6 +267,9 @@ refused with a message naming the switch.
   variable-length EXCEPTION-LOCATION and EXCEPTION-FILE, and 2023's
   exception-checking PERFORM. No oracle: GnuCOBOL 4 does not implement
   exception declaratives.
+- **NATIONAL, part one** (2026-09-28, ISSUES-62): PICTURE N and national
+  literals, stored UTF-16 big-endian, alphanumeric read as UTF-8; VALUE,
+  MOVE, comparison, DISPLAY, LENGTH and INITIALIZE. docs/national.md.
 
 ## Deferred — object orientation
 

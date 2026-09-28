@@ -20,7 +20,8 @@ enum {
     PIC_ALPHANUMERIC,         /* X, or A and X                */
     PIC_ALPHANUMERIC_EDITED,  /* A/X with B, 0, /             */
     PIC_NUMERIC,              /* 9, S, V, P                   */
-    PIC_NUMERIC_EDITED        /* anything else numeric        */
+    PIC_NUMERIC_EDITED,       /* anything else numeric        */
+    PIC_NATIONAL              /* N only (s32-cobc recognizes it; COBOL 2002) */
 };
 
 typedef struct {

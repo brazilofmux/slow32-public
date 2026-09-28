@@ -1,0 +1,19 @@
+literal: [Grüße]
+n: [Aé€   ]  h from NX: [Hi]
+stored big-endian: 0041 00E9
+n to m: [Aé€ ]
+alnum to m: [naïv]
+numeric to m: [042 ]
+spaces: [    ]
+all: [abab]
+justified: [   xy]
+n = its literal
+m = alphanumeric abab
+n < m (A before a)
+m = high-values
+high-values sorts above zzzz
+length 06
+byte-length 12
+length of a literal 03
+initialized: [   ] [    ]
+replacing national: [Ω   ]
