@@ -180,6 +180,15 @@ with the five 74-era exceptions registered as behavior point BP-N1.
 Stage A's remaining work is the two rulings above, each to be read
 against the 1985 text.
 
+Both were read the same day, once the text turned out to be public as
+FIPS PUB 21-2 (docs/oracles.md). The ADVANCING default is AFTER 1 by
+the text's own words (VII-54, WRITE rule 15), which the runtime already
+does. The first-line placement is the implementor's, and the runtime's
+choice matches how both compilers write LINAGE files (ISSUES-46).
+**Stage A is complete:** CCVS-85 fully matches GnuCOBOL's tally with
+none failing, every inspection test is accounted for, and no known
+conformance gap is open.
+
 ## Stage B — COBOL 2002, the practical half
 
 The standard is treated as modules, not one block. These parts of

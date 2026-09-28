@@ -1425,10 +1425,25 @@ form length below it. The new paper puts the first control number 66
 lines below the alignment's, three forms exactly; the pin had it at
 65. Re-pinned in `~/open`. 79 of 80 papers unchanged; majesty passes.
 
-**Open.** GnuCOBOL misses four SQ101M claims and four of SQ207M's:
-it appends an overprint instead of overlaying it, and it does not
-advance for a WRITE with no ADVANCING phrase (SQ101M tests 19 and 20
-say "2 LINES BELOW"). A report upstream would need the text's wording
-on the default read first. The first-line placement is a ruling, not
-yet read against the text either.
+**Read against the text (2026-09-27, FIPS PUB 21-2; docs/oracles.md).**
+WRITE, Sequential I-O general rule 15, page VII-54: "If the ADVANCING
+phrase is not used, automatic advancing will be provided by the
+implementor to act as if the user had specified AFTER ADVANCING 1
+LINE"; (15)c, a zero count performs no repositioning; (15)e and f, BEFORE
+presents the line and then advances, AFTER advances and then presents
+it. That is the model above, word for word. So GnuCOBOL's WRITE with
+no ADVANCING, which does not advance at all, departs from the text as
+well as from SQ101M tests 19 and 20; with the page reference that is
+now a clean report for upstream, not yet filed.
+
+Where a plain print file's first line falls is not in the text. The
+nearest rule is LINAGE's (general rule 9, VII-28): LINAGE-COUNTER is
+the line the device is positioned on, and OPEN OUTPUT sets it to one.
+Both compilers keep that counter and still write a LINAGE file's first
+AFTER 1 record on the file's first line, with no blank line above it;
+how a file represents the page above the first record is left to the
+implementor ((15)h, physical pages). This runtime's plain print files
+start the way both compilers' LINAGE files do. GnuCOBOL's plain print
+files alone start a line lower, unlike its own LINAGE files. Ruled:
+kept.
 

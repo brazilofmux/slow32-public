@@ -49,7 +49,16 @@ item must know the oracle can be wrong there.
 ## Authority
 
 - **ANSI X3.23-1985** (and the 1989 intrinsic-function amendment,
-  where we claim it)
+  where we claim it). The full text is public: it was adopted for
+  federal use as **FIPS PUB 21-2**, which carries the standard entire
+  (824 pages, searchable), and NIST still hosts it --
+  <https://nvlpubs.nist.gov/nistpubs/Legacy/FIPS/fipspub21-2.pdf>.
+  Cite it by the standard's own page numbers (VII-54 is Sequential
+  I-O, the WRITE statement). The 1974 text is FIPS PUB 21-1 at the
+  same place, which is where cobc370 reads its standard; FIPS 21-3 and
+  21-4 are the later adoptions. Found 2026-09-27, before which rulings
+  here rested on the NIST cases and GnuCOBOL with the text cited from
+  knowledge.
 - Implementor modules (LINE SEQUENTIAL, SCREEN SECTION, COMP-5)
   have no ISO text. GnuCOBOL's behaviour plus a note in
   [dialect.md](dialect.md) is the spec, until we write a tighter
