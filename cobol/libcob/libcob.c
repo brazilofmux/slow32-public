@@ -702,6 +702,20 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
         nat_widen(dst, b, (int)nd.size);
         return;
     }
+    if (dd->cat == COB_BOOLEAN) {
+        /* a boolean receiver (cobol ISSUES-76): the sender's characters,
+         * aligned left, zero-filled or truncated on the right (2023
+         * 14.6.8.6); a national sender's characters narrowed, one that is
+         * not 0 or 1 left for a BOOLEAN class test to find */
+        const unsigned char *sp = src; unsigned char *q = dst;
+        int n = (int)dd->size, m = sd->cat == COB_NATIONAL ? (int)sd->size / 2 : (int)sd->size;
+        for (int i = 0; i < n; i++) {
+            if (i >= m) q[i] = '0';
+            else if (sd->cat == COB_NATIONAL) q[i] = sp[2 * i] ? 0x7F : sp[2 * i + 1];
+            else q[i] = sp[i];
+        }
+        return;
+    }
     if (sd->cat == COB_NATIONAL && (dd->cat == COB_NUM || dd->cat == COB_NUM_ED)) {
         /* national text to a numeric receiver (an UNSTRING part): as its
          * UTF-8, which for digits and signs is their ASCII */
@@ -977,6 +991,17 @@ int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd
         free(ua); free(ub);
         return r;
     }
+    if (ad->cat == COB_BOOLEAN && bd->cat == COB_BOOLEAN) {
+        /* boolean values, the shorter extended on the right with zeros
+         * (2023 8.8.4.2.8) */
+        const unsigned char *pa = a, *pb = b;
+        int na = (int)ad->size, nb = (int)bd->size;
+        for (int i = 0; i < na || i < nb; i++) {
+            unsigned x = i < na ? pa[i] : '0', y = i < nb ? pb[i] : '0';
+            if (x != y) return x < y ? -1 : 1;
+        }
+        return 0;
+    }
     int an = ad->cat == COB_NUM, bn = bd->cat == COB_NUM;
     if (an && bn) return cmp_scaled(cob_get_num(a, ad), ad->scale, cob_get_num(b, bd), bd->scale);
     char ta[40], tb[40];
@@ -1006,6 +1031,11 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
             if (i == ((d->flags & COB_F_LEAD) ? 0 : n - 1) && (d->flags & COB_F_SIGNED) && c >= 'p' && c <= 'y') continue;
             return 0;
         }
+        return 1;
+    }
+    if (kind == 4) {                                    /* BOOLEAN: every position 0 or 1 */
+        if (d->cat == COB_NATIONAL) { for (int i = 0; i + 1 < n; i += 2) if (p[i] || (p[i + 1] != '0' && p[i + 1] != '1')) return 0; return 1; }
+        for (int i = 0; i < n; i++) if (p[i] != '0' && p[i] != '1') return 0;
         return 1;
     }
     for (int i = 0; i < n; i++) {
@@ -2477,7 +2507,7 @@ const cob_desc *cob_fn_var_desc(int national)
     static int rot;
     cob_desc *d = &pool[rot++ & 7];
     memset(d, 0, sizeof *d);
-    d->cat = national ? COB_NATIONAL : COB_ALNUM;
+    d->cat = national == 1 ? COB_NATIONAL : national == 2 ? COB_BOOLEAN : COB_ALNUM;
     d->usage = COB_U_DISPLAY;
     d->size = (unsigned)fn_var_len;
     return d;
@@ -2532,6 +2562,38 @@ char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track)
         } else k += nat_to_utf8(q + 2 * i, 1, b + k);
     }
     fn_var_len = k;
+    return b;
+}
+
+/* BOOLEAN-OF-INTEGER (2023 15.13): argument-1, from the numeric stack,
+ * as n boolean positions, the low-order binary digit rightmost, zero-
+ * filled or truncated on the left (cobol ISSUES-76) */
+char *cob_fn_boolean_of_integer(int n)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[--nsp];
+    long long v = a->v;
+    if (a->scale > 0) v = div_pow10(v, a->scale, 0);
+    unsigned long long u = (unsigned long long)v;
+    if (n < 1) n = 1;
+    char *b = fn_buffer(n);
+    for (int i = n - 1; i >= 0; i--) { b[i] = (char)('0' + (int)(u & 1)); u >>= 1; }
+    fn_var_len = n;
+    return b;
+}
+
+/* INTEGER-OF-BOOLEAN (2023 15.45): the unsigned binary value of the
+ * boolean positions, as eighteen digits (a value past them is truncated
+ * on the left, as a MOVE to PIC 9(18) would) */
+char *cob_fn_integer_of_boolean(const void *p, const cob_desc *d)
+{
+    unsigned char t[NATNUM_MAX]; cob_desc nd;
+    const unsigned char *q = p; int n = (int)d->size;
+    if (d->usage == COB_U_NATIONAL) { q = nat_narrow(p, d, t, &nd); n = (int)nd.size; }
+    unsigned long long u = 0;
+    for (int i = 0; i < n; i++) u = (u << 1) | (q[i] == '1');
+    char *b = fn_buffer(18);
+    for (int i = 17; i >= 0; i--) { b[i] = (char)('0' + (int)(u % 10)); u /= 10; }
     return b;
 }
 
@@ -3909,7 +3971,7 @@ const cob_desc *cob_refmod_desc(const cob_desc *base, int start, int len)
     if (len < 1 || start - 1 + len > chars) cob_fatal("reference modification: length is outside the item");
     cob_desc *d = &rmdesc[rmrot++ & 7];
     memset(d, 0, sizeof *d);
-    d->cat = nat ? COB_NATIONAL : COB_ALNUM;
+    d->cat = nat ? COB_NATIONAL : base->cat == COB_BOOLEAN ? COB_BOOLEAN : COB_ALNUM;
     d->usage = COB_U_DISPLAY;
     d->size = (unsigned)(nat ? 2 * len : len);
     return d;

@@ -1,0 +1,24 @@
+g: 1100  nb: 1010  h: 000000
+f is on
+f is off
+zero-filled: 110000
+truncated: 1011
+g = B'1011'
+110000 > 1(00000)
+110000 = 1100(00)
+to alphanumeric: [1011  ]
+to national: [1011]
+from alphanumeric: 0110
+from national: 0011
+zero: 000000
+all: 101010
+h is boolean
+01x1 is not boolean
+initialized: 0000
+replacing: 1000
+part: 010
+part moved: 101111
+lengths: 6 4 8
+boolean-of-integer(10, 6): 001010
+boolean-of-integer(10, k): 001010
+integer-of-boolean: 000000000000000010 000000000000000010

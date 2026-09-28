@@ -1,1 +1,1 @@
-FUNCTION boolean-of-integer is COBOL 2002 and needs the BOOLEAN module, not implemented yet
+FUNCTION locale-compare is COBOL 2002 and needs locale support, not implemented yet

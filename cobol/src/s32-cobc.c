@@ -565,6 +565,7 @@ typedef struct {
     unsigned char after_comma;   /* a separator comma or semicolon stood before this token */
     unsigned char nat;           /* T_STR: a national literal, its bytes UTF-16 big-endian (cobol ISSUES-62) */
     char *orig;                  /* T_WORD: as written, before lowercasing; 0 when the same */
+    unsigned char boolv;         /* T_STR: a boolean literal, one character 0 or 1 per position (cobol ISSUES-76) */
 } Tok;
 
 static Tok *g_tok;
@@ -578,7 +579,7 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
     t->after_comma = (unsigned char)g_pending_comma; g_pending_comma = 0;
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0; t->orig = 0;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0; t->orig = 0; t->boolv = 0;
     return t;
 }
 
@@ -714,6 +715,34 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 nt->nat = 1;
                 free(raw); free(out);
                 p = s + 1;
+                continue;
+            }
+            /* Boolean literals (2023 8.3.3.4): B"0101", BX"5"; held as one
+             * character 0 or 1 per boolean position */
+            if ((c == 'b' || c == 'B') && (p[1] == '\'' || p[1] == '"' ||
+                ((p[1] == 'x' || p[1] == 'X') && (p[2] == '\'' || p[2] == '"')))) {
+                if (g_std < 2002) die_at(line, "boolean literals (B\"...\") are COBOL 2002; compile with -std=2002");
+                int hex = p[1] == 'x' || p[1] == 'X';
+                char q = p[hex ? 2 : 1];
+                const char *s = p + (hex ? 3 : 2), *e = s;
+                while (*e && *e != q) e++;
+                if (!*e) die_at(line, "unterminated boolean literal");
+                int n = (int)(e - s);
+                char *out = xmalloc((size_t)n * 4 + 1); int on = 0;
+                for (int i = 0; i < n; i++) {
+                    if (hex) {
+                        int h = hexval(s[i]);
+                        if (h < 0) die_at(line, "bad hexadecimal digit in a boolean literal");
+                        for (int b = 3; b >= 0; b--) out[on++] = (char)('0' + ((h >> b) & 1));
+                    } else {
+                        if (s[i] != '0' && s[i] != '1') die_at(line, "a boolean literal holds only the characters 0 and 1");
+                        out[on++] = s[i];
+                    }
+                }
+                Tok *bt = push_tok(T_STR, line, out, on);
+                bt->boolv = 1;
+                free(out);
+                p = e + 1;
                 continue;
             }
             if ((c == 'z' || c == 'Z') && (p[1] == '\'' || p[1] == '"'))
@@ -1675,8 +1704,8 @@ static void sym_finish(Sym *s)
     if (s->nat_usage && pi->category != PIC_NATIONAL) {
         /* numeric and numeric-edited USAGE NATIONAL: the DISPLAY form, each
          * character two bytes (2023 13.18.66 rule 12; not A or X, rule 30) */
-        if (pi->category != PIC_NUMERIC && pi->category != PIC_NUMERIC_EDITED)
-            die_at(s->line, "'%s': USAGE NATIONAL takes a PICTURE of N, or a numeric or numeric-edited one (2023 13.18.66.3 rule 12)", s->name);
+        if (pi->category != PIC_NUMERIC && pi->category != PIC_NUMERIC_EDITED && pi->category != PIC_BOOLEAN)
+            die_at(s->line, "'%s': USAGE NATIONAL takes a PICTURE of N, or a numeric, numeric-edited or boolean one (2023 13.18.66.3 rule 12)", s->name);
         u = s->usage = U_NATIONAL;
     }
     switch (u) {
@@ -1839,6 +1868,29 @@ static void parse_data_item(void)
 
 /* PICTURE N...: a national item (COBOL 2002 13.18.40), N(k) and N
  * repeated, each character two bytes.  Other pictures are pic_analyse's. */
+/* PICTURE 1...: a boolean item (2023 13.18.40), 1(k) and 1 repeated,
+ * one boolean position each (cobol ISSUES-76) */
+static int bool_picture(const char *pic, PicInfo *pi, int line)
+{
+    int n = 0;
+    for (const char *p = pic; *p; ) {
+        if (*p != '1') return 0;
+        p++;
+        if (*p == '(') {
+            char *e; long k = strtol(p + 1, &e, 10);
+            if (*e != ')' || k < 1) return 0;
+            n += (int)k; p = e + 1;
+        } else n++;
+    }
+    if (!n) return 0;
+    if (g_std < 2002) die_at(line, "PICTURE 1 (boolean) is COBOL 2002; compile with -std=2002");
+    memset(pi, 0, sizeof *pi);
+    pi->category = PIC_BOOLEAN; pi->bytes = n;
+    pi->patlen = n < PIC_MAXPAT - 1 ? n : PIC_MAXPAT - 1;
+    memset(pi->pat, '1', (size_t)pi->patlen);
+    return 1;
+}
+
 static int nat_picture(const char *pic, PicInfo *pi, int line)
 {
     /* with B, 0 or / as well, national-edited (cobol ISSUES-73); the
@@ -1960,6 +2012,7 @@ static void parse_data_item1(void)
             s->has_pic = 1;
             snprintf(s->pic, sizeof s->pic, "%s", cur()->s);
             if (nat_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
+            if (bool_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (pic_analyse(s->pic, &s->pi) < 0) die_at(t->line, "'%s': %s", s->name, s->pi.err);
             advance();
             continue;
@@ -1981,6 +2034,8 @@ static void parse_data_item1(void)
             s->usage = u; s->has_usage = 1;
             continue;
         }
+        else if (g_std >= 2002 && !strcmp(t->s, "bit"))
+            die_at(t->line, "USAGE BIT is not implemented yet (boolean items are USAGE DISPLAY or NATIONAL here)");
         else if (!strcmp(t->s, "group-usage")) {
             /* GROUP-USAGE IS NATIONAL (2023 13.18.29): the group is treated
              * as one national item; checked once the tree is built */
@@ -2323,6 +2378,24 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
 {
     int numeric = is_numeric_sym(s);
     if (s->pi.category == PIC_NATIONAL) { init_national(s, p, defaults); return; }
+    if (s->pi.category == PIC_BOOLEAN && s->usage == U_DISPLAY) {
+        /* boolean: zeros by default; a VALUE is a boolean literal or ZERO,
+         * aligned left and zero-filled (2023 13.18.63; 14.6.8.6) */
+        if (defaults) memset(p, '0', s->size);
+        if (!s->value_tok || g_no_values) return;
+        Tok *v = s->value_tok;
+        if (s->value_fig) {
+            if (strncmp(v->s, "zero", 4)) die_at(v->line, "VALUE %s is not a boolean value for '%s' (2023 14.9.25 rule 7)", v->s, s->name);
+            memset(p, '0', s->size);
+            return;
+        }
+        if (v->kind != T_STR || !v->boolv) die_at(v->line, "the VALUE of the boolean item '%s' must be a boolean literal (B\"...\") or ZERO", s->name);
+        if (s->value_all) { for (int i = 0; i < s->size; i++) p[i] = (unsigned char)v->s[i % (v->len ? v->len : 1)]; return; }
+        if (v->len > s->size) die_at(v->line, "VALUE literal (%d boolean positions) is longer than '%s' (%d)", v->len, s->name, s->size);
+        memcpy(p, v->s, (size_t)v->len);
+        memset(p + v->len, '0', (size_t)(s->size - v->len));
+        return;
+    }
     if (s->usage == U_NATIONAL) {
         /* numeric national: initialized as its DISPLAY form, then widened;
          * a nonnumeric VALUE is a national literal (13.18.63 rule 5) */
@@ -2330,7 +2403,7 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
         unsigned char *t = xmalloc((size_t)n + 1);
         for (int i = 0; i < n; i++) t[i] = p[2 * i + 1];
         Tok *save = s->value_tok, narrow;
-        if (save && save->kind == T_STR && !s->value_fig) {
+        if (save && save->kind == T_STR && !s->value_fig && !(save->boolv && s->pi.category == PIC_BOOLEAN)) {
             if (!save->nat) die_at(save->line, "the VALUE of the USAGE NATIONAL item '%s' must be a national literal (N\"...\") (2023 13.18.63 rule 5)", s->name);
             narrow = *save; narrow.nat = 0; narrow.len = save->len / 2; narrow.s = xmalloc((size_t)narrow.len + 1);
             for (int i = 0; i < narrow.len; i++) {
@@ -2815,6 +2888,7 @@ static int sym_desc(Sym *s)
         case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;
         case PIC_NUMERIC: d.cat = COB_NUM; break;
         case PIC_NATIONAL: d.cat = COB_NATIONAL; break;
+        case PIC_BOOLEAN: d.cat = COB_BOOLEAN; break;
         default: d.cat = COB_NUM_ED; break;
         }
         switch (s->usage) {
@@ -2850,6 +2924,14 @@ static int nat_desc(int len)
 {
     Desc d; memset(&d, 0, sizeof d);
     d.cat = COB_NATIONAL; d.usage = COB_U_DISPLAY; d.size = len;
+    return desc_add(&d);
+}
+
+/* a boolean literal's or part's descriptor: len boolean positions, DISPLAY */
+static int bool_desc(int len)
+{
+    Desc d; memset(&d, 0, sizeof d);
+    d.cat = COB_BOOLEAN; d.usage = COB_U_DISPLAY; d.size = len;
     return desc_add(&d);
 }
 
@@ -3031,12 +3113,13 @@ typedef struct Opnd_ {
     int e_start, e_end; /* O_EXPR: token range, re-parsed when emitted */
     int fn; struct Opnd_ *farg, *farg2; int fsize;   /* O_FUNC: intrinsic, its argument(s), result width */
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
-    int fvar, fnat;                          /* O_FUNC: length known only at run time (fsize its maximum); a national result */
+    int fvar, fnat, fbool;                   /* O_FUNC: length known only at run time (fsize its maximum); a national, a boolean result */
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
 } Opnd;
 static int opnd_is_national(const Opnd *o);
+static int opnd_is_boolean(const Opnd *o);
 static int ref_is_national(const Ref *r);
 static int ref_static_len(const Ref *r);
 static void nat_fig_opnd(Opnd *o, int nbytes);
@@ -3044,6 +3127,7 @@ static void nat_fig_opnd(Opnd *o, int nbytes);
 /* national: an elementary PIC N item, or a national group, which is
  * treated as one (2023 13.18.29.4 rule 2b) */
 static int sym_is_national(const Sym *s) { return s->natgroup || (!s->is_group && s->pi.category == PIC_NATIONAL); }
+static int sym_is_boolean(const Sym *s) { return !s->is_group && s->pi.category == PIC_BOOLEAN; }
 
 static int is_int_item(Sym *s)
 {
@@ -3173,6 +3257,8 @@ static void parse_ref(Ref *r)
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
         advance();
         r->rm = 1; r->rm_l0 = -1;
+        if (!r->sym->is_group && r->sym->usage == U_NATIONAL)
+            die_at(r->line, "reference modification of the USAGE NATIONAL item '%s' is not implemented yet", r->sym->name);
         r->rm_nat = sym_is_national(r->sym);   /* 2023 8.4.2.4: character positions; a national group as elementary */
         if (cur()->kind == T_NUM && peek(1)->kind == T_COLON) {
             NumLit n; numlit_parse(cur(), &n);
@@ -3209,10 +3295,10 @@ static void parse_ref(Ref *r)
 }
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
-       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC };
+       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL };
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
-static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN; }
+static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN || fn == FN_INTOFBOOL; }
 static const char *fn_runtime_name(int fn)
 {
     switch (fn) {
@@ -3384,7 +3470,8 @@ static int fn89_known(const char *w)
     static const char *named[] = { "when-compiled", "upper-case", "lower-case", "current-date", "integer-of-date",
         "date-of-integer", "day-of-integer", "integer-of-day", "length", "byte-length", "highest-algebraic",
         "lowest-algebraic", "exception-status", "exception-statement", "national-of", "display-of", "char-national",
-        "exception-file", "exception-file-n", "exception-location", "exception-location-n", NULL };
+        "exception-file", "exception-file-n", "exception-location", "exception-location-n",
+        "boolean-of-integer", "integer-of-boolean", NULL };
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(w, g_fn89[i].name)) return 1;
     for (int i = 0; named[i]; i++) if (!strcmp(w, named[i])) return 1;
     return 0;
@@ -3442,7 +3529,6 @@ static int ufn_named(const char *w);
 static void fn_refuse(Tok *n)
 {
     static const struct { const char *name, *why; } later[] = {
-        { "boolean-of-integer", "the BOOLEAN module" }, { "integer-of-boolean", "the BOOLEAN module" },
 
         { "locale-compare", "locale support" }, { "locale-date", "locale support" }, { "locale-time", "locale support" },
         { "locale-time-from-seconds", "locale support" }, { "standard-compare", "the ISO/IEC 14651 ordering" },
@@ -3598,6 +3684,36 @@ static void parse_operand_raw(Opnd *o)
                 o->fn = FN_CHARNAT; o->fnat = 1; o->fsize = 2;
             }
             if (o->fsize > 8190) die_at(n->line, "FUNCTION %s: the result could exceed 8190 bytes", n->s);
+            return;
+        }
+        else if (!strcmp(n->s, "boolean-of-integer") || !strcmp(n->s, "integer-of-boolean")) {
+            /* COBOL 2002 15.13, 15.45 (cobol ISSUES-76) */
+            if (g_std < 2002) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
+            int boi = !strcmp(n->s, "boolean-of-integer");
+            advance();
+            if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
+            advance();
+            Opnd *a1 = xmalloc(sizeof *a1); parse_operand(a1);
+            Opnd *a2 = NULL;
+            if (boi) { a2 = xmalloc(sizeof *a2); parse_operand(a2); }
+            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the arguments of FUNCTION %s", n->s);
+            advance();
+            memset(o, 0, sizeof *o); o->kind = O_FUNC; o->farg = a1; o->farg2 = a2; o->line = n->line;
+            if (boi) {
+                for (Opnd *x = a1; x; x = x == a1 ? a2 : NULL)
+                    if (!((x->kind == O_NUM && numlit_is_int(&x->num) && !x->num.neg) || (x->kind == O_REF && is_int_item(x->ref.sym))))
+                        die_at(n->line, "FUNCTION BOOLEAN-OF-INTEGER takes two positive integers (15.13.3)");
+                o->fn = FN_BOOLOFINT; o->fbool = 1;
+                if (a2->kind == O_NUM) {
+                    long long len = numlit_int(&a2->num);
+                    if (len < 1 || len > 8190) die_at(n->line, "FUNCTION BOOLEAN-OF-INTEGER: a length of %lld boolean positions (1 to 8190 here)", len);
+                    o->fsize = (int)len;
+                } else { o->fvar = 1; o->fsize = 8190; }
+            } else {
+                if (!opnd_is_boolean(a1) || a1->kind == O_ALL)
+                    die_at(n->line, "FUNCTION INTEGER-OF-BOOLEAN takes a boolean argument (15.45.3)");
+                o->fn = FN_INTOFBOOL; o->fsize = 18;
+            }
             return;
         }
         else if (!strcmp(n->s, "exception-status") || !strcmp(n->s, "exception-statement")) {
@@ -3919,6 +4035,7 @@ static Arg arg_content(Opnd *o)    { Arg a = { A_CONTENT, 0, 0, 0, 0, o }; retur
 static Arg arg_fdesc(Opnd *o)      { Arg a = { A_FDESC, 0, 0, 0, 0, o }; return a; }   /* the descriptor of the function result just evaluated */
 static Arg arg_rdesc(const Ref *r) { Arg a = { A_RDESC, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_rlen(const Ref *r)  { Arg a = { A_RLEN, r, 0, 0, 0, 0 }; return a; }
+static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_numeric);
 static int g_slot_base;             /* staged operands of nested evaluations use higher slots */
 
 static void emit_fn_value(Opnd *f);
@@ -4030,7 +4147,7 @@ static void emit_args(const Arg *a, int n)
             /* a result whose length is known only now: its descriptor, taken
              * while it is still the last function evaluated (the A_FUNC
              * before this one) */
-            emit_li("r3", a[i].fn->fnat);
+            emit_li("r3", a[i].fn->fnat ? 1 : a[i].fn->fbool ? 2 : 0);
             emit_call("cob_fn_var_desc");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
@@ -4361,6 +4478,19 @@ static void emit_fn_value_raw(Opnd *f)
         emit_call(f->fn == FN_NATOF ? "cob_fn_national_of" : "cob_fn_display_of");
         return;
     }
+    if (f->fn == FN_BOOLOFINT) {
+        emit_push_opnd(x);                      /* argument-1, on the numeric stack */
+        if (f->fvar) { emit_push_opnd(f->farg2); emit_call("cob_pop_int"); emit("\tadd r3, r1, r0"); }
+        else emit_li("r3", f->fsize);
+        emit_call("cob_fn_boolean_of_integer");
+        return;
+    }
+    if (f->fn == FN_INTOFBOOL) {
+        Arg a[2]; opnd_args(x, &a[0], &a[1], 0, 0);
+        emit_args(a, 2);
+        emit_call("cob_fn_integer_of_boolean");
+        return;
+    }
     if (f->fn == FN_CHARNAT) {
         emit_push_opnd(x);
         emit_call("cob_pop_int");
@@ -4472,19 +4602,21 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
     case O_REF:
         *addr = arg_ref(&o->ref);
         if (!o->ref.rm) *desc = arg_desc(sym_desc(o->ref.sym));
-        else if (o->ref.rm_len) *desc = arg_desc(o->ref.rm_nat ? nat_desc(2 * (int)o->ref.rm_len) : str_desc((int)o->ref.rm_len));
+        else if (o->ref.rm_len) *desc = arg_desc(o->ref.rm_nat ? nat_desc(2 * (int)o->ref.rm_len)
+                                                 : sym_is_boolean(o->ref.sym) ? bool_desc((int)o->ref.rm_len) : str_desc((int)o->ref.rm_len));
         else *desc = arg_rdesc(&o->ref);
         return;
     case O_FUNC:
         *addr = arg_func(o);
         if (o->fvar) { *desc = arg_fdesc(o); return; }
         if (o->fnat) { *desc = arg_desc(nat_desc(o->fsize)); return; }
+        if (o->fbool) { *desc = arg_desc(bool_desc(o->fsize)); return; }
         if (o->fn == -1) *desc = arg_desc(o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize));
         else *desc = arg_desc(fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
         return;
     case O_STR:
         *addr = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
-        *desc = arg_desc(o->tok->nat ? nat_desc(o->tok->len) : str_desc(o->tok->len)); return;
+        *desc = arg_desc(o->tok->nat ? nat_desc(o->tok->len) : o->tok->boolv ? bool_desc(o->tok->len) : str_desc(o->tok->len)); return;
     case O_NUM: {
         int d; const char *l = num_lit_label(&o->num, &d);
         *addr = arg_label(l); *desc = arg_desc(d); return;
@@ -4847,8 +4979,19 @@ typedef struct Cond {
 
 static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); memset(c, 0, sizeof *c); c->kind = kind; return c; }
 
+static int opnd_is_boolean(const Opnd *o);
+static void bool_fig_opnd(Opnd *o, int n);
+static int bool_positions(const Sym *s);
 static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
+    /* a boolean operand is compared only with a boolean one (2023
+     * 8.8.4.2.8); ZERO and ALL B"..." beside it are boolean */
+    int xb = opnd_is_boolean(x), yb = opnd_is_boolean(y);
+    if (xb || yb) {
+        if (!xb && !(x->kind == O_FIG || x->kind == O_ALL)) die_at(x->line, "a boolean operand is compared only with a boolean one (2023 8.8.4.2.8)");
+        if (!yb && !(y->kind == O_FIG || y->kind == O_ALL)) die_at(y->line, "a boolean operand is compared only with a boolean one (2023 8.8.4.2.8)");
+        bool_fig_opnd(x, 1); bool_fig_opnd(y, 1);       /* zero-filled on the right by the comparison */
+    }
     Cond *c = cond_new(C_REL);
     c->x = *x; c->y = *y; c->op = op; c->neg = neg;
     return c;
@@ -4972,10 +5115,12 @@ static Cond *parse_simple(void)
         else if (!strcmp(t->s, "alphabetic")) klass = 1;
         else if (!strcmp(t->s, "alphabetic-lower")) klass = 2;
         else if (!strcmp(t->s, "alphabetic-upper")) klass = 3;
+        else if (g_std >= 2002 && !strcmp(t->s, "boolean")) klass = -2;     /* 2023 8.8.4.4: each position 0 or 1 */
         if (klass < 0)
             for (int i = 0; i < g_nclass; i++) if (!strcmp(t->s, g_class[i].name)) klass = 4 + i;
-        if (klass >= 0) {
+        if (klass >= 0 || klass == -2) {
             if (x.kind != O_REF) die_at(line, "a class condition needs a data item");
+            if (klass == -2 && is_numeric_sym(x.ref.sym)) die_at(line, "BOOLEAN is no class test for the numeric item '%s' (2023 8.8.4.4.3 rule 5)", x.ref.sym->name);
             advance();
             Cond *c = cond_new(C_CLASS); c->x = x; c->klass = klass; c->neg = neg;
             return c;
@@ -4999,6 +5144,16 @@ static Cond *parse_simple(void)
     }
 
     int op = parse_relop();
+    if (op < 0 && opnd_is_boolean(&x)) {
+        /* a simple boolean condition (2023 8.8.4.3): one boolean position,
+         * true when it is 1 */
+        int len = x.kind == O_STR ? x.tok->len : x.ref.rm ? (int)x.ref.rm_len : bool_positions(x.ref.sym);
+        if (len != 1) die_at(line, "a boolean condition takes a boolean item of one position (2023 8.8.4.3.3 rule 1)");
+        Tok *one = xmalloc(sizeof *one); memset(one, 0, sizeof *one);
+        one->kind = T_STR; one->s = "1"; one->len = 1; one->boolv = 1; one->line = line;
+        Opnd y; memset(&y, 0, sizeof y); y.kind = O_STR; y.tok = one; y.line = line;
+        return cond_rel(&x, R_EQ, &y, neg);
+    }
     if (op < 0) {
         if (x.kind == O_REF && x.ref.sym->is_cond) return cond_88(&x.ref, neg);
         if (g_abbr_op >= 0)             /* an object alone: the last relation's subject and operator */
@@ -5065,7 +5220,7 @@ static void emit_cond_value(Cond *c)
             emit_args(a, 3);
             emit_call("cob_class_user");
         } else {
-            a[2] = arg_imm(c->klass);
+            a[2] = arg_imm(c->klass == -2 ? 4 : c->klass);       /* -2: BOOLEAN, the runtime's kind 4 */
             emit_args(a, 3);
             emit_call("cob_class");
         }
@@ -6020,6 +6175,71 @@ static int emit_move_national(Opnd *src, Ref *dst)
     return 1;
 }
 
+/* boolean positions of a boolean item */
+static int bool_positions(const Sym *s) { return s->usage == U_NATIONAL ? s->size / 2 : s->size; }
+
+/* a figurative constant or ALL literal beside a boolean operand of n
+ * positions: ZERO is boolean zeros, ALL B"..." its value repeated; any
+ * other figurative is no boolean value (2023 14.9.25 rule 7) */
+static void bool_fig_opnd(Opnd *o, int n)
+{
+    if (o->kind != O_FIG && o->kind != O_ALL) return;
+    if (n < 1) n = 1;
+    char *b = xmalloc((size_t)n + 1);
+    if (o->kind == O_FIG) {
+        if (strncmp(o->tok->s, "zero", 4)) die_at(o->line, "%s is not a boolean value (2023 14.9.25 rule 7)", o->tok->s);
+        memset(b, '0', (size_t)n);
+    } else {
+        if (!o->tok->boolv) die_at(o->line, "ALL with a literal that is not boolean, beside a boolean operand");
+        for (int i = 0; i < n; i++) b[i] = o->tok->s[i % (o->tok->len ? o->tok->len : 1)];
+    }
+    Tok *t = xmalloc(sizeof *t); *t = *o->tok;
+    t->kind = T_STR; t->s = b; t->len = n; t->boolv = 1; t->nat = 0;
+    o->kind = O_STR; o->tok = t;
+}
+
+static int opnd_is_boolean(const Opnd *o)
+{
+    if (o->kind == O_STR || o->kind == O_ALL) return o->tok && o->tok->boolv;
+    if (o->kind == O_FUNC) return o->fbool;
+    return o->kind == O_REF && sym_is_boolean(o->ref.sym);
+}
+
+/* MOVE with a boolean side (2023 14.9.25 table): a boolean receiver takes
+ * a boolean, alphanumeric or national sender, aligned left, zero-filled
+ * or truncated on the right (14.6.8.6); a boolean sender goes to an
+ * alphanumeric, national or group receiver as its characters 0 and 1.
+ * Numeric and edited categories are no boolean's partners either way. */
+static int emit_move_boolean(Opnd *src, Ref *dst)
+{
+    Sym *d = dst->sym;
+    int db = sym_is_boolean(d), sb = opnd_is_boolean(src);
+    if (!db && !sb) return 0;
+    if (!db) {
+        if (d->is_group) return 0;                          /* a group receives the bytes */
+        int c = d->pi.category;
+        if (c == PIC_ALPHANUMERIC || c == PIC_ALPHANUMERIC_EDITED || c == PIC_NATIONAL) return 0;   /* as its characters */
+        die_at(dst->line, "a boolean item cannot be moved to the %s item '%s' (2023 14.9.25)",
+               c == PIC_ALPHABETIC ? "alphabetic" : "numeric", d->name);
+    }
+    int n = dst->rm ? (dst->rm_len ? (int)dst->rm_len : 1) : bool_positions(d);
+    Opnd lit;
+    if (src->kind == O_FIG || src->kind == O_ALL) { lit = *src; bool_fig_opnd(&lit, n); src = &lit; }
+    else if (!sb) {
+        int ok = src->kind == O_STR ||
+                 (src->kind == O_REF && (src->ref.sym->is_group || src->ref.sym->pi.category == PIC_ALPHANUMERIC ||
+                                         (sym_is_national(src->ref.sym) && !src->ref.sym->pi.edited))) ||
+                 (src->kind == O_FUNC && !fn_is_numeric(src->fn));
+        if (!ok) die_at(src->line, "only a boolean, alphanumeric or national item can be moved to the boolean item '%s' (2023 14.9.25)", d->name);
+    }
+    Arg a[4];
+    opnd_args(src, &a[0], &a[1], n, 0);
+    a[2] = arg_ref(dst);
+    a[3] = !dst->rm ? arg_desc(sym_desc(d)) : dst->rm_len ? arg_desc(bool_desc((int)dst->rm_len)) : arg_rdesc(dst);
+    emit_args(a, 4); emit_call("cob_move");
+    return 1;
+}
+
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
@@ -6048,6 +6268,7 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
+    if (emit_move_boolean(src, dst)) return;
     if (emit_move_national(src, dst)) return;
     /* Sending and receiving items with byte-identical descriptors -- same
      * category, usage, size, digit count, scale, flags and PICTURE -- so the
@@ -9660,8 +9881,8 @@ static void init_mask(Sym *s, int top_off, int disp, unsigned char *mask, int li
 static void parse_initialize(void)
 {
     Ref rs[MAXOPS]; int n = 0;
-    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0 };
-    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0 };
+    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0 };
+    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0 };
     Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand()) {
@@ -9713,6 +9934,7 @@ static void parse_initialize(void)
             else if (accept_word("alphanumeric-edited")) cat = PIC_ALPHANUMERIC_EDITED;
             else if (accept_word("numeric-edited")) cat = PIC_NUMERIC_EDITED;
             else if (g_std >= 2002 && accept_word("national")) cat = PIC_NATIONAL;
+            else if (g_std >= 2002 && accept_word("boolean")) cat = PIC_BOOLEAN;
             else die_at(line, "INITIALIZE REPLACING: expected ALPHABETIC, ALPHANUMERIC, NUMERIC, ALPHANUMERIC-EDITED, NUMERIC-EDITED%s",
                         g_std >= 2002 ? " or NATIONAL" : "");
             accept_word("data"); expect_word("by");

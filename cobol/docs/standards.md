@@ -282,6 +282,10 @@ refused with a message naming the switch.
     and positioned ACCEPT into a national item. Both need a ruling on
     what a column is when a character takes two cells; both modules are
     optional since 2014. Refused by name.
+- **BOOLEAN, part one** (2026-09-28, ISSUES-76): PICTURE 1 in USAGE
+  DISPLAY and NATIONAL, B and BX literals, VALUE, MOVE, comparison, the
+  boolean condition and class test, INITIALIZE, BOOLEAN-OF-INTEGER and
+  INTEGER-OF-BOOLEAN. Expressions and USAGE BIT follow. docs/boolean.md.
 
 ## Deferred — object orientation
 

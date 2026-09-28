@@ -2445,3 +2445,47 @@ bad/std2002-nat-rw, -nat-rw-source, -nat-screen, -nat-screen-from.
 Harness 228/228; -std=85 byte-identical on all 227 Open Systems
 programs; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+### 76. BOOLEAN, part one: boolean data in DISPLAY and NATIONAL usage (2026-09-28)
+
+The next Stage B module after NATIONAL. Part one is boolean data and
+everything that moves or tests it; expressions and USAGE BIT follow.
+docs/boolean.md has the whole of it.
+
+- **Data.** PICTURE 1 (a new category, PIC_BOOLEAN; COB_BOOLEAN in
+  libcob). USAGE DISPLAY stores a character 0 or 1 a position. USAGE
+  NATIONAL stores the same widened, through the ISSUES-72 narrowing,
+  which needed only to admit the category. USAGE BIT is refused by
+  name.
+- **Literals.** `B"..."` and `BX"..."` are tokens carrying `boolv`, held
+  as characters 0 and 1.
+- **MOVE** by the 14.9.25 table, in `emit_move_boolean`, ahead of the
+  national path, which would otherwise take a national-to-boolean MOVE
+  for a forbidden national-to-alphanumeric one. The runtime aligns left
+  and zero-fills (14.6.8.6). ZERO and ALL B"..." expand to boolean
+  literals; any other figurative is refused (rule 7).
+- **Conditions.** Boolean against boolean only, zero-extended on the
+  right (8.8.4.2.8). The simple boolean condition (8.8.4.3) for one
+  position, and the BOOLEAN class test (8.8.4.4), runtime class 4.
+- **Also.** INITIALIZE zeros, REPLACING BOOLEAN DATA BY; reference
+  modification, whose part is boolean; LENGTH in positions.
+- **Functions.** BOOLEAN-OF-INTEGER and INTEGER-OF-BOOLEAN. With a
+  length item, BOOLEAN-OF-INTEGER's result has a run-time length
+  (`cob_fn_var_desc` kind 2).
+
+Reference modification of any USAGE NATIONAL numeric or boolean item is
+refused for now. Before this, numeric national reference modification
+counted bytes, not characters; it came in with ISSUES-72 and was never
+tested.
+
+Oracle: none. GnuCOBOL 4, measured, rejects 2002/boolean: no simple
+boolean condition, no BOOLEAN class test, no INITIALIZE REPLACING
+BOOLEAN, no MOVE ALL B"10". std2002-intrinsic-module now uses
+LOCALE-COMPARE, as BOOLEAN-OF-INTEGER exists; two rule-12 messages name
+boolean.
+
+2002/boolean (no oracle). Refusals: std2002-bool-from-num, -bool-to-num,
+-bool-cmp-alnum, -bool-cond-wide, -bool-value-alnum, -bool-space,
+-usage-bit, -bool-literal-digit, boolean-85. Harness 238/238; -std=85
+byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.
