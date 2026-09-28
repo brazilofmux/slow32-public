@@ -1,0 +1,13 @@
+read 1: abcd
+read past the end, no AT END phrase:
+  EC-I-O declarative: EC-I-O-AT-END                   in READ 
+read past the end, with AT END:
+  the AT END phrase
+duplicate alternate key, warning off:
+duplicate alternate key, warning on:
+  EC-I-O declarative: EC-I-O-WARNING                  in WRITE
+a missing file with its own USE procedure:
+  gone's own USE AFTER ERROR procedure
+on after it
+a missing file with none:
+  EC-I-O declarative: EC-I-O-PERMANENT-ERROR          in OPEN 

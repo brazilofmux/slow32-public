@@ -1213,8 +1213,13 @@ int cob_open_mode(cob_file *f) { return f->open_mode ? (int)f->open_mode : (int)
  * a FILE STATUS, 3 an error with no FILE STATUS to record it -- the
  * compiler runs a USE procedure if one applies, else cob_io_unhandled. */
 static char cob_last_st[3]; static const char *cob_last_op = "";
+static char io_st[2] = { '0', '0' };    /* every I-O statement's status, for EC-I-O */
+/* the last I-O status's class for EC-I-O (cobol ISSUES-58): its first digit,
+ * or -1 for 00 */
+int cob_io_class(void) { return io_st[0] == '0' && io_st[1] == '0' ? -1 : io_st[0] - '0'; }
 static int file_result(cob_file *f, const char *st, const char *what)
 {
+    io_st[0] = st[0]; io_st[1] = st[1];
     set_status(f, st);
     if (st[0] == '0') return 0;
     if (st[0] == '1' || st[0] == '2') return 1;      /* at end; the invalid key condition */

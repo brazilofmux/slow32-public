@@ -1902,3 +1902,33 @@ now; GnuCOBOL agrees. Every program's prologue changed, so the gates
 were the paper: harness 177/177 with CCVS-85 unchanged, majesty PASS,
 majesty-functions PASS, Open Systems paper unchanged in all seven
 modules.
+
+### 58. Exception handling, part four: EC-I-O from the I-O status (2026-09-28)
+
+With checking on, an input-output statement's I-O status raises the
+condition its first digit names (2023 9.1.13): 1 EC-I-O-AT-END, 2
+-INVALID-KEY, 3 -PERMANENT-ERROR, 4 -LOGIC-ERROR, 5 -RECORD-OPERATION,
+6 -FILE-SHARING, 7 -RECORD-CONTENT, 9 -IMP; a successful status other
+than 00 raises EC-I-O-WARNING, which only its own name turns on. The
+order is USE general rule 3's: the statement's AT END or INVALID KEY
+phrase; the file's USE AFTER ERROR procedure; the open mode's; then
+the exception declaratives, most specific first. libcob keeps every
+statement's status (cob_io_class), not only the errors'.
+
+After a fatal status the implementor chooses (9.1.13). Here: when a
+USE AFTER ERROR procedure handled it, the run goes on as COBOL 85
+programs expect; when an exception declarative did, or nothing did,
+the run ends.
+
+2002/ecio: AT END with and without the phrase, a duplicate alternate
+key's 02 as a warning, a missing file's own USE procedure coming first,
+and a missing file with none ending the run. Writing it turned up the
+text's own rule working: a READ after the AT END condition was reported
+is 46, a logic error, and fatal. No oracle.
+
+Found on the way: the first cut allocated the warning label whether or
+not EC-I-O-WARNING was on, which renumbered every later label in every
+program -- equivalent code, but the byte-identical gate caught it (224
+of 227 Open Systems programs "differed"). Allocated only when needed,
+-std=85 output is byte-identical again on all 227. Harness 178/178;
+majesty PASS; majesty-functions PASS; Open Systems paper unchanged.

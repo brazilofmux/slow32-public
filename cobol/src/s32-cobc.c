@@ -6879,8 +6879,13 @@ static void emit_use_dispatch(File *f, int has_clause)
      * 2 an error with a FILE STATUS to record it, 3 an error nothing but a
      * USE procedure can take -- the run stops if none does */
     int Ldone = new_label();
+    /* EC-I-O (cobol ISSUES-58): with checking on, the condition the I-O
+     * status names (2023 9.1.13) -- after the statement's own phrase and
+     * the file's and the open mode's USE AFTER ERROR procedures, before
+     * the run stops for want of one (USE general rule 3) */
+    int warn = ec_on_name("EC-I-O-WARNING"), Lwarn = warn ? new_label() : 0;
     emit("\tldw r13, sp+%d", SLOT_C);
-    emit("\tbeq r13, r0, .L%d", Ldone);
+    emit("\tbeq r13, r0, .L%d", warn ? Lwarn : Ldone);
     if (has_clause) { emit_li("r2", 1); emit("\tbeq r13, r2, .L%d", Ldone); }
     if (any_mode) { emit_file_addr("r3", f); emit_call("cob_open_mode"); emit("\tadd r12, r0, r1"); }
     for (int i = 0; i < nc; i++) {
@@ -6895,10 +6900,37 @@ static void emit_use_dispatch(File *f, int has_clause)
         emit_jump(Ldone);
         emit_label(Lnext);
     }
+    static const struct { const char *name; int digit; } ecio[] = {
+        { "EC-I-O-AT-END", 1 }, { "EC-I-O-INVALID-KEY", 2 }, { "EC-I-O-PERMANENT-ERROR", 3 },
+        { "EC-I-O-LOGIC-ERROR", 4 }, { "EC-I-O-RECORD-OPERATION", 5 }, { "EC-I-O-FILE-SHARING", 6 },
+        { "EC-I-O-RECORD-CONTENT", 7 }, { "EC-I-O-IMP", 9 }, { NULL, 0 } };
+    int any = 0;
+    for (int k = 0; ecio[k].name; k++) if (ec_on_name(ecio[k].name)) any = 1;
+    if (any) {
+        emit_call("cob_io_class");                  /* the status's first digit; r13 survives */
+        for (int k = 0; ecio[k].name; k++) {
+            if (!ec_on_name(ecio[k].name)) continue;
+            int Lnext = new_label();
+            emit_li("r2", ecio[k].digit);
+            emit("\tbne r1, r2, .L%d", Lnext);
+            emit_ec_raise(ec_find(ecio[k].name, 0));      /* a fatal one ends the run here */
+            emit_jump(Ldone);
+            emit_label(Lnext);
+        }
+    }
     emit_li("r2", 3);
     emit("\tbne r13, r2, .L%d", Ldone);
     emit_file_addr("r3", f);
     emit_call("cob_io_unhandled");
+    if (warn) {
+        /* a successful statement whose status is not 00: EC-I-O-WARNING,
+         * only when turned on by its own name (7.3.25 rule 4) */
+        emit_jump(Ldone);
+        emit_label(Lwarn);
+        emit_call("cob_io_class");
+        emit("\tbne r1, r0, .L%d", Ldone);
+        emit_ec_raise(ec_find("EC-I-O-WARNING", 0));
+    }
     emit_label(Ldone);
 }
 
