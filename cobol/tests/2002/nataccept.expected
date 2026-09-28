@@ -1,0 +1,9 @@
+long line: [日本語のテ]
+short line: [abc  ]
+invalid UTF-8, unchecked: [caf� ]
+  declarative: EC-DATA-CONVERSION
+invalid UTF-8, checked: [no�l ]
+at end: [no�l ]
+command line: [東京 x    ]
+argument: [東京   ]
+date: [260928  ]

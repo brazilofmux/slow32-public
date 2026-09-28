@@ -2905,7 +2905,6 @@ static void emit_expr_tokens(int s0, int s1);
 static void emit_ucalls(int from, int to);
 static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */
 static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
-static const char *g_nat_forbid;        /* the statement a national item may not appear in yet, or NULL */
 static int ec_size_on(void);
 static void emit_ec_size(void);
 static int ec_on_name(const char *name);
@@ -2951,6 +2950,7 @@ typedef struct Opnd_ {
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
 } Opnd;
 static int opnd_is_national(const Opnd *o);
+static int ref_is_national(const Ref *r);
 static int ref_static_len(const Ref *r);
 static void nat_fig_opnd(Opnd *o, int nbytes);
 
@@ -3019,8 +3019,6 @@ static void parse_ref(Ref *r)
         advance();
     }
     r->sym = sym_lookup(name, quals, nq, t->line);
-    if (g_nat_forbid && !r->sym->is_group && r->sym->pi.category == PIC_NATIONAL)
-        die_at(t->line, "a national item in %s is not implemented yet", g_nat_forbid);
     /* an unsubscripted item's parenthesis holding a ':' is a reference
      * modification, not a subscript list */
     int lead_rm = 0;
@@ -5155,11 +5153,7 @@ static int at_operand(void)
 static void parse_statement(void);
 static void parse_statements(void)
 {
-    /* the statements in a phrase (ON OVERFLOW ...) are their own, free of
-     * the enclosing statement's restrictions */
-    const char *nf = g_nat_forbid; g_nat_forbid = NULL;
     while (!at_scope_end()) parse_statement();
-    g_nat_forbid = nf;
 }
 
 static int g_sentence_label = -1;   /* NEXT SENTENCE target, made on demand */
@@ -5531,9 +5525,21 @@ static void parse_accept_positioned(Ref *r, int tp)
 }
 
 static void parse_accept_1(void);
+/* ACCEPT into a national item (cobol ISSUES-70): the text arrives as
+ * UTF-8 and is moved, so a byte that begins no UTF-8 character becomes
+ * U+FFFD and, checked, EC-DATA-CONVERSION (as a MOVE, 14.9.25 rule 6) */
+static int g_accept_nat_check;
 static void parse_accept(void)
 {
-    g_nat_forbid = "ACCEPT"; parse_accept_1(); g_nat_forbid = NULL;
+    g_accept_nat_check = 0;
+    parse_accept_1();
+    if (g_accept_nat_check) {
+        int Lok = new_label();
+        emit_call("cob_nat_conv_bad");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-DATA-CONVERSION", 0));
+        emit_label(Lok);
+    }
 }
 static void parse_accept_1(void)
 {
@@ -5558,7 +5564,15 @@ static void parse_accept_1(void)
     }
     int ref_tp = g_tp;
     Ref r; parse_ref(&r);
-    if (stmt_positioned()) { parse_accept_positioned(&r, ref_tp); return; }
+    int nat = ref_is_national(&r);
+    if (stmt_positioned()) {
+        if (nat) die_at(r.line, "ACCEPT of a national item at a screen position is not implemented yet");
+        parse_accept_positioned(&r, ref_tp); return;
+    }
+    if (nat && ec_on_name("EC-DATA-CONVERSION")) {
+        emit_call("cob_nat_conv_bad");              /* clear what an earlier MOVE left: at end of file nothing is moved */
+        g_accept_nat_check = 1;
+    }
     if (accept_word("from")) {
         if (at_word("argument-number") || at_word("argument-value") || at_word("command-line")) {
             const char *fn = at_word("argument-number") ? "cob_accept_argnum"
@@ -10194,7 +10208,7 @@ static void parse_procedure_division(void)
         if (setjmp(jb)) {
             g_recover = outer;
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge;
-            g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL; g_nat_forbid = NULL;
+            g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
             resync_sentence(start);
             continue;
         }

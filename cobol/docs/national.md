@@ -47,7 +47,8 @@ bytes, INITIALIZE with REPLACING NATIONAL.
 A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
-Refused until later parts: ACCEPT of national items; numeric and edited national
+Refused until later parts: ACCEPT of a national item at a screen
+position; numeric and edited national
 pictures; national groups (GROUP-USAGE NATIONAL); national fields in
 Report Writer and SCREEN SECTION.
 
@@ -109,6 +110,15 @@ positions are characters -- POINTER, COUNT IN and TALLYING IN count
 them, and a delimiter matches only at a character boundary. A numeric
 UNSTRING receiver of national data would have to be USAGE NATIONAL
 (rule 4), which is not implemented, so it is refused.
+
+## ACCEPT (ISSUES-70)
+
+ACCEPT into a national item -- from standard input, the console, the
+command line, an argument, DATE, DAY, TIME or DAY-OF-WEEK -- moves the
+text as UTF-8, so the item is truncated or padded by character. A byte
+that begins no UTF-8 character becomes U+FFFD and, with checking on,
+EC-DATA-CONVERSION, as for a MOVE. At end of input the item is left as
+it was, and nothing is raised.
 
 ## Case (ISSUES-66)
 

@@ -2253,3 +2253,25 @@ that is present only across a character boundary.
 bad/std2002-nat-string and bad/std2002-nat-unstring-num. Harness
 208/208; -std=85 byte-identical on all 227 Open Systems programs;
 majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
+
+### 70. NATIONAL, part three: ACCEPT (2026-09-28)
+
+ACCEPT into a national item. Every form already went through `cob_move`
+with alphanumeric text as the source, and a national receiver's move
+decodes UTF-8 (ISSUES-62/63), so the runtime needed nothing. The
+compiler stops refusing, and with EC-DATA-CONVERSION checked, it clears
+the conversion flag before the ACCEPT (at end of input nothing is
+moved, and a flag left by an earlier unchecked MOVE must not raise the
+condition) and tests it after. ACCEPT at a screen position waits for
+national screen fields and is refused by name.
+
+This was the last statement using `g_nat_forbid`, the blanket "a
+national item in X is not implemented yet" refusal; it is gone. It only
+ever covered INSPECT, STRING, UNSTRING and ACCEPT, which now take
+national data by their own rules.
+
+2002/nataccept (no oracle; .keys, .args and .env): a long line and a
+short one, invalid UTF-8 unchecked and checked, end of input, COMMAND-
+LINE, ARGUMENT-VALUE and DATE. bad/std2002-nat-accept-at. Harness
+210/210; -std=85 byte-identical on all 227 Open Systems programs;
+majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
