@@ -556,22 +556,27 @@ static void move_alnum_edited(const char *s, int n, char *dst, const cob_desc *d
 
 /* A national character is one UTF-16 code unit, stored big-endian, two
  * bytes (2023 8.5.1.4: no special handling of surrogates or composites).
- * Alphanumeric text is read as UTF-8 when it becomes national; a byte
- * that does not start a valid sequence stands for its Latin-1 character.
+ * Alphanumeric text is UTF-8 when it becomes national (the user's ruling:
+ * this side of the fence).  A byte that begins no valid sequence is
+ * malformed data, not another encoding: it becomes U+FFFD and nat_bad is
+ * set, for EC-DATA-CONVERSION (14.9.25 general rule 6).
  * Returns the code units written (at most max). */
+static int nat_bad;
+int cob_nat_conv_bad(void) { int b = nat_bad; nat_bad = 0; return b; }
 static int utf8_to_nat(const unsigned char *p, int n, unsigned short *out, int max)
 {
     int k = 0, i = 0;
     while (i < n && k < max) {
-        unsigned c = p[i], cp = c; int len = 1;
+        unsigned c = p[i], cp = c < 0x80 ? c : 0xFFFD; int len = 1;
         if (c >= 0xC2 && c <= 0xDF && i + 1 < n && (p[i + 1] & 0xC0) == 0x80) { cp = ((c & 0x1F) << 6) | (p[i + 1] & 0x3F); len = 2; }
         else if (c >= 0xE0 && c <= 0xEF && i + 2 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80) {
             cp = ((c & 0x0F) << 12) | ((p[i + 1] & 0x3F) << 6) | (p[i + 2] & 0x3F); len = 3;
-            if (cp < 0x800) { cp = c; len = 1; }
+            if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) { cp = 0xFFFD; len = 1; }
         } else if (c >= 0xF0 && c <= 0xF4 && i + 3 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80 && (p[i + 3] & 0xC0) == 0x80) {
             cp = ((c & 0x07) << 18) | ((p[i + 1] & 0x3F) << 12) | ((p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F); len = 4;
-            if (cp < 0x10000 || cp > 0x10FFFF) { cp = c; len = 1; }
+            if (cp < 0x10000 || cp > 0x10FFFF) { cp = 0xFFFD; len = 1; }
         }
+        if (cp == 0xFFFD && len == 1) nat_bad = 1;
         i += len;
         if (cp >= 0x10000) {                            /* a surrogate pair: two character positions */
             cp -= 0x10000;
@@ -623,6 +628,7 @@ static int as_national(const void *p, const cob_desc *d, unsigned short *out, in
 static void move_to_national(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd)
 {
     int dn = (int)dd->size / 2;
+    nat_bad = 0;                                    /* this MOVE's own conversion, for EC-DATA-CONVERSION */
     unsigned short stk[256], *u = stk;
     int max = sd->cat == COB_NATIONAL ? (int)sd->size / 2 : (int)sd->size + 2;
     if (max > 256) { u = malloc((size_t)max * sizeof *u); if (!u) cob_fatal("out of memory"); }

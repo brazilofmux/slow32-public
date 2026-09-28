@@ -15,9 +15,23 @@ Stage B). Parts landed so far are listed in ISSUES.md 62 onward.
 - **Alphanumeric text is UTF-8 when it becomes national** -- in a MOVE,
   a comparison, NATIONAL-OF. Source files, the terminal and modern data
   are UTF-8; the text allows this as "mixed alphanumeric and national
-  data". A byte that begins no valid UTF-8 sequence stands for its
-  Latin-1 character rather than being lost. DISPLAY of a national item
-  or literal writes UTF-8.
+  data". DISPLAY of a national item or literal writes UTF-8.
+- **A byte that is not UTF-8 is malformed data, not another encoding**
+  (ruled 2026-09-28, ISSUES-63; a first cut read it as Latin-1, and a
+  byte string cannot be both). It becomes U+FFFD, and with checking on,
+  the MOVE raises EC-DATA-CONVERSION (14.9.25 general rule 6). A national
+  literal in the source must be UTF-8 text; anything else is a compile
+  error. Legacy 8-bit or EBCDIC data is converted once, explicitly, where
+  it comes in -- never guessed at byte by byte.
+
+**The principle** (the user's framing): these are the choices of an
+implementation on the non-IBM side of the fence. IBM keeps alphanumeric
+in a single-byte code page and adds UTF-8 as a separate usage (`USAGE
+UTF-8`, `U"..."` literals, Enterprise COBOL 6.x); here the source,
+the terminal and alphanumeric data are UTF-8, and national data is
+IBM's UTF-16BE so it interchanges unchanged. Surrogates follow the text
+and IBM alike: a character above U+FFFF is a surrogate pair, two PIC N
+positions, four bytes, and not splitting one is the programmer's care.
 
 ## What part one covers (ISSUES-62)
 

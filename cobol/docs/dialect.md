@@ -611,3 +611,14 @@ reference modification are **in v1**, at the width taskdt uses them —
 see [plan.md](plan.md) Stage 9. Indexed alternate keys. Report Writer `CONTROL`/`SUM`/`USE BEFORE REPORTING`. These are
 real 85; they are not on the majesty v1 path. CCVS-85 NC/SQ/IC is the
 yardstick for that growth, not for v1. See [plan.md](plan.md).
+
+## Reference-format columns in UTF-8 source (2026-09-28)
+
+Fixed-form columns -- 7 the indicator, 8-72 the program text, 73-80
+ignored -- count characters (code points), not bytes: the user's ruling,
+so a card image keeps its layout when its text becomes UTF-8 (an
+accented letter is one EBCDIC byte on the mainframe and two bytes
+here). IBM defines a column as a byte position, and GnuCOBOL counts
+bytes; `-fixed-columns=bytes` does the same, for UTF-8 sources written
+with byte columns. ASCII sources are unaffected either way.
+fixed/utf8cols (cobol ISSUES-63).

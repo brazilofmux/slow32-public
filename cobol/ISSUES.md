@@ -2020,3 +2020,33 @@ Next (part two): NATIONAL-OF, DISPLAY-OF, CHAR-NATIONAL, whose results'
 lengths are known only at run time -- the variable-length function
 result machinery EXCEPTION-LOCATION, EXCEPTION-FILE, TRIM and CONCAT
 also wait on.
+
+### 63. UTF-8 source columns, and malformed UTF-8 in national conversion (2026-09-28)
+
+Two rulings from a discussion of part one's encodings, framed by the
+user as the choices of an implementation on the non-IBM side of the
+fence:
+
+- **Fixed-form columns count code points.** IBM (a column is "a byte
+  position") and GnuCOBOL count bytes, as this compiler did; but a card
+  image carried from EBCDIC into UTF-8 grows a byte for every accented
+  letter, and its layout breaks -- a literal ending at column 72 runs
+  into the sequence area. The reader now places columns 7, 8 and 73 by
+  characters; `-fixed-columns=bytes` restores byte counting (compile.sh
+  passes it through). ASCII sources are unaffected: -std=85 output is
+  byte-identical on all 227 Open Systems programs, and CCVS-85 is
+  unchanged. fixed/utf8cols (no oracle; GnuCOBOL counts bytes).
+- **Invalid UTF-8 is malformed, not Latin-1.** Part one read a byte that
+  begins no valid sequence as its Latin-1 character; a byte string
+  cannot be both encodings. It now becomes U+FFFD, and with checking on
+  a MOVE into a national item raises EC-DATA-CONVERSION (14.9.25 general
+  rule 6; nonfatal). A national literal with invalid UTF-8 is a compile
+  error. 2002/natconv. A first cut left libcob's conversion flag set
+  from an unchecked MOVE, so a later valid one raised the condition;
+  each MOVE now clears it.
+
+Surrogates were confirmed, not changed: one PIC N position is one UTF-16
+code unit, a supplementary character two (the text, 8.5.1.4, and IBM's
+Language Reference agree). docs/national.md, docs/dialect.md. Harness
+189/189; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.

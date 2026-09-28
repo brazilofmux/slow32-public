@@ -314,6 +314,31 @@ typedef struct { char *text; int line; int dbg, dir; } SrcLine;   /* dbg: a D in
 static SrcLine *g_lines;
 static int g_nlines;
 
+static int g_col_bytes;             /* -fixed-columns=bytes: reference-format columns are bytes */
+
+/* the byte offset of character column k (0-based) of a line: code points
+ * (a byte that is not a UTF-8 continuation byte begins a character), or
+ * bytes under -fixed-columns=bytes; len when the line is shorter */
+static int colb(const char *p, int len, int k)
+{
+    if (g_col_bytes) return k < len ? k : len;
+    int c = -1;
+    for (int i = 0; i < len; i++) {
+        if (((unsigned char)p[i] & 0xC0) != 0x80) c++;
+        if (c == k) return i;
+    }
+    return len;
+}
+
+/* the columns a piece of text occupies, by the same count */
+static int colcount(const char *p, int len)
+{
+    if (g_col_bytes) return len;
+    int c = 0;
+    for (int i = 0; i < len; i++) if (((unsigned char)p[i] & 0xC0) != 0x80) c++;
+    return c;
+}
+
 /* read a source file (or a copybook) into lines of program text; 0 if
  * it cannot be opened */
 static int read_lines(const char *path, SrcLine **out, int *nout)
@@ -345,7 +370,7 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
         /* a compiler-directive line (COBOL 2002 7.3): >> as the first
          * non-blank, in free form anywhere, in fixed form from column 7 */
         {
-            int from = free_form ? 0 : 6;
+            int from = free_form ? 0 : colb(p, len, 6);
             const char *d = p + (len > from ? from : len), *de = p + len;
             while (d < de && (*d == ' ' || *d == '\t')) d++;
             if (de - d >= 2 && d[0] == '>' && d[1] == '>') {
@@ -394,15 +419,20 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
         if (free_form) {
             text = xstrndup(p, len);
         } else {
-            if (len > 6) {
-                char ind = p[6];
+            /* the reference format's columns: code points, so a card image
+             * keeps its layout when its text becomes UTF-8 (-fixed-columns=
+             * bytes counts bytes, as GnuCOBOL and IBM's byte columns do) */
+            int i7 = colb(p, len, 6), i8 = colb(p, len, 7), i73 = colb(p, len, 72);
+            if (i7 < len) {
+                char ind = p[i7];
+                if ((unsigned char)ind >= 0x80) ind = '?';
                 if (ind == '*' || ind == '/') text = NULL;         /* comment */
                 else if (ind == 'D' || ind == 'd') {
                     /* a debugging line: text for COPY/REPLACE matching ("as
                      * if the D did not appear"), dropped afterwards unless
                      * the program says WITH DEBUGGING MODE (tokenize) */
-                    int cn = len - 7; if (cn > 65) cn = 65; if (cn < 0) cn = 0;
-                    text = xstrndup(p + 7, cn); dbg = 1;
+                    int cn = i73 - i8; if (cn < 0) cn = 0;
+                    text = xstrndup(p + i8, cn); dbg = 1;
                 }
                 else if (ind == '-') {
                     /* continuation: the previous text line goes on here.  If
@@ -418,8 +448,8 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                         if (open) { if (*q == open) open = 0; }
                         else if (*q == '"' || *q == '\'') open = *q;
                     }
-                    int cn = len - 7; if (cn > 65) cn = 65; if (cn < 0) cn = 0;
-                    const char *c = p + 7, *ce = p + 7 + cn;
+                    int cn = i73 - i8; if (cn < 0) cn = 0;
+                    const char *c = p + i8, *ce = p + i8 + cn;
                     while (c < ce && (*c == ' ' || *c == '\t')) c++;
                     /* a literal whose quotes look balanced but whose last character,
                      * at the end of the line, is a quote, met by a continuation
@@ -428,7 +458,7 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                      * "...8J" at column 72, then -    ""9K...) */
                     if (!open) {
                         size_t pl = strlen(prev);
-                        if (pl == 65 && (prev[pl - 1] == '"' || prev[pl - 1] == '\'') && c < ce && *c == prev[pl - 1]) open = prev[pl - 1];   /* column 72 exactly */
+                        if (colcount(prev, (int)pl) == 65 && (prev[pl - 1] == '"' || prev[pl - 1] == '\'') && c < ce && *c == prev[pl - 1]) open = prev[pl - 1];   /* column 72 exactly */
                     }
                     if (open) {
                         if (c >= ce || *c != open)
@@ -447,9 +477,8 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                     die_at(lineno, "unrecognised indicator '%c' in column 7 "
                            "(free-format source? compile it with -free)", ind);
                 else {
-                    int n = len - 7;
-                    if (n > 65) n = 65;                             /* 8..72 */
-                    text = xstrndup(p + 7, n);
+                    int n = i73 - i8; if (n < 0) n = 0;             /* 8..72 */
+                    text = xstrndup(p + i8, n);
                 }
             }
         }
@@ -554,22 +583,23 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
 
 static int is_wordch(int c) { return isalnum(c) || c == '-' || c == '_'; }
 
-/* UTF-8 source text to national bytes, UTF-16 big-endian (as libcob's
- * utf8_to_nat: a byte that begins no valid sequence is its Latin-1
- * character); returns the bytes written, 2 per code unit */
+/* UTF-8 source text to national bytes, UTF-16 big-endian, as libcob's
+ * utf8_to_nat does it; returns the bytes written, 2 per code unit, or -1
+ * at a byte that begins no valid UTF-8 sequence (the source is UTF-8) */
 static int utf8_to_utf16be(const unsigned char *p, int n, unsigned char *out)
 {
     int k = 0, i = 0;
     while (i < n) {
         unsigned c = p[i], cp = c; int len = 1;
+        if (c >= 0x80 && !(c >= 0xC2 && c <= 0xF4)) return -1;
         if (c >= 0xC2 && c <= 0xDF && i + 1 < n && (p[i + 1] & 0xC0) == 0x80) { cp = ((c & 0x1F) << 6) | (p[i + 1] & 0x3F); len = 2; }
         else if (c >= 0xE0 && c <= 0xEF && i + 2 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80) {
             cp = ((c & 0x0F) << 12) | ((p[i + 1] & 0x3F) << 6) | (p[i + 2] & 0x3F); len = 3;
-            if (cp < 0x800) { cp = c; len = 1; }
+            if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) return -1;
         } else if (c >= 0xF0 && c <= 0xF4 && i + 3 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80 && (p[i + 3] & 0xC0) == 0x80) {
             cp = ((c & 0x07) << 18) | ((p[i + 1] & 0x3F) << 12) | ((p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F); len = 4;
-            if (cp < 0x10000 || cp > 0x10FFFF) { cp = c; len = 1; }
-        }
+            if (cp < 0x10000 || cp > 0x10FFFF) return -1;
+        } else if (c >= 0x80) return -1;
         i += len;
         if (cp >= 0x10000) {
             cp -= 0x10000;
@@ -663,7 +693,10 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                         if (h < 0 || l < 0) die_at(line, "bad hexadecimal digit in a national literal");
                         out[i / 2] = (char)(h * 16 + l);
                     }
-                } else { out = xmalloc((size_t)rn * 4 + 1); on = utf8_to_utf16be((const unsigned char *)raw, rn, (unsigned char *)out); }
+                } else {
+                    out = xmalloc((size_t)rn * 4 + 1); on = utf8_to_utf16be((const unsigned char *)raw, rn, (unsigned char *)out);
+                    if (on < 0) die_at(line, "a national literal must be UTF-8 text (the source is UTF-8)");
+                }
                 Tok *nt = push_tok(T_STR, line, out, on);
                 nt->nat = 1;
                 free(raw); free(out);
@@ -5587,7 +5620,10 @@ static void nat_fig_opnd(Opnd *o, int nbytes)
     } else {
         const unsigned char *lit = (const unsigned char *)o->tok->s; int len = o->tok->len;
         unsigned char *conv = NULL;
-        if (!o->tok->nat) { conv = xmalloc((size_t)len * 4 + 2); len = utf8_to_utf16be(lit, len, conv); lit = conv; }
+        if (!o->tok->nat) {
+            conv = xmalloc((size_t)len * 4 + 2); len = utf8_to_utf16be(lit, len, conv); lit = conv;
+            if (len < 0) die_at(o->line, "an ALL literal compared with a national item must be UTF-8 text");
+        }
         for (int i = 0; i < nbytes; i++) b[i] = lit[i % len];
         free(conv);
     }
@@ -5618,7 +5654,10 @@ static int emit_move_national(Opnd *src, Ref *dst)
         /* ALL literal: its national characters repeated */
         const unsigned char *lit = (const unsigned char *)src->tok->s; int len = src->tok->len;
         unsigned char *conv = NULL;
-        if (!src->tok->nat) { conv = xmalloc((size_t)len * 4 + 2); len = utf8_to_utf16be(lit, len, conv); lit = conv; }
+        if (!src->tok->nat) {
+            conv = xmalloc((size_t)len * 4 + 2); len = utf8_to_utf16be(lit, len, conv); lit = conv;
+            if (len < 0) die_at(src->line, "an ALL literal moved to a national item must be UTF-8 text");
+        }
         Arg a[4] = { arg_ref(dst), arg_imm(d->size), arg_label(lit_label(lit, len)), arg_imm(len) };
         emit_args(a, 4); emit_call("cob_fill_all");
         free(conv);
@@ -5628,6 +5667,14 @@ static int emit_move_national(Opnd *src, Ref *dst)
     opnd_args(src, &a[0], &a[1], d->size, 0);
     a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
     emit_args(a, 4); emit_call("cob_move");
+    if (!sn && ec_on_name("EC-DATA-CONVERSION")) {
+        /* a byte that is not UTF-8 became U+FFFD (14.9.25 general rule 6) */
+        int Lok = new_label();
+        emit_call("cob_nat_conv_bad");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-DATA-CONVERSION", 0));
+        emit_label(Lok);
+    }
     return 1;
 }
 
@@ -11432,6 +11479,7 @@ static void usage(void)
         "  -std=85  X3.23-1985 and the 1989 intrinsics; the default\n"
         "  -std=2002 add the COBOL 2002 modules landed so far (docs/standards.md, Stage B)\n"
         "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
+        "  -fixed-columns=bytes  count reference-format columns in bytes, not characters (UTF-8 source)\n"
         "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n", VERSION);
     exit(2);
 }
@@ -11449,6 +11497,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--version")) { printf("s32-cobc %s\n", VERSION); return 0; }
         else if (!strcmp(argv[i], "-warn-74")) g_warn74 = 1;
         else if (!strcmp(argv[i], "-fnsig")) g_fnsig_only = 1;
+        else if (!strcmp(argv[i], "-fixed-columns=bytes")) g_col_bytes = 1;
+        else if (!strcmp(argv[i], "-fixed-columns=chars")) g_col_bytes = 0;
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) g_std = 2002;
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {

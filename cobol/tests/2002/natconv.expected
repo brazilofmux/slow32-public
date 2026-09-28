@@ -1,0 +1,4 @@
+unchecked: [caf�]
+valid UTF-8: [café]
+  declarative: EC-DATA-CONVERSION             
+checked: [caf�]
