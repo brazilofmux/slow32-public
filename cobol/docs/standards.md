@@ -159,6 +159,13 @@ target. Per the README, CCVS-85 is at 348 of 348 programs compiling
 and 8049 of 8160 tests passing. Closing that gap, or recording each
 remaining failure as a ruling against the text, finishes the stage.
 
+Surveyed 2026-09-27 (ISSUES-44): all 348 programs now match
+GnuCOBOL's tally, 8068 of 8175 passing and none failing. No remaining
+test is a failure. 16 are deleted by the suite itself and 91 are
+marked for visual inspection, both the same as GnuCOBOL's. What is
+left of the stage is those 91 read by a person against the text, and
+the conformance gaps the suite does not test (ISSUES-43 is the first).
+
 ## Stage B — COBOL 2002, the practical half
 
 The standard is treated as modules, not one block. These parts of

@@ -119,6 +119,28 @@ for m in $MODULES; do
                           END { printf "tp=%d tf=%d\n", ok ? 1 : 0, bad ? 1 : 0 }' "$rep")"
             pass=$((pass + tp)); fail=$((fail + tf))
         fi
+        # (report.pl's patterns want a space after the matched word; a
+        # line-sequential print file trims trailing spaces, so end of line
+        # counts too)
+        # NC113M: report.pl counts each MARGIN TESTING line as a pass when the
+        # MAR-TEST numbers come out in sequence; the total is the "n TESTS
+        # REQUIRE VISUAL INSPECTION" line (there is no "TESTS WERE" line)
+        if [ "$name" = NC113M ] && [ -f "$rep" ]; then
+            eval "$(awk '/^ MARGIN TESTING *MAR-TEST-[0-9]+( |$)/ { match($0, /MAR-TEST-[0-9]+/); n = substr($0, RSTART + 9, RLENGTH - 9) + 0; seq++; if (seq == n) p++; else { f++; seq = n } }
+                          /^ *[0-9]+ *TESTS REQUIRE VISUAL INSPECTION/ { t += $1; s = 1 }
+                          END { printf "tp=%d tf=%d tt=%d ts=%d\n", p, f, t, s }' "$rep")"
+            pass=$((pass + tp)); fail=$((fail + tf)); total=$((total + tt)); [ "$ts" = 1 ] && summary=1
+        fi
+        # NC121M, NC220M: report.pl passes each "*** INFORMATION ***" line whose
+        # value equals the matching line the program DISPLAYed (the console's
+        # second and third lines, in order)
+        if { [ "$name" = NC121M ] || [ "$name" = NC220M ]; } && [ -f "$rep" ] && [ -f "$run/$name.out" ]; then
+            eval "$(awk 'NR == FNR { if (FNR == 2) l1 = $0; if (FNR == 3) l2 = $0; next }
+                          /^\*\*\* INFORMATION \*\*\* *[0-9A-Z-]+( |$)/ { v = $0; sub(/^\*\*\* INFORMATION \*\*\* */, "", v); sub(/ .*/, "", v);
+                                                                    if (v == l1) p++; else f++; l1 = l2 }
+                          END { printf "tp=%d tf=%d\n", p, f }' "$run/$name.out" "$rep")"
+            pass=$((pass + tp)); fail=$((fail + tf))
+        fi
         [ "$summary" = 1 ] && [ "$total" = 0 ] && { pass=1; total=1; }     # "000 OF 000 TESTS": the run itself is the test
         status=""
         # a program with no summary that GnuCOBOL's tally also scores 0 of 0 is fine when it exits 0

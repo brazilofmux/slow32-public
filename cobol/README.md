@@ -16,8 +16,10 @@ INITIALIZE / reference modification / every X3.23a-1989 intrinsic
 function, sequential mode V behind the IBM RDW that tapemgr
 round-trips, COPY, the command line, OCCURS DEPENDING ON, SEARCH;
 91/91 tests, GnuCOBOL agreeing on every program that can run without
-a tty, and the NIST CCVS-85 at 348 of 348 compiling, 8049 of 8160
-tests passing. Stages in [docs/plan.md](docs/plan.md);
+a tty, and the NIST CCVS-85 at 348 of 348 compiling and all 348
+matching GnuCOBOL's tally, 8068 of 8175 tests passing and none failing
+(the other 107 are the suite's own deletions and visual-inspection
+tests, the same count as GnuCOBOL's; ISSUES-44). Stages in [docs/plan.md](docs/plan.md);
 what the rest of the corpus needs, in
 [docs/majesty-corpus.md](docs/majesty-corpus.md) "Stage 12+".
 

@@ -6290,8 +6290,9 @@ static void parse_write(void)
         Opnd src; parse_operand(&src);
         emit_move(&src, &rec);
     }
-    int before = 0, after = 0, after_kw = 0; Opnd n; int dyn = 0;
+    int before = 0, after = 0, after_kw = 0; Opnd n; int dyn = 0, adv = 0;
     if (at_word("before") || at_word("after")) {
+        adv = 1;
         after_kw = accept_word("after"); if (!after_kw) accept_word("before");
         accept_word("advancing");
         if (accept_word("page") || (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 3 && (advance(), 1))) {
@@ -6314,8 +6315,12 @@ static void parse_write(void)
     }
 advancing_done:;
     /* a file written WITH ADVANCING and no ORGANIZATION clause is a print
-     * file: its records are lines (GnuCOBOL's "line advancing" file) */
-    if ((before || after || dyn) && f->org == COB_ORG_SEQ && !f->org_given && !f->varying) f->org = COB_ORG_LINESEQ;
+     * file: its records are lines (GnuCOBOL's "line advancing" file).  The
+     * phrase decides, not its count: AFTER 1 is zero newlines beyond the
+     * record's own, so testing the counts left a file written only AFTER 1
+     * a plain sequential file with no line breaks at all (CCVS-85 NC113M;
+     * cobol ISSUES-44) */
+    if (adv && f->org == COB_ORG_SEQ && !f->org_given && !f->varying) f->org = COB_ORG_LINESEQ;
     /* (a LINAGE file took the line counts themselves above, not n-1: AFTER n
      * in r4, BEFORE n in r5, -1 for PAGE, 0/0 for no ADVANCING) */
     int keyed_org = f->org == COB_ORG_INDEXED || f->org == COB_ORG_RELATIVE;

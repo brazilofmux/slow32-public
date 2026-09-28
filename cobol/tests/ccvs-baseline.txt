@@ -1,1 +1,1 @@
-CCVS-85: 348 programs, 348 compile, 347 run to a summary; tests 8049 of 8160 pass (0 fail); 345 programs match GnuCOBOL exactly
+CCVS-85: 348 programs, 348 compile, 348 run to a summary; tests 8068 of 8175 pass (0 fail); 348 programs match GnuCOBOL exactly

@@ -706,6 +706,49 @@ this, so it is a conformance gap and not a miscompile; it belongs in
 Stage A (`docs/standards.md`) as one bounded piece, with a
 `tests/bad/` fixture per word class.
 
+### 44. A file written only `AFTER 1` had no line breaks; CCVS-85 surveyed (2026-09-27)
+**Surveyed.** The 111 CCVS-85 tests that did not pass were not
+failures: 16 are deleted by the suite's own configuration and 91 are
+marked for visual inspection (89 of them the SQ module's `M`
+programs), both exactly as GnuCOBOL scores them. The last four were
+three programs GnuCOBOL scores with special rules in `report.pl` that
+`tests/ccvs-run.sh` did not implement, and one of the three hid a real
+bug.
+
+**The bug.** A file with no ORGANIZATION clause that is written with
+ADVANCING becomes a print file (records are lines). The test was the
+advancing *counts*, and `AFTER 1` is zero newlines beyond the record's
+own, so a file written only `AFTER 1` -- never `AFTER 2`, never
+`AFTER PAGE` -- stayed plain sequential and got no line breaks at all.
+NC113M's whole report came out as one line. Every other CCVS program
+also writes a page heading, which is why only this one showed it; a
+real program printing a list one line at a time would have met it.
+Fixed: the phrase decides, not its count.
+
+**The runner.** `report.pl` scores NC113M by its MARGIN TESTING lines
+coming out in sequence (total from "n TESTS REQUIRE VISUAL
+INSPECTION"), and NC121M and NC220M by each `*** INFORMATION ***` line
+matching the line the program DISPLAYed on the console. The runner now
+does the same, with one reading: those patterns want a space after the
+matched word, and a line-sequential print file trims trailing spaces,
+so end of line counts too.
+
+Result: **348 of 348 programs match GnuCOBOL's tally exactly** (was
+345), 8068 of 8175 pass with none failing; `tests/ccvs-baseline.txt`
+updated. Stage A (docs/standards.md) is left with the 91 inspection
+tests to be read against the text and the gaps the suite does not
+test.
+
+Found on the way, not a compiler matter: the Open Systems AR harness's
+cash-flow paper differs from its pin because the invoice date defaults
+to the run date and the three aging dates in its key script are fixed
+(15 and 30 September, 31 October 2026). Pinned on 7 September, the
+invoice aged into the first column; run on 27 September, into the
+second. The same paper comes out of the 7 September compiler and the 7
+September DBT. The harness masks dates as text but not their effect.
+GnuCOBOL answers this with `COB_CURRENT_DATE`; libcob has no such
+override yet.
+
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
 Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
