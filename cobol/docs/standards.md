@@ -233,10 +233,40 @@ touches the ISA.
 
 ## Later revisions
 
-ISO/IEC 1989:2014 and 1989:2023 revised the language again. Which
-2002 features they made optional, obsolete or changed has not been
-checked here; that survey happens before Stage B picks its modules,
-so the stage targets the current text rather than a superseded one.
+Surveyed 2026-09-28 against ISO/IEC 1989:2014 and 1989:2023, both held
+(licensed copies outside the tree; oracles.md). 2014's Annex E lists
+its changes from 2002, 2023's its changes from 2014. For Stage B:
+
+- **Every Stage B module is still in 2023.** `RECURSIVE`,
+  `LOCAL-STORAGE`, `FUNCTION-ID` and `REPOSITORY`, `TYPEDEF`, `BOOLEAN`
+  and `USAGE BIT`, `NATIONAL`, and `RAISE` with the `EC-` conditions
+  all appear in 2002, 2014 and 2023 alike. Stage B targets the current
+  text with no module dropped.
+- **Two modules changed shape.** 2023 removed `EXIT FUNCTION` and
+  `EXIT METHOD` (E.2 item 1, page 1172), so a user-defined function
+  ends with `GOBACK`, which 2023 also lets carry the STOP status phrase.
+  2023 added an exception-checking form of `PERFORM` (E.2 item 19), an
+  inline alternative to `USE` for exceptions. Stage B implements the
+  2023 forms, not the 2002 ones.
+- **What is optional now.** 2014 made optional what 2002 required
+  (its E.2 item 23): screen handling, file sharing and record locking,
+  object orientation, Report Writer, the `RESUME` statement, and
+  others. 2023's optional list (A.4, pages 974-979) adds `VALIDATE`.
+  An implementation may omit these and still conform, so `VALIDATE`
+  moves down Stage B's order, and the object-orientation deferral
+  below now has the standard's own blessing.
+- **What 2023 took out that 85 programs use.** Continuation of a word
+  in fixed form, `CALL ... ON OVERFLOW`, and `CLOSE ... WITH LOCK` with
+  status 38 are removed (E.2 item 1). So is a figurative constant moved
+  to a numeric item, except `ALL` with a literal of digits to an
+  *integer* item, which 2023 keeps as obsolete (Annex F): the case behind BP-O9 (ISSUES-47),
+  still defined, now only for integers. None of this touches `-std=85`,
+  and all of it is on the watch list in
+  [behavior-points.md](behavior-points.md) for the day a 2023 switch
+  needs points of its own.
+
+The order of Stage B is unchanged: `RECURSIVE` and `LOCAL-STORAGE`
+first, the module the rest (user-defined functions especially) stand on.
 
 ## What this does not change
 

@@ -458,8 +458,6 @@ given, because majesty's `.prn` oracles were produced under it.
 - **`GOBACK`** is accepted (IBM's word, not in X3.23-1985 -- GnuCOBOL
   `-std=cobol85` refuses it; majesty uses it everywhere). In the main
   program it is `STOP RUN`.
-- **ADVANCING PAGE** is refused: majesty's `.prn` files carry no form
-  feed, and a line-sequential print file has nowhere to put one.
 - **`COMP`/`BINARY` width**: 2, 4, 8 bytes for 1-4, 5-9, 10-18 digits.
   IBM's table and the natural fit for the SLOW-32 C types. GnuCOBOL's
   default is 1-2-4-8; the difference is one- and two-digit items, and

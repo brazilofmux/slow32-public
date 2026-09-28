@@ -1020,6 +1020,17 @@ int cob_load_int(const void *p, const cob_desc *d)
 typedef struct { int exit_id; void *ret; } cob_frame;
 static cob_frame pstk[256];
 static int psp;
+static int pbase;       /* the first frame of the running program's activation */
+
+/* Paragraph ids are numbered from 1 in every program, so the frames of a
+ * calling program must be out of reach of the called one: without this, a
+ * CALL made inside PERFORM P (id k) to a program that performs its own
+ * paragraph k found the caller's frame, "abandoned" it, and the caller
+ * fell through into the paragraph after P.  Each activation starts its
+ * frames above a base, searches no lower, and on return drops them all;
+ * a RECURSIVE program's activations are kept apart the same way. */
+int cob_perform_enter(void) { int old = pbase; pbase = psp; return old; }
+void cob_perform_leave(int old) { psp = pbase; pbase = old; }
 
 void cob_perform_push(int exit_id, void *ret)
 {
@@ -1029,7 +1040,7 @@ void cob_perform_push(int exit_id, void *ret)
      * and everything above it are abandoned.  Replacing it keeps the stack
      * bounded by the number of distinct ranges, as the per-paragraph return
      * slots of the classic runtimes are. */
-    for (int k = psp - 1; k >= 0; k--)
+    for (int k = psp - 1; k >= pbase; k--)
         if (pstk[k].exit_id == exit_id) { psp = k; break; }
     if (psp >= 256) cob_fatal("PERFORM nesting too deep");
     pstk[psp].exit_id = exit_id; pstk[psp].ret = ret; psp++;
@@ -1042,7 +1053,7 @@ void *cob_perform_exit(int id)
      * INVALID KEY GO TO 750 inside PERFORM 705 THRU 750).  The abandoned
      * frames above the match are dropped, as the per-paragraph return slots
      * of the classic runtimes would have them. */
-    for (int k = psp - 1; k >= 0; k--)
+    for (int k = psp - 1; k >= pbase; k--)
         if (pstk[k].exit_id == id) { void *r = pstk[k].ret; psp = k; return r; }
     return 0;
 }

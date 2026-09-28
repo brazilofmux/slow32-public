@@ -118,6 +118,7 @@ They do not call `bp()` yet.
 | `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | no: the standard form is `STOP RUN WITH {ERROR / NORMAL} STATUS [identifier / literal]` (14.9.42); neither `RETURNING` nor a bare identifier |
 | `COMP-1` as a binary integer with a PICTURE | RM/COBOL | no; `COMP-1` does not appear (the standard's floating types are `FLOAT-SHORT` and kin) |
 | `USAGE POINTER` | GnuCOBOL / majesty | yes |
+| `GOBACK` | IBM / majesty (docs/dialect.md) | yes, from 2002 (14.8.17; 2023 14.9.18) |
 | `COMP-5`, `BINARY-CHAR` and kin | GnuCOBOL / majesty | `BINARY-CHAR` and kin yes; `COMP-5` no |
 | `CALL ... BY VALUE ... RETURNING` to C | C-ABI implementor module | `BY VALUE` and `RETURNING` yes |
 
@@ -135,7 +136,12 @@ have and 2023 does.
 SENTENCE`; obsolete, `MOVE ALL "digits"` to an integer item, and the
 fixed-form continuation indicator (a hyphen in column 7), on which every
 fixed-format program in the preserved corpora relies. 2023 also removed
-`CLOSE ... WITH LOCK` and its status 38, both implemented here (Annex E).
+`CLOSE ... WITH LOCK` and its status 38, both implemented here, and
+with them (Annex E.2 item 1) the continuation of a word across fixed-form
+lines, `CALL ... ON OVERFLOW`, and a figurative constant moved to a
+numeric or numeric-edited item -- except `ALL` with a literal of digits
+to an integer item, which 2023 keeps as obsolete (BP-O9's case, now only for
+integers). docs/standards.md, "Later revisions", has the survey.
 
 ## Adding a point
 

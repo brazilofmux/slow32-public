@@ -1541,3 +1541,36 @@ and file status 38 (Annex E), both implemented here, and marks the
 fixed-form continuation indicator obsolete (Annex F) -- matters only to
 a future 2023 switch, and the preserved corpora all rely on it.
 
+### 48. A CALL could break the caller's PERFORM; USING arguments lost to the prologue (found and fixed 2026-09-28)
+
+Found reading the call path before Stage B's `RECURSIVE`, which needs
+each activation to own its state. Two defects in plain COBOL 85, both
+in every build until now, neither hit by majesty, CCVS-85 or the Open
+Systems suite.
+
+- **A CALL inside a performed paragraph could break its PERFORM.**
+  The PERFORM stack is one runtime stack keyed by paragraph id, and ids
+  are numbered from 1 in every program. When the called program
+  performed a paragraph with the same id as the caller's active one,
+  `cob_perform_push` took the caller's frame for an abandoned range and
+  dropped it; back in the caller, the paragraph's end found no frame
+  and fell through into the next paragraph. Now each activation calls
+  `cob_perform_enter` after its prologue, keeps its frames above that
+  base, searches no lower, and drops them all at `cob_perform_leave` on
+  return. free/performcall.
+- **A USING program lost its arguments** when its prologue made a call
+  first -- `IS INITIAL` (the CANCEL routine), `DECIMAL-POINT IS COMMA`,
+  `CURRENCY SIGN`, or a `PROGRAM COLLATING SEQUENCE`. The addresses in
+  r3 onward were stored into the LINKAGE cells after those calls had
+  clobbered them, and the program wrote to address 1. They are stored
+  first now. free/usingfirst.
+
+GnuCOBOL agrees with both tests' output. Neither construct is rare --
+a performed paragraph that CALLs is ordinary COBOL -- and the first
+needs only a same-numbered paragraph on the other side, so the gap in
+the corpora is luck, not rarity.
+
+**Lesson.** Reading a mechanism for what the next feature needs is an
+audit of what it already does. Both bugs were on the call path; the
+corpora passed the first because of which paragraph numbers happened
+to line up.

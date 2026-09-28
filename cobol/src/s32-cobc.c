@@ -2548,6 +2548,7 @@ static void emit_bytes(const unsigned char *b, int n)
 #define SLOT_COLL   96          /* the caller's collating table, when this unit sets its own */
 #define SLOT_DP     100         /* the caller's decimal point, under DECIMAL-POINT IS COMMA */
 #define SLOT_CUR    104         /* the caller's currency sign, under CURRENCY SIGN */
+#define SLOT_PBASE  108         /* the caller's PERFORM frame base (cob_perform_enter) */
 #define SLOT(i)     (8 + 4 * (i))
 #define NSLOTS      16
 #define SLOT_A      (8 + 4 * NSLOTS)
@@ -8281,6 +8282,15 @@ static void parse_procedure_division(void)
     emit("\taddi sp, sp, -%d", FRAME);
     emit("\tstw sp+0, lr");
     emit("\tstw sp+4, r11");
+    /* the caller's addresses go into the LINKAGE cells, first: every call
+     * below clobbers the argument registers (a USING program with DECIMAL-
+     * POINT IS COMMA, CURRENCY SIGN, a COLLATING SEQUENCE or IS INITIAL
+     * used to take its addresses from what those calls left there) */
+    for (int i = 0; i < nusing; i++) {
+        emit_la("r1", g_sym[using[i]->record].label);
+        emit("\tstw r1+0, %s", argreg(i));
+    }
+    emit_call("cob_perform_enter"); emit("\tstw sp+%d, r1", SLOT_PBASE);   /* this activation's PERFORM frames */
     if (g_collate >= 0) {       /* PROGRAM COLLATING SEQUENCE: this unit's table, the caller's kept */
         char lab[32]; snprintf(lab, sizeof lab, ".Lcoll%d", g_unit);
         emit_la("r3", lab); emit_call("cob_set_collating"); emit("\tstw sp+%d, r1", SLOT_COLL);
@@ -8288,11 +8298,6 @@ static void parse_procedure_division(void)
     if (g_dp_comma) { emit("\taddi r3, r0, 1"); emit_call("cob_set_decimal_point"); emit("\tstw sp+%d, r1", SLOT_DP); }
     if (g_currency && g_currency != '$') { emit_li("r3", g_currency); emit_call("cob_set_currency"); emit("\tstw sp+%d, r1", SLOT_CUR); }
     if (g_initial) { char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit); emit_call(cl); }   /* INITIAL: as after CANCEL */
-    /* the caller's addresses go into the LINKAGE cells */
-    for (int i = 0; i < nusing; i++) {
-        emit_la("r1", g_sym[using[i]->record].label);
-        emit("\tstw r1+0, %s", argreg(i));
-    }
     /* a FILE STATUS item in the LINKAGE SECTION (or EXTERNAL): the image
      * takes its address now that the cell is filled (status is at 16) */
     for (int i = g_file_base; i < g_nfile; i++) {
@@ -8422,6 +8427,7 @@ static void parse_procedure_division(void)
             emit_la("r4", lab);
             emit_call("cob_ext_file_exit");
         }
+    emit("\tldw r3, sp+%d", SLOT_PBASE); emit_call("cob_perform_leave");
     if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
     if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
     if (g_currency && g_currency != '$') { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_set_currency"); }
