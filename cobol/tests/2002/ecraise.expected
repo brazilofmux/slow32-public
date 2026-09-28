@@ -1,0 +1,7 @@
+status before: [                               ]
+not turned on: nothing ran
+declarative for EC-USER-X                      
+statement [RAISE                                                          ]
+after the nonfatal raise
+cleared: [                               ]
+size group declarative: EC-SIZE-OVERFLOW               

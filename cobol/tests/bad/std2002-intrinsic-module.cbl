@@ -1,6 +1,6 @@
 identification division.
-program-id. excst.
+program-id. chnat.
 *> A 2002 function whose module is not here yet is refused naming it.
 procedure division.
-    display function exception-status
+    display function char-national(66)
     stop run.

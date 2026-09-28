@@ -1,1 +1,1 @@
-FUNCTION exception-status is COBOL 2002 and needs exception handling, not implemented yet
+FUNCTION char-national is COBOL 2002 and needs the NATIONAL module, not implemented yet

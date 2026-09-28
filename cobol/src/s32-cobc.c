@@ -310,7 +310,7 @@ static char *xstrndup(const char *s, int n)
  * may be continued with the floating indicator "- or '- in either format
  * (cobol ISSUES-51). */
 
-typedef struct { char *text; int line; int dbg; } SrcLine;   /* dbg: a D in column 7 */
+typedef struct { char *text; int line; int dbg, dir; } SrcLine;   /* dbg: a D in column 7; dir: a compiler directive kept for the parser */
 static SrcLine *g_lines;
 static int g_nlines;
 
@@ -360,6 +360,22 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                     if (d + 1 < de && d[0] == '*' && d[1] == '>') break;      /* an inline comment ends it */
                 }
                 int k = 1;
+                if (nw && !strcmp(w[0], "turn")) {
+                    /* >>TURN: applied by the parser where it stands among the statements */
+                    const char *t0 = p + (len > from ? from : len);
+                    while (*t0 == ' ' || *t0 == '\t') t0++;
+                    t0 += 2;
+                    int tl = (int)(de - t0);
+                    const char *cm = NULL;
+                    for (const char *q = t0; q + 1 < de; q++) if (q[0] == '*' && q[1] == '>') { cm = q; break; }
+                    if (cm) tl = (int)(cm - t0);
+                    if (n == cap) { cap *= 2; lines = realloc(lines, cap * sizeof *lines); }
+                    lines[n].text = xstrndup(t0, tl); lines[n].line = lineno; lines[n].dbg = 0; lines[n].dir = 1;
+                    n++;
+                    if (!e) break;
+                    p = e + 1;
+                    continue;
+                }
                 if (nw && !strcmp(w[0], "source")) {
                     if (k < nw && !strcmp(w[k], "format")) k++;
                     if (k < nw && !strcmp(w[k], "is")) k++;
@@ -487,7 +503,7 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
             if (n == cap) { cap *= 2; lines = realloc(lines, cap * sizeof *lines); }
             lines[n].text = text;
             lines[n].line = lineno;
-            lines[n].dbg = dbg;
+            lines[n].dbg = dbg; lines[n].dir = 0;
             n++;
         }
         if (!e) break;
@@ -509,7 +525,7 @@ static void read_source(const char *path)
 /* Tokenizer                                                               */
 /* ====================================================================== */
 
-enum { T_EOF, T_WORD, T_NUM, T_STR, T_PIC, T_PERIOD, T_LP, T_RP, T_COLON, T_OP };
+enum { T_EOF, T_WORD, T_NUM, T_STR, T_PIC, T_PERIOD, T_LP, T_RP, T_COLON, T_OP, T_DIR };   /* T_DIR: a >>TURN, taken out of the stream */
 
 typedef struct {
     int kind, line;
@@ -553,6 +569,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
         int line = lines[li].line;
         const char *p = t;
         g_tok_dbg = lines[li].dbg;
+        if (lines[li].dir) { push_tok(T_DIR, line, t, (int)strlen(t)); continue; }
         while (*p) {
             if (*p == ' ' || *p == '\t') { p++; continue; }
             if (p[0] == '*' && p[1] == '>') break;            /* comment to EOL */
@@ -999,6 +1016,7 @@ static void strip_comment_entries(SrcLine *lines, int n)
 }
 
 static int is_word(Tok *t, const char *w);
+static struct { int pos; Tok tok; } *g_dir; static int g_ndir, g_dircap, g_ndir_done;   /* >>TURN directives, by token position */
 
 static void tokenize(void)
 {
@@ -1021,6 +1039,12 @@ static void tokenize(void)
             }
         for (int r = 0; r < g_ntok; r++) {
             if (g_tok[r].dbg && g_tok[r].line != last) { last = g_tok[r].line; if (!mode) bp(BP_O12_DEBUG_LINES, last); }
+            if (g_tok[r].kind == T_DIR) {
+                /* a >>TURN: the parser applies it on reaching this point */
+                if (g_ndir == g_dircap) { g_dircap = g_dircap ? 2 * g_dircap : 16; g_dir = realloc(g_dir, (size_t)g_dircap * sizeof *g_dir); }
+                g_dir[g_ndir].pos = w; g_dir[g_ndir].tok = g_tok[r]; g_ndir++;
+                continue;
+            }
             if (mode || !g_tok[r].dbg) g_tok[w++] = g_tok[r];
         }
         g_ntok = w;
@@ -2875,10 +2899,10 @@ static void parse_ref(Ref *r)
             die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
 }
 
-enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY };
+enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT };
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
-static int fn_is_numeric(int fn) { return fn >= FN_INTDATE; }
+static int fn_is_numeric(int fn) { return fn >= FN_INTDATE && fn <= FN_INTDAY; }
 static const char *fn_runtime_name(int fn)
 {
     switch (fn) {
@@ -3011,7 +3035,7 @@ static int fn89_known(const char *w)
 {
     static const char *named[] = { "when-compiled", "upper-case", "lower-case", "current-date", "integer-of-date",
         "date-of-integer", "day-of-integer", "integer-of-day", "length", "byte-length", "highest-algebraic",
-        "lowest-algebraic", NULL };
+        "lowest-algebraic", "exception-status", "exception-statement", NULL };
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(w, g_fn89[i].name)) return 1;
     for (int i = 0; named[i]; i++) if (!strcmp(w, named[i])) return 1;
     return 0;
@@ -3071,9 +3095,9 @@ static void fn_refuse(Tok *n)
     static const struct { const char *name, *why; } later[] = {
         { "char-national", "the NATIONAL module" }, { "display-of", "the NATIONAL module" }, { "national-of", "the NATIONAL module" },
         { "boolean-of-integer", "the BOOLEAN module" }, { "integer-of-boolean", "the BOOLEAN module" },
-        { "exception-file", "exception handling" }, { "exception-file-n", "exception handling" },
-        { "exception-location", "exception handling" }, { "exception-location-n", "exception handling" },
-        { "exception-statement", "exception handling" }, { "exception-status", "exception handling" },
+        { "exception-file", "EC-I-O checking (cobol ISSUES-53 has what is done)" }, { "exception-file-n", "EC-I-O checking" },
+        { "exception-location", "a variable-length result (cobol ISSUES-53)" }, { "exception-location-n", "a variable-length result" },
+
         { "locale-compare", "locale support" }, { "locale-date", "locale support" }, { "locale-time", "locale support" },
         { "locale-time-from-seconds", "locale support" }, { "standard-compare", "the ISO/IEC 14651 ordering" },
         { NULL, NULL } };
@@ -3194,6 +3218,14 @@ static void parse_operand_raw(Opnd *o)
         }
         if (!strcmp(n->s, "upper-case")) o->fn = FN_UPPER;
         else if (!strcmp(n->s, "lower-case")) o->fn = FN_LOWER;
+        else if (!strcmp(n->s, "exception-status") || !strcmp(n->s, "exception-statement")) {
+            /* COBOL 2002 15.32-15.33: the last exception status */
+            if (g_std < 2002) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
+            int st = !strcmp(n->s, "exception-status");
+            advance();
+            o->kind = O_FUNC; o->fn = st ? FN_EXCSTATUS : FN_EXCSTMT; o->fsize = st ? 31 : 63;
+            return;
+        }
         else if (!strcmp(n->s, "current-date")) {
             advance();
             o->kind = O_FUNC; o->fn = FN_CURDATE; o->fsize = 21;
@@ -3851,6 +3883,8 @@ static void emit_fn_value(Opnd *f)
         return;
     }
     if (f->fn == FN_CURDATE) { emit_call("cob_fn_current_date"); return; }
+    if (f->fn == FN_EXCSTATUS) { emit_call("cob_fn_exception_status"); return; }
+    if (f->fn == FN_EXCSTMT) { emit_call("cob_fn_exception_statement"); return; }
     if (fn_is_numeric(f->fn)) {
         if (x->kind == O_REF && is_hot_int(x->ref.sym)) { emit_ref_addr(&x->ref, "r3"); emit_load_int(x->ref.sym, "r3", "r1"); }
         else if (x->kind == O_REF) { emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
@@ -4582,6 +4616,7 @@ static int is_verb(const char *w)
         "sort", "start", "stop", "string", "subtract", "suppress", "terminate", "unlock",
         "unstring", "use", "write", "next", NULL };
     for (int i = 0; verbs[i]; i++) if (!strcmp(w, verbs[i])) return 1;
+    if (g_std >= 2002 && (!strcmp(w, "raise") || !strcmp(w, "resume"))) return 1;   /* COBOL 2002's verbs */
     return 0;
 }
 
@@ -6383,11 +6418,264 @@ static File *expect_file(void);
 static void emit_file_addr(const char *reg, File *f);
 static File *g_io_file;             /* the file the statement being parsed acts on, for the USE dispatch */
 
+/* ---- exception conditions (COBOL 2002 14.6.13; cobol ISSUES-53) ------- */
+
+/* ISO/IEC 1989:2023 Table 13: every exception-name, its level (1 EC-ALL,
+ * 2 a group, 3 a condition) and its fatality, 'F' fatal, 'N' nonfatal,
+ * 'I' implementor-defined (taken here as nonfatal).  EC-USER-suffix names
+ * are the user's, level 3 and nonfatal, and are added as they are met. */
+static const struct { const char *name; char level; char fatal; } g_ec[] = {
+    { "EC-ALL", 1, 0 },
+    { "EC-ARGUMENT", 2, 0 },
+    { "EC-ARGUMENT-FUNCTION", 3, 'F' },
+    { "EC-ARGUMENT-IMP", 3, 'I' },
+    { "EC-BOUND", 2, 0 },
+    { "EC-BOUND-FUNC-RET-VALUE", 3, 'N' },
+    { "EC-BOUND-IMP", 3, 'I' },
+    { "EC-BOUND-ODO", 3, 'F' },
+    { "EC-BOUND-OVERFLOW", 3, 'N' },
+    { "EC-BOUND-PTR", 3, 'F' },
+    { "EC-BOUND-REF-MOD", 3, 'F' },
+    { "EC-BOUND-SET", 3, 'N' },
+    { "EC-BOUND-SUBSCRIPT", 3, 'F' },
+    { "EC-BOUND-TABLE-LIMIT", 3, 'F' },
+    { "EC-CONTINUE", 2, 0 },
+    { "EC-CONTINUE-IMP", 3, 'I' },
+    { "EC-CONTINUE-LESS-THAN-ZERO", 3, 'N' },
+    { "EC-DATA", 2, 0 },
+    { "EC-DATA-CONVERSION", 3, 'N' },
+    { "EC-DATA-IMP", 3, 'I' },
+    { "EC-DATA-INCOMPATIBLE", 3, 'F' },
+    { "EC-DATA-NOT-FINITE", 3, 'F' },
+    { "EC-DATA-OVERFLOW", 3, 'F' },
+    { "EC-DATA-PTR-NULL", 3, 'F' },
+    { "EC-EXTERNAL", 2, 0 },
+    { "EC-EXTERNAL-DATA-MISMATCH", 3, 'F' },
+    { "EC-EXTERNAL-FILE-MISMATCH", 3, 'F' },
+    { "EC-EXTERNAL-FORMAT-CONFLICT", 3, 'F' },
+    { "EC-EXTERNAL-IMP", 3, 'I' },
+    { "EC-FLOW", 2, 0 },
+    { "EC-FLOW-APPLY-COMMIT", 3, 'F' },
+    { "EC-FLOW-COMMIT", 3, 'F' },
+    { "EC-FLOW-GLOBAL-EXIT", 3, 'F' },
+    { "EC-FLOW-GLOBAL-GOBACK", 3, 'F' },
+    { "EC-FLOW-IMP", 3, 'I' },
+    { "EC-FLOW-RELEASE", 3, 'F' },
+    { "EC-FLOW-REPORT", 3, 'F' },
+    { "EC-FLOW-RETURN", 3, 'F' },
+    { "EC-FLOW-ROLLBACK", 3, 'F' },
+    { "EC-FLOW-SEARCH", 3, 'F' },
+    { "EC-FLOW-USE", 3, 'F' },
+    { "EC-FUNCTION", 2, 0 },
+    { "EC-FUNCTION-ARG-OMITTED", 3, 'F' },
+    { "EC-FUNCTION-IMP", 3, 'I' },
+    { "EC-FUNCTION-NOT-FOUND", 3, 'F' },
+    { "EC-FUNCTION-PTR-INVALID", 3, 'F' },
+    { "EC-FUNCTION-PTR-NULL", 3, 'F' },
+    { "EC-I-O", 2, 0 },
+    { "EC-I-O-AT-END", 3, 'N' },
+    { "EC-I-O-EOP", 3, 'N' },
+    { "EC-I-O-EOP-OVERFLOW", 3, 'N' },
+    { "EC-I-O-FILE-SHARING", 3, 'N' },
+    { "EC-I-O-IMP", 3, 'I' },
+    { "EC-I-O-INVALID-KEY", 3, 'N' },
+    { "EC-I-O-LINAGE", 3, 'F' },
+    { "EC-I-O-LOGIC-ERROR", 3, 'F' },
+    { "EC-I-O-PERMANENT-ERROR", 3, 'F' },
+    { "EC-I-O-RECORD-CONTENT", 3, 'F' },
+    { "EC-I-O-RECORD-OPERATION", 3, 'N' },
+    { "EC-I-O-WARNING", 3, 'N' },
+    { "EC-IMP", 2, 0 },
+    /* { "EC-IMP-suffix", 3, 'I' },  pattern entry (implementor/user supplies suffix), not a literal name */
+    { "EC-LOCALE", 2, 0 },
+    { "EC-LOCALE-IMP", 3, 'I' },
+    { "EC-LOCALE-INCOMPATIBLE", 3, 'F' },
+    { "EC-LOCALE-INVALID", 3, 'F' },
+    { "EC-LOCALE-INVALID-PTR", 3, 'F' },
+    { "EC-LOCALE-MISSING", 3, 'F' },
+    { "EC-LOCALE-SIZE", 3, 'F' },
+    { "EC-MCS", 2, 0 },
+    { "EC-MCS-ABNORMAL-TERMINATION", 3, 'N' },
+    { "EC-MCS-IMP", 3, 'I' },
+    { "EC-MCS-INVALID-TAG", 3, 'N' },
+    { "EC-MCS-MESSAGE-LENGTH", 3, 'N' },
+    { "EC-MCS-NO-REQUESTER", 3, 'N' },
+    { "EC-MCS-NO-SERVER", 3, 'N' },
+    { "EC-MCS-NORMAL-TERMINATION", 3, 'N' },
+    { "EC-MCS-REQUESTOR-FAILED", 3, 'N' },
+    { "EC-OO", 2, 0 },
+    { "EC-OO-ARG-OMITTED", 3, 'F' },
+    { "EC-OO-CONFORMANCE", 3, 'F' },
+    { "EC-OO-EXCEPTION", 3, 'F' },
+    { "EC-OO-IMP", 3, 'I' },
+    { "EC-OO-METHOD", 3, 'F' },
+    { "EC-OO-NULL", 3, 'F' },
+    { "EC-OO-RESOURCE", 3, 'F' },
+    { "EC-OO-UNIVERSAL", 3, 'F' },
+    { "EC-ORDER", 2, 0 },
+    { "EC-ORDER-IMP", 3, 'I' },
+    { "EC-ORDER-NOT-SUPPORTED", 3, 'F' },
+    { "EC-OVERFLOW", 2, 0 },
+    { "EC-OVERFLOW-IMP", 3, 'I' },
+    { "EC-OVERFLOW-STRING", 3, 'N' },
+    { "EC-OVERFLOW-UNSTRING", 3, 'N' },
+    { "EC-PROGRAM", 2, 0 },
+    { "EC-PROGRAM-ARG-MISMATCH", 3, 'F' },
+    { "EC-PROGRAM-ARG-OMITTED", 3, 'F' },
+    { "EC-PROGRAM-CANCEL-ACTIVE", 3, 'F' },
+    { "EC-PROGRAM-IMP", 3, 'I' },
+    { "EC-PROGRAM-NOT-FOUND", 3, 'F' },
+    { "EC-PROGRAM-PTR-NULL", 3, 'F' },
+    { "EC-PROGRAM-RECURSIVE-CALL", 3, 'F' },
+    { "EC-PROGRAM-RESOURCES", 3, 'F' },
+    { "EC-RAISING", 2, 0 },
+    { "EC-RAISING-IMP", 3, 'I' },
+    { "EC-RAISING-NOT-SPECIFIED", 3, 'F' },
+    { "EC-RANGE", 2, 0 },
+    { "EC-RANGE-IMP", 3, 'I' },
+    { "EC-RANGE-INDEX", 3, 'F' },
+    { "EC-RANGE-INSPECT-SIZE", 3, 'F' },
+    { "EC-RANGE-INVALID", 3, 'N' },
+    { "EC-RANGE-PERFORM-VARYING", 3, 'F' },
+    { "EC-RANGE-PTR", 3, 'F' },
+    { "EC-RANGE-SEARCH-INDEX", 3, 'N' },
+    { "EC-RANGE-SEARCH-NO-MATCH", 3, 'N' },
+    { "EC-REPORT", 2, 0 },
+    { "EC-REPORT-ACTIVE", 3, 'F' },
+    { "EC-REPORT-COLUMN-OVERLAP", 3, 'N' },
+    { "EC-REPORT-FILE-MODE", 3, 'F' },
+    { "EC-REPORT-IMP", 3, 'I' },
+    { "EC-REPORT-INACTIVE", 3, 'F' },
+    { "EC-REPORT-LINE-OVERLAP", 3, 'N' },
+    { "EC-REPORT-NOT-TERMINATED", 3, 'N' },
+    { "EC-REPORT-PAGE-LIMIT", 3, 'N' },
+    { "EC-REPORT-PAGE-WIDTH", 3, 'N' },
+    { "EC-REPORT-SUM-SIZE", 3, 'F' },
+    { "EC-REPORT-VARYING", 3, 'F' },
+    { "EC-SCREEN", 2, 0 },
+    { "EC-SCREEN-FIELD-OVERLAP", 3, 'N' },
+    { "EC-SCREEN-IMP", 3, 'I' },
+    { "EC-SCREEN-ITEM-TRUNCATED", 3, 'N' },
+    { "EC-SCREEN-LINE-NUMBER", 3, 'N' },
+    { "EC-SCREEN-STARTING-COLUMN", 3, 'N' },
+    { "EC-SIZE", 2, 0 },
+    { "EC-SIZE-ADDRESS", 3, 'F' },
+    { "EC-SIZE-EXPONENTIATION", 3, 'F' },
+    { "EC-SIZE-IMP", 3, 'I' },
+    { "EC-SIZE-OVERFLOW", 3, 'F' },
+    { "EC-SIZE-TRUNCATION", 3, 'F' },
+    { "EC-SIZE-UNDERFLOW", 3, 'F' },
+    { "EC-SIZE-ZERO-DIVIDE", 3, 'F' },
+    { "EC-SORT-MERGE", 2, 0 },
+    { "EC-SORT-MERGE-ACTIVE", 3, 'F' },
+    { "EC-SORT-MERGE-FILE-OPEN", 3, 'F' },
+    { "EC-SORT-MERGE-IMP", 3, 'I' },
+    { "EC-SORT-MERGE-RELEASE", 3, 'F' },
+    { "EC-SORT-MERGE-RETURN", 3, 'F' },
+    { "EC-SORT-MERGE-SEQUENCE", 3, 'F' },
+    { "EC-STORAGE", 2, 0 },
+    { "EC-STORAGE-IMP", 3, 'I' },
+    { "EC-STORAGE-NOT-ALLOC", 3, 'N' },
+    { "EC-STORAGE-NOT-AVAIL", 3, 'N' },
+    { "EC-USER", 2, 0 },
+    /* { "EC-USER-suffix", 3, 'N' },  pattern entry (implementor/user supplies suffix), not a literal name */
+    { "EC-VALIDATE", 2, 0 },
+    { "EC-VALIDATE-CONTENT", 3, 'N' },
+    { "EC-VALIDATE-FORMAT", 3, 'N' },
+    { "EC-VALIDATE-IMP", 3, 'I' },
+    { "EC-VALIDATE-RELATION", 3, 'N' },
+    { "EC-VALIDATE-VARYING", 3, 'F' },
+    { NULL, 0, 0 }
+};
+#define NEC (int)(sizeof g_ec / sizeof g_ec[0] - 1)
+static char g_ecu[64][64]; static int g_necu;             /* EC-USER-suffix names met so far */
+static unsigned char g_ec_on[NEC + 64], g_ec_loc[NEC + 64];  /* checking enabled; WITH LOCATION */
+static int g_ecuser_on, g_ecuser_loc;                      /* EC-USER (or EC-ALL): user names met later too */
+
+static const char *ec_name(int i) { return i < NEC ? g_ec[i].name : g_ecu[i - NEC]; }
+static int ec_level(int i) { return i < NEC ? g_ec[i].level : 3; }
+static int ec_fatal(int i) { return i < NEC && g_ec[i].fatal == 'F'; }
+
+/* the index of an exception-name, or -1; a new EC-USER-suffix is added */
+static int ec_find(const char *w, int line)
+{
+    for (int i = 0; i < NEC; i++) if (!strcasecmp(w, g_ec[i].name)) return i;
+    if (!strncasecmp(w, "ec-user-", 8) && w[8]) {
+        size_t n = strlen(w);
+        for (size_t k = 8; k < n; k++) if (!isalnum((unsigned char)w[k]) && w[k] != '-' && w[k] != '_') return -1;
+        if (w[n - 1] == '-' || w[n - 1] == '_') return -1;
+        for (int i = 0; i < g_necu; i++) if (!strcasecmp(w, g_ecu[i])) return NEC + i;
+        if (g_necu == 64) die_at(line, "more than 64 EC-USER exception-names");
+        snprintf(g_ecu[g_necu], sizeof g_ecu[0], "%s", w);
+        for (char *c = g_ecu[g_necu]; *c; c++) *c = (char)toupper((unsigned char)*c);
+        g_ec_on[NEC + g_necu] = (unsigned char)g_ecuser_on; g_ec_loc[NEC + g_necu] = (unsigned char)g_ecuser_loc;
+        return NEC + g_necu++;
+    }
+    return -1;
+}
+
+/* a level-3 name's level-2 group */
+static int ec_group(int i)
+{
+    if (i >= NEC) return ec_find("EC-USER", 0);
+    int best = -1; size_t bl = 0;
+    for (int k = 0; k < NEC; k++) {
+        if (g_ec[k].level != 2) continue;
+        size_t l = strlen(g_ec[k].name);
+        if (l > bl && !strncmp(g_ec[i].name, g_ec[k].name, l) && g_ec[i].name[l] == '-') { best = k; bl = l; }
+    }
+    return best;
+}
+
+/* >>TURN name ... CHECKING {ON [WITH LOCATION] | OFF} (2023 7.3.25) */
+static void apply_turn(Tok *d)
+{
+    char buf[512]; snprintf(buf, sizeof buf, "%s", d->s);
+    char *w[64]; int nw = 0;
+    for (char *t = strtok(buf, " \t"); t && nw < 64; t = strtok(NULL, " \t")) w[nw++] = t;
+    int k = 1, names[64], nn = 0;                  /* w[0] is TURN */
+    while (k < nw && strcasecmp(w[k], "checking")) {
+        if (strncasecmp(w[k], "ec-", 3)) die_at(d->line, ">>TURN for a file (%s) is not implemented yet", w[k]);
+        int i = ec_find(w[k], d->line);
+        if (i < 0) die_at(d->line, ">>TURN: '%s' is not an exception-name", w[k]);
+        names[nn++] = i; k++;
+    }
+    if (!nn || k >= nw) die_at(d->line, ">>TURN needs exception-names and CHECKING ON or OFF");
+    k++;
+    int on = 1, loc = 0;
+    if (k < nw && !strcasecmp(w[k], "off")) { on = 0; k++; }
+    else {
+        if (k < nw && !strcasecmp(w[k], "on")) k++;
+        if (k < nw && !strcasecmp(w[k], "with")) k++;
+        if (k < nw && !strcasecmp(w[k], "location")) { loc = 1; k++; }
+    }
+    if (k < nw) die_at(d->line, ">>TURN: unexpected '%s'", w[k]);
+    int warning = ec_find("EC-I-O-WARNING", 0);
+    for (int j = 0; j < nn; j++) {
+        int i = names[j], lv = ec_level(i);
+        for (int c = 0; c < NEC + g_necu; c++) {
+            if (ec_level(c) != 3) continue;
+            int hit = c == i || lv == 1 || (lv == 2 && ec_group(c) == i);
+            if (!hit || (c == warning && c != i)) continue;       /* EC-I-O-WARNING only by its own name */
+            g_ec_on[c] = (unsigned char)on; g_ec_loc[c] = (unsigned char)(on && loc);
+        }
+        if (lv == 1 || (i < NEC && !strcmp(g_ec[i].name, "EC-USER"))) { g_ecuser_on = on; g_ecuser_loc = on && loc; }
+    }
+}
+
+static int unit_use_own_from(void);
+
+/* the directives the parser has reached */
+static void apply_dirs(void)
+{
+    while (g_ndir_done < g_ndir && g_dir[g_ndir_done].pos <= g_tp) apply_turn(&g_dir[g_ndir_done++].tok);
+}
+
 /* the unit's declarative sections: each USE names files or open modes.
  * After an I/O statement the compiler emits the choice: this unit's USE
  * for the file, then this unit's for the open mode, then outward through
  * the containing programs' GLOBAL ones (X3.23-1985 USE general rules). */
-typedef struct { int sec, unit, global, mode; File *file; } UseEntry;
+typedef struct { int sec, unit, global, mode; File *file; int ec; } UseEntry;   /* ec: an exception-name's index (USE AFTER EXCEPTION CONDITION), else -1 */
 static UseEntry g_use[64]; static int g_nuse;
 static struct { int unit, sec; int rep; } g_rwuse[16]; static int g_nrwuse;   /* USE BEFORE REPORTING sections: their report, for SUPPRESS */
 static int g_in_decl;
@@ -6423,7 +6711,30 @@ static void parse_use(void)
         for (int i = 0; dbg[i] && g_npoison < 64; i++) snprintf(g_poison[g_npoison++], sizeof g_poison[0], "%s", dbg[i]);
         die_at(line, "USE FOR DEBUGGING is the Debug module, obsolete in COBOL 85 (item 18) and not implemented here");
     }
-    expect_word("after"); accept_word("standard");
+    expect_word("after");
+    if ((at_word("exception") && is_word(cur() + 1, "condition")) || at_word("ec")) {
+        /* USE AFTER EXCEPTION CONDITION exception-name ... (2023 14.9.49 format 3) */
+        if (g_std < 2002) die_at(line, "USE AFTER EXCEPTION CONDITION is COBOL 2002; compile with -std=2002");
+        if (global) die_at(line, "USE GLOBAL is not allowed with EXCEPTION CONDITION");
+        if (!accept_word("ec")) { advance(); advance(); }
+        int any = 0;
+        while (cur()->kind == T_WORD && !strncmp(cur()->s, "ec-", 3)) {
+            int i = ec_find(cur()->s, cur()->line);
+            if (i < 0) die_at(cur()->line, "'%s' is not an exception-name", cur()->s);
+            advance();
+            if (at_word("file")) die_at(cur()->line, "USE AFTER EXCEPTION CONDITION ... FILE is not implemented yet");
+            for (int u = unit_use_own_from(); u < g_nuse; u++)
+                if (g_use[u].ec == i) die_at(line, "two USE procedures for %s", ec_name(i));
+            if (g_nuse == 64) die_at(line, "too many USE procedures");
+            g_use[g_nuse].sec = g_cur_sec_id; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = 0;
+            g_use[g_nuse].mode = 0; g_use[g_nuse].file = NULL; g_use[g_nuse].ec = i;
+            g_nuse++; any = 1;
+        }
+        if (!any) die_at(line, "USE AFTER EXCEPTION CONDITION needs an exception-name");
+        return;
+    }
+    if (at_word("exception") && is_word(cur() + 1, "object")) die_at(line, "USE AFTER EXCEPTION OBJECT is object orientation, not implemented");
+    accept_word("standard");
     if (!accept_word("error") && !accept_word("exception")) die_at(line, "USE AFTER ... : expected ERROR or EXCEPTION PROCEDURE (the other USE forms are not implemented)");
     expect_word("procedure"); accept_word("on");
     int sec = g_cur_sec_id, any = 0;
@@ -6442,7 +6753,7 @@ static void parse_use(void)
             if (g_use[i].unit == g_unit && g_use[i].mode == mode && g_use[i].file == f)
                 die_at(line, mode ? "two USE procedures for the same open mode" : "two USE procedures for file '%s'", f ? f->name : "");
         if (g_nuse == 64) die_at(line, "too many USE procedures");
-        g_use[g_nuse].sec = sec; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = global; g_use[g_nuse].mode = mode; g_use[g_nuse].file = f;
+        g_use[g_nuse].sec = sec; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = global; g_use[g_nuse].mode = mode; g_use[g_nuse].file = f; g_use[g_nuse].ec = -1;
         g_nuse++; any = 1;
     }
     if (!any) die_at(line, "USE AFTER ERROR PROCEDURE needs a file-name or INPUT/OUTPUT/I-O/EXTEND");
@@ -6468,6 +6779,7 @@ static void emit_use_dispatch(File *f, int has_clause)
             for (int i = from; i < to; i++) {
                 UseEntry *u = &g_use[i];
                 if (level < g_udepth && !u->global) continue;
+                if (u->ec >= 0) continue;                 /* an exception-name's, not a file's */
                 if (pass == 0 ? u->file != f : !u->mode) continue;
                 if (u->mode) any_mode = 1;
                 c[nc++] = u;
@@ -6854,9 +7166,57 @@ static void parse_goto(void)
     emit("\tjal r0, .Lp%d_%d", g_unit, ps[0]->id);
 }
 
+/* after exception condition i is raised: perform the declarative that
+ * applies -- this program's USE for the name, else its group's, else
+ * EC-ALL's (2023 14.6.13.1.3-4) -- then stop the run if i is fatal */
+static void emit_ec_dispatch(int i)
+{
+    int cand[3] = { i, ec_group(i), ec_find("EC-ALL", 0) }, sec = -1;
+    for (int c = 0; c < 3 && sec < 0; c++)
+        for (int u = unit_use_own_from(); u < g_nuse; u++)
+            if (g_use[u].unit == g_unit && g_use[u].ec >= 0 && g_use[u].ec == cand[c]) { sec = g_use[u].sec; break; }
+    if (sec >= 0) {
+        int Lret = new_label();
+        char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
+        emit_li("r3", sec);
+        emit_la("r4", lab);
+        emit_call("cob_perform_push");
+        emit("\tjal r0, .Lp%d_%d", g_unit, sec);
+        emit_label(Lret);
+    }
+    if (ec_fatal(i)) emit_call("cob_ec_abort");     /* abnormal run unit termination (14.6.12) */
+}
+
+/* RAISE EXCEPTION exception-name (2023 14.9.29).  Everything is known here:
+ * whether checking is on at this statement, the declarative that applies
+ * (the name's own USE, its group's, EC-ALL's), and whether the condition
+ * is fatal.  Checking off: the statement does nothing. */
+static void parse_raise(void)
+{
+    int line = cur()->line;
+    if (!accept_word("exception")) die_at(line, "RAISE of an exception object is object orientation, not implemented");
+    if (cur()->kind != T_WORD) die_at(line, "RAISE EXCEPTION needs an exception-name");
+    int i = ec_find(cur()->s, line);
+    if (i < 0) die_at(line, "'%s' is not an exception-name", cur()->s);
+    if (ec_level(i) != 3) die_at(line, "RAISE needs a level-3 exception-name, not %s", ec_name(i));
+    advance();
+    if (!g_ec_on[i]) return;
+    char nm[64]; snprintf(nm, sizeof nm, "%s", ec_name(i));
+    emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+    if (g_ec_loc[i]) emit_la("r4", lit_label((const unsigned char *)"RAISE", 6)); else emit_li("r4", 0);
+    emit_call("cob_ec_raise");
+    emit_ec_dispatch(i);
+}
+
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
+    if (g_std >= 2002 && at_word("last") && is_word(peek(1), "exception")) {
+        /* SET LAST EXCEPTION TO OFF (2023 14.9.39): no exception condition exists */
+        advance(); advance(); expect_word("to"); expect_word("off");
+        emit_call("cob_ec_clear");
+        return;
+    }
     if (cur()->kind == T_WORD && switch_find(cur()->s) && switch_find(cur()->s)->on < 0) {
         /* SET {mnemonic-name ... TO ON | OFF}... (NC174A: SET SW-1 TO ON SW-2 TO OFF) */
         while (cur()->kind == T_WORD && switch_find(cur()->s) && switch_find(cur()->s)->on < 0) {
@@ -8539,11 +8899,19 @@ static void parse_search(void)
 
 /* ---- dispatch ---------------------------------------------------------- */
 
+static void parse_raise(void);
+
 static void parse_statement(void)
 {
+    apply_dirs();                           /* a >>TURN before this statement */
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a statement, found %s", tok_desc(t));
     const char *v = t->s;
+
+    if (g_std >= 2002 && !strcmp(v, "raise")) { advance(); parse_raise(); return; }
+    if (!strcmp(v, "raise")) die_at(t->line, "RAISE is COBOL 2002; compile with -std=2002");
+    if (g_std >= 2002 && !strcmp(v, "resume"))
+        die_at(t->line, "RESUME is not implemented (COBOL 2014 made it optional)");
 
     if (!strcmp(v, "display")) { advance(); parse_display(); return; }
     if (!strcmp(v, "move")) { advance(); parse_move(); return; }

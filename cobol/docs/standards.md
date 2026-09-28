@@ -251,6 +251,18 @@ refused with a message naming the switch.
   ISSUES-52): the numeric, date-window, BYTE-LENGTH, NUMVAL-F and
   TEST-NUMVAL families; the rest refused naming the module or edition
   they need (docs/oracles.md, "Intrinsic functions, COBOL 2002").
+- **Exception handling, first part** (2026-09-28, ISSUES-53): `>>TURN`
+  (by exception-name, group or EC-ALL, ON [WITH LOCATION] or OFF, from
+  its point in the source), `RAISE EXCEPTION`, `USE AFTER EXCEPTION
+  CONDITION` declaratives chosen most specific first, fatal conditions
+  ending the run after their declarative, EXCEPTION-STATUS and
+  EXCEPTION-STATEMENT, `SET LAST EXCEPTION TO OFF`. Everything is decided
+  at compile time, and a program that never turns checking on compiles
+  as before. Still to come: the statements that raise conditions
+  themselves (size errors, bounds, I-O ...), TURN for one file, the
+  variable-length EXCEPTION-LOCATION and EXCEPTION-FILE, and 2023's
+  exception-checking PERFORM. No oracle: GnuCOBOL 4 does not implement
+  exception declaratives.
 
 ## Deferred — object orientation
 

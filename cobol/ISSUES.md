@@ -1748,3 +1748,57 @@ landed; it is honoured now. Refusals: intrinsic-2002-85,
 std2002-intrinsic-2014, std2002-intrinsic-module. Harness 162/162;
 -std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 53. Exception handling, part one: TURN, RAISE, exception declaratives (2026-09-28)
+
+Stage B's exception module is too large for one row; this is its
+foundation. Table 13 (2023, 158 exception-names: EC-ALL, 24 groups, 133
+conditions -- 73 fatal, 38 nonfatal, 22 implementor-defined, taken here
+as nonfatal) is in the compiler, transcribed from the text and checked
+against its own counts; EC-USER-suffix names are the user's.
+
+- **`>>TURN name ... CHECKING ON [WITH LOCATION] | OFF`** (7.3.25). The
+  reader keeps the directive as a token; the parser applies it on
+  reaching the next statement, so it holds from that point in the
+  source. EC-ALL and a group name expand to their conditions,
+  EC-I-O-WARNING excepted (rule 4); EC-ALL and EC-USER also turn on user
+  names first met later. Default: all off (rule 1). TURN for one file
+  is refused for now.
+- **`RAISE EXCEPTION name`** (14.9.29), a level-3 name. Checking off at
+  that statement: nothing is compiled. On: the last exception status is
+  set, the declarative that applies is performed -- the program's USE
+  for the name, else for its group, else for EC-ALL -- and a fatal
+  condition then ends the run (14.6.13.1.3 rule 5; libcob reports it and
+  exits 3). All of this is decided at compile time.
+- **`USE AFTER EXCEPTION CONDITION name ...`** (also `EC`; 14.9.49 format
+  3). FILE, and EXCEPTION OBJECT, are refused.
+- **EXCEPTION-STATUS** and **EXCEPTION-STATEMENT** (15.33, 15.32), the
+  statement's name only when WITH LOCATION turned checking on;
+  **`SET LAST EXCEPTION TO OFF`**. RAISE and RESUME are verbs only under
+  `-std=2002` (RESUME, optional since 2014, is refused).
+
+Open, for the next parts: the statements that raise conditions
+themselves (EC-SIZE where no ON SIZE ERROR is written, EC-BOUND-SUBSCRIPT
+and -REF-MOD, EC-I-O from the I-O status, EC-PROGRAM-NOT-FOUND ...),
+each compiled in only where checking is on; TURN for one file;
+EXCEPTION-LOCATION and EXCEPTION-FILE, whose results are as long as
+their contents (the function machinery has fixed widths); and 2023's
+exception-checking PERFORM (E.2 item 19).
+
+No oracle: GnuCOBOL 4 warns that USE AFTER EXCEPTION CONDITION is not
+implemented and runs past a fatal RAISE. 2002/ecraise and 2002/ecturn
+are reviewed against the text. Refusals: raise-85, use-ec-85,
+std2002-raise-level2, std2002-ec-unknown, std2002-turn-file.
+std2002-intrinsic-module now uses CHAR-NATIONAL, since EXCEPTION-STATUS
+exists. -std=85 byte-identical on all 227 Open Systems programs;
+majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
+
+### 54. Reference modification of a function result is refused (open, 2026-09-28)
+
+`FUNCTION CURRENT-DATE(1:8)` fails with "expected a statement, found
+'('". X3.23a-1989 gives reference modification of a function-identifier
+in its own format (FIPS PUB 21-3, the reference-modifier format:
+FUNCTION function-name-1 [(argument-1 ...)] (leftmost:[length])), so
+this is a COBOL 85 conformance gap, and a common idiom in real code.
+Found writing 2002/ecturn. No corpus program uses it (checked: majesty,
+Open Systems); CCVS-85 does not exercise it.

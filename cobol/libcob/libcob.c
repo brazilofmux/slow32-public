@@ -1044,6 +1044,49 @@ static int pbase;       /* the first frame of the running program's activation *
 int cob_perform_enter(void) { int old = pbase; pbase = psp; return old; }
 void cob_perform_leave(int old) { psp = pbase; pbase = old; }
 
+/* ---- exception conditions (COBOL 2002 14.6.13; cobol ISSUES-53) -------- */
+
+/* The last exception status: the exception-name, and the statement's name
+ * when its checking was turned on WITH LOCATION.  The compiler decides the
+ * rest -- whether checking is on, which declarative runs, fatality. */
+static char *fn_buffer(int n);
+static char ec_last[31], ec_stmt[63];
+static int ec_any;
+
+void cob_ec_raise(const char *name, const char *stmt)
+{
+    memset(ec_last, ' ', sizeof ec_last); memset(ec_stmt, ' ', sizeof ec_stmt);
+    for (int i = 0; name[i] && i < 31; i++) ec_last[i] = (char)toupper((unsigned char)name[i]);
+    if (stmt) for (int i = 0; stmt[i] && i < 63; i++) ec_stmt[i] = stmt[i];
+    ec_any = 1;
+}
+
+void cob_ec_clear(void) { ec_any = 0; }
+
+/* a fatal exception condition, checked and not resumed: abnormal
+ * termination of the run unit (14.6.12) */
+void cob_ec_abort(void)
+{
+    char m[80];
+    int n = 31; while (n > 0 && ec_last[n - 1] == ' ') n--;
+    snprintf(m, sizeof m, "fatal exception condition %.*s", n, ec_last);
+    cob_fatal(m);
+}
+
+char *cob_fn_exception_status(void)
+{
+    char *b = fn_buffer(31);
+    if (ec_any) memcpy(b, ec_last, 31); else memset(b, ' ', 31);
+    return b;
+}
+
+char *cob_fn_exception_statement(void)
+{
+    char *b = fn_buffer(63);
+    if (ec_any) memcpy(b, ec_stmt, 63); else memset(b, ' ', 63);
+    return b;
+}
+
 /* ---- activations (COBOL 2002, -std=2002) --------------------------------- */
 
 /* The compiler's activation descriptor (s32-cobc.c emit_act_desc): active

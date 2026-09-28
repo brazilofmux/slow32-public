@@ -1,0 +1,14 @@
+raise ec-user-a
+  EC-USER-A's own: EC-USER-A                      
+raise ec-user-b
+  the EC-USER group's: EC-USER-B                      
+raise ec-i-o-warning (not turned on by EC-ALL)
+raise ec-i-o-warning (turned on by name)
+  EC-ALL's: EC-I-O-WARNING                  [RAISE]
+raise ec-user-a (turned off)
+raise ec-user-b (still on)
+  the EC-USER group's: EC-USER-B                      
+in p2
+  the EC-USER group's: EC-USER-C                      
+p2 goes on
+back from p2
