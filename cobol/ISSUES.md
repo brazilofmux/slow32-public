@@ -1965,3 +1965,21 @@ checking off, the called program's prologue still stops the run, as
 2002/recnot shows. 2002/ecrecur. No oracle. -std=85 byte-identical on
 all 227 Open Systems programs; harness 180/180; majesty PASS;
 majesty-functions PASS.
+
+### 61. EC-BOUND-ODO (2026-09-28)
+
+With checking on, a reference to an OCCURS DEPENDING ON table, to an
+item in it, or to a group holding it tests the DEPENDING ON value
+against the OCCURS bounds before the address is formed (2023 13.18.38
+general rule 7), in emit_ref_addr. 2002/ecodo: the group and an element
+with N inside 2 TO 5, then the group with N at 7 raising. No oracle.
+
+The first cut crashed ("read out of bounds at 0xffffffff"): emit_args
+loads plain references straight into the argument registers, trusting
+ref_needs_call that forming the address calls nothing, and the check
+loads the DEPENDING ON item through libcob. ref_needs_call now says so
+whenever the check will be emitted, and the reference is staged in the
+frame first. (The subscript check needs no such entry: on success it
+touches only r2, and its failing path never returns.) Harness 181/181;
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS.

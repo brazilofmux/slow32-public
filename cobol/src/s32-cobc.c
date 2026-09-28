@@ -2711,6 +2711,8 @@ static const char *g_ufn_forbid;        /* where a user function may not appear 
 static int ec_size_on(void);
 static void emit_ec_size(void);
 static int ec_on_name(const char *name);
+struct Sym;
+static struct Sym *odo_table_for(struct Sym *s);
 static void emit_ec_raise(int i);
 static int ec_find(const char *w, int line);
 static char g_cur_stmt[16];              /* the statement being compiled, for EXCEPTION-STATEMENT */
@@ -3364,6 +3366,7 @@ static int ref_needs_call(const Ref *r)
     for (int i = 0; i < r->nsub; i++)
         if (r->sub[i].sym && !is_hot_int(r->sub[i].sym)) return 1;
     if (r->rm && !r->rm_start) return 1;           /* the start is an expression */
+    if (ec_on_name("EC-BOUND-ODO") && odo_table_for(r->sym)) return 1;   /* the check loads the DEPENDING ON item */
     return 0;
 }
 
@@ -3426,9 +3429,37 @@ static int ref_has_runtime_sub(const Ref *r)
  * sum); r1/r2 are scratch.  A reference whose subscript needs that call
  * clobbers r3-r10, so callers stage such operands through frame slots
  * (emit_args) before loading argument registers. */
+/* EC-BOUND-ODO (2023 13.18.38 general rule 7; cobol ISSUES-61): a
+ * reference to an OCCURS DEPENDING ON table, to an item in it, or to a
+ * group holding it, needs the DEPENDING ON value within the OCCURS
+ * bounds.  Checked before the address is formed, with checking on. */
+static Sym *odo_table_for(Sym *s)
+{
+    Sym *t = NULL;
+    for (Sym *k = s; k && !t; k = k->parent >= 0 ? &g_sym[k->parent] : NULL) if (k->odo_dep_sym) t = k;
+    if (!t && s->is_group) t = odo_table_below(s);
+    return t && t->odo_dep_sym ? t : NULL;
+}
+
+static void emit_odo_check(Sym *s)
+{
+    Sym *t = odo_table_for(s);
+    if (!t) return;
+    Sym *d = t->odo_dep_sym;
+    int Lok = new_label();
+    if (is_hot_int(d)) { emit_item_addr("r1", d, d->offset); emit_load_int(d, "r1", "r1"); }
+    else { emit_item_addr("r3", d, d->offset); emit_desc_addr("r4", sym_desc(d)); emit_call("cob_load_int"); }
+    if (t->odo_min) emit("\taddi r1, r1, %d", -t->odo_min);
+    emit_li("r2", t->occurs - t->odo_min + 1);
+    emit("\tbltu r1, r2, .L%d", Lok);
+    emit_ec_raise(ec_find("EC-BOUND-ODO", 0));
+    emit_label(Lok);
+}
+
 static void emit_ref_addr(const Ref *r, const char *reg)
 {
     Sym *s = r->sym;
+    if (ec_on_name("EC-BOUND-ODO")) emit_odo_check(s);
     int off = s->offset;
     int runtime = ref_has_runtime_sub(r);
     for (int i = 0; i < r->nsub; i++)
