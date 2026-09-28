@@ -695,6 +695,17 @@ found. `tests/bt_test.c` now cross-checks the hinted lookup against the
 plain one on every seek; that check is what caught it (three shapes, all
 mismatching), and it is the reason this shipped correct rather than fast.
 
+### 43. Reserved words are accepted as user-defined names (2026-09-27)
+Open, unscheduled. `s32-cobc` accepted `SELECT FD ...` and a record
+named `RD`; GnuCOBOL `-std=cobol85` refuses both ("unexpected FD",
+"unexpected RD"), as the 85 text requires: a reserved word is never a
+user-defined word. Found while writing `tests/free/sortgive2`. Not yet
+surveyed: whether the compiler has a reserved-word list at all, or
+tells words apart by position. A program that is valid never meets
+this, so it is a conformance gap and not a miscompile; it belongs in
+Stage A (`docs/standards.md`) as one bounded piece, with a
+`tests/bad/` fixture per word class.
+
 ## C. Documented divergences from GnuCOBOL (not bugs — the text wins)
 
 Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
@@ -1218,3 +1229,35 @@ suites agree across the interpreter, fast and DBT.
 Separately, an RM program that never clears (GLENTER opens with an ERASE EOS
 from line 16 and paints over lines 1-13) relied on runcobol clearing the
 screen at start; the deployment's runcobol shim does that, not the runtime.
+
+### 42. SORT/MERGE with more than one GIVING file wrote only the first (2026-09-05, found and fixed 2026-09-27)
+The budgeted external sort (`xsort.h`, 2d76bc1c, 2026-09-05) made the
+sorted stream something `xs_next` reads once -- runs merge off disk --
+but `cob_sort_giving` still wrote each GIVING file by draining the
+stream. The first file got every record and the rest got none. The
+standard gives every record to every GIVING file; the in-memory code
+before it had rewound per file, so the change was invisible until a
+program named two.
+
+CCVS-85 ST147A, a MERGE with three GIVING files, caught it: 12 of 26
+with 14 failing, "PREMATURE EOF FOUND" from MRG-TEST-011 on. The suite
+went from 8049 of 8160 with none failing to 8035 with 14. Nothing else
+saw it: the harness had no two-GIVING program, the corpus has none,
+and CCVS-85 was run by hand, so it sat for 22 days. Localized by
+running ST147A under all three engines (identical, so not the engine),
+then `git bisect` over `cobol/` with the current tools linked in.
+
+Fix: GIVING opens and registers each file; `cob_sort_end`, which the
+compiler emits right after the last GIVING, drains the stream once
+and writes each record to every registered file, then closes them.
+One pass, where the old code made one per file. `tests/free/sortgive2`
+spills a SORT into two GIVING files and MERGEs those into two more; it
+prints what GnuCOBOL prints, and on the unfixed runtime its second and
+fourth files are empty.
+
+**The lesson is the gate.** CCVS-85 runs in thirteen seconds. It is
+now gate 5 of `tests/run-tests.sh`: the totals line must equal
+`tests/ccvs-baseline.txt` exactly, a better total included, so a
+change in either direction is recorded on purpose. No NIST tree is
+reported as NOT RUN, never passed over.
+

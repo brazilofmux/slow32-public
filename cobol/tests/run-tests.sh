@@ -22,6 +22,9 @@
 #   -warn-74 with exactly the [BP-..] ids its .expected lists (an empty
 #   file: none), and must compile with no stderr at all without the flag.
 #   The ids are docs/behavior-points.md's.
+# Gate 5 (NIST): the CCVS-85 totals must equal tests/ccvs-baseline.txt
+#   exactly (CCVS85 names the tree; CCVS=0 skips it, and a missing
+#   tree is reported as NOT RUN, never passed over).
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -311,6 +314,27 @@ for src in "$HERE/warn"/*.cbl; do
     report "warn/$name" 0 "$(echo $got | wc -w) point(s), silent by default"
 done
 
+# Gate 5 (NIST): the CCVS-85 totals line must equal tests/ccvs-baseline.txt.
+# The suite runs in seconds, and outside this gate a MERGE regression sat
+# unseen for three weeks (cobol ISSUES-42).  Equality is a ratchet both
+# ways: a better total fails too, until the baseline is updated on purpose.
+# No tree is reported, never silent; CCVS=0 switches the gate off.
+CCVS_NOTE=""
+CCVS_TREE=${CCVS85:-$HOME/gnucobol-svn/tests/cobol85}
+if [ "${CCVS:-1}" = 0 ]; then
+    CCVS_NOTE="cobol: CCVS-85 NOT RUN -- switched off by CCVS=0"
+elif [ -d "$CCVS_TREE" ]; then
+    got="$("$HERE/ccvs-run.sh" 2>/dev/null | tail -1)"
+    want="$(cat "$HERE/ccvs-baseline.txt")"
+    if [ "$got" = "$want" ]; then
+        report "ccvs/totals" 0 "$(echo "$got" | sed 's/.*tests \([0-9]* of [0-9]*\) pass.*/\1/') pass, as recorded"
+    else
+        report "ccvs/totals" 1 "got [$got] want [$want]; if better, update tests/ccvs-baseline.txt"
+    fi
+else
+    CCVS_NOTE="cobol: CCVS-85 NOT RUN -- no tree at $CCVS_TREE (set CCVS85)"
+fi
+
 echo
 case "$ORACLE_ENGINE" in
     "")   if [ "${ORACLE:-1}" = 0 ]; then
@@ -326,5 +350,6 @@ if [ "${ORACLE:-1}" = 0 ]; then
 else
     echo "cobol: $PASS passed, $FAIL failed"
 fi
+[ -z "$CCVS_NOTE" ] || echo "$CCVS_NOTE"
 [ -z "$SKIPPED" ] || echo "cobol: SKIPPED:$SKIPPED -- no C compiler for them here; this is not a full run"
 [ "$FAIL" = "0" ]

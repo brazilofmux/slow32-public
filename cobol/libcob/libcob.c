@@ -1641,6 +1641,7 @@ typedef struct {
     unsigned n;                     /* records released: the arrival number */
     xsort xs;                       /* the engine: entries of klen + recsize */
     int sorted;                     /* cob_sort_perform ran */
+    cob_file **giving; int ngiving; /* GIVING files, opened; written at cob_sort_end */
 } cob_sorter;
 
 /* The sort's memory: half the heap the program was linked with, or
@@ -1790,17 +1791,32 @@ void cob_sort_perform(cob_file *sd)
     so->sorted = 1; sd->at_eof = 0;
 }
 
-/* GIVING: the sorted records, written as that file writes */
+/* GIVING: each file named is opened here and registered; the records
+ * are written at cob_sort_end, which the compiler emits right after the
+ * last GIVING in the same statement.  The sorted stream can be read once
+ * (xsort merges runs off disk), and every GIVING file gets every record,
+ * so one pass writes each record to all of them.  Writing per file here
+ * drained the stream into the first and left the rest empty (CCVS-85
+ * ST147A, a MERGE with three GIVING files; cobol ISSUES-42). */
 void cob_sort_giving(cob_file *sd, cob_file *out)
 {
     cob_sorter *so = sorter_of(sd, "SORT GIVING");
     if (cob_open(out, COB_OPEN_OUTPUT) == 2) cob_fatal("SORT GIVING: cannot open the output file");
+    cob_file **g = realloc(so->giving, (size_t)(so->ngiving + 1) * sizeof *g);
+    if (!g) cob_fatal("SORT GIVING: out of memory");
+    so->giving = g; so->giving[so->ngiving++] = out;
+}
+
+static void sort_write_giving(cob_file *sd, cob_sorter *so)
+{
     const unsigned char *e;
-    while ((e = xs_next(&so->xs)) != 0) {
-        sort_copy(out->record, out->recsize, (const char *)e + so->klen, sd->recsize);
-        if (cob_write(out, 0, 0, 0) == 2) cob_fatal("SORT GIVING: write failed");
-    }
-    cob_close(out);
+    while ((e = xs_next(&so->xs)) != 0)
+        for (int i = 0; i < so->ngiving; i++) {
+            cob_file *out = so->giving[i];
+            sort_copy(out->record, out->recsize, (const char *)e + so->klen, sd->recsize);
+            if (cob_write(out, 0, 0, 0) == 2) cob_fatal("SORT GIVING: write failed");
+        }
+    for (int i = 0; i < so->ngiving; i++) cob_close(so->giving[i]);
 }
 
 /* RETURN: the next sorted record into the SD's area; 1 at end */
@@ -1818,6 +1834,8 @@ int cob_return(cob_file *sd)
 void cob_sort_end(cob_file *sd)
 {
     cob_sorter *so = sorter_of(sd, "SORT");
+    if (so->ngiving) sort_write_giving(sd, so);
+    free(so->giving);
     xs_free(&so->xs); free(so->kbuf); free(so);
     sd->idx = 0; sd->open_mode = 0;
 }
