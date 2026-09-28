@@ -1717,3 +1717,34 @@ Refusals: directive-85, floating-continuation-85,
 std2002-directive-unknown, std2002-continuation-quote. `-std=85` output
 byte-identical on all 227 Open Systems programs; CCVS-85 unchanged;
 majesty PASS; tests/majesty-functions.sh PASS.
+
+### 52. The COBOL 2002 intrinsic functions (2026-09-28)
+
+A survey of the three texts: the 1989 set's 42 functions were all here;
+2002 adds 33, 2014 eleven more, 2023 seven more, and no edition removes
+any. Of 2002's 33, eighteen need no other module and are implemented under
+`-std=2002`: ABS, EXP, EXP10, PI, SIGN, FRACTION-PART, HIGHEST- and
+LOWEST-ALGEBRAIC, BYTE-LENGTH, YEAR-TO-YYYY, DATE-TO-YYYYMMDD,
+DAY-TO-YYYYDDD, TEST-DATE-YYYYMMDD, TEST-DAY-YYYYDDD, NUMVAL-F,
+TEST-NUMVAL, TEST-NUMVAL-C, TEST-NUMVAL-F. The other fifteen need the
+NATIONAL or BOOLEAN module, exception handling, locales or the ISO/IEC
+14651 ordering, and are refused naming it; 2014's and 2023's are refused
+naming their edition; an unknown name is "not an intrinsic function".
+Under `-std=85` every 2002 name is refused as 2002.
+
+Each function follows its clause's returned-values rule, checked against
+the text's own examples (YEAR-TO-YYYY (4, 23) in 1995 is 2004; (98, -15)
+in 2008 is 1898; DATE-TO-YYYYMMDD (851003, 10) in 2002 is 19851003).
+NUMVAL, NUMVAL-C and NUMVAL-F's argument formats became one scanner in
+libcob that the TEST- functions report from, so a string the test calls
+valid is always one the conversion reads.
+
+2002/intr2002 exercises all eighteen, ten strings through TEST-NUMVAL
+among them, and agrees with GnuCOBOL -std=cobol2002 except for
+TEST-NUMVAL-C with a currency string, where GnuCOBOL reports an error
+its own NUMVAL-C does not see (docs/oracles.md). Found on the way:
+NUMVAL-C's argument-2 was parsed and ignored since the 1989 module
+landed; it is honoured now. Refusals: intrinsic-2002-85,
+std2002-intrinsic-2014, std2002-intrinsic-module. Harness 162/162;
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

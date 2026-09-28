@@ -2928,41 +2928,57 @@ static void parse_operand(Opnd *o) { parse_operand_raw(o); operand_odo_length(o)
  * (one string), FK_NONE.  Results: numeric digit strings (scale 0 or
  * 9), or a string buffer. */
 enum { FK_NUMS, FK_INT, FK_ALNUM, FK_NONE, FK_ALNUMS };
-static const struct { const char *name; int id, kind, scale, minargs, maxargs, fsize; } g_fn89[] = {
-    { "max", COB_FN_MAX, FK_NUMS, 9, 1, 99, 19 },
-    { "min", COB_FN_MIN, FK_NUMS, 9, 1, 99, 19 },
-    { "ord-max", COB_FN_ORD_MAX, FK_NUMS, 0, 1, 99, 19 },
-    { "ord-min", COB_FN_ORD_MIN, FK_NUMS, 0, 1, 99, 19 },
-    { "sum", COB_FN_SUM, FK_NUMS, 9, 1, 99, 19 },
-    { "range", COB_FN_RANGE, FK_NUMS, 9, 1, 99, 19 },
-    { "midrange", COB_FN_MIDRANGE, FK_NUMS, 9, 1, 99, 19 },
-    { "mean", COB_FN_MEAN, FK_NUMS, 9, 1, 99, 19 },
-    { "median", COB_FN_MEDIAN, FK_NUMS, 9, 1, 99, 19 },
-    { "variance", COB_FN_VARIANCE, FK_NUMS, 9, 1, 99, 19 },
-    { "standard-deviation", COB_FN_STDDEV, FK_NUMS, 9, 1, 99, 19 },
-    { "mod", COB_FN_MOD, FK_NUMS, 0, 2, 2, 19 },
-    { "rem", COB_FN_REM, FK_NUMS, 9, 2, 2, 19 },
-    { "integer", COB_FN_INTEGER, FK_NUMS, 0, 1, 1, 19 },
-    { "integer-part", COB_FN_INTEGER_PART, FK_NUMS, 0, 1, 1, 19 },
-    { "factorial", COB_FN_FACTORIAL, FK_NUMS, 0, 1, 1, 19 },
-    { "sqrt", COB_FN_SQRT, FK_NUMS, 9, 1, 1, 19 },
-    { "log", COB_FN_LOG, FK_NUMS, 9, 1, 1, 19 },
-    { "log10", COB_FN_LOG10, FK_NUMS, 9, 1, 1, 19 },
-    { "sin", COB_FN_SIN, FK_NUMS, 9, 1, 1, 19 },
-    { "cos", COB_FN_COS, FK_NUMS, 9, 1, 1, 19 },
-    { "tan", COB_FN_TAN, FK_NUMS, 9, 1, 1, 19 },
-    { "asin", COB_FN_ASIN, FK_NUMS, 9, 1, 1, 19 },
-    { "acos", COB_FN_ACOS, FK_NUMS, 9, 1, 1, 19 },
-    { "atan", COB_FN_ATAN, FK_NUMS, 9, 1, 1, 19 },
-    { "annuity", COB_FN_ANNUITY, FK_NUMS, 9, 2, 2, 19 },
-    { "present-value", COB_FN_PRESENT_VALUE, FK_NUMS, 9, 2, 99, 19 },
-    { "random", COB_FN_RANDOM, FK_NUMS, 9, 0, 1, 19 },
-    { "char", -2, FK_INT, -1, 1, 1, 1 },
-    { "ord", -3, FK_ALNUM, 0, 1, 1, 19 },
-    { "reverse", -4, FK_ALNUM, -1, 1, 1, 0 },
-    { "numval", -5, FK_ALNUM, 9, 1, 1, 19 },
-    { "numval-c", -6, FK_ALNUM, 9, 1, 2, 19 },
-    { NULL, 0, 0, 0, 0, 0, 0 }
+static const struct { const char *name; int id, kind, scale, minargs, maxargs, fsize, std; } g_fn89[] = {
+    { "max", COB_FN_MAX, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "min", COB_FN_MIN, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "ord-max", COB_FN_ORD_MAX, FK_NUMS, 0, 1, 99, 19, 85 },
+    { "ord-min", COB_FN_ORD_MIN, FK_NUMS, 0, 1, 99, 19, 85 },
+    { "sum", COB_FN_SUM, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "range", COB_FN_RANGE, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "midrange", COB_FN_MIDRANGE, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "mean", COB_FN_MEAN, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "median", COB_FN_MEDIAN, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "variance", COB_FN_VARIANCE, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "standard-deviation", COB_FN_STDDEV, FK_NUMS, 9, 1, 99, 19, 85 },
+    { "mod", COB_FN_MOD, FK_NUMS, 0, 2, 2, 19, 85 },
+    { "rem", COB_FN_REM, FK_NUMS, 9, 2, 2, 19, 85 },
+    { "integer", COB_FN_INTEGER, FK_NUMS, 0, 1, 1, 19, 85 },
+    { "integer-part", COB_FN_INTEGER_PART, FK_NUMS, 0, 1, 1, 19, 85 },
+    { "factorial", COB_FN_FACTORIAL, FK_NUMS, 0, 1, 1, 19, 85 },
+    { "sqrt", COB_FN_SQRT, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "log", COB_FN_LOG, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "log10", COB_FN_LOG10, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "sin", COB_FN_SIN, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "cos", COB_FN_COS, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "tan", COB_FN_TAN, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "asin", COB_FN_ASIN, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "acos", COB_FN_ACOS, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "atan", COB_FN_ATAN, FK_NUMS, 9, 1, 1, 19, 85 },
+    { "annuity", COB_FN_ANNUITY, FK_NUMS, 9, 2, 2, 19, 85 },
+    { "present-value", COB_FN_PRESENT_VALUE, FK_NUMS, 9, 2, 99, 19, 85 },
+    { "random", COB_FN_RANDOM, FK_NUMS, 9, 0, 1, 19, 85 },
+    { "char", -2, FK_INT, -1, 1, 1, 1, 85 },
+    { "ord", -3, FK_ALNUM, 0, 1, 1, 19, 85 },
+    { "reverse", -4, FK_ALNUM, -1, 1, 1, 0, 85 },
+    { "numval", -5, FK_ALNUM, 9, 1, 1, 19, 85 },
+    { "numval-c", -6, FK_ALNUM, 9, 1, 2, 19, 85 },
+    /* COBOL 2002 (15.x; cobol ISSUES-52), under -std=2002 */
+    { "abs", COB_FN_ABS, FK_NUMS, 9, 1, 1, 19, 2002 },
+    { "exp", COB_FN_EXP, FK_NUMS, 9, 1, 1, 19, 2002 },
+    { "exp10", COB_FN_EXP10, FK_NUMS, 9, 1, 1, 19, 2002 },
+    { "pi", COB_FN_PI, FK_NUMS, 9, 0, 0, 19, 2002 },
+    { "sign", COB_FN_SIGN, FK_NUMS, 0, 1, 1, 19, 2002 },
+    { "fraction-part", COB_FN_FRACTION_PART, FK_NUMS, 9, 1, 1, 19, 2002 },
+    { "year-to-yyyy", COB_FN_YEAR_TO_YYYY, FK_NUMS, 0, 1, 3, 19, 2002 },
+    { "date-to-yyyymmdd", COB_FN_DATE_TO_YYYYMMDD, FK_NUMS, 0, 1, 3, 19, 2002 },
+    { "day-to-yyyyddd", COB_FN_DAY_TO_YYYYDDD, FK_NUMS, 0, 1, 3, 19, 2002 },
+    { "test-date-yyyymmdd", COB_FN_TEST_DATE_YYYYMMDD, FK_NUMS, 0, 1, 1, 19, 2002 },
+    { "test-day-yyyyddd", COB_FN_TEST_DAY_YYYYDDD, FK_NUMS, 0, 1, 1, 19, 2002 },
+    { "numval-f", -7, FK_ALNUM, 9, 1, 1, 19, 2002 },
+    { "test-numval", -8, FK_ALNUM, 0, 1, 1, 19, 2002 },
+    { "test-numval-c", -9, FK_ALNUM, 0, 1, 2, 19, 2002 },
+    { "test-numval-f", -10, FK_ALNUM, 0, 1, 1, 19, 2002 },
+    { NULL, 0, 0, 0, 0, 0, 0, 0 }
 };
 
 static void parse_operand(Opnd *o);
@@ -2994,7 +3010,8 @@ static Opnd *fn89_arg(const char *fname)
 static int fn89_known(const char *w)
 {
     static const char *named[] = { "when-compiled", "upper-case", "lower-case", "current-date", "integer-of-date",
-        "date-of-integer", "day-of-integer", "integer-of-day", "length", NULL };
+        "date-of-integer", "day-of-integer", "integer-of-day", "length", "byte-length", "highest-algebraic",
+        "lowest-algebraic", NULL };
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(w, g_fn89[i].name)) return 1;
     for (int i = 0; named[i]; i++) if (!strcmp(w, named[i])) return 1;
     return 0;
@@ -3005,6 +3022,7 @@ static int fn89_parse(Opnd *o, Tok *n)
     int f = -1;
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(n->s, g_fn89[i].name)) { f = i; break; }
     if (f < 0) return 0;
+    if (g_fn89[f].std > g_std) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
     advance();
     o->fnid = g_fn89[f].id; o->fkind = g_fn89[f].kind; o->fscale = g_fn89[f].scale;
     o->fsize = g_fn89[f].fsize; o->fn = -1;
@@ -3047,6 +3065,71 @@ static int fn89_parse(Opnd *o, Tok *n)
 
 static void parse_ufunc(Opnd *o, const char *name, int line);
 static int ufn_named(const char *w);
+/* a function this compiler does not have: the module or edition it needs */
+static void fn_refuse(Tok *n)
+{
+    static const struct { const char *name, *why; } later[] = {
+        { "char-national", "the NATIONAL module" }, { "display-of", "the NATIONAL module" }, { "national-of", "the NATIONAL module" },
+        { "boolean-of-integer", "the BOOLEAN module" }, { "integer-of-boolean", "the BOOLEAN module" },
+        { "exception-file", "exception handling" }, { "exception-file-n", "exception handling" },
+        { "exception-location", "exception handling" }, { "exception-location-n", "exception handling" },
+        { "exception-statement", "exception handling" }, { "exception-status", "exception handling" },
+        { "locale-compare", "locale support" }, { "locale-date", "locale support" }, { "locale-time", "locale support" },
+        { "locale-time-from-seconds", "locale support" }, { "standard-compare", "the ISO/IEC 14651 ordering" },
+        { NULL, NULL } };
+    static const char *y2014[] = { "combined-datetime", "formatted-current-date", "formatted-date", "formatted-datetime",
+        "formatted-time", "integer-of-formatted-date", "seconds-from-formatted-time", "seconds-past-midnight",
+        "test-formatted-datetime", "trim", NULL };
+    static const char *y2023[] = { "baseconvert", "concat", "convert", "find-string", "module-name",
+        "smallest-algebraic", "substitute", NULL };
+    for (int i = 0; later[i].name; i++)
+        if (!strcmp(n->s, later[i].name)) die_at(n->line, "FUNCTION %s is COBOL 2002 and needs %s, not implemented yet", n->s, later[i].why);
+    for (int i = 0; y2014[i]; i++) if (!strcmp(n->s, y2014[i])) die_at(n->line, "FUNCTION %s is COBOL 2014; not implemented", n->s);
+    for (int i = 0; y2023[i]; i++) if (!strcmp(n->s, y2023[i])) die_at(n->line, "FUNCTION %s is COBOL 2023; not implemented", n->s);
+    die_at(n->line, "FUNCTION %s is not an intrinsic function", n->s);
+}
+
+/* HIGHEST-ALGEBRAIC / LOWEST-ALGEBRAIC (2002 15.33, 15.46): the extreme
+ * values the argument can represent -- its picture's, or a native
+ * binary usage's range */
+static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
+{
+    if (x->kind != O_REF || x->ref.rm) die_at(n->line, "FUNCTION %s takes a numeric or numeric-edited item", n->s);
+    Sym *a = x->ref.sym;
+    memset(o, 0, sizeof *o); o->kind = O_NUM; o->line = n->line;
+    long long nat = 0; int sgn = 0;
+    switch (a->usage) {
+    case U_BCHAR: nat = high ? 127 : -128; sgn = 1; break;
+    case U_UBCHAR: nat = high ? 255 : 0; sgn = 1; break;
+    case U_SSHORT: nat = high ? 32767 : -32768; sgn = 1; break;
+    case U_USHORT: nat = high ? 65535 : 0; sgn = 1; break;
+    case U_SINT: nat = high ? 2147483647LL : -2147483648LL; sgn = 1; break;
+    case U_UINT: nat = high ? 4294967295LL : 0; sgn = 1; break;
+    default: break;
+    }
+    if (sgn) {
+        o->num.neg = nat < 0; unsigned long long m = nat < 0 ? 0ULL - (unsigned long long)nat : (unsigned long long)nat;
+        char b[24]; int k = snprintf(b, sizeof b, "%llu", m);
+        memcpy(o->num.digits, b, (size_t)k); o->num.ndigits = k; o->num.scale = 0;
+        return;
+    }
+    if (a->is_group || !a->has_pic || (a->pi.category != PIC_NUMERIC && a->pi.category != PIC_NUMERIC_EDITED))
+        die_at(n->line, "FUNCTION %s takes a numeric or numeric-edited item", n->s);
+    /* all nines in the picture's digit positions; P positions read as zeros */
+    int digits = a->pi.digits, scale = a->pi.scale, stored = digits;
+    int pz = 0;                                   /* trailing P: zeros left of the point */
+    if (scale < 0) { pz = -scale; stored = digits - pz; scale = 0; }
+    else if (scale > digits) stored = digits;     /* leading P after the point: V PPP99 */
+    int nd = 0;
+    int lead0 = scale > digits ? scale - digits : 0;
+    for (int i = 0; i < lead0; i++) o->num.digits[nd++] = '0';
+    for (int i = 0; i < stored; i++) o->num.digits[nd++] = '9';
+    for (int i = 0; i < pz; i++) o->num.digits[nd++] = '0';
+    if (nd == 0) o->num.digits[nd++] = '0';
+    o->num.ndigits = nd; o->num.scale = scale;
+    if (!high) { if (a->pi.is_signed) o->num.neg = 1; else { o->num.ndigits = 1; o->num.digits[0] = '0'; o->num.scale = 0; } }
+}
+
 static void parse_operand_raw(Opnd *o)
 {
     memset(o, 0, sizeof *o);
@@ -3149,7 +3232,27 @@ static void parse_operand_raw(Opnd *o)
             o->kind = O_NUM; numlit_from_int(&o->num, len);
             return;
         }
-        else die_at(n->line, "FUNCTION %s is not implemented", n->s);
+        else if (!strcmp(n->s, "byte-length") || !strcmp(n->s, "highest-algebraic") || !strcmp(n->s, "lowest-algebraic")) {
+            /* COBOL 2002, known from the argument's description at compile time */
+            if (g_std < 2002) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
+            int bytes = !strcmp(n->s, "byte-length"), high = !strcmp(n->s, "highest-algebraic");
+            advance();
+            if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
+            advance();
+            Opnd x; parse_operand(&x);
+            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+            advance();
+            if (bytes) {
+                if (x.kind != O_REF && x.kind != O_STR && x.kind != O_FUNC) die_at(n->line, "FUNCTION BYTE-LENGTH takes an item or a literal");
+                int len = opnd_size(&x);
+                if (len < 0) die_at(n->line, "FUNCTION BYTE-LENGTH of a reference modification with a variable length is not implemented");
+                o->kind = O_NUM; numlit_from_int(&o->num, len);
+                return;
+            }
+            algebraic_limit(o, &x, high, n);
+            return;
+        }
+        else fn_refuse(n);
         advance();
         if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
         advance();
@@ -3724,6 +3827,14 @@ static void emit_fn_value(Opnd *f)
             emit_call("cob_fn_char");
             return;
         }
+        if ((f->fnid == -6 || f->fnid == -9) && f->nfargs == 2) {
+            /* NUMVAL-C's currency string, argument-2: handed over first */
+            Opnd *cx = f->fargs[1];
+            if (cx->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)cx->tok->s, cx->tok->len)); emit_li("r4", cx->tok->len); }
+            else if (cx->kind == O_REF) { emit_ref_addr(&cx->ref, "r3"); emit_li("r4", (long)cx->ref.sym->size); }
+            else die_at(f->line, "FUNCTION NUMVAL-C: the currency string must be an item or a literal");
+            emit_call("cob_fn_currency_arg");
+        }
         Opnd *ax = f->fargs[0];                         /* the string functions */
         int alen;
         if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); alen = ax->fsize; }
@@ -3732,6 +3843,9 @@ static void emit_fn_value(Opnd *f)
         switch (f->fnid) {
         case -3: emit_call("cob_fn_ord"); break;
         case -4: emit_li("r4", alen); emit_call("cob_fn_reverse"); break;
+        case -7: emit_li("r4", alen); emit_call("cob_fn_numval_f"); break;
+        case -8: case -9: case -10:
+            emit_li("r4", alen); emit_li("r5", f->fnid == -8 ? 0 : f->fnid == -9 ? 1 : 2); emit_call("cob_fn_test_numval"); break;
         default: emit_li("r4", alen); emit_li("r5", f->fnid == -6); emit_call("cob_fn_numval"); break;
         }
         return;

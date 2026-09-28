@@ -3553,6 +3553,20 @@ static int fn_cmp(const void *a, const void *b)
     return x < y ? -1 : x > y ? 1 : 0;
 }
 
+static void cob_clock(struct tm *out, int *hund, long *gmtoff);
+
+/* YEAR-TO-YYYY (2002 15.81): the year in the 100-year window ending at
+ * argument-2 + argument-3 (defaults 50 and the current year) */
+static long fn_year_window(long yy, int n, const cob_num *a)
+{
+    long w = n > 1 ? (long)(a[1].v / pow10tab[a[1].scale]) : 50, cy;
+    if (n > 2) cy = (long)(a[2].v / pow10tab[a[2].scale]);
+    else { struct tm t; int h; long g; cob_clock(&t, &h, &g); cy = t.tm_year + 1900; }
+    long maxy = w + cy;
+    if (yy < 0 || yy > 99 || maxy < 1700 || maxy > 9999) return 0;
+    return maxy % 100 >= yy ? yy + 100 * (maxy / 100) : yy + 100 * (maxy / 100 - 1);
+}
+
 char *cob_fn_num(int which, int n)
 {
     cob_num *a = &nstk[nsp - n];               /* the n arguments, oldest first */
@@ -3662,6 +3676,41 @@ char *cob_fn_num(int which, int n)
         res = fn_from_dbl((double)pcg32() / 4294967296.0);
         break;
     }
+    /* COBOL 2002 */
+    case COB_FN_ABS: res = fn_signed18(cob_rescale(a[0].v < 0 ? -a[0].v : a[0].v, a[0].scale, 9)); break;
+    case COB_FN_EXP: res = fn_from_dbl(exp(fn_dbl(&a[0]))); break;
+    case COB_FN_EXP10: res = fn_from_dbl(pow(10.0, fn_dbl(&a[0]))); break;
+    case COB_FN_PI: res = fn_signed18(3141592654LL); break;           /* 3.141592654 at scale 9, rounded */
+    case COB_FN_SIGN: res = fn_signed18(a[0].v > 0 ? 1 : a[0].v < 0 ? -1 : 0); break;
+    case COB_FN_FRACTION_PART: {
+        long long k = pow10tab[a[0].scale];
+        res = fn_signed18(cob_rescale(a[0].v - a[0].v / k * k, a[0].scale, 9));
+        break;
+    }
+    case COB_FN_YEAR_TO_YYYY:
+        res = fn_signed18(fn_year_window((long)(a[0].v / pow10tab[a[0].scale]), n, a));
+        break;
+    case COB_FN_DATE_TO_YYYYMMDD: case COB_FN_DAY_TO_YYYYDDD: {
+        long v = (long)(a[0].v / pow10tab[a[0].scale]), unit = which == COB_FN_DATE_TO_YYYYMMDD ? 10000 : 1000;
+        long y = fn_year_window(v / unit, n, a);
+        res = fn_signed18(y ? y * unit + v % unit : 0);
+        break;
+    }
+    case COB_FN_TEST_DATE_YYYYMMDD: {                 /* 15.73: 0 valid, 1 year, 2 month, 3 day */
+        long v = (long)(a[0].v / pow10tab[a[0].scale]);
+        long y = v / 10000, m = v / 100 % 100, d = v % 100;
+        static const int md[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+        int r = v < 16010000 || v > 99999999 ? 1 : m < 1 || m > 12 ? 2 : d < 1 || d > md[m - 1] + (m == 2 && leap(y)) ? 3 : 0;
+        res = fn_signed18(r);
+        break;
+    }
+    case COB_FN_TEST_DAY_YYYYDDD: {                   /* 15.74: 0 valid, 1 year, 2 day */
+        long v = (long)(a[0].v / pow10tab[a[0].scale]);
+        long y = v / 1000, d = v % 1000;
+        int r = v < 1601000 || v > 9999999 ? 1 : d < 1 || d > 365 + leap(y) ? 2 : 0;
+        res = fn_signed18(r);
+        break;
+    }
     default: cob_fatal("unknown intrinsic function");
     }
     nsp -= n;
@@ -3732,8 +3781,104 @@ char *cob_fn_reverse(const char *p, int n)
  * spaces, an optional sign either side, digits with one point (comma
  * under DECIMAL-POINT IS COMMA); NUMVAL-C also passes over the
  * currency sign and the grouping separators */
+/* NUMVAL, NUMVAL-C and NUMVAL-F's argument formats (2002 15.54-15.56),
+ * as one scanner: 0 when p conforms, else the position of the first
+ * character in error, or n + 1 when the error is no one character's
+ * (TEST-NUMVAL's returned value, 15.75-15.77).  form 0 NUMVAL, 1
+ * NUMVAL-C (a currency string, grouping commas), 2 NUMVAL-F (an exponent).
+ * The value, when it conforms: v at scale sc, times 10**exp. */
+static const char *fn_cur_p; static int fn_cur_n;    /* NUMVAL-C argument-2, for the next call */
+
+void cob_fn_currency_arg(const char *p, int n)
+{
+    while (n > 0 && *p == ' ') { p++; n--; }
+    while (n > 0 && p[n - 1] == ' ') n--;
+    fn_cur_p = p; fn_cur_n = n;
+}
+
+static int numval_scan(const char *p, int n, int form, long long *v, int *sc, int *exp10)
+{
+    char cs[64]; int csn;
+    if (form == 1 && fn_cur_p) { csn = fn_cur_n < 63 ? fn_cur_n : 63; memcpy(cs, fn_cur_p, (size_t)csn); }
+    else { cs[0] = (char)cob_currency; csn = 1; }
+    fn_cur_p = 0;
+    int dp = cob_dp_comma ? ',' : '.', grp = cob_dp_comma ? '.' : ',';
+    int i = 0, neg = 0, lead = 0, nd = 0, seen_pt = 0, scale = 0, any = 0;
+    long long val = 0;
+#define SP() while (i < n && p[i] == ' ') i++
+    SP();
+    if (i < n && (p[i] == '+' || p[i] == '-')) { neg = p[i] == '-'; lead = 1; i++; SP(); }
+    if (form == 1 && csn && i + csn <= n && !memcmp(p + i, cs, (size_t)csn)) { i += csn; SP(); }
+    /* the number: digits, one decimal separator, NUMVAL-C's grouping commas */
+    int start = i;
+    for (; i < n; i++) {
+        unsigned char c = (unsigned char)p[i];
+        if (c >= '0' && c <= '9') {
+            if (++nd > 31) return i + 1;
+            any = 1;
+            if (val < 100000000000000000LL) { val = val * 10 + (c - '0'); if (seen_pt) scale++; }
+            else if (!seen_pt) return i + 1;        /* beyond 18 integer digits: this compiler's limit */
+        } else if (c == dp && !seen_pt) seen_pt = 1;
+        else if (form == 1 && c == grp && !seen_pt && any && i + 1 < n && p[i + 1] >= '0' && p[i + 1] <= '9') continue;
+        else break;
+    }
+    if (!any) return i < n && i > start ? i + 1 : i < n ? i + 1 : n + 1;
+    SP();
+    int e = 0;
+    if (form == 2 && i < n && (p[i] == 'E' || p[i] == 'e')) {
+        i++; SP();
+        if (i >= n) return n + 1;
+        if (p[i] != '+' && p[i] != '-') return i + 1;
+        int eneg = p[i] == '-'; i++; SP();
+        int k = 0;
+        while (i < n && p[i] >= '0' && p[i] <= '9' && k < 4) { e = e * 10 + (p[i] - '0'); i++; k++; }
+        if (k == 0) return i < n ? i + 1 : n + 1;
+        if (k > 3) return i;
+        if (eneg) e = -e;
+        SP();
+    } else if (form != 2 && !lead && i < n) {
+        if (p[i] == '+' || p[i] == '-') { neg = p[i] == '-'; i++; SP(); }
+        else if (i + 1 < n && (p[i] == 'C' || p[i] == 'c') && (p[i + 1] == 'R' || p[i + 1] == 'r')) { neg = 1; i += 2; SP(); }
+        else if (i + 1 < n && (p[i] == 'D' || p[i] == 'd') && (p[i + 1] == 'B' || p[i + 1] == 'b')) { neg = 1; i += 2; SP(); }
+    }
+    if (i < n) return i + 1;
+#undef SP
+    *v = neg ? -val : val; *sc = scale; *exp10 = e;
+    return 0;
+}
+
+int cob_fn_test_numval_pos(const char *p, int n, int form)
+{
+    long long v; int sc, e;
+    return numval_scan(p, n, form, &v, &sc, &e);
+}
+
+char *cob_fn_test_numval(const char *p, int n, int form)
+{
+    return fn_signed18(cob_fn_test_numval_pos(p, n, form));
+}
+
+char *cob_fn_numval_f(const char *p, int n)
+{
+    long long v; int sc, e;
+    if (numval_scan(p, n, 2, &v, &sc, &e)) return fn_signed18(0);
+    /* v * 10**(e - sc) at scale 9, truncated to what 18 digits hold */
+    int shift = 9 + e - sc;
+    if (shift >= 0) { while (shift-- > 0) { if (v > 999999999999999999LL / 10 || v < -999999999999999999LL / 10) return fn_signed18(v < 0 ? -999999999999999999LL : 999999999999999999LL); v *= 10; } }
+    else { while (shift++ < 0) v /= 10; }
+    return fn_signed18(v);
+}
+
 char *cob_fn_numval(const char *p, int n, int cform)
 {
+    if (cform && fn_cur_p) {
+        /* NUMVAL-C with argument-2, a currency string of any length:
+         * the format scanner, which TEST-NUMVAL-C shares */
+        long long v; int sc, e;
+        if (numval_scan(p, n, 1, &v, &sc, &e)) return fn_signed18(0);
+        if (sc > 9) { v /= pow10tab[sc - 9]; sc = 9; }
+        return fn_signed18(v * pow10tab[9 - sc]);
+    }
     int i = 0, neg = 0, seen_pt = 0, scale = 0;
     long long v = 0;
     int dp = cob_dp_comma ? ',' : '.', grp = cob_dp_comma ? '.' : ',';

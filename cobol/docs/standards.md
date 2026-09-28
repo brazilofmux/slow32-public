@@ -247,6 +247,10 @@ refused with a message naming the switch.
   between the parts. The floating comment `*>` stays accepted in both
   standards, as majesty needs. Other compiler directives (`>>DEFINE`,
   `>>IF`, `>>D` ...) are refused by name.
+- **The 2002 intrinsic functions** that need no other module (2026-09-28,
+  ISSUES-52): the numeric, date-window, BYTE-LENGTH, NUMVAL-F and
+  TEST-NUMVAL families; the rest refused naming the module or edition
+  they need (docs/oracles.md, "Intrinsic functions, COBOL 2002").
 
 ## Deferred — object orientation
 
