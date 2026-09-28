@@ -2705,6 +2705,8 @@ static void emit_expr_tokens(int s0, int s1);
 static void emit_ucalls(int from, int to);
 static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */
 static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
+static int ec_size_on(void);
+static void emit_ec_size(void);
 static int g_recursive, g_std, g_cond_depth;   /* defined below */
 static int g_fnsig_only;                /* -fnsig: write the functions' .s32fn files, compile nothing */
 static void skip_unit_body(void);
@@ -5591,7 +5593,7 @@ static void parse_arith_corr(int mode, const char *between, const char *end_word
     Ref a, b; parse_corr_operands(&a, &b, between);
     int rounded = accept_word("rounded");
     if (rounded && at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2002; plain ROUNDED is the 1985 form");
-    int size_err = at_size_error_clause();
+    int size_err = at_size_error_clause() || ec_size_on();
     if (size_err) emit("\tstw sp+%d, r0", SLOT_A);
     corr_walk(&a, &b, mode, rounded, size_err);
     if (size_err) { emit("\tldw r1, sp+%d", SLOT_A); emit("\tstw sp+%d, r1", SLOT_B); }
@@ -5642,6 +5644,7 @@ static void parse_size_error_clauses(int size_err, const char *end_word)
         emit("\tldw r1, sp+%d", SLOT_B);
         emit("\tbeq r1, r0, .L%d", Lok);
         if (at_word("size") || (at_word("on") && is_word(peek(1), "size"))) { accept_size_error_words(); parse_statements(); }
+        else if (ec_size_on()) emit_ec_size();       /* no ON SIZE ERROR: EC-SIZE, if checking is on (2023 14.7.5) */
         emit_jump(Lend);
         emit_label(Lok);
         if (at_size_error_clause() && accept_word("not")) { accept_size_error_words(); parse_statements(); }
@@ -6136,7 +6139,7 @@ static void parse_add(void)
         giving = 1; nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else die_at(cur()->line, "expected TO or GIVING in ADD");
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
-    int size_err = at_size_error_clause();
+    int size_err = at_size_error_clause() || ec_size_on();
 
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 0, ops_all_nonneg(ops, n)) && hot_sum_fits(ops, n);
@@ -6173,7 +6176,7 @@ static void parse_subtract(void)
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
     if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
-    int size_err = at_size_error_clause();
+    int size_err = at_size_error_clause() || ec_size_on();
 
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 1, 0) && (!giving || opnd_hot_int(&minuend)) &&
@@ -6214,7 +6217,7 @@ static void parse_multiply(void)
         g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
         if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-        int size_err = at_size_error_clause();
+        int size_err = at_size_error_clause() || ec_size_on();
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
         parse_size_error_clauses(size_err, "end-multiply");
@@ -6223,7 +6226,7 @@ static void parse_multiply(void)
     g_tp = save;
     nr = parse_ref_list(rs, rd, MAXOPS, 0);
     if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-    int size_err = at_size_error_clause();
+    int size_err = at_size_error_clause() || ec_size_on();
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
@@ -6285,7 +6288,7 @@ static void parse_divide(void)
             g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
             nr = parse_ref_list(rs, rd, MAXOPS, 1);
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-            int size_err = size_error_after_remainder();
+            int size_err = size_error_after_remainder() || ec_size_on();
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
             emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
             emit_remainder(&b, &rs[0], rd[0], &a, size_err);
@@ -6295,7 +6298,7 @@ static void parse_divide(void)
         g_tp = save;
         nr = parse_ref_list(rs, rd, MAXOPS, 0);
         if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-        int size_err = at_size_error_clause();
+        int size_err = at_size_error_clause() || ec_size_on();
         if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
         for (int i = 0; i < nr; i++) {
             Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
@@ -6310,7 +6313,7 @@ static void parse_divide(void)
     expect_word("giving");
     nr = parse_ref_list(rs, rd, MAXOPS, 1);
     if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-    int size_err = size_error_after_remainder();
+    int size_err = size_error_after_remainder() || ec_size_on();
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     emit_remainder(&a, &rs[0], rd[0], &b, size_err);
@@ -6427,7 +6430,7 @@ static void parse_compute(void)
     if (!at_op("=")) die_at(cur()->line, "expected '=' in COMPUTE, found %s", tok_desc(cur()));
     advance();
     parse_expr();
-    int size_err = at_size_error_clause();
+    int size_err = at_size_error_clause() || ec_size_on();
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     parse_size_error_clauses(size_err, "end-compute");
 }
@@ -7235,6 +7238,42 @@ static void emit_ec_dispatch(int i)
         emit_label(Lret);
     }
     if (ec_fatal(i)) emit_call("cob_ec_abort");     /* abnormal run unit termination (14.6.12) */
+}
+
+/* EC-SIZE (cobol ISSUES-55): with checking on for any of the conditions a
+ * statement's arithmetic can meet, the statement is compiled as if it had
+ * a SIZE ERROR phrase, and the phrase's place raises the condition libcob
+ * saw -- EC-SIZE-ZERO-DIVIDE, -OVERFLOW (the 18-digit intermediate), or
+ * -TRUNCATION (a result too large for its receiver), 14.7.5 */
+static int ec_size_on(void)
+{
+    if (g_std < 2002) return 0;
+    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION" };
+    for (int k = 0; k < 3; k++) if (g_ec_on[ec_find(n[k], 0)]) return 1;
+    return 0;
+}
+
+static void emit_ec_size(void)
+{
+    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION" };
+    int Ldone = new_label();
+    emit_call("cob_size_kind");
+    emit("\tadd r13, r1, r0");
+    for (int k = 0; k < 3; k++) {
+        int i = ec_find(n[k], 0);
+        if (!g_ec_on[i]) continue;
+        int Lnext = new_label();
+        emit_li("r2", k + 1);
+        emit("\tbne r13, r2, .L%d", Lnext);
+        char nm[40]; snprintf(nm, sizeof nm, "%s", n[k]);
+        emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+        emit_li("r4", 0);
+        emit_call("cob_ec_raise");
+        emit_ec_dispatch(i);
+        emit_jump(Ldone);
+        emit_label(Lnext);
+    }
+    emit_label(Ldone);
 }
 
 /* RAISE EXCEPTION exception-name (2023 14.9.29).  Everything is known here:

@@ -258,8 +258,9 @@ refused with a message naming the switch.
   ending the run after their declarative, EXCEPTION-STATUS and
   EXCEPTION-STATEMENT, `SET LAST EXCEPTION TO OFF`. Everything is decided
   at compile time, and a program that never turns checking on compiles
-  as before. Still to come: the statements that raise conditions
-  themselves (size errors, bounds, I-O ...), TURN for one file, the
+  as before. EC-SIZE from the arithmetic statements followed (ISSUES-55).
+  Still to come: the other statements that raise conditions themselves
+  (bounds, I-O, program-not-found ...), TURN for one file, the
   variable-length EXCEPTION-LOCATION and EXCEPTION-FILE, and 2023's
   exception-checking PERFORM. No oracle: GnuCOBOL 4 does not implement
   exception declaratives.

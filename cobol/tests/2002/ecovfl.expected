@@ -1,0 +1,2 @@
+big * 1000 = 000999999999999000
+declarative: EC-SIZE-OVERFLOW                r=000999999999999000

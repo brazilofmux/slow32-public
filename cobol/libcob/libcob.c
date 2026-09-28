@@ -873,7 +873,9 @@ static void align2(cob_num *a, cob_num *b)
     }
 }
 
-static int div0;        /* a size error happened in this statement (div0 or overflow) */
+static int div0;        /* a size error happened in this statement: 1 a zero divisor, 2 an i64 overflow */
+static int size_kind;   /* the last size error's kind, for EC-SIZE (cobol ISSUES-55): 1 zero divide, 2 overflow, 3 truncation */
+int cob_size_kind(void) { return size_kind; }
 
 void cob_nadd(void) { cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1]; align2(a, b); a->v += b->v; nsp--; }
 void cob_nsub(void) { cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1]; align2(a, b); a->v -= b->v; nsp--; }
@@ -896,7 +898,7 @@ void cob_nmul(void)
     unsigned long long ua = a->v < 0 ? 0 - (unsigned long long)a->v : (unsigned long long)a->v;
     unsigned long long ub = b->v < 0 ? 0 - (unsigned long long)b->v : (unsigned long long)b->v;
     if (ub && ua > 0x7fffffffffffffffULL / ub) {
-        div0 = 1;                                   /* size error: product does not fit i64 */
+        div0 = 2;                                   /* size error: product does not fit i64 */
         nsp--;
         return;
     }
@@ -993,24 +995,30 @@ int cob_ncmp(void)
 /* opts as cob_put_num_x; return 1 on a size error (receiver unchanged) */
 int cob_top_store(void *p, const cob_desc *d, int opts)
 {
-    if (div0) return 1;
-    return cob_put_num_x(p, d, nstk[nsp - 1].v, nstk[nsp - 1].scale, opts);
+    if (div0) { size_kind = div0; return 1; }
+    int r = cob_put_num_x(p, d, nstk[nsp - 1].v, nstk[nsp - 1].scale, opts);
+    if (r) size_kind = 3;
+    return r;
 }
 
 int cob_top_addto(void *p, const cob_desc *d, int opts)
 {
-    if (div0) return 1;
+    if (div0) { size_kind = div0; return 1; }
     cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
     align2(&a, &b);
-    return cob_put_num_x(p, d, a.v + b.v, a.scale, opts);
+    int r = cob_put_num_x(p, d, a.v + b.v, a.scale, opts);
+    if (r) size_kind = 3;
+    return r;
 }
 
 int cob_top_subfrom(void *p, const cob_desc *d, int opts)
 {
-    if (div0) return 1;
+    if (div0) { size_kind = div0; return 1; }
     cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
     align2(&a, &b);
-    return cob_put_num_x(p, d, a.v - b.v, a.scale, opts);
+    int r = cob_put_num_x(p, d, a.v - b.v, a.scale, opts);
+    if (r) size_kind = 3;
+    return r;
 }
 
 void cob_drop(void) { if (nsp) nsp--; div0 = 0; }

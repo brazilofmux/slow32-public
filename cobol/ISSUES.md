@@ -1818,3 +1818,32 @@ Found with it: `DISPLAY FUNCTION REVERSE(...)` was taken for a positioned
 DISPLAY, REVERSE being one of RM/COBOL's video attributes; a word after
 FUNCTION is a function's name now. -std=85 byte-identical on all 227
 Open Systems programs; CCVS-85 unchanged; majesty PASS.
+
+### 55. Exception handling, part two: EC-SIZE from arithmetic (2026-09-28)
+
+With checking on for EC-SIZE-ZERO-DIVIDE, -OVERFLOW or -TRUNCATION, an
+ADD, SUBTRACT, MULTIPLY, DIVIDE or COMPUTE (CORRESPONDING included)
+with no ON SIZE ERROR phrase is compiled as if it had one, and the
+phrase's place raises the condition libcob saw (2023 14.7.5): a zero
+divisor, an intermediate past the 64-bit, 18-digit arithmetic this
+compiler uses (rule 3), or a result too large for its receiver. The
+receiver keeps its value, a lone NOT ON SIZE ERROR phrase is ignored,
+and all three being fatal, the run ends after the declarative. An
+explicit ON SIZE ERROR still handles its own statement, and no
+declarative runs (14.7.5, first paragraph).
+
+libcob's size-error flag now says which it was (cob_size_kind).
+Checking off: nothing changes. One edge, allowed by the text's
+"undefined": with only some EC-SIZE names turned on, a size error of an
+unchecked kind leaves the receiver unchanged instead of truncating,
+since the statement is compiled in size-error mode.
+
+EC-SIZE-EXPONENTIATION (the ** rules) and EC-SIZE in expressions outside
+arithmetic statements (a condition's `a / 0`) are not raised yet.
+
+Tests: 2002/ecsize (truncation; the unchecked and phrase-handled cases
+before the TURN), 2002/eczdiv, 2002/ecovfl -- one program each, since a
+fatal condition ends the run. No oracle (GnuCOBOL 4 has no exception
+declaratives). -std=85 byte-identical on all 227 Open Systems programs;
+CCVS-85 unchanged; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.
