@@ -47,8 +47,8 @@ bytes, INITIALIZE with REPLACING NATIONAL.
 A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
-Refused until later parts: STRING, UNSTRING, INSPECT, ACCEPT and
-reference modification of national items; numeric and edited national
+Refused until later parts: STRING, UNSTRING, INSPECT and ACCEPT of
+national items; numeric and edited national
 pictures; national groups (GROUP-USAGE NATIONAL); national fields in
 Report Writer and SCREEN SECTION.
 
@@ -75,6 +75,18 @@ comparison, a DISPLAY, and FUNCTION LENGTH (characters) and BYTE-LENGTH
 (NATIONAL-OF) or 3 per national character (DISPLAY-OF); a result that
 could exceed 8190 bytes is refused. Reference modification of such a
 result is refused for now.
+
+## Reference modification (ISSUES-67)
+
+`n(start:length)` on a national item counts character positions, two
+bytes each, and the part is national (2023 8.4.2.4). Literal positions
+become byte offsets at compile time; computed ones are doubled where
+they are evaluated. The runtime's descriptor for a computed part reads
+the item's category and counts in characters. EC-BOUND-REF-MOD checks
+character positions, and so do the compile-time range checks: `n(4:2)`
+on a PIC N(4) is refused, though its eight bytes would hold two more.
+A position is a code unit, so a part can split a surrogate pair, as the
+text's one-position-per-code-unit rule implies.
 
 ## Case (ISSUES-66)
 

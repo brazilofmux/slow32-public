@@ -2163,3 +2163,37 @@ Now:
 2002/natcase (no oracle), free/casermod. Harness 202/202; -std=85
 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 67. NATIONAL, part three begins: reference modification (2026-09-28)
+
+Reference modification of a national item (2023 8.4.2.4) is the first
+row of part three, the one STRING, UNSTRING and INSPECT of national data
+will stand on. Start and length count character positions, and the part
+is national.
+
+- **Compiler.** A `Ref` carries `rm_nat`. Its literal start and length
+  stay in characters and become bytes where they are used: the address
+  offset, the static length, and the part's descriptor (`nat_desc`, not
+  `str_desc`). A computed start is doubled after the bound check. The
+  compile-time "past the end" checks count characters.
+- **Runtime.** `cob_refmod_desc` and `cob_refmod_len` read the item's
+  category: a national part is national, and its length in bytes is
+  twice its characters. `cob_bound_refmod` is given the size in
+  characters.
+- **MOVE.** A national MOVE takes a reference-modified receiver: a
+  figurative constant fills it through `cob_fill_all` with the constant's
+  two bytes, and ALL and ordinary sources get the part's length and
+  descriptor.
+
+bad/std2002-nat-refmod, which was the refusal, now checks the character
+count: `n(4:2)` runs past the end of a PIC N(4). 2002/natrefmod (no
+oracle) covers sending and receiving parts, literal, computed and
+omitted positions, a table element, comparison, and a fatal
+EC-BOUND-REF-MOD.
+
+Open, not national-specific: FUNCTION LENGTH of a reference modification
+whose length is an expression is refused for alphanumeric items too.
+
+Harness 203/203; -std=85 byte-identical on all 227 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.

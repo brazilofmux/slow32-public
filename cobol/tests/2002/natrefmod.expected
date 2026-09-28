@@ -1,0 +1,13 @@
+literal: [本語テ] [キス]
+computed: [本語テ] [キス]
+length: 3 6
+sending: [テキ  ]
+receiving alphanumeric: [ab語テキス]
+receiving computed: [a語語テキス]
+a figurative: [a語語テ  ]
+ALL: [axyx  ]
+table: [五六]
+compare: equal
+in bounds: [x]
+past the end (fatal):
+  declarative: EC-BOUND-REF-MOD

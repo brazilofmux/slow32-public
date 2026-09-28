@@ -2894,6 +2894,7 @@ typedef struct {
     int line;
     int rm;                         /* reference modification item(start:len) */
     long rm_start, rm_len;          /* literal values, or 0 when an expression / omitted */
+    int rm_nat;                     /* a national item's: start and length count characters, two bytes each */
     int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
@@ -3081,10 +3082,9 @@ static void parse_ref(Ref *r)
     }
     if (is_rm) {
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
-        if (!r->sym->is_group && r->sym->pi.category == PIC_NATIONAL)
-            die_at(r->line, "reference modification of a national item is not implemented yet");
         advance();
         r->rm = 1; r->rm_l0 = -1;
+        r->rm_nat = !r->sym->is_group && r->sym->pi.category == PIC_NATIONAL;   /* 2023 8.4.2.4: character positions */
         if (cur()->kind == T_NUM && peek(1)->kind == T_COLON) {
             NumLit n; numlit_parse(cur(), &n);
             if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the start of a reference modification must be a positive integer");
@@ -3104,9 +3104,10 @@ static void parse_ref(Ref *r)
         }
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
-        if (r->rm_start && r->rm_start > r->sym->size) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
-        if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > r->sym->size) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
-        if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = r->sym->size - r->rm_start + 1;
+        long chars = r->rm_nat ? r->sym->size / 2 : r->sym->size;
+        if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
+        if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
+        if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
     }
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
@@ -3649,7 +3650,7 @@ static int ref_needs_call(const Ref *r)
 static int ref_static_len(const Ref *r)
 {
     if (!r->rm) return r->sym->size;
-    return r->rm_len ? (int)r->rm_len : -1;
+    return r->rm_len ? (int)r->rm_len * (r->rm_nat ? 2 : 1) : -1;
 }
 
 /* load the integer value of a hot item at address in areg into dreg */
@@ -3738,7 +3739,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     int runtime = ref_has_runtime_sub(r);
     for (int i = 0; i < r->nsub; i++)
         if (!r->sub[i].sym) off += (int)(r->sub[i].lit - 1) * s->dim_stride[i];
-    if (r->rm && r->rm_start) off += (int)r->rm_start - 1;
+    if (r->rm && r->rm_start) off += ((int)r->rm_start - 1) * (r->rm_nat ? 2 : 1);
     if (runtime) emit("\tadd r11, r0, r0");
     for (int i = 0; i < r->nsub; i++) {
         if (!r->sub[i].sym) continue;
@@ -3772,6 +3773,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         emit_call("cob_pop_int");
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
         emit("\taddi r1, r1, -1");
+        if (r->rm_nat) emit("\tadd r1, r1, r1");      /* characters to bytes */
         emit("\tadd r11, r11, r1");
     }
     emit_item_addr(reg, s, off);
@@ -3860,7 +3862,7 @@ static void emit_refmod_check(const Ref *r, long len, int slot)
     emit("\tadd r3, r1, r0");
     if (len == -2) emit("\tldw r4, sp+%d", SLOT(slot));
     else emit_li("r4", len == -3 ? -1 : len);    /* -3: computed, and checked with the length */
-    emit_li("r5", r->sym->size);
+    emit_li("r5", r->rm_nat ? r->sym->size / 2 : r->sym->size);   /* in character positions */
     emit_call("cob_bound_refmod");
     emit("\tbeq r1, r0, .L%d", Lok);
     emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
@@ -4378,7 +4380,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
     case O_REF:
         *addr = arg_ref(&o->ref);
         if (!o->ref.rm) *desc = arg_desc(sym_desc(o->ref.sym));
-        else if (o->ref.rm_len) *desc = arg_desc(str_desc((int)o->ref.rm_len));
+        else if (o->ref.rm_len) *desc = arg_desc(o->ref.rm_nat ? nat_desc(2 * (int)o->ref.rm_len) : str_desc((int)o->ref.rm_len));
         else *desc = arg_rdesc(&o->ref);
         return;
     case O_FUNC:
@@ -5807,14 +5809,21 @@ static int emit_move_national(Opnd *src, Ref *dst)
     Sym *d = dst->sym;
     int dn = !d->is_group && d->pi.category == PIC_NATIONAL, sn = opnd_is_national(src);
     if (!dn && !sn) return 0;
-    if ((src->kind == O_REF && src->ref.rm && sn) || (dn && dst->rm))
-        die_at(dst->line, "reference modification of a national item is not implemented yet");
     if (!dn) {
         if (d->is_group) return 0;                  /* a group receives the bytes (14.9.25 general rule 4) */
         die_at(dst->line, "a national item cannot be moved to the %s item '%s' (2023 14.9.25): use FUNCTION DISPLAY-OF",
                is_numeric_sym(d) ? "numeric" : "alphanumeric", d->name);
     }
     int n = d->size / 2;
+    /* a reference-modified receiver: its bytes, known here or at run time */
+    Arg dlen = !dst->rm ? arg_imm(d->size) : dst->rm_len ? arg_imm(2 * dst->rm_len) : arg_rlen(dst);
+    Arg ddesc = !dst->rm ? arg_desc(sym_desc(d)) : dst->rm_len ? arg_desc(nat_desc(2 * (int)dst->rm_len)) : arg_rdesc(dst);
+    if (src->kind == O_FIG && dst->rm) {
+        unsigned u = nat_fig(src->tok->s); unsigned char two[2] = { (unsigned char)(u >> 8), (unsigned char)u };
+        Arg a[4] = { arg_ref(dst), dlen, arg_label(lit_label(two, 2)), arg_imm(2) };
+        emit_args(a, 4); emit_call("cob_fill_all");
+        return 1;
+    }
     if (src->kind == O_FIG) {
         Arg a[3] = { arg_ref(dst), arg_imm(n), arg_imm((long)nat_fig(src->tok->s)) };
         emit_args(a, 3); emit_call("cob_fill_nat");
@@ -5828,14 +5837,14 @@ static int emit_move_national(Opnd *src, Ref *dst)
             conv = xmalloc((size_t)len * 4 + 2); len = utf8_to_utf16be(lit, len, conv); lit = conv;
             if (len < 0) die_at(src->line, "an ALL literal moved to a national item must be UTF-8 text");
         }
-        Arg a[4] = { arg_ref(dst), arg_imm(d->size), arg_label(lit_label(lit, len)), arg_imm(len) };
+        Arg a[4] = { arg_ref(dst), dlen, arg_label(lit_label(lit, len)), arg_imm(len) };
         emit_args(a, 4); emit_call("cob_fill_all");
         free(conv);
         return 1;
     }
     Arg a[4];
-    opnd_args(src, &a[0], &a[1], d->size, 0);
-    a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
+    opnd_args(src, &a[0], &a[1], ref_static_len(dst) > 0 ? ref_static_len(dst) : d->size, 0);
+    a[2] = arg_ref(dst); a[3] = ddesc;
     emit_args(a, 4); emit_call("cob_move");
     if (!sn && ec_on_name("EC-DATA-CONVERSION")) {
         /* a byte that is not UTF-8 became U+FFFD (14.9.25 general rule 6) */
@@ -9480,7 +9489,7 @@ static void parse_initialize(void)
                 if (mask[a]) { a++; continue; }
                 int b = a; while (b < t->size && !mask[b]) b++;
                 Ref part = *r;
-                if (a) { part.rm = 1; part.rm_start = a + 1; part.rm_len = b - a; part.rm_l0 = -1; }
+                if (a) { part.rm = 1; part.rm_start = a + 1; part.rm_len = b - a; part.rm_l0 = -1; part.rm_nat = 0; }   /* bytes */
                 Arg args[3] = { arg_ref(&part), arg_label(lit_label(tmp.image + a, b - a)), arg_imm(b - a) };
                 emit_args(args, 3);
                 emit_call("memcpy");
