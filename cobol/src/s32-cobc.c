@@ -109,6 +109,77 @@ static int g_same[8][16], g_nsame[8], g_nsame_groups;
 /* SPECIAL-NAMES SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic-name:
  * kind 1 the console for ACCEPT, 2 the console for DISPLAY, 3 a page */
 typedef struct { char name[64]; int kind; } Mnemonic;
+/* The COBOL 85 reserved words (X3.23-1985 as GnuCOBOL's -std=cobol85
+ * lists them, 348), sorted for bsearch.  A reserved word is never a
+ * user-defined word; user_word() refuses one where a program names a
+ * data item, index, file, paragraph or section (cobol ISSUES-43). */
+static const char *const g_rw85[] = {
+    "accept", "access", "add", "advancing", "after", "all", "alphabet",
+    "alphabetic", "alphabetic-lower", "alphabetic-upper", "alphanumeric",
+    "alphanumeric-edited", "also", "alter", "alternate", "and", "any",
+    "are", "area", "areas", "ascending", "assign", "at", "author", "before",
+    "binary", "binary-sequential", "blank", "block", "bottom", "by", "call",
+    "cancel", "cd", "cf", "ch", "character", "characters", "class",
+    "clock-units", "close", "cobol", "code", "code-set", "collating",
+    "column", "comma", "common", "communication", "comp", "computational",
+    "compute", "configuration", "contains", "content", "continue",
+    "control", "controls", "converting", "copy", "corr", "corresponding",
+    "count", "currency", "data", "date", "date-compiled", "date-written",
+    "day", "day-of-week", "de", "debug-item", "debugging", "decimal-point",
+    "declaratives", "delete", "delimited", "delimiter", "depending",
+    "descending", "destination", "detail", "disable", "display", "divide",
+    "division", "down", "duplicates", "dynamic", "egi", "else", "emi",
+    "enable", "end", "end-add", "end-call", "end-compute", "end-delete",
+    "end-divide", "end-evaluate", "end-if", "end-multiply", "end-of-page",
+    "end-perform", "end-read", "end-receive", "end-return", "end-rewrite",
+    "end-search", "end-start", "end-string", "end-subtract", "end-unstring",
+    "end-write", "enter", "environment", "eop", "equal", "error", "esi",
+    "evaluate", "every", "exception", "exit", "extend", "external", "false",
+    "fd", "file", "file-control", "filler", "final", "first", "footing",
+    "for", "from", "function", "generate", "giving", "global", "go",
+    "greater", "group", "heading", "high-value", "high-values", "i-o",
+    "i-o-control", "identification", "if", "in", "index", "indexed",
+    "indicate", "initial", "initialize", "initiate", "input",
+    "input-output", "inspect", "installation", "internal", "into",
+    "invalid", "is", "just", "justified", "key", "label", "last", "leading",
+    "left", "length", "less", "limit", "limits", "linage", "linage-counter",
+    "line", "line-counter", "line-sequential", "lines", "linkage", "lock",
+    "low-value", "low-values", "memory", "merge", "message", "mode",
+    "modules", "move", "multiple", "multiply", "native", "negative", "next",
+    "no", "not", "number", "numeric", "numeric-edited", "object-computer",
+    "occurs", "of", "off", "omitted", "on", "open", "optional", "or",
+    "order", "organization", "other", "output", "overflow",
+    "packed-decimal", "padding", "page", "page-counter", "perform", "pf",
+    "ph", "pic", "picture", "plus", "pointer", "position", "positive",
+    "printing", "procedure", "procedures", "proceed", "program",
+    "program-id", "purge", "queue", "quote", "quotes", "random", "rd",
+    "read", "receive", "record", "records", "redefines", "reel",
+    "reference", "references", "relative", "release", "remainder",
+    "removal", "renames", "replace", "replacing", "report", "reporting",
+    "reports", "rerun", "reserve", "reserved", "reset", "return",
+    "reversed", "rewind", "rewrite", "rf", "rh", "right", "rounded", "run",
+    "same", "sd", "search", "section", "security", "segment",
+    "segment-limit", "select", "send", "sentence", "separate", "sequence",
+    "sequential", "set", "sign", "size", "sort", "sort-merge", "source",
+    "source-computer", "space", "spaces", "special-names", "standard",
+    "standard-1", "standard-2", "start", "status", "stop", "string",
+    "sub-queue-1", "sub-queue-2", "sub-queue-3", "subtract", "sum",
+    "suppress", "symbolic", "sync", "synchronized", "table", "tallying",
+    "tape", "terminal", "terminate", "test", "text", "than", "then",
+    "through", "thru", "time", "times", "to", "top", "trailing", "true",
+    "type", "unit", "unstring", "until", "up", "upon", "usage", "use",
+    "using", "value", "values", "varying", "when", "with", "words",
+    "working-storage", "write", "zero", "zeroes", "zeros",
+};
+static int rw_cmp(const void *a, const void *b) { return strcmp(*(const char *const *)a, *(const char *const *)b); }
+static int is_reserved85(const char *w)
+{
+    char lw[64]; int i = 0;
+    for (; w[i] && i < 63; i++) lw[i] = (char)tolower((unsigned char)w[i]);
+    lw[i] = 0;
+    const char *k = lw;
+    return bsearch(&k, g_rw85, sizeof g_rw85 / sizeof *g_rw85, sizeof *g_rw85, rw_cmp) != 0;
+}
 static Mnemonic g_mnemonic[16];
 static int g_nmnemonic;
 static int mnemonic_kind(const char *name)
@@ -133,10 +204,13 @@ static void die_at(int line, const char *fmt, ...)
  * changed what the construct means and the 85 meaning is applied (a 74
  * program compiles and silently computes something else).  Class 'O': an
  * obsolete element of the 1985 text, deleted in COBOL 2002, accepted here.
+ * Class 'N': a word COBOL 85 reserved, used as a name by a 74-era program
+ * and accepted as one (user_word).
  * The ids are stable: the docs, the messages and the tests all cite them. */
 enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_O1_ALTER, BP_O2_COMMENT_ENTRY, BP_O3_STOP_LITERAL, BP_O4_REVERSED,
        BP_O5_MEMORY_SIZE, BP_O6_LABEL_RECORDS, BP_O7_VALUE_OF, BP_O8_DATA_RECORDS,
+       BP_N1_RESERVED_NAME,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -151,6 +225,7 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-O6", 'O', "LABEL RECORDS is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
     { "BP-O7", 'O', "VALUE OF is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
     { "BP-O8", 'O', "DATA RECORDS is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+    { "BP-N1", 'N', "this name became a reserved word in COBOL 85; accepted for a COBOL 74 program, but rename it" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static void bp(int point, int line)
@@ -160,6 +235,22 @@ static void bp(int point, int line)
     if (point == last_point && line == last_line) return;     /* one per point per line */
     last_point = point; last_line = line;
     fprintf(stderr, "%s:%d: warning: [%s] %s\n", diag_file(line), line, g_bp[point].id, g_bp[point].msg);
+}
+
+/* A user-defined word must not be a reserved word (X3.23-1985).  The
+ * exception is a word COBOL 85 newly reserved that 74-era programs
+ * really use as a name: the Open Systems suite's payroll programs name
+ * data items CLASS and OTHER (PAACEMP, PACHKTBL, PAMANCHK, PAPRECHK), and
+ * TRUE, FALSE and ANY were taken with OTHER in 91e6807f.  Those are
+ * accepted, as behavior point BP-N1.  Surveyed over majesty, the Open
+ * Systems suite, CCVS-85 and the tests: no other reserved word is used
+ * as a name anywhere (cobol ISSUES-43). */
+static void user_word(const char *w, int line, const char *what)
+{
+    if (!is_reserved85(w)) return;
+    static const char *const n1[] = { "class", "other", "true", "false", "any", NULL };
+    for (int i = 0; n1[i]; i++) if (!strcasecmp(w, n1[i])) { bp(BP_N1_RESERVED_NAME, line); return; }
+    die_at(line, "'%s' is a reserved word and cannot name %s", w, what);
 }
 
 static void *xmalloc(size_t n)
@@ -1409,6 +1500,7 @@ static void parse_data_item(void)
         snprintf(s->name, sizeof s->name, "filler");
     } else if (cur()->kind == T_WORD && !at_word("redefines") && !at_word("pic") &&
                !at_word("picture") && !at_word("value") && !at_word("occurs") && !at_word("usage")) {
+        user_word(cur()->s, line, "a data item");
         snprintf(s->name, sizeof s->name, "%s", cur()->s);
         advance();
     } else {
@@ -1557,6 +1649,7 @@ static void parse_data_item(void)
                            !at_word("value") && !at_word("usage") && !at_word("ascending") &&
                            !at_word("descending") && !at_word("comp") && !at_word("comp-3") &&
                            !at_word("comp-5") && !at_word("display") && !at_word("sync")) {
+                        user_word(cur()->s, cur()->line, "an index");
                         Sym *ix = sym_new();
                         snprintf(ix->name, sizeof ix->name, "%s", cur()->s);
                         ix->line = cur()->line; ix->usage = U_INDEX; ix->has_usage = 1;
@@ -3925,6 +4018,7 @@ static Para *para_find(const char *name)
 
 static Para *para_add(const char *name, int is_section, int line)
 {
+    user_word(name, line, is_section ? "a section" : "a paragraph");
     if (is_section) { for (int i = g_para_base; i < g_npara; i++) if (!strcmp(g_para[i].name, name)) die_at(line, "the procedure-name '%s' is declared twice", name); }
     else if (para_find_in(name, g_cur_sec_id)) die_at(line, "the paragraph '%s' is declared twice in the same section", name);
     if (g_npara == g_pcap) { g_pcap = g_pcap ? g_pcap * 2 : 64; g_para = realloc(g_para, g_pcap * sizeof *g_para); }
@@ -8281,6 +8375,7 @@ static void parse_select(void)
     if (accept_word("optional")) f->optional = 1;
     if (cur()->kind != T_WORD) die_at(line, "expected a file-name after SELECT");
     if (file_find(cur()->s)) die_at(line, "file '%s' is SELECTed twice", cur()->s);
+    user_word(cur()->s, line, "a file");
     snprintf(f->name, sizeof f->name, "%s", cur()->s);
     advance();
     int has_assign = 0;

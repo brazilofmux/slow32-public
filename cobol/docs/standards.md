@@ -175,6 +175,11 @@ remain to be read against the text: where a print file's first line
 falls, and the ADVANCING default. What is left of Stage A is those two
 and ISSUES-43.
 
+ISSUES-43 closed the same day: reserved words are refused as names,
+with the five 74-era exceptions registered as behavior point BP-N1.
+Stage A's remaining work is the two rulings above, each to be read
+against the 1985 text.
+
 ## Stage B — COBOL 2002, the practical half
 
 The standard is treated as modules, not one block. These parts of

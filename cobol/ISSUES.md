@@ -695,7 +695,27 @@ found. `tests/bt_test.c` now cross-checks the hinted lookup against the
 plain one on every seek; that check is what caught it (three shapes, all
 mismatching), and it is the reason this shipped correct rather than fast.
 
-### 43. Reserved words are accepted as user-defined names (2026-09-27)
+### 43. ~~Reserved words are accepted as user-defined names~~ — RESOLVED 2026-09-27
+**Resolved.** The compiler had no reserved-word table; keywords were
+told apart by context, so a name like FD or RD went through wherever
+the parser could read it. It now carries the 1985 list (GnuCOBOL's
+`-std=cobol85`, 348 words) and refuses one wherever a program names a
+data item, index, file, paragraph or section:
+`'fd' is a reserved word and cannot name a data item`. Four
+`tests/bad/rw-*` fixtures, one per kind of name.
+
+The survey came first, because refusing blindly would break preserved
+code: 74-era programs used words that 85 later reserved. Over majesty
+(0), the Open Systems suite, CCVS-85 (0) and the tests, the only
+reserved words used as names are `CLASS` (four payroll programs) and
+`OTHER` (PAACEMP, and tests/fixed/rmother), both newly reserved in
+1985, plus the harness's own `TAPE` in tests/warn/every-point, renamed.
+`CLASS` and `OTHER` are accepted, with `TRUE`, `FALSE` and `ANY` that
+91e6807f took with `OTHER`, as behavior point BP-N1, a new class N in
+docs/behavior-points.md; `-warn-74` names them. SPECIAL-NAMES names
+(mnemonic, alphabet, class, symbolic) are not checked yet.
+
+The original entry:
 Open, unscheduled. `s32-cobc` accepted `SELECT FD ...` and a record
 named `RD`; GnuCOBOL `-std=cobol85` refuses both ("unexpected FD",
 "unexpected RD"), as the 85 text requires: a reserved word is never a

@@ -8,11 +8,11 @@ configuration section.
 object-computer. slow32 memory size 64000 characters.
 input-output section.
 file-control.
-    select tape assign to "every-point.dat"
+    select tapefile assign to "every-point.dat"
         organization is sequential.
 data division.
 file section.
-fd  tape
+fd  tapefile
     label records are standard
     value of file-id is "every-point.dat"
     data record is tape-rec.
@@ -21,6 +21,8 @@ working-storage section.
 01  i pic 99.
 01  j pic 99.
 01  n pic 99 value 3.
+*> BP-N1: CLASS became reserved in COBOL 85; RM/COBOL payroll programs name items so
+01  class pic x.
 01  grp.
     05 cnt pic 99.
     05 elem pic x occurs 1 to 5 depending on n.
@@ -32,8 +34,8 @@ p0.
         continue
     end-perform
     move src to grp
-    open input tape reversed
-    close tape
+    open input tapefile reversed
+    close tapefile
     stop "operator".
     alter p1 to proceed to p2.
 p1.

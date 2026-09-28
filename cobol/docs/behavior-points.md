@@ -21,7 +21,7 @@ Plan and reasoning: [standards.md](standards.md).
 | `-std=85` (also `-std=cobol85`) | the default and the only standard implemented: X3.23-1985 and the X3.23a-1989 intrinsic functions |
 | `-std=74` | refused: 74 programs compile as 85, and `-warn-74` flags where their meaning changed; full COBOL 74 is cobc370's job |
 | `-std=2002`, any other | refused as not implemented; COBOL 2002 is Stage B of standards.md |
-| `-warn-74` | warns at every class M and class O point below; never changes the output |
+| `-warn-74` | warns at every class M, O and N point below; never changes the output |
 
 Without `-warn-74` the compiler is silent at every point, and its
 assembler is byte-identical to what it was before the registry existed
@@ -61,6 +61,25 @@ Accepted under `-std=85`, as the 1985 text requires. They are what a
 
 Already refused rather than accepted, so not points: section segment
 numbers (Segmentation), and `ENTER` with the Communication module.
+
+## Class N — a word COBOL 85 reserved, used as a name
+
+A reserved word is never a user-defined word (X3.23-1985), and the
+compiler refuses one wherever a program names a data item, index, file,
+paragraph or section (cobol ISSUES-43; the list is GnuCOBOL's
+`-std=cobol85`, 348 words). The exception is a word the 1985 text newly
+reserved that 74-era programs really use as a name. They are accepted,
+and `-warn-74` names them so the program can be updated.
+
+| id | construct | accepted words | why |
+|---|---|---|---|
+| BP-N1 | a newly reserved word naming a data item (or other user-defined word) | `CLASS`, `OTHER`, `TRUE`, `FALSE`, `ANY` | the Open Systems suite's payroll programs name items `CLASS` (PAACEMP, PACHKTBL, PAMANCHK, PAPRECHK) and `OTHER` (PAACEMP); `TRUE`, `FALSE`, `ANY` were taken with `OTHER` in 91e6807f |
+
+The set is data-driven, not the full list of words 85 added: every
+corpus was surveyed (majesty, the Open Systems suite, CCVS-85, the
+tests) and these are the only reserved words any of them uses as a
+name. A word joins the set when a real program needs it, as a dialect
+does.
 
 ## Class E — extensions already taken (registered, not yet enforced)
 
