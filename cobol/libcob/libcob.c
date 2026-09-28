@@ -2199,33 +2199,43 @@ int cob_switches[8];
 /* STRING                                                                  */
 /* ====================================================================== */
 
-static struct { char *dst; int dlen, pos, overflow; } cs;
+/* w: a character's bytes, 2 when the operands are national (cobol
+ * ISSUES-69); pos is a byte position, POINTER counts characters */
+static struct { char *dst; int dlen, pos, overflow, w; } cs;
 
 /* pos is the 1-based POINTER value, or 0 when there is none */
 void cob_str_begin(char *dst, int dlen, int pos)
 {
-    cs.dst = dst; cs.dlen = dlen; cs.overflow = 0;
+    cs.dst = dst; cs.dlen = dlen; cs.overflow = 0; cs.w = 1;
     cs.pos = pos ? pos : 1;
     if (cs.pos < 1 || cs.pos > dlen) cs.overflow = 1;
+}
+
+void cob_str_begin_nat(char *dst, int dlen, int pos)
+{
+    cs.dst = dst; cs.dlen = dlen; cs.overflow = 0; cs.w = 2;
+    if (!pos) pos = 1;
+    if (pos < 1 || pos > dlen / 2) { cs.overflow = 1; pos = pos < 1 ? 1 : pos; }
+    cs.pos = 2 * (pos - 1) + 1;
 }
 
 /* delim of length dn; dn == 0 means DELIMITED BY SIZE */
 void cob_str_src(const char *s, int n, const char *delim, int dn)
 {
     if (cs.overflow) return;
-    int take = n;
+    int take = n, w = cs.w;
     if (dn) {
-        for (int i = 0; i + dn <= n; i++)
+        for (int i = 0; i + dn <= n; i += w)
             if (!memcmp(s + i, delim, dn)) { take = i; break; }
     }
-    for (int i = 0; i < take; i++) {
-        if (cs.pos > cs.dlen) { cs.overflow = 1; return; }
-        cs.dst[cs.pos - 1] = s[i];
-        cs.pos++;
+    for (int i = 0; i + w <= take; i += w) {
+        if (cs.pos + w - 1 > cs.dlen) { cs.overflow = 1; return; }
+        memcpy(cs.dst + cs.pos - 1, s + i, (size_t)w);
+        cs.pos += w;
     }
 }
 
-int cob_str_pointer(void) { return cs.pos; }
+int cob_str_pointer(void) { return (cs.pos - 1) / cs.w + 1; }
 int cob_str_overflow(void) { return cs.overflow; }
 
 /* ---- UNSTRING ---------------------------------------------------------
@@ -2237,15 +2247,23 @@ int cob_str_overflow(void) { return cs.overflow; }
  * source is exhausted are untouched; source left over when the
  * receivers are is the overflow, as is a POINTER outside the source. */
 static struct {
-    const char *src; int slen, pos, overflow, tally, moved;
+    const char *src; int slen, pos, overflow, tally, moved, w;     /* w, pos: as STRING's */
     struct { const char *p; int n, all; } d[16]; int nd;
 } cu;
 
 void cob_unstr_begin(const char *src, int slen, int pos)
 {
-    cu.src = src; cu.slen = slen; cu.overflow = 0; cu.tally = 0; cu.nd = 0; cu.moved = 0;
+    cu.src = src; cu.slen = slen; cu.overflow = 0; cu.tally = 0; cu.nd = 0; cu.moved = 0; cu.w = 1;
     cu.pos = pos ? pos : 1;
     if (cu.pos < 1 || cu.pos > slen) cu.overflow = 1;
+}
+
+void cob_unstr_begin_nat(const char *src, int slen, int pos)
+{
+    cu.src = src; cu.slen = slen; cu.overflow = 0; cu.tally = 0; cu.nd = 0; cu.moved = 0; cu.w = 2;
+    if (!pos) pos = 1;
+    if (pos < 1 || pos > slen / 2) { cu.overflow = 1; pos = pos < 1 ? 1 : pos; }
+    cu.pos = 2 * (pos - 1) + 1;
 }
 void cob_unstr_setlen(int slen) { cu.slen = slen; if (cu.pos > slen) cu.overflow = 1; }
 void cob_unstr_delim(const char *p, int n, int all)
@@ -2264,26 +2282,26 @@ void cob_unstr_into(void *dst, const cob_desc *dd, void *ddst, const cob_desc *d
         if (room < 0) room = 0;
         i = start + room; if (i > cu.slen) i = cu.slen;
     } else {
-        for (; i < cu.slen && hit < 0; i++)
+        for (; i < cu.slen && hit < 0; i += cu.w)
             for (int k = 0; k < cu.nd; k++)
                 if (cu.d[k].n && i + cu.d[k].n <= cu.slen && !memcmp(cu.src + i, cu.d[k].p, cu.d[k].n)) { hit = k; break; }
-        if (hit >= 0) i--;                      /* the delimiter's position */
+        if (hit >= 0) i -= cu.w;                /* the delimiter's position */
     }
-    int k = i - start;                          /* the examined characters */
-    cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = COB_ALNUM; sd.size = (unsigned)k;
+    int k = i - start;                          /* the examined bytes */
+    cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = cu.w == 2 ? COB_NATIONAL : COB_ALNUM; sd.size = (unsigned)k;
     if (k) cob_move(cu.src + start, &sd, dst, dd);
-    else { sd.size = 1; cob_move(dd->cat == COB_NUM || dd->cat == COB_NUM_ED ? "0" : " ", &sd, dst, dd); }
-    if (cdst) cob_put_num(cdst, cdd, k, 0);
+    else { sd.cat = COB_ALNUM; sd.size = 1; cob_move(dd->cat == COB_NUM || dd->cat == COB_NUM_ED ? "0" : " ", &sd, dst, dd); sd.cat = cu.w == 2 ? COB_NATIONAL : COB_ALNUM; }
+    if (cdst) cob_put_num(cdst, cdd, k / cu.w, 0);  /* COUNT IN: characters */
     if (hit >= 0) {
         int dn = cu.d[hit].n;
         if (ddst) { sd.size = (unsigned)dn; cob_move(cu.d[hit].p, &sd, ddst, ddd); }
         i += dn;
         if (cu.d[hit].all) while (i + dn <= cu.slen && !memcmp(cu.src + i, cu.d[hit].p, dn)) i += dn;
-    } else if (ddst) { sd.size = 1; cob_move(" ", &sd, ddst, ddd); }
+    } else if (ddst) { sd.cat = COB_ALNUM; sd.size = 1; cob_move(" ", &sd, ddst, ddd); }
     cu.pos = i + 1;
     cu.tally++; cu.moved = 1;
 }
-int cob_unstr_pointer(void) { return cu.pos; }
+int cob_unstr_pointer(void) { return (cu.pos - 1) / cu.w + 1; }
 int cob_unstr_tally(void) { return cu.tally; }
 int cob_unstr_overflow(void) { return cu.overflow || cu.pos <= cu.slen; }
 

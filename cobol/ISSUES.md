@@ -2225,3 +2225,31 @@ refusal, now checks rule 4 on a national item; bad/std2002-inspect-natop
 checks it on an alphanumeric one. Harness 205/205; -std=85
 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 69. NATIONAL, part three: STRING and UNSTRING (2026-09-28)
+
+STRING into a national receiver and UNSTRING of a national source (2023
+14.9.43, 14.9.48).
+
+- **Runtime.** Both statements get a character width, set by their own
+  begin calls: `cob_str_begin_nat` and `cob_unstr_begin_nat`, so the
+  calls a non-national statement makes are unchanged. Positions stay
+  bytes inside, and the POINTER is converted on the way in and out. The
+  copy, the delimiter search and ALL's repeats step by characters.
+  COUNT IN is characters, and an UNSTRING part is moved as national.
+- **Compiler.** The class rule both ways (rule 1 of STRING, rule 3 of
+  UNSTRING), for sources, delimiters, receivers and DELIMITER IN items.
+  Before this, only a national data item was refused there; a national
+  literal in STRING into an alphanumeric receiver compiled and was
+  copied as bytes. A figurative constant is one national character
+  (`fig_char_args`). A numeric UNSTRING receiver of national data would
+  have to be USAGE NATIONAL (rule 4); that is not implemented, so it is
+  refused.
+
+2002/natstring (no oracle): DELIMITED BY SIZE and by a national
+literal, a figurative source, POINTER, ON OVERFLOW, UNSTRING with OR,
+ALL, DELIMITER IN, COUNT IN, TALLYING IN and POINTER, and a delimiter
+that is present only across a character boundary.
+bad/std2002-nat-string and bad/std2002-nat-unstring-num. Harness
+208/208; -std=85 byte-identical on all 227 Open Systems programs;
+majesty PASS; majesty-functions PASS; Open Systems paper unchanged.

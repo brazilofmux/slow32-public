@@ -1,0 +1,6 @@
+string: [日本語 ok      ]
+pointer: [--abcxyz----] 09
+overflow at 13
+unstring: [東京  ] [,] 02 [大阪  ] 02 [    ] [名古屋 ] 04
+from 4: [大阪  ] 07
+misaligned: [AB  ] 02

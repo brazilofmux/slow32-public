@@ -5779,6 +5779,31 @@ static int opnd_is_national(const Opnd *o)
     return o->kind == O_REF && !o->ref.sym->is_group && o->ref.sym->pi.category == PIC_NATIONAL;
 }
 
+static int ref_is_national(const Ref *r) { return !r->sym->is_group && r->sym->pi.category == PIC_NATIONAL; }
+
+/* STRING, UNSTRING: when one operand is national all are (2023 14.9.43.3
+ * rule 1, 14.9.48.3 rule 3); a figurative constant takes the class */
+static void nat_class_check(const Opnd *o, int nat, const char *stmt, const char *rule)
+{
+    if (o->kind == O_FIG) return;
+    if (opnd_is_national(o) != nat)
+        die_at(o->line, "%s: %s operand beside %s ones (2023 %s)", stmt, nat ? "a non-national" : "a national",
+               nat ? "national" : "non-national", rule);
+}
+
+/* a one-character figurative constant as an address and length: one
+ * byte, or one national character */
+static void fig_char_args(const Opnd *o, int nat, Arg *addr, Arg *len)
+{
+    if (nat) {
+        unsigned u = nat_fig(o->tok->s); unsigned char two[2] = { (unsigned char)(u >> 8), (unsigned char)u };
+        *addr = arg_label(lit_label(two, 2)); *len = arg_imm(2);
+    } else {
+        unsigned char c = (unsigned char)fig_byte(o->tok->s);
+        *addr = arg_label(lit_label(&c, 1)); *len = arg_imm(1);
+    }
+}
+
 /* a figurative constant or ALL literal, as the national literal of nbytes
  * it stands for beside a national operand */
 static void nat_fig_opnd(Opnd *o, int nbytes)
@@ -8291,7 +8316,7 @@ static void parse_start(void)
 static void parse_string_1(void);
 static void parse_string(void)
 {
-    g_nat_forbid = "STRING"; parse_string_1(); g_nat_forbid = NULL;
+    parse_string_1();
 }
 static void parse_string_1(void)
 {
@@ -8325,6 +8350,13 @@ static void parse_string_1(void)
     if (!dst.sym->is_group && (dst.sym->pi.category == PIC_NUMERIC || dst.sym->pi.edited || dst.sym->just))
         die_at(dst.line, "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED");
     if (dst.rm) die_at(dst.line, "a reference-modified STRING receiver is not implemented");
+    /* national operands (cobol ISSUES-69): characters of two bytes throughout */
+    int nat = ref_is_national(&dst);
+    static const char *srule = "14.9.43.3 rule 1";
+    for (int i = 0; i < n; i++) {
+        nat_class_check(&srcs[i], nat, "STRING", srule);
+        if (delims[i].kind != O_ALL) nat_class_check(&delims[i], nat, "STRING", srule);   /* O_ALL: SIZE */
+    }
     Ref ptr; int has_ptr = 0;
     if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; if (!is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item"); }
     else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
@@ -8338,15 +8370,12 @@ static void parse_string_1(void)
     Arg b[2] = { arg_ref(&dst), arg_imm(dst.sym->size) };
     emit_args(b, 2);
     if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 0);
-    emit_call("cob_str_begin");
+    emit_call(nat ? "cob_str_begin_nat" : "cob_str_begin");
 
     for (int i = 0; i < n; i++) {
         Arg a[4]; Arg dd;
-        if (srcs[i].kind == O_FIG) {
-            /* SPACE, ZERO, ...: a one-character source */
-            unsigned char c = (unsigned char)fig_byte(srcs[i].tok->s);
-            a[0] = arg_label(lit_label(&c, 1)); a[1] = arg_imm(1);
-        } else if (srcs[i].kind == O_ALL) {
+        if (srcs[i].kind == O_FIG) fig_char_args(&srcs[i], nat, &a[0], &a[1]);   /* SPACE, ZERO, ...: one character */
+        else if (srcs[i].kind == O_ALL) {
             a[0] = arg_label(lit_label((unsigned char *)srcs[i].tok->s, srcs[i].tok->len)); a[1] = arg_imm(srcs[i].tok->len);
         } else {
             opnd_args(&srcs[i], &a[0], &dd, 0, 0);
@@ -8354,7 +8383,7 @@ static void parse_string_1(void)
         }
         Opnd *d = &delims[i];
         if (d->kind == O_ALL) { a[2] = arg_imm(0); a[3] = arg_imm(0); }
-        else if (d->kind == O_FIG) { unsigned char c = (unsigned char)fig_byte(d->tok->s); a[2] = arg_label(lit_label(&c, 1)); a[3] = arg_imm(1); }
+        else if (d->kind == O_FIG) fig_char_args(d, nat, &a[2], &a[3]);
         else { Arg x; opnd_args(d, &a[2], &x, 0, 0); a[3] = arg_len(d); }
         emit_args(a, 4);
         emit_call("cob_str_src");
@@ -8387,7 +8416,7 @@ static void parse_string_1(void)
 static void parse_unstring_1(void);
 static void parse_unstring(void)
 {
-    g_nat_forbid = "UNSTRING"; parse_unstring_1(); g_nat_forbid = NULL;
+    parse_unstring_1();
 }
 static void parse_unstring_1(void)
 {
@@ -8432,6 +8461,18 @@ static void parse_unstring_1(void)
     if (has_ptr && !is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item");
     Ref tly; int has_tly = 0;
     if (accept_word("tallying")) { accept_word("in"); parse_ref(&tly); has_tly = 1; if (!is_int_item(tly.sym)) die_at(tly.line, "TALLYING IN needs an integer item"); }
+    /* national operands (cobol ISSUES-69): the source, the delimiters, the
+     * receivers and DELIMITER IN items all national, or none */
+    int nat = opnd_is_national(&src);
+    static const char *urule = "14.9.48.3 rule 3";
+    for (int i = 0; i < nd; i++) nat_class_check(&delims[i], nat, "UNSTRING", urule);
+    for (int i = 0; i < n; i++) {
+        Opnd ro; memset(&ro, 0, sizeof ro); ro.kind = O_REF; ro.ref = rcv[i]; ro.line = rcv[i].line;
+        if (nat && is_numeric_sym(rcv[i].sym))
+            die_at(rcv[i].line, "UNSTRING: a numeric receiver of national data must be USAGE NATIONAL, which is not implemented (2023 14.9.48.3 rule 4)");
+        nat_class_check(&ro, nat, "UNSTRING", urule);
+        if (has_d[i]) { ro.ref = dlm[i]; ro.line = dlm[i].line; nat_class_check(&ro, nat, "UNSTRING", urule); }
+    }
 
     /* begin: the source, its length, the pointer */
     if (has_ptr) {
@@ -8440,10 +8481,10 @@ static void parse_unstring_1(void)
     }
     { Arg a[2], dd; opnd_args(&src, &a[0], &dd, 0, 0); a[1] = arg_len(&src); emit_args(a, 2); }
     if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 0);
-    emit_call("cob_unstr_begin");
+    emit_call(nat ? "cob_unstr_begin_nat" : "cob_unstr_begin");
     for (int i = 0; i < nd; i++) {
         Arg a[3];
-        if (delims[i].kind == O_FIG) { unsigned char c = (unsigned char)fig_byte(delims[i].tok->s); a[0] = arg_label(lit_label(&c, 1)); a[1] = arg_imm(1); }
+        if (delims[i].kind == O_FIG) fig_char_args(&delims[i], nat, &a[0], &a[1]);
         else { Arg x; opnd_args(&delims[i], &a[0], &x, 0, 0); a[1] = arg_len(&delims[i]); }
         a[2] = arg_imm(dall[i]);
         emit_args(a, 3);

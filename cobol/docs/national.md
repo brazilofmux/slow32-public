@@ -47,8 +47,7 @@ bytes, INITIALIZE with REPLACING NATIONAL.
 A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
-Refused until later parts: STRING, UNSTRING and ACCEPT of national
-items; numeric and edited national
+Refused until later parts: ACCEPT of national items; numeric and edited national
 pictures; national groups (GROUP-USAGE NATIONAL); national fields in
 Report Writer and SCREEN SECTION.
 
@@ -100,6 +99,16 @@ item is refused, as is a national operand beside an item that is not
 national. The runtime takes the character width from the inspected
 item's descriptor; a reference-modified national item passes a
 national one.
+
+## STRING and UNSTRING (ISSUES-69)
+
+A national STRING receiver, or UNSTRING source, makes the statement
+national: every operand is national (2023 14.9.43.3 rule 1, 14.9.48.3
+rule 3), a figurative constant is one national character, and
+positions are characters -- POINTER, COUNT IN and TALLYING IN count
+them, and a delimiter matches only at a character boundary. A numeric
+UNSTRING receiver of national data would have to be USAGE NATIONAL
+(rule 4), which is not implemented, so it is refused.
 
 ## Case (ISSUES-66)
 
