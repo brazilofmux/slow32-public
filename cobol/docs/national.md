@@ -48,7 +48,7 @@ A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
 Refused until later parts: ACCEPT of a national item at a screen
-position; numeric and edited national pictures; GROUP-USAGE BIT (the
+position; national-edited pictures (N with B, 0 or /); GROUP-USAGE BIT (the
 BOOLEAN module); national fields in Report Writer and SCREEN SECTION.
 
 ## What part two covers (ISSUES-64)
@@ -131,6 +131,27 @@ subordinate groups are national groups, and every elementary item under
 it must be PICTURE N; a signed numeric one would need SIGN SEPARATE and
 USAGE NATIONAL, which waits for numeric national. The subject is a
 group, with no USAGE clause of its own (syntax rules 1 and 3).
+
+## Numeric USAGE NATIONAL (ISSUES-72)
+
+A numeric or numeric-edited picture with USAGE NATIONAL (2023 13.18.66
+rule 12) -- written on the item, on a group above it, or implied by a
+national group -- is stored as its DISPLAY form with each character one
+UTF-16BE code unit: digits U+0030..U+0039, a separate sign U+002B or
+U+002D. The text leaves an unseparated sign to the implementor
+(13.18.52.4 rule 4), and here it is the DISPLAY overpunch widened
+(`p`..`y` for a negative last digit), so the two usages differ only in
+width. libcob narrows such an operand to a scratch DISPLAY copy for
+every numeric primitive (reading, arithmetic, comparison, class tests,
+editing, DISPLAY) and widens a receiver back, so everything DISPLAY
+numeric does, national numeric does. LENGTH counts characters, and
+INSPECT scans them.
+
+The MOVE table (14.9.25) is by category: a national sender to a numeric
+or numeric-edited receiver is valid, and a numeric noninteger to a
+national receiver is not. A signed numeric item in a national group
+needs SIGN SEPARATE (13.18.29.3 rule 3); A and X pictures take no
+USAGE NATIONAL (rule 12).
 
 ## Case (ISSUES-66)
 

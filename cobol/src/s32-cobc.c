@@ -1304,14 +1304,15 @@ static int numlit_align(const NumLit *n, int digits, int scale, char *out)
 
 enum {
     U_DISPLAY, U_BINARY, U_PACKED, U_COMP5,
-    U_SINT, U_UINT, U_SSHORT, U_USHORT, U_BCHAR, U_UBCHAR, U_POINTER, U_INDEX
+    U_SINT, U_UINT, U_SSHORT, U_USHORT, U_BCHAR, U_UBCHAR, U_POINTER, U_INDEX,
+    U_NATIONAL                      /* numeric and numeric-edited USAGE NATIONAL (cobol ISSUES-72); PIC N keeps U_DISPLAY */
 };
 
 static const char *usage_name(int u)
 {
     static const char *n[] = { "display", "comp", "comp-3", "comp-5", "signed-int",
         "unsigned-int", "signed-short", "unsigned-short", "binary-char",
-        "binary-char unsigned", "pointer", "index" };
+        "binary-char unsigned", "pointer", "index", "national" };
     return n[u];
 }
 
@@ -1357,6 +1358,7 @@ typedef struct Sym {
     int  nat_usage;                 /* USAGE NATIONAL was written (cobol ISSUES-62) */
     int  natgroup;                  /* GROUP-USAGE NATIONAL, written or inherited: a national group (cobol ISSUES-71) */
     int  standin;                   /* the FILLER PIC X put in place of an entry refused with an error */
+    int  in_natgroup;               /* an elementary item of a national group */
     int  ftemp_scan;                /* ... made while scanning ahead (no code): must never be emitted */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
@@ -1670,15 +1672,25 @@ static void sym_finish(Sym *s)
     }
 
     const PicInfo *pi = &s->pi;
-    if (s->nat_usage && pi->category != PIC_NATIONAL)
-        die_at(s->line, "'%s': USAGE NATIONAL with a PICTURE other than N (numeric or edited national) is not implemented yet", s->name);
+    if (s->nat_usage && pi->category != PIC_NATIONAL) {
+        /* numeric and numeric-edited USAGE NATIONAL: the DISPLAY form, each
+         * character two bytes (2023 13.18.66 rule 12; not A or X, rule 30) */
+        if (pi->category != PIC_NUMERIC && pi->category != PIC_NUMERIC_EDITED)
+            die_at(s->line, "'%s': USAGE NATIONAL takes a PICTURE of N, or a numeric or numeric-edited one (2023 13.18.66.3 rule 12)", s->name);
+        u = s->usage = U_NATIONAL;
+    }
     switch (u) {
-    case U_DISPLAY:
+    case U_DISPLAY: case U_NATIONAL:
         s->size = pi->bytes;
         if (!s->sign_lead && !s->sign_sep && pi->category == PIC_NUMERIC && pi->is_signed)
             for (int a = s->parent; a >= 0; a = g_sym[a].parent)          /* a group's SIGN clause reaches down */
                 if (g_sym[a].sign_lead || g_sym[a].sign_sep) { s->sign_lead = g_sym[a].sign_lead; s->sign_sep = g_sym[a].sign_sep; break; }
         if (s->sign_sep) s->size++;                 /* SIGN SEPARATE: its own character */
+        if (u == U_NATIONAL) {
+            if (s->in_natgroup && pi->is_signed && !s->sign_sep)
+                die_at(s->line, "'%s': a signed numeric item in a national group needs SIGN SEPARATE (2023 13.18.29.3 rule 3)", s->name);
+            s->size *= 2;
+        }
         break;
     case U_BINARY: case U_COMP5:
         if (pi->category != PIC_NUMERIC)
@@ -1829,7 +1841,15 @@ static void parse_data_item(void)
  * repeated, each character two bytes.  Other pictures are pic_analyse's. */
 static int nat_picture(const char *pic, PicInfo *pi, int line)
 {
-    int n = 0;
+    int n = 0, edit = 0, other = 0;
+    for (const char *p = pic; *p; p++) {                /* national-edited: N with B, 0 or / (2023 13.18.40) */
+        if (*p == '(') { while (*p && *p != ')') p++; if (!*p) break; continue; }   /* a repeat count */
+        if (*p == 'n' || *p == 'N') n++;
+        else if (strchr("bB0/", *p)) edit++;
+        else other++;
+    }
+    if (n && edit && !other) die_at(line, "a national-edited PICTURE ('%s') is not implemented yet", pic);
+    n = 0;
     for (const char *p = pic; *p; ) {
         if (*p != 'n' && *p != 'N') return 0;
         p++;
@@ -2149,12 +2169,21 @@ static void build_tree(void)
         if (s->natgroup == 2 && (s->has_usage || s->nat_usage)) die_at(s->line, "GROUP-USAGE NATIONAL: '%s' cannot have a USAGE clause too (2023 13.18.29.3 rule 3)", s->name);
         if (!s->natgroup && s->parent >= 0 && g_sym[s->parent].natgroup) {
             if (s->is_group) s->natgroup = 1;
-            else if (s->pi.category != PIC_NATIONAL)
-                die_at(s->line, "'%s' is in the national group '%s' and must be national, PICTURE N (2023 13.18.29.3 rule 3)",
+            else if (s->has_usage)
+                die_at(s->line, "'%s' is in the national group '%s' and must be USAGE NATIONAL (2023 13.18.29.3 rule 3)",
                        s->name, g_sym[s->parent].name);
+            else { s->nat_usage = 1; s->in_natgroup = 1; }        /* implied (rule 3); a PICTURE of X or A is refused when finished */
         }
         if (s->is_group && s->has_pic && s->standin) s->has_pic = 0;      /* it stood in for a group: no second error */
         if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
+        if (s->is_group && s->nat_usage) {
+            /* USAGE NATIONAL on a group: every subordinate's, as any USAGE */
+            for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+                if (g_sym[c].is_cond) continue;
+                if (g_sym[c].has_usage) die_at(g_sym[c].line, "USAGE of '%s' contradicts the USAGE of its group '%s'", g_sym[c].name, s->name);
+                g_sym[c].nat_usage = 1;
+            }
+        }
         if (s->is_group && s->has_usage) {
             /* USAGE on a group is every subordinate's that does not say
              * otherwise (X3.23 5.3.x); the children follow in the table, so
@@ -2263,6 +2292,7 @@ static void init_national(Sym *s, unsigned char *p, int defaults)
     for (int i = v->len / 2; i < n; i++) { p[2 * i] = 0; p[2 * i + 1] = 0x20; }
 }
 
+static void init_elem(Sym *s, unsigned char *p, int defaults);
 static void init_one(Sym *rec, int si, int base, int defaults)
 {
     Sym *s = &g_sym[si];
@@ -2286,8 +2316,37 @@ static void init_one(Sym *rec, int si, int base, int defaults)
         }
         return;
     }
+    init_elem(s, p, defaults);
+}
+
+/* an elementary item's initial value at p */
+static void init_elem(Sym *s, unsigned char *p, int defaults)
+{
     int numeric = is_numeric_sym(s);
     if (s->pi.category == PIC_NATIONAL) { init_national(s, p, defaults); return; }
+    if (s->usage == U_NATIONAL) {
+        /* numeric national: initialized as its DISPLAY form, then widened;
+         * a nonnumeric VALUE is a national literal (13.18.63 rule 5) */
+        int n = s->size / 2;
+        unsigned char *t = xmalloc((size_t)n + 1);
+        for (int i = 0; i < n; i++) t[i] = p[2 * i + 1];
+        Tok *save = s->value_tok, narrow;
+        if (save && save->kind == T_STR && !s->value_fig) {
+            if (!save->nat) die_at(save->line, "the VALUE of the USAGE NATIONAL item '%s' must be a national literal (N\"...\") (2023 13.18.63 rule 5)", s->name);
+            narrow = *save; narrow.nat = 0; narrow.len = save->len / 2; narrow.s = xmalloc((size_t)narrow.len + 1);
+            for (int i = 0; i < narrow.len; i++) {
+                if (save->s[2 * i]) die_at(save->line, "the VALUE of '%s' holds a character that is no digit, sign or editing symbol", s->name);
+                narrow.s[i] = save->s[2 * i + 1];
+            }
+            s->value_tok = &narrow;
+        }
+        s->usage = U_DISPLAY; s->size = n;
+        init_elem(s, t, defaults);
+        s->usage = U_NATIONAL; s->size = 2 * n; s->value_tok = save;
+        for (int i = 0; i < n; i++) { p[2 * i] = 0; p[2 * i + 1] = t[i]; }
+        free(t);
+        return;
+    }
     if (defaults) {
         if (s->usage == U_DISPLAY && !numeric) memset(p, ' ', s->size);
         else if (s->usage == U_DISPLAY) {
@@ -2762,6 +2821,7 @@ static int sym_desc(Sym *s)
         switch (s->usage) {
         case U_DISPLAY: d.usage = COB_U_DISPLAY; break;
         case U_PACKED: d.usage = COB_U_PACKED; break;
+        case U_NATIONAL: d.usage = COB_U_NATIONAL; break;
         default: d.usage = COB_U_BINARY; break;
         }
         d.digits = (unsigned char)s->pi.digits; d.scale = (signed char)s->pi.scale;
@@ -2999,7 +3059,7 @@ static int sym_notrunc(Sym *s) { return s->usage == U_COMP5 || usage_is_native(s
 static int is_hot_int(Sym *s)
 {
     if (s->is_group || s->pi.category != PIC_NUMERIC || s->pi.scale != 0) return 0;
-    if (s->usage == U_DISPLAY || s->usage == U_PACKED) return 0;
+    if (s->usage == U_DISPLAY || s->usage == U_PACKED || s->usage == U_NATIONAL) return 0;
     return s->size <= 4;
 }
 
@@ -3601,7 +3661,8 @@ static void parse_operand_raw(Opnd *o)
             }
             int len = opnd_size(&x);
             if (len < 0) die_at(n->line, "FUNCTION LENGTH of a reference modification with a variable length is not implemented");
-            if (opnd_is_national(&x)) len /= 2;         /* national: character positions, two bytes each */
+            if (opnd_is_national(&x) || (x.kind == O_REF && x.ref.sym->usage == U_NATIONAL))
+                len /= 2;                               /* national: character positions, two bytes each */
             o->kind = O_NUM; numlit_from_int(&o->num, len);
             return;
         }
@@ -5882,9 +5943,23 @@ static int emit_move_national(Opnd *src, Ref *dst)
     if (!dn && !sn) return 0;
     if (!dn) {
         if (d->is_group) return 0;                  /* a group receives the bytes (14.9.25 general rule 4) */
-        die_at(dst->line, "a national item cannot be moved to the %s item '%s' (2023 14.9.25): use FUNCTION DISPLAY-OF",
-               is_numeric_sym(d) ? "numeric" : "alphanumeric", d->name);
+        if (is_numeric_sym(d) || d->pi.category == PIC_NUMERIC_EDITED) {
+            /* national to numeric or numeric-edited: valid (the 14.9.25
+             * table), the characters taken as for an alphanumeric sender */
+            if (dst->rm) die_at(dst->line, "a reference-modified numeric receiver of national data is not implemented");
+            Arg a[4];
+            opnd_args(src, &a[0], &a[1], d->size, 1);
+            a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
+            emit_args(a, 4); emit_call("cob_move");
+            return 1;
+        }
+        die_at(dst->line, "a national item cannot be moved to the alphanumeric item '%s' (2023 14.9.25): use FUNCTION DISPLAY-OF", d->name);
     }
+    /* a numeric sender that is not an integer has no national form (the
+     * 14.9.25 table: numeric noninteger to national, no) */
+    if ((src->kind == O_NUM && src->num.scale > 0) ||
+        (src->kind == O_REF && !src->ref.rm && is_numeric_sym(src->ref.sym) && src->ref.sym->pi.scale > 0))
+        die_at(dst->line, "a numeric item that is not an integer cannot be moved to the national item '%s' (2023 14.9.25)", d->name);
     int n = d->size / 2;
     /* a reference-modified receiver: its bytes, known here or at run time */
     Arg dlen = !dst->rm ? arg_imm(d->size) : dst->rm_len ? arg_imm(2 * dst->rm_len) : arg_rlen(dst);
@@ -8514,9 +8589,10 @@ static void parse_unstring_1(void)
     for (int i = 0; i < nd; i++) nat_class_check(&delims[i], nat, "UNSTRING", urule);
     for (int i = 0; i < n; i++) {
         Opnd ro; memset(&ro, 0, sizeof ro); ro.kind = O_REF; ro.ref = rcv[i]; ro.line = rcv[i].line;
-        if (nat && is_numeric_sym(rcv[i].sym))
-            die_at(rcv[i].line, "UNSTRING: a numeric receiver of national data must be USAGE NATIONAL, which is not implemented (2023 14.9.48.3 rule 4)");
-        nat_class_check(&ro, nat, "UNSTRING", urule);
+        if (nat && is_numeric_sym(rcv[i].sym)) {
+            if (rcv[i].sym->usage != U_NATIONAL)
+                die_at(rcv[i].line, "UNSTRING: a numeric receiver of national data must be USAGE NATIONAL (2023 14.9.48.3 rule 4)");
+        } else nat_class_check(&ro, nat, "UNSTRING", urule);
         if (has_d[i]) { ro.ref = dlm[i]; ro.line = dlm[i].line; nat_class_check(&ro, nat, "UNSTRING", urule); }
     }
 
@@ -9409,7 +9485,8 @@ static void parse_inspect_1(void)
 {
     Ref item; parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
-    g_insp_nat = sym_is_national(item.sym);
+    /* a numeric USAGE NATIONAL item's characters are national too */
+    g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     Opnd itemo = ref_opnd(&item);
     operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */

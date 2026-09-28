@@ -1,7 +1,7 @@
 identification division.
 program-id. natuns.
 *> A numeric UNSTRING receiver of national data must be USAGE NATIONAL
-*> (2023 14.9.48.3 rule 4), which is not implemented; a display one is
+*> (2023 14.9.48.3 rule 4); a display one is
 *> refused.
 data division.
 working-storage section.

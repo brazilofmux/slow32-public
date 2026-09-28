@@ -248,12 +248,36 @@ static __attribute__((noinline)) long long get_num_edited(const unsigned char *p
     }
 }
 
+/* ---- numeric USAGE NATIONAL (COBOL 2002; cobol ISSUES-72) --------------
+ * The DISPLAY representation with each byte one UTF-16BE code unit: digits
+ * U+0030..U+0039, a separate sign U+002B/U+002D, an unseparated one the
+ * DISPLAY overpunch widened.  Each primitive narrows such an operand into
+ * a scratch DISPLAY copy, and a receiver is written there and widened
+ * back.  A code unit above U+00FF narrows to X'7F', which is no digit. */
+#define NATNUM_MAX 256
+static int is_natnum(const cob_desc *d) { return d->usage == COB_U_NATIONAL; }
+static const unsigned char *nat_narrow(const void *vp, const cob_desc *d, unsigned char *buf, cob_desc *nd)
+{
+    const unsigned char *p = vp;
+    int n = (int)d->size / 2;
+    if (n > NATNUM_MAX) cob_fatal("numeric national item longer than 256 characters");
+    *nd = *d; nd->usage = COB_U_DISPLAY; nd->size = (unsigned)n;
+    for (int i = 0; i < n; i++) buf[i] = p[2 * i] ? 0x7F : p[2 * i + 1];
+    return buf;
+}
+static void nat_widen(void *vp, const unsigned char *buf, int n)
+{
+    unsigned char *p = vp;
+    for (int i = 0; i < n; i++) { p[2 * i] = 0; p[2 * i + 1] = buf[i]; }
+}
+
 long long cob_get_num(const void *vp, const cob_desc *d)
 {
     const unsigned char *p = vp;
     long long v = 0;
     int neg = 0;
 
+    if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; return cob_get_num(nat_narrow(vp, d, b, &nd), &nd); }
     if (d->cat == COB_NUM_ED) return get_num_edited(p, d);
 
     switch (d->usage) {
@@ -340,6 +364,13 @@ long long cob_get_num(const void *vp, const cob_desc *d)
  * error (nothing stored), else 0. */
 int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts)
 {
+    if (is_natnum(d)) {
+        unsigned char b[NATNUM_MAX]; cob_desc nd;
+        nat_narrow(vp, d, b, &nd);
+        int r = cob_put_num_x(b, &nd, v, vscale, opts);
+        nat_widen(vp, b, (int)nd.size);
+        return r;
+    }
     unsigned char *p = vp;
     /* the digit positions that hold a character: P scaling positions do not */
     int eff = d->digits;
@@ -455,6 +486,7 @@ static void emit_scaled(unsigned long long mag, int neg, int digits, int scale, 
 static int nat_to_utf8(const unsigned char *p, int nch, char *out);
 void cob_display_field(const void *vp, const cob_desc *d)
 {
+    if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; cob_display_field(nat_narrow(vp, d, b, &nd), &nd); return; }
     const unsigned char *p = vp;
     if (d->cat == COB_NATIONAL) {                   /* national: written as UTF-8 */
         int n = (int)d->size / 2;
@@ -512,6 +544,7 @@ void cob_move_alnum(const void *src, int slen, void *dst, int dlen, int just)
  * S9P(17) holding 1 reads 100000000000000000) */
 static int num_to_digits(const void *p, const cob_desc *d, char *out)
 {
+    if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; return num_to_digits(nat_narrow(p, d, b, &nd), &nd, out); }
     int np = 0, lead_p = 0;
     if (d->pic) { for (const char *q = d->pic; *q; q++) if (*q == 'P') np++; lead_p = np && (d->pic[0] == 'P' || (d->pic[0] == 'S' && d->pic[1] == 'P')); }
     if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && !np) {
@@ -651,6 +684,26 @@ void cob_fill_nat(void *dst, int nch, int unit)
 
 void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd)
 {
+    if (is_natnum(sd)) { unsigned char b[NATNUM_MAX]; cob_desc nd; cob_move(nat_narrow(src, sd, b, &nd), &nd, dst, dd); return; }
+    if (is_natnum(dd)) {
+        /* written as DISPLAY, then widened: editing included */
+        unsigned char b[NATNUM_MAX]; cob_desc nd;
+        nat_narrow(dst, dd, b, &nd);
+        cob_move(src, sd, b, &nd);
+        nat_widen(dst, b, (int)nd.size);
+        return;
+    }
+    if (sd->cat == COB_NATIONAL && (dd->cat == COB_NUM || dd->cat == COB_NUM_ED)) {
+        /* national text to a numeric receiver (an UNSTRING part): as its
+         * UTF-8, which for digits and signs is their ASCII */
+        int n = (int)sd->size / 2;
+        char *t = malloc((size_t)n * 4 + 1); if (!t) cob_fatal("out of memory");
+        cob_desc ad; memset(&ad, 0, sizeof ad); ad.cat = COB_ALNUM; ad.usage = COB_U_DISPLAY;
+        ad.size = (unsigned)nat_to_utf8(src, n, t);
+        cob_move(t, &ad, dst, dd);
+        free(t);
+        return;
+    }
     if (dd->cat == COB_NATIONAL) { move_to_national(src, sd, dst, dd); return; }
     char tmp[40];
     int dnum = dd->cat == COB_NUM || dd->cat == COB_NUM_ED;
@@ -898,6 +951,8 @@ static int cmp_scaled(long long a, int sa, long long b, int sb)
 /* -1, 0, 1 */
 int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd)
 {
+    if (is_natnum(ad)) { unsigned char t[NATNUM_MAX]; cob_desc nd; return cob_cmp(nat_narrow(a, ad, t, &nd), &nd, b, bd); }
+    if (is_natnum(bd)) { unsigned char t[NATNUM_MAX]; cob_desc nd; return cob_cmp(a, ad, nat_narrow(b, bd, t, &nd), &nd); }
     if (ad->cat == COB_NATIONAL || bd->cat == COB_NATIONAL) {
         /* national against anything: both as national characters, the
          * shorter padded with national spaces, as for nonnumeric operands */
@@ -930,6 +985,7 @@ int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd
 /* class conditions: 0 NUMERIC, 1 ALPHABETIC, 2 ALPHABETIC-LOWER, 3 ALPHABETIC-UPPER */
 int cob_class(const void *vp, const cob_desc *d, int kind)
 {
+    if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; return cob_class(nat_narrow(vp, d, b, &nd), &nd, kind); }
     const unsigned char *p = vp;
     int n = (int)d->size;
     if (kind == 0) {
@@ -3838,7 +3894,7 @@ static char ci_copy[4096];
 void cob_inspect_begin(char *item, int n, const cob_desc *d)
 {
     cin.item = item; cin.n = n; cin.np = 0; cin.real = NULL; cin.signpos = -1; cin.neg = 0;
-    ci_w = d && d->cat == COB_NATIONAL ? 2 : 1;     /* positions are characters (2023 14.9.22.4 rule 3) */
+    ci_w = d && (d->cat == COB_NATIONAL || d->usage == COB_U_NATIONAL) ? 2 : 1;     /* positions are characters (2023 14.9.22.4 rule 3) */
     if (d && d->cat == COB_NUM && d->usage == COB_U_DISPLAY && (d->flags & COB_F_SIGNED) && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && n > 0 && n <= (int)sizeof ci_copy) {
         int sp = (d->flags & COB_F_LEAD) ? 0 : n - 1;
         unsigned char c = (unsigned char)item[sp];

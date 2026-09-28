@@ -2305,3 +2305,53 @@ PICTURE". The stand-in is marked now and drops its PICTURE quietly.
 -usage, std2002-groupusage-bit, groupusage-85. Harness 216/216; -std=85
 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 72. NATIONAL, part three: numeric and numeric-edited USAGE NATIONAL (2026-09-28)
+
+A numeric or numeric-edited picture with USAGE NATIONAL (2023 13.18.66
+rule 12), explicit, from a group's USAGE, or implied by a national group.
+
+- **Representation** (the implementor's choice, recorded in
+  docs/national.md): the DISPLAY form with each character one UTF-16BE
+  code unit. The text specifies a separate sign's characters and leaves
+  an unseparated sign to the implementor; here it is the DISPLAY
+  overpunch widened. So -126 in PIC S9(4) is 00 30 00 31 00 32 00 76.
+- **Runtime.** A new usage, `COB_U_NATIONAL`. Each numeric primitive
+  (`cob_get_num`, `cob_put_num_x`, `num_to_digits`, `cob_move`,
+  `cob_cmp`, `cob_class`, `cob_display_field`) narrows such an operand
+  to a scratch DISPLAY copy and widens a receiver back afterwards.
+  Arithmetic, comparison, editing and DISPLAY all come through
+  unchanged. `cob_move` also takes a national sender to a numeric
+  receiver, as its UTF-8.
+- **Compiler.** `U_NATIONAL`, sized at twice the DISPLAY size. Every
+  compiler path that tests a usage was audited: `is_hot_int` excluded
+  only DISPLAY and PACKED and would have taken U_NATIONAL for binary.
+  The DISPLAY-only fast paths (`is_display_int`, `sym_dec_ok`, the
+  inline decimal add) test for U_DISPLAY, and a national item takes the
+  runtime path. Initial values are made as DISPLAY and widened; a
+  nonnumeric VALUE is a national literal (13.18.63 rule 5). LENGTH
+  counts characters, and INSPECT scans them. UNSTRING takes a numeric
+  national receiver, as rule 4 allows.
+- **The MOVE table (14.9.25) by category.** National to numeric or
+  numeric-edited is valid, and was refused until now; numeric noninteger
+  to national is not, and was accepted until now.
+- **Refusals.** A picture of A or X with USAGE NATIONAL (rule 12). A
+  signed numeric item in a national group without SIGN SEPARATE
+  (13.18.29.3 rule 3). National-edited pictures (N with B, 0 or /),
+  which got an unhelpful "not valid at character 1", are now refused by
+  name.
+
+A slip on the way, caught by the first test run: the edit that added
+`case U_NATIONAL` in `sym_finish` replaced `case U_DISPLAY` instead of
+joining it, so every DISPLAY item had no size.
+
+2002/natnum (no oracle): arithmetic with a separate and an unseparated
+sign, the stored bytes, editing, comparison, MOVE both ways with PIC N
+and alphanumeric, LENGTH, INSPECT, a class test, a group USAGE
+NATIONAL, a national group with numeric items, and UNSTRING into a
+numeric national receiver. Refusals: std2002-nat-noninteger,
+-natgroup-sign, -nat-usage-x, -nat-edited; natgroup-alnum's message
+follows rule 12; nat-unstring-num now refuses only a DISPLAY numeric
+receiver. Harness 221/221; -std=85 byte-identical on all 227 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.

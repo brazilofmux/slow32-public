@@ -14,7 +14,7 @@ enum { COB_ALNUM = 0, COB_ALPHA = 1, COB_ALNUM_ED = 2, COB_NUM = 3, COB_NUM_ED =
        COB_NATIONAL = 6 };   /* national: UTF-16 code units, big-endian (cobol ISSUES-62) */
 
 /* usage (runtime view: COMP-5 and the C-ABI types are BINARY + NOTRUNC) */
-enum { COB_U_DISPLAY = 0, COB_U_BINARY = 1, COB_U_PACKED = 2 };
+enum { COB_U_DISPLAY = 0, COB_U_BINARY = 1, COB_U_PACKED = 2, COB_U_NATIONAL = 3 };   /* NATIONAL: numeric and numeric-edited only (cobol ISSUES-72) */
 
 /* flags */
 enum {

@@ -1,0 +1,17 @@
+a: 00123 c: -0042
+a + 1: 00124
+b = a / 7: +017.71
+c * 3: -0126
+stored: 0 1 2 v, each two bytes
+edited: [    17.71 ]
+compare: a > 100
+to national: [00124 ]
+from national: 00042
+to alphanumeric: [00042]
+length: 5 10
+inspect zeros: 03
+class: numeric
+group usage national: 007 [ab]
+national group: [05-3]
+unstring: 12 03456
+moved as digits
