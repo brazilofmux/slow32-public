@@ -1,5 +1,27 @@
 # Standards first, dialects second
 
+> **What this project is for.** Preservation first. The aim is a COBOL
+> that no vendor can take away: old programs, compiled once, running
+> identically on every engine SLOW-32 has, for as long as any of them
+> runs. GnuCOBOL solved access to COBOL for everyone, and gcobol will
+> carry it wherever GCC goes; this compiler is the owner's own, on a
+> layer he designed, and it answers to no roadmap but his.
+>
+> It is tended slowly, one bounded piece at a time: a survey of a
+> construct, a dialect behaviour locked behind a behavior point, a
+> COBOL 2002 module with its own conformance tests. The standards
+> below set the order of that work, not a schedule. COBOL 2002 and
+> later have things people will want, and they will come, a piece at
+> a time.
+>
+> A dialect is taken when real programs in it exist to be faithful to,
+> as RM/COBOL was with the Open Systems suite. Without the code,
+> matching a dialect is guesswork.
+>
+> This is a personal project, not an organisation. It is not taking
+> feature requests; split keys and embedded SQL, for instance, arrive
+> only if a program here needs them.
+
 Written 2026-09-27. This is the direction for `./cobol` after v1, and
 the reasoning behind it.
 
@@ -7,7 +29,7 @@ the reasoning behind it.
 
 SLOW-32 is the layer. Execution engines sit below it: the DBT on
 x86-64 and AArch64 for speed, and QEMU TCG for reach to every host
-TCG targets. Languages sit above it, and COBOL is the first of them.
+TCG targets. Languages sit above it, and COBOL is one of them.
 A `.s32x` built here runs on every engine below, and the differential
 harnesses prove the engines agree on it.
 
