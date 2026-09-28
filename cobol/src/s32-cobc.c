@@ -2671,8 +2671,10 @@ static void emit_bytes(const unsigned char *b, int n)
     }
 }
 
-/* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, then three scratch words */
-#define FRAME       112
+/* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, three scratch words, the slots named below; r12/r13 at SLOT_R12/SLOT_R13 */
+#define FRAME       120
+#define SLOT_R12    92          /* the caller's r12 and r13: callee-saved in the C ABI, and */
+#define SLOT_R13    112         /* the generated code uses both as scratch (cobol ISSUES-57) */
 #define SLOT_COLL   96          /* the caller's collating table, when this unit sets its own */
 #define SLOT_DP     100         /* the caller's decimal point, under DECIMAL-POINT IS COMMA */
 #define SLOT_CUR    104         /* the caller's currency sign, under CURRENCY SIGN */
@@ -9374,6 +9376,8 @@ static void parse_procedure_division(void)
     emit("\taddi sp, sp, -%d", FRAME);
     emit("\tstw sp+0, lr");
     emit("\tstw sp+4, r11");
+    emit("\tstw sp+%d, r12", SLOT_R12);
+    emit("\tstw sp+%d, r13", SLOT_R13);
     /* the caller's addresses go into the LINKAGE cells, first: every call
      * below clobbers the argument registers (a USING program with DECIMAL-
      * POINT IS COMMA, CURRENCY SIGN, a COLLATING SEQUENCE or IS INITIAL
@@ -9547,6 +9551,8 @@ static void parse_procedure_division(void)
     if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
     if (g_currency && g_currency != '$') { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_set_currency"); }
     emit("\taddi r1, r0, 0");
+    emit("\tldw r13, sp+%d", SLOT_R13);
+    emit("\tldw r12, sp+%d", SLOT_R12);
     emit("\tldw r11, sp+4");
     emit("\tldw lr, sp+0");
     emit("\taddi sp, sp, %d", FRAME);

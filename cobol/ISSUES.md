@@ -1881,4 +1881,24 @@ code today never sees it: the generated main ends in cob_stop_run, which
 exits rather than returning to the libc start-up that called it, and
 the registration (.init_array) and CANCEL reset routines libcob calls
 touch neither register. A C caller of a whole COBOL program, returning,
-would lose r12/r13.
+would lose r12/r13. (Fixed the same day: ISSUES-57.)
+
+### 57. A COBOL program did not preserve r12 and r13 for its caller (found and fixed 2026-09-28)
+
+Found writing ISSUES-56. The SLOW-32 C ABI makes r11-r28 callee-saved
+(docs/CALLING_CONVENTION.md); a COBOL program's prologue saved r11
+only, while the generated code uses r12 and r13 as scratch (the open
+mode in a USE dispatch, a dynamic CALL's target, the EC-SIZE kind). A C
+function holding values in them across a call to a COBOL program --
+through the C bridge, COBOL calling C calling COBOL -- got them back
+changed. The frame grows from 112 to 120 bytes; the prologue saves both
+(SLOT_R12, SLOT_R13) and the epilogue restores them. No other
+callee-saved register is used by the generated code.
+
+free/calleesaved: a COBOL main calls C, which keeps fourteen values
+live across a call into a COBOL program making a dynamic CALL, and
+checks their sum -- CLOBBERED with the previous compiler, preserved
+now; GnuCOBOL agrees. Every program's prologue changed, so the gates
+were the paper: harness 177/177 with CCVS-85 unchanged, majesty PASS,
+majesty-functions PASS, Open Systems paper unchanged in all seven
+modules.
