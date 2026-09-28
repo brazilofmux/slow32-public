@@ -3880,6 +3880,8 @@ static void sfield_resolve(SField *f)
     Ref rr; parse_ref(&rr);
     g_tp = save_tp;
     if (rr.rm) die_at(f->srcline, "reference modification in a screen item is not implemented");
+    if (sym_is_national(rr.sym) || (!rr.sym->is_group && rr.sym->usage == U_NATIONAL))
+        die_at(f->srcline, "'%s' is national: a national field in SCREEN SECTION is not implemented yet", rr.sym->name);
     f->item = rr.sym;
     if (rec_indirect(&g_sym[rr.sym->record]) || ref_has_runtime_sub(&rr))
         f->dyn = 1;
@@ -9114,6 +9116,8 @@ static void emit_report_group(Report *r, RGroup *g)
                 int save_tp = g_tp;
                 g_tp = f->source_tp; parse_ref(rf); g_tp = save_tp;
                 if (rf->sym->is_cond) die_at(f->line, "SOURCE '%s' is a condition-name", rf->sym->name);
+                if (sym_is_national(rf->sym) || (!rf->sym->is_group && rf->sym->usage == U_NATIONAL))
+                    die_at(f->line, "SOURCE '%s' is national: a national field in Report Writer is not implemented yet", rf->sym->name);
                 a[2] = arg_ref(rf); a[3] = arg_desc(sym_desc(rf->sym));
             } else if (f->value->kind == T_STR) {
                 a[2] = arg_label(lit_label((unsigned char *)f->value->s, f->value->len));
@@ -11280,6 +11284,7 @@ static void parse_rd(void)
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
                     fd.has_pic = 1;
                     snprintf(fd.pic, sizeof fd.pic, "%s", cur()->s);
+                    { PicInfo np; if (nat_picture(fd.pic, &np, t->line)) die_at(t->line, "a national field in Report Writer is not implemented yet"); }
                     if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(t->line, "report field: %s", fd.pi.err);
                     advance(); is_field = 1;
                     continue;
@@ -11377,6 +11382,7 @@ static void parse_rd(void)
                     /* VALUE without PICTURE: an alphanumeric of the literal's width */
                     fd.has_pic = 1;
                     snprintf(fd.pic, sizeof fd.pic, "x(%d)", fd.value->len > 0 ? fd.value->len : 1);
+                    { PicInfo np; if (nat_picture(fd.pic, &np, eline)) die_at(eline, "a national field in Report Writer is not implemented yet"); }
                     if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(eline, "report field: %s", fd.pi.err);
                 }
                 if (!fd.has_pic) die_at(eline, "a report field needs a PICTURE");
@@ -11473,6 +11479,7 @@ static void parse_screen_section(void)
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
                     f->has_pic = 1;
                     snprintf(f->pic, sizeof f->pic, "%s", cur()->s);
+                    { PicInfo np; if (nat_picture(f->pic, &np, t->line)) die_at(t->line, "a national field in SCREEN SECTION is not implemented yet"); }
                     if (pic_analyse(f->pic, &f->pi) < 0) die_at(t->line, "screen field: %s", f->pi.err);
                     advance(); continue;
                 }

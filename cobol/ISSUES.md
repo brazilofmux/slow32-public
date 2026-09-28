@@ -2419,3 +2419,29 @@ national and through an alphanumeric view of the same file, statuses
 code-unit order and by key. bad/std2002-nat-ls-mixed. Harness 224/224;
 -std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 75. NATIONAL: the module closed, with Report Writer and screens refused (2026-09-28)
+
+With ISSUES-62 to -74, every category of national data in the text works:
+national, national-edited, numeric and numeric-edited USAGE NATIONAL,
+and national groups. So do every statement that takes them and national
+records in files.
+
+What remains is placing national text in character cells: a report
+line's COLUMN, a screen field's LINE and COL. An East Asian character
+takes two cells on a terminal or a page, so "column" needs a ruling
+(code units, code points, or display width; libutf's console_width.c
+has the third). Both modules are optional since 2014 (its E.2 item 23).
+So they are refused by name, not built:
+
+- a PIC N report field and a PIC N screen field. These got "PICTURE
+  'n(4)' is not valid at character 1", which named no reason.
+- a national SOURCE for a report field, and a national FROM/TO/USING
+  item for a screen field. Both **compiled silently**, and would have
+  copied UTF-16 bytes into an alphanumeric field.
+- positioned ACCEPT of a national item (ISSUES-70).
+
+bad/std2002-nat-rw, -nat-rw-source, -nat-screen, -nat-screen-from.
+Harness 228/228; -std=85 byte-identical on all 227 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.

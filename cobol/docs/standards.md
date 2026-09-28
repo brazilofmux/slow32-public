@@ -267,11 +267,21 @@ refused with a message naming the switch.
   Table 13's conditions, TURN for one file, and 2023's
   exception-checking PERFORM. No oracle: GnuCOBOL 4 does not implement
   exception declaratives.
-- **NATIONAL, part one** (2026-09-28, ISSUES-62): PICTURE N and national
-  literals, stored UTF-16 big-endian, alphanumeric read as UTF-8; VALUE,
-  MOVE, comparison, DISPLAY, LENGTH and INITIALIZE. docs/national.md.
-  Part two (ISSUES-64): NATIONAL-OF, DISPLAY-OF and CHAR-NATIONAL, and
-  with them function results whose length is known only at run time.
+- **NATIONAL** (2026-09-28, ISSUES-62 to -75). docs/national.md.
+  - Part one: PICTURE N and national literals, stored UTF-16 big-endian,
+    alphanumeric read as UTF-8; VALUE, MOVE, comparison, DISPLAY, LENGTH
+    and INITIALIZE.
+  - Part two: NATIONAL-OF, DISPLAY-OF and CHAR-NATIONAL, with function
+    results whose length is known only at run time; EXCEPTION-LOCATION
+    and -FILE; UPPER-CASE and LOWER-CASE on national and UTF-8 text.
+  - Part three: reference modification, INSPECT, STRING, UNSTRING,
+    ACCEPT, national groups, numeric and numeric-edited USAGE NATIONAL,
+    national-edited pictures, and national records in files (line
+    sequential as UTF-8).
+  - Not implemented: national fields in Report Writer and SCREEN SECTION,
+    and positioned ACCEPT into a national item. Both need a ruling on
+    what a column is when a character takes two cells; both modules are
+    optional since 2014. Refused by name.
 
 ## Deferred — object orientation
 

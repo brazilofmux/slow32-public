@@ -47,9 +47,9 @@ bytes, INITIALIZE with REPLACING NATIONAL.
 A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
-Refused until later parts: ACCEPT of a national item at a screen
-position; GROUP-USAGE BIT (the
-BOOLEAN module); national fields in Report Writer and SCREEN SECTION.
+Refused: GROUP-USAGE BIT (the BOOLEAN module); national fields in
+Report Writer and SCREEN SECTION, a national SOURCE or FROM item for
+one, and ACCEPT of a national item at a screen position (ISSUES-75).
 
 ## What part two covers (ISSUES-64)
 
