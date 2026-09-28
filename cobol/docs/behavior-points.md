@@ -118,6 +118,7 @@ They do not call `bp()` yet.
 | `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | no: the standard form is `STOP RUN WITH {ERROR / NORMAL} STATUS [identifier / literal]` (14.9.42); neither `RETURNING` nor a bare identifier |
 | `COMP-1` as a binary integer with a PICTURE | RM/COBOL | no; `COMP-1` does not appear (the standard's floating types are `FLOAT-SHORT` and kin) |
 | `USAGE POINTER` | GnuCOBOL / majesty | yes |
+| a BY REFERENCE function argument described differently from its parameter but stored identically (`PIC S9(8) COMP-5` and `SIGNED-INT`) | GnuCOBOL / majesty's `holidays` | no: 14.8.2.3 requires the same USAGE and PICTURE; taken for two's-complement binary integers of equal size and signedness only (docs/functions.md) |
 | `GOBACK` | IBM / majesty (docs/dialect.md) | yes, from 2002 (14.8.17; 2023 14.9.18) |
 | `COMP-5`, `BINARY-CHAR` and kin | GnuCOBOL / majesty | `BINARY-CHAR` and kin yes; `COMP-5` no |
 | `CALL ... BY VALUE ... RETURNING` to C | C-ABI implementor module | `BY VALUE` and `RETURNING` yes |

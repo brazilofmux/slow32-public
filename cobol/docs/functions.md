@@ -1,4 +1,75 @@
-# The C bridge — and why user-defined functions are *not* in the dialect
+# User-defined functions — and the C bridge
+
+## Stage B: user-defined functions under `-std=2002` (2026-09-28)
+
+The ruling below (2026-08-30) was about majesty, and it stands for
+majesty: its corpus is COBOL 85. The compiler now implements COBOL 2002
+user-defined functions anyway, for the standard's sake, as Stage B's
+second module (docs/standards.md; cobol ISSUES-50). Under `-std=85`,
+the default, `FUNCTION-ID` and `REPOSITORY` are still refused.
+
+**Accepted.** `FUNCTION-ID. name.` with `PROCEDURE DIVISION USING ...
+RETURNING item` and `END FUNCTION name`; parameters BY REFERENCE (the
+default); the RETURNING item a level 01 or 77 in LINKAGE (2023 14.2.2
+rule 5). `REPOSITORY. FUNCTION name ...` lets a program invoke `name(args)`
+without the word FUNCTION; `FUNCTION ALL INTRINSIC` (or `FUNCTION name
+... INTRINSIC`) does the same for intrinsics. A function is always
+recursive: LOCAL-STORAGE, LINKAGE and the rest are per activation, as
+for a RECURSIVE program (ISSUES-49).
+
+**Arguments** (2023 8.4.3.2.4 rule 5). An identifier the program could
+store into goes BY REFERENCE and must be described as the parameter is
+(14.8.2.3): PICTURE, USAGE, SIGN, JUSTIFIED and BLANK WHEN ZERO, the
+pictures compared as analysed. One extension: two's-complement binary
+integers of the same size and signedness conform whatever the spelling
+(`PIC S9(8) COMP-5` and `SIGNED-INT`), as GnuCOBOL takes them and as
+majesty's `holidays` needs. A literal, an arithmetic expression or
+another function's result goes BY CONTENT, into a copy described as the
+parameter, converted as COMPUTE would (14.8.2.3.3 rule 2a) -- GnuCOBOL 4
+gets this wrong for expressions and negative or short literals
+(docs/oracles.md).
+
+**Where the call happens.** Outside a condition, where the operand is
+parsed: the compiler emits in execution order. Inside a condition, the
+calls are kept with the condition and made each time it is evaluated,
+so `PERFORM UNTIL f(x) > 3` and a `WHEN` call it every time. VARYING's
+BY and an AFTER's FROM are evaluated at every step and reset, not where
+they are parsed; a function there is refused until they are deferred
+the same way. A statement that scans ahead and keeps the scanned
+operands (ADD/SUBTRACT/MULTIPLY/DIVIDE with GIVING) re-parses them, and
+a compile-time guard stops any result from a scan reaching code.
+
+**The external repository.** A caller needs the function's RETURNING
+description to build its result, and a separately compiled function is
+not in its source. Compiling a function writes `name.s32fn` beside the
+output: the RETURNING item and each parameter, one line each. A caller
+finds a function defined earlier in its own source first, then a
+`.s32fn` beside its output, beside its source, or on `-I`. `s32-cobc
+-fnsig` writes the signatures and nothing else, skipping every
+procedure body so it needs no other signature; `compile.sh -std=2002`
+runs it over all its inputs first, so the order of the files does not
+matter. Call sites stay compile-time specialized: the result is an
+ordinary item of known description, not a runtime-typed one.
+
+**Calling sequence.** The C ABI of `CALL`: the arguments' addresses in
+r3 onward, then the address of the caller's result temporary, which
+becomes the function's RETURNING item. The temporary is LOCAL-STORAGE
+in a program that can be re-entered (the same call site in two
+activations), static otherwise.
+
+**Not implemented yet, refused with a message:** prototypes (`IS
+PROTOTYPE`), function pointers, `AS literal`, BY VALUE and OPTIONAL
+parameters, OMITTED, ANY LENGTH, PROCEDURE DIVISION RETURNING in a
+program.
+
+**Real code.** `tests/majesty-functions.sh` takes majesty's date family
+as it was written in COBOL 2002 -- twelve functions across seven files,
+from majesty's history, unchanged -- and builds it with `-std=2002` and
+with GnuCOBOL: jerm's 400,001 lines and the gltrans trio over 3,000
+synthetic transactions print the same bytes.
+
+## The C bridge (2026-08-30) — and why majesty's functions became CALLs
+
 
 **Finding, 2026-08-30:** the corpus reaches C through COBOL 2002
 user-defined functions, not `CALL`. gl030 does `move

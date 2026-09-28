@@ -232,6 +232,13 @@ refused with a message naming the switch.
   EC-PROGRAM-RECURSIVE-CALL, fatal. How: an activation descriptor per
   program, read by `cob_act_enter`/`cob_act_leave` at entry and
   return; under `-std=85` none is emitted, and 85 output is unchanged.
+- **User-defined functions** (2026-09-28, ISSUES-50). `FUNCTION-ID`,
+  `REPOSITORY`, invocation with or without the word FUNCTION, BY
+  REFERENCE and BY CONTENT arguments, and an external repository of
+  signature files so separately compiled functions keep call sites
+  specialized. Proven on majesty's original 2002 date family
+  (`tests/majesty-functions.sh`). docs/functions.md has the design and
+  what is still refused.
 
 ## Deferred — object orientation
 

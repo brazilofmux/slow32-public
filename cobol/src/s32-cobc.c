@@ -1136,6 +1136,8 @@ typedef struct Sym {
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
+    int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
+    int  ftemp_scan;                /* ... made while scanning ahead (no code): must never be emitted */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
     int  is_rename;                 /* level 66: another name for a range of the record, resolved after layout */
@@ -2563,6 +2565,7 @@ static void emit_bytes(const unsigned char *b, int n)
 #define SLOT_CUR    104         /* the caller's currency sign, under CURRENCY SIGN */
 #define SLOT_PBASE  108         /* the caller's PERFORM frame base (cob_perform_enter) */
 #define SLOT_ACT    84          /* this activation's saved words and LOCAL-STORAGE (cob_act_enter, -std=2002) */
+#define SLOT_RET    88          /* a function's result: the caller's temporary (-std=2002) */
 #define SLOT(i)     (8 + 4 * (i))
 #define NSLOTS      16
 #define SLOT_A      (8 + 4 * NSLOTS)
@@ -2586,6 +2589,26 @@ typedef struct {
 
 static void parse_expr(void);
 static void emit_expr_tokens(int s0, int s1);
+static void emit_ucalls(int from, int to);
+static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */
+static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
+static int g_recursive, g_std, g_cond_depth;   /* defined below */
+static int g_fnsig_only;                /* -fnsig: write the functions' .s32fn files, compile nothing */
+static void skip_unit_body(void);
+static int g_is_function;           /* FUNCTION-ID: a user-defined function (COBOL 2002; always recursive) */
+static int g_main_done;             /* the executable's main program has been emitted */
+static Sym *g_returning;            /* the function's RETURNING item */
+
+/* A user-defined function's signature (docs/functions.md, Stage B): its
+ * RETURNING item and parameters, as descriptions a caller can rebuild.
+ * Known from a definition earlier in the source, or from the external
+ * repository -- a name.s32fn file the function's own compile wrote. */
+typedef struct { int group, size, usage, has_pic, just, bwz, sign_lead, sign_sep; char pic[PIC_MAXPAT]; } FDesc;
+typedef struct { char name[64], link[128]; int nparam; FDesc param[8], ret; } FnSig;
+static FnSig g_fnsig[128]; static int g_nfnsig;
+/* the unit's REPOSITORY: functions named there are invoked without FUNCTION */
+static char g_repo_fn[32][64]; static int g_nrepo_fn;
+static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
 
 enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC };
 
@@ -2878,6 +2901,16 @@ static Opnd *fn89_arg(const char *fname)
     return x;
 }
 
+/* an intrinsic function's name: the 1989 table, or one parsed by name */
+static int fn89_known(const char *w)
+{
+    static const char *named[] = { "when-compiled", "upper-case", "lower-case", "current-date", "integer-of-date",
+        "date-of-integer", "day-of-integer", "integer-of-day", "length", NULL };
+    for (int i = 0; g_fn89[i].name; i++) if (!strcmp(w, g_fn89[i].name)) return 1;
+    for (int i = 0; named[i]; i++) if (!strcmp(w, named[i])) return 1;
+    return 0;
+}
+
 static int fn89_parse(Opnd *o, Tok *n)
 {
     int f = -1;
@@ -2923,6 +2956,8 @@ static int fn89_parse(Opnd *o, Tok *n)
     return 1;
 }
 
+static void parse_ufunc(Opnd *o, const char *name, int line);
+static int ufn_named(const char *w);
 static void parse_operand_raw(Opnd *o)
 {
     memset(o, 0, sizeof *o);
@@ -2940,10 +2975,18 @@ static void parse_operand_raw(Opnd *o)
         o->kind = O_NUM; numlit_from_int(&o->num, len);
         return;
     }
-    if (t->kind == T_WORD && !strcmp(t->s, "function")) {
-        advance();
+    /* a user-defined function named in REPOSITORY (or this function
+     * itself), invoked without the word FUNCTION (COBOL 2002 8.4.3.2) */
+    if (t->kind == T_WORD && ufn_named(t->s) && !sym_lookup_quiet(t->s)) {
+        advance(); parse_ufunc(o, t->s, t->line); return;
+    }
+    /* FUNCTION ALL INTRINSIC: an intrinsic without the word FUNCTION too */
+    int bare_fn = t->kind == T_WORD && g_repo_all_intrinsic && fn89_known(t->s) && !sym_lookup_quiet(t->s);
+    if (t->kind == T_WORD && (!strcmp(t->s, "function") || bare_fn)) {
+        if (!bare_fn) advance();
         Tok *n = cur();
         if (n->kind != T_WORD) die_at(n->line, "expected an intrinsic function name");
+        if (ufn_named(n->s)) { advance(); parse_ufunc(o, n->s, n->line); return; }
         if (!strcmp(n->s, "when-compiled")) {
             advance();
             static Tok wc; static char wcbuf[22];
@@ -3090,6 +3133,8 @@ static void emit_store_int(Sym *s, const char *areg, const char *vreg)
 static void emit_item_addr(const char *reg, Sym *s, int off)
 {
     Sym *rec = &g_sym[s->record];
+    if (rec->ftemp_scan && !g_noemit)
+        die_at(rec->line, "internal: a user function's result from a scan-ahead was used without its call (a statement keeps scanned operands)");
     if (!rec_indirect(rec)) { emit_la_off(reg, rec->label, off); return; }
     emit_la(reg, rec->label);
     emit("\tldw %s, %s+0", reg, reg);
@@ -3295,6 +3340,256 @@ static void emit_args(const Arg *a, int n)
     }
     g_slot_base = base;
 }
+
+static void emit_move(Opnd *src, Ref *dst);
+static Opnd expr_opnd(void);
+static int at_arith_op(void);
+static void init_record(Sym *rec, int si, int defaults);
+static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err,
+                                 long long sum_mag, int sum_nonneg);
+static void sym_finish(Sym *s);
+static int layout(int si, int base);
+static void set_dims(int si, int ndims, const int *counts, const int *strides);
+static const char *link_name(const char *name);
+static void emit_args(const Arg *a, int n);
+static Arg arg_ref(const Ref *r);
+
+/* ---- user-defined functions: the caller's side (COBOL 2002; ISSUES-50) -- */
+
+/* The external repository: name.s32fn, written by the function's own
+ * compile (-fnsig, or any compile of it), found beside the output, beside
+ * the source, or on -I.  One line per item: the RETURNING item, then each
+ * parameter -- group size usage has_pic just bwz sign_lead sign_sep pic. */
+static const char *g_outdir = ".";
+
+static void fdesc_of(FDesc *d, const Sym *x)
+{
+    memset(d, 0, sizeof *d);
+    d->group = x->is_group; d->size = x->size; d->usage = x->usage; d->has_pic = x->has_pic;
+    d->just = x->just; d->bwz = x->blank_zero; d->sign_lead = x->sign_lead; d->sign_sep = x->sign_sep;
+    snprintf(d->pic, sizeof d->pic, "%s", x->has_pic ? x->pic : "-");
+}
+
+static void fnsig_path(char *out, size_t n, const char *dir, const char *name)
+{
+    snprintf(out, n, "%s/%s.s32fn", dir, link_name(name));
+}
+
+static void fnsig_write(const FnSig *f)
+{
+    char path[1100]; fnsig_path(path, sizeof path, g_outdir, f->name);
+    FILE *o = fopen(path, "w");
+    if (!o) { fprintf(stderr, "s32-cobc: cannot write %s\n", path); fail(); }
+    fprintf(o, "s32fn 1 %s %s %d\n", f->name, f->link, f->nparam);
+    for (int k = -1; k < f->nparam; k++) {
+        const FDesc *d = k < 0 ? &f->ret : &f->param[k];
+        fprintf(o, "%d %d %d %d %d %d %d %d %s\n", d->group, d->size, d->usage, d->has_pic, d->just, d->bwz, d->sign_lead, d->sign_sep, d->pic);
+    }
+    fclose(o);
+}
+
+static int fnsig_read(const char *path, FnSig *f)
+{
+    FILE *in = fopen(path, "r");
+    if (!in) return 0;
+    memset(f, 0, sizeof *f);
+    int ok = fscanf(in, "s32fn 1 %63s %127s %d", f->name, f->link, &f->nparam) == 3 && f->nparam >= 0 && f->nparam <= 8;
+    for (int k = -1; ok && k < f->nparam; k++) {
+        FDesc *d = k < 0 ? &f->ret : &f->param[k];
+        ok = fscanf(in, "%d %d %d %d %d %d %d %d %255s", &d->group, &d->size, &d->usage, &d->has_pic, &d->just, &d->bwz,
+                    &d->sign_lead, &d->sign_sep, d->pic) == 9;
+    }
+    fclose(in);
+    return ok;
+}
+
+/* the function's signature: defined earlier in this source, or from the repository */
+static int fnsig_find(const char *name)
+{
+    for (int i = 0; i < g_nfnsig; i++) if (!strcmp(g_fnsig[i].name, name)) return i;
+    char srcdir[1024]; snprintf(srcdir, sizeof srcdir, "%s", g_file);
+    char *sl = strrchr(srcdir, '/'); if (sl) *sl = 0; else strcpy(srcdir, ".");
+    for (int d = -2; d < g_nincdir; d++) {
+        const char *dir = d == -2 ? g_outdir : d == -1 ? srcdir : g_incdirs[d];
+        char path[1100]; fnsig_path(path, sizeof path, dir, name);
+        FnSig f;
+        if (fnsig_read(path, &f) && !strcmp(f.name, name)) {
+            if (g_nfnsig == 128) die_at(0, "more than 128 user-defined functions");
+            g_fnsig[g_nfnsig] = f;
+            return g_nfnsig++;
+        }
+    }
+    return -1;
+}
+
+/* BY REFERENCE conformance (14.8.2.3.2): the same PICTURE, USAGE,
+ * JUSTIFIED, BLANK WHEN ZERO and SIGN -- pictures compared as analysed,
+ * so S9(4) and s9999 are the same picture */
+/* a two's-complement binary integer with no truncation to a digit count:
+ * COMP-5 with an integer picture, or a native usage (SIGNED-INT ...).
+ * 1 signed, 2 unsigned, 0 neither */
+static int fdesc_native_int(const FDesc *d)
+{
+    if (d->group) return 0;
+    switch (d->usage) {
+    case U_SINT: case U_SSHORT: case U_BCHAR: return 1;
+    case U_UINT: case U_USHORT: case U_UBCHAR: return 2;
+    case U_COMP5: {
+        PicInfo pi;
+        if (!d->has_pic || pic_analyse(d->pic, &pi) < 0 || pi.scale != 0) return 0;
+        return pi.is_signed ? 1 : 2;
+    }
+    default: return 0;
+    }
+}
+
+static int fdesc_match(const FDesc *a, const FDesc *b)
+{
+    /* an implementor extension (docs/behavior-points.md, class E): the same
+     * storage under two spellings -- PIC S9(8) COMP-5 and SIGNED-INT -- is
+     * taken as conforming, as GnuCOBOL takes it; majesty's holidays passes
+     * a SIGNED-INT to floor-divmod's COMP-5 parameter */
+    int na = fdesc_native_int(a), nb = fdesc_native_int(b);
+    if (na && na == nb && a->size == b->size) return 1;
+    if (a->group || b->group) return a->group == b->group && a->size == b->size;
+    if (a->size != b->size || a->usage != b->usage || a->has_pic != b->has_pic || a->just != b->just || a->bwz != b->bwz ||
+        a->sign_lead != b->sign_lead || a->sign_sep != b->sign_sep) return 0;
+    if (!a->has_pic) return 1;
+    PicInfo pa, pb;
+    if (pic_analyse(a->pic, &pa) < 0 || pic_analyse(b->pic, &pb) < 0) return 0;
+    return pa.category == pb.category && pa.digits == pb.digits && pa.scale == pb.scale && pa.is_signed == pb.is_signed &&
+           pa.bytes == pb.bytes && !strcmp(pa.pat, pb.pat);
+}
+
+/* is this word a user function this unit may invoke without FUNCTION? */
+static int ufn_named(const char *w)
+{
+    if (g_is_function && !strcmp(w, g_progid)) return 1;
+    for (int i = 0; i < g_nrepo_fn; i++) if (!strcmp(g_repo_fn[i], w)) return 1;
+    return 0;
+}
+
+/* a compiler-made record described by d: a function's result, or a BY
+ * CONTENT argument.  LOCAL-STORAGE in a program that can be re-entered
+ * (the same call site in two activations must not share it), static
+ * otherwise. */
+static Sym *ftemp_new(const FDesc *d, int line)
+{
+    static int n;
+    Sym *t = sym_new();
+    int idx = sym_idx(t);
+    t->level = 1; t->line = line; t->is_filler = 1; t->is_ftemp = 1; t->ftemp_scan = g_noemit > 0;
+    snprintf(t->name, sizeof t->name, "filler");
+    t->usage = d->group ? U_DISPLAY : d->usage; t->has_usage = !d->group;
+    t->is_local = g_recursive;
+    if (d->group || !d->has_pic) {
+        if (d->group) { t->has_pic = 1; snprintf(t->pic, sizeof t->pic, "x(%d)", d->size); }
+    } else {
+        t->has_pic = 1; snprintf(t->pic, sizeof t->pic, "%s", d->pic);
+        t->just = d->just; t->blank_zero = d->bwz; t->sign_lead = d->sign_lead; t->sign_sep = d->sign_sep;
+    }
+    if (t->has_pic && pic_analyse(t->pic, &t->pi) < 0) die_at(line, "internal: function signature picture '%s': %s", t->pic, t->pi.err);
+    sym_finish(t);
+    int zero[1] = { 0 };
+    layout(idx, 0);
+    set_dims(idx, 0, zero, zero);
+    t = &g_sym[idx];
+    t->record = idx; t->desc_id = -1;
+    snprintf(t->label, sizeof t->label, "%s%d_%d", t->is_local ? ".Llft" : "ft", g_unit, n++);
+    t->image_size = t->size; t->image = xmalloc((size_t)t->size);
+    init_record(t, idx, 1);
+    return &g_sym[idx];
+}
+
+typedef struct { int sig, nargs, line, emitted; Opnd arg[8]; int byref[8]; Sym *ctmp[8]; Sym *res; } UCall;
+static UCall *g_ucall; static int g_ucap;
+
+static Ref ftemp_ref(Sym *t, int line)
+{
+    Ref r; memset(&r, 0, sizeof r); r.sym = t; r.line = line; r.rm_l0 = -1;
+    return r;
+}
+
+/* the call: arguments by reference or into their content copies, the
+ * result's address last; the function fills the result */
+static void emit_ucall(UCall *u)
+{
+    FnSig *f = &g_fnsig[u->sig];
+    Ref refs[9]; Arg a[9];
+    for (int k = 0; k < u->nargs; k++) {
+        if (u->byref[k]) { refs[k] = u->arg[k].ref; continue; }
+        refs[k] = ftemp_ref(u->ctmp[k], u->line);
+        if (u->arg[k].kind == O_EXPR) {
+            int rd[1] = { 0 };
+            emit_expr_tokens(u->arg[k].e_start, u->arg[k].e_end);
+            emit_store_receivers(&refs[k], rd, 1, 0, 1, 0, 0, -1, 0);
+        } else emit_move(&u->arg[k], &refs[k]);
+    }
+    refs[u->nargs] = ftemp_ref(u->res, u->line);
+    for (int k = 0; k <= u->nargs; k++) a[k] = arg_ref(&refs[k]);
+    emit_args(a, u->nargs + 1);
+    emit_call(f->link);
+    u->emitted = 1;
+}
+
+static void emit_ucalls(int from, int to)
+{
+    for (int k = from; k < to; k++) emit_ucall(&g_ucall[k]);
+}
+
+/* name(args), the cursor past the name: the operand becomes the result */
+static void parse_ufunc(Opnd *o, const char *name, int line)
+{
+    if (g_ufn_forbid) die_at(line, "a user-defined function in %s is not implemented yet", g_ufn_forbid);
+    int sig = fnsig_find(name);
+    if (sig < 0)
+        die_at(line, "no signature for the function '%s': define it earlier in this source, or compile its own source "
+                     "first (compile.sh does), so its %s.s32fn is beside the output or on -I", name, link_name(name));
+    UCall u; memset(&u, 0, sizeof u);
+    u.sig = sig; u.line = line;
+    if (cur()->kind == T_LP) {
+        advance();
+        while (cur()->kind != T_RP) {
+            if (cur()->kind == T_EOF) die_at(line, "expected ')' after the arguments of '%s'", name);
+            if (at_word("omitted")) die_at(cur()->line, "OMITTED arguments (OPTIONAL parameters) are not implemented yet");
+            if (u.nargs == 8) die_at(line, "'%s': more than eight arguments", name);
+            int start = g_tp;
+            Opnd a; parse_operand(&a);
+            if (at_arith_op()) { g_tp = start; a = expr_opnd(); }
+            u.arg[u.nargs++] = a;
+        }
+        advance();
+    }
+    FnSig *f = &g_fnsig[sig];
+    if (u.nargs != f->nparam) die_at(line, "the function '%s' takes %d argument%s, not %d", name, f->nparam, f->nparam == 1 ? "" : "s", u.nargs);
+    for (int k = 0; k < u.nargs; k++) {
+        Opnd *a = &u.arg[k];
+        /* 8.4.3.2.4 rule 5: an identifier that could receive goes BY REFERENCE,
+         * and must then be described as the parameter is (14.8.2.3); a
+         * literal, an expression or a function result goes BY CONTENT, into
+         * a copy described as the parameter is */
+        if (a->kind == O_REF && !a->ref.sym->is_ftemp && !a->ref.rm) {
+            FDesc ad; fdesc_of(&ad, a->ref.sym);
+            FDesc *pd = &f->param[k];
+            if (!fdesc_match(&ad, pd))
+                die_at(a->line, "argument %d of '%s' must be described as the parameter is (PICTURE %s, %d bytes; "
+                                "2023 14.8.2.3), or be a literal or expression", k + 1, name, pd->group ? "group" : pd->pic, pd->size);
+            u.byref[k] = 1;
+        } else {
+            u.byref[k] = 0;
+            u.ctmp[k] = ftemp_new(&f->param[k], line);
+        }
+    }
+    u.res = ftemp_new(&f->ret, line);
+    memset(o, 0, sizeof *o);
+    o->kind = O_REF; o->ref = ftemp_ref(u.res, line); o->line = line;
+    if (g_noemit) return;                       /* a scan: the re-parse makes the call */
+    if (g_nucall == g_ucap) { g_ucap = g_ucap ? 2 * g_ucap : 64; g_ucall = realloc(g_ucall, (size_t)g_ucap * sizeof *g_ucall); }
+    g_ucall[g_nucall] = u;
+    if (g_cond_depth > 0) { g_nucall++; return; }   /* made where the condition is evaluated */
+    emit_ucall(&g_ucall[g_nucall]);
+}
+
 
 /* evaluate an intrinsic into libcob's buffer; r1 holds the pointer */
 static void emit_fn_value(Opnd *f)
@@ -3738,9 +4033,10 @@ typedef struct Cond {
     Opnd x, y;
     int op, neg;            /* C_REL */
     int klass;              /* C_CLASS: 0 NUMERIC 1 ALPHABETIC 2 LOWER 3 UPPER, 4+i SPECIAL-NAMES class i */
+    int uc0, uc1;           /* the root: user-function calls to make each time it is evaluated */
 } Cond;
 
-static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); c->kind = kind; return c; }
+static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); memset(c, 0, sizeof *c); c->kind = kind; return c; }
 
 static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
@@ -3928,16 +4224,24 @@ static Cond *parse_and(void)
 
 static Cond *parse_cond(void)
 {
+    int top = g_cond_depth == 0, uc0 = g_nucall;
     if (g_cond_depth++ == 0) g_abbr_op = -1;       /* a new condition: nothing to abbreviate yet */
     Cond *a = parse_and();
     while (accept_word("or")) a = cond_bin(C_OR, a, parse_and());
     g_cond_depth--;
+    if (top && g_nucall > uc0) {
+        /* user functions in the condition are called where it is evaluated,
+         * which for PERFORM UNTIL or a WHEN is not where it was parsed */
+        Cond *r = cond_new(C_AND); *r = *a; r->uc0 = uc0; r->uc1 = g_nucall;
+        a = r;
+    }
     return a;
 }
 
 /* r1 = 0/1 for a simple condition */
 static void emit_cond_value(Cond *c)
 {
+    if (c->uc1 > c->uc0) emit_ucalls(c->uc0, c->uc1);
     if (c->kind == C_SWITCH) {
         emit_la("r3", "cob_switches");
         emit("\tldw r1, r3+%d", 4 * (c->klass - 1));
@@ -4041,6 +4345,7 @@ static void cond_jump_true(Cond *c, int L);
 
 static void cond_jump_false(Cond *c, int L)
 {
+    if (c->uc1 > c->uc0) emit_ucalls(c->uc0, c->uc1);
     switch (c->kind) {
     case C_AND: cond_jump_false(c->a, L); cond_jump_false(c->b, L); return;
     case C_OR: { int Lt = new_label(); cond_jump_true(c->a, Lt); cond_jump_false(c->b, L); emit_label(Lt); return; }
@@ -4051,6 +4356,7 @@ static void cond_jump_false(Cond *c, int L)
 
 static void cond_jump_true(Cond *c, int L)
 {
+    if (c->uc1 > c->uc0) emit_ucalls(c->uc0, c->uc1);
     switch (c->kind) {
     case C_AND: { int Ls = new_label(); cond_jump_false(c->a, Ls); cond_jump_true(c->b, L); emit_label(Ls); return; }
     case C_OR: cond_jump_true(c->a, L); cond_jump_true(c->b, L); return;
@@ -5532,6 +5838,8 @@ static void parse_add(void)
         int has_giving = accept_word("giving");
         g_noemit--;
         if (has_giving) {
+            /* again, for real: a user function among them is called here */
+            g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
             for (int i = 0; i < ne; i++) { if (n >= MAXOPS) die_at(cur()->line, "too many operands"); ops[n++] = extra[i]; }
             giving = 1;
             nr = parse_ref_list(rs, rd, MAXOPS, 1);
@@ -5570,6 +5878,8 @@ static void parse_subtract(void)
     int has_giving = accept_word("giving");
     g_noemit--;
     if (has_giving) {
+        /* again, for real: a user function in the minuend is called here */
+        g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
         if (ne != 1) die_at(cur()->line, "SUBTRACT ... FROM x GIVING takes one item after FROM");
         minuend = extra[0]; giving = 1;
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
@@ -5613,6 +5923,7 @@ static void parse_multiply(void)
     int has_giving = accept_word("giving");
     g_noemit--;
     if (has_giving) {
+        g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
         if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
         int size_err = at_size_error_clause();
@@ -5683,6 +5994,7 @@ static void parse_divide(void)
         int has_giving = accept_word("giving");
         g_noemit--;
         if (has_giving) {
+            g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
             nr = parse_ref_list(rs, rd, MAXOPS, 1);
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
             int size_err = size_error_after_remainder();
@@ -6244,11 +6556,20 @@ static void parse_perform(void)
             if (nv >= 8) die_at(cur()->line, "more than eight VARYING/AFTER levels");
             parse_ref(&v[nv].var);
             if (!is_numeric_sym(v[nv].var.sym)) die_at(v[nv].var.line, "the VARYING item must be numeric");
-            expect_word("from"); parse_operand(&v[nv].from); check_numeric_opnd(&v[nv].from);
+            expect_word("from");
+            /* an AFTER's FROM is evaluated at every reset and BY at every
+             * step, not where they are parsed: a user function there waits
+             * for a deferred evaluation like a condition's */
+            if (nv > 0) g_ufn_forbid = "the FROM phrase of PERFORM ... AFTER";
+            parse_operand(&v[nv].from); check_numeric_opnd(&v[nv].from);
+            g_ufn_forbid = NULL;
             if (nv > 0 && v[nv].from.kind == O_REF)          /* BP-M1: the 74/85 reset order shows here */
                 for (int k = 0; k < nv; k++)
                     if (v[k].var.sym == v[nv].from.ref.sym) { bp(BP_M1_VARYING_AFTER, v[nv].from.line); break; }
-            expect_word("by"); parse_operand(&v[nv].by); check_numeric_opnd(&v[nv].by);
+            expect_word("by");
+            g_ufn_forbid = "the BY phrase of PERFORM VARYING";
+            parse_operand(&v[nv].by); check_numeric_opnd(&v[nv].by);
+            g_ufn_forbid = NULL;
             expect_word("until"); v[nv].until = parse_cond();
             nv++;
             if (!accept_word("after")) break;
@@ -8275,13 +8596,40 @@ static void resync_sentence(int start)
     if (cur()->kind == T_PERIOD) advance();
 }
 
+/* -fnsig: past this unit's procedure division to its END PROGRAM or END
+ * FUNCTION (a contained program's END names another), which is consumed */
+static void skip_unit_body(void)
+{
+    const char *kind = g_is_function ? "function" : "program";
+    while (cur()->kind != T_EOF) {
+        if (at_word("end") && is_word(peek(1), kind) &&
+            (peek(2)->kind == T_PERIOD || peek(2)->kind == T_EOF || is_word(peek(2), g_progid))) {
+            advance(); advance();
+            if (cur()->kind == T_WORD) advance();
+            if (cur()->kind == T_PERIOD) advance();
+            g_saw_end_program = 1;
+            return;
+        }
+        advance();
+    }
+    g_saw_end_program = 0;
+}
+
 static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
     Sym *using[8]; int nusing = 0;
     if (accept_word("using")) {
         while (cur()->kind == T_WORD && !at_word("returning")) {
-            if (nusing >= 8) die_at(cur()->line, "more than eight USING items (stack arguments) are not implemented yet");
+            if (g_std >= 2002) {
+                if (accept_word("by")) {
+                    if (at_word("value")) die_at(cur()->line, "BY VALUE parameters are not implemented yet (the C-ABI CALL has them)");
+                    expect_word("reference");
+                }
+                if (at_word("optional")) die_at(cur()->line, "OPTIONAL parameters are not implemented yet");
+                if (cur()->kind != T_WORD || at_word("returning")) break;
+            }
+            if (nusing >= (g_is_function ? 7 : 8)) die_at(cur()->line, "more than %d USING items (stack arguments) are not implemented yet", g_is_function ? 7 : 8);
             Sym *u = sym_lookup(cur()->s, NULL, 0, cur()->line);
             if (!g_sym[u->record].is_linkage || u->parent >= 0)
                 die_at(cur()->line, "USING '%s' must be a level 01 or 77 item of the LINKAGE SECTION", u->name);
@@ -8289,9 +8637,29 @@ static void parse_procedure_division(void)
             advance();
         }
     }
-    if (at_word("returning"))
-        die_at(cur()->line, "PROCEDURE DIVISION RETURNING is COBOL 2002; make the result the last USING item (docs/functions.md)");
+    if (at_word("returning") && !g_is_function)
+        die_at(cur()->line, "PROCEDURE DIVISION RETURNING is COBOL 2002, and for a program not implemented yet; make the result the last USING item (docs/functions.md)");
+    if (g_is_function) {
+        /* the function's result: a level 01 or 77 item; the caller passes
+         * the address of its temporary after the arguments */
+        if (!accept_word("returning")) die_at(cur()->line, "a function needs PROCEDURE DIVISION ... RETURNING its result");
+        Sym *r = sym_lookup(cur()->s, NULL, 0, cur()->line);
+        if (!r->is_linkage || r->parent >= 0 || r->level == 66 || r->is_cond || r->redefines >= 0)
+            die_at(cur()->line, "RETURNING '%s' must be a level 01 or 77 item of the LINKAGE SECTION, without REDEFINES (2023 14.2.2 rule 5)", r->name);
+        g_returning = r;
+        advance();
+        if (g_nfnsig == 128) die_at(cur()->line, "more than 128 user-defined functions");
+        FnSig *f = &g_fnsig[g_nfnsig++];
+        memset(f, 0, sizeof *f);
+        snprintf(f->name, sizeof f->name, "%s", g_progid);
+        snprintf(f->link, sizeof f->link, "%s", link_name(g_progid));
+        f->nparam = nusing;
+        for (int k = 0; k < nusing; k++) fdesc_of(&f->param[k], using[k]);
+        fdesc_of(&f->ret, r);
+        fnsig_write(f);
+    }
     expect_period();
+    if (g_fnsig_only) { skip_unit_body(); return; }
     prescan_paragraphs(g_tp);
 
     char entry[128];
@@ -8312,11 +8680,18 @@ static void parse_procedure_division(void)
         /* the arguments wait in the frame while cob_act_enter saves the
          * cells they are about to overwrite (a RECURSIVE caller's own) */
         for (int i = 0; i < nusing; i++) emit("\tstw sp+%d, %s", SLOT(i), argreg(i));
+        if (g_is_function) emit("\tstw sp+%d, %s", SLOT_RET, argreg(nusing));   /* where the result goes */
         char lab[32]; snprintf(lab, sizeof lab, ".Lact%d", g_unit);
         emit_la("r3", lab); emit_call("cob_act_enter"); emit("\tstw sp+%d, r1", SLOT_ACT);
         for (int i = 0; i < nusing; i++) {
             emit_la("r1", g_sym[using[i]->record].label);
             emit("\tldw r2, sp+%d", SLOT(i));
+            emit("\tstw r1+0, r2");
+        }
+        if (g_is_function) {
+            /* the LINKAGE result is the caller's temporary itself */
+            emit_la("r1", g_returning->label);
+            emit("\tldw r2, sp+%d", SLOT_RET);
             emit("\tstw r1+0, r2");
         }
     } else
@@ -8387,7 +8762,7 @@ static void parse_procedure_division(void)
     for (;;) {
         Tok *t = cur();
         if (t->kind == T_EOF) break;
-        if (is_word(t, "end") && is_word(peek(1), "program")) break;
+        if (is_word(t, "end") && (is_word(peek(1), "program") || is_word(peek(1), "function"))) break;
         if ((is_word(t, "identification") || is_word(t, "id")) && is_word(peek(1), "division")) {
             /* a contained program: from here to END PROGRAM the text is nested
              * programs; the containing program's flow ends as at its last line */
@@ -8433,7 +8808,7 @@ static void parse_procedure_division(void)
         if (setjmp(jb)) {
             g_recover = outer;
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge;
-            g_abbr_op = -1; g_sentence_label = -1;
+            g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
             resync_sentence(start);
             continue;
         }
@@ -8475,8 +8850,9 @@ static void parse_procedure_division(void)
     emit("\taddi sp, sp, %d", FRAME);
     emit("\tjalr r0, r31, 0");
 
-    /* the unit joins the program registry at start-up (CALL identifier) */
-    {
+    /* the unit joins the program registry at start-up (CALL identifier);
+     * a function is invoked, never CALLed, and does not */
+    if (!g_is_function) {
         char nm[130]; int nl = (int)strlen(g_progid);
         memcpy(nm, g_progid, (size_t)nl); nm[nl] = 0;
         const char *nlab = lit_label((const unsigned char *)nm, nl + 1);
@@ -8515,8 +8891,10 @@ static void parse_procedure_division(void)
         emit("\t.text");
     }
 
-    if (g_unit == 0 && !g_module) {
-        /* the first unit of an executable is the main program */
+    if (!g_is_function && !g_main_done && !g_module && !g_udepth) {
+        /* the first program of an executable is the main program (functions
+         * defined ahead of it, as REPOSITORY requires, are not) */
+        g_main_done = 1;
         emit("\t.globl main");
         emit("\t.p2align 2");
         emit("\t.type main,@function");
@@ -8531,7 +8909,15 @@ static void parse_procedure_division(void)
     }
 
     g_saw_end_program = 0;
-    if (accept_word("end")) {
+    if (g_is_function) {
+        if (!(at_word("end") && is_word(peek(1), "function"))) die_at(cur()->line, "a function ends with END FUNCTION %s", g_progid);
+        advance(); advance();
+        if (cur()->kind != T_WORD || strcmp(cur()->s, g_progid))
+            die_at(cur()->line, "END FUNCTION names '%s' but the function is '%s'", cur()->s, g_progid);
+        advance();
+        if (cur()->kind != T_EOF) expect_period();
+        g_saw_end_program = 1;
+    } else if (accept_word("end")) {
         expect_word("program");
         if (cur()->kind == T_PERIOD || cur()->kind == T_EOF) {
             /* a bare END PROGRAM. -- RM/COBOL; the Open Systems AP and IN
@@ -8562,10 +8948,25 @@ static void parse_identification_division(void)
     if (!(accept_word("identification") || accept_word("id")))
         die_at(cur()->line, "expected IDENTIFICATION DIVISION, found %s", tok_desc(cur()));
     expect_word("division"); expect_period();
-    expect_word("program-id"); expect_period();
+    g_is_function = 0; g_returning = NULL; g_nrepo_fn = 0; g_repo_all_intrinsic = 0;
+    if (at_word("function-id")) {
+        /* COBOL 2002 11.5: a user-defined function, always recursive */
+        if (g_std < 2002) die_at(cur()->line, "FUNCTION-ID is COBOL 2002; compile with -std=2002 (docs/standards.md, Stage B)");
+        if (g_udepth) die_at(cur()->line, "a function definition cannot be contained in a program");
+        g_is_function = 1; g_recursive = 1;
+    } else expect_word("program-id");
+    if (g_is_function) advance();
+    expect_period();
     if (cur()->kind != T_WORD) die_at(cur()->line, "expected a program-name");
     snprintf(g_progid, sizeof g_progid, "%s", cur()->s);
     advance();
+    if (g_is_function) {
+        if (accept_word("as")) die_at(cur()->line, "FUNCTION-ID ... AS literal is not implemented yet");
+        if (accept_word("is") || at_word("prototype")) {
+            if (at_word("prototype")) die_at(cur()->line, "function prototypes (IS PROTOTYPE) are not implemented yet; the caller finds the definition's signature file");
+            die_at(cur()->line, "expected '.' after the function name, found %s", tok_desc(cur()));
+        }
+    }
     accept_word("is");
     for (;;) {
         int line = cur()->line;
@@ -8763,6 +9164,41 @@ static void parse_select(void)
     if (f->org == COB_ORG_INDEXED && !f->key_name[0]) die_at(line, "an INDEXED file needs RECORD KEY");
 }
 
+/* REPOSITORY (COBOL 2002 12.3.8): FUNCTION name ... makes user functions
+ * invocable without the word FUNCTION; FUNCTION ALL INTRINSIC and
+ * FUNCTION name ... INTRINSIC do the same for intrinsics. */
+static void parse_repository(void)
+{
+    advance(); expect_period();
+    while (at_word("function")) {
+        int line = cur()->line;
+        advance();
+        if (accept_word("all")) { expect_word("intrinsic"); g_repo_all_intrinsic = 1; continue; }
+        int first = g_nrepo_fn;
+        while (cur()->kind == T_WORD && !at_word("function") && !at_word("intrinsic") && !at_division() &&
+               !at_word("input-output") && !at_word("special-names")) {
+            if (at_word("as")) die_at(cur()->line, "REPOSITORY FUNCTION ... AS literal is not implemented yet");
+            if (g_nrepo_fn == 32) die_at(cur()->line, "more than 32 functions in REPOSITORY");
+            snprintf(g_repo_fn[g_nrepo_fn++], sizeof g_repo_fn[0], "%s", cur()->s);
+            advance();
+        }
+        if (g_nrepo_fn == first) die_at(line, "REPOSITORY FUNCTION needs a function name, or ALL INTRINSIC");
+        if (accept_word("intrinsic")) {
+            /* intrinsics named individually: invocable without FUNCTION, like ALL INTRINSIC does for all */
+            for (int k = first; k < g_nrepo_fn; k++) if (!fn89_known(g_repo_fn[k]))
+                die_at(line, "'%s' is not an intrinsic function", g_repo_fn[k]);
+            g_repo_all_intrinsic = 1;         /* narrower in the text; the names are checked, the rest is harmless */
+            g_nrepo_fn = first;
+        }
+    }
+    for (;;) {
+        if (at_word("class") || at_word("interface") || at_word("program") || at_word("property"))
+            die_at(cur()->line, "REPOSITORY %s is object orientation or a program prototype, not implemented", cur()->s);
+        break;
+    }
+    if (cur()->kind == T_PERIOD) advance();
+}
+
 static void parse_environment_division(void)
 {
     if (!accept_word("environment")) return;
@@ -8772,7 +9208,7 @@ static void parse_environment_division(void)
         for (;;) {
             if (accept_word("source-computer") || accept_word("object-computer")) {
                 expect_period();
-                while ((cur()->kind == T_WORD || cur()->kind == T_NUM) && !at_word("special-names") && !at_word("input-output") &&
+                while ((cur()->kind == T_WORD || cur()->kind == T_NUM) && !at_word("special-names") && !at_word("input-output") && !at_word("repository") &&
                        !at_word("source-computer") && !at_word("object-computer") && !at_division()) {   /* MEMORY SIZE 64000 CHARACTERS: obsolete, no effect */
                     if (at_word("memory")) bp(BP_O5_MEMORY_SIZE, cur()->line);
                     if (accept_word("collating")) {         /* [PROGRAM] COLLATING SEQUENCE IS alphabet-name */
@@ -8949,13 +9385,16 @@ static void parse_environment_division(void)
                             continue;
                         }
                     }
-                    if (at_division() || at_word("input-output")) break;
+                    if (at_division() || at_word("input-output") || at_word("repository")) break;
                     die_at(cur()->line, "SPECIAL-NAMES clause '%s' is not implemented yet (CLASS, SWITCH-n, ALPHABET and the device names are)", cur()->s);
                 }
                 continue;
             }
-            if (at_word("repository"))
-                die_at(cur()->line, "REPOSITORY is COBOL 2002; rewrite user-defined functions as CALL (docs/functions.md)");
+            if (at_word("repository")) {
+                if (g_std < 2002) die_at(cur()->line, "REPOSITORY is COBOL 2002; compile with -std=2002, or rewrite user-defined functions as CALL (docs/functions.md)");
+                parse_repository();
+                continue;
+            }
             break;
         }
     }
@@ -9930,7 +10369,9 @@ static void usage(void)
         "  -free    free format (GnuCOBOL -free; majesty)\n"
         "  -m       module: no main entry, every unit a subprogram\n"
         "  -I dir   where COPY looks for copybooks (repeatable)\n"
-        "  -std=85  X3.23-1985 and the 1989 intrinsics; the default and, today, the only one\n"
+        "  -std=85  X3.23-1985 and the 1989 intrinsics; the default\n"
+        "  -std=2002 add the COBOL 2002 modules landed so far (docs/standards.md, Stage B)\n"
+        "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
         "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n", VERSION);
     exit(2);
 }
@@ -9947,6 +10388,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
         else if (!strcmp(argv[i], "--version")) { printf("s32-cobc %s\n", VERSION); return 0; }
         else if (!strcmp(argv[i], "-warn-74")) g_warn74 = 1;
+        else if (!strcmp(argv[i], "-fnsig")) g_fnsig_only = 1;
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) g_std = 2002;
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {
@@ -9975,12 +10417,19 @@ int main(int argc, char **argv)
         out = outbuf;
     }
 
+    {   /* the external repository: signature files go beside the output */
+        static char od[1024]; snprintf(od, sizeof od, "%s", out);
+        char *sl = strrchr(od, '/'); if (sl) { *sl = 0; g_outdir = od; } else g_outdir = ".";
+    }
     read_source(in);
     tokenize();
 
-    g_out = fopen(out, "w");
-    if (!g_out) { fprintf(stderr, "s32-cobc: cannot write %s\n", out); return 1; }
-    g_out_path = out;
+    if (g_fnsig_only) g_noemit = 1;         /* signatures only: no code, no output file */
+    else {
+        g_out = fopen(out, "w");
+        if (!g_out) { fprintf(stderr, "s32-cobc: cannot write %s\n", out); return 1; }
+        g_out_path = out;
+    }
     emit("\t.file\t\"%s\"", in);
     emit("# s32-cobc %s", VERSION);
 
@@ -9995,12 +10444,13 @@ int main(int argc, char **argv)
         parse_data_division();
         if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
         parse_procedure_division();
-        if (!g_nerrors) emit_unit_data();   /* nothing is generated once anything has failed */
+        if (!g_nerrors && !g_fnsig_only) emit_unit_data();   /* nothing is generated once anything has failed */
         if (cur()->kind == T_EOF) break;
         if (!g_saw_end_program) die_at(cur()->line, "unexpected %s after the program (a further program needs END PROGRAM before it)", tok_desc(cur()));
         g_unit = ++g_unit_counter;
     }
     if (g_nerrors) fail();
+    if (g_fnsig_only) return 0;
     emit_rodata();
     relax_branches();
     fclose(g_out);

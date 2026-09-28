@@ -1628,3 +1628,62 @@ any corpus used one.
 smaller for it: a descriptor per program and one block per activation,
 rather than frame-relative addressing threaded through every
 statement.
+
+### 50. Stage B, second module: user-defined functions (2026-09-28)
+
+`FUNCTION-ID`, `REPOSITORY` and function invocation under `-std=2002`.
+docs/functions.md has the design; this is the record.
+
+**Driven by real code.** majesty's date family was written with COBOL
+2002 functions and rewritten to 85 subprograms in its e69e98b. The
+originals, taken from its history unchanged -- twelve functions in
+seven files, invoked bare inside ADD, SUBTRACT ... GIVING, IF and MOVE,
+with literal and expression arguments -- now build with `-std=2002`,
+and `tests/majesty-functions.sh` requires them to match GnuCOBOL byte
+for byte: jerm's 400,001 lines, and the gltrans trio (crgltrans and
+ldgltrans as majesty has them, the original exgltrans) over 3,000
+synthetic transactions. Each build keeps its own indexed format, so the
+three run as a set.
+
+**Decisions.**
+- The external repository (the user's choice of three): a function's
+  compile writes `name.s32fn`; a caller reads it; `-fnsig` writes only
+  signatures, and `compile.sh -std=2002` runs it over every input first.
+  Call sites stay compile-time specialized. The rejected alternatives
+  were GnuCOBOL's runtime descriptors (the generic path standards.md
+  weighs against) and prototypes only (majesty's originals would need
+  edits).
+- A function call is made where it is evaluated: at parse time outside
+  conditions, recorded on the condition and made at each evaluation
+  inside one. VARYING's BY and an AFTER's FROM are refused for now.
+- Arguments follow 8.4.3.2.4 rule 5 and 14.8.2.3: BY REFERENCE for an
+  identifier, which must conform; BY CONTENT for the rest, converted
+  into a copy described like the parameter. One extension, registered
+  in class E: same-size two's-complement binary integers conform
+  (majesty's holidays passes a SIGNED-INT to a COMP-5 parameter).
+- The RETURNING item must be in LINKAGE (14.2.2 rule 5). The first cut
+  allowed WORKING-STORAGE with a copy-out; GnuCOBOL refused the test,
+  the text agreed with it, and the copy-out went.
+
+**Found on the way.**
+- ADD, SUBTRACT, MULTIPLY and DIVIDE with GIVING scanned their operands
+  with no code and kept the scan's operands, so a function there was
+  never called -- jerm's first run computed today as -584389, the bare
+  epoch offset. They re-parse
+  now, and a guard makes any scanned result that reaches code an
+  internal error rather than a silent wrong value.
+- libcob's evaluation stack stopped at 32 entries and the PERFORM stack
+  at 256 frames: fixed limits that recursion turns into depth limits.
+  Both grow now (2002/userfndeep recurses 1000 deep through COMPUTE).
+- GnuCOBOL 4 passes a function's BY CONTENT numeric arguments wrongly:
+  `twice(a + 4)` gives 0, `twice(-7)` 1400, `clamp(42, 0, 100)` 100
+  (docs/oracles.md). A candidate for a clean upstream report.
+
+Tests: 2002/userfn (in-source functions: bare, FUNCTION, conditions,
+PERFORM UNTIL, EVALUATE WHEN, GIVING, recursion, an alphanumeric
+result, a function calling a function), 2002/userfnx (a separately
+compiled library through the repository files), 2002/userfndeep.
+Refusals: function-id-85, and std2002-fn-argcount, -byref,
+-returning-ws, -nosig, -varying-by. `-std=85` output is byte-identical
+on all 227 Open Systems programs; majesty PASS; Open Systems paper
+unchanged.

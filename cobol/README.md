@@ -90,7 +90,10 @@ under `docs/`.
                       (a .link beside one names its subprograms and C);
                       subs/ subprogram units; c/ C called from tests;
                       bad/ programs that must be refused; pictures.txt;
-                      data/ fixtures, copied fresh for every program run
+                      data/ fixtures, copied fresh for every program run;
+                      2002/ COBOL 2002 (Stage B) programs, run with -std=2002;
+                      warn/ -warn-74 behavior points; majesty-functions.sh
+                      checks majesty's original 2002 functions vs GnuCOBOL
     build.sh          host build of s32-cobc + libcob
     compile.sh        .cbl -> .s32x (assemble + link with libcob and libc)
 
@@ -105,11 +108,15 @@ PATH install (optional, for majesty and friends):
     ./compile.sh -free prog.cbl -o prog.s32x     # majesty is free-format
     ./compile.sh -free gl030.cbl clinkages.cbl dateutil.c -I ~/majesty/src/h -o gl030.s32x
     ../tools/emulator/slow32 prog.s32x           # or slow32-fast, slow32-dbt
-    ./tests/run-tests.sh                         # 3 gates; GnuCOBOL oracle from
+    ./tests/run-tests.sh                         # 5 gates; GnuCOBOL oracle from
                                                  # gnucobol:4.0-builder/-runtime
                                                  # (podman/docker), or a host cobc
+    ./tests/majesty-functions.sh                 # 2002 functions on real code
 
-`s32-cobc [-free|-fixed] [-std=85] [-warn-74] [-o out.s] source.cbl`. Fixed format is the
+`s32-cobc [-free|-fixed] [-std=85|-std=2002] [-warn-74] [-fnsig] [-o out.s] source.cbl`.
+`-std=2002` adds the COBOL 2002 modules landed so far (docs/standards.md,
+Stage B); `-fnsig` only writes the user functions' signature files
+(docs/functions.md), which `compile.sh -std=2002` does first. Fixed format is the
 default (the standard's reference format); majesty passes `-free`,
 as it already does to GnuCOBOL.
 

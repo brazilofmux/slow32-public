@@ -1,0 +1,5 @@
+clamp(250) = +00100
+clamp(-5)  = +00100
+clamp(42)  = +10000
+label-of(2) = [two   ]
+label-of(7) = [many  ]

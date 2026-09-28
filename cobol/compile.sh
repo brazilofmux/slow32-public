@@ -40,6 +40,14 @@ main="${mains[0]}"
 . "$HERE/cctool.sh"
 base="${out%.s32x}"
 link=()
+# COBOL 2002 user-defined functions: every source's signatures first (the
+# external repository, name.s32fn beside the output), so a caller finds a
+# function defined in any of the files, whatever their order
+if [ "$std" = "-std=2002" ]; then
+    for f in "$main" "${subs[@]+"${subs[@]}"}"; do
+        "$S32_COBC" $fmt $std $incs -fnsig -o "$base.fnsig.s" "$f"
+    done
+fi
 "$S32_COBC" $fmt $std $incs -o "$base.s" "$main"
 "$S32_AS" "$base.s" "$base.s32o" >/dev/null
 link+=("$base.s32o")

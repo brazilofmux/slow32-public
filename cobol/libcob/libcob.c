@@ -832,18 +832,29 @@ int cob_class_user(const void *vp, const cob_desc *d, const unsigned char *tab)
 /* ---- the numeric stack: ADD/SUBTRACT/MULTIPLY/DIVIDE, COMPUTE later --- */
 
 typedef struct { long long v; int scale; } cob_num;
-static cob_num nstk[96];
-static int nsp;
+/* The evaluation stack grows: a user-defined function (COBOL 2002) runs
+ * with its caller's pending operands still on it, so the depth is the
+ * recursion's, not one statement's (cobol ISSUES-50). */
+static cob_num *nstk;
+static int nsp, ncap;
+
+static void nstk_room(void)
+{
+    if (nsp < ncap) return;
+    ncap = ncap ? 2 * ncap : 64;
+    nstk = realloc(nstk, (size_t)ncap * sizeof *nstk);
+    if (!nstk) cob_fatal("numeric stack: out of memory");
+}
 
 void cob_push(const void *p, const cob_desc *d)
 {
-    if (nsp >= 32) cob_fatal("numeric stack overflow");
+    nstk_room();
     nstk[nsp].v = cob_get_num(p, d); nstk[nsp].scale = d->scale; nsp++;
 }
 
 void cob_push_lit(long long v, int scale)
 {
-    if (nsp >= 32) cob_fatal("numeric stack overflow");
+    nstk_room();
     nstk[nsp].v = v; nstk[nsp].scale = scale; nsp++;
 }
 
@@ -1019,8 +1030,8 @@ int cob_load_int(const void *p, const cob_desc *d)
  * so, pops and returns there.  Nested and recursive PERFORMs behave like
  * GnuCOBOL's frame stack, not like a single exit cell. */
 typedef struct { int exit_id; void *ret; } cob_frame;
-static cob_frame pstk[256];
-static int psp;
+static cob_frame *pstk;                 /* grows, as recursion deepens it */
+static int psp, pcap;
 static int pbase;       /* the first frame of the running program's activation */
 
 /* Paragraph ids are numbered from 1 in every program, so the frames of a
@@ -1092,7 +1103,11 @@ void cob_perform_push(int exit_id, void *ret)
      * slots of the classic runtimes are. */
     for (int k = psp - 1; k >= pbase; k--)
         if (pstk[k].exit_id == exit_id) { psp = k; break; }
-    if (psp >= 256) cob_fatal("PERFORM nesting too deep");
+    if (psp == pcap) {
+        pcap = pcap ? 2 * pcap : 256;
+        pstk = realloc(pstk, (size_t)pcap * sizeof *pstk);
+        if (!pstk) cob_fatal("PERFORM stack: out of memory");
+    }
     pstk[psp].exit_id = exit_id; pstk[psp].ret = ret; psp++;
 }
 
