@@ -1847,3 +1847,38 @@ fatal condition ends the run. No oracle (GnuCOBOL 4 has no exception
 declaratives). -std=85 byte-identical on all 227 Open Systems programs;
 CCVS-85 unchanged; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+### 56. Exception handling, part three: EC-BOUND-SUBSCRIPT and EC-BOUND-REF-MOD (2026-09-28)
+
+With checking on, every subscript computed at run time -- a data item or
+an index-name, with its +/- integer -- is tested against 1 and the
+dimension's OCCURS maximum (2023 8.4.2.3.4 rule 2: the maximum, also
+for an OCCURS DEPENDING ON table) in `emit_ref_addr`, the one place a
+subscript becomes an address: one unsigned compare and branch, nothing
+at all with checking off. A reference modification with a computed
+leftmost position or length is tested by libcob's cob_bound_refmod
+(8.4.2.4): the start within the item, the part not past its end.
+Literal subscripts and positions were already compile-time errors.
+EXCEPTION-STATEMENT now names the statement for every condition raised
+under WITH LOCATION, not only RAISE (the compiler keeps the current
+statement's name). A check is made while the statement's operands are
+identified, so a DISPLAY that has already written a literal before
+reaching the bad subscript has written it -- the statement is
+interrupted there, as the text puts it.
+
+Tests: 2002/ecbound (an unchecked store to elem(9) of five landing in
+the next item, then elem(5) passing and an index-name at 6 raising),
+2002/ecrefmod (s(8:3) and s(8:) passing, s(8:4) raising). No oracle.
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS.
+
+Open: EC-BOUND-ODO (a DEPENDING ON value outside the OCCURS range when
+the table is referenced). And a note found reading the calling
+convention for these checks: registers r11-r28 are callee-saved in the
+SLOW-32 C ABI, but a COBOL program's prologue saves only r11 while the
+generated code uses r12 and r13 as scratch. The C that calls generated
+code today never sees it: the generated main ends in cob_stop_run, which
+exits rather than returning to the libc start-up that called it, and
+the registration (.init_array) and CANCEL reset routines libcob calls
+touch neither register. A C caller of a whole COBOL program, returning,
+would lose r12/r13.

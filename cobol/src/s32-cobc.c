@@ -2699,6 +2699,7 @@ typedef struct {
     int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
+static void emit_refmod_check(const Ref *r, long len, int slot);
 
 static void parse_expr(void);
 static void emit_expr_tokens(int s0, int s1);
@@ -2707,6 +2708,10 @@ static int g_nucall;                    /* user-function calls recorded (cobol I
 static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
 static int ec_size_on(void);
 static void emit_ec_size(void);
+static int ec_on_name(const char *name);
+static void emit_ec_raise(int i);
+static int ec_find(const char *w, int line);
+static char g_cur_stmt[16];              /* the statement being compiled, for EXCEPTION-STATEMENT */
 static int g_recursive, g_std, g_cond_depth;   /* defined below */
 static int g_fnsig_only;                /* -fnsig: write the functions' .s32fn files, compile nothing */
 static void skip_unit_body(void);
@@ -3441,6 +3446,15 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         }
         long adj = r->sub[i].adj - 1;
         if (adj) emit("\taddi r1, r1, %ld", adj);
+        if (ec_on_name("EC-BOUND-SUBSCRIPT")) {
+            /* the occurrence number, now less one, must be below the
+             * dimension's OCCURS maximum (2023 8.4.2.3.4 rule 2) */
+            int Lok = new_label();
+            emit_li("r2", s->dim_count[i]);
+            emit("\tbltu r1, r2, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-BOUND-SUBSCRIPT", 0));
+            emit_label(Lok);
+        }
         emit_li("r2", s->dim_stride[i]);
         emit("\tmul r1, r1, r2");
         emit("\tadd r11, r11, r1");
@@ -3449,6 +3463,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         /* the start expression: onto the numeric stack, then off as an int */
         emit_expr_tokens(r->rm_s0, r->rm_s1);
         emit_call("cob_pop_int");
+        if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
         emit("\taddi r1, r1, -1");
         emit("\tadd r11, r11, r1");
     }
@@ -3526,6 +3541,25 @@ static const char *argreg(int i)
 static void emit_args(const Arg *a, int n);
 static void emit_hot_value(Opnd *o);
 
+/* EC-BOUND-REF-MOD (2023 8.4.2.4): r1 holds the leftmost position; the
+ * part must lie within the item.  len: the literal length, -1 when
+ * omitted, -2 when computed (then in the frame slot emit_rm_start_len
+ * filled).  r1 survives. */
+static void emit_refmod_check(const Ref *r, long len, int slot)
+{
+    int Lok = new_label();
+    emit("\tadd r12, r1, r0");
+    emit("\tadd r3, r1, r0");
+    if (len == -2) emit("\tldw r4, sp+%d", SLOT(slot));
+    else emit_li("r4", len == -3 ? -1 : len);    /* -3: computed, and checked with the length */
+    emit_li("r5", r->sym->size);
+    emit_call("cob_bound_refmod");
+    emit("\tbeq r1, r0, .L%d", Lok);
+    emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
+    emit_label(Lok);
+    emit("\tadd r1, r12, r0");
+}
+
 static void emit_rm_start_len(const Ref *r, int slot)
 {
     if (r->rm_odo) {
@@ -3545,6 +3579,7 @@ static void emit_rm_start_len(const Ref *r, int slot)
     emit("\tstw sp+%d, r1", SLOT(slot));
     if (r->rm_start) emit_li("r1", r->rm_start);
     else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_call("cob_pop_int"); }
+    if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, -2, slot);   /* a computed length */
 }
 
 static void emit_args(const Arg *a, int n)
@@ -7265,15 +7300,25 @@ static void emit_ec_size(void)
         int Lnext = new_label();
         emit_li("r2", k + 1);
         emit("\tbne r13, r2, .L%d", Lnext);
-        char nm[40]; snprintf(nm, sizeof nm, "%s", n[k]);
-        emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
-        emit_li("r4", 0);
-        emit_call("cob_ec_raise");
-        emit_ec_dispatch(i);
+        emit_ec_raise(i);
         emit_jump(Ldone);
         emit_label(Lnext);
     }
     emit_label(Ldone);
+}
+
+static int ec_on_name(const char *name) { return g_std >= 2002 && g_ec_on[ec_find(name, 0)]; }
+
+/* raise condition i here: the last exception status, the statement's
+ * name when WITH LOCATION turned it on, then the declarative and fatality */
+static void emit_ec_raise(int i)
+{
+    char nm[64]; snprintf(nm, sizeof nm, "%s", ec_name(i));
+    emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+    if (g_ec_loc[i] && g_cur_stmt[0]) emit_la("r4", lit_label((const unsigned char *)g_cur_stmt, (int)strlen(g_cur_stmt) + 1));
+    else emit_li("r4", 0);
+    emit_call("cob_ec_raise");
+    emit_ec_dispatch(i);
 }
 
 /* RAISE EXCEPTION exception-name (2023 14.9.29).  Everything is known here:
@@ -7290,11 +7335,7 @@ static void parse_raise(void)
     if (ec_level(i) != 3) die_at(line, "RAISE needs a level-3 exception-name, not %s", ec_name(i));
     advance();
     if (!g_ec_on[i]) return;
-    char nm[64]; snprintf(nm, sizeof nm, "%s", ec_name(i));
-    emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
-    if (g_ec_loc[i]) emit_la("r4", lit_label((const unsigned char *)"RAISE", 6)); else emit_li("r4", 0);
-    emit_call("cob_ec_raise");
-    emit_ec_dispatch(i);
+    emit_ec_raise(i);
 }
 
 static void parse_set(void)
@@ -8996,6 +9037,7 @@ static void parse_statement(void)
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a statement, found %s", tok_desc(t));
     const char *v = t->s;
+    { int k = 0; for (; v[k] && k < 15; k++) g_cur_stmt[k] = (char)toupper((unsigned char)v[k]); g_cur_stmt[k] = 0; }
 
     if (g_std >= 2002 && !strcmp(v, "raise")) { advance(); parse_raise(); return; }
     if (!strcmp(v, "raise")) die_at(t->line, "RAISE is COBOL 2002; compile with -std=2002");

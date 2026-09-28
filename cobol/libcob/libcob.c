@@ -1071,6 +1071,15 @@ void cob_ec_raise(const char *name, const char *stmt)
 
 void cob_ec_clear(void) { ec_any = 0; }
 
+/* EC-BOUND-REF-MOD: 1 when (start:len) leaves an item of size bytes;
+ * len -1 when the length was omitted (the rest of the item) */
+int cob_bound_refmod(int start, int len, int size)
+{
+    if (start < 1 || start > size) return 1;
+    if (len == -1) return 0;
+    return len < 1 || start + len - 1 > size;
+}
+
 /* a fatal exception condition, checked and not resumed: abnormal
  * termination of the run unit (14.6.12) */
 void cob_ec_abort(void)
