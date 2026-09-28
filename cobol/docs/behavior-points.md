@@ -52,11 +52,13 @@ encourage the update.
 Checked 2026-09-28 against the texts. Each row is an item of the 1985
 text's Obsolete Language Element List (FIPS PUB 21-2, XVII-81 ff; the
 item number is in the construct column). That list says obsolete
-elements "will be deleted from the next revision", which was 2002. None
-of them appears anywhere in ISO/IEC 1989:2023, and none is among 2023's
-own removals from 2014 (its Annex E), so each was gone by 2014 at the
-latest. That 2002 itself deleted them is the 1985 text's schedule; the
-2002 edition is not held here to confirm it.
+elements "will be deleted from the next revision", and ISO/IEC
+1989:2002 did so: its Annex F.1 item 1 (page 810) names all eighteen
+items as removed. One part survived a revision longer. 2002 removed
+the Debug module but kept debugging lines and the `DEBUGGING MODE`
+phrase as obsolete (its G.2 item 2), and ISO/IEC 1989:2014 removed
+those (Annex E.2 item 19, page 891), so BP-O12 says 2014. None of the
+eighteen appears in ISO/IEC 1989:2023.
 
 | id | construct | effect here |
 |---|---|---|
@@ -68,19 +70,17 @@ latest. That 2002 itself deleted them is the 1985 text's schedule; the
 | BP-O6 | `LABEL RECORDS` (item 7) | no effect |
 | BP-O7 | `VALUE OF` (item 8) | no effect |
 | BP-O8 | `DATA RECORDS` (item 9) | no effect |
+| BP-O9 | `MOVE ALL` a literal of more than one character to a numeric or numeric-edited item (item 2) | implemented: the literal repeated to the item's character positions, then moved as an unsigned integer (IV-11; the text's example on XVII-82, `ALL "123"` to `99V99` giving 31.00) |
+| BP-O10 | `RERUN` (item 5) | no effect |
+| BP-O11 | `MULTIPLE FILE TAPE` (item 6) | no effect |
+| BP-O12 | debugging lines, `D` in column 7, and `WITH DEBUGGING MODE` (the Debug module, item 18) | comments without the clause; compiled with it (VI-10, rules 4-5) |
 
 Already refused rather than accepted, so not points: section segment
 numbers (Segmentation, item 17), `ENTER` (item 13) with the
 Communication module (items 11 and 12), and `USE FOR DEBUGGING` (the
-Debug module, item 18) -- though that one is refused with a parse
-error, not a message naming it (ISSUES-47).
-
-**On the 1985 list, accepted, and not points yet** (found by the same
-check; ISSUES-47): `MOVE ALL "digits"` to a numeric item (item 2, which
-also computes the wrong value here), `RERUN` (item 5), `MULTIPLE FILE
-TAPE` (item 6), and debugging lines, `D` in column 7 (item 18). Each is
-accepted silently; `-warn-74` should name them. Item 1, double
-character substitution, does not arise on an ASCII machine.
+rest of the Debug module, item 18), refused with a message naming it.
+Item 1, double character substitution, does not arise on an ASCII
+machine. That accounts for all eighteen items of the list.
 
 ## Class N — a word COBOL 85 reserved, used as a name
 
@@ -123,8 +123,12 @@ They do not call `bp()` yet.
 
 Checked 2026-09-28 against ISO/IEC 1989:2023 (a licensed copy, held
 outside the tree; clause numbers are 2023's). The column used to say
-"COBOL 2002" from general knowledge; what 2002 itself had is not
-verified here, only that 2023 has it or not.
+"COBOL 2002" from general knowledge. Re-checked against ISO/IEC
+1989:2002 the same day, once it was held: every answer is the same for
+2002 (free-form reference format 6.3, `STOP RUN WITH ... STATUS`
+14.8.38, `BINARY-CHAR`, `POINTER`, `BY VALUE`, the floating types, no
+`COMP-5` or `COMP-1`), except `LINE SEQUENTIAL`, which 2002 does not
+have and 2023 does.
 
 **What 2023 marks archaic or obsolete** (its Annex F), for the day a
 2023 switch needs points of its own: archaic, `EXIT PROGRAM` and `NEXT
@@ -181,3 +185,10 @@ instead is class O, and in the proportions to expect of 74-era code:
 comment-entries and `LABEL RECORDS` nearly everywhere, and `ALTER`
 concentrated in 11 programs. BP-M1 is still matched by symbol only, so
 a bound reached through `REDEFINES` would not have been seen.
+
+Re-run 2026-09-28 when BP-O9 to BP-O12 were added (ISSUES-47): none of
+the four occurs anywhere in the suite -- no `MOVE ALL` to a numeric
+item, no `RERUN` or `MULTIPLE FILE TAPE`, no debugging line. By then
+227 of the 228 programs compiled (only `in/CPINVBIL`, whose `sexinv`
+copybook is not in the tree, did not), so the older counts above have
+grown with them: BP-O2 443, BP-O6 412, BP-N1 5.

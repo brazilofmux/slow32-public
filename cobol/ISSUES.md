@@ -803,6 +803,10 @@ Kept in `docs/oracles.md` and `docs/dialect.md`, each with a
   same bytes every time. GnuCOBOL accepts and ignores a trailing offset
   or fraction; here anything but the two documented forms is fatal.
   free/fixclock shows the fields both agree on.
+- `MOVE ALL "123"` to a `PIC 99V99` item gives 31.00, the 1985 text's
+  own example (XVII-82, X3J4 interpretation B-23), and `ALL "12"` to
+  `9(5)` gives 12121; GnuCOBOL gives 12.00 and 21212 (ISSUES-47,
+  free/moveall).
 - A print file is a line printer (ISSUES-46): an overprint is a carriage
   return, so the second record lies over the first; GnuCOBOL appends it
   to the line, which leaves it 120 columns to the right. A WRITE with no
@@ -1448,12 +1452,12 @@ start the way both compilers' LINAGE files do. GnuCOBOL's plain print
 files alone start a line lower, unlike its own LINAGE files. Ruled:
 kept.
 
-### 47. Obsolete 1985 elements the registry missed; MOVE ALL "digits" computes the wrong value (2026-09-28)
+### 47. Obsolete 1985 elements the registry missed; MOVE ALL "digits" computed the wrong value (2026-09-28, fixed the same day)
 Found checking docs/behavior-points.md against the texts (the 1985
 Obsolete Language Element List, FIPS PUB 21-2 XVII-81 ff, and
 ISO/IEC 1989:2023). The registry's own claims held or were corrected
-there; these are what it did not cover. Open, unscheduled; no
-preserved program uses any of them.
+there; these are what it did not cover. No preserved program uses any
+of them.
 
 - **`MOVE ALL "digits"` to a numeric item computes the wrong value.**
   Obsolete element 2, which a conforming implementation must still
@@ -1471,6 +1475,25 @@ preserved program uses any of them.
 - **`USE FOR DEBUGGING` is refused with a parse error**, "expected
   'after', found 'for'", where the rule is a message naming what is not
   implemented: the Debug module, obsolete element 18.
+
+**Fixed.** `MOVE ALL` to a numeric or numeric-edited item now repeats
+the literal to the item's character positions and moves the result as
+the alphanumeric literal it is (IV-11): 99.00 and 31.00, the text's
+values; free/moveall, with GnuCOBOL's 12.00 kept as a documented
+divergence (section C). A one-character literal changes too: `ALL "1"`
+to `99V99` is 11.00 by the same rule, where the fill gave 11.11.
+`-warn-74` names the four as BP-O9 to BP-O12. Debugging lines are
+compiled under `WITH DEBUGGING MODE` and are comments without it (VI-10,
+SOURCE-COMPUTER rules 4-5; they were always dropped before):
+fixed/dbgmode and fixed/dbgoff. `USE FOR DEBUGGING` is refused naming
+the Debug module (bad/use-debugging). With these, every item of the
+1985 obsolete list is a point, refused with a message, or (item 1) moot
+on ASCII. The Open Systems suite re-audited: none of the four occurs.
+
+**Lesson.** The registry was built from the constructs the corpora
+carried, and a list assembled that way is exactly as complete as the
+corpora. Checking it against the text's own list found four more in an
+afternoon, and a wrong value under one of them.
 
 Also recorded from the same check: 2023 removed `CLOSE ... WITH LOCK`
 and file status 38 (Annex E), both implemented here, and marks the

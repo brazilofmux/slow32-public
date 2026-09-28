@@ -204,13 +204,15 @@ static void die_at(int line, const char *fmt, ...)
  * table keyed by -std and -warn-74, never at the site.  Class 'M': COBOL 85
  * changed what the construct means and the 85 meaning is applied (a 74
  * program compiles and silently computes something else).  Class 'O': an
- * obsolete element of the 1985 text, deleted in COBOL 2002, accepted here.
+ * obsolete element of the 1985 text, deleted in COBOL 2002 (debugging lines
+ * in 2014), accepted here.
  * Class 'N': a word COBOL 85 reserved, used as a name by a 74-era program
  * and accepted as one (user_word).
  * The ids are stable: the docs, the messages and the tests all cite them. */
 enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_O1_ALTER, BP_O2_COMMENT_ENTRY, BP_O3_STOP_LITERAL, BP_O4_REVERSED,
        BP_O5_MEMORY_SIZE, BP_O6_LABEL_RECORDS, BP_O7_VALUE_OF, BP_O8_DATA_RECORDS,
+       BP_O9_ALL_NUMERIC, BP_O10_RERUN, BP_O11_MULTIPLE_FILE, BP_O12_DEBUG_LINES,
        BP_N1_RESERVED_NAME,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
@@ -226,6 +228,12 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-O6", 'O', "LABEL RECORDS is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
     { "BP-O7", 'O', "VALUE OF is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
     { "BP-O8", 'O', "DATA RECORDS is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+    { "BP-O9", 'O', "ALL with a literal of more than one character, moved to a numeric or numeric-edited item, is obsolete "
+                    "in COBOL 85 and deleted in COBOL 2002; move the digits themselves" },
+    { "BP-O10", 'O', "RERUN is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+    { "BP-O11", 'O', "MULTIPLE FILE TAPE is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here" },
+    { "BP-O12", 'O', "debugging lines and WITH DEBUGGING MODE are obsolete in COBOL 85 and 2002 "
+                     "and deleted in COBOL 2014; make the line code or a comment" },
     { "BP-N1", 'N', "this name became a reserved word in COBOL 85; accepted for a COBOL 74 program, but rename it" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
@@ -314,8 +322,8 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                 if (ind == '*' || ind == '/') text = NULL;         /* comment */
                 else if (ind == 'D' || ind == 'd') {
                     /* a debugging line: text for COPY/REPLACE matching ("as
-                     * if the D did not appear"), dropped afterwards -- there
-                     * is no WITH DEBUGGING MODE here */
+                     * if the D did not appear"), dropped afterwards unless
+                     * the program says WITH DEBUGGING MODE (tokenize) */
                     int cn = len - 7; if (cn > 65) cn = 65; if (cn < 0) cn = 0;
                     text = xstrndup(p + 7, cn); dbg = 1;
                 }
@@ -399,7 +407,7 @@ typedef struct {
     char *s;        /* word (lowercased), number text, literal bytes, picture, op */
     int len;        /* literal byte length (literals may hold NULs) */
     const char *file;
-    int dbg;        /* from a debugging line: matched by COPY REPLACING, then dropped */
+    int dbg;        /* from a debugging line: matched by COPY REPLACING, then dropped without DEBUGGING MODE */
     unsigned char after_comma;   /* a separator comma or semicolon stood before this token */
 } Tok;
 
@@ -878,6 +886,8 @@ static void strip_comment_entries(SrcLine *lines, int n)
     }
 }
 
+static int is_word(Tok *t, const char *w);
+
 static void tokenize(void)
 {
     g_tok_file = g_file;
@@ -887,7 +897,20 @@ static void tokenize(void)
     apply_replace();
     {
         int w = 0;
-        for (int r = 0; r < g_ntok; r++) if (!g_tok[r].dbg) g_tok[w++] = g_tok[r];
+        /* Debugging lines (D in column 7) are compiled under WITH DEBUGGING
+         * MODE and are comments otherwise (X3.23-1985 VI-10, SOURCE-COMPUTER
+         * rules 4-5).  The clause is found here, before parsing, because it
+         * decides which tokens exist, and is taken for the whole source file:
+         * exact for one program and the programs nested in it. */
+        int mode = 0, last = -1;
+        for (int r = 0; r + 1 < g_ntok; r++)
+            if (!g_tok[r].dbg && is_word(&g_tok[r], "debugging") && is_word(&g_tok[r + 1], "mode")) {
+                mode = 1; bp(BP_O12_DEBUG_LINES, g_tok[r].line);
+            }
+        for (int r = 0; r < g_ntok; r++) {
+            if (g_tok[r].dbg && g_tok[r].line != last) { last = g_tok[r].line; if (!mode) bp(BP_O12_DEBUG_LINES, last); }
+            if (mode || !g_tok[r].dbg) g_tok[w++] = g_tok[r];
+        }
         g_ntok = w;
     }
     apply_decimal_point();
@@ -4562,6 +4585,24 @@ static Sym *odo_table_below(Sym *s)
     return NULL;
 }
 
+/* MOVE ALL literal to a numeric or numeric-edited item.  The literal is
+ * repeated to the receiver's character positions and then moved as any
+ * alphanumeric literal is: an unsigned integer, aligned on the decimal
+ * point (X3.23-1985 IV-11).  The text's own example (XVII-82, from X3J4
+ * interpretation B-23): MOVE ALL "123" to a PIC 99V99 item gives 31.00,
+ * the digits of "1231" that fit, not the 12.31 a fill would leave. */
+static void emit_move(Opnd *src, Ref *dst);
+static void emit_move_all_numeric(Opnd *src, Ref *dst, int n)
+{
+    if (src->tok->len > 1) bp(BP_O9_ALL_NUMERIC, src->line);
+    Tok *t = xmalloc(sizeof *t); *t = *src->tok;
+    t->s = xmalloc((size_t)n + 1);
+    for (int i = 0; i < n; i++) t->s[i] = src->tok->s[i % src->tok->len];
+    t->s[n] = 0; t->len = n;
+    Opnd lit = *src; lit.kind = O_STR; lit.tok = t;
+    emit_move(&lit, dst);
+}
+
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
@@ -4636,6 +4677,7 @@ static void emit_move(Opnd *src, Ref *dst)
             emit_args(a, 3); emit_call("cob_fill");
             return;
         }
+        if (src->kind == O_ALL && ned) { emit_move_all_numeric(src, dst, d->size); return; }
         if (src->kind == O_ALL) {
             Arg a[4] = { arg_ref(dst), arg_imm(d->size), arg_label(lit_label((unsigned char *)src->tok->s, src->tok->len)), arg_imm(src->tok->len) };
             emit_args(a, 4); emit_call("cob_fill_all");
@@ -4739,7 +4781,8 @@ static void emit_move(Opnd *src, Ref *dst)
     }
     if (src->kind == O_FIG || src->kind == O_ALL) {
         if (d->usage != U_DISPLAY) die_at(src->line, "%s cannot be moved to the %s item '%s'", src->tok->s, usage_name(d->usage), d->name);
-        Arg a[3] = { arg_ref(dst), arg_imm(d->size), arg_imm(src->kind == O_ALL ? (unsigned char)src->tok->s[0] : fig_byte(src->tok->s)) };
+        if (src->kind == O_ALL) { emit_move_all_numeric(src, dst, d->size); return; }
+        Arg a[3] = { arg_ref(dst), arg_imm(d->size), arg_imm(fig_byte(src->tok->s)) };
         emit_args(a, 3); emit_call("cob_fill");
         return;
     }
@@ -5742,6 +5785,8 @@ static void parse_use(void)
         (void)global;
         return;
     }
+    if (at_word("for") && is_word(cur() + 1, "debugging"))
+        die_at(line, "USE FOR DEBUGGING is the Debug module, obsolete in COBOL 85 (item 18) and not implemented here");
     expect_word("after"); accept_word("standard");
     if (!accept_word("error") && !accept_word("exception")) die_at(line, "USE AFTER ... : expected ERROR or EXCEPTION PROCEDURE (the other USE forms are not implemented)");
     expect_word("procedure"); accept_word("on");
@@ -8735,6 +8780,8 @@ static void parse_environment_division(void)
              * and scarce memory, and are read past */
             expect_period();
             while (!at_division() && cur()->kind != T_EOF) {
+                if (at_word("rerun")) bp(BP_O10_RERUN, cur()->line);
+                if (at_word("multiple") && is_word(cur() + 1, "file")) bp(BP_O11_MULTIPLE_FILE, cur()->line);
                 if (accept_word("same")) {
                     int is_record = accept_word("record");
                     if (!is_record) { accept_word("sort"); accept_word("sort-merge"); }

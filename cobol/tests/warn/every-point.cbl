@@ -1,15 +1,19 @@
 identification division.
 program-id. every-point.
-*> Every behavior point, once each: -warn-74 must name all ten ids,
+*> Every behavior point, once each: -warn-74 must name all fifteen ids,
 *> and a compile without it must be silent.  docs/behavior-points.md
 author. a comment-entry.
 environment division.
 configuration section.
+source-computer. slow32 with debugging mode.
 object-computer. slow32 memory size 64000 characters.
 input-output section.
 file-control.
     select tapefile assign to "every-point.dat"
         organization is sequential.
+i-o-control.
+    rerun on tapefile every 100 records
+    multiple file tape contains tapefile.
 data division.
 file section.
 fd  tapefile
@@ -27,6 +31,7 @@ working-storage section.
     05 cnt pic 99.
     05 elem pic x occurs 1 to 5 depending on n.
 01  src pic x(8) value "abcdefgh".
+01  num pic 99v99.
 procedure division.
 p0.
     perform varying i from 1 by 1 until i > 2
@@ -34,6 +39,7 @@ p0.
         continue
     end-perform
     move src to grp
+    move all "123" to num
     open input tapefile reversed
     close tapefile
     stop "operator".

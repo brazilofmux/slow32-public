@@ -61,13 +61,17 @@ item must know the oracle can be wrong there.
   a 12-page adoption notice only; the 1993 corrections amendment
   (X3.23b-1993) is not public, and neither is any later standard
   (2002, 2014, 2023 are sold, the INCITS adoptions on the ANSI
-  webstore). Found 2026-09-27, before which rulings
+  webstore). Licensed copies of all of them are held outside the tree
+  since 2026-09-28: X3.23b-1993 (bundled in ANSI INCITS 23-1985
+  (R2001)), 1989:2002 with its two 2006 corrigenda, 1989:2014, and
+  1989:2023. Cite them by clause and page, never quote at length.
+  Found 2026-09-27, before which rulings
   here rested on the NIST cases and GnuCOBOL with the text cited from
   knowledge.
 - Implementor modules (LINE SEQUENTIAL, SCREEN SECTION, COMP-5)
   have no ISO text in 1985. LINE SEQUENTIAL and SCREEN SECTION do in
-  ISO/IEC 1989:2023 (a licensed copy is held outside the tree; COMP-5
-  is still absent), which makes 2023 a second source for them --
+  ISO/IEC 1989:2023 (held outside the tree; SCREEN SECTION is already
+  in 2002, LINE SEQUENTIAL arrives in 2023; COMP-5 is still absent), which makes 2023 a second source for them --
   cited by clause, never quoted at length. GnuCOBOL's behaviour plus a note in
   [dialect.md](dialect.md) is the spec, until we write a tighter
   one. Divergences from GnuCOBOL on those modules are product
@@ -105,6 +109,7 @@ agrees with its documented divergence").
 | `free/numalnum` (oracle refuses it) | a non-integer numeric item MOVEd to an alphanumeric item | the digits as stored (what NIST NC105A/NC114M/NC124A test for) | 4.0-early-dev with its default configuration refuses the MOVE ("invalid MOVE statement"), though it runs the NIST programs under their own configuration |
 | `free/notrunc` | an arithmetic result below zero stored into an unsigned COMP-5 item (`SUBTRACT 5 FROM u5` holding 3) | the **magnitude**, 2 (the 85 rule for an unsigned receiver, the same one both agree on for MOVE) | 4294967294, the value modulo 2^32 -- but only in place: `SUBTRACT s9 FROM u5 GIVING u5` with the same operands gives 5. A native-binary fast path showing through, not a rule |
 | `free/sqst` | `OPEN INPUT f REVERSED`, four fixed-length records | the last record first (X3.23 OPEN: REVERSED positions at the end, READ delivers the previous record) | 4.0-early-dev reads forward, REVERSED ignored |
+| `free/moveall` | `MOVE ALL "123"` to a `PIC 99V99` item; `MOVE ALL "12"` to a `PIC 9(5)` item | **31.00**, the text's own example (XVII-82, X3J4 interpretation B-23): the literal repeated to the item's character positions, then moved as an unsigned integer; and **12121** likewise | 12.00 and 21212 |
 | (not a test) | a numeric literal as a CALL argument (`CALL X USING 1234`, by reference or by content) | its digits, read through the callee's picture (the 85 text leaves the literal's class to the callee) | a 4-byte big-endian binary: a `PIC 9(4)` callee reads `0042` |
 | (not a test) | `CALL 'twice'` when the program is `TWICE` | found: program-names are words, case is not significant (the static link folds them the same way) | not found (a case-sensitive symbol lookup) |
 | (not a test) | relative slots on disk | the same 4-byte RDW per slot, zero for an empty slot; slot = 4 + maximum record (docs/indexed.md) | an 8-byte native `size_t` length per slot, 0 for empty |
