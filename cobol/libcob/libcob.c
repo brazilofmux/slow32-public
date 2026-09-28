@@ -615,7 +615,7 @@ const unsigned char *cob_set_collating(const unsigned char *t) { const unsigned 
 
 /* The program registry: every unit registers its PROGRAM-ID and entry
  * from .init_array before main; CALL identifier looks the name up. */
-static struct { const char *name; void *fn; void (*cancel)(void); } cob_progs[256];
+static struct { const char *name; void *fn; void (*cancel)(void); const int *act; } cob_progs[256];
 static int cob_nprogs;
 void cob_register(const char *name, void *fn, void (*cancel)(void))
 {
@@ -639,6 +639,19 @@ void cob_cancel(const unsigned char *p, int len)
     int i = prog_index(p, len);
     if (i >= 0 && cob_progs[i].cancel) cob_progs[i].cancel();
 }
+/* -std=2002: a program's activation descriptor (active count, RECURSIVE),
+ * so a CALL can tell before calling that it would re-enter an active
+ * program that is not recursive (EC-PROGRAM-RECURSIVE-CALL; cobol ISSUES-60) */
+void cob_register_act(const char *name, const int *act)
+{
+    for (int i = 0; i < cob_nprogs; i++) if (cob_progs[i].name == name) { cob_progs[i].act = act; return; }
+}
+int cob_program_busy(const unsigned char *p, int len)
+{
+    int i = prog_index(p, len);
+    return i >= 0 && cob_progs[i].act && cob_progs[i].act[0] > 0 && !cob_progs[i].act[1];
+}
+
 void *cob_resolve(const unsigned char *p, int len, int must)
 {
     int i = prog_index(p, len);

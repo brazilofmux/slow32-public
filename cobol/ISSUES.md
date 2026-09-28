@@ -1949,6 +1949,19 @@ Not done: EC-PROGRAM-RECURSIVE-CALL through the caller's declarative.
 The re-entry is detected in the called program's prologue
 (cob_act_enter), which ends the run whether or not checking is on;
 the condition belongs to the CALL statement, and routing it there needs
-the caller to learn the callee's active state before the call.
+the caller to learn the callee's active state before the call. (Done the same day: ISSUES-60.)
 -std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS.
+
+### 60. EC-PROGRAM-RECURSIVE-CALL raised at the CALL (2026-09-28)
+
+Under -std=2002 every program registers its activation descriptor with
+libcob beside its entry (cob_register_act; a separate call, so -std=85
+output is unchanged). With checking on, a CALL first asks
+cob_program_busy whether the named program is active and not RECURSIVE
+(2023 14.9.4 general rule 3f), and if so raises the condition there, so
+the caller's declarative runs before the run ends (fatal). With
+checking off, the called program's prologue still stops the run, as
+2002/recnot shows. 2002/ecrecur. No oracle. -std=85 byte-identical on
+all 227 Open Systems programs; harness 180/180; majesty PASS;
 majesty-functions PASS.

@@ -8047,6 +8047,17 @@ static void parse_call(void)
             emit_label(Lcall);
         }
     }
+    if (ec_on_name("EC-PROGRAM-RECURSIVE-CALL")) {
+        /* the called program active and not RECURSIVE (14.9.4 general rule
+         * 3f): known here from its registered descriptor, before the call */
+        int Lok = new_label();
+        if (dynamic) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
+        else { emit_la("r3", lit_label((const unsigned char *)t->s, t->len)); emit_li("r4", t->len); }
+        emit_call("cob_program_busy");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-PROGRAM-RECURSIVE-CALL", 0));
+        emit_label(Lok);
+    }
     emit_args(a, n);
     if (dynamic || has_clause || ecnf) emit("\tjalr r31, r12, 0");
     else emit("\tjal r31, %s", link_name(name));
@@ -9629,6 +9640,11 @@ static void parse_procedure_division(void)
         char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit);
         emit_la("r5", cl);
         emit_call("cob_register");
+        if (g_std >= 2002) {                   /* and its activation descriptor, for EC-PROGRAM-RECURSIVE-CALL */
+            char al[32]; snprintf(al, sizeof al, ".Lact%d", g_unit);
+            emit_la("r3", nlab); emit_la("r4", al);
+            emit_call("cob_register_act");
+        }
         emit("\tldw lr, sp+0");
         emit("\taddi sp, sp, 8");
         emit("\tjalr r0, r31, 0");
