@@ -1,0 +1,6 @@
+'b': PICTURE 'q(4)' is not valid
+'count' is a reserved word and cannot name an index
+VALUE literal (7 characters) is longer than 'c' (3)
+'nothing-here' is not declared
+'end-if' without a matching statement
+expected a data-name, found '.'

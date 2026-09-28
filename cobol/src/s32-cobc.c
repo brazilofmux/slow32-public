@@ -46,6 +46,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <setjmp.h>
+#include <unistd.h>
 #include <ctype.h>
 #include <strings.h>
 #include "picture.h"
@@ -189,13 +191,31 @@ static int mnemonic_kind(const char *name)
     return 0;
 }
 
+/* Errors (cobol ISSUES-41).  An error inside a sentence or a data entry
+ * is reported and the parse resumes after it: those two loops set
+ * g_recover, die_at jumps back to them, and the sentence or entry is
+ * dropped.  Anywhere else an error is still the end.  Once anything has
+ * failed nothing is generated -- fail() removes the partial output --
+ * and a cap stops a cascade.  The recipe is cobc370's #41. */
+#define MAX_ERRORS 30
+static jmp_buf *g_recover;           /* the loop that resumes after an error, or NULL */
+static int g_nerrors;
+static FILE *g_out;
+static const char *g_out_path;
+static void fail(void)
+{
+    if (g_out) { fclose(g_out); g_out = NULL; if (g_out_path) unlink(g_out_path); }
+    exit(1);
+}
 static void die_at(int line, const char *fmt, ...)
 {
     va_list ap;
     fprintf(stderr, "%s:%d: error: ", diag_file(line), line);
     va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
     fputc('\n', stderr);
-    exit(1);
+    if (++g_nerrors >= MAX_ERRORS) { fprintf(stderr, "s32-cobc: %d errors; stopping\n", g_nerrors); fail(); }
+    if (g_recover) longjmp(*g_recover, 1);
+    fail();
 }
 
 /* Behavior points (docs/behavior-points.md).  Every place the compiler
@@ -521,6 +541,9 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 while (isdigit((unsigned char)*e)) e++;
                 if (*e == '.' && isdigit((unsigned char)e[1])) { e++; while (isdigit((unsigned char)*e)) e++; }
                 if (is_wordch((unsigned char)*e) && !signed_num) {
+                    /* ".00-EXIT" is a period with no space after it, not a
+                     * word: the loop below would take nothing, forever */
+                    if (c == '.') die_at(line, "a period must be followed by a space or the end of the line");
                     e = p; while (is_wordch((unsigned char)*e)) e++;
                     Tok *w = push_tok(T_WORD, line, p, (int)(e - p));
                     for (char *k = w->s; *k; k++) *k = (char)tolower((unsigned char)*k);
@@ -1153,6 +1176,8 @@ static int sym_idx(Sym *s) { return (int)(s - g_sym); }
 static void unit_range(int level, int *from, int *to);   /* an ancestor's symbol range */
 static const char *file_name_of(int fd);                /* the FD's file-name (File is declared below) */
 
+static char g_poison[64][64]; static int g_npoison;   /* names whose uses fail quietly: data entries dropped after an error, a refused module's registers */
+
 static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
 {
     Sym *found = NULL; int nfound = 0;
@@ -1179,6 +1204,10 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
         }
     }
     if (!nfound) {
+        /* a data entry dropped after an error: its uses fail quietly,
+         * rather than once each */
+        for (int i = 0; i < g_npoison; i++)
+            if (!strcmp(g_poison[i], name) && g_recover) longjmp(*g_recover, 1);
         if (nq) die_at(line, "'%s' is not declared under '%s'", name, quals[0]);
         die_at(line, "'%s' is not declared", name);
     }
@@ -1506,12 +1535,73 @@ static int g_last_item = -1;        /* the previous non-88 item, for 88s */
 static int g_no_values;             /* building an INITIALIZE template: VALUE clauses do not apply */
 static int g_in_linkage = 0;        /* parsing the LINKAGE SECTION */
 
+/* Where a parse resumes after an error in a data entry: the entry's
+ * period, unless something that plainly starts the next entry or section
+ * comes first (a level number opening a line, as when the period was
+ * left off).  An error found after the period -- an entry's own checks
+ * -- resumes where it stands. */
+static int at_division(void);
+static void resync_data(int start)
+{
+    if (g_tp > start && g_tok[g_tp - 1].kind == T_PERIOD) return;
+    if (g_tp == start) advance();
+    while (cur()->kind != T_PERIOD && cur()->kind != T_EOF && !at_division()) {
+        Tok *t = cur(), *n = peek(1);
+        if (t->kind == T_NUM && g_tok[g_tp - 1].line != t->line &&
+            (n->kind == T_PERIOD || (n->kind == T_WORD && (!strcmp(n->s, "filler") || !is_reserved85(n->s))))) return;
+        if (g_tok[g_tp - 1].line != t->line &&
+            (is_word(t, "fd") || is_word(t, "sd") || is_word(t, "rd") || is_word(n, "section"))) return;
+        advance();
+    }
+    if (cur()->kind == T_PERIOD) advance();
+}
+
+static void parse_data_item1(void);
+static int g_entry_level;             /* the level number of the entry being parsed */
 static void parse_data_item(void)
+{
+    jmp_buf jb, *outer = g_recover;
+    int start = g_tp, nsym = g_nsym, last = g_last_item;
+    g_entry_level = -1;
+    if (setjmp(jb)) {
+        /* the entry is dropped; later references to its name fail quietly */
+        g_nsym = nsym; g_last_item = last;
+        g_recover = outer;
+        int lv = g_entry_level;
+        if ((lv >= 1 && lv <= 49) || lv == 77) {
+            /* a FILLER PIC X stands in its place, so the record keeps its
+             * shape: a group whose only item failed is still a group */
+            Sym *f = sym_new();
+            f->level = lv; f->line = g_tok[start].line; f->usage = U_DISPLAY; f->is_linkage = g_in_linkage;
+            f->is_filler = 1; snprintf(f->name, sizeof f->name, "filler");
+            f->has_pic = 1; snprintf(f->pic, sizeof f->pic, "x"); pic_analyse(f->pic, &f->pi);
+            if (g_cur_fd >= 0 && lv == 1) {
+                File *fl = &g_files[g_cur_fd];
+                f->fd = g_cur_fd;
+                if (fl->rec < 0 || fl->rec == sym_idx(f)) fl->rec = sym_idx(f); else f->redefines = fl->rec;
+            }
+            g_last_item = sym_idx(f);
+        }
+        /* every name the entry and the resync passed over: the entry's own,
+         * and any entry swallowed with it when its period was missing */
+        resync_data(start);
+        for (int k = start; k < g_tp; k++)
+            if (g_tok[k].kind == T_WORD && !is_reserved85(g_tok[k].s) && g_npoison < 64)
+                snprintf(g_poison[g_npoison++], sizeof g_poison[0], "%s", g_tok[k].s);
+        return;
+    }
+    g_recover = &jb;
+    parse_data_item1();
+    g_recover = outer;
+}
+
+static void parse_data_item1(void)
 {
     int line = cur()->line;
     int level = parse_level();
     if (level < 0) die_at(line, "expected a level number, found %s", tok_desc(cur()));
     advance();
+    g_entry_level = level;
 
     if (!((level >= 1 && level <= 49) || level == 66 || level == 77 || level == 88))
         die_at(line, "level number %d is not valid", level);
@@ -1936,6 +2026,18 @@ static void init_instance(Sym *rec, int si, int base, int defaults)
     for (int k = 0; k < n; k++) init_one(rec, si, base + k * s->size, defaults);
 }
 
+/* A record's initial image.  An error in its VALUE clauses is reported
+ * and the compile goes on to the next record (ISSUES-41): the images are
+ * independent, and no code is generated once anything has failed. */
+static void init_record(Sym *rec, int si, int defaults)
+{
+    jmp_buf jb, *outer = g_recover;
+    if (setjmp(jb)) { g_recover = outer; return; }
+    g_recover = &jb;
+    init_instance(rec, si, 0, defaults);
+    g_recover = outer;
+}
+
 static void finish_data_division(void)
 {
     build_tree();
@@ -2138,12 +2240,12 @@ static void finish_data_division(void)
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0) continue;
         if (s->image_size < s->size) s->image_size = s->size;
         s->image = xmalloc(s->image_size);
-        if (!s->is_linkage && !s->is_external) init_instance(s, i, 0, 1);
+        if (!s->is_linkage && !s->is_external) init_record(s, i, 1);
     }
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines < 0) continue;
-        init_instance(&g_sym[s->record], i, 0, 0);
+        init_record(&g_sym[s->record], i, 0);
     }
 }
 
@@ -2151,7 +2253,6 @@ static void finish_data_division(void)
 /* Emitter                                                                 */
 /* ====================================================================== */
 
-static FILE *g_out;
 static int g_nlabel;
 
 /* label is heap-allocated, NOT an array in this struct.  lit_label hands
@@ -5785,8 +5886,13 @@ static void parse_use(void)
         (void)global;
         return;
     }
-    if (at_word("for") && is_word(cur() + 1, "debugging"))
+    if (at_word("for") && is_word(cur() + 1, "debugging")) {
+        /* the section's uses of the module's special register stay quiet */
+        static const char *dbg[] = { "debug-item", "debug-line", "debug-name", "debug-sub-1", "debug-sub-2",
+                                     "debug-sub-3", "debug-contents", NULL };
+        for (int i = 0; dbg[i] && g_npoison < 64; i++) snprintf(g_poison[g_npoison++], sizeof g_poison[0], "%s", dbg[i]);
         die_at(line, "USE FOR DEBUGGING is the Debug module, obsolete in COBOL 85 (item 18) and not implemented here");
+    }
     expect_word("after"); accept_word("standard");
     if (!accept_word("error") && !accept_word("exception")) die_at(line, "USE AFTER ... : expected ERROR or EXCEPTION PROCEDURE (the other USE forms are not implemented)");
     expect_word("procedure"); accept_word("on");
@@ -6093,7 +6199,16 @@ static void parse_perform(void)
     if (at_para_name(cur()) && para_find(cur()->s)) {
         body.from = expect_para();
         if (accept_word("thru") || accept_word("through")) body.thru = expect_para();
-    } else body.inline_body = 1;
+    } else {
+        /* a name that is no statement, loop phrase or TIMES count can only
+         * have meant a paragraph */
+        Tok *t = cur(), *n = peek(1);
+        if (t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s) && !is_word(t, "with") && !is_word(t, "test") &&
+            !is_word(t, "until") && !is_word(t, "varying") && !is_word(n, "times") && !is_word(n, "of") && !is_word(n, "in") &&
+            n->kind != T_LP)
+            die_at(t->line, "'%s' is not a paragraph or section", t->s);
+        body.inline_body = 1;
+    }
 
     int test_after = 0;
     if (accept_word("with")) { expect_word("test"); if (accept_word("after")) test_after = 1; else expect_word("before"); }
@@ -6167,6 +6282,9 @@ static void parse_goto(void)
         ps[n++] = expect_para();
     }
     int altered = g_cur_para && is_altered_para(g_cur_para->name);
+    if (!n && !altered && at_para_name(cur()) && !(cur()->kind == T_WORD && (is_verb(cur()->s) || is_terminator(cur()->s))) &&
+        !at_word("depending"))
+        die_at(cur()->line, "'%s' is not a paragraph or section", cur()->s);
     if (!n && !altered) die_at(cur()->line, "GO TO without a procedure-name: the paragraph is not named in any ALTER");
     if (altered && n <= 1 && !at_word("depending")) {
         /* through the paragraph's cell, which ALTER rewrites */
@@ -8087,7 +8205,7 @@ static void compile_nested_unit(void)
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
     g_nreport = 0; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
-    g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
+    g_nsame_groups = 0; g_npoison = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
     g_nsorttab = 0; g_initial = 0;
     parse_identification_division();
     parse_environment_division();
@@ -8114,6 +8232,24 @@ static void compile_nested_unit(void)
     if (g_nsorttab > g_sorttabcap) { g_sorttabcap = g_nsorttab; g_sorttab = realloc(g_sorttab, (size_t)g_sorttabcap * sizeof *g_sorttab); }
     memcpy(g_sorttab, u->sorttab, (size_t)g_nsorttab * sizeof *g_sorttab);
     free(u->sorttab); free(u);
+}
+
+/* Where a parse resumes after an error in a sentence: past its period,
+ * unless a paragraph or section header, or the end of the program or of
+ * DECLARATIVES, comes first (the period was left off). */
+static void resync_sentence(int start)
+{
+    if (g_tp > start && g_tok[g_tp - 1].kind == T_PERIOD) return;
+    if (g_tp == start) advance();
+    while (cur()->kind != T_PERIOD && cur()->kind != T_EOF) {
+        Tok *t = cur(), *n = peek(1);
+        if (t->kind == T_WORD && g_tok[g_tp - 1].line != t->line &&
+            ((n->kind == T_PERIOD && para_find(t->s)) || (is_word(n, "section") && peek(2)->kind == T_PERIOD))) return;
+        if (is_word(t, "end") && (is_word(n, "program") || is_word(n, "declaratives"))) return;
+        if ((is_word(t, "identification") || is_word(t, "id")) && is_word(n, "division")) return;
+        advance();
+    }
+    if (cur()->kind == T_PERIOD) advance();
 }
 
 static void parse_procedure_division(void)
@@ -8251,14 +8387,25 @@ static void parse_procedure_division(void)
         if (t->kind == T_WORD && !is_verb(t->s) && peek(1)->kind == T_NUM && is_word(peek(2), "section"))
             die_at(t->line, "section segment numbers are obsolete in COBOL 85; not supported");
 
-        /* a sentence */
+        /* a sentence; after an error in it, the next one (ISSUES-41) */
         g_sentence_label = -1;
+        jmp_buf jb, *outer = g_recover;
+        int start = g_tp, noemit = g_noemit, slot = g_slot_base, cdepth = g_cond_depth, merge = g_is_merge;
+        if (setjmp(jb)) {
+            g_recover = outer;
+            g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge;
+            g_abbr_op = -1; g_sentence_label = -1;
+            resync_sentence(start);
+            continue;
+        }
+        g_recover = &jb;
         for (;;) {
             parse_statement();
             if (cur()->kind == T_PERIOD) { advance(); break; }
             if (cur()->kind == T_EOF) die_at(cur()->line, "missing '.' at the end of the last sentence");
             if (at_scope_end()) die_at(cur()->line, "'%s' without a matching statement", cur()->s);
         }
+        g_recover = outer;
         if (g_sentence_label >= 0) emit_label(g_sentence_label);
     }
     if (cur_par >= 0) emit_exit_check(cur_par);
@@ -9704,6 +9851,7 @@ int main(int argc, char **argv)
 
     g_out = fopen(out, "w");
     if (!g_out) { fprintf(stderr, "s32-cobc: cannot write %s\n", out); return 1; }
+    g_out_path = out;
     emit("\t.file\t\"%s\"", in);
     emit("# s32-cobc %s", VERSION);
 
@@ -9718,11 +9866,12 @@ int main(int argc, char **argv)
         parse_data_division();
         if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
         parse_procedure_division();
-        emit_unit_data();
+        if (!g_nerrors) emit_unit_data();   /* nothing is generated once anything has failed */
         if (cur()->kind == T_EOF) break;
         if (!g_saw_end_program) die_at(cur()->line, "unexpected %s after the program (a further program needs END PROGRAM before it)", tok_desc(cur()));
         g_unit = ++g_unit_counter;
     }
+    if (g_nerrors) fail();
     emit_rodata();
     relax_branches();
     fclose(g_out);

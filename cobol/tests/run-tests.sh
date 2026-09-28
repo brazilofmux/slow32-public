@@ -15,9 +15,9 @@
 #   (cobc) and gnucobol:4.0-runtime (the built program), under podman or
 #   docker, with the repo bind-mounted at its own path.  A host cobc, if
 #   one exists, is used instead.  No oracle at all is reported, not hidden.
-# Gate 3 (refusals): every tests/bad/*.cbl must be refused, and the message
-#   must contain the text in its .expected file.  Unimplemented is a
-#   diagnostic, never silence.
+# Gate 3 (refusals): every tests/bad/*.cbl must be refused with exactly one
+#   error per line of its .expected, each containing that line's text, and
+#   leave no output file.  Unimplemented is a diagnostic, never silence.
 # Gate 4 (behavior points): every tests/warn/*.cbl must compile under
 #   -warn-74 with exactly the [BP-..] ids its .expected lists (an empty
 #   file: none), and must compile with no stderr at all without the flag.
@@ -290,10 +290,22 @@ for src in "$HERE/bad"/*.cbl; do
     if "$COBC" $flag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
         report "bad/$name" 1 "was accepted"; continue
     fi
-    if grep -qF "$(cat "$exp")" "$W/$name.err"; then
-        report "bad/$name" 0 "$(cut -d: -f3- "$W/$name.err" | head -1 | cut -c1-50)"
-    else
+    # one line of .expected per error, and no
+    # more errors than that: a cascade after the first is a failure too
+    # (ISSUES-41).  A refused compile leaves no output behind.
+    want=$(grep -c . "$exp"); got=$(grep -c ': error: ' "$W/$name.err")
+    miss=""
+    while IFS= read -r line; do
+        [ -n "$line" ] && ! grep -qF -- "$line" "$W/$name.err" && miss="$line" && break
+    done < "$exp"
+    if [ -e "$W/$name.s" ]; then
+        report "bad/$name" 1 "left a partial $name.s behind"
+    elif [ -n "$miss" ]; then
         report "bad/$name" 1 "wrong message: $(head -1 "$W/$name.err")"
+    elif [ "$got" != "$want" ]; then
+        report "bad/$name" 1 "$got errors, want $want: $(sed -n "$((want + 1))p" "$W/$name.err" | cut -c1-60)"
+    else
+        report "bad/$name" 0 "$(cut -d: -f3- "$W/$name.err" | head -1 | cut -c1-50)$([ "$want" -gt 1 ] && echo " (+$((want - 1)) more)")"
     fi
 done
 

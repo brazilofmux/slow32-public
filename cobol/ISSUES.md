@@ -967,41 +967,6 @@ through `cc.s32x`) it runs 46/46 with the oracle agreeing. The kit
 `~/s32x/cc.s32x` (and kagura's copy) was rebuilt with both fixes the
 same evening; probed 2026-08-30 through the kit's own cc/as/ld.
 
-### 41. The compiler reports the first error and stops (2026-09-26)
-
-Not scheduled. Every diagnostic in `s32-cobc` goes through `die_at()`,
-which prints one message and calls `exit(1)`: **582 call sites in 9,508
-lines**. A program with three mistakes yields one message, the author
-fixes it, compiles again, and finds the second. Nothing is wrong with
-any individual message -- the refusals are precise, and gate 3 of the
-harness checks thirteen of them -- but the compile is one error long.
-
-Found by comparing against cobc370, which solved it as its own #41 on
-2026-09-26, and whose recipe transfers as a design even though no line
-of its code can:
-
-- an error inside a **sentence** or inside a **data entry** is reported
-  and parsing resumes at the next period (or where it stands, when the
-  error came after the period, as an entry's checks do);
-- the failed sentence or entry is dropped;
-- **nothing is generated once anything has failed**, so a partial
-  object never escapes;
-- a cap (thirty there) stops a cascade from filling the listing;
-- everywhere else an error is still the end: `setjmp` around the two
-  loops, `longjmp` in the fatal path. The recovery is deliberately
-  narrow, at the two places the language gives an unambiguous
-  resynchronisation point.
-
-Their fixture is `bad-multi`, three mistakes expecting three messages.
-The same shape would work here, alongside the existing `tests/bad/*`.
-
-Why it is not scheduled: no program has asked. The corpus compiles 56
-of 56, CCVS-85 compiles 303 of 303, and the Open Systems suite is in;
-a one-error compile costs an author iterations, not correctness. It
-belongs on the list because 582 fatal sites is the kind of thing that
-only gets more expensive, and because the two trees now disagree on a
-point of craft where the other one is right.
-
 ## E. Closed, with the lesson
 
 - **Out-of-line `PERFORM` swallowed the enclosing `END-PERFORM`**
@@ -1313,6 +1278,82 @@ suites agree across the interpreter, fast and DBT.
 Separately, an RM program that never clears (GLENTER opens with an ERASE EOS
 from line 16 and paints over lines 1-13) relied on runcobol clearing the
 screen at start; the deployment's runcobol shim does that, not the runtime.
+
+### 41. The compiler reported the first error and stopped (2026-09-26, fixed 2026-09-28)
+
+Every diagnostic in `s32-cobc` goes through `die_at()`,
+which prints one message and calls `exit(1)`: **582 call sites in 9,508
+lines**. A program with three mistakes yields one message, the author
+fixes it, compiles again, and finds the second. Nothing is wrong with
+any individual message -- the refusals are precise, and gate 3 of the
+harness checks thirteen of them -- but the compile is one error long.
+
+Found by comparing against cobc370, which solved it as its own #41 on
+2026-09-26, and whose recipe transfers as a design even though no line
+of its code can:
+
+- an error inside a **sentence** or inside a **data entry** is reported
+  and parsing resumes at the next period (or where it stands, when the
+  error came after the period, as an entry's checks do);
+- the failed sentence or entry is dropped;
+- **nothing is generated once anything has failed**, so a partial
+  object never escapes;
+- a cap (thirty there) stops a cascade from filling the listing;
+- everywhere else an error is still the end: `setjmp` around the two
+  loops, `longjmp` in the fatal path. The recovery is deliberately
+  narrow, at the two places the language gives an unambiguous
+  resynchronisation point.
+
+Their fixture is `bad-multi`, three mistakes expecting three messages.
+The same shape would work here, alongside the existing `tests/bad/*`.
+
+Why it is not scheduled: no program has asked. The corpus compiles 56
+of 56, CCVS-85 compiles 303 of 303, and the Open Systems suite is in;
+a one-error compile costs an author iterations, not correctness. It
+belongs on the list because 582 fatal sites is the kind of thing that
+only gets more expensive, and because the two trees now disagree on a
+point of craft where the other one is right.
+
+**Fixed**, on cobc370's recipe. `die_at` counts the error and, inside
+a sentence or a data entry, jumps back to the loop that set
+`g_recover`; the sentence or entry is dropped and the parse resumes
+after its period. Resynchronisation also stops at the next paragraph
+or section header, or at a level number opening a line, so a missing
+period costs one message, not the next sentence's too. VALUE clauses,
+checked a record at a time when the data division is finished, recover
+per record. Everywhere else an error is still the end, and a cap of
+thirty stops a cascade. Once anything has failed nothing is generated:
+the partial `.s` is removed (before, a refused compile left one behind).
+
+Two measures keep the messages to one per mistake. A dropped data
+entry leaves a `FILLER PIC X` at its level, so a group whose only item
+failed stays a group; and its name, with every name the resync skipped,
+is poisoned -- a later use drops its sentence without a message. The
+`USE FOR DEBUGGING` refusal poisons the Debug module's registers the
+same way. PERFORM and GO TO naming a paragraph that does not exist now
+say so, rather than "is not a COBOL verb" and "GO TO without a
+procedure-name".
+
+Gate 3 now holds one line of `.expected` per error, requires exactly
+that many, and fails a refused compile that leaves output behind. That
+strictness found three cascades in the existing fixtures (rw-data,
+rw-index, use-debugging), each fixed. New fixtures: bad/multi-error
+(six mistakes, six messages), bad/missing-period, bad/no-paragraph.
+
+Fuzzed against the Open Systems suite: 1,500 copies with one to six
+words deleted, replaced or unpunctuated, compiled under AddressSanitizer
+and UBSan -- no crash, hang, sanitizer report or leftover output. The
+first round found a tokenizer bug older than this work: a period glued
+to a number and a word (`.00-EXIT`, a mangled paragraph header) pushed
+empty tokens until memory ran out. It is now the period error it
+always should have been. Valid programs are unaffected: all 227
+compilable Open Systems programs produce byte-identical assembly.
+
+**Lesson.** The strict gate paid for itself on its first run: the
+old one matched any line of `.expected`, so the three cascades it
+found would have passed. And the fuzz found a real bug in the first
+600 cases, in code nobody had touched -- recovery is what lets damaged
+input reach the corners.
 
 ### 42. SORT/MERGE with more than one GIVING file wrote only the first (2026-09-05, found and fixed 2026-09-27)
 The budgeted external sort (`xsort.h`, 2d76bc1c, 2026-09-05) made the
