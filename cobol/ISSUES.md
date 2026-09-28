@@ -2275,3 +2275,33 @@ short one, invalid UTF-8 unchecked and checked, end of input, COMMAND-
 LINE, ARGUMENT-VALUE and DATE. bad/std2002-nat-accept-at. Harness
 210/210; -std=85 byte-identical on all 227 Open Systems programs;
 majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
+
+### 71. NATIONAL, part three: national groups (2026-09-28)
+
+`GROUP-USAGE IS NATIONAL` (2023 13.18.29). A national group is treated
+as an elementary national item of its length (general rule 2b), except
+where the text processes it as a group.
+
+- **One predicate.** `sym_is_national` answers for both an elementary
+  PIC N item and a national group, and the national checks from
+  ISSUES-62 to -70 now use it. That covers MOVE, comparison, reference
+  modification, INSPECT, STRING, UNSTRING and ACCEPT. A national
+  group's descriptor is national, so the runtime needed nothing.
+- **The rules.** GROUP-USAGE applies to a group only (rule 1), with no
+  USAGE clause of its own (rule 3). A subordinate group inherits it, and
+  every elementary item under it must be national, which today means
+  PICTURE N. VALUE takes a national literal, as for PIC N.
+- **As a group.** INITIALIZE (14.9.20.4 rule 1) and MOVE CORRESPONDING
+  (the MOVE statement's note 5) keep processing it as a group, and an
+  alphanumeric group receives its bytes (14.9.25 rule 4).
+- **GROUP-USAGE BIT** is refused by name: it is the BOOLEAN module.
+
+Found on the way: when a data entry that turned out to be a group was
+refused, the FILLER PIC X put in its place (the recovery from ISSUES-41)
+then drew a second error, "'filler' is a group and cannot have a
+PICTURE". The stand-in is marked now and drops its PICTURE quietly.
+
+2002/natgroup (no oracle). Refusals: std2002-natgroup-alnum, -elem,
+-usage, std2002-groupusage-bit, groupusage-85. Harness 216/216; -std=85
+byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

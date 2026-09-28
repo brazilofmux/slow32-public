@@ -1,0 +1,10 @@
+moved: [日本   ] [日本 ] [  ]
+from alphanumeric: [abcde]
+compare: equal
+length: 5 10
+reference-modified: [bcd]
+inspect: 01
+value: [東京都港区]
+initialized: [     ]
+corresponding: [東京都  ]
+a plain group receives the bytes

@@ -48,9 +48,8 @@ A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
 Refused until later parts: ACCEPT of a national item at a screen
-position; numeric and edited national
-pictures; national groups (GROUP-USAGE NATIONAL); national fields in
-Report Writer and SCREEN SECTION.
+position; numeric and edited national pictures; GROUP-USAGE BIT (the
+BOOLEAN module); national fields in Report Writer and SCREEN SECTION.
 
 ## What part two covers (ISSUES-64)
 
@@ -119,6 +118,19 @@ text as UTF-8, so the item is truncated or padded by character. A byte
 that begins no UTF-8 character becomes U+FFFD and, with checking on,
 EC-DATA-CONVERSION, as for a MOVE. At end of input the item is left as
 it was, and nothing is raised.
+
+## National groups (ISSUES-71)
+
+`GROUP-USAGE IS NATIONAL` (2023 13.18.29) makes a group a national
+group: treated as one national item described PICTURE N(m), for MOVE,
+comparison, DISPLAY, LENGTH, reference modification, INSPECT, STRING and
+UNSTRING, and with a national literal as its VALUE. INITIALIZE and MOVE
+CORRESPONDING process it as a group (14.9.20.4 rule 1, the MOVE
+statement's note 5); an alphanumeric group receives its bytes. Its
+subordinate groups are national groups, and every elementary item under
+it must be PICTURE N; a signed numeric one would need SIGN SEPARATE and
+USAGE NATIONAL, which waits for numeric national. The subject is a
+group, with no USAGE clause of its own (syntax rules 1 and 3).
 
 ## Case (ISSUES-66)
 

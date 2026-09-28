@@ -1355,6 +1355,8 @@ typedef struct Sym {
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
     int  nat_usage;                 /* USAGE NATIONAL was written (cobol ISSUES-62) */
+    int  natgroup;                  /* GROUP-USAGE NATIONAL, written or inherited: a national group (cobol ISSUES-71) */
+    int  standin;                   /* the FILLER PIC X put in place of an entry refused with an error */
     int  ftemp_scan;                /* ... made while scanning ahead (no code): must never be emitted */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
@@ -1802,7 +1804,7 @@ static void parse_data_item(void)
             Sym *f = sym_new();
             f->level = lv; f->line = g_tok[start].line; f->usage = U_DISPLAY; f->is_linkage = g_in_linkage; f->is_local = g_in_local;
             f->is_filler = 1; snprintf(f->name, sizeof f->name, "filler");
-            f->has_pic = 1; snprintf(f->pic, sizeof f->pic, "x"); pic_analyse(f->pic, &f->pi);
+            f->has_pic = 1; snprintf(f->pic, sizeof f->pic, "x"); pic_analyse(f->pic, &f->pi); f->standin = 1;
             if (g_cur_fd >= 0 && lv == 1) {
                 File *fl = &g_files[g_cur_fd];
                 f->fd = g_cur_fd;
@@ -1958,6 +1960,16 @@ static void parse_data_item1(void)
             u = accept_word("unsigned") ? U_UBCHAR : U_BCHAR;
             if (u == U_BCHAR) accept_word("signed");
             s->usage = u; s->has_usage = 1;
+            continue;
+        }
+        else if (!strcmp(t->s, "group-usage")) {
+            /* GROUP-USAGE IS NATIONAL (2023 13.18.29): the group is treated
+             * as one national item; checked once the tree is built */
+            if (g_std < 2002) die_at(t->line, "GROUP-USAGE is COBOL 2002; compile with -std=2002");
+            advance(); accept_word("is");
+            if (accept_word("bit")) die_at(t->line, "GROUP-USAGE BIT needs the BOOLEAN module, not implemented yet");
+            if (!accept_word("national")) die_at(t->line, "expected NATIONAL or BIT after GROUP-USAGE");
+            s->natgroup = 2;                    /* 2: written here; 1: inherited */
             continue;
         }
         else if (!strcmp(t->s, "national")) {
@@ -2130,6 +2142,18 @@ static void build_tree(void)
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->is_index || s->is_rename) continue;
+        /* a national group (2023 13.18.29.3): a group, with no USAGE of its
+         * own; its subordinate groups are national groups and its
+         * elementary items national.  Parents precede children here. */
+        if (s->natgroup == 2 && !s->is_group) die_at(s->line, "GROUP-USAGE: '%s' is not a group (2023 13.18.29.3 rule 1)", s->name);
+        if (s->natgroup == 2 && (s->has_usage || s->nat_usage)) die_at(s->line, "GROUP-USAGE NATIONAL: '%s' cannot have a USAGE clause too (2023 13.18.29.3 rule 3)", s->name);
+        if (!s->natgroup && s->parent >= 0 && g_sym[s->parent].natgroup) {
+            if (s->is_group) s->natgroup = 1;
+            else if (s->pi.category != PIC_NATIONAL)
+                die_at(s->line, "'%s' is in the national group '%s' and must be national, PICTURE N (2023 13.18.29.3 rule 3)",
+                       s->name, g_sym[s->parent].name);
+        }
+        if (s->is_group && s->has_pic && s->standin) s->has_pic = 0;      /* it stood in for a group: no second error */
         if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
         if (s->is_group && s->has_usage) {
             /* USAGE on a group is every subordinate's that does not say
@@ -2244,7 +2268,10 @@ static void init_one(Sym *rec, int si, int base, int defaults)
     Sym *s = &g_sym[si];
     unsigned char *p = rec->image + base;
     if (s->is_group) {
-        if (s->value_tok && !g_no_values) {
+        if (s->natgroup && s->value_tok && !g_no_values) {
+            init_national(s, p, 1);                 /* a national literal, as for PIC N (13.18.63 rule 5) */
+            defaults = 0;
+        } else if (s->value_tok && !g_no_values) {
             Tok *v = s->value_tok;
             if (v->kind != T_STR && !s->value_fig) die_at(v->line, "VALUE of the group '%s' must be a nonnumeric literal", s->name);
             if (s->value_fig) memset(p, fig_byte(v->s), s->size);
@@ -2721,7 +2748,8 @@ static int sym_desc(Sym *s)
 {
     if (s->desc_id >= 0) return s->desc_id;
     Desc d; memset(&d, 0, sizeof d);
-    if (s->is_group) { d.cat = COB_GROUP; d.usage = COB_U_DISPLAY; }
+    if (s->natgroup) { d.cat = COB_NATIONAL; d.usage = COB_U_DISPLAY; }   /* treated as PIC N(m) (13.18.29.4 rule 2b) */
+    else if (s->is_group) { d.cat = COB_GROUP; d.usage = COB_U_DISPLAY; }
     else {
         switch (s->pi.category) {
         case PIC_ALPHABETIC: d.cat = COB_ALPHA; break;
@@ -2954,6 +2982,10 @@ static int ref_is_national(const Ref *r);
 static int ref_static_len(const Ref *r);
 static void nat_fig_opnd(Opnd *o, int nbytes);
 
+/* national: an elementary PIC N item, or a national group, which is
+ * treated as one (2023 13.18.29.4 rule 2b) */
+static int sym_is_national(const Sym *s) { return s->natgroup || (!s->is_group && s->pi.category == PIC_NATIONAL); }
+
 static int is_int_item(Sym *s)
 {
     return is_numeric_sym(s) && s->pi.scale == 0;
@@ -3082,7 +3114,7 @@ static void parse_ref(Ref *r)
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
         advance();
         r->rm = 1; r->rm_l0 = -1;
-        r->rm_nat = !r->sym->is_group && r->sym->pi.category == PIC_NATIONAL;   /* 2023 8.4.2.4: character positions */
+        r->rm_nat = sym_is_national(r->sym);   /* 2023 8.4.2.4: character positions; a national group as elementary */
         if (cur()->kind == T_NUM && peek(1)->kind == T_COLON) {
             NumLit n; numlit_parse(cur(), &n);
             if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the start of a reference modification must be a positive integer");
@@ -5790,10 +5822,10 @@ static int opnd_is_national(const Opnd *o)
 {
     if (o->kind == O_FUNC) return o->fnat;
     if (o->kind == O_STR || o->kind == O_ALL) return o->tok && o->tok->nat;
-    return o->kind == O_REF && !o->ref.sym->is_group && o->ref.sym->pi.category == PIC_NATIONAL;
+    return o->kind == O_REF && sym_is_national(o->ref.sym);
 }
 
-static int ref_is_national(const Ref *r) { return !r->sym->is_group && r->sym->pi.category == PIC_NATIONAL; }
+static int ref_is_national(const Ref *r) { return sym_is_national(r->sym); }
 
 /* STRING, UNSTRING: when one operand is national all are (2023 14.9.43.3
  * rule 1, 14.9.48.3 rule 3); a figurative constant takes the class */
@@ -5846,7 +5878,7 @@ static void nat_fig_opnd(Opnd *o, int nbytes)
 static int emit_move_national(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
-    int dn = !d->is_group && d->pi.category == PIC_NATIONAL, sn = opnd_is_national(src);
+    int dn = sym_is_national(d), sn = opnd_is_national(src);
     if (!dn && !sn) return 0;
     if (!dn) {
         if (d->is_group) return 0;                  /* a group receives the bytes (14.9.25 general rule 4) */
@@ -9377,7 +9409,7 @@ static void parse_inspect_1(void)
 {
     Ref item; parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
-    g_insp_nat = !item.sym->is_group && item.sym->pi.category == PIC_NATIONAL;
+    g_insp_nat = sym_is_national(item.sym);
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     Opnd itemo = ref_opnd(&item);
     operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
