@@ -2355,3 +2355,33 @@ follows rule 12; nat-unstring-num now refuses only a DISPLAY numeric
 receiver. Harness 221/221; -std=85 byte-identical on all 227 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+### 73. NATIONAL, part three: national-edited pictures (2026-09-28)
+
+PICTURE N with B, 0 and / (2023 13.18.40).
+
+- **Compiler.** `nat_picture` takes the insertion symbols and flattens
+  the picture into one symbol per character position; `pi.edited` marks
+  it, and the descriptor carries the pattern as it does for
+  alphanumeric-edited. The category stays national, so every national
+  path (comparison, DISPLAY, INSPECT, reference modification, sending)
+  takes it without change. A figurative constant or ALL literal moved to
+  one becomes a national literal of the item's length and goes through
+  the editing move. An UNSTRING receiver may not be national-edited
+  (rule 4); STRING already refused edited receivers.
+- **Runtime.** `move_to_national` edits when the receiver's descriptor
+  has a pattern: the sending characters fill the N positions, and B, 0
+  and / insert U+0020, U+0030 and U+002F.
+
+A slip on the way: the first splice of the new `nat_picture` was bounded
+by the first occurrence of `parse_data_item1`, which is its forward
+declaration, so the edit duplicated code and the build failed. The file
+was restored from HEAD, which had nothing else pending, and the edit
+redone bounded by the function's own closing brace.
+
+2002/natedit (no oracle): a date picture, space and zero insertion, an
+integer sender, SPACES and ALL, the item as a sender, VALUE, LENGTH,
+INSPECT. bad/std2002-nat-edited, which was the refusal, now checks the
+UNSTRING rule. Harness 222/222; -std=85 byte-identical on all 227 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.

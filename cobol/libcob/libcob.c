@@ -668,6 +668,15 @@ static void move_to_national(const void *src, const cob_desc *sd, void *dst, con
     if (max > 256) { u = malloc((size_t)max * sizeof *u); if (!u) cob_fatal("out of memory"); }
     int n = as_national(src, sd, u, max);
     unsigned char *q = dst;
+    if (dd->pic && dd->pic[0]) {
+        /* national-edited (cobol ISSUES-73): the characters fill the N
+         * positions left to right; B, 0 and / are inserted (13.18.40) */
+        int si = 0, o = 0;
+        for (const char *p = dd->pic; *p && o < dn; p++, o++)
+            nat_put(q, o, *p == 'B' ? 0x20 : *p == '0' ? 0x30 : *p == '/' ? 0x2F : si < n ? u[si++] : 0x20);
+        if (u != stk) free(u);
+        return;
+    }
     int just = dd->flags & COB_F_JUST, off = 0;
     if (just && n < dn) off = dn - n;
     const unsigned short *from = u;

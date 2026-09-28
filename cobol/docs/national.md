@@ -48,7 +48,7 @@ A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
 Refused until later parts: ACCEPT of a national item at a screen
-position; national-edited pictures (N with B, 0 or /); GROUP-USAGE BIT (the
+position; GROUP-USAGE BIT (the
 BOOLEAN module); national fields in Report Writer and SCREEN SECTION.
 
 ## What part two covers (ISSUES-64)
@@ -152,6 +152,16 @@ or numeric-edited receiver is valid, and a numeric noninteger to a
 national receiver is not. A signed numeric item in a national group
 needs SIGN SEPARATE (13.18.29.3 rule 3); A and X pictures take no
 USAGE NATIONAL (rule 12).
+
+## National-edited (ISSUES-73)
+
+A picture of N with the insertion symbols B, 0 and / (2023 13.18.40) is
+national-edited: class national, so it compares, displays, is
+inspected and sends as its characters, insertions included. As a MOVE
+receiver its N positions are filled left to right, and B, 0 and / put a
+national space, zero and stroke in theirs. A figurative constant or ALL
+literal is expanded to the item's length and edited too. It is not a
+STRING or UNSTRING receiver (14.9.43.3 rule 5, 14.9.48.3 rule 4).
 
 ## Case (ISSUES-66)
 

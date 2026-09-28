@@ -1841,30 +1841,29 @@ static void parse_data_item(void)
  * repeated, each character two bytes.  Other pictures are pic_analyse's. */
 static int nat_picture(const char *pic, PicInfo *pi, int line)
 {
-    int n = 0, edit = 0, other = 0;
-    for (const char *p = pic; *p; p++) {                /* national-edited: N with B, 0 or / (2023 13.18.40) */
-        if (*p == '(') { while (*p && *p != ')') p++; if (!*p) break; continue; }   /* a repeat count */
-        if (*p == 'n' || *p == 'N') n++;
-        else if (strchr("bB0/", *p)) edit++;
-        else other++;
-    }
-    if (n && edit && !other) die_at(line, "a national-edited PICTURE ('%s') is not implemented yet", pic);
-    n = 0;
+    /* with B, 0 or / as well, national-edited (cobol ISSUES-73); the
+     * flattened pattern holds one symbol per character position */
+    char flat[PIC_MAXPAT]; int n = 0, nn = 0, edit = 0;
     for (const char *p = pic; *p; ) {
-        if (*p != 'n' && *p != 'N') return 0;
+        char c = (char)toupper((unsigned char)*p);
+        if (c != 'N' && c != 'B' && c != '0' && c != '/') return 0;
         p++;
+        long k = 1;
         if (*p == '(') {
-            char *e; long k = strtol(p + 1, &e, 10);
+            char *e; k = strtol(p + 1, &e, 10);
             if (*e != ')' || k < 1) return 0;
-            n += (int)k; p = e + 1;
-        } else n++;
+            p = e + 1;
+        }
+        if (c == 'N') nn += (int)k; else edit = 1;
+        for (long q = 0; q < k; q++) { if (n < PIC_MAXPAT - 1) flat[n] = c; n++; }
     }
-    if (!n) return 0;
+    if (!nn) return 0;                               /* B, 0 and / alone are no national picture */
     if (g_std < 2002) die_at(line, "PICTURE N (national) is COBOL 2002; compile with -std=2002");
+    if (edit && n >= PIC_MAXPAT) die_at(line, "a national-edited PICTURE longer than %d characters is not implemented", PIC_MAXPAT - 1);
     memset(pi, 0, sizeof *pi);
-    pi->category = PIC_NATIONAL; pi->bytes = 2 * n;
+    pi->category = PIC_NATIONAL; pi->bytes = 2 * n; pi->edited = edit;
     pi->patlen = n < PIC_MAXPAT - 1 ? n : PIC_MAXPAT - 1;
-    memset(pi->pat, 'N', (size_t)pi->patlen);
+    memcpy(pi->pat, flat, (size_t)pi->patlen);
     return 1;
 }
 
@@ -5964,6 +5963,22 @@ static int emit_move_national(Opnd *src, Ref *dst)
     /* a reference-modified receiver: its bytes, known here or at run time */
     Arg dlen = !dst->rm ? arg_imm(d->size) : dst->rm_len ? arg_imm(2 * dst->rm_len) : arg_rlen(dst);
     Arg ddesc = !dst->rm ? arg_desc(sym_desc(d)) : dst->rm_len ? arg_desc(nat_desc(2 * (int)dst->rm_len)) : arg_rdesc(dst);
+    if ((src->kind == O_FIG || src->kind == O_ALL) && d->pi.edited && !dst->rm) {
+        /* national-edited: the figurative as a national literal of the
+         * item's characters, which the move then edits (cobol ISSUES-73) */
+        Opnd lit = *src;
+        if (lit.kind == O_ALL && !lit.tok->nat) {
+            unsigned char *conv = xmalloc((size_t)lit.tok->len * 4 + 2); int len = utf8_to_utf16be((const unsigned char *)lit.tok->s, lit.tok->len, conv);
+            if (len < 0) die_at(src->line, "an ALL literal moved to a national item must be UTF-8 text");
+            Tok *t = xmalloc(sizeof *t); *t = *lit.tok; t->s = (char *)conv; t->len = len; t->nat = 1; lit.tok = t;
+        }
+        nat_fig_opnd(&lit, d->size);
+        Arg a[4];
+        opnd_args(&lit, &a[0], &a[1], d->size, 0);
+        a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
+        emit_args(a, 4); emit_call("cob_move");
+        return 1;
+    }
     if (src->kind == O_FIG && dst->rm) {
         unsigned u = nat_fig(src->tok->s); unsigned char two[2] = { (unsigned char)(u >> 8), (unsigned char)u };
         Arg a[4] = { arg_ref(dst), dlen, arg_label(lit_label(two, 2)), arg_imm(2) };
@@ -8593,6 +8608,8 @@ static void parse_unstring_1(void)
             if (rcv[i].sym->usage != U_NATIONAL)
                 die_at(rcv[i].line, "UNSTRING: a numeric receiver of national data must be USAGE NATIONAL (2023 14.9.48.3 rule 4)");
         } else nat_class_check(&ro, nat, "UNSTRING", urule);
+        if (nat && rcv[i].sym->pi.edited)
+            die_at(rcv[i].line, "UNSTRING: a national-edited receiver is not allowed (2023 14.9.48.3 rule 4)");
         if (has_d[i]) { ro.ref = dlm[i]; ro.line = dlm[i].line; nat_class_check(&ro, nat, "UNSTRING", urule); }
     }
 
