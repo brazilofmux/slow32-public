@@ -1,0 +1,6 @@
+moved: 2026-09-28
+d1 = d2
+d1 < d2
+-1.00 < 0.50: element by element, not bytes
+event: 2026 +000.50 USD
+initialized: +000.00 [   ]

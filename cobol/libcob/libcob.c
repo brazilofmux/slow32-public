@@ -1034,6 +1034,19 @@ int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd
     return cmp_bytes(pa, na, pb, nb);
 }
 
+/* two strongly-typed groups of one type (2023 8.8.4.2.12): each elementary
+ * item compared in order, by its own rules, until a pair differs (cobol
+ * ISSUES-80); tab holds (offset, descriptor) pairs */
+int cob_cmp_struct(const void *a, const void *b, const unsigned *tab, int n)
+{
+    for (int i = 0; i < n; i++) {
+        const cob_desc *d = (const cob_desc *)(size_t)tab[2 * i + 1];
+        int r = cob_cmp((const char *)a + tab[2 * i], d, (const char *)b + tab[2 * i], d);
+        if (r) return r;
+    }
+    return 0;
+}
+
 /* class conditions: 0 NUMERIC, 1 ALPHABETIC, 2 ALPHABETIC-LOWER, 3 ALPHABETIC-UPPER */
 int cob_class(const void *vp, const cob_desc *d, int kind)
 {

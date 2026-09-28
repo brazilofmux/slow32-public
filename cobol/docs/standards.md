@@ -289,8 +289,14 @@ refused with a message naming the switch.
   COMPUTE and conditions. Part three (ISSUES-78): USAGE BIT, packed at
   bit positions, and GROUP-USAGE BIT. docs/boolean.md.
 - **TYPEDEF and TYPE** (2026-09-28, ISSUES-79): type declarations,
-  expanded over the tokens as the text defines them. STRONG is refused
-  by name. docs/typedef.md.
+  expanded over the tokens as the text defines them; STRONG types
+  (ISSUES-80) with their MOVE and comparison rules. docs/typedef.md.
+- **VALIDATE: not built, by ruling** (2026-09-28). 2023 marks the
+  VALIDATE facility obsolete (Annex D.22) and its Annex E says it "has
+  not been implemented as of the writing of this revision by any COBOL
+  provider. Neither users nor implementors have indicated interest",
+  its future to be decided at the next revision. It stays refused by
+  name here until a program needs it.
 
 ## Deferred — object orientation
 

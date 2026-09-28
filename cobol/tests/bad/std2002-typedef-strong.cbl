@@ -1,10 +1,9 @@
 identification division.
 program-id. tdstrong.
-*> Strongly-typed groups come later; TYPEDEF STRONG is refused by name.
+*> Only a group is strongly typed (2023 13.18.58.3 rule 1).
 data division.
 working-storage section.
-01  t typedef strong.
-    05 a pic x.
+01  e-t pic x(4) typedef strong.
 procedure division.
 
     stop run.

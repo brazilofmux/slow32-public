@@ -566,6 +566,7 @@ typedef struct {
     unsigned char nat;           /* T_STR: a national literal, its bytes UTF-16 big-endian (cobol ISSUES-62) */
     char *orig;                  /* T_WORD: as written, before lowercasing; 0 when the same */
     unsigned char boolv;         /* T_STR: a boolean literal, one character 0 or 1 per position (cobol ISSUES-76) */
+    int strong;                  /* the strong-type marker expand_types() puts in an entry: its type key + 1 (cobol ISSUES-80) */
 } Tok;
 
 static Tok *g_tok;
@@ -579,7 +580,7 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
     t->after_comma = (unsigned char)g_pending_comma; g_pending_comma = 0;
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0; t->orig = 0; t->boolv = 0;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0; t->orig = 0; t->boolv = 0; t->strong = 0;
     return t;
 }
 
@@ -1162,7 +1163,20 @@ static struct { int pos; Tok tok; } *g_dir; static int g_ndir, g_dircap, g_ndir_
  * name is replaced by the type's clauses, and its subordinate entries
  * follow the entry.  Types are defined before use, and a type's own
  * TYPE clauses are expanded as it is recorded. */
-typedef struct { char name[64]; Tok *clause; int nclause; Tok *sub; int nsub; int *sublvl; int level; } TypeDef;
+typedef struct { char name[64]; Tok *clause; int nclause; Tok *sub; int nsub; int *sublvl; int level, strong, key; } TypeDef;
+/* strong types (13.18.58, STRONG; cobol ISSUES-80): each strongly-typed
+ * group -- the entry using the type, and each group inside it -- gets a
+ * marker token carrying a key; the same key is the same type */
+static char (*g_strong_key)[80]; static int g_nstrong_key, g_strong_cap;
+static int strong_key(const char *k)
+{
+    for (int i = 0; i < g_nstrong_key; i++) if (!strcmp(g_strong_key[i], k)) return i;
+    if (g_nstrong_key == g_strong_cap) { g_strong_cap = g_strong_cap ? g_strong_cap * 2 : 16; g_strong_key = realloc(g_strong_key, (size_t)g_strong_cap * sizeof *g_strong_key); }
+    snprintf(g_strong_key[g_nstrong_key], sizeof g_strong_key[0], "%s", k);
+    return g_nstrong_key++;
+}
+static const char *strong_name(int key) { return g_strong_key[key]; }
+static int g_type_recording_strong;     /* recording a STRONG type: its TYPE clauses may name strong types */
 static TypeDef *g_types; static int g_ntypes, g_typecap;
 static Tok *g_xt; static int g_nxt, g_xtcap;
 static void xt_push(const Tok *t)
@@ -1181,6 +1195,11 @@ static TypeDef *type_find(const char *name)
 {
     for (int i = 0; i < g_ntypes; i++) if (!strcmp(g_types[i].name, name)) return &g_types[i];
     return NULL;
+}
+static Tok strong_tok(const Tok *like, int key)
+{
+    Tok t = *like; t.kind = T_WORD; t.s = "\001strong"; t.len = 7; t.orig = 0; t.strong = key + 1;
+    return t;
 }
 static Tok level_tok(const Tok *like, int level)
 {
@@ -1203,6 +1222,12 @@ static void type_emit_entry(const Tok *tk, int a, int e, int level)
             if (ty) {
                 if (used) die_at(tk[i].line, "two TYPE clauses in one entry");
                 used = ty;
+                if (ty->strong) {
+                    /* a strong type at level 01, or inside a strong type (13.18.57.3 rule 6) */
+                    if (level != 1 && !g_type_recording_strong)
+                        die_at(tk[i].line, "the strong type '%s' is used only at level 01 or inside a strong type (2023 13.18.57.3 rule 6)", ty->name);
+                    Tok m = strong_tok(&tk[i], ty->key); xt_push(&m);
+                }
                 for (int k = 0; k < ty->nclause; k++) xt_push(&ty->clause[k]);
                 i = j;
                 continue;
@@ -1247,14 +1272,15 @@ static void expand_types(void)
             continue;
         }
         /* a type declaration: recorded, not emitted */
-        if (td + 1 < e && tok_is(&g_tok[td + 1], "strong"))
-            die_at(g_tok[td].line, "TYPEDEF STRONG (strongly-typed groups) is not implemented yet");
+        int strong = td + 1 < e && tok_is(&g_tok[td + 1], "strong");
         if (g_tok[i + 1].kind != T_WORD) die_at(t->line, "a TYPEDEF entry needs a name");
         if (lv != 1 && lv != 77) die_at(t->line, "a type declaration here is a level 01 or 77 entry");
         if (g_ntypes == g_typecap) { g_typecap = g_typecap ? g_typecap * 2 : 16; g_types = realloc(g_types, (size_t)g_typecap * sizeof *g_types); }
         TypeDef *ty = &g_types[g_ntypes]; memset(ty, 0, sizeof *ty);
         snprintf(ty->name, sizeof ty->name, "%s", g_tok[i + 1].s);
-        ty->level = lv;
+        ty->level = lv; ty->strong = strong;
+        if (strong) ty->key = strong_key(ty->name);
+        g_type_recording_strong = strong;
         /* its own clauses, TYPE clauses expanded, without TYPEDEF, IS
          * before it, and GLOBAL */
         int save = g_nxt;
@@ -1263,7 +1289,7 @@ static void expand_types(void)
         ty->clause = xmalloc((size_t)(n + 1) * sizeof *ty->clause);
         for (int k = save + 2; k < g_nxt - 1; k++) {           /* past the level and name, before the period */
             Tok *c = &g_xt[k];
-            if (tok_is(c, "typedef") || tok_is(c, "global")) continue;
+            if (tok_is(c, "typedef") || tok_is(c, "global") || (strong && tok_is(c, "strong"))) continue;
             if (tok_is(c, "is") && k + 1 < g_nxt && tok_is(&g_xt[k + 1], "typedef")) continue;
             ty->clause[ty->nclause++] = *c;
         }
@@ -1291,6 +1317,31 @@ static void expand_types(void)
             int l2 = at ? tok_level(c) : -1;
             ty->sublvl[ty->nsub] = l2 < 0 ? -1 : (l2 == 66 || l2 == 88) ? l2 : l2 - lv;
             ty->nsub++;
+        }
+        g_type_recording_strong = 0;
+        if (strong && !ns) die_at(t->line, "TYPEDEF STRONG: '%s' is not a group (2023 13.18.58.3 rule 1)", ty->name);
+        if (strong) {
+            /* each subordinate group of a strong type is strong too: a marker,
+             * keyed type#n, after its level and name */
+            Tok *ns2 = xmalloc((size_t)(ty->nsub * 2 + 1) * sizeof *ns2); int *nl2 = xmalloc((size_t)(ty->nsub * 2 + 1) * sizeof *nl2);
+            int m = 0, gn = 0;
+            for (int k = 0; k < ty->nsub; k++) {
+                ns2[m] = ty->sub[k]; nl2[m] = ty->sublvl[k]; m++;
+                if (ty->sublvl[k] >= 0 && ty->sublvl[k] < 66 && k + 1 < ty->nsub) {
+                    int e2 = k; while (e2 < ty->nsub && ty->sub[e2].kind != T_PERIOD) e2++;
+                    int nextlv = -1;
+                    for (int q = e2 + 1; q < ty->nsub; q++) if (ty->sublvl[q] >= 0) { nextlv = ty->sublvl[q]; break; }
+                    int already = 0;
+                    for (int q = k + 1; q < e2; q++) if (ty->sub[q].strong) already = 1;
+                    if (nextlv > ty->sublvl[k] && nextlv < 66 && !already && k + 1 < e2) {
+                        char key[80]; snprintf(key, sizeof key, "%s#%d", ty->name, ++gn);
+                        ns2[m] = ty->sub[k + 1]; nl2[m] = -1; m++;         /* the name */
+                        ns2[m] = strong_tok(&ty->sub[k], strong_key(key)); nl2[m] = -1; m++;
+                        k++;
+                    }
+                }
+            }
+            ty->sub = ns2; ty->sublvl = nl2; ty->nsub = m;
         }
         g_nxt = save;                                   /* no storage: nothing of it stays */
         g_ntypes++;
@@ -1542,6 +1593,7 @@ typedef struct Sym {
     int  natgroup;                  /* GROUP-USAGE NATIONAL, written or inherited: a national group (cobol ISSUES-71) */
     int  bitgroup;                  /* GROUP-USAGE BIT, written (2) or inherited (1): a bit group (cobol ISSUES-78) */
     int  bits, bitoff;              /* USAGE BIT and bit groups: boolean positions, and the first bit's place in the first byte */
+    int  strong;                    /* a strongly-typed group: its type key + 1 (cobol ISSUES-80) */
     int  standin;                   /* the FILLER PIC X put in place of an entry refused with an error */
     int  in_natgroup;               /* an elementary item of a national group */
     int  ftemp_scan;                /* ... made while scanning ahead (no code): must never be emitted */
@@ -1555,6 +1607,7 @@ typedef struct Sym {
     /* descriptor */
     int  desc_id;                   /* -1 until emitted */
 } Sym;
+static int sym_in_strong(const Sym *s);
 
 static Sym *g_sym;
 static int g_nsym, g_scap;
@@ -2170,6 +2223,7 @@ static void parse_data_item1(void)
         Tok *t = cur();
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
         if (!strcmp(t->s, "is")) { advance(); continue; }        /* 01 X IS GLOBAL: a noise word */
+        if (t->strong) { s->strong = t->strong; advance(); continue; }   /* expand_types()'s strong-type marker */
 
         if (!strcmp(t->s, "pic") || !strcmp(t->s, "picture")) {
             advance();
@@ -2387,6 +2441,8 @@ static void build_tree(void)
          * own; its subordinate groups are national groups and its
          * elementary items national.  Parents precede children here. */
         if (s->natgroup == 2 && !s->is_group) die_at(s->line, "GROUP-USAGE: '%s' is not a group (2023 13.18.29.3 rule 1)", s->name);
+        if (s->redefines >= 0 && (sym_in_strong(s) || sym_in_strong(&g_sym[s->redefines])))
+            die_at(s->line, "'%s': a strongly-typed group is not redefined, in whole or in part (2023 13.18.57.3 rule 4)", s->name);
         if (s->bitgroup == 2 && !s->is_group) die_at(s->line, "GROUP-USAGE: '%s' is not a group (2023 13.18.29.3 rule 1)", s->name);
         if (s->bitgroup == 2 && s->has_usage) die_at(s->line, "GROUP-USAGE BIT: '%s' cannot have a USAGE clause too (2023 13.18.29.3 rule 2)", s->name);
         if (!s->bitgroup && s->parent >= 0 && g_sym[s->parent].bitgroup) {
@@ -2798,6 +2854,7 @@ static void finish_data_division(void)
             if (!x) continue;
             if (x->record != s->record) die_at(s->line, "RENAMES '%s': '%s' is not in the same record", s->name, x->name);
             if (x->level == 1 || x->level == 66 || x->level == 77 || x->is_cond) die_at(s->line, "RENAMES '%s': '%s' is not a level 02-49 item", s->name, x->name);
+            if (sym_in_strong(x)) die_at(s->line, "RENAMES '%s': '%s' is in a strongly-typed group (2023 13.18.57.3 rule 3)", s->name, x->name);
             if (x->ndims) die_at(s->line, "RENAMES '%s': '%s' has OCCURS or lies in a table", s->name, x->name);
         }
         int end = b ? (int)(b->offset + b->size) : (int)(a->offset + a->size);
@@ -3356,6 +3413,33 @@ static void nat_fig_opnd(Opnd *o, int nbytes);
  * treated as one (2023 13.18.29.4 rule 2b) */
 static int sym_is_national(const Sym *s) { return s->natgroup || (!s->is_group && s->pi.category == PIC_NATIONAL); }
 static int sym_is_boolean(const Sym *s) { return s->bitgroup || (!s->is_group && s->pi.category == PIC_BOOLEAN); }
+/* a strong group's elementary items, in order, as (offset in the group,
+ * descriptor) words; an OCCURS repeats its entries; returns the count */
+static int sym_desc(Sym *s);
+static int strong_table_at(Sym *g, Sym *s, int base)
+{
+    int n = 0, times = s->occurs ? s->occurs : 1;
+    for (int k = 0; k < times; k++) {
+        int b = base + k * s->size;
+        if (!s->is_group) { emit("\t.word %d, .Ld%d", b + s->offset - g->offset, sym_desc(s)); n++; continue; }
+        for (int c = s->child; c >= 0; c = g_sym[c].sibling)
+            if (!g_sym[c].is_cond && !g_sym[c].is_rename && g_sym[c].redefines < 0) n += strong_table_at(g, &g_sym[c], b);
+    }
+    return n;
+}
+static int strong_table(Sym *g, int base)
+{
+    int n = 0;
+    for (int c = g->child; c >= 0; c = g_sym[c].sibling)
+        if (!g_sym[c].is_cond && !g_sym[c].is_rename && g_sym[c].redefines < 0) n += strong_table_at(g, &g_sym[c], base);
+    return n;
+}
+
+/* in a strongly-typed group: the group itself or anything under one */
+static int sym_in_strong(const Sym *s)
+{
+    for (; ; s = &g_sym[s->parent]) { if (s->strong) return 1; if (s->parent < 0) return 0; }
+}
 
 static int is_int_item(Sym *s)
 {
@@ -3485,6 +3569,9 @@ static void parse_ref(Ref *r)
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
         advance();
         r->rm = 1; r->rm_l0 = -1;
+        if (r->sym->strong || (sym_in_strong(r->sym) && (is_numeric_sym(r->sym) || r->sym->pi.edited)))
+            die_at(r->line, "'%s' is %s and is not reference-modified (2023 8.4.2.4)", r->sym->name,
+                   r->sym->strong ? "a strongly-typed group" : "a numeric or edited item in a strongly-typed group");
         if ((!r->sym->is_group && (r->sym->usage == U_NATIONAL || r->sym->usage == U_BIT)) || r->sym->bitgroup)
             die_at(r->line, "reference modification of the USAGE %s item '%s' is not implemented yet",
                    r->sym->usage == U_NATIONAL ? "NATIONAL" : "BIT", r->sym->name);
@@ -5219,6 +5306,11 @@ static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
     /* a boolean operand is compared only with a boolean one (2023
      * 8.8.4.2.8); ZERO and ALL B"..." beside it are boolean */
+    {   /* strongly-typed groups compare only with the same type (8.8.4.2.12) */
+        int xs = x->kind == O_REF ? x->ref.sym->strong : 0, ys = y->kind == O_REF ? y->ref.sym->strong : 0;
+        if ((xs || ys) && xs != ys)
+            die_at(x->line, "a strongly-typed group is compared only with one of the same type (2023 8.8.4.2.12)");
+    }
     int xb = opnd_is_boolean(x), yb = opnd_is_boolean(y);
     if (xb || yb) {
         if (!xb && !(x->kind == O_FIG || x->kind == O_ALL)) die_at(x->line, "a boolean operand is compared only with a boolean one (2023 8.8.4.2.8)");
@@ -5498,6 +5590,7 @@ static Cond *parse_simple(void)
             for (int i = 0; i < g_nclass; i++) if (!strcmp(t->s, g_class[i].name)) klass = 4 + i;
         if (klass >= 0 || klass == -2) {
             if (x.kind != O_REF) die_at(line, "a class condition needs a data item");
+            if (x.ref.sym->strong) die_at(line, "a strongly-typed group takes no class condition (2023 8.8.4.4.3 rule 1)");
             if (klass == -2 && is_numeric_sym(x.ref.sym)) die_at(line, "BOOLEAN is no class test for the numeric item '%s' (2023 8.8.4.4.3 rule 5)", x.ref.sym->name);
             advance();
             Cond *c = cond_new(C_CLASS); c->x = x; c->klass = klass; c->neg = neg;
@@ -5607,6 +5700,31 @@ static void emit_cond_value(Cond *c)
         return;
     }
     /* C_REL */
+    if (c->x.kind == O_REF && c->x.ref.sym->strong && !c->x.ref.rm) {
+        /* two groups of one strong type: element by element, in order
+         * (8.8.4.2.12), from a table of each elementary item's offset in
+         * the group and descriptor */
+        int lab = new_label();
+        emit("\t.data");
+        emit("\t.p2align 2");
+        emit(".L%d:", lab);
+        int n = strong_table(c->x.ref.sym, 0);
+        emit("\t.text");
+        char tl[32]; snprintf(tl, sizeof tl, ".L%d", lab);
+        Arg a[4] = { arg_ref(&c->x.ref), arg_ref(&c->y.ref), arg_label(tl), arg_imm(n) };
+        emit_args(a, 4);
+        emit_call("cob_cmp_struct");
+        switch (c->op) {
+        case R_EQ: emit("\tseq r1, r1, r0"); break;
+        case R_NE: emit("\tsne r1, r1, r0"); break;
+        case R_LT: emit("\tslt r1, r1, r0"); break;
+        case R_GT: emit("\tsgt r1, r1, r0"); break;
+        case R_LE: emit("\tsle r1, r1, r0"); break;
+        case R_GE: emit("\tsge r1, r1, r0"); break;
+        }
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
     if (c->x.kind == O_BEXPR || c->y.kind == O_BEXPR) {
         bool_push(&c->x);
         bool_push(&c->y);
@@ -6677,6 +6795,12 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
+    {   /* strongly-typed groups: sender and receiver of the same type (8.5.3.3, D.8.3) */
+        int ss = src->kind == O_REF ? src->ref.sym->strong : 0, ds = d->strong;
+        if ((ss || ds) && ss != ds)
+            die_at(dst->line, "MOVE: a strongly-typed group moves only to and from one of the same type ('%s' is %s, the sender %s)",
+                   d->name, ds ? strong_name(ds - 1) : "not strongly typed", ss ? strong_name(ss - 1) : "is not strongly typed");
+    }
     if (emit_move_boolean(src, dst)) return;
     if (emit_move_national(src, dst)) return;
     /* Sending and receiving items with byte-identical descriptors -- same
@@ -9136,6 +9260,7 @@ static void parse_string_1(void)
     if (!dst.sym->is_group && (dst.sym->pi.category == PIC_NUMERIC || dst.sym->pi.edited || dst.sym->just))
         die_at(dst.line, "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED");
     if (dst.rm) die_at(dst.line, "a reference-modified STRING receiver is not implemented");
+    if (dst.sym->strong) die_at(dst.line, "a strongly-typed group is not a STRING receiver (2023 14.9.43.3 rule 6)");
     /* national operands (cobol ISSUES-69): characters of two bytes throughout */
     int nat = ref_is_national(&dst);
     static const char *srule = "14.9.43.3 rule 1";
@@ -10160,6 +10285,7 @@ static void parse_inspect_1(void)
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
     /* a numeric USAGE NATIONAL item's characters are national too */
     { Opnd io; memset(&io, 0, sizeof io); io.kind = O_REF; io.ref = item; io.line = item.line; no_bits(&io, "INSPECT"); }
+    if (item.sym->strong) die_at(item.line, "INSPECT of a strongly-typed group (2023 14.9.22.3 rule 1)");
     g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     Opnd itemo = ref_opnd(&item);
@@ -10313,8 +10439,8 @@ static void init_mask(Sym *s, int top_off, int disp, unsigned char *mask, int li
 static void parse_initialize(void)
 {
     Ref rs[MAXOPS]; int n = 0;
-    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0 };
-    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0 };
+    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0, 0 };
+    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0 };
     Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand()) {
@@ -10519,6 +10645,8 @@ static void parse_statement_1(void)
     { int k = 0; for (; v[k] && k < 15; k++) g_cur_stmt[k] = (char)toupper((unsigned char)v[k]); g_cur_stmt[k] = 0; }
 
     if (g_std >= 2002 && !strcmp(v, "raise")) { advance(); parse_raise(); return; }
+    if (g_std >= 2002 && !strcmp(v, "validate"))
+        die_at(t->line, "VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 Annex D.22, Annex E; docs/standards.md)");
     if (!strcmp(v, "raise")) die_at(t->line, "RAISE is COBOL 2002; compile with -std=2002");
     if (g_std >= 2002 && !strcmp(v, "resume"))
         die_at(t->line, "RESUME is not implemented (COBOL 2014 made it optional)");

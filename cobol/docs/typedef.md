@@ -25,10 +25,31 @@ after COPY and REPLACE and before anything is parsed:
 
 Diagnostics inside an expanded type point at the type's own lines.
 
+## Strong types (ISSUES-80)
+
+`TYPEDEF STRONG` declares a strongly-typed group type (only a group may
+be one, 13.18.58.3 rule 1). A group described by it, and each group
+inside it, is strongly typed: the expansion puts a marker in each such
+entry, carrying a key -- the type's name, or type#n for the n-th group
+inside it -- and the same key is the same type.
+
+- MOVE: a strongly-typed group moves only to and from one of the same
+  type (8.5.3.3, D.8.3); its elementary items are moved freely.
+- Comparison: only with the same type, element by element in order,
+  each elementary item by its own rules (8.8.4.2.12) -- a numeric
+  element compares as a number, not as its bytes.
+- A strong type is used at level 01 or inside a strong type (13.18.57.3
+  rule 6).
+- Refused on a strongly-typed group: REDEFINES either way and RENAMES
+  (rules 3, 4), reference modification (and of a numeric or edited item
+  inside one, 8.4.2.4), a class condition, INSPECT, and a STRING
+  receiver.
+
+Not checked yet: the CALL rule that an argument and its parameter be of
+one strong type (14.9.4), and the rules for FD and SD records.
+
 ## Not implemented
 
-- `TYPEDEF STRONG`: strongly-typed groups, whose MOVE, comparison and
-  reference rules are the module's other half. Refused by name.
 - A type declared after its use, or inside a group (only 01 and 77).
 - An expansion that would take a level past 49 (rule 2c allows it).
 - Types across separately compiled programs; a type is visible from its

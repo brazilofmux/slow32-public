@@ -2597,3 +2597,39 @@ type. Refusals: std2002-typedef-strong, -type-unknown, -type-77-group,
 typedef-85. Harness 253/253; -std=85 byte-identical on all 227 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+### 80. TYPEDEF STRONG: strongly-typed groups (2026-09-28)
+
+The second half of the TYPEDEF module, and the ruling on VALIDATE, the
+last row of Stage B's order.
+
+- **Keys through the expansion.** `expand_types()` puts a marker token
+  (a word no source can spell, with the key in `Tok.strong`) in each
+  entry described by a strong type, and in each group inside one,
+  keyed type#n. The parser sets `Sym.strong`. The same key is the same
+  type.
+- **Rules.** MOVE only between groups of one strong type. Comparison
+  only between groups of one strong type, element by element in order:
+  `cob_cmp_struct` walks a table of (offset, descriptor) pairs that the
+  compiler lays out, OCCURS expanded (8.8.4.2.12). A strong type only at
+  level 01 or inside a strong type (13.18.57.3 rule 6). Refused on a
+  strongly-typed group: REDEFINES either way, RENAMES, reference
+  modification (and of a numeric or edited item inside one), a class
+  condition, INSPECT, and a STRING receiver.
+- **Not checked yet:** CALL arguments of a strong type, and FD/SD
+  records.
+
+**VALIDATE** is not built, by ruling. 2023 marks it obsolete, and its
+Annex E records that no COBOL provider has implemented it and neither
+users nor implementors asked (docs/standards.md). It was not refused
+by name, only as "not a COBOL verb"; under -std=2002 it is now refused
+with the reason (std2002-validate).
+
+2002/strongtype (no oracle): same-type MOVE and comparison, a strong
+type inside a strong type, INITIALIZE, and a comparison that bytes would
+get backwards (-1.00 is 0010p, 0.50 is 00050). std2002-typedef-strong,
+which was the refusal, now checks rule 1. New: std2002-strong-move-other,
+-strong-move-group, -strong-compare, -strong-level, -strong-redefines,
+-strong-refmod, std2002-validate. Harness 261/261; -std=85 byte-identical on all 227 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.
