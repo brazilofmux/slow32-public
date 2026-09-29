@@ -100,6 +100,16 @@ static void widths(void)
     CHECK(clu_width_of(heart, 2) == 2, "VS16 makes two");
     uint32_t eacute[] = { 'e', 0x0301 };
     CHECK(clu_width_of(eacute, 2) == 1, "e + combining acute is one");
+    /* GB11: exactly one ZWJ between pictographs -- ExtPict ZWJ ZWJ ExtPict
+     * is two clusters (libutf 92968c8; GraphemeBreakTest has no case) */
+    {
+        s32u_clu g; memset(&g, 0, sizeof g);
+        s32u_clu_step(&g, 0x1F468); s32u_clu_step(&g, 0x200D); s32u_clu_step(&g, 0x200D);
+        CHECK(s32u_clu_step(&g, 0x1F469) == 1, "ExtPict ZWJ ZWJ ExtPict: the second pictograph starts a cluster");
+        memset(&g, 0, sizeof g);
+        s32u_clu_step(&g, 0x1F468); s32u_clu_step(&g, 0x200D);
+        CHECK(s32u_clu_step(&g, 0x1F469) == 0, "ExtPict ZWJ ExtPict: one cluster");
+    }
     /* GB11: only an emoji joins after a ZWJ */
     s32u_clu c; memset(&c, 0, sizeof c);
     s32u_clu_step(&c, 'a'); s32u_clu_step(&c, 0x200D);

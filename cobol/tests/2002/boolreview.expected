@@ -1,0 +1,18 @@
+B1 initialize b2 keeps its neighbours: ok 
+B1 the redefined item is initialized: [   00]
+B2 B3 REPLACING every element, BOOLEAN after NUMERIC: ok 
+B3 INITIALIZE of one element: ok 
+B3 INITIALIZE of a reference-modified part: [X Z12]
+B4 MOVE ALL B'1' to d8(k:l): 00111100
+B4 d8(k:l) = ALL B'1'
+B4 d8(1:l) not = ALL B'1'
+B5 a group with USAGE BIT: [A] length 1
+B7 1011 shifted left 2^31 - 1: 0000
+B8 a 300-bit item
+B9 the entry's own VALUE: 007
+B10 a group TYPE starts a byte: ok 
+B14 alphanumeric group to bit group, bytes: ok 
+B14 bit group to alphanumeric group, bytes: [CD]
+B15 MOVE ALL '1': 1111
+B16 0001 B-OR B-NOT 0011 B-SHIFT-L 1: 1001
+B17 a bit item after a REDEFINES starts a byte: ok 

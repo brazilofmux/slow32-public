@@ -48,7 +48,7 @@ main.
     compute r6 = a b-and all b"1"           display "and all 1 (4 positions, stored in 6): " r6
     if (a b-or all b"01") = b"1101" display "condition: a b-or all 01 = 1101" end-if
     if a b-and b = b"0100" display "condition: a b-and b = 0100" end-if
-    if b-not a > b"0010" display "condition: b-not a > 0010" end-if
+    if b-not a not = b"0010" display "condition: b-not a not = 0010" end-if
     if p b-and q display "p and q" else display "not (p and q)" end-if
     if p b-or q display "p or q" end-if
     if not (p b-xor p) display "not (p xor p)" end-if

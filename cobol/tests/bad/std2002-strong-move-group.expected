@@ -1,1 +1,1 @@
-MOVE: a strongly-typed group moves only to and from one of the same type ('d1' is d-t, the sender is not strongly typed)
+MOVE: the strongly-typed group 'd1' (d-t) receives only a group of the same type, the sender is not strongly typed (2023 14.9.25.3 rule 2)

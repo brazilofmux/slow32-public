@@ -1,0 +1,1 @@
+'b' is a bit data item passed BY REFERENCE and does not start a byte (its bit 4; 2023 14.9.4.3 rule 6)

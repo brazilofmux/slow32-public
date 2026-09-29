@@ -20,7 +20,7 @@ xor all 10: 0110
 and all 1 (4 positions, stored in 6): 110000
 condition: a b-or all 01 = 1101
 condition: a b-and b = 0100
-condition: b-not a > 0010
+condition: b-not a not = 0010
 not (p and q)
 p or q
 not (p xor p)

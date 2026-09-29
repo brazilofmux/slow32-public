@@ -1203,35 +1203,50 @@ static Tok level_tok(const Tok *like, int level)
     t.kind = T_NUM; t.s = xstrndup(b, (int)strlen(b)); t.len = (int)strlen(b); t.orig = 0;
     return t;
 }
+/* the words Report Writer's TYPE clause starts with (13.16.x TYPE) */
+static int rw_type_word(const char *w)
+{
+    static const char *k[] = { "is", "report", "page", "control", "detail", "de", "rh", "ph", "ch", "cf", "pf", "rf", NULL };
+    for (int i = 0; k[i]; i++) if (!strcmp(w, k[i])) return 1;
+    return 0;
+}
 /* one entry's tokens [a, e] (e its period) to the output, TYPE clauses
  * expanded; the expansion's subordinate entries follow, at level + rel */
 static void type_emit_entry(const Tok *tk, int a, int e, int level)
 {
-    TypeDef *used = NULL;
-    for (int i = a; i <= e; i++) {
-        if (i > a + 1 && tok_is(&tk[i], "type") && i + 1 < e) {
-            int j = i + 1;
-            if (tok_is(&tk[j], "to") && j + 1 < e) j++;
-            TypeDef *ty = tk[j].kind == T_WORD ? type_find(tk[j].s) : NULL;
-            if (!ty && j > i + 1 && tk[j].kind == T_WORD)          /* TYPE TO: a type-name, not Report Writer's TYPE */
-                die_at(tk[j].line, "'%s' is not a type declared before this entry (TYPEDEF)", tk[j].s);
-            if (ty) {
-                if (used) die_at(tk[i].line, "two TYPE clauses in one entry");
-                used = ty;
-                if (ty->strong) {
-                    /* a strong type at level 01, or inside a strong type (13.18.57.3 rule 6) */
-                    if (level != 1 && !g_type_recording_strong)
-                        die_at(tk[i].line, "the strong type '%s' is used only at level 01 or inside a strong type (2023 13.18.57.3 rule 6)", ty->name);
-                    Tok m = strong_tok(&tk[i], ty->key); xt_push(&m);
-                }
-                for (int k = 0; k < ty->nclause; k++) xt_push(&ty->clause[k]);
-                i = j;
-                continue;
-            }
-        }
-        xt_push(&tk[i]);
+    /* the TYPE clause, if any: its type and its tokens [ti, tj] */
+    TypeDef *used = NULL; int ti = -1, tj = -1;
+    for (int i = a + 2; i < e; i++) {
+        if (!tok_is(&tk[i], "type") || i + 1 >= e) continue;
+        int j = i + 1;
+        if (tok_is(&tk[j], "to") && j + 1 < e) j++;
+        TypeDef *ty = tk[j].kind == T_WORD ? type_find(tk[j].s) : NULL;
+        if (!ty && tk[j].kind == T_WORD && (j > i + 1 || !rw_type_word(tk[j].s)))
+            /* TYPE TO, or a TYPE that is not Report Writer's: a type-name
+             * declared before this entry -- a type does not refer to itself
+             * or to one declared later (13.18.58.3 rule 2; ISSUES-94) */
+            die_at(tk[j].line, "'%s' is not a type declared before this entry (TYPEDEF)", tk[j].s);
+        if (!ty) continue;
+        if (used) die_at(tk[i].line, "two TYPE clauses in one entry");
+        used = ty; ti = i; tj = j;
     }
-    if (!used) return;
+    if (!used) { for (int i = a; i <= e; i++) xt_push(&tk[i]); return; }
+    /* the level and the name, then the type's clauses, then the entry's
+     * own: where both say the same (VALUE), the entry's comes later and
+     * is the one used (13.18.57.4 rule 3; cobol ISSUES-94 B9) */
+    xt_push(&tk[a]); xt_push(&tk[a + 1]);
+    if (used->strong) {
+        /* a strong type at level 01, or inside a strong type (13.18.57.3 rule 6) */
+        if (level != 1 && !g_type_recording_strong)
+            die_at(tk[ti].line, "the strong type '%s' is used only at level 01 or inside a strong type (2023 13.18.57.3 rule 6)", used->name);
+        Tok m = strong_tok(&tk[ti], used->key); xt_push(&m);
+    }
+    if (used->nsub && level != 1 && level != 77) {
+        /* a group type is aligned as a level 1 item (rule 2d; B10) */
+        Tok m = tk[ti]; m.kind = T_WORD; m.s = "\001lvl1"; m.len = 5; m.orig = 0; xt_push(&m);
+    }
+    for (int k = 0; k < used->nclause; k++) xt_push(&used->clause[k]);
+    for (int i = a + 2; i <= e; i++) if (i < ti || i > tj) xt_push(&tk[i]);
     if (level == 77 && used->nsub) die_at(tk[a].line, "a level 77 item takes an elementary type (2023 13.18.57.3 rule 7)");
     for (int k = 0; k < used->nsub; k++) {
         if (used->sublvl[k] >= 0) {
@@ -1564,6 +1579,7 @@ typedef struct Sym {
     char pic[PIC_MAXPAT];
     PicInfo pi;
     int  is_group, is_cond, is_index;
+    int  type_lvl1;                 /* expanded from a group TYPE: aligned as a level 1 item (13.18.57.4 rule 2d) */
     int  size;                      /* one occurrence */
     int  offset;                    /* from the start of the record */
     int  occurs;                    /* 0 = no OCCURS; with DEPENDING ON, the maximum */
@@ -2134,6 +2150,7 @@ static int nat_picture(const char *pic, PicInfo *pi, int line)
     return 1;
 }
 
+static int sym_is_boolean(const Sym *s);
 static void parse_data_item1(void)
 {
     int line = cur()->line;
@@ -2181,6 +2198,8 @@ static void parse_data_item1(void)
             advance();
             if (accept_word("thru") || accept_word("through")) {
                 Tok *h = cur();
+                if (sym_is_boolean(&g_sym[g_last_item]) || v->boolv)
+                    die_at(h->line, "THROUGH is not specified for the boolean item '%s' (2023 13.18.63.3 rule 29)", g_sym[g_last_item].name);
                 if (!(h->kind == T_STR || h->kind == T_NUM)) die_at(h->line, "expected a literal after THRU");
                 s->cv_hi[s->ncv] = h;
                 advance();
@@ -2220,6 +2239,7 @@ static void parse_data_item1(void)
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
         if (!strcmp(t->s, "is")) { advance(); continue; }        /* 01 X IS GLOBAL: a noise word */
         if (t->strong) { s->strong = t->strong; advance(); continue; }   /* expand_types()'s strong-type marker */
+        if (!strcmp(t->s, "\001lvl1")) { s->type_lvl1 = 1; advance(); continue; }   /* ... and its group-type marker */
 
         if (!strcmp(t->s, "pic") || !strcmp(t->s, "picture")) {
             advance();
@@ -2539,7 +2559,7 @@ static int layout(int si, int base)
             if (sym_bitlike(ch)) g_lay_bit = sym_bitlike(t) ? t->bitoff : 0;
             else if (sym_bitlike(t) && t->bitoff)
                 die_at(ch->line, "'%s' redefines '%s', which starts inside a byte (its bit %d): a character item at a bit position is not implemented (13.18.44.4 rule 1)", ch->name, t->name, t->bitoff + 1);
-        } else if (isbit && run && !ch->sync) {
+        } else if (isbit && run && !ch->sync && !ch->type_lvl1) {
             cbase = off; g_lay_bit = cur;
         } else {
             if (run && cur) off++;          /* leave the partly used byte */
@@ -2558,6 +2578,13 @@ static int layout(int si, int base)
         } else {
             cend = cbase + (sym_bitlike(ch) ? sz : sz * (ch->occurs ? ch->occurs : 1));   /* a bit item's size spans its occurrences */
             if (ch->redefines < 0) off = cend;
+            else if (!sym_bitlike(ch) && run) {
+                /* a character item, REDEFINES or not, ends a run of bits: the
+                 * next bit item follows it, not the bit before (8.5.1.6.3;
+                 * cobol ISSUES-94 B17) */
+                if (cur) off++;
+                run = 0; cur = 0;
+            }
         }
         /* A REDEFINES larger than the original is allowed: the group grows. */
         if (cend > end) end = cend;
@@ -2641,6 +2668,8 @@ static void init_one(Sym *rec, int si, int base, int defaults)
             }
             return;
         }
+        if (s->strong && s->value_tok && !g_no_values)
+            die_at(s->value_tok->line, "a VALUE on the strongly-typed group '%s' (2023 13.18.63.3 rule 1)", s->name);
         if (s->natgroup && s->value_tok && !g_no_values) {
             init_national(s, p, 1);                 /* a national literal, as for PIC N (13.18.63 rule 5) */
             defaults = 0;
@@ -3196,7 +3225,7 @@ static int sym_desc(Sym *s)
     if (s->desc_id >= 0) return s->desc_id;
     Desc d; memset(&d, 0, sizeof d);
     if (s->natgroup) { d.cat = COB_NATIONAL; d.usage = COB_U_DISPLAY; }   /* treated as PIC N(m) (13.18.29.4 rule 2b) */
-    else if (s->bitgroup || s->usage == U_BIT) {
+    else if (sym_bitlike(s)) {           /* not a group with a USAGE BIT clause: that one is alphanumeric (13.18.60; B5) */
         /* bits: size the boolean positions, scale the first bit's place */
         d.cat = COB_BOOLEAN; d.usage = COB_U_BIT; d.size = s->bits; d.scale = (signed char)s->bitoff;
         s->desc_id = desc_add(&d);
@@ -3399,6 +3428,7 @@ typedef struct {
     int rm_bit;                     /* a USAGE BIT item's or bit group's: they count bits (cobol ISSUES-82) */
     int bitsub;                     /* a bit array's element: 1 + the subscript that picks it, as a bit position (cobol ISSUES-84) */
     long bitu_start;                /* ... and the start within the element: 1 without a reference modification, 0 computed (cobol ISSUES-93) */
+    int user_rm;                    /* the program wrote a reference modification (rm is also set for a bit-array element) */
     int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
@@ -3467,6 +3497,15 @@ static void nat_fig_opnd(Opnd *o, int nbytes);
  * treated as one (2023 13.18.29.4 rule 2b) */
 static int sym_is_national(const Sym *s) { return s->natgroup || (!s->is_group && s->pi.category == PIC_NATIONAL); }
 static int sym_is_boolean(const Sym *s) { return s->bitgroup || (!s->is_group && s->pi.category == PIC_BOOLEAN); }
+/* does a group hold a boolean item anywhere below it */
+static int sym_strong_has_boolean(Sym *g)
+{
+    for (int c = g->child; c >= 0; c = g_sym[c].sibling) {
+        Sym *k = &g_sym[c];
+        if (sym_is_boolean(k) || (k->is_group && sym_strong_has_boolean(k))) return 1;
+    }
+    return 0;
+}
 /* a strong group's elementary items, in order, as (offset in the group,
  * descriptor) words; an OCCURS repeats its entries; returns the count */
 static int sym_desc(Sym *s);
@@ -3544,6 +3583,34 @@ static int is_hot_int(Sym *s)
 }
 
 /* identifier [OF|IN qualifier]... [( subscripts )] */
+/* a bit array's element, subscripted: its bits are picked out of the
+ * array as a reference modification does -- the element's bits, (i - 1)
+ * * bits + 1 onward -- whatever builds the Ref (parse_ref, INITIALIZE's
+ * walk; cobol ISSUES-84, -94 B2).  A reference modification the program
+ * wrote counts bits within the element (8.4.3.3.4 rule 5a), its bounds
+ * checked against the element's bits already. */
+static void ref_resolve_bits(Ref *r)
+{
+    if (r->sym->is_group || r->sym->usage != U_BIT || !r->sym->occurs || r->nsub != r->sym->ndims || !r->nsub) return;
+    int k = r->nsub - 1;
+    if (r->rm) r->bitu_start = r->rm_start;
+    else { r->rm = 1; r->rm_len = r->sym->bits; r->rm_l0 = -1; r->bitu_start = 1; }
+    r->rm_bit = 1; r->bitsub = r->nsub;
+    r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * r->sym->bits + r->bitu_start : 0;
+}
+
+/* a bit data item passed BY REFERENCE starts a byte, with only literal
+ * subscripts and a literal leftmost position (2023 14.9.4.3 rule 6;
+ * cobol ISSUES-94 B6): the callee gets a byte address */
+static void bit_arg_check(const Ref *r)
+{
+    for (int i = 0; i < r->nsub; i++)
+        if (r->sub[i].sym) die_at(r->line, "'%s' is a bit data item passed BY REFERENCE: its subscripts must be literals (2023 14.9.4.3 rule 6)", r->sym->name);
+    if (r->rm && !r->rm_start) die_at(r->line, "'%s' is a bit data item passed BY REFERENCE: its leftmost position must be a literal (2023 14.9.4.3 rule 6)", r->sym->name);
+    long first = r->sym->bitoff + (r->rm ? r->rm_start - 1 : 0);
+    if (first % 8) die_at(r->line, "'%s' is a bit data item passed BY REFERENCE and does not start a byte (its bit %ld; 2023 14.9.4.3 rule 6)", r->sym->name, first % 8 + 1);
+}
+
 static void parse_ref(Ref *r)
 {
     memset(r, 0, sizeof *r);
@@ -3653,7 +3720,7 @@ static void parse_ref(Ref *r)
     if (is_rm) {
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
         advance();
-        r->rm = 1; r->rm_l0 = -1;
+        r->rm = 1; r->rm_l0 = -1; r->user_rm = 1;
         if (r->sym->strong || (sym_in_strong(r->sym) && (is_numeric_sym(r->sym) || r->sym->pi.edited)))
             die_at(r->line, "'%s' is %s and is not reference-modified (2023 8.4.2.4)", r->sym->name,
                    r->sym->strong ? "a strongly-typed group" : "a numeric or edited item in a strongly-typed group");
@@ -3686,18 +3753,7 @@ static void parse_ref(Ref *r)
         if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
         if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
     }
-    if (!r->sym->is_group && r->sym->usage == U_BIT && r->sym->occurs && r->nsub == r->sym->ndims && r->nsub) {
-        /* a bit array's element: the bits (i - 1) * bits + 1 for bits,
-         * reference-modified out of the array (cobol ISSUES-84) */
-        int k = r->nsub - 1;
-        /* reference-modified, the positions count bits within the element
-         * (8.4.3.3.4 rule 5a; cobol ISSUES-93): the bounds were checked
-         * against the element's bits above */
-        if (r->rm) r->bitu_start = r->rm_start;
-        else { r->rm = 1; r->rm_len = r->sym->bits; r->rm_l0 = -1; r->bitu_start = 1; }
-        r->rm_bit = 1; r->bitsub = r->nsub;
-        r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * r->sym->bits + r->bitu_start : 0;
-    }
+    ref_resolve_bits(r);
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
         die_at(r->line, "'%s' needs %d subscript%s, %d given", r->sym->name, r->sym->ndims,
@@ -4231,7 +4287,7 @@ static void parse_operand_raw(Opnd *o)
             int len = opnd_size(&x);
             if (opnd_is_national(&x) || (x.kind == O_REF && x.ref.sym->usage == U_NATIONAL))
                 len /= 2;                               /* national: character positions, two bytes each */
-            if (x.kind == O_REF && !x.ref.rm && (x.ref.sym->usage == U_BIT || x.ref.sym->bitgroup))
+            if (x.kind == O_REF && !x.ref.rm && sym_bitlike(x.ref.sym))
                 len = x.ref.sym->bits;                  /* bits: boolean positions */
             if (x.kind == O_REF && x.ref.rm_bit && x.ref.rm_len) len = (int)x.ref.rm_len;   /* a bit part or element */
             o->kind = O_NUM; numlit_from_int(&o->num, len);
@@ -5569,6 +5625,7 @@ typedef struct Cond {
     int op, neg;            /* C_REL */
     int klass;              /* C_CLASS: 0 NUMERIC 1 ALPHABETIC 2 LOWER 3 UPPER, 4+i SPECIAL-NAMES class i */
     int uc0, uc1;           /* the root: user-function calls to make each time it is evaluated */
+    int bstack;             /* C_REL: compared on the boolean stack (an ALL literal beside a run-time length) */
 } Cond;
 
 static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); memset(c, 0, sizeof *c); c->kind = kind; return c; }
@@ -5579,6 +5636,16 @@ static int at_operand(void);
 static int is_verb(const char *w);
 static int bool_positions(const Sym *s);
 static int bool_opnd_len(const Opnd *o);
+/* a boolean operand whose positions are known only at run time: a
+ * reference modification with a computed length, or a function result
+ * of run-time length (cobol ISSUES-94 B4) */
+static int bool_len_dynamic(const Opnd *o)
+{
+    if (o->kind == O_REF) return o->ref.rm && !o->ref.rm_len && !o->ref.rm_odo;
+    if (o->kind == O_FUNC) return o->fvar;
+    return 0;
+}
+static int sym_strong_has_boolean(Sym *g);
 static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
     /* a boolean operand is compared only with a boolean one (2023
@@ -5592,10 +5659,22 @@ static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
     if (xb || yb) {
         if (!xb && !(x->kind == O_FIG || x->kind == O_ALL)) die_at(x->line, "a boolean operand is compared only with a boolean one (2023 8.8.4.2.8)");
         if (!yb && !(y->kind == O_FIG || y->kind == O_ALL)) die_at(y->line, "a boolean operand is compared only with a boolean one (2023 8.8.4.2.8)");
+        /* boolean operands relate by EQUAL and NOT EQUAL only (8.8.4.2.2
+         * format 2; cobol ISSUES-94 B11) */
+        if (op != R_EQ && op != R_NE) die_at(x->line, "boolean operands are compared by EQUAL or NOT EQUAL only (2023 8.8.4.2.2)");
         /* ZERO beside a boolean is one zero, extended by the comparison;
-         * ALL B"..." is repeated to the other operand's length */
+         * ALL B"..." is repeated to the other operand's length -- at run
+         * time when that length is known only then */
+        if ((x->kind == O_ALL && bool_len_dynamic(y)) || (y->kind == O_ALL && bool_len_dynamic(x))) {
+            Opnd *a = x->kind == O_ALL ? x : y;
+            if (!a->tok->boolv) { bool_fig_opnd(a, a->tok->len / (a->tok->nat ? 2 : 1)); a->kind = O_ALL; }   /* checked, its value kept ALL */
+            Cond *c = cond_new(C_REL);
+            c->x = *x; c->y = *y; c->op = op; c->neg = neg; c->bstack = 1;
+            return c;
+        }
         bool_fig_opnd(x, yb ? bool_opnd_len(y) : 1); bool_fig_opnd(y, xb ? bool_opnd_len(x) : 1);
-    }
+    } else if (op != R_EQ && op != R_NE && x->kind == O_REF && x->ref.sym->strong && sym_strong_has_boolean(x->ref.sym))
+        die_at(x->line, "a strongly-typed group holding a boolean item is compared by EQUAL or NOT EQUAL only (2023 8.8.4.2.3 rule 4)");
     Cond *c = cond_new(C_REL);
     c->x = *x; c->y = *y; c->op = op; c->neg = neg;
     return c;
@@ -5650,10 +5729,8 @@ static void bool_emit_op(int op, Opnd *cnt)
     if (op == BO_NOT) { emit_call("cob_bnot"); return; }
     if (op <= BO_XOR) { emit_call(op == BO_AND ? "cob_band" : op == BO_OR ? "cob_bor" : "cob_bxor"); return; }
     emit_push_opnd(cnt);
-    emit_call("cob_pop_int");
-    emit("\tadd r4, r1, r0");
-    emit_li("r3", op - BO_SL);                   /* 0 L, 1 R, 2 LC, 3 RC */
-    emit_call("cob_bshift");
+    emit_li("r3", op - BO_SL);                   /* 0 L, 1 R, 2 LC, 3 RC; the count taken whole (B7) */
+    emit_call("cob_bshift_pop");
 }
 static void bool_emit_operand(Opnd *o)
 {
@@ -5680,7 +5757,11 @@ static int parse_bexpr(void)
     for (;;) {
         Tok *t = cur(); int op = bool_op(t);
         if (want) {
-            if (op == BO_NOT) { advance(); st[sp].op = BO_NOT; st[sp].prec = 4; sp++; continue; }
+            if (op == BO_NOT) {
+                /* B-NOT is an operation too: a shift after its operand
+                 * takes its precedence (8.8.2 rule 7b; cobol ISSUES-94 B16) */
+                advance(); st[sp].op = BO_NOT; st[sp].prec = 4; sp++; lastprec[lv] = 4; continue;
+            }
             if (t->kind == T_LP) {
                 advance();
                 if (sp == 64 || lv == 31) die_at(t->line, "a boolean expression nested too deeply");
@@ -6028,7 +6109,7 @@ static void emit_cond_value(Cond *c)
         if (c->neg) emit("\txori r1, r1, 1");
         return;
     }
-    if (c->x.kind == O_BEXPR || c->y.kind == O_BEXPR) {
+    if (c->x.kind == O_BEXPR || c->y.kind == O_BEXPR || c->bstack) {
         bool_push(&c->x);
         bool_push(&c->y);
         emit_call("cob_bcmp");
@@ -6648,6 +6729,7 @@ static void parse_accept_1(void)
     }
     int ref_tp = g_tp;
     Ref r; parse_ref(&r);
+    if (r.sym->strong) die_at(r.line, "ACCEPT into the strongly-typed group '%s' (2023 14.9.1.3 rule 1)", r.sym->name);
     int nat = ref_is_national(&r);
     if (stmt_positioned()) {
         parse_accept_positioned(&r, ref_tp); return;
@@ -6888,7 +6970,7 @@ static void no_bits(const Opnd *o, const char *stmt)
     static const char *rule[] = { "INSPECT", "14.9.22.3 rules 1 and 2", "STRING", "14.9.43.3 rule 1", "UNSTRING", "14.9.48.3 rules 2 and 4", NULL };
     const char *r = "";
     for (int i = 0; rule[i]; i += 2) if (!strcmp(stmt, rule[i])) r = rule[i + 1];
-    if (o->kind == O_REF && (o->ref.sym->usage == U_BIT || o->ref.sym->bitgroup))
+    if (o->kind == O_REF && sym_bitlike(o->ref.sym))
         die_at(o->line, "%s takes items of usage display or national, not the USAGE BIT item '%s' (2023 %s)", stmt, o->ref.sym->name, r);
 }
 
@@ -7025,7 +7107,7 @@ static int emit_move_national(Opnd *src, Ref *dst)
 }
 
 /* boolean positions of a boolean item */
-static int bool_positions(const Sym *s) { return (s->usage == U_BIT || s->bitgroup) ? s->bits : s->usage == U_NATIONAL ? s->size / 2 : s->size; }
+static int bool_positions(const Sym *s) { return sym_bitlike(s) ? s->bits : s->usage == U_NATIONAL ? s->size / 2 : s->size; }
 
 /* a figurative constant or ALL literal beside a boolean operand of n
  * positions: ZERO is boolean zeros, ALL B"..." its value repeated; any
@@ -7039,8 +7121,18 @@ static void bool_fig_opnd(Opnd *o, int n)
         if (strncmp(o->tok->s, "zero", 4)) die_at(o->line, "%s is not a boolean value (2023 14.9.25 rule 7)", o->tok->s);
         memset(b, '0', (size_t)n);
     } else {
-        if (!o->tok->boolv) die_at(o->line, "ALL with a literal that is not boolean, beside a boolean operand");
-        for (int i = 0; i < n; i++) b[i] = o->tok->s[i % (o->tok->len ? o->tok->len : 1)];
+        /* ALL "1" is as good as ALL B"1": rule 7 bars only characters that
+         * are no boolean character (cobol ISSUES-94 B15) */
+        Tok *t = o->tok;
+        int w = t->nat ? 2 : 1, len = t->len / w;
+        char *v = xmalloc((size_t)len + 1);
+        for (int i = 0; i < len; i++) {
+            unsigned ch = t->nat ? ((unsigned char)t->s[2 * i] << 8 | (unsigned char)t->s[2 * i + 1]) : (unsigned char)t->s[i];
+            if (!t->boolv && ch != '0' && ch != '1') die_at(o->line, "ALL %s: a character that is not 0 or 1 is no boolean value (2023 14.9.25.3 rule 7)", tok_desc(t));
+            v[i] = (char)ch;
+        }
+        for (int i = 0; i < n; i++) b[i] = v[i % (len ? len : 1)];
+        free(v);
     }
     Tok *t = xmalloc(sizeof *t); *t = *o->tok;
     t->kind = T_STR; t->s = b; t->len = n; t->boolv = 1; t->nat = 0;
@@ -7065,15 +7157,13 @@ static int emit_move_boolean(Opnd *src, Ref *dst)
     Sym *d = dst->sym;
     int db = sym_is_boolean(d), sb = opnd_is_boolean(src);
     if (!db && !sb) return 0;
+    /* A move with a group on either side -- a group that is not a bit
+     * group, which is treated as elementary (13.18.29.4 rule 1b) -- is no
+     * elementary move: its bytes are copied without conversion (14.9.25.4
+     * rule 4; cobol ISSUES-94 B14).  The group MOVE does that. */
+    if (d->is_group && !d->bitgroup && !dst->rm) return 0;
+    if (src->kind == O_REF && src->ref.sym->is_group && !src->ref.sym->bitgroup && !src->ref.rm) return 0;
     if (!db) {
-        if (d->is_group && src->kind == O_REF && (src->ref.sym->usage == U_BIT || src->ref.sym->bitgroup)) {
-            /* bits to a group: the boolean value, as characters (14.9.25 rule 5a) */
-            Arg a[4]; opnd_args(src, &a[0], &a[1], d->size, 0);
-            a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
-            emit_args(a, 4); emit_call("cob_move");
-            return 1;
-        }
-        if (d->is_group) return 0;                          /* a group receives the bytes */
         int c = d->pi.category;
         if (c == PIC_ALPHANUMERIC || c == PIC_ALPHANUMERIC_EDITED || c == PIC_NATIONAL) return 0;   /* as its characters */
         die_at(dst->line, "a boolean item cannot be moved to the %s item '%s' (2023 14.9.25)",
@@ -7081,6 +7171,18 @@ static int emit_move_boolean(Opnd *src, Ref *dst)
     }
     int n = dst->rm ? (dst->rm_len ? (int)dst->rm_len : 1) : bool_positions(d);
     Opnd lit;
+    if (src->kind == O_ALL && dst->rm && !dst->rm_len) {
+        /* ALL to positions known only at run time: repeated to them there
+         * (cobol ISSUES-94 B4) */
+        lit = *src;
+        if (!lit.tok->boolv) { bool_fig_opnd(&lit, lit.tok->len / (lit.tok->nat ? 2 : 1)); lit.kind = O_ALL; }
+        bool_emit_operand(&lit);
+        Arg a[2] = { arg_ref(dst), arg_rdesc(dst) };
+        emit_args(a, 2);
+        emit_call("cob_bstore");
+        emit_call("cob_bdrop");
+        return 1;
+    }
     if (src->kind == O_FIG || src->kind == O_ALL) { lit = *src; bool_fig_opnd(&lit, n); src = &lit; }
     else if (!sb) {
         int ok = src->kind == O_STR ||
@@ -7125,11 +7227,13 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (d->is_cond) die_at(dst->line, "'%s' is a condition-name and cannot receive a MOVE", d->name);
-    {   /* strongly-typed groups: sender and receiver of the same type (8.5.3.3, D.8.3) */
+    {   /* a strongly-typed group receives only a group of its own type
+         * (14.9.25.3 rule 2); as a sender it goes anywhere a group does
+         * (Table 16; cobol ISSUES-94 B13) */
         int ss = src->kind == O_REF ? src->ref.sym->strong : 0, ds = d->strong;
-        if ((ss || ds) && ss != ds)
-            die_at(dst->line, "MOVE: a strongly-typed group moves only to and from one of the same type ('%s' is %s, the sender %s)",
-                   d->name, ds ? strong_name(ds - 1) : "not strongly typed", ss ? strong_name(ss - 1) : "is not strongly typed");
+        if (ds && ss != ds)
+            die_at(dst->line, "MOVE: the strongly-typed group '%s' (%s) receives only a group of the same type, the sender %s (2023 14.9.25.3 rule 2)",
+                   d->name, strong_name(ds - 1), ss ? strong_name(ss - 1) : "is not strongly typed");
     }
     if (emit_move_boolean(src, dst)) return;
     if (emit_move_national(src, dst)) return;
@@ -10040,6 +10144,8 @@ static void parse_unstring_1(void)
         if (n >= MAXOPS) die_at(cur()->line, "too many UNSTRING receivers");
         parse_ref(&rcv[n]);
         if (rcv[n].sym->is_cond) die_at(rcv[n].line, "'%s' is a condition-name", rcv[n].sym->name);
+        if (rcv[n].sym->strong)                   /* its category is its type (8.5.2.1) */
+            die_at(rcv[n].line, "the strongly-typed group '%s' is not an UNSTRING receiver (2023 14.9.48.3 rule 4)", rcv[n].sym->name);
         has_d[n] = has_c[n] = 0;
         for (;;) {
             if (accept_word("delimiter")) { accept_word("in"); parse_ref(&dlm[n]); has_d[n] = 1; continue; }
@@ -10195,7 +10301,11 @@ static void parse_call(void)
                     a[n] = arg_imm((long)numlit_int(&o->num));
                 } else die_at(o->line, "BY VALUE needs an integer item or literal");
             } else {
-                if (o->kind == O_REF) { if (o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed"); a[n] = arg_ref(&o->ref); }
+                if (o->kind == O_REF) {
+                    if (o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed");
+                    if (sym_bitlike(o->ref.sym)) bit_arg_check(&o->ref);
+                    a[n] = arg_ref(&o->ref);
+                }
                 else if (o->kind == O_STR) a[n] = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
                 else if (o->kind == O_NUM) a[n] = arg_label(call_num_lit_label(&o->num));
                 else die_at(o->line, "a CALL argument must be an item or a literal");
@@ -11090,38 +11200,45 @@ static void parse_inspect_1(void)
  * REDEFINES items and elementary FILLERs left alone, X3.23 6.16) takes
  * the value by the MOVE rules -- every occurrence of a table, the
  * receiver's own subscripts leading, the rest unrolled at compile time */
-static void init_replace_walk(Sym *s, const Ref *base, int cat, Opnd *value, long *sub, int nsub, int line)
+static void init_replace_walk(Sym *s, const Ref *base, int cat, Opnd *value, long *sub, int nsub, int line, int bits_only)
 {
     if (s->is_cond || s->is_index || s->redefines >= 0) return;
     if (s->is_group) {
         for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
             Sym *k = &g_sym[c];
             if (k->occurs) {
-                /* one more dimension: every occurrence */
+                /* one more dimension: every occurrence (a bit array's
+                 * elements too, their bits found by ref_resolve_bits) */
                 if (nsub >= MAXDIM) die_at(line, "INITIALIZE REPLACING: too many dimensions");
-                for (long i = 1; i <= k->occurs; i++) { sub[nsub] = i; init_replace_walk(k, base, cat, value, sub, nsub + 1, line); }
-            } else init_replace_walk(k, base, cat, value, sub, nsub, line);
+                for (long i = 1; i <= k->occurs; i++) { sub[nsub] = i; init_replace_walk(k, base, cat, value, sub, nsub + 1, line, bits_only); }
+            } else init_replace_walk(k, base, cat, value, sub, nsub, line, bits_only);
         }
         return;
     }
     if (s->is_filler || s->pi.category != cat) return;
-    Ref r = *base; r.sym = s; r.nsub = nsub;
+    if (bits_only && s->usage != U_BIT) return;
+    Ref r = *base; r.sym = s; r.nsub = nsub; r.rm = 0; r.user_rm = 0; r.rm_bit = 0; r.bitsub = 0;
     for (int i = 0; i < nsub; i++) { if (i < base->nsub) r.sub[i] = base->sub[i]; else { r.sub[i].sym = NULL; r.sub[i].lit = sub[i]; r.sub[i].adj = 0; } }
     if (nsub != s->ndims) die_at(line, "INITIALIZE REPLACING: '%s' needs %d subscripts", s->name, s->ndims);
+    ref_resolve_bits(&r);                       /* a bit array's element: its own bits (cobol ISSUES-94 B2) */
     emit_move(value, &r);
 }
 
-/* the bytes INITIALIZE leaves alone: elementary FILLERs, index items,
- * REDEFINES items and their subordinates (X3.23 6.16), every occurrence */
-static void init_mask(Sym *s, int top_off, int disp, unsigned char *mask, int limit, int is_top)
+/* the bytes INITIALIZE sets from the template: those of the elementary
+ * items it initializes -- not FILLERs, index items, or REDEFINES items
+ * and their subordinates (X3.23 6.16; the item a REDEFINES redefines is
+ * initialized, cobol ISSUES-94), every occurrence.  Bit items share bytes
+ * with their neighbours and are set by MOVE instead (ISSUES-94 B1). */
+static void init_cover(Sym *s, int top_off, int disp, unsigned char *cover, int limit, int is_top)
 {
-    if (s->is_cond) return;
-    if (!is_top && s->redefines >= 0) { int a = s->offset - top_off + disp; for (int k = a; k < a + s->size && k < limit; k++) if (k >= 0) mask[k] = 1; return; }
+    if (s->is_cond || s->is_index) return;
+    if (!is_top && s->redefines >= 0) return;
+    if (s->bitgroup || (!s->is_group && s->usage == U_BIT)) return;
     int reps = (!is_top && s->occurs) ? s->occurs : 1;
     for (int i = 0; i < reps; i++) {
         int d = disp + i * s->size;
-        if (s->is_group) { for (int c = s->child; c >= 0; c = g_sym[c].sibling) init_mask(&g_sym[c], top_off, d, mask, limit, 0); }
-        else if (s->is_filler || s->is_index) { int a = s->offset - top_off + d; for (int k = a; k < a + s->size && k < limit; k++) if (k >= 0) mask[k] = 1; }
+        if (s->is_group) { for (int c = s->child; c >= 0; c = g_sym[c].sibling) init_cover(&g_sym[c], top_off, d, cover, limit, 0); }
+        else if (!s->is_filler) { int a = s->offset - top_off + d; for (int k = a; k < a + s->size && k < limit; k++) if (k >= 0) cover[k] = 1; }
     }
 }
 
@@ -11136,7 +11253,6 @@ static void parse_initialize(void)
         if (n >= MAXOPS) die_at(cur()->line, "too many items in INITIALIZE");
         Ref *r = &rs[n]; parse_ref(r);
         if (r->sym->is_cond) die_at(r->line, "INITIALIZE of a condition-name");
-        if (r->rm) die_at(r->line, "INITIALIZE of a reference-modified item is not implemented");
         n++;
     }
     if (!n) die_at(cur()->line, "INITIALIZE needs an item");
@@ -11146,16 +11262,25 @@ static void parse_initialize(void)
          * then the edited items by MOVE (ZERO or SPACES through the edit) */
         for (int i = 0; i < n; i++) {
             Ref *r = &rs[i]; Sym *t = r->sym;
+            if (r->user_rm) {
+                /* a reference-modified item is an elementary item of its
+                 * part's category: alphanumeric (national, boolean), set to
+                 * spaces (national spaces, zeros) (X3.23 6.16; 2023 8.4.2.4;
+                 * cobol ISSUES-94) */
+                emit_move(r->rm_bit || t->pi.category == PIC_BOOLEAN ? &fig_zero : &fig_space, r);
+                continue;
+            }
+            if (r->rm) { emit_move(&fig_zero, r); continue; }      /* a bit array's element */
             Sym tmp; memset(&tmp, 0, sizeof tmp);
             tmp.image = xmalloc(t->size); tmp.image_size = t->size;
             g_no_values = 1;
             init_one(&tmp, sym_idx(t), 0, 1);
             g_no_values = 0;
-            unsigned char *mask = xmalloc((size_t)t->size + 1); memset(mask, 0, (size_t)t->size + 1);
-            init_mask(t, t->offset, 0, mask, t->size, 1);
+            unsigned char *cover = xmalloc((size_t)t->size + 1); memset(cover, 0, (size_t)t->size + 1);
+            init_cover(t, t->offset, 0, cover, t->size, 1);
             for (int a = 0; a < t->size; ) {
-                if (mask[a]) { a++; continue; }
-                int b = a; while (b < t->size && !mask[b]) b++;
+                if (!cover[a]) { a++; continue; }
+                int b = a; while (b < t->size && cover[b]) b++;
                 Ref part = *r;
                 if (a) { part.rm = 1; part.rm_start = a + 1; part.rm_len = b - a; part.rm_l0 = -1; part.rm_nat = 0; }   /* bytes */
                 Arg args[3] = { arg_ref(&part), arg_label(lit_label(tmp.image + a, b - a)), arg_imm(b - a) };
@@ -11163,13 +11288,15 @@ static void parse_initialize(void)
                 emit_call("memcpy");
                 a = b;
             }
-            free(mask); free(tmp.image);
+            free(cover); free(tmp.image);
             long sub[MAXDIM];
             if (t->is_group) {
-                init_replace_walk(t, r, PIC_NUMERIC_EDITED, &fig_zero, sub, r->nsub, r->line);
-                init_replace_walk(t, r, PIC_ALPHANUMERIC_EDITED, &fig_space, sub, r->nsub, r->line);
+                init_replace_walk(t, r, PIC_NUMERIC_EDITED, &fig_zero, sub, r->nsub, r->line, 0);
+                init_replace_walk(t, r, PIC_ALPHANUMERIC_EDITED, &fig_space, sub, r->nsub, r->line, 0);
+                init_replace_walk(t, r, PIC_BOOLEAN, &fig_zero, sub, r->nsub, r->line, 1);   /* bit items, a MOVE each */
             } else if (t->pi.category == PIC_NUMERIC_EDITED) emit_move(&fig_zero, r);
             else if (t->pi.category == PIC_ALPHANUMERIC_EDITED) emit_move(&fig_space, r);
+            else if (t->usage == U_BIT) emit_move(&fig_zero, r);
         }
     }
     if (accept_word("replacing")) {
@@ -11192,11 +11319,14 @@ static void parse_initialize(void)
                 Sym *t = rs[i].sym;
                 long sub[MAXDIM];
                 for (int k = 0; k < rs[i].nsub && k < MAXDIM; k++) sub[k] = 0;
-                if (!t->is_group) {
-                    if (!t->is_filler && t->pi.category == cat) { Ref r = rs[i]; emit_move(&value, &r); }
-                } else init_replace_walk(t, &rs[i], cat, &value, sub, rs[i].nsub, line);
+                int rcat = rs[i].user_rm ? (rs[i].rm_bit || t->pi.category == PIC_BOOLEAN ? PIC_BOOLEAN : rs[i].rm_nat ? PIC_NATIONAL : PIC_ALPHANUMERIC)
+                                         : t->pi.category;      /* a part is of its part's category */
+                if (!t->is_group || rs[i].user_rm) {
+                    if (!t->is_filler && rcat == cat) { Ref r = rs[i]; emit_move(&value, &r); }
+                } else init_replace_walk(t, &rs[i], cat, &value, sub, rs[i].nsub, line, 0);
             }
-            if (!(at_word("alphabetic") || at_word("alphanumeric") || at_word("numeric") || at_word("alphanumeric-edited") || at_word("numeric-edited"))) break;
+            if (!(at_word("alphabetic") || at_word("alphanumeric") || at_word("numeric") || at_word("alphanumeric-edited") ||
+                  at_word("numeric-edited") || (g_std >= 2002 && (at_word("national") || at_word("boolean"))))) break;
         }
     }
     if (at_word("with") || at_word("default")) die_at(cur()->line, "INITIALIZE WITH FILLER / DEFAULT is COBOL 2002");

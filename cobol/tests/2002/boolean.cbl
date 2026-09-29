@@ -30,7 +30,7 @@ main.
     move b"101101" to g
     display "truncated: " g
     if g = b"1011" display "g = B'1011'" end-if
-    if h > b"1" display "110000 > 1(00000)" end-if
+    if h not = b"1" display "110000 not = 1(00000)" end-if
     if h = bx"C" display "110000 = 1100(00)" end-if
     move g to x
     display "to alphanumeric: [" x "]"

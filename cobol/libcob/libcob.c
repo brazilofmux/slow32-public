@@ -278,13 +278,29 @@ static __attribute__((noinline)) long long get_num_edited(const unsigned char *p
  * size bits from the scale-th bit of the first byte, 1 for '1'.  Widening
  * it sets or clears only its own bits. */
 static int is_natnum(const cob_desc *d) { return d->usage == COB_U_NATIONAL || d->usage == COB_U_BIT; }
+/* The DISPLAY form goes in the caller's NATNUM_MAX buffer, or, for a
+ * longer item (bits: a bit group of any size; cobol ISSUES-94 B8), in one
+ * of a ring of heap buffers -- four, as many as are live at once.  Callers
+ * use the pointer returned, which is the one to widen from. */
+static unsigned char *natbig[4]; static size_t natbig_cap[4]; static int natbig_k;
+static unsigned char *nat_room(unsigned char *buf, int n)
+{
+    if (n <= NATNUM_MAX) return buf;
+    int k = natbig_k++ & 3;
+    if (natbig_cap[k] < (size_t)n) {
+        natbig[k] = realloc(natbig[k], (size_t)n);
+        if (!natbig[k]) cob_fatal("out of memory");
+        natbig_cap[k] = (size_t)n;
+    }
+    return natbig[k];
+}
 static const unsigned char *nat_narrow(const void *vp, const cob_desc *d, unsigned char *buf, cob_desc *nd)
 {
     const unsigned char *p = vp;
     *nd = *d; nd->usage = COB_U_DISPLAY;
     if (d->usage == COB_U_BIT) {
         int n = (int)d->size, o = d->scale;
-        if (n > NATNUM_MAX) cob_fatal("USAGE BIT item longer than 256 bits");
+        buf = nat_room(buf, n);
         for (int i = 0; i < n; i++) buf[i] = (unsigned char)('0' + ((p[(o + i) / 8] >> (7 - (o + i) % 8)) & 1));
         nd->scale = 0;
         return buf;
@@ -403,9 +419,9 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
 {
     if (is_natnum(d)) {
         unsigned char b[NATNUM_MAX]; cob_desc nd;
-        nat_narrow(vp, d, b, &nd);
-        int r = cob_put_num_x(b, &nd, v, vscale, opts);
-        nat_widen(vp, d, b, (int)nd.size);
+        unsigned char *q = (unsigned char *)nat_narrow(vp, d, b, &nd);
+        int r = cob_put_num_x(q, &nd, v, vscale, opts);
+        nat_widen(vp, d, q, (int)nd.size);
         return r;
     }
     unsigned char *p = vp;
@@ -779,9 +795,9 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
     if (is_natnum(dd)) {
         /* written as DISPLAY, then widened: editing included */
         unsigned char b[NATNUM_MAX]; cob_desc nd;
-        nat_narrow(dst, dd, b, &nd);
-        cob_move(src, sd, b, &nd);
-        nat_widen(dst, dd, b, (int)nd.size);
+        unsigned char *q = (unsigned char *)nat_narrow(dst, dd, b, &nd);
+        cob_move(src, sd, q, &nd);
+        nat_widen(dst, dd, q, (int)nd.size);
         return;
     }
     if (dd->cat == COB_BOOLEAN) {
@@ -2879,11 +2895,15 @@ char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track)
  * A stack of boolean values, each a string of characters 0 and 1.  Binary
  * operations extend the shorter operand on the right with zeros (rule 9);
  * a shift keeps its operand's length (rule 8); B-NOT its operand's. */
-static struct { char *v; int n, all; } bstk[32];     /* all: an ALL literal, repeated to its partner's length */
-static int bsp;
+static struct bent { char *v; int n, all; } *bstk;   /* all: an ALL literal, repeated to its partner's length */
+static int bsp, bcap;                                /* grows: a user function can run with its caller's operands on it */
 static void bstk_push(char *v, int n)
 {
-    if (bsp == 32) cob_fatal("boolean expression too deep");
+    if (bsp == bcap) {
+        bcap = bcap ? 2 * bcap : 32;
+        bstk = realloc(bstk, (size_t)bcap * sizeof *bstk);
+        if (!bstk) cob_fatal("out of memory");
+    }
     bstk[bsp].v = v; bstk[bsp].n = n; bstk[bsp].all = 0; bsp++;
 }
 void cob_bpush_all(const char *lit, int n)
@@ -2949,9 +2969,28 @@ void cob_bshift(int kind, int count)
     }
     memcpy(v, t, (size_t)n); free(t);
 }
+/* a shift whose count is on the numeric stack, taken whole (cobol
+ * ISSUES-94 B7): shifting L or R by the length or more leaves zeros, a
+ * circular shift goes round count mod length times; a count below zero
+ * shifts nothing */
+void cob_bshift_pop(int kind)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[--nsp];
+    long long c = a->v;
+    if (a->scale > 0) c = div_pow10(c, a->scale, 0);
+    int n = bstk[bsp - 1].n;
+    if (c <= 0 || n == 0) return;
+    if (kind >= 2) c %= n;
+    else if (c > n) c = n;
+    cob_bshift(kind, (int)c);
+}
 /* the top value into a receiver, by the MOVE rules (14.6.8.6) */
+static void ball_expand(int k, int n);
 void cob_bstore(void *p, const cob_desc *d)
 {
+    /* an ALL literal takes the receiver's positions (cobol ISSUES-94 B4) */
+    if (bstk[bsp - 1].all) ball_expand(bsp - 1, d->usage == COB_U_BIT ? (int)d->size : d->usage == COB_U_NATIONAL ? (int)d->size / 2 : (int)d->size);
     cob_desc sd; memset(&sd, 0, sizeof sd);
     sd.cat = COB_BOOLEAN; sd.usage = COB_U_DISPLAY; sd.size = (unsigned)bstk[bsp - 1].n;
     cob_move(bstk[bsp - 1].v, &sd, p, d);

@@ -101,7 +101,14 @@ character item may redefine a bit item that starts a byte.
 
 Not implemented, refused by name: OCCURS DEPENDING ON on a bit array,
 OCCURS on a bit group, and a character item redefining a bit item that
-starts inside a byte.
+starts inside a byte. The ALIGNED clause (13.18.1) is not implemented.
+
+After the Stage B review (ISSUES-94): INITIALIZE sets bit items by MOVE,
+so the bits beside them keep their values; boolean relations are EQUAL
+and NOT EQUAL only (8.8.4.2.2); an ALL literal beside a run-time length
+is repeated at run time; a bit item passed BY REFERENCE starts a byte
+(14.9.4.3 rule 6); a group moved to or from a bit group copies bytes
+(14.9.25.4 rule 4); a character REDEFINES ends a run of bits.
 
 Refused by the standard, not a gap: bit items in INSPECT, STRING and
 UNSTRING, which take items of usage display or national (14.9.22.3

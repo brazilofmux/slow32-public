@@ -4,7 +4,7 @@ f is off
 zero-filled: 110000
 truncated: 1011
 g = B'1011'
-110000 > 1(00000)
+110000 not = 1(00000)
 110000 = 1100(00)
 to alphanumeric: [1011  ]
 to national: [1011]

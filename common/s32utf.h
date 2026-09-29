@@ -214,7 +214,9 @@ typedef struct {
     int prev;          /* the last code point's GCB */
     int ri;            /* regional indicators in the cluster (GB12/13: they pair only when adjacent;
                           libutf had the count without the adjacency until e46427a) */
-    int epez;          /* ExtPict Extend* seen, for GB11 */
+    int gb11;          /* GB11 progress, "ExtPict Extend* ZWJ x ExtPict": 0 none, 1 ExtPict
+                          Extend* seen, 2 ... ZWJ seen -- an ExtPict joins only in 2, and a
+                          second ZWJ drops to 0 (TinyMUX c3fafc153, libutf 92968c8) */
     int base;          /* the first code point's GCB */
     int ncp, wmax, vs16;
 } s32u_clu;
@@ -236,14 +238,16 @@ static inline int s32u_clu_step(s32u_clu *c, uint32_t cp)
         else if (g == S32U_GCB_EXTEND || g == S32U_GCB_ZWJ) join = 1;                          /* GB9 */
         else if (g == S32U_GCB_SPACINGMARK) join = 1;                                          /* GB9a */
         else if (p == S32U_GCB_PREPEND) join = 1;                                              /* GB9b */
-        else if (c->epez && p == S32U_GCB_ZWJ && ep) join = 1;                                 /* GB11 */
+        else if (c->gb11 == 2 && ep) join = 1;                                                 /* GB11 */
         else if (g == S32U_GCB_RI && p == S32U_GCB_RI && c->ri % 2 == 1) join = 1;             /* GB12/13 */
     }
     if (!join) {
-        c->started = 1; c->base = g; c->ri = 0; c->epez = ep;
+        c->started = 1; c->base = g; c->ri = 0; c->gb11 = ep ? 1 : 0;
         c->ncp = 0; c->wmax = 0; c->vs16 = 0;
-    } else if (ep) c->epez = 1;
-    else if (g != S32U_GCB_EXTEND && g != S32U_GCB_ZWJ) c->epez = 0;
+    } else if (ep) c->gb11 = 1;
+    else if (c->gb11 == 1 && g == S32U_GCB_EXTEND) { /* still ExtPict Extend* */ }
+    else if (c->gb11 == 1 && g == S32U_GCB_ZWJ) c->gb11 = 2;
+    else c->gb11 = 0;
     if (g == S32U_GCB_RI) c->ri++;
     c->prev = g;
     c->ncp++;

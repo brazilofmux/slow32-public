@@ -3308,3 +3308,73 @@ rmnonint (E17); bad/std2002-ecp-turn (E13), -until-exit-test (E15),
 -ecp-dup (E16), -ecp-recovery (E10). Harness 299/299; -std=85
 byte-identical on all 229 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+**Progress, part 3 (2026-09-28): BOOLEAN, bits, TYPEDEF -- B1-B17.**
+The bit-array element is resolved by one function, `ref_resolve_bits`,
+which every Ref builder calls (parse_ref, INITIALIZE's walk), and a Ref
+records `user_rm`, whether the program wrote a reference modification.
+
+- B1 fixed: INITIALIZE sets bit items by MOVE (a boolean zero each), not
+  by the template's bytes; the template covers only the bytes of the
+  items INITIALIZE sets (`init_cover`, the inverse of the old mask). That
+  also fixed a Stage A bug: the old mask left alone the bytes of every
+  REDEFINES item, which are the redefined item's too, so INITIALIZE of a
+  group never initialized an item another redefined (GnuCOBOL agrees
+  with the fix; X3.23 6.16 excludes only the REDEFINES items).
+- B2, B3 fixed: REPLACING reaches every element of a bit array; BOOLEAN
+  and NATIONAL phrases may follow the first; a bit array's element may be
+  INITIALIZEd; and INITIALIZE of a reference-modified item -- the Stage A
+  gap of docs/refusals.md -- sets the part as an elementary alphanumeric
+  (national, boolean) item.
+- B4 fixed: an ALL literal beside a computed-length reference
+  modification or a run-time-length function result is repeated at run
+  time: comparisons go by the boolean stack, MOVE by cob_bstore, which
+  expands ALL to the receiver's positions.
+- B5 fixed: sym_bitlike at every site; a group with a group-level USAGE
+  BIT clause is alphanumeric.
+- B6 fixed: a bit item passed BY REFERENCE must start a byte, with
+  literal subscripts and leftmost position (14.9.4.3 rule 6).
+- B7 fixed: a shift's count is popped whole by the runtime
+  (cob_bshift_pop): L/R by the length or more gives zeros, circular goes
+  mod the length.
+- B8 fixed: nat_narrow uses a ring of heap buffers past 256 positions.
+- B9, B10 fixed: a TYPE's clauses go right after the level and name, the
+  entry's own after them, so the entry's VALUE is the one used (rule 3);
+  a group type starts a byte, as a level 1 item (rule 2d).
+- B11 fixed: boolean relations are EQUAL and NOT EQUAL only, and a
+  strongly-typed group holding a boolean item likewise. Two of this
+  project's own earlier tests (2002/boolean, boolexpr) used `>` on
+  booleans; they were wrong and now say NOT =.
+- B12 fixed: THROUGH on a boolean condition-name is refused (13.18.63.3
+  rule 29).
+- B13 fixed: a strongly-typed group as a MOVE sender goes anywhere a
+  group does (14.9.25.3 rule 2 constrains only the receiver); VALUE on
+  one (13.18.63.3 rule 1), ACCEPT into one (14.9.1.3 rule 1) and
+  UNSTRING into one (rule 4) are refused. The 88 on a strong group the
+  review listed is left: no rule found that forbids it.
+- B14 fixed: a MOVE between an ordinary group and a bit group copies
+  bytes (14.9.25.4 rule 4).
+- B15 fixed: MOVE ALL "1" (any ALL literal of 0s and 1s) to a boolean.
+- B16 fixed: a shift after B-NOT takes B-NOT's precedence (8.8.2 7b).
+- B17 fixed: a character REDEFINES ends a run of bits (8.5.1.6.3).
+- Also: the runtime boolean stack grows (it held 32 where the compiler
+  allowed 64); an unknown TYPE name is diagnosed as one (a type declared
+  later, or itself, 13.18.58.3 rule 2).
+- Left open from the review's minor list: TYPE syntax rules 2 and 5;
+  VALUE on a bit group together with a subordinate VALUE; a negative
+  shift count shifts nothing; the ALIGNED clause (not implemented, now
+  listed in docs/boolean.md); a computed reference-modification start is
+  evaluated twice per operand (a side-effecting function in it runs
+  twice).
+- The shared Unicode header also took libutf 92968c8 (from TinyMUX):
+  GB11 allows exactly one ZWJ between pictographs; the stepper keeps a
+  three-state GB11 tracker, and test_s32utf.c has the case, which
+  GraphemeBreakTest lacks.
+
+Tests: 2002/boolreview, strongsend; bad/std2002-bool-relation,
+-bool-88-thru, -strong-value, -strong-accept, -strong-unstring,
+-bit-byref, -type-later. Harness 308/308; regression 94/94; kit
+differential 80/80; cross-engine 90/94 (the four pre-existing QEMU
+fault-line divergences); -std=85 byte-identical on all 229 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.

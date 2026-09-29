@@ -42,7 +42,7 @@ rest (see "What follows" below).
 COBOL 85 (Stage A was declared complete; these are in the 85 text):
 
 - the Report Writer CODE clause;
-- INITIALIZE of a reference-modified item;
+- INITIALIZE of a reference-modified item (done, ISSUES-94 B3);
 - BY CONTENT of a reference-modified item (no restriction in 85 or
   2023 CALL rules);
 - a REPORT SECTION in a contained program (2023 13.8.3 rule 1 allows it

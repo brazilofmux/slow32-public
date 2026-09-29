@@ -1,6 +1,6 @@
 identification division.
 program-id. stmv.
-*> A strongly-typed group moves only to and from one of its own type (8.5.3.3).
+*> A strongly-typed group receives only a group of its own type (14.9.25.3 rule 2).
 data division.
 working-storage section.
 01  d-t typedef strong.
