@@ -6135,6 +6135,7 @@ static void bool_emit_op(int op, Opnd *cnt)
         die_at(line, "the first operand of a boolean shift cannot be an ALL literal (2023 8.8.2 rule 5)");
     if (op == BO_NOT) { emit_call("cob_bnot"); return; }
     if (op <= BO_XOR) { emit_call(op == BO_AND ? "cob_band" : op == BO_OR ? "cob_bor" : "cob_bxor"); return; }
+    emit_incompat(cnt);
     emit_push_opnd(cnt);
     emit_li("r3", op - BO_SL);                   /* 0 L, 1 R, 2 LC, 3 RC; the count taken whole (B7) */
     emit_call("cob_bshift_pop");
@@ -6150,6 +6151,7 @@ static void bool_emit_operand(Opnd *o)
         return;
     }
     Arg a[2];
+    emit_incompat(o);                            /* 14.6.13.2 rule 1 */
     opnd_args(o, &a[0], &a[1], 0, 0);
     emit_args(a, 2);
     emit_call("cob_bpush");
@@ -8662,7 +8664,7 @@ static void emit_dec_addto(Opnd *op, Ref *rs, int nr, int subtract)
     }
 }
 
-/* EC-DATA-INCOMPATIBLE (2023 14.6.13.2 rule 2): a numeric sending item
+/* EC-DATA-INCOMPATIBLE (2023 14.6.13.2 rules 1-2): a numeric sending item
  * whose content would fail a NUMERIC class test, referenced while the
  * condition is checked.  Binary items are always valid; DISPLAY, packed
  * and national numeric ones are tested before the statement uses them.
@@ -8671,9 +8673,12 @@ static void emit_incompat(const Opnd *o)
 {
     if (o->kind != O_REF || o->ref.rm || !ec_on_name("EC-DATA-INCOMPATIBLE")) return;
     Sym *x = o->ref.sym;
-    if (x->is_group || x->pi.category != PIC_NUMERIC) return;
-    if (x->usage != U_DISPLAY && x->usage != U_PACKED && x->usage != U_NATIONAL) return;
-    Arg a[3] = { arg_ref(&o->ref), arg_desc(sym_desc(x)), arg_imm(0) };
+    /* rule 1: a boolean item of usage display or national whose content
+     * fails the BOOLEAN class test (a USAGE BIT item is always valid) */
+    int boolean = x->pi.category == PIC_BOOLEAN;
+    if (x->is_group || (x->pi.category != PIC_NUMERIC && !boolean)) return;
+    if (x->usage != U_DISPLAY && x->usage != U_NATIONAL && (boolean || x->usage != U_PACKED)) return;
+    Arg a[3] = { arg_ref(&o->ref), arg_desc(sym_desc(x)), arg_imm(boolean ? 4 : 0) };
     emit_args(a, 3);
     emit_call("cob_class");
     int Lok = new_label();

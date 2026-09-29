@@ -3946,12 +3946,18 @@ unchanged: -std=85 byte-identical on the Open Systems programs.
 Not raised, by the rule's own exceptions or because the content is not
 sent as a number: a class condition, UNSTRING's receivers, INSPECT of a
 numeric item (examined as characters, not sent as a number), BY
-REFERENCE and BY CONTENT arguments. Rule 1 (boolean content) is not
-done.
+REFERENCE and BY CONTENT arguments.
+
+Rule 1 too: a boolean item of usage display or national whose content
+fails the BOOLEAN class test (cob_class kind 4) raises it wherever
+emit_incompat is reached -- MOVE, relations, DISPLAY, STRING -- and
+boolean expression operands and shift counts (bool_emit_operand), which
+were not. A USAGE BIT item is always valid. Not raised in a class
+condition.
 
 The condition is fatal, so one program cannot show more than one site:
 harness gate 6 (tests/ecsites) builds tests/ecsites/template.cbl once
-per line of sites.txt -- 24 sites that must raise, 5 that must not (a
-class test, a binary subscript expression, an UNSTRING receiver, a
-binary BY VALUE). Harness 453/453.
+per line of sites.txt -- 30 sites that must raise, 8 that must not
+(class tests, a binary subscript expression, an UNSTRING receiver, a
+binary BY VALUE, bit operands, a boolean receiver). Harness 453/453.
 

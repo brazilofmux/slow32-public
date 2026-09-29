@@ -62,8 +62,7 @@ COBOL 2002/2023 (Stage B):
 - exceptions: USE AFTER EXCEPTION CONDITION ... FILE, WHEN EXCEPTION
   with a file-name or open mode, ACCEPT ... ON EXCEPTION, the rest of
   Table 13's conditions (EC-DATA-INCOMPATIBLE is raised wherever
-  numeric content is sent since ISSUES-101 and -103; its boolean
-  half, rule 1, is not);
+  numeric or boolean content is sent since ISSUES-101 and -103);
 - a MOVE sender reference-modified with a computed length over an item
   that a receiver before the last changes (general rule 1 needs a
   snapshot of run-time length; docs/conformance/move.md);

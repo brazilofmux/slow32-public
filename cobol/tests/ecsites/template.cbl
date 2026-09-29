@@ -1,8 +1,10 @@
 *> The template for the EC-DATA-INCOMPATIBLE sites gate (run-tests.sh,
 *> gate 6): @STMT@ is replaced by each line of sites.txt in turn.  n is a
 *> numeric DISPLAY item whose content ("1a3") fails the NUMERIC class
-*> test; 2023 14.6.13.2 rule 2 says every statement that references it as
-*> a sending item raises the condition while it is checked.  The condition
+*> test, bb a boolean DISPLAY item whose content ("1a0") fails the
+*> BOOLEAN one; 2023 14.6.13.2 rules 1 and 2 say every statement that
+*> references either as a sending item raises the condition while it is
+*> checked.  The condition
 *> is fatal, so each site is a program of its own.
 identification division.
 program-id. ecsite.
@@ -11,6 +13,10 @@ working-storage section.
 01 raw  pic x(3) value "1a3".
 01 n    redefines raw pic 9(3).
 01 m    pic 9(3) value 2.
+01 rawb pic x(3) value "1a0".
+01 bb   redefines rawb pic 1(3).
+01 bc   pic 1(3) value b"101".
+01 bu   pic 1(3) usage bit.
 01 x    pic x(20).
 01 t.
    05 e pic x occurs 5.

@@ -23,9 +23,18 @@ RAISED|move function char(n) to x
 RAISED|initialize m replacing numeric by n
 RAISED|call "cv" using by value n
 RAISED|stop run n
+RAISED|move bb to bc
+RAISED|if bb = bc continue end-if
+RAISED|compute bc = bb b-and bc
+RAISED|compute bc = b-not bb
+RAISED|display bb
+RAISED|move bb to bu
 # not sending items, or not numeric content: no condition
 not raised|display k m
 not raised|move e (k + 1) to x
 not raised|unstring x delimited by "," into n
 not raised|if n is numeric continue end-if
 not raised|call "cv" using by value k
+not raised|if bb is boolean continue end-if
+not raised|compute bc = bc b-and bu
+not raised|move bc to bb
