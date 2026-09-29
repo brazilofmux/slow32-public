@@ -1,0 +1,1 @@
+RECORD ... DEPENDING ON 'k2': an elementary unsigned integer in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE (X3.23-1985 RECORD syntax rule 4)

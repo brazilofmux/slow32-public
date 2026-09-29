@@ -1,0 +1,1 @@
+FD f: RECORD CONTAINS 20 TO 10: the maximum must be greater than the minimum (X3.23-1985 RECORD syntax rule 3)

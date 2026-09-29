@@ -7,11 +7,18 @@ environment division.
 input-output section.
 file-control.
     select lst assign to "ext.txt" organization line sequential.
+    select ix assign to "ext.idx" organization indexed record key ixk
+        file status ixs.
 data division.
 file section.
 fd  lst.
 01  lst-rec pic x(10).
+fd  ix.
+01  ix-rec.
+    05 ixk pic 9(4).
+    05 ixd pic x(6).
 working-storage section.
+01  ixs    pic 99.
 01  pk     pic s9(5) comp-3.
 01  c5     pic 9(4) comp-5.
 01  c1     pic s9(4) comp-1.

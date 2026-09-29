@@ -4114,3 +4114,28 @@ Tests: bad/clause-rules (4 errors). Harness 473/473, CCVS-85 unchanged,
 -std=85 byte-identical on the Open Systems programs, majesty PASS.
 Page: docs/conformance/clauses.md.
 
+### 110. The file control entry and FD sweep (2026-09-29)
+
+12.4.5, 13.4.5 and the FD clauses, with the 85 I-O modules. Refused
+now, accepted before: ACCESS RANDOM or DYNAMIC on a sequential file;
+RECORD KEY on a file that is not indexed; an ALTERNATE RECORD KEY
+beginning where another key does; a FILE STATUS item in a table or in
+the FILE SECTION; a second FD for one file; DATA RECORDS naming no
+record of the FD; RECORD CONTAINS m TO n with a record shorter than m,
+or n not above m (that gave a confused message); a RECORD VARYING
+DEPENDING ON item inside the record or signed; a signed or table LINAGE
+data-name; a LINAGE footing beyond the page body. Under -std=2002, a
+LINE SEQUENTIAL file with RESERVE, BLOCK or RECORD CONTAINS. An FD with
+no record description said "file 'f' has no FD"; it cites the rule now
+(and under -std=2002 says the record-less form is not implemented).
+
+Two rules are extensions, not refusals: a numeric RECORD KEY (BP-E16;
+the Open Systems suite has 13) and a numeric FILE STATUS (BP-E17), both
+of which GnuCOBOL takes.
+
+Tests: 12 bad/fd-* and bad/select-* programs,
+bad/std2002-lineseq-clauses, warn/ext-every (BP-E16, E17). Harness
+486/486, CCVS-85 unchanged, -std=85 byte-identical on the Open Systems
+programs, majesty PASS, Open Systems paper unchanged. Page:
+docs/conformance/files.md.
+

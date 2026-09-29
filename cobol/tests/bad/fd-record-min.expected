@@ -1,0 +1,1 @@
+FD f: RECORD CONTAINS 18 TO 30, but a record description is 10 characters (X3.23-1985 RECORD syntax rule 2)

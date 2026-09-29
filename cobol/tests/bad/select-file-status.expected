@@ -1,0 +1,1 @@
+FILE STATUS 'st': an item of a file's record; it belongs in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE (X3.23-1985 FILE STATUS syntax rule 2)

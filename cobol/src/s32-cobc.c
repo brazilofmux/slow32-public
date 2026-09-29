@@ -261,7 +261,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E1_RETURN_CODE, BP_E2_GOBACK, BP_E3_COMP_N, BP_E4_VENDOR_BINARY, BP_E5_BINARY_2002,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
-       BP_E15_INIT_ODO,
+       BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -305,6 +305,9 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "arithmetic holds 18 digits, so a value past that would overflow" },
     { "BP-E15", 'E', "INITIALIZE of an item that is or contains an OCCURS DEPENDING ON table, which X3.23-1985 forbids "
                      "(INITIALIZE syntax rule 4); COBOL 2002 allows it, and it is taken" },
+    { "BP-E16", 'E', "a RECORD KEY or ALTERNATE RECORD KEY that is not alphanumeric (or national); the standard's keys are, "
+                     "and here a numeric key is taken, ordered by its bytes" },
+    { "BP-E17", 'E', "a FILE STATUS item that is not alphanumeric; the standard's is PIC XX, and here a two-digit numeric one is taken" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -1838,6 +1841,9 @@ typedef struct {
     int  global;                     /* FD ... GLOBAL: contained programs may use it */
     int  external;                   /* FD ... EXTERNAL: one file connector for every program naming it */
     int  codeset;                    /* FD CODE-SET: 1 + the alphabet index of a non-native code set, 0 native */
+    int  fd_line;                    /* the line of its FD (or SD) entry, 0 before one is seen */
+    int  block_given, rc_given, rc_varying_from, reserve_given;   /* BLOCK CONTAINS, RECORD CONTAINS written; RECORD VARYING FROM written */
+    char data_rec[8][64]; int ndata_rec;           /* DATA RECORDS names (85 3.5), checked against the 01s */
     int  codeset_line;
 } File;
 
@@ -3520,7 +3526,19 @@ static void finish_data_division(void)
     /* files: names, status, the record area */
     for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
-        if (f->rec < 0 && !f->report_name[0]) die_at(f->line, "file '%s' has no FD", f->name);
+        if ((f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ) && f->access)
+            die_at(f->line, "file '%s' is sequential: ACCESS %s is for a relative or indexed file (%s)", f->name, f->access == 1 ? "RANDOM" : "DYNAMIC",
+                   g_std < 2002 ? "X3.23-1985 sequential file control entry format" : "2023 12.4.5.5.2 rule 2");
+        if (f->rec < 0 && !f->report_name[0]) {
+            if (!f->fd_line) die_at(f->line, "file '%s' has no FD", f->name);
+            if (g_std < 2002) die_at(f->fd_line, "FD %s has no record description entry (X3.23-1985 file description syntax rule 3)", f->name);
+            die_at(f->fd_line, "FD %s without a record description entry (READ INTO, WRITE FILE ... FROM; 2023 13.4.5.3 rule 3) is not implemented", f->name);
+        }
+        for (int d = 0; d < f->ndata_rec; d++) {        /* DATA RECORDS names its own 01s (85 DATA RECORDS rule 1) */
+            int ok = 0;
+            for (int j = 0; j < g_nsym && !ok; j++) if (g_sym[j].fd == i && g_sym[j].level == 1 && !strcmp(g_sym[j].name, f->data_rec[d])) ok = 1;
+            if (!ok) die_at(f->fd_line, "FD %s: DATA RECORDS names '%s', which is not one of its record descriptions (X3.23-1985 DATA RECORDS syntax rule 1)", f->name, f->data_rec[d]);
+        }
         if (f->assign_name[0]) {
             f->assign_sym = sym_lookup(f->assign_name, NULL, 0, f->line);
             if (rec_indirect(&g_sym[f->assign_sym->record]))
@@ -3534,6 +3552,10 @@ static void finish_data_division(void)
             char *sq[1] = { f->status_qual };
             f->status_sym = sym_lookup(f->status_name, sq, f->status_qual[0] ? 1 : 0, f->line);
             if (f->status_sym->size != 2) die_at(f->line, "FILE STATUS '%s' must be PIC XX", f->status_name);
+            if (f->status_sym->ndims || (f->status_sym->record >= 0 && g_sym[f->status_sym->record].fd >= 0))
+                die_at(f->line, "FILE STATUS '%s': %s (%s)", f->status_name, f->status_sym->ndims ? "an item in a table" : "an item of a file's record; it belongs in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE",
+                       g_std < 2002 ? "X3.23-1985 FILE STATUS syntax rule 2" : "2023 12.4.5.8.3 rules 1-2");
+            if (!f->status_sym->is_group && f->status_sym->pi.category != PIC_ALPHANUMERIC) bp(BP_E17_NUMERIC_STATUS, f->line);
         }
         int minrec = 0;
         for (int j = 0; j < g_nsym; j++)
@@ -3548,10 +3570,16 @@ static void finish_data_division(void)
          * 92-byte 01); smaller is a contradiction */
         if (f->maxlen && f->recsize && f->maxlen < f->recsize && f->rec >= 0 && !f->dep_name[0])
             die_at(f->line, "FD %s: RECORD CONTAINS says %d characters but the largest 01 is %d", f->name, f->maxlen, f->recsize);
+        if (f->rc_given && f->maxlen > f->minlen && minrec && minrec < f->minlen)
+            die_at(f->fd_line, "FD %s: RECORD CONTAINS %d TO %d, but a record description is %d characters (%s)", f->name, f->minlen, f->maxlen, minrec,
+                   g_std < 2002 ? "X3.23-1985 RECORD syntax rule 2" : "2023 13.18.43.3 rule 4");
         if (f->maxlen > f->recsize && f->rec >= 0) f->recsize = f->maxlen;
         if (f->dep_name[0]) {
             f->dep_sym = sym_lookup(f->dep_name, NULL, 0, f->line);
             if (!is_int_item(f->dep_sym)) die_at(f->line, "DEPENDING ON '%s' must be an integer item", f->dep_name);
+            if (f->dep_sym->pi.is_signed || f->dep_sym->is_group || (f->dep_sym->record >= 0 && g_sym[f->dep_sym->record].fd >= 0))
+                die_at(f->line, "RECORD ... DEPENDING ON '%s': an elementary unsigned integer in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE (%s)", f->dep_name,
+                       g_std < 2002 ? "X3.23-1985 RECORD syntax rule 4" : "2023 13.18.43.3 rule 6");
             if (rec_indirect(&g_sym[f->dep_sym->record]))
                 die_at(f->line, "DEPENDING ON '%s' cannot be a %s item", f->dep_name, indirect_kind(&g_sym[f->dep_sym->record]));
             if (!f->maxlen) f->maxlen = f->recsize;
@@ -3568,15 +3596,25 @@ static void finish_data_division(void)
             if (nk > 1) die_at(f->line, "RECORD KEY '%s' is ambiguous in file '%s'", f->key_name, f->name);
             if (k->ndims) die_at(f->line, "RECORD KEY '%s' cannot be a table item", f->key_name);
             if (k->size < 1 || k->size > 255) die_at(f->line, "RECORD KEY '%s' must be 1 to 255 bytes", f->key_name);
+            if (f->org != COB_ORG_INDEXED) die_at(f->line, "file '%s': RECORD KEY is for an INDEXED file (%s)", f->name,
+                                                  g_std < 2002 ? "X3.23-1985 indexed file control entry format" : "2023 12.4.5.2 rule 8");
+            if (!k->is_group && k->pi.category != PIC_ALPHANUMERIC && k->pi.category != PIC_NATIONAL)
+                bp(BP_E16_NUMERIC_KEY, f->line);
             f->key_sym = k;
         }
         if (f->linage) {
             if (f->org != COB_ORG_LINESEQ && f->org != COB_ORG_SEQ) die_at(f->line, "FD %s: LINAGE needs a sequential file", f->name);
+            if (!f->lin_name[0][0] && !f->lin_name[1][0] && f->lin_lit[1] > f->lin_lit[0])
+                die_at(f->fd_line, "FD %s: LINAGE %ld WITH FOOTING AT %ld: the footing must begin within the page body (%s)", f->name, f->lin_lit[0], f->lin_lit[1],
+                       g_std < 2002 ? "X3.23-1985 LINAGE syntax rule 3" : "2023 13.18.34.3 rule 3");
             f->org = COB_ORG_LINESEQ;               /* a LINAGE file is a print file: its records are lines */
             for (int w = 0; w < 4; w++)
                 if (f->lin_name[w][0]) {
                     f->lin_sym[w] = sym_lookup(f->lin_name[w], NULL, 0, f->line);
                     if (!is_int_item(f->lin_sym[w])) die_at(f->line, "LINAGE: '%s' must be an integer item", f->lin_name[w]);
+                    if (f->lin_sym[w]->pi.is_signed || f->lin_sym[w]->ndims)
+                        die_at(f->line, "LINAGE: '%s' is %s; the LINAGE data-names are elementary unsigned integers, not in a table (%s)", f->lin_name[w],
+                               f->lin_sym[w]->ndims ? "in a table" : "signed", g_std < 2002 ? "X3.23-1985 LINAGE syntax rule 1" : "2023 13.18.34.3 rules 1-2");
                     if (rec_indirect(&g_sym[f->lin_sym[w]->record]))
                         die_at(f->line, "LINAGE: '%s' cannot be a %s item", f->lin_name[w], indirect_kind(&g_sym[f->lin_sym[w]->record]));
                 }
@@ -3592,6 +3630,16 @@ static void finish_data_division(void)
             if (k->ndims) die_at(f->line, "ALTERNATE RECORD KEY '%s' cannot be a table item", f->alt[a].name);
             if (k->size < 1 || k->size > 255) die_at(f->line, "ALTERNATE RECORD KEY '%s' must be 1 to 255 bytes", f->alt[a].name);
             if (f->org != COB_ORG_INDEXED) die_at(f->line, "ALTERNATE RECORD KEY needs ORGANIZATION INDEXED");
+            if (!k->is_group && k->pi.category != PIC_ALPHANUMERIC && k->pi.category != PIC_NATIONAL)
+                bp(BP_E16_NUMERIC_KEY, f->line);
+            /* no two keys start at the same byte (2023 12.4.5.6.3 rule 4) */
+            if (f->key_sym && k->offset == f->key_sym->offset)
+                die_at(f->line, "ALTERNATE RECORD KEY '%s' begins where the RECORD KEY '%s' does (%s)", k->name, f->key_sym->name,
+                       g_std < 2002 ? "X3.23-1985 ALTERNATE RECORD KEY syntax rule 4" : "2023 12.4.5.6.3 rule 4");
+            for (int b = 0; b < a; b++)
+                if (f->alt[b].sym && f->alt[b].sym->offset == k->offset)
+                    die_at(f->line, "ALTERNATE RECORD KEY '%s' begins where '%s' does (%s)", k->name, f->alt[b].sym->name,
+                           g_std < 2002 ? "X3.23-1985 ALTERNATE RECORD KEY syntax rule 4" : "2023 12.4.5.6.3 rule 4");
             f->alt[a].sym = k;
         }
         if (f->org == COB_ORG_RELATIVE) {
@@ -14304,6 +14352,7 @@ static void parse_select(void)
             continue;
         }
         if (accept_word("reserve")) {           /* RESERVE n AREAS: buffering is the host's */
+            f->reserve_given = 1;
             if (cur()->kind == T_NUM || at_word("no")) advance();
             accept_word("area"); accept_word("areas");
             continue;
@@ -14628,6 +14677,8 @@ static void parse_fd(void)
     if (cur()->kind != T_WORD) die_at(line, "expected a file-name after %s", is_sd ? "SD" : "FD");
     File *f = file_find(cur()->s);
     if (!f) die_at(line, "%s %s has no SELECT", is_sd ? "SD" : "FD", cur()->s);
+    if (f->fd_line) die_at(line, "%s %s: the file already has an FD at line %d", is_sd ? "SD" : "FD", f->name, f->fd_line);
+    f->fd_line = line;
     f->lin_counter_sym = -1;
     if (is_sd) f->org = COB_ORG_SORT;         /* a sort file: SORT opens it, RELEASE/RETURN use it */
     advance();
@@ -14636,7 +14687,7 @@ static void parse_fd(void)
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
         if (accept_word("block")) {
             /* BLOCK CONTAINS: a blocking hint with no meaning on a byte stream */
-            accept_word("contains");
+            accept_word("contains"); f->block_given = 1;
             if (cur()->kind == T_NUM) advance();
             if (accept_word("to")) { if (cur()->kind == T_NUM) advance(); }
             accept_word("records"); accept_word("characters");
@@ -14647,8 +14698,10 @@ static void parse_fd(void)
             if (accept_word("varying")) {
                 accept_word("in"); accept_word("size");
                 accept_word("from");
-                if (cur()->kind == T_NUM) { f->minlen = atoi(cur()->s); advance(); }
+                if (cur()->kind == T_NUM) { f->minlen = atoi(cur()->s); f->rc_varying_from = 1; advance(); }
                 if (accept_word("to")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after TO"); f->maxlen = atoi(cur()->s); advance(); }
+                if (f->rc_varying_from && f->maxlen && f->maxlen <= f->minlen)
+                    die_at(t->line, "FD %s: RECORD VARYING FROM %d TO %d: the maximum must be greater than the minimum (2023 13.18.43.3 rule 9)", f->name, f->minlen, f->maxlen);
                 accept_word("characters");
                 if (accept_word("depending")) {
                     accept_word("on");
@@ -14658,12 +14711,15 @@ static void parse_fd(void)
                 f->varying = 1;
                 continue;
             }
-            accept_word("contains");
+            accept_word("contains"); f->rc_given = 1;
             if (cur()->kind != T_NUM) die_at(t->line, "expected a number after RECORD CONTAINS");
             f->minlen = atoi(cur()->s); advance();
             if (accept_word("to")) {
                 if (cur()->kind != T_NUM) die_at(t->line, "expected a number after TO");
                 f->maxlen = atoi(cur()->s); advance();
+                if (f->maxlen <= f->minlen)
+                    die_at(t->line, "FD %s: RECORD CONTAINS %d TO %d: the maximum must be greater than the minimum (%s)", f->name, f->minlen, f->maxlen,
+                           g_std < 2002 ? "X3.23-1985 RECORD syntax rule 3" : "2023 13.18.43.3 rule 5");
                 f->varying = 1;                     /* m TO n: variable, as cobc370 infers */
             } else { f->maxlen = f->minlen; }
             accept_word("characters");
@@ -14672,7 +14728,7 @@ static void parse_fd(void)
         if (at_word("label")) bp(BP_O6_LABEL_RECORDS, cur()->line);
         if (accept_word("label")) { accept_word("record"); accept_word("records"); accept_word("is"); accept_word("are"); accept_word("standard"); accept_word("omitted"); continue; }
         if (at_word("data")) bp(BP_O8_DATA_RECORDS, cur()->line);
-        if (accept_word("data")) { accept_word("record"); accept_word("records"); accept_word("is"); accept_word("are"); while (cur()->kind == T_WORD && !at_word("block") && !at_word("record") && !at_word("label") && !at_word("report") && !at_word("value")) advance(); continue; }
+        if (accept_word("data")) { accept_word("record"); accept_word("records"); accept_word("is"); accept_word("are"); while (cur()->kind == T_WORD && !at_word("block") && !at_word("record") && !at_word("label") && !at_word("report") && !at_word("value")) { if (f->ndata_rec < 8) snprintf(f->data_rec[f->ndata_rec++], 64, "%s", cur()->s); advance(); } continue; }
         if (accept_word("report") || accept_word("reports")) {
             accept_word("is"); accept_word("are");
             if (cur()->kind != T_WORD) die_at(t->line, "expected a report-name");
@@ -14749,6 +14805,10 @@ static void parse_fd(void)
     g_cur_fd = (int)(f - g_files);
     while (cur()->kind == T_NUM) parse_data_item();
     g_cur_fd = -1;
+    if (g_std >= 2002 && f->org == COB_ORG_LINESEQ && f->reserve_given)
+        die_at(f->line, "file '%s': a LINE SEQUENTIAL file takes no RESERVE clause (2023 12.4.5.2 rule 12)", f->name);
+    if (g_std >= 2002 && f->org == COB_ORG_LINESEQ && (f->block_given || f->rc_given))
+        die_at(line, "FD %s: a LINE SEQUENTIAL file takes neither BLOCK CONTAINS nor RECORD CONTAINS (2023 13.4.5.3 rule 4)", f->name);
     if (f->varying && f->org == COB_ORG_LINESEQ)
         die_at(line, "FD %s: variable records need ORGANIZATION SEQUENTIAL (LINE SEQUENTIAL names its own framing; docs/framing.md)", f->name);
 }

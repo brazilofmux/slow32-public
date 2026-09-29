@@ -127,6 +127,8 @@ warns only under -std=85. Never changes the output.
 | BP-E13 | `_` in a user-defined word | GnuCOBOL / majesty | 85, 2002 | no: letters, digits and hyphens |
 | BP-E14 | an ADD, SUBTRACT, MULTIPLY or DIVIDE whose composite of operands is 19-31 digits | majesty's dist01 (one SUBTRACT, 15 integer digits and 4 decimals) | 85 | 2002 allows 31 (14.7.7 rule 2); 1985 says 18. Taken, since the values fit the 18-digit arithmetic; past 31 refused in both editions |
 | BP-E15 | INITIALIZE of an item that is or contains an OCCURS DEPENDING ON table | majesty's gl008, gl034, gl040 (and tests/free/odo, their shape) | 85 | X3.23-1985 INITIALIZE syntax rule 4 forbids it; 2002 allows it (2023 14.9.20.4 GR 8). Taken, the table unrolled to its maximum as before |
+| BP-E16 | a RECORD KEY or ALTERNATE RECORD KEY that is not alphanumeric or national | the Open Systems suite (13 files) | 85, 2002 | both editions' key rule 2 asks for alphanumeric; taken, the key ordered by its bytes, as GnuCOBOL does |
+| BP-E17 | a FILE STATUS item that is not alphanumeric (PIC 99) | none in the corpora | 85, 2002 | FILE STATUS rule 2 asks for two alphanumeric characters; a two-digit numeric one is taken |
 
 Not points, recorded here:
 
