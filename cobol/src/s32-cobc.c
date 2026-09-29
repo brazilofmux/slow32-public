@@ -1601,6 +1601,7 @@ typedef struct Sym {
     int  size;                      /* one occurrence */
     int  offset;                    /* from the start of the record */
     int  occurs;                    /* 0 = no OCCURS; with DEPENDING ON, the maximum */
+    int  nokey; char okey[8][64]; unsigned char okey_desc[8];   /* OCCURS ASCENDING/DESCENDING KEY: names in order, 1 = descending (SEARCH ALL) */
     int  odo_min; char odo_dep[64]; struct Sym *odo_dep_sym;   /* OCCURS m TO n DEPENDING ON */
     int  idx1;                      /* the table's first INDEXED BY item, or -1 */
     int  ix_table;                  /* an index item: the table it indexes */
@@ -2469,11 +2470,18 @@ static void parse_data_item1(void)
             }
             accept_word("times");
             for (;;) {
+                int desc = at_word("descending");
                 if (accept_word("ascending") || accept_word("descending")) {
                     accept_word("key"); accept_word("is");
                     while (cur()->kind == T_WORD && !at_word("indexed") && !at_word("ascending") &&
                            !at_word("descending") && !at_word("pic") && !at_word("picture") &&
-                           !at_word("value") && !at_word("usage")) advance();
+                           !at_word("value") && !at_word("usage")) {
+                        if (s->nokey < 8) {     /* kept for SEARCH ALL's binary search */
+                            snprintf(s->okey[s->nokey], sizeof s->okey[0], "%s", cur()->s);
+                            s->okey_desc[s->nokey++] = (unsigned char)desc;
+                        }
+                        advance();
+                    }
                     continue;
                 }
                 if (accept_word("indexed")) {
@@ -12099,11 +12107,46 @@ static void parse_initialize(void)
 /* ---- SEARCH ------------------------------------------------------------ */
 
 /* SEARCH table [VARYING id] [AT END s] {WHEN cond s}... [END-SEARCH]
- * walks the table's first index from its current value; SEARCH ALL sets
- * it to 1 first.  Both are a scan here: SEARCH ALL's table is ordered by
- * its key and its keys are unique in every use the corpus makes, so the
- * first entry satisfying the WHEN is the one a binary search would
- * report.  The bound is the OCCURS count, or the DEPENDING ON item. */
+ * walks the table's first index from its current value, a serial scan.
+ * SEARCH ALL is a binary search over the table's KEYs when its WHEN has
+ * the form the standard gives it -- key (index) = value, joined by AND,
+ * the keys a leading run of the OCCURS KEY list -- and a scan from 1
+ * otherwise (a scan finds the same entry when the keys are unique, and
+ * any entry when they are not, which the standard allows).  The bound is
+ * the OCCURS count, or the DEPENDING ON item. */
+
+/* SEARCH ALL: is o the table's key k, subscripted by exactly the index? */
+static int sa_key_of(const Opnd *o, Sym *tbl, Sym *ix)
+{
+    if (o->kind != O_REF || o->ref.rm || o->ref.nsub != 1 || o->ref.sub[0].sym != ix || o->ref.sub[0].adj != 0) return -1;   /* ix, not ix + n or ix - n (rule 8) */
+    const Sym *x = o->ref.sym;
+    int inside = 0;
+    for (const Sym *a = x; a; a = a->parent >= 0 ? &g_sym[a->parent] : NULL) if (a == tbl) { inside = 1; break; }
+    if (!inside) return -1;
+    for (int k = 0; k < tbl->nokey; k++) if (!strcmp(tbl->okey[k], x->name)) return k;
+    return -1;
+}
+/* does the operand depend on the index (then it is no search argument)? */
+static int sa_uses_index(const Opnd *o, const Sym *ix)
+{
+    if (o->kind == O_REF) { for (int i = 0; i < o->ref.nsub; i++) if (o->ref.sub[i].sym == ix) return 1; return o->ref.sym == ix || o->ref.rm; }
+    if (o->kind == O_EXPR) { for (int t = o->e_start; t < o->e_end; t++) if (g_tok[t].kind == T_WORD && !strcmp(g_tok[t].s, ix->name)) return 1; return 0; }
+    return o->kind == O_FUNC || o->kind == O_BEXPR || o->kind == O_ADDR;
+}
+/* collect c's key = value relations; 0 when c has another shape */
+static int sa_collect(Cond *c, Sym *tbl, Sym *ix, Cond **rel, int *n)
+{
+    if (c->kind == C_AND) return sa_collect(c->a, tbl, ix, rel, n) && sa_collect(c->b, tbl, ix, rel, n);
+    if (c->kind != C_REL || c->op != R_EQ || c->neg || c->bstack || c->ptr || *n >= 8) return 0;
+    int kx = sa_key_of(&c->x, tbl, ix), ky = sa_key_of(&c->y, tbl, ix);
+    if ((kx < 0) == (ky < 0)) return 0;
+    if (ky >= 0) { Opnd t = c->x; c->x = c->y; c->y = t; kx = ky; }     /* the key on the left */
+    if (sa_uses_index(&c->y, ix)) return 0;
+    for (int i = 0; i < *n; i++) if (sa_key_of(&rel[i]->x, tbl, ix) == kx) return 0;
+    rel[(*n)++] = c;
+    return 1;
+}
+
 static void parse_search(void)
 {
     int all = accept_word("all");
@@ -12126,42 +12169,20 @@ static void parse_search(void)
         ix = vary.sym; ixr.sym = ix; has_vary = 0;
     }
 
-    int Lend = new_label(), Ltop = new_label(), Latend = new_label();
-    Opnd one; memset(&one, 0, sizeof one); one.kind = O_NUM; numlit_from_int(&one.num, 1); one.line = t.line;
-    if (all) emit_move(&one, &ixr);
-    emit_label(Ltop);
-    /* at end when the index passes the bound */
-    Opnd ixo; memset(&ixo, 0, sizeof ixo); ixo.kind = O_REF; ixo.ref = ixr; ixo.line = t.line;
-    emit_hot_value(&ixo);
-    emit("\tstw sp+%d, r1", SLOT_A);
-    if (tbl->odo_dep_sym) {
-        Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
-        if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
-        else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-    } else emit_li("r1", tbl->occurs);
-    emit("\tldw r2, sp+%d", SLOT_A);
-    emit("\tslt r1, r1, r2");                    /* bound < index */
-    emit("\tbne r1, r0, .L%d", Latend);
-
-    /* the WHENs are parsed once; their bodies are emitted after the
-     * loop, so the loop only holds the tests */
-    int Lwhen[16]; int nwhen = 0;
+    /* the phrases first, no code: AT END's statements and each WHEN's
+     * body are emitted after the loop, which holds only the tests */
     int save_atend = -1, atend_start = -1;
     if (at_word("at") || at_word("end")) {          /* [AT] END: AT is optional (NC237A writes SEARCH ALL t END GO TO ...) */
         accept_word("at"); expect_word("end");
-        /* the AT END imperative comes before the WHENs in the source; scan
-         * past it now (no code), emit it at Latend later */
         atend_start = g_tp;
         g_noemit++; parse_statements(); g_noemit--;
         save_atend = g_tp;
     }
-    int when_start[16], when_body_end[16];
+    Cond *wc[16]; int when_start[16], when_body_end[16], nwhen = 0;
     while (at_word("when")) {
         if (nwhen >= 16) die_at(cur()->line, "too many WHENs in SEARCH");
         advance();
-        Cond *c = parse_cond();
-        Lwhen[nwhen] = new_label();
-        cond_jump_true(c, Lwhen[nwhen]);
+        wc[nwhen] = parse_cond();
         when_start[nwhen] = g_tp;
         g_noemit++;
         if (at_word("next")) { advance(); expect_word("sentence"); } else parse_statements();
@@ -12170,11 +12191,89 @@ static void parse_search(void)
         nwhen++;
     }
     if (!nwhen) die_at(t.line, "SEARCH needs at least one WHEN");
-    /* no WHEN held: step and go round */
-    Opnd step; memset(&step, 0, sizeof step); step.kind = O_NUM; numlit_from_int(&step.num, 1); step.line = t.line;
-    emit_add_to_ref(&step, &ixr);
-    if (has_vary && vary.sym != ixr.sym) emit_add_to_ref(&step, &vary);   /* VARYING the table's own index: once */
-    emit_jump(Ltop);
+
+    int Lend = new_label(), Latend = new_label(), Lwhen[16];
+    for (int i = 0; i < nwhen; i++) Lwhen[i] = new_label();
+    Cond *rel[8]; int nrel = 0;
+    int binary = all && nwhen == 1 && tbl->ndims == 1 && tbl->nokey > 0 && !(wc[0]->uc1 > wc[0]->uc0) &&
+                 sa_collect(wc[0], tbl, ix, rel, &nrel) && nrel > 0 && is_hot_int(ix);
+    if (binary) {
+        /* the keys used must be the first ones declared (2023 14.9.37.3
+         * rule 8); in declared order they steer the search */
+        Cond *ord[8]; int no = 0;
+        for (int k = 0; k < tbl->nokey && no < nrel; k++) {
+            int f = -1;
+            for (int i = 0; i < nrel; i++) if (sa_key_of(&rel[i]->x, tbl, ix) == k) f = i;
+            if (f < 0) break;
+            ord[no++] = rel[f];
+        }
+        if (no != nrel) binary = 0;
+        else {
+            /* lo, hi and the middle in slots of their own: the key tests
+             * use SLOT_A and the staging slots above g_slot_base */
+            int base = g_slot_base; g_slot_base += 3;
+            if (g_slot_base > NSLOTS) die_at(t.line, "internal: too many staged operands");
+            int lo = SLOT(base), hi = SLOT(base + 1), mid = SLOT(base + 2);
+            int Ltop = new_label(), Lup = new_label(), Ldown = new_label();
+            emit_li("r1", 1); emit("\tstw sp+%d, r1", lo);
+            if (tbl->odo_dep_sym) {
+                Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
+                if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
+                else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+            } else emit_li("r1", tbl->occurs);
+            emit("\tstw sp+%d, r1", hi);
+            emit_label(Ltop);
+            emit("\tldw r1, sp+%d", lo); emit("\tldw r2, sp+%d", hi);
+            emit("\tslt r3, r2, r1");                        /* hi < lo: not there */
+            emit("\tbne r3, r0, .L%d", Latend);
+            emit("\tadd r1, r1, r2"); emit("\tsrli r1, r1, 1");
+            emit("\tstw sp+%d, r1", mid);
+            emit_ref_addr(&ixr, "r3");
+            emit("\tldw r1, sp+%d", mid);
+            emit_store_int(ix, "r3", "r1");                  /* the index at the middle entry */
+            for (int i = 0; i < no; i++) {
+                /* key below the argument: the entry sought lies after the
+                 * middle for an ascending key, before it for a descending one */
+                int desc = tbl->okey_desc[sa_key_of(&ord[i]->x, tbl, ix)];
+                Cond *lt = cond_new(C_REL); *lt = *ord[i]; lt->op = R_LT;
+                Cond *gt = cond_new(C_REL); *gt = *ord[i]; gt->op = R_GT;
+                cond_jump_true(lt, desc ? Ldown : Lup);
+                cond_jump_true(gt, desc ? Lup : Ldown);
+            }
+            emit_jump(Lwhen[0]);                             /* every key equal: found */
+            emit_label(Lup);                                 /* lo = mid + 1 */
+            emit("\tldw r1, sp+%d", mid); emit("\taddi r1, r1, 1"); emit("\tstw sp+%d, r1", lo);
+            emit_jump(Ltop);
+            emit_label(Ldown);                               /* hi = mid - 1 */
+            emit("\tldw r1, sp+%d", mid); emit("\taddi r1, r1, -1"); emit("\tstw sp+%d, r1", hi);
+            emit_jump(Ltop);
+            g_slot_base = base;
+        }
+    }
+    if (!binary) {
+        int Ltop = new_label();
+        Opnd one; memset(&one, 0, sizeof one); one.kind = O_NUM; numlit_from_int(&one.num, 1); one.line = t.line;
+        if (all) emit_move(&one, &ixr);
+        emit_label(Ltop);
+        /* at end when the index passes the bound */
+        Opnd ixo; memset(&ixo, 0, sizeof ixo); ixo.kind = O_REF; ixo.ref = ixr; ixo.line = t.line;
+        emit_hot_value(&ixo);
+        emit("\tstw sp+%d, r1", SLOT_A);
+        if (tbl->odo_dep_sym) {
+            Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
+            if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
+            else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+        } else emit_li("r1", tbl->occurs);
+        emit("\tldw r2, sp+%d", SLOT_A);
+        emit("\tslt r1, r1, r2");                    /* bound < index */
+        emit("\tbne r1, r0, .L%d", Latend);
+        for (int i = 0; i < nwhen; i++) cond_jump_true(wc[i], Lwhen[i]);
+        /* no WHEN held: step and go round */
+        Opnd step; memset(&step, 0, sizeof step); step.kind = O_NUM; numlit_from_int(&step.num, 1); step.line = t.line;
+        emit_add_to_ref(&step, &ixr);
+        if (has_vary && vary.sym != ixr.sym) emit_add_to_ref(&step, &vary);   /* VARYING the table's own index: once */
+        emit_jump(Ltop);
+    }
 
     /* AT END */
     emit_label(Latend);

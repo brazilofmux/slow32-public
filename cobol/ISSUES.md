@@ -3689,3 +3689,48 @@ bad/std2002-allocate-not-based, -allocate-no-returning,
 unchanged; harness 417/417; -std=85 byte-identical on all 229 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+### 97. Performance: the comparison kernels, and what they found (2026-09-29)
+
+bench/vs/ holds nine kernels for comparing compilers (arithmetic, MOVE,
+editing, STRING/UNSTRING/INSPECT, SEARCH, sequential and indexed files,
+SORT, a control-break report): standard COBOL 85, every iteration
+dependent on the loop index, a printed checksum. Built with this
+compiler and with GnuCOBOL 3.2 and 4.0, all three print the same bytes.
+Two kernels ran far behind the rest, and instruction-count ablation
+(slow32-fast, one statement added at a time) found an algorithm in each:
+
+- **SEARCH ALL was a linear scan.** By design -- the first entry
+  satisfying the WHEN is the one a binary search reports when the keys
+  are unique -- but O(n): 66,965 instructions for a search of 2,000
+  entries. The OCCURS KEY names were parsed and thrown away. Now the
+  table keeps them (Sym okey/okey_desc), and a SEARCH ALL whose one WHEN
+  is key (index) = value joined by AND, over the leading declared keys
+  of a one-dimension table (2023 14.9.37.3 rules 8 and 11), is a binary
+  search steered by each key's < and > in declared order, ASCENDING or
+  DESCENDING, bounded by OCCURS or DEPENDING ON: 600 instructions. Other
+  shapes keep the scan. The first cut kept the middle in SLOT_A, which
+  the key comparisons also use; free/search looped until the middle got
+  a slot of its own.
+- **INSPECT CONVERTING was O(length x alphabet).** cob_inspect_convert
+  registered one single-character replacing phrase per FROM character and
+  the general pass tried each at every position: 56,002 instructions for
+  60 characters converting a-z. Single-byte data now goes through a
+  256-byte table (built from the right, so the first occurrence in FROM
+  wins), applied over the BEFORE/AFTER range in one sweep, and kept while
+  FROM and TO are byte-for-byte the same: about 2,500. National data keeps
+  the phrase pass.
+
+Per iteration, kstring went from 64,599 instructions to 11,675 and
+ksearch from 75,990 to 9,624. What remains is constant factors, the
+candidates for native DBT hooks or for code that stays out of libcob's
+decimal stack: FUNCTION MOD in a COMPUTE (~1,500-1,900), a serial SEARCH
+(~170 an element), INSPECT TALLYING (~60 a character), STRING and
+UNSTRING (~2,200 each), a binary 9(9) moved to an 8-digit DISPLAY item
+(382).
+
+Also: bench/bsort.cbl named a paragraph SUM (reserved); renamed.
+
+Tests: 2002/searchall (the oracle agrees). Harness 418/418, CCVS-85
+unchanged, -std=85 byte-identical on all 229 Open Systems programs,
+majesty PASS, majesty-functions PASS, Open Systems paper unchanged.

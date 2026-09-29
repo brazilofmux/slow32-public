@@ -4860,7 +4860,7 @@ void cob_inspect_phrase(int tallying, int kind, const char *pat, int plen, const
 }
 void cob_inspect_run(void)
 {
-    for (int pos = 0; pos < cin.n; ) {
+    for (int pos = 0; cin.np && pos < cin.n; ) {
         int took = 0, taker = -1;
         for (int k = 0; k < cin.np && !took; k++) {
             if (cin.ph[k].done || pos < cin.ph[k].lo || pos + cin.ph[k].plen > cin.ph[k].hi) continue;
@@ -4890,6 +4890,31 @@ int cob_inspect_count(int k) { return cin.ph[k].count; }
  * character of `from`, all in the range set for the next phrase */
 void cob_inspect_convert(const char *from, int n, const char *to)
 {
+    if (ci_w == 1 && cin.np == 0) {
+        /* single-byte characters: one translation table, applied over the
+         * range in one sweep.  The phrase-per-character pass below does the
+         * same thing at O(length x alphabet) -- 930 instructions a
+         * character for CONVERTING a-z.  A character that occurs twice in
+         * FROM converts as its first occurrence does (the table is built
+         * from the right, so the leftmost wins). */
+        int lo = 0, hi = cin.n;
+        if (ci_after) { int i = ci_find(cin.item, cin.n, ci_after, ci_alen); lo = i < 0 ? cin.n : i + ci_alen; }
+        if (ci_before) { int i = ci_find(cin.item, cin.n, ci_before, ci_blen); if (i >= 0) hi = i; }
+        ci_before = ci_after = NULL; ci_blen = ci_alen = 0;
+        /* the last table is kept: a loop converts with the same FROM and
+         * TO every time, and comparing them is cheaper than a rebuild.
+         * Their contents are compared, not their addresses, since either
+         * may be an item whose value changes */
+        static unsigned char tab[256], cfrom[256], cto[256]; static int cn = -1;
+        if (!(n == cn && n <= 256 && !memcmp(from, cfrom, (size_t)n) && !memcmp(to, cto, (size_t)n))) {
+            for (int c = 0; c < 256; c++) tab[c] = (unsigned char)c;
+            for (int i = n - 1; i >= 0; i--) tab[(unsigned char)from[i]] = (unsigned char)to[i];
+            if (n <= 256) { memcpy(cfrom, from, (size_t)n); memcpy(cto, to, (size_t)n); cn = n; } else cn = -1;
+        }
+        unsigned char *p = (unsigned char *)cin.item;
+        for (int i = lo; i < hi; i++) p[i] = tab[p[i]];
+        return;
+    }
     const char *bp = ci_before, *ap = ci_after; int bl = ci_blen, al = ci_alen;
     for (int i = 0; i + ci_w <= n; i += ci_w) {
         ci_before = bp; ci_after = ap; ci_blen = bl; ci_alen = al;
