@@ -1,0 +1,3 @@
+'nosuch' is not declared
+'nosuch2' is not declared
+EXIT PERFORM is only in an inline or exception-checking PERFORM

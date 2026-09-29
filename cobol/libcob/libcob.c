@@ -1435,8 +1435,10 @@ void cob_ec_clear(void) { ec_any = 0; }
 
 /* EC-BOUND-REF-MOD: 1 when (start:len) leaves an item of size bytes;
  * len -1 when the length was omitted (the rest of the item) */
+static int pos_nonint;
 int cob_bound_refmod(int start, int len, int size)
 {
+    if (pos_nonint) { pos_nonint = 0; return 1; }
     if (start < 1 || start > size) return 1;
     if (len == -1) return 0;
     return len < 1 || start + len - 1 > size;
@@ -1450,6 +1452,41 @@ void cob_ec_abort(void)
     int n = 31; while (n > 0 && ec_last[n - 1] == ' ') n--;
     snprintf(m, sizeof m, "fatal exception condition %.*s", n, ec_last);
     cob_fatal(m);
+}
+
+/* An exception-checking PERFORM's raises (2023 14.9.28 rule 20; cobol
+ * ISSUES-94 E9): where each WHEN phrase's return resumes, and whether its
+ * condition was fatal.  A stack, so a recursive activation's raise in a
+ * phrase does not overwrite its caller's.  Entries carry the PERFORM's id
+ * and the activation's frame (its sp): a recursive activation runs the
+ * same PERFORM with the same id. */
+static struct ecp_ent { int id, fatal; void *resume, *frame; } *ecps;
+static int necps, ecps_cap;
+void cob_ecp_push(int id, void *resume, int fatal, void *frame)
+{
+    if (necps == ecps_cap) {
+        ecps_cap = ecps_cap ? 2 * ecps_cap : 16;
+        ecps = realloc(ecps, (size_t)ecps_cap * sizeof *ecps);
+        if (!ecps) cob_fatal("out of memory");
+    }
+    ecps[necps].id = id; ecps[necps].resume = resume; ecps[necps].fatal = fatal; ecps[necps].frame = frame; necps++;
+}
+/* the end of the last phrase: where to resume; a fatal condition ends
+ * the run instead (14.6.13.1.3 rule 4) */
+void *cob_ecp_pop(int id, void *frame)
+{
+    if (!necps || ecps[necps - 1].id != id || ecps[necps - 1].frame != frame) cob_fatal("exception-checking PERFORM: no raise to return to");
+    struct ecp_ent e = ecps[--necps];
+    if (e.fatal) cob_ec_abort();
+    return e.resume;
+}
+/* the end of the PERFORM: a raise whose phrase left by EXIT PERFORM is
+ * dropped -- and a fatal one still ends the run */
+void cob_ecp_drop(int id, void *frame)
+{
+    while (necps && ecps[necps - 1].id == id && ecps[necps - 1].frame == frame) {
+        if (ecps[--necps].fatal) cob_ec_abort();
+    }
 }
 
 char *cob_fn_exception_status(void)
@@ -1556,6 +1593,21 @@ void cob_perform_push(int exit_id, void *ret)
         if (!pstk) cob_fatal("PERFORM stack: out of memory");
     }
     pstk[psp].exit_id = exit_id; pstk[psp].ret = ret; psp++;
+}
+
+/* a USE declarative performed for an exception condition: one already
+ * active -- performed and not yet returned -- is EC-FLOW-USE (2023
+ * 14.9.49.4 rule 2), a fatal condition; it ends the run whether or not
+ * its checking is on (unchecked, the implementor decides, 14.6.13.1.3
+ * rule 8), where performing it again would lose its return (cobol
+ * ISSUES-94 E14) */
+void cob_ec_raise(const char *name, const char *stmt, const char *loc, const char *file);
+void cob_ec_abort(void);
+void cob_use_push(int exit_id, void *ret)
+{
+    for (int k = psp - 1; k >= pbase; k--)
+        if (pstk[k].exit_id == exit_id) { cob_ec_raise("EC-FLOW-USE", 0, 0, 0); cob_ec_abort(); }
+    cob_perform_push(exit_id, ret);
 }
 
 void *cob_perform_exit(int id)
@@ -2702,17 +2754,18 @@ int cob_fn_last_len(void) { return fn_var_len; }
 
 /* a function result reference-modified at computed positions (cobol
  * ISSUES-91): full bytes (-1: the result's own run-time length), start and
- * len in characters of unit bytes (len 0: to the end).  The part's length
- * is recorded as a run-time-length result's; one outside the result is
- * clamped to it and noted, for EC-BOUND-REF-MOD */
+ * len in characters of unit bytes (len -1: to the end; a computed 0 is
+ * out of range, ISSUES-94 E2).  The part's length is recorded as a
+ * run-time-length result's; one outside the result is clamped to it and
+ * noted, for EC-BOUND-REF-MOD -- as is a position that was no integer */
 static int fn_rm_bad;
 char *cob_fn_rm(char *p, int full, int start, int len, int unit)
 {
     int chars = (full < 0 ? fn_var_len : full) / unit;
-    fn_rm_bad = 0;
+    fn_rm_bad = pos_nonint; pos_nonint = 0;
     if (start < 1 || start > chars) { fn_rm_bad = 1; start = start < 1 ? 1 : chars + 1; }
-    if (len == 0) len = chars - start + 1;
-    if (len < 0 || start - 1 + len > chars) { fn_rm_bad = 1; len = chars - start + 1; if (len < 0) len = 0; }
+    if (len == -1) len = chars - start + 1;
+    if (len < 1 || start - 1 + len > chars) { fn_rm_bad = 1; len = chars - start + 1; if (len < 0) len = 0; }
     fn_var_len = len * unit;
     return p + (start - 1) * unit;
 }
@@ -2722,6 +2775,7 @@ int cob_fn_rm_bad(void) { return fn_rm_bad; }
  * (cobol ISSUES-88); a start past the end leaves nothing */
 char *cob_fn_var_skip(char *p, int n)
 {
+    fn_rm_bad = n >= fn_var_len;                    /* the start is past the result's end (E3) */
     fn_var_len = fn_var_len > n ? fn_var_len - n : 0;
     return p + n;
 }
@@ -4571,6 +4625,22 @@ void cob_screen_accept(const cob_screen *s)
 /* ====================================================================== */
 
 /* the integer value of the numeric stack's top; pops it */
+/* a reference modification's position: as cob_pop_int, a fraction noted
+ * for the bound check (8.4.3.3.4 rule 5: a non-integer position is out
+ * of range; cobol ISSUES-94 E17) */
+int cob_pop_int(void);
+int cob_pop_pos(void)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[nsp - 1];
+    if (a->scale > 0) {
+        long long f;
+        div_pow10(a->v < 0 ? -a->v : a->v, a->scale, &f);
+        if (f) pos_nonint = 1;
+    }
+    return cob_pop_int();
+}
+
 int cob_pop_int(void)
 {
     if (nsp <= 0) cob_fatal("numeric stack underflow");

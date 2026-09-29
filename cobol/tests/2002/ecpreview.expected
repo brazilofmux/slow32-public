@@ -1,0 +1,15 @@
+E4: WHEN EC-USER, a name first seen inside
+  WHEN EC-USER: EC-USER-NEW                    
+E4: resumed after the raise
+E5: WHEN EC-ALL, then a new user name after END-PERFORM
+E5: no USE above
+E6: a name on before PERFORM WITH LOCATION keeps no location
+  USE EC-USER-A, location [ ]
+E8: WHEN takes AT END; USE AFTER ERROR ignored
+  WHEN EC-I-O-AT-END
+E8: after read, fs=10
+E11: WHEN EC-I-O FILE f3 before WHEN EC-I-O-AT-END
+  WHEN EC-I-O FILE f3
+E7: on for all files, off for f1: the implicit TURN for f1
+  WHEN EC-I-O-AT-END
+E7: after read, fs=10

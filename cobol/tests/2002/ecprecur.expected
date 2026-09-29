@@ -1,0 +1,7 @@
+  WHEN in depth 1
+  d2: raise in 2nd statement
+  depth 2: between the statements
+  WHEN in depth 2
+end of depth 2
+  depth 1: between the statements
+end of depth 1

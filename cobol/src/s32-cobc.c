@@ -284,10 +284,17 @@ static void user_word(const char *w, int line, const char *what)
     die_at(line, "'%s' is a reserved word and cannot name %s", w, what);
 }
 
+static void *xrealloc(void *p, size_t n);
 static void *xmalloc(size_t n)
 {
     void *p = calloc(1, n ? n : 1);
     if (!p) { fprintf(stderr, "s32-cobc: out of memory\n"); exit(2); }
+    return p;
+}
+static void *xrealloc(void *p, size_t n)
+{
+    p = realloc(p, n ? n : 1);
+    if (!p) { fprintf(stderr, "s32-cobc: out of memory\n"); exit(1); }
     return p;
 }
 
@@ -4393,6 +4400,12 @@ static void emit_odo_check(Sym *s)
  * subscript and the start either computed (cobol ISSUES-84, -93).  Worked
  * on the numeric stack, which leaves r11 alone.  chk: the length as
  * emit_refmod_check takes it, for a computed start under EC-BOUND-REF-MOD. */
+/* a reference modification's computed position, off the numeric stack
+ * into r1: with EC-BOUND-REF-MOD checked, a value that is not an integer
+ * is noted for the bound check to raise (8.4.3.3.4 rule 5; cobol
+ * ISSUES-94 E17) */
+static void emit_pop_pos(void) { emit_call(ec_on_name("EC-BOUND-REF-MOD") ? "cob_pop_pos" : "cob_pop_int"); }
+
 static void emit_bitelem_start(const Ref *r, long chk, int slot)
 {
     Sym *s = r->sym;
@@ -4400,7 +4413,7 @@ static void emit_bitelem_start(const Ref *r, long chk, int slot)
     if (r->bitu_start) emit_li("r1", r->bitu_start);
     else {
         emit_expr_tokens(r->rm_s0, r->rm_s1);
-        emit_call("cob_pop_int");
+        emit_pop_pos();
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, chk, slot);
     }
     emit("	add r3, r1, r0"); emit("	srai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
@@ -4463,7 +4476,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     } else if (r->rm && !r->rm_start) {
         /* the start expression: onto the numeric stack, then off as an int */
         emit_expr_tokens(r->rm_s0, r->rm_s1);
-        emit_call("cob_pop_int");
+        emit_pop_pos();
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
         if (r->rm_bit) {
             /* bits: the byte holding bitoff + start - 1 */
@@ -4595,11 +4608,11 @@ static void emit_rm_start_len(const Ref *r, int slot)
         return;
     }
     if (r->rm_len) emit_li("r1", r->rm_len);
-    else if (r->rm_l0 >= 0) { emit_expr_tokens(r->rm_l0, r->rm_l1); emit_call("cob_pop_int"); }
+    else if (r->rm_l0 >= 0) { emit_expr_tokens(r->rm_l0, r->rm_l1); emit_pop_pos(); }
     else if (r->bitsub) {
         /* a bit array element's part to the element's end: its bits past the start */
         if (r->bitu_start) emit_li("r1", r->sym->bits - r->bitu_start + 1);
-        else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_call("cob_pop_int"); emit_li("r2", r->sym->bits + 1); emit("\tsub r1, r2, r1"); }
+        else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_pop_pos(); emit_li("r2", r->sym->bits + 1); emit("\tsub r1, r2, r1"); }
     }
     else emit_li("r1", 0);
     emit("\tstw sp+%d, r1", SLOT(slot));
@@ -4613,7 +4626,7 @@ static void emit_rm_start_len(const Ref *r, int slot)
         return;
     }
     if (r->rm_start) emit_li("r1", r->rm_start);
-    else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_call("cob_pop_int"); }
+    else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_pop_pos(); }
     if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, -2, slot);   /* a computed length */
 }
 
@@ -4937,23 +4950,39 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
 static int g_stmt_convcheck;            /* this statement evaluated a checked NATIONAL-OF / DISPLAY-OF */
 
 static void emit_fn_value_raw(Opnd *f);
+/* after cob_fn_rm or cob_fn_var_skip, r1 the part: EC-BOUND-REF-MOD when
+ * the runtime noted the positions out of range, r1 kept */
+static void emit_fn_rm_check(void)
+{
+    if (!ec_on_name("EC-BOUND-REF-MOD")) return;
+    int Lok = new_label();
+    emit("\tadd r12, r1, r0");
+    emit_call("cob_fn_rm_bad");
+    emit("\tbeq r1, r0, .L%d", Lok);
+    emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
+    emit_label(Lok);
+    emit("\tadd r1, r12, r0");
+}
 /* a function's value in libcob's buffer, r1 its address -- evaluated at
  * its full width, the address then moved to a reference modification's part */
 static void emit_fn_value(Opnd *f)
 {
     if (!f->ffull) { emit_fn_value_raw(f); return; }
     int part = f->fsize;
-    f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
     if (f->frm < 0) {
-        /* computed positions: the result's address, then the start and the
-         * length, to cob_fn_rm, which finds the part (cobol ISSUES-91) */
+        /* computed positions: the start and the length first -- they may
+         * call functions themselves, which would overwrite this one's
+         * result and its recorded length (cobol ISSUES-94 E1) -- then the
+         * function, then cob_fn_rm, which finds the part (cobol ISSUES-91).
+         * No length written is -1, so a computed 0 is out of range (E2). */
         int base = g_slot_base; g_slot_base += 3;
         if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
-        emit("\tstw sp+%d, r1", SLOT(base));
-        emit_expr_tokens(f->fs0, f->fs1); emit_call("cob_pop_int");
+        emit_expr_tokens(f->fs0, f->fs1); emit_pop_pos();
         emit("\tstw sp+%d, r1", SLOT(base + 1));
-        if (f->fl0 >= 0) { emit_expr_tokens(f->fl0, f->fl1); emit_call("cob_pop_int"); } else emit_li("r1", 0);
+        if (f->fl0 >= 0) { emit_expr_tokens(f->fl0, f->fl1); emit_pop_pos(); } else emit_li("r1", -1);
         emit("\tstw sp+%d, r1", SLOT(base + 2));
+        f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
+        emit("\tstw sp+%d, r1", SLOT(base));
         emit("\tldw r3, sp+%d", SLOT(base));
         emit_li("r4", f->fwasvar ? -1 : f->ffull);
         emit("\tldw r5, sp+%d", SLOT(base + 1));
@@ -4961,23 +4990,18 @@ static void emit_fn_value(Opnd *f)
         emit_li("r7", f->fnat ? 2 : 1);
         emit_call("cob_fn_rm");
         g_slot_base = base;
-        if (ec_on_name("EC-BOUND-REF-MOD")) {
-            int Lok = new_label();
-            emit("\tadd r12, r1, r0");
-            emit_call("cob_fn_rm_bad");
-            emit("\tbeq r1, r0, .L%d", Lok);
-            emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
-            emit_label(Lok);
-            emit("\tadd r1, r12, r0");
-        }
+        emit_fn_rm_check();
         return;
     }
+    f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
     if (f->fvar && f->frm) {
         /* to the end of a run-time-length result: the pointer on, the
-         * length the runtime keeps shortened (cobol ISSUES-88) */
+         * length the runtime keeps shortened (cobol ISSUES-88); a start
+         * past the end is noted, and checked (E3) */
         emit("\tadd r3, r1, r0");
         emit_li("r4", f->frm);
         emit_call("cob_fn_var_skip");
+        emit_fn_rm_check();
     } else {
         if (f->fwasvar && ec_on_name("EC-BOUND-REF-MOD")) {
             /* the part must lie within the result as it came out (8.4.3.3.4
@@ -8427,8 +8451,27 @@ static const struct { const char *name; char level; char fatal; } g_ec[] = {
 };
 #define NEC (int)(sizeof g_ec / sizeof g_ec[0] - 1)
 static char g_ecu[64][64]; static int g_necu;             /* EC-USER-suffix names met so far */
-static unsigned char g_ec_on[NEC + 64], g_ec_loc[NEC + 64];  /* checking enabled; WITH LOCATION */
-static int g_ecuser_on, g_ecuser_loc;                      /* EC-USER (or EC-ALL): user names met later too */
+/* TURN for one file (7.3.25 rules 4, 6, 8; cobol ISSUES-87): an override
+ * of checking for one EC-I-O condition and one file, over the setting
+ * for all files; a TURN without a file clears a condition's overrides */
+typedef struct { int ec, file; unsigned char on, loc; } EcFile;
+/* The exception checking in force at a point in the source (cobol
+ * ISSUES-53, -87, -94): each level-3 condition's checking and WITH
+ * LOCATION, the per-file overrides, and the setting EC-USER-names not
+ * yet met will take.  One state, saved and restored whole. */
+typedef struct {
+    unsigned char on[NEC + 64], loc[NEC + 64];
+    EcFile *f; int nf, fcap;
+    int user_on, user_loc;
+} EcState;
+static EcState g_ecs;
+static void ecs_copy(EcState *d, const EcState *s)
+{
+    EcFile *f = d->f; int cap = d->fcap;
+    if (cap < s->nf) { cap = s->nf + 16; f = xrealloc(f, (size_t)cap * sizeof *f); }
+    *d = *s; d->f = f; d->fcap = cap;
+    if (s->nf) memcpy(d->f, s->f, (size_t)s->nf * sizeof *s->f);
+}
 
 static const char *ec_name(int i) { return i < NEC ? g_ec[i].name : g_ecu[i - NEC]; }
 static int ec_level(int i) { return i < NEC ? g_ec[i].level : 3; }
@@ -8446,7 +8489,7 @@ static int ec_find(const char *w, int line)
         if (g_necu == 64) die_at(line, "more than 64 EC-USER exception-names");
         snprintf(g_ecu[g_necu], sizeof g_ecu[0], "%s", w);
         for (char *c = g_ecu[g_necu]; *c; c++) *c = (char)toupper((unsigned char)*c);
-        g_ec_on[NEC + g_necu] = (unsigned char)g_ecuser_on; g_ec_loc[NEC + g_necu] = (unsigned char)g_ecuser_loc;
+        g_ecs.on[NEC + g_necu] = (unsigned char)g_ecs.user_on; g_ecs.loc[NEC + g_necu] = (unsigned char)g_ecs.user_loc;
         return NEC + g_necu++;
     }
     return -1;
@@ -8466,39 +8509,65 @@ static int ec_group(int i)
 }
 
 static int ec_on_io(const char *name, int file);
-/* TURN for one file (7.3.25 rules 4, 6, 8; cobol ISSUES-87): an override
- * of checking for one EC-I-O condition and one file, over the setting
- * for all files; a TURN without a file clears a condition's overrides */
-typedef struct { int ec, file; unsigned char on, loc; } EcFile;
-static EcFile g_ecf[256]; static int g_necf;
 /* an exception-checking PERFORM (2023 14.9.28 format 3; cobol ISSUES-89)
  * whose imperative-statement-1 is being compiled: its WHEN phrases, the
  * labels of their handlers, and the data words a raise leaves for the
  * handler's return -- where to resume, and whether the condition was
  * fatal (general rule 20) */
-typedef struct { int ec[16], file[16], n, label; } EcpWhen;
-typedef struct { EcpWhen w[16]; int nw, Lother, Lcommon, Lend, id, resume; } Ecp;
-static Ecp *g_ecp[8]; static int g_necp, g_ecp_handler;
+typedef struct { int *ec, *file, n, cap, label; } EcpWhen;
+typedef struct { EcpWhen *w; int nw, wcap, Lother, Lcommon, Lend, id, resume; } Ecp;
+static Ecp **g_ecp; static int g_necp, g_ecp_cap, g_ecp_handler;
 
 static void ecf_set(int c, int file, int on, int loc)
 {
-    for (int k = 0; k < g_necf; k++) if (g_ecf[k].ec == c && g_ecf[k].file == file) { g_ecf[k].on = (unsigned char)on; g_ecf[k].loc = (unsigned char)loc; return; }
-    if (g_necf == 256) die_at(cur()->line, ">>TURN: more than 256 settings for one file and condition");
-    g_ecf[g_necf].ec = c; g_ecf[g_necf].file = file; g_ecf[g_necf].on = (unsigned char)on; g_ecf[g_necf].loc = (unsigned char)loc; g_necf++;
+    EcState *st = &g_ecs;
+    for (int k = 0; k < st->nf; k++) if (st->f[k].ec == c && st->f[k].file == file) { st->f[k].on = (unsigned char)on; st->f[k].loc = (unsigned char)loc; return; }
+    if (st->nf == st->fcap) {
+        st->fcap = st->fcap ? 2 * st->fcap : 16;
+        st->f = xrealloc(st->f, (size_t)st->fcap * sizeof *st->f);
+    }
+    st->f[st->nf].ec = c; st->f[st->nf].file = file; st->f[st->nf].on = (unsigned char)on; st->f[st->nf].loc = (unsigned char)loc; st->nf++;
 }
 static void ecf_clear(int c)
 {
+    EcState *st = &g_ecs;
     int m = 0;
-    for (int k = 0; k < g_necf; k++) if (g_ecf[k].ec != c) g_ecf[m++] = g_ecf[k];
-    g_necf = m;
+    for (int k = 0; k < st->nf; k++) if (st->f[k].ec != c) st->f[m++] = st->f[k];
+    st->nf = m;
 }
 /* checking for condition c on file index file (-1: none), and WITH LOCATION */
 static int ec_on_file(int c, int file, int *loc)
 {
-    for (int k = 0; file >= 0 && k < g_necf; k++)
-        if (g_ecf[k].ec == c && g_ecf[k].file == file) { if (loc) *loc = g_ecf[k].loc; return g_ecf[k].on; }
-    if (loc) *loc = g_ec_loc[c];
-    return g_ec_on[c];
+    for (int k = 0; file >= 0 && k < g_ecs.nf; k++)
+        if (g_ecs.f[k].ec == c && g_ecs.f[k].file == file) { if (loc) *loc = g_ecs.f[k].loc; return g_ecs.f[k].on; }
+    if (loc) *loc = g_ecs.loc[c];
+    return g_ecs.on[c];
+}
+/* checking for condition c everywhere: on, and no file's override off */
+static int ec_on_all(int c)
+{
+    if (!g_ecs.on[c]) return 0;
+    for (int k = 0; k < g_ecs.nf; k++) if (g_ecs.f[k].ec == c && !g_ecs.f[k].on) return 0;
+    return 1;
+}
+/* does exception-name i cover level-3 condition c: itself, its group's,
+ * or EC-ALL's -- EC-I-O-WARNING only by its own name (14.6.13.1.2) */
+static int ec_covers(int i, int c)
+{
+    if (ec_level(c) != 3) return 0;
+    if (c == ec_find("EC-I-O-WARNING", 0) && c != i) return 0;
+    int lv = ec_level(i);
+    return c == i || lv == 1 || (lv == 2 && ec_group(c) == i);
+}
+/* does name i (at level 1, or EC-USER) also decide the EC-USER-names not yet met */
+static int ec_covers_later_users(int i) { return ec_level(i) == 1 || (i < NEC && !strcmp(g_ec[i].name, "EC-USER")); }
+/* one condition's checking set, for all files (their overrides cleared)
+ * or for one */
+static void ec_turn_c(int c, int file, int on, int loc)
+{
+    if (file >= 0) { ecf_set(c, file, on, on && loc); return; }
+    g_ecs.on[c] = (unsigned char)on; g_ecs.loc[c] = (unsigned char)(on && loc);
+    ecf_clear(c);
 }
 
 /* >>TURN name [file-name] ... CHECKING {ON [WITH LOCATION] | OFF} (2023 7.3.25) */
@@ -8536,18 +8605,10 @@ static void apply_turn(Tok *d)
         if (k < nw && !strcasecmp(w[k], "location")) { loc = 1; k++; }
     }
     if (k < nw) die_at(d->line, ">>TURN: unexpected '%s'", w[k]);
-    int warning = ec_find("EC-I-O-WARNING", 0);
     for (int j = 0; j < nn; j++) {
-        int i = names[j], lv = ec_level(i);
-        for (int c = 0; c < NEC + g_necu; c++) {
-            if (ec_level(c) != 3) continue;
-            int hit = c == i || lv == 1 || (lv == 2 && ec_group(c) == i);
-            if (!hit || (c == warning && c != i)) continue;       /* EC-I-O-WARNING only by its own name */
-            if (files[j] >= 0) { ecf_set(c, files[j], on, on && loc); continue; }
-            g_ec_on[c] = (unsigned char)on; g_ec_loc[c] = (unsigned char)(on && loc);
-            ecf_clear(c);                                         /* for all files now */
-        }
-        if (files[j] < 0 && (lv == 1 || (i < NEC && !strcmp(g_ec[i].name, "EC-USER")))) { g_ecuser_on = on; g_ecuser_loc = on && loc; }
+        int i = names[j];
+        for (int c = 0; c < NEC + g_necu; c++) if (ec_covers(i, c)) ec_turn_c(c, files[j], on, loc);
+        if (files[j] < 0 && ec_covers_later_users(i)) { g_ecs.user_on = on; g_ecs.user_loc = on && loc; }
     }
 }
 
@@ -8653,6 +8714,7 @@ static void parse_use(void)
  * mode's), then continue with the next statement */
 static void unit_use_range(int level, int *from, int *to);
 static int unit_use_own_from(void);                     /* where this unit's own USE entries begin */
+static int ecp_target(int i, int fidx, Ecp **ep, int *resume);
 
 static void emit_use_dispatch(File *f, int has_clause)
 {
@@ -8686,6 +8748,32 @@ static void emit_use_dispatch(File *f, int has_clause)
     emit("\tldw r13, sp+%d", SLOT_C);
     emit("\tbeq r13, r0, .L%d", warn ? Lwarn : Ldone);
     if (has_clause) { emit_li("r2", 1); emit("\tbeq r13, r2, .L%d", Ldone); }
+    static const struct { const char *name; int digit; } ecio[] = {
+        { "EC-I-O-AT-END", 1 }, { "EC-I-O-INVALID-KEY", 2 }, { "EC-I-O-PERMANENT-ERROR", 3 },
+        { "EC-I-O-LOGIC-ERROR", 4 }, { "EC-I-O-RECORD-OPERATION", 5 }, { "EC-I-O-FILE-SHARING", 6 },
+        { "EC-I-O-RECORD-CONTENT", 7 }, { "EC-I-O-IMP", 9 }, { NULL, 0 } };
+    /* inside imperative-statement-1 of an exception-checking PERFORM, a
+     * condition a WHEN phrase takes goes there, and a USE procedure that
+     * would match is ignored (14.9.28 rules 17, 18; cobol ISSUES-94 E8) */
+    int taken[16] = { 0 }, any_taken = 0;
+    for (int k = 0; g_necp && ecio[k].name; k++) {
+        Ecp *e; int r, i = ec_find(ecio[k].name, 0);
+        if (ec_on_io(ecio[k].name, fidx) && ecp_target(i, fidx, &e, &r) >= 0) { taken[k] = 1; any_taken = 1; }
+    }
+    if (any_taken) {
+        emit_call("cob_io_class");                  /* the status's first digit; r13 survives */
+        for (int k = 0; ecio[k].name; k++) {
+            if (!taken[k]) continue;
+            int Lnext = new_label();
+            emit_li("r2", ecio[k].digit);
+            emit("\tbne r1, r2, .L%d", Lnext);
+            g_ec_file = f->oname; g_ec_fidx = fidx;
+            emit_ec_raise(ec_find(ecio[k].name, 0));
+            g_ec_file = NULL; g_ec_fidx = -1;
+            emit_jump(Ldone);
+            emit_label(Lnext);
+        }
+    }
     if (any_mode) { emit_file_addr("r3", f); emit_call("cob_open_mode"); emit("\tadd r12, r0, r1"); }
     for (int i = 0; i < nc; i++) {
         int Lnext = new_label(), Lret = new_label();
@@ -8699,16 +8787,12 @@ static void emit_use_dispatch(File *f, int has_clause)
         emit_jump(Ldone);
         emit_label(Lnext);
     }
-    static const struct { const char *name; int digit; } ecio[] = {
-        { "EC-I-O-AT-END", 1 }, { "EC-I-O-INVALID-KEY", 2 }, { "EC-I-O-PERMANENT-ERROR", 3 },
-        { "EC-I-O-LOGIC-ERROR", 4 }, { "EC-I-O-RECORD-OPERATION", 5 }, { "EC-I-O-FILE-SHARING", 6 },
-        { "EC-I-O-RECORD-CONTENT", 7 }, { "EC-I-O-IMP", 9 }, { NULL, 0 } };
     int any = 0;
-    for (int k = 0; ecio[k].name; k++) if (ec_on_io(ecio[k].name, fidx)) any = 1;
+    for (int k = 0; ecio[k].name; k++) if (ec_on_io(ecio[k].name, fidx) && !taken[k]) any = 1;
     if (any) {
         emit_call("cob_io_class");                  /* the status's first digit; r13 survives */
         for (int k = 0; ecio[k].name; k++) {
-            if (!ec_on_io(ecio[k].name, fidx)) continue;
+            if (!ec_on_io(ecio[k].name, fidx) || taken[k]) continue;
             int Lnext = new_label();
             emit_li("r2", ecio[k].digit);
             emit("\tbne r1, r2, .L%d", Lnext);
@@ -8983,53 +9067,73 @@ static int times_follows(void)
     return is_word(&g_tok[j], "times");
 }
 
-/* does the inline PERFORM at the cursor end in WHEN ... EXCEPTION or
- * FINALLY at its own level: an exception-checking PERFORM */
-static int perform_is_ecp(void)
+/* The WHEN phrases of the inline PERFORM at the cursor, read ahead from
+ * the tokens -- their names are turned on before imperative-statement-1
+ * is compiled (14.9.28 rule 14).  Returns 1 when the PERFORM ends in WHEN
+ * ... EXCEPTION or FINALLY at its own level, an exception-checking
+ * PERFORM; with e NULL it only answers that. */
+static int ecp_scan(Ecp *e)
 {
-    int depth = 0;
+    int depth = 0, found = 0;
     for (int k = g_tp; k < g_ntok; k++) {
         Tok *t = &g_tok[k];
-        if (t->kind == T_PERIOD || t->kind == T_EOF) return 0;
+        if (t->kind == T_PERIOD || t->kind == T_EOF) break;
         if (t->kind != T_WORD) continue;
         if (!strcmp(t->s, "perform") && !(k > 0 && is_word(&g_tok[k - 1], "exit"))) {   /* EXIT PERFORM opens nothing */
             Tok *n = &g_tok[k + 1];
             if (!(at_para_name(n) && para_find(n->s))) depth++;       /* inline: closed by END-PERFORM */
-        } else if (!strcmp(t->s, "end-perform")) { if (depth-- == 0) return 0; }
-        else if (depth == 0 && !strcmp(t->s, "finally")) return 1;
-        else if (depth == 0 && !strcmp(t->s, "when")) {
-            Tok *a = &g_tok[k + 1], *b = &g_tok[k + 2];
-            if (is_word(a, "exception") || ((is_word(a, "other") || is_word(a, "common")) && is_word(b, "exception"))) return 1;
+            continue;
         }
+        if (!strcmp(t->s, "end-perform")) { if (depth-- == 0) break; continue; }
+        if (depth) continue;
+        if (!strcmp(t->s, "finally")) { if (!e) return 1; found = 1; continue; }
+        if (strcmp(t->s, "when")) continue;
+        Tok *a = &g_tok[k + 1], *b = &g_tok[k + 2];
+        int other = is_word(a, "other") && is_word(b, "exception"), common = is_word(a, "common") && is_word(b, "exception");
+        if (!is_word(a, "exception") && !other && !common) continue;
+        if (!e) return 1;
+        found = 1;
+        if (other) { e->Lother = new_label(); continue; }
+        if (common) { e->Lcommon = new_label(); continue; }
+        if (e->nw == e->wcap) { e->wcap = e->wcap ? 2 * e->wcap : 8; e->w = xrealloc(e->w, (size_t)e->wcap * sizeof *e->w); }
+        EcpWhen *w = &e->w[e->nw++]; memset(w, 0, sizeof *w); w->label = new_label();
+        for (int q = k + 2; q < g_ntok && g_tok[q].kind == T_WORD && !is_verb(g_tok[q].s); q++) {
+            Tok *x = &g_tok[q];
+            if (strncmp(x->s, "ec-", 3))
+                die_at(x->line, "WHEN EXCEPTION with a file-name or an open mode is not implemented yet (exception-names, and name FILE file-name, are)");
+            int i = ec_find(x->s, x->line);
+            if (i < 0) die_at(x->line, "'%s' is not an exception-name", x->s);
+            int file = -1;
+            if (is_word(&g_tok[q + 1], "file")) {
+                File *f = file_find(g_tok[q + 2].s);
+                if (!f) die_at(x->line, "WHEN %s FILE: '%s' is not a file-name", ec_name(i), g_tok[q + 2].s);
+                if (strncmp(ec_name(i), "EC-I-O", 6)) die_at(x->line, "FILE follows only an EC-I-O exception-name (2023 14.9.28.3 rule 16)");
+                file = (int)(f - g_files); q += 2;
+            }
+            for (int v = 0; v < e->nw; v++) for (int u = 0; u < e->w[v].n; u++)
+                if (e->w[v].ec[u] == i && e->w[v].file[u] == file)
+                    die_at(x->line, "%s appears twice in the WHEN phrases (2023 14.9.28.3 rule 15)", ec_name(i));
+            if (w->n == w->cap) { w->cap = w->cap ? 2 * w->cap : 8; w->ec = xrealloc(w->ec, (size_t)w->cap * sizeof *w->ec); w->file = xrealloc(w->file, (size_t)w->cap * sizeof *w->file); }
+            w->ec[w->n] = i; w->file[w->n] = file; w->n++;
+        }
+        if (!w->n) die_at(t->line, "WHEN EXCEPTION needs an exception-name");
     }
-    return 0;
+    return found;
 }
+static int perform_is_ecp(void) { return ecp_scan(NULL); }
 
-static void ecp_save(unsigned char *on, unsigned char *loc, EcFile *f, int *nf, int *uo, int *ul)
+/* the implicit TURN before imperative-statement-1 (rule 14): each
+ * condition a WHEN name covers whose checking is not already enabled --
+ * for all files, or for the WHEN's file -- turned on, with LOCATION when
+ * the PERFORM has it; a condition already enabled keeps its setting */
+static void ecp_implicit_turn(int i, int file, int loc)
 {
-    memcpy(on, g_ec_on, sizeof g_ec_on); memcpy(loc, g_ec_loc, sizeof g_ec_loc);
-    memcpy(f, g_ecf, sizeof g_ecf); *nf = g_necf; *uo = g_ecuser_on; *ul = g_ecuser_loc;
-}
-static void ecp_restore(const unsigned char *on, const unsigned char *loc, const EcFile *f, int nf, int uo, int ul)
-{
-    memcpy(g_ec_on, on, sizeof g_ec_on); memcpy(g_ec_loc, loc, sizeof g_ec_loc);
-    memcpy(g_ecf, f, sizeof g_ecf); g_necf = nf; g_ecuser_on = uo; g_ecuser_loc = ul;
-}
-
-/* each level-3 condition a WHEN name covers, turned on (for one file with
- * FILE), as an implicit TURN before imperative-statement-1 (rule 14) */
-static void ecp_turn_on(int i, int file, int loc)
-{
-    int lv = ec_level(i), warning = ec_find("EC-I-O-WARNING", 0);
     for (int c = 0; c < NEC + g_necu; c++) {
-        if (ec_level(c) != 3) continue;
-        int hit = c == i || lv == 1 || (lv == 2 && ec_group(c) == i);
-        if (!hit || (c == warning && c != i)) continue;
-        if (file >= 0) { int l; if (!ec_on_file(c, file, &l)) ecf_set(c, file, 1, loc); }
-        else if (!g_ec_on[c]) { g_ec_on[c] = 1; g_ec_loc[c] = (unsigned char)loc; }
-        else if (loc) g_ec_loc[c] = 1;
+        if (!ec_covers(i, c)) continue;
+        if (file >= 0 ? ec_on_file(c, file, NULL) : ec_on_all(c)) continue;
+        ec_turn_c(c, file, 1, loc);
     }
-    if (lv == 1 && file < 0) { g_ecuser_on = 1; g_ecuser_loc = loc; }
+    if (file < 0 && ec_covers_later_users(i) && !g_ecs.user_on) { g_ecs.user_on = 1; g_ecs.user_loc = loc; }
 }
 
 /* PERFORM [WITH LOCATION] imperative-statement-1 {WHEN EXCEPTION ...}...
@@ -9038,54 +9142,22 @@ static void ecp_turn_on(int i, int file, int loc)
 static void parse_perform_ecp(void)
 {
     static int ecp_ids;
-    int line = cur()->line, loc = 0;
+    int line = cur()->line, loc = 0, start = g_tp;
     if (at_word("with") && is_word(peek(1), "location")) { advance(); advance(); loc = 1; }
-    if (g_necp == 8) die_at(line, "exception-checking PERFORMs nested more than 8 deep");
     Ecp *e = xmalloc(sizeof *e); memset(e, 0, sizeof *e);
     e->id = ecp_ids++; e->Lother = e->Lcommon = -1; e->Lend = new_label();
-    /* the WHEN phrases first, from the tokens: their names are turned on
-     * before imperative-statement-1 is compiled */
-    int depth = 0;
-    for (int k = g_tp; k < g_ntok; k++) {
-        Tok *t = &g_tok[k];
-        if (t->kind == T_PERIOD || t->kind == T_EOF) break;
-        if (t->kind != T_WORD) continue;
-        if (!strcmp(t->s, "perform") && !(k > 0 && is_word(&g_tok[k - 1], "exit"))) { Tok *n = &g_tok[k + 1]; if (!(at_para_name(n) && para_find(n->s))) depth++; continue; }
-        if (!strcmp(t->s, "end-perform")) { if (depth-- == 0) break; continue; }
-        if (depth || strcmp(t->s, "when")) continue;
-        if (is_word(&g_tok[k + 1], "other") && is_word(&g_tok[k + 2], "exception")) { e->Lother = new_label(); continue; }
-        if (is_word(&g_tok[k + 1], "common") && is_word(&g_tok[k + 2], "exception")) { e->Lcommon = new_label(); continue; }
-        if (!is_word(&g_tok[k + 1], "exception")) continue;
-        if (e->nw == 16) die_at(t->line, "more than 16 WHEN phrases");
-        EcpWhen *w = &e->w[e->nw++]; w->label = new_label();
-        for (int q = k + 2; q < g_ntok && g_tok[q].kind == T_WORD && !is_verb(g_tok[q].s); q++) {
-            Tok *x = &g_tok[q];
-            if (!strncmp(x->s, "ec-", 3)) {
-                int i = ec_find(x->s, x->line);
-                if (i < 0) die_at(x->line, "'%s' is not an exception-name", x->s);
-                if (w->n == 16) die_at(x->line, "more than 16 exception-names in one WHEN phrase");
-                w->ec[w->n] = i; w->file[w->n] = -1;
-                if (is_word(&g_tok[q + 1], "file")) {
-                    File *f = file_find(g_tok[q + 2].s);
-                    if (!f) die_at(x->line, "WHEN %s FILE: '%s' is not a file-name", ec_name(i), g_tok[q + 2].s);
-                    if (strncmp(ec_name(i), "EC-I-O", 6)) die_at(x->line, "FILE follows only an EC-I-O exception-name (2023 14.9.28.3 rule 16)");
-                    w->file[w->n] = (int)(f - g_files); q += 2;
-                }
-                w->n++;
-                continue;
-            }
-            die_at(x->line, "WHEN EXCEPTION with a file-name or an open mode is not implemented yet (exception-names, and name FILE file-name, are)");
-        }
-        if (!w->n) die_at(t->line, "WHEN EXCEPTION needs an exception-name");
-    }
-    unsigned char on0[NEC + 64], loc0[NEC + 64], on1[NEC + 64], loc1[NEC + 64];
-    EcFile f0[256], f1[256]; int nf0, nf1, uo0, ul0, uo1, ul1;
-    ecp_save(on0, loc0, f0, &nf0, &uo0, &ul0);
-    for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) ecp_turn_on(e->w[w].ec[q], e->w[w].file[q], loc);
+    ecp_scan(e);
+    /* the checking before the PERFORM: after END-PERFORM it is back as it
+     * was, for no TURN can be inside it (7.3.25.3 rule 5), and whatever
+     * the implicit TURN enabled is not enabled any more (rule 22) */
+    EcState pre; memset(&pre, 0, sizeof pre); ecs_copy(&pre, &g_ecs);
+    int necu0 = g_necu;
+    for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) ecp_implicit_turn(e->w[w].ec[q], e->w[w].file[q], loc);
     /* imperative-statement-1, a statement at a time: a raise resumes after
      * the statement it occurred in (rule 20) */
     int Lafter = new_label();
     pstk_push(e->Lend, -1);                       /* EXIT PERFORM: to FINALLY or END-PERFORM, no CYCLE (rules 4, 8) */
+    if (g_necp == g_ecp_cap) { g_ecp_cap = g_ecp_cap ? 2 * g_ecp_cap : 8; g_ecp = xrealloc(g_ecp, (size_t)g_ecp_cap * sizeof *g_ecp); }
     g_ecp[g_necp++] = e;
     while (!at_word("when") && !at_word("finally") && !at_word("end-perform") && !at_scope_end()) {
         e->resume = new_label();
@@ -9096,9 +9168,8 @@ static void parse_perform_ecp(void)
     emit_jump(e->Lend);
     /* the phrases: checking off inside them (the implicit PUSH ALL and
      * TURN OFF ALL, rule 14), no WHEN of this PERFORM for their raises (21) */
-    ecp_save(on1, loc1, f1, &nf1, &uo1, &ul1);
-    memset(g_ec_on, 0, sizeof g_ec_on); memset(g_ec_loc, 0, sizeof g_ec_loc); g_necf = 0; g_ecuser_on = 0;
-    char cell[32];
+    memset(g_ecs.on, 0, sizeof g_ecs.on); memset(g_ecs.loc, 0, sizeof g_ecs.loc);
+    g_ecs.nf = 0; g_ecs.user_on = g_ecs.user_loc = 0;
     g_ecp_handler++;
     int wi = 0;
     for (;;) {
@@ -9112,37 +9183,33 @@ static void parse_perform_ecp(void)
         else break;
         parse_statements();
         /* a WHEN phrase goes on to WHEN COMMON (17-19); the last of them
-         * returns: a fatal condition ends the run, a nonfatal one resumes
-         * where the raise left it (20) */
+         * returns where the raise left its resume point -- after the
+         * statement for a nonfatal condition; a fatal one ends the run
+         * there (20; 14.6.13.1.3 rule 4) */
         if (!is_common && e->Lcommon >= 0) { emit_jump(e->Lcommon); continue; }
-        snprintf(cell, sizeof cell, ".Lecpf%d", e->id); emit_la("r2", cell); emit("\tldw r1, r2+0");
-        { int Lnf = new_label(); emit("\tbeq r1, r0, .L%d", Lnf); emit_call("cob_ec_abort"); emit_label(Lnf); }
-        snprintf(cell, sizeof cell, ".Lecpr%d", e->id); emit_la("r2", cell); emit("\tldw r1, r2+0");
+        emit_li("r3", e->id);
+        emit("\tadd r4, sp, r0");
+        emit_call("cob_ecp_pop");
         emit("\tjalr r0, r1, 0");
     }
     emit_label(e->Lend);
+    /* what a phrase left by EXIT PERFORM: dropped, and a fatal condition
+     * ends the run all the same */
+    emit_li("r3", e->id);
+    emit("\tadd r4, sp, r0");
+    emit_call("cob_ecp_drop");
     g_npstk--;
     if (accept_word("finally")) { pstk_push(Lafter, -1); parse_statements(); g_npstk--; }     /* in FINALLY: past END-PERFORM (16) */
     g_ecp_handler--;
     if (!accept_word("end-perform")) die_at(cur()->line, "expected END-PERFORM to end the exception-checking PERFORM, found %s", tok_desc(cur()));
     emit_label(Lafter);
-    /* after END-PERFORM: the state imperative-statement-1 left, with the
-     * implicitly turned-on names back as they were before (rule 22) */
-    ecp_restore(on1, loc1, f1, nf1, uo1, ul1);
-    for (int c = 0; c < NEC + g_necu; c++) {
-        int implied = 0;
-        for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) {
-            int i = e->w[w].ec[q], lv = ec_level(i);
-            if (c == i || lv == 1 || (lv == 2 && ec_group(c) == i)) implied = 1;
-        }
-        if (implied && on1[c] && !on0[c]) { g_ec_on[c] = 0; g_ec_loc[c] = loc0[c]; }
-    }
-    g_necf = nf0; memcpy(g_ecf, f0, sizeof g_ecf);        /* the per-file settings the WHENs made go too */
-    emit("\t.data");
-    emit("\t.p2align 2");
-    emit(".Lecpr%d:\t.word 0", e->id);
-    emit(".Lecpf%d:\t.word 0", e->id);
-    emit("\t.text");
+    for (int k = 0; k < g_ndir; k++)
+        if (g_dir[k].pos >= start && g_dir[k].pos < g_tp)
+            die_at(g_dir[k].tok.line, "a TURN directive inside an exception-checking PERFORM (2023 7.3.25.3 rule 5)");
+    ecs_copy(&g_ecs, &pre);
+    for (int c = NEC + necu0; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)pre.user_on; g_ecs.loc[c] = (unsigned char)pre.user_loc; }
+    free(pre.f);
+    (void)line;
 }
 
 static void parse_perform(void)
@@ -9165,11 +9232,12 @@ static void parse_perform(void)
         body.Lexit = g_std >= 2002 ? new_label() : -1;     /* EXIT PERFORM is 2002: -std=85 output keeps its labels */
     }
 
-    int test_after = 0;
-    if (accept_word("with")) { expect_word("test"); if (accept_word("after")) test_after = 1; else expect_word("before"); }
-    else if (accept_word("test")) { if (accept_word("after")) test_after = 1; else expect_word("before"); }
+    int test_after = 0, test_given = 0;
+    if (accept_word("with")) { expect_word("test"); test_given = 1; if (accept_word("after")) test_after = 1; else expect_word("before"); }
+    else if (accept_word("test")) { test_given = 1; if (accept_word("after")) test_after = 1; else expect_word("before"); }
 
     if (accept_word("until") && g_std >= 2002 && accept_word("exit")) {
+        if (test_given) die_at(g_tok[g_tp - 1].line, "UNTIL EXIT takes no WITH TEST phrase (2023 14.9.28.3 rule 8)");
         /* UNTIL EXIT: a condition that never holds (14.9.28.4 rule 11); an
          * EXIT PERFORM, a GOBACK or a STOP leaves it (cobol ISSUES-90) */
         int Ltop = new_label();
@@ -9285,37 +9353,66 @@ static void parse_goto(void)
     emit("\tjal r0, .Lp%d_%d", g_unit, ps[0]->id);
 }
 
-/* after exception condition i is raised: perform the declarative that
- * applies -- this program's USE for the name, else its group's, else
- * EC-ALL's (2023 14.6.13.1.3-4) -- then stop the run if i is fatal */
-/* a raise inside imperative-statement-1: to the matching WHEN, by the USE
- * rules' order (the name, its group, EC-ALL; 17), else WHEN OTHER (18);
- * returns 1 when it went to one */
-static int ecp_dispatch(int i)
+/* How well a WHEN (or USE) exception-name w, for file wf (-1: none),
+ * matches condition i raised on file fidx: the order of USE general rule
+ * 3c-3g (14.9.49.4), which 14.9.28 rule 17 points at -- the name with its
+ * file, its group with the file, the name, the group, EC-ALL.  0 best;
+ * -1 no match. */
+static int ec_match_rank(int w, int wf, int i, int fidx)
 {
-    int cand[3] = { i, ec_group(i), ec_find("EC-ALL", 0) };
-    for (int k = g_necp - 1; k >= 0; k--) {
-        Ecp *e = g_ecp[k];
-        int target = -1, resume = e->resume;
-        for (int c = 0; c < 3 && target < 0; c++)
-            for (int w = 0; w < e->nw && target < 0; w++)
-                for (int q = 0; q < e->w[w].n; q++)
-                    if (e->w[w].ec[q] == cand[c] && (e->w[w].file[q] < 0 || e->w[w].file[q] == g_ec_fidx)) { target = e->w[w].label; break; }
-        if (target < 0 && e->Lother >= 0) { target = e->Lother; resume = e->Lend; }
-        if (target < 0) continue;
-        char lab[32];
-        snprintf(lab, sizeof lab, ".L%d", resume); emit_la("r1", lab);
-        snprintf(lab, sizeof lab, ".Lecpr%d", e->id); emit_la("r2", lab);
-        emit("\tstw r2+0, r1");
-        emit_li("r1", ec_fatal(i));
-        snprintf(lab, sizeof lab, ".Lecpf%d", e->id); emit_la("r2", lab);
-        emit("\tstw r2+0, r1");
-        emit_jump(target);
-        return 1;
+    int g = ec_group(i);
+    if (wf >= 0) {
+        if (wf != fidx) return -1;
+        return w == i ? 0 : w == g ? 1 : -1;
     }
-    return 0;
+    return w == i ? 2 : w == g ? 3 : w == ec_find("EC-ALL", 0) ? 4 : -1;
 }
 
+/* the WHEN phrase of the innermost exception-checking PERFORM that takes
+ * condition i here, or -1; *resume set to where its return goes.  A fatal
+ * condition goes to a WHEN that names it or its hierarchy only, never to
+ * WHEN OTHER (14.6.13.1.3 rule 4); a nonfatal one to WHEN OTHER when no
+ * WHEN names it (14.9.28 rule 18). */
+static int ecp_target(int i, int fidx, Ecp **ep, int *resume)
+{
+    for (int k = g_necp - 1; k >= 0; k--) {
+        Ecp *e = g_ecp[k];
+        int best = -1, rank = 5;
+        for (int w = 0; w < e->nw; w++)
+            for (int q = 0; q < e->w[w].n; q++) {
+                int r = ec_match_rank(e->w[w].ec[q], e->w[w].file[q], i, fidx);
+                if (r >= 0 && r < rank) { rank = r; best = e->w[w].label; }
+            }
+        *ep = e; *resume = e->resume;
+        if (best >= 0) return best;
+        if (e->Lother >= 0 && !ec_fatal(i)) { *resume = e->Lend; return e->Lother; }
+    }
+    return -1;
+}
+
+/* a raise inside imperative-statement-1 that a WHEN takes: the resume
+ * point and fatality onto libcob's stack of them (a recursive activation's
+ * raise pushes its own; cobol ISSUES-94 E9), then the phrase; returns 1
+ * when a WHEN took it */
+static int ecp_dispatch(int i)
+{
+    Ecp *e; int resume;
+    int target = ecp_target(i, g_ec_fidx, &e, &resume);
+    if (target < 0) return 0;
+    char lab[32]; snprintf(lab, sizeof lab, ".L%d", resume);
+    emit_li("r3", e->id);
+    emit_la("r4", lab);
+    emit_li("r5", ec_fatal(i));
+    emit("\tadd r6, sp, r0");                   /* the activation's frame */
+    emit_call("cob_ecp_push");
+    emit_jump(target);
+    return 1;
+}
+
+/* after exception condition i is raised: a WHEN of the exception-checking
+ * PERFORM around it, else the declarative that applies -- this program's
+ * USE for the name, else its group's, else EC-ALL's (2023 14.6.13.1.3-4)
+ * -- then stop the run if i is fatal */
 static void emit_ec_dispatch(int i)
 {
     if (g_necp && ecp_dispatch(i)) return;          /* the WHEN takes it; USE does not (17) */
@@ -9328,7 +9425,7 @@ static void emit_ec_dispatch(int i)
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
         emit_li("r3", sec);
         emit_la("r4", lab);
-        emit_call("cob_perform_push");
+        emit_call("cob_use_push");                  /* EC-FLOW-USE when it is active already (E14) */
         emit("\tjal r0, .Lp%d_%d", g_unit, sec);
         emit_label(Lret);
     }
@@ -9344,7 +9441,7 @@ static int ec_size_on(void)
 {
     if (g_std < 2002) return 0;
     static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION" };
-    for (int k = 0; k < 3; k++) if (g_ec_on[ec_find(n[k], 0)]) return 1;
+    for (int k = 0; k < 3; k++) if (g_ecs.on[ec_find(n[k], 0)]) return 1;
     return 0;
 }
 
@@ -9356,7 +9453,7 @@ static void emit_ec_size(void)
     emit("\tadd r13, r1, r0");
     for (int k = 0; k < 3; k++) {
         int i = ec_find(n[k], 0);
-        if (!g_ec_on[i]) continue;
+        if (!g_ecs.on[i]) continue;
         int Lnext = new_label();
         emit_li("r2", k + 1);
         emit("\tbne r13, r2, .L%d", Lnext);
@@ -9367,12 +9464,10 @@ static void emit_ec_size(void)
     emit_label(Ldone);
 }
 
-static int ec_on_name(const char *name) { return g_std >= 2002 && g_ec_on[ec_find(name, 0)]; }
+static int ec_on_name(const char *name) { return g_std >= 2002 && g_ecs.on[ec_find(name, 0)]; }
 /* an EC-I-O condition for one file: its TURN for that file, else for all */
 static int ec_on_io(const char *name, int file) { return g_std >= 2002 && ec_on_file(ec_find(name, 0), file, NULL); }
 
-/* raise condition i here: the last exception status, the statement's
- * name when WITH LOCATION turned it on, then the declarative and fatality */
 /* EXCEPTION-LOCATION's string (2002 15.25.2 rule 2b), known here: the
  * program-name; the paragraph, OF its section, or the section; the line.
  * The line is implementor-defined: its number, and the copybook's name
@@ -9392,11 +9487,13 @@ static void ec_location(char *b, size_t n)
     } else snprintf(b + k, n - (size_t)k, "%d", t ? t->line : 0);
 }
 
+/* raise condition i here: the last exception status, the statement's
+ * name when WITH LOCATION turned it on, then the declarative and fatality */
 static void emit_ec_raise(int i)
 {
     char nm[64]; snprintf(nm, sizeof nm, "%s", ec_name(i));
     emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
-    int loc = g_ec_loc[i];
+    int loc = g_ecs.loc[i];
     if (g_ec_fidx >= 0) ec_on_file(i, g_ec_fidx, &loc);
     if (loc && g_cur_stmt[0]) emit_la("r4", lit_label((const unsigned char *)g_cur_stmt, (int)strlen(g_cur_stmt) + 1));
     else emit_li("r4", 0);
@@ -9424,7 +9521,7 @@ static void parse_raise(void)
     if (ec_level(i) != 3) die_at(line, "RAISE needs a level-3 exception-name, not %s", ec_name(i));
     if (g_ecp_handler) die_at(line, "RAISE in a WHEN or FINALLY phrase of an exception-checking PERFORM (2023 14.9.29.3 rule 4)");
     advance();
-    if (!g_ec_on[i]) return;
+    if (!g_ecs.on[i]) return;
     emit_ec_raise(i);
 }
 
@@ -11731,9 +11828,18 @@ static void parse_procedure_division(void)
         g_sentence_label = -1;
         jmp_buf jb, *outer = g_recover;
         int start = g_tp, noemit = g_noemit, slot = g_slot_base, cdepth = g_cond_depth, merge = g_is_merge;
+        /* the state a statement may leave half-changed when it fails: the
+         * checking (an exception-checking PERFORM's implicit TURN), the
+         * PERFORMs open around it (cobol ISSUES-94 E10) */
+        static EcState ecs0;
+        ecs_copy(&ecs0, &g_ecs);
+        int necp = g_necp, ecp_handler = g_ecp_handler, npstk = g_npstk, necu = g_necu;
         if (setjmp(jb)) {
             g_recover = outer;
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge;
+            ecs_copy(&g_ecs, &ecs0);
+            for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
+            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk;
             g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
             resync_sentence(start);
             continue;

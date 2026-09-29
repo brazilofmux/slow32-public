@@ -3250,3 +3250,61 @@ differential 80/80; cross-engine 90/94 (the four bug-dbt-intrinsic-bounds
 divergences are QEMU's missing fault line, pre-existing); COBOL harness
 286/286; -std=85 byte-identical on all 229 Open Systems programs; majesty
 PASS; majesty-functions PASS; Open Systems paper unchanged.
+
+**Progress, part 2 (2026-09-28): exceptions -- E1-E18.**
+The checking state is one struct, `EcState` (each level-3 condition's
+checking and LOCATION, the per-file overrides in a growable list, and
+what EC-USER-names not yet met will take), copied and restored whole.
+`ec_covers(i, c)` is the one "name covers condition" test and
+`ec_turn_c` the one core of a TURN; >>TURN and the implicit TURN both
+use them (the review's R2/R3, which would have prevented E4-E7). The two
+token pre-scans are one, `ecp_scan` (R1); the WHEN lists, the PERFORM
+nesting and the per-file settings grow on demand (R9); the WHEN/USE
+match order is one function, `ec_match_rank` (R4); the function
+reference-modification check is `emit_fn_rm_check` (R8); the misplaced
+comments are back on their functions (R5).
+
+- E1 fixed: a function's computed start and length are evaluated before
+  the function.
+- E2 fixed: "no length" is -1, so a computed 0 is out of range.
+- E3 fixed: (start:) on a run-time-length result notes a start past its
+  end, and is checked.
+- E4, E5, E6, E7 fixed: the implicit TURN (14.9.28 rule 14) turns on
+  only what is not enabled -- for all files, or for the WHEN's file;
+  LOCATION goes with it and nowhere else; EC-USER and EC-ALL decide the
+  EC-USER-names met later too. After END-PERFORM the state before the
+  PERFORM comes back whole (rule 22 -- there can be no TURN inside, E13),
+  EC-USER-names first met inside taking the restored later-name setting.
+- E8 fixed: inside imperative-statement-1, an EC-I-O condition a WHEN
+  takes is tested before the file's USE AFTER ERROR procedures, which
+  are ignored for it (rule 17).
+- E9 fixed: the resume points are a stack in libcob (cob_ecp_push, _pop,
+  _drop), keyed by the PERFORM's id and the activation's frame, so a
+  recursive activation's raise does not overwrite its caller's.
+- E10 fixed: a failed sentence restores the checking state, the
+  exception-checking PERFORM nesting and the PERFORM stack.
+- E11 fixed: WHEN phrases match in USE rule 3c-3g's order.
+- E12 fixed: a fatal condition never goes to WHEN OTHER (14.6.13.1.3
+  rule 4); without a WHEN naming it, the USE declarative, then the end.
+- E13 fixed: a TURN inside an exception-checking PERFORM is refused
+  (7.3.25.3 rule 5), which settles rule 22's contradiction.
+- E14 fixed: RAISE selecting an active USE declarative is EC-FLOW-USE,
+  fatal, checked or not (cob_use_push); performing it again lost its
+  return.
+- E15 fixed: UNTIL EXIT with a TEST phrase is refused (14.9.28.3 rule 8).
+- E16 fixed: an exception-name twice in the WHEN phrases is refused
+  (rule 15).
+- E17 fixed: under EC-BOUND-REF-MOD, reference-modification positions
+  are popped by cob_pop_pos, which notes a fraction for the bound check.
+- E18 decided: a WHEN phrase for a fatal condition that leaves by EXIT
+  PERFORM still ends the run -- the raise is dropped at the PERFORM's
+  end, and a fatal one aborts there (14.6.13.1.3 rule 4). A GO TO out of
+  the PERFORM altogether escapes it; NOTE 9 of 14.9.28 warns against
+  that.
+
+Tests: 2002/ecpreview (E4-E8, E11), ecprecur (E9), ecpfatal (E12),
+ecpfatal2 (E18), ecflowuse (E14), fnrmzero (E1, E2), fnrmpast (E3),
+rmnonint (E17); bad/std2002-ecp-turn (E13), -until-exit-test (E15),
+-ecp-dup (E16), -ecp-recovery (E10). Harness 299/299; -std=85
+byte-identical on all 229 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.
