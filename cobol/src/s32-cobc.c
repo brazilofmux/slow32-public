@@ -52,7 +52,7 @@
 #include <strings.h>
 #include "picture.h"
 #include "../libcob/cobrt.h"
-#include "../../common/term_width.h"   /* a national literal's display width (cobol ISSUES-92) */
+#include "../../common/s32utf.h"   /* the one Unicode model: coding, width, clusters (cobol ISSUES-94) */
 
 #define VERSION "0.63 (stage 63: IF module)"
 
@@ -606,23 +606,11 @@ static int utf8_to_utf16be(const unsigned char *p, int n, unsigned char *out)
 {
     int k = 0, i = 0;
     while (i < n) {
-        unsigned c = p[i], cp = c; int len = 1;
-        if (c >= 0x80 && !(c >= 0xC2 && c <= 0xF4)) return -1;
-        if (c >= 0xC2 && c <= 0xDF && i + 1 < n && (p[i + 1] & 0xC0) == 0x80) { cp = ((c & 0x1F) << 6) | (p[i + 1] & 0x3F); len = 2; }
-        else if (c >= 0xE0 && c <= 0xEF && i + 2 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80) {
-            cp = ((c & 0x0F) << 12) | ((p[i + 1] & 0x3F) << 6) | (p[i + 2] & 0x3F); len = 3;
-            if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) return -1;
-        } else if (c >= 0xF0 && c <= 0xF4 && i + 3 < n && (p[i + 1] & 0xC0) == 0x80 && (p[i + 2] & 0xC0) == 0x80 && (p[i + 3] & 0xC0) == 0x80) {
-            cp = ((c & 0x07) << 18) | ((p[i + 1] & 0x3F) << 12) | ((p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F); len = 4;
-            if (cp < 0x10000 || cp > 0x10FFFF) return -1;
-        } else if (c >= 0x80) return -1;
+        uint32_t cp;
+        int len = (int)s32u_decode(p + i, (size_t)(n - i), &cp);
+        if (cp == S32U_REPL && !(len == 3 && p[i] == 0xEF && p[i + 1] == 0xBF && p[i + 2] == 0xBD)) return -1;
         i += len;
-        if (cp >= 0x10000) {
-            cp -= 0x10000;
-            unsigned hi = 0xD800 + (cp >> 10), lo = 0xDC00 + (cp & 0x3FF);
-            out[k++] = (unsigned char)(hi >> 8); out[k++] = (unsigned char)hi;
-            out[k++] = (unsigned char)(lo >> 8); out[k++] = (unsigned char)lo;
-        } else { out[k++] = (unsigned char)(cp >> 8); out[k++] = (unsigned char)cp; }
+        k += 2 * s32u_u16_put(out + k, cp);
     }
     return k;
 }
@@ -3255,23 +3243,20 @@ static int nat_desc(int len)
 }
 
 /* the columns national text (len bytes of UTF-16BE) takes on a screen or
- * a report line: each character its display width, one that takes none
- * or follows a ZERO WIDTH JOINER riding with the one before (the
- * runtime's nat_clusters, cobol ISSUES-92) */
+ * a report line: a grapheme cluster at a time, each its display width, a
+ * mark with nothing to sit on one -- the runtime's nat_clusters, on the
+ * shared model of common/s32utf.h (cobol ISSUES-92, -94) */
 static int nat_lit_cols(const unsigned char *p, int len)
 {
-    int w = 0, join = 0, any = 0;
-    for (int i = 0; i + 1 < len; i += 2) {
-        unsigned u = (unsigned)p[i] << 8 | p[i + 1];
-        if (u >= 0xD800 && u <= 0xDBFF && i + 3 < len) {
-            unsigned l = (unsigned)p[i + 2] << 8 | p[i + 3];
-            if (l >= 0xDC00 && l <= 0xDFFF) { u = 0x10000 + ((u - 0xD800) << 10) + (l - 0xDC00); i += 2; }
-        }
-        int cw = s32_term_width(u);
-        if (!((cw == 0 || join) && any)) w += cw ? cw : 1;
-        join = u == 0x200D; any = 1;
+    s32u_clu st; memset(&st, 0, sizeof st);
+    int w = 0, pend = 0, n = len / 2;
+    for (int i = 0; i < n; ) {
+        uint32_t cp;
+        i += (int)s32u_u16_get(p, (size_t)n, (size_t)i, &cp);
+        if (s32u_clu_step(&st, cp)) w += pend;
+        pend = s32u_clu_lone(&st) ? 1 : s32u_clu_width(&st);
     }
-    return w;
+    return w + pend;
 }
 
 /* a boolean literal's or part's descriptor: len boolean positions, DISPLAY */
@@ -3286,17 +3271,10 @@ static int bool_desc(int len)
 static int utf16be_to_utf8(const unsigned char *p, int nbytes, char *out)
 {
     int k = 0, n = nbytes / 2;
-    for (int i = 0; i < n; i++) {
-        unsigned u = (unsigned)p[2 * i] << 8 | p[2 * i + 1];
-        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < n) {
-            unsigned l = (unsigned)p[2 * i + 2] << 8 | p[2 * i + 3];
-            if (l >= 0xDC00 && l <= 0xDFFF) { u = 0x10000 + ((u - 0xD800) << 10) + (l - 0xDC00); i++; }
-        }
-        if (u >= 0xD800 && u <= 0xDFFF) u = 0xFFFD;
-        if (u < 0x80) out[k++] = (char)u;
-        else if (u < 0x800) { out[k++] = (char)(0xC0 | u >> 6); out[k++] = (char)(0x80 | (u & 0x3F)); }
-        else if (u < 0x10000) { out[k++] = (char)(0xE0 | u >> 12); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
-        else { out[k++] = (char)(0xF0 | u >> 18); out[k++] = (char)(0x80 | (u >> 12 & 0x3F)); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
+    for (int i = 0; i < n; ) {
+        uint32_t cp;
+        i += (int)s32u_u16_get(p, (size_t)n, (size_t)i, &cp);
+        k += s32u_encode(cp, (unsigned char *)out + k);
     }
     return k;
 }

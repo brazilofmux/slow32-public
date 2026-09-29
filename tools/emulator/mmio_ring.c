@@ -1,7 +1,7 @@
 // SLOW-32 Ring Buffer MMIO Implementation
 #include "mmio_ring.h"
 #include "slow32.h"
-#include "../../common/term_width.h"
+#include "../../common/s32utf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -368,16 +368,15 @@ void mmio_cleanup_services(mmio_ring_state_t *mmio) {
 #define TERM_MAX_SAVE_DEPTH 8
 #define TERM_MAX_PENDING_CLEARS 8
 
-// A cell holds a character, not a byte: output is UTF-8, and a character
-// takes its display width in cells (common/term_width.h).  A double-width
-// character's second cell is marked, and never painted on its own.
+// A cell holds a grapheme cluster, not a byte: output is decoded as UTF-8,
+// split into clusters by UAX #29, and each cluster takes its display width
+// in cells -- the Unicode model of common/s32utf.h, shared with the COBOL
+// runtime.  A double-width cluster's second cell is marked, and never
+// painted on its own.  A cell keeps TERM_CLUSTER code points; a longer
+// cluster (rare past emoji with skin tones) keeps its first ones in the
+// shadow, which a repaint then shows.
 enum { TERM_NARROW = 0, TERM_WIDE = 1, TERM_WIDE_TAIL = 2 };
-// A cell holds a grapheme cluster, as far as the shadow can tell one: a base
-// character and the code points that join it without taking a column --
-// combining marks, variation selectors, and whatever follows a ZERO WIDTH
-// JOINER.  At most TERM_CLUSTER code points; the rest of a longer cluster
-// goes to the terminal but not into the shadow.
-#define TERM_CLUSTER 4
+#define TERM_CLUSTER 8
 typedef struct {
     uint32_t ch;                    // the base code point
     uint32_t mark[TERM_CLUSTER - 1];    // the joining ones, 0 past the last
@@ -420,17 +419,21 @@ typedef struct {
     // is blanked over its range so the repaint covers it.
     int n_pending_clears;
     struct { int mode, row, col; } pending_clears[TERM_MAX_PENDING_CLEARS];
-    // The UTF-8 sequence PUTC and PUTS are part way through
-    uint32_t u8_cp;
-    int u8_need;
-    // The cell the last character went to, for a joining code point to join
+    // The UTF-8 sequence PUTC and PUTS are part way through, and the
+    // cluster being built in the last cell written
+    s32u_dec dec;
+    s32u_clu clu;
     int last_row, last_col;
-    bool last_valid, joiner;
+    bool last_valid;
+    // A byte READ_CHAR took that belongs to the next read (it cut a UTF-8
+    // sequence short); -1 when none
+    int key_pushback;
 } term_state_t;
 
 static void *term_create(void) {
     term_state_t *ts = calloc(1, sizeof(term_state_t));
     if (!ts) return NULL;
+    ts->key_pushback = -1;
     if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
         ts->termios_saved = true;
     }
@@ -487,29 +490,48 @@ static void term_blank_half(term_state_t *ts, int row, int col) {
     if (!c) return;
     if (c->wide == TERM_WIDE_TAIL) {
         term_cell_t *l = term_cell_at(ts, row, col - 1);
-        if (l) { l->ch = ' '; l->wide = TERM_NARROW; }
+        if (l) { l->ch = ' '; l->wide = TERM_NARROW; memset(l->mark, 0, sizeof l->mark); }
     } else if (c->wide == TERM_WIDE) {
         term_cell_t *t = term_cell_at(ts, row, col + 1);
-        if (t) { t->ch = ' '; t->wide = TERM_NARROW; }
+        if (t) { t->ch = ' '; t->wide = TERM_NARROW; memset(t->mark, 0, sizeof t->mark); }
     }
 }
 
-static void term_cell_join(term_cell_t *c, uint32_t cp) {
+static bool term_cell_join(term_cell_t *c, uint32_t cp) {
     for (int k = 0; k < TERM_CLUSTER - 1; k++)
-        if (!c->mark[k]) { c->mark[k] = cp; return; }
+        if (!c->mark[k]) { c->mark[k] = cp; return true; }
+    return false;
+}
+
+// nothing joins across a cursor move, a clear or a line end
+static void term_clu_reset(term_state_t *ts) {
+    memset(&ts->clu, 0, sizeof ts->clu);
+    ts->last_valid = false;
 }
 
 static void term_shadow_char(term_state_t *ts, uint32_t cp) {
-    int w = s32_term_width(cp);
-    if (w == 0 || ts->joiner) {
-        // it joins the cluster in the last cell: a combining mark, a
-        // variation selector, a joiner, or the character after a joiner
-        term_cell_t *l = ts->last_valid ? term_cell_at(ts, ts->last_row, ts->last_col) : NULL;
-        if (l) term_cell_join(l, cp);
-        ts->joiner = cp == 0x200D;
-        if (l || w == 0) return;
+    int brk = s32u_clu_step(&ts->clu, cp);
+    term_cell_t *l = ts->last_valid ? term_cell_at(ts, ts->last_row, ts->last_col) : NULL;
+    int w = s32u_clu_width(&ts->clu);
+    if (!brk || (w == 0 && !s32u_clu_lone(&ts->clu))) {
+        // it joins the cluster in the last cell -- or takes no column of
+        // its own (U+200B), and rides there to be repainted in order
+        if (!l) return;
+        term_cell_join(l, cp);
+        if (!brk && w == 2 && l->wide == TERM_NARROW && ts->last_col + 1 < ts->cols) {
+            // a variation selector or a second regional indicator made it wide
+            term_blank_half(ts, ts->last_row, ts->last_col + 1);
+            term_cell_t *t = term_cell_at(ts, ts->last_row, ts->last_col + 1);
+            if (t) { *t = *l; t->ch = ' '; memset(t->mark, 0, sizeof t->mark); t->wide = TERM_WIDE_TAIL; }
+            l->wide = TERM_WIDE;
+            if (ts->cur_row == ts->last_row && ts->cur_col == ts->last_col + 1) {
+                if (++ts->cur_col >= ts->cols) { ts->cur_col = 0; ts->cur_row++; }
+            }
+        }
+        return;
     }
-    ts->joiner = false;
+    uint32_t base = cp;
+    if (s32u_clu_lone(&ts->clu)) { base = ' '; w = 1; }    // a mark with nothing to sit on: over a space
     if (w == 2 && ts->cur_col + 1 >= ts->cols) {   // no room for both halves: it wraps, as a terminal does
         ts->cur_col = 0;
         ts->cur_row++;
@@ -521,7 +543,8 @@ static void term_shadow_char(term_state_t *ts, uint32_t cp) {
         term_cell_t *c = term_cell_at(ts, ts->cur_row, ts->cur_col + k);
         if (!c) continue;
         memset(c->mark, 0, sizeof c->mark);
-        c->ch = k ? ' ' : cp;
+        c->ch = k ? ' ' : base;
+        if (!k && base != cp) c->mark[0] = cp;
         c->wide = w == 2 ? (k ? TERM_WIDE_TAIL : TERM_WIDE) : TERM_NARROW;
         c->attr = (uint8_t)ts->cur_attr;
         c->fg = (uint8_t)ts->cur_fg;
@@ -534,59 +557,53 @@ static void term_shadow_char(term_state_t *ts, uint32_t cp) {
     }
 }
 
-// a byte of output: control characters move the cursor; UTF-8 is decoded,
-// a byte that begins or continues no sequence standing for U+FFFD
+// a code point of output: control characters move the cursor and end the
+// cluster; anything else is a character
+static void term_shadow_cp(term_state_t *ts, uint32_t cp) {
+    if (cp == '\n') { term_clu_reset(ts); ts->cur_row++; ts->cur_col = 0; return; }
+    if (cp == '\r') { term_clu_reset(ts); ts->cur_col = 0; return; }
+    if (cp == '\t') {
+        term_clu_reset(ts);
+        ts->cur_col = (ts->cur_col + 8) & ~7;
+        if (ts->cur_col >= ts->cols) { ts->cur_col = 0; ts->cur_row++; }
+        return;
+    }
+    if (cp < 0x20 || cp == 0x7F) return;    // other control characters: nothing shown
+    term_shadow_char(ts, cp);
+}
+
+// a byte of output, decoded as UTF-8 (s32utf.h: U+FFFD for what is not,
+// and a byte that cut a sequence short decoded again)
 static void term_shadow_putc(term_state_t *ts, int ch) {
     if (!ts->cells) return;
-    ch &= 0xFF;
-    if (ts->u8_need) {
-        if ((ch & 0xC0) == 0x80) {
-            ts->u8_cp = (ts->u8_cp << 6) | (uint32_t)(ch & 0x3F);
-            if (--ts->u8_need == 0) term_shadow_char(ts, ts->u8_cp);
-            return;
-        }
-        ts->u8_need = 0;
-        term_shadow_char(ts, 0xFFFD);       // the sequence broke off; this byte stands on its own
+    for (;;) {
+        uint32_t cp;
+        int r = s32u_dec_byte(&ts->dec, (unsigned)ch, &cp);
+        if (!r) return;
+        term_shadow_cp(ts, cp);
+        if (r == 1) return;
     }
-    if (ch >= 0xC2 && ch <= 0xF4) {
-        ts->u8_need = ch >= 0xF0 ? 3 : ch >= 0xE0 ? 2 : 1;
-        ts->u8_cp = (uint32_t)(ch & (0x3F >> ts->u8_need));
-        return;
-    }
-    if (ch >= 0x80) { term_shadow_char(ts, 0xFFFD); return; }
-    if (ch == '\n') {
-        ts->cur_row++;
-        ts->cur_col = 0;
-        return;
-    }
-    if (ch == '\r') {
-        ts->cur_col = 0;
-        return;
-    }
-    if (ch == '\t') {
-        ts->cur_col = (ts->cur_col + 8) & ~7;
-        if (ts->cur_col >= ts->cols) {
-            ts->cur_col = 0;
-            ts->cur_row++;
-        }
-        return;
-    }
-    if (ch < 0x20) return;  // skip other control chars
-    term_shadow_char(ts, (uint32_t)ch);
 }
 
 // a cell's cluster to the terminal, as UTF-8 (a double-width character's
 // tail cell is painted by its first)
 static void term_emit_cp(uint32_t u) {
-    if (u < 0x80) fputc((int)u, stdout);
-    else if (u < 0x800) { fputc(0xC0 | (int)(u >> 6), stdout); fputc(0x80 | (int)(u & 0x3F), stdout); }
-    else if (u < 0x10000) { fputc(0xE0 | (int)(u >> 12), stdout); fputc(0x80 | (int)((u >> 6) & 0x3F), stdout); fputc(0x80 | (int)(u & 0x3F), stdout); }
-    else { fputc(0xF0 | (int)(u >> 18), stdout); fputc(0x80 | (int)((u >> 12) & 0x3F), stdout); fputc(0x80 | (int)((u >> 6) & 0x3F), stdout); fputc(0x80 | (int)(u & 0x3F), stdout); }
+    unsigned char b[4];
+    fwrite(b, 1, (size_t)s32u_encode(u, b), stdout);
 }
 static void term_emit_cell(const term_cell_t *c) {
     if (c->wide == TERM_WIDE_TAIL) return;
     term_emit_cp(c->ch);
     for (int k = 0; k < TERM_CLUSTER - 1 && c->mark[k]; k++) term_emit_cp(c->mark[k]);
+}
+
+// one byte of keyboard input: the one READ_CHAR gave back first, then the
+// stdin prefix file, then stdin; false at end of input
+static bool term_key_byte(term_state_t *ts, unsigned char *b) {
+    if (ts->key_pushback >= 0) { *b = (unsigned char)ts->key_pushback; ts->key_pushback = -1; return true; }
+    ssize_t n = stdin_prefix_read(b, 1);
+    if (n != 1) n = read(STDIN_FILENO, b, 1);
+    return n == 1;
 }
 
 static void term_blank_cells(term_cell_t *cells, int start, int end) {
@@ -602,7 +619,7 @@ static void term_blank_cells(term_cell_t *cells, int start, int end) {
 
 static void term_shadow_clear(term_state_t *ts, int mode) {
     if (!ts->cells) return;
-    ts->last_valid = false; ts->joiner = false;
+    term_clu_reset(ts);
     int start, end;
     switch (mode) {
         case 0: // full screen
@@ -701,7 +718,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             }
             ts->cur_row = (int)row - 1;  // shadow: 0-based
             ts->cur_col = (int)col - 1;
-            ts->last_valid = false; ts->joiner = false;     // nothing to join across a move
+            term_clu_reset(ts);                             // nothing joins across a move
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -742,9 +759,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
         case S32_TERM_READ_KEY: {
             // Blocking read of one byte
             unsigned char ch;
-            ssize_t n = stdin_prefix_read(&ch, 1);
-            if (n != 1) n = read(STDIN_FILENO, &ch, 1);
-            if (n == 1) {
+            if (term_key_byte(ts, &ch)) {
                 mmio->data_buffer[offset] = ch;
                 resp->length = 1;
                 resp->status = (uint32_t)ch;
@@ -755,25 +770,20 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             break;
         }
         case S32_TERM_READ_CHAR: {
-            // Blocking read of one character: its UTF-8 bytes read whole,
-            // the code point returned; a byte that begins no sequence, or a
-            // sequence cut short, is U+FFFD
-            unsigned char b[4];
-            ssize_t n = stdin_prefix_read(&b[0], 1);
-            if (n != 1) n = read(STDIN_FILENO, &b[0], 1);
-            if (n != 1) { resp->status = S32_MMIO_STATUS_EOF; resp->length = 0; break; }
-            uint32_t cp = b[0];
-            int need = b[0] >= 0xF0 && b[0] <= 0xF4 ? 3 : b[0] >= 0xE0 ? 2 : b[0] >= 0xC2 ? 1 : 0;
-            if (b[0] >= 0x80 && !need) cp = 0xFFFD;
-            if (need) {
-                cp = (uint32_t)(b[0] & (0x3F >> need));
-                for (int k = 1; k <= need; k++) {
-                    ssize_t m = stdin_prefix_read(&b[k], 1);
-                    if (m != 1) m = read(STDIN_FILENO, &b[k], 1);
-                    if (m != 1 || (b[k] & 0xC0) != 0x80) { cp = 0xFFFD; break; }
-                    cp = (cp << 6) | (uint32_t)(b[k] & 0x3F);
-                }
+            // Blocking read of one character: its UTF-8 bytes read whole and
+            // decoded as s32utf.h does (U+FFFD for what is not UTF-8); a
+            // byte that cut a sequence short is kept for the next read
+            s32u_dec d = { 0, 0, 0, 0 };
+            uint32_t cp = 0;
+            int got = 0;
+            for (;;) {
+                unsigned char b;
+                if (!term_key_byte(ts, &b)) { got = s32u_dec_end(&d, &cp); break; }
+                int r = s32u_dec_byte(&d, b, &cp);
+                if (r == 2) ts->key_pushback = b;
+                if (r) { got = 1; break; }
             }
+            if (!got) { resp->status = S32_MMIO_STATUS_EOF; resp->length = 0; break; }
             resp->length = 0;
             resp->status = cp;
             break;
@@ -781,8 +791,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
         case S32_TERM_KEY_AVAIL: {
             // Non-blocking poll: returns 1 if key available, 0 if not
             struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
-            int ret = stdin_prefix_active() ? 1 : poll(&pfd, 1, 0);
-            resp->status = (ret > 0 && (stdin_prefix_active() || (pfd.revents & POLLIN))) ? 1 : 0;
+            int ret = ts->key_pushback >= 0 || stdin_prefix_active() ? 1 : poll(&pfd, 1, 0);
+            resp->status = (ret > 0 && (ts->key_pushback >= 0 || stdin_prefix_active() || (pfd.revents & POLLIN))) ? 1 : 0;
             break;
         }
         case S32_TERM_SET_COLOR: {
@@ -866,7 +876,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                 for (int c = 0; c < paint_cols; c++) {
                     term_cell_t *cell = &s->cells[r * s->cols + c];
                     // Skip trailing spaces with default attributes
-                    if (cell->ch == ' ' && cell->attr == 0 &&
+                    if (cell->ch == ' ' && !cell->mark[0] && cell->attr == 0 &&
                         cell->fg == 7 && cell->bg == 0)
                         continue;
                     // Position cursor if we skipped columns

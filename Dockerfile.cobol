@@ -17,7 +17,7 @@ WORKDIR /build/cobol
 COPY cobol/build.sh cobol/cctool.sh cobol/compile.sh /build/cobol/
 COPY cobol/src /build/cobol/src
 COPY cobol/libcob /build/cobol/libcob
-COPY common/term_width.h /build/common/term_width.h
+COPY common/s32utf.h common/s32utf_tables.h /build/common/
 RUN CC=gcc LLVM_BIN=/opt/llvm/bin \
     S32_AS=/opt/slow32/bin/slow32asm S32_RT_INCLUDE=/opt/slow32/include \
     ./build.sh

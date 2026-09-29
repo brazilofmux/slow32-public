@@ -30,7 +30,7 @@
 
 #include "cpu.h"
 #include "mmio.h"
-#include "term_width.h"
+#include "s32utf.h"   /* copied from slow-32 common/, with s32utf_tables.h */
 
 #define S32_MMIO_REQ_HEAD_OFFSET    0x0000u
 #define S32_MMIO_REQ_TAIL_OFFSET    0x0004u
@@ -529,14 +529,13 @@ static void slow32_mmio_cleanup_services(Slow32MMIOContext *ctx)
 #define TERM_MAX_SAVE_DEPTH 8
 #define TERM_MAX_PENDING_CLEARS 8
 
-/* A cell holds a grapheme cluster, as far as the shadow can tell one: a
- * base code point and those that join it without taking a column
- * (combining marks, variation selectors, what follows a ZERO WIDTH
- * JOINER), at most TERM_CLUSTER of them.  A character takes its display
- * width in cells (term_width.h); a double-width character's second cell is
- * marked and never painted on its own.  The same model as the emulators'
- * tools/emulator/mmio_ring.c. */
-#define TERM_CLUSTER 4
+/* A cell holds a grapheme cluster: output is decoded as UTF-8, split into
+ * clusters by UAX #29, and each cluster takes its display width in cells
+ * -- the Unicode model of s32utf.h, shared with the emulators
+ * (tools/emulator/mmio_ring.c) and the COBOL runtime.  A double-width
+ * cluster's second cell is marked and never painted on its own.  A cell
+ * keeps TERM_CLUSTER code points of a longer cluster. */
+#define TERM_CLUSTER 8
 enum { TERM_NARROW = 0, TERM_WIDE = 1, TERM_WIDE_TAIL = 2 };
 typedef struct {
     uint32_t ch;                        /* the base code point */
@@ -580,17 +579,20 @@ typedef struct {
      * is blanked over its range so the repaint covers it. */
     int n_pending_clears;
     struct { int mode, row, col; } pending_clears[TERM_MAX_PENDING_CLEARS];
-    /* The UTF-8 sequence output is part way through, and the cell the last
-     * character went to, for a joining code point to join */
-    uint32_t u8_cp;
-    int u8_need;
+    /* The UTF-8 sequence output is part way through, and the cluster being
+     * built in the last cell written */
+    s32u_dec dec;
+    s32u_clu clu;
     int last_row, last_col;
-    bool last_valid, joiner;
+    bool last_valid;
+    /* a byte READ_CHAR took that belongs to the next read; -1 when none */
+    int key_pushback;
 } Slow32TermState;
 
 static void *slow32_term_create(void)
 {
     Slow32TermState *ts = g_new0(Slow32TermState, 1);
+    ts->key_pushback = -1;
     if (isatty(STDIN_FILENO) &&
         tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
         ts->termios_saved = true;
@@ -661,43 +663,76 @@ static void slow32_term_blank_half(Slow32TermState *ts, int row, int col)
         if (l) {
             l->ch = ' ';
             l->wide = TERM_NARROW;
+            memset(l->mark, 0, sizeof l->mark);
         }
     } else if (c->wide == TERM_WIDE) {
         Slow32TermCell *t = slow32_term_cell_at(ts, row, col + 1);
         if (t) {
             t->ch = ' ';
             t->wide = TERM_NARROW;
+            memset(t->mark, 0, sizeof t->mark);
         }
     }
 }
 
-static void slow32_term_cell_join(Slow32TermCell *c, uint32_t cp)
+static bool slow32_term_cell_join(Slow32TermCell *c, uint32_t cp)
 {
     for (int k = 0; k < TERM_CLUSTER - 1; k++) {
         if (!c->mark[k]) {
             c->mark[k] = cp;
-            return;
+            return true;
         }
     }
+    return false;
 }
 
-/* one character at the cursor: the cells its width takes, the halves of
- * any double-width character it overwrites blanked, as a terminal does */
+/* nothing joins across a cursor move, a clear or a line end */
+static void slow32_term_clu_reset(Slow32TermState *ts)
+{
+    memset(&ts->clu, 0, sizeof ts->clu);
+    ts->last_valid = false;
+}
+
+/* one code point at the cursor: a new cluster takes its width in cells,
+ * blanking the halves of any double-width character it overwrites; a code
+ * point that joins the last cluster joins its cell */
 static void slow32_term_shadow_char(Slow32TermState *ts, uint32_t cp)
 {
-    int w = s32_term_width(cp);
-    if (w == 0 || ts->joiner) {
-        Slow32TermCell *l = ts->last_valid ?
-            slow32_term_cell_at(ts, ts->last_row, ts->last_col) : NULL;
-        if (l) {
-            slow32_term_cell_join(l, cp);
-        }
-        ts->joiner = cp == 0x200D;
-        if (l || w == 0) {
+    int brk = s32u_clu_step(&ts->clu, cp);
+    Slow32TermCell *l = ts->last_valid ?
+        slow32_term_cell_at(ts, ts->last_row, ts->last_col) : NULL;
+    int w = s32u_clu_width(&ts->clu);
+    if (!brk || (w == 0 && !s32u_clu_lone(&ts->clu))) {
+        if (!l) {
             return;
         }
+        slow32_term_cell_join(l, cp);
+        if (!brk && w == 2 && l->wide == TERM_NARROW &&
+            ts->last_col + 1 < ts->cols) {
+            /* a variation selector or a second regional indicator made it wide */
+            slow32_term_blank_half(ts, ts->last_row, ts->last_col + 1);
+            Slow32TermCell *t = slow32_term_cell_at(ts, ts->last_row, ts->last_col + 1);
+            if (t) {
+                *t = *l;
+                t->ch = ' ';
+                memset(t->mark, 0, sizeof t->mark);
+                t->wide = TERM_WIDE_TAIL;
+            }
+            l->wide = TERM_WIDE;
+            if (ts->cur_row == ts->last_row && ts->cur_col == ts->last_col + 1) {
+                if (++ts->cur_col >= ts->cols) {
+                    ts->cur_col = 0;
+                    ts->cur_row++;
+                }
+            }
+        }
+        return;
     }
-    ts->joiner = false;
+    uint32_t base = cp;
+    if (s32u_clu_lone(&ts->clu)) {
+        base = ' ';     /* a mark with nothing to sit on: over a space */
+        w = 1;
+    }
     if (w == 2 && ts->cur_col + 1 >= ts->cols) {
         ts->cur_col = 0;
         ts->cur_row++;
@@ -714,7 +749,10 @@ static void slow32_term_shadow_char(Slow32TermState *ts, uint32_t cp)
             continue;
         }
         memset(c->mark, 0, sizeof c->mark);
-        c->ch = k ? ' ' : cp;
+        c->ch = k ? ' ' : base;
+        if (!k && base != cp) {
+            c->mark[0] = cp;
+        }
         c->wide = w == 2 ? (k ? TERM_WIDE_TAIL : TERM_WIDE) : TERM_NARROW;
         c->attr = (uint8_t)ts->cur_attr;
         c->fg = (uint8_t)ts->cur_fg;
@@ -727,75 +765,72 @@ static void slow32_term_shadow_char(Slow32TermState *ts, uint32_t cp)
     }
 }
 
-/* a byte of output: control characters move the cursor; UTF-8 is decoded,
- * a byte that begins or continues no sequence standing for U+FFFD */
+/* a code point of output: control characters move the cursor and end the
+ * cluster; anything else is a character */
+static void slow32_term_shadow_cp(Slow32TermState *ts, uint32_t cp)
+{
+    if (cp == '\n' || cp == '\r' || cp == '\t') {
+        slow32_term_clu_reset(ts);
+        if (cp == '\n') {
+            ts->cur_row++;
+            ts->cur_col = 0;
+        } else if (cp == '\r') {
+            ts->cur_col = 0;
+        } else {
+            ts->cur_col = (ts->cur_col + 8) & ~7;
+            if (ts->cur_col >= ts->cols) {
+                ts->cur_col = 0;
+                ts->cur_row++;
+            }
+        }
+        return;
+    }
+    if (cp < 0x20 || cp == 0x7F) {
+        return;  /* other control characters: nothing shown */
+    }
+    slow32_term_shadow_char(ts, cp);
+}
+
+/* a byte of output, decoded as UTF-8 (s32utf.h: U+FFFD for what is not,
+ * and a byte that cut a sequence short decoded again) */
 static void slow32_term_shadow_putc(Slow32TermState *ts, int ch)
 {
     if (!ts->cells) {
         return;
     }
-    ch &= 0xFF;
-    if (ts->u8_need) {
-        if ((ch & 0xC0) == 0x80) {
-            ts->u8_cp = (ts->u8_cp << 6) | (uint32_t)(ch & 0x3F);
-            if (--ts->u8_need == 0) {
-                slow32_term_shadow_char(ts, ts->u8_cp);
-            }
+    for (;;) {
+        uint32_t cp;
+        int r = s32u_dec_byte(&ts->dec, (unsigned)ch, &cp);
+        if (!r) {
             return;
         }
-        ts->u8_need = 0;
-        slow32_term_shadow_char(ts, 0xFFFD);
-    }
-    if (ch >= 0xC2 && ch <= 0xF4) {
-        ts->u8_need = ch >= 0xF0 ? 3 : ch >= 0xE0 ? 2 : 1;
-        ts->u8_cp = (uint32_t)(ch & (0x3F >> ts->u8_need));
-        return;
-    }
-    if (ch >= 0x80) {
-        slow32_term_shadow_char(ts, 0xFFFD);
-        return;
-    }
-    if (ch == '\n') {
-        ts->cur_row++;
-        ts->cur_col = 0;
-        return;
-    }
-    if (ch == '\r') {
-        ts->cur_col = 0;
-        return;
-    }
-    if (ch == '\t') {
-        ts->cur_col = (ts->cur_col + 8) & ~7;
-        if (ts->cur_col >= ts->cols) {
-            ts->cur_col = 0;
-            ts->cur_row++;
+        slow32_term_shadow_cp(ts, cp);
+        if (r == 1) {
+            return;
         }
-        return;
     }
-    if (ch < 0x20) {
-        return;  /* skip other control chars */
-    }
-    slow32_term_shadow_char(ts, (uint32_t)ch);
 }
 
 /* a cell's cluster to the terminal, as UTF-8 */
 static void slow32_term_emit_cp(uint32_t u)
 {
-    if (u < 0x80) {
-        slow32_console_write_byte((int)u);
-    } else if (u < 0x800) {
-        slow32_console_write_byte(0xC0 | (int)(u >> 6));
-        slow32_console_write_byte(0x80 | (int)(u & 0x3F));
-    } else if (u < 0x10000) {
-        slow32_console_write_byte(0xE0 | (int)(u >> 12));
-        slow32_console_write_byte(0x80 | (int)((u >> 6) & 0x3F));
-        slow32_console_write_byte(0x80 | (int)(u & 0x3F));
-    } else {
-        slow32_console_write_byte(0xF0 | (int)(u >> 18));
-        slow32_console_write_byte(0x80 | (int)((u >> 12) & 0x3F));
-        slow32_console_write_byte(0x80 | (int)((u >> 6) & 0x3F));
-        slow32_console_write_byte(0x80 | (int)(u & 0x3F));
+    unsigned char b[4];
+    int n = s32u_encode(u, b);
+    for (int k = 0; k < n; k++) {
+        slow32_console_write_byte(b[k]);
     }
+}
+
+/* one byte of keyboard input: the one READ_CHAR gave back first; false at
+ * end of input */
+static bool slow32_term_key_byte(Slow32TermState *ts, unsigned char *b)
+{
+    if (ts->key_pushback >= 0) {
+        *b = (unsigned char)ts->key_pushback;
+        ts->key_pushback = -1;
+        return true;
+    }
+    return read(STDIN_FILENO, b, 1) == 1;
 }
 
 static void slow32_term_emit_cell(const Slow32TermCell *c)
@@ -826,8 +861,7 @@ static void slow32_term_shadow_clear(Slow32TermState *ts, int mode)
     if (!ts->cells) {
         return;
     }
-    ts->last_valid = false;
-    ts->joiner = false;
+    slow32_term_clu_reset(ts);
     int start, end;
     switch (mode) {
     case 0: /* full screen */
@@ -927,8 +961,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         }
         ts->cur_row = (int)row - 1;  /* shadow: 0-based */
         ts->cur_col = (int)col - 1;
-        ts->last_valid = false;
-        ts->joiner = false;
+        slow32_term_clu_reset(ts);
         resp->status = S32_MMIO_STATUS_OK;
         break;
     }
@@ -974,8 +1007,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_READ_KEY: {
         unsigned char ch;
-        ssize_t n = read(STDIN_FILENO, &ch, 1);
-        if (n == 1) {
+        if (slow32_term_key_byte(ts, &ch)) {
             slow32_mmio_copy_to_guest(env, req->offset, &ch, 1);
             resp->length = 1;
             resp->status = (uint32_t)ch;
@@ -987,29 +1019,31 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     }
 
     case S32_TERM_READ_CHAR: {
-        /* one character: its UTF-8 bytes read whole, the code point
-         * returned; bytes that are not UTF-8 are U+FFFD */
-        unsigned char b[4];
-        if (read(STDIN_FILENO, &b[0], 1) != 1) {
+        /* one character: its UTF-8 bytes read whole and decoded as
+         * s32utf.h does (U+FFFD for what is not UTF-8); a byte that cut a
+         * sequence short is kept for the next read */
+        s32u_dec d = { 0, 0, 0, 0 };
+        uint32_t cp = 0;
+        int got = 0;
+        for (;;) {
+            unsigned char b;
+            if (!slow32_term_key_byte(ts, &b)) {
+                got = s32u_dec_end(&d, &cp);
+                break;
+            }
+            int r = s32u_dec_byte(&d, b, &cp);
+            if (r == 2) {
+                ts->key_pushback = b;
+            }
+            if (r) {
+                got = 1;
+                break;
+            }
+        }
+        if (!got) {
             resp->status = S32_MMIO_STATUS_EOF;
             resp->length = 0;
             break;
-        }
-        uint32_t cp = b[0];
-        int need = b[0] >= 0xF0 && b[0] <= 0xF4 ? 3 : b[0] >= 0xE0 ? 2 :
-                   b[0] >= 0xC2 ? 1 : 0;
-        if (b[0] >= 0x80 && !need) {
-            cp = 0xFFFD;
-        }
-        if (need) {
-            cp = (uint32_t)(b[0] & (0x3F >> need));
-            for (int k = 1; k <= need; k++) {
-                if (read(STDIN_FILENO, &b[k], 1) != 1 || (b[k] & 0xC0) != 0x80) {
-                    cp = 0xFFFD;
-                    break;
-                }
-                cp = (cp << 6) | (uint32_t)(b[k] & 0x3F);
-            }
         }
         resp->length = 0;
         resp->status = cp;
@@ -1017,8 +1051,9 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     }
     case S32_TERM_KEY_AVAIL: {
         struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
-        int ret = poll(&pfd, 1, 0);
-        resp->status = (ret > 0 && (pfd.revents & POLLIN)) ? 1 : 0;
+        int ret = ts->key_pushback >= 0 ? 1 : poll(&pfd, 1, 0);
+        resp->status = (ts->key_pushback >= 0 ||
+                        (ret > 0 && (pfd.revents & POLLIN))) ? 1 : 0;
         break;
     }
 
@@ -1100,7 +1135,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
             for (int c = 0; c < paint_cols; c++) {
                 Slow32TermCell *cell = &s->cells[r * s->cols + c];
                 /* Skip trailing spaces with default attributes */
-                if (cell->ch == ' ' && cell->attr == 0 &&
+                if (cell->ch == ' ' && !cell->mark[0] && cell->attr == 0 &&
                     cell->fg == 7 && cell->bg == 0) {
                     continue;
                 }

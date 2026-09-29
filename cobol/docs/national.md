@@ -52,12 +52,17 @@ Refused: GROUP-USAGE BIT (the BOOLEAN module).
 ## National text in columns (ISSUES-92)
 
 A report line and a screen are character cells, and national text goes
-into them by display width, as a terminal shows it. A character takes
-its width in columns: two for an East Asian wide or full-width one, one
-for most. A character that takes no column (a combining mark, a
-variation selector), or follows a ZERO WIDTH JOINER, rides with the one
-before it as a single cluster. The width table is the term service's,
-`common/term_width.h`, generated from the Unicode data.
+into them by display width, as a terminal shows it. The text is split
+into grapheme clusters (UAX #29: a letter and its combining marks, an
+emoji ZWJ sequence, a flag's two regional indicators), and each cluster
+takes its display width in columns: two for an East Asian wide or
+full-width character or an emoji, one for most, and a cluster carrying
+U+FE0F or a flag is two (tinymux's policy). A mark with nothing before
+it sits over a space. The model is `common/s32utf.h`, with libutf's
+Unicode 16.0 tables, shared by the term service, the runtime and the
+compiler, so a screen, a report line and the compiler agree (ISSUES-94).
+A cluster is a span of the item's own code units, so laying text out or
+editing it on a screen never drops any of it.
 
 - **A field of n national character positions is n columns.** Its text
   is laid out left to right. A character that would cross the field's

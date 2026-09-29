@@ -189,6 +189,14 @@ choice matches how both compilers write LINAGE files (ISSUES-46).
 none failing, every inspection test is accounted for, and no known
 conformance gap is open.
 
+Reopened in part 2026-09-28 ([refusals.md](refusals.md)). CCVS tests
+what a compiler must accept, and barely what it must reject. A survey
+of the refusals found four 85 features still refused (the CODE clause,
+INITIALIZE and BY CONTENT of a reference-modified item, a REPORT
+SECTION in a contained program) and one 85 syntax rule not enforced
+(UNSTRING's reference-modified sending item). The rule-by-rule sweep in
+refusals.md, "What follows", is what closes Stage A properly.
+
 ## Stage B — COBOL 2002, the practical half
 
 The standard is treated as modules, not one block. These parts of
@@ -265,8 +273,8 @@ refused with a message naming the switch.
   EC-BOUND-ODO (ISSUES-61), and EXCEPTION-LOCATION and EXCEPTION-FILE
   with their national forms (ISSUES-65), and TURN for one file
   (ISSUES-87), and 2023's exception-checking PERFORM (ISSUES-89). Still
-  to come: the rest of Table 13's conditions. No oracle: GnuCOBOL 4 does not implement
-  exception declaratives.
+  to come: the rest of Table 13's conditions. No oracle: GnuCOBOL 4
+  does not implement exception declaratives.
 - **NATIONAL** (2026-09-28, ISSUES-62 to -75). docs/national.md.
   - Part one: PICTURE N and national literals, stored UTF-16 big-endian,
     alphanumeric read as UTF-8; VALUE, MOVE, comparison, DISPLAY, LENGTH
@@ -278,10 +286,8 @@ refused with a message naming the switch.
     ACCEPT, national groups, numeric and numeric-edited USAGE NATIONAL,
     national-edited pictures, and national records in files (line
     sequential as UTF-8).
-  - Not implemented: national fields in Report Writer and SCREEN SECTION,
-    and positioned ACCEPT into a national item. Both need a ruling on
-    what a column is when a character takes two cells; both modules are
-    optional since 2014. Refused by name.
+  - National fields in Report Writer and SCREEN SECTION (ISSUES-92),
+    laid out by display width on a Unicode-aware term service.
 - **BOOLEAN, part one** (2026-09-28, ISSUES-76): PICTURE 1 in USAGE
   DISPLAY and NATIONAL, B and BX literals, VALUE, MOVE, comparison, the
   boolean condition and class test, INITIALIZE, BOOLEAN-OF-INTEGER and

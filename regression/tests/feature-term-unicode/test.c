@@ -1,4 +1,4 @@
-/* The term service is Unicode-aware (term_width.h, mmio_ring.c): a screen
+/* The term service is Unicode-aware (common/s32utf.h, mmio_ring.c): a screen
  * cell holds a grapheme cluster and a character takes its display width.
  *   - a buffered update's diff (the repaint) writes whole UTF-8 characters,
  *     and overwriting the first half of a double-width character blanks

@@ -3062,3 +3062,181 @@ valid). Still refused: OCCURS DEPENDING ON on a bit array, OCCURS on a
 bit group, a character item redefining a mid-byte bit item. Harness
 284/284; -std=85 byte-identical on all 229 Open Systems programs;
 majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
+
+### 94. The Stage B code review (2026-09-28) -- findings, to be worked off
+
+After ISSUES-62 to -93 went in over two days, three independent
+reviewers read the code against the 2023 text, one area each. Every
+"bug" and "standard" item was reproduced with a program; they are kept
+under `cobol/out/review/{national,boolean,except}/` (gitignored) and
+become regression tests as they are fixed. Checked off here as they go.
+
+**NATIONAL, term, reports, screens**
+- N1 bug: a binary or packed numeric sender to or compared with a
+  national item loses digits (as_national's max is bytes, not digits).
+- N2 bug: screen ACCEPT rewrites a national item whose cluster has more
+  than 4 code points (nat_clusters drops the rest; the commit writes it
+  back). Data loss on Enter alone.
+- N3 bug: the term shadow swallows the character after a full cluster
+  (term_cell_join failing still returns). Both copies.
+- N4 bug: the term service's UTF-8 decoders do not validate (overlong,
+  surrogates, > U+10FFFF; READ_CHAR eats the byte that broke a
+  sequence). Both copies.
+- N5 bug: UNSTRING without DELIMITED BY counts `room` in bytes for a
+  national source into a SIGN SEPARATE numeric national receiver.
+- N6 bug: class conditions (NUMERIC, ALPHABETIC*, class-names) test
+  bytes on PIC N items.
+- N7 bug: three cluster/width models disagree (con_write,
+  nat_clusters, the shadow); all join anything after ZWJ, where UAX #29
+  GB11 joins only Extended_Pictographic.
+- N8 standard: a national LINE SEQUENTIAL READ of a long line gives 04
+  and drops the rest; the comment cites 2023 14.9.30 rule 15, which
+  says 06 and keeps the rest for the next READ.
+- Suspicions: record-oriented RW print file cuts a national line at
+  bytes; restore skips a space cell carrying marks; \n does not reset
+  the shadow's join state; fn_var_result caps at 256 national chars; a
+  screen field whose text is wider than the field cannot be edited.
+- Refactor: one shared Unicode header (validating decoder, encoder,
+  surrogate read/write, width, UAX #29 cluster step) for libcob, the
+  compiler, the emulator and QEMU -- generated from libutf's DFAs
+  (width, GCB, Extended_Pictographic), replacing gen_term_width.py's
+  table; sym_nat_usage/sym_chars/desc_nat_chars predicates;
+  sfield_cols/rfield_cols -> pic_cols; nat_fig_lit/all_lit_national;
+  one nat_to_utf8_alloc; the QEMU shadow copy kept in sync by a check.
+
+**Exceptions, the exception-checking PERFORM, EXIT, function refmod**
+- E1 bug: a function's computed-position refmod evaluates the start and
+  length after the function, clobbering fnbuf and fn_var_len.
+- E2 bug: a computed refmod length of 0 on a function result returns
+  the whole result, no EC-BOUND-REF-MOD (0 is the "no length" sentinel).
+- E3 bug: (start:) on a run-time-length result is never checked.
+- E4 bug: WHEN EXCEPTION EC-USER does not turn on EC-USER names met later.
+- E5 bug: WHEN EXCEPTION EC-ALL leaves g_ecuser_on set past END-PERFORM.
+- E6 bug: PERFORM WITH LOCATION outlives END-PERFORM for names already on.
+- E7 bug: the implicit TURN does not override an earlier per-file OFF.
+- E8 bug: a file's USE AFTER ERROR runs instead of the WHEN phrase
+  (14.9.28 rule 17: matching USE declaratives are ignored).
+- E9 bug: .Lecpr/.Lecpf are static; a recursive activation in a WHEN
+  phrase overwrites its caller's resume point.
+- E10 bug: sentence error recovery does not restore the ECP / PERFORM
+  / checking state (spurious later diagnostics).
+- E11 standard: WHEN matching order is not USE rule 3c-3g (14.9.49.4).
+- E12 standard: fatal conditions go to WHEN OTHER (14.6.13.1.3 rule 4).
+- E13 standard: >>TURN inside an exception-checking PERFORM should be
+  refused (7.3.25 syntax rule 5).
+- E14 standard: RAISE selecting the active USE declarative should be
+  EC-FLOW-USE (14.9.49.4 rule 2).
+- E15 standard: PERFORM WITH TEST ... UNTIL EXIT accepted (14.9.28.3 rule 8).
+- E16 standard: duplicate exception-name across WHEN phrases (rule 15).
+- E17 standard: a non-integer computed refmod position is truncated,
+  no EC-BOUND-REF-MOD (8.4.3.3.4 rule 5).
+- E18 debatable: EXIT PERFORM / GO TO in a WHEN phrase for a fatal
+  condition escapes the termination; decide and document.
+- Refactor: one checking-state struct saved and restored whole (the
+  partial restores caused E5/E6, and it is where error recovery and
+  >>PUSH/>>POP belong); ec_covers(i, c); the implicit TURN built on
+  apply_turn's core; one WHEN/USE ranking function; one ECP pre-scan;
+  close_para/close_sec helpers; an EC-BOUND-REF-MOD emit helper; grow
+  the fixed ceilings (g_ecp[8], 16x16 WHEN names, g_pstk[64], g_ecf[256]).
+
+**BOOLEAN, USAGE BIT, TYPEDEF**
+- B1 bug: INITIALIZE of bit items copies whole bytes (clobbers bits of
+  neighbours); a bit REDEFINES masks its whole byte.
+- B2 bug: INITIALIZE REPLACING BOOLEAN over a bit array writes every
+  occurrence to element 1 (init_replace_walk's Ref skips the bit rewrite).
+- B3 bug: INITIALIZE REPLACING continues only for the five 85
+  categories (BOOLEAN, NATIONAL after the first phrase fail); INITIALIZE
+  of a bit-array element is refused as reference-modified.
+- B4 bug: an ALL boolean literal beside a run-time-length operand is
+  expanded to length 1 (MOVE, comparison, function results).
+- B5 bug: a group with a group-level USAGE BIT clause (not GROUP-USAGE
+  BIT) is taken as a zero-length boolean (use sym_bitlike everywhere).
+- B6 bug: CALL BY REFERENCE of a bit item not starting a byte is
+  accepted and passes the wrong bits (14.9.4.3 rule 6).
+- B7 bug: shift counts near or past 2^31 crash or are truncated.
+- B8 bug: USAGE BIT items over 256 bits compile, then die at run time.
+- B9 bug: TYPE: the entry's VALUE loses when written before TYPE
+  (13.18.57.4 rule 3).
+- B10 bug: a group TYPE is not aligned as a level 1 item (rule 2d).
+- B11 standard: boolean relations accept > < >= <= (8.8.4.2.2 format 2).
+- B12 standard: THRU on a boolean condition-name (13.18.63.3 rule 29).
+- B13 standard: strong-group MOVE too strict as a sender (Table 16),
+  too loose elsewhere: VALUE on a strong group, an 88 on it, ACCEPT
+  into it, UNSTRING into it.
+- B14 standard: non-elementary MOVEs with bit groups convert; 14.9.25.4
+  rule 4 says bytes are copied without conversion.
+- B15 standard: MOVE ALL "1" to a boolean is refused (rule 7 bars only
+  non-boolean characters).
+- B16 standard (lower confidence): a shift after B-NOT takes the wrong
+  precedence (8.8.2 rule 7b).
+- B17 standard (lower confidence): a bit item after a character
+  REDEFINES stays in the same bit run.
+- Minor: TYPE syntax rules 2 and 5 unchecked; VALUE on a bit group and
+  on a subordinate both accepted; negative shift counts silently 0;
+  ALIGNED clause not implemented and not listed; a refmod start is
+  evaluated twice per operand (twice for side-effecting functions).
+- Refactor: bits_get/bits_put (five hand-written packing loops);
+  sym_is_bititem and sym_bitlike used everywhere; the bit-array element
+  as its own Ref field (ref_resolve_bits, a user_rm flag) instead of
+  hidden in the refmod fields; compute a refmod start once into a
+  frame slot; one ALL path (the run-time one); boolean stack limits
+  agree (32 vs 64); diagnose an unknown TYPE name during expansion.
+
+Work order: the shared Unicode header and the NATIONAL items; then the
+checking-state struct and the E items; then the bit Ref refactor and
+the B items; then the misstated and missing refusals of
+docs/refusals.md.
+
+**Progress, part 1 (2026-09-28): the shared Unicode model; N1-N7.**
+`common/s32utf.h` is now the one model for text: a streaming UTF-8
+decoder that validates (overlong forms, surrogates, past U+10FFFF) and
+gives one U+FFFD per maximal subpart (Unicode 16.0 3.9), re-feeding the
+byte that cut a sequence short; UTF-8 and UTF-16BE encoders; libutf's
+width, Grapheme_Cluster_Break and Extended_Pictographic DFAs
+(`s32utf_tables.h`, generated from ~/utf by `gen_s32utf.py`); a UAX #29
+cluster stepper; and tinymux's cluster-width policy (widest code point;
+a flag, or anything with U+FE0F, two). `common/test_s32utf.c` runs
+Unicode's GraphemeBreakTest over it: 1,086 of 1,093 lines agree, the
+other 7 being GB9c, which libutf does not implement either. The test
+found a libutf bug on its first run: GB12/13 counts regional
+indicators across the whole cluster, so RI Extend RI is one cluster
+(`utf_grapheme_next` gives 10 bytes where UAX #29 gives 6); the port
+pairs only adjacent ones. `term_width.h` and `gen_term_width.py` are gone.
+
+Everything that measured text now uses it: the term service's shadow
+(both copies), libcob's nat_clusters, con_write and coding helpers,
+and the compiler's nat_lit_cols and UTF converters.
+
+- N1 fixed: nat_cap() sizes a numeric sender by its digits (40).
+- N2 fixed: a cluster is a span of the item's code units; the screen
+  edit splices units and re-splits, so nothing is capped or dropped. A
+  field already wider than its columns stays editable (an edit may not
+  make it wider still).
+- N3 fixed: clusters come from UAX #29, not "width 0 or after ZWJ"; a
+  cell keeps 8 code points. Blanking half a wide cell now clears its
+  marks too -- a bug the new regression test found on its first run
+  (the repaint re-emitted " ZWJ woman ZWJ girl" after the space).
+- N4 fixed: the shadow and READ_CHAR decode through s32utf.h; READ_CHAR
+  keeps the byte that cut a sequence short for the next read
+  (key_pushback, seen by READ_KEY and KEY_AVAIL too).
+- N5 fixed: UNSTRING's room counts the receiver's character positions.
+- N6 fixed: class conditions on PIC N test characters; one past U+00FF
+  is no digit, letter or class member.
+- N7 fixed: one model; GB11 joins only emoji after a ZWJ.
+- Suspicions: restore now repaints a space cell that carries marks; a
+  line end, carriage return or tab ends the cluster; the field too wide
+  to edit is fixed with N2. Still open: a record-oriented RW print file
+  cuts a national line at bytes; fn_var_result caps at 256 characters.
+- N8: rule 15's 06 with continuation, for -std=2002, both kinds of line
+  sequential record; -std=85 keeps GnuCOBOL's 04 (majesty reads such
+  files). Not done yet; the comment now says so.
+- Behavior change: utf8_to_nat (NATIONAL-OF, MOVE of alphanumeric to
+  national, line sequential READ) now gives one U+FFFD per maximal
+  subpart, not per byte. No test's output changed.
+
+Tests: regression/tests/feature-term-clusters (all engines agree),
+cobol/tests/2002/natreview and natscreen2. Regression 94/94; kit
+differential 80/80; cross-engine 90/94 (the four bug-dbt-intrinsic-bounds
+divergences are QEMU's missing fault line, pre-existing); COBOL harness
+286/286; -std=85 byte-identical on all 229 Open Systems programs; majesty
+PASS; majesty-functions PASS; Open Systems paper unchanged.

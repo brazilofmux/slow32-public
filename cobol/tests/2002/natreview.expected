@@ -1,0 +1,12 @@
+binary to national: 123456789
+packed to national: 123456789
+national = binary: equal
+national = packed: equal
+unstring: k=+123 j=456
+123 numeric
+1二3 NOT numeric
+abc alphabetic
+abc lower
+ABC upper
+0F9A hexdig
+1二3 NOT hexdig
