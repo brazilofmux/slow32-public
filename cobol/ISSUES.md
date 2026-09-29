@@ -3813,3 +3813,31 @@ both. On majesty's gl008 the switch reports free form, LINE SEQUENTIAL,
 GOBACK and COMP-3/5 -- all true. Tests: warn/ext-every (all thirteen),
 warn/ext-clean (a standard 85 program, silent). Harness 436/436; the
 gates as above.
+
+### 100. ALPHABET ... IS EBCDIC -- collating sequence and CODE-SET (2026-09-29)
+
+The ruling of 2026-09-28: an alphabet is a collating sequence and a
+code set, not the machine's code, so EBCDIC is honoured. It is code page
+037, IBM's reference EBCDIC, as the Latin-1 <-> CP037 bijection
+(g_cp037, generated from Python's codec). As a collating sequence the
+alphabet's rank table is that code, which the existing PROGRAM
+COLLATING SEQUENCE and SORT COLLATING SEQUENCE machinery takes as it is.
+As an FD's CODE-SET (record sequential files; others refused as not
+implemented) the file image carries two 256-byte tables, code_out and
+code_in (two new words at the end of cob_file), and libcob converts at
+READ (in place), WRITE and REWRITE (a copy, the record area keeping the
+machine's code), SORT USING/GIVING included through cob_read/cob_write.
+The 85 rules are enforced: no literal alphabet as a CODE-SET (rule 2),
+every elementary item USAGE DISPLAY and signed numbers SIGN SEPARATE
+(rule 1; 2023 13.18.13.3 rule 3a).
+
+The two image words change the -std=85 output of every program with a
+file: of the 229 Open Systems programs, 224 differ by exactly those two
+zero words per file image and nothing else, 5 are unchanged.
+
+Tests: free/ebcdic (collation, the raw bytes of a CODE-SET record --
+checked against Python's cp037 -- the round trip, a SORT; the oracle
+agrees, default dialect, since EBCDIC is an implementor-name in 85);
+bad/codeset-literal, -comp, -sign, -lineseq. Harness 441/441, CCVS-85
+unchanged, majesty PASS, majesty-functions PASS, Open Systems paper
+unchanged.

@@ -89,6 +89,8 @@ typedef struct {
     unsigned int pr_state;    /* line sequential: the printer's cursor (libcob.c, PR_TOP..PR_INK) */
     char *rbuf;               /* line sequential input: the runtime's read buffer ... */
     unsigned int rpos, rlen;  /* ... the next byte in it, and how many it holds */
+    const unsigned char *code_out;  /* FD CODE-SET: native to the medium's code (256 bytes), or 0 */
+    const unsigned char *code_in;   /* ... and the medium's code back to native */
 } cob_file;
 
 

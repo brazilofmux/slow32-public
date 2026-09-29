@@ -1951,6 +1951,23 @@ static int ls_write_national(cob_file *f, int before, int after, int reclen)
     free(t);
     return r;
 }
+/* FD CODE-SET (X3.23-1985 3.4; 2023 13.18.13): the record's characters
+ * converted to the medium's code on output -- a copy, the record area
+ * keeps its own -- and back in place on input */
+static const char *cs_out(cob_file *f, const char *rec, unsigned len)
+{
+    static unsigned char *buf; static unsigned cap;
+    if (!f->code_out || !len) return rec;
+    if (len > cap) { unsigned char *nb = realloc(buf, len); if (!nb) cob_fatal("out of memory"); buf = nb; cap = len; }
+    for (unsigned i = 0; i < len; i++) buf[i] = f->code_out[(unsigned char)rec[i]];
+    return (const char *)buf;
+}
+static void cs_in(cob_file *f, char *rec, unsigned len)
+{
+    if (!f->code_in) return;
+    for (unsigned i = 0; i < len; i++) rec[i] = (char)f->code_in[(unsigned char)rec[i]];
+}
+
 
 int cob_read(cob_file *f)
 {
@@ -1985,6 +2002,7 @@ int cob_read(cob_file *f)
         len -= 4;
         unsigned take = len < n ? len : n;
         if (fread(rec, 1, take, fp) != take) return file_result(f, "30", "truncated record");
+        cs_in(f, rec, take);
         f->fpos += 4 + len;
         if (len > n) { fseek(fp, (long)f->fpos, 0); }
         f->last_len = take;
@@ -1997,12 +2015,14 @@ int cob_read(cob_file *f)
         f->fpos -= n;
         fseek(fp, (long)f->fpos, 0);
         if (fread(rec, 1, n, fp) != n) return file_result(f, "30", "read");
+        cs_in(f, rec, n);
         f->last_len = n;
         return file_result(f, "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
         size_t got = fread(rec, 1, n, fp);
         if (got == 0) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
+        cs_in(f, rec, (unsigned)got);
         f->fpos += (unsigned)got;
         if (got < n) { memset(rec + got, ' ', n - got); f->last_len = (unsigned)got; return file_result(f, "04", ""); }
         f->last_len = n;
@@ -2139,12 +2159,12 @@ int cob_write(cob_file *f, int before, int after, int reclen)
             len = (unsigned)d;
         }
         unsigned char rdw[4] = { (unsigned char)((len + 4) >> 8), (unsigned char)((len + 4) & 255), 0, 0 };
-        if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(rec, 1, len, fp) != len) return file_result(f, "30", "write failed");
+        if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(cs_out(f, rec, len), 1, len, fp) != len) return file_result(f, "30", "write failed");
         f->fpos += 4 + len; f->last_len = 0;
         return file_result(f, "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
-        if (fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
+        if (fwrite(cs_out(f, rec, n), 1, n, fp) != n) return file_result(f, "30", "write failed");
         f->fpos += n; f->last_len = 0;
         return file_result(f, "00", "");
     }
@@ -3749,11 +3769,11 @@ int cob_rewrite(cob_file *f, int reclen)
             if (want != len) return file_result(f, "44", "");
             if (fseek(fp, (long)(f->fpos - 4 - len), 0) != 0) return file_result(f, "30", "seek failed");
             unsigned char rdw[4] = { (unsigned char)((len + 4) >> 8), (unsigned char)((len + 4) & 255), 0, 0 };
-            if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(f->record, 1, len, fp) != len) return file_result(f, "30", "write failed");
+            if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(cs_out(f, f->record, len), 1, len, fp) != len) return file_result(f, "30", "write failed");
         } else {
             if (reclen > 0 && (unsigned)reclen != len) return file_result(f, "44", "");
             if (fseek(fp, (long)(f->fpos - len), 0) != 0) return file_result(f, "30", "seek failed");
-            if (fwrite(f->record, 1, len, fp) != len) return file_result(f, "30", "write failed");
+            if (fwrite(cs_out(f, f->record, len), 1, len, fp) != len) return file_result(f, "30", "write failed");
         }
         fseek(fp, (long)f->fpos, 0);                    /* back to after the record; the read buffer refills */
         f->last_len = 0;

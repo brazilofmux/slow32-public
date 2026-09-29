@@ -81,11 +81,10 @@ COBOL 2002/2023 (Stage B):
 - EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
   the caller (docs/conformance/exit.md);
 - numeric items and literals of 19 to 31 digits (COBOL 2002 raised the
-  limit from 18; the arithmetic here is 64-bit), and with them MOVE's
+  limit from 18; the arithmetic here is 64-bit; wanted, queued -- the
+  user, 2026-09-29), and with them MOVE's
   31-digit cap on an alphanumeric sender (2023 14.9.25.4 rule 6d3);
 - RESUME (optional since 2014);
-- ALPHABET ... IS EBCDIC, as a collating sequence and a CODE-SET (ruled
-  below).
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
 - a BASED entry in LOCAL-STORAGE, EC-BOUND-PTR, and ALLOCATE ...
@@ -109,7 +108,7 @@ COBOL 2002/2023 (Stage B):
 
 Two ruled 2026-09-28:
 
-- **ALPHABET ... IS EBCDIC: to be implemented.** An alphabet is a
+- **ALPHABET ... IS EBCDIC: implemented 2026-09-29** (ISSUES-100; code page 037). An alphabet is a
   collating sequence and a CODE-SET translation, not the machine's
   code. A mainframe program with PROGRAM COLLATING SEQUENCE IS EBCDIC
   sorts and compares in EBCDIC order on any machine, and honoring that

@@ -133,6 +133,16 @@ given, because majesty's `.prn` oracles were produced under it.
   GnuCOBOL 4 instead delivers the remainder as further records with
   status 06. No majesty file has such a line; a program that depends
   on the split would be wrong on both.
+- **`ALPHABET ... IS EBCDIC`**: IBM's code page 037 (US/Canada), the
+  reference EBCDIC. As a collating sequence (PROGRAM COLLATING SEQUENCE,
+  SORT/MERGE COLLATING SEQUENCE) each byte ranks at its CP037 code:
+  lowercase before uppercase before digits, as on the mainframe. As an
+  FD's CODE-SET (ORGANIZATION SEQUENTIAL only here) the records are
+  CP037 on the medium, converted at READ, WRITE and REWRITE; the record
+  area keeps the machine's code. The table is the Latin-1 <-> CP037
+  bijection, so a byte above 127 -- here usually part of a UTF-8
+  character -- converts as its Latin-1 value would: a CODE-SET file is
+  for data that fits EBCDIC's repertoire, as it always was.
 - **`RETURN-CODE`** (IBM, Micro Focus, GnuCOBOL; not standard, BP-E1
   under `-warn-extensions`): a `PIC S9(9) BINARY` special register the
   run unit shares (libcob `cob_return_code`), as GnuCOBOL declares it
