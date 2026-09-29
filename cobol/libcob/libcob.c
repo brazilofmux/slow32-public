@@ -2614,12 +2614,26 @@ char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track)
  * A stack of boolean values, each a string of characters 0 and 1.  Binary
  * operations extend the shorter operand on the right with zeros (rule 9);
  * a shift keeps its operand's length (rule 8); B-NOT its operand's. */
-static struct { char *v; int n; } bstk[32];
+static struct { char *v; int n, all; } bstk[32];     /* all: an ALL literal, repeated to its partner's length */
 static int bsp;
 static void bstk_push(char *v, int n)
 {
     if (bsp == 32) cob_fatal("boolean expression too deep");
-    bstk[bsp].v = v; bstk[bsp].n = n; bsp++;
+    bstk[bsp].v = v; bstk[bsp].n = n; bstk[bsp].all = 0; bsp++;
+}
+void cob_bpush_all(const char *lit, int n)
+{
+    char *v = malloc((size_t)n + 1); if (!v) cob_fatal("out of memory");
+    memcpy(v, lit, (size_t)n);
+    bstk_push(v, n); bstk[bsp - 1].all = 1;
+}
+/* an ALL entry at k taken to n positions, its value repeated */
+static void ball_expand(int k, int n)
+{
+    if (!bstk[k].all) return;
+    char *v = malloc((size_t)n + 1); if (!v) cob_fatal("out of memory");
+    for (int i = 0; i < n; i++) v[i] = bstk[k].n ? bstk[k].v[i % bstk[k].n] : '0';
+    free(bstk[k].v); bstk[k].v = v; bstk[k].n = n; bstk[k].all = 0;
 }
 void cob_bpush(const void *p, const cob_desc *d)
 {
@@ -2638,6 +2652,7 @@ void cob_bnot(void)
 static void bbin(int op)
 {
     if (bsp < 2) cob_fatal("boolean stack underflow");
+    ball_expand(bsp - 2, bstk[bsp - 1].n); ball_expand(bsp - 1, bstk[bsp - 2].n);
     int na = bstk[bsp - 2].n, nb = bstk[bsp - 1].n, n = na > nb ? na : nb;
     char *a = bstk[bsp - 2].v, *b = bstk[bsp - 1].v, *r = malloc((size_t)n + 1);
     if (!r) cob_fatal("out of memory");
@@ -2681,6 +2696,7 @@ void cob_bdrop(void) { if (bsp) free(bstk[--bsp].v); }
 int cob_bcmp(void)
 {
     if (bsp < 2) cob_fatal("boolean stack underflow");
+    ball_expand(bsp - 2, bstk[bsp - 1].n); ball_expand(bsp - 1, bstk[bsp - 2].n);
     int na = bstk[bsp - 2].n, nb = bstk[bsp - 1].n, r = 0;
     const char *a = bstk[bsp - 2].v, *b = bstk[bsp - 1].v;
     for (int i = 0; i < na || i < nb; i++) {

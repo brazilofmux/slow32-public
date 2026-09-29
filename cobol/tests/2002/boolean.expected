@@ -13,6 +13,7 @@ from national: 0011
 zero: 000000
 all: 101010
 h is boolean
+h = all 10
 01x1 is not boolean
 initialized: 0000
 replacing: 1000

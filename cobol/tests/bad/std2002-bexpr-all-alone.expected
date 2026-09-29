@@ -1,0 +1,1 @@
+a boolean COMPUTE's expression cannot be an ALL literal alone (2023 14.9.8.3 rule 3)

@@ -1,0 +1,1 @@
+the first operand of a boolean shift cannot be an ALL literal (2023 8.8.2 rule 5)

@@ -5353,6 +5353,7 @@ static void bool_fig_opnd(Opnd *o, int n);
 static int at_operand(void);
 static int is_verb(const char *w);
 static int bool_positions(const Sym *s);
+static int bool_opnd_len(const Opnd *o);
 static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
     /* a boolean operand is compared only with a boolean one (2023
@@ -5366,7 +5367,9 @@ static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
     if (xb || yb) {
         if (!xb && !(x->kind == O_FIG || x->kind == O_ALL)) die_at(x->line, "a boolean operand is compared only with a boolean one (2023 8.8.4.2.8)");
         if (!yb && !(y->kind == O_FIG || y->kind == O_ALL)) die_at(y->line, "a boolean operand is compared only with a boolean one (2023 8.8.4.2.8)");
-        bool_fig_opnd(x, 1); bool_fig_opnd(y, 1);       /* zero-filled on the right by the comparison */
+        /* ZERO beside a boolean is one zero, extended by the comparison;
+         * ALL B"..." is repeated to the other operand's length */
+        bool_fig_opnd(x, yb ? bool_opnd_len(y) : 1); bool_fig_opnd(y, xb ? bool_opnd_len(x) : 1);
     }
     Cond *c = cond_new(C_REL);
     c->x = *x; c->y = *y; c->op = op; c->neg = neg;
@@ -5400,12 +5403,25 @@ static int bool_op(const Tok *t)
 static int bool_opnd_len(const Opnd *o)
 {
     if (o->kind == O_STR) return o->tok->len;
+    if (o->kind == O_BEXPR) return o->fsize;
     if (o->kind == O_FUNC) return o->fsize;
     if (o->kind == O_REF) return o->ref.rm ? (o->ref.rm_len ? (int)o->ref.rm_len : 1) : bool_positions(o->ref.sym);
     return 1;
 }
+/* which boolean stack entries are ALL literals, simulated as the code is
+ * emitted, for 8.8.2 rules 4 and 5 */
+static int g_bsim[64], g_bsp;
+static int g_bexpr_all;                  /* the expression just parsed was an ALL literal alone */
 static void bool_emit_op(int op, Opnd *cnt)
 {
+    int line = op >= BO_SL && op <= BO_SRC ? cnt->line : cur()->line;   /* only a shift has its count operand */
+    if (op == BO_NOT) { if (g_bsp && g_bsim[g_bsp - 1]) die_at(line, "B-NOT of an ALL literal is not implemented"); }
+    else if (op <= BO_XOR) {
+        if (g_bsp >= 2 && g_bsim[g_bsp - 1] && g_bsim[g_bsp - 2])
+            die_at(line, "the two operands of a boolean operation cannot both be ALL literals (2023 8.8.2 rule 4)");
+        if (g_bsp >= 2) { g_bsp--; g_bsim[g_bsp - 1] = 0; }
+    } else if (g_bsp && g_bsim[g_bsp - 1])
+        die_at(line, "the first operand of a boolean shift cannot be an ALL literal (2023 8.8.2 rule 5)");
     if (op == BO_NOT) { emit_call("cob_bnot"); return; }
     if (op <= BO_XOR) { emit_call(op == BO_AND ? "cob_band" : op == BO_OR ? "cob_bor" : "cob_bxor"); return; }
     emit_push_opnd(cnt);
@@ -5416,6 +5432,14 @@ static void bool_emit_op(int op, Opnd *cnt)
 }
 static void bool_emit_operand(Opnd *o)
 {
+    if (g_bsp < 64) g_bsim[g_bsp++] = o->kind == O_ALL;
+    if (o->kind == O_ALL) {
+        /* ALL B"...": its value, repeated to the other operand's length
+         * when the operation runs */
+        Arg a[2] = { arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len)), arg_imm(o->tok->len) };
+        emit_args(a, 2); emit_call("cob_bpush_all");
+        return;
+    }
     Arg a[2];
     opnd_args(o, &a[0], &a[1], 0, 0);
     emit_args(a, 2);
@@ -5423,6 +5447,7 @@ static void bool_emit_operand(Opnd *o)
 }
 static int parse_bexpr(void)
 {
+    int save_bsp = g_bsp; g_bsp = 0;
     struct { int op, prec; Opnd cnt; } st[64]; int sp = 0;
     int lastprec[32], lv = 0; lastprec[0] = 0;
     int want = 1, width = 0, line = cur()->line;
@@ -5439,7 +5464,7 @@ static int parse_bexpr(void)
             if (op) die_at(t->line, "a boolean operand is expected before %s (2023 8.8.2, Table 4)", t->s);
             if (!at_operand() || (t->kind == T_WORD && is_verb(t->s))) die_at(line, "a boolean expression ends without an operand (2023 8.8.2 rule 2)");
             Opnd o; parse_operand(&o);
-            if (o.kind == O_ALL) die_at(o.line, "ALL in a boolean expression is not implemented");
+            if (o.kind == O_ALL && !o.tok->boolv) die_at(o.line, "ALL in a boolean expression takes a boolean literal");
             if (o.kind == O_FIG) bool_fig_opnd(&o, 1);            /* ZERO: a boolean zero, extended as needed */
             if (!opnd_is_boolean(&o)) die_at(o.line, "a boolean expression takes boolean operands (2023 8.8.2)");
             bool_emit_operand(&o);
@@ -5480,6 +5505,8 @@ static int parse_bexpr(void)
         if (st[sp].op == BO_PAREN) die_at(line, "unbalanced parentheses in a boolean expression");
         bool_emit_op(st[sp].op, &st[sp].cnt);
     }
+    g_bexpr_all = g_bsp == 1 && g_bsim[0];        /* the whole expression one ALL literal */
+    g_bsp = save_bsp;
     return width;
 }
 
@@ -7952,6 +7979,7 @@ static void parse_compute(void)
         if (nb != nr) die_at(rs[0].line, "COMPUTE: boolean and numeric receivers cannot be mixed (2023 14.9.8.3)");
         for (int i = 0; i < nr; i++) if (rd[i]) die_at(rs[i].line, "ROUNDED does not apply to a boolean receiver");
         parse_bexpr();
+        if (g_bexpr_all) die_at(rs[0].line, "a boolean COMPUTE's expression cannot be an ALL literal alone (2023 14.9.8.3 rule 3)");
         for (int i = 0; i < nr; i++) {
             Arg a[2] = { arg_ref(&rs[i]), rs[i].rm ? (rs[i].rm_len ? arg_desc(bool_desc((int)rs[i].rm_len)) : arg_rdesc(&rs[i])) : arg_desc(sym_desc(rs[i].sym)) };
             emit_args(a, 2);

@@ -16,6 +16,9 @@ xor, then or:  1001
 shift at or's precedence: 1010
 unequal lengths: 110000
 two receivers: 111100 11
+xor all 10: 0110
+and all 1 (4 positions, stored in 6): 110000
+condition: a b-or all 01 = 1101
 condition: a b-and b = 0100
 condition: b-not a > 0010
 not (p and q)

@@ -51,7 +51,10 @@ shorter operand with zeros on the right; a shift keeps its operand's
 length (rules 8, 9). COMPUTE stores the value in each receiver by the
 MOVE rules. In a condition an expression compares with a boolean
 operand, and alone it is a simple boolean condition when every operand
-is one position. ALL literal operands are not implemented.
+is one position. An ALL literal takes the length of the operand it
+meets (ISSUES-83); it is not both operands of an operation (rule 4), a
+shift's first operand (rule 5), or a COMPUTE's whole expression
+(14.9.8.3 rule 3).
 
 ## USAGE BIT and bit groups (ISSUES-78)
 
@@ -79,8 +82,8 @@ characters.
 ## Not yet
 
 Reference modification of a USAGE BIT item at a computed position (a
-literal one works, ISSUES-82); ALL in a boolean expression; the other
-items listed under USAGE BIT.
+literal one works, ISSUES-82); B-NOT of an ALL literal; the other items
+listed under USAGE BIT.
 
 ## Oracle
 

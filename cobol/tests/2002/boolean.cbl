@@ -45,6 +45,7 @@ main.
     move all b"10" to h
     display "all: " h
     if h is boolean display "h is boolean" end-if
+    if h = all b"10" display "h = all 10" end-if
     move "01x1" to g
     if g is not boolean display "01x1 is not boolean" end-if
     initialize g

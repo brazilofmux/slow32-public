@@ -2700,3 +2700,23 @@ checked in the record's bytes, and one crossing a byte.
 std2002-bit-refmod now checks the computed position. Harness 263/263;
 -std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS (with the fix); Open Systems paper unchanged.
+
+### 83. ALL literals in boolean expressions; a boolean compared with ALL took one position (2026-09-28)
+
+- **ALL B"..." in an expression** (2023 8.8.2) was refused. It is now
+  pushed with an ALL mark (`cob_bpush_all`), and a binary operation or a
+  comparison repeats it to its partner's length first. The compiler
+  simulates which stack entries are ALL as it emits, so rule 4 (not both
+  operands), rule 5 (not a shift's first operand) and 14.9.8.3 rule 3 (a
+  COMPUTE is not ALL alone) are refused at compile time. B-NOT of ALL,
+  whose length the text leaves to its surroundings, is refused.
+- **A bug from ISSUES-76:** `IF h = ALL B"10"` expanded the ALL literal
+  to one position, and the comparison's zero padding then made
+  101010 unequal to it. `cond_rel` now repeats ALL to the other
+  operand's length; ZERO stays one zero, which the padding extends.
+
+2002/boolexpr and 2002/boolean gain the cases (four new lines, nothing
+else changed). Refusals: std2002-bexpr-all-both, -bexpr-all-shift,
+-bexpr-all-alone. Harness 266/266; -std=85 byte-identical on all 227
+Open Systems programs; majesty PASS; majesty-functions PASS; Open
+Systems paper unchanged.

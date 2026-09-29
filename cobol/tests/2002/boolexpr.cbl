@@ -6,7 +6,8 @@ program-id. boolexpr.
 *> the operation before it (rule 7b), unequal lengths extended with
 *> zeros (rule 9), a COMPUTE storing into several receivers by the MOVE
 *> rules, a USAGE NATIONAL operand, and boolean expressions in
-*> conditions, the simple boolean condition among them.
+*> conditions, the simple boolean condition among them.  An ALL literal
+*> takes the length of the operand it meets (rules 4, 5).
 *> No oracle (docs/boolean.md).
 data division.
 working-storage section.
@@ -43,6 +44,9 @@ main.
     compute r = b"0001" b-or a b-shift-l 1   display "shift at or's precedence: " r
     compute r6 = a b-or b"11"                display "unequal lengths: " r6
     compute r6 r2 = a b-xor nb               display "two receivers: " r6 " " r2
+    compute r = a b-xor all b"10"           display "xor all 10: " r
+    compute r6 = a b-and all b"1"           display "and all 1 (4 positions, stored in 6): " r6
+    if (a b-or all b"01") = b"1101" display "condition: a b-or all 01 = 1101" end-if
     if a b-and b = b"0100" display "condition: a b-and b = 0100" end-if
     if b-not a > b"0010" display "condition: b-not a > 0010" end-if
     if p b-and q display "p and q" else display "not (p and q)" end-if
