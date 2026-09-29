@@ -1,0 +1,6 @@
+SORT key 'st' has an OCCURS clause or is in a table (X3.23-1985 SORT syntax rule 4)
+SORT USING 'fb': its record (40) is longer than the sort file's (20) (X3.23-1985 SORT syntax rule 3)
+SORT GIVING 'fs': the sort file's record (20) is longer than its record (5) (X3.23-1985 SORT syntax rule 10)
+SORT GIVING the indexed file 'fx': the first key is ASCENDING and in the place of its RECORD KEY (X3.23-1985 SORT syntax rule 8)
+MERGE names the file 'fi' twice (X3.23-1985 MERGE syntax rule 7)
+SORT inside the input or output procedure of a SORT statement (X3.23-1985 SORT syntax rule 1)

@@ -4164,3 +4164,31 @@ Tests: bad/io-rules (9 errors), bad/open-report-input, warn/ext-every
 programs, majesty PASS, Open Systems paper unchanged. Page:
 docs/conformance/io-statements.md.
 
+### 112. The SORT and MERGE sweep; SORT of a table (2026-09-29)
+
+Refused now, accepted before: a SORT or MERGE inside a SORT's or
+MERGE's input/output procedure (checked when the procedure division is
+done, over the procedures' paragraph ranges) or in a declarative; a
+boolean or pointer key; USING records longer than the sort record;
+a sort record longer than a fixed-length GIVING file's; an indexed
+GIVING file whose RECORD KEY is not the first, ascending key; a file
+named twice in a MERGE; a random-access relative or indexed USING file.
+A key in a table now cites the rule instead of asking for a subscript.
+
+Our free/sortfile test sorted 30-byte input into a 29-byte SD; the SD is
+30 bytes now. Nothing else in the corpora breaks the size rules.
+
+New: SORT of a table (2002; 2023 14.9.40 format 2), which was refused.
+cob_sort_table builds the file sort's normalized key per occurrence
+(occurrence number trailing), merge-sorts them with memcmp and moves the
+occurrences once. Keys default to the OCCURS clause's KEYs (rule 15);
+an ODO table sorts its current count. GnuCOBOL agrees on 2002/sorttable
+(no ties); with WITH DUPLICATES it reorders equal keys, which GR 3c
+forbids, so 2002/sortdups has no oracle. A table inside another table
+is not implemented.
+
+Tests: bad/sort-rules (6 errors), bad/std2002-sort-table (5),
+2002/sorttable, 2002/sortdups. Harness 492/492, CCVS-85 unchanged,
+-std=85 byte-identical on the Open Systems programs, majesty PASS, Open
+Systems paper unchanged. Page: docs/conformance/sort.md.
+

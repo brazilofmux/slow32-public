@@ -28,7 +28,7 @@ sd  work-file.
     05  filler       pic x.
     05  wr-amount    pic s9(5)v99.
     05  filler       pic x.
-    05  wr-name      pic x(18).
+    05  wr-name      pic x(19).
 working-storage section.
 01  eof              pic x value 'n'.
 01  n                pic 99 value 0.

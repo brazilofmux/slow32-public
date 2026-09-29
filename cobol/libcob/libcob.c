@@ -2531,6 +2531,42 @@ static void sort_key_build(const cob_sorter *so, const char *rec, unsigned seq, 
     out[2] = (unsigned char)(seq >> 8);  out[3] = (unsigned char)seq;
 }
 
+/* SORT of a table (COBOL 2002; 2023 14.9.40 format 2): the n
+ * occurrences at base, stride bytes apart, put in order in place.  Each
+ * gets its normalized key (the file SORT's, with its occurrence number
+ * trailing, so equal keys keep their order); the keys are merge-sorted
+ * with memcmp and the occurrences moved once through a copy. */
+static unsigned char *tsort_keys; static unsigned tsort_klen;
+static void tsort_merge(unsigned *a, unsigned *tmp, unsigned n)
+{
+    if (n < 2) return;
+    unsigned h = n / 2;
+    tsort_merge(a, tmp, h); tsort_merge(a + h, tmp, n - h);
+    unsigned i = 0, j = h, k = 0;
+    while (i < h && j < n)
+        tmp[k++] = memcmp(tsort_keys + (size_t)a[i] * tsort_klen, tsort_keys + (size_t)a[j] * tsort_klen, tsort_klen) <= 0 ? a[i++] : a[j++];
+    while (i < h) tmp[k++] = a[i++];
+    while (j < n) tmp[k++] = a[j++];
+    memcpy(a, tmp, n * sizeof *a);
+}
+void cob_sort_table(char *base, int n, int stride, const cob_sort_key *keys, int nkeys, const unsigned char *coll)
+{
+    if (n < 2 || stride < 1) return;
+    cob_sorter so; memset(&so, 0, sizeof so);
+    so.keys = keys; so.nkeys = nkeys; so.coll = coll;
+    unsigned kl = sort_klen(&so);
+    unsigned char *kb = malloc((size_t)n * kl);
+    unsigned *ix = malloc((size_t)n * 2 * sizeof *ix);
+    char *copy = malloc((size_t)n * (size_t)stride);
+    if (!kb || !ix || !copy) cob_fatal("SORT of a table: out of memory");
+    for (int i = 0; i < n; i++) { sort_key_build(&so, base + (size_t)i * stride, (unsigned)i, kb + (size_t)i * kl); ix[i] = (unsigned)i; }
+    tsort_keys = kb; tsort_klen = kl;
+    tsort_merge(ix, ix + n, (unsigned)n);
+    memcpy(copy, base, (size_t)n * (size_t)stride);
+    for (int i = 0; i < n; i++) memcpy(base + (size_t)i * stride, copy + (size_t)ix[i] * stride, (size_t)stride);
+    free(kb); free(ix); free(copy);
+}
+
 void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups, const unsigned char *coll)
 {
     (void)dups;

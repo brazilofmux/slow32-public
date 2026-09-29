@@ -34,6 +34,7 @@ began this; ISSUES-96 on record the sweeps.
 | 14.9.6/.10/.27/.30/.35/.41/.51 the I-O statements | [io-statements.md](io-statements.md) | 2026-09-29 |
 | 14.9.20 INITIALIZE | [initialize.md](initialize.md) | 2026-09-29 |
 | 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
+| 14.9.40, .24, .32, .34 SORT, MERGE, RELEASE, RETURN | [sort.md](sort.md) | 2026-09-29 |
 | 13.18.32, .33, .52, .55 JUSTIFIED, level-number, SIGN, SYNCHRONIZED | [clauses.md](clauses.md) | 2026-09-29 |
 | 13.18.38 OCCURS | [occurs.md](occurs.md) | 2026-09-29 |
 | 13.18.44 REDEFINES | [redefines.md](redefines.md) | 2026-09-29 |

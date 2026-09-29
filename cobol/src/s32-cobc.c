@@ -74,7 +74,7 @@ static int g_unit = 0;              /* program unit being compiled, for label sp
 #define COB_FILE_LIN_COUNTER_OFF 136
 
 /* a SORT statement's key table, emitted into .data with the unit's files */
-typedef struct { int offset, desc, descending; } SortKey;
+typedef struct { int offset, desc, descending, size; } SortKey;
 typedef struct { int id; SortKey k[16]; int nk; } SortTab;
 static SortTab *g_sorttab; static int g_nsorttab, g_sorttabcap;
 
@@ -10140,12 +10140,154 @@ static void parse_condition_clauses(const char *w1, const char *w2, const char *
 static int g_is_merge;    /* parse_sort is parsing MERGE: USING of two or more files, no INPUT PROCEDURE;
                              each is already in key order and joins the merge as presorted runs (cob_merge_using) */
 
+/* SORT and MERGE are not in an input or output procedure, nor in a
+ * declarative (2023 14.9.40.3 rule 3, 14.9.24.3 rule 1; X3.23-1985 SORT
+ * rule 2, MERGE rule 2): each unit's procedures and statements are noted
+ * and checked when its procedure division is done, the paragraphs being
+ * known by then */
+static struct { Para *from, *thru; int unit, merge; } g_sproc[128]; static int g_nsproc;
+static struct { Para *in; int line, unit, merge; } g_sstmt[256]; static int g_nsstmt;
+static int para_in_range(const Para *q, const Para *from, const Para *thru)
+{
+    const Para *last = thru ? thru : from;
+    if (!q || q->line < from->line) return 0;
+    if (last->is_section) return q == last || q->section == last->id || q->line <= last->line;
+    return q->line <= last->line;
+}
+static void sort_proc_check(void)
+{
+    for (int i = 0; i < g_nsstmt; i++) {
+        if (g_sstmt[i].unit != g_unit) continue;
+        for (int j = 0; j < g_nsproc; j++) {
+            if (g_sproc[j].unit != g_unit) continue;
+            /* a MERGE may be in a SORT's procedures only if ... it may not
+             * (rule 1), nor a SORT in a MERGE's output procedure */
+            if (para_in_range(g_sstmt[i].in, g_sproc[j].from, g_sproc[j].thru))
+                die_at(g_sstmt[i].line, "%s inside the %s procedure of a %s statement (%s)", g_sstmt[i].merge ? "MERGE" : "SORT",
+                       "input or output", g_sproc[j].merge ? "MERGE" : "SORT",
+                       g_std < 2002 ? (g_sstmt[i].merge ? "X3.23-1985 MERGE syntax rule 1" : "X3.23-1985 SORT syntax rule 1")
+                                    : (g_sstmt[i].merge ? "2023 14.9.24.3 rule 1" : "2023 14.9.40.3 rule 3"));
+        }
+    }
+    int k = 0; for (int i = 0; i < g_nsstmt; i++) if (g_sstmt[i].unit != g_unit) g_sstmt[k++] = g_sstmt[i]; g_nsstmt = k;
+    k = 0; for (int j = 0; j < g_nsproc; j++) if (g_sproc[j].unit != g_unit) g_sproc[k++] = g_sproc[j]; g_nsproc = k;
+}
+
+/* [COLLATING] SEQUENCE [IS] alphabet-name: -1 native, else the alphabet */
+static int sort_collating(const char *verb)
+{
+    int coll = -1;
+    if (accept_word("collating") || at_word("sequence")) {
+        expect_word("sequence"); accept_word("is");
+        if (cur()->kind != T_WORD) die_at(cur()->line, "%s COLLATING SEQUENCE needs an alphabet-name", verb);
+        for (int i = 0; i < g_nalphabet; i++) if (!strcmp(g_alphabet[i].name, cur()->s)) coll = i;
+        if (coll < 0) die_at(cur()->line, "%s COLLATING SEQUENCE: '%s' is not an alphabet-name", verb, cur()->s);
+        if (g_alphabet[coll].native) coll = -1;
+        else g_alphabet[coll].used = 1;
+        advance();
+    }
+    return coll;
+}
+/* a key's class (both formats' rule c): not boolean, not a pointer */
+static void sort_key_class(const Sym *k, int line, const char *rule)
+{
+    if (!k->is_group && (k->usage == U_BIT || k->pi.category == PIC_BOOLEAN || k->usage == U_POINTER || k->usage == U_INDEX))
+        die_at(line, "SORT key '%s' is %s (%s)", k->name, k->usage == U_POINTER ? "a pointer" : k->usage == U_INDEX ? "an index" : "boolean", rule);
+}
+
+/* SORT table (COBOL 2002; 2023 14.9.40 format 2): SORT data-name-2 [ON
+ * {ASCENDING | DESCENDING} KEY data-name-1 ...]... [WITH DUPLICATES [IN
+ * ORDER]] [COLLATING SEQUENCE alphabet-name]: the table's occurrences
+ * (the DEPENDING ON count, or all) put in order in place */
+static void parse_sort_table(int line)
+{
+    /* data-name-2, written without subscripts: resolved by name and
+     * qualifiers, not by parse_ref, which asks for the subscripts */
+    Ref tr; memset(&tr, 0, sizeof tr); tr.line = cur()->line;
+    char nm[64], qb[8][64]; char *qv[8]; int nq = 0;
+    snprintf(nm, sizeof nm, "%s", cur()->s); advance();
+    while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD && nq < 8) { advance(); snprintf(qb[nq], 64, "%s", cur()->s); qv[nq] = qb[nq]; nq++; advance(); }
+    tr.sym = sym_lookup(nm, qv, nq, tr.line);
+    if (at_op("(")) die_at(tr.line, "SORT '%s': a table SORT of a table inside another table is not implemented", nm);
+    Sym *e = tr.sym;
+    if (!e->occurs) die_at(tr.line, "SORT '%s': a table SORT names an entry with an OCCURS clause (2023 14.9.40.3 rule 13)", e->name);
+    if (e->ndims != 1 || tr.nsub || tr.rm) die_at(tr.line, "SORT '%s': a table SORT of a table inside another table is not implemented", e->name);
+    if (g_nsorttab == g_sorttabcap) { g_sorttabcap = g_sorttabcap ? g_sorttabcap * 2 : 4; g_sorttab = realloc(g_sorttab, g_sorttabcap * sizeof *g_sorttab); }
+    SortTab *t = &g_sorttab[g_nsorttab++];
+    memset(t, 0, sizeof *t); t->id = new_label();
+    int ei = sym_idx(e);
+    while (at_word("on") || at_word("ascending") || at_word("descending")) {
+        accept_word("on");
+        int descending = 0;
+        if (accept_word("descending")) descending = 1;
+        else if (!accept_word("ascending")) die_at(cur()->line, "expected ASCENDING or DESCENDING in SORT");
+        accept_word("key");
+        int any = 0;
+        while (cur()->kind == T_WORD && !at_word("on") && !at_word("ascending") && !at_word("descending") &&
+               !at_word("with") && !at_word("collating") && !at_word("sequence") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
+            Sym *q = sym_lookup_quiet(cur()->s);
+            if (q && (q->ndims > 1 || (q->occurs && q != e)))
+                die_at(cur()->line, "SORT key '%s' has an OCCURS clause or is in a table inside '%s' (2023 14.9.40.3 rule 14e)", q->name, e->name);
+            int save = g_noemit; g_noemit++;
+            Ref k; memset(&k, 0, sizeof k);
+            k.sym = sym_lookup(cur()->s, NULL, 0, cur()->line); k.line = cur()->line; advance();
+            while (accept_word("of") || accept_word("in")) advance();
+            g_noemit = save;
+            if (at_op("(")) die_at(k.line, "SORT key '%s' is written without subscripts (2023 14.9.40.3 rule 14b)", k.sym->name);
+            if (!sym_under(sym_idx(k.sym), ei))
+                die_at(k.line, "SORT key '%s' is not '%s' or an item inside it (2023 14.9.40.3 rule 14a)", k.sym->name, e->name);
+            for (int a = k.sym->parent; a >= 0 && a != ei; a = g_sym[a].parent)
+                if (g_sym[a].occurs) die_at(k.line, "SORT key '%s' is inside '%s', which has an OCCURS clause (2023 14.9.40.3 rule 14e)", k.sym->name, g_sym[a].name);
+            sort_key_class(k.sym, k.line, "2023 14.9.40.3 rule 14c");
+            if (t->nk == 16) die_at(k.line, "too many SORT keys (16)");
+            t->k[t->nk].offset = k.sym->offset - e->offset; t->k[t->nk].desc = sym_desc(k.sym); t->k[t->nk].descending = descending; t->nk++;
+            any = 1;
+        }
+        if (!any) die_at(cur()->line, "expected a key data-name after KEY");
+    }
+    if (!t->nk) {
+        /* no KEY phrase: the table's own (rule 15) */
+        if (!e->nokey) die_at(line, "SORT '%s' without a KEY phrase: its OCCURS clause has no KEY either (2023 14.9.40.3 rule 15)", e->name);
+        for (int i = 0; i < e->nokey && t->nk < 16; i++) {
+            Sym *k = NULL;
+            for (int j = ei; j < g_nsym && !k; j++) if (!g_sym[j].is_cond && !g_sym[j].is_index && !strcmp(g_sym[j].name, e->okey[i]) && sym_under(j, ei)) k = &g_sym[j];
+            if (!k) die_at(line, "SORT '%s': its KEY '%s' is not found", e->name, e->okey[i]);
+            t->k[t->nk].offset = k->offset - e->offset; t->k[t->nk].desc = sym_desc(k); t->k[t->nk].descending = e->okey_desc[i]; t->nk++;
+        }
+    }
+    if (accept_word("with")) { expect_word("duplicates"); accept_word("in"); accept_word("order"); }
+    int coll = sort_collating("SORT");
+    /* the first occurrence's address, the count, the stride */
+    Ref first = tr; first.nsub = 1; first.sub[0].sym = NULL; first.sub[0].lit = 1; first.sub[0].adj = 0;
+    if (e->odo_dep_sym) {
+        Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = e->odo_dep_sym; d.ref.line = line; d.line = line;
+        if (is_hot_int(e->odo_dep_sym)) emit_hot_value(&d);
+        else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(e->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+    } else emit_li("r1", e->occurs);
+    emit("\tstw sp+%d, r1", SLOT_A);
+    char tab[32]; snprintf(tab, sizeof tab, ".Lsk%d_%d", g_unit, t->id);
+    emit_ref_addr(&first, "r3");
+    emit("\tldw r4, sp+%d", SLOT_A);
+    emit_li("r5", e->size);
+    emit_la("r6", tab); emit_li("r7", t->nk);
+    if (coll >= 0) { char al[32]; snprintf(al, sizeof al, ".Lalph%d_%d", g_unit, coll); emit_la("r8", al); } else emit_li("r8", 0);
+    emit_call("cob_sort_table");
+}
+
 static void parse_sort(void)
 {
     int line = cur()->line;
     const char *verb = g_is_merge ? "MERGE" : "SORT";
+    if (!g_is_merge && cur()->kind == T_WORD && !file_find(cur()->s) && sym_lookup_quiet(cur()->s)) {
+        if (g_std < 2002) die_at(line, "SORT '%s': a table SORT is COBOL 2002; compile with -std=2002", cur()->s);
+        parse_sort_table(line);
+        return;
+    }
+    if (g_in_decl) die_at(line, "%s in a declarative procedure (%s)", verb, g_std < 2002 ? (g_is_merge ? "X3.23-1985 MERGE syntax rule 1" : "X3.23-1985 SORT syntax rule 1") : g_is_merge ? "2023 14.9.24.3 rule 1" : "2023 14.9.40.3 rule 3");
+    if (g_nsstmt < 256) { g_sstmt[g_nsstmt].in = g_cur_para; g_sstmt[g_nsstmt].line = line; g_sstmt[g_nsstmt].unit = g_unit; g_sstmt[g_nsstmt].merge = g_is_merge; g_nsstmt++; }
     File *sd = expect_file();
-    if (sd->org != COB_ORG_SORT) die_at(line, "%s '%s': the file must be described by an SD (a table SORT is COBOL 2002; sort the table in a paragraph)", verb, sd->name);
+    if (sd->org != COB_ORG_SORT) die_at(line, "%s '%s': the file must be described by an SD (%s)", verb, sd->name,
+                                        g_std < 2002 ? "X3.23-1985 SORT syntax rule 2" : "2023 14.9.40.3 rule 4");
     if (sd->rec < 0) die_at(line, "SD %s has no record description", sd->name);
     if (g_nsorttab == g_sorttabcap) { g_sorttabcap = g_sorttabcap ? g_sorttabcap * 2 : 4; g_sorttab = realloc(g_sorttab, g_sorttabcap * sizeof *g_sorttab); }
     SortTab *t = &g_sorttab[g_nsorttab++];
@@ -10160,11 +10302,16 @@ static void parse_sort(void)
         while (cur()->kind == T_WORD && !at_word("on") && !at_word("ascending") && !at_word("descending") &&
                !at_word("with") && !at_word("collating") && !at_word("sequence") && !at_word("using") && !at_word("input") &&
                !at_word("giving") && !at_word("output")) {
+            Sym *q = sym_lookup_quiet(cur()->s);
+            if (q && q->ndims)
+                die_at(cur()->line, "%s key '%s' has an OCCURS clause or is in a table (%s)", verb, q->name,
+                       g_std < 2002 ? "X3.23-1985 SORT syntax rule 4" : "2023 14.9.40.3 rule 6b");
             Ref k; parse_ref(&k);
             if (k.sym->record != g_sym[sd->rec].record) die_at(k.line, "SORT key '%s' is not an item of the SD %s", k.sym->name, sd->name);
+            sort_key_class(k.sym, k.line, "2023 14.9.40.3 rule 6c");
             if (k.nsub || k.rm) die_at(k.line, "a SORT key is a plain data item of the SD record");
             if (t->nk == 16) die_at(k.line, "too many SORT keys (16)");
-            t->k[t->nk].offset = k.sym->offset; t->k[t->nk].desc = sym_desc(k.sym); t->k[t->nk].descending = descending; t->nk++;
+            t->k[t->nk].offset = k.sym->offset; t->k[t->nk].desc = sym_desc(k.sym); t->k[t->nk].descending = descending; t->k[t->nk].size = k.sym->size; t->nk++;
             any = 1;
         }
         if (!any) die_at(cur()->line, "expected a key data-name after KEY");
@@ -10172,16 +10319,9 @@ static void parse_sort(void)
     if (!t->nk) die_at(line, "SORT needs at least one KEY");
     int dups = 0;
     if (accept_word("with")) { expect_word("duplicates"); accept_word("in"); accept_word("order"); dups = 1; }
-    int coll = -1;                          /* [COLLATING] SEQUENCE [IS] alphabet-name: the keys compare by its ranks */
-    if (accept_word("collating") || at_word("sequence")) {
-        expect_word("sequence"); accept_word("is");
-        if (cur()->kind != T_WORD) die_at(cur()->line, "SORT COLLATING SEQUENCE needs an alphabet-name");
-        for (int i = 0; i < g_nalphabet; i++) if (!strcmp(g_alphabet[i].name, cur()->s)) coll = i;
-        if (coll < 0) die_at(cur()->line, "SORT COLLATING SEQUENCE: '%s' is not an alphabet-name", cur()->s);
-        if (g_alphabet[coll].native) coll = -1;
-        else g_alphabet[coll].used = 1;
-        advance();
-    }
+    int coll = sort_collating(verb);         /* the keys compare by its ranks */
+    File *named[32]; int nnamed = 0;
+    const char *e85r = g_std < 2002 ? "X3.23-1985" : "2023";
     char tab[32]; snprintf(tab, sizeof tab, ".Lsk%d_%d", g_unit, t->id);
     emit_file_addr("r3", sd); emit_la("r4", tab); emit_li("r5", t->nk); emit_li("r6", dups);
     if (coll >= 0) { char al[32]; snprintf(al, sizeof al, ".Lalph%d_%d", g_unit, coll); emit_la("r7", al); } else emit_li("r7", 0);
@@ -10191,6 +10331,14 @@ static void parse_sort(void)
         while (cur()->kind == T_WORD && !at_word("giving") && !at_word("output")) {
             File *in = expect_file();
             if (in->org == COB_ORG_SORT) die_at(line, "%s USING names a sort file", verb);
+            for (int q = 0; q < nnamed; q++) if (named[q] == in) die_at(line, "%s names the file '%s' twice (%s)", verb, in->name, g_std < 2002 ? "X3.23-1985 MERGE syntax rule 7" : "2023 14.9.24.3 rule 7");
+            if (nnamed < 32) named[nnamed++] = in;
+            if (in->recsize > sd->recsize)
+                die_at(line, "%s USING '%s': its record (%d) is longer than the sort file's (%d) (%s %s)", verb, in->name, in->recsize, sd->recsize, e85r,
+                       g_std < 2002 ? (g_is_merge ? "MERGE syntax rule 3" : "SORT syntax rule 3") : (g_is_merge ? "14.9.24.3 rule 3" : "14.9.40.3 rule 5"));
+            if ((in->org == COB_ORG_RELATIVE || in->org == COB_ORG_INDEXED) && in->access == 1)
+                die_at(line, "%s USING '%s': a relative or indexed file here is in sequential or dynamic access (%s)", verb, in->name,
+                       g_is_merge ? "2023 14.9.24.3 rule 13" : "2023 14.9.40.3 rule 12");
             emit_file_addr("r3", sd); emit_file_addr("r4", in); emit_call(g_is_merge ? "cob_merge_using" : "cob_sort_using"); n++;
         }
         if (!n) die_at(cur()->line, "expected a file-name after USING");
@@ -10201,6 +10349,7 @@ static void parse_sort(void)
         Body b; memset(&b, 0, sizeof b);
         b.from = expect_para();
         if (accept_word("thru") || accept_word("through")) b.thru = expect_para();
+        if (g_nsproc < 128) { g_sproc[g_nsproc].from = b.from; g_sproc[g_nsproc].thru = b.thru; g_sproc[g_nsproc].unit = g_unit; g_sproc[g_nsproc].merge = g_is_merge; g_nsproc++; }
         emit_body(&b);
     } else die_at(cur()->line, "SORT needs USING or INPUT PROCEDURE");
     emit_file_addr("r3", sd); emit_call("cob_sort_perform");
@@ -10209,6 +10358,14 @@ static void parse_sort(void)
         while (cur()->kind == T_WORD && file_find(cur()->s)) {
             File *out = expect_file();
             if (out->org == COB_ORG_SORT) die_at(line, "SORT GIVING names a sort file");
+            if (g_is_merge) for (int q = 0; q < nnamed; q++) if (named[q] == out) die_at(line, "MERGE names the file '%s' twice (%s)", out->name, g_std < 2002 ? "X3.23-1985 MERGE syntax rule 7" : "2023 14.9.24.3 rule 7");
+            if (sd->recsize > out->recsize && !out->varying && out->org != COB_ORG_LINESEQ)
+                die_at(line, "%s GIVING '%s': the sort file's record (%d) is longer than its record (%d) (%s)", verb, out->name, sd->recsize, out->recsize,
+                       g_std < 2002 ? (g_is_merge ? "X3.23-1985 MERGE syntax rule 11" : "X3.23-1985 SORT syntax rule 10") : g_is_merge ? "2023 14.9.24.3 rule 12" : "2023 14.9.40.3 rule 11");
+            if (out->org == COB_ORG_INDEXED && out->key_sym &&
+                (t->k[0].descending || t->k[0].offset != out->key_sym->offset - g_sym[out->rec].offset || t->k[0].size != out->key_sym->size))
+                die_at(line, "%s GIVING the indexed file '%s': the first key is ASCENDING and in the place of its RECORD KEY (%s)", verb, out->name,
+                       g_std < 2002 ? (g_is_merge ? "X3.23-1985 MERGE syntax rule 10" : "X3.23-1985 SORT syntax rule 8") : g_is_merge ? "2023 14.9.24.3 rule 10" : "2023 14.9.40.3 rule 9");
             emit_file_addr("r3", sd); emit_file_addr("r4", out); emit_call("cob_sort_giving"); n++;
         }
         if (!n) die_at(cur()->line, "expected a file-name after GIVING");
@@ -10217,6 +10374,7 @@ static void parse_sort(void)
         Body b; memset(&b, 0, sizeof b);
         b.from = expect_para();
         if (accept_word("thru") || accept_word("through")) b.thru = expect_para();
+        if (g_nsproc < 128) { g_sproc[g_nsproc].from = b.from; g_sproc[g_nsproc].thru = b.thru; g_sproc[g_nsproc].unit = g_unit; g_sproc[g_nsproc].merge = g_is_merge; g_nsproc++; }
         emit_body(&b);
     } else die_at(cur()->line, "SORT needs GIVING or OUTPUT PROCEDURE");
     emit_file_addr("r3", sd); emit_call("cob_sort_end");
@@ -14102,6 +14260,7 @@ static void parse_procedure_division(void)
     }
     if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
     if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
+    sort_proc_check();
 
     emit(".Lgb%d:", g_unit);
     if (has_ext_file)

@@ -1,0 +1,5 @@
+SORT 'tb': a table SORT names an entry with an OCCURS clause (2023 14.9.40.3 rule 13)
+SORT key 'w' is not 'te' or an item inside it (2023 14.9.40.3 rule 14a)
+SORT key 'to2' has an OCCURS clause or is in a table inside 'te' (2023 14.9.40.3 rule 14e)
+SORT key 'tb1' is boolean (2023 14.9.40.3 rule 14c)
+SORT 'te' without a KEY phrase: its OCCURS clause has no KEY either (2023 14.9.40.3 rule 15)
