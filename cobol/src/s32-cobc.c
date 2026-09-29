@@ -10900,6 +10900,25 @@ static void parse_start(void)
 
 /* ---- STRING ------------------------------------------------------------ */
 
+/* a STRING sending operand or delimiter: no ALL figurative (X3.23-1985
+ * STRING rule 1; 2023 14.9.43.3 rule 2); a literal is nonnumeric, an
+ * identifier is usage display or national (85 rule 2; 2023 rule 1); an
+ * elementary numeric item is an integer without P (85 rule 6; 2023 rule 8) */
+static void str_operand(const Opnd *o)
+{
+    int e85 = g_std < 2002;
+    if (o->kind == O_ALL) die_at(o->line, "STRING: an ALL figurative constant is not a STRING operand (%s)", e85 ? "X3.23-1985 STRING rule 1" : "2023 14.9.43.3 rule 2");
+    if (o->kind == O_NUM) die_at(o->line, "STRING: a numeric literal is not a STRING operand; write it as \"...\" (%s)", e85 ? "X3.23-1985 STRING rule 2" : "2023 14.9.43.3 rule 1");
+    if (o->kind != O_REF || o->ref.sym->is_group) return;
+    Sym *x = o->ref.sym;
+    no_bits(o, "STRING");                           /* the USAGE BIT wording */
+    if (x->usage != U_DISPLAY && x->usage != U_NATIONAL)
+        die_at(o->line, "STRING: '%s' is USAGE %s; an operand is usage display%s (%s)", x->name, usage_name(x->usage), e85 ? "" : " or national",
+               e85 ? "X3.23-1985 STRING rule 2" : "2023 14.9.43.3 rule 1");
+    if (!o->ref.rm && is_numeric_sym(x) && !is_int_item(x))
+        die_at(o->line, "STRING: '%s' is numeric but not an integer without P (%s)", x->name, e85 ? "X3.23-1985 STRING rule 6" : "2023 14.9.43.3 rule 8");
+}
+
 static void parse_string_1(void);
 static void parse_string(void)
 {
@@ -10914,13 +10933,14 @@ static void parse_string_1(void)
             if (n >= MAXOPS) die_at(cur()->line, "too many STRING sources");
             parse_operand(&srcs[n]);
             if (srcs[n].kind == O_EXPR) die_at(srcs[n].line, "a STRING source must be an item, a literal or a figurative constant");
+            str_operand(&srcs[n]);
             has_delim[n] = 0; n++; pending++;
         }
         if (accept_word("delimited")) {
             accept_word("by");
             Opnd d; memset(&d, 0, sizeof d);
             if (accept_word("size")) d.kind = O_ALL;      /* stands for SIZE here */
-            else { parse_operand(&d); if (d.kind != O_STR && d.kind != O_REF && d.kind != O_FIG) die_at(d.line, "DELIMITED BY needs SIZE, a literal or an item"); }
+            else { parse_operand(&d); str_operand(&d); if (d.kind != O_STR && d.kind != O_REF && d.kind != O_FIG) die_at(d.line, "DELIMITED BY needs SIZE, a literal or an item"); }
             for (int i = n - pending; i < n; i++) { delims[i] = d; has_delim[i] = 1; }
             pending = 0;
             continue;
@@ -10948,8 +10968,17 @@ static void parse_string_1(void)
         if (delims[i].kind != O_ALL) nat_class_check(&delims[i], nat, "STRING", srule);   /* O_ALL: SIZE */
     }
     Ref ptr; int has_ptr = 0;
-    if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; if (!is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item"); }
+    if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; }
     else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
+    /* the POINTER: an elementary numeric integer without P, able to hold
+     * one more than the receiver's length (85 rule 5; 2023 rule 7) */
+    if (has_ptr && (ptr.sym->is_group || !is_int_item(ptr.sym))) die_at(ptr.line, "the POINTER must be an integer item");
+    if (has_ptr && !sym_notrunc(ptr.sym)) {
+        int need = 1; for (long v = (dst.rm ? 0 : dst.sym->size / (nat ? 2 : 1)) + 1; v >= 10; v /= 10) need++;
+        if (!dst.rm && ptr.sym->pi.digits < need)
+            die_at(ptr.line, "the POINTER '%s' has %d digit%s; the receiver needs %d (%s)", ptr.sym->name, ptr.sym->pi.digits, ptr.sym->pi.digits == 1 ? "" : "s", need,
+                   g_std < 2002 ? "X3.23-1985 STRING rule 5" : "2023 14.9.43.3 rule 7");
+    }
 
     /* begin: receiver, its length, the pointer's value */
     if (has_ptr) {
@@ -12054,12 +12083,29 @@ static Opnd ref_opnd(const Ref *r)
 
 /* [BEFORE|AFTER] [INITIAL] operand, either or both, after a TALLYING or
  * REPLACING phrase: the runtime is told the range for the next phrase */
+/* an INSPECT operand other than the item and the tally: an identifier
+ * is an elementary item of usage display or national (2023 14.9.22.3
+ * rule 2; 85 INSPECT rule 3); a literal is no ALL figurative (rule 3) */
+static void insp_operand(const Opnd *o)
+{
+    int e85 = g_std < 2002;
+    if (o->kind == O_ALL) die_at(o->line, "INSPECT: an ALL figurative constant is not an INSPECT operand (%s)", e85 ? "X3.23-1985 INSPECT rule 3" : "2023 14.9.22.3 rule 3");
+    if (o->kind == O_NUM) die_at(o->line, "INSPECT: a numeric literal is not an INSPECT operand; write it as \"...\" (%s)", e85 ? "X3.23-1985 INSPECT rule 3" : "2023 14.9.22.3 rule 3");
+    if (o->kind != O_REF) return;
+    const Sym *x = o->ref.sym;
+    if (x->is_group && !o->ref.rm)
+        die_at(o->line, "INSPECT: '%s' is a group; an operand is an elementary item (%s)", x->name, e85 ? "X3.23-1985 INSPECT rule 2" : "2023 14.9.22.3 rule 2");
+    if (!x->is_group && x->usage != U_DISPLAY && x->usage != U_NATIONAL)
+        die_at(o->line, "INSPECT: '%s' is USAGE %s; an operand is usage display%s (%s)", x->name, usage_name(x->usage), e85 ? "" : " or national",
+               e85 ? "X3.23-1985 INSPECT rule 2" : "2023 14.9.22.3 rule 2");
+}
+
 static void parse_inspect_range(void)
 {
     Opnd before, after; int hb = 0, ha = 0;
     for (;;) {
-        if (accept_word("before")) { if (hb) die_at(cur()->line, "two BEFORE phrases"); accept_word("initial"); parse_operand(&before); hb = 1; }
-        else if (accept_word("after")) { if (ha) die_at(cur()->line, "two AFTER phrases"); accept_word("initial"); parse_operand(&after); ha = 1; }
+        if (accept_word("before")) { if (hb) die_at(cur()->line, "two BEFORE phrases"); accept_word("initial"); parse_operand(&before); insp_operand(&before); hb = 1; }
+        else if (accept_word("after")) { if (ha) die_at(cur()->line, "two AFTER phrases"); accept_word("initial"); parse_operand(&after); insp_operand(&after); ha = 1; }
         else break;
     }
     if (!hb && !ha) return;
@@ -12108,6 +12154,9 @@ static void parse_inspect_1(void)
     /* a numeric USAGE NATIONAL item's characters are national too */
     { Opnd io; memset(&io, 0, sizeof io); io.kind = O_REF; io.ref = item; io.line = item.line; no_bits(&io, "INSPECT"); }
     if (item.sym->strong) die_at(item.line, "INSPECT of a strongly-typed group (2023 14.9.22.3 rule 1)");
+    if (!item.sym->is_group && !item.rm && item.sym->usage != U_DISPLAY && item.sym->usage != U_NATIONAL)
+        die_at(item.line, "INSPECT of '%s', USAGE %s: the item is usage display%s, or a group (%s)", item.sym->name, usage_name(item.sym->usage),
+               g_std < 2002 ? "" : " or national", g_std < 2002 ? "X3.23-1985 INSPECT rule 1" : "2023 14.9.22.3 rule 1");
     g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     Opnd itemo = ref_opnd(&item);
@@ -12119,7 +12168,8 @@ static void parse_inspect_1(void)
     { Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin"); }
     Ref tallies[32]; int tally_ph[32], nt = 0, np = 0, any = 0;
     if (accept_word("converting")) {
-        Opnd from, to; parse_operand(&from); expect_word("to"); parse_operand(&to);
+        Opnd from, to; parse_operand(&from); insp_operand(&from); expect_word("to"); parse_operand(&to);
+        if (to.kind == O_REF) insp_operand(&to);
         int fl = from.kind == O_FIG ? w : opnd_size(&from), tl = to.kind == O_FIG ? w : opnd_size(&to);
         if (fl > 0 && tl > 0 && fl != tl && to.kind != O_FIG) die_at(to.line, "INSPECT CONVERTING: the two operands must be the same length");
         parse_inspect_range();
@@ -12141,7 +12191,8 @@ static void parse_inspect_1(void)
         any = 1;
         for (;;) {
             Ref tally; parse_ref(&tally);
-            if (!is_int_item(tally.sym)) die_at(tally.line, "the INSPECT tally '%s' must be an integer item", tally.sym->name);
+            if (tally.sym->is_group || tally.sym->pi.category != PIC_NUMERIC)
+                die_at(tally.line, "the INSPECT tally '%s' is an elementary numeric item (2023 14.9.22.3 rule 5)", tally.sym->name);
             expect_word("for");
             for (;;) {
                 int kind = 0;
@@ -12152,7 +12203,7 @@ static void parse_inspect_1(void)
                 /* CHARACTERS [range]; ALL|LEADING {operand [range]}... */
                 for (;;) {
                     Opnd pat; memset(&pat, 0, sizeof pat);
-                    if (kind) parse_operand(&pat);
+                    if (kind) { parse_operand(&pat); insp_operand(&pat); }
                     parse_inspect_range();
                     if (np == 32) die_at(cur()->line, "INSPECT: more than 32 phrases");
                     Arg a[5];
@@ -12191,8 +12242,13 @@ static void parse_inspect_1(void)
             /* CHARACTERS BY rep [range]; ALL|LEADING|FIRST {pat BY rep [range]}... */
             for (;;) {
                 Opnd pat, rep; memset(&pat, 0, sizeof pat); memset(&rep, 0, sizeof rep);
-                if (kind) parse_operand(&pat);
-                expect_word("by"); parse_operand(&rep);
+                if (kind) { parse_operand(&pat); insp_operand(&pat); }
+                expect_word("by"); parse_operand(&rep); insp_operand(&rep);
+                if (!kind) {
+                    /* CHARACTERS BY: one character (rule 7) */
+                    int rl = rep.kind == O_FIG ? w : opnd_size(&rep);
+                    if (rl != w) die_at(rep.line, "INSPECT REPLACING CHARACTERS BY: one character (%s)", g_std < 2002 ? "X3.23-1985 INSPECT rule 8" : "2023 14.9.22.3 rule 7");
+                }
                 if (kind) {
                     int pl = pat.kind == O_FIG ? w : opnd_size(&pat), rl = rep.kind == O_FIG ? w : opnd_size(&rep);
                     if (pl > 0 && rl > 0 && pl != rl) die_at(rep.line, "INSPECT REPLACING: the two operands must be the same length");

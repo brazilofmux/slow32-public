@@ -1,0 +1,6 @@
+INSPECT of 'k', USAGE comp: the item is usage display, or a group (X3.23-1985 INSPECT rule 1)
+INSPECT: 'k' is USAGE comp; an operand is usage display (X3.23-1985 INSPECT rule 2)
+INSPECT: 'g' is a group; an operand is an elementary item (X3.23-1985 INSPECT rule 2)
+INSPECT: an ALL figurative constant is not an INSPECT operand (X3.23-1985 INSPECT rule 3)
+INSPECT: a numeric literal is not an INSPECT operand; write it as "..." (X3.23-1985 INSPECT rule 3)
+INSPECT REPLACING CHARACTERS BY: one character (X3.23-1985 INSPECT rule 8)

@@ -1,0 +1,5 @@
+STRING: an ALL figurative constant is not a STRING operand (X3.23-1985 STRING rule 1)
+STRING: a numeric literal is not a STRING operand; write it as "..." (X3.23-1985 STRING rule 2)
+STRING: 'k' is USAGE comp; an operand is usage display (X3.23-1985 STRING rule 2)
+STRING: 'v' is numeric but not an integer without P (X3.23-1985 STRING rule 6)
+the POINTER 'p1' has 1 digit; the receiver needs 2 (X3.23-1985 STRING rule 5)
