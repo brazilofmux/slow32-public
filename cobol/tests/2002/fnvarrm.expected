@@ -3,6 +3,10 @@ national-of(abcdef)(3:): [cdef] 4
 display-of(日本語)(4:3): [本]
 char-national(12354)(1:1): [ぁ]
 boolean-of-integer(10, 8)(5:4): 1010
+computed, national-of(café)(k:2): [af]
+computed, display-of(日本語)(k * 3 - 2:3): [本]
+computed, upper-case(abcdef)(k:): [BCDEF] 5
+computed length, national-of(abcdef)(2:l): [bcd]
 national-of(a)(2:3): [本  ]
 national-of(a)(5:4), past its six characters (fatal):
   declarative: EC-BOUND-REF-MOD

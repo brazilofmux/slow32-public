@@ -1,1 +1,1 @@
-a numeric function cannot be reference-modified
+a numeric function cannot be reference-modified (2023 8.4.3.3.3 rule 2)

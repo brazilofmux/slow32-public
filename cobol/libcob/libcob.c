@@ -2516,6 +2516,24 @@ static int fn_conv_bad;                         /* a checked conversion substitu
 
 int cob_fn_last_len(void) { return fn_var_len; }
 
+/* a function result reference-modified at computed positions (cobol
+ * ISSUES-91): full bytes (-1: the result's own run-time length), start and
+ * len in characters of unit bytes (len 0: to the end).  The part's length
+ * is recorded as a run-time-length result's; one outside the result is
+ * clamped to it and noted, for EC-BOUND-REF-MOD */
+static int fn_rm_bad;
+char *cob_fn_rm(char *p, int full, int start, int len, int unit)
+{
+    int chars = (full < 0 ? fn_var_len : full) / unit;
+    fn_rm_bad = 0;
+    if (start < 1 || start > chars) { fn_rm_bad = 1; start = start < 1 ? 1 : chars + 1; }
+    if (len == 0) len = chars - start + 1;
+    if (len < 0 || start - 1 + len > chars) { fn_rm_bad = 1; len = chars - start + 1; if (len < 0) len = 0; }
+    fn_var_len = len * unit;
+    return p + (start - 1) * unit;
+}
+int cob_fn_rm_bad(void) { return fn_rm_bad; }
+
 /* a run-time-length result reference-modified to its end: n bytes skipped
  * (cobol ISSUES-88); a start past the end leaves nothing */
 char *cob_fn_var_skip(char *p, int n)

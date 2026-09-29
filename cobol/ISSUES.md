@@ -2941,3 +2941,38 @@ std2002-exit-perform-outside, -exit-cycle-ecp, -exit-section-nosec,
 exit-perform-85. Harness 282/282; -std=85 byte-identical on all 227 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+### 91. Computed positions in a function's reference modification (2026-09-28)
+
+`FUNCTION f(...)(k:l)`, with a start or length that is an expression,
+was refused (ISSUES-88 lifted only the literal forms). The function is
+evaluated at its full length. Then the start and length are evaluated,
+and `cob_fn_rm` finds the part: its address, and its length recorded as
+a run-time-length result's, so LENGTH, MOVE and DISPLAY see it. The
+whole is the runtime's length for a run-time-length result, or the
+function's fixed size, and positions count characters of the result's
+unit (two bytes national). A part outside the whole is clamped and
+noted, and with EC-BOUND-REF-MOD checked it raises the condition. This
+applies under -std=85 too, where the 1989 functions can be
+reference-modified.
+
+The rule-2 refusal for a numeric function now cites 8.4.3.3.3 rule 2.
+std2002-natof-refmod, whose case now works, is removed rather than
+repurposed: fn-refmod-numeric already checks the one refusal left.
+
+**Noted, the terminal** (asked by the user). The term service is not
+Unicode-aware: `term_cell_t` holds one byte (`uint8_t ch`), the cursor
+advances one column per byte, screen save/restore and the buffered
+update's diff replay cells byte by byte, and term_getkey delivers a
+typed character's UTF-8 bytes as separate keys. Two copies:
+tools/emulator/mmio_ring.c (slow32, slow32-fast, the DBT) and
+qemu-backend/target/slow32/mmio.c. Plain DISPLAY is unaffected, since
+its bytes go straight to the host terminal. National fields in SCREEN
+SECTION wait for a Unicode-aware term service. Report Writer does not:
+it waits for the ruling on what a column is (code points or display
+width).
+
+2002/fnvarrm gains computed starts, an expression start, a start to the
+end with LENGTH, and a computed length. Harness 281/281; -std=85
+byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

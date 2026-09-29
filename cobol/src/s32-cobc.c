@@ -3419,6 +3419,8 @@ typedef struct Opnd_ {
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
     int fvar, fnat, fbool;                   /* O_FUNC: length known only at run time (fsize its maximum); a national, a boolean result */
     int fwasvar;                             /* O_FUNC: a fixed part cut from a run-time-length result (cobol ISSUES-88) */
+    int fs0, fs1, fl0, fl1, flen;            /* O_FUNC reference-modified at computed positions: the start's and length's
+                                              * token ranges (fl0 < 0: flen, or to the end when 0) (cobol ISSUES-91) */
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
@@ -3745,14 +3747,28 @@ static void function_refmod(Opnd *o)
     if (!colon) return;
     int line = cur()->line;
     int numeric = o->fn == -1 ? o->fscale >= 0 : fn_is_numeric(o->fn);
-    if (numeric) die_at(line, "a numeric function cannot be reference-modified");
+    if (numeric) die_at(line, "a numeric function cannot be reference-modified (2023 8.4.3.3.3 rule 2)");
     /* positions are characters: two bytes each in a national result; a
      * result of run-time length is bounded by its maximum here (cobol
      * ISSUES-88) */
     int unit = o->fnat ? 2 : 1, chars = o->fsize / unit;
     advance();
-    if (cur()->kind != T_NUM || peek(1)->kind != T_COLON)
-        die_at(line, "reference modification of a function with an expression position is not implemented yet");
+    if (cur()->kind != T_NUM || peek(1)->kind != T_COLON || !(peek(2)->kind == T_RP || (peek(2)->kind == T_NUM && peek(3)->kind == T_RP))) {
+        /* a computed start or length: evaluated after the function, the
+         * part's place and length found at run time (cobol ISSUES-91) */
+        o->fs0 = g_tp; g_noemit++; parse_expr(); g_noemit--; o->fs1 = g_tp;
+        if (cur()->kind != T_COLON) die_at(cur()->line, "expected ':' in the reference modification");
+        advance();
+        o->fl0 = -1; o->flen = 0;
+        if (cur()->kind != T_RP) { o->fl0 = g_tp; g_noemit++; parse_expr(); g_noemit--; o->fl1 = g_tp; }
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
+        advance();
+        if (!o->ffull) o->ffull = o->fsize;
+        o->fwasvar = o->fvar;                   /* the whole result's length: the runtime's, or ffull */
+        o->fvar = 1;                            /* the part's length is known at run time */
+        o->frm = -1;                            /* marks the computed form */
+        return;
+    }
     NumLit a; numlit_parse(cur(), &a);
     long start = numlit_is_int(&a) && !a.neg ? (long)numlit_int(&a) : 0;
     if (start < 1 || start > chars) die_at(line, "the reference modification starts outside the function's %d characters", chars);
@@ -4870,6 +4886,34 @@ static void emit_fn_value(Opnd *f)
     if (!f->ffull) { emit_fn_value_raw(f); return; }
     int part = f->fsize;
     f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
+    if (f->frm < 0) {
+        /* computed positions: the result's address, then the start and the
+         * length, to cob_fn_rm, which finds the part (cobol ISSUES-91) */
+        int base = g_slot_base; g_slot_base += 3;
+        if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
+        emit("\tstw sp+%d, r1", SLOT(base));
+        emit_expr_tokens(f->fs0, f->fs1); emit_call("cob_pop_int");
+        emit("\tstw sp+%d, r1", SLOT(base + 1));
+        if (f->fl0 >= 0) { emit_expr_tokens(f->fl0, f->fl1); emit_call("cob_pop_int"); } else emit_li("r1", 0);
+        emit("\tstw sp+%d, r1", SLOT(base + 2));
+        emit("\tldw r3, sp+%d", SLOT(base));
+        emit_li("r4", f->fwasvar ? -1 : f->ffull);
+        emit("\tldw r5, sp+%d", SLOT(base + 1));
+        emit("\tldw r6, sp+%d", SLOT(base + 2));
+        emit_li("r7", f->fnat ? 2 : 1);
+        emit_call("cob_fn_rm");
+        g_slot_base = base;
+        if (ec_on_name("EC-BOUND-REF-MOD")) {
+            int Lok = new_label();
+            emit("\tadd r12, r1, r0");
+            emit_call("cob_fn_rm_bad");
+            emit("\tbeq r1, r0, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
+            emit_label(Lok);
+            emit("\tadd r1, r12, r0");
+        }
+        return;
+    }
     if (f->fvar && f->frm) {
         /* to the end of a run-time-length result: the pointer on, the
          * length the runtime keeps shortened (cobol ISSUES-88) */
