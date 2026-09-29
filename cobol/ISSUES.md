@@ -3842,7 +3842,7 @@ bad/codeset-literal, -comp, -sign, -lineseq. Harness 441/441, CCVS-85
 unchanged, majesty PASS, majesty-functions PASS, Open Systems paper
 unchanged.
 
-### 101. The arithmetic statements sweep (2026-09-29, in progress)
+### 101. The arithmetic statements sweep (2026-09-29)
 
 ADD, SUBTRACT, MULTIPLY, DIVIDE and COMPUTE against 2023 14.7.7 and
 14.9.2/.8/.12/.26/.44 and the 85 text. The common rules probed first --
@@ -3890,3 +3890,34 @@ programs, majesty PASS, majesty-functions PASS, Open Systems paper
 unchanged. The per-statement rules held; the page is
 docs/conformance/arithmetic.md, and the sweep's probe became
 free/arithrules (the oracle agrees). Harness 447/447.
+
+### 102. The INSPECT, STRING and UNSTRING sweep (2026-09-29)
+
+The three statements against 2023 14.9.22, 14.9.43, 14.9.48 and the 85
+text; the page is docs/conformance/string.md. CCVS-85 tests what must be
+accepted, so the syntax rules were probed for what must be refused.
+
+Found and fixed:
+- operands the text forbids were accepted. INSPECT: a COMP inspected
+  item or operand, a group operand, ALL figuratives, numeric literals.
+  STRING: numeric literals, ALL figuratives, COMP items, a non-integer
+  or P numeric sender. UNSTRING: a numeric (display) sender, numeric
+  delimiters and DELIMITER IN items, edited, COMP and P receivers.
+  Each is refused now, citing the edition compiled (insp_operand,
+  str_operand, unstr_alnum, unstr_receiver).
+- the POINTER's size (one more than the receiver's, or the sending
+  item's, length) was checked by neither statement, and STRING's
+  POINTER written without WITH skipped the integer check.
+- the INSPECT tally had to be an integer; rule 5 asks only for an
+  elementary numeric item.
+- a POINTER of 0 was taken as "no POINTER": cob_str_begin and
+  cob_unstr_begin read 0 as absent and started at position 1. The
+  compiler now passes 1 when there is no POINTER, so 0 is the overflow
+  (nothing moves, the POINTER keeps its value); the national entries
+  also stopped setting an out-of-range POINTER to 1.
+
+Tests: bad/inspect-operands, bad/string-operands, bad/unstring-operands;
+free/inspectrules and free/stringrules (the oracle agrees on every
+line). Harness 452/452, CCVS-85 unchanged, -std=85 byte-identical on the
+227 Open Systems programs that compile, majesty PASS, majesty-functions
+PASS, Open Systems paper unchanged.

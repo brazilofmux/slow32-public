@@ -1,0 +1,7 @@
+UNSTRING: the sending item 'sn' is numeric; an alphanumeric item is required (X3.23-1985 UNSTRING rule 2)
+UNSTRING: the delimiter 'd9' is numeric; an alphanumeric item is required (X3.23-1985 UNSTRING rule 2)
+DELIMITED BY needs a nonnumeric literal or an item (X3.23-1985 UNSTRING rule 1)
+UNSTRING: the receiver 're' is numeric-edited; a receiver is alphabetic, alphanumeric or numeric, usage display (X3.23-1985 UNSTRING rule 3)
+UNSTRING: the receiver 'rp' has P in its picture (X3.23-1985 UNSTRING rule 3)
+UNSTRING: the DELIMITER IN item 'd9' is numeric; an alphanumeric item is required (X3.23-1985 UNSTRING rule 2)
+the POINTER 'p1' has 1 digit; the sending item needs 2 (X3.23-1985 UNSTRING rule 5)

@@ -10988,7 +10988,7 @@ static void parse_string_1(void)
     }
     Arg b[2] = { arg_ref(&dst), arg_imm(dst.sym->size) };
     emit_args(b, 2);
-    if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 0);
+    if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 1);
     emit_call(nat ? "cob_str_begin_nat" : "cob_str_begin");
 
     for (int i = 0; i < n; i++) {
@@ -11032,6 +11032,40 @@ static void parse_string_1(void)
 /* UNSTRING src [DELIMITED BY [ALL] d [OR [ALL] d]...] INTO {r [DELIMITER IN
  * r] [COUNT IN r]}... [WITH POINTER p] [TALLYING IN t] [[NOT] ON OVERFLOW]
  * [END-UNSTRING]; the runtime does the scanning (cob_unstr_*) */
+/* UNSTRING's sending item, delimiters and DELIMITER IN items are of
+ * category alphanumeric or national (X3.23-1985 UNSTRING rule 2; 2023
+ * 14.9.48.3 rule 2): a group or a reference-modified item qualifies */
+static void unstr_alnum(const Ref *r, const char *role)
+{
+    Sym *x = r->sym;
+    if (r->rm || x->is_group || sym_bitlike(x) || sym_is_national(x)) return;   /* no_bits, nat_class_check */
+    int c = x->pi.category;
+    if (x->usage == U_DISPLAY && c == PIC_ALPHANUMERIC) return;
+    if (c == PIC_NATIONAL || (x->usage == U_NATIONAL && c != PIC_NUMERIC && c != PIC_NUMERIC_EDITED)) return;
+    die_at(r->line, "UNSTRING: %s '%s' is %s; an alphanumeric%s item is required (%s)", role, x->name,
+           x->usage != U_DISPLAY && x->usage != U_NATIONAL ? "not usage display" : pic_category_name(c), g_std < 2002 ? "" : " or national",
+           g_std < 2002 ? "X3.23-1985 UNSTRING rule 2" : "2023 14.9.48.3 rule 2");
+}
+
+/* an UNSTRING receiver: usage display and alphabetic, alphanumeric or
+ * numeric, or usage national and national or numeric; numeric without P
+ * (85 rule 3; 2023 rule 4) */
+static void unstr_receiver(const Ref *r)
+{
+    Sym *x = r->sym;
+    if (r->rm || x->is_group || sym_bitlike(x) || sym_is_national(x)) return;   /* checked with the national rules */
+    int c = x->pi.category, e85 = g_std < 2002;
+    const char *rule = e85 ? "X3.23-1985 UNSTRING rule 3" : "2023 14.9.48.3 rule 4";
+    int ok = x->usage == U_DISPLAY ? (c == PIC_ALPHABETIC || c == PIC_ALPHANUMERIC || c == PIC_NUMERIC)
+           : x->usage == U_NATIONAL ? (c == PIC_NATIONAL || c == PIC_NUMERIC) : 0;
+    if (!ok)
+        die_at(r->line, "UNSTRING: the receiver '%s' is %s%s; a receiver is alphabetic, alphanumeric or numeric%s (%s)", x->name,
+               x->usage != U_DISPLAY && x->usage != U_NATIONAL ? "USAGE " : "", x->usage != U_DISPLAY && x->usage != U_NATIONAL ? usage_name(x->usage) : pic_category_name(c),
+               e85 ? ", usage display" : ", usage display or national", rule);
+    if (c == PIC_NUMERIC && memchr(x->pi.pat, 'P', x->pi.patlen))
+        die_at(r->line, "UNSTRING: the receiver '%s' has P in its picture (%s)", x->name, rule);
+}
+
 static void parse_unstring_1(void);
 static void parse_unstring(void)
 {
@@ -11044,8 +11078,7 @@ static void parse_unstring_1(void)
     if (src.kind != O_REF) die_at(src.line, "UNSTRING needs a data item to take apart");
     if (g_std < 2002 && src.ref.user_rm)                /* 2023 dropped the rule */
         die_at(src.line, "the UNSTRING sending item shall not be reference-modified in COBOL 85 (X3.23-1985 UNSTRING syntax rule 7)");
-    if (!src.ref.rm && !src.ref.sym->is_group && src.ref.sym->pi.category == PIC_NUMERIC && src.ref.sym->usage != U_DISPLAY)
-        die_at(src.line, "UNSTRING: '%s' is not a DISPLAY item", src.ref.sym->name);
+    unstr_alnum(&src.ref, "the sending item");
     Opnd delims[16]; int dall[16]; int nd = 0;
     if (accept_word("delimited")) {
         accept_word("by");
@@ -11054,7 +11087,8 @@ static void parse_unstring_1(void)
             dall[nd] = accept_word("all");
             parse_operand(&delims[nd]);
             if (delims[nd].kind != O_STR && delims[nd].kind != O_REF && delims[nd].kind != O_FIG)
-                die_at(delims[nd].line, "DELIMITED BY needs a literal or an item");
+                die_at(delims[nd].line, "DELIMITED BY needs a nonnumeric literal or an item (%s)", g_std < 2002 ? "X3.23-1985 UNSTRING rule 1" : "2023 14.9.48.3 rule 1");
+            if (delims[nd].kind == O_REF) unstr_alnum(&delims[nd].ref, "the delimiter");
             nd++;
             if (!accept_word("or")) break;
         }
@@ -11067,9 +11101,10 @@ static void parse_unstring_1(void)
         if (rcv[n].sym->is_cond) die_at(rcv[n].line, "'%s' is a condition-name", rcv[n].sym->name);
         if (rcv[n].sym->strong)                   /* its category is its type (8.5.2.1) */
             die_at(rcv[n].line, "the strongly-typed group '%s' is not an UNSTRING receiver (2023 14.9.48.3 rule 4)", rcv[n].sym->name);
+        unstr_receiver(&rcv[n]);
         has_d[n] = has_c[n] = 0;
         for (;;) {
-            if (accept_word("delimiter")) { accept_word("in"); parse_ref(&dlm[n]); has_d[n] = 1; continue; }
+            if (accept_word("delimiter")) { accept_word("in"); parse_ref(&dlm[n]); has_d[n] = 1; unstr_alnum(&dlm[n], "the DELIMITER IN item"); continue; }
             if (accept_word("count")) { accept_word("in"); parse_ref(&cnt[n]); has_c[n] = 1; if (!is_int_item(cnt[n].sym)) die_at(cnt[n].line, "COUNT IN needs an integer item"); continue; }
             break;
         }
@@ -11082,6 +11117,13 @@ static void parse_unstring_1(void)
     if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; }
     else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
     if (has_ptr && !is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item");
+    /* wide enough for one more than the sending item's length (85 rule 5; 2023 rule 6) */
+    if (has_ptr && !sym_notrunc(ptr.sym) && !src.ref.rm) {
+        int need = 1; for (long v = src.ref.sym->size / (opnd_is_national(&src) ? 2 : 1) + 1; v >= 10; v /= 10) need++;
+        if (ptr.sym->pi.digits < need)
+            die_at(ptr.line, "the POINTER '%s' has %d digit%s; the sending item needs %d (%s)", ptr.sym->name, ptr.sym->pi.digits, ptr.sym->pi.digits == 1 ? "" : "s", need,
+                   g_std < 2002 ? "X3.23-1985 UNSTRING rule 5" : "2023 14.9.48.3 rule 6");
+    }
     Ref tly; int has_tly = 0;
     if (accept_word("tallying")) { accept_word("in"); parse_ref(&tly); has_tly = 1; if (!is_int_item(tly.sym)) die_at(tly.line, "TALLYING IN needs an integer item"); }
     /* national operands (cobol ISSUES-69): the source, the delimiters, the
@@ -11108,7 +11150,7 @@ static void parse_unstring_1(void)
         emit("\tstw sp+%d, r1", SLOT_C);
     }
     { Arg a[2], dd; opnd_args(&src, &a[0], &dd, 0, 0); a[1] = arg_len(&src); emit_args(a, 2); }
-    if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 0);
+    if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 1);
     emit_call(nat ? "cob_unstr_begin_nat" : "cob_unstr_begin");
     for (int i = 0; i < nd; i++) {
         Arg a[3];

@@ -25,6 +25,8 @@ const char *pic_category_name(int c)
     case PIC_ALPHANUMERIC_EDITED: return "alphanumeric-edited";
     case PIC_NUMERIC:             return "numeric";
     case PIC_NUMERIC_EDITED:      return "numeric-edited";
+    case PIC_NATIONAL:            return "national";
+    case PIC_BOOLEAN:             return "boolean";
     }
     return "?";
 }

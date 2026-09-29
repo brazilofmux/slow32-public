@@ -1,0 +1,12 @@
+s1 ........ 00 ovf
+s2 ..abcdef 09 ovf
+s3 xx007...
+s4 abc..... 04 ok 
+u1 a   |b   |c    01 01 03
+u2 a   |    |b    , |, 
+u3 a   |b   |.... ,,|  
+u4 012 3.0   ab
+u5 a   |b    05 02 ovf
+u6 .... 00 ovf
+u7 ab  |cd   - 
+u8 a   |b   |.... 02 ok 

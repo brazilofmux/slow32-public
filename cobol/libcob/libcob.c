@@ -2679,19 +2679,20 @@ int cob_switches[8];
  * ISSUES-69); pos is a byte position, POINTER counts characters */
 static struct { char *dst; int dlen, pos, overflow, w; } cs;
 
-/* pos is the 1-based POINTER value, or 0 when there is none */
+/* pos is the 1-based POINTER value, 1 when there is none; one out of
+ * range is the overflow, nothing moves and the POINTER keeps its value
+ * (X3.23-1985 STRING GR 7; 2023 14.9.43.4) */
 void cob_str_begin(char *dst, int dlen, int pos)
 {
     cs.dst = dst; cs.dlen = dlen; cs.overflow = 0; cs.w = 1;
-    cs.pos = pos ? pos : 1;
+    cs.pos = pos;
     if (cs.pos < 1 || cs.pos > dlen) cs.overflow = 1;
 }
 
 void cob_str_begin_nat(char *dst, int dlen, int pos)
 {
     cs.dst = dst; cs.dlen = dlen; cs.overflow = 0; cs.w = 2;
-    if (!pos) pos = 1;
-    if (pos < 1 || pos > dlen / 2) { cs.overflow = 1; pos = pos < 1 ? 1 : pos; }
+    if (pos < 1 || pos > dlen / 2) cs.overflow = 1;
     cs.pos = 2 * (pos - 1) + 1;
 }
 
@@ -2715,7 +2716,7 @@ int cob_str_pointer(void) { return (cs.pos - 1) / cs.w + 1; }
 int cob_str_overflow(void) { return cs.overflow; }
 
 /* ---- UNSTRING ---------------------------------------------------------
- * begin (source, its length, the POINTER or 0), the DELIMITED BY list,
+ * begin (source, its length, the POINTER or 1), the DELIMITED BY list,
  * then one call per receiver: the characters up to the leftmost
  * delimiter (the first listed wins at equal positions; ALL takes the
  * repeats too) go to the receiver by the MOVE rules, the delimiter to
@@ -2730,15 +2731,14 @@ static struct {
 void cob_unstr_begin(const char *src, int slen, int pos)
 {
     cu.src = src; cu.slen = slen; cu.overflow = 0; cu.tally = 0; cu.nd = 0; cu.moved = 0; cu.w = 1;
-    cu.pos = pos ? pos : 1;
+    cu.pos = pos;
     if (cu.pos < 1 || cu.pos > slen) cu.overflow = 1;
 }
 
 void cob_unstr_begin_nat(const char *src, int slen, int pos)
 {
     cu.src = src; cu.slen = slen; cu.overflow = 0; cu.tally = 0; cu.nd = 0; cu.moved = 0; cu.w = 2;
-    if (!pos) pos = 1;
-    if (pos < 1 || pos > slen / 2) { cu.overflow = 1; pos = pos < 1 ? 1 : pos; }
+    if (pos < 1 || pos > slen / 2) cu.overflow = 1;
     cu.pos = 2 * (pos - 1) + 1;
 }
 void cob_unstr_setlen(int slen) { cu.slen = slen; if (cu.pos > slen) cu.overflow = 1; }
