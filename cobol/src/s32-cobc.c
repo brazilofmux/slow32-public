@@ -8731,6 +8731,11 @@ static void apply_turn(Tok *d)
         names[nn] = i; files[nn] = -1; nn++; k++;
     }
     if (!nn || k >= nw) die_at(d->line, ">>TURN needs exception-names and CHECKING ON or OFF");
+    for (int a = 0; a < nn; a++)
+        for (int b = a + 1; b < nn; b++)
+            if (names[a] == names[b] && files[a] == files[b])
+                die_at(d->line, ">>TURN names %s%s%s twice (2023 7.3.25.3 rule 3)", ec_name(names[a]),
+                       files[a] >= 0 ? " for " : "", files[a] >= 0 ? g_files[files[a]].name : "");
     k++;
     int on = 1, loc = 0;
     if (k < nw && !strcasecmp(w[k], "off")) { on = 0; k++; }

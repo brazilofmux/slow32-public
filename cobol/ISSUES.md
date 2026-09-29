@@ -3477,3 +3477,10 @@ perform-inline-after-85, std2002-until-exit-varying,
 std2002-finally-goto. CCVS-85 unchanged; harness 331/331; -std=85
 byte-identical on all 229 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+**14.9.29 RAISE and 7.3.25 TURN** (docs/conformance/raise.md, turn.md).
+RAISE: nothing new. TURN: syntax rule 3 (an exception-name and
+file-name pair twice in one directive) was accepted; refused. General
+rule 5 (a TURN inside a statement governs what follows it in the source,
+the ELSE branch included) had no test; 2002/ecturnstmt. Tests:
+bad/std2002-turn-dup, std2002-turn-unknown; 2002/ecturnstmt.
