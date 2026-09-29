@@ -87,8 +87,9 @@ COBOL 2002/2023 (Stage B):
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
-- a BASED entry in LOCAL-STORAGE, EC-BOUND-PTR, and ALLOCATE ...
-  INITIALIZED of a based record (docs/conformance/usage.md);
+- a BASED entry in LOCAL-STORAGE and EC-BOUND-PTR
+  (docs/conformance/usage.md; ALLOCATE ... INITIALIZED of a based
+  record is implemented since ISSUES-104);
 - INITIALIZE of a reference-modified item with the COBOL 2002 phrases
   (WITH FILLER, TO VALUE, TO DEFAULT; the phrases themselves are
   implemented, docs/conformance/initialize.md);

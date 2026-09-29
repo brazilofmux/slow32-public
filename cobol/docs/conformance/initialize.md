@@ -28,6 +28,7 @@ and checked the syntax rules of both editions.
 | 5c2-4 | else the REPLACING category; else DEFAULT; else only when neither VALUE nor REPLACING is given | **test**: 2002/init2002 (val+def, rep+def, all), 2002/init2002cat (num+rep, alnum+def) |
 | 6a | the VALUE clause's value; NULL for a pointer | **test**: 2002/init2002cat (pointer) -- GnuCOBOL leaves the pointer alone |
 | 6c | the defaults: SPACES for the alphabetic, alphanumeric and national categories and their edited forms, ZEROES for numeric, numeric-edited and boolean, NULL for a pointer | **test**: 2002/init2002, 2002/init2002cat (default) |
+| ALLOCATE GR 7 | ALLOCATE data-name INITIALIZED is INITIALIZE WITH FILLER ALL TO VALUE THEN TO DEFAULT | **test**: 2002/allocinit, the oracle agrees -- refused as not implemented before |
 | 7, 10 | dynamic-length items and dynamic-capacity tables | **n/a**: 2014's |
 
 The 1985 forms (no phrase, or REPLACING alone) keep their own code path

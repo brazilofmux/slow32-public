@@ -12886,8 +12886,6 @@ static void parse_allocate(void)
         emit_expr_tokens(e0, e1); emit_call("cob_pop_alloc_size");
     }
     int init = accept_word("initialized");
-    if (init && has_based)
-        die_at(line, "ALLOCATE data-name INITIALIZED is not implemented (it is INITIALIZE ... ALL TO VALUE THEN TO DEFAULT)");
     Ref ret; int has_ret = 0;
     if (accept_word("returning")) {
         parse_ref(&ret); has_ret = 1;
@@ -12912,6 +12910,18 @@ static void parse_allocate(void)
     }
     if (has_based) { emit_la("r3", g_sym[based.sym->record].label); emit("\tldw r1, sp+%d", SLOT_A); emit("\tstw r3+0, r1"); }
     if (has_ret) { emit_ref_addr(&ret, "r3"); emit("\tldw r1, sp+%d", SLOT_A); emit("\tstw r3+0, r1"); }
+    if (init && has_based) {
+        /* as INITIALIZE data-name-1 WITH FILLER ALL TO VALUE THEN TO
+         * DEFAULT (GR 7) -- when there was storage to be had */
+        int Lnone = new_label();
+        emit("\tldw r1, sp+%d", SLOT_A);
+        emit("\tbeq r1, r0, .L%d", Lnone);
+        InitSpec sp; memset(&sp, 0, sizeof sp);
+        sp.filler = sp.value = sp.value_all = sp.deflt = 1;
+        long sub[MAXDIM];
+        init_walk(based.sym, &based, &sp, sub, 0, based.line, 1);
+        emit_label(Lnone);
+    }
 }
 
 /* FREE {data-name-1}... (2002 14.8.14): each pointer's storage released

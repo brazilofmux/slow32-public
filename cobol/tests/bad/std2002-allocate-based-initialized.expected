@@ -1,1 +1,0 @@
-ALLOCATE data-name INITIALIZED is not implemented (it is INITIALIZE ... ALL TO VALUE THEN TO DEFAULT)

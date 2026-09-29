@@ -3989,8 +3989,14 @@ Found on the way, not fixed here: a REDEFINES of an item with an OCCURS
 clause is accepted (85 REDEFINES syntax rule 5); GnuCOBOL warns. That
 is the next sweep.
 
+With it, ALLOCATE data-name INITIALIZED (2023 14.9.3.4 GR 7: as
+INITIALIZE WITH FILLER ALL TO VALUE THEN TO DEFAULT), refused until now,
+runs the same walk over the new storage when there was storage to be
+had: 2002/allocinit, the oracle agrees; bad/std2002-allocate-based-
+initialized removed.
+
 Tests: 2002/init2002 (oracle agrees), 2002/init2002cat,
-bad/initialize-operands, warn/ext-every (BP-E15). Harness 456/456,
+bad/initialize-operands, warn/ext-every (BP-E15), 2002/allocinit. Harness 456/456,
 -std=85 byte-identical on the Open Systems programs, majesty PASS, Open
 Systems paper unchanged. Page: docs/conformance/initialize.md.
 
