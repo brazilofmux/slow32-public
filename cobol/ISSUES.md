@@ -2720,3 +2720,38 @@ else changed). Refusals: std2002-bexpr-all-both, -bexpr-all-shift,
 -bexpr-all-alone. Harness 266/266; -std=85 byte-identical on all 227
 Open Systems programs; majesty PASS; majesty-functions PASS; Open
 Systems paper unchanged.
+
+### 84. OCCURS on USAGE BIT items; bits at computed positions (2026-09-28)
+
+Both need a bit address computed at run time, so they are one row.
+
+- **A bit array** (8.5.1.6.3): occurrences follow one another bit by bit.
+  `bit_total` (bits x occurrences) drives the layout and the bytes
+  spanned; the array's own dimension has no byte stride (`set_dims`).
+  VALUE is laid down per occurrence at successive bit offsets
+  (`init_instance`).
+- **A subscripted element** is a bit reference modification of the
+  array: `parse_ref` sets `rm_bit`, `rm_len` = bits, and `rm_start` =
+  (i - 1) x bits + 1 for a literal subscript, or `bitsub` for an item.
+- **A computed start**, from a subscript or a reference modification
+  expression, gets its address at run time: the byte holding bitoff +
+  start - 1, as `srai 3`. Its descriptor comes from `cob_refmod_desc`,
+  which for a BIT base returns a BIT part whose scale is (base scale +
+  start - 1) mod 8. A bit array's element is cut from a descriptor of
+  the whole array (`bitarray_desc`), so the runtime's bounds check sees
+  all its bits. Address and descriptor come from the same start, so
+  they cannot disagree.
+- **LENGTH** of an element or a part is its bits.
+
+**Refused by name:** OCCURS DEPENDING ON and INDEXED BY on a bit array,
+OCCURS on a bit group, reference modification of an element.
+std2002-usage-bit and std2002-bit-refmod, whose cases now work, check
+INDEXED BY and element reference modification.
+
+2002/bitarray (no oracle): twelve 1-bit flags with VALUE on each (61 FF
+F0 7A), one cleared (61 DF F0 7A), read back by a computed subscript; 3-
+bit elements across bytes from BOOLEAN-OF-INTEGER; a computed
+subscript; LENGTH of an element; a computed reference modification
+across a byte, and to the end. Harness 267/267; -std=85 byte-identical
+on all 227 Open Systems programs; majesty PASS; majesty-functions PASS;
+Open Systems paper unchanged.

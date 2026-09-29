@@ -71,19 +71,23 @@ and libcob reads it as the DISPLAY form and writes back only its own
 bits, so every boolean operation takes bits as it takes characters.
 
 Reference modification of a bit item or bit group counts bits (8.4.3.3.4
-rule 5a): its part starts at any bit and may cross a byte (ISSUES-82);
-literal positions only for now.
+rule 5a): its part starts at any bit and may cross a byte, at literal
+(ISSUES-82) or computed (ISSUES-84) positions.
 
-Not implemented, refused by name: OCCURS, REDEFINES and SYNCHRONIZED of
-a bit item or bit group; reference modification at a computed position; a VALUE on a bit
+A bit item may OCCUR (ISSUES-84): its occurrences follow one another bit
+by bit, and a subscript picks bits (i - 1) * bits + 1 onward, found at
+run time when the subscript is an item. VALUE applies to each
+occurrence.
+
+Not implemented, refused by name: OCCURS DEPENDING ON and INDEXED BY on
+a bit array, OCCURS on a bit group, REDEFINES and SYNCHRONIZED of a bit
+item or bit group, reference modification of a bit array's element; a VALUE on a bit
 group; bit items in INSPECT, STRING and UNSTRING, whose runtimes work on
 characters.
 
 ## Not yet
 
-Reference modification of a USAGE BIT item at a computed position (a
-literal one works, ISSUES-82); B-NOT of an ALL literal; the other items
-listed under USAGE BIT.
+B-NOT of an ALL literal; the items listed under USAGE BIT.
 
 ## Oracle
 

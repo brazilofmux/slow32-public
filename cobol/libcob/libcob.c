@@ -4115,6 +4115,14 @@ const cob_desc *cob_refmod_desc(const cob_desc *base, int start, int len)
     if (len < 1 || start - 1 + len > chars) cob_fatal("reference modification: length is outside the item");
     cob_desc *d = &rmdesc[rmrot++ & 7];
     memset(d, 0, sizeof *d);
+    if (base->usage == COB_U_BIT) {
+        /* bits (cobol ISSUES-84): base->size bits from the scale-th bit; the
+         * part starts at bit scale + start - 1, the compiler having put the
+         * address at the byte that holds it */
+        d->cat = COB_BOOLEAN; d->usage = COB_U_BIT; d->size = (unsigned)len;
+        d->scale = (signed char)((base->scale + start - 1) % 8);
+        return d;
+    }
     d->cat = base->cat == COB_BOOLEAN ? COB_BOOLEAN : nat ? COB_NATIONAL : COB_ALNUM;
     d->usage = base->cat == COB_BOOLEAN && nat ? COB_U_NATIONAL : COB_U_DISPLAY;
     d->size = (unsigned)(nat ? 2 * len : len);
@@ -4124,6 +4132,7 @@ const cob_desc *cob_refmod_desc(const cob_desc *base, int start, int len)
 /* the part's length in bytes */
 int cob_refmod_len(const cob_desc *base, int start, int len)
 {
+    if (base->usage == COB_U_BIT) return len ? len : (int)base->size - start + 1;   /* bits: positions */
     int nat = base->cat == COB_NATIONAL || base->usage == COB_U_NATIONAL;
     if (len == 0) len = (nat ? (int)base->size / 2 : (int)base->size) - start + 1;
     return nat ? 2 * len : len;

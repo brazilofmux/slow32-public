@@ -1921,7 +1921,8 @@ static void sym_finish(Sym *s)
         /* boolean positions as bits (2023 13.18.66); the bit offset and the
          * bytes spanned come with the layout (8.5.1.6.3) */
         if (pi->category != PIC_BOOLEAN) die_at(s->line, "'%s': USAGE BIT needs a boolean PICTURE (1)", s->name);
-        if (s->occurs) die_at(s->line, "'%s': OCCURS on a USAGE BIT item is not implemented yet", s->name);
+        if (s->occurs && s->odo_dep[0]) die_at(s->line, "'%s': OCCURS DEPENDING ON a USAGE BIT item is not implemented yet", s->name);
+        if (s->occurs && s->idx1 >= 0) die_at(s->line, "'%s': INDEXED BY on a USAGE BIT item is not implemented yet", s->name);
         if (s->redefines >= 0) die_at(s->line, "'%s': REDEFINES of a USAGE BIT item is not implemented yet", s->name);
         if (s->sync) die_at(s->line, "'%s': SYNCHRONIZED on a USAGE BIT item is not implemented yet", s->name);
         s->bits = pi->bytes; s->size = (s->bits + 7) / 8;
@@ -2506,6 +2507,9 @@ static int align_of(Sym *s)
 /* lay out s at `base` (offset within the record); returns one occurrence's size */
 /* a bit item or a bit group: laid out at bit positions (cobol ISSUES-78) */
 static int sym_bitlike(const Sym *s) { return (!s->is_group && s->usage == U_BIT) || s->bitgroup; }
+/* the bits a bit item or bit group takes, every occurrence of a bit
+ * array's elements following one another (cobol ISSUES-84) */
+static int bit_total(const Sym *s) { return s->bits * (!s->is_group && s->occurs ? s->occurs : 1); }
 static int g_lay_bit;                   /* the bit offset the next layout() call starts at */
 
 static int layout(int si, int base)
@@ -2515,7 +2519,7 @@ static int layout(int si, int base)
     s->offset = base;
     if (sym_bitlike(s)) s->bitoff = bo;
     if (!s->is_group) {
-        if (s->usage == U_BIT) s->size = (s->bitoff + s->bits + 7) / 8;
+        if (s->usage == U_BIT) s->size = (s->bitoff + bit_total(s) + 7) / 8;
         return s->size;
     }
     if (s->bitgroup && (s->occurs || s->redefines >= 0))
@@ -2543,7 +2547,7 @@ static int layout(int si, int base)
         if (sz <= 0) die_at(ch->line, "'%s' has no size", ch->name);
         int cend;
         if (isbit) {
-            int tot = ch->bitoff + ch->bits;
+            int tot = ch->bitoff + bit_total(ch);
             off = cbase + tot / 8; cur = tot % 8; run = 1;
             cend = cbase + (tot + 7) / 8;
         } else {
@@ -2565,7 +2569,7 @@ static void set_dims(int si, int ndims, const int *counts, const int *strides)
     memcpy(cnt, counts, ndims * sizeof *cnt); memcpy(str, strides, ndims * sizeof *str);
     if (s->occurs) {
         if (ndims >= MAXDIM) die_at(s->line, "too many OCCURS levels");
-        cnt[ndims] = s->occurs; str[ndims] = s->size; ndims++;
+        cnt[ndims] = s->occurs; str[ndims] = (!s->is_group && s->usage == U_BIT) ? 0 : s->size; ndims++;   /* bits: the element is a bit position */
     }
     s->ndims = ndims;
     memcpy(s->dim_count, cnt, ndims * sizeof *cnt); memcpy(s->dim_stride, str, ndims * sizeof *str);
@@ -2749,6 +2753,13 @@ static void init_instance(Sym *rec, int si, int base, int defaults)
 {
     Sym *s = &g_sym[si];
     int n = s->occurs ? s->occurs : 1;
+    if (!s->is_group && s->usage == U_BIT) {
+        /* a bit array: each occurrence at the next bits (cobol ISSUES-84) */
+        int bo = s->bitoff;
+        for (int k = 0; k < n; k++) { s->bitoff = bo + k * s->bits; init_one(rec, si, base, defaults); }
+        s->bitoff = bo;
+        return;
+    }
     for (int k = 0; k < n; k++) init_one(rec, si, base + k * s->size, defaults);
 }
 
@@ -3350,6 +3361,7 @@ typedef struct {
     long rm_start, rm_len;          /* literal values, or 0 when an expression / omitted */
     int rm_nat;                     /* a national item's: start and length count characters, two bytes each */
     int rm_bit;                     /* a USAGE BIT item's or bit group's: they count bits (cobol ISSUES-82) */
+    int bitsub;                     /* a bit array's element: 1 + the subscript that picks it, as a bit position (cobol ISSUES-84) */
     int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
@@ -3441,6 +3453,15 @@ static int strong_table(Sym *g, int base)
  * USAGE NATIONAL one, boolean (in the item's usage) for a boolean one,
  * alphanumeric otherwise */
 static int bool_desc(int len);
+/* a bit array as one boolean item of all its bits, the base its
+ * elements are reference-modified out of at run time */
+static int bitarray_desc(Sym *s)
+{
+    Desc d; memset(&d, 0, sizeof d);
+    d.cat = COB_BOOLEAN; d.usage = COB_U_BIT; d.size = bit_total(s); d.scale = (signed char)s->bitoff;
+    return desc_add(&d);
+}
+
 static int part_desc(const Ref *r)
 {
     Sym *s = r->sym; int len = (int)r->rm_len;
@@ -3619,12 +3640,19 @@ static void parse_ref(Ref *r)
         }
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
-        if (r->rm_bit && (!r->rm_start || (r->rm_l0 >= 0 && !r->rm_len)))
-            die_at(r->line, "reference modification of the USAGE BIT item '%s' with a computed position is not implemented yet", r->sym->name);
         long chars = r->rm_bit ? r->sym->bits : r->rm_nat ? r->sym->size / 2 : r->sym->size;
         if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
         if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
         if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
+    }
+    if (!r->sym->is_group && r->sym->usage == U_BIT && r->sym->occurs && r->nsub == r->sym->ndims && r->nsub) {
+        /* a bit array's element: the bits (i - 1) * bits + 1 for bits,
+         * reference-modified out of the array (cobol ISSUES-84) */
+        if (r->rm) die_at(r->line, "reference modification of an element of the bit array '%s' is not implemented yet", r->sym->name);
+        int k = r->nsub - 1;
+        if (r->sub[k].sym && r->sub[k].sym->is_index) die_at(r->line, "an index-name subscript of the bit array '%s' is not implemented yet", r->sym->name);
+        r->rm = 1; r->rm_bit = 1; r->rm_len = r->sym->bits; r->rm_l0 = -1; r->bitsub = r->nsub;
+        if (!r->sub[k].sym) r->rm_start = (r->sub[k].lit - 1) * r->sym->bits + 1;
     }
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
@@ -4140,6 +4168,7 @@ static void parse_operand_raw(Opnd *o)
                 len /= 2;                               /* national: character positions, two bytes each */
             if (x.kind == O_REF && !x.ref.rm && (x.ref.sym->usage == U_BIT || x.ref.sym->bitgroup))
                 len = x.ref.sym->bits;                  /* bits: boolean positions */
+            if (x.kind == O_REF && x.ref.rm_bit && x.ref.rm_len) len = (int)x.ref.rm_len;   /* a bit part or element */
             o->kind = O_NUM; numlit_from_int(&o->num, len);
             return;
         }
@@ -4218,7 +4247,8 @@ static int ref_needs_call(const Ref *r)
 static int ref_static_len(const Ref *r)
 {
     if (!r->rm) return r->sym->size;
-    if (r->rm_bit) return (int)((r->sym->bitoff + r->rm_start - 1) % 8 + r->rm_len + 7) / 8;   /* the bytes the bits span */
+    if (r->rm_bit) return r->rm_start ? (int)((r->sym->bitoff + r->rm_start - 1) % 8 + r->rm_len + 7) / 8   /* the bytes the bits span */
+                                      : (int)(r->rm_len + 7) / 8 + 1;                                          /* at most, from a computed bit */
     return r->rm_len ? (int)r->rm_len * (r->rm_nat ? 2 : 1) : -1;
 }
 
@@ -4300,6 +4330,16 @@ static void emit_odo_check(Sym *s)
     emit_label(Lok);
 }
 
+/* r1 = subscript i's occurrence number less one */
+static void emit_sub_index(const Ref *r, int i)
+{
+    Sym *ss = r->sub[i].sym;
+    if (is_hot_int(ss)) { emit_item_addr("r1", ss, ss->offset); emit_load_int(ss, "r1", "r1"); }
+    else { emit_item_addr("r3", ss, ss->offset); emit_desc_addr("r4", sym_desc(ss)); emit_call("cob_load_int"); }
+    long adj = r->sub[i].adj - 1;
+    if (adj) emit("\taddi r1, r1, %ld", adj);
+}
+
 static void emit_ref_addr(const Ref *r, const char *reg)
 {
     Sym *s = r->sym;
@@ -4336,15 +4376,32 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         emit("\tmul r1, r1, r2");
         emit("\tadd r11, r11, r1");
     }
-    if (r->rm && !r->rm_start) {
+    if (r->rm && !r->rm_start && r->bitsub) {
+        /* a bit array's element at a computed subscript: the byte holding
+         * its first bit, bitoff + (i - 1) * bits (cobol ISSUES-84) */
+        emit_sub_index(r, r->bitsub - 1);
+        emit_li("r2", s->bits);
+        emit("\tmul r1, r1, r2");
+        emit("\taddi r1, r1, %d", s->bitoff);
+        emit("\tsrai r1, r1, 3");
+        emit("\tadd r11, r11, r1");
+    } else if (r->rm && !r->rm_start) {
         /* the start expression: onto the numeric stack, then off as an int */
         emit_expr_tokens(r->rm_s0, r->rm_s1);
         emit_call("cob_pop_int");
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
+        if (r->rm_bit) {
+            /* bits: the byte holding bitoff + start - 1 */
+            emit("\taddi r1, r1, %d", s->bitoff - 1);
+            emit("\tsrai r1, r1, 3");
+            emit("\tadd r11, r11, r1");
+            goto addr_done;
+        }
         emit("\taddi r1, r1, -1");
         if (r->rm_nat) emit("\tadd r1, r1, r1");      /* characters to bytes */
         emit("\tadd r11, r11, r1");
     }
+addr_done:
     emit_item_addr(reg, s, off);
     if (runtime) emit("\tadd %s, %s, r11", reg, reg);
 }
@@ -4434,7 +4491,7 @@ static void emit_refmod_check(const Ref *r, long len, int slot)
     emit("\tadd r3, r1, r0");
     if (len == -2) emit("\tldw r4, sp+%d", SLOT(slot));
     else emit_li("r4", len == -3 ? -1 : len);    /* -3: computed, and checked with the length */
-    emit_li("r5", r->rm_nat ? r->sym->size / 2 : r->sym->size);   /* in character positions */
+    emit_li("r5", r->rm_bit ? r->sym->bits : r->rm_nat ? r->sym->size / 2 : r->sym->size);   /* in character positions, or bits */
     emit_call("cob_bound_refmod");
     emit("\tbeq r1, r0, .L%d", Lok);
     emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
@@ -4459,6 +4516,14 @@ static void emit_rm_start_len(const Ref *r, int slot)
     else if (r->rm_l0 >= 0) { emit_expr_tokens(r->rm_l0, r->rm_l1); emit_call("cob_pop_int"); }
     else emit_li("r1", 0);
     emit("\tstw sp+%d, r1", SLOT(slot));
+    if (!r->rm_start && r->bitsub) {
+        /* a bit array's element: start (i - 1) * bits + 1 */
+        emit_sub_index(r, r->bitsub - 1);
+        emit_li("r2", r->sym->bits);
+        emit("\tmul r1, r1, r2");
+        emit("\taddi r1, r1, 1");
+        return;
+    }
     if (r->rm_start) emit_li("r1", r->rm_start);
     else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_call("cob_pop_int"); }
     if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, -2, slot);   /* a computed length */
@@ -4480,7 +4545,7 @@ static void emit_args(const Arg *a, int n)
             emit_rm_start_len(r, base + i);
             emit("\tadd r4, r1, r0");
             emit("\tldw r5, sp+%d", SLOT(base + i));
-            emit_desc_addr("r3", sym_desc(r->sym));
+            emit_desc_addr("r3", r->bitsub ? bitarray_desc(r->sym) : sym_desc(r->sym));
             emit_call(a[i].kind == A_RDESC ? "cob_refmod_desc" : "cob_refmod_len");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
@@ -4972,7 +5037,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
     case O_REF:
         *addr = arg_ref(&o->ref);
         if (!o->ref.rm) *desc = arg_desc(sym_desc(o->ref.sym));
-        else if (o->ref.rm_len) *desc = arg_desc(part_desc(&o->ref));
+        else if (o->ref.rm_len && (o->ref.rm_start || !o->ref.rm_bit)) *desc = arg_desc(part_desc(&o->ref));
         else *desc = arg_rdesc(&o->ref);
         return;
     case O_FUNC:
@@ -6843,7 +6908,7 @@ static int emit_move_boolean(Opnd *src, Ref *dst)
     Arg a[4];
     opnd_args(src, &a[0], &a[1], n, 0);
     a[2] = arg_ref(dst);
-    a[3] = !dst->rm ? arg_desc(sym_desc(d)) : dst->rm_len ? arg_desc(part_desc(dst)) : arg_rdesc(dst);
+    a[3] = !dst->rm ? arg_desc(sym_desc(d)) : dst->rm_len && (dst->rm_start || !dst->rm_bit) ? arg_desc(part_desc(dst)) : arg_rdesc(dst);
     emit_args(a, 4); emit_call("cob_move");
     return 1;
 }

@@ -1,0 +1,8 @@
+value on every occurrence: 61 FF F0 7A
+fl(3) cleared: 61 DF F0 7A
+fl(1..12): 110111111111    
+pr: 001 010 011 100 101
+pr(i) with i = 4: 100
+length of an element: 3
+w(7:3) receives 101, across a byte: 0000001010000000
+w(k:3): 101  w(k + 1:): 010000000
