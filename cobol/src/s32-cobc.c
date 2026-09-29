@@ -2723,6 +2723,28 @@ static void occurs_rules_one(int i)
                    x->usage == U_POINTER ? "a pointer" : "boolean");
     }
 }
+/* JUSTIFIED, SIGN, SYNCHRONIZED (2023 13.18.32, .52, .55; X3.23-1985
+ * 5.6, 5.12, 5.13) */
+static void clause_rules_one(int i)
+{
+    Sym *s = &g_sym[i];
+    int e85 = g_std < 2002;
+    if (s->is_cond || s->is_index || s->is_rename || s->is_ftemp) return;
+    if (s->just && s->is_group)
+        die_at(s->line, "'%s' is a group; JUSTIFIED is for an elementary item (%s)", s->name, e85 ? "X3.23-1985 JUSTIFIED syntax rule 1" : "2023 13.18.32.3 rule 1");
+    if (s->just && !s->is_group && s->pi.edited)
+        die_at(s->line, "'%s' is %s; JUSTIFIED is not for an edited item (%s)", s->name, pic_category_name(s->pi.category),
+               e85 ? "X3.23-1985 JUSTIFIED syntax rule 3" : "2023 13.18.32.3 rule 3");
+    if (e85 && s->sync && s->is_group)
+        die_at(s->line, "'%s' is a group; in COBOL 85 SYNCHRONIZED is for an elementary item, COBOL 2002 allows it (X3.23-1985 SYNCHRONIZED syntax rule 1)", s->name);
+    if (e85 && s->is_group && (s->sign_lead || s->sign_sep)) {
+        int any = 0;
+        for (int j = i + 1; j < g_nsym && !any; j++)
+            if (!g_sym[j].is_cond && !g_sym[j].is_index && !g_sym[j].is_group && sym_under(j, i) && g_sym[j].pi.category == PIC_NUMERIC && g_sym[j].pi.is_signed && g_sym[j].usage == U_DISPLAY) any = 1;
+        if (!any)
+            die_at(s->line, "the group '%s' has a SIGN clause but no signed numeric DISPLAY item below it (X3.23-1985 SIGN syntax rule 1)", s->name);
+    }
+}
 static void occurs_rules(void)
 {
     for (int i = g_sym_base; i < g_nsym; i++) {
@@ -2730,6 +2752,7 @@ static void occurs_rules(void)
         if (setjmp(jb)) { g_recover = outer; continue; }
         g_recover = &jb;
         occurs_rules_one(i);
+        clause_rules_one(i);
         g_recover = outer;
     }
 }

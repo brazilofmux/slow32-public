@@ -32,6 +32,7 @@ began this; ISSUES-96 on record the sweeps.
 | 14.7.7, ADD SUBTRACT MULTIPLY DIVIDE COMPUTE | [arithmetic.md](arithmetic.md) | 2026-09-29 |
 | 14.9.20 INITIALIZE | [initialize.md](initialize.md) | 2026-09-29 |
 | 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
+| 13.18.32, .33, .52, .55 JUSTIFIED, level-number, SIGN, SYNCHRONIZED | [clauses.md](clauses.md) | 2026-09-29 |
 | 13.18.38 OCCURS | [occurs.md](occurs.md) | 2026-09-29 |
 | 13.18.44 REDEFINES | [redefines.md](redefines.md) | 2026-09-29 |
 | 13.18.45 RENAMES | [renames.md](renames.md) | 2026-09-29 |

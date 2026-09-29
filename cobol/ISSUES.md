@@ -4100,3 +4100,17 @@ bad/initialize-operands (the index-name message is the general one
 now). Harness 472/472, CCVS-85 unchanged, -std=85 byte-identical on the
 Open Systems programs, majesty PASS. Page: docs/conformance/occurs.md.
 
+### 109. JUSTIFIED, SIGN, SYNCHRONIZED, level-numbers (2026-09-29)
+
+The small data clauses, probed rule by rule. Refused now, accepted
+before: JUSTIFIED on a group (both editions' rule 1) or on an edited
+item (85 rule 3; 2023 rule 3's categories); under -std=85, SYNCHRONIZED
+on a group (85 5.13.3 rule 1; 2002 allows it) and SIGN on a group with
+no signed numeric DISPLAY item below it (85 5.12.3 rule 1; 2023 allows
+it). The CODE-SET rule (signed items SIGN SEPARATE) was in place
+already. clause_rules_one runs in the OCCURS pass.
+
+Tests: bad/clause-rules (4 errors). Harness 473/473, CCVS-85 unchanged,
+-std=85 byte-identical on the Open Systems programs, majesty PASS.
+Page: docs/conformance/clauses.md.
+

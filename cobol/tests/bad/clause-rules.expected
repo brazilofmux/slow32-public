@@ -1,0 +1,4 @@
+'g1' is a group; JUSTIFIED is for an elementary item (X3.23-1985 JUSTIFIED syntax rule 1)
+'e1' is alphanumeric-edited; JUSTIFIED is not for an edited item (X3.23-1985 JUSTIFIED syntax rule 3)
+'g2' is a group; in COBOL 85 SYNCHRONIZED is for an elementary item, COBOL 2002 allows it (X3.23-1985 SYNCHRONIZED syntax rule 1)
+the group 'g3' has a SIGN clause but no signed numeric DISPLAY item below it (X3.23-1985 SIGN syntax rule 1)
