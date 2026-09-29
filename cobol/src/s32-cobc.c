@@ -8622,7 +8622,22 @@ static void emit_use_dispatch(File *f, int has_clause)
 static int g_ncnt;      /* TIMES counters */
 static int *g_cnt_unit; static int g_cnt_cap;   /* the unit each counter belongs to */
 
-typedef struct { Para *from, *thru; int inline_body; } Body;
+typedef struct { Para *from, *thru; int inline_body, Lexit; } Body;   /* Lexit: after END-PERFORM, for EXIT PERFORM */
+
+/* the inline PERFORMs being compiled, innermost last: where EXIT PERFORM
+ * goes, and EXIT PERFORM CYCLE (-1: not allowed) (2023 14.9.14.4 rules
+ * 4-5; cobol ISSUES-90) */
+static struct { int Lexit, Lcycle; } g_pstk[64]; static int g_npstk;
+static void pstk_push(int lexit, int lcycle)
+{
+    if (g_npstk == 64) die_at(cur()->line, "inline PERFORMs nested more than 64 deep");
+    g_pstk[g_npstk].Lexit = lexit; g_pstk[g_npstk].Lcycle = lcycle; g_npstk++;
+}
+/* EXIT PARAGRAPH and EXIT SECTION: the current paragraph's and section's
+ * end, made when an EXIT asks for it (rules 6-7) */
+static int g_exit_par_label = -1, g_exit_sec_label = -1;
+static void end_par_label(void) { if (g_exit_par_label >= 0) { emit_label(g_exit_par_label); g_exit_par_label = -1; } }
+static void end_sec_label(void) { if (g_exit_sec_label >= 0) { emit_label(g_exit_sec_label); g_exit_sec_label = -1; } }
 
 static void emit_body(Body *b);
 
@@ -8767,7 +8782,14 @@ static void emit_body(Body *b)
         emit("\tjal r0, .Lp%d_%d", g_unit, b->from->id);
         emit_label(Lret);
     } else {
+        /* an inline body: EXIT PERFORM CYCLE comes to its end, EXIT PERFORM
+         * past END-PERFORM */
+        if (b->Lexit < 0) { parse_statements(); return; }
+        int Lcycle = new_label();
+        pstk_push(b->Lexit, Lcycle);
         parse_statements();
+        g_npstk--;
+        emit_label(Lcycle);
     }
 }
 
@@ -8850,7 +8872,7 @@ static int perform_is_ecp(void)
         Tok *t = &g_tok[k];
         if (t->kind == T_PERIOD || t->kind == T_EOF) return 0;
         if (t->kind != T_WORD) continue;
-        if (!strcmp(t->s, "perform")) {
+        if (!strcmp(t->s, "perform") && !(k > 0 && is_word(&g_tok[k - 1], "exit"))) {   /* EXIT PERFORM opens nothing */
             Tok *n = &g_tok[k + 1];
             if (!(at_para_name(n) && para_find(n->s))) depth++;       /* inline: closed by END-PERFORM */
         } else if (!strcmp(t->s, "end-perform")) { if (depth-- == 0) return 0; }
@@ -8908,7 +8930,7 @@ static void parse_perform_ecp(void)
         Tok *t = &g_tok[k];
         if (t->kind == T_PERIOD || t->kind == T_EOF) break;
         if (t->kind != T_WORD) continue;
-        if (!strcmp(t->s, "perform")) { Tok *n = &g_tok[k + 1]; if (!(at_para_name(n) && para_find(n->s))) depth++; continue; }
+        if (!strcmp(t->s, "perform") && !(k > 0 && is_word(&g_tok[k - 1], "exit"))) { Tok *n = &g_tok[k + 1]; if (!(at_para_name(n) && para_find(n->s))) depth++; continue; }
         if (!strcmp(t->s, "end-perform")) { if (depth-- == 0) break; continue; }
         if (depth || strcmp(t->s, "when")) continue;
         if (is_word(&g_tok[k + 1], "other") && is_word(&g_tok[k + 2], "exception")) { e->Lother = new_label(); continue; }
@@ -8942,6 +8964,8 @@ static void parse_perform_ecp(void)
     for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) ecp_turn_on(e->w[w].ec[q], e->w[w].file[q], loc);
     /* imperative-statement-1, a statement at a time: a raise resumes after
      * the statement it occurred in (rule 20) */
+    int Lafter = new_label();
+    pstk_push(e->Lend, -1);                       /* EXIT PERFORM: to FINALLY or END-PERFORM, no CYCLE (rules 4, 8) */
     g_ecp[g_necp++] = e;
     while (!at_word("when") && !at_word("finally") && !at_word("end-perform") && !at_scope_end()) {
         e->resume = new_label();
@@ -8977,9 +9001,11 @@ static void parse_perform_ecp(void)
         emit("\tjalr r0, r1, 0");
     }
     emit_label(e->Lend);
-    if (accept_word("finally")) parse_statements();
+    g_npstk--;
+    if (accept_word("finally")) { pstk_push(Lafter, -1); parse_statements(); g_npstk--; }     /* in FINALLY: past END-PERFORM (16) */
     g_ecp_handler--;
     if (!accept_word("end-perform")) die_at(cur()->line, "expected END-PERFORM to end the exception-checking PERFORM, found %s", tok_desc(cur()));
+    emit_label(Lafter);
     /* after END-PERFORM: the state imperative-statement-1 left, with the
      * implicitly turned-on names back as they were before (rule 22) */
     ecp_restore(on1, loc1, f1, nf1, uo1, ul1);
@@ -9016,13 +9042,21 @@ static void parse_perform(void)
             n->kind != T_LP)
             die_at(t->line, "'%s' is not a paragraph or section", t->s);
         body.inline_body = 1;
+        body.Lexit = g_std >= 2002 ? new_label() : -1;     /* EXIT PERFORM is 2002: -std=85 output keeps its labels */
     }
 
     int test_after = 0;
     if (accept_word("with")) { expect_word("test"); if (accept_word("after")) test_after = 1; else expect_word("before"); }
     else if (accept_word("test")) { if (accept_word("after")) test_after = 1; else expect_word("before"); }
 
-    if (accept_word("until")) {
+    if (accept_word("until") && g_std >= 2002 && accept_word("exit")) {
+        /* UNTIL EXIT: a condition that never holds (14.9.28.4 rule 11); an
+         * EXIT PERFORM, a GOBACK or a STOP leaves it (cobol ISSUES-90) */
+        int Ltop = new_label();
+        emit_label(Ltop);
+        emit_body(&body);
+        emit_jump(Ltop);
+    } else if (g_tok[g_tp - 1].kind == T_WORD && !strcmp(g_tok[g_tp - 1].s, "until")) {
         Cond *c = parse_cond();
         int Ltop = new_label(), Lend = new_label();
         emit_label(Ltop);
@@ -9085,7 +9119,7 @@ static void parse_perform(void)
     } else {
         emit_body(&body);
     }
-    if (body.inline_body) expect_word("end-perform");
+    if (body.inline_body) { if (body.Lexit >= 0) emit_label(body.Lexit); expect_word("end-perform"); }
     /* an out-of-line PERFORM has no END-PERFORM: the next one belongs to
      * whatever inline PERFORM encloses this statement */
 }
@@ -11180,8 +11214,30 @@ static void parse_statement_1(void)
     if (!strcmp(v, "exit")) {
         advance();
         if (accept_word("program")) { emit("\tjal r0, .Lgb%d", g_unit); return; }
+        if (g_std >= 2002 && accept_word("perform")) {
+            /* 2023 14.9.14 format 3 (cobol ISSUES-90) */
+            int cycle = accept_word("cycle");
+            if (!g_npstk) die_at(t->line, "EXIT PERFORM is only in an inline or exception-checking PERFORM (2023 14.9.14.3 rule 8)");
+            if (cycle && g_pstk[g_npstk - 1].Lcycle < 0)
+                die_at(t->line, "EXIT PERFORM CYCLE is not in an exception-checking PERFORM (2023 14.9.14.3 rule 8)");
+            emit_jump(cycle ? g_pstk[g_npstk - 1].Lcycle : g_pstk[g_npstk - 1].Lexit);
+            return;
+        }
+        if (g_std >= 2002 && accept_word("paragraph")) {
+            if (!g_cur_para || g_cur_para->is_section) die_at(t->line, "EXIT PARAGRAPH is only in a paragraph (2023 14.9.14.3 rule 10)");
+            if (g_exit_par_label < 0) g_exit_par_label = new_label();
+            emit_jump(g_exit_par_label);
+            return;
+        }
+        if (g_std >= 2002 && accept_word("section")) {
+            if (g_cur_sec_id < 0) die_at(t->line, "EXIT SECTION is only in a section (2023 14.9.14.3 rule 9)");
+            if (g_exit_sec_label < 0) g_exit_sec_label = new_label();
+            emit_jump(g_exit_sec_label);
+            return;
+        }
         if (at_word("perform") || at_word("paragraph") || at_word("section"))
-            die_at(t->line, "EXIT %s is not in COBOL 85", cur()->s);
+            die_at(t->line, "EXIT %s is COBOL 2002; compile with -std=2002",
+                   at_word("perform") ? "PERFORM" : at_word("paragraph") ? "PARAGRAPH" : "SECTION");
         return;
     }
     if (!strcmp(v, "next")) die_at(t->line, "NEXT SENTENCE is only valid inside IF (or SEARCH)");
@@ -11510,8 +11566,8 @@ static void parse_procedure_division(void)
         if ((is_word(t, "identification") || is_word(t, "id")) && is_word(peek(1), "division")) {
             /* a contained program: from here to END PROGRAM the text is nested
              * programs; the containing program's flow ends as at its last line */
-            if (cur_par >= 0) emit_exit_check(cur_par);
-            if (cur_sec >= 0) emit_exit_check(cur_sec);
+            if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
+            if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
             cur_par = -1; cur_sec = -1; g_cur_sec_id = -1;
             emit("\tjal r0, .Lgb%d", g_unit);
             compile_nested_unit();
@@ -11520,8 +11576,8 @@ static void parse_procedure_division(void)
         }
         if (is_word(t, "end") && is_word(peek(1), "declaratives")) {
             if (!g_in_decl) die_at(t->line, "END DECLARATIVES without DECLARATIVES");
-            if (cur_par >= 0) emit_exit_check(cur_par);
-            if (cur_sec >= 0) emit_exit_check(cur_sec);
+            if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
+            if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
             cur_par = -1; cur_sec = -1; g_cur_sec_id = -1;
             advance(); advance(); expect_period();
             emit_label(Ldecl_end); g_in_decl = 0;
@@ -11533,8 +11589,8 @@ static void parse_procedure_division(void)
             Para *p = is_word(peek(1), "section") ? para_find(t->s) : para_find_in(t->s, cur_sec >= 0 ? cur_sec : -1);
             if (!p) p = para_find(t->s);
             if (!p) die_at(t->line, "internal: paragraph '%s' not prescanned", t->s);
-            if (cur_par >= 0) emit_exit_check(cur_par);
-            if (p->is_section && cur_sec >= 0) emit_exit_check(cur_sec);
+            if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
+            if (p->is_section && cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
             emit_para_label(p);
             g_cur_para = p;
             if (p->is_section) { cur_sec = p->id; cur_par = -1; g_cur_sec_id = p->id; } else cur_par = p->id;
@@ -11566,8 +11622,8 @@ static void parse_procedure_division(void)
         g_recover = outer;
         if (g_sentence_label >= 0) emit_label(g_sentence_label);
     }
-    if (cur_par >= 0) emit_exit_check(cur_par);
-    if (cur_sec >= 0) emit_exit_check(cur_sec);
+    if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
+    if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
 
     emit(".Lgb%d:", g_unit);
     if (has_ext_file)

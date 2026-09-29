@@ -2907,3 +2907,37 @@ the run. Refusals: std2002-ecp-raise, -ecp-file-io, -ecp-filename.
 Harness 277/277; -std=85 byte-identical on all 227 Open Systems
 programs; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+### 90. EXIT PERFORM [CYCLE], EXIT PARAGRAPH, EXIT SECTION, PERFORM UNTIL EXIT (2026-09-28)
+
+2023 14.9.14 formats 3 and 4, and 14.9.28 general rule 11. All four were
+refused as "not in COBOL 85", under -std=2002 too.
+
+- **EXIT PERFORM** leaves the innermost inline PERFORM, and with CYCLE
+  ends its current pass (rule 5). The inline PERFORMs being compiled are
+  a stack of (exit, cycle) labels: a body's cycle label follows its last
+  statement, and its exit label follows the loop.
+- **In an exception-checking PERFORM** (ISSUES-89), EXIT PERFORM goes to
+  FINALLY or END-PERFORM, and in FINALLY past END-PERFORM (rule 4, and
+  14.9.28 rule 16). CYCLE is refused there (rule 8).
+- **EXIT PARAGRAPH and EXIT SECTION** go to the end of the current
+  paragraph or section, before its return (rules 6, 7), so a PERFORM of
+  it returns. The label is made when an EXIT asks for it, and emitted
+  before the exit check at every place a paragraph or section closes.
+- **PERFORM UNTIL EXIT** loops until something leaves it (14.9.28.4 rule
+  11).
+
+-std=85 output is unchanged: the labels exist only under -std=2002, since
+new labels renumber every later label.
+
+On the way: the exception-checking PERFORM's pre-scans counted the
+PERFORM of EXIT PERFORM as a nested inline PERFORM, and so missed the
+WHEN phrases; a PERFORM after EXIT opens nothing now.
+
+2002/exitperform (no oracle): CYCLE and EXIT in a VARYING loop, EXIT
+from an inner loop, UNTIL EXIT, EXIT PARAGRAPH and EXIT SECTION through
+PERFORM, EXIT PERFORM to FINALLY. Refusals:
+std2002-exit-perform-outside, -exit-cycle-ecp, -exit-section-nosec,
+exit-perform-85. Harness 282/282; -std=85 byte-identical on all 227 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.

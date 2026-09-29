@@ -1,0 +1,9 @@
+varying: 01 02 04 05                              left at i = 06
+nested, the inner left at j = 2: 11 21 31                                
+until exit, left at 04
+para-a: first
+back from para-a
+sec-b: b1
+back from sec-b
+ecp: before
+ecp: finally

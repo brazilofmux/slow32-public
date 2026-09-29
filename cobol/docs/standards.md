@@ -291,6 +291,9 @@ refused with a message naming the switch.
 - **TYPEDEF and TYPE** (2026-09-28, ISSUES-79): type declarations,
   expanded over the tokens as the text defines them; STRONG types
   (ISSUES-80) with their MOVE and comparison rules. docs/typedef.md.
+- **EXIT PERFORM [CYCLE], EXIT PARAGRAPH, EXIT SECTION, PERFORM UNTIL
+  EXIT** (2026-09-28, ISSUES-90): 2023 14.9.14 formats 3-4 and 14.9.28
+  general rule 11.
 - **VALIDATE: not built, by ruling** (2026-09-28). 2023 marks the
   VALIDATE facility obsolete (Annex D.22) and its Annex E says it "has
   not been implemented as of the writing of this revision by any COBOL
