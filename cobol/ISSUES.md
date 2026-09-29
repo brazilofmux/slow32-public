@@ -4192,3 +4192,29 @@ Tests: bad/sort-rules (6 errors), bad/std2002-sort-table (5),
 -std=85 byte-identical on the Open Systems programs, majesty PASS, Open
 Systems paper unchanged. Page: docs/conformance/sort.md.
 
+### 113. The SEARCH sweep (2026-09-29)
+
+SEARCH ALL's WHEN was taken in any form, and a form the binary search
+could not use was scanned. Format 2 allows one: one WHEN, KEY = value or
+a single-valued condition-name, joined by AND, the key first, each KEY
+subscripted at the table's level by its first index without + or -,
+the values neither KEYs nor indexed by it, the keys a leading run of the
+KEY list, and a KEY phrase on the table at all. sa_validate refuses
+everything else. Its first cut asked for the index as the only
+subscript and refused CCVS-85's nested tables (NC233A, NC237A, NC238A);
+it checks the table's own level now. Also refused: NEXT SENTENCE with
+END-SEARCH.
+
+General rules: EC-RANGE-SEARCH-INDEX, registered and never raised, is
+raised by a serial SEARCH whose index is outside the table at the
+start (then AT END). GnuCOBOL departs from the text twice, both in
+free/searchvary (no oracle): VARYING an integer item is set from the
+index instead of incremented from its own value (GR 3b2), and an index
+past the table searches from the first occurrence instead of ending
+(GR 4).
+
+Tests: bad/search-rules (10 errors), free/searchrules (the oracle
+agrees), free/searchvary, 2002/ecsearchidx. Harness 496/496, CCVS-85
+unchanged, -std=85 byte-identical on the Open Systems programs, majesty
+PASS. Page: docs/conformance/search.md.
+

@@ -13325,6 +13325,45 @@ static int sa_collect(Cond *c, Sym *tbl, Sym *ix, Cond **rel, int *n)
     return 1;
 }
 
+/* SEARCH ALL's WHEN, as its format has it (2023 14.9.37.3 rules 8-11;
+ * X3.23-1985 SEARCH syntax rules): data-name = value, or a condition-name
+ * of one value, joined by AND; each data-name a KEY of the table
+ * subscripted by exactly its first index, the value neither a key nor
+ * indexed by it, the keys used a leading run of the KEY list */
+static int sa_key_named(const Opnd *o, Sym *tbl)      /* the KEY o names, whatever its subscripts; -1 */
+{
+    if (o->kind != O_REF) return -1;
+    const Sym *x = o->ref.sym;
+    int inside = 0;
+    for (const Sym *a = x; a; a = a->parent >= 0 ? &g_sym[a->parent] : NULL) if (a == tbl) { inside = 1; break; }
+    if (!inside) return -1;
+    for (int k = 0; k < tbl->nokey; k++) if (!strcmp(tbl->okey[k], x->name)) return k;
+    return -1;
+}
+static void sa_validate(Cond *c, Sym *tbl, Sym *ix, unsigned *used, int line)
+{
+    int e85 = g_std < 2002;
+    const char *r8 = e85 ? "X3.23-1985 SEARCH syntax rule 4" : "2023 14.9.37.3 rules 8-9", *r10 = e85 ? "X3.23-1985 SEARCH syntax rule 4" : "2023 14.9.37.3 rule 10";
+    if (c->kind == C_AND) { sa_validate(c->a, tbl, ix, used, line); sa_validate(c->b, tbl, ix, used, line); return; }
+    if (c->kind != C_REL || c->op != R_EQ || c->neg)
+        die_at(line, "SEARCH ALL ... WHEN: a key = a value, or a condition-name of one value, joined by AND; no OR, NOT or other relation (%s)", r8);
+    int kx = sa_key_named(&c->x, tbl), ky = sa_key_named(&c->y, tbl);
+    if (kx < 0)
+        die_at(line, ky >= 0 ? "SEARCH ALL ... WHEN: the KEY data-name is written first, key = value (%s)"
+                             : "SEARCH ALL ... WHEN: each relation tests a KEY of the table (%s)", r8);
+    /* the index at the table's own level; the outer levels' subscripts
+     * are whatever the program says (CCVS-85 NC233A, NC237A) */
+    const Ref *kr = &c->x.ref; int lv = tbl->ndims - 1;
+    if (kr->rm || kr->nsub != kr->sym->ndims || lv < 0 || lv >= kr->nsub || kr->sub[lv].sym != ix || kr->sub[lv].adj != 0)
+        die_at(line, "SEARCH ALL ... WHEN: the key '%s' is subscripted by the table's first index '%s' at its level, without + or - (%s)",
+               c->x.ref.sym->name, ix->name, r8);
+    if (ky >= 0 || sa_uses_index(&c->y, ix))
+        die_at(line, "SEARCH ALL ... WHEN: the value compared with '%s' is neither a key of the table nor subscripted by '%s' (%s)",
+               c->x.ref.sym->name, ix->name, r10);
+    if (*used & (1u << kx)) die_at(line, "SEARCH ALL ... WHEN: the key '%s' is tested twice", c->x.ref.sym->name);
+    *used |= 1u << kx;
+}
+
 static void parse_search(void)
 {
     int all = accept_word("all");
@@ -13356,14 +13395,26 @@ static void parse_search(void)
         g_noemit++; parse_statements(); g_noemit--;
         save_atend = g_tp;
     }
-    Cond *wc[16]; int when_start[16], when_body_end[16], nwhen = 0;
+    Cond *wc[16]; int when_start[16], when_body_end[16], nwhen = 0, next_sent = 0;
     while (at_word("when")) {
         if (nwhen >= 16) die_at(cur()->line, "too many WHENs in SEARCH");
+        int wline = cur()->line;
+        if (all && nwhen) die_at(wline, "SEARCH ALL has one WHEN (%s)", g_std < 2002 ? "X3.23-1985 SEARCH format 2" : "2023 14.9.37 format 2");
         advance();
         wc[nwhen] = parse_cond();
+        if (all) {
+            if (!tbl->nokey) die_at(wline, "SEARCH ALL '%s': its OCCURS clause has no KEY phrase (%s)", tbl->name,
+                                   g_std < 2002 ? "X3.23-1985 SEARCH syntax rule 1" : "2023 14.9.37.3 rule 7");
+            unsigned used = 0;
+            sa_validate(wc[nwhen], tbl, ix, &used, wline);
+            for (int k = 0; k < tbl->nokey; k++)
+                if (!(used & (1u << k)) && (used >> k))
+                    die_at(wline, "SEARCH ALL ... WHEN tests a later KEY without '%s', which comes before it (%s)", tbl->okey[k],
+                           g_std < 2002 ? "X3.23-1985 SEARCH syntax rule 4" : "2023 14.9.37.3 rule 11");
+        }
         when_start[nwhen] = g_tp;
         g_noemit++;
-        if (at_word("next")) { advance(); expect_word("sentence"); } else parse_statements();
+        if (at_word("next")) { advance(); expect_word("sentence"); next_sent = 1; } else parse_statements();
         g_noemit--;
         when_body_end[nwhen] = g_tp;
         nwhen++;
@@ -13432,6 +13483,27 @@ static void parse_search(void)
         int Ltop = new_label();
         Opnd one; memset(&one, 0, sizeof one); one.kind = O_NUM; numlit_from_int(&one.num, 1); one.line = t.line;
         if (all) emit_move(&one, &ixr);
+        else if (ec_on_name("EC-RANGE-SEARCH-INDEX")) {
+            /* the search index outside the table at the start: the search
+             * is unsuccessful and the condition exists (2023 14.9.37.4 GR 4) */
+            int Lok = new_label(), Lbad = new_label();
+            Opnd ixo; memset(&ixo, 0, sizeof ixo); ixo.kind = O_REF; ixo.ref = ixr; ixo.line = t.line;
+            emit_hot_value(&ixo);
+            emit("\tstw sp+%d, r1", SLOT_A);
+            emit("\tbge r0, r1, .L%d", Lbad);                  /* 0 or less */
+            if (tbl->odo_dep_sym) {
+                Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
+                if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
+                else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+            } else emit_li("r1", tbl->occurs);
+            emit("\tldw r2, sp+%d", SLOT_A);
+            emit("\tslt r1, r1, r2");
+            emit("\tbeq r1, r0, .L%d", Lok);
+            emit_label(Lbad);
+            emit_ec_raise(ec_find("EC-RANGE-SEARCH-INDEX", 0));
+            emit_jump(Latend);
+            emit_label(Lok);
+        }
         emit_label(Ltop);
         /* at end when the index passes the bound */
         Opnd ixo; memset(&ixo, 0, sizeof ixo); ixo.kind = O_REF; ixo.ref = ixr; ixo.line = t.line;
@@ -13468,6 +13540,8 @@ static void parse_search(void)
         emit_jump(Lend);
     }
     emit_label(Lend);
+    if (at_word("end-search") && next_sent)
+        die_at(cur()->line, "SEARCH with NEXT SENTENCE ends at the period, not END-SEARCH (%s)", g_std < 2002 ? "X3.23-1985 SEARCH syntax rule 5" : "2023 14.9.37.3 rule 4");
     accept_word("end-search");
 }
 
