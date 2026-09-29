@@ -2851,3 +2851,59 @@ CHAR-NATIONAL and BOOLEAN-OF-INTEGER; a part to the end and its LENGTH;
 a fixed part within the result and one past it (fatal). Harness 273/273;
 -std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 89. The exception-checking PERFORM (2026-09-28)
+
+2023 14.9.28 format 3: `PERFORM [WITH LOCATION] imperative-statement-1
+{WHEN EXCEPTION names imperative-statement-2}... [WHEN OTHER EXCEPTION
+...] [WHEN COMMON EXCEPTION ...] [FINALLY ...] END-PERFORM`.
+
+ISSUES-53 deferred this because its range looked dynamic, which would
+conflict with this compiler's compile-time exception model. The text
+turns out to define its checking lexically: general rule 14 is an
+implicit TURN for the WHEN names "before the first statement in
+imperative-statement-1", and an implicit PUSH ALL / TURN OFF ALL / POP
+ALL around the phrases. So it fits the model.
+
+- **Recognizing it.** A pre-scan (`perform_is_ecp`) finds WHEN ...
+  EXCEPTION or FINALLY at the PERFORM's own level, counting nested
+  inline PERFORMs by the same test `parse_perform` uses. It is not a
+  speculative parse: that would apply the >>TURNs inside twice.
+- **Dispatch.** While imperative-statement-1 is compiled, the PERFORM is
+  on a compile-time stack. `emit_ec_dispatch` asks it first
+  (`ecp_dispatch`): the name, its group, EC-ALL, by the USE rules
+  (rule 17), FILE matching the raising file; else WHEN OTHER (18). A
+  match stores where to resume and whether the condition was fatal in
+  two data words, and jumps; no USE declarative runs.
+- **Returning** (rule 20). imperative-statement-1 is compiled a
+  statement at a time, each with a resume label after it. A WHEN
+  phrase's end goes on to WHEN COMMON, and the last phrase returns: a
+  fatal condition ends the run, a nonfatal one jumps back to after the
+  statement it arose in. WHEN OTHER resumes at the end of the PERFORM,
+  which is FINALLY (16, 18).
+- **State.** Checking is off in the phrases (rule 14), and a RAISE there
+  is refused (14.9.29.3 rule 4). After END-PERFORM the names turned on
+  for the PERFORM are off again unless they were on before (22), and
+  per-file settings are restored.
+
+**Limits, documented:**
+- A condition raised in code outside the PERFORM's text -- a paragraph
+  PERFORMed from inside it, with checking turned on there -- goes to
+  USE declaratives. Rule 17 says "during the execution of
+  imperative-statement-1", which reaches it; that would need a
+  run-time handler stack.
+- The resume words are static, so a RECURSIVE program raising inside a
+  nested activation of the same PERFORM would share them.
+- A per-file TURN made inside imperative-statement-1 is not retained
+  past END-PERFORM.
+- WHEN EXCEPTION with a bare file-name or an open mode is refused.
+- EXIT PERFORM does not exist here at all.
+
+2002/ecperform (no oracle): a nonfatal RAISE resumed with its USE
+declarative bypassed, WITH LOCATION, WHEN OTHER and WHEN COMMON,
+FINALLY, the enablement gone after END-PERFORM and a USE running once
+TURNed on outside, a fatal EC-BOUND-SUBSCRIPT's phrase then the end of
+the run. Refusals: std2002-ecp-raise, -ecp-file-io, -ecp-filename.
+Harness 277/277; -std=85 byte-identical on all 227 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.

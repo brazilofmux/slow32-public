@@ -6047,6 +6047,7 @@ static int is_terminator(const char *w)
         "end-compute", "end-call", "end-string", "end-unstring", "end-search", "end-start",
         "end-delete", "end-rewrite", "end-return", "end-accept", "end-display", "end-program", NULL };
     for (int i = 0; t[i]; i++) if (!strcmp(w, t[i])) return 1;
+    if (g_std >= 2002 && !strcmp(w, "finally")) return 1;     /* an exception-checking PERFORM's (cobol ISSUES-89) */
     return 0;
 }
 
@@ -8350,6 +8351,15 @@ static int ec_on_io(const char *name, int file);
  * for all files; a TURN without a file clears a condition's overrides */
 typedef struct { int ec, file; unsigned char on, loc; } EcFile;
 static EcFile g_ecf[256]; static int g_necf;
+/* an exception-checking PERFORM (2023 14.9.28 format 3; cobol ISSUES-89)
+ * whose imperative-statement-1 is being compiled: its WHEN phrases, the
+ * labels of their handlers, and the data words a raise leaves for the
+ * handler's return -- where to resume, and whether the condition was
+ * fatal (general rule 20) */
+typedef struct { int ec[16], file[16], n, label; } EcpWhen;
+typedef struct { EcpWhen w[16]; int nw, Lother, Lcommon, Lend, id, resume; } Ecp;
+static Ecp *g_ecp[8]; static int g_necp, g_ecp_handler;
+
 static void ecf_set(int c, int file, int on, int loc)
 {
     for (int k = 0; k < g_necf; k++) if (g_ecf[k].ec == c && g_ecf[k].file == file) { g_ecf[k].on = (unsigned char)on; g_ecf[k].loc = (unsigned char)loc; return; }
@@ -8831,9 +8841,169 @@ static int times_follows(void)
     return is_word(&g_tok[j], "times");
 }
 
+/* does the inline PERFORM at the cursor end in WHEN ... EXCEPTION or
+ * FINALLY at its own level: an exception-checking PERFORM */
+static int perform_is_ecp(void)
+{
+    int depth = 0;
+    for (int k = g_tp; k < g_ntok; k++) {
+        Tok *t = &g_tok[k];
+        if (t->kind == T_PERIOD || t->kind == T_EOF) return 0;
+        if (t->kind != T_WORD) continue;
+        if (!strcmp(t->s, "perform")) {
+            Tok *n = &g_tok[k + 1];
+            if (!(at_para_name(n) && para_find(n->s))) depth++;       /* inline: closed by END-PERFORM */
+        } else if (!strcmp(t->s, "end-perform")) { if (depth-- == 0) return 0; }
+        else if (depth == 0 && !strcmp(t->s, "finally")) return 1;
+        else if (depth == 0 && !strcmp(t->s, "when")) {
+            Tok *a = &g_tok[k + 1], *b = &g_tok[k + 2];
+            if (is_word(a, "exception") || ((is_word(a, "other") || is_word(a, "common")) && is_word(b, "exception"))) return 1;
+        }
+    }
+    return 0;
+}
+
+static void ecp_save(unsigned char *on, unsigned char *loc, EcFile *f, int *nf, int *uo, int *ul)
+{
+    memcpy(on, g_ec_on, sizeof g_ec_on); memcpy(loc, g_ec_loc, sizeof g_ec_loc);
+    memcpy(f, g_ecf, sizeof g_ecf); *nf = g_necf; *uo = g_ecuser_on; *ul = g_ecuser_loc;
+}
+static void ecp_restore(const unsigned char *on, const unsigned char *loc, const EcFile *f, int nf, int uo, int ul)
+{
+    memcpy(g_ec_on, on, sizeof g_ec_on); memcpy(g_ec_loc, loc, sizeof g_ec_loc);
+    memcpy(g_ecf, f, sizeof g_ecf); g_necf = nf; g_ecuser_on = uo; g_ecuser_loc = ul;
+}
+
+/* each level-3 condition a WHEN name covers, turned on (for one file with
+ * FILE), as an implicit TURN before imperative-statement-1 (rule 14) */
+static void ecp_turn_on(int i, int file, int loc)
+{
+    int lv = ec_level(i), warning = ec_find("EC-I-O-WARNING", 0);
+    for (int c = 0; c < NEC + g_necu; c++) {
+        if (ec_level(c) != 3) continue;
+        int hit = c == i || lv == 1 || (lv == 2 && ec_group(c) == i);
+        if (!hit || (c == warning && c != i)) continue;
+        if (file >= 0) { int l; if (!ec_on_file(c, file, &l)) ecf_set(c, file, 1, loc); }
+        else if (!g_ec_on[c]) { g_ec_on[c] = 1; g_ec_loc[c] = (unsigned char)loc; }
+        else if (loc) g_ec_loc[c] = 1;
+    }
+    if (lv == 1 && file < 0) { g_ecuser_on = 1; g_ecuser_loc = loc; }
+}
+
+/* PERFORM [WITH LOCATION] imperative-statement-1 {WHEN EXCEPTION ...}...
+ * [WHEN OTHER EXCEPTION ...] [WHEN COMMON EXCEPTION ...] [FINALLY ...]
+ * END-PERFORM (2023 14.9.28 format 3) */
+static void parse_perform_ecp(void)
+{
+    static int ecp_ids;
+    int line = cur()->line, loc = 0;
+    if (at_word("with") && is_word(peek(1), "location")) { advance(); advance(); loc = 1; }
+    if (g_necp == 8) die_at(line, "exception-checking PERFORMs nested more than 8 deep");
+    Ecp *e = xmalloc(sizeof *e); memset(e, 0, sizeof *e);
+    e->id = ecp_ids++; e->Lother = e->Lcommon = -1; e->Lend = new_label();
+    /* the WHEN phrases first, from the tokens: their names are turned on
+     * before imperative-statement-1 is compiled */
+    int depth = 0;
+    for (int k = g_tp; k < g_ntok; k++) {
+        Tok *t = &g_tok[k];
+        if (t->kind == T_PERIOD || t->kind == T_EOF) break;
+        if (t->kind != T_WORD) continue;
+        if (!strcmp(t->s, "perform")) { Tok *n = &g_tok[k + 1]; if (!(at_para_name(n) && para_find(n->s))) depth++; continue; }
+        if (!strcmp(t->s, "end-perform")) { if (depth-- == 0) break; continue; }
+        if (depth || strcmp(t->s, "when")) continue;
+        if (is_word(&g_tok[k + 1], "other") && is_word(&g_tok[k + 2], "exception")) { e->Lother = new_label(); continue; }
+        if (is_word(&g_tok[k + 1], "common") && is_word(&g_tok[k + 2], "exception")) { e->Lcommon = new_label(); continue; }
+        if (!is_word(&g_tok[k + 1], "exception")) continue;
+        if (e->nw == 16) die_at(t->line, "more than 16 WHEN phrases");
+        EcpWhen *w = &e->w[e->nw++]; w->label = new_label();
+        for (int q = k + 2; q < g_ntok && g_tok[q].kind == T_WORD && !is_verb(g_tok[q].s); q++) {
+            Tok *x = &g_tok[q];
+            if (!strncmp(x->s, "ec-", 3)) {
+                int i = ec_find(x->s, x->line);
+                if (i < 0) die_at(x->line, "'%s' is not an exception-name", x->s);
+                if (w->n == 16) die_at(x->line, "more than 16 exception-names in one WHEN phrase");
+                w->ec[w->n] = i; w->file[w->n] = -1;
+                if (is_word(&g_tok[q + 1], "file")) {
+                    File *f = file_find(g_tok[q + 2].s);
+                    if (!f) die_at(x->line, "WHEN %s FILE: '%s' is not a file-name", ec_name(i), g_tok[q + 2].s);
+                    if (strncmp(ec_name(i), "EC-I-O", 6)) die_at(x->line, "FILE follows only an EC-I-O exception-name (2023 14.9.28.3 rule 16)");
+                    w->file[w->n] = (int)(f - g_files); q += 2;
+                }
+                w->n++;
+                continue;
+            }
+            die_at(x->line, "WHEN EXCEPTION with a file-name or an open mode is not implemented yet (exception-names, and name FILE file-name, are)");
+        }
+        if (!w->n) die_at(t->line, "WHEN EXCEPTION needs an exception-name");
+    }
+    unsigned char on0[NEC + 64], loc0[NEC + 64], on1[NEC + 64], loc1[NEC + 64];
+    EcFile f0[256], f1[256]; int nf0, nf1, uo0, ul0, uo1, ul1;
+    ecp_save(on0, loc0, f0, &nf0, &uo0, &ul0);
+    for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) ecp_turn_on(e->w[w].ec[q], e->w[w].file[q], loc);
+    /* imperative-statement-1, a statement at a time: a raise resumes after
+     * the statement it occurred in (rule 20) */
+    g_ecp[g_necp++] = e;
+    while (!at_word("when") && !at_word("finally") && !at_word("end-perform") && !at_scope_end()) {
+        e->resume = new_label();
+        parse_statement();
+        emit_label(e->resume);
+    }
+    g_necp--;
+    emit_jump(e->Lend);
+    /* the phrases: checking off inside them (the implicit PUSH ALL and
+     * TURN OFF ALL, rule 14), no WHEN of this PERFORM for their raises (21) */
+    ecp_save(on1, loc1, f1, &nf1, &uo1, &ul1);
+    memset(g_ec_on, 0, sizeof g_ec_on); memset(g_ec_loc, 0, sizeof g_ec_loc); g_necf = 0; g_ecuser_on = 0;
+    char cell[32];
+    g_ecp_handler++;
+    int wi = 0;
+    for (;;) {
+        int is_common = 0;
+        if (at_word("when") && is_word(peek(1), "exception")) {
+            advance(); advance();
+            while (cur()->kind == T_WORD && !is_verb(cur()->s)) advance();     /* the names, read already */
+            emit_label(e->w[wi++].label);
+        } else if (at_word("when") && is_word(peek(1), "other")) { advance(); advance(); expect_word("exception"); emit_label(e->Lother); }
+        else if (at_word("when") && is_word(peek(1), "common")) { advance(); advance(); expect_word("exception"); emit_label(e->Lcommon); is_common = 1; }
+        else break;
+        parse_statements();
+        /* a WHEN phrase goes on to WHEN COMMON (17-19); the last of them
+         * returns: a fatal condition ends the run, a nonfatal one resumes
+         * where the raise left it (20) */
+        if (!is_common && e->Lcommon >= 0) { emit_jump(e->Lcommon); continue; }
+        snprintf(cell, sizeof cell, ".Lecpf%d", e->id); emit_la("r2", cell); emit("\tldw r1, r2+0");
+        { int Lnf = new_label(); emit("\tbeq r1, r0, .L%d", Lnf); emit_call("cob_ec_abort"); emit_label(Lnf); }
+        snprintf(cell, sizeof cell, ".Lecpr%d", e->id); emit_la("r2", cell); emit("\tldw r1, r2+0");
+        emit("\tjalr r0, r1, 0");
+    }
+    emit_label(e->Lend);
+    if (accept_word("finally")) parse_statements();
+    g_ecp_handler--;
+    if (!accept_word("end-perform")) die_at(cur()->line, "expected END-PERFORM to end the exception-checking PERFORM, found %s", tok_desc(cur()));
+    /* after END-PERFORM: the state imperative-statement-1 left, with the
+     * implicitly turned-on names back as they were before (rule 22) */
+    ecp_restore(on1, loc1, f1, nf1, uo1, ul1);
+    for (int c = 0; c < NEC + g_necu; c++) {
+        int implied = 0;
+        for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) {
+            int i = e->w[w].ec[q], lv = ec_level(i);
+            if (c == i || lv == 1 || (lv == 2 && ec_group(c) == i)) implied = 1;
+        }
+        if (implied && on1[c] && !on0[c]) { g_ec_on[c] = 0; g_ec_loc[c] = loc0[c]; }
+    }
+    g_necf = nf0; memcpy(g_ecf, f0, sizeof g_ecf);        /* the per-file settings the WHENs made go too */
+    emit("\t.data");
+    emit("\t.p2align 2");
+    emit(".Lecpr%d:\t.word 0", e->id);
+    emit(".Lecpf%d:\t.word 0", e->id);
+    emit("\t.text");
+}
+
 static void parse_perform(void)
 {
     Body body; memset(&body, 0, sizeof body);
+    if (g_std >= 2002 && ((at_word("with") && is_word(peek(1), "location")) ||
+        (!(at_para_name(cur()) && para_find(cur()->s)) && perform_is_ecp()))) { parse_perform_ecp(); return; }
     if (at_para_name(cur()) && para_find(cur()->s)) {
         body.from = expect_para();
         if (accept_word("thru") || accept_word("through")) body.thru = expect_para();
@@ -8964,8 +9134,37 @@ static void parse_goto(void)
 /* after exception condition i is raised: perform the declarative that
  * applies -- this program's USE for the name, else its group's, else
  * EC-ALL's (2023 14.6.13.1.3-4) -- then stop the run if i is fatal */
+/* a raise inside imperative-statement-1: to the matching WHEN, by the USE
+ * rules' order (the name, its group, EC-ALL; 17), else WHEN OTHER (18);
+ * returns 1 when it went to one */
+static int ecp_dispatch(int i)
+{
+    int cand[3] = { i, ec_group(i), ec_find("EC-ALL", 0) };
+    for (int k = g_necp - 1; k >= 0; k--) {
+        Ecp *e = g_ecp[k];
+        int target = -1, resume = e->resume;
+        for (int c = 0; c < 3 && target < 0; c++)
+            for (int w = 0; w < e->nw && target < 0; w++)
+                for (int q = 0; q < e->w[w].n; q++)
+                    if (e->w[w].ec[q] == cand[c] && (e->w[w].file[q] < 0 || e->w[w].file[q] == g_ec_fidx)) { target = e->w[w].label; break; }
+        if (target < 0 && e->Lother >= 0) { target = e->Lother; resume = e->Lend; }
+        if (target < 0) continue;
+        char lab[32];
+        snprintf(lab, sizeof lab, ".L%d", resume); emit_la("r1", lab);
+        snprintf(lab, sizeof lab, ".Lecpr%d", e->id); emit_la("r2", lab);
+        emit("\tstw r2+0, r1");
+        emit_li("r1", ec_fatal(i));
+        snprintf(lab, sizeof lab, ".Lecpf%d", e->id); emit_la("r2", lab);
+        emit("\tstw r2+0, r1");
+        emit_jump(target);
+        return 1;
+    }
+    return 0;
+}
+
 static void emit_ec_dispatch(int i)
 {
+    if (g_necp && ecp_dispatch(i)) return;          /* the WHEN takes it; USE does not (17) */
     int cand[3] = { i, ec_group(i), ec_find("EC-ALL", 0) }, sec = -1;
     for (int c = 0; c < 3 && sec < 0; c++)
         for (int u = unit_use_own_from(); u < g_nuse; u++)
@@ -9069,6 +9268,7 @@ static void parse_raise(void)
     int i = ec_find(cur()->s, line);
     if (i < 0) die_at(line, "'%s' is not an exception-name", cur()->s);
     if (ec_level(i) != 3) die_at(line, "RAISE needs a level-3 exception-name, not %s", ec_name(i));
+    if (g_ecp_handler) die_at(line, "RAISE in a WHEN or FINALLY phrase of an exception-checking PERFORM (2023 14.9.29.3 rule 4)");
     advance();
     if (!g_ec_on[i]) return;
     emit_ec_raise(i);

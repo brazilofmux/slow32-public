@@ -1,0 +1,12 @@
+1: before
+  WHEN EC-USER-A [ecperform; m1 OF main; 30]
+  WHEN COMMON
+1: after the raise, resumed
+  WHEN OTHER: EC-USER-B
+  WHEN COMMON
+1: finally
+2: after END-PERFORM, EC-USER-A is off again:
+3: turned on outside, its USE declarative runs:
+  USE for EC-USER-A
+4: a fatal condition in a PERFORM:
+  WHEN EC-BOUND-SUBSCRIPT, then the run ends
