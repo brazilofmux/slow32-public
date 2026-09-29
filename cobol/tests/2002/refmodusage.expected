@@ -1,0 +1,11 @@
+a(2:2): 23  a(k:2): 23  length: 2
+to national: [23]
+a after a(3:2) receives 98: 1298
+b(2:2): 01
+b after b(1:2) receives 11: 1110
+b(3:1) is on
+f(2:3): 100
+f after f(4:3) receives 111: 110111
+the bits in place: 110111 00 = X'DC'
+fl(7:4) across a byte: 000000111100
+fl(7:4) = 1111

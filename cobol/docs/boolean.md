@@ -67,15 +67,20 @@ A bit item's descriptor holds its bit count and its first bit's place,
 and libcob reads it as the DISPLAY form and writes back only its own
 bits, so every boolean operation takes bits as it takes characters.
 
-Not implemented, refused by name: OCCURS, REDEFINES, SYNCHRONIZED and
-reference modification of a bit item or bit group; a VALUE on a bit
+Reference modification of a bit item or bit group counts bits (8.4.3.3.4
+rule 5a): its part starts at any bit and may cross a byte (ISSUES-82);
+literal positions only for now.
+
+Not implemented, refused by name: OCCURS, REDEFINES and SYNCHRONIZED of
+a bit item or bit group; reference modification at a computed position; a VALUE on a bit
 group; bit items in INSPECT, STRING and UNSTRING, whose runtimes work on
 characters.
 
 ## Not yet
 
-Reference modification of a USAGE NATIONAL or USAGE BIT item; ALL in a
-boolean expression; the items listed under USAGE BIT.
+Reference modification of a USAGE BIT item at a computed position (a
+literal one works, ISSUES-82); ALL in a boolean expression; the other
+items listed under USAGE BIT.
 
 ## Oracle
 

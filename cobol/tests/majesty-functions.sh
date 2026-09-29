@@ -62,7 +62,10 @@ fam=(); for f in $FAM; do fam+=("$O/$f.cbl"); done
     || { echo "FAIL oracle build"; exit 1; }
 
 # the program's own output: the DBT's lines are not the program's
-ours() { (cd "$S" && "$DBT" "$1.s32x" 2>/dev/null) | grep -v '^\[DBT\]\|^$' ; }
+# jerm dates its lines around today: the oracle's container runs in UTC,
+# so ours does too, or the two disagree on "today" for the hours when the
+# local date and UTC's differ (cobol ISSUES-82)
+ours() { (cd "$S" && TZ=UTC "$DBT" "$1.s32x" 2>/dev/null) | grep -v '^\[DBT\]\|^$' ; }
 gnu()  { "$ENG" run --rm -v "$G:/w" -w /w gnucobol:4.0-runtime "./$1" 2>&1; }
 
 ours jerm > "$S/jerm.out"; gnu jerm > "$G/jerm.out"

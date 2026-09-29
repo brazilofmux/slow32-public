@@ -2665,3 +2665,38 @@ free/lenrefmod (oracle, documented divergence); 2002/natrefmod gains a
 computed national length. Harness 262/262; -std=85 byte-identical on all
 227 Open Systems programs; majesty PASS; majesty-functions PASS; Open
 Systems paper unchanged.
+
+### 82. Reference modification of USAGE NATIONAL and USAGE BIT items (2026-09-28)
+
+Refused since ISSUES-76 and -78. 2023 8.4.3.3.4 says what the part is
+(rule 6): it keeps the item's class, category and usage, except that a
+numeric or numeric-edited item gives a national part under USAGE
+NATIONAL, an alphanumeric one otherwise. Positions are characters, or
+bits under USAGE BIT (rule 5a).
+
+- **USAGE NATIONAL.** Positions count characters (`rm_nat`). A numeric
+  item's part is national, both sending and receiving:
+  `opnd_is_national` and the national MOVE path now say so. A boolean
+  item's part is boolean in national usage (`part_desc`). The runtime's
+  `cob_refmod_desc` and `cob_refmod_len` follow for computed positions.
+- **USAGE BIT and bit groups.** Positions count bits (`rm_bit`). The
+  part's address is the byte holding its first bit, and its descriptor
+  a BIT one, whose scale is that bit's place. So a part may start inside
+  a byte and cross into the next. Literal positions only: a computed one
+  would need the address and the bit offset computed together at run
+  time, and is refused by name.
+
+**Found on the way: majesty-functions flaked by the clock.** jerm dates
+its 400,001 lines around today. The oracle's container runs in UTC and
+ours ran in local time, so from 18:00 to midnight MDT the two disagreed
+by a day ("FAIL jerm: output differs", the first line one day apart).
+Not this change: rerun with our side in UTC, it is byte-identical. The
+script now runs ours with TZ=UTC.
+
+2002/refmodusage (no oracle): a USAGE NATIONAL numeric part sending,
+receiving and computed, with LENGTH; a USAGE NATIONAL boolean part
+sending, receiving and as a condition; bit parts reading, receiving,
+checked in the record's bytes, and one crossing a byte.
+std2002-bit-refmod now checks the computed position. Harness 263/263;
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS (with the fix); Open Systems paper unchanged.

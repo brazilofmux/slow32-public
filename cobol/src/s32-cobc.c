@@ -3349,6 +3349,7 @@ typedef struct {
     int rm;                         /* reference modification item(start:len) */
     long rm_start, rm_len;          /* literal values, or 0 when an expression / omitted */
     int rm_nat;                     /* a national item's: start and length count characters, two bytes each */
+    int rm_bit;                     /* a USAGE BIT item's or bit group's: they count bits (cobol ISSUES-82) */
     int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
@@ -3433,6 +3434,28 @@ static int strong_table(Sym *g, int base)
     for (int c = g->child; c >= 0; c = g_sym[c].sibling)
         if (!g_sym[c].is_cond && !g_sym[c].is_rename && g_sym[c].redefines < 0) n += strong_table_at(g, &g_sym[c], base);
     return n;
+}
+
+/* the descriptor of a reference-modified part with literal positions
+ * (2023 8.4.3.3.4 rule 6): national for a national item or a numeric
+ * USAGE NATIONAL one, boolean (in the item's usage) for a boolean one,
+ * alphanumeric otherwise */
+static int bool_desc(int len);
+static int part_desc(const Ref *r)
+{
+    Sym *s = r->sym; int len = (int)r->rm_len;
+    if (r->rm_bit) {
+        Desc d; memset(&d, 0, sizeof d);
+        d.cat = COB_BOOLEAN; d.usage = COB_U_BIT; d.size = len; d.scale = (signed char)((s->bitoff + r->rm_start - 1) % 8);
+        return desc_add(&d);
+    }
+    if (sym_is_boolean(s)) {
+        if (!r->rm_nat) return bool_desc(len);
+        Desc d; memset(&d, 0, sizeof d);
+        d.cat = COB_BOOLEAN; d.usage = COB_U_NATIONAL; d.size = 2 * len;
+        return desc_add(&d);
+    }
+    return r->rm_nat ? nat_desc(2 * len) : str_desc(len);
 }
 
 /* in a strongly-typed group: the group itself or anything under one */
@@ -3572,10 +3595,11 @@ static void parse_ref(Ref *r)
         if (r->sym->strong || (sym_in_strong(r->sym) && (is_numeric_sym(r->sym) || r->sym->pi.edited)))
             die_at(r->line, "'%s' is %s and is not reference-modified (2023 8.4.2.4)", r->sym->name,
                    r->sym->strong ? "a strongly-typed group" : "a numeric or edited item in a strongly-typed group");
-        if ((!r->sym->is_group && (r->sym->usage == U_NATIONAL || r->sym->usage == U_BIT)) || r->sym->bitgroup)
-            die_at(r->line, "reference modification of the USAGE %s item '%s' is not implemented yet",
-                   r->sym->usage == U_NATIONAL ? "NATIONAL" : "BIT", r->sym->name);
-        r->rm_nat = sym_is_national(r->sym);   /* 2023 8.4.2.4: character positions; a national group as elementary */
+        /* 2023 8.4.3.3.4: a USAGE NATIONAL item counts characters, its part
+         * national, or boolean for a boolean item (rule 6); a USAGE BIT item
+         * or bit group counts bits (rule 5a) */
+        r->rm_nat = sym_is_national(r->sym) || (!r->sym->is_group && r->sym->usage == U_NATIONAL);
+        r->rm_bit = (!r->sym->is_group && r->sym->usage == U_BIT) || r->sym->bitgroup;   /* 2023 8.4.2.4: character positions; a national group as elementary */
         if (cur()->kind == T_NUM && peek(1)->kind == T_COLON) {
             NumLit n; numlit_parse(cur(), &n);
             if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the start of a reference modification must be a positive integer");
@@ -3595,7 +3619,9 @@ static void parse_ref(Ref *r)
         }
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
-        long chars = r->rm_nat ? r->sym->size / 2 : r->sym->size;
+        if (r->rm_bit && (!r->rm_start || (r->rm_l0 >= 0 && !r->rm_len)))
+            die_at(r->line, "reference modification of the USAGE BIT item '%s' with a computed position is not implemented yet", r->sym->name);
+        long chars = r->rm_bit ? r->sym->bits : r->rm_nat ? r->sym->size / 2 : r->sym->size;
         if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
         if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
         if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
@@ -4192,6 +4218,7 @@ static int ref_needs_call(const Ref *r)
 static int ref_static_len(const Ref *r)
 {
     if (!r->rm) return r->sym->size;
+    if (r->rm_bit) return (int)((r->sym->bitoff + r->rm_start - 1) % 8 + r->rm_len + 7) / 8;   /* the bytes the bits span */
     return r->rm_len ? (int)r->rm_len * (r->rm_nat ? 2 : 1) : -1;
 }
 
@@ -4281,7 +4308,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     int runtime = ref_has_runtime_sub(r);
     for (int i = 0; i < r->nsub; i++)
         if (!r->sub[i].sym) off += (int)(r->sub[i].lit - 1) * s->dim_stride[i];
-    if (r->rm && r->rm_start) off += ((int)r->rm_start - 1) * (r->rm_nat ? 2 : 1);
+    if (r->rm && r->rm_start) off += r->rm_bit ? (s->bitoff + (int)r->rm_start - 1) / 8 : ((int)r->rm_start - 1) * (r->rm_nat ? 2 : 1);
     if (runtime) emit("\tadd r11, r0, r0");
     for (int i = 0; i < r->nsub; i++) {
         if (!r->sub[i].sym) continue;
@@ -4945,8 +4972,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
     case O_REF:
         *addr = arg_ref(&o->ref);
         if (!o->ref.rm) *desc = arg_desc(sym_desc(o->ref.sym));
-        else if (o->ref.rm_len) *desc = arg_desc(o->ref.rm_nat ? nat_desc(2 * (int)o->ref.rm_len)
-                                                 : sym_is_boolean(o->ref.sym) ? bool_desc((int)o->ref.rm_len) : str_desc((int)o->ref.rm_len));
+        else if (o->ref.rm_len) *desc = arg_desc(part_desc(&o->ref));
         else *desc = arg_rdesc(&o->ref);
         return;
     case O_FUNC:
@@ -6576,7 +6602,9 @@ static int opnd_is_national(const Opnd *o)
 {
     if (o->kind == O_FUNC) return o->fnat;
     if (o->kind == O_STR || o->kind == O_ALL) return o->tok && o->tok->nat;
-    return o->kind == O_REF && sym_is_national(o->ref.sym);
+    /* a USAGE NATIONAL numeric item reference-modified: a national part (8.4.3.3.4 rule 6c) */
+    return o->kind == O_REF && (sym_is_national(o->ref.sym) ||
+           (o->ref.rm && !o->ref.sym->is_group && o->ref.sym->usage == U_NATIONAL && !sym_is_boolean(o->ref.sym)));
 }
 
 static int ref_is_national(const Ref *r) { return sym_is_national(r->sym); }
@@ -6639,7 +6667,8 @@ static void nat_fig_opnd(Opnd *o, int nbytes)
 static int emit_move_national(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
-    int dn = sym_is_national(d), sn = opnd_is_national(src);
+    int dn = sym_is_national(d) || (dst->rm && !d->is_group && d->usage == U_NATIONAL && !sym_is_boolean(d)),   /* a national part, 8.4.3.3.4 rule 6c */
+        sn = opnd_is_national(src);
     if (!dn && !sn) return 0;
     if (!dn) {
         if (d->is_group) return 0;                  /* a group receives the bytes (14.9.25 general rule 4) */
@@ -6787,7 +6816,7 @@ static int emit_move_boolean(Opnd *src, Ref *dst)
     Arg a[4];
     opnd_args(src, &a[0], &a[1], n, 0);
     a[2] = arg_ref(dst);
-    a[3] = !dst->rm ? arg_desc(sym_desc(d)) : dst->rm_len ? arg_desc(bool_desc((int)dst->rm_len)) : arg_rdesc(dst);
+    a[3] = !dst->rm ? arg_desc(sym_desc(d)) : dst->rm_len ? arg_desc(part_desc(dst)) : arg_rdesc(dst);
     emit_args(a, 4); emit_call("cob_move");
     return 1;
 }

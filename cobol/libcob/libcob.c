@@ -4091,14 +4091,16 @@ static int rmrot;
  * bytes each (2023 8.4.2.4), and its part is national */
 const cob_desc *cob_refmod_desc(const cob_desc *base, int start, int len)
 {
-    int nat = base->cat == COB_NATIONAL, chars = nat ? (int)base->size / 2 : (int)base->size;
+    /* a USAGE NATIONAL item counts characters: a national part, or a
+     * boolean one in national usage (2023 8.4.3.3.4 rule 6) */
+    int nat = base->cat == COB_NATIONAL || base->usage == COB_U_NATIONAL, chars = nat ? (int)base->size / 2 : (int)base->size;
     if (start < 1 || start > chars) cob_fatal("reference modification: start is outside the item");
     if (len == 0) len = chars - start + 1;
     if (len < 1 || start - 1 + len > chars) cob_fatal("reference modification: length is outside the item");
     cob_desc *d = &rmdesc[rmrot++ & 7];
     memset(d, 0, sizeof *d);
-    d->cat = nat ? COB_NATIONAL : base->cat == COB_BOOLEAN ? COB_BOOLEAN : COB_ALNUM;
-    d->usage = COB_U_DISPLAY;
+    d->cat = base->cat == COB_BOOLEAN ? COB_BOOLEAN : nat ? COB_NATIONAL : COB_ALNUM;
+    d->usage = base->cat == COB_BOOLEAN && nat ? COB_U_NATIONAL : COB_U_DISPLAY;
     d->size = (unsigned)(nat ? 2 * len : len);
     return d;
 }
@@ -4106,7 +4108,7 @@ const cob_desc *cob_refmod_desc(const cob_desc *base, int start, int len)
 /* the part's length in bytes */
 int cob_refmod_len(const cob_desc *base, int start, int len)
 {
-    int nat = base->cat == COB_NATIONAL;
+    int nat = base->cat == COB_NATIONAL || base->usage == COB_U_NATIONAL;
     if (len == 0) len = (nat ? (int)base->size / 2 : (int)base->size) - start + 1;
     return nat ? 2 * len : len;
 }
