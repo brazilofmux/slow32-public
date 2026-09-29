@@ -1,0 +1,9 @@
+OPEN EXTEND 'pr': EXTEND is for a file in sequential access mode without LINAGE (X3.23-1985 sequential OPEN syntax rule 3)
+OPEN ... NO REWIND 'rl': for a sequential file opened INPUT or OUTPUT (the X3.23-1985 OPEN formats)
+CLOSE reel 'ix': for a sequential file (the X3.23-1985 relative and indexed CLOSE format)
+READ ... INTO 'sqr': the item is the file's own record area (X3.23-1985 READ syntax rule 1)
+END-OF-PAGE on 'sq', whose FD has no LINAGE clause (X3.23-1985 sequential WRITE syntax rule 8)
+ADVANCING PAGE and END-OF-PAGE in one WRITE (X3.23-1985 sequential WRITE syntax rule 7)
+ADVANCING is not valid on an INDEXED file
+REWRITE of the relative file 'rl' in sequential access takes no INVALID KEY (X3.23-1985 relative REWRITE syntax rule 3)
+DELETE 'rl' in sequential access takes no INVALID KEY (X3.23-1985 DELETE syntax rule 1)

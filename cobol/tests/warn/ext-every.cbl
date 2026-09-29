@@ -37,6 +37,7 @@ screen section.
     05 line 1 col 1 value "hello".
 procedure division.
     add fine to wide
+    read lst
     initialize otab
     display "at" line 2 position 1
     call "nothing" using by value k

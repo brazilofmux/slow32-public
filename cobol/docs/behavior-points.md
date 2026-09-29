@@ -129,6 +129,7 @@ warns only under -std=85. Never changes the output.
 | BP-E15 | INITIALIZE of an item that is or contains an OCCURS DEPENDING ON table | majesty's gl008, gl034, gl040 (and tests/free/odo, their shape) | 85 | X3.23-1985 INITIALIZE syntax rule 4 forbids it; 2002 allows it (2023 14.9.20.4 GR 8). Taken, the table unrolled to its maximum as before |
 | BP-E16 | a RECORD KEY or ALTERNATE RECORD KEY that is not alphanumeric or national | the Open Systems suite (13 files) | 85, 2002 | both editions' key rule 2 asks for alphanumeric; taken, the key ordered by its bytes, as GnuCOBOL does |
 | BP-E17 | a FILE STATUS item that is not alphanumeric (PIC 99) | none in the corpora | 85, 2002 | FILE STATUS rule 2 asks for two alphanumeric characters; a two-digit numeric one is taken |
+| BP-E18 | READ without AT END, or a keyed statement without INVALID KEY, and no USE procedure for the file | the Open Systems suite (8) | 85 | X3.23-1985 requires the phrase then (READ rule 2 and its keyed siblings); the condition goes to the FILE STATUS, or stops the run |
 
 Not points, recorded here:
 

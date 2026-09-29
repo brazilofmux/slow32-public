@@ -261,7 +261,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E1_RETURN_CODE, BP_E2_GOBACK, BP_E3_COMP_N, BP_E4_VENDOR_BINARY, BP_E5_BINARY_2002,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
-       BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS,
+       BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -308,6 +308,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-E16", 'E', "a RECORD KEY or ALTERNATE RECORD KEY that is not alphanumeric (or national); the standard's keys are, "
                      "and here a numeric key is taken, ordered by its bytes" },
     { "BP-E17", 'E', "a FILE STATUS item that is not alphanumeric; the standard's is PIC XX, and here a two-digit numeric one is taken" },
+    { "BP-E18", 'E', "no AT END or INVALID KEY phrase and no USE procedure for the file, which X3.23-1985 requires; "
+                     "the condition goes to the FILE STATUS, or stops the run" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -9971,6 +9973,30 @@ static void unit_use_range(int level, int *from, int *to);
 static int unit_use_own_from(void);                     /* where this unit's own USE entries begin */
 static int ecp_target(int i, int fidx, Ecp **ep, int *resume);
 
+/* is there a USE AFTER ERROR procedure the file could reach (its own, or
+ * one for an open mode, here or GLOBAL in a containing program)? */
+static int file_has_use(File *f)
+{
+    for (int level = g_udepth; level >= 0; level--) {
+        int from, to;
+        if (level == g_udepth) { from = unit_use_own_from(); to = g_nuse; } else unit_use_range(level, &from, &to);
+        for (int i = from; i < to; i++) {
+            UseEntry *u = &g_use[i];
+            if (level < g_udepth && !u->global) continue;
+            if (u->ec >= 0) continue;
+            if (u->file == f || u->mode) return 1;
+        }
+    }
+    return 0;
+}
+/* AT END or INVALID KEY with no USE procedure for the file: the 1985 text
+ * requires the phrase (READ rule 2, and the keyed statements' likewise);
+ * here the FILE STATUS or the run's stop takes the condition */
+static void io_phrase_required(File *f, const char *w, int line)
+{
+    if (!at_word(w) && !(at_word("not") && is_word(peek(1), w)) && !file_has_use(f)) bp(BP_E18_NO_ATEND, line);
+}
+
 static void emit_use_dispatch(File *f, int has_clause)
 {
     /* the candidates, in the order the text gives them: this unit's USE
@@ -11050,9 +11076,21 @@ static void parse_open(void)
         else break;
         while (cur()->kind == T_WORD && !at_word("input") && !at_word("output") && !at_word("i-o") &&
                !at_word("extend") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
+            int fline = cur()->line;
             File *f = expect_file();
-            int reversed = 0;
-            if (accept_word("with")) { accept_word("no"); accept_word("rewind"); accept_word("lock"); }
+            int reversed = 0, e85 = g_std < 2002, seq = f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ;
+            if (mode == COB_OPEN_EXTEND && (f->linage || f->access))
+                die_at(fline, "OPEN EXTEND '%s': EXTEND is for a file in sequential access mode without LINAGE (%s)", f->name,
+                       !e85 ? "2023 14.9.27.3 rule 2" : f->linage ? "X3.23-1985 sequential OPEN syntax rule 3" : "X3.23-1985 relative and indexed OPEN syntax rule 1");
+            if (accept_word("with")) {
+                if (accept_word("no")) {
+                    accept_word("rewind");
+                    if (!seq || (mode != COB_OPEN_INPUT && mode != COB_OPEN_OUTPUT))
+                        die_at(fline, "OPEN ... NO REWIND '%s': for a sequential file opened INPUT or OUTPUT (%s)", f->name,
+                               e85 ? "the X3.23-1985 OPEN formats" : "2023 14.9.27.3 rules 5-6");
+                }
+                accept_word("lock");
+            }
             if (at_word("reversed")) bp(BP_O4_REVERSED, cur()->line);
             if (accept_word("reversed")) {          /* obsolete: read from the last record back (SQ303M, SQ401M) */
                 if (mode != COB_OPEN_INPUT) die_at(cur()->line, "REVERSED goes with OPEN INPUT");
@@ -11071,9 +11109,11 @@ static void parse_close(void)
     int n = 0;
     while (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
         File *f = expect_file();
-        int lock = 0;
+        int lock = 0, seq = f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ;
+        const char *crule = g_std < 2002 ? "the X3.23-1985 relative and indexed CLOSE format" : "2023 14.9.6.3 rule 1";
         accept_word("with");
-        if (accept_word("no")) accept_word("rewind");
+        if (accept_word("no")) { accept_word("rewind"); if (!seq) die_at(cur()->line, "CLOSE ... NO REWIND '%s': for a sequential file (%s)", f->name, crule); }
+        if (!seq && (at_word("reel") || at_word("unit"))) die_at(cur()->line, "CLOSE %s '%s': for a sequential file (%s)", cur()->s, f->name, crule);
         if (accept_word("lock")) lock = 1;
         if (lock) { emit_file_addr("r3", f); emit_call("cob_close_lock"); emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0); n++; continue; }
         if (accept_word("reel") || accept_word("unit")) {
@@ -11095,6 +11135,7 @@ static void parse_close(void)
 /* [NOT] INVALID KEY / [NOT] AT END after a keyed verb, on the result in
  * SLOT_C: 0 done, 1 the condition, 2 an error already reported */
 static void emit_use_dispatch(File *f, int has_clause);
+static void io_phrase_required(File *f, const char *w, int line);
 
 static void parse_condition_clauses(const char *w1, const char *w2, const char *end_word)
 {
@@ -11143,9 +11184,28 @@ static void parse_read(void)
 {
     File *f = expect_file();
     if (f->org == COB_ORG_SORT) die_at(cur()->line, "READ of the sort file '%s': use RETURN inside the OUTPUT PROCEDURE", f->name);
+    if (at_word("previous"))
+        die_at(cur()->line, g_std < 2002 ? "READ PREVIOUS is COBOL 2002; compile with -std=2002"
+                                         : "READ PREVIOUS (2023 14.9.30, format 1) is not implemented");
     int has_next = accept_word("next"); accept_word("record");
     Ref into; int has_into = 0;
-    if (accept_word("into")) { parse_ref(&into); has_into = 1; }
+    if (accept_word("into")) {
+        parse_ref(&into); has_into = 1;
+        if (f->rec >= 0 && into.sym->record == g_sym[f->rec].record)
+            die_at(into.line, "READ ... INTO '%s': the item is the file's own record area (X3.23-1985 READ syntax rule 1)", into.sym->name);
+        /* several record descriptions: INTO and all of them alphanumeric (2023 rule 1) */
+        int nrec = 0, alnum = 1;
+        for (int j = 0; j < g_nsym; j++)
+            if (g_sym[j].level == 1 && f->rec >= 0 && g_sym[j].fd >= 0 && g_sym[j].fd == g_sym[f->rec].fd) {
+                nrec++;
+                Sym *q = &g_sym[j];
+                if (!q->is_group && q->pi.category != PIC_ALPHANUMERIC && q->pi.category != PIC_NATIONAL) alnum = 0;
+            }
+        Sym *q = into.sym;
+        if (!into.rm && !q->is_group && q->pi.category != PIC_ALPHANUMERIC && q->pi.category != PIC_NATIONAL) alnum = 0;
+        if (g_std >= 2002 && nrec > 1 && !alnum)
+            die_at(into.line, "READ %s INTO '%s': with several record descriptions, the INTO item and every record are alphanumeric (2023 14.9.30.3 rule 1)", f->name, into.sym->name);
+    }
     int keyed = 0, ki = 0;
     if (accept_word("key")) {
         accept_word("is");
@@ -11181,9 +11241,11 @@ static void parse_read(void)
     }
     if (keyed) {
         if (at_word("at")) die_at(cur()->line, "a READ by key takes INVALID KEY, not AT END");
+        io_phrase_required(f, "invalid", cur()->line);
         parse_condition_clauses("invalid", "key", "end-read");
     } else {
         if (at_word("invalid")) die_at(cur()->line, "a sequential READ takes AT END, not INVALID KEY");
+        if (!at_word("end")) io_phrase_required(f, "at", cur()->line);
         parse_condition_clauses("at", "end", "end-read");
     }
 }
@@ -11236,7 +11298,7 @@ advancing_done:;
     /* (a LINAGE file took the line counts themselves above, not n-1: AFTER n
      * in r4, BEFORE n in r5, -1 for PAGE, 0/0 for no ADVANCING) */
     int keyed_org = f->org == COB_ORG_INDEXED || f->org == COB_ORG_RELATIVE;
-    if (keyed_org && (before || after || dyn)) die_at(rec.line, "ADVANCING is not valid on an %s file", f->org == COB_ORG_INDEXED ? "INDEXED" : "RELATIVE");
+    if (keyed_org && adv) die_at(rec.line, "ADVANCING is not valid on an %s file", f->org == COB_ORG_INDEXED ? "INDEXED" : "RELATIVE");
     if (!keyed_org && at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED or RELATIVE file");
     if (dyn) {
         if (is_hot_int(n.ref.sym)) emit_hot_value(&n);
@@ -11255,7 +11317,12 @@ advancing_done:;
     emit_call("cob_write");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
-    if (keyed_org) parse_condition_clauses("invalid", "key", "end-write");
+    if (!f->linage && (at_word("eop") || at_word("end-of-page") || (at_word("at") && (is_word(peek(1), "eop") || is_word(peek(1), "end-of-page"))) ||
+                       (at_word("not") && (is_word(peek(1), "eop") || is_word(peek(1), "end-of-page") || is_word(peek(1), "at")))))
+        die_at(cur()->line, "END-OF-PAGE on '%s', whose FD has no LINAGE clause (%s)", f->name, g_std < 2002 ? "X3.23-1985 sequential WRITE syntax rule 8" : "2023 14.9.51.3 rule 19");
+    if (f->linage && (before == -1 || after == -1) && (at_word("eop") || at_word("end-of-page") || (at_word("at") && !is_word(peek(1), "end")) || (at_word("not") && !is_word(peek(1), "invalid"))))
+        die_at(cur()->line, "ADVANCING PAGE and END-OF-PAGE in one WRITE (%s)", g_std < 2002 ? "X3.23-1985 sequential WRITE syntax rule 7" : "2023 14.9.51.3 rule 18");
+    if (keyed_org) { io_phrase_required(f, "invalid", cur()->line); parse_condition_clauses("invalid", "key", "end-write"); }
     else if (f->linage) {
         emit_use_dispatch(f, 0);
         /* [NOT] [AT] END-OF-PAGE (EOP): the runtime's verdict on this WRITE */
@@ -11283,6 +11350,10 @@ static void parse_rewrite(void)
     emit_call("cob_rewrite");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
+    if (f->org == COB_ORG_RELATIVE && f->access == 0 && (at_word("invalid") || (at_word("not") && is_word(peek(1), "invalid"))))
+        die_at(cur()->line, "REWRITE of the relative file '%s' in sequential access takes no INVALID KEY (%s)", f->name,
+               g_std < 2002 ? "X3.23-1985 relative REWRITE syntax rule 3" : "2023 14.9.35.3 rule 2");
+    if (f->org == COB_ORG_INDEXED || (f->org == COB_ORG_RELATIVE && f->access)) io_phrase_required(f, "invalid", cur()->line);
     if (f->org == COB_ORG_INDEXED || f->org == COB_ORG_RELATIVE) parse_condition_clauses("invalid", "key", "end-rewrite");
     else { if (at_word("invalid")) die_at(cur()->line, "INVALID KEY needs an INDEXED or RELATIVE file"); emit_use_dispatch(f, 0); accept_word("end-rewrite"); }
 }
@@ -11293,6 +11364,10 @@ static void parse_delete(void)
     File *f = expect_file();
     accept_word("record");
     if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE) die_at(cur()->line, "DELETE needs an INDEXED or RELATIVE file");
+    if (f->access == 0 && (at_word("invalid") || (at_word("not") && is_word(peek(1), "invalid"))))
+        die_at(cur()->line, "DELETE '%s' in sequential access takes no INVALID KEY (%s)", f->name,
+               g_std < 2002 ? "X3.23-1985 DELETE syntax rule 1" : "2023 14.9.10.3 rule 2");
+    if (f->access) io_phrase_required(f, "invalid", cur()->line);
     emit_file_addr("r3", f);
     emit_call("cob_delete");
     emit("\tstw sp+%d, r1", SLOT_C);
