@@ -133,6 +133,14 @@ given, because majesty's `.prn` oracles were produced under it.
   GnuCOBOL 4 instead delivers the remainder as further records with
   status 06. No majesty file has such a line; a program that depends
   on the split would be wrong on both.
+- **`RETURN-CODE`** (IBM, Micro Focus, GnuCOBOL; not standard, BP-E1
+  under `-warn-extensions`): a `PIC S9(9) BINARY` special register the
+  run unit shares (libcob `cob_return_code`), as GnuCOBOL declares it
+  (IBM's is S9(4)). A program that names it sets it after every CALL
+  without RETURNING from what the callee returned -- a COBOL program's
+  RETURN-CODE, a C function's result -- and returns it to its own caller;
+  STOP RUN without a status of its own, and the end of the main program,
+  exit with it. A program that never names it compiles as before.
 - **`CALL`**: literal program-names only; `BY REFERENCE` passes the
   address, `BY VALUE` an integer item of up to four bytes widened to a
   word (or an integer literal), `RETURNING` takes `r1` into an integer

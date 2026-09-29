@@ -22,6 +22,7 @@ Plan and reasoning: [standards.md](standards.md).
 | `-std=74` | refused: 74 programs compile as 85, and `-warn-74` flags where their meaning changed; full COBOL 74 is cobc370's job |
 | `-std=2002`, any other | refused as not implemented; COBOL 2002 is Stage B of standards.md |
 | `-warn-74` | warns at every class M, O and N point below; never changes the output |
+| `-warn-extensions` | warns at every class E point that calls `bp()` (an extension to the standard the program is compiled for); never changes the output |
 
 Without `-warn-74` the compiler is silent at every point, and its
 assembler is byte-identical to what it was before the registry existed
@@ -107,7 +108,14 @@ does.
 Implementor and dialect features accepted under `-std=85`. They are
 recorded so the day a stricter switch arrives (`-std=2002`, or a
 pedantic 85), deciding each one is a row here, not an archaeology dig.
-They do not call `bp()` yet.
+A row with an id calls `bp()` and warns under `-warn-extensions`
+(2026-09-29); the rows without one are registered, not yet enforced.
+
+| id | construct | source | in ISO/IEC 1989:2023 |
+|---|---|---|---|
+| BP-E1 | `RETURN-CODE` | IBM, Micro Focus, GnuCOBOL | no: a special register of those dialects; the standard returns a value through `PROCEDURE DIVISION RETURNING` |
+
+Registered, not yet enforced:
 
 | construct | source | in ISO/IEC 1989:2023 |
 |---|---|---|

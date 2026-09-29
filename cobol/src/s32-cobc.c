@@ -237,6 +237,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_O5_MEMORY_SIZE, BP_O6_LABEL_RECORDS, BP_O7_VALUE_OF, BP_O8_DATA_RECORDS,
        BP_O9_ALL_NUMERIC, BP_O10_RERUN, BP_O11_MULTIPLE_FILE, BP_O12_DEBUG_LINES,
        BP_N1_RESERVED_NAME,
+       BP_E1_RETURN_CODE,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -258,12 +259,15 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-O12", 'O', "debugging lines and WITH DEBUGGING MODE are obsolete in COBOL 85 and 2002 "
                      "and deleted in COBOL 2014; make the line code or a comment" },
     { "BP-N1", 'N', "this name became a reserved word in COBOL 85; accepted for a COBOL 74 program, but rename it" },
+    { "BP-E1", 'E', "RETURN-CODE is an IBM and Micro Focus special register, not standard COBOL; "
+                    "a standard program returns a value through PROCEDURE DIVISION RETURNING (2002)" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
+static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
 static void bp(int point, int line)
 {
     static int last_point = -1, last_line = -1;
-    if (!g_warn74) return;
+    if (g_bp[point].cls == 'E' ? !g_warn_ext : !g_warn74) return;
     if (point == last_point && line == last_line) return;     /* one per point per line */
     last_point = point; last_line = line;
     fprintf(stderr, "%s:%d: warning: [%s] %s\n", diag_file(line), line, g_bp[point].id, g_bp[point].msg);
@@ -1620,6 +1624,7 @@ typedef struct Sym {
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_based;                  /* a BASED entry: reached through a cell SET ADDRESS OF fills, NULL at first (2002 8.6.4) */
     int  param_opt;                 /* a PROCEDURE DIVISION USING OPTIONAL parameter: its cell may be NULL (omitted) */
+    int  is_rc;                     /* RETURN-CODE: storage in libcob (cob_return_code), none of the unit's */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
     int  nat_usage;                 /* USAGE NATIONAL was written (cobol ISSUES-62) */
@@ -3585,7 +3590,8 @@ static void emit_bytes(const unsigned char *b, int n)
 /* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, three scratch words, the slots named below; r12/r13 at SLOT_R12/SLOT_R13 */
 #define FRAME       120
 static int g_frame = FRAME;
-static Sym *g_prog_ret;             /* a program's PROCEDURE DIVISION RETURNING item (-std=2002) */         /* this unit's frame: FRAME and its BY VALUE parameters' storage */
+static Sym *g_prog_ret;
+static int g_uses_rc;               /* this unit names RETURN-CODE: its CALLs set it, its exit returns it */             /* a program's PROCEDURE DIVISION RETURNING item (-std=2002) */         /* this unit's frame: FRAME and its BY VALUE parameters' storage */
 #define SLOT_R12    92          /* the caller's r12 and r13: callee-saved in the C ABI, and */
 #define SLOT_R13    112         /* the generated code uses both as scratch (cobol ISSUES-57) */
 #define SLOT_COLL   96          /* the caller's collating table, when this unit sets its own */
@@ -3826,6 +3832,29 @@ static void parse_ref(Ref *r)
     memset(r, 0, sizeof *r);
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a data-name, found %s", tok_desc(t));
+    if (!strcmp(t->s, "return-code") && !sym_lookup_quiet("return-code")) {
+        /* RETURN-CODE (IBM, Micro Focus): a signed binary word the run unit
+         * shares, cob_return_code in libcob; a CALL sets it from what the
+         * callee returns, and STOP RUN exits with it */
+        bp(BP_E1_RETURN_CODE, t->line);
+        Sym *rc = NULL;
+        for (int i = g_sym_base; i < g_nsym; i++) if (g_sym[i].is_rc) rc = &g_sym[i];
+        if (!rc) {
+            rc = sym_new();
+            int idx = sym_idx(rc);
+            /* PIC S9(9) BINARY: a native signed word, shown as nine digits, as GnuCOBOL declares
+             * it (IBM's is S9(4) BINARY) */
+            rc->level = 1; rc->line = t->line; rc->is_rc = 1; rc->usage = U_BINARY; rc->has_usage = 1;
+            snprintf(rc->name, sizeof rc->name, "return-code");
+            rc->has_pic = 1; snprintf(rc->pic, sizeof rc->pic, "s9(9)");
+            if (pic_analyse(rc->pic, &rc->pi) < 0) die_at(t->line, "internal: RETURN-CODE picture");
+            sym_finish(rc);
+            rc->record = idx; rc->desc_id = -1;
+            snprintf(rc->label, sizeof rc->label, "cob_return_code");
+        }
+        r->sym = rc; r->line = t->line; advance();
+        return;
+    }
     if (!strcmp(t->s, "address") && is_word(peek(1), "of") && !sym_lookup_quiet("address"))
         die_at(t->line, "ADDRESS OF is a sending operand of SET or CALL, or a relation's operand; not here (2023 8.4.3.11 rule 5)");
     r->line = t->line;
@@ -11133,6 +11162,11 @@ static void parse_call(void)
         emit_li("r3", ncontent); emit_call("cob_content_pop");
         emit("\tldw r1, sp+%d", SLOT_C);
     }
+    if (!has_ret && g_uses_rc) {
+        /* RETURN-CODE: what the callee returned, a COBOL program's own
+         * RETURN-CODE or a C function's result */
+        emit_la("r2", "cob_return_code"); emit("\tstw r2+0, r1");
+    }
     int Lcobret = -1;
     if (has_ret && g_std >= 2002) {
         /* a COBOL program put its result in place; a C function left it in r1 */
@@ -12748,6 +12782,9 @@ static void compile_nested_unit(void)
     /* a program contained in a recursive program is recursive (2023 11.10.4 rule 4) */
     g_recursive = u->recursive;
     int in_proc = g_in_proc; char cur_stmt[16]; memcpy(cur_stmt, g_cur_stmt, sizeof cur_stmt);
+    /* the enclosing program's frame, returning item and RETURN-CODE use:
+     * its epilogue is emitted after this unit is compiled */
+    int frame = g_frame, uses_rc = g_uses_rc; Sym *prog_ret = g_prog_ret;
     g_in_proc = 0;
     parse_identification_division();
     parse_environment_division();
@@ -12755,6 +12792,7 @@ static void compile_nested_unit(void)
     if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
     parse_procedure_division();
     g_in_proc = in_proc; memcpy(g_cur_stmt, cur_stmt, sizeof cur_stmt);
+    g_frame = frame; g_uses_rc = uses_rc; g_prog_ret = prog_ret;
     emit_unit_data();
     if (!g_saw_end_program) die_at(cur()->line, "a contained program needs its END PROGRAM");
 
@@ -12818,6 +12856,9 @@ static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
     g_cur_stmt[0] = 0; g_in_proc = 1;
+    g_uses_rc = 0;
+    for (int k = g_tp; k < g_ntok && !(g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "end") && k + 1 < g_ntok && is_word(&g_tok[k + 1], "program")); k++)
+        if (g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "return-code")) { g_uses_rc = !sym_lookup_quiet("return-code"); break; }
     /* USING [BY REFERENCE] [OPTIONAL] data-name ... | BY VALUE data-name ...
      * (2023 14.2.1; the phrase carries over to the names after it) */
     Sym *using[32]; int nusing = 0, uval[32], mode_val = 0;
@@ -13159,7 +13200,8 @@ static void parse_procedure_division(void)
         emit_la("r2", "cob_call_returned");
         if (g_prog_ret) { emit_li("r1", 1); emit("\tstw r2+0, r1"); } else emit("\tstw r2+0, r0");
     }
-    emit("\taddi r1, r0, 0");
+    if (g_uses_rc) { emit_la("r1", "cob_return_code"); emit("\tldw r1, r1+0"); }   /* RETURN-CODE, to the caller */
+    else emit("\taddi r1, r0, 0");
     emit("\tldw r13, sp+%d", SLOT_R13);
     emit("\tldw r12, sp+%d", SLOT_R12);
     emit("\tldw r11, sp+4");
@@ -13180,7 +13222,7 @@ static void parse_procedure_division(void)
         emit("\tstw sp+0, lr");
         for (int i = g_sym_base; i < g_nsym; i++) {
             Sym *s = &g_sym[i];
-            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s)) continue;
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s) || s->is_rc) continue;
             emit_la("r3", s->label);
             char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
             emit_la("r4", il);
@@ -14544,7 +14586,7 @@ static void emit_unit_data(void)
     emit("\t.data");
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
-        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0) continue;
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_rc) continue;
         if (s->is_local) {
             /* a cell for the activation's copy, and the copy's initial state
              * (cob_act_enter makes a fresh one on every entry) */
@@ -14788,7 +14830,8 @@ static void usage(void)
         "  -std=2002 add the COBOL 2002 modules landed so far (docs/standards.md, Stage B)\n"
         "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
         "  -fixed-columns=bytes  count reference-format columns in bytes, not characters (UTF-8 source)\n"
-        "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n", VERSION);
+        "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n"
+        "  -warn-extensions warn where a program uses an extension to the standard it is compiled for\n", VERSION);
     exit(2);
 }
 
@@ -14804,6 +14847,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
         else if (!strcmp(argv[i], "--version")) { printf("s32-cobc %s\n", VERSION); return 0; }
         else if (!strcmp(argv[i], "-warn-74")) g_warn74 = 1;
+        else if (!strcmp(argv[i], "-warn-extensions")) g_warn_ext = 1;
         else if (!strcmp(argv[i], "-fnsig")) g_fnsig_only = 1;
         else if (!strcmp(argv[i], "-fixed-columns=bytes")) g_col_bytes = 1;
         else if (!strcmp(argv[i], "-fixed-columns=chars")) g_col_bytes = 0;

@@ -3772,3 +3772,32 @@ compiler converts, so the test was made conforming. Harness 430/430,
 CCVS-85 unchanged, -std=85 byte-identical on all 229 Open Systems
 programs, majesty PASS, majesty-functions PASS, Open Systems paper
 unchanged.
+
+### 99. RETURN-CODE, and -warn-extensions (2026-09-29)
+
+RETURN-CODE, the IBM / Micro Focus / GnuCOBOL special register, taken as
+a dialect extension (the user's ruling: in, with a way to warn where
+strict compliance is wanted). A PIC S9(9) BINARY item whose storage is
+libcob's cob_return_code, shared by the run unit (GnuCOBOL's model and
+width). A unit that names it stores what each CALL without RETURNING
+returns (a COBOL program's RETURN-CODE, a C function's result) and
+returns it from its own exit; cob_stop_run exits with it when STOP RUN
+gives no status. A unit that never names it compiles as before, so
+-std=85 output is unchanged (229 Open Systems programs byte-identical).
+
+-warn-extensions: class E behavior points now call bp() and warn under
+it, the way -warn-74 governs classes M, O and N. BP-E1 is RETURN-CODE;
+the other class E rows (docs/behavior-points.md) are still registered
+only. Gate 4 runs tests/warn/ext-*.cbl under the new switch.
+
+Also fixed, found writing the tests: a contained program with BY VALUE
+parameters (ISSUES-98) left its frame size in g_frame, and the containing
+program's exit -- emitted after its contained programs are compiled --
+restored that size instead of its own. g_frame, g_prog_ret and
+g_uses_rc are now saved around a contained unit.
+
+Tests: free/returncode (the oracle agrees, default dialect),
+2002/callc (a C result into RETURN-CODE), 2002/nestedvalue (the
+oracle agrees), warn/ext-return-code. Harness 434/434, CCVS-85
+unchanged, majesty PASS, majesty-functions PASS, Open Systems paper
+unchanged.

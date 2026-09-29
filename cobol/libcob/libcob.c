@@ -152,8 +152,14 @@ static void close_open_files(void)
         if (open_files[i]->open_mode) cob_close(open_files[i]);
 }
 
+/* RETURN-CODE (IBM, Micro Focus; not standard): the run unit's, set by a
+ * program or by a CALL from what the callee returned.  STOP RUN without a
+ * status of its own -- and the end of the main program -- exits with it. */
+int cob_return_code;
+
 void cob_stop_run(int code)
 {
+    if (code == 0) code = cob_return_code;
     close_open_files();
     out_flush();
     term_down();

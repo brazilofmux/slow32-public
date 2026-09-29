@@ -320,7 +320,9 @@ for src in "$HERE/warn"/*.cbl; do
     name="$(basename "$src" .cbl)"
     exp="${src%.cbl}.expected"
     flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
-    if ! "$COBC" $flag -warn-74 -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.warn"; then
+    # ext-*: the extensions (class E) under -warn-extensions, not -warn-74
+    wflag="-warn-74"; case "$name" in ext-*) wflag="-warn-extensions" ;; esac
+    if ! "$COBC" $flag $wflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.warn"; then
         report "warn/$name" 1 "refused: $(head -1 "$W/$name.warn")"; continue
     fi
     got="$(grep -o '\[BP-[A-Z][0-9]*\]' "$W/$name.warn" | sort -u)"
@@ -330,7 +332,7 @@ for src in "$HERE/warn"/*.cbl; do
     fi
     "$COBC" $flag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.quiet"
     if [ -s "$W/$name.quiet" ]; then
-        report "warn/$name" 1 "not silent without -warn-74: $(head -1 "$W/$name.quiet")"; continue
+        report "warn/$name" 1 "not silent without $wflag: $(head -1 "$W/$name.quiet")"; continue
     fi
     report "warn/$name" 0 "$(echo $got | wc -w) point(s), silent by default"
 done
