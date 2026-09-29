@@ -1,0 +1,11 @@
+ten: aaaa bbbb +0000000003 +0000001234 +00077
+p6 omitted
+p7-p10: aaaa bbbb iiii jjjj
+caller w10 [JJJJ]
+opt: a aaaa
+opt: b omitted
+opt: a aaaa
+opt: b bbbb
+opt: a omitted
+opt: b bbbb
+fact(6) = 000000720

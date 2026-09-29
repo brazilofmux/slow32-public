@@ -53,10 +53,10 @@ all closed 2026-09-28 (ISSUES-94, -95):
 
 COBOL 2002/2023 (Stage B):
 
-- the CALL parameter family: BY VALUE and OPTIONAL parameters, OMITTED
-  arguments, PROCEDURE DIVISION RETURNING for a program, more than
-  eight arguments, function prototypes, FUNCTION-ID and REPOSITORY
-  `AS literal`;
+- the rest of the CALL family: function and program prototypes,
+  FUNCTION-ID and REPOSITORY `AS literal`, BY VALUE parameters of a
+  function, ANY LENGTH (BY VALUE, OPTIONAL, OMITTED, program RETURNING
+  and stack arguments are implemented: docs/conformance/call.md);
 - compiler directives other than >>SOURCE and >>TURN (>>DEFINE, >>IF,
   >>EVALUATE, ...);
 - exceptions: USE AFTER EXCEPTION CONDITION ... FILE, WHEN EXCEPTION
@@ -123,8 +123,8 @@ Two ruled 2026-09-28:
 ## 4. Implementation limits
 
 - a national-edited PICTURE longer than PIC_MAXPAT - 1 characters;
-- more than eight CALL arguments, more than eight USING items (listed
-  under 2 as well: the standard sets no such limit).
+- more than 16 CALL arguments, more than 32 USING items (stack
+  arguments beyond the eighth; the standard sets no limit).
 
 ## Dead code
 

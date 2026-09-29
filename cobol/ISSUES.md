@@ -3734,3 +3734,41 @@ Also: bench/bsort.cbl named a paragraph SUM (reserved); renamed.
 Tests: 2002/searchall (the oracle agrees). Harness 418/418, CCVS-85
 unchanged, -std=85 byte-identical on all 229 Open Systems programs,
 majesty PASS, majesty-functions PASS, Open Systems paper unchanged.
+
+### 98. The CALL parameter family (2026-09-29)
+
+BY VALUE and OPTIONAL parameters, OMITTED arguments, more than eight
+arguments, and PROCEDURE DIVISION RETURNING for a program -- the gap
+docs/refusals.md ranked first. docs/conformance/call.md has the rules
+and the carriage:
+
+- stack arguments: 9-16 at the callee's entry sp + 4k, the C ABI's
+  place; the caller stages them in slots and copies them to an outgoing
+  area reserved around the jal (the frame's own lr is at sp + 0). The
+  callee reads parameters past the eighth above its frame; up to 32.
+- BY VALUE parameters: a copy in the activation's frame (g_frame grows
+  by their sizes), the value stored as into the item -- so a RECURSIVE
+  program's value parameter is its own (the test computes 6! that way).
+- OMITTED passes NULL; `cob_call_nargs`, set by every -std=2002 CALL and
+  read at entry by a program with OPTIONAL parameters, makes a trailing
+  parameter not passed omitted too (14.9.4 GR 11). IS [NOT] OMITTED
+  (8.8.4.8); EC-PROGRAM-ARG-OMITTED when checked.
+- program RETURNING: the caller's item's address in `cob_call_retaddr`;
+  `cob_call_returned`, set by every -std=2002 program at exit, tells a
+  COBOL result (in place) from a C one (r1), so the C bridge's CALL
+  RETURNING keeps working. None of this is emitted under -std=85: the
+  229 Open Systems programs compile byte-identical.
+
+Tests: 2002/callparams (ten arguments, BY VALUE, OMITTED in the middle
+and trailing, recursion; the oracle agrees), 2002/callreturning (no
+oracle: GnuCOBOL 4 does not implement program RETURNING), 2002/callc (a
+C function with ten arguments, its r1 result); bad/std2002-using-twice,
+-using-value-alnum, -using-value-optional, -call-omitted-value,
+-omitted-not-param, -call-17-args, -returning-using, -returning-ws,
+returning-program-85, 2002/ecargomit. The first test used a BY VALUE binary argument
+into DISPLAY and COMP-3 parameters; 14.8.2.3.3 rule 1 makes that
+non-conforming (the same length), and GnuCOBOL copies bytes where this
+compiler converts, so the test was made conforming. Harness 430/430,
+CCVS-85 unchanged, -std=85 byte-identical on all 229 Open Systems
+programs, majesty PASS, majesty-functions PASS, Open Systems paper
+unchanged.

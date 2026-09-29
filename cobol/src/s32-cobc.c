@@ -1619,6 +1619,7 @@ typedef struct Sym {
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_based;                  /* a BASED entry: reached through a cell SET ADDRESS OF fills, NULL at first (2002 8.6.4) */
+    int  param_opt;                 /* a PROCEDURE DIVISION USING OPTIONAL parameter: its cell may be NULL (omitted) */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
     int  nat_usage;                 /* USAGE NATIONAL was written (cobol ISSUES-62) */
@@ -3583,6 +3584,8 @@ static void emit_bytes(const unsigned char *b, int n)
 
 /* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, three scratch words, the slots named below; r12/r13 at SLOT_R12/SLOT_R13 */
 #define FRAME       120
+static int g_frame = FRAME;
+static Sym *g_prog_ret;             /* a program's PROCEDURE DIVISION RETURNING item (-std=2002) */         /* this unit's frame: FRAME and its BY VALUE parameters' storage */
 #define SLOT_R12    92          /* the caller's r12 and r13: callee-saved in the C ABI, and */
 #define SLOT_R13    112         /* the generated code uses both as scratch (cobol ISSUES-57) */
 #define SLOT_COLL   96          /* the caller's collating table, when this unit sets its own */
@@ -4647,6 +4650,14 @@ static void emit_item_addr(const char *reg, Sym *s, int off)
     if (!rec_indirect(rec)) { emit_la_off(reg, rec->label, off); return; }
     emit_la(reg, rec->label);
     emit("\tldw %s, %s+0", reg, reg);
+    if (rec->param_opt && strcmp(g_cur_stmt, "CALL") && ec_on_name("EC-PROGRAM-ARG-OMITTED")) {
+        /* an omitted parameter referenced, not as an argument (2023 14.9.4
+         * GR 12) */
+        int Lok = new_label();
+        emit("\tbne %s, r0, .L%d", reg, Lok);
+        emit_ec_raise(ec_find("EC-PROGRAM-ARG-OMITTED", 0));
+        emit_label(Lok);
+    }
     if (rec->is_based && ec_on_name("EC-DATA-PTR-NULL")) {
         /* a based item referenced while its address is NULL (2002 13.16.5 GR 3) */
         int Lok = new_label();
@@ -6270,6 +6281,15 @@ static Cond *parse_simple(void)
         else if (!strcmp(t->s, "alphabetic-lower")) klass = 2;
         else if (!strcmp(t->s, "alphabetic-upper")) klass = 3;
         else if (g_std >= 2002 && !strcmp(t->s, "boolean")) klass = -2;     /* 2023 8.8.4.4: each position 0 or 1 */
+        else if (g_std >= 2002 && !strcmp(t->s, "omitted")) {
+            /* the omitted-argument condition (2023 8.8.4.8): a USING
+             * parameter whose argument was OMITTED or not passed */
+            if (x.kind != O_REF || x.ref.nsub || x.ref.rm || x.ref.sym->parent >= 0 || !x.ref.sym->is_linkage)
+                die_at(line, "IS OMITTED tests a level 01 or 77 LINKAGE item, a parameter (2023 8.8.4.8)");
+            advance();
+            Cond *c = cond_new(C_CLASS); c->x = x; c->klass = -3; c->neg = neg;
+            return c;
+        }
         if (klass < 0)
             for (int i = 0; i < g_nclass; i++) if (!strcmp(t->s, g_class[i].name)) klass = 4 + i;
         if (klass >= 0 || klass == -2) {
@@ -6365,6 +6385,14 @@ static void emit_cond_value(Cond *c)
     if (c->kind == C_SWITCH) {
         emit_la("r3", "cob_switches");
         emit("\tldw r1, r3+%d", 4 * (c->klass - 1));
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
+    if (c->kind == C_CLASS && c->klass == -3) {
+        /* IS OMITTED: the parameter's cell holds no address */
+        emit_la("r1", g_sym[c->x.ref.sym->record].label);
+        emit("\tldw r1, r1+0");
+        emit("\tseq r1, r1, r0");
         if (c->neg) emit("\txori r1, r1, 1");
         return;
     }
@@ -10957,7 +10985,7 @@ static void parse_call(void)
         parse_ref(&target); dynamic = 1;
         if (target.sym->is_cond) die_at(line, "CALL: a condition-name cannot name a program");
     } else die_at(line, "expected a program-name literal or an identifier after CALL");
-    Arg a[8]; Opnd ops[8]; int n = 0, ncontent = 0;
+    Arg a[16]; Opnd ops[16]; int n = 0, ncontent = 0;
     if (accept_word("using")) {
         int mode = 0;               /* 0 reference, 1 content, 2 value */
         for (;;) {
@@ -10971,8 +10999,16 @@ static void parse_call(void)
             if (accept_word("reference")) { mode = 0; continue; }
             if (accept_word("value")) { mode = 2; continue; }
             if (accept_word("content")) { mode = 1; continue; }
+            if (g_std >= 2002 && at_word("omitted")) {
+                /* OMITTED: no argument, a NULL address (2023 14.9.4.2) */
+                if (n >= 16) die_at(cur()->line, "more than 16 CALL arguments (an implementation limit)");
+                if (mode == 2) die_at(cur()->line, "OMITTED is a BY REFERENCE argument's (2023 14.9.4.2)");
+                advance();
+                a[n++] = arg_imm(0);
+                continue;
+            }
             if (!at_operand()) break;
-            if (n >= 8) die_at(cur()->line, "more than eight CALL arguments (stack arguments) are not implemented yet");
+            if (n >= 16) die_at(cur()->line, "more than 16 CALL arguments (an implementation limit)");
             parse_operand(&ops[n]);
             Opnd *o = &ops[n];
             if (o->kind == O_ADDR) {
@@ -11023,7 +11059,8 @@ static void parse_call(void)
     Ref ret; int has_ret = 0;
     if (accept_word("returning") || accept_word("giving")) {
         parse_ref(&ret); has_ret = 1;
-        if (!is_int_item(ret.sym)) die_at(ret.line, "RETURNING '%s' must be an integer item (the C ABI returns a word)", ret.sym->name);
+        if (ret.sym->is_cond) die_at(ret.line, "RETURNING '%s': a condition-name receives nothing", ret.sym->name);
+        if (g_std < 2002 && !is_int_item(ret.sym)) die_at(ret.line, "RETURNING '%s' must be an integer item (the C ABI returns a word)", ret.sym->name);
     }
     /* [ON] EXCEPTION|OVERFLOW ... [NOT [ON] EXCEPTION|OVERFLOW ...]: the
      * exception is the program not being in this executable.  A literal
@@ -11062,15 +11099,49 @@ static void parse_call(void)
         emit_ec_raise(ec_find("EC-PROGRAM-RECURSIVE-CALL", 0));
         emit_label(Lok);
     }
-    emit_args(a, n);
+    /* arguments past the eighth go on the stack (the C ABI): each is
+     * worked out into a slot first, the first eight into r3-r10, then the
+     * slots are copied to an outgoing area at sp+0 for the call */
+    /* the returning item's address, for a COBOL program's result */
+    int rslot = -1;
+    if (g_std >= 2002 && has_ret) { rslot = g_slot_base++; emit_ref_addr(&ret, "r1"); emit("\tstw sp+%d, r1", SLOT(rslot)); }
+    int nx = n > 8 ? n - 8 : 0, xbase = g_slot_base, out = (nx * 4 + 7) & ~7;
+    if (nx) {
+        g_slot_base += nx;
+        if (g_slot_base + 8 > NSLOTS) die_at(line, "internal: too many staged operands");
+        for (int k = 0; k < nx; k++) { emit_args(&a[8 + k], 1); emit("\tstw sp+%d, r3", SLOT(xbase + k)); }
+    }
+    emit_args(a, n > 8 ? 8 : n);
+    /* the count, for a called program's OPTIONAL parameters */
+    if (g_std >= 2002) {
+        emit_la("r1", "cob_call_nargs"); emit_li("r2", n); emit("\tstw r1+0, r2");
+        emit_la("r1", "cob_call_retaddr");
+        if (rslot >= 0) emit("\tldw r2, sp+%d", SLOT(rslot)); else emit("\tadd r2, r0, r0");
+        emit("\tstw r1+0, r2");
+        emit_la("r1", "cob_call_returned"); emit("\tstw r1+0, r0");
+    }
+    if (nx) {
+        emit("\taddi sp, sp, -%d", out);
+        for (int k = 0; k < nx; k++) { emit("\tldw r1, sp+%d", out + SLOT(xbase + k)); emit("\tstw sp+%d, r1", 4 * k); }
+    }
     if (dynamic || has_clause || ecnf) emit("\tjalr r31, r12, 0");
     else emit("\tjal r31, %s", link_name(name));
+    if (nx) { emit("\taddi sp, sp, %d", out); g_slot_base = xbase; }
+    if (rslot >= 0) g_slot_base = rslot;
     if (ncontent) {                 /* the BY CONTENT copies go, the result kept */
         emit("\tstw sp+%d, r1", SLOT_C);
         emit_li("r3", ncontent); emit_call("cob_content_pop");
         emit("\tldw r1, sp+%d", SLOT_C);
     }
-    if (has_ret) {
+    int Lcobret = -1;
+    if (has_ret && g_std >= 2002) {
+        /* a COBOL program put its result in place; a C function left it in r1 */
+        Lcobret = new_label();
+        emit_la("r2", "cob_call_returned"); emit("\tldw r2, r2+0");
+        emit("\tbne r2, r0, .L%d", Lcobret);
+    }
+    if (has_ret && !is_int_item(ret.sym)) { /* only a COBOL program fills it */ }
+    else if (has_ret) {
         if (is_hot_int(ret.sym)) {
             emit("\tstw sp+%d, r1", SLOT_C);
             emit_ref_addr(&ret, "r3");
@@ -11084,6 +11155,7 @@ static void parse_call(void)
             emit_call("cob_store_int");
         }
     }
+    if (Lcobret >= 0) emit_label(Lcobret);
     if (ecnf && !has_clause) emit_label(Lafter);    /* reached only past a raise that returned, which a fatal one never does */
     if (has_clause) {
         emit("\tstw sp+%d, r0", SLOT_C);
@@ -12746,27 +12818,64 @@ static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
     g_cur_stmt[0] = 0; g_in_proc = 1;
-    Sym *using[8]; int nusing = 0;
+    /* USING [BY REFERENCE] [OPTIONAL] data-name ... | BY VALUE data-name ...
+     * (2023 14.2.1; the phrase carries over to the names after it) */
+    Sym *using[32]; int nusing = 0, uval[32], mode_val = 0;
     if (accept_word("using")) {
         while (cur()->kind == T_WORD && !at_word("returning")) {
+            int opt = 0;
             if (g_std >= 2002) {
                 if (accept_word("by")) {
-                    if (at_word("value")) die_at(cur()->line, "BY VALUE parameters are not implemented yet (the C-ABI CALL has them)");
-                    expect_word("reference");
+                    if (accept_word("value")) mode_val = 1;
+                    else { expect_word("reference"); mode_val = 0; }
                 }
-                if (at_word("optional")) die_at(cur()->line, "OPTIONAL parameters are not implemented yet");
+                if (at_word("optional")) {
+                    if (mode_val) die_at(cur()->line, "OPTIONAL is a BY REFERENCE parameter's (2023 14.2.1)");
+                    advance(); opt = 1;
+                }
                 if (cur()->kind != T_WORD || at_word("returning")) break;
             }
-            if (nusing >= (g_is_function ? 7 : 8)) die_at(cur()->line, "more than %d USING items (stack arguments) are not implemented yet", g_is_function ? 7 : 8);
+            if (nusing >= (g_is_function ? 7 : 32))
+                die_at(cur()->line, g_is_function ? "more than 7 USING items in a function are not implemented" :
+                                                    "more than 32 USING items (an implementation limit)");
             Sym *u = sym_lookup(cur()->s, NULL, 0, cur()->line);
             if (!g_sym[u->record].is_linkage || u->parent >= 0)
                 die_at(cur()->line, "USING '%s' must be a level 01 or 77 item of the LINKAGE SECTION", u->name);
+            if (u->is_based || u->redefines >= 0)
+                die_at(cur()->line, "USING '%s': a parameter has no BASED or REDEFINES clause (2023 14.2.2 rule 1)", u->name);
+            for (int k = 0; k < nusing; k++)
+                if (using[k] == u) die_at(cur()->line, "USING '%s' twice (2023 14.2.2 rule 1)", u->name);
+            if (mode_val && (u->is_group || (u->pi.category != PIC_NUMERIC && u->usage != U_POINTER)))
+                die_at(cur()->line, "BY VALUE '%s': a numeric or pointer item (2023 14.2.2 rule 2)", u->name);
+            if (mode_val && g_is_function) die_at(cur()->line, "a BY VALUE parameter of a function is not implemented");
+            u->param_opt = opt;
+            uval[nusing] = mode_val;
             using[nusing++] = u;
             advance();
         }
     }
-    if (at_word("returning") && !g_is_function)
-        die_at(cur()->line, "PROCEDURE DIVISION RETURNING is COBOL 2002, and for a program not implemented yet; make the result the last USING item (docs/functions.md)");
+    /* BY VALUE parameters live in this activation's frame, above FRAME */
+    int voff[32], ext = 0, any_opt = 0;
+    for (int i = 0; i < nusing; i++) {
+        voff[i] = uval[i] ? FRAME + ext : 0;
+        if (uval[i]) ext += (using[i]->size + 3) & ~3;
+        any_opt |= using[i]->param_opt;
+    }
+    g_frame = FRAME + ((ext + 7) & ~7);
+    g_prog_ret = NULL;
+    if (at_word("returning") && !g_is_function) {
+        /* a program's returning item (2023 14.2.2 rules 4-6): the
+         * caller's storage, its address taken at entry */
+        if (g_std < 2002) die_at(cur()->line, "PROCEDURE DIVISION RETURNING is COBOL 2002; compile with -std=2002");
+        advance();
+        Sym *r = sym_lookup(cur()->s, NULL, 0, cur()->line);
+        if (!r->is_linkage || r->parent >= 0 || r->level == 66 || r->is_cond || r->redefines >= 0 || r->is_based)
+            die_at(cur()->line, "RETURNING '%s' must be a level 01 or 77 item of the LINKAGE SECTION, without REDEFINES or BASED (2023 14.2.2 rule 5)", r->name);
+        for (int k = 0; k < nusing; k++)
+            if (using[k] == r) die_at(cur()->line, "RETURNING '%s' is a USING item too (2023 14.2.2 rule 6)", r->name);
+        g_prog_ret = r;
+        advance();
+    }
     if (g_is_function) {
         /* the function's result: a level 01 or 77 item; the caller passes
          * the address of its temporary after the arguments */
@@ -12797,7 +12906,7 @@ static void parse_procedure_division(void)
     emit("\t.p2align 2");
     emit("\t.type %s,@function", entry);
     emit("%s:", entry);
-    emit("\taddi sp, sp, -%d", FRAME);
+    emit("\taddi sp, sp, -%d", g_frame);
     emit("\tstw sp+0, lr");
     emit("\tstw sp+4, r11");
     emit("\tstw sp+%d, r12", SLOT_R12);
@@ -12806,16 +12915,74 @@ static void parse_procedure_division(void)
      * below clobbers the argument registers (a USING program with DECIMAL-
      * POINT IS COMMA, CURRENCY SIGN, a COLLATING SEQUENCE or IS INITIAL
      * used to take its addresses from what those calls left there) */
+    /* how many arguments the CALL passed, when a program has OPTIONAL
+     * parameters: a trailing one not passed is omitted (2023 14.9.4 GR
+     * 11).  -1: not a CALL from this compiler's code, all taken as given */
+    if (any_opt) {
+        emit_la("r1", "cob_call_nargs"); emit("\tldw r2, r1+0"); emit("\tstw sp+%d, r2", SLOT_B);
+        emit_li("r2", -1); emit("\tstw r1+0, r2");
+    }
+    if (g_prog_ret) {
+        /* the caller's returning item; none (a CALL without RETURNING, or
+         * from C): a scratch item of this unit's, the result discarded */
+        emit_la("r1", "cob_call_retaddr"); emit("\tldw r2, r1+0"); emit("\tstw r1+0, r0");
+        int Lhave = new_label(), scr = new_label();
+        emit("\tbne r2, r0, .L%d", Lhave);
+        emit("\t.data"); emit("\t.p2align 3"); emit(".L%d:", scr); emit("\t.space %d", g_prog_ret->size > 0 ? g_prog_ret->size : 1); emit("\t.text");
+        char sl[24]; snprintf(sl, sizeof sl, ".L%d", scr); emit_la("r2", sl);
+        emit_label(Lhave);
+        emit("\tstw sp+%d, r2", SLOT_RET);
+    }
+    /* parameter i: in its argument register, or past the eighth at the
+     * caller's stack, above this frame */
+    #define PARAM_AT(i, reg) do { if ((i) < 8) emit("\tldw %s, sp+%d", reg, SLOT(i)); \
+                                  else emit("\tldw %s, sp+%d", reg, g_frame + 4 * ((i) - 8)); } while (0)
+    int nreg = nusing < 8 ? nusing : 8;
     if (g_std >= 2002) {
         /* the arguments wait in the frame while cob_act_enter saves the
          * cells they are about to overwrite (a RECURSIVE caller's own) */
-        for (int i = 0; i < nusing; i++) emit("\tstw sp+%d, %s", SLOT(i), argreg(i));
+        for (int i = 0; i < nreg; i++) emit("\tstw sp+%d, %s", SLOT(i), argreg(i));
         if (g_is_function) emit("\tstw sp+%d, %s", SLOT_RET, argreg(nusing));   /* where the result goes */
         char lab[32]; snprintf(lab, sizeof lab, ".Lact%d", g_unit);
         emit_la("r3", lab); emit_call("cob_act_enter"); emit("\tstw sp+%d, r1", SLOT_ACT);
         for (int i = 0; i < nusing; i++) {
-            emit_la("r1", g_sym[using[i]->record].label);
-            emit("\tldw r2, sp+%d", SLOT(i));
+            Sym *u = using[i];
+            if (uval[i]) {
+                /* BY VALUE: a copy of this activation's, the value stored
+                 * into it as into the item */
+                emit("\taddi r2, sp, %d", voff[i]);
+                emit_la("r1", g_sym[u->record].label);
+                emit("\tstw r1+0, r2");
+                PARAM_AT(i, "r1");
+                if (u->usage == U_POINTER || is_hot_int(u)) {
+                    emit("\taddi r3, sp, %d", voff[i]);
+                    emit_store_int(u, "r3", "r1");
+                } else {
+                    emit("\tadd r5, r1, r0");
+                    emit("\taddi r3, sp, %d", voff[i]);
+                    emit_desc_addr("r4", sym_desc(u));
+                    emit_call("cob_store_int");
+                }
+                continue;
+            }
+            PARAM_AT(i, "r2");
+            if (u->param_opt) {
+                /* past the arguments passed: omitted, a NULL cell */
+                int Lkeep = new_label();
+                emit("\tldw r1, sp+%d", SLOT_B);
+                emit("\tblt r1, r0, .L%d", Lkeep);
+                emit_li("r3", i);
+                emit("\tslt r1, r3, r1");
+                emit("\tbne r1, r0, .L%d", Lkeep);
+                emit("\tadd r2, r0, r0");
+                emit_label(Lkeep);
+            }
+            emit_la("r1", g_sym[u->record].label);
+            emit("\tstw r1+0, r2");
+        }
+        if (g_prog_ret) {
+            emit_la("r1", g_prog_ret->label);
+            emit("\tldw r2, sp+%d", SLOT_RET);
             emit("\tstw r1+0, r2");
         }
         if (g_is_function) {
@@ -12827,8 +12994,10 @@ static void parse_procedure_division(void)
     } else
         for (int i = 0; i < nusing; i++) {
             emit_la("r1", g_sym[using[i]->record].label);
-            emit("\tstw r1+0, %s", argreg(i));
+            if (i < 8) emit("\tstw r1+0, %s", argreg(i));
+            else { emit("\tldw r2, sp+%d", g_frame + 4 * (i - 8)); emit("\tstw r1+0, r2"); }
         }
+    #undef PARAM_AT
     emit_call("cob_perform_enter"); emit("\tstw sp+%d, r1", SLOT_PBASE);   /* this activation's PERFORM frames */
     if (g_collate >= 0) {       /* PROGRAM COLLATING SEQUENCE: this unit's table, the caller's kept */
         char lab[32]; snprintf(lab, sizeof lab, ".Lcoll%d", g_unit);
@@ -12985,12 +13154,17 @@ static void parse_procedure_division(void)
     if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
     if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
     if (g_currency && g_currency != '$') { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_set_currency"); }
+    if (g_std >= 2002 && !g_is_function) {
+        /* whether a result was put in place, for the caller's RETURNING */
+        emit_la("r2", "cob_call_returned");
+        if (g_prog_ret) { emit_li("r1", 1); emit("\tstw r2+0, r1"); } else emit("\tstw r2+0, r0");
+    }
     emit("\taddi r1, r0, 0");
     emit("\tldw r13, sp+%d", SLOT_R13);
     emit("\tldw r12, sp+%d", SLOT_R12);
     emit("\tldw r11, sp+4");
     emit("\tldw lr, sp+0");
-    emit("\taddi sp, sp, %d", FRAME);
+    emit("\taddi sp, sp, %d", g_frame);
     emit("\tjalr r0, r31, 0");
 
     /* the unit joins the program registry at start-up (CALL identifier);

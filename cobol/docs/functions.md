@@ -58,9 +58,10 @@ in a program that can be re-entered (the same call site in two
 activations), static otherwise.
 
 **Not implemented yet, refused with a message:** prototypes (`IS
-PROTOTYPE`), function pointers, `AS literal`, BY VALUE and OPTIONAL
-parameters, OMITTED, ANY LENGTH, PROCEDURE DIVISION RETURNING in a
-program.
+PROTOTYPE`), function pointers, `AS literal`, BY VALUE parameters of a
+function, ANY LENGTH. (A program's BY VALUE and OPTIONAL parameters,
+OMITTED arguments and PROCEDURE DIVISION RETURNING are implemented:
+docs/conformance/call.md.)
 
 **Real code.** `tests/majesty-functions.sh` takes majesty's date family
 as it was written in COBOL 2002 -- twelve functions across seven files,

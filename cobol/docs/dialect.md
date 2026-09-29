@@ -136,7 +136,10 @@ given, because majesty's `.prn` oracles were produced under it.
 - **`CALL`**: literal program-names only; `BY REFERENCE` passes the
   address, `BY VALUE` an integer item of up to four bytes widened to a
   word (or an integer literal), `RETURNING` takes `r1` into an integer
-  item; at most eight arguments (the C ABI's registers). The
+  item; the first eight arguments in the C ABI's registers, up to eight
+  more on the stack where C looks for them. Under -std=2002 a COBOL
+  program's PROCEDURE DIVISION RETURNING result goes straight into the
+  RETURNING item (docs/conformance/call.md). The
   program-name literal is the linker symbol, lower-cased, with
   anything but letters, digits and `_` turned into `_` -- so `CALL
   'du_lineartofielded'` reaches C directly and `CALL 'c_lineartofielded'`

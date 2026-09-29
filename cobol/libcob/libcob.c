@@ -4732,6 +4732,20 @@ int cob_pop_alloc_size(void)
     return q > 0x7fffffff ? 0x7fffffff : (int)q;
 }
 
+/* the number of arguments the last CALL passed, for a called program with
+ * OPTIONAL parameters: a trailing argument not passed is omitted (2023
+ * 14.9.4 GR 11).  The program reads it at entry and sets it back to -1,
+ * "not known", which a program entered from C code sees. */
+int cob_call_nargs = -1;
+/* PROCEDURE DIVISION RETURNING for a program (2023 14.8.3): the caller
+ * allocates the returning item (14.2.3 GR 6 NOTE 1) and leaves its
+ * address here for the program to take at entry; every program compiled
+ * -std=2002 says at exit whether it had a returning item, so a CALL ...
+ * RETURNING of a C function (the result in r1) is told from one of a
+ * COBOL program (the result already in place). */
+void *cob_call_retaddr;
+int cob_call_returned;
+
 /* ALLOCATE and FREE (2002 14.8.3, 14.8.14): storage from the heap, zeroed
  * (pointers in it NULL, 14.8.3 GR 9), and a list of the blocks this run
  * unit holds, so FREE can tell allocated storage from anything else */
