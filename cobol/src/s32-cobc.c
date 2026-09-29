@@ -6337,7 +6337,7 @@ static int g_sentence_label = -1;   /* NEXT SENTENCE target, made on demand */
 
 /* ---- paragraphs ------------------------------------------------------- */
 
-typedef struct { char name[64], oname[64]; int id, is_section, line, section, unit; } Para;   /* oname: as written */   /* section: id of the enclosing section, 0 none; unit: where it is */
+typedef struct { char name[64], oname[64]; int id, is_section, line, section, unit, in_decl; } Para;   /* oname: as written */   /* section: id of the enclosing section, 0 none; unit: where it is */
 static Para *g_para; static int g_npara, g_pcap;
 
 static int g_cur_sec_id;            /* the section being parsed (or prescanned), -1 outside one */
@@ -6362,6 +6362,7 @@ static Para *para_find(const char *name)
     return found;
 }
 
+static int g_prescan_decl;          /* the prescan is between DECLARATIVES and END DECLARATIVES */
 static Para *para_add(const char *name, const char *oname, int is_section, int line)
 {
     user_word(name, line, is_section ? "a section" : "a paragraph");
@@ -6371,7 +6372,7 @@ static Para *para_add(const char *name, const char *oname, int is_section, int l
     Para *p = &g_para[g_npara];
     snprintf(p->name, sizeof p->name, "%s", name);
     snprintf(p->oname, sizeof p->oname, "%s", oname);
-    p->id = g_npara + 1; p->is_section = is_section; p->line = line; p->unit = g_unit;
+    p->id = g_npara + 1; p->is_section = is_section; p->line = line; p->unit = g_unit; p->in_decl = g_prescan_decl;
     p->section = is_section ? 0 : (g_cur_sec_id >= 0 ? g_cur_sec_id : 0);
     if (is_section) g_cur_sec_id = p->id;
     g_npara++;
@@ -6398,6 +6399,7 @@ static int is_altered_para(const char *name)
 static void prescan_paragraphs(int from)
 {
     int sentence_start = 1;
+    g_prescan_decl = 0;
     g_cur_sec_id = -1;
     for (int i = from; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
@@ -6420,8 +6422,11 @@ static void prescan_paragraphs(int from)
             else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, tok_orig(t), 1, t->line);
         }
         if (sentence_start && t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s)) {
-            if (!strcmp(t->s, "declaratives")) { }
-            else if (!strcmp(t->s, "end") && (is_word(&g_tok[i + 1], "declaratives") || is_word(&g_tok[i + 1], "program"))) { if (is_word(&g_tok[i + 1], "program")) break; }
+            if (!strcmp(t->s, "declaratives")) { g_prescan_decl = 1; }
+            else if (!strcmp(t->s, "end") && (is_word(&g_tok[i + 1], "declaratives") || is_word(&g_tok[i + 1], "program"))) {
+                if (is_word(&g_tok[i + 1], "program")) break;
+                g_prescan_decl = 0;
+            }
             else if ((!strcmp(t->s, "identification") || !strcmp(t->s, "id")) && is_word(&g_tok[i + 1], "division")) break;   /* a contained program's */
             else if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, tok_orig(t), 0, t->line); }
             else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, tok_orig(t), 1, t->line);
@@ -8774,7 +8779,10 @@ static void parse_use(void)
 {
     int line = cur()->line;
     if (!g_in_decl) die_at(line, "USE belongs in a DECLARATIVES section");
-    if (g_cur_sec_id < 0) die_at(line, "USE must be the first sentence of a section in DECLARATIVES");
+    /* immediately after the section header, a sentence by itself
+     * (X3.23-1985 USE rule 1; 2023 14.9.49.3 rule 1) */
+    if (g_cur_sec_id < 0 || g_tp < 4 || g_tok[g_tp - 2].kind != T_PERIOD || !is_word(&g_tok[g_tp - 3], "section"))   /* USE itself is g_tp - 1 */
+        die_at(line, "USE immediately follows its section header (2023 14.9.49.3 rule 1)");
     int global = accept_word("global");
     if (accept_word("before")) {
         expect_word("reporting");
@@ -8791,6 +8799,7 @@ static void parse_use(void)
         g_rwuse[g_nrwuse].unit = g_unit; g_rwuse[g_nrwuse].sec = g_cur_sec_id; g_rwuse[g_nrwuse].rep = (int)(r - g_reports);
         g_nrwuse++;
         (void)global;
+        if (cur()->kind != T_PERIOD) die_at(cur()->line, "the USE statement is a sentence by itself (2023 14.9.49.3 rule 1)");
         return;
     }
     if (at_word("for") && is_word(cur() + 1, "debugging")) {
@@ -8804,7 +8813,7 @@ static void parse_use(void)
     if ((at_word("exception") && is_word(cur() + 1, "condition")) || at_word("ec")) {
         /* USE AFTER EXCEPTION CONDITION exception-name ... (2023 14.9.49 format 3) */
         if (g_std < 2002) die_at(line, "USE AFTER EXCEPTION CONDITION is COBOL 2002; compile with -std=2002");
-        if (global) die_at(line, "USE GLOBAL is not allowed with EXCEPTION CONDITION");
+        if (global) die_at(line, "USE GLOBAL is not allowed with EXCEPTION CONDITION (2023 14.9.49.2, format 3 has no GLOBAL)");
         if (!accept_word("ec")) { advance(); advance(); }
         int any = 0;
         while (cur()->kind == T_WORD && !strncmp(cur()->s, "ec-", 3)) {
@@ -8812,14 +8821,15 @@ static void parse_use(void)
             if (i < 0) die_at(cur()->line, "'%s' is not an exception-name", cur()->s);
             advance();
             if (at_word("file")) die_at(cur()->line, "USE AFTER EXCEPTION CONDITION ... FILE is not implemented yet");
-            for (int u = unit_use_own_from(); u < g_nuse; u++)
-                if (g_use[u].ec == i) die_at(line, "two USE procedures for %s", ec_name(i));
+            /* the same name in two USE statements is allowed: the first
+             * in the source is the one selected (14.9.49.4 rule 3) */
             if (g_nuse == 64) die_at(line, "too many USE procedures");
             g_use[g_nuse].sec = g_cur_sec_id; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = 0;
             g_use[g_nuse].mode = 0; g_use[g_nuse].file = NULL; g_use[g_nuse].ec = i;
             g_nuse++; any = 1;
         }
         if (!any) die_at(line, "USE AFTER EXCEPTION CONDITION needs an exception-name");
+        if (cur()->kind != T_PERIOD) die_at(cur()->line, "the USE statement is a sentence by itself (2023 14.9.49.3 rule 1)");
         return;
     }
     if (at_word("exception") && is_word(cur() + 1, "object")) die_at(line, "USE AFTER EXCEPTION OBJECT is object orientation, not implemented");
@@ -8837,15 +8847,18 @@ static void parse_use(void)
         if (!mode) {
             if (!(cur()->kind == T_WORD && file_find(cur()->s))) break;
             f = expect_file();
+            if (f->org == COB_ORG_SORT)
+                die_at(line, "'%s' is a sort or merge file and takes no USE procedure (2023 14.9.49.3 rule 2)", f->name);
         }
         for (int i = 0; i < g_nuse; i++)
             if (g_use[i].unit == g_unit && g_use[i].mode == mode && g_use[i].file == f)
-                die_at(line, mode ? "two USE procedures for the same open mode" : "two USE procedures for file '%s'", f ? f->name : "");
+                die_at(line, mode ? "two USE procedures for the same open mode (2023 14.9.49.3 rule 7)" : "two USE procedures for file '%s' (2023 14.9.49.3 rule 8)", f ? f->name : "");
         if (g_nuse == 64) die_at(line, "too many USE procedures");
         g_use[g_nuse].sec = sec; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = global; g_use[g_nuse].mode = mode; g_use[g_nuse].file = f; g_use[g_nuse].ec = -1;
         g_nuse++; any = 1;
     }
     if (!any) die_at(line, "USE AFTER ERROR PROCEDURE needs a file-name or INPUT/OUTPUT/I-O/EXTEND");
+    if (cur()->kind != T_PERIOD) die_at(cur()->line, "the USE statement is a sentence by itself (2023 14.9.49.3 rule 1)");
 }
 
 /* after an I/O statement, with its result in SLOT_C: if the condition is
@@ -9371,6 +9384,7 @@ static void parse_perform_ecp(void)
     (void)line;
 }
 
+static void decl_ref_check(const Para *p, int is_perform, int line);
 /* the declarative section a paragraph or section is in, or -1 */
 static int para_decl_sec(const Para *p)
 {
@@ -9415,8 +9429,10 @@ static void parse_perform(void)
         (!(at_para_name(cur()) && para_find(cur()->s)) && perform_is_ecp()))) { parse_perform_ecp(); return; }
     if (at_para_name(cur()) && para_find(cur()->s)) {
         body.from = expect_para();
+        decl_ref_check(body.from, 1, cur()->line);
         if (accept_word("thru") || accept_word("through")) {
             body.thru = expect_para();
+            decl_ref_check(body.thru, 1, cur()->line);
             /* a range into or out of the declaratives stays in one
              * declarative section (X3.23-1985 PERFORM rule 5; 2023
              * 14.9.28.3 rule 11) */
@@ -9527,6 +9543,21 @@ static void parse_perform(void)
 
 /* ---- GO TO, SET ------------------------------------------------------- */
 
+/* declaratives and the rest meet only by PERFORM (2023 14.9.49.3 rules
+ * 3-4; X3.23-1985 USE rules 3-4): a declarative procedure names no
+ * nondeclarative one, and a declarative one is named from outside its
+ * section only by PERFORM */
+static void decl_ref_check(const Para *p, int is_perform, int line)
+{
+    if (g_in_decl && !p->in_decl)
+        die_at(line, "a declarative procedure refers to '%s', which is not in the declaratives (2023 14.9.49.3 rule 3)", p->oname);
+    if (!is_perform && p->in_decl) {
+        int here = g_cur_sec_id, there = p->is_section ? p->id : p->section;
+        if (!g_in_decl || here != there)
+            die_at(line, "'%s' is in a declarative section: it is named from outside that section only by PERFORM (2023 14.9.49.3 rule 4)", p->oname);
+    }
+}
+
 static void parse_goto(void)
 {
     if (g_in_finally) die_at(cur()->line, "GO TO in a FINALLY phrase: no statement there transfers control out of the PERFORM (2023 14.9.28.4 rule 16)");
@@ -9535,6 +9566,7 @@ static void parse_goto(void)
     while (at_para_name(cur()) && !at_word("depending") && !(cur()->kind == T_WORD && (is_verb(cur()->s) || is_terminator(cur()->s))) && para_find(cur()->s)) {
         if (n >= 64) die_at(cur()->line, "too many GO TO targets");
         ps[n++] = expect_para();
+        decl_ref_check(ps[n - 1], 0, cur()->line);
     }
     int altered = g_cur_para && is_altered_para(g_cur_para->name);
     if (!n && !altered && at_para_name(cur()) && !(cur()->kind == T_WORD && (is_verb(cur()->s) || is_terminator(cur()->s))) &&
@@ -10887,8 +10919,19 @@ static void emit_rw_code(Report *r)
     }
 }
 
+/* no GENERATE, INITIATE or TERMINATE in a USE BEFORE REPORTING procedure
+ * (X3.23-1985 USE rule 7; 2023 14.9.49.3 rule 10) */
+static void rw_not_in_use(const char *verb, int line)
+{
+    if (!g_in_decl) return;
+    for (int i = 0; i < g_nrwuse; i++)
+        if (g_rwuse[i].unit == g_unit && g_rwuse[i].sec == g_cur_sec_id)
+            die_at(line, "%s in a USE BEFORE REPORTING procedure (2023 14.9.49.3 rule 10)", verb);
+}
+
 static void parse_initiate(void)
 {
+    rw_not_in_use("INITIATE", cur()->line);
     /* INITIATE report-name ... (X3.23-1985 XIII 4.2) */
     do {
         Report *r = expect_report();
@@ -11029,6 +11072,7 @@ static void emit_rw_generate(Report *r, RGroup *det)
 static void parse_terminate_1(Report *r);
 static void parse_terminate(void)
 {
+    rw_not_in_use("TERMINATE", cur()->line);
     /* TERMINATE report-name ... (X3.23-1985 XIII 4.4) */
     do parse_terminate_1(expect_report());
     while (cur()->kind == T_WORD && report_find(cur()->s));
@@ -11059,6 +11103,7 @@ static void parse_terminate_1(Report *r)
 
 static void parse_generate(void)
 {
+    rw_not_in_use("GENERATE", cur()->line);
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a report group after GENERATE");
     Report *r = NULL; RGroup *g = NULL;
@@ -11796,11 +11841,13 @@ static void parse_statement_1(void)
         advance();
         for (;;) {
             Para *p1 = expect_para();
+            decl_ref_check(p1, 0, cur()->line);
             if (p1->is_section) die_at(t->line, "ALTER names a paragraph, not a section");
             if (!is_altered_para(p1->name)) die_at(t->line, "internal: '%s' was not seen by the ALTER prescan", p1->name);
             expect_word("to");
             if (accept_word("proceed")) expect_word("to");
             Para *p2 = expect_para();
+            decl_ref_check(p2, 0, cur()->line);
             char cell[32], tgt[32];
             snprintf(cell, sizeof cell, ".Lalt%d_%d", g_unit, p1->id);
             snprintf(tgt, sizeof tgt, ".Lp%d_%d", g_unit, p2->id);

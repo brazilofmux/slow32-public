@@ -3484,3 +3484,21 @@ file-name pair twice in one directive) was accepted; refused. General
 rule 5 (a TURN inside a statement governs what follows it in the source,
 the ELSE branch included) had no test; 2002/ecturnstmt. Tests:
 bad/std2002-turn-dup, std2002-turn-unknown; 2002/ecturnstmt.
+
+**14.9.49 USE** (docs/conformance/use.md). Found and fixed: syntax rule
+1 (USE right after its section header, a sentence by itself -- neither
+half checked), 2 (no USE on a sort or merge file), 3 (a declarative
+refers to no nondeclarative procedure) and 4 (a declarative procedure
+named from outside its section only by PERFORM) -- the prescan now marks
+each paragraph in_decl -- and 10 (no GENERATE, INITIATE or TERMINATE in
+a USE BEFORE REPORTING procedure). Two format 3 USE statements for one
+exception-name were refused, which no rule supports; general rule 3
+takes the first. The open-mode and file duplicate messages cite rules
+7-8. Gaps named: format 3's FILE phrase (rules 13-14, general rule 3c-d)
+and the run-time EC-FLOW-REPORT (general rule 10).
+
+Tests: 2002/usedupec; bad/use-not-first, use-not-alone, use-sort-file,
+use-refers-main, use-goto-into, rw-use-generate. CCVS-85 unchanged;
+harness 341/341; -std=85 byte-identical on all 229 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.
