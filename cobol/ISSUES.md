@@ -2633,3 +2633,35 @@ which was the refusal, now checks rule 1. New: std2002-strong-move-other,
 -strong-refmod, std2002-validate. Harness 261/261; -std=85 byte-identical on all 227 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+### 81. FUNCTION LENGTH of a computed reference modification; integer results display as values (2026-09-28)
+
+The first of Stage B's gaps (the user's choice after Stage B closed:
+close what the modules refuse by name before anything new).
+
+- **LENGTH of `a(s:l)`** with a computed start or length was refused
+  for every item (ISSUES-67 noted it). It is now counted when the
+  statement runs, `FN_RMLEN`: the part's bytes from `cob_refmod_len`, in
+  characters for a national item. GnuCOBOL returns the whole item's
+  length, 10 for all four cases in free/lenrefmod; that is a documented
+  divergence (lenrefmod.oracle-expected, docs/oracles.md).
+- **How an integer result displays.** A compile-time LENGTH is a literal
+  and displays as its value (`10`), which is also how GnuCOBOL shows an
+  integer function. The run-time integer results -- this one, LENGTH
+  and BYTE-LENGTH of a run-time-length function (ISSUES-64), and
+  INTEGER-OF-BOOLEAN (ISSUES-76) -- displayed all their digits
+  (`000000004`). They now carry `COB_F_INTFN`, and DISPLAY shows the
+  value. The text leaves the form to the implementor. Six 2002 tests'
+  expected output changed by exactly that, and nothing else did. The
+  1989 date functions keep the fixed widths GnuCOBOL shows for them.
+
+A slip while regenerating those files: in zsh an unquoted `$fl` does
+not split, so a loop compiled with "-free -std=2002" as one argument,
+failed, and wrote six empty .expected files. They were restored from
+git before anything else, and regenerated under bash with a guard
+against writing an empty capture.
+
+free/lenrefmod (oracle, documented divergence); 2002/natrefmod gains a
+computed national length. Harness 262/262; -std=85 byte-identical on all
+227 Open Systems programs; majesty PASS; majesty-functions PASS; Open
+Systems paper unchanged.

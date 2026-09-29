@@ -6,7 +6,7 @@ f2 xor 101: 010
 f3 = 101010
 f1 is on
 f1 is off
-integer-of-boolean(f3): 000000000000000042
+integer-of-boolean(f3): 42
 boolean-of-integer(5, 3): 101
 from alphanumeric: 01100000
 to alphanumeric: [101010  ]

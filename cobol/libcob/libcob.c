@@ -515,6 +515,11 @@ void cob_display_field(const void *vp, const cob_desc *d)
         return;
     }
     if (d->cat != COB_NUM) { out_bytes((const char *)p, (int)d->size); return; }
+    if (d->flags & COB_F_INTFN) {                   /* an integer function's value, no leading zeros */
+        char t[24]; long long v = cob_get_num(p, d);
+        out_bytes(t, snprintf(t, sizeof t, "%lld", v));
+        return;
+    }
     if (d->usage == COB_U_DISPLAY && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && d->digits == d->size) {
         /* the digits as stored (a picture with P positions takes the general path) */
         int n = (int)d->size;
@@ -2545,6 +2550,15 @@ const cob_desc *cob_fn_var_desc(int national)
 }
 
 /* LENGTH (characters) or BYTE-LENGTH of the result just evaluated */
+/* a length in bytes as nine digits, of characters when national */
+char *cob_fn_len_digits(int bytes, int national)
+{
+    char *b = fn_buffer(9);
+    int v = national ? bytes / 2 : bytes;
+    for (int i = 8; i >= 0; i--) { b[i] = (char)('0' + v % 10); v /= 10; }
+    return b;
+}
+
 char *cob_fn_last_len_digits(int national)
 {
     char *b = fn_buffer(9);

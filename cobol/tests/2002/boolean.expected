@@ -21,4 +21,4 @@ part moved: 101111
 lengths: 6 4 8
 boolean-of-integer(10, 6): 001010
 boolean-of-integer(10, k): 001010
-integer-of-boolean: 000000000000000010 000000000000000010
+integer-of-boolean: 10 10

@@ -3611,10 +3611,21 @@ static void parse_ref(Ref *r)
 }
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
-       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL };
+       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL, FN_RMLEN };
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
-static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN || fn == FN_INTOFBOOL; }
+static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN || fn == FN_INTOFBOOL || fn == FN_RMLEN; }
+static int num_desc(int digits);
+/* a run-time integer result (LENGTH of a run-time length, INTEGER-OF-
+ * BOOLEAN): DISPLAYed as its value, no leading zeros, as a compile-time
+ * LENGTH is and as GnuCOBOL shows integer functions */
+static int fn_num_desc(const Opnd *o)
+{
+    int d = num_desc(o->fsize);
+    if (o->fn != FN_VARLEN && o->fn != FN_RMLEN && o->fn != FN_INTOFBOOL) return d;
+    Desc x = g_desc[d]; x.flags |= COB_F_INTFN;
+    return desc_add(&x);
+}
 static const char *fn_runtime_name(int fn)
 {
     switch (fn) {
@@ -4090,8 +4101,15 @@ static void parse_operand_raw(Opnd *o)
                 o->line = n->line;
                 return;
             }
+            if (x.kind == O_REF && x.ref.rm && !x.ref.rm_len) {
+                /* the part's length is computed: counted at run time, in
+                 * character positions (cobol ISSUES-81) */
+                Opnd *fx = xmalloc(sizeof *fx); *fx = x;
+                memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = FN_RMLEN; o->farg = fx; o->fsize = 9;
+                o->fnid = x.ref.rm_nat; o->line = n->line;
+                return;
+            }
             int len = opnd_size(&x);
-            if (len < 0) die_at(n->line, "FUNCTION LENGTH of a reference modification with a variable length is not implemented");
             if (opnd_is_national(&x) || (x.kind == O_REF && x.ref.sym->usage == U_NATIONAL))
                 len /= 2;                               /* national: character positions, two bytes each */
             if (x.kind == O_REF && !x.ref.rm && (x.ref.sym->usage == U_BIT || x.ref.sym->bitgroup))
@@ -4816,6 +4834,13 @@ static void emit_fn_value_raw(Opnd *f)
         emit_call("cob_fn_char_national");
         return;
     }
+    if (f->fn == FN_RMLEN) {
+        Arg a[1] = { arg_rlen(&x->ref) };            /* the part's bytes */
+        emit_args(a, 1);
+        emit_li("r4", f->fnid);
+        emit_call("cob_fn_len_digits");
+        return;
+    }
     if (f->fn == FN_VARLEN) {
         emit_fn_value(x);                        /* its length is libcob's now */
         emit_li("r3", f->fnid);
@@ -4930,7 +4955,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
         if (o->fnat) { *desc = arg_desc(nat_desc(o->fsize)); return; }
         if (o->fbool) { *desc = arg_desc(bool_desc(o->fsize)); return; }
         if (o->fn == -1) *desc = arg_desc(o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize));
-        else *desc = arg_desc(fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
+        else *desc = arg_desc(fn_is_numeric(o->fn) ? fn_num_desc(o) : str_desc(o->fsize));
         return;
     case O_STR:
         *addr = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
@@ -7129,7 +7154,7 @@ static void emit_push(Opnd *o)
         emit_fn_value(o);
         emit("\tadd r3, r1, r0");
         emit_desc_addr("r4", o->fn == -1 ? (o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize))
-                            : fn_is_numeric(o->fn) ? num_desc(o->fsize) : str_desc(o->fsize));
+                            : fn_is_numeric(o->fn) ? fn_num_desc(o) : str_desc(o->fsize));
         emit_call("cob_push");
         return;
     }

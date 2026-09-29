@@ -27,7 +27,8 @@ enum {
     COB_F_JUST     = 8,   /* JUSTIFIED RIGHT */
     COB_F_BLANKZ   = 16,  /* BLANK WHEN ZERO */
     COB_F_NOTRUNC  = 32,  /* COMP-5 / C types: full binary capacity, no decimal truncation */
-    COB_F_LEAD     = 64   /* SIGN LEADING (not separate): overpunch on the first digit */
+    COB_F_LEAD     = 64,  /* SIGN LEADING (not separate): overpunch on the first digit */
+    COB_F_INTFN    = 128  /* an integer function's result: DISPLAY shows no leading zeros (cobol ISSUES-81) */
 };
 
 /* a file, as SELECT/FD described it; built by the compiler in .data */

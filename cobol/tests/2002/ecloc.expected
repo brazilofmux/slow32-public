@@ -1,7 +1,7 @@
-before any: [ ] [00] 000000001
+before any: [ ] [00] 1
   EC-USER-PLAIN      [ ] [00]
   EC-USER-HERE       [EcLoc; Start-Up OF Main-Line; 36] [00]
   EC-USER-FROMCOPY   [EcLoc; Second-Para OF Main-Line; ecloc-raise.cpy:2] [00]
-national: [EcLoc; Second-Para OF Main-Line; ecloc-raise.cpy:2] 000000050 000000100
+national: [EcLoc; Second-Para OF Main-Line; ecloc-raise.cpy:2] 50 100
   EC-I-O-AT-END      [EcLoc; Lone-Section; 47] [10Ledger-File]
-file: [10Ledger-File] [10Ledger-File] 000000013
+file: [10Ledger-File] [10Ledger-File] 13

@@ -1,8 +1,8 @@
-national-of: [café  ] 000000004 000000008
-lengths: 000000004 000000008
+national-of: [café  ] 4 8
+lengths: 4 8
 bytes: UTF-16BE
 compare: equal
-display-of: [日本語] 000000009
+display-of: [日本語] 9
 char-national(66): [A     ]
 char-national(12354): [ぁ     ]
 substituted: [ab?c  ]

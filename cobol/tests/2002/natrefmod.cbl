@@ -28,6 +28,7 @@ m1.
     display "literal: [" n(2:3) "] [" n(5:) "]"
     display "computed: [" n(k:l) "] [" n(k + 3:) "]"
     display "length: " function length(n(2:3)) " " function byte-length(n(2:3))
+    display "computed length: " function length(n(k:l))
     move n(4:2) to m
     display "sending: [" m "]"
     move "ab" to n(1:2)

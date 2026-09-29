@@ -1,6 +1,7 @@
 literal: [本語テ] [キス]
 computed: [本語テ] [キス]
 length: 3 6
+computed length: 3
 sending: [テキ  ]
 receiving alphanumeric: [ab語テキス]
 receiving computed: [a語語テキス]

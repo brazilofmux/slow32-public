@@ -6,4 +6,4 @@ Deseret round trip: [𐐨          ] 2
 alphanumeric: [CAFÉ       ]
 not the same width: [ı ⱥ Z    ]
 a Latin-1 byte: unchanged
-of a national-of: [NAÏVE       ] 000000005
+of a national-of: [NAÏVE       ] 5
