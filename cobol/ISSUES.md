@@ -3841,3 +3841,34 @@ agrees, default dialect, since EBCDIC is an implementor-name in 85);
 bad/codeset-literal, -comp, -sign, -lineseq. Harness 441/441, CCVS-85
 unchanged, majesty PASS, majesty-functions PASS, Open Systems paper
 unchanged.
+
+### 101. The arithmetic statements sweep (2026-09-29, in progress)
+
+ADD, SUBTRACT, MULTIPLY, DIVIDE and COMPUTE against 2023 14.7.7 and
+14.9.2/.8/.12/.26/.44 and the 85 text. The common rules probed first --
+item identification (a receiver identified as it is reached, so ADD 1 TO
+i t (i) adds to the new i's element; senders once, at the start), SIZE
+ERROR leaving only the receiver that overflows unchanged, the REMAINDER
+from the unrounded quotient -- all hold and agree with GnuCOBOL.
+
+Found and fixed so far:
+- the composite of operands (85 6.4.4 rule 2 and each statement's rule
+  3: ADD/SUBTRACT every operand but the GIVING items, CORRESPONDING by
+  pair, MULTIPLY/DIVIDE the receiving items; COMPUTE exempt) was not
+  checked. arith_composite() now refuses a composite past 31 digits in
+  both editions (past what any edition allows, and past the 64-bit
+  arithmetic). 19-31 under -std=85: the only one in the corpora is
+  majesty's dist01 (a SUBTRACT, 15 integer digits with 4 decimals, whose
+  values fit), so it is taken and a strict build is told: BP-E14 under
+  -warn-extensions. Under -std=2002, 19-31 is legal (the 31-digit gap).
+  None in the Open Systems suite or CCVS-85.
+- DIVIDE ... REMAINDER with more than one GIVING item was accepted;
+  refused (85 DIVIDE formats 4-5).
+- ROUNDED MODE was called COBOL 2002; it is 2014's (2002 has no MODE).
+
+Tests: bad/arith-composite, bad/divide-remainder-two, bad/rounded-mode
+(reworded), warn/ext-every (BP-E14). Harness 443/443, CCVS-85
+unchanged, -std=85 byte-identical on all 229 Open Systems programs,
+majesty PASS, majesty-functions PASS, Open Systems paper unchanged.
+Next: EC-DATA-INCOMPATIBLE (never raised), then the per-statement rules
+and the page.

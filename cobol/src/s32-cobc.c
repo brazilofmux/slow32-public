@@ -260,7 +260,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_N1_RESERVED_NAME,
        BP_E1_RETURN_CODE, BP_E2_GOBACK, BP_E3_COMP_N, BP_E4_VENDOR_BINARY, BP_E5_BINARY_2002,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
-       BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE,
+       BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -300,6 +300,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-E11", 'E', "free-form source is COBOL 2002; an extension in a COBOL 85 program" },
     { "BP-E12", 'E', "ORGANIZATION LINE SEQUENTIAL is not in COBOL 85 or 2002 (COBOL 2023 adds it)" },
     { "BP-E13", 'E', "an underscore in a user-defined word is an implementor's extension; the standard's words take letters, digits and hyphens" },
+    { "BP-E14", 'E', "the composite of operands is more than 18 digits, which X3.23-1985 forbids; taken here, but the "
+                     "arithmetic holds 18 digits, so a value past that would overflow" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -7982,6 +7984,7 @@ static void move_valid(const Opnd *src, const Ref *dst)
     if (why) die_at(src->kind == O_FIG || src->kind == O_ALL ? src->line : dst->line, "%s", why);
 }
 
+static void arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const char *stmt, const char *rule85, int line);
 static int corr_walk(Ref *a, Ref *b, int mode, int rounded, int size_err)
 {
     int n = 0;
@@ -8002,6 +8005,8 @@ static int corr_walk(Ref *a, Ref *b, int mode, int rounded, int size_err)
         } else {
             if (c1->is_group || c2->is_group || c1->pi.category != PIC_NUMERIC || c2->pi.category != PIC_NUMERIC) continue;
             Opnd o = ref_opnd(&r1);
+            arith_composite(&o, 1, &r2, 1, mode == 2 ? "SUBTRACT CORRESPONDING" : "ADD CORRESPONDING",
+                            mode == 2 ? "X3.23-1985 SUBTRACT rule 3c" : "X3.23-1985 ADD rule 3c", r2.line);
             emit_push(&o);
             int rd = rounded;
             emit_store_receivers(&r2, &rd, 1, 0, 0, mode == 2, size_err, -1, 0);
@@ -8031,7 +8036,7 @@ static void parse_arith_corr(int mode, const char *between, const char *end_word
 {
     Ref a, b; parse_corr_operands(&a, &b, between);
     int rounded = accept_word("rounded");
-    if (rounded && at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2002; plain ROUNDED is the 1985 form");
+    if (rounded && at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2014; plain ROUNDED is the 1985 and 2002 form");
     int size_err = at_size_error_clause() || ec_size_on();
     if (size_err) emit("\tstw sp+%d, r0", SLOT_A);
     corr_walk(&a, &b, mode, rounded, size_err);
@@ -8359,7 +8364,7 @@ static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)
         rounded[n] = 0;
         if (accept_word("rounded")) {
             rounded[n] = 1;
-            if (at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2002; plain ROUNDED is the 1985 form");
+            if (at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2014; plain ROUNDED is the 1985 and 2002 form");
         }
         n++;
     }
@@ -8637,6 +8642,40 @@ static void emit_dec_addto(Opnd *op, Ref *rs, int nr, int subtract)
     }
 }
 
+/* the composite of operands (X3.23-1985 6.4.4 rule 2; 2023 14.7.7 rule
+ * 2): the operands superimposed on their decimal points -- the widest
+ * integer part and the widest fraction -- at most 18 digits in 1985, 31
+ * in 2002, and 18 is what this compiler's arithmetic holds.  Which
+ * operands count is each statement's rule; COMPUTE has none. */
+static void opnd_int_frac(const Opnd *o, int *in, int *fr)
+{
+    int digits = -1, scale = 0;
+    if (o->kind == O_REF && !o->ref.sym->is_group && (o->ref.sym->pi.category == PIC_NUMERIC || o->ref.sym->pi.category == PIC_NUMERIC_EDITED))
+        { digits = o->ref.sym->pi.digits; scale = o->ref.sym->pi.scale; }
+    else if (o->kind == O_NUM) { digits = o->num.ndigits; scale = o->num.scale; }
+    if (digits < 0) return;
+    int f = scale > 0 ? scale : 0, i = digits - f;
+    if (i < 0) i = 0;
+    if (i > *in) *in = i;
+    if (f > *fr) *fr = f;
+}
+static void arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const char *stmt, const char *rule85, int line)
+{
+    int in = 0, fr = 0;
+    for (int k = 0; k < n; k++) opnd_int_frac(&ops[k], &in, &fr);
+    for (int k = 0; k < nr; k++) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = rs[k]; opnd_int_frac(&o, &in, &fr); }
+    int c = in + fr;
+    if (c <= 18) return;
+    /* past 31: no edition allows it.  19-31: 2002's, the 31-digit gap
+     * here; under -std=85 forbidden, yet majesty's dist01 has a 19-digit
+     * SUBTRACT whose values fit, so it is taken, and a strict build is
+     * told (BP-E14, -warn-extensions) */
+    if (c > 31)
+        die_at(line, "%s: the composite of operands is %d digits, more than %s allows (%s)", stmt, c,
+               g_std < 2002 ? "COBOL 85's 18, or any edition's 31," : "31", g_std < 2002 ? rule85 : "2023 14.7.7 rule 2");
+    if (g_std < 2002) bp(BP_E14_COMPOSITE, line);
+}
+
 static void parse_add(void)
 {
     if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
@@ -8662,6 +8701,7 @@ static void parse_add(void)
         giving = 1; nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else die_at(cur()->line, "expected TO or GIVING in ADD");
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
+    arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
     int size_err = at_size_error_clause() || ec_size_on();
 
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
@@ -8699,6 +8739,12 @@ static void parse_subtract(void)
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
     if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
+    {   /* the composite: every operand, the GIVING items apart (85 rule 3) */
+        Opnd all[MAXOPS + 1]; int na = 0;
+        for (int k = 0; k < n; k++) all[na++] = ops[k];
+        if (giving) all[na++] = minuend;
+        arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
+    }
     int size_err = at_size_error_clause() || ec_size_on();
 
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
@@ -8740,6 +8786,7 @@ static void parse_multiply(void)
         g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
         if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
+        arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);   /* the receiving items */
         int size_err = at_size_error_clause() || ec_size_on();
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
@@ -8749,6 +8796,7 @@ static void parse_multiply(void)
     g_tp = save;
     nr = parse_ref_list(rs, rd, MAXOPS, 0);
     if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
+    arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);
     int size_err = at_size_error_clause() || ec_size_on();
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
@@ -8811,6 +8859,8 @@ static void parse_divide(void)
             g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
             nr = parse_ref_list(rs, rd, MAXOPS, 1);
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+            if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
+            arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
             int size_err = size_error_after_remainder() || ec_size_on();
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
             emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
@@ -8821,6 +8871,7 @@ static void parse_divide(void)
         g_tp = save;
         nr = parse_ref_list(rs, rd, MAXOPS, 0);
         if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+        arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
         int size_err = at_size_error_clause() || ec_size_on();
         if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
         for (int i = 0; i < nr; i++) {
@@ -8836,6 +8887,8 @@ static void parse_divide(void)
     expect_word("giving");
     nr = parse_ref_list(rs, rd, MAXOPS, 1);
     if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+    if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
+    arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
     int size_err = size_error_after_remainder() || ec_size_on();
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);

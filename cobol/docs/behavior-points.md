@@ -125,6 +125,7 @@ warns only under -std=85. Never changes the output.
 | BP-E11 | free-form source | GnuCOBOL / majesty | 85 | yes, free-form reference format (2002 6.3) |
 | BP-E12 | `ORGANIZATION LINE SEQUENTIAL` | Micro Focus, GnuCOBOL | 85, 2002 | yes, but only from 2023 |
 | BP-E13 | `_` in a user-defined word | GnuCOBOL / majesty | 85, 2002 | no: letters, digits and hyphens |
+| BP-E14 | an ADD, SUBTRACT, MULTIPLY or DIVIDE whose composite of operands is 19-31 digits | majesty's dist01 (one SUBTRACT, 15 integer digits and 4 decimals) | 85 | 2002 allows 31 (14.7.7 rule 2); 1985 says 18. Taken, since the values fit the 18-digit arithmetic; past 31 refused in both editions |
 
 Not points, recorded here:
 
