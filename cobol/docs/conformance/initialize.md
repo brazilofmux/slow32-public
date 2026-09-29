@@ -10,7 +10,7 @@ and checked the syntax rules of both editions.
 
 | rule | paraphrase | disposition |
 |---|---|---|
-| 2023 1 | identifier-1 of a class INITIALIZE can set | **refused**: an index-name ("not a data item; SET it", bad/initialize-operands -- accepted before this sweep); a USAGE INDEX item (usage.md) |
+| 2023 1 | identifier-1 of a class INITIALIZE can set | **refused**: an index-name (bad/initialize-operands; accepted before this sweep; since ISSUES-108 by the general index-name rule, occurs.md); a USAGE INDEX item (usage.md) |
 | 2023 3-4 (85: 2) | each REPLACING value a valid MOVE (SET, for the pointer categories) to its category | **refused** through the MOVE rules; DATA-POINTER takes a pointer item or NULL. FUNCTION-POINTER, PROGRAM-POINTER, MESSAGE-TAG and OBJECT-REFERENCE: no such items exist here, so the words are refused as not implemented |
 | 85: 4 | no OCCURS DEPENDING ON in identifier-1 or below it | **extension** under -std=85: BP-E15 (majesty's gl008, gl034, gl040 INITIALIZE such tables); 2023 GR 8 allows it |
 | 2023 5 (85: 6) | no RENAMES item | **refused**: bad/initialize-operands -- accepted before |

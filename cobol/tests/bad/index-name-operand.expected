@@ -1,0 +1,2 @@
+the index-name 'i' is not an operand of ADD; SET it, or SET an integer item from it (X3.23-1985 OCCURS syntax rule 13)
+the index-name 'i' is not an operand of DISPLAY; SET it, or SET an integer item from it (X3.23-1985 OCCURS syntax rule 13)

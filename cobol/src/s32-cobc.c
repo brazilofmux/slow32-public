@@ -1696,6 +1696,7 @@ typedef struct Sym {
 static int sym_in_strong(const Sym *s);
 static Sym *odo_table_for(Sym *s);
 static void value_rules(void);
+static void occurs_rules(void);
 static Sym *odo_table_below(Sym *s);
 
 static Sym *g_sym;
@@ -2541,6 +2542,9 @@ static void parse_data_item1(void)
                  * receiving item); d says how many are in use */
                 if (cur()->kind != T_NUM) die_at(t->line, "expected the maximum after OCCURS m TO");
                 s->odo_min = s->occurs; s->occurs = atoi(cur()->s); advance();
+                if (s->occurs <= s->odo_min)
+                    die_at(t->line, "OCCURS %d TO %d: the maximum must be greater than the minimum (%s)", s->odo_min, s->occurs,
+                           g_std < 2002 ? "X3.23-1985 OCCURS syntax rule 5" : "2023 13.18.38.3 rule 16");
                 accept_word("times");
                 if (!accept_word("depending")) die_at(t->line, "OCCURS m TO n needs DEPENDING ON");
                 accept_word("on");
@@ -2560,6 +2564,9 @@ static void parse_data_item1(void)
                             s->okey_desc[s->nokey++] = (unsigned char)desc;
                         }
                         advance();
+                        /* a qualified key (85 OCCURS rule 2): the qualifiers
+                         * name the table and its groups, not further keys */
+                        while (at_word("of") || at_word("in")) { advance(); if (cur()->kind == T_WORD) advance(); }
                     }
                     continue;
                 }
@@ -2676,6 +2683,55 @@ static void parse_data_item1(void)
         if (f->rec < 0) f->rec = sym_idx(s); else s->redefines = f->rec;
     } else if (g_cur_fd >= 0 && level == 77)
         die_at(line, "a level 77 item cannot appear in the FILE SECTION");
+}
+
+/* ---- the OCCURS clause's rules (2023 13.18.38.3; X3.23-1985 5.8.3) --- */
+
+static int sym_under(int j, int i)          /* is entry j entry i or below it? */
+{
+    for (int a = j; a >= 0; a = g_sym[a].parent) if (a == i) return 1;
+    return 0;
+}
+static void occurs_rules_one(int i)
+{
+    Sym *s = &g_sym[i];
+    int e85 = g_std < 2002;
+    if (!s->occurs || s->is_cond) return;
+    /* no ODO table below a table (rule 1b) */
+    for (int j = i + 1; j < g_nsym; j++)       /* index-names sit among the entries: test each, stop at none */
+        if (g_sym[j].odo_dep[0] && !g_sym[j].is_index && sym_under(j, i))
+            die_at(g_sym[j].line, "'%s' has OCCURS DEPENDING ON inside the table '%s'; a variable table is not subordinate to another table (%s)",
+                   g_sym[j].name, s->name, e85 ? "X3.23-1985 OCCURS syntax rule 1b" : "2023 13.18.38.3 rule 1b");
+    for (int k = 0; k < s->nokey; k++) {
+        int found = -1;
+        for (int j = i; j < g_nsym; j++)
+            if (!g_sym[j].is_cond && !g_sym[j].is_index && !strcmp(g_sym[j].name, s->okey[k]) && sym_under(j, i)) { found = j; break; }
+        if (found < 0 || (k > 0 && found == i))
+            die_at(s->line, "KEY '%s' of the table '%s': %s (%s)", s->okey[k], s->name,
+                   found < 0 ? "a key is the table's entry or an entry below it" : "only the first key may be the table's own entry",
+                   e85 ? "X3.23-1985 OCCURS syntax rule 3" : "2023 13.18.38.3 rule 3");
+        Sym *x = &g_sym[found];
+        if (found != i && x->occurs)
+            die_at(s->line, "KEY '%s' of the table '%s' has an OCCURS clause of its own (%s)", x->name, s->name,
+                   e85 ? "X3.23-1985 OCCURS syntax rule 11" : "2023 13.18.38.3 rule 6");
+        for (int a = x->parent; a >= 0 && a != i; a = g_sym[a].parent)
+            if (g_sym[a].occurs)
+                die_at(s->line, "KEY '%s' of the table '%s' is inside '%s', which has an OCCURS clause (%s)", x->name, s->name, g_sym[a].name,
+                       e85 ? "X3.23-1985 OCCURS syntax rule 12" : "2023 13.18.38.3 rule 4");
+        if (!x->is_group && (x->usage == U_BIT || x->pi.category == PIC_BOOLEAN || x->usage == U_POINTER))
+            die_at(s->line, "KEY '%s' of the table '%s' is %s (2023 13.18.38.3 rule 8)", x->name, s->name,
+                   x->usage == U_POINTER ? "a pointer" : "boolean");
+    }
+}
+static void occurs_rules(void)
+{
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        jmp_buf jb, *outer = g_recover;
+        if (setjmp(jb)) { g_recover = outer; continue; }
+        g_recover = &jb;
+        occurs_rules_one(i);
+        g_recover = outer;
+    }
 }
 
 /* ---- the VALUE clause's rules (2023 13.18.63.3; X3.23-1985 5.15) --- */
@@ -3318,6 +3374,7 @@ static void finish_data_division(void)
             if (a->rec < 0 || b->rec < 0) die_at(b->line, "SAME RECORD AREA: file '%s' has no record description", b->name);
             if (g_sym[b->rec].redefines < 0) g_sym[b->rec].redefines = a->rec;
         }
+    occurs_rules();
     value_rules();
     /* the REDEFINES rules that need sizes and subordinates (2023
      * 13.18.44.3 rules 5, 8, 9, 12, 14; X3.23-1985 REDEFINES rules 5, 6, 9) */
@@ -4125,6 +4182,15 @@ static int g_cond_depth;
 static void index_ref_check(const Ref *r)
 {
     const Sym *x = r->sym;
+    if (g_in_proc && x->is_index && !g_cond_depth && !g_fn_depth && g_cur_stmt[0]) {
+        /* an index-name: a subscript, PERFORM and SEARCH VARYING, SET, a
+         * relation (2023 13.18.38.3 rule 7; X3.23-1985 OCCURS rule 13:
+         * an index-name is not data) */
+        static const char *in_ok[] = { "SET", "SEARCH", "PERFORM", "EVALUATE", "MOVE", NULL };
+        for (int i = 0; in_ok[i]; i++) if (!strcmp(g_cur_stmt, in_ok[i])) return;
+        die_at(r->line, "the index-name '%s' is not an operand of %s; SET it, or SET an integer item from it (%s)", x->name, g_cur_stmt,
+               g_std < 2002 ? "X3.23-1985 OCCURS syntax rule 13" : "2023 13.18.38.3 rule 7");
+    }
     if (!g_in_proc || x->is_group || x->is_index || (x->usage != U_INDEX && x->usage != U_POINTER)) return;
     if (g_cond_depth || g_fn_depth || !g_cur_stmt[0]) return;
     /* MOVE says so itself, pointing at SET (move_invalid) */

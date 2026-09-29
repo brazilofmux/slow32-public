@@ -26,6 +26,7 @@ working-storage section.
 01  w        pic 1(6).
 01  i        pic 99.
 01  k        pic 99.
+01  pn       pic 9(10).
 procedure division.
 main.
     perform varying i from 1 by 1 until i > 5
@@ -37,7 +38,7 @@ main.
     display "pr(px) after SET UP BY 1: " pr(px) "  pr(px - 1): " pr(px - 1)
     set px to 1
     search pr at end display "search: not found"
-        when pr(px) = b"101" display "search: 101 at " px
+        when pr(px) = b"101" set pn to px display "search: 101 at " pn
     end-search
     display "pr(5)(2:2): " pr(5)(2:2) "  pr(4)(1:1): " pr(4)(1:1)
     move 5 to i move 2 to k

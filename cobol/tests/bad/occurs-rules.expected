@@ -1,0 +1,5 @@
+OCCURS 3 TO 3: the maximum must be greater than the minimum (X3.23-1985 OCCURS syntax rule 5)
+KEY 'w' of the table 't1': a key is the table's entry or an entry below it (X3.23-1985 OCCURS syntax rule 3)
+KEY 'v2' of the table 't2' has an OCCURS clause of its own (X3.23-1985 OCCURS syntax rule 11)
+KEY 'v3' of the table 't3' is inside 'h3', which has an OCCURS clause (X3.23-1985 OCCURS syntax rule 12)
+'u4' has OCCURS DEPENDING ON inside the table 't4'; a variable table is not subordinate to another table (X3.23-1985 OCCURS syntax rule 1b)

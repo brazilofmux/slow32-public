@@ -4078,3 +4078,25 @@ bad/value-rules (11 errors in one program), bad/std2002-value-false,
 2002/condfalse. Harness 470/470, -std=85 byte-identical on the Open
 Systems programs, majesty PASS. Page: docs/conformance/value.md.
 
+### 108. The OCCURS sweep (2026-09-29)
+
+13.18.38 formats 1-2 and 85 5.8. The KEY names were stored for SEARCH
+ALL and never resolved: an undeclared key, one outside the table, one
+with an OCCURS of its own or inside a nested table, a boolean key were
+all accepted, and a qualified key (KEY IS k OF t) was stored as three
+keys. A pass after layout, occurs_rules (recovering per entry), now
+resolves each; the first scan stopped at the INDEXED BY names, which are
+entered among the table's subordinates, and refused majesty's keys --
+caught by the gates before commit.
+
+Also refused now: an ODO table below a table (rule 1b); OCCURS m TO n
+with n not above m (rule 16; 85 rule 5); an index-name as an operand of
+anything but SET, SEARCH, PERFORM VARYING, a relation or a subscript
+(rule 7; 85 rule 13), which had let ADD 1 TO i and DISPLAY i through.
+Our 2002/bitarray2 displayed an index-name; it now SETs an integer.
+
+Tests: bad/occurs-rules (5 errors), bad/index-name-operand;
+bad/initialize-operands (the index-name message is the general one
+now). Harness 472/472, CCVS-85 unchanged, -std=85 byte-identical on the
+Open Systems programs, majesty PASS. Page: docs/conformance/occurs.md.
+
