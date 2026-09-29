@@ -1,6 +1,6 @@
 identification division.
 program-id. bitins.
-*> INSPECT works on characters; a USAGE BIT item is refused.
+*> INSPECT takes items of usage display or national (2023 14.9.22.3 rule 1).
 data division.
 working-storage section.
 01  b pic 1(8) usage bit.

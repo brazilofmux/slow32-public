@@ -88,8 +88,11 @@ Not implemented, refused by name: OCCURS DEPENDING ON and INDEXED BY on
 a bit array, OCCURS on a bit group, a character item redefining a bit
 item that starts inside a byte, SYNCHRONIZED of a bit item or bit
 group, reference modification of a bit array's element; a VALUE on a bit
-group; bit items in INSPECT, STRING and UNSTRING, whose runtimes work on
-characters.
+group.
+
+Refused by the standard, not a gap: bit items in INSPECT, STRING and
+UNSTRING, which take items of usage display or national (14.9.22.3
+rules 1-2, 14.9.43.3 rule 1, 14.9.48.3 rules 2 and 4) (ISSUES-86).
 
 ## Not yet
 

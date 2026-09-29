@@ -6706,11 +6706,16 @@ static int opnd_is_national(const Opnd *o)
 
 static int ref_is_national(const Ref *r) { return sym_is_national(r->sym); }
 
-/* bits in a statement whose runtime works on characters */
+/* INSPECT, STRING and UNSTRING take items of usage display or national
+ * only (2023 14.9.22.3 rules 1-2, 14.9.43.3 rule 1, 14.9.48.3 rules 2 and
+ * 4): not bits (cobol ISSUES-86) */
 static void no_bits(const Opnd *o, const char *stmt)
 {
+    static const char *rule[] = { "INSPECT", "14.9.22.3 rules 1 and 2", "STRING", "14.9.43.3 rule 1", "UNSTRING", "14.9.48.3 rules 2 and 4", NULL };
+    const char *r = "";
+    for (int i = 0; rule[i]; i += 2) if (!strcmp(stmt, rule[i])) r = rule[i + 1];
     if (o->kind == O_REF && (o->ref.sym->usage == U_BIT || o->ref.sym->bitgroup))
-        die_at(o->line, "a USAGE BIT item in %s is not implemented yet", stmt);
+        die_at(o->line, "%s takes items of usage display or national, not the USAGE BIT item '%s' (2023 %s)", stmt, o->ref.sym->name, r);
 }
 
 /* STRING, UNSTRING: when one operand is national all are (2023 14.9.43.3

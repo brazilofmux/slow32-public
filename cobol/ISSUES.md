@@ -2779,3 +2779,14 @@ alone, a character view of a byte-aligned bit item, and sixteen flags
 over two bytes. bad/std2002-bit-redef-byte. Harness 269/269; -std=85
 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 86. Bit items in INSPECT, STRING and UNSTRING are the standard's refusal, not a gap (2026-09-28)
+
+ISSUES-78 refused USAGE BIT items in INSPECT, STRING and UNSTRING as
+"not implemented yet", as if they were a gap. The text rules them out:
+all three take items of usage display or national (14.9.22.3 rules 1-2,
+14.9.43.3 rule 1, 14.9.48.3 rules 2 and 4). The message now cites the
+rule, and the gap list loses the entry. std2002-bit-inspect's expected
+message follows; std2002-bit-string and -bit-unstring are new. Harness
+271/271; -std=85 byte-identical on all 227 Open Systems programs;
+majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
