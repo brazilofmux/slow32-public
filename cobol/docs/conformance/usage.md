@@ -33,9 +33,15 @@ were swept with the national and boolean data
 | 11 | PACKED-DECIMAL: a digit a nibble; WITH NO SIGN | **test**: free/identmove, CCVS NC; NO SIGN is 2014's: **n/a** |
 | 12 | BINARY-CHAR, -SHORT, -LONG, -DOUBLE, SIGNED by default, hold their minimum ranges | **test**: 2002/binranges (the oracle agrees). SIGNED and UNSIGNED after BINARY-SHORT and BINARY-LONG were not parsed before this sweep ("unexpected 'unsigned'"). BINARY-DOUBLE is **gap**: its range needs 19 digits, the arithmetic here holds 18; refused by name (bad/std2002-binary-double) |
 | 13-18 | the floating-point usages | **n/a** until -std=2014 (the ruling of 2026-09-28); refused as not implemented |
-| POINTER | a pointer holds a data address, NULL the null one; INITIALIZE sets NULL | **test**: 2002/pointerset (the oracle agrees). `SET p TO NULL` failed ("null cannot be moved to the pointer item") and `p = NULL` was never true, NULL being compared as four alphanumeric bytes; both fixed. ADDRESS OF (8.4.3.11) is **gap**, refused by name (bad/std2002-address-of), so a pointer is set only by CALL |
+| POINTER | a pointer holds a data address, NULL the null one; INITIALIZE sets NULL | **test**: 2002/pointerset (the oracle agrees). `SET p TO NULL` failed ("null cannot be moved to the pointer item") and `p = NULL` was never true, NULL being compared as four alphanumeric bytes; both fixed |
+| ADDRESS OF, BASED | 2002 8.4.2.11 / 2023 8.4.3.11 (rules 2, 4, 5), BASED 2002 13.16.5, SET formats 7 and 10, pointer relations (8.8.4.2.2 format 3, 8.8.4.2.3 rule 5, 8.8.4.2.16) | **test**: 2002/addressof (the oracle agrees), 2002/ecptrnull (EC-DATA-PTR-NULL, 13.16.5 general rule 3); **refused**: bad/std2002-address-of-display (rule 5), -set-address-ws (14.9.39.3 rule 18), -pointer-lt, -pointer-cmp-num, address-of-85. Implemented after this sweep named it a gap (ISSUES-96). **gap**: ADDRESS OF passed BY REFERENCE or BY CONTENT (bad/std2002-address-of-byref), ALLOCATE and FREE, BASED in LOCAL-STORAGE; EC-BOUND-PTR (13.16.5 general rule 4) is not raised |
 
 ## Rulings recorded
+
+- `SET ADDRESS OF` a LINKAGE record at level 01 or 77 that is not
+  BASED: accepted, as IBM and GnuCOBOL accept it and as older programs
+  written for them do. 2023 14.9.39.3 rule 18 asks for a based item; a
+  LINKAGE record is reached through the same kind of cell here.
 
 - Under -std=85 the compiler takes, as extensions majesty uses,
   COMP-3, COMP-5, BINARY-CHAR, SIGNED-INT, SIGNED-SHORT,

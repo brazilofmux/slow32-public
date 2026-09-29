@@ -1617,6 +1617,7 @@ typedef struct Sym {
     unsigned cv_all;                 /* bit i: value i is ALL literal */
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
+    int  is_based;                  /* a BASED entry: reached through a cell SET ADDRESS OF fills, NULL at first (2002 8.6.4) */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
     int  nat_usage;                 /* USAGE NATIONAL was written (cobol ISSUES-62) */
@@ -1690,8 +1691,8 @@ static Sym *sym_new(void)
 static int sym_idx(Sym *s) { return (int)(s - g_sym); }
 /* a record reached through a cell holding its address, not by its label:
  * LINKAGE (the caller's), LOCAL-STORAGE (the activation's), EXTERNAL */
-static int rec_indirect(const Sym *rec) { return rec->is_linkage || rec->is_local || rec->is_external; }
-static const char *indirect_kind(const Sym *rec) { return rec->is_linkage ? "LINKAGE" : rec->is_local ? "LOCAL-STORAGE" : "EXTERNAL"; }
+static int rec_indirect(const Sym *rec) { return rec->is_linkage || rec->is_local || rec->is_external || rec->is_based; }
+static const char *indirect_kind(const Sym *rec) { return rec->is_based ? "BASED" : rec->is_linkage ? "LINKAGE" : rec->is_local ? "LOCAL-STORAGE" : "EXTERNAL"; }
 
 /* name [OF|IN qualifier]...: the unique item that matches */
 static void unit_range(int level, int *from, int *to);   /* an ancestor's symbol range */
@@ -2516,6 +2517,14 @@ static void parse_data_item1(void)
             advance(); accept_word("left"); accept_word("right");
             s->sync = 1; continue;
         }
+        if (!strcmp(t->s, "based")) {
+            /* BASED (2002 13.16.5): a template reached through an implicit
+             * data-address pointer, NULL until SET ADDRESS OF gives it one */
+            if (g_std < 2002) die_at(t->line, "BASED is COBOL 2002; compile with -std=2002");
+            if (level != 1 && level != 77) die_at(t->line, "'%s': BASED is for a level 01 or 77 entry here", s->name);
+            if (g_in_local) die_at(t->line, "'%s': a BASED entry in LOCAL-STORAGE is not implemented", s->name);
+            advance(); s->is_based = 1; continue;
+        }
         if (!strcmp(t->s, "just") || !strcmp(t->s, "justified")) {
             advance(); accept_word("right");
             s->just = 1; continue;
@@ -2627,6 +2636,12 @@ static void build_tree(void)
                        s->name, g_sym[s->parent].name);
             else { s->nat_usage = 1; s->in_natgroup = 1; }        /* implied (rule 3); a PICTURE of X or A is refused when finished */
         }
+        if (s->value_tok || s->value_fig) {
+            int r = i; while (g_sym[r].parent >= 0) r = g_sym[r].parent;
+            if (g_sym[r].is_based)
+                die_at(s->line, "'%s': a BASED entry has no storage of its own, so no VALUE (2002 13.16.5)", s->name);
+        }
+        if (s->is_based && s->redefines >= 0) die_at(s->line, "'%s': a BASED entry takes no REDEFINES", s->name);
         if (!s->is_group && s->usage == U_POINTER && s->level != 1 && !sym_in_strong(s))
             die_at(s->line, "'%s': a USAGE POINTER item is at level 1, or in a strongly-typed group (2023 13.18.60.3 rule 14; 2002 rule 13)", s->name);
         if (s->is_group && s->has_pic && s->standin) s->has_pic = 0;      /* it stood in for a group: no second error */
@@ -3634,7 +3649,7 @@ static FnSig g_fnsig[128]; static int g_nfnsig;
 static char g_repo_fn[32][64]; static int g_nrepo_fn;
 static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
 
-enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR };   /* O_BEXPR: a boolean expression, e_start..e_end, fsize its widest operand */
+enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /* O_ADDR: ADDRESS OF ref, a data-address identifier */   /* O_BEXPR: a boolean expression, e_start..e_end, fsize its widest operand */
 
 typedef struct Opnd_ {
     int kind;
@@ -3806,7 +3821,7 @@ static void parse_ref(Ref *r)
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a data-name, found %s", tok_desc(t));
     if (!strcmp(t->s, "address") && is_word(peek(1), "of") && !sym_lookup_quiet("address"))
-        die_at(t->line, "ADDRESS OF (a data-address identifier, 2023 8.4.3.11) is not implemented");
+        die_at(t->line, "ADDRESS OF is a sending operand of SET or CALL, or a relation's operand; not here (2023 8.4.3.11 rule 5)");
     r->line = t->line;
     if (!strcmp(t->s, "line-counter") || !strcmp(t->s, "page-counter")) {
         /* the report's counters: cells of its block, four-byte unsigned */
@@ -4281,6 +4296,7 @@ static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
 }
 
 static void parse_operand_raw_1(Opnd *o);
+static int ref_has_runtime_sub(const Ref *r);
 static void parse_operand_raw(Opnd *o)
 {
     Tok *t = cur();
@@ -4297,6 +4313,23 @@ static void parse_operand_raw_1(Opnd *o)
     memset(o, 0, sizeof *o);
     Tok *t = cur();
     o->line = t->line;
+    /* ADDRESS OF identifier (2002 8.4.2.11; 2023 8.4.3.11): the address of
+     * an item, a data-pointer value.  SET, CALL and relations take it. */
+    if (t->kind == T_WORD && !strcmp(t->s, "address") && is_word(peek(1), "of") && !sym_lookup_quiet("address")) {
+        if (g_std < 2002) die_at(t->line, "ADDRESS OF is COBOL 2002; compile with -std=2002");
+        if (!g_cond_depth && strcmp(g_cur_stmt, "SET") && strcmp(g_cur_stmt, "CALL"))
+            die_at(t->line, "ADDRESS OF is a sending operand of SET or CALL, or a relation's operand; not of %s", g_cur_stmt);
+        advance(); advance();
+        o->kind = O_ADDR;
+        parse_ref(&o->ref);
+        const Sym *x = o->ref.sym;
+        if (x->is_cond || x->is_index) die_at(o->line, "ADDRESS OF '%s': it is not a data item", x->name);
+        if (x->strong == 0 && !x->is_group && sym_in_strong(x))
+            die_at(o->line, "ADDRESS OF '%s': an item inside a strongly-typed group (2023 8.4.3.11 rule 2)", x->name);
+        if (sym_bitlike(x) && ((x->bitoff % 8) || ref_has_runtime_sub(&o->ref) || o->ref.rm))
+            die_at(o->line, "ADDRESS OF '%s': a bit item not on a byte, or located at run time (2023 8.4.3.11 rule 4)", x->name);
+        return;
+    }
     /* LENGTH OF item: the IBM register the corpus writes (damm), the same
      * compile-time size as FUNCTION LENGTH; a data item named LENGTH wins */
     if (t->kind == T_WORD && !strcmp(t->s, "length") && g_tp + 1 < g_ntok &&
@@ -4611,6 +4644,13 @@ static void emit_item_addr(const char *reg, Sym *s, int off)
     if (!rec_indirect(rec)) { emit_la_off(reg, rec->label, off); return; }
     emit_la(reg, rec->label);
     emit("\tldw %s, %s+0", reg, reg);
+    if (rec->is_based && ec_on_name("EC-DATA-PTR-NULL")) {
+        /* a based item referenced while its address is NULL (2002 13.16.5 GR 3) */
+        int Lok = new_label();
+        emit("\tbne %s, r0, .L%d", reg, Lok);
+        emit_ec_raise(ec_find("EC-DATA-PTR-NULL", 0));
+        emit_label(Lok);
+    }
     if (off >= -2048 && off <= 2047) { if (off) emit("\taddi %s, %s, %d", reg, reg, off); }
     else { emit_li("r2", off); emit("\tadd %s, %s, r2", reg, reg); }
 }
@@ -4752,6 +4792,29 @@ static void emit_ref_addr(const Ref *r, const char *reg)
 addr_done:
     emit_item_addr(reg, s, off);
     if (runtime) emit("\tadd %s, %s, r11", reg, reg);
+}
+
+/* a data-pointer value (2023 8.4.3.11; 14.9.39 formats 7 and 10): ADDRESS
+ * OF an item, a pointer item's content, or NULL */
+static int opnd_is_ptr(const Opnd *o)
+{
+    return o->kind == O_ADDR || (o->kind == O_REF && !o->ref.sym->is_group && o->ref.sym->usage == U_POINTER) ||
+           (o->kind == O_FIG && !strncmp(o->tok->s, "null", 4));
+}
+
+static void emit_ptr_value(const Opnd *o, const char *reg)
+{
+    if (o->kind == O_FIG) { emit("\tadd %s, r0, r0", reg); return; }
+    if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit("\tldw %s, r3+0", reg); return; }
+    const Ref *r = &o->ref;
+    Sym *rec = &g_sym[r->sym->record];
+    if (rec == r->sym && rec_indirect(rec) && !r->nsub && !r->rm) {
+        /* a based or LINKAGE record's own address: its cell, NULL or not */
+        emit_la(reg, rec->label);
+        emit("\tldw %s, %s+0", reg, reg);
+        return;
+    }
+    emit_ref_addr(r, reg);
 }
 
 /* a slot's columns: a national one's character positions (cobol ISSUES-92) */
@@ -4937,7 +5000,8 @@ static void emit_args(const Arg *a, int n)
         } else if (a[i].kind == A_VALUE) {
             /* BY VALUE: the item's integer value, widened to a word */
             Opnd *o = a[i].fn;
-            if (o->kind == O_REF && is_hot_int(o->ref.sym)) { emit_ref_addr(&o->ref, "r3"); emit_load_int(o->ref.sym, "r3", "r1"); }
+            if (o->kind == O_ADDR) emit_ptr_value(o, "r1");
+            else if (o->kind == O_REF && is_hot_int(o->ref.sym)) { emit_ref_addr(&o->ref, "r3"); emit_load_int(o->ref.sym, "r3", "r1"); }
             else if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit_desc_addr("r4", sym_desc(o->ref.sym)); emit_call("cob_load_int"); }
             else emit_li("r1", (long)numlit_int(&o->num));
             emit("\tstw sp+%d, r1", SLOT(base + i));
@@ -5845,6 +5909,7 @@ typedef struct Cond {
     int klass;              /* C_CLASS: 0 NUMERIC 1 ALPHABETIC 2 LOWER 3 UPPER, 4+i SPECIAL-NAMES class i */
     int uc0, uc1;           /* the root: user-function calls to make each time it is evaluated */
     int bstack;             /* C_REL: compared on the boolean stack (an ALL literal beside a run-time length) */
+    int ptr;                /* C_REL: two data-pointer values, compared as addresses (8.8.4.2.16) */
 } Cond;
 
 static Cond *cond_new(int kind) { Cond *c = xmalloc(sizeof *c); memset(c, 0, sizeof *c); c->kind = kind; return c; }
@@ -5865,8 +5930,22 @@ static int bool_len_dynamic(const Opnd *o)
     return 0;
 }
 static int sym_strong_has_boolean(Sym *g);
+static int opnd_is_ptr(const Opnd *o);
 static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
+    {   /* data pointers (format 3): EQUAL or NOT EQUAL, and a pointer on
+         * both sides, NULL counting as one (2023 8.8.4.2.3 rule 5) */
+        int xp = opnd_is_ptr(x) && !(x->kind == O_FIG), yp = opnd_is_ptr(y) && !(y->kind == O_FIG);
+        if (xp || yp) {
+            if (!opnd_is_ptr(x) || !opnd_is_ptr(y))
+                die_at(x->line, "a data pointer is compared only with ADDRESS OF, a pointer item or NULL (2023 8.8.4.2.3 rule 5)");
+            if (op != R_EQ && op != R_NE)
+                die_at(x->line, "data pointers are compared by EQUAL or NOT EQUAL only (2023 8.8.4.2.2 format 3)");
+            Cond *c = cond_new(C_REL);
+            c->x = *x; c->y = *y; c->op = op; c->neg = neg; c->ptr = 1;
+            return c;
+        }
+    }
     /* a boolean operand is compared only with a boolean one (2023
      * 8.8.4.2.8); ZERO and ALL B"..." beside it are boolean */
     {   /* strongly-typed groups compare only with the same type (8.8.4.2.12) */
@@ -6302,6 +6381,18 @@ static void emit_cond_value(Cond *c)
         return;
     }
     /* C_REL */
+    if (c->ptr) {
+        emit_ptr_value(&c->x, "r1");
+        int base = g_slot_base++;
+        if (g_slot_base > NSLOTS) die_at(c->x.line, "internal: too many staged operands");
+        emit("\tstw sp+%d, r1", SLOT(base));
+        emit_ptr_value(&c->y, "r1");
+        emit("\tldw r2, sp+%d", SLOT(base));
+        g_slot_base = base;
+        emit("\t%s r1, r2, r1", c->op == R_EQ ? "seq" : "sne");
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
     if (c->x.kind == O_REF && c->x.ref.sym->strong && !c->x.ref.rm) {
         /* two groups of one strong type: element by element, in order
          * (8.8.4.2.12), from a table of each elementary item's offset in
@@ -10185,8 +10276,70 @@ static void parse_set(void)
         }
         return;
     }
-    while (at_operand()) { if (nr >= MAXOPS) die_at(cur()->line, "too many items in SET"); parse_ref(&rs[nr++]); }
+    int raddr[MAXOPS], nptr = 0;
+    while (at_operand()) {
+        if (nr >= MAXOPS) die_at(cur()->line, "too many items in SET");
+        raddr[nr] = 0;
+        if (at_word("address") && is_word(peek(1), "of") && !sym_lookup_quiet("address")) {
+            /* SET ADDRESS OF data-name (format 7): a based entry's implicit
+             * pointer (2023 14.9.39.3 rule 18); a LINKAGE record's cell
+             * likewise, as IBM and GnuCOBOL allow */
+            int line = cur()->line;
+            if (g_std < 2002) die_at(line, "ADDRESS OF is COBOL 2002; compile with -std=2002");
+            advance(); advance();
+            parse_ref(&rs[nr]);
+            Sym *x = rs[nr].sym;
+            if (rs[nr].nsub || rs[nr].rm || x->parent >= 0 || !(x->is_based || x->is_linkage))
+                die_at(line, "SET ADDRESS OF '%s': it is a BASED entry, or a LINKAGE record at level 01 or 77 (2023 14.9.39.3 rule 18)", x->name);
+            raddr[nr] = 1;
+        } else parse_ref(&rs[nr]);
+        if (raddr[nr] || (!rs[nr].sym->is_group && rs[nr].sym->usage == U_POINTER)) nptr++;
+        nr++;
+    }
     if (!nr) die_at(cur()->line, "SET needs an item");
+    if (nptr && nptr != nr) die_at(rs[0].line, "SET: data-pointer receivers are not mixed with others");
+    if (nptr && accept_word("to")) {
+        /* format 7: the value once, then each receiver in order */
+        Opnd v; parse_operand(&v);
+        if (!opnd_is_ptr(&v))
+            die_at(v.line, "SET of a data pointer takes ADDRESS OF, a pointer item or NULL (2023 14.9.39.3 rule 17)");
+        emit_ptr_value(&v, "r1");
+        emit("\tstw sp+%d, r1", SLOT_A);
+        for (int i = 0; i < nr; i++) {
+            if (raddr[i]) emit_la("r3", g_sym[rs[i].sym->record].label);
+            else emit_ref_addr(&rs[i], "r3");
+            emit("\tldw r1, sp+%d", SLOT_A);
+            emit("\tstw r3+0, r1");
+        }
+        return;
+    }
+    if (nptr) {
+        /* format 10: SET pointer UP|DOWN BY n, in bytes */
+        int down = 0;
+        if (accept_word("up")) down = 0; else if (accept_word("down")) down = 1;
+        else die_at(cur()->line, "expected TO, UP BY or DOWN BY in SET");
+        expect_word("by");
+        Opnd v; parse_operand(&v); check_numeric_opnd(&v);
+        for (int i = 0; i < nr; i++) {
+            if (raddr[i]) die_at(rs[i].line, "SET ADDRESS OF ... UP or DOWN: set a pointer item instead (2023 14.9.39 format 10)");
+            emit_push(&v); emit_call("cob_pop_int");
+            emit("\tstw sp+%d, r1", SLOT_A);
+            emit_ref_addr(&rs[i], "r3");
+            emit("\tldw r2, r3+0");
+            if (ec_on_name("EC-DATA-PTR-NULL")) {
+                int Lok = new_label();
+                emit("\tbne r2, r0, .L%d", Lok);
+                emit_ec_raise(ec_find("EC-DATA-PTR-NULL", 0));
+                emit_label(Lok);
+                emit_ref_addr(&rs[i], "r3");
+                emit("\tldw r2, r3+0");
+            }
+            emit("\tldw r1, sp+%d", SLOT_A);
+            emit("\t%s r2, r2, r1", down ? "sub" : "add");
+            emit("\tstw r3+0, r2");
+        }
+        return;
+    }
     if (accept_word("to")) {
         if (accept_word("true")) {
             for (int i = 0; i < nr; i++) {
@@ -10818,6 +10971,13 @@ static void parse_call(void)
             if (n >= 8) die_at(cur()->line, "more than eight CALL arguments (stack arguments) are not implemented yet");
             parse_operand(&ops[n]);
             Opnd *o = &ops[n];
+            if (o->kind == O_ADDR) {
+                /* the address, a word: BY VALUE; by reference or content it
+                 * would need a pointer item of its own */
+                if (mode != 2) die_at(o->line, "ADDRESS OF as a CALL argument is passed BY VALUE here; BY REFERENCE or CONTENT is not implemented");
+                a[n++] = arg_value(o);
+                continue;
+            }
             if (mode == 1) {
                 if (o->kind == O_REF && o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed");
                 if (o->kind == O_REF && o->ref.rm && o->ref.rm_bit) die_at(o->line, "BY CONTENT of a reference-modified bit item is not implemented (its bits would need moving to a byte)");
@@ -14034,6 +14194,12 @@ static void emit_unit_data(void)
             emit("%s_i:", s->label);
             emit_bytes(s->image, s->image_size);
             emit("\t.data");
+            continue;
+        }
+        if (s->is_based && !s->is_linkage) {
+            emit("\t.p2align 2");
+            emit("%s:\t# based %02d %s (%d bytes, wherever SET ADDRESS OF puts it)", s->label, s->level, s->name, s->image_size);
+            emit("\t.word 0");
             continue;
         }
         if (s->is_linkage || s->is_external) {

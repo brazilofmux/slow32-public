@@ -3644,3 +3644,25 @@ index-value, index-sync-85, std2002-pointer-ref-display, -pointer-88,
 unchanged; harness 404/404; -std=85 byte-identical on all 229 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+**ADDRESS OF and BASED** (2002 8.4.2.11, 13.16.5; 2023 8.4.3.11, 14.9.39
+formats 7 and 10), the gap the USAGE sweep named. ADDRESS OF identifier
+is an operand kind of its own (O_ADDR), taken by SET, CALL BY VALUE and
+relations; emit_ptr_value() gives its address, a pointer's content or
+NULL. A BASED record (level 01/77, WORKING-STORAGE or LINKAGE) is an
+indirect record like a LINKAGE one: a cell, NULL at first, that SET
+ADDRESS OF fills; ADDRESS OF such a record is the cell's content, NULL
+included; with EC-DATA-PTR-NULL checked, a reference through a NULL cell
+raises it. SET ADDRESS OF a non-based LINKAGE record is accepted (IBM,
+GnuCOBOL; a ruling on the usage page). SET pointer UP/DOWN BY n moves it
+in bytes. Pointer relations are EQUAL/NOT EQUAL between data pointers
+only (8.8.4.2.3 rule 5), which also turns away `p = 5`. Gaps named:
+ADDRESS OF BY REFERENCE/CONTENT, BASED in LOCAL-STORAGE, ALLOCATE/FREE,
+EC-BOUND-PTR.
+
+Tests: 2002/addressof (the oracle agrees), 2002/ecptrnull;
+bad/std2002-address-of-display, -set-address-ws, -pointer-lt,
+-address-of-byref, -pointer-cmp-num, address-of-85. CCVS-85 unchanged;
+harness 411/411; -std=85 byte-identical on all 229 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.

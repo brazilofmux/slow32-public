@@ -1,0 +1,1 @@
+a data pointer is compared only with ADDRESS OF, a pointer item or NULL (2023 8.8.4.2.3 rule 5)
