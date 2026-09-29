@@ -1925,8 +1925,6 @@ static void sym_finish(Sym *s)
          * bytes spanned come with the layout (8.5.1.6.3) */
         if (pi->category != PIC_BOOLEAN) die_at(s->line, "'%s': USAGE BIT needs a boolean PICTURE (1)", s->name);
         if (s->occurs && s->odo_dep[0]) die_at(s->line, "'%s': OCCURS DEPENDING ON a USAGE BIT item is not implemented yet", s->name);
-        if (s->occurs && s->idx1 >= 0) die_at(s->line, "'%s': INDEXED BY on a USAGE BIT item is not implemented yet", s->name);
-        if (s->sync) die_at(s->line, "'%s': SYNCHRONIZED on a USAGE BIT item is not implemented yet", s->name);
         s->bits = pi->bytes; s->size = (s->bits + 7) / 8;
         return;
     }
@@ -2533,6 +2531,9 @@ static int layout(int si, int base)
     int run = s->bitgroup != 0, cur = s->bitgroup ? s->bitoff : 0;
     for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
         Sym *ch = &g_sym[c];
+        /* SYNCHRONIZED on a bit item or bit group: implementor-defined
+         * (8.5.1.6.3); here it starts at a byte, and what follows it at the
+         * next byte (cobol ISSUES-93) */
         int cbase, isbit = sym_bitlike(ch) && ch->redefines < 0;
         if (ch->redefines >= 0) {
             /* the first bit of the redefined item (13.18.44.4 rule 1) -- a bit
@@ -2543,7 +2544,7 @@ static int layout(int si, int base)
             if (sym_bitlike(ch)) g_lay_bit = sym_bitlike(t) ? t->bitoff : 0;
             else if (sym_bitlike(t) && t->bitoff)
                 die_at(ch->line, "'%s' redefines '%s', which starts inside a byte (its bit %d): a character item at a bit position is not implemented (13.18.44.4 rule 1)", ch->name, t->name, t->bitoff + 1);
-        } else if (isbit && run) {
+        } else if (isbit && run && !ch->sync) {
             cbase = off; g_lay_bit = cur;
         } else {
             if (run && cur) off++;          /* leave the partly used byte */
@@ -2558,6 +2559,7 @@ static int layout(int si, int base)
             int tot = ch->bitoff + bit_total(ch);
             off = cbase + tot / 8; cur = tot % 8; run = 1;
             cend = cbase + (tot + 7) / 8;
+            if (ch->sync) { off = cend; cur = 0; run = 0; }
         } else {
             cend = cbase + (sym_bitlike(ch) ? sz : sz * (ch->occurs ? ch->occurs : 1));   /* a bit item's size spans its occurrences */
             if (ch->redefines < 0) off = cend;
@@ -2624,13 +2626,34 @@ static void init_one(Sym *rec, int si, int base, int defaults)
     Sym *s = &g_sym[si];
     unsigned char *p = rec->image + base;
     if (s->is_group) {
-        if (s->bitgroup && s->value_tok && !g_no_values) die_at(s->value_tok->line, "a VALUE on the bit group '%s' is not implemented yet", s->name);
+        if (s->bitgroup && s->value_tok && !g_no_values) {
+            /* a bit group's VALUE: a boolean literal, ZERO or ALL B"...", over
+             * the group's bits from its first, aligned left and zero-filled
+             * as for a boolean item (13.18.63; cobol ISSUES-93); the items
+             * in it take their defaults first */
+            for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+                Sym *ch = &g_sym[c];
+                init_instance(rec, c, base + (ch->offset - s->offset), ch->redefines >= 0 ? 0 : defaults);
+            }
+            Tok *v = s->value_tok;
+            if (s->value_fig && strncmp(v->s, "zero", 4)) die_at(v->line, "VALUE %s is not a boolean value for the bit group '%s' (2023 14.9.25 rule 7)", v->s, s->name);
+            if (!s->value_fig && (v->kind != T_STR || !v->boolv)) die_at(v->line, "the VALUE of the bit group '%s' must be a boolean literal (B\"...\") or ZERO", s->name);
+            if (!s->value_fig && !s->value_all && v->len > s->bits) die_at(v->line, "VALUE literal (%d boolean positions) is longer than the bit group '%s' (%d)", v->len, s->name, s->bits);
+            for (int i = 0; i < s->bits; i++) {
+                char c = s->value_fig ? '0' : s->value_all ? v->s[i % (v->len ? v->len : 1)] : i < v->len ? v->s[i] : '0';
+                int b = s->bitoff + i; unsigned char m = (unsigned char)(0x80 >> (b % 8));
+                if (c == '1') p[b / 8] |= m; else p[b / 8] &= (unsigned char)~m;
+            }
+            return;
+        }
         if (s->natgroup && s->value_tok && !g_no_values) {
             init_national(s, p, 1);                 /* a national literal, as for PIC N (13.18.63 rule 5) */
             defaults = 0;
         } else if (s->value_tok && !g_no_values) {
             Tok *v = s->value_tok;
             if (v->kind != T_STR && !s->value_fig) die_at(v->line, "VALUE of the group '%s' must be a nonnumeric literal", s->name);
+            if (v->kind == T_STR && v->boolv)
+                die_at(v->line, "a boolean VALUE belongs to a bit group (GROUP-USAGE BIT); '%s' is an alphanumeric group (2023 13.18.29.4 rule 3)", s->name);
             if (s->value_fig) memset(p, fig_byte(v->s), s->size);
             else if (s->value_all) for (int i = 0; i < s->size; i++) p[i] = (unsigned char)v->s[i % v->len];
             else { int n = v->len < s->size ? v->len : s->size; memcpy(p, v->s, n); memset(p + n, ' ', s->size - n); }
@@ -3390,6 +3413,7 @@ typedef struct {
     int rm_nat;                     /* a national item's: start and length count characters, two bytes each */
     int rm_bit;                     /* a USAGE BIT item's or bit group's: they count bits (cobol ISSUES-82) */
     int bitsub;                     /* a bit array's element: 1 + the subscript that picks it, as a bit position (cobol ISSUES-84) */
+    long bitu_start;                /* ... and the start within the element: 1 without a reference modification, 0 computed (cobol ISSUES-93) */
     int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
@@ -3680,11 +3704,14 @@ static void parse_ref(Ref *r)
     if (!r->sym->is_group && r->sym->usage == U_BIT && r->sym->occurs && r->nsub == r->sym->ndims && r->nsub) {
         /* a bit array's element: the bits (i - 1) * bits + 1 for bits,
          * reference-modified out of the array (cobol ISSUES-84) */
-        if (r->rm) die_at(r->line, "reference modification of an element of the bit array '%s' is not implemented yet", r->sym->name);
         int k = r->nsub - 1;
-        if (r->sub[k].sym && r->sub[k].sym->is_index) die_at(r->line, "an index-name subscript of the bit array '%s' is not implemented yet", r->sym->name);
-        r->rm = 1; r->rm_bit = 1; r->rm_len = r->sym->bits; r->rm_l0 = -1; r->bitsub = r->nsub;
-        if (!r->sub[k].sym) r->rm_start = (r->sub[k].lit - 1) * r->sym->bits + 1;
+        /* reference-modified, the positions count bits within the element
+         * (8.4.3.3.4 rule 5a; cobol ISSUES-93): the bounds were checked
+         * against the element's bits above */
+        if (r->rm) r->bitu_start = r->rm_start;
+        else { r->rm = 1; r->rm_len = r->sym->bits; r->rm_l0 = -1; r->bitu_start = 1; }
+        r->rm_bit = 1; r->bitsub = r->nsub;
+        r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * r->sym->bits + r->bitu_start : 0;
     }
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
@@ -4383,14 +4410,33 @@ static void emit_odo_check(Sym *s)
     emit_label(Lok);
 }
 
-/* r1 = subscript i's occurrence number less one */
-static void emit_sub_index(const Ref *r, int i)
+/* r1 = where a bit array element's part begins, as a bit position in
+ * the array from 1: (i - 1) * bits + the start within the element, the
+ * subscript and the start either computed (cobol ISSUES-84, -93).  Worked
+ * on the numeric stack, which leaves r11 alone.  chk: the length as
+ * emit_refmod_check takes it, for a computed start under EC-BOUND-REF-MOD. */
+static void emit_bitelem_start(const Ref *r, long chk, int slot)
 {
-    Sym *ss = r->sub[i].sym;
-    if (is_hot_int(ss)) { emit_item_addr("r1", ss, ss->offset); emit_load_int(ss, "r1", "r1"); }
-    else { emit_item_addr("r3", ss, ss->offset); emit_desc_addr("r4", sym_desc(ss)); emit_call("cob_load_int"); }
-    long adj = r->sub[i].adj - 1;
-    if (adj) emit("\taddi r1, r1, %ld", adj);
+    Sym *s = r->sym;
+    int k = r->bitsub - 1;
+    if (r->bitu_start) emit_li("r1", r->bitu_start);
+    else {
+        emit_expr_tokens(r->rm_s0, r->rm_s1);
+        emit_call("cob_pop_int");
+        if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, chk, slot);
+    }
+    emit("	add r3, r1, r0"); emit("	srai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
+    if (!r->sub[k].sym) { emit_li("r3", (r->sub[k].lit - 1) * s->bits); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit"); }
+    else {
+        Sym *ss = r->sub[k].sym;
+        emit_item_addr("r3", ss, ss->offset); emit_desc_addr("r4", sym_desc(ss)); emit_call("cob_push");
+        emit_li("r3", r->sub[k].adj - 1); emit("	srai r4, r3, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
+        emit_call("cob_nadd");
+        emit_li("r3", s->bits); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit");
+        emit_call("cob_nmul");
+    }
+    emit_call("cob_nadd");
+    emit_call("cob_pop_int");
 }
 
 static void emit_ref_addr(const Ref *r, const char *reg)
@@ -4430,12 +4476,10 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         emit("\tadd r11, r11, r1");
     }
     if (r->rm && !r->rm_start && r->bitsub) {
-        /* a bit array's element at a computed subscript: the byte holding
-         * its first bit, bitoff + (i - 1) * bits (cobol ISSUES-84) */
-        emit_sub_index(r, r->bitsub - 1);
-        emit_li("r2", s->bits);
-        emit("\tmul r1, r1, r2");
-        emit("\taddi r1, r1, %d", s->bitoff);
+        /* a bit array's element at a computed subscript, or its part at a
+         * computed start: the byte holding its first bit (cobol ISSUES-84) */
+        emit_bitelem_start(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
+        emit("\taddi r1, r1, %d", s->bitoff - 1);
         emit("\tsrai r1, r1, 3");
         emit("\tadd r11, r11, r1");
     } else if (r->rm && !r->rm_start) {
@@ -4574,14 +4618,20 @@ static void emit_rm_start_len(const Ref *r, int slot)
     }
     if (r->rm_len) emit_li("r1", r->rm_len);
     else if (r->rm_l0 >= 0) { emit_expr_tokens(r->rm_l0, r->rm_l1); emit_call("cob_pop_int"); }
+    else if (r->bitsub) {
+        /* a bit array element's part to the element's end: its bits past the start */
+        if (r->bitu_start) emit_li("r1", r->sym->bits - r->bitu_start + 1);
+        else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_call("cob_pop_int"); emit_li("r2", r->sym->bits + 1); emit("\tsub r1, r2, r1"); }
+    }
     else emit_li("r1", 0);
     emit("\tstw sp+%d, r1", SLOT(slot));
-    if (!r->rm_start && r->bitsub) {
-        /* a bit array's element: start (i - 1) * bits + 1 */
-        emit_sub_index(r, r->bitsub - 1);
-        emit_li("r2", r->sym->bits);
-        emit("\tmul r1, r1, r2");
-        emit("\taddi r1, r1, 1");
+    if (r->bitsub) {
+        /* a bit array's element: the array's bit (i - 1) * bits + start */
+        if (!r->rm_start) { emit_bitelem_start(r, r->rm_l0 >= 0 ? -2 : r->rm_len ? (long)r->rm_len : -1, slot); return; }
+        emit_li("r1", r->rm_start);
+        if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) {
+            emit_li("r1", r->bitu_start); emit_refmod_check(r, -2, slot); emit_li("r1", r->rm_start);
+        }
         return;
     }
     if (r->rm_start) emit_li("r1", r->rm_start);
@@ -5588,7 +5638,7 @@ static int g_bexpr_all;                  /* the expression just parsed was an AL
 static void bool_emit_op(int op, Opnd *cnt)
 {
     int line = op >= BO_SL && op <= BO_SRC ? cnt->line : cur()->line;   /* only a shift has its count operand */
-    if (op == BO_NOT) { if (g_bsp && g_bsim[g_bsp - 1]) die_at(line, "B-NOT of an ALL literal is not implemented"); }
+    if (op == BO_NOT) { /* of an ALL literal: still one, each position inverted (cobol ISSUES-93) */ }
     else if (op <= BO_XOR) {
         if (g_bsp >= 2 && g_bsim[g_bsp - 1] && g_bsim[g_bsp - 2])
             die_at(line, "the two operands of a boolean operation cannot both be ALL literals (2023 8.8.2 rule 4)");

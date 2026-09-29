@@ -1,0 +1,13 @@
+pr(px) with px = 3: 011
+pr(px) after SET UP BY 1: 100  pr(px - 1): 011
+search: 101 at 0000000005
+pr(5)(2:2): 01  pr(4)(1:1): 1
+pr(i)(2:2): 01  pr(5)(k:2): 01  pr(i)(k:1): 0
+pr(i)(k:): 01  pr(3)(k + 1:): 1
+pr(2) after (2:2) gets 11: 011  pr(5) after (1:1) gets 0: 001
+pr(px)(k - 1:1) gets 1: 111  pr(1) and pr(3) untouched: 001 011
+synchronized: E0 C0 A0
+bit group VALUE 1100101: CA
+g1: 110  g2: 0101
+w b-and b-not all b'10': 000101
+b-not all b'011' b-or 000000: 100100

@@ -77,18 +77,31 @@ rule 5a): its part starts at any bit and may cross a byte, at literal
 A bit item may OCCUR (ISSUES-84): its occurrences follow one another bit
 by bit, and a subscript picks bits (i - 1) * bits + 1 onward, found at
 run time when the subscript is an item. VALUE applies to each
-occurrence.
+occurrence. INDEXED BY works on a bit array, so do SET, SEARCH and
+index-name subscripts. An element may be reference-modified, its
+positions counting bits within the element (8.4.3.3.4 rule 5a; ISSUES-93):
+the subscript and the start may each be literal or computed. The
+element's start in the array, (i - 1) * bits + start, is worked out on
+the numeric stack.
+
+SYNCHRONIZED on a bit item or bit group is the implementor's to place
+(8.5.1.6.3). Here the item starts at a byte, and whatever follows it
+starts at the next byte (ISSUES-93).
+
+A VALUE on a bit group (GROUP-USAGE BIT) is a boolean literal, ZERO or
+ALL B"...". It is laid over the group's bits from the first, aligned
+left and zero-filled. Without GROUP-USAGE BIT a group of bit items is an
+alphanumeric group (13.18.29.4 rule 3), and a boolean VALUE on it is
+refused: it would store the literal's characters, not its bits.
 
 REDEFINES (ISSUES-85) starts at the first bit of the redefined item
 (13.18.44.4 rule 1): a bit item over a character item starts at its
 first bit, a bit item over a bit item at that item's bit, and a
 character item may redefine a bit item that starts a byte.
 
-Not implemented, refused by name: OCCURS DEPENDING ON and INDEXED BY on
-a bit array, OCCURS on a bit group, a character item redefining a bit
-item that starts inside a byte, SYNCHRONIZED of a bit item or bit
-group, reference modification of a bit array's element; a VALUE on a bit
-group.
+Not implemented, refused by name: OCCURS DEPENDING ON on a bit array,
+OCCURS on a bit group, and a character item redefining a bit item that
+starts inside a byte.
 
 Refused by the standard, not a gap: bit items in INSPECT, STRING and
 UNSTRING, which take items of usage display or national (14.9.22.3
@@ -96,7 +109,8 @@ rules 1-2, 14.9.43.3 rule 1, 14.9.48.3 rules 2 and 4) (ISSUES-86).
 
 ## Not yet
 
-B-NOT of an ALL literal; the items listed under USAGE BIT.
+The items listed under USAGE BIT. (B-NOT of an ALL literal is an ALL
+literal with each position inverted, ISSUES-93.)
 
 ## Oracle
 

@@ -3023,3 +3023,42 @@ a combining acute, a wide character refused at the seventh column,
 positioned DISPLAY and ACCEPT. Harness 283/283; -std=85 byte-identical
 on all 229 Open Systems programs; majesty PASS; majesty-functions PASS;
 Open Systems paper unchanged.
+
+### 93. Bit arrays, part two: INDEXED BY, element reference modification, SYNCHRONIZED, bit-group VALUE, B-NOT ALL (2026-09-28)
+
+Five of the USAGE BIT refusals from ISSUES-78 and -84 lifted:
+
+- **INDEXED BY on a bit array.** An index-name holds an occurrence
+  number, as a data-name subscript does. So SET, SEARCH and index-name
+  subscripts (`pr(px)`, `pr(px - 1)`) take the path the other
+  subscripts already took. The refusal guarded nothing.
+- **Reference modification of an element**, `pr(i)(k:1)`. Positions
+  count bits within the element (8.4.3.3.4 rule 5a). The compile-time
+  bounds were already checked against the element's bits. The start in
+  the array is `(i - 1) * bits + start`; with both literal it is folded,
+  otherwise `emit_bitelem_start` works it out on the numeric stack. That
+  leaves r11, the subscript accumulator, alone. A part with no length
+  runs to the element's end, not the array's. EC-BOUND-REF-MOD checks
+  the start within the element. The old runtime-subscript arithmetic
+  (`emit_sub_index`) is gone into the same helper.
+- **SYNCHRONIZED** on a bit item or bit group: implementor-defined
+  (8.5.1.6.3). It starts at a byte, and what follows it at the next byte.
+- **VALUE on a bit group** (GROUP-USAGE BIT): a boolean literal, ZERO or
+  ALL, laid over the group's bits from the first, aligned left and
+  zero-filled. The subordinate items take their defaults first.
+- **B-NOT of an ALL literal**: `cob_bnot` already inverted an ALL entry
+  in place, keeping it ALL, so only the refusal went. It stays an ALL
+  literal for 8.8.2 rule 4 and 14.9.8.3 rule 3. `COMPUTE w = B-NOT ALL
+  B"011"` is refused as an ALL literal alone, as the rule says.
+
+Found on the way: a group of bit items without GROUP-USAGE BIT is an
+alphanumeric group (13.18.29.4 rule 3), and a boolean VALUE on it
+stored the literal's characters ('1' for B"1100101"). It is now refused
+by name.
+
+2002/bitarray2; bad/std2002-bitelem-refmod-past and
+-bool-value-alnum-group new; -bit-refmod and -usage-bit gone (now
+valid). Still refused: OCCURS DEPENDING ON on a bit array, OCCURS on a
+bit group, a character item redefining a mid-byte bit item. Harness
+284/284; -std=85 byte-identical on all 229 Open Systems programs;
+majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
