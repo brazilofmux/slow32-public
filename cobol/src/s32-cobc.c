@@ -1504,6 +1504,12 @@ static void numlit_parse(Tok *t, NumLit *n)
 
 static void numlit_zero(NumLit *n) { memset(n, 0, sizeof *n); n->digits[0] = '0'; n->ndigits = 1; }
 
+static int numlit_is_zero(const NumLit *n)
+{
+    for (int i = 0; i < n->ndigits; i++) if (n->digits[i] != '0') return 0;
+    return 1;
+}
+
 static int numlit_is_int(const NumLit *n)
 {
     for (int i = n->ndigits - n->scale; i < n->ndigits; i++) if (n->digits[i] != '0') return 0;
@@ -9138,10 +9144,26 @@ static void emit_add_to_ref(Opnd *by, Ref *var)
 
 typedef struct { Ref var; Opnd from, by; Cond *until; } Vary;
 
+/* an induction variable to its FROM value; an index-name set from an
+ * identifier that is not positive is EC-RANGE-PERFORM-VARYING (2023
+ * 14.9.28.4 rule 3) */
+static void emit_vary_init(Vary *x)
+{
+    if (x->var.sym->is_index && x->from.kind == O_REF && ec_on_name("EC-RANGE-PERFORM-VARYING")) {
+        int Lok = new_label();
+        Arg a[2] = { arg_ref(&x->from.ref), arg_desc(sym_desc(x->from.ref.sym)) };
+        emit_args(a, 2); emit_call("cob_load_int");
+        emit("\tblt r0, r1, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-RANGE-PERFORM-VARYING", 0));
+        emit_label(Lok);
+    }
+    emit_move(&x->from, &x->var);
+}
+
 static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
 {
     Vary *x = &v[level];
-    emit_move(&x->from, &x->var);
+    emit_vary_init(x);
     int Ltop = new_label(), Lend = new_label();
     emit_label(Ltop);
     if (!test_after) cond_jump_true(x->until, Lend);
@@ -9153,7 +9175,7 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
     emit_label(Lend);
     /* an inner item goes back to its FROM when its condition is true and
      * the outer one is augmented (6.20.4), so it reads FROM at the end */
-    if (level > 0) emit_move(&x->from, &x->var);
+    if (level > 0) emit_vary_init(x);
 }
 
 /* VARYING ... AFTER ... WITH TEST AFTER (X3.23 6.20.4, the figure for
@@ -9166,14 +9188,14 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
  * which their conditions came true. */
 static void emit_varying_test_after(Vary *v, int nv, Body *body)
 {
-    for (int k = 0; k < nv; k++) emit_move(&v[k].from, &v[k].var);
+    for (int k = 0; k < nv; k++) emit_vary_init(&v[k]);
     int Ltop = new_label();
     emit_label(Ltop);
     emit_body(body);
     for (int k = nv - 1; k >= 0; k--) {
         int Ldone = new_label();
         cond_jump_true(v[k].until, Ldone);
-        for (int j = k + 1; j < nv; j++) emit_move(&v[j].from, &v[j].var);
+        for (int j = k + 1; j < nv; j++) emit_vary_init(&v[j]);
         emit_add_to_ref(&v[k].by, &v[k].var);
         emit_jump(Ltop);
         emit_label(Ldone);
@@ -9201,6 +9223,7 @@ static int times_follows(void)
  * is compiled (14.9.28 rule 14).  Returns 1 when the PERFORM ends in WHEN
  * ... EXCEPTION or FINALLY at its own level, an exception-checking
  * PERFORM; with e NULL it only answers that. */
+static int g_in_finally;            /* inside a FINALLY phrase: no transfer out of the PERFORM (14.9.28.4 rule 16) */
 static int ecp_scan(Ecp *e)
 {
     int depth = 0, found = 0;
@@ -9328,7 +9351,9 @@ static void parse_perform_ecp(void)
     emit("\tadd r4, sp, r0");
     emit_call("cob_ecp_drop");
     g_npstk--;
-    if (accept_word("finally")) { pstk_push(Lafter, -1); parse_statements(); g_npstk--; }     /* in FINALLY: past END-PERFORM (16) */
+    if (accept_word("finally")) {                   /* in FINALLY: EXIT PERFORM goes past END-PERFORM (16) */
+        pstk_push(Lafter, -1); g_in_finally++; parse_statements(); g_in_finally--; g_npstk--;
+    }
     g_ecp_handler--;
     if (!accept_word("end-perform")) die_at(cur()->line, "expected END-PERFORM to end the exception-checking PERFORM, found %s", tok_desc(cur()));
     emit_label(Lafter);
@@ -9341,6 +9366,43 @@ static void parse_perform_ecp(void)
     (void)line;
 }
 
+/* the declarative section a paragraph or section is in, or -1 */
+static int para_decl_sec(const Para *p)
+{
+    int sec = p->is_section ? p->id : p->section;    /* ids from 1; 0: in no section */
+    if (!sec) return -1;
+    for (int u = 0; u < g_nuse; u++) if (g_use[u].unit == g_unit && g_use[u].sec == sec) return sec;
+    for (int u = 0; u < g_nrwuse; u++) if (g_rwuse[u].unit == g_unit && g_rwuse[u].sec == sec) return sec;
+    return -1;
+}
+
+/* VARYING or AFTER with an index-name (2023 14.9.28.3 rules 4-6; X3.23-1985
+ * PERFORM rules 3-4): the other operands integers, FROM a positive and BY
+ * a nonzero literal; BY is never zero */
+static void varying_rules(const Ref *var, const Opnd *from, const Opnd *by)
+{
+    if (by->kind == O_NUM && numlit_is_zero(&by->num))
+        die_at(by->line, "the BY literal of PERFORM VARYING shall not be zero (2023 14.9.28.3 rule 6)");
+    if (var->sym->is_index) {
+        if (from->kind == O_REF && !is_int_item(from->ref.sym))
+            die_at(from->line, "VARYING an index-name: FROM '%s' must be an integer item (2023 14.9.28.3 rule 4a)", from->ref.sym->name);
+        if (from->kind == O_NUM && (!numlit_is_int(&from->num) || from->num.neg || numlit_is_zero(&from->num)))
+            die_at(from->line, "VARYING an index-name: the FROM literal must be a positive integer (2023 14.9.28.3 rule 4b)");
+        if (by->kind == O_REF && !is_int_item(by->ref.sym))
+            die_at(by->line, "VARYING an index-name: BY '%s' must be an integer item (2023 14.9.28.3 rule 4a)", by->ref.sym->name);
+        if (by->kind == O_NUM && !numlit_is_int(&by->num))
+            die_at(by->line, "VARYING an index-name: the BY literal must be a nonzero integer (2023 14.9.28.3 rule 4c)");
+    }
+    if (from->kind == O_REF && from->ref.sym->is_index) {
+        if (!is_int_item(var->sym))
+            die_at(var->line, "FROM an index-name: the VARYING item '%s' must be an integer (2023 14.9.28.3 rule 5a)", var->sym->name);
+        if (by->kind == O_REF && !is_int_item(by->ref.sym))
+            die_at(by->line, "FROM an index-name: BY '%s' must be an integer item (2023 14.9.28.3 rule 5b)", by->ref.sym->name);
+        if (by->kind == O_NUM && !numlit_is_int(&by->num))
+            die_at(by->line, "FROM an index-name: the BY literal must be an integer (2023 14.9.28.3 rule 5c)");
+    }
+}
+
 static void parse_perform(void)
 {
     Body body; memset(&body, 0, sizeof body);
@@ -9348,7 +9410,16 @@ static void parse_perform(void)
         (!(at_para_name(cur()) && para_find(cur()->s)) && perform_is_ecp()))) { parse_perform_ecp(); return; }
     if (at_para_name(cur()) && para_find(cur()->s)) {
         body.from = expect_para();
-        if (accept_word("thru") || accept_word("through")) body.thru = expect_para();
+        if (accept_word("thru") || accept_word("through")) {
+            body.thru = expect_para();
+            /* a range into or out of the declaratives stays in one
+             * declarative section (X3.23-1985 PERFORM rule 5; 2023
+             * 14.9.28.3 rule 11) */
+            int d1 = para_decl_sec(body.from), d2 = para_decl_sec(body.thru);
+            if ((d1 >= 0 || d2 >= 0) && d1 != d2)
+                die_at(cur()->line, "PERFORM %s THRU %s: a range that names a declarative procedure stays in one declarative section (2023 14.9.28.3 rule 11)",
+                       body.from->oname, body.thru->oname);
+        }
     } else {
         /* a name that is no statement, loop phrase or TIMES count can only
          * have meant a paragraph */
@@ -9401,14 +9472,22 @@ static void parse_perform(void)
             g_ufn_forbid = "the BY phrase of PERFORM VARYING";
             parse_operand(&v[nv].by); check_numeric_opnd(&v[nv].by);
             g_ufn_forbid = NULL;
-            expect_word("until"); v[nv].until = parse_cond();
+            varying_rules(&v[nv].var, &v[nv].from, &v[nv].by);
+            expect_word("until");
+            if (at_word("exit"))
+                die_at(cur()->line, "UNTIL EXIT is not a VARYING or AFTER phrase's condition (2023 14.9.28.3 rule 8)");
+            v[nv].until = parse_cond();
             nv++;
             if (!accept_word("after")) break;
         }
+        if (g_std < 2002 && body.inline_body && nv > 1)
+            die_at(v[1].var.line, "an in-line PERFORM VARYING takes no AFTER phrase in COBOL 85 (X3.23-1985 PERFORM syntax rule 2)");
         if (test_after && nv > 1) emit_varying_test_after(v, nv, &body);
         else emit_varying(v, nv, 0, &body, test_after);
     } else if (at_operand() && times_follows()) {
         Opnd n; parse_operand(&n); check_numeric_opnd(&n);
+        if ((n.kind == O_REF && !is_int_item(n.ref.sym)) || (n.kind == O_NUM && !numlit_is_int(&n.num)))
+            die_at(n.line, "PERFORM ... TIMES takes an integer (2023 14.9.28.3 rule 2)");
         expect_word("times");
         if (g_ncnt == g_cnt_cap) { g_cnt_cap = g_cnt_cap ? 2 * g_cnt_cap : 64; g_cnt_unit = realloc(g_cnt_unit, (size_t)g_cnt_cap * sizeof *g_cnt_unit); }
         g_cnt_unit[g_ncnt] = g_unit;
@@ -9445,6 +9524,7 @@ static void parse_perform(void)
 
 static void parse_goto(void)
 {
+    if (g_in_finally) die_at(cur()->line, "GO TO in a FINALLY phrase: no statement there transfers control out of the PERFORM (2023 14.9.28.4 rule 16)");
     accept_word("to");
     Para *ps[64]; int n = 0;
     while (at_para_name(cur()) && !at_word("depending") && !(cur()->kind == T_WORD && (is_verb(cur()->s) || is_terminator(cur()->s))) && para_find(cur()->s)) {
@@ -11675,6 +11755,9 @@ static void parse_statement_1(void)
             emit_jump(cycle ? g_pstk[g_npstk - 1].Lcycle : g_pstk[g_npstk - 1].Lexit);
             return;
         }
+        if (g_in_finally && (at_word("paragraph") || at_word("section")))
+            die_at(t->line, "EXIT %s in a FINALLY phrase: no statement there transfers control out of the PERFORM (2023 14.9.28.4 rule 16)",
+                   at_word("paragraph") ? "PARAGRAPH" : "SECTION");
         if (g_std >= 2002 && accept_word("paragraph")) {
             if (!g_cur_para || g_cur_para->is_section) die_at(t->line, "EXIT PARAGRAPH is only in a paragraph (2023 14.9.14.3 rule 10)");
             if (g_exit_par_label < 0) g_exit_par_label = new_label();
@@ -12067,13 +12150,13 @@ static void parse_procedure_division(void)
          * PERFORMs open around it (cobol ISSUES-94 E10) */
         static EcState ecs0;
         ecs_copy(&ecs0, &g_ecs);
-        int necp = g_necp, ecp_handler = g_ecp_handler, npstk = g_npstk, necu = g_necu;
+        int necp = g_necp, ecp_handler = g_ecp_handler, npstk = g_npstk, necu = g_necu, in_finally = g_in_finally;
         if (setjmp(jb)) {
             g_recover = outer;
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge;
             ecs_copy(&g_ecs, &ecs0);
             for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
-            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk;
+            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally;
             g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
             resync_sentence(start);
             continue;

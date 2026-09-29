@@ -34,10 +34,8 @@ working-storage section.
 01  num pic 99v99.
 procedure division.
 p0.
-    perform varying i from 1 by 1 until i > 2
+    perform nothing varying i from 1 by 1 until i > 2
             after j from i by 1 until j > 3
-        continue
-    end-perform
     move src to grp
     move all "123" to num
     open input tapefile reversed
@@ -48,3 +46,5 @@ p1.
     go to.
 p2.
     stop run.
+nothing.
+    continue.

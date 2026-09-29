@@ -13,10 +13,11 @@ working-storage section.
     05 elem pic x occurs 1 to 5 depending on n.
 01  dst pic x(8).
 procedure division.
-    perform varying i from 1 by 1 until i > 2
+m1.
+    perform nothing varying i from 1 by 1 until i > 2
             after j from 1 by 1 until j > 3
-        continue
-    end-perform
     move grp to dst
     move "x" to elem (1)
     stop run.
+nothing.
+    continue.

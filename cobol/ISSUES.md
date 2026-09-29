@@ -3449,3 +3449,31 @@ exit-program-global, exit-program-not-last, std2002-exit-program-function,
 -exit-paragraph-nopara, -exit-program-raising. CCVS-85 unchanged.
 Harness 322/322; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+**14.9.28 PERFORM** (docs/conformance/perform.md). Found and fixed:
+
+- syntax rule 2: PERFORM ... TIMES with a non-integer item, accepted;
+  refused (85 rule 4 the same).
+- rules 4-6 (85 rules 7-9): the index-name VARYING constraints and a
+  zero BY literal, none checked; refused.
+- rule 8: UNTIL EXIT as a VARYING phrase's condition said "'exit' is not
+  declared"; now cites the rule.
+- rule 11 (85 the same): a THRU range across declarative sections,
+  accepted; refused.
+- X3.23-1985 rule 2 (not in 2023): an in-line PERFORM VARYING with AFTER,
+  accepted under -std=85 (GnuCOBOL accepts it too); refused. No program
+  in the Open Systems suite, CCVS-85 or majesty uses it; four of this
+  project's own tests did (fixed/control, free/vary4, warn/clean-85,
+  warn/every-point) and now PERFORM a paragraph instead, their output
+  unchanged.
+- general rule 3: EC-RANGE-PERFORM-VARYING was never raised; it is, for
+  an index-name set FROM an identifier that is not positive.
+- general rule 16: nothing kept a GO TO, EXIT PARAGRAPH or EXIT SECTION
+  from leaving a FINALLY phrase; refused.
+
+Tests: 2002/perfvary; bad/perform-times-nonint, perform-by-zero,
+perform-index-from, perform-from-index, perform-thru-decl,
+perform-inline-after-85, std2002-until-exit-varying,
+std2002-finally-goto. CCVS-85 unchanged; harness 331/331; -std=85
+byte-identical on all 229 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

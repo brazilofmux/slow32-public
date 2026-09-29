@@ -24,10 +24,8 @@
                move i to e(i)
            end-perform.
            display tbl.
-           perform varying i from 1 by 2 until i > 5
-               after j from 3 by -1 until j < 1
-               display i j ' ' with no advancing
-           end-perform.
+           perform show-ij varying i from 1 by 2 until i > 5
+               after j from 3 by -1 until j < 1.
            display '.'.
            move 0 to i.
            perform with test after until i >= 3
@@ -103,3 +101,5 @@
            display 'inner in'.
            perform show-i 2 times.
            display 'inner out'.
+       show-ij.
+           display i j ' ' with no advancing.

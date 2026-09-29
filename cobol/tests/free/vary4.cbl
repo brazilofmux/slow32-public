@@ -17,16 +17,16 @@
                AFTER L FROM 1 BY 2 UNTIL L > 3.
            DISPLAY N ' ' LAST-SEEN ' ' I ' ' J ' ' K ' ' L.
            MOVE 0 TO N.
-           PERFORM WITH TEST AFTER
+           PERFORM COUNT-X WITH TEST AFTER
                VARYING I FROM 1 BY 1 UNTIL I >= 2
                AFTER J FROM 5 BY -1 UNTIL J < 4
                AFTER K FROM 1 BY 1 UNTIL K >= 1
-               AFTER L FROM 2 BY 2 UNTIL L >= 4
-               ADD 1 TO N
-               MOVE 'x' TO LAST-SEEN
-           END-PERFORM.
+               AFTER L FROM 2 BY 2 UNTIL L >= 4.
            DISPLAY N ' ' I ' ' J ' ' K ' ' L.
            STOP RUN.
        COUNT-IT.
            ADD 1 TO N.
            STRING I J K L DELIMITED BY SIZE INTO LAST-SEEN.
+       COUNT-X.
+           ADD 1 TO N
+           MOVE 'x' TO LAST-SEEN.
