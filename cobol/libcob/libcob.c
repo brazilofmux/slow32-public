@@ -30,6 +30,7 @@
 #include <time.h>
 #include "xsort.h"
 #include "btree.h"
+#include "../../common/term_width.h"   /* display width, as the term service measures it */
 
 /* ---- output: DISPLAY goes to stdout, buffered by us ------------------ */
 
@@ -55,11 +56,29 @@ static int con_col = 1, con_rows;
 static void con_write(const char *p, int n)
 {
     if (!con_rows) { int r = 24, c = 80; term_get_size(&r, &c); con_rows = r > 0 ? r : 24; }
+    int skip = 0;                       /* bytes left of a UTF-8 sequence already counted */
     for (int i = 0; i < n; i++) {
         if (p[i] == '\n') { con_col = 1; if (scr_next_line < con_rows) scr_next_line++; continue; }
         if (p[i] == '\r') { con_col = 1; continue; }
         if (con_col == 1 || i == 0) term_gotoxy(scr_next_line ? scr_next_line : 1, con_col);
-        term_putc(p[i]); con_col++;
+        term_putc(p[i]);
+        /* the column moves as the terminal's does, by display width (cobol
+         * ISSUES-92): a UTF-8 sequence's width at its first byte, nothing
+         * for the bytes that continue it */
+        unsigned char c = (unsigned char)p[i];
+        if (skip) { skip--; continue; }
+        if (c < 0x80) con_col++;
+        else if (c >= 0xC2 && c <= 0xF4) {
+            int need = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1;
+            unsigned u = c & (0x3Fu >> need);
+            int ok = i + need < n;
+            for (int j = 1; ok && j <= need; j++) {
+                if (((unsigned char)p[i + j] & 0xC0) != 0x80) ok = 0;
+                else u = u << 6 | ((unsigned char)p[i + j] & 0x3F);
+            }
+            con_col += ok ? s32_term_width(u) : 1;
+            if (ok) skip = need;
+        } else con_col++;                   /* not UTF-8: U+FFFD on the terminal, a column */
     }
 }
 
@@ -662,6 +681,67 @@ static int nat_to_utf8(const unsigned char *p, int nch, char *out)
         else { out[k++] = (char)(0xF0 | u >> 18); out[k++] = (char)(0x80 | (u >> 12 & 0x3F)); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
     }
     return k;
+}
+
+/* National text in character cells -- a report line's columns, a screen
+ * field's (cobol ISSUES-92) -- goes by display width, as the terminal
+ * shows it: a character takes its width in columns (two for an East Asian
+ * wide one), and one that takes none (a combining mark, a variation
+ * selector) or follows a ZERO WIDTH JOINER rides with the character
+ * before it, as one cluster.  An item of n national character positions
+ * is a field of n columns: its text is laid out left to right, a
+ * character that would cross the field's last column dropped with all
+ * after it, the rest spaces.  Positions, lengths and reference
+ * modification still count code units; only the laying out is visual. */
+typedef struct { unsigned cp[4]; unsigned char n, w, units; } cob_cluster;
+static int utf8_put(unsigned cp, char *out);
+
+static int nat_clusters(const unsigned char *p, int nch, cob_cluster *out, int max)
+{
+    int n = 0, join = 0;
+    for (int i = 0; i < nch; i++) {
+        unsigned u = nat_at(p, i);
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < nch && nat_at(p, i + 1) >= 0xDC00 && nat_at(p, i + 1) <= 0xDFFF) {
+            u = 0x10000 + ((u - 0xD800) << 10) + (nat_at(p, i + 1) - 0xDC00); i++;
+        } else if (u >= 0xD800 && u <= 0xDFFF) u = 0xFFFD;
+        int w = s32_term_width(u);
+        if ((w == 0 || join) && n > 0) {
+            cob_cluster *c = &out[n - 1];
+            if (c->n < 4) { c->cp[c->n++] = u; c->units += u >= 0x10000 ? 2 : 1; }
+            join = u == 0x200D;
+            continue;
+        }
+        join = u == 0x200D;
+        if (n == max) break;
+        cob_cluster *c = &out[n++];
+        c->n = 0; c->units = 0;
+        if (w == 0) { c->cp[c->n++] = ' '; c->units = 1; w = 1; }   /* nothing to ride with: over a space */
+        c->cp[c->n++] = u; c->units += u >= 0x10000 ? 2 : 1;
+        c->w = (unsigned char)w;
+    }
+    return n;
+}
+
+static int cluster_utf8(const cob_cluster *c, char *out)
+{
+    int k = 0;
+    for (int j = 0; j < c->n; j++) k += utf8_put(c->cp[j], out + k);
+    return k;
+}
+
+/* clusters as national characters, space-padded to cap code units */
+static void clusters_nat(const cob_cluster *c, int n, unsigned char *p, int cap)
+{
+    int k = 0;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < c[i].n; j++) {
+            unsigned u = c[i].cp[j];
+            if (u >= 0x10000) {
+                if (k + 2 > cap) return;
+                u -= 0x10000; nat_put(p, k++, 0xD800 + (u >> 10)); nat_put(p, k++, 0xDC00 + (u & 0x3FF));
+            } else { if (k + 1 > cap) return; nat_put(p, k++, u); }
+        }
+    while (k < cap) nat_put(p, k++, ' ');
 }
 
 /* an operand as national characters: a national one as it is, an
@@ -3540,6 +3620,13 @@ int cob_delete(cob_file *f)
 
 #define RW_WIDTH 512
 static char rw_line[RW_WIDTH];
+/* a national field's columns (cobol ISSUES-92): rw_kind 1 says rw_u8
+ * holds the character (UTF-8, its cluster) that begins in the column, 2
+ * that the column is the second of a double-width one; 0 is rw_line's
+ * byte, as for every alphanumeric field */
+static unsigned char rw_kind[RW_WIDTH];
+static char rw_u8[RW_WIDTH][20];
+static char rw_out[RW_WIDTH * 20];
 
 static void rw_put_line(cob_report *r, const char *p, int n)
 {
@@ -3622,18 +3709,50 @@ void cob_rw_line_begin(cob_report *r, int abs, int plus, int is_body)
     rw_blank_to(r, target);
     r->line_counter = target;
     memset(rw_line, ' ', RW_WIDTH);
+    memset(rw_kind, 0, RW_WIDTH);
+}
+
+/* columns [a, b) become plain bytes; half a double-width character left
+ * outside them becomes a space */
+static void rw_plain(int a, int b)
+{
+    if (a < RW_WIDTH && rw_kind[a] == 2) { rw_kind[a - 1] = 0; rw_line[a - 1] = ' '; }
+    if (b < RW_WIDTH && rw_kind[b] == 2) { rw_kind[b] = 0; rw_line[b] = ' '; }
+    for (int c = a; c < b; c++) rw_kind[c] = 0;
 }
 
 void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *sd)
 {
-    if (col < 1 || col - 1 + (int)dd->size > RW_WIDTH) cob_fatal("report line wider than 512 columns");
-    cob_move(src, sd, rw_line + col - 1, dd);
+    int nat = dd->cat == COB_NATIONAL || dd->usage == COB_U_NATIONAL;
+    int ncol = nat ? (int)dd->size / 2 : (int)dd->size;
+    if (col < 1 || col - 1 + ncol > RW_WIDTH) cob_fatal("report line wider than 512 columns");
+    rw_plain(col - 1, col - 1 + ncol);
+    if (!nat) { cob_move(src, sd, rw_line + col - 1, dd); return; }
+    unsigned char t[2 * RW_WIDTH];
+    cob_cluster cl[RW_WIDTH];
+    cob_move(src, sd, t, dd);
+    int n = nat_clusters(t, ncol, cl, RW_WIDTH), x = col - 1, end = col - 1 + ncol;
+    memset(rw_line + x, ' ', (size_t)ncol);
+    for (int i = 0; i < n && x + cl[i].w <= end; i++) {
+        if (cl[i].n == 1 && cl[i].cp[0] < 0x80) rw_line[x] = (char)cl[i].cp[0];
+        else {
+            rw_u8[x][cluster_utf8(&cl[i], rw_u8[x])] = 0;
+            rw_kind[x] = 1;
+            if (cl[i].w == 2) rw_kind[x + 1] = 2;
+        }
+        x += cl[i].w;
+    }
 }
 
 void cob_rw_line_write(cob_report *r, int is_body)
 {
     r->line_counter--;                  /* rw_put_line counts it again */
-    rw_put_line(r, rw_line, RW_WIDTH);
+    int k = 0;
+    for (int c = 0; c < RW_WIDTH; c++) {
+        if (rw_kind[c] == 0) rw_out[k++] = rw_line[c];
+        else if (rw_kind[c] == 1) { size_t m = strlen(rw_u8[c]); memcpy(rw_out + k, rw_u8[c], m); k += (int)m; }
+    }
+    rw_put_line(r, rw_out, k);
     if (is_body) { r->body_seen = 1; r->next_line = 0; }
 }
 
@@ -3779,25 +3898,83 @@ void cob_scr_at(cob_scr_field *f, int rrcc)
     f->line = (unsigned short)(rrcc / 100); f->col = (unsigned short)(rrcc % 100);
 }
 
-static void scr_paint_text(const cob_scr_field *f, const char *buf)
+/* a national slot (cobol ISSUES-92): PIC N, or a national VALUE, whose
+ * picture is a national descriptor; its width is columns */
+static int scr_is_nat(const cob_scr_field *f)
 {
-    int line, col;
-    scr_pos(f, &line, &col);
+    const cob_desc *d = (const cob_desc *)f->pic;
+    return d && d->cat == COB_NATIONAL;
+}
+
+static void scr_paint_begin(const cob_scr_field *f, int *line, int *col)
+{
+    scr_pos(f, line, col);
     if (f->ext & COB_SX_ERASE_ALL) term_clear(0);
-    term_gotoxy(line, col);
+    term_gotoxy(*line, *col);
     if (f->ext & COB_SX_ERASE_EOS) term_clear(2);
     else if (f->ext & COB_SX_ERASE_EOL) term_clear(1);
     scr_attr(f);
-    int prompt = (f->ext & COB_SX_PROMPT) && (scr_kind(f) == COB_SCR_TO || scr_kind(f) == COB_SCR_USING) ? f->prompt : 0;
-    if (f->flags & COB_SF_SECURE) { for (unsigned i = 0; i < f->width; i++) term_putc(buf[i] == ' ' ? ' ' : '*'); }
-    else if (prompt) { for (unsigned i = 0; i < f->width; i++) term_putc(buf[i] == ' ' ? prompt : buf[i]); }
-    else scr_puts_n(buf, f->width);
+}
+
+static void scr_paint_end(const cob_scr_field *f, int line, int col)
+{
     scr_attr_off(f);
     if (f->ext & COB_SX_POS) { scr_rm_mode = 1; con_col = 1; scr_last_line = line; scr_last_col = col; scr_last_width = (int)f->width; scr_next_line = line + 1; }
 }
 
+/* a national slot's clusters into its columns: SECURE shows an asterisk
+ * a column, PROMPT its character where a space stands */
+static void scr_paint_nat(const cob_scr_field *f, const cob_cluster *cl, int n)
+{
+    int line, col, x = 0;
+    scr_paint_begin(f, &line, &col);
+    int prompt = (f->ext & COB_SX_PROMPT) && (scr_kind(f) == COB_SCR_TO || scr_kind(f) == COB_SCR_USING) ? f->prompt : 0;
+    for (int i = 0; i < n && x + cl[i].w <= (int)f->width; i++) {
+        int sp = cl[i].n == 1 && cl[i].cp[0] == ' ';
+        if (sp) term_putc(prompt ? prompt : ' ');
+        else if (f->flags & COB_SF_SECURE) { for (int j = 0; j < cl[i].w; j++) term_putc('*'); }
+        else { char u[20]; int m = cluster_utf8(&cl[i], u); for (int j = 0; j < m; j++) term_putc(u[j]); }
+        x += cl[i].w;
+    }
+    for (; x < (int)f->width; x++) term_putc(prompt ? prompt : ' ');
+    scr_paint_end(f, line, col);
+}
+
+/* a national slot's text: the VALUE literal, the item through the
+ * picture, or nothing */
+static int scr_nat_load(const cob_scr_field *f, cob_cluster *cl, int max)
+{
+    const cob_desc *d = (const cob_desc *)f->pic;
+    int nch = (int)d->size / 2;
+    if (scr_kind(f) == COB_SCR_TO) return 0;
+    if (scr_kind(f) == COB_SCR_VALUE) return nat_clusters((const unsigned char *)f->value, nch, cl, max);
+    unsigned char *t = malloc(d->size ? d->size : 1);
+    if (!t) cob_fatal("out of memory");
+    cob_move(scr_item(f), (const cob_desc *)f->item_desc, t, d);
+    int n = nat_clusters(t, nch, cl, max);
+    free(t);
+    return n;
+}
+
+static void scr_paint_text(const cob_scr_field *f, const char *buf)
+{
+    int line, col;
+    scr_paint_begin(f, &line, &col);
+    int prompt = (f->ext & COB_SX_PROMPT) && (scr_kind(f) == COB_SCR_TO || scr_kind(f) == COB_SCR_USING) ? f->prompt : 0;
+    if (f->flags & COB_SF_SECURE) { for (unsigned i = 0; i < f->width; i++) term_putc(buf[i] == ' ' ? ' ' : '*'); }
+    else if (prompt) { for (unsigned i = 0; i < f->width; i++) term_putc(buf[i] == ' ' ? prompt : buf[i]); }
+    else scr_puts_n(buf, f->width);
+    scr_paint_end(f, line, col);
+}
+
 static void scr_paint_field(const cob_scr_field *f)
 {
+    if (scr_is_nat(f)) {
+        cob_cluster cl[512];
+        if (f->width > 512) cob_fatal("screen field wider than 512");
+        scr_paint_nat(f, cl, scr_nat_load(f, cl, 512));
+        return;
+    }
     char buf[512];
     if (f->width > sizeof buf) cob_fatal("screen field wider than 512");
     scr_render(f, buf);
@@ -3814,9 +3991,10 @@ void cob_screen_display(const cob_screen *s)
 }
 
 /* ---- the focus loop (docs/screen.md, "the eventual target") ------------ */
-/* Keys: the terminal's bytes, with the ANSI cursor sequences folded into
- * codes of their own; a lone Escape is K_ESC. */
-enum { K_EOF = -1, K_ESC = 27, K_UP = 1001, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_BTAB, K_INS,
+/* Keys: the terminal's characters -- UTF-8 decoded, a byte that is not
+ * UTF-8 standing for U+FFFD -- with the ANSI cursor sequences folded into
+ * codes of their own, above Unicode's range; a lone Escape is K_ESC. */
+enum { K_EOF = -1, K_ESC = 27, K_UP = 0x110001, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_BTAB, K_INS,
        K_PGUP, K_PGDN, K_F1, K_F12 = K_F1 + 11 };
 
 static int scr_pending = -2;                    /* a byte read past a lone Escape */
@@ -3833,6 +4011,18 @@ static int scr_key(void)
         out_flush(); term_down();
         fprintf(stderr, "libcob: end of input on ACCEPT\n");
         exit(2);
+    }
+    if (k >= 0x80) {
+        int need = k >= 0xF0 && k <= 0xF4 ? 3 : k >= 0xE0 && k <= 0xEF ? 2 : k >= 0xC2 && k <= 0xDF ? 1 : 0;
+        if (!need) return 0xFFFD;
+        unsigned u = (unsigned)k & (0x3Fu >> need);
+        for (int j = 0; j < need; j++) {
+            int c = term_getkey();
+            if (c < 0x80 || c > 0xBF) { if (c != K_EOF) scr_pending = c; return 0xFFFD; }
+            u = u << 6 | (unsigned)(c & 0x3F);
+        }
+        static const unsigned least[4] = { 0, 0x80, 0x800, 0x10000 };
+        return u < least[need] || u > 0x10FFFF || (u >= 0xD800 && u <= 0xDFFF) ? 0xFFFD : (int)u;
     }
     if (k != 27) return k;
     if (!term_kbhit()) return K_ESC;
@@ -3913,7 +4103,46 @@ typedef struct {
     int numeric, neg, infrac, touched;
     int ni, nf, ni_max, nf_max, point;   /* numeric: digits typed each side of the point, the capacities, the point's column */
     char ibuf[20], fbuf[20];
+    int nat, ncl, cap;         /* national: the text as clusters, pos counting them; cap its code units */
+    cob_cluster *cl, *tmp;
 } scr_edit;
+
+static int nat_cols(const cob_cluster *c, int n) { int w = 0; for (int i = 0; i < n; i++) w += c[i].w; return w; }
+static int nat_units(const cob_cluster *c, int n) { int u = 0; for (int i = 0; i < n; i++) u += c[i].units; return u; }
+static int nat_is_space(const cob_cluster *c) { return c->n == 1 && c->cp[0] == ' '; }
+static void scr_nat_trim(scr_edit *e) { while (e->ncl > 0 && nat_is_space(&e->cl[e->ncl - 1])) e->ncl--; }
+/* the cursor stays on the field: on its last character when it is full */
+static void scr_nat_clamp(scr_edit *e)
+{
+    if ((int)e->pos > e->ncl) e->pos = (unsigned)e->ncl;
+    if (e->ncl && nat_cols(e->cl, (int)e->pos) >= (int)e->f->width) e->pos = (unsigned)e->ncl - 1;
+}
+static int scr_nat_full(const scr_edit *e) { return nat_cols(e->cl, e->ncl) >= (int)e->f->width || nat_units(e->cl, e->ncl) >= e->cap; }
+
+/* a character typed into a national field: one that takes no column, or
+ * follows a ZERO WIDTH JOINER, joins the character before the cursor;
+ * another replaces the one under it.  0 when it does not fit. */
+static int scr_nat_type(scr_edit *e, unsigned u)
+{
+    int n = e->ncl; unsigned pos = e->pos;
+    memcpy(e->tmp, e->cl, (size_t)n * sizeof *e->cl);
+    int w = s32_term_width(u);
+    cob_cluster *prev = pos ? &e->tmp[pos - 1] : NULL;
+    if (prev && (w == 0 || prev->cp[prev->n - 1] == 0x200D)) {
+        if (prev->n == 4) return 0;
+        prev->cp[prev->n++] = u; prev->units += u >= 0x10000 ? 2 : 1;
+    } else {
+        cob_cluster c; c.n = 0; c.units = 0;
+        if (w == 0) { c.cp[c.n++] = ' '; c.units = 1; w = 1; }
+        c.cp[c.n++] = u; c.units += u >= 0x10000 ? 2 : 1; c.w = (unsigned char)w;
+        if ((int)pos < n) e->tmp[pos] = c; else e->tmp[n++] = c;
+        pos++;
+    }
+    if (nat_cols(e->tmp, n) > (int)e->f->width || nat_units(e->tmp, n) > e->cap) return 0;
+    cob_cluster *t = e->cl; e->cl = e->tmp; e->tmp = t;
+    e->ncl = n; e->pos = pos;
+    return 1;
+}
 
 /* the numeric value the digits typed so far stand for, at the picture's scale */
 static long long scr_num_value(const scr_edit *e)
@@ -3968,6 +4197,12 @@ static void scr_focus(scr_edit *e) { e->pos = 0; e->infrac = 0; e->touched = 0; 
 static int scr_may_leave(const scr_edit *e)
 {
     const cob_scr_field *f = e->f;
+    if (e->nat) {
+        int n = e->ncl; while (n > 0 && nat_is_space(&e->cl[n - 1])) n--;
+        if ((f->flags & COB_SF_REQUIRED) && !n) return 0;
+        if ((f->flags & COB_SF_FULL) && n && !scr_nat_full(e)) return 0;
+        return 1;
+    }
     if (f->flags & COB_SF_REQUIRED) {
         if (e->numeric ? scr_num_value(e) == 0 : strspn(e->buf, " ") >= f->width) return 0;
     }
@@ -3995,7 +4230,18 @@ void cob_screen_accept(const cob_screen *s)
         e->f = f;
         e->buf = malloc(f->width + 1);
         if (!e->buf) cob_fatal("out of memory");
-        scr_render(f, e->buf); e->buf[f->width] = 0;
+        memset(e->buf, ' ', f->width); e->buf[f->width] = 0;
+        if (scr_is_nat(f)) {
+            e->nat = 1;
+            e->cap = (int)((const cob_desc *)f->pic)->size / 2;
+            e->cl = malloc(((size_t)e->cap + 1) * sizeof *e->cl);
+            e->tmp = malloc(((size_t)e->cap + 1) * sizeof *e->cl);
+            if (!e->cl || !e->tmp) cob_fatal("out of memory");
+            e->ncl = scr_nat_load(f, e->cl, e->cap);
+            scr_nat_trim(e);
+            continue;
+        }
+        scr_render(f, e->buf);
         e->numeric = scr_is_numeric(f);
         if (e->numeric) {
             const cob_desc *d = (const cob_desc *)f->pic;
@@ -4011,7 +4257,7 @@ void cob_screen_accept(const cob_screen *s)
     while (!done) {
         scr_edit *e = &ed[cur];
         const cob_scr_field *f = e->f;
-        { int ln, cl; scr_pos(f, &ln, &cl); term_gotoxy(ln, cl + (int)(e->numeric ? scr_num_cursor(e) : e->pos)); }
+        { int ln, cl; scr_pos(f, &ln, &cl); term_gotoxy(ln, cl + (int)(e->numeric ? scr_num_cursor(e) : e->nat ? (unsigned)nat_cols(e->cl, (int)e->pos) : e->pos)); }
         int key = scr_key();
         if (key == K_EOF) { done = 1; break; }
         if (key == K_ESC) { done = 1; abandon = 1; fret = 2005; break; }
@@ -4057,6 +4303,38 @@ void cob_screen_accept(const cob_screen *s)
             if (key == K_HOME) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; scr_num_render(e); scr_paint_text(f, e->buf); continue; }
             continue;                           /* other keys: nothing */
         }
+        if (e->nat) {
+            /* a national field: edited a character (cluster) at a time,
+             * the cursor moving by the columns each takes */
+            if (key == K_LEFT) { if (e->pos) e->pos--; continue; }
+            if (key == K_RIGHT) {
+                if ((int)e->pos < e->ncl) e->pos++;
+                else if (!scr_nat_full(e)) scr_nat_type(e, ' ');
+                scr_nat_clamp(e); continue;
+            }
+            if (key == K_HOME) { e->pos = 0; continue; }
+            if (key == K_END) { scr_nat_trim(e); e->pos = (unsigned)e->ncl; scr_nat_clamp(e); continue; }
+            if (key == 8 || key == 127 || key == K_DEL) {
+                unsigned at = key == K_DEL ? e->pos : e->pos - 1;
+                if (key != K_DEL && !e->pos) continue;
+                if ((int)at >= e->ncl) continue;
+                memmove(e->cl + at, e->cl + at + 1, (size_t)(e->ncl - (int)at - 1) * sizeof *e->cl);
+                e->ncl--; e->pos = at;
+                scr_paint_nat(f, e->cl, e->ncl);
+                continue;
+            }
+            if (key >= 32 && key != 127 && key < 0x110000) {
+                if (!scr_nat_type(e, (unsigned)key)) { scr_beep_f(e->f); continue; }
+                scr_paint_nat(f, e->cl, e->ncl);
+                if (scr_nat_full(e) && (f->flags & COB_SF_AUTO)) {
+                    if (!scr_may_leave(e)) { scr_beep_f(e->f); scr_nat_clamp(e); continue; }
+                    if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
+                }
+                scr_nat_clamp(e);
+                continue;
+            }
+            continue;
+        }
         /* a text field: edited where it sits */
         if (key == K_LEFT) { if (e->pos) e->pos--; continue; }
         if (key == K_RIGHT) { if (e->pos + 1 < f->width) e->pos++; continue; }
@@ -4098,6 +4376,14 @@ void cob_screen_accept(const cob_screen *s)
             if (e->numeric) {
                 const cob_desc *d = (const cob_desc *)f->pic;
                 cob_put_num(scr_item(f), (const cob_desc *)f->item_desc, scr_num_value(e), d->scale);
+            } else if (e->nat) {
+                cob_desc td; memset(&td, 0, sizeof td);
+                td.cat = COB_NATIONAL; td.usage = COB_U_DISPLAY; td.size = 2u * (unsigned)e->cap;
+                unsigned char *t = malloc(td.size ? td.size : 1);
+                if (!t) cob_fatal("out of memory");
+                clusters_nat(e->cl, e->ncl, t, e->cap);
+                cob_move(t, &td, scr_item(f), (const cob_desc *)f->item_desc);
+                free(t);
             } else {
                 cob_desc td; memset(&td, 0, sizeof td);
                 td.cat = COB_ALNUM; td.usage = COB_U_DISPLAY; td.size = f->width;
@@ -4105,7 +4391,7 @@ void cob_screen_accept(const cob_screen *s)
             }
         }
     }
-    for (unsigned i = 0; i < nin; i++) free(ed[i].buf);
+    for (unsigned i = 0; i < nin; i++) { free(ed[i].buf); free(ed[i].cl); free(ed[i].tmp); }
     free(ed);
 }
 

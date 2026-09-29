@@ -2422,6 +2422,8 @@ majesty-functions PASS; Open Systems paper unchanged.
 
 ### 75. NATIONAL: the module closed, with Report Writer and screens refused (2026-09-28)
 
+(The refusals below were lifted by ISSUES-92.)
+
 With ISSUES-62 to -74, every category of national data in the text works:
 national, national-edited, numeric and numeric-edited USAGE NATIONAL,
 and national groups. So do every statement that takes them and national
@@ -2976,3 +2978,48 @@ width).
 end with LENGTH, and a computed length. Harness 281/281; -std=85
 byte-identical on all 227 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 92. National fields in Report Writer and SCREEN SECTION, by display width (2026-09-28)
+
+This closes the refusals of ISSUES-75. The ruling on what a column is:
+display width ("visual width is the right answer -- albeit not a
+perfect one"). The term service became Unicode-aware for it (4dfb334c),
+with the same width table, `common/term_width.h`. docs/national.md
+"National text in columns" has the rule. In short, a field of n
+national positions is n columns, its text laid out by width, and a
+character that would cross the last column is dropped. Positions,
+LENGTH and reference modification still count code units.
+
+- **Report Writer.** `cob_rw_field` lays a national field out as
+  clusters (`nat_clusters`). The line keeps a byte per column for
+  alphanumeric fields plus a UTF-8 cell per column for national ones
+  (`rw_kind`, `rw_u8`), and a double-width character's second column is
+  marked. Overwriting half of one blanks the other half. The compiler
+  takes PIC N and national-edited fields, USAGE NATIONAL on a numeric
+  or numeric-edited PICTURE, and a national VALUE (a no-PICTURE one as
+  wide as it shows). A field with no COLUMN follows the one before by
+  its columns.
+- **Screens.** A national slot has a national picture descriptor and a
+  width in columns. It is painted from clusters (`scr_paint_nat`: SECURE
+  gives an asterisk a column, PROMPT fills spaces) and edited as a
+  cluster list. `scr_key` decodes UTF-8, and the special keys moved to
+  0x110001 on. Positioned DISPLAY of a national item or literal and
+  positioned ACCEPT of a national item take the same path. The first
+  was quietly wrong before: a national item's UTF-16 went through an
+  alphanumeric slot.
+- **Console after screen mode.** `con_write` moved its column a byte at
+  a time, so a plain DISPLAY of national text after a positioned
+  statement put what followed too far right. It now moves by display
+  width.
+- **Refused, as MOVE refuses them:** a national SOURCE, FROM or VALUE
+  into a field that is not national, a national field's input into an
+  item that is not national, and USAGE NATIONAL on PICTURE X.
+
+bad/std2002-nat-rw, -nat-screen and -nat-accept-at are gone (now
+valid). -nat-rw-source and -nat-screen-from keep their refusals under
+the MOVE rule. New: -nat-rw-value, -nat-rw-usage-x and -nat-screen-to.
+2002/natreport reads its print file back. 2002/natscreen types UTF-8:
+a combining acute, a wide character refused at the seventh column,
+positioned DISPLAY and ACCEPT. Harness 283/283; -std=85 byte-identical
+on all 229 Open Systems programs; majesty PASS; majesty-functions PASS;
+Open Systems paper unchanged.

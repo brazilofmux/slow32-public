@@ -52,6 +52,7 @@
 #include <strings.h>
 #include "picture.h"
 #include "../libcob/cobrt.h"
+#include "../../common/term_width.h"   /* a national literal's display width (cobol ISSUES-92) */
 
 #define VERSION "0.63 (stage 63: IF module)"
 
@@ -1748,6 +1749,7 @@ typedef struct {
     int has_source; int source_tp;      /* token position of the SOURCE reference, parsed at GENERATE time */
     Tok *value;
     int just, blank_zero;
+    int usage_nat;                      /* USAGE NATIONAL on a numeric or numeric-edited PICTURE */
     char ename[64];                     /* the entry's data-name (a SUM entry's names its counter) */
     int gi;                             /* GROUP INDICATE */
     int has_sum, nsum, sum_tp[8];       /* SUM operands: token positions, resolved when the report is first used */
@@ -1807,6 +1809,7 @@ typedef struct {
     int ref_tp, dyn;            /* the reference's token position; dyn: its address is computed at ACCEPT/DISPLAY */
     long stat_off;              /* static references (literal subscripts included): the resolved offset */
 int ext, prompt;            /* positioned DISPLAY/ACCEPT: COB_SX_* bits, the PROMPT character */
+int natlit;                 /* a VALUE slot's literal is national: its columns are its display width */
 int line_tp, col_tp, at_tp; /* LINE / POSITION / AT given as identifiers: token positions, stored at run time */
 } SField;
 
@@ -3228,6 +3231,26 @@ static int nat_desc(int len)
     return desc_add(&d);
 }
 
+/* the columns national text (len bytes of UTF-16BE) takes on a screen or
+ * a report line: each character its display width, one that takes none
+ * or follows a ZERO WIDTH JOINER riding with the one before (the
+ * runtime's nat_clusters, cobol ISSUES-92) */
+static int nat_lit_cols(const unsigned char *p, int len)
+{
+    int w = 0, join = 0, any = 0;
+    for (int i = 0; i + 1 < len; i += 2) {
+        unsigned u = (unsigned)p[i] << 8 | p[i + 1];
+        if (u >= 0xD800 && u <= 0xDBFF && i + 3 < len) {
+            unsigned l = (unsigned)p[i + 2] << 8 | p[i + 3];
+            if (l >= 0xDC00 && l <= 0xDFFF) { u = 0x10000 + ((u - 0xD800) << 10) + (l - 0xDC00); i += 2; }
+        }
+        int cw = s32_term_width(u);
+        if (!((cw == 0 || join) && any)) w += cw ? cw : 1;
+        join = u == 0x200D; any = 1;
+    }
+    return w;
+}
+
 /* a boolean literal's or part's descriptor: len boolean positions, DISPLAY */
 static int bool_desc(int len)
 {
@@ -4436,6 +4459,9 @@ addr_done:
     if (runtime) emit("\tadd %s, %s, r11", reg, reg);
 }
 
+/* a slot's columns: a national one's character positions (cobol ISSUES-92) */
+static int sfield_cols(const SField *f) { return f->pi.category == PIC_NATIONAL ? f->pi.bytes / 2 : f->pi.bytes; }
+
 /* a slot's reference, resolved once the data tree is complete: LINKAGE,
  * EXTERNAL and runtime subscripts make the slot dynamic; a literal
  * subscript folds into a static offset */
@@ -4446,8 +4472,12 @@ static void sfield_resolve(SField *f)
     Ref rr; parse_ref(&rr);
     g_tp = save_tp;
     if (rr.rm) die_at(f->srcline, "reference modification in a screen item is not implemented");
-    if (sym_is_national(rr.sym) || (!rr.sym->is_group && rr.sym->usage == U_NATIONAL))
-        die_at(f->srcline, "'%s' is national: a national field in SCREEN SECTION is not implemented yet", rr.sym->name);
+    /* a national field and its item move as MOVE does: national text to a
+     * national receiver only (2023 14.9.25.3 rule 3) */
+    if (f->has_pic && f->pi.category != PIC_NATIONAL && sym_is_national(rr.sym) && f->kind != COB_SCR_TO)
+        die_at(f->srcline, "'%s' is national: it is shown through a national field (PICTURE N), not this one", rr.sym->name);
+    if (f->has_pic && f->pi.category == PIC_NATIONAL && !sym_is_national(rr.sym) && f->kind != COB_SCR_FROM)
+        die_at(f->srcline, "'%s' is not national: a national field (PICTURE N) takes its input into a national item", rr.sym->name);
     f->item = rr.sym;
     if (rec_indirect(&g_sym[rr.sym->record]) || ref_has_runtime_sub(&rr))
         f->dyn = 1;
@@ -6453,11 +6483,24 @@ static void parse_display_positioned(void)
         case O_REF:
             if (o.ref.rm) die_at(o.line, "reference modification in a positioned DISPLAY is not implemented");
             f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1; f->ref_tp = tp;
-            if (!f->width) f->width = o.ref.sym->size;
-            f->has_pic = 1; f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width;
+            f->has_pic = 1;
+            if (sym_is_national(o.ref.sym)) {
+                /* national text in columns (cobol ISSUES-92): a column a character position, SIZE counting columns */
+                int n = o.ref.sym->size / 2;
+                f->pi.category = PIC_NATIONAL; f->pi.bytes = 2 * n;
+                if (!f->width) f->width = n;
+                break;
+            }
+            if (!f->width) f->width = !o.ref.sym->is_group && o.ref.sym->usage == U_NATIONAL ? o.ref.sym->size / 2 : o.ref.sym->size;
+            f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width;
             break;
         case O_STR:
             f->kind = COB_SCR_VALUE;
+            if (o.tok->nat) {
+                f->value = o.tok; f->natlit = 1;
+                if (!f->width) f->width = nat_lit_cols((const unsigned char *)o.tok->s, o.tok->len);
+                break;
+            }
             if (!f->width || f->width == o.tok->len) { f->value = o.tok; f->width = o.tok->len; }
             else f->value = pos_literal(o.tok->s, o.tok->len, f->width, ' ');
             break;
@@ -6490,10 +6533,16 @@ static void parse_accept_positioned(Ref *r, int tp)
     if (r->rm) die_at(r->line, "reference modification in a positioned ACCEPT is not implemented");
     f->kind = COB_SCR_TO; f->item = r->sym; f->dyn = 1; f->ref_tp = tp;
     parse_pos_clauses(f, 1);
-    if (!f->width) f->width = r->sym->size;
     f->has_pic = 1;
-    if (r->sym->is_group || !r->sym->pi.bytes) { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width; }
-    else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
+    if (sym_is_national(r->sym)) {
+        /* national input (cobol ISSUES-92): the field a column a character position */
+        f->pi.category = PIC_NATIONAL; f->pi.bytes = r->sym->size;
+        if (!f->width) f->width = r->sym->size / 2;
+    } else {
+        if (!f->width) f->width = !r->sym->is_group && r->sym->usage == U_NATIONAL ? r->sym->pi.bytes : r->sym->size;
+        if (r->sym->is_group || !r->sym->pi.bytes) { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width; }
+        else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
+    }
     if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
         Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, r->line);
         if (rec_indirect(&g_sym[cs->record])) die_at(r->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
@@ -6549,7 +6598,6 @@ static void parse_accept_1(void)
     Ref r; parse_ref(&r);
     int nat = ref_is_national(&r);
     if (stmt_positioned()) {
-        if (nat) die_at(r.line, "ACCEPT of a national item at a screen position is not implemented yet");
         parse_accept_positioned(&r, ref_tp); return;
     }
     if (nat && ec_on_name("EC-DATA-CONVERSION")) {
@@ -10139,10 +10187,15 @@ static Report *expect_report(void)
     return r;
 }
 
+/* a report field's columns: a national one's character positions (cobol ISSUES-92) */
+static int rfield_cols(const RField *f) { return f->pi.category == PIC_NATIONAL ? f->pi.bytes / 2 : f->pi.bytes; }
+static int rfield_is_nat(const RField *f) { return f->pi.category == PIC_NATIONAL || f->usage_nat; }
+
 static int rfield_desc(RField *f)
 {
     Desc d; memset(&d, 0, sizeof d);
     switch (f->pi.category) {
+    case PIC_NATIONAL: d.cat = COB_NATIONAL; break;
     case PIC_ALPHABETIC: d.cat = COB_ALPHA; break;
     case PIC_ALPHANUMERIC: d.cat = COB_ALNUM; break;
     case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;
@@ -10156,6 +10209,7 @@ static int rfield_desc(RField *f)
     if (f->blank_zero) d.flags |= COB_F_BLANKZ;
     if (f->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", f->pi.pat);
     d.size = f->pi.bytes;
+    if (f->usage_nat) { d.usage = COB_U_NATIONAL; d.size = 2 * f->pi.bytes; }
     return desc_add(&d);
 }
 
@@ -10403,12 +10457,12 @@ static void emit_report_group(Report *r, RGroup *g)
                 int save_tp = g_tp;
                 g_tp = f->source_tp; parse_ref(rf); g_tp = save_tp;
                 if (rf->sym->is_cond) die_at(f->line, "SOURCE '%s' is a condition-name", rf->sym->name);
-                if (sym_is_national(rf->sym) || (!rf->sym->is_group && rf->sym->usage == U_NATIONAL))
-                    die_at(f->line, "SOURCE '%s' is national: a national field in Report Writer is not implemented yet", rf->sym->name);
+                if (sym_is_national(rf->sym) && f->pi.category != PIC_NATIONAL)
+                    die_at(f->line, "SOURCE '%s' is national: it goes to a national field (PICTURE N), not this one (2023 14.9.25.3 rule 3)", rf->sym->name);
                 a[2] = arg_ref(rf); a[3] = arg_desc(sym_desc(rf->sym));
             } else if (f->value->kind == T_STR) {
                 a[2] = arg_label(lit_label((unsigned char *)f->value->s, f->value->len));
-                a[3] = arg_desc(str_desc(f->value->len));
+                a[3] = arg_desc(f->value->nat ? nat_desc(f->value->len) : str_desc(f->value->len));
             } else {
                 NumLit n; numlit_parse(f->value, &n);
                 int d; a[2] = arg_label(num_lit_label(&n, &d)); a[3] = arg_desc(d);
@@ -12598,7 +12652,7 @@ static void parse_rd(void)
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
                     fd.has_pic = 1;
                     snprintf(fd.pic, sizeof fd.pic, "%s", cur()->s);
-                    { PicInfo np; if (nat_picture(fd.pic, &np, t->line)) die_at(t->line, "a national field in Report Writer is not implemented yet"); }
+                    if (nat_picture(fd.pic, &fd.pi, t->line)) { advance(); is_field = 1; continue; }
                     if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(t->line, "report field: %s", fd.pi.err);
                     advance(); is_field = 1;
                     continue;
@@ -12629,8 +12683,14 @@ static void parse_rd(void)
                 }
                 if (accept_word("just") || accept_word("justified")) { accept_word("right"); fd.just = 1; is_field = 1; continue; }
                 if (accept_word("blank")) { accept_word("when"); accept_word("zero"); accept_word("zeros"); fd.blank_zero = 1; is_field = 1; continue; }
-                if (accept_word("usage")) { accept_word("is"); expect_word("display"); continue; }
+                if (accept_word("usage")) {
+                    accept_word("is");
+                    if (accept_word("national")) { if (g_std < 2002) die_at(t->line, "USAGE NATIONAL is COBOL 2002; compile with -std=2002"); fd.usage_nat = 1; }
+                    else expect_word("display");
+                    continue;
+                }
                 if (accept_word("display")) continue;
+                if (g_std >= 2002 && accept_word("national")) { fd.usage_nat = 1; continue; }
                 if (accept_word("sum")) {
                     fd.has_sum = 1; is_field = 1;
                     for (;;) {
@@ -12695,13 +12755,27 @@ static void parse_rd(void)
                 if (!fd.has_pic && fd.value && fd.value->kind == T_STR) {
                     /* VALUE without PICTURE: an alphanumeric of the literal's width */
                     fd.has_pic = 1;
-                    snprintf(fd.pic, sizeof fd.pic, "x(%d)", fd.value->len > 0 ? fd.value->len : 1);
-                    { PicInfo np; if (nat_picture(fd.pic, &np, eline)) die_at(eline, "a national field in Report Writer is not implemented yet"); }
-                    if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(eline, "report field: %s", fd.pi.err);
+                    if (fd.value->nat) {
+                        /* a national literal: national, as many positions as it
+                         * has characters or takes columns, so all of it shows */
+                        int nu = fd.value->len / 2, nc = nat_lit_cols((const unsigned char *)fd.value->s, fd.value->len);
+                        snprintf(fd.pic, sizeof fd.pic, "n(%d)", nc > nu ? nc : nu > 0 ? nu : 1);
+                        nat_picture(fd.pic, &fd.pi, eline);
+                    } else {
+                        snprintf(fd.pic, sizeof fd.pic, "x(%d)", fd.value->len > 0 ? fd.value->len : 1);
+                        if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(eline, "report field: %s", fd.pi.err);
+                    }
                 }
+                if (fd.usage_nat) {
+                    if (fd.pi.category == PIC_NATIONAL) fd.usage_nat = 0;     /* PICTURE N is national usage already */
+                    else if (fd.pi.category != PIC_NUMERIC && fd.pi.category != PIC_NUMERIC_EDITED)
+                        die_at(eline, "USAGE NATIONAL takes a PICTURE N, or a numeric or numeric-edited one");
+                }
+                if (fd.value && fd.value->kind == T_STR && fd.value->nat && !rfield_is_nat(&fd))
+                    die_at(eline, "a national VALUE goes to a national field (PICTURE N)");
                 if (!fd.has_pic) die_at(eline, "a report field needs a PICTURE");
                 if (fd.has_source + !!fd.value + fd.has_sum != 1) die_at(eline, "a report field needs exactly one of SOURCE, VALUE and SUM");
-                if (!fd.column) fd.column = ln->nf ? ln->f[ln->nf - 1].column + ln->f[ln->nf - 1].pi.bytes : 1;
+                if (!fd.column) fd.column = ln->nf ? ln->f[ln->nf - 1].column + rfield_cols(&ln->f[ln->nf - 1]) : 1;
                 if (ln->nf == ln->fcap) { ln->fcap = ln->fcap ? ln->fcap * 2 : 8; ln->f = realloc(ln->f, ln->fcap * sizeof *ln->f); }
                 ln->f[ln->nf++] = fd;
             }
@@ -12787,13 +12861,13 @@ static void parse_screen_section(void)
                 if (accept_word("value")) {
                     accept_word("is");
                     if (cur()->kind != T_STR) die_at(t->line, "a screen VALUE needs a nonnumeric literal");
-                    f->value = cur(); advance(); f->kind = COB_SCR_VALUE; continue;
+                    f->value = cur(); f->natlit = cur()->nat; advance(); f->kind = COB_SCR_VALUE; continue;
                 }
                 if (accept_word("pic") || accept_word("picture")) {
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
                     f->has_pic = 1;
                     snprintf(f->pic, sizeof f->pic, "%s", cur()->s);
-                    { PicInfo np; if (nat_picture(f->pic, &np, t->line)) die_at(t->line, "a national field in SCREEN SECTION is not implemented yet"); }
+                    if (nat_picture(f->pic, &f->pi, t->line)) { advance(); continue; }
                     if (pic_analyse(f->pic, &f->pi) < 0) die_at(t->line, "screen field: %s", f->pi.err);
                     advance(); continue;
                 }
@@ -12879,8 +12953,11 @@ static void parse_screen_section(void)
                 if (!f->col && gstk[gdepth - 1].col) f->col = gstk[gdepth - 1].col;
                 gstk[gdepth - 1].line = 0; gstk[gdepth - 1].col = 0;    /* the anchor is the first child's */
             }
-            if (f->kind == COB_SCR_VALUE) { if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE"); f->width = f->value->len; }
-            else { if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE"); f->width = f->pi.bytes; }
+            if (f->kind == COB_SCR_VALUE) {
+                if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE");
+                f->width = f->natlit ? nat_lit_cols((const unsigned char *)f->value->s, f->value->len) : f->value->len;
+            }
+            else { if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE"); f->width = sfield_cols(f); }
             if (!f->line) f->line = prev ? prev->line : 1;        /* no LINE: the previous slot's line */
             if (!f->col) f->col = prev && prev->line == f->line ? prev->col + prev->width : 1;   /* no COLUMN: right after it */
             if ((f->flags & (COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL)) && f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
@@ -13147,9 +13224,11 @@ static void emit_unit_data(void)
             emit("\t.byte %d,%d", f->fg, f->bg);   /* FOREGROUND-COLOR, BACKGROUND-COLOR (255: not given) */
             emit("\t.word %d", f->width);
             if (f->kind == COB_SCR_VALUE) emit("\t.word %s", lit_label((unsigned char *)f->value->s, f->value->len)); else emit("\t.word 0");
-            if (f->has_pic) {
+            if (f->kind == COB_SCR_VALUE && f->natlit) emit("\t.word .Ld%d", nat_desc(f->value->len));   /* painted as national text */
+            else if (f->has_pic) {
                 Desc d; memset(&d, 0, sizeof d);
                 switch (f->pi.category) {
+                case PIC_NATIONAL: d.cat = COB_NATIONAL; break;
                 case PIC_ALPHABETIC: d.cat = COB_ALPHA; break;
                 case PIC_ALPHANUMERIC: d.cat = COB_ALNUM; break;
                 case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;

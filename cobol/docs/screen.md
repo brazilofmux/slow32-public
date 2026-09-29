@@ -263,3 +263,20 @@ at column 1 (RM's rule); a SCREEN SECTION program keeps its stdout stream.
 ECHO, OFF, TAB, CONVERT, BLINK, BEEP, UNIT and CONTROL are accepted and
 ignored. tests/fixed/rmscreen pins the stream.
 
+## National fields (2026-09-28, ISSUES-92)
+
+A PIC N(n) field is n columns, and its text is laid out by display
+width. A CJK character takes two columns, and a combining mark rides
+with the character before it. The rule is docs/national.md's, "National
+text in columns".
+
+Keys reach the focus loop as characters: `scr_key` decodes UTF-8, and a
+byte that is not UTF-8 stands for U+FFFD. The cursor and function-key
+codes moved above Unicode's range (0x110001 on) to make room.
+Alphanumeric fields still take only printable ASCII, as before.
+
+A national field is edited a cluster at a time, overwriting as a text
+field does. The cursor moves by the columns each cluster takes. A
+character that would not fit the field's columns or its item's code
+units is refused with the beep. The terminal under it is the
+Unicode-aware term service (docs/SERVICE_NEGOTIATION.md).

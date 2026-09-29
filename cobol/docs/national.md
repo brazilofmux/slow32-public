@@ -47,9 +47,47 @@ bytes, INITIALIZE with REPLACING NATIONAL.
 A national item is not MOVEd to an alphanumeric or numeric one (14.9.25;
 DISPLAY-OF converts); a group receives its bytes (general rule 4).
 
-Refused: GROUP-USAGE BIT (the BOOLEAN module); national fields in
-Report Writer and SCREEN SECTION, a national SOURCE or FROM item for
-one, and ACCEPT of a national item at a screen position (ISSUES-75).
+Refused: GROUP-USAGE BIT (the BOOLEAN module).
+
+## National text in columns (ISSUES-92)
+
+A report line and a screen are character cells, and national text goes
+into them by display width, as a terminal shows it. A character takes
+its width in columns: two for an East Asian wide or full-width one, one
+for most. A character that takes no column (a combining mark, a
+variation selector), or follows a ZERO WIDTH JOINER, rides with the one
+before it as a single cluster. The width table is the term service's,
+`common/term_width.h`, generated from the Unicode data.
+
+- **A field of n national character positions is n columns.** Its text
+  is laid out left to right. A character that would cross the field's
+  last column is dropped with everything after it, and spaces stand
+  instead. So what follows the field lands in the same column whatever
+  the text: PIC N(6) holds three CJK characters, or six Latin ones.
+- **A national VALUE with no PICTURE** in a report takes as many
+  positions as it has code units or columns, whichever is more, so all
+  of it shows.
+- **Positions still count code units.** LENGTH, reference modification
+  and CHAR/ORD are unchanged. Only the laying out is visual.
+- **Report Writer:** PIC N and national-edited fields, USAGE NATIONAL on
+  a numeric or numeric-edited PICTURE, a national VALUE, an alphanumeric
+  SOURCE into a national field, and a numeric USAGE NATIONAL SOURCE.
+- **SCREEN SECTION:** PIC N fields for FROM, TO and USING, and a
+  national VALUE. The same holds for positioned DISPLAY of a national
+  item or literal and positioned ACCEPT of a national item. Input is
+  UTF-8, edited a cluster at a time: a combining mark joins the
+  character before the cursor. A character that would take more columns
+  than the field has, or more code units than the item has, is refused
+  with the field's beep.
+- **Refused, as MOVE refuses them (14.9.25):** a national SOURCE, FROM
+  or VALUE into a field that is not national, and a national field's
+  input into an item that is not national.
+
+Once a program has painted with positioned DISPLAY/ACCEPT, the plain
+DISPLAY that follows moves its column by display width too.
+Alphanumeric fields are unchanged: an alphanumeric position is a byte,
+so a PIC X field of UTF-8 text takes as many positions as it has bytes,
+and shows narrower than that on the terminal.
 
 ## What part two covers (ISSUES-64)
 
