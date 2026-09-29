@@ -45,7 +45,7 @@
                on ascending key wr-seq
                with duplicates in order
                input procedure is gen
-               output procedure is sum
+               output procedure is summarize
            move ck to ck-ed
            move n to n-ed
            display 'bsort n=' n-ed ' checksum=' ck-ed
@@ -65,7 +65,7 @@
                move all 'x' to wr-pad
                release wr
            end-perform.
-       sum.
+       summarize.
            move -1 to prev-seq
            move 'n' to eof
            perform until eof = 'y'
