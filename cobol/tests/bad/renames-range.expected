@@ -1,0 +1,1 @@
+RENAMES 'r': 'b1' must begin no earlier than 'b' and end after it (X3.23-1985 RENAMES syntax rule 8)

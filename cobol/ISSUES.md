@@ -4025,3 +4025,23 @@ bad/std2002-redefines-pointer. Harness 462/462, -std=85 byte-identical
 on the Open Systems programs, majesty PASS. Page:
 docs/conformance/redefines.md.
 
+### 106. The RENAMES sweep (2026-09-29)
+
+2023 13.18.45.3 and 85 5.11.3, probed rule by rule. Found and fixed:
+THRU naming data-name-2 again was accepted (rule 4); a data-name-3
+inside data-name-2, or ending before it ends, was accepted -- only one
+ending before data-name-2 began was refused (rule 11; 85 rule 8); a bit
+item starting or ending the range inside a byte was not checked (rule
+10); a strongly-typed item inside the range, not at its ends, was not
+checked (rule 8). Naming the record itself or a level 77 item said "'g'
+is not declared under 'g'"; it now cites rule 5 (85 rule 4), without
+misfiring when the record also holds an item of that name.
+
+GnuCOBOL refuses data-name-2 inside data-name-3 (b1 THRU b, b1 the
+first item of b) because b is declared first; the text asks only about
+the storage, so it is accepted here: free/renames3, no oracle.
+
+Tests: bad/renames-same, -range, -level; free/renames2 (the oracle
+agrees), free/renames3. Harness 467/467, -std=85 byte-identical on the
+Open Systems programs, majesty PASS. Page: docs/conformance/renames.md.
+

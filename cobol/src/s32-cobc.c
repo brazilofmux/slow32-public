@@ -3208,6 +3208,20 @@ static void finish_data_division(void)
         Sym *rec = &g_sym[s->parent];       /* the 01 the entry follows (a REDEFINES 01 keeps its own name) */
         if (!rec->is_filler && !(naq && !strcmp(aq[naq - 1], rec->name))) aq[naq++] = rec->name;
         if (!rec->is_filler && !(nbq && !strcmp(bq[nbq - 1], rec->name))) bq[nbq++] = rec->name;
+        int e85 = g_std < 2002;
+        /* a record, a 77 or another record's item: say which rule, not
+         * "not declared" (85 rules 2, 4; 2023 rules 2, 4, 5) */
+        for (int k = 0; k < 2; k++) {
+            const char *nm = k ? s->rn_b : s->rn_a;
+            if (!nm[0]) continue;
+            Sym *q = sym_lookup_quiet(nm);
+            int inrec = 0;                          /* a 02-49 item of that name in this record: the lookup below finds it */
+            for (int j = g_sym_base; j < g_nsym && !inrec; j++)
+                if (!g_sym[j].is_cond && g_sym[j].level > 1 && g_sym[j].level < 50 && g_sym[j].record == s->record && !strcmp(g_sym[j].name, nm)) inrec = 1;
+            if (!inrec && (!strcmp(nm, rec->name) || (q && (q->level == 1 || q->level == 77) && !q->is_filler)))
+                die_at(s->line, "RENAMES '%s': '%s' is a level %02d entry; a RENAMES entry names items at levels 02-49 (%s)", s->name, nm,
+                       !strcmp(nm, rec->name) ? rec->level : q->level, e85 ? "X3.23-1985 RENAMES syntax rule 4" : "2023 13.18.45.3 rule 5");
+        }
         Sym *a = sym_lookup(s->rn_a, aq, naq, s->line), *b = NULL;
         if (s->rn_b[0]) b = sym_lookup(s->rn_b, bq, nbq, s->line);
         Sym *chk[2] = { a, b };
@@ -3219,8 +3233,24 @@ static void finish_data_division(void)
             if (sym_in_strong(x)) die_at(s->line, "RENAMES '%s': '%s' is in a strongly-typed group (2023 13.18.57.3 rule 3)", s->name, x->name);
             if (x->ndims) die_at(s->line, "RENAMES '%s': '%s' has OCCURS or lies in a table", s->name, x->name);
         }
+        if (b == a) die_at(s->line, "RENAMES '%s': THRU names '%s' again; the two data-names differ (%s)", s->name, a->name,
+                           e85 ? "X3.23-1985 RENAMES syntax rule 4" : "2023 13.18.45.3 rule 4");
+        long aend = (long)a->offset + a->size;
+        if (b && (b->offset < a->offset || (long)b->offset + b->size <= aend))
+            die_at(s->line, "RENAMES '%s': '%s' must begin no earlier than '%s' and end after it (%s)", s->name, b->name, a->name,
+                   e85 ? "X3.23-1985 RENAMES syntax rule 8" : "2023 13.18.45.3 rule 11");
+        for (int k = 0; k < 2; k++) {               /* whole bytes (2023 rule 10) */
+            Sym *x = chk[k];
+            if (x && sym_bitlike(x) && ((k == 0 && x->bitoff) || (k == 1 && (x->bitoff + bit_total(x)) % 8)))
+                die_at(s->line, "RENAMES '%s': the range starts or ends inside a byte at '%s' (2023 13.18.45.3 rule 10)", s->name, x->name);
+        }
         int end = b ? (int)(b->offset + b->size) : (int)(a->offset + a->size);
-        if (end <= (int)a->offset) die_at(s->line, "RENAMES '%s': '%s' does not follow '%s'", s->name, b->name, a->name);
+        for (int j = g_sym_base; j < g_nsym; j++) {  /* nothing in the range strongly typed (2023 rule 8) */
+            Sym *q = &g_sym[j];
+            if (q->is_cond || q->is_rename || q->record != s->record || q->level == 1) continue;
+            if (q->offset >= a->offset && q->offset < end && sym_in_strong(q))
+                die_at(s->line, "RENAMES '%s': '%s' in the range is in a strongly-typed group (2023 13.18.45.3 rule 8)", s->name, q->name);
+        }
         s->offset = a->offset; s->size = end - (int)a->offset; s->ndims = 0;
         if (!b && !a->is_group) {
             s->usage = a->usage; s->has_usage = a->has_usage; s->pi = a->pi; s->has_pic = a->has_pic;
