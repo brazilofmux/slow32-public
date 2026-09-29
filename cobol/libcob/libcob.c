@@ -2516,6 +2516,14 @@ static int fn_conv_bad;                         /* a checked conversion substitu
 
 int cob_fn_last_len(void) { return fn_var_len; }
 
+/* a run-time-length result reference-modified to its end: n bytes skipped
+ * (cobol ISSUES-88); a start past the end leaves nothing */
+char *cob_fn_var_skip(char *p, int n)
+{
+    fn_var_len = fn_var_len > n ? fn_var_len - n : 0;
+    return p + n;
+}
+
 /* a run-time-length result from text: alphanumeric as it is, or national
  * decoded from UTF-8 */
 static char *fn_var_result(const char *s, int n, int national)

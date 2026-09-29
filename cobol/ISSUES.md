@@ -2820,3 +2820,34 @@ one; WITH LOCATION for one. std2002-turn-file, which was the refusal,
 now checks rule 4. Harness 272/272; -std=85 byte-identical on all 227
 Open Systems programs; majesty PASS; majesty-functions PASS; Open
 Systems paper unchanged.
+
+### 88. Reference modification of function results: run-time lengths, and national positions (2026-09-28)
+
+Found in ISSUES-87: `FUNCTION EXCEPTION-FILE(3:8)` was refused, as was
+reference modification of any result whose length is known only at run
+time.
+
+- **A result of run-time length** (NATIONAL-OF, DISPLAY-OF,
+  EXCEPTION-FILE/-LOCATION, BOOLEAN-OF-INTEGER with an item length). The
+  start is checked against the compile-time maximum.
+  - With a length written, the part is fixed. With EC-BOUND-REF-MOD
+    checked, its end is tested against the length the result came out
+    with: the national form of "日本" in PIC X(10) is six characters,
+    not the ten its bound allows.
+  - To its end, the part stays of run-time length:
+    `cob_fn_var_skip` advances the pointer and shortens the length
+    libcob recorded, so LENGTH, a MOVE and DISPLAY see the part.
+- **A latent bug, national results.** Positions in a function's
+  reference modification counted bytes, so a national result's `(1:1)`
+  took half a character: `FUNCTION CHAR-NATIONAL(12354)(1:1)` displayed
+  nothing and had LENGTH 0 at HEAD (checked). Positions now count
+  characters, two bytes each in a national result (8.4.3.3.4 rule 1).
+
+Still refused: a computed position in a function's reference
+modification. std2002-natof-refmod, whose case now works, checks that.
+
+2002/fnvarrm (no oracle): parts of NATIONAL-OF, DISPLAY-OF,
+CHAR-NATIONAL and BOOLEAN-OF-INTEGER; a part to the end and its LENGTH;
+a fixed part within the result and one past it (fatal). Harness 273/273;
+-std=85 byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

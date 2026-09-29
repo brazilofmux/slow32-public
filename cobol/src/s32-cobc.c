@@ -3418,6 +3418,7 @@ typedef struct Opnd_ {
     int fn; struct Opnd_ *farg, *farg2; int fsize;   /* O_FUNC: intrinsic, its argument(s), result width */
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
     int fvar, fnat, fbool;                   /* O_FUNC: length known only at run time (fsize its maximum); a national, a boolean result */
+    int fwasvar;                             /* O_FUNC: a fixed part cut from a run-time-length result (cobol ISSUES-88) */
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
@@ -3745,26 +3746,33 @@ static void function_refmod(Opnd *o)
     int line = cur()->line;
     int numeric = o->fn == -1 ? o->fscale >= 0 : fn_is_numeric(o->fn);
     if (numeric) die_at(line, "a numeric function cannot be reference-modified");
-    if (o->fvar) die_at(line, "reference modification of a function whose length is known only at run time is not implemented yet");
+    /* positions are characters: two bytes each in a national result; a
+     * result of run-time length is bounded by its maximum here (cobol
+     * ISSUES-88) */
+    int unit = o->fnat ? 2 : 1, chars = o->fsize / unit;
     advance();
     if (cur()->kind != T_NUM || peek(1)->kind != T_COLON)
         die_at(line, "reference modification of a function with an expression position is not implemented yet");
     NumLit a; numlit_parse(cur(), &a);
     long start = numlit_is_int(&a) && !a.neg ? (long)numlit_int(&a) : 0;
-    if (start < 1 || start > o->fsize) die_at(line, "the reference modification starts outside the function's %d characters", o->fsize);
+    if (start < 1 || start > chars) die_at(line, "the reference modification starts outside the function's %d characters", chars);
     advance(); advance();
-    long len = o->fsize - start + 1;
+    long len = chars - start + 1; int given = 0;
     if (cur()->kind != T_RP) {
         if (cur()->kind != T_NUM || peek(1)->kind != T_RP)
             die_at(line, "reference modification of a function with an expression length is not implemented yet");
         NumLit b; numlit_parse(cur(), &b);
         len = numlit_is_int(&b) && !b.neg ? (long)numlit_int(&b) : 0;
-        if (len < 1 || start + len - 1 > o->fsize) die_at(line, "the reference modification runs outside the function's %d characters", o->fsize);
+        if (len < 1 || start + len - 1 > chars) die_at(line, "the reference modification runs outside the function's %d characters", chars);
+        given = 1;
         advance();
     }
     advance();
     if (!o->ffull) o->ffull = o->fsize;
-    o->frm += (int)start - 1; o->fsize = (int)len;
+    o->frm += ((int)start - 1) * unit; o->fsize = (int)len * unit;
+    /* a run-time-length result: with a length, the part is fixed; to its
+     * end, the part's length is the result's less the start (at run time) */
+    if (o->fvar && given) { o->fvar = 0; o->fwasvar = 1; }
 }
 static void parse_operand(Opnd *o) { parse_operand_raw(o); function_refmod(o); operand_odo_length(o); }
 
@@ -4862,7 +4870,27 @@ static void emit_fn_value(Opnd *f)
     if (!f->ffull) { emit_fn_value_raw(f); return; }
     int part = f->fsize;
     f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
-    if (f->frm) emit("\taddi r1, r1, %d", f->frm);
+    if (f->fvar && f->frm) {
+        /* to the end of a run-time-length result: the pointer on, the
+         * length the runtime keeps shortened (cobol ISSUES-88) */
+        emit("\tadd r3, r1, r0");
+        emit_li("r4", f->frm);
+        emit_call("cob_fn_var_skip");
+    } else {
+        if (f->fwasvar && ec_on_name("EC-BOUND-REF-MOD")) {
+            /* the part must lie within the result as it came out (8.4.3.3.4
+             * rule 5): its end against the length the runtime recorded */
+            int Lok = new_label();
+            emit("\tadd r12, r1, r0");
+            emit_call("cob_fn_last_len");
+            emit_li("r2", f->frm + f->fsize);
+            emit("\tbge r1, r2, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
+            emit_label(Lok);
+            emit("\tadd r1, r12, r0");
+        }
+        if (f->frm) emit("\taddi r1, r1, %d", f->frm);
+    }
 }
 
 /* r3 = a string argument's address, r4 its length in bytes -- a
