@@ -1,9 +1,9 @@
 identification division.
-program-id. bitx.
-*> USAGE BIT is for boolean pictures (2023 13.18.60).
+program-id. p.
 data division.
 working-storage section.
-01  b pic x(4) usage bit.
+01 t typedef strong.
+ 05 a pic n(2).
+01 g type t group-usage national.
 procedure division.
-
     stop run.

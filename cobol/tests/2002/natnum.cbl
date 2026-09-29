@@ -1,6 +1,6 @@
 identification division.
 program-id. natnum.
-*> Numeric and numeric-edited USAGE NATIONAL (2023 13.18.66 rule 12;
+*> Numeric and numeric-edited USAGE NATIONAL (2023 13.18.60 rule 12;
 *> cobol ISSUES-72): the DISPLAY form with each character a UTF-16BE code
 *> unit -- digits U+0030..U+0039, a separate sign U+002B/U+002D, an
 *> unseparated one the DISPLAY overpunch widened (the implementor's

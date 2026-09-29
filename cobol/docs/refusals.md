@@ -86,6 +86,8 @@ COBOL 2002/2023 (Stage B):
 - RESUME (optional since 2014);
 - ALPHABET ... IS EBCDIC, as a collating sequence and a CODE-SET (ruled
   below).
+- USAGE NATIONAL on a screen item whose PICTURE is not N
+  (docs/conformance/national-boolean.md).
 
 ## 3. Out of scope, by ruling
 

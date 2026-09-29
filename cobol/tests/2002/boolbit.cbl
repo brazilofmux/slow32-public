@@ -1,6 +1,6 @@
 identification division.
 program-id. boolbit.
-*> USAGE BIT and GROUP-USAGE BIT (2023 8.5.1.6.3, 13.18.29, 13.18.66;
+*> USAGE BIT and GROUP-USAGE BIT (2023 8.5.1.6.3, 13.18.29, 13.18.60;
 *> cobol ISSUES-78).  Bit items at one level take the next bit position:
 *> F1 (1 bit), F2 (3) and F3 (6) after the byte A share byte 2 and spill
 *> into byte 3, whose last six bits are implicit filler; Z starts on the

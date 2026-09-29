@@ -667,7 +667,9 @@ static void tokenize_lines(SrcLine *lines, int nlines)
              * 160 characters, 2002 more than zero (8.3.1.2.1.2 rule 1, X"" too;
              * .3.2 rule 1 boolean, .4.2 rule 1 national) */
             #define NO_EMPTY_LIT(n, what, rule) do { if ((n) == 0) die_at(line, "a zero-length %s literal is COBOL 2014 (%s)", what, \
-                g_std < 2002 ? "X3.23-1985: 1 through 160 characters" : rule); } while (0)
+                g_std < 2002 ? "X3.23-1985: 1 through 160 characters" : rule); \
+                if ((n) > 160) die_at(line, "this %s literal has %d positions, more than 160 (%s; 2023 allows 8,191)", what, (int)(n), \
+                g_std < 2002 ? "X3.23-1985 nonnumeric literals" : rule); } while (0)
             /* Hexadecimal literal X'..' */
             if ((c == 'x' || c == 'X') && (p[1] == '\'' || p[1] == '"')) {
                 char q = p[1];
@@ -704,18 +706,18 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 }
                 char *out; int on;
                 if (hex) {
-                    if (rn % 4) die_at(line, "NX\"...\" needs four hexadecimal digits for each national character");
+                    if (rn % 4) die_at(line, "NX\"...\" needs four hexadecimal digits for each national character (2023 8.3.3.5.3 rule 5: UTF-16 here)");
                     out = xmalloc((size_t)rn / 2 + 1); on = rn / 2;
                     for (int i = 0; i < rn; i += 2) {
                         int h = hexval(raw[i]), l = hexval(raw[i + 1]);
-                        if (h < 0 || l < 0) die_at(line, "bad hexadecimal digit in a national literal");
+                        if (h < 0 || l < 0) die_at(line, "bad hexadecimal digit in a national literal (2023 8.3.3.5.3 rule 4)");
                         out[i / 2] = (char)(h * 16 + l);
                     }
                 } else {
                     out = xmalloc((size_t)rn * 4 + 1); on = utf8_to_utf16be((const unsigned char *)raw, rn, (unsigned char *)out);
                     if (on < 0) die_at(line, "a national literal must be UTF-8 text (the source is UTF-8)");
                 }
-                NO_EMPTY_LIT(on, "national", "2002 8.3.1.2.4.2 rule 1");
+                NO_EMPTY_LIT(on / 2, "national", "2002 8.3.1.2.4.2 rule 1");
                 Tok *nt = push_tok(T_STR, line, out, on);
                 nt->nat = 1;
                 free(raw); free(out);
@@ -737,10 +739,10 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 for (int i = 0; i < n; i++) {
                     if (hex) {
                         int h = hexval(s[i]);
-                        if (h < 0) die_at(line, "bad hexadecimal digit in a boolean literal");
+                        if (h < 0) die_at(line, "bad hexadecimal digit in a boolean literal (2023 8.3.3.4.3 rule 3)");
                         for (int b = 3; b >= 0; b--) out[on++] = (char)('0' + ((h >> b) & 1));
                     } else {
-                        if (s[i] != '0' && s[i] != '1') die_at(line, "a boolean literal holds only the characters 0 and 1");
+                        if (s[i] != '0' && s[i] != '1') die_at(line, "a boolean literal holds only the characters 0 and 1 (2023 8.3.3.4.3 rule 2)");
                         out[on++] = s[i];
                     }
                 }
@@ -1967,17 +1969,22 @@ static void sym_finish(Sym *s)
     }
 
     const PicInfo *pi = &s->pi;
+    /* a PICTURE with N takes no USAGE but NATIONAL, its own or its
+     * group's (2023 13.18.60.3 rule 20; a compiler-made copy carries the
+     * original's usage) */
+    if (pi->category == PIC_NATIONAL && s->has_usage && !s->is_ftemp)
+        die_at(s->line, "'%s': a PICTURE with N takes only USAGE NATIONAL, not %s (2023 13.18.60.3 rule 20)", s->name, usage_name(u));
     if (s->nat_usage && pi->category != PIC_NATIONAL) {
         /* numeric and numeric-edited USAGE NATIONAL: the DISPLAY form, each
-         * character two bytes (2023 13.18.66 rule 12; not A or X, rule 30) */
+         * character two bytes (2023 13.18.60.3 rule 12) */
         if (pi->category != PIC_NUMERIC && pi->category != PIC_NUMERIC_EDITED && pi->category != PIC_BOOLEAN)
-            die_at(s->line, "'%s': USAGE NATIONAL takes a PICTURE of N, or a numeric, numeric-edited or boolean one (2023 13.18.66.3 rule 12)", s->name);
+            die_at(s->line, "'%s': USAGE NATIONAL takes a PICTURE of N, or a numeric, numeric-edited or boolean one (2023 13.18.60.3 rule 12)", s->name);
         u = s->usage = U_NATIONAL;
     }
     if (u == U_BIT) {
-        /* boolean positions as bits (2023 13.18.66); the bit offset and the
+        /* boolean positions as bits (2023 13.18.60); the bit offset and the
          * bytes spanned come with the layout (8.5.1.6.3) */
-        if (pi->category != PIC_BOOLEAN) die_at(s->line, "'%s': USAGE BIT needs a boolean PICTURE (1)", s->name);
+        if (pi->category != PIC_BOOLEAN) die_at(s->line, "'%s': USAGE BIT needs a boolean PICTURE (1) (2023 13.18.60.3 rule 5)", s->name);
         if (s->occurs && s->odo_dep[0]) die_at(s->line, "'%s': OCCURS DEPENDING ON a USAGE BIT item is not implemented yet", s->name);
         s->bits = pi->bytes; s->size = (s->bits + 7) / 8;
         return;
@@ -2297,6 +2304,28 @@ static void parse_data_item1(void)
                  * arithmetic is 64-bit, docs/refusals.md) */
                 if (g_std >= 2002 && !strncmp(s->pi.err, "more than 18 digits", 19))
                     die_at(t->line, "'%s': more than 18 digits -- COBOL 2002's 31 are not implemented", s->name);
+                /* a symbol 1 or N (not a repeat count) says which category
+                 * was meant: name its rule (2023 13.18.40.4 rules 8-10) */
+                int has1 = 0, hasn = 0, paren = 0;
+                for (const char *c = s->pic; *c; c++) {
+                    if (*c == '(') paren = 1; else if (*c == ')') paren = 0;
+                    else if (!paren && *c == '1') has1 = 1;
+                    else if (!paren && (*c == 'n' || *c == 'N')) hasn = 1;
+                }
+                for (const char *c = s->pic; *c; c++)
+                    if (*c == '(') {
+                        const char *d = c + 1; while (*d == '0') d++;
+                        if (d > c + 1 && *d == ')')
+                            die_at(t->line, "'%s': PICTURE '%s': a repeat count is a nonzero integer (%s)", s->name, s->pic,
+                                   g_std < 2002 ? "X3.23-1985 VI-30 PICTURE general rule 7" : "2023 13.18.40.3 rule 6");
+                    }
+                if (g_std < 2002 && (hasn || has1))
+                    die_at(t->line, "'%s': PICTURE '%s': the symbol %s is COBOL 2002's; compile with -std=2002", s->name, s->pic, hasn ? "N" : "1");
+                if (hasn)
+                    die_at(t->line, "'%s': PICTURE '%s': a national PICTURE holds only N, and B, 0 or / for a national-edited one (2023 13.18.40.4 rules 9-10)",
+                           s->name, s->pic);
+                if (has1)
+                    die_at(t->line, "'%s': PICTURE '%s': a boolean PICTURE holds only the symbol 1 (2023 13.18.40.4 rule 8)", s->name, s->pic);
                 die_at(t->line, "'%s': %s", s->name, s->pi.err);
             }
             advance();
@@ -2506,6 +2535,20 @@ static void build_tree(void)
          * own; its subordinate groups are national groups and its
          * elementary items national.  Parents precede children here. */
         if (s->natgroup == 2 && !s->is_group) die_at(s->line, "GROUP-USAGE: '%s' is not a group (2023 13.18.29.3 rule 1)", s->name);
+        if ((s->natgroup == 2 || s->bitgroup == 2) && s->strong)
+            die_at(s->line, "GROUP-USAGE: '%s' is strongly typed (2023 13.18.29.3 rule 1)", s->name);
+        /* a subordinate group of a bit or national group is one of the same
+         * kind, by its own clause or implied -- never the other kind, and
+         * with no USAGE of its own (rules 2 and 3) */
+        if (s->parent >= 0 && s->is_group && (g_sym[s->parent].bitgroup || g_sym[s->parent].natgroup)) {
+            int pb = g_sym[s->parent].bitgroup != 0;
+            if (pb ? s->natgroup == 2 : s->bitgroup == 2)
+                die_at(s->line, "'%s' is in the %s group '%s' and cannot be GROUP-USAGE %s (2023 13.18.29.3 rule %d)", s->name,
+                       pb ? "bit" : "national", g_sym[s->parent].name, pb ? "NATIONAL" : "BIT", pb ? 2 : 3);
+            if (s->has_usage && !(pb ? s->usage == U_BIT : 0))
+                die_at(s->line, "'%s' is in the %s group '%s': a subordinate group is GROUP-USAGE %s, with no USAGE of its own (2023 13.18.29.3 rule %d)",
+                       s->name, pb ? "bit" : "national", g_sym[s->parent].name, pb ? "BIT" : "NATIONAL", pb ? 2 : 3);
+        }
         if (s->redefines >= 0 && (sym_in_strong(s) || sym_in_strong(&g_sym[s->redefines])))
             die_at(s->line, "'%s': a strongly-typed group is not redefined, in whole or in part (2023 13.18.57.3 rule 4)", s->name);
         if (s->bitgroup == 2 && !s->is_group) die_at(s->line, "GROUP-USAGE: '%s' is not a group (2023 13.18.29.3 rule 1)", s->name);
@@ -13356,6 +13399,7 @@ static void parse_rd(void)
             /* the entry's clauses */
             int has_line = 0, labs = 0, lplus = 0, is_field = 0, lnp = 0;
             RField fd; memset(&fd, 0, sizeof fd); fd.line = eline;
+            int usage_disp = 0;         /* DISPLAY written: a PICTURE of N refuses it (13.18.60.3 rule 20) */
             snprintf(fd.ename, sizeof fd.ename, "%s", entry_name);
             while (cur()->kind != T_PERIOD) {
                 Tok *t = cur();
@@ -13456,10 +13500,11 @@ static void parse_rd(void)
                 if (accept_word("usage")) {
                     accept_word("is");
                     if (accept_word("national")) { if (g_std < 2002) die_at(t->line, "USAGE NATIONAL is COBOL 2002; compile with -std=2002"); fd.usage_nat = 1; }
-                    else expect_word("display");
+                    else if (accept_word("display")) usage_disp = 1;
+                    else die_at(cur()->line, "a report group item takes only USAGE DISPLAY or NATIONAL, not %s (2023 13.18.60.3 rule 7)", tok_desc(cur()));
                     continue;
                 }
-                if (accept_word("display")) continue;
+                if (accept_word("display")) { usage_disp = 1; continue; }
                 if (g_std >= 2002 && accept_word("national")) { fd.usage_nat = 1; continue; }
                 if (accept_word("sum")) {
                     fd.has_sum = 1; is_field = 1;
@@ -13536,10 +13581,12 @@ static void parse_rd(void)
                         if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(eline, "report field: %s", fd.pi.err);
                     }
                 }
+                if (usage_disp && fd.pi.category == PIC_NATIONAL)
+                    die_at(eline, "a report group item with a PICTURE of N takes only USAGE NATIONAL (2023 13.18.60.3 rule 20)");
                 if (fd.usage_nat) {
                     if (fd.pi.category == PIC_NATIONAL) fd.usage_nat = 0;     /* PICTURE N is national usage already */
                     else if (fd.pi.category != PIC_NUMERIC && fd.pi.category != PIC_NUMERIC_EDITED)
-                        die_at(eline, "USAGE NATIONAL takes a PICTURE N, or a numeric or numeric-edited one");
+                        die_at(eline, "USAGE NATIONAL takes a PICTURE N, or a numeric or numeric-edited one (2023 13.18.60.3 rule 12)");
                 }
                 if (fd.value && fd.value->kind == T_STR && fd.value->nat && !rfield_is_nat(&fd))
                     die_at(eline, "a national VALUE goes to a national field (PICTURE N)");
@@ -13576,7 +13623,7 @@ static void parse_screen_section(void)
         /* nested groups: a stack of the enclosing entries.  Each carries
          * the composed look (flags, colours) its children inherit, and
          * the group's LINE/COLUMN, which anchor its first child. */
-        struct { int level, flags, fg, bg, line, col, subidx; } gstk[16];
+        struct { int level, flags, fg, bg, line, col, subidx, usage; } gstk[16];
         int gdepth = 0;
         while (cur()->kind == T_NUM && strcmp(cur()->s, "01")) {
             int fl = parse_level(); int fline = cur()->line; advance();
@@ -13586,7 +13633,8 @@ static void parse_screen_section(void)
                 if (si >= 0) sc->sub[si].count = sc->nf - sc->sub[si].first;
             }
             char ename[64] = "";
-            if (cur()->kind == T_WORD && !at_word("blank") && !at_word("line") && !at_word("column") && !at_word("col") &&
+            int susage = 0;             /* USAGE: 1 DISPLAY, 2 NATIONAL; a group's reaches its children */
+            if (cur()->kind == T_WORD && !at_word("blank") && !at_word("usage") && !at_word("line") && !at_word("column") && !at_word("col") &&
                 !at_word("value") && !at_word("pic") && !at_word("picture") && !at_word("highlight") && !at_word("underline") &&
                 !at_word("auto") && !at_word("auto-skip") && !at_word("reverse-video") && !at_word("from") && !at_word("to") && !at_word("using") &&
                 !at_word("secure") && !at_word("required") && !at_word("full") && !at_word("lowlight") && !at_word("blink") && !at_word("bell") &&
@@ -13680,9 +13728,21 @@ static void parse_screen_section(void)
                 if (accept_word("required")) { f->flags |= COB_SF_REQUIRED; continue; }
                 if (accept_word("full")) { f->flags |= COB_SF_FULL; continue; }
                 if (accept_word("lowlight")) { f->flags |= COB_SF_LOWLIGHT; continue; }
+                if (accept_word("usage")) {
+                    accept_word("is");
+                    if (accept_word("national")) susage = 2;
+                    else if (accept_word("display")) susage = 1;
+                    else die_at(cur()->line, "a screen item takes only USAGE DISPLAY or NATIONAL, not %s (2023 13.18.60.3 rule 17)", tok_desc(cur()));
+                    continue;
+                }
                 die_at(t->line, "unexpected %s in screen '%s'", tok_desc(t), sc->name);
             }
             expect_period();
+            if (!susage && gdepth) susage = gstk[gdepth - 1].usage;
+            if (f->has_pic && susage == 1 && f->pi.category == PIC_NATIONAL)
+                die_at(fline, "a screen item with a PICTURE of N takes only USAGE NATIONAL (2023 13.18.60.3 rule 20)");
+            if (f->has_pic && susage == 2 && f->pi.category != PIC_NATIONAL)
+                die_at(fline, "USAGE NATIONAL on a screen item whose PICTURE is not N is not implemented");
             if (blank_screen_entry && f->kind < 0 && !f->has_pic) continue;   /* just BLANK SCREEN */
             if (f->kind < 0 && !f->has_pic) {
                 /* a group: its look composes over the enclosing one and its
@@ -13696,6 +13756,7 @@ static void parse_screen_section(void)
                 gstk[gdepth].bg = f->bg != 255 ? f->bg : pbg;
                 gstk[gdepth].line = f->line; gstk[gdepth].col = f->col;
                 gstk[gdepth].subidx = -1;
+                gstk[gdepth].usage = susage;
                 if (ename[0] && strcmp(ename, "filler")) {
                     if (sym_lookup_quiet(ename)) die_at(fline, "'%s' is both a data item and a screen group", ename);
                     char dummy[40]; int d1, d2;

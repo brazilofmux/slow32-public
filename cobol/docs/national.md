@@ -177,7 +177,7 @@ group, with no USAGE clause of its own (syntax rules 1 and 3).
 
 ## Numeric USAGE NATIONAL (ISSUES-72)
 
-A numeric or numeric-edited picture with USAGE NATIONAL (2023 13.18.66
+A numeric or numeric-edited picture with USAGE NATIONAL (2023 13.18.60
 rule 12) -- written on the item, on a group above it, or implied by a
 national group -- is stored as its DISPLAY form with each character one
 UTF-16BE code unit: digits U+0030..U+0039, a separate sign U+002B or

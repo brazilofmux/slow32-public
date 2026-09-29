@@ -2308,7 +2308,7 @@ majesty-functions PASS; Open Systems paper unchanged.
 
 ### 72. NATIONAL, part three: numeric and numeric-edited USAGE NATIONAL (2026-09-28)
 
-A numeric or numeric-edited picture with USAGE NATIONAL (2023 13.18.66
+A numeric or numeric-edited picture with USAGE NATIONAL (2023 13.18.60
 rule 12), explicit, from a group's USAGE, or implied by a national group.
 
 - **Representation** (the implementor's choice, recorded in
@@ -3559,3 +3559,35 @@ std2002-move-nonint-alnum, -move-natedited-num, -move-highvalue-num,
 CCVS-85 unchanged; -std=85 byte-identical on all 229 Open Systems
 programs; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+**National and boolean data: 13.18.29 GROUP-USAGE, 13.18.60 USAGE (BIT,
+NATIONAL), 13.18.40 PICTURE (1, N), 8.3.3.4-5 literals**
+(docs/conformance/national-boolean.md). Found and fixed:
+
+- GROUP-USAGE rule 1: a strongly-typed group with GROUP-USAGE,
+  accepted; refused. Rules 2-3: a GROUP-USAGE NATIONAL group inside a
+  bit group (or the reverse), and a subordinate group with a USAGE of
+  its own, were refused under the wrong rule, naming an item below;
+  now named at the group.
+- USAGE rule 20: PIC N with USAGE DISPLAY -- its own or its group's, in
+  the data division, a report group or a screen entry -- accepted;
+  refused. Rule 17: USAGE in a screen entry was not parsed; DISPLAY and
+  NATIONAL are taken (USAGE NATIONAL on a non-N screen item is a named
+  gap). Rule 7's message was "expected 'display'". The USAGE rules
+  were cited as 13.18.66 (2002's numbering); now 13.18.60, in the tests
+  too.
+- PICTURE: a picture mixing 1 or N with other symbols, and a zero
+  repeat count, were refused as "not valid at character 1"; the
+  message now names 13.18.40.4 rules 8-10 or 13.18.40.3 rule 6 (85
+  VI-30 general rule 7).
+- literals: 2002 (and 85) cap alphanumeric, boolean and national
+  literals at 160 positions; any length was accepted. Refused. X"..."
+  under -std=85 stays, an extension majesty uses (a ruling on the page).
+
+Tests: 2002/natlitquote (no oracle: GnuCOBOL's national support is
+unfinished); bad/std2002-groupusage-strong, -groupusage-mixed,
+-groupusage-subusage, -picn-display, -picn-group-display, -pic-bool-mixed,
+-pic-nat-mixed, -screen-usage, -rw-usage, -national-literal-161,
+pic-zero-count, literal-161. CCVS-85 unchanged; harness 371/371; -std=85
+byte-identical on all 229 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.
