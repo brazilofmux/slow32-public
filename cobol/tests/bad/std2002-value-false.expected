@@ -1,0 +1,2 @@
+'a1': the FALSE value is one of the condition's own values (2023 13.18.63.3 rule 27)
+SET 'a2' TO FALSE: its VALUE clause has no FALSE phrase (2023 14.9.39.3 rule 7)

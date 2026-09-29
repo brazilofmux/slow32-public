@@ -26,8 +26,8 @@
                88  is-open      value 'O'.
                88  is-closed    value 'C' 'N'.
            05  grade      pic 99 value 55.
-               88  passing    value 50 thru 100.
-               88  honours    value 90 thru 100.
+               88  passing    value 50 thru 99.
+               88  honours    value 90 thru 99.
        01  whole   pic x(12) value 'abcdefghijkl'.
        01  parts redefines whole.
            05  left-part  pic x(4).

@@ -1666,6 +1666,7 @@ typedef struct Sym {
     Tok *value_tok; int value_all, value_fig;
     /* level 88 */
     int  ncv; Tok *cv_lo[MAXCV], *cv_hi[MAXCV];
+    Tok *cv_false;                  /* level 88 ... [WHEN SET TO] FALSE IS literal-4 (COBOL 2002) */
     unsigned cv_all;                 /* bit i: value i is ALL literal */
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
@@ -1694,6 +1695,7 @@ typedef struct Sym {
 } Sym;
 static int sym_in_strong(const Sym *s);
 static Sym *odo_table_for(Sym *s);
+static void value_rules(void);
 static Sym *odo_table_below(Sym *s);
 
 static Sym *g_sym;
@@ -2339,6 +2341,18 @@ static void parse_data_item1(void)
             die_at(line, "level 88 '%s' needs a VALUE clause", s->name);
         accept_word("is"); accept_word("are");
         for (;;) {
+            if (at_word("when") || at_word("false")) {
+                /* [WHEN SET TO] FALSE IS literal-4: the value SET ... TO
+                 * FALSE gives (2002; 2023 13.18.63 format 3) */
+                if (g_std < 2002) die_at(cur()->line, "the FALSE phrase of a level 88 VALUE is COBOL 2002; compile with -std=2002");
+                if (accept_word("when")) { expect_word("set"); expect_word("to"); }
+                expect_word("false"); accept_word("is");
+                Tok *f = cur();
+                if (!(f->kind == T_STR || f->kind == T_NUM || (f->kind == T_WORD && is_figurative(f->s))))
+                    die_at(f->line, "expected a literal after FALSE in the VALUE of '%s'", s->name);
+                s->cv_false = f; advance();
+                break;
+            }
             int is_all = accept_word("all");
             Tok *v = cur();
             if (v->kind == T_WORD && (!strcmp(v->s, "usage") || !strcmp(v->s, "comp") || !strcmp(v->s, "display") || !strcmp(v->s, "binary")))
@@ -2361,6 +2375,7 @@ static void parse_data_item1(void)
             s->ncv++;
             if (cur()->kind == T_PERIOD) break;
         }
+        if (!s->ncv) die_at(line, "level 88 '%s' needs a value before FALSE", s->name);
         expect_period();
         return;
     }
@@ -2661,6 +2676,151 @@ static void parse_data_item1(void)
         if (f->rec < 0) f->rec = sym_idx(s); else s->redefines = f->rec;
     } else if (g_cur_fd >= 0 && level == 77)
         die_at(line, "a level 77 item cannot appear in the FILE SECTION");
+}
+
+/* ---- the VALUE clause's rules (2023 13.18.63.3; X3.23-1985 5.15) --- */
+
+/* the digits of a numeric literal past the picture's decimal places are
+ * zeros (no truncation of nonzero digits: 85 rule 3, 2023 rule 2) */
+static int numlit_frac_fits(const NumLit *n, int scale)
+{
+    for (int i = n->ndigits - n->scale + (scale > 0 ? scale : 0); i < n->ndigits; i++) if (n->digits[i] != '0') return 0;
+    return 1;
+}
+static int numlit_cmp(const NumLit *a, const NumLit *b)     /* the values' order */
+{
+    char x[80], y[80]; int sc = a->scale > b->scale ? a->scale : b->scale, dg = 38;
+    numlit_align(a, dg, sc, x); numlit_align(b, dg, sc, y);
+    int c = memcmp(x, y, (size_t)dg), na = a->neg, nb = b->neg;
+    int za = 1, zb = 1; for (int i = 0; i < dg; i++) { if (x[i] != '0') za = 0; if (y[i] != '0') zb = 0; }
+    if (za) na = 0; if (zb) nb = 0;
+    if (na != nb) return na ? -1 : 1;
+    return na ? -c : c;
+}
+/* one literal against the item it gives a value to (the item itself, or
+ * a condition-name's conditional variable) */
+static void value_literal_check(Sym *x, Tok *v, int is_all, const char *who, int e85)
+{
+    if (x->is_group || x->is_index || x->usage == U_POINTER || x->usage == U_INDEX || x->usage == U_BIT) return;
+    int cat = x->pi.category, fig = v->kind == T_WORD;
+    if (cat == PIC_NUMERIC) {
+        if (fig && strncmp(v->s, "zero", 4))
+            die_at(v->line, "VALUE %s for the numeric %s '%s': a numeric item takes a numeric literal or ZERO (%s)", v->s, who, x->name,
+                   e85 ? "X3.23-1985 VALUE general rule 1a" : "2023 13.18.63.3 rule 2");
+        /* a nonnumeric literal of digits: CCVS-85 gives one to numeric
+         * items (NC107A, NC108M), so it is taken, as before; one with
+         * anything else is refused (an item's own as its image is built) */
+        if (v->kind == T_STR && strcmp(who, "item"))
+            for (int i = 0; i < v->len; i++)
+                if (!isdigit((unsigned char)v->s[i]))
+                    die_at(v->line, "VALUE \"%.*s\" for the numeric %s '%s': a numeric item takes a numeric literal (%s)", v->len, v->s, who, x->name,
+                           e85 ? "X3.23-1985 VALUE general rule 1a" : "2023 13.18.63.3 rule 2");
+        if (v->kind == T_NUM) {
+            NumLit n; numlit_parse(v, &n);
+            if (n.neg && !x->pi.is_signed)
+                die_at(v->line, "VALUE %.*s: the %s '%s' is unsigned (%s)", v->len, v->s, who, x->name,
+                       e85 ? "X3.23-1985 VALUE syntax rule 2" : "2023 13.18.63.3 rule 3");
+            char d[40];
+            int item = !strcmp(who, "item");       /* an item's own VALUE: its integer part is checked as the image is built */
+            if (x->has_pic && x->pi.scale >= 0 && (!numlit_frac_fits(&n, x->pi.scale) || (!item && !numlit_align(&n, x->pi.digits, x->pi.scale, d))))
+                die_at(v->line, "VALUE %.*s does not fit the PICTURE of the %s '%s' without losing nonzero digits (%s)", v->len, v->s, who, x->name,
+                       e85 ? "X3.23-1985 VALUE syntax rule 3" : "2023 13.18.63.3 rule 2");
+        }
+        return;
+    }
+    if (cat == PIC_ALPHABETIC || cat == PIC_ALPHANUMERIC || cat == PIC_ALPHANUMERIC_EDITED) {
+        if (v->kind == T_NUM)
+            die_at(v->line, "a numeric VALUE for the %s %s '%s': it takes a nonnumeric literal (%s)", pic_category_name(cat), who, x->name,
+                   e85 ? "X3.23-1985 VALUE general rule 1b" : "2023 13.18.63.3 rule 4");
+        if (v->kind == T_STR && !is_all && !v->nat && !v->boolv && v->len > x->size && strcmp(who, "item"))   /* an item's own: as the image is built */
+            die_at(v->line, "VALUE literal (%d characters) is longer than the %s '%s' (%d) (%s)", v->len, who, x->name, x->size,
+                   e85 ? "X3.23-1985 VALUE syntax rule 3" : "2023 13.18.63.3 rule 4");
+    }
+}
+static void value_rules_one(int i);
+/* each entry on its own: an error is reported and the next one checked
+ * (ISSUES-41), as the records' images are */
+static void value_rules(void)
+{
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        jmp_buf jb, *outer = g_recover;
+        if (setjmp(jb)) { g_recover = outer; continue; }
+        g_recover = &jb;
+        value_rules_one(i);
+        g_recover = outer;
+    }
+}
+static void value_rules_one(int i)
+{
+    int e85 = g_std < 2002;
+    {
+        Sym *s = &g_sym[i];
+        if (s->is_ftemp || s->is_rename) return;
+        if (s->is_cond) {
+            Sym *x = &g_sym[s->parent];
+            for (int k = 0; k < s->ncv; k++) {
+                int all = (s->cv_all >> k) & 1;
+                value_literal_check(x, s->cv_lo[k], all, "conditional variable", e85);
+                if (!s->cv_hi[k]) continue;
+                value_literal_check(x, s->cv_hi[k], 0, "conditional variable", e85);
+                Tok *lo = s->cv_lo[k], *hi = s->cv_hi[k];
+                int bad = 0;
+                if (lo->kind == T_NUM && hi->kind == T_NUM) { NumLit a, b; numlit_parse(lo, &a); numlit_parse(hi, &b); bad = numlit_cmp(&a, &b) > 0; }
+                else if (lo->kind == T_STR && hi->kind == T_STR && !g_collate_name[0]) {
+                    int n = lo->len < hi->len ? lo->len : hi->len, c = memcmp(lo->s, hi->s, (size_t)n);
+                    bad = c > 0 || (c == 0 && lo->len > hi->len);
+                }
+                if (bad)
+                    die_at(lo->line, "'%s': VALUE ... THRU runs from the higher value to the lower (%s)", s->name,
+                           e85 ? "X3.23-1985 condition-name rule 2" : "2023 13.18.63.3 rule 26");
+            }
+            if (s->cv_false) {
+                Tok *f = s->cv_false;
+                value_literal_check(x, f, 0, "conditional variable", e85);
+                /* literal-4 is none of the values, nor inside a range (rule 27) */
+                for (int k = 0; k < s->ncv; k++) {
+                    Tok *lo = s->cv_lo[k], *hi = s->cv_hi[k] ? s->cv_hi[k] : s->cv_lo[k];
+                    int in = 0;
+                    if (f->kind == T_NUM && lo->kind == T_NUM && hi->kind == T_NUM) {
+                        NumLit a, b, c; numlit_parse(lo, &a); numlit_parse(hi, &b); numlit_parse(f, &c);
+                        in = numlit_cmp(&a, &c) <= 0 && numlit_cmp(&c, &b) <= 0;
+                    } else if (f->kind == T_STR && lo->kind == T_STR && hi->kind == T_STR && (!s->cv_hi[k] || !g_collate_name[0])) {
+                        int n1 = lo->len < f->len ? lo->len : f->len, n2 = hi->len < f->len ? hi->len : f->len;
+                        int c1 = memcmp(lo->s, f->s, (size_t)n1), c2 = memcmp(f->s, hi->s, (size_t)n2);
+                        if (!c1) c1 = lo->len - f->len;
+                        if (!c2) c2 = f->len - hi->len;
+                        in = s->cv_hi[k] ? (c1 <= 0 && c2 <= 0) : c1 == 0;
+                    }
+                    if (in) die_at(f->line, "'%s': the FALSE value is one of the condition's own values (2023 13.18.63.3 rule 27)", s->name);
+                }
+            }
+            return;
+        }
+        if (!s->value_tok) return;
+        if (e85 && s->record >= 0 && (g_sym[s->record].fd >= 0 || g_sym[s->record].is_linkage))
+            die_at(s->value_tok->line, "'%s': in the %s SECTION a VALUE clause belongs to a condition-name; COBOL 2002 allows it (X3.23-1985 VALUE rule 5.15.6(1))",
+                   s->name, g_sym[s->record].fd >= 0 ? "FILE" : "LINKAGE");
+        if (!s->is_group) { value_literal_check(s, s->value_tok, s->value_all, "item", e85); return; }
+        if (s->bitgroup || s->natgroup || s->strong) return;       /* their own rules, checked where they are initialized */
+        Tok *v = s->value_tok;
+        if (v->kind == T_STR && v->boolv) return;                  /* refused where the image is built, more precisely */
+        if (v->kind == T_STR && !v->boolv && !s->value_all && !s->value_fig && v->len > s->size)
+            die_at(v->line, "VALUE literal (%d characters) is longer than the group '%s' (%d) (%s)", v->len, s->name, s->size,
+                   e85 ? "X3.23-1985 VALUE syntax rule 3" : "2023 13.18.63.3 rule 4");
+        for (int j = i + 1; j < g_nsym; j++) {          /* the group's subordinates */
+            Sym *q = &g_sym[j];
+            int in = 0; for (int a = q->parent; a >= 0; a = g_sym[a].parent) if (a == i) { in = 1; break; }
+            if (!in) { if (q->is_cond || q->is_index) continue; break; }
+            if (q->is_cond) continue;
+            if (q->value_tok)
+                die_at(q->line, "'%s' has a VALUE clause inside the group '%s', which has one (%s)", q->name, s->name,
+                       e85 ? "X3.23-1985 VALUE rule 5.15.6(3)" : "2023 13.18.63.3 rule 13");
+            if (!q->is_group && (q->just || q->sync || (q->usage != U_DISPLAY)))
+                die_at(q->line, "'%s' is %s, inside the group '%s' whose VALUE clause sets it as characters (%s)", q->name,
+                       q->just ? "JUSTIFIED" : q->sync ? "SYNCHRONIZED" : "not USAGE DISPLAY", s->name,
+                       e85 ? "X3.23-1985 VALUE rule 5.15.6(4)" : "2023 13.18.63.3 rule 14");
+        }
+    }
 }
 
 /* ---- tree, layout, images ------------------------------------------- */
@@ -3045,7 +3205,8 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
     }
     if (v->kind == T_NUM) {
         if (s->pi.category == PIC_NUMERIC_EDITED)
-            die_at(v->line, "the VALUE of the numeric-edited item '%s' must be a nonnumeric literal (X3.23-1985 VALUE clause rule; GnuCOBOL -std=cobol85 agrees)", s->name);
+            die_at(v->line, g_std < 2002 ? "the VALUE of the numeric-edited item '%s' must be a nonnumeric literal (X3.23-1985 VALUE general rule 1b)"
+                                         : "a numeric VALUE for the numeric-edited item '%s', edited as a MOVE would (2023 13.18.63.3 rule 6), is not implemented; write it edited, as \"...\"", s->name);
         if (!numeric) die_at(v->line, "a numeric VALUE is not valid for the alphanumeric item '%s'", s->name);
         NumLit n; numlit_parse(v, &n);
         store_numeric(s, &n, p, v->line);
@@ -3157,6 +3318,7 @@ static void finish_data_division(void)
             if (a->rec < 0 || b->rec < 0) die_at(b->line, "SAME RECORD AREA: file '%s' has no record description", b->name);
             if (g_sym[b->rec].redefines < 0) g_sym[b->rec].redefines = a->rec;
         }
+    value_rules();
     /* the REDEFINES rules that need sizes and subordinates (2023
      * 13.18.44.3 rules 5, 8, 9, 12, 14; X3.23-1985 REDEFINES rules 5, 6, 9) */
     for (int i = g_sym_base; i < g_nsym; i++) {
@@ -10681,7 +10843,20 @@ static void parse_set(void)
             }
             return;
         }
-        if (accept_word("false")) die_at(cur()->line, "SET ... TO FALSE is not in COBOL 85");
+        if (accept_word("false")) {
+            if (g_std < 2002) die_at(cur()->line, "SET ... TO FALSE is COBOL 2002; compile with -std=2002");
+            /* the conditional variable takes the FALSE phrase's literal
+             * (2023 14.9.39.4 rule 7) */
+            for (int i = 0; i < nr; i++) {
+                Sym *c = rs[i].sym;
+                if (!c->is_cond) die_at(rs[i].line, "'%s' is not a condition-name", c->name);
+                if (!c->cv_false) die_at(rs[i].line, "SET '%s' TO FALSE: its VALUE clause has no FALSE phrase (2023 14.9.39.3 rule 7)", c->name);
+                Opnd v = lit_opnd(c->cv_false);
+                Ref p = rs[i]; p.sym = &g_sym[c->parent];
+                emit_move(&v, &p);
+            }
+            return;
+        }
         Opnd v; parse_operand(&v);
         emit_incompat(&v);
         for (int i = 0; i < nr; i++) {

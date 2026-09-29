@@ -4045,3 +4045,36 @@ Tests: bad/renames-same, -range, -level; free/renames2 (the oracle
 agrees), free/renames3. Harness 467/467, -std=85 byte-identical on the
 Open Systems programs, majesty PASS. Page: docs/conformance/renames.md.
 
+### 107. The VALUE clause sweep (2026-09-29)
+
+13.18.63 formats 1 and 3 and 85 5.15, probed rule by rule. The checks
+that were there lived in the image builder and covered only what it
+could not store; a new pass after layout (value_rules, recovering per
+entry like init_record) takes the rest.
+
+Refused now, accepted before: VALUE SPACES (any figurative but ZERO) on
+a numeric item; a literal losing nonzero decimal digits; a signed
+literal for an unsigned item (the sign was dropped); a group literal
+longer than the group (truncated); a VALUE below a group that has one;
+a JUSTIFIED, SYNCHRONIZED or non-DISPLAY item below a group with a
+VALUE; for condition-names, literals that do not suit the conditional
+variable (category, PICTURE range, size) and a THRU range running
+downward; under -std=85, a VALUE on anything but a condition-name in
+the FILE or LINKAGE SECTION. Kept: a nonnumeric literal of digits for a
+numeric item, which CCVS-85 uses (NC107A, NC108M).
+
+New: the level 88 FALSE phrase ([WHEN SET TO] FALSE IS literal) and SET
+condition-name TO FALSE, refused as "not in COBOL 85" even under
+-std=2002 before; rule 27 (the FALSE literal not among the values) and
+SET rule 7 (the phrase is needed). 2002/condfalse, the oracle agrees.
+
+Not done: 2023 rule 6, a numeric literal for a numeric-edited item
+(edited at compile time as a MOVE would); the message says so.
+
+Our own test fixed/tables had an 88 VALUE 50 THRU 100 on a PIC 99 --
+by the rule 100 is out of range -- and now says 99. CCVS-85, the Open
+Systems suite and majesty trip none of the new rules. Tests:
+bad/value-rules (11 errors in one program), bad/std2002-value-false,
+2002/condfalse. Harness 470/470, -std=85 byte-identical on the Open
+Systems programs, majesty PASS. Page: docs/conformance/value.md.
+
