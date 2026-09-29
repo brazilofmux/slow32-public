@@ -4,9 +4,10 @@ program-id. natfiles.
 *> of national records is UTF-8 text: WRITE encodes, trailing national
 *> spaces dropped (2023 14.9.51 rule 21); READ decodes and pads with
 *> national spaces (14.9.30 rule 15).  Bytes that are not UTF-8 read as
-*> U+FFFD with status 09 (rule 16); a line longer than the record is
-*> truncated, 04; a lone surrogate has no UTF-8 form and its WRITE fails
-*> with 71 (14.9.51 rule 23).  A record sequential or indexed file holds
+*> U+FFFD with status 09 (rule 16); a line longer than the record fills
+*> it, 06, and the next READ has the rest (rule 15; ISSUES-94 N8); a
+*> lone surrogate has no UTF-8 form and its WRITE fails with 71
+*> (14.9.51 rule 23).  A record sequential or indexed file holds
 *> the record's bytes, UTF-16BE, and a national key orders by code unit.
 *> The alphanumeric views read the same files byte for byte.
 *> No oracle (docs/national.md).

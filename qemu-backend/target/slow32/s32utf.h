@@ -212,8 +212,8 @@ static inline int s32u_extpict(uint32_t cp)
 typedef struct {
     int started;
     int prev;          /* the last code point's GCB */
-    int ri;            /* regional indicators in the cluster (GB12/13: they pair only when adjacent,
-                          which libutf's count misses -- see its RI x Extend x RI case) */
+    int ri;            /* regional indicators in the cluster (GB12/13: they pair only when adjacent;
+                          libutf had the count without the adjacency until e46427a) */
     int epez;          /* ExtPict Extend* seen, for GB11 */
     int base;          /* the first code point's GCB */
     int ncp, wmax, vs16;

@@ -1,0 +1,15 @@
+alnum [abcd] 06
+alnum [efgh] 00
+alnum [xy  ] 00
+alnum [1234] 00
+alnum [ABCD] 06
+alnum [EFGH] 06
+alnum [IJ  ] 00
+alnum [wxyz] 00
+alnum end 10
+national [日本語] 06
+national [テスト] 00
+national [abc] 00
+national [ab ] 06
+national [😀c] 00
+national end 10

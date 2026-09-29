@@ -3201,7 +3201,11 @@ other 7 being GB9c, which libutf does not implement either. The test
 found a libutf bug on its first run: GB12/13 counts regional
 indicators across the whole cluster, so RI Extend RI is one cluster
 (`utf_grapheme_next` gives 10 bytes where UAX #29 gives 6); the port
-pairs only adjacent ones. `term_width.h` and `gen_term_width.py` are gone.
+pairs only adjacent ones. Fixed upstream in libutf e46427a, with a
+second defect the same GraphemeBreakTest run found there (GB4 was not
+applied after a CR, so CR + a mark was one cluster; 30 of its 32
+disagreements); libutf now agrees on every line but GB9c.
+`term_width.h` and `gen_term_width.py` are gone.
 
 Everything that measured text now uses it: the term service's shadow
 (both copies), libcob's nat_clusters, con_write and coding helpers,
@@ -3227,9 +3231,15 @@ and the compiler's nat_lit_cols and UTF converters.
   line end, carriage return or tab ends the cluster; the field too wide
   to edit is fixed with N2. Still open: a record-oriented RW print file
   cuts a national line at bytes; fn_var_result caps at 256 characters.
-- N8: rule 15's 06 with continuation, for -std=2002, both kinds of line
-  sequential record; -std=85 keeps GnuCOBOL's 04 (majesty reads such
-  files). Not done yet; the comment now says so.
+- N8 fixed (the user approved the split): under -std=2002 the compiler
+  sets 4 in a line sequential file's varying, and READ follows 2023
+  14.9.30 rule 15 -- a line longer than the record fills it, status 06,
+  the rest left in the read buffer for the next READ (a line exactly
+  the record's length, CR LF included, is 00). National records decode
+  a character at a time and stop before one that does not fit (a pair
+  needs two positions). -std=85 keeps GnuCOBOL's 04 with the rest
+  dropped, which majesty reads. 2002/lsrule15; 2002/natfiles' long line
+  now reads 06 then its rest.
 - Behavior change: utf8_to_nat (NATIONAL-OF, MOVE of alphanumeric to
   national, line sequential READ) now gives one U+FFFD per maximal
   subpart, not per byte. No test's output changed.

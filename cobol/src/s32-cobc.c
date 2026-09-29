@@ -13154,6 +13154,7 @@ static void emit_unit_data(void)
             if (nrec && arec)
                 die_at(f->line, "the line sequential file '%s' has national and alphanumeric records; they are all one or the other here", f->name);
             if (nrec) varying = 2;
+            if (g_std >= 2002) varying |= 4;    /* 2023 14.9.30 rule 15: 06, the rest for the next READ (cobol ISSUES-94 N8) */
         }
         emit("\t.p2align 2");
         emit(".Lf%d_%d:\t# %s", f->unit, i, f->name);

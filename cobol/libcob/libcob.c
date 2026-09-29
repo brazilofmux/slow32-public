@@ -1760,15 +1760,24 @@ int cob_close(cob_file *f)
  * line sequential code once over a UTF-8 buffer, marked varying = 3. */
 int cob_read(cob_file *f);
 int cob_write(cob_file *f, int before, int after, int reclen);
-static int ls_national(cob_file *f) { return f->org == COB_ORG_LINESEQ && f->varying == 2; }
+static int ls_national(cob_file *f) { return f->org == COB_ORG_LINESEQ && (f->varying & 3) == 2; }
+/* 2023 14.9.30 rule 15, which the compiler asks for under -std=2002 by
+ * setting 4 in a line sequential file's varying (cobol ISSUES-94 N8): a
+ * line longer than the record fills it, the status is 06, and the rest
+ * of the line is left for the next READ.  Otherwise the rest is dropped
+ * and the status is 04, as GnuCOBOL does and majesty reads. */
+static int ls_rule15(const cob_file *f) { return f->org == COB_ORG_LINESEQ && (f->varying & 4); }
+static int ls_read_national_r15(cob_file *f);
 
 static int ls_read_national(cob_file *f)
 {
+    if (ls_rule15(f)) return ls_read_national_r15(f);
     char *rec = f->record; unsigned n = f->recsize, nch = n / 2, cap = nch * 4 + 8;
     char *t = malloc(cap); if (!t) cob_fatal("out of memory");
+    unsigned v = f->varying;
     f->record = t; f->recsize = cap; f->varying = 3;
     int r = cob_read(f);
-    f->record = rec; f->recsize = n; f->varying = 2;
+    f->record = rec; f->recsize = n; f->varying = v;
     if (f->last_len == 0 && f->at_eof) { free(t); return r; }   /* 10, 46: nothing read */
     int trunc = io_st[0] == '0' && io_st[1] == '4';
     unsigned short *u = malloc((size_t)(cap + 1) * sizeof *u); if (!u) cob_fatal("out of memory");
@@ -1782,6 +1791,70 @@ static int ls_read_national(cob_file *f)
     return file_result(f, trunc ? "04" : bad ? "09" : "00", "");
 }
 
+/* rule 15 for national records: the line is decoded a character at a
+ * time out of the read buffer, and READ stops before a character the
+ * record has no room for (a pair needs two positions, which its first
+ * byte tells), leaving it and the rest of the line for the next READ */
+static int ls_peek(cob_file *f)
+{
+    if (f->rpos >= f->rlen) {
+        size_t got = fread(f->rbuf, 1, COB_RBUF, (FILE *)f->fp);
+        if (!got) return -1;
+        f->rpos = 0; f->rlen = (unsigned)got;
+    }
+    return (unsigned char)f->rbuf[f->rpos];
+}
+static void ls_take(cob_file *f) { f->rpos++; f->fpos++; }
+
+static int ls_read_national_r15(cob_file *f)
+{
+    if (f->at_eof) {                    /* as cob_read, which has checked the open mode */
+        f->last_len = 0;
+        if (f->eof_seen) return file_result(f, "46", "");
+        f->eof_seen = 1;
+        return file_result(f, "10", "");
+    }
+    if (!f->rbuf) { f->rbuf = malloc(COB_RBUF); f->rpos = f->rlen = 0; if (!f->rbuf) cob_fatal("out of memory"); }
+    unsigned char *rec = (unsigned char *)f->record;
+    unsigned nch = f->recsize / 2, k = 0;
+    int any = 0, bad = 0, full = 0, save = nat_bad;
+    s32u_dec d = { 0, 0, 0, 0 };
+    unsigned char sb[4]; int sn = 0;
+    for (;;) {
+        int b = ls_peek(f);
+        uint32_t cp;
+        if (b < 0) {
+            if (s32u_dec_end(&d, &cp)) { bad = 1; if (k < nch) nat_put(rec, k++, nat_repl); }
+            break;
+        }
+        any = 1;
+        if (!d.need) {
+            if (b == '\n') { ls_take(f); break; }
+            if (b == '\r') {
+                ls_take(f);
+                if (ls_peek(f) == '\n') { ls_take(f); break; }
+                if (k < nch) { nat_put(rec, k++, 0x0D); continue; }
+                full = 1; break;
+            }
+            if (k + (b >= 0xF0 && b <= 0xF4 ? 2u : 1u) > nch) { full = 1; break; }
+            sn = 0;
+        }
+        int r = s32u_dec_byte(&d, (unsigned)b, &cp);
+        if (r != 2) { ls_take(f); if (sn < 4) sb[sn++] = (unsigned char)b; }
+        if (!r) continue;
+        if (cp == S32U_REPL && !(sn == 3 && sb[0] == 0xEF && sb[1] == 0xBF && sb[2] == 0xBD)) { bad = 1; cp = nat_repl; }
+        unsigned char u[4];
+        int nu = s32u_u16_put(u, cp);
+        for (int q = 0; q < nu && k < nch; q++) nat_put(rec, k++, (unsigned)(u[2 * q] << 8 | u[2 * q + 1]));
+        sn = 0;
+    }
+    nat_bad = save;
+    if (!any) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
+    f->last_len = 2 * k;
+    for (unsigned q = k; q < nch; q++) nat_put(rec, q, 0x20);
+    return file_result(f, full ? "06" : bad ? "09" : "00", "");
+}
+
 static int ls_write_national(cob_file *f, int before, int after, int reclen)
 {
     const unsigned char *rec = (const unsigned char *)f->record; unsigned n = f->recsize, nch = n / 2;
@@ -1793,9 +1866,10 @@ static int ls_write_national(cob_file *f, int before, int after, int reclen)
     char *t = malloc((size_t)nch * 3 + 1); if (!t) cob_fatal("out of memory");
     unsigned k = (unsigned)nat_to_utf8(rec, (int)nch, t);
     char *save = f->record;
+    unsigned v = f->varying;
     f->record = t; f->recsize = k; f->varying = 3;
     int r = cob_write(f, before, after, reclen);
-    f->record = save; f->recsize = n; f->varying = 2;
+    f->record = save; f->recsize = n; f->varying = v;
     free(t);
     return r;
 }
@@ -1861,7 +1935,7 @@ int cob_read(cob_file *f)
      * the runtime's own -- a byte through fgetc is thirty-odd instructions
      * on this target, a memchr over a block about three */
     if (!f->rbuf) { f->rbuf = malloc(COB_RBUF); f->rpos = f->rlen = 0; if (!f->rbuf) cob_fatal("out of memory"); }
-    unsigned i = 0; int truncated = 0, any = 0;
+    unsigned i = 0; int truncated = 0, any = 0, r15 = ls_rule15(f);
     for (;;) {
         if (f->rpos >= f->rlen) {
             size_t got = fread(f->rbuf, 1, COB_RBUF, fp);
@@ -1871,6 +1945,20 @@ int cob_read(cob_file *f)
         any = 1;
         unsigned char *s = (unsigned char *)f->rbuf + f->rpos, *e = memchr(s, '\n', f->rlen - f->rpos);
         unsigned take = e ? (unsigned)(e - s) : f->rlen - f->rpos;
+        if (take && r15 && take > n - i) {
+            unsigned c = n - i;
+            memcpy(rec + i, s, c); i += c;
+            if (e && take == c + 1 && s[c] == '\r') {
+                /* the line fills the record exactly and ends CR LF: 00 */
+                f->rpos += take + 1; f->fpos += take + 1;
+                break;
+            }
+            /* rule 15: the record is full before the line ends; the rest
+             * stays in the buffer for the next READ */
+            f->rpos += c; f->fpos += c;
+            f->last_len = i;
+            return file_result(f, "06", "");
+        }
         if (take) {
             if (i < n) { unsigned c = take < n - i ? take : n - i; memcpy(rec + i, s, c); i += c; if (c < take) truncated = 1; }
             else truncated = 1;
