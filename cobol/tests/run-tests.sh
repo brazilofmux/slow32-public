@@ -26,6 +26,11 @@
 # Gate 5 (NIST): the CCVS-85 totals must equal tests/ccvs-baseline.txt
 #   exactly (CCVS85 names the tree; CCVS=0 skips it, and a missing
 #   tree is reported as NOT RUN, never passed over).
+# Gate 6 (exception sites): tests/ecsites/template.cbl compiled once per
+#   line of sites.txt with the statement put in; each must print what the
+#   line expects -- RAISED where the statement references invalid numeric
+#   content under EC-DATA-INCOMPATIBLE checking, "not raised" where it does
+#   not.  A fatal condition ends the run, so one program per site.
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -336,6 +341,23 @@ for src in "$HERE/warn"/*.cbl; do
     fi
     report "warn/$name" 0 "$(echo $got | wc -w) point(s), silent by default"
 done
+
+# Gate 6 (exception sites): one program per sites.txt line, all counted
+# as one report so the tally stays readable; the first failure is named.
+esn=0; esbad=""
+while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in ""|"#"*) continue ;; esac
+    want="${l%%|*}"; stmt="${l#*|}"; esn=$((esn + 1))
+    awk -v s="$stmt" '{ i = index($0, "@STMT@"); if (i) $0 = substr($0, 1, i - 1) s substr($0, i + 6); print }' \
+        "$HERE/ecsites/template.cbl" > "$W/ecsite.cbl"
+    if ! "$CDIR/compile.sh" -free -std=2002 "$W/ecsite.cbl" -o "$W/ecsite.s32x" >"$W/ecsite.log" 2>&1; then
+        esbad="compile: $stmt"; break
+    fi
+    fresh_workdir
+    got="$(emu_run "$W/ecsite.s32x" /dev/null | grep -m1 -E '^(RAISED|not raised)$')"
+    [ "$got" = "$want" ] || { esbad="${got:-nothing} for: $stmt"; break; }
+done < "$HERE/ecsites/sites.txt"
+if [ -z "$esbad" ]; then report "ecsites" 0 "$esn sites"; else report "ecsites" 1 "$esbad"; fi
 
 # Gate 5 (NIST): the CCVS-85 totals line must equal tests/ccvs-baseline.txt.
 # The suite runs in seconds, and outside this gate a MERGE regression sat

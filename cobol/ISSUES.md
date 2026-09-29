@@ -3921,3 +3921,37 @@ free/inspectrules and free/stringrules (the oracle agrees on every
 line). Harness 452/452, CCVS-85 unchanged, -std=85 byte-identical on the
 227 Open Systems programs that compile, majesty PASS, majesty-functions
 PASS, Open Systems paper unchanged.
+
+### 103. EC-DATA-INCOMPATIBLE at every numeric sending reference (2026-09-29)
+
+ISSUES-101 raised it in the arithmetic statements, MOVE and relations.
+2023 14.6.13.2 rule 2 covers any statement that references a numeric
+sending item's content, and the probes (template program, invalid
+"1a3" in a PIC 9(3), checking on) found it silent in DISPLAY, STRING,
+subscripts, reference-modification start and length, SET TO / UP BY,
+PERFORM TIMES and VARYING FROM/BY, GO TO DEPENDING, function
+arguments, INITIALIZE REPLACING ... BY, CALL BY VALUE and STOP RUN n.
+
+Fixed where the value is read, not per statement where that is shared:
+emit_expr_tokens (every deferred expression: reference modification,
+function arguments, expression operands) and emit_fn_value_raw (a
+function's pushed arguments) test each operand as it is pushed; a
+subscript item is tested in emit_ref_addr before it is loaded (the
+running offset lives in r11, which the runtime keeps); the rest at
+their statements. Several of those sites decode small DISPLAY integers
+inline (opnd_hot_int), so the test comes before that branch. Nothing is
+emitted unless the condition is checked, so unchecked code is
+unchanged: -std=85 byte-identical on the Open Systems programs.
+
+Not raised, by the rule's own exceptions or because the content is not
+sent as a number: a class condition, UNSTRING's receivers, INSPECT of a
+numeric item (examined as characters, not sent as a number), BY
+REFERENCE and BY CONTENT arguments. Rule 1 (boolean content) is not
+done.
+
+The condition is fatal, so one program cannot show more than one site:
+harness gate 6 (tests/ecsites) builds tests/ecsites/template.cbl once
+per line of sites.txt -- 24 sites that must raise, 5 that must not (a
+class test, a binary subscript expression, an UNSTRING receiver, a
+binary BY VALUE). Harness 453/453.
+

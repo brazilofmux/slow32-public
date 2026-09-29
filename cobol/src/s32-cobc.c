@@ -3739,6 +3739,8 @@ static int ref_is_national(const Ref *r);
 static int ref_static_len(const Ref *r);
 static void nat_fig_opnd(Opnd *o, int nbytes);
 static void emit_incompat(const Opnd *o);
+static int g_incompat_push;         /* test each operand as an expression or a function pushes it */
+static void emit_incompat_sym(Sym *s, int line);
 
 /* national: an elementary PIC N item, or a national group, which is
  * treated as one (2023 13.18.29.4 rule 2b) */
@@ -4816,6 +4818,7 @@ static void emit_bitelem_start(const Ref *r, long chk, int slot)
     if (!r->sub[k].sym) { emit_li("r3", (r->sub[k].lit - 1) * s->bits); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit"); }
     else {
         Sym *ss = r->sub[k].sym;
+        emit_incompat_sym(ss, r->line);
         emit_item_addr("r3", ss, ss->offset); emit_desc_addr("r4", sym_desc(ss)); emit_call("cob_push");
         emit_li("r3", r->sub[k].adj - 1); emit("	srai r4, r3, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
         emit_call("cob_nadd");
@@ -4843,6 +4846,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
             emit_item_addr("r1", ss, ss->offset);
             emit_load_int(ss, "r1", "r1");
         } else {
+            emit_incompat_sym(ss, r->line);         /* item identification reads it (14.6.13.2 rule 2) */
             emit_item_addr("r3", ss, ss->offset);
             emit_desc_addr("r4", sym_desc(ss));
             emit_call("cob_load_int");
@@ -5098,7 +5102,7 @@ static void emit_args(const Arg *a, int n)
             Opnd *o = a[i].fn;
             if (o->kind == O_ADDR) emit_ptr_value(o, "r1");
             else if (o->kind == O_REF && is_hot_int(o->ref.sym)) { emit_ref_addr(&o->ref, "r3"); emit_load_int(o->ref.sym, "r3", "r1"); }
-            else if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit_desc_addr("r4", sym_desc(o->ref.sym)); emit_call("cob_load_int"); }
+            else if (o->kind == O_REF) { emit_incompat(o); emit_ref_addr(&o->ref, "r3"); emit_desc_addr("r4", sym_desc(o->ref.sym)); emit_call("cob_load_int"); }
             else emit_li("r1", (long)numlit_int(&o->num));
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
@@ -5475,7 +5479,16 @@ static void emit_str_arg(Opnd *x)
     emit_li("r4", x->ref.rm ? ref_static_len(&x->ref) : (long)x->ref.sym->size);
 }
 
+/* a function's arguments are sending items: each numeric one pushed is
+ * tested for EC-DATA-INCOMPATIBLE when that is checked (14.6.13.2 rule 2) */
+static void emit_fn_value_raw_1(Opnd *f);
 static void emit_fn_value_raw(Opnd *f)
+{
+    g_incompat_push++;
+    emit_fn_value_raw_1(f);
+    g_incompat_push--;
+}
+static void emit_fn_value_raw_1(Opnd *f)
 {
     Opnd *x = f->farg;
     if (f->fn == FN_NATOF || f->fn == FN_DISPOF) {
@@ -5607,7 +5620,7 @@ static void emit_fn_value_raw(Opnd *f)
     }
     if (fn_is_numeric(f->fn)) {
         if (x->kind == O_REF && is_hot_int(x->ref.sym)) { emit_ref_addr(&x->ref, "r3"); emit_load_int(x->ref.sym, "r3", "r1"); }
-        else if (x->kind == O_REF) { emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
+        else if (x->kind == O_REF) { emit_incompat(x); emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
         else emit_li("r1", (long)numlit_int(&x->num));
         emit("\tadd r3, r1, r0");
         emit_call(fn_runtime_name(f->fn));
@@ -7009,6 +7022,7 @@ static void emit_pos_int(int tp)   /* r1 = the integer value of the identifier a
     int save = g_tp; g_tp = tp;
     Opnd n; parse_operand(&n);
     g_tp = save;
+    emit_incompat(&n);
     if (opnd_hot_int(&n)) emit_hot_value(&n);
     else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
 }
@@ -7224,6 +7238,7 @@ static void parse_display(void)
     if (stmt_positioned()) { parse_display_positioned(); return; }
     if (is_word(peek(1), "upon") && is_word(peek(2), "argument-number")) {
         Opnd o; parse_operand(&o);
+        emit_incompat(&o);
         if (!opnd_hot_int(&o)) {
             if (o.kind != O_REF || !is_int_item(o.ref.sym)) die_at(o.line, "DISPLAY ... UPON ARGUMENT-NUMBER needs an integer");
             Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int");
@@ -7282,6 +7297,7 @@ static void parse_display(void)
         }
         default: {
             Arg a[2];
+            emit_incompat(&o);
             opnd_args(&o, &a[0], &a[1], 0, 0);
             emit_args(a, 2); emit_call("cob_display_field"); break;
         }
@@ -8192,7 +8208,6 @@ static void check_numeric_opnd(Opnd *o)
 }
 
 /* push an operand onto the numeric stack */
-static int g_incompat_push;
 static void emit_push(Opnd *o)
 {
     if (g_incompat_push) emit_incompat(o);
@@ -8652,7 +8667,6 @@ static void emit_dec_addto(Opnd *op, Ref *rs, int nr, int subtract)
  * condition is checked.  Binary items are always valid; DISPLAY, packed
  * and national numeric ones are tested before the statement uses them.
  * Nothing is emitted unless the checking is on. */
-static int g_incompat_push;         /* COMPUTE: test each operand as the expression pushes it */
 static void emit_incompat(const Opnd *o)
 {
     if (o->kind != O_REF || o->ref.rm || !ec_on_name("EC-DATA-INCOMPATIBLE")) return;
@@ -8666,6 +8680,10 @@ static void emit_incompat(const Opnd *o)
     emit("\tbne r1, r0, .L%d", Lok);
     emit_ec_raise(ec_find("EC-DATA-INCOMPATIBLE", 0));
     emit_label(Lok);
+}
+static void emit_incompat_sym(Sym *s, int line)
+{
+    Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref.sym = s; o.ref.line = line; o.line = line; emit_incompat(&o);
 }
 static void emit_incompat_refs(const Ref *rs, int nr)
 {
@@ -9000,7 +9018,9 @@ static void emit_expr_tokens(int s0, int s1)
 {
     int save = g_tp;
     g_tp = s0;
+    g_incompat_push++;          /* its operands are sending items (14.6.13.2 rule 2) */
     parse_expr();
+    g_incompat_push--;
     if (g_tp != s1) die_at(g_tok[s0].line, "internal: expression re-parse drifted");
     g_tp = save;
 }
@@ -9839,6 +9859,7 @@ static void emit_body(Body *b)
 static void emit_add_to_ref(Opnd *by, Ref *var)
 {
     Opnd ops[1] = { *by }; Ref rs[1] = { *var };
+    emit_incompat(by); emit_incompat_refs(rs, 1);       /* both are summed */
     int hot = opnd_hot_int(by) && ref_hot_store(var, 0, ops_all_nonneg(ops, 1));
     int rd[1] = { 0 };
     if (hot) emit_hot_sum(ops, 1);
@@ -9861,6 +9882,7 @@ static void emit_vary_init(Vary *x)
         emit_ec_raise(ec_find("EC-RANGE-PERFORM-VARYING", 0));
         emit_label(Lok);
     }
+    emit_incompat(&x->from);
     emit_move(&x->from, &x->var);
 }
 
@@ -10199,6 +10221,7 @@ static void parse_perform(void)
         if (g_ncnt == g_cnt_cap) { g_cnt_cap = g_cnt_cap ? 2 * g_cnt_cap : 64; g_cnt_unit = realloc(g_cnt_unit, (size_t)g_cnt_cap * sizeof *g_cnt_unit); }
         g_cnt_unit[g_ncnt] = g_unit;
         char cnt[32]; snprintf(cnt, sizeof cnt, ".Lcnt%d", g_ncnt++);
+        emit_incompat(&n);
         if (opnd_hot_int(&n)) emit_hot_value(&n);
         else {
             if (n.kind != O_REF) die_at(n.line, "TIMES needs an integer");
@@ -10273,6 +10296,7 @@ static void parse_goto(void)
         accept_word("on");
         Opnd o; parse_operand(&o);
         if (o.kind != O_REF || !is_int_item(o.ref.sym)) die_at(o.line, "GO TO DEPENDING ON needs an integer item");
+        emit_incompat(&o);
         if (is_hot_int(o.ref.sym)) emit_hot_value(&o);
         else { Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
         for (int i = 0; i < n; i++) {
@@ -10527,6 +10551,7 @@ static void parse_set(void)
         else die_at(cur()->line, "expected TO, UP BY or DOWN BY in SET");
         expect_word("by");
         Opnd v; parse_operand(&v); check_numeric_opnd(&v);
+        emit_incompat(&v);
         for (int i = 0; i < nr; i++) {
             if (raddr[i]) die_at(rs[i].line, "SET ADDRESS OF ... UP or DOWN: set a pointer item instead (2023 14.9.39 format 10)");
             emit_push(&v); emit_call("cob_pop_int");
@@ -10561,6 +10586,7 @@ static void parse_set(void)
         }
         if (accept_word("false")) die_at(cur()->line, "SET ... TO FALSE is not in COBOL 85");
         Opnd v; parse_operand(&v);
+        emit_incompat(&v);
         for (int i = 0; i < nr; i++) {
             if (!is_numeric_sym(rs[i].sym)) die_at(rs[i].line, "SET ... TO needs an index or integer item");
             emit_move(&v, &rs[i]);
@@ -10572,6 +10598,7 @@ static void parse_set(void)
     else die_at(cur()->line, "expected TO, UP BY or DOWN BY in SET");
     expect_word("by");
     Opnd v; parse_operand(&v); check_numeric_opnd(&v);
+    emit_incompat(&v); emit_incompat_refs(rs, nr);      /* the receivers are summed too */
     for (int i = 0; i < nr; i++) {
         Opnd ops[1] = { v };
         int hot = opnd_hot_int(&v) && ref_hot_store(&rs[i], down, ops_all_nonneg(ops, 1));
@@ -10997,6 +11024,7 @@ static void parse_string_1(void)
         else if (srcs[i].kind == O_ALL) {
             a[0] = arg_label(lit_label((unsigned char *)srcs[i].tok->s, srcs[i].tok->len)); a[1] = arg_imm(srcs[i].tok->len);
         } else {
+            emit_incompat(&srcs[i]);
             opnd_args(&srcs[i], &a[0], &dd, 0, 0);
             a[1] = arg_len(&srcs[i]);
         }
@@ -12436,6 +12464,7 @@ static void parse_initialize(void)
             Opnd value; parse_operand(&value);
             if (value.kind != O_REF && value.kind != O_STR && value.kind != O_NUM && value.kind != O_FIG)
                 die_at(line, "INITIALIZE REPLACING ... BY needs an item or a literal");
+            emit_incompat(&value);
             for (int i = 0; i < n; i++) {
                 Sym *t = rs[i].sym;
                 long sub[MAXDIM];
@@ -12849,6 +12878,7 @@ static void parse_statement_1(void)
             if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand()) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
             bp(BP_E6_STOP_RUN_VALUE, t->line);
             { Opnd n; parse_operand(&n); check_numeric_opnd(&n);
+              emit_incompat(&n);
               if (opnd_hot_int(&n)) emit_hot_value(&n);
               else {
                   if (n.kind != O_REF) die_at(t->line, "STOP RUN needs an integer or a numeric identifier");

@@ -36,7 +36,7 @@ arithmetic itself.
 
 | rule | paraphrase | disposition |
 |---|---|---|
-| 2 | a numeric sending item failing the NUMERIC class test, referenced: EC-DATA-INCOMPATIBLE | **test**: 2002/ecincompat (ADD), 2002/ecincompat2 (COMPUTE); also MOVE's numeric sender and relation operands. Never raised before this sweep. Not yet: the other statements that read numeric content (DISPLAY, STRING operands and the rest) |
+| 2 | a numeric sending item failing the NUMERIC class test, referenced: EC-DATA-INCOMPATIBLE | **test**: 2002/ecincompat (ADD), 2002/ecincompat2 (COMPUTE); also MOVE's numeric sender and relation operands. Never raised before this sweep. Since ISSUES-103 every other statement that reads numeric content raises it too: DISPLAY, STRING senders, subscripts and reference-modification positions, SET, PERFORM TIMES and VARYING, GO TO DEPENDING, function arguments, INITIALIZE ... BY, CALL BY VALUE, STOP RUN -- one program per site in the harness's ecsites gate (tests/ecsites/sites.txt) |
 | the class test | NUMERIC on a packed item | **test**: free/packedclass (the oracle agrees) -- IS NUMERIC on a packed item was always true before |
 | 1, 3-6 | boolean content, floating point, de-editing, dynamic items | boolean: the boolean sweep's checks; floating and dynamic: **n/a** (2014) |
 

@@ -1,0 +1,31 @@
+# expect|statement -- one program each (template.cbl)
+RAISED|add n to m
+RAISED|compute m = n + 1
+RAISED|move n to m
+RAISED|if n = 1 continue end-if
+RAISED|if n positive continue end-if
+RAISED|evaluate n when 1 continue end-evaluate
+RAISED|display n
+RAISED|string n delimited by size into x
+RAISED|move e (n) to x
+RAISED|move x (n:1) to x
+RAISED|move x (1:n) to x
+RAISED|set ix to n
+RAISED|set k to n
+RAISED|set ix up by n
+RAISED|perform n times continue end-perform
+RAISED|perform varying k from n by 1 until k > 3 continue end-perform
+RAISED|perform varying k from 1 by n until k > 3 continue end-perform
+RAISED|go to p2 depending on n
+RAISED|move function abs(n) to m
+RAISED|move function max(n m) to m
+RAISED|move function char(n) to x
+RAISED|initialize m replacing numeric by n
+RAISED|call "cv" using by value n
+RAISED|stop run n
+# not sending items, or not numeric content: no condition
+not raised|display k m
+not raised|move e (k + 1) to x
+not raised|unstring x delimited by "," into n
+not raised|if n is numeric continue end-if
+not raised|call "cv" using by value k
