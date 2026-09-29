@@ -23,11 +23,14 @@ working-storage section.
 01  k      pic 9 value 0.
 01  wide   pic 9(15)v999 value 0.
 01  fine   pic 9v9999 value 0.
+01  otab.
+    05 oe  pic x occurs 1 to 3 depending on k.
 screen section.
 01  sc.
     05 line 1 col 1 value "hello".
 procedure division.
     add fine to wide
+    initialize otab
     display "at" line 2 position 1
     call "nothing" using by value k
     move 0 to return-code

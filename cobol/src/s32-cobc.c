@@ -261,6 +261,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E1_RETURN_CODE, BP_E2_GOBACK, BP_E3_COMP_N, BP_E4_VENDOR_BINARY, BP_E5_BINARY_2002,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
+       BP_E15_INIT_ODO,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -302,6 +303,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-E13", 'E', "an underscore in a user-defined word is an implementor's extension; the standard's words take letters, digits and hyphens" },
     { "BP-E14", 'E', "the composite of operands is more than 18 digits, which X3.23-1985 forbids; taken here, but the "
                      "arithmetic holds 18 digits, so a value past that would overflow" },
+    { "BP-E15", 'E', "INITIALIZE of an item that is or contains an OCCURS DEPENDING ON table, which X3.23-1985 forbids "
+                     "(INITIALIZE syntax rule 4); COBOL 2002 allows it, and it is taken" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -12396,6 +12399,133 @@ static void init_cover(Sym *s, int top_off, int disp, unsigned char *cover, int 
     }
 }
 
+/* COBOL 2002's INITIALIZE (2023 14.9.20): WITH FILLER, {ALL | category}
+ * TO VALUE, REPLACING, TO DEFAULT.  Every elementary item below the
+ * receiver, in the order of definition, every occurrence, is a possible
+ * receiving operand (GR 5: not condition-names or index items, not
+ * REDEFINES items below the receiver, a FILLER only WITH FILLER); it
+ * takes its VALUE clause's value when the VALUE phrase names its category
+ * and it has one (a pointer: NULL), else the REPLACING value for its
+ * category, else its category's default (GR 6c) when TO DEFAULT is given
+ * or neither VALUE nor REPLACING is -- or is left alone. */
+enum { IC_DPTR = 100, IC_NATED };           /* categories beyond PIC_*: data-pointer, national-edited */
+typedef struct {
+    int filler, value, value_all, value_cat, deflt, nrep;
+    int rep_cat[16]; Opnd rep_val[16];
+} InitSpec;
+static int init_cat(const Sym *s)
+{
+    if (s->usage == U_POINTER) return IC_DPTR;
+    if (s->pi.category == PIC_NATIONAL && s->pi.edited) return IC_NATED;
+    return s->pi.category;
+}
+static Opnd init_value_opnd(Sym *s)
+{
+    Opnd o = lit_opnd(s->value_tok);
+    if (s->value_all && s->value_tok->kind == T_STR) o.kind = O_ALL;
+    return o;
+}
+static void init_elem2k(Sym *s, Ref *r, const InitSpec *sp)
+{
+    static Tok tz = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0, 0 };
+    static Tok ts = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0 };
+    int cat = init_cat(s);
+    Opnd v; memset(&v, 0, sizeof v); v.line = r->line;
+    int ptr_null = 0, have = 0;
+    if (sp->value && (sp->value_all || sp->value_cat == cat)) {
+        if (cat == IC_DPTR) { ptr_null = 1; have = 1; }
+        else if (s->value_tok) { v = init_value_opnd(s); have = 1; }
+    }
+    if (!have) for (int k = 0; k < sp->nrep; k++) if (sp->rep_cat[k] == cat) { v = sp->rep_val[k]; have = 1; break; }
+    if (!have && (sp->deflt || (!sp->value && !sp->nrep))) {
+        if (cat == IC_DPTR) ptr_null = 1;
+        else { v.kind = O_FIG; v.tok = cat == PIC_NUMERIC || cat == PIC_NUMERIC_EDITED || cat == PIC_BOOLEAN ? &tz : &ts; }
+        have = 1;
+    }
+    if (!have) return;
+    if (cat == IC_DPTR) {                       /* SET receiving-operand TO NULL, or TO the REPLACING pointer */
+        if (ptr_null) emit_li("r1", 0);
+        else emit_ptr_value(&v, "r1");
+        emit("\tstw sp+%d, r1", SLOT_A);
+        emit_ref_addr(r, "r3");
+        emit("\tldw r1, sp+%d", SLOT_A);
+        emit("\tstw r3+0, r1");
+        return;
+    }
+    emit_move(&v, r);
+}
+static void init_walk(Sym *s, const Ref *base, const InitSpec *sp, long *sub, int nsub, int line, int is_top)
+{
+    if (s->is_cond || s->is_index || s->usage == U_INDEX) return;
+    if (!is_top && s->redefines >= 0) return;
+    if (s->is_group) {
+        for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+            Sym *k = &g_sym[c];
+            if (k->occurs) {
+                if (nsub >= MAXDIM) die_at(line, "INITIALIZE: too many dimensions");
+                for (long i = 1; i <= k->occurs; i++) { sub[nsub] = i; init_walk(k, base, sp, sub, nsub + 1, line, 0); }
+            } else init_walk(k, base, sp, sub, nsub, line, 0);
+        }
+        return;
+    }
+    if (s->is_filler && !sp->filler && !is_top) return;
+    Ref r = *base; r.sym = s; r.nsub = nsub; r.rm = 0; r.user_rm = 0; r.rm_bit = 0; r.bitsub = 0;
+    for (int i = 0; i < nsub; i++) { if (i < base->nsub) r.sub[i] = base->sub[i]; else { r.sub[i].sym = NULL; r.sub[i].lit = sub[i]; r.sub[i].adj = 0; } }
+    if (nsub != s->ndims) die_at(line, "INITIALIZE: '%s' needs %d subscripts", s->name, s->ndims);
+    ref_resolve_bits(&r);
+    init_elem2k(s, &r, sp);
+}
+/* a category-name of the 2002 INITIALIZE, or -1 */
+static int init_cat_word(void)
+{
+    static const struct { const char *w; int c; } cw[] = {
+        { "alphabetic", PIC_ALPHABETIC }, { "alphanumeric", PIC_ALPHANUMERIC }, { "alphanumeric-edited", PIC_ALPHANUMERIC_EDITED },
+        { "numeric", PIC_NUMERIC }, { "numeric-edited", PIC_NUMERIC_EDITED }, { "national", PIC_NATIONAL },
+        { "national-edited", IC_NATED }, { "boolean", PIC_BOOLEAN }, { "data-pointer", IC_DPTR },
+    };
+    for (unsigned i = 0; i < sizeof cw / sizeof cw[0]; i++) if (at_word(cw[i].w)) return cw[i].c;
+    if (at_word("function-pointer") || at_word("program-pointer") || at_word("message-tag") || at_word("object-reference"))
+        die_at(cur()->line, "INITIALIZE: the category %s is not implemented (no such items exist here)", cur()->s);
+    return -1;
+}
+static void parse_initialize_2002(Ref *rs, int n)
+{
+    InitSpec sp; memset(&sp, 0, sizeof sp);
+    if (accept_word("with")) { expect_word("filler"); sp.filler = 1; }
+    else if (accept_word("filler")) sp.filler = 1;
+    if (at_word("all") || (init_cat_word() >= 0 && is_word(peek(1), "to"))) {
+        if (accept_word("all")) sp.value_all = 1; else { sp.value_cat = init_cat_word(); advance(); }
+        expect_word("to"); expect_word("value"); sp.value = 1;
+    }
+    if (at_word("then") && is_word(peek(1), "replacing")) advance();
+    if (accept_word("replacing")) {
+        for (;;) {
+            int line = cur()->line, cat = init_cat_word();
+            if (cat < 0) die_at(line, "INITIALIZE REPLACING: expected a category-name");
+            advance();
+            for (int k = 0; k < sp.nrep; k++)
+                if (sp.rep_cat[k] == cat) die_at(line, "INITIALIZE REPLACING: a category named twice (2023 14.9.20.3 rule 6)");
+            accept_word("data"); expect_word("by");
+            Opnd value; parse_operand(&value);
+            if (cat == IC_DPTR) {
+                if (!opnd_is_ptr(&value)) die_at(line, "INITIALIZE REPLACING DATA-POINTER needs a pointer item, ADDRESS OF or NULL (2023 14.9.20.3 rules 3-4)");
+            } else if (value.kind != O_REF && value.kind != O_STR && value.kind != O_NUM && value.kind != O_FIG)
+                die_at(line, "INITIALIZE REPLACING ... BY needs an item or a literal");
+            emit_incompat(&value);
+            if (sp.nrep == 16) die_at(line, "INITIALIZE REPLACING: too many categories");
+            sp.rep_cat[sp.nrep] = cat; sp.rep_val[sp.nrep++] = value;
+            if (init_cat_word() < 0) break;
+        }
+    }
+    if (at_word("then") && is_word(peek(1), "to")) advance();
+    if (at_word("to") && is_word(peek(1), "default")) { advance(); advance(); sp.deflt = 1; }
+    for (int i = 0; i < n; i++) {
+        if (rs[i].user_rm) die_at(rs[i].line, "INITIALIZE of a reference-modified item with the COBOL 2002 phrases is not implemented");
+        long sub[MAXDIM];
+        init_walk(rs[i].sym, &rs[i], &sp, sub, rs[i].nsub, rs[i].line, 1);
+    }
+}
+
 static void parse_initialize(void)
 {
     Ref rs[MAXOPS]; int n = 0;
@@ -12403,13 +12533,39 @@ static void parse_initialize(void)
     static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0 };
     Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
-    while (at_operand()) {
+    while (at_operand() && !at_word("all") && !at_word("with") && !at_word("filler") && !at_word("then") && !is_word(peek(1), "to")) {
         if (n >= MAXOPS) die_at(cur()->line, "too many items in INITIALIZE");
         Ref *r = &rs[n]; parse_ref(r);
         if (r->sym->is_cond) die_at(r->line, "INITIALIZE of a condition-name");
+        if (r->sym->is_rename)
+            die_at(r->line, "INITIALIZE: '%s' is a RENAMES item (%s)", r->sym->name, g_std < 2002 ? "X3.23-1985 INITIALIZE syntax rule 6" : "2023 14.9.20.3 rule 5");
+        if (r->sym->is_index)
+            die_at(r->line, "INITIALIZE: '%s' is an index-name, not a data item; SET it", r->sym->name);
+        if (g_std < 2002 && odo_table_for(r->sym)) bp(BP_E15_INIT_ODO, r->line);
         n++;
     }
     if (!n) die_at(cur()->line, "INITIALIZE needs an item");
+    /* the COBOL 2002 phrases: WITH FILLER, ... TO VALUE, TO DEFAULT */
+    {
+        int j = g_tp, two = 0;
+        if (is_word(&g_tok[j], "with") || is_word(&g_tok[j], "filler") || is_word(&g_tok[j], "all")) two = 1;
+        else if (is_word(&g_tok[j], "then")) two = 1;
+        else if (g_tok[j].kind == T_WORD && is_word(&g_tok[j + 1], "to") && (is_word(&g_tok[j + 2], "value") || is_word(&g_tok[j + 2], "default"))) two = 1;
+        else if (is_word(&g_tok[j], "to") && is_word(&g_tok[j + 1], "default")) two = 1;
+        else if (is_word(&g_tok[j], "replacing")) {
+            /* REPLACING ... THEN TO DEFAULT, or a 2002 category */
+            for (int k = j + 1; g_tok[k].kind == T_WORD || g_tok[k].kind == T_STR || g_tok[k].kind == T_NUM; k++) {
+                if (is_word(&g_tok[k], "default") || is_word(&g_tok[k], "national-edited") || is_word(&g_tok[k], "data-pointer")) { two = 1; break; }
+                if (g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "then")) { two = 1; break; }
+                if (g_tok[k].kind == T_WORD && is_verb(g_tok[k].s)) break;
+            }
+        }
+        if (two) {
+            if (g_std < 2002) die_at(cur()->line, "INITIALIZE WITH FILLER / TO VALUE / TO DEFAULT is COBOL 2002; compile with -std=2002");
+            parse_initialize_2002(rs, n);
+            return;
+        }
+    }
     if (!at_word("replacing")) {
         /* no REPLACING: every elementary item to its category's default --
          * the template image copied in runs around the bytes left alone,
@@ -12454,8 +12610,9 @@ static void parse_initialize(void)
         }
     }
     if (accept_word("replacing")) {
+        int seen[8] = { 0 };
         for (;;) {
-            int line = cur()->line, cat;
+            int line = cur()->line, cat = -1;
             if (accept_word("alphabetic")) cat = PIC_ALPHABETIC;
             else if (accept_word("alphanumeric")) cat = PIC_ALPHANUMERIC;
             else if (accept_word("numeric")) cat = PIC_NUMERIC;
@@ -12465,6 +12622,8 @@ static void parse_initialize(void)
             else if (g_std >= 2002 && accept_word("boolean")) cat = PIC_BOOLEAN;
             else die_at(line, "INITIALIZE REPLACING: expected ALPHABETIC, ALPHANUMERIC, NUMERIC, ALPHANUMERIC-EDITED, NUMERIC-EDITED%s",
                         g_std >= 2002 ? " or NATIONAL" : "");
+            if (cat >= 0 && cat < 8 && seen[cat]++)
+                die_at(line, "INITIALIZE REPLACING: a category named twice (%s)", g_std < 2002 ? "X3.23-1985 INITIALIZE syntax rule 3" : "2023 14.9.20.3 rule 6");
             accept_word("data"); expect_word("by");
             Opnd value; parse_operand(&value);
             if (value.kind != O_REF && value.kind != O_STR && value.kind != O_NUM && value.kind != O_FIG)
@@ -12484,9 +12643,6 @@ static void parse_initialize(void)
                   at_word("numeric-edited") || (g_std >= 2002 && (at_word("national") || at_word("boolean"))))) break;
         }
     }
-    if (at_word("with") || at_word("default") || at_word("all") || (at_word("to") && is_word(peek(1), "value")))
-        die_at(cur()->line, g_std < 2002 ? "INITIALIZE WITH FILLER / ALL / DEFAULT is COBOL 2002; compile with -std=2002"
-                                         : "INITIALIZE WITH FILLER, ALL ... TO VALUE and THEN TO DEFAULT are not implemented");
 }
 
 /* ---- SEARCH ------------------------------------------------------------ */

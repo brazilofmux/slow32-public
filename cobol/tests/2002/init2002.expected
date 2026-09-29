@@ -1,0 +1,8 @@
+85:      [   ##000  000    ]
+filler:  [     000  000    ]
+value:   [abc##007 4299qquu]
+val+def: [abc##007 4200qquu]
+rep+def: [   ##003  003    ]
+fil+val: [abczz007 4299qquu]
+all:     [abczz007 4205qquu]
+elem:    [abc##007 4299qqxy]

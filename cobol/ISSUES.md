@@ -3961,3 +3961,36 @@ per line of sites.txt -- 30 sites that must raise, 8 that must not
 (class tests, a binary subscript expression, an UNSTRING receiver, a
 binary BY VALUE, bit operands, a boolean receiver). Harness 453/453.
 
+### 104. INITIALIZE's COBOL 2002 phrases, and its syntax rules (2026-09-29)
+
+WITH FILLER, `{ALL | category} TO VALUE`, THEN REPLACING and THEN TO
+DEFAULT (2023 14.9.20) were refused as not implemented. A new walk,
+init_walk / init_elem2k, visits every elementary item below
+identifier-1 in order, every occurrence, and decides per item by GR 5-6:
+the VALUE clause's value when the VALUE phrase names its category (NULL
+for a pointer), else the REPLACING value, else the category default when
+TO DEFAULT is given or neither VALUE nor REPLACING is. FILLERs only WITH
+FILLER; REDEFINES items below the receiver never. The categories add
+NATIONAL-EDITED and DATA-POINTER (a SET). The 1985 forms keep their own
+path: -std=85 byte-identical.
+
+Refusals added: a RENAMES item (85 rule 6; 2023 rule 5), an index-name,
+a category repeated in REPLACING (85 rule 3; 2023 rule 6), the phrases
+under -std=85. The 85 rule against OCCURS DEPENDING ON in identifier-1
+(rule 4) would refuse majesty's gl008, gl034 and gl040, so it is a class
+E point, BP-E15, taken and reported under -warn-extensions.
+
+GnuCOBOL (the oracle) agrees on every case in 2002/init2002, and departs
+from the text in two places, both in 2002/init2002cat (no oracle): it
+restores every VALUE under `category TO VALUE` whatever the category
+named (GR 5c1), and leaves a pointer alone under TO VALUE (GR 6a1).
+
+Found on the way, not fixed here: a REDEFINES of an item with an OCCURS
+clause is accepted (85 REDEFINES syntax rule 5); GnuCOBOL warns. That
+is the next sweep.
+
+Tests: 2002/init2002 (oracle agrees), 2002/init2002cat,
+bad/initialize-operands, warn/ext-every (BP-E15). Harness 456/456,
+-std=85 byte-identical on the Open Systems programs, majesty PASS, Open
+Systems paper unchanged. Page: docs/conformance/initialize.md.
+

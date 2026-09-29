@@ -89,9 +89,9 @@ COBOL 2002/2023 (Stage B):
   (docs/conformance/national-boolean.md).
 - a BASED entry in LOCAL-STORAGE, EC-BOUND-PTR, and ALLOCATE ...
   INITIALIZED of a based record (docs/conformance/usage.md);
-- INITIALIZE WITH FILLER, ALL ... TO VALUE and THEN TO DEFAULT (the
-  message said "is COBOL 2002" under -std=2002 too; now "not
-  implemented");
+- INITIALIZE of a reference-modified item with the COBOL 2002 phrases
+  (WITH FILLER, TO VALUE, TO DEFAULT; the phrases themselves are
+  implemented, docs/conformance/initialize.md);
 - USAGE BINARY-DOUBLE, whose range needs 19 digits (with the 31-digit
   gap above).
 

@@ -1,0 +1,4 @@
+INITIALIZE REPLACING: a category named twice (X3.23-1985 INITIALIZE syntax rule 3)
+INITIALIZE: 'rn' is a RENAMES item (X3.23-1985 INITIALIZE syntax rule 6)
+INITIALIZE: 'hi' is an index-name, not a data item; SET it
+INITIALIZE WITH FILLER / TO VALUE / TO DEFAULT is COBOL 2002; compile with -std=2002
