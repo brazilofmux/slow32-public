@@ -1,0 +1,10 @@
+rec: 0042 widget
+returned its address
+twelve zero bytes
+buf: hello, world
+p freed to null
+free of null: nothing
+0 characters: null
+declarative: EC-STORAGE-NOT-ALLOC           
+not freed, unchanged
+q freed

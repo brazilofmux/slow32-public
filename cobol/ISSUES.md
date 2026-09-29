@@ -3666,3 +3666,26 @@ bad/std2002-address-of-display, -set-address-ws, -pointer-lt,
 harness 411/411; -std=85 byte-identical on all 229 Open Systems
 programs; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+**ALLOCATE, FREE; ADDRESS OF BY REFERENCE/CONTENT** (2002 14.8.3,
+14.8.14). libcob cob_allocate/cob_free keep a list of the blocks the run
+unit holds (calloc: zeroed, pointers NULL); FREE sets the pointer NULL,
+leaves NULL alone, and reports anything else for EC-STORAGE-NOT-ALLOC;
+ALLOCATE raises EC-STORAGE-NOT-AVAIL when none is to be had but not for
+a count of 0 or less (GR 2; the first cut raised it). cob_pop_alloc_size
+rounds a fractional count up (GR 1). ALLOCATE and FREE joined is_verb,
+without which a FREE after a MOVE was read as another receiver. ADDRESS
+OF BY REFERENCE and BY CONTENT pass a compiler-made pointer record (the
+unique data item of 8.4.3.11 GR 1). A VALUE clause in a BASED entry,
+refused in the previous step, is allowed again: nothing forbids it and
+INITIALIZE ... TO VALUE is what reads it. The INITIALIZE WITH FILLER /
+DEFAULT refusal said "is COBOL 2002" under -std=2002; it says "not
+implemented" now. Gap named: ALLOCATE data-name INITIALIZED.
+
+Tests: 2002/allocfree, 2002/addressofarg (the oracle agrees);
+bad/std2002-allocate-not-based, -allocate-no-returning,
+-allocate-returning-alnum, -allocate-based-initialized,
+-free-not-pointer; bad/std2002-address-of-byref retired. CCVS-85
+unchanged; harness 417/417; -std=85 byte-identical on all 229 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.

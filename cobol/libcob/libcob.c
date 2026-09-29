@@ -4719,6 +4719,48 @@ int cob_pop_int(void)
     return (int)v;
 }
 
+/* ALLOCATE's byte count (2002 14.8.3 GR 1): an arithmetic expression's
+ * value, a fraction rounded up */
+int cob_pop_alloc_size(void)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[--nsp];
+    long long v = a->v, d = 1;
+    for (int i = 0; i < a->scale; i++) d *= 10;
+    long long q = v / d;
+    if (v % d > 0) q++;
+    return q > 0x7fffffff ? 0x7fffffff : (int)q;
+}
+
+/* ALLOCATE and FREE (2002 14.8.3, 14.8.14): storage from the heap, zeroed
+ * (pointers in it NULL, 14.8.3 GR 9), and a list of the blocks this run
+ * unit holds, so FREE can tell allocated storage from anything else */
+static void **alloc_blk; static int alloc_n, alloc_cap;
+
+void *cob_allocate(int n)
+{
+    if (n <= 0) return NULL;                    /* GR 2: NULL, no exception */
+    void *p = calloc((size_t)n, 1);
+    if (!p) return NULL;
+    if (alloc_n == alloc_cap) {
+        int c = alloc_cap ? 2 * alloc_cap : 16;
+        void **nb = realloc(alloc_blk, (size_t)c * sizeof *nb);
+        if (!nb) { free(p); return NULL; }
+        alloc_blk = nb; alloc_cap = c;
+    }
+    alloc_blk[alloc_n++] = p;
+    return p;
+}
+
+/* 0 freed, 1 not storage ALLOCATE obtained (EC-STORAGE-NOT-ALLOC), 2 NULL */
+int cob_free(void *p)
+{
+    if (!p) return 2;
+    for (int i = alloc_n - 1; i >= 0; i--)
+        if (alloc_blk[i] == p) { free(p); alloc_blk[i] = alloc_blk[--alloc_n]; return 0; }
+    return 1;
+}
+
 /* a descriptor for item(start:len): the base's category, the given
  * length (0: to the end of the item).  Rotating buffers, like the
  * intrinsic functions'. */

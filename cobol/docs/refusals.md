@@ -88,9 +88,11 @@ COBOL 2002/2023 (Stage B):
   below).
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
-- ADDRESS OF passed BY REFERENCE or BY CONTENT (BY VALUE works), a
-  BASED entry in LOCAL-STORAGE, ALLOCATE and FREE, EC-BOUND-PTR
-  (docs/conformance/usage.md);
+- a BASED entry in LOCAL-STORAGE, EC-BOUND-PTR, and ALLOCATE ...
+  INITIALIZED of a based record (docs/conformance/usage.md);
+- INITIALIZE WITH FILLER, ALL ... TO VALUE and THEN TO DEFAULT (the
+  message said "is COBOL 2002" under -std=2002 too; now "not
+  implemented");
 - USAGE BINARY-DOUBLE, whose range needs 19 digits (with the 31-digit
   gap above).
 
