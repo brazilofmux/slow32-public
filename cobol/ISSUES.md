@@ -3414,3 +3414,38 @@ unstring-refmod-85, rw-code-partial. CCVS-85 unchanged: 348 programs,
 8068 of 8175 tests, all 348 matching GnuCOBOL. Harness 315/315; -std=85
 byte-identical on all 229 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+### 96. The rule-by-rule sweep, one section at a time (2026-09-28)
+
+docs/conformance/ holds one page per section of the 2023 text swept:
+every syntax and general rule, paraphrased, with a disposition -- a test,
+a refusal test, not applicable by ruling, a named gap, or an
+implementor's ruling. The CCVS-85 suite tests what a compiler must
+accept, almost never what it must refuse, so the sweep is where the
+unenforced rules turn up.
+
+**14.9.14 EXIT** (docs/conformance/exit.md). Found and fixed:
+
+- rule 1 (and X3.23-1985 EXIT rules 1-2): a simple EXIT not alone in its
+  paragraph was accepted. Now refused; no program in the Open Systems
+  suite, CCVS-85 or majesty breaks it.
+- rule 2 (85 the same): EXIT PROGRAM in a GLOBAL declarative, accepted;
+  refused.
+- rule 7: EXIT PROGRAM in a function, accepted; refused.
+- X3.23-1985 EXIT PROGRAM rule 1 (not in 2023): EXIT PROGRAM must end its
+  run of imperative statements; refused under -std=85.
+- general rule 2 (85 general rule 1 the same): EXIT PROGRAM in the run
+  unit's first program ended the run; it continues, as CONTINUE. libcob
+  counts program activations in cob_perform_enter/leave (cob_called).
+  This changes the -std=85 code of the 12 Open Systems programs that
+  hold an EXIT PROGRAM -- exactly those -- and not their output: all are
+  called subprograms. GnuCOBOL agrees (fixed/exitprog).
+- rules 3 and 6, EXIT PROGRAM RAISING: a gap, now refused by name
+  instead of "'raising' is not a COBOL verb".
+- the EXIT PERFORM CYCLE message read backwards; reworded.
+
+Tests: fixed/exitprog (the oracle agrees); bad/exit-not-alone,
+exit-program-global, exit-program-not-last, std2002-exit-program-function,
+-exit-paragraph-nopara, -exit-program-raising. CCVS-85 unchanged.
+Harness 322/322; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.

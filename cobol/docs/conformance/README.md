@@ -1,0 +1,28 @@
+# Conformance, rule by rule
+
+Each page takes one section of ISO/IEC 1989:2023 (and, where the
+statement is in COBOL 85, X3.23-1985) and gives every syntax rule and
+general rule a disposition:
+
+| mark | meaning |
+|---|---|
+| **test** | a program in `tests/` exercises the rule, named |
+| **refused** | a `tests/bad/` program shows the violation refused, with a message citing the rule |
+| **n/a** | the rule is about a feature ruled out (object orientation, ...), with the ruling |
+| **gap** | not implemented; the refusal names it; recorded in docs/refusals.md |
+| **ruling** | the text leaves it to the implementor, or is unclear; the choice made and why |
+
+The rules are paraphrased, never quoted: the 2023 text is licensed and
+stays out of the tree (docs/standards.md). Section and rule numbers are
+enough to find them.
+
+A page is done when every rule has a mark. Sweeping a section finds
+three kinds of thing, and each is fixed and tested before the page is
+written: rules the compiler does not enforce (the CCVS suite tests what
+must be accepted, not what must be refused), behaviour that differs from
+the text, and misleading messages. docs/refusals.md, "What follows",
+began this; ISSUES-96 on record the sweeps.
+
+| section | page | swept |
+|---|---|---|
+| 14.9.14 EXIT | [exit.md](exit.md) | 2026-09-28 |

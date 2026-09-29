@@ -1,0 +1,6 @@
+main: before EXIT PROGRAM
+main: after EXIT PROGRAM (continues)
+inner: before EXIT PROGRAM
+main: back from inner
+p1
+main: after the PERFORM

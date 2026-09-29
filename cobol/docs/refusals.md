@@ -74,6 +74,8 @@ COBOL 2002/2023 (Stage B):
   the SPECIAL-NAMES clauses not yet taken;
 - bits: OCCURS DEPENDING ON on a bit array, OCCURS on a bit group, a
   character item redefining a bit item that starts mid-byte;
+- EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
+  the caller (docs/conformance/exit.md);
 - RESUME (optional since 2014);
 - ALPHABET ... IS EBCDIC, as a collating sequence and a CODE-SET (ruled
   below).

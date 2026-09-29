@@ -1422,8 +1422,12 @@ static int pbase;       /* the first frame of the running program's activation *
  * fell through into the paragraph after P.  Each activation starts its
  * frames above a base, searches no lower, and on return drops them all;
  * a RECURSIVE program's activations are kept apart the same way. */
-int cob_perform_enter(void) { int old = pbase; pbase = psp; return old; }
-void cob_perform_leave(int old) { psp = pbase; pbase = old; }
+static int prog_depth;          /* program activations under way: the first is the run unit's own */
+int cob_perform_enter(void) { int old = pbase; pbase = psp; prog_depth++; return old; }
+void cob_perform_leave(int old) { psp = pbase; pbase = old; prog_depth--; }
+/* is the running program under the control of a calling one (EXIT
+ * PROGRAM: X3.23-1985 general rule 1, 2023 14.9.14.4 rule 2) */
+int cob_called(void) { return prog_depth > 1; }
 
 /* ---- exception conditions (COBOL 2002 14.6.13; cobol ISSUES-53) -------- */
 

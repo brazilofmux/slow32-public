@@ -11513,6 +11513,13 @@ static void parse_raise(void);
 static void parse_statement_1(void);
 
 /* a statement, then the EC-DATA-CONVERSION its conversion functions noted */
+static int g_para_body_tp = -1;     /* where the current paragraph's first sentence begins */
+static int cur_use_is_global(void)
+{
+    for (int u = 0; u < g_nuse; u++)
+        if (g_use[u].unit == g_unit && g_use[u].sec == g_cur_sec_id && g_use[u].global) return 1;
+    return 0;
+}
 static void parse_statement(void)
 {
     int outer = g_stmt_convcheck;
@@ -11642,14 +11649,29 @@ static void parse_statement_1(void)
     if (!strcmp(v, "goback")) { advance(); emit("\tjal r0, .Lgb%d", g_unit); return; }
     if (!strcmp(v, "continue")) { advance(); return; }
     if (!strcmp(v, "exit")) {
+        int exit_tp = g_tp;
         advance();
-        if (accept_word("program")) { emit("\tjal r0, .Lgb%d", g_unit); return; }
+        if (accept_word("program")) {
+            if (at_word("raising"))
+                die_at(t->line, "EXIT PROGRAM RAISING is not implemented yet (exception propagation to the caller)");
+            if (g_is_function)
+                die_at(t->line, "EXIT PROGRAM is only in a program's procedure division, not a function's (2023 14.9.14.3 rule 7)");
+            if (g_in_decl && cur_use_is_global())
+                die_at(t->line, "EXIT PROGRAM in a declarative procedure whose USE is GLOBAL (X3.23-1985 EXIT PROGRAM rule 2; 2023 14.9.14.3 rule 2)");
+            if (g_std < 2002 && cur()->kind == T_WORD && is_verb(cur()->s))
+                die_at(t->line, "EXIT PROGRAM must be the last of the imperative statements in its sentence (X3.23-1985 EXIT PROGRAM syntax rule 1)");
+            /* a program no calling program controls continues past it
+             * (X3.23-1985 EXIT PROGRAM general rule 1; 2023 14.9.14.4 rule 2) */
+            emit_call("cob_called");
+            emit("\tbne r1, r0, .Lgb%d", g_unit);
+            return;
+        }
         if (g_std >= 2002 && accept_word("perform")) {
             /* 2023 14.9.14 format 3 (cobol ISSUES-90) */
             int cycle = accept_word("cycle");
             if (!g_npstk) die_at(t->line, "EXIT PERFORM is only in an inline or exception-checking PERFORM (2023 14.9.14.3 rule 8)");
             if (cycle && g_pstk[g_npstk - 1].Lcycle < 0)
-                die_at(t->line, "EXIT PERFORM CYCLE is not in an exception-checking PERFORM (2023 14.9.14.3 rule 8)");
+                die_at(t->line, "EXIT PERFORM CYCLE is not allowed in an exception-checking PERFORM (2023 14.9.14.3 rule 8)");
             emit_jump(cycle ? g_pstk[g_npstk - 1].Lcycle : g_pstk[g_npstk - 1].Lexit);
             return;
         }
@@ -11668,6 +11690,15 @@ static void parse_statement_1(void)
         if (at_word("perform") || at_word("paragraph") || at_word("section"))
             die_at(t->line, "EXIT %s is COBOL 2002; compile with -std=2002",
                    at_word("perform") ? "PERFORM" : at_word("paragraph") ? "PARAGRAPH" : "SECTION");
+        /* EXIT alone: a sentence by itself, the only one in its paragraph
+         * (X3.23-1985 EXIT syntax rules 1-2; 2023 14.9.14.3 rule 1) */
+        int alone = exit_tp == g_para_body_tp && cur()->kind == T_PERIOD;
+        if (alone) {
+            Tok *n = peek(1);
+            alone = n->kind == T_EOF || is_word(n, "end") || is_word(n, "identification") || is_word(n, "id") ||
+                    (at_para_name(n) && (peek(2)->kind == T_PERIOD || is_word(peek(2), "section")));
+        }
+        if (!alone) die_at(t->line, "EXIT must be a sentence by itself, the only one in its paragraph (X3.23-1985 EXIT syntax rule 1; 2023 14.9.14.3 rule 1)");
         return;
     }
     if (!strcmp(v, "next")) die_at(t->line, "NEXT SENTENCE is only valid inside IF (or SEARCH)");
@@ -12021,6 +12052,7 @@ static void parse_procedure_division(void)
             if (p->is_section) { cur_sec = p->id; cur_par = -1; g_cur_sec_id = p->id; } else cur_par = p->id;
             advance(); if (p->is_section) advance();
             expect_period();
+            g_para_body_tp = g_tp;
             continue;
         }
         if (t->kind == T_WORD && !is_verb(t->s) && peek(1)->kind == T_NUM && is_word(peek(2), "section"))

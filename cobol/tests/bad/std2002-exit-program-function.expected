@@ -1,0 +1,1 @@
+EXIT PROGRAM is only in a program's procedure division, not a function's (2023 14.9.14.3 rule 7)
