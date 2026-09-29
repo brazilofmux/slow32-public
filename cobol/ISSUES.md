@@ -3887,4 +3887,6 @@ Tests: 2002/ecincompat (ADD), 2002/ecincompat2 (COMPUTE),
 free/packedclass (the oracle agrees, default dialect). Harness 446/446,
 CCVS-85 unchanged, -std=85 byte-identical on all 229 Open Systems
 programs, majesty PASS, majesty-functions PASS, Open Systems paper
-unchanged. Next: the per-statement rules and the page.
+unchanged. The per-statement rules held; the page is
+docs/conformance/arithmetic.md, and the sweep's probe became
+free/arithrules (the oracle agrees). Harness 447/447.
