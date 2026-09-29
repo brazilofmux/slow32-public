@@ -1923,7 +1923,6 @@ static void sym_finish(Sym *s)
         if (pi->category != PIC_BOOLEAN) die_at(s->line, "'%s': USAGE BIT needs a boolean PICTURE (1)", s->name);
         if (s->occurs && s->odo_dep[0]) die_at(s->line, "'%s': OCCURS DEPENDING ON a USAGE BIT item is not implemented yet", s->name);
         if (s->occurs && s->idx1 >= 0) die_at(s->line, "'%s': INDEXED BY on a USAGE BIT item is not implemented yet", s->name);
-        if (s->redefines >= 0) die_at(s->line, "'%s': REDEFINES of a USAGE BIT item is not implemented yet", s->name);
         if (s->sync) die_at(s->line, "'%s': SYNCHRONIZED on a USAGE BIT item is not implemented yet", s->name);
         s->bits = pi->bytes; s->size = (s->bits + 7) / 8;
         return;
@@ -2522,8 +2521,8 @@ static int layout(int si, int base)
         if (s->usage == U_BIT) s->size = (s->bitoff + bit_total(s) + 7) / 8;
         return s->size;
     }
-    if (s->bitgroup && (s->occurs || s->redefines >= 0))
-        die_at(s->line, "'%s': OCCURS or REDEFINES on a bit group is not implemented yet", s->name);
+    if (s->bitgroup && s->occurs)
+        die_at(s->line, "'%s': OCCURS on a bit group is not implemented yet", s->name);
     int off = base, end = base;
     /* bit items and bit groups that follow one another at a level take
      * the next bit position; anything else the next byte (8.5.1.6.3) --
@@ -2533,8 +2532,14 @@ static int layout(int si, int base)
         Sym *ch = &g_sym[c];
         int cbase, isbit = sym_bitlike(ch) && ch->redefines < 0;
         if (ch->redefines >= 0) {
-            if (sym_bitlike(&g_sym[ch->redefines])) die_at(ch->line, "REDEFINES of a bit item or bit group is not implemented yet");
-            cbase = g_sym[ch->redefines].offset;
+            /* the first bit of the redefined item (13.18.44.4 rule 1) -- a bit
+             * item over a byte item starts at its first bit; a byte item
+             * over a bit item needs that item to start a byte (cobol ISSUES-85) */
+            Sym *t = &g_sym[ch->redefines];
+            cbase = t->offset;
+            if (sym_bitlike(ch)) g_lay_bit = sym_bitlike(t) ? t->bitoff : 0;
+            else if (sym_bitlike(t) && t->bitoff)
+                die_at(ch->line, "'%s' redefines '%s', which starts inside a byte (its bit %d): a character item at a bit position is not implemented (13.18.44.4 rule 1)", ch->name, t->name, t->bitoff + 1);
         } else if (isbit && run) {
             cbase = off; g_lay_bit = cur;
         } else {
@@ -2551,7 +2556,7 @@ static int layout(int si, int base)
             off = cbase + tot / 8; cur = tot % 8; run = 1;
             cend = cbase + (tot + 7) / 8;
         } else {
-            cend = cbase + sz * (ch->occurs ? ch->occurs : 1);
+            cend = cbase + (sym_bitlike(ch) ? sz : sz * (ch->occurs ? ch->occurs : 1));   /* a bit item's size spans its occurrences */
             if (ch->redefines < 0) off = cend;
         }
         /* A REDEFINES larger than the original is allowed: the group grows. */

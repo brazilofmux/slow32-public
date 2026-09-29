@@ -79,9 +79,15 @@ by bit, and a subscript picks bits (i - 1) * bits + 1 onward, found at
 run time when the subscript is an item. VALUE applies to each
 occurrence.
 
+REDEFINES (ISSUES-85) starts at the first bit of the redefined item
+(13.18.44.4 rule 1): a bit item over a character item starts at its
+first bit, a bit item over a bit item at that item's bit, and a
+character item may redefine a bit item that starts a byte.
+
 Not implemented, refused by name: OCCURS DEPENDING ON and INDEXED BY on
-a bit array, OCCURS on a bit group, REDEFINES and SYNCHRONIZED of a bit
-item or bit group, reference modification of a bit array's element; a VALUE on a bit
+a bit array, OCCURS on a bit group, a character item redefining a bit
+item that starts inside a byte, SYNCHRONIZED of a bit item or bit
+group, reference modification of a bit array's element; a VALUE on a bit
 group; bit items in INSPECT, STRING and UNSTRING, whose runtimes work on
 characters.
 

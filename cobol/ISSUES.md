@@ -2755,3 +2755,27 @@ subscript; LENGTH of an element; a computed reference modification
 across a byte, and to the end. Harness 267/267; -std=85 byte-identical
 on all 227 Open Systems programs; majesty PASS; majesty-functions PASS;
 Open Systems paper unchanged.
+
+### 85. REDEFINES with bit items (2026-09-28)
+
+2023 13.18.44.4 rule 1: storage association "starts at the first bit of
+the data item referenced by data-name-2". In `layout()`'s REDEFINES
+branch:
+
+- A bit item or bit group redefining takes the redefined item's bit
+  offset, or bit 0 over a character item.
+- A character item may redefine a bit item that starts a byte.
+- One over a bit item that starts inside a byte would begin at a bit,
+  which this layout cannot express. It is refused as not implemented,
+  citing the rule, and not as an error in the program.
+- REDEFINES never moves the bit cursor.
+
+On the way: a redefining bit array's end was computed as its size times
+its occurrences, but a bit item's size already spans its occurrences.
+
+2002/bitredef (no oracle): bit views of a character (read, then written
+through), a bit view of a bit item mid-byte leaving its neighbour
+alone, a character view of a byte-aligned bit item, and sixteen flags
+over two bytes. bad/std2002-bit-redef-byte. Harness 269/269; -std=85
+byte-identical on all 227 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

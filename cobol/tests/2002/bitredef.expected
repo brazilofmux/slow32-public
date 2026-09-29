@@ -1,0 +1,6 @@
+bits of A: 01000001
+A after its bits become 01100010: b
+f2 through its redefinition: 11001
+f1 and f2 after f2v receives 00111: 101 00111
+g as a character: a
+flags 1, 2, 16: 101
