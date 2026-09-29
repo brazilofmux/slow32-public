@@ -50,6 +50,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <strings.h>
+#include <sys/mman.h>
 #include "picture.h"
 #include "../libcob/cobrt.h"
 #include "../../common/s32utf.h"   /* the one Unicode model: coding, width, clusters (cobol ISSUES-94) */
@@ -662,6 +663,11 @@ static void tokenize_lines(SrcLine *lines, int nlines)
 
             int c = (unsigned char)*p;
 
+            /* A zero-length literal is COBOL 2014's: 1985 has 1 through
+             * 160 characters, 2002 more than zero (8.3.1.2.1.2 rule 1, X"" too;
+             * .3.2 rule 1 boolean, .4.2 rule 1 national) */
+            #define NO_EMPTY_LIT(n, what, rule) do { if ((n) == 0) die_at(line, "a zero-length %s literal is COBOL 2014 (%s)", what, \
+                g_std < 2002 ? "X3.23-1985: 1 through 160 characters" : rule); } while (0)
             /* Hexadecimal literal X'..' */
             if ((c == 'x' || c == 'X') && (p[1] == '\'' || p[1] == '"')) {
                 char q = p[1];
@@ -670,6 +676,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 if (!*e) die_at(line, "unterminated hexadecimal literal");
                 int n = (int)(e - s);
                 if (n & 1) die_at(line, "hexadecimal literal needs an even number of digits");
+                NO_EMPTY_LIT(n, "hexadecimal", "2002 8.3.1.2.1.2 rule 1");
                 char *bytes = xmalloc(n / 2 + 1);
                 for (int i = 0; i < n; i += 2) {
                     int h = hexval(s[i]), l = hexval(s[i + 1]);
@@ -708,6 +715,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                     out = xmalloc((size_t)rn * 4 + 1); on = utf8_to_utf16be((const unsigned char *)raw, rn, (unsigned char *)out);
                     if (on < 0) die_at(line, "a national literal must be UTF-8 text (the source is UTF-8)");
                 }
+                NO_EMPTY_LIT(on, "national", "2002 8.3.1.2.4.2 rule 1");
                 Tok *nt = push_tok(T_STR, line, out, on);
                 nt->nat = 1;
                 free(raw); free(out);
@@ -736,6 +744,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                         out[on++] = s[i];
                     }
                 }
+                NO_EMPTY_LIT(on, "boolean", "2002 8.3.1.2.3.2 rule 1");
                 Tok *bt = push_tok(T_STR, line, out, on);
                 bt->boolv = 1;
                 free(out);
@@ -759,6 +768,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                     }
                     out[n++] = *s++;
                 }
+                NO_EMPTY_LIT(n, "alphanumeric", "2002 8.3.1.2.1.2 rule 1");
                 push_tok(T_STR, line, out, n);
                 free(out);
                 p = s + 1;
@@ -1499,7 +1509,7 @@ static void numlit_parse(Tok *t, NumLit *n)
         if (seen) n->scale++;
     }
     if (n->ndigits - n->scale > 18 || n->ndigits > 36)
-        die_at(t->line, "numeric literal has more than 18 digits");
+        die_at(t->line, "numeric literal has more than 18 digits%s", g_std >= 2002 ? " -- COBOL 2002's 31 are not implemented" : "");
 }
 
 static void numlit_zero(NumLit *n) { memset(n, 0, sizeof *n); n->digits[0] = '0'; n->ndigits = 1; }
@@ -1641,9 +1651,33 @@ static int g_unit_counter;          /* units so far in this source file, for lab
 typedef struct UnitSave UnitSave;
 static UnitSave *g_ustack[8]; static int g_udepth;
 
+/* The symbol table never moves.  Sym pointers live the whole compile --
+ * in every Ref a statement holds while it parses, in odo_dep_sym, in a
+ * file's keys -- and records are still made in the PROCEDURE DIVISION
+ * (ftemp_new: a function's result, a BY CONTENT copy, a MOVE's sender).
+ * A realloc under them was a use-after-free (a COMPUTE whose function
+ * call grew the table, cobol ISSUES-96).  So the address space is
+ * reserved once and committed as the table grows; untouched pages cost
+ * nothing. */
+enum { SYM_RESERVE = 1 << 20 };
 static Sym *sym_new(void)
 {
-    if (g_nsym == g_scap) { g_scap = g_scap ? g_scap * 2 : 128; g_sym = realloc(g_sym, g_scap * sizeof *g_sym); }
+    if (g_nsym == g_scap) {
+        if (!g_sym) {
+            int fl = MAP_PRIVATE | MAP_ANON;
+#ifdef MAP_NORESERVE
+            fl |= MAP_NORESERVE;
+#endif
+            void *m = mmap(NULL, (size_t)SYM_RESERVE * sizeof *g_sym, PROT_NONE, fl, -1, 0);
+            if (m == MAP_FAILED) { fprintf(stderr, "s32-cobc: cannot reserve the symbol table\n"); exit(1); }
+            g_sym = m;
+        }
+        if (g_scap == SYM_RESERVE) { fprintf(stderr, "s32-cobc: more than %d data items\n", SYM_RESERVE); exit(1); }
+        int n = g_scap ? 2 * g_scap : 128;
+        if (n > SYM_RESERVE) n = SYM_RESERVE;
+        if (mprotect(g_sym, (size_t)n * sizeof *g_sym, PROT_READ | PROT_WRITE)) { fprintf(stderr, "s32-cobc: cannot grow the symbol table\n"); exit(1); }
+        g_scap = n;
+    }
     Sym *s = &g_sym[g_nsym++];
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
@@ -2258,7 +2292,13 @@ static void parse_data_item1(void)
             snprintf(s->pic, sizeof s->pic, "%s", cur()->s);
             if (nat_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (bool_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
-            if (pic_analyse(s->pic, &s->pi) < 0) die_at(t->line, "'%s': %s", s->name, s->pi.err);
+            if (pic_analyse(s->pic, &s->pi) < 0) {
+                /* 2002 raised the limit to 31 digits (a gap here: the
+                 * arithmetic is 64-bit, docs/refusals.md) */
+                if (g_std >= 2002 && !strncmp(s->pi.err, "more than 18 digits", 19))
+                    die_at(t->line, "'%s': more than 18 digits -- COBOL 2002's 31 are not implemented", s->name);
+                die_at(t->line, "'%s': %s", s->name, s->pi.err);
+            }
             advance();
             continue;
         }
@@ -3503,6 +3543,7 @@ typedef struct Opnd_ {
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
+    int fsaved;                              /* O_FUNC evaluated already: 1 + the label of its result's copy (MOVE, general rule 1) */
 } Opnd;
 static int opnd_is_national(const Opnd *o);
 static int opnd_is_boolean(const Opnd *o);
@@ -4756,7 +4797,8 @@ static void emit_args(const Arg *a, int n)
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_FUNC) {
-            emit_fn_value(a[i].fn);        /* r1 = the result buffer */
+            if (a[i].fn->fsaved) { char l[24]; snprintf(l, sizeof l, ".L%d", a[i].fn->fsaved - 1); emit_la("r1", l); }
+            else emit_fn_value(a[i].fn);   /* r1 = the result buffer */
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_FDESC) {
@@ -7472,7 +7514,122 @@ static void parse_size_error_clauses(int size_err, const char *end_word);
 
 static int corr_eligible(Sym *c)
 {
-    return !c->is_filler && !c->is_cond && c->level != 66 && c->redefines < 0 && !c->occurs && !c->odo_dep[0];
+    return !c->is_filler && !c->is_cond && c->level != 66 && c->redefines < 0 && !c->occurs && !c->odo_dep[0] &&
+           (c->is_group || (c->usage != U_INDEX && c->usage != U_POINTER));    /* 14.7.6 rule 4 */
+}
+
+/* The validity of a MOVE by category (2023 14.9.25.3 syntax rules 5, 6,
+ * 8 and 10 with Table 16; 85 VI-104 general rule 3a-c).  Boolean moves
+ * and strongly-typed groups are checked where they are emitted; a group
+ * on either side is an alphanumeric move and always valid, and a
+ * reference modification is alphanumeric (or national). */
+enum { MC_NONE, MC_ALPHA, MC_ALNUM, MC_ALNUMED, MC_NAT, MC_NATED, MC_INT, MC_NONINT, MC_NUMED };
+static const char *mc_name[] = { "", "alphabetic", "alphanumeric", "alphanumeric-edited", "national", "national-edited",
+                                 "numeric integer", "numeric noninteger", "numeric-edited" };
+
+static int move_cat_sym(const Sym *s, int rm)
+{
+    if (s->is_group || sym_is_boolean(s) || sym_bitlike(s)) return MC_NONE;
+    if (rm) return sym_is_national(s) || s->usage == U_NATIONAL ? MC_NAT : MC_ALNUM;
+    switch (s->pi.category) {
+    case PIC_ALPHABETIC: return MC_ALPHA;
+    case PIC_ALPHANUMERIC: return MC_ALNUM;
+    case PIC_ALPHANUMERIC_EDITED: return MC_ALNUMED;
+    case PIC_NATIONAL: return s->pi.edited ? MC_NATED : MC_NAT;
+    case PIC_NUMERIC: return s->pi.scale > 0 ? MC_NONINT : MC_INT;
+    case PIC_NUMERIC_EDITED: return MC_NUMED;
+    }
+    return MC_NONE;
+}
+
+/* why the move is invalid, into msg, or NULL: MOVE refuses it, and a
+ * CORRESPONDING pair it names does not correspond (2023 14.7.6 rule 2,
+ * 85 VI-68 6.4.3 rule 2) */
+#define MV_BAD(...) do { snprintf(msg, MV_MSG, __VA_ARGS__); return msg; } while (0)
+enum { MV_MSG = 256 };
+static const char *move_invalid(const Opnd *src, const Ref *dst, char *msg)
+{
+    const Sym *d = dst->sym;
+    const Sym *sy = src->kind == O_REF ? src->ref.sym : NULL;
+    /* index and pointer items are set, not moved (rule 1; 85 syntax rule 4) */
+    for (int k = 0; k < 2; k++) {
+        const Sym *x = k ? d : sy;
+        if (x && !x->is_group && (x->usage == U_INDEX || x->usage == U_POINTER))
+            MV_BAD("MOVE: the %s item '%s' is not an operand of MOVE; use SET (%s)", x->usage == U_INDEX ? "index" : "pointer", x->name,
+                   g_std < 2002 ? "85 VI-103 syntax rule 4" : "2023 14.9.25.3 rule 1");
+    }
+    int r = move_cat_sym(d, dst->rm);
+    int rnum = r == MC_INT || r == MC_NONINT || r == MC_NUMED;
+    /* binary-char, -short, -long go only to numeric items (rule 8) */
+    if (sy && !src->ref.rm && !sy->is_group && (sy->usage == U_BCHAR || sy->usage == U_UBCHAR || sy->usage == U_SSHORT || sy->usage == U_SINT) && !rnum)
+        MV_BAD("MOVE: the %s item '%s' goes only to a numeric or numeric-edited item, not '%s' (2023 14.9.25.3 rule 8)",
+               sy->usage == U_SSHORT ? "binary-short" : sy->usage == U_SINT ? "binary-long" : "binary-char", sy->name, d->name);
+    if (r == MC_NONE) return NULL;
+    if (src->kind == O_FIG || src->kind == O_ALL) {
+        const char *w = src->tok->s;
+        if (src->kind == O_FIG && !strncmp(w, "null", 4)) return NULL;
+        int zero = src->kind == O_FIG && !strncmp(w, "zero", 4);
+        char up[64]; int n = 0;
+        for (; w[n] && n < 63; n++) up[n] = (char)toupper((unsigned char)w[n]);
+        up[n] = 0;
+        if (zero && r == MC_ALPHA)
+            MV_BAD("MOVE: ZERO cannot be moved to the alphabetic item '%s' (%s)", d->name, g_std < 2002 ? "85 VI-104 general rule 3b" : "2023 14.9.25.3 rule 6");
+        if (zero || !rnum) return NULL;
+        const char *rn = r == MC_NUMED ? "numeric-edited" : "numeric";
+        if (g_std < 2002) {
+            if (src->kind == O_FIG && !strncmp(w, "space", 5))
+                MV_BAD("MOVE: SPACE cannot be moved to the %s item '%s' (85 VI-104 general rule 3a)", rn, d->name);
+            return NULL;
+        }
+        /* an ALL literal of digits (or a symbolic character that is a
+         * digit) may go to an integer: an obsolete feature */
+        int digits = 1;
+        if (src->kind == O_ALL && !src->tok->nat) for (int i = 0; i < src->tok->len; i++) digits &= isdigit((unsigned char)w[i]) != 0;
+        else if (src->kind == O_ALL) digits = 0;
+        else digits = symch_find(w) >= 0 && isdigit(fig_byte(w));
+        if (digits && r == MC_INT) return NULL;
+        MV_BAD("MOVE: the figurative constant %s%s cannot be moved to the %s item '%s' (2023 14.9.25.3 rule 5)",
+               src->kind == O_ALL ? "ALL " : "", src->kind == O_ALL ? tok_desc(src->tok) : up, rn, d->name);
+    }
+    int s = MC_NONE;
+    if (src->kind == O_NUM) s = numlit_is_int(&src->num) ? MC_INT : MC_NONINT;
+    else if (src->kind == O_STR) s = src->tok->boolv ? MC_NONE : src->tok->nat ? MC_NAT : MC_ALNUM;
+    else if (sy && !sy->is_cond) s = move_cat_sym(sy, src->ref.rm);
+    if (s == MC_NONE) return NULL;
+    int ok = 1; const char *r85 = NULL;
+    switch (s) {
+    case MC_ALPHA: case MC_ALNUMED: ok = !rnum; r85 = "3a"; break;
+    case MC_NAT: ok = r != MC_ALPHA && r != MC_ALNUM && r != MC_ALNUMED; break;
+    case MC_NATED: ok = r == MC_NAT || r == MC_NATED; break;
+    case MC_INT: case MC_NUMED: ok = r != MC_ALPHA; r85 = "3b"; break;
+    case MC_NONINT:
+        if (r == MC_ALPHA) { ok = 0; r85 = "3b"; break; }
+        if (r == MC_ALNUM || r == MC_ALNUMED) {
+            /* the 85 text forbids it (3c) but NIST NC105A, NC114M and NC124A
+             * move a noninteger item to an alphanumeric one, and the cases
+             * win under -std=85 (the ruling of 2026-08-31; a literal was
+             * always refused) */
+            ok = g_std < 2002 && src->kind == O_REF; r85 = "3c"; break;
+        }
+        ok = r != MC_NAT && r != MC_NATED;
+        break;
+    }
+    if (ok) return NULL;
+    if (s == MC_NAT)
+        MV_BAD("a national item cannot be moved to the %s item '%s' (2023 14.9.25.3 rule 10, Table 16): use FUNCTION DISPLAY-OF", mc_name[r], d->name);   /* r is alphanumeric or alphabetic here */
+    char why[48];
+    if (g_std < 2002 && r85) snprintf(why, sizeof why, "85 VI-104 general rule %s", r85);
+    else snprintf(why, sizeof why, "2023 14.9.25.3 rule 10, Table 16");
+    MV_BAD("MOVE: %s %s %s cannot be moved to the %s item '%s' (%s)", s == MC_ALPHA || s == MC_ALNUM || s == MC_ALNUMED ? "an" : "a",
+           mc_name[s], src->kind == O_REF ? "item" : "literal", r == MC_INT || r == MC_NONINT ? "numeric" : mc_name[r], d->name, why);
+}
+#undef MV_BAD
+
+static void move_valid(const Opnd *src, const Ref *dst)
+{
+    char msg[MV_MSG];
+    const char *why = move_invalid(src, dst, msg);
+    if (why) die_at(src->kind == O_FIG || src->kind == O_ALL ? src->line : dst->line, "%s", why);
 }
 
 static int corr_walk(Ref *a, Ref *b, int mode, int rounded, int size_err)
@@ -7489,6 +7646,8 @@ static int corr_walk(Ref *a, Ref *b, int mode, int rounded, int size_err)
         if (c1->is_group && c2->is_group) { n += corr_walk(&r1, &r2, mode, rounded, size_err); continue; }
         if (mode == 0) {
             Opnd o = ref_opnd(&r1);
+            char msg[MV_MSG];
+            if (move_invalid(&o, &r2, msg)) continue;       /* not a corresponding pair (14.7.6 rule 2) */
             emit_move(&o, &r2); n++;
         } else {
             if (c1->is_group || c2->is_group || c1->pi.category != PIC_NUMERIC || c2->pi.category != PIC_NUMERIC) continue;
@@ -7530,6 +7689,49 @@ static void parse_arith_corr(int mode, const char *between, const char *end_word
     parse_size_error_clauses(size_err, end_word);
 }
 
+/* storage in common: the two items' records, or one redefining the other's */
+static int rec_base(const Sym *s)
+{
+    int r = s->record;
+    while (r >= 0 && g_sym[r].redefines >= 0) r = g_sym[r].redefines;
+    return r;
+}
+
+/* 0: the sender is safe to identify again for each receiver; 1: copy it
+ * to a compiler-made record first; 2: an OCCURS DEPENDING ON group,
+ * whose DEPENDING ON item is copied instead (its length is a run-time
+ * one, and the bytes stay where they are) */
+static int move_needs_temp(const Opnd *src, const Ref *dst, int n)
+{
+    if (n < 2 || src->kind != O_REF) return 0;
+    const Ref *r = &src->ref;
+    for (int i = 0; i < n - 1; i++) {
+        int rb = rec_base(dst[i].sym);
+        if (r->rm_odo) { if (r->odo_dep && rec_base(r->odo_dep) == rb) return 2; continue; }
+        for (int k = 0; k < r->nsub; k++)
+            if (r->sub[k].sym && rec_base(r->sub[k].sym) == rb) return 1;
+    }
+    if (r->rm_odo) return 0;
+    /* a reference modifier's start that is an expression: any receiver
+     * may be in it */
+    if (r->rm && r->rm_len && !r->rm_bit && !r->rm_start) return 1;
+    /* a length that is one would need a snapshot of run-time length: not
+     * done, so refused when a receiver ahead of the last shares storage
+     * with an item the expressions name (docs/conformance/move.md) */
+    if (r->rm && !r->rm_len && r->rm_l0 >= 0)
+        for (int t = r->rm_s0; t < r->rm_l1; t++) {
+            if (g_tok[t].kind != T_WORD || (t >= r->rm_s1 && t < r->rm_l0)) continue;
+            for (int k = g_sym_base; k < g_nsym; k++) {
+                if (strcmp(g_sym[k].name, g_tok[t].s)) continue;
+                for (int i = 0; i < n - 1; i++)
+                    if (rec_base(&g_sym[k]) == rec_base(dst[i].sym))
+                        die_at(src->line, "MOVE: the sender's reference modification uses '%s', which a receiver before the last changes; "
+                               "identifying the sender once (general rule 1) with a computed length is not implemented", g_tok[t].s);
+            }
+        }
+    return 0;
+}
+
 static void parse_move(void)
 {
     if (accept_word("corresponding") || accept_word("corr")) {
@@ -7539,13 +7741,53 @@ static void parse_move(void)
     }
     Opnd src; parse_operand(&src);
     expect_word("to");
-    int n = 0;
+    int n = 0, cap = 0;
+    Ref *dst = NULL;
     while (at_operand()) {
-        Ref dst; parse_ref(&dst);
-        emit_move(&src, &dst);
+        if (n == cap) { cap = cap ? 2 * cap : 8; dst = xrealloc(dst, (size_t)cap * sizeof *dst); }
+        parse_ref(&dst[n]);
+        move_valid(&src, &dst[n]);
         n++;
     }
     if (!n) die_at(cur()->line, "MOVE needs a receiving item");
+    /* the sender is identified once, before the first move (general rule
+     * 1: MOVE a (b) TO b, c (b) moves a (b) to a temporary first).  When
+     * a receiver ahead of the last shares storage with a subscript, the
+     * DEPENDING ON item or a reference modifier's operands, the sender
+     * is copied to a compiler-made record first */
+    if (src.kind == O_FUNC && n > 1) {
+        /* a function-identifier likewise: evaluated once, its result
+         * kept for every receiver (RANDOM, CURRENT-DATE, or an argument
+         * that a receiver changes) */
+        int l = new_label(), sz = src.fsize > 0 ? src.fsize : 1;
+        emit("\t.data"); emit("\t.p2align 3"); emit(".L%d:", l); emit("\t.space %d", sz); emit("\t.text");
+        emit_fn_value(&src);
+        emit("\tadd r4, r1, r0");
+        char lb[24]; snprintf(lb, sizeof lb, ".L%d", l); emit_la("r3", lb);
+        emit_li("r5", sz);
+        emit_call("memcpy");
+        src.fsaved = l + 1;
+    }
+    int snap = move_needs_temp(&src, dst, n);
+    if (snap == 2) {
+        FDesc fd; fdesc_of(&fd, src.ref.odo_dep);
+        Sym *t = ftemp_new(&fd, src.line);
+        Ref tr = ftemp_ref(t, src.line), dr; memset(&dr, 0, sizeof dr);
+        dr.sym = src.ref.odo_dep; dr.line = src.line; dr.rm_l0 = -1;
+        Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = dr; o.line = src.line;
+        emit_move(&o, &tr);
+        src.ref.odo_dep = t;
+    } else if (snap == 1) {
+        FDesc fd; fdesc_of(&fd, src.ref.sym);
+        if (src.ref.rm) { fd.group = 1; fd.size = (int)(src.ref.rm_nat ? 2 * src.ref.rm_len : src.ref.rm_len); }
+        Sym *t = ftemp_new(&fd, src.line);
+        Ref tr = ftemp_ref(t, src.line);
+        emit_move(&src, &tr);
+        Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = tr; o.line = src.line;
+        src = o;
+    }
+    for (int i = 0; i < n; i++) emit_move(&src, &dst[i]);
+    free(dst);
 }
 
 /* ---- arithmetic ------------------------------------------------------- */

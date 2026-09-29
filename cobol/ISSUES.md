@@ -3502,3 +3502,60 @@ use-refers-main, use-goto-into, rw-use-generate. CCVS-85 unchanged;
 harness 341/341; -std=85 byte-identical on all 229 Open Systems
 programs; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+**14.9.25 MOVE** (docs/conformance/move.md). Table 16 checked cell by
+cell, 90 programs; eleven forbidden moves were accepted. Found and
+fixed:
+
+- syntax rule 10 / Table 16 (85 general rule 3a-b): alphabetic and
+  alphanumeric-edited to numeric or numeric-edited, national-edited to
+  numeric, integer, noninteger and numeric-edited to alphabetic, all
+  accepted; refused. A noninteger item to an alphanumeric one stays
+  accepted under -std=85 (NIST NC105A/NC114M/NC124A, the ruling of
+  2026-08-31) and is refused under -std=2002. move_invalid() holds the
+  table and syntax rules 1, 5, 6 and 8.
+- rule 1 (85 rule 4): an index or pointer item as a MOVE operand,
+  accepted; refused. Rule 5: HIGH-VALUE and the other alphanumeric
+  figuratives to a numeric item under -std=2002; rule 6: ZERO to an
+  alphabetic item; rule 8: a binary-char/-short/-long sender to a
+  non-numeric receiver -- all accepted, all refused.
+- 14.7.6 rules 2 and 4 (85 6.4.3 the same): MOVE CORRESPONDING moved
+  pairs whose MOVE is invalid, and index items; such pairs do not
+  correspond and are skipped now. GnuCOBOL refuses the statement.
+- general rule 1 (85 general rule 2): the sender was identified again
+  for each receiver -- `MOVE te (b) TO b, ce (b)` stored te (1) in
+  ce (1), not te (2), and `MOVE FUNCTION RANDOM TO r1 r2` drew two
+  numbers. parse_move now collects the receivers first; when one ahead
+  of the last shares storage with a subscript or a reference modifier's
+  start, the sender is copied to a compiler-made record (ftemp_new);
+  for an OCCURS DEPENDING ON group the DEPENDING ON item is copied
+  instead; a function is evaluated once into a static copy
+  (Opnd.fsaved). A computed reference-modification length over such an
+  item is refused as not implemented. GnuCOBOL gets the ODO case wrong
+  (docs/oracles.md).
+- zero-length literals ("", X"", N"", B"") were accepted in both
+  editions; they are COBOL 2014's (85: 1 through 160 characters; 2002
+  8.3.1.2.1.2, .3.2, .4.2 rule 1). Refused.
+- -std=2002 refused a 19-digit item with the 1985 limit's message; 2002
+  allows 31. Named as a gap (the arithmetic is 64-bit).
+
+Found on the way, not a MOVE rule: **a use-after-free in the compiler.**
+sym_new grew g_sym with realloc, but Sym pointers live the whole
+compile (every Ref a statement holds while parsing, odo_dep_sym, a
+file's keys, g_returning, UCall), and ftemp_new makes records in the
+PROCEDURE DIVISION. A COMPUTE whose user-function call grew the table
+read freed memory (AddressSanitizer, the caller padded to 115 items so
+the table crossed a doubling). The table is now reserved once with mmap
+(1M entries of address space, committed as it grows) and never moves.
+An ASan build over every test program, and the padded reproducer at
+90-600 items, is clean.
+
+Tests: free/moveonce (the oracle agrees with its documented
+divergence), free/moverules (the oracle agrees), 2002/movecorr (no
+oracle); bad/move-alpha-to-num, move-edited-to-alpha, move-space-to-num,
+move-zero-to-alpha, move-index, move-refmod-len-recv, empty-literal,
+std2002-move-nonint-alnum, -move-natedited-num, -move-highvalue-num,
+-move-all-edited, -move-binchar-alnum, -move-pointer, -empty-boolean.
+CCVS-85 unchanged; -std=85 byte-identical on all 229 Open Systems
+programs; majesty PASS; majesty-functions PASS; Open Systems paper
+unchanged.

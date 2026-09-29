@@ -61,7 +61,11 @@ COBOL 2002/2023 (Stage B):
   >>EVALUATE, ...);
 - exceptions: USE AFTER EXCEPTION CONDITION ... FILE, WHEN EXCEPTION
   with a file-name or open mode, ACCEPT ... ON EXCEPTION, the rest of
-  Table 13's conditions;
+  Table 13's conditions (EC-DATA-INCOMPATIBLE among them: MOVE general
+  rule 6d1 and the arithmetic statements never raise it);
+- a MOVE sender reference-modified with a computed length over an item
+  that a receiver before the last changes (general rule 1 needs a
+  snapshot of run-time length; docs/conformance/move.md);
 - reference modification in a screen item and in positioned DISPLAY
   and ACCEPT; a reference-modified numeric receiver of national data;
 - LENGTH OF, BYTE-LENGTH and other functions of a reference
@@ -76,6 +80,9 @@ COBOL 2002/2023 (Stage B):
   character item redefining a bit item that starts mid-byte;
 - EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
   the caller (docs/conformance/exit.md);
+- numeric items and literals of 19 to 31 digits (COBOL 2002 raised the
+  limit from 18; the arithmetic here is 64-bit), and with them MOVE's
+  31-digit cap on an alphanumeric sender (2023 14.9.25.4 rule 6d3);
 - RESUME (optional since 2014);
 - ALPHABET ... IS EBCDIC, as a collating sequence and a CODE-SET (ruled
   below).

@@ -26,6 +26,7 @@ began this; ISSUES-96 on record the sweeps.
 | section | page | swept |
 |---|---|---|
 | 14.9.14 EXIT | [exit.md](exit.md) | 2026-09-28 |
+| 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
 | 14.9.28 PERFORM | [perform.md](perform.md) | 2026-09-28 |
 | 14.9.29 RAISE | [raise.md](raise.md) | 2026-09-28 |
 | 7.3.25 TURN | [turn.md](turn.md) | 2026-09-28 |

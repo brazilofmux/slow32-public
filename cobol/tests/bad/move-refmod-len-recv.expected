@@ -1,0 +1,1 @@
+MOVE: the sender's reference modification uses 'k', which a receiver before the last changes; identifying the sender once (general rule 1) with a computed length is not implemented
