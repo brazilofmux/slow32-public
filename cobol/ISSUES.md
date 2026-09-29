@@ -3870,5 +3870,21 @@ Tests: bad/arith-composite, bad/divide-remainder-two, bad/rounded-mode
 (reworded), warn/ext-every (BP-E14). Harness 443/443, CCVS-85
 unchanged, -std=85 byte-identical on all 229 Open Systems programs,
 majesty PASS, majesty-functions PASS, Open Systems paper unchanged.
-Next: EC-DATA-INCOMPATIBLE (never raised), then the per-statement rules
-and the page.
+EC-DATA-INCOMPATIBLE (14.6.13.2 rule 2; MOVE GR 6d1), never raised
+before: with the condition checked, a numeric DISPLAY, packed or
+national sending item whose content fails the NUMERIC class test raises
+it -- the operands of ADD, SUBTRACT, MULTIPLY and DIVIDE (an ADD TO /
+SUBTRACT FROM receiver too, which is summed), COMPUTE's operands as the
+expression pushes them, a MOVE's numeric sender, a relation's operands.
+Binary items are always valid. Unchecked, nothing is emitted. The other
+statements that read numeric content do not check yet.
+
+And the class test it rests on had a hole: IS NUMERIC on a packed item
+was always true. cob_class now checks the digit nibbles (0-9) and the
+sign nibble (A-F); GnuCOBOL agrees (free/packedclass).
+
+Tests: 2002/ecincompat (ADD), 2002/ecincompat2 (COMPUTE),
+free/packedclass (the oracle agrees, default dialect). Harness 446/446,
+CCVS-85 unchanged, -std=85 byte-identical on all 229 Open Systems
+programs, majesty PASS, majesty-functions PASS, Open Systems paper
+unchanged. Next: the per-statement rules and the page.

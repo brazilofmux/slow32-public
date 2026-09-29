@@ -1165,6 +1165,17 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
     const unsigned char *p = vp;
     int n = (int)d->size;
     if (kind == 0) {
+        if (d->cat == COB_NUM && d->usage == COB_U_PACKED) {
+            /* packed decimal: each digit nibble 0-9, the last nibble a
+             * sign (A-F: C, D and F as written here, A, B, E as IBM also
+             * reads them) */
+            for (int i = 0; i < n; i++) {
+                unsigned hi = p[i] >> 4, lo = p[i] & 15;
+                if (hi > 9) return 0;
+                if (i < n - 1 ? lo > 9 : lo < 10) return 0;
+            }
+            return 1;
+        }
         if (d->cat == COB_NUM && d->usage != COB_U_DISPLAY) return 1;
         int start = (d->flags & COB_F_SEPLEAD) ? 1 : 0, end = (d->flags & COB_F_SEPTRAIL) ? n - 1 : n;
         for (int i = start; i < end; i++) {

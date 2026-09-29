@@ -61,8 +61,9 @@ COBOL 2002/2023 (Stage B):
   >>EVALUATE, ...);
 - exceptions: USE AFTER EXCEPTION CONDITION ... FILE, WHEN EXCEPTION
   with a file-name or open mode, ACCEPT ... ON EXCEPTION, the rest of
-  Table 13's conditions (EC-DATA-INCOMPATIBLE among them: MOVE general
-  rule 6d1 and the arithmetic statements never raise it);
+  Table 13's conditions (EC-DATA-INCOMPATIBLE is raised by the
+  arithmetic statements, MOVE and relations since ISSUES-101, not yet
+  by the other statements that read numeric content);
 - a MOVE sender reference-modified with a computed length over an item
   that a receiver before the last changes (general rule 1 needs a
   snapshot of run-time length; docs/conformance/move.md);

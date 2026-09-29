@@ -3738,6 +3738,7 @@ static int opnd_is_boolean(const Opnd *o);
 static int ref_is_national(const Ref *r);
 static int ref_static_len(const Ref *r);
 static void nat_fig_opnd(Opnd *o, int nbytes);
+static void emit_incompat(const Opnd *o);
 
 /* national: an elementary PIC N item, or a national group, which is
  * treated as one (2023 13.18.29.4 rule 2b) */
@@ -6493,6 +6494,7 @@ static void emit_cond_value(Cond *c)
         return;
     }
     /* C_REL */
+    emit_incompat(&c->x); emit_incompat(&c->y);
     if (c->ptr) {
         emit_ptr_value(&c->x, "r1");
         int base = g_slot_base++;
@@ -8105,6 +8107,7 @@ static void parse_move(void)
         n++;
     }
     if (!n) die_at(cur()->line, "MOVE needs a receiving item");
+    emit_incompat(&src);                /* a numeric sender's content (14.6.13.2 rule 2; MOVE GR 6d1) */
     /* the sender is identified once, before the first move (general rule
      * 1: MOVE a (b) TO b, c (b) moves a (b) to a temporary first).  When
      * a receiver ahead of the last shares storage with a subscript, the
@@ -8189,8 +8192,10 @@ static void check_numeric_opnd(Opnd *o)
 }
 
 /* push an operand onto the numeric stack */
+static int g_incompat_push;
 static void emit_push(Opnd *o)
 {
+    if (g_incompat_push) emit_incompat(o);
     if (o->kind == O_EXPR) die_at(o->line, "internal: expression pushed as an operand");
     if (o->kind == O_FUNC) {
         emit_fn_value(o);
@@ -8642,6 +8647,31 @@ static void emit_dec_addto(Opnd *op, Ref *rs, int nr, int subtract)
     }
 }
 
+/* EC-DATA-INCOMPATIBLE (2023 14.6.13.2 rule 2): a numeric sending item
+ * whose content would fail a NUMERIC class test, referenced while the
+ * condition is checked.  Binary items are always valid; DISPLAY, packed
+ * and national numeric ones are tested before the statement uses them.
+ * Nothing is emitted unless the checking is on. */
+static int g_incompat_push;         /* COMPUTE: test each operand as the expression pushes it */
+static void emit_incompat(const Opnd *o)
+{
+    if (o->kind != O_REF || o->ref.rm || !ec_on_name("EC-DATA-INCOMPATIBLE")) return;
+    Sym *x = o->ref.sym;
+    if (x->is_group || x->pi.category != PIC_NUMERIC) return;
+    if (x->usage != U_DISPLAY && x->usage != U_PACKED && x->usage != U_NATIONAL) return;
+    Arg a[3] = { arg_ref(&o->ref), arg_desc(sym_desc(x)), arg_imm(0) };
+    emit_args(a, 3);
+    emit_call("cob_class");
+    int Lok = new_label();
+    emit("\tbne r1, r0, .L%d", Lok);
+    emit_ec_raise(ec_find("EC-DATA-INCOMPATIBLE", 0));
+    emit_label(Lok);
+}
+static void emit_incompat_refs(const Ref *rs, int nr)
+{
+    for (int k = 0; k < nr; k++) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = rs[k]; o.line = rs[k].line; emit_incompat(&o); }
+}
+
 /* the composite of operands (X3.23-1985 6.4.4 rule 2; 2023 14.7.7 rule
  * 2): the operands superimposed on their decimal points -- the widest
  * integer part and the widest fraction -- at most 18 digits in 1985, 31
@@ -8702,6 +8732,8 @@ static void parse_add(void)
     } else die_at(cur()->line, "expected TO or GIVING in ADD");
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
     arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
+    for (int k = 0; k < n; k++) emit_incompat(&ops[k]);
+    if (!giving) emit_incompat_refs(rs, nr);            /* ADD a TO b: b is summed too */
     int size_err = at_size_error_clause() || ec_size_on();
 
     int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
@@ -8744,6 +8776,8 @@ static void parse_subtract(void)
         for (int k = 0; k < n; k++) all[na++] = ops[k];
         if (giving) all[na++] = minuend;
         arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
+        for (int k = 0; k < na; k++) emit_incompat(&all[k]);
+        if (!giving) emit_incompat_refs(rs, nr);
     }
     int size_err = at_size_error_clause() || ec_size_on();
 
@@ -8787,6 +8821,7 @@ static void parse_multiply(void)
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
         if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
         arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);   /* the receiving items */
+        emit_incompat(&a); emit_incompat(&b);
         int size_err = at_size_error_clause() || ec_size_on();
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
@@ -8797,6 +8832,7 @@ static void parse_multiply(void)
     nr = parse_ref_list(rs, rd, MAXOPS, 0);
     if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
     arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);
+    emit_incompat(&a); emit_incompat_refs(rs, nr);
     int size_err = at_size_error_clause() || ec_size_on();
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
@@ -8861,6 +8897,7 @@ static void parse_divide(void)
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
             if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
             arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
+            emit_incompat(&a); emit_incompat(&b);
             int size_err = size_error_after_remainder() || ec_size_on();
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
             emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
@@ -8872,6 +8909,7 @@ static void parse_divide(void)
         nr = parse_ref_list(rs, rd, MAXOPS, 0);
         if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
         arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
+        emit_incompat(&a); emit_incompat_refs(rs, nr);
         int size_err = at_size_error_clause() || ec_size_on();
         if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
         for (int i = 0; i < nr; i++) {
@@ -8889,6 +8927,7 @@ static void parse_divide(void)
     if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
     if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
     arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
+    emit_incompat(&a); emit_incompat(&b);
     int size_err = size_error_after_remainder() || ec_size_on();
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
@@ -9023,7 +9062,9 @@ static void parse_compute(void)
         accept_word("end-compute");
         return;
     }
+    g_incompat_push++;
     parse_expr();
+    g_incompat_push--;
     int size_err = at_size_error_clause() || ec_size_on();
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     parse_size_error_clauses(size_err, "end-compute");
