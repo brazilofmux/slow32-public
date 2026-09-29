@@ -88,6 +88,10 @@ COBOL 2002/2023 (Stage B):
   below).
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
+- ADDRESS OF (2023 8.4.3.11), so a pointer is set only by CALL; and
+  ALLOCATE and FREE (docs/conformance/usage.md);
+- USAGE BINARY-DOUBLE, whose range needs 19 digits (with the 31-digit
+  gap above).
 
 ## 3. Out of scope, by ruling
 

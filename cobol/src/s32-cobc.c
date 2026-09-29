@@ -1955,6 +1955,17 @@ static void sym_finish(Sym *s)
     if (s->has_pic && native)
         die_at(s->line, "'%s': USAGE %s takes no PICTURE", s->name, usage_name(u));
 
+    if (native && (u == U_INDEX || u == U_POINTER) && !s->is_index && !s->is_ftemp) {
+        /* no VALUE, JUSTIFIED or BLANK WHEN ZERO on an index or pointer item,
+         * nor (1985) SYNCHRONIZED: X3.23-1985 USAGE syntax rule 6; 2023
+         * 13.16.3 rule 10, 13.18.32.3 rule 3, 13.18.8.3 rule 1 */
+        const char *what = s->value_tok ? "VALUE" : s->just ? "JUSTIFIED" : s->blank_zero ? "BLANK WHEN ZERO" :
+                           (s->sync && g_std < 2002 && u == U_INDEX) ? "SYNCHRONIZED" : NULL;
+        if (what)
+            die_at(s->line, "'%s': a USAGE %s item takes no %s clause (%s)", s->name, u == U_INDEX ? "INDEX" : "POINTER", what,
+                   g_std < 2002 && u == U_INDEX ? "X3.23-1985 USAGE syntax rule 6" :
+                   s->value_tok ? "2023 13.16.3 rule 10" : s->just ? "2023 13.18.32.3 rule 3" : "2023 13.18.8.3 rule 1");
+    }
     if (native) {
         switch (u) {
         case U_SINT:   s->size = 4; s->pi.digits = 10; s->pi.is_signed = 1; break;
@@ -2005,12 +2016,12 @@ static void sym_finish(Sym *s)
         break;
     case U_BINARY: case U_COMP5:
         if (pi->category != PIC_NUMERIC)
-            die_at(s->line, "'%s': USAGE %s needs a numeric PICTURE", s->name, usage_name(u));
+            die_at(s->line, "'%s': USAGE %s needs a numeric PICTURE (2023 13.18.60.3 rule 3)", s->name, usage_name(u));
         s->size = binary_bytes(pi->digits, u);
         break;
     case U_PACKED:
         if (pi->category != PIC_NUMERIC)
-            die_at(s->line, "'%s': USAGE COMP-3 needs a numeric PICTURE", s->name);
+            die_at(s->line, "'%s': USAGE PACKED-DECIMAL (COMP-3) needs a numeric PICTURE (2023 13.18.60.3 rule 3)", s->name);
         s->size = pi->digits / 2 + 1;
         break;
     }
@@ -2271,6 +2282,8 @@ static void parse_data_item1(void)
         for (;;) {
             int is_all = accept_word("all");
             Tok *v = cur();
+            if (v->kind == T_WORD && (!strcmp(v->s, "usage") || !strcmp(v->s, "comp") || !strcmp(v->s, "display") || !strcmp(v->s, "binary")))
+                die_at(v->line, "a level 88 entry takes no USAGE clause (%s)", g_std < 2002 ? "X3.23-1985 level 88 format" : "2023 13.18.60.3 rule 1");
             if (!(v->kind == T_STR || v->kind == T_NUM || (v->kind == T_WORD && is_figurative(v->s))))
                 die_at(v->line, "expected a literal in the VALUE of '%s'", s->name);
             if (s->ncv >= MAXCV) die_at(v->line, "too many values for '%s'", s->name);
@@ -2370,9 +2383,22 @@ static void parse_data_item1(void)
         else if (!strcmp(t->s, "comp") || !strcmp(t->s, "computational") || !strcmp(t->s, "binary")) u = U_BINARY;
         else if (!strcmp(t->s, "comp-3") || !strcmp(t->s, "computational-3") || !strcmp(t->s, "packed-decimal")) u = U_PACKED;
         else if (!strcmp(t->s, "comp-5") || !strcmp(t->s, "computational-5")) u = U_COMP5;
-        else if (!strcmp(t->s, "signed-int") || !strcmp(t->s, "binary-long")) u = U_SINT;
+        else if (!strcmp(t->s, "binary-long") || !strcmp(t->s, "binary-short")) {
+            /* [SIGNED | UNSIGNED], signed by default (2023 13.18.60.2) */
+            int lng = t->s[7] == 'l';
+            advance();
+            int uns = accept_word("unsigned");
+            if (!uns) accept_word("signed");
+            u = lng ? (uns ? U_UINT : U_SINT) : (uns ? U_USHORT : U_SSHORT);
+            if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
+            s->usage = u; s->has_usage = 1;
+            continue;
+        }
+        else if (!strcmp(t->s, "binary-double"))
+            die_at(t->line, "USAGE BINARY-DOUBLE is not implemented (its range needs 19 digits; this compiler's arithmetic holds 18)");
+        else if (!strcmp(t->s, "signed-int")) u = U_SINT;
         else if (!strcmp(t->s, "unsigned-int")) u = U_UINT;
-        else if (!strcmp(t->s, "signed-short") || !strcmp(t->s, "binary-short")) u = U_SSHORT;
+        else if (!strcmp(t->s, "signed-short")) u = U_SSHORT;
         else if (!strcmp(t->s, "unsigned-short")) u = U_USHORT;
         else if (!strcmp(t->s, "binary-char")) {
             advance();
@@ -2601,6 +2627,8 @@ static void build_tree(void)
                        s->name, g_sym[s->parent].name);
             else { s->nat_usage = 1; s->in_natgroup = 1; }        /* implied (rule 3); a PICTURE of X or A is refused when finished */
         }
+        if (!s->is_group && s->usage == U_POINTER && s->level != 1 && !sym_in_strong(s))
+            die_at(s->line, "'%s': a USAGE POINTER item is at level 1, or in a strongly-typed group (2023 13.18.60.3 rule 14; 2002 rule 13)", s->name);
         if (s->is_group && s->has_pic && s->standin) s->has_pic = 0;      /* it stood in for a group: no second error */
         if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
         if (s->is_group && s->nat_usage) {
@@ -2630,6 +2658,11 @@ static void build_tree(void)
         if (!s->is_cond) continue;
         int p = s->parent;
         if (g_sym[p].is_cond) s->parent = g_sym[p].parent;
+        const Sym *cv = &g_sym[s->parent];
+        if (!cv->is_group && (cv->usage == U_INDEX || cv->usage == U_POINTER))
+            die_at(s->line, "'%s': a %s item is not a conditional variable (%s)", s->name,
+                   cv->usage == U_INDEX ? "USAGE INDEX" : "USAGE POINTER",
+                   g_std < 2002 && cv->usage == U_INDEX ? "X3.23-1985 USAGE syntax rule 7" : "2023 13.18.60.3 rule 11");
     }
 }
 
@@ -3745,11 +3778,35 @@ static void bit_arg_check(const Ref *r)
     if (first % 8) die_at(r->line, "'%s' is a bit data item passed BY REFERENCE and does not start a byte (its bit %ld; 2023 14.9.4.3 rule 6)", r->sym->name, first % 8 + 1);
 }
 
+static int g_fn_depth;              /* parsing a function-identifier's arguments (13.18.60.3 rules 8-10) */
+static int g_in_proc;               /* in a PROCEDURE DIVISION's statements */
+static int g_cond_depth;
+/* an index data item is referenced only in SEARCH, SET, a relation
+ * condition, a function argument or a USING phrase (2023 13.18.60.3
+ * rule 10; X3.23-1985 USAGE syntax rule 5); a pointer only in CALL,
+ * INITIALIZE, SET, a relation condition, a function argument or a
+ * procedure division header (rules 8-9) */
+static void index_ref_check(const Ref *r)
+{
+    const Sym *x = r->sym;
+    if (!g_in_proc || x->is_group || x->is_index || (x->usage != U_INDEX && x->usage != U_POINTER)) return;
+    if (g_cond_depth || g_fn_depth || !g_cur_stmt[0]) return;
+    /* MOVE says so itself, pointing at SET (move_invalid) */
+    static const char *ix_ok[] = { "SET", "SEARCH", "CALL", "EVALUATE", "MOVE", NULL };
+    static const char *pt_ok[] = { "SET", "CALL", "INITIALIZE", "EVALUATE", "MOVE", NULL };
+    const char *const *ok = x->usage == U_INDEX ? ix_ok : pt_ok;
+    for (int i = 0; ok[i]; i++) if (!strcmp(g_cur_stmt, ok[i])) return;
+    die_at(r->line, "the %s item '%s' is not an operand of %s (%s)", x->usage == U_INDEX ? "USAGE INDEX" : "USAGE POINTER", x->name, g_cur_stmt,
+           x->usage == U_INDEX ? (g_std < 2002 ? "X3.23-1985 USAGE syntax rule 5" : "2023 13.18.60.3 rule 10") : "2023 13.18.60.3 rules 8-9");
+}
+
 static void parse_ref(Ref *r)
 {
     memset(r, 0, sizeof *r);
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a data-name, found %s", tok_desc(t));
+    if (!strcmp(t->s, "address") && is_word(peek(1), "of") && !sym_lookup_quiet("address"))
+        die_at(t->line, "ADDRESS OF (a data-address identifier, 2023 8.4.3.11) is not implemented");
     r->line = t->line;
     if (!strcmp(t->s, "line-counter") || !strcmp(t->s, "page-counter")) {
         /* the report's counters: cells of its block, four-byte unsigned */
@@ -3896,6 +3953,7 @@ static void parse_ref(Ref *r)
     for (int i = 0; i < r->nsub; i++)
         if (!r->sub[i].sym && (r->sub[i].lit < 1 || r->sub[i].lit > r->sym->dim_count[i]))
             die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
+    index_ref_check(r);
 }
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
@@ -4222,7 +4280,19 @@ static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
     if (!high) { if (a->pi.is_signed) o->num.neg = 1; else { o->num.ndigits = 1; o->num.digits[0] = '0'; o->num.scale = 0; } }
 }
 
+static void parse_operand_raw_1(Opnd *o);
 static void parse_operand_raw(Opnd *o)
+{
+    Tok *t = cur();
+    int fn = t->kind == T_WORD && (!strcmp(t->s, "function") ||
+             (!strcmp(t->s, "length") && g_tp + 1 < g_ntok && is_word(&g_tok[g_tp + 1], "of")) ||
+             ((ufn_named(t->s) || (g_repo_all_intrinsic && fn89_known(t->s))) && !sym_lookup_quiet(t->s)));
+    g_fn_depth += fn;
+    parse_operand_raw_1(o);
+    g_fn_depth -= fn;
+}
+
+static void parse_operand_raw_1(Opnd *o)
 {
     memset(o, 0, sizeof *o);
     Tok *t = cur();
@@ -5423,7 +5493,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
     case O_FIG: case O_ALL: {
         /* ZERO against a numeric item is the number; otherwise a fill of
          * the other operand's length */
-        if (o->kind == O_FIG && other_numeric && !strncmp(o->tok->s, "zero", 4)) {
+        if (o->kind == O_FIG && other_numeric && (!strncmp(o->tok->s, "zero", 4) || !strncmp(o->tok->s, "null", 4))) {   /* NULL: a pointer's zero */
             NumLit z; numlit_zero(&z);
             int d; const char *l = num_lit_label(&z, &d);
             *addr = arg_label(l); *desc = arg_desc(d); return;
@@ -6084,7 +6154,6 @@ static int parse_relop(void)
  * are those of the last relation.  NOT before an abbreviation is the
  * ordinary negation (parse_not); the truth is the same as the text's. */
 static Opnd g_abbr_x; static int g_abbr_op = -1, g_abbr_neg;
-static int g_cond_depth;
 
 static Cond *parse_simple(void)
 {
@@ -7533,8 +7602,8 @@ static void emit_move(Opnd *src, Ref *dst)
         }
     }
 
-    /* numeric receiver */
-    if (src->kind == O_FIG && !strncmp(src->tok->s, "zero", 4)) {
+    /* numeric receiver; NULL is a pointer's zero address (SET ... TO NULL) */
+    if (src->kind == O_FIG && (!strncmp(src->tok->s, "zero", 4) || (!strncmp(src->tok->s, "null", 4) && d->usage == U_POINTER))) {
         Opnd z; memset(&z, 0, sizeof z); z.kind = O_NUM; numlit_zero(&z.num); z.line = src->line;
         emit_move(&z, dst);
         return;
@@ -7637,9 +7706,10 @@ static const char *move_invalid(const Opnd *src, const Ref *dst, char *msg)
     int r = move_cat_sym(d, dst->rm);
     int rnum = r == MC_INT || r == MC_NONINT || r == MC_NUMED;
     /* binary-char, -short, -long go only to numeric items (rule 8) */
-    if (sy && !src->ref.rm && !sy->is_group && (sy->usage == U_BCHAR || sy->usage == U_UBCHAR || sy->usage == U_SSHORT || sy->usage == U_SINT) && !rnum)
+    if (sy && !src->ref.rm && !sy->is_group && (sy->usage == U_BCHAR || sy->usage == U_UBCHAR || sy->usage == U_SSHORT || sy->usage == U_USHORT ||
+                                                   sy->usage == U_SINT || sy->usage == U_UINT) && !rnum)
         MV_BAD("MOVE: the %s item '%s' goes only to a numeric or numeric-edited item, not '%s' (2023 14.9.25.3 rule 8)",
-               sy->usage == U_SSHORT ? "binary-short" : sy->usage == U_SINT ? "binary-long" : "binary-char", sy->name, d->name);
+               sy->usage == U_SSHORT || sy->usage == U_USHORT ? "binary-short" : sy->usage == U_SINT || sy->usage == U_UINT ? "binary-long" : "binary-char", sy->name, d->name);
     if (r == MC_NONE) return NULL;
     if (src->kind == O_FIG || src->kind == O_ALL) {
         const char *w = src->tok->s;
@@ -12257,11 +12327,14 @@ static void compile_nested_unit(void)
     g_nsorttab = 0; g_initial = 0;
     /* a program contained in a recursive program is recursive (2023 11.10.4 rule 4) */
     g_recursive = u->recursive;
+    int in_proc = g_in_proc; char cur_stmt[16]; memcpy(cur_stmt, g_cur_stmt, sizeof cur_stmt);
+    g_in_proc = 0;
     parse_identification_division();
     parse_environment_division();
     parse_data_division();
     if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
     parse_procedure_division();
+    g_in_proc = in_proc; memcpy(g_cur_stmt, cur_stmt, sizeof cur_stmt);
     emit_unit_data();
     if (!g_saw_end_program) die_at(cur()->line, "a contained program needs its END PROGRAM");
 
@@ -12324,6 +12397,7 @@ static void skip_unit_body(void)
 static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
+    g_cur_stmt[0] = 0; g_in_proc = 1;
     Sym *using[8]; int nusing = 0;
     if (accept_word("using")) {
         while (cur()->kind == T_WORD && !at_word("returning")) {
@@ -12514,7 +12588,7 @@ static void parse_procedure_division(void)
         /* a sentence; after an error in it, the next one (ISSUES-41) */
         g_sentence_label = -1;
         jmp_buf jb, *outer = g_recover;
-        int start = g_tp, noemit = g_noemit, slot = g_slot_base, cdepth = g_cond_depth, merge = g_is_merge;
+        int start = g_tp, noemit = g_noemit, slot = g_slot_base, cdepth = g_cond_depth, merge = g_is_merge, fdepth = g_fn_depth;
         /* the state a statement may leave half-changed when it fails: the
          * checking (an exception-checking PERFORM's implicit TURN), the
          * PERFORMs open around it (cobol ISSUES-94 E10) */
@@ -12523,7 +12597,7 @@ static void parse_procedure_division(void)
         int necp = g_necp, ecp_handler = g_ecp_handler, npstk = g_npstk, necu = g_necu, in_finally = g_in_finally;
         if (setjmp(jb)) {
             g_recover = outer;
-            g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge;
+            g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge; g_fn_depth = fdepth;
             ecs_copy(&g_ecs, &ecs0);
             for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
             g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally;
@@ -14256,6 +14330,7 @@ int main(int argc, char **argv)
         g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_report_base = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
         g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0;
+        g_in_proc = 0;
         parse_identification_division();
         parse_environment_division();
         parse_data_division();

@@ -3619,3 +3619,28 @@ bad/pic-crdb-twice, -s-not-first, -p-and-point, -z-and-star,
 unchanged; harness 390/390; -std=85 byte-identical on all 229 Open
 Systems programs; majesty PASS; majesty-functions PASS; Open Systems
 paper unchanged.
+
+**13.18.60 USAGE, the rest** (docs/conformance/usage.md). Found and
+fixed: rule 10 (85 USAGE rule 5) -- an index data item in DISPLAY, ADD,
+COMPUTE and the other statements outside SEARCH, SET, conditions,
+function arguments and USING was accepted; index_ref_check() in
+parse_ref refuses it, with g_fn_depth for function arguments and
+g_in_proc saved around contained programs. Rules 8-9 likewise for
+pointers. Rule 11 (85 rule 7): a level 88 under an index or pointer
+item; rule 14: a pointer below level 1; 85 rule 6 (2023 13.16.3 rule
+10, 13.18.32.3 rule 3): VALUE, JUSTIFIED, BLANK WHEN ZERO on an index
+or pointer item, SYNCHRONIZED on an index under -std=85 -- all
+accepted, all refused. BINARY-SHORT and BINARY-LONG took no SIGNED or
+UNSIGNED phrase; they do. SET pointer TO NULL did not compile (emit_move's
+numeric path took only ZERO) and no pointer compared equal to NULL
+(opnd_args expanded NULL as alphanumeric bytes); both fixed. Named
+gaps: BINARY-DOUBLE (19 digits), ADDRESS OF (misread as a qualified
+name before), ALLOCATE/FREE. Rules 1 and 3 have clearer messages.
+
+Tests: 2002/binranges, 2002/pointerset (the oracle agrees with both);
+bad/usage-88, index-ref-display, index-ref-arith, index-88,
+index-value, index-sync-85, std2002-pointer-ref-display, -pointer-88,
+-pointer-level, -pointer-value, -binary-double, -address-of. CCVS-85
+unchanged; harness 404/404; -std=85 byte-identical on all 229 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.
