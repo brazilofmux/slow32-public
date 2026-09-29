@@ -285,7 +285,8 @@ typedef struct s32_mmio_envp_info {
 #define S32_TERM_RESTORE_SCREEN 11 // Pop screen contents and repaint
 #define S32_TERM_BEGIN_UPDATE 12  // Begin buffered update (shadow only, no stdout)
 #define S32_TERM_END_UPDATE   13  // End update: diff shadow vs prev, emit minimum ANSI
-#define S32_TERM_OPCODE_COUNT 14  // Total opcodes for term service
+#define S32_TERM_READ_CHAR    14  // Blocking read of one character, UTF-8 decoded: its code point
+#define S32_TERM_OPCODE_COUNT 15  // Total opcodes for term service
 
 // Tube service opcode offsets (relative to negotiated base). 16-opcode
 // window; 6..15 reserved. See docs/TUBE.md.

@@ -30,6 +30,7 @@
 
 #include "cpu.h"
 #include "mmio.h"
+#include "term_width.h"
 
 #define S32_MMIO_REQ_HEAD_OFFSET    0x0000u
 #define S32_MMIO_REQ_TAIL_OFFSET    0x0004u
@@ -164,7 +165,8 @@ typedef struct QEMU_PACKED s32_mmio_sockaddr_in {
 #define S32_TERM_RESTORE_SCREEN 11
 #define S32_TERM_BEGIN_UPDATE 12
 #define S32_TERM_END_UPDATE   13
-#define S32_TERM_OPCODE_COUNT 14
+#define S32_TERM_READ_CHAR    14
+#define S32_TERM_OPCODE_COUNT 15
 
 typedef struct Slow32MMIODesc {
     uint32_t opcode;
@@ -527,11 +529,22 @@ static void slow32_mmio_cleanup_services(Slow32MMIOContext *ctx)
 #define TERM_MAX_SAVE_DEPTH 8
 #define TERM_MAX_PENDING_CLEARS 8
 
+/* A cell holds a grapheme cluster, as far as the shadow can tell one: a
+ * base code point and those that join it without taking a column
+ * (combining marks, variation selectors, what follows a ZERO WIDTH
+ * JOINER), at most TERM_CLUSTER of them.  A character takes its display
+ * width in cells (term_width.h); a double-width character's second cell is
+ * marked and never painted on its own.  The same model as the emulators'
+ * tools/emulator/mmio_ring.c. */
+#define TERM_CLUSTER 4
+enum { TERM_NARROW = 0, TERM_WIDE = 1, TERM_WIDE_TAIL = 2 };
 typedef struct {
-    uint8_t ch;
+    uint32_t ch;                        /* the base code point */
+    uint32_t mark[TERM_CLUSTER - 1];    /* the joining ones, 0 past the last */
     uint8_t attr;   /* 0=normal, 1=bold, 7=reverse, etc. */
     uint8_t fg;     /* ANSI 0-7 */
     uint8_t bg;     /* ANSI 0-7 */
+    uint8_t wide;   /* TERM_NARROW, TERM_WIDE (first of two), TERM_WIDE_TAIL */
 } Slow32TermCell;
 
 typedef struct {
@@ -567,6 +580,12 @@ typedef struct {
      * is blanked over its range so the repaint covers it. */
     int n_pending_clears;
     struct { int mode, row, col; } pending_clears[TERM_MAX_PENDING_CLEARS];
+    /* The UTF-8 sequence output is part way through, and the cell the last
+     * character went to, for a joining code point to join */
+    uint32_t u8_cp;
+    int u8_need;
+    int last_row, last_col;
+    bool last_valid, joiner;
 } Slow32TermState;
 
 static void *slow32_term_create(void)
@@ -631,9 +650,109 @@ static inline Slow32TermCell *slow32_term_cell_at(Slow32TermState *ts,
     return &ts->cells[row * ts->cols + col];
 }
 
+static void slow32_term_blank_half(Slow32TermState *ts, int row, int col)
+{
+    Slow32TermCell *c = slow32_term_cell_at(ts, row, col);
+    if (!c) {
+        return;
+    }
+    if (c->wide == TERM_WIDE_TAIL) {
+        Slow32TermCell *l = slow32_term_cell_at(ts, row, col - 1);
+        if (l) {
+            l->ch = ' ';
+            l->wide = TERM_NARROW;
+        }
+    } else if (c->wide == TERM_WIDE) {
+        Slow32TermCell *t = slow32_term_cell_at(ts, row, col + 1);
+        if (t) {
+            t->ch = ' ';
+            t->wide = TERM_NARROW;
+        }
+    }
+}
+
+static void slow32_term_cell_join(Slow32TermCell *c, uint32_t cp)
+{
+    for (int k = 0; k < TERM_CLUSTER - 1; k++) {
+        if (!c->mark[k]) {
+            c->mark[k] = cp;
+            return;
+        }
+    }
+}
+
+/* one character at the cursor: the cells its width takes, the halves of
+ * any double-width character it overwrites blanked, as a terminal does */
+static void slow32_term_shadow_char(Slow32TermState *ts, uint32_t cp)
+{
+    int w = s32_term_width(cp);
+    if (w == 0 || ts->joiner) {
+        Slow32TermCell *l = ts->last_valid ?
+            slow32_term_cell_at(ts, ts->last_row, ts->last_col) : NULL;
+        if (l) {
+            slow32_term_cell_join(l, cp);
+        }
+        ts->joiner = cp == 0x200D;
+        if (l || w == 0) {
+            return;
+        }
+    }
+    ts->joiner = false;
+    if (w == 2 && ts->cur_col + 1 >= ts->cols) {
+        ts->cur_col = 0;
+        ts->cur_row++;
+    }
+    for (int k = 0; k < w; k++) {
+        slow32_term_blank_half(ts, ts->cur_row, ts->cur_col + k);
+    }
+    ts->last_row = ts->cur_row;
+    ts->last_col = ts->cur_col;
+    ts->last_valid = slow32_term_cell_at(ts, ts->cur_row, ts->cur_col) != NULL;
+    for (int k = 0; k < w; k++) {
+        Slow32TermCell *c = slow32_term_cell_at(ts, ts->cur_row, ts->cur_col + k);
+        if (!c) {
+            continue;
+        }
+        memset(c->mark, 0, sizeof c->mark);
+        c->ch = k ? ' ' : cp;
+        c->wide = w == 2 ? (k ? TERM_WIDE_TAIL : TERM_WIDE) : TERM_NARROW;
+        c->attr = (uint8_t)ts->cur_attr;
+        c->fg = (uint8_t)ts->cur_fg;
+        c->bg = (uint8_t)ts->cur_bg;
+    }
+    ts->cur_col += w;
+    if (ts->cur_col >= ts->cols) {
+        ts->cur_col = 0;
+        ts->cur_row++;
+    }
+}
+
+/* a byte of output: control characters move the cursor; UTF-8 is decoded,
+ * a byte that begins or continues no sequence standing for U+FFFD */
 static void slow32_term_shadow_putc(Slow32TermState *ts, int ch)
 {
     if (!ts->cells) {
+        return;
+    }
+    ch &= 0xFF;
+    if (ts->u8_need) {
+        if ((ch & 0xC0) == 0x80) {
+            ts->u8_cp = (ts->u8_cp << 6) | (uint32_t)(ch & 0x3F);
+            if (--ts->u8_need == 0) {
+                slow32_term_shadow_char(ts, ts->u8_cp);
+            }
+            return;
+        }
+        ts->u8_need = 0;
+        slow32_term_shadow_char(ts, 0xFFFD);
+    }
+    if (ch >= 0xC2 && ch <= 0xF4) {
+        ts->u8_need = ch >= 0xF0 ? 3 : ch >= 0xE0 ? 2 : 1;
+        ts->u8_cp = (uint32_t)(ch & (0x3F >> ts->u8_need));
+        return;
+    }
+    if (ch >= 0x80) {
+        slow32_term_shadow_char(ts, 0xFFFD);
         return;
     }
     if (ch == '\n') {
@@ -656,17 +775,37 @@ static void slow32_term_shadow_putc(Slow32TermState *ts, int ch)
     if (ch < 0x20) {
         return;  /* skip other control chars */
     }
-    Slow32TermCell *c = slow32_term_cell_at(ts, ts->cur_row, ts->cur_col);
-    if (c) {
-        c->ch = (uint8_t)ch;
-        c->attr = (uint8_t)ts->cur_attr;
-        c->fg = (uint8_t)ts->cur_fg;
-        c->bg = (uint8_t)ts->cur_bg;
+    slow32_term_shadow_char(ts, (uint32_t)ch);
+}
+
+/* a cell's cluster to the terminal, as UTF-8 */
+static void slow32_term_emit_cp(uint32_t u)
+{
+    if (u < 0x80) {
+        slow32_console_write_byte((int)u);
+    } else if (u < 0x800) {
+        slow32_console_write_byte(0xC0 | (int)(u >> 6));
+        slow32_console_write_byte(0x80 | (int)(u & 0x3F));
+    } else if (u < 0x10000) {
+        slow32_console_write_byte(0xE0 | (int)(u >> 12));
+        slow32_console_write_byte(0x80 | (int)((u >> 6) & 0x3F));
+        slow32_console_write_byte(0x80 | (int)(u & 0x3F));
+    } else {
+        slow32_console_write_byte(0xF0 | (int)(u >> 18));
+        slow32_console_write_byte(0x80 | (int)((u >> 12) & 0x3F));
+        slow32_console_write_byte(0x80 | (int)((u >> 6) & 0x3F));
+        slow32_console_write_byte(0x80 | (int)(u & 0x3F));
     }
-    ts->cur_col++;
-    if (ts->cur_col >= ts->cols) {
-        ts->cur_col = 0;
-        ts->cur_row++;
+}
+
+static void slow32_term_emit_cell(const Slow32TermCell *c)
+{
+    if (c->wide == TERM_WIDE_TAIL) {
+        return;
+    }
+    slow32_term_emit_cp(c->ch);
+    for (int k = 0; k < TERM_CLUSTER - 1 && c->mark[k]; k++) {
+        slow32_term_emit_cp(c->mark[k]);
     }
 }
 
@@ -677,6 +816,8 @@ static void slow32_term_blank_cells(Slow32TermCell *cells, int start, int end)
         cells[i].attr = 0;
         cells[i].fg = 7;
         cells[i].bg = 0;
+        cells[i].wide = TERM_NARROW;
+        memset(cells[i].mark, 0, sizeof cells[i].mark);
     }
 }
 
@@ -685,6 +826,8 @@ static void slow32_term_shadow_clear(Slow32TermState *ts, int mode)
     if (!ts->cells) {
         return;
     }
+    ts->last_valid = false;
+    ts->joiner = false;
     int start, end;
     switch (mode) {
     case 0: /* full screen */
@@ -714,12 +857,10 @@ static void slow32_term_shadow_clear(Slow32TermState *ts, int mode)
     if (end > ts->rows * ts->cols) {
         end = ts->rows * ts->cols;
     }
-    for (int i = start; i < end; i++) {
-        ts->cells[i].ch = ' ';
-        ts->cells[i].attr = 0;
-        ts->cells[i].fg = 7;
-        ts->cells[i].bg = 0;
+    if (start > 0 && start < end && ts->cells[start].wide == TERM_WIDE_TAIL) {
+        slow32_term_blank_cells(ts->cells, start - 1, start);
     }
+    slow32_term_blank_cells(ts->cells, start, end);
 }
 
 static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
@@ -786,6 +927,8 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         }
         ts->cur_row = (int)row - 1;  /* shadow: 0-based */
         ts->cur_col = (int)col - 1;
+        ts->last_valid = false;
+        ts->joiner = false;
         resp->status = S32_MMIO_STATUS_OK;
         break;
     }
@@ -843,6 +986,35 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         break;
     }
 
+    case S32_TERM_READ_CHAR: {
+        /* one character: its UTF-8 bytes read whole, the code point
+         * returned; bytes that are not UTF-8 are U+FFFD */
+        unsigned char b[4];
+        if (read(STDIN_FILENO, &b[0], 1) != 1) {
+            resp->status = S32_MMIO_STATUS_EOF;
+            resp->length = 0;
+            break;
+        }
+        uint32_t cp = b[0];
+        int need = b[0] >= 0xF0 && b[0] <= 0xF4 ? 3 : b[0] >= 0xE0 ? 2 :
+                   b[0] >= 0xC2 ? 1 : 0;
+        if (b[0] >= 0x80 && !need) {
+            cp = 0xFFFD;
+        }
+        if (need) {
+            cp = (uint32_t)(b[0] & (0x3F >> need));
+            for (int k = 1; k <= need; k++) {
+                if (read(STDIN_FILENO, &b[k], 1) != 1 || (b[k] & 0xC0) != 0x80) {
+                    cp = 0xFFFD;
+                    break;
+                }
+                cp = (cp << 6) | (uint32_t)(b[k] & 0x3F);
+            }
+        }
+        resp->length = 0;
+        resp->status = cp;
+        break;
+    }
     case S32_TERM_KEY_AVAIL: {
         struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
         int ret = poll(&pfd, 1, 0);
@@ -947,8 +1119,11 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                     prev_fg = cell->fg;
                     prev_bg = cell->bg;
                 }
-                slow32_console_write_byte(cell->ch);
-                last_written_col = c;
+                if (cell->wide == TERM_WIDE_TAIL) {
+                    continue;   /* painted with its first half */
+                }
+                slow32_term_emit_cell(cell);
+                last_written_col = cell->wide == TERM_WIDE ? c + 1 : c;
             }
         }
         /* Restore shadow buffer from saved state */
@@ -957,12 +1132,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
             memcpy(ts->cells, s->cells, ncells * sizeof(Slow32TermCell));
         } else {
             /* Dimension mismatch: clear and copy what fits */
-            for (size_t i = 0; i < ncells; i++) {
-                ts->cells[i].ch = ' ';
-                ts->cells[i].attr = 0;
-                ts->cells[i].fg = 7;
-                ts->cells[i].bg = 0;
-            }
+            slow32_term_blank_cells(ts->cells, 0, (int)ncells);
             for (int r = 0; r < paint_rows; r++) {
                 memcpy(&ts->cells[r * ts->cols],
                        &s->cells[r * s->cols],
@@ -1049,8 +1219,19 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                 Slow32TermCell *prev = &ts->prev_cells[idx];
                 Slow32TermCell *cur = &ts->cells[idx];
                 if (cur->ch == prev->ch && cur->attr == prev->attr &&
-                    cur->fg == prev->fg && cur->bg == prev->bg) {
+                    cur->fg == prev->fg && cur->bg == prev->bg &&
+                    cur->wide == prev->wide &&
+                    !memcmp(cur->mark, prev->mark, sizeof cur->mark)) {
                     continue;
+                }
+                if (cur->wide == TERM_WIDE_TAIL) {
+                    /* the tail changed: repaint the character from its first half */
+                    if (c == 0) {
+                        continue;
+                    }
+                    c--;
+                    idx--;
+                    cur = &ts->cells[idx];
                 }
                 /* Position cursor if needed */
                 if (r != out_row || c != out_col) {
@@ -1074,8 +1255,11 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                     out_fg = cur->fg;
                     out_bg = cur->bg;
                 }
-                slow32_console_write_byte(cur->ch);
-                out_col++;
+                slow32_term_emit_cell(cur);
+                out_col += cur->wide == TERM_WIDE ? 2 : 1;
+                if (cur->wide == TERM_WIDE) {
+                    c++;    /* its tail is painted */
+                }
                 if (out_col >= ts->cols) {
                     out_col = 0;
                     out_row++;

@@ -34,6 +34,10 @@ int term_getkey(void) {
     return -1;
 }
 
+int term_getchar(void) {
+    return -1;
+}
+
 int term_kbhit(void) {
     return 0;
 }

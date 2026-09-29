@@ -27,6 +27,12 @@ void term_set_attr(int attr);
 /* Blocking key read. Returns character or -1 on EOF. */
 int  term_getkey(void);
 
+/* Blocking read of one character, not one byte: its UTF-8 sequence read
+ * whole and decoded.  Returns the code point (U+FFFD for bytes that are
+ * not UTF-8) or -1 on EOF.  An escape sequence arrives a byte at a time,
+ * ESC first, as with term_getkey. */
+int  term_getchar(void);
+
 /* Non-blocking key poll. Returns 1 if key available, 0 otherwise. */
 int  term_kbhit(void);
 

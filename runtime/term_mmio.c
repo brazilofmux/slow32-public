@@ -102,6 +102,13 @@ int term_getkey(void) {
     return result;
 }
 
+int term_getchar(void) {
+    if (!term_initialized) return -1;
+    int result = s32_mmio_request(term_base_opcode + 14, 0, 0, 0);   /* S32_TERM_READ_CHAR */
+    if (result == (int)S32_MMIO_STATUS_EOF) return -1;
+    return result;
+}
+
 int term_kbhit(void) {
     if (!term_initialized) return 0;
     return s32_mmio_request(term_base_opcode + 6, 0, 0, 0);

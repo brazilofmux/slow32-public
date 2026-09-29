@@ -232,6 +232,25 @@ The first service to implement via negotiation. Unlocks dBase III and INKEY$.
 | +5     | `TERM_READ_KEY`   | -                        | Blocking key read |
 | +6     | `TERM_KEY_AVAIL`  | -                        | Non-blocking poll (INKEY$) |
 | +7     | `TERM_SET_COLOR`  | fg, bg                   | Set text color |
+| +8     | `TERM_PUTC`       | byte                     | Output a byte at the cursor |
+| +9     | `TERM_PUTS`       | bytes (in buffer)        | Output a string at the cursor |
+| +10    | `TERM_SAVE_SCREEN`| -                        | Push the screen onto a stack |
+| +11    | `TERM_RESTORE_SCREEN` | -                    | Pop the screen and repaint it |
+| +12    | `TERM_BEGIN_UPDATE` | -                      | Buffer output in the shadow only |
+| +13    | `TERM_END_UPDATE` | -                        | Paint the difference from the last frame |
+| +14    | `TERM_READ_CHAR`  | -                        | Blocking read of one character, UTF-8 decoded to its code point |
+
+Output is UTF-8. The host's shadow screen (what save/restore and the update
+diff work from) holds a character per cell as the terminal does: a code point
+takes its East Asian display width in cells (two for W/F, none for combining
+marks and format characters), and a code point that takes no column -- or
+follows a ZERO WIDTH JOINER -- joins the cell before it, up to four code
+points a cell. Overwriting half of a double-width character blanks the other
+half. Bytes that are not UTF-8 are U+FFFD. The width table is
+`common/term_width.h`, generated from the Unicode data by
+`tools/emulator/gen_term_width.py`; QEMU carries a copy. `TERM_READ_KEY`
+stays a byte read, for the programs that read keys; `TERM_READ_CHAR` is for
+text.
 
 If the guest negotiated `term` at base 0x80, then `TERM_SET_MODE` is opcode
 0x80, `TERM_READ_KEY` is 0x85, etc.
@@ -256,6 +275,7 @@ void term_bold(int on);
 void term_reverse(int on);
 int  term_getkey(void);            // blocking
 int  term_kbhit(void);             // non-blocking (INKEY$)
+int  term_getchar(void);           // one UTF-8 character: its code point, -1 at EOF
 ```
 
 ### Graceful Degradation
