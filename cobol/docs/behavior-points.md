@@ -103,33 +103,35 @@ tests) and these are the only reserved words any of them uses as a
 name. A word joins the set when a real program needs it, as a dialect
 does.
 
-## Class E — extensions already taken (registered, not yet enforced)
+## Class E — extensions to the standard a program is compiled for
 
-Implementor and dialect features accepted under `-std=85`. They are
-recorded so the day a stricter switch arrives (`-std=2002`, or a
-pedantic 85), deciding each one is a row here, not an archaeology dig.
-A row with an id calls `bp()` and warns under `-warn-extensions`
-(2026-09-29); the rows without one are registered, not yet enforced.
+Implementor and dialect features this compiler accepts. Each calls
+`bp()` and warns under `-warn-extensions` (2026-09-29), for the edition
+where it is an extension: a point marked 85 is standard COBOL 2002 and
+warns only under -std=85. Never changes the output.
 
-| id | construct | source | in ISO/IEC 1989:2023 |
-|---|---|---|---|
-| BP-E1 | `RETURN-CODE` | IBM, Micro Focus, GnuCOBOL | no: a special register of those dialects; the standard returns a value through `PROCEDURE DIVISION RETURNING` |
+| id | construct | source | an extension under | in ISO/IEC 1989:2023 |
+|---|---|---|---|---|
+| BP-E1 | `RETURN-CODE` | IBM, Micro Focus, GnuCOBOL | 85, 2002 | no: a special register of those dialects; the standard returns a value through `PROCEDURE DIVISION RETURNING` |
+| BP-E2 | `GOBACK` | IBM / majesty (docs/dialect.md) | 85 | yes, from 2002 (14.8.17; 2023 14.9.18) |
+| BP-E3 | `COMP-3`, `COMP-5`, `COMP-1` (RM/COBOL's binary integer with a PICTURE) | IBM, GnuCOBOL / majesty, RM/COBOL | 85, 2002 | no; the standard's are `PACKED-DECIMAL` and `BINARY` (and the floating types, not `COMP-1`) |
+| BP-E4 | `SIGNED-INT`, `UNSIGNED-INT`, `SIGNED-SHORT`, `UNSIGNED-SHORT` | GnuCOBOL / majesty | 85, 2002 | no; `BINARY-LONG`, `BINARY-SHORT` [SIGNED / UNSIGNED] |
+| BP-E5 | `BINARY-CHAR`, `BINARY-SHORT`, `BINARY-LONG`, `POINTER` | GnuCOBOL / majesty | 85 | yes, from 2002 |
+| BP-E6 | `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | 85, 2002 | no: the standard form is `STOP RUN WITH {ERROR / NORMAL} STATUS [identifier / literal]` (14.9.42) |
+| BP-E7 | positioned `DISPLAY` / `ACCEPT` (`LINE`, `POSITION`, `AT`) | RM/COBOL, Micro Focus | 85, 2002 | no: RM's `LINE ... POSITION` form does not appear (`AT rrcc` not checked) |
+| BP-E8 | hexadecimal literals `X"..."` | the Stage 1 extension majesty uses | 85 | yes, from 2002 |
+| BP-E9 | `CALL ... BY VALUE`, `CALL ... RETURNING` (the seam to C) | C-ABI implementor module | 85 | yes, from 2002 |
+| BP-E10 | `SCREEN SECTION` | Micro Focus | 85 | yes, from 2002 |
+| BP-E11 | free-form source | GnuCOBOL / majesty | 85 | yes, free-form reference format (2002 6.3) |
+| BP-E12 | `ORGANIZATION LINE SEQUENTIAL` | Micro Focus, GnuCOBOL | 85, 2002 | yes, but only from 2023 |
+| BP-E13 | `_` in a user-defined word | GnuCOBOL / majesty | 85, 2002 | no: letters, digits and hyphens |
 
-Registered, not yet enforced:
+Not points, recorded here:
 
-| construct | source | in ISO/IEC 1989:2023 |
-|---|---|---|
-| free-format source | GnuCOBOL / majesty | yes, free-form reference format |
-| `SCREEN SECTION` | Micro Focus | yes |
-| positioned `DISPLAY` / `ACCEPT` (`LINE`, `POSITION`, `AT rrcc`) | RM/COBOL | no: RM's `LINE ... POSITION` form does not appear (`AT rrcc` not checked) |
-| the device word in `ASSIGN` (`RANDOM`, `PRINT`, `DISK`) | RM/COBOL | not an extension: `ASSIGN TO device-name` is standard syntax in 1985 and 2023 (12.4.5), and device-names are implementor-defined; RM's names are this implementation's choice |
-| `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | no: the standard form is `STOP RUN WITH {ERROR / NORMAL} STATUS [identifier / literal]` (14.9.42); neither `RETURNING` nor a bare identifier |
-| `COMP-1` as a binary integer with a PICTURE | RM/COBOL | no; `COMP-1` does not appear (the standard's floating types are `FLOAT-SHORT` and kin) |
-| `USAGE POINTER` | GnuCOBOL / majesty | yes |
-| a BY REFERENCE function argument described differently from its parameter but stored identically (`PIC S9(8) COMP-5` and `SIGNED-INT`) | GnuCOBOL / majesty's `holidays` | no: 14.8.2.3 requires the same USAGE and PICTURE; taken for two's-complement binary integers of equal size and signedness only (docs/functions.md) |
-| `GOBACK` | IBM / majesty (docs/dialect.md) | yes, from 2002 (14.8.17; 2023 14.9.18) |
-| `COMP-5`, `BINARY-CHAR` and kin | GnuCOBOL / majesty | `BINARY-CHAR` and kin yes; `COMP-5` no |
-| `CALL ... BY VALUE ... RETURNING` to C | C-ABI implementor module | `BY VALUE` and `RETURNING` yes |
+| construct | note |
+|---|---|
+| the device word in `ASSIGN` (`RANDOM`, `PRINT`, `DISK`) | not an extension: `ASSIGN TO device-name` is standard syntax in 1985 and 2023 (12.4.5), and device-names are implementor-defined; RM's names are this implementation's choice |
+| a BY REFERENCE function argument described differently from its parameter but stored identically (`PIC S9(8) COMP-5` and `SIGNED-INT`) | GnuCOBOL / majesty's `holidays`; 14.8.2.3 requires the same USAGE and PICTURE; taken for two's-complement binary integers of equal size and signedness only (docs/functions.md) |
 
 Checked 2026-09-28 against ISO/IEC 1989:2023 (a licensed copy, held
 outside the tree; clause numbers are 2023's). The column used to say

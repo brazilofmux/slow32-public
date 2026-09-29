@@ -1,0 +1,32 @@
+*> -warn-extensions under -std=85: every class E point (docs/behavior-
+*> points.md), each where a COBOL 85 program leaves the standard.
+*> Free-form source is itself one (BP-E11).
+identification division.
+program-id. extevery.
+environment division.
+input-output section.
+file-control.
+    select lst assign to "ext.txt" organization line sequential.
+data division.
+file section.
+fd  lst.
+01  lst-rec pic x(10).
+working-storage section.
+01  pk     pic s9(5) comp-3.
+01  c5     pic 9(4) comp-5.
+01  c1     pic s9(4) comp-1.
+01  si     signed-int.
+01  bc     binary-char.
+01  pt     usage pointer.
+01  my_item pic x value "x".
+01  hx     pic x(2) value x"4142".
+01  k      pic 9 value 0.
+screen section.
+01  sc.
+    05 line 1 col 1 value "hello".
+procedure division.
+    display "at" line 2 position 1
+    call "nothing" using by value k
+    move 0 to return-code
+    stop run returning k
+    goback.

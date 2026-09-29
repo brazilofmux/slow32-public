@@ -3801,3 +3801,15 @@ Tests: free/returncode (the oracle agrees, default dialect),
 oracle agrees), warn/ext-return-code. Harness 434/434, CCVS-85
 unchanged, majesty PASS, majesty-functions PASS, Open Systems paper
 unchanged.
+
+**-warn-extensions, the rest of class E** (same day). The registered
+extensions are now points BP-E2..E13, each warning for the edition where
+it leaves the standard: GOBACK, BINARY-CHAR/-SHORT/-LONG, POINTER,
+hexadecimal literals, CALL BY VALUE/RETURNING, the SCREEN SECTION and
+free-form source under -std=85 only (standard from 2002); COMP-3, COMP-5,
+COMP-1, GnuCOBOL's SIGNED-INT family, STOP RUN identifier/RETURNING,
+positioned DISPLAY/ACCEPT, LINE SEQUENTIAL and `_` in user words under
+both. On majesty's gl008 the switch reports free form, LINE SEQUENTIAL,
+GOBACK and COMP-3/5 -- all true. Tests: warn/ext-every (all thirteen),
+warn/ext-clean (a standard 85 program, silent). Harness 436/436; the
+gates as above.

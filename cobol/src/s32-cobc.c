@@ -237,7 +237,9 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_O5_MEMORY_SIZE, BP_O6_LABEL_RECORDS, BP_O7_VALUE_OF, BP_O8_DATA_RECORDS,
        BP_O9_ALL_NUMERIC, BP_O10_RERUN, BP_O11_MULTIPLE_FILE, BP_O12_DEBUG_LINES,
        BP_N1_RESERVED_NAME,
-       BP_E1_RETURN_CODE,
+       BP_E1_RETURN_CODE, BP_E2_GOBACK, BP_E3_COMP_N, BP_E4_VENDOR_BINARY, BP_E5_BINARY_2002,
+       BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
+       BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -261,6 +263,22 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-N1", 'N', "this name became a reserved word in COBOL 85; accepted for a COBOL 74 program, but rename it" },
     { "BP-E1", 'E', "RETURN-CODE is an IBM and Micro Focus special register, not standard COBOL; "
                     "a standard program returns a value through PROCEDURE DIVISION RETURNING (2002)" },
+    { "BP-E2", 'E', "GOBACK is COBOL 2002; in a COBOL 85 program the standard ends with EXIT PROGRAM or STOP RUN" },
+    { "BP-E3", 'E', "COMP-3, COMP-5 and COMP-1 are implementors' usages, not standard COBOL; "
+                    "the standard's are PACKED-DECIMAL and BINARY" },
+    { "BP-E4", 'E', "SIGNED-INT, UNSIGNED-INT, SIGNED-SHORT and UNSIGNED-SHORT are GnuCOBOL's; "
+                    "the standard's are BINARY-LONG and BINARY-SHORT [SIGNED | UNSIGNED] (2002)" },
+    { "BP-E5", 'E', "BINARY-CHAR, BINARY-SHORT, BINARY-LONG and POINTER are COBOL 2002; an extension in a COBOL 85 program" },
+    { "BP-E6", 'E', "STOP RUN with an identifier or RETURNING is RM/COBOL and GnuCOBOL; "
+                    "the standard form is STOP RUN WITH ERROR | NORMAL STATUS (2002)" },
+    { "BP-E7", 'E', "positioned DISPLAY and ACCEPT (LINE, POSITION, AT) are RM/COBOL and Micro Focus; "
+                    "the standard positions a screen item in the SCREEN SECTION" },
+    { "BP-E8", 'E', "hexadecimal literals (X\"...\") are COBOL 2002; an extension in a COBOL 85 program" },
+    { "BP-E9", 'E', "CALL ... BY VALUE and RETURNING are COBOL 2002; an extension in a COBOL 85 program" },
+    { "BP-E10", 'E', "the SCREEN SECTION is COBOL 2002; an extension in a COBOL 85 program" },
+    { "BP-E11", 'E', "free-form source is COBOL 2002; an extension in a COBOL 85 program" },
+    { "BP-E12", 'E', "ORGANIZATION LINE SEQUENTIAL is not in COBOL 85 or 2002 (COBOL 2023 adds it)" },
+    { "BP-E13", 'E', "an underscore in a user-defined word is an implementor's extension; the standard's words take letters, digits and hyphens" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -283,6 +301,7 @@ static void bp(int point, int line)
  * as a name anywhere (cobol ISSUES-43). */
 static void user_word(const char *w, int line, const char *what)
 {
+    if (strchr(w, '_')) bp(BP_E13_UNDERSCORE, line);
     if (!is_reserved85(w)) return;
     static const char *const n1[] = { "class", "other", "true", "false", "any", NULL };
     for (int i = 0; n1[i]; i++) if (!strcasecmp(w, n1[i])) { bp(BP_N1_RESERVED_NAME, line); return; }
@@ -682,6 +701,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 if (!*e) die_at(line, "unterminated hexadecimal literal");
                 int n = (int)(e - s);
                 if (n & 1) die_at(line, "hexadecimal literal needs an even number of digits");
+                if (g_std < 2002) bp(BP_E8_HEX_LITERAL, line);
                 NO_EMPTY_LIT(n, "hexadecimal", "2002 8.3.1.2.1.2 rule 1");
                 char *bytes = xmalloc(n / 2 + 1);
                 for (int i = 0; i < n; i += 2) {
@@ -2389,10 +2409,14 @@ static void parse_data_item1(void)
         int u = -1;
         if (!strcmp(t->s, "display")) u = U_DISPLAY;
         else if (!strcmp(t->s, "comp") || !strcmp(t->s, "computational") || !strcmp(t->s, "binary")) u = U_BINARY;
-        else if (!strcmp(t->s, "comp-3") || !strcmp(t->s, "computational-3") || !strcmp(t->s, "packed-decimal")) u = U_PACKED;
-        else if (!strcmp(t->s, "comp-5") || !strcmp(t->s, "computational-5")) u = U_COMP5;
+        else if (!strcmp(t->s, "comp-3") || !strcmp(t->s, "computational-3") || !strcmp(t->s, "packed-decimal")) {
+            if (strcmp(t->s, "packed-decimal")) bp(BP_E3_COMP_N, t->line);
+            u = U_PACKED;
+        }
+        else if (!strcmp(t->s, "comp-5") || !strcmp(t->s, "computational-5")) { bp(BP_E3_COMP_N, t->line); u = U_COMP5; }
         else if (!strcmp(t->s, "binary-long") || !strcmp(t->s, "binary-short")) {
             /* [SIGNED | UNSIGNED], signed by default (2023 13.18.60.2) */
+            if (g_std < 2002) bp(BP_E5_BINARY_2002, t->line);
             int lng = t->s[7] == 'l';
             advance();
             int uns = accept_word("unsigned");
@@ -2404,11 +2428,12 @@ static void parse_data_item1(void)
         }
         else if (!strcmp(t->s, "binary-double"))
             die_at(t->line, "USAGE BINARY-DOUBLE is not implemented (its range needs 19 digits; this compiler's arithmetic holds 18)");
-        else if (!strcmp(t->s, "signed-int")) u = U_SINT;
-        else if (!strcmp(t->s, "unsigned-int")) u = U_UINT;
-        else if (!strcmp(t->s, "signed-short")) u = U_SSHORT;
-        else if (!strcmp(t->s, "unsigned-short")) u = U_USHORT;
+        else if (!strcmp(t->s, "signed-int")) { bp(BP_E4_VENDOR_BINARY, t->line); u = U_SINT; }
+        else if (!strcmp(t->s, "unsigned-int")) { bp(BP_E4_VENDOR_BINARY, t->line); u = U_UINT; }
+        else if (!strcmp(t->s, "signed-short")) { bp(BP_E4_VENDOR_BINARY, t->line); u = U_SSHORT; }
+        else if (!strcmp(t->s, "unsigned-short")) { bp(BP_E4_VENDOR_BINARY, t->line); u = U_USHORT; }
         else if (!strcmp(t->s, "binary-char")) {
+            if (g_std < 2002) bp(BP_E5_BINARY_2002, t->line);
             advance();
             u = accept_word("unsigned") ? U_UBCHAR : U_BCHAR;
             if (u == U_BCHAR) accept_word("signed");
@@ -2433,10 +2458,12 @@ static void parse_data_item1(void)
             if (g_std < 2002) die_at(t->line, "USAGE NATIONAL is COBOL 2002; compile with -std=2002");
             s->nat_usage = 1; advance(); continue;
         }
-        else if (!strcmp(t->s, "pointer")) u = U_POINTER;
+        else if (!strcmp(t->s, "pointer")) { if (g_std < 2002) bp(BP_E5_BINARY_2002, t->line); u = U_POINTER; }
         else if (!strcmp(t->s, "index")) u = U_INDEX;
-        else if (!strcmp(t->s, "comp-1"))
-            u = U_BINARY;   /* RM/COBOL: a binary integer with a PICTURE (S9(4) in two bytes), not a float; the Open Systems suite's COMP-1 items all carry one */
+        else if (!strcmp(t->s, "comp-1")) {
+            bp(BP_E3_COMP_N, t->line);
+            u = U_BINARY;
+        }   /* RM/COBOL: a binary integer with a PICTURE (S9(4) in two bytes), not a float; the Open Systems suite's COMP-1 items all carry one */
         else if (!strcmp(t->s, "comp-2") || !strcmp(t->s, "float-short") || !strcmp(t->s, "float-long"))
             die_at(t->line, "floating-point USAGE %s is not implemented", t->s);
         if (u >= 0) {
@@ -6886,6 +6913,8 @@ static void parse_pos_clauses(SField *f, int is_accept)
     g_pos_field = f;
     for (;;) {
         if (accept_word("with")) continue;
+        if (at_word("line") || at_word("position") || at_word("column") || at_word("col") || at_word("at"))
+            bp(BP_E7_POSITIONED_IO, cur()->line);
         if (accept_word("line")) { pos_int(&f->line, &f->line_tp, "LINE"); continue; }
         if (accept_word("position") || accept_word("column") || accept_word("col")) { pos_int(&f->col, &f->col_tp, "POSITION"); continue; }
         if (accept_word("at")) {
@@ -11021,12 +11050,12 @@ static void parse_call(void)
             if (accept_word("by")) {
                 if (accept_word("reference")) mode = 0;
                 else if (accept_word("content")) mode = 1;
-                else if (accept_word("value")) mode = 2;
+                else if (accept_word("value")) { mode = 2; if (g_std < 2002) bp(BP_E9_CALL_VALUE, cur()->line); }
                 else die_at(cur()->line, "expected REFERENCE, CONTENT or VALUE after BY");
                 continue;
             }
             if (accept_word("reference")) { mode = 0; continue; }
-            if (accept_word("value")) { mode = 2; continue; }
+            if (accept_word("value")) { mode = 2; if (g_std < 2002) bp(BP_E9_CALL_VALUE, cur()->line); continue; }
             if (accept_word("content")) { mode = 1; continue; }
             if (g_std >= 2002 && at_word("omitted")) {
                 /* OMITTED: no argument, a NULL address (2023 14.9.4.2) */
@@ -11087,6 +11116,7 @@ static void parse_call(void)
     }
     Ref ret; int has_ret = 0;
     if (accept_word("returning") || accept_word("giving")) {
+        if (g_std < 2002) bp(BP_E9_CALL_VALUE, cur()->line);
         parse_ref(&ret); has_ret = 1;
         if (ret.sym->is_cond) die_at(ret.line, "RETURNING '%s': a condition-name receives nothing", ret.sym->name);
         if (g_std < 2002 && !is_int_item(ret.sym)) die_at(ret.line, "RETURNING '%s' must be an integer item (the C ABI returns a word)", ret.sym->name);
@@ -12599,8 +12629,10 @@ static void parse_statement_1(void)
              * bare identifier is RM/COBOL, the Open Systems suite's SJCLCODE
              * copybook ends every program with STOP RUN JCL-CODE), and both are
              * one operand on the exit path that exists (GitHub #35). */
+            if (at_word("returning")) bp(BP_E6_STOP_RUN_VALUE, t->line);
             accept_word("returning");
             if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand()) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
+            bp(BP_E6_STOP_RUN_VALUE, t->line);
             { Opnd n; parse_operand(&n); check_numeric_opnd(&n);
               if (opnd_hot_int(&n)) emit_hot_value(&n);
               else {
@@ -12618,7 +12650,7 @@ static void parse_statement_1(void)
         advance();
         return;
     }
-    if (!strcmp(v, "goback")) { advance(); emit("\tjal r0, .Lgb%d", g_unit); return; }
+    if (!strcmp(v, "goback")) { if (g_std < 2002) bp(BP_E2_GOBACK, t->line); advance(); emit("\tjal r0, .Lgb%d", g_unit); return; }
     if (!strcmp(v, "continue")) { advance(); return; }
     if (!strcmp(v, "exit")) {
         int exit_tp = g_tp;
@@ -13429,14 +13461,14 @@ static void parse_select(void)
         if (at_word("sequential") || at_word("indexed") || (at_word("line") && is_word(peek(1), "sequential"))) {
             /* ORGANIZATION IS may be omitted */
             f->org_given = 1;
-            if (accept_word("line")) { expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
+            if (accept_word("line")) { bp(BP_E12_LINE_SEQUENTIAL, cur()->line); expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
             else if (accept_word("sequential")) f->org = COB_ORG_SEQ;
             else { advance(); f->org = COB_ORG_INDEXED; }
             continue;
         }
         if (accept_word("organization") || accept_word("organisation")) {
             accept_word("is"); f->org_given = 1;
-            if (accept_word("line")) { expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
+            if (accept_word("line")) { bp(BP_E12_LINE_SEQUENTIAL, cur()->line); expect_word("sequential"); f->org = COB_ORG_LINESEQ; }
             else if (accept_word("sequential")) f->org = COB_ORG_SEQ;
             else if (accept_word("indexed")) f->org = COB_ORG_INDEXED;
             else if (accept_word("relative")) f->org = COB_ORG_RELATIVE;
@@ -14515,6 +14547,7 @@ static void parse_data_division(void)
             continue;
         }
         if (at_word("screen") && is_word(peek(1), "section")) {
+            if (g_std < 2002) bp(BP_E10_SCREEN_SECTION, cur()->line);
 
             advance(); advance(); expect_period();
             parse_screen_section();
@@ -14885,6 +14918,7 @@ int main(int argc, char **argv)
     }
     read_source(in);
     tokenize();
+    if (g_free && g_std < 2002 && g_ntok) bp(BP_E11_FREE_FORMAT, g_tok[0].line);
     expand_types();
 
     if (g_fnsig_only) g_noemit = 1;         /* signatures only: no code, no output file */
