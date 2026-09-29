@@ -1943,6 +1943,7 @@ static int capacity_digits(int bytes)
 static int is_int_item(Sym *s);
 
 /* elementary size and numeric attributes */
+static void bwz_check(const char *name, const PicInfo *pi, int bad_usage, int line);
 static void sym_finish(Sym *s)
 {
     int u = s->usage;
@@ -2015,6 +2016,7 @@ static void sym_finish(Sym *s)
     }
     if (s->just && pi->category == PIC_NUMERIC)
         die_at(s->line, "'%s': JUSTIFIED is only for alphanumeric items", s->name);
+    if (s->blank_zero && !s->is_ftemp) bwz_check(s->name, pi, u != U_DISPLAY && u != U_NATIONAL, s->line);
 }
 
 static int is_numeric_sym(Sym *s) { return !s->is_group && s->pi.category == PIC_NUMERIC; }
@@ -2172,6 +2174,36 @@ static int bool_picture(const char *pic, PicInfo *pi, int line)
     return 1;
 }
 
+/* a PICTURE character-string of at most 30 characters (X3.23-1985
+ * PICTURE syntax rule 4), 50 in 2002 (13.16.38.2 rule 4); 2023 allows 63 */
+static void pic_len_check(const char *pic, int line)
+{
+    int lim = g_std < 2002 ? 30 : 50;
+    if ((int)strlen(pic) > lim)
+        die_at(line, "the PICTURE '%s' has %d characters, more than %d (%s)", pic, (int)strlen(pic), lim,
+               g_std < 2002 ? "X3.23-1985 PICTURE syntax rule 4" : "2002 13.16.38.2 rule 4; 2023 allows 63");
+}
+
+/* BLANK WHEN ZERO: a numeric or numeric-edited item of usage display (or
+ * national), no S and no * (85 BLANK WHEN ZERO rules 1-2 and PICTURE
+ * rule 7; 2023 13.18.8.3 rules 1-2 and 13.18.40.3 rule 22) */
+static void bwz_check(const char *name, const PicInfo *pi, int bad_usage, int line)
+{
+    int e85 = g_std < 2002;
+    if (pi->category != PIC_NUMERIC && pi->category != PIC_NUMERIC_EDITED)
+        die_at(line, "'%s': BLANK WHEN ZERO is for a numeric or numeric-edited item (%s)", name,
+               e85 ? "X3.23-1985 BLANK WHEN ZERO rule 1" : "2023 13.18.8.3 rule 1");
+    if (bad_usage)
+        die_at(line, "'%s': BLANK WHEN ZERO is for an item of usage display%s (%s)", name, e85 ? "" : " or national",
+               e85 ? "X3.23-1985 BLANK WHEN ZERO rule 2" : "2023 13.18.8.3 rule 2");
+    if (strchr(pi->pat, 'S'))
+        die_at(line, "'%s': BLANK WHEN ZERO is not for a PICTURE with S (%s)", name,
+               e85 ? "X3.23-1985: it makes the item numeric-edited, which has no S" : "2023 13.18.8.3 rule 1");
+    if (strchr(pi->pat, '*'))
+        die_at(line, "'%s': BLANK WHEN ZERO and the zero-suppression symbol * exclude each other (%s)", name,
+               e85 ? "X3.23-1985 PICTURE rule 7" : "2023 13.18.40.3 rule 22");
+}
+
 static int nat_picture(const char *pic, PicInfo *pi, int line)
 {
     /* with B, 0 or / as well, national-edited (cobol ISSUES-73); the
@@ -2297,6 +2329,7 @@ static void parse_data_item1(void)
             if (s->has_pic) die_at(t->line, "'%s' has two PICTURE clauses", s->name);
             s->has_pic = 1;
             snprintf(s->pic, sizeof s->pic, "%s", cur()->s);
+            pic_len_check(s->pic, t->line);
             if (nat_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (bool_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (pic_analyse(s->pic, &s->pi) < 0) {
@@ -13465,7 +13498,7 @@ static void parse_rd(void)
                     accept_word("is");
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
                     fd.has_pic = 1;
-                    snprintf(fd.pic, sizeof fd.pic, "%s", cur()->s);
+                    snprintf(fd.pic, sizeof fd.pic, "%s", cur()->s); pic_len_check(fd.pic, t->line);
                     if (nat_picture(fd.pic, &fd.pi, t->line)) { advance(); is_field = 1; continue; }
                     if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(t->line, "report field: %s", fd.pi.err);
                     advance(); is_field = 1;
@@ -13581,6 +13614,7 @@ static void parse_rd(void)
                         if (pic_analyse(fd.pic, &fd.pi) < 0) die_at(eline, "report field: %s", fd.pi.err);
                     }
                 }
+                if (fd.blank_zero) bwz_check("the report field", &fd.pi, 0, eline);
                 if (usage_disp && fd.pi.category == PIC_NATIONAL)
                     die_at(eline, "a report group item with a PICTURE of N takes only USAGE NATIONAL (2023 13.18.60.3 rule 20)");
                 if (fd.usage_nat) {
@@ -13685,6 +13719,7 @@ static void parse_screen_section(void)
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
                     f->has_pic = 1;
                     snprintf(f->pic, sizeof f->pic, "%s", cur()->s);
+                    pic_len_check(f->pic, t->line);
                     if (nat_picture(f->pic, &f->pi, t->line)) { advance(); continue; }
                     if (pic_analyse(f->pic, &f->pi) < 0) die_at(t->line, "screen field: %s", f->pi.err);
                     advance(); continue;
@@ -13739,6 +13774,7 @@ static void parse_screen_section(void)
             }
             expect_period();
             if (!susage && gdepth) susage = gstk[gdepth - 1].usage;
+            if (f->has_pic && f->blank_zero) bwz_check("the screen field", &f->pi, 0, fline);
             if (f->has_pic && susage == 1 && f->pi.category == PIC_NATIONAL)
                 die_at(fline, "a screen item with a PICTURE of N takes only USAGE NATIONAL (2023 13.18.60.3 rule 20)");
             if (f->has_pic && susage == 2 && f->pi.category != PIC_NATIONAL)

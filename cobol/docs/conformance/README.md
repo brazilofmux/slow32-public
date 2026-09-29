@@ -26,6 +26,7 @@ began this; ISSUES-96 on record the sweeps.
 | section | page | swept |
 |---|---|---|
 | 14.9.14 EXIT | [exit.md](exit.md) | 2026-09-28 |
+| 13.18.40 PICTURE, 13.18.8 BLANK WHEN ZERO | [picture.md](picture.md) | 2026-09-29 |
 | 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
 | 13.18.29 GROUP-USAGE, 13.18.60 USAGE BIT/NATIONAL, 13.18.40 PICTURE 1/N, 8.3.3.4-5 | [national-boolean.md](national-boolean.md) | 2026-09-29 |
 | 14.9.28 PERFORM | [perform.md](perform.md) | 2026-09-28 |

@@ -3591,3 +3591,31 @@ unfinished); bad/std2002-groupusage-strong, -groupusage-mixed,
 pic-zero-count, literal-161. CCVS-85 unchanged; harness 371/371; -std=85
 byte-identical on all 229 Open Systems programs; majesty PASS;
 majesty-functions PASS; Open Systems paper unchanged.
+
+**13.18.40 PICTURE and 13.18.8 BLANK WHEN ZERO** (docs/conformance/picture.md).
+The analyser checked the symbols' meaning but almost none of the order
+and combination rules: 99CRCR, 9V9V9, S9S9, Z*9, +99CR, 9+9, 9$9,
+++$$9, ZZ.Z9 and .$$ all compiled, a picture could be any length, and
+BLANK WHEN ZERO took alphanumeric, COMP, S and * pictures. Now:
+pic_rules() checks 13.18.40.3 rules 12, 16-21, 23, 25-27 and 29 with
+messages that cite them; pic_precedence() checks every ordered pair of
+symbols against Table 10, read off the 2023 PDF by mark position
+(pdftotext -bbox; the two pages differ by 17 points), and rule 12a; the
+length is 30 characters under -std=85 and 50 under -std=2002;
+bwz_check() takes the BLANK WHEN ZERO rules for data, report and screen
+items.
+
+Checked by differential: 7,368 generated pictures against GnuCOBOL 4
+(-std=cobol85, which implements the chart). 7,313 agree; the 55 that
+do not were each settled by the text, which sides with this compiler
+in every case (docs/oracles.md). tests/pic-differential.sh reruns it
+and fails if the count moves; 42 of the cases join tests/pictures.txt.
+
+Tests: free/picedit (editing at its edges; the oracle agrees);
+bad/pic-crdb-twice, -s-not-first, -p-and-point, -z-and-star,
+-sign-exclusive, -fixed-sign-middle, -currency-middle, -two-floating,
+-9-before-z, -z-past-point, -float-after-point, -no-digit-symbol,
+-precedence, -too-long, bwz-star, -sign, -alnum, -comp. CCVS-85
+unchanged; harness 390/390; -std=85 byte-identical on all 229 Open
+Systems programs; majesty PASS; majesty-functions PASS; Open Systems
+paper unchanged.
