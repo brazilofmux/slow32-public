@@ -1,0 +1,1 @@
+'q' REDEFINES 'p': a pointer item is neither redefined nor a redefinition (2023 13.18.44.3 rules 12 and 14)

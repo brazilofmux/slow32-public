@@ -1,0 +1,1 @@
+'h' REDEFINES 'f', which has an OCCURS clause; redefine an item containing the table, or one inside it (X3.23-1985 REDEFINES syntax rule 5)

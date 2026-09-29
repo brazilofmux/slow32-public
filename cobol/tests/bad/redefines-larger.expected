@@ -1,0 +1,1 @@
+'j' (6 bytes) REDEFINES the smaller 'i' (4 bytes); only a level 01 item that is not EXTERNAL may be redefined by a larger one (X3.23-1985 REDEFINES syntax rule 6)

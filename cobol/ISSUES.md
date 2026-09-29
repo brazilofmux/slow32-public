@@ -4000,3 +4000,28 @@ bad/initialize-operands, warn/ext-every (BP-E15), 2002/allocinit. Harness 456/45
 -std=85 byte-identical on the Open Systems programs, majesty PASS, Open
 Systems paper unchanged. Page: docs/conformance/initialize.md.
 
+### 105. The REDEFINES sweep (2026-09-29)
+
+GnuCOBOL warned on a test (INITIALIZE, ISSUES-104) that REDEFINEd an
+item with OCCURS, which we had accepted. The clause's syntax rules,
+probed one by one, were mostly unchecked: the redefined item was found
+by searching back for any earlier entry of that name and level.
+
+Now data-name-2 must be the entry just before at its level, or the one
+that entry redefines (2023 13.18.44.3 rules 4, 7, 10; 85 rules 8, 10,
+11), and after layout a pass over the entries with a REDEFINES clause
+(redef_clause: file records and SAME RECORD AREA share storage the same
+way without one) refuses an OCCURS on data-name-2 or an ODO table on
+either side (rule 5), a larger redefinition of anything but a non-
+EXTERNAL level 01 item (rule 8; 85 rule 6), a VALUE in the entry or
+below it but at level 88 (rule 9), and pointer items (rules 12, 14).
+REDEFINES on a level 01 in the FILE SECTION is refused (rule 3). The
+level-mismatch message named the redefined item as if it were the
+subject; it names both now.
+
+Nothing in CCVS-85, the Open Systems suite or majesty trips any of
+these. Tests: bad/redefines-rules, -occurs, -larger, -value, -fd,
+bad/std2002-redefines-pointer. Harness 462/462, -std=85 byte-identical
+on the Open Systems programs, majesty PASS. Page:
+docs/conformance/redefines.md.
+

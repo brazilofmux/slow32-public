@@ -32,6 +32,7 @@ began this; ISSUES-96 on record the sweeps.
 | 14.7.7, ADD SUBTRACT MULTIPLY DIVIDE COMPUTE | [arithmetic.md](arithmetic.md) | 2026-09-29 |
 | 14.9.20 INITIALIZE | [initialize.md](initialize.md) | 2026-09-29 |
 | 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
+| 13.18.44 REDEFINES | [redefines.md](redefines.md) | 2026-09-29 |
 | 14.9.22 INSPECT, 14.9.43 STRING, 14.9.48 UNSTRING | [string.md](string.md) | 2026-09-29 |
 | 13.18.29 GROUP-USAGE, 13.18.60 USAGE BIT/NATIONAL, 13.18.40 PICTURE 1/N, 8.3.3.4-5 | [national-boolean.md](national-boolean.md) | 2026-09-29 |
 | 14.9.28 PERFORM | [perform.md](perform.md) | 2026-09-28 |

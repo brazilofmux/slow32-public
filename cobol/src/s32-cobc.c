@@ -1658,6 +1658,7 @@ typedef struct Sym {
     int  lin_file;                  /* LINAGE-COUNTER of file lin_file (a cell in its cob_file), -1 otherwise */
     int  rep_ctr;                   /* LINE-COUNTER / PAGE-COUNTER of report rep_ctr (a cell in its cob_report), -1 otherwise */
     int  redefines;                 /* sym index, -1 */
+    int  redef_clause;              /* ... from a REDEFINES clause, not a file's records sharing storage */
     int  sync, just, blank_zero;
     int  sign_lead, sign_sep;        /* SIGN IS LEADING/TRAILING [SEPARATE] */
     int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];
@@ -1692,6 +1693,8 @@ typedef struct Sym {
     int  desc_id;                   /* -1 until emitted */
 } Sym;
 static int sym_in_strong(const Sym *s);
+static Sym *odo_table_for(Sym *s);
+static Sym *odo_table_below(Sym *s);
 
 static Sym *g_sym;
 static int g_nsym, g_scap;
@@ -2573,12 +2576,36 @@ static void parse_data_item1(void)
             advance();
             if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after REDEFINES");
             if (!strcmp(cur()->s, "filler")) die_at(t->line, "REDEFINES FILLER: the redefined item needs a name (FILLER cannot be referenced)");
-            /* the redefined item must be an earlier sibling in the same group */
-            int found = -1;
-            for (int i = sym_idx(s) - 1; i >= 0; i--)
-                if (!g_sym[i].is_cond && !strcmp(g_sym[i].name, cur()->s) && g_sym[i].level == level) { found = i; break; }
-            if (found < 0) die_at(t->line, "'%s' does not redefine an item at level %02d", cur()->s, level);
-            s->redefines = found;
+            /* data-name-2 is the entry just before this one at its level,
+             * with nothing at a lower level between (13.18.44.3 rule 4) and
+             * no other storage between (rule 10) -- or, when that entry is
+             * itself a redefinition, the entry it redefines (rule 7) */
+            int e85 = g_std < 2002, lv = level == 77 ? 1 : level, prev = -1;
+            for (int i = sym_idx(s) - 1; i >= g_sym_base; i--) {
+                Sym *q = &g_sym[i];
+                if (q->is_cond || q->is_index || q->level == 66 || q->is_ftemp) continue;
+                int ql = q->level == 77 ? 1 : q->level;
+                if (ql > lv) continue;                  /* inside an earlier sibling */
+                if (ql == lv) prev = i;
+                break;
+            }
+            int orig = prev >= 0 && g_sym[prev].redefines >= 0 && g_sym[prev].redef_clause ? g_sym[prev].redefines : prev;
+            if (orig >= 0 && !strcmp(g_sym[orig].name, cur()->s) && g_sym[orig].level == level) s->redefines = orig;
+            else if (prev >= 0 && !strcmp(g_sym[prev].name, cur()->s) && g_sym[prev].level == level)
+                die_at(t->line, "'%s' REDEFINES '%s', itself a redefinition: name the entry that first described the storage, '%s' (%s)",
+                       s->name, cur()->s, g_sym[orig].name, e85 ? "X3.23-1985 REDEFINES syntax rule 8" : "2023 13.18.44.3 rule 7");
+            else {
+                int any = -1;
+                for (int i = sym_idx(s) - 1; i >= g_sym_base; i--)
+                    if (!g_sym[i].is_cond && !strcmp(g_sym[i].name, cur()->s)) { any = i; break; }
+                if (any < 0) die_at(t->line, "'%s' REDEFINES '%s', which is not declared before it", s->name, cur()->s);
+                if (g_sym[any].level != level)
+                    die_at(t->line, "'%s' (level %02d) REDEFINES '%s' (level %02d): the levels must be the same (%s)", s->name, level, cur()->s, g_sym[any].level,
+                           e85 ? "X3.23-1985 REDEFINES syntax rule 2" : "2023 13.18.44.3 rule 2");
+                die_at(t->line, "'%s' REDEFINES '%s', but other entries come between them; a redefinition follows the entry it redefines (%s)",
+                       s->name, cur()->s, e85 ? "X3.23-1985 REDEFINES syntax rules 10 and 11" : "2023 13.18.44.3 rules 4 and 10");
+            }
+            s->redef_clause = 1;
             advance();
             continue;
         }
@@ -2626,6 +2653,9 @@ static void parse_data_item1(void)
         die_at(line, "OCCURS is not allowed at level 01");
     if (g_cur_fd >= 0 && level == 1) {
         /* every 01 under an FD is a view of the same record area */
+        if (s->redef_clause)
+            die_at(line, "'%s': a level 01 entry in the FILE SECTION takes no REDEFINES; its records already share the area (%s)", s->name,
+                   g_std < 2002 ? "X3.23-1985 REDEFINES syntax rule 3" : "2023 13.18.44.3 rule 3");
         File *f = &g_files[g_cur_fd];
         s->fd = g_cur_fd;
         if (f->rec < 0) f->rec = sym_idx(s); else s->redefines = f->rec;
@@ -3127,6 +3157,35 @@ static void finish_data_division(void)
             if (a->rec < 0 || b->rec < 0) die_at(b->line, "SAME RECORD AREA: file '%s' has no record description", b->name);
             if (g_sym[b->rec].redefines < 0) g_sym[b->rec].redefines = a->rec;
         }
+    /* the REDEFINES rules that need sizes and subordinates (2023
+     * 13.18.44.3 rules 5, 8, 9, 12, 14; X3.23-1985 REDEFINES rules 5, 6, 9) */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->redefines < 0 || !s->redef_clause) continue;
+        Sym *o = &g_sym[s->redefines];
+        int e85 = g_std < 2002;
+        if (o->occurs)
+            die_at(s->line, "'%s' REDEFINES '%s', which has an OCCURS clause; redefine an item containing the table, or one inside it (%s)",
+                   s->name, o->name, e85 ? "X3.23-1985 REDEFINES syntax rule 5" : "2023 13.18.44.3 rule 5");
+        if (odo_table_for(s) != odo_table_for(o) || (s->is_group && odo_table_below(s)))
+            die_at(s->line, "'%s' REDEFINES '%s': neither may include an OCCURS DEPENDING ON table (%s)",
+                   s->name, o->name, e85 ? "X3.23-1985 REDEFINES syntax rule 5" : "2023 13.18.44.3 rule 5");
+        if (!e85 && ((!s->is_group && s->usage == U_POINTER) || (!o->is_group && o->usage == U_POINTER)))
+            die_at(s->line, "'%s' REDEFINES '%s': a pointer item is neither redefined nor a redefinition (2023 13.18.44.3 rules 12 and 14)", s->name, o->name);
+        if (!sym_bitlike(s) && !sym_bitlike(o) && !(o->level == 1 && !o->is_external)) {
+            long ssz = (long)s->size * (s->occurs ? s->occurs : 1);
+            if (ssz > o->size)
+                die_at(s->line, "'%s' (%ld bytes) REDEFINES the smaller '%s' (%d bytes); only a level 01 item that is not EXTERNAL may be redefined by a larger one (%s)",
+                       s->name, ssz, o->name, o->size, e85 ? "X3.23-1985 REDEFINES syntax rule 6" : "2023 13.18.44.3 rule 8");
+        }
+        for (int j = i; j < g_nsym; j++) {             /* this entry and its subordinates: no VALUE but at level 88 */
+            Sym *q = &g_sym[j];
+            if (j > i) { int in = 0; for (int a = q->parent; a >= 0; a = g_sym[a].parent) if (a == i) { in = 1; break; } if (!in) { if (!q->is_cond && !q->is_index) break; continue; } }
+            if (!q->is_cond && q->value_tok)
+                die_at(q->line, "'%s' is %s REDEFINES entry and cannot have a VALUE clause; only a level 88 below it can (%s)", q->name,
+                       j == i ? "a" : "under a", e85 ? "X3.23-1985 REDEFINES syntax rule 9" : "2023 13.18.44.3 rule 9");
+        }
+    }
     /* 01 REDEFINES 01: share the earlier record's storage */
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];

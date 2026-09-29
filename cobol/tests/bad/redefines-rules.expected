@@ -1,0 +1,3 @@
+'b' REDEFINES 'a', but other entries come between them; a redefinition follows the entry it redefines (X3.23-1985 REDEFINES syntax rules 10 and 11)
+'e' REDEFINES 'd', itself a redefinition: name the entry that first described the storage, 'c' (X3.23-1985 REDEFINES syntax rule 8)
+'n' (level 10) REDEFINES 'm' (level 05): the levels must be the same (X3.23-1985 REDEFINES syntax rule 2)
