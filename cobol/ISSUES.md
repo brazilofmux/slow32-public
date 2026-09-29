@@ -4148,7 +4148,7 @@ with I-O; CLOSE REEL/UNIT/NO REWIND on a non-sequential file; READ INTO
 the file's own record area; (2002) READ INTO a non-alphanumeric item
 when the file has several records; END-OF-PAGE with ADVANCING PAGE;
 INVALID KEY on REWRITE or DELETE of a relative file in sequential
-access. END-OF-PAGE without LINAGE was a parse error ("'at' is not a
+access; OPEN INPUT or I-O of a report file. END-OF-PAGE without LINAGE was a parse error ("'at' is not a
 COBOL verb") and cites the rule now.
 
 A bug: WRITE ... AFTER ADVANCING 1 on an indexed file slipped through,
@@ -4159,8 +4159,8 @@ The 85 rule that AT END / INVALID KEY is required when no USE procedure
 applies is BP-E18 (the Open Systems suite omits it 8 times, relying on
 FILE STATUS). READ PREVIOUS is not implemented and now says so.
 
-Tests: bad/io-rules (9 errors), warn/ext-every (BP-E18). Harness
-487/487, CCVS-85 unchanged, -std=85 byte-identical on the Open Systems
+Tests: bad/io-rules (9 errors), bad/open-report-input, warn/ext-every
+(BP-E18). Harness 488/488, CCVS-85 unchanged, -std=85 byte-identical on the Open Systems
 programs, majesty PASS, Open Systems paper unchanged. Page:
 docs/conformance/io-statements.md.
 

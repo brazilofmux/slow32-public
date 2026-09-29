@@ -11079,6 +11079,9 @@ static void parse_open(void)
             int fline = cur()->line;
             File *f = expect_file();
             int reversed = 0, e85 = g_std < 2002, seq = f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ;
+            if (f->report_name[0] && (mode == COB_OPEN_INPUT || mode == COB_OPEN_IO))
+                die_at(fline, "OPEN %s '%s': a report file is opened OUTPUT or EXTEND (%s)", mode == COB_OPEN_INPUT ? "INPUT" : "I-O", f->name,
+                       e85 ? "X3.23-1985 Report Writer OPEN format" : "2023 14.9.27.3 rule 1");
             if (mode == COB_OPEN_EXTEND && (f->linage || f->access))
                 die_at(fline, "OPEN EXTEND '%s': EXTEND is for a file in sequential access mode without LINAGE (%s)", f->name,
                        !e85 ? "2023 14.9.27.3 rule 2" : f->linage ? "X3.23-1985 sequential OPEN syntax rule 3" : "X3.23-1985 relative and indexed OPEN syntax rule 1");

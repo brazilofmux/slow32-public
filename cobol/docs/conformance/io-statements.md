@@ -11,7 +11,7 @@ rules.
 |---|---|---|
 | OPEN (85 sequential 3, relative/indexed 1; 2023 2) | EXTEND only in sequential access and without LINAGE | **refused**: bad/io-rules -- accepted before this sweep |
 | OPEN (85 formats; 2023 5-6) | NO REWIND only for a sequential file opened INPUT or OUTPUT | **refused**: bad/io-rules -- accepted before |
-| OPEN (2023 1) | a report file not opened INPUT or I-O | **refused** |
+| OPEN (2023 1; 85 Report Writer format) | a report file not opened INPUT or I-O | **refused**: bad/open-report-input -- accepted before |
 | CLOSE (85 relative/indexed format; 2023 1) | REEL, UNIT, NO REWIND only for sequential files | **refused**: bad/io-rules -- accepted before |
 | READ 85 rule 1 | INTO is not the file's own record area | **refused**: bad/io-rules -- accepted before |
 | READ 2023 rule 1 | several record descriptions: INTO and every record alphanumeric | **refused** under -std=2002 -- accepted before |
