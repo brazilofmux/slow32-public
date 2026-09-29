@@ -1,0 +1,1 @@
+the STRING receiver shall not be reference-modified (2023 14.9.43.3 rule 4; X3.23-1985 STRING syntax rule 3)

@@ -3378,3 +3378,39 @@ differential 80/80; cross-engine 90/94 (the four pre-existing QEMU
 fault-line divergences); -std=85 byte-identical on all 229 Open Systems
 programs; majesty PASS; majesty-functions PASS; Open Systems paper
 unchanged.
+
+### 95. The refusal survey's fixes: misstated and missing refusals, the Stage A gaps (2026-09-28)
+
+docs/refusals.md sorted the compiler's refusals. Its class 1 and the
+COBOL 85 part of class 2, done:
+
+- **Forbidden, and now says so.** A reference-modified STRING receiver
+  cites X3.23-1985 STRING rule 3 and 2023 14.9.43.3 rule 4 instead of
+  "not implemented". Items after an OCCURS DEPENDING ON table in its
+  record are refused at the declaration (85 OCCURS format 2 rule 10;
+  2023 13.18.38.3 rule 22) -- before, only a MOVE or operand of the group
+  complained. None of the 229 Open Systems programs, majesty or CCVS-85
+  declares one.
+- **Forbidden, and was accepted.** Under -std=85 a reference-modified
+  UNSTRING sending item is refused (85 UNSTRING rule 7; 2023 dropped it).
+- **Stage A gaps closed.** CALL BY CONTENT of a reference-modified item
+  (its length from cob_refmod_len; a bit part still refused). A REPORT
+  SECTION in a contained program: each unit's reports start at
+  g_report_base, where the contained program's used to overwrite its
+  container's. The Report Writer CODE clause (85: a two-character
+  literal; 2023: a literal or an identifier, taken at each body group),
+  kept by the runtime per report (cob_rw_code) so no report block
+  changes shape; with it, FD REPORTS ARE of several reports, INITIATE and
+  TERMINATE of several report-names, and the rule that CODE is on each
+  report of a file or none -- all three missing before.
+- **Dead code.** SUPPRESS's entry in the verbs refused as "not
+  implemented" (SUPPRESS is implemented).
+- **GnuCOBOL.** 4.0-early-dev writes an empty print file for a report
+  with CODE; fixed/rwcode is ours alone, the divergence in oracles.md.
+
+Tests: fixed/bycontentrm and rwnested (the oracle agrees), fixed/rwcode
+(no oracle); bad/odo-followed, string-refmod-receiver,
+unstring-refmod-85, rw-code-partial. CCVS-85 unchanged: 348 programs,
+8068 of 8175 tests, all 348 matching GnuCOBOL. Harness 315/315; -std=85
+byte-identical on all 229 Open Systems programs; majesty PASS;
+majesty-functions PASS; Open Systems paper unchanged.

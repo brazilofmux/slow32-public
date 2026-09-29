@@ -18,6 +18,8 @@ Surveyed 2026-09-28 against X3.23-1985 (FIPS 21-2) and ISO/IEC
 
 ## 1. Forbidden by the standard
 
+All three below fixed 2026-09-28 (ISSUES-95), each with a refusal test.
+
 Mislabelled "not implemented", to be reworded with the citation:
 
 | refusal | rule |
@@ -39,14 +41,15 @@ rest (see "What follows" below).
 
 ## 2. Gaps in a targeted edition
 
-COBOL 85 (Stage A was declared complete; these are in the 85 text):
+COBOL 85 (Stage A was declared complete; these are in the 85 text) --
+all closed 2026-09-28 (ISSUES-94, -95):
 
-- the Report Writer CODE clause;
-- INITIALIZE of a reference-modified item (done, ISSUES-94 B3);
-- BY CONTENT of a reference-modified item (no restriction in 85 or
-  2023 CALL rules);
-- a REPORT SECTION in a contained program (2023 13.8.3 rule 1 allows it
-  in any program definition).
+- the Report Writer CODE clause, and with it REPORTS ARE with several
+  reports to one file and INITIATE/TERMINATE of several reports, which
+  were missing too;
+- INITIALIZE of a reference-modified item;
+- BY CONTENT of a reference-modified item (a bit part still refused);
+- a REPORT SECTION in a contained program.
 
 COBOL 2002/2023 (Stage B):
 
@@ -107,8 +110,7 @@ Two ruled 2026-09-28:
 
 ## Dead code
 
-- `"suppress"` in the verb refusal list: SUPPRESS is implemented, so
-  the entry is never reached.
+- `"suppress"` in the verb refusal list: removed (ISSUES-95).
 
 ## What follows
 

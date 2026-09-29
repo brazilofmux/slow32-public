@@ -1716,6 +1716,7 @@ typedef struct {
     Tok *assign_lit;                 /* ASSIGN TO literal ... */
     char assign_name[64];            /* ... or to a data-name */
     char status_name[64], key_name[64], report_name[64];
+    char (*report_more)[64]; int nreport_more;    /* REPORTS ARE: the names after the first */
     char status_qual[64];            /* FILE STATUS name OF group */
     char relkey_name[64];            /* RELATIVE KEY IS data-name */
     char key_qual[64];               /* RECORD KEY IS name IN group */
@@ -1800,6 +1801,7 @@ typedef struct {
     int ctl_held[8];                 /* where the new value waits while the item holds the prior one */
     int resolved;                    /* SUM operands, UPON, RESET, CH/CF levels resolved at first use */
     RGroup *g; int ng, gcap;
+    Tok *code_lit; int code_tp;      /* CODE: the literal, or the identifier's token position (0 none) */
 } Report;
 
 /* the report state block's cells past the ones with symbols (cobrt.h) */
@@ -1809,6 +1811,7 @@ typedef struct {
 #define RW_OFF_GI        60
 
 static Report *g_reports; static int g_nreport, g_rcap;
+static int g_report_base;           /* the unit's first report: a contained program's follow its container's (ISSUES-94) */
 
 /* ---- screens: SCREEN SECTION 01s as slot tables ------------------------ */
 
@@ -1862,7 +1865,7 @@ static void emit_screen_dyn_fill(Screen *sc, int first, int count);   /* below, 
 
 static Report *report_find(const char *name)
 {
-    for (int i = 0; i < g_nreport; i++) if (!strcmp(g_reports[i].name, name)) return &g_reports[i];
+    for (int i = g_report_base; i < g_nreport; i++) if (!strcmp(g_reports[i].name, name)) return &g_reports[i];
     return NULL;
 }
 
@@ -2940,6 +2943,14 @@ static void finish_data_division(void)
         if (!is_int_item(s->odo_dep_sym)) die_at(s->line, "DEPENDING ON '%s' must be an integer item", s->odo_dep);
         if (s->odo_dep_sym->record == s->record && s->odo_dep_sym->offset >= s->offset)
             die_at(s->line, "DEPENDING ON '%s' must not be inside or after the table", s->odo_dep);
+        /* the table may be followed in its record only by entries
+         * subordinate to it (X3.23-1985 OCCURS format 2 syntax rule 10;
+         * 2023 13.18.38.3 rule 22): no item after it at any level above */
+        for (Sym *k = s; k->parent >= 0 && k->level != 1; k = &g_sym[k->parent])
+            for (int c = k->sibling; c >= 0; c = g_sym[c].sibling)
+                if (g_sym[c].level != 88 && g_sym[c].level != 66)
+                    die_at(g_sym[c].line, "'%s' follows the OCCURS DEPENDING ON table '%s' in its record, which only the table's own subordinate entries may (2023 13.18.38.3 rule 22)",
+                           g_sym[c].name, s->name);
     }
     /* files: names, status, the record area */
     for (int i = g_file_base; i < g_nfile; i++) {
@@ -3626,8 +3637,8 @@ static void parse_ref(Ref *r)
             if (cur()->kind != T_WORD || !report_find(cur()->s)) die_at(t->line, "%s-COUNTER OF needs a report-name", which ? "PAGE" : "LINE");
             rp = report_find(cur()->s); advance();
         } else {
-            if (g_nreport != 1) die_at(t->line, g_nreport ? "%s-COUNTER is ambiguous: say %s-COUNTER OF report-name" : "%s-COUNTER: there is no RD", which ? "PAGE" : "LINE", which ? "PAGE" : "LINE");
-            rp = &g_reports[0];
+            if (g_nreport - g_report_base != 1) die_at(t->line, g_nreport > g_report_base ? "%s-COUNTER is ambiguous: say %s-COUNTER OF report-name" : "%s-COUNTER: there is no RD", which ? "PAGE" : "LINE", which ? "PAGE" : "LINE");
+            rp = &g_reports[g_report_base];
         }
         r->sym = &g_sym[which ? rp->pc_sym : rp->lc_sym];
         return;
@@ -4710,7 +4721,21 @@ static void emit_args(const Arg *a, int n)
             /* BY CONTENT: the callee gets a copy, from the runtime's arena,
              * released after the CALL (cob_content_pop) */
             Opnd *o = a[i].fn;
-            if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit_li("r4", o->ref.sym->size); }
+            if (o->kind == O_REF && o->ref.rm) {
+                /* a reference-modified part: its length in bytes, worked
+                 * out as its descriptor's is (X3.23-1985 and 2023 put no
+                 * restriction on it; cobol ISSUES-94) */
+                const Ref *r = &o->ref;
+                emit_rm_start_len(r, base + i);
+                emit("\tadd r4, r1, r0");
+                emit("\tldw r5, sp+%d", SLOT(base + i));
+                emit_desc_addr("r3", sym_desc(r->sym));
+                emit_call("cob_refmod_len");
+                emit("\tstw sp+%d, r1", SLOT(base + i));
+                emit_ref_addr(r, "r3");
+                emit("\tldw r4, sp+%d", SLOT(base + i));
+            }
+            else if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit_li("r4", o->ref.sym->size); }
             else if (o->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)o->tok->s, o->tok->len)); emit_li("r4", o->tok->len); }
             else { emit_la("r3", call_num_lit_label(&o->num)); emit_li("r4", o->num.ndigits); }
             emit_call("cob_content_push");
@@ -8744,7 +8769,7 @@ static void parse_use(void)
         expect_word("reporting");
         if (cur()->kind != T_WORD) die_at(line, "USE BEFORE REPORTING needs a report group name");
         RGroup *g = NULL; Report *r = NULL;
-        for (int i = 0; i < g_nreport && !g; i++)
+        for (int i = g_report_base; i < g_nreport && !g; i++)
             for (int k = 0; k < g_reports[i].ng; k++)
                 if (g_reports[i].g[k].name[0] && !strcmp(g_reports[i].g[k].name, cur()->s)) { r = &g_reports[i]; g = &g_reports[i].g[k]; break; }
         if (!g) die_at(line, "'%s' is not a report group", cur()->s);
@@ -10046,7 +10071,7 @@ static void parse_string_1(void)
     /* the receiver: not edited, not JUSTIFIED (X3.23 6.24.2); a group is alphanumeric */
     if (!dst.sym->is_group && (dst.sym->pi.category == PIC_NUMERIC || dst.sym->pi.edited || dst.sym->just))
         die_at(dst.line, "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED");
-    if (dst.rm) die_at(dst.line, "a reference-modified STRING receiver is not implemented");
+    if (dst.user_rm) die_at(dst.line, "the STRING receiver shall not be reference-modified (2023 14.9.43.3 rule 4; X3.23-1985 STRING syntax rule 3)");
     if (dst.sym->strong) die_at(dst.line, "a strongly-typed group is not a STRING receiver (2023 14.9.43.3 rule 6)");
     /* national operands (cobol ISSUES-69): characters of two bytes throughout */
     int nat = ref_is_national(&dst);
@@ -10123,6 +10148,8 @@ static void parse_unstring_1(void)
     int line = cur()->line;
     Opnd src; parse_operand(&src);
     if (src.kind != O_REF) die_at(src.line, "UNSTRING needs a data item to take apart");
+    if (g_std < 2002 && src.ref.user_rm)                /* 2023 dropped the rule */
+        die_at(src.line, "the UNSTRING sending item shall not be reference-modified in COBOL 85 (X3.23-1985 UNSTRING syntax rule 7)");
     if (!src.ref.rm && !src.ref.sym->is_group && src.ref.sym->pi.category == PIC_NUMERIC && src.ref.sym->usage != U_DISPLAY)
         die_at(src.line, "UNSTRING: '%s' is not a DISPLAY item", src.ref.sym->name);
     Opnd delims[16]; int dall[16]; int nd = 0;
@@ -10288,7 +10315,7 @@ static void parse_call(void)
             Opnd *o = &ops[n];
             if (mode == 1) {
                 if (o->kind == O_REF && o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed");
-                if (o->kind == O_REF && o->ref.rm) die_at(o->line, "BY CONTENT of a reference-modified item is not implemented");
+                if (o->kind == O_REF && o->ref.rm && o->ref.rm_bit) die_at(o->line, "BY CONTENT of a reference-modified bit item is not implemented (its bits would need moving to a byte)");
                 if (!(o->kind == O_REF || o->kind == O_STR || o->kind == O_NUM)) die_at(o->line, "a CALL argument must be an item or a literal");
                 a[n] = arg_content(o); ncontent++;
             } else if (mode == 2) {
@@ -10738,11 +10765,53 @@ static void emit_report_group(Report *r, RGroup *g)
     if (Lsupp >= 0) emit_label(Lsupp);
 }
 
+/* a CODE on one report of a file is on each report of it (X3.23-1985 XIII
+ * 3.6.3 rule 2; 2023 13.18.12.3 rule 3) */
+static void rw_check_code(Report *r)
+{
+    int any = 0, all = 1;
+    for (int i = g_report_base; i < g_nreport; i++) {
+        if (g_reports[i].file != r->file) continue;
+        int has = g_reports[i].code_lit || g_reports[i].code_tp;
+        any |= has; all &= has;
+    }
+    if (any && !all) die_at(r->line, "CODE is on one report of the file '%s' but not on each (2023 13.18.12.3 rule 3)", g_files[r->file].name);
+}
+
+/* a report's CODE for the runtime: the literal once, at INITIATE; an
+ * identifier's value at each body group's start (GENERATE) */
+static void emit_rw_code(Report *r)
+{
+    if (r->code_lit) {
+        Arg a[3] = { arg_imm(0), arg_label(lit_label((unsigned char *)r->code_lit->s, r->code_lit->len)), arg_imm(r->code_lit->len) };
+        emit_args(a + 1, 2);
+        emit("\tadd r5, r4, r0"); emit("\tadd r4, r3, r0");
+        emit_report_addr("r3", r);
+        emit_call("cob_rw_code");
+    } else if (r->code_tp) {
+        int save = g_tp; g_tp = r->code_tp;
+        Ref cr; parse_ref(&cr);
+        g_tp = save;
+        if (cr.sym->is_group || (cr.sym->pi.category != PIC_ALPHANUMERIC))
+            die_at(cr.line, "CODE: '%s' is not an alphanumeric data item (2023 13.18.12.3 rule 2)", cr.sym->name);
+        Arg a[2] = { arg_ref(&cr), arg_imm(cr.sym->size) };
+        emit_args(a, 2);
+        emit("\tadd r5, r4, r0"); emit("\tadd r4, r3, r0");
+        emit_report_addr("r3", r);
+        emit_call("cob_rw_code");
+    }
+}
+
 static void parse_initiate(void)
 {
-    Report *r = expect_report();
-    emit_report_addr("r3", r);
-    emit_call("cob_rw_initiate");
+    /* INITIATE report-name ... (X3.23-1985 XIII 4.2) */
+    do {
+        Report *r = expect_report();
+        rw_check_code(r);
+        emit_report_addr("r3", r);
+        emit_call("cob_rw_initiate");
+        if (r->code_lit) emit_rw_code(r);
+    } while (cur()->kind == T_WORD && report_find(cur()->s));
 }
 
 /* the counters a GENERATE subtotals: plain (non-counter) sources, the
@@ -10872,9 +10941,15 @@ static void emit_rw_generate(Report *r, RGroup *det)
     }
 }
 
+static void parse_terminate_1(Report *r);
 static void parse_terminate(void)
 {
-    Report *r = expect_report();
+    /* TERMINATE report-name ... (X3.23-1985 XIII 4.4) */
+    do parse_terminate_1(expect_report());
+    while (cur()->kind == T_WORD && report_find(cur()->s));
+}
+static void parse_terminate_1(Report *r)
+{
     rw_resolve(r);
     int Lend = new_label();
     emit_rw_ldw(r, RW_OFF_FIRST_GEN, "r2");
@@ -10902,18 +10977,20 @@ static void parse_generate(void)
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a report group after GENERATE");
     Report *r = NULL; RGroup *g = NULL;
-    for (int i = 0; i < g_nreport && !g; i++)
+    for (int i = g_report_base; i < g_nreport && !g; i++)
         for (int k = 0; k < g_reports[i].ng; k++)
             if (g_reports[i].g[k].name[0] && !strcmp(g_reports[i].g[k].name, t->s)) { r = &g_reports[i]; g = &g_reports[i].g[k]; break; }
     if (!g) {
         r = report_find(t->s);
         if (!r) die_at(t->line, "'%s' is not a report group", t->s);
         advance();
+        if (r->code_tp) emit_rw_code(r);
         emit_rw_generate(r, NULL);                  /* GENERATE report-name: summary reporting */
         return;
     }
     if (g->type != RG_DETAIL) die_at(t->line, "GENERATE needs a DETAIL group or the report-name");
     advance();
+    if (r->code_tp) emit_rw_code(r);
     emit_rw_generate(r, g);
 }
 
@@ -11616,11 +11693,6 @@ static void parse_statement_1(void)
     if (!strcmp(v, "enter") || !strcmp(v, "disable") || !strcmp(v, "enable") ||
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
-    static const struct { const char *verb; const char *when; } later[] = {
-
-        { "suppress", "after v1" }, { NULL, NULL } };
-    for (int i = 0; later[i].verb; i++)
-        if (!strcmp(v, later[i].verb)) die_at(t->line, "the verb %s is not implemented yet (%s)", v, later[i].when);
     if (is_terminator(v)) die_at(t->line, "'%s' without a matching statement", v);
     if (!strcmp(v, "identification") || !strcmp(v, "id"))
         die_at(t->line, "IDENTIFICATION DIVISION in the middle of a sentence (a contained program begins after a period)");
@@ -11646,7 +11718,7 @@ static int g_std = 85;              /* -std=85 (the default) or -std=2002: Stage
 struct UnitSave {
     int unit, sym_base, sym_end, file_base, file_end, para_base, para_end, use_end;
     char progid[64], progid_orig[64];
-    int nreport, nscreen, screen_base, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
+    int nreport, report_base, nscreen, screen_base, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
     char collate_name[64];
     char crtname[64];
     int nuse, in_decl, cur_sec_id, saw_end, initial, recursive, nsorttab;
@@ -11680,7 +11752,7 @@ static void compile_nested_unit(void)
     u->unit = g_unit; u->sym_base = g_sym_base; u->sym_end = g_nsym; u->file_base = g_file_base; u->file_end = g_nfile;
     u->para_base = g_para_base; u->para_end = g_npara; u->use_end = g_nuse;
     memcpy(u->progid, g_progid, sizeof u->progid); memcpy(u->progid_orig, g_progid_orig, sizeof u->progid_orig);
-    u->nreport = g_nreport; u->nscreen = g_nscreen; u->screen_base = g_screen_base; u->nclass = g_nclass; u->nswitch = g_nswitch; u->nalphabet = g_nalphabet;
+    u->nreport = g_nreport; u->report_base = g_report_base; u->nscreen = g_nscreen; u->screen_base = g_screen_base; u->nclass = g_nclass; u->nswitch = g_nswitch; u->nalphabet = g_nalphabet;
     u->nmnemonic = g_nmnemonic; u->last_item = g_last_item; u->nsame_groups = g_nsame_groups; u->collate = g_collate;
     u->lowval = g_lowval; u->highval = g_highval; u->cur_fd = g_cur_fd; u->in_linkage = g_in_linkage;
     memcpy(u->collate_name, g_collate_name, sizeof u->collate_name);
@@ -11696,7 +11768,7 @@ static void compile_nested_unit(void)
     g_unit = ++g_unit_counter;
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
-    g_nreport = 0; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
+    g_report_base = g_nreport; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
     g_nsame_groups = 0; g_npoison = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
     g_nsorttab = 0; g_initial = 0;
     /* a program contained in a recursive program is recursive (2023 11.10.4 rule 4) */
@@ -11713,7 +11785,7 @@ static void compile_nested_unit(void)
     g_unit = u->unit; g_sym_base = u->sym_base; g_nsym = u->sym_end; g_file_base = u->file_base; g_nfile = u->file_end;
     g_para_base = u->para_base; g_npara = u->para_end;
     memcpy(g_progid, u->progid, sizeof g_progid); memcpy(g_progid_orig, u->progid_orig, sizeof g_progid_orig);
-    g_nreport = u->nreport; g_nscreen = u->nscreen; g_screen_base = u->screen_base; g_nclass = u->nclass; g_nswitch = u->nswitch; g_nalphabet = u->nalphabet;
+    g_nreport = u->nreport; g_report_base = u->report_base; g_nscreen = u->nscreen; g_screen_base = u->screen_base; g_nclass = u->nclass; g_nswitch = u->nswitch; g_nalphabet = u->nalphabet;
     g_nmnemonic = u->nmnemonic; g_last_item = u->last_item; g_nsame_groups = u->nsame_groups; g_collate = u->collate;
     g_lowval = u->lowval; g_highval = u->highval; g_cur_fd = u->cur_fd; g_in_linkage = u->in_linkage;
     memcpy(g_collate_name, u->collate_name, sizeof g_collate_name);
@@ -12675,6 +12747,14 @@ static void parse_fd(void)
             accept_word("is"); accept_word("are");
             if (cur()->kind != T_WORD) die_at(t->line, "expected a report-name");
             snprintf(f->report_name, sizeof f->report_name, "%s", cur()->s); advance();
+            /* REPORTS ARE r1 r2 ...: several reports to one file (X3.23-1985
+             * XIII 2.2; each told apart by its CODE, cobol ISSUES-94) */
+            while (cur()->kind == T_WORD && !is_verb(cur()->s) && !at_word("label") && !at_word("block") && !at_word("record") &&
+                   !at_word("records") && !at_word("data") && !at_word("value") && !at_word("recording") && !at_word("code-set") &&
+                   !at_word("linage") && !at_word("external") && !at_word("global") && !at_word("is")) {
+                f->report_more = xrealloc(f->report_more, (size_t)(f->nreport_more + 1) * sizeof *f->report_more);
+                snprintf(f->report_more[f->nreport_more++], 64, "%s", cur()->s); advance();
+            }
             continue;
         }
         if (accept_word("recording")) {
@@ -12748,7 +12828,10 @@ static void parse_rd(void)
     r->line = line; r->file = -1;
     snprintf(r->name, sizeof r->name, "%s", cur()->s);
     advance();
-    for (int i = g_file_base; i < g_nfile; i++) if (!strcmp(g_files[i].report_name, r->name)) r->file = i;
+    for (int i = g_file_base; i < g_nfile; i++) {
+        if (!strcmp(g_files[i].report_name, r->name)) r->file = i;
+        for (int k = 0; k < g_files[i].nreport_more; k++) if (!strcmp(g_files[i].report_more[k], r->name)) r->file = i;
+    }
     if (r->file < 0) die_at(line, "no FD says REPORT IS %s", r->name);
     /* a print file SELECTed without ORGANIZATION is line sequential: that
      * is what GnuCOBOL made of gl036's, and its .prn is the oracle */
@@ -12794,7 +12877,21 @@ static void parse_rd(void)
             if (!r->nctl && !r->ctl_final) die_at(t->line, "CONTROL needs FINAL or data-names");
             continue;
         }
-        if (accept_word("code")) die_at(t->line, "the CODE clause is not implemented");
+        if (accept_word("code")) {
+            /* CODE (X3.23-1985 XIII 3.6; 2023 13.18.12): the characters
+             * each record of this report begins with, outside the lines'
+             * columns.  85: a two-character literal; 2023 also an
+             * identifier, evaluated at the start of each body group. */
+            accept_word("is");
+            if (cur()->kind == T_STR) {
+                if (g_std < 2002 && cur()->len != 2) die_at(t->line, "CODE takes a two-character literal (X3.23-1985 XIII 3.6.3 rule 1)");
+                r->code_lit = cur(); advance();
+            } else if (g_std >= 2002 && cur()->kind == T_WORD) {
+                r->code_tp = g_tp; advance();
+                while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD) { advance(); advance(); }
+            } else die_at(t->line, "CODE takes %s", g_std >= 2002 ? "an alphanumeric literal or identifier" : "a two-character literal");
+            continue;
+        }
         die_at(t->line, "unexpected %s in RD %s", tok_desc(t), r->name);
     }
     expect_period();
@@ -13269,7 +13366,6 @@ static void parse_data_division(void)
             continue;
         }
         if (at_word("report") && is_word(peek(1), "section")) {
-            if (g_udepth) die_at(cur()->line, "a REPORT SECTION in a contained program is not implemented");
             advance(); advance(); expect_period();
             while (at_word("rd")) parse_rd();
             continue;
@@ -13531,7 +13627,7 @@ static void emit_unit_data(void)
         if (g_altcell[i].target >= 0) emit("\t.word .Lp%d_%d", g_unit, g_altcell[i].target); else emit("\t.word 0");
     }
     g_naltcell = 0; g_naltname = 0;
-    for (int i = 0; i < g_nreport; i++) {
+    for (int i = g_report_base; i < g_nreport; i++) {
         Report *r = &g_reports[i];
         emit("\t.p2align 2");
         emit(".Lrpt%d_%d:\t# report %s", g_unit, i, r->name);
@@ -13651,7 +13747,7 @@ int main(int argc, char **argv)
     for (;;) {
         /* one program unit; a source file may hold several, each closed
          * by END PROGRAM */
-        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
+        g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_report_base = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
         g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0;
         parse_identification_division();

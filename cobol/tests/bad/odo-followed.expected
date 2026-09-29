@@ -1,0 +1,1 @@
+'after-t' follows the OCCURS DEPENDING ON table 't' in its record, which only the table's own subordinate entries may (2023 13.18.38.3 rule 22)

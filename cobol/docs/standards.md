@@ -197,6 +197,12 @@ SECTION in a contained program) and one 85 syntax rule not enforced
 (UNSTRING's reference-modified sending item). The rule-by-rule sweep in
 refusals.md, "What follows", is what closes Stage A properly.
 
+The four features and the rule were done the same day (ISSUES-94, -95),
+with more the work turned up: INITIALIZE never set an item another
+REDEFINES (the mask covered the redefined item's bytes), and an FD took
+one report and INITIATE/TERMINATE one report-name. CCVS-85 is unchanged
+by all of it; what the sweep may still find is unknown.
+
 ## Stage B — COBOL 2002, the practical half
 
 The standard is treated as modules, not one block. These parts of

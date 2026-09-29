@@ -116,6 +116,7 @@ agrees with its documented divergence").
 | `fixed/utf8cols` (no oracle) | a fixed-form line whose UTF-8 characters put column 72 past byte 72 | columns count characters (the user's ruling, docs/dialect.md) | counts bytes: the literal runs into the sequence area |
 | (not a test) | a numeric literal as a CALL argument (`CALL X USING 1234`, by reference or by content) | its digits, read through the callee's picture (the 85 text leaves the literal's class to the callee) | a 4-byte big-endian binary: a `PIC 9(4)` callee reads `0042` |
 | (not a test) | `CALL 'twice'` when the program is `TWICE` | found: program-names are words, case is not significant (the static link folds them the same way) | not found (a case-sensitive symbol lookup) |
+| `fixed/rwcode` (no oracle) | Report Writer `RD ... CODE "A1"` (one report, or two sharing a file) | each record begins with the code, the lines' columns after it (X3.23-1985 XIII 3.6.4; 2023 13.18.12.4) | 4.0-early-dev writes an empty print file for any report with a CODE clause |
 | (not a test) | relative slots on disk | the same 4-byte RDW per slot, zero for an empty slot; slot = 4 + maximum record (docs/indexed.md) | an 8-byte native `size_t` length per slot, 0 for empty |
 
 ## What we will not do

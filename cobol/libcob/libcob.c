@@ -3822,19 +3822,45 @@ static char *rw_pool_room(int n)
     return rw_pool + rw_pool_n;
 }
 
+/* CODE (X3.23-1985 XIII 3.6; 2023 13.18.12): the characters each record of
+ * a report begins with, kept here by report so the report block the
+ * compiler lays out is unchanged for the reports without it */
+static struct rw_code { cob_report *r; char *v; int n; } *rwcodes;
+static int nrwcodes;
+void cob_rw_code(cob_report *r, const char *p, int n)
+{
+    int k = 0;
+    while (k < nrwcodes && rwcodes[k].r != r) k++;
+    if (k == nrwcodes) {
+        rwcodes = realloc(rwcodes, (size_t)(nrwcodes + 1) * sizeof *rwcodes);
+        if (!rwcodes) cob_fatal("out of memory");
+        rwcodes[k].r = r; rwcodes[k].v = NULL; nrwcodes++;
+    }
+    free(rwcodes[k].v);
+    rwcodes[k].v = malloc((size_t)n + 1);
+    if (!rwcodes[k].v) cob_fatal("out of memory");
+    memcpy(rwcodes[k].v, p, (size_t)n); rwcodes[k].n = n;
+}
+
 static void rw_put_line(cob_report *r, const char *p, int n)
 {
     cob_file *f = r->file;
+    const struct rw_code *code = NULL;
+    for (int k = 0; k < nrwcodes; k++) if (rwcodes[k].r == r) code = &rwcodes[k];
     if (!f->open_mode || !f->fp) cob_fatal("GENERATE: the report's print file is not open");
+    unsigned cn = code ? (unsigned)code->n : 0;
     if (f->org != COB_ORG_LINESEQ && f->recsize) {
         /* a record-oriented print file: each line is one record, space-filled */
-        unsigned m = (unsigned)n < f->recsize ? (unsigned)n : f->recsize;
+        if (cn > f->recsize) cn = f->recsize;
+        if (cn) fwrite(code->v, 1, cn, (FILE *)f->fp);
+        unsigned room = f->recsize - cn, m = (unsigned)n < room ? (unsigned)n : room;
         fwrite(p, 1, m, (FILE *)f->fp);
-        for (unsigned k = m; k < f->recsize; k++) fputc(' ', (FILE *)f->fp);
+        for (unsigned k = m; k < room; k++) fputc(' ', (FILE *)f->fp);
         r->line_counter++;
         return;
     }
     while (n > 0 && p[n - 1] == ' ') n--;
+    if (cn) fwrite(code->v, 1, cn, (FILE *)f->fp);
     if (n) fwrite(p, 1, n, (FILE *)f->fp);
     fputc('\n', (FILE *)f->fp);
     r->line_counter++;
