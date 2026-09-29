@@ -2790,3 +2790,33 @@ rule, and the gap list loses the entry. std2002-bit-inspect's expected
 message follows; std2002-bit-string and -bit-unstring are new. Harness
 271/271; -std=85 byte-identical on all 227 Open Systems programs;
 majesty PASS; majesty-functions PASS; Open Systems paper unchanged.
+
+### 87. >>TURN for one file (2026-09-28)
+
+2023 7.3.25: `>>TURN exception-name [file-name] ... CHECKING ON | OFF`.
+Refused since ISSUES-53.
+
+- **What a file-name means.** A file-name follows an EC-I-O
+  exception-name (rule 4) and turns its checking on or off for that
+  file alone (rules 6 and 8). A TURN without a file-name sets the
+  condition for every file and clears its per-file settings, since it
+  applies "for all procedure division statements that follow".
+- **How it is held.** Per (condition, file) overrides (`EcFile`), over
+  `g_ec_on`. The code emitted after an I-O statement asks
+  `ec_on_io(name, file)` for its own file, and WITH LOCATION comes from
+  the override when one applies.
+- **Lexical, like any TURN.** A TURN holds for the statements that follow
+  it in the source (rule 6), not for the statements executed after it.
+  The test's first draft PERFORMed one shared paragraph after three
+  TURNs and saw the last state in every phase. That was correct, and the
+  test was rewritten, not the compiler.
+
+Noted for the gap list: reference modification of a function result
+whose length is known only at run time (`FUNCTION EXCEPTION-FILE(3:8)`)
+is refused. The test moves the result to an item first.
+
+2002/ecturnfile (no oracle): on for one file; on for all and off for
+one; WITH LOCATION for one. std2002-turn-file, which was the refusal,
+now checks rule 4. Harness 272/272; -std=85 byte-identical on all 227
+Open Systems programs; majesty PASS; majesty-functions PASS; Open
+Systems paper unchanged.

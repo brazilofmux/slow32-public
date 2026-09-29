@@ -3387,6 +3387,7 @@ static int ec_find(const char *w, int line);
 static char g_cur_stmt[16];              /* the statement being compiled, for EXCEPTION-STATEMENT */
 static const Tok *g_stmt_tok;            /* its first token: the line EXCEPTION-LOCATION names */
 static const char *g_ec_file;            /* EC-I-O being raised: the file-name as written, for EXCEPTION-FILE */
+static int g_ec_fidx = -1;               /* ... and its file index, for a TURN WITH LOCATION for that file */
 static int g_recursive, g_std, g_cond_depth;   /* defined below */
 static int g_fnsig_only;                /* -fnsig: write the functions' .s32fn files, compile nothing */
 static void skip_unit_body(void);
@@ -8315,18 +8316,57 @@ static int ec_group(int i)
     return best;
 }
 
-/* >>TURN name ... CHECKING {ON [WITH LOCATION] | OFF} (2023 7.3.25) */
+static int ec_on_io(const char *name, int file);
+/* TURN for one file (7.3.25 rules 4, 6, 8; cobol ISSUES-87): an override
+ * of checking for one EC-I-O condition and one file, over the setting
+ * for all files; a TURN without a file clears a condition's overrides */
+typedef struct { int ec, file; unsigned char on, loc; } EcFile;
+static EcFile g_ecf[256]; static int g_necf;
+static void ecf_set(int c, int file, int on, int loc)
+{
+    for (int k = 0; k < g_necf; k++) if (g_ecf[k].ec == c && g_ecf[k].file == file) { g_ecf[k].on = (unsigned char)on; g_ecf[k].loc = (unsigned char)loc; return; }
+    if (g_necf == 256) die_at(cur()->line, ">>TURN: more than 256 settings for one file and condition");
+    g_ecf[g_necf].ec = c; g_ecf[g_necf].file = file; g_ecf[g_necf].on = (unsigned char)on; g_ecf[g_necf].loc = (unsigned char)loc; g_necf++;
+}
+static void ecf_clear(int c)
+{
+    int m = 0;
+    for (int k = 0; k < g_necf; k++) if (g_ecf[k].ec != c) g_ecf[m++] = g_ecf[k];
+    g_necf = m;
+}
+/* checking for condition c on file index file (-1: none), and WITH LOCATION */
+static int ec_on_file(int c, int file, int *loc)
+{
+    for (int k = 0; file >= 0 && k < g_necf; k++)
+        if (g_ecf[k].ec == c && g_ecf[k].file == file) { if (loc) *loc = g_ecf[k].loc; return g_ecf[k].on; }
+    if (loc) *loc = g_ec_loc[c];
+    return g_ec_on[c];
+}
+
+/* >>TURN name [file-name] ... CHECKING {ON [WITH LOCATION] | OFF} (2023 7.3.25) */
 static void apply_turn(Tok *d)
 {
     char buf[512]; snprintf(buf, sizeof buf, "%s", d->s);
     char *w[64]; int nw = 0;
     for (char *t = strtok(buf, " \t"); t && nw < 64; t = strtok(NULL, " \t")) w[nw++] = t;
-    int k = 1, names[64], nn = 0;                  /* w[0] is TURN */
+    int k = 1, names[64], files[64], nn = 0;       /* w[0] is TURN */
     while (k < nw && strcasecmp(w[k], "checking")) {
-        if (strncasecmp(w[k], "ec-", 3)) die_at(d->line, ">>TURN for a file (%s) is not implemented yet", w[k]);
+        if (strncasecmp(w[k], "ec-", 3)) {
+            /* a file-name after an exception-name (rule 1: a word not EC-) */
+            if (!nn) die_at(d->line, ">>TURN: '%s' is not an exception-name", w[k]);
+            char lw[64]; int q = 0; for (; w[k][q] && q < 63; q++) lw[q] = (char)tolower((unsigned char)w[k][q]); lw[q] = 0;
+            File *f = file_find(lw);
+            if (!f) die_at(d->line, ">>TURN: '%s' is not a file-name", w[k]);
+            const char *en = ec_name(names[nn - 1]);
+            if (strncmp(en, "EC-I-O", 6)) die_at(d->line, ">>TURN: a file-name follows only an EC-I-O exception-name (2023 7.3.25.3 rule 4)");
+            if (files[nn - 1] >= 0) { if (nn == 64) die_at(d->line, ">>TURN: too many names"); names[nn] = names[nn - 1]; nn++; }
+            files[nn - 1] = (int)(f - g_files); k++;
+            continue;
+        }
         int i = ec_find(w[k], d->line);
         if (i < 0) die_at(d->line, ">>TURN: '%s' is not an exception-name", w[k]);
-        names[nn++] = i; k++;
+        if (nn == 64) die_at(d->line, ">>TURN: too many names");
+        names[nn] = i; files[nn] = -1; nn++; k++;
     }
     if (!nn || k >= nw) die_at(d->line, ">>TURN needs exception-names and CHECKING ON or OFF");
     k++;
@@ -8345,9 +8385,11 @@ static void apply_turn(Tok *d)
             if (ec_level(c) != 3) continue;
             int hit = c == i || lv == 1 || (lv == 2 && ec_group(c) == i);
             if (!hit || (c == warning && c != i)) continue;       /* EC-I-O-WARNING only by its own name */
+            if (files[j] >= 0) { ecf_set(c, files[j], on, on && loc); continue; }
             g_ec_on[c] = (unsigned char)on; g_ec_loc[c] = (unsigned char)(on && loc);
+            ecf_clear(c);                                         /* for all files now */
         }
-        if (lv == 1 || (i < NEC && !strcmp(g_ec[i].name, "EC-USER"))) { g_ecuser_on = on; g_ecuser_loc = on && loc; }
+        if (files[j] < 0 && (lv == 1 || (i < NEC && !strcmp(g_ec[i].name, "EC-USER")))) { g_ecuser_on = on; g_ecuser_loc = on && loc; }
     }
 }
 
@@ -8481,7 +8523,8 @@ static void emit_use_dispatch(File *f, int has_clause)
      * status names (2023 9.1.13) -- after the statement's own phrase and
      * the file's and the open mode's USE AFTER ERROR procedures, before
      * the run stops for want of one (USE general rule 3) */
-    int warn = ec_on_name("EC-I-O-WARNING"), Lwarn = warn ? new_label() : 0;
+    int fidx = (int)(f - g_files);
+    int warn = ec_on_io("EC-I-O-WARNING", fidx), Lwarn = warn ? new_label() : 0;
     emit("\tldw r13, sp+%d", SLOT_C);
     emit("\tbeq r13, r0, .L%d", warn ? Lwarn : Ldone);
     if (has_clause) { emit_li("r2", 1); emit("\tbeq r13, r2, .L%d", Ldone); }
@@ -8503,17 +8546,17 @@ static void emit_use_dispatch(File *f, int has_clause)
         { "EC-I-O-LOGIC-ERROR", 4 }, { "EC-I-O-RECORD-OPERATION", 5 }, { "EC-I-O-FILE-SHARING", 6 },
         { "EC-I-O-RECORD-CONTENT", 7 }, { "EC-I-O-IMP", 9 }, { NULL, 0 } };
     int any = 0;
-    for (int k = 0; ecio[k].name; k++) if (ec_on_name(ecio[k].name)) any = 1;
+    for (int k = 0; ecio[k].name; k++) if (ec_on_io(ecio[k].name, fidx)) any = 1;
     if (any) {
         emit_call("cob_io_class");                  /* the status's first digit; r13 survives */
         for (int k = 0; ecio[k].name; k++) {
-            if (!ec_on_name(ecio[k].name)) continue;
+            if (!ec_on_io(ecio[k].name, fidx)) continue;
             int Lnext = new_label();
             emit_li("r2", ecio[k].digit);
             emit("\tbne r1, r2, .L%d", Lnext);
-            g_ec_file = f->oname;
+            g_ec_file = f->oname; g_ec_fidx = fidx;
             emit_ec_raise(ec_find(ecio[k].name, 0));      /* a fatal one ends the run here */
-            g_ec_file = NULL;
+            g_ec_file = NULL; g_ec_fidx = -1;
             emit_jump(Ldone);
             emit_label(Lnext);
         }
@@ -8529,9 +8572,9 @@ static void emit_use_dispatch(File *f, int has_clause)
         emit_label(Lwarn);
         emit_call("cob_io_class");
         emit("\tbne r1, r0, .L%d", Ldone);
-        g_ec_file = f->oname;
+        g_ec_file = f->oname; g_ec_fidx = fidx;
         emit_ec_raise(ec_find("EC-I-O-WARNING", 0));
-        g_ec_file = NULL;
+        g_ec_file = NULL; g_ec_fidx = -1;
     }
     emit_label(Ldone);
 }
@@ -8944,6 +8987,8 @@ static void emit_ec_size(void)
 }
 
 static int ec_on_name(const char *name) { return g_std >= 2002 && g_ec_on[ec_find(name, 0)]; }
+/* an EC-I-O condition for one file: its TURN for that file, else for all */
+static int ec_on_io(const char *name, int file) { return g_std >= 2002 && ec_on_file(ec_find(name, 0), file, NULL); }
 
 /* raise condition i here: the last exception status, the statement's
  * name when WITH LOCATION turned it on, then the declarative and fatality */
@@ -8970,9 +9015,11 @@ static void emit_ec_raise(int i)
 {
     char nm[64]; snprintf(nm, sizeof nm, "%s", ec_name(i));
     emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
-    if (g_ec_loc[i] && g_cur_stmt[0]) emit_la("r4", lit_label((const unsigned char *)g_cur_stmt, (int)strlen(g_cur_stmt) + 1));
+    int loc = g_ec_loc[i];
+    if (g_ec_fidx >= 0) ec_on_file(i, g_ec_fidx, &loc);
+    if (loc && g_cur_stmt[0]) emit_la("r4", lit_label((const unsigned char *)g_cur_stmt, (int)strlen(g_cur_stmt) + 1));
     else emit_li("r4", 0);
-    if (g_ec_loc[i]) {
+    if (loc) {
         char loc[256]; ec_location(loc, sizeof loc);
         emit_la("r5", lit_label((const unsigned char *)loc, (int)strlen(loc) + 1));
     } else emit_li("r5", 0);
