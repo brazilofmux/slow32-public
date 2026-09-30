@@ -58,7 +58,9 @@ were swept with the national and boolean data
   its capacity, a negative value MOVEd into it is stored in two's
   complement, and with ON SIZE ERROR a 9(n) item's digits decide the
   size error (free/compn, free/compxmf; GnuCOBOL differs, docs/oracles.md).
-  COMP-6 is unsigned packed decimal, a signed one COMP-3.
+  COMP-6 is unsigned packed decimal, a signed one COMP-3. COMP-5 may be
+  described with X's, as MF allows: n bytes, unsigned, native order
+  (free/comp5x).
 
 ## Found by this sweep
 

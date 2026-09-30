@@ -2319,22 +2319,25 @@ static void sym_finish(Sym *s)
             s->size *= 2;
         }
         break;
-    case U_BINARY: case U_COMP5:
-        if (s->uvar == UV_COMPX) {
-            /* MF's COMP-X: PIC X(n) is n bytes, holding what n bytes hold
-             * (as the digits of 256^n - 1); PIC 9(n) is the fewest bytes
-             * that hold n nines; never signed */
-            int allx = pi->category == PIC_ALPHANUMERIC;        /* X's only (pi->pat is empty unless edited) */
-            for (const char *c = s->pic; allx && *c; c++) {
-                if (*c == '(') { while (c[1] && c[1] != ')') c++; if (c[1]) c++; continue; }
-                if (*c != 'x' && *c != 'X') allx = 0;
-            }
+    case U_BINARY: case U_COMP5: {
+        int allx = u == U_COMP5 && pi->category == PIC_ALPHANUMERIC;   /* X's only (pi->pat is empty unless edited) */
+        for (const char *c = s->pic; allx && *c; c++) {
+            if (*c == '(') { while (c[1] && c[1] != ')') c++; if (c[1]) c++; continue; }
+            if (*c != 'x' && *c != 'X') allx = 0;
+        }
+        if (s->uvar == UV_COMPX || allx) {
+            /* MF's COMP-X, and COMP-5 with X's: PIC X(n) is n bytes,
+             * unsigned, holding what n bytes hold (as the digits of
+             * 256^n - 1) -- COMP-X big-endian, COMP-5 in the machine's
+             * order; COMP-X's PIC 9(n) is the fewest bytes that hold n
+             * nines, never signed */
+            const char *un = s->uvar == UV_COMPX ? "COMP-X" : "COMP-5";
             if (allx) {
                 int n = pi->bytes;
-                if (n > 7) die_at(s->line, "'%s': PIC X(%d) COMP-X is not implemented (up to seven bytes)", s->name, n);
+                if (n > 7) die_at(s->line, "'%s': PIC X(%d) %s is not implemented (up to seven bytes)", s->name, n, un);
                 static const int capd[8] = { 0, 3, 5, 8, 10, 13, 15, 17 };
                 snprintf(s->pic, sizeof s->pic, "9(%d)", capd[n]);
-                if (pic_analyse(s->pic, &s->pi) < 0) die_at(s->line, "internal: COMP-X picture");
+                if (pic_analyse(s->pic, &s->pi) < 0) die_at(s->line, "internal: %s picture", un);
                 s->size = n; s->compx_x = 1;
                 break;
             }
@@ -2347,10 +2350,13 @@ static void sym_finish(Sym *s)
             s->size = b;
             break;
         }
-        if (pi->category != PIC_NUMERIC)
+        if (pi->category != PIC_NUMERIC) {
+            if (u == U_COMP5) die_at(s->line, "'%s': USAGE COMP-5 needs a PICTURE of 9s or of Xs (Micro Focus)", s->name);
             die_at(s->line, "'%s': USAGE %s needs a numeric PICTURE (2023 13.18.60.3 rule 3)", s->name, usage_name(u));
+        }
         s->size = binary_bytes(pi->digits, u);
         break;
+    }
     case U_PACKED:
         if (pi->category != PIC_NUMERIC)
             die_at(s->line, "'%s': USAGE PACKED-DECIMAL (COMP-3) needs a numeric PICTURE (2023 13.18.60.3 rule 3)", s->name);

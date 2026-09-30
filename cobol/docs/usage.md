@@ -181,6 +181,11 @@ Each is a class E behavior point, as COMP-3 and COMP-5 are now.
     (`COB_F2_SIZEDIG`).
   - Both are in kern.h, so the DBT hooks honor them.
   - `tests/free/compxmf` checks both.
+- **COMP-5 with a PICTURE of X's** (the same MF page): n bytes, unsigned,
+  held to capacity, in the machine's order. It was refused before, with
+  a message citing a standard rule that does not cover COMP-5.
+  `tests/free/comp5x`; GnuCOBOL stores it big-endian, as if it were
+  COMP-X (docs/oracles.md).
 - **Tests:** `tests/free/compn.cbl` checks sizes, bytes and arithmetic,
   and the `bad/compx-*` tests check the refusals.
 
