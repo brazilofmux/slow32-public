@@ -92,6 +92,35 @@ Done since:
     BY :p` name the authorization id. CONNECT RESET and DISCONNECT close
     the connection.
 
+- **Phase 3, dynamic SQL, less the descriptors:**
+  - EXECUTE IMMEDIATE, of a host variable or a literal;
+  - PREPARE name FROM, then EXECUTE name [INTO ...] [USING ...]. A
+    statement that returns a row gives it to INTO, as SELECT INTO does;
+  - DECLARE c CURSOR FOR name, and OPEN c USING. When such a cursor is
+    used positioned, the runtime prepares its SELECT with rowid first;
+  - DEALLOCATE PREPARE;
+  - GET DIAGNOSTICS: NUMBER, MORE, COMMAND_FUNCTION, DYNAMIC_FUNCTION and
+    ROW_COUNT; and, for EXCEPTION n, RETURNED_SQLSTATE, MESSAGE_TEXT,
+    MESSAGE_LENGTH, CLASS_ORIGIN, SUBCLASS_ORIGIN and CONDITION_NUMBER.
+    Items SQLite has nothing for come back blank or zero;
+  - SET SESSION AUTHORIZATION changes the user, outside a transaction.
+    SET TRANSACTION, CONSTRAINTS, TIME ZONE, CATALOG, SCHEMA and NAMES
+    succeed and do nothing (behavior points: SQLite is serializable and
+    read-write, and has none of the rest);
+  - delimited cursor names ("A < a").
+
+  The suite's COBOL needed two more changes:
+  - `--` inside a COBOL host name (:CITY1---city1) is no SQL comment;
+  - a separator comma with no space after it is BP-E22.
+
+  Not yet:
+  - SQL descriptors (ALLOCATE/SET/GET DESCRIPTOR, DESCRIBE, USING SQL
+    DESCRIPTOR);
+  - scroll cursors (FETCH PRIOR/FIRST/LAST/ABSOLUTE: SQLite cursors go
+    forward only);
+  - floating-point host variables (COMP-1 without a PICTURE, COMP-2: a
+    COBOL feature this compiler lacks).
+
 What SQLite cannot report, so no map will reach:
 
 - 22012, division by zero: it yields NULL;

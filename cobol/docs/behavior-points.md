@@ -133,6 +133,7 @@ warns only under -std=85. Never changes the output.
 | BP-E19 | RESERVE, BLOCK CONTAINS or RECORD CONTAINS on a LINE SEQUENTIAL file | majesty's jerm (RECORD CONTAINS) | 2002 | 2023 excludes them (12.4.5.2 rule 12, 13.4.5.3 rule 4); taken, with no effect on the lines |
 | BP-E20 | a literal of more than 160 character positions | the NIST SQL suite (yts750, 255 positions) | 85, 2002 | 1985 and 2002 allow 1 through 160; 2014 and 2023 allow 8,191. Taken up to 8,191; past that refused |
 | BP-E21 | EXIT PROGRAM followed by more statements in its sentence | the NIST SQL suite (dml116s: EXIT PROGRAM, STOP RUN) | 85 | X3.23-1985 EXIT PROGRAM syntax rule 1 makes it the last; 2002 dropped the rule. Taken, run as 2002 runs it |
+| BP-E22 | a separator comma or semicolon with no space after it (`"...",SQL-COD`) | the NIST SQL suite (yts775) | 85, 2002 | the standard's separator comma is followed by a space; taken as a separator. A comma between digits is still the decimal point under DECIMAL-POINT IS COMMA |
 
 Not points, recorded here:
 

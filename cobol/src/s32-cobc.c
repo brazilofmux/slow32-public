@@ -263,7 +263,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
-       BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST,
+       BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -318,6 +318,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "(2014 and 2023 allow 8,191); taken" },
     { "BP-E21", 'E', "EXIT PROGRAM followed by more statements in its sentence: X3.23-1985 makes it the last "
                      "(EXIT PROGRAM syntax rule 1), 2002 does not; taken, as 2002 runs it" },
+    { "BP-E22", 'E', "a separator comma or semicolon not followed by a space: the standard's separators are followed "
+                     "by one (1985 and 2023 reference format); taken as a separator" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -755,7 +757,9 @@ static const char *take_exec_sql(SrcLine *lines, int nlines, int *li, const char
         char c = *q;
         if (quote) { if (c == quote) quote = 0; }
         else if (c == '\'' || c == '"') quote = c;
-        else if (c == '-' && q[1] == '-') { q += strlen(q); continue; }          /* a SQL comment to the end of the line */
+        else if (c == '-' && q[1] == '-' && (n == 0 || !sql_wordch((unsigned char)buf[n - 1]))) { q += strlen(q); continue; }
+            /* a SQL comment to the end of the line -- not inside a COBOL host
+             * name, which may hold hyphens: :CITY1---city1 (the NIST suite) */
         else if ((c == 'e' || c == 'E') && !strncasecmp(q, "end-exec", 8) && !sql_wordch((unsigned char)q[8]) &&
                  (q == lines[l].text || !sql_wordch((unsigned char)q[-1]))) {
             while (n && buf[n - 1] == ' ') n--;
@@ -991,7 +995,8 @@ static void tokenize_lines(SrcLine *lines, int nlines)
             }
             if (c == ',' || c == ';') {
                 if (p[1] == 0 || p[1] == ' ' || p[1] == '\t') { g_pending_comma = 1; p++; continue; }
-                die_at(line, "'%c' is a separator only when followed by a space", c);
+                bp(BP_E22_SEPARATOR_SPACE, line);        /* "... is ",SQL-COD (the NIST SQL suite) */
+                g_pending_comma = 1; p++; continue;
             }
             if (c == '(') { push_tok(T_LP, line, "(", 1); p++; continue; }
             if (c == ')') { push_tok(T_RP, line, ")", 1); p++; continue; }
@@ -14133,7 +14138,9 @@ static void parse_free(void)
  * from its first words and the rest is passed through. */
 
 typedef struct { char name[64], qual[64], ind[64], indqual[64]; int line; Sym *sym; } SqlHost;   /* sym: an item of an expanded host structure */
-typedef struct { char name[64]; char *query; SqlHost *in; int nin; int unit, id, positioned, line; } SqlCursor;
+typedef struct { char name[64]; char *query; SqlHost *in; int nin; int unit, id, positioned, line, dyn; } SqlCursor;   /* dyn: FOR a prepared statement's id, else -1 */
+typedef struct { char name[64]; int unit, id, rowid; } SqlDyn;  /* a prepared statement's name; rowid: a positioned cursor runs it */
+static SqlDyn *g_sqldyn; static int g_nsqldyn;
 typedef struct { char *text; int kind, cursor, unit, id; } SqlStmt;
 enum { SQLK_EXEC = 0, SQLK_SELECT_INTO = 1, SQLK_NOOP = 2, SQLK_POSITIONED = 3 };
 
@@ -14150,6 +14157,24 @@ static int sql_word(const char **p, char *w, int wn)
     while (*q == ' ') q++;
     int n = 0;
     while (sqlw((unsigned char)*q) && n < wn - 1) w[n++] = (char)tolower((unsigned char)*q++);
+    w[n] = 0;
+    *p = q;
+    return n;
+}
+
+/* an SQL name at *p: a regular identifier uppercased (so a and "A" are
+ * one name, as SQL has it), or a delimited one ("A < a", "" a quote)
+ * exactly */
+static int sql_name(const char **p, char *w, int wn)
+{
+    const char *q = *p; int n = 0;
+    while (*q == ' ') q++;
+    if (*q == '"') {
+        for (q++; *q; q++) {
+            if (*q == '"') { if (q[1] == '"') { if (n < wn - 1) w[n++] = '"'; q++; continue; } q++; break; }
+            if (n < wn - 1) w[n++] = *q;
+        }
+    } else while (sqlw((unsigned char)*q) && n < wn - 1) w[n++] = (char)toupper((unsigned char)*q++);
     w[n] = 0;
     *p = q;
     return n;
@@ -14395,9 +14420,34 @@ static void sql_emit_whenever(void)
     }
 }
 
+/* a prepared statement name's descriptor, made on first mention */
+static int sql_dyn(const char *name)
+{
+    for (int i = 0; i < g_nsqldyn; i++) if (g_sqldyn[i].unit == g_unit && !strcmp(g_sqldyn[i].name, name)) return g_sqldyn[i].id;
+    g_sqldyn = xrealloc(g_sqldyn, (size_t)(g_nsqldyn + 1) * sizeof *g_sqldyn);
+    SqlDyn *d = &g_sqldyn[g_nsqldyn];
+    snprintf(d->name, sizeof d->name, "%s", name); d->unit = g_unit; d->id = g_nsqldyn; d->rowid = 0;
+    return g_nsqldyn++;
+}
+
+/* a statement given as :host or 'literal' after position p: the host is
+ * bound as the one input (cob_sql_in); a literal's text goes in *lit */
+static void sql_stmt_source(const char *p, int line, const char *what, char **lit)
+{
+    *lit = NULL;
+    while (*p == ' ') p++;
+    if (*p == ':') {
+        SqlHost h; sql_host(p + 1, &h, line);
+        sql_emit_hosts(&h, 1, "cob_sql_in");
+    } else if (*p == '\'') {
+        size_t n = strlen(p); char *t = xmalloc(n + 1); size_t o = 0;
+        for (p++; *p; p++) { if (*p == '\'') { if (p[1] == '\'') { t[o++] = '\''; p++; continue; } break; } t[o++] = *p; }
+        t[o] = 0; *lit = t;
+    } else die_at(line, "EXEC SQL %s needs a host variable or a literal holding the statement", what);
+}
+
 static const char *sql_unimpl[][2] = {
-    { "prepare", "3" }, { "execute", "3" }, { "describe", "3" }, { "allocate", "3" }, { "deallocate", "3" },
-    { "get", "3" }, { "set", "3" }, { 0, 0 } };
+    { "describe", "3c" }, { "allocate", "3c" }, { 0, 0 } };
 
 /* DECLARE name TABLE (...): DB2's DCLGEN documentation of a table, which
  * the precompiler checks statements against; nothing here */
@@ -14416,7 +14466,7 @@ static int sql_declare(const char *text, int line)
 {
     const char *p = text; char w[64];
     sql_word(&p, w, sizeof w);                          /* declare */
-    char name[64]; sql_word(&p, name, sizeof name);
+    char name[64]; sql_name(&p, name, sizeof name);
     int f = sql_find(text, 0, "for");
     if (sql_find(text, 0, "cursor") < 0 || f < 0) return 0;
     if (sql_cursor(name, line, 0)) die_at(line, "EXEC SQL: the cursor '%s' is declared twice", name);
@@ -14425,7 +14475,13 @@ static int sql_declare(const char *text, int line)
     memset(c, 0, sizeof *c);
     snprintf(c->name, sizeof c->name, "%s", name);
     const char *q = text + f + 3; while (*q == ' ') q++;
-    c->query = sql_params(q, &c->in, &c->nin, line);
+    c->dyn = -1;
+    {   /* FOR a prepared statement's name: a dynamic cursor, its inputs at OPEN ... USING */
+        const char *r = q; char w[64]; int n = sql_word(&r, w, sizeof w);
+        while (*r == ' ') r++;
+        if (n && !*r && strcmp(w, "select") && strcmp(w, "values") && strcmp(w, "table")) c->dyn = sql_dyn(w);
+    }
+    c->query = c->dyn >= 0 ? xstrndup("", 0) : sql_params(q, &c->in, &c->nin, line);
     c->unit = g_unit; c->id = g_nsqlcur; c->line = line;
     g_nsqlcur++;
     return 1;
@@ -14465,8 +14521,18 @@ static void parse_exec_sql(void)
     }
     if (!strcmp(w1, "whenever")) { sql_whenever(t->s, line); return; }
     if (!strcmp(w1, "open") || !strcmp(w1, "close")) {
-        SqlCursor *c = sql_cursor(w2, line, 1);
-        if (w1[0] == 'o') sql_emit_hosts(c->in, c->nin, "cob_sql_in");
+        char cn[64]; const char *cp = after1; sql_name(&cp, cn, sizeof cn);
+        SqlCursor *c = sql_cursor(cn, line, 1);
+        if (w1[0] == 'o') {
+            int u = sql_find(t->s, 0, "using");
+            if (u >= 0) {
+                if (c->dyn < 0) die_at(line, "EXEC SQL OPEN %s USING: the cursor is not declared FOR a prepared statement", cn);
+                const char *r = t->s + u + 5; char w[64]; const char *r2 = r; sql_word(&r2, w, sizeof w);
+                if (!strcmp(w, "sql")) die_at(line, "EXEC SQL OPEN ... USING SQL DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)");
+                SqlHost *in; int nin; free(sql_params(r, &in, &nin, line));
+                sql_emit_hosts(in, nin, "cob_sql_in");
+            } else sql_emit_hosts(c->in, c->nin, "cob_sql_in");
+        }
         char lab[32]; snprintf(lab, sizeof lab, ".Lsqc%d", c->id);
         emit_la("r3", lab);
         emit_call(w1[0] == 'o' ? "cob_sql_open" : "cob_sql_close");
@@ -14481,13 +14547,15 @@ static void parse_exec_sql(void)
         char buf[256]; snprintf(buf, sizeof buf, "%.*s", in, t->s);
         const char *q = buf; char w[64], last[64] = "";
         sql_word(&q, w, sizeof w);                      /* fetch */
-        while (sql_word(&q, w, sizeof w)) {
-            if (!strcmp(w, "next") || !strcmp(w, "from")) continue;
-            if (!strcmp(w, "prior") || !strcmp(w, "first") || !strcmp(w, "last") || !strcmp(w, "absolute") || !strcmp(w, "relative"))
+        while (sql_name(&q, w, sizeof w)) {
+            if (!strcmp(w, "NEXT") || !strcmp(w, "FROM")) continue;
+            if (!strcmp(w, "PRIOR") || !strcmp(w, "FIRST") || !strcmp(w, "LAST") || !strcmp(w, "ABSOLUTE") || !strcmp(w, "RELATIVE"))
                 die_at(line, "EXEC SQL FETCH %s: scroll cursors are not implemented (SQLite cursors go forward)", w);
             snprintf(last, sizeof last, "%s", w);
         }
         SqlCursor *c = sql_cursor(last, line, 1);
+        { const char *r = t->s + in + 4; char w[64]; sql_word(&r, w, sizeof w);
+          if (!strcmp(w, "sql") || !strcmp(w, "descriptor")) die_at(line, "EXEC SQL FETCH ... INTO SQL DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)"); }
         SqlHost *out; int nout;
         free(sql_params(t->s + in + 4, &out, &nout, line));
         sql_emit_hosts(out, nout, "cob_sql_out");
@@ -14496,6 +14564,104 @@ static void parse_exec_sql(void)
         emit_call("cob_sql_fetch");
         sql_emit_status(line);
         sql_emit_whenever();
+        return;
+    }
+    if (!strcmp(w1, "execute") && !strcmp(w2, "immediate")) {
+        char *lit; sql_stmt_source(p, line, "EXECUTE IMMEDIATE", &lit);
+        if (lit) { emit_la("r3", lit_label((const unsigned char *)lit, (int)strlen(lit) + 1)); emit_call("cob_sql_immediate_text"); }
+        else emit_call("cob_sql_immediate");
+        sql_emit_status(line); sql_emit_whenever();
+        return;
+    }
+    if (!strcmp(w1, "prepare")) {
+        /* PREPARE name FROM :text | 'text' */
+        int fr = sql_find(t->s, 0, "from");
+        if (fr < 0) die_at(line, "EXEC SQL PREPARE needs FROM");
+        int id = sql_dyn(w2);
+        char *lit; sql_stmt_source(t->s + fr + 4, line, "PREPARE", &lit);
+        char lab[32]; snprintf(lab, sizeof lab, ".Lsqd%d", id);
+        emit_la("r3", lab);
+        if (lit) { emit_la("r4", lit_label((const unsigned char *)lit, (int)strlen(lit) + 1)); emit_call("cob_sql_prepare_text"); }
+        else emit_call("cob_sql_prepare");
+        sql_emit_status(line); sql_emit_whenever();
+        return;
+    }
+    if (!strcmp(w1, "execute")) {
+        /* EXECUTE name [INTO :x, ...] [USING :a, ...] (either order) */
+        int u = sql_find(t->s, 0, "using"), in = sql_find(t->s, 0, "into");
+        SqlHost *ins = NULL, *outs = NULL; int nins = 0, nouts = 0;
+        for (int k = 0; k < 2; k++) {
+            int at = k ? in : u;
+            if (at < 0) continue;
+            int other = k ? u : in;
+            const char *r = t->s + at + (k ? 4 : 5);
+            char w[64]; const char *r2 = r; sql_word(&r2, w, sizeof w);
+            if (!strcmp(w, "sql") || !strcmp(w, "descriptor"))
+                die_at(line, "EXEC SQL EXECUTE ... %s SQL DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)", k ? "INTO" : "USING");
+            size_t len = other > at ? (size_t)(other - at) : strlen(t->s + at);
+            char *part = xstrndup(t->s + at + (k ? 4 : 5), (int)(len - (k ? 4 : 5)));
+            free(sql_params(part, k ? &outs : &ins, k ? &nouts : &nins, line)); free(part);
+        }
+        int id = sql_dyn(w2);
+        sql_emit_hosts(ins, nins, "cob_sql_in");
+        sql_emit_hosts(outs, nouts, "cob_sql_out");
+        char lab[32]; snprintf(lab, sizeof lab, ".Lsqd%d", id);
+        emit_la("r3", lab);
+        emit_call("cob_sql_execute");
+        sql_emit_status(line); sql_emit_whenever();
+        return;
+    }
+    if (!strcmp(w1, "deallocate")) {
+        if (!strcmp(w2, "prepare")) {
+            char nm[64]; sql_word(&p, nm, sizeof nm);
+            char lab[32]; snprintf(lab, sizeof lab, ".Lsqd%d", sql_dyn(nm));
+            emit_la("r3", lab);
+            emit_call("cob_sql_deallocate_prepare");
+            sql_emit_status(line); sql_emit_whenever();
+            return;
+        }
+        die_at(line, "EXEC SQL DEALLOCATE %s is not implemented yet (docs/esql.md, phase 3c)", w2);
+    }
+    if (!strcmp(w1, "set") && !strcmp(w2, "descriptor"))
+        die_at(line, "EXEC SQL SET DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)");
+    if (!strcmp(w1, "get")) {
+        if (strcmp(w2, "diagnostics")) die_at(line, "EXEC SQL GET %s is not implemented yet (docs/esql.md, phase 3c)", w2);
+        /* GET DIAGNOSTICS [EXCEPTION n] :target = item [, ...] */
+        static const char *items[] = { "number", "more", "command_function", "dynamic_function", "row_count", NULL };
+        static const char *citems[] = { "returned_sqlstate", "message_text", "message_length", "message_octet_length",
+                                        "class_origin", "subclass_origin", "condition_number", NULL };
+        const char *r = p; char w[64];
+        const char *r0 = r; sql_word(&r0, w, sizeof w);
+        int cond = 0;
+        if (!strcmp(w, "exception") || !strcmp(w, "condition")) {
+            cond = 1; r = r0; while (*r == ' ') r++;
+            if (*r == ':') {
+                /* the condition number: a plain name (the next :target is not its indicator) */
+                SqlHost h; memset(&h, 0, sizeof h); int k = 0; r++;
+                while (sqlw((unsigned char)*r) && k < 63) h.name[k++] = (char)tolower((unsigned char)*r++);
+                Ref cr; memset(&cr, 0, sizeof cr); cr.sym = sql_sym(h.name, h.qual, line); cr.line = line;
+                Arg a[2] = { arg_ref(&cr), arg_desc(sym_desc(cr.sym)) }; emit_args(a, 2); emit_call("cob_sql_diag_cond"); }
+            else { long n = strtol(r, (char **)&r, 10); emit_li("r3", n); emit_call("cob_sql_diag_cond_n"); }
+        }
+        for (;;) {
+            while (*r == ' ' || *r == ',') r++;
+            if (!*r) break;
+            if (*r != ':') die_at(line, "EXEC SQL GET DIAGNOSTICS: expected :target = item");
+            SqlHost h; r = sql_host(r + 1, &h, line);
+            while (*r == ' ') r++;
+            if (*r != '=') die_at(line, "EXEC SQL GET DIAGNOSTICS: expected = after :%s", h.name);
+            r++;
+            char it[64]; sql_word(&r, it, sizeof it);
+            int code = -1;
+            const char **tab = cond ? citems : items;
+            for (int k = 0; tab[k]; k++) if (!strcmp(tab[k], it)) code = k + (cond ? 10 : 0);
+            if (code < 0) code = cond ? 17 : 17;             /* an item SQLite has nothing for: blank or zero */
+            Ref tr; memset(&tr, 0, sizeof tr); tr.sym = sql_sym(h.name, h.qual, line); tr.line = line;
+            Arg a[3] = { arg_ref(&tr), arg_desc(sym_desc(tr.sym)), arg_imm(code) };
+            emit_args(a, 3);
+            emit_call("cob_sql_diag");
+        }
+        sql_emit_status(line);
         return;
     }
     int kind = SQLK_EXEC, cursor = -1;
@@ -14520,7 +14686,7 @@ static void parse_exec_sql(void)
         int wc = sql_find(t->s, 0, "where");
         const char *tail = wc >= 0 ? t->s + wc + 5 : NULL;
         char cw1[64] = "", cw2[64] = "", cname[64] = "";
-        if (tail) { const char *q = tail; sql_word(&q, cw1, sizeof cw1); sql_word(&q, cw2, sizeof cw2); sql_word(&q, cname, sizeof cname); }
+        if (tail) { const char *q = tail; sql_word(&q, cw1, sizeof cw1); sql_word(&q, cw2, sizeof cw2); sql_name(&q, cname, sizeof cname); }
         if (!strcmp(cw1, "current") && !strcmp(cw2, "of")) {
             SqlCursor *c = sql_cursor(cname, line, 1);
             c->positioned = 1; cursor = c->id; kind = SQLK_POSITIONED;
@@ -14558,7 +14724,8 @@ static void emit_sql_data(void)
         SqlCursor *c = &g_sqlcur[i];
         if (c->unit != g_unit) continue;
         char *q = c->query;
-        if (c->positioned) {
+        if (c->positioned && c->dyn >= 0) g_sqldyn[c->dyn].rowid = 1;       /* the runtime puts rowid first when it prepares */
+        else if (c->positioned) {
             /* the row a positioned statement names: SELECT rowid, ... */
             int s = sql_find(q, 0, "select");
             if (s < 0) die_at(c->line, "EXEC SQL: cursor '%s' is used with WHERE CURRENT OF but its query is not a SELECT", c->name);
@@ -14577,6 +14744,18 @@ static void emit_sql_data(void)
         emit("\t.word 0");                       /* the runtime's: open, and the current row's rowid */
         emit("\t.word 0, 0");
         emit("\t.word %s", nl);                 /* its name, for messages */
+        if (c->dyn >= 0) emit("\t.word .Lsqd%d", c->dyn); else emit("\t.word 0");   /* FOR a prepared statement */
+    }
+    for (int i = 0; i < g_nsqldyn; i++) {
+        SqlDyn *d = &g_sqldyn[i];
+        if (d->unit != g_unit) continue;
+        const char *nl = lit_label((const unsigned char *)d->name, (int)strlen(d->name) + 1);
+        emit("\t.p2align 2");
+        emit(".Lsqd%d:", d->id);
+        emit("\t.word %s", nl);                 /* the statement name */
+        emit("\t.word 0");                       /* the prepared statement, the runtime's */
+        emit("\t.word 0");                       /* its text, the runtime's copy */
+        emit("\t.word %d", d->rowid);            /* a positioned cursor runs it: SELECT rowid, ... */
     }
 }
 

@@ -43,6 +43,7 @@ procedure division.
     display "at" line 2 position 1
     call "nothing" using by value k
     move 0 to return-code
+    display "p",k   *> BP-E22
     exit program move 0 to return-code   *> BP-E21
     stop run returning k
     goback.
