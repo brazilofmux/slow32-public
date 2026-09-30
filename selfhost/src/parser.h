@@ -2268,23 +2268,47 @@ static int parse_const_unary(void) {
     return parse_const_primary();
 }
 
+/* the high word of the constant just parsed: its own when it is wide,
+ * else the low word's sign extended */
+static int pc_hi_of(int lo) {
+    if (pc_wide) return pc_hi;
+    if (lo < 0) return -1;
+    return 0;
+}
+
+/* * / % stay 32-bit: a wide operand is taken only when its value fits
+ * 32 bits, and one that does not is an error, not a silently dropped
+ * high word (which is what + and - did to INT64_MIN's usual spelling,
+ * -9223372036854775807LL - 1, until they learned 64 bits below). */
+static void pc_narrow_check(int lo) {
+    if (pc_hi_of(lo) != (lo < 0 ? -1 : 0))
+        p_error("64-bit constant multiply or divide is not supported");
+    pc_wide = 0;
+    pc_hi = 0;
+}
+
 static int parse_const_mul(void) {
     int v;
     int r;
 
     v = parse_const_unary();
     while (lex_tok == TK_STAR || lex_tok == TK_SLASH || lex_tok == TK_PERCENT) {
+        pc_narrow_check(v);
         if (lex_tok == TK_STAR) {
             next();
-            v = v * parse_const_unary();
+            r = parse_const_unary();
+            pc_narrow_check(r);
+            v = v * r;
         } else if (lex_tok == TK_SLASH) {
             next();
             r = parse_const_unary();
+            pc_narrow_check(r);
             if (r == 0) p_error("division by zero in constant expression");
             v = v / r;
         } else {
             next();
             r = parse_const_unary();
+            pc_narrow_check(r);
             if (r == 0) p_error("division by zero in constant expression");
             v = v % r;
         }
@@ -2297,15 +2321,45 @@ static int parse_const_mul(void) {
  * and masks in constant initializers. */
 static int parse_const_add(void) {
     int v;
+    int r;
+    int op;
+    int lwide;
+    int lhi;
+    int rhi;
+    unsigned ulo;
+    unsigned uhi;
+    unsigned rlo;
+    unsigned sum;
 
     v = parse_const_mul();
     while (lex_tok == TK_PLUS || lex_tok == TK_MINUS) {
-        if (lex_tok == TK_PLUS) {
-            next();
-            v = v + parse_const_mul();
+        /* 64 bits when either side is wide: INT64_MIN is spelled
+         * -9223372036854775807LL - 1, and the 32-bit sum made it 0 */
+        op = lex_tok;
+        lwide = pc_wide;
+        lhi = pc_hi_of(v);
+        next();
+        r = parse_const_mul();
+        if (!lwide && !pc_wide) {
+            if (op == TK_PLUS) v = v + r;
+            else v = v - r;
         } else {
-            next();
-            v = v - parse_const_mul();
+            rhi = pc_hi_of(r);
+            ulo = v;
+            uhi = lhi;
+            rlo = r;
+            if (op == TK_PLUS) {
+                sum = ulo + rlo;
+                uhi = uhi + rhi;
+                if (sum < ulo) uhi = uhi + 1;
+            } else {
+                sum = ulo - rlo;
+                uhi = uhi - rhi;
+                if (ulo < rlo) uhi = uhi - 1;
+            }
+            v = sum;
+            pc_hi = uhi;
+            pc_wide = 1;
         }
     }
     return v;
@@ -2404,6 +2458,8 @@ static int parse_const_rel(void) {
             next();
             v = (v >= parse_const_shift());
         }
+        pc_wide = 0;   /* 0 or 1: no high word from an operand */
+        pc_hi = 0;
     }
     return v;
 }
@@ -2420,39 +2476,71 @@ static int parse_const_eq(void) {
             next();
             v = (v != parse_const_rel());
         }
+        pc_wide = 0;   /* 0 or 1: no high word from an operand */
+        pc_hi = 0;
     }
     return v;
 }
 
 static int parse_const_band(void) {
     int v;
+    int r;
+    int lwide;
+    int lhi;
 
     v = parse_const_eq();
     while (lex_tok == TK_AMP) {
+        lwide = pc_wide;
+        lhi = pc_hi_of(v);
         next();
-        v = v & parse_const_eq();
+        r = parse_const_eq();
+        if (lwide || pc_wide) {                 /* both words */
+            pc_hi = lhi & pc_hi_of(r);
+            pc_wide = 1;
+        }
+        v = v & r;
     }
     return v;
 }
 
 static int parse_const_bxor(void) {
     int v;
+    int r;
+    int lwide;
+    int lhi;
 
     v = parse_const_band();
     while (lex_tok == TK_CARET) {
+        lwide = pc_wide;
+        lhi = pc_hi_of(v);
         next();
-        v = v ^ parse_const_band();
+        r = parse_const_band();
+        if (lwide || pc_wide) {                 /* both words */
+            pc_hi = lhi ^ pc_hi_of(r);
+            pc_wide = 1;
+        }
+        v = v ^ r;
     }
     return v;
 }
 
 static int parse_const_bor(void) {
     int v;
+    int r;
+    int lwide;
+    int lhi;
 
     v = parse_const_bxor();
     while (lex_tok == TK_PIPE) {
+        lwide = pc_wide;
+        lhi = pc_hi_of(v);
         next();
-        v = v | parse_const_bxor();
+        r = parse_const_bxor();
+        if (lwide || pc_wide) {                 /* both words */
+            pc_hi = lhi | pc_hi_of(r);
+            pc_wide = 1;
+        }
+        v = v | r;
     }
     return v;
 }
@@ -2464,6 +2552,8 @@ static int parse_const_land(void) {
     while (lex_tok == TK_LAND) {
         next();
         v = (parse_const_bor() != 0 && v != 0);
+        pc_wide = 0;
+        pc_hi = 0;
     }
     return v;
 }
@@ -2475,6 +2565,8 @@ static int parse_const_lor(void) {
     while (lex_tok == TK_LOR) {
         next();
         v = (parse_const_land() != 0 || v != 0);
+        pc_wide = 0;
+        pc_hi = 0;
     }
     return v;
 }
@@ -2488,14 +2580,22 @@ static int parse_const_cond(void) {
     int c;
     int a;
     int b;
+    int awide;
+    int ahi;
 
     c = parse_const_lor();
     if (lex_tok == TK_QMARK) {
         next();
         a = parse_const_cond();
+        awide = pc_wide;
+        ahi = pc_hi;
         expect(TK_COLON);
         b = parse_const_cond();
-        if (c != 0) return a;
+        if (c != 0) {
+            pc_wide = awide;
+            pc_hi = ahi;
+            return a;
+        }
         return b;
     }
     return c;

@@ -2291,3 +2291,32 @@ someone else's C is what finds this class of defect.
 
 Still open: the preprocessor's reported line numbers drift.  (`getenv`
 was the other item here; resolved 2026-09-09, selfhost ISSUES-68.)
+
+### 70. [RESOLVED 2026-09-29] stage08 cc: INT64_MIN in a static initializer was 0
+
+Found by cobol's hook differential (cobol/tests/kern-differential.sh):
+built on kagura, where libcob and the test go through stage08 cc, its
+hash differed from the Mac's clang build.  The test's edge table held
+`(-0x7FFFFFFFFFFFFFFFLL - 1)`, which stage08 emitted as 0.  That is the
+usual spelling of INT64_MIN and LLONG_MIN in a header, so any static
+initializer built on it was wrong, silently.
+
+The constant evaluator is 32-bit, with a high-word side channel
+(pc_wide/pc_hi) that only a lone literal, unary minus/tilde and shifts
+kept.  A binary `+` or `-` threw the high word away and sign-extended
+the 32-bit result: `-0x7FFF...FFFLL - 1` has low word 0, so the value
+became 0.  `&`, `|` and `^` lost it the same way.  And the comparisons,
+`&&`, `||` and `?:` left a stale pc_wide behind, so `(0LL - 1) == -1`
+would have been 1 with a high word of -1.
+
+Fix (src/parser.h): `+ - & | ^` compute both words when either operand
+is wide; comparisons and logical operators clear the high word (their
+result is 0 or 1); `?:` keeps the chosen arm's.  `* / %` stay 32-bit
+and are now an error when an operand does not fit 32 bits, instead of
+dropping the high word.  Still open: `< > <= >= == !=` compare the low
+words only, so a comparison of wide constants that differ only in the
+high word is wrong.  No known code does that in an initializer.
+
+Gates: stage08 99/99 with the fixed point; check-host-frontend; SQLite
+acceptance with the rebuilt cc.s32x; eleven wide initializers agree
+with clang.
