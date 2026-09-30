@@ -117,6 +117,8 @@ typedef struct {
     // Math intercept addresses to skip
     uint32_t intercept_addrs[MAX_INTERCEPTS];
     int num_intercepts;
+    uint32_t hook_addrs[MAX_HOOKS];     // hook stubs are not verified either (hooks.h)
+    int num_hooks;
 } shadow_state_t;
 
 // Global paranoid mode flag (checked by block_cache.c to disable chaining)

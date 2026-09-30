@@ -56,6 +56,8 @@ void shadow_init(shadow_state_t *s, dbt_cpu_state_t *cpu) {
     for (int i = 0; i < cpu->num_intercepts && i < MAX_INTERCEPTS; i++) {
         s->intercept_addrs[i] = cpu->intercepts[i].guest_addr;
     }
+    s->num_hooks = cpu->num_hooks;
+    for (int i = 0; i < cpu->num_hooks && i < MAX_HOOKS; i++) s->hook_addrs[i] = cpu->hooks[i].guest_addr;
 }
 
 // ============================================================================
@@ -805,6 +807,9 @@ static bool is_intrinsic_block(shadow_state_t *s, uint32_t guest_pc) {
     if (guest_pc == s->intrinsic_memcmp  && guest_pc != 0) return true;
     for (int i = 0; i < s->num_intercepts; i++) {
         if (s->intercept_addrs[i] == guest_pc) return true;
+    }
+    for (int i = 0; i < s->num_hooks; i++) {
+        if (s->hook_addrs[i] == guest_pc) return true;
     }
     return false;
 }

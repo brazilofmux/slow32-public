@@ -32,6 +32,7 @@
 
 // Paranoid mode: lockstep shadow interpreter
 #include "shadow_interp.h"
+#include "hooks.h"
 
 #define STAGE1_CODE_BUFFER_SIZE (64 * 1024)    // 64KB for Stage 1 translated code
 #define GUEST_MEM_SIZE   (256 * 1024 * 1024)  // 256MB guest memory (must cover stack at 0x0FFFFFF0)
@@ -51,6 +52,7 @@ static bool reg_cache_enabled = true;
 static bool strict_carry_enabled = false;
 static bool align_traps_enabled = false;
 static bool intrinsics_disabled = false;
+static bool hooks_disabled = false;     // -H: no hooks (docs/dbt-hooks.md), intrinsics still on
 static bool bounds_checks_disabled = false;
 static bool trace_branch_exit_enabled = false;
 static int trace_branch_exit_budget = 0;
@@ -1072,6 +1074,11 @@ static const struct {
     { NULL, NULL, 0 }
 };
 
+static uint32_t hook_symtab_lookup(void *st, const char *name)
+{
+    return s32x_symtab_lookup((s32x_symtab_result_t *)st, name);
+}
+
 bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
     // Read and validate header
     s32x_load_result_t hdr = load_s32x_header(filename);
@@ -1228,6 +1235,9 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
                     cpu->num_intercepts++;
                 }
             }
+
+            // Hooks: the routines the guest declared hookable (hooks.c)
+            if (!hooks_disabled) dbt_hooks_register(cpu, hook_symtab_lookup, &st);
 
             s32x_symtab_free(&st);
         } else {
@@ -1954,7 +1964,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -D        Dump top offender blocks\n");
     fprintf(stderr, "  -O        Disassemble offender host blocks (uses objdump)\n");
     fprintf(stderr, "  -X <pc>   Dump block containing guest PC\n");
-    fprintf(stderr, "  -I        Disable intrinsic recognition (native stubs)\n");
+    fprintf(stderr, "  -I        Disable intrinsic recognition (native stubs), hooks included\n");
+    fprintf(stderr, "  -H        Disable hooks only (S32_HOOKS=name,... enables just those)\n");
     fprintf(stderr, "  -U        UNSAFE: Disable all bounds/W^X checks (for benchmarking)\n");
     fprintf(stderr, "  -Q [N]    Probe: sample PC every N seconds (default 1) via SIGALRM\n");
     fprintf(stderr, "  -q        Quiet (accepted for MMIO-exec compatibility; dbt is already silent)\n");
@@ -2169,6 +2180,9 @@ int main(int argc, char **argv) {
                 case 'I':
                     intrinsics_disabled = true;
                     break;
+                case 'H':
+                    hooks_disabled = true;
+                    break;
                 case 'U':
                     bounds_checks_disabled = true;
                     break;
@@ -2310,6 +2324,8 @@ int main(int argc, char **argv) {
             if (cpu.intrinsic_memswap) fprintf(stderr, "    memswap: 0x%08X\n", cpu.intrinsic_memswap);
             if (cpu.num_intercepts > 0)
                 fprintf(stderr, "    math intercepts: %d functions\n", cpu.num_intercepts);
+            if (cpu.num_hooks > 0)
+                fprintf(stderr, "    hooks: %d routines\n", cpu.num_hooks);
         }
         if (paranoid_mode) {
             fprintf(stderr, "  Paranoid:     enabled\n");
@@ -2609,6 +2625,7 @@ int main(int argc, char **argv) {
         if (native_stub_count > 0) {
             fprintf(stderr, "Native intrinsic stubs: %" PRIu32 "\n", native_stub_count);
         }
+        dbt_hooks_print_stats(&cpu);
 
         if (stage >= 2) {
             cache_print_stats(&cache);

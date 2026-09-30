@@ -70,6 +70,7 @@ runtime/printf_enhanced.s
 runtime/convert.s
 runtime/convert_extra.s
 runtime/builtins.s
+runtime/builtins_hk.s
 runtime/malloc.s
 runtime/stdlib_utils.s
 runtime/stdlib_extra.s

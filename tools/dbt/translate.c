@@ -6,6 +6,7 @@
 #include "translate.h"
 #include "block_cache.h"
 #include "shadow_interp.h"
+#include "hooks.h"
 #include "stage5_lift.h"
 #include "stage5_burg.h"
 #include <stdio.h>
@@ -5318,6 +5319,36 @@ static int s32_memcmp_exact(const unsigned char *a, const unsigned char *b, uint
 /* memcmp: r3 = a, r4 = b, r5 = n, result in r1.  COBOL routes every
  * comparison of two identical unsigned DISPLAY descriptors here (#29), so
  * this is now a hot entry point and not just a libc convenience. */
+// A hook (hooks.h, docs/dbt-hooks.md): call dbt_hook_call(cpu, mem, idx);
+// done returns to r31 as the intrinsic stubs do, a decline branches to the
+// routine's implementation (the thunk's jump target) as a chained exit.
+static bool emit_hook_stub(translate_ctx_t *ctx, translated_block_t *block, int idx) {
+    emit_ctx_t *e = &ctx->emit;
+    uint32_t decline_pc = ctx->cpu->hooks[idx].decline_pc;
+
+    emit_mov_r64_r64(e, RDI, RBP);                 // cpu
+    emit_mov_r64_r64(e, RSI, R14);                 // guest memory
+    emit_mov_r32_imm32(e, RDX, (uint32_t)idx);
+    emit_push_r64(e, RAX);                         // align the stack for the call
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)dbt_hook_call);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RCX);
+    emit_test_r32_r32(e, RAX, RAX);
+    emit_jne_rel32(e, 0);
+    size_t decline_patch = e->offset - 4;
+    emit_intrinsic_return(ctx);
+
+    emit_patch_rel32(e, decline_patch, e->offset);
+    translated_block_t *saved_block = ctx->block;
+    ctx->block = block;                            // so the exit is recorded for chaining
+    emit_exit_chained(ctx, decline_pc, 0);
+    ctx->block = saved_block;
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
 static bool emit_native_memcmp_stub(translate_ctx_t *ctx, translated_block_t *block) {
     emit_ctx_t *e = &ctx->emit;
 
@@ -6037,15 +6068,18 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
     dbt_cpu_state_t *cpu = ctx->cpu;
     if (!cpu->intrinsics_enabled) return NULL;
 
+    bool (*emitter)(translate_ctx_t *, translated_block_t *) = NULL;
+    bool is_memmove = false;
+    int hook = dbt_hook_at(cpu, guest_pc);
+
     // Early exit: intrinsics are always in the low (code) region.
     // Stack is at 0x0Fxxxxxx, Heap usually starts at 0x004xxxxx.
     // Most intrinsics are in the low 64KB or similar.
-    if (guest_pc > 0x00100000) return NULL;
+    if (hook < 0 && guest_pc > 0x00100000) return NULL;
 
-    bool (*emitter)(translate_ctx_t *, translated_block_t *) = NULL;
-    bool is_memmove = false;
-
-    if (cpu->intrinsic_memcpy && guest_pc == cpu->intrinsic_memcpy) {
+    if (hook >= 0) {
+        // a hook: emit_hook_stub
+    } else if (cpu->intrinsic_memcpy && guest_pc == cpu->intrinsic_memcpy) {
         // Will use emit_native_memcpy_stub with is_memmove=false
     } else if (cpu->intrinsic_memset && guest_pc == cpu->intrinsic_memset) {
         emitter = emit_native_memset_stub;
@@ -6152,7 +6186,9 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
     ctx->pending_cond.valid = false;
 
     bool ok;
-    if (emitter) {
+    if (hook >= 0) {
+        ok = emit_hook_stub(ctx, block, hook);
+    } else if (emitter) {
         ok = emitter(ctx, block);
     } else {
         ok = emit_native_memcpy_stub(ctx, block, is_memmove);

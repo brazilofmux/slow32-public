@@ -13,6 +13,7 @@
 #include "translate.h"
 #include "block_cache.h"
 #include "shadow_interp.h"
+#include "hooks.h"
 #include "stage5_burg.h"
 #include "stage5_lift.h"
 #include <stdio.h>
@@ -3842,6 +3843,46 @@ static int s32_memcmp_exact_a64(const unsigned char *a, const unsigned char *b, 
 // Both operands are reads, so both range checks are loads.  COBOL routes
 // every comparison of two identical unsigned DISPLAY descriptors here (#29),
 // which is what makes this a hot entry point rather than a libc convenience.
+// A hook (hooks.h, docs/dbt-hooks.md): call dbt_hook_call(cpu, mem, idx);
+// done returns to r31 as the intrinsic stubs do, a decline branches to the
+// routine's implementation (the thunk's jump target) as a chained exit.
+static bool emit_hook_stub_a64(translate_ctx_t *ctx, translated_block_t *block, int idx) {
+    emit_ctx_t *e = &ctx->emit;
+    uint32_t decline_pc = ctx->cpu->hooks[idx].decline_pc;
+
+    emit_a64_stub_prologue(e);
+    emit_mov_x64_x64(e, W0, W20);                  // cpu
+    emit_mov_x64_x64(e, W1, W21);                  // guest memory
+    emit_mov_w32_imm32(e, W2, (uint32_t)idx);
+    emit_a64_call_host(e, (void *)dbt_hook_call);
+    size_t decline_patch = emit_offset(e);
+    emit_cbnz_w32(e, W0, 0);
+    emit_a64_stub_epilogue(ctx);
+
+    patch_imm19_branches(e, &decline_patch, 1, emit_offset(e));
+    emit_ldp_x64_post(e, W29, W30, WZR, 16);       // the prologue's frame
+    // The stub holds nothing in the register cache: without this,
+    // emit_exit_chained's flush would store the previous block's stale
+    // allocations over the guest's arguments (as the epilogue notes).
+    bool saved_rc = ctx->reg_cache_enabled;
+    bool saved_pw = ctx->pending_write.valid;
+    bool saved_pc = ctx->pending_cond.valid;
+    ctx->reg_cache_enabled = false;
+    ctx->pending_write.valid = false;
+    ctx->pending_cond.valid = false;
+    translated_block_t *saved_block = ctx->block;
+    ctx->block = block;                            // so the exit is recorded for chaining
+    emit_exit_chained(ctx, decline_pc, 0);
+    ctx->block = saved_block;
+    ctx->reg_cache_enabled = saved_rc;
+    ctx->pending_write.valid = saved_pw;
+    ctx->pending_cond.valid = saved_pc;
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
 static bool emit_native_memcmp_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
     emit_ctx_t *e = &ctx->emit;
 
@@ -4429,8 +4470,11 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
     bool is_memmove = false;
     void *math_fn = NULL;
     uint8_t math_sig = 0;
+    int hook = dbt_hook_at(cpu, guest_pc);
 
-    if (cpu->intrinsic_memcpy && guest_pc == cpu->intrinsic_memcpy) {
+    if (hook >= 0) {
+        // a hook: emit_hook_stub_a64
+    } else if (cpu->intrinsic_memcpy && guest_pc == cpu->intrinsic_memcpy) {
         // Use emit_native_memcpy_stub_a64 with is_memmove=false
     } else if (cpu->intrinsic_memset && guest_pc == cpu->intrinsic_memset) {
         emitter = emit_native_memset_stub_a64;
@@ -4485,7 +4529,8 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
     block->host_code = code_start;
 
     const char *name = "unknown";
-    if (math_fn) name = "math";
+    if (hook >= 0) name = "hook";
+    else if (math_fn) name = "math";
     else if (emitter == emit_native_memset_stub_a64) name = "memset";
     else if (emitter == emit_native_strlen_stub_a64) name = "strlen";
     else if (emitter == emit_native_memswap_stub_a64) name = "memswap";
@@ -4494,7 +4539,9 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
     else name = "memcpy";
 
     bool ok;
-    if (math_fn) {
+    if (hook >= 0) {
+        ok = emit_hook_stub_a64(ctx, block, hook);
+    } else if (math_fn) {
         ok = emit_native_math_stub_a64(ctx, block, math_fn, math_sig);
     } else if (emitter) {
         ok = emitter(ctx, block);

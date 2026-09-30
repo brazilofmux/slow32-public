@@ -31,6 +31,15 @@ typedef struct {
     uint8_t  sig;           // Signature type enum
 } dbt_intercept_t;
 
+// Hooks: a guest routine declared hookable (hooks.h)
+#define MAX_HOOKS 64
+
+typedef struct {
+    uint32_t guest_addr;    // the thunk: `jal r0, impl`
+    uint32_t decline_pc;    // impl, where a declined call goes
+    uint16_t def;           // index into the hook definitions (hooks.c)
+} dbt_hook_t;
+
 // Exit reasons (set by translated code before returning to dispatcher)
 typedef enum {
     EXIT_BRANCH         = 0,    // Normal branch, next_pc in cpu->pc
@@ -137,6 +146,12 @@ typedef struct {
     // Math function interception table
     dbt_intercept_t intercepts[MAX_INTERCEPTS];
     int num_intercepts;
+
+    // Hooks (hooks.h, docs/dbt-hooks.md): guest routines the guest
+    // declared hookable and this DBT knows, by entry address
+    dbt_hook_t hooks[MAX_HOOKS];
+    int num_hooks;
+    uint32_t hook_lo, hook_hi;  // the range of hook entries, a quick filter
 
 } dbt_cpu_state_t;
 

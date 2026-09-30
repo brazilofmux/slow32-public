@@ -37,15 +37,27 @@ endif
 
 # Source files
 STAGE5_COMMON_SRCS = stage5_lift.c stage5_burg.c stage5_ssa.c stage5_ra.c stage5_mir.c stage5_lir_opt.c
-SRCS = dbt.c $(ARCH_SRCS) block_cache.c shadow_interp.c $(STAGE5_COMMON_SRCS)
+SRCS = dbt.c $(ARCH_SRCS) block_cache.c shadow_interp.c hooks.c $(STAGE5_COMMON_SRCS)
 EMULATOR_SRCS = ../emulator/mmio_ring.c
 OBJS = $(SRCS:.c=.o)
 EMULATOR_OBJS = mmio_ring.o
 
 # Headers
-HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h shadow_interp.h \
+HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h shadow_interp.h hooks.h \
 	stage5_lift.h stage5_burg.h stage5_ssa.h stage5_ra.h stage5_mir.h stage5_lir.h \
 	../emulator/mmio_ring.h
+
+.DEFAULT_GOAL := all
+
+# Hook tags (docs/dbt-hooks.md): the cksum of each source that defines a
+# hooked routine's contract, computed the same way where the guest side
+# is built (runtime/Makefile).  A source that is not here leaves its tag
+# empty and its routines unhooked.
+HK_SRC_BUILTINS = $(wildcard ../../runtime/builtins.c)
+HK_TAG_BUILTINS := $(if $(HK_SRC_BUILTINS),$(shell cksum < $(HK_SRC_BUILTINS) | awk '{printf "%08x", $$1}'))
+
+hooks.o: hooks.c $(HDRS) $(HK_SRC_BUILTINS)
+	$(CC) $(CFLAGS) -DHK_TAG_BUILTINS='"$(HK_TAG_BUILTINS)"' -c -o $@ $<
 
 # Main target
 TARGET = slow32-dbt

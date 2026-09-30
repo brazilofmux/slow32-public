@@ -91,6 +91,9 @@ WORKDIR /build
 COPY common /build/common
 COPY tools/emulator /build/tools/emulator
 COPY tools/dbt /build/tools/dbt
+# The sources whose checksums tag the DBT's hooks (docs/dbt-hooks.md):
+# without them the DBT builds, and hooks nothing
+COPY runtime/builtins.c /build/runtime/builtins.c
 
 # Build emulators
 RUN make -C tools/emulator clean && make -C tools/emulator
