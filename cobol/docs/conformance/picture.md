@@ -49,7 +49,7 @@ from 55; `tests/pictures.txt` keeps 42 of the cases in the harness.
 | 12a | at least one of A, X, Z, 9, * (N, 1), or two of +, -, cs | **refused**: bad/pic-no-digit-symbol -- `P` alone, `+P`, accepted before |
 | 12b | CR, DB, S, V, `.` each once | **refused**: bad/pic-crdb-twice; V and `.`: pictures.txt |
 | 13 | DECIMAL-POINT IS COMMA swaps `,` and `.` | **test**: free/dpcomma; the swap is applied before the analysis |
-| 14 | 1-31 digit positions (2023); 18 in 1985 | 18 **refused** by name; 19-31 under -std=2002 is **gap** (docs/refusals.md) |
+| 14 | 1-31 digit positions (2023); 18 in 1985 | 18 **refused** by name under -std=85; under -std=2002 19-31 **implemented** (docs/wide.md, 2002/wide1) and 32 **refused** (bad/std2002-wide-limits) |
 | 15 | floating-point edited | **n/a**: 2014's |
 | 16 | P one run at the leftmost or rightmost digit positions | **refused**: pictures.txt (`9P9`, `P9P`) |
 | 17 | P and `.` exclude each other | **refused**: bad/pic-p-and-point |

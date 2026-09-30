@@ -26,6 +26,9 @@
 #include <ctype.h>
 #include "cobrt.h"
 #include "cobedit.h"
+#include "wide.h"
+void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w);
+int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts);
 #include <term.h>
 #include <time.h>
 #include "xsort.h"
@@ -335,6 +338,14 @@ long long cob_get_num(const void *vp, const cob_desc *d)
     const unsigned char *p = vp;
     long long v = 0;
     int neg = 0;
+    if (d->digits > 18 || (d->usage == COB_U_BINARY && d->size > 8)) {
+        /* a 31-digit item where only 18 fit: its value when it fits, and
+         * a stop, never a wrong number, when it does not (docs/wide.md) */
+        cob_wnum w; cob_wget(vp, d, &w);
+        if (!w_fits_i64(&w)) cob_fatal("a value of more than 18 digits reached an operation that holds 18 (not implemented yet: docs/wide.md)");
+        long long x = w_to_i64(&w);
+        return x;
+    }
 
     if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; return cob_get_num(nat_narrow(vp, d, b, &nd), &nd); }
     if (d->cat == COB_NUM_ED) return get_num_edited(p, d);
@@ -421,8 +432,12 @@ long long cob_get_num(const void *vp, const cob_desc *d)
 /* opts: 1 = ROUNDED (nearest, ties away from zero -- the 85 rule),
  * 2 = report a size error instead of truncating.  Returns 1 on a size
  * error (nothing stored), else 0. */
+static int is_wide(const cob_desc *d);
 int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts)
 {
+    if (d->digits > 18 || (d->usage == COB_U_BINARY && d->size > 8)) {
+        if (is_wide(d)) { cob_wnum w; w_from_i64(&w, v, vscale); return cob_wput_x(vp, d, &w, opts); }
+    }
     if (is_natnum(d)) {
         unsigned char b[NATNUM_MAX]; cob_desc nd;
         unsigned char *q = (unsigned char *)nat_narrow(vp, d, b, &nd);
@@ -522,6 +537,171 @@ int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts
 
 void cob_put_num(void *vp, const cob_desc *d, long long v, int vscale) { cob_put_num_x(vp, d, v, vscale, 0); }
 
+/* ---- 31 digits (COBOL 2002; docs/wide.md, cobol ISSUES-117) -----------
+ * An item of more than 18 digits (or a binary field wider than eight
+ * bytes) is read and written through a cob_wnum, a 128-bit magnitude
+ * with a sign and a scale; everything narrower keeps the 64-bit path. */
+static int is_wide(const cob_desc *d)
+{
+    return (d->cat == COB_NUM || d->cat == COB_NUM_ED) && (d->digits > 18 || (d->usage == COB_U_BINARY && d->size > 8));
+}
+
+void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w)
+{
+    if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; cob_wget(nat_narrow(vp, d, b, &nd), &nd, w); return; }
+    const unsigned char *p = vp;
+    char digs[80]; int n = 0, neg = 0;
+    memset(w, 0, sizeof *w); w->scale = d->scale;
+    if (d->cat == COB_NUM_ED) {
+        unsigned char sw[256];
+        if ((cob_dp_comma || cob_currency != '$') && d->size <= sizeof sw) {
+            for (size_t i = 0; i < d->size; i++) {
+                unsigned char c = p[i];
+                if (cob_dp_comma) c = c == '.' ? ',' : c == ',' ? '.' : c;
+                if (cob_currency != '$' && c == (unsigned char)cob_currency) c = '$';
+                sw[i] = c;
+            }
+            p = sw;
+        }
+        n = cob_deedit(d->pic, p, digs, &neg);
+    } else switch (d->usage) {
+    case COB_U_BINARY: {
+        /* little-endian two's complement, up to sixteen bytes */
+        unsigned sz = d->size < 16 ? d->size : 16;
+        for (unsigned i = 0; i < sz; i++) w->m[i / 4] |= (wl_t)p[i] << (8 * (i % 4));
+        if ((d->flags & COB_F_SIGNED) && (p[sz - 1] & 0x80)) {
+            for (unsigned i = sz; i < 16; i++) w->m[i / 4] |= (wl_t)0xFF << (8 * (i % 4));
+            for (int i = 0; i < WL; i++) w->m[i] = ~w->m[i];
+            wl_t one[WL] = { 1, 0, 0, 0 };
+            mp_add(w->m, one, WL);
+            w->neg = 1;
+        }
+        return;
+    }
+    case COB_U_PACKED: {
+        int bytes = (int)d->size;
+        for (int i = 0; i < bytes; i++) {
+            digs[n++] = (char)('0' + ((p[i] >> 4) % 10));
+            if (i < bytes - 1) digs[n++] = (char)('0' + ((p[i] & 15) % 10));
+        }
+        neg = (p[bytes - 1] & 15) == 0xD;
+        break;
+    }
+    default: {
+        int sz = (int)d->size, i = 0, end = sz;
+        if (d->flags & COB_F_SEPLEAD) { neg = p[0] == '-'; i = 1; }
+        if (d->flags & COB_F_SEPTRAIL) { neg = p[sz - 1] == '-'; end = sz - 1; }
+        for (; i < end; i++) {
+            unsigned char ch = p[i];
+            unsigned c = (unsigned)ch - '0';
+            if (c > 9) {
+                if (ch >= 'p' && ch <= 'y') { c = ch - 'p'; neg = 1; }
+                else if (ch == ' ') c = 0;
+                else c = (ch & 15) % 10;
+            }
+            digs[n++] = (char)('0' + c);
+        }
+        break;
+    }
+    }
+    int k = n > 38 ? n - 38 : 0;                 /* the low 38 digits */
+    w_from_digits(w->m, digs + k, n - k);
+    w->neg = neg && !mp_is_zero(w->m, WL);
+}
+
+/* store w, as cob_put_num_x does: opts 1 ROUNDED, 2 report a size error
+ * (1 returned, the item untouched) instead of truncating */
+int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
+{
+    if (is_natnum(d)) {
+        unsigned char b[NATNUM_MAX]; cob_desc nd;
+        unsigned char *q = (unsigned char *)nat_narrow(vp, d, b, &nd);
+        int r = cob_wput_x(q, &nd, win, opts);
+        nat_widen(vp, d, q, (int)nd.size);
+        return r;
+    }
+    unsigned char *p = vp;
+    cob_wnum w = *win;
+    int eff = d->digits;
+    if (d->pic) for (const char *q = d->pic; *q; q++) if (*q == 'P') eff--;
+    int m = w.scale - d->scale;
+    if (m > 0) {
+        int half, nz;
+        w_drop_digits(w.m, WL, m > 40 ? 40 : m, &half, &nz);
+        if ((opts & 1) && half >= 0) { wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(w.m, one, WL); }
+    }
+    /* the digits, the receiver's fraction aligned at the end */
+    char D[96]; int L = 38;
+    w_to_digits(w.m, D, 38);
+    for (int k = m < 0 ? -m : 0; k > 0 && L < 90; k--) D[L++] = '0';
+    int zero = 1; for (int i = 0; i < L; i++) if (D[i] != '0') { zero = 0; break; }
+    int neg = w.neg && !zero;
+    if (!(d->flags & COB_F_NOTRUNC) && eff < L) {
+        for (int i = 0; i < L - eff; i++) if (D[i] != '0') { if (opts & 2) return 1; break; }
+        for (int i = 0; i < L - eff; i++) D[i] = '0';
+    }
+    zero = 1; for (int i = 0; i < L; i++) if (D[i] != '0') { zero = 0; break; }
+    if (zero) neg = 0;
+    if (!(d->flags & COB_F_SIGNED)) neg = 0;
+    if (d->cat == COB_NUM_ED) {
+        int nd = eff > 0 ? eff : 0;
+        int w2 = cob_edit_apply(d->pic, D + L - nd, neg, d->flags & COB_F_BLANKZ, (char *)p);
+        if (cob_dp_comma) for (int i = 0; i < w2; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
+        if (cob_currency != '$') for (int i = 0; i < w2; i++) if (p[i] == '$') p[i] = (unsigned char)cob_currency;
+        return 0;
+    }
+    switch (d->usage) {
+    case COB_U_BINARY: {
+        wl_t mag[WL];
+        w_from_digits(mag, D + L - 38, 38);
+        if (neg) { for (int i = 0; i < WL; i++) mag[i] = ~mag[i]; wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(mag, one, WL); }
+        for (unsigned i = 0; i < d->size; i++) p[i] = i < 16 ? (unsigned char)(mag[i / 4] >> (8 * (i % 4))) : (neg ? 0xFF : 0);
+        break;
+    }
+    case COB_U_PACKED: {
+        int digits = d->digits, bytes = (int)d->size;
+        const char *dg = D + L - digits;
+        int k = digits - 1, j = bytes - 1;
+        p[j] = (unsigned char)(((dg[k] - '0') << 4) | ((d->flags & COB_F_SIGNED) ? (neg ? 0xD : 0xC) : 0xF));
+        for (k--; k >= 0; k -= 2) {
+            unsigned hi = k > 0 ? (unsigned)(dg[k - 1] - '0') : 0u;
+            p[--j] = (unsigned char)((hi << 4) | (unsigned)(dg[k] - '0'));
+        }
+        while (j > 0) p[--j] = 0;
+        break;
+    }
+    default: {
+        int n = (int)d->size, i = n - 1, start = 0;
+        if ((d->flags & COB_F_BLANKZ) && zero) { memset(p, ' ', (size_t)n); break; }
+        if (d->flags & COB_F_SEPLEAD) { p[0] = neg ? '-' : '+'; start = 1; }
+        if (d->flags & COB_F_SEPTRAIL) { p[n - 1] = neg ? '-' : '+'; i = n - 2; }
+        int wdt = i - start + 1;
+        memcpy(p + start, D + L - wdt, (size_t)wdt);
+        if (neg && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) {
+            int k = (d->flags & COB_F_LEAD) ? 0 : n - 1;
+            p[k] = (unsigned char)(p[k] - '0' + 'p');
+        }
+        break;
+    }
+    }
+    return 0;
+}
+
+/* compare two wide values, -1 0 1 */
+static int w_cmp_val(const cob_wnum *a, const cob_wnum *b)
+{
+    int za = mp_is_zero(a->m, WL), zb = mp_is_zero(b->m, WL);
+    int na = a->neg && !za, nb = b->neg && !zb;
+    if (na != nb) return na ? -1 : 1;
+    wl_t x[2 * WL] = { 0 }, y[2 * WL] = { 0 };
+    memcpy(x, a->m, sizeof a->m); memcpy(y, b->m, sizeof b->m);
+    int s = a->scale > b->scale ? a->scale : b->scale;
+    for (int k = s - a->scale; k > 0; k--) mp_mul_small(x, 2 * WL, 10, 0);
+    for (int k = s - b->scale; k > 0; k--) mp_mul_small(y, 2 * WL, 10, 0);
+    int c = mp_cmp(x, y, 2 * WL);
+    return na ? -c : c;
+}
+
 /* ---- DISPLAY ---------------------------------------------------------- */
 
 void cob_display(const char *p, int n) { out_bytes(p, n); }
@@ -576,6 +756,17 @@ void cob_display_field(const void *vp, const cob_desc *d)
         }
         return;
     }
+    if (is_wide(d)) {                           /* 31 digits: as emit_scaled, from the wide value */
+        cob_wnum w; cob_wget(p, d, &w);
+        char D[40]; w_to_digits(w.m, D, 38);
+        int digits = d->digits, scale = d->scale;
+        if (d->flags & COB_F_SIGNED) out_char(w.neg ? '-' : '+');
+        for (int i = 38 - digits; i < 38; i++) {
+            if (scale > 0 && i == 38 - scale) out_char(cob_dp_comma ? ',' : '.');
+            out_char(D[i]);
+        }
+        return;
+    }
     long long v = cob_get_num(p, d);
     int neg = v < 0;
     unsigned long long mag = neg ? (unsigned long long)(-v) : (unsigned long long)v;
@@ -617,6 +808,15 @@ static int num_to_digits(const void *p, const cob_desc *d, char *out)
         unsigned char last = (unsigned char)out[sk];
         if (last >= 'p' && last <= 'y') out[sk] = (char)(last - 'p' + '0');
         return (int)d->size;
+    }
+    if (is_wide(d)) {                           /* 31 digits: the P positions as zeros too */
+        cob_wnum w; cob_wget(p, d, &w);
+        char D[40]; w_to_digits(w.m, D, 38);
+        int stored = d->digits - np, o = 0;
+        if (lead_p) for (int i = 0; i < np; i++) out[o++] = '0';
+        memcpy(out + o, D + 38 - stored, (size_t)stored); o += stored;
+        if (!lead_p) for (int i = 0; i < np; i++) out[o++] = '0';
+        return o;
     }
     long long v = cob_get_num(p, d);
     unsigned long long mag = v < 0 ? (unsigned long long)(-v) : (unsigned long long)v;
@@ -856,7 +1056,31 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
     }
 
     if (snum) {
+        if (is_wide(sd) || is_wide(dd)) { cob_wnum w; cob_wget(src, sd, &w); cob_wput_x(dst, dd, &w, 0); return; }
         cob_put_num(dst, dd, cob_get_num(src, sd), sd->scale);
+        return;
+    }
+    if (is_wide(dd)) {
+        /* alphanumeric to a 31-digit receiver: the text read as below --
+         * blanks, a sign, digits, a point and fraction -- the rightmost
+         * integer digits kept (docs/wide.md) */
+        const char *s = src; unsigned n = sd->size, i = 0;
+        while (i < n && s[i] == ' ') i++;
+        int neg = 0;
+        if (i < n && (s[i] == '+' || s[i] == '-')) { neg = s[i] == '-'; i++; }
+        char ig[128], fg[64]; int ni = 0, nf = 0, pt = 0;
+        for (; i < n; i++) {
+            char c = s[i];
+            if (c >= '0' && c <= '9') { if (pt) { if (nf < 38) fg[nf++] = c; } else if (ni < 128) ig[ni++] = c; }
+            else if (c == (cob_dp_comma ? ',' : '.') && !pt) pt = 1;
+            else break;
+        }
+        char all[80]; int na = 0, keep = ni > 38 - nf ? 38 - nf : ni;
+        memcpy(all, ig + ni - keep, (size_t)keep); na = keep;
+        memcpy(all + na, fg, (size_t)nf); na += nf;
+        cob_wnum w; memset(&w, 0, sizeof w);
+        w_from_digits(w.m, all, na); w.scale = nf; w.neg = neg && !mp_is_zero(w.m, WL);
+        cob_wput_x(dst, dd, &w, 0);
         return;
     }
 
@@ -1106,6 +1330,7 @@ int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd
         return 0;
     }
     int an = ad->cat == COB_NUM, bn = bd->cat == COB_NUM;
+    if (an && bn && (is_wide(ad) || is_wide(bd))) { cob_wnum x, y; cob_wget(a, ad, &x); cob_wget(b, bd, &y); return w_cmp_val(&x, &y); }
     if (an && bn) return cmp_scaled(cob_get_num(a, ad), ad->scale, cob_get_num(b, bd), bd->scale);
     char ta[40], tb[40];
     const unsigned char *pa = a, *pb = b;

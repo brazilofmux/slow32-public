@@ -4319,3 +4319,26 @@ operand pairs and every pair of 37 edge values (limb boundaries, powers
 of ten); it is harness gate 1c. Mutation-checked: a borrow bug survived
 the random operands alone, which is why the edges are there.
 
+Phase 1 (items and moves), done. Runtime: cob_wget and cob_wput_x, the
+wide cob_get_num and cob_put_num_x (DISPLAY with every sign form,
+BINARY of sixteen bytes little-endian two's complement, PACKED-DECIMAL,
+numeric-edited through cob_deedit and cob_edit_apply, national through
+the narrow copy), with ROUNDED and the size-error report ready for
+phase 2. cob_move, cob_cmp, cob_display_field and num_to_digits take
+them when a descriptor passes 18 digits; cob_put_num_x hands a wide
+receiver to cob_wput_x; cob_get_num on a wide item returns its value
+when it fits 64 bits and stops the run when it does not -- never a
+wrong number. Compiler: pic_max_digits (31 under -std=2002), BINARY of
+19-31 digits is sixteen bytes, VALUE of such items (the compiler
+includes wide.h too), literals of 31 digits under -std=2002,
+numlit_int and numlit_scaled saturate instead of wrapping, and
+arithmetic touching a wide operand or receiver is refused by name
+until phase 2.
+
+Tests: 2002/wide1 (25 lines, the oracle agrees: DISPLAY, BINARY and
+PACKED-DECIMAL of 20-31 digits, signs, fractions, truncation both
+ends, edited and alphanumeric sides, relations across widths and
+scales), bad/std2002-wide-limits. Harness 508/508, -std=85
+byte-identical on the Open Systems programs, majesty PASS,
+majesty-functions PASS, Open Systems paper unchanged.
+

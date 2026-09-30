@@ -196,6 +196,8 @@ static const char *pic_precedence(const char *f, int nf, char *msg, size_t msz)
 }
 #undef B_
 
+int pic_max_digits = 18;
+
 int pic_analyse(const char *s, PicInfo *info)
 {
     PicItem it[PIC_MAXITEM];
@@ -328,12 +330,12 @@ int pic_analyse(const char *s, PicInfo *info)
     if (lead_p)  info->scale = lead_p + stored;
 
     if (info->digits == 0) return fail(info, "PICTURE has no digit positions");
-    /* The standard's ceiling: numeric literals and arithmetic operands are
-     * 1 through 18 digits.  This machine could hold more; the language
-     * does not. */
-    if (info->digits > 18)
-        return fail(info, "more than 18 digits -- the standard's limit for a "
-                          "numeric item is 18");
+    /* The standard's ceiling: 18 digits in 1985, 31 from 2002 (the caller
+     * sets pic_max_digits; docs/wide.md) */
+    if (info->digits > pic_max_digits)
+        return fail(info, pic_max_digits > 18 ? "more than 31 digits -- the standard's limit for a numeric item is 31"
+                                              : "more than 18 digits -- the standard's limit for a "
+                                                "numeric item is 18");
 
     info->category = info->edited ? PIC_NUMERIC_EDITED : PIC_NUMERIC;
     memcpy(info->pat, f, nf + 1);

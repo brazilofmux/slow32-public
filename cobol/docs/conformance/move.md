@@ -44,7 +44,7 @@ this sweep; all 90 now agree.
 | 6c | the same usage: the bytes unchanged (and endianness) | **test**: free/identmove. Endianness phrases are 2014's: **n/a** |
 | 6d1 | a numeric-edited sender de-edited; invalid numeric content sets EC-DATA-INCOMPATIBLE | de-editing **test**: free/moverules. EC-DATA-INCOMPATIBLE is **gap**: it is in the exception table but no statement raises it yet (docs/refusals.md, the rest of Table 13) |
 | 6d2 | a numeric value: the sign kept for a signed receiver, the absolute value for an unsigned one; float usages | **test**: CCVS NC1xx, free/moverules. Float: **n/a** until -std=2014 (the ruling of 2026-09-28) |
-| 6d3 | an alphanumeric or national sender as an unsigned integer: its digits (the rightmost 31), a figurative constant replicated to the receiver's digits, a literal's characters (rightmost 31) | **test**: free/moverules (rightmost digits, ALL to an integer). The 31-digit cap is **gap** with 19-31-digit items (docs/refusals.md): no receiver has more than 18 |
+| 6d3 | an alphanumeric or national sender as an unsigned integer: its digits (the rightmost 31), a figurative constant replicated to the receiver's digits, a literal's characters (rightmost 31) | **test**: free/moverules (rightmost digits, ALL to an integer). Past 18 digits the receiver takes the rightmost integer digits it holds (docs/wide.md phase 1; 2002/wide1) |
 | 6d4 | floating-point receivers | **n/a** until -std=2014 |
 | 6d5 | a value too far from zero for the receiver's usage is EC-DATA-OVERFLOW; too near is zero | **n/a**: those are the floating-point usages' |
 | 7 | the category of literals and figurative constants (Table 17) | **test**: free/moverules (ZERO to numeric-edited), 2002/natconv, 2002/boolean |

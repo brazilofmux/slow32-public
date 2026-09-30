@@ -43,6 +43,7 @@ typedef struct {
 
 int pic_scan(const char *s, PicItem *out, int max, int *errpos);
 int pic_analyse(const char *s, PicInfo *info);   /* 0 ok, -1 with info->err */
+extern int pic_max_digits;   /* a numeric picture's digit limit: 18 (1985), 31 (2002) */
 const char *pic_category_name(int category);
 
 #endif

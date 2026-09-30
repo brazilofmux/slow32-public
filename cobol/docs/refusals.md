@@ -80,10 +80,11 @@ COBOL 2002/2023 (Stage B):
   character item redefining a bit item that starts mid-byte;
 - EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
   the caller (docs/conformance/exit.md);
-- numeric items and literals of 19 to 31 digits (COBOL 2002 raised the
-  limit from 18; the arithmetic here is 64-bit; wanted, queued -- the
-  user, 2026-09-29), and with them MOVE's
-  31-digit cap on an alphanumeric sender (2023 14.9.25.4 rule 6d3);
+- arithmetic on items and literals of 19 to 31 digits (COBOL 2002): the
+  items, literals, VALUE, MOVE, relations and DISPLAY are implemented
+  (docs/wide.md phase 1, ISSUES-117); ADD, SUBTRACT, MULTIPLY, DIVIDE and
+  COMPUTE on them are phase 2, refused by name until then, and the
+  functions, edited and national cases past 18 digits phase 3;
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
@@ -94,8 +95,8 @@ COBOL 2002/2023 (Stage B):
   (WITH FILLER, TO VALUE, TO DEFAULT; the phrases themselves are
   implemented, docs/conformance/initialize.md);
 - READ PREVIOUS of a sequential file (2002; io-statements.md);
-- USAGE BINARY-DOUBLE, whose range needs 19 digits (with the 31-digit
-  gap above).
+- USAGE BINARY-DOUBLE, whose range needs 19 digits (docs/wide.md
+  phase 3).
 
 ## 3. Out of scope, by ruling
 

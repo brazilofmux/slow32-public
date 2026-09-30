@@ -52,6 +52,7 @@
 #include <strings.h>
 #include <sys/mman.h>
 #include "picture.h"
+#include "../libcob/wide.h"    /* 31 digits: the runtime's 128-bit arithmetic, for VALUE and literals */
 #include "../libcob/cobrt.h"
 #include "../../common/s32utf.h"   /* the one Unicode model: coding, width, clusters (cobol ISSUES-94) */
 
@@ -1573,9 +1574,11 @@ static void numlit_parse(Tok *t, NumLit *n)
         n->digits[n->ndigits++] = *s;
         if (seen) n->scale++;
     }
-    if (n->ndigits - n->scale > 18 || n->ndigits > 36)
-        die_at(t->line, "numeric literal has more than 18 digits%s", g_std >= 2002 ? " -- COBOL 2002's 31 are not implemented" : "");
+    if (g_std >= 2002 ? n->ndigits > 31 : (n->ndigits - n->scale > 18 || n->ndigits > 36))
+        die_at(t->line, g_std >= 2002 ? "numeric literal has more than 31 digits (2023 8.3.1.2.2.2 rule 1)" : "numeric literal has more than 18 digits");
 }
+/* a literal past the 64-bit path (COBOL 2002's 31 digits; docs/wide.md) */
+static int numlit_wide(const NumLit *n) { return n->ndigits > 18; }
 
 static void numlit_zero(NumLit *n) { memset(n, 0, sizeof *n); n->digits[0] = '0'; n->ndigits = 1; }
 
@@ -1591,15 +1594,17 @@ static int numlit_is_int(const NumLit *n)
     return 1;
 }
 
-static long long numlit_int(const NumLit *n)       /* integer part */
+static long long numlit_int(const NumLit *n)       /* integer part; saturated past 18 digits, never wrapped */
 {
+    if (n->ndigits - n->scale > 18) return n->neg ? -9223372036854775807LL : 9223372036854775807LL;
     long long v = 0;
     for (int i = 0; i < n->ndigits - n->scale; i++) v = v * 10 + (n->digits[i] - '0');
     return n->neg ? -v : v;
 }
 
-static long long numlit_scaled(const NumLit *n)    /* all digits as an integer */
+static long long numlit_scaled(const NumLit *n)    /* all digits as an integer; saturated past 18 */
 {
+    if (n->ndigits > 18) return n->neg ? -9223372036854775807LL : 9223372036854775807LL;
     long long v = 0;
     for (int i = 0; i < n->ndigits; i++) v = v * 10 + (n->digits[i] - '0');
     return n->neg ? -v : v;
@@ -2010,7 +2015,8 @@ static int binary_bytes(int digits, int usage)
     if (usage == U_COMP5 && digits <= 2) return 1;
     if (digits <= 4) return 2;
     if (digits <= 9) return 4;
-    return 8;
+    if (digits <= 18) return 8;
+    return 16;                          /* 19-31 digits (COBOL 2002; docs/wide.md) */
 }
 
 static int capacity_digits(int bytes)
@@ -2153,6 +2159,13 @@ static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
         break;
     }
     default: {
+        if (s->size > 8) {                          /* 19-31 digits: sixteen bytes (docs/wide.md) */
+            wl_t m[WL];
+            w_from_digits(m, d, digits);
+            if (neg) { for (int i = 0; i < WL; i++) m[i] = ~m[i]; wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(m, one, WL); }
+            for (int i = 0; i < s->size; i++) p[i] = i < 16 ? (unsigned char)(m[i / 4] >> (8 * (i % 4))) : (neg ? 0xFF : 0);
+            break;
+        }
         unsigned long long mag = 0;
         for (int i = 0; i < digits; i++) mag = mag * 10 + (d[i] - '0');
         if (s->size < 8 && (mag >> (s->size * 8 - (pi->is_signed ? 1 : 0))))
@@ -2437,10 +2450,6 @@ static void parse_data_item1(void)
             if (nat_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (bool_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (pic_analyse(s->pic, &s->pi) < 0) {
-                /* 2002 raised the limit to 31 digits (a gap here: the
-                 * arithmetic is 64-bit, docs/refusals.md) */
-                if (g_std >= 2002 && !strncmp(s->pi.err, "more than 18 digits", 19))
-                    die_at(t->line, "'%s': more than 18 digits -- COBOL 2002's 31 are not implemented", s->name);
                 /* a symbol 1 or N (not a repeat count) says which category
                  * was meant: name its rule (2023 13.18.40.4 rules 8-10) */
                 int has1 = 0, hasn = 0, paren = 0;
@@ -8256,7 +8265,7 @@ static void emit_move(Opnd *src, Ref *dst)
         emit_args(a, 3); emit_call("cob_fill");
         return;
     }
-    if (src->kind == O_NUM && is_hot_int(d)) {
+    if (src->kind == O_NUM && !numlit_wide(&src->num) && is_hot_int(d)) {
         long long v = numlit_int(&src->num);
         if (d->usage == U_BINARY) v %= pow10l(d->pi.digits);
         if (!d->pi.is_signed && v < 0) v = -v;
@@ -8625,8 +8634,17 @@ static void check_numeric_opnd(Opnd *o)
 }
 
 /* push an operand onto the numeric stack */
+/* 31 digits in arithmetic: phase 2 of docs/wide.md; refused until then,
+ * never computed in 64 bits and truncated */
+static int sym_wide(const Sym *s) { return !s->is_group && (s->pi.digits > 18 || (s->usage == U_BINARY && s->size > 8)); }
+static void wide_arith_refuse(int line, const char *what)
+{
+    die_at(line, "arithmetic on %s of more than 18 digits is not implemented yet (COBOL 2002's 31 digits: docs/wide.md, phase 2)", what);
+}
 static void emit_push(Opnd *o)
 {
+    if (o->kind == O_NUM && numlit_wide(&o->num)) wide_arith_refuse(o->line, "a literal");
+    if (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym)) wide_arith_refuse(o->line, "an item");
     if (g_incompat_push) emit_incompat(o);
     if (o->kind == O_EXPR) die_at(o->line, "internal: expression pushed as an operand");
     if (o->kind == O_FUNC) {
@@ -8670,6 +8688,7 @@ static void emit_push(Opnd *o)
  * With the check on, the status accumulates in SLOT_B. */
 static void emit_top_op(Ref *r, const char *fn, int opts)
 {
+    if (!r->rm && sym_wide(r->sym)) wide_arith_refuse(r->line, "a receiver");
     Arg a[3] = { arg_ref(r), arg_desc(sym_desc(r->sym)), arg_imm(opts) };
     emit_args(a, 3);
     emit_call(fn);
@@ -8817,6 +8836,7 @@ static int any_rounded(const int *r, int n) { for (int i = 0; i < n; i++) if (r[
 static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err,
                                  long long sum_mag, int sum_nonneg)
 {
+    for (int i = 0; i < nr; i++) if (!rs[i].rm && sym_wide(rs[i].sym)) wide_arith_refuse(rs[i].line, "a receiver");
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         int opts = (rounded[i] ? 1 : 0) | (size_err ? 2 : 0);
@@ -16189,7 +16209,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fixed-columns=bytes")) g_col_bytes = 1;
         else if (!strcmp(argv[i], "-fixed-columns=chars")) g_col_bytes = 0;
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
-        else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) g_std = 2002;
+        else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) { g_std = 2002; pic_max_digits = 31; }
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {
             fprintf(stderr, "s32-cobc: there is no -std=74: 74 programs compile as 85, and -warn-74 flags where their "
                             "meaning changed; full COBOL 74 is cobc370's job (docs/standards.md)\n");

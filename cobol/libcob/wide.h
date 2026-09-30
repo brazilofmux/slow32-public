@@ -17,18 +17,21 @@ typedef unsigned int wl_t;              /* one limb */
 
 typedef struct { wl_t m[WL]; int neg; int scale; } cob_wnum;
 
+/* every function static, and unused ones no warning: each includer takes what it needs */
+#define WFN static __attribute__((unused))
+
 /* ---- limb arrays ---------------------------------------------------- */
 
-static int mp_is_zero(const wl_t *a, int n) { for (int i = 0; i < n; i++) if (a[i]) return 0; return 1; }
+WFN int mp_is_zero(const wl_t *a, int n) { for (int i = 0; i < n; i++) if (a[i]) return 0; return 1; }
 
-static int mp_cmp(const wl_t *a, const wl_t *b, int n)
+WFN int mp_cmp(const wl_t *a, const wl_t *b, int n)
 {
     for (int i = n - 1; i >= 0; i--) if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
     return 0;
 }
 
 /* a += b; the carry out */
-static wl_t mp_add(wl_t *a, const wl_t *b, int n)
+WFN wl_t mp_add(wl_t *a, const wl_t *b, int n)
 {
     unsigned long long c = 0;
     for (int i = 0; i < n; i++) { c += (unsigned long long)a[i] + b[i]; a[i] = (wl_t)c; c >>= 32; }
@@ -36,7 +39,7 @@ static wl_t mp_add(wl_t *a, const wl_t *b, int n)
 }
 
 /* a -= b, a >= b */
-static void mp_sub(wl_t *a, const wl_t *b, int n)
+WFN void mp_sub(wl_t *a, const wl_t *b, int n)
 {
     long long br = 0;
     for (int i = 0; i < n; i++) {
@@ -46,7 +49,7 @@ static void mp_sub(wl_t *a, const wl_t *b, int n)
 }
 
 /* a = a * m + add; the carry out */
-static wl_t mp_mul_small(wl_t *a, int n, wl_t m, wl_t add)
+WFN wl_t mp_mul_small(wl_t *a, int n, wl_t m, wl_t add)
 {
     unsigned long long c = add;
     for (int i = 0; i < n; i++) { c += (unsigned long long)a[i] * m; a[i] = (wl_t)c; c >>= 32; }
@@ -54,7 +57,7 @@ static wl_t mp_mul_small(wl_t *a, int n, wl_t m, wl_t add)
 }
 
 /* a /= d; the remainder */
-static wl_t mp_div_small(wl_t *a, int n, wl_t d)
+WFN wl_t mp_div_small(wl_t *a, int n, wl_t d)
 {
     unsigned long long r = 0;
     for (int i = n - 1; i >= 0; i--) { r = (r << 32) | a[i]; a[i] = (wl_t)(r / d); r %= d; }
@@ -62,7 +65,7 @@ static wl_t mp_div_small(wl_t *a, int n, wl_t d)
 }
 
 /* r[na+nb] = a * b */
-static void mp_mul(const wl_t *a, int na, const wl_t *b, int nb, wl_t *r)
+WFN void mp_mul(const wl_t *a, int na, const wl_t *b, int nb, wl_t *r)
 {
     for (int i = 0; i < na + nb; i++) r[i] = 0;
     for (int i = 0; i < na; i++) {
@@ -76,7 +79,7 @@ static void mp_mul(const wl_t *a, int na, const wl_t *b, int nb, wl_t *r)
     }
 }
 
-static int mp_bits(const wl_t *a, int n)
+WFN int mp_bits(const wl_t *a, int n)
 {
     for (int i = n - 1; i >= 0; i--)
         if (a[i]) { int b = 32; while (!(a[i] >> (b - 1))) b--; return i * 32 + b; }
@@ -85,7 +88,7 @@ static int mp_bits(const wl_t *a, int n)
 
 /* q = a / b, r = a % b, all n limbs, b != 0: shift and subtract, a bit
  * at a time -- the wide path is rare enough that this is fine */
-static void mp_divmod(const wl_t *a, const wl_t *b, int n, wl_t *q, wl_t *r)
+WFN void mp_divmod(const wl_t *a, const wl_t *b, int n, wl_t *q, wl_t *r)
 {
     for (int i = 0; i < n; i++) { q[i] = 0; r[i] = 0; }
     for (int bit = mp_bits(a, n) - 1; bit >= 0; bit--) {
@@ -99,7 +102,7 @@ static void mp_divmod(const wl_t *a, const wl_t *b, int n, wl_t *q, wl_t *r)
 /* ---- decimal ---------------------------------------------------------- */
 
 /* the magnitude 10^k, k <= 38 */
-static void w_pow10(wl_t *a, int k)
+WFN void w_pow10(wl_t *a, int k)
 {
     a[0] = 1; for (int i = 1; i < WL; i++) a[i] = 0;
     for (; k >= 9; k -= 9) mp_mul_small(a, WL, 1000000000u, 0);
@@ -109,7 +112,7 @@ static void w_pow10(wl_t *a, int k)
 
 /* the magnitude's digits, n of them, leading zeros; the high ones are
  * lost if it has more */
-static void w_to_digits(const wl_t *mag, char *out, int n)
+WFN void w_to_digits(const wl_t *mag, char *out, int n)
 {
     wl_t t[WL]; memcpy(t, mag, sizeof t);
     int i = n;
@@ -120,7 +123,7 @@ static void w_to_digits(const wl_t *mag, char *out, int n)
 }
 
 /* the magnitude of n digits (characters '0'..'9') */
-static void w_from_digits(wl_t *mag, const char *d, int n)
+WFN void w_from_digits(wl_t *mag, const char *d, int n)
 {
     for (int i = 0; i < WL; i++) mag[i] = 0;
     int i = 0;
@@ -133,7 +136,7 @@ static void w_from_digits(wl_t *mag, const char *d, int n)
     }
 }
 
-static void w_from_i64(cob_wnum *w, long long v, int scale)
+WFN void w_from_i64(cob_wnum *w, long long v, int scale)
 {
     unsigned long long u = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v;
     w->m[0] = (wl_t)u; w->m[1] = (wl_t)(u >> 32); w->m[2] = w->m[3] = 0;
@@ -141,15 +144,15 @@ static void w_from_i64(cob_wnum *w, long long v, int scale)
 }
 
 /* does the magnitude fit in 63 bits (for a narrow value)? */
-static int w_fits_i64(const cob_wnum *w) { return !w->m[2] && !w->m[3] && !(w->m[1] >> 31); }
-static long long w_to_i64(const cob_wnum *w)
+WFN int w_fits_i64(const cob_wnum *w) { return !w->m[2] && !w->m[3] && !(w->m[1] >> 31); }
+WFN long long w_to_i64(const cob_wnum *w)
 {
     long long v = (long long)(((unsigned long long)w->m[1] << 32) | w->m[0]);
     return w->neg ? -v : v;
 }
 
 /* the number of decimal digits in the magnitude (0 for zero) */
-static int w_ndigits(const wl_t *mag)
+WFN int w_ndigits(const wl_t *mag)
 {
     if (mp_is_zero(mag, WL)) return 0;
     char d[40]; w_to_digits(mag, d, 39);
@@ -160,7 +163,7 @@ static int w_ndigits(const wl_t *mag)
 /* mag /= 10^k; the remainder's comparison with half of 10^k for ROUNDED:
  * *half gets -1 below half, 0 exactly half, 1 above; *nonzero whether
  * anything was dropped */
-static void w_drop_digits(wl_t *mag, int n, int k, int *half, int *nonzero)
+WFN void w_drop_digits(wl_t *mag, int n, int k, int *half, int *nonzero)
 {
     int first = -1, rest = 0;
     for (int i = 0; i < k; i++) {
@@ -172,7 +175,7 @@ static void w_drop_digits(wl_t *mag, int n, int k, int *half, int *nonzero)
 }
 
 /* mag *= 10^k; 0 if it no longer fits WL limbs */
-static int w_scale_up(wl_t *mag, int k)
+WFN int w_scale_up(wl_t *mag, int k)
 {
     for (int i = 0; i < k; i++) if (mp_mul_small(mag, WL, 10, 0)) return 0;
     return !(mag[WL - 1] >> 31);
