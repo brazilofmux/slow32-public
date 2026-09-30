@@ -32,6 +32,8 @@ began this; ISSUES-96 on record the sweeps.
 | 13.18.60 USAGE (the rest) | [usage.md](usage.md) | 2026-09-29 |
 | 14.2, 14.9.4 CALL parameters | [call.md](call.md) | 2026-09-29 |
 | 14.7.7, ADD SUBTRACT MULTIPLY DIVIDE COMPUTE | [arithmetic.md](arithmetic.md) | 2026-09-29 |
+| 8.8.1 arithmetic expressions, native arithmetic | [expressions.md](expressions.md) | 2026-09-30 |
+| 8.8.4.2 relation conditions, abbreviated relations | [conditions.md](conditions.md) | 2026-09-30 |
 | 12.4.5, 13.4.5, RECORD, LINAGE: files | [files.md](files.md) | 2026-09-29 |
 | 14.9.6/.10/.27/.30/.35/.41/.51 the I-O statements | [io-statements.md](io-statements.md) | 2026-09-29 |
 | 14.9.20 INITIALIZE | [initialize.md](initialize.md) | 2026-09-29 |

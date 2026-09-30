@@ -1,0 +1,15 @@
+-0 = +0
+packed -0 = 0
+zero unique
+9(3) 42 = x(3) '042'
+vs longer, space-padded
+042 < '1' as characters
+edited compare as characters
+x(4) 'ab' = x(2) 'ab'
+pad with spaces
+comp 7 = 7.0
+signed -1 < unsigned 1
+abbreviated and
+abbreviated or
+not over or
+not = and

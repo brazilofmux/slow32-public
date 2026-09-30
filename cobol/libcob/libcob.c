@@ -1454,7 +1454,7 @@ static void align2(cob_num *a, cob_num *b)
 }
 
 static int div0;        /* a size error happened in this statement: 1 a zero divisor, 2 an i64 overflow */
-static int size_kind;   /* the last size error's kind, for EC-SIZE (cobol ISSUES-55): 1 zero divide, 2 overflow, 3 truncation */
+static int size_kind;   /* the last size error's kind, for EC-SIZE (cobol ISSUES-55): 1 zero divide, 2 overflow, 3 truncation, 4 exponentiation */
 int cob_size_kind(void) { return size_kind; }
 
 void cob_nadd(void) { cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1]; align2(a, b); a->v += b->v; nsp--; }
@@ -1573,7 +1573,8 @@ void cob_npow(void)
          * error), at nine decimals or as many as 64 bits leave room for */
         double x = (double)a->v / pow10d(a->scale), y = (double)b->v / pow10d(b->scale);
         double r = (x == 0 && y <= 0) || (x < 0 && y != floor(y)) ? NAN : pow(x, y);
-        if (r != r || fabs(r) >= 9e17) { div0 = 2; nsp--; return; }
+        if (r != r) { div0 = 4; nsp--; return; }    /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
+        if (fabs(r) >= 9e17) { div0 = 2; nsp--; return; }
         int sc = 9;
         while (sc > 0 && fabs(r) * pow10d(sc) >= 9e17) sc--;
         double v = r * pow10d(sc);
@@ -1582,6 +1583,7 @@ void cob_npow(void)
         return;
     }
     if (b->scale > 0) { b->v /= pow10tab[b->scale]; b->scale = 0; }
+    if (a->v == 0 && b->v == 0) { div0 = 4; nsp--; return; }   /* zero to the power zero (rule 6a) */
     long long base = a->v, r = 1; int bs = a->scale, scale = 0;
     while (bs > 9) { base /= 10; bs--; }            /* nine fraction digits of base carry the answer */
     unsigned long long ab = base < 0 ? 0 - (unsigned long long)base : (unsigned long long)base;
@@ -1777,10 +1779,11 @@ void cob_wpow(void)
          * error */
         double x = w_to_dbl(a), y = w_to_dbl(b);
         double r = (x == 0 && y <= 0) || (x < 0 && y != floor(y)) ? NAN : pow(x, y);
-        if (r != r) div0 = 2; else w_set_f(a, r);
+        if (r != r) div0 = 4; else w_set_f(a, r);   /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
         wsp--; return;
     }
     if (b->scale > 0) { w_drop_digits(b->m, WL, b->scale, 0, 0); b->scale = 0; }
+    if (mp_is_zero(a->m, WL) && mp_is_zero(b->m, WL)) { div0 = 4; wsp--; return; }   /* zero to the power zero (rule 6a) */
     if (b->m[1] || b->m[2] || b->m[3] || b->m[0] > 1000) cob_fatal("** with an exponent past 1000 is not implemented");
     cob_wnum r; w_from_i64(&r, 1, 0);
     for (wl_t i = 0; i < b->m[0] && !div0; i++) w_mul(&r, a);

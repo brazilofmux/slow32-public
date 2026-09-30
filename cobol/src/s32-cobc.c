@@ -4442,6 +4442,7 @@ enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /
 typedef struct Opnd_ {
     int kind;
     int wide;           /* O_EXPR: an operand past 18 digits inside (docs/wide.md) */
+    int folded;         /* O_NUM: a function or LENGTH OF the compiler evaluated -- written as a reference, not a literal */
     int flt;            /* O_EXPR: a floating-point item inside (docs/usage.md) */
     Ref ref;
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
@@ -5108,7 +5109,7 @@ static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
 {
     if (x->kind != O_REF || x->ref.rm) die_at(n->line, "FUNCTION %s takes a numeric or numeric-edited item", n->s);
     Sym *a = x->ref.sym;
-    memset(o, 0, sizeof *o); o->kind = O_NUM; o->line = n->line;
+    memset(o, 0, sizeof *o); o->kind = O_NUM; o->line = n->line; o->folded = 1;
     long long nat = 0; int sgn = 0;
     switch (a->usage) {
     case U_BCHAR: nat = high ? 127 : -128; sgn = 1; break;
@@ -5193,7 +5194,7 @@ static void parse_operand_raw_1(Opnd *o)
         if (x.kind != O_REF) die_at(t->line, "LENGTH OF takes a data item");
         int len = opnd_size(&x);
         if (len < 0) die_at(t->line, "LENGTH OF a reference modification with a variable length is not implemented");
-        o->kind = O_NUM; numlit_from_int(&o->num, len);
+        o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1;
         return;
     }
     /* a user-defined function named in REPOSITORY (or this function
@@ -5381,7 +5382,7 @@ static void parse_operand_raw_1(Opnd *o)
             if (x.kind == O_REF && !x.ref.rm && sym_bitlike(x.ref.sym))
                 len = x.ref.sym->bits;                  /* bits: boolean positions */
             if (x.kind == O_REF && x.ref.rm_bit && x.ref.rm_len) len = (int)x.ref.rm_len;   /* a bit part or element */
-            o->kind = O_NUM; numlit_from_int(&o->num, len);
+            o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1;
             return;
         }
         else if (!strcmp(n->s, "byte-length") || !strcmp(n->s, "highest-algebraic") || !strcmp(n->s, "lowest-algebraic")) {
@@ -5404,7 +5405,7 @@ static void parse_operand_raw_1(Opnd *o)
                 }
                 int len = opnd_size(&x);
                 if (len < 0) die_at(n->line, "FUNCTION BYTE-LENGTH of a reference modification with a variable length is not implemented");
-                o->kind = O_NUM; numlit_from_int(&o->num, len);
+                o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1;
                 return;
             }
             algebraic_limit(o, &x, high, n);
@@ -6931,6 +6932,44 @@ static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 
 static Cond *cond_bin(int kind, Cond *a, Cond *b) { Cond *c = cond_new(kind); c->a = a; c->b = b; return c; }
 
+/* a written relation's operand rules (X3.23-1985 6.3.1.1, 6.3.1.1.2; 2023
+ * 8.8.4.2.1, 8.8.4.2.5): at least one operand not a literal; and a numeric
+ * operand compared with a nonnumeric one an integer item of usage DISPLAY
+ * (or national) or an integer literal -- a noninteger, an expression or a
+ * binary item beside text has no defined comparison.  A figurative
+ * constant fits either side. */
+static void rel_rules(const Opnd *x, const Opnd *y, int line)
+{
+    int xl = (x->kind == O_NUM && !x->folded) || x->kind == O_STR || x->kind == O_FIG || x->kind == O_ALL;
+    int yl = (y->kind == O_NUM && !y->folded) || y->kind == O_STR || y->kind == O_FIG || y->kind == O_ALL;
+    if (xl && yl)
+        die_at(line, "a relation condition needs at least one operand that is not a literal (%s)",
+               g_std < 2002 ? "X3.23-1985 6.3.1.1" : "2023 8.8.4.2.1");
+    if (x->kind == O_FIG || y->kind == O_FIG) return;
+    for (int k = 0; k < 2; k++) {
+        const Opnd *n = k ? y : x, *o = k ? x : y;
+        if (!opnd_numeric((Opnd *)n)) continue;
+        /* the other side nonnumeric: text, or an item of an alphanumeric-
+         * class category (national and boolean have their own rules) */
+        int other_text = o->kind == O_STR || o->kind == O_ALL ||
+            (o->kind == O_REF && (o->ref.rm || o->ref.sym->is_group ||
+                                  o->ref.sym->pi.category == PIC_ALPHANUMERIC || o->ref.sym->pi.category == PIC_ALPHABETIC ||
+                                  o->ref.sym->pi.category == PIC_ALPHANUMERIC_EDITED || o->ref.sym->pi.category == PIC_NUMERIC_EDITED));
+        if (!other_text) continue;
+        if (n->kind == O_EXPR)
+            die_at(line, "an arithmetic expression is not compared with a nonnumeric operand (%s)",
+                   g_std < 2002 ? "X3.23-1985 6.3.1.1.2" : "2023 8.8.4.2.5");
+        int integer = n->kind == O_NUM ? numlit_is_int(&n->num)
+                    : n->ref.sym->pi.scale == 0 && !strchr(n->ref.sym->pi.pat, 'P');
+        if (!integer)
+            die_at(line, "a noninteger numeric operand is not compared with a nonnumeric one (%s)",
+                   g_std < 2002 ? "X3.23-1985 6.3.1.1.2 (3)" : "2023 8.8.4.2.5");
+        if (n->kind == O_REF && n->ref.sym->usage != U_DISPLAY && n->ref.sym->usage != U_NATIONAL)
+            die_at(line, "'%s' is compared with a nonnumeric operand, so it must be of usage DISPLAY (%s)", n->ref.sym->name,
+                   g_std < 2002 ? "X3.23-1985 6.3.1.1.2: the same usage" : "2023 8.8.4.2.5");
+    }
+}
+
 static Cond *parse_cond(void);
 
 static Opnd expr_opnd(void);
@@ -7280,6 +7319,7 @@ static Cond *parse_simple(void)
     Opnd y = parse_cond_operand();
 
     g_abbr_x = x; g_abbr_op = op; g_abbr_neg = neg;
+    rel_rules(&x, &y, line);
     return cond_rel(&x, op, &y, neg);
 }
 
@@ -10667,10 +10707,13 @@ static void parse_primary(void)
     emit_push(&o);
 }
 
+/* consecutive exponentiations left to right, as every level: 2 ** 3 ** 2
+ * is 64 (X3.23-1985 6.2.3 (2); 2023 8.8.1.2 rule 3; MF's reference says
+ * the same; GnuCOBOL takes it right to left, 512) */
 static void parse_power(void)
 {
     parse_primary();
-    if (at_op("**")) { advance(); parse_power(); emit_call("cob_npow"); }
+    while (at_op("**")) { advance(); parse_primary(); emit_call("cob_npow"); }
 }
 
 static void parse_term(void)
@@ -12339,18 +12382,18 @@ static void emit_ec_dispatch(int i)
 static int ec_size_on(void)
 {
     if (g_std < 2002) return 0;
-    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION" };
-    for (int k = 0; k < 3; k++) if (g_ecs.on[ec_find(n[k], 0)]) return 1;
+    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION", "EC-SIZE-EXPONENTIATION" };
+    for (int k = 0; k < 4; k++) if (g_ecs.on[ec_find(n[k], 0)]) return 1;
     return 0;
 }
 
 static void emit_ec_size(void)
 {
-    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION" };
+    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION", "EC-SIZE-EXPONENTIATION" };
     int Ldone = new_label();
     emit_call("cob_size_kind");
     emit("\tadd r13, r1, r0");
-    for (int k = 0; k < 3; k++) {
+    for (int k = 0; k < 4; k++) {
         int i = ec_find(n[k], 0);
         if (!g_ecs.on[i]) continue;
         int Lnext = new_label();

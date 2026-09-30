@@ -91,7 +91,10 @@ fi
 # same absolute paths the host sees.
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/tests.XXXXXX")"
-trap 'rm -rf "$W"' EXIT
+# build.sh refuses to rebuild under a running harness (a rebuild mid-run
+# mixes compilers); this run's own builds pass
+echo $$ > "$CDIR/out/harness.lock"; export S32_HARNESS=1
+trap 'rm -rf "$W"; rm -f "$CDIR/out/harness.lock"' EXIT
 
 oracle_cc() {   # oracle_cc out.orc [cobc args...]: compile under GnuCOBOL, cwd $W
     out="$1"; shift

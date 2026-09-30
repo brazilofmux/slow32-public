@@ -1,0 +1,1 @@
+'c4' is compared with a nonnumeric operand, so it must be of usage DISPLAY (X3.23-1985 6.3.1.1.2: the same usage)

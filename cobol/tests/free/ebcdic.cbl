@@ -29,6 +29,9 @@ fd  raw-f.
 sd  sf.
 01  s-rec pic x(3).
 working-storage section.
+01  lo-a   pic x value "a".
+01  up-a   pic x value "A".
+01  one    pic x value "1".
 01  i      pic 99.
 01  codes  pic x(40) value spaces.
 01  p      pic 99.
@@ -36,8 +39,9 @@ working-storage section.
 01  tbl.
     05 t-e pic x(3) occurs 4.
 procedure division.
-    if "a" < "A" display "a before A" else display "A before a" end-if
-    if "A" < "1" display "A before 1" else display "1 before A" end-if
+    *> items, not two literals: a relation needs a variable (8.8.4.2.1)
+    if lo-a < up-a display "a before A" else display "A before a" end-if
+    if up-a < one display "A before 1" else display "1 before A" end-if
     open output ef
     move "HELLO" to e-text  move -42 to e-num
     write e-rec
