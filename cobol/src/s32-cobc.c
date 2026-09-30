@@ -2254,7 +2254,8 @@ static void sym_finish(Sym *s)
     int native = usage_is_native(u);
 
     if (!s->has_pic && !native)
-        die_at(s->line, "'%s' has no PICTURE clause", s->name);
+        die_at(s->line, "'%s' has no PICTURE clause%s", s->name,
+               s->level == 1 || s->level == 77 ? " (and no subordinate items: an empty group is RM/COBOL's, not taken -- docs/dialect.md)" : "");
     if (s->has_pic && native)
         die_at(s->line, "'%s': USAGE %s takes no PICTURE", s->name, usage_name(u));
 
@@ -12695,7 +12696,10 @@ static void parse_open(void)
             if (mode == COB_OPEN_EXTEND && (f->linage || f->access))
                 die_at(fline, "OPEN EXTEND '%s': EXTEND is for a file in sequential access mode without LINAGE (%s)", f->name,
                        !e85 ? "2023 14.9.27.3 rule 2" : f->linage ? "X3.23-1985 sequential OPEN syntax rule 3" : "X3.23-1985 relative and indexed OPEN syntax rule 1");
-            if (accept_word("with")) {
+            /* [WITH] NO REWIND, [WITH] LOCK: WITH is optional (the
+             * X3.23-1985 and 2023 OPEN formats); OPEN OUTPUT f NO REWIND
+             * was refused as "'no' is not a file" */
+            if (accept_word("with") || (at_word("no") && is_word(peek(1), "rewind")) || at_word("lock")) {
                 if (accept_word("no")) {
                     accept_word("rewind");
                     if (!seq || (mode != COB_OPEN_INPUT && mode != COB_OPEN_OUTPUT))

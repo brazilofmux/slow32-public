@@ -621,6 +621,60 @@ given, because majesty's `.prn` oracles were produced under it.
   256-entry membership table over the native collating sequence; other
   `SPECIAL-NAMES` clauses are refused by name.
 
+## RM/COBOL, as Micro Focus's RM pages describe it (walked 2026-09-30)
+
+The Open Systems suite is RM/COBOL code, and it already compiles and
+prints its papers byte for byte. So this walk classifies Micro Focus's
+RM/COBOL pages (Language Reference, "RM/COBOL Syntax Support") against
+what s32-cobc does. Only what real code asks for is built.
+
+**Taken, or already the behavior here:**
+- **USAGE (the RM page):**
+  - COMP-1 with a PICTURE is RM's binary;
+  - COMP-4 is BINARY;
+  - COMP-6 is unsigned packed;
+  - COMP-5 may take X's.
+  (docs/usage.md)
+- **Table subscripts are not bound-checked** unless EC-BOUND-SUBSCRIPT
+  checking is turned on.
+- **Literals as CALL arguments.**
+- **Procedure-names that are also data-names.**
+- **INDEX items are four bytes**, as under DIALECT"RM".
+- **STOP RUN with a literal or item** sets RETURN-CODE.
+- **ASSIGN TO PRINT and the other ASSIGN words**, and **RECORD
+  DELIMITER**, are accepted.
+- **OPEN and CLOSE ... NO REWIND.** This is standard 85 too; RM's page
+  only notes that RM honors it. **Fixed by this walk:** WITH is
+  optional, and `OPEN OUTPUT f NO REWIND` was refused as "'no' is not a
+  file" (tests/fixed/norewind; the oracle agrees).
+- **ACCEPT and DISPLAY in RM's screen formats**, as far as the suite
+  uses them (its papers).
+
+**Not taken, and recorded here:** no corpus program uses any of them;
+each is refused or behaves as the standard says.
+- **USAGE ... (n), RM's binary allocation override:** a syntax error.
+- **SPECIAL-NAMES NUMERIC SIGN IS TRAILING [SEPARATE]** (RM's default
+  sign): refused as not implemented. The default here is the standard's
+  trailing overpunch.
+- **Groups with no subordinate items:** refused. The message now names
+  the RM extension.
+- **An alphanumeric value MOVEd to a numeric item** (RM keeps `"AB"` as
+  `   AB`): here the standard's numeric MOVE (`00000`).
+- **REWRITE on a LINE SEQUENTIAL file** at the same length: refused, as
+  the standard refuses it.
+- **CODE-SET in FILE-CONTROL:** "unexpected". The standard's place is
+  the FD, which is implemented.
+- **ORGANIZATION omitted means LINE SEQUENTIAL** under the RM directive:
+  here the standard's SEQUENTIAL. The suite states its organizations.
+- **EXIT PROGRAM closing the subprogram's open files** under the RM
+  directive: here files stay open, as the standard has it.
+- **RM's I-O status codes** (FILETYPE 21): here the standard's codes.
+  The suite's papers do not depend on them.
+- **PERFORM with a return address bound to each procedure** (RM's
+  PERFORM-TYPE): here a stack, as GnuCOBOL and MF's default have it.
+  An abandoned range is dropped when it is performed again.
+- **Locked records:** one process, so no locking.
+
 ## COBOL 85 we will grow into, not v1
 
 Nucleus Level 2 at full width (abbreviated conditions; `UNSTRING`
