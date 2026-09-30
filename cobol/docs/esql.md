@@ -65,10 +65,27 @@ Done since:
   as DB2 does; ISO leaves it to the implementation. libcob's
   `cob_at_stop` hook is set by the SQL runtime when it first connects.
 
-The runtime's own items, to do:
+- **Truncation and range.**
+  - A character value cut short on the way to its host variable is the
+    warning 01004, with SQLCODE 0 and the value's length in the indicator.
+  - A number with too many integer digits for its host variable is
+    22003 (-304), the host variable unchanged; before, it was silently
+    truncated as a MOVE would.
+  - SQLite's words map to SQL-92's conditions where they match: 22019
+    for a bad LIKE escape, 22003 for integer overflow.
 
-- the 01004 truncation warning, with the full length in the indicator;
-- a finer SQLSTATE map (22019 for a bad LIKE escape, 22003 and 22012).
+What SQLite cannot report, so no map will reach:
+
+- 22012, division by zero: it yields NULL;
+- 21000 from a scalar subquery with several rows: it takes the first;
+- 01003, null eliminated in a set function;
+- 22001, a string too long for its column: SQLite has no length;
+- 44000, check option;
+- 22025, an invalid escape sequence.
+
+NATURAL JOIN lists its columns in SQLite's order, not SQL-92's (the
+common columns first), so `SELECT *` over one fills the wrong host
+variables.
 
 ## The plan
 

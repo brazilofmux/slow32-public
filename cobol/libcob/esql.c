@@ -26,6 +26,7 @@
 
 long long cob_get_num(const void *p, const cob_desc *d);
 void cob_put_num(void *p, const cob_desc *d, long long v, int vscale);
+int cob_put_num_x(void *p, const cob_desc *d, long long v, int vscale, int opts);
 void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd);
 
 /* the compiler's descriptors (s32-cobc.c emit_sql_data) */
@@ -60,6 +61,13 @@ static char g_sqlstate[6] = "00000";
 static sqlite3_stmt **g_prepared_slot[4096]; static int g_nprep;
 static cob_sql_cursor *g_cursors[512]; static int g_ncur;
 
+/* a completion condition that is a warning (01004): kept only while the
+ * statement has nothing worse to say */
+static void set_warning(const char *state)
+{
+    if (!memcmp(g_sqlstate, "00000", 5)) memcpy(g_sqlstate, state, 5);
+}
+
 static void set_status(int code, const char *state)
 {
     g_sqlcode = code;
@@ -82,6 +90,9 @@ static void set_error(int rc, const char *what)
     case SQLITE_CONSTRAINT_CHECK: set_status(-545, "23000"); break;
     case SQLITE_CONSTRAINT_FOREIGNKEY: set_status(-530, "23000"); break;
     default:
+        /* what SQLite says in words, where it has a SQL-92 condition */
+        if (g_db && strstr(sqlite3_errmsg(g_db), "ESCAPE expression must be a single character")) { set_status(-130, "22019"); break; }
+        if (g_db && strstr(sqlite3_errmsg(g_db), "integer overflow")) { set_status(-304, "22003"); break; }
         if ((ext & 0xff) == SQLITE_CONSTRAINT) set_status(-803, "23000");
         else if (rc == SQLITE_ERROR) set_status(-204, "42000");        /* syntax, no such table or column */
         else if (rc == SQLITE_MISMATCH || rc == SQLITE_RANGE) set_status(-302, "22000");
@@ -275,7 +286,10 @@ static int store_out(sqlite3_stmt *st, int c, const host *h)
             int r = parse_decimal(t ? t : "", &v, &sc);
             if (r <= 0) { set_status(r < 0 ? -304 : -302, r < 0 ? "22003" : "22018"); trace_error("fetch: not a number"); return 0; }
         }
-        cob_put_num(h->p, d, v, sc);
+        /* too many integer digits for the host variable: 22003, not the
+         * silent high-order truncation of a MOVE; the lost fraction
+         * digits are the implementation's (SQL-92: rounding or truncation) */
+        if (cob_put_num_x(h->p, d, v, sc, 2)) { set_status(-304, "22003"); trace_error("fetch: value out of range"); return 0; }
         return 1;
     }
     const char *t = (const char *)sqlite3_column_text(st, c);
@@ -284,7 +298,15 @@ static int store_out(sqlite3_stmt *st, int c, const host *h)
     sd.cat = COB_ALNUM; sd.size = (unsigned)n;
     if (n) cob_move(t, &sd, h->p, d);
     else memset(h->p, ' ', d->size);
-    if (h->ip && n > (int)d->size) cob_put_num(h->ip, h->id, n, 0);   /* truncated: the indicator says how long it was */
+    if (n > (int)d->size) {
+        /* SQL-92: string data, right truncation, a warning; the indicator
+         * holds the length the value had */
+        int k = n; while (k > (int)d->size && t[k - 1] == ' ') k--;
+        if (k > (int)d->size) {
+            set_warning("01004");
+            if (h->ip) cob_put_num(h->ip, h->id, n, 0);
+        }
+    }
     return 1;
 }
 
