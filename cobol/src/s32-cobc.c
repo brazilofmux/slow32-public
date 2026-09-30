@@ -10559,6 +10559,7 @@ static int times_follows(void)
  * ... EXCEPTION or FINALLY at its own level, an exception-checking
  * PERFORM; with e NULL it only answers that. */
 static int g_in_finally;            /* inside a FINALLY phrase: no transfer out of the PERFORM (14.9.28.4 rule 16) */
+static int g_in_ecp_when;           /* inside a WHEN phrase of an exception-checking PERFORM: no GO TO (14.9.17.3 rule 3) */
 static int ecp_scan(Ecp *e)
 {
     int depth = 0, found = 0;
@@ -10668,7 +10669,7 @@ static void parse_perform_ecp(void)
         } else if (at_word("when") && is_word(peek(1), "other")) { advance(); advance(); expect_word("exception"); emit_label(e->Lother); }
         else if (at_word("when") && is_word(peek(1), "common")) { advance(); advance(); expect_word("exception"); emit_label(e->Lcommon); is_common = 1; }
         else break;
-        parse_statements();
+        g_in_ecp_when++; parse_statements(); g_in_ecp_when--;
         /* a WHEN phrase goes on to WHEN COMMON (17-19); the last of them
          * returns where the raise left its resume point -- after the
          * statement for a nonfatal condition; a fatal one ends the run
@@ -10889,6 +10890,7 @@ static void goto_last_check(void)
 static void parse_goto(void)
 {
     if (g_in_finally) die_at(cur()->line, "GO TO in a FINALLY phrase: no statement there transfers control out of the PERFORM (2023 14.9.28.4 rule 16)");
+    if (g_in_ecp_when) die_at(cur()->line, "GO TO in a WHEN phrase of an exception-checking PERFORM (2023 14.9.17.3 rule 3)");
     accept_word("to");
     Para *ps[64]; int n = 0;
     while (at_para_name(cur()) && !at_word("depending") && !(cur()->kind == T_WORD && (is_verb(cur()->s) || is_terminator(cur()->s))) && para_find(cur()->s)) {
@@ -14415,13 +14417,13 @@ static void parse_procedure_division(void)
          * PERFORMs open around it (cobol ISSUES-94 E10) */
         static EcState ecs0;
         ecs_copy(&ecs0, &g_ecs);
-        int necp = g_necp, ecp_handler = g_ecp_handler, npstk = g_npstk, necu = g_necu, in_finally = g_in_finally;
+        int necp = g_necp, ecp_handler = g_ecp_handler, npstk = g_npstk, necu = g_necu, in_finally = g_in_finally, in_ecpw = g_in_ecp_when;
         if (setjmp(jb)) {
             g_recover = outer;
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge; g_fn_depth = fdepth;
             ecs_copy(&g_ecs, &ecs0);
             for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
-            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally;
+            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally; g_in_ecp_when = in_ecpw;
             g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
             resync_sentence(start);
             continue;

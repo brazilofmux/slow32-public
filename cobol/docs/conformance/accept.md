@@ -20,7 +20,7 @@ F.1 for what 2002 deleted.
 |---|---|---|
 | GO TO 1 (both) | DEPENDING ON an integer item | **refused** |
 | GO TO 2 (both) | an unconditional GO TO is the last statement of its sequence | **refused**: bad/goto-alter -- a statement after it (never reached) was accepted |
-| GO TO 3 (2023) | not in a WHEN of an exception-checking PERFORM | **refused** (the PERFORM work) |
+| GO TO 3 (2023) | not in a WHEN of an exception-checking PERFORM | **refused**: bad/std2002-goto-when -- accepted before (only FINALLY was checked) |
 | ALTER 1 (85) | the paragraph ALTER names holds one sentence, a GO TO without DEPENDING | **refused**: bad/goto-alter -- any paragraph was accepted |
 | ALTER 2 (85) | the new target a paragraph or section | **refused** |
 | GO TO without a procedure-name | only in a paragraph ALTER names | **refused** |
