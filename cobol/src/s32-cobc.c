@@ -9719,6 +9719,219 @@ static void parse_subtract(void)
     parse_size_error_clauses(size_err, "end-subtract");
 }
 
+/* ---- integer arithmetic in registers ----------------------------------
+ * MULTIPLY, DIVIDE and COMPUTE on integer binary (and short DISPLAY)
+ * items, computed in a word instead of on the decimal stack, where the
+ * answer is provably the stack's:
+ *  - exact: every intermediate fits a signed word, bounding each operand
+ *    by its picture, or by its bytes when the usage keeps the capacity
+ *    (COMP-5, the native types);
+ *  - wrap: no division, every receiver a signed COMP-5 or native item,
+ *    and the whole value provably below 2^63 -- the stack computes it
+ *    exactly and stores its low bytes, which is what a word's wrapping
+ *    arithmetic leaves.
+ *  - checked: anything else on such items -- each + - * and negation
+ *    tests for a word's overflow (mulh for the product) and branches to
+ *    the stack's code for the whole statement, emitted after; every test
+ *    comes before the first store, so the stack starts clean.  Real values
+ *    rarely overflow a word, so the check is nearly always passed.
+ * Division only at the top: COBOL's 7 / 2 * 2 is 7, not integer division.
+ * A zero divisor leaves the receivers alone, as the stack's size error
+ * does without the phrase; -1 is negation (the word's INT_MIN / -1 traps).
+ * SIZE ERROR, the EC checks, ROUNDED on a quotient and anything wider
+ * take the stack.  A four-byte signed item is bounded by 2^31 - 1, as
+ * hot_opnd_mag bounds it: the one value past that, INT_MIN, is the one
+ * place the two paths can part (INT_MIN / -1 into a truncating receiver).  The profile of majesty's date functions (jerm) put 70%
+ * of its instructions in the stack for exactly these statements. */
+typedef struct { char op; int l, r; Opnd o; } HNode;   /* op: 0 leaf, + - * /, 'n' negate */
+#define MAXHN 64
+static int g_nohx;                      /* -fno-hot-arith: every such statement on the stack (a differential's other side) */
+static HNode g_hn[MAXHN]; static int g_nhn;
+static int hn_new(char op, int l, int r, const Opnd *o)
+{
+    if (l < -1 || r < -1 || g_nhn >= MAXHN) return -2;
+    HNode *h = &g_hn[g_nhn]; memset(h, 0, sizeof *h);
+    h->op = op; h->l = l; h->r = r; if (o) h->o = *o;
+    return g_nhn++;
+}
+static int hx_expr(void);
+static int hx_primary(void)
+{
+    if (cur()->kind == T_LP) {
+        advance(); int n = hx_expr();
+        if (cur()->kind != T_RP) return -2;
+        advance(); return n;
+    }
+    if (at_op("+")) { advance(); return hx_primary(); }
+    if (at_op("-")) { advance(); int n = hx_primary(); return n < 0 ? -2 : hn_new('n', n, -1, NULL); }
+    if (!at_operand() && !(cur()->kind == T_WORD && is_figurative(cur()->s))) return -2;
+    Opnd o; parse_operand(&o);
+    if (!opnd_hot_int(&o)) return -2;
+    return hn_new(0, -1, -1, &o);
+}
+static int hx_power(void) { int n = hx_primary(); return at_op("**") ? -2 : n; }
+static int hx_term(void)
+{
+    int n = hx_power();
+    while (n >= 0 && (at_op("*") || at_op("/"))) { char op = at_op("*") ? '*' : '/'; advance(); n = hn_new(op, n, hx_power(), NULL); }
+    return n;
+}
+static int hx_expr(void)
+{
+    int n = hx_term();
+    while (n >= 0 && (at_op("+") || at_op("-"))) { char op = at_op("+") ? '+' : '-'; advance(); n = hn_new(op, n, hx_term(), NULL); }
+    return n;
+}
+/* an operand's magnitude bound */
+static long double hx_mag(const Opnd *o)
+{
+    if (o->kind == O_NUM) { long long v = numlit_int(&o->num); return v < 0 ? -(long double)v : (long double)v; }
+    if (o->kind != O_REF) return 0;
+    Sym *s = o->ref.sym;
+    if (!is_display_int(s) && (sym_notrunc(s) || s->pi.digits >= 10))
+        return s->size == 1 ? (s->pi.is_signed ? 128 : 255) : s->size == 2 ? (s->pi.is_signed ? 32768 : 65535) : 2147483647.0L;
+    return (long double)pow10l(s->pi.digits) - 1;
+}
+/* the bound of node n; *wide past a word somewhere, *inner a division
+ * below the top, *neg a value that can be negative */
+static long double hx_bound(int n, int *wide, int *inner, int *neg, int top)
+{
+    HNode *h = &g_hn[n];
+    long double b;
+    if (!h->op) { b = hx_mag(&h->o); if (!opnd_nonneg(&h->o)) *neg = 1; }
+    else if (h->op == 'n') { b = hx_bound(h->l, wide, inner, neg, 0); *neg = 1; }
+    else {
+        long double x = hx_bound(h->l, wide, inner, neg, 0), y = hx_bound(h->r, wide, inner, neg, 0);
+        if (h->op == '/') { if (!top) *inner = 1; b = x; }
+        else if (h->op == '*') b = x * y;
+        else { b = x + y; if (h->op == '-') *neg = 1; }
+    }
+    if (b > 2147483647.0L) *wide = 1;
+    return b;
+}
+/* r1 = node n; with slow >= 0 a word's overflow branches there */
+static void hx_emit(int n, int slow)
+{
+    HNode *h = &g_hn[n];
+    if (!h->op) { emit_hot_value(&h->o); return; }
+    hx_emit(h->l, slow);
+    if (h->op == 'n') {
+        if (slow >= 0) { emit_li("r2", -2147483647L - 1); emit("\tbeq r1, r2, .L%d", slow); }
+        emit("\tsub r1, r0, r1");
+        return;
+    }
+    if (g_slot_base >= NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
+    int t = g_slot_base++;
+    emit("\tstw sp+%d, r1", SLOT(t));
+    hx_emit(h->r, slow);
+    emit("\tadd r2, r1, r0");
+    emit("\tldw r1, sp+%d", SLOT(t));
+    g_slot_base--;
+    if (slow < 0) { emit("\t%s r1, r1, r2", h->op == '+' ? "add" : h->op == '-' ? "sub" : "mul"); return; }
+    if (h->op == '*') {                             /* the high word must be the low word's sign */
+        emit("\tmul r3, r1, r2");
+        emit("\tmulh r1, r1, r2");
+        emit("\tsrai r2, r3, 31");
+        emit("\tbne r1, r2, .L%d", slow);
+    } else if (h->op == '+') {                      /* both operands' signs differ from the sum's */
+        emit("\tadd r3, r1, r2");
+        emit("\txor r1, r1, r3");
+        emit("\txor r2, r2, r3");
+        emit("\tand r1, r1, r2");
+        emit("\tblt r1, r0, .L%d", slow);
+    } else {                                        /* the operands' signs differ, and the result's from the minuend's */
+        emit("\tsub r3, r1, r2");
+        emit("\txor r2, r1, r2");
+        emit("\txor r1, r1, r3");
+        emit("\tand r1, r1, r2");
+        emit("\tblt r1, r0, .L%d", slow);
+    }
+    emit("\tadd r1, r3, r0");
+}
+/* may the tree at root be stored into rs (and the remainder into rem)
+ * in registers?  *bound and *nonneg for the store's truncation */
+static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, long long *bound, int *nonneg)
+{
+    if (root < 0 || size_err || g_wide || g_nohx || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
+    int wide = 0, inner = 0, neg = 0, div = g_hn[root].op == '/';
+    long double b = hx_bound(root, &wide, &inner, &neg, 1);
+    if (inner) return 0;
+    if (div) {
+        for (int i = 0; i < nr; i++) if (rd[i]) return 0;           /* ROUNDED on a quotient: the stack */
+        HNode *h = &g_hn[root];
+        if (!g_hn[h->r].op && g_hn[h->r].o.kind != O_REF && hx_mag(&g_hn[h->r].o) == 0) return 0;   /* a literal zero divisor */
+    }
+    int mode = 1;
+    if (wide) {                                     /* wrap if every receiver wraps as the stack's store does, else checked */
+        if (div || b >= 9.0e18L) mode = 2;
+        for (int i = 0; i < nr && mode == 1; i++) {
+            Sym *d = rs[i].sym;
+            if (!sym_notrunc(d) || !d->pi.is_signed || !is_hot_int(d)) mode = 2;
+        }
+    }
+    *nonneg = !neg;
+    for (int i = 0; i < nr; i++) if (rs[i].rm || rs[i].sym->pi.scale != 0 || !ref_hot_store(&rs[i], 0, !neg)) return 0;
+    if (rem && (rem->rm || rem->sym->pi.scale != 0 || !ref_hot_store(rem, 0, !neg))) return 0;
+    *bound = wide ? -1 : (long long)b;
+    return mode;
+}
+/* emit the tree and store it (and the remainder); after hx_ok said yes */
+static void hx_store(int root, Ref *rs, int *rd, int nr, Ref *rem, long long bound, int nonneg, int slow)
+{
+    HNode *h = &g_hn[root];
+    if (h->op != '/') {
+        hx_emit(root, slow);
+        emit("\tstw sp+%d, r1", SLOT_A);
+        emit_store_receivers(rs, rd, nr, 1, 1, 0, 0, bound, nonneg);
+        return;
+    }
+    if (g_slot_base + 2 > NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
+    int t = g_slot_base++, tr = g_slot_base++;
+    hx_emit(h->l, slow);
+    emit("\tstw sp+%d, r1", SLOT(t));
+    hx_emit(h->r, slow);
+    emit("\tadd r2, r1, r0");
+    emit("\tldw r1, sp+%d", SLOT(t));
+    int Lskip = new_label(), Ldiv = new_label(), Ldone = new_label();
+    emit("\tbeq r2, r0, .L%d", Lskip);                      /* a zero divisor: the receivers stay */
+    emit("\taddi r3, r0, -1");
+    emit("\tbne r2, r3, .L%d", Ldiv);
+    if (slow >= 0) { emit_li("r3", -2147483647L - 1); emit("\tbeq r1, r3, .L%d", slow); }   /* INT_MIN / -1 */
+    emit("\tsub r1, r0, r1");                                /* by -1: negation, no remainder */
+    emit("\tstw sp+%d, r0", SLOT(tr));
+    emit_jump(Ldone);
+    emit_label(Ldiv);
+    emit("\trem r3, r1, r2");
+    emit("\tstw sp+%d, r3", SLOT(tr));
+    emit("\tdiv r1, r1, r2");
+    emit_label(Ldone);
+    emit("\tstw sp+%d, r1", SLOT_A);
+    emit_store_receivers(rs, rd, nr, 1, 1, 0, 0, bound, nonneg);
+    if (rem) {
+        int zero = 0;
+        emit("\tldw r1, sp+%d", SLOT(tr));
+        emit("\tstw sp+%d, r1", SLOT_A);
+        emit_store_receivers(rem, &zero, 1, 1, 1, 0, 0, bound, nonneg);
+    }
+    emit_label(Lskip);
+    g_slot_base -= 2;
+}
+/* REMAINDER r ahead: parsed into *r, the cursor left after it; 0 (the
+ * cursor unmoved) when there is none */
+static int hx_remainder_ahead(Ref *r)
+{
+    if (!at_word("remainder")) return 0;
+    advance(); parse_ref(r);
+    return 1;
+}
+/* a leaf for a statement's operand or receiver */
+static int hx_leaf(const Opnd *o) { return opnd_hot_int((Opnd *)o) ? hn_new(0, -1, -1, o) : -2; }
+static int hx_leaf_ref(const Ref *r)
+{
+    Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line;
+    return hx_leaf(&o);
+}
+
 static void parse_multiply(void)
 {
     Opnd a; parse_operand(&a); check_numeric_opnd(&a);
@@ -9737,8 +9950,15 @@ static void parse_multiply(void)
         emit_incompat(&a); emit_incompat(&b);
         int size_err = at_size_error_clause() || ec_size_on();
         { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
+        g_nhn = 0; int root = hn_new('*', hx_leaf(&a), hx_leaf(&b), NULL); long long bd; int nn;
+        int mode = hx_ok(root, rs, rd, nr, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
+        if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, NULL, bd, nn, Lslow); }
+        if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
+        if (mode != 1) {
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
+        }
+        if (mode == 2) emit_label(Ldone);
         g_wide = 0; g_fstmt = 0;
         parse_size_error_clauses(size_err, "end-multiply");
         return;
@@ -9752,9 +9972,15 @@ static void parse_multiply(void)
     g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr);
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
+        g_nhn = 0; int root = hn_new('*', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
+        int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
+        if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }
+        if (mode == 1) continue;
+        if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
         Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
         emit_push(&r); emit_push(&a); emit_call("cob_nmul");
         emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
+        if (mode == 2) emit_label(Ldone);
     }
     g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-multiply");
@@ -9820,9 +10046,18 @@ static void parse_divide(void)
             emit_incompat(&a); emit_incompat(&b);
             int size_err = size_error_after_remainder() || ec_size_on();
             { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
+            g_nhn = 0; int root = hn_new('/', hx_leaf(&b), hx_leaf(&a), NULL); long long bd; int nn;
+            int at = g_tp; Ref rr; int hasr = hx_remainder_ahead(&rr);
+            int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
+            if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, hasr ? &rr : NULL, bd, nn, Lslow); }
+            if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
+            if (mode != 1) {
+            g_tp = at;
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
             emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
             emit_remainder(&b, &rs[0], rd[0], &a, size_err);
+            }
+            if (mode == 2) emit_label(Ldone);
             g_wide = 0; g_fstmt = 0;
             parse_size_error_clauses(size_err, "end-divide");
             return;
@@ -9836,9 +10071,15 @@ static void parse_divide(void)
         g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr);
         if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
         for (int i = 0; i < nr; i++) {
+            g_nhn = 0; int root = hn_new('/', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
+            int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
+            if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }
+            if (mode == 1) continue;
+            if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
             Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
             emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
             emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
+            if (mode == 2) emit_label(Ldone);
         }
         g_wide = 0; g_fstmt = 0;
         parse_size_error_clauses(size_err, "end-divide");
@@ -9854,9 +10095,18 @@ static void parse_divide(void)
     emit_incompat(&a); emit_incompat(&b);
     int size_err = size_error_after_remainder() || ec_size_on();
     { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
+    g_nhn = 0; int root = hn_new('/', hx_leaf(&a), hx_leaf(&b), NULL); long long bd; int nn;
+    int at = g_tp; Ref rr; int hasr = hx_remainder_ahead(&rr);
+    int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
+    if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, hasr ? &rr : NULL, bd, nn, Lslow); }
+    if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
+    if (mode != 1) {
+    g_tp = at;
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     emit_remainder(&a, &rs[0], rd[0], &b, size_err);
+    }
+    if (mode == 2) emit_label(Ldone);
     g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-divide");
 }
@@ -10000,6 +10250,29 @@ static void parse_compute(void)
         g_wide = g_saw_wide || g_saw_float || refs_wide(rs, nr);
         if (g_saw_float) g_fstmt = 1;
         g_saw_wide = saw; g_saw_float = sawf; g_tp = start;
+    }
+    if (!g_wide) {                              /* integers in a word, where that is the stack's answer */
+        int start = g_tp;
+        g_noemit++; g_nhn = 0; int root = hx_expr(); g_noemit--;
+        int size_err = at_size_error_clause() || ec_size_on();
+        long long bd; int nn;
+        int mode = root >= 0 ? hx_ok(root, rs, rd, nr, NULL, size_err, &bd, &nn) : 0;
+        if (mode) {
+            int Lslow = mode == 2 ? new_label() : -1;
+            hx_store(root, rs, rd, nr, NULL, bd, nn, Lslow);
+            if (mode == 2) {                    /* a word overflowed: the stack, from the start */
+                int Ldone = new_label(), end = g_tp;
+                emit_jump(Ldone); emit_label(Lslow);
+                g_tp = start;
+                g_incompat_push++; parse_expr(); g_incompat_push--;
+                if (g_tp != end) die_at(rs[0].line, "internal: COMPUTE re-parse drifted");
+                emit_store_receivers(rs, rd, nr, 0, 1, 0, 0, -1, 0);
+                emit_label(Ldone);
+            }
+            parse_size_error_clauses(size_err, "end-compute");
+            return;
+        }
+        g_tp = start;
     }
     g_incompat_push++;
     parse_expr();
@@ -17140,13 +17413,18 @@ static void emit_act_desc(void)
     emit("\t.word 0");                              /* active instances */
     emit("\t.word %d", g_recursive);
     emit("\t.word %s", nlab);
+    emit("\t.word 0");                              /* the outermost activation's block, kept (cob_act_enter) */
     emit("\t.word %d", nw);
     for (int k = 0; k < nw; k++) emit("\t.word %s", words[k]);
     emit("\t.word %d", nl);
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || !s->is_local) continue;
-        emit("\t.word %s", s->label); emit("\t.word %s_i", s->label); emit("\t.word %d", s->image_size);
+        /* a function's result temporary is written by its call before it is
+         * read: storage of its own per activation, no initial image to copy */
+        emit("\t.word %s", s->label);
+        if (s->is_ftemp) emit("\t.word 0"); else emit("\t.word %s_i", s->label);
+        emit("\t.word %d", s->image_size);
     }
 }
 
@@ -17459,6 +17737,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fbinary-byteorder=big-endian")) g_bin_native = 0;
         else if (!strcmp(argv[i], "-fcomp1=binary")) g_comp1 = 1;
         else if (!strcmp(argv[i], "-fcomp1=float")) g_comp1 = 0;
+        else if (!strcmp(argv[i], "-fno-hot-arith")) g_nohx = 1;
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) { g_std = 2002; pic_max_digits = 31; }
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {

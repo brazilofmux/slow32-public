@@ -1953,32 +1953,55 @@ char *cob_fn_exception_location(int national)
  * cell, initial image, size.  The block holds the saved words and the
  * records; the cells point into it, so a LOCAL-STORAGE item's address may
  * be passed on and stays this activation's (2023 8.6.4). */
-typedef struct { int active, recursive; const char *name; int nwords; } cob_act_hdr;
+typedef struct { int active, recursive; const char *name; char *cache; int nwords; } cob_act_hdr;
+
+/* The outermost activation -- none of this program live, which is nearly
+ * every call of a user function -- has nothing to save: the words belong
+ * to no other activation, so they are neither copied nor restored, and
+ * its block is the descriptor's cached one, kept from call to call
+ * instead of a malloc and a free each time (majesty's date functions
+ * spent a third of their time here).  A nested activation of the same
+ * program saves the words and has a block of its own, as before. */
+static __attribute__((noinline)) void act_recursive_call(const cob_act_hdr *h)
+{
+    char m[160];
+    snprintf(m, sizeof m, "EC-PROGRAM-RECURSIVE-CALL: '%s' was called while active and is not RECURSIVE", h->name);
+    cob_fatal(m);
+}
 
 void *cob_act_enter(int *desc)
 {
     cob_act_hdr *h = (cob_act_hdr *)desc;
-    if (h->active && !h->recursive) {
-        char m[160];
-        snprintf(m, sizeof m, "EC-PROGRAM-RECURSIVE-CALL: '%s' was called while active and is not RECURSIVE", h->name);
-        cob_fatal(m);
+    if (h->active && !h->recursive) act_recursive_call(h);    /* out of line: its buffer made every call's frame 224 bytes */
+    int **words = (int **)(desc + 5);
+    int *loc = desc + 5 + h->nwords, nl = loc[0];
+    if (!h->active && h->cache) {
+        /* the outermost again: its cells still point into the kept block
+         * (set on its first entry, and restored with the words by any
+         * nested activation's leave), so only the initial images go back */
+        h->active = 1;
+        for (int k = 0; k < nl; k++) {
+            const char *image = (const char *)(intptr_t)loc[1 + 3 * k + 1];
+            if (image) memcpy(*(char **)(intptr_t)loc[1 + 3 * k], image, (size_t)loc[1 + 3 * k + 2]);
+        }
+        return h->cache;
     }
-    int **words = (int **)(desc + 4);
-    int *loc = desc + 4 + h->nwords, nl = loc[0];
     size_t size = (size_t)h->nwords * sizeof(int);
     for (int k = 0; k < nl; k++) size = ((size + 7) & ~(size_t)7) + (size_t)loc[1 + 3 * k + 2];
+    int outer = h->active == 0;
     h->active++;
     if (!size) return 0;
-    char *b = malloc(size);
+    char *b = outer && h->cache ? h->cache : malloc(size);
     if (!b) cob_fatal("EC-STORAGE-NOT-AVAIL: no storage for an activation's LOCAL-STORAGE");
-    for (int k = 0; k < h->nwords; k++) ((int *)b)[k] = *words[k];
+    if (outer) h->cache = b;
+    else for (int k = 0; k < h->nwords; k++) ((int *)b)[k] = *words[k];
     size_t at = (size_t)h->nwords * sizeof(int);
     for (int k = 0; k < nl; k++) {
         char **cell = (char **)(intptr_t)loc[1 + 3 * k];
         const char *image = (const char *)(intptr_t)loc[1 + 3 * k + 1];
         int n = loc[1 + 3 * k + 2];
         at = (at + 7) & ~(size_t)7;
-        memcpy(b + at, image, (size_t)n);
+        if (image) memcpy(b + at, image, (size_t)n);  /* none for a function's result temporary */
         *cell = b + at;
         at += (size_t)n;
     }
@@ -1988,10 +2011,11 @@ void *cob_act_enter(int *desc)
 void cob_act_leave(int *desc, void *block)
 {
     cob_act_hdr *h = (cob_act_hdr *)desc;
-    int **words = (int **)(desc + 4);
+    h->active--;
+    if (!block || block == h->cache) return;      /* the outermost: nothing saved, the block kept */
+    int **words = (int **)(desc + 5);
     for (int k = 0; k < h->nwords; k++) *words[k] = ((int *)block)[k];
     free(block);
-    h->active--;
 }
 
 void cob_perform_push(int exit_id, void *ret)

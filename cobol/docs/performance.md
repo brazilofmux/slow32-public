@@ -58,3 +58,35 @@ record. The next levers, none taken yet:
   destination and shifts;
 - stage08's own libc, whose `fgetc` is a `read` system call per byte:
   it is what the self-hosted `cc.s32x` reads source through.
+
+## 2026-09-30: integer arithmetic in registers, and cheaper activations
+
+**The workload.** majesty's `batch.sh` is small now: 0.28 s for the whole
+run, and 52 ms for its heaviest program. So the measure is jerm, the
+-std=2002 date-functions build (400,001 lines, from
+`tests/majesty-functions.sh`). It spent 26.4 G guest instructions:
+- about 70% in the decimal stack, for integer COMP-5 arithmetic
+  (floor-divmod's `DIVIDE ... REMAINDER`, `COMPUTE 400 * n400 + ...`);
+- about 12% in calling user functions (a `malloc`, `free` and word
+  copies per call);
+- about 4% in its own compiled code.
+
+| where | what it cost | what changed | jerm |
+|---|---|---|---|
+| compiler | MULTIPLY, DIVIDE and COMPUTE always went through the decimal stack (push, `cob_ndiv`, store), even on binary integers; ADD and SUBTRACT already had a hot path | integers computed in a word (`hx_*` in s32-cobc.c), in one of three modes: **exact** when every intermediate provably fits; **wrap** when every receiver is signed COMP-5 or native, whose stored low bytes the stack's store leaves too; **checked** otherwise, each `+ - *` and negation testing for overflow (`mulh` for a product) and branching to the stack's code for the whole statement. Division only at the top (COBOL's `7 / 2 * 2` is 7). A zero divisor leaves the receivers; -1 is negation. SIZE ERROR, the EC checks and ROUNDED on a quotient keep the stack | 26.4 G → 6.4 G |
+| libcob | `cob_act_enter` did a `malloc` and copied the saved words on every call, and `cob_act_leave` copied them back and freed the block | the outermost activation, nearly every call, keeps one cached block and saves nothing; on re-entry its cells already point into the block, so only the initial images go back | 6.4 G → 5.7 G, with the next row |
+| compiler | each function-result temporary (`.Llft`, per-activation in a recursive unit) had its initial image copied on every call | the descriptor gives it no image: its call writes it before anything reads it | (in the row above) |
+
+- **The result:** jerm runs in 0.56 s on slow32-dbt, down from 2.37 s,
+  with its output byte-identical.
+- **`-fno-hot-arith`** turns the register path off, which gives a
+  differential's other side. With it (and `-fbinary-byteorder=native`),
+  the Open Systems suite compiles byte-identical to the baseline.
+- **Tests:** `tests/free/hotarith` and `hotarith2` cover signs,
+  remainders, zero and -1 divisors, truncation, wrapping and overflow
+  fallbacks. GnuCOBOL agrees with both.
+
+**What is left in jerm:** moving COMP-5 values into DISPLAY and edited
+output fields (`cob_k_put_num`, `cob_move`, `cob_edit_apply`), about a
+third of it. That is the next lever: inline decimal and conversion code
+in the compiler, as in the "Where it stands" list above.

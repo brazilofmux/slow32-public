@@ -15,7 +15,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -free|-fixed) fmt="$1" ;;
         -std=*) std="$1" ;;
-        -fixed-columns=*|-fbinary-byteorder=*) cols="$cols $1" ;;
+        -fixed-columns=*|-fbinary-byteorder=*|-fcomp1=*|-fno-hot-arith) cols="$cols $1" ;;
         -o) out="$2"; shift ;;
         -I) incs="$incs -I$2"; shift ;;
         -I*) incs="$incs $1" ;;
