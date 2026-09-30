@@ -1,0 +1,4 @@
+move -1 to xx comp-x: 65535
+move -3 to 9(2) comp-x: 253
+size error (99 exceeded)
+without the phrase: 140

@@ -1853,6 +1853,7 @@ typedef struct Sym {
     int  record;                    /* the 01/77 (or index) owning the storage */
     int  usage, has_usage, has_pic;
     int  uvar;                          /* UV_*: a usage's variant -- COMP-X (U_COMP5), unsigned COMP-6 (U_PACKED) */
+    int  compx_x;                       /* COMP-X described with a PICTURE of X's: no digit limit */
     char pic[PIC_MAXPAT];
     PicInfo pi;
     int  is_group, is_cond, is_index;
@@ -2334,7 +2335,7 @@ static void sym_finish(Sym *s)
                 static const int capd[8] = { 0, 3, 5, 8, 10, 13, 15, 17 };
                 snprintf(s->pic, sizeof s->pic, "9(%d)", capd[n]);
                 if (pic_analyse(s->pic, &s->pi) < 0) die_at(s->line, "internal: COMP-X picture");
-                s->size = n;
+                s->size = n; s->compx_x = 1;
                 break;
             }
             if (pi->category != PIC_NUMERIC) die_at(s->line, "'%s': USAGE COMP-X needs a PICTURE of 9s or of Xs", s->name);
@@ -2831,10 +2832,14 @@ static void parse_data_item1(void)
             u = U_BINARY; uv = UV_COMP1;
         }
         else if (!strcmp(t->s, "comp-2") || !strcmp(t->s, "computational-2")) { bp(BP_E3_COMP_N, t->line); u = U_FLOAT; uv = UV_FLONG; }
-        else if (!strcmp(t->s, "float-short") || !strcmp(t->s, "float-long")) {
+        else if (!strcmp(t->s, "float-short") || !strcmp(t->s, "float-long") || !strcmp(t->s, "float-extended")) {
+            /* FLOAT-EXTENDED need only hold what FLOAT-LONG holds (2023
+             * 13.18.60.4 rule 13): a double here too */
             if (g_std < 2002) die_at(t->line, "USAGE %s is COBOL 2002; compile with -std=2002 (COMP-1 and COMP-2 are the same)", t->s);
             u = U_FLOAT; uv = t->s[6] == 's' ? UV_FSHORT : UV_FLONG;
         }
+        else if (!strncmp(t->s, "float-binary-", 13) || !strncmp(t->s, "float-decimal-", 14))
+            die_at(t->line, "USAGE %s is COBOL 2014 (ISO/IEC 60559 formats); not implemented", t->s);
         if (u >= 0) {
             if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
             s->usage = u; s->uvar = uv; s->has_usage = 1;
@@ -4194,6 +4199,7 @@ static int sym_desc(Sym *s)
         if (s->usage == U_COMP5 || usage_is_native(s->usage)) d.flags |= COB_F_NOTRUNC;
         if (sym_be(s)) d.flags2 |= COB_F2_BIGEND;
         if (s->uvar == UV_NOSIGN) d.flags2 |= COB_F2_NOSIGN;
+        if (s->uvar == UV_COMPX && !s->compx_x) d.flags2 |= COB_F2_SIZEDIG;   /* MF: the 9s decide a size error */
         if (s->just) d.flags |= COB_F_JUST;
         if (s->blank_zero) d.flags |= COB_F_BLANKZ;
         if (s->sign_sep) d.flags |= s->sign_lead ? COB_F_SEPLEAD : COB_F_SEPTRAIL;
@@ -4203,6 +4209,17 @@ static int sym_desc(Sym *s)
     d.size = s->size;
     s->desc_id = desc_add(&d);
     return s->desc_id;
+}
+
+/* the descriptor a MOVE stores through: a COMP-X item takes a negative
+ * value in two's complement there (MF: "as if the item had been signed"),
+ * where an arithmetic statement's unsigned receiver takes the magnitude */
+static int move_desc(Sym *s)
+{
+    int id = sym_desc(s);
+    if (s->uvar != UV_COMPX) return id;
+    Desc d = g_desc[id]; d.flags2 |= COB_F2_TWOSC;
+    return desc_add(&d);
 }
 
 /* a nonnumeric literal's descriptor */
@@ -8786,7 +8803,7 @@ static void emit_move(Opnd *src, Ref *dst)
     if (src->kind == O_NUM && !numlit_wide(&src->num) && is_hot_int(d)) {
         long long v = numlit_int(&src->num);
         if (d->usage == U_BINARY) v %= pow10l(d->pi.digits);
-        if (!d->pi.is_signed && v < 0) v = -v;
+        if (!d->pi.is_signed && v < 0 && d->uvar != UV_COMPX) v = -v;     /* COMP-X: two's complement (move_desc) */
         emit_ref_addr(dst, "r3");
         emit_li("r1", (long)v);
         emit_store_int(d, "r3", "r1");
@@ -8805,7 +8822,7 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (dx_move(src, dst)) return;              /* numeric to numeric: fetch and store, without cob_move's dispatch */
-    Arg a[4]; Arg da = arg_ref(dst), dd = arg_desc(sym_desc(d));
+    Arg a[4]; Arg da = arg_ref(dst), dd = arg_desc(move_desc(d));
     opnd_args(src, &a[0], &a[1], d->size, 1);
     a[2] = da; a[3] = dd;
     emit_args(a, 4);
@@ -10238,9 +10255,10 @@ static int dx_ok(int root, Ref *rs, int nr, int size_err)
 /* the call that stores r5:r6 (scale in r7, opts in r8) into the item at
  * r3: a numeric-edited one straight to the hooked cob_put_edited, with
  * the locale word libcob keeps (cob_put_num_x would dispatch to it) */
+static int g_dx_movestore;              /* dx_move's store: move_desc, not sym_desc */
 static void dx_put_call(const Sym *d)
 {
-    emit_desc_addr("r4", sym_desc((Sym *)d));
+    emit_desc_addr("r4", g_dx_movestore ? move_desc((Sym *)d) : sym_desc((Sym *)d));
     if (g_desc[sym_desc((Sym *)d)].cat == COB_NUM_ED) {
         emit_la("r9", "cob_locale_word"); emit("\tldw r9, r9+0");
         emit_call("cob_put_edited");
@@ -10357,7 +10375,7 @@ static int dx_move(Opnd *src, Ref *dst)
     }
     int rd = 0;
     if (root < 0 || !dx_ok(root, dst, 1, 0)) return 0;
-    dx_store(root, dst, &rd, 1);
+    g_dx_movestore = 1; dx_store(root, dst, &rd, 1); g_dx_movestore = 0;
     return 1;
 }
 static int dx_leaf_ref(const Ref *r)

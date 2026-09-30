@@ -170,6 +170,17 @@ Each is a class E behavior point, as COMP-3 and COMP-5 are now.
   COMP-6 is COMP-3, as MF's default and GnuCOBOL have it.
 - **CALL signatures** (.s32fn) carry the variant in the usage's second
   byte, so COMP-X does not conform to COMP-5.
+- **Micro Focus's two further COMP-X rules**, found when its reference
+  was walked against the tests:
+  - a negative value MOVEd into a COMP-X item is stored in two's
+    complement, "as if the item had been signed" (the descriptor flag
+    `COB_F2_TWOSC`, on a MOVE's store only; arithmetic keeps the
+    standard's magnitude);
+  - with ON SIZE ERROR, a 9(n) item's n digits decide the size error,
+    while without the phrase it still stores to its capacity
+    (`COB_F2_SIZEDIG`).
+  - Both are in kern.h, so the DBT hooks honor them.
+  - `tests/free/compxmf` checks both.
 - **Tests:** `tests/free/compn.cbl` checks sizes, bytes and arithmetic,
   and the `bad/compx-*` tests check the refusals.
 

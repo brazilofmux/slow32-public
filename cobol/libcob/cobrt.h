@@ -34,7 +34,9 @@ enum {
 /* flags2 */
 enum {
     COB_F2_BIGEND  = 1,   /* COB_U_BINARY stored big-endian: COMP, BINARY, COMP-X (docs/usage.md) */
-    COB_F2_NOSIGN  = 2    /* COB_U_PACKED with no sign nibble: unsigned COMP-6 */
+    COB_F2_NOSIGN  = 2,   /* COB_U_PACKED with no sign nibble: unsigned COMP-6 */
+    COB_F2_TWOSC   = 4,   /* a MOVE's store: a negative value in two's complement, though unsigned (MF: COMP-X) */
+    COB_F2_SIZEDIG = 8    /* a capacity-limited binary whose size error is by its picture's digits (MF: 9(n) COMP-X) */
 };
 
 /* a file, as SELECT/FD described it; built by the compiler in .data */

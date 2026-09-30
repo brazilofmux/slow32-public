@@ -33,7 +33,7 @@
 typedef char kern_chk_desc[(sizeof(cob_desc) == sizeof(cob_kdesc) && offsetof(cob_desc, size) == offsetof(cob_kdesc, size) &&
                             offsetof(cob_desc, pic) == offsetof(cob_kdesc, pic) && offsetof(cob_desc, flags) == offsetof(cob_kdesc, flags) &&
                             offsetof(cob_desc, flags2) == offsetof(cob_kdesc, flags2)) ? 1 : -1];
-typedef char kern_chk_f2[(K_F2_BIGEND == COB_F2_BIGEND && K_F2_NOSIGN == COB_F2_NOSIGN) ? 1 : -1];
+typedef char kern_chk_f2[(K_F2_BIGEND == COB_F2_BIGEND && K_F2_NOSIGN == COB_F2_NOSIGN && K_F2_TWOSC == COB_F2_TWOSC && K_F2_SIZEDIG == COB_F2_SIZEDIG) ? 1 : -1];
 typedef char kern_chk_cat[K_NUM_ED == COB_NUM_ED ? 1 : -1];
 typedef char kern_chk_u[(K_U_DISPLAY == COB_U_DISPLAY && K_U_BINARY == COB_U_BINARY && K_U_PACKED == COB_U_PACKED &&
                          K_U_NATIONAL == COB_U_NATIONAL && K_U_BIT == COB_U_BIT) ? 1 : -1];

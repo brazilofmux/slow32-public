@@ -42,7 +42,7 @@
 enum { K_NUM_ED = 4 };                                      /* cat */
 enum { K_U_DISPLAY = 0, K_U_BINARY = 1, K_U_PACKED = 2, K_U_NATIONAL = 3, K_U_BIT = 4 };
 enum { K_F_SIGNED = 1, K_F_SEPLEAD = 2, K_F_SEPTRAIL = 4, K_F_BLANKZ = 16, K_F_NOTRUNC = 32, K_F_LEAD = 64 };
-enum { K_F2_BIGEND = 1, K_F2_NOSIGN = 2 };                  /* flags2 */
+enum { K_F2_BIGEND = 1, K_F2_NOSIGN = 2, K_F2_TWOSC = 4, K_F2_SIZEDIG = 8 };   /* flags2 */
 
 /* cob_desc as the guest lays it out, the PICTURE pointer a 32-bit guest
  * address */
@@ -267,6 +267,7 @@ KFN int cob_k_put_scale(const cob_kdesc *d, int eff, long long v, int vscale, in
     int neg = v < 0;
     unsigned long long mag = neg ? 0 - (unsigned long long)v : (unsigned long long)v;
     if (d->flags & K_F_NOTRUNC) {
+        if ((opts & 2) && (d->flags2 & K_F2_SIZEDIG) && d->digits <= 18 && mag >= (unsigned long long)pow10tab[d->digits]) return 1;
         if ((opts & 2) && d->size < 8) {
             unsigned long long lim = 1ULL << (d->size * 8 - ((d->flags & K_F_SIGNED) ? 1 : 0));
             if (mag >= lim) return 1;
@@ -277,7 +278,7 @@ KFN int cob_k_put_scale(const cob_kdesc *d, int eff, long long v, int vscale, in
             udiv_pow10(mag, eff, &mag);
         }
     }
-    if (!(d->flags & K_F_SIGNED)) neg = 0;         /* unsigned takes the magnitude */
+    if (!(d->flags & K_F_SIGNED) && !(d->flags2 & K_F2_TWOSC)) neg = 0;   /* unsigned takes the magnitude (a COMP-X MOVE: two's complement) */
     *negp = neg; *magp = mag;
     return 0;
 }

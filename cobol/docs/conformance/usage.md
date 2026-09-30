@@ -27,12 +27,13 @@ were swept with the national and boolean data
 | rule | paraphrase | disposition |
 |---|---|---|
 | 1 | a group's USAGE applies to its elementary items | **test**: 2002/natnum, CCVS NC |
-| 4, 6 | BINARY and COMPUTATIONAL: the implementor's radix-2 form | **ruling**: 2, 4 or 8 bytes by digits; COMP-5 1, 2, 4 or 8 (docs/dialect.md, "COMP/BINARY width") |
+| 4, 6 | BINARY and COMPUTATIONAL: the implementor's radix-2 form, alignment, sign and range | **ruling** (docs/usage.md): two's complement, 2, 4 or 8 bytes by digits, **big-endian** as IBM, Micro Focus and GnuCOBOL store it (`-fbinary-byteorder=native` for SLOW-32's order); COMP-5 and the native usages 1, 2, 4 or 8 bytes in the machine's order. **test**: free/binorder (the bytes of a written record; the oracle agrees) |
 | 7 | DISPLAY: the alphanumeric character set | **ruling**: UTF-8 (docs/national.md, the encoding rulings) |
 | 10 | INDEX: an occurrence number's representation | **ruling**: four bytes, as a pointer is |
 | 11 | PACKED-DECIMAL: a digit a nibble; WITH NO SIGN | **test**: free/identmove, CCVS NC; NO SIGN is 2014's: **n/a** |
 | 12 | BINARY-CHAR, -SHORT, -LONG, -DOUBLE, SIGNED by default, hold their minimum ranges | **test**: 2002/binranges (the oracle agrees). SIGNED and UNSIGNED after BINARY-SHORT and BINARY-LONG were not parsed before this sweep ("unexpected 'unsigned'"). BINARY-DOUBLE [SIGNED | UNSIGNED]: **test** 2002/bindouble, the oracle agrees (implemented in ISSUES-117 on the 31-digit path; it was refused by name) |
-| 13-18 | the floating-point usages | **n/a** until -std=2014 (the ruling of 2026-09-28); refused as not implemented |
+| 13 | FLOAT-SHORT, -LONG, -EXTENDED: the implementor's floating-point formats, each holding what the one before holds | **ruling** (docs/usage.md, 2026-09-30): IEEE single, double, and double again for FLOAT-EXTENDED, in the machine's order. **test**: 2002/floatext (the values; the oracle agrees), free/comp12, 2002/floatsort |
+| 14-18 | FLOAT-BINARY-32/64/128, FLOAT-DECIMAL-16/34: ISO/IEC 60559's formats | **refused** by name: bad/std2002-float-binary ("is COBOL 2014") -- "unexpected" before this sweep |
 | POINTER | a pointer holds a data address, NULL the null one; INITIALIZE sets NULL | **test**: 2002/pointerset (the oracle agrees). `SET p TO NULL` failed ("null cannot be moved to the pointer item") and `p = NULL` was never true, NULL being compared as four alphanumeric bytes; both fixed |
 | ADDRESS OF, BASED | 2002 8.4.2.11 / 2023 8.4.3.11 (rules 2, 4, 5), BASED 2002 13.16.5, SET formats 7 and 10, pointer relations (8.8.4.2.2 format 3, 8.8.4.2.3 rule 5, 8.8.4.2.16) | **test**: 2002/addressof (the oracle agrees), 2002/ecptrnull (EC-DATA-PTR-NULL, 13.16.5 general rule 3); **refused**: bad/std2002-address-of-display (rule 5), -set-address-ws (14.9.39.3 rule 18), -pointer-lt, -pointer-cmp-num, address-of-85. Implemented after this sweep named it a gap (ISSUES-96). ADDRESS OF BY REFERENCE and BY CONTENT pass the unique data item it creates (8.4.3.11 GR 1), a compiler-made pointer: 2002/addressofarg (the oracle agrees). **gap**: BASED in LOCAL-STORAGE; EC-BOUND-PTR (13.16.5 general rule 4) is not raised |
 | ALLOCATE, FREE | 2002 14.8.3, 14.8.14 (2023 14.9.15): storage for a based record or a number of characters (rounded up), zeroed; FREE releases it and sets the pointer NULL, leaves NULL alone, and raises EC-STORAGE-NOT-ALLOC for anything else; EC-STORAGE-NOT-AVAIL when none is to be had, not for a count of 0 or less | **test**: 2002/allocfree; **refused**: bad/std2002-allocate-not-based (rule 1), -allocate-no-returning (rule 2), -allocate-returning-alnum (rule 3), -free-not-pointer (FREE rule 1). ALLOCATE data-name INITIALIZED, INITIALIZE WITH FILLER ALL TO VALUE THEN TO DEFAULT (GR 7): **test**: 2002/allocinit, the oracle agrees (a gap until ISSUES-104) |
@@ -48,9 +49,16 @@ were swept with the national and boolean data
   COMP-3, COMP-5, BINARY-CHAR, SIGNED-INT, SIGNED-SHORT,
   UNSIGNED-SHORT and POINTER (docs/dialect.md). The rules above apply
   to them as in 2002.
-- COMP-1 is RM/COBOL's: a binary integer with a PICTURE, as every
-  COMP-1 item in the Open Systems suite has. IBM's hexadecimal float
-  COMP-1/COMP-2 stays out (the ruling of 2026-09-28).
+- COMP-1 is RM/COBOL's binary integer when it has a PICTURE, as every
+  COMP-1 item in the Open Systems suite does; without one it is Micro
+  Focus's IEEE single, and COMP-2 its double (2026-09-30; `-fcomp1=`
+  forces either). IBM's hexadecimal floating point stays out.
+- COMP-4 is BINARY; COMP-X and COMP-6 are Micro Focus's, and follow its
+  reference (docs/usage.md): COMP-X is unsigned big-endian binary held to
+  its capacity, a negative value MOVEd into it is stored in two's
+  complement, and with ON SIZE ERROR a 9(n) item's digits decide the
+  size error (free/compn, free/compxmf; GnuCOBOL differs, docs/oracles.md).
+  COMP-6 is unsigned packed decimal, a signed one COMP-3.
 
 ## Found by this sweep
 
