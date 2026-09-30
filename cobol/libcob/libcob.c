@@ -5540,6 +5540,8 @@ void cob_accept_datetime(int which, void *dst, const cob_desc *dd)
     case 0: n = snprintf(b, sizeof b, "%02d%02d%02d", t->tm_year % 100, t->tm_mon + 1, t->tm_mday); break;
     case 1: n = snprintf(b, sizeof b, "%02d%03d", t->tm_year % 100, t->tm_yday + 1); break;
     case 2: n = snprintf(b, sizeof b, "%02d%02d%02d%02d", t->tm_hour, t->tm_min, t->tm_sec, hund); break;
+    case 4: n = snprintf(b, sizeof b, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday); break;   /* DATE YYYYMMDD (2002) */
+    case 5: n = snprintf(b, sizeof b, "%04d%03d", t->tm_year + 1900, t->tm_yday + 1); break;                  /* DAY YYYYDDD */
     default: n = snprintf(b, sizeof b, "%d", t->tm_wday == 0 ? 7 : t->tm_wday); break;
     }
     cob_desc sd; memset(&sd, 0, sizeof sd);

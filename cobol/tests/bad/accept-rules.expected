@@ -1,0 +1,3 @@
+ACCEPT FROM 'zz': not a mnemonic-name of SPECIAL-NAMES, nor DATE, DAY, TIME, DAY-OF-WEEK (X3.23-1985 ACCEPT syntax rule 2)
+DISPLAY UPON 'zz': not a mnemonic-name of SPECIAL-NAMES (X3.23-1985 DISPLAY syntax rule 2)
+ACCEPT 'ba' FROM DATE, DAY, TIME or DAY-OF-WEEK: an alphabetic or boolean item does not take the digits (X3.23-1985 ACCEPT general rule 6: the MOVE rules)

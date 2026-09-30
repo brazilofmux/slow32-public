@@ -214,3 +214,10 @@ item, no `RERUN` or `MULTIPLE FILE TAPE`, no debugging line. By then
 227 of the 228 programs compiled (only `in/CPINVBIL`, whose `sexinv`
 copybook is not in the tree, did not), so the older counts above have
 grown with them: BP-O2 443, BP-O6 412, BP-N1 5.
+
+Under -std=2002 the class O points BP-O1 to BP-O11, except BP-O9, are
+errors, not warnings: COBOL 2002 deleted those elements (ISO/IEC
+1989:2002 F.1), so a 2002 program cannot use them (cobol ISSUES-115).
+BP-O9 stays a warning because 2023 permits an ALL literal of digits to
+an integer item again.
+

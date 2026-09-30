@@ -4237,3 +4237,28 @@ Tests: bad/evaluate-rules (8 errors), bad/if-rules (3). Harness
 498/498, CCVS-85 unchanged, -std=85 byte-identical on the Open Systems
 programs, majesty PASS. Page: docs/conformance/evaluate.md.
 
+### 115. ACCEPT, DISPLAY, GO TO, ALTER; 2002's deleted elements (2026-09-29)
+
+Refused now, accepted before: a statement after an unconditional GO TO
+(never reached); a paragraph named by ALTER that is not one sentence of
+a GO TO without DEPENDING (85 ALTER rule 1); ACCEPT of DATE, DAY, TIME
+or DAY-OF-WEEK into an alphabetic or boolean item. An undeclared
+mnemonic-name after ACCEPT FROM or DISPLAY UPON said "not implemented";
+it cites the rule now.
+
+New: ACCEPT ... FROM DATE YYYYMMDD and DAY YYYYDDD (2002), a parse
+error before (cob_accept_datetime cases 4 and 5); 2002/acceptyyyy, the
+oracle agrees.
+
+Under -std=2002 the elements 2002 deleted (F.1) -- ALTER, comment-
+entries, STOP literal, OPEN REVERSED, MEMORY SIZE, LABEL RECORDS, VALUE
+OF, DATA RECORDS, RERUN, MULTIPLE FILE TAPE -- were accepted with at
+most a -warn-74 warning. bp() now refuses BP-O1 to BP-O11 under
+-std=2002, except BP-O9, which 2023 permits again (our 2002/movecorr
+uses it). Nothing changes under -std=85.
+
+Tests: bad/goto-alter, bad/accept-rules, bad/std2002-deleted,
+2002/acceptyyyy (+ .env). Harness 502/502, CCVS-85 unchanged, -std=85
+byte-identical on the Open Systems programs, majesty PASS, Open Systems
+paper unchanged. Page: docs/conformance/accept.md.
+

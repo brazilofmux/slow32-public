@@ -316,6 +316,12 @@ static int g_warn_ext;               /* -warn-extensions: say where a program le
 static void bp(int point, int line)
 {
     static int last_point = -1, last_line = -1;
+    /* an element COBOL 2002 deleted (its F.1 list): under -std=2002 it is
+     * no longer the language, whatever the warnings asked for */
+    /* (not BP-O9: 2023 14.9.25.3 rule 5 permits an ALL literal of digits
+     * to an integer item again, as an obsolete feature) */
+    if (g_std >= 2002 && point >= BP_O1_ALTER && point <= BP_O11_MULTIPLE_FILE && point != BP_O9_ALL_NUMERIC)
+        die_at(line, "[%s] %s (ISO/IEC 1989:2002 F.1); under -std=2002 it is refused -- compile with -std=85", g_bp[point].id, g_bp[point].msg);
     if (g_bp[point].cls == 'E' ? !g_warn_ext : !g_warn74) return;
     if (point == last_point && line == last_line) return;     /* one per point per line */
     last_point = point; last_line = line;
@@ -7595,6 +7601,14 @@ static void parse_accept_1(void)
             /* the unsigned integer of the text -- YYMMDD, YYDDD, HHMMSShh, 1 (Monday) to 7 -- by the MOVE rules */
             int which = at_word("date") ? 0 : at_word("day") ? 1 : at_word("time") ? 2 : 3;
             advance();
+            /* DATE YYYYMMDD and DAY YYYYDDD: the four-digit year (COBOL 2002) */
+            if ((which == 0 && at_word("yyyymmdd")) || (which == 1 && at_word("yyyyddd"))) {
+                if (g_std < 2002) die_at(cur()->line, "ACCEPT ... FROM %s %s is COBOL 2002; compile with -std=2002", which ? "DAY" : "DATE", which ? "YYYYDDD" : "YYYYMMDD");
+                advance(); which += 4;
+            }
+            if (!r.rm && !r.sym->is_group && (r.sym->pi.category == PIC_ALPHABETIC || r.sym->pi.category == PIC_BOOLEAN || r.sym->usage == U_BIT))
+                die_at(r.line, "ACCEPT '%s' FROM DATE, DAY, TIME or DAY-OF-WEEK: an alphabetic or boolean item does not take the digits (%s)", r.sym->name,
+                       g_std < 2002 ? "X3.23-1985 ACCEPT general rule 6: the MOVE rules" : "2023 14.9.1.3 rule 3");
             Arg a[3] = { arg_imm(which), arg_ref(&r), arg_desc(sym_desc(r.sym)) };
             emit_args(a, 3);
             emit_call("cob_accept_datetime");
@@ -7609,6 +7623,9 @@ static void parse_accept_1(void)
             accept_word("end-accept");
             return;
         }
+        if (cur()->kind == T_WORD && !mnemonic_kind(cur()->s))
+            die_at(cur()->line, "ACCEPT FROM '%s': not a mnemonic-name of SPECIAL-NAMES, nor DATE, DAY, TIME, DAY-OF-WEEK (%s)", cur()->s,
+                   g_std < 2002 ? "X3.23-1985 ACCEPT syntax rule 2" : "2023 14.9.1.3 rule 2");
         die_at(cur()->line, "ACCEPT FROM %s is not implemented", tok_desc(cur()));
     }
     /* ACCEPT identifier: a line from standard input */
@@ -7652,6 +7669,9 @@ static void parse_display(void)
             advance();
             if (accept_word("sysout") || accept_word("console") || accept_word("syserr") || accept_word("stderr")) continue;
             if (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 2) { advance(); continue; }
+            if (cur()->kind == T_WORD && !mnemonic_kind(cur()->s) && !at_word("argument-number") && !at_word("environment-name") && !at_word("environment-value"))
+                die_at(t->line, "DISPLAY UPON '%s': not a mnemonic-name of SPECIAL-NAMES (%s)", cur()->s,
+                       g_std < 2002 ? "X3.23-1985 DISPLAY syntax rule 2" : "2023 14.9.11.3 rule 2");
             die_at(t->line, "DISPLAY UPON %s is not implemented (ARGUMENT-NUMBER takes one operand)", cur()->s);
         }
         if (t->kind == T_WORD && (!strcmp(t->s, "with") || !strcmp(t->s, "no"))) {
@@ -10856,6 +10876,16 @@ static void decl_ref_check(const Para *p, int is_perform, int line)
     }
 }
 
+/* an unconditional GO TO ends its run of imperative statements (2023
+ * 14.9.17.3 rule 2; X3.23-1985 GO TO syntax rule 2): nothing after it
+ * could be reached */
+static void goto_last_check(void)
+{
+    if (cur()->kind == T_WORD && is_verb(cur()->s))
+        die_at(cur()->line, "a GO TO is the last statement of its sequence; '%s' after it is never reached (%s)", cur()->s,
+               g_std < 2002 ? "X3.23-1985 GO TO syntax rule 2" : "2023 14.9.17.3 rule 2");
+}
+
 static void parse_goto(void)
 {
     if (g_in_finally) die_at(cur()->line, "GO TO in a FINALLY phrase: no statement there transfers control out of the PERFORM (2023 14.9.28.4 rule 16)");
@@ -10879,6 +10909,7 @@ static void parse_goto(void)
         emit_la("r1", lab);
         emit("\tldw r1, r1+0");
         emit("\tjalr r0, r1, 0");
+        goto_last_check();
         return;
     }
     if (accept_word("depending")) {
@@ -10896,6 +10927,7 @@ static void parse_goto(void)
     }
     if (n != 1) die_at(cur()->line, "GO TO with several procedure-names needs DEPENDING ON");
     emit("\tjal r0, .Lp%d_%d", g_unit, ps[0]->id);
+    goto_last_check();
 }
 
 /* How well a WHEN (or USE) exception-name w, for file wf (-1: none),
@@ -14357,6 +14389,18 @@ static void parse_procedure_division(void)
             advance(); if (p->is_section) advance();
             expect_period();
             g_para_body_tp = g_tp;
+            if (!p->is_section && is_altered_para(p->name)) {
+                /* a paragraph ALTER names holds one sentence, a GO TO without
+                 * DEPENDING (X3.23-1985 ALTER syntax rule 1) */
+                int j = g_tp, ok = is_word(&g_tok[j], "go");
+                if (ok) { j++; if (is_word(&g_tok[j], "to")) j++; if (g_tok[j].kind == T_WORD || g_tok[j].kind == T_NUM) j++; ok = g_tok[j].kind == T_PERIOD; j++; }
+                if (ok) {
+                    Tok *nx = &g_tok[j];
+                    ok = nx->kind == T_EOF || (is_word(nx, "end") && (is_word(&g_tok[j + 1], "program") || is_word(&g_tok[j + 1], "declaratives") || is_word(&g_tok[j + 1], "function"))) ||
+                         ((nx->kind == T_WORD || nx->kind == T_NUM) && (g_tok[j + 1].kind == T_PERIOD || is_word(&g_tok[j + 1], "section")) && !(nx->kind == T_WORD && is_verb(nx->s)));
+                }
+                if (!ok) die_at(p->line, "ALTER names the paragraph '%s', which must hold one sentence, a GO TO without DEPENDING (X3.23-1985 ALTER syntax rule 1)", p->oname[0] ? p->oname : p->name);
+            }
             continue;
         }
         if (t->kind == T_WORD && !is_verb(t->s) && peek(1)->kind == T_NUM && is_word(peek(2), "section"))

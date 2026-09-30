@@ -1,0 +1,2 @@
+a GO TO is the last statement of its sequence; 'display' after it is never reached (X3.23-1985 GO TO syntax rule 2)
+ALTER names the paragraph 'p1', which must hold one sentence, a GO TO without DEPENDING (X3.23-1985 ALTER syntax rule 1)
