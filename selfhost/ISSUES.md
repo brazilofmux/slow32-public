@@ -2320,3 +2320,19 @@ high word is wrong.  No known code does that in an initializer.
 Gates: stage08 99/99 with the fixed point; check-host-frontend; SQLite
 acceptance with the rebuilt cc.s32x; eleven wide initializers agree
 with clang.
+
+### 71. [OPEN 2026-09-30] stage08 cc: no __builtin_nanf / __builtin_inff, so <math.h>'s NAN and INFINITY do not link
+
+Found building cobol's libcob on kagura, where it goes through stage08
+cc: the floating-point work used `NAN`, which runtime/include/math.h
+defines as `(__builtin_nanf(""))` (and `INFINITY` as
+`(__builtin_inff())`). clang folds both. stage08 cc does not know the
+builtins, so it emits calls to them, and the link fails with
+"Undefined symbol '__builtin_nanf'". Nothing warns before the link.
+
+libcob no longer uses NAN, so this does not block anything today. The
+fix belongs in stage08: fold `__builtin_nanf`, `__builtin_nan`,
+`__builtin_inff`, `__builtin_inf` and `__builtin_huge_val` to their
+constants, as `__builtin_sqrt` is already special-cased. Otherwise any C
+source that uses the standard macros builds with clang and fails with
+the self-hosted toolchain.

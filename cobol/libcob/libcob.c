@@ -1572,8 +1572,10 @@ void cob_npow(void)
          * base to such a power, or a negative one to a fraction, is a size
          * error), at nine decimals or as many as 64 bits leave room for */
         double x = (double)a->v / pow10d(a->scale), y = (double)b->v / pow10d(b->scale);
-        double r = (x == 0 && y <= 0) || (x < 0 && y != floor(y)) ? NAN : pow(x, y);
-        if (r != r) { div0 = 4; nsp--; return; }    /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
+        /* no NAN: stage08 cc has no __builtin_nanf (selfhost ISSUES-71) */
+        int bad = (x == 0 && y <= 0) || (x < 0 && y != floor(y));
+        double r = bad ? 0 : pow(x, y);
+        if (bad || r != r) { div0 = 4; nsp--; return; }    /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
         if (fabs(r) >= 9e17) { div0 = 2; nsp--; return; }
         int sc = 9;
         while (sc > 0 && fabs(r) * pow10d(sc) >= 9e17) sc--;
@@ -1778,8 +1780,9 @@ void cob_wpow(void)
          * base to such a power, or a negative one to a fraction, is a size
          * error */
         double x = w_to_dbl(a), y = w_to_dbl(b);
-        double r = (x == 0 && y <= 0) || (x < 0 && y != floor(y)) ? NAN : pow(x, y);
-        if (r != r) div0 = 4; else w_set_f(a, r);   /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
+        int bad = (x == 0 && y <= 0) || (x < 0 && y != floor(y));
+        double r = bad ? 0 : pow(x, y);
+        if (bad || r != r) div0 = 4; else w_set_f(a, r);   /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
         wsp--; return;
     }
     if (b->scale > 0) { w_drop_digits(b->m, WL, b->scale, 0, 0); b->scale = 0; }
