@@ -22,85 +22,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "../../../common/mmio_ring_layout.h"
 
-/* ---- Mirror of the public types from tools/emulator/mmio_ring.h ----
- * Must stay byte-for-byte compatible since dbt allocates these. */
-
-#define S32_MMIO_MAX_FDS 128
-#define S32_MAX_SERVICES 16
-#define S32_MAX_SVC_NAME 32
-
-typedef enum { S32_FD_TYPE_FILE = 0, S32_FD_TYPE_DIR = 1 } s32_fd_type_t;
-
-typedef struct {
-    uint32_t opcode;
-    uint32_t length;
-    uint32_t offset;
-    uint32_t status;
-} io_descriptor_t;
-
-typedef struct __dir_stream DIR;
-struct mmio_ring_state;
-typedef struct mmio_ring_state mmio_ring_state_t;
-
-typedef struct {
-    bool active;
-    char name[S32_MAX_SVC_NAME];
-    uint32_t base_opcode;
-    uint32_t opcode_count;
-    uint32_t version;
-    void *state;
-    void (*cleanup)(void *state);
-    void (*handle)(void *state, mmio_ring_state_t *mmio,
-                   uint32_t sub_opcode, io_descriptor_t *req,
-                   io_descriptor_t *resp);
-} svc_session_t;
-
-typedef struct {
-    bool default_allow;
-    char allow_list[S32_MAX_SERVICES][S32_MAX_SVC_NAME];
-    int allow_count;
-    char deny_list[S32_MAX_SERVICES][S32_MAX_SVC_NAME];
-    int deny_count;
-} svc_policy_t;
-
-struct mmio_ring_state {
-    uint32_t req_head;
-    uint32_t req_tail;
-    uint32_t resp_head;
-    uint32_t resp_tail;
-    uint32_t base_addr;
-    void *guest_mem_base;
-    uint32_t guest_mem_size;
-    io_descriptor_t *req_ring;
-    io_descriptor_t *resp_ring;
-    uint8_t *data_buffer;
-    uint64_t total_requests;
-    uint64_t total_responses;
-    uint32_t args_argc;
-    uint32_t args_total_bytes;
-    uint8_t *args_blob;
-    uint32_t envp_envc;
-    uint32_t envp_total_bytes;
-    uint8_t *envp_blob;
-    int host_fds[S32_MMIO_MAX_FDS];
-    bool host_fd_owned[S32_MMIO_MAX_FDS];
-    s32_fd_type_t fd_types[S32_MMIO_MAX_FDS];
-    DIR *host_dirs[S32_MMIO_MAX_FDS];
-    svc_session_t services[S32_MAX_SERVICES];
-    int num_services;
-    svc_policy_t policy;
-    uint32_t next_dynamic_opcode;
-};
-
-typedef struct {
-    bool *halted;
-    uint32_t *exit_status;
-} mmio_cpu_iface_t;
+/* The types are tools/emulator/mmio_ring.h's own, included -- not a copy.
+ * dbt allocates mmio_ring_state_t and reads its fields (req_ring,
+ * resp_ring, data_buffer, base_addr) at the real header's offsets; a
+ * hand-kept mirror here drifted when the DPC timers, posted reads and
+ * guest-memory hooks were added ahead of those fields, and every MMIO
+ * program crashed under this DBT (tools/dbt/ISSUES.md, DBT-18). */
+#include "../../../tools/emulator/mmio_ring.h"
 
 /* ---- libc/syscall imports ---- */
 
+long  __syscall();
+char *getenv(char *name);
 int   write(int fd, char *buf, int len);
 int   read(int fd, char *buf, int len);
 int   open(char *path, int flags, int mode);
@@ -299,6 +233,72 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
 
     if (req->opcode == S32_MMIO_OP_NOP) {
         resp.status = S32_MMIO_STATUS_OK;
+    } else if (req->opcode == S32_MMIO_OP_GETTIME) {
+        /* wall-clock time, as tools/emulator/mmio_ring.c gives it:
+         * clock_gettime(CLOCK_REALTIME) is AArch64 Linux syscall 113.
+         * Without it the guest's clock read 1970 (DBT-18). */
+        long ts[2];
+        ts[0] = 0; ts[1] = 0;
+        if (len >= sizeof(s32_mmio_timepair64_t) && off <= S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_timepair64_t) &&
+            __syscall(113, 0, ts, 0, 0, 0, 0) == 0) {
+            s32_mmio_timepair64_t pair;
+            unsigned long secs = ts[0] < 0 ? 0 : (unsigned long)ts[0];
+            pair.seconds_lo = (uint32_t)(secs & 0xFFFFFFFFu);
+            pair.seconds_hi = (uint32_t)(secs >> 32);
+            pair.nanoseconds = (uint32_t)ts[1];
+            pair.reserved = 0;
+            memcpy((char *)(mmio->data_buffer + off), (char *)&pair, sizeof(pair));
+            resp.length = sizeof(s32_mmio_timepair64_t);
+            resp.status = S32_MMIO_STATUS_OK;
+        }
+    } else if (req->opcode == S32_MMIO_OP_READ_DIRECT) {
+        /* status the fd, offset the guest address, length the count: read(2)
+         * straight into guest memory; status and length the count read
+         * (SQLite reads its pages this way; DBT-18) */
+        if (req->length == 0) {
+            resp.status = 0;
+        } else {
+            host_fd = host_fd_for(mmio, req->status);
+            if (host_fd >= 0 && mmio->guest_mem_base && req->offset < mmio->guest_mem_size &&
+                (uint64_t)req->offset + req->length <= mmio->guest_mem_size) {
+                rc = read(host_fd, (char *)mmio->guest_mem_base + req->offset, (int)req->length);
+                if (rc >= 0) { resp.status = (uint32_t)rc; resp.length = (uint32_t)rc; }
+            }
+        }
+    } else if (req->opcode == S32_MMIO_OP_ACCESS) {
+        /* the path in the data buffer, status the mode (the POSIX values):
+         * faccessat(AT_FDCWD, path, mode, 0), syscall 48 */
+        if (len > 0 && len < 256 && off + len <= S32_MMIO_DATA_CAPACITY) {
+            for (i = 0; i < len; i = i + 1) namebuf[i] = (char)mmio->data_buffer[off + i];
+            namebuf[len] = 0;
+            if (__syscall(48, -100, namebuf, (long)req->status, 0, 0, 0) == 0) resp.status = S32_MMIO_STATUS_OK;
+        }
+    } else if (req->opcode == S32_MMIO_OP_UNLINK) {
+        /* the path in the data buffer: unlinkat(AT_FDCWD, path, 0), syscall 35
+         * (SQLite deletes its journal; DBT-18) */
+        if (len > 0 && len < 256 && off + len <= S32_MMIO_DATA_CAPACITY) {
+            for (i = 0; i < len; i = i + 1) namebuf[i] = (char)mmio->data_buffer[off + i];
+            namebuf[len] = 0;
+            if (__syscall(35, -100, namebuf, 0, 0, 0, 0) == 0) resp.status = S32_MMIO_STATUS_OK;
+        }
+    } else if (req->opcode == S32_MMIO_OP_FTRUNCATE) {
+        /* the new length, 4 bytes, in the data buffer: ftruncate, syscall 46 */
+        host_fd = host_fd_for(mmio, req->status);
+        if (host_fd >= 0 && len >= 4 && off <= S32_MMIO_DATA_CAPACITY - 4) {
+            uint32_t nl;
+            memcpy((char *)&nl, (char *)(mmio->data_buffer + off), 4);
+            if (__syscall(46, host_fd, (long)nl, 0, 0, 0, 0) == 0) resp.status = S32_MMIO_STATUS_OK;
+        }
+    } else if (req->opcode == S32_MMIO_OP_GETCWD) {
+        /* the working directory into the data buffer, the length with its NUL
+         * as length and status: getcwd, syscall 17, returns that length */
+        if (len > 0 && off < S32_MMIO_DATA_CAPACITY) {
+            uint32_t maxl = S32_MMIO_DATA_CAPACITY - off;
+            long got;
+            if (len < maxl) maxl = len;
+            got = __syscall(17, (char *)(mmio->data_buffer + off), (long)maxl, 0, 0, 0, 0);
+            if (got > 0) { resp.length = (uint32_t)got; resp.status = (uint32_t)got; }
+        }
     } else if (req->opcode == S32_MMIO_OP_PUTCHAR) {
         write(1, (char *)(mmio->data_buffer + off), 1);
         resp.status = S32_MMIO_STATUS_OK;
@@ -390,18 +390,20 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
                 }
             }
         }
-    } else if (req->opcode == S32_MMIO_OP_STAT) {
+    } else if (req->opcode == S32_MMIO_OP_STAT || req->opcode == S32_MMIO_OP_LSTAT) {
         /* req->status == 0xFFFFFFFF (S32_MMIO_STAT_PATH_SENTINEL) means
          * path-stat: NUL-terminated path is in data_buffer+off, length len.
          * Otherwise req->status is a guest fd to fstat. */
         rc_stat = -1;
-        if (req->status == S32_MMIO_STAT_PATH_SENTINEL) {
+        if (req->opcode == S32_MMIO_OP_LSTAT || req->status == S32_MMIO_STAT_PATH_SENTINEL) {
             if (len > 0 && len <= 256) {
                 for (i = 0; i < len && i < 255; i = i + 1) {
                     namebuf[i] = (char)mmio->data_buffer[(off + i) % S32_MMIO_DATA_CAPACITY];
                 }
                 namebuf[i] = 0;
-                rc_stat = stat(namebuf, kbuf);
+                /* LSTAT: newfstatat without following a symlink (AT_SYMLINK_NOFOLLOW) */
+                if (req->opcode == S32_MMIO_OP_LSTAT) rc_stat = __syscall(79, -100, namebuf, kbuf, 0x100, 0, 0);
+                else rc_stat = stat(namebuf, kbuf);
             }
         } else {
             host_fd = host_fd_for(mmio, req->status);
@@ -514,6 +516,25 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
     }
     /* All other opcodes leave resp.status = ERR. */
 
+    /* S32_MMIO_TRACE set: each request answered with an error, on stderr --
+     * how an operation this stub lacks shows itself (DBT-18 found three) */
+    {
+        static int trace = -1;
+        if (trace < 0) { char *tv = getenv("S32_MMIO_TRACE"); trace = tv ? (tv[0] == '2' ? 2 : 1) : 0; }
+        if (trace == 2 || (trace && resp.status == S32_MMIO_STATUS_ERR)) {
+            /* 1: the errors; 2: every request -- op status offset length -> status length */
+            char tb[128]; int tn = 0, f, sh; uint32_t fv[6];
+            const char *pre = "mmio_ring_a64:";
+            fv[0] = req->opcode; fv[1] = req->status; fv[2] = req->offset; fv[3] = req->length; fv[4] = resp.status; fv[5] = resp.length;
+            while (pre[tn]) { tb[tn] = pre[tn]; tn = tn + 1; }
+            for (f = 0; f < 6; f = f + 1) {
+                tb[tn] = f == 4 ? '>' : ' '; tn = tn + 1;
+                for (sh = 28; sh >= 0; sh = sh - 4) { tb[tn] = "0123456789abcdef"[(fv[f] >> sh) & 15]; tn = tn + 1; }
+            }
+            tb[tn] = '\n'; tn = tn + 1;
+            write(2, tb, tn);
+        }
+    }
     emit_response(mmio, &resp);
 }
 

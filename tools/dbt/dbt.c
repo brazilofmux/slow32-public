@@ -1011,6 +1011,16 @@ static const struct {
     void       *host_fn;
     uint8_t     sig;
 } math_intercepts[] = {
+#ifndef __S12CC__
+    // Not in the self-hosted DBT (selfhost/stage08-cross-{a64,x64}, compiled
+    // by cc-a64/cc-x64): its libc's libm is placeholders -- exp, log, pow,
+    // sin ... return 0, floor returns x (libc_a64/libc_extra.c) -- and the
+    // intercept trampoline passes a double the platform way, in d0 (xmm0),
+    // which a function cc-a64 compiled does not read: even its real sqrt
+    // and fabs came back wrong.  COBOL's floating-point and intrinsic
+    // results were 0 (tools/dbt/ISSUES.md, DBT-18).  There the guest's own
+    // libm runs, correct and slower.
+
     // f32 unary: float fn(float)
     { "sqrtf",    (void*)(uintptr_t)sqrtf,    SIG_F32_F32 },
     { "fabsf",    (void*)(uintptr_t)fabsf,    SIG_F32_F32 },
@@ -1071,6 +1081,7 @@ static const struct {
     { "isnan",    (void*)(uintptr_t)host_isnan,    SIG_I32_F64 },
     { "isinf",    (void*)(uintptr_t)host_isinf,    SIG_I32_F64 },
     { "isfinite", (void*)(uintptr_t)host_isfinite, SIG_I32_F64 },
+#endif
     { NULL, NULL, 0 }
 };
 

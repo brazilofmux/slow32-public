@@ -538,17 +538,82 @@ given; the host disassembly shells out to `objdump` and fails on macOS (the raw
 `/tmp/slow32-dbt-host-*.bin` files are still written -- feed them to
 `objdump -D -b binary -m aarch64` in the `slow32:toolchain` container).
 
-## 18. Self-Hosted dbt-a64 Segfaults on COBOL Programs (OPEN, 2026-09-30)
+## 18. Self-Hosted dbt-a64 Segfaults on COBOL Programs (FIXED 2026-09-30)
 
-`selfhost/stage08-cross-a64/out/dbt-a64` (the DBT compiled by cc-a64),
-run in linux/arm64 (`gcc:latest` under podman), exits 139 on any COBOL
-program tried -- `cobol/tests/free/hotarith` and `2002/fnreturn`, built by
-`cobol/compile.sh` -- while it runs `benchmark_core.s32x` to its checksum
-(0x8d70b2b).  The native `tools/dbt/slow32-dbt` runs both programs.  Not
-the hooks: the same crash with `S32_HOOKS=none`, and with dbt-a64 built
-from 3c406af2, the commit before hooks.c existed.  Found while fixing the
-cross trees' missing hooks.c (a717728d); `make test` in the a64 tree does
-not run a COBOL program, so nothing there sees it.  Not yet narrowed:
-cc-a64 miscompiling the DBT, or the tree's stripped-down
-`libc_a64/mmio_ring_a64.c`, which COBOL's file and argument I/O leans on
-and the benchmark barely touches, are the first two suspects.
+`selfhost/stage08-cross-a64/out/dbt-a64` exited 139 on any COBOL program.
+The line that mattered: a C program linked with libc_debug ran, the same
+program linked with libc_mmio crashed.  COBOL was only the first MMIO
+user anyone ran.
+
+Cause: both cross trees' libcs (`libc_a64/mmio_ring_a64.c`,
+`libc_x64/mmio_ring_x64.c`) kept a hand-written mirror of
+`mmio_ring_state_t`, "byte-for-byte compatible since dbt allocates
+these".  The real struct had since gained the DPC indices, the timer and
+posted-read arrays, the guest-memory hooks and `dpc_ring` -- ahead of
+`base_addr`, `req_ring` and `data_buffer`.  dbt.c, compiled against the
+real header, and the stub, against its copy, disagreed on every later
+field; the stub set the ring pointers at the wrong offsets and the first
+MMIO request dereferenced garbage.  Fix: the stubs include
+`tools/emulator/mmio_ring.h` itself.  No copy to drift.
+
+With the crash gone, what the crash had hidden:
+- **Floating point and the intrinsic functions gave 0.**  dbt.c
+  intercepts guest libm calls with host functions, and the self-hosted
+  build links placeholders (`libc_a64/libc_extra.c`: exp, log, pow, sin
+  ... return 0; floor returns x).  Even the real ones there, sqrt and
+  fabs, came back wrong: the trampoline passes the double in d0, and a
+  function cc-a64 compiled does not read it there.  Under `__S12CC__` (the
+  self-hosted compilers' macro) the table is empty and the guest's own
+  libm runs.
+- **The clock read 1969-1970**, and SQLite's reads failed: the stubs
+  answered GETTIME, READ_DIRECT, ACCESS, UNLINK, FTRUNCATE, GETCWD and
+  LSTAT with ERR.  Each is now one Linux syscall, as the real ring does.
+  `S32_MMIO_TRACE=1` prints each request the stub answers with an error,
+  `=2` every request (op, status, offset, length, then the response).
+  That is how the gaps showed themselves.
+
+Verified: 60 of the harness's `free/` programs under dbt-a64 in
+linux/arm64 (gcc:latest, podman) against the native DBT: 58 identical,
+the two ESQL programs not (DBT-19).  C programs using libm, time() and
+localtime agree.  Both cross trees pass `make && make test` as the
+builder runs them (a64 in the container, x64 on kagura).  dbt-x64 runs
+the MMIO programs too (DBT-20 for what it does next).
+
+## 19. SQLite Fails Under the Self-Hosted dbt-a64 (OPEN, 2026-09-30)
+
+`cobol/tests/free/esqldesc` and `esqldyn` (EXEC SQL on SQLite): the
+first statement fails with "malformed database schema (sqlite_master) -
+invalid rootpage", and `PUBLIC.db` stays empty.  The gcc-built DBT in
+the same container, and `s32fast-hir` (the interpreter cc-a64 compiles,
+with its own MMIO), both run it correctly.  Ruled out, each by a
+differential:
+- the MMIO responses: the op/status/length sequence matches the real
+  ring up to the point where the guest itself takes another path;
+- the stat payload, byte for byte;
+- floating point, every conversion and comparison;
+- the intrinsics and hooks (-I);
+- the translation stages (-1 .. -4);
+- `--paranoid-skip 17000`: no divergence between translation and
+  interpretation (the `fstat` block's divergence is an artifact of
+  lockstep over MMIO; the native DBT shows it too);
+- the shared instruction decoder: `decode_instruction` compiled by
+  cc-a64 and by gcc decodes all 302,344 words of the program alike.
+The guest diverges right after the `fstat` of the database file: the
+real run goes on to ACCESS, SEEK and a 16-byte header READ; this one
+stops.  Since translation and interpretation agree, the wrong value
+comes from something both share that is compiled by cc-a64 and was not
+covered by the differentials above -- or from guest memory written host
+side.  Next: a guest-state checkpoint differential (registers and a
+memory hash at each block exit) between the gcc DBT and dbt-a64, from
+the `fstat` return on.
+
+## 20. Floating Point Broken in the Self-Hosted dbt-x64 (OPEN, 2026-09-30)
+
+With DBT-18 fixed, dbt-x64 (built by cc-x64, run on kagura, x86-64
+Linux) runs MMIO programs, and shows its floating point is wrong: a C
+`sqrt(2.0)` prints -2147483648, COBOL `FUNCTION SQRT(2)` prints
++4609047870845170000, and two programs then segfault.  The a64 DBT's
+equivalents are right.  The x64 translator's FP path and
+`libc_x64/fpu_ops.c` (cc-x64-compiled) are the first suspects; the
+equivalent a64 bug was in the math intercepts, which are already off
+here.  Nothing in the fleet runs dbt-x64 on FP code; `make test` does not.
