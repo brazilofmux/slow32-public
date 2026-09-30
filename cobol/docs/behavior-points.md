@@ -131,6 +131,8 @@ warns only under -std=85. Never changes the output.
 | BP-E17 | a FILE STATUS item that is not alphanumeric (PIC 99) | none in the corpora | 85, 2002 | FILE STATUS rule 2 asks for two alphanumeric characters; a two-digit numeric one is taken |
 | BP-E18 | READ without AT END, or a keyed statement without INVALID KEY, and no USE procedure for the file | the Open Systems suite (8) | 85 | X3.23-1985 requires the phrase then (READ rule 2 and its keyed siblings); the condition goes to the FILE STATUS, or stops the run |
 | BP-E19 | RESERVE, BLOCK CONTAINS or RECORD CONTAINS on a LINE SEQUENTIAL file | majesty's jerm (RECORD CONTAINS) | 2002 | 2023 excludes them (12.4.5.2 rule 12, 13.4.5.3 rule 4); taken, with no effect on the lines |
+| BP-E20 | a literal of more than 160 character positions | the NIST SQL suite (yts750, 255 positions) | 85, 2002 | 1985 and 2002 allow 1 through 160; 2014 and 2023 allow 8,191. Taken up to 8,191; past that refused |
+| BP-E21 | EXIT PROGRAM followed by more statements in its sentence | the NIST SQL suite (dml116s: EXIT PROGRAM, STOP RUN) | 85 | X3.23-1985 EXIT PROGRAM syntax rule 1 makes it the last; 2002 dropped the rule. Taken, run as 2002 runs it |
 
 Not points, recorded here:
 

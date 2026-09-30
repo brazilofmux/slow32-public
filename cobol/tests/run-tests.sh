@@ -418,6 +418,26 @@ else
     CCVS_NOTE="cobol: CCVS-85 NOT RUN -- no tree at $CCVS_TREE (set CCVS85)"
 fi
 
+# Gate 5b (NIST): the NIST SQL Test Suite's embedded COBOL (docs/esql.md),
+# totals equal to tests/nist-sql-baseline.txt, a ratchet as CCVS's is.
+# The suite lives outside the tree (NISTSQL, default ~/refs/nist-sql); no
+# tree is reported, and NISTSQL_RUN=0 switches the gate off.
+NSQL_NOTE=""
+NSQL_TREE=${NISTSQL:-$HOME/refs/nist-sql}
+if [ "${NISTSQL_RUN:-1}" = 0 ]; then
+    NSQL_NOTE="cobol: NIST SQL NOT RUN -- switched off by NISTSQL_RUN=0"
+elif [ -d "$NSQL_TREE/pco" ] && command -v python3 >/dev/null 2>&1; then
+    got="$(NISTSQL="$NSQL_TREE" "$HERE/nist-sql-run.sh" 2>/dev/null | tail -1)"
+    want="$(cat "$HERE/nist-sql-baseline.txt")"
+    if [ "$got" = "$want" ]; then
+        report "nist-sql/totals" 0 "$(echo "$got" | sed 's/.*tests \([0-9]* pass, [0-9]* fail\).*/\1/'), as recorded"
+    else
+        report "nist-sql/totals" 1 "got [$got] want [$want]; if better, update tests/nist-sql-baseline.txt"
+    fi
+else
+    NSQL_NOTE="cobol: NIST SQL NOT RUN -- no suite at $NSQL_TREE (set NISTSQL), or no python3"
+fi
+
 echo
 case "$ORACLE_ENGINE" in
     "")   if [ "${ORACLE:-1}" = 0 ]; then
@@ -434,5 +454,6 @@ else
     echo "cobol: $PASS passed, $FAIL failed"
 fi
 [ -z "$CCVS_NOTE" ] || echo "$CCVS_NOTE"
+[ -z "$NSQL_NOTE" ] || echo "$NSQL_NOTE"
 [ -z "$SKIPPED" ] || echo "cobol: SKIPPED:$SKIPPED -- no C compiler for them here; this is not a full run"
 [ "$FAIL" = "0" ]

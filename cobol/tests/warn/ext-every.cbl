@@ -18,6 +18,7 @@ fd  ix.
     05 ixk pic 9(4).
     05 ixd pic x(6).
 working-storage section.
+01 longlit pic x(170) value "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL".   *> BP-E20
 01  ixs    pic 99.
 01  pk     pic s9(5) comp-3.
 01  c5     pic 9(4) comp-5.
@@ -42,5 +43,6 @@ procedure division.
     display "at" line 2 position 1
     call "nothing" using by value k
     move 0 to return-code
+    exit program move 0 to return-code   *> BP-E21
     stop run returning k
     goback.

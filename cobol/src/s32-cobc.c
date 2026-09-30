@@ -263,6 +263,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
+       BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -313,6 +314,10 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "the condition goes to the FILE STATUS, or stops the run" },
     { "BP-E19", 'E', "RESERVE, BLOCK CONTAINS or RECORD CONTAINS on a LINE SEQUENTIAL file, which 2023 excludes "
                      "(12.4.5.2 rule 12, 13.4.5.3 rule 4); taken, with no effect on the lines" },
+    { "BP-E20", 'E', "a literal of more than 160 character positions: X3.23-1985 and 2002 allow 1 through 160 "
+                     "(2014 and 2023 allow 8,191); taken" },
+    { "BP-E21", 'E', "EXIT PROGRAM followed by more statements in its sentence: X3.23-1985 makes it the last "
+                     "(EXIT PROGRAM syntax rule 1), 2002 does not; taken, as 2002 runs it" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -413,6 +418,24 @@ static int colcount(const char *p, int len)
 
 /* read a source file (or a copybook) into lines of program text; 0 if
  * it cannot be opened */
+/* are the lines so far inside an EXEC SQL ... END-EXEC?  (the last of
+ * the two to appear, looking back) */
+static int in_exec_sql(const SrcLine *lines, int n)
+{
+    for (int k = n - 1; k >= 0 && k >= n - 400; k--) {
+        const char *t = lines[k].text, *hit = NULL; int kind = 0;
+        for (const char *q = t; *q; q++) {
+            if (!strncasecmp(q, "end-exec", 8)) { hit = q; kind = 2; }
+            else if (!strncasecmp(q, "exec", 4) && (q[4] == ' ' || q[4] == '\t')) {
+                const char *r = q + 4; while (*r == ' ' || *r == '\t') r++;
+                if (!strncasecmp(r, "sql", 3)) { hit = q; kind = 1; }
+            }
+        }
+        if (hit) return kind == 1;
+    }
+    return 0;
+}
+
 static int read_lines(const char *path, SrcLine **out, int *nout)
 {
     FILE *f = fopen(path, "rb");
@@ -533,6 +556,9 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                         if (colcount(prev, (int)pl) == 65 && (prev[pl - 1] == '"' || prev[pl - 1] == '\'') && c < ce && *c == prev[pl - 1]) open = prev[pl - 1];   /* column 72 exactly */
                     }
                     if (open) {
+                        /* a SQL string continued with the other quote mark:
+                         * the NIST SQL suite continues '...' with a " (docs/esql.md) */
+                        if (c < ce && *c != open && (*c == '"' || *c == '\'') && in_exec_sql(lines, n)) open = *c;
                         if (c >= ce || *c != open)
                             die_at(lineno, "a continuation of a literal must begin with its quote (%c)", open);
                         c++;
@@ -626,7 +652,8 @@ static void read_source(const char *path)
 /* Tokenizer                                                               */
 /* ====================================================================== */
 
-enum { T_EOF, T_WORD, T_NUM, T_STR, T_PIC, T_PERIOD, T_LP, T_RP, T_COLON, T_OP, T_DIR };   /* T_DIR: a >>TURN, taken out of the stream */
+enum { T_EOF, T_WORD, T_NUM, T_STR, T_PIC, T_PERIOD, T_LP, T_RP, T_COLON, T_OP, T_DIR,   /* T_DIR: a >>TURN, taken out of the stream */
+       T_SQL };   /* EXEC SQL ... END-EXEC: s is the statement's text (docs/esql.md) */
 
 typedef struct {
     int kind, line;
@@ -643,6 +670,7 @@ typedef struct {
 
 static Tok *g_tok;
 static int g_ntok, g_tcap;
+static int g_sql_declare;               /* between EXEC SQL BEGIN and END DECLARE SECTION */
 static int g_tok_dbg;
 
 static int g_pending_comma;
@@ -694,8 +722,58 @@ static int hexval(int c)
     return -1;
 }
 
+/* EXEC SQL: the text up to END-EXEC, across lines (joined by a space),
+ * as one T_SQL token -- SQL is never COBOL-tokenized.  Quotes ('...'
+ * strings, "..." identifiers) are respected and -- comments dropped.  *li
+ * and the return value are where tokenizing resumes, just past END-EXEC.
+ * Returns NULL when the word after EXEC is not SQL. */
+static int sql_wordch(int c) { return isalnum(c) || c == '-' || c == '_'; }
+static const char *take_exec_sql(SrcLine *lines, int nlines, int *li, const char *p, int line)
+{
+    int l = *li;
+    const char *q = p;
+    for (;;) {                                   /* the word after EXEC, maybe on a later line */
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q || l + 1 >= nlines) break;
+        l++; q = lines[l].text;
+    }
+    if (strncasecmp(q, "sql", 3) || sql_wordch((unsigned char)q[3])) return NULL;
+    q += 3;
+    size_t cap = 256, n = 0; char *buf = xmalloc(cap);
+    char quote = 0;
+    for (;;) {
+        if (!*q) {
+            /* a line break is a space -- inside a quoted string too: the
+             * NIST suite writes '... AS' and 'TIMESTAMP))' on two lines
+             * with no COBOL continuation, one SQL string (docs/esql.md) */
+            if (++l >= nlines) die_at(line, quote ? "EXEC SQL: a quoted string or name is not closed" : "EXEC SQL without END-EXEC");
+            q = lines[l].text;
+            if (!quote) while (*q == ' ' || *q == '\t') q++;
+            if (n && (quote || buf[n - 1] != ' ')) { if (n + 1 >= cap) buf = xrealloc(buf, cap *= 2); buf[n++] = ' '; }
+            continue;
+        }
+        char c = *q;
+        if (quote) { if (c == quote) quote = 0; }
+        else if (c == '\'' || c == '"') quote = c;
+        else if (c == '-' && q[1] == '-') { q += strlen(q); continue; }          /* a SQL comment to the end of the line */
+        else if ((c == 'e' || c == 'E') && !strncasecmp(q, "end-exec", 8) && !sql_wordch((unsigned char)q[8]) &&
+                 (q == lines[l].text || !sql_wordch((unsigned char)q[-1]))) {
+            while (n && buf[n - 1] == ' ') n--;
+            size_t b = 0; while (b < n && buf[b] == ' ') b++;
+            push_tok(T_SQL, line, buf + b, (int)(n - b));
+            free(buf);
+            *li = l;
+            return q + 8;
+        }
+        if (n + 2 >= cap) buf = xrealloc(buf, cap *= 2);
+        buf[n++] = c == '\t' ? ' ' : c;
+        q++;
+    }
+}
+
 static void tokenize_lines(SrcLine *lines, int nlines)
 {
+    static int sql_decl_tok;    /* between EXEC SQL BEGIN and END DECLARE SECTION */
     int pic_ctx = 0;    /* after PIC/PICTURE [IS]: the next token is a picture */
     for (int li = 0; li < nlines; li++) {
         const char *t = lines[li].text;
@@ -731,8 +809,9 @@ static void tokenize_lines(SrcLine *lines, int nlines)
              * .3.2 rule 1 boolean, .4.2 rule 1 national) */
             #define NO_EMPTY_LIT(n, what, rule) do { if ((n) == 0) die_at(line, "a zero-length %s literal is COBOL 2014 (%s)", what, \
                 g_std < 2002 ? "X3.23-1985: 1 through 160 characters" : rule); \
-                if ((n) > 160) die_at(line, "this %s literal has %d positions, more than 160 (%s; 2023 allows 8,191)", what, (int)(n), \
-                g_std < 2002 ? "X3.23-1985 nonnumeric literals" : rule); } while (0)
+                if ((n) > 8191) die_at(line, "this %s literal has %d positions, more than 8,191, the most any edition allows (%s)", what, (int)(n), \
+                g_std < 2002 ? "X3.23-1985 nonnumeric literals allow 160" : rule); \
+                if ((n) > 160) bp(BP_E20_LONG_LITERAL, line); } while (0)   /* 1985 and 2002 say 160: taken (preservation) */
             /* Hexadecimal literal X'..' */
             if ((c == 'x' || c == 'X') && (p[1] == '\'' || p[1] == '"')) {
                 char q = p[1];
@@ -870,6 +949,18 @@ static void tokenize_lines(SrcLine *lines, int nlines)
             if (isalpha(c)) {
                 const char *e = p;
                 while (is_wordch((unsigned char)*e)) e++;
+                if (e - p == 4 && !strncasecmp(p, "exec", 4)) {
+                    const char *r = take_exec_sql(lines, nlines, &li, e, line);
+                    if (r) {
+                        /* inside a DECLARE SECTION a character set name may be
+                         * qualified (CTS1.CS): the tokenizer keeps it one word */
+                        const char *sq = g_tok[g_ntok - 1].s;
+                        if (!strncasecmp(sq, "begin declare section", 21)) sql_decl_tok = 1;
+                        else if (!strncasecmp(sq, "end declare section", 19)) sql_decl_tok = 0;
+                        p = r; t = lines[li].text; line = lines[li].line; continue;
+                    }
+                }
+                if (sql_decl_tok) while (*e == '.' && isalpha((unsigned char)e[1])) { e++; while (is_wordch((unsigned char)*e)) e++; }
                 Tok *w = push_tok(T_WORD, line, p, (int)(e - p));
                 word_lower(w);
                 if (!strcmp(w->s, "pic") || !strcmp(w->s, "picture")) pic_ctx = 1;
@@ -2440,6 +2531,13 @@ static void parse_data_item1(void)
         Tok *t = cur();
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
         if (!strcmp(t->s, "is")) { advance(); continue; }        /* 01 X IS GLOBAL: a noise word */
+        if (g_sql_declare && !strcmp(t->s, "character") && is_word(peek(1), "set")) {
+            /* ISO 9075's embedded COBOL: a host variable's CHARACTER SET
+             * [IS] name, in a DECLARE SECTION; SQLite has none (docs/esql.md) */
+            advance(); advance(); accept_word("is");
+            if (cur()->kind != T_WORD) die_at(t->line, "CHARACTER SET needs a character set name");
+            advance(); continue;
+        }
         if (t->strong) { s->strong = t->strong; advance(); continue; }   /* expand_types()'s strong-type marker */
         if (!strcmp(t->s, "\001lvl1")) { s->type_lvl1 = 1; advance(); continue; }   /* ... and its group-type marker */
 
@@ -13935,10 +14033,341 @@ static void parse_free(void)
     if (!n) die_at(cur()->line, "FREE needs a pointer item");
 }
 
+
+/* ====================================================================== */
+/* EXEC SQL (docs/esql.md)                                                 */
+/* ====================================================================== */
+
+/* The compiler is the precompiler.  A statement's text arrives whole as
+ * a T_SQL token; host references (:name, :group.name, an indicator as
+ * :name :ind or :name INDICATOR :ind) become ? parameters, bound at run
+ * time by one cob_sql_in / cob_sql_out call each, then the statement
+ * runs through libcob/esql.c.  No SQL parser: the statement kind comes
+ * from its first words and the rest is passed through. */
+
+typedef struct { char name[64], qual[64], ind[64], indqual[64]; int line; } SqlHost;
+typedef struct { char name[64]; char *query; SqlHost *in; int nin; int unit, id, positioned, line; } SqlCursor;
+typedef struct { char *text; int kind, cursor, unit, id; } SqlStmt;
+enum { SQLK_EXEC = 0, SQLK_SELECT_INTO = 1, SQLK_NOOP = 2, SQLK_POSITIONED = 3 };
+
+static SqlCursor *g_sqlcur; static int g_nsqlcur;
+static SqlStmt *g_sqlst; static int g_nsqlst;
+static int g_sql_used;                  /* the program has SQL: compile.sh links the runtime */
+
+static int sqlw(int c) { return isalnum(c) || c == '_' || c == '-' || c == '$' || c == '#' || c == '@'; }
+
+/* the next SQL word from *p (outside quotes); its bytes in w, lowercased */
+static int sql_word(const char **p, char *w, int wn)
+{
+    const char *q = *p;
+    while (*q == ' ') q++;
+    int n = 0;
+    while (sqlw((unsigned char)*q) && n < wn - 1) w[n++] = (char)tolower((unsigned char)*q++);
+    w[n] = 0;
+    *p = q;
+    return n;
+}
+
+/* a host reference at p (just past the ':'): the name, qualifier, and an
+ * indicator; returns the text after it */
+static const char *sql_host(const char *p, SqlHost *h, int line)
+{
+    memset(h, 0, sizeof *h); h->line = line;
+    int n = 0;
+    while (sqlw((unsigned char)*p) && n < 63) h->name[n++] = (char)tolower((unsigned char)*p++);
+    if (!n) die_at(line, "EXEC SQL: ':' must be followed by a host variable's name");
+    if (*p == '.' && sqlw((unsigned char)p[1])) {            /* :group.name */
+        memcpy(h->qual, h->name, sizeof h->qual); n = 0; p++;
+        memset(h->name, 0, sizeof h->name);
+        while (sqlw((unsigned char)*p) && n < 63) h->name[n++] = (char)tolower((unsigned char)*p++);
+    }
+    const char *q = p; while (*q == ' ') q++;
+    const char *ip = NULL;
+    if (*q == ':') ip = q + 1;
+    else if (!strncasecmp(q, "indicator", 9) && !sqlw((unsigned char)q[9])) { q += 9; while (*q == ' ') q++; if (*q == ':') ip = q + 1; }
+    if (ip) {
+        n = 0; p = ip;
+        while (sqlw((unsigned char)*p) && n < 63) h->ind[n++] = (char)tolower((unsigned char)*p++);
+        if (*p == '.' && sqlw((unsigned char)p[1])) {
+            memcpy(h->indqual, h->ind, sizeof h->indqual); n = 0; p++; memset(h->ind, 0, sizeof h->ind);
+            while (sqlw((unsigned char)*p) && n < 63) h->ind[n++] = (char)tolower((unsigned char)*p++);
+        }
+    }
+    return p;
+}
+
+/* the text with each host reference replaced by ?, the references in
+ * order; *nh counts them */
+static char *sql_params(const char *text, SqlHost **hs, int *nh, int line)
+{
+    size_t n = strlen(text);
+    char *out = xmalloc(n + 1); size_t o = 0;
+    char quote = 0;
+    *hs = NULL; *nh = 0; int cap = 0;
+    for (const char *p = text; *p; ) {
+        char c = *p;
+        if (quote) { if (c == quote) quote = 0; out[o++] = *p++; continue; }
+        if (c == '\'' || c == '"') { quote = c; out[o++] = *p++; continue; }
+        if (c == ':' && sqlw((unsigned char)p[1])) {
+            if (*nh == cap) { cap = cap ? cap * 2 : 8; *hs = xrealloc(*hs, (size_t)cap * sizeof **hs); }
+            p = sql_host(p + 1, &(*hs)[(*nh)++], line);
+            out[o++] = '?';
+            continue;
+        }
+        out[o++] = *p++;
+    }
+    out[o] = 0;
+    return out;
+}
+
+/* the top-level (outside quotes and parentheses) word w in text, from
+ * position from; its offset or -1 */
+static int sql_find(const char *text, int from, const char *w)
+{
+    int depth = 0; char quote = 0; size_t wl = strlen(w);
+    for (int i = from; text[i]; i++) {
+        char c = text[i];
+        if (quote) { if (c == quote) quote = 0; continue; }
+        if (c == '\'' || c == '"') { quote = c; continue; }
+        if (c == '(') depth++;
+        else if (c == ')') depth--;
+        else if (!depth && !strncasecmp(text + i, w, wl) && !sqlw((unsigned char)text[i + wl]) &&
+                 (i == 0 || !sqlw((unsigned char)text[i - 1]))) return i;
+    }
+    return -1;
+}
+
+static Sym *sql_sym(const char *name, const char *qual, int line)
+{
+    char *q[1] = { (char *)qual };
+    Sym *s = sym_lookup(name, q, qual[0] ? 1 : 0, line);
+    if (s->is_cond) die_at(line, "EXEC SQL: ':%s' is a condition-name, not a host variable", name);
+    if (s->is_group) die_at(line, "EXEC SQL: ':%s' is a group; host structures are not implemented yet (docs/esql.md, phase 2)", name);
+    if (s->ndims) die_at(line, "EXEC SQL: ':%s' is in a table; subscripted host variables are not implemented yet", name);
+    return s;
+}
+
+/* one cob_sql_in or cob_sql_out call per host reference */
+static void sql_emit_hosts(const SqlHost *hs, int n, const char *fn)
+{
+    for (int i = 0; i < n; i++) {
+        Ref r, ri; memset(&r, 0, sizeof r); memset(&ri, 0, sizeof ri);
+        r.sym = sql_sym(hs[i].name, hs[i].qual, hs[i].line); r.line = hs[i].line;
+        Arg a[4] = { arg_ref(&r), arg_desc(sym_desc(r.sym)), arg_imm(0), arg_imm(0) };
+        if (hs[i].ind[0]) {
+            ri.sym = sql_sym(hs[i].ind, hs[i].indqual, hs[i].line); ri.line = hs[i].line;
+            if (ri.sym->pi.category != PIC_NUMERIC) die_at(hs[i].line, "EXEC SQL: the indicator ':%s' must be a numeric item", hs[i].ind);
+            a[2] = arg_ref(&ri); a[3] = arg_desc(sym_desc(ri.sym));
+        }
+        emit_args(a, 4);
+        emit_call(fn);
+    }
+}
+
+/* after a statement: the program's SQLCODE and SQLSTATE, if it has them */
+static void sql_emit_status(int line)
+{
+    static const char *nm[2] = { "sqlcode", "sqlstate" }, *fn[2] = { "cob_sql_put_sqlcode", "cob_sql_put_sqlstate" };
+    for (int k = 0; k < 2; k++) {
+        Sym *s = sym_lookup_quiet(nm[k]);
+        if (!s || s->is_group || s->is_cond || s->ndims) continue;
+        Ref r; memset(&r, 0, sizeof r); r.sym = s; r.line = line;
+        Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+        emit_args(a, 2);
+        emit_call(fn[k]);
+    }
+}
+
+static SqlCursor *sql_cursor(const char *name, int line, int must)
+{
+    for (int i = 0; i < g_nsqlcur; i++)
+        if (g_sqlcur[i].unit == g_unit && !strcmp(g_sqlcur[i].name, name)) return &g_sqlcur[i];
+    if (must) die_at(line, "EXEC SQL: the cursor '%s' is not declared (DECLARE ... CURSOR FOR must come first)", name);
+    return NULL;
+}
+
+static int sql_stmt(char *text, int kind, int cursor)
+{
+    g_sqlst = xrealloc(g_sqlst, (size_t)(g_nsqlst + 1) * sizeof *g_sqlst);
+    SqlStmt *st = &g_sqlst[g_nsqlst];
+    st->text = text; st->kind = kind; st->cursor = cursor; st->unit = g_unit; st->id = g_nsqlst;
+    return g_nsqlst++;
+}
+
+static const char *sql_unimpl[][2] = {
+    { "include", "2" }, { "whenever", "2" }, { "connect", "2" }, { "disconnect", "2" },
+    { "prepare", "3" }, { "execute", "3" }, { "describe", "3" }, { "allocate", "3" }, { "deallocate", "3" },
+    { "get", "3" }, { "set", "3" }, { 0, 0 } };
+
+/* DECLARE name [...] CURSOR FOR query: recorded, nothing emitted */
+static int sql_declare(const char *text, int line)
+{
+    const char *p = text; char w[64];
+    sql_word(&p, w, sizeof w);                          /* declare */
+    char name[64]; sql_word(&p, name, sizeof name);
+    int f = sql_find(text, 0, "for");
+    if (sql_find(text, 0, "cursor") < 0 || f < 0) return 0;
+    if (sql_cursor(name, line, 0)) die_at(line, "EXEC SQL: the cursor '%s' is declared twice", name);
+    g_sqlcur = xrealloc(g_sqlcur, (size_t)(g_nsqlcur + 1) * sizeof *g_sqlcur);
+    SqlCursor *c = &g_sqlcur[g_nsqlcur];
+    memset(c, 0, sizeof *c);
+    snprintf(c->name, sizeof c->name, "%s", name);
+    const char *q = text + f + 3; while (*q == ' ') q++;
+    c->query = sql_params(q, &c->in, &c->nin, line);
+    c->unit = g_unit; c->id = g_nsqlcur; c->line = line;
+    g_nsqlcur++;
+    return 1;
+}
+
+/* EXEC SQL in the data division: DECLARE SECTION markers, DECLARE CURSOR */
+static void parse_exec_sql_data(void)
+{
+    Tok *t = cur(); advance();
+    if (cur()->kind == T_PERIOD) advance();
+    g_sql_used = 1;
+    const char *p = t->s; char w1[64], w2[64];
+    sql_word(&p, w1, sizeof w1); sql_word(&p, w2, sizeof w2);
+    if ((!strcmp(w1, "begin") || !strcmp(w1, "end")) && !strcmp(w2, "declare")) { g_sql_declare = w1[0] == 'b'; return; }
+    if (!strcmp(w1, "declare") && sql_declare(t->s, t->line)) return;
+    die_at(t->line, "EXEC SQL %s in the DATA DIVISION is not implemented yet (docs/esql.md)", w1);
+}
+
+/* EXEC SQL in the procedure division */
+static void parse_exec_sql(void)
+{
+    Tok *t = cur(); advance();
+    int line = t->line;
+    g_sql_used = 1;
+    const char *p = t->s; char w1[64], w2[64];
+    sql_word(&p, w1, sizeof w1);
+    const char *after1 = p;
+    sql_word(&p, w2, sizeof w2);
+    for (int i = 0; sql_unimpl[i][0]; i++)
+        if (!strcmp(w1, sql_unimpl[i][0]))
+            die_at(line, "EXEC SQL %s is not implemented yet (docs/esql.md, phase %s)", sql_unimpl[i][0], sql_unimpl[i][1]);
+    if ((!strcmp(w1, "begin") || !strcmp(w1, "end")) && !strcmp(w2, "declare")) return;
+    if (!strcmp(w1, "declare")) {
+        if (sql_declare(t->s, line)) return;
+        die_at(line, "EXEC SQL DECLARE: only DECLARE cursor CURSOR FOR is implemented");
+    }
+    if (!strcmp(w1, "open") || !strcmp(w1, "close")) {
+        SqlCursor *c = sql_cursor(w2, line, 1);
+        if (w1[0] == 'o') sql_emit_hosts(c->in, c->nin, "cob_sql_in");
+        char lab[32]; snprintf(lab, sizeof lab, ".Lsqc%d", c->id);
+        emit_la("r3", lab);
+        emit_call(w1[0] == 'o' ? "cob_sql_open" : "cob_sql_close");
+        sql_emit_status(line);
+        return;
+    }
+    if (!strcmp(w1, "fetch")) {
+        /* FETCH [NEXT] [FROM] cursor INTO :a, ... */
+        int in = sql_find(t->s, 0, "into");
+        if (in < 0) die_at(line, "EXEC SQL FETCH needs INTO");
+        char buf[256]; snprintf(buf, sizeof buf, "%.*s", in, t->s);
+        const char *q = buf; char w[64], last[64] = "";
+        sql_word(&q, w, sizeof w);                      /* fetch */
+        while (sql_word(&q, w, sizeof w)) {
+            if (!strcmp(w, "next") || !strcmp(w, "from")) continue;
+            if (!strcmp(w, "prior") || !strcmp(w, "first") || !strcmp(w, "last") || !strcmp(w, "absolute") || !strcmp(w, "relative"))
+                die_at(line, "EXEC SQL FETCH %s: scroll cursors are not implemented (SQLite cursors go forward)", w);
+            snprintf(last, sizeof last, "%s", w);
+        }
+        SqlCursor *c = sql_cursor(last, line, 1);
+        SqlHost *out; int nout;
+        free(sql_params(t->s + in + 4, &out, &nout, line));
+        sql_emit_hosts(out, nout, "cob_sql_out");
+        char lab[32]; snprintf(lab, sizeof lab, ".Lsqc%d", c->id);
+        emit_la("r3", lab);
+        emit_call("cob_sql_fetch");
+        sql_emit_status(line);
+        return;
+    }
+    int kind = SQLK_EXEC, cursor = -1;
+    char *text;
+    SqlHost *in = NULL, *out = NULL; int nin = 0, nout = 0;
+    if (!strcmp(w1, "grant") || !strcmp(w1, "revoke")) {
+        kind = SQLK_NOOP; text = xstrndup(t->s, (int)strlen(t->s));      /* SQLite has no privileges: a behavior point */
+    } else if (!strcmp(w1, "select") && sql_find(t->s, 0, "into") >= 0) {
+        /* SELECT list INTO :a, ... FROM ...: the INTO list is the outputs */
+        int in0 = sql_find(t->s, 0, "into"), fr = sql_find(t->s, in0, "from");
+        if (fr < 0) die_at(line, "EXEC SQL SELECT INTO needs FROM");
+        char *targets = xstrndup(t->s + in0 + 4, fr - in0 - 4);
+        free(sql_params(targets, &out, &nout, line)); free(targets);
+        size_t n = strlen(t->s);
+        char *rest = xmalloc(n + 1);
+        snprintf(rest, n + 1, "%.*s%s", in0, t->s, t->s + fr);
+        text = sql_params(rest, &in, &nin, line); free(rest);
+        kind = SQLK_SELECT_INTO;
+    } else {
+        /* positioned UPDATE / DELETE: WHERE CURRENT OF c becomes rowid = ?,
+         * the cursor's row bound by the runtime (its query selects rowid) */
+        int wc = sql_find(t->s, 0, "where");
+        const char *tail = wc >= 0 ? t->s + wc + 5 : NULL;
+        char cw1[64] = "", cw2[64] = "", cname[64] = "";
+        if (tail) { const char *q = tail; sql_word(&q, cw1, sizeof cw1); sql_word(&q, cw2, sizeof cw2); sql_word(&q, cname, sizeof cname); }
+        if (!strcmp(cw1, "current") && !strcmp(cw2, "of")) {
+            SqlCursor *c = sql_cursor(cname, line, 1);
+            c->positioned = 1; cursor = c->id; kind = SQLK_POSITIONED;
+            size_t n = strlen(t->s);
+            char *rest = xmalloc(n + 32);
+            snprintf(rest, n + 32, "%.*sWHERE rowid = ?", wc, t->s);
+            text = sql_params(rest, &in, &nin, line); free(rest);
+        } else text = sql_params(t->s, &in, &nin, line);
+        (void)after1;
+    }
+    sql_emit_hosts(in, nin, "cob_sql_in");
+    sql_emit_hosts(out, nout, "cob_sql_out");
+    char lab[32]; snprintf(lab, sizeof lab, ".Lsqs%d", sql_stmt(text, kind, cursor));
+    emit_la("r3", lab);
+    emit_call("cob_sql_exec");
+    sql_emit_status(line);
+}
+
+/* the unit's statement and cursor descriptors (libcob/esql.c reads them) */
+static void emit_sql_data(void)
+{
+    for (int i = 0; i < g_nsqlst; i++) {
+        SqlStmt *st = &g_sqlst[i];
+        if (st->unit != g_unit) continue;
+        const char *tl = lit_label((const unsigned char *)st->text, (int)strlen(st->text) + 1);
+        emit("\t.p2align 2");
+        emit(".Lsqs%d:", st->id);
+        emit("\t.word %s", tl);                 /* the SQL text */
+        emit("\t.word 0");                       /* the prepared statement, the runtime's */
+        emit("\t.word %d", st->kind);
+        if (st->cursor >= 0) emit("\t.word .Lsqc%d", st->cursor); else emit("\t.word 0");
+    }
+    for (int i = 0; i < g_nsqlcur; i++) {
+        SqlCursor *c = &g_sqlcur[i];
+        if (c->unit != g_unit) continue;
+        char *q = c->query;
+        if (c->positioned) {
+            /* the row a positioned statement names: SELECT rowid, ... */
+            int s = sql_find(q, 0, "select");
+            if (s < 0) die_at(c->line, "EXEC SQL: cursor '%s' is used with WHERE CURRENT OF but its query is not a SELECT", c->name);
+            size_t n = strlen(q);
+            char *r = xmalloc(n + 16);
+            snprintf(r, n + 16, "%.*sSELECT rowid,%s", s, q, q + s + 6);
+            q = r;
+        }
+        const char *tl = lit_label((const unsigned char *)q, (int)strlen(q) + 1);
+        const char *nl = lit_label((const unsigned char *)c->name, (int)strlen(c->name) + 1);
+        emit("\t.p2align 2");
+        emit(".Lsqc%d:", c->id);
+        emit("\t.word %s", tl);                 /* the query */
+        emit("\t.word 0");                       /* the prepared statement */
+        emit("\t.word %d", c->positioned);       /* its first column is the rowid */
+        emit("\t.word 0");                       /* the runtime's: open, and the current row's rowid */
+        emit("\t.word 0, 0");
+        emit("\t.word %s", nl);                 /* its name, for messages */
+    }
+}
+
 static void parse_statement_1(void)
 {
     apply_dirs();                           /* a >>TURN before this statement */
     Tok *t = cur();
+    if (t->kind == T_SQL) { snprintf(g_cur_stmt, sizeof g_cur_stmt, "EXEC SQL"); parse_exec_sql(); return; }
     if (t->kind != T_WORD) die_at(t->line, "expected a statement, found %s", tok_desc(t));
     const char *v = t->s;
     { int k = 0; for (; v[k] && k < 15; k++) g_cur_stmt[k] = (char)toupper((unsigned char)v[k]); g_cur_stmt[k] = 0; }
@@ -14060,7 +14489,7 @@ static void parse_statement_1(void)
             if (g_in_decl && cur_use_is_global())
                 die_at(t->line, "EXIT PROGRAM in a declarative procedure whose USE is GLOBAL (X3.23-1985 EXIT PROGRAM rule 2; 2023 14.9.14.3 rule 2)");
             if (g_std < 2002 && cur()->kind == T_WORD && is_verb(cur()->s))
-                die_at(t->line, "EXIT PROGRAM must be the last of the imperative statements in its sentence (X3.23-1985 EXIT PROGRAM syntax rule 1)");
+                bp(BP_E21_EXIT_PROGRAM_NOT_LAST, t->line);   /* the NIST SQL suite's dml116s: EXIT PROGRAM then STOP RUN */
             /* a program no calling program controls continues past it
              * (X3.23-1985 EXIT PROGRAM general rule 1; 2023 14.9.14.4 rule 2) */
             emit_call("cob_called");
@@ -15958,7 +16387,7 @@ static void parse_data_division(void)
         }
         if (at_word("working-storage")) {
             advance(); expect_word("section"); expect_period();
-            while (cur()->kind == T_NUM) parse_data_item();
+            while (cur()->kind == T_NUM || cur()->kind == T_SQL) { if (cur()->kind == T_SQL) parse_exec_sql_data(); else parse_data_item(); }
             continue;
         }
         if (at_word("local-storage") && is_word(peek(1), "section")) {
@@ -15967,14 +16396,14 @@ static void parse_data_division(void)
             if (g_std < 2002) die_at(cur()->line, "the LOCAL-STORAGE SECTION is COBOL 2002; compile with -std=2002 (docs/standards.md, Stage B)");
             advance(); advance(); expect_period();
             g_in_local = 1;
-            while (cur()->kind == T_NUM) parse_data_item();
+            while (cur()->kind == T_NUM || cur()->kind == T_SQL) { if (cur()->kind == T_SQL) parse_exec_sql_data(); else parse_data_item(); }
             g_in_local = 0;
             continue;
         }
         if (at_word("linkage") && is_word(peek(1), "section")) {
             advance(); advance(); expect_period();
             g_in_linkage = 1;
-            while (cur()->kind == T_NUM) parse_data_item();
+            while (cur()->kind == T_NUM || cur()->kind == T_SQL) { if (cur()->kind == T_SQL) parse_exec_sql_data(); else parse_data_item(); }
             g_in_linkage = 0;
             continue;
         }
@@ -16050,10 +16479,12 @@ static void emit_act_desc(void)
     }
 }
 
+static void emit_sql_data(void);
 static void emit_unit_data(void)
 {
     emit("");
     emit("\t.data");
+    emit_sql_data();
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_rc) continue;

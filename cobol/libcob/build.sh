@@ -25,3 +25,6 @@ hk="$HERE/libcob_hk.s"
 } > "$hk"
 S32_CC_APPEND="$hk" s32_cc_obj "$HERE/libcob.s32o" "$HERE/libcob.c" -I"$HERE"
 echo "built: $HERE/libcob.s32o ($s32_cc_backend)"
+# the EXEC SQL runtime (docs/esql.md), linked only into programs with SQL
+s32_cc_obj "$HERE/esql.s32o" "$HERE/esql.c" -I"$HERE" -I"$ROOT/sqlite"
+echo "built: $HERE/esql.s32o"

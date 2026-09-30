@@ -70,6 +70,14 @@ if [ -n "$builtins" ]; then link+=("$builtins"); fi
 for f in "${objs[@]+"${objs[@]}"}"; do link+=("$f"); done
 # The MMIO libc: files (fopen and friends) live only there, and the
 # linker's --mmio gives the emulator the ring buffers to serve them.
-"$S32_LD" --mmio 64K --stack-size 256K --heap-size 64M -o "$out" "$S32_RT/crt0.s32o" "${link[@]}" \
-    "$S32_LIBCOB" "$S32_RT/libc_mmio.s32a" "$S32_RT/libs32.s32a" >/dev/null
+# EXEC SQL (docs/esql.md): the SQL runtime and SQLite, and room for them
+# -- only when a unit calls into it, so other programs stay as they were
+: "${S32_ESQL:=$HERE/libcob/esql.s32o}"
+: "${S32_SQLITE:=$ROOT/sqlite/out/libsqlite3.s32a}"
+sql=(); code=()
+if grep -q "cob_sql_" "$base".s "$base"-*.s 2>/dev/null; then
+    sql=("$S32_ESQL" "$S32_SQLITE"); code=(--code-size 2M)
+fi
+"$S32_LD" --mmio 64K --stack-size 256K --heap-size 64M ${code[@]+"${code[@]}"} -o "$out" "$S32_RT/crt0.s32o" "${link[@]}" \
+    "$S32_LIBCOB" ${sql[@]+"${sql[@]}"} "$S32_RT/libc_mmio.s32a" "$S32_RT/libs32.s32a" >/dev/null
 echo "$out"
