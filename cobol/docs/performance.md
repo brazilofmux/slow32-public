@@ -142,7 +142,7 @@ native types) can use the top bit.
 
 | kernel | guest instructions (before -> after) | slow32-dbt |
 |---|---|---|
-| karith (COMP-3/DISPLAY COMPUTE ROUNDED, ADD, DIVIDE, MULTIPLY) | 24.9 G -> about a quarter of it | 1.57 s -> 0.49 s |
+| karith (COMP-3/DISPLAY COMPUTE ROUNDED, ADD, DIVIDE, MULTIPLY) | 24.9 G -> 11.8 G (what is left is mostly the fetch and store, which the DBT runs natively: hence the time falls further than the count) | 1.57 s -> 0.49 s |
 
 `tests/free/hotdec` must equal the stack's output, and does: `-fno-hot-arith`
 gives the stack's answers, 98 stack calls in it against 14. GnuCOBOL
