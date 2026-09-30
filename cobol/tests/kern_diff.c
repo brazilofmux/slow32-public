@@ -96,6 +96,9 @@ int main(void)
             int vscale = (int)rn(19), opts = (int)rn(4);
             int r = cob_put_num_x(p, &d, v, vscale, opts);
             mix((unsigned long long)r);
+#ifdef KERN_DIFF_VERBOSE
+            printf("%d put %lld %d %d pic %s -> %d\n", it, v, vscale, opts, d.pic ? d.pic : "-", r);
+#endif
             if (shown < 6 && !r) {
                 printf("put %lld scale %d usage %d digits %d scale %d flags %d ->", v, vscale, d.usage, d.digits, d.scale, d.flags);
                 for (unsigned i = 0; i < d.size; i++) printf(" %02x", p[i]);
@@ -105,6 +108,11 @@ int main(void)
         }
         long long g = cob_get_num(p, &d);
         mix((unsigned long long)g);
+#ifdef KERN_DIFF_VERBOSE
+        printf("%d u%d d%d s%d f%d z%u g%lld b", it, d.usage, d.digits, d.scale, d.flags, d.size, g);
+        for (int i = 0; i < (int)sizeof buf; i++) printf("%02x", buf[i]);
+        printf("\n");
+#endif
         for (int i = 0; i < (int)sizeof buf; i++) mix(buf[i]);
     }
     printf("kern_diff: %d cases, hash %016llx\n", N, h);

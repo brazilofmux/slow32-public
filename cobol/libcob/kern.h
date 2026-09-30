@@ -111,12 +111,19 @@ KFN unsigned long long udiv_pow10(unsigned long long a, int m, unsigned long lon
     return q;
 }
 
+/* -u as a signed value.  Every negation of a value that may be INT64_MIN
+ * goes through unsigned arithmetic here: -v is undefined there, and the
+ * two compilers that build this file (the slow32 clang, stage08's cc)
+ * answered it differently (kern-differential, 2026-09-29).  The unsigned
+ * to signed conversion is two's complement on every compiler we use. */
+KFN long long k_neg(unsigned long long u) { return (long long)(0 - u); }
+
 /* v / 10^m with C's truncation toward zero, the remainder v's sign */
 KFN long long div_pow10(long long v, int m, long long *rem)
 {
     unsigned long long r, q = udiv_pow10(v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v, m, &r);
-    if (rem) *rem = v < 0 ? -(long long)r : (long long)r;
-    return v < 0 ? -(long long)q : (long long)q;
+    if (rem) *rem = v < 0 ? k_neg(r) : (long long)r;
+    return v < 0 ? k_neg(q) : (long long)q;
 }
 
 /* ---- cob_get_num: DISPLAY, PACKED-DECIMAL and BINARY of up to 18 digits */
@@ -223,7 +230,8 @@ KFN int cob_k_put_scale(const cob_kdesc *d, int eff, long long v, int vscale, in
         int m = vscale - d->scale;
         long long k = pow10tab[m > 18 ? 18 : m], r;
         long long q = div_pow10(v, m, &r);
-        if ((opts & 1) && (r < 0 ? -r : r) * 2 >= k) q += (v < 0) ? -1 : 1;
+        unsigned long long ar = r < 0 ? 0 - (unsigned long long)r : (unsigned long long)r;
+        if ((opts & 1) && ar >= ((unsigned long long)k + 1) / 2) q += (v < 0) ? -1 : 1;   /* |r| * 2 >= k, without the overflow */
         v = q;
     } else if (vscale < d->scale) {
         /* scaling up can pass 64 bits (12345 into 9V9(17)): the size error
@@ -231,7 +239,7 @@ KFN int cob_k_put_scale(const cob_kdesc *d, int eff, long long v, int vscale, in
          * cannot survive the receiver's width are dropped before the shift */
         int k = d->scale - vscale;
         if (!(d->flags & K_F_NOTRUNC) && d->digits <= 18) {
-            unsigned long long a = v < 0 ? (unsigned long long)(-v) : (unsigned long long)v;
+            unsigned long long a = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v;
             int lim = eff - d->scale + vscale;           /* integer positions, in v's scale */
             if (opts & 2) {
                 if (lim < 0 ? a != 0 : (lim <= 18 && a >= (unsigned long long)pow10tab[lim])) return 1;
@@ -239,11 +247,11 @@ KFN int cob_k_put_scale(const cob_kdesc *d, int eff, long long v, int vscale, in
             int keep = eff - k;
             if (keep <= 0) v = 0; else if (keep <= 18 && a >= (unsigned long long)pow10tab[keep]) div_pow10(v, keep, &v);
         }
-        if (v) v *= pow10tab[k > 18 ? 18 : k];
+        if (v) v = (long long)((unsigned long long)v * (unsigned long long)pow10tab[k > 18 ? 18 : k]);   /* wraps, as the guest always has */
     }
 
     int neg = v < 0;
-    unsigned long long mag = neg ? (unsigned long long)(-v) : (unsigned long long)v;
+    unsigned long long mag = neg ? 0 - (unsigned long long)v : (unsigned long long)v;
     if (d->flags & K_F_NOTRUNC) {
         if ((opts & 2) && d->size < 8) {
             unsigned long long lim = 1ULL << (d->size * 8 - ((d->flags & K_F_SIGNED) ? 1 : 0));
@@ -266,7 +274,7 @@ KFN int cob_k_put_num(unsigned char *p, const cob_kdesc *d, int eff, long long v
     if (cob_k_put_scale(d, eff, v, vscale, opts, &neg, &mag)) return 1;
     switch (d->usage) {
     case K_U_BINARY: {
-        long long s = neg ? -(long long)mag : (long long)mag;
+        long long s = neg ? k_neg(mag) : (long long)mag;
         for (unsigned i = 0; i < d->size; i++) p[i] = (unsigned char)(s >> (8 * i));
         break;
     }
