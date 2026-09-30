@@ -2,10 +2,21 @@
 
 ## Background
 
-SLOW-32 has a 32-cycle hardware MUL instruction but no hardware FPU. All
-floating-point math runs in software. The initial hypothesis was that CORDIC
-(which uses only shifts and adds) would outperform Taylor series (which
-relies heavily on multiplication) on this architecture.
+SLOW-32 has had IEEE 754 f32 and f64 instructions since 2026-02-01
+(f432799d): FADD/FSUB/FMUL/FDIV/FSQRT in both widths, plus compares and
+conversions. `math_soft.c` is "soft" only in the sense that it is C rather
+than a single instruction; it compiles to those FP instructions. The integer
+MUL/MULH/MULHU cost 32 cycles in `slow32-fast`'s cycle model and DIV/REM 64;
+every FP instruction costs one.
+
+An earlier version of this document, written on 2026-02-09, said SLOW-32 had
+no hardware FPU and that all floating-point math ran in software. That was
+already wrong when it was written, and the reasoning below has been corrected
+to match. The measurements were taken with the FP instructions in place.
+
+The initial hypothesis was that CORDIC (which uses only shifts and adds)
+would outperform Taylor series (which relies heavily on multiplication) on
+this architecture.
 
 This turned out to be wrong.
 
@@ -21,7 +32,10 @@ This turned out to be wrong.
 | exp(2.0)   |          460 |        1,332 |           630 |         1,820 |
 
 Taylor is **2-3.4x faster by instruction count** and **2-4.4x faster by
-cycle count** (which includes the 32-cycle MUL penalty).
+cycle count**. The cycle counts include the 32-cycle integer MUL, but for
+Taylor that penalty comes from the loop's integer denominator
+`2*i*(2*i+1)`, one MUL per term (15 x 31 = 465 of sin's ~590 extra
+cycles), not from the floating-point multiplies, which cost one cycle.
 
 ### Code Size
 
@@ -52,21 +66,29 @@ The original reasoning was:
 > MUL takes 32 cycles on SLOW-32. CORDIC replaces multiplications with
 > shifts and adds (1 cycle each). Therefore CORDIC should be faster.
 
-This ignores iteration count. Double-precision CORDIC needs **53
-iterations** (one per mantissa bit) of a multi-instruction loop body
-(shift, compare, conditional add/subtract, for each of x, y, and z).
-That's ~950-1300 instructions per call.
+Its premise was wrong twice over:
 
-Taylor series for sin/cos converges in **~15 terms** with range reduction
-to [-pi, pi]. Each term is one multiply and one add. Even at 32
-cycles/multiply, 15 iterations * ~18 instructions ≈ 270 instructions,
-with ~870 cycles. The 32-cycle MUL is expensive per-instruction, but
-there aren't enough of them to overcome CORDIC's iteration overhead.
+- **The multiplies in question are FP, and they cost one cycle.** The
+  32-cycle MUL is the integer instruction. Taylor's floating-point
+  multiplies and divides are single FMUL.D/FDIV.D instructions.
+- **This CORDIC does not shift.** `math_cordic.c` iterates in doubles, so
+  each "shift" is an FMUL.D by a halving `p2`. Every one of its 52
+  iterations does two FP multiplies plus a third to halve `p2`, plus a
+  compare, a table load and three add/subtracts: more FP multiplication
+  than the Taylor series it was meant to avoid.
 
-The break-even point would require MUL to cost roughly **100+ cycles**
-before CORDIC becomes competitive for double precision. For single
-precision (24 iterations), CORDIC would be closer but still likely
-slower than a well-tuned Taylor with early termination.
+So the contest came down to iteration count. Double-precision CORDIC
+needs **52 iterations** (about one per mantissa bit); that is ~950-1300
+instructions per call. The Taylor series for sin/cos runs **15 terms**
+after range reduction to [-pi, pi], at ~18 instructions a term: ~270
+instructions.
+
+An integer, fixed-point CORDIC with real shifts would avoid the FP
+multiplies, but it would still need ~52 iterations against Taylor's 15
+terms, plus conversions in and out of fixed point, against one-cycle
+FMUL.D. That is not a race it can win on this ISA. For single precision
+(24 iterations) it would be closer, but still likely slower than a
+well-tuned Taylor with early termination.
 
 ## When CORDIC Would Win
 
@@ -93,8 +115,9 @@ is needed.
 
 Benchmark: `examples/math_shootout.c` with `examples/math_taylor.c`
 providing explicit Taylor implementations and `runtime/math_cordic.c`
-providing CORDIC. Run on `slow32-fast` emulator with cycle-accurate MUL
-timing (32 cycles). Each function called 1000 times in isolation to get
+providing CORDIC. Run on the `slow32-fast` emulator, whose cycle model
+charges 32 cycles for integer MUL/MULH/MULHU, 64 for DIV/REM, and one
+for each FP instruction. Each function called 1000 times in isolation to get
 stable per-call instruction and cycle counts.
 
 Reference values for accuracy tests are IEEE double constants computed

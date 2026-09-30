@@ -170,7 +170,8 @@ The RTL (`rtl/slow32/`) provides CPU-specific implementations:
 
 - Stack frame intrinsics (`get_frame`, `Sptr`, `get_caller_addr`)
 - SetJmp/LongJmp for exception handling
-- Soft-float FPU initialization (no hardware FPU)
+- Soft-float FPU initialization for the default `fpu_soft` mode (the
+  `-CfSLOW32` mode uses the hardware FP instructions; see FPU notes below)
 - Non-atomic fallbacks for `InterlockedIncrement` etc. (single-core)
 - Memory barriers (no-ops on single-core)
 

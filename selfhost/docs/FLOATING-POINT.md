@@ -129,10 +129,13 @@ float  sqrtf(float x)  { return __builtin_sqrtf(x); }  /* FSQRT.S */
 
 ### math_soft.c -- Taylor-series transcendentals
 
-Full soft-float implementations of all math.h functions. Uses Taylor series
-with range reduction. Benchmarks show Taylor is **2-4.4x faster** than
-CORDIC on SLOW-32 due to the 32-cycle hardware MUL (CORDIC needs ~53
-iterations of shift-add loops). See `docs/MATH_COMPARISON.md`.
+C implementations of the math.h transcendentals. "Soft" means C rather
+than a single instruction: they compile to the native FADD.D/FMUL.D/FDIV.D
+instructions. Uses Taylor series with range reduction. Benchmarks show
+Taylor is **2-4.4x faster** than CORDIC on SLOW-32. That is because of
+iteration count (52 CORDIC iterations against 15 Taylor terms), not the
+32-cycle integer MUL: FP instructions cost one cycle, and `math_cordic.c`'s
+"shifts" are FMUL.D themselves. See `docs/MATH_COMPARISON.md`.
 
 ### dtoa.c -- Double-to-string conversion
 
