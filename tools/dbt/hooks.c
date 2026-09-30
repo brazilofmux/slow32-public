@@ -16,6 +16,17 @@
 #ifndef HK_TAG_BUILTINS
 #define HK_TAG_BUILTINS ""
 #endif
+#ifndef HK_TAG_COBKERN
+#define HK_TAG_COBKERN ""
+#endif
+
+// libcob's kernels, the same source libcob compiles (docs/dbt-hooks.md)
+#if __has_include("../../cobol/libcob/kern.h")
+#include "../../cobol/libcob/kern.h"
+#define HAVE_COBKERN 1
+#else
+#define HAVE_COBKERN 0
+#endif
 
 #define R(n) (cpu->regs[n])
 #define U64(lo, hi) ((uint64_t)R(lo) | ((uint64_t)R(hi) << 32))
@@ -83,6 +94,50 @@ static int hk_moddi3(dbt_cpu_state_t *cpu, uint8_t *mem)
     return HK_DONE;
 }
 
+// ---- cobol/libcob/kern.h: numeric fetch and store ---------------------
+
+#if HAVE_COBKERN
+// the descriptor at guest address a, copied out (it need not be aligned)
+static int hk_desc(dbt_cpu_state_t *cpu, uint8_t *mem, uint32_t a, cob_kdesc *d)
+{
+    const void *g = hk_ptr(cpu, mem, a, sizeof *d, 0);
+    if (!g) return 0;
+    memcpy(d, g, sizeof *d);
+    return 1;
+}
+
+// long long cob_get_num(const void *p, const cob_desc *d)
+static int hk_cob_get_num(dbt_cpu_state_t *cpu, uint8_t *mem)
+{
+    cob_kdesc d;
+    if (!hk_desc(cpu, mem, R(4), &d) || !cob_k_get_ok(&d) || !d.size) return HK_DECLINE;
+    const unsigned char *p = hk_ptr(cpu, mem, R(3), d.size, 0);
+    if (!p) return HK_DECLINE;
+    RET64((uint64_t)cob_k_get_num(p, &d));
+    return HK_DONE;
+}
+
+// int cob_put_num_x(void *p, const cob_desc *d, long long v, int vscale, int opts)
+static int hk_cob_put_num_x(dbt_cpu_state_t *cpu, uint8_t *mem)
+{
+    cob_kdesc d;
+    if (!hk_desc(cpu, mem, R(4), &d) || !cob_k_put_ok(&d) || !d.size) return HK_DECLINE;
+    int eff = d.digits;
+    if (d.pic) {                        // the PICTURE's P symbols hold no digit
+        for (uint32_t a = d.pic; ; a++) {
+            const char *c = hk_ptr(cpu, mem, a, 1, 0);
+            if (!c || a - d.pic > 256) return HK_DECLINE;
+            if (!*c) break;
+            if (*c == 'P') eff--;
+        }
+    }
+    unsigned char *p = hk_ptr(cpu, mem, R(3), d.size, 1);
+    if (!p) return HK_DECLINE;
+    R(1) = (uint32_t)cob_k_put_num(p, &d, eff, (long long)U64(5, 6), (int)R(7), (int)R(8));
+    return HK_DONE;
+}
+#endif
+
 // ---- the definitions --------------------------------------------------
 
 typedef struct {
@@ -96,6 +151,10 @@ static const hook_def_t hook_defs[] = {
     { "__umoddi3", HK_TAG_BUILTINS, hk_umoddi3 },
     { "__divdi3",  HK_TAG_BUILTINS, hk_divdi3 },
     { "__moddi3",  HK_TAG_BUILTINS, hk_moddi3 },
+#if HAVE_COBKERN
+    { "cob_get_num",   HK_TAG_COBKERN, hk_cob_get_num },
+    { "cob_put_num_x", HK_TAG_COBKERN, hk_cob_put_num_x },
+#endif
 };
 #define NDEFS ((int)(sizeof hook_defs / sizeof hook_defs[0]))
 

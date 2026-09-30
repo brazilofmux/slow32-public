@@ -179,6 +179,17 @@ if [ -z "$SKIPPED" ]; then
     fi
 fi
 
+# --- Gate 1d: the DBT hooks over libcob/kern.h (docs/dbt-hooks.md) ------
+# slow32-fast (no hooks) against slow32-dbt (hooks) on random descriptors;
+# needs both engines built in the tree.
+if [ -x "$CDIR/../tools/dbt/slow32-dbt" ] && [ -x "$CDIR/../tools/emulator/slow32-fast" ]; then
+    if "$HERE/kern-differential.sh" > "$W/kern.out" 2>&1; then
+        report "kern-differential" 0 "$(tail -1 "$W/kern.out" | sed 's/^kern-differential: //; s/, hooks called.*//')"
+    else
+        report "kern-differential" 1 "$(head -1 "$W/kern.out")"
+    fi
+fi
+
 # --- Gate 1b: the key-file B+tree (host, libcob/btree.h) ---------------
 # Six shapes, ~8s of silence on a fast host and more on a busy one -- say so,
 # or the pause after pictest reads as a hang (it was reported as one).

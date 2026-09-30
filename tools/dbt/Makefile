@@ -56,8 +56,11 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h shadow_in
 HK_SRC_BUILTINS = $(wildcard ../../runtime/builtins.c)
 HK_TAG_BUILTINS := $(if $(HK_SRC_BUILTINS),$(shell cksum < $(HK_SRC_BUILTINS) | awk '{printf "%08x", $$1}'))
 
-hooks.o: hooks.c $(HDRS) $(HK_SRC_BUILTINS)
-	$(CC) $(CFLAGS) -DHK_TAG_BUILTINS='"$(HK_TAG_BUILTINS)"' -c -o $@ $<
+HK_SRC_COBKERN = $(wildcard ../../cobol/libcob/kern.h)
+HK_TAG_COBKERN := $(if $(HK_SRC_COBKERN),$(shell cksum < $(HK_SRC_COBKERN) | awk '{printf "%08x", $$1}'))
+
+hooks.o: hooks.c $(HDRS) $(HK_SRC_BUILTINS) $(HK_SRC_COBKERN)
+	$(CC) $(CFLAGS) -DHK_TAG_BUILTINS='"$(HK_TAG_BUILTINS)"' -DHK_TAG_COBKERN='"$(HK_TAG_COBKERN)"' -c -o $@ $<
 
 # Main target
 TARGET = slow32-dbt

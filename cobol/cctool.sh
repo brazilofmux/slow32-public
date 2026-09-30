@@ -72,6 +72,9 @@ s32_cc_obj() {
         echo "  In a container, .c inputs need slow32:toolchain, not slow32:cobol." >&2
         return 1
     fi
+    # S32_CC_APPEND: assembly to add to this object -- libcob's hook
+    # thunks (build.sh), which the self-hosted cc has no way to spell in C
+    if [ -n "${S32_CC_APPEND:-}" ]; then cat "$S32_CC_APPEND" >> "$_base.s"; fi
     "$S32_AS" "$_base.s" "$_o" >/dev/null
 }
 
