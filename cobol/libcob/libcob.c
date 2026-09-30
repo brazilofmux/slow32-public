@@ -1179,10 +1179,14 @@ void cob_content_pop(int k)
 
 /* DECIMAL-POINT IS COMMA: the program's own; a called program's is restored on its exit */
 int cob_dp_comma;
-int cob_set_decimal_point(int comma) { int old = cob_dp_comma; cob_dp_comma = comma; return old; }
+/* the edited fetch and store's locale argument, kept current here so the
+ * compiled code passes it straight to the hooked cob_put_edited /
+ * cob_get_edited (s32-cobc dx_store) */
+int cob_locale_word = '$' << 8;
+int cob_set_decimal_point(int comma) { int old = cob_dp_comma; cob_dp_comma = comma; cob_locale_word = loc_word(); return old; }
 /* CURRENCY SIGN: the character printed where the picture says '$' */
 int cob_currency = '$';
-int cob_set_currency(int c) { int old = cob_currency; cob_currency = c ? c : '$'; return old; }
+int cob_set_currency(int c) { int old = cob_currency; cob_currency = c ? c : '$'; cob_locale_word = loc_word(); return old; }
 
 static int cmp_bytes(const unsigned char *a, int na, const unsigned char *b, int nb)
 {
@@ -3275,6 +3279,11 @@ void cob_unstr_into(void *dst, const cob_desc *dd, void *ddst, const cob_desc *d
         int room = chars - ((dd->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) ? 1 : 0);
         if (room < 0) room = 0;
         i = start + room * cu.w; if (i > cu.slen) i = cu.slen;
+    } else if (cu.nd == 1 && cu.d[0].n == 1 && cu.w == 1) {
+        /* one delimiter of one byte, the common case: a plain scan */
+        char c = cu.d[0].p[0];
+        while (i < cu.slen && cu.src[i] != c) i++;
+        if (i < cu.slen) hit = 0;
     } else {
         for (; i < cu.slen && hit < 0; i += cu.w)
             for (int k = 0; k < cu.nd; k++)

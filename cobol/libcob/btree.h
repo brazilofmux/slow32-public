@@ -58,15 +58,15 @@ typedef struct {
     /* the cache */
     unsigned char *pages;         /* ncache pages */
     unsigned *pno;                /* page number in each frame, ~0u empty */
-    unsigned *tick;               /* last use */
+    unsigned *tick;               /* referenced since the clock hand last passed (CLOCK) */
     unsigned char *dirty, *pin;
     unsigned ncache, clock;
     unsigned bm_hint;             /* no free slot below this (not persisted) */
     unsigned mod;                 /* bumped by every insert and removal: a remembered position is stale after */
-    unsigned short *hmap;         /* pno -> frame guess, direct-mapped */
+    unsigned *hmap, *hnext, hmask;   /* pno -> frame: chained buckets, hmask + 1 of them */
+    unsigned hand;                /* the CLOCK hand */
     void (*fatal)(const char *);
 } btf;
-#define BT_HMAP 1024u
 
 static void bt_die(btf *b, const char *m) { b->fatal(m); exit(3); }
 
@@ -75,14 +75,26 @@ static unsigned bt_get32(const unsigned char *p) { return p[0] | (p[1] << 8) | (
 static void bt_putbe(unsigned char *p, unsigned v) { p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v; }
 static unsigned bt_getbe(const unsigned char *p) { return ((unsigned)p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]; }
 
-/* ---- pages: a pinned LRU cache over lseek/read/write ---- */
-
+/* ---- pages: a pinned CLOCK cache over lseek/read/write ----
+ * The frame of a page by exact hash (a miss is an empty bucket, not a
+ * scan of the whole cache, which the direct-mapped guess this replaces
+ * fell back to), and the victim by CLOCK's second chance instead of a
+ * least-recently-used scan: both were linear in the cache on every miss
+ * (the kidx kernel, 16% of its instructions in bt_pin). */
 static int bt_frame_of(btf *b, unsigned pno)
 {
-    unsigned g = b->hmap[pno % BT_HMAP];
-    if (g < b->ncache && b->pno[g] == pno) return (int)g;
-    for (unsigned i = 0; i < b->ncache; i++) if (b->pno[i] == pno) { b->hmap[pno % BT_HMAP] = (unsigned short)i; return (int)i; }
+    for (unsigned i = b->hmap[pno & b->hmask]; i != ~0u; i = b->hnext[i]) if (b->pno[i] == pno) return (int)i;
     return -1;
+}
+static void bt_hash_add(btf *b, unsigned i)
+{
+    unsigned h = b->pno[i] & b->hmask;
+    b->hnext[i] = b->hmap[h]; b->hmap[h] = i;
+}
+static void bt_hash_del(btf *b, unsigned i)
+{
+    unsigned *pp = &b->hmap[b->pno[i] & b->hmask];
+    while (*pp != ~0u) { if (*pp == i) { *pp = b->hnext[i]; return; } pp = &b->hnext[*pp]; }
 }
 
 static void bt_write_frame(btf *b, unsigned i)
@@ -95,16 +107,21 @@ static void bt_write_frame(btf *b, unsigned i)
 
 static unsigned bt_victim(btf *b)
 {
-    int best = -1;
-    for (unsigned i = 0; i < b->ncache; i++) {
+    /* two sweeps clear every reference bit; a third finding nothing
+     * means every frame is pinned */
+    for (unsigned n = 0; n < 3 * b->ncache; n++) {
+        unsigned i = b->hand;
+        if (++b->hand == b->ncache) b->hand = 0;
         if (b->pno[i] == ~0u) return i;
         if (b->pin[i]) continue;
-        if (best < 0 || b->tick[i] < b->tick[best]) best = (int)i;
+        if (b->tick[i]) { b->tick[i] = 0; continue; }
+        bt_write_frame(b, i);
+        bt_hash_del(b, i);
+        b->pno[i] = ~0u;
+        return i;
     }
-    if (best < 0) bt_die(b, "index: page cache exhausted (S32_INDEX_CACHE)");
-    bt_write_frame(b, (unsigned)best);
-    b->pno[best] = ~0u;
-    return (unsigned)best;
+    bt_die(b, "index: page cache exhausted (S32_INDEX_CACHE)");
+    return 0;
 }
 
 /* the page, pinned; bt_unpin when done with the pointer */
@@ -121,9 +138,9 @@ static unsigned char *bt_pin(btf *b, unsigned pno)
             if ((unsigned)n < BT_PAGE) memset(p + n, 0, BT_PAGE - (unsigned)n);
         } else memset(p, 0, BT_PAGE);
         b->pno[i] = pno; b->dirty[i] = 0; b->pin[i] = 0;
-        b->hmap[pno % BT_HMAP] = (unsigned short)i;
+        bt_hash_add(b, (unsigned)i);
     }
-    b->tick[i] = ++b->clock;
+    b->tick[i] = 1;
     b->pin[i]++;
     return b->pages + (size_t)i * BT_PAGE;
 }
@@ -204,16 +221,19 @@ static void bt_cache_alloc(btf *b, unsigned ncache)
     for (;;) {
         b->pages = malloc((size_t)ncache * BT_PAGE);
         b->pno = malloc(ncache * sizeof *b->pno); b->tick = malloc(ncache * sizeof *b->tick);
-        b->dirty = malloc(ncache); b->pin = malloc(ncache); b->hmap = malloc(BT_HMAP * sizeof *b->hmap);
-        if (b->pages && b->pno && b->tick && b->dirty && b->pin && b->hmap) break;
-        free(b->pages); free(b->pno); free(b->tick); free(b->dirty); free(b->pin); free(b->hmap);
+        unsigned nb = 1; while (nb < 2 * ncache) nb <<= 1;
+        b->hmask = nb - 1;
+        b->dirty = malloc(ncache); b->pin = malloc(ncache);
+        b->hmap = malloc(nb * sizeof *b->hmap); b->hnext = malloc(ncache * sizeof *b->hnext);
+        if (b->pages && b->pno && b->tick && b->dirty && b->pin && b->hmap && b->hnext) break;
+        free(b->pages); free(b->pno); free(b->tick); free(b->dirty); free(b->pin); free(b->hmap); free(b->hnext);
         if (ncache <= BT_MINCACHE) bt_die(b, "index: out of memory for the page cache");
         ncache /= 2; if (ncache < BT_MINCACHE) ncache = BT_MINCACHE;
     }
     b->ncache = ncache;
     for (unsigned i = 0; i < ncache; i++) { b->pno[i] = ~0u; b->tick[i] = 0; b->dirty[i] = 0; b->pin[i] = 0; }
-    for (unsigned i = 0; i < BT_HMAP; i++) b->hmap[i] = 0xFFFF;
-    b->clock = 0; b->bm_hint = 0;
+    for (unsigned i = 0; i <= b->hmask; i++) b->hmap[i] = ~0u;
+    b->clock = 0; b->hand = 0; b->bm_hint = 0;
 }
 
 /* a new, empty key file: keys[] describe the trees; each gets an empty root leaf */
@@ -246,7 +266,7 @@ static int bt_open(btf *b, const char *path, int rdonly, unsigned ncache, void (
     if (b->fd < 0) return 0;
     bt_cache_alloc(b, ncache);
     b->npages = 1;                                   /* enough to read page 0 */
-    if (!bt_hdr_read(b)) { close(b->fd); free(b->pages); free(b->pno); free(b->tick); free(b->dirty); free(b->pin); free(b->hmap); memset(b, 0, sizeof *b); b->fd = -1; return 0; }
+    if (!bt_hdr_read(b)) { close(b->fd); free(b->pages); free(b->pno); free(b->tick); free(b->dirty); free(b->pin); free(b->hmap); free(b->hnext); memset(b, 0, sizeof *b); b->fd = -1; return 0; }
     return 1;
 }
 
@@ -261,7 +281,7 @@ static void bt_close(btf *b, int save)
     if (b->fd < 0) return;
     if (save) bt_flush(b);
     close(b->fd);
-    free(b->pages); free(b->pno); free(b->tick); free(b->dirty); free(b->pin); free(b->hmap);
+    free(b->pages); free(b->pno); free(b->tick); free(b->dirty); free(b->pin); free(b->hmap); free(b->hnext);
     memset(b, 0, sizeof *b); b->fd = -1;
 }
 

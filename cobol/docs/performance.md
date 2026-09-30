@@ -189,3 +189,35 @@ its length.
 **Tests, each against GnuCOBOL:** `tests/2002/hotfn` (the intrinsics),
 `tests/free/inspfast` (table sweeps beside the general forms),
 `tests/free/cmprm` (reference-modified compares).
+
+## 2026-09-30, continued: loops, edited stores, UNSTRING, the index cache
+
+- **Edited stores and fetches.** The DBT's `cob_put_num_x` hook declines
+  a numeric-edited receiver, so every edited MOVE went through the
+  guest-side dispatch in `cob_put_num_x_impl` before reaching the hooked
+  `cob_put_edited`. libcob now keeps the locale word current
+  (`cob_locale_word`: DECIMAL-POINT IS COMMA and the currency sign), and
+  the register paths call `cob_put_edited` and `cob_get_edited`
+  directly. A numeric MOVE to an edited item, and from one, takes this
+  path. kedit: 0.74 s -> 0.59 s, no declines left.
+- **Loop steps and bounds.** Every PERFORM VARYING and SEARCH step is
+  `ADD 1`: the hot store now adds a literal that fits an immediate with
+  `addi`, instead of spilling it to SLOT_A and reloading it. A hot
+  compare against a constant loads the constant into the register
+  directly. The serial SEARCH's fixed bound is one `slt` against it.
+- **Short equality compares** (at most 16 bytes, native collating
+  sequence) are the xor of word, halfword and byte chunks; unaligned
+  loads are SLOW-32's by ruling. No call for a serial SEARCH's key.
+- **UNSTRING with one delimiter of one byte** is a plain scan. kstring:
+  0.31 s -> 0.25 s.
+- **The indexed files' page cache.** btree.h found a page by a
+  direct-mapped guess and fell back to a scan of the whole cache on
+  every miss, and it chose a victim by a least-recently-used scan, also
+  over the whole cache.
+  - It is now an exact chained hash, where a miss is an empty bucket,
+    and CLOCK's second chance for the victim.
+  - `tests/bt_test`'s six shapes pass under a 16-page cache.
+  - kidx: 0.48 s -> 0.39 s, and the files it writes are byte-identical.
+- **`-fno-hot-arith`** now turns the peepholes above off too, so the
+  Open Systems suite still compiles byte-identical to the baseline with
+  it.

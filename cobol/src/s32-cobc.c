@@ -4331,6 +4331,7 @@ static void emit_li(const char *rd, long v)
 static int g_wide;
 static int g_saw_wide;              /* an operand past 18 digits was met (set even under g_noemit) */
 static int g_saw_float;             /* a floating-point item was pushed (likewise) */
+static int g_nohx;                  /* -fno-hot-arith: the register paths and their peepholes off -- the code as before them (a differential's other side) */
 static int g_fstmt;                 /* the wide statement computes in double: a float among its operands or
                                      * receivers, so every operand goes on the stack as a double (docs/usage.md) */
 static const char *wide_fn(const char *fn)
@@ -7435,6 +7436,29 @@ static void emit_cond_value(Cond *c)
         case R_LE: emit("\tsleu r1, r2, r1"); break;
         case R_GE: emit("\tsgeu r1, r2, r1"); break;
         }
+    } else if (!g_nohx && (cmp_is_bytewise(&c->x, &c->y) || cmp_is_rm_lit(&c->x, &c->y)) && (c->op == R_EQ || c->op == R_NE) &&
+               (c->x.kind == O_REF && !c->x.ref.rm ? (long)c->x.ref.sym->size : c->x.kind == O_REF ? (long)c->x.ref.rm_len : c->x.tok->len) <= 16) {
+        /* equality of at most 16 bytes: the chunks' xor, no call (unaligned
+         * loads are SLOW-32's: docs/ ruling) -- a serial SEARCH compares a
+         * short key per entry */
+        long n = c->x.kind == O_REF && !c->x.ref.rm ? (long)c->x.ref.sym->size : c->x.kind == O_REF ? (long)c->x.ref.rm_len : c->x.tok->len;
+        if (g_slot_base >= NSLOTS) die_at(c->x.line, "internal: no frame slot for a compare");
+        int t = g_slot_base++;
+        Opnd *ox = &c->x, *oy = &c->y;
+        if (ox->kind == O_REF) emit_ref_addr(&ox->ref, "r3"); else emit_la("r3", lit_label((const unsigned char *)ox->tok->s, ox->tok->len));
+        emit("\tstw sp+%d, r3", SLOT(t));
+        if (oy->kind == O_REF) emit_ref_addr(&oy->ref, "r4"); else emit_la("r4", lit_label((const unsigned char *)oy->tok->s, oy->tok->len));
+        emit("\tldw r3, sp+%d", SLOT(t));
+        g_slot_base--;
+        emit("\tadd r1, r0, r0");
+        for (long o = 0; o < n; ) {
+            const char *ld = n - o >= 4 ? "ldw" : n - o >= 2 ? "ldhu" : "ldbu";
+            int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1;
+            emit("\t%s r5, r3+%ld", ld, o); emit("\t%s r6, r4+%ld", ld, o);
+            emit("\txor r5, r5, r6"); emit("\tor r1, r1, r5");
+            o += w;
+        }
+        emit(c->op == R_EQ ? "\tseq r1, r1, r0" : "\tsne r1, r1, r0");
     } else if (cmp_is_bytewise(&c->x, &c->y) || cmp_is_rm_lit(&c->x, &c->y)) {
         Arg a[3];
         for (int k = 0; k < 2; k++) {
@@ -7457,10 +7481,22 @@ static void emit_cond_value(Cond *c)
          * handled, and it is the only correct one when a four-byte unsigned
          * item uses the top bit.  EQ and NE do not care either way. */
         int u = opnd_nonneg(&c->x) && opnd_nonneg(&c->y);
-        emit_cmp_value(&c->x);
-        emit("\tstw sp+%d, r1", SLOT_A);
-        emit_cmp_value(&c->y);
-        emit("\tldw r2, sp+%d", SLOT_A);
+        /* r2 = x, r1 = y; a constant side needs no spill (a PERFORM or
+         * SEARCH limit is one on every iteration) */
+        int ky = !g_nohx && (c->y.kind == O_NUM || c->y.kind == O_FIG), kx = !g_nohx && (c->x.kind == O_NUM || c->x.kind == O_FIG);
+        if (ky) {
+            emit_cmp_value(&c->x);
+            emit("\tadd r2, r1, r0");
+            emit_li("r1", c->y.kind == O_NUM ? (long)numlit_int(&c->y.num) : 0);
+        } else if (kx) {
+            emit_cmp_value(&c->y);
+            emit_li("r2", c->x.kind == O_NUM ? (long)numlit_int(&c->x.num) : 0);
+        } else {
+            emit_cmp_value(&c->x);
+            emit("\tstw sp+%d, r1", SLOT_A);
+            emit_cmp_value(&c->y);
+            emit("\tldw r2, sp+%d", SLOT_A);
+        }
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r2, r1"); break;
         case R_NE: emit("\tsne r1, r2, r1"); break;
@@ -8604,6 +8640,7 @@ static void emit_move(Opnd *src, Ref *dst)
             return;
         }
         if (src->kind == O_REF && src->ref.sym->is_cond) die_at(src->line, "'%s' is a condition-name and cannot be moved", src->ref.sym->name);
+        if (ned && !dst->rm && dx_move(src, dst)) return;   /* a numeric sender: fetch and store, the store editing */
         Arg a[4];
         opnd_args(src, &a[0], &a[1], d->size, ned);
         a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
@@ -9297,6 +9334,9 @@ static int any_rounded(const int *r, int n) { for (int i = 0; i < n; i++) if (r[
 /* sum_mag bounds |the staged sum| (-1: unknown) and sum_nonneg says it cannot
  * be negative; together with the receiver's own picture they bound the value
  * being stored, which is what lets the truncation and the sign fixup go. */
+/* the hot sum is a literal that fits an addi: the store adds it as an
+ * immediate, no SLOT_A (every PERFORM VARYING and SEARCH step is ADD 1) */
+static int g_addk_on; static long g_addk;
 static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err,
                                  long long sum_mag, int sum_nonneg)
 {
@@ -9308,7 +9348,10 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
             Sym *d = rs[i].sym;
             emit_ref_addr(&rs[i], "r3");
             if (giving) emit("\tldw r1, sp+%d", SLOT_A);
-            else {
+            else if (g_addk_on) {
+                emit_load_int(d, "r3", "r1");
+                emit("\taddi r1, r1, %ld", subtract ? -g_addk : g_addk);
+            } else {
                 emit_load_int(d, "r3", "r1");
                 emit("\tldw r2, sp+%d", SLOT_A);
                 emit(subtract ? "\tsub r1, r1, r2" : "\tadd r1, r1, r2");
@@ -9677,7 +9720,6 @@ static int opnd_scanned(const Opnd *o) { return o->kind == O_REF && g_sym[o->ref
 typedef struct { char op; int l, r; Opnd o; } HNode;
 static int hn_depth(int n, int per);   /* op: 0 leaf, + - * /, 'n' negate */
 #define MAXHN 64
-static int g_nohx;                      /* -fno-hot-arith: every such statement on the stack (a differential's other side) */
 static HNode g_hn[MAXHN]; static int g_nhn;
 static int hn_new(char op, int l, int r, const Opnd *o)
 {
@@ -10057,6 +10099,7 @@ static void emit_scale64(const char *xl, const char *xh, int k)
     emit_li64("r3", "r4", p);
     emit_mul64(xl, xh, "r3", "r4");
 }
+static void dx_get_edited_call(const Sym *s);
 /* r1:r2 = node n at its scale */
 static void dx_emit(int n)
 {
@@ -10067,6 +10110,7 @@ static void dx_emit(int n)
         if (o->kind == O_NUM) { emit_li64("r1", "r2", numlit_scaled(&o->num)); return; }
         if (opnd_hot_int((Opnd *)o)) { emit_hot_value((Opnd *)o); emit("\tsrai r2, r1, 31"); return; }
         emit_ref_addr(&o->ref, "r3");
+        if (o->ref.sym->pi.category == PIC_NUMERIC_EDITED) { dx_get_edited_call(o->ref.sym); return; }
         emit_desc_addr("r4", sym_desc(o->ref.sym));
         emit_call("cob_get_num");
         return;
@@ -10151,6 +10195,25 @@ static int dx_ok(int root, Ref *rs, int nr, int size_err)
     }
     return 1;
 }
+/* the call that stores r5:r6 (scale in r7, opts in r8) into the item at
+ * r3: a numeric-edited one straight to the hooked cob_put_edited, with
+ * the locale word libcob keeps (cob_put_num_x would dispatch to it) */
+static void dx_put_call(const Sym *d)
+{
+    emit_desc_addr("r4", sym_desc((Sym *)d));
+    if (g_desc[sym_desc((Sym *)d)].cat == COB_NUM_ED) {
+        emit_la("r9", "cob_locale_word"); emit("\tldw r9, r9+0");
+        emit_call("cob_put_edited");
+    } else emit_call("cob_put_num_x");
+}
+/* the fetch into r1:r2 of a numeric-edited item at r3, as cob_get_num
+ * would dispatch it */
+static void dx_get_edited_call(const Sym *s)
+{
+    emit_desc_addr("r4", sym_desc((Sym *)s));
+    emit_la("r5", "cob_locale_word"); emit("\tldw r5, r5+0");
+    emit_call("cob_get_edited");
+}
 /* emit the tree and store it into each receiver, as cob_top_store would */
 static void dx_store(int root, Ref *rs, int *rd, int nr)
 {
@@ -10177,11 +10240,10 @@ static void dx_store(int root, Ref *rs, int *rd, int nr)
     }
     for (int i = 0; i < nr; i++) {
         emit_ref_addr(&rs[i], "r3");
-        emit_desc_addr("r4", sym_desc(rs[i].sym));
         emit("\tldw r5, sp+%d", SLOT(t)); emit("\tldw r6, sp+%d", SLOT(t + 1));
         if (h->op == '/') emit("\tldw r7, sp+%d", SLOT(t + 2)); else emit_li("r7", g_dsc[root]);
         emit_li("r8", rd[i] ? 1 : 0);
-        emit_call("cob_put_num_x");
+        dx_put_call(rs[i].sym);
     }
     if (Lskip >= 0) emit_label(Lskip);
     g_slot_base -= 3;
@@ -10223,11 +10285,10 @@ static void dx_addto(int sum, Ref *rs, int *rd, int nr, int *leaf, int subtract)
         }
         emit("\tstw sp+%d, r1", SLOT(t + 2)); emit("\tstw sp+%d, r2", SLOT(t + 3));
         emit_ref_addr(&rs[i], "r3");
-        emit_desc_addr("r4", sym_desc(rs[i].sym));
         emit("\tldw r5, sp+%d", SLOT(t + 2)); emit("\tldw r6, sp+%d", SLOT(t + 3));
         emit_li("r7", sr > ss ? sr : ss);
         emit_li("r8", rd[i] ? 1 : 0);
-        emit_call("cob_put_num_x");
+        dx_put_call(rs[i].sym);
     }
     g_slot_base -= 4;
 }
@@ -10247,6 +10308,13 @@ static int dx_move(Opnd *src, Ref *dst)
     if (g_nohx) return 0;
     g_nhn = 0;
     int root = src->kind == O_FUNC ? hn_fn(src, dx_leaf, dx_expr) : (src->kind == O_REF || src->kind == O_NUM) ? dx_leaf(src) : -2;
+    if (root == -2 && src->kind == O_REF && !src->ref.rm && !opnd_scanned(src)) {
+        /* a numeric-edited sender (de-edited, as cob_move's cob_get_num does) */
+        Sym *s = src->ref.sym;
+        if (!s->is_group && s->pi.category == PIC_NUMERIC_EDITED && s->usage == U_DISPLAY && !sym_wide(s) &&
+            s->pi.digits <= 18 && s->pi.scale >= 0 && !strchr(s->pi.pat, 'P'))
+            root = hn_new(0, -1, -1, src);
+    }
     int rd = 0;
     if (root < 0 || !dx_ok(root, dst, 1, 0)) return 0;
     dx_store(root, dst, &rd, 1);
@@ -10291,7 +10359,10 @@ static void parse_add(void)
 
     int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 0, ops_all_nonneg(ops, n)) && hot_sum_fits(ops, n);
-    if (hot) emit_hot_sum(ops, n);
+    long k = n == 1 && ops[0].kind == O_NUM ? (long)numlit_int(&ops[0].num) : 0;
+    g_addk_on = !g_nohx && hot && !giving && n == 1 && ops[0].kind == O_NUM && k > -2048 && k < 2048; g_addk = k;   /* ADD 1 TO x: an immediate */
+    if (g_addk_on) { /* the store adds it as an immediate */ }
+    else if (hot) emit_hot_sum(ops, n);
     else if (!g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
         emit_dec_addto(&ops[0], rs, nr, 0);
         parse_size_error_clauses(size_err, "end-add");
@@ -10305,6 +10376,7 @@ static void parse_add(void)
         for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
     }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
+    g_addk_on = 0;
     g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-add");
 }
@@ -11715,9 +11787,12 @@ static void emit_add_to_ref(Opnd *by, Ref *var)
     g_wide = was || opnds_wide(ops, 1) || refs_wide(rs, 1);
     int hot = !g_wide && opnd_hot_int(by) && ref_hot_store(var, 0, ops_all_nonneg(ops, 1));
     int rd[1] = { 0 };
-    if (hot) emit_hot_sum(ops, 1);
-    else emit_push(by);
+    long k = by->kind == O_NUM ? (long)numlit_int(&by->num) : 0;
+    g_addk_on = !g_nohx && hot && by->kind == O_NUM && k > -2048 && k < 2048;
+    g_addk = k;
+    if (!g_addk_on) { if (hot) emit_hot_sum(ops, 1); else emit_push(by); }
     emit_store_receivers(rs, rd, 1, hot, 0, 0, 0, ops_sum_mag(ops, 1), ops_all_nonneg(ops, 1));
+    g_addk_on = 0;
     g_wide = was; if (!was) g_fstmt = 0;
 }
 
@@ -14858,14 +14933,17 @@ static void parse_search(void)
         /* at end when the index passes the bound */
         Opnd ixo; memset(&ixo, 0, sizeof ixo); ixo.kind = O_REF; ixo.ref = ixr; ixo.line = t.line;
         emit_hot_value(&ixo);
-        emit("\tstw sp+%d, r1", SLOT_A);
-        if (tbl->odo_dep_sym) {
+        if (!tbl->odo_dep_sym && !g_nohx) {          /* a fixed bound: no spill */
+            emit_li("r2", tbl->occurs);
+            emit("\tslt r1, r2, r1");               /* bound < index */
+        } else {
+            emit("\tstw sp+%d, r1", SLOT_A);
             Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
             if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
             else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-        } else emit_li("r1", tbl->occurs);
-        emit("\tldw r2, sp+%d", SLOT_A);
-        emit("\tslt r1, r1, r2");                    /* bound < index */
+            emit("\tldw r2, sp+%d", SLOT_A);
+            emit("\tslt r1, r1, r2");                /* bound < index */
+        }
         emit("\tbne r1, r0, .L%d", Latend);
         for (int i = 0; i < nwhen; i++) cond_jump_true(wc[i], Lwhen[i]);
         /* no WHEN held: step and go round */
