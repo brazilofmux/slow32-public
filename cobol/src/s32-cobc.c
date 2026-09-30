@@ -1820,18 +1820,22 @@ enum {
     U_SINT, U_UINT, U_SSHORT, U_USHORT, U_BCHAR, U_UBCHAR, U_POINTER, U_INDEX,
     U_NATIONAL,                     /* numeric and numeric-edited USAGE NATIONAL (cobol ISSUES-72); PIC N keeps U_DISPLAY */
     U_BIT,                          /* boolean USAGE BIT: bits, packed (cobol ISSUES-78) */
-    U_SDBL, U_UDBL                  /* BINARY-DOUBLE [UNSIGNED]: eight bytes, 19 (20) digits -- the wide path (docs/wide.md) */
+    U_SDBL, U_UDBL,                 /* BINARY-DOUBLE [UNSIGNED]: eight bytes, 19 (20) digits -- the wide path (docs/wide.md) */
+    U_FLOAT                         /* COMP-1 (no PICTURE), COMP-2, FLOAT-SHORT/-LONG: IEEE, size 4 or 8 (docs/usage.md) */
 };
 
 static const char *usage_name(int u)
 {
     static const char *n[] = { "display", "comp", "comp-3", "comp-5", "signed-int",
         "unsigned-int", "signed-short", "unsigned-short", "binary-char",
-        "binary-char unsigned", "pointer", "index", "national", "bit", "binary-double", "binary-double unsigned" };
+        "binary-char unsigned", "pointer", "index", "national", "bit", "binary-double", "binary-double unsigned", "float" };
     return n[u];
 }
 
-enum { UV_NONE, UV_COMPX, UV_NOSIGN };  /* Sym.uvar (docs/usage.md) */
+enum { UV_NONE, UV_COMPX, UV_NOSIGN,     /* Sym.uvar (docs/usage.md) */
+       UV_COMP1,                        /* COMP-1, until sym_finish sees whether a PICTURE came: RM's binary, or a float */
+       UV_FSHORT, UV_FLONG };           /* U_FLOAT: four bytes or eight */
+static int g_comp1 = -1;                /* -fcomp1=binary (1) | float (0); -1: by its PICTURE */
 
 static int usage_is_native(int u)
 {
@@ -2230,6 +2234,22 @@ static void sym_finish(Sym *s)
 {
     int u = s->usage;
     if (s->is_group) { s->pi.category = PIC_ALPHANUMERIC; return; }
+    if (s->uvar == UV_COMP1) {                  /* RM's binary with a PICTURE, MF's float without */
+        int flt = g_comp1 >= 0 ? !g_comp1 : !s->has_pic;
+        if (flt) { u = s->usage = U_FLOAT; s->uvar = UV_FSHORT; }
+        else s->uvar = UV_NONE;
+    }
+    if (u == U_FLOAT) {
+        /* IEEE single or double; no PICTURE (MF), no editing clauses */
+        if (s->has_pic) die_at(s->line, "'%s': a floating-point item takes no PICTURE%s", s->name,
+                               s->uvar == UV_FLONG ? " (ACUCOBOL's decimal COMP-2 is not implemented)" : "");
+        if (s->just || s->blank_zero || s->sign_lead || s->sign_sep)
+            die_at(s->line, "'%s': a floating-point item takes no JUSTIFIED, BLANK WHEN ZERO or SIGN clause", s->name);
+        s->size = s->uvar == UV_FSHORT ? 4 : 8;
+        memset(&s->pi, 0, sizeof s->pi);
+        s->pi.category = PIC_NUMERIC; s->pi.is_signed = 1; s->pi.digits = 18;   /* 18: the narrow paths' reading, an integer part */
+        return;
+    }
     int native = usage_is_native(u);
 
     if (!s->has_pic && !native)
@@ -2347,6 +2367,15 @@ static int is_numeric_sym(Sym *s) { return !s->is_group && s->pi.category == PIC
 /* Encode a numeric literal into storage described by s, at p. */
 static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
 {
+    if (s->usage == U_FLOAT) {
+        /* the literal to the nearest float or double, laid down in the
+         * machine's order (the host that compiles is little-endian, as
+         * SLOW-32 is) */
+        char t[128]; snprintf(t, sizeof t, "%s%.*se%d", n->neg ? "-" : "", n->ndigits, n->digits, -n->scale);
+        double x = strtod(t, NULL);
+        if (s->size == 4) { float f = (float)x; memcpy(p, &f, 4); } else memcpy(p, &x, 8);
+        return;
+    }
     const PicInfo *pi = &s->pi;
     int digits = pi->digits, scale = pi->scale;
     char d[40];
@@ -2794,12 +2823,18 @@ static void parse_data_item1(void)
         }
         else if (!strcmp(t->s, "pointer")) { if (g_std < 2002) bp(BP_E5_BINARY_2002, t->line); u = U_POINTER; }
         else if (!strcmp(t->s, "index")) u = U_INDEX;
-        else if (!strcmp(t->s, "comp-1")) {
+        else if (!strcmp(t->s, "comp-1") || !strcmp(t->s, "computational-1")) {
+            /* with a PICTURE, RM/COBOL's binary integer (the Open Systems
+             * suite's COMP-1 items all carry one); without, MF's IEEE
+             * single: sym_finish decides, or -fcomp1= */
             bp(BP_E3_COMP_N, t->line);
-            u = U_BINARY;
-        }   /* RM/COBOL: a binary integer with a PICTURE (S9(4) in two bytes), not a float; the Open Systems suite's COMP-1 items all carry one */
-        else if (!strcmp(t->s, "comp-2") || !strcmp(t->s, "float-short") || !strcmp(t->s, "float-long"))
-            die_at(t->line, "floating-point USAGE %s is not implemented", t->s);
+            u = U_BINARY; uv = UV_COMP1;
+        }
+        else if (!strcmp(t->s, "comp-2") || !strcmp(t->s, "computational-2")) { bp(BP_E3_COMP_N, t->line); u = U_FLOAT; uv = UV_FLONG; }
+        else if (!strcmp(t->s, "float-short") || !strcmp(t->s, "float-long")) {
+            if (g_std < 2002) die_at(t->line, "USAGE %s is COBOL 2002; compile with -std=2002 (COMP-1 and COMP-2 are the same)", t->s);
+            u = U_FLOAT; uv = t->s[6] == 's' ? UV_FSHORT : UV_FLONG;
+        }
         if (u >= 0) {
             if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
             s->usage = u; s->uvar = uv; s->has_usage = 1;
@@ -3306,7 +3341,7 @@ static int align_of(Sym *s)
     if (!s->sync || s->is_group) return 1;
     switch (s->usage) {
     case U_BINARY: case U_COMP5: case U_SINT: case U_UINT: case U_SSHORT: case U_USHORT:
-    case U_POINTER: case U_INDEX: case U_SDBL: case U_UDBL:
+    case U_POINTER: case U_INDEX: case U_SDBL: case U_UDBL: case U_FLOAT:
         return s->size >= 8 ? 8 : s->size;
     default: return 1;
     }
@@ -4151,6 +4186,7 @@ static int sym_desc(Sym *s)
         case U_DISPLAY: d.usage = COB_U_DISPLAY; break;
         case U_PACKED: d.usage = COB_U_PACKED; break;
         case U_NATIONAL: d.usage = COB_U_NATIONAL; break;
+        case U_FLOAT: d.usage = COB_U_FLOAT; break;
         default: d.usage = COB_U_BINARY; break;
         }
         d.digits = (unsigned char)s->pi.digits; d.scale = (signed char)s->pi.scale;
@@ -4294,6 +4330,9 @@ static void emit_li(const char *rd, long v)
  * (docs/wide.md phase 2): its stack operations go to the wide stack */
 static int g_wide;
 static int g_saw_wide;              /* an operand past 18 digits was met (set even under g_noemit) */
+static int g_saw_float;             /* a floating-point item was pushed (likewise) */
+static int g_fstmt;                 /* the wide statement computes in double: a float among its operands or
+                                     * receivers, so every operand goes on the stack as a double (docs/usage.md) */
 static const char *wide_fn(const char *fn)
 {
     static const char *map[][2] = {
@@ -4302,7 +4341,11 @@ static const char *wide_fn(const char *fn)
         { "cob_ntrunc", "cob_wtrunc" }, { "cob_npow", "cob_wpow" }, { "cob_ncmp", "cob_wcmp" },
         { "cob_top_store", "cob_wtop_store" }, { "cob_top_addto", "cob_wtop_addto" }, { "cob_top_subfrom", "cob_wtop_subfrom" },
         { "cob_drop", "cob_wdrop" }, { "cob_pop_int", "cob_wpop_int" }, { "cob_pop_pos", "cob_wpop_pos" }, { NULL, NULL } };
-    for (int i = 0; map[i][0]; i++) if (!strcmp(fn, map[i][0])) return map[i][1];
+    for (int i = 0; map[i][0]; i++) if (!strcmp(fn, map[i][0])) {
+        if (g_fstmt && !strcmp(map[i][1], "cob_wpush")) return "cob_fpush";
+        if (g_fstmt && !strcmp(map[i][1], "cob_wpush_lit")) return "cob_fpush_lit";
+        return map[i][1];
+    }
     return fn;
 }
 static void emit_call(const char *fn) { if (g_wide) fn = wide_fn(fn); emit("\tjal r31, %s", fn); }
@@ -4398,6 +4441,7 @@ enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /
 typedef struct Opnd_ {
     int kind;
     int wide;           /* O_EXPR: an operand past 18 digits inside (docs/wide.md) */
+    int flt;            /* O_EXPR: a floating-point item inside (docs/usage.md) */
     Ref ref;
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
     NumLit num;         /* O_NUM */
@@ -4511,7 +4555,7 @@ static int sym_notrunc(Sym *s) { return s->usage == U_COMP5 || usage_is_native(s
 static int is_hot_int(Sym *s)
 {
     if (s->is_group || s->pi.category != PIC_NUMERIC || s->pi.scale != 0) return 0;
-    if (s->usage == U_DISPLAY || s->usage == U_PACKED || s->usage == U_NATIONAL) return 0;
+    if (s->usage == U_DISPLAY || s->usage == U_PACKED || s->usage == U_NATIONAL || s->usage == U_FLOAT) return 0;
     return s->size == 1 || s->size == 2 || s->size == 4;    /* not COMP-X's three bytes */
 }
 
@@ -6248,7 +6292,7 @@ static void emit_fn_value_raw(Opnd *f)
     g_incompat_push++;
     emit_fn_value_raw_1(f);
     g_incompat_push--;
-    g_wide = was;
+    g_wide = was; if (!was) g_fstmt = 0;
 }
 static void emit_fn_value_raw_1(Opnd *f)
 {
@@ -7341,7 +7385,7 @@ static void emit_cond_value(Cond *c)
         emit_push_opnd(&c->x);
         emit_push_opnd(&c->y);
         emit_call("cob_ncmp");
-        g_wide = was;
+        g_wide = was; if (!was) g_fstmt = 0;
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r1, r0"); break;
         case R_NE: emit("\tsne r1, r1, r0"); break;
@@ -9003,7 +9047,7 @@ static void check_numeric_opnd(Opnd *o)
 /* push an operand onto the numeric stack */
 /* 31 digits in arithmetic: phase 2 of docs/wide.md; refused until then,
  * never computed in 64 bits and truncated */
-static int sym_wide(const Sym *s) { return !s->is_group && (s->pi.digits > 18 || (s->usage == U_BINARY && s->size > 8)); }
+static int sym_wide(const Sym *s) { return !s->is_group && (s->pi.digits > 18 || (s->usage == U_BINARY && s->size > 8) || s->usage == U_FLOAT); }   /* a float computes on the wide stack, in double */
 static void wide_arith_refuse(int line, const char *what)
 {
     die_at(line, "arithmetic on %s of more than 18 digits is not implemented yet (COBOL 2002's 31 digits: docs/wide.md, phase 2)", what);
@@ -9013,6 +9057,7 @@ static void emit_push(Opnd *o)
 {
     int w = (o->kind == O_NUM && numlit_wide(&o->num)) || (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym));
     if (w) g_saw_wide = 1;
+    if (o->kind == O_REF && o->ref.sym->usage == U_FLOAT) g_saw_float = 1;
     if (w && !g_wide && !g_noemit) wide_arith_refuse(o->line, o->kind == O_NUM ? "a literal" : "an item");
     if (g_wide && o->kind == O_NUM && numlit_wide(&o->num)) {
         int d; const char *l = num_lit_label(&o->num, &d);
@@ -9525,6 +9570,7 @@ static void emit_incompat_refs(const Ref *rs, int nr)
 static void opnd_int_frac(const Opnd *o, int *in, int *fr)
 {
     int digits = -1, scale = 0;
+    if (o->kind == O_REF && o->ref.sym->usage == U_FLOAT) return;       /* no digits: a float is computed in double */
     if (o->kind == O_REF && !o->ref.sym->is_group && (o->ref.sym->pi.category == PIC_NUMERIC || o->ref.sym->pi.category == PIC_NUMERIC_EDITED))
         { digits = o->ref.sym->pi.digits; scale = o->ref.sym->pi.scale; }
     else if (o->kind == O_NUM) { digits = o->num.ndigits; scale = o->num.scale; }
@@ -9556,12 +9602,15 @@ static int arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const 
 static int opnds_wide(const Opnd *ops, int n)
 {
     for (int k = 0; k < n; k++)
+        if ((ops[k].kind == O_REF && ops[k].ref.sym->usage == U_FLOAT) || (ops[k].kind == O_EXPR && ops[k].flt)) g_fstmt = 1;
+    for (int k = 0; k < n; k++)
         if ((ops[k].kind == O_REF && !ops[k].ref.rm && sym_wide(ops[k].ref.sym)) || (ops[k].kind == O_NUM && numlit_wide(&ops[k].num)) ||
             (ops[k].kind == O_EXPR && ops[k].wide)) return 1;
     return 0;
 }
 static int refs_wide(const Ref *rs, int nr)
 {
+    for (int k = 0; k < nr; k++) if (rs[k].sym->usage == U_FLOAT) g_fstmt = 1;
     for (int k = 0; k < nr; k++) if (!rs[k].rm && sym_wide(rs[k].sym)) return 1;
     return 0;
 }
@@ -9607,7 +9656,7 @@ static void parse_add(void)
     }
     else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
-    g_wide = 0;
+    g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-add");
 }
 
@@ -9666,7 +9715,7 @@ static void parse_subtract(void)
         if (giving) emit_call("cob_nsub");
     }
     emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err, -1, 0);
-    g_wide = 0;
+    g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-subtract");
 }
 
@@ -9690,7 +9739,7 @@ static void parse_multiply(void)
         { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
-        g_wide = 0;
+        g_wide = 0; g_fstmt = 0;
         parse_size_error_clauses(size_err, "end-multiply");
         return;
     }
@@ -9707,7 +9756,7 @@ static void parse_multiply(void)
         emit_push(&r); emit_push(&a); emit_call("cob_nmul");
         emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
     }
-    g_wide = 0;
+    g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-multiply");
 }
 
@@ -9737,7 +9786,7 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
     emit_top_op(&r, "cob_top_store", size_err ? 2 : 0);
     emit_label(Lskip);
     emit_call("cob_drop");
-    g_wide = was_wide;
+    g_wide = was_wide; if (!was_wide) g_fstmt = 0;
 }
 
 /* is ON SIZE ERROR written after a REMAINDER phrase?  The quotient's store
@@ -9774,7 +9823,7 @@ static void parse_divide(void)
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
             emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
             emit_remainder(&b, &rs[0], rd[0], &a, size_err);
-            g_wide = 0;
+            g_wide = 0; g_fstmt = 0;
             parse_size_error_clauses(size_err, "end-divide");
             return;
         }
@@ -9791,7 +9840,7 @@ static void parse_divide(void)
             emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
             emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
         }
-        g_wide = 0;
+        g_wide = 0; g_fstmt = 0;
         parse_size_error_clauses(size_err, "end-divide");
         return;
     }
@@ -9808,7 +9857,7 @@ static void parse_divide(void)
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     emit_remainder(&a, &rs[0], rd[0], &b, size_err);
-    g_wide = 0;
+    g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-divide");
 }
 
@@ -9868,9 +9917,10 @@ static Opnd expr_opnd(void)
 {
     Opnd o; memset(&o, 0, sizeof o);
     o.kind = O_EXPR; o.line = cur()->line; o.e_start = g_tp;
-    int saw = g_saw_wide; g_saw_wide = 0;
+    int saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
     g_noemit++; parse_expr(); g_noemit--;
     o.wide = g_saw_wide; g_saw_wide |= saw;
+    o.flt = g_saw_float; g_saw_float |= sawf;
     o.e_end = g_tp;
     return o;
 }
@@ -9945,17 +9995,18 @@ static void parse_compute(void)
     }
     /* wide or not: known from a pass that emits nothing, then for real */
     {
-        int start = g_tp, saw = g_saw_wide; g_saw_wide = 0;
+        int start = g_tp, saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
         g_noemit++; parse_expr(); g_noemit--;
-        g_wide = g_saw_wide || refs_wide(rs, nr);
-        g_saw_wide = saw; g_tp = start;
+        g_wide = g_saw_wide || g_saw_float || refs_wide(rs, nr);
+        if (g_saw_float) g_fstmt = 1;
+        g_saw_wide = saw; g_saw_float = sawf; g_tp = start;
     }
     g_incompat_push++;
     parse_expr();
     g_incompat_push--;
     int size_err = at_size_error_clause() || ec_size_on();
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
-    g_wide = 0;
+    g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-compute");
 }
 
@@ -10927,7 +10978,7 @@ static void emit_add_to_ref(Opnd *by, Ref *var)
     if (hot) emit_hot_sum(ops, 1);
     else emit_push(by);
     emit_store_receivers(rs, rd, 1, hot, 0, 0, 0, ops_sum_mag(ops, 1), ops_all_nonneg(ops, 1));
-    g_wide = was;
+    g_wide = was; if (!was) g_fstmt = 0;
 }
 
 typedef struct { Ref var; Opnd from, by; Cond *until; } Vary;
@@ -14985,6 +15036,7 @@ static void emit_sql_data(void)
 static void parse_statement_1(void)
 {
     apply_dirs();                           /* a >>TURN before this statement */
+    if (!g_wide) g_fstmt = 0;
     Tok *t = cur();
     if (t->kind == T_SQL) { snprintf(g_cur_stmt, sizeof g_cur_stmt, "EXEC SQL"); parse_exec_sql(); return; }
     if (t->kind != T_WORD) die_at(t->line, "expected a statement, found %s", tok_desc(t));
@@ -15647,7 +15699,7 @@ static void parse_procedure_division(void)
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge; g_fn_depth = fdepth;
             ecs_copy(&g_ecs, &ecs0);
             for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
-            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally; g_in_ecp_when = in_ecpw; g_wide = 0; g_saw_wide = 0;
+            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally; g_in_ecp_when = in_ecpw; g_wide = 0; g_fstmt = 0; g_saw_wide = 0;
             g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
             resync_sentence(start);
             continue;
@@ -17381,6 +17433,7 @@ static void usage(void)
         "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
         "  -fixed-columns=bytes  count reference-format columns in bytes, not characters (UTF-8 source)\n"
         "  -fbinary-byteorder=native  COMP/BINARY in SLOW-32's little-endian order, not big-endian (docs/usage.md)\n"
+        "  -fcomp1=binary|float  COMP-1 as RM's binary or MF's float, whatever its PICTURE (default: binary with one)\n"
         "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n"
         "  -warn-extensions warn where a program uses an extension to the standard it is compiled for\n", VERSION);
     exit(2);
@@ -17404,6 +17457,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fixed-columns=chars")) g_col_bytes = 0;
         else if (!strcmp(argv[i], "-fbinary-byteorder=native")) g_bin_native = 1;
         else if (!strcmp(argv[i], "-fbinary-byteorder=big-endian")) g_bin_native = 0;
+        else if (!strcmp(argv[i], "-fcomp1=binary")) g_comp1 = 1;
+        else if (!strcmp(argv[i], "-fcomp1=float")) g_comp1 = 0;
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) { g_std = 2002; pic_max_digits = 31; }
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {

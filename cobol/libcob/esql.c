@@ -234,10 +234,22 @@ static const long long p10[19] = { 1LL, 10LL, 100LL, 1000LL, 10000LL, 100000LL, 
 /* one input: NULL by a negative indicator; a numeric item as an integer
  * or its exact decimal text; anything else as text, trailing spaces
  * trimmed (SQL-92 compares CHAR blank-padded, SQLite exactly) */
+static double host_dbl(const host *h)
+{
+    if (h->d->size == 4) { float f; memcpy(&f, h->p, 4); return f; }
+    double x; memcpy(&x, h->p, 8); return x;
+}
+static void host_set_dbl(const host *h, double x)
+{
+    if (h->d->size == 4) { float f = (float)x; memcpy(h->p, &f, 4); }
+    else memcpy(h->p, &x, 8);
+}
+
 static int bind_in(sqlite3_stmt *st, int i, const host *h)
 {
     if (h->ip && cob_get_num(h->ip, h->id) < 0) return sqlite3_bind_null(st, i);
     const cob_desc *d = h->d;
+    if (d->usage == COB_U_FLOAT) return sqlite3_bind_double(st, i, host_dbl(h));   /* COMP-1/COMP-2: REAL (docs/usage.md) */
     if (d->cat == COB_NUM) {
         long long v = cob_get_num(h->p, d);
         int sc = d->scale;
@@ -300,6 +312,12 @@ static int store_val(int ty, long long iv, const char *t, int n, const host *h)
     }
     if (h->ip) cob_put_num(h->ip, h->id, 0, 0);
     const cob_desc *d = h->d;
+    if (d->usage == COB_U_FLOAT) {                 /* a float host variable: the value, as near as it holds */
+        char *e = NULL; double x = ty == SQLITE_INTEGER ? (double)iv : strtod(t ? t : "", &e);
+        if (ty != SQLITE_INTEGER && (!t || e == t)) { set_status(-302, "22018"); trace_error("fetch: not a number"); return 0; }
+        host_set_dbl(h, x);
+        return 1;
+    }
     if (d->cat == COB_NUM) {
         long long v; int sc;
         if (ty == SQLITE_INTEGER) { v = iv; sc = 0; }
@@ -332,6 +350,11 @@ static int store_val(int ty, long long iv, const char *t, int n, const host *h)
 static int store_out(sqlite3_stmt *st, int c, const host *h)
 {
     int ty = sqlite3_column_type(st, c);
+    if (h->d->usage == COB_U_FLOAT && (ty == SQLITE_FLOAT || ty == SQLITE_INTEGER)) {   /* to a float: the double itself, not its text */
+        if (h->ip) cob_put_num(h->ip, h->id, 0, 0);
+        host_set_dbl(h, sqlite3_column_double(st, c));
+        return 1;
+    }
     const char *t = ty == SQLITE_NULL ? NULL : (const char *)sqlite3_column_text(st, c);
     return store_val(ty, ty == SQLITE_INTEGER ? sqlite3_column_int64(st, c) : 0, t, t ? sqlite3_column_bytes(st, c) : 0, h);
 }
@@ -501,6 +524,7 @@ static int end_transaction(int commit)
 static void host_text(const host *h, char *out, int cap)
 {
     int n = (int)h->d->size; const char *s = h->p;
+    if (h->d->usage == COB_U_FLOAT) { snprintf(out, (size_t)cap, "%.17g", host_dbl(h)); return; }
     if (h->d->cat == COB_NUM) { snprintf(out, (size_t)cap, "%lld", cob_get_num(h->p, h->d)); return; }
     while (n && s[n - 1] == ' ') n--;
     if (n > cap - 1) n = cap - 1;

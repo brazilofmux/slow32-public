@@ -17,7 +17,8 @@ enum { COB_ALNUM = 0, COB_ALPHA = 1, COB_ALNUM_ED = 2, COB_NUM = 3, COB_NUM_ED =
 /* usage (runtime view: COMP-5 and the C-ABI types are BINARY + NOTRUNC) */
 enum { COB_U_DISPLAY = 0, COB_U_BINARY = 1, COB_U_PACKED = 2,
        COB_U_NATIONAL = 3,   /* numeric, numeric-edited and boolean USAGE NATIONAL (cobol ISSUES-72) */
-       COB_U_BIT = 4 };      /* boolean USAGE BIT: size the bits, scale the first bit's place (cobol ISSUES-78) */
+       COB_U_BIT = 4,        /* boolean USAGE BIT: size the bits, scale the first bit's place (cobol ISSUES-78) */
+       COB_U_FLOAT = 5 };    /* COMP-1 / COMP-2: IEEE single or double, size 4 or 8, the machine's byte order (docs/usage.md) */
 
 /* flags */
 enum {

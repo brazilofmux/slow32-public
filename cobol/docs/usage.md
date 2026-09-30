@@ -21,8 +21,8 @@ a dialect question, decided for preservation.
 | COMP, COMPUTATIONAL, BINARY | two's complement, the picture's digits the limit | 2/4/8 bytes by digits (IBM's rule) |
 | COMP-5 | the same, the binary field's capacity the limit (BP-E3) | 1/2/4/8 |
 | COMP-3, PACKED-DECIMAL | packed decimal, sign nibble C/D/F | digits/2 + 1 |
-| COMP-1 | RM/COBOL's: a binary integer *with* a PICTURE (BP-E3) | as COMP |
-| COMP-2, FLOAT-SHORT, FLOAT-LONG | refused: "floating-point USAGE is not implemented" | |
+| COMP-1 | with a PICTURE, RM/COBOL's binary integer (BP-E3); without one, MF's IEEE single (step 3); `-fcomp1=binary\|float` forces either | as COMP; 4 |
+| COMP-2, FLOAT-SHORT, FLOAT-LONG | IEEE double (FLOAT-SHORT single), no PICTURE (step 3); FLOAT-* under -std=2002 | 8 (4) |
 | COMP-4 | BINARY (step 2) | as COMP |
 | COMP-X | MF's: unsigned, big-endian, the field's capacity the limit (step 2) | PIC X(n): n bytes; PIC 9(n): the fewest bytes holding n nines, 1-8 |
 | COMP-6 | unsigned packed decimal, no sign nibble; a signed one is COMP-3 (MF's default COMP-6"2"; step 2) | (digits + 1) / 2 |
@@ -172,6 +172,43 @@ Each is a class E behavior point, as COMP-3 and COMP-5 are now.
   byte, so COMP-X does not conform to COMP-5.
 - **Tests:** `tests/free/compn.cbl` checks sizes, bytes and arithmetic,
   and the `bad/compx-*` tests check the refusals.
+
+**Step 3 as built:**
+- **Storage:** IEEE single or double in the machine's order; descriptor
+  usage `COB_U_FLOAT`.
+- **Arithmetic** runs on the wide stack, whose `cob_wnum` can hold a
+  double.
+  - A statement with a float operand or receiver is marked (`g_fstmt`),
+    and every operand goes on the stack as a double (`cob_fpush`). The
+    whole statement is computed in double: `2 / 3 * f` is not `2 / 3`
+    in decimal first.
+  - A store into a decimal receiver truncates, or rounds under ROUNDED,
+    to its scale, then stores as any wide value, size error included.
+- **MOVE and comparison** convert through double. SORT keys order by the
+  double's bits.
+- **DISPLAY** uses MF's form, `-.9(8)E-99` and `-.9(18)E-99`: the
+  mantissa's digits from `%.*e`, so the COMP-2 digits past the double's
+  precision are those of the exact binary value.
+- **The narrow paths** (subscripts, intrinsic arguments) take a float's
+  value at nine decimals.
+- **ESQL** binds a float host variable as REAL and fetches the column's
+  double, not its text. NIST dml035 passes.
+- **`**` with a fractional or negative exponent**, refused before (a
+  stop at run time), is now computed in double on both stacks. A zero
+  base to such a power, or a negative base to a fraction, is a size
+  error.
+- **Not done:**
+  - floating-point literals (`1.5E3`) and external floating-point
+    PICTUREs (step 4, when code asks);
+  - MOVE of a float to or from an alphanumeric item (bytes, as a group
+    move);
+  - CALL BY VALUE of a float.
+- **Tests:**
+  - `tests/free/comp12.cbl`: GnuCOBOL computes the same values, with
+    the display form and the statement-in-double rule as documented
+    divergences;
+  - `tests/2002/floatsort.cbl`: GnuCOBOL agrees;
+  - `bad/float-*`: the refusals.
 
 1. **Byte order** of COMP/BINARY/COMP-4, with the flag. The runtime and
    the compiler's inline paths change together. The gates' printed

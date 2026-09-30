@@ -133,11 +133,13 @@ Done since:
   The runner prints every program's counts, so a program that stops
   printing shows in a diff.
 
-  Not yet:
-  - scroll cursors (FETCH PRIOR/FIRST/LAST/ABSOLUTE: SQLite cursors go
-    forward only);
-  - floating-point host variables (COMP-1 without a PICTURE, COMP-2: a
-    COBOL feature this compiler lacks).
+  Not yet: scroll cursors (FETCH PRIOR/FIRST/LAST/ABSOLUTE: SQLite
+  cursors go forward only).
+
+  Floating-point host variables (COMP-1 without a PICTURE, COMP-2)
+  arrived with the floats (docs/usage.md, 2026-09-30). They bind as
+  REAL and fetch the column's double. dml035 compiles and passes: 421
+  programs compile, 386 tests pass.
 
 What SQLite cannot report, so no map will reach:
 
