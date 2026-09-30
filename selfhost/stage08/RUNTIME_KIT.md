@@ -103,6 +103,18 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-09-29, seventh batch (`12d523f8`).  In `cc.s32x` only; the
+tools, `crt0.s32o` and every `libc.s32a` member rebuilt content-identical:
+
+- **INT64_MIN in a static initializer was 0** (selfhost ISSUES-70).  The
+  constant folder carried a 64-bit value's high word through a literal,
+  unary minus and shifts only, so `-9223372036854775807LL - 1` -- how
+  headers spell INT64_MIN and LLONG_MIN -- folded to 0, and `&`, `|`,
+  `^` lost the high word too.  Silent, in any static table built on such
+  a constant.  A `*`, `/` or `%` of a constant that does not fit 32 bits
+  is now an error, not a dropped word.  Wide constants compared with
+  `<` `==` and the rest still compare low words only.
+
 Fixed 2026-09-11, sixth batch (`877afcf1`..`f4e09a25`) -- self-hosting
 restored, and the whole-program size work.  All in `cc.s32x` unless noted:
 
