@@ -5487,9 +5487,31 @@ void cob_inspect_run(void)
      * position.  A one-byte pattern is compared in line (a TALLYING FOR
      * ALL "a" called memcmp per phrase per character), and the LEADING
      * bookkeeping pass runs only when there is a LEADING phrase. */
-    int leading = 0;
-    for (int k = 0; k < cin.np; k++) if (cin.ph[k].kind == 2) leading = 1;
-    for (int pos = 0; cin.np && pos < cin.n; ) {
+    int leading = 0, bytewise = ci_w == 1 && cin.np > 0;
+    for (int k = 0; k < cin.np; k++) {
+        if (cin.ph[k].kind == 2) leading = 1;
+        if (cin.ph[k].kind > 1 || cin.ph[k].plen != 1 || cin.ph[k].lo != 0 || cin.ph[k].hi != cin.n) bytewise = 0;
+    }
+    if (bytewise) {
+        /* every phrase CHARACTERS or ALL of one byte over the whole item:
+         * which phrase takes a byte depends on the byte alone, so a table
+         * (the first phrase listed wins) and one sweep do it -- the pass
+         * below tries every phrase at every position */
+        unsigned char who[256];
+        memset(who, 0xFF, sizeof who);
+        for (int k = 0; k < cin.np; k++) {
+            if (cin.ph[k].kind == 0) { for (int c = 0; c < 256; c++) if (who[c] == 0xFF) who[c] = (unsigned char)k; }
+            else if (who[(unsigned char)cin.ph[k].pat[0]] == 0xFF) who[(unsigned char)cin.ph[k].pat[0]] = (unsigned char)k;
+        }
+        unsigned char *p = (unsigned char *)cin.item;
+        for (int pos = 0; pos < cin.n; pos++) {
+            int k = who[p[pos]];
+            if (k == 0xFF) continue;
+            if (cin.ph[k].tallying) cin.ph[k].count++;
+            else p[pos] = (unsigned char)cin.ph[k].rep[0];
+        }
+    }
+    for (int pos = 0; !bytewise && cin.np && pos < cin.n; ) {
         int took = 0, taker = -1;
         for (int k = 0; k < cin.np && !took; k++) {
             if (cin.ph[k].done || pos < cin.ph[k].lo || pos + cin.ph[k].plen > cin.ph[k].hi) continue;

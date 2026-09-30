@@ -147,3 +147,45 @@ native types) can use the top bit.
 `tests/free/hotdec` must equal the stack's output, and does: `-fno-hot-arith`
 gives the stack's answers, 98 stack calls in it against 14. GnuCOBOL
 agrees with every line.
+
+## 2026-09-30, continued: intrinsics, MOVE, INSPECT, compares
+
+**Choosing what to fix: the guest-only view.** Under slow32-dbt the
+following run natively:
+- memcpy, memset, memmove, strlen, memcmp (intrinsics);
+- the 64-bit divides, `cob_get_num`, `cob_put_num_x`, `cob_get_edited`
+  and `cob_put_edited`, with the kernels beneath them (hooks).
+
+So the interpreter's profile overstates them. The targets below were
+picked from the profile with those names filtered out.
+
+**Intrinsics in registers.** FUNCTION MOD and REM with a literal divisor
+of magnitude 2 or more (so no zero and no INT_MIN / -1), INTEGER,
+INTEGER-PART and ABS are now nodes of both register trees. Their
+arguments may be items, literals or expressions. In the integer path
+they compile to `rem` with a floor adjustment; in the decimal path to
+`__moddi3` and `__divdi3` (both hooked).
+
+**Numeric MOVE.** `cob_move` does `cob_put_num(cob_get_num)` for numeric
+to numeric, so `dx_move` emits that fetch and store directly. The
+source may be an item, a literal or one of the intrinsics above.
+
+**INSPECT.** When every phrase is CHARACTERS or ALL of one byte, over
+the whole item, a 256-entry table (the first phrase listed wins) does it
+in one sweep instead of trying every phrase at every position.
+
+**Compares.** A reference modification of constant length joins the
+in-line one-byte compare, and the memcmp compare against a literal of
+its length.
+
+| kernel | before | after (slow32-dbt) |
+|---|---|---|
+| kmove | 1.26 s | 0.77 s |
+| ksearch | 0.78 s | 0.31 s |
+| kedit | 1.02 s | 0.87 s |
+| ksort | 0.95 s | 0.88 s (its MOD of a 10-digit product needs more than 64 bits: the wide stack, correctly) |
+| kstring | 0.51 s | 0.35 s |
+
+**Tests, each against GnuCOBOL:** `tests/2002/hotfn` (the intrinsics),
+`tests/free/inspfast` (table sweeps beside the general forms),
+`tests/free/cmprm` (reference-modified compares).

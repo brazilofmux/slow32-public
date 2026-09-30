@@ -6598,11 +6598,23 @@ static int opnd_hot_int(Opnd *o)
  * numeric class on either side (that is a digits-as-characters compare with
  * its own rules).  Both sides literal is a constant, left to the runtime.
  * GitHub #29, ISSUES-26. */
+/* a reference modification of constant length len, of an item whose
+ * part is alphanumeric (anything but national or boolean: 2023 8.4.2.3.3
+ * makes the part alphanumeric) */
+static int ref_rm_alnum_len(const Ref *r, int len)
+{
+    Sym *s = r->sym;
+    if (!r->rm || r->rm_bit || r->rm_nat || (long)r->rm_len != len || s->is_cond) return 0;
+    if (s->usage == U_NATIONAL || s->usage == U_BIT || s->nat_usage || s->natgroup || s->bitgroup) return 0;
+    return s->pi.category != PIC_NATIONAL && s->pi.category != PIC_BOOLEAN;
+}
+
 static int opnd_onebyte_alnum(Opnd *o)
 {
     if (o->kind == O_REF) {
         Sym *s = o->ref.sym;
-        if (o->ref.rm || s->is_group || s->is_cond) return 0;
+        if (o->ref.rm) return ref_rm_alnum_len(&o->ref, 1);
+        if (s->is_group || s->is_cond) return 0;
         if (s->pi.category != PIC_ALPHANUMERIC && s->pi.category != PIC_ALPHABETIC) return 0;
         if (s->pi.edited || s->size != 1) return 0;
         return 1;
@@ -6624,6 +6636,16 @@ static void emit_onebyte_value(Opnd *o)
 {
     if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit("\tldbu r1, r3+0"); return; }
     emit_li("r1", o->kind == O_FIG ? fig_byte(o->tok->s) : (o->tok->s[0] & 255));
+}
+
+/* a constant-length reference modification against a literal of its
+ * length, under the native collating sequence: the bytes, as memcmp */
+static int cmp_is_rm_lit(Opnd *x, Opnd *y)
+{
+    if (g_collate >= 0) return 0;
+    if (x->kind == O_STR && y->kind == O_REF) { Opnd *t = x; x = y; y = t; }
+    if (x->kind != O_REF || y->kind != O_STR || y->tok->len < 1) return 0;
+    return ref_rm_alnum_len(&x->ref, y->tok->len);
 }
 
 static int cmp_is_bytewise(Opnd *x, Opnd *y)
@@ -7413,8 +7435,13 @@ static void emit_cond_value(Cond *c)
         case R_LE: emit("\tsleu r1, r2, r1"); break;
         case R_GE: emit("\tsgeu r1, r2, r1"); break;
         }
-    } else if (cmp_is_bytewise(&c->x, &c->y)) {
-        Arg a[3] = { arg_ref(&c->x.ref), arg_ref(&c->y.ref), arg_imm(c->x.ref.sym->size) };
+    } else if (cmp_is_bytewise(&c->x, &c->y) || cmp_is_rm_lit(&c->x, &c->y)) {
+        Arg a[3];
+        for (int k = 0; k < 2; k++) {
+            Opnd *o = k ? &c->y : &c->x;
+            a[k] = o->kind == O_REF ? arg_ref(&o->ref) : arg_label(lit_label((const unsigned char *)o->tok->s, o->tok->len));
+        }
+        a[2] = arg_imm(c->x.kind == O_REF && !c->x.ref.rm ? (long)c->x.ref.sym->size : c->x.kind == O_REF ? (long)c->x.ref.rm_len : c->x.tok->len);
         emit_args(a, 3); emit_call("memcmp");
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r1, r0"); break;
@@ -8485,6 +8512,7 @@ static int emit_move_boolean(Opnd *src, Ref *dst)
     return 1;
 }
 
+static int dx_move(Opnd *src, Ref *dst);
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
@@ -8699,6 +8727,7 @@ static void emit_move(Opnd *src, Ref *dst)
         emit_store_int(d, "r3", "r1");
         return;
     }
+    if (dx_move(src, dst)) return;              /* numeric to numeric: fetch and store, without cob_move's dispatch */
     Arg a[4]; Arg da = arg_ref(dst), dd = arg_desc(sym_desc(d));
     opnd_args(src, &a[0], &a[1], d->size, 1);
     a[2] = da; a[3] = dd;
@@ -9663,11 +9692,44 @@ static int hn_depth(int n, int per)
     HNode *h = &g_hn[n];
     if (!h->op) return 0;
     int l = hn_depth(h->l, per);
-    if (h->op == 'n') return l;
+    if (h->op == 'n' || h->op == 'I' || h->op == 'T' || h->op == 'A') return l;
     int r = hn_depth(h->r, per) + per;
     return l > r ? l : r;
 }
+/* FUNCTION MOD / REM / INTEGER / INTEGER-PART / ABS as a node of a
+ * register tree: op 'M' 'R' (the divisor a literal of magnitude 2 or
+ * more, so no zero and no INT_MIN / -1), 'I' 'T', 'A'; each argument an
+ * item, a literal or an expression (re-read from its tokens) that the
+ * given path takes */
+static int hn_arg(Opnd *a, int (*leaf)(const Opnd *), int (*expr)(void))
+{
+    if (a->kind == O_EXPR) {
+        int save = g_tp; g_tp = a->e_start;
+        g_noemit++; int n = expr(); g_noemit--;
+        if (g_tp != a->e_end) n = -2;
+        g_tp = save;
+        return n;
+    }
+    return leaf(a);
+}
+static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *), int (*expr)(void))
+{
+    if (o->kind != O_FUNC || o->fkind != FK_NUMS) return -2;
+    switch (o->fnid) {
+    case COB_FN_MOD: case COB_FN_REM: {
+        if (o->nfargs != 2 || o->fargs[1]->kind != O_NUM || !numlit_is_int(&o->fargs[1]->num)) return -2;
+        long long d = numlit_int(&o->fargs[1]->num);
+        if (d > -2 && d < 2) return -2;
+        return hn_new(o->fnid == COB_FN_MOD ? 'M' : 'R', hn_arg(o->fargs[0], leaf, expr), hn_arg(o->fargs[1], leaf, expr), NULL);
+    }
+    case COB_FN_INTEGER: case COB_FN_INTEGER_PART: case COB_FN_ABS:
+        if (o->nfargs != 1) return -2;
+        return hn_new(o->fnid == COB_FN_INTEGER ? 'I' : o->fnid == COB_FN_ABS ? 'A' : 'T', hn_arg(o->fargs[0], leaf, expr), -1, NULL);
+    default: return -2;
+    }
+}
 static int hx_expr(void);
+static int hx_leaf(const Opnd *o);
 static int hx_primary(void)
 {
     if (cur()->kind == T_LP) {
@@ -9679,6 +9741,7 @@ static int hx_primary(void)
     if (at_op("-")) { advance(); int n = hx_primary(); return n < 0 ? -2 : hn_new('n', n, -1, NULL); }
     if (!at_operand() && !(cur()->kind == T_WORD && is_figurative(cur()->s))) return -2;
     Opnd o; parse_operand(&o);
+    if (o.kind == O_FUNC) return hn_fn(&o, hx_leaf, hx_expr);
     if (!opnd_hot_int(&o) || opnd_scanned(&o)) return -2;
     return hn_new(0, -1, -1, &o);
 }
@@ -9713,6 +9776,14 @@ static long double hx_bound(int n, int *wide, int *inner, int *neg, int top)
     long double b;
     if (!h->op) { b = hx_mag(&h->o); if (!opnd_nonneg(&h->o)) *neg = 1; }
     else if (h->op == 'n') { b = hx_bound(h->l, wide, inner, neg, 0); *neg = 1; }
+    else if (h->op == 'I' || h->op == 'T') b = hx_bound(h->l, wide, inner, neg, 0);   /* an integer's own value */
+    else if (h->op == 'A') { int ng = 0; b = hx_bound(h->l, wide, inner, &ng, 0); }
+    else if (h->op == 'M' || h->op == 'R') {
+        int ng = 0; long long d = numlit_int(&g_hn[h->r].o.num);
+        hx_bound(h->l, wide, inner, h->op == 'R' ? neg : &ng, 0);
+        if (h->op == 'M' && d < 0) *neg = 1;          /* MOD takes the divisor's sign, REM the dividend's */
+        b = (long double)(d < 0 ? -d : d) - 1;
+    }
     else {
         long double x = hx_bound(h->l, wide, inner, neg, 0), y = hx_bound(h->r, wide, inner, neg, 0);
         if (h->op == '/') { if (!top) *inner = 1; b = x; }
@@ -9728,6 +9799,21 @@ static void hx_emit(int n, int slow)
     HNode *h = &g_hn[n];
     if (!h->op) { emit_hot_value(&h->o); return; }
     hx_emit(h->l, slow);
+    if (h->op == 'I' || h->op == 'T') return;         /* an integer is its own integer part */
+    if (h->op == 'A') { emit("\tsrai r2, r1, 31"); emit("\txor r1, r1, r2"); emit("\tsub r1, r1, r2"); return; }
+    if (h->op == 'M' || h->op == 'R') {               /* the divisor a literal, |d| >= 2 */
+        long long d = numlit_int(&g_hn[h->r].o.num);
+        emit_li("r2", (long)d);
+        emit("\trem r1, r1, r2");
+        if (h->op == 'M') {                            /* floor: a nonzero remainder takes the divisor's sign */
+            int L = new_label();
+            emit("\tbeq r1, r0, .L%d", L);
+            emit("\t%s r1, r0, .L%d", d > 0 ? "bge" : "blt", L);
+            emit("\tadd r1, r1, r2");
+            emit_label(L);
+        }
+        return;
+    }
     if (h->op == 'n') {
         if (slow >= 0) { emit_li("r2", -2147483647L - 1); emit("\tbeq r1, r2, .L%d", slow); }
         emit("\tsub r1, r0, r1");
@@ -9839,7 +9925,7 @@ static int hx_remainder_ahead(Ref *r)
     return 1;
 }
 /* a leaf for a statement's operand or receiver */
-static int hx_leaf(const Opnd *o) { return opnd_hot_int((Opnd *)o) ? hn_new(0, -1, -1, o) : -2; }
+static int hx_leaf(const Opnd *o) { return opnd_hot_int((Opnd *)o) && !opnd_scanned(o) ? hn_new(0, -1, -1, o) : -2; }
 static int hx_leaf_ref(const Ref *r)
 {
     Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line;
@@ -9874,6 +9960,7 @@ static int dx_leaf_ok(const Opnd *o)
     }
 }
 static int dx_expr(void);
+static int dx_leaf(const Opnd *o);
 static int dx_primary(void)
 {
     if (cur()->kind == T_LP) {
@@ -9885,6 +9972,7 @@ static int dx_primary(void)
     if (at_op("-")) { advance(); int n = dx_primary(); return n < 0 ? -2 : hn_new('n', n, -1, NULL); }
     if (!at_operand() && !(cur()->kind == T_WORD && is_figurative(cur()->s))) return -2;
     Opnd o; parse_operand(&o);
+    if (o.kind == O_FUNC) return hn_fn(&o, dx_leaf, dx_expr);
     if (!dx_leaf_ok(&o) || opnd_scanned(&o)) return -2;
     return hn_new(0, -1, -1, &o);
 }
@@ -9918,7 +10006,18 @@ static int dx_check(int n, int top)
         else g_dbd[n] = dx_p10(s->pi.digits) - 1;
         return g_dbd[n] < DX_LIM;
     }
-    if (h->op == 'n') { if (!dx_check(h->l, 0)) return 0; g_dsc[n] = g_dsc[h->l]; g_dbd[n] = g_dbd[h->l]; return 1; }
+    if (h->op == 'n' || h->op == 'A') { if (!dx_check(h->l, 0)) return 0; g_dsc[n] = g_dsc[h->l]; g_dbd[n] = g_dbd[h->l]; return 1; }
+    if (h->op == 'I' || h->op == 'T') {                 /* to an integer: the bound shrinks by the scale, plus one for the floor */
+        if (!dx_check(h->l, 0)) return 0;
+        g_dsc[n] = 0; g_dbd[n] = g_dbd[h->l] / dx_p10(g_dsc[h->l]) + 1;
+        return 1;
+    }
+    if (h->op == 'M' || h->op == 'R') {                 /* integers only; the divisor a literal */
+        if (!dx_check(h->l, 0) || g_dsc[h->l] != 0) return 0;
+        long long d = numlit_int(&g_hn[h->r].o.num);
+        g_dsc[n] = 0; g_dbd[n] = (long double)(d < 0 ? -d : d) - 1;
+        return 1;
+    }
     if (!dx_check(h->l, 0) || !dx_check(h->r, 0)) return 0;
     int sl = g_dsc[h->l], sr = g_dsc[h->r];
     long double bl = g_dbd[h->l], br = g_dbd[h->r];
@@ -9973,6 +10072,48 @@ static void dx_emit(int n)
         return;
     }
     dx_emit(h->l);
+    if (h->op == 'A') {
+        int L = new_label();
+        emit("\tbge r2, r0, .L%d", L);
+        emit("\tsltu r8, r0, r1");
+        emit("\tsub r1, r0, r1"); emit("\tsub r2, r0, r2"); emit("\tsub r2, r2, r8");
+        emit_label(L);
+        return;
+    }
+    if (h->op == 'I' || h->op == 'T') {
+        int sc = g_dsc[h->l];
+        if (sc <= 0) return;
+        long long p = 1; for (int i = 0; i < sc; i++) p *= 10;
+        if (h->op == 'I') {                             /* floor: a negative value less p - 1 first, then truncate */
+            int L = new_label();
+            emit("\tbge r2, r0, .L%d", L);
+            emit_li64("r5", "r6", -(p - 1));
+            emit("\tadd r7, r1, r5"); emit("\tsltu r8, r7, r1");
+            emit("\tadd r2, r2, r6"); emit("\tadd r2, r2, r8"); emit("\tadd r1, r7, r0");
+            emit_label(L);
+        }
+        emit("\tadd r3, r1, r0"); emit("\tadd r4, r2, r0");
+        emit_li64("r5", "r6", p);
+        emit_call("__divdi3");
+        return;
+    }
+    if (h->op == 'M' || h->op == 'R') {
+        long long d = numlit_int(&g_hn[h->r].o.num);
+        emit("\tadd r3, r1, r0"); emit("\tadd r4, r2, r0");
+        emit_li64("r5", "r6", d);
+        emit_call("__moddi3");                          /* the remainder, the dividend's sign */
+        if (h->op == 'M') {                             /* floor: a nonzero remainder takes the divisor's sign */
+            int L = new_label();
+            emit("\tor r7, r1, r2");
+            emit("\tbeq r7, r0, .L%d", L);
+            emit("\t%s r2, r0, .L%d", d > 0 ? "bge" : "blt", L);
+            emit_li64("r5", "r6", d);
+            emit("\tadd r7, r1, r5"); emit("\tsltu r8, r7, r1");
+            emit("\tadd r2, r2, r6"); emit("\tadd r2, r2, r8"); emit("\tadd r1, r7, r0");
+            emit_label(L);
+        }
+        return;
+    }
     if (h->op == 'n') {
         emit("\tsltu r8, r0, r1");
         emit("\tsub r1, r0, r1"); emit("\tsub r2, r0, r2"); emit("\tsub r2, r2, r8");
@@ -10097,7 +10238,20 @@ static int dx_sum(Opnd *ops, int n)
     for (int i = 1; i < n && r >= 0; i++) r = hn_new('+', r, dx_leaf_ok(&ops[i]) ? hn_new(0, -1, -1, &ops[i]) : -2, NULL);
     return r;
 }
-static int dx_leaf(const Opnd *o) { return dx_leaf_ok(o) ? hn_new(0, -1, -1, o) : -2; }
+static int dx_leaf(const Opnd *o) { return dx_leaf_ok(o) && !opnd_scanned(o) ? hn_new(0, -1, -1, o) : -2; }
+/* MOVE of a numeric item, literal or MOD/INTEGER/... to a numeric or
+ * numeric-edited item: cob_move does cob_put_num(cob_get_num) there, so
+ * the tree's store is the same MOVE (truncating: no ROUNDED) */
+static int dx_move(Opnd *src, Ref *dst)
+{
+    if (g_nohx) return 0;
+    g_nhn = 0;
+    int root = src->kind == O_FUNC ? hn_fn(src, dx_leaf, dx_expr) : (src->kind == O_REF || src->kind == O_NUM) ? dx_leaf(src) : -2;
+    int rd = 0;
+    if (root < 0 || !dx_ok(root, dst, 1, 0)) return 0;
+    dx_store(root, dst, &rd, 1);
+    return 1;
+}
 static int dx_leaf_ref(const Ref *r)
 {
     Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line;
