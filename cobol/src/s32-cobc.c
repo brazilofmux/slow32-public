@@ -6529,7 +6529,10 @@ static int opnd_hot_int(Opnd *o)
      * below 10^9, so every partial sum hot_sum_fits admits still fits a word.
      * GitHub #29 shape (3). */
     if (opnd_display_int(o)) return 1;
-    if (o->kind == O_REF) return !o->ref.rm && is_hot_int(o->ref.sym) && !(o->ref.sym->size == 4 && !o->ref.sym->pi.is_signed);
+    /* a four-byte unsigned item that keeps its capacity (COMP-5, the native
+     * types) may use the top bit; one its picture truncates holds at most
+     * 999999999 and is a signed word's value */
+    if (o->kind == O_REF) return !o->ref.rm && is_hot_int(o->ref.sym) && !(o->ref.sym->size == 4 && !o->ref.sym->pi.is_signed && sym_notrunc(o->ref.sym));
     if (o->kind == O_NUM) return numlit_is_int(&o->num) && numlit_int(&o->num) <= 2147483647LL && numlit_int(&o->num) >= -2147483647LL;
     if (o->kind == O_FIG) return !strncmp(o->tok->s, "zero", 4);
     return 0;
@@ -9615,110 +9618,6 @@ static int refs_wide(const Ref *rs, int nr)
     return 0;
 }
 
-static void parse_add(void)
-{
-    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
-    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
-    int n = parse_operand_list(ops, MAXOPS);
-    if (!n) die_at(cur()->line, "ADD needs an operand");
-    int giving = 0, nr = 0;
-    if (accept_word("to")) {
-        /* ADD a TO b [GIVING c]: b is a receiver unless GIVING follows */
-        int save = g_tp;
-        g_noemit++;
-        Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
-        int has_giving = accept_word("giving");
-        g_noemit--;
-        if (has_giving) {
-            /* again, for real: a user function among them is called here */
-            g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
-            for (int i = 0; i < ne; i++) { if (n >= MAXOPS) die_at(cur()->line, "too many operands"); ops[n++] = extra[i]; }
-            giving = 1;
-            nr = parse_ref_list(rs, rd, MAXOPS, 1);
-        } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
-    } else if (accept_word("giving")) {
-        giving = 1; nr = parse_ref_list(rs, rd, MAXOPS, 1);
-    } else die_at(cur()->line, "expected TO or GIVING in ADD");
-    if (!nr) die_at(cur()->line, "ADD needs a receiving item");
-    int comp = arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
-    for (int k = 0; k < n; k++) emit_incompat(&ops[k]);
-    if (!giving) emit_incompat_refs(rs, nr);            /* ADD a TO b: b is summed too */
-    int size_err = at_size_error_clause() || ec_size_on();
-    g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ops, n) || refs_wide(rs, nr);
-
-    int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
-              refs_hot(rs, nr, 0, ops_all_nonneg(ops, n)) && hot_sum_fits(ops, n);
-    if (hot) emit_hot_sum(ops, n);
-    else if (!g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
-        emit_dec_addto(&ops[0], rs, nr, 0);
-        parse_size_error_clauses(size_err, "end-add");
-        return;
-    }
-    else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
-    emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
-    g_wide = 0; g_fstmt = 0;
-    parse_size_error_clauses(size_err, "end-add");
-}
-
-static void parse_subtract(void)
-{
-    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(2, "from", "end-subtract"); return; }
-    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
-    int n = parse_operand_list(ops, MAXOPS);
-    if (!n) die_at(cur()->line, "SUBTRACT needs an operand");
-    expect_word("from");
-    int giving = 0, nr = 0;
-    Opnd minuend; memset(&minuend, 0, sizeof minuend);
-    int save = g_tp;
-    g_noemit++;
-    Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
-    int has_giving = accept_word("giving");
-    g_noemit--;
-    if (has_giving) {
-        /* again, for real: a user function in the minuend is called here */
-        g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
-        if (ne != 1) die_at(cur()->line, "SUBTRACT ... FROM x GIVING takes one item after FROM");
-        minuend = extra[0]; giving = 1;
-        nr = parse_ref_list(rs, rd, MAXOPS, 1);
-    } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
-    if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
-    {   /* the composite: every operand, the GIVING items apart (85 rule 3) */
-        Opnd all[MAXOPS + 1]; int na = 0;
-        for (int k = 0; k < n; k++) all[na++] = ops[k];
-        if (giving) all[na++] = minuend;
-        int comp = arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
-        for (int k = 0; k < na; k++) emit_incompat(&all[k]);
-        if (!giving) emit_incompat_refs(rs, nr);
-        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(all, na) || refs_wide(rs, nr);
-    }
-    int size_err = at_size_error_clause() || ec_size_on();
-
-    int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
-              refs_hot(rs, nr, 1, 0) && (!giving || opnd_hot_int(&minuend)) &&
-              hot_sum_fits(ops, n);
-    if (!hot && !g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
-        emit_dec_addto(&ops[0], rs, nr, 1);
-        parse_size_error_clauses(size_err, "end-subtract");
-        return;
-    }
-    if (hot) {
-        emit_hot_sum(ops, n);
-        if (giving) {
-            emit_hot_value(&minuend);
-            emit("\tldw r2, sp+%d", SLOT_A);
-            emit("\tsub r1, r1, r2");
-            emit("\tstw sp+%d, r1", SLOT_A);
-        }
-    } else {
-        if (giving) emit_push(&minuend);
-        for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
-        if (giving) emit_call("cob_nsub");
-    }
-    emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err, -1, 0);
-    g_wide = 0; g_fstmt = 0;
-    parse_size_error_clauses(size_err, "end-subtract");
-}
-
 /* ---- integer arithmetic in registers ----------------------------------
  * MULTIPLY, DIVIDE and COMPUTE on integer binary (and short DISPLAY)
  * items, computed in a word instead of on the decimal stack, where the
@@ -9743,7 +9642,11 @@ static void parse_subtract(void)
  * hot_opnd_mag bounds it: the one value past that, INT_MIN, is the one
  * place the two paths can part (INT_MIN / -1 into a truncating receiver).  The profile of majesty's date functions (jerm) put 70%
  * of its instructions in the stack for exactly these statements. */
-typedef struct { char op; int l, r; Opnd o; } HNode;   /* op: 0 leaf, + - * /, 'n' negate */
+/* a user function's result met while scanning ahead: the scan made no
+ * call, so the tree may not hold it (the re-parse makes the call) */
+static int opnd_scanned(const Opnd *o) { return o->kind == O_REF && g_sym[o->ref.sym->record].ftemp_scan; }
+typedef struct { char op; int l, r; Opnd o; } HNode;
+static int hn_depth(int n, int per);   /* op: 0 leaf, + - * /, 'n' negate */
 #define MAXHN 64
 static int g_nohx;                      /* -fno-hot-arith: every such statement on the stack (a differential's other side) */
 static HNode g_hn[MAXHN]; static int g_nhn;
@@ -9753,6 +9656,16 @@ static int hn_new(char op, int l, int r, const Opnd *o)
     HNode *h = &g_hn[g_nhn]; memset(h, 0, sizeof *h);
     h->op = op; h->l = l; h->r = r; if (o) h->o = *o;
     return g_nhn++;
+}
+/* the frame slots evaluating node n needs, per words held at each level */
+static int hn_depth(int n, int per)
+{
+    HNode *h = &g_hn[n];
+    if (!h->op) return 0;
+    int l = hn_depth(h->l, per);
+    if (h->op == 'n') return l;
+    int r = hn_depth(h->r, per) + per;
+    return l > r ? l : r;
 }
 static int hx_expr(void);
 static int hx_primary(void)
@@ -9766,7 +9679,7 @@ static int hx_primary(void)
     if (at_op("-")) { advance(); int n = hx_primary(); return n < 0 ? -2 : hn_new('n', n, -1, NULL); }
     if (!at_operand() && !(cur()->kind == T_WORD && is_figurative(cur()->s))) return -2;
     Opnd o; parse_operand(&o);
-    if (!opnd_hot_int(&o)) return -2;
+    if (!opnd_hot_int(&o) || opnd_scanned(&o)) return -2;
     return hn_new(0, -1, -1, &o);
 }
 static int hx_power(void) { int n = hx_primary(); return at_op("**") ? -2 : n; }
@@ -9853,6 +9766,7 @@ static void hx_emit(int n, int slow)
 static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, long long *bound, int *nonneg)
 {
     if (root < 0 || size_err || g_wide || g_nohx || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
+    if (g_slot_base + hn_depth(root, 1) + 2 > NSLOTS) return 0;     /* too deep for the frame: the stack */
     int wide = 0, inner = 0, neg = 0, div = g_hn[root].op == '/';
     long double b = hx_bound(root, &wide, &inner, &neg, 1);
     if (inner) return 0;
@@ -9932,6 +9846,380 @@ static int hx_leaf_ref(const Ref *r)
     return hx_leaf(&o);
 }
 
+/* ---- decimal arithmetic in registers -----------------------------------
+ * What the integer path above cannot take -- decimals, packed and DISPLAY
+ * items of up to 18 digits, ROUNDED -- computed as 64-bit scaled integers
+ * in register pairs, the scales known when compiling, instead of on the
+ * decimal stack.  Only where the answer is provably the stack's: every
+ * intermediate (aligned operands, sums, products) bounded below 9*10^18,
+ * a product's scale at most 18, so none of the stack's shedding happens.
+ * Each operand is fetched by cob_get_num and the result stored by
+ * cob_put_num_x -- the stack's own fetch and store, which round, truncate
+ * and edit, and which the DBT runs natively -- so what goes is the stack
+ * between them: its pushes, alignment and dispatch.  A division, only at
+ * the top, is the stack's own (cob_xdiv), its scale found at run time.
+ * SIZE ERROR and the EC checks keep the stack. */
+static int g_dsc[MAXHN]; static long double g_dbd[MAXHN];
+static int dx_leaf_ok(const Opnd *o)
+{
+    if (o->kind == O_FIG) return !strncmp(o->tok->s, "zero", 4);
+    if (o->kind == O_NUM) return o->num.ndigits <= 18 && o->num.scale >= 0 && o->num.scale <= 18;
+    if (o->kind != O_REF || o->ref.rm) return 0;
+    Sym *s = o->ref.sym;
+    if (s->is_group || s->pi.category != PIC_NUMERIC || sym_wide(s) || s->pi.digits > 18 || s->pi.scale < 0 || strchr(s->pi.pat, 'P')) return 0;
+    switch (s->usage) {
+    case U_DISPLAY: case U_BINARY: case U_PACKED: case U_COMP5: case U_SINT: case U_UINT:
+    case U_SSHORT: case U_USHORT: case U_BCHAR: case U_UBCHAR: return 1;
+    default: return 0;
+    }
+}
+static int dx_expr(void);
+static int dx_primary(void)
+{
+    if (cur()->kind == T_LP) {
+        advance(); int n = dx_expr();
+        if (cur()->kind != T_RP) return -2;
+        advance(); return n;
+    }
+    if (at_op("+")) { advance(); return dx_primary(); }
+    if (at_op("-")) { advance(); int n = dx_primary(); return n < 0 ? -2 : hn_new('n', n, -1, NULL); }
+    if (!at_operand() && !(cur()->kind == T_WORD && is_figurative(cur()->s))) return -2;
+    Opnd o; parse_operand(&o);
+    if (!dx_leaf_ok(&o) || opnd_scanned(&o)) return -2;
+    return hn_new(0, -1, -1, &o);
+}
+static int dx_power(void) { int n = dx_primary(); return at_op("**") ? -2 : n; }
+static int dx_term(void)
+{
+    int n = dx_power();
+    while (n >= 0 && (at_op("*") || at_op("/"))) { char op = at_op("*") ? '*' : '/'; advance(); n = hn_new(op, n, dx_power(), NULL); }
+    return n;
+}
+static int dx_expr(void)
+{
+    int n = dx_term();
+    while (n >= 0 && (at_op("+") || at_op("-"))) { char op = at_op("+") ? '+' : '-'; advance(); n = hn_new(op, n, dx_term(), NULL); }
+    return n;
+}
+static long double dx_p10(int k) { long double r = 1; while (k-- > 0) r *= 10; return r; }
+#define DX_LIM 9.0e18L
+/* scale and bound of node n (the bound in units of its scale); 0 when the
+ * stack could answer otherwise */
+static int dx_check(int n, int top)
+{
+    HNode *h = &g_hn[n];
+    if (!h->op) {
+        const Opnd *o = &h->o;
+        if (o->kind == O_FIG) { g_dsc[n] = 0; g_dbd[n] = 0; return 1; }
+        if (o->kind == O_NUM) { long long v = numlit_scaled(&o->num); g_dsc[n] = o->num.scale; g_dbd[n] = v < 0 ? -(long double)v : v; return 1; }
+        Sym *s = o->ref.sym;
+        g_dsc[n] = s->pi.scale;
+        if (sym_notrunc(s)) g_dbd[n] = s->size >= 8 ? DX_LIM : dx_p10(0) * (long double)(1ULL << (8 * s->size));
+        else g_dbd[n] = dx_p10(s->pi.digits) - 1;
+        return g_dbd[n] < DX_LIM;
+    }
+    if (h->op == 'n') { if (!dx_check(h->l, 0)) return 0; g_dsc[n] = g_dsc[h->l]; g_dbd[n] = g_dbd[h->l]; return 1; }
+    if (!dx_check(h->l, 0) || !dx_check(h->r, 0)) return 0;
+    int sl = g_dsc[h->l], sr = g_dsc[h->r];
+    long double bl = g_dbd[h->l], br = g_dbd[h->r];
+    if (h->op == '/') { if (!top) return 0; g_dsc[n] = -1; g_dbd[n] = 0; return 1; }
+    if (h->op == '*') {
+        if (sl + sr > 18) return 0;
+        g_dsc[n] = sl + sr; g_dbd[n] = bl * br;
+        return g_dbd[n] < DX_LIM;
+    }
+    int sc = sl > sr ? sl : sr;
+    bl *= dx_p10(sc - sl); br *= dx_p10(sc - sr);
+    g_dsc[n] = sc; g_dbd[n] = bl + br;
+    return bl < DX_LIM && br < DX_LIM && g_dbd[n] < DX_LIM;
+}
+/* x = x * y, 64 bits, pairs of registers; r7-r9 scratch */
+static void emit_mul64(const char *xl, const char *xh, const char *yl, const char *yh)
+{
+    emit("\tmul r7, %s, %s", xl, yl);
+    emit("\tmulhu r8, %s, %s", xl, yl);
+    emit("\tmul r9, %s, %s", xl, yh);
+    emit("\tadd r8, r8, r9");
+    emit("\tmul r9, %s, %s", xh, yl);
+    emit("\tadd r8, r8, r9");
+    emit("\tadd %s, r7, r0", xl);
+    emit("\tadd %s, r8, r0", xh);
+}
+static void emit_li64(const char *lo, const char *hi, long long v)
+{
+    emit_li(lo, (long)(int)(unsigned)(unsigned long long)v);
+    emit_li(hi, (long)(int)(unsigned)((unsigned long long)v >> 32));
+}
+/* the pair scaled up by 10^k */
+static void emit_scale64(const char *xl, const char *xh, int k)
+{
+    if (k <= 0) return;
+    long long p = 1; for (int i = 0; i < k; i++) p *= 10;
+    emit_li64("r3", "r4", p);
+    emit_mul64(xl, xh, "r3", "r4");
+}
+/* r1:r2 = node n at its scale */
+static void dx_emit(int n)
+{
+    HNode *h = &g_hn[n];
+    if (!h->op) {
+        const Opnd *o = &h->o;
+        if (o->kind == O_FIG) { emit_li("r1", 0); emit_li("r2", 0); return; }
+        if (o->kind == O_NUM) { emit_li64("r1", "r2", numlit_scaled(&o->num)); return; }
+        if (opnd_hot_int((Opnd *)o)) { emit_hot_value((Opnd *)o); emit("\tsrai r2, r1, 31"); return; }
+        emit_ref_addr(&o->ref, "r3");
+        emit_desc_addr("r4", sym_desc(o->ref.sym));
+        emit_call("cob_get_num");
+        return;
+    }
+    dx_emit(h->l);
+    if (h->op == 'n') {
+        emit("\tsltu r8, r0, r1");
+        emit("\tsub r1, r0, r1"); emit("\tsub r2, r0, r2"); emit("\tsub r2, r2, r8");
+        return;
+    }
+    if (g_slot_base + 2 > NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
+    int t = g_slot_base; g_slot_base += 2;
+    emit("\tstw sp+%d, r1", SLOT(t)); emit("\tstw sp+%d, r2", SLOT(t + 1));
+    dx_emit(h->r);
+    emit("\tadd r5, r1, r0"); emit("\tadd r6, r2, r0");
+    emit("\tldw r1, sp+%d", SLOT(t)); emit("\tldw r2, sp+%d", SLOT(t + 1));
+    g_slot_base -= 2;
+    int sl = g_dsc[h->l], sr = g_dsc[h->r];
+    if (h->op == '*') { emit_mul64("r1", "r2", "r5", "r6"); return; }
+    if (sl < sr) emit_scale64("r1", "r2", sr - sl);
+    if (sr < sl) emit_scale64("r5", "r6", sl - sr);
+    if (h->op == '+') {
+        emit("\tadd r7, r1, r5"); emit("\tsltu r8, r7, r1");
+        emit("\tadd r2, r2, r6"); emit("\tadd r2, r2, r8"); emit("\tadd r1, r7, r0");
+    } else {
+        emit("\tsltu r8, r1, r5");
+        emit("\tsub r1, r1, r5"); emit("\tsub r2, r2, r6"); emit("\tsub r2, r2, r8");
+    }
+}
+/* may the tree at root be stored into rs in registers? */
+static int dx_ok(int root, Ref *rs, int nr, int size_err)
+{
+    if (root < 0 || size_err || g_wide || g_nohx || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
+    if (g_slot_base + hn_depth(root, 2) + 4 > NSLOTS) return 0;     /* too deep for the frame: the stack */
+    if (!dx_check(root, 1)) return 0;
+    for (int i = 0; i < nr; i++) {
+        Sym *d = rs[i].sym;
+        if (rs[i].rm || d->is_group || sym_wide(d) || d->usage == U_FLOAT || d->usage == U_NATIONAL || d->usage == U_BIT) return 0;
+        if (d->pi.category != PIC_NUMERIC && d->pi.category != PIC_NUMERIC_EDITED) return 0;
+    }
+    return 1;
+}
+/* emit the tree and store it into each receiver, as cob_top_store would */
+static void dx_store(int root, Ref *rs, int *rd, int nr)
+{
+    HNode *h = &g_hn[root];
+    if (g_slot_base + 3 > NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
+    int t = g_slot_base; g_slot_base += 3;
+    int Lskip = -1;
+    if (h->op == '/') {
+        dx_emit(h->l);
+        emit("\tstw sp+%d, r1", SLOT(t)); emit("\tstw sp+%d, r2", SLOT(t + 1));
+        dx_emit(h->r);
+        emit("\tadd r5, r1, r0"); emit("\tadd r6, r2, r0");
+        emit("\tldw r3, sp+%d", SLOT(t)); emit("\tldw r4, sp+%d", SLOT(t + 1));
+        emit_li("r7", g_dsc[h->l]); emit_li("r8", g_dsc[h->r]);
+        emit_call("cob_xdiv");
+        emit("\tstw sp+%d, r1", SLOT(t)); emit("\tstw sp+%d, r2", SLOT(t + 1));
+        emit_la("r3", "cob_xdiv_scale"); emit("\tldw r3, r3+0");
+        emit("\tstw sp+%d, r3", SLOT(t + 2));
+        Lskip = new_label();
+        emit("\tblt r3, r0, .L%d", Lskip);                  /* a zero divisor: the receivers stay */
+    } else {
+        dx_emit(root);
+        emit("\tstw sp+%d, r1", SLOT(t)); emit("\tstw sp+%d, r2", SLOT(t + 1));
+    }
+    for (int i = 0; i < nr; i++) {
+        emit_ref_addr(&rs[i], "r3");
+        emit_desc_addr("r4", sym_desc(rs[i].sym));
+        emit("\tldw r5, sp+%d", SLOT(t)); emit("\tldw r6, sp+%d", SLOT(t + 1));
+        if (h->op == '/') emit("\tldw r7, sp+%d", SLOT(t + 2)); else emit_li("r7", g_dsc[root]);
+        emit_li("r8", rd[i] ? 1 : 0);
+        emit_call("cob_put_num_x");
+    }
+    if (Lskip >= 0) emit_label(Lskip);
+    g_slot_base -= 3;
+}
+/* ADD ... TO / SUBTRACT ... FROM: the operands' sum once, then each
+ * receiver's value plus (less) it, as cob_top_addto does -- an operand
+ * that is also a receiver is read once, before any store */
+static int dx_addto_ok(int sum, Ref *rs, int nr, int size_err, int *leaf)
+{
+    if (!dx_ok(sum, rs, nr, size_err)) return 0;
+    if (g_dsc[sum] < 0) return 0;
+    for (int i = 0; i < nr; i++) {
+        Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = rs[i]; o.line = rs[i].line;
+        if (!dx_leaf_ok(&o) || (leaf[i] = hn_new(0, -1, -1, &o)) < 0 || !dx_check(leaf[i], 0)) return 0;
+        int sr = g_dsc[leaf[i]], ss = g_dsc[sum], sc = sr > ss ? sr : ss;
+        long double a = g_dbd[leaf[i]] * dx_p10(sc - sr), b = g_dbd[sum] * dx_p10(sc - ss);
+        if (a >= DX_LIM || b >= DX_LIM || a + b >= DX_LIM) return 0;
+    }
+    return 1;
+}
+static void dx_addto(int sum, Ref *rs, int *rd, int nr, int *leaf, int subtract)
+{
+    if (g_slot_base + 4 > NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
+    int t = g_slot_base; g_slot_base += 4;
+    dx_emit(sum);
+    emit("\tstw sp+%d, r1", SLOT(t)); emit("\tstw sp+%d, r2", SLOT(t + 1));
+    for (int i = 0; i < nr; i++) {
+        int sr = g_dsc[leaf[i]], ss = g_dsc[sum];
+        dx_emit(leaf[i]);
+        emit("\tldw r5, sp+%d", SLOT(t)); emit("\tldw r6, sp+%d", SLOT(t + 1));
+        if (sr < ss) emit_scale64("r1", "r2", ss - sr);
+        if (ss < sr) emit_scale64("r5", "r6", sr - ss);
+        if (!subtract) {
+            emit("\tadd r7, r1, r5"); emit("\tsltu r8, r7, r1");
+            emit("\tadd r2, r2, r6"); emit("\tadd r2, r2, r8"); emit("\tadd r1, r7, r0");
+        } else {
+            emit("\tsltu r8, r1, r5");
+            emit("\tsub r1, r1, r5"); emit("\tsub r2, r2, r6"); emit("\tsub r2, r2, r8");
+        }
+        emit("\tstw sp+%d, r1", SLOT(t + 2)); emit("\tstw sp+%d, r2", SLOT(t + 3));
+        emit_ref_addr(&rs[i], "r3");
+        emit_desc_addr("r4", sym_desc(rs[i].sym));
+        emit("\tldw r5, sp+%d", SLOT(t + 2)); emit("\tldw r6, sp+%d", SLOT(t + 3));
+        emit_li("r7", sr > ss ? sr : ss);
+        emit_li("r8", rd[i] ? 1 : 0);
+        emit_call("cob_put_num_x");
+    }
+    g_slot_base -= 4;
+}
+/* the operands' sum, left to right as the stack adds them */
+static int dx_sum(Opnd *ops, int n)
+{
+    int r = dx_leaf_ok(&ops[0]) ? hn_new(0, -1, -1, &ops[0]) : -2;
+    for (int i = 1; i < n && r >= 0; i++) r = hn_new('+', r, dx_leaf_ok(&ops[i]) ? hn_new(0, -1, -1, &ops[i]) : -2, NULL);
+    return r;
+}
+static int dx_leaf(const Opnd *o) { return dx_leaf_ok(o) ? hn_new(0, -1, -1, o) : -2; }
+static int dx_leaf_ref(const Ref *r)
+{
+    Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line;
+    return dx_leaf(&o);
+}
+
+static void parse_add(void)
+{
+    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
+    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
+    int n = parse_operand_list(ops, MAXOPS);
+    if (!n) die_at(cur()->line, "ADD needs an operand");
+    int giving = 0, nr = 0;
+    if (accept_word("to")) {
+        /* ADD a TO b [GIVING c]: b is a receiver unless GIVING follows */
+        int save = g_tp;
+        g_noemit++;
+        Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
+        int has_giving = accept_word("giving");
+        g_noemit--;
+        if (has_giving) {
+            /* again, for real: a user function among them is called here */
+            g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
+            for (int i = 0; i < ne; i++) { if (n >= MAXOPS) die_at(cur()->line, "too many operands"); ops[n++] = extra[i]; }
+            giving = 1;
+            nr = parse_ref_list(rs, rd, MAXOPS, 1);
+        } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
+    } else if (accept_word("giving")) {
+        giving = 1; nr = parse_ref_list(rs, rd, MAXOPS, 1);
+    } else die_at(cur()->line, "expected TO or GIVING in ADD");
+    if (!nr) die_at(cur()->line, "ADD needs a receiving item");
+    int comp = arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
+    for (int k = 0; k < n; k++) emit_incompat(&ops[k]);
+    if (!giving) emit_incompat_refs(rs, nr);            /* ADD a TO b: b is summed too */
+    int size_err = at_size_error_clause() || ec_size_on();
+    g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ops, n) || refs_wide(rs, nr);
+
+    int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
+              refs_hot(rs, nr, 0, ops_all_nonneg(ops, n)) && hot_sum_fits(ops, n);
+    if (hot) emit_hot_sum(ops, n);
+    else if (!g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
+        emit_dec_addto(&ops[0], rs, nr, 0);
+        parse_size_error_clauses(size_err, "end-add");
+        return;
+    }
+    else {
+        int leaf[MAXOPS];
+        g_nhn = 0; int sum = dx_sum(ops, n);
+        if (giving && dx_ok(sum, rs, nr, size_err)) { dx_store(sum, rs, rd, nr); parse_size_error_clauses(size_err, "end-add"); return; }
+        if (!giving && dx_addto_ok(sum, rs, nr, size_err, leaf)) { dx_addto(sum, rs, rd, nr, leaf, 0); parse_size_error_clauses(size_err, "end-add"); return; }
+        for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
+    }
+    emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
+    g_wide = 0; g_fstmt = 0;
+    parse_size_error_clauses(size_err, "end-add");
+}
+
+static void parse_subtract(void)
+{
+    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(2, "from", "end-subtract"); return; }
+    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
+    int n = parse_operand_list(ops, MAXOPS);
+    if (!n) die_at(cur()->line, "SUBTRACT needs an operand");
+    expect_word("from");
+    int giving = 0, nr = 0;
+    Opnd minuend; memset(&minuend, 0, sizeof minuend);
+    int save = g_tp;
+    g_noemit++;
+    Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
+    int has_giving = accept_word("giving");
+    g_noemit--;
+    if (has_giving) {
+        /* again, for real: a user function in the minuend is called here */
+        g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
+        if (ne != 1) die_at(cur()->line, "SUBTRACT ... FROM x GIVING takes one item after FROM");
+        minuend = extra[0]; giving = 1;
+        nr = parse_ref_list(rs, rd, MAXOPS, 1);
+    } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
+    if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
+    {   /* the composite: every operand, the GIVING items apart (85 rule 3) */
+        Opnd all[MAXOPS + 1]; int na = 0;
+        for (int k = 0; k < n; k++) all[na++] = ops[k];
+        if (giving) all[na++] = minuend;
+        int comp = arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
+        for (int k = 0; k < na; k++) emit_incompat(&all[k]);
+        if (!giving) emit_incompat_refs(rs, nr);
+        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(all, na) || refs_wide(rs, nr);
+    }
+    int size_err = at_size_error_clause() || ec_size_on();
+
+    int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
+              refs_hot(rs, nr, 1, 0) && (!giving || opnd_hot_int(&minuend)) &&
+              hot_sum_fits(ops, n);
+    if (!hot && !g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
+        emit_dec_addto(&ops[0], rs, nr, 1);
+        parse_size_error_clauses(size_err, "end-subtract");
+        return;
+    }
+    if (hot) {
+        emit_hot_sum(ops, n);
+        if (giving) {
+            emit_hot_value(&minuend);
+            emit("\tldw r2, sp+%d", SLOT_A);
+            emit("\tsub r1, r1, r2");
+            emit("\tstw sp+%d, r1", SLOT_A);
+        }
+    } else {
+        int leaf[MAXOPS];
+        g_nhn = 0; int sum = dx_sum(ops, n);
+        if (giving) {
+            int root = sum >= 0 ? hn_new('-', dx_leaf(&minuend), sum, NULL) : -2;
+            if (dx_ok(root, rs, nr, size_err)) { dx_store(root, rs, rd, nr); parse_size_error_clauses(size_err, "end-subtract"); return; }
+        } else if (dx_addto_ok(sum, rs, nr, size_err, leaf)) { dx_addto(sum, rs, rd, nr, leaf, 1); parse_size_error_clauses(size_err, "end-subtract"); return; }
+        if (giving) emit_push(&minuend);
+        for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
+        if (giving) emit_call("cob_nsub");
+    }
+    emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err, -1, 0);
+    g_wide = 0; g_fstmt = 0;
+    parse_size_error_clauses(size_err, "end-subtract");
+}
+
 static void parse_multiply(void)
 {
     Opnd a; parse_operand(&a); check_numeric_opnd(&a);
@@ -9954,7 +10242,10 @@ static void parse_multiply(void)
         int mode = hx_ok(root, rs, rd, nr, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
         if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, NULL, bd, nn, Lslow); }
         if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
-        if (mode != 1) {
+        int dxr = -2;
+        if (!mode) { g_nhn = 0; dxr = hn_new('*', dx_leaf(&a), dx_leaf(&b), NULL); }
+        if (!mode && dx_ok(dxr, rs, nr, size_err)) dx_store(dxr, rs, rd, nr);
+        else if (mode != 1) {
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
         }
@@ -9976,6 +10267,10 @@ static void parse_multiply(void)
         int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
         if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }
         if (mode == 1) continue;
+        if (!mode) {
+            g_nhn = 0; int dxr = hn_new('*', dx_leaf_ref(&rs[i]), dx_leaf(&a), NULL);
+            if (dx_ok(dxr, &rs[i], 1, size_err)) { dx_store(dxr, &rs[i], &rd[i], 1); continue; }
+        }
         if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
         Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
         emit_push(&r); emit_push(&a); emit_call("cob_nmul");
@@ -10051,7 +10346,10 @@ static void parse_divide(void)
             int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
             if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, hasr ? &rr : NULL, bd, nn, Lslow); }
             if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
-            if (mode != 1) {
+            int dxr = -2;
+            if (!mode && !hasr) { g_nhn = 0; dxr = hn_new('/', dx_leaf(&b), dx_leaf(&a), NULL); }
+            if (!mode && !hasr && dx_ok(dxr, rs, nr, size_err)) dx_store(dxr, rs, rd, nr);
+            else if (mode != 1) {
             g_tp = at;
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
             emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
@@ -10075,6 +10373,10 @@ static void parse_divide(void)
             int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
             if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }
             if (mode == 1) continue;
+            if (!mode) {
+                g_nhn = 0; int dxr = hn_new('/', dx_leaf_ref(&rs[i]), dx_leaf(&a), NULL);
+                if (dx_ok(dxr, &rs[i], 1, size_err)) { dx_store(dxr, &rs[i], &rd[i], 1); continue; }
+            }
             if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
             Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
             emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
@@ -10100,7 +10402,10 @@ static void parse_divide(void)
     int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
     if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, hasr ? &rr : NULL, bd, nn, Lslow); }
     if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
-    if (mode != 1) {
+    int dxr = -2;
+    if (!mode && !hasr) { g_nhn = 0; dxr = hn_new('/', dx_leaf(&a), dx_leaf(&b), NULL); }
+    if (!mode && !hasr && dx_ok(dxr, rs, nr, size_err)) dx_store(dxr, rs, rd, nr);
+    else if (mode != 1) {
     g_tp = at;
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
@@ -10269,6 +10574,14 @@ static void parse_compute(void)
                 emit_store_receivers(rs, rd, nr, 0, 1, 0, 0, -1, 0);
                 emit_label(Ldone);
             }
+            parse_size_error_clauses(size_err, "end-compute");
+            return;
+        }
+        g_tp = start;
+        g_noemit++; g_nhn = 0; root = dx_expr(); g_noemit--;
+        size_err = at_size_error_clause() || ec_size_on();   /* where this parse stopped: the integer one may have quit early */
+        if (dx_ok(root, rs, nr, size_err)) {           /* decimals in registers */
+            dx_store(root, rs, rd, nr);
             parse_size_error_clauses(size_err, "end-compute");
             return;
         }

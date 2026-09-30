@@ -90,3 +90,60 @@ run, and 52 ms for its heaviest program. So the measure is jerm, the
 output fields (`cob_k_put_num`, `cob_move`, `cob_edit_apply`), about a
 third of it. That is the next lever: inline decimal and conversion code
 in the compiler, as in the "Where it stands" list above.
+
+## 2026-09-30, continued: decimal arithmetic in registers
+
+**The change.** What the integer path cannot take now also leaves the
+decimal stack:
+- decimals;
+- packed and DISPLAY items of up to 18 digits;
+- ROUNDED;
+- a division at the top of an expression.
+
+`dx_*` in s32-cobc.c computes these as 64-bit scaled integers in
+register pairs, with every scale known when the program is compiled.
+
+**Staying the stack's answer.** Every intermediate is bounded below
+9 * 10^18, and a product's scale may be at most 18. So none of the
+stack's digit shedding ever happens, and alignment, sums and products
+are exact, as the stack's are.
+
+**Operands and results.** Operands are fetched by `cob_get_num` and the
+result is stored by `cob_put_num_x`. These are the stack's own fetch and
+store: they round, truncate and edit, and the DBT runs them natively.
+What goes away is the stack between them: its pushes, alignment and
+dispatch.
+
+**Division** calls `cob_xdiv`, the stack's long division (now shared as
+`ndiv_core`), and reads the quotient's scale at run time. A zero
+divisor leaves the receivers unchanged.
+
+**ADD and SUBTRACT with several receivers** sum the operands once, then
+add that sum to each receiver, as `cob_top_addto` does. MULTIPLY and
+DIVIDE re-read their operand for each receiver, as the stack does.
+
+**The stack still takes:**
+- SIZE ERROR and the EC checks;
+- a remainder of decimals;
+- `**`;
+- 31-digit, float and P-scaled items;
+- an expression too deep for the frame's slots.
+
+**The integer path**, alongside: a PIC 9(9) COMP item (unsigned, four
+bytes) now joins it. Only one that keeps its capacity (COMP-5, the
+native types) can use the top bit.
+
+**Two scan hazards found on the way, both fixed:**
+- **A user function's result met while scanning ahead.** The scan
+  makes no call, so a register tree may not hold that result
+  (`opnd_scanned`).
+- **CCVS NC252A.** Its expressions nest deeper than the frame's slots,
+  so each path now counts the slots it needs and declines past them.
+
+| kernel | guest instructions (before -> after) | slow32-dbt |
+|---|---|---|
+| karith (COMP-3/DISPLAY COMPUTE ROUNDED, ADD, DIVIDE, MULTIPLY) | 24.9 G -> about a quarter of it | 1.57 s -> 0.49 s |
+
+`tests/free/hotdec` must equal the stack's output, and does: `-fno-hot-arith`
+gives the stack's answers, 98 stack calls in it against 14. GnuCOBOL
+agrees with every line.

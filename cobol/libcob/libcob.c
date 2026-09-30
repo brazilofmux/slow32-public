@@ -1486,10 +1486,30 @@ void cob_nmul(void)
  * receiver with a wider scale than either operand still gets its digits;
  * the store truncates.  (The 85 intermediate rules are implementor-defined;
  * this is the stage-2 rule and stage 3 may tighten it.) */
+static int ndiv_core(cob_num *a, const cob_num *b);
 void cob_ndiv(void)
 {
     cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
-    if (b->v == 0) { div0 = 1; nsp--; return; }   /* size error; the left operand stands in */
+    if (ndiv_core(a, b)) div0 = 1;                 /* size error; the left operand stands in */
+    nsp--;
+}
+
+/* the compiler's decimal arithmetic in registers (s32-cobc.c dx_*): a
+ * division at the top of a statement, by the stack's own rule; the
+ * quotient's scale in cob_xdiv_scale, -1 for a zero divisor */
+int cob_xdiv_scale;
+long long cob_xdiv(long long a, long long b, int sa, int sb)
+{
+    cob_num x = { a, sa }, y = { b, sb };
+    if (ndiv_core(&x, &y)) { cob_xdiv_scale = -1; return 0; }
+    cob_xdiv_scale = x.scale;
+    return x.v;
+}
+
+/* a / b into *a; 1 for a zero divisor (a left as it was) */
+static int ndiv_core(cob_num *a, const cob_num *b)
+{
+    if (b->v == 0) return 1;
     /* long division in decimal: the integer quotient of the scaled values,
      * then one fraction digit at a time from the remainder (ten times a
      * remainder below 10^18 fits in 64 bits), until the quotient holds
@@ -1527,7 +1547,7 @@ void cob_ndiv(void)
         if (scale < 0) { q = (unsigned long long)pow10tab[18]; scale = 0; }   /* beyond eighteen digits: a size error at the store */
     }
     a->v = neg ? -(long long)q : (long long)q; a->scale = scale;
-    nsp--;
+    return 0;
 }
 
 void cob_nneg(void) { nstk[nsp - 1].v = -nstk[nsp - 1].v; }
