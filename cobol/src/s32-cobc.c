@@ -6296,6 +6296,15 @@ static int cmp_is_bytewise(Opnd *x, Opnd *y)
     if (x->ref.rm || y->ref.rm) return 0;
     Sym *a = x->ref.sym, *b = y->ref.sym;
     if (a->is_group || b->is_group || a->is_cond || b->is_cond) return 0;
+    /* two alphanumeric or alphabetic items of one length under the native
+     * collating sequence: cmp_bytes pads neither, and orders unsigned
+     * bytes as memcmp does -- which slow32-dbt runs natively.  A serial
+     * SEARCH over PIC X keys was a cob_cmp per entry (the ksearch kernel,
+     * 31% of its instructions). */
+    if (g_collate < 0 && a->size == b->size && a->size > 0 &&
+        (a->pi.category == PIC_ALPHANUMERIC || a->pi.category == PIC_ALPHABETIC) && !a->pi.edited &&
+        (b->pi.category == PIC_ALPHANUMERIC || b->pi.category == PIC_ALPHABETIC) && !b->pi.edited)
+        return 1;
     if (sym_desc(a) != sym_desc(b)) return 0;
     const Desc *d = &g_desc[sym_desc(a)];
     if (d->cat != COB_NUM || d->usage != COB_U_DISPLAY) return 0;

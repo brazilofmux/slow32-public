@@ -1,0 +1,11 @@
+eq
+lt
+gt
+ne2
+le-ge
+high byte orders after
+low-value first
+subscript eq
+subscript gt
+padded eq
+longer gt
