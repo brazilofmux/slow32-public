@@ -80,11 +80,10 @@ COBOL 2002/2023 (Stage B):
   character item redefining a bit item that starts mid-byte;
 - EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
   the caller (docs/conformance/exit.md);
-- arithmetic on items and literals of 19 to 31 digits (COBOL 2002): the
-  items, literals, VALUE, MOVE, relations and DISPLAY are implemented
-  (docs/wide.md phase 1, ISSUES-117); ADD, SUBTRACT, MULTIPLY, DIVIDE and
-  COMPUTE on them are phase 2, refused by name until then, and the
-  functions, edited and national cases past 18 digits phase 3;
+- intrinsic functions in arithmetic of more than 18 digits, BINARY-DOUBLE
+  and the other phase-3 cases of docs/wide.md (items, literals, MOVE,
+  relations, DISPLAY and ADD, SUBTRACT, MULTIPLY, DIVIDE, COMPUTE of 19
+  to 31 digits are implemented, ISSUES-117);
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).

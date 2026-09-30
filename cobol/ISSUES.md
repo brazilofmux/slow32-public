@@ -4342,3 +4342,31 @@ scales), bad/std2002-wide-limits. Harness 508/508, -std=85
 byte-identical on the Open Systems programs, majesty PASS,
 majesty-functions PASS, Open Systems paper unchanged.
 
+Phase 2 (arithmetic), done. Runtime: a wide evaluation stack -- cob_wpush,
+cob_wpush_lit, cob_wadd, cob_wsub, cob_wmul (the full product in eight
+limbs, fraction digits shed until it is below 10^38), cob_wdiv (the
+operands' larger scale and six guard digits, at least nine, truncated; a
+256-bit numerator), cob_wneg, cob_wtrunc, cob_wpow (repeated
+multiplication), cob_wcmp, cob_wtop_store and the ADD TO / SUBTRACT FROM
+forms, cob_wdrop, cob_wpop_int / cob_wpop_pos -- sharing div0 and
+size_kind with the narrow stack, so ON SIZE ERROR and EC-SIZE behave the
+same. Compiler: g_wide, set per statement when an operand, literal or
+receiver passes 18 digits or (under -std=2002) the composite of operands
+does, turns emit_call's stack operations into their wide names and
+turns off the inline fast paths (hot binary sums, the decimal ADD, the
+DISPLAY-integer push); COMPUTE learns it from a pass that emits nothing,
+a condition's expression operands carry it (Opnd.wide), REMAINDER and
+the VARYING / SET step decide for themselves. It is cleared before ON
+SIZE ERROR's statements, which decide their own. A function in wide
+arithmetic is refused until phase 3.
+
+Tests: 2002/wide2 (22 lines, the oracle agrees: each statement,
+ROUNDED against truncation, ON SIZE ERROR, REMAINDER, a product of two
+18-digit items into 31, a composite of 19-31 from narrow items,
+relations on expressions, VARYING a wide item), 2002/wide3 (powers of
+two to 2 ** 110, 10 ** 30, a negative base; no oracle -- GnuCOBOL gives
+zero for 2 ** 90 into S9(31)), bad/std2002-wide-limits (a composite of
+32). Harness 510/510, -std=85 byte-identical on the Open Systems
+programs, majesty PASS, majesty-functions PASS, Open Systems paper
+unchanged.
+

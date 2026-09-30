@@ -4026,7 +4026,22 @@ static void emit_li(const char *rd, long v)
     if (lo) emit("\taddi %s, %s, %ld", rd, rd, lo);
 }
 
-static void emit_call(const char *fn) { emit("\tjal r31, %s", fn); }
+/* the statement being emitted computes with more than 18 digits
+ * (docs/wide.md phase 2): its stack operations go to the wide stack */
+static int g_wide;
+static int g_saw_wide;              /* an operand past 18 digits was met (set even under g_noemit) */
+static const char *wide_fn(const char *fn)
+{
+    static const char *map[][2] = {
+        { "cob_push", "cob_wpush" }, { "cob_push_lit", "cob_wpush_lit" }, { "cob_nadd", "cob_wadd" },
+        { "cob_nsub", "cob_wsub" }, { "cob_nmul", "cob_wmul" }, { "cob_ndiv", "cob_wdiv" }, { "cob_nneg", "cob_wneg" },
+        { "cob_ntrunc", "cob_wtrunc" }, { "cob_npow", "cob_wpow" }, { "cob_ncmp", "cob_wcmp" },
+        { "cob_top_store", "cob_wtop_store" }, { "cob_top_addto", "cob_wtop_addto" }, { "cob_top_subfrom", "cob_wtop_subfrom" },
+        { "cob_drop", "cob_wdrop" }, { "cob_pop_int", "cob_wpop_int" }, { "cob_pop_pos", "cob_wpop_pos" }, { NULL, NULL } };
+    for (int i = 0; map[i][0]; i++) if (!strcmp(fn, map[i][0])) return map[i][1];
+    return fn;
+}
+static void emit_call(const char *fn) { if (g_wide) fn = wide_fn(fn); emit("\tjal r31, %s", fn); }
 static void emit_jump(int label) { emit("\tjal r0, .L%d", label); }
 static void emit_label(int label) { emit(".L%d:", label); }
 
@@ -4118,6 +4133,7 @@ enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /
 
 typedef struct Opnd_ {
     int kind;
+    int wide;           /* O_EXPR: an operand past 18 digits inside (docs/wide.md) */
     Ref ref;
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
     NumLit num;         /* O_NUM */
@@ -4134,6 +4150,8 @@ typedef struct Opnd_ {
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
     int fsaved;                              /* O_FUNC evaluated already: 1 + the label of its result's copy (MOVE, general rule 1) */
 } Opnd;
+static int opnds_wide(const Opnd *ops, int n);
+static int refs_wide(const Ref *rs, int nr);
 static int opnd_is_national(const Opnd *o);
 static int opnd_is_boolean(const Opnd *o);
 static int ref_is_national(const Ref *r);
@@ -6973,9 +6991,13 @@ static void emit_cond_value(Cond *c)
         return;
     }
     if (c->x.kind == O_EXPR || c->y.kind == O_EXPR) {
+        Opnd xy[2] = { c->x, c->y };
+        int was = g_wide;
+        g_wide = was || opnds_wide(xy, 2);
         emit_push_opnd(&c->x);
         emit_push_opnd(&c->y);
         emit_call("cob_ncmp");
+        g_wide = was;
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r1, r0"); break;
         case R_NE: emit("\tsne r1, r1, r0"); break;
@@ -8428,7 +8450,7 @@ static void move_valid(const Opnd *src, const Ref *dst)
     if (why) die_at(src->kind == O_FIG || src->kind == O_ALL ? src->line : dst->line, "%s", why);
 }
 
-static void arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const char *stmt, const char *rule85, int line);
+static int arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const char *stmt, const char *rule85, int line);
 static int corr_walk(Ref *a, Ref *b, int mode, int rounded, int size_err)
 {
     int n = 0;
@@ -8641,10 +8663,21 @@ static void wide_arith_refuse(int line, const char *what)
 {
     die_at(line, "arithmetic on %s of more than 18 digits is not implemented yet (COBOL 2002's 31 digits: docs/wide.md, phase 2)", what);
 }
+static const char *num_lit_label(const NumLit *n, int *desc);
 static void emit_push(Opnd *o)
 {
-    if (o->kind == O_NUM && numlit_wide(&o->num)) wide_arith_refuse(o->line, "a literal");
-    if (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym)) wide_arith_refuse(o->line, "an item");
+    int w = (o->kind == O_NUM && numlit_wide(&o->num)) || (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym));
+    if (w) g_saw_wide = 1;
+    if (w && !g_wide && !g_noemit) wide_arith_refuse(o->line, o->kind == O_NUM ? "a literal" : "an item");
+    if (g_wide && o->kind == O_FUNC && !g_noemit)
+        die_at(o->line, "a function in arithmetic of more than 18 digits is not implemented yet (docs/wide.md, phase 3)");
+    if (g_wide && o->kind == O_NUM && numlit_wide(&o->num)) {
+        int d; const char *l = num_lit_label(&o->num, &d);
+        Arg a[2] = { arg_label(l), arg_desc(d) };
+        emit_args(a, 2);
+        emit_call("cob_push");                      /* cob_wpush, g_wide being set */
+        return;
+    }
     if (g_incompat_push) emit_incompat(o);
     if (o->kind == O_EXPR) die_at(o->line, "internal: expression pushed as an operand");
     if (o->kind == O_FUNC) {
@@ -8664,7 +8697,7 @@ static void emit_push(Opnd *o)
         emit_call("cob_push_lit");
         return;
     }
-    if (opnd_display_int(o)) {
+    if (!g_wide && opnd_display_int(o)) {
         /* GitHub #29 shape (3): an unsigned DISPLAY integer reaches the
          * numeric stack through the same inline decode the compare path
          * uses, instead of cob_push -> cob_get_num's digit loop.  The value
@@ -8688,7 +8721,7 @@ static void emit_push(Opnd *o)
  * With the check on, the status accumulates in SLOT_B. */
 static void emit_top_op(Ref *r, const char *fn, int opts)
 {
-    if (!r->rm && sym_wide(r->sym)) wide_arith_refuse(r->line, "a receiver");
+    if (!g_wide && !r->rm && sym_wide(r->sym)) wide_arith_refuse(r->line, "a receiver");
     Arg a[3] = { arg_ref(r), arg_desc(sym_desc(r->sym)), arg_imm(opts) };
     emit_args(a, 3);
     emit_call(fn);
@@ -8836,7 +8869,7 @@ static int any_rounded(const int *r, int n) { for (int i = 0; i < n; i++) if (r[
 static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err,
                                  long long sum_mag, int sum_nonneg)
 {
-    for (int i = 0; i < nr; i++) if (!rs[i].rm && sym_wide(rs[i].sym)) wide_arith_refuse(rs[i].line, "a receiver");
+    for (int i = 0; i < nr; i++) if (!g_wide && !rs[i].rm && sym_wide(rs[i].sym)) wide_arith_refuse(rs[i].line, "a receiver");
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         int opts = (rounded[i] ? 1 : 0) | (size_err ? 2 : 0);
@@ -9147,13 +9180,13 @@ static void opnd_int_frac(const Opnd *o, int *in, int *fr)
     if (i > *in) *in = i;
     if (f > *fr) *fr = f;
 }
-static void arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const char *stmt, const char *rule85, int line)
+static int arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const char *stmt, const char *rule85, int line)
 {
     int in = 0, fr = 0;
     for (int k = 0; k < n; k++) opnd_int_frac(&ops[k], &in, &fr);
     for (int k = 0; k < nr; k++) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = rs[k]; opnd_int_frac(&o, &in, &fr); }
     int c = in + fr;
-    if (c <= 18) return;
+    if (c <= 18) return c;
     /* past 31: no edition allows it.  19-31: 2002's, the 31-digit gap
      * here; under -std=85 forbidden, yet majesty's dist01 has a 19-digit
      * SUBTRACT whose values fit, so it is taken, and a strict build is
@@ -9162,6 +9195,21 @@ static void arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const
         die_at(line, "%s: the composite of operands is %d digits, more than %s allows (%s)", stmt, c,
                g_std < 2002 ? "COBOL 85's 18, or any edition's 31," : "31", g_std < 2002 ? rule85 : "2023 14.7.7 rule 2");
     if (g_std < 2002) bp(BP_E14_COMPOSITE, line);
+    return c;
+}
+/* does an arithmetic statement take the wide path?  An operand, literal
+ * or receiver past 18 digits, or -- 2002's 31 -- a composite past 18 */
+static int opnds_wide(const Opnd *ops, int n)
+{
+    for (int k = 0; k < n; k++)
+        if ((ops[k].kind == O_REF && !ops[k].ref.rm && sym_wide(ops[k].ref.sym)) || (ops[k].kind == O_NUM && numlit_wide(&ops[k].num)) ||
+            (ops[k].kind == O_EXPR && ops[k].wide)) return 1;
+    return 0;
+}
+static int refs_wide(const Ref *rs, int nr)
+{
+    for (int k = 0; k < nr; k++) if (!rs[k].rm && sym_wide(rs[k].sym)) return 1;
+    return 0;
 }
 
 static void parse_add(void)
@@ -9189,21 +9237,23 @@ static void parse_add(void)
         giving = 1; nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else die_at(cur()->line, "expected TO or GIVING in ADD");
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
-    arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
+    int comp = arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
     for (int k = 0; k < n; k++) emit_incompat(&ops[k]);
     if (!giving) emit_incompat_refs(rs, nr);            /* ADD a TO b: b is summed too */
     int size_err = at_size_error_clause() || ec_size_on();
+    g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ops, n) || refs_wide(rs, nr);
 
-    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
+    int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 0, ops_all_nonneg(ops, n)) && hot_sum_fits(ops, n);
     if (hot) emit_hot_sum(ops, n);
-    else if (!giving && dec_add_ok(ops, n, rs, nr, size_err)) {
+    else if (!g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
         emit_dec_addto(&ops[0], rs, nr, 0);
         parse_size_error_clauses(size_err, "end-add");
         return;
     }
     else { for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); } }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
+    g_wide = 0;
     parse_size_error_clauses(size_err, "end-add");
 }
 
@@ -9233,16 +9283,17 @@ static void parse_subtract(void)
         Opnd all[MAXOPS + 1]; int na = 0;
         for (int k = 0; k < n; k++) all[na++] = ops[k];
         if (giving) all[na++] = minuend;
-        arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
+        int comp = arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
         for (int k = 0; k < na; k++) emit_incompat(&all[k]);
         if (!giving) emit_incompat_refs(rs, nr);
+        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(all, na) || refs_wide(rs, nr);
     }
     int size_err = at_size_error_clause() || ec_size_on();
 
-    int hot = !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
+    int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 1, 0) && (!giving || opnd_hot_int(&minuend)) &&
               hot_sum_fits(ops, n);
-    if (!hot && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
+    if (!hot && !g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
         emit_dec_addto(&ops[0], rs, nr, 1);
         parse_size_error_clauses(size_err, "end-subtract");
         return;
@@ -9261,6 +9312,7 @@ static void parse_subtract(void)
         if (giving) emit_call("cob_nsub");
     }
     emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err, -1, 0);
+    g_wide = 0;
     parse_size_error_clauses(size_err, "end-subtract");
 }
 
@@ -9278,26 +9330,30 @@ static void parse_multiply(void)
         g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
         if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-        arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);   /* the receiving items */
+        int comp = arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);   /* the receiving items */
         emit_incompat(&a); emit_incompat(&b);
         int size_err = at_size_error_clause() || ec_size_on();
+        { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
         emit_push(&a); emit_push(&b); emit_call("cob_nmul");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
+        g_wide = 0;
         parse_size_error_clauses(size_err, "end-multiply");
         return;
     }
     g_tp = save;
     nr = parse_ref_list(rs, rd, MAXOPS, 0);
     if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-    arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);
+    int comp = arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);
     emit_incompat(&a); emit_incompat_refs(rs, nr);
     int size_err = at_size_error_clause() || ec_size_on();
+    g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr);
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
         emit_push(&r); emit_push(&a); emit_call("cob_nmul");
         emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
     }
+    g_wide = 0;
     parse_size_error_clauses(size_err, "end-multiply");
 }
 
@@ -9313,6 +9369,8 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
     Ref r; parse_ref(&r);
     if (r.sym->is_group || (r.sym->pi.category != PIC_NUMERIC && r.sym->pi.category != PIC_NUMERIC_EDITED))
         die_at(r.line, "REMAINDER '%s' is not numeric (or numeric-edited)", r.sym->name);
+    int was_wide = g_wide;
+    if (!r.rm && sym_wide(r.sym)) g_wide = 1;           /* computed afresh: on the wide stack when the remainder needs it */
     emit_push(dividend);
     emit_push(dividend); emit_push(divisor); emit_call("cob_ndiv");
     emit_li("r3", q->sym->pi.scale); emit_call("cob_ntrunc");
@@ -9325,6 +9383,7 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
     emit_top_op(&r, "cob_top_store", size_err ? 2 : 0);
     emit_label(Lskip);
     emit_call("cob_drop");
+    g_wide = was_wide;
 }
 
 /* is ON SIZE ERROR written after a REMAINDER phrase?  The quotient's store
@@ -9354,27 +9413,31 @@ static void parse_divide(void)
             nr = parse_ref_list(rs, rd, MAXOPS, 1);
             if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
             if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
-            arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
+            int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
             emit_incompat(&a); emit_incompat(&b);
             int size_err = size_error_after_remainder() || ec_size_on();
+            { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
             emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
             emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
             emit_remainder(&b, &rs[0], rd[0], &a, size_err);
+            g_wide = 0;
             parse_size_error_clauses(size_err, "end-divide");
             return;
         }
         g_tp = save;
         nr = parse_ref_list(rs, rd, MAXOPS, 0);
         if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-        arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
+        int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
         emit_incompat(&a); emit_incompat_refs(rs, nr);
         int size_err = at_size_error_clause() || ec_size_on();
+        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr);
         if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
         for (int i = 0; i < nr; i++) {
             Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
             emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
             emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
         }
+        g_wide = 0;
         parse_size_error_clauses(size_err, "end-divide");
         return;
     }
@@ -9384,12 +9447,14 @@ static void parse_divide(void)
     nr = parse_ref_list(rs, rd, MAXOPS, 1);
     if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
     if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
-    arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
+    int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
     emit_incompat(&a); emit_incompat(&b);
     int size_err = size_error_after_remainder() || ec_size_on();
+    { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
     emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     emit_remainder(&a, &rs[0], rd[0], &b, size_err);
+    g_wide = 0;
     parse_size_error_clauses(size_err, "end-divide");
 }
 
@@ -9449,7 +9514,9 @@ static Opnd expr_opnd(void)
 {
     Opnd o; memset(&o, 0, sizeof o);
     o.kind = O_EXPR; o.line = cur()->line; o.e_start = g_tp;
+    int saw = g_saw_wide; g_saw_wide = 0;
     g_noemit++; parse_expr(); g_noemit--;
+    o.wide = g_saw_wide; g_saw_wide |= saw;
     o.e_end = g_tp;
     return o;
 }
@@ -9522,11 +9589,19 @@ static void parse_compute(void)
         accept_word("end-compute");
         return;
     }
+    /* wide or not: known from a pass that emits nothing, then for real */
+    {
+        int start = g_tp, saw = g_saw_wide; g_saw_wide = 0;
+        g_noemit++; parse_expr(); g_noemit--;
+        g_wide = g_saw_wide || refs_wide(rs, nr);
+        g_saw_wide = saw; g_tp = start;
+    }
     g_incompat_push++;
     parse_expr();
     g_incompat_push--;
     int size_err = at_size_error_clause() || ec_size_on();
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
+    g_wide = 0;
     parse_size_error_clauses(size_err, "end-compute");
 }
 
@@ -10491,11 +10566,14 @@ static void emit_add_to_ref(Opnd *by, Ref *var)
 {
     Opnd ops[1] = { *by }; Ref rs[1] = { *var };
     emit_incompat(by); emit_incompat_refs(rs, 1);       /* both are summed */
-    int hot = opnd_hot_int(by) && ref_hot_store(var, 0, ops_all_nonneg(ops, 1));
+    int was = g_wide;
+    g_wide = was || opnds_wide(ops, 1) || refs_wide(rs, 1);
+    int hot = !g_wide && opnd_hot_int(by) && ref_hot_store(var, 0, ops_all_nonneg(ops, 1));
     int rd[1] = { 0 };
     if (hot) emit_hot_sum(ops, 1);
     else emit_push(by);
     emit_store_receivers(rs, rd, 1, hot, 0, 0, 0, ops_sum_mag(ops, 1), ops_all_nonneg(ops, 1));
+    g_wide = was;
 }
 
 typedef struct { Ref var; Opnd from, by; Cond *until; } Vary;
@@ -14456,7 +14534,7 @@ static void parse_procedure_division(void)
             g_noemit = noemit; g_slot_base = slot; g_cond_depth = cdepth; g_is_merge = merge; g_fn_depth = fdepth;
             ecs_copy(&g_ecs, &ecs0);
             for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
-            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally; g_in_ecp_when = in_ecpw;
+            g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally; g_in_ecp_when = in_ecpw; g_wide = 0; g_saw_wide = 0;
             g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
             resync_sentence(start);
             continue;

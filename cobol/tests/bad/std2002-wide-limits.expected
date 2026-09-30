@@ -1,4 +1,3 @@
 'a': more than 31 digits -- the standard's limit for a numeric item is 31
 numeric literal has more than 31 digits (2023 8.3.1.2.2.2 rule 1)
-arithmetic on a receiver of more than 18 digits is not implemented yet (COBOL 2002's 31 digits: docs/wide.md, phase 2)
-arithmetic on an item of more than 18 digits is not implemented yet (COBOL 2002's 31 digits: docs/wide.md, phase 2)
+ADD: the composite of operands is 32 digits, more than 31 allows (2023 14.7.7 rule 2)

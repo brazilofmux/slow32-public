@@ -13,7 +13,7 @@ arithmetic itself.
 | rule | paraphrase | disposition |
 |---|---|---|
 | 1 | operands need not share a description; conversion and alignment supplied | **test**: fixed/arith, fixed/compute, CCVS NC |
-| 2 | the composite of operands at most 31 digits (18 in 1985) | **refused** past 31 in both editions: bad/arith-composite; 19-31 under -std=85 taken as BP-E14 (warn/ext-every) -- majesty's dist01; under -std=2002 the 31-digit gap. Not checked before this sweep |
+| 2 | the composite of operands at most 31 digits (18 in 1985) | **refused** past 31 in both editions: bad/arith-composite; 19-31 under -std=85 taken as BP-E14 (warn/ext-every) -- majesty's dist01; under -std=2002 computed on the wide path (docs/wide.md, 2002/wide2). Not checked before this sweep |
 | 3 | standard-decimal/-binary arithmetic | **n/a**: 2014's ARITHMETIC clause |
 | 4a | the initial evaluation into an intermediate; senders identified at the start; a size error there changes no receiver | **test**: free/arithrules (senders once), free/remrnd, 2002/ecsize |
 | 4b | each receiver identified as it is reached, left to right; a size error leaves only that one unchanged | **test**: free/arithrules -- ADD 1 TO i t (i) adds to the new i's element, and of three receivers only the overflowing one is kept; the oracle agrees |

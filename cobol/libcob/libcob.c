@@ -1638,6 +1638,169 @@ int cob_top_subfrom(void *p, const cob_desc *d, int opts)
 
 void cob_drop(void) { if (nsp) nsp--; div0 = 0; }
 
+/* ---- the wide evaluation stack (docs/wide.md phase 2) ----------------
+ * The narrow stack's operations over cob_wnum, for a statement the
+ * compiler found to need more than 18 digits.  Magnitudes stay below
+ * 10^38: a result past that sheds fraction digits, and with none left is
+ * a size error (div0 = 2), as the narrow stack does at 64 bits.  div0 and
+ * size_kind are the narrow stack's own, so ON SIZE ERROR and EC-SIZE
+ * work the same way. */
+static cob_wnum *wstk;
+static int wsp, wcap;
+
+static void wstk_room(void)
+{
+    if (wsp < wcap) return;
+    wcap = wcap ? 2 * wcap : 32;
+    wstk = realloc(wstk, (size_t)wcap * sizeof *wstk);
+    if (!wstk) cob_fatal("wide numeric stack: out of memory");
+}
+
+/* is a limb array (n limbs) at least 10^38? */
+static int mp_ge_1e38(const wl_t *a, int n)
+{
+    wl_t p[2 * WL] = { 0 };
+    w_pow10(p, 38);
+    for (int i = n - 1; i >= WL; i--) if (a[i]) return 1;
+    return mp_cmp(a, p, WL) >= 0;
+}
+
+/* keep a value below 10^38 digits by shedding fraction digits; 0 when it
+ * cannot (a size error) */
+static int w_fit(wl_t *a, int n, int *scale)
+{
+    while (mp_ge_1e38(a, n)) {
+        if (*scale <= 0) return 0;
+        mp_div_small(a, n, 10); (*scale)--;
+    }
+    return 1;
+}
+
+void cob_wpush(const void *p, const cob_desc *d) { wstk_room(); cob_wget(p, d, &wstk[wsp++]); }
+void cob_wpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++], v, scale); }
+
+/* one scale for both: the smaller scaled up while it has room below 38
+ * digits, the rest shed from the larger (as align2) */
+static void w_align2(cob_wnum *a, cob_wnum *b)
+{
+    if (a->scale == b->scale) return;
+    cob_wnum *lo = a->scale < b->scale ? a : b, *hi = lo == a ? b : a;
+    int k = hi->scale - lo->scale, room = 38 - w_ndigits(lo->m);
+    int up = k < room ? k : room;
+    if (up > 0) { w_scale_up(lo->m, up); lo->scale += up; }
+    if (hi->scale > lo->scale) { w_drop_digits(hi->m, WL, hi->scale - lo->scale, 0, 0); hi->scale = lo->scale; }
+}
+
+static void w_addsub(cob_wnum *a, const cob_wnum *b0, int sub)
+{
+    cob_wnum b = *b0;
+    if (sub) b.neg = !b.neg;
+    w_align2(a, &b);
+    if (a->neg == b.neg) {
+        mp_add(a->m, b.m, WL);                      /* two below 10^38 fit 128 bits */
+        if (!w_fit(a->m, WL, &a->scale)) div0 = 2;
+    } else if (mp_cmp(a->m, b.m, WL) >= 0) mp_sub(a->m, b.m, WL);
+    else { wl_t t[WL]; memcpy(t, b.m, sizeof t); mp_sub(t, a->m, WL); memcpy(a->m, t, sizeof t); a->neg = b.neg; }
+    if (mp_is_zero(a->m, WL)) a->neg = 0;
+}
+
+void cob_wadd(void) { w_addsub(&wstk[wsp - 2], &wstk[wsp - 1], 0); wsp--; }
+void cob_wsub(void) { w_addsub(&wstk[wsp - 2], &wstk[wsp - 1], 1); wsp--; }
+
+static void w_mul(cob_wnum *a, const cob_wnum *b)
+{
+    wl_t p[2 * WL];
+    mp_mul(a->m, WL, b->m, WL, p);
+    int scale = a->scale + b->scale;
+    while (scale > 38) { mp_div_small(p, 2 * WL, 10); scale--; }
+    if (!w_fit(p, 2 * WL, &scale)) { div0 = 2; return; }
+    memcpy(a->m, p, sizeof a->m);
+    a->scale = scale;
+    a->neg = a->neg != b->neg && !mp_is_zero(a->m, WL);
+}
+void cob_wmul(void) { w_mul(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
+
+/* the quotient to the operands' larger scale and six guard digits (at
+ * least nine), truncated, as the narrow division; as many as 38 digits
+ * hold */
+void cob_wdiv(void)
+{
+    cob_wnum *a = &wstk[wsp - 2], *b = &wstk[wsp - 1];
+    if (mp_is_zero(b->m, WL)) { div0 = 1; wsp--; return; }
+    int want = (a->scale > b->scale ? a->scale : b->scale) + 6;
+    if (want < 9) want = 9;
+    if (want > 38) want = 38;
+    /* a * 10^k / b has the scale a.scale + k - b.scale = want */
+    int k = want - a->scale + b->scale;
+    wl_t n[2 * WL] = { 0 }, dv[2 * WL] = { 0 }, q[2 * WL], r[2 * WL];
+    memcpy(n, a->m, sizeof a->m); memcpy(dv, b->m, sizeof b->m);
+    int nd = w_ndigits(a->m);
+    while (k > 0 && nd + k > 76) { k--; want--; }   /* the numerator stays within 256 bits */
+    for (int i = 0; i < k; i++) mp_mul_small(n, 2 * WL, 10, 0);
+    for (int i = 0; i < -k; i++) mp_mul_small(dv, 2 * WL, 10, 0);
+    mp_divmod(n, dv, 2 * WL, q, r);                 /* a*10^k/b, or a/(b*10^-k): scale want either way */
+    int scale = want;
+    while (scale > 38) { mp_div_small(q, 2 * WL, 10); scale--; }
+    if (!w_fit(q, 2 * WL, &scale)) { div0 = 2; wsp--; return; }
+    int neg = a->neg != b->neg;
+    memcpy(a->m, q, sizeof a->m); a->scale = scale;
+    a->neg = neg && !mp_is_zero(a->m, WL);
+    wsp--;
+}
+
+void cob_wneg(void) { cob_wnum *a = &wstk[wsp - 1]; a->neg = !a->neg && !mp_is_zero(a->m, WL); }
+void cob_wtrunc(int scale)
+{
+    cob_wnum *a = &wstk[wsp - 1];
+    if (a->scale > scale) { w_drop_digits(a->m, WL, a->scale - scale, 0, 0); a->scale = scale; if (mp_is_zero(a->m, WL)) a->neg = 0; }
+}
+
+/* a ** b for an integer b >= 0, by repeated multiplication */
+void cob_wpow(void)
+{
+    cob_wnum *a = &wstk[wsp - 2], *b = &wstk[wsp - 1];
+    if (b->scale > 0) {
+        int nz; w_drop_digits(b->m, WL, b->scale, 0, &nz);
+        if (nz) cob_fatal("** with a non-integer exponent is not implemented");
+        b->scale = 0;
+    }
+    if (b->neg) cob_fatal("** with a negative exponent is not implemented");
+    if (b->m[1] || b->m[2] || b->m[3] || b->m[0] > 1000) cob_fatal("** with an exponent past 1000 is not implemented");
+    cob_wnum r; w_from_i64(&r, 1, 0);
+    for (wl_t i = 0; i < b->m[0] && !div0; i++) w_mul(&r, a);
+    *a = r;
+    wsp--;
+}
+
+int cob_wcmp(void)
+{
+    int r = w_cmp_val(&wstk[wsp - 2], &wstk[wsp - 1]);
+    wsp -= 2;
+    return r;
+}
+
+int cob_wtop_store(void *p, const cob_desc *d, int opts)
+{
+    if (div0) { size_kind = div0; return 1; }
+    int r = cob_wput_x(p, d, &wstk[wsp - 1], opts);
+    if (r) size_kind = 3;
+    return r;
+}
+
+static int w_top_addsub(void *p, const cob_desc *d, int opts, int sub)
+{
+    if (div0) { size_kind = div0; return 1; }
+    cob_wnum a; cob_wget(p, d, &a);
+    w_addsub(&a, &wstk[wsp - 1], sub);
+    if (div0) { size_kind = div0; return 1; }
+    int r = cob_wput_x(p, d, &a, opts);
+    if (r) size_kind = 3;
+    return r;
+}
+int cob_wtop_addto(void *p, const cob_desc *d, int opts) { return w_top_addsub(p, d, opts, 0); }
+int cob_wtop_subfrom(void *p, const cob_desc *d, int opts) { return w_top_addsub(p, d, opts, 1); }
+void cob_wdrop(void) { if (wsp) wsp--; div0 = 0; }
+
 /* subscripts: the integer value of an item */
 int cob_load_int(const void *p, const cob_desc *d)
 {
@@ -5070,6 +5233,24 @@ int cob_pop_pos(void)
         if (f) pos_nonint = 1;
     }
     return cob_pop_int();
+}
+
+/* the wide stack's top as an integer (a subscript or position computed
+ * in a wide statement); pops it */
+int cob_wpop_int(void)
+{
+    if (wsp <= 0) cob_fatal("numeric stack underflow");
+    cob_wnum a = wstk[--wsp];
+    if (a.scale > 0) w_drop_digits(a.m, WL, a.scale, 0, 0);
+    if (a.m[1] || a.m[2] || a.m[3] || a.m[0] > 0x7fffffffu) return a.neg ? -0x7fffffff : 0x7fffffff;
+    return a.neg ? -(int)a.m[0] : (int)a.m[0];
+}
+int cob_wpop_pos(void)
+{
+    if (wsp <= 0) cob_fatal("numeric stack underflow");
+    cob_wnum *a = &wstk[wsp - 1];
+    if (a->scale > 0) { cob_wnum t = *a; int nz; w_drop_digits(t.m, WL, a->scale, 0, &nz); if (nz) pos_nonint = 1; }
+    return cob_wpop_int();
 }
 
 int cob_pop_int(void)
