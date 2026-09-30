@@ -3132,6 +3132,26 @@ static void parse_global_init_struct(int ty, int gidx) {
  * constants convert through a native double ((double)2 for
  * `double x = 2;`), which the old int-truncating fallthrough silently
  * corrupted. */
+/* __builtin_nan[f|l](...), __builtin_inf[f|l](), __builtin_huge_val[f|l]()
+ * at the cursor, in a static initializer: consumed, *lo:*hi the double's
+ * bits (a float item narrows them by cast, NaN and infinity surviving).
+ * The expression parser folds the same names (selfhost ISSUES-71). */
+static int ps_fp_builtin_bits(int *lo, int *hi) {
+    int nan;
+    if (lex_tok != TK_IDENT) return 0;
+    nan = strcmp(lex_str, "__builtin_nanf") == 0 || strcmp(lex_str, "__builtin_nan") == 0 || strcmp(lex_str, "__builtin_nanl") == 0;
+    if (!nan && strcmp(lex_str, "__builtin_inff") != 0 && strcmp(lex_str, "__builtin_inf") != 0 &&
+        strcmp(lex_str, "__builtin_infl") != 0 && strcmp(lex_str, "__builtin_huge_valf") != 0 &&
+        strcmp(lex_str, "__builtin_huge_val") != 0 && strcmp(lex_str, "__builtin_huge_vall") != 0) return 0;
+    next();
+    expect(TK_LPAREN);
+    while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();   /* a NaN's payload string: not read */
+    expect(TK_RPAREN);
+    *lo = 0;
+    *hi = nan ? 0x7FF80000 : 0x7FF00000;
+    return 1;
+}
+
 static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
     int fneg;
     int flo;
@@ -3149,6 +3169,8 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
         flo = lex_val;
         fhi = lex_fval_hi;
         next();
+    } else if (ps_fp_builtin_bits(&flo, &fhi)) {
+        /* NAN, INFINITY */
     } else {
         fd = (double)parse_const_int();
         memcpy(fw, &fd, 8);
@@ -3746,6 +3768,26 @@ static Node *parse_primary(void) {
             parse_assign();  /* discard second arg (the expected value) */
             expect(TK_RPAREN);
             return n;
+        }
+
+        /* __builtin_nan[f|l]("..."), __builtin_inf[f|l](),
+         * __builtin_huge_val[f|l](): the constants, as clang folds them --
+         * runtime/include/math.h's NAN and INFINITY are these, and a call
+         * to them links to nothing (selfhost ISSUES-71).  The NaN is the
+         * quiet one; a payload string is not read.  long double is double. */
+        if (strcmp(nm, "__builtin_nanf") == 0 || strcmp(nm, "__builtin_nan") == 0 || strcmp(nm, "__builtin_nanl") == 0) {
+            int f = strcmp(nm, "__builtin_nanf") == 0;
+            expect(TK_LPAREN);
+            parse_assign();  /* the payload string: not read */
+            expect(TK_RPAREN);
+            return f ? nd_fnum(0x7FC00000, 0, TY_FLOAT) : nd_fnum(0, 0x7FF80000, TY_DOUBLE);
+        }
+        if (strcmp(nm, "__builtin_inff") == 0 || strcmp(nm, "__builtin_inf") == 0 || strcmp(nm, "__builtin_infl") == 0 ||
+            strcmp(nm, "__builtin_huge_valf") == 0 || strcmp(nm, "__builtin_huge_val") == 0 || strcmp(nm, "__builtin_huge_vall") == 0) {
+            int f = strcmp(nm, "__builtin_inff") == 0 || strcmp(nm, "__builtin_huge_valf") == 0;
+            expect(TK_LPAREN);
+            expect(TK_RPAREN);
+            return f ? nd_fnum(0x7F800000, 0, TY_FLOAT) : nd_fnum(0, 0x7FF00000, TY_DOUBLE);
         }
 
         /* __builtin___clear_cache(begin, end) — no-op in the portable
