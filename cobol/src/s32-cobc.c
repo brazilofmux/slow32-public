@@ -261,7 +261,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E1_RETURN_CODE, BP_E2_GOBACK, BP_E3_COMP_N, BP_E4_VENDOR_BINARY, BP_E5_BINARY_2002,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
-       BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND,
+       BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -310,6 +310,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-E17", 'E', "a FILE STATUS item that is not alphanumeric; the standard's is PIC XX, and here a two-digit numeric one is taken" },
     { "BP-E18", 'E', "no AT END or INVALID KEY phrase and no USE procedure for the file, which X3.23-1985 requires; "
                      "the condition goes to the FILE STATUS, or stops the run" },
+    { "BP-E19", 'E', "RESERVE, BLOCK CONTAINS or RECORD CONTAINS on a LINE SEQUENTIAL file, which 2023 excludes "
+                     "(12.4.5.2 rule 12, 13.4.5.3 rule 4); taken, with no effect on the lines" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -15233,10 +15235,11 @@ static void parse_fd(void)
     g_cur_fd = (int)(f - g_files);
     while (cur()->kind == T_NUM) parse_data_item();
     g_cur_fd = -1;
-    if (g_std >= 2002 && f->org == COB_ORG_LINESEQ && f->reserve_given)
-        die_at(f->line, "file '%s': a LINE SEQUENTIAL file takes no RESERVE clause (2023 12.4.5.2 rule 12)", f->name);
-    if (g_std >= 2002 && f->org == COB_ORG_LINESEQ && (f->block_given || f->rc_given))
-        die_at(line, "FD %s: a LINE SEQUENTIAL file takes neither BLOCK CONTAINS nor RECORD CONTAINS (2023 13.4.5.3 rule 4)", f->name);
+    /* 2023 12.4.5.2 rule 12 and 13.4.5.3 rule 4 say LINE SEQUENTIAL takes
+     * no RESERVE, BLOCK CONTAINS or RECORD CONTAINS; majesty's jerm writes
+     * RECORD CONTAINS on one, as GnuCOBOL allows: taken, BP-E19 */
+    if (g_std >= 2002 && f->org == COB_ORG_LINESEQ && (f->reserve_given || f->block_given || f->rc_given))
+        bp(BP_E19_LINESEQ_CLAUSES, line);
     if (f->varying && f->org == COB_ORG_LINESEQ)
         die_at(line, "FD %s: variable records need ORGANIZATION SEQUENTIAL (LINE SEQUENTIAL names its own framing; docs/framing.md)", f->name);
 }

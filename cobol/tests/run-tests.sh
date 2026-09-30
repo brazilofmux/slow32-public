@@ -327,7 +327,8 @@ for src in "$HERE/warn"/*.cbl; do
     flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
     # ext-*: the extensions (class E) under -warn-extensions, not -warn-74
     wflag="-warn-74"; case "$name" in ext-*) wflag="-warn-extensions" ;; esac
-    if ! "$COBC" $flag $wflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.warn"; then
+    stdflag=""; case "$name" in *std2002*) stdflag="-std=2002" ;; esac   # a point that exists only under 2002
+    if ! "$COBC" $flag $stdflag $wflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.warn"; then
         report "warn/$name" 1 "refused: $(head -1 "$W/$name.warn")"; continue
     fi
     got="$(grep -o '\[BP-[A-Z][0-9]*\]' "$W/$name.warn" | sort -u)"
@@ -335,7 +336,7 @@ for src in "$HERE/warn"/*.cbl; do
     if [ "$got" != "$want" ]; then
         report "warn/$name" 1 "ids: got [$(echo $got)] want [$(echo $want)]"; continue
     fi
-    "$COBC" $flag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.quiet"
+    "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.quiet"
     if [ -s "$W/$name.quiet" ]; then
         report "warn/$name" 1 "not silent without $wflag: $(head -1 "$W/$name.quiet")"; continue
     fi

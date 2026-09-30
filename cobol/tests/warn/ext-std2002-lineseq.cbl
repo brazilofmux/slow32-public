@@ -1,7 +1,9 @@
 identification division.
 program-id. lsclause.
-*> A LINE SEQUENTIAL file takes neither RESERVE (2023 12.4.5.2 rule 12)
-*> nor BLOCK or RECORD CONTAINS (13.4.5.3 rule 4): its records are lines.
+*> -warn-extensions under -std=2002: 2023 says a LINE SEQUENTIAL file
+*> takes neither RESERVE (12.4.5.2 rule 12) nor BLOCK or RECORD CONTAINS
+*> (13.4.5.3 rule 4); majesty's jerm writes RECORD CONTAINS on one, so it
+*> is taken as BP-E19.
 environment division.
 input-output section.
 file-control.

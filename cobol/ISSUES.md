@@ -4291,3 +4291,12 @@ Tests: 2002/readprev (the oracle agrees), 2002/readprev2. Harness
 505/505, CCVS-85 unchanged, -std=85 byte-identical on the Open Systems
 programs, majesty PASS, Open Systems paper unchanged.
 
+A regression found on the way: ISSUES-110 refused RESERVE, BLOCK and
+RECORD CONTAINS on a LINE SEQUENTIAL file under -std=2002, and majesty's
+jerm (built -std=2002 by tests/majesty-functions.sh) has RECORD CONTAINS
+on one. That gate was not run for ISSUES-110 to -115, so jerm failed to
+build from c8ff2f4f until here. It is BP-E19 now, a warning under
+-warn-extensions; the warn gate runs *std2002* files under -std=2002
+(warn/ext-std2002-lineseq replaces bad/std2002-lineseq-clauses).
+tests/majesty-functions.sh PASS again.
+

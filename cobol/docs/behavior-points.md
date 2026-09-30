@@ -130,6 +130,7 @@ warns only under -std=85. Never changes the output.
 | BP-E16 | a RECORD KEY or ALTERNATE RECORD KEY that is not alphanumeric or national | the Open Systems suite (13 files) | 85, 2002 | both editions' key rule 2 asks for alphanumeric; taken, the key ordered by its bytes, as GnuCOBOL does |
 | BP-E17 | a FILE STATUS item that is not alphanumeric (PIC 99) | none in the corpora | 85, 2002 | FILE STATUS rule 2 asks for two alphanumeric characters; a two-digit numeric one is taken |
 | BP-E18 | READ without AT END, or a keyed statement without INVALID KEY, and no USE procedure for the file | the Open Systems suite (8) | 85 | X3.23-1985 requires the phrase then (READ rule 2 and its keyed siblings); the condition goes to the FILE STATUS, or stops the run |
+| BP-E19 | RESERVE, BLOCK CONTAINS or RECORD CONTAINS on a LINE SEQUENTIAL file | majesty's jerm (RECORD CONTAINS) | 2002 | 2023 excludes them (12.4.5.2 rule 12, 13.4.5.3 rule 4); taken, with no effect on the lines |
 
 Not points, recorded here:
 

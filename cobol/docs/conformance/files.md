@@ -19,7 +19,7 @@ RECORD). 2023: 12.4.5 and its clauses, 13.4.5, 13.4.6, 13.18.10,
 | ALTERNATE RECORD KEY 4 (85: 4) | no alternate key beginning where the prime key or another alternate does | **refused**: bad/select-alternate-key -- accepted before |
 | FILE STATUS 1-2 (85: 2) | two alphanumeric characters, not in a table, not in the FILE SECTION | table and FILE SECTION: **refused**, bad/select-file-status -- accepted before; a numeric PIC 99: **extension** BP-E17 |
 | RELATIVE KEY 1-3 | an unsigned integer without P, outside the file's record | **refused** |
-| 2023 12 | no RESERVE for LINE SEQUENTIAL | **refused** under -std=2002: bad/std2002-lineseq-clauses; under -std=85 LINE SEQUENTIAL is itself an extension (BP-E12) |
+| 2023 12 | no RESERVE for LINE SEQUENTIAL | **extension** under -std=2002, BP-E19 (warn/ext-std2002-lineseq); it was refused by ISSUES-110 and broke majesty's jerm (RECORD CONTAINS), found by tests/majesty-functions.sh in ISSUES-116. Under -std=85 LINE SEQUENTIAL is itself an extension (BP-E12) |
 
 ## The file description entry
 
@@ -27,7 +27,7 @@ RECORD). 2023: 12.4.5 and its clauses, 13.4.5, 13.4.6, 13.18.10,
 |---|---|---|
 | 85 FD rule 3; 2023 13.4.5.3 rule 3 | record descriptions follow (2023: or a RECORD clause, with READ INTO and WRITE FILE ... FROM) | **refused** under -std=85 with the rule (bad/fd-no-record; it said "file 'f' has no FD"); under -std=2002 **not implemented**, said so |
 | one FD per file | | **refused**: bad/fd-twice -- accepted before |
-| 2023 13.4.5.3 rule 4 | LINE SEQUENTIAL takes no BLOCK or RECORD CONTAINS | **refused** under -std=2002, as RESERVE above |
+| 2023 13.4.5.3 rule 4 | LINE SEQUENTIAL takes no BLOCK or RECORD CONTAINS | **extension** under -std=2002, BP-E19, as RESERVE above |
 | DATA RECORDS 1 (85) | the names are the FD's own 01 records | **refused**: bad/fd-data-records -- accepted before (the clause is obsolete, BP-O8) |
 | RECORD 1 (85: 1) | no record longer than RECORD CONTAINS | **refused**; a longer RECORD CONTAINS is taken as the record area, as GnuCOBOL does (majesty's sglentry) |
 | RECORD 4 (85: 2) | m TO n: no record shorter than m | **refused**: bad/fd-record-min -- accepted before |
