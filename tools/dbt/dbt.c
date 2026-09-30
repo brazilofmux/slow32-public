@@ -1326,7 +1326,18 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
     // Use specific registers for inputs to avoid conflicts
     // rax = cpu, rcx = mem_base, rdx = block, rsi = compact_table
     // These are caller-saved so we don't need to preserve them
+    //
+    // The stack is aligned here explicitly.  To the compiler this is a leaf
+    // function (the call is inside the asm), so rsp at the asm is whatever
+    // entry left it -- 8 mod 16 under gcc -O2 -- and its red zone may be in
+    // use.  Translated code enters with rsp 8 mod 16, as a called function
+    // does, and every stub's `push; call host_fn` relies on that.  Before
+    // this, block entry was 0 mod 16 and each host call a misaligned one:
+    // harmless until a callee spilled an SSE register to its frame, which a
+    // libcob hook kernel with a 256-byte buffer did (a #GP, reported as
+    // SIGSEGV at address 0, on kagura; docs/dbt-hooks.md).
     __asm__ __volatile__(
+        "sub $128, %%rsp\n\t"     // step over the red zone
         // Save callee-saved registers that we'll clobber
         "push %%rbp\n\t"
         "push %%rbx\n\t"
@@ -1340,8 +1351,17 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
         "mov %%rcx, %%r14\n\t"   // r14 = mem_base
         "mov %%rsi, %%r13\n\t"   // r13 = compact_table
 
+        // Align: the old rsp saved on the aligned stack, so rsp is 0 mod 16
+        // at the call and 8 mod 16 in the block
+        "mov %%rsp, %%rbx\n\t"
+        "and $-16, %%rsp\n\t"
+        "sub $8, %%rsp\n\t"
+        "push %%rbx\n\t"
+
         // Call translated block (address in rdx)
         "call *%%rdx\n\t"
+
+        "pop %%rsp\n\t"          // the pre-alignment rsp
 
         // Restore callee-saved registers
         "pop %%r15\n\t"
@@ -1350,6 +1370,7 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
         "pop %%r12\n\t"
         "pop %%rbx\n\t"
         "pop %%rbp\n\t"
+        "add $128, %%rsp\n\t"
 
         : // No outputs
         : "a" (cpu),           // rax = cpu
