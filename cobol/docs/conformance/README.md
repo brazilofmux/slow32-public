@@ -23,6 +23,15 @@ must be accepted, not what must be refused), behaviour that differs from
 the text, and misleading messages. docs/refusals.md, "What follows",
 began this; ISSUES-96 on record the sweeps.
 
+[coverage.md](coverage.md) is the matrix across the whole standard: every
+element of ISO/IEC 1989:2023 with syntax or general rules, swept or not,
+and for intrinsic functions and unswept statements, the compiler's own
+answer as to whether they are implemented.  It is generated, by section
+number (and the COBOL keyword, where the element is one), never the
+standard's titles or text:
+
+    python3 gen-coverage.py > coverage.md     # needs mutool and the PDF
+
 | section | page | swept |
 |---|---|---|
 | 14.9.1 ACCEPT, 14.9.11 DISPLAY, 14.9.17 GO TO, ALTER; 2002 F.1 | [accept.md](accept.md) | 2026-09-29 |
