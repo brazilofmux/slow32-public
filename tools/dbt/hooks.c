@@ -231,11 +231,11 @@ static int hook_wanted(const char *name)
     if (!only) return 1;
     size_t n = strlen(name);
     for (const char *p = only; *p; ) {
-        const char *e = strchr(p, ',');
-        size_t len = e ? (size_t)(e - p) : strlen(p);
+        size_t len = 0;
+        while (p[len] && p[len] != ',') len++;       /* no strchr: the self-hosted libcs have none */
         if (len == n && !strncmp(p, name, n)) return 1;
-        if (!e) break;
-        p = e + 1;
+        if (!p[len]) break;
+        p += len + 1;
     }
     return 0;
 }

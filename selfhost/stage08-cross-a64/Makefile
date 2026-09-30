@@ -373,6 +373,21 @@ DBT_SRCS = $(DBT_DIR)/dbt.c $(DBT_DIR)/emit_a64.c $(DBT_DIR)/translate_a64.c \
            $(DBT_DIR)/stage5_mir.c $(DBT_DIR)/stage5_lir_opt.c
 DBT_OBJS = $(patsubst $(DBT_DIR)/%.c,$(OUT)/dbt_%.o,$(DBT_SRCS))
 
+# hooks.c (docs/dbt-hooks.md), with the hook tags tools/dbt/Makefile passes
+# as -D: cc-a64 has no -D, so a wrapper defines them and includes the source.
+# Without it the link fails (dbt_hook_at and the rest are undefined); with
+# empty tags the hooks would all decline, correct but slower.
+HK_SRC_BUILTINS = $(wildcard ../../runtime/builtins.c)
+HK_TAG_BUILTINS := $(if $(HK_SRC_BUILTINS),$(shell cksum < $(HK_SRC_BUILTINS) | awk '{printf "%08x", $$1}'))
+HK_SRC_COBKERN = $(wildcard ../../cobol/libcob/kern.h)
+HK_TAG_COBKERN := $(if $(HK_SRC_COBKERN),$(shell cksum < $(HK_SRC_COBKERN) | awk '{printf "%08x", $$1}'))
+DBT_OBJS += $(OUT)/dbt_hooks.o
+
+$(OUT)/dbt_hooks.o: $(DBT_DIR)/hooks.c $(DBT_DIR)/hooks.h $(HK_SRC_BUILTINS) $(HK_SRC_COBKERN) $(OUT)/cc-a64
+	@printf '#define HK_TAG_BUILTINS "%s"\n#define HK_TAG_COBKERN "%s"\n#include "%s"\n' \
+	    '$(HK_TAG_BUILTINS)' '$(HK_TAG_COBKERN)' '../$(DBT_DIR)/hooks.c' > $(OUT)/dbt_hooks_tagged.c
+	@$(OUT)/cc-a64 --hir -c $(OUT)/dbt_hooks_tagged.c -o $@ >/dev/null
+
 $(OUT)/dbt_%.o: $(DBT_DIR)/%.c $(OUT)/cc-a64
 	@$(OUT)/cc-a64 --hir -c $< -o $@ >/dev/null
 
