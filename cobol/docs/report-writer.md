@@ -236,6 +236,6 @@ wants it) and `REPORTS ARE` with several reports on one FD.
 - A sum counter keeps its value after TERMINATE; 2.20.4(8) resets it
   when its footing's processing completes (rptctl).
 
-`tests/free/rptctl`, `rptnext`, `rptuse` pin ours and the oracle's
+`tests/free/rptctl`, `rptnext` and `tests/2002/rptuse` pin ours and the oracle's
 outputs side by side; cobc370's `tests/rptctl`-family is the design
 donor and its 1974-text derivations the arbiter.

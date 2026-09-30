@@ -5,6 +5,8 @@
 *> (summary reporting) drives it: details never print, sums do.
 *> UPON restricts one counter to one detail; RESET ON FINAL keeps a
 *> running total across breaks. Oracle: GnuCOBOL.
+*> Under -std=2002 since 2026-09-30: GENERATE report-name over two
+*> details is 2002's (1985 allows one, XIII 4.3.3 rule 2b).
 identification division.
 program-id. rptuse.
 environment division.

@@ -31,7 +31,7 @@ working-storage section.
 01  alnm  pic x(6).
 01  eof   pic x value "n".
 report section.
-rd  r page limit 9.
+rd  r page limit 9 first detail 2.
 01  type page heading line 1.
     05 column 1 value "t".
     05 column 5 value n"名前".

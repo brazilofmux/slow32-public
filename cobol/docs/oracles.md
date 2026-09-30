@@ -128,6 +128,7 @@ agrees with its documented divergence").
 | `free/setcond` | `SET c TO TRUE`, `c` a condition-name on an edited item with an alphanumeric literal (`z,zz9.99` with `" 12.5"`; `xxbxx` with `"abcd"`) | the characters as written, `[ 12.5   ]` and `[abcd ]`, by the VALUE clause's rules (2023 14.9.39.4 rule 6; 13.18.63.3 rules 4 and 7-8), so the condition is true afterwards | edits them as a MOVE would, `[   12.50]` and `[ab cd]`, and the condition is then false |
 | `free/copyquote` | `REPLACE =="abc"== BY =="rep"==` over `'abc'`; `=="it""s"==` over `'it''s'` | replaced: the two quotation marks match each other and a doubled quote is one (2002 and 2023 7.2.4.4 rule 8c4, COPY's rule 9c4) | not replaced: a literal matches only in the quote it was written with |
 | `2002/fnreturn` | the intrinsics' returned values, 169 calls | as the oracle, but for four: EXP(20), EXP10(10.5) to the 15 significant digits a double holds (native arithmetic: an implementor-defined approximation, 2023 15.34.4, 15.35.4); ANNUITY(0.1, 1) exactly 1.1; NUMVAL-F("1.5E3") 0, its exponent unsigned where 15.69.3 requires the sign | about 34 digits; 1.0999999999; 1500 (though its own TEST-NUMVAL-F finds the same error at position 5) |
+| `free/rwsign` | a report group entry with SUM (or SOURCE) and no COLUMN | not presented: the counter sums, nothing prints (X3.23-1985 XIII 3.11.4 rule 1) | presented at column 1 |
 | (not a test) | relative slots on disk | the same 4-byte RDW per slot, zero for an empty slot; slot = 4 + maximum record (docs/indexed.md) | an 8-byte native `size_t` length per slot, 0 for empty |
 
 ## What we will not do
@@ -165,7 +166,7 @@ concurring) wins:
 - LINE n NEXT PAGE on a detail: GnuCOBOL ignores it when a body group
   is already on the page; rule 3c starts one (free/rptnext).
 - SUM ... UPON: GnuCOBOL feeds the counter from every GENERATE; the
-  text only from the named details (free/rptuse).
+  text only from the named details (2002/rptuse).
 - A sum counter after TERMINATE: GnuCOBOL leaves the final value;
   2.20.4(8) resets it with its footing's processing (free/rptctl).
 

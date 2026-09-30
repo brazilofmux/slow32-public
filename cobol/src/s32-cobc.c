@@ -2391,6 +2391,7 @@ typedef struct {
     int sum_sym[8], sum_is_ctr[8];      /* resolved operands */
     int upon_g[4];                      /* resolved UPON detail groups (indexes into r->g) */
     int reset_lvl;                      /* resolved: 0 FINAL, 1..nctl; the own CF's level by default */
+    int sign_lead, sign_sep;            /* SIGN IS LEADING/TRAILING SEPARATE */
 } RField;
 
 typedef struct {
@@ -14237,7 +14238,7 @@ static Report *expect_report(void)
 }
 
 /* a report field's columns: a national one's character positions (cobol ISSUES-92) */
-static int rfield_cols(const RField *f) { return f->pi.category == PIC_NATIONAL ? f->pi.bytes / 2 : f->pi.bytes; }
+static int rfield_cols(const RField *f) { return (f->pi.category == PIC_NATIONAL ? f->pi.bytes / 2 : f->pi.bytes) + f->sign_sep; }
 static int rfield_is_nat(const RField *f) { return f->pi.category == PIC_NATIONAL || f->usage_nat; }
 
 static int rfield_desc(RField *f)
@@ -14258,6 +14259,7 @@ static int rfield_desc(RField *f)
     if (f->blank_zero) d.flags |= COB_F_BLANKZ;
     if (f->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", f->pi.pat);
     d.size = f->pi.bytes;
+    if (f->sign_sep) { d.flags |= f->sign_lead ? COB_F_SEPLEAD : COB_F_SEPTRAIL; d.size++; }   /* its own character */
     if (f->usage_nat) { d.usage = COB_U_NATIONAL; d.size = 2 * f->pi.bytes; }
     return desc_add(&d);
 }
@@ -14311,6 +14313,8 @@ static void rw_resolve(Report *r)
                     Sym *op = rw_ref_sym(f->sum_tp[k], f->line);
                     f->sum_sym[k] = sym_idx(op);
                     f->sum_is_ctr[k] = rw_sym_is_counter(r, f->sum_sym[k]);
+                    if (!is_numeric_sym(op)) die_at(f->line, "SUM '%s': identifier-1 is numeric (X3.23-1985 XIII 3.19.3 rule 1)", op->name);
+                    if (f->nupon && f->sum_is_ctr[k]) die_at(f->line, "SUM '%s' UPON: with UPON the operands are not sum counters (X3.23-1985 XIII 3.19.3 rule 1)", op->name);
                 }
                 for (int k = 0; k < f->nupon; k++) {
                     Tok *nt = &g_tok[f->upon_tp[k]];
@@ -14320,8 +14324,15 @@ static void rw_resolve(Report *r)
                     if (found < 0) die_at(f->line, "UPON '%s' is not a DETAIL group of RD %s", nt->s, r->name);
                     f->upon_g[k] = found;
                 }
-                if (f->reset_final) f->reset_lvl = 0;
-                else if (f->reset_tp) f->reset_lvl = rw_ctl_level_of(r, rw_ref_sym(f->reset_tp, f->line), f->line);
+                if (f->reset_final) {
+                    if (!r->ctl_final) die_at(f->line, "RESET ON FINAL: FINAL is in the CONTROL clause too (X3.23-1985 XIII 3.19.3 rule 4)");
+                    f->reset_lvl = 0;
+                }
+                else if (f->reset_tp) {
+                    f->reset_lvl = rw_ctl_level_of(r, rw_ref_sym(f->reset_tp, f->line), f->line);
+                    if (g->ctl_level >= 0 && f->reset_lvl > g->ctl_level)
+                        die_at(f->line, "RESET ON '%s': a control no lower than the footing's own (X3.23-1985 XIII 3.19.3 rule 4)", g_tok[f->reset_tp].s);
+                }
                 else f->reset_lvl = g->ctl_level;   /* its own footing's level (FINAL = 0) */
             }
     }
@@ -14486,6 +14497,7 @@ static void emit_report_group(Report *r, RGroup *g)
         emit_call("cob_rw_line_begin");
         for (int k = 0; k < ln->nf; k++) {
             RField *f = &ln->f[k];
+            if (!f->column) continue;               /* no COLUMN: not presented (X3.23-1985 XIII 3.11.4 rule 1) */
             int Lgi = -1;
             if (f->gi && g->type == RG_DETAIL) {    /* GROUP INDICATE: spaces except first after a page or break */
                 Lgi = new_label();
@@ -14783,6 +14795,13 @@ static void parse_generate(void)
     if (!g) {
         r = report_find(t->s);
         if (!r) die_at(t->line, "'%s' is not a report group", t->s);
+        /* summary reporting: the RD has a CONTROL clause and at most one
+         * DETAIL group (X3.23-1985 XIII 4.3.3 rule 2; the body group, 3.20.3 rule 7) */
+        int ndet = 0;
+        for (int k = 0; k < r->ng; k++) ndet += r->g[k].type == RG_DETAIL;
+        if (!r->nctl && !r->ctl_final) die_at(t->line, "GENERATE %s: the RD has no CONTROL clause (X3.23-1985 XIII 4.3.3 rule 2a)", r->name);
+        if (ndet > 1 && g_std < 2002)          /* 1985's rule; 2002 and 2023 drop it */
+            die_at(t->line, "GENERATE %s: the RD has %d DETAIL groups, one at most (X3.23-1985 XIII 4.3.3 rule 2b; 2002 allows more -- compile with -std=2002)", r->name, ndet);
         advance();
         if (r->code_tp) emit_rw_code(r);
         emit_rw_generate(r, NULL);                  /* GENERATE report-name: summary reporting */
@@ -18162,6 +18181,95 @@ static void parse_fd(void)
 
 /* RD report-name [PAGE [LIMIT IS] n [LINE(S)]] [HEADING n] [FIRST DETAIL n]
  * [LAST DETAIL n] [FOOTING n]. then the group descriptions */
+/* the report's layout against X3.23-1985 XIII's syntax rules, once every
+ * group is read: TYPE (3.20.3 rules 2-4, 7), LINE (3.15.3 rules 3-9), NEXT
+ * GROUP (3.16.3 rules 3-5), the page regions (3.8.3 rules 8-9), and COLUMN
+ * (3.11.3 rule 2) */
+static const char *rg_type_name(int t)
+{
+    static const char *n[] = { "PAGE HEADING", "DETAIL", "PAGE FOOTING", "REPORT HEADING", "REPORT FOOTING", "CONTROL HEADING", "CONTROL FOOTING" };
+    return t >= 0 && t < 7 ? n[t] : "?";
+}
+static void rw_layout_check(Report *r, int paged)
+{
+    int body = 0;
+    for (int i = 0; i < r->ng; i++) {
+        RGroup *g = &r->g[i];
+        int isbody = g->type == RG_DETAIL || g->type == RG_CONTROL_HEADING || g->type == RG_CONTROL_FOOTING;
+        body |= isbody;
+        /* once each: RH, PH, CH FINAL, CF FINAL, PF, RF; one CH and one CF a control */
+        for (int j = 0; j < i; j++) {
+            RGroup *h = &r->g[j];
+            if (h->type != g->type || g->type == RG_DETAIL) continue;
+            int same = 1;
+            if (g->type == RG_CONTROL_HEADING || g->type == RG_CONTROL_FOOTING)
+                same = (g->ctl_tp == 0 && h->ctl_tp == 0) ||
+                       (g->ctl_tp && h->ctl_tp && !strcmp(g_tok[g->ctl_tp].s, g_tok[h->ctl_tp].s));
+            if (same) die_at(g->line, "RD %s: a second %s%s%s group (X3.23-1985 XIII 3.20.3 rules 2 and 4)", r->name, rg_type_name(g->type),
+                             g->type == RG_CONTROL_HEADING || g->type == RG_CONTROL_FOOTING ? " " : "",
+                             g->type == RG_CONTROL_HEADING || g->type == RG_CONTROL_FOOTING ? (g->ctl_tp ? g_tok[g->ctl_tp].s : "FINAL") : "");
+        }
+        if (!paged && (g->type == RG_PAGE_HEADING || g->type == RG_PAGE_FOOTING))
+            die_at(g->line, "RD %s: a %s group needs a PAGE clause (X3.23-1985 XIII 3.20.3 rule 3)", r->name, rg_type_name(g->type));
+        /* NEXT GROUP */
+        if (g->next_kind && (g->type == RG_REPORT_FOOTING || g->type == RG_PAGE_HEADING))
+            die_at(g->line, "NEXT GROUP is not for a %s group (X3.23-1985 XIII 3.16.3 rule 5)", rg_type_name(g->type));
+        if (g->next_kind == 3 && g->type == RG_PAGE_FOOTING)
+            die_at(g->line, "NEXT GROUP NEXT PAGE is not for a PAGE FOOTING group (X3.23-1985 XIII 3.16.3 rule 4)");
+        if (!paged && (g->next_kind == 1 || g->next_kind == 3))
+            die_at(g->line, "RD %s has no PAGE clause: only NEXT GROUP PLUS (X3.23-1985 XIII 3.16.3 rule 3)", r->name);
+        /* LINE */
+        int seen_rel = 0, last_abs = 0;
+        for (int k = 0; k < g->nl; k++) {
+            RLine *ln = &g->l[k];
+            if (ln->np && k > 0) die_at(ln->line, "NEXT PAGE is in the first LINE clause of a group, once (X3.23-1985 XIII 3.15.3 rule 6)");
+            if (ln->np && !isbody && g->type != RG_REPORT_FOOTING)
+                die_at(ln->line, "LINE ... NEXT PAGE is for body groups and the REPORT FOOTING, not a %s group (X3.23-1985 XIII 3.15.3 rule 7)", rg_type_name(g->type));
+            if (ln->abs) {
+                if (!paged) die_at(ln->line, "RD %s has no PAGE clause: only relative LINE clauses (X3.23-1985 XIII 3.15.3 rule 5)", r->name);
+                if (seen_rel) die_at(ln->line, "an absolute LINE after a relative one in the group (X3.23-1985 XIII 3.15.3 rule 3)");
+                if (ln->abs <= last_abs) die_at(ln->line, "absolute LINE %d after LINE %d: they ascend (X3.23-1985 XIII 3.15.3 rule 4)", ln->abs, last_abs);
+                last_abs = ln->abs;
+            } else if (!ln->np) seen_rel = 1;
+            if (k == 0 && g->type == RG_PAGE_FOOTING && !ln->abs)
+                die_at(ln->line, "a PAGE FOOTING group's first LINE is absolute (X3.23-1985 XIII 3.15.3 rule 9)");
+            /* COLUMN: ascending, no overlap, among the items presented */
+            int endcol = 0;
+            for (int f = 0; f < ln->nf; f++) {
+                RField *fd = &ln->f[f];
+                if (!fd->column) continue;
+                if (fd->column <= endcol)
+                    die_at(fd->line, "COLUMN %d: the printable items of a line ascend and do not overlap (the one before ends at %d; X3.23-1985 XIII 3.11.3 rule 2)", fd->column, endcol);
+                endcol = fd->column + rfield_cols(fd) - 1;
+            }
+        }
+        /* the page region the group's absolute lines fall in (3.8.3 rule 8) */
+        if (paged) {
+            int lo, hi, own_page = g->next_kind == 3 || (g->nl && g->l[0].np);
+            switch (g->type) {
+            case RG_REPORT_HEADING: lo = r->heading; hi = own_page ? r->page_limit : r->first_detail - 1; break;
+            case RG_PAGE_HEADING:   lo = r->heading; hi = r->first_detail - 1; break;
+            case RG_CONTROL_FOOTING: lo = r->first_detail; hi = r->footing; break;
+            case RG_PAGE_FOOTING:   lo = r->footing + 1; hi = r->page_limit; break;
+            case RG_REPORT_FOOTING: lo = own_page ? r->heading : r->footing + 1; hi = r->page_limit; break;
+            default:                lo = r->first_detail; hi = r->last_detail; break;
+            }
+            int pos = 0;
+            for (int k = 0; k < g->nl; k++) {
+                RLine *ln = &g->l[k];
+                if (ln->abs) pos = ln->abs; else if (pos) pos += ln->plus; else continue;
+                if (pos < lo || pos > hi)
+                    die_at(ln->line, "line %d of the %s group is outside its region of the page, lines %d to %d (X3.23-1985 XIII 3.8.3 rule 8)", pos, rg_type_name(g->type), lo, hi);
+            }
+            int height = 1;
+            for (int k = 1; k < g->nl; k++) height += g->l[k].abs ? g->l[k].abs - (g->l[k - 1].abs ? g->l[k - 1].abs : 0) : g->l[k].plus;
+            if (height > hi - lo + 1 && hi >= lo)
+                die_at(g->line, "the %s group takes %d lines, more than its region of the page holds (%d; X3.23-1985 XIII 3.8.3 rules 8-9)", rg_type_name(g->type), height, hi - lo + 1);
+        }
+    }
+    if (!body) die_at(r->line, "RD %s has no body group (a DETAIL, CONTROL HEADING or CONTROL FOOTING; X3.23-1985 XIII 3.20.3 rule 7)", r->name);
+}
+
 static void parse_rd(void)
 {
     int line = cur()->line;
@@ -18182,25 +18290,30 @@ static void parse_rd(void)
      * is what GnuCOBOL made of gl036's, and its .prn is the oracle */
     if (!g_files[r->file].org_given && g_files[r->file].org == COB_ORG_SEQ) g_files[r->file].org = COB_ORG_LINESEQ;
     /* (a print file of another organization takes each line as a record) */
+    int pg_h = -1, pg_f = -1, pg_l = -1, pg_ft = -1, pg_given = 0;   /* the PAGE integers written (-1 not) */
     while (cur()->kind != T_PERIOD) {
         Tok *t = cur();
         if (accept_word("page")) {
             accept_word("limit"); accept_word("limits"); accept_word("is"); accept_word("are");
             if (cur()->kind != T_NUM) die_at(t->line, "expected a number after PAGE LIMIT");
-            r->page_limit = atoi(cur()->s); advance();
+            r->page_limit = atoi(cur()->s); pg_given = 1;
+            if (r->page_limit > 999) die_at(t->line, "PAGE LIMIT %d: integer-1 has at most three significant digits (X3.23-1985 XIII 3.8.3 rule 2)", r->page_limit);
+            advance();
             accept_word("line"); accept_word("lines");
             continue;
         }
-        if (accept_word("heading")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after HEADING"); r->heading = atoi(cur()->s); advance(); continue; }
-        if (accept_word("first")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->first_detail = atoi(cur()->s); advance(); continue; }
-        if (accept_word("last")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->last_detail = atoi(cur()->s); advance(); continue; }
-        if (accept_word("footing")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after FOOTING"); r->footing = atoi(cur()->s); advance(); continue; }
+        if (accept_word("heading")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after HEADING"); r->heading = pg_h = atoi(cur()->s); advance(); continue; }
+        if (accept_word("first")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->first_detail = pg_f = atoi(cur()->s); advance(); continue; }
+        if (accept_word("last")) { expect_word("detail"); if (cur()->kind != T_NUM) die_at(t->line, "expected a number"); r->last_detail = pg_l = atoi(cur()->s); advance(); continue; }
+        if (accept_word("footing")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after FOOTING"); r->footing = pg_ft = atoi(cur()->s); advance(); continue; }
         if (accept_word("control") || accept_word("controls")) {
             accept_word("is"); accept_word("are");
             if (accept_word("final")) r->ctl_final = 1;
             while (cur()->kind == T_WORD && !at_word("page") && !at_word("heading") && !at_word("first") && !at_word("last") && !at_word("footing") && !at_word("code")) {
                 if (r->nctl == 8) die_at(t->line, "more than 8 control levels");
                 Sym *c = sym_lookup(cur()->s, NULL, 0, t->line); advance();
+                for (int q = 0; q < r->nctl; q++)
+                    if (r->ctl_sym[q] == sym_idx(c)) die_at(t->line, "CONTROL names '%s' twice; each data-name a different item (X3.23-1985 XIII 3.7.3 rule 2)", c->name);
                 r->ctl_sym[r->nctl] = sym_idx(c);
                 /* the prior values a CONTROL FOOTING prints: a hidden clone
                  * of the item, sensed against and refreshed at each break */
@@ -18240,6 +18353,20 @@ static void parse_rd(void)
         die_at(t->line, "unexpected %s in RD %s", tok_desc(t), r->name);
     }
     expect_period();
+    /* the PAGE integers in order (X3.23-1985 XIII 3.8.3 rules 3-7): 1 <= HEADING
+     * <= FIRST DETAIL <= LAST DETAIL <= FOOTING <= PAGE LIMIT, among those written */
+    {
+        int v[5] = { 1, pg_h, pg_f, pg_l, pg_ft }; const char *nm[5] = { "1", "HEADING", "FIRST DETAIL", "LAST DETAIL", "FOOTING" };
+        if (pg_h == 0) die_at(line, "RD %s: HEADING is at least 1 (X3.23-1985 XIII 3.8.3 rule 3)", r->name);
+        for (int a = 1; a < 5; a++) {
+            if (v[a] < 0) continue;
+            for (int b = a - 1; b >= 1; b--) if (v[b] >= 0) {
+                if (v[a] < v[b]) die_at(line, "RD %s: %s %d is less than %s %d (X3.23-1985 XIII 3.8.3 rules 4-6)", r->name, nm[a], v[a], nm[b], v[b]);
+                break;
+            }
+            if (pg_given && v[a] > r->page_limit) die_at(line, "RD %s: %s %d is past PAGE LIMIT %d (X3.23-1985 XIII 3.8.3 rule 7)", r->name, nm[a], v[a], r->page_limit);
+        }
+    }
     /* no PAGE clause: no page control -- one endless page (the runtime
      * pads nothing and never ends it) */
     if (!r->page_limit) { r->heading = 1; r->first_detail = 1; r->last_detail = 1 << 30; r->footing = 1 << 30; }
@@ -18271,6 +18398,7 @@ static void parse_rd(void)
         g->use_sec = -1; g->ctl_level = -1;
         g->line = cur()->line;
         int has_type = 0, first = 1;
+        int lstk[50], nlstk = 0;            /* the levels of the open entries that hold a LINE */
         static const char *clause_words[] = { "type", "line", "next", "column", "pic", "picture", "source", "value", "just", "justified", "blank", "sum", "group", "usage", "display", NULL };
         for (;;) {
             int eline = cur()->line, lvl = 1;
@@ -18289,6 +18417,7 @@ static void parse_rd(void)
                     advance();
                 }   /* a name */
             }
+            while (nlstk && lstk[nlstk - 1] >= lvl) nlstk--;       /* entries this one is not under */
             /* the entry's clauses */
             int has_line = 0, labs = 0, lplus = 0, is_field = 0, lnp = 0;
             RField fd; memset(&fd, 0, sizeof fd); fd.line = eline;
@@ -18330,8 +18459,12 @@ static void parse_rd(void)
                         advance();
                     } else if (accept_word("next")) { expect_word("page"); lnp = 1; }
                     else die_at(t->line, "expected a line number after LINE");
+                    if (accept_word("on")) { expect_word("next"); expect_word("page"); lnp = 1; }
+                    else if (labs && at_word("next") && is_word(peek(1), "page")) { advance(); advance(); lnp = 1; }
                     if (!lnp && !labs && !lplus) die_at(t->line, "LINE needs a number");
+                    if (labs > 999 || lplus > 999) die_at(t->line, "LINE: at most three significant digits (X3.23-1985 XIII 3.15.3 rule 1)");
                     if (r->page_limit && labs > r->page_limit) die_at(t->line, "LINE %d is past PAGE LIMIT %d", labs, r->page_limit);
+                    if (nlstk) die_at(t->line, "a LINE clause in an entry under another with LINE (X3.23-1985 XIII 3.9.3 rule 9, 3.15.3 rule 2)");
                     has_line = 1;
                     continue;
                 }
@@ -18346,10 +18479,14 @@ static void parse_rd(void)
                         advance();
                     }
                     else die_at(t->line, "NEXT GROUP takes an integer, PLUS integer, or NEXT PAGE");
+                    if (g->next_n > 999) die_at(t->line, "NEXT GROUP: at most three significant digits (X3.23-1985 XIII 3.16.3 rule 2)");
                     continue;
                 }
-                if (accept_word("column")) {
-                    accept_word("number"); accept_word("is");
+                if (accept_word("column") || accept_word("col") || accept_word("columns") || accept_word("cols")) {
+                    accept_word("number"); accept_word("numbers"); accept_word("is"); accept_word("are");
+                    if (at_word("plus") || at_op("+") || at_word("left") || at_word("right") || at_word("center") || at_word("centered") ||
+                        (cur()->kind == T_NUM && peek(1)->kind == T_NUM))
+                        die_at(t->line, "COLUMN PLUS, LEFT, RIGHT, CENTER and several column numbers are COBOL 2002's Report Writer; not implemented (the 1985 module is)");
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
                     fd.column = atoi(cur()->s); advance(); is_field = 1;
                     continue;
@@ -18411,6 +18548,11 @@ static void parse_rd(void)
                             if (accept_word("sum")) continue;
                             break;
                         }
+                        {   /* the next clause of the entry: the operands end (clauses come in any order) */
+                            int cw = 0;
+                            for (int k = 0; clause_words[k]; k++) if (at_word(clause_words[k])) cw = 1;
+                            if (cw || at_word("sign") || at_word("indicate") || cur()->kind != T_WORD) break;
+                        }
                     }
                     if (accept_word("upon")) {
                         while (cur()->kind == T_WORD && !at_word("reset")) {
@@ -18428,10 +18570,32 @@ static void parse_rd(void)
                     continue;
                 }
                 if (accept_word("group")) { accept_word("indicate"); fd.gi = 1; is_field = 1; continue; }
+                if (accept_word("sign")) {
+                    /* SIGN [IS] {LEADING | TRAILING} SEPARATE [CHARACTER]: in a
+                     * report group SEPARATE is required (X3.23-1985 XIII 3.17.3 rule 3) */
+                    accept_word("is");
+                    if (accept_word("leading")) fd.sign_lead = 1; else if (!accept_word("trailing")) die_at(t->line, "SIGN: LEADING or TRAILING");
+                    if (!accept_word("separate")) die_at(t->line, "SIGN in a report group is SEPARATE (X3.23-1985 XIII 3.17.3 rule 3)");
+                    accept_word("character");
+                    fd.sign_sep = 1;
+                    continue;
+                }
+                if (at_word("present") || at_word("varying") || at_word("occurs"))
+                    die_at(t->line, "%s in a report group is COBOL 2002's Report Writer; not implemented (the 1985 module is)",
+                           at_word("present") ? "PRESENT WHEN" : at_word("varying") ? "VARYING" : "OCCURS");
                 die_at(t->line, "unexpected %s in report group '%s'", tok_desc(t), g->name);
             }
             expect_period();
             if (first && !has_type) die_at(g->line, "report group '%s' needs a TYPE", g->name);
+            if (has_line && nlstk < 50) lstk[nlstk++] = lvl;
+            if (fd.gi && g->type != RG_DETAIL)
+                die_at(eline, "GROUP INDICATE belongs in a DETAIL report group (X3.23-1985 XIII 3.9.3 rule 10a, 3.13.3 rule 1)");
+            if (fd.value && !fd.column)
+                die_at(eline, "an entry with VALUE also has COLUMN (X3.23-1985 XIII 3.9.3 rule 10e)");
+            if (fd.sign_sep && !(fd.has_pic && fd.pi.category == PIC_NUMERIC && fd.pi.is_signed))
+                die_at(eline, "SIGN: a numeric entry whose PICTURE has S (X3.23-1985 XIII 3.17.3 rule 1)");
+            if (fd.has_sum && fd.has_pic && fd.pi.category == PIC_ALPHABETIC)
+                die_at(eline, "a SUM entry is not alphabetic (X3.23-1985 XIII 3.19.3 rule 1)");
             if (has_line) {
                 if (g->nl == g->lcap) { g->lcap = g->lcap ? g->lcap * 2 : 4; g->l = realloc(g->l, g->lcap * sizeof *g->l); }
                 RLine *ln = &g->l[g->nl++];
@@ -18486,7 +18650,10 @@ static void parse_rd(void)
                     die_at(eline, "a national VALUE goes to a national field (PICTURE N)");
                 if (!fd.has_pic) die_at(eline, "a report field needs a PICTURE");
                 if (fd.has_source + !!fd.value + fd.has_sum != 1) die_at(eline, "a report field needs exactly one of SOURCE, VALUE and SUM");
-                if (!fd.column) fd.column = ln->nf ? ln->f[ln->nf - 1].column + rfield_cols(&ln->f[ln->nf - 1]) : 1;
+                if (fd.value && fd.value->kind == T_STR && !fd.value->nat && fd.pi.category != PIC_NATIONAL && fd.value->len > fd.pi.bytes)
+                    die_at(eline, "VALUE: the literal has %d characters, the PICTURE %d (X3.23-1985 XIII 3.22.3 rule 2)", fd.value->len, fd.pi.bytes);
+                /* no COLUMN: the item is not presented (3.11.4 rule 1) -- a SUM
+                 * counter so defined still counts; column 0 marks it */
                 if (ln->nf == ln->fcap) { ln->fcap = ln->fcap ? ln->fcap * 2 : 8; ln->f = realloc(ln->f, ln->fcap * sizeof *ln->f); }
                 ln->f[ln->nf++] = fd;
             }
@@ -18494,6 +18661,7 @@ static void parse_rd(void)
         }
         if (!g->nl) die_at(g->line, "report group '%s' has no LINE", g->name);
     }
+    rw_layout_check(r, pg_given);
 }
 
 /* 01 screen-name. then slot entries at deeper levels, each with LINE /

@@ -40,7 +40,7 @@ and IC234A (USE GLOBAL across contained programs), the RW module.
 | 5 | a file-name USE over an open-mode USE | **test**: CCVS SQ module |
 | 6 | after the standard error routine, unless AT END or INVALID KEY takes it; the WHEN of an exception-checking PERFORM first | **test**: CCVS SQ; 2002/ecpreview (E8) |
 | 7 | after the procedure, continue; a fatal EC-I-O condition is the implementor's | **ruling**: without a FILE STATUS the run stops with the status (cob_io_unhandled); docs/indexed.md |
-| 8, 9 | USE BEFORE REPORTING runs just before its group, after control breaks and sums | **test**: free/rptuse, CCVS RW module |
+| 8, 9 | USE BEFORE REPORTING runs just before its group, after control breaks and sums | **test**: 2002/rptuse, CCVS RW module |
 | 10 | GENERATE, INITIATE or TERMINATE reached at run time from a USE BEFORE REPORTING procedure is EC-FLOW-REPORT | **gap**: the static case is refused (syntax rule 10); a run-time path there (a PERFORM of another declarative) is not checked |
 | 11 | the first condition in evaluation order selects the USE | **test**: the compiler raises one condition per statement |
 | 12, 13 | after the procedure: EC-I-O as rule 7; another nonfatal condition continues after the statement, a fatal one ends the run | **test**: 2002/ecraise, ecio, ecpfatal |

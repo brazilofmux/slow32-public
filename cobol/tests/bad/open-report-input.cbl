@@ -12,7 +12,7 @@ fd prf report is rp.
 report section.
 rd rp.
 01 type detail.
-   05 line 1 column 1 pic x(5) value "hello".
+   05 line plus 1 column 1 pic x(5) value "hello".
 procedure division.
     open input prf
     stop run.
