@@ -1,0 +1,14 @@
+sum v       00013.0000
+max v       00012.0000
+ordmin v    00002.0000
+sum c all   00090.0000
+sum c 2,.   00030.0000
+sum c .,2   00060.0000
+max c .,i+1 00007.0000
+ordmax c    00010.0000
+mean c .,1  00026.5000
+sum odo 2   00300.0000
+sum odo 3   00600.0000
+max w      [zed]
+min w      [amy]
+ordmax w    00002.0000

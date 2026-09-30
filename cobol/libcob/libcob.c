@@ -5762,8 +5762,12 @@ static void fn_dres(cob_wnum *r, double x)
 {
     if (x == x && fabs(x) < 1e38) {
         int e = x == 0 ? 0 : (int)floor(log10(fabs(x)));
-        int sc = 14 - e; if (sc < 0) sc = 0; if (sc > 30) sc = 30;
-        if (!w_from_dbl(r, x, sc, 1)) return;
+        int sc = 14 - e; if (sc > 30) sc = 30;
+        if (sc >= 0) { if (!w_from_dbl(r, x, sc, 1)) return; }
+        else if (!w_from_dbl(r, x / pow10d(-sc), 0, 1)) {
+            w_scale_up(r->m, -sc);              /* past 15 digits, zeros -- not the double's binary noise, which differs by engine */
+            return;
+        }
     }
     fn_argbad = 1; memset(r, 0, sizeof *r);
 }
@@ -5838,6 +5842,14 @@ char *cob_fn_wnum(int which, int n, int fscale)
     }
     case COB_FN_ABS: r = a[0]; r.neg = 0; break;
     case COB_FN_SIGN: w_from_i64(&r, mp_is_zero(a[0].m, WL) ? 0 : a[0].neg ? -1 : 1, 0); break;
+    case COB_FN_PI: case COB_FN_E: {
+        /* native arithmetic: an approximation of 3 + 0.1415926535897932384626433832795
+         * (2023 15.73.3 rule 1), and of e likewise (15.27.3); these are those 31 decimals */
+        const char *k = which == COB_FN_PI ? "31415926535897932384626433832795" : "27182818284590452353602874713527";
+        memset(&r, 0, sizeof r);
+        w_from_digits(r.m, k, 32); r.scale = 31;
+        break;
+    }
     case COB_FN_FACTORIAL: {                    /* exact: 33! is the last within 38 digits */
         double k = w_to_dbl(&a[0]);
         if (!w_isint(&a[0]) || k < 0 || k > 33) { fn_argbad = 1; w_from_i64(&r, 0, 0); break; }
@@ -6007,7 +6019,6 @@ char *cob_fn_num(int which, int n)
     /* FACTORIAL and the functions computed in double: cob_fn_wnum */
     /* COBOL 2002 */
     case COB_FN_ABS: res = fn_signed18(cob_rescale(a[0].v < 0 ? -a[0].v : a[0].v, a[0].scale, 9)); break;
-    case COB_FN_PI: res = fn_signed18(3141592654LL); break;           /* 3.141592654 at scale 9, rounded */
     case COB_FN_SIGN: res = fn_signed18(a[0].v > 0 ? 1 : a[0].v < 0 ? -1 : 0); break;
     case COB_FN_FRACTION_PART: {
         long long k = pow10tab[a[0].scale];
@@ -6084,6 +6095,7 @@ char *cob_fn_al(int which, int fsize)
     memset(b, ' ', (size_t)fsize);
     memcpy(b, al_arg_p[best], (size_t)(al_arg_n[best] < fsize ? al_arg_n[best] : fsize));
     b[fsize] = 0;
+    fn_var_len = al_arg_n[best] < fsize ? al_arg_n[best] : fsize;   /* the selected argument's size (2023 15.59.4 rule 3) */
     return b;
 }
 
@@ -6151,7 +6163,12 @@ static int numval_scan(const char *p, int n, int form, cob_wnum *wv, int *exp10)
             any = 1;
             dg[ndg++] = (char)c; if (seen_pt) scale++;
         } else if (c == dp && !seen_pt) seen_pt = 1;
-        else if (form == 1 && c == grp && !seen_pt && any && i + 1 < n && p[i + 1] >= '0' && p[i + 1] <= '9') continue;
+        else if (form == 1 && c == grp && !seen_pt && any) {
+            /* digit [, digit]...: the comma needs a digit after it; the
+             * character that is not one is the one in error ("1,,2": 3) */
+            if (i + 1 < n && p[i + 1] >= '0' && p[i + 1] <= '9') continue;
+            return i + 1 < n ? i + 2 : n + 1;
+        }
         else break;
     }
     if (!any) return i < n && i > start ? i + 1 : i < n ? i + 1 : n + 1;
@@ -6218,7 +6235,7 @@ char *cob_fn_numval(const char *p, int n, int cform)
     }
     /* out of format: noted (15.67.3, 15.68.3); the value is still the
      * digits read up to the first character out of place, as it was */
-    { cob_wnum tw; int te; if (numval_scan(p, n, cform, &tw, &te)) fn_argbad = 1; }
+    { cob_wnum tw; int te; if (numval_scan(p, n, cform, &tw, &te)) fn_argbad = 1; else return fn_wresult(&tw, 9); }
     int i = 0, neg = 0, seen_pt = 0, scale = 0;
     char dg[40]; int ndg = 0;
     int dp = cob_dp_comma ? ',' : '.', grp = cob_dp_comma ? '.' : ',';

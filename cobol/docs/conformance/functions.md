@@ -1,13 +1,56 @@
 # Intrinsic functions: 15
 
-Part 1, swept 2026-09-30: the clause's general rules (15.1-15.3) and
-every implemented function's argument rules. X3.23a-1989 (the
+Swept 2026-09-30, in two parts: the clause's general rules (15.1-15.3)
+and every implemented function's argument rules, then the returned
+values and the ALL subscript. X3.23a-1989 (the
 Intrinsic Function module, FIPS 21-3): 2.2-2.3 and the definitions.
 2002: 15. 2023: 15.
 
-Part 2 (still to come) covers each function's returned value, checked
-against a generated differential with GnuCOBOL, and the ALL subscript in
-its general form.
+## Part 2: returned values and ALL
+
+**Returned values.** `2002/fnreturn` calls every implemented function
+over a grid of correct arguments, 169 calls, generated, each line
+labelled with its call. The oracle agrees on all but four, recorded in
+`.oracle-expected` and docs/oracles.md:
+- EXP(20) and EXP10(10.5) differ past the 15 significant digits
+  computed here in double. For native arithmetic the value is an
+  implementor-defined approximation. Past 15 digits the value is zeros,
+  not the double's binary noise, so every engine gives the same answer.
+  EXP(50) is left out: the guest libm the interpreters run is several
+  ulps off there, and its 15th digit differs from the DBT's.
+- ANNUITY(0.1, 1) is exactly 1.1 here.
+- NUMVAL-F("1.5E3") has an unsigned exponent, which 15.69.3 does not
+  allow.
+
+Found and fixed on the way:
+- **NUMVAL ignored a trailing CR or DB.** Its second format allows them
+  (15.67.3), and `NUMVAL("7 CR")` was 7. A conforming string now takes
+  its value from the same scanner TEST-NUMVAL uses.
+- **PI was 3.141592654**, rounded to nine decimals. It is now the 31
+  decimals the rule's expression gives (15.73.3 rule 1).
+- **FUNCTION E, a 2002 function (15.22 there, 15.27 in 2023), was
+  missing.** It is added, to 31 decimals likewise. With it, every 2002
+  function is implemented except LOCALE-COMPARE, LOCALE-DATE,
+  LOCALE-TIME, LOCALE-TIME-FROM-SECONDS and STANDARD-COMPARE, which are
+  refused, naming what they need.
+- **MAX and MIN over strings padded the result to the widest
+  argument.** Its size is the selected argument's (15.59.4 rule 3).
+- **TEST-NUMVAL-C("1,,2") said 2.** The character in error is the
+  second comma, 3: the first comma is valid if a digit follows it, and
+  the one after is where the string stops being valid.
+
+**ALL** (15.3; X3.23a-1989 2.2). ALL is now a subscript in any position:
+- `t(ALL, ALL)`, `t(2, ALL)`, `t(ALL, i + 1)`, with qualifiers.
+- The rightmost ALL varies fastest.
+- The dimension with OCCURS DEPENDING ON runs to the DEPENDING ON
+  item's current value.
+- It works for MAX, MIN, ORD-MAX and ORD-MIN over strings too.
+
+Before, only `name(ALL)` on a one-dimension table was taken. Its
+elements were counted to the OCCURS maximum whatever the DEPENDING ON
+item held, and MAX and MIN over strings saw the first element only.
+**test**: 2002/fnallsub. There is no oracle: GnuCOBOL 4.0-early-dev refuses
+ALL there.
 
 ## What changed
 
@@ -67,7 +110,7 @@ its general form.
 | 10 numeric | an arithmetic expression or a numeric item | **refused**: bad/fn-numeric-arg |
 | MAX, MIN, ORD-MAX, ORD-MIN | one class throughout, alphabetic mixing with alphanumeric; not boolean (15.59.3, 15.63.3, 15.71.3, 15.72.3) | **refused**: bad/fn-max-mixed |
 | incorrect values | EC-ARGUMENT-FUNCTION; unchecked, the implementor's result | as above. 1989 left the value undefined and had no exception condition: under `-std=85` the result is the same 0, with no condition to check |
-| ALL subscript | every element as an argument, rightmost ALL varying fastest; ODO's current range | one-dimension tables only: "the ALL subscript takes a one-dimension table". The general form is part 2 |
+| ALL subscript | every element as an argument, rightmost ALL varying fastest; ODO's current range | **test**: free/fnall (one dimension), 2002/fnallsub (the general form; part 2 below) |
 
 ## The value rules, function by function
 

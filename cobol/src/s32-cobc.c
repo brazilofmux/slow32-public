@@ -4776,7 +4776,7 @@ typedef struct Opnd_ {
                                               * token ranges (fl0 < 0: flen, or to the end when 0) (cobol ISSUES-91) */
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
-    int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
+    unsigned all_sub;                        /* O_REF: the subscript positions written ALL (bit k: subscript k+1) -- every element, looped over at emission */
     int fsaved;                              /* O_FUNC evaluated already: 1 + the label of its result's copy (MOVE, general rule 1) */
     int fwnum;                               /* O_FUNC: an exact numeric function on the wide stack, its result described at run time (docs/wide.md) */
     const char *fname;                       /* O_FUNC: the intrinsic's name, for messages */
@@ -5283,6 +5283,7 @@ static const struct { const char *name; int id, kind, scale, minargs, maxargs, f
     { "exp", COB_FN_EXP, FK_NUMS, 9, 1, 1, 19, 2002 },
     { "exp10", COB_FN_EXP10, FK_NUMS, 9, 1, 1, 19, 2002 },
     { "pi", COB_FN_PI, FK_NUMS, 9, 0, 0, 19, 2002 },
+    { "e", COB_FN_E, FK_NUMS, 9, 0, 0, 19, 2002 },
     { "sign", COB_FN_SIGN, FK_NUMS, 0, 1, 1, 19, 2002 },
     { "fraction-part", COB_FN_FRACTION_PART, FK_NUMS, 9, 1, 1, 19, 2002 },
     { "year-to-yyyy", COB_FN_YEAR_TO_YYYY, FK_NUMS, 0, 1, 3, 19, 2002 },
@@ -5308,8 +5309,8 @@ static int opnd_is_boolean(const Opnd *o);
 static int fn_is_numeric(int fn);
 static int opnd_fn_numeric(const Opnd *o) { return o->fn < 0 ? o->fscale >= 0 : fn_is_numeric(o->fn); }
 static int opnd_fn_integer(const Opnd *o) { return o->fn < 0 ? o->fscale == 0 : fn_is_numeric(o->fn); }
-/* a function computed in double, or FACTORIAL: its value as wide as it
- * is, so a statement that uses it computes on the wide stack */
+/* a function computed in double, FACTORIAL, PI or E: its value as wide
+ * as it is, so a statement that uses it computes on the wide stack */
 static int fn_inexact(const Opnd *o)
 {
     if (o->kind != O_FUNC || o->fn != -1 || o->fkind != FK_NUMS) return 0;
@@ -5317,6 +5318,7 @@ static int fn_inexact(const Opnd *o)
     case COB_FN_MEAN: case COB_FN_MEDIAN: case COB_FN_VARIANCE: case COB_FN_STDDEV: case COB_FN_SQRT: case COB_FN_LOG:
     case COB_FN_LOG10: case COB_FN_SIN: case COB_FN_COS: case COB_FN_TAN: case COB_FN_ASIN: case COB_FN_ACOS: case COB_FN_ATAN:
     case COB_FN_ANNUITY: case COB_FN_PRESENT_VALUE: case COB_FN_RANDOM: case COB_FN_EXP: case COB_FN_EXP10: case COB_FN_FACTORIAL:
+    case COB_FN_PI: case COB_FN_E:
         return 1;
     }
     return 0;
@@ -5378,16 +5380,46 @@ static void fn_arg_check(const Opnd *x, int want, const char *name, int k, int l
 
 /* one function argument: an expression, an item, a literal -- or a
  * one-dimension table with the subscript ALL, every element an argument */
+/* a table reference ahead with ALL among its subscripts: the positions
+ * written ALL, as a mask (a relative subscript's + or - and its integer
+ * belong to the subscript before them) */
+static unsigned all_sub_ahead(void)
+{
+    int i = g_tp;
+    if (g_tok[i].kind != T_WORD || is_word(&g_tok[i], "function")) return 0;
+    i++;
+    while (i + 1 < g_ntok && (is_word(&g_tok[i], "of") || is_word(&g_tok[i], "in")) && g_tok[i + 1].kind == T_WORD) i += 2;
+    if (i >= g_ntok || g_tok[i].kind != T_LP || g_tok[i].after_comma) return 0;
+    unsigned m = 0; int pos = 0;
+    for (int j = i + 1; j < g_ntok && g_tok[j].kind != T_RP; ) {
+        Tok *t = &g_tok[j];
+        if (t->kind == T_EOF || t->kind == T_PERIOD || t->kind == T_LP || pos >= MAXDIM) return 0;
+        if (t->kind == T_OP && (!strcmp(t->s, "+") || !strcmp(t->s, "-"))) { j += 2; continue; }
+        if (is_word(t, "all")) m |= 1u << pos;
+        pos++; j++;
+    }
+    return m;
+}
+
 static Opnd *fn89_arg(const char *fname)
 {
     Opnd *x = xmalloc(sizeof *x);
-    if (cur()->kind == T_WORD && peek(1)->kind == T_LP && !peek(1)->after_comma && is_word(peek(2), "all") && peek(3)->kind == T_RP) {
-        memset(x, 0, sizeof *x);
-        x->kind = O_REF; x->line = cur()->line;
-        x->ref.sym = sym_lookup(cur()->s, NULL, 0, cur()->line);
-        if (x->ref.sym->ndims != 1) die_at(cur()->line, "FUNCTION %s: the ALL subscript takes a one-dimension table", fname);
-        x->all_sub = 1;
-        advance(); advance(); advance(); advance();
+    unsigned mask = all_sub_ahead();
+    if (mask) {
+        /* ALL as a subscript (X3.23a-1989 2.2; 2023 15.3): the reference
+         * parsed with 1 in each ALL position, every element taken at run
+         * time, the rightmost ALL varying fastest */
+        static char one[] = "1";
+        int lp = g_tp; while (g_tok[lp].kind != T_LP) lp++;
+        int rp = lp; while (g_tok[rp].kind != T_RP) rp++;
+        Tok save[MAXDIM * 3]; int at[MAXDIM * 3], ns = 0;
+        for (int j = lp + 1; j < rp && ns < MAXDIM * 3; j++)
+            if (is_word(&g_tok[j], "all")) { at[ns] = j; save[ns++] = g_tok[j]; g_tok[j].kind = T_NUM; g_tok[j].s = one; g_tok[j].len = 1; }
+        parse_operand(x);
+        for (int k = 0; k < ns; k++) g_tok[at[k]] = save[k];
+        if (x->kind != O_REF || x->ref.rm || x->ref.nsub != x->ref.sym->ndims)
+            die_at(x->line, "FUNCTION %s: ALL subscripts a table element, every subscript written", fname);
+        x->all_sub = mask;
         return x;
     }
     if (cur()->kind == T_LP) { *x = expr_opnd(); return x; }   /* SIN((3 * PI) / 2) */
@@ -5472,12 +5504,12 @@ static int fn89_parse(Opnd *o, Tok *n)
         for (int i = 0; i < o->nfargs; i++) {
             Opnd *x = o->fargs[i];
             int aw = x->kind == O_STR ? x->tok->len
-                   : x->kind == O_REF && !x->all_sub && !is_numeric_sym(x->ref.sym) ? (int)x->ref.sym->size : 0;
+                   : x->kind == O_REF && !is_numeric_sym(x->ref.sym) ? (int)x->ref.sym->size : 0;
             if (aw) { alnum = 1; if (aw > w) w = aw; }
         }
         if (alnum) {                        /* the largest ARGUMENT, as a string */
             o->fkind = FK_ALNUMS;
-            if (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN) { o->fscale = -1; o->fsize = w; }
+            if (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN) { o->fscale = -1; o->fsize = w; o->fvar = 1; }   /* the selected argument's size (15.59.4 rule 3) */
         }
     }
     /* the exact functions: any argument of up to 31 digits, the result as
@@ -5505,7 +5537,8 @@ static int fn89_parse(Opnd *o, Tok *n)
         o->fnid == COB_FN_STDDEV || o->fnid == COB_FN_SQRT || o->fnid == COB_FN_LOG || o->fnid == COB_FN_LOG10 ||
         o->fnid == COB_FN_SIN || o->fnid == COB_FN_COS || o->fnid == COB_FN_TAN || o->fnid == COB_FN_ASIN ||
         o->fnid == COB_FN_ACOS || o->fnid == COB_FN_ATAN || o->fnid == COB_FN_ANNUITY || o->fnid == COB_FN_PRESENT_VALUE ||
-        o->fnid == COB_FN_RANDOM || o->fnid == COB_FN_EXP || o->fnid == COB_FN_EXP10 || o->fnid == COB_FN_FACTORIAL)) {
+        o->fnid == COB_FN_RANDOM || o->fnid == COB_FN_EXP || o->fnid == COB_FN_EXP10 || o->fnid == COB_FN_FACTORIAL ||
+        o->fnid == COB_FN_PI || o->fnid == COB_FN_E)) {
         o->fwnum = 1; o->fsize = 39;
     }
     o->kind = O_FUNC;
@@ -6635,6 +6668,58 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
 /* evaluate an intrinsic into libcob's buffer; r1 holds the pointer */
 static int g_stmt_convcheck;            /* this statement evaluated a checked NATIONAL-OF / DISPLAY-OF */
 
+/* every element a table reference with ALL subscripts names (X3.23a-1989
+ * 2.2; 2023 15.3): the address with 1 in each ALL position, then a loop
+ * per ALL position, outermost first, so the rightmost varies fastest;
+ * each runs to its OCCURS, or to the DEPENDING ON item's value for the
+ * dimension that has one.  Each element is pushed (alnum 0) or handed to
+ * MAX/MIN over strings (alnum 1); cslot, when >= 0, counts them. */
+static Sym *odo_table_for(Sym *s);
+static void emit_all_elements(Opnd *ax, int alnum, int cslot)
+{
+    Sym *s = ax->ref.sym, *ot = odo_table_for(s);
+    int odim = ot && ot->odo_dep_sym ? ot->ndims - 1 : -1;
+    int base = g_slot_base, ks[MAXDIM], nk = 0;
+    for (int k = 0; k < ax->ref.nsub; k++) if (ax->all_sub & (1u << k)) ks[nk++] = k;
+    int B = g_slot_base++, I[MAXDIM];
+    for (int q = 0; q < nk; q++) I[q] = g_slot_base++;
+    if (g_slot_base > NSLOTS) die_at(ax->line, "internal: too many staged operands");
+    emit_ref_addr(&ax->ref, "r3");
+    emit("\tstw sp+%d, r3", SLOT(B));
+    int Ltop[MAXDIM], Lend[MAXDIM];
+    for (int q = 0; q < nk; q++) {
+        emit_li("r1", 0); emit("\tstw sp+%d, r1", SLOT(I[q]));
+        Ltop[q] = new_label(); Lend[q] = new_label();
+        emit_label(Ltop[q]);
+        if (ks[q] == odim) {
+            Sym *d = ot->odo_dep_sym;
+            if (is_hot_int(d)) { emit_item_addr("r1", d, d->offset); emit_load_int(d, "r1", "r1"); }
+            else { emit_item_addr("r3", d, d->offset); emit_desc_addr("r4", sym_desc(d)); emit_call("cob_load_int"); }
+            emit("\tadd r2, r1, r0");
+        } else emit_li("r2", s->dim_count[ks[q]]);
+        emit("\tldw r1, sp+%d", SLOT(I[q]));
+        emit("\tbge r1, r2, .L%d", Lend[q]);
+    }
+    emit("\tldw r3, sp+%d", SLOT(B));
+    for (int q = 0; q < nk; q++) {
+        emit("\tldw r1, sp+%d", SLOT(I[q]));
+        emit_li("r2", s->dim_stride[ks[q]]);
+        emit("\tmul r1, r1, r2");
+        emit("\tadd r3, r3, r1");
+    }
+    if (alnum) { emit_li("r4", (long)s->size); emit_call("cob_fn_al_arg"); }
+    else { emit_desc_addr("r4", sym_desc(s)); emit_call("cob_push"); }
+    if (cslot >= 0) { emit("\tldw r1, sp+%d", SLOT(cslot)); emit("\taddi r1, r1, 1"); emit("\tstw sp+%d, r1", SLOT(cslot)); }
+    for (int q = nk - 1; q >= 0; q--) {
+        emit("\tldw r1, sp+%d", SLOT(I[q]));
+        emit("\taddi r1, r1, 1");
+        emit("\tstw sp+%d, r1", SLOT(I[q]));
+        emit_jump(Ltop[q]);
+        emit_label(Lend[q]);                      /* then the next position out steps */
+    }
+    g_slot_base = base;
+}
+
 static void emit_fn_value_raw(Opnd *f);
 /* after cob_fn_rm or cob_fn_var_skip, r1 the part: EC-BOUND-REF-MOD when
  * the runtime noted the positions out of range, r1 kept */
@@ -6813,21 +6898,19 @@ static void emit_fn_value_raw_1(Opnd *f)
     }
     if (f->fn == -1) {
         if (f->fkind == FK_NUMS) {
-            int cnt = 0;
+            /* the count in a frame slot: an ALL subscript's is known at run time */
+            int cslot = g_slot_base++;
+            if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
+            emit_li("r1", 0); emit("\tstw sp+%d, r1", SLOT(cslot));
             for (int i = 0; i < f->nfargs; i++) {
                 Opnd *ax = f->fargs[i];
-                if (ax->all_sub) {
-                    Sym *sym = ax->ref.sym;
-                    for (int k = 0; k < sym->dim_count[0]; k++) {
-                        emit_item_addr("r3", sym, sym->offset + k * sym->dim_stride[0]);
-                        emit_desc_addr("r4", sym_desc(sym));
-                        emit_call("cob_push");
-                        cnt++;
-                    }
-                } else { emit_push_opnd(ax); cnt++; }
+                if (ax->all_sub) { emit_all_elements(ax, 0, cslot); continue; }
+                emit_push_opnd(ax);
+                emit("\tldw r1, sp+%d", SLOT(cslot)); emit("\taddi r1, r1, 1"); emit("\tstw sp+%d, r1", SLOT(cslot));
             }
             emit_li("r3", f->fnid);
-            emit_li("r4", cnt);
+            emit("\tldw r4, sp+%d", SLOT(cslot));
+            g_slot_base--;
             if (f->fwnum) { emit_li("r5", f->fscale < 0 ? 0 : f->fscale); emit_call("cob_fn_wnum"); }
             else emit_call("cob_fn_num");
             return;
@@ -6835,6 +6918,7 @@ static void emit_fn_value_raw_1(Opnd *f)
         if (f->fkind == FK_ALNUMS) {                    /* MAX/MIN over strings */
             for (int i = 0; i < f->nfargs; i++) {
                 Opnd *ax = f->fargs[i];
+                if (ax->all_sub) { emit_all_elements(ax, 1, -1); continue; }
                 if (ax->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); emit_li("r4", ax->tok->len); }
                 else if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); emit_li("r4", ax->fsize); }
                 else { emit_ref_addr(&ax->ref, "r3"); emit_li("r4", (long)ax->ref.sym->size); }
