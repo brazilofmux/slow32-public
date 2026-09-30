@@ -23,9 +23,15 @@ RUNTIME="$PROJECT_DIR/runtime"
 OUTDIR="$SCRIPT_DIR/out"
 LLVM="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
 CLANG="$LLVM/clang"; LLC="$LLVM/llc"
+# an installed toolchain instead of the tree's (the slow32:cobol image's
+# build stage: S32_AS, S32_AR, S32_RT_INCLUDE under /opt/slow32), and
+# SQLITE_LIB_ONLY=1 for the library alone -- what ESQL links against
+S32ASM="${S32_AS:-$TOOLCHAIN/assembler/slow32asm}"
+S32AR="${S32_AR:-$TOOLCHAIN/utilities/s32-ar}"
+RTINC="${S32_RT_INCLUDE:-$RUNTIME/include}"
 mkdir -p "$OUTDIR"
 
-CFLAGS="-target slow32-unknown-none -S -emit-llvm -I$RUNTIME/include -I$SCRIPT_DIR -Os"
+CFLAGS="-target slow32-unknown-none -S -emit-llvm -I$RTINC -I$SCRIPT_DIR -Os"
 OPTS="-DSQLITE_OS_OTHER=1 -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_WAL=1 -DSQLITE_OMIT_LOAD_EXTENSION=1
       -DSQLITE_OMIT_SHARED_CACHE=1 -DSQLITE_OMIT_DEPRECATED=1 -DSQLITE_OMIT_UTF16=1
       -DSQLITE_OMIT_COMPILEOPTION_DIAGS=1 -DSQLITE_DEFAULT_MEMSTATUS=0
@@ -40,7 +46,7 @@ cc1() {   # cc1 name.c [cflags...] -> out/name.s32o
     # build path into a binary that is distributed (the kit image).
     (cd "$(dirname "$src")" && $CLANG $CFLAGS $OPTS "$@" "$(basename "$src")" -o "$OUTDIR/$b.ll")
     $LLC -mtriple=slow32-unknown-none "$OUTDIR/$b.ll" -o "$OUTDIR/$b.s"
-    "$TOOLCHAIN/assembler/slow32asm" "$OUTDIR/$b.s" "$OUTDIR/$b.s32o"
+    "$S32ASM" "$OUTDIR/$b.s" "$OUTDIR/$b.s32o"
 }
 link() {  # link out.s32x objects...
     local out="$1"; shift
@@ -52,9 +58,10 @@ echo "=== library"
 cc1 "$SCRIPT_DIR/sqlite3.c"
 cc1 "$SCRIPT_DIR/slow32_vfs.c"
 rm -f "$OUTDIR/libsqlite3.s32a"
-"$TOOLCHAIN/utilities/s32-ar" rc "$OUTDIR/libsqlite3.s32a" "$OUTDIR/sqlite3.s32o" "$OUTDIR/slow32_vfs.s32o"
+"$S32AR" rc "$OUTDIR/libsqlite3.s32a" "$OUTDIR/sqlite3.s32o" "$OUTDIR/slow32_vfs.s32o"
 cp "$SCRIPT_DIR/sqlite3.h" "$OUTDIR/"
 echo "  -> $OUTDIR/libsqlite3.s32a, sqlite3.h"
+[ -n "${SQLITE_LIB_ONLY:-}" ] && exit 0
 
 echo "=== smoke test"
 cc1 "$SCRIPT_DIR/main.c"

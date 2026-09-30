@@ -10,4 +10,6 @@ export S32_AS=/opt/slow32/bin/slow32asm
 export S32_LD=/opt/slow32/bin/s32-ld
 export S32_RT=/opt/slow32/lib
 export S32_RT_INCLUDE=/opt/slow32/include
+export S32_ESQL=/opt/slow32/lib/esql.s32o           # EXEC SQL: the runtime and SQLite (docs/esql.md)
+export S32_SQLITE=/opt/slow32/lib/libsqlite3.s32a
 exec /opt/slow32/cobol/compile.sh "$@"
