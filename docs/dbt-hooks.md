@@ -1,11 +1,28 @@
 # DBT hooks: native routines the guest opts into
 
-Status, 2026-09-29: step 1 (the mechanism, on the 64-bit division
-builtins) is built and validated on both hosts (88f6b1dd). karith runs
-16% faster on the M-series (3.27 s to 2.74 s) and 15% faster on kagura's
-x86-64 (11.79 s to 10.00 s), with byte-identical output. Steps 2 and 3
-are not started. The candidates came from the profiler, `slow32 -p`
-(8c829339).
+Status, 2026-09-29. Steps 1 and 2 are built and validated on both hosts.
+Step 3 is not started.
+
+- **Step 1** (88f6b1dd): the mechanism, on the 64-bit division builtins.
+  karith runs 16% faster.
+- **Step 2** (a4d16d62, be044c11): libcob's numeric fetch and store,
+  from `cobol/libcob/kern.h`. With hooks, against `-H`, on the M-series:
+
+  | kernel | hooks | `-H` |
+  |---|---|---|
+  | karith | 1.54 s | 3.25 s |
+  | kmove | 1.16 s | 1.79 s |
+  | ksort | 0.88 s | 1.15 s |
+
+  Guest output is identical. `cobol/tests/kern-differential.sh` is the
+  gate (harness gate 1d).
+- The candidates came from the profiler, `slow32 -p` (8c829339).
+
+Two lessons from step 2. A kernel compiled by two compilers must be free
+of undefined behaviour: `-v` of INT64_MIN answered differently under
+clang and under stage08's cc. And building the differential with both
+compilers is itself a compiler test: it found a stage08 bug, selfhost
+ISSUES-70, where INT64_MIN in a static initializer was 0.
 
 ## What exists today
 
