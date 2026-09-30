@@ -5636,9 +5636,8 @@ static long fn_year_window(long yy, int n, const cob_num *a)
  * cob_fn_var_desc(3)'s.  Past 38 digits the decimals are shortened. */
 static char *fn_wresult(const cob_wnum *w, int fscale)
 {
-    char D[40]; w_to_digits(w->m, D, 38);
-    int f = 0; while (f < 38 && D[f] == '0') f++;
-    int nd = 38 - f, ws = w->scale > 38 ? 38 : w->scale;
+    char D[40]; int nd = w_to_digits(w->m, D, 38);
+    int ws = w->scale > 38 ? 38 : w->scale;
     int intd = nd - ws; if (intd < 0) intd = 0;
     int scale = ws > fscale ? ws : fscale;
     int iw = 18 - fscale; if (intd > iw) iw = intd;
@@ -5647,14 +5646,14 @@ static char *fn_wresult(const cob_wnum *w, int fscale)
     int zero = nd == 0;
     b[0] = w->neg && !zero ? '-' : '+';
     int o = 1;
-    for (int i = 0; i < iw; i++) {                  /* the integer digits, right-aligned */
-        int src = 38 - ws - iw + i;
-        b[o++] = src >= 0 && src < 38 - ws ? D[src] : '0';
-    }
-    for (int i = 0; i < scale; i++) {               /* the decimals, left-aligned */
-        int src = 38 - ws + i;
-        b[o++] = i < ws ? D[src] : '0';
-    }
+    /* the integer digits, right-aligned: D[38 - ws - iw ..], zeros where
+     * that runs off the front; then the decimals, left-aligned */
+    int lead = iw - (38 - ws); if (lead < 0) lead = 0;
+    memset(b + o, '0', (size_t)lead); o += lead;
+    memcpy(b + o, D + 38 - ws - (iw - lead), (size_t)(iw - lead)); o += iw - lead;
+    int dk = ws < scale ? ws : scale;
+    memcpy(b + o, D + 38 - ws, (size_t)dk); o += dk;
+    memset(b + o, '0', (size_t)(scale - dk)); o += scale - dk;
     b[o] = 0;
     fn_var_len = o; fn_var_scale = scale; fn_var_digits = iw + scale;
     return b;

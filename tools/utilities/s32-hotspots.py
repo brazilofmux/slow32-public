@@ -3,13 +3,14 @@
 instructions inside one function.
 
     s32-ld --print-map ... -o prog.s32x            # prog.s32x.map beside it
+    slow32 -p hist prog.s32x args                  # the whole run, or a window:
     slow32 -t -c 50000000 prog.s32x args 2>/dev/null \\
         | tail -n +30000000 | grep -o 'PC=[0-9A-F]*' | sort | uniq -c > hist
     s32-hotspots.py prog.s32x.map hist             # per function
     s32-hotspots.py prog.s32x.map hist cob_get_num # per instruction (needs slow32dis)
 
 The map lists global symbols only: a static function is charged to the
-global before it.  The trace window skips the program's start-up so the
+global before it.  A trace window can skip the program's start-up so the
 steady state is what gets counted.
 """
 import bisect, os, re, subprocess, sys
@@ -28,8 +29,10 @@ def load_map(path):
 def load_hist(path):
     h = {}
     for l in open(path):
-        c, pc = l.split()
-        h[int(pc[3:], 16)] = h.get(int(pc[3:], 16), 0) + int(c)
+        a, b = l.split()
+        if a.isdigit() and b.startswith('PC='): pc, c = int(b[3:], 16), int(a)  # uniq -c of a trace
+        else: pc, c = int(a, 16), int(b)                                   # slow32 -p
+        h[pc] = h.get(pc, 0) + c
     return h
 
 def main():

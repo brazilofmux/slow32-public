@@ -87,10 +87,22 @@ WFN int mp_bits(const wl_t *a, int n)
 }
 
 /* q = a / b, r = a % b, all n limbs, b != 0: shift and subtract, a bit
- * at a time -- the wide path is rare enough that this is fine */
+ * at a time past 64 bits -- the wide path is rare enough that this is fine */
 WFN void mp_divmod(const wl_t *a, const wl_t *b, int n, wl_t *q, wl_t *r)
 {
     for (int i = 0; i < n; i++) { q[i] = 0; r[i] = 0; }
+    /* the usual cases first: a divisor of one limb, and both in 64 bits */
+    if (mp_bits(b, n) <= 32) {
+        for (int i = 0; i < n; i++) q[i] = a[i];
+        r[0] = mp_div_small(q, n, b[0]);
+        return;
+    }
+    if (n >= 2 && mp_bits(a, n) <= 64 && mp_bits(b, n) <= 64) {
+        unsigned long long x = ((unsigned long long)a[1] << 32) | a[0], y = ((unsigned long long)b[1] << 32) | b[0];
+        unsigned long long qq = x / y, rr = x % y;
+        q[0] = (wl_t)qq; q[1] = (wl_t)(qq >> 32); r[0] = (wl_t)rr; r[1] = (wl_t)(rr >> 32);
+        return;
+    }
     for (int bit = mp_bits(a, n) - 1; bit >= 0; bit--) {
         /* r = r << 1 | the bit */
         wl_t c = (a[bit / 32] >> (bit % 32)) & 1;
@@ -111,15 +123,22 @@ WFN void w_pow10(wl_t *a, int k)
 }
 
 /* the magnitude's digits, n of them, leading zeros; the high ones are
- * lost if it has more */
-WFN void w_to_digits(const wl_t *mag, char *out, int n)
+ * lost if it has more.  Returns how many of the n are significant (0 for
+ * zero), which saves the callers a scan of the leading zeros. */
+WFN int w_to_digits(const wl_t *mag, char *out, int n)
 {
     wl_t t[WL]; memcpy(t, mag, sizeof t);
+    int top = WL; while (top > 0 && !t[top - 1]) top--;     /* the limbs still nonzero */
     int i = n;
-    while (i > 0) {
-        wl_t r = mp_div_small(t, WL, 1000000000u);
+    while (i > 0 && top > 0) {
+        wl_t r = top == 1 ? t[0] % 1000000000u : mp_div_small(t, top, 1000000000u);
+        if (top == 1) t[0] /= 1000000000u;
+        while (top > 0 && !t[top - 1]) top--;
         for (int k = 0; k < 9 && i > 0; k++) { out[--i] = (char)('0' + r % 10); r /= 10; }
     }
+    if (i > 0) memset(out, '0', (size_t)i);                  /* the value ran out: leading zeros */
+    while (i < n && out[i] == '0') i++;                     /* at most the last chunk's */
+    return n - i;
 }
 
 /* the magnitude of n digits (characters '0'..'9') */
@@ -154,10 +173,8 @@ WFN long long w_to_i64(const cob_wnum *w)
 /* the number of decimal digits in the magnitude (0 for zero) */
 WFN int w_ndigits(const wl_t *mag)
 {
-    if (mp_is_zero(mag, WL)) return 0;
-    char d[40]; w_to_digits(mag, d, 39);
-    int i = 0; while (i < 39 && d[i] == '0') i++;
-    return 39 - i;
+    char d[40];
+    return w_to_digits(mag, d, 39);
 }
 
 /* mag /= 10^k; the remainder's comparison with half of 10^k for ROUNDED:

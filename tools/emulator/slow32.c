@@ -457,9 +457,15 @@ static uint32_t cpu_fetch(cpu_state_t *cpu, uint32_t addr) {
     return inst;
 }
 
+/* -p FILE: instructions executed at each code address, written at exit
+ * as "addr count" lines (scripts/s32prof symbolizes them) */
+static uint64_t *g_pcprof;
+static const char *g_pcprof_path;
+
 void cpu_step(cpu_state_t *cpu) {
     // Execute instruction
     if (cpu->halted) return;
+    if (g_pcprof && cpu->pc < cpu->code_limit) g_pcprof[cpu->pc >> 2]++;
     
     // Check breakpoints
     for (int i = 0; i < cpu->debug.num_breakpoints; i++) {
@@ -1107,6 +1113,7 @@ static void print_usage(const char *progname) {
     fprintf(stderr, "  -c <cycles>     Limit execution cycles\n");
     fprintf(stderr, "  -b <addr>       Set breakpoint (hex, up to 16)\n");
     fprintf(stderr, "  -w <start-end>  Watch memory range (hex)\n");
+    fprintf(stderr, "  -p <file>       Write instructions executed per code address to file\n");
     fprintf(stderr, "  --allow <list>  Only allow these services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>   Deny these services (comma-separated)\n");
 }
@@ -1162,7 +1169,7 @@ int main(int argc, char *argv[]) {
 
     mmio_ring_set_emulator(argv[0]);
 
-    while ((opt = getopt(argc, argv, "+hstrc:b:w:qI")) != -1) {
+    while ((opt = getopt(argc, argv, "+hstrc:b:w:qIp:")) != -1) {
         switch (opt) {
             case 'h':
                 print_usage(argv[0]);
@@ -1192,6 +1199,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'I':
                 ilp_init();
+                break;
+            case 'p':
+                g_pcprof_path = optarg;
                 break;
             case 'q':
                 quiet = 1;
@@ -1251,6 +1261,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Warning: guest arguments ignored because MMIO is disabled.\n");
     }
     
+    if (g_pcprof_path) g_pcprof = calloc(cpu.code_limit / 4 + 1, sizeof *g_pcprof);
+
     // Run program
     if (!quiet) {
         printf("Starting execution\n");
@@ -1272,6 +1284,15 @@ int main(int argc, char *argv[]) {
     }
     
     if (g_ilp.enabled) ilp_report();
+    if (g_pcprof) {
+        FILE *pf = fopen(g_pcprof_path, "w");
+        if (!pf) perror(g_pcprof_path);
+        else {
+            for (uint32_t i = 0; i < cpu.code_limit / 4; i++)
+                if (g_pcprof[i]) fprintf(pf, "%08x %" PRIu64 "\n", i * 4, g_pcprof[i]);
+            fclose(pf);
+        }
+    }
 
     int exit_code = cpu.regs[1];
     cpu_destroy(&cpu);

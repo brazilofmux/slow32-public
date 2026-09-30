@@ -80,6 +80,17 @@ file); the class test, INITIALIZE, SET, SEARCH ALL, EVALUATE and national
 numeric items, which needed nothing new (2002/wide4). A wide function
 result in a narrow statement sheds decimals to fit 64 bits.
 
+Phase 3 first put every exact function on the wide stack, 85 programs
+included (the old S9(9)V9(9) result of MAX, SUM, NUMVAL and the rest was
+wrong past nine integer digits, free/fnwidth). That doubled the
+instruction count of a COBOL 85 loop around FUNCTION MOD (the cobol/bench
+kernels, profiled with `slow32 -p`; ksort four times over). Now MOD,
+INTEGER, INTEGER-PART, SIGN, ORD-MAX and ORD-MIN of items and literals
+of at most 18 digits keep the 64-bit code -- their integer result is
+exact in 18 digits -- and the wide path itself got the common cases
+first: a division whose divisor fits a limb or whose operands fit 64
+bits, and digit conversion that stops when the value runs out.
+
 Not done: the floating functions (SQRT, LOG, the trigonometric ones,
 MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE) keep
 their S9(9)V9(9) double-precision result, and an argument whose integer

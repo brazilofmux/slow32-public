@@ -4760,12 +4760,22 @@ static int fn89_parse(Opnd *o, Tok *n)
         }
     }
     /* the exact functions: any argument of up to 31 digits, the result as
-     * wide as it needs (docs/wide.md phase 3) */
-    if ((o->fkind == FK_NUMS && (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN ||
+     * wide as it needs (docs/wide.md phase 3).  Six have an integer result
+     * no longer than their arguments, which the 64-bit code states exactly
+     * as 18 digits: those keep it when every argument is an item or a
+     * literal of at most 18 digits (an expression's intermediates may pass
+     * 18) -- a MOD in a loop is common, and the wide stack's round trip
+     * costs it several times over. */
+    int narrow_ok = o->fkind == FK_NUMS && (o->fnid == COB_FN_MOD || o->fnid == COB_FN_INTEGER || o->fnid == COB_FN_INTEGER_PART ||
+                                            o->fnid == COB_FN_SIGN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN);
+    for (int i = 0; narrow_ok && i < o->nfargs; i++)
+        if ((o->fargs[i]->kind != O_REF && o->fargs[i]->kind != O_NUM) || opnds_wide(o->fargs[i], 1)) narrow_ok = 0;
+    if (!narrow_ok &&
+        ((o->fkind == FK_NUMS && (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN ||
                                  o->fnid == COB_FN_SUM || o->fnid == COB_FN_RANGE || o->fnid == COB_FN_MIDRANGE || o->fnid == COB_FN_MOD ||
                                  o->fnid == COB_FN_REM || o->fnid == COB_FN_INTEGER || o->fnid == COB_FN_INTEGER_PART || o->fnid == COB_FN_ABS ||
                                  o->fnid == COB_FN_SIGN || o->fnid == COB_FN_FRACTION_PART)) ||
-        (o->fkind == FK_ALNUM && (o->fnid == -5 || o->fnid == -6 || o->fnid == -7))) {
+        (o->fkind == FK_ALNUM && (o->fnid == -5 || o->fnid == -6 || o->fnid == -7)))) {
         o->fwnum = 1; o->fsize = 39;
     }
     o->kind = O_FUNC;
