@@ -113,9 +113,27 @@ Done since:
   - `--` inside a COBOL host name (:CITY1---city1) is no SQL comment;
   - a separator comma with no space after it is BP-E22.
 
+- **SQL descriptors** (tests/free/esqldesc; esqldyn has the rest):
+  - ALLOCATE DESCRIPTOR [WITH MAX n | :h] and DEALLOCATE;
+  - SET DESCRIPTOR COUNT, and for VALUE n: TYPE (which resets the
+    item), LENGTH, OCTET_LENGTH, PRECISION, SCALE, NULLABLE, INDICATOR,
+    NAME and DATA. DATA is taken as the item's TYPE says;
+  - GET DESCRIPTOR, those fields and RETURNED_LENGTH;
+  - DESCRIBE [INPUT | OUTPUT] from SQLite's declared column types. An
+    expression has none, so it is NUMERIC and UNNAMED, and nullability
+    is not known (a behavior point);
+  - USING SQL DESCRIPTOR on EXECUTE and OPEN, INTO SQL DESCRIPTOR on
+    EXECUTE and FETCH.
+
+  Found on the way: the owner's qualifier was rewritten to `main.`, and
+  a view created with it stored main.X in its text. SQLite then refused
+  to attach that schema under its own name ("cannot reference objects in
+  database main"), and every later program lost the schema. The
+  qualifier is now dropped instead, in the runtime and in the loader.
+  The runner prints every program's counts, so a program that stops
+  printing shows in a diff.
+
   Not yet:
-  - SQL descriptors (ALLOCATE/SET/GET DESCRIPTOR, DESCRIBE, USING SQL
-    DESCRIPTOR);
   - scroll cursors (FETCH PRIOR/FIRST/LAST/ABSOLUTE: SQLite cursors go
     forward only);
   - floating-point host variables (COMP-1 without a PICTURE, COMP-2: a

@@ -4,7 +4,7 @@ file into the SQLite databases libcob/esql.c uses (docs/esql.md).
 
 Each schema (authorization id) is DIR/<AUTHID>.db, listed in DIR/schemas;
 the owner's database is `main`, the others are attached by name, and the
-owner's own qualifier (HU.STAFF) becomes main. -- as the runtime does it.
+owner's own qualifier (HU.STAFF) is dropped -- as the runtime does it.
 A schema file's elements are not separated by semicolons: each begins with
 CREATE, GRANT, ALTER, INSERT or DROP at the top level.  CREATE SCHEMA,
 GRANT, CREATE DOMAIN, ASSERTION, CHARACTER SET, COLLATION and TRANSLATION
@@ -62,7 +62,7 @@ def elements(text):
 
 
 def own(sql, user):
-    """the owner's qualifier as main. outside quotes"""
+    """the owner's qualifier dropped, outside quotes (libcob/esql.c own_schema)"""
     out, q, i = [], None, 0
     pat = re.compile(re.escape(user) + r'\.', re.I)
     while i < len(sql):
@@ -74,7 +74,7 @@ def own(sql, user):
         if c == "'": q = c; out.append(c); i += 1; continue
         m = pat.match(sql, i)
         if m and (i == 0 or not (sql[i - 1].isalnum() or sql[i - 1] in '_.')):
-            out.append('main.'); i = m.end(); continue
+            i = m.end(); continue            # dropped, as libcob/esql.c does: a view stored with main. cannot be attached
         out.append(c); i += 1
     return ''.join(out)
 

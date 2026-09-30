@@ -57,7 +57,7 @@ while read -r kind name auth; do
     p=$(grep -c '\*\*\* pass \*\*\*' "$W/run/$name.out"); f=$(grep -c '\*\*\* fail \*\*\*' "$W/run/$name.out")
     pass=$((pass + p)); fail=$((fail + f))
     if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then crash=$((crash + 1)); echo "$name: stopped (status $rc) after $p pass, $f fail: $(tail -1 "$W/run/$name.err")"
-    else ran=$((ran + 1)); [ "$f" -gt 0 ] && echo "$name: $p pass, $f fail"; fi
+    else ran=$((ran + 1)); echo "$name: $p pass, $f fail"; fi      # every program: a quiet regression shows in a diff
     if [ -n "${NSQL_ONLY:-}" ] && [ "$name" = "$NSQL_ONLY" ]; then cat "$W/run/$name.out" "$W/run/$name.err"; fi
 done < <(tr -d '\r' < "$NIST/pco/runpco.all" | awk '$1 ~ /^RUN/ {print $1, $2, $3}')
 

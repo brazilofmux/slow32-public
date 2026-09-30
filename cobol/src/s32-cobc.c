@@ -14446,8 +14446,99 @@ static void sql_stmt_source(const char *p, int line, const char *what, char **li
     } else die_at(line, "EXEC SQL %s needs a host variable or a literal holding the statement", what);
 }
 
+/* a descriptor's name at *p: 'literal' (its label in *lab) or :host
+ * (bound as the pending input, *lab NULL); returns the text after it */
+static const char *sql_desc_name(const char *p, int line, const char **lab)
+{
+    while (*p == ' ') p++;
+    *lab = NULL;
+    if (*p == ':') { SqlHost h; memset(&h, 0, sizeof h); int k = 0; p++;
+        while (sqlw((unsigned char)*p) && k < 63) h.name[k++] = (char)tolower((unsigned char)*p++);
+        h.line = line; sql_emit_hosts(&h, 1, "cob_sql_in"); return p; }
+    if (*p == '\'') {
+        char buf[256]; int o = 0;
+        for (p++; *p; p++) { if (*p == '\'') { if (p[1] == '\'') { if (o < 255) buf[o++] = '\''; p++; continue; } p++; break; } if (o < 255) buf[o++] = *p; }
+        buf[o] = 0;
+        *lab = lit_label((const unsigned char *)buf, o + 1);
+        return p;
+    }
+    die_at(line, "EXEC SQL: a descriptor is named by a literal or a host variable");
+    return p;
+}
+static void sql_la_or_zero(const char *reg, const char *lab) { if (lab) emit_la(reg, lab); else emit_li(reg, 0); }
+
+static int sql_desc_field(const char *w)
+{
+    static const char *f[] = { "count", "type", "length", "octet_length", "returned_length", "returned_octet_length",
+        "precision", "scale", "datetime_interval_code", "datetime_interval_precision", "nullable", "indicator", "data",
+        "name", "unnamed", NULL };
+    for (int k = 0; f[k]; k++) if (!strcmp(f[k], w)) return k;
+    return 15;                                  /* a field SQLite has nothing for */
+}
+
+/* one host reference as a Ref (a plain name: a descriptor's value, a target) */
+static void sql_ref(const char **pp, Ref *r, int line)
+{
+    const char *p = *pp; SqlHost h; memset(&h, 0, sizeof h); int k = 0;
+    while (sqlw((unsigned char)*p) && k < 63) h.name[k++] = (char)tolower((unsigned char)*p++);
+    memset(r, 0, sizeof *r); r->sym = sql_sym(h.name, "", line); r->line = line;
+    *pp = p;
+}
+
+/* GET / SET DESCRIPTOR name {COUNT ... | VALUE n ...} */
+static void sql_getset_desc(const char *p, int get, int line)
+{
+    const char *lab; p = sql_desc_name(p, line, &lab);
+    sql_la_or_zero("r3", lab); emit_call("cob_sql_desc_begin");
+    while (*p == ' ') p++;
+    char w[64]; const char *q = p; sql_word(&q, w, sizeof w);
+    if (!strcmp(w, "value")) {
+        p = q; while (*p == ' ') p++;
+        if (*p == ':') { p++; Ref r; sql_ref(&p, &r, line); Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) }; emit_args(a, 2); emit_call("cob_sql_desc_value"); }
+        else { long n = strtol(p, (char **)&p, 10); emit_li("r3", n); emit_call("cob_sql_desc_value_n"); }
+    }
+    for (;;) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        if (get) {
+            /* :target = field */
+            if (*p != ':') die_at(line, "EXEC SQL GET DESCRIPTOR: expected :target = field");
+            p++; Ref r; sql_ref(&p, &r, line);
+            while (*p == ' ') p++;
+            if (*p != '=') die_at(line, "EXEC SQL GET DESCRIPTOR: expected = after the target");
+            p++;
+            char f[64]; sql_word(&p, f, sizeof f);
+            Arg a[3] = { arg_ref(&r), arg_desc(sym_desc(r.sym)), arg_imm(sql_desc_field(f)) };
+            emit_args(a, 3); emit_call("cob_sql_desc_get");
+        } else {
+            /* field = n | :value */
+            char f[64]; sql_word(&p, f, sizeof f);
+            while (*p == ' ') p++;
+            if (*p != '=') die_at(line, "EXEC SQL SET DESCRIPTOR: expected = after %s", f);
+            p++; while (*p == ' ') p++;
+            int code = sql_desc_field(f);
+            if (*p == ':') { p++; Ref r; sql_ref(&p, &r, line); Arg a[3] = { arg_ref(&r), arg_desc(sym_desc(r.sym)), arg_imm(code) }; emit_args(a, 3); emit_call("cob_sql_desc_set"); }
+            else if (*p == '-' || isdigit((unsigned char)*p)) { long n = strtol(p, (char **)&p, 10); emit_li("r3", code); emit_li("r4", n); emit_call("cob_sql_desc_set_n"); }
+            else die_at(line, "EXEC SQL SET DESCRIPTOR %s: a literal other than an integer is not implemented", f);
+        }
+    }
+    emit_li("r3", get); emit_call("cob_sql_desc_end");
+}
+
+/* USING SQL DESCRIPTOR d / INTO SQL DESCRIPTOR d at text+at (after the
+ * keyword): 1 when it is one, and the call emitted */
+static int sql_desc_clause(const char *after, int into, int line)
+{
+    const char *q = after; char w[64]; sql_word(&q, w, sizeof w);
+    if (!strcmp(w, "sql")) sql_word(&q, w, sizeof w);
+    if (strcmp(w, "descriptor")) return 0;
+    const char *lab; sql_desc_name(q, line, &lab);
+    sql_la_or_zero("r3", lab); emit_call(into ? "cob_sql_desc_into" : "cob_sql_desc_using");
+    return 1;
+}
+
 static const char *sql_unimpl[][2] = {
-    { "describe", "3c" }, { "allocate", "3c" }, { 0, 0 } };
+    { 0, 0 } };
 
 /* DECLARE name TABLE (...): DB2's DCLGEN documentation of a table, which
  * the precompiler checks statements against; nothing here */
@@ -14527,10 +14618,11 @@ static void parse_exec_sql(void)
             int u = sql_find(t->s, 0, "using");
             if (u >= 0) {
                 if (c->dyn < 0) die_at(line, "EXEC SQL OPEN %s USING: the cursor is not declared FOR a prepared statement", cn);
-                const char *r = t->s + u + 5; char w[64]; const char *r2 = r; sql_word(&r2, w, sizeof w);
-                if (!strcmp(w, "sql")) die_at(line, "EXEC SQL OPEN ... USING SQL DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)");
-                SqlHost *in; int nin; free(sql_params(r, &in, &nin, line));
-                sql_emit_hosts(in, nin, "cob_sql_in");
+                const char *r = t->s + u + 5;
+                if (!sql_desc_clause(r, 0, line)) {
+                    SqlHost *in; int nin; free(sql_params(r, &in, &nin, line));
+                    sql_emit_hosts(in, nin, "cob_sql_in");
+                }
             } else sql_emit_hosts(c->in, c->nin, "cob_sql_in");
         }
         char lab[32]; snprintf(lab, sizeof lab, ".Lsqc%d", c->id);
@@ -14554,11 +14646,11 @@ static void parse_exec_sql(void)
             snprintf(last, sizeof last, "%s", w);
         }
         SqlCursor *c = sql_cursor(last, line, 1);
-        { const char *r = t->s + in + 4; char w[64]; sql_word(&r, w, sizeof w);
-          if (!strcmp(w, "sql") || !strcmp(w, "descriptor")) die_at(line, "EXEC SQL FETCH ... INTO SQL DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)"); }
-        SqlHost *out; int nout;
-        free(sql_params(t->s + in + 4, &out, &nout, line));
-        sql_emit_hosts(out, nout, "cob_sql_out");
+        if (!sql_desc_clause(t->s + in + 4, 1, line)) {
+            SqlHost *out; int nout;
+            free(sql_params(t->s + in + 4, &out, &nout, line));
+            sql_emit_hosts(out, nout, "cob_sql_out");
+        }
         char lab[32]; snprintf(lab, sizeof lab, ".Lsqc%d", c->id);
         emit_la("r3", lab);
         emit_call("cob_sql_fetch");
@@ -14595,9 +14687,7 @@ static void parse_exec_sql(void)
             if (at < 0) continue;
             int other = k ? u : in;
             const char *r = t->s + at + (k ? 4 : 5);
-            char w[64]; const char *r2 = r; sql_word(&r2, w, sizeof w);
-            if (!strcmp(w, "sql") || !strcmp(w, "descriptor"))
-                die_at(line, "EXEC SQL EXECUTE ... %s SQL DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)", k ? "INTO" : "USING");
+            if (sql_desc_clause(r, k, line)) continue;
             size_t len = other > at ? (size_t)(other - at) : strlen(t->s + at);
             char *part = xstrndup(t->s + at + (k ? 4 : 5), (int)(len - (k ? 4 : 5)));
             free(sql_params(part, k ? &outs : &ins, k ? &nouts : &nins, line)); free(part);
@@ -14608,6 +14698,37 @@ static void parse_exec_sql(void)
         char lab[32]; snprintf(lab, sizeof lab, ".Lsqd%d", id);
         emit_la("r3", lab);
         emit_call("cob_sql_execute");
+        sql_emit_status(line); sql_emit_whenever();
+        return;
+    }
+    if (!strcmp(w1, "allocate") || (!strcmp(w1, "deallocate") && !strcmp(w2, "descriptor"))) {
+        if (strcmp(w2, "descriptor")) die_at(line, "EXEC SQL %s %s is not implemented", w1, w2);
+        const char *lab; const char *r = sql_desc_name(p, line, &lab);
+        if (w1[0] == 'a') {
+            /* WITH MAX n | :h */
+            int wm = sql_find(r, 0, "max");
+            const char *m = wm >= 0 ? r + wm + 3 : NULL;
+            while (m && *m == ' ') m++;
+            if (m && *m == ':') { m++; Ref mr; sql_ref(&m, &mr, line); Arg a[2] = { arg_ref(&mr), arg_desc(sym_desc(mr.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); emit("\tadd r4, r1, r0"); }
+            else emit_li("r4", m ? strtol(m, NULL, 10) : 0);
+            sql_la_or_zero("r3", lab); emit_call("cob_sql_desc_alloc");
+        } else { sql_la_or_zero("r3", lab); emit_call("cob_sql_desc_dealloc"); }
+        sql_emit_status(line); sql_emit_whenever();
+        return;
+    }
+    if (!strcmp(w1, "describe")) {
+        /* DESCRIBE [INPUT | OUTPUT] s USING SQL DESCRIPTOR d */
+        const char *r = after1; char w[64]; int input = 0;
+        const char *r0 = r; sql_word(&r0, w, sizeof w);
+        if (!strcmp(w, "input") || !strcmp(w, "output")) { input = w[0] == 'i'; r = r0; }
+        char nm[64]; sql_word(&r, nm, sizeof nm);
+        int u = sql_find(r, 0, "using");
+        if (u < 0) die_at(line, "EXEC SQL DESCRIBE needs USING SQL DESCRIPTOR");
+        const char *q = r + u + 5; sql_word(&q, w, sizeof w); if (!strcmp(w, "sql")) sql_word(&q, w, sizeof w);
+        const char *lab; sql_desc_name(q, line, &lab);
+        char dl[32]; snprintf(dl, sizeof dl, ".Lsqd%d", sql_dyn(nm));
+        emit_la("r3", dl); sql_la_or_zero("r4", lab); emit_li("r5", input);
+        emit_call("cob_sql_describe");
         sql_emit_status(line); sql_emit_whenever();
         return;
     }
@@ -14622,8 +14743,11 @@ static void parse_exec_sql(void)
         }
         die_at(line, "EXEC SQL DEALLOCATE %s is not implemented yet (docs/esql.md, phase 3c)", w2);
     }
-    if (!strcmp(w1, "set") && !strcmp(w2, "descriptor"))
-        die_at(line, "EXEC SQL SET DESCRIPTOR is not implemented yet (docs/esql.md, phase 3c)");
+    if ((!strcmp(w1, "set") || !strcmp(w1, "get")) && !strcmp(w2, "descriptor")) {
+        sql_getset_desc(p, w1[0] == 'g', line);
+        sql_emit_status(line); sql_emit_whenever();
+        return;
+    }
     if (!strcmp(w1, "get")) {
         if (strcmp(w2, "diagnostics")) die_at(line, "EXEC SQL GET %s is not implemented yet (docs/esql.md, phase 3c)", w2);
         /* GET DIAGNOSTICS [EXCEPTION n] :target = item [, ...] */

@@ -1,1 +1,1 @@
-NIST SQL embedded COBOL: 429 programs, 411 compile, 411 run to the end; tests 383 pass, 410 fail; 18 do not compile, 0 stop early, 14 not run (concurrent pairs, C); 35 schema elements refused
+NIST SQL embedded COBOL: 429 programs, 420 compile, 420 run to the end; tests 385 pass, 445 fail; 9 do not compile, 0 stop early, 14 not run (concurrent pairs, C); 35 schema elements refused

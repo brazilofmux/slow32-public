@@ -1,0 +1,14 @@
+immediate +000000000
+diag [EXECUTE IMMEDIATE             ] [CREATE TABLE                  ] +0000
+prepare +000000000
+execute +000000000
+rows +000000001
+sum +000000005
+row C   +00003
+row B   +00002
+row A   +00001
+bad -000000204 42000
+diag state 42000 msg [no such table: nosuch                                       ] now +000000000
+unprepared -000000518 26000
+set trans +000000000
+dealloc +000000000

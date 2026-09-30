@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stddef.h>
 #include "cobrt.h"
 #include "sqlite3.h"
 
@@ -112,8 +113,9 @@ static const char *sql_dir(void) { const char *d = getenv("COB_SQL_DIR"); return
 
 static void upcase_trim(char *out, const char *in, int n, int cap)
 {
-    int k = 0;
-    for (int i = 0; i < n && in[i] && k < cap - 1; i++) out[k++] = (char)toupper((unsigned char)in[i]);
+    int k = 0, i = 0;
+    while (i < n && in[i] == ' ') i++;                  /* leading blanks too: a user is a name */
+    for (; i < n && in[i] && k < cap - 1; i++) out[k++] = (char)toupper((unsigned char)in[i]);
     while (k && out[k - 1] == ' ') k--;
     out[k] = 0;
 }
@@ -212,6 +214,12 @@ void cob_sql_out(void *p, const cob_desc *d, void *ip, const cob_desc *id)
 
 static void clear_hosts(void) { g_nin = g_nout = 0; }
 
+/* SQL descriptor areas (below): the next statement's USING and INTO */
+typedef struct desc_area desc_area;
+static desc_area *g_desc_in, *g_desc_out;
+static int bind_desc(sqlite3_stmt *st);
+static int store_desc(sqlite3_stmt *st, int base);
+
 static const char *strcasestr_simple(const char *h, const char *n)
 {
     size_t l = strlen(n);
@@ -280,9 +288,11 @@ static int parse_decimal(const char *t, long long *v, int *sc)
 
 /* one output, column c: NULL to the indicator (or an error), a number by
  * its exact text, anything else by the MOVE rules */
-static int store_out(sqlite3_stmt *st, int c, const host *h)
+/* one value (SQLite's type, its integer, its text) to a host variable:
+ * NULL to the indicator (or an error), a number by its exact text,
+ * anything else by the MOVE rules */
+static int store_val(int ty, long long iv, const char *t, int n, const host *h)
 {
-    int ty = sqlite3_column_type(st, c);
     if (ty == SQLITE_NULL) {
         if (!h->ip) { set_status(-305, "22002"); trace_error("fetch: NULL with no indicator"); return 0; }
         cob_put_num(h->ip, h->id, -1, 0);
@@ -292,9 +302,8 @@ static int store_out(sqlite3_stmt *st, int c, const host *h)
     const cob_desc *d = h->d;
     if (d->cat == COB_NUM) {
         long long v; int sc;
-        if (ty == SQLITE_INTEGER) { v = sqlite3_column_int64(st, c); sc = 0; }
+        if (ty == SQLITE_INTEGER) { v = iv; sc = 0; }
         else {
-            const char *t = (const char *)sqlite3_column_text(st, c);
             int r = parse_decimal(t ? t : "", &v, &sc);
             if (r <= 0) { set_status(r < 0 ? -304 : -302, r < 0 ? "22003" : "22018"); trace_error("fetch: not a number"); return 0; }
         }
@@ -304,8 +313,6 @@ static int store_out(sqlite3_stmt *st, int c, const host *h)
         if (cob_put_num_x(h->p, d, v, sc, 2)) { set_status(-304, "22003"); trace_error("fetch: value out of range"); return 0; }
         return 1;
     }
-    const char *t = (const char *)sqlite3_column_text(st, c);
-    int n = sqlite3_column_bytes(st, c);
     cob_desc sd; memset(&sd, 0, sizeof sd);
     sd.cat = COB_ALNUM; sd.size = (unsigned)n;
     if (n) cob_move(t, &sd, h->p, d);
@@ -320,6 +327,13 @@ static int store_out(sqlite3_stmt *st, int c, const host *h)
         }
     }
     return 1;
+}
+
+static int store_out(sqlite3_stmt *st, int c, const host *h)
+{
+    int ty = sqlite3_column_type(st, c);
+    const char *t = ty == SQLITE_NULL ? NULL : (const char *)sqlite3_column_text(st, c);
+    return store_val(ty, ty == SQLITE_INTEGER ? sqlite3_column_int64(st, c) : 0, t, t ? sqlite3_column_bytes(st, c) : 0, h);
 }
 
 /* ---- statements -------------------------------------------------------- */
@@ -354,7 +368,12 @@ static char *own_schema(const char *text)
         }
         if (ul && !strncasecmp(text + i, g_user, ul) && text[i + ul] == '.' &&
             (i == 0 || !(isalnum((unsigned char)text[i - 1]) || text[i - 1] == '_' || text[i - 1] == '.'))) {
-            memcpy(out + o, "main.", 5); o += 5; i += ul + 1;
+            /* dropped, not main.: a view stored with main.X in its text
+             * cannot be attached under its schema's name again ("cannot
+             * reference objects in database main"), which took HU away
+             * from every later program; unqualified, a statement finds
+             * main first and a view resolves in its own database */
+            i += ul + 1;
             continue;
         }
         out[o++] = text[i++];
@@ -623,7 +642,8 @@ static int run_stmt(sqlite3_stmt **slot, const char *text, int kind, cob_sql_cur
     if (!prepare_x(slot, text, reg)) { clear_hosts(); return g_sqlcode; }
     sqlite3_stmt *st = *slot;
     int i = 0;
-    for (; i < g_nin; i++) bind_in(st, i + 1, &g_in[i]);
+    if (g_desc_in) { if (!bind_desc(st)) goto done; }
+    else for (; i < g_nin; i++) bind_in(st, i + 1, &g_in[i]);
     if (kind == K_POSITIONED) {
         cob_sql_cursor *c = cur;
         if (!c->open) { set_status(-508, "24000"); trace_error("positioned: cursor not open"); goto done; }
@@ -633,7 +653,8 @@ static int run_stmt(sqlite3_stmt **slot, const char *text, int kind, cob_sql_cur
     if (kind == K_SELECT_INTO || (dynamic && sqlite3_column_count(st) > 0)) {
         if (rc == SQLITE_ROW) {
             g_rows = 1;
-            for (int k = 0; k < g_nout && k < sqlite3_column_count(st); k++) if (!store_out(st, k, &g_out[k])) goto done;
+            if (g_desc_out) { if (!store_desc(st, 0)) goto done; }
+            else for (int k = 0; k < g_nout && k < sqlite3_column_count(st); k++) if (!store_out(st, k, &g_out[k])) goto done;
             if (sqlite3_step(st) == SQLITE_ROW) { set_status(-811, "21000"); trace_error("SELECT INTO: more than one row"); }
         } else if (rc == SQLITE_DONE) set_status(100, "02000");
         else set_error(rc, text);
@@ -649,6 +670,7 @@ done:
     sqlite3_reset(st);
     sqlite3_clear_bindings(st);
     clear_hosts();
+    g_desc_in = g_desc_out = NULL;
     return g_sqlcode;
 }
 
@@ -840,7 +862,8 @@ int cob_sql_open(cob_sql_cursor *c)
         c->st = c->dyn->st;
     } else if (!prepare(&c->st, c->text)) { clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode; }
     sqlite3_reset(c->st); sqlite3_clear_bindings(c->st);
-    for (int i = 0; i < g_nin; i++) bind_in(c->st, i + 1, &g_in[i]);
+    if (g_desc_in) { if (!bind_desc(c->st)) { clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode; } }
+    else for (int i = 0; i < g_nin; i++) bind_in(c->st, i + 1, &g_in[i]);
     clear_hosts();
     c->open = 1;
     if (g_ncur < 512) g_cursors[g_ncur++] = c;
@@ -865,11 +888,13 @@ int cob_sql_fetch(cob_sql_cursor *c)
             c->rowid_lo = (unsigned)r; c->rowid_hi = (unsigned)(r >> 32);
             base = 1;
         }
-        for (int k = 0; k < g_nout && base + k < sqlite3_column_count(c->st); k++)
+        if (g_desc_out) store_desc(c->st, base);
+        else for (int k = 0; k < g_nout && base + k < sqlite3_column_count(c->st); k++)
             if (!store_out(c->st, base + k, &g_out[k])) break;
     } else if (rc == SQLITE_DONE) { set_status(100, "02000"); c->open = 2; }
     else set_error(rc, c->name);
     clear_hosts();
+    g_desc_out = NULL;
     diag_end("FETCH", NULL);
     return g_sqlcode;
 }
@@ -884,6 +909,285 @@ int cob_sql_close(cob_sql_cursor *c)
     c->open = 0;
     diag_end("CLOSE", NULL);
     return 0;
+}
+
+/* ---- SQL descriptor areas (ISO 9075 dynamic SQL) -----------------------
+ * ALLOCATE DESCRIPTOR name [WITH MAX n]; SET and GET DESCRIPTOR, COUNT
+ * and per VALUE n the fields below; DESCRIBE [INPUT | OUTPUT] s USING SQL
+ * DESCRIPTOR; EXECUTE ... USING / INTO, OPEN ... USING and FETCH ... INTO
+ * SQL DESCRIPTOR.  An item's value is SQLite's: NULL, an integer, or text
+ * (a REAL as SQLite prints it). */
+enum { DF_COUNT = 0, DF_TYPE, DF_LENGTH, DF_OCTET_LENGTH, DF_RETURNED_LENGTH, DF_RETURNED_OCTET_LENGTH,
+       DF_PRECISION, DF_SCALE, DF_DI_CODE, DF_DI_PRECISION, DF_NULLABLE, DF_INDICATOR, DF_DATA,
+       DF_NAME, DF_UNNAMED, DF_OTHER };
+typedef struct {
+    int type, length, octet, precision, scale, dicode, diprec, nullable, unnamed, indicator;
+    char name[132];
+    int vty; long long iv; char *tv; int tn;        /* the value: SQLite's type, integer, text */
+} desc_item;
+struct desc_area { char name[132]; int max, count; desc_item *it; };
+static desc_area *g_descs[64]; static int g_ndesc;
+static desc_area *g_dcur;                           /* the statement's descriptor */
+static desc_item *g_ditem;                          /* its VALUE n */
+static int g_dbad;                                  /* the statement already failed */
+/* g_desc_in, g_desc_out: USING / INTO SQL DESCRIPTOR for the next statement (declared above) */
+
+static desc_area *desc_find(const char *name)
+{
+    for (int i = 0; i < g_ndesc; i++) if (!strcmp(g_descs[i]->name, name)) return g_descs[i];
+    return NULL;
+}
+
+/* the descriptor's name: a literal, or the one pending input */
+static void desc_name(const char *lit, char *out)
+{
+    if (lit) snprintf(out, 132, "%s", lit);
+    else if (g_nin) host_text(&g_in[0], out, 132);
+    else out[0] = 0;
+    int n = (int)strlen(out); while (n && out[n - 1] == ' ') out[--n] = 0;
+    clear_hosts();
+}
+
+static void desc_fail(int code, const char *state) { if (!g_dbad) { set_status(code, state); trace_error("descriptor"); } g_dbad = 1; }
+
+/* the start of a descriptor statement: its descriptor by name */
+void cob_sql_desc_begin(const char *lit)
+{
+    char name[132]; desc_name(lit, name);
+    set_status(0, "00000"); g_rows = 0; g_dbad = 0; g_ditem = NULL;
+    g_dcur = desc_find(name);
+    if (!g_dcur) desc_fail(-1, "33000");            /* invalid SQL descriptor name */
+}
+
+void cob_sql_desc_alloc(const char *lit, int max)
+{
+    char name[132]; desc_name(lit, name);
+    set_status(0, "00000"); g_rows = 0; g_dbad = 0;
+    if (desc_find(name) || g_ndesc == 64) desc_fail(-1, "33000");
+    else {
+        desc_area *d = calloc(1, sizeof *d);
+        snprintf(d->name, sizeof d->name, "%s", name);
+        d->max = max > 0 ? max : 100;               /* the implementation's default maximum */
+        d->it = calloc((size_t)d->max, sizeof *d->it);
+        g_descs[g_ndesc++] = d;
+    }
+    diag_end("ALLOCATE DESCRIPTOR", NULL);
+}
+
+void cob_sql_desc_dealloc(const char *lit)
+{
+    cob_sql_desc_begin(lit);
+    if (g_dcur) {
+        for (int k = 0; k < g_dcur->max; k++) free(g_dcur->it[k].tv);
+        free(g_dcur->it);
+        for (int i = 0; i < g_ndesc; i++) if (g_descs[i] == g_dcur) g_descs[i] = g_descs[--g_ndesc];
+        free(g_dcur); g_dcur = NULL;
+    }
+    diag_end("DEALLOCATE DESCRIPTOR", NULL);
+}
+
+/* VALUE n */
+void cob_sql_desc_value_n(int n)
+{
+    if (!g_dcur) return;
+    if (n < 1 || n > g_dcur->max) { desc_fail(-1, "07009"); g_ditem = NULL; return; }   /* invalid descriptor index */
+    g_ditem = &g_dcur->it[n - 1];
+}
+void cob_sql_desc_value(void *p, const cob_desc *d) { cob_sql_desc_value_n((int)cob_get_num(p, d)); }
+
+static void desc_set_value(desc_item *it, int vty, long long iv, const char *t, int n)
+{
+    free(it->tv); it->tv = NULL; it->tn = 0;
+    it->vty = vty; it->iv = iv;
+    if (t) { it->tv = malloc((size_t)n + 1); memcpy(it->tv, t, (size_t)n); it->tv[n] = 0; it->tn = n; }
+}
+
+/* SET DESCRIPTOR: a field from an integer */
+void cob_sql_desc_set_n(int field, int v)
+{
+    if (!g_dcur) return;
+    if (field == DF_COUNT) { if (v < 0 || v > g_dcur->max) desc_fail(-1, "07009"); else g_dcur->count = (int)v; return; }
+    desc_item *it = g_ditem;
+    if (!it) return;
+    switch (field) {
+    case DF_TYPE:
+        /* a new type resets the item's other fields (ISO 17.5 SET DESCRIPTOR GR 4) */
+        memset(it, 0, offsetof(desc_item, name)); it->type = (int)v;
+        if (v == 1 || v == 12) it->length = 1;
+        break;
+    case DF_LENGTH: it->length = (int)v; break;
+    case DF_OCTET_LENGTH: it->octet = (int)v; break;
+    case DF_PRECISION: it->precision = (int)v; break;
+    case DF_SCALE: it->scale = (int)v; break;
+    case DF_DI_CODE: it->dicode = (int)v; break;
+    case DF_DI_PRECISION: it->diprec = (int)v; break;
+    case DF_NULLABLE: it->nullable = (int)v; break;
+    case DF_INDICATOR: it->indicator = (int)v; break;
+    case DF_UNNAMED: it->unnamed = (int)v; break;
+    case DF_DATA: { char b[32]; int n = snprintf(b, sizeof b, "%lld", v); desc_set_value(it, SQLITE_INTEGER, v, b, n); break; }
+    default: break;
+    }
+}
+
+/* SET DESCRIPTOR: a field from a host variable (DATA takes its value as
+ * the item's type says: text for CHARACTER and VARCHAR, a number else) */
+void cob_sql_desc_set(void *p, const cob_desc *d, int field)
+{
+    if (!g_dcur) return;
+    if (field == DF_NAME) {
+        host h = { p, d, NULL, NULL }; char b[132]; host_text(&h, b, sizeof b);
+        if (g_ditem) snprintf(g_ditem->name, sizeof g_ditem->name, "%s", b);
+        return;
+    }
+    if (field != DF_DATA) { cob_sql_desc_set_n(field, cob_get_num(p, d)); return; }
+    desc_item *it = g_ditem;
+    if (!it) return;
+    int chartype = it->type == 1 || it->type == 12;
+    if (d->cat == COB_NUM && !chartype) {
+        long long v = cob_get_num(p, d);
+        if (d->scale <= 0) { for (int k = 0; k < -d->scale; k++) v *= 10; char b[32]; int n = snprintf(b, sizeof b, "%lld", v); desc_set_value(it, SQLITE_INTEGER, v, b, n); }
+        else {
+            unsigned long long m = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v;
+            char b[48]; int n = snprintf(b, sizeof b, "%s%llu.%0*llu", v < 0 ? "-" : "", m / (unsigned long long)p10[d->scale], d->scale, m % (unsigned long long)p10[d->scale]);
+            desc_set_value(it, SQLITE_TEXT, 0, b, n);
+        }
+    } else {
+        char b[512]; host h = { p, d, NULL, NULL }; host_text(&h, b, sizeof b);
+        if (chartype && it->type == 1 && it->length > 0 && (int)strlen(b) > it->length) b[it->length] = 0;
+        desc_set_value(it, SQLITE_TEXT, 0, b, (int)strlen(b));
+    }
+}
+
+/* GET DESCRIPTOR: a field into a host variable */
+void cob_sql_desc_get(void *p, const cob_desc *d, int field)
+{
+    if (!g_dcur) return;
+    long long v = 0; const char *text = NULL;
+    desc_item *it = g_ditem;
+    if (field != DF_COUNT && !it) return;
+    switch (field) {
+    case DF_COUNT: v = g_dcur->count; break;
+    case DF_TYPE: v = it->type; break;
+    case DF_LENGTH: v = it->length; break;
+    case DF_OCTET_LENGTH: v = it->octet ? it->octet : it->length; break;
+    case DF_RETURNED_LENGTH: case DF_RETURNED_OCTET_LENGTH: v = it->tn; break;
+    case DF_PRECISION: v = it->precision; break;
+    case DF_SCALE: v = it->scale; break;
+    case DF_DI_CODE: v = it->dicode; break;
+    case DF_DI_PRECISION: v = it->diprec; break;
+    case DF_NULLABLE: v = it->nullable; break;
+    case DF_INDICATOR: v = it->vty == SQLITE_NULL ? -1 : it->indicator; break;
+    case DF_UNNAMED: v = it->unnamed; break;
+    case DF_NAME: text = it->name; break;
+    case DF_DATA: {
+        host h = { p, d, NULL, NULL };
+        if (it->vty == SQLITE_NULL || (!it->tv && it->vty != SQLITE_INTEGER)) return;   /* NULL: DATA is left alone (the INDICATOR says) */
+        if (!store_val(it->vty ? it->vty : SQLITE_TEXT, it->iv, it->tv, it->tn, &h)) g_dbad = 1;
+        return;
+    }
+    default: text = ""; break;
+    }
+    if (text) {
+        cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = COB_ALNUM; sd.size = (unsigned)strlen(text);
+        if (sd.size) cob_move(text, &sd, p, d); else memset(p, ' ', d->size);
+    } else if (d->cat == COB_NUM) cob_put_num(p, d, v, 0);
+}
+
+/* the end of a GET or SET DESCRIPTOR statement */
+void cob_sql_desc_end(int get) { g_dcur = NULL; g_ditem = NULL; diag_end(get ? "GET DESCRIPTOR" : "SET DESCRIPTOR", NULL); }
+
+/* the declared type of a column as the descriptor's TYPE, LENGTH,
+ * PRECISION and SCALE (ISO codes: 1 CHARACTER, 2 NUMERIC, 3 DECIMAL,
+ * 4 INTEGER, 5 SMALLINT, 6 FLOAT, 7 REAL, 8 DOUBLE PRECISION, 12 VARCHAR);
+ * an expression SQLite gives no declared type: NUMERIC (a behavior point) */
+static void desc_from_decl(desc_item *it, const char *decl)
+{
+    int a = 0, b = 0, na = 0;
+    const char *lp = decl ? strchr(decl, '(') : NULL;
+    if (lp) { na = sscanf(lp, "(%d , %d", &a, &b); if (na < 1) na = sscanf(lp, "(%d,%d", &a, &b); }
+    char up[64] = ""; int k = 0;
+    for (const char *q = decl ? decl : ""; *q && *q != '(' && k < 63; q++) up[k++] = (char)toupper((unsigned char)*q);
+    while (k && up[k - 1] == ' ') k--; up[k] = 0;
+    it->nullable = 1;
+    if (!decl || !*decl) { it->type = 2; it->unnamed = 1; return; }
+    if (strstr(up, "VARYING") || !strncmp(up, "VARCHAR", 7)) { it->type = 12; it->length = na >= 1 ? a : 1; }
+    else if (!strncmp(up, "CHAR", 4) || !strncmp(up, "NCHAR", 5) || !strncmp(up, "NATIONAL", 8)) { it->type = 1; it->length = na >= 1 ? a : 1; }
+    else if (!strncmp(up, "NUMERIC", 7)) { it->type = 2; it->precision = na >= 1 ? a : 18; it->scale = na >= 2 ? b : 0; }
+    else if (!strncmp(up, "DEC", 3)) { it->type = 3; it->precision = na >= 1 ? a : 18; it->scale = na >= 2 ? b : 0; }
+    else if (!strncmp(up, "INT", 3)) { it->type = 4; it->precision = 10; }
+    else if (!strncmp(up, "SMALLINT", 8)) { it->type = 5; it->precision = 5; }
+    else if (!strncmp(up, "FLOAT", 5)) { it->type = 6; it->precision = na >= 1 ? a : 53; }
+    else if (!strncmp(up, "REAL", 4)) { it->type = 7; it->precision = 24; }
+    else if (!strncmp(up, "DOUBLE", 6)) { it->type = 8; it->precision = 53; }
+    else it->type = 1;
+    it->octet = it->length;
+}
+
+/* DESCRIBE [INPUT | OUTPUT] s USING SQL DESCRIPTOR d */
+void cob_sql_describe(cob_sql_dyn *s, const char *lit, int input)
+{
+    cob_sql_desc_begin(lit);
+    if (g_dcur) {
+        if (!s->st) desc_fail(-518, "26000");
+        else if (input) {
+            int n = sqlite3_bind_parameter_count(s->st);
+            g_dcur->count = n;
+            if (n > g_dcur->max) { set_warning("01005"); n = g_dcur->max; }   /* insufficient item descriptor areas */
+            for (int k = 0; k < n; k++) { desc_item *it = &g_dcur->it[k]; memset(it, 0, offsetof(desc_item, vty)); it->type = 1; it->length = 1; it->nullable = 1; it->unnamed = 1; }
+        } else {
+            int n = sqlite3_column_count(s->st), base = s->rowid ? 1 : 0;
+            n -= base;
+            g_dcur->count = n;
+            if (n > g_dcur->max) { set_warning("01005"); n = g_dcur->max; }
+            for (int k = 0; k < n; k++) {
+                desc_item *it = &g_dcur->it[k];
+                memset(it, 0, offsetof(desc_item, vty));
+                desc_from_decl(it, sqlite3_column_decltype(s->st, base + k));
+                const char *nm = sqlite3_column_name(s->st, base + k);
+                snprintf(it->name, sizeof it->name, "%s", nm ? nm : "");
+            }
+        }
+    }
+    g_dcur = NULL;
+    diag_end("DESCRIBE", NULL);
+}
+
+/* USING / INTO SQL DESCRIPTOR: the next statement's */
+void cob_sql_desc_using(const char *lit) { char n[132]; desc_name(lit, n); g_desc_in = desc_find(n); if (!g_desc_in) g_desc_in = (desc_area *)-1; }
+void cob_sql_desc_into(const char *lit) { char n[132]; desc_name(lit, n); g_desc_out = desc_find(n); if (!g_desc_out) g_desc_out = (desc_area *)-1; }
+
+/* binding a statement's parameters from the USING descriptor: 1 done, 0 failed */
+static int bind_desc(sqlite3_stmt *st)
+{
+    desc_area *d = g_desc_in; g_desc_in = NULL;
+    if (d == (desc_area *)-1) { set_status(-1, "33000"); return 0; }
+    for (int k = 0; k < d->count; k++) {
+        desc_item *it = &d->it[k];
+        if (it->indicator < 0 || it->vty == SQLITE_NULL || (it->vty == 0 && !it->tv)) sqlite3_bind_null(st, k + 1);
+        else if (it->vty == SQLITE_INTEGER) sqlite3_bind_int64(st, k + 1, it->iv);
+        else sqlite3_bind_text(st, k + 1, it->tv, it->tn, SQLITE_TRANSIENT);
+    }
+    return 1;
+}
+
+/* a row into the INTO descriptor: its items' types and names as DESCRIBE
+ * would set them, their values, the NULLs as indicators */
+static int store_desc(sqlite3_stmt *st, int base)
+{
+    desc_area *d = g_desc_out; g_desc_out = NULL;
+    if (d == (desc_area *)-1) { set_status(-1, "33000"); return 0; }
+    int n = sqlite3_column_count(st) - base;
+    if (n > d->max) { set_status(-1, "07008"); return 0; }
+    d->count = n;
+    for (int k = 0; k < n; k++) {
+        desc_item *it = &d->it[k];
+        int ty = sqlite3_column_type(st, base + k);
+        if (!it->type) desc_from_decl(it, sqlite3_column_decltype(st, base + k));
+        const char *t = ty == SQLITE_NULL ? NULL : (const char *)sqlite3_column_text(st, base + k);
+        desc_set_value(it, ty, ty == SQLITE_INTEGER ? sqlite3_column_int64(st, base + k) : 0, t, t ? sqlite3_column_bytes(st, base + k) : 0);
+        it->indicator = ty == SQLITE_NULL ? -1 : 0;
+    }
+    return 1;
 }
 
 /* ---- the program's status items ---------------------------------------- */

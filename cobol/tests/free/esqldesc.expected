@@ -1,0 +1,9 @@
+alloc +000000000
+insert +000000000
+insert null +000000000
+describe count +0003
+col1 k                    type +0001 len +0003
+col3 type +0003 prec +0007 scale +0002
+row AB  ind +0000 amt +00012.50
+row CD  ind -0001 amt +00012.50
+gone -000000001 33000
