@@ -2984,15 +2984,18 @@ void cob_str_src(const char *s, int n, const char *delim, int dn)
 {
     if (cs.overflow) return;
     int take = n, w = cs.w;
-    if (dn) {
+    if (dn) {                                   /* the first byte in line, memcmp only on a match */
         for (int i = 0; i + dn <= n; i += w)
-            if (!memcmp(s + i, delim, dn)) { take = i; break; }
+            if (s[i] == delim[0] && !memcmp(s + i, delim, dn)) { take = i; break; }
     }
-    for (int i = 0; i + w <= take; i += w) {
-        if (cs.pos + w - 1 > cs.dlen) { cs.overflow = 1; return; }
-        memcpy(cs.dst + cs.pos - 1, s + i, (size_t)w);
-        cs.pos += w;
-    }
+    /* the characters that fit, in one copy; any left over is the overflow
+     * (the character-at-a-time loop this replaces stopped at the first
+     * character that did not fit, having moved the ones before it) */
+    int chars = take / w, room = cs.pos - 1 <= cs.dlen ? (cs.dlen - (cs.pos - 1)) / w : 0;
+    int moved = chars < room ? chars : room;
+    if (moved > 0) memcpy(cs.dst + cs.pos - 1, s, (size_t)(moved * w));
+    cs.pos += moved * w;
+    if (chars > room) cs.overflow = 1;
 }
 
 int cob_str_pointer(void) { return (cs.pos - 1) / cs.w + 1; }
@@ -3045,7 +3048,8 @@ void cob_unstr_into(void *dst, const cob_desc *dd, void *ddst, const cob_desc *d
     } else {
         for (; i < cu.slen && hit < 0; i += cu.w)
             for (int k = 0; k < cu.nd; k++)
-                if (cu.d[k].n && i + cu.d[k].n <= cu.slen && !memcmp(cu.src + i, cu.d[k].p, cu.d[k].n)) { hit = k; break; }
+                if (cu.d[k].n && i + cu.d[k].n <= cu.slen && cu.src[i] == cu.d[k].p[0] &&
+                    !memcmp(cu.src + i, cu.d[k].p, cu.d[k].n)) { hit = k; break; }
         if (hit >= 0) i -= cu.w;                /* the delimiter's position */
     }
     int k = i - start;                          /* the examined bytes */
@@ -5247,21 +5251,30 @@ void cob_inspect_phrase(int tallying, int kind, const char *pat, int plen, const
 }
 void cob_inspect_run(void)
 {
+    /* One pass left to right, the first phrase that matches taking the
+     * position.  A one-byte pattern is compared in line (a TALLYING FOR
+     * ALL "a" called memcmp per phrase per character), and the LEADING
+     * bookkeeping pass runs only when there is a LEADING phrase. */
+    int leading = 0;
+    for (int k = 0; k < cin.np; k++) if (cin.ph[k].kind == 2) leading = 1;
     for (int pos = 0; cin.np && pos < cin.n; ) {
         int took = 0, taker = -1;
         for (int k = 0; k < cin.np && !took; k++) {
             if (cin.ph[k].done || pos < cin.ph[k].lo || pos + cin.ph[k].plen > cin.ph[k].hi) continue;
-            int m = cin.ph[k].kind == 0 || !memcmp(cin.item + pos, cin.ph[k].pat, cin.ph[k].plen);
+            int m = cin.ph[k].kind == 0 ||
+                    (cin.ph[k].plen == 1 ? cin.item[pos] == cin.ph[k].pat[0] : !memcmp(cin.item + pos, cin.ph[k].pat, cin.ph[k].plen));
             if (!m) continue;
             if (cin.ph[k].tallying) cin.ph[k].count++;
+            else if (cin.ph[k].plen == 1) cin.item[pos] = cin.ph[k].rep[0];
             else memcpy(cin.item + pos, cin.ph[k].rep, cin.ph[k].plen);
             if (cin.ph[k].kind == 3) cin.ph[k].done = 1;
             took = cin.ph[k].plen; taker = k;
         }
         /* a LEADING phrase whose range has begun and which did not take
          * this position is over */
-        for (int k = 0; k < cin.np; k++)
-            if (cin.ph[k].kind == 2 && !cin.ph[k].done && pos >= cin.ph[k].lo && taker != k) cin.ph[k].done = 1;
+        if (leading)
+            for (int k = 0; k < cin.np; k++)
+                if (cin.ph[k].kind == 2 && !cin.ph[k].done && pos >= cin.ph[k].lo && taker != k) cin.ph[k].done = 1;
         pos += took ? took : ci_w;
     }
     if (cin.real) {
