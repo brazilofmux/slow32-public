@@ -10,6 +10,7 @@
 #   tests/ccvs-run.sh [module ...]        default: NC SQ RL IX ST SM IC RW IF
 #   CCVS_KEEP=1                           keep the work directory
 #   CCVS_ONLY=NC101A                      one program, with its report shown
+#   CCVS_FLAGS=-fno-hot-arith             extra s32-cobc options (the harness's both-paths run)
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CDIR="$(cd "$HERE/.." && pwd)"
@@ -37,7 +38,7 @@ for m in $MODULES; do
     for x in "$d"/lib/*.CBL; do
         [ -e "$x" ] || continue
         ln="$(basename "$x" .CBL | tr 'A-Z' 'a-z')"
-        if "$CDIR/out/s32-cobc" -fixed -I "$CCVS/copy" -m -o "$run/lib-$ln.s" "$x" >"$run/lib-$ln.compile.log" 2>&1 &&
+        if "$CDIR/out/s32-cobc" -fixed ${CCVS_FLAGS:-} -I "$CCVS/copy" -m -o "$run/lib-$ln.s" "$x" >"$run/lib-$ln.compile.log" 2>&1 &&
            "$ROOT/tools/assembler/slow32asm" "$run/lib-$ln.s" "$run/lib-$ln.s32o" >/dev/null 2>&1; then
             libobjs+=("$run/lib-$ln.s32o")
         else
@@ -56,7 +57,7 @@ for m in $MODULES; do
         # compile-only programs (report.pl's comp_only) may CALL programs the
         # suite never supplies (IC401M's FIC401M): compile and assemble, no link
         case "$name" in NC401M|RL301M|RL401M|IC401M|IX301M|IX401M|SQ303M|SQ401M|ST301M|SM401M|RW301M|RW302M|DB205A|OB401M|DB301M|DB302M|DB303M|DB304M|DB305M|SG301M|CM301M|CM401M|IF401M|IF402M|IF403M)
-            if "$CDIR/out/s32-cobc" -fixed -I "$CCVS/copy" -o "$run/$lc.s" "$run/$lc.cbl" >"$run/$name.compile.log" 2>&1 &&
+            if "$CDIR/out/s32-cobc" -fixed ${CCVS_FLAGS:-} -I "$CCVS/copy" -o "$run/$lc.s" "$run/$lc.cbl" >"$run/$name.compile.log" 2>&1 &&
                "$ROOT/tools/assembler/slow32asm" "$run/$lc.s" "$run/$lc.s32o" >>"$run/$name.compile.log" 2>&1; then
                 printf '  %-7s %3d/%3d  fail %2d  del %2d   %s\n' "$name" 1 1 0 0 "= GnuCOBOL (compile only)"
                 t_all=$((t_all+1)); t_pass=$((t_pass+1)); t_progok=$((t_progok+1))
@@ -66,7 +67,7 @@ for m in $MODULES; do
             fi
             continue ;;
         esac
-        if ! "$CDIR/compile.sh" -fixed -I "$CCVS/copy" "$run/$lc.cbl" "${libobjs[@]+"${libobjs[@]}"}" -o "$run/$lc.s32x" >"$run/$name.compile.log" 2>&1; then
+        if ! "$CDIR/compile.sh" -fixed ${CCVS_FLAGS:-} -I "$CCVS/copy" "$run/$lc.cbl" "${libobjs[@]+"${libobjs[@]}"}" -o "$run/$lc.s32x" >"$run/$name.compile.log" 2>&1; then
             t_nocomp=$((t_nocomp+1))
             printf '  %-7s %-24s (%s)\n' "$name" "does not compile" "$(grep -m1 -i error "$run/$name.compile.log" | sed 's/^[^:]*:[0-9]*: *error: *//' | cut -c1-60)"
             continue
@@ -83,6 +84,7 @@ for m in $MODULES; do
         # report.pl runs every program with COB_SWITCH_1=ON and COB_SWITCH_2=OFF (NC254A reads them)
         ( cd "$run" && COB_SWITCH_1=ON COB_SWITCH_2=OFF timeout 120 "$EMU" "$lc.s32x" < "$inp" > "$name.out" 2> "$name.err" ); rc=$?
         rep="$run/REPORT"
+        [ -n "${CCVS_KEEP:-}" ] && [ -f "$rep" ] && cp "$rep" "$run/$name.report"   # each program's, for a comparison of two runs
         # a few programs report on the console instead (report.pl reads NC121M's
         # and NC220M's .out); two write nothing and count as one pass when they exit 0
 

@@ -23,6 +23,10 @@
 #   -warn-74 with exactly the [BP-..] ids its .expected lists (an empty
 #   file: none), and must compile with no stderr at all without the flag.
 #   The ids are docs/behavior-points.md's.
+# Both paths (in Gates 2 and 5): every program is compiled a second time
+#   with -fno-hot-arith, the register arithmetic and its peepholes off, and
+#   must print the same; CCVS runs twice and every program's tally, report
+#   and console output must be the same bytes (docs/performance.md).
 # Gate 5 (NIST): the CCVS-85 totals must equal tests/ccvs-baseline.txt
 #   exactly (CCVS85 names the tree; CCVS=0 skips it, and a missing
 #   tree is reported as NOT RUN, never passed over).
@@ -249,6 +253,20 @@ for fmt in fixed free 2002; do
             diff "$exp" "$W/$name.out" | head -8
             continue
         fi
+        # both paths: the same program with the register arithmetic and its
+        # peepholes off (-fno-hot-arith, the code the decimal stack and
+        # cob_move run) must print the same -- the fast paths are exact by
+        # construction, and this is where that is checked on every program
+        if ! "$CDIR/compile.sh" $flag $stdflag -fno-hot-arith -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" -o "$W/$name.stack.s32x" >"$W/$name.stack.log" 2>&1; then
+            report "$fmt/$name" 1 "does not compile with -fno-hot-arith: $(grep -m1 -i error "$W/$name.stack.log")"; continue
+        fi
+        fresh_workdir
+        emu_run "$W/$name.stack.s32x" "$keys" > "$W/$name.stack.out"
+        if ! diff -q "$W/$name.stack.out" "$exp" >/dev/null; then
+            report "$fmt/$name" 1 "the stack path (-fno-hot-arith) prints otherwise"
+            diff "$exp" "$W/$name.stack.out" | head -8
+            continue
+        fi
         # a .tapemgr file lists "file maxlen" pairs the program wrote in
         # mode V: each goes through majesty's tapemgr (create a binary-V
         # dataset from it, extract it again) and must come back byte for
@@ -393,13 +411,33 @@ CCVS_TREE=${CCVS85:-$HOME/gnucobol-svn/tests/cobol85}
 if [ "${CCVS:-1}" = 0 ]; then
     CCVS_NOTE="cobol: CCVS-85 NOT RUN -- switched off by CCVS=0"
 elif [ -d "$CCVS_TREE" ]; then
-    got="$("$HERE/ccvs-run.sh" 2>/dev/null | tail -1)"
+    CCVS_KEEP=1 "$HERE/ccvs-run.sh" > "$W/ccvs.fast" 2>/dev/null
+    cd1="$(ls -dt "$CDIR"/out/ccvsrun.* 2>/dev/null | head -1)"
+    got="$(tail -1 "$W/ccvs.fast")"
     want="$(cat "$HERE/ccvs-baseline.txt")"
     if [ "$got" = "$want" ]; then
         report "ccvs/totals" 0 "$(echo "$got" | sed 's/.*tests \([0-9]* of [0-9]*\) pass.*/\1/') pass, as recorded"
     else
         report "ccvs/totals" 1 "got [$got] want [$want]; if better, update tests/ccvs-baseline.txt"
     fi
+    # both paths: the suite again with -fno-hot-arith; every program's
+    # tally, report and console output must be the same bytes.  NC214M
+    # prints the time of day (ACCEPT FROM TIME) and differs between any
+    # two runs, so its report is left out.  (A null dereference that only
+    # the stack path's SEARCH reached was found this way, 2026-09-30.)
+    CCVS_KEEP=1 CCVS_FLAGS=-fno-hot-arith "$HERE/ccvs-run.sh" > "$W/ccvs.stack" 2>/dev/null
+    cd2="$(ls -dt "$CDIR"/out/ccvsrun.* 2>/dev/null | head -1)"
+    bpd=""; bpn=0
+    diff -q "$W/ccvs.fast" "$W/ccvs.stack" >/dev/null || bpd="tallies differ: $(diff "$W/ccvs.fast" "$W/ccvs.stack" | grep -m1 '^>' )"
+    if [ -z "$bpd" ] && [ -n "$cd1" ] && [ "$cd1" != "$cd2" ]; then
+        for f in $(cd "$cd1" && find . \( -name '*.report' -o -name '*.out' \) ! -name 'NC214M.report' | sort); do
+            bpn=$((bpn+1))
+            cmp -s "$cd1/$f" "$cd2/$f" || { bpd="$f differs"; break; }
+        done
+    fi
+    if [ -z "$bpd" ]; then report "ccvs/both-paths" 0 "$bpn reports and outputs identical with -fno-hot-arith"
+    else report "ccvs/both-paths" 1 "$bpd"; fi
+    rm -rf "$cd1" "$cd2"
     # SQ101M's 57 tests are the suite's visual inspection of WRITE
     # ADVANCING; the program states where every line must land, so the
     # print file is rendered as a printer would and checked (ISSUES-46)

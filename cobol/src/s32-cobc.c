@@ -14938,9 +14938,11 @@ static void parse_search(void)
             emit("\tslt r1, r2, r1");               /* bound < index */
         } else {
             emit("\tstw sp+%d, r1", SLOT_A);
-            Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
-            if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
-            else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+            if (tbl->odo_dep_sym) {
+                Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
+                if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
+                else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+            } else emit_li("r1", tbl->occurs);
             emit("\tldw r2, sp+%d", SLOT_A);
             emit("\tslt r1, r1, r2");                /* bound < index */
         }
