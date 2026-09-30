@@ -23,6 +23,9 @@
 #   __fp64_cvt_DtoF - double to float
 #   __fp64_cvt_ltoD - long long to double
 #   __fp64_cvt_DtoL - double to long long
+#   __fp64_cvt_utoD, __fp64_cvt_DtoU, __fp64_cvt_ultoD, __fp64_cvt_DtoUL,
+#   __fp64_cvt_ltoF, __fp64_cvt_ultoF, __fp64_cvt_FtoL, __fp64_cvt_FtoUL
+#                   - the unsigned and float <-> long long conversions
 
 .text
 
@@ -174,6 +177,74 @@ __fp64_cvt_DtoL:
     addi r5, r4, 0
     addi r4, r3, 0
     fcvt.l.d r4, r4, r0
+    addi r1, r4, 0
+    addi r2, r5, 0
+    jalr r0, r31, 0
+
+# unsigned → double: r3=unsigned, returns r1:r2=double
+.global __fp64_cvt_utoD
+__fp64_cvt_utoD:
+    fcvt.d.wu r4, r3, r0
+    addi r1, r4, 0
+    addi r2, r5, 0
+    jalr r0, r31, 0
+
+# double → unsigned: r3=lo, r4=hi, returns r1=unsigned
+.global __fp64_cvt_DtoU
+__fp64_cvt_DtoU:
+    addi r5, r4, 0
+    addi r4, r3, 0
+    fcvt.wu.d r1, r4, r0
+    jalr r0, r31, 0
+
+# unsigned long long → double: r3=lo, r4=hi, returns r1:r2=double
+.global __fp64_cvt_ultoD
+__fp64_cvt_ultoD:
+    addi r5, r4, 0
+    addi r4, r3, 0
+    fcvt.d.lu r4, r4, r0
+    addi r1, r4, 0
+    addi r2, r5, 0
+    jalr r0, r31, 0
+
+# double → unsigned long long: r3=lo, r4=hi, returns r1:r2
+.global __fp64_cvt_DtoUL
+__fp64_cvt_DtoUL:
+    addi r5, r4, 0
+    addi r4, r3, 0
+    fcvt.lu.d r4, r4, r0
+    addi r1, r4, 0
+    addi r2, r5, 0
+    jalr r0, r31, 0
+
+# long long → float: r3=lo, r4=hi, returns r1=float_bits
+.global __fp64_cvt_ltoF
+__fp64_cvt_ltoF:
+    addi r5, r4, 0
+    addi r4, r3, 0
+    fcvt.s.l r1, r4, r0
+    jalr r0, r31, 0
+
+# unsigned long long → float: r3=lo, r4=hi, returns r1=float_bits
+.global __fp64_cvt_ultoF
+__fp64_cvt_ultoF:
+    addi r5, r4, 0
+    addi r4, r3, 0
+    fcvt.s.lu r1, r4, r0
+    jalr r0, r31, 0
+
+# float → long long: r3=float_bits, returns r1:r2
+.global __fp64_cvt_FtoL
+__fp64_cvt_FtoL:
+    fcvt.l.s r4, r3, r0
+    addi r1, r4, 0
+    addi r2, r5, 0
+    jalr r0, r31, 0
+
+# float → unsigned long long: r3=float_bits, returns r1:r2
+.global __fp64_cvt_FtoUL
+__fp64_cvt_FtoUL:
+    fcvt.lu.s r4, r3, r0
     addi r1, r4, 0
     addi r2, r5, 0
     jalr r0, r31, 0

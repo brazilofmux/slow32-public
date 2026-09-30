@@ -3277,14 +3277,17 @@ static void hx_emit_inst(int idx) {
     /* ---------- Floating-point conversions ---------- */
     if (k == HI_FCVT_ItoF) {
         /* int → float / double.  src is X-class, dst is V-class.
-         * sf bit comes from the int side (TY_LLONG → 64-bit X form);
-         * type bit comes from the FP side (TY_DOUBLE → D form). */
+         * sf bit and signedness come from the int side, which the
+         * lowering records in h_val (HL_CVT_64, HL_CVT_UNS) -- the
+         * operand's own h_ty need not say, a widening ZEXT32 being
+         * typed plain TY_LLONG (DBT-20); type bit comes from the FP
+         * side (TY_DOUBLE → D form). */
         int rs; int sf; int type;
         rs = hx_get_src(s1, HX_SCRATCH1);
-        sf   = ty_is_llong(h_ty[s1]) ? 1 : 0;
+        sf   = (h_val[idx] & 2) ? 1 : 0;
         type = ty_is_double(h_ty[idx]) ? 1 : 0;
-        if (h_ty[s1] & TY_UNSIGNED) a64_ucvtf(sf, type, dst, rs);
-        else                         a64_scvtf(sf, type, dst, rs);
+        if (h_val[idx] & 1) a64_ucvtf(sf, type, dst, rs);
+        else                a64_scvtf(sf, type, dst, rs);
         hx_spill(idx, dst);
         return;
     }

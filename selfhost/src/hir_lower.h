@@ -591,22 +591,130 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n,
     return 1;
 }
 
-/* Promote a 32-bit value (int or float) to f64 twin pair via helper call.
- * After return, hl_hi holds the hi word. */
-static int hl_promote_to_f64(int val, int from_ty) {
+/* Integer <-> floating-point conversions, every width and signedness.
+ *
+ * Unsigned sources and destinations used to take the signed
+ * conversions, and a cast between long long and float moved the bits
+ * across unconverted: (float)(long long)1 was 1.4e-45 and
+ * (double)3000000000u was -1294967296.0, on SLOW-32 and on both native
+ * hosts alike.  It is how the self-hosted dbt-x64 came to run FCVT.S.L
+ * and FCVT.D.WU wrong (tools/dbt/ISSUES.md, DBT-20).
+ *
+ * HI_FCVT_ItoF carries the source's shape in h_val (HL_CVT_UNS,
+ * HL_CVT_64), so a back end need not trust the operand's h_ty; an
+ * HI_FCVT_FtoI's own type is its destination's.  On SLOW-32 each
+ * conversion touching a register pair is an __fp64_cvt_* call, which
+ * the back end emits as a single FCVT. */
+#define HL_CVT_UNS 1
+#define HL_CVT_64  2
+
+static int hl_cvt_call(char *fn, int a, int b, int nargs, int pair_result) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = val;
+    h_carg[h_ncarg] = a;
     h_ncarg = h_ncarg + 1;
-    if (ty_is_float(from_ty)) {
-        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "__fp64_cvt_ftoD");
-    } else {
-        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "__fp64_cvt_itoD");
+    if (nargs == 2) {
+        h_carg[h_ncarg] = b;
+        h_ncarg = h_ncarg + 1;
     }
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, nargs, fn);
     h_cbase[r] = cb;
-    hl_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    if (pair_result) hl_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     return r;
+}
+
+/* val of integer type from_ty to float or double to_ty.  val_hi is a
+ * SLOW-32 long long's high word.  A SLOW-32 double result leaves its
+ * high word in hl_hi. */
+static int hl_int_to_fp(int val, int val_hi, int from_ty, int to_ty) {
+    int uns;
+    int wide;
+    uns = (from_ty & TY_UNSIGNED) != 0;
+    wide = ty_is_llong(from_ty);
+#ifdef S12CC_NATIVE_F64
+    val_hi = (uns ? HL_CVT_UNS : 0) | (wide ? HL_CVT_64 : 0);
+    if (ty_is_double(to_ty))
+        return hi_emit(HI_FCVT_ItoF, TY_DOUBLE, val, -1, val_hi, NULL);
+    return hi_emit(HI_FCVT_ItoF, TY_FLOAT, val, -1, val_hi, NULL);
+#else
+    if (ty_is_double(to_ty)) {
+        if (wide)
+            return hl_cvt_call(uns ? "__fp64_cvt_ultoD" : "__fp64_cvt_ltoD",
+                               val, val_hi, 2, 1);
+        return hl_cvt_call(uns ? "__fp64_cvt_utoD" : "__fp64_cvt_itoD",
+                           val, -1, 1, 1);
+    }
+    if (wide)
+        return hl_cvt_call(uns ? "__fp64_cvt_ultoF" : "__fp64_cvt_ltoF",
+                           val, val_hi, 2, 0);
+    return hi_emit(HI_FCVT_ItoF, TY_FLOAT, val, -1, uns ? HL_CVT_UNS : 0, NULL);
+#endif
+}
+
+/* val of float or double type from_ty (val_hi: a SLOW-32 double's high
+ * word) to integer type to_ty.  A SLOW-32 long long result leaves its
+ * high word in hl_hi. */
+static int hl_fp_to_int(int val, int val_hi, int from_ty, int to_ty) {
+#ifdef S12CC_NATIVE_F64
+    return hi_emit(HI_FCVT_FtoI, to_ty, val, -1, 0, NULL);
+#else
+    int uns;
+    int wide;
+    uns = (to_ty & TY_UNSIGNED) != 0;
+    wide = ty_is_llong(to_ty);
+    if (ty_is_double(from_ty)) {
+        if (wide)
+            return hl_cvt_call(uns ? "__fp64_cvt_DtoUL" : "__fp64_cvt_DtoL",
+                               val, val_hi, 2, 1);
+        return hl_cvt_call(uns ? "__fp64_cvt_DtoU" : "__fp64_cvt_DtoI",
+                           val, val_hi, 2, 0);
+    }
+    if (wide)
+        return hl_cvt_call(uns ? "__fp64_cvt_FtoUL" : "__fp64_cvt_FtoL",
+                           val, -1, 1, 1);
+    return hi_emit(HI_FCVT_FtoI, to_ty, val, -1, 0, NULL);
+#endif
+}
+
+/* a op b in floating type ty (TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH).
+ * a_hi/b_hi: a SLOW-32 double's high words; the result's is left in
+ * hl_hi. */
+static int hl_fp_arith(int op, int a, int a_hi, int b, int b_hi, int ty) {
+    int k;
+    if (op == TK_PLUS) k = HI_FADD;
+    else if (op == TK_MINUS) k = HI_FSUB;
+    else if (op == TK_STAR) k = HI_FMUL;
+    else k = HI_FDIV;
+#ifndef S12CC_NATIVE_F64
+    if (ty_is_double(ty)) {
+        int cb;
+        int r;
+        cb = h_ncarg;
+        h_carg[h_ncarg] = a;    h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = a_hi; h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = b;    h_ncarg = h_ncarg + 1;
+        h_carg[h_ncarg] = b_hi; h_ncarg = h_ncarg + 1;
+        if (k == HI_FADD) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
+        else if (k == HI_FSUB) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_sub");
+        else if (k == HI_FMUL) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_mul");
+        else r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_div");
+        h_cbase[r] = cb;
+        hl_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+        return r;
+    }
+#endif
+    return hi_emit(k, ty_is_double(ty) ? TY_DOUBLE : TY_FLOAT, a, b, 0, NULL);
+}
+
+/* Promote an int, long long or float to f64 twin pair via helper call.
+ * A long long's high word is read from hl_hi: every caller promotes
+ * the operand it has just evaluated.  After return, hl_hi holds the
+ * hi word. */
+static int hl_promote_to_f64(int val, int from_ty) {
+    if (ty_is_float(from_ty))
+        return hl_cvt_call("__fp64_cvt_ftoD", val, -1, 1, 1);
+    return hl_int_to_fp(val, hl_hi, from_ty, TY_DOUBLE);
 }
 
 /* Unsigned 32-bit divide/modulo: SLOW-32 has only signed DIV/REM
@@ -1745,7 +1853,7 @@ static int hl_expr(Node *n) {
                 if (ty_is_float(n->rhs->ty)) {
                     val = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, val, -1, 0, NULL);
                 } else {
-                    val = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, val, -1, 0, NULL);
+                    val = hl_int_to_fp(val, -1, n->rhs->ty, TY_DOUBLE);
                 }
             }
             addr = hl_addr(n->lhs);
@@ -2335,7 +2443,7 @@ static int hl_expr(Node *n) {
                     lvn = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, lvn, -1, 0, NULL);
                 } else {
                     /* int → double */
-                    lvn = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, lvn, -1, 0, NULL);
+                    lvn = hl_int_to_fp(lvn, -1, n->lhs->ty, TY_DOUBLE);
                 }
             }
             rvn = hl_expr(n->rhs);
@@ -2343,7 +2451,7 @@ static int hl_expr(Node *n) {
                 if (ty_is_float(n->rhs->ty)) {
                     rvn = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, rvn, -1, 0, NULL);
                 } else {
-                    rvn = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, rvn, -1, 0, NULL);
+                    rvn = hl_int_to_fp(rvn, -1, n->rhs->ty, TY_DOUBLE);
                 }
             }
             if (n->op == TK_PLUS)  return hi_emit(HI_FADD, TY_DOUBLE, lvn, rvn, 0, NULL);
@@ -2437,8 +2545,14 @@ static int hl_expr(Node *n) {
 
         /* Floating-point binary operations (f32) */
         if (ty_is_float(n->lhs->ty) || ty_is_float(n->rhs->ty)) {
+            /* The other operand may be an integer of any width: convert
+             * it (it was used as the float's bits; DBT-20). */
             lv = hl_expr(n->lhs);
+            if (!ty_is_fp(n->lhs->ty))
+                lv = hl_int_to_fp(lv, hl_hi, n->lhs->ty, TY_FLOAT);
             rv = hl_expr(n->rhs);
+            if (!ty_is_fp(n->rhs->ty))
+                rv = hl_int_to_fp(rv, hl_hi, n->rhs->ty, TY_FLOAT);
             if (n->op == TK_PLUS)  return hi_emit(HI_FADD, TY_FLOAT, lv, rv, 0, NULL);
             if (n->op == TK_MINUS) return hi_emit(HI_FSUB, TY_FLOAT, lv, rv, 0, NULL);
             if (n->op == TK_STAR)  return hi_emit(HI_FMUL, TY_FLOAT, lv, rv, 0, NULL);
@@ -2496,6 +2610,64 @@ static int hl_expr(Node *n) {
         addr = hl_addr(n->lhs);
         old_val = hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
         rv = hl_expr(n->rhs);
+        /* An operation in a floating type wider than the LHS: an
+         * integer LHS with a float or double rhs (`k += 1.5`), or a
+         * float LHS with a double rhs.  C computes in the rhs's type
+         * and converts the result back; the paths below took the rhs
+         * for a value of the LHS's type, so `k += 1.5` added the
+         * double's low word (DBT-20). */
+        if (ty_is_fp(n->rhs->ty) && !ty_is_double(n->ty) && !ty_is_ptr(n->ty) &&
+            (!ty_is_fp(n->ty) || ty_is_double(n->rhs->ty)) &&
+            (n->op == TK_PLUS || n->op == TK_MINUS ||
+             n->op == TK_STAR || n->op == TK_SLASH)) {
+            int ct;
+            int rv_hi;
+            int ov_hi;
+            ct = n->rhs->ty;
+            rv_hi = hl_hi;
+            ov_hi = -1;
+#ifndef S12CC_X64_HOST
+            if (ty_is_llong(n->ty)) {
+                int a4;
+                a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+                old_val = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+                ov_hi = hi_emit(HI_LOAD, TY_INT, a4, -1, 0, NULL);
+            }
+#endif
+            if (ty_is_float(n->ty)) {
+#ifdef S12CC_NATIVE_F64
+                old_val = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, old_val, -1, 0, NULL);
+#else
+                old_val = hl_promote_to_f64(old_val, n->ty);
+                ov_hi = hl_hi;
+#endif
+            } else {
+                old_val = hl_int_to_fp(old_val, ov_hi, n->ty, ct);
+                ov_hi = hl_hi;
+            }
+            new_val = hl_fp_arith(n->op, old_val, ov_hi, rv, rv_hi, ct);
+            if (ty_is_float(n->ty)) {
+#ifdef S12CC_NATIVE_F64
+                new_val = hi_emit(HI_FCVT_DtoF, TY_FLOAT, new_val, -1, 0, NULL);
+#else
+                new_val = hl_cvt_call("__fp64_cvt_DtoF", new_val, hl_hi, 2, 0);
+#endif
+            } else {
+                new_val = hl_fp_to_int(new_val, hl_hi, ct, n->ty);
+            }
+#ifndef S12CC_X64_HOST
+            if (ty_is_llong(n->ty)) {
+                int a4;
+                hi_emit(HI_STORE, TY_INT, addr, new_val, 0, NULL);
+                a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+                hi_emit(HI_STORE, TY_INT, a4, hl_hi, 0, NULL);
+                return new_val;
+            }
+#endif
+            new_val = hl_narrow(n->ty, new_val);
+            hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
+            return new_val;
+        }
         /* Scale for pointer arithmetic */
         if (ty_is_ptr(n->ty) && (n->op == TK_PLUS || n->op == TK_MINUS)) {
             elem_sz = ty_size(ty_deref(n->ty));
@@ -2556,9 +2728,9 @@ static int hl_expr(Node *n) {
                 if (ty_is_float(rhs_ty))
                     rv = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, rv, -1, 0, NULL);
                 else
-                    rv = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, rv, -1, 0, NULL);
+                    rv = hl_int_to_fp(rv, hl_hi, rhs_ty, TY_DOUBLE);
             } else if (ty_is_float(n->ty) && !ty_is_fp(rhs_ty)) {
-                rv = hi_emit(HI_FCVT_ItoF, TY_FLOAT, rv, -1, 0, NULL);
+                rv = hl_int_to_fp(rv, hl_hi, rhs_ty, TY_FLOAT);
             }
             if (n->op == TK_PLUS)       fkind = HI_FADD;
             else if (n->op == TK_MINUS) fkind = HI_FSUB;
@@ -2746,14 +2918,13 @@ static int hl_expr(Node *n) {
 
             hl_switch_block(then_blk);
             val = hl_expr(n->lhs);
-            if (!ty_is_llong(n->lhs->ty) && !ty_is_double(n->lhs->ty)) {
-                if (ty_is_double(n->ty)) {
-                    /* result is double: CONVERT the int/float arm (sema
-                     * doesn't insert arm casts) */
+            if (ty_is_double(n->ty)) {
+                /* result is double: CONVERT the int, long long or float
+                 * arm (sema doesn't insert arm casts) */
+                if (!ty_is_double(n->lhs->ty))
                     val = hl_promote_to_f64(val, n->lhs->ty);
-                } else {
-                    hl_widen64(val, n->lhs->ty, &val, &hl_hi);
-                }
+            } else if (!ty_is_llong(n->lhs->ty)) {
+                hl_widen64(val, n->lhs->ty, &val, &hl_hi);
             }
             hi_emit(HI_STORE, TY_INT, tmp, val, 0, NULL);
             t4 = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 4, NULL);
@@ -2762,12 +2933,11 @@ static int hl_expr(Node *n) {
 
             hl_switch_block(else_blk);
             val = hl_expr(n->rhs);
-            if (!ty_is_llong(n->rhs->ty) && !ty_is_double(n->rhs->ty)) {
-                if (ty_is_double(n->ty)) {
+            if (ty_is_double(n->ty)) {
+                if (!ty_is_double(n->rhs->ty))
                     val = hl_promote_to_f64(val, n->rhs->ty);
-                } else {
-                    hl_widen64(val, n->rhs->ty, &val, &hl_hi);
-                }
+            } else if (!ty_is_llong(n->rhs->ty)) {
+                hl_widen64(val, n->rhs->ty, &val, &hl_hi);
             }
             hi_emit(HI_STORE, TY_INT, tmp, val, 0, NULL);
             t4 = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 4, NULL);
@@ -2787,6 +2957,12 @@ static int hl_expr(Node *n) {
 #ifdef S12CC_X64_HOST
         if (ty_is_llong(n->ty)) val = hl_widen_native64(val, n->lhs->ty);
 #endif
+        if (ty_is_fp(n->ty) && !ty_is_fp(n->lhs->ty))
+            val = hl_int_to_fp(val, hl_hi, n->lhs->ty, n->ty); /* an integer arm of an FP result (DBT-20) */
+#ifdef S12CC_NATIVE_F64
+        else if (ty_is_double(n->ty) && ty_is_float(n->lhs->ty))
+            val = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, val, -1, 0, NULL);
+#endif
         hi_emit(HI_STORE, n->ty, tmp, val, 0, NULL);
         hi_emit(HI_BR, 0, -1, -1, join_blk, NULL);
 
@@ -2794,6 +2970,12 @@ static int hl_expr(Node *n) {
         val = hl_expr(n->rhs);
 #ifdef S12CC_X64_HOST
         if (ty_is_llong(n->ty)) val = hl_widen_native64(val, n->rhs->ty);
+#endif
+        if (ty_is_fp(n->ty) && !ty_is_fp(n->rhs->ty))
+            val = hl_int_to_fp(val, hl_hi, n->rhs->ty, n->ty);
+#ifdef S12CC_NATIVE_F64
+        else if (ty_is_double(n->ty) && ty_is_float(n->rhs->ty))
+            val = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, val, -1, 0, NULL);
 #endif
         hi_emit(HI_STORE, n->ty, tmp, val, 0, NULL);
         hi_emit(HI_BR, 0, -1, -1, join_blk, NULL);
@@ -2816,6 +2998,15 @@ static int hl_expr(Node *n) {
                           (ty_is_ptr(n->lhs->ty) && ty_ptr_size == 8);
         dst_is_native64 = ty_is_llong(n->ty) ||
                           (ty_is_ptr(n->ty) && ty_ptr_size == 8);
+        /* Integer <-> floating point, every width and signedness, ahead
+         * of the widening and truncating cases below: excluding only
+         * double, they took long long <-> float and moved the bits
+         * across unconverted. */
+        if (ty_is_fp(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_ptr(n->lhs->ty))
+            return hl_int_to_fp(lv, hl_hi, n->lhs->ty, n->ty);
+        if (ty_is_fp(n->lhs->ty) && !ty_is_fp(n->ty) && !ty_is_ptr(n->ty) &&
+            (n->ty & TY_BASE_MASK) != TY_VOID)
+            return hl_fp_to_int(lv, hl_hi, n->lhs->ty, n->ty);
 #ifdef S12CC_X64_HOST
         if (dst_is_native64 && !src_is_native64 && !ty_is_double(n->lhs->ty)) {
             /* x64: explicit widening via SEXT32/ZEXT32 (optimizer won't fold) */
@@ -2856,49 +3047,12 @@ static int hl_expr(Node *n) {
              * the value is already a 64-bit register, no conversion. */
             return lv;
         }
-        /* int → float */
-        if (ty_is_float(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_llong(n->lhs->ty)) {
-            return hi_emit(HI_FCVT_ItoF, TY_FLOAT, lv, -1, 0, NULL);
-        }
-        /* float → int.  Pass through the destination type (n->ty) so the
-         * codegen can pick fcvtzs vs fcvtzu by inspecting TY_UNSIGNED. */
-        if (!ty_is_fp(n->ty) && !ty_is_llong(n->ty) && ty_is_float(n->lhs->ty)) {
-            return hi_emit(HI_FCVT_FtoI, n->ty, lv, -1, 0, NULL);
-        }
-        /* int → double */
-        if (ty_is_double(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_llong(n->lhs->ty)) {
-#ifdef S12CC_NATIVE_F64
-            /* Native: HI_FCVT_ItoF with TY_DOUBLE — codegen picks
-             * scvtf sf=0 type=1 by inspecting src/dst types. */
-            return hi_emit(HI_FCVT_ItoF, TY_DOUBLE, lv, -1, 0, NULL);
-#else
-            return hl_promote_to_f64(lv, n->lhs->ty);
-#endif
-        }
         /* float → double */
         if (ty_is_double(n->ty) && ty_is_float(n->lhs->ty)) {
 #ifdef S12CC_NATIVE_F64
             return hi_emit(HI_FCVT_FtoD, TY_DOUBLE, lv, -1, 0, NULL);
 #else
             return hl_promote_to_f64(lv, n->lhs->ty);
-#endif
-        }
-        /* double → int */
-        if (!ty_is_fp(n->ty) && !ty_is_llong(n->ty) && ty_is_double(n->lhs->ty)) {
-#ifdef S12CC_NATIVE_F64
-            /* Native: HI_FCVT_FtoI; codegen picks fcvtzs/fcvtzu with
-             * sf=0 (W-form) type=1 (D-form) by inspecting src/dst. */
-            return hi_emit(HI_FCVT_FtoI, n->ty, lv, -1, 0, NULL);
-#else
-            int d_hi;
-            int cb;
-            d_hi = hl_hi;
-            cb = h_ncarg;
-            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
-            lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoI");
-            h_cbase[lv] = cb;
-            return lv;
 #endif
         }
         /* double → float */
@@ -2914,44 +3068,6 @@ static int hl_expr(Node *n) {
             h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
             lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoF");
             h_cbase[lv] = cb;
-            return lv;
-#endif
-        }
-        /* llong → double */
-        if (ty_is_double(n->ty) && ty_is_llong(n->lhs->ty)) {
-#ifdef S12CC_NATIVE_F64
-            /* Native: HI_FCVT_ItoF with TY_DOUBLE; codegen picks sf=1
-             * by seeing TY_LLONG on src. */
-            return hi_emit(HI_FCVT_ItoF, TY_DOUBLE, lv, -1, 0, NULL);
-#else
-            int d_hi;
-            int cb;
-            d_hi = hl_hi;
-            cb = h_ncarg;
-            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
-            lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_ltoD");
-            h_cbase[lv] = cb;
-            hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
-            return lv;
-#endif
-        }
-        /* double → llong */
-        if (ty_is_llong(n->ty) && ty_is_double(n->lhs->ty)) {
-#ifdef S12CC_NATIVE_F64
-            /* Native: HI_FCVT_FtoI with TY_LLONG dst; codegen picks
-             * sf=1 (X-form) type=1 (D-form). */
-            return hi_emit(HI_FCVT_FtoI, n->ty, lv, -1, 0, NULL);
-#else
-            int d_hi;
-            int cb;
-            d_hi = hl_hi;
-            cb = h_ncarg;
-            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
-            lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoL");
-            h_cbase[lv] = cb;
-            hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
             return lv;
 #endif
         }

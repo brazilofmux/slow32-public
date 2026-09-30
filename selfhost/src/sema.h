@@ -112,6 +112,17 @@ static void sema_expr(Node *n) {
 
     if (n->kind == ND_ASSIGN) {
         n->ty = n->lhs ? n->lhs->ty : TY_INT;
+        /* Across the integer/floating-point line, or between float and
+         * double, the stored value is the converted one: the cast
+         * lowering does it.  Without this `u = d` stored the double's
+         * low word and `f = u` the integer's bits (DBT-20). */
+        if (n->lhs && n->rhs) {
+            lty = sema_arg_class(n->lhs->ty);
+            rty = sema_arg_class(n->rhs->ty);
+            if (lty != rty && lty != 4 && rty != 4 &&
+                (lty >= 2 || rty >= 2))
+                n->rhs = nd_cast(n->rhs, n->lhs->ty);
+        }
         return;
     }
 

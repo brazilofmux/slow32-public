@@ -320,8 +320,12 @@ static void hx_load_xmm(int inst, int xmm) {
         return;
     }
     is_d = ty_is_double(h_ty[inst]);
-    if (h_kind[inst] == HI_FCONST) {
-        /* f64 FCONST not supported; lower never emits one. */
+    if (h_kind[inst] == HI_FCONST ||
+        (h_kind[inst] == HI_ICONST && !is_d)) {
+        /* f64 FCONST not supported; lower never emits one.  An f32
+         * literal is an HI_ICONST typed TY_FLOAT: a rematerialised
+         * constant with no slot, which fell to the zero below, so
+         * `float f = 1.5f; f * i` was 0 (DBT-20). */
         x64_mov_ri(X64_RAX, h_val[inst]);
         x64_movd_xmm_r(xmm, X64_RAX);
         return;
@@ -2144,14 +2148,52 @@ static void hx_emit_inst(int idx) {
         return;
     }
     if (k == HI_FCVT_ItoF) {
-        /* int → float/double.  Source is in a GPR; pick the right
-         * cvtsi2 form by destination FP width and source GPR width. */
+        /* int → float/double.  Source is in a GPR; the source's width
+         * and signedness are in h_val (HL_CVT_64, HL_CVT_UNS).  SSE
+         * converts signed integers only: an unsigned 32-bit source is
+         * zero-extended and converted as 64 bits, and an unsigned
+         * 64-bit source with its top bit set is halved -- the low bit
+         * folded in so the rounding stays correct -- converted, and
+         * doubled (DBT-20). */
         int sr;
         int dst_d;
         int src_64;
+        int src_uns;
+        int p_big;
+        int p_done;
         sr = hx_src(h_src1[idx], X64_RAX);
         dst_d = ty_is_double(h_ty[idx]);
-        src_64 = hx_is_wide(h_ty[h_src1[idx]]);
+        src_64 = (h_val[idx] & 2) != 0;
+        src_uns = (h_val[idx] & 1) != 0;
+        if (src_uns && !src_64) {
+            x64_mov_rr(X64_RAX, sr);          /* zero-extends */
+            sr = X64_RAX;
+            src_64 = 1;
+        } else if (src_uns) {
+            if (sr != X64_RAX) x64_mov_rr64(X64_RAX, sr);
+            x64_test_rr64(X64_RAX, X64_RAX);
+            p_big = x64_jcc_placeholder(X64_CC_S);
+            if (dst_d) x64_cvtsi2sd_64(X64_XMM0, X64_RAX);
+            else       x64_cvtsi2ss_64(X64_XMM0, X64_RAX);
+            p_done = x64_jmp_placeholder();
+            x64_patch_rel32(p_big, x64_off);
+            hx_save_dx();
+            x64_mov_rr64(X64_RDX, X64_RAX);
+            x64_shr_ri64(X64_RDX, 1);
+            x64_and_ri(X64_RAX, 1);
+            x64_or_rr64(X64_RDX, X64_RAX);
+            if (dst_d) {
+                x64_cvtsi2sd_64(X64_XMM0, X64_RDX);
+                x64_addsd(X64_XMM0, X64_XMM0);
+            } else {
+                x64_cvtsi2ss_64(X64_XMM0, X64_RDX);
+                x64_addss(X64_XMM0, X64_XMM0);
+            }
+            hx_restore_dx();                  /* the result is an XMM */
+            x64_patch_rel32(p_done, x64_off);
+            hx_store_xmm(idx, X64_XMM0);
+            return;
+        }
         if (dst_d) {
             if (src_64) x64_cvtsi2sd_64(X64_XMM0, sr);
             else        x64_cvtsi2sd_32(X64_XMM0, sr);
@@ -2164,14 +2206,54 @@ static void hx_emit_inst(int idx) {
     }
     if (k == HI_FCVT_FtoI) {
         /* float/double → int (truncating).  Source FP width from src,
-         * dest GPR width from dst. */
+         * dest GPR width and signedness from dst.  An unsigned 32-bit
+         * result is the low half of a 64-bit conversion; an unsigned
+         * 64-bit one at or above 2^63 is converted less 2^63, and the
+         * top bit put back (DBT-20). */
         int dr;
         int src_d;
         int dst_64;
+        int p_big;
+        int p_done;
         src_d = ty_is_double(h_ty[h_src1[idx]]);
         dst_64 = hx_is_wide(h_ty[idx]);
         hx_load_xmm(h_src1[idx], X64_XMM0);
         dr = hx_dst(idx);
+        if (h_ty[idx] & TY_UNSIGNED) {
+            if (!dst_64) {
+                if (src_d) x64_cvttsd2si_64(X64_RAX, X64_XMM0);
+                else       x64_cvttss2si_64(X64_RAX, X64_XMM0);
+                x64_mov_rr(dr, X64_RAX);      /* low half, zero-extended */
+                hx_maybe_spill(idx);
+                return;
+            }
+            if (src_d) {
+                x64_mov_ri64(X64_RAX, 0, 0x43E00000);   /* 2^63 */
+                x64_movq_xmm_r(X64_XMM1, X64_RAX);
+                x64_ucomisd(X64_XMM0, X64_XMM1);
+            } else {
+                x64_mov_ri(X64_RAX, 0x5F000000);        /* 2^63 */
+                x64_movd_xmm_r(X64_XMM1, X64_RAX);
+                x64_ucomiss(X64_XMM0, X64_XMM1);
+            }
+            p_big = x64_jcc_placeholder(X64_CC_AE);
+            if (src_d) x64_cvttsd2si_64(X64_RAX, X64_XMM0);
+            else       x64_cvttss2si_64(X64_RAX, X64_XMM0);
+            p_done = x64_jmp_placeholder();
+            x64_patch_rel32(p_big, x64_off);
+            if (src_d) {
+                x64_subsd(X64_XMM0, X64_XMM1);
+                x64_cvttsd2si_64(X64_RAX, X64_XMM0);
+            } else {
+                x64_subss(X64_XMM0, X64_XMM1);
+                x64_cvttss2si_64(X64_RAX, X64_XMM0);
+            }
+            x64_btc_ri64(X64_RAX, 63);
+            x64_patch_rel32(p_done, x64_off);
+            if (dr != X64_RAX) x64_mov_rr64(dr, X64_RAX);
+            hx_maybe_spill(idx);
+            return;
+        }
         if (src_d) {
             if (dst_64) x64_cvttsd2si_64(dr, X64_XMM0);
             else        x64_cvttsd2si_32(dr, X64_XMM0);

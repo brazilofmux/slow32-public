@@ -452,6 +452,18 @@ static int obj_write_file(char *filename) {
         i = i + 1;
     }
 
+    /* Undefined symbols named by data relocations (a function or an
+     * array defined in another object) */
+    i = 0;
+    while (i < cg_ndrelocs) {
+        if (cg_dreloc_kind[i] == DRELOC_SYMBOL && cg_dreloc_name[i] != 0) {
+            if (obj_find_sym(cg_dreloc_name[i]) < 0)
+                obj_add_sym(cg_dreloc_name[i], 0, 0,
+                            OBJ_STB_GLOBAL, OBJ_STT_NOTYPE);
+        }
+        i = i + 1;
+    }
+
     /* ================================================================
      * Step 3: Count relocations
      * ================================================================ */
@@ -548,6 +560,10 @@ static int obj_write_file(char *filename) {
             if (cg_dreloc_kind[i] == DRELOC_STRING) {
                 obj_emit_rela(off, OBJ_SEC_RODATA, OBJ_R_X86_64_64,
                               cg_str_rodata_off[cg_dreloc_idx[i]]);
+            } else if (cg_dreloc_kind[i] == DRELOC_SYMBOL) {
+                sym_idx = obj_find_sym(cg_dreloc_name[i]);
+                if (sym_idx < 0) sym_idx = 0;
+                obj_emit_rela(off, sym_idx, OBJ_R_X86_64_64, cg_dreloc_add[i]);
             } else {
                 int gidx;
                 int gsec;
@@ -572,6 +588,10 @@ static int obj_write_file(char *filename) {
             if (cg_dreloc_kind[i] == DRELOC_STRING) {
                 obj_emit_rela(doff, OBJ_SEC_RODATA, OBJ_R_X86_64_64,
                               cg_str_rodata_off[cg_dreloc_idx[i]]);
+            } else if (cg_dreloc_kind[i] == DRELOC_SYMBOL) {
+                sym_idx = obj_find_sym(cg_dreloc_name[i]);
+                if (sym_idx < 0) sym_idx = 0;
+                obj_emit_rela(doff, sym_idx, OBJ_R_X86_64_64, cg_dreloc_add[i]);
             } else {
                 int gidx;
                 int gsec;

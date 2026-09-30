@@ -2346,3 +2346,60 @@ through ps_fp_builtin_bits. The first test run found that second path.
 Test: tests/test_nan_inf.c (static initializers, expressions, the bit
 patterns, a NaN unequal to itself). Gates: stage08 101/101 with the
 fixed point; check-host-frontend; SQLite acceptance identical.
+
+### 72. [RESOLVED 2026-09-30] Integer <-> floating-point conversions: unsigned and long long <-> float wrong on every target (DBT-20)
+
+Found through the self-hosted dbt-x64 (tools/dbt/ISSUES.md, DBT-20),
+whose floating point was wrong: its C helpers, compiled by cc-x64, ran
+FCVT.S.L and FCVT.D.WU through casts the compiler got wrong. The same
+casts were wrong under stage08 cc on SLOW-32, with the same bits. A
+matrix of casts against the host found the family:
+
+- `__builtin_sqrt[f]` was typed as the implicit int of an undeclared
+  function, so a caller converted the double's bits as an integer
+  (src/parser.h).
+- long long <-> float moved the bits across unconverted: the cast
+  lowering's widening and truncating cases excluded only double, so
+  `(float)(long long)1` was 1.4e-45 and `(long long)f` the float's bits.
+- Unsigned sources and destinations took the signed conversions:
+  `(double)3000000000u` was -1294967296.0, `(unsigned)3e9` saturated.
+- Assignment converted nothing across the int/fp line (`u = d` stored
+  the double's low word, `f = u` the integer's bits). Neither did float
+  arithmetic with an integer operand (`f * i`), `k += 1.5` or
+  `f += d`, nor a long long arm of a double ternary.
+
+Fix (src/hir_lower.h, src/sema.h): hl_int_to_fp and hl_fp_to_int do
+every width and signedness, and every conversion site goes through
+them. HI_FCVT_ItoF carries the source's shape in h_val (HL_CVT_UNS,
+HL_CVT_64), since an operand's h_ty need not say: x64's widening ZEXT32
+is typed plain TY_LLONG. On SLOW-32 the pair conversions are new
+__fp64_cvt_* names (utoD, DtoU, ultoD, DtoUL, ltoF, ultoF, FtoL, FtoUL)
+that stage08/hir_codegen.h emits as one FCVT, as the old six are; the
+bodies are in builtins_fp64.s too. sema casts an assignment's rhs across
+the int/fp line, as it already did arguments and returns. x64 gained the
+unsigned sequences SSE lacks: a 64-bit conversion for u32, the halving
+trick for u64 -> fp, and a 2^63 split for fp -> u64.
+
+Three more defects surfaced on the way, each found by the tests above:
+
+- stage08/hir_codegen.h wrote fneg.d, fsqrt.d and fcvt.d.l/l.d into the
+  operand's own register pair when it had one. When LICM had hoisted
+  that operand into a callee-saved pair, the loop rewrote it every
+  trip: `d > -3e9 && d < 2e9` compared against -3e9 and +3e9 on
+  alternate iterations. The results now go to the scratch pair.
+  fortran/src's older copy always went through r4:r5 and never had it.
+- cc-x64 read an unspilled f32 constant (HI_ICONST typed TY_FLOAT) into
+  an XMM register as 0: hx_load_xmm rematerialised only HI_FCONST.
+- cc-x64 pointed every function pointer in a static initializer at the
+  start of .data: GIRELOC_SYMBOL was emitted as DRELOC_GLOBAL, its name
+  index taken for a global's. dbt-x64's hook table (tools/dbt/hooks.c)
+  called into data, the segfault in DBT-20. DRELOC_SYMBOL, with the
+  addend, as cc-a64 has (codegen_x64.h, obj_writer.h).
+
+Test: stage08/tests/test_fp_convert.c, the explicit and implicit
+matrices, the loop invariant and a function-pointer table, returning
+the first failing check. The kit compiler fails its first check. It is
+also d38_fp_convert.c in the cross trees' diff-test corpus, against gcc.
+Gates: stage08 102/102 with the fixed point; check-host-frontend; SQLite
+acceptance identical; cc-x64 38/38 (kagura) and cc-a64 38/38 (podman,
+arm64).

@@ -3824,6 +3824,15 @@ static Node *parse_primary(void) {
             expect(TK_RPAREN);
             n = nd_call(nm, head, nargs);
             n->ty = find_func_type(nm);
+            /* __builtin_sqrt[f]: the lowering emits HI_FSQRT, but the call
+             * node's type was the implicit int of an undeclared function, so
+             * a caller converted the double's bits as an integer -- sqrt(2.0)
+             * came back 4.6e18 in libc_x64's cc-x64-compiled math_stubs and
+             * every FSQRT the self-hosted dbt-x64 ran was wrong
+             * (tools/dbt/ISSUES.md, DBT-20).  The argument is taken as it is:
+             * its callers pass a double. */
+            if (strcmp(nm, "__builtin_sqrt") == 0) n->ty = TY_DOUBLE;
+            else if (strcmp(nm, "__builtin_sqrtf") == 0) n->ty = TY_FLOAT;
             i = 0;
             while (i < ps_nfuncs) {
                 if (strcmp(nm, ps_fname[i]) == 0) {

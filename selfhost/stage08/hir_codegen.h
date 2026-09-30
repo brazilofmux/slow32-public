@@ -2236,6 +2236,15 @@ static int hcg_fp64_kind(char *nm) {
     if (strcmp(nm, "cvt_DtoF") == 0) return 11;
     if (strcmp(nm, "cvt_ltoD") == 0) return 12;
     if (strcmp(nm, "cvt_DtoL") == 0) return 13;
+    /* The unsigned and float <-> long long conversions (DBT-20). */
+    if (strcmp(nm, "cvt_utoD") == 0) return 16;
+    if (strcmp(nm, "cvt_DtoU") == 0) return 17;
+    if (strcmp(nm, "cvt_ultoD") == 0) return 18;
+    if (strcmp(nm, "cvt_DtoUL") == 0) return 19;
+    if (strcmp(nm, "cvt_ltoF") == 0) return 20;
+    if (strcmp(nm, "cvt_ultoF") == 0) return 21;
+    if (strcmp(nm, "cvt_FtoL") == 0) return 22;
+    if (strcmp(nm, "cvt_FtoUL") == 0) return 23;
     return -1;
 }
 
@@ -2343,14 +2352,14 @@ static void hcg_fp64_emit(int fpk, int base) {
                 hcg_move_vals(md, mv, 2);
                 pr = 4;
             }
-            cg_rrr("fsqrt.d", pr, pr, 0);
-            if (pr != 4) {
-                cg_rri("addi", 1, pr, 0);
-                cg_rri("addi", 2, pr + 1, 0);
-            } else {
-                cg_rri("addi", 1, 4, 0);
-                cg_rri("addi", 2, 5, 0);
-            }
+            /* Into the scratch pair, never the operand's own: a home
+             * pair can hold a value still live -- a loop invariant LICM
+             * hoisted -- and an in-place op rewrote it every iteration
+             * (fneg.d below turned `d > -3e9` into `d > 3e9` on alternate
+             * trips round a loop). */
+            cg_rrr("fsqrt.d", 4, pr, 0);
+            cg_rri("addi", 1, 4, 0);
+            cg_rri("addi", 2, 5, 0);
         }
         return;
     }
@@ -2373,23 +2382,26 @@ static void hcg_fp64_emit(int fpk, int base) {
                 hcg_move_vals(md, mv, 2);
                 pr = 4;
             }
-            cg_rrr("fneg.d", pr, pr, 0);
-            cg_rri("addi", 1, pr, 0);
-            cg_rri("addi", 2, pr + 1, 0);
+            cg_rrr("fneg.d", 4, pr, 0);    /* not in place: see fsqrt.d */
+            cg_rri("addi", 1, 4, 0);
+            cg_rri("addi", 2, 5, 0);
         }
         return;
     }
-    /* int/float word → double pair */
-    if (fpk == 8 || fpk == 9) {
+    /* int/unsigned/float word → double pair; float word → llong pair */
+    if (fpk == 8 || fpk == 9 || fpk == 16 || fpk == 22 || fpk == 23) {
         hcg_into(3, h_carg[base + 0]);
         if (fpk == 8) cg_rrr("fcvt.d.w", 4, 3, 0);
-        else cg_rrr("fcvt.d.s", 4, 3, 0);
+        else if (fpk == 9) cg_rrr("fcvt.d.s", 4, 3, 0);
+        else if (fpk == 16) cg_rrr("fcvt.d.wu", 4, 3, 0);
+        else if (fpk == 22) cg_rrr("fcvt.l.s", 4, 3, 0);
+        else cg_rrr("fcvt.lu.s", 4, 3, 0);
         cg_rri("addi", 1, 4, 0);
         cg_rri("addi", 2, 5, 0);
         return;
     }
-    /* double pair → int/float word */
-    if (fpk == 10 || fpk == 11) {
+    /* double pair → int/unsigned/float word; llong pair → float word */
+    if (fpk == 10 || fpk == 11 || fpk == 17 || fpk == 20 || fpk == 21) {
         {
             int md[2];
             int mv[2];
@@ -2402,7 +2414,10 @@ static void hcg_fp64_emit(int fpk, int base) {
                 pr = 4;
             }
             if (fpk == 10) cg_rrr("fcvt.w.d", 1, pr, 0);
-            else cg_rrr("fcvt.s.d", 1, pr, 0);
+            else if (fpk == 11) cg_rrr("fcvt.s.d", 1, pr, 0);
+            else if (fpk == 17) cg_rrr("fcvt.wu.d", 1, pr, 0);
+            else if (fpk == 20) cg_rrr("fcvt.s.l", 1, pr, 0);
+            else cg_rrr("fcvt.s.lu", 1, pr, 0);
         }
         return;
     }
@@ -2418,10 +2433,13 @@ static void hcg_fp64_emit(int fpk, int base) {
             hcg_move_vals(md, mv, 2);
             pr = 4;
         }
-        if (fpk == 12) cg_rrr("fcvt.d.l", pr, pr, 0);
-        else cg_rrr("fcvt.l.d", pr, pr, 0);
-        cg_rri("addi", 1, pr, 0);
-        cg_rri("addi", 2, pr + 1, 0);
+        /* not in place: see fsqrt.d */
+        if (fpk == 12) cg_rrr("fcvt.d.l", 4, pr, 0);
+        else if (fpk == 13) cg_rrr("fcvt.l.d", 4, pr, 0);
+        else if (fpk == 18) cg_rrr("fcvt.d.lu", 4, pr, 0);
+        else cg_rrr("fcvt.lu.d", 4, pr, 0);
+        cg_rri("addi", 1, 4, 0);
+        cg_rri("addi", 2, 5, 0);
     }
 }
 
@@ -3065,14 +3083,16 @@ static void hcg_inst(int idx) {
     if (k == HI_FCVT_ItoF) {
         rs1 = hcg_src(s1, 1);
         rd = hcg_dst(idx);
-        cg_rrr("fcvt.s.w", rd, rs1, 0);
+        if (h_val[idx] & 1) cg_rrr("fcvt.s.wu", rd, rs1, 0);  /* HL_CVT_UNS */
+        else cg_rrr("fcvt.s.w", rd, rs1, 0);
         hcg_maybe_spill(idx);
         return;
     }
     if (k == HI_FCVT_FtoI) {
         rs1 = hcg_src(s1, 1);
         rd = hcg_dst(idx);
-        cg_rrr("fcvt.w.s", rd, rs1, 0);
+        if (h_ty[idx] & TY_UNSIGNED) cg_rrr("fcvt.wu.s", rd, rs1, 0);
+        else cg_rrr("fcvt.w.s", rd, rs1, 0);
         hcg_maybe_spill(idx);
         return;
     }

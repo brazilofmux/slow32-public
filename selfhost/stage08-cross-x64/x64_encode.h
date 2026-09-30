@@ -772,6 +772,27 @@ static void x64_shr_ri(int dst, int imm) {
     x64_byte(imm & 0x1F);
 }
 
+// shr r64, imm8  (REX.W C1 /5 ib)
+static void x64_shr_ri64(int dst, int imm) {
+    int rex = REX_W;
+    if (dst >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
+    x64_byte(0xC1);
+    x64_byte(MODRM(MOD_DIRECT, 5, dst));
+    x64_byte(imm & 0x3F);
+}
+
+// btc r64, imm8  (REX.W 0F BA /7 ib)
+static void x64_btc_ri64(int dst, int imm) {
+    int rex = REX_W;
+    if (dst >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
+    x64_byte(0x0F);
+    x64_byte(0xBA);
+    x64_byte(MODRM(MOD_DIRECT, 7, dst));
+    x64_byte(imm & 0x3F);
+}
+
 // shr r32, cl  (D3 /5)
 static void x64_shr_cl(int dst) {
     int rex = 0;
@@ -1173,6 +1194,7 @@ static int x64_call_placeholder(void) {
 #define X64_CC_AE  0x83
 #define X64_CC_A   0x87
 #define X64_CC_BE  0x86
+#define X64_CC_S   0x88
 
 // ============================================================================
 // Alignment

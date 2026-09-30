@@ -607,7 +607,7 @@ side.  Next: a guest-state checkpoint differential (registers and a
 memory hash at each block exit) between the gcc DBT and dbt-a64, from
 the `fstat` return on.
 
-## 20. Floating Point Broken in the Self-Hosted dbt-x64 (OPEN, 2026-09-30)
+## 20. Floating Point Broken in the Self-Hosted dbt-x64 (FIXED 2026-09-30)
 
 With DBT-18 fixed, dbt-x64 (built by cc-x64, run on kagura, x86-64
 Linux) runs MMIO programs, and shows its floating point is wrong: a C
@@ -617,3 +617,22 @@ equivalents are right.  The x64 translator's FP path and
 `libc_x64/fpu_ops.c` (cc-x64-compiled) are the first suspects; the
 equivalent a64 bug was in the math intercepts, which are already off
 here.  Nothing in the fleet runs dbt-x64 on FP code; `make test` does not.
+
+Cause: not the translator, the compiler that built it. The DBT's C
+helpers, which run the FP instructions the translator does not inline,
+were miscompiled by cc-x64: `sqrt` came back as its argument's bits
+converted as an integer, `(float)(int64_t)v` moved the bits across
+unconverted, and the unsigned conversions (FCVT.D.WU, .S.LU, .D.LU)
+took the signed ones. The segfaults were a third defect: cc-x64 pointed
+every function pointer in a static initializer at the start of .data,
+so hooks.c's table called into data the first time a hook ran
+(`printf` of a 64-bit value, `__udivdi3`). `-H` ran on; `S32_HOOKS`
+put it on the unsigned divisions.
+
+Most of it was the shared stage08 front end, wrong on SLOW-32 too, and
+fixed there with the other defects the search turned up: selfhost
+ISSUES-72. fp.s32x (the FP instructions and conversions, printed as
+bits) now matches the native run under dbt-x64 with hooks on, and
+comp12, floatmf, intrinsics, fnreturn, fnargbad, fnvalues and intr2002
+from cobol/tests match slow32-fast.
+

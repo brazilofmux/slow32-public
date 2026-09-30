@@ -72,10 +72,13 @@ static int   cg_ncpatches;
 #define DRELOC_STRING 0
 #define DRELOC_GLOBAL 1
 #define DRELOC_BSS    2
+#define DRELOC_SYMBOL 3   /* a named symbol (a function, &arr[k]): name + addend */
 
 static int cg_dreloc_off[CG_MAX_DATA_RELOCS];  /* offset of imm64 in code */
-static int cg_dreloc_kind[CG_MAX_DATA_RELOCS]; /* DRELOC_STRING or DRELOC_GLOBAL */
+static int cg_dreloc_kind[CG_MAX_DATA_RELOCS]; /* DRELOC_STRING, _GLOBAL or _SYMBOL */
 static int cg_dreloc_idx[CG_MAX_DATA_RELOCS];
+static char *cg_dreloc_name[CG_MAX_DATA_RELOCS]; /* DRELOC_SYMBOL */
+static int cg_dreloc_add[CG_MAX_DATA_RELOCS];    /* DRELOC_SYMBOL */
 static int cg_ndrelocs;
 
 /* --- Object mode flag --- */
@@ -1542,9 +1545,22 @@ static void gen_data_sections(Node *prog) {
                         cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
                         cg_dreloc_idx[cg_ndrelocs] = ps_girel_idx[reli];
                         cg_ndrelocs = cg_ndrelocs + 1;
+                    } else if (ps_girel_kind[reli] == GIRELOC_SYMBOL) {
+                        /* A function or `&arr[k]`, by name: ps_girel_idx
+                         * is no global index for it, and taking it for one
+                         * pointed every function pointer in a static
+                         * initializer at the start of .data -- the
+                         * self-hosted dbt-x64's hook table called into
+                         * data (DBT-20).  As cc-a64 does. */
+                        cg_dreloc_off[cg_ndrelocs] = -(cg_data_len + 1);
+                        cg_dreloc_kind[cg_ndrelocs] = DRELOC_SYMBOL;
+                        cg_dreloc_idx[cg_ndrelocs] = 0;
+                        cg_dreloc_name[cg_ndrelocs] = ps_girel_name[reli];
+                        cg_dreloc_add[cg_ndrelocs] = ps_girel_add[reli];
+                        cg_ndrelocs = cg_ndrelocs + 1;
                     } else {
-                        /* GIRELOC_GLOBAL or GIRELOC_SYMBOL — emit a
-                         * pointer slot to another global symbol. */
+                        /* GIRELOC_GLOBAL — a pointer slot to another
+                         * global. */
                         cg_dreloc_off[cg_ndrelocs] = -(cg_data_len + 1);
                         cg_dreloc_kind[cg_ndrelocs] = DRELOC_GLOBAL;
                         cg_dreloc_idx[cg_ndrelocs] = ps_girel_idx[reli];
@@ -1630,6 +1646,31 @@ static void resolve_relocations(void) {
         /* Compute target address */
         if (cg_dreloc_kind[i] == DRELOC_STRING) {
             addr = rodata_base + cg_str_rodata_off[cg_dreloc_idx[i]];
+        } else if (cg_dreloc_kind[i] == DRELOC_SYMBOL) {
+            int si;
+            addr = 0;
+            si = 0;
+            while (si < cg_nfuncs) {
+                if (cg_strcmp(cg_dreloc_name[i], cg_func_name[si]) == 0) {
+                    addr = elf_text_vaddr() + cg_func_off[si];
+                    break;
+                }
+                si = si + 1;
+            }
+            if (si == cg_nfuncs) {
+                si = 0;
+                while (si < cg_nglobals) {
+                    if (cg_strcmp(cg_dreloc_name[i], cg_glob_name[si]) == 0) {
+                        if (cg_glob_in_bss[si])
+                            addr = data_base + cg_data_len + cg_glob_data_off[si];
+                        else
+                            addr = data_base + cg_glob_data_off[si];
+                        break;
+                    }
+                    si = si + 1;
+                }
+            }
+            addr = addr + cg_dreloc_add[i];
         } else {
             /* DRELOC_GLOBAL: check if this global is in BSS or data */
             int gidx;
