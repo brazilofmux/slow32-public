@@ -89,8 +89,21 @@ static int alloc_guest_fd(mmio_ring_state_t *mmio, int host_fd) {
     return -1;
 }
 
+/* The errno an error response carries, as tools/emulator/mmio_ring.c's
+ * mmio_fail gives it: the guest's libc makes it errno.  Without it every
+ * failure read as EIO, and SQLite, which tells a missing journal
+ * (ENOENT) from a real I/O error, found its database corrupt (DBT-19). */
+static int stub_err;
+static long stub_ck(long rc) {
+    if (rc < 0 && rc > -4096) stub_err = (int)-rc;
+    return rc;
+}
+
 static int host_fd_for(mmio_ring_state_t *mmio, uint32_t guest_fd) {
-    if (guest_fd >= S32_MMIO_MAX_FDS) return -1;
+    if (guest_fd >= S32_MMIO_MAX_FDS || mmio->host_fds[guest_fd] < 0) {
+        stub_err = 9;   /* EBADF */
+        return -1;
+    }
     return mmio->host_fds[guest_fd];
 }
 
@@ -233,6 +246,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
     resp.length = 0;
     resp.offset = req->offset;
     resp.status = S32_MMIO_STATUS_ERR;
+    stub_err = 0;
 
     off = req->offset % S32_MMIO_DATA_CAPACITY;
     len = req->length;
@@ -263,7 +277,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
             host_fd = host_fd_for(mmio, req->status);
             if (host_fd >= 0 && mmio->guest_mem_base && req->offset < mmio->guest_mem_size &&
                 (uint64_t)req->offset + req->length <= mmio->guest_mem_size) {
-                rc = read(host_fd, (char *)mmio->guest_mem_base + req->offset, (int)req->length);
+                rc = stub_ck(read(host_fd, (char *)mmio->guest_mem_base + req->offset, (int)req->length));
                 if (rc >= 0) { resp.status = (uint32_t)rc; resp.length = (uint32_t)rc; }
             }
         }
@@ -272,14 +286,14 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
         if (len > 0 && len < 256 && off + len <= S32_MMIO_DATA_CAPACITY) {
             for (i = 0; i < len; i = i + 1) namebuf[i] = (char)mmio->data_buffer[off + i];
             namebuf[len] = 0;
-            if (__syscall(269, -100, namebuf, (long)req->status, 0, 0, 0) == 0) resp.status = S32_MMIO_STATUS_OK;
+            if (stub_ck(__syscall(269, -100, namebuf, (long)req->status, 0, 0, 0)) == 0) resp.status = S32_MMIO_STATUS_OK;
         }
     } else if (req->opcode == S32_MMIO_OP_UNLINK) {
         /* unlinkat(AT_FDCWD, path, 0), syscall 263 */
         if (len > 0 && len < 256 && off + len <= S32_MMIO_DATA_CAPACITY) {
             for (i = 0; i < len; i = i + 1) namebuf[i] = (char)mmio->data_buffer[off + i];
             namebuf[len] = 0;
-            if (__syscall(263, -100, namebuf, 0, 0, 0, 0) == 0) resp.status = S32_MMIO_STATUS_OK;
+            if (stub_ck(__syscall(263, -100, namebuf, 0, 0, 0, 0)) == 0) resp.status = S32_MMIO_STATUS_OK;
         }
     } else if (req->opcode == S32_MMIO_OP_FTRUNCATE) {
         /* the new length, 4 bytes, in the data buffer: ftruncate, syscall 77 */
@@ -287,7 +301,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
         if (host_fd >= 0 && len >= 4 && off <= S32_MMIO_DATA_CAPACITY - 4) {
             uint32_t nl;
             memcpy((char *)&nl, (char *)(mmio->data_buffer + off), 4);
-            if (__syscall(77, host_fd, (long)nl, 0, 0, 0, 0) == 0) resp.status = S32_MMIO_STATUS_OK;
+            if (stub_ck(__syscall(77, host_fd, (long)nl, 0, 0, 0, 0)) == 0) resp.status = S32_MMIO_STATUS_OK;
         }
     } else if (req->opcode == S32_MMIO_OP_GETCWD) {
         /* getcwd, syscall 79: the length with its NUL as length and status */
@@ -295,7 +309,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
             uint32_t maxl = S32_MMIO_DATA_CAPACITY - off;
             long got;
             if (len < maxl) maxl = len;
-            got = __syscall(79, (char *)(mmio->data_buffer + off), (long)maxl, 0, 0, 0, 0);
+            got = stub_ck(__syscall(79, (char *)(mmio->data_buffer + off), (long)maxl, 0, 0, 0, 0));
             if (got > 0) { resp.length = (uint32_t)got; resp.status = (uint32_t)got; }
         }
     } else if (req->opcode == S32_MMIO_OP_NOP) {
@@ -307,7 +321,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
         host_fd = host_fd_for(mmio, req->status);
         if (host_fd >= 0 && len > 0 && len <= S32_MMIO_DATA_CAPACITY) {
             if (off + len > S32_MMIO_DATA_CAPACITY) len = S32_MMIO_DATA_CAPACITY - off;
-            rc = write(host_fd, (char *)(mmio->data_buffer + off), (int)len);
+            rc = stub_ck(write(host_fd, (char *)(mmio->data_buffer + off), (int)len));
             if (rc >= 0) {
                 resp.length = (uint32_t)rc;
                 resp.status = (uint32_t)rc;
@@ -317,14 +331,14 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
         host_fd = host_fd_for(mmio, req->status);
         if (host_fd >= 0 && len > 0 && len <= S32_MMIO_DATA_CAPACITY) {
             if (off + len > S32_MMIO_DATA_CAPACITY) len = S32_MMIO_DATA_CAPACITY - off;
-            rc = read(host_fd, (char *)(mmio->data_buffer + off), (int)len);
+            rc = stub_ck(read(host_fd, (char *)(mmio->data_buffer + off), (int)len));
             if (rc >= 0) {
                 resp.length = (uint32_t)rc;
                 resp.status = (uint32_t)rc;
             }
         }
     } else if (req->opcode == S32_MMIO_OP_GETCHAR) {
-        rc = read(0, (char *)(mmio->data_buffer + off), 1);
+        rc = stub_ck(read(0, (char *)(mmio->data_buffer + off), 1));
         if (rc == 1) { resp.length = 1; resp.status = S32_MMIO_STATUS_OK; }
         else if (rc == 0) resp.status = S32_MMIO_STATUS_EOF;
     } else if (req->opcode == S32_MMIO_OP_OPEN) {
@@ -345,7 +359,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
                 namebuf[i] = (char)mmio->data_buffer[(off + i) % S32_MMIO_DATA_CAPACITY];
             }
             namebuf[i] = 0;
-            host_fd = open(namebuf, linux_flags, 0644);
+            host_fd = stub_ck(open(namebuf, linux_flags, 0644));
             if (host_fd >= 0) {
                 guest_fd = alloc_guest_fd(mmio, host_fd);
                 if (guest_fd >= 0) {
@@ -353,6 +367,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
                     resp.status = (uint32_t)guest_fd;
                 } else {
                     close(host_fd);
+                    stub_err = 24;   /* EMFILE */
                 }
             }
         }
@@ -377,7 +392,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
                 whence = (int)mmio->data_buffer[off];
                 distance = 0;
                 memcpy((char *)&distance, (char *)(mmio->data_buffer + off + 4), 4);
-                new_pos = lseek(host_fd, distance, whence);
+                new_pos = stub_ck(lseek(host_fd, distance, whence));
                 if (new_pos >= 0) resp.status = (uint32_t)new_pos;
             }
         }
@@ -390,12 +405,12 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
                 }
                 namebuf[i] = 0;
                 /* LSTAT: newfstatat(AT_FDCWD, path, buf, AT_SYMLINK_NOFOLLOW), syscall 262 */
-                if (req->opcode == S32_MMIO_OP_LSTAT) rc_stat = __syscall(262, -100, namebuf, stat_buf, 0x100, 0, 0);
-                else rc_stat = stat(namebuf, stat_buf);
+                if (req->opcode == S32_MMIO_OP_LSTAT) rc_stat = stub_ck(__syscall(262, -100, namebuf, stat_buf, 0x100, 0, 0));
+                else rc_stat = stub_ck(stat(namebuf, stat_buf));
             }
         } else {
             host_fd = host_fd_for(mmio, req->status);
-            if (host_fd >= 0) rc_stat = fstat(host_fd, stat_buf);
+            if (host_fd >= 0) rc_stat = stub_ck(fstat(host_fd, stat_buf));
         }
         if (rc_stat == 0 && off + sizeof(stat_result) <= S32_MMIO_DATA_CAPACITY) {
             memset((char *)&stat_result, 0, sizeof(stat_result));
@@ -494,6 +509,8 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu,
         }
     }
     /* All other opcodes leave resp.status = ERR. */
+    if (resp.status == S32_MMIO_STATUS_ERR)
+        resp.length = (uint32_t)(stub_err ? stub_err : 22);   /* else EINVAL */
 
     /* S32_MMIO_TRACE: 1 the requests answered with an error, 2 every request
      * (op status offset length > status length), on stderr (DBT-18) */

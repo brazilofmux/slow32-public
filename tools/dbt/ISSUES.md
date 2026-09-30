@@ -579,7 +579,7 @@ localtime agree.  Both cross trees pass `make && make test` as the
 builder runs them (a64 in the container, x64 on kagura).  dbt-x64 runs
 the MMIO programs too (DBT-20 for what it does next).
 
-## 19. SQLite Fails Under the Self-Hosted dbt-a64 (OPEN, 2026-09-30)
+## 19. SQLite Fails Under the Self-Hosted dbt-a64 (FIXED 2026-09-30)
 
 `cobol/tests/free/esqldesc` and `esqldyn` (EXEC SQL on SQLite): the
 first statement fails with "malformed database schema (sqlite_master) -
@@ -606,6 +606,36 @@ covered by the differentials above -- or from guest memory written host
 side.  Next: a guest-state checkpoint differential (registers and a
 memory hash at each block exit) between the gcc DBT and dbt-a64, from
 the `fstat` return on.
+
+Fixed with that differential, done in Stage 1 (`-1`, one block per
+dispatcher trip, and it still failed there): after every block, the
+block PC, the next PC and a hash of the 32 registers, from the gcc DBT
+and from dbt-a64, then the first line that differs. The run is under
+200,000 blocks, so every block was traced.
+
+- The first difference was not the bug: an MMIO error response. The
+  real service carries the errno in `length` (mmio_fail); both cross
+  trees' stubs left it 0, so every failed request reached the guest as
+  EIO, here a GETENV of an unset variable (EINVAL). Fixed: the stubs
+  record the kernel's errno, EBADF for an unmapped fd, EINVAL otherwise.
+- With registers the same, the first control-flow split was in
+  sqlite3InitCallback: `sqlite3GetUInt32(rootpage)` returned 0, which
+  is "invalid rootpage". Its tail block, `seq r1, r1, r5; bne r1, zero`,
+  branched correctly and left r1 (the return value) 0. The fused
+  compare-branch skips materializing rd when `dead_temp_skip` says it is
+  dead, and dbt-a64 read the flag at index 0 (the `andi`, truly dead)
+  instead of 2. `pending_cond.inst_idx` held 2 when stored and when the
+  branch began; the local copy lost it. cc-a64 had paired the loads of
+  `imm` (+8) and `inst_idx` (+12) into one LDP while `inst_idx`'s value
+  was spilled: ra_reg -1 encoded as register 31, `ldp w24, wzr` and
+  `str wzr` to the spill slot. `hx_load_pair_safe` never checked that
+  both loads had registers (the store twin did). selfhost/stage08-cross-a64
+  hir_codegen_a64.h now refuses; cc-x64 has no LDP pairing.
+
+esqldesc and esqldyn match their expected output under dbt-a64 and
+dbt-x64. Found on the way, not fixed: the self-hosted libcs' printf
+prints `%-2d` literally and shifts every later argument; cc-a64's
+`offsetof` refuses a nested member designator (`offsetof(T, a.b)`).
 
 ## 20. Floating Point Broken in the Self-Hosted dbt-x64 (FIXED 2026-09-30)
 

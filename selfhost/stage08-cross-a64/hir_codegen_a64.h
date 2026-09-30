@@ -1979,6 +1979,14 @@ static int hx_load_pair_safe(int idx, int j, int wide) {
     int diff;
     int x;
 
+    /* Both loads need a register.  A spilled one has ra_reg -1, which the
+     * LDP encodes as register 31 -- the zero register -- so its load was
+     * discarded and 0 spilled in its place: the self-hosted dbt-a64's
+     * `saved_idx = pending_cond.inst_idx` paired with the `imm` load before
+     * it read 0, and a fused compare-branch skipped a live result
+     * (tools/dbt/ISSUES.md, DBT-19).  hx_store_pair_safe already refuses. */
+    if (ra_reg[idx] < 0 || ra_reg[j] < 0) return 0;
+
     color_a    = hx_slot_reg(ra_reg[idx]);
     color_b    = hx_slot_reg(ra_reg[j]);
     color_base = (ra_reg[hx_off_base[idx]] >= 0)
