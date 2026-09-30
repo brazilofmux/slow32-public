@@ -671,6 +671,11 @@ times). free/copyrep, free/replace; SM 12 of 13 compile and every
 one matches GnuCOBOL's tally; the whole suite 217 of 303 compile,
 4115 of 4152 tests pass, none fail, 214 programs match.
 
+Superseded 2026-09-30: COPY and REPLACE now work on text-words, ahead
+of the tokenizer, as 2023 7.2 orders it (`text_manipulation`;
+docs/conformance/copy.md). The token model could not match inside a
+picture or re-join IBM's `:TAG:` prefixes.
+
 ## Stage 27 — DECIMAL-POINT IS COMMA **S** — DONE 2026-08-31
 
 The last SM program. The clause reaches SM103A by `COPY K3SNA`, after

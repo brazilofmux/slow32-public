@@ -1,7 +1,7 @@
 identification division.
 program-id. copyrep.
 *> COPY ... REPLACING: a word by a word, a literal by a literal, and
-*> ==pseudo-text== by ==pseudo-text==, matched token for token against
+*> ==pseudo-text== by ==pseudo-text==, matched text-word for text-word against
 *> the copied text (the Library module of COBOL 85).
 data division.
 working-storage section.

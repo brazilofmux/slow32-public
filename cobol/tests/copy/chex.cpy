@@ -1,0 +1,2 @@
+       01 CH-A PIC X(3) VALUE "ABC".
+       01 CH-B PIC X(3) VALUE X"414243".

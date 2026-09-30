@@ -39,6 +39,7 @@ began this; ISSUES-96 on record the sweeps.
 | 14.9.20 INITIALIZE | [initialize.md](initialize.md) | 2026-09-29 |
 | 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
 | 14.9.37 SEARCH | [search.md](search.md) | 2026-09-29 |
+| 7.2 COPY and REPLACE (text manipulation) | [copy.md](copy.md) | 2026-09-30 |
 | 14.9.39 SET (formats 1-4) | [set.md](set.md) | 2026-09-30 |
 | 14.9.40, .24, .32, .34 SORT, MERGE, RELEASE, RETURN | [sort.md](sort.md) | 2026-09-29 |
 | 13.18.32, .33, .52, .55 JUSTIFIED, level-number, SIGN, SYNCHRONIZED | [clauses.md](clauses.md) | 2026-09-29 |

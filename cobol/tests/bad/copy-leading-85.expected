@@ -1,0 +1,1 @@
+COPY REPLACING LEADING and TRAILING (partial words) are COBOL 2002; compile with -std=2002
