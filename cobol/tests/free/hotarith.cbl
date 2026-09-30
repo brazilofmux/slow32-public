@@ -1,58 +1,57 @@
-*> MULTIPLY, DIVIDE and COMPUTE on binary integers, computed in a word
-*> where that is the decimal stack's answer (default dialect: COMP-5):
-*> signs, remainders, a zero and a -1 divisor, truncation, wrapping.
+*> hotarith -- the inline integer paths GitHub #27 widened.
+*> Comparisons: an unsigned four-byte COMP uses the whole 32-bit range, so
+*> it is ordered by the unsigned compare, while anything that can be
+*> negative must keep the signed one; both are exercised at the boundaries.
+*> Stores: the picture still truncates, and an unsigned receiver still
+*> takes the magnitude -- the compare-and-subtract that replaced the REM,
+*> and the elided sign fixup, must not change either answer.
+*> Not covered here: a four-byte unsigned item holding more than 2^31,
+*> where the unsigned ordering is necessary rather than merely equivalent.
+*> Every such item built from a picture holds at most 999999999, below the
+*> sign bit, so only COMP-5 reaches past it; free/notrunc has that case
+*> (GitHub #28, the store that used to lose it).
 identification division.
 program-id. hotarith.
 data division.
 working-storage section.
-01 a5  pic s9(8) comp-5.
-01 b5  pic s9(8) comp-5.
-01 q5  pic s9(8) comp-5.
-01 r5  pic s9(8) comp-5.
-01 h5  pic s9(4) comp-5.
-01 u5  pic 9(4) comp-5.
-01 c4  pic s9(4) comp.
-01 cu  pic 9(3) comp.
-01 d6  pic s9(6).
-01 du  pic 9(4).
-01 i   pic s9(4) comp.
-01 j   pic s9(4) comp.
-01 t.
-   05 e pic s9(4) comp occurs 5.
-01 x   pic s9(5) comp-5.
+01  u9  pic 9(9)  comp value 0.
+01  s9  pic s9(9) comp value 0.
+01  u4  pic 9(4)  comp value 0.
+01  u2  pic 9(2)  comp value 0.
 procedure division.
-    move -17 to a5 move 5 to b5
-    divide b5 into a5 giving q5 remainder r5 display q5 " " r5
-    divide a5 by b5 giving q5 remainder r5 display q5 " " r5
-    move 17 to a5 move -5 to b5
-    divide b5 into a5 giving q5 remainder r5 display q5 " " r5
-    move 0 to b5 move 77 to q5 move 66 to r5
-    divide b5 into a5 giving q5 remainder r5 display "div0 " q5 " " r5
-    move -1 to b5
-    divide b5 into a5 giving q5 remainder r5 display q5 " " r5
-    move 12345 to a5 move 7 to b5
-    divide b5 into a5 giving c4 remainder cu display c4 " " cu
-    divide b5 into a5 giving d6 du display d6 " " du
-    move 1000 to c4 divide 3 into c4 display c4
-    multiply 3 by c4 display c4
-    multiply 50 by c4 display c4
-    multiply a5 by b5 giving d6 display d6
-    move -30000 to h5 multiply 3 by h5 display h5
-    move 40000 to u5 multiply 2 by u5 display u5
-    move 2147483000 to a5 compute x = a5 * 3 + 7 display x
-    compute q5 = 400 * a5 + 100 * b5 - 4 display q5
-    compute c4 = (b5 + 3) * (b5 - 10) display c4
-    compute cu = b5 - 20 display cu
-    compute d6 = -(b5 * b5) + 1 display d6
-    compute q5 = (a5 - 5) / -b5 display q5
-    compute q5 rounded = 7 / 2 display q5
-    compute q5 = 7 / 2 * 2 display q5
-    move 1 to i
-    perform until i > 5
-        compute e(i) = i * i - 3
-        add 1 to i
-    end-perform
-    move 2 to j
-    compute x = e(j + 1) * e(5) / e(j) display x
-    display e(1) " " e(2) " " e(3) " " e(4) " " e(5)
+main-procedure.
+    move 999999999 to u9
+    if u9 > 999999998 then display 'A ok' else display 'A BAD' end-if
+    if u9 > 1000000000 then display 'B BAD' else display 'B ok' end-if
+    if u9 = 999999999 then display 'C ok' else display 'C BAD' end-if
+    move 0 to u9
+    if u9 < 1 then display 'D ok' else display 'D BAD' end-if
+    if u9 >= 0 then display 'E ok' else display 'E BAD' end-if
+    move -5 to s9
+    if s9 < 0 then display 'F ok' else display 'F BAD' end-if
+    if s9 < u9 then display 'G ok' else display 'G BAD' end-if
+    if u9 > s9 then display 'H ok' else display 'H BAD' end-if
+    move 999999999 to u9
+    add 1 to u9
+    display 'I ' u9
+    if u9 = 0 then display 'N ok' else display 'N BAD' end-if
+    move 9999 to u4
+    add 1 to u4
+    display 'J ' u4
+    if u4 = 0 then display 'O ok' else display 'O BAD' end-if
+    move 98 to u2
+    add 3 to u2
+    display 'K ' u2
+    if u2 = 1 then display 'P ok' else display 'P BAD' end-if
+    move 5 to u2
+    add 400 to u2
+    display 'Q ' u2
+    if u2 = 5 then display 'R ok' else display 'R BAD' end-if
+    move 3 to u9
+    subtract 5 from u9
+    display 'L ' u9
+    move 7 to u9
+    add 4 to u9
+    display 'M ' u9
     stop run.
+end program hotarith.

@@ -82,7 +82,7 @@ run, and 52 ms for its heaviest program. So the measure is jerm, the
 - **`-fno-hot-arith`** turns the register path off, which gives a
   differential's other side. With it (and `-fbinary-byteorder=native`),
   the Open Systems suite compiles byte-identical to the baseline.
-- **Tests:** `tests/free/hotarith` and `hotarith2` cover signs,
+- **Tests:** `tests/free/hotmuldiv` and `hotarith2` cover signs,
   remainders, zero and -1 divisors, truncation, wrapping and overflow
   fallbacks. GnuCOBOL agrees with both.
 
