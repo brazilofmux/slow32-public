@@ -169,9 +169,12 @@ FROM alpine:3.21 AS selfhost-builder
 RUN apk add --no-cache build-base bash
 WORKDIR /build
 # selfhost/ and common/ must stay siblings: the cross libc includes
-# ../../../common/mmio_ring_layout.h.
+# ../../../common/mmio_ring_layout.h.  Its MMIO stubs also include the
+# emulator's own ../../../tools/emulator/mmio_ring.h (DBT-18: the copy they
+# carried had gone stale), which in turn includes common/ as above.
 COPY selfhost /build/selfhost
 COPY common  /build/common
+COPY tools/emulator/mmio_ring.h /build/tools/emulator/
 # rm -rf out: drop any dev-host out/ artifacts (Mach-O on the Mac) so make
 # rebuilds fresh for this image's arch+libc. mkdir out: the a64 cc-a64 target
 # lacks the order-only `| $(OUT)` mkdir guard the x64 one has.
