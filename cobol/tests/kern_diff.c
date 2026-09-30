@@ -59,6 +59,7 @@ static void make_desc(cob_desc *d, char *pic)
     default:
         d->size = digits <= 4 ? 2 : digits <= 9 ? 4 : 8;
         if (rn(4) == 0) { d->flags |= COB_F_NOTRUNC; if (rn(3) == 0) d->size = 1 + rn(8); }
+        if (rn(2)) d->flags2 |= COB_F2_BIGEND;         /* COMP's order (docs/usage.md) */
         break;
     }
 }

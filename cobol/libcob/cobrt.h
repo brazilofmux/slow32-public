@@ -30,6 +30,10 @@ enum {
     COB_F_LEAD     = 64,  /* SIGN LEADING (not separate): overpunch on the first digit */
     COB_F_INTFN    = 128  /* an integer function's result: DISPLAY shows no leading zeros (cobol ISSUES-81) */
 };
+/* flags2 */
+enum {
+    COB_F2_BIGEND  = 1    /* COB_U_BINARY stored big-endian: COMP, BINARY (docs/usage.md) */
+};
 
 /* a file, as SELECT/FD described it; built by the compiler in .data */
 enum { COB_ORG_LINESEQ = 0, COB_ORG_SEQ = 1, COB_ORG_INDEXED = 2, COB_ORG_RELATIVE = 3, COB_ORG_SORT = 4 };
@@ -172,7 +176,8 @@ typedef struct {
     unsigned char digits;
     signed char   scale;
     unsigned char flags;
-    unsigned char pad[3];
+    unsigned char flags2;    /* COB_F2_*: the flags byte is full */
+    unsigned char pad[2];
     unsigned int  size;      /* bytes in storage */
     const char   *pic;       /* flattened PICTURE symbols, or 0 */
 } cob_desc;

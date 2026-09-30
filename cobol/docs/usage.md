@@ -26,9 +26,12 @@ a dialect question, decided for preservation.
 | COMP-4, COMP-6, COMP-X, COMP-N | not recognized | |
 | BINARY-CHAR/SHORT/LONG/DOUBLE, SIGNED-INT etc. | native binary | 1/2/4/8 |
 
-**Byte order: every binary item is little-endian**, SLOW-32's own order.
-That holds in libcob's stores (kern.h) and in the compiler's inline
-loads and stores of COMP items (the hot paths).
+**Byte order** (step 1, done 2026-09-30): COMP, COMPUTATIONAL, BINARY and
+RM's COMP-1 are **big-endian**; `-fbinary-byteorder=native` keeps them
+little-endian. COMP-5, the native usages (BINARY-CHAR and the rest,
+POINTER, INDEX) and RETURN-CODE, a C int that libcob shares, are always
+SLOW-32's own little-endian order. (Before step 1, every binary item was
+little-endian.)
 
 ## What Micro Focus does (Visual COBOL 8.0 Language Reference)
 
@@ -129,6 +132,22 @@ PICTURE stays RM's binary.**
 Each is a class E behavior point, as COMP-3 and COMP-5 are now.
 
 ## The order of work
+
+**Step 1 as built:**
+- A descriptor carries the order in a second flags byte (`flags2`,
+  `COB_F2_BIGEND`; the first byte is full). kern.h reads and writes by it,
+  so the DBT hooks do too, and so do libcob's 31-digit paths.
+- The compiler's inline loads and stores of a hot COMP item (a word or
+  less, integer) work without a byte-swap instruction, which SLOW-32
+  lacks, and with r2 as the only scratch register:
+  - a halfword load is two byte loads;
+  - a word load is a word load and nine register operations;
+  - a store is the bytes one at a time.
+- VALUE clauses are laid down big-endian at compile time.
+- Under `-fbinary-byteorder=native` the generated code is byte-identical
+  to the code before step 1.
+- `tests/free/binorder.cbl` writes a record and prints its bytes, with
+  GnuCOBOL as the oracle.
 
 1. **Byte order** of COMP/BINARY/COMP-4, with the flag. The runtime and
    the compiler's inline paths change together. The gates' printed

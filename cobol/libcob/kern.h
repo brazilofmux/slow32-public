@@ -42,13 +42,14 @@
 enum { K_NUM_ED = 4 };                                      /* cat */
 enum { K_U_DISPLAY = 0, K_U_BINARY = 1, K_U_PACKED = 2, K_U_NATIONAL = 3, K_U_BIT = 4 };
 enum { K_F_SIGNED = 1, K_F_SEPLEAD = 2, K_F_SEPTRAIL = 4, K_F_BLANKZ = 16, K_F_NOTRUNC = 32, K_F_LEAD = 64 };
+enum { K_F2_BIGEND = 1 };                                   /* flags2 */
 
 /* cob_desc as the guest lays it out, the PICTURE pointer a 32-bit guest
  * address */
 typedef struct {
     unsigned char cat, usage, digits;
     signed char   scale;
-    unsigned char flags, pad[3];
+    unsigned char flags, flags2, pad[2];
     unsigned int  size;
     unsigned int  pic;
 } cob_kdesc;
@@ -153,7 +154,8 @@ KFN long long cob_k_get_num(const unsigned char *p, const cob_kdesc *d)
     switch (d->usage) {
     case K_U_BINARY: {
         unsigned long long u = 0;
-        for (int i = (int)d->size - 1; i >= 0; i--) u = (u << 8) | p[i];
+        if (d->flags2 & K_F2_BIGEND) for (unsigned i = 0; i < d->size; i++) u = (u << 8) | p[i];
+        else for (int i = (int)d->size - 1; i >= 0; i--) u = (u << 8) | p[i];
         if ((d->flags & K_F_SIGNED) && d->size < 8 && ((u >> (d->size * 8 - 1)) & 1))
             u |= ~0ULL << (d->size * 8);
         return (long long)u;
@@ -282,7 +284,8 @@ KFN int cob_k_put_num(unsigned char *p, const cob_kdesc *d, int eff, long long v
     switch (d->usage) {
     case K_U_BINARY: {
         long long s = neg ? k_neg(mag) : (long long)mag;
-        for (unsigned i = 0; i < d->size; i++) p[i] = (unsigned char)(s >> (8 * i));
+        if (d->flags2 & K_F2_BIGEND) for (unsigned i = 0; i < d->size; i++) p[d->size - 1 - i] = (unsigned char)(s >> (8 * i));
+        else for (unsigned i = 0; i < d->size; i++) p[i] = (unsigned char)(s >> (8 * i));
         break;
     }
     case K_U_PACKED: {

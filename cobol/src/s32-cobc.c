@@ -1895,6 +1895,14 @@ typedef struct Sym {
     /* descriptor */
     int  desc_id;                   /* -1 until emitted */
 } Sym;
+
+/* COMP, BINARY (and RM's COMP-1) are big-endian, as IBM, Micro Focus and
+ * GnuCOBOL store them, so a record written by any of them reads here
+ * (docs/usage.md); -fbinary-byteorder=native keeps SLOW-32's little-endian
+ * order.  COMP-5, the native usages and RETURN-CODE (a C int the run unit
+ * shares) are always the machine's order. */
+static int g_bin_native;
+static int sym_be(const Sym *s) { return s->usage == U_BINARY && !s->is_rc && !g_bin_native; }
 static int sym_in_strong(const Sym *s);
 static Sym *odo_table_for(Sym *s);
 static void value_rules(void);
@@ -2361,6 +2369,8 @@ static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
         break;
     }
     }
+    if (sym_be(s))                              /* built little-endian above; COMP is stored big-endian */
+        for (int i = 0, j = s->size - 1; i < j; i++, j--) { unsigned char c = p[i]; p[i] = p[j]; p[j] = c; }
 }
 
 static int parse_level(void)
@@ -3907,7 +3917,7 @@ typedef struct { char *label; unsigned char *bytes; int len; } Lit;
 static Lit *g_lit; static int g_nlit, g_lcap;
 
 /* descriptors: emitted into .rodata at the end */
-typedef struct { unsigned char cat, usage, digits; signed char scale; unsigned char flags; int size; char picstr[PIC_MAXPAT]; } Desc;
+typedef struct { unsigned char cat, usage, digits; signed char scale; unsigned char flags, flags2; int size; char picstr[PIC_MAXPAT]; } Desc;
 static Desc *g_desc; static int g_ndesc, g_dcap;
 
 static int g_noemit;        /* >0 while a lookahead parse runs: no code */
@@ -4096,6 +4106,7 @@ static int sym_desc(Sym *s)
         d.digits = (unsigned char)s->pi.digits; d.scale = (signed char)s->pi.scale;
         if (s->pi.is_signed) d.flags |= COB_F_SIGNED;
         if (s->usage == U_COMP5 || usage_is_native(s->usage)) d.flags |= COB_F_NOTRUNC;
+        if (sym_be(s)) d.flags2 |= COB_F2_BIGEND;
         if (s->just) d.flags |= COB_F_JUST;
         if (s->blank_zero) d.flags |= COB_F_BLANKZ;
         if (s->sign_sep) d.flags |= s->sign_lead ? COB_F_SEPLEAD : COB_F_SEPTRAIL;
@@ -5363,10 +5374,39 @@ static void emit_display_encode(int n, const char *areg, const char *vreg);
 static int is_display_int(Sym *s);
 static int opnd_display_int(Opnd *o);
 
+/* A big-endian (COMP) item.  SLOW-32 has no byte swap, and the only
+ * scratch is r2, as emit_display_decode has it: emit_ref_addr's subscript
+ * path loads with areg == dreg == r1 while emit_args may hold arguments in
+ * r3 and up.  So the address is used up first and the bytes are put right
+ * in registers: for a word, b0 into the top, the other three below it
+ * reversed ([b0 b3 b2 b1]), then b1 and b3 exchanged by xor. */
 static void emit_load_int(Sym *s, const char *areg, const char *dreg)
 {
     if (is_display_int(s)) { emit_display_decode(s->pi.digits, areg, dreg); return; }
     int sg = s->pi.is_signed;
+    if (sym_be(s) && s->size > 1) {
+        if (!strcmp(areg, "r2") || !strcmp(dreg, "r2") || (s->size != 2 && s->size != 4))
+            die_at(s->line, "internal: emit_load_int of a big-endian item: registers or size");
+        if (s->size == 2) {
+            emit("\tldbu r2, %s+1", areg);
+            emit("\tldbu %s, %s+0", dreg, areg);
+            emit("\tslli %s, %s, %d", dreg, dreg, sg ? 24 : 8);
+            if (sg) emit("\tsrai %s, %s, 16", dreg, dreg);
+            emit("\tor %s, %s, r2", dreg, dreg);
+            return;
+        }
+        emit("\tldw r2, %s+0", areg);                 /* b0 | b1<<8 | b2<<16 | b3<<24 */
+        emit("\tslli %s, r2, 24", dreg);
+        emit("\tsrli r2, r2, 8");
+        emit("\tor %s, %s, r2", dreg, dreg);        /* [b0 b3 b2 b1] */
+        emit("\tsrli r2, %s, 16", dreg);
+        emit("\txor r2, r2, %s", dreg);
+        emit("\tandi r2, r2, 255");                 /* b1 ^ b3 */
+        emit("\txor %s, %s, r2", dreg, dreg);
+        emit("\tslli r2, r2, 16");
+        emit("\txor %s, %s, r2", dreg, dreg);        /* [b0 b1 b2 b3] */
+        return;
+    }
     if (s->size == 1) emit("\t%s %s, %s+0", sg ? "ldb" : "ldbu", dreg, areg);
     else if (s->size == 2) emit("\t%s %s, %s+0", sg ? "ldh" : "ldhu", dreg, areg);
     else emit("\tldw %s, %s+0", dreg, areg);
@@ -5375,6 +5415,14 @@ static void emit_load_int(Sym *s, const char *areg, const char *dreg)
 static void emit_store_int(Sym *s, const char *areg, const char *vreg)
 {
     if (is_display_int(s)) { emit_display_encode(s->pi.digits, areg, vreg); return; }
+    if (sym_be(s) && s->size > 1) {             /* big-endian: the low byte last; vreg kept */
+        emit("\tstb %s+%d, %s", areg, s->size - 1, vreg);
+        for (int i = 1; i < s->size; i++) {
+            emit("\tsrli r2, %s, %d", vreg, 8 * i);
+            emit("\tstb %s+%d, r2", areg, s->size - 1 - i);
+        }
+        return;
+    }
     if (s->size == 1) emit("\tstb %s+0, %s", areg, vreg);
     else if (s->size == 2) emit("\tsth %s+0, %s", areg, vreg);
     else emit("\tstw %s+0, %s", areg, vreg);
@@ -17263,7 +17311,7 @@ static void emit_rodata(void)
         Desc *d = &g_desc[i];
         emit("\t.p2align 2");
         emit(".Ld%d:", i);
-        emit("\t.byte %d,%d,%d,%d,%d,0,0,0", d->cat, d->usage, d->digits, (unsigned char)d->scale, d->flags);
+        emit("\t.byte %d,%d,%d,%d,%d,%d,0,0", d->cat, d->usage, d->digits, (unsigned char)d->scale, d->flags, d->flags2);
         emit("\t.word %d", d->size);
         if (d->picstr[0]) emit("\t.word .Lpic%d", i); else emit("\t.word 0");
     }
@@ -17281,6 +17329,7 @@ static void usage(void)
         "  -std=2002 add the COBOL 2002 modules landed so far (docs/standards.md, Stage B)\n"
         "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
         "  -fixed-columns=bytes  count reference-format columns in bytes, not characters (UTF-8 source)\n"
+        "  -fbinary-byteorder=native  COMP/BINARY in SLOW-32's little-endian order, not big-endian (docs/usage.md)\n"
         "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n"
         "  -warn-extensions warn where a program uses an extension to the standard it is compiled for\n", VERSION);
     exit(2);
@@ -17302,6 +17351,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fnsig")) g_fnsig_only = 1;
         else if (!strcmp(argv[i], "-fixed-columns=bytes")) g_col_bytes = 1;
         else if (!strcmp(argv[i], "-fixed-columns=chars")) g_col_bytes = 0;
+        else if (!strcmp(argv[i], "-fbinary-byteorder=native")) g_bin_native = 1;
+        else if (!strcmp(argv[i], "-fbinary-byteorder=big-endian")) g_bin_native = 0;
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) { g_std = 2002; pic_max_digits = 31; }
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {

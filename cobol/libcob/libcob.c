@@ -31,7 +31,9 @@
 
 /* kern.h restates what it needs of cobrt.h; a disagreement fails here */
 typedef char kern_chk_desc[(sizeof(cob_desc) == sizeof(cob_kdesc) && offsetof(cob_desc, size) == offsetof(cob_kdesc, size) &&
-                            offsetof(cob_desc, pic) == offsetof(cob_kdesc, pic) && offsetof(cob_desc, flags) == offsetof(cob_kdesc, flags)) ? 1 : -1];
+                            offsetof(cob_desc, pic) == offsetof(cob_kdesc, pic) && offsetof(cob_desc, flags) == offsetof(cob_kdesc, flags) &&
+                            offsetof(cob_desc, flags2) == offsetof(cob_kdesc, flags2)) ? 1 : -1];
+typedef char kern_chk_f2[K_F2_BIGEND == COB_F2_BIGEND ? 1 : -1];
 typedef char kern_chk_cat[K_NUM_ED == COB_NUM_ED ? 1 : -1];
 typedef char kern_chk_u[(K_U_DISPLAY == COB_U_DISPLAY && K_U_BINARY == COB_U_BINARY && K_U_PACKED == COB_U_PACKED &&
                          K_U_NATIONAL == COB_U_NATIONAL && K_U_BIT == COB_U_BIT) ? 1 : -1];
@@ -363,10 +365,10 @@ void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w)
         n = cob_deedit(d->pic, p, digs, &neg);
     } else switch (d->usage) {
     case COB_U_BINARY: {
-        /* little-endian two's complement, up to sixteen bytes */
-        unsigned sz = d->size < 16 ? d->size : 16;
-        for (unsigned i = 0; i < sz; i++) w->m[i / 4] |= (wl_t)p[i] << (8 * (i % 4));
-        if ((d->flags & COB_F_SIGNED) && (p[sz - 1] & 0x80)) {
+        /* two's complement, up to sixteen bytes, little- or big-endian */
+        unsigned sz = d->size < 16 ? d->size : 16, be = d->flags2 & COB_F2_BIGEND;
+        for (unsigned i = 0; i < sz; i++) w->m[i / 4] |= (wl_t)p[be ? d->size - 1 - i : i] << (8 * (i % 4));
+        if ((d->flags & COB_F_SIGNED) && (p[be ? d->size - sz : sz - 1] & 0x80)) {
             for (unsigned i = sz; i < 16; i++) w->m[i / 4] |= (wl_t)0xFF << (8 * (i % 4));
             for (int i = 0; i < WL; i++) w->m[i] = ~w->m[i];
             wl_t one[WL] = { 1, 0, 0, 0 };
@@ -464,7 +466,8 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
         wl_t mag[WL];
         w_from_digits(mag, D + L - 38, 38);
         if (neg) { for (int i = 0; i < WL; i++) mag[i] = ~mag[i]; wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(mag, one, WL); }
-        for (unsigned i = 0; i < d->size; i++) p[i] = i < 16 ? (unsigned char)(mag[i / 4] >> (8 * (i % 4))) : (neg ? 0xFF : 0);
+        unsigned be = d->flags2 & COB_F2_BIGEND;
+        for (unsigned i = 0; i < d->size; i++) p[be ? d->size - 1 - i : i] = i < 16 ? (unsigned char)(mag[i / 4] >> (8 * (i % 4))) : (neg ? 0xFF : 0);
         break;
     }
     case COB_U_PACKED: {

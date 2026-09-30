@@ -1,0 +1,6 @@
+rec FF FE 12 34 56 78 FF FF FE E0 8E 04 FB 35 02 01 02 01                   
+VALUE 12 34 56 78                                                             
+r-d -000001234567890123
+tot +305420152
+eeedddcccbbbaaa 
+r-h -2007
