@@ -4779,6 +4779,7 @@ typedef struct Opnd_ {
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
     int fsaved;                              /* O_FUNC evaluated already: 1 + the label of its result's copy (MOVE, general rule 1) */
     int fwnum;                               /* O_FUNC: an exact numeric function on the wide stack, its result described at run time (docs/wide.md) */
+    const char *fname;                       /* O_FUNC: the intrinsic's name, for messages */
 } Opnd;
 static int opnds_wide(const Opnd *ops, int n);
 static int refs_wide(const Ref *rs, int nr);
@@ -5299,6 +5300,81 @@ static const struct { const char *name; int id, kind, scale, minargs, maxargs, f
 static void parse_operand(Opnd *o);
 static Opnd expr_opnd(void);
 static int at_arith_op(void);
+static int opnd_is_national(const Opnd *o);
+static int opnd_is_boolean(const Opnd *o);
+
+/* a function's result: numeric, and an integer (X3.23a-1989 23; 2023
+ * 15.2): the table's scale 0 or 9, or a calendar or length function */
+static int fn_is_numeric(int fn);
+static int opnd_fn_numeric(const Opnd *o) { return o->fn < 0 ? o->fscale >= 0 : fn_is_numeric(o->fn); }
+static int opnd_fn_integer(const Opnd *o) { return o->fn < 0 ? o->fscale == 0 : fn_is_numeric(o->fn); }
+/* a function computed in double, or FACTORIAL: its value as wide as it
+ * is, so a statement that uses it computes on the wide stack */
+static int fn_inexact(const Opnd *o)
+{
+    if (o->kind != O_FUNC || o->fn != -1 || o->fkind != FK_NUMS) return 0;
+    switch (o->fnid) {
+    case COB_FN_MEAN: case COB_FN_MEDIAN: case COB_FN_VARIANCE: case COB_FN_STDDEV: case COB_FN_SQRT: case COB_FN_LOG:
+    case COB_FN_LOG10: case COB_FN_SIN: case COB_FN_COS: case COB_FN_TAN: case COB_FN_ASIN: case COB_FN_ACOS: case COB_FN_ATAN:
+    case COB_FN_ANNUITY: case COB_FN_PRESENT_VALUE: case COB_FN_RANDOM: case COB_FN_EXP: case COB_FN_EXP10: case COB_FN_FACTORIAL:
+        return 1;
+    }
+    return 0;
+}
+
+/* an operand's class, for the functions' argument rules (X3.23a-1989 22;
+ * 2023 15.3): 'N' numeric, 'A' alphabetic or alphanumeric, 'X' national,
+ * 'B' boolean, 0 none of those (a figurative constant, an index, a pointer) */
+static int opnd_class(const Opnd *o)
+{
+    if (opnd_is_boolean(o)) return 'B';
+    if (opnd_is_national(o)) return 'X';
+    switch (o->kind) {
+    case O_NUM: case O_EXPR: return 'N';
+    case O_STR: case O_ALL: return 'A';
+    case O_FUNC: return opnd_fn_numeric(o) ? 'N' : 'A';
+    case O_REF: {
+        Sym *s = o->ref.sym;
+        if (o->ref.rm || s->is_group) return 'A';
+        if (s->is_index || s->usage == U_INDEX || s->usage == U_POINTER) return 0;
+        return is_numeric_sym(s) ? 'N' : 'A';
+    }
+    }
+    return 0;
+}
+
+/* argument k of FUNCTION name is of the kind the function takes: 'N'
+ * numeric, 'I' an integer, 'A' alphanumeric (or national, where the
+ * function allows it).  An integer is checked here when it is an item, a
+ * literal or a function; an expression's value, at run time. */
+static void fn_arg_check(const Opnd *x, int want, const char *name, int k, int line)
+{
+    int e85 = g_std < 2002, c = opnd_class(x);
+    char up[40]; snprintf(up, sizeof up, "%s", name);
+    for (char *q = up; *q; q++) *q = (char)toupper((unsigned char)*q);
+    if (want == 'A') {
+        if (c == 'N' || c == 'B' || c == 0)
+            die_at(line, "FUNCTION %s: argument %d is %s; it takes an alphanumeric argument (%s)", up, k,
+                   c == 'N' ? "numeric" : c == 'B' ? "boolean" : "not a character string",
+                   e85 ? "X3.23a-1989 22 (3)" : "2023 15.3 rule 2");
+        return;
+    }
+    if (c != 'N')
+        die_at(line, "FUNCTION %s: argument %d is not numeric (%s)", up, k,
+               e85 ? (want == 'I' ? "X3.23a-1989 22 (4)" : "X3.23a-1989 22 (1)") : (want == 'I' ? "2023 15.3 rule 6" : "2023 15.3 rule 10"));
+    if (want != 'I') return;
+    const char *rule = e85 ? "X3.23a-1989 22 (4)" : "2023 15.3 rule 6";
+    if (x->kind == O_NUM && !numlit_is_int(&x->num))
+        die_at(line, "FUNCTION %s: argument %d is an integer (%s)", up, k, rule);
+    if (x->kind == O_REF && (x->ref.sym->pi.scale > 0 || x->ref.sym->usage == U_FLOAT))
+        die_at(line, "FUNCTION %s: argument %d is an integer; '%s' is not an integer item (%s)", up, k, x->ref.sym->name, rule);
+    if (x->kind == O_FUNC && !opnd_fn_integer(x)) {
+        char xn[40]; snprintf(xn, sizeof xn, "%s", x->fname ? x->fname : "?");
+        for (char *q = xn; *q; q++) *q = (char)toupper((unsigned char)*q);
+        die_at(line, "FUNCTION %s: argument %d is an integer; FUNCTION %s is a numeric function, not an integer function (%s)", up, k,
+               xn, e85 ? "X3.23a-1989 23 (2)" : rule);
+    }
+}
 
 /* one function argument: an expression, an item, a literal -- or a
  * one-dimension table with the subscript ALL, every element an argument */
@@ -5355,6 +5431,34 @@ static int fn89_parse(Opnd *o, Tok *n)
     }
     if (o->nfargs < g_fn89[f].minargs || o->nfargs > g_fn89[f].maxargs)
         die_at(n->line, "FUNCTION %s takes %d to %d arguments", n->s, g_fn89[f].minargs, g_fn89[f].maxargs);
+    {
+        int id = g_fn89[f].id, kind = g_fn89[f].kind;
+        int anyclass = id == COB_FN_MAX || id == COB_FN_MIN || id == COB_FN_ORD_MAX || id == COB_FN_ORD_MIN;
+        for (int i = 0; i < o->nfargs; i++) {
+            int want = kind == FK_ALNUM ? 'A' : kind == FK_INT ? 'I' : 'N';
+            if (kind == FK_NUMS && (id == COB_FN_MOD || id == COB_FN_FACTORIAL || id == COB_FN_YEAR_TO_YYYY ||
+                                    id == COB_FN_DATE_TO_YYYYMMDD || id == COB_FN_DAY_TO_YYYYDDD ||
+                                    id == COB_FN_TEST_DATE_YYYYMMDD || id == COB_FN_TEST_DAY_YYYYDDD ||
+                                    id == COB_FN_RANDOM || (id == COB_FN_ANNUITY && i == 1))) want = 'I';
+            if (!anyclass) fn_arg_check(o->fargs[i], want, n->s, i + 1, n->line);
+        }
+        if (anyclass) {
+            /* one class throughout, alphabetic mixing with alphanumeric;
+             * not boolean (2023 15.59.3, 15.63.3, 15.71.3, 15.72.3 rules 1-2) */
+            int c0 = opnd_class(o->fargs[0]);
+            for (int i = 0; i < o->nfargs; i++) {
+                int c = o->fargs[i]->all_sub ? (is_numeric_sym(o->fargs[i]->ref.sym) ? 'N' : 'A') : opnd_class(o->fargs[i]);
+                if (i == 0) c0 = c;
+                char up[40]; snprintf(up, sizeof up, "%s", n->s);
+                for (char *q = up; *q; q++) *q = (char)toupper((unsigned char)*q);
+                if (c == 'B' || c == 0 || c != c0)
+                    die_at(n->line, "FUNCTION %s: its arguments are all numeric, all alphanumeric or all national (%s)", up,
+                           g_std < 2002 ? "X3.23a-1989 MAX, MIN, ORD-MAX and ORD-MIN argument rules" : "2023 15.59.3 rule 2");
+            }
+        }
+        if (kind == FK_ALNUM && o->nfargs == 2 && (opnd_class(o->fargs[1]) != opnd_class(o->fargs[0])))
+            die_at(n->line, "FUNCTION %s: argument 2 is of the same class as argument 1 (2023 15.68.3 rule 2)", n->s);
+    }
     if (g_fn89[f].kind == FK_ALNUM) {
         Opnd *x = o->fargs[0];
         if (x->kind != O_REF && x->kind != O_STR && x->kind != O_FUNC)
@@ -5393,6 +5497,15 @@ static int fn89_parse(Opnd *o, Tok *n)
                                  o->fnid == COB_FN_REM || o->fnid == COB_FN_INTEGER || o->fnid == COB_FN_INTEGER_PART || o->fnid == COB_FN_ABS ||
                                  o->fnid == COB_FN_SIGN || o->fnid == COB_FN_FRACTION_PART)) ||
         (o->fkind == FK_ALNUM && (o->fnid == -5 || o->fnid == -6 || o->fnid == -7)))) {
+        o->fwnum = 1; o->fsize = 39;
+    }
+    /* computed in double, or FACTORIAL exactly: on the wide stack too, the
+     * result as wide as its value (it was held to nine integer digits) */
+    if (o->fkind == FK_NUMS && (o->fnid == COB_FN_MEAN || o->fnid == COB_FN_MEDIAN || o->fnid == COB_FN_VARIANCE ||
+        o->fnid == COB_FN_STDDEV || o->fnid == COB_FN_SQRT || o->fnid == COB_FN_LOG || o->fnid == COB_FN_LOG10 ||
+        o->fnid == COB_FN_SIN || o->fnid == COB_FN_COS || o->fnid == COB_FN_TAN || o->fnid == COB_FN_ASIN ||
+        o->fnid == COB_FN_ACOS || o->fnid == COB_FN_ATAN || o->fnid == COB_FN_ANNUITY || o->fnid == COB_FN_PRESENT_VALUE ||
+        o->fnid == COB_FN_RANDOM || o->fnid == COB_FN_EXP || o->fnid == COB_FN_EXP10 || o->fnid == COB_FN_FACTORIAL)) {
         o->fwnum = 1; o->fsize = 39;
     }
     o->kind = O_FUNC;
@@ -5477,9 +5590,12 @@ static void parse_operand_raw(Opnd *o)
     int fn = t->kind == T_WORD && (!strcmp(t->s, "function") ||
              (!strcmp(t->s, "length") && g_tp + 1 < g_ntok && is_word(&g_tok[g_tp + 1], "of")) ||
              ((ufn_named(t->s) || (g_repo_all_intrinsic && fn89_known(t->s))) && !sym_lookup_quiet(t->s)));
+    int start = g_tp;
     g_fn_depth += fn;
     parse_operand_raw_1(o);
     g_fn_depth -= fn;
+    if (fn && o->kind == O_FUNC && !o->fname)
+        o->fname = !strcmp(t->s, "function") && start + 1 < g_ntok ? g_tok[start + 1].s : t->s;
 }
 
 static void parse_operand_raw_1(Opnd *o)
@@ -5658,12 +5774,8 @@ static void parse_operand_raw_1(Opnd *o)
             advance();
             if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
             advance();
-            o->farg = xmalloc(sizeof *o->farg);
-            parse_operand(o->farg);
-            if (o->farg->kind == O_REF && !is_int_item(o->farg->ref.sym))
-                die_at(n->line, "FUNCTION %s takes an integer; '%s' is not one", n->s, o->farg->ref.sym->name);
-            if (o->farg->kind != O_REF && o->farg->kind != O_NUM)
-                die_at(n->line, "FUNCTION %s takes an integer item or literal", n->s);
+            o->farg = fn89_arg(n->s);             /* an integer: an arithmetic expression too (15.3 rule 6) */
+            fn_arg_check(o->farg, 'I', n->s, 1, n->line);
             if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
             advance();
             o->kind = O_FUNC; o->fn = fn;
@@ -5738,6 +5850,7 @@ static void parse_operand_raw_1(Opnd *o)
         parse_operand(o->farg);
         if (o->farg->kind != O_REF && o->farg->kind != O_STR && o->farg->kind != O_FUNC)
             die_at(n->line, "FUNCTION %s takes an alphanumeric item or literal", n->s);
+        fn_arg_check(o->farg, 'A', n->s, 1, n->line);
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
         advance();
         o->kind = O_FUNC;
@@ -6627,6 +6740,17 @@ static void emit_fn_value_raw(Opnd *f)
     emit_fn_value_raw_1(f);
     g_incompat_push--;
     g_wide = was; if (!was) g_fstmt = 0;
+    if (ec_on_name("EC-ARGUMENT-FUNCTION")) {
+        /* an argument, or the value, outside the function's rules: the
+         * library noted it (2023 15.3); r1, the result, kept */
+        int Lok = new_label();
+        emit("\tadd r12, r1, r0");
+        emit_call("cob_fn_argbad");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-ARGUMENT-FUNCTION", 0));
+        emit_label(Lok);
+        emit("\tadd r1, r12, r0");
+    }
 }
 static void emit_fn_value_raw_1(Opnd *f)
 {
@@ -6762,7 +6886,8 @@ static void emit_fn_value_raw_1(Opnd *f)
     if (fn_is_numeric(f->fn)) {
         if (x->kind == O_REF && is_hot_int(x->ref.sym)) { emit_ref_addr(&x->ref, "r3"); emit_load_int(x->ref.sym, "r3", "r1"); }
         else if (x->kind == O_REF) { emit_incompat(x); emit_ref_addr(&x->ref, "r3"); emit_desc_addr("r4", sym_desc(x->ref.sym)); emit_call("cob_load_int"); }
-        else emit_li("r1", (long)numlit_int(&x->num));
+        else if (x->kind == O_NUM) emit_li("r1", (long)numlit_int(&x->num));
+        else { emit_push_opnd(x); emit_call("cob_pop_fnint"); }   /* an expression: a fraction is an incorrect argument */
         emit("\tadd r3, r1, r0");
         emit_call(fn_runtime_name(f->fn));
         return;
@@ -9485,6 +9610,12 @@ static void check_numeric_opnd(Opnd *o)
     if (o->kind == O_FIG && strncmp(o->tok->s, "zero", 4)) die_at(o->line, "an arithmetic operand must be numeric");
     if (o->kind == O_REF && o->ref.rm) die_at(o->line, "a reference-modified item is not numeric");
     if (o->kind == O_REF && !is_numeric_sym(o->ref.sym)) die_at(o->line, "'%s' is not numeric", o->ref.sym->name);
+    if (o->kind == O_FUNC && !opnd_fn_numeric(o)) {
+        char up[40]; snprintf(up, sizeof up, "%s", o->fname ? o->fname : "?");
+        for (char *q = up; *q; q++) *q = (char)toupper((unsigned char)*q);
+        die_at(o->line, "FUNCTION %s is %s function, not numeric; an arithmetic operand is numeric (%s)", up,
+               o->fnat ? "a national" : o->fbool ? "a boolean" : "an alphanumeric", g_std < 2002 ? "X3.23a-1989 23" : "2023 15.2");
+    }
 }
 
 /* push an operand onto the numeric stack */
@@ -9499,7 +9630,7 @@ static const char *num_lit_label(const NumLit *n, int *desc);
 static void emit_push(Opnd *o)
 {
     int w = (o->kind == O_NUM && numlit_wide(&o->num)) || (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym));
-    if (w) g_saw_wide = 1;
+    if (w || fn_inexact(o)) g_saw_wide = 1;
     if (o->kind == O_REF && o->ref.sym->usage == U_FLOAT) g_saw_float = 1;
     if (w && !g_wide && !g_noemit) wide_arith_refuse(o->line, o->kind == O_NUM ? "a literal" : "an item");
     if (g_wide && o->kind == O_NUM && numlit_wide(&o->num)) {
@@ -10054,7 +10185,7 @@ static int opnds_wide(const Opnd *ops, int n)
         if ((ops[k].kind == O_REF && ops[k].ref.sym->usage == U_FLOAT) || (ops[k].kind == O_EXPR && ops[k].flt)) g_fstmt = 1;
     for (int k = 0; k < n; k++)
         if ((ops[k].kind == O_REF && !ops[k].ref.rm && sym_wide(ops[k].ref.sym)) || (ops[k].kind == O_NUM && numlit_wide(&ops[k].num)) ||
-            (ops[k].kind == O_EXPR && ops[k].wide)) return 1;
+            (ops[k].kind == O_EXPR && ops[k].wide) || fn_inexact(&ops[k])) return 1;
     return 0;
 }
 static int refs_wide(const Ref *rs, int nr)

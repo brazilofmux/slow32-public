@@ -387,22 +387,28 @@ for src in "$HERE/warn"/*.cbl; do
     report "warn/$name" 0 "$(echo $got | wc -w) point(s), silent by default"
 done
 
-# Gate 6 (exception sites): one program per sites.txt line, all counted
-# as one report so the tally stays readable; the first failure is named.
-esn=0; esbad=""
-while IFS= read -r l || [ -n "$l" ]; do
-    case "$l" in ""|"#"*) continue ;; esac
-    want="${l%%|*}"; stmt="${l#*|}"; esn=$((esn + 1))
-    awk -v s="$stmt" '{ i = index($0, "@STMT@"); if (i) $0 = substr($0, 1, i - 1) s substr($0, i + 6); print }' \
-        "$HERE/ecsites/template.cbl" > "$W/ecsite.cbl"
-    if ! "$CDIR/compile.sh" -free -std=2002 "$W/ecsite.cbl" -o "$W/ecsite.s32x" >"$W/ecsite.log" 2>&1; then
-        esbad="compile: $stmt"; break
-    fi
-    fresh_workdir
-    got="$(emu_run "$W/ecsite.s32x" /dev/null | grep -m1 -E '^(RAISED|not raised)$')"
-    [ "$got" = "$want" ] || { esbad="${got:-nothing} for: $stmt"; break; }
-done < "$HERE/ecsites/sites.txt"
-if [ -z "$esbad" ]; then report "ecsites" 0 "$esn sites"; else report "ecsites" 1 "$esbad"; fi
+# Gate 6 (exception sites): one program per line of a sites file, its
+# statement put into a template, all counted as one report so the tally
+# stays readable; the first failure is named.  template.cbl + sites.txt:
+# EC-DATA-INCOMPATIBLE; argfn.cbl + argfn.txt: EC-ARGUMENT-FUNCTION.
+run_sites() {   # name template sites
+    local esn=0 esbad="" l want stmt got
+    while IFS= read -r l || [ -n "$l" ]; do
+        case "$l" in ""|"#"*) continue ;; esac
+        want="${l%%|*}"; stmt="${l#*|}"; esn=$((esn + 1))
+        awk -v s="$stmt" '{ i = index($0, "@STMT@"); if (i) $0 = substr($0, 1, i - 1) s substr($0, i + 6); print }' \
+            "$HERE/ecsites/$2" > "$W/ecsite.cbl"
+        if ! "$CDIR/compile.sh" -free -std=2002 "$W/ecsite.cbl" -o "$W/ecsite.s32x" >"$W/ecsite.log" 2>&1; then
+            esbad="compile: $stmt"; break
+        fi
+        fresh_workdir
+        got="$(emu_run "$W/ecsite.s32x" /dev/null | grep -m1 -E '^(RAISED|not raised)$')"
+        [ "$got" = "$want" ] || { esbad="${got:-nothing} for: $stmt"; break; }
+    done < "$HERE/ecsites/$3"
+    if [ -z "$esbad" ]; then report "$1" 0 "$esn sites"; else report "$1" 1 "$esbad"; fi
+}
+run_sites ecsites template.cbl sites.txt
+run_sites ecsites/argfn argfn.cbl argfn.txt
 
 # Gate 5 (NIST): the CCVS-85 totals line must equal tests/ccvs-baseline.txt.
 # The suite runs in seconds, and outside this gate a MERGE regression sat

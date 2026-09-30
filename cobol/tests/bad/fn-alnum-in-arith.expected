@@ -1,0 +1,1 @@
+FUNCTION CHAR is an alphanumeric function, not numeric; an arithmetic operand is numeric (X3.23a-1989 23)

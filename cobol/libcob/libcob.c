@@ -1731,15 +1731,14 @@ void cob_wmul(void) { w_mul(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
 /* the quotient to the operands' larger scale and six guard digits (at
  * least nine), truncated, as the narrow division; as many as 38 digits
  * hold */
-void cob_wdiv(void)
+static void w_div(cob_wnum *a, const cob_wnum *b)
 {
-    cob_wnum *a = &wstk[wsp - 2], *b = &wstk[wsp - 1];
     if (a->isf || b->isf) {
         double y = w_to_dbl(b);
         if (y == 0) div0 = 1; else w_set_f(a, w_to_dbl(a) / y);
-        wsp--; return;
+        return;
     }
-    if (mp_is_zero(b->m, WL)) { div0 = 1; wsp--; return; }
+    if (mp_is_zero(b->m, WL)) { div0 = 1; return; }
     int want = (a->scale > b->scale ? a->scale : b->scale) + 6;
     if (want < 9) want = 9;
     if (want > 38) want = 38;
@@ -1754,12 +1753,12 @@ void cob_wdiv(void)
     mp_divmod(n, dv, 2 * WL, q, r);                 /* a*10^k/b, or a/(b*10^-k): scale want either way */
     int scale = want;
     while (scale > 38) { mp_div_small(q, 2 * WL, 10); scale--; }
-    if (!w_fit(q, 2 * WL, &scale)) { div0 = 2; wsp--; return; }
+    if (!w_fit(q, 2 * WL, &scale)) { div0 = 2; return; }
     int neg = a->neg != b->neg;
     memcpy(a->m, q, sizeof a->m); a->scale = scale;
     a->neg = neg && !mp_is_zero(a->m, WL);
-    wsp--;
 }
+void cob_wdiv(void) { w_div(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
 
 void cob_wneg(void) { cob_wnum *a = &wstk[wsp - 1]; if (a->isf) { a->f = -a->f; return; } a->neg = !a->neg && !mp_is_zero(a->m, WL); }
 void cob_wtrunc(int scale)
@@ -1889,6 +1888,14 @@ void cob_ec_clear(void) { ec_any = 0; }
 /* EC-BOUND-REF-MOD: 1 when (start:len) leaves an item of size bytes;
  * len -1 when the length was omitted (the rest of the item) */
 static int pos_nonint;
+/* EC-ARGUMENT-FUNCTION (2023 15.3): an argument, or the returned value,
+ * outside a function's rules.  The function notes it here and returns 0
+ * (CHAR a space); the compiled check reads and clears the note when the
+ * condition is checked.  Unchecked, that 0 is the implementor's result
+ * the rule leaves to us -- GnuCOBOL's too.  X3.23a-1989 left the value
+ * undefined and had no exception condition. */
+static int fn_argbad;
+int cob_fn_argbad(void) { int r = fn_argbad; fn_argbad = 0; return r; }
 /* SET's sending value, from cob_pop_pos: 1 when it was not an integer,
  * EC-BOUND-SUBSCRIPT (2023 14.9.39.4 rules 2 and 3); the note cleared */
 int cob_pos_nonint(void) { int r = pos_nonint; pos_nonint = 0; return r; }
@@ -5322,6 +5329,15 @@ int cob_pop_pos(void)
     }
     return cob_pop_int();
 }
+/* an intrinsic function's integer argument, computed: as cob_pop_int, a
+ * fraction noted as an incorrect argument (2023 15.3 rule 6) */
+int cob_pop_fnint(void)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[nsp - 1];
+    if (a->scale > 0 && a->v % pow10tab[a->scale]) fn_argbad = 1;
+    return cob_pop_int();
+}
 
 /* the wide stack's top as an integer (a subscript or position computed
  * in a wide statement); pops it */
@@ -5653,12 +5669,6 @@ static char *fn_digits(long v, int n)
  * for the rest.  Exact i64 arithmetic where the function allows it,
  * libm doubles where it does not (the DBT runs those natively). */
 
-static double fn_dbl(const cob_num *a)
-{
-    double d = (double)a->v; int sc = a->scale;
-    while (sc > 18) { d /= 1e18; sc -= 18; }
-    return d / (double)pow10tab[sc];
-}
 
 static char *fn_signed18(long long v)
 {
@@ -5668,15 +5678,6 @@ static char *fn_signed18(long long v)
     mag_to_digits(m, b + 1, 18);
     b[19] = 0;
     return b;
-}
-
-static char *fn_from_dbl(double d)
-{
-    if (d > 999999999.0) d = 999999999.0;
-    if (d < -999999999.0) d = -999999999.0;
-    double r = d * 1e9;
-    long long v = (long long)(r < 0 ? r - 0.5 : r + 0.5);
-    return fn_signed18(v);
 }
 
 /* PCG-XSH-RR-64/32, the pcg32 of O'Neill's family -- the generator
@@ -5744,6 +5745,29 @@ static char *fn_wresult(const cob_wnum *w, int fscale)
     return b;
 }
 
+static int w_isint(const cob_wnum *a)
+{
+    if (a->isf) return a->f == floor(a->f);
+    if (a->scale <= 0) return 1;
+    cob_wnum t = *a; int nz = 0;
+    w_drop_digits(t.m, WL, a->scale, 0, &nz);
+    return !nz;
+}
+/* a function computed in double: its value to 15 significant digits,
+ * what a double holds (so EXP(LOG(5)) is 5, not 4.99999...), as wide as
+ * the value is -- MEAN(2000000000 3000000000) is 2500000000 (it was held
+ * to nine integer digits, 999999999).  Not a finite number, or past 38
+ * digits: an incorrect returned value (2023 15.3), 0. */
+static void fn_dres(cob_wnum *r, double x)
+{
+    if (x == x && fabs(x) < 1e38) {
+        int e = x == 0 ? 0 : (int)floor(log10(fabs(x)));
+        int sc = 14 - e; if (sc < 0) sc = 0; if (sc > 30) sc = 30;
+        if (!w_from_dbl(r, x, sc, 1)) return;
+    }
+    fn_argbad = 1; memset(r, 0, sizeof *r);
+}
+
 /* the exact functions over the wide stack: MAX, MIN, ORD-MAX, ORD-MIN,
  * SUM, RANGE, MIDRANGE, MOD, REM, INTEGER, INTEGER-PART, ABS, SIGN,
  * FRACTION-PART -- any argument of up to 31 digits, the result exact */
@@ -5782,11 +5806,12 @@ char *cob_fn_wnum(int which, int n, int fscale)
          * (x less y times the greatest integer not above x / y) */
         cob_wnum x = a[0], y = a[1];
         if (which == COB_FN_MOD) {
+            if (!w_isint(&x) || !w_isint(&y)) { fn_argbad = 1; w_from_i64(&r, 0, 0); break; }   /* integers (15.64.3 rule 1) */
             if (x.scale > 0) { w_drop_digits(x.m, WL, x.scale, 0, 0); x.scale = 0; }
             if (y.scale > 0) { w_drop_digits(y.m, WL, y.scale, 0, 0); y.scale = 0; }
         }
         w_align2(&x, &y);
-        if (mp_is_zero(y.m, WL)) cob_fatal(which == COB_FN_MOD ? "FUNCTION MOD with a zero divisor" : "FUNCTION REM with a zero divisor");
+        if (mp_is_zero(y.m, WL)) { fn_argbad = 1; w_from_i64(&r, 0, 0); break; }   /* MOD 15.64.3 rule 2, REM 15.77.3 */
         wl_t q[WL], rm[WL];
         mp_divmod(x.m, y.m, WL, q, rm);
         memcpy(r.m, rm, sizeof rm); r.scale = x.scale; r.neg = x.neg && !mp_is_zero(rm, WL);
@@ -5813,7 +5838,111 @@ char *cob_fn_wnum(int which, int n, int fscale)
     }
     case COB_FN_ABS: r = a[0]; r.neg = 0; break;
     case COB_FN_SIGN: w_from_i64(&r, mp_is_zero(a[0].m, WL) ? 0 : a[0].neg ? -1 : 1, 0); break;
-    default: cob_fatal("internal: cob_fn_wnum of a function that is not exact");
+    case COB_FN_FACTORIAL: {                    /* exact: 33! is the last within 38 digits */
+        double k = w_to_dbl(&a[0]);
+        if (!w_isint(&a[0]) || k < 0 || k > 33) { fn_argbad = 1; w_from_i64(&r, 0, 0); break; }
+        w_from_i64(&r, 1, 0);
+        for (int i = 2; i <= (int)k; i++) mp_mul_small(r.m, WL, (wl_t)i, 0);
+        break;
+    }
+    /* computed in double (libm; the DBT runs those natively) */
+    case COB_FN_MEAN: case COB_FN_MEDIAN: case COB_FN_VARIANCE: {
+        /* exact, in decimal, as MIDRANGE is: the quotients to the scale
+         * the wide division keeps (at least nine decimals) */
+        int anyf = 0;
+        for (int i = 0; i < n; i++) anyf |= a[i].isf;
+        if (anyf) goto dbl_stats;
+        int save = div0; div0 = 0;
+        cob_wnum cnt; w_from_i64(&cnt, n, 0);
+        if (which == COB_FN_MEDIAN) {
+            int *ix = malloc((size_t)n * sizeof *ix);
+            if (!ix) cob_fatal("out of memory");
+            for (int i = 0; i < n; i++) {
+                int j = i;
+                while (j > 0 && w_cmp_val(&a[ix[j - 1]], &a[i]) > 0) { ix[j] = ix[j - 1]; j--; }
+                ix[j] = i;
+            }
+            r = a[ix[n / 2]];
+            if (!(n & 1)) { cob_wnum two; w_from_i64(&two, 2, 0); w_addsub(&r, &a[ix[n / 2 - 1]], 0); w_div(&r, &two); }
+            free(ix);
+        } else {
+            cob_wnum m = a[0];
+            for (int i = 1; i < n; i++) w_addsub(&m, &a[i], 0);
+            w_div(&m, &cnt);
+            if (which == COB_FN_MEAN) r = m;
+            else {
+                w_from_i64(&r, 0, 0);
+                for (int i = 0; i < n; i++) { cob_wnum d = a[i]; w_addsub(&d, &m, 1); w_mul(&d, &d); w_addsub(&r, &d, 0); }
+                w_div(&r, &cnt);
+            }
+        }
+        if (div0) { fn_argbad = 1; w_from_i64(&r, 0, 0); }   /* past 38 digits: not a returned value it can give */
+        div0 = save;
+        break;
+    }
+    case COB_FN_STDDEV: dbl_stats: {
+        double *d = malloc((size_t)n * sizeof *d);
+        if (!d) cob_fatal("out of memory");
+        double sum = 0;
+        for (int i = 0; i < n; i++) { d[i] = w_to_dbl(&a[i]); sum += d[i]; }
+        double m = sum / n, out;
+        if (which == COB_FN_MEAN) out = m;
+        else if (which == COB_FN_MEDIAN) {
+            qsort(d, (size_t)n, sizeof *d, fn_cmp);
+            out = (n & 1) ? d[n / 2] : (d[n / 2 - 1] + d[n / 2]) / 2;
+        } else {
+            double v = 0;
+            for (int i = 0; i < n; i++) v += (d[i] - m) * (d[i] - m);
+            v /= n;
+            out = which == COB_FN_VARIANCE ? v : sqrt(v);
+        }
+        free(d);
+        fn_dres(&r, out);
+        break;
+    }
+    case COB_FN_SQRT: case COB_FN_LOG: case COB_FN_LOG10: case COB_FN_SIN: case COB_FN_COS: case COB_FN_TAN:
+    case COB_FN_ASIN: case COB_FN_ACOS: case COB_FN_ATAN: case COB_FN_EXP: case COB_FN_EXP10: {
+        double x = w_to_dbl(&a[0]), y = 0;
+        int bad = 0;
+        switch (which) {
+        case COB_FN_SQRT: bad = x < 0; if (!bad) y = sqrt(x); break;                 /* 15.84.3 rule 2 */
+        case COB_FN_LOG: bad = x <= 0; if (!bad) y = log(x); break;                  /* 15.55.3 rule 2 */
+        case COB_FN_LOG10: bad = x <= 0; if (!bad) y = log10(x); break;              /* 15.56.3 rule 2 */
+        case COB_FN_SIN: y = sin(x); break;
+        case COB_FN_COS: y = cos(x); break;
+        case COB_FN_TAN: y = tan(x); break;
+        case COB_FN_ASIN: bad = x < -1 || x > 1; if (!bad) y = asin(x); break;       /* argument-1 from -1 to +1 */
+        case COB_FN_ACOS: bad = x < -1 || x > 1; if (!bad) y = acos(x); break;
+        case COB_FN_ATAN: y = atan(x); break;
+        case COB_FN_EXP: y = exp(x); break;
+        default: y = pow(10.0, x); break;
+        }
+        if (bad) { fn_argbad = 1; w_from_i64(&r, 0, 0); } else fn_dres(&r, y);
+        break;
+    }
+    case COB_FN_ANNUITY: {                      /* argument-1 >= 0, argument-2 a positive integer (15.9.3) */
+        double x = w_to_dbl(&a[0]), p = w_to_dbl(&a[1]);
+        if (x < 0 || !w_isint(&a[1]) || p < 1) { fn_argbad = 1; w_from_i64(&r, 0, 0); break; }
+        fn_dres(&r, x == 0 ? 1.0 / p : x / (1.0 - pow(1.0 + x, -p)));
+        break;
+    }
+    case COB_FN_PRESENT_VALUE: {                /* argument-1 > -1 (15.74.3) */
+        double x = w_to_dbl(&a[0]), pv = 0, f = 1.0 + x, acc = 1.0;
+        if (x <= -1) { fn_argbad = 1; w_from_i64(&r, 0, 0); break; }
+        for (int i = 1; i < n; i++) { acc *= f; pv += w_to_dbl(&a[i]) / acc; }
+        fn_dres(&r, pv);
+        break;
+    }
+    case COB_FN_RANDOM: {                       /* a seed: zero or a positive integer (15.75.3) */
+        if (n > 0) {
+            double k = w_to_dbl(&a[0]);
+            if (!w_isint(&a[0]) || k < 0) { fn_argbad = 1; w_from_i64(&r, 0, 0); break; }
+            pcg_state = (unsigned long long)k * 2u + 1u; pcg32(); pcg32();
+        }
+        fn_dres(&r, (double)pcg32() / 4294967296.0);
+        break;
+    }
+    default: cob_fatal("internal: cob_fn_wnum of a function it does not compute");
     }
     wsp -= n;
     return fn_wresult(&r, fscale);
@@ -5851,7 +5980,7 @@ char *cob_fn_num(int which, int n)
     }
     case COB_FN_MOD: {                          /* integer args; the result has the divisor's sign */
         long long x = a[0].v / pow10tab[a[0].scale], y = a[1].v / pow10tab[a[1].scale];
-        if (y == 0) cob_fatal("FUNCTION MOD with a zero divisor");
+        if (y == 0 || x * pow10tab[a[0].scale] != a[0].v || y * pow10tab[a[1].scale] != a[1].v) { fn_argbad = 1; res = fn_signed18(0); break; }
         long long r = x % y;
         if (r != 0 && ((r < 0) != (y < 0))) r += y;
         res = fn_signed18(r);
@@ -5860,7 +5989,7 @@ char *cob_fn_num(int which, int n)
     case COB_FN_REM: {                          /* a - b * INTEGER-PART(a / b), exact at the common scale */
         int sc = a[0].scale > a[1].scale ? a[0].scale : a[1].scale;
         long long x = cob_rescale(a[0].v, a[0].scale, sc), y = cob_rescale(a[1].v, a[1].scale, sc);
-        if (y == 0) cob_fatal("FUNCTION REM with a zero divisor");
+        if (y == 0) { fn_argbad = 1; res = fn_signed18(0); break; }
         long long q = x / y;                    /* truncation is INTEGER-PART */
         res = fn_signed18(cob_rescale(x - q * y, sc, 9));
         break;
@@ -5875,63 +6004,9 @@ char *cob_fn_num(int which, int n)
     case COB_FN_INTEGER_PART:
         res = fn_signed18(a[0].v / pow10tab[a[0].scale]);
         break;
-    case COB_FN_FACTORIAL: {
-        long long k = a[0].v / pow10tab[a[0].scale], r = 1;
-        if (k < 0 || k > 19) cob_fatal("FUNCTION FACTORIAL of a value outside 0-19");
-        for (long long i = 2; i <= k; i++) r *= i;
-        res = fn_signed18(r);
-        break;
-    }
-    case COB_FN_MEAN: case COB_FN_MEDIAN: case COB_FN_VARIANCE: case COB_FN_STDDEV: {
-        double *d = malloc((size_t)n * sizeof *d);
-        if (!d) cob_fatal("out of memory");
-        double sum = 0;
-        for (int i = 0; i < n; i++) { d[i] = fn_dbl(&a[i]); sum += d[i]; }
-        double m = sum / n, out;
-        if (which == COB_FN_MEAN) out = m;
-        else if (which == COB_FN_MEDIAN) {
-            qsort(d, (size_t)n, sizeof *d, fn_cmp);
-            out = (n & 1) ? d[n / 2] : (d[n / 2 - 1] + d[n / 2]) / 2;
-        } else {
-            double v = 0;
-            for (int i = 0; i < n; i++) v += (d[i] - m) * (d[i] - m);
-            v /= n;
-            out = which == COB_FN_VARIANCE ? v : sqrt(v);
-        }
-        free(d);
-        res = fn_from_dbl(out);
-        break;
-    }
-    case COB_FN_SQRT: res = fn_from_dbl(sqrt(fn_dbl(&a[0]))); break;
-    case COB_FN_LOG: res = fn_from_dbl(log(fn_dbl(&a[0]))); break;
-    case COB_FN_LOG10: res = fn_from_dbl(log10(fn_dbl(&a[0]))); break;
-    case COB_FN_SIN: res = fn_from_dbl(sin(fn_dbl(&a[0]))); break;
-    case COB_FN_COS: res = fn_from_dbl(cos(fn_dbl(&a[0]))); break;
-    case COB_FN_TAN: res = fn_from_dbl(tan(fn_dbl(&a[0]))); break;
-    case COB_FN_ASIN: res = fn_from_dbl(asin(fn_dbl(&a[0]))); break;
-    case COB_FN_ACOS: res = fn_from_dbl(acos(fn_dbl(&a[0]))); break;
-    case COB_FN_ATAN: res = fn_from_dbl(atan(fn_dbl(&a[0]))); break;
-    case COB_FN_ANNUITY: {
-        double r = fn_dbl(&a[0]); long long p = a[1].v / pow10tab[a[1].scale];
-        res = fn_from_dbl(r == 0 ? 1.0 / (double)p : r / (1.0 - pow(1.0 + r, (double)-p)));
-        break;
-    }
-    case COB_FN_PRESENT_VALUE: {
-        double r = fn_dbl(&a[0]), pv = 0, f = 1.0 + r;
-        double acc = 1.0;
-        for (int i = 1; i < n; i++) { acc *= f; pv += fn_dbl(&a[i]) / acc; }
-        res = fn_from_dbl(pv);
-        break;
-    }
-    case COB_FN_RANDOM: {
-        if (n > 0) { pcg_state = (unsigned long long)(a[0].v / pow10tab[a[0].scale]) * 2u + 1u; pcg32(); pcg32(); }
-        res = fn_from_dbl((double)pcg32() / 4294967296.0);
-        break;
-    }
+    /* FACTORIAL and the functions computed in double: cob_fn_wnum */
     /* COBOL 2002 */
     case COB_FN_ABS: res = fn_signed18(cob_rescale(a[0].v < 0 ? -a[0].v : a[0].v, a[0].scale, 9)); break;
-    case COB_FN_EXP: res = fn_from_dbl(exp(fn_dbl(&a[0]))); break;
-    case COB_FN_EXP10: res = fn_from_dbl(pow(10.0, fn_dbl(&a[0]))); break;
     case COB_FN_PI: res = fn_signed18(3141592654LL); break;           /* 3.141592654 at scale 9, rounded */
     case COB_FN_SIGN: res = fn_signed18(a[0].v > 0 ? 1 : a[0].v < 0 ? -1 : 0); break;
     case COB_FN_FRACTION_PART: {
@@ -5939,16 +6014,20 @@ char *cob_fn_num(int which, int n)
         res = fn_signed18(cob_rescale(a[0].v - a[0].v / k * k, a[0].scale, 9));
         break;
     }
-    case COB_FN_YEAR_TO_YYYY:
-        res = fn_signed18(fn_year_window((long)(a[0].v / pow10tab[a[0].scale]), n, a));
-        break;
-    case COB_FN_DATE_TO_YYYYMMDD: case COB_FN_DAY_TO_YYYYDDD: {
-        long v = (long)(a[0].v / pow10tab[a[0].scale]), unit = which == COB_FN_DATE_TO_YYYYMMDD ? 10000 : 1000;
-        long y = fn_year_window(v / unit, n, a);
+    case COB_FN_YEAR_TO_YYYY: case COB_FN_DATE_TO_YYYYMMDD: case COB_FN_DAY_TO_YYYYDDD: {
+        /* integers; argument-1 below 100, 1000000 or 100000; the window's
+         * last year from 1700 to 9999 (15.100.3, 15.23.3, 15.25.3): 0 otherwise */
+        long unit = which == COB_FN_DATE_TO_YYYYMMDD ? 10000 : which == COB_FN_DAY_TO_YYYYDDD ? 1000 : 1;
+        long v = (long)(a[0].v / pow10tab[a[0].scale]), y = 0;
+        int ok = v >= 0 && v < 100 * unit;
+        for (int i = 0; i < n; i++) if (a[i].scale > 0 && a[i].v % pow10tab[a[i].scale]) ok = 0;
+        if (ok) y = fn_year_window(v / unit, n, a);
+        if (!y) fn_argbad = 1;
         res = fn_signed18(y ? y * unit + v % unit : 0);
         break;
     }
     case COB_FN_TEST_DATE_YYYYMMDD: {                 /* 15.73: 0 valid, 1 year, 2 month, 3 day */
+        if (a[0].scale > 0 && a[0].v % pow10tab[a[0].scale]) fn_argbad = 1;     /* an integer */
         long v = (long)(a[0].v / pow10tab[a[0].scale]);
         long y = v / 10000, m = v / 100 % 100, d = v % 100;
         static const int md[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
@@ -5957,6 +6036,7 @@ char *cob_fn_num(int which, int n)
         break;
     }
     case COB_FN_TEST_DAY_YYYYDDD: {                   /* 15.74: 0 valid, 1 year, 2 day */
+        if (a[0].scale > 0 && a[0].v % pow10tab[a[0].scale]) fn_argbad = 1;
         long v = (long)(a[0].v / pow10tab[a[0].scale]);
         long y = v / 1000, d = v % 1000;
         int r = v < 1601000 || v > 9999999 ? 1 : d < 1 || d > 365 + leap(y) ? 2 : 0;
@@ -6012,6 +6092,7 @@ char *cob_fn_al(int which, int fsize)
 char *cob_fn_char(int n)
 {
     char *b = fn_buffer(2);
+    if (n < 1 || n > 256) { fn_argbad = 1; n = ' ' + 1; }   /* 1 to the sequence's 256 positions (15.15.3 rule 2) */
     b[0] = (char)(n - 1); b[1] = 0;
     return b;
 }
@@ -6114,7 +6195,7 @@ char *cob_fn_test_numval(const char *p, int n, int form)
 char *cob_fn_numval_f(const char *p, int n)
 {
     cob_wnum w; int e;
-    if (numval_scan(p, n, 2, &w, &e)) { w_from_i64(&w, 0, 0); return fn_wresult(&w, 9); }
+    if (numval_scan(p, n, 2, &w, &e)) { fn_argbad = 1; w_from_i64(&w, 0, 0); return fn_wresult(&w, 9); }
     /* the value times 10**e: the scale moves, and a negative one is made
      * up with zeros while 38 digits hold them */
     w.scale -= e;
@@ -6132,9 +6213,12 @@ char *cob_fn_numval(const char *p, int n, int cform)
         /* NUMVAL-C with argument-2, a currency string of any length:
          * the format scanner, which TEST-NUMVAL-C shares */
         cob_wnum w; int e;
-        if (numval_scan(p, n, 1, &w, &e)) w_from_i64(&w, 0, 0);
+        if (numval_scan(p, n, 1, &w, &e)) { fn_argbad = 1; w_from_i64(&w, 0, 0); }
         return fn_wresult(&w, 9);
     }
+    /* out of format: noted (15.67.3, 15.68.3); the value is still the
+     * digits read up to the first character out of place, as it was */
+    { cob_wnum tw; int te; if (numval_scan(p, n, cform, &tw, &te)) fn_argbad = 1; }
     int i = 0, neg = 0, seen_pt = 0, scale = 0;
     char dg[40]; int ndg = 0;
     int dp = cob_dp_comma ? ',' : '.', grp = cob_dp_comma ? '.' : ',';
@@ -6163,24 +6247,25 @@ char *cob_fn_numval(const char *p, int n, int cform)
 char *cob_fn_integer_of_date(long ymd)
 {
     long y = ymd / 10000, m = ymd / 100 % 100, d = ymd % 100;
-    return fn_digits(valid_date(y, m, d) ? civil_to_days(y, m, d) : 0, 10);
+    if (!valid_date(y, m, d)) { fn_argbad = 1; return fn_digits(0, 10); }   /* 15.46.3 */
+    return fn_digits(civil_to_days(y, m, d), 10);
 }
 char *cob_fn_date_of_integer(long n)
 {
-    if (n < 1 || n > MAX_DAY) return fn_digits(0, 8);
+    if (n < 1 || n > MAX_DAY) { fn_argbad = 1; return fn_digits(0, 8); }   /* integer date form */
     long y, m, d; days_to_civil(n, &y, &m, &d);
     return fn_digits(y * 10000 + m * 100 + d, 8);
 }
 char *cob_fn_day_of_integer(long n)
 {
-    if (n < 1 || n > MAX_DAY) return fn_digits(0, 7);
+    if (n < 1 || n > MAX_DAY) { fn_argbad = 1; return fn_digits(0, 7); }
     long y, m, d; days_to_civil(n, &y, &m, &d);
     return fn_digits(y * 1000 + (n - civil_to_days(y, 1, 1) + 1), 7);
 }
 char *cob_fn_integer_of_day(long yddd)
 {
     long y = yddd / 1000, doy = yddd % 1000;
-    if (y < 1601 || y > 9999 || doy < 1 || doy > 365 + leap(y)) return fn_digits(0, 10);
+    if (y < 1601 || y > 9999 || doy < 1 || doy > 365 + leap(y)) { fn_argbad = 1; return fn_digits(0, 10); }
     return fn_digits(civil_to_days(y, 1, 1) + doy - 1, 10);
 }
 
