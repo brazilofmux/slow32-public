@@ -1170,9 +1170,96 @@ static void apply_replace(void)
     }
 }
 
+/* EXEC SQL INCLUDE SQLCA: DB2's communication area, when the program has
+ * no copybook of that name; BINARY where DB2 writes COMP-5, so a COBOL 85
+ * program meets no extension (docs/esql.md) */
+static const char *g_sqlca_text[] = {
+    "01 SQLCA.",
+    "   05 SQLCAID     PIC X(8) VALUE \"SQLCA\".",
+    "   05 SQLCABC     PIC S9(9) BINARY VALUE 136.",
+    "   05 SQLCODE     PIC S9(9) BINARY VALUE 0.",
+    "   05 SQLERRM.",
+    "      49 SQLERRML PIC S9(4) BINARY VALUE 0.",
+    "      49 SQLERRMC PIC X(70) VALUE SPACES.",
+    "   05 SQLERRP     PIC X(8) VALUE SPACES.",
+    "   05 SQLERRD     PIC S9(9) BINARY OCCURS 6 TIMES.",
+    "   05 SQLWARN.",
+    "      10 SQLWARN0 PIC X VALUE SPACE.",
+    "      10 SQLWARN1 PIC X VALUE SPACE.",
+    "      10 SQLWARN2 PIC X VALUE SPACE.",
+    "      10 SQLWARN3 PIC X VALUE SPACE.",
+    "      10 SQLWARN4 PIC X VALUE SPACE.",
+    "      10 SQLWARN5 PIC X VALUE SPACE.",
+    "      10 SQLWARN6 PIC X VALUE SPACE.",
+    "      10 SQLWARN7 PIC X VALUE SPACE.",
+    "   05 SQLEXT.",
+    "      10 SQLWARN8 PIC X VALUE SPACE.",
+    "      10 SQLWARN9 PIC X VALUE SPACE.",
+    "      10 SQLWARNA PIC X VALUE SPACE.",
+    "      10 SQLSTATE PIC X(5) VALUE \"00000\".",
+    NULL };
+
 static void expand_copies(int depth)
 {
     for (int i = 0; i < g_ntok; i++) {
+        /* EXEC SQL INCLUDE member: COPY member, SQLCA built in */
+        if (g_tok[i].kind == T_SQL && !strncasecmp(g_tok[i].s, "include", 7) && (g_tok[i].s[7] == ' ' || !g_tok[i].s[7])) {
+            int line = g_tok[i].line;
+            const char *q = g_tok[i].s + 7; while (*q == ' ') q++;
+            char name[256]; int nn = 0;
+            while (*q && *q != ' ' && nn < 250) { if (*q != '\'' && *q != '"') name[nn++] = *q; q++; }
+            name[nn] = 0;
+            if (!nn) die_at(line, "EXEC SQL INCLUDE needs a member name");
+            int j = i + 1 < g_ntok && g_tok[i + 1].kind == T_PERIOD ? i + 1 : i;
+            SrcLine *lines; int n; char found[1200];
+            if (!copy_open(name, &lines, &n, found, sizeof found)) {
+                if (strcasecmp(name, "sqlca")) die_at(line, "EXEC SQL INCLUDE: cannot find '%s' (looked as COPY does)", name);
+                /* in the LINKAGE SECTION (a subprogram given its caller's
+                 * SQLCA) without the VALUE clauses; and SQLCODE or SQLSTATE
+                 * left to the program when it declares its own (X/Open's
+                 * SQLCA has no SQLSTATE; ISO programs declare both) */
+                int in_link = 0, own_code = 0, own_state = 0;
+                for (int k = i - 1; k >= 0; k--) {
+                    if (g_tok[k].kind == T_WORD && g_tok[k + 1].kind == T_WORD && !strcmp(g_tok[k + 1].s, "section")) {
+                        if (!strcmp(g_tok[k].s, "linkage")) in_link = 1;
+                        if (!strcmp(g_tok[k].s, "linkage") || !strcmp(g_tok[k].s, "working-storage") || !strcmp(g_tok[k].s, "local-storage")) break;
+                    }
+                }
+                for (int k = 1; k < g_ntok; k++)
+                    if (g_tok[k].kind == T_WORD && g_tok[k - 1].kind == T_NUM) {
+                        if (!strcmp(g_tok[k].s, "sqlcode")) own_code = 1;
+                        if (!strcmp(g_tok[k].s, "sqlstate")) own_state = 1;
+                    }
+                n = 0; while (g_sqlca_text[n]) n++;
+                lines = xmalloc((size_t)n * sizeof *lines);
+                for (int k = 0; k < n; k++) {
+                    char buf[128]; snprintf(buf, sizeof buf, "%s", g_sqlca_text[k]);
+                    if (in_link) { char *v = strstr(buf, " VALUE "); if (v) strcpy(v, "."); }
+                    for (int f = 0; f < 2; f++) {           /* the program's own: FILLER here */
+                        const char *nm = f ? " SQLSTATE " : " SQLCODE ";
+                        char *v = (f ? own_state : own_code) ? strstr(buf, nm) : NULL;
+                        if (v) { char rest[128]; snprintf(rest, sizeof rest, "%s", v + strlen(nm)); snprintf(v, sizeof buf - (size_t)(v - buf), " FILLER %s", rest); }
+                    }
+                    memset(&lines[k], 0, sizeof lines[k]); lines[k].text = xstrndup(buf, (int)strlen(buf)); lines[k].line = line;
+                }
+                snprintf(found, sizeof found, "SQLCA (built in)");
+            }
+            Tok *save_tok = g_tok; int save_n = g_ntok, save_cap = g_tcap;
+            const char *save_file = g_tok_file;
+            g_tok = NULL; g_ntok = 0; g_tcap = 0; g_tok_file = xstrndup(found, (int)strlen(found));
+            tokenize_lines(lines, n);
+            Tok *ctok = g_tok; int cn = g_ntok;
+            g_tok = save_tok; g_ntok = save_n; g_tcap = save_cap; g_tok_file = save_file;
+            if (cn && ctok[cn - 1].kind == T_EOF) cn--;
+            int removed = j - i + 1, newn = g_ntok - removed + cn;
+            if (newn > g_tcap) { g_tcap = newn + 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
+            memmove(&g_tok[i + cn], &g_tok[j + 1], (size_t)(g_ntok - (j + 1)) * sizeof *g_tok);
+            memcpy(&g_tok[i], ctok, (size_t)cn * sizeof *ctok);
+            g_ntok = newn;
+            free(ctok);
+            i--;
+            continue;
+        }
         if (!(g_tok[i].kind == T_WORD && !strcmp(g_tok[i].s, "copy")) || g_tok[i].dbg) continue;   /* a COPY on a debugging line is a comment */
         int line = g_tok[i].line;
         int j = i + 1;
@@ -14045,7 +14132,7 @@ static void parse_free(void)
  * runs through libcob/esql.c.  No SQL parser: the statement kind comes
  * from its first words and the rest is passed through. */
 
-typedef struct { char name[64], qual[64], ind[64], indqual[64]; int line; } SqlHost;
+typedef struct { char name[64], qual[64], ind[64], indqual[64]; int line; Sym *sym; } SqlHost;   /* sym: an item of an expanded host structure */
 typedef struct { char name[64]; char *query; SqlHost *in; int nin; int unit, id, positioned, line; } SqlCursor;
 typedef struct { char *text; int kind, cursor, unit, id; } SqlStmt;
 enum { SQLK_EXEC = 0, SQLK_SELECT_INTO = 1, SQLK_NOOP = 2, SQLK_POSITIONED = 3 };
@@ -14096,6 +14183,42 @@ static const char *sql_host(const char *p, SqlHost *h, int line)
     return p;
 }
 
+/* a host reference's item, or NULL when it is not declared yet (a cursor
+ * declared in the data division) or ambiguous */
+static Sym *sql_sym_quiet(const char *name, const char *qual)
+{
+    Sym *found = NULL; int n = 0;
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_filler || strcmp(s->name, name)) continue;
+        if (qual[0]) {
+            int ok = 0;
+            for (int p = s->parent; p >= 0; p = g_sym[p].parent) if (!strcmp(g_sym[p].name, qual)) { ok = 1; break; }
+            if (!ok) continue;
+        }
+        found = s; n++;
+    }
+    return n == 1 ? found : NULL;
+}
+
+/* a host structure's elementary items, in order: DB2 takes :group as the
+ * list of its items (FILLER, 88s and REDEFINES left out) */
+static int sql_struct_items(Sym *g, Sym **out, int max)
+{
+    int n = 0, gi = (int)(g - g_sym);
+    for (int i = gi + 1; i < g_nsym && n < max; i++) {
+        Sym *s = &g_sym[i];
+        int inside = 0;
+        for (int p = s->parent; p >= 0; p = g_sym[p].parent) if (p == gi) { inside = 1; break; }
+        if (!inside) break;
+        if (s->is_group || s->is_cond || s->is_filler || s->redefines >= 0) continue;
+        int red = 0;
+        for (int p = s->parent; p >= 0 && p != gi; p = g_sym[p].parent) if (g_sym[p].redefines >= 0) red = 1;
+        if (!red) out[n++] = s;
+    }
+    return n;
+}
+
 /* the text with each host reference replaced by ?, the references in
  * order; *nh counts them */
 static char *sql_params(const char *text, SqlHost **hs, int *nh, int line)
@@ -14109,8 +14232,27 @@ static char *sql_params(const char *text, SqlHost **hs, int *nh, int line)
         if (quote) { if (c == quote) quote = 0; out[o++] = *p++; continue; }
         if (c == '\'' || c == '"') { quote = c; out[o++] = *p++; continue; }
         if (c == ':' && sqlw((unsigned char)p[1])) {
+            SqlHost h;
+            p = sql_host(p + 1, &h, line);
+            Sym *g = sql_sym_quiet(h.name, h.qual);
+            Sym *items[256]; int ni = 0;
+            if (g && g->is_group && !h.ind[0]) ni = sql_struct_items(g, items, 256);
+            if (ni) {
+                /* a host structure: one ? per item */
+                out = xrealloc(out, n + 1 + o + (size_t)ni * 3 + 16);
+                for (int k = 0; k < ni; k++) {
+                    if (*nh == cap) { cap = cap ? cap * 2 : 8; *hs = xrealloc(*hs, (size_t)cap * sizeof **hs); }
+                    SqlHost *e = &(*hs)[(*nh)++];
+                    *e = h; e->sym = items[k];
+                    snprintf(e->name, sizeof e->name, "%s", items[k]->name);
+                    if (k) { out[o++] = ','; out[o++] = ' '; }
+                    out[o++] = '?';
+                }
+                n += (size_t)ni * 3;
+                continue;
+            }
             if (*nh == cap) { cap = cap ? cap * 2 : 8; *hs = xrealloc(*hs, (size_t)cap * sizeof **hs); }
-            p = sql_host(p + 1, &(*hs)[(*nh)++], line);
+            (*hs)[(*nh)++] = h;
             out[o++] = '?';
             continue;
         }
@@ -14152,7 +14294,8 @@ static void sql_emit_hosts(const SqlHost *hs, int n, const char *fn)
 {
     for (int i = 0; i < n; i++) {
         Ref r, ri; memset(&r, 0, sizeof r); memset(&ri, 0, sizeof ri);
-        r.sym = sql_sym(hs[i].name, hs[i].qual, hs[i].line); r.line = hs[i].line;
+        r.sym = hs[i].sym ? hs[i].sym : sql_sym(hs[i].name, hs[i].qual, hs[i].line); r.line = hs[i].line;
+        if (r.sym->ndims) die_at(hs[i].line, "EXEC SQL: ':%s' is in a table; subscripted host variables are not implemented yet", hs[i].name);
         Arg a[4] = { arg_ref(&r), arg_desc(sym_desc(r.sym)), arg_imm(0), arg_imm(0) };
         if (hs[i].ind[0]) {
             ri.sym = sql_sym(hs[i].ind, hs[i].indqual, hs[i].line); ri.line = hs[i].line;
@@ -14176,6 +14319,20 @@ static void sql_emit_status(int line)
         emit_args(a, 2);
         emit_call(fn[k]);
     }
+    /* the rest of an SQLCA, by name (a site's own SQLCA copybook as well
+     * as the built-in one): the message, the row count in SQLERRD(3), the
+     * warning flags */
+    static const char *fld[] = { "sqlerrml", "sqlerrmc", "sqlerrd", "sqlwarn0", "sqlwarn1", NULL };
+    for (int k = 0; fld[k]; k++) {
+        Sym *s = sym_lookup_quiet(fld[k]);
+        if (!s || s->is_group || s->is_cond) continue;
+        Ref r; memset(&r, 0, sizeof r); r.sym = s; r.line = line;
+        if (k == 2) { if (s->ndims != 1) continue; r.nsub = 1; r.sub[0].sym = NULL; r.sub[0].lit = 3; }
+        else if (s->ndims) continue;
+        Arg a[3] = { arg_ref(&r), arg_desc(sym_desc(r.sym)), arg_imm(k) };
+        emit_args(a, 3);
+        emit_call("cob_sql_put_field");
+    }
 }
 
 static SqlCursor *sql_cursor(const char *name, int line, int must)
@@ -14194,10 +14351,65 @@ static int sql_stmt(char *text, int kind, int cursor)
     return g_nsqlst++;
 }
 
+/* WHENEVER SQLERROR | SQLWARNING | NOT FOUND {CONTINUE | GO TO name}:
+ * where it stands in the text, to the end of the unit */
+static struct { int unit; char para[3][64]; } g_when = { -1, { "", "", "" } };
+enum { WH_ERROR, WH_WARNING, WH_NOTFOUND };
+
+static void sql_whenever(const char *text, int line)
+{
+    const char *p = text; char w[64], w2[64];
+    sql_word(&p, w, sizeof w);                      /* whenever */
+    sql_word(&p, w, sizeof w);
+    int k;
+    if (!strcmp(w, "sqlerror")) k = WH_ERROR;
+    else if (!strcmp(w, "sqlwarning")) k = WH_WARNING;
+    else if (!strcmp(w, "not") && sql_word(&p, w2, sizeof w2) && !strcmp(w2, "found")) k = WH_NOTFOUND;
+    else die_at(line, "EXEC SQL WHENEVER: expected SQLERROR, SQLWARNING or NOT FOUND");
+    if (g_when.unit != g_unit) { memset(&g_when, 0, sizeof g_when); g_when.unit = g_unit; }
+    sql_word(&p, w, sizeof w);
+    if (!strcmp(w, "continue")) { g_when.para[k][0] = 0; return; }
+    if (!strcmp(w, "goto") || (!strcmp(w, "go") && sql_word(&p, w2, sizeof w2) && !strcmp(w2, "to"))) {
+        while (*p == ' ') p++;
+        if (*p == ':') p++;                             /* GO TO :label, as some precompilers write it */
+        char name[64]; if (!sql_word(&p, name, sizeof name)) die_at(line, "EXEC SQL WHENEVER ... GO TO needs a procedure-name");
+        if (!para_find(name)) die_at(line, "EXEC SQL WHENEVER ... GO TO: '%s' is not a paragraph or section", name);
+        snprintf(g_when.para[k], sizeof g_when.para[k], "%s", name);
+        return;
+    }
+    die_at(line, "EXEC SQL WHENEVER: expected CONTINUE or GO TO");
+}
+
+/* after an executable statement: the WHENEVER branches in force */
+static void sql_emit_whenever(void)
+{
+    if (g_when.unit != g_unit) return;
+    if (g_when.para[WH_ERROR][0] || g_when.para[WH_NOTFOUND][0]) {
+        emit_call("cob_sql_code");
+        if (g_when.para[WH_ERROR][0]) emit("	blt r1, r0, .Lp%d_%d", g_unit, para_find(g_when.para[WH_ERROR])->id);
+        if (g_when.para[WH_NOTFOUND][0]) { emit_li("r2", 100); emit("	beq r1, r2, .Lp%d_%d", g_unit, para_find(g_when.para[WH_NOTFOUND])->id); }
+    }
+    if (g_when.para[WH_WARNING][0]) {
+        emit_call("cob_sql_warn");
+        emit("	bne r1, r0, .Lp%d_%d", g_unit, para_find(g_when.para[WH_WARNING])->id);
+    }
+}
+
 static const char *sql_unimpl[][2] = {
-    { "include", "2" }, { "whenever", "2" }, { "connect", "2" }, { "disconnect", "2" },
     { "prepare", "3" }, { "execute", "3" }, { "describe", "3" }, { "allocate", "3" }, { "deallocate", "3" },
     { "get", "3" }, { "set", "3" }, { 0, 0 } };
+
+/* DECLARE name TABLE (...): DB2's DCLGEN documentation of a table, which
+ * the precompiler checks statements against; nothing here */
+static int sql_declare_table(const char *text)
+{
+    const char *p = text; char w[64];
+    sql_word(&p, w, sizeof w); sql_word(&p, w, sizeof w);
+    while (*p == ' ') p++;
+    if (*p == '.') { p++; sql_word(&p, w, sizeof w); }  /* a qualified table name */
+    sql_word(&p, w, sizeof w);
+    return !strcmp(w, "table");
+}
 
 /* DECLARE name [...] CURSOR FOR query: recorded, nothing emitted */
 static int sql_declare(const char *text, int line)
@@ -14229,6 +14441,7 @@ static void parse_exec_sql_data(void)
     sql_word(&p, w1, sizeof w1); sql_word(&p, w2, sizeof w2);
     if ((!strcmp(w1, "begin") || !strcmp(w1, "end")) && !strcmp(w2, "declare")) { g_sql_declare = w1[0] == 'b'; return; }
     if (!strcmp(w1, "declare") && sql_declare(t->s, t->line)) return;
+    if (!strcmp(w1, "declare") && sql_declare_table(t->s)) return;
     die_at(t->line, "EXEC SQL %s in the DATA DIVISION is not implemented yet (docs/esql.md)", w1);
 }
 
@@ -14247,9 +14460,10 @@ static void parse_exec_sql(void)
             die_at(line, "EXEC SQL %s is not implemented yet (docs/esql.md, phase %s)", sql_unimpl[i][0], sql_unimpl[i][1]);
     if ((!strcmp(w1, "begin") || !strcmp(w1, "end")) && !strcmp(w2, "declare")) return;
     if (!strcmp(w1, "declare")) {
-        if (sql_declare(t->s, line)) return;
-        die_at(line, "EXEC SQL DECLARE: only DECLARE cursor CURSOR FOR is implemented");
+        if (sql_declare(t->s, line) || sql_declare_table(t->s)) return;
+        die_at(line, "EXEC SQL DECLARE: only DECLARE ... CURSOR FOR and DECLARE ... TABLE are implemented");
     }
+    if (!strcmp(w1, "whenever")) { sql_whenever(t->s, line); return; }
     if (!strcmp(w1, "open") || !strcmp(w1, "close")) {
         SqlCursor *c = sql_cursor(w2, line, 1);
         if (w1[0] == 'o') sql_emit_hosts(c->in, c->nin, "cob_sql_in");
@@ -14257,6 +14471,7 @@ static void parse_exec_sql(void)
         emit_la("r3", lab);
         emit_call(w1[0] == 'o' ? "cob_sql_open" : "cob_sql_close");
         sql_emit_status(line);
+        sql_emit_whenever();
         return;
     }
     if (!strcmp(w1, "fetch")) {
@@ -14280,6 +14495,7 @@ static void parse_exec_sql(void)
         emit_la("r3", lab);
         emit_call("cob_sql_fetch");
         sql_emit_status(line);
+        sql_emit_whenever();
         return;
     }
     int kind = SQLK_EXEC, cursor = -1;
@@ -14321,6 +14537,7 @@ static void parse_exec_sql(void)
     emit_la("r3", lab);
     emit_call("cob_sql_exec");
     sql_emit_status(line);
+    sql_emit_whenever();
 }
 
 /* the unit's statement and cursor descriptors (libcob/esql.c reads them) */

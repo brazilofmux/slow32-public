@@ -55,6 +55,8 @@ static char g_user[64];
 static int g_trace = -1;
 static int g_sqlcode;
 static char g_sqlstate[6] = "00000";
+static char g_errmsg[72];               /* SQLERRMC: the backend's message on an error */
+static long long g_rows;                /* SQLERRD(3): the rows the statement touched */
 
 /* every statement and cursor prepared on this connection, to finalize
  * when it closes */
@@ -72,6 +74,8 @@ static void set_status(int code, const char *state)
 {
     g_sqlcode = code;
     memcpy(g_sqlstate, state, 5); g_sqlstate[5] = 0;
+    if (code == 0 || code == 100) g_errmsg[0] = 0;
+    else snprintf(g_errmsg, sizeof g_errmsg, "%s", g_db && code != -305 && code != -811 ? sqlite3_errmsg(g_db) : "");
 }
 
 static void trace_error(const char *what)
@@ -206,6 +210,13 @@ void cob_sql_out(void *p, const cob_desc *d, void *ip, const cob_desc *id)
 }
 
 static void clear_hosts(void) { g_nin = g_nout = 0; }
+
+static const char *strcasestr_simple(const char *h, const char *n)
+{
+    size_t l = strlen(n);
+    for (; *h; h++) if (!strncasecmp(h, n, l)) return h;
+    return NULL;
+}
 
 static const long long p10[19] = { 1LL, 10LL, 100LL, 1000LL, 10000LL, 100000LL, 1000000LL, 10000000LL, 100000000LL,
     1000000000LL, 10000000000LL, 100000000000LL, 1000000000000LL, 10000000000000LL, 100000000000000LL,
@@ -433,8 +444,8 @@ static int prepare(sqlite3_stmt **slot, const char *text)
     char *d = ddl_collate(t);
     if (d) { free(t); t = d; }
     int rc = sqlite3_prepare_v2(g_db, t, -1, slot, NULL);
+    if (rc != SQLITE_OK) { set_error(rc, t); free(t); *slot = NULL; return 0; }   /* the text as SQLite saw it */
     free(t);
-    if (rc != SQLITE_OK) { set_error(rc, text); *slot = NULL; return 0; }
     if (g_nprep < 4096) g_prepared_slot[g_nprep++] = slot;
     return 1;
 }
@@ -465,10 +476,64 @@ static int end_transaction(int commit)
     return 0;
 }
 
+/* an input host variable's value as text, trimmed */
+static void host_text(const host *h, char *out, int cap)
+{
+    int n = (int)h->d->size; const char *s = h->p;
+    if (h->d->cat == COB_NUM) { snprintf(out, (size_t)cap, "%lld", cob_get_num(h->p, h->d)); return; }
+    while (n && s[n - 1] == ' ') n--;
+    if (n > cap - 1) n = cap - 1;
+    memcpy(out, s, (size_t)n); out[n] = 0;
+}
+
+/* CONNECT [TO target] [AS name] [USER user [USING pw]] | CONNECT RESET |
+ * CONNECT :user IDENTIFIED BY :pw | DISCONNECT [...]: the authorization
+ * id is the user (a word or a host variable); the target, the name and
+ * the password are taken and not used -- there is one database directory */
+static int connect_stmt(const char *text)
+{
+    set_status(0, "00000");
+    const char *p = text; char w[64];
+    int in = 0;
+    if (first_word(text, "disconnect")) { disconnect(); return 0; }
+    while (*p == ' ') p++;
+    p += 7;                                     /* connect */
+    char user[64] = "";
+    for (;;) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        if (*p == '?') { p++; in++; continue; }       /* a TO or AS host variable: not used */
+        if (*p == '\'' ) { const char *e = strchr(p + 1, '\''); p = e ? e + 1 : p + strlen(p); continue; }
+        int n = 0; while (*p && *p != ' ' && *p != ',' && n < 63) w[n++] = (char)tolower((unsigned char)*p++); w[n] = 0;
+        if (!strcmp(w, "reset")) { disconnect(); return 0; }
+        if (!strcmp(w, "user") || !strcmp(w, "identified")) {
+            if (!strcmp(w, "identified")) break;        /* :user IDENTIFIED BY :pw: the user came first */
+            while (*p == ' ') p++;
+            if (*p == '?') { if (in < g_nin) host_text(&g_in[in], user, sizeof user); in++; p++; }
+            else if (*p == '\'') { const char *e = strchr(p + 1, '\''); int l = e ? (int)(e - p - 1) : 0; if (l > 63) l = 63; memcpy(user, p + 1, (size_t)l); user[l] = 0; p = e ? e + 1 : p + strlen(p); }
+            else { int k = 0; while (*p && *p != ' ' && k < 63) user[k++] = *p++; user[k] = 0; }
+        }
+    }
+    /* CONNECT :user IDENTIFIED BY :pw (Oracle): the first host variable */
+    if (!user[0] && strcasestr_simple(text, "identified") && g_nin) host_text(&g_in[0], user, sizeof user);
+    if (user[0]) {
+        char u[64]; upcase_trim(u, user, (int)strlen(user), sizeof u);
+        if (g_db && strcmp(u, g_user)) disconnect();
+        snprintf(g_user, sizeof g_user, "%s", u);
+    }
+    return sql_connect() ? 0 : g_sqlcode;
+}
+
 int cob_sql_exec(cob_sql_stmt *s)
 {
     set_status(0, "00000");
+    g_rows = 0;
     if (s->kind == K_NOOP) { clear_hosts(); return 0; }       /* GRANT, REVOKE: SQLite has no privileges */
+    if (first_word(s->text, "connect") || first_word(s->text, "disconnect")) {
+        int r = connect_stmt(s->text);
+        clear_hosts();
+        return r;
+    }
     if (!sql_connect()) { clear_hosts(); return g_sqlcode; }
     if (first_word(s->text, "commit") || first_word(s->text, "rollback")) {
         clear_hosts();
@@ -487,6 +552,7 @@ int cob_sql_exec(cob_sql_stmt *s)
     int rc = sqlite3_step(st);
     if (s->kind == K_SELECT_INTO) {
         if (rc == SQLITE_ROW) {
+            g_rows = 1;
             for (int k = 0; k < g_nout && k < sqlite3_column_count(st); k++) if (!store_out(st, k, &g_out[k])) goto done;
             if (sqlite3_step(st) == SQLITE_ROW) { set_status(-811, "21000"); trace_error("SELECT INTO: more than one row"); }
         } else if (rc == SQLITE_DONE) set_status(100, "02000");
@@ -494,8 +560,10 @@ int cob_sql_exec(cob_sql_stmt *s)
     } else {
         while (rc == SQLITE_ROW) rc = sqlite3_step(st);
         if (rc != SQLITE_DONE) set_error(rc, s->text);
-        else if ((first_word(s->text, "update") || first_word(s->text, "delete") || first_word(s->text, "insert")) &&
-                 sqlite3_changes(g_db) == 0) set_status(100, "02000");      /* no row: no data (SQL-92) */
+        else if (first_word(s->text, "update") || first_word(s->text, "delete") || first_word(s->text, "insert")) {
+            g_rows = sqlite3_changes(g_db);
+            if (g_rows == 0) set_status(100, "02000");                      /* no row: no data (SQL-92) */
+        }
     }
 done:
     sqlite3_reset(st);
@@ -554,9 +622,27 @@ int cob_sql_close(cob_sql_cursor *c)
 
 /* ---- the program's status items ---------------------------------------- */
 
+/* for WHENEVER: the last statement's SQLCODE, and whether it warned */
+int cob_sql_code(void) { return g_sqlcode; }
+int cob_sql_warn(void) { return !memcmp(g_sqlstate, "01", 2); }
+
 void cob_sql_put_sqlcode(void *p, const cob_desc *d)
 {
     if (d->cat == COB_NUM) cob_put_num(p, d, g_sqlcode, 0);
+}
+
+/* an SQLCA field: 0 SQLERRML, 1 SQLERRMC, 2 SQLERRD(3), 3 SQLWARN0, 4 SQLWARN1 */
+void cob_sql_put_field(void *p, const cob_desc *d, int which)
+{
+    cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = COB_ALNUM;
+    int warn = !memcmp(g_sqlstate, "01", 2);
+    switch (which) {
+    case 0: if (d->cat == COB_NUM) cob_put_num(p, d, (long long)strlen(g_errmsg), 0); break;
+    case 1: sd.size = (unsigned)strlen(g_errmsg); if (sd.size) cob_move(g_errmsg, &sd, p, d); else memset(p, ' ', d->size); break;
+    case 2: if (d->cat == COB_NUM) cob_put_num(p, d, g_rows, 0); break;
+    case 3: sd.size = 1; cob_move(warn ? "W" : " ", &sd, p, d); break;
+    case 4: sd.size = 1; cob_move(!memcmp(g_sqlstate, "01004", 5) ? "W" : " ", &sd, p, d); break;
+    }
 }
 
 void cob_sql_put_sqlstate(void *p, const cob_desc *d)

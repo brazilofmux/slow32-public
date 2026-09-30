@@ -74,6 +74,24 @@ Done since:
   - SQLite's words map to SQL-92's conditions where they match: 22019
     for a bad LIKE escape, 22003 for integer overflow.
 
+- **Phase 2, the DB2 conventions** (tests/fixed/esqldb2):
+  - **INCLUDE member** works as COPY does. `INCLUDE SQLCA`, when the
+    program has no copybook of that name, is DB2's layout with BINARY for
+    COMP-5. In the LINKAGE SECTION it has no VALUE clauses. When the
+    program declares its own SQLCODE or SQLSTATE, the SQLCA leaves that
+    one to the program.
+  - **The SQLCA is filled by name** after each statement: SQLCODE,
+    SQLSTATE, SQLERRML/SQLERRMC with the backend's message, SQLERRD(3)
+    with the rows touched, SQLWARN0 and SQLWARN1.
+  - **WHENEVER** SQLERROR (SQLCODE < 0), SQLWARNING (SQLSTATE class 01)
+    or NOT FOUND takes CONTINUE or GO TO, from where it stands to the end
+    of the unit.
+  - **A host structure** (:group) is its elementary items, in order.
+  - **DECLARE ... TABLE** (DCLGEN) is accepted and does nothing.
+  - **CONNECT** [TO t] [USER u | :u] and Oracle's `CONNECT :u IDENTIFIED
+    BY :p` name the authorization id. CONNECT RESET and DISCONNECT close
+    the connection.
+
 What SQLite cannot report, so no map will reach:
 
 - 22012, division by zero: it yields NULL;
@@ -223,7 +241,7 @@ NULL into an item with no indicator gives SQLCODE -305 and SQLSTATE
    and fails as ccvs-run.sh does. A baseline file gates it.
 2. **DB2 conventions:** INCLUDE SQLCA (and INCLUDE of a member), WHENEVER,
    indicator variables, host structures (a group as a list of host
-   variables), CONNECT.
+   variables), CONNECT. Done 2026-09-30.
 3. **Dynamic SQL:** EXECUTE IMMEDIATE, PREPARE and EXECUTE, DESCRIBE,
    ALLOCATE and GET/SET DESCRIPTOR; GET DIAGNOSTICS.
 4. **The rest of Intermediate SQL, as far as SQLite goes.** Every failure
