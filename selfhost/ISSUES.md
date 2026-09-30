@@ -2321,7 +2321,7 @@ Gates: stage08 99/99 with the fixed point; check-host-frontend; SQLite
 acceptance with the rebuilt cc.s32x; eleven wide initializers agree
 with clang.
 
-### 71. [OPEN 2026-09-30] stage08 cc: no __builtin_nanf / __builtin_inff, so <math.h>'s NAN and INFINITY do not link
+### 71. [RESOLVED 2026-09-30] stage08 cc: no __builtin_nanf / __builtin_inff, so <math.h>'s NAN and INFINITY do not link
 
 Found building cobol's libcob on kagura, where it goes through stage08
 cc: the floating-point work used `NAN`, which runtime/include/math.h
@@ -2336,3 +2336,13 @@ fix belongs in stage08: fold `__builtin_nanf`, `__builtin_nan`,
 constants, as `__builtin_sqrt` is already special-cased. Otherwise any C
 source that uses the standard macros builds with clang and fails with
 the self-hosted toolchain.
+
+Fix (src/parser.h): the names fold to their constants in both places a
+value is read. In an expression they are floating literals, a quiet NaN
+or an infinity, typed float for the `f` forms and double otherwise.
+In a static FP initializer, which reads a literal token or an integer
+constant expression and never reaches the expression parser, they go
+through ps_fp_builtin_bits. The first test run found that second path.
+Test: tests/test_nan_inf.c (static initializers, expressions, the bit
+patterns, a NaN unequal to itself). Gates: stage08 101/101 with the
+fixed point; check-host-frontend; SQLite acceptance identical.
