@@ -9490,15 +9490,22 @@ static void parse_compute(void)
 
 /* ---- IF ---------------------------------------------------------------- */
 
-static void parse_branch_body(void)
+/* an IF branch: NEXT SENTENCE, or one or more statements -- not none
+ * (statement-1 and statement-2 are required: 85 IF syntax rule 1; 2023
+ * 14.9.19.3 rule 1); returns whether it was NEXT SENTENCE */
+static int parse_branch_body(void)
 {
     if (at_word("next")) {
         advance(); expect_word("sentence");
         if (g_sentence_label < 0) g_sentence_label = new_label();
         emit_jump(g_sentence_label);
-        return;
+        return 1;
     }
+    if (at_scope_end() || at_word("else") || at_word("end-if"))
+        die_at(cur()->line, "IF: the condition, and ELSE, are each followed by a statement or NEXT SENTENCE (%s)",
+               g_std < 2002 ? "X3.23-1985 IF syntax rule 1" : "2023 14.9.19.3 rule 1");
     parse_statements();
+    return 0;
 }
 
 static void parse_if(void)
@@ -9507,14 +9514,16 @@ static void parse_if(void)
     accept_word("then");
     int Lelse = new_label();
     cond_jump_false(c, Lelse);
-    parse_branch_body();
+    int ns = parse_branch_body();
     if (accept_word("else")) {
         int Lend = new_label();
         emit_jump(Lend);
         emit_label(Lelse);
-        parse_branch_body();
+        ns |= parse_branch_body();
         emit_label(Lend);
     } else emit_label(Lelse);
+    if (ns && at_word("end-if"))
+        die_at(cur()->line, "IF with NEXT SENTENCE ends at the period, not END-IF (%s)", g_std < 2002 ? "X3.23-1985 IF syntax rule 3" : "2023 14.9.19 format 2");
     accept_word("end-if");
 }
 
@@ -12695,15 +12704,43 @@ static Cond *cond_never(void)
     return cond_rel(&z, R_EQ, &one, 0);
 }
 
+/* an EVALUATE operand's class for THRU (2023 14.9.13.3 rule 4): 1 numeric, 0 not */
+static int eval_numeric(const Opnd *o)
+{
+    if (o->kind == O_NUM || o->kind == O_EXPR) return 1;
+    if (o->kind == O_FIG) return !strncmp(o->tok->s, "zero", 4) ? -1 : 0;     /* ZERO goes with either */
+    if (o->kind == O_REF) return o->ref.rm ? 0 : is_numeric_sym(o->ref.sym);
+    if (o->kind == O_FUNC) return o->fn == -1 || fn_is_numeric(o->fn);
+    return 0;
+}
+static int eval_literal(const Opnd *o) { return o->kind == O_NUM || o->kind == O_STR || o->kind == O_FIG || o->kind == O_ALL; }
+static int at_relational(void)
+{
+    static const char *w[] = { "greater", "less", "equal", "equals", "numeric", "alphabetic", "alphabetic-lower", "alphabetic-upper",
+                               "positive", "negative", NULL };     /* not ZERO: WHEN ZERO is a figurative constant */
+    if (at_op("=") || at_op("<") || at_op(">") || at_op("<=") || at_op(">=") || at_op("<>")) return 1;
+    for (int k = 0; w[k]; k++) if (at_word(w[k])) return 1;
+    return 0;
+}
+
 static void parse_evaluate(void)
 {
-    Subject subj[8]; int ns = 0;
+    Subject subj[8]; int ns = 0, subj_lit[8];
+    int o85 = g_std < 2002;
+    const char *r_cnt = o85 ? "X3.23-1985 EVALUATE syntax rule 5" : "2023 14.9.13.3 rule 2";
+    const char *r_thru = o85 ? "X3.23-1985 EVALUATE syntax rule 4" : "2023 14.9.13.3 rule 4";
+    const char *r_cmp = o85 ? "X3.23-1985 EVALUATE syntax rule 6a" : "2023 14.9.13.3, Table 15";
+    const char *r_cond = o85 ? "X3.23-1985 EVALUATE syntax rule 6b" : "2023 14.9.13.3, Table 15";
     for (;;) {
         if (ns >= 8) die_at(cur()->line, "too many EVALUATE subjects");
         if (accept_word("true")) subj[ns].kind = 1;
         else if (accept_word("false")) subj[ns].kind = 2;
         else {
             int start = g_tp;
+            /* written as a literal (a folded FUNCTION LENGTH("...") is an
+             * identifier, CCVS-85 IF115A) */
+            Tok *st = cur();
+            subj_lit[ns] = st->kind == T_NUM || st->kind == T_STR || (st->kind == T_WORD && (is_figurative(st->s) || !strcmp(st->s, "all")));
             subj[ns].kind = 0; subj[ns].o = parse_cond_operand();
             /* an operand followed by a class word or a relation is a condition
              * subject, matched by WHEN TRUE / WHEN FALSE */
@@ -12726,6 +12763,8 @@ static void parse_evaluate(void)
             if (accept_word("other")) { other = 1; break; }
             Cond *all = NULL;
             for (int i = 0; i < ns; i++) {
+                if (i && !at_word("also"))
+                    die_at(cur()->line, "EVALUATE has %d subjects; each WHEN has as many objects, joined by ALSO (%s)", ns, r_cnt);
                 if (i) expect_word("also");
                 Cond *c = NULL;
                 if (accept_word("any")) c = NULL;
@@ -12744,20 +12783,41 @@ static void parse_evaluate(void)
                         if (subj[i].kind == 2) { Cond *nn = cond_new(C_NOT); nn->a = c; c = nn; }
                     }
                 } else {
+                    if (at_word("true") || at_word("false"))
+                        die_at(cur()->line, "WHEN %s goes with a subject that is TRUE, FALSE or a condition (%s)", at_word("true") ? "TRUE" : "FALSE", r_cond);
+                    if (at_relational())
+                        die_at(cur()->line, g_std < 2002 ? "a WHEN object that begins with a relation is COBOL 2014's partial expression"
+                                                         : "a partial expression as a WHEN object (COBOL 2014) is not implemented");
                     int neg = accept_word("not");
                     Opnd x = parse_cond_operand();
+                    if (at_relational())
+                        die_at(cur()->line, "a condition as a WHEN object goes with a subject that is TRUE, FALSE or a condition (%s)", r_cond);
                     if (accept_word("thru") || accept_word("through")) {
                         Opnd y = parse_cond_operand();
+                        int cx = eval_numeric(&x), cy = eval_numeric(&y);
+                        if (cx >= 0 && cy >= 0 && cx != cy)
+                            die_at(y.line, "WHEN ... THRU: the two ends are of the same class, both numeric or neither (%s)", r_thru);
                         c = cond_bin(C_AND, cond_rel(&subj[i].o, R_GE, &x, 0), cond_rel(&subj[i].o, R_LE, &y, 0));
-                    } else c = cond_rel(&subj[i].o, R_EQ, &x, 0);
+                    } else {
+                        if (subj_lit[i] && eval_literal(&subj[i].o) && eval_literal(&x))
+                            die_at(x.line, "a literal subject is not compared with a literal object (%s)", r_cmp);
+                        c = cond_rel(&subj[i].o, R_EQ, &x, 0);
+                    }
                     if (neg) { Cond *nn = cond_new(C_NOT); nn->a = c; c = nn; }
                 }
                 if (c) all = all ? cond_bin(C_AND, all, c) : c;
             }
+            if (at_word("also")) die_at(cur()->line, "EVALUATE has %d subject%s; this WHEN has more objects (%s)", ns, ns == 1 ? "" : "s", r_cnt);
             if (!all) { Cond *nn = cond_new(C_NOT); nn->a = cond_never(); all = nn; }   /* every ANY: always */
             group = group ? cond_bin(C_OR, group, all) : all;
         }
-        if (other) { parse_statements(); emit_jump(Lend); break; }
+        if (at_scope_end() || at_word("end-evaluate"))
+            die_at(cur()->line, "each WHEN phrase of EVALUATE is followed by an imperative statement (%s format)", g_std < 2002 ? "X3.23-1985 EVALUATE" : "2023 14.9.13");
+        if (other) {
+            parse_statements(); emit_jump(Lend);
+            if (at_word("when")) die_at(cur()->line, "WHEN OTHER is the last phrase of EVALUATE (%s format)", g_std < 2002 ? "X3.23-1985 EVALUATE" : "2023 14.9.13");
+            break;
+        }
         int Lnext = new_label();
         cond_jump_false(group, Lnext);
         parse_statements();

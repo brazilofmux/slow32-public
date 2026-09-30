@@ -4218,3 +4218,22 @@ agrees), free/searchvary, 2002/ecsearchidx. Harness 496/496, CCVS-85
 unchanged, -std=85 byte-identical on the Open Systems programs, majesty
 PASS. Page: docs/conformance/search.md.
 
+### 114. The EVALUATE and IF sweep (2026-09-29)
+
+EVALUATE, refused now and accepted before: a THRU range of two classes
+(1 THRU "z"), a literal subject with a literal object, a WHEN with no
+statement after it. Given the rule instead of a parse error: a WHEN
+with too few or too many objects, a condition or TRUE/FALSE object
+under an identifier subject, a WHEN after WHEN OTHER, a partial
+expression (COBOL 2014, not implemented). The first cut of the literal
+rule refused CCVS-85 IF115A, whose subject FUNCTION LENGTH("...") the
+compiler folds to a literal; the rule now looks at how the subject was
+written.
+
+IF, refused now and accepted before: no statement after the condition
+or after ELSE; NEXT SENTENCE with END-IF.
+
+Tests: bad/evaluate-rules (8 errors), bad/if-rules (3). Harness
+498/498, CCVS-85 unchanged, -std=85 byte-identical on the Open Systems
+programs, majesty PASS. Page: docs/conformance/evaluate.md.
+

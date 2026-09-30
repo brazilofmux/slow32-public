@@ -25,6 +25,7 @@ began this; ISSUES-96 on record the sweeps.
 
 | section | page | swept |
 |---|---|---|
+| 14.9.13 EVALUATE, 14.9.19 IF | [evaluate.md](evaluate.md) | 2026-09-29 |
 | 14.9.14 EXIT | [exit.md](exit.md) | 2026-09-28 |
 | 13.18.40 PICTURE, 13.18.8 BLANK WHEN ZERO | [picture.md](picture.md) | 2026-09-29 |
 | 13.18.60 USAGE (the rest) | [usage.md](usage.md) | 2026-09-29 |

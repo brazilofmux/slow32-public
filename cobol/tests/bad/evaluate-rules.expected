@@ -1,0 +1,8 @@
+EVALUATE has 2 subjects; each WHEN has as many objects, joined by ALSO (X3.23-1985 EVALUATE syntax rule 5)
+EVALUATE has 1 subject; this WHEN has more objects (X3.23-1985 EVALUATE syntax rule 5)
+WHEN ... THRU: the two ends are of the same class, both numeric or neither (X3.23-1985 EVALUATE syntax rule 4)
+a literal subject is not compared with a literal object (X3.23-1985 EVALUATE syntax rule 6a)
+a condition as a WHEN object goes with a subject that is TRUE, FALSE or a condition (X3.23-1985 EVALUATE syntax rule 6b)
+WHEN TRUE goes with a subject that is TRUE, FALSE or a condition (X3.23-1985 EVALUATE syntax rule 6b)
+each WHEN phrase of EVALUATE is followed by an imperative statement (X3.23-1985 EVALUATE format)
+WHEN OTHER is the last phrase of EVALUATE (X3.23-1985 EVALUATE format)
