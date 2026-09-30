@@ -4428,6 +4428,7 @@ static void emit_refmod_check(const Ref *r, long len, int slot);
 
 static void parse_expr(void);
 static void emit_expr_tokens(int s0, int s1);
+static void parse_expr(void);
 static void emit_ucalls(int from, int to);
 static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */
 static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
@@ -5628,6 +5629,21 @@ static void emit_odo_check(Sym *s)
  * is noted for the bound check to raise (8.4.3.3.4 rule 5; cobol
  * ISSUES-94 E17) */
 static void emit_pop_pos(void) { emit_call(ec_on_name("EC-BOUND-REF-MOD") ? "cob_pop_pos" : "cob_pop_int"); }
+/* r1 = a position or count expression's value: on the wide stack when it
+ * holds a 31-digit operand or a float (in double, the float then rounded
+ * to the nearest integer, as Micro Focus has it for subscripts and
+ * reference modification) -- the narrow stack would refuse either */
+static void emit_expr_pos(int s0, int s1)
+{
+    int save = g_tp, sw = g_saw_wide, sf = g_saw_float, was = g_wide, wasf = g_fstmt;
+    g_saw_wide = g_saw_float = 0;
+    g_tp = s0; g_noemit++; parse_expr(); g_noemit--; g_tp = save;
+    if (g_saw_wide || g_saw_float) { g_wide = 1; if (g_saw_float) g_fstmt = 1; }
+    g_saw_wide = sw; g_saw_float = sf;
+    emit_expr_tokens(s0, s1);
+    emit_pop_pos();
+    g_wide = was; g_fstmt = wasf;
+}
 
 static void emit_bitelem_start(const Ref *r, long chk, int slot)
 {
@@ -5635,8 +5651,7 @@ static void emit_bitelem_start(const Ref *r, long chk, int slot)
     int k = r->bitsub - 1;
     if (r->bitu_start) emit_li("r1", r->bitu_start);
     else {
-        emit_expr_tokens(r->rm_s0, r->rm_s1);
-        emit_pop_pos();
+        emit_expr_pos(r->rm_s0, r->rm_s1);
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, chk, slot);
     }
     emit("	add r3, r1, r0"); emit("	srai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
@@ -5700,8 +5715,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         emit("\tadd r11, r11, r1");
     } else if (r->rm && !r->rm_start) {
         /* the start expression: onto the numeric stack, then off as an int */
-        emit_expr_tokens(r->rm_s0, r->rm_s1);
-        emit_pop_pos();
+        emit_expr_pos(r->rm_s0, r->rm_s1);
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
         if (r->rm_bit) {
             /* bits: the byte holding bitoff + start - 1 */
@@ -5856,11 +5870,11 @@ static void emit_rm_start_len(const Ref *r, int slot)
         return;
     }
     if (r->rm_len) emit_li("r1", r->rm_len);
-    else if (r->rm_l0 >= 0) { emit_expr_tokens(r->rm_l0, r->rm_l1); emit_pop_pos(); }
+    else if (r->rm_l0 >= 0) { emit_expr_pos(r->rm_l0, r->rm_l1); }
     else if (r->bitsub) {
         /* a bit array element's part to the element's end: its bits past the start */
         if (r->bitu_start) emit_li("r1", r->sym->bits - r->bitu_start + 1);
-        else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_pop_pos(); emit_li("r2", r->sym->bits + 1); emit("\tsub r1, r2, r1"); }
+        else { emit_expr_pos(r->rm_s0, r->rm_s1); emit_li("r2", r->sym->bits + 1); emit("\tsub r1, r2, r1"); }
     }
     else emit_li("r1", 0);
     emit("\tstw sp+%d, r1", SLOT(slot));
@@ -5874,7 +5888,7 @@ static void emit_rm_start_len(const Ref *r, int slot)
         return;
     }
     if (r->rm_start) emit_li("r1", r->rm_start);
-    else { emit_expr_tokens(r->rm_s0, r->rm_s1); emit_pop_pos(); }
+    else { emit_expr_pos(r->rm_s0, r->rm_s1); }
     if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, -2, slot);   /* a computed length */
 }
 
@@ -6241,9 +6255,9 @@ static void emit_fn_value(Opnd *f)
          * No length written is -1, so a computed 0 is out of range (E2). */
         int base = g_slot_base; g_slot_base += 3;
         if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
-        emit_expr_tokens(f->fs0, f->fs1); emit_pop_pos();
+        emit_expr_pos(f->fs0, f->fs1);
         emit("\tstw sp+%d, r1", SLOT(base + 1));
-        if (f->fl0 >= 0) { emit_expr_tokens(f->fl0, f->fl1); emit_pop_pos(); } else emit_li("r1", -1);
+        if (f->fl0 >= 0) { emit_expr_pos(f->fl0, f->fl1); } else emit_li("r1", -1);
         emit("\tstw sp+%d, r1", SLOT(base + 2));
         f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
         emit("\tstw sp+%d, r1", SLOT(base));
@@ -7296,6 +7310,7 @@ static Cond *parse_simple(void)
         if (klass >= 0 || klass == -2) {
             if (x.kind != O_REF) die_at(line, "a class condition needs a data item");
             if (x.ref.sym->strong) die_at(line, "a strongly-typed group takes no class condition (2023 8.8.4.4.3 rule 1)");
+            if (x.ref.sym->usage == U_FLOAT) die_at(line, "the floating-point item '%s' takes no class condition (Micro Focus: class condition rules)", x.ref.sym->name);
             if (klass == -2 && is_numeric_sym(x.ref.sym)) die_at(line, "BOOLEAN is no class test for the numeric item '%s' (2023 8.8.4.4.3 rule 5)", x.ref.sym->name);
             advance();
             Cond *c = cond_new(C_CLASS); c->x = x; c->klass = klass; c->neg = neg;
@@ -10579,6 +10594,12 @@ static void parse_multiply(void)
 static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor, int size_err)
 {
     if (!accept_word("remainder")) return;
+    {   /* Micro Focus: formats 4 and 5 take no floating-point item */
+        const Sym *f = dividend->kind == O_REF && dividend->ref.sym->usage == U_FLOAT ? dividend->ref.sym
+                     : divisor->kind == O_REF && divisor->ref.sym->usage == U_FLOAT ? divisor->ref.sym
+                     : q->sym->usage == U_FLOAT ? q->sym : NULL;
+        if (f) die_at(q->line, "DIVIDE ... REMAINDER takes no floating-point item ('%s'; Micro Focus: DIVIDE rules)", f->name);
+    }
     (void)q_rounded;
     Ref r; parse_ref(&r);
     if (r.sym->is_group || (r.sym->pi.category != PIC_NUMERIC && r.sym->pi.category != PIC_NUMERIC_EDITED))
@@ -12222,6 +12243,7 @@ static void parse_perform(void)
         if (opnd_hot_int(&n)) emit_hot_value(&n);
         else {
             if (n.kind != O_REF) die_at(n.line, "TIMES needs an integer");
+            if (n.ref.sym->usage == U_FLOAT) die_at(n.line, "TIMES needs an integer, not the floating-point item '%s' (Micro Focus: PERFORM rules)", n.ref.sym->name);
             Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
             emit_args(a, 2); emit_call("cob_load_int");
         }
@@ -13396,6 +13418,7 @@ static void parse_call(void)
                 a[n] = arg_content(o); ncontent++;
             } else if (mode == 2) {
                 if (o->kind == O_REF) {
+                    if (o->ref.sym->usage == U_FLOAT) die_at(o->line, "BY VALUE '%s': a floating-point item is not passed by value (Micro Focus: CALL rules)", o->ref.sym->name);
                     if (!is_int_item(o->ref.sym)) die_at(o->line, "BY VALUE '%s' must be an integer item", o->ref.sym->name);
                     if (o->ref.sym->size > 4) die_at(o->line, "BY VALUE '%s': only items up to four bytes (a word) are passed by value", o->ref.sym->name);
                     a[n] = arg_value(o);
@@ -14897,6 +14920,13 @@ static void parse_search(void)
         if (all) {
             if (!tbl->nokey) die_at(wline, "SEARCH ALL '%s': its OCCURS clause has no KEY phrase (%s)", tbl->name,
                                    g_std < 2002 ? "X3.23-1985 SEARCH syntax rule 1" : "2023 14.9.37.3 rule 7");
+            for (int k = 0; k < tbl->nokey; k++)            /* Micro Focus: a KEY data item is no floating-point item */
+                for (int j = (int)(tbl - g_sym) + 1; j < g_nsym; j++) {
+                    int in = 0;                          /* the key is the table entry's descendant */
+                    for (int a2 = g_sym[j].parent; a2 >= 0 && !in; a2 = g_sym[a2].parent) in = &g_sym[a2] == tbl;
+                    if (in && !strcmp(g_sym[j].name, tbl->okey[k]) && g_sym[j].usage == U_FLOAT)
+                        die_at(wline, "SEARCH ALL: the KEY '%s' is a floating-point item (Micro Focus: SEARCH rules)", g_sym[j].name);
+                }
             unsigned used = 0;
             sa_validate(wc[nwhen], tbl, ix, &used, wline);
             for (int k = 0; k < tbl->nokey; k++)

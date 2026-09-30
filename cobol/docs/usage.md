@@ -213,6 +213,29 @@ Each is a class E behavior point, as COMP-3 and COMP-5 are now.
   stop at run time), is now computed in double on both stacks. A zero
   base to such a power, or a negative base to a fraction, is a size
   error.
+- **Micro Focus's float rules, walked page by page** (its Language
+  Reference: the float formats, ROUNDED, MOVE, DISPLAY, subscripting,
+  reference modification, the class condition, DIVIDE, PERFORM, SEARCH,
+  CALL):
+  - an arithmetic statement's floating-point result is always rounded
+    into a decimal receiver, ROUNDED being documentary; a MOVE still
+    truncates, as a numeric MOVE does;
+  - a float subscript, and a reference-modification position computed
+    in floating point, are rounded to the nearest integer. The position
+    had failed to compile, with a misleading message about 18 digits;
+  - an 88 on a float works;
+  - refused, as MF refuses them:
+    - a class condition on a float;
+    - a float in DIVIDE ... REMAINDER;
+    - PERFORM TIMES a float;
+    - CALL BY VALUE a float (a COMP-1 had passed as a word);
+    - a SEARCH ALL key that is a float;
+    - a float UNSTRING receiver (refused already).
+  - `tests/free/floatmf` (no oracle: GnuCOBOL refuses a float subscript)
+    and `tests/bad/float-*` check these.
+  - **Not taken:** MF rounds a float argument where an intrinsic expects
+    an integer. Here it goes through the narrow stack at nine decimals
+    and truncates. No program here passes one.
 - **Not done:**
   - floating-point literals (`1.5E3`) and external floating-point
     PICTUREs (step 4, when code asks);

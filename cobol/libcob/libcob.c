@@ -1804,6 +1804,7 @@ int cob_wcmp(void)
 int cob_wtop_store(void *p, const cob_desc *d, int opts)
 {
     if (div0) { size_kind = div0; return 1; }
+    if (wstk[wsp - 1].isf) opts |= 1;           /* a floating-point result is always rounded (MF: ROUNDED documentary) */
     int r = cob_wput_x(p, d, &wstk[wsp - 1], opts);
     if (r) size_kind = 3;
     return r;
@@ -1815,6 +1816,7 @@ static int w_top_addsub(void *p, const cob_desc *d, int opts, int sub)
     cob_wnum a; cob_wget(p, d, &a);
     w_addsub(&a, &wstk[wsp - 1], sub);
     if (div0) { size_kind = div0; return 1; }
+    if (a.isf) opts |= 1;                       /* a floating-point result is always rounded (MF) */
     int r = cob_wput_x(p, d, &a, opts);
     if (r) size_kind = 3;
     return r;
@@ -1826,6 +1828,10 @@ void cob_wdrop(void) { if (wsp) wsp--; div0 = 0; }
 /* subscripts: the integer value of an item */
 int cob_load_int(const void *p, const cob_desc *d)
 {
+    if (is_float(d)) {                          /* a float subscript: the nearest integer (MF) */
+        double x = f_load(p, d); x = x < 0 ? ceil(x - 0.5) : floor(x + 0.5);
+        return x >= 2147483647.0 ? 0x7fffffff : x <= -2147483647.0 ? -0x7fffffff : (int)x;
+    }
     long long v = cob_get_num(p, d);
     if (d->scale > 0) v = div_pow10(v, d->scale, 0);
     return (int)v;
@@ -5320,7 +5326,10 @@ int cob_wpop_int(void)
 {
     if (wsp <= 0) cob_fatal("numeric stack underflow");
     cob_wnum a = wstk[--wsp];
-    if (a.isf) { double x = trunc(a.f); return x >= 2147483647.0 ? 0x7fffffff : x <= -2147483647.0 ? -0x7fffffff : (int)x; }
+    if (a.isf) {                               /* a float: the nearest integer (MF, for subscripts and reference modification) */
+        double x = a.f < 0 ? ceil(a.f - 0.5) : floor(a.f + 0.5);
+        return x >= 2147483647.0 ? 0x7fffffff : x <= -2147483647.0 ? -0x7fffffff : (int)x;
+    }
     if (a.scale > 0) w_drop_digits(a.m, WL, a.scale, 0, 0);
     if (a.m[1] || a.m[2] || a.m[3] || a.m[0] > 0x7fffffffu) return a.neg ? -0x7fffffff : 0x7fffffff;
     return a.neg ? -(int)a.m[0] : (int)a.m[0];
@@ -5329,7 +5338,6 @@ int cob_wpop_pos(void)
 {
     if (wsp <= 0) cob_fatal("numeric stack underflow");
     cob_wnum *a = &wstk[wsp - 1];
-    if (a->isf && a->f != trunc(a->f)) pos_nonint = 1;
     if (!a->isf && a->scale > 0) { cob_wnum t = *a; int nz; w_drop_digits(t.m, WL, a->scale, 0, &nz); if (nz) pos_nonint = 1; }
     return cob_wpop_int();
 }
