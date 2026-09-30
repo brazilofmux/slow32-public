@@ -537,3 +537,18 @@ entries, so a chained loop shows 0 executions and a `ret` stub shows as hottest;
 given; the host disassembly shells out to `objdump` and fails on macOS (the raw
 `/tmp/slow32-dbt-host-*.bin` files are still written -- feed them to
 `objdump -D -b binary -m aarch64` in the `slow32:toolchain` container).
+
+## 18. Self-Hosted dbt-a64 Segfaults on COBOL Programs (OPEN, 2026-09-30)
+
+`selfhost/stage08-cross-a64/out/dbt-a64` (the DBT compiled by cc-a64),
+run in linux/arm64 (`gcc:latest` under podman), exits 139 on any COBOL
+program tried -- `cobol/tests/free/hotarith` and `2002/fnreturn`, built by
+`cobol/compile.sh` -- while it runs `benchmark_core.s32x` to its checksum
+(0x8d70b2b).  The native `tools/dbt/slow32-dbt` runs both programs.  Not
+the hooks: the same crash with `S32_HOOKS=none`, and with dbt-a64 built
+from 3c406af2, the commit before hooks.c existed.  Found while fixing the
+cross trees' missing hooks.c (a717728d); `make test` in the a64 tree does
+not run a COBOL program, so nothing there sees it.  Not yet narrowed:
+cc-a64 miscompiling the DBT, or the tree's stripped-down
+`libc_a64/mmio_ring_a64.c`, which COBOL's file and argument I/O leans on
+and the benchmark barely touches, are the first two suspects.
