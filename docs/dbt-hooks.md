@@ -1,7 +1,11 @@
 # DBT hooks: native routines the guest opts into
 
-Status: design, 2026-09-29. Nothing below is built yet except the
-profiler that chose the candidates (`slow32 -p`, 8c829339).
+Status, 2026-09-29: step 1 (the mechanism, on the 64-bit division
+builtins) is built and validated on both hosts (88f6b1dd). karith runs
+16% faster on the M-series (3.27 s to 2.74 s) and 15% faster on kagura's
+x86-64 (11.79 s to 10.00 s), with byte-identical output. Steps 2 and 3
+are not started. The candidates came from the profiler, `slow32 -p`
+(8c829339).
 
 ## What exists today
 
