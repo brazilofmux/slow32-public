@@ -1078,12 +1078,28 @@ static int prog_index(const unsigned char *p, int len)
     }
     return -1;
 }
-/* CANCEL: the program's WORKING-STORAGE back to its initial state; a
- * name that is not a program here is ignored, as GnuCOBOL does */
-void cob_cancel(const unsigned char *p, int len)
+/* CANCEL: the program back to its initial state -- WORKING-STORAGE,
+ * its files closed, its contained programs likewise (the compiled cancel
+ * routine); a name that is not a program here is ignored (2023 14.9.5.4
+ * rule 7).  1 when the program is active (-std=2002 keeps the count): it
+ * is not canceled (rule 5; EC-PROGRAM-CANCEL-ACTIVE when checked) */
+int cob_cancel(const unsigned char *p, int len)
 {
     int i = prog_index(p, len);
-    if (i >= 0 && cob_progs[i].cancel) cob_progs[i].cancel();
+    if (i < 0 || !cob_progs[i].cancel) return 0;
+    if (cob_progs[i].act && cob_progs[i].act[0] > 0) return 1;
+    cob_progs[i].cancel();
+    return 0;
+}
+/* a canceled program's file: the implicit CLOSE without options, when it
+ * is open (14.9.5.4 rule 9) */
+void cob_cancel_close(cob_file *f) { if (f->open_mode) (void)cob_close(f); }
+/* STOP RUN WITH STATUS alphanumeric: the text to the operating system --
+ * here, standard error -- then the exit (14.9.42.4 rules 2-5) */
+void cob_stop_text(const char *p, int n, int error)
+{
+    fwrite(p, 1, (size_t)n, stderr); fputc('\n', stderr);
+    cob_stop_run(error ? 1 : 0);
 }
 /* -std=2002: a program's activation descriptor (active count, RECURSIVE),
  * so a CALL can tell before calling that it would re-enter an active

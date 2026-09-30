@@ -21,7 +21,7 @@ RAISED|move function max(n m) to m
 RAISED|move function char(n) to x
 RAISED|initialize m replacing numeric by n
 RAISED|call "cv" using by value n
-RAISED|stop run n
+RAISED|stop run n.
 RAISED|move bb to bc
 RAISED|if bb = bc continue end-if
 RAISED|compute bc = bb b-and bc

@@ -2222,6 +2222,7 @@ static int g_nsym, g_scap;
  * ancestors' GLOBAL items and files. */
 static int g_sym_base, g_file_base, g_para_base;
 static int g_unit_counter;          /* units so far in this source file, for label spaces */
+static int g_unit_parent1[4096];    /* a contained unit's container + 1; 0 at the top */
 typedef struct UnitSave UnitSave;
 static UnitSave *g_ustack[8]; static int g_udepth;
 
@@ -16543,6 +16544,18 @@ static void parse_exec_sql(void)
 }
 
 /* the unit's statement and cursor descriptors (libcob/esql.c reads them) */
+/* STOP RUN is the last statement of a consecutive sequence of imperative
+ * statements in its sentence (X3.23-1985 STOP syntax rule 2; 2002
+ * 14.8.38.2 rule 1): another statement straight after it is refused --
+ * ELSE, WHEN, a scope terminator or the period end the sequence */
+static int is_verb(const char *w);
+static void stop_last_check(Tok *t)
+{
+    if (cur()->kind == T_WORD && is_verb(cur()->s))
+        die_at(t->line, "STOP RUN is the last statement of its sequence; '%s' follows it (%s)", cur()->s,
+               g_std < 2002 ? "X3.23-1985 STOP syntax rule 2" : "2002 14.8.38.2 rule 1");
+}
+
 static void emit_sql_data(void)
 {
     for (int i = 0; i < g_nsqlst; i++) {
@@ -16659,10 +16672,23 @@ static void parse_statement_1(void)
         /* nothing to release -- the program is linked in -- but its next
          * CALL finds it in its initial state: the registry's cancel routine */
         advance();
+        if (cur()->kind == T_NUM) die_at(t->line, "CANCEL: literal-1 is an alphanumeric literal, a program-name (%s)", g_std < 2002 ? "X3.23-1985 CANCEL syntax rule 1" : "2023 14.9.5.3 rule 2");
         while (cur()->kind == T_STR || (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s))) {
             if (cur()->kind == T_STR) { emit_la("r3", lit_label((const unsigned char *)cur()->s, cur()->len)); emit_li("r4", cur()->len); advance(); }
-            else { Ref r; parse_ref(&r); emit_ref_addr(&r, "r3"); emit_li("r4", r.sym->size); }
+            else {
+                Ref r; parse_ref(&r);
+                if (r.sym->is_group ? 0 : (is_numeric_sym(r.sym) || sym_is_boolean(r.sym)))
+                    die_at(r.line, "CANCEL '%s': identifier-1 is an alphanumeric or national item (%s)", r.sym->name,
+                           g_std < 2002 ? "X3.23-1985 CANCEL syntax rule 2" : "2023 14.9.5.3 rule 1");
+                emit_ref_addr(&r, "r3"); emit_li("r4", r.sym->size);
+            }
             emit_call("cob_cancel");
+            if (ec_on_name("EC-PROGRAM-CANCEL-ACTIVE")) {
+                int Lok = new_label();
+                emit("\tbeq r1, r0, .L%d", Lok);
+                emit_ec_raise(ec_find("EC-PROGRAM-CANCEL-ACTIVE", 0));
+                emit_label(Lok);
+            }
         }
         return;
     }
@@ -16681,6 +16707,37 @@ static void parse_statement_1(void)
     }
     if (!strcmp(v, "stop")) {
         advance();
+        if (at_word("run") && is_word(peek(1), "with")) {
+            /* STOP RUN WITH {ERROR | NORMAL} STATUS [identifier | literal]
+             * (2002 14.8.38; 2023 14.9.42): the status to the operating
+             * system -- an integer its exit status, ERROR alone 1, NORMAL
+             * alone 0; an alphanumeric value to standard error, then 1 or 0 */
+            advance(); advance();
+            if (g_std < 2002) die_at(t->line, "STOP RUN WITH ... STATUS is COBOL 2002; compile with -std=2002");
+            int err = 0;
+            if (accept_word("error")) err = 1; else if (!accept_word("normal")) die_at(cur()->line, "STOP RUN WITH: expected ERROR or NORMAL");
+            accept_word("status");
+            if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand() || is_verb(cur()->s)) { emit_li("r3", err); emit_call("cob_stop_run"); }
+            else {
+                Opnd n; parse_operand(&n);
+                if (n.kind == O_NUM) {
+                    if (!numlit_is_int(&n.num)) die_at(t->line, "STOP RUN WITH STATUS: a numeric literal is an integer (2023 14.9.42.3 rule 3)");
+                    emit_li("r3", (long)numlit_int(&n.num)); emit_call("cob_stop_run");
+                } else if (n.kind == O_STR) {
+                    Arg a[2] = { arg_label(lit_label((unsigned char *)n.tok->s, n.tok->len)), arg_imm(n.tok->len) };
+                    emit_args(a, 2); emit_li("r5", err); emit_call("cob_stop_text");
+                } else if (n.kind == O_REF && !n.ref.rm && is_int_item(n.ref.sym)) {
+                    Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
+                    emit_args(a, 2); emit_call("cob_load_int");
+                    emit("\tadd r3, r0, r1"); emit_call("cob_stop_run");
+                } else if (n.kind == O_REF && (n.ref.sym->usage == U_DISPLAY || n.ref.sym->usage == U_NATIONAL) && !is_numeric_sym(n.ref.sym)) {
+                    Arg a[2] = { arg_ref(&n.ref), arg_rlen(&n.ref) };
+                    emit_args(a, 2); emit_li("r5", err); emit_call("cob_stop_text");
+                } else die_at(t->line, "STOP RUN WITH STATUS: an integer item, an item of usage display or national, or a literal (2023 14.9.42.3 rules 2-3)");
+            }
+            stop_last_check(t);
+            return;
+        }
         if (accept_word("run")) {
             /* STOP RUN [RETURNING] {integer | identifier}: the process exit
              * status.  Neither form is in the 1985 text (RETURNING is 2002; the
@@ -16689,7 +16746,7 @@ static void parse_statement_1(void)
              * one operand on the exit path that exists (GitHub #35). */
             if (at_word("returning")) bp(BP_E6_STOP_RUN_VALUE, t->line);
             accept_word("returning");
-            if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand()) { emit_li("r3", 0); emit_call("cob_stop_run"); return; }
+            if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand() || is_verb(cur()->s)) { emit_li("r3", 0); emit_call("cob_stop_run"); stop_last_check(t); return; }
             bp(BP_E6_STOP_RUN_VALUE, t->line);
             { Opnd n; parse_operand(&n); check_numeric_opnd(&n);
               emit_incompat(&n);
@@ -16699,18 +16756,40 @@ static void parse_statement_1(void)
                   Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
                   emit_args(a, 2); emit_call("cob_load_int");
               }
-              emit("\tadd r3, r0, r1"); emit_call("cob_stop_run"); return; }
+              emit("\tadd r3, r0, r1"); emit_call("cob_stop_run"); stop_last_check(t); return; }
         }
         /* STOP literal (obsolete): the literal to the operator, who would
          * resume the run -- displayed, and the run goes on */
+        if (at_word("all")) die_at(t->line, "STOP literal: not an ALL literal (X3.23-1985 STOP syntax rule 1)");
         if (cur()->kind != T_STR && cur()->kind != T_NUM) die_at(t->line, "STOP needs RUN or a literal");
+        if (cur()->kind == T_NUM) { NumLit q; numlit_parse(cur(), &q);
+            if (!numlit_is_int(&q) || q.neg || cur()->s[0] == '+') die_at(t->line, "STOP literal: a numeric literal is an unsigned integer (X3.23-1985 STOP syntax rule 3)"); }
         bp(BP_O3_STOP_LITERAL, t->line);
         { Arg a[2] = { arg_label(lit_label((unsigned char *)cur()->s, cur()->len)), arg_imm(cur()->len) }; emit_args(a, 2); emit_call("cob_display"); emit_call("cob_display_nl"); }
         advance();
         return;
     }
-    if (!strcmp(v, "goback")) { if (g_std < 2002) bp(BP_E2_GOBACK, t->line); advance(); emit("\tjal r0, .Lgb%d", g_unit); return; }
-    if (!strcmp(v, "continue")) { advance(); return; }
+    if (!strcmp(v, "goback")) {
+        if (g_std < 2002) bp(BP_E2_GOBACK, t->line);
+        if (g_in_decl && cur_use_is_global())
+            die_at(t->line, "GOBACK in a declarative whose USE statement says GLOBAL (2002 14.8.17.2 rule 1; 2023 14.9.18.3 rule 1)");
+        advance();
+        if (at_word("raising"))
+            die_at(t->line, "GOBACK RAISING is not implemented yet (exception propagation to the caller, as EXIT PROGRAM RAISING)");
+        if (at_word("with") && (is_word(peek(1), "error") || is_word(peek(1), "normal")))
+            die_at(t->line, "GOBACK WITH ... STATUS is COBOL 2023 (14.9.18); not implemented -- STOP RUN WITH STATUS is 2002's");
+        emit("\tjal r0, .Lgb%d", g_unit);
+        return;
+    }
+    if (!strcmp(v, "continue")) {
+        advance();
+        if (at_word("after")) {
+            int k = g_tp; while (k < g_ntok && g_tok[k].kind != T_PERIOD && !is_word(&g_tok[k], "seconds")) k++;
+            if (k < g_ntok && is_word(&g_tok[k], "seconds"))
+                die_at(t->line, "CONTINUE AFTER ... SECONDS is COBOL 2023 (14.9.9); not implemented");
+        }
+        return;
+    }
     if (!strcmp(v, "exit")) {
         int exit_tp = g_tp;
         advance();
@@ -16865,6 +16944,7 @@ static void compile_nested_unit(void)
     g_ustack[g_udepth++] = u;
 
     g_unit = ++g_unit_counter;
+    if (g_unit < 4096) g_unit_parent1[g_unit] = u->unit + 1;
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
     g_report_base = g_nreport; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
@@ -17333,6 +17413,17 @@ static void parse_procedure_division(void)
             emit_li("r5", s->image_size);
             emit_call("memcpy");
         }
+        /* its internal files closed (2023 14.9.5.4 rule 9), and the programs
+         * it contains canceled, last first (rule 4) -- each of those closes
+         * its own files and cancels its own contained programs */
+        for (int i = g_file_base; i < g_nfile; i++) {
+            File *f = &g_files[i];
+            if (f->external || f->org == COB_ORG_SORT || f->unit != g_unit) continue;
+            emit_file_addr("r3", f);
+            emit_call("cob_cancel_close");
+        }
+        for (int u = g_unit_counter; u > g_unit; u--)
+            if (u < 4096 && g_unit_parent1[u] == g_unit + 1) emit("\tjal r31, .Lcan%d", u);
         emit("\tldw lr, sp+0");
         emit("\taddi sp, sp, 8");
         emit("\tjalr r0, r31, 0");

@@ -1,0 +1,11 @@
+wr: open status 00 opened-before=0
+wr: open status 41 opened-before=1
+second call, no cancel: k=2
+wr: open status 00 opened-before=0
+after cancel: k=3
+inner m=1
+outer n=1
+inner m=2
+outer n=2
+inner m=1
+outer n=1

@@ -141,7 +141,10 @@ emu_run() {   # emu_run prog.s32x > stdout: the guest's output only
     # a .args file beside the test is the program's command line;
     # a .env file beside it is the guest's environment (S32_SORT_MEMORY=24K ...),
     # and the oracle's: GnuCOBOL ignores the S32_ names and reads COB_ ones
-    (cd "$W/run" && env ${PROG_ENV[@]+"${PROG_ENV[@]}"} "$EMU" "$1" $PROG_ARGS 2>/dev/null < "${2:-/dev/null}") | awk '
+    # the program's exit status (the emulator's own) goes to $W/lastrc,
+    # for a test with a .exitcode file (STOP RUN WITH STATUS)
+    rm -f "$W/lastrc"
+    (cd "$W/run" && env ${PROG_ENV[@]+"${PROG_ENV[@]}"} "$EMU" "$1" $PROG_ARGS 2>/dev/null < "${2:-/dev/null}"; echo $? > "$W/lastrc") | awk '
         /^Starting execution/ { capture = 1; held = 0; next }
         /^HALT at|^Program halted|^Exit code/ { if (held && prev != "") print prev; capture = 0; held = 0 }
         capture { if (held) print prev; prev = $0; held = 1 }
@@ -255,6 +258,9 @@ for fmt in fixed free 2002; do
             report "$fmt/$name" 1 "output mismatch"
             diff "$exp" "$W/$name.out" | head -8
             continue
+        fi
+        if [ -f "${src%.cbl}.exitcode" ] && [ "$(cat "$W/lastrc" 2>/dev/null)" != "$(cat "${src%.cbl}.exitcode")" ]; then
+            report "$fmt/$name" 1 "exit status $(cat "$W/lastrc" 2>/dev/null), want $(cat "${src%.cbl}.exitcode")"; continue
         fi
         # both paths: the same program with the register arithmetic and its
         # peepholes off (-fno-hot-arith, the code the decimal stack and

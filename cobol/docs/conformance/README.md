@@ -39,6 +39,7 @@ began this; ISSUES-96 on record the sweeps.
 | 14.9.20 INITIALIZE | [initialize.md](initialize.md) | 2026-09-29 |
 | 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
 | 14.9.37 SEARCH | [search.md](search.md) | 2026-09-29 |
+| 14.9.42 STOP, 14.9.18 GOBACK, 14.9.9 CONTINUE, 14.9.5 CANCEL | [control.md](control.md) | 2026-09-30 |
 | 15 intrinsic functions | [functions.md](functions.md) | 2026-09-30 |
 | 7.2 COPY and REPLACE (text manipulation) | [copy.md](copy.md) | 2026-09-30 |
 | 14.9.39 SET (formats 1-4) | [set.md](set.md) | 2026-09-30 |

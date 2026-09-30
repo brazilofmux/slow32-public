@@ -45,5 +45,5 @@ procedure division.
     move 0 to return-code
     display "p",k   *> BP-E22
     exit program move 0 to return-code   *> BP-E21
-    stop run returning k
+    stop run returning k.
     goback.
