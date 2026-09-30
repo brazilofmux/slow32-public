@@ -14,6 +14,8 @@
 
 long long cob_get_num(const void *p, const cob_desc *d);
 int cob_put_num_x(void *p, const cob_desc *d, long long v, int vscale, int opts);
+int cob_set_decimal_point(int comma);
+int cob_set_currency(int c);
 
 static unsigned long long rs = 88172645463325252ULL;
 static unsigned long long rnd(void) { rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17; return rs; }
@@ -61,6 +63,43 @@ static void make_desc(cob_desc *d, char *pic)
     }
 }
 
+/* a random numeric-edited descriptor and its flattened PICTURE: an
+ * integer part of 9, Z or * or a floating $ + - string, insertion
+ * characters among them, a point and fraction digits, a fixed sign or
+ * CR/DB -- the shapes picture.c accepts */
+static void make_edited(cob_desc *d, char *pic)
+{
+    memset(d, 0, sizeof *d);
+    d->cat = COB_NUM_ED;
+    d->usage = COB_U_DISPLAY;
+    int o = 0, digits = 0, width = 0;
+    int kind = (int)rn(5);                   /* 0 9s, 1 Zs, 2 *s, 3 floating, 4 Zs then 9s */
+    char fl = "$+-"[rn(3)];
+    int nint = 1 + (int)rn(10), lead_sign = kind != 3 && rn(4) == 0;
+    int trail = rn(4);                       /* 0 none, 1 + or -, 2 CR/DB, 3 none */
+    if (lead_sign) { pic[o++] = rn(2) ? '+' : '-'; width++; d->flags |= COB_F_SIGNED; }
+    if (kind == 3) { pic[o++] = fl; width++; if (fl != '$') { d->flags |= COB_F_SIGNED; trail = trail == 1 || trail == 2 ? 0 : trail; } }
+    else if (rn(4) == 0 && !lead_sign) { pic[o++] = '$'; width++; }
+    for (int i = 0; i < nint; i++) {
+        char c = kind == 0 ? '9' : kind == 1 ? 'Z' : kind == 2 ? '*' : kind == 3 ? fl : (i < nint / 2 ? 'Z' : '9');
+        pic[o++] = c; width++; digits++;
+        if (i < nint - 1 && rn(4) == 0) { pic[o++] = "B0/,,"[rn(5)]; width++; }
+    }
+    int nfrac = rn(3) ? (int)rn(5) : 0;
+    if (nfrac || rn(4) == 0) {
+        pic[o++] = '.'; width++;
+        for (int i = 0; i < nfrac; i++) { pic[o++] = kind == 2 && rn(2) ? '*' : kind == 1 && rn(3) == 0 ? 'Z' : '9'; width++; digits++; }
+    }
+    if (trail == 1 && !lead_sign && !(d->flags & COB_F_SIGNED)) { pic[o++] = rn(2) ? '+' : '-'; width++; d->flags |= COB_F_SIGNED; }
+    else if (trail == 2 && !lead_sign && !(d->flags & COB_F_SIGNED)) { pic[o++] = rn(2) ? 'C' : 'D'; width += 2; d->flags |= COB_F_SIGNED; }
+    pic[o] = 0;
+    d->digits = (unsigned char)digits;
+    d->scale = (signed char)nfrac;
+    d->size = (unsigned)width;
+    d->pic = pic;
+    if (rn(6) == 0) d->flags |= COB_F_BLANKZ;
+}
+
 /* a random value: any magnitude up to 19 digits, and sometimes an edge */
 static long long make_value(void)
 {
@@ -77,19 +116,25 @@ static long long make_value(void)
 int main(void)
 {
     enum { N = 300000, PAD = 4 };
-    unsigned char buf[PAD + 16 + PAD];
-    char pic[24];
+    unsigned char buf[PAD + 40 + PAD];
+    char pic[48];
     int shown = 0;
     for (int it = 0; it < N; it++) {
         cob_desc d;
-        make_desc(&d, pic);
+        int edited = rn(3) == 0;
+        if (edited) {
+            make_edited(&d, pic);
+            cob_set_decimal_point(rn(4) == 0);             /* the locale the edited routines are handed */
+            cob_set_currency(rn(4) == 0 ? "E#"[rn(2)] : '$');
+        } else make_desc(&d, pic);
         for (int i = 0; i < (int)sizeof buf; i++) buf[i] = (unsigned char)rnd();
         unsigned char *p = buf + PAD;
         if (rn(5) == 0) {
             /* a fetch of whatever bytes are there: digits, spaces, overpunch, junk */
             for (unsigned i = 0; i < d.size; i++) {
                 unsigned r = rn(10);
-                p[i] = r < 6 ? (unsigned char)('0' + rn(10)) : r == 6 ? ' ' : r == 7 ? (unsigned char)('p' + rn(10)) : (unsigned char)rnd();
+                if (edited) p[i] = r < 5 ? (unsigned char)('0' + rn(10)) : (unsigned char)" .,-+CRDB$*E#"[rn(13)];
+                else p[i] = r < 6 ? (unsigned char)('0' + rn(10)) : r == 6 ? ' ' : r == 7 ? (unsigned char)('p' + rn(10)) : (unsigned char)rnd();
             }
         } else {
             long long v = make_value();
@@ -99,9 +144,10 @@ int main(void)
 #ifdef KERN_DIFF_VERBOSE
             printf("%d put %lld %d %d pic %s -> %d\n", it, v, vscale, opts, d.pic ? d.pic : "-", r);
 #endif
-            if (shown < 6 && !r) {
+            if (shown < 12 && !r && (edited || shown < 6)) {
                 printf("put %lld scale %d usage %d digits %d scale %d flags %d ->", v, vscale, d.usage, d.digits, d.scale, d.flags);
-                for (unsigned i = 0; i < d.size; i++) printf(" %02x", p[i]);
+                if (edited) printf(" %s [%.*s]", pic, (int)d.size, (const char *)p);
+                else for (unsigned i = 0; i < d.size; i++) printf(" %02x", p[i]);
                 printf("\n");
                 shown++;
             }

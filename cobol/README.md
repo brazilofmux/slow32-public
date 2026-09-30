@@ -96,7 +96,10 @@ under `docs/`.
                       width, and the software edit descriptor
     libcob/cobrt.h    the field descriptor both sides read (cat, usage,
                       digits, scale, flags, size, picture)
-    libcob/cobedit.h  the software edit descriptor, applied and reversed
+    libcob/kern.h     the hookable kernels (docs/dbt-hooks.md): numeric
+                      fetch and store, the software edit descriptor
+                      applied and reversed; compiled into libcob and
+                      into slow32-dbt
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
     libcob/casemap.h  Unicode simple case mappings for UPPER-CASE and
                       LOWER-CASE, generated and checked in;

@@ -12,7 +12,7 @@
  * conversion matrix behind MOVE, the arithmetic statements on a scaled-i64
  * numeric stack with COMP-integer hot cases inline, conditions, IF,
  * every PERFORM form, GO TO, SET.  Stage 3: edited MOVE and de-edit
- * through the shared software editor (libcob/cobedit.h), COMPUTE with
+ * through the runtime's software editor (libcob/kern.h), COMPUTE with
  * arithmetic expressions (also as condition operands), ROUNDED, ON SIZE
  * ERROR, REMAINDER.  Stage 4: SELECT/FD, line sequential and fixed
  * sequential files (OPEN, CLOSE, READ, WRITE), STRING, the case

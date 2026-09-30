@@ -136,6 +136,51 @@ static int hk_cob_put_num_x(dbt_cpu_state_t *cpu, uint8_t *mem)
     R(1) = (uint32_t)cob_k_put_num(p, &d, eff, (long long)U64(5, 6), (int)R(7), (int)R(8));
     return HK_DONE;
 }
+
+// The item's PICTURE as a host string, its P symbols, and the bytes the
+// editor walks (CR/DB two, V S P none); NULL when it is not all there or
+// longer than 38 symbols (the kernels' digit buffers hold 40).
+static const char *hk_pic(dbt_cpu_state_t *cpu, uint8_t *mem, uint32_t a, int *np, uint32_t *width)
+{
+    *np = 0; *width = 0;
+    if (!a) return NULL;
+    for (uint32_t i = 0; ; i++) {
+        const char *c = hk_ptr(cpu, mem, a + i, 1, 0);
+        if (!c || i > 38) return NULL;
+        if (!*c) break;
+        if (*c == 'P') ++*np;
+        *width += (*c == 'C' || *c == 'D') ? 2 : (*c == 'V' || *c == 'S' || *c == 'P') ? 0 : 1;
+    }
+    return (const char *)mem + a;
+}
+
+// int cob_put_edited(void *p, const cob_desc *d, long long v, int vscale, int opts, int locale)
+static int hk_cob_put_edited(dbt_cpu_state_t *cpu, uint8_t *mem)
+{
+    cob_kdesc d;
+    int np; uint32_t width;
+    if (!hk_desc(cpu, mem, R(4), &d) || !cob_k_ed_ok(&d)) return HK_DECLINE;
+    const char *pic = hk_pic(cpu, mem, d.pic, &np, &width);
+    if (!pic) return HK_DECLINE;
+    unsigned char *p = hk_ptr(cpu, mem, R(3), width > d.size ? width : d.size, 1);
+    if (!p) return HK_DECLINE;
+    R(1) = (uint32_t)cob_k_put_edited(p, &d, pic, d.digits - np, (long long)U64(5, 6), (int)R(7), (int)R(8), (int)R(9));
+    return HK_DONE;
+}
+
+// long long cob_get_edited(const void *p, const cob_desc *d, int locale)
+static int hk_cob_get_edited(dbt_cpu_state_t *cpu, uint8_t *mem)
+{
+    cob_kdesc d;
+    int np; uint32_t width;
+    if (!hk_desc(cpu, mem, R(4), &d) || !cob_k_ed_ok(&d)) return HK_DECLINE;
+    const char *pic = hk_pic(cpu, mem, d.pic, &np, &width);
+    if (!pic) return HK_DECLINE;
+    const unsigned char *p = hk_ptr(cpu, mem, R(3), width > d.size ? width : d.size, 0);
+    if (!p) return HK_DECLINE;
+    RET64((uint64_t)cob_k_get_edited(p, &d, pic, (int)R(5)));
+    return HK_DONE;
+}
 #endif
 
 // ---- the definitions --------------------------------------------------
@@ -154,6 +199,8 @@ static const hook_def_t hook_defs[] = {
 #if HAVE_COBKERN
     { "cob_get_num",   HK_TAG_COBKERN, hk_cob_get_num },
     { "cob_put_num_x", HK_TAG_COBKERN, hk_cob_put_num_x },
+    { "cob_get_edited", HK_TAG_COBKERN, hk_cob_get_edited },
+    { "cob_put_edited", HK_TAG_COBKERN, hk_cob_put_edited },
 #endif
 };
 #define NDEFS ((int)(sizeof hook_defs / sizeof hook_defs[0]))

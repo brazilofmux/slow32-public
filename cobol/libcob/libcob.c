@@ -8,7 +8,7 @@
  *
  * Stage 2: DISPLAY; MOVE across the conversion matrix; comparison; class
  * tests; a scaled-i64 numeric stack for the arithmetic statements; the
- * PERFORM stack.  Stage 3: editing and de-editing (cobedit.h), ROUNDED,
+ * PERFORM stack.  Stage 3: editing and de-editing (kern.h), ROUNDED,
  * SIZE ERROR, COMPUTE's operators.  Stage 4: line sequential and fixed
  * sequential files, STRING, the case intrinsics.  Stage 5: indexed files
  * on the default path (docs/indexed.md).  Stage 7: Report Writer, the
@@ -26,7 +26,6 @@
 #include <math.h>
 #include <ctype.h>
 #include "cobrt.h"
-#include "cobedit.h"
 #include "wide.h"
 #include "kern.h"
 
@@ -42,6 +41,8 @@ typedef char kern_chk_f[(K_F_SIGNED == COB_F_SIGNED && K_F_SEPLEAD == COB_F_SEPL
  * each jumps to its _impl here */
 long long cob_get_num(const void *vp, const cob_desc *d);
 int cob_put_num_x(void *vp, const cob_desc *d, long long v, int vscale, int opts);
+long long cob_get_edited(const void *vp, const cob_desc *d, int locale);
+int cob_put_edited(void *vp, const cob_desc *d, long long v, int vscale, int opts, int locale);
 void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w);
 int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts);
 #include <term.h>
@@ -199,28 +200,22 @@ static int capacity_digits(unsigned size)
 /* Value of the item scaled by 10^scale (i.e. the integer the digits spell). */
 /* de-editing: a 1985 feature IBM ANS COBOL never had.  Out of line so
  * its arrays do not put a 350-byte frame under every numeric fetch. */
-static __attribute__((noinline)) long long get_num_edited(const unsigned char *p, const cob_desc *d)
-{
-    long long v = 0;
-    int neg = 0;
-    {
-        char digs[40];
-        unsigned char sw[256];
-        if ((cob_dp_comma || cob_currency != '$') && d->size <= sizeof sw) {     /* the bytes carry ',' for the point, c for '$': read them the other way round */
-            for (size_t i = 0; i < d->size; i++) {
-                unsigned char c = p[i];
-                if (cob_dp_comma) c = c == '.' ? ',' : c == ',' ? '.' : c;
-                if (cob_currency != '$' && c == (unsigned char)cob_currency) c = '$';
-                sw[i] = c;
-            }
-            p = sw;
-        }
-        int n = cob_deedit(d->pic, p, digs, &neg);
-        for (int i = 0; i < n; i++) v = v * 10 + (digs[i] - '0');
-        return neg ? -v : v;
-    }
-}
+/* the program's DECIMAL-POINT IS COMMA and CURRENCY SIGN, as the edited
+ * kernels take them (kern.h K_LOC_*) */
+extern int cob_dp_comma, cob_currency;
+static int loc_word(void) { return (cob_dp_comma ? 1 : 0) | ((cob_currency & 255) << 8); }
 
+/* the numeric-edited fetch and store: hookable thunks (build.sh) in front
+ * of these */
+long long cob_get_edited_impl(const void *vp, const cob_desc *d, int locale)
+{
+    return cob_k_get_edited(vp, (const cob_kdesc *)d, d->pic, locale);
+}
+static int eff_digits(const cob_desc *d);
+int cob_put_edited_impl(void *vp, const cob_desc *d, long long v, int vscale, int opts, int locale)
+{
+    return cob_k_put_edited(vp, (const cob_kdesc *)d, d->pic, eff_digits(d), v, vscale, opts, locale);
+}
 /* ---- numeric USAGE NATIONAL (COBOL 2002; cobol ISSUES-72) --------------
  * The DISPLAY representation with each byte one UTF-16BE code unit: digits
  * U+0030..U+0039, a separate sign U+002B/U+002D, an unseparated one the
@@ -292,7 +287,7 @@ long long cob_get_num_impl(const void *vp, const cob_desc *d)
         return w_to_i64(&w);
     }
     if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; return cob_get_num(nat_narrow(vp, d, b, &nd), &nd); }
-    if (d->cat == COB_NUM_ED) return get_num_edited(p, d);
+    if (d->cat == COB_NUM_ED) return cob_get_edited(p, d, loc_word());
     return cob_k_get_num(p, (const cob_kdesc *)d);     /* as before: any other usage reads as DISPLAY */
 }
 
@@ -329,22 +324,7 @@ int cob_put_num_x_impl(void *vp, const cob_desc *d, long long v, int vscale, int
     }
     if (d->cat != COB_NUM_ED) return cob_k_put_num(vp, (const cob_kdesc *)d, eff_digits(d), v, vscale, opts);  /* any other usage, as before */
 
-    /* numeric-edited: the scaling and truncation of the kernel, then the
-     * editing, which reads the PICTURE and the program's currency and
-     * decimal-point choices */
-    unsigned char *p = vp;
-    int neg; unsigned long long mag;
-    if (cob_k_put_scale((const cob_kdesc *)d, eff_digits(d), v, vscale, opts, &neg, &mag)) return 1;
-    {
-        char digs[40];
-        int nd = d->digits;                         /* the P positions hold no digit character */
-        for (const char *q = d->pic; q && *q; q++) if (*q == 'P') nd--;
-        mag_to_digits(mag, digs, nd);
-        int w = cob_edit_apply(d->pic, digs, neg, d->flags & COB_F_BLANKZ, (char *)p);
-        if (cob_dp_comma) for (int i = 0; i < w; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
-        if (cob_currency != '$') for (int i = 0; i < w; i++) if (p[i] == '$') p[i] = (unsigned char)cob_currency;
-        return 0;
-    }
+    return cob_put_edited(vp, d, v, vscale, opts, loc_word());     /* numeric-edited */
 }
 
 void cob_put_num(void *vp, const cob_desc *d, long long v, int vscale) { cob_put_num_x(vp, d, v, vscale, 0); }
