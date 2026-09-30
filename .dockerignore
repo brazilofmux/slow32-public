@@ -36,6 +36,13 @@
 !cobol/compile.sh
 !cobol/src/
 !cobol/libcob/
+# SQLite: Dockerfile.cobol builds libsqlite3.s32a for the EXEC SQL runtime
+# (sqlite/build.sh SQLITE_LIB_ONLY=1 reads exactly these; out/ stays out)
+!sqlite/build.sh
+!sqlite/sqlite3.c
+!sqlite/sqlite3.h
+!sqlite/sqlite3ext.h
+!sqlite/slow32_vfs.c
 
 # Fortran 77 image (Dockerfile.fortran); libf77's built outputs excluded below.
 !fortran/build.sh
