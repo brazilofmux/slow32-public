@@ -1,22 +1,48 @@
 # DBT hooks: native routines the guest opts into
 
-Status, 2026-09-29. Steps 1 and 2 are built and validated on both hosts.
-Step 3 is not started.
+Status, 2026-09-29: steps 1 to 3 are done and validated on both hosts.
+
+Seconds on the M-series, best of 3, for all nine cobol/bench/vs kernels:
+
+| kernel | when hooks work began (after 8c829339) | now, hooks | now, `-H` |
+|---|---|---|---|
+| karith | 3.31 | 1.44 | 3.07 |
+| kmove | 1.76 | 1.06 | 1.66 |
+| kedit | 2.06 | 0.91 | 2.00 |
+| kstring | 0.64 | 0.46 | 0.52 |
+| ksearch | 1.48 | 0.68 | 0.93 |
+| kseq | 0.45 | 0.35 | 0.42 |
+| kidx | 0.56 | 0.49 | 0.53 |
+| ksort | 1.06 | 0.82 | 1.05 |
+| kreport | 0.54 | 0.45 | 0.54 |
+
+The `-H` column includes the guest-side work of step 3, which every
+engine gets.
 
 - **Step 1** (88f6b1dd): the mechanism, on the 64-bit division builtins.
-  karith runs 16% faster.
-- **Step 2** (a4d16d62, be044c11): libcob's numeric fetch and store,
-  from `cobol/libcob/kern.h`. With hooks, against `-H`, on the M-series:
+- **Step 2** (a4d16d62, be044c11): numeric fetch and store, from
+  `cobol/libcob/kern.h`.
+- **Step 3a** (3464923d): numeric-edited store and fetch, as hooks.
+  The editor moved into kern.h.
+- **Step 3b and 3c** (dee8d65c, 9120e313): not hooks. Comparison and
+  the string statements proved compiler and algorithm problems:
+  - same-length alphanumeric relations compile to memcmp, which the DBT
+    already runs natively;
+  - INSPECT, STRING and UNSTRING stopped calling memcmp per character.
+  cob_cmp's alphanumeric path and INSPECT's phrase table both depend on
+  libcob globals, which no hook may read.
 
-  | kernel | hooks | `-H` |
-  |---|---|---|
-  | karith | 1.54 s | 3.25 s |
-  | kmove | 1.16 s | 1.79 s |
-  | ksort | 0.88 s | 1.15 s |
+`cobol/tests/kern-differential.sh` is the hook gate (harness gate 1d).
 
-  Guest output is identical. `cobol/tests/kern-differential.sh` is the
-  gate (harness gate 1d).
-- The candidates came from the profiler, `slow32 -p` (8c829339).
+Running it on the other host found two platform bugs that no gate had
+seen:
+
+- selfhost ISSUES-70: stage08 cc folded INT64_MIN in a static
+  initializer to 0.
+- The x86-64 trampoline entered translated code with the stack 8 bytes
+  off the ABI's alignment (f1977533). Every intrinsic and intercept stub
+  has called host C misaligned since the stubs were written; a hook
+  kernel with an aligned SSE spill was the first to fault.
 
 Two lessons from step 2. A kernel compiled by two compilers must be free
 of undefined behaviour: `-v` of INT64_MIN answered differently under
