@@ -4300,3 +4300,22 @@ build from c8ff2f4f until here. It is BP-E19 now, a warning under
 (warn/ext-std2002-lineseq replaces bad/std2002-lineseq-clauses).
 tests/majesty-functions.sh PASS again.
 
+### 117. Thirty-one digits (2026-09-29, in progress)
+
+COBOL 2002's limit for a numeric item and literal is 31 digits; s32-cobc
+has held 18 (a 64-bit integer and a scale). The plan is docs/wide.md: a
+wide path beside the narrow one, chosen at compile time from the
+descriptors, so everything that fits 18 digits keeps today's code
+(-std=85 byte-identical) and only 19-31-digit items, literals and
+statements take it. Three phases: items and moves; arithmetic; the rest
+(functions, edited receivers past 18, BINARY-DOUBLE, keys, class test).
+
+Foundation: libcob/wide.h -- a sign, a scale and a 128-bit magnitude in
+four 32-bit limbs (SLOW-32's clang has no __int128), with multi-limb
+add, subtract, compare, small multiply and divide, full multiply, long
+division, and decimal conversion. tests/wide_test.c checks every
+operation against the host's unsigned __int128 on 200,000 random
+operand pairs and every pair of 37 edge values (limb boundaries, powers
+of ten); it is harness gate 1c. Mutation-checked: a borrow bug survived
+the random operands alone, which is why the edges are there.
+

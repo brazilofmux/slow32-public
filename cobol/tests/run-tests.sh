@@ -151,7 +151,7 @@ fi
 # a run that silently dropped two gates would read as a full one.
 SKIPPED=""
 if ! command -v "$HOSTCC" >/dev/null 2>&1; then
-    SKIPPED=" pictest bt_test"
+    SKIPPED=" pictest bt_test wide_test"
     echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
     echo "SKIP  bt_test  (no host C compiler: $HOSTCC)"
 elif ! "$HOSTCC" -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
@@ -164,6 +164,18 @@ else
     else
         report "pictest" 1 "mismatch"
         diff "$HERE/pictures.expected" "$W/pictures.out" | head -12
+    fi
+fi
+
+# --- Gate 1c: the 31-digit arithmetic core (host, libcob/wide.h) -------
+# Every limb operation against the host's unsigned __int128 (docs/wide.md)
+if [ -z "$SKIPPED" ]; then
+    if ! "$HOSTCC" -std=gnu99 -I"$CDIR/libcob" -O1 -w -o "$W/wide_test" "$HERE/wide_test.c" 2>"$W/cc.log"; then
+        report "wide_test" 1 "host build"
+    elif "$W/wide_test" > "$W/wide.out" 2>&1; then
+        report "wide_test" 0 "$(tail -1 "$W/wide.out" | sed 's/^wide_test: //')"
+    else
+        report "wide_test" 1 "$(tail -1 "$W/wide.out")"
     fi
 fi
 
