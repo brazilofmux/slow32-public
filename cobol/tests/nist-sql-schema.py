@@ -79,6 +79,60 @@ def own(sql, user):
     return ''.join(out)
 
 
+CHAR_TYPES = ('char', 'character', 'varchar', 'nchar', 'national')
+
+
+def collate(sql):
+    """libcob/esql.c ddl_collate, the same rules: in CREATE TABLE and
+    ALTER TABLE ... ADD [COLUMN], a character column definition's type gets
+    COLLATE RTRIM (SQL-92 compares blank-padded) unless it names a
+    collation; only column definitions, never a CAST in a CHECK"""
+    words = sql.split()
+    w = [x.lower() for x in words[:2]]
+    create = w[:1] == ['create'] and len(w) > 1 and w[1] in ('table', 'global', 'local')
+    alter = w == ['alter', 'table']
+    if not (create or alter):
+        return sql
+    out, i, n, depth, elem, q = [], 0, len(sql), 0, -1, None
+    while i < n:
+        c = sql[i]
+        if q:
+            out.append(c)
+            if c == q: q = None
+            i += 1; continue
+        if c in "'\"": q = c; out.append(c); i += 1; continue
+        if c == '(':
+            depth += 1
+            if create and depth == 1: elem = 0
+            out.append(c); i += 1; continue
+        if c == ')': depth -= 1; out.append(c); i += 1; continue
+        if c == ',' and depth == 1 and create: elem = 0; out.append(c); i += 1; continue
+        if c.isalpha() and (i == 0 or not (sql[i - 1].isalnum() or sql[i - 1] == '_')):
+            m = re.match(r'[A-Za-z0-9_]+', sql[i:]); word = m.group(0); lw = word.lower()
+            top = (create and depth == 1) or (alter and depth == 0)
+            if alter and depth == 0 and lw == 'add':
+                elem = 0; out.append(word); i += len(word); continue
+            if alter and depth == 0 and lw == 'column' and elem == 0:
+                out.append(word); i += len(word); continue
+            at_type = elem == 1 and top
+            if elem >= 0 and top: elem += 1
+            out.append(word); i += len(word)
+            if at_type and lw in CHAR_TYPES:
+                while True:
+                    m2 = re.match(r'\s*([A-Za-z]+)', sql[i:])
+                    if m2 and m2.group(1).lower() in ('character', 'char', 'varying'):
+                        out.append(m2.group(0)); i += m2.end(); continue
+                    break
+                m3 = re.match(r'\s*\([^)]*\)', sql[i:])
+                if m3: out.append(m3.group(0)); i += m3.end()
+                m4 = re.match(r'\s*([A-Za-z]+)', sql[i:])
+                if not (m4 and m4.group(1).lower() in ('collate', 'set')):
+                    out.append(' COLLATE RTRIM')
+            continue
+        out.append(c); i += 1
+    return ''.join(out)
+
+
 def main():
     d, path, user = sys.argv[1], sys.argv[2], sys.argv[3].upper()
     cat = os.path.join(d, 'schemas')
@@ -107,7 +161,7 @@ def main():
         try:
             db.commit()
             attach_for(s)
-            db.execute(own(s, user))
+            db.execute(collate(own(s, user)))
         except sqlite3.Error as e:
             refused += 1
             print('refused: %d: %s: %s' % (line, ' '.join(s.split()[:4]), e))

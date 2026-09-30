@@ -131,8 +131,15 @@ static void catalog_add(const char *schema)
     if (f) { fprintf(f, "%s\n", schema); fclose(f); }
 }
 
+/* the run ends normally (STOP RUN, or GOBACK from the main program): its
+ * open transaction is committed, as DB2 does at normal termination -- ISO
+ * leaves it to the implementation.  libcob calls this from cob_stop_run. */
+extern void (*cob_at_stop)(void);
+static void at_end(void) { disconnect(); }
+
 static int sql_connect(void)
 {
+    cob_at_stop = at_end;
     if (g_db) return 1;
     if (!g_user[0]) {
         const char *u = getenv("COB_SQL_USER");
@@ -322,10 +329,87 @@ static char *own_schema(const char *text)
     return out;
 }
 
+/* CREATE TABLE and ALTER TABLE ... ADD: a character column compares
+ * blank-padded, as SQL-92's PAD SPACE collations do, through SQLite's own
+ * RTRIM collation -- a column definition's type (its second word, at the
+ * top of the element list) gets COLLATE RTRIM unless it names a collation.
+ * tests/nist-sql-schema.py does the same for the loaded schemas.  Only
+ * column definitions: a CAST inside a CHECK takes no COLLATE. */
+static int ddl_word(const char *t, size_t *i, char *w, int wn)
+{
+    size_t k = *i; int n = 0;
+    while (t[k] == ' ' || t[k] == '\t' || t[k] == '\n') k++;
+    *i = k;
+    while ((isalnum((unsigned char)t[k]) || t[k] == '_') && n < wn - 1) w[n++] = (char)tolower((unsigned char)t[k++]);
+    w[n] = 0;
+    return n;
+}
+static int is_char_type(const char *w)
+{
+    return !strcmp(w, "char") || !strcmp(w, "character") || !strcmp(w, "varchar") || !strcmp(w, "nchar") ||
+           !strcmp(w, "national");
+}
+static char *ddl_collate(const char *text)
+{
+    size_t n = strlen(text), o = 0, i = 0;
+    char w[32], w2[32];
+    size_t j = 0, j2;
+    ddl_word(text, &j, w, sizeof w);
+    j2 = j + strlen(w);
+    ddl_word(text, &j2, w2, sizeof w2);
+    int create = !strcmp(w, "create") && (!strcmp(w2, "table") || !strcmp(w2, "global") || !strcmp(w2, "local"));
+    int alter = !strcmp(w, "alter") && !strcmp(w2, "table");
+    if (!create && !alter) return NULL;
+    char *out = malloc(n * 2 + 64);
+    int depth = 0, elem_word = -1;              /* the word number within a column element, -1 outside one */
+    char quote = 0;
+    while (i < n) {
+        char c = text[i];
+        if (quote) { if (c == quote) quote = 0; out[o++] = text[i++]; continue; }
+        if (c == '\'' || c == '"') { quote = c; out[o++] = text[i++]; continue; }
+        if (c == '(') { depth++; if (create && depth == 1) elem_word = 0; out[o++] = text[i++]; continue; }
+        if (c == ')') { depth--; out[o++] = text[i++]; continue; }
+        if (c == ',' && depth == 1 && create) { elem_word = 0; out[o++] = text[i++]; continue; }
+        if (isalpha((unsigned char)c) && (i == 0 || !(isalnum((unsigned char)text[i - 1]) || text[i - 1] == '_'))) {
+            size_t k = i; char word[32];
+            ddl_word(text, &k, word, sizeof word);
+            size_t wl = strlen(word);
+            /* ALTER TABLE t ADD [COLUMN] name type: the element starts after ADD */
+            if (alter && depth == 0 && !strcmp(word, "add")) { elem_word = 0; memcpy(out + o, text + i, wl); o += wl; i += wl; continue; }
+            else if (alter && depth == 0 && !strcmp(word, "column") && elem_word == 0) { memcpy(out + o, text + i, wl); o += wl; i += wl; continue; }
+            int at_type = elem_word == 1 && ((create && depth == 1) || (alter && depth == 0));
+            if (elem_word >= 0 && ((create && depth == 1) || (alter && depth == 0))) elem_word++;
+            memcpy(out + o, text + i, wl); o += wl; i += wl;
+            if (at_type && is_char_type(word)) {
+                /* the rest of the type: CHARACTER VARYING, NATIONAL CHARACTER [VARYING], (n) */
+                for (;;) {
+                    size_t k2 = i; char nx[32];
+                    ddl_word(text, &k2, nx, sizeof nx);
+                    if (!strcmp(nx, "character") || !strcmp(nx, "char") || !strcmp(nx, "varying")) {
+                        while (i < k2 + strlen(nx)) out[o++] = text[i++];
+                        continue;
+                    }
+                    break;
+                }
+                size_t k3 = i; while (text[k3] == ' ') k3++;
+                if (text[k3] == '(') { while (i <= k3) out[o++] = text[i++]; while (i < n && text[i] != ')') out[o++] = text[i++]; if (i < n) out[o++] = text[i++]; }
+                size_t k4 = i; char nx[32]; ddl_word(text, &k4, nx, sizeof nx);
+                if (strcmp(nx, "collate") && strcmp(nx, "set")) { memcpy(out + o, " COLLATE RTRIM", 14); o += 14; }
+            }
+            continue;
+        }
+        out[o++] = text[i++];
+    }
+    out[o] = 0;
+    return out;
+}
+
 static int prepare(sqlite3_stmt **slot, const char *text)
 {
     if (*slot) return 1;
     char *t = own_schema(text);
+    char *d = ddl_collate(t);
+    if (d) { free(t); t = d; }
     int rc = sqlite3_prepare_v2(g_db, t, -1, slot, NULL);
     free(t);
     if (rc != SQLITE_OK) { set_error(rc, text); *slot = NULL; return 0; }

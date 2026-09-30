@@ -54,6 +54,17 @@ all are SQLite itself:
 - **No INFORMATION_SCHEMA** (about 600 references).
 - **No rowid in a view or a join**, where a positioned statement needs one.
 
+Done since:
+
+- **Character columns compare blank-padded.** A character column's type
+  in CREATE TABLE and ALTER TABLE ADD gets SQLite's own `COLLATE RTRIM`,
+  in the runtime and in the schema loader alike. SQL-92 compares every
+  character type under a PAD SPACE collation, so `k = 'AB   '` finds
+  'AB', literal against column as well as host variable.
+- **A normal end commits** (STOP RUN, or GOBACK from the main program),
+  as DB2 does; ISO leaves it to the implementation. libcob's
+  `cob_at_stop` hook is set by the SQL runtime when it first connects.
+
 The runtime's own items, to do:
 
 - the 01004 truncation warning, with the full length in the indicator;

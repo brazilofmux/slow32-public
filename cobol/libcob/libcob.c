@@ -176,9 +176,14 @@ static void close_open_files(void)
  * status of its own -- and the end of the main program -- exits with it. */
 int cob_return_code;
 
+/* a component's work at the normal end of the run: the EXEC SQL runtime
+ * commits there (libcob/esql.c); nothing sets it in a program without SQL */
+void (*cob_at_stop)(void);
+
 void cob_stop_run(int code)
 {
     if (code == 0) code = cob_return_code;
+    if (cob_at_stop) { void (*f)(void) = cob_at_stop; cob_at_stop = 0; f(); }
     close_open_files();
     out_flush();
     term_down();
