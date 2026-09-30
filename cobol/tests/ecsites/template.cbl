@@ -19,7 +19,7 @@ working-storage section.
 01 bu   pic 1(3) usage bit.
 01 x    pic x(20).
 01 t.
-   05 e pic x occurs 5.
+   05 e pic x occurs 5 indexed by xi.
 01 k    pic 9(4) comp.
 01 ix   usage index.
 procedure division.

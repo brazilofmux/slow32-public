@@ -8696,7 +8696,8 @@ static void emit_move(Opnd *src, Ref *dst)
         emit_args(a, 4); emit_li("r7", d->just); emit_call("cob_move_alnum");
         return;
     }
-    if (!d->is_group && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) {
+    /* a reference-modified receiver is alphanumeric, whatever its item's category (8.4.2.4.3) */
+    if (!d->is_group && !dst->rm && (d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) {
         int ned = d->pi.category == PIC_NUMERIC_EDITED;
         if (src->kind == O_FIG && !ned) {
             /* MOVE SPACES to an alphanumeric-edited item: a literal of spaces
@@ -12514,6 +12515,67 @@ static void parse_raise(void)
     emit_ec_raise(i);
 }
 
+/* SET formats 1 and 2 (X3.23-1985 6.23; 2023 14.9.39): what an operand is */
+enum { SK_OTHER, SK_INDEX, SK_IXD, SK_INT };
+static int set_kind(Sym *s)
+{
+    if (s->is_index) return SK_INDEX;
+    if (!s->is_group && s->usage == U_INDEX) return SK_IXD;
+    if (is_numeric_sym(s) && s->usage != U_FLOAT && s->pi.scale <= 0) return SK_INT;
+    return SK_OTHER;
+}
+
+/* is SET's sending operand an arithmetic expression, not an operand
+ * alone?  (only where one is allowed: 2002 and later, index receivers) */
+static int set_at_expr(int never)
+{
+    if (never) return 0;
+    if (!at_operand()) return 1;                /* (, a sign */
+    int save = g_tp; Opnd o;
+    g_noemit++; parse_operand(&o); int more = at_arith_op(); g_noemit--;
+    g_tp = save;
+    return more;
+}
+
+/* SET's arithmetic-expression-1 or -2 when it is not a whole number on
+ * its face: its value, once, into sp+SLOT_A; with EC-BOUND-SUBSCRIPT
+ * checked, a value that is not an integer raises it and the receivers
+ * are left alone (2023 14.9.39.4 rules 2 and 3) */
+static void emit_set_value(Opnd *v, int Lskip)
+{
+    int was = g_wide, wasf = g_fstmt, chk = ec_on_name("EC-BOUND-SUBSCRIPT");
+    if (opnds_wide(v, 1) || g_fstmt || (v->kind == O_FUNC && v->fwnum)) g_wide = 1;
+    emit_push_opnd(v);
+    emit_call(chk ? "cob_pop_pos" : "cob_pop_int");
+    g_wide = was; g_fstmt = wasf;
+    emit("\tstw sp+%d, r1", SLOT_A);
+    if (chk) {
+        int Lok = new_label();
+        emit_call("cob_pos_nonint");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-BOUND-SUBSCRIPT", 0));
+        emit_jump(Lskip);
+        emit_label(Lok);
+    }
+}
+
+/* SET condition-name TO TRUE or FALSE: the literal goes in by the VALUE
+ * clause's rules (2023 14.9.39.4 rules 6-7), not MOVE's.  They differ
+ * for an edited item given an alphanumeric literal: VALUE places the
+ * characters as written (13.18.63.3 rules 4 and 7-8), MOVE would edit
+ * them -- and then the condition was false after SET ... TO TRUE */
+static void set_cond_move(Opnd *v, Ref *p)
+{
+    Sym *x = p->sym;
+    int alnum = v->kind == O_STR || v->kind == O_ALL ||
+                (v->kind == O_FIG && v->tok && strncmp(v->tok->s, "zero", 4));
+    if (alnum && !x->is_group && !p->rm &&
+        (x->pi.category == PIC_NUMERIC_EDITED || x->pi.category == PIC_ALPHANUMERIC_EDITED)) {
+        p->rm = 1; p->rm_start = 1; p->rm_len = x->size;
+    }
+    emit_move(v, p);
+}
+
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
@@ -12613,7 +12675,7 @@ static void parse_set(void)
                 Opnd v = lit_opnd(c->cv_lo[0]);
                 if (c->cv_all & 1u) v.kind = O_ALL;
                 Ref p = rs[i]; p.sym = &g_sym[c->parent];
-                emit_move(&v, &p);
+                set_cond_move(&v, &p);
             }
             return;
         }
@@ -12627,23 +12689,93 @@ static void parse_set(void)
                 if (!c->cv_false) die_at(rs[i].line, "SET '%s' TO FALSE: its VALUE clause has no FALSE phrase (2023 14.9.39.3 rule 7)", c->name);
                 Opnd v = lit_opnd(c->cv_false);
                 Ref p = rs[i]; p.sym = &g_sym[c->parent];
-                emit_move(&v, &p);
+                set_cond_move(&v, &p);
             }
             return;
         }
-        Opnd v; parse_operand(&v);
-        emit_incompat(&v);
+        /* format 1: which sending operand each receiver takes (X3.23-1985
+         * SET general rule 5's table; 2023 14.9.39.3 rules 1-4) */
+        int e85 = g_std < 2002, allix = 1;
         for (int i = 0; i < nr; i++) {
-            if (!is_numeric_sym(rs[i].sym)) die_at(rs[i].line, "SET ... TO needs an index or integer item");
-            emit_move(&v, &rs[i]);
+            int k = set_kind(rs[i].sym);
+            if (k == SK_OTHER)
+                die_at(rs[i].line, "SET '%s' TO: the receiver is an index-name, an index data item or an integer item (%s)", rs[i].sym->name,
+                       e85 ? "X3.23-1985 SET syntax rule 2" : "2023 14.9.39.3 rule 1");
+            if (k != SK_INDEX) allix = 0;
         }
+        Opnd v;
+        if (set_at_expr(e85 || !allix)) v = expr_opnd();
+        else parse_operand(&v);
+        if (at_arith_op())
+            die_at(v.line, "SET ... TO an arithmetic expression: %s", e85 ? "that is COBOL 2002; compile with -std=2002" :
+                   "every receiver is an index-name (2023 14.9.39.3 rules 3-4)");
+        int sk = v.kind == O_REF && !v.ref.rm ? set_kind(v.ref.sym) : SK_OTHER;
+        int whole = sk == SK_INT || (v.kind == O_NUM && v.num.scale == 0);
+        for (int i = 0; i < nr; i++) {
+            int k = set_kind(rs[i].sym);
+            if (k == SK_INT && sk != SK_INDEX)
+                die_at(rs[i].line, "SET '%s' TO: an integer item is set only from an index-name (%s)", rs[i].sym->name,
+                       e85 ? "X3.23-1985 SET general rule 3c" : "2023 14.9.39.3 rule 4");
+            if (k == SK_IXD && sk != SK_INDEX && sk != SK_IXD)
+                die_at(rs[i].line, "SET '%s' TO: an index data item is set only from an index-name or an index data item (%s)", rs[i].sym->name,
+                       e85 ? "X3.23-1985 SET general rule 3b" : "2023 14.9.39.3 rules 2-3");
+            if (k == SK_INDEX && e85 && v.kind == O_NUM && (v.num.neg || strspn(v.num.digits, "0") == (size_t)v.num.ndigits))
+                die_at(v.line, "SET '%s' TO: the integer is positive (X3.23-1985 SET syntax rule 4)", rs[i].sym->name);
+            if (k == SK_INDEX && sk != SK_INDEX && sk != SK_IXD && !whole) {
+                if (e85)
+                    die_at(v.line, "SET '%s' TO: an index-name is set from an index-name, an index data item, an integer item or an integer (X3.23-1985 SET syntax rules 2 and 4)", rs[i].sym->name);
+                check_numeric_opnd(&v);         /* arithmetic-expression-1 (2023 14.9.39 format 1) */
+            }
+        }
+        if (v.kind != O_EXPR) emit_incompat(&v);
+        if (allix && sk != SK_INDEX && sk != SK_IXD && !whole) {
+            /* arithmetic-expression-1: its value once, then each index
+             * (2023 14.9.39.4 rule 2) */
+            int Lskip = new_label();
+            emit_set_value(&v, Lskip);
+            for (int i = 0; i < nr; i++) {
+                emit_ref_addr(&rs[i], "r3");
+                emit("\tldw r1, sp+%d", SLOT_A);
+                emit("\tstw r3+0, r1");
+            }
+            emit_label(Lskip);
+            return;
+        }
+        for (int i = 0; i < nr; i++) emit_move(&v, &rs[i]);
         return;
     }
     int down = 0;
     if (accept_word("up")) down = 0; else if (accept_word("down")) down = 1;
     else die_at(cur()->line, "expected TO, UP BY or DOWN BY in SET");
     expect_word("by");
-    Opnd v; parse_operand(&v); check_numeric_opnd(&v);
+    int e85 = g_std < 2002;
+    for (int i = 0; i < nr; i++)
+        if (set_kind(rs[i].sym) != SK_INDEX)
+            die_at(rs[i].line, "SET '%s' UP BY or DOWN BY: the receiver is an index-name (%s)", rs[i].sym->name,
+                   e85 ? "X3.23-1985 SET format 2" : "2023 14.9.39 format 2");
+    Opnd v;
+    if (set_at_expr(e85)) v = expr_opnd();
+    else parse_operand(&v);
+    if (at_arith_op()) die_at(v.line, "SET ... UP BY or DOWN BY an arithmetic expression is COBOL 2002; compile with -std=2002");
+    check_numeric_opnd(&v);
+    int whole = (v.kind == O_REF && !v.ref.rm && set_kind(v.ref.sym) == SK_INT) || (v.kind == O_NUM && v.num.scale == 0);
+    if (!whole && e85)
+        die_at(v.line, "SET ... UP BY or DOWN BY: an integer item or an integer (X3.23-1985 SET syntax rule 3)");
+    if (!whole) {
+        /* arithmetic-expression-2: its value once, then each index
+         * (2023 14.9.39.4 rules 3-4) */
+        int Lskip = new_label();
+        emit_set_value(&v, Lskip);
+        for (int i = 0; i < nr; i++) {
+            emit_ref_addr(&rs[i], "r3");
+            emit("\tldw r2, r3+0");
+            emit("\tldw r1, sp+%d", SLOT_A);
+            emit("\t%s r2, r2, r1", down ? "sub" : "add");
+            emit("\tstw r3+0, r2");
+        }
+        emit_label(Lskip);
+        return;
+    }
     emit_incompat(&v); emit_incompat_refs(rs, nr);      /* the receivers are summed too */
     for (int i = 0; i < nr; i++) {
         Opnd ops[1] = { v };

@@ -20,9 +20,11 @@ working-storage section.
    05 qty   pic a(4)    value "ZZZZ".
    05 ix    usage index.
 01 n pic 9(6).
+01 tt.
+   05 te pic x occurs 5 indexed by ti.
 procedure division.
-    set ix of src to 3
-    set ix of dst to 1
+    set ti to 3  set ix of src to ti
+    set ti to 1  set ix of dst to ti
     move corresponding src to dst
     *> amt (noninteger to alphanumeric), name (alphabetic to numeric),
     *> qty (integer to alphabetic) and ix do not correspond; code1 does

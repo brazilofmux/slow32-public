@@ -1,0 +1,9 @@
+n + 1:        ddd
+up n*2-3:     ggg
+down (n-1):   eee
+both to 3n-1: hhh hhh
+i2 + 1:       ccc
+up max(n,4):  iii fff
+nd=2.5, unchecked: bbb
+nd*3 (6.0):  fff
+declarative: EC-BOUND-SUBSCRIPT              i1=04 j1=07

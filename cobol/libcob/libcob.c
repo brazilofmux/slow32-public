@@ -1889,6 +1889,9 @@ void cob_ec_clear(void) { ec_any = 0; }
 /* EC-BOUND-REF-MOD: 1 when (start:len) leaves an item of size bytes;
  * len -1 when the length was omitted (the rest of the item) */
 static int pos_nonint;
+/* SET's sending value, from cob_pop_pos: 1 when it was not an integer,
+ * EC-BOUND-SUBSCRIPT (2023 14.9.39.4 rules 2 and 3); the note cleared */
+int cob_pos_nonint(void) { int r = pos_nonint; pos_nonint = 0; return r; }
 int cob_bound_refmod(int start, int len, int size)
 {
     if (pos_nonint) { pos_nonint = 0; return 1; }

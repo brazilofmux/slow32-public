@@ -63,7 +63,8 @@ procedure division.
     if an is numeric display "numeric" else display "not numeric" end-if
     initialize a display "init " a
     move 1234567890123456789012345678901 to a
-    set e to a display "set " e
+    move 3 to a  set ti to a  set e to ti display "set " e
+    move 1234567890123456789012345678901 to a
     evaluate a when 1 thru 1234567890123456789012345678 display "low" when other display "other" end-evaluate
     stop run.
 mk.

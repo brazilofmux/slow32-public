@@ -100,7 +100,7 @@ main-procedure.
     move u5 to w
     display 'N6 ' w
     move 0 to u5
-    set u5 down by 1
+    subtract 1 from u5
     move u5 to w
     display 'D ' w
 *> a negative value moved

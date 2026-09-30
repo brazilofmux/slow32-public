@@ -10,9 +10,8 @@ RAISED|string n delimited by size into x
 RAISED|move e (n) to x
 RAISED|move x (n:1) to x
 RAISED|move x (1:n) to x
-RAISED|set ix to n
-RAISED|set k to n
-RAISED|set ix up by n
+RAISED|set xi to n
+RAISED|set xi up by n
 RAISED|perform n times continue end-perform
 RAISED|perform varying k from n by 1 until k > 3 continue end-perform
 RAISED|perform varying k from 1 by n until k > 3 continue end-perform
