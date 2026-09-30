@@ -4370,3 +4370,15 @@ zero for 2 ** 90 into S9(31)), bad/std2002-wide-limits (a composite of
 programs, majesty PASS, majesty-functions PASS, Open Systems paper
 unchanged.
 
+A randomized differential, tests/wide-differential.sh (tests/wide-gen.py):
+COMPUTE statements over random items of 1-31 digits, every usage, random
+scales and signs, + - * with one level of parentheses, into random
+receivers, ROUNDED or not, each line its value or its size error. 960
+statements over twelve seeds agree with GnuCOBOL line for line. The first
+run found 34 differences, every one a BINARY receiver of more than 18
+digits whose result overflows its PICTURE: we report the size error, as
+the narrow path does for BINARY; GnuCOBOL checks the sixteen-byte field
+only and stores a truncated value. That case is left out of the script
+and noted in it. Division is left out too (the intermediate precision is
+the implementor's).
+

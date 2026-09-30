@@ -61,3 +61,12 @@ B-tree.
 Each phase is gated like the sweeps: harness, CCVS-85, -std=85
 byte-identity, majesty and majesty-functions, the Open Systems papers,
 and GnuCOBOL as the oracle (it holds 38 digits).
+
+## Status
+
+Phases 1 and 2 are done (ISSUES-117): 2002/wide1-3, and
+tests/wide-differential.sh, which checks random COMPUTE statements of up
+to 31 digits against GnuCOBOL (960 agree; BINARY receivers past 18 digits
+are left out -- GnuCOBOL does not report a PICTURE overflow there as a
+size error). Phase 3 is next.
+
