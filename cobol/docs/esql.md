@@ -306,3 +306,26 @@ NULL into an item with no indicator gives SQLCODE -305 and SQLSTATE
     not literal-to-column comparisons);
   - views that reference another schema's tables;
   - domains, privileges, and deferred constraints.
+
+## Roadmap
+
+**PostgreSQL as a second target** (the user, 2026-09-30: on the roadmap,
+not now). SQLite stays the default and is used as it is (the ruling
+above). The NIST failures that are SQL-92 SQLite lacks are what another
+backend would buy:
+- updatable views, domains, ALL/ANY, datetime and intervals;
+- INFORMATION_SCHEMA and privileges;
+- DECIMAL past 15 digits;
+- scroll cursors.
+
+The shape, as far as it has been thought through:
+- **Transport:** the guest cannot link libpq. The connection would be
+  an emulator service, beside the MMIO file and socket services, that
+  speaks the PostgreSQL wire protocol on the host.
+- **Runtime:** esql.c's entry points (prepare, bind, step, column,
+  diagnostics) would sit behind a small backend table, one entry for
+  SQLite and one for the service.
+- **Compiler:** unchanged. It emits calls to libcob's `cob_sql_*`
+  layer, not to SQLite.
+- **Gate:** the same NIST SQL run against a PostgreSQL schema set, its
+  totals a ratchet as SQLite's are.
