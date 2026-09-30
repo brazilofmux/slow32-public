@@ -17,7 +17,7 @@ rules.
 | READ 2023 rule 1 | several record descriptions: INTO and every record alphanumeric | **refused** under -std=2002 -- accepted before |
 | READ 85 rule 2, WRITE/REWRITE/DELETE/START likewise | AT END or INVALID KEY required when no USE procedure applies | **extension** BP-E18: the condition goes to the FILE STATUS or stops the run; the Open Systems suite has 8 |
 | READ 2023 6, 10-11 | no AT END or NEXT in random access; KEY only for an indexed file, naming one of its keys | **refused** |
-| READ PREVIOUS (2002) | | **not implemented**, said so (it was a parse error) |
+| READ PREVIOUS (2002; 2023 GR 21) | after OPEN at end; after START the record found; after a READ the one before; relative: the first existing lower number | **implemented** (ISSUES-116): 2002/readprev (indexed, the oracle agrees), 2002/readprev2 (after OPEN, relative -- no oracle: GnuCOBOL gives 46 after OPEN and skips or stops wrongly on relative files). Not for sequential files, LINE SEQUENTIAL (rule 7) or random access (rule 6) |
 | WRITE (85 sequential 7; 2023 18) | not both ADVANCING PAGE and END-OF-PAGE | **refused**: bad/io-rules -- accepted before |
 | WRITE (85 sequential 8; 2023 19) | END-OF-PAGE only with LINAGE | **refused** with the rule -- was a parse error |
 | WRITE (2023 3) | no ADVANCING on an indexed or relative file | **refused** -- AFTER ADVANCING 1 slipped through before, the check reading the newline count (zero) rather than the phrase |

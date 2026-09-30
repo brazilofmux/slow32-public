@@ -93,7 +93,7 @@ COBOL 2002/2023 (Stage B):
 - INITIALIZE of a reference-modified item with the COBOL 2002 phrases
   (WITH FILLER, TO VALUE, TO DEFAULT; the phrases themselves are
   implemented, docs/conformance/initialize.md);
-- READ PREVIOUS (2002; io-statements.md);
+- READ PREVIOUS of a sequential file (2002; io-statements.md);
 - USAGE BINARY-DOUBLE, whose range needs 19 digits (with the 31-digit
   gap above).
 

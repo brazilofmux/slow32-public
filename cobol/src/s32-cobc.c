@@ -11388,10 +11388,19 @@ static void parse_read(void)
 {
     File *f = expect_file();
     if (f->org == COB_ORG_SORT) die_at(cur()->line, "READ of the sort file '%s': use RETURN inside the OUTPUT PROCEDURE", f->name);
-    if (at_word("previous"))
-        die_at(cur()->line, g_std < 2002 ? "READ PREVIOUS is COBOL 2002; compile with -std=2002"
-                                         : "READ PREVIOUS (2023 14.9.30, format 1) is not implemented");
-    int has_next = accept_word("next"); accept_word("record");
+    int has_prev = 0;
+    if (at_word("previous")) {
+        /* READ PREVIOUS (COBOL 2002): a sequential read backwards, an
+         * indexed or relative file in sequential or dynamic access
+         * (2023 14.9.30.3 rules 6-7) */
+        if (g_std < 2002) die_at(cur()->line, "READ PREVIOUS is COBOL 2002; compile with -std=2002");
+        if (f->org == COB_ORG_LINESEQ) die_at(cur()->line, "READ PREVIOUS of the LINE SEQUENTIAL file '%s' (2023 14.9.30.3 rule 7)", f->name);
+        if (f->access == 1) die_at(cur()->line, "READ PREVIOUS of '%s', whose access mode is RANDOM (2023 14.9.30.3 rule 6)", f->name);
+        if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE)
+            die_at(cur()->line, "READ PREVIOUS of the sequential file '%s' is not implemented", f->name);
+        advance(); has_prev = 1;
+    }
+    int has_next = !has_prev && accept_word("next"); accept_word("record");
     Ref into; int has_into = 0;
     if (accept_word("into")) {
         parse_ref(&into); has_into = 1;
@@ -11420,6 +11429,8 @@ static void parse_read(void)
         if (ki < 0 || klen) die_at(k.line, "READ ... KEY IS '%s': not the RECORD KEY or an ALTERNATE RECORD KEY of '%s'", k.sym->name, f->name);
         keyed = 1;
     }
+    if (has_prev && keyed) die_at(cur()->line, "READ PREVIOUS names no KEY (2023 14.9.30 format 1)");
+    has_next |= has_prev;                       /* a sequential read, backwards */
     if (f->org == COB_ORG_INDEXED) {
         if (has_next && keyed) die_at(cur()->line, "READ NEXT cannot name a KEY");
         if (!has_next && !keyed && f->access != 0) keyed = 1;         /* ACCESS RANDOM or DYNAMIC: a READ without NEXT is by the prime key */
@@ -11433,7 +11444,7 @@ static void parse_read(void)
 
     g_io_file = f;
     emit_file_addr("r3", f); emit_li("r4", ki);
-    emit_call(keyed ? "cob_read_key" : "cob_read");
+    emit_call(keyed ? "cob_read_key" : has_prev ? "cob_read_prev" : "cob_read");
     emit("\tstw sp+%d, r1", SLOT_C);
     if (has_into) {
         int Lskip = new_label();

@@ -4262,3 +4262,32 @@ Tests: bad/goto-alter, bad/accept-rules, bad/std2002-deleted,
 byte-identical on the Open Systems programs, majesty PASS, Open Systems
 paper unchanged. Page: docs/conformance/accept.md.
 
+### 116. READ PREVIOUS (2026-09-29)
+
+The I-O sweep (ISSUES-111) left READ PREVIOUS (COBOL 2002) as a named
+gap. Implemented for indexed and relative files by 2023 14.9.30.4 GR 21:
+
+- indexed (idx_read_prev): after OPEN the at end condition; after START
+  the record START found; after a READ the record before the one it
+  delivered. Each is "the last entry on the key of reference below a
+  bound", the bound including the cursor's entry after START (cob_idx
+  cur_at, new) and excluding it after a READ (the cursor is one past
+  it). The record delivered leaves the cursor one past it, so NEXT and
+  PREVIOUS continue from it either way; duplicates on an alternate key
+  come back in reverse arrival order, status 02 while more precede.
+- relative (rel_read_prev): after OPEN or START the record NEXT would
+  give; after a READ the first existing record with a lower number.
+
+Refused: with a KEY phrase, on a LINE SEQUENTIAL file (rule 7), in
+random access (rule 6); on a sequential file it is not implemented.
+
+GnuCOBOL agrees on every indexed case except the first: READ PREVIOUS
+straight after OPEN is status 46 there, where GR 21d3 says at end. Its
+relative READ PREVIOUS goes wrong twice (from record 4 it skips an
+existing record 2; at a missing record it reports at end), so those
+cases are in 2002/readprev2 without an oracle.
+
+Tests: 2002/readprev (the oracle agrees), 2002/readprev2. Harness
+505/505, CCVS-85 unchanged, -std=85 byte-identical on the Open Systems
+programs, majesty PASS, Open Systems paper unchanged.
+

@@ -1980,6 +1980,19 @@ static void cs_in(cob_file *f, char *rec, unsigned len)
 }
 
 
+static int idx_read_prev(cob_file *f);
+static int rel_read_prev(cob_file *f);
+int cob_read_prev(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
+    if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)
+        return file_result(f, "47", "READ of a file open for output");
+    if (f->org == COB_ORG_INDEXED) return idx_read_prev(f);
+    if (f->org == COB_ORG_RELATIVE) return rel_read_prev(f);
+    cob_fatal("READ PREVIOUS of a file that is neither indexed nor relative");
+    return 0;
+}
+
 int cob_read(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
@@ -2330,6 +2343,28 @@ static int rel_read_next(cob_file *f)
         rel_key_set(f, n);
         return file_result(f, "00", "");
     }
+}
+
+/* READ PREVIOUS, relative (2023 14.9.30.4 GR 21, relative b-c): after
+ * OPEN or START the record the position indicator selects, as NEXT
+ * would; after a READ the existing record with the next lower number */
+static int rel_read_prev(cob_file *f)
+{
+    if (f->at_eof) {
+        if (f->eof_seen) return file_result(f, "46", "");
+        f->eof_seen = 1; return file_result(f, "10", "");
+    }
+    if (!f->rel_last) return rel_read_next(f);
+    for (unsigned n = f->rel_last - 1; n >= 1; n--) {
+        int r = rel_slot_get(f, n, 1);
+        if (r == -2) return file_result(f, "30", "read failed");
+        if (r <= 0) continue;
+        f->rel_last = n; f->rel_pos = n + 1;
+        rel_key_set(f, n);
+        return file_result(f, "00", "");
+    }
+    f->at_eof = 1; f->eof_seen = 1; f->rel_last = 0;
+    return file_result(f, "10", "");
 }
 
 /* READ (random): the record the RELATIVE KEY names */
@@ -3251,6 +3286,7 @@ typedef struct {
     int ref;                /* key of reference: 0 the prime key, i the i-th alternate */
     int have_cur;           /* the cursor is set (else READ NEXT starts at the front) */
     unsigned char cur[BT_KEYMAX + 4];   /* next (key, arrival) to deliver, inclusive */
+    int cur_at;             /* cur is the entry START found (READ PREVIOUS takes it), not one past the last READ */
     int last_slot;          /* slot the last READ delivered, for REWRITE/DELETE; -1 */
     unsigned char *tmp;     /* a record's worth of scratch */
     btpos hint;             /* where the last lookup landed (bt_first_ge_near) */
@@ -3644,7 +3680,7 @@ static int alt_check(cob_idx *x, const unsigned char *rec, unsigned skip, int *d
 static void idx_cursor_at(cob_idx *x, unsigned ki, unsigned page, unsigned ix)
 {
     bt_read(&x->bt, ki, page, ix, x->cur);
-    x->have_cur = 1;
+    x->have_cur = 1; x->cur_at = 1;
 }
 /* ... after the entry just delivered */
 static void idx_cursor_after(cob_idx *x, unsigned ki, const unsigned char *ka)
@@ -3652,7 +3688,7 @@ static void idx_cursor_after(cob_idx *x, unsigned ki, const unsigned char *ka)
     unsigned kl = x->bt.k[ki].klen;
     memcpy(x->cur, ka, kl + 4);
     bt_putbe(x->cur + kl, bt_getbe(ka + kl) + 1);
-    x->have_cur = 1;
+    x->have_cur = 1; x->cur_at = 0;
 }
 
 static int idx_write(cob_file *f)
@@ -3720,6 +3756,34 @@ static int idx_read_next(cob_file *f)
     if (!slot_read(f, slot)) return file_result(f, "30", "read failed");
     x->last_slot = (int)slot; idx_cursor_after(x, ki, ka);
     int more = b->k[ki].dups && bt_step(b, &page, &ix) && (bt_read(b, ki, page, ix, nk), !memcmp(nk, ka, kl));
+    return file_result(f, more ? "02" : "00", "");
+}
+
+/* READ PREVIOUS (COBOL 2002; 2023 14.9.30.4 GR 21d-g): after OPEN, the
+ * at end condition; after START, the record START found; after a READ,
+ * the record before the one it delivered -- in each case the last entry
+ * on the key of reference below a bound, the cursor's entry included
+ * (START) or excluded (READ: the cursor is one past it).  The record
+ * delivered leaves the cursor one past it, so NEXT and PREVIOUS go on
+ * from there either way. */
+static int idx_read_prev(cob_file *f)
+{
+    cob_idx *x = f->idx;
+    if (!x) return file_result(f, "10", "");
+    if (f->at_eof) { if (f->eof_seen) return file_result(f, "46", ""); f->eof_seen = 1; return file_result(f, "10", ""); }
+    if (!x->have_cur) { f->at_eof = 1; f->eof_seen = 1; x->last_slot = -1; return file_result(f, "10", ""); }
+    btf *b = &x->bt;
+    unsigned ki = (unsigned)x->ref, kl = b->k[ki].klen, page, ix;
+    unsigned char bound[BT_KEYMAX + 4], ka[BT_KEYMAX + 4], pk[BT_KEYMAX + 4];
+    memcpy(bound, x->cur, kl + 4);
+    unsigned t = bt_getbe(bound + kl);
+    bt_putbe(bound + kl, x->cur_at ? t + 1 : t - 1);
+    int got = bt_first_ge(b, ki, bound, kl + 4, &page, &ix) ? bt_back(b, &page, &ix) : bt_last(b, ki, &page, &ix);
+    if (!got) { f->at_eof = 1; f->eof_seen = 1; x->last_slot = -1; return file_result(f, "10", ""); }
+    unsigned slot = bt_read(b, ki, page, ix, ka);
+    if (!slot_read(f, slot)) return file_result(f, "30", "read failed");
+    x->last_slot = (int)slot; idx_cursor_after(x, ki, ka);
+    int more = b->k[ki].dups && bt_back(b, &page, &ix) && (bt_read(b, ki, page, ix, pk), !memcmp(pk, ka, kl));
     return file_result(f, more ? "02" : "00", "");
 }
 
