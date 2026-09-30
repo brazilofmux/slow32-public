@@ -114,7 +114,7 @@ warns only under -std=85. Never changes the output.
 |---|---|---|---|---|
 | BP-E1 | `RETURN-CODE` | IBM, Micro Focus, GnuCOBOL | 85, 2002 | no: a special register of those dialects; the standard returns a value through `PROCEDURE DIVISION RETURNING` |
 | BP-E2 | `GOBACK` | IBM / majesty (docs/dialect.md) | 85 | yes, from 2002 (14.8.17; 2023 14.9.18) |
-| BP-E3 | `COMP-3`, `COMP-5`, `COMP-1` (RM/COBOL's binary integer with a PICTURE) | IBM, GnuCOBOL / majesty, RM/COBOL | 85, 2002 | no; the standard's are `PACKED-DECIMAL` and `BINARY` (and the floating types, not `COMP-1`) |
+| BP-E3 | `COMP-3`, `COMP-5`, `COMP-1` (RM/COBOL's binary integer with a PICTURE), `COMP-4` (BINARY), `COMP-X` (MF's unsigned big-endian binary, PIC 9(n) or X(n)), `COMP-6` (unsigned packed decimal, no sign nibble; signed, COMP-3) | IBM, GnuCOBOL / majesty, RM/COBOL, Micro Focus | 85, 2002 | no; the standard's are `PACKED-DECIMAL` and `BINARY` (and the floating types, not `COMP-1`) |
 | BP-E4 | `SIGNED-INT`, `UNSIGNED-INT`, `SIGNED-SHORT`, `UNSIGNED-SHORT` | GnuCOBOL / majesty | 85, 2002 | no; `BINARY-LONG`, `BINARY-SHORT` [SIGNED / UNSIGNED] |
 | BP-E5 | `BINARY-CHAR`, `BINARY-SHORT`, `BINARY-LONG`, `POINTER` | GnuCOBOL / majesty | 85 | yes, from 2002 |
 | BP-E6 | `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | 85, 2002 | no: the standard form is `STOP RUN WITH {ERROR / NORMAL} STATUS [identifier / literal]` (14.9.42) |

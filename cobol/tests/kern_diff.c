@@ -55,6 +55,7 @@ static void make_desc(cob_desc *d, char *pic)
         break;
     case COB_U_PACKED:
         d->size = (unsigned)digits / 2 + 1;
+        if (!(d->flags & COB_F_SIGNED) && rn(3) == 0) { d->flags2 |= COB_F2_NOSIGN; d->size = (unsigned)(digits + 1) / 2; }   /* COMP-6 */
         break;
     default:
         d->size = digits <= 4 ? 2 : digits <= 9 ? 4 : 8;

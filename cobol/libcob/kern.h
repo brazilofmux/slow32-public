@@ -42,7 +42,7 @@
 enum { K_NUM_ED = 4 };                                      /* cat */
 enum { K_U_DISPLAY = 0, K_U_BINARY = 1, K_U_PACKED = 2, K_U_NATIONAL = 3, K_U_BIT = 4 };
 enum { K_F_SIGNED = 1, K_F_SEPLEAD = 2, K_F_SEPTRAIL = 4, K_F_BLANKZ = 16, K_F_NOTRUNC = 32, K_F_LEAD = 64 };
-enum { K_F2_BIGEND = 1 };                                   /* flags2 */
+enum { K_F2_BIGEND = 1, K_F2_NOSIGN = 2 };                  /* flags2 */
 
 /* cob_desc as the guest lays it out, the PICTURE pointer a 32-bit guest
  * address */
@@ -162,6 +162,11 @@ KFN long long cob_k_get_num(const unsigned char *p, const cob_kdesc *d)
     }
     case K_U_PACKED: {
         int bytes = (int)d->size;
+        if (d->flags2 & K_F2_NOSIGN) {                  /* COMP-6: every nibble a digit */
+            unsigned long long u = 0;
+            for (int i = 0; i < bytes; i++) u = u * 100 + (p[i] >> 4) * 10 + (p[i] & 15);
+            return (long long)u;
+        }
         /* eight digits at a time in a 32-bit word (the flush into v kept
          * out of the byte loop: inside it the compiler if-converts it into
          * a 64-bit multiply on every byte) */
@@ -292,6 +297,14 @@ KFN int cob_k_put_num(unsigned char *p, const cob_kdesc *d, int eff, long long v
         int digits = d->digits, bytes = (int)d->size;
         char dg[20];
         mag_to_digits(mag, dg, digits);
+        if (d->flags2 & K_F2_NOSIGN) {                  /* COMP-6: the digits right-aligned, no sign */
+            int k = digits - 1;
+            for (int j = bytes - 1; j >= 0; j--, k -= 2) {
+                unsigned lo = k >= 0 ? (unsigned)(dg[k] - '0') : 0u, hi = k > 0 ? (unsigned)(dg[k - 1] - '0') : 0u;
+                p[j] = (unsigned char)((hi << 4) | lo);
+            }
+            break;
+        }
         /* the last digit shares its byte with the sign; the rest pair off
          * leftwards, a zero nibble at the front when the count is even */
         int k = digits - 1, j = bytes - 1;

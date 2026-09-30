@@ -33,7 +33,7 @@
 typedef char kern_chk_desc[(sizeof(cob_desc) == sizeof(cob_kdesc) && offsetof(cob_desc, size) == offsetof(cob_kdesc, size) &&
                             offsetof(cob_desc, pic) == offsetof(cob_kdesc, pic) && offsetof(cob_desc, flags) == offsetof(cob_kdesc, flags) &&
                             offsetof(cob_desc, flags2) == offsetof(cob_kdesc, flags2)) ? 1 : -1];
-typedef char kern_chk_f2[K_F2_BIGEND == COB_F2_BIGEND ? 1 : -1];
+typedef char kern_chk_f2[(K_F2_BIGEND == COB_F2_BIGEND && K_F2_NOSIGN == COB_F2_NOSIGN) ? 1 : -1];
 typedef char kern_chk_cat[K_NUM_ED == COB_NUM_ED ? 1 : -1];
 typedef char kern_chk_u[(K_U_DISPLAY == COB_U_DISPLAY && K_U_BINARY == COB_U_BINARY && K_U_PACKED == COB_U_PACKED &&
                          K_U_NATIONAL == COB_U_NATIONAL && K_U_BIT == COB_U_BIT) ? 1 : -1];
@@ -196,7 +196,10 @@ void cob_stop_run(int code)
 
 static int capacity_digits(unsigned size)
 {
-    return size == 1 ? 3 : size == 2 ? 5 : size == 4 ? 10 : 19;
+    /* the digits of the largest value the bytes hold, 256^n - 1 (COMP-X
+     * sizes by MF's rule run 1 to 8); eight bytes, 19 */
+    static const int d[9] = { 0, 3, 5, 8, 10, 13, 15, 17, 19 };
+    return size >= 1 && size <= 8 ? d[size] : 19;
 }
 
 #define COB_RBUF 8192   /* line-sequential read buffer */
@@ -379,11 +382,12 @@ void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w)
     }
     case COB_U_PACKED: {
         int bytes = (int)d->size;
+        int nosign = d->flags2 & COB_F2_NOSIGN;         /* COMP-6: every nibble a digit */
         for (int i = 0; i < bytes; i++) {
             digs[n++] = (char)('0' + ((p[i] >> 4) % 10));
-            if (i < bytes - 1) digs[n++] = (char)('0' + ((p[i] & 15) % 10));
+            if (i < bytes - 1 || nosign) digs[n++] = (char)('0' + ((p[i] & 15) % 10));
         }
-        neg = (p[bytes - 1] & 15) == 0xD;
+        neg = !nosign && (p[bytes - 1] & 15) == 0xD;
         break;
     }
     default: {
@@ -474,6 +478,13 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
         int digits = d->digits, bytes = (int)d->size;
         const char *dg = D + L - digits;
         int k = digits - 1, j = bytes - 1;
+        if (d->flags2 & COB_F2_NOSIGN) {                /* COMP-6: the digits right-aligned, no sign */
+            for (; j >= 0; j--, k -= 2) {
+                unsigned lo = k >= 0 ? (unsigned)(dg[k] - '0') : 0u, hi = k > 0 ? (unsigned)(dg[k - 1] - '0') : 0u;
+                p[j] = (unsigned char)((hi << 4) | lo);
+            }
+            break;
+        }
         p[j] = (unsigned char)(((dg[k] - '0') << 4) | ((d->flags & COB_F_SIGNED) ? (neg ? 0xD : 0xC) : 0xF));
         for (k--; k >= 0; k -= 2) {
             unsigned hi = k > 0 ? (unsigned)(dg[k - 1] - '0') : 0u;
@@ -1206,10 +1217,11 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
             /* packed decimal: each digit nibble 0-9, the last nibble a
              * sign (A-F: C, D and F as written here, A, B, E as IBM also
              * reads them) */
+            int nosign = d->flags2 & COB_F2_NOSIGN;     /* COMP-6: every nibble a digit */
             for (int i = 0; i < n; i++) {
                 unsigned hi = p[i] >> 4, lo = p[i] & 15;
                 if (hi > 9) return 0;
-                if (i < n - 1 ? lo > 9 : lo < 10) return 0;
+                if (i < n - 1 || nosign ? lo > 9 : lo < 10) return 0;
             }
             return 1;
         }

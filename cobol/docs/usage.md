@@ -23,7 +23,10 @@ a dialect question, decided for preservation.
 | COMP-3, PACKED-DECIMAL | packed decimal, sign nibble C/D/F | digits/2 + 1 |
 | COMP-1 | RM/COBOL's: a binary integer *with* a PICTURE (BP-E3) | as COMP |
 | COMP-2, FLOAT-SHORT, FLOAT-LONG | refused: "floating-point USAGE is not implemented" | |
-| COMP-4, COMP-6, COMP-X, COMP-N | not recognized | |
+| COMP-4 | BINARY (step 2) | as COMP |
+| COMP-X | MF's: unsigned, big-endian, the field's capacity the limit (step 2) | PIC X(n): n bytes; PIC 9(n): the fewest bytes holding n nines, 1-8 |
+| COMP-6 | unsigned packed decimal, no sign nibble; a signed one is COMP-3 (MF's default COMP-6"2"; step 2) | (digits + 1) / 2 |
+| COMP-N | not recognized | |
 | BINARY-CHAR/SHORT/LONG/DOUBLE, SIGNED-INT etc. | native binary | 1/2/4/8 |
 
 **Byte order** (step 1, done 2026-09-30): COMP, COMPUTATIONAL, BINARY and
@@ -148,6 +151,27 @@ Each is a class E behavior point, as COMP-3 and COMP-5 are now.
   to the code before step 1.
 - `tests/free/binorder.cbl` writes a record and prints its bytes, with
   GnuCOBOL as the oracle.
+
+**Step 2 as built:**
+- **COMP-4:** BINARY under another name.
+- **COMP-X:** COMP-5's rules (no truncation to the picture) with a
+  variant mark (`Sym.uvar`):
+  - always big-endian, whatever `-fbinary-byteorder` says, as MF has it;
+  - never signed;
+  - PIC X(n) up to seven bytes, taken as the 9s of 256^n - 1;
+  - it shows, as COMP-5 does, at its capacity's width (three bytes, eight
+    digits);
+  - GnuCOBOL truncates COMP-X to the picture and shows the picture's
+    digits. That is a documented divergence (docs/oracles.md): the usage
+    is MF's, so MF's reference decides.
+- **COMP-6 unsigned:** packed decimal with the descriptor's
+  `COB_F2_NOSIGN` flag, every nibble a digit. This is in kern.h (so in
+  the hooks), in the 31-digit paths and in the class test. A signed
+  COMP-6 is COMP-3, as MF's default and GnuCOBOL have it.
+- **CALL signatures** (.s32fn) carry the variant in the usage's second
+  byte, so COMP-X does not conform to COMP-5.
+- **Tests:** `tests/free/compn.cbl` checks sizes, bytes and arithmetic,
+  and the `bad/compx-*` tests check the refusals.
 
 1. **Byte order** of COMP/BINARY/COMP-4, with the flag. The runtime and
    the compiler's inline paths change together. The gates' printed

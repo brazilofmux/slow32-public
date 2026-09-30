@@ -1831,6 +1831,8 @@ static const char *usage_name(int u)
     return n[u];
 }
 
+enum { UV_NONE, UV_COMPX, UV_NOSIGN };  /* Sym.uvar (docs/usage.md) */
+
 static int usage_is_native(int u)
 {
     return u == U_SINT || u == U_UINT || u == U_SSHORT || u == U_USHORT ||
@@ -1846,6 +1848,7 @@ typedef struct Sym {
     int  parent, child, sibling;    /* tree, as indices; -1 = none */
     int  record;                    /* the 01/77 (or index) owning the storage */
     int  usage, has_usage, has_pic;
+    int  uvar;                          /* UV_*: a usage's variant -- COMP-X (U_COMP5), unsigned COMP-6 (U_PACKED) */
     char pic[PIC_MAXPAT];
     PicInfo pi;
     int  is_group, is_cond, is_index;
@@ -1902,7 +1905,7 @@ typedef struct Sym {
  * order.  COMP-5, the native usages and RETURN-CODE (a C int the run unit
  * shares) are always the machine's order. */
 static int g_bin_native;
-static int sym_be(const Sym *s) { return s->usage == U_BINARY && !s->is_rc && !g_bin_native; }
+static int sym_be(const Sym *s) { return (s->usage == U_BINARY && !s->is_rc && !g_bin_native) || s->uvar == UV_COMPX; }   /* COMP-X always (MF) */
 static int sym_in_strong(const Sym *s);
 static Sym *odo_table_for(Sym *s);
 static void value_rules(void);
@@ -2213,7 +2216,10 @@ static int binary_bytes(int digits, int usage)
 
 static int capacity_digits(int bytes)
 {
-    return bytes == 1 ? 3 : bytes == 2 ? 5 : bytes == 4 ? 10 : 19;
+    /* the digits of the largest value the bytes hold, 256^n - 1 (COMP-X
+     * sizes by MF's rule run 1 to 8); eight bytes, 19 */
+    static const int d[9] = { 0, 3, 5, 8, 10, 13, 15, 17, 19 };
+    return bytes >= 1 && bytes <= 8 ? d[bytes] : 19;
 }
 
 static int is_int_item(Sym *s);
@@ -2293,6 +2299,33 @@ static void sym_finish(Sym *s)
         }
         break;
     case U_BINARY: case U_COMP5:
+        if (s->uvar == UV_COMPX) {
+            /* MF's COMP-X: PIC X(n) is n bytes, holding what n bytes hold
+             * (as the digits of 256^n - 1); PIC 9(n) is the fewest bytes
+             * that hold n nines; never signed */
+            int allx = pi->category == PIC_ALPHANUMERIC;        /* X's only (pi->pat is empty unless edited) */
+            for (const char *c = s->pic; allx && *c; c++) {
+                if (*c == '(') { while (c[1] && c[1] != ')') c++; if (c[1]) c++; continue; }
+                if (*c != 'x' && *c != 'X') allx = 0;
+            }
+            if (allx) {
+                int n = pi->bytes;
+                if (n > 7) die_at(s->line, "'%s': PIC X(%d) COMP-X is not implemented (up to seven bytes)", s->name, n);
+                static const int capd[8] = { 0, 3, 5, 8, 10, 13, 15, 17 };
+                snprintf(s->pic, sizeof s->pic, "9(%d)", capd[n]);
+                if (pic_analyse(s->pic, &s->pi) < 0) die_at(s->line, "internal: COMP-X picture");
+                s->size = n;
+                break;
+            }
+            if (pi->category != PIC_NUMERIC) die_at(s->line, "'%s': USAGE COMP-X needs a PICTURE of 9s or of Xs", s->name);
+            if (pi->is_signed) die_at(s->line, "'%s': a COMP-X item is unsigned (Micro Focus)", s->name);
+            if (pi->digits > 18) die_at(s->line, "'%s': COMP-X of more than 18 digits is not implemented", s->name);
+            unsigned long long top = 1; int b = 0;
+            for (int i = 0; i < pi->digits; i++) top *= 10;              /* 10^digits, the first value too big */
+            while (b < 8 && (b == 0 || (1ULL << (8 * b)) < top)) b++;
+            s->size = b;
+            break;
+        }
         if (pi->category != PIC_NUMERIC)
             die_at(s->line, "'%s': USAGE %s needs a numeric PICTURE (2023 13.18.60.3 rule 3)", s->name, usage_name(u));
         s->size = binary_bytes(pi->digits, u);
@@ -2300,7 +2333,8 @@ static void sym_finish(Sym *s)
     case U_PACKED:
         if (pi->category != PIC_NUMERIC)
             die_at(s->line, "'%s': USAGE PACKED-DECIMAL (COMP-3) needs a numeric PICTURE (2023 13.18.60.3 rule 3)", s->name);
-        s->size = pi->digits / 2 + 1;
+        if (s->uvar == UV_NOSIGN && pi->is_signed) s->uvar = UV_NONE;    /* signed COMP-6 is COMP-3 (MF COMP-6"2") */
+        s->size = s->uvar == UV_NOSIGN ? (pi->digits + 1) / 2 : pi->digits / 2 + 1;
         break;
     }
     if (s->just && pi->category == PIC_NUMERIC)
@@ -2344,6 +2378,11 @@ static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
     case U_PACKED: {
         int bytes = s->size;
         memset(p, 0, bytes);
+        if (s->uvar == UV_NOSIGN) {                 /* COMP-6: the digits right-aligned, no sign */
+            for (int i = digits - 1, nib = bytes * 2 - 1; i >= 0; i--, nib--)
+                p[nib / 2] |= (unsigned char)(nib & 1 ? d[i] - '0' : (d[i] - '0') << 4);
+            break;
+        }
         int nib = bytes * 2 - 2;
         for (int i = digits - 1; i >= 0; i--, nib--) {
             int v = d[i] - '0';
@@ -2681,9 +2720,20 @@ static void parse_data_item1(void)
             continue;
         }
         if (!strcmp(t->s, "usage")) { advance(); accept_word("is"); t = cur(); if (t->kind != T_WORD) die_at(t->line, "expected a USAGE"); }
-        int u = -1;
+        int u = -1, uv = UV_NONE;
         if (!strcmp(t->s, "display")) u = U_DISPLAY;
         else if (!strcmp(t->s, "comp") || !strcmp(t->s, "computational") || !strcmp(t->s, "binary")) u = U_BINARY;
+        else if (!strcmp(t->s, "comp-4") || !strcmp(t->s, "computational-4")) { bp(BP_E3_COMP_N, t->line); u = U_BINARY; }   /* IBM, MF: BINARY */
+        else if (!strcmp(t->s, "comp-x") || !strcmp(t->s, "computational-x")) {
+            /* MF: unsigned big-endian binary, the field's capacity the limit;
+             * a PICTURE of X(n) is n bytes (sym_finish) */
+            bp(BP_E3_COMP_N, t->line); u = U_COMP5; uv = UV_COMPX;
+        }
+        else if (!strcmp(t->s, "comp-6") || !strcmp(t->s, "computational-6")) {
+            /* MF's default COMP-6"2" (RM's, for an unsigned item): packed
+             * decimal with no sign nibble; a signed one is COMP-3 (sym_finish) */
+            bp(BP_E3_COMP_N, t->line); u = U_PACKED; uv = UV_NOSIGN;
+        }
         else if (!strcmp(t->s, "comp-3") || !strcmp(t->s, "computational-3") || !strcmp(t->s, "packed-decimal")) {
             if (strcmp(t->s, "packed-decimal")) bp(BP_E3_COMP_N, t->line);
             u = U_PACKED;
@@ -2752,7 +2802,7 @@ static void parse_data_item1(void)
             die_at(t->line, "floating-point USAGE %s is not implemented", t->s);
         if (u >= 0) {
             if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
-            s->usage = u; s->has_usage = 1;
+            s->usage = u; s->uvar = uv; s->has_usage = 1;
             advance();
             continue;
         }
@@ -3230,8 +3280,8 @@ static void build_tree(void)
              * they are finished after this with the usage in place */
             for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
                 if (g_sym[c].is_cond) continue;
-                if (!g_sym[c].has_usage) { g_sym[c].usage = s->usage; g_sym[c].has_usage = 1; }
-                else if (g_sym[c].usage != s->usage)
+                if (!g_sym[c].has_usage) { g_sym[c].usage = s->usage; g_sym[c].uvar = s->uvar; g_sym[c].has_usage = 1; }
+                else if (g_sym[c].usage != s->usage || g_sym[c].uvar != s->uvar)
                     die_at(g_sym[c].line, "USAGE of '%s' contradicts the USAGE of its group '%s'", g_sym[c].name, s->name);
             }
         }
@@ -3732,7 +3782,7 @@ static void finish_data_division(void)
         }
         s->offset = a->offset; s->size = end - (int)a->offset; s->ndims = 0;
         if (!b && !a->is_group) {
-            s->usage = a->usage; s->has_usage = a->has_usage; s->pi = a->pi; s->has_pic = a->has_pic;
+            s->usage = a->usage; s->uvar = a->uvar; s->has_usage = a->has_usage; s->pi = a->pi; s->has_pic = a->has_pic;
             memcpy(s->pic, a->pic, sizeof s->pic); s->sign_lead = a->sign_lead; s->sign_sep = a->sign_sep;
             s->is_group = 0;
         } else s->is_group = 1;
@@ -4107,6 +4157,7 @@ static int sym_desc(Sym *s)
         if (s->pi.is_signed) d.flags |= COB_F_SIGNED;
         if (s->usage == U_COMP5 || usage_is_native(s->usage)) d.flags |= COB_F_NOTRUNC;
         if (sym_be(s)) d.flags2 |= COB_F2_BIGEND;
+        if (s->uvar == UV_NOSIGN) d.flags2 |= COB_F2_NOSIGN;
         if (s->just) d.flags |= COB_F_JUST;
         if (s->blank_zero) d.flags |= COB_F_BLANKZ;
         if (s->sign_sep) d.flags |= s->sign_lead ? COB_F_SEPLEAD : COB_F_SEPTRAIL;
@@ -4461,7 +4512,7 @@ static int is_hot_int(Sym *s)
 {
     if (s->is_group || s->pi.category != PIC_NUMERIC || s->pi.scale != 0) return 0;
     if (s->usage == U_DISPLAY || s->usage == U_PACKED || s->usage == U_NATIONAL) return 0;
-    return s->size <= 4;
+    return s->size == 1 || s->size == 2 || s->size == 4;    /* not COMP-X's three bytes */
 }
 
 /* identifier [OF|IN qualifier]... [( subscripts )] */
@@ -5864,7 +5915,7 @@ static const char *g_outdir = ".";
 static void fdesc_of(FDesc *d, const Sym *x)
 {
     memset(d, 0, sizeof *d);
-    d->group = x->is_group; d->size = x->size; d->usage = x->usage; d->has_pic = x->has_pic;
+    d->group = x->is_group; d->size = x->size; d->usage = x->usage | x->uvar << 8; d->has_pic = x->has_pic;   /* the variant in the second byte: COMP-X is not COMP-5 */
     d->just = x->just; d->bwz = x->blank_zero; d->sign_lead = x->sign_lead; d->sign_sep = x->sign_sep;
     snprintf(d->pic, sizeof d->pic, "%s", x->has_pic ? x->pic : "-");
 }
@@ -5979,7 +6030,7 @@ static Sym *ftemp_new(const FDesc *d, int line)
     int idx = sym_idx(t);
     t->level = 1; t->line = line; t->is_filler = 1; t->is_ftemp = 1; t->ftemp_scan = g_noemit > 0;
     snprintf(t->name, sizeof t->name, "filler");
-    t->usage = d->group ? U_DISPLAY : d->usage; t->has_usage = !d->group;
+    t->usage = d->group ? U_DISPLAY : d->usage & 255; t->uvar = d->group ? UV_NONE : d->usage >> 8; t->has_usage = !d->group;
     t->is_local = g_recursive;
     if (d->group || !d->has_pic) {
         if (d->group) { t->has_pic = 1; snprintf(t->pic, sizeof t->pic, "x(%d)", d->size); }
@@ -9256,7 +9307,7 @@ static int sym_dec_ok(Sym *s)
     if (s->sign_sep || s->sign_lead || s->blank_zero || s->pi.edited || strchr(s->pi.pat, 'P')) return 0;
     if (s->pi.digits < 1 || s->pi.digits > 18) return 0;
     if (s->usage == U_DISPLAY) return (int)s->size == s->pi.digits;
-    if (s->usage == U_PACKED) return (int)s->size == (s->pi.digits + 2) / 2;
+    if (s->usage == U_PACKED) return s->uvar == UV_NONE && (int)s->size == (s->pi.digits + 2) / 2;
     return 0;
 }
 
@@ -16452,13 +16503,13 @@ static void parse_rd(void)
                 snprintf(cl->name, sizeof cl->name, "*prior-%.50s-%d", c->name, r->nctl);
                 cl->line = t->line; cl->level = 77;
                 cl->has_pic = c->has_pic; memcpy(cl->pic, c->pic, sizeof cl->pic); cl->pi = c->pi;
-                cl->usage = c->usage; cl->has_usage = c->has_usage;
+                cl->usage = c->usage; cl->uvar = c->uvar; cl->has_usage = c->has_usage;
                 r->ctl_clone[r->nctl] = sym_idx(cl);
                 Sym *hd = sym_new();
                 snprintf(hd->name, sizeof hd->name, "*held-%.51s-%d", c->name, r->nctl);
                 hd->line = t->line; hd->level = 77;
                 hd->has_pic = c->has_pic; memcpy(hd->pic, c->pic, sizeof hd->pic); hd->pi = c->pi;
-                hd->usage = c->usage; hd->has_usage = c->has_usage;
+                hd->usage = c->usage; hd->uvar = c->uvar; hd->has_usage = c->has_usage;
                 r->ctl_held[r->nctl] = sym_idx(hd);
                 r = &g_reports[g_nreport - 1];                       /* sym_new may move nothing, but be safe */
                 r->nctl++;
