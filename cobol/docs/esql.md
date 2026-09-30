@@ -36,6 +36,29 @@ Found on the way:
   - EXIT PROGRAM followed by STOP RUN (BP-E21).
 - SQLite is built with SQLITE_MAX_ATTACHED=125 for the 18 schemas.
 
+What the 326 failures are (COB_SQL_TRACE=1 on the gate's run). Nearly
+all are SQLite itself:
+
+- **Views are read-only.** 557 INSERTs into TESTREPORT, the view every
+  program records its results through. The pass/fail counts come from the
+  program's output, so they are unaffected.
+- **Missing SQL-92 syntax:**
+  - DROP ... CASCADE/RESTRICT, 132 statements. Each leaves its table
+    behind for the next test's CREATE;
+  - CREATE DOMAIN;
+  - quantified comparisons (> ALL, ANY);
+  - EXTRACT, interval and datetime literals, OVERLAPS;
+  - ALTER TABLE ADD (a, b);
+  - parenthesized compound SELECTs;
+  - NATURAL JOIN over schema-qualified names.
+- **No INFORMATION_SCHEMA** (about 600 references).
+- **No rowid in a view or a join**, where a positioned statement needs one.
+
+The runtime's own items, to do:
+
+- the 01004 truncation warning, with the full length in the indicator;
+- a finer SQLSTATE map (22019 for a bad LIKE escape, 22003 and 22012).
+
 ## The plan
 
 Started 2026-09-29. The plan for EXEC SQL in s32-cobc, with SQLite
