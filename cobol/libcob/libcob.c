@@ -642,6 +642,18 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
     }
     zero = 1; for (int i = 0; i < L; i++) if (D[i] != '0') { zero = 0; break; }
     if (zero) neg = 0;
+    if ((d->flags & COB_F_NOTRUNC) && (opts & 2)) {
+        /* a native binary (BINARY-DOUBLE): the field's capacity is the limit */
+        for (int i = 0; i < L - 38; i++) if (D[i] != '0') return 1;
+        wl_t mag[WL]; w_from_digits(mag, D + L - 38, 38);
+        int sgn = (d->flags & COB_F_SIGNED) != 0, bits = (int)d->size * 8 - sgn, nb = mp_bits(mag, WL);
+        if (!sgn && neg && !zero) return 1;
+        if (nb > bits) {
+            int exact = nb == bits + 1 && neg && sgn;   /* -2^bits fits */
+            for (int i = 0; exact && i < bits; i++) if ((mag[i / 32] >> (i % 32)) & 1) exact = 0;
+            if (!exact) return 1;
+        }
+    }
     if (!(d->flags & COB_F_SIGNED)) neg = 0;
     if (d->cat == COB_NUM_ED) {
         int nd = eff > 0 ? eff : 0;
@@ -1464,6 +1476,17 @@ static void nstk_room(void)
 void cob_push(const void *p, const cob_desc *d)
 {
     nstk_room();
+    if (d->digits > 18 && is_wide(d)) {
+        /* a wide value on the narrow stack (an exact function's result in
+         * a narrow statement): decimals shed until 64 bits hold it, as
+         * cob_nmul sheds them; one whose integer part does not fit stops
+         * the run, never a wrong number (docs/wide.md) */
+        cob_wnum w; cob_wget(p, d, &w);
+        while (!w_fits_i64(&w) && w.scale > 0) { mp_div_small(w.m, WL, 10); w.scale--; }
+        if (!w_fits_i64(&w)) cob_fatal("a value of more than 18 digits reached an operation that holds 18 (docs/wide.md)");
+        nstk[nsp].v = w_to_i64(&w); nstk[nsp].scale = w.scale; nsp++;
+        return;
+    }
     nstk[nsp].v = cob_get_num(p, d); nstk[nsp].scale = d->scale; nsp++;
 }
 
@@ -2925,7 +2948,7 @@ static unsigned sort_klen(const cob_sorter *so)
     unsigned k = 4;
     for (int i = 0; i < so->nkeys; i++) {
         const cob_desc *d = so->keys[i].desc;
-        k += d->cat == COB_NUM || d->cat == COB_NUM_ED ? 8 : d->size;
+        k += d->cat == COB_NUM || d->cat == COB_NUM_ED ? (is_wide(d) ? 16 : 8) : d->size;
     }
     return k;
 }
@@ -2937,7 +2960,16 @@ static void sort_key_build(const cob_sorter *so, const char *rec, unsigned seq, 
         const cob_sort_key *k = &so->keys[i];
         const cob_desc *d = k->desc;
         unsigned char *o = out;
-        if (d->cat == COB_NUM || d->cat == COB_NUM_ED) {
+        if ((d->cat == COB_NUM || d->cat == COB_NUM_ED) && is_wide(d)) {
+            /* past 18 digits: the 128-bit two's complement, sign bit
+             * flipped, big-endian -- memcmp order is the numeric order */
+            cob_wnum w; cob_wget(rec + k->offset, d, &w);
+            wl_t m[WL]; memcpy(m, w.m, sizeof m);
+            if (w.neg) { for (int j = 0; j < WL; j++) m[j] = ~m[j]; wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(m, one, WL); }
+            m[WL - 1] ^= 0x80000000u;
+            for (int b = 0; b < 16; b++) o[b] = (unsigned char)(m[(15 - b) / 4] >> (8 * ((15 - b) % 4)));
+            out += 16;
+        } else if (d->cat == COB_NUM || d->cat == COB_NUM_ED) {
             unsigned long long u = (unsigned long long)cob_get_num(rec + k->offset, d) ^ (1ULL << 63);
             for (int b = 7; b >= 0; b--) { o[b] = (unsigned char)u; u >>= 8; }
             out += 8;
@@ -3317,12 +3349,18 @@ static char *fn_var_result(const char *s, int n, int national)
 }
 int cob_fn_conv_bad(void) { int b = fn_conv_bad; fn_conv_bad = 0; return b; }
 
+static int fn_var_scale, fn_var_digits;      /* a numeric result's, for cob_fn_var_desc(3) */
 const cob_desc *cob_fn_var_desc(int national)
 {
     static cob_desc pool[8];
     static int rot;
     cob_desc *d = &pool[rot++ & 7];
     memset(d, 0, sizeof *d);
+    if (national == 3) {                        /* an exact numeric function's result (docs/wide.md) */
+        d->cat = COB_NUM; d->usage = COB_U_DISPLAY; d->flags = COB_F_SIGNED | COB_F_SEPLEAD;
+        d->digits = (unsigned char)fn_var_digits; d->scale = (signed char)fn_var_scale; d->size = (unsigned)fn_var_len;
+        return d;
+    }
     d->cat = national == 1 ? COB_NATIONAL : national == 2 ? COB_BOOLEAN : COB_ALNUM;
     d->usage = COB_U_DISPLAY;
     d->size = (unsigned)fn_var_len;
@@ -5591,6 +5629,112 @@ static long fn_year_window(long yy, int n, const cob_num *a)
     return maxy % 100 >= yy ? yy + 100 * (maxy / 100) : yy + 100 * (maxy / 100 - 1);
 }
 
+/* An exact numeric function's result (docs/wide.md phase 3): a sign and
+ * as many digits as the value needs, at least what the function's
+ * 18-digit result had (18 - fscale integer digits, fscale decimals), so
+ * any value that fitted before is written as before; the descriptor is
+ * cob_fn_var_desc(3)'s.  Past 38 digits the decimals are shortened. */
+static char *fn_wresult(const cob_wnum *w, int fscale)
+{
+    char D[40]; w_to_digits(w->m, D, 38);
+    int f = 0; while (f < 38 && D[f] == '0') f++;
+    int nd = 38 - f, ws = w->scale > 38 ? 38 : w->scale;
+    int intd = nd - ws; if (intd < 0) intd = 0;
+    int scale = ws > fscale ? ws : fscale;
+    int iw = 18 - fscale; if (intd > iw) iw = intd;
+    if (iw + scale > 38) scale = 38 - iw;
+    char *b = fn_buffer(40);
+    int zero = nd == 0;
+    b[0] = w->neg && !zero ? '-' : '+';
+    int o = 1;
+    for (int i = 0; i < iw; i++) {                  /* the integer digits, right-aligned */
+        int src = 38 - ws - iw + i;
+        b[o++] = src >= 0 && src < 38 - ws ? D[src] : '0';
+    }
+    for (int i = 0; i < scale; i++) {               /* the decimals, left-aligned */
+        int src = 38 - ws + i;
+        b[o++] = i < ws ? D[src] : '0';
+    }
+    b[o] = 0;
+    fn_var_len = o; fn_var_scale = scale; fn_var_digits = iw + scale;
+    return b;
+}
+
+/* the exact functions over the wide stack: MAX, MIN, ORD-MAX, ORD-MIN,
+ * SUM, RANGE, MIDRANGE, MOD, REM, INTEGER, INTEGER-PART, ABS, SIGN,
+ * FRACTION-PART -- any argument of up to 31 digits, the result exact */
+char *cob_fn_wnum(int which, int n, int fscale)
+{
+    cob_wnum *a = &wstk[wsp - n], r;
+    memset(&r, 0, sizeof r);
+    switch (which) {
+    case COB_FN_MAX: case COB_FN_MIN: case COB_FN_ORD_MAX: case COB_FN_ORD_MIN:
+    case COB_FN_RANGE: case COB_FN_MIDRANGE: {
+        int hi = 0, lo = 0;
+        for (int i = 1; i < n; i++) {
+            if (w_cmp_val(&a[i], &a[hi]) > 0) hi = i;
+            if (w_cmp_val(&a[i], &a[lo]) < 0) lo = i;
+        }
+        if (which == COB_FN_MAX) r = a[hi];
+        else if (which == COB_FN_MIN) r = a[lo];
+        else if (which == COB_FN_ORD_MAX) w_from_i64(&r, hi + 1, 0);
+        else if (which == COB_FN_ORD_MIN) w_from_i64(&r, lo + 1, 0);
+        else if (which == COB_FN_RANGE) { r = a[hi]; w_addsub(&r, &a[lo], 1); }
+        else {                                      /* (hi + lo) / 2, one more decimal */
+            r = a[hi]; w_addsub(&r, &a[lo], 0);
+            if (w_ndigits(r.m) < 38) { w_scale_up(r.m, 1); r.scale++; }
+            mp_div_small(r.m, WL, 2);
+            if (mp_is_zero(r.m, WL)) r.neg = 0;
+        }
+        break;
+    }
+    case COB_FN_SUM:
+        r = a[0];
+        for (int i = 1; i < n; i++) w_addsub(&r, &a[i], 0);
+        break;
+    case COB_FN_MOD: case COB_FN_REM: {
+        /* on a common scale, |x| mod |y|: REM takes x's sign (x less y times
+         * the integer part of x / y); MOD the divisor's, the integers only
+         * (x less y times the greatest integer not above x / y) */
+        cob_wnum x = a[0], y = a[1];
+        if (which == COB_FN_MOD) {
+            if (x.scale > 0) { w_drop_digits(x.m, WL, x.scale, 0, 0); x.scale = 0; }
+            if (y.scale > 0) { w_drop_digits(y.m, WL, y.scale, 0, 0); y.scale = 0; }
+        }
+        w_align2(&x, &y);
+        if (mp_is_zero(y.m, WL)) cob_fatal(which == COB_FN_MOD ? "FUNCTION MOD with a zero divisor" : "FUNCTION REM with a zero divisor");
+        wl_t q[WL], rm[WL];
+        mp_divmod(x.m, y.m, WL, q, rm);
+        memcpy(r.m, rm, sizeof rm); r.scale = x.scale; r.neg = x.neg && !mp_is_zero(rm, WL);
+        if (which == COB_FN_MOD && !mp_is_zero(rm, WL) && x.neg != y.neg) {
+            wl_t t[WL]; memcpy(t, y.m, sizeof t); mp_sub(t, rm, WL); memcpy(r.m, t, sizeof t);
+            r.neg = y.neg;
+        } else if (which == COB_FN_MOD) r.neg = y.neg && !mp_is_zero(r.m, WL);
+        break;
+    }
+    case COB_FN_INTEGER: case COB_FN_INTEGER_PART: case COB_FN_FRACTION_PART: {
+        r = a[0];
+        if (r.scale > 0) {
+            cob_wnum ip = r; int nz;
+            w_drop_digits(ip.m, WL, r.scale, 0, &nz);
+            ip.scale = 0;
+            if (which == COB_FN_INTEGER && r.neg && nz) { wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(ip.m, one, WL); }
+            if (which == COB_FN_FRACTION_PART) {
+                cob_wnum t = ip; t.neg = r.neg;
+                w_addsub(&r, &t, 1);                 /* x less its integer part */
+            } else r = ip;
+        } else if (which == COB_FN_FRACTION_PART) { memset(r.m, 0, sizeof r.m); r.neg = 0; }
+        if (mp_is_zero(r.m, WL)) r.neg = 0;
+        break;
+    }
+    case COB_FN_ABS: r = a[0]; r.neg = 0; break;
+    case COB_FN_SIGN: w_from_i64(&r, mp_is_zero(a[0].m, WL) ? 0 : a[0].neg ? -1 : 1, 0); break;
+    default: cob_fatal("internal: cob_fn_wnum of a function that is not exact");
+    }
+    wsp -= n;
+    return fn_wresult(&r, fscale);
+}
+
 char *cob_fn_num(int which, int n)
 {
     cob_num *a = &nstk[nsp - n];               /* the n arguments, oldest first */
@@ -5820,7 +5964,7 @@ void cob_fn_currency_arg(const char *p, int n)
     fn_cur_p = p; fn_cur_n = n;
 }
 
-static int numval_scan(const char *p, int n, int form, long long *v, int *sc, int *exp10)
+static int numval_scan(const char *p, int n, int form, cob_wnum *wv, int *exp10)
 {
     char cs[64]; int csn;
     if (form == 1 && fn_cur_p) { csn = fn_cur_n < 63 ? fn_cur_n : 63; memcpy(cs, fn_cur_p, (size_t)csn); }
@@ -5828,7 +5972,7 @@ static int numval_scan(const char *p, int n, int form, long long *v, int *sc, in
     fn_cur_p = 0;
     int dp = cob_dp_comma ? ',' : '.', grp = cob_dp_comma ? '.' : ',';
     int i = 0, neg = 0, lead = 0, nd = 0, seen_pt = 0, scale = 0, any = 0;
-    long long val = 0;
+    char dg[40]; int ndg = 0;                       /* the digits, up to 31 (15.54: the argument's limit) */
 #define SP() while (i < n && p[i] == ' ') i++
     SP();
     if (i < n && (p[i] == '+' || p[i] == '-')) { neg = p[i] == '-'; lead = 1; i++; SP(); }
@@ -5840,8 +5984,7 @@ static int numval_scan(const char *p, int n, int form, long long *v, int *sc, in
         if (c >= '0' && c <= '9') {
             if (++nd > 31) return i + 1;
             any = 1;
-            if (val < 100000000000000000LL) { val = val * 10 + (c - '0'); if (seen_pt) scale++; }
-            else if (!seen_pt) return i + 1;        /* beyond 18 integer digits: this compiler's limit */
+            dg[ndg++] = (char)c; if (seen_pt) scale++;
         } else if (c == dp && !seen_pt) seen_pt = 1;
         else if (form == 1 && c == grp && !seen_pt && any && i + 1 < n && p[i + 1] >= '0' && p[i + 1] <= '9') continue;
         else break;
@@ -5867,14 +6010,16 @@ static int numval_scan(const char *p, int n, int form, long long *v, int *sc, in
     }
     if (i < n) return i + 1;
 #undef SP
-    *v = neg ? -val : val; *sc = scale; *exp10 = e;
+    memset(wv, 0, sizeof *wv);
+    w_from_digits(wv->m, dg, ndg); wv->scale = scale; wv->neg = neg && !mp_is_zero(wv->m, WL);
+    *exp10 = e;
     return 0;
 }
 
 int cob_fn_test_numval_pos(const char *p, int n, int form)
 {
-    long long v; int sc, e;
-    return numval_scan(p, n, form, &v, &sc, &e);
+    cob_wnum w; int e;
+    return numval_scan(p, n, form, &w, &e);
 }
 
 char *cob_fn_test_numval(const char *p, int n, int form)
@@ -5884,13 +6029,17 @@ char *cob_fn_test_numval(const char *p, int n, int form)
 
 char *cob_fn_numval_f(const char *p, int n)
 {
-    long long v; int sc, e;
-    if (numval_scan(p, n, 2, &v, &sc, &e)) return fn_signed18(0);
-    /* v * 10**(e - sc) at scale 9, truncated to what 18 digits hold */
-    int shift = 9 + e - sc;
-    if (shift >= 0) { while (shift-- > 0) { if (v > 999999999999999999LL / 10 || v < -999999999999999999LL / 10) return fn_signed18(v < 0 ? -999999999999999999LL : 999999999999999999LL); v *= 10; } }
-    else { while (shift++ < 0) v /= 10; }
-    return fn_signed18(v);
+    cob_wnum w; int e;
+    if (numval_scan(p, n, 2, &w, &e)) { w_from_i64(&w, 0, 0); return fn_wresult(&w, 9); }
+    /* the value times 10**e: the scale moves, and a negative one is made
+     * up with zeros while 38 digits hold them */
+    w.scale -= e;
+    if (w.scale < 0) {
+        int up = -w.scale, room = 38 - w_ndigits(w.m);
+        if (up > room) up = room;
+        w_scale_up(w.m, up); w.scale = 0;
+    }
+    return fn_wresult(&w, 9);
 }
 
 char *cob_fn_numval(const char *p, int n, int cform)
@@ -5898,20 +6047,19 @@ char *cob_fn_numval(const char *p, int n, int cform)
     if (cform && fn_cur_p) {
         /* NUMVAL-C with argument-2, a currency string of any length:
          * the format scanner, which TEST-NUMVAL-C shares */
-        long long v; int sc, e;
-        if (numval_scan(p, n, 1, &v, &sc, &e)) return fn_signed18(0);
-        if (sc > 9) { v /= pow10tab[sc - 9]; sc = 9; }
-        return fn_signed18(v * pow10tab[9 - sc]);
+        cob_wnum w; int e;
+        if (numval_scan(p, n, 1, &w, &e)) w_from_i64(&w, 0, 0);
+        return fn_wresult(&w, 9);
     }
     int i = 0, neg = 0, seen_pt = 0, scale = 0;
-    long long v = 0;
+    char dg[40]; int ndg = 0;
     int dp = cob_dp_comma ? ',' : '.', grp = cob_dp_comma ? '.' : ',';
     int any_digit = 0;
     while (i < n && p[i] == ' ') i++;
     if (i < n && (p[i] == '+' || p[i] == '-')) { neg = p[i] == '-'; i++; }
     for (; i < n; i++) {
         unsigned char c = (unsigned char)p[i];
-        if (c >= '0' && c <= '9') { any_digit = 1; if (scale < 18 && v < pow10tab[17]) { v = v * 10 + (c - '0'); if (seen_pt) scale++; } }
+        if (c >= '0' && c <= '9') { any_digit = 1; if (ndg < 38) { dg[ndg++] = (char)c; if (seen_pt) scale++; } }
         else if (c == dp && !seen_pt) seen_pt = 1;
         else if (cform && (c == grp || c == (unsigned char)cob_currency)) continue;
         else if (c == ' ' && !any_digit) continue;      /* spaces stand between the sign, the currency and the number */
@@ -5923,9 +6071,9 @@ char *cob_fn_numval(const char *p, int n, int cform)
         if (c == '+' || c == '-') neg = c == '-';
         else if (cform && (c == 'C' || c == 'c' || c == 'D' || c == 'd')) neg = 1;   /* CR / DB */
     }
-    if (scale > 9) { v /= pow10tab[scale - 9]; scale = 9; }
-    v *= pow10tab[9 - scale];
-    return fn_signed18(neg ? -v : v);
+    cob_wnum w; memset(&w, 0, sizeof w);
+    w_from_digits(w.m, dg, ndg); w.scale = scale; w.neg = neg && !mp_is_zero(w.m, WL);
+    return fn_wresult(&w, 9);
 }
 
 char *cob_fn_integer_of_date(long ymd)

@@ -4382,3 +4382,27 @@ only and stores a truncated value. That case is left out of the script
 and noted in it. Division is left out too (the intermediate precision is
 the implementor's).
 
+Phase 3, done. BINARY-DOUBLE [SIGNED | UNSIGNED] (U_SDBL, U_UDBL: eight
+bytes, 20 digits shown as GnuCOBOL shows them, the field's capacity the
+size-error limit -- cob_wput_x checks a native binary's capacity now),
+which was refused by name. The exact intrinsic functions moved to the
+wide stack (cob_fn_wnum) with results described at run time
+(cob_fn_var_desc kind 3; Opnd.fwnum; a function's arguments go to the
+stack its implementation reads, whatever the statement around it uses),
+and NUMVAL, NUMVAL-C and NUMVAL-F scan into a wide value. SORT keys past
+18 digits get a sixteen-byte normalized key.
+
+This fixed a bug older than the 31-digit work: numeric function results
+were an S9(9)V9(9) buffer, and in a plain COBOL 85 program MAX, MIN,
+SUM, RANGE, MIDRANGE and NUMVAL of a value past nine integer digits came
+back as garbage (MAX of 123456789012 was 223372036), silently.
+free/fnwidth (the oracle agrees). A result that fitted the old buffer is
+written exactly as before, so DISPLAY of function values is unchanged.
+
+Tests: 2002/bindouble, 2002/wide4 (30 lines, the oracle agrees),
+free/fnwidth. Harness 512/512, CCVS-85 unchanged, -std=85 byte-identical
+on the Open Systems programs, majesty and majesty-functions PASS, Open
+Systems paper unchanged, wide-differential agrees. Not done: the
+floating functions keep their double-precision S9(9)V9(9) result
+(docs/wide.md).
+

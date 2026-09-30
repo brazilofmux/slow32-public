@@ -80,10 +80,10 @@ COBOL 2002/2023 (Stage B):
   character item redefining a bit item that starts mid-byte;
 - EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
   the caller (docs/conformance/exit.md);
-- intrinsic functions in arithmetic of more than 18 digits, BINARY-DOUBLE
-  and the other phase-3 cases of docs/wide.md (items, literals, MOVE,
-  relations, DISPLAY and ADD, SUBTRACT, MULTIPLY, DIVIDE, COMPUTE of 19
-  to 31 digits are implemented, ISSUES-117);
+- the floating intrinsic functions (SQRT, LOG, the trigonometric ones,
+  MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE) with
+  arguments or results past 18 digits (docs/wide.md; the rest of 31-digit
+  COBOL is implemented, ISSUES-117);
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
@@ -94,8 +94,6 @@ COBOL 2002/2023 (Stage B):
   (WITH FILLER, TO VALUE, TO DEFAULT; the phrases themselves are
   implemented, docs/conformance/initialize.md);
 - READ PREVIOUS of a sequential file (2002; io-statements.md);
-- USAGE BINARY-DOUBLE, whose range needs 19 digits (docs/wide.md
-  phase 3).
 
 ## 3. Out of scope, by ruling
 

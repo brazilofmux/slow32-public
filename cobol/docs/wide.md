@@ -68,5 +68,21 @@ Phases 1 and 2 are done (ISSUES-117): 2002/wide1-3, and
 tests/wide-differential.sh, which checks random COMPUTE statements of up
 to 31 digits against GnuCOBOL (960 agree; BINARY receivers past 18 digits
 are left out -- GnuCOBOL does not report a PICTURE overflow there as a
-size error). Phase 3 is next.
+size error).
+
+Phase 3, done: BINARY-DOUBLE [SIGNED | UNSIGNED] (2002/bindouble); the
+exact intrinsic functions -- MAX, MIN, ORD-MAX, ORD-MIN, SUM, RANGE,
+MIDRANGE, MOD, REM, INTEGER, INTEGER-PART, ABS, SIGN, FRACTION-PART,
+NUMVAL, NUMVAL-C, NUMVAL-F -- on the wide stack, their result as wide as
+the value and described at run time, and written as before for any value
+that fitted the old 18-digit result; SORT keys past 18 digits (table and
+file); the class test, INITIALIZE, SET, SEARCH ALL, EVALUATE and national
+numeric items, which needed nothing new (2002/wide4). A wide function
+result in a narrow statement sheds decimals to fit 64 bits.
+
+Not done: the floating functions (SQRT, LOG, the trigonometric ones,
+MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE) keep
+their S9(9)V9(9) double-precision result, and an argument whose integer
+part does not fit 64 bits stops the run with a message rather than
+compute a wrong value.
 

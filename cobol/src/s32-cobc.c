@@ -1636,21 +1636,22 @@ enum {
     U_DISPLAY, U_BINARY, U_PACKED, U_COMP5,
     U_SINT, U_UINT, U_SSHORT, U_USHORT, U_BCHAR, U_UBCHAR, U_POINTER, U_INDEX,
     U_NATIONAL,                     /* numeric and numeric-edited USAGE NATIONAL (cobol ISSUES-72); PIC N keeps U_DISPLAY */
-    U_BIT                           /* boolean USAGE BIT: bits, packed (cobol ISSUES-78) */
+    U_BIT,                          /* boolean USAGE BIT: bits, packed (cobol ISSUES-78) */
+    U_SDBL, U_UDBL                  /* BINARY-DOUBLE [UNSIGNED]: eight bytes, 19 (20) digits -- the wide path (docs/wide.md) */
 };
 
 static const char *usage_name(int u)
 {
     static const char *n[] = { "display", "comp", "comp-3", "comp-5", "signed-int",
         "unsigned-int", "signed-short", "unsigned-short", "binary-char",
-        "binary-char unsigned", "pointer", "index", "national", "bit" };
+        "binary-char unsigned", "pointer", "index", "national", "bit", "binary-double", "binary-double unsigned" };
     return n[u];
 }
 
 static int usage_is_native(int u)
 {
     return u == U_SINT || u == U_UINT || u == U_SSHORT || u == U_USHORT ||
-           u == U_BCHAR || u == U_UBCHAR || u == U_POINTER || u == U_INDEX;
+           u == U_BCHAR || u == U_UBCHAR || u == U_POINTER || u == U_INDEX || u == U_SDBL || u == U_UDBL;
 }
 
 #define MAXDIM 7
@@ -2054,6 +2055,8 @@ static void sym_finish(Sym *s)
         switch (u) {
         case U_SINT:   s->size = 4; s->pi.digits = 10; s->pi.is_signed = 1; break;
         case U_UINT:   s->size = 4; s->pi.digits = 10; break;
+        case U_SDBL:   s->size = 8; s->pi.digits = 20; s->pi.is_signed = 1; break;   /* 20 shown, as GnuCOBOL; the capacity limits it */
+        case U_UDBL:   s->size = 8; s->pi.digits = 20; break;
         case U_SSHORT: s->size = 2; s->pi.digits = 5;  s->pi.is_signed = 1; break;
         case U_USHORT: s->size = 2; s->pi.digits = 5;  break;
         case U_BCHAR:  s->size = 1; s->pi.digits = 3;  s->pi.is_signed = 1; break;
@@ -2498,8 +2501,17 @@ static void parse_data_item1(void)
             s->usage = u; s->has_usage = 1;
             continue;
         }
-        else if (!strcmp(t->s, "binary-double"))
-            die_at(t->line, "USAGE BINARY-DOUBLE is not implemented (its range needs 19 digits; this compiler's arithmetic holds 18)");
+        else if (!strcmp(t->s, "binary-double")) {
+            /* [SIGNED | UNSIGNED], signed by default; its 19 digits need the
+             * wide path (docs/wide.md), so COBOL 2002 only */
+            if (g_std < 2002) die_at(t->line, "USAGE BINARY-DOUBLE is COBOL 2002; compile with -std=2002");
+            advance();
+            int uns = accept_word("unsigned");
+            if (!uns) accept_word("signed");
+            if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
+            s->usage = uns ? U_UDBL : U_SDBL; s->has_usage = 1;
+            continue;
+        }
         else if (!strcmp(t->s, "signed-int")) { bp(BP_E4_VENDOR_BINARY, t->line); u = U_SINT; }
         else if (!strcmp(t->s, "unsigned-int")) { bp(BP_E4_VENDOR_BINARY, t->line); u = U_UINT; }
         else if (!strcmp(t->s, "signed-short")) { bp(BP_E4_VENDOR_BINARY, t->line); u = U_SSHORT; }
@@ -3044,7 +3056,7 @@ static int align_of(Sym *s)
     if (!s->sync || s->is_group) return 1;
     switch (s->usage) {
     case U_BINARY: case U_COMP5: case U_SINT: case U_UINT: case U_SSHORT: case U_USHORT:
-    case U_POINTER: case U_INDEX:
+    case U_POINTER: case U_INDEX: case U_SDBL: case U_UDBL:
         return s->size >= 8 ? 8 : s->size;
     default: return 1;
     }
@@ -4149,6 +4161,7 @@ typedef struct Opnd_ {
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     int all_sub;                             /* O_REF: table(ALL) -- every element, expanded at emission */
     int fsaved;                              /* O_FUNC evaluated already: 1 + the label of its result's copy (MOVE, general rule 1) */
+    int fwnum;                               /* O_FUNC: an exact numeric function on the wide stack, its result described at run time (docs/wide.md) */
 } Opnd;
 static int opnds_wide(const Opnd *ops, int n);
 static int refs_wide(const Ref *rs, int nr);
@@ -4746,6 +4759,15 @@ static int fn89_parse(Opnd *o, Tok *n)
             if (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN) { o->fscale = -1; o->fsize = w; }
         }
     }
+    /* the exact functions: any argument of up to 31 digits, the result as
+     * wide as it needs (docs/wide.md phase 3) */
+    if ((o->fkind == FK_NUMS && (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN ||
+                                 o->fnid == COB_FN_SUM || o->fnid == COB_FN_RANGE || o->fnid == COB_FN_MIDRANGE || o->fnid == COB_FN_MOD ||
+                                 o->fnid == COB_FN_REM || o->fnid == COB_FN_INTEGER || o->fnid == COB_FN_INTEGER_PART || o->fnid == COB_FN_ABS ||
+                                 o->fnid == COB_FN_SIGN || o->fnid == COB_FN_FRACTION_PART)) ||
+        (o->fkind == FK_ALNUM && (o->fnid == -5 || o->fnid == -6 || o->fnid == -7))) {
+        o->fwnum = 1; o->fsize = 39;
+    }
     o->kind = O_FUNC;
     return 1;
 }
@@ -4788,6 +4810,13 @@ static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
     case U_USHORT: nat = high ? 65535 : 0; sgn = 1; break;
     case U_SINT: nat = high ? 2147483647LL : -2147483648LL; sgn = 1; break;
     case U_UINT: nat = high ? 4294967295LL : 0; sgn = 1; break;
+    case U_SDBL: case U_UDBL: {                      /* past 64 signed bits in one case: written out */
+        const char *t = a->usage == U_UDBL ? (high ? "18446744073709551615" : "0")
+                                           : (high ? "9223372036854775807" : "9223372036854775808");
+        o->num.neg = a->usage == U_SDBL && !high;
+        o->num.ndigits = (int)strlen(t); memcpy(o->num.digits, t, (size_t)o->num.ndigits); o->num.scale = 0;
+        return;
+    }
     default: break;
     }
     if (sgn) {
@@ -5543,7 +5572,7 @@ static void emit_args(const Arg *a, int n)
             /* a result whose length is known only now: its descriptor, taken
              * while it is still the last function evaluated (the A_FUNC
              * before this one) */
-            emit_li("r3", a[i].fn->fnat ? 1 : a[i].fn->fbool ? 2 : 0);
+            emit_li("r3", a[i].fn->fwnum ? 3 : a[i].fn->fnat ? 1 : a[i].fn->fbool ? 2 : 0);
             emit_call("cob_fn_var_desc");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
@@ -5654,8 +5683,8 @@ static int fdesc_native_int(const FDesc *d)
 {
     if (d->group) return 0;
     switch (d->usage) {
-    case U_SINT: case U_SSHORT: case U_BCHAR: return 1;
-    case U_UINT: case U_USHORT: case U_UBCHAR: return 2;
+    case U_SINT: case U_SSHORT: case U_BCHAR: case U_SDBL: return 1;
+    case U_UINT: case U_USHORT: case U_UBCHAR: case U_UDBL: return 2;
     case U_COMP5: {
         PicInfo pi;
         if (!d->has_pic || pic_analyse(d->pic, &pi) < 0 || pi.scale != 0) return 0;
@@ -5912,9 +5941,15 @@ static void emit_str_arg(Opnd *x)
 static void emit_fn_value_raw_1(Opnd *f);
 static void emit_fn_value_raw(Opnd *f)
 {
+    /* its arguments go to the stack the function reads: the wide one for
+     * an exact function, the narrow one otherwise, whatever the statement
+     * around it computes with */
+    int was = g_wide;
+    g_wide = f->fwnum && f->fkind == FK_NUMS;
     g_incompat_push++;
     emit_fn_value_raw_1(f);
     g_incompat_push--;
+    g_wide = was;
 }
 static void emit_fn_value_raw_1(Opnd *f)
 {
@@ -5992,7 +6027,8 @@ static void emit_fn_value_raw_1(Opnd *f)
             }
             emit_li("r3", f->fnid);
             emit_li("r4", cnt);
-            emit_call("cob_fn_num");
+            if (f->fwnum) { emit_li("r5", f->fscale < 0 ? 0 : f->fscale); emit_call("cob_fn_wnum"); }
+            else emit_call("cob_fn_num");
             return;
         }
         if (f->fkind == FK_ALNUMS) {                    /* MAX/MIN over strings */
@@ -6078,7 +6114,7 @@ static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_n
         return;
     case O_FUNC:
         *addr = arg_func(o);
-        if (o->fvar) { *desc = arg_fdesc(o); return; }
+        if (o->fvar || o->fwnum) { *desc = arg_fdesc(o); return; }
         if (o->fnat) { *desc = arg_desc(nat_desc(o->fsize)); return; }
         if (o->fbool) { *desc = arg_desc(bool_desc(o->fsize)); return; }
         if (o->fn == -1) *desc = arg_desc(o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize));
@@ -8379,9 +8415,10 @@ static const char *move_invalid(const Opnd *src, const Ref *dst, char *msg)
     int rnum = r == MC_INT || r == MC_NONINT || r == MC_NUMED;
     /* binary-char, -short, -long go only to numeric items (rule 8) */
     if (sy && !src->ref.rm && !sy->is_group && (sy->usage == U_BCHAR || sy->usage == U_UBCHAR || sy->usage == U_SSHORT || sy->usage == U_USHORT ||
-                                                   sy->usage == U_SINT || sy->usage == U_UINT) && !rnum)
+                                                   sy->usage == U_SINT || sy->usage == U_UINT || sy->usage == U_SDBL || sy->usage == U_UDBL) && !rnum)
         MV_BAD("MOVE: the %s item '%s' goes only to a numeric or numeric-edited item, not '%s' (2023 14.9.25.3 rule 8)",
-               sy->usage == U_SSHORT || sy->usage == U_USHORT ? "binary-short" : sy->usage == U_SINT || sy->usage == U_UINT ? "binary-long" : "binary-char", sy->name, d->name);
+               sy->usage == U_SSHORT || sy->usage == U_USHORT ? "binary-short" : sy->usage == U_SINT || sy->usage == U_UINT ? "binary-long" :
+               sy->usage == U_SDBL || sy->usage == U_UDBL ? "binary-double" : "binary-char", sy->name, d->name);
     if (r == MC_NONE) return NULL;
     if (src->kind == O_FIG || src->kind == O_ALL) {
         const char *w = src->tok->s;
@@ -8669,8 +8706,6 @@ static void emit_push(Opnd *o)
     int w = (o->kind == O_NUM && numlit_wide(&o->num)) || (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym));
     if (w) g_saw_wide = 1;
     if (w && !g_wide && !g_noemit) wide_arith_refuse(o->line, o->kind == O_NUM ? "a literal" : "an item");
-    if (g_wide && o->kind == O_FUNC && !g_noemit)
-        die_at(o->line, "a function in arithmetic of more than 18 digits is not implemented yet (docs/wide.md, phase 3)");
     if (g_wide && o->kind == O_NUM && numlit_wide(&o->num)) {
         int d; const char *l = num_lit_label(&o->num, &d);
         Arg a[2] = { arg_label(l), arg_desc(d) };
@@ -8682,6 +8717,17 @@ static void emit_push(Opnd *o)
     if (o->kind == O_EXPR) die_at(o->line, "internal: expression pushed as an operand");
     if (o->kind == O_FUNC) {
         emit_fn_value(o);
+        if (o->fwnum) {                             /* its descriptor from the run time */
+            int slot = g_slot_base++;
+            emit("\tstw sp+%d, r1", SLOT(slot));
+            emit_li("r3", 3);
+            emit_call("cob_fn_var_desc");
+            emit("\tadd r4, r1, r0");
+            emit("\tldw r3, sp+%d", SLOT(slot));
+            g_slot_base--;
+            emit_call("cob_push");
+            return;
+        }
         emit("\tadd r3, r1, r0");
         emit_desc_addr("r4", o->fn == -1 ? (o->fscale >= 0 ? numfn_desc(o->fscale) : str_desc(o->fsize))
                             : fn_is_numeric(o->fn) ? fn_num_desc(o) : str_desc(o->fsize));
