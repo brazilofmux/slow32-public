@@ -9,6 +9,7 @@
 #
 #   asm-snapshot.sh /tmp/before;  (change);  asm-snapshot.sh /tmp/after
 #   diff -r /tmp/before /tmp/after
+#   tests/asm-equiv.py /tmp/before /tmp/after   (the same code, labels and data order aside)
 #
 #   SNAP_SKIP="ccvs xcobol"   leave those corpora out (they are the slow ones)
 set -u

@@ -4970,3 +4970,14 @@ it, and the register paths refuse such a leaf (opnd_scanned) so the
 stack makes it.  2002/userfnonce gained LENGTH in COMPUTE, MOVE and
 ADD; GnuCOBOL counts the same calls.  The snapshot against the
 previous commit diffs empty.
+
+**IF as a node.**  parse_if reads the condition and both branches before
+any code -- each branch's statements parsed once into a Block, NEXT
+SENTENCE recorded -- and emit_if lays them out.  The branches' labels,
+literals and descriptors are now allocated before the condition's, so
+805 programs' assembly changed byte-wise and none in substance:
+tests/asm-equiv.py (new; label families renamed in order of
+appearance, code compared in sequence, data as a multiset) finds them
+all the same code (the one exception, userfnonce, is the test's own
+edit since the baseline).  bi2 compares the same way when bytes differ
+and stays at same=227 diff=2.

@@ -74,6 +74,12 @@ for in the commit -- plus all the usual gates.
    - References in the REPORT and SCREEN sections, and positioned
      DISPLAY/ACCEPT's LINE, POSITION and AT identifiers (done
      2026-10-01): parsed once, at first use, and kept.
+   - IF (done 2026-10-01): the condition and both branches read whole,
+     each branch a Block, then laid out (emit_if).  Labels, literals and
+     descriptors are allocated in a different order, so from here a
+     step's check is `tests/asm-equiv.py` over the two snapshots: the
+     same code, labels renamed in order of appearance and data in any
+     order.
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of

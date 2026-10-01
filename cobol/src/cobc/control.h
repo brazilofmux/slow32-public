@@ -3,41 +3,67 @@
 
 /* ---- IF ---------------------------------------------------------------- */
 
+/* IF as a node (docs/plans/frontend-pass.md, step 4): the condition and
+ * both branches are read whole -- each branch's statements parsed once,
+ * their code cut out as a Block -- and then the IF's code is laid out. */
+typedef struct {
+    Cond *c;
+    Block then_b, else_b;
+    int then_ns, else_ns;       /* the branch is NEXT SENTENCE */
+    int has_else;
+} IfStmt;
+
 /* an IF branch: NEXT SENTENCE, or one or more statements -- not none
  * (statement-1 and statement-2 are required: 85 IF syntax rule 1; 2023
  * 14.9.19.3 rule 1); returns whether it was NEXT SENTENCE */
-static int parse_branch_body(void)
+static int parse_branch_body(Block *b)
 {
+    b->line = NULL; b->n = 0;
     if (at_word("next")) {
         advance(); expect_word("sentence");
-        if (g_sentence_label < 0) g_sentence_label = new_label();
-        emit_jump(g_sentence_label);
         return 1;
     }
     if (at_scope_end() || at_word("else") || at_word("end-if"))
         die_at(cur()->line, "IF: the condition, and ELSE, are each followed by a statement or NEXT SENTENCE (%s)",
                g_std < 2002 ? "X3.23-1985 IF syntax rule 1" : "2023 14.9.19.3 rule 1");
-    parse_statements();
+    int b0 = block_begin(); parse_statements(); *b = block_cut(b0);
     return 0;
+}
+
+/* a branch's code: NEXT SENTENCE's jump, or its block */
+static void emit_branch(const Block *b, int ns)
+{
+    if (ns) {
+        if (g_sentence_label < 0) g_sentence_label = new_label();
+        emit_jump(g_sentence_label);
+    } else block_put(b);
+}
+
+static void emit_if(IfStmt *s)
+{
+    int Lelse = new_label();
+    cond_jump_false(s->c, Lelse);
+    emit_branch(&s->then_b, s->then_ns);
+    if (s->has_else) {
+        int Lend = new_label();
+        emit_jump(Lend);
+        emit_label(Lelse);
+        emit_branch(&s->else_b, s->else_ns);
+        emit_label(Lend);
+    } else emit_label(Lelse);
 }
 
 static void parse_if(void)
 {
-    Cond *c = parse_cond();
+    IfStmt s; memset(&s, 0, sizeof s);
+    s.c = parse_cond();
     accept_word("then");
-    int Lelse = new_label();
-    cond_jump_false(c, Lelse);
-    int ns = parse_branch_body();
-    if (accept_word("else")) {
-        int Lend = new_label();
-        emit_jump(Lend);
-        emit_label(Lelse);
-        ns |= parse_branch_body();
-        emit_label(Lend);
-    } else emit_label(Lelse);
-    if (ns && at_word("end-if"))
+    s.then_ns = parse_branch_body(&s.then_b);
+    if (accept_word("else")) { s.has_else = 1; s.else_ns = parse_branch_body(&s.else_b); }
+    if ((s.then_ns || s.else_ns) && at_word("end-if"))
         die_at(cur()->line, "IF with NEXT SENTENCE ends at the period, not END-IF (%s)", g_std < 2002 ? "X3.23-1985 IF syntax rule 3" : "2023 14.9.19 format 2");
     accept_word("end-if");
+    emit_if(&s);
 }
 
 /* ---- DECLARATIVES: USE AFTER ERROR PROCEDURE --------------------------- */
