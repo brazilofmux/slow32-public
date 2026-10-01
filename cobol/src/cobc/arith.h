@@ -19,21 +19,44 @@ static void accept_size_error_words(void)
     accept_word("on"); expect_word("size"); expect_word("error");
 }
 
-/* after the stores: branch on the accumulated status in SLOT_B */
-static void parse_size_error_clauses(int size_err, const char *end_word)
+/* [NOT] ON SIZE ERROR as a node (docs/plans/frontend-pass.md, step 4):
+ * each phrase's statements parsed once into a Block, read with the rest
+ * of the statement before its code, and laid out after the stores */
+typedef struct { int size_err, has_on, has_not; Block on, not_on; } SizePh;
+static void parse_size_phrases(SizePh *p, int size_err, const char *end_word)
 {
+    memset(p, 0, sizeof *p);
+    p->size_err = size_err;
     if (size_err) {
-        int Lok = new_label(), Lend = new_label();
-        emit("\tldw r1, sp+%d", SLOT_B);
-        emit("\tbeq r1, r0, .L%d", Lok);
-        if (at_word("size") || (at_word("on") && is_word(peek(1), "size"))) { accept_size_error_words(); parse_statements(); }
-        else if (ec_size_on()) emit_ec_size();       /* no ON SIZE ERROR: EC-SIZE, if checking is on (2023 14.7.5) */
-        emit_jump(Lend);
-        emit_label(Lok);
-        if (at_size_error_clause() && accept_word("not")) { accept_size_error_words(); parse_statements(); }
-        emit_label(Lend);
+        if (at_word("size") || (at_word("on") && is_word(peek(1), "size"))) {
+            accept_size_error_words(); p->has_on = 1;
+            int b0 = block_begin(); parse_statements(); p->on = block_cut(b0);
+        }
+        if (at_size_error_clause() && accept_word("not")) {
+            accept_size_error_words(); p->has_not = 1;
+            int b0 = block_begin(); parse_statements(); p->not_on = block_cut(b0);
+        }
     }
     accept_word(end_word);
+}
+/* after the stores: branch on the accumulated status in SLOT_B */
+static void emit_size_phrases(const SizePh *p)
+{
+    if (!p->size_err) return;
+    Phrases ph; memset(&ph, 0, sizeof ph);
+    ph.has_not = p->has_not; ph.not_on = p->not_on;
+    if (p->has_on) { ph.has_on = 1; ph.on = p->on; }
+    else if (ec_size_on()) {                    /* no ON SIZE ERROR: EC-SIZE, if checking is on (2023 14.7.5) */
+        int b0 = block_begin(); emit_ec_size(); ph.on = block_cut(b0); ph.has_on = 1;
+    }
+    emit_phrases(&ph, SLOT_B, 0);
+}
+/* the phrases read and laid out at once, for a statement that is not a
+ * node yet (CORRESPONDING) */
+static void parse_size_error_clauses(int size_err, const char *end_word)
+{
+    SizePh p; parse_size_phrases(&p, size_err, end_word);
+    emit_size_phrases(&p);
 }
 
 static void check_numeric_opnd(Opnd *o)

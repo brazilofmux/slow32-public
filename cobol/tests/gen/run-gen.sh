@@ -1,6 +1,7 @@
 #!/bin/bash
 # run-gen.sh FIRST COUNT [STATEMENTS] -- differential testing on generated
-# programs: gen-$GEN.py (GEN=arith, the default, or edit) seeds
+# programs: gen-$GEN.py (GEN=arith, the default, edit, cond, string,
+# table or flow) seeds
 # FIRST..FIRST+COUNT-1, each built and run
 # here (compile.sh, slow32-fast) and under GnuCOBOL -std=cobol85 (the
 # harness's oracle images, one container for the whole batch), output
@@ -57,7 +58,11 @@ done"
 #   literal unsigned (X3.23-1985 VI-55; tests/free/negcmp);
 # - INSPECT, where a generator writes the expected line from the text
 #   (gen-string.py, with inspect85.py) to g<seed>.ref: that reference
-#   decides, and ours must equal it whatever the oracle says.
+#   decides, and ours must equal it whatever the oracle says;
+# - a CALL of a missing program whose ON EXCEPTION phrase falls through:
+#   GnuCOBOL runs NOT ON EXCEPTION too (gen-flow.py's CALLED NOSUCHPROG,
+#   never a right line; tests/free/callexc).  The oracle's such lines are
+#   set aside; ours must have none.
 classify() {  # classify ours oracle [reference]: prints "<real> <known>"
     python3 - "$1" "$2" "${3:-}" <<'PY'
 import sys, os
@@ -71,6 +76,8 @@ if sys.argv[3] and os.path.exists(sys.argv[3]):
     for l in open(sys.argv[3]).read().splitlines():
         ref.setdefault(l.split(" ", 1)[0], []).append(l)
 real = known = 0
+nb = [l for l in b if l != "CALLED NOSUCHPROG"]
+known += len(b) - len(nb); b = nb
 if len(a) != len(b):
     print(max(len(a), len(b)), 0); sys.exit()
 se = {l.split()[0] for l in a if " divrem SIZE ERROR " in l}

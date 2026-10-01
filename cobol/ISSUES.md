@@ -4998,3 +4998,34 @@ programs, 8068 of 8175 pass, every one matching GnuCOBOL).  bi2,
 byte-identity against the 2026-09-29 compiler, can no longer mean what
 it meant: it reads same=58 diff=171, the differences being these
 branches.
+
+**The conditional phrases as nodes.**  [NOT] ON SIZE ERROR is read with
+its statement, before any code (SizePh, for ADD, SUBTRACT, MULTIPLY,
+DIVIDE and COMPUTE; the statement keeps its ROUNDED MODE and width
+across the phrases' own statements), and every phrase pair -- SIZE
+ERROR, AT END, INVALID KEY, AT END-OF-PAGE, ON EXCEPTION, ON OVERFLOW --
+is laid out by one emitter, emit_phrases, from Blocks.  First with the
+old layout (asm-equiv: the same code), then with two changes: a phrase
+that is one jump (GO TO, NEXT SENTENCE) is the status test's own
+branch, and an ON phrase with no NOT phrase no longer jumps past
+nothing.  About 3000 instructions fewer over the snapshot.  (Counting
+branch-over-jump shapes misleads here: a direct branch to a paragraph
+more than 4000 bytes away is relaxed into exactly that shape.)
+
+A change of code is checked by running.  CCVS-85 before and after:
+identical.  tests/gen/run-self.sh (new) builds the compiler as of a git
+revision and runs generated programs through both it and the current
+one, requiring the same output bytes -- the compiler before a change as
+the oracle for it, on as many programs as asked for, no container.
+tests/gen/gen-flow.py (new) generates what this exercises: paragraphs
+that trace themselves, forward GO TO, IF with GO TO / NEXT SENTENCE /
+CONTINUE / ELSE GO TO, SIZE ERROR phrases, a file read with AT END GO
+TO, CALL of a missing program with ON EXCEPTION.  100 programs: the
+same.  Mutation-tested: a wrong branch sense in the status-1 test (AT
+END, INVALID KEY) shows in 100 of 100 programs, in the nonzero test
+(SIZE ERROR, EXCEPTION) in 62 of 100.  gen-flow is in Gate 7 against
+GnuCOBOL too, where it found an oracle defect: for a CALL of a missing
+program, GnuCOBOL 4.0-early-dev runs NOT ON EXCEPTION after an ON
+EXCEPTION phrase that falls through (2023 14.9.4.4 rule 3h1 sends
+control to the end of the CALL).  Test free/callexc (.oracle-expected);
+run-gen.sh counts gen-flow's such lines apart.

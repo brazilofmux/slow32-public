@@ -418,6 +418,12 @@ static void retarget(int from, int L, const char *target)
         g_asm[i] = r;
     }
 }
+static void parse_statements(void);
+/* a phrase's statements, parsed once: their code as a Block */
+static Block parse_block(void)
+{
+    int b0 = block_begin(); parse_statements(); return block_cut(b0);
+}
 static void block_put(const Block *b)
 {
     if (g_noemit) return;
@@ -425,6 +431,40 @@ static void block_put(const Block *b)
         if (g_nasm == g_asmcap) { g_asmcap = g_asmcap ? g_asmcap * 2 : 4096; g_asm = realloc(g_asm, g_asmcap * sizeof *g_asm); }
         g_asm[g_nasm++] = b->line[i];
     }
+}
+
+/* A statement's pair of conditional phrases -- [NOT] AT END, INVALID KEY,
+ * ON EXCEPTION, ON OVERFLOW, ON SIZE ERROR -- as blocks, laid out on the
+ * status the statement left in a frame slot: ON when it is 1 (on_one) or
+ * not 0, NOT ON when it is 0 (an AT END's 2, an error already reported,
+ * runs neither).  A phrase that is one jump (GO TO, NEXT SENTENCE) is the
+ * test's own branch to its target; without a NOT phrase the ON phrase
+ * needs no jump past one. */
+typedef struct { int has_on, has_not; Block on, not_on; } Phrases;
+static void emit_phrases(const Phrases *p, int slot, int on_one)
+{
+    if (!p->has_on && !p->has_not) return;
+    char t[96];
+    int Lend = new_label();
+    emit("\tldw r1, sp+%d", slot);
+    if (p->has_on) {
+        if (on_one) emit_li("r2", 1);
+        if (block_is_jump(&p->on, t, sizeof t)) {
+            emit(on_one ? "\tbeq r1, r2, %s" : "\tbne r1, r0, %s", t);
+        } else {
+            int Lnot = new_label();
+            emit(on_one ? "\tbne r1, r2, .L%d" : "\tbeq r1, r0, .L%d", Lnot);
+            block_put(&p->on);
+            if (p->has_not) emit_jump(Lend);
+            emit_label(Lnot);
+            if (p->has_not) emit("\tldw r1, sp+%d", slot);     /* the ON phrase's statements used r1 */
+        }
+    }
+    if (p->has_not) {
+        if (block_is_jump(&p->not_on, t, sizeof t)) emit("\tbeq r1, r0, %s", t);
+        else { emit("\tbne r1, r0, .L%d", Lend); block_put(&p->not_on); }
+    }
+    emit_label(Lend);
 }
 
 static void emit_bytes(const unsigned char *b, int n)

@@ -649,6 +649,9 @@ static void parse_add(void)
     if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
     Arith st; memset(&st, 0, sizeof st);
     g_noemit++; parse_add_node(&st); g_noemit--;
+    /* the phrases too, before any code: their statements parsed now must
+     * not leave this statement's ROUNDED MODE behind them */
+    int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-add"); g_rmode = rmode;
     arith_calls(&st, 0);
     Opnd *ops = st.ops; Ref *rs = st.rs; int *rd = st.rd;
     int n = st.n, nr = st.nr, giving = st.giving, comp = st.comp, size_err = st.size_err;
@@ -664,20 +667,20 @@ static void parse_add(void)
     else if (hot) emit_hot_sum(ops, n);
     else if (!g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
         emit_dec_addto(&ops[0], rs, nr, 0);
-        parse_size_error_clauses(size_err, "end-add");
+        emit_size_phrases(&ph);
         return;
     }
     else {
         int leaf[MAXOPS];
         g_nhn = 0; int sum = dx_sum(ops, n);
-        if (giving && dx_ok(sum, rs, nr, size_err)) { dx_store(sum, rs, rd, nr); parse_size_error_clauses(size_err, "end-add"); return; }
-        if (!giving && dx_addto_ok(sum, rs, nr, size_err, leaf)) { dx_addto(sum, rs, rd, nr, leaf, 0); parse_size_error_clauses(size_err, "end-add"); return; }
+        if (giving && dx_ok(sum, rs, nr, size_err)) { dx_store(sum, rs, rd, nr); emit_size_phrases(&ph); return; }
+        if (!giving && dx_addto_ok(sum, rs, nr, size_err, leaf)) { dx_addto(sum, rs, rd, nr, leaf, 0); emit_size_phrases(&ph); return; }
         for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
     }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
     g_addk_on = 0;
     g_wide = 0; g_fstmt = 0;
-    parse_size_error_clauses(size_err, "end-add");
+    emit_size_phrases(&ph);
 }
 
 /* SUBTRACT a ... FROM b ... ; SUBTRACT a ... FROM b GIVING c ... */
@@ -711,6 +714,7 @@ static void parse_subtract(void)
     if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(2, "from", "end-subtract"); return; }
     Arith st; memset(&st, 0, sizeof st);
     g_noemit++; parse_subtract_node(&st); g_noemit--;
+    int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-subtract"); g_rmode = rmode;
     arith_calls(&st, 0);
     Opnd *ops = st.ops; Ref *rs = st.rs; int *rd = st.rd; Opnd minuend = st.minuend;
     int n = st.n, nr = st.nr, giving = st.giving, size_err = st.size_err;
@@ -728,7 +732,7 @@ static void parse_subtract(void)
               hot_sum_fits(ops, n);
     if (!hot && !g_wide && !giving && dec_add_ok(ops, n, rs, nr, size_err)) {
         emit_dec_addto(&ops[0], rs, nr, 1);
-        parse_size_error_clauses(size_err, "end-subtract");
+        emit_size_phrases(&ph);
         return;
     }
     if (hot) {
@@ -744,15 +748,15 @@ static void parse_subtract(void)
         g_nhn = 0; int sum = dx_sum(ops, n);
         if (giving) {
             int root = sum >= 0 ? hn_new('-', dx_leaf(&minuend), sum, NULL) : -2;
-            if (dx_ok(root, rs, nr, size_err)) { dx_store(root, rs, rd, nr); parse_size_error_clauses(size_err, "end-subtract"); return; }
-        } else if (dx_addto_ok(sum, rs, nr, size_err, leaf)) { dx_addto(sum, rs, rd, nr, leaf, 1); parse_size_error_clauses(size_err, "end-subtract"); return; }
+            if (dx_ok(root, rs, nr, size_err)) { dx_store(root, rs, rd, nr); emit_size_phrases(&ph); return; }
+        } else if (dx_addto_ok(sum, rs, nr, size_err, leaf)) { dx_addto(sum, rs, rd, nr, leaf, 1); emit_size_phrases(&ph); return; }
         if (giving) emit_push(&minuend);
         for (int i = 0; i < n; i++) { emit_push(&ops[i]); if (i) emit_call("cob_nadd"); }
         if (giving) emit_call("cob_nsub");
     }
     emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err, -1, 0);
     g_wide = 0; g_fstmt = 0;
-    parse_size_error_clauses(size_err, "end-subtract");
+    emit_size_phrases(&ph);
 }
 
 /* MULTIPLY a BY b ... ; MULTIPLY a BY b GIVING c ... */
@@ -779,6 +783,7 @@ static void parse_multiply(void)
 {
     Arith st; memset(&st, 0, sizeof st);
     g_noemit++; parse_multiply_node(&st); g_noemit--;
+    int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-multiply"); g_rmode = rmode;
     arith_calls(&st, 1);
     Opnd a = st.a, b = st.b; Ref *rs = st.rs; int *rd = st.rd;
     int nr = st.nr, comp = st.comp, size_err = st.size_err;
@@ -798,7 +803,7 @@ static void parse_multiply(void)
         }
         if (mode == 2) emit_label(Ldone);
         g_wide = 0; g_fstmt = 0;
-        parse_size_error_clauses(size_err, "end-multiply");
+        emit_size_phrases(&ph);
         return;
     }
     emit_incompat(&a); emit_incompat_refs(rs, nr);
@@ -821,7 +826,7 @@ static void parse_multiply(void)
         if (mode == 2) emit_label(Ldone);
     }
     g_wide = 0; g_fstmt = 0;
-    parse_size_error_clauses(size_err, "end-multiply");
+    emit_size_phrases(&ph);
 }
 
 /* REMAINDER r: dividend - (quotient as stored, truncated) * divisor */
@@ -939,10 +944,11 @@ static void parse_divide(void)
 {
     Arith st; memset(&st, 0, sizeof st);
     g_noemit++; parse_divide_node(&st); g_noemit--;
+    int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-divide"); g_rmode = rmode;
     arith_calls(&st, 1);
     if (st.giving) {
         if (st.into) emit_divide_giving(&st, &st.b, &st.a); else emit_divide_giving(&st, &st.a, &st.b);
-        parse_size_error_clauses(st.size_err, "end-divide");
+        emit_size_phrases(&ph);
         return;
     }
     Opnd a = st.a; Ref *rs = st.rs; int *rd = st.rd;
@@ -966,5 +972,5 @@ static void parse_divide(void)
         if (mode == 2) emit_label(Ldone);
     }
     g_wide = 0; g_fstmt = 0;
-    parse_size_error_clauses(size_err, "end-divide");
+    emit_size_phrases(&ph);
 }

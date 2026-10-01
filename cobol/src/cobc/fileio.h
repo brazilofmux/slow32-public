@@ -103,28 +103,20 @@ static void io_phrase_required(File *f, const char *w, int line);
 
 static void parse_condition_clauses(const char *w1, const char *w2, const char *end_word)
 {
-    int Lend = new_label();
     int has_clause = at_word(w1) || at_word(w2);
     if (g_io_file) emit_use_dispatch(g_io_file, has_clause);
+    Phrases ph; memset(&ph, 0, sizeof ph);
     if (at_word(w1) || at_word(w2)) {
         /* AT END / INVALID KEY: AT and KEY may be omitted */
         if (accept_word(w1)) accept_word(w2); else advance();
-        int Lnot = new_label();
-        emit("\tldw r1, sp+%d", SLOT_C);
-        emit_li("r2", 1);
-        emit("\tbne r1, r2, .L%d", Lnot);
-        parse_statements();
-        emit_jump(Lend);
-        emit_label(Lnot);
+        ph.has_on = 1; ph.on = parse_block();
     }
     if (at_word("not") && (is_word(peek(1), w1) || is_word(peek(1), w2))) {
         advance();
         if (accept_word(w1)) accept_word(w2); else advance();
-        emit("\tldw r1, sp+%d", SLOT_C);
-        emit("\tbne r1, r0, .L%d", Lend);
-        parse_statements();
+        ph.has_not = 1; ph.not_on = parse_block();
     }
-    emit_label(Lend);
+    emit_phrases(&ph, SLOT_C, 1);
     accept_word(end_word);
 }
 

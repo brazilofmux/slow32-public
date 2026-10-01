@@ -291,12 +291,16 @@ static void parse_compute(void)
     int saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
     g_xd_div = 0;
     g_noemit++; Expr *e = parse_expr(); g_noemit--;
-    g_wide = g_saw_wide || g_saw_float || refs_wide(rs, nr) || (g_xd_div && round_wide(rs, rd, nr));
-    if (g_saw_float) g_fstmt = 1;
+    int wide = g_saw_wide || g_saw_float || refs_wide(rs, nr) || (g_xd_div && round_wide(rs, rd, nr)), flt = g_saw_float;
     g_saw_wide = saw; g_saw_float = sawf;
+    /* the SIZE ERROR phrases, before any code (their statements must not
+     * leave this statement's ROUNDED MODE or width behind them) */
+    int size_err = at_size_error_clause() || ec_size_on();
+    int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, size_err, "end-compute"); g_rmode = rmode;
+    g_wide = wide;
+    if (flt) g_fstmt = 1;
     if (!g_wide) {                              /* integers in a word */
         g_nhn = 0; int root = hn_tree(e, hx_leaf);
-        int size_err = at_size_error_clause() || ec_size_on();
         long long bd; int nn;
         int mode = root >= 0 ? hx_ok(root, rs, rd, nr, NULL, size_err, &bd, &nn) : 0;
         if (mode) {
@@ -309,19 +313,18 @@ static void parse_compute(void)
                 emit_store_receivers(rs, rd, nr, 0, 1, 0, 0, -1, 0);
                 emit_label(Ldone);
             }
-            parse_size_error_clauses(size_err, "end-compute");
+            emit_size_phrases(&ph);
             return;
         }
         g_nhn = 0; root = hn_tree(e, dx_leaf);
         if (dx_ok(root, rs, nr, size_err)) {           /* decimals in registers */
             dx_store(root, rs, rd, nr);
-            parse_size_error_clauses(size_err, "end-compute");
+            emit_size_phrases(&ph);
             return;
         }
     }
     emit_expr(e);
-    int size_err = at_size_error_clause() || ec_size_on();
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     g_wide = 0; g_fstmt = 0;
-    parse_size_error_clauses(size_err, "end-compute");
+    emit_size_phrases(&ph);
 }

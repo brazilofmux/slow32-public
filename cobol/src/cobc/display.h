@@ -420,23 +420,16 @@ static void parse_env_exception(void)
 {
     if (!(at_word("on") || at_word("exception") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "exception"))))) return;
     emit("\tstw sp+%d, r1", SLOT_C);
-    int Lend = new_label();
+    Phrases ph; memset(&ph, 0, sizeof ph);
     if (at_word("on") || at_word("exception")) {
         accept_word("on"); expect_word("exception");
-        int Lnot = new_label();
-        emit("\tldw r1, sp+%d", SLOT_C);
-        emit("\tbeq r1, r0, .L%d", Lnot);
-        parse_statements();
-        emit_jump(Lend);
-        emit_label(Lnot);
+        ph.has_on = 1; ph.on = parse_block();
     }
     if (at_word("not")) {
         advance(); accept_word("on"); expect_word("exception");
-        emit("\tldw r1, sp+%d", SLOT_C);
-        emit("\tbne r1, r0, .L%d", Lend);
-        parse_statements();
+        ph.has_not = 1; ph.not_on = parse_block();
     }
-    emit_label(Lend);
+    emit_phrases(&ph, SLOT_C, 0);
 }
 
 /* r3, r4: an alphanumeric literal's or item's bytes, for the environment */

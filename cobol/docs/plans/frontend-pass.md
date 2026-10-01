@@ -88,6 +88,19 @@ for in the commit -- plus all the usual gates.
      INVALID KEY GO TO), for when the phrases are nodes.  A change of
      code, not a refactor: checked by running the corpus (harness,
      majesty, the papers, CCVS-85 before and after).
+   - The conditional phrases (done 2026-10-01): [NOT] ON SIZE ERROR
+     read with its statement before any code (SizePh; the four verbs
+     and COMPUTE), and every phrase pair -- SIZE ERROR, AT END, INVALID
+     KEY, AT END-OF-PAGE, ON EXCEPTION, ON OVERFLOW -- laid out by one
+     emitter (emit_phrases) from Blocks: a phrase that is one jump is
+     the status test's own branch, and an ON phrase with no NOT after it
+     no longer jumps past nothing.  Checked by running: CCVS-85 before
+     and after, and tests/gen/run-self.sh (new): generated programs
+     through the compiler before the change and after, the outputs the
+     same bytes; mutation-tested (a wrong branch sense in either status
+     test shows in 100 and 62 of 100 programs).  tests/gen/gen-flow.py
+     (new) generates the control flow it runs, and is in Gate 7 against
+     GnuCOBOL, which found an oracle defect (free/callexc).
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of
