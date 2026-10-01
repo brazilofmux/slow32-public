@@ -1,0 +1,3 @@
+elem(k - 1) = bbb
+elem(k * 2 - 4) = bbb
+declarative: EC-BOUND-SUBSCRIPT              in MOVE

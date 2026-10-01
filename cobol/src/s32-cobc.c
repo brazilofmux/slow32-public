@@ -1022,13 +1022,13 @@ static void tokenize_lines(SrcLine *lines, int nlines)
 /* COPY text-name [OF/IN library] [SUPPRESS] [REPLACING ...]. is replaced,
  * period included, by the copybook's tokens; the copybook is read in the
  * same reference format, may itself COPY, and is looked for as the name
- * given, then name.cpy / .CPY / .cbl, in the source's directory and the
- * -I directories. */
+ * given, then name.cpy / .CPY / .cbl / .cob (GnuCOBOL's list), in the
+ * source's directory and the -I directories. */
 static const char *g_incdirs[16]; static int g_nincdir;
 
 static int copy_open(const char *name, SrcLine **lines, int *n, char *found, size_t foundsz)
 {
-    static const char *exts[] = { "", ".cpy", ".CPY", ".cbl", ".CBL", NULL };
+    static const char *exts[] = { "", ".cpy", ".CPY", ".cbl", ".CBL", ".cob", ".COB", NULL };
     /* A text-name is case-insensitive and the tokenizer lowercased it; a
      * copybook kept under its uppercase name (Open Systems' SCONFIG,
      * TAGSFILE) is found on a case-sensitive filesystem by trying the
@@ -1488,7 +1488,7 @@ static void tw_copy(TWV *in, TWV *out)
         if (lib[0]) { snprintf(qual, sizeof qual, "%s/%s", lib, name); ok = copy_open(qual, &lines, &n, found, sizeof found); }
         if (!ok && !copy_open(name, &lines, &n, found, sizeof found)) {
             g_tok_file = t->file;
-            die_at(t->line, "COPY: cannot find '%s' (looked beside the source and in the -I directories, as %s, %s.cpy, %s.cbl, and upper-cased)", name, name, name, name);
+            die_at(t->line, "COPY: cannot find '%s' (looked beside the source and in the -I directories, as %s, %s.cpy, %s.cbl, %s.cob, and upper-cased)", name, name, name, name, name);
         }
         for (int d = 0; d < g_copy_depth; d++)
             if (!strcmp(g_copy_stack[d], found)) tw_die(t, "COPY %s: the library text copies itself (2023 7.2.3.4 rule 12)", name);
@@ -4850,7 +4850,7 @@ static int g_uses_rc;               /* this unit names RETURN-CODE: its CALLs se
 typedef struct {
     Sym *sym;
     int nsub;
-    struct { Sym *sym; long lit; long adj; } sub[MAXDIM];   /* sym == NULL: literal */
+    struct { Sym *sym; long lit; long adj; int x0, x1; } sub[MAXDIM];   /* sym == NULL: literal; &g_subx: the expression x0..x1 */
     int line;
     int rm;                         /* reference modification item(start:len) */
     long rm_start, rm_len;          /* literal values, or 0 when an expression / omitted */
@@ -4863,6 +4863,9 @@ typedef struct {
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
 static void emit_refmod_check(const Ref *r, long len, int slot);
+/* the stand-in subscript symbol of an arithmetic-expression subscript
+ * (2002 8.4.1.2): a group, so nothing takes it for an integer item */
+static Sym g_subx = { .is_group = 1, .record = -1, .redefines = -1, .parent = -1, .name = "(an expression)" };
 
 static void parse_expr(void);
 static void emit_expr_tokens(int s0, int s1);
@@ -5024,6 +5027,34 @@ static int is_hot_int(Sym *s)
     return s->size == 1 || s->size == 2 || s->size == 4;    /* not COMP-X's three bytes */
 }
 
+/* is the subscript at the cursor more than COBOL 85's forms -- integer,
+ * data-name or index-name, data-name +/- integer -- can say: does an
+ * arithmetic expression from here run further than they would, or is
+ * the data-name itself subscripted (X-COBOL's E(9 - I), K(I - N, 1)) */
+static int sub_is_expr(void)
+{
+    int i = g_tp, simple;
+    if (g_tok[i].kind == T_NUM) simple = i + 1;
+    else if (g_tok[i].kind == T_WORD) {
+        i++;
+        while ((is_word(&g_tok[i], "of") || is_word(&g_tok[i], "in")) && g_tok[i + 1].kind == T_WORD) i += 2;
+        if (g_tok[i].kind == T_LP && !g_tok[i].after_comma) return 1;
+        if (g_tok[i].kind == T_OP && (!strcmp(g_tok[i].s, "+") || !strcmp(g_tok[i].s, "-")) && g_tok[i + 1].kind == T_NUM) i += 2;
+        simple = i;
+    } else return g_tok[i].kind == T_LP || (g_tok[i].kind == T_OP && (!strcmp(g_tok[i].s, "+") || !strcmp(g_tok[i].s, "-")));
+    /* only an arithmetic operator after the 85 form carries it further;
+     * anything else -- ')', the next subscript -- ends it there, and the
+     * expression parser is not asked (it refuses an index-name, which
+     * is a subscript) */
+    Tok *nx = &g_tok[simple];
+    if (nx->kind != T_OP || !(!strcmp(nx->s, "+") || !strcmp(nx->s, "-") || !strcmp(nx->s, "*") ||
+                              !strcmp(nx->s, "/") || !strcmp(nx->s, "**"))) return 0;
+    int save = g_tp;
+    g_noemit++; parse_expr(); g_noemit--;
+    int end = g_tp; g_tp = save;
+    return end > simple;
+}
+
 /* identifier [OF|IN qualifier]... [( subscripts )] */
 /* a bit array's element, subscripted: its bits are picked out of the
  * array as a reference modification does -- the element's bits, (i - 1)
@@ -5173,7 +5204,13 @@ static void parse_ref(Ref *r)
         for (;;) {
             if (r->nsub >= MAXDIM) die_at(cur()->line, "too many subscripts");
             Tok *st = cur();
-            if (st->kind == T_NUM) {
+            if (sub_is_expr()) {
+                if (g_std < 2002) die_at(st->line, "an arithmetic-expression subscript is COBOL 2002; compile with -std=2002");
+                /* an arithmetic expression (2002 8.4.1.2.1): evaluated
+                 * when the reference is, before its address is formed */
+                r->sub[r->nsub].sym = &g_subx; r->sub[r->nsub].lit = 0; r->sub[r->nsub].adj = 0;
+                r->sub[r->nsub].x0 = g_tp; g_noemit++; parse_expr(); g_noemit--; r->sub[r->nsub].x1 = g_tp;
+            } else if (st->kind == T_NUM) {
                 NumLit n; numlit_parse(st, &n);
                 if (!numlit_is_int(&n) || n.neg) die_at(st->line, "a subscript must be a positive integer");
                 r->sub[r->nsub].lit = numlit_int(&n);
@@ -5251,6 +5288,9 @@ static void parse_ref(Ref *r)
         if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
         if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
     }
+    for (int i = 0; i < r->nsub; i++)
+        if (r->sub[i].sym == &g_subx && (r->sym->usage == U_BIT || r->sym->bitgroup))
+            die_at(r->line, "'%s': an arithmetic-expression subscript of a bit data item is not implemented", r->sym->name);
     ref_resolve_bits(r);
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
@@ -6289,11 +6329,37 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     /* a start expression first: its operands' addressing would clobber r11 */
     int rm_pushed = r->rm && !r->rm_start && !(r->bitsub && r->bitu_start);
     if (rm_pushed) emit_expr_pos_push(r->rm_s0, r->rm_s1);
+    /* expression subscripts likewise, each evaluated to an integer and
+     * left on the numeric stack -- last first, so they come off in order
+     * -- above the start, which comes off after them */
+    int pw = g_pos_was, pwf = g_pos_wasf;
+    for (int i = r->nsub - 1; i >= 0; i--) {
+        if (r->sub[i].sym != &g_subx) continue;
+        int w = g_wide, f = g_fstmt, chk = ec_on_name("EC-BOUND-SUBSCRIPT");
+        emit_expr_pos_push(r->sub[i].x0, r->sub[i].x1);
+        emit_call(chk ? "cob_pop_pos" : "cob_pop_int");
+        g_wide = w; g_fstmt = f;
+        if (chk) {
+            /* a value that is not an integer is out of range (2023
+             * 8.4.2.3.4 rule 2, as SET's rule 2a1) */
+            int Lok = new_label();
+            emit("\tadd r11, r1, r0");      /* r11: callee-saved, and this reference's sum not begun */
+            emit_call("cob_pos_nonint");
+            emit("\tbeq r1, r0, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-BOUND-SUBSCRIPT", 0));
+            emit_label(Lok);
+            emit("\tadd r1, r11, r0");
+        }
+        emit("\tadd r3, r1, r0"); emit("\tsrai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
+    }
+    g_pos_was = pw; g_pos_wasf = pwf;
     if (runtime) emit("\tadd r11, r0, r0");
     for (int i = 0; i < r->nsub; i++) {
         if (!r->sub[i].sym) continue;
         Sym *ss = r->sub[i].sym;
-        if (is_hot_int(ss)) {
+        if (ss == &g_subx) {
+            emit_call("cob_pop_int");
+        } else if (is_hot_int(ss)) {
             emit_item_addr("r1", ss, ss->offset);
             emit_load_int(ss, "r1", "r1");
         } else {
@@ -8359,7 +8425,7 @@ static int is_terminator(const char *w)
     static const char *t[] = { "else", "end-if", "end-perform", "when", "end-evaluate",
         "end-read", "end-write", "end-add", "end-subtract", "end-multiply", "end-divide",
         "end-compute", "end-call", "end-string", "end-unstring", "end-search", "end-start",
-        "end-delete", "end-rewrite", "end-return", "end-accept", "end-display", "end-program", NULL };
+        "end-delete", "end-rewrite", "end-return", "end-accept", "end-display", NULL };
     for (int i = 0; t[i]; i++) if (!strcmp(w, t[i])) return 1;
     if (g_std >= 2002 && !strcmp(w, "finally")) return 1;     /* an exception-checking PERFORM's (cobol ISSUES-89) */
     return 0;
@@ -9817,7 +9883,7 @@ static int move_needs_temp(const Opnd *src, const Ref *dst, int n)
         int rb = rec_base(dst[i].sym);
         if (r->rm_odo) { if (r->odo_dep && rec_base(r->odo_dep) == rb) return 2; continue; }
         for (int k = 0; k < r->nsub; k++)
-            if (r->sub[k].sym && rec_base(r->sub[k].sym) == rb) return 1;
+            if (r->sub[k].sym == &g_subx || (r->sub[k].sym && rec_base(r->sub[k].sym) == rb)) return 1;
     }
     if (r->rm_odo) return 0;
     /* a reference modifier's start that is an expression: any receiver
@@ -11671,6 +11737,10 @@ static int paren_is_condition(void)
             static const char *cw[] = { "is", "not", "and", "or", "equal", "equals", "greater", "less",
                 "than", "numeric", "alphabetic", "alphabetic-lower", "alphabetic-upper", "positive", "negative", NULL };
             for (int k = 0; cw[k]; k++) if (!strcmp(t->s, cw[k])) return 1;
+            /* the 2002 tests, and a class-name: no expression has them
+             * -- ( a OMITTED ) is a condition (X-COBOL's cobcurses) */
+            if (g_std >= 2002 && (!strcmp(t->s, "omitted") || !strcmp(t->s, "boolean"))) return 1;
+            for (int k = 0; k < g_nclass; k++) if (!strcmp(t->s, g_class[k].name)) return 1;
             words++; only = t;
         }
         else if (t->kind == T_PERIOD || t->kind == T_EOF) break;
@@ -17017,7 +17087,15 @@ static void parse_statement_1(void)
 
     if (g_std >= 2002 && !strcmp(v, "allocate")) { advance(); parse_allocate(); return; }
     if (g_std >= 2002 && !strcmp(v, "free")) { advance(); parse_free(); return; }
-    if (!strcmp(v, "display")) { advance(); parse_display(); return; }
+    if (!strcmp(v, "display")) {
+        advance(); parse_display();
+        /* the scope terminator (2023 14.9.11.2, every format) */
+        if (at_word("end-display")) {
+            if (g_std < 2002) die_at(cur()->line, "END-DISPLAY is COBOL 2002; compile with -std=2002");
+            advance();
+        }
+        return;
+    }
     if (!strcmp(v, "move")) { advance(); parse_move(); return; }
     if (!strcmp(v, "add")) { advance(); parse_add(); return; }
     if (!strcmp(v, "subtract")) { advance(); parse_subtract(); return; }
@@ -17690,7 +17768,8 @@ static void parse_procedure_division(void)
             continue;
         }
 
-        if (((t->kind == T_WORD && !is_verb(t->s)) || (t->kind != T_WORD && at_para_name(t))) && (peek(1)->kind == T_PERIOD ||
+        /* the prescan's test: a verb or a scope terminator is no paragraph-name */
+        if (((t->kind == T_WORD && !is_verb(t->s) && !is_terminator(t->s)) || (t->kind != T_WORD && at_para_name(t))) && (peek(1)->kind == T_PERIOD ||
             (is_word(peek(1), "section") && peek(2)->kind == T_PERIOD))) {
             Para *p = is_word(peek(1), "section") ? para_find(t->s) : para_find_in(t->s, cur_sec >= 0 ? cur_sec : -1);
             if (!p) p = para_find(t->s);

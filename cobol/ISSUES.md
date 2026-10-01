@@ -4483,3 +4483,57 @@ out, none of which the harness, CCVS-85 or the generators had reached:
 The port itself (majesty src/cobol/csv2fw.cbl) matches the C++ byte for
 byte on the real exports and on 600 random trials (majesty
 tests/csv2fw/differential.sh).
+
+### 120. The X-COBOL compile survey (2026-10-01)
+
+Third-party COBOL, none of it written for us: X-COBOL (Zenodo
+10.5281/zenodo.7968845, CC-BY-4.0), 844 .cbl/.cob files from 84 GitHub
+projects, kept in ~/refs/x-cobol and never in a git tree.
+tests/xcobol-survey.py compiles each in the format its text declares,
+-std=85 then -std=2002, and records the first error.  Before the fixes
+below 154 compiled (131 before the survey stopped blaming its own
+format guesses and flattened copybook paths on the compiler); after
+them 173, and all 14 of a GnuCOBOL sample repository's programs.
+
+Fixed:
+
+- **END-DISPLAY was never consumed** (2023 14.9.11.2: every format of
+  DISPLAY takes it), so the next statement found it "without a matching
+  statement".  Accepted under -std=2002, refused by name under 85.
+  Tests: 2002/enddisplay, bad/end-display-85.
+- **END-PROGRAM as a paragraph-name: "internal: paragraph not
+  prescanned".**  It is reserved in no standard but sat in the
+  scope-terminator list; the prescan skipped it and the paragraph pass
+  did not.  Out of the list, and the paragraph pass now applies the
+  prescan's test, so a stray END-IF. says so instead of the internal
+  error.  Test: free/endprogpara.
+- **Arithmetic-expression subscripts** (2002 8.4.1.2.1) were not
+  implemented: E(9 - I), E(I * 2), E(K(2)), K(I - N, 1) were parse
+  errors under either standard.  A subscript the 85 forms cannot
+  express is now an expression, evaluated before the reference's
+  address is formed (its operands may themselves be subscripted, and
+  addressing uses r11) and left on the numeric stack as an integer;
+  under EC-BOUND-SUBSCRIPT checking a value that is not an integer
+  raises it, as SET's does.  Under -std=85 it is refused by name.  A bit
+  data item's expression subscript is refused as not implemented.
+  Tests: 2002/subexpr (identical to GnuCOBOL), 2002/subexprchk,
+  bad/subscript-expr-85.
+- **( a OMITTED ) was taken for an arithmetic expression**: the
+  parenthesis test knew the relational and class words but not OMITTED,
+  BOOLEAN or a class-name.  Test: 2002/omitparen.
+- **COPY looks for .cob/.COB too**, as GnuCOBOL does (a test framework
+  in the dataset keeps its copybooks so).
+
+Not defects -- the rest, by first error, as candidates for behavior
+points if a program we care about needs one: Micro Focus $SET lines and
+>>IF; level 78 and OCCURS at level 01/77; USAGE POINTER inside an
+ordinary group (2002 USAGE rule 13 and 2023 13.18.60.3 rule 14 allow it
+only at level 1 or under a STRONG type -- every IBM CICS sample breaks
+it); IBM CBL/PROCESS cards and UT-S- assignment names; tabs in fixed
+form; ASSIGN DYNAMIC/KEYBOARD, ACCEPT FROM ENVIRONMENT, a literal
+PROGRAM-ID, INSPECT ... TRAILING.  Unimplemented 2002/2014 features met:
+& literal concatenation, CONSTANT entries, FUNCTION TRIM.  About 90
+programs break a standard rule we enforce (EXIT not alone, a period or
+comma not followed by a space, an empty sentence); about 180 cannot
+compile anywhere as shipped (copybooks named .cbl, JCL decks, CICS/DB2
+copybooks and copybooks the dataset does not have).
