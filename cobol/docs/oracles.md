@@ -135,6 +135,33 @@ agrees with its documented divergence").
 | `free/negcmp` (found by tests/gen) | a relation condition against a negative numeric literal with more integer digits than the subject: `n00 >= -316940`, `n00` an `S9(4)V9(3)` item holding 9884.108 | the literal's algebraic value: true (X3.23-1985 VI-55: the comparison is by algebraic value, and the number of digits a literal represents is not significant); the same value in an item, or as `- 316940`, agrees | false, as if the literal were unsigned; with the value in an item, or a negative literal within the subject's digits, it agrees |
 | `free/inspord` (found by tests/gen) | an INSPECT with several REPLACING phrases: `replacing all "b" by "1" all "1b" by "1b" all "1" by "a" after initial "1"` over `,Bb1baB` | the comparison cycle goes position by position; at each, the phrases are tried in the order written and the first match wins, the next cycle starting right of it (X3.23-1985 VI-96, general rule 6); a LEADING run starts where the phrase was first eligible (rule 13c): `,B11baB` | applies each phrase over the whole item before the next: `,B111aB`; the same in the FIRST and LEADING cases of the test. tests/gen checks every generated INSPECT against tests/gen/inspect85.py, these rules written out, rather than against the oracle |
 
+## A second witness: Microsoft COBOL 5.0 (2026-09-30)
+
+Microsoft COBOL 5.0 (1993) is Micro Focus's compiler under Microsoft's
+name. It is a COBOL 85 implementation of the period, run under the x86
+project's DOS translator from the user's own diskettes
+(`~/x86/disks/cobol50`). `tests/mfcheck.sh NAME...` converts a
+tests/free program to fixed format with `$SET ANS85`, compiles, links
+and runs it there, and prints its output beside ours. MS COBOL DISPLAYs
+a numeric item without the point and with a trailing sign, so those
+lines compare by digits and sign. Like GnuCOBOL it is a witness, not the
+authority: the text decides.
+
+On the ten programs of the 2026-09-30 disputes and fixes, it agrees with
+this compiler throughout. That includes every case above where GnuCOBOL
+differs:
+
+| test | MS COBOL 5.0 |
+|---|---|
+| `free/divremu` | **as this compiler under `-std=85`**: the remainder from the quotient as stored, a size error on -7 / 2 into `9`, -13 into `S99`, -1.99 (the 85 text, VI-81 rule 6) |
+| `free/divremse` | as this compiler: both receivers unchanged on the quotient's size error (rule 8a), rules 6 and 8b, the 22-digit product |
+| `free/inspord` | byte for byte as this compiler: the comparison cycle, position by position (VI-96, rule 6) |
+| `free/editins` | byte for byte as this compiler: insertion characters in the suppressed part, B outside a `*` string, a truncated zero's sign |
+| `free/negcmp` | as this compiler: a negative literal's algebraic value |
+| `free/abbrnot` | as this compiler: the text's five abbreviated examples equal their expansions |
+| `free/odorecv` | as this compiler: OCCURS rule 3a and 3b |
+| `free/mulwide`, `free/computewide`, `free/divround18` | as this compiler, digit for digit |
+
 ## What we will not do
 
 - Use cobc370 as an oracle for 85 semantics.
