@@ -41,6 +41,15 @@ unsigned pg_column_type(pg_stmt *s, int i);      /* the type's OID */
 const char *pg_column_text(pg_stmt *s, int i, int *len);
 long long pg_changes(pg_conn *c);           /* the rows the last command touched */
 
+/* the password for host:port:db:user from a password file, as libpq's
+ * passwordFromFile finds it: lines of host:port:database:username:password,
+ * '*' matching anything in the first four, '\' escaping ':' and '\', the
+ * password running to the first unescaped ':'; # comments and blank lines
+ * skipped; the first matching line wins.  The file is not read if it is
+ * not a regular file or has any group or other access.  1 found, 0 not. */
+int pg_password_from_file(const char *path, const char *host, const char *port, const char *db,
+                          const char *user, char *out, int outsz);
+
 /* the last error: the server's message and its SQLSTATE ("08001" and the
  * like for the connection's own) */
 const char *pg_errmsg(pg_conn *c);

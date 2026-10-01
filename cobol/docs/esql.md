@@ -297,8 +297,17 @@ of the month-end not on SLOW-32 but `accounts`.  Majesty's
   TEXT or NULL.  The NIST SQL gate's totals are unchanged.
 - **Chosen by `COB_SQL_BACKEND=postgres`**, connected by libpq's
   variables:
-  - PGHOST, which must be an IPv4 address (no DNS in the guest);
+  - PGHOSTADDR, the IPv4 address connected to (the guest has no DNS);
+  - PGHOST, the name the password file is matched against (either alone
+    serves for both, as in libpq);
   - PGPORT, PGUSER, PGDATABASE, PGPASSWORD.
+- **The password file**: without PGPASSWORD, PGPASSFILE or ~/.pgpass is
+  read as libpq's passwordFromFile reads it.  `*` matches anything; `\`
+  escapes `:` and `\`; the password runs to the first unescaped colon
+  (a colon later in the line is not part of it -- the point a
+  "rest of the line" reading gets wrong).  The first matching line wins.
+  A file with any group or other access is ignored.  Checked by
+  tests/scram_test.c with the SCRAM vectors.
 - **SQLite-only, not done for PostgreSQL**: the schema files and ATTACH,
   the own-qualifier rewrite and COLLATE RTRIM (PostgreSQL has schemas
   and blank-padded CHAR itself).

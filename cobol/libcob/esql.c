@@ -283,20 +283,29 @@ static int sql_connect(void)
     cob_at_stop = at_end;
     if (DB_OPEN) return 1;
     if (use_pg()) {
-        /* libpq's variables; PGHOST an IPv4 address (the guest has no DNS).
-         * Each copied as read: a getenv's result may be overwritten by the
-         * next (POSIX), and the guest's is. */
-        char host[64], port[16], user[64], db[64], pw[256];
+        /* libpq's variables.  The guest has no DNS: PGHOSTADDR is the IPv4
+         * address connected to, PGHOST the name the password file is
+         * matched against (either alone serves as both, as in libpq).
+         * Without PGPASSWORD, PGPASSFILE or ~/.pgpass.  Each value copied
+         * as read: a getenv's result may be overwritten by the next
+         * (POSIX), and the guest's is. */
+        char host[128], addr[64], port[16], user[64], db[64], pw[256], passfile[512];
         #define ENV_COPY(buf, name, dflt) do { const char *v_ = getenv(name); \
             snprintf(buf, sizeof buf, "%s", v_ && *v_ ? v_ : (dflt)); } while (0)
-        ENV_COPY(host, "PGHOST", "127.0.0.1");
+        ENV_COPY(host, "PGHOST", "");
+        ENV_COPY(addr, "PGHOSTADDR", host);
+        if (!addr[0]) snprintf(addr, sizeof addr, "127.0.0.1");
+        if (!host[0]) snprintf(host, sizeof host, "%s", addr);
         ENV_COPY(port, "PGPORT", "5432");
         ENV_COPY(user, "PGUSER", "postgres");
         ENV_COPY(db, "PGDATABASE", user);
         ENV_COPY(pw, "PGPASSWORD", "");
+        ENV_COPY(passfile, "PGPASSFILE", "");
+        if (!passfile[0]) { char home[384]; ENV_COPY(home, "HOME", ""); if (home[0]) snprintf(passfile, sizeof passfile, "%s/.pgpass", home); }
         #undef ENV_COPY
+        if (!pw[0] && passfile[0]) pg_password_from_file(passfile, host, port, db, user, pw, sizeof pw);
         char err[256];
-        if (pg_connect(host, atoi(port), user, db, pw[0] ? pw : NULL, &g_pg, err, sizeof err) != PG_OK) {
+        if (pg_connect(addr, atoi(port), user, db, pw[0] ? pw : NULL, &g_pg, err, sizeof err) != PG_OK) {
             g_pg = NULL;
             set_status(-1, "08001");
             snprintf(g_errmsg, sizeof g_errmsg, "%s", err);

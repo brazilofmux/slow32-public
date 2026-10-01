@@ -1,12 +1,15 @@
 /* scram_test.c -- libcob/scram.c against the published vectors: SHA-256
  * (FIPS 180-4 examples), HMAC-SHA-256 (RFC 4231 cases 1, 2, 6),
  * PBKDF2-HMAC-SHA-256 (RFC 7914, 11; and the common c=1/4096 values), and
- * a whole SCRAM-SHA-256 exchange (RFC 7677, 3).  Built for the host by
+ * a whole SCRAM-SHA-256 exchange (RFC 7677, 3); and libpq's password-file
+ * rules (pgwire.c's pg_password_from_file).  Built for the host by
  * run-tests.sh; prints "scram_test: N vectors" and exits 0 when all hold. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "../libcob/scram.c"
+#include "../libcob/pgwire.c"
 
 static int fails, count;
 
@@ -85,6 +88,39 @@ int main(void)
     count++; if (scram_verify_server(&s, "v=AAAA", 6)) { fails++; printf("FAIL a wrong server signature accepted\n"); }
     const char *bad = "r=SOMEONEELSE%x,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096";
     count++; if (scram_client_final(&s, "pencil", bad, (int)strlen(bad), out, sizeof out) != -1) { fails++; printf("FAIL a foreign nonce accepted\n"); }
+
+    /* the password file, as libpq reads it */
+    char path[] = "/tmp/scram_test_pgpass_XXXXXX";
+    int fd = mkstemp(path);
+    FILE *pf = fdopen(fd, "w");
+    fputs("# a comment\n"
+          "\n"
+          "dbhost:5432:ledgerdb:user:pw1:the rest after a colon\n"
+          "dbhost:5432:ledgerdb:user:second-match\n"
+          "other:5432:*:user:pw2\n"
+          "*:*:otherdb:*:pw3\r\n"
+          "h\\:x:5432:db:u:p\\:q\\\\r\n", pf);
+    fclose(pf);
+    chmod(path, 0600);
+    struct { const char *h, *p, *d, *u, *want; } pc[] = {
+        { "dbhost", "5432", "ledgerdb", "user", "pw1" },               /* to the first ':'; first line wins */
+        { "other", "5432", "anything", "user", "pw2" },                /* '*' */
+        { "z", "1", "otherdb", "bob", "pw3" },                         /* CR LF line end */
+        { "h:x", "5432", "db", "u", "p:q\\r" },                        /* escaped ':' and '\' */
+        { "dbhost", "5433", "ledgerdb", "user", NULL },                /* no match */
+    };
+    for (int i = 0; i < (int)(sizeof pc / sizeof pc[0]); i++) {
+        char pw[64];
+        int got = pg_password_from_file(path, pc[i].h, pc[i].p, pc[i].d, pc[i].u, pw, sizeof pw);
+        count++;
+        if (pc[i].want ? !got || strcmp(pw, pc[i].want) : got) {
+            fails++; printf("FAIL pgpass %s:%s:%s:%s got %s want %s\n", pc[i].h, pc[i].p, pc[i].d, pc[i].u,
+                            got ? pw : "(none)", pc[i].want ? pc[i].want : "(none)");
+        }
+    }
+    chmod(path, 0644);                  /* readable by others: libpq ignores it */
+    { char pw[64]; count++; if (pg_password_from_file(path, "dbhost", "5432", "ledgerdb", "user", pw, sizeof pw)) { fails++; printf("FAIL pgpass: a 0644 file was used\n"); } }
+    unlink(path);
 
     printf("scram_test: %d vectors%s\n", count, fails ? ", FAILURES" : "");
     return fails != 0;

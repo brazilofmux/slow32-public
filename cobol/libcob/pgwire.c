@@ -9,6 +9,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -287,6 +288,54 @@ int pg_exec(pg_conn *c, const char *sql)
 
 int pg_in_transaction(pg_conn *c) { return c && c->txn != 'I'; }
 long long pg_changes(pg_conn *c) { return c ? c->changes : 0; }
+
+/* ---- the password file (libpq's .pgpass) --------------------------------- */
+
+/* libpq's pwdfMatchesString: the field at buf matches token ('*' anything);
+ * the text after its ':', or NULL */
+static const char *pgpass_field(const char *buf, const char *token)
+{
+    if (buf[0] == '*' && buf[1] == ':') return buf + 2;
+    const char *t = buf, *k = token;
+    int bslash = 0;
+    while (*t) {
+        if (*t == '\\' && !bslash) { t++; bslash = 1; }
+        if (*t == ':' && !*k && !bslash) return t + 1;
+        bslash = 0;
+        if (!*k || *t != *k) return NULL;
+        t++; k++;
+    }
+    return NULL;
+}
+
+int pg_password_from_file(const char *path, const char *host, const char *port, const char *db,
+                          const char *user, char *out, int outsz)
+{
+    struct stat st;
+    if (stat(path, &st) || !S_ISREG(st.st_mode) || (st.st_mode & 0077)) return 0;
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    char line[1024];
+    int found = 0;
+    while (!found && fgets(line, sizeof line, f)) {
+        size_t n = strlen(line);
+        while (n && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = 0;
+        if (!n || line[0] == '#') continue;
+        const char *t = line;
+        if (!(t = pgpass_field(t, host)) || !(t = pgpass_field(t, port)) ||
+            !(t = pgpass_field(t, db)) || !(t = pgpass_field(t, user))) continue;
+        /* the password: to the first unescaped ':', escapes removed */
+        int k = 0;
+        for (const char *p = t; *p && *p != ':' && k < outsz - 1; p++) {
+            if (*p == '\\' && p[1]) p++;
+            out[k++] = *p;
+        }
+        out[k] = 0;
+        found = 1;
+    }
+    fclose(f);
+    return found;
+}
 
 /* ---- statements ---------------------------------------------------------- */
 
