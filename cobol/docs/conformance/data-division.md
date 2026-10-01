@@ -52,7 +52,7 @@ TYPE (docs/typedef.md).
 | 85 GR2; 2023 rules 23, 24 | condition-name entries follow their item | **test**: everywhere |
 | 85 GR2a; 2023 rule 24a | not on another 88 | **ruling**: consecutive 88s all belong to the item before them, which is what a second 88 means |
 | 85 GR2b; 2023 rule 24b | not on a level 66 entry | **refused**: bad/condname-66 -- before this sweep the message was a VALUE length complaint |
-| 85 GR2c; 2023 rule 24c, d | not on a group holding items of another usage than DISPLAY, or JUSTIFIED or SYNCHRONIZED ones | **ruling**: taken, as behavior point BP-E23 (docs/behavior-points.md). Majesty's GnuCOBOL-era records carried an `88 ... VALUE HIGH-VALUES` end-of-file flag over packed fields, and refusing it broke two of its programs; by the user's ruling the point stays, warned under -warn-extensions, and majesty was changed to conform (majesty 5f9cc24) |
+| 85 GR2c; 2023 rule 24c, d | not on a group holding items of another usage than DISPLAY, or JUSTIFIED or SYNCHRONIZED ones | **ruling**: taken, as behavior point BP-E23 (docs/behavior-points.md). Majesty's GnuCOBOL-era records carried an `88 ... VALUE HIGH-VALUES` end-of-file flag over packed fields, and refusing it broke two of its programs; by the user's ruling the point stays, warned under -warn-extensions, and majesty was changed to conform (majesty 1dfaa92) |
 | 85 GR2d; 2023 rule 24e | not on an index or pointer item | **refused** (bad/index-88, bad/std2002-pointer-88) |
 | 2023 rule 24f, g | not with ANY LENGTH; not on a strongly typed group | ANY LENGTH a **gap**; strong types in docs/typedef.md |
 | 2023 rule 24h | not on a variable-length group | **ruling**: 2023 only (not in 2002's list); accepted under -std=2002 |

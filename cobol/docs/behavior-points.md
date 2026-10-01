@@ -134,7 +134,7 @@ warns only under -std=85. Never changes the output.
 | BP-E20 | a literal of more than 160 character positions | the NIST SQL suite (yts750, 255 positions) | 85, 2002 | 1985 and 2002 allow 1 through 160; 2014 and 2023 allow 8,191. Taken up to 8,191; past that refused |
 | BP-E21 | EXIT PROGRAM followed by more statements in its sentence | the NIST SQL suite (dml116s: EXIT PROGRAM, STOP RUN) | 85 | X3.23-1985 EXIT PROGRAM syntax rule 1 makes it the last; 2002 dropped the rule. Taken, run as 2002 runs it |
 | BP-E22 | a separator comma or semicolon with no space after it (`"...",SQL-COD`) | the NIST SQL suite (yts775) | 85, 2002 | the standard's separator comma is followed by a space; taken as a separator. A comma between digits is still the decimal point under DECIMAL-POINT IS COMMA |
-| BP-E23 | a condition-name on a group holding items of a usage other than DISPLAY, or JUSTIFIED or SYNCHRONIZED ones | majesty's GnuCOBOL-era copybooks (`88 ... VALUE HIGH-VALUES` end-of-file flags over packed fields), changed to conform in majesty 5f9cc24; tests/free/copybook keeps the shape | 85, 2002 | X3.23-1985 VI-21 general rule 2c and 2023 13.16.3 rule 24c and d keep it off; taken, the group compared as its bytes (ISSUES-118) |
+| BP-E23 | a condition-name on a group holding items of a usage other than DISPLAY, or JUSTIFIED or SYNCHRONIZED ones | majesty's GnuCOBOL-era copybooks (`88 ... VALUE HIGH-VALUES` end-of-file flags over packed fields), changed to conform in majesty 1dfaa92; tests/free/copybook keeps the shape | 85, 2002 | X3.23-1985 VI-21 general rule 2c and 2023 13.16.3 rule 24c and d keep it off; taken, the group compared as its bytes (ISSUES-118) |
 
 Not points, recorded here:
 
