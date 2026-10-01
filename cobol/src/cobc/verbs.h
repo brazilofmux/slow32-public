@@ -775,16 +775,16 @@ static void parse_search(void)
         ix = vary.sym; ixr.sym = ix; has_vary = 0;
     }
 
-    /* the phrases first, no code: AT END's statements and each WHEN's
-     * body are emitted after the loop, which holds only the tests */
-    int save_atend = -1, atend_start = -1;
+    /* the phrases first: AT END's statements and each WHEN's body are
+     * parsed here, once, and their code cut out (Block) to go after the
+     * loop, which holds only the tests */
+    int has_atend = 0; Block atend = { NULL, 0 };
     if (at_word("at") || at_word("end")) {          /* [AT] END: AT is optional (NC237A writes SEARCH ALL t END GO TO ...) */
         accept_word("at"); expect_word("end");
-        atend_start = g_tp;
-        g_noemit++; parse_statements(); g_noemit--;
-        save_atend = g_tp;
+        has_atend = 1;
+        int b0 = block_begin(); parse_statements(); atend = block_cut(b0);
     }
-    Cond *wc[16]; int when_start[16], when_body_end[16], nwhen = 0, next_sent = 0;
+    Cond *wc[16]; Block wbody[16]; int wnext[16], nwhen = 0, next_sent = 0;
     while (at_word("when")) {
         if (nwhen >= 16) die_at(cur()->line, "too many WHENs in SEARCH");
         int wline = cur()->line;
@@ -808,11 +808,9 @@ static void parse_search(void)
                     die_at(wline, "SEARCH ALL ... WHEN tests a later KEY without '%s', which comes before it (%s)", tbl->okey[k],
                            g_std < 2002 ? "X3.23-1985 SEARCH syntax rule 4" : "2023 14.9.37.3 rule 11");
         }
-        when_start[nwhen] = g_tp;
-        g_noemit++;
-        if (at_word("next")) { advance(); expect_word("sentence"); next_sent = 1; } else parse_statements();
-        g_noemit--;
-        when_body_end[nwhen] = g_tp;
+        wnext[nwhen] = 0; wbody[nwhen].line = NULL; wbody[nwhen].n = 0;
+        if (at_word("next")) { advance(); expect_word("sentence"); next_sent = 1; wnext[nwhen] = 1; }
+        else { int b0 = block_begin(); parse_statements(); wbody[nwhen] = block_cut(b0); }
         nwhen++;
     }
     if (!nwhen) die_at(t.line, "SEARCH needs at least one WHEN");
@@ -928,16 +926,13 @@ static void parse_search(void)
 
     /* AT END */
     emit_label(Latend);
-    if (atend_start >= 0) { int here = g_tp; g_tp = atend_start; parse_statements(); if (g_tp != save_atend) die_at(t.line, "internal: AT END re-parse drifted"); g_tp = here; }
+    if (has_atend) block_put(&atend);
     emit_jump(Lend);
     /* WHEN bodies */
     for (int i = 0; i < nwhen; i++) {
         emit_label(Lwhen[i]);
-        int here = g_tp; g_tp = when_start[i];
-        if (at_word("next")) { advance(); expect_word("sentence"); if (g_sentence_label < 0) g_sentence_label = new_label(); emit_jump(g_sentence_label); }
-        else parse_statements();
-        if (g_tp != when_body_end[i]) die_at(t.line, "internal: WHEN re-parse drifted");
-        g_tp = here;
+        if (wnext[i]) { if (g_sentence_label < 0) g_sentence_label = new_label(); emit_jump(g_sentence_label); }
+        else block_put(&wbody[i]);
         emit_jump(Lend);
     }
     emit_label(Lend);

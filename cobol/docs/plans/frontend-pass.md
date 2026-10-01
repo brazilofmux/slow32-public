@@ -34,7 +34,7 @@ again, with emission on, when it wants the code:
 | COMPUTE | the statement's own tokens | a width scan, `hx_expr`, `dx_expr`, then `parse_expr` for real |
 | a MOVE sender's refmod, a SEARCH ALL argument | the ranges above | token scans for names (`move_needs_temp`, `sa_uses_index`) |
 | ADD/SUBTRACT/MULTIPLY/DIVIDE GIVING | the operands, scanned ahead | parsed again where the code goes |
-| SEARCH's WHEN and AT END bodies | statement lists | `parse_statements` once to find their end, again to emit |
+| SEARCH's WHEN and AT END bodies | statement lists | `parse_statements` once to find their end, again to emit (step 4: blocks) |
 | a SCREEN SECTION entry's reference | its token position | `emit_screen_dyn_fill`, at every ACCEPT and DISPLAY |
 
 ## Steps
@@ -71,6 +71,10 @@ for in the commit -- plus all the usual gates.
      an `Arith` node, user-function calls first; their SIZE ERROR
      phrases' statements are still parsed where their code goes, until
      nested statements are nodes too.
+   - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
+     once, where they are written, and their code cut out as a `Block`
+     and put after the loop -- a nested statement list as a node of
+     already-made code, which serves until every verb is a node.
 
 Nothing here is an optimizer.  An SSA layer was considered and set aside
 (2026-10-01): most COBOL time is in libcob, little COBOL data can live in

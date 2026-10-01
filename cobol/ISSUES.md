@@ -4891,3 +4891,17 @@ dialects) -- by removed records and their LOCAL-STORAGE table entries
 only.  Test 2002/userfnarith: a function in every format of the four
 verbs, REMAINDER and SIZE ERROR (twice(0) as a divisor); GnuCOBOL
 agrees.
+
+Next, **SEARCH**.  Its AT END and WHEN bodies go after the loop, which
+holds only the tests, so each body was parsed twice: under g_noemit to
+find where it ends, then again after the loop for its code (with two
+"re-parse drifted" checks).  The assembly is held in memory until the
+end (g_asm, for branch relaxation), and nothing reads it back before
+then, so a stretch of it can move: a Block is the code a nested
+statement list made, parsed once where it is written, cut out
+(block_cut) and put where the statement wants it (block_put).  The
+bodies' labels are now allocated before the loop's, so the snapshot
+differs in the eleven programs with a SEARCH whose bodies use labels
+(CCVS NC231A-NC237A, NC247A, IC207A; majesty gl034; free/search) --
+and in nothing else once labels are renamed in order of appearance
+(labnorm.py).

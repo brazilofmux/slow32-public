@@ -379,6 +379,31 @@ static void emit_call(const char *fn) { if (g_wide) fn = wide_fn(fn); emit("\tja
 static void emit_jump(int label) { emit("\tjal r0, .L%d", label); }
 static void emit_label(int label) { emit(".L%d:", label); }
 
+/* A stretch of code taken out of the stream and put back elsewhere: a
+ * statement's nested statements are parsed once, where they are written,
+ * their code made there and cut out, and placed where the statement
+ * wants them (docs/plans/frontend-pass.md, step 4).  Nothing reads the
+ * stream back but the branch relaxation at the end, so a stretch moves
+ * whole.  Under g_noemit a block is empty, as the code would have been. */
+typedef struct { char **line; int n; } Block;
+static int block_begin(void) { return g_nasm; }
+static Block block_cut(int from)
+{
+    Block b; b.n = g_nasm - from;
+    b.line = b.n ? xmalloc((size_t)b.n * sizeof *b.line) : NULL;
+    if (b.n) memcpy(b.line, g_asm + from, (size_t)b.n * sizeof *b.line);
+    g_nasm = from;
+    return b;
+}
+static void block_put(const Block *b)
+{
+    if (g_noemit) return;
+    for (int i = 0; i < b->n; i++) {
+        if (g_nasm == g_asmcap) { g_asmcap = g_asmcap ? g_asmcap * 2 : 4096; g_asm = realloc(g_asm, g_asmcap * sizeof *g_asm); }
+        g_asm[g_nasm++] = b->line[i];
+    }
+}
+
 static void emit_bytes(const unsigned char *b, int n)
 {
     for (int i = 0; i < n; i += 16) {
