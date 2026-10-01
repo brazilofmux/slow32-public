@@ -39,8 +39,44 @@ static void emit_branch(const Block *b, int ns)
     } else block_put(b);
 }
 
+/* a branch that is one jump: GO TO, or NEXT SENTENCE -- its target */
+static int branch_jump(const Block *b, int ns, char *t, int cap)
+{
+    if (ns) {
+        if (g_sentence_label < 0) g_sentence_label = new_label();
+        snprintf(t, (size_t)cap, ".L%d", g_sentence_label);
+        return 1;
+    }
+    return block_is_jump(b, t, cap);
+}
+
 static void emit_if(IfStmt *s)
 {
+    /* a branch that only jumps (IF c GO TO p) is the condition's own
+     * branch to the target, not a branch around a jump; an empty THEN
+     * (CONTINUE) branches round the ELSE */
+    char tgt[96];
+    if (branch_jump(&s->then_b, s->then_ns, tgt, sizeof tgt)) {
+        int L = new_label(), b0 = g_nasm;
+        cond_jump_true(s->c, L);
+        if (!g_noemit) retarget(b0, L, tgt);
+        if (s->has_else) emit_branch(&s->else_b, s->else_ns);
+        return;
+    }
+    if (s->has_else && branch_jump(&s->else_b, s->else_ns, tgt, sizeof tgt)) {
+        int L = new_label(), b0 = g_nasm;
+        cond_jump_false(s->c, L);
+        if (!g_noemit) retarget(b0, L, tgt);
+        emit_branch(&s->then_b, s->then_ns);
+        return;
+    }
+    if (s->has_else && !s->then_ns && !s->then_b.n) {
+        int Lend = new_label();
+        cond_jump_true(s->c, Lend);
+        emit_branch(&s->else_b, s->else_ns);
+        emit_label(Lend);
+        return;
+    }
     int Lelse = new_label();
     cond_jump_false(s->c, Lelse);
     emit_branch(&s->then_b, s->then_ns);

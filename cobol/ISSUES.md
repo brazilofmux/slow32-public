@@ -4981,3 +4981,20 @@ appearance, code compared in sequence, data as a multiset) finds them
 all the same code (the one exception, userfnonce, is the test's own
 edit since the baseline).  bi2 compares the same way when bytes differ
 and stays at same=227 diff=2.
+
+**A branch that is one jump.**  With both branches parsed before the IF's
+code, emit_if sees a branch that is a single jump -- GO TO p, NEXT
+SENTENCE, EXIT PERFORM -- and makes it the condition's own branch to the
+target (retarget: the condition jumps to a fresh label, and its lines
+are rewritten to the target), instead of a branch around a jump; an
+empty THEN (CONTINUE) becomes a branch round the ELSE.  The corpus had
+5821 branch-over-jump shapes; 5301 are gone, about 7700 instructions
+(3,202,015 -> 3,194,340 over the snapshot).  The 520 left are phrases
+-- AT END GO TO, INVALID KEY GO TO -- for when the phrases are nodes.
+This one changes code on purpose, so it was checked by running the
+corpus: harness 769/0, majesty validate and functions, the papers, and
+CCVS-85 run with the compiler before and after (identical reports: 348
+programs, 8068 of 8175 pass, every one matching GnuCOBOL).  bi2,
+byte-identity against the 2026-09-29 compiler, can no longer mean what
+it meant: it reads same=58 diff=171, the differences being these
+branches.

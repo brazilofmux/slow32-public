@@ -395,6 +395,29 @@ static Block block_cut(int from)
     g_nasm = from;
     return b;
 }
+/* is the block one unconditional jump to a label?  its target in t */
+static int block_is_jump(const Block *b, char *t, int cap)
+{
+    if (b->n != 1 || strncmp(b->line[0], "\tjal r0, ", 9)) return 0;
+    const char *x = b->line[0] + 9;
+    if (!*x || strpbrk(x, " ,\t#") || (int)strlen(x) >= cap) return 0;
+    snprintf(t, (size_t)cap, "%s", x);
+    return 1;
+}
+/* the lines emitted since from that branch or jump to .L<L>: to target
+ * instead (L is never defined) */
+static void retarget(int from, int L, const char *target)
+{
+    char suf[24]; int ns = snprintf(suf, sizeof suf, " .L%d", L);
+    for (int i = from; i < g_nasm; i++) {
+        size_t n = strlen(g_asm[i]);
+        if (n < (size_t)ns || strcmp(g_asm[i] + n - ns, suf)) continue;
+        size_t keep = n - (size_t)ns + 1;           /* through the space */
+        char *r = xmalloc(keep + strlen(target) + 1);
+        memcpy(r, g_asm[i], keep); strcpy(r + keep, target);
+        g_asm[i] = r;
+    }
+}
 static void block_put(const Block *b)
 {
     if (g_noemit) return;

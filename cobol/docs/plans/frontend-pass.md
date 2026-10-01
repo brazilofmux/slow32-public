@@ -80,6 +80,14 @@ for in the commit -- plus all the usual gates.
      step's check is `tests/asm-equiv.py` over the two snapshots: the
      same code, labels renamed in order of appearance and data in any
      order.
+   - With the branches known before the IF's code, a branch that is
+     one jump -- GO TO, NEXT SENTENCE -- becomes the condition's own
+     branch to its target, and an empty THEN (CONTINUE) a branch round
+     the ELSE: 5301 of the corpus's 5821 branch-over-jump shapes gone,
+     about 7700 instructions.  The rest are phrases (AT END GO TO,
+     INVALID KEY GO TO), for when the phrases are nodes.  A change of
+     code, not a refactor: checked by running the corpus (harness,
+     majesty, the papers, CCVS-85 before and after).
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of
