@@ -65,6 +65,20 @@ RUN apk add --no-cache build-base git bash tar
 # Install host FPC 3.2.2 for the build host's architecture.
 # Stable aliases /opt/fpc/bin/ppc-host and /opt/fpc/units/host let the
 # subsequent build steps stay arch-agnostic.
+#
+# Fetched from FPC's own server, not SourceForge. On 2026-10-01 SourceForge
+# stopped serving the file at all: .../files/.../download answered 302 to a
+# "#!" client-routing URL and then 200 with 859 bytes of text/html, while
+# downloads.sourceforge.net and the netix/phoenixnap mirrors returned empty
+# bodies or 301s to HTML. `wget -q` exits 0 on a web page, so both arches
+# failed three commands later with "tar: This does not look like a tar
+# archive" -- a confusing way to be told the download was wrong.
+#
+# This changes only WHO SERVES the 3.2.2 release tarball; it pins nothing
+# less. FPC_VERSION still selects the release, and the FPC *source* pin is
+# FPC_COMMIT on the git fetch below, which is untouched. `tar tf` before
+# extracting is the guard that was missing: it fails here, loudly, if the
+# bytes are not an archive, whoever served them.
 WORKDIR /build
 ARG FPC_VERSION=3.2.2
 RUN MACHINE=$(uname -m) && \
@@ -73,7 +87,8 @@ RUN MACHINE=$(uname -m) && \
       aarch64) FPC_ARCH=aarch64; FPC_PPC=ppca64 ;; \
       *) echo "Unsupported host arch for FPC bootstrap: $MACHINE" >&2; exit 1 ;; \
     esac && \
-    wget -q "https://sourceforge.net/projects/freepascal/files/Linux/${FPC_VERSION}/fpc-${FPC_VERSION}.${FPC_ARCH}-linux.tar/download" -O fpc-host.tar && \
+    wget -q "https://downloads.freepascal.org/fpc/dist/${FPC_VERSION}/${FPC_ARCH}-linux/fpc-${FPC_VERSION}.${FPC_ARCH}-linux.tar" -O fpc-host.tar && \
+    { tar tf fpc-host.tar >/dev/null 2>&1 || { echo "fpc-host.tar is not a tar archive -- the download served something else:" >&2; head -c 200 fpc-host.tar >&2; echo >&2; exit 1; }; } && \
     tar xf fpc-host.tar && \
     cd fpc-${FPC_VERSION}.${FPC_ARCH}-linux && \
     tar xf binary.${FPC_ARCH}-linux.tar && \
