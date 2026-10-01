@@ -245,3 +245,6 @@ dfsort/tests/tmp/
 # above cover the .s32x and .ll but not the .s32o/.s32a/.s/.h/.log, so
 # the directory surfaced as untracked after every acceptance run.
 sqlite/out/
+
+# Python bytecode (tests/gen imports inspect85.py)
+__pycache__/
