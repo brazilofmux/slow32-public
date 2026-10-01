@@ -286,16 +286,16 @@ static int parse_bexpr(void)
 /* the code parse_bexpr would have emitted for b: operands pushed and
  * operators applied in the order the shunting yard gave, a user
  * function's call made as its operand is pushed (ucall_make) */
-static void emit_bexpr_node(const BExpr *b)
+static void emit_bexpr_node(BExpr *b)
 {
-    if (!b->op) { Opnd o = *b->o; ucall_make(&o); bool_emit_operand(&o); return; }
+    if (!b->op) { ucall_make(b->o); Opnd o = *b->o; bool_emit_operand(&o); return; }
     emit_bexpr_node(b->l);
     if (b->r) emit_bexpr_node(b->r);
     Opnd cnt; memset(&cnt, 0, sizeof cnt);
-    if (b->o) { cnt = *b->o; ucall_make(&cnt); }
+    if (b->o) { ucall_make(b->o); cnt = *b->o; }
     bool_emit_op(b->op, &cnt);
 }
-static void emit_bexpr(const BExpr *b)
+static void emit_bexpr(BExpr *b)
 {
     int save_bsp = g_bsp; g_bsp = 0;
     emit_bexpr_node(b);

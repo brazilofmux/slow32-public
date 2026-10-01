@@ -101,6 +101,18 @@ for in the commit -- plus all the usual gates.
      test shows in 100 and 62 of 100 programs).  tests/gen/gen-flow.py
      (new) generates the control flow it runs, and is in Gate 7 against
      GnuCOBOL, which found an oracle defect (free/callexc).
+   - EVALUATE (done 2026-10-01): its WHEN phrases read whole -- each
+     one's objects (with the code reading them makes), its test, its
+     statements as a Block -- then laid out: a body that is one jump is
+     its test's own branch, the last body and one ending in a jump need
+     no jump to the end.  Its subjects are evaluated once, at the
+     beginning (2023 14.9.13.4 rule 3).
+   - Calls once, first, in the order written (2023 14.6.4, item
+     identification): a statement's user function calls are made before
+     its code, wherever they stand -- a receiver's subscript, a
+     reference modifier, an expression's leaf.  The operands are then
+     plain items, their code free to be made any number of times, and
+     the register paths take statements they had to refuse.
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of

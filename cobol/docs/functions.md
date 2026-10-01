@@ -35,14 +35,20 @@ calls are kept with the condition and made each time it is evaluated,
 so `PERFORM UNTIL f(x) > 3` and a `WHEN` call it every time. VARYING's
 BY and an AFTER's FROM are evaluated at every step and reset, not where
 they are parsed; a function there is refused until they are deferred
-the same way. ADD, SUBTRACT, MULTIPLY and DIVIDE are read whole before
-their code, and make their calls first, in the order written; a
-compile-time guard stops any result from a scan reaching code without
-its call. An
-expression kept for later -- a subscript, a reference modifier's start
-or length, an argument, a condition's operand -- keeps each call with
-its operand and makes it where the expression is evaluated, a call
-inside another's argument first (docs/plans/frontend-pass.md).
+the same way. The rule is item identification's (2023 14.6.4): the
+identifiers in a statement are evaluated left to right as the first
+operation of its execution, function evaluation and subscript
+evaluation among the steps. So a statement's calls are made once,
+first, in the order written -- wherever they stand: an operand, a
+receiver's subscript, a reference modifier's start or length, an
+expression's operand, another call's argument (that one first). The
+statements read whole before their code (the arithmetic verbs, MOVE,
+COMPUTE) make them from the parsed statement; one that emits as it
+reads makes each where it is read; and a compile-time guard stops any
+result from a scan reaching code without its call. An EVALUATE subject
+is evaluated once, at the beginning (14.9.13.4 rule 3), so its calls
+are made there and not again for each WHEN (docs/plans/
+frontend-pass.md).
 
 **The external repository.** A caller needs the function's RETURNING
 description to build its result, and a separately compiled function is

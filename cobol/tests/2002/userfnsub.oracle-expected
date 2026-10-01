@@ -1,0 +1,15 @@
+eval-expr-3when calls=+00002
+eval-cond-false calls=+00002
+eval-sub calls=+00004
+add-recv-sub calls=+00002
+move-recv-sub calls=+00002
+compute-recv-sub calls=+00002
+  +0007
+display-sub calls=+00002
+if-sub calls=+00002
+move-send-sub2 calls=+00002
+mult-recv-sub calls=+00002
+compute-sub-both calls=+00004
+until-sub calls=+00002
+el(1) after add, move, compute, multiply, compute: +0015
+until-sub-3-times calls=+00006

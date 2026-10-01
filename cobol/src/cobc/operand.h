@@ -40,6 +40,8 @@ static Sym g_subx = { .is_group = 1, .record = -1, .redefines = -1, .parent = -1
 
 static Expr *parse_expr(void);
 static Expr *scan_expr(void);
+static void ucall_make(struct Opnd_ *o);
+static void expr_calls(Expr *e);
 static void emit_expr(Expr *e);
 static void emit_ucalls(int from, int to);
 static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */

@@ -34,6 +34,12 @@ typedef struct { char op; int l, r; Opnd o; } HNode;
 static int hn_depth(int n, int per);   /* op: 0 leaf, + - * /, 'n' negate */
 #define MAXHN 64
 static HNode g_hn[MAXHN]; static int g_nhn;
+/* >0 while a tree in g_hn is being emitted: its leaves' code (a
+ * subscript's expression, say) must not build another tree in it --
+ * dx_move declines, and the stack makes that move (cobol ISSUES-121: a
+ * user function's call inside a subscript moved its argument through
+ * dx_move, and the tree being emitted was overwritten) */
+static int g_hn_busy;
 static int hn_new(char op, int l, int r, const Opnd *o)
 {
     if (l < -1 || r < -1 || g_nhn >= MAXHN) return -2;
@@ -223,7 +229,7 @@ static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, lon
     return mode;
 }
 /* emit the tree and store it (and the remainder); after hx_ok said yes */
-static void hx_store(int root, Ref *rs, int *rd, int nr, Ref *rem, long long bound, int nonneg, int slow)
+static void hx_store_1(int root, Ref *rs, int *rd, int nr, Ref *rem, long long bound, int nonneg, int slow)
 {
     HNode *h = &g_hn[root];
     if (h->op != '/') {
@@ -262,6 +268,10 @@ static void hx_store(int root, Ref *rs, int *rd, int nr, Ref *rem, long long bou
     }
     emit_label(Lskip);
     g_slot_base -= 2;
+}
+static void hx_store(int root, Ref *rs, int *rd, int nr, Ref *rem, long long bound, int nonneg, int slow)
+{
+    g_hn_busy++; hx_store_1(root, rs, rd, nr, rem, bound, nonneg, slow); g_hn_busy--;
 }
 /* a leaf for a statement's operand or receiver */
 static int hx_leaf(const Opnd *o) { return opnd_hot_int((Opnd *)o) && !opnd_scanned(o) ? hn_new(0, -1, -1, o) : -2; }
@@ -484,7 +494,7 @@ static void dx_get_edited_call(const Sym *s)
     emit_call("cob_get_edited");
 }
 /* emit the tree and store it into each receiver, as cob_top_store would */
-static void dx_store(int root, Ref *rs, int *rd, int nr)
+static void dx_store_1(int root, Ref *rs, int *rd, int nr)
 {
     HNode *h = &g_hn[root];
     if (g_slot_base + 3 > NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
@@ -517,6 +527,10 @@ static void dx_store(int root, Ref *rs, int *rd, int nr)
     if (Lskip >= 0) emit_label(Lskip);
     g_slot_base -= 3;
 }
+static void dx_store(int root, Ref *rs, int *rd, int nr)
+{
+    g_hn_busy++; dx_store_1(root, rs, rd, nr); g_hn_busy--;
+}
 /* ADD ... TO / SUBTRACT ... FROM: the operands' sum once, then each
  * receiver's value plus (less) it, as cob_top_addto does -- an operand
  * that is also a receiver is read once, before any store */
@@ -533,7 +547,7 @@ static int dx_addto_ok(int sum, Ref *rs, int nr, int size_err, int *leaf)
     }
     return 1;
 }
-static void dx_addto(int sum, Ref *rs, int *rd, int nr, int *leaf, int subtract)
+static void dx_addto_1(int sum, Ref *rs, int *rd, int nr, int *leaf, int subtract)
 {
     if (g_slot_base + 4 > NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
     int t = g_slot_base; g_slot_base += 4;
@@ -561,6 +575,10 @@ static void dx_addto(int sum, Ref *rs, int *rd, int nr, int *leaf, int subtract)
     }
     g_slot_base -= 4;
 }
+static void dx_addto(int sum, Ref *rs, int *rd, int nr, int *leaf, int subtract)
+{
+    g_hn_busy++; dx_addto_1(sum, rs, rd, nr, leaf, subtract); g_hn_busy--;
+}
 /* the operands' sum, left to right as the stack adds them */
 static int dx_sum(Opnd *ops, int n)
 {
@@ -574,7 +592,7 @@ static int dx_leaf(const Opnd *o) { return dx_leaf_ok(o) && !opnd_scanned(o) ? h
  * the tree's store is the same MOVE (truncating: no ROUNDED) */
 static int dx_move(Opnd *src, Ref *dst)
 {
-    if (g_nohx || g_rmode) return 0;
+    if (g_nohx || g_rmode || g_hn_busy) return 0;
     g_nhn = 0;
     int root = src->kind == O_FUNC ? hn_fn(src, dx_leaf) : (src->kind == O_REF || src->kind == O_NUM) ? dx_leaf(src) : -2;
     if (root == -2 && src->kind == O_REF && !src->ref.rm && !opnd_scanned(src)) {
@@ -614,9 +632,13 @@ typedef struct {
 } Arith;
 static void arith_calls(Arith *st, int ab)
 {
-    if (ab) { ucall_make(&st->a); ucall_make(&st->b); return; }
-    for (int i = 0; i < st->n; i++) ucall_make(&st->ops[i]);
-    if (st->giving) ucall_make(&st->minuend);
+    if (ab) { ucall_make(&st->a); ucall_make(&st->b); }
+    else {
+        for (int i = 0; i < st->n; i++) ucall_make(&st->ops[i]);
+        if (st->giving) ucall_make(&st->minuend);
+    }
+    for (int i = 0; i < st->nr; i++) ref_calls(&st->rs[i]);     /* a receiver's subscripts */
+    if (st->has_rem) ref_calls(&st->rem);
 }
 
 /* ADD a ... TO b ... [GIVING c ...]; ADD a ... GIVING c ... */

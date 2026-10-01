@@ -152,15 +152,6 @@ typedef struct UCall_ { int sig, nargs, line; Opnd arg[8]; int byref[8]; Sym *ct
 static UCall *g_ucall; static int g_ucap;
 static void ucall_bind(UCall *u, const char *name);
 static void ucall_emit(const UCall *u);
-/* does making this operand's code need a user function's call first? */
-static int opnd_has_ucall(const Opnd *o)
-{
-    if (o->uc) return 1;
-    if (o->kind != O_FUNC) return 0;
-    if ((o->farg && opnd_has_ucall(o->farg)) || (o->farg2 && opnd_has_ucall(o->farg2))) return 1;
-    for (int k = 0; k < o->nfargs; k++) if (opnd_has_ucall(o->fargs[k])) return 1;
-    return 0;
-}
 
 static Ref ftemp_ref(Sym *t, int line)
 {
@@ -296,27 +287,50 @@ static void ucall_emit(const UCall *u)
     emit_ucall(&g_ucall[g_nucall]);
 }
 
-/* an operand a scan parsed, about to be emitted: the user function calls
- * in it made, as a parse that emits would have made them -- the
- * arguments' own first, then the call.  The copies and the result are the
- * ones the scan made (laid out like any record; flagged ftemp_scan until
- * a call fills them).  o may be the emitter's copy of a tree's leaf. */
+/* Item identification's function evaluation (2023 14.6.4): the identifiers
+ * in a statement are evaluated left to right as the first operation of
+ * its execution.  So, for an operand a scan parsed, about to be emitted:
+ * every user function call in it made (or, inside a condition, queued
+ * with the condition), once and in the order written -- in its
+ * subscripts and reference modifiers,
+ * its expression's leaves, a function's arguments, and the operand's own;
+ * a call's arguments' first.  In place: the operand is then free of
+ * calls, and its code may be emitted any number of times.  The copies and
+ * the result are the ones the scan made (flagged ftemp_scan until a call
+ * fills them). */
+static void expr_calls(Expr *e)
+{
+    if (!e->op) { ucall_make(e->o); return; }
+    expr_calls(e->l);
+    if (e->r) expr_calls(e->r);
+}
+static void ref_calls(Ref *r)
+{
+    for (int k = 0; k < r->nsub; k++) if (r->sub[k].sym == &g_subx) expr_calls(r->sub[k].x);
+    if (r->rm_sx) expr_calls(r->rm_sx);
+    if (r->rm_lx) expr_calls(r->rm_lx);
+}
+static void bexpr_calls(BExpr *b)
+{
+    if (b->l) bexpr_calls(b->l);
+    if (b->r) bexpr_calls(b->r);
+    if (b->o) ucall_make(b->o);
+}
 static void ucall_make(Opnd *o)
 {
     if (g_noemit) return;                       /* still a scan: the calls wait */
-    if (o->kind == O_FUNC) {
-        if (!opnd_has_ucall(o)) return;
-        if (o->farg) { Opnd *c = xmalloc(sizeof *c); *c = *o->farg; ucall_make(c); o->farg = c; }
-        if (o->farg2) { Opnd *c = xmalloc(sizeof *c); *c = *o->farg2; ucall_make(c); o->farg2 = c; }
-        if (o->nfargs) {
-            Opnd **v = xmalloc((size_t)o->nfargs * sizeof *v);
-            for (int k = 0; k < o->nfargs; k++) {
-                v[k] = o->fargs[k];
-                if (opnd_has_ucall(v[k])) { Opnd *c = xmalloc(sizeof *c); *c = *v[k]; ucall_make(c); v[k] = c; }
-            }
-            o->fargs = v;
-        }
-        return;
+    switch (o->kind) {
+    case O_EXPR: expr_calls(o->ex); break;
+    case O_BEXPR: bexpr_calls(o->bx); break;
+    case O_REF: case O_ADDR: if (!o->uc) ref_calls(&o->ref); break;
+    case O_FUNC:
+        if (o->farg) ucall_make(o->farg);
+        if (o->farg2) ucall_make(o->farg2);
+        for (int k = 0; k < o->nfargs; k++) ucall_make(o->fargs[k]);
+        if (o->fsx) expr_calls(o->fsx);
+        if (o->flx) expr_calls(o->flx);
+        break;
+    default: break;
     }
     if (!o->uc) return;
     UCall u = *o->uc;

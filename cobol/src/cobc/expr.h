@@ -133,6 +133,11 @@ static Expr *scan_expr(void)
     g_noemit++; Expr *e = parse_expr(); g_noemit--;
     e->wide = g_saw_wide; e->flt = g_saw_float;
     g_saw_wide |= sw; g_saw_float |= sf;
+    /* in a statement that emits as it reads, its user functions are called
+     * now, where they are written (or queued with the condition being
+     * read), not each time the expression's code is made; a scan's wait
+     * for the statement (ucall_make) */
+    expr_calls(e);
     return e;
 }
 
@@ -162,12 +167,11 @@ static Opnd expr_opnd_after(const Opnd *first, int start)
 
 /* the code parse_expr would have emitted for e, side effects and all:
  * the digit stack, the width it notes, a user function's call */
-static void ucall_make(Opnd *o);
 static void emit_expr_node(Expr *e)
 {
     if (!e->op) {
+        ucall_make(e->o);                       /* a call still waiting (ALLOCATE's size): made here, once */
         Opnd o = *e->o;
-        ucall_make(&o);
         { int in = 0, fr = 0; opnd_int_frac(&o, &in, &fr); xd_push(in, fr); }
         emit_push(&o);
         return;
@@ -291,6 +295,7 @@ static void parse_compute(void)
     int saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
     g_xd_div = 0;
     g_noemit++; Expr *e = parse_expr(); g_noemit--;
+    expr_calls(e);                              /* its user functions, before any path's code */
     int wide = g_saw_wide || g_saw_float || refs_wide(rs, nr) || (g_xd_div && round_wide(rs, rd, nr)), flt = g_saw_float;
     g_saw_wide = saw; g_saw_float = sawf;
     /* the SIZE ERROR phrases, before any code (their statements must not

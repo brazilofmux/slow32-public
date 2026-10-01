@@ -860,6 +860,7 @@ static void parse_move(void)
     g_noemit--;
     if (!n) die_at(cur()->line, "MOVE needs a receiving item");
     ucall_make(&src);
+    for (int i = 0; i < n; i++) ref_calls(&dst[i]);     /* a receiver's subscripts */
     emit_incompat(&src);                /* a numeric sender's content (14.6.13.2 rule 2; MOVE GR 6d1) */
     /* the sender is identified once, before the first move (general rule
      * 1: MOVE a (b) TO b, c (b) moves a (b) to a temporary first).  When

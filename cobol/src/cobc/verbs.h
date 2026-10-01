@@ -63,15 +63,28 @@ static void parse_evaluate(void)
             if (cur()->kind == T_WORD && switch_find(cur()->s)) is_cond = 0;
             /* a condition-name alone is a condition subject too (NC225A: ALSO IT-IS-81 ... WHEN ... ALSO TRUE) */
             if (subj[ns].o.kind == O_REF && subj[ns].o.ref.sym->is_cond) is_cond = 1;
-            if (is_cond) { g_tp = start; subj[ns].kind = 3; subj[ns].c = parse_cond(); }
+            if (is_cond) {
+                g_tp = start; subj[ns].kind = 3; subj[ns].c = parse_cond();
+                /* a subject is evaluated once, at the beginning (2023
+                 * 14.9.13.4 rule 3): the condition's user functions are
+                 * called here, and each WHEN tests it without them */
+                Cond *sc = subj[ns].c;
+                if (sc->uc1 > sc->uc0) { emit_ucalls(sc->uc0, sc->uc1); sc->uc0 = sc->uc1 = 0; }
+            }
             else ucall_make(&subj[ns].o);           /* an operand: its calls made here, at the start */
         }
         ns++;
         if (!accept_word("also")) break;
     }
-    int Lend = new_label();
+    /* the WHEN phrases, read whole before their code (docs/plans/
+     * frontend-pass.md, step 4): each one's objects -- with any code
+     * reading them makes, a user function's call -- its test, and its
+     * statements as a Block */
+    typedef struct { Block pre, body; Cond *c; int other; } When;
+    When *wh = NULL; int nwh = 0, whcap = 0;
     while (at_word("when")) {
         Cond *group = NULL; int other = 0;
+        int pre0 = block_begin();
         while (accept_word("when")) {
             if (accept_word("other")) { other = 1; break; }
             Cond *all = NULL;
@@ -126,19 +139,42 @@ static void parse_evaluate(void)
         }
         if (at_scope_end() || at_word("end-evaluate"))
             die_at(cur()->line, "each WHEN phrase of EVALUATE is followed by an imperative statement (%s format)", g_std < 2002 ? "X3.23-1985 EVALUATE" : "2023 14.9.13");
+        if (nwh == whcap) { whcap = whcap ? 2 * whcap : 8; wh = xrealloc(wh, (size_t)whcap * sizeof *wh); }
+        When *w = &wh[nwh++];
+        w->pre = block_cut(pre0); w->c = group; w->other = other;
+        w->body = parse_block();
         if (other) {
-            parse_statements(); emit_jump(Lend);
             if (at_word("when")) die_at(cur()->line, "WHEN OTHER is the last phrase of EVALUATE (%s format)", g_std < 2002 ? "X3.23-1985 EVALUATE" : "2023 14.9.13");
             break;
         }
-        int Lnext = new_label();
-        cond_jump_false(group, Lnext);
-        parse_statements();
-        emit_jump(Lend);
-        emit_label(Lnext);
+    }
+    accept_word("end-evaluate");
+    /* laid out: each test falls to the next WHEN; a body that is one jump
+     * (GO TO) is its test's own branch; the last body, and one that ends
+     * in a jump, need no jump to the end */
+    int Lend = new_label();
+    for (int i = 0; i < nwh; i++) {
+        When *w = &wh[i];
+        int last = i == nwh - 1;
+        char tgt[96];
+        block_put(&w->pre);
+        if (w->other) { block_put(&w->body); continue; }
+        if (block_is_jump(&w->body, tgt, sizeof tgt)) {
+            int L = new_label(), b0 = g_nasm;
+            cond_jump_true(w->c, L);
+            if (!g_noemit) retarget(b0, L, tgt);
+            continue;
+        }
+        int Lnext = last ? Lend : new_label();
+        cond_jump_false(w->c, Lnext);
+        block_put(&w->body);
+        if (!last) {
+            if (!block_ends_jump(&w->body)) emit_jump(Lend);
+            emit_label(Lnext);
+        }
     }
     emit_label(Lend);
-    accept_word("end-evaluate");
+    free(wh);
 }
 
 /* ---- INSPECT ----------------------------------------------------------- */

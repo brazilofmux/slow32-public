@@ -404,6 +404,11 @@ static int block_is_jump(const Block *b, char *t, int cap)
     snprintf(t, (size_t)cap, "%s", x);
     return 1;
 }
+/* does the block end in an unconditional jump?  nothing falls out of it */
+static int block_ends_jump(const Block *b)
+{
+    return b->n > 0 && (!strncmp(b->line[b->n - 1], "\tjal r0, ", 9) || !strncmp(b->line[b->n - 1], "\tjalr r0, ", 10));
+}
 /* the lines emitted since from that branch or jump to .L<L>: to target
  * instead (L is never defined) */
 static void retarget(int from, int L, const char *target)

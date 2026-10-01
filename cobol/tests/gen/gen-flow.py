@@ -15,6 +15,8 @@ mistake would change:
   TO, combined conditions;
 - ADD / SUBTRACT / MULTIPLY / COMPUTE into small pictures, so ON SIZE
   ERROR fires, with GO TO, DISPLAY or CONTINUE in either phrase;
+- EVALUATE of an item, an expression or TRUE, WHEN bodies that are GO
+  TO, DISPLAY or CONTINUE, THRU ranges, WHEN OTHER or none;
 - a sequential file written and read back in a loop, AT END GO TO and
   NOT AT END;
 - CALL of a program that does not exist, ON EXCEPTION GO TO / DISPLAY,
@@ -118,6 +120,30 @@ def main():
         end = {"A": "END-ADD", "S": "END-SUBTRACT", "M": "END-MULTIPLY", "C": "END-COMPUTE"}[s[0]]
         return s + " " + end + ' DISPLAY "S2 " S2'
 
+    def evaluate(i):
+        kind = r.random()
+        if kind < 0.4:
+            s = "EVALUATE %s" % var()
+            def obj():
+                a = r.randint(-40, 40)
+                return str(a) if r.random() < 0.6 else "%d THRU %d" % (a, a + r.randint(0, 30))
+        elif kind < 0.6:
+            s = "EVALUATE %s + %s" % (var(), lit())
+            def obj():
+                return str(r.randint(-60, 60))
+        else:
+            s = "EVALUATE TRUE"
+            def obj():
+                return cond()
+        for _ in range(r.randint(1, 4)):
+            s += " WHEN %s" % obj()
+            if r.random() < 0.2:
+                s += " WHEN %s" % obj()        # two WHENs, one body
+            s += " %s" % phrase(i)
+        if r.random() < 0.6:
+            s += " WHEN OTHER %s" % phrase(i)
+        return s + " END-EVALUATE"
+
     # the file: written, then read in a loop
     w("P0.")
     w('    DISPLAY "P0"')
@@ -152,8 +178,10 @@ def main():
                 # NEXT SENTENCE: the sentence ends here, so the period follows
                 w("    IF %s NEXT SENTENCE ELSE %s." % (cond(), simple(i)))
                 w('    DISPLAY "after-ns %d"' % i)
-            elif k < 0.75:
+            elif k < 0.68:
                 w("    " + size_stmt(i) if i < npara else "    ADD 1 TO S2")
+            elif k < 0.78 and i < npara:
+                w("    " + evaluate(i))
             elif k < 0.8 and i < npara:
                 w('    CALL "NOSUCHPROG" ON EXCEPTION %s NOT ON EXCEPTION DISPLAY "CALLED NOSUCHPROG" END-CALL' % phrase(i))
             else:

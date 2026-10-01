@@ -82,7 +82,7 @@ static void emit_if(IfStmt *s)
     emit_branch(&s->then_b, s->then_ns);
     if (s->has_else) {
         int Lend = new_label();
-        emit_jump(Lend);
+        if (!s->then_ns && !block_ends_jump(&s->then_b)) emit_jump(Lend);  /* a THEN ending in GO TO falls nowhere */
         emit_label(Lelse);
         emit_branch(&s->else_b, s->else_ns);
         emit_label(Lend);

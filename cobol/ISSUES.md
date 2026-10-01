@@ -5029,3 +5029,48 @@ program, GnuCOBOL 4.0-early-dev runs NOT ON EXCEPTION after an ON
 EXCEPTION phrase that falls through (2023 14.9.4.4 rule 3h1 sends
 control to the end of the CALL).  Test free/callexc (.oracle-expected);
 run-gen.sh counts gen-flow's such lines apart.
+
+**Calls once, first; EVALUATE as a node.**  A probe for EVALUATE -- a
+counting function in a subject and in subscripts -- found four defects,
+three of them older than the pass:
+
+- **A compiler crash** (SIGSEGV; the pre-pass compiler too): MULTIPLY
+  into an element whose subscript calls a user function, and COMPUTE
+  with such an element on both sides.  The register paths emit from a
+  tree in static storage (g_hn); emitting a leaf's subscript made the
+  call, the call moved its argument with emit_move, and dx_move built
+  its own tree in the same storage.  Now nothing rebuilds a tree being
+  emitted (g_hn_busy; dx_move declines), and -- the real fix -- no call
+  is made during emission at all.
+- **ADD 1 TO el(f(x))** called f twice, once for each time the
+  receiver's address was formed.
+- **An EVALUATE subject** holding a call -- an expression, a condition,
+  a subscript -- made it again for each WHEN tested.  2023 14.9.13.4
+  rule 3: each subject is evaluated at the beginning.  GnuCOBOL makes
+  them per WHEN too (docs/oracles.md).
+
+The rule is item identification's (2023 14.6.4): the identifiers in a
+statement are evaluated left to right as the first operation of its
+execution, and function evaluation and subscript evaluation are steps
+of that.  So ucall_make now makes every call in an operand once, in
+place, in the order written -- its subscripts', its reference
+modifier's, its expression's leaves', a function's arguments', its own
+-- and the operand is then free of calls.  The node statements (the
+arithmetic verbs, MOVE, COMPUTE) do that for their operands and their
+receivers before any code; scan_expr does it for a statement that emits
+as it reads (inside a condition the call is queued with the condition,
+as before).  With the operands plain items, the register paths take
+statements they refused: COMPUTE res = n * fact(m) is 64-bit arithmetic
+in registers now, where it was the stack (the user-function tests grew
+64 instructions and lost that many runtime calls).
+
+EVALUATE reads its WHEN phrases whole (each one's objects with any code
+reading them makes, its test, its statements as a Block), then lays
+them out: a body that is one jump is its test's own branch; the last
+body, and one that ends in a jump, need no jump to the end (IF's THEN
+likewise).  About 500 instructions fewer over the corpus.  Checked by
+running: tests/gen/gen-flow.py gained EVALUATE (items, expressions,
+TRUE; THRU; stacked WHENs; OTHER) -- 40 programs against GnuCOBOL, 150
+through the compiler before and after (run-self.sh), CCVS-85 before and
+after.  Test 2002/userfnsub: the calls each statement made, the loop's
+condition three times; .oracle-expected for the three EVALUATE lines.
