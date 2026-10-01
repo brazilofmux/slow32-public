@@ -31,7 +31,7 @@
 #   exactly (CCVS85 names the tree; CCVS=0 skips it, and a missing
 #   tree is reported as NOT RUN, never passed over).
 # Gate 7 (generated): a fixed batch of each tests/gen generator (arith,
-#   edit, cond, string), run here and under the oracle by run-gen.sh: every
+#   edit, cond, string, table), run here and under the oracle by run-gen.sh: every
 #   line must agree, apart from the oracle disagreements docs/oracles.md
 #   records -- and those only in the shapes run-gen.sh checks (ours equal
 #   to a computed truth or to inspect85.py).  Needs the oracle's container
@@ -502,7 +502,7 @@ fi
 # disagrees.
 GEN_NOTE=""
 if [ "$ORACLE_ENGINE" = podman ] || [ "$ORACLE_ENGINE" = docker ]; then
-    for g in arith:70 edit:60 cond:60 string:40; do
+    for g in arith:70 edit:60 cond:60 string:40 table:50; do
         gname=${g%%:*}; gn=${g##*:}
         gout="$(GEN=$gname "$HERE/gen/run-gen.sh" 1 40 "$gn" 2>&1 | tail -1)"
         case "$gout" in

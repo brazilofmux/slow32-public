@@ -29,7 +29,7 @@ working-storage section.
 01  class pic x.
 01  grp.
     05 cnt pic 99.
-    05 elem pic x occurs 1 to 5 depending on n.
+    05 elem pic x occurs 1 to 5 depending on cnt.
 01  src pic x(8) value "abcdefgh".
 01  num pic 99v99.
 procedure division.

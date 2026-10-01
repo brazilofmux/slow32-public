@@ -30,6 +30,13 @@ computed by `inspect85.py`, to `g<seed>.ref`. That file is the 85 INSPECT
 rules (VI-96 to VI-99) written out independently of either compiler, and
 it decides those lines: ours must equal it, even where the oracle agrees.
 
+`gen-table.py SEED` covers table handling. It writes subscripted and
+indexed references, with relative subscripts and indexing, and SET TO, UP
+BY and DOWN BY. It writes SEARCH from a set starting index (a SEARCH
+starts there, not at 1) and SEARCH ALL on an ascending unique key. It
+also writes MOVEs from, to and between variable-length groups whose
+OCCURS DEPENDING ON item is outside the group. Run it with `GEN=table`.
+
 `run-gen.sh FIRST COUNT [STATEMENTS]` builds and runs the seeds here and
 under the harness's GnuCOBOL images (`-std=cobol85`, one container for
 the batch), then compares them line by line. A batch of 400 programs takes
@@ -39,10 +46,11 @@ seconds.
     GEN=edit tests/gen/run-gen.sh 1 400 60
     GEN=cond tests/gen/run-gen.sh 1 400 60
     GEN=string tests/gen/run-gen.sh 1 400 40
+    GEN=table tests/gen/run-gen.sh 1 400 50
 
 The harness runs seeds 1 to 40 of each generator as Gate 7
-(`gen/arith`, `gen/edit`, `gen/cond`, `gen/string`), about 9,000 checks a
-run. A mutation check showed it fails with the old `0` insertion bug back
+(`gen/arith`, `gen/edit`, `gen/cond`, `gen/string`, `gen/table`), about
+11,000 checks a run. A mutation check showed it fails with the old `0` insertion bug back
 in place (18 of 40 edit programs disagree). Without the oracle's image the
 summary says the gate did not run.
 
@@ -117,4 +125,18 @@ the oracle's insertion readings above.
 - **The oracle refuses an ALL or LEADING group after a CHARACTERS phrase
   in one TALLYING or REPLACING list,** so the generator writes CHARACTERS
   last.
+- **s32-cobc: every receiving group over an OCCURS DEPENDING ON table took
+  its maximum length.** X3.23-1985 VI-27, OCCURS rule 3, uses the maximum
+  only when the DEPENDING ON item is inside the group (3b). With the item
+  outside, only the part its value gives is used, receiving as sending
+  (3a). A MOVE into a record built at a shorter count overwrote the rest.
+  The BP-M2 behavior point now names the 3b case it is about. Test:
+  free/odorecv. free/odomove and docs/oracles.md had recorded the
+  maximum as the 85 rule for this case, and listed the oracle's current
+  length as a divergence. That was a misreading: the text's list of
+  changes since 1974 (XVII-54, change 8) names only a group that contains
+  its DEPENDING ON item. It is corrected, and the oracle was right.
+
+420 table programs, about 21,000 statements, agree. Subscripts, indexes,
+SEARCH and SEARCH ALL found nothing else.
 

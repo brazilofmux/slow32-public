@@ -268,8 +268,8 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
                     "resetting this one, COBOL 74 did the reverse, so a 74 program's loop bounds change here" },
-    { "BP-M2", 'M', "the receiving group holds an OCCURS DEPENDING ON table and takes its maximum length "
-                    "(COBOL 85); COBOL 74 used the current length" },
+    { "BP-M2", 'M', "the receiving group holds an OCCURS DEPENDING ON table whose DEPENDING ON item is inside it, "
+                    "and takes its maximum length (COBOL 85); COBOL 74 used the current length" },
     { "BP-O1", 'O', "ALTER is obsolete in COBOL 85 and deleted in COBOL 2002; use GO TO ... DEPENDING ON or EVALUATE" },
     { "BP-O2", 'O', "comment-entries are obsolete in COBOL 85 and deleted in COBOL 2002; use comment lines" },
     { "BP-O3", 'O', "STOP literal is obsolete in COBOL 85 and deleted in COBOL 2002; DISPLAY the literal" },
@@ -5163,7 +5163,8 @@ static Sym *odo_table_below(Sym *s);
  * (no subscript, no reference modification) has the group's current
  * length wherever it is sent -- MOVE, STRING, UNSTRING, INSPECT, a
  * comparison, DISPLAY: it becomes (1:length) computed at run time.
- * Receivers are not operands here and keep the maximum, the 85 rule. */
+ * A receiving group is decided in emit_move: the current length too when
+ * the DEPENDING ON item is outside it, the maximum when it is inside. */
 static void operand_odo_length(Opnd *o)
 {
     if (o->kind != O_REF || o->ref.rm || o->ref.nsub) return;
@@ -9155,13 +9156,39 @@ static int emit_move_boolean(Opnd *src, Ref *dst)
 }
 
 static int dx_move(Opnd *src, Ref *dst);
+/* is s g itself or one of its subordinates */
+static int sym_within(const Sym *s, const Sym *g)
+{
+    for (;;) {
+        if (s == g) return 1;
+        if (s->parent < 0) return 0;
+        s = &g_sym[s->parent];
+    }
+}
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
-    /* BP-M2: before the ODO-source path returns, so a group-to-group MOVE counts */
-    if (d->is_group && !dst->rm && !dst->nsub && has_odo(d)) bp(BP_M2_ODO_RECEIVE, dst->line);
-    /* a receiving group holding an OCCURS DEPENDING ON table has its
-     * maximum length (the 1985 rule), which is how it is laid out */
+    /* A receiving group over an OCCURS DEPENDING ON table (X3.23-1985
+     * VI-27, OCCURS general rule 3): with the DEPENDING ON item outside
+     * the group, only the part its value gives at the start of the
+     * operation is used, receiving as sending (3a) -- the bytes past it
+     * are left alone; with the item inside the group, a receiving group
+     * has its maximum length (3b), as it is laid out.  Every receiving
+     * group took the maximum, so a MOVE into a record built at a shorter
+     * count overwrote the rest (tests/gen found it; tests/free/odorecv). */
+    if (d->is_group && !dst->rm && !dst->nsub && has_odo(d)) {
+        Sym *tbl = odo_table_below(d);
+        if (tbl && tbl->odo_dep_sym && !sym_within(tbl->odo_dep_sym, d)) {
+            for (Sym *k = tbl; k != d; k = &g_sym[k->parent])
+                if (k->sibling >= 0)
+                    die_at(dst->line, "'%s': items follow its OCCURS DEPENDING ON table (variable-location items are not implemented)", d->name);
+            dst->rm = 1; dst->rm_start = 1; dst->rm_len = 0; dst->rm_l0 = -1;
+            dst->rm_odo = 1; dst->odo_dep = tbl->odo_dep_sym;
+            dst->odo_base = d->size - tbl->occurs * tbl->size; dst->odo_elem = tbl->size;
+        } else {
+            bp(BP_M2_ODO_RECEIVE, dst->line);   /* 3b: the maximum; COBOL 74 used the current length */
+        }
+    }
     if (src->kind == O_REF && src->ref.sym->is_group && has_odo(src->ref.sym) && !src->ref.rm_odo && !src->ref.rm && !src->ref.nsub) {
         /* a sending group's length is its current one.  The group is laid
          * out with the table at its maximum, so however deep the table

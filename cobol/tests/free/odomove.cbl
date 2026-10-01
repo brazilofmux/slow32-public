@@ -1,10 +1,13 @@
 identification division.
 program-id. odomove.
-*> MOVE of a group that ends in an OCCURS DEPENDING ON table.  Sending,
-*> the group is as long as DEPENDING ON says.  Receiving, the 1985 text
-*> gives it its maximum length when the DEPENDING ON item lies outside
-*> the group (docs/oracles.md: GnuCOBOL uses the current length there
-*> too, so the second line differs and .oracle-expected carries its).
+*> MOVE of a group that ends in an OCCURS DEPENDING ON table whose
+*> DEPENDING ON item lies outside the group: sending and receiving, the
+*> group is as long as that item says at the start of the MOVE
+*> (X3.23-1985 VI-27, OCCURS general rule 3a).  The maximum length is for
+*> a receiving group that contains its DEPENDING ON item (3b; XVII-54
+*> change 8, free/odorecv).  This test said the maximum applied here too,
+*> a misreading the generator's disagreement brought out; the oracle had
+*> it right.
 data division.
 working-storage section.
 01  n        pic 99 value 5.

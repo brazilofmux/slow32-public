@@ -183,9 +183,10 @@ given, because majesty's `.prn` oracles were produced under it.
   it (Stage 33): laid out at the maximum, the length is size - (max -
   d) x element; the table must be the last thing in the group (items
   following it would sit at variable locations, which this layout does
-  not give them: refused by name). A *receiving* group with such a
-  table takes its maximum length, the 85 rule (free/odomove; GnuCOBOL
-  takes the current one).
+  not give them: refused by name). A *receiving* group takes the
+  current length too when its DEPENDING ON item is outside it, and its
+  maximum length when the item is inside it (X3.23-1985 VI-27, OCCURS
+  rule 3; XVII-54 change 8; free/odomove, free/odorecv).
 - **`COPY`**: text-name as a word or literal; found as given, then
   `.cpy`, `.CPY`, `.cbl`, `.CBL`, beside the source and in the `-I`
   directories; `OF`/`IN library` accepted (the directories serve as the

@@ -37,7 +37,7 @@ matter most.
 | id | construct | COBOL 85 (applied) | COBOL 74 | detected when |
 |---|---|---|---|---|
 | BP-M1 | `PERFORM VARYING ... AFTER` | the outer item is augmented, then the inner one is reset from its FROM | the inner item is reset first, from the outer item's old value | an AFTER item's FROM is an outer VARYING item of the same statement |
-| BP-M2 | a receiving group holding an `OCCURS DEPENDING ON` table | the group's maximum length | its current length | the whole group (no subscript, no reference modification) receives a MOVE, or anything lowered as one (`READ ... INTO`) |
+| BP-M2 | a receiving group holding an `OCCURS DEPENDING ON` table whose DEPENDING ON item is inside it | the group's maximum length (X3.23-1985 XVII-54, change 8) | its current length | the whole group (no subscript, no reference modification) receives a MOVE, or anything lowered as one (`READ ... INTO`) |
 
 BP-M1 is detected by the same symbol only. An outer item reached
 through `REDEFINES` or `RENAMES` would change the bounds just the same
