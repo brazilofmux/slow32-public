@@ -4867,3 +4867,27 @@ a condition operand (O_BEXPR) keeps the tree, not its tokens, and
 bool_push walks it instead of re-parsing.  With that, no Opnd keeps a
 token range.  The snapshot diffs empty; the boolean tests
 (2002/boolexpr, boolreview, boolbit, bitarray2) are among it.
+
+Step 4 begins: **ADD, SUBTRACT, MULTIPLY and DIVIDE as nodes.**  Each
+is read whole into an Arith node -- operands, receivers with ROUNDED,
+DIVIDE's REMAINDER item, and whether a SIZE ERROR phrase follows --
+under g_noemit, so a user function among the operands is deferred.
+Then the calls are made, in the order written (arith_calls), and the
+statement's code follows from the node.  Before, the GIVING forms read
+their second list twice (a scan to find GIVING, then again for real so
+a call would be made), and DIVIDE read its REMAINDER item up to three
+times: size_error_after_remainder and hx_remainder_ahead looked past
+it, and emit_remainder parsed it again in the middle of emitting.  All
+three are gone; emit_remainder takes the item.  The SIZE ERROR phrases'
+own statements are still parsed where their code goes.
+
+With the calls made from the node, ucall_make now uses the copies and
+result record the scan made (clearing ftemp_scan) rather than making
+new ones.  The scan's records were laid out in any case, so every
+deferred call had left one set unused; with this, no call does.  The
+snapshot differs in four programs, all with user functions -- 2002/
+userfn, userfndeep, userfnnest and X-COBOL's fielded_to_linear (both
+dialects) -- by removed records and their LOCAL-STORAGE table entries
+only.  Test 2002/userfnarith: a function in every format of the four
+verbs, REMAINDER and SIZE ERROR (twice(0) as a divisor); GnuCOBOL
+agrees.

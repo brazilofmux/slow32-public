@@ -296,12 +296,14 @@ static void ucall_emit(const UCall *u)
     emit_ucall(&g_ucall[g_nucall]);
 }
 
-/* an operand an expression's scan parsed, about to be emitted: the user
- * function calls in it made, as a parse that emits would have made them
- * -- the arguments' own first, then the copies and result anew, then the
- * call.  o is the emitter's copy; the tree keeps the scan's. */
+/* an operand a scan parsed, about to be emitted: the user function calls
+ * in it made, as a parse that emits would have made them -- the
+ * arguments' own first, then the call.  The copies and the result are the
+ * ones the scan made (laid out like any record; flagged ftemp_scan until
+ * a call fills them).  o may be the emitter's copy of a tree's leaf. */
 static void ucall_make(Opnd *o)
 {
+    if (g_noemit) return;                       /* still a scan: the calls wait */
     if (o->kind == O_FUNC) {
         if (!opnd_has_ucall(o)) return;
         if (o->farg) { Opnd *c = xmalloc(sizeof *c); *c = *o->farg; ucall_make(c); o->farg = c; }
@@ -319,10 +321,9 @@ static void ucall_make(Opnd *o)
     if (!o->uc) return;
     UCall u = *o->uc;
     for (int k = 0; k < u.nargs; k++) ucall_make(&u.arg[k]);
-    ucall_bind(&u, g_fnsig[u.sig].name);
-    *o = (Opnd){ 0 };
-    o->kind = O_REF; o->ref = ftemp_ref(u.res, u.line); o->line = u.line;
-    if (g_noemit) { o->uc = xmalloc(sizeof *o->uc); *o->uc = u; return; }   /* still a scan */
+    for (int k = 0; k < u.nargs; k++) if (u.ctmp[k]) u.ctmp[k]->ftemp_scan = 0;
+    u.res->ftemp_scan = 0;
+    o->uc = NULL;
     ucall_emit(&u);
 }
 

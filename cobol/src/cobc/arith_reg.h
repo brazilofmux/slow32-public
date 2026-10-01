@@ -262,14 +262,6 @@ static void hx_store(int root, Ref *rs, int *rd, int nr, Ref *rem, long long bou
     emit_label(Lskip);
     g_slot_base -= 2;
 }
-/* REMAINDER r ahead: parsed into *r, the cursor left after it; 0 (the
- * cursor unmoved) when there is none */
-static int hx_remainder_ahead(Ref *r)
-{
-    if (!at_word("remainder")) return 0;
-    advance(); parse_ref(r);
-    return 1;
-}
 /* a leaf for a statement's operand or receiver */
 static int hx_leaf(const Opnd *o) { return opnd_hot_int((Opnd *)o) && !opnd_scanned(o) ? hn_new(0, -1, -1, o) : -2; }
 static int hx_leaf_ref(const Ref *r)
@@ -602,23 +594,42 @@ static int dx_leaf_ref(const Ref *r)
     return dx_leaf(&o);
 }
 
-static void parse_add(void)
+/* ---- the arithmetic statements as nodes (docs/plans/frontend-pass.md,
+ * step 4): ADD, SUBTRACT, MULTIPLY and DIVIDE are read whole -- every
+ * operand, receiver and REMAINDER, and whether a SIZE ERROR phrase
+ * follows -- before any code, the operands as a scan reads them; then
+ * their user function calls are made, in the order they are written,
+ * and the statement's code follows.  The SIZE ERROR phrases' statements
+ * are still parsed where their code goes. */
+typedef struct {
+    Opnd ops[MAXOPS]; int n;    /* ADD, SUBTRACT: the operands summed */
+    Opnd a, b;                  /* MULTIPLY a BY b; DIVIDE a INTO b, a BY b */
+    Opnd minuend;               /* SUBTRACT ... FROM minuend GIVING */
+    Ref rs[MAXOPS]; int rd[MAXOPS], nr;
+    int giving, into;           /* DIVIDE: INTO (else BY) */
+    int has_rem; Ref rem;       /* DIVIDE ... REMAINDER rem */
+    int size_err;               /* [NOT] ON SIZE ERROR written, or EC-SIZE checked */
+    int comp;                   /* the composite of operands (85 rule 3) */
+} Arith;
+static void arith_calls(Arith *st, int ab)
 {
-    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
-    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
+    if (ab) { ucall_make(&st->a); ucall_make(&st->b); return; }
+    for (int i = 0; i < st->n; i++) ucall_make(&st->ops[i]);
+    if (st->giving) ucall_make(&st->minuend);
+}
+
+/* ADD a ... TO b ... [GIVING c ...]; ADD a ... GIVING c ... */
+static void parse_add_node(Arith *st)
+{
+    Opnd *ops = st->ops; Ref *rs = st->rs; int *rd = st->rd;
     int n = parse_operand_list(ops, MAXOPS);
     if (!n) die_at(cur()->line, "ADD needs an operand");
     int giving = 0, nr = 0;
     if (accept_word("to")) {
-        /* ADD a TO b [GIVING c]: b is a receiver unless GIVING follows */
+        /* b is a receiver unless GIVING follows */
         int save = g_tp;
-        g_noemit++;
         Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
-        int has_giving = accept_word("giving");
-        g_noemit--;
-        if (has_giving) {
-            /* again, for real: a user function among them is called here */
-            g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
+        if (accept_word("giving")) {
             for (int i = 0; i < ne; i++) { if (n >= MAXOPS) die_at(cur()->line, "too many operands"); ops[n++] = extra[i]; }
             giving = 1;
             nr = parse_ref_list(rs, rd, MAXOPS, 1);
@@ -627,10 +638,21 @@ static void parse_add(void)
         giving = 1; nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else die_at(cur()->line, "expected TO or GIVING in ADD");
     if (!nr) die_at(cur()->line, "ADD needs a receiving item");
-    int comp = arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
+    st->n = n; st->nr = nr; st->giving = giving;
+    st->comp = arith_composite(ops, n, rs, giving ? 0 : nr, "ADD", "X3.23-1985 ADD rule 3", rs[0].line);
+    st->size_err = at_size_error_clause() || ec_size_on();
+}
+
+static void parse_add(void)
+{
+    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
+    Arith st; memset(&st, 0, sizeof st);
+    g_noemit++; parse_add_node(&st); g_noemit--;
+    arith_calls(&st, 0);
+    Opnd *ops = st.ops; Ref *rs = st.rs; int *rd = st.rd;
+    int n = st.n, nr = st.nr, giving = st.giving, comp = st.comp, size_err = st.size_err;
     for (int k = 0; k < n; k++) emit_incompat(&ops[k]);
     if (!giving) emit_incompat_refs(rs, nr);            /* ADD a TO b: b is summed too */
-    int size_err = at_size_error_clause() || ec_size_on();
     g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ops, n) || refs_wide(rs, nr);
 
     int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
@@ -657,38 +679,48 @@ static void parse_add(void)
     parse_size_error_clauses(size_err, "end-add");
 }
 
-static void parse_subtract(void)
+/* SUBTRACT a ... FROM b ... ; SUBTRACT a ... FROM b GIVING c ... */
+static void parse_subtract_node(Arith *st)
 {
-    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(2, "from", "end-subtract"); return; }
-    Opnd ops[MAXOPS]; Ref rs[MAXOPS]; int rd[MAXOPS];
+    Opnd *ops = st->ops; Ref *rs = st->rs; int *rd = st->rd;
     int n = parse_operand_list(ops, MAXOPS);
     if (!n) die_at(cur()->line, "SUBTRACT needs an operand");
     expect_word("from");
     int giving = 0, nr = 0;
-    Opnd minuend; memset(&minuend, 0, sizeof minuend);
     int save = g_tp;
-    g_noemit++;
     Opnd extra[MAXOPS]; int ne = parse_operand_list(extra, MAXOPS);
-    int has_giving = accept_word("giving");
-    g_noemit--;
-    if (has_giving) {
-        /* again, for real: a user function in the minuend is called here */
-        g_tp = save; ne = parse_operand_list(extra, MAXOPS); expect_word("giving");
+    if (accept_word("giving")) {
         if (ne != 1) die_at(cur()->line, "SUBTRACT ... FROM x GIVING takes one item after FROM");
-        minuend = extra[0]; giving = 1;
+        st->minuend = extra[0]; giving = 1;
         nr = parse_ref_list(rs, rd, MAXOPS, 1);
     } else { g_tp = save; nr = parse_ref_list(rs, rd, MAXOPS, 0); }
     if (!nr) die_at(cur()->line, "SUBTRACT needs a receiving item");
+    st->n = n; st->nr = nr; st->giving = giving;
     {   /* the composite: every operand, the GIVING items apart (85 rule 3) */
         Opnd all[MAXOPS + 1]; int na = 0;
         for (int k = 0; k < n; k++) all[na++] = ops[k];
+        if (giving) all[na++] = st->minuend;
+        st->comp = arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
+    }
+    st->size_err = at_size_error_clause() || ec_size_on();
+}
+
+static void parse_subtract(void)
+{
+    if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(2, "from", "end-subtract"); return; }
+    Arith st; memset(&st, 0, sizeof st);
+    g_noemit++; parse_subtract_node(&st); g_noemit--;
+    arith_calls(&st, 0);
+    Opnd *ops = st.ops; Ref *rs = st.rs; int *rd = st.rd; Opnd minuend = st.minuend;
+    int n = st.n, nr = st.nr, giving = st.giving, size_err = st.size_err;
+    {
+        Opnd all[MAXOPS + 1]; int na = 0;
+        for (int k = 0; k < n; k++) all[na++] = ops[k];
         if (giving) all[na++] = minuend;
-        int comp = arith_composite(all, na, rs, giving ? 0 : nr, "SUBTRACT", "X3.23-1985 SUBTRACT rule 3", rs[0].line);
         for (int k = 0; k < na; k++) emit_incompat(&all[k]);
         if (!giving) emit_incompat_refs(rs, nr);
-        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(all, na) || refs_wide(rs, nr);
+        g_wide = (g_std >= 2002 && st.comp > 18) || opnds_wide(all, na) || refs_wide(rs, nr);
     }
-    int size_err = at_size_error_clause() || ec_size_on();
 
     int hot = !g_wide && !size_err && !any_rounded(rd, nr) && all_hot(ops, n) &&
               refs_hot(rs, nr, 1, 0) && (!giving || opnd_hot_int(&minuend)) &&
@@ -722,23 +754,35 @@ static void parse_subtract(void)
     parse_size_error_clauses(size_err, "end-subtract");
 }
 
+/* MULTIPLY a BY b ... ; MULTIPLY a BY b GIVING c ... */
+static void parse_multiply_node(Arith *st)
+{
+    parse_operand(&st->a); check_numeric_opnd(&st->a);
+    expect_word("by");
+    int save = g_tp;
+    parse_operand(&st->b); check_numeric_opnd(&st->b);
+    if (accept_word("giving")) {
+        st->giving = 1;
+        st->nr = parse_ref_list(st->rs, st->rd, MAXOPS, 1);
+        if (!st->nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
+    } else {
+        g_tp = save; memset(&st->b, 0, sizeof st->b);
+        st->nr = parse_ref_list(st->rs, st->rd, MAXOPS, 0);
+        if (!st->nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
+    }
+    st->comp = arith_composite(NULL, 0, st->rs, st->nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", st->rs[0].line);   /* the receiving items */
+    st->size_err = at_size_error_clause() || ec_size_on();
+}
+
 static void parse_multiply(void)
 {
-    Opnd a; parse_operand(&a); check_numeric_opnd(&a);
-    expect_word("by");
-    Ref rs[MAXOPS]; int rd[MAXOPS]; int nr = 0;
-    int save = g_tp;
-    g_noemit++;
-    Opnd b; parse_operand(&b); check_numeric_opnd(&b);
-    int has_giving = accept_word("giving");
-    g_noemit--;
-    if (has_giving) {
-        g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
-        nr = parse_ref_list(rs, rd, MAXOPS, 1);
-        if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-        int comp = arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);   /* the receiving items */
+    Arith st; memset(&st, 0, sizeof st);
+    g_noemit++; parse_multiply_node(&st); g_noemit--;
+    arith_calls(&st, 1);
+    Opnd a = st.a, b = st.b; Ref *rs = st.rs; int *rd = st.rd;
+    int nr = st.nr, comp = st.comp, size_err = st.size_err;
+    if (st.giving) {
         emit_incompat(&a); emit_incompat(&b);
-        int size_err = at_size_error_clause() || ec_size_on();
         { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr) || prod_wide(&a, &b); }
         g_nhn = 0; int root = hn_new('*', hx_leaf(&a), hx_leaf(&b), NULL); long long bd; int nn;
         int mode = hx_ok(root, rs, rd, nr, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
@@ -756,12 +800,7 @@ static void parse_multiply(void)
         parse_size_error_clauses(size_err, "end-multiply");
         return;
     }
-    g_tp = save;
-    nr = parse_ref_list(rs, rd, MAXOPS, 0);
-    if (!nr) die_at(cur()->line, "MULTIPLY needs a receiving item");
-    int comp = arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);
     emit_incompat(&a); emit_incompat_refs(rs, nr);
-    int size_err = at_size_error_clause() || ec_size_on();
     g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr);
     for (int i = 0; i < nr && !g_wide; i++) { Opnd ro = ref_opnd(&rs[i]); if (prod_wide(&a, &ro)) g_wide = 1; }
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
@@ -789,9 +828,9 @@ static void parse_multiply(void)
  * quotient as it would be stored *before* ROUNDED -- the quotient
  * truncated to the receiver's decimals (X3.23 6.9.4), recomputed here
  * rather than read back from the receiver */
-static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor, int size_err)
+static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor, int size_err, const Ref *rem)
 {
-    if (!accept_word("remainder")) return;
+    if (!rem) return;
     {   /* Micro Focus: formats 4 and 5 take no floating-point item */
         const Sym *f = dividend->kind == O_REF && dividend->ref.sym->usage == U_FLOAT ? dividend->ref.sym
                      : divisor->kind == O_REF && divisor->ref.sym->usage == U_FLOAT ? divisor->ref.sym
@@ -799,7 +838,7 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
         if (f) die_at(q->line, "DIVIDE ... REMAINDER takes no floating-point item ('%s'; Micro Focus: DIVIDE rules)", f->name);
     }
     (void)q_rounded;
-    Ref r; parse_ref(&r);
+    Ref r = *rem;
     if (r.sym->is_group || (r.sym->pi.category != PIC_NUMERIC && r.sym->pi.category != PIC_NUMERIC_EDITED))
         die_at(r.line, "REMAINDER '%s' is not numeric (or numeric-edited)", r.sym->name);
     int was_wide = g_wide;
@@ -840,108 +879,91 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
     g_wide = was_wide; if (!was_wide) g_fstmt = 0;
 }
 
-/* is ON SIZE ERROR written after a REMAINDER phrase?  The quotient's store
- * needs to know before the phrase is parsed */
-static int size_error_after_remainder(void)
+/* DIVIDE a INTO b ... ; DIVIDE a INTO b GIVING c ... ; DIVIDE a BY b
+ * GIVING c ... -- the GIVING forms with REMAINDER r after one receiver */
+static void parse_divide_node(Arith *st)
 {
-    if (!at_word("remainder")) return at_size_error_clause();
-    int save = g_tp; g_noemit++;
-    advance(); Ref tmp; parse_ref(&tmp);
-    int se = at_size_error_clause();
-    g_noemit--; g_tp = save;
-    return se;
+    parse_operand(&st->a); check_numeric_opnd(&st->a);
+    if (accept_word("into")) {
+        int save = g_tp;
+        parse_operand(&st->b); check_numeric_opnd(&st->b);
+        if (!accept_word("giving")) {
+            g_tp = save; memset(&st->b, 0, sizeof st->b);
+            st->nr = parse_ref_list(st->rs, st->rd, MAXOPS, 0);
+            if (!st->nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+            st->comp = arith_composite(NULL, 0, st->rs, st->nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", st->rs[0].line);
+            st->size_err = at_size_error_clause() || ec_size_on();
+            return;
+        }
+        st->into = 1;
+    } else {
+        expect_word("by");
+        parse_operand(&st->b); check_numeric_opnd(&st->b);
+        expect_word("giving");
+    }
+    st->giving = 1;
+    st->nr = parse_ref_list(st->rs, st->rd, MAXOPS, 1);
+    if (!st->nr) die_at(cur()->line, "DIVIDE needs a receiving item");
+    if (at_word("remainder") && st->nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
+    st->comp = arith_composite(NULL, 0, st->rs, st->nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", st->rs[0].line);
+    if (accept_word("remainder")) { st->has_rem = 1; parse_ref(&st->rem); }
+    st->size_err = at_size_error_clause() || ec_size_on();
+}
+
+/* the GIVING forms: dividend / divisor into the receivers, and the
+ * remainder */
+static void emit_divide_giving(Arith *st, Opnd *dividend, Opnd *divisor)
+{
+    Ref *rs = st->rs; int *rd = st->rd; int nr = st->nr, size_err = st->size_err;
+    emit_incompat(&st->a); emit_incompat(&st->b);
+    { Opnd ab[2] = { st->a, st->b }; g_wide = (g_std >= 2002 && st->comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr) || round_wide(rs, rd, nr); }
+    g_nhn = 0; int root = hn_new('/', hx_leaf(dividend), hx_leaf(divisor), NULL); long long bd; int nn;
+    Ref *rr = st->has_rem ? &st->rem : NULL;
+    int mode = hx_ok(root, rs, rd, nr, rr, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
+    if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, rr, bd, nn, Lslow); }
+    if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
+    int dxr = -2;
+    if (!mode && !rr) { g_nhn = 0; dxr = hn_new('/', dx_leaf(dividend), dx_leaf(divisor), NULL); }
+    if (!mode && !rr && dx_ok(dxr, rs, nr, size_err)) dx_store(dxr, rs, rd, nr);
+    else if (mode != 1) {
+        emit_push(dividend); emit_push(divisor); emit_call("cob_ndiv");
+        emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
+        emit_remainder(dividend, &rs[0], rd[0], divisor, size_err, rr);
+    }
+    if (mode == 2) emit_label(Ldone);
+    g_wide = 0; g_fstmt = 0;
 }
 
 static void parse_divide(void)
 {
-    Opnd a; parse_operand(&a); check_numeric_opnd(&a);
-    Ref rs[MAXOPS]; int rd[MAXOPS]; int nr;
-    if (accept_word("into")) {
-        int save = g_tp;
-        g_noemit++;
-        Opnd b; parse_operand(&b); check_numeric_opnd(&b);
-        int has_giving = accept_word("giving");
-        g_noemit--;
-        if (has_giving) {
-            g_tp = save; parse_operand(&b); expect_word("giving");   /* again, for real (a user function) */
-            nr = parse_ref_list(rs, rd, MAXOPS, 1);
-            if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-            if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
-            int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
-            emit_incompat(&a); emit_incompat(&b);
-            int size_err = size_error_after_remainder() || ec_size_on();
-            { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr) || round_wide(rs, rd, nr); }
-            g_nhn = 0; int root = hn_new('/', hx_leaf(&b), hx_leaf(&a), NULL); long long bd; int nn;
-            int at = g_tp; Ref rr; int hasr = hx_remainder_ahead(&rr);
-            int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
-            if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, hasr ? &rr : NULL, bd, nn, Lslow); }
-            if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
-            int dxr = -2;
-            if (!mode && !hasr) { g_nhn = 0; dxr = hn_new('/', dx_leaf(&b), dx_leaf(&a), NULL); }
-            if (!mode && !hasr && dx_ok(dxr, rs, nr, size_err)) dx_store(dxr, rs, rd, nr);
-            else if (mode != 1) {
-            g_tp = at;
-            emit_push(&b); emit_push(&a); emit_call("cob_ndiv");
-            emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
-            emit_remainder(&b, &rs[0], rd[0], &a, size_err);
-            }
-            if (mode == 2) emit_label(Ldone);
-            g_wide = 0; g_fstmt = 0;
-            parse_size_error_clauses(size_err, "end-divide");
-            return;
-        }
-        g_tp = save;
-        nr = parse_ref_list(rs, rd, MAXOPS, 0);
-        if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-        int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
-        emit_incompat(&a); emit_incompat_refs(rs, nr);
-        int size_err = at_size_error_clause() || ec_size_on();
-        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr) || round_wide(rs, rd, nr);
-        if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
-        for (int i = 0; i < nr; i++) {
-            g_nhn = 0; int root = hn_new('/', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
-            int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
-            if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }
-            if (mode == 1) continue;
-            if (!mode) {
-                g_nhn = 0; int dxr = hn_new('/', dx_leaf_ref(&rs[i]), dx_leaf(&a), NULL);
-                if (dx_ok(dxr, &rs[i], 1, size_err)) { dx_store(dxr, &rs[i], &rd[i], 1); continue; }
-            }
-            if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
-            Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
-            emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
-            emit_top_op(&rs[i], "cob_top_store", rnd_opts(rd[i]) | (size_err ? 2 : 0)); emit_call("cob_drop");
-            if (mode == 2) emit_label(Ldone);
-        }
-        g_wide = 0; g_fstmt = 0;
-        parse_size_error_clauses(size_err, "end-divide");
+    Arith st; memset(&st, 0, sizeof st);
+    g_noemit++; parse_divide_node(&st); g_noemit--;
+    arith_calls(&st, 1);
+    if (st.giving) {
+        if (st.into) emit_divide_giving(&st, &st.b, &st.a); else emit_divide_giving(&st, &st.a, &st.b);
+        parse_size_error_clauses(st.size_err, "end-divide");
         return;
     }
-    expect_word("by");
-    Opnd b; parse_operand(&b); check_numeric_opnd(&b);
-    expect_word("giving");
-    nr = parse_ref_list(rs, rd, MAXOPS, 1);
-    if (!nr) die_at(cur()->line, "DIVIDE needs a receiving item");
-    if (at_word("remainder") && nr > 1) die_at(cur()->line, "DIVIDE ... REMAINDER takes one GIVING item (X3.23-1985 DIVIDE formats 4 and 5)");
-    int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
-    emit_incompat(&a); emit_incompat(&b);
-    int size_err = size_error_after_remainder() || ec_size_on();
-    { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr) || round_wide(rs, rd, nr); }
-    g_nhn = 0; int root = hn_new('/', hx_leaf(&a), hx_leaf(&b), NULL); long long bd; int nn;
-    int at = g_tp; Ref rr; int hasr = hx_remainder_ahead(&rr);
-    int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
-    if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, hasr ? &rr : NULL, bd, nn, Lslow); }
-    if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
-    int dxr = -2;
-    if (!mode && !hasr) { g_nhn = 0; dxr = hn_new('/', dx_leaf(&a), dx_leaf(&b), NULL); }
-    if (!mode && !hasr && dx_ok(dxr, rs, nr, size_err)) dx_store(dxr, rs, rd, nr);
-    else if (mode != 1) {
-    g_tp = at;
-    emit_push(&a); emit_push(&b); emit_call("cob_ndiv");
-    emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
-    emit_remainder(&a, &rs[0], rd[0], &b, size_err);
+    Opnd a = st.a; Ref *rs = st.rs; int *rd = st.rd;
+    int nr = st.nr, size_err = st.size_err;
+    emit_incompat(&a); emit_incompat_refs(rs, nr);
+    g_wide = (g_std >= 2002 && st.comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr) || round_wide(rs, rd, nr);
+    if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
+    for (int i = 0; i < nr; i++) {
+        g_nhn = 0; int root = hn_new('/', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
+        int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
+        if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }
+        if (mode == 1) continue;
+        if (!mode) {
+            g_nhn = 0; int dxr = hn_new('/', dx_leaf_ref(&rs[i]), dx_leaf(&a), NULL);
+            if (dx_ok(dxr, &rs[i], 1, size_err)) { dx_store(dxr, &rs[i], &rd[i], 1); continue; }
+        }
+        if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
+        Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
+        emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
+        emit_top_op(&rs[i], "cob_top_store", rnd_opts(rd[i]) | (size_err ? 2 : 0)); emit_call("cob_drop");
+        if (mode == 2) emit_label(Ldone);
     }
-    if (mode == 2) emit_label(Ldone);
     g_wide = 0; g_fstmt = 0;
     parse_size_error_clauses(size_err, "end-divide");
 }

@@ -67,6 +67,10 @@ for in the commit -- plus all the usual gates.
    the statement uses their results, evaluate subscripts before any
    register they could disturb is live.  Verb by verb, simplest first;
    a verb not yet converted keeps parse-and-emit.
+   - ADD, SUBTRACT, MULTIPLY, DIVIDE (done 2026-10-01, ISSUES 121):
+     an `Arith` node, user-function calls first; their SIZE ERROR
+     phrases' statements are still parsed where their code goes, until
+     nested statements are nodes too.
 
 Nothing here is an optimizer.  An SSA layer was considered and set aside
 (2026-10-01): most COBOL time is in libcob, little COBOL data can live in
