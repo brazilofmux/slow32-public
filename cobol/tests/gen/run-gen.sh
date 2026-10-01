@@ -51,7 +51,10 @@ done"
 #   and leave a B outside a * string a space; GnuCOBOL keeps the
 #   character, and prints such a B as '*' (tests/free/editins).  Only
 #   those two shapes are counted apart: our keeping a character the rules
-#   replace is still a disagreement.
+#   replace is still a disagreement;
+# - a relation against a negative literal with more integer digits than
+#   its subject, labelled neglit by gen-cond.py: the oracle reads the
+#   literal unsigned (X3.23-1985 VI-55; tests/free/negcmp).
 classify() {  # classify ours oracle: prints "<real> <known>"
     python3 - "$1" "$2" <<'PY'
 import sys
@@ -97,6 +100,15 @@ def insertion_known(x, y):
         return False
     return True
 
+def neglit_known(x, y):
+    """a condition labelled neglit=T|F, the algebraic truth gen-cond.py
+    computed: the oracle reads a negative literal with more integer digits
+    than the subject as if unsigned.  Known only when ours is the truth."""
+    fx, fy = x.split(), y.split()
+    if len(fx) != 3 or len(fy) != 3 or fx[0] != fy[0] or not fx[2].startswith("neglit="):
+        return False
+    return fx[1] == fx[2][-1] and fy[1] != fx[1]
+
 for x, y in zip(a, b):
     if x == y:
         continue
@@ -104,6 +116,8 @@ for x, y in zip(a, b):
     if len(f) >= 3 and f[1] == "divrem" and f[2] == "rem" and f[0] in se:
         known += 1
     elif insertion_known(x, y):
+        known += 1
+    elif neglit_known(x, y):
         known += 1
     else:
         real += 1

@@ -14,6 +14,13 @@ suppression, floating `+ - $`, simple insertion, CR and DB, and BLANK
 WHEN ZERO. Alphanumeric-edited pictures use X with `B 0 /`. Each label
 carries its picture. Run it with `GEN=edit`.
 
+`gen-cond.py SEED` writes conditions, each printing T or F. It covers
+relation conditions across usages and scales, alphanumeric operands of
+unequal length, figurative constants, and integer DISPLAY items against
+alphanumeric ones. It also covers class and sign conditions, and combined
+conditions with AND, OR and NOT. Abbreviated combined relations include
+the NOT-before-an-operator forms. Run it with `GEN=cond`.
+
 `run-gen.sh FIRST COUNT [STATEMENTS]` builds and runs the seeds here and
 under the harness's GnuCOBOL images (`-std=cobol85`, one container for
 the batch), then compares them line by line. A batch of 400 programs takes
@@ -21,6 +28,7 @@ seconds.
 
     tests/gen/run-gen.sh 1 400 70
     GEN=edit tests/gen/run-gen.sh 1 400 60
+    GEN=cond tests/gen/run-gen.sh 1 400 60
 
 The programs stay where X3.23-1985 defines the result exactly, so a
 disagreement is a finding, not two valid choices:
@@ -67,4 +75,22 @@ When the two disagree, the text decides (docs/oracles.md).
 
 After the fixes, 800 edit programs (about 48,000 MOVEs) agree apart from
 the oracle's insertion readings above.
+- **s32-cobc: an abbreviated relation dropped the NOT of the operator it
+  implied.** In `a > b AND NOT < c OR d`, d takes `NOT <`: X3.23-1985
+  VI-61 gives the expansion `... OR (a NOT < d)`. An abbreviation that
+  stated its own operator was not recorded as the last one, and a NOT
+  before an operator was read as the logical NOT. Test: free/abbrnot
+  checks the text's five examples against their stated expansions over
+  every a, b, c, d in 1..3.
+- **The oracle reads a negative literal with more integer digits than the
+  subject as unsigned.** `n00 >= -316940` is false there for an
+  `S9(4)V9(3)` item holding 9884.108, but the comparison is algebraic,
+  whatever the literal's length (VI-55). gen-cond.py labels such a
+  condition with its computed truth. run-gen.sh counts the oracle's answer
+  apart only when ours equals that truth. Test: free/negcmp.
+- **The oracle refuses `... OR NOT b NOT < c`,** a negated relation whose
+  operator has its own NOT, so the generator keeps such relations
+  positive.
+
+400 condition programs, about 32,000 conditions, agree after these.
 

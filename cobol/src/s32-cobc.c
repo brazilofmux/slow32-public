@@ -7765,9 +7765,11 @@ static int parse_relop(void)
  * relation, AND/OR may be followed by just a relational operator and an
  * object, or by an object alone; the subject -- and, with the object
  * alone, the operator (NOT included when it preceded the operator) --
- * are those of the last relation.  NOT before an abbreviation is the
- * ordinary negation (parse_not); the truth is the same as the text's. */
+ * are those of the last relation.  A NOT followed by a relational
+ * operator is part of the operator (parse_not leaves it); any other NOT
+ * is the logical one. */
 static Opnd g_abbr_x; static int g_abbr_op = -1, g_abbr_neg;
+static int tok_is_relop(const Tok *t);
 
 static Cond *parse_simple(void)
 {
@@ -7780,13 +7782,19 @@ static Cond *parse_simple(void)
             return c;
         }
     }
-    if (g_abbr_op >= 0 && ((cur()->kind == T_OP && strchr("=<>", cur()->s[0])) || at_word("equal") || at_word("equals") || at_word("greater") || at_word("less") || at_word("is"))) {
+    if (g_abbr_op >= 0 && ((cur()->kind == T_OP && strchr("=<>", cur()->s[0])) || at_word("equal") || at_word("equals") || at_word("greater") || at_word("less") || at_word("is") ||
+                           (at_word("not") && tok_is_relop(cur() + 1)))) {
         /* [IS] [NOT] relop object: the last relation's subject */
         accept_word("is");
         int neg = accept_word("not");
         int op = parse_relop();
         if (op < 0) die_at(line, "expected a relational operator, found %s", tok_desc(cur()));
         Opnd y = parse_cond_operand();
+        /* the last stated relational operator, NOT included, is the one an
+         * object standing alone after this takes: a > b AND NOT < c OR d
+         * is ... OR (a NOT < d) (X3.23-1985 VI-61).  It was not recorded,
+         * and d took the operator before it (tests/gen found it) */
+        g_abbr_op = op; g_abbr_neg = neg;
         return cond_rel(&g_abbr_x, op, &y, neg);
     }
     Opnd x = parse_cond_operand();
@@ -7867,8 +7875,22 @@ static Cond *parse_simple(void)
     return cond_rel(&x, op, &y, neg);
 }
 
+/* is t a relational operator's first word (X3.23-1985 VI-61: GREATER, >,
+ * LESS, <, EQUAL, =) */
+static int tok_is_relop(const Tok *t)
+{
+    if (t->kind == T_OP) return strchr("=<>", t->s[0]) != NULL;
+    return t->kind == T_WORD && (!strcmp(t->s, "greater") || !strcmp(t->s, "less") ||
+                                 !strcmp(t->s, "equal") || !strcmp(t->s, "equals"));
+}
+
 static Cond *parse_not(void)
 {
+    /* in an abbreviated combined relation, a NOT followed by a relational
+     * operator is part of the operator, not a logical NOT (X3.23-1985
+     * VI-61 rule 1): parse_simple takes it, and records NOT with the
+     * operator for the abbreviations that follow it */
+    if (at_word("not") && g_abbr_op >= 0 && tok_is_relop(cur() + 1)) return parse_simple();
     if (accept_word("not")) { Cond *c = cond_new(C_NOT); c->a = parse_not(); return c; }
     if (cur()->kind == T_LP && paren_is_condition()) {
         advance(); Cond *c = parse_cond();
