@@ -1,0 +1,25 @@
+  +00001
+display +00002
+move +00004
+move2 +00006
+compute +00008
+compute+ +00010
+add +00012
+addgiving +00014
+subtract +00016
+multiply +00018
+divide +00020
+if +00022
+ifnot +00024
+ifand +00026
+evaluate +00028
+evalwhen +00030
+evalwhen2 +00032
+string +00034
+performtimes +00036
+initialize +00038
+inspect +00040
+call +00042
+  +00043 +00044
+display2 +00045
+unstring +00047
