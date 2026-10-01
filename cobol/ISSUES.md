@@ -4639,3 +4639,13 @@ check).  Test free/progscope (no oracle: GnuCOBOL takes ON EXCEPTION
 after successful CALLs there, and dies with SIGSEGV calling an
 out-of-scope active program).
 
+Seventh batch: **INSPECT of a function's value**, which X-COBOL's
+command-line parser writes (`INSPECT FUNCTION TRIM(args) TALLYING`), met
+"'function' is not declared".  A function-identifier is an identifier
+(2023 8.4.3.2), and TALLYING only reads its subject, so it is taken: the
+function is evaluated and its value, at its run-time length, inspected.
+REPLACING and CONVERTING would change it and are refused naming 8.4.3.2.3
+rule 1 (not a receiving operand); a numeric function's value is refused
+by INSPECT's rule 1.  Tests 2002/inspfunc (identical to GnuCOBOL), three
+bad/std2002-inspfunc-* tests.
+

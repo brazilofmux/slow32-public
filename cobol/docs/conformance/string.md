@@ -15,7 +15,7 @@ under -std=85, the 2023 rule otherwise.
 
 | rule | paraphrase | disposition |
 |---|---|---|
-| 1 | the inspected item is a group or an elementary item of usage display or national | **refused**: bad/inspect-operands -- a COMP item was accepted before this sweep |
+| 1 | the inspected item is a group or an elementary item of usage display or national | **refused**: bad/inspect-operands -- a COMP item was accepted before this sweep. A function's value (a function-identifier is an identifier, 8.4.3.2) is inspected by TALLYING, which only reads it: **test** 2002/inspfunc (identical to GnuCOBOL); REPLACING and CONVERTING are **refused**, as it is no receiving operand (8.4.3.2.3 rule 1): bad/std2002-inspfunc-replacing, -converting, -numeric. It was "'function' is not declared" before (ISSUES-120) |
 | 2 | every other identifier is an elementary item of usage display or national | **refused**: bad/inspect-operands (a COMP item, a group); both accepted before |
 | 3 | literals: no ALL figurative constant; nonnumeric | **refused**: bad/inspect-operands (ALL "ab", 12); both accepted before |
 | 4, 6 | national all-or-none; national/boolean categories | **refused**: bad/std2002-nat-inspect, bad/std2002-inspect-natop, bad/std2002-bit-inspect |

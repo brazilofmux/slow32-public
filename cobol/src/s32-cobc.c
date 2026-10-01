@@ -16146,7 +16146,25 @@ static void parse_inspect(void)
 }
 static void parse_inspect_1(void)
 {
-    Ref item; parse_ref(&item);
+    Ref item; memset(&item, 0, sizeof item);
+    Opnd itemo; memset(&itemo, 0, sizeof itemo);
+    int fsubj = 0, fline = cur()->line;
+    const char *fwhy = "a function-identifier is not a receiving operand (2023 8.4.3.2.3 rule 1); only TALLYING inspects one";
+    if (at_word("function") || (cur()->kind == T_WORD && ufn_named(cur()->s))) {
+        /* a function-identifier: a sending operand, so TALLYING only --
+         * REPLACING and CONVERTING would change it */
+        Opnd fo; parse_operand(&fo);
+        int numeric = fo.kind == O_NUM ||           /* LENGTH and the like, folded at compile time */
+                      (fo.kind == O_FUNC && (fo.fn == -1 ? fo.fscale >= 0 : fn_is_numeric(fo.fn))) || fo.fwnum || fo.fbool ||
+                      (fo.kind == O_REF && is_numeric_sym(fo.ref.sym));
+        if (numeric) die_at(fline, "INSPECT of a numeric or boolean function's value: the subject is alphanumeric or national (2023 14.9.22.3 rule 1)");
+        fsubj = 1;
+        g_insp_nat = opnd_is_national(&fo);
+        emit_str_arg(&fo);                      /* r3 its value, r4 its length */
+        if (g_insp_nat) emit_desc_addr("r5", nat_desc(2)); else emit_li("r5", 0);
+        emit_call("cob_inspect_begin");
+    } else {
+    parse_ref(&item);
     if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
     /* a numeric USAGE NATIONAL item's characters are national too */
     { Opnd io; memset(&io, 0, sizeof io); io.kind = O_REF; io.ref = item; io.line = item.line; no_bits(&io, "INSPECT"); }
@@ -16155,15 +16173,17 @@ static void parse_inspect_1(void)
         die_at(item.line, "INSPECT of '%s', USAGE %s: the item is usage display%s, or a group (%s)", item.sym->name, usage_name(item.sym->usage),
                g_std < 2002 ? "" : " or national", g_std < 2002 ? "X3.23-1985 INSPECT rule 1" : "2023 14.9.22.3 rule 1");
     g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
-    int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
-    Opnd itemo = ref_opnd(&item);
+    itemo = ref_opnd(&item);
     operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
     /* the phrases are registered with the runtime, which makes the one pass
      * the text describes (cob_inspect_run); then each tally is added.  A
      * statement with both TALLYING and REPLACING is two statements, the
      * tallying pass first (X3.23 general rule): two begin/run rounds. */
     { Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin"); }
+    }
+    int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     Ref tallies[32]; int tally_ph[32], nt = 0, np = 0, any = 0;
+    if (fsubj && at_word("converting")) die_at(fline, "INSPECT CONVERTING of a function: %s", fwhy);
     if (accept_word("converting")) {
         Opnd from, to; parse_operand(&from); insp_operand(&from); expect_word("to"); parse_operand(&to);
         if (to.kind == O_REF) insp_operand(&to);
@@ -16220,6 +16240,7 @@ static void parse_inspect_1(void)
             if (!at_operand() || at_word("replacing")) break;
         }
     }
+    if (fsubj && at_word("replacing")) die_at(fline, "INSPECT REPLACING of a function: %s", fwhy);
     if (at_word("replacing") && nt) {
         /* the tallying pass first, its counts added; then the replacing pass */
         emit_call("cob_inspect_run");
@@ -16264,7 +16285,7 @@ static void parse_inspect_1(void)
             if (!(at_word("characters") || at_word("all") || at_word("leading") || at_word("first"))) break;
         }
     }
-    if (!any) die_at(item.line, "INSPECT needs TALLYING, REPLACING or CONVERTING");
+    if (!any) die_at(fline, "INSPECT needs TALLYING, REPLACING or CONVERTING");
     emit_call("cob_inspect_run");
     emit_inspect_tallies(tallies, tally_ph, nt);
 }
