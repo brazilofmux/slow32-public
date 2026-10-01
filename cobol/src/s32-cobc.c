@@ -2650,6 +2650,7 @@ int ext, prompt;            /* positioned DISPLAY/ACCEPT: COB_SX_* bits, the PRO
 int natlit;                 /* a VALUE slot's literal is national: its columns are its display width */
 int line_tp, col_tp, at_tp; /* LINE / POSITION / AT given as identifiers: token positions, stored at run time */
 int idesc;                  /* the item a reference-modified part: its descriptor + 1 (the part's, not the item's) */
+int from_lit;               /* FROM literal-1: a VALUE slot that must have its PICTURE */
 } SField;
 
 typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested group: a window into the slot table */
@@ -20359,6 +20360,14 @@ static void parse_screen_section(void)
                 if (at_word("from") || at_word("to") || at_word("using")) {
                     int kind = at_word("from") ? COB_SCR_FROM : at_word("to") ? COB_SCR_TO : COB_SCR_USING;
                     advance();
+                    if (kind == COB_SCR_FROM && (cur()->kind == T_STR || cur()->kind == T_NUM)) {
+                        /* FROM literal-1 (2002 13.15.1): the literal through
+                         * the entry's PICTURE -- a VALUE with a PICTURE, as
+                         * the slot is finished below */
+                        if (cur()->kind == T_NUM) die_at(t->line, "a screen FROM with a numeric literal is not implemented (2002 13.15.1)");
+                        f->kind = COB_SCR_VALUE; f->value = cur(); f->natlit = cur()->nat; f->from_lit = 1;
+                        advance(); continue;
+                    }
                     /* the reference's tokens are recorded and skipped, as
                      * Report Writer records SOURCE: the table dimensions do
                      * not exist yet, so it is resolved at first use
@@ -20456,6 +20465,7 @@ static void parse_screen_section(void)
                 if (!f->col && gstk[gdepth - 1].col) f->col = gstk[gdepth - 1].col;
                 gstk[gdepth - 1].line = 0; gstk[gdepth - 1].col = 0;    /* the anchor is the first child's */
             }
+            if (f->from_lit && !f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE");   /* rule 7: PICTURE with FROM */
             if (f->kind == COB_SCR_VALUE && f->has_pic) {
                 /* PICTURE with VALUE (2002 13.15.2 rule 7, GR 3: the picture
                  * "may be omitted" for an alphanumeric literal, so it may be
@@ -20463,13 +20473,14 @@ static void parse_screen_section(void)
                  * size, as a MOVE puts it -- padded with spaces, or cut on
                  * the right, which is warned */
                 int pnat = f->pi.category == PIC_NATIONAL;
+                const char *what = f->from_lit ? "FROM" : "VALUE";
                 if (f->pi.category != PIC_ALPHANUMERIC && f->pi.category != PIC_ALPHABETIC && !pnat)
-                    die_at(fline, "a screen VALUE with a numeric or edited PICTURE is not implemented (2002 13.15.2 rule 7)");
+                    die_at(fline, "a screen %s literal with a numeric or edited PICTURE is not implemented (2002 13.15.2 rule 7)", what);
                 if (pnat != !!f->natlit)
-                    die_at(fline, "a screen VALUE literal and its PICTURE are of one class: alphanumeric, or national");
+                    die_at(fline, "a screen %s literal and its PICTURE are of one class: alphanumeric, or national", what);
                 int u = pnat ? 2 : 1, cols = f->pi.bytes / u, have = f->value->len / u;
                 if (have > cols)
-                    warn_at(fline, "the screen VALUE literal (%d characters) is cut to its PICTURE's %d", have, cols);
+                    warn_at(fline, "the screen %s literal (%d characters) is cut to its PICTURE's %d", what, have, cols);
                 Tok *v = xmalloc(sizeof *v); *v = *f->value;
                 char *b = xmalloc((size_t)cols * u + 1);
                 for (int k = 0; k < cols; k++) {

@@ -138,4 +138,5 @@ at run time.
 | rule | paraphrase | disposition |
 |---|---|---|
 | 2002 13.15.2 rule 7; GR 3 | an elementary screen item: PICTURE with FROM, TO or USING; PICTURE with a numeric VALUE; a VALUE literal, its PICTURE "may be omitted" (so it may be written) | **test**: free/scrpicval -- the literal in a field of the picture's size, padded with spaces, or cut on the right with a warning. It was "a VALUE slot takes no PICTURE" (ISSUES-120). A numeric VALUE with a numeric PICTURE is a **gap**, refused naming it |
+| 2002 13.15.1 (source-destination clauses) | FROM literal-1 | **test**: free/scrpicval -- the literal through the entry's PICTURE, as PICTURE with VALUE is; **refused** without a PICTURE: bad/screen-from-lit-nopic. It was "expected a data-name" (abrignoli_COBSOFT's `pic x(01) from "-"`). A numeric literal is a **gap** |
 

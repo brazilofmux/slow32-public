@@ -4795,3 +4795,10 @@ phrase when the variable is present, and blanks the item on the
 exception (MF: undefined; kept here).  Test free/envvar (.env,
 .oracle-expected).
 
+Twentieth batch: **a screen FROM literal** (2002 13.15.1: FROM
+identifier-5 or literal-1).  `pic x(01) from "-"` met "expected a
+data-name"; it is now the literal through the entry's PICTURE, the same
+field as PICTURE with VALUE (padded, or cut with the always-on warning),
+and refused without a PICTURE (rule 7).  A numeric literal is refused as
+not implemented.  Tests free/scrpicval, bad/screen-from-lit-nopic.
+
