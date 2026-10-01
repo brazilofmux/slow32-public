@@ -263,7 +263,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E6_STOP_RUN_VALUE, BP_E7_POSITIONED_IO, BP_E8_HEX_LITERAL, BP_E9_CALL_VALUE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
-       BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE,
+       BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -320,6 +320,9 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "(EXIT PROGRAM syntax rule 1), 2002 does not; taken, as 2002 runs it" },
     { "BP-E22", 'E', "a separator comma or semicolon not followed by a space: the standard's separators are followed "
                      "by one (1985 and 2023 reference format); taken as a separator" },
+    { "BP-E23", 'E', "a condition-name on a group holding items of a usage other than DISPLAY, or JUSTIFIED or "
+                     "SYNCHRONIZED ones (X3.23-1985 VI-21 general rule 2c; 2023 13.16.3 rule 24c and d); taken, the "
+                     "group compared as its bytes, as an 88 VALUE HIGH-VALUES end-of-file flag is written" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -1835,6 +1838,8 @@ static void expand_types(void)
         /* a type declaration: recorded, not emitted */
         int strong = td + 1 < e && tok_is(&g_tok[td + 1], "strong");
         if (g_tok[i + 1].kind != T_WORD) die_at(t->line, "a TYPEDEF entry needs a name");
+        if (!(td == i + 2 || (td == i + 3 && tok_is(&g_tok[i + 2], "is"))))
+            die_at(g_tok[td].line, "'%s': TYPEDEF comes immediately after the data-name (2023 13.16.3 rule 4)", g_tok[i + 1].s);
         if (lv != 1 && lv != 77) die_at(t->line, "a type declaration here is a level 01 or 77 entry");
         if (g_ntypes == g_typecap) { g_typecap = g_typecap ? g_typecap * 2 : 16; g_types = realloc(g_types, (size_t)g_typecap * sizeof *g_types); }
         TypeDef *ty = &g_types[g_ntypes]; memset(ty, 0, sizeof *ty);
@@ -2272,6 +2277,10 @@ static const char *file_name_of(int fd);                /* the FD's file-name (F
 
 static char g_poison[64][64]; static int g_npoison;   /* names whose uses fail quietly: data entries dropped after an error, a refused module's registers */
 
+static int g_lk_check;              /* -std=85, in a PROCEDURE DIVISION after its USING: references to LINKAGE are checked */
+static int g_lk_using[32], g_lk_nusing;   /* that division's USING records, by index */
+static int g_in_proc;               /* (defined with the PROCEDURE DIVISION's state) */
+static void lk_reference(const Sym *s, int line);
 static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
 {
     Sym *found = NULL; int nfound = 0;
@@ -2306,7 +2315,24 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
         die_at(line, "'%s' is not declared", name);
     }
     if (nfound > 1) die_at(line, "'%s' is ambiguous; qualify it with OF/IN", name);
+    if (g_lk_check && g_in_proc && found->is_linkage) lk_reference(found, line);
     return found;
+}
+
+/* X3.23-1985 X-25 and X-26, procedure division header rule 4: an item
+ * of the LINKAGE SECTION is referenced only as, or under, a USING
+ * operand, or a REDEFINES or RENAMES of one (and its 88s and indexes).
+ * Under -std=2002 SET ADDRESS OF gives such an item its storage, so the
+ * rule is left to 2002's own reading (docs/conformance/data-division.md). */
+static void lk_reference(const Sym *s, int line)
+{
+    int r = sym_idx((Sym *)s);
+    while (g_sym[r].parent >= 0) r = g_sym[r].parent;
+    if (g_sym[r].level == 66) return;
+    for (int k = 0; k < g_lk_nusing; k++)
+        if (r == g_lk_using[k] || g_sym[r].redefines == g_lk_using[k]) return;
+    die_at(line, "'%s' is in the LINKAGE SECTION but not a USING operand, nor under or redefining one (X3.23-1985 X-25, procedure division header rule 4)",
+           s->name);
 }
 
 static Sym *sym_lookup_quiet(const char *name)
@@ -2549,9 +2575,12 @@ static void sym_finish(Sym *s)
     }
     int native = usage_is_native(u);
 
+    if (!s->has_pic && !native && g_std >= 2002 && s->value_tok && s->value_tok->kind == T_STR)
+        die_at(s->line, "'%s' has no PICTURE clause: one implied by its VALUE literal (2002 13.13.2 rule 14; 2023 13.16.3 rule 9) is not implemented", s->name);
     if (!s->has_pic && !native)
-        die_at(s->line, "'%s' has no PICTURE clause%s", s->name,
-               s->level == 1 || s->level == 77 ? " (and no subordinate items: an empty group is RM/COBOL's, not taken -- docs/dialect.md)" : "");
+        die_at(s->line, "'%s' has no PICTURE clause%s (%s)", s->name,
+               s->level == 1 || s->level == 77 ? " (and no subordinate items: an empty group is RM/COBOL's, not taken -- docs/dialect.md)" : "",
+               g_std < 2002 ? "X3.23-1985 VI-21, data description entry syntax rule 3" : "2023 13.16.3 rule 8");
     if (s->has_pic && native)
         die_at(s->line, "'%s': USAGE %s takes no PICTURE", s->name, usage_name(u));
 
@@ -2782,6 +2811,45 @@ static void resync_data(int start)
 
 static void parse_data_item1(void);
 static int g_entry_level;             /* the level number of the entry being parsed */
+/* The rules of one data description entry that its own clauses decide
+ * (X3.23-1985 VI-18 and VI-21, X-21 to X-24; 2023 13.16.3, 13.18.22,
+ * 13.18.27): the 77's name, and where EXTERNAL and GLOBAL may stand. */
+static void entry_rules(Sym *s, int level, int line)
+{
+    int e85 = g_std < 2002;
+    int ws = !g_in_linkage && !g_in_local && g_cur_fd < 0;
+    if (level == 77 && s->is_filler)
+        die_at(line, "a level 77 entry needs a data-name (%s)",
+               e85 ? "X3.23-1985 VI-18, noncontiguous working storage" : "2023 13.16.3 rule 2");
+    if ((s->is_external || s->is_global) && s->is_filler)
+        die_at(line, "an entry with %s needs a data-name, not FILLER (%s)", s->is_external ? "EXTERNAL" : "GLOBAL",
+               e85 ? "X3.23-1985 X-21, data description entry syntax rule 5" : "2023 13.16.3 rule 7");
+    if (s->is_external) {
+        if (level != 1 || !ws)
+            die_at(line, "'%s': EXTERNAL is for a level 01 entry in the WORKING-STORAGE SECTION (%s)", s->name,
+                   e85 ? "X3.23-1985 X-21, data description entry syntax rule 2" : "2023 13.18.22.3 rule 1");
+        if (s->redef_clause)
+            die_at(line, "'%s': EXTERNAL and REDEFINES cannot be in the same entry (%s)", s->name,
+                   e85 ? "X3.23-1985 X-21, data description entry syntax rule 3" : "2023 13.16.3 rule 5");
+        if (s->is_based)
+            die_at(line, "'%s': EXTERNAL and BASED cannot be in the same entry (2002 13.13.2 rule 5; 2023 13.16.3 rule 5)", s->name);
+        for (int i = g_sym_base; i < sym_idx(s); i++)
+            if (g_sym[i].is_external && g_sym[i].level == 1 && !strcmp(g_sym[i].name, s->name))
+                die_at(line, "'%s' is described EXTERNAL twice in this program (%s)", s->name,
+                       e85 ? "X3.23-1985 X-23, EXTERNAL syntax rule 2" : "2023 13.18.22.3 rule 2");
+    }
+    if (s->is_global) {
+        if (level != 1 || (e85 && (g_in_linkage || g_in_local)))
+            die_at(line, "'%s': GLOBAL is for a level 01 entry in the %s (%s)", s->name,
+                   e85 ? "FILE or WORKING-STORAGE SECTION" : "FILE, WORKING-STORAGE, LOCAL-STORAGE or LINKAGE SECTION",
+                   e85 ? "X3.23-1985 X-24, GLOBAL syntax rule 1" : "2023 13.18.27.3 rule 1");
+        if (e85)
+            for (int i = g_sym_base; i < sym_idx(s); i++)
+                if (g_sym[i].is_global && !g_sym[i].is_cond && !strcmp(g_sym[i].name, s->name))
+                    die_at(line, "'%s' names two GLOBAL items in this DATA DIVISION (X3.23-1985 X-24, GLOBAL syntax rule 2)", s->name);
+    }
+}
+
 static void parse_data_item(void)
 {
     jmp_buf jb, *outer = g_recover;
@@ -3001,6 +3069,7 @@ static void parse_data_item1(void)
         return;
     }
 
+    Tok *first_clause = cur();
     while (cur()->kind != T_PERIOD) {
         Tok *t = cur();
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
@@ -3225,6 +3294,9 @@ static void parse_data_item1(void)
             continue;
         }
         if (!strcmp(t->s, "redefines")) {
+            if (t != first_clause)
+                die_at(t->line, "'%s': REDEFINES comes first, immediately after the data-name or FILLER (%s)", s->name,
+                       g_std < 2002 ? "X3.23-1985 VI-21, data description entry syntax rule 2" : "2023 13.16.3 rule 4");
             advance();
             if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after REDEFINES");
             if (!strcmp(cur()->s, "filler")) die_at(t->line, "REDEFINES FILLER: the redefined item needs a name (FILLER cannot be referenced)");
@@ -3292,11 +3364,31 @@ static void parse_data_item1(void)
             continue;
         }
         if (!strcmp(t->s, "global")) { advance(); s->is_global = 1; continue; }
-        if (!strcmp(t->s, "external")) { advance(); s->is_external = 1; continue; }
+        if (!strcmp(t->s, "external")) {
+            advance(); s->is_external = 1;
+            if (at_word("as"))
+                die_at(cur()->line, g_std < 2002 ? "EXTERNAL AS is not COBOL 85 (X3.23-1985 X-23)" :
+                       "'%s': EXTERNAL AS literal, an externalized name, is not implemented (2023 13.18.22)", s->name);
+            continue;
+        }
+        if (!strcmp(t->s, "constant") && is_word(peek(1), "record"))
+            die_at(t->line, "'%s': the CONSTANT RECORD clause is COBOL 2014, beyond %s (2023 13.18.15)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
+        if (!strcmp(t->s, "constant"))
+            die_at(t->line, g_std < 2002 ? "a constant entry (level 01 CONSTANT) is not COBOL 85" :
+                   "'%s': the constant entry (level 01 CONSTANT, 2023 13.10) is not implemented", s->name);
+        if (!strcmp(t->s, "dynamic") && is_word(peek(1), "length"))
+            die_at(t->line, "'%s': the DYNAMIC LENGTH clause is COBOL 2014, beyond %s (2023 13.18.19)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
+        if ((!strcmp(t->s, "same") && is_word(peek(1), "as")) || (!strcmp(t->s, "any") && is_word(peek(1), "length")) || !strcmp(t->s, "locale")) {
+            const char *what = !strcmp(t->s, "same") ? "the SAME AS clause (2023 13.18.49)" :
+                               !strcmp(t->s, "any") ? "the ANY LENGTH clause (2023 13.18.2)" : "the LOCALE phrase of PICTURE (2023 13.18.40)";
+            if (g_std < 2002) die_at(t->line, "'%s': %s is COBOL 2002, not 85", s->name, what);
+            die_at(t->line, "'%s': %s is not implemented", s->name, what);
+        }
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
     }
     expect_period();
 
+    entry_rules(s, level, line);
     if (level == 77 && s->occurs)
         die_at(line, "a level 77 item cannot have OCCURS");
     if ((s->sign_lead || s->sign_sep) && s->has_pic && (s->usage != U_DISPLAY || s->pi.category != PIC_NUMERIC || !s->pi.is_signed))
@@ -3608,7 +3700,12 @@ static void build_tree(void)
         if (!s->is_group && s->usage == U_POINTER && s->level != 1 && !sym_in_strong(s))
             die_at(s->line, "'%s': a USAGE POINTER item is at level 1, or in a strongly-typed group (2023 13.18.60.3 rule 14; 2002 rule 13)", s->name);
         if (s->is_group && s->has_pic && s->standin) s->has_pic = 0;      /* it stood in for a group: no second error */
-        if (s->is_group && s->has_pic) die_at(s->line, "'%s' is a group and cannot have a PICTURE", s->name);
+        if (s->is_group && s->has_pic)
+            die_at(s->line, "'%s' is a group and cannot have a PICTURE (%s)", s->name,
+                   g_std < 2002 ? "X3.23-1985 VI-21, data description entry general rule 1" : "2023 13.16.3 rule 11");
+        if (s->is_group && s->blank_zero)
+            die_at(s->line, "'%s' is a group and cannot have BLANK WHEN ZERO (%s)", s->name,
+                   g_std < 2002 ? "X3.23-1985 VI-21, data description entry general rule 1" : "2023 13.16.3 rule 11");
         if (s->is_group && s->nat_usage) {
             /* USAGE NATIONAL on a group: every subordinate's, as any USAGE */
             for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
@@ -3630,6 +3727,18 @@ static void build_tree(void)
         }
         if (!s->is_group) sym_finish(s);
     }
+    /* no VALUE in an EXTERNAL record under 85, except on its 88s (X-23,
+     * EXTERNAL syntax rule 3); 2023 lets INITIALIZE apply it (13.18.63) */
+    if (g_std < 2002)
+        for (int i = g_sym_base; i < g_nsym; i++) {
+            const Sym *s = &g_sym[i];
+            if (s->is_cond || !s->value_tok) continue;
+            int r = i;
+            while (g_sym[r].parent >= 0) r = g_sym[r].parent;
+            if (g_sym[r].is_external)
+                die_at(s->line, "'%s': no VALUE clause in or under the EXTERNAL record '%s', except on a level 88 (X3.23-1985 X-23, EXTERNAL syntax rule 3)",
+                       s->name, g_sym[r].name);
+        }
     /* level 88 parents: the item they follow; a 88 under an 88 shares it */
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
@@ -3637,6 +3746,25 @@ static void build_tree(void)
         int p = s->parent;
         if (g_sym[p].is_cond) s->parent = g_sym[p].parent;
         const Sym *cv = &g_sym[s->parent];
+        int e85 = g_std < 2002;
+        if (cv->level == 66)
+            die_at(s->line, "'%s': a level 66 entry is not a conditional variable (%s)", s->name,
+                   e85 ? "X3.23-1985 VI-21, data description entry general rule 2b" : "2023 13.16.3 rule 24b");
+        if (cv->is_group) {
+            /* not a group with JUSTIFIED or SYNCHRONIZED items, nor (an
+             * alphanumeric group, 2002 on) with items of another usage
+             * than display (85 general rule 2c; 2023 rule 24c and d) */
+            int alnum = !cv->natgroup && !cv->bitgroup;
+            for (int j = s->parent + 1; j < g_nsym; j++) {
+                const Sym *m = &g_sym[j];
+                if (m->is_index) continue;               /* index-names sit among the entries */
+                if (!sym_under(j, s->parent)) break;
+                if (m->is_cond || m->level == 66) continue;
+                const char *why = m->just ? "JUSTIFIED" : m->sync ? "SYNCHRONIZED" :
+                                  (!m->is_group && m->usage != U_DISPLAY && (e85 || alnum) && !m->nat_usage) ? "a usage other than DISPLAY" : NULL;
+                if (why) { bp(BP_E23_CONDNAME_GROUP, s->line); break; }   /* majesty's 88 ... VALUE HIGH-VALUES flags */
+            }
+        }
         if (!cv->is_group && (cv->usage == U_INDEX || cv->usage == U_POINTER))
             die_at(s->line, "'%s': a %s item is not a conditional variable (%s)", s->name,
                    cv->usage == U_INDEX ? "USAGE INDEX" : "USAGE POINTER",
@@ -4020,6 +4148,18 @@ static void finish_data_division(void)
         int r = i; while (g_sym[r].parent >= 0) r = g_sym[r].parent;
         s->record = r;
     }
+    /* SAME RECORD AREA: no GLOBAL on its files or their records
+     * (X3.23-1985 X-24, GLOBAL syntax rule 3; 2023 13.18.27.3 rule 2) */
+    for (int g = 0; g < g_nsame_groups; g++)
+        for (int k = 0; k < g_nsame[g]; k++) {
+            int fi = g_same[g][k];
+            int glob = g_files[fi].global;
+            for (int i = g_sym_base; i < g_nsym && !glob; i++)
+                if (g_sym[i].fd == fi && g_sym[i].level == 1 && g_sym[i].is_global) glob = 1;
+            if (glob)
+                die_at(g_files[fi].line, "file '%s' is in a SAME RECORD AREA, so neither it nor its records can be GLOBAL (%s)", g_files[fi].name,
+                       g_std < 2002 ? "X3.23-1985 X-24, GLOBAL syntax rule 3" : "2023 13.18.27.3 rule 2");
+        }
     /* SAME RECORD AREA: the later files' first 01s redefine the first file's */
     for (int g = 0; g < g_nsame_groups; g++)
         for (int k = 1; k < g_nsame[g]; k++) {
@@ -17191,6 +17331,7 @@ static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
     g_cur_stmt[0] = 0; g_in_proc = 1;
+    g_lk_check = 0;                     /* until this division's USING is known */
     g_uses_rc = 0;
     for (int k = g_tp; k < g_ntok && !(g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "end") && k + 1 < g_ntok && is_word(&g_tok[k + 1], "program")); k++)
         if (g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "return-code")) { g_uses_rc = !sym_lookup_quiet("return-code"); break; }
@@ -17230,6 +17371,9 @@ static void parse_procedure_division(void)
             advance();
         }
     }
+    g_lk_nusing = nusing;
+    for (int k = 0; k < nusing; k++) g_lk_using[k] = using[k]->record;
+    g_lk_check = g_std < 2002;
     /* BY VALUE parameters live in this activation's frame, above FRAME */
     int voff[32], ext = 0, any_opt = 0;
     for (int i = 0; i < nusing; i++) {
@@ -19011,18 +19155,35 @@ static void parse_screen_section(void)
     }
 }
 
+/* the sections in their order (X3.23-1985 IV-34, which "defines the order
+ * of their presentation"; 2023 13.2.1): each at most once, in this order */
+static void section_order(int *last, int rank, const char *name)
+{
+    static const char *names[] = { "", "FILE", "WORKING-STORAGE", "LOCAL-STORAGE", "LINKAGE", "COMMUNICATION", "REPORT", "SCREEN" };
+    if (rank == *last)
+        die_at(cur()->line, "a second %s SECTION (%s)", name,
+               g_std < 2002 ? "X3.23-1985 IV-34, the DATA DIVISION's sections" : "2023 13.2.1");
+    if (rank < *last)
+        die_at(cur()->line, "the %s SECTION follows the %s SECTION here, but comes before it (%s)", name, names[*last],
+               g_std < 2002 ? "X3.23-1985 IV-34, the order of the DATA DIVISION's sections" : "2023 13.2.1");
+    *last = rank;
+}
+
 static void parse_data_division(void)
 {
     if (!accept_word("data")) { finish_data_division(); return; }
     expect_word("division"); expect_period();
+    int last = 0;
     for (;;) {
         if (at_word("file") && is_word(peek(1), "section")) {
+            section_order(&last, 1, "FILE");
             advance(); advance(); expect_period();
             while (at_word("fd") || at_word("sd")) parse_fd();
             g_cur_fd = -1;
             continue;
         }
         if (at_word("working-storage")) {
+            section_order(&last, 2, "WORKING-STORAGE");
             advance(); expect_word("section"); expect_period();
             while (cur()->kind == T_NUM || cur()->kind == T_SQL) { if (cur()->kind == T_SQL) parse_exec_sql_data(); else parse_data_item(); }
             continue;
@@ -19031,6 +19192,7 @@ static void parse_data_division(void)
             /* COBOL 2002: automatic data, a fresh copy for every activation
              * (2023 8.6.4), reached through a cell like a LINKAGE record */
             if (g_std < 2002) die_at(cur()->line, "the LOCAL-STORAGE SECTION is COBOL 2002; compile with -std=2002 (docs/standards.md, Stage B)");
+            section_order(&last, 3, "LOCAL-STORAGE");
             advance(); advance(); expect_period();
             g_in_local = 1;
             while (cur()->kind == T_NUM || cur()->kind == T_SQL) { if (cur()->kind == T_SQL) parse_exec_sql_data(); else parse_data_item(); }
@@ -19038,6 +19200,7 @@ static void parse_data_division(void)
             continue;
         }
         if (at_word("linkage") && is_word(peek(1), "section")) {
+            section_order(&last, 4, "LINKAGE");
             advance(); advance(); expect_period();
             g_in_linkage = 1;
             while (cur()->kind == T_NUM || cur()->kind == T_SQL) { if (cur()->kind == T_SQL) parse_exec_sql_data(); else parse_data_item(); }
@@ -19045,12 +19208,14 @@ static void parse_data_division(void)
             continue;
         }
         if (at_word("report") && is_word(peek(1), "section")) {
+            section_order(&last, 6, "REPORT");
             advance(); advance(); expect_period();
             while (at_word("rd")) parse_rd();
             continue;
         }
         if (at_word("screen") && is_word(peek(1), "section")) {
             if (g_std < 2002) bp(BP_E10_SCREEN_SECTION, cur()->line);
+            section_order(&last, 7, "SCREEN");
 
             advance(); advance(); expect_period();
             parse_screen_section();

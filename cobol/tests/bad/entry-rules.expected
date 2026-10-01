@@ -1,0 +1,3 @@
+'a': REDEFINES comes first, immediately after the data-name or FILLER (X3.23-1985 VI-21, data description entry syntax rule 2)
+a level 77 entry needs a data-name (X3.23-1985 VI-18, noncontiguous working storage)
+'g' is a group and cannot have BLANK WHEN ZERO (X3.23-1985 VI-21, data description entry general rule 1)

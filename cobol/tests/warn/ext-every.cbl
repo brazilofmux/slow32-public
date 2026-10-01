@@ -33,6 +33,9 @@ working-storage section.
 01  fine   pic 9v9999 value 0.
 01  otab.
     05 oe  pic x occurs 1 to 3 depending on k.
+01  eofrec.                                *> BP-E23
+    88 eof value high-values.
+    05 eofk pic 9(5) packed-decimal.
 screen section.
 01  sc.
     05 line 1 col 1 value "hello".

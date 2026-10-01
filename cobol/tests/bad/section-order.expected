@@ -1,0 +1,1 @@
+the FILE SECTION follows the WORKING-STORAGE SECTION here, but comes before it (X3.23-1985 IV-34, the order of the DATA DIVISION's sections)

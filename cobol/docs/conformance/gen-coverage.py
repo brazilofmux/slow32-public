@@ -120,12 +120,13 @@ def readme_sections():
                 continue
             cell = ln.split("|")[1]
             nums = set()
-            # 14.9.6/.10/.27: the shorthand continues the first number
+            # 14.9.6/.10/.27: the shorthand continues the first number;
+            # 13.18.32, .33, .52: so does a comma-separated list
             for full, tail in re.findall(
-                    r"\b((?:1[0-6]|[7-9])\.\d+(?:\.\d+)*)((?:/\.\d+)*)", cell):
+                    r"\b((?:1[0-6]|[7-9])\.\d+(?:\.\d+)*)((?:(?:/|,\s*)\.\d+)*)", cell):
                 nums.add(full)
                 stem = full.rsplit(".", 1)[0]
-                for t in re.findall(r"/\.(\d+)", tail):
+                for t in re.findall(r"(?:/|,\s*)\.(\d+)", tail):
                     nums.add(stem + "." + t)
             words = set(re.findall(r"\b[A-Z][A-Z0-9-]{1,}\b", cell))
             ent = res.setdefault(m.group(1), [set(), set()])

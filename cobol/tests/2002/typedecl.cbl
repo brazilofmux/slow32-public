@@ -11,8 +11,8 @@ program-id. typedecl.
 *> -std=cobol2002 and, by default, not a type used inside a type.
 data division.
 working-storage section.
-01  money-t     pic s9(7)v99 comp-3 typedef.
-01  flag-t      pic x value "n" typedef.
+01  money-t     typedef pic s9(7)v99 comp-3.
+01  flag-t      typedef pic x value "n".
 01  point-t     typedef.
     05 px       pic s999 value 0.
     05 py       pic s999 value 0.

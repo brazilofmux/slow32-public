@@ -17,11 +17,11 @@ carry the compiler's own reason.
 | 10 the compilation group | 2 | 0 | 0 | 2 |
 | 11 IDENTIFICATION DIVISION | 15 | 1 | 0 | 14 |
 | 12 ENVIRONMENT DIVISION | 22 | 13 | 0 | 9 |
-| 13 DATA DIVISION | 78 | 18 | 0 | 60 |
+| 13 DATA DIVISION | 78 | 29 | 0 | 49 |
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
 | 15 intrinsic functions | 94 | 72 | 22 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **154** | **29** | **141** |
+| **all** | **324** | **165** | **29** | **130** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -150,19 +150,19 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 13.2 |  | *unswept* | | | | | |
+| 13.2 |  | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.4 |  | [files](files.md) | 0 | 18 | 0 | 0 | 0 |
 | 13.4.5 |  | [files](files.md) | 0 | 18 | 0 | 0 | 0 |
 | 13.4.6 |  | *unswept* | | | | | |
-| 13.5 |  | *unswept* | | | | | |
-| 13.6 |  | *unswept* | | | | | |
-| 13.7 |  | *unswept* | | | | | |
+| 13.5 |  | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
+| 13.6 |  | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
+| 13.7 |  | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.8 |  | *unswept* | | | | | |
 | 13.9 |  | *unswept* | | | | | |
-| 13.10 |  | *unswept* | | | | | |
+| 13.10 |  | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.14 |  | *unswept* | | | | | |
 | 13.15 |  | *unswept* | | | | | |
-| 13.16 |  | *unswept* | | | | | |
+| 13.16 |  | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.17 |  | *unswept* | | | | | |
 | 13.18.1 | ALIGNED clause | *unswept* | | | | | |
 | 13.18.2 | ANY LENGTH clause | *unswept* | | | | | |
@@ -176,27 +176,27 @@ carry the compiler's own reason.
 | 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 0 | 18 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
 | 13.18.12 | CODE clause | *unswept* | | | | | |
-| 13.18.13 | CODE-SET clause | *unswept* | | | | | |
+| 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.18.14 | COLUMN clause | *unswept* | | | | | |
 | 13.18.15 | CONSTANT RECORD clause | *unswept* | | | | | |
 | 13.18.16 | CONTROL clause | *unswept* | | | | | |
 | 13.18.17 | DEFAULT clause | *unswept* | | | | | |
 | 13.18.18 | DESTINATION clause | *unswept* | | | | | |
 | 13.18.19 | DYNAMIC LENGTH clause | *unswept* | | | | | |
-| 13.18.20 |  | *unswept* | | | | | |
+| 13.18.20 |  | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.18.21 | ERASE clause | *unswept* | | | | | |
-| 13.18.22 | EXTERNAL clause | *unswept* | | | | | |
+| 13.18.22 | EXTERNAL clause | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.18.23 | FOREGROUND-COLOR clause | *unswept* | | | | | |
 | 13.18.24 | FORMAT clause | *unswept* | | | | | |
 | 13.18.25 | FROM clause | *unswept* | | | | | |
 | 13.18.26 | FULL clause | *unswept* | | | | | |
-| 13.18.27 | GLOBAL clause | *unswept* | | | | | |
+| 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 14 | 31 | 4 | 1 | 4 |
 | 13.18.28 | GROUP INDICATE clause | *unswept* | | | | | |
 | 13.18.29 | GROUP-USAGE clause | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
 | 13.18.30 | HIGHLIGHT clause | *unswept* | | | | | |
 | 13.18.31 | INVALID clause | *unswept* | | | | | |
 | 13.18.32 | JUSTIFIED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
-| 13.18.33 |  | *unswept* | | | | | |
+| 13.18.33 |  | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.34 | LINAGE clause | [files](files.md) | 0 | 18 | 0 | 0 | 0 |
 | 13.18.35 | LINE clause | *unswept* | | | | | |
 | 13.18.36 | LOWLIGHT clause | *unswept* | | | | | |

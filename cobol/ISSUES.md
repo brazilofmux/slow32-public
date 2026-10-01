@@ -4406,3 +4406,46 @@ Systems paper unchanged, wide-differential agrees. Not done: the
 floating functions keep their double-precision S9(9)V9(9) result
 (docs/wide.md).
 
+
+### 118. The DATA DIVISION sweep (2026-09-30)
+
+docs/conformance/data-division.md: the sections, the data description
+entry, FILLER, EXTERNAL, GLOBAL, CODE-SET, LINKAGE. Rules that were
+accepted and are now refused, each with a test:
+
+- the sections out of order, or one twice (85 IV-34): bad/section-order,
+  bad/section-twice;
+- REDEFINES after another clause; BLANK WHEN ZERO on a group; a level 77
+  entry with no name (85 VI-18, VI-21): bad/entry-rules;
+- a condition-name on a level 66 entry, which was refused with a VALUE
+  length message instead: bad/condname-66;
+- EXTERNAL below level 01, in LINKAGE, on FILLER, with REDEFINES or
+  BASED, twice under one name, and under 85 with a VALUE (X-21, X-23):
+  bad/external-rules;
+- GLOBAL below level 01, on a 77, in LINKAGE under 85, on FILLER, twice
+  under one name (X-21, X-24): bad/global-rules; and on a file in a SAME
+  RECORD AREA: bad/global-sra;
+- under -std=85, a LINKAGE item that is not a USING operand, nor under or
+  redefining one (X-25, rule 4): bad/linkage-ref;
+- TYPEDEF after another clause (2002 13.13.2 and 2023 13.16.3, rule 4:
+  immediately after the name). Two of our own tests had TYPEDEF last,
+  as GnuCOBOL accepts it: 2002/typedecl and bad/std2002-typedef-strong,
+  corrected.
+
+Messages that now name the rule or the feature: an elementary item
+without a PICTURE (bad/no-picture), a group with one (bad/group-picture);
+the 2002 features not implemented -- the constant entry, EXTERNAL AS, a
+PICTURE implied by VALUE, SAME AS, ANY LENGTH, LOCALE -- and the 2014
+ones, CONSTANT RECORD and DYNAMIC LENGTH, which were "unexpected 'x'".
+
+One rule became a behavior point instead: 85 general rule 2c (2023 rule
+24c and d) keeps a condition-name off a group holding COMP, PACKED,
+JUSTIFIED or SYNCHRONIZED items. Majesty's records carry `88 ... VALUE
+HIGH-VALUES` end-of-file flags over packed fields (crgltrans and the
+copybook test failed when it was refused), so it is BP-E23: taken,
+warned under -warn-extensions.
+
+Open: a function's formal parameter used as a receiving operand (2002
+and 2023 13.7.3 rule 5) is accepted. Receiving operands are parsed by
+each statement, with no common point to check them; a function that
+changes its parameter changes its caller's argument.

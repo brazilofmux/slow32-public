@@ -1,0 +1,1 @@
+file 'f1' is in a SAME RECORD AREA, so neither it nor its records can be GLOBAL (X3.23-1985 X-24, GLOBAL syntax rule 3)

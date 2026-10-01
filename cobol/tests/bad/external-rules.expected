@@ -1,0 +1,6 @@
+'e1': EXTERNAL is for a level 01 entry in the WORKING-STORAGE SECTION (X3.23-1985 X-21, data description entry syntax rule 2)
+an entry with EXTERNAL needs a data-name, not FILLER (X3.23-1985 X-21, data description entry syntax rule 5)
+'e2': EXTERNAL and REDEFINES cannot be in the same entry (X3.23-1985 X-21, data description entry syntax rule 3)
+'e3' is described EXTERNAL twice in this program (X3.23-1985 X-23, EXTERNAL syntax rule 2)
+'e5': EXTERNAL is for a level 01 entry in the WORKING-STORAGE SECTION (X3.23-1985 X-21, data description entry syntax rule 2)
+'v': no VALUE clause in or under the EXTERNAL record 'e4', except on a level 88 (X3.23-1985 X-23, EXTERNAL syntax rule 3)

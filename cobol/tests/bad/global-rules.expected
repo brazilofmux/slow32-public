@@ -1,0 +1,5 @@
+'g1': GLOBAL is for a level 01 entry in the FILE or WORKING-STORAGE SECTION (X3.23-1985 X-24, GLOBAL syntax rule 1)
+'g2': GLOBAL is for a level 01 entry in the FILE or WORKING-STORAGE SECTION (X3.23-1985 X-24, GLOBAL syntax rule 1)
+an entry with GLOBAL needs a data-name, not FILLER (X3.23-1985 X-21, data description entry syntax rule 5)
+'g3' names two GLOBAL items in this DATA DIVISION (X3.23-1985 X-24, GLOBAL syntax rule 2)
+'g4': GLOBAL is for a level 01 entry in the FILE or WORKING-STORAGE SECTION (X3.23-1985 X-24, GLOBAL syntax rule 1)
