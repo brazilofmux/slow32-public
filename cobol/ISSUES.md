@@ -5159,14 +5159,14 @@ the data is moved to it (14.9.25.4), an arithmetic statement's as each
 is accessed (14.7.7 rule 4b), a DIVIDE's dividend as each is determined
 and its REMAINDER after the quotient is stored (14.9.12.4), READ and
 RETURN INTO's after the record is read and not at all when the read
-fails (14.9.30.4).  4f4da3b5 made receivers' calls first with the
+fails (14.9.30.4, 14.9.34.4).  4f4da3b5 made receivers' calls first with the
 rest; before the pass they were made as the address was formed -- the
 right time, if twice.  Now those receivers are read as scans and their
 calls made in place where the item is stored (recv_calls, held out of
 the statement's list), once; a statement with such a receiver takes the
 stack's stores (hx_ok, dx_ok, refs_hot, dec_add_ok decline).  Not yet
 so, their calls made first: SET's receivers (immediately before each is
-changed, 14.9.35.4), UNSTRING's, a PERFORM VARYING item.
+changed, 14.9.39.4), UNSTRING's, a PERFORM VARYING item.
 
 Also: a subscript written FUNCTION f(x) was taken for a data-name
 'function' (sub_is_expr); only the bare f(x) form was an expression.
