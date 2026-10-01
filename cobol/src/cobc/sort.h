@@ -356,19 +356,32 @@ static void emit_vary_init(Vary *x)
     emit_move(&x->from, &x->var);
 }
 
+/* A loop is laid out with its test at the bottom: one jump in, to the
+ * test, and then each iteration is the body and the test's own branch
+ * back -- not a test, the body and a jump back to the test. */
 static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
 {
     Vary *x = &v[level];
     emit_vary_init(x);
-    int Ltop = new_label(), Lend = new_label();
-    emit_label(Ltop);
-    if (!test_after) cond_jump_true(x->until, Lend);
-    if (level + 1 < nv) emit_varying(v, nv, level + 1, body, test_after);
-    else emit_body(body);
-    if (test_after) cond_jump_true(x->until, Lend);
-    emit_add_to_ref(&x->by, &x->var);
-    emit_jump(Ltop);
-    emit_label(Lend);
+    if (test_after) {
+        int Ltop = new_label(), Lend = new_label();
+        emit_label(Ltop);
+        if (level + 1 < nv) emit_varying(v, nv, level + 1, body, test_after);
+        else emit_body(body);
+        cond_jump_true(x->until, Lend);
+        emit_add_to_ref(&x->by, &x->var);
+        emit_jump(Ltop);
+        emit_label(Lend);
+    } else {
+        int Lbody = new_label(), Ltest = new_label();
+        emit_jump(Ltest);
+        emit_label(Lbody);
+        if (level + 1 < nv) emit_varying(v, nv, level + 1, body, test_after);
+        else emit_body(body);
+        emit_add_to_ref(&x->by, &x->var);
+        emit_label(Ltest);
+        cond_jump_false(x->until, Lbody);
+    }
     /* an inner item goes back to its FROM when its condition is true and
      * the outer one is augmented (6.20.4), so it reads FROM at the end */
     if (level > 0) emit_vary_init(x);
@@ -698,12 +711,12 @@ static void parse_perform(void)
         break;
     }
     case PF_UNTIL: {
-        int Ltop = new_label(), Lend = new_label();
-        emit_label(Ltop);
-        if (!test_after) cond_jump_true(c, Lend);
+        int Lbody = new_label(), Ltest = new_label();
+        if (!test_after) emit_jump(Ltest);      /* WITH TEST AFTER falls into the body */
+        emit_label(Lbody);
         emit_body(&body);
-        if (test_after) cond_jump_false(c, Ltop); else emit_jump(Ltop);
-        emit_label(Lend);
+        emit_label(Ltest);
+        cond_jump_false(c, Lbody);
         break;
     }
     case PF_VARYING:
@@ -724,16 +737,18 @@ static void parse_perform(void)
         }
         emit_la("r2", cnt);
         emit("\tstw r2+0, r1");
-        int Ltop = new_label(), Lend = new_label();
-        emit_label(Ltop);
+        /* the count left to do, in r1 at the test: the whole count coming
+         * in, one less after each execution of the body */
+        int Lbody = new_label(), Ltest = new_label();
+        emit_jump(Ltest);
+        emit_label(Lbody);
+        emit_body(&body);
         emit_la("r2", cnt);
         emit("\tldw r1, r2+0");
-        emit("\tbge r0, r1, .L%d", Lend);
         emit("\taddi r1, r1, -1");
         emit("\tstw r2+0, r1");
-        emit_body(&body);
-        emit_jump(Ltop);
-        emit_label(Lend);
+        emit_label(Ltest);
+        emit("\tblt r0, r1, .L%d", Lbody);
         break;
     }
     default:

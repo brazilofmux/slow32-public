@@ -5081,3 +5081,27 @@ statements into a Block (parse_inline_body, with the EXIT PERFORM
 labels), and only then emits the loop; emit_body places the block.  The
 same layout as before: 203 programs' labels renumbered, all the same
 code (asm-equiv).
+
+**Loops tested at the bottom.**  A test-before loop was laid out as the
+test, the body, and a jump back to the test; it is now one jump in, to
+the test, and then the body and the test's own branch back -- PERFORM
+UNTIL, VARYING (each level of AFTER), and TIMES (the count left kept in
+r1 at the test, one less after each execution of the body).  WITH TEST
+AFTER was already so.  The static size is the same (3,194,291
+instructions over the snapshot, before and after); each iteration is
+one instruction shorter: a program of five counted loops, 4.3 million
+iterations, went from 220,123,749 instructions to 215,823,751.  What an
+iteration mostly costs is the items, not the loop: a COMP item is
+big-endian, so every access is a byte swap, a truncating rem and a
+byte-wise store.
+
+Checked by running.  gen-flow.py gained PERFORM: inline and of
+paragraphs (THRU), TIMES, UNTIL, VARYING up and down, WITH TEST AFTER,
+VARYING ... AFTER, nested inline loops, a GO TO out of an inline body.
+60 programs agree with GnuCOBOL; 200 are the same through the compiler
+before and after.  Mutation testing found a hole in the generator
+first: a VARYING loop that skipped its first test passed all 60
+programs, because every generated VARYING ran at least once.  With
+loops whose condition holds at the start, that mutant shows in 12 of
+60, and a TIMES loop that runs once too often in 60 of 60.  CCVS-85
+before and after: identical.

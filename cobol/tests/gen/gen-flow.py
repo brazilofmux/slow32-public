@@ -17,6 +17,10 @@ mistake would change:
   ERROR fires, with GO TO, DISPLAY or CONTINUE in either phrase;
 - EVALUATE of an item, an expression or TRUE, WHEN bodies that are GO
   TO, DISPLAY or CONTINUE, THRU ranges, WHEN OTHER or none;
+- PERFORM loops, inline and of paragraphs (Q1..Q4, THRU): TIMES, UNTIL,
+  VARYING up and down, WITH TEST AFTER, VARYING ... AFTER, nested
+  inline loops, a GO TO out of an inline body; every loop is counted,
+  so every program ends;
 - a sequential file written and read back in a loop, AT END GO TO and
   NOT AT END;
 - CALL of a program that does not exist, ON EXCEPTION GO TO / DISPLAY,
@@ -52,6 +56,10 @@ def main():
     w("01  S2 PIC 9(2) VALUE 0.")         # small: SIZE ERROR fires
     w("01  CNT PIC 9(3) VALUE 0.")
     w("01  K PIC 9(3) VALUE 0.")
+    for i in range(1, 4):
+        w("01  L%d PIC S9(3) VALUE 0." % i)    # loop items: only the loops change them
+    w("01  T1 PIC S9(3) VALUE 0.")
+    w("01  U1 PIC S9(3) VALUE 0.")            # counted by the performed paragraphs, for their UNTIL loops
     w("PROCEDURE DIVISION.")
 
     def var():
@@ -144,6 +152,62 @@ def main():
             s += " WHEN OTHER %s" % phrase(i)
         return s + " END-EVALUATE"
 
+    def varying(lv):
+        # n < 0: the condition holds at the start, and the body is not
+        # executed at all (unless the test is after)
+        if r.random() < 0.75:
+            a = r.randint(-2, 3); n = r.randint(-2, 4); by = r.randint(1, 3)
+            return "VARYING %s FROM %d BY %d UNTIL %s > %d" % (lv, a, by, lv, a + n)
+        a = r.randint(0, 5); n = r.randint(-2, 4); by = r.randint(1, 2)
+        return "VARYING %s FROM %d BY -%d UNTIL %s < %d" % (lv, a, by, lv, a - n)
+
+    def test_phrase():
+        k = r.random()
+        return "WITH TEST AFTER " if k < 0.25 else "WITH TEST BEFORE " if k < 0.35 else ""
+
+    def loop_body(i, depth):
+        lv = "L%d" % depth
+        st = ['DISPLAY "B%d-%d " %s' % (i, r.randrange(1000), lv)]
+        for _ in range(r.randint(0, 2)):
+            k = r.random()
+            if k < 0.45:
+                st.append(simple(i))
+            elif k < 0.6 and depth < 3:
+                st.append(inline_loop(i, depth + 1))
+            elif k < 0.75 and i < npara:
+                st.append(evaluate(i))
+            elif k < 0.85 and i < npara:
+                st.append("IF %s GO TO %s END-IF" % (cond(), target(i)))
+            else:
+                st.append("ADD 1 TO T1")
+        return " ".join(st)
+
+    def inline_loop(i, depth=1):
+        lv = "L%d" % depth
+        k = r.random()
+        if k < 0.3:
+            return "PERFORM %d TIMES %s END-PERFORM" % (r.randint(0, 4), loop_body(i, depth))
+        if k < 0.4:
+            return "MOVE %d TO %s PERFORM %s TIMES %s END-PERFORM" % (r.randint(-1, 3), lv, lv, loop_body(i, depth).replace("ADD 1 TO T1", "CONTINUE"))
+        if k < 0.7:
+            return "PERFORM %s%s %s END-PERFORM" % (test_phrase(), varying(lv), loop_body(i, depth))
+        return "MOVE 0 TO %s PERFORM %sUNTIL %s >= %d %s ADD 1 TO %s END-PERFORM" % (lv, test_phrase(), lv, r.randint(0, 4), loop_body(i, depth), lv)
+
+    def para_loop():
+        rng = "Q%d" % r.randint(1, 4)
+        if r.random() < 0.3:
+            a = r.randint(1, 3); rng = "Q%d THRU Q%d" % (a, r.randint(a, 4))
+        k = r.random()
+        if k < 0.2:
+            return "PERFORM %s" % rng
+        if k < 0.4:
+            return "PERFORM %s %d TIMES" % (rng, r.randint(0, 3))
+        if k < 0.6:
+            return "MOVE 0 TO U1 PERFORM %s %sUNTIL U1 >= %d" % (rng, test_phrase(), r.randint(0, 3))
+        if k < 0.8:
+            return "PERFORM %s %s%s" % (rng, test_phrase(), varying("L1"))
+        return "PERFORM %s %s%s AFTER %s" % (rng, test_phrase(), varying("L1"), varying("L2")[len("VARYING "):])
+
     # the file: written, then read in a loop
     w("P0.")
     w('    DISPLAY "P0"')
@@ -180,16 +244,28 @@ def main():
                 w('    DISPLAY "after-ns %d"' % i)
             elif k < 0.68:
                 w("    " + size_stmt(i) if i < npara else "    ADD 1 TO S2")
-            elif k < 0.78 and i < npara:
+            elif k < 0.76 and i < npara:
                 w("    " + evaluate(i))
+            elif k < 0.84:
+                w("    " + inline_loop(i))
+            elif k < 0.9:
+                w("    " + para_loop())
             elif k < 0.8 and i < npara:
                 w('    CALL "NOSUCHPROG" ON EXCEPTION %s NOT ON EXCEPTION DISPLAY "CALLED NOSUCHPROG" END-CALL' % phrase(i))
             else:
                 w("    " + simple(i))
         w("    .")
     w("PEND.")
-    w('    DISPLAY "END " V0 " " V1 " " S2')
+    w('    DISPLAY "END " V0 " " V1 " " S2 " " T1')
     w("    STOP RUN.")
+    # performed paragraphs: no GO TO out of them; each counts U1, which ends their UNTIL loops
+    for q in range(1, 5):
+        w("Q%d." % q)
+        w('    DISPLAY "Q%d " L1 " " L2' % q)
+        for _ in range(r.randint(0, 2)):
+            w("    " + simple(npara + 1))
+        w("    ADD 1 TO U1")
+        w("    .")
     print("\n".join(out))
 
 

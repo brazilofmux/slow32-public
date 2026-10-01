@@ -115,7 +115,14 @@ for in the commit -- plus all the usual gates.
      the register paths take statements they had to refuse.
    - PERFORM (done 2026-10-01): its phrases, then an inline body's
      statements as a Block, read before the loop's code (Body.blk;
-     the exception-checking PERFORM is still its own path).
+     the exception-checking PERFORM is still its own path).  Then the
+     loops laid out with the test at the bottom -- UNTIL, VARYING at
+     every level, TIMES: one jump in, and each iteration is the body
+     and the test's own branch back; an instruction less per iteration,
+     the static size the same.  Openings it leaves: a loop item kept in
+     a register across the body (a COMP item's every access is a byte
+     swap, a truncating rem and a byte-wise store), and the out-of-line
+     PERFORM's cob_perform_push / cob_perform_exit calls.
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of
