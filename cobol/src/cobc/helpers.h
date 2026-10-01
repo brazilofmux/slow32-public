@@ -177,9 +177,12 @@ static void emit_report_group(Report *r, RGroup *g)
                 rf->sym = &g_sym[f->ctr_sym]; rf->line = f->line;
                 a[2] = arg_ref(rf); a[3] = arg_desc(sym_desc(rf->sym));
             } else if (f->has_source) {
-                Ref *rf = xmalloc(sizeof *rf);
-                int save_tp = g_tp;
-                g_tp = f->source_tp; parse_ref(rf); g_tp = save_tp;
+                if (!f->source) {                   /* parsed at the first GENERATE, kept */
+                    f->source = xmalloc(sizeof *f->source);
+                    int save_tp = g_tp;
+                    g_tp = f->source_tp; parse_ref(f->source); g_tp = save_tp;
+                }
+                Ref *rf = f->source;
                 if (rf->sym->is_cond) die_at(f->line, "SOURCE '%s' is a condition-name", rf->sym->name);
                 if (sym_is_national(rf->sym) && f->pi.category != PIC_NATIONAL)
                     die_at(f->line, "SOURCE '%s' is national: it goes to a national field (PICTURE N), not this one (2023 14.9.25.3 rule 3)", rf->sym->name);
@@ -251,9 +254,13 @@ static void emit_rw_code(Report *r)
         emit_report_addr("r3", r);
         emit_call("cob_rw_code");
     } else if (r->code_tp) {
-        int save = g_tp; g_tp = r->code_tp;
-        Ref cr; parse_ref(&cr);
-        g_tp = save;
+        if (!r->code_ref) {                     /* parsed at first use, kept */
+            r->code_ref = xmalloc(sizeof *r->code_ref);
+            int save = g_tp; g_tp = r->code_tp;
+            parse_ref(r->code_ref);
+            g_tp = save;
+        }
+        Ref cr = *r->code_ref;
         if (cr.sym->is_group || (cr.sym->pi.category != PIC_ALPHANUMERIC))
             die_at(cr.line, "CODE: '%s' is not an alphanumeric data item (2023 13.18.12.3 rule 2)", cr.sym->name);
         Arg a[2] = { arg_ref(&cr), arg_imm(cr.sym->size) };

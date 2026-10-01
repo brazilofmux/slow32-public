@@ -212,8 +212,9 @@ notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
   folds into the slot's static address; a runtime subscript, a
   LINKAGE item or an EXTERNAL one makes the slot *dynamic*: its image
   points at a .data cell, flagged in the kind byte's high bit, and
-  every ACCEPT or DISPLAY of the window re-parses the reference and
-  stores the freshly computed address first -- so `PIC X(4) USING
+  every ACCEPT or DISPLAY of the window computes the reference's
+  address afresh (from the reference parsed at first use) and stores
+  it first -- so `PIC X(4) USING
   CELL(I)` follows I from one ACCEPT to the next. A contained program
   may own screens now (the screen table gained a per-unit base, like
   the symbol table's); screens are per-unit, not GLOBAL. Reference

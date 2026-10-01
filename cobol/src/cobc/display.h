@@ -59,7 +59,7 @@ static int stmt_positioned(void)
 /* LINE n / POSITION n: an integer literal, or an identifier whose value the
  * statement stores into the slot at run time (tp: where it sits) */
 static SField *g_pos_field;    /* the slot pos_int is filling: an explicit 0 marks it CONT */
-static void pos_int(int *val, int *tp, const char *what)
+static void pos_int(int *val, Ref **rp, const char *what)
 {
     accept_word("is"); accept_word("number");
     if (cur()->kind == T_NUM) {
@@ -71,10 +71,10 @@ static void pos_int(int *val, int *tp, const char *what)
         if (*val == 0 && g_pos_field) g_pos_field->ext |= COB_SX_CONT;
         return;
     }
-    if (cur()->kind != T_WORD || !tp) die_at(cur()->line, "%s needs an integer%s", what, tp ? " or a numeric identifier" : "");
-    *tp = g_tp;
+    if (cur()->kind != T_WORD || !rp) die_at(cur()->line, "%s needs an integer%s", what, rp ? " or a numeric identifier" : "");
     Ref r; parse_ref(&r);
     if (!is_numeric_sym(r.sym)) die_at(r.line, "%s needs a numeric identifier", what);
+    *rp = xmalloc(sizeof **rp); **rp = r;
 }
 
 static void parse_pos_clauses(SField *f, int is_accept)
@@ -84,18 +84,18 @@ static void parse_pos_clauses(SField *f, int is_accept)
         if (accept_word("with")) continue;
         if (at_word("line") || at_word("position") || at_word("column") || at_word("col") || at_word("at"))
             bp(BP_E7_POSITIONED_IO, cur()->line);
-        if (accept_word("line")) { pos_int(&f->line, &f->line_tp, "LINE"); continue; }
-        if (accept_word("position") || accept_word("column") || accept_word("col")) { pos_int(&f->col, &f->col_tp, "POSITION"); continue; }
+        if (accept_word("line")) { pos_int(&f->line, &f->line_r, "LINE"); continue; }
+        if (accept_word("position") || accept_word("column") || accept_word("col")) { pos_int(&f->col, &f->col_r, "POSITION"); continue; }
         if (accept_word("at")) {
             if (accept_word("line")) {
-                pos_int(&f->line, &f->line_tp, "AT LINE");
-                if (accept_word("position") || accept_word("column") || accept_word("col")) pos_int(&f->col, &f->col_tp, "COLUMN");
+                pos_int(&f->line, &f->line_r, "AT LINE");
+                if (accept_word("position") || accept_word("column") || accept_word("col")) pos_int(&f->col, &f->col_r, "COLUMN");
                 continue;
             }
             if (cur()->kind == T_NUM) { int v = atoi(cur()->s); advance(); f->line = v / 100; f->col = v % 100; continue; }
             if (cur()->kind != T_WORD) die_at(cur()->line, "AT needs rrcc or a numeric identifier");
-            f->at_tp = g_tp;
-            { Ref r; parse_ref(&r); if (!is_numeric_sym(r.sym)) die_at(r.line, "AT needs a numeric identifier"); }
+            { Ref r; parse_ref(&r); if (!is_numeric_sym(r.sym)) die_at(r.line, "AT needs a numeric identifier");
+              f->at_r = xmalloc(sizeof *f->at_r); *f->at_r = r; }
             continue;
         }
         if (accept_word("erase")) {
@@ -156,11 +156,9 @@ static Tok *pos_literal(const char *bytes, int len, int width, int fill)
     return t;
 }
 
-static void emit_pos_int(int tp)   /* r1 = the integer value of the identifier at tp */
+static void emit_pos_int(const Ref *r)   /* r1 = the integer value of the identifier */
 {
-    int save = g_tp; g_tp = tp;
-    Opnd n; parse_operand(&n);
-    g_tp = save;
+    Opnd n; memset(&n, 0, sizeof n); n.kind = O_REF; n.ref = *r; n.line = r->line;
     emit_incompat(&n);
     if (opnd_hot_int(&n)) emit_hot_value(&n);
     else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
@@ -174,9 +172,9 @@ static void emit_pos_stmt(int si, const char *fn)
     char rec[48]; snprintf(rec, sizeof rec, ".Lscrf%d_%d", g_unit, si);
     for (int k = 0; k < sc->nf; k++) {
         SField *f = &sc->f[k];
-        if (f->line_tp) { emit_pos_int(f->line_tp); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
-        if (f->col_tp)  { emit_pos_int(f->col_tp);  emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1"); }
-        if (f->at_tp)   { emit_pos_int(f->at_tp); emit("\tadd r4, r0, r1"); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
+        if (f->line_r) { emit_pos_int(f->line_r); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
+        if (f->col_r)  { emit_pos_int(f->col_r);  emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1"); }
+        if (f->at_r)    { emit_pos_int(f->at_r); emit("\tadd r4, r0, r1"); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
     }
     char lab[48]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, si);
     emit_la("r3", lab); emit_call(fn);
@@ -190,7 +188,6 @@ static void parse_display_positioned(void)
         Tok *t = cur();
         if (t->kind == T_PERIOD || t->kind == T_EOF) break;
         if (!at_operand() && !(t->kind == T_WORD && (is_figurative(t->s) || !strcmp(t->s, "all")))) break;
-        int tp = g_tp;
         Opnd o; parse_operand(&o);
         SField *f = screen_synth_field(&g_screens[si]);
         if (!first) f->ext |= COB_SX_CONT;
@@ -198,7 +195,8 @@ static void parse_display_positioned(void)
         parse_pos_clauses(f, 0);
         switch (o.kind) {
         case O_REF:
-            f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1; f->ref_tp = tp;
+            f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1;
+            f->ref = xmalloc(sizeof *f->ref); *f->ref = o.ref;
             f->has_pic = 1;
             if (o.ref.rm) {
                 /* a part: shown as its own characters (as ACCEPT's) */
@@ -253,11 +251,12 @@ static void parse_display_positioned(void)
 
 static void parse_env_exception(void);
 static void env_text_args(Opnd *o, const char *what);
-static void parse_accept_positioned(Ref *r, int tp)
+static void parse_accept_positioned(Ref *r)
 {
     int si = (int)(screen_synth() - g_screens);
     SField *f = screen_synth_field(&g_screens[si]);
-    f->kind = COB_SCR_TO; f->item = r->sym; f->dyn = 1; f->ref_tp = tp;
+    f->kind = COB_SCR_TO; f->item = r->sym; f->dyn = 1;
+    f->ref = xmalloc(sizeof *f->ref); *f->ref = *r;
     parse_pos_clauses(f, 1);
     f->has_pic = 1;
     if (r->rm) {
@@ -329,12 +328,11 @@ static void parse_accept_1(void)
             emit_la("r3", scrlab); emit_call("cob_screen_accept"); return;
         }
     }
-    int ref_tp = g_tp;
     Ref r; parse_ref(&r);
     if (r.sym->strong) die_at(r.line, "ACCEPT into the strongly-typed group '%s' (2023 14.9.1.3 rule 1)", r.sym->name);
     int nat = ref_is_national(&r);
     if (stmt_positioned()) {
-        parse_accept_positioned(&r, ref_tp); return;
+        parse_accept_positioned(&r); return;
     }
     if (nat && ec_on_name("EC-DATA-CONVERSION")) {
         emit_call("cob_nat_conv_bad");              /* clear what an earlier MOVE left: at end of file nothing is moved */

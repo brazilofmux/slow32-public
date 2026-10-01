@@ -4930,3 +4930,14 @@ Test 2002/userfnonce: a counting function in a condition, IF, an
 argument, an intrinsic's argument, UNTIL and WHEN; GnuCOBOL counts the
 same calls but passes 0 for the expression argument (.oracle-expected,
 docs/oracles.md).
+
+**References kept as token positions.**  A SCREEN SECTION entry's
+USING/FROM/TO reference and a report's SOURCE and CODE identifier are
+read in the DATA DIVISION before the items they name are laid out, so
+they were kept as token positions and parsed where used -- a dynamic
+screen slot's at every ACCEPT and DISPLAY, a SOURCE at every GENERATE.
+Positioned DISPLAY/ACCEPT parsed its item and its LINE, POSITION and AT
+identifiers, kept only their token positions, and parsed them again to
+emit.  Now each is parsed once -- at the statement, or at first use --
+and the Ref kept (SField.ref, line_r/col_r/at_r; RField.source;
+Report.code_ref).  The snapshot diffs empty.

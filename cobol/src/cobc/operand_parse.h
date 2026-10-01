@@ -1198,6 +1198,7 @@ static void sfield_resolve(SField *f)
     int save_tp = g_tp; g_tp = f->ref_tp;
     Ref rr; parse_ref(&rr);
     g_tp = save_tp;
+    f->ref = xmalloc(sizeof *f->ref); *f->ref = rr;
     if (rr.rm) sfield_part(f, &rr, f->srcline);
     /* a national field and its item move as MOVE does: national text to a
      * national receiver only (2023 14.9.25.3 rule 3) */
@@ -1215,18 +1216,15 @@ static void sfield_resolve(SField *f)
     f->stat_off = off;
 }
 
-/* the screen window's dynamic slots: re-parse each reference where its
- * tokens sit (Report Writer's SOURCE trick) and store the address into
- * the slot's cell before the runtime paints or focuses the window */
+/* the screen window's dynamic slots: each reference's address, stored
+ * into the slot's cell before the runtime paints or focuses the window */
 static void emit_screen_dyn_fill(Screen *sc, int first, int count)
 {
     for (int k = first; k < first + count && k < sc->nf; k++) {
         SField *f = &sc->f[k];
         sfield_resolve(f);
         if (!f->dyn) continue;
-        Ref rr; int save_tp = g_tp;
-        g_tp = f->ref_tp; parse_ref(&rr); g_tp = save_tp;
-        emit_ref_addr(&rr, "r1");
+        emit_ref_addr(f->ref, "r1");
         char cell[48]; snprintf(cell, sizeof cell, ".Lsdyn%d_%d_%d", g_unit, (int)(sc - g_screens), k);
         emit_la("r2", cell);
         emit("\tstw r2+0, r1");

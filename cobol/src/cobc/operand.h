@@ -18,7 +18,7 @@ typedef struct Expr {
     int wide, flt;              /* scan_expr's: an operand past 18 digits, a float, inside it */
 } Expr;
 
-typedef struct {
+typedef struct Ref_ {
     Sym *sym;
     int nsub;
     struct { Sym *sym; long lit; long adj; Expr *x; } sub[MAXDIM];   /* sym == NULL: literal; &g_subx: the expression x */

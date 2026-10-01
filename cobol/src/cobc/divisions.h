@@ -1300,9 +1300,9 @@ static void parse_screen_section(void)
                     }
                     /* the reference's tokens are recorded and skipped, as
                      * Report Writer records SOURCE: the table dimensions do
-                     * not exist yet, so it is resolved at first use
-                     * (sfield_resolve) and re-parsed at every ACCEPT/DISPLAY
-                     * when its address is not static */
+                     * not exist yet, so it is parsed at first use
+                     * (sfield_resolve) and kept; its address is computed
+                     * at every ACCEPT/DISPLAY when it is not static */
                     f->ref_tp = g_tp;
                     if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name");
                     advance();

@@ -299,7 +299,8 @@ static File *file_find(const char *name)
 typedef struct {
     int column, line;
     int has_pic; char pic[PIC_MAXPAT]; PicInfo pi;
-    int has_source; int source_tp;      /* token position of the SOURCE reference, parsed at GENERATE time */
+    int has_source; int source_tp;      /* token position of the SOURCE reference, parsed at the first GENERATE */
+    struct Ref_ *source;                /* ... and kept, parsed */
     Tok *value;
     int just, blank_zero;
     int usage_nat;                      /* USAGE NATIONAL on a numeric or numeric-edited PICTURE */
@@ -344,6 +345,7 @@ typedef struct {
     int resolved;                    /* SUM operands, UPON, RESET, CH/CF levels resolved at first use */
     RGroup *g; int ng, gcap;
     Tok *code_lit; int code_tp;      /* CODE: the literal, or the identifier's token position (0 none) */
+    struct Ref_ *code_ref;           /* ... the identifier, parsed at first use and kept */
 } Report;
 
 /* the report state block's cells past the ones with symbols (cobrt.h) */
@@ -363,10 +365,11 @@ typedef struct {
     int has_pic; char pic[PIC_MAXPAT]; PicInfo pi; int blank_zero;
     Sym *item;
     int ref_tp, dyn;            /* the reference's token position; dyn: its address is computed at ACCEPT/DISPLAY */
+    struct Ref_ *ref;           /* ... the reference, parsed: at the statement, or at first use (sfield_resolve) */
     long stat_off;              /* static references (literal subscripts included): the resolved offset */
 int ext, prompt;            /* positioned DISPLAY/ACCEPT: COB_SX_* bits, the PROMPT character */
 int natlit;                 /* a VALUE slot's literal is national: its columns are its display width */
-int line_tp, col_tp, at_tp; /* LINE / POSITION / AT given as identifiers: token positions, stored at run time */
+struct Ref_ *line_r, *col_r, *at_r;   /* LINE / POSITION / AT given as identifiers, stored at run time */
 int idesc;                  /* the item a reference-modified part: its descriptor + 1 (the part's, not the item's) */
 int from_lit;               /* FROM literal-1: a VALUE slot that must have its PICTURE */
 } SField;

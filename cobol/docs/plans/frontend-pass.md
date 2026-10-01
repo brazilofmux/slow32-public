@@ -35,7 +35,7 @@ again, with emission on, when it wants the code:
 | a MOVE sender's refmod, a SEARCH ALL argument | the ranges above | token scans for names (`move_needs_temp`, `sa_uses_index`) |
 | ADD/SUBTRACT/MULTIPLY/DIVIDE GIVING | the operands, scanned ahead | parsed again where the code goes |
 | SEARCH's WHEN and AT END bodies | statement lists | `parse_statements` once to find their end, again to emit (step 4: blocks) |
-| a SCREEN SECTION entry's reference | its token position | `emit_screen_dyn_fill`, at every ACCEPT and DISPLAY |
+| a SCREEN SECTION entry's reference, a report's SOURCE and CODE, positioned LINE/POSITION/AT identifiers | token positions | at every ACCEPT, DISPLAY, GENERATE (step 4: parsed once, at first use, and kept) |
 
 ## Steps
 
@@ -71,6 +71,9 @@ for in the commit -- plus all the usual gates.
      an `Arith` node, user-function calls first; their SIZE ERROR
      phrases' statements are still parsed where their code goes, until
      nested statements are nodes too.
+   - References in the REPORT and SCREEN sections, and positioned
+     DISPLAY/ACCEPT's LINE, POSITION and AT identifiers (done
+     2026-10-01): parsed once, at first use, and kept.
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of
