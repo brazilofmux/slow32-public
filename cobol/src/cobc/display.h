@@ -1,0 +1,570 @@
+/* s32-cobc: DISPLAY, positioned DISPLAY/ACCEPT.  A part of one translation unit, included by
+ * s32-cobc.c in order; not a header to include anywhere else. */
+
+/* ---- DISPLAY ---------------------------------------------------------- */
+
+/* ---- RM/COBOL positioned DISPLAY / ACCEPT (GitHub #32, #33) ------------
+ *   DISPLAY x LINE n [,] POSITION m [,] ERASE [EOS|EOL] [,] HIGH|LOW|REVERSE
+ *           [,] SIZE n ...        DISPLAY x AT rrcc [WITH ERASE EOS|EOL]
+ *   ACCEPT  x LINE n POSITION m PROMPT [UPDATE] [NO BEEP] [ECHO] [TAB] ...
+ *           ACCEPT x AT rrcc [WITH PROMPT]
+ * The Open Systems suite (~/open) paints every screen this way: RM never
+ * had a SCREEN SECTION.  Each statement becomes a screen of its own, one
+ * slot per operand, on the SCREEN SECTION runtime.  LINE/POSITION are the
+ * slot's line/col -- 0 when absent, which the runtime reads as "the line
+ * after the last positioned statement" / column 1 -- and an identifier's
+ * value is stored into the slot before the call (AT rrcc likewise, split by
+ * cob_scr_at).  SIZE is the width; ERASE, PROMPT and NO BEEP are the slot's
+ * ext bits; UPDATE makes the ACCEPT slot USING; HIGH/LOW/REVERSE are the
+ * flags slots already carry.  ECHO, OFF, TAB, CONVERT, BLINK, BEEP, UNIT
+ * and CONTROL are accepted and ignored. */
+#define SCRF_SIZE 32               /* sizeof(cob_scr_field) on the guest */
+
+static int pos_word_at(int i)      /* token i begins a positioning clause */
+{
+    Tok *t = &g_tok[i];
+    if (t->kind != T_WORD) return 0;
+    if (i > 0 && is_word(&g_tok[i - 1], "function")) return 0;   /* FUNCTION REVERSE is the function, not reverse video */
+    static const char *strong[] = { "line", "position", "erase", "prompt", "size", "high", "low", "reverse", "update", "at", NULL };
+    for (int k = 0; strong[k]; k++) if (!strcmp(t->s, strong[k])) return 1;
+    if (!strcmp(t->s, "no") && is_word(&g_tok[i + 1], "beep")) return 1;
+    if (!strcmp(t->s, "with") && (is_word(&g_tok[i + 1], "erase") || is_word(&g_tok[i + 1], "prompt") ||
+                                  (is_word(&g_tok[i + 1], "no") && is_word(&g_tok[i + 2], "beep")))) return 1;
+    return 0;
+}
+
+/* does the DISPLAY/ACCEPT at g_tp carry a positioning clause?  A look ahead
+ * to the end of the sentence: a period, the next verb, or a terminator. */
+static int stmt_positioned(void)
+{
+    for (int i = g_tp; i < g_ntok; i++) {
+        Tok *t = &g_tok[i];
+        if (t->kind == T_PERIOD || t->kind == T_EOF) return 0;
+        if (t->kind == T_WORD && i > g_tp && (is_verb(t->s) || is_terminator(t->s))) return 0;
+        if (t->kind == T_WORD) {
+            /* the phrases of an enclosing statement end the DISPLAY/ACCEPT:
+             * READ ... AT END DISPLAY x NOT AT END ..., COMPUTE ... ON SIZE
+             * ERROR DISPLAY x NOT ON SIZE ERROR ... (the suite's compute and
+             * lineseq tests), IF ... ELSE, EVALUATE ... WHEN */
+            static const char *stop[] = { "not", "on", "else", "when", "invalid", "exception", "overflow", "end-of-page", "eop", "also", NULL };
+            for (int k = 0; stop[k]; k++) if (!strcmp(t->s, stop[k])) return 0;
+            if (!strcmp(t->s, "at") && (is_word(&g_tok[i + 1], "end") || is_word(&g_tok[i + 1], "end-of-page") || is_word(&g_tok[i + 1], "eop"))) return 0;
+            if (!strcmp(t->s, "size") && is_word(&g_tok[i + 1], "error")) return 0;
+        }
+        if (pos_word_at(i)) return 1;
+    }
+    return 0;
+}
+
+/* LINE n / POSITION n: an integer literal, or an identifier whose value the
+ * statement stores into the slot at run time (tp: where it sits) */
+static SField *g_pos_field;    /* the slot pos_int is filling: an explicit 0 marks it CONT */
+static void pos_int(int *val, int *tp, const char *what)
+{
+    accept_word("is"); accept_word("number");
+    if (cur()->kind == T_NUM) {
+        *val = atoi(cur()->s); advance();
+        /* RM: LINE 0 / POSITION 0 is "where the cursor is", the position after
+         * the last thing painted (APPKJRNL builds a title from three DISPLAYs);
+         * an omitted clause is the next line / column 1.  The runtime's
+         * continue-after-the-last-slot rule covers the explicit zero. */
+        if (*val == 0 && g_pos_field) g_pos_field->ext |= COB_SX_CONT;
+        return;
+    }
+    if (cur()->kind != T_WORD || !tp) die_at(cur()->line, "%s needs an integer%s", what, tp ? " or a numeric identifier" : "");
+    *tp = g_tp;
+    Ref r; parse_ref(&r);
+    if (!is_numeric_sym(r.sym)) die_at(r.line, "%s needs a numeric identifier", what);
+}
+
+static void parse_pos_clauses(SField *f, int is_accept)
+{
+    g_pos_field = f;
+    for (;;) {
+        if (accept_word("with")) continue;
+        if (at_word("line") || at_word("position") || at_word("column") || at_word("col") || at_word("at"))
+            bp(BP_E7_POSITIONED_IO, cur()->line);
+        if (accept_word("line")) { pos_int(&f->line, &f->line_tp, "LINE"); continue; }
+        if (accept_word("position") || accept_word("column") || accept_word("col")) { pos_int(&f->col, &f->col_tp, "POSITION"); continue; }
+        if (accept_word("at")) {
+            if (accept_word("line")) {
+                pos_int(&f->line, &f->line_tp, "AT LINE");
+                if (accept_word("position") || accept_word("column") || accept_word("col")) pos_int(&f->col, &f->col_tp, "COLUMN");
+                continue;
+            }
+            if (cur()->kind == T_NUM) { int v = atoi(cur()->s); advance(); f->line = v / 100; f->col = v % 100; continue; }
+            if (cur()->kind != T_WORD) die_at(cur()->line, "AT needs rrcc or a numeric identifier");
+            f->at_tp = g_tp;
+            { Ref r; parse_ref(&r); if (!is_numeric_sym(r.sym)) die_at(r.line, "AT needs a numeric identifier"); }
+            continue;
+        }
+        if (accept_word("erase")) {
+            if (accept_word("eos")) f->ext |= COB_SX_ERASE_EOS;
+            else if (accept_word("eol")) f->ext |= COB_SX_ERASE_EOL;
+            else { accept_word("screen"); f->ext |= COB_SX_ERASE_ALL; }   /* ERASE [SCREEN]: the whole screen */
+            continue;
+        }
+        if (accept_word("prompt")) { f->ext |= COB_SX_PROMPT; if (cur()->kind == T_STR) { f->prompt = (unsigned char)cur()->s[0]; advance(); } continue; }
+        if (accept_word("size")) { pos_int(&f->width, NULL, "SIZE"); continue; }
+        if (accept_word("high")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
+        if (accept_word("low")) { f->flags |= COB_SF_LOWLIGHT; continue; }
+        if (accept_word("reverse") || accept_word("reverse-video")) { f->flags |= COB_SF_REVERSE; continue; }
+        if (accept_word("update")) { if (is_accept) f->kind = COB_SCR_USING; continue; }
+        /* the screen entry's own clauses, as Micro Focus and RM write them on
+         * the statement (BP-E7): AUTO[-SKIP] ends the field when it is full,
+         * the rest as in the SCREEN SECTION; the input ones only on ACCEPT */
+        if (accept_word("auto") || accept_word("auto-skip")) { if (is_accept) f->flags |= COB_SF_AUTO; continue; }
+        if (accept_word("secure")) { if (is_accept) f->flags |= COB_SF_SECURE; continue; }
+        if (accept_word("required") || accept_word("empty-check")) { if (is_accept) f->flags |= COB_SF_REQUIRED; continue; }
+        if (accept_word("full") || accept_word("length-check")) { if (is_accept) f->flags |= COB_SF_FULL; continue; }
+        if (accept_word("underline")) { f->flags |= COB_SF_UNDERLINE; continue; }
+        if (accept_word("highlight")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
+        if (accept_word("lowlight")) { f->flags |= COB_SF_LOWLIGHT; continue; }
+        if (accept_word("no")) { expect_word("beep"); f->ext |= COB_SX_NOBEEP; continue; }
+        if (accept_word("blink") || accept_word("echo") || accept_word("off") || accept_word("tab") || accept_word("convert") || accept_word("beep")) continue;
+        if (accept_word("unit") || accept_word("control")) { Opnd o; parse_operand(&o); continue; }
+        break;
+    }
+}
+
+static Screen *screen_synth(void)
+{
+    if (g_nscreen == g_scrcap) { g_scrcap = g_scrcap ? g_scrcap * 2 : 4; g_screens = realloc(g_screens, g_scrcap * sizeof *g_screens); }
+    Screen *sc = &g_screens[g_nscreen++];
+    memset(sc, 0, sizeof *sc);
+    snprintf(sc->name, sizeof sc->name, "(positioned %d)", g_nscreen);   /* not a word: screen_ref never matches it */
+    return sc;
+}
+
+static SField *screen_synth_field(Screen *sc)
+{
+    if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 4; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
+    SField *f = &sc->f[sc->nf++];
+    memset(f, 0, sizeof *f);
+    f->fg = f->bg = 255; f->ext = COB_SX_POS; f->srcline = cur()->line;
+    return f;
+}
+
+/* a literal of width bytes: len bytes of text padded with fill, or, fill
+ * < 0, the text repeated (a figurative constant, ALL) */
+static Tok *pos_literal(const char *bytes, int len, int width, int fill)
+{
+    Tok *t = xmalloc(sizeof *t); memset(t, 0, sizeof *t);
+    t->kind = T_STR; t->s = xmalloc(width + 1); t->len = width;
+    for (int i = 0; i < width; i++) t->s[i] = i < len ? bytes[i] : fill < 0 ? bytes[i % len] : (char)fill;
+    t->s[width] = 0;
+    return t;
+}
+
+static void emit_pos_int(int tp)   /* r1 = the integer value of the identifier at tp */
+{
+    int save = g_tp; g_tp = tp;
+    Opnd n; parse_operand(&n);
+    g_tp = save;
+    emit_incompat(&n);
+    if (opnd_hot_int(&n)) emit_hot_value(&n);
+    else { Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+}
+
+/* the statement: item addresses and run-time positions into the slots, then the runtime */
+static void emit_pos_stmt(int si, const char *fn)
+{
+    Screen *sc = &g_screens[si];
+    emit_screen_dyn_fill(sc, 0, sc->nf);
+    char rec[48]; snprintf(rec, sizeof rec, ".Lscrf%d_%d", g_unit, si);
+    for (int k = 0; k < sc->nf; k++) {
+        SField *f = &sc->f[k];
+        if (f->line_tp) { emit_pos_int(f->line_tp); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
+        if (f->col_tp)  { emit_pos_int(f->col_tp);  emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1"); }
+        if (f->at_tp)   { emit_pos_int(f->at_tp); emit("\tadd r4, r0, r1"); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
+    }
+    char lab[48]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, si);
+    emit_la("r3", lab); emit_call(fn);
+}
+
+static void parse_display_positioned(void)
+{
+    int si = (int)(screen_synth() - g_screens);
+    int first = 1;
+    for (;;) {
+        Tok *t = cur();
+        if (t->kind == T_PERIOD || t->kind == T_EOF) break;
+        if (!at_operand() && !(t->kind == T_WORD && (is_figurative(t->s) || !strcmp(t->s, "all")))) break;
+        int tp = g_tp;
+        Opnd o; parse_operand(&o);
+        SField *f = screen_synth_field(&g_screens[si]);
+        if (!first) f->ext |= COB_SX_CONT;
+        first = 0;
+        parse_pos_clauses(f, 0);
+        switch (o.kind) {
+        case O_REF:
+            f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1; f->ref_tp = tp;
+            f->has_pic = 1;
+            if (o.ref.rm) {
+                /* a part: shown as its own characters (as ACCEPT's) */
+                sfield_part(f, &o.ref, o.line);
+                int chars = (int)o.ref.rm_len;
+                if (o.ref.rm_nat) { f->pi.category = PIC_NATIONAL; f->pi.bytes = 2 * chars; }
+                else { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = chars; }
+                if (!f->width) f->width = chars;
+                break;
+            }
+            if (sym_is_national(o.ref.sym)) {
+                /* national text in columns (cobol ISSUES-92): a column a character position, SIZE counting columns */
+                int n = o.ref.sym->size / 2;
+                f->pi.category = PIC_NATIONAL; f->pi.bytes = 2 * n;
+                if (!f->width) f->width = n;
+                break;
+            }
+            if (!f->width) f->width = !o.ref.sym->is_group && o.ref.sym->usage == U_NATIONAL ? o.ref.sym->size / 2 : o.ref.sym->size;
+            f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width;
+            break;
+        case O_STR:
+            f->kind = COB_SCR_VALUE;
+            if (o.tok->nat) {
+                f->value = o.tok; f->natlit = 1;
+                if (!f->width) f->width = nat_lit_cols((const unsigned char *)o.tok->s, o.tok->len);
+                break;
+            }
+            if (!f->width || f->width == o.tok->len) { f->value = o.tok; f->width = o.tok->len; }
+            else f->value = pos_literal(o.tok->s, o.tok->len, f->width, ' ');
+            break;
+        case O_NUM: {
+            char txt[48]; int k = 0;
+            if (o.num.neg) txt[k++] = '-';
+            for (int i = 0; i < o.num.ndigits; i++) {
+                if (o.num.scale && i == o.num.ndigits - o.num.scale) txt[k++] = g_dp_comma ? ',' : '.';
+                txt[k++] = o.num.digits[i];
+            }
+            f->kind = COB_SCR_VALUE; if (!f->width) f->width = k;
+            f->value = pos_literal(txt, k, f->width, ' ');
+            break; }
+        case O_FIG: case O_ALL: {
+            int len = o.kind == O_ALL ? o.tok->len : 1;
+            char one = o.kind == O_ALL ? 0 : (char)fig_byte(o.tok->s);
+            f->kind = COB_SCR_VALUE; if (!f->width) f->width = len;
+            f->value = pos_literal(o.kind == O_ALL ? o.tok->s : &one, len, f->width, -1);
+            break; }
+        default: die_at(o.line, "a positioned DISPLAY takes identifiers and literals");
+        }
+    }
+    emit_pos_stmt(si, "cob_screen_display");
+}
+
+static void parse_env_exception(void);
+static void env_text_args(Opnd *o, const char *what);
+static void parse_accept_positioned(Ref *r, int tp)
+{
+    int si = (int)(screen_synth() - g_screens);
+    SField *f = screen_synth_field(&g_screens[si]);
+    f->kind = COB_SCR_TO; f->item = r->sym; f->dyn = 1; f->ref_tp = tp;
+    parse_pos_clauses(f, 1);
+    f->has_pic = 1;
+    if (r->rm) {
+        /* a part (abrignoli_COBSOFT keys a CPF number into f-cpf(07:03)
+         * and its neighbours): a field of the part's characters */
+        sfield_part(f, r, r->line);
+        int chars = (int)r->rm_len;
+        if (r->rm_nat) { f->pi.category = PIC_NATIONAL; f->pi.bytes = 2 * chars; }
+        else { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = chars; }
+        if (!f->width) f->width = chars;
+    } else
+    if (sym_is_national(r->sym)) {
+        /* national input (cobol ISSUES-92): the field a column a character position */
+        f->pi.category = PIC_NATIONAL; f->pi.bytes = r->sym->size;
+        if (!f->width) f->width = r->sym->size / 2;
+    } else {
+        if (!f->width) f->width = !r->sym->is_group && r->sym->usage == U_NATIONAL ? r->sym->pi.bytes : r->sym->size;
+        if (r->sym->is_group || !r->sym->pi.bytes) { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width; }
+        else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
+    }
+    if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
+        Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, r->line);
+        if (rec_indirect(&g_sym[cs->record])) die_at(r->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
+        char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
+        emit_la("r3", b);
+        snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
+        emit_la("r4", b);
+        emit_call("cob_crt_status");
+    }
+    emit_pos_stmt(si, "cob_screen_accept");
+    accept_word("end-accept");
+}
+
+static void parse_accept_1(void);
+/* ACCEPT into a national item (cobol ISSUES-70): the text arrives as
+ * UTF-8 and is moved, so a byte that begins no UTF-8 character becomes
+ * U+FFFD and, checked, EC-DATA-CONVERSION (as a MOVE, 14.9.25 rule 6) */
+static int g_accept_nat_check;
+static void parse_accept(void)
+{
+    g_accept_nat_check = 0;
+    parse_accept_1();
+    if (g_accept_nat_check) {
+        int Lok = new_label();
+        emit_call("cob_nat_conv_bad");
+        emit("\tbeq r1, r0, .L%d", Lok);
+        emit_ec_raise(ec_find("EC-DATA-CONVERSION", 0));
+        emit_label(Lok);
+    }
+}
+static void parse_accept_1(void)
+{
+    Tok *t = cur();
+    if (t->kind == T_WORD) {
+        char scrlab[40]; int sfirst, scount;
+        Screen *scp = screen_ref(t->s, scrlab, sizeof scrlab, &sfirst, &scount);
+        if (scp) {
+            advance();
+            emit_screen_dyn_fill(scp, sfirst, scount);
+            if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
+                Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line);
+                if (rec_indirect(&g_sym[cs->record])) die_at(t->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
+                char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
+                emit_la("r3", b);
+                snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
+                emit_la("r4", b);
+                emit_call("cob_crt_status");
+            }
+            emit_la("r3", scrlab); emit_call("cob_screen_accept"); return;
+        }
+    }
+    int ref_tp = g_tp;
+    Ref r; parse_ref(&r);
+    if (r.sym->strong) die_at(r.line, "ACCEPT into the strongly-typed group '%s' (2023 14.9.1.3 rule 1)", r.sym->name);
+    int nat = ref_is_national(&r);
+    if (stmt_positioned()) {
+        parse_accept_positioned(&r, ref_tp); return;
+    }
+    if (nat && ec_on_name("EC-DATA-CONVERSION")) {
+        emit_call("cob_nat_conv_bad");              /* clear what an earlier MOVE left: at end of file nothing is moved */
+        g_accept_nat_check = 1;
+    }
+    if (accept_word("from")) {
+        if (at_word("environment-value") || at_word("environment")) {
+            /* FROM ENVIRONMENT-VALUE, the variable DISPLAY ... UPON
+             * ENVIRONMENT-NAME chose; FROM ENVIRONMENT name, one named
+             * here (BP-E31; MF ACCEPT rules 8 and 56).  No such variable:
+             * the exception, the item left as it was */
+            bp(BP_E31_ENVIRONMENT, r.line);
+            int named = at_word("environment"); advance();
+            if (named) {
+                Opnd no; parse_operand(&no);
+                env_text_args(&no, "ACCEPT ... FROM ENVIRONMENT");
+                emit("\tstw sp+%d, r3", SLOT_A); emit("\tstw sp+%d, r4", SLOT_B);
+                Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) }; emit_args(a, 2);
+                emit("\tadd r5, r3, r0"); emit("\tadd r6, r4, r0");
+                emit("\tldw r3, sp+%d", SLOT_A); emit("\tldw r4, sp+%d", SLOT_B);
+                emit_call("cob_env_accept_named");
+            } else {
+                Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) }; emit_args(a, 2);
+                emit_call("cob_env_accept");
+            }
+            parse_env_exception();
+            accept_word("end-accept");
+            return;
+        }
+        if (at_word("argument-number") || at_word("argument-value") || at_word("command-line")) {
+            const char *fn = at_word("argument-number") ? "cob_accept_argnum"
+                           : at_word("argument-value") ? "cob_accept_argval" : "cob_accept_cmdline";
+            if (at_word("argument-number") && !is_numeric_sym(r.sym)) die_at(r.line, "ACCEPT ... FROM ARGUMENT-NUMBER needs a numeric item");
+            advance();
+            Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            emit_args(a, 2);
+            emit_call(fn);
+            if (at_word("on") || at_word("exception") || at_word("not")) die_at(cur()->line, "ACCEPT ... ON EXCEPTION is not implemented");
+            accept_word("end-accept");
+            return;
+        }
+        if (at_word("date") || at_word("day") || at_word("time") || at_word("day-of-week")) {
+            /* the unsigned integer of the text -- YYMMDD, YYDDD, HHMMSShh, 1 (Monday) to 7 -- by the MOVE rules */
+            int which = at_word("date") ? 0 : at_word("day") ? 1 : at_word("time") ? 2 : 3;
+            advance();
+            /* DATE YYYYMMDD and DAY YYYYDDD: the four-digit year (COBOL 2002) */
+            if ((which == 0 && at_word("yyyymmdd")) || (which == 1 && at_word("yyyyddd"))) {
+                if (g_std < 2002) die_at(cur()->line, "ACCEPT ... FROM %s %s is COBOL 2002; compile with -std=2002", which ? "DAY" : "DATE", which ? "YYYYDDD" : "YYYYMMDD");
+                advance(); which += 4;
+            }
+            if (!r.rm && !r.sym->is_group && (r.sym->pi.category == PIC_ALPHABETIC || r.sym->pi.category == PIC_BOOLEAN || r.sym->usage == U_BIT))
+                die_at(r.line, "ACCEPT '%s' FROM DATE, DAY, TIME or DAY-OF-WEEK: an alphabetic or boolean item does not take the digits (%s)", r.sym->name,
+                       g_std < 2002 ? "X3.23-1985 ACCEPT general rule 6: the MOVE rules" : "2023 14.9.1.3 rule 3");
+            Arg a[3] = { arg_imm(which), arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            emit_args(a, 3);
+            emit_call("cob_accept_datetime");
+            accept_word("end-accept");
+            return;
+        }
+        if (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 1) {
+            advance();
+            Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            emit_args(a, 2);
+            emit_call("cob_accept_console");
+            accept_word("end-accept");
+            return;
+        }
+        if (cur()->kind == T_WORD && !mnemonic_kind(cur()->s))
+            die_at(cur()->line, "ACCEPT FROM '%s': not a mnemonic-name of SPECIAL-NAMES, nor DATE, DAY, TIME, DAY-OF-WEEK (%s)", cur()->s,
+                   g_std < 2002 ? "X3.23-1985 ACCEPT syntax rule 2" : "2023 14.9.1.3 rule 2");
+        die_at(cur()->line, "ACCEPT FROM %s is not implemented", tok_desc(cur()));
+    }
+    /* ACCEPT identifier: a line from standard input */
+    {
+        Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+        emit_args(a, 2);
+        emit_call("cob_accept_console");
+        accept_word("end-accept");
+    }
+}
+
+/* [ON] EXCEPTION ... [NOT [ON] EXCEPTION ...] after a statement that left
+ * 1 in r1 for its exception condition (the environment's) */
+static void parse_env_exception(void)
+{
+    if (!(at_word("on") || at_word("exception") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "exception"))))) return;
+    emit("\tstw sp+%d, r1", SLOT_C);
+    int Lend = new_label();
+    if (at_word("on") || at_word("exception")) {
+        accept_word("on"); expect_word("exception");
+        int Lnot = new_label();
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit("\tbeq r1, r0, .L%d", Lnot);
+        parse_statements();
+        emit_jump(Lend);
+        emit_label(Lnot);
+    }
+    if (at_word("not")) {
+        advance(); accept_word("on"); expect_word("exception");
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit("\tbne r1, r0, .L%d", Lend);
+        parse_statements();
+    }
+    emit_label(Lend);
+}
+
+/* r3, r4: an alphanumeric literal's or item's bytes, for the environment */
+static void env_text_args(Opnd *o, const char *what)
+{
+    if (o->kind == O_STR && !o->tok->nat) { Arg a[2] = { arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len)), arg_imm(o->tok->len) }; emit_args(a, 2); return; }
+    if (o->kind == O_REF && (o->ref.sym->is_group || o->ref.sym->pi.category == PIC_ALPHANUMERIC || o->ref.sym->pi.category == PIC_ALPHABETIC) && !sym_is_national(o->ref.sym)) {
+        Arg a[2] = { arg_ref(&o->ref), arg_len(o) }; emit_args(a, 2); return;
+    }
+    die_at(o->line, "%s takes an alphanumeric literal or item (Micro Focus DISPLAY rule 6)", what);
+}
+
+static void parse_display(void)
+{
+    int line = cur()->line;
+    int n = 0, no_adv = 0;
+    if (cur()->kind == T_WORD) {
+        char scrlab[40]; int sfirst, scount;
+        Screen *scp = screen_ref(cur()->s, scrlab, sizeof scrlab, &sfirst, &scount);
+        if (scp) { advance(); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
+    }
+    /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
+    if (stmt_positioned()) { parse_display_positioned(); return; }
+    if (is_word(peek(1), "upon") && (is_word(peek(2), "environment-name") || is_word(peek(2), "environment-value"))) {
+        /* DISPLAY x UPON ENVIRONMENT-NAME | ENVIRONMENT-VALUE (BP-E31):
+         * one operand, the variable's name, or its value set */
+        bp(BP_E31_ENVIRONMENT, line);
+        Opnd o; parse_operand(&o);
+        advance();
+        int val = at_word("environment-value"); advance();
+        env_text_args(&o, val ? "DISPLAY UPON ENVIRONMENT-VALUE" : "DISPLAY UPON ENVIRONMENT-NAME");
+        if (val) emit_call("cob_env_set_value");
+        else { emit_call("cob_env_set_name"); emit_li("r1", 0); }   /* ON EXCEPTION ignored (MF DISPLAY rule 6) */
+        parse_env_exception();
+        return;
+    }
+    if (is_word(peek(1), "upon") && is_word(peek(2), "argument-number")) {
+        Opnd o; parse_operand(&o);
+        emit_incompat(&o);
+        if (!opnd_hot_int(&o)) {
+            if (o.kind != O_REF || !is_int_item(o.ref.sym)) die_at(o.line, "DISPLAY ... UPON ARGUMENT-NUMBER needs an integer");
+            Arg a[2] = { arg_ref(&o.ref), arg_desc(sym_desc(o.ref.sym)) }; emit_args(a, 2); emit_call("cob_load_int");
+        } else emit_hot_value(&o);
+        emit("\tadd r3, r1, r0");
+        emit_call("cob_display_upon_argnum");
+        advance(); advance();
+        return;
+    }
+    if (is_word(peek(1), "upon") && (is_word(peek(2), "sysout") || is_word(peek(2), "console") || is_word(peek(2), "syserr") || is_word(peek(2), "stderr"))) {
+        /* the console: an ordinary DISPLAY */
+    }
+    /* UPON SYSERR (or STDERR, or a mnemonic-name for either): the line goes
+     * to the error stream.  UPON follows the operands, so look ahead to it
+     * -- to the end of the statement: a period, the next verb, or a word
+     * that ends a scope -- and switch before any operand is written. */
+    int to_err = 0;
+    for (int k = g_tp, depth = 0; k < g_ntok; k++) {
+        Tok *t = &g_tok[k];
+        if (t->kind == T_PERIOD || t->kind == T_EOF) break;
+        if (t->kind == T_LP) { depth++; continue; }
+        if (t->kind == T_RP) { depth--; continue; }
+        if (depth || t->kind != T_WORD) continue;
+        if (!strcmp(t->s, "upon")) {
+            const Tok *d = k + 1 < g_ntok ? &g_tok[k + 1] : NULL;
+            to_err = d && d->kind == T_WORD && (!strcmp(d->s, "syserr") || !strcmp(d->s, "stderr") || mnemonic_kind(d->s) == 4);
+            break;
+        }
+        if (k > g_tp && (is_verb(t->s) || !strncmp(t->s, "end-", 4) || !strcmp(t->s, "else") || !strcmp(t->s, "when"))) break;
+    }
+    if (to_err) { emit("\taddi r3, r0, 1"); emit_call("cob_display_err"); }
+    for (;;) {
+        Tok *t = cur();
+        if (t->kind == T_WORD && !strcmp(t->s, "upon")) {
+            advance();
+            if (accept_word("sysout") || accept_word("console") || accept_word("syserr") || accept_word("stderr")) continue;
+            if (cur()->kind == T_WORD && (mnemonic_kind(cur()->s) == 2 || mnemonic_kind(cur()->s) == 4)) { advance(); continue; }
+            if (cur()->kind == T_WORD && !mnemonic_kind(cur()->s) && !at_word("argument-number") && !at_word("environment-name") && !at_word("environment-value"))
+                die_at(t->line, "DISPLAY UPON '%s': not a mnemonic-name of SPECIAL-NAMES (%s)", cur()->s,
+                       g_std < 2002 ? "X3.23-1985 DISPLAY syntax rule 2" : "2023 14.9.11.3 rule 2");
+            die_at(t->line, "DISPLAY UPON %s is not implemented (ARGUMENT-NUMBER takes one operand)", cur()->s);
+        }
+        if (t->kind == T_WORD && (!strcmp(t->s, "with") || !strcmp(t->s, "no"))) {
+            accept_word("with"); expect_word("no"); expect_word("advancing");
+            no_adv = 1; break;
+        }
+        if (!at_operand() && !(t->kind == T_WORD && (is_figurative(t->s) || !strcmp(t->s, "all")))) break;
+        Opnd o; parse_operand(&o);
+        n++;
+        switch (o.kind) {
+        case O_STR: {
+            if (o.tok->nat) {                       /* a national literal: written as UTF-8 */
+                char *u = xmalloc((size_t)o.tok->len * 2 + 1);
+                int un = utf16be_to_utf8((const unsigned char *)o.tok->s, o.tok->len, u);
+                Arg a[2] = { arg_label(lit_label((unsigned char *)u, un)), arg_imm(un) };
+                emit_args(a, 2); emit_call("cob_display"); free(u); break;
+            }
+            Arg a[2] = { arg_label(lit_label((unsigned char *)o.tok->s, o.tok->len)), arg_imm(o.tok->len) };
+            emit_args(a, 2); emit_call("cob_display"); break;
+        }
+        case O_NUM: {  /* a numeric literal displays as written */
+            char txt[48]; int k = 0;
+            if (o.num.neg) txt[k++] = '-';
+            for (int i = 0; i < o.num.ndigits; i++) {
+                if (o.num.scale && i == o.num.ndigits - o.num.scale) txt[k++] = g_dp_comma ? ',' : '.';
+                txt[k++] = o.num.digits[i];
+            }
+            Arg a[2] = { arg_label(lit_label((unsigned char *)txt, k)), arg_imm(k) };
+            emit_args(a, 2); emit_call("cob_display"); break;
+        }
+        case O_FIG: case O_ALL: {
+            int len = o.kind == O_ALL ? o.tok->len : 1;
+            unsigned char *b = xmalloc(len);
+            if (o.kind == O_ALL) memcpy(b, o.tok->s, len); else b[0] = (unsigned char)fig_byte(o.tok->s);
+            Arg a[2] = { arg_label(lit_label(b, len)), arg_imm(len) };
+            free(b);
+            emit_args(a, 2); emit_call("cob_display"); break;
+        }
+        default: {
+            Arg a[2];
+            emit_incompat(&o);
+            opnd_args(&o, &a[0], &a[1], 0, 0);
+            emit_args(a, 2); emit_call("cob_display_field"); break;
+        }
+        }
+    }
+    if (!n) die_at(line, "DISPLAY needs at least one operand");
+    if (!no_adv) emit_call("cob_display_nl");
+    if (to_err) { emit("\taddi r3, r0, 0"); emit_call("cob_display_err"); }
+}

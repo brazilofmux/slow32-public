@@ -26,6 +26,8 @@
 #
 #   git show 18fcb42c:cobol/src/s32-cobc.c > /tmp/buggy.c
 #   COBC_SRC=/tmp/buggy.c ./run-cobc-asan.sh NC     # must FAIL
+# (that commit predates the split into src/cobc/*.h; a later revision's
+# s32-cobc.c needs its src/cobc beside it -- use git worktree, not git show)
 #   ./run-cobc-asan.sh NC                           # must PASS
 #
 # EXIT CODES, following run-differential.sh: 0 the check ran and was clean,

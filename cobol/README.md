@@ -88,7 +88,11 @@ under `docs/`.
     README.md         this file
     docs/             requirements, architecture, plans, rulings
     src/s32-cobc.c    the host compiler: reader, tokenizer, parser, Sym[],
-                      lowering, emitter -- one file until it earns a split
+                      lowering, emitter -- one translation unit, which
+                      #includes its parts from src/cobc/*.h in order
+                      (diag, reader, tokenizer ... esql, divisions, driver);
+                      the parts share one set of statics and are not
+                      headers to include anywhere else
     src/picture.rl    PICTURE scanner, Ragel -G2 (re-hosted from cobc370);
                       picture_scan.c is the generated output, checked in;
                       gen_picture.sh regenerates it
