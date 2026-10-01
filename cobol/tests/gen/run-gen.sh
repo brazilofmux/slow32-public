@@ -66,10 +66,10 @@ b = open(sys.argv[2]).read().splitlines()
 # a reference written out from the text (tests/gen/inspect85.py) decides
 # the lines it covers: ours must be it -- even where the oracle agrees
 # with us -- and an oracle that differs from it is counted apart
-ref = {}
+ref = {}                    # label -> its expected lines, in order (a DIVIDE REMAINDER shows two)
 if sys.argv[3] and os.path.exists(sys.argv[3]):
     for l in open(sys.argv[3]).read().splitlines():
-        ref[l.split(" ", 1)[0]] = l
+        ref.setdefault(l.split(" ", 1)[0], []).append(l)
 real = known = 0
 if len(a) != len(b):
     print(max(len(a), len(b)), 0); sys.exit()
@@ -121,8 +121,8 @@ def neglit_known(x, y):
 
 for x, y in zip(a, b):
     lab = x.split(" ", 1)[0]
-    if lab in ref:
-        if x != ref[lab]:
+    if ref.get(lab):
+        if x != ref[lab].pop(0):
             real += 1
         elif y != x:
             known += 1

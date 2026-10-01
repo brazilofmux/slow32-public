@@ -1572,6 +1572,9 @@ static int ndiv_core(cob_num *a, const cob_num *b)
 }
 
 void cob_nneg(void) { nstk[nsp - 1].v = -nstk[nsp - 1].v; }
+/* the magnitude: DIVIDE ... REMAINDER's quotient when the quotient item is
+ * unsigned (X3.23-1985 VI-81, DIVIDE rule 6) */
+void cob_nabs(void) { if (nstk[nsp - 1].v < 0) nstk[nsp - 1].v = -nstk[nsp - 1].v; }
 /* the top truncated to `scale` decimals (DIVIDE ... REMAINDER: the
  * quotient as it would be stored before ROUNDED, X3.23 6.9.4) */
 void cob_ntrunc(int scale)
@@ -1778,6 +1781,7 @@ static void w_div(cob_wnum *a, const cob_wnum *b)
 void cob_wdiv(void) { w_div(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
 
 void cob_wneg(void) { cob_wnum *a = &wstk[wsp - 1]; if (a->isf) { a->f = -a->f; return; } a->neg = !a->neg && !mp_is_zero(a->m, WL); }
+void cob_wabs(void) { cob_wnum *a = &wstk[wsp - 1]; if (a->isf) { if (a->f < 0) a->f = -a->f; return; } a->neg = 0; }
 void cob_wtrunc(int scale)
 {
     cob_wnum *a = &wstk[wsp - 1];

@@ -37,6 +37,28 @@ starts there, not at 1) and SEARCH ALL on an ascending unique key. It
 also writes MOVEs from, to and between variable-length groups whose
 OCCURS DEPENDING ON item is outside the group. Run it with `GEN=table`.
 
+## References: the text, executable
+
+For arithmetic, editing and INSPECT, the generators also write each
+statement's expected line to `g<seed>.ref`. The line is computed from the
+85 rules written out in Python, independently of either compiler:
+
+- `arith85.py`: storing a result (alignment, ROUNDED, size error, an
+  unsigned receiver), MOVE, and DIVIDE ... REMAINDER (VI-80, VI-81).
+- `edit85.py`: editing rules 4 to 8 (VI-33 to VI-35), the sign table and
+  BLANK WHEN ZERO.
+- `inspect85.py`: INSPECT (VI-96 to VI-99).
+
+run-gen.sh judges every line a reference covers by the reference. Ours
+must equal it, even where the oracle agrees with us, and an oracle that
+differs from it is counted apart. GnuCOBOL becomes a cross-check rather
+than the judge. A reference is only as good as its reading. Three
+readings were corrected against the rule's exact wording after meeting
+real output: LEADING's start, the floating string's right limit, and the
+remainder's quotient. The last went the other way: the reference held,
+both compilers departed from the 85 text, and the user ruled to follow
+each edition as its text says.
+
 `run-gen.sh FIRST COUNT [STATEMENTS]` builds and runs the seeds here and
 under the harness's GnuCOBOL images (`-std=cobol85`, one container for
 the batch), then compares them line by line. A batch of 400 programs takes
@@ -139,4 +161,10 @@ the oracle's insertion readings above.
 
 420 table programs, about 21,000 statements, agree. Subscripts, indexes,
 SEARCH and SEARCH ALL found nothing else.
+- **COBOL 85's DIVIDE ... REMAINDER uses the quotient as stored**, its
+  magnitude in an unsigned item (VI-81, rule 6). 2002 and 2023 use a
+  signed subsidiary quotient (14.9.12, general rules 6c and 7). Both
+  compilers took the signed one under 85 too. The user's ruling: each
+  edition as its text says, so s32-cobc now follows 85 under `-std=85`.
+  Tests: free/divremu and 2002/divremu. The case was found by arith85.py.
 

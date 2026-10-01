@@ -4658,7 +4658,7 @@ static const char *wide_fn(const char *fn)
 {
     static const char *map[][2] = {
         { "cob_push", "cob_wpush" }, { "cob_push_lit", "cob_wpush_lit" }, { "cob_nadd", "cob_wadd" },
-        { "cob_nsub", "cob_wsub" }, { "cob_nmul", "cob_wmul" }, { "cob_ndiv", "cob_wdiv" }, { "cob_nneg", "cob_wneg" },
+        { "cob_nsub", "cob_wsub" }, { "cob_nmul", "cob_wmul" }, { "cob_ndiv", "cob_wdiv" }, { "cob_nneg", "cob_wneg" }, { "cob_nabs", "cob_wabs" },
         { "cob_ntrunc", "cob_wtrunc" }, { "cob_npow", "cob_wpow" }, { "cob_ncmp", "cob_wcmp" },
         { "cob_top_store", "cob_wtop_store" }, { "cob_top_addto", "cob_wtop_addto" }, { "cob_top_subfrom", "cob_wtop_subfrom" },
         { "cob_drop", "cob_wdrop" }, { "cob_pop_int", "cob_wpop_int" }, { "cob_pop_pos", "cob_wpop_pos" }, { NULL, NULL } };
@@ -10576,6 +10576,10 @@ static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, lon
     *nonneg = !neg;
     for (int i = 0; i < nr; i++) if (rs[i].rm || rs[i].sym->pi.scale != 0 || !ref_hot_store(&rs[i], 0, !neg)) return 0;
     if (rem && (rem->rm || rem->sym->pi.scale != 0 || !ref_hot_store(rem, 0, !neg))) return 0;
+    /* the hardware rem is the signed quotient's remainder: under 85 an
+     * unsigned quotient item's remainder is from its magnitude (DIVIDE
+     * rule 6; 2002 and later take the signed one, as rem does) */
+    if (rem && !rs[0].sym->pi.is_signed && g_std < 2002) return 0;
     *bound = wide ? -1 : (long long)b;
     return mode;
 }
@@ -11207,6 +11211,14 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
     emit_push(dividend);
     emit_push(dividend); emit_push(divisor); emit_call("cob_ndiv");
     emit_li("r3", q->sym->pi.scale); emit_call("cob_ntrunc");
+    /* COBOL 85: the quotient (identifier-3), or the intermediate field
+     * with its presence or absence of a sign -- an unsigned quotient
+     * item's is the magnitude (X3.23-1985 VI-81, DIVIDE rule 6).  2002
+     * and 2023 make it a signed subsidiary quotient (2023 14.9.12,
+     * general rules 6c, 7).  The user's ruling, 2026-09-30: each edition
+     * as its text says; CCVS is silent, and GnuCOBOL takes the signed
+     * quotient under 85 too (docs/oracles.md, free/divremu) */
+    if (!q->sym->pi.is_signed && g_std < 2002) emit_call("cob_nabs");
     emit_push(divisor); emit_call("cob_nmul");
     emit_call("cob_nsub");
     /* ON SIZE ERROR: a quotient that overflowed leaves the remainder alone;

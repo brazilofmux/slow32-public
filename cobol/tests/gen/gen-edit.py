@@ -15,8 +15,14 @@ BLANK WHEN ZERO (never with *).  Alphanumeric-edited items take X with
 B 0 / insertions.  Each MOVE's result is DISPLAYed between brackets, so
 leading and trailing spaces count.
 """
+import os
 import random
 import sys
+from decimal import Decimal
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import arith85                      # a MOVE into the source item
+from edit85 import edit_numeric, edit_alnum   # the 85 editing rules, the reference
 
 
 def insert_simple(r, chars, frac=False):
@@ -115,23 +121,29 @@ def main():
             pic, n = alnum_edited(r)
             w("01 E%03d pic %s." % (k, pic))
             txt = "".join(r.choice("ABCXYZ 12") for _ in range(r.randint(1, 12)))
-            stmts.append(('    move "%s" to E%03d' % (txt, k), k, pic))
+            stmts.append(('    move "%s" to E%03d' % (txt, k), k, pic, edit_alnum(pic, txt)))
         else:
             pic, digits, decs, bwz_ok = numeric_edited(r)
             bwz = " blank when zero" if bwz_ok and r.random() < 0.1 else ""
             w("01 E%03d pic %s%s." % (k, pic, bwz))
             name, _, signed, ints, sdecs = r.choice(srcs)
             if r.random() < 0.3:
-                stmts.append(("    move %s to E%03d" % (value(r, True, r.randint(0, 9), r.randint(0, 4)), k), k, pic))
+                lit = value(r, True, r.randint(0, 9), r.randint(0, 4))
+                stmts.append(("    move %s to E%03d" % (lit, k), k, pic,
+                              edit_numeric(pic, Decimal(lit), bool(bwz))))
             else:
+                lit = value(r, signed, ints, sdecs)
+                sv = arith85.move((signed, ints, sdecs), Decimal(lit))
                 stmts.append(("    move %s to %s\n    move %s to E%03d"
-                              % (value(r, signed, ints, sdecs), name, name, k), k, pic))
+                              % (lit, name, name, k), k, pic, edit_numeric(pic, sv, bool(bwz))))
     w("procedure division.")
-    for st, k, pic in stmts:
+    for st, k, pic, want in stmts:
         w(st)
         w('    display "%d %s [" E%03d "]"' % (k, pic, k))
     w("    stop run.")
     print("\n".join(out))
+    for st, k, pic, want in stmts:           # the reference's lines, for run-gen.sh
+        print("%d %s [%s]" % (k, pic, want), file=sys.stderr)
 
 
 if __name__ == "__main__":
