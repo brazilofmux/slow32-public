@@ -5475,6 +5475,17 @@ int cob_pop_alloc_size(void)
  * 14.9.4 GR 11).  The program reads it at entry and sets it back to -1,
  * "not known", which a program entered from C code sees. */
 int cob_call_nargs = -1;
+/* ANY LENGTH (2023 13.18.2): each argument's length in bytes, and how
+ * many the CALL set; the called program takes them at entry and sets the
+ * count back to -1, "none", which a caller compiled -std=85 or C leaves */
+int cob_call_lens[16];
+int cob_call_nlens = -1;
+void cob_anylen_missing(const char *prog)
+{
+    char m[200];
+    snprintf(m, sizeof m, "'%s' has an ANY LENGTH parameter, and its caller passed no lengths (a CALL compiled -std=85, or from C)", prog);
+    cob_fatal(m);
+}
 /* PROCEDURE DIVISION RETURNING for a program (2023 14.8.3): the caller
  * allocates the returning item (14.2.3 GR 6 NOTE 1) and leaves its
  * address here for the program to take at entry; every program compiled

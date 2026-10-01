@@ -4601,3 +4601,27 @@ Fourth batch:
   2002/trimchars (no oracle: GnuCOBOL has only the 2014 form), two bad/
   tests, warn/ext-trim, warn/ext-every; bad/std2002-intrinsic-2014 now
   names SECONDS-PAST-MIDNIGHT.
+
+Fifth batch: **ANY LENGTH** (2002; 2023 13.18.2).  The caller leaves
+each argument's length in bytes beside the count (cob_call_lens and
+cob_call_nlens, set by every CALL and user-function invocation compiled
+-std=2002); the called program puts it in the parameter's own writable
+descriptor at entry, saved and restored with the activation's words when
+it recurses; and every reference to the item becomes a reference
+modification to its end, so each statement takes the run-time length as
+it takes a computed part's.  An outermost program's ANY LENGTH is taken
+as BP-E28; a caller compiled -std=85 or C passes no lengths, and the run
+stops naming the program.  Two gaps closed on the way: FUNCTION
+BYTE-LENGTH of a part with a computed length (counted at run time, as
+LENGTH is), and a string function's argument with a computed length
+(DISPLAY-OF, NATIONAL-OF, TRIM; it was "of known length" only).  Gaps
+left: PICTURE 1, a program's RETURNING item, a zero-length argument.
+Tests 2002/anylen (identical to GnuCOBOL), 2002/anylenfn (no oracle:
+GnuCOBOL dies with SIGSEGV), 2002/anylennat, six bad/ tests,
+warn/ext-std2002-anylen-outer.
+
+Found while writing 2002/anylen, **open**: a contained program may CALL
+a sibling that is not COMMON.  GnuCOBOL refuses it at run time ("module
+not found"), and the scope rules make only a directly contained program,
+or a COMMON sibling, visible by name; this compiler links any program
+the CALL names.

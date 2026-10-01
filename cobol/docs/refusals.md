@@ -55,8 +55,9 @@ COBOL 2002/2023 (Stage B):
 
 - the rest of the CALL family: function and program prototypes,
   FUNCTION-ID and REPOSITORY `AS literal`, BY VALUE parameters of a
-  function, ANY LENGTH (BY VALUE, OPTIONAL, OMITTED, program RETURNING
-  and stack arguments are implemented: docs/conformance/call.md);
+  function (BY VALUE, OPTIONAL, OMITTED, program RETURNING, ANY LENGTH
+  and stack arguments are implemented: docs/conformance/call.md,
+  data-division.md);
 - compiler directives other than >>SOURCE and >>TURN (>>DEFINE, >>IF,
   >>EVALUATE, ...);
 - exceptions: USE AFTER EXCEPTION CONDITION ... FILE, WHEN EXCEPTION

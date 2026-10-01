@@ -265,7 +265,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
-       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM,
+       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -333,6 +333,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "01 name CONSTANT AS (2002 13.9; 2023 13.10)" },
     { "BP-E27", 'E', "FUNCTION TRIM is COBOL 2014 (2023 15.96), beyond 1985 and 2002; IBM, Micro Focus and "
                      "GnuCOBOL all have it, and it is taken" },
+    { "BP-E28", 'E', "ANY LENGTH in an outermost program, which 2023 13.18.2.3 rule 2 excludes (a plain CALL need not carry "
+                     "lengths); Micro Focus and GnuCOBOL take it, and so does this compiler's CALL" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -2262,6 +2264,7 @@ typedef struct Sym {
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_based;                  /* a BASED entry: reached through a cell SET ADDRESS OF fills, NULL at first (2002 8.6.4) */
     int  param_opt;                 /* a PROCEDURE DIVISION USING OPTIONAL parameter: its cell may be NULL (omitted) */
+    int  any_len;                   /* ANY LENGTH (2002; 2023 13.18.2): its size the argument's, in a writable descriptor */
     int  is_rc;                     /* RETURN-CODE: storage in libcob (cob_return_code), none of the unit's */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
@@ -3052,6 +3055,7 @@ static int nat_picture(const char *pic, PicInfo *pi, int line)
 }
 
 static int sym_is_boolean(const Sym *s);
+static int g_is_function;           /* (defined with the units, below) */
 static void parse_constant_entry(int line);
 static void const_pic_check(void);
 static int g_cpicbad[64], g_cpicbad_ci[64], g_ncpicbad;  /* PICTURE repetitions no constant could fill */
@@ -3094,6 +3098,8 @@ static void parse_data_item1(void)
 
     if (level == 88) {
         if (g_last_item < 0) die_at(line, "level 88 '%s' has no conditional variable", s->name);
+        if (g_sym[g_last_item].any_len)
+            die_at(line, "level 88 '%s': an ANY LENGTH item takes no condition-name (2023 13.16.3 rule 24f)", s->name);
         s->is_cond = 1;
         s->parent = g_last_item;
         if (!(accept_word("value") || accept_word("values")))
@@ -3472,6 +3478,9 @@ static void parse_data_item1(void)
                    "'%s': the constant entry (level 01 CONSTANT, 2023 13.10) is not implemented", s->name);
         if (!strcmp(t->s, "dynamic") && is_word(peek(1), "length"))
             die_at(t->line, "'%s': the DYNAMIC LENGTH clause is COBOL 2014, beyond %s (2023 13.18.19)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
+        if (!strcmp(t->s, "any") && is_word(peek(1), "length") && g_std >= 2002) {
+            advance(); advance(); s->any_len = 1; continue;
+        }
         if ((!strcmp(t->s, "same") && is_word(peek(1), "as")) || (!strcmp(t->s, "any") && is_word(peek(1), "length")) || !strcmp(t->s, "locale")) {
             const char *what = !strcmp(t->s, "same") ? "the SAME AS clause (2023 13.18.49)" :
                                !strcmp(t->s, "any") ? "the ANY LENGTH clause (2023 13.18.2)" : "the LOCALE phrase of PICTURE (2023 13.18.40)";
@@ -3791,6 +3800,16 @@ static void build_tree(void)
             else { s->nat_usage = 1; s->in_natgroup = 1; }        /* implied (rule 3); a PICTURE of X or A is refused when finished */
         }
         if (s->is_based && s->redefines >= 0) die_at(s->line, "'%s': a BASED entry takes no REDEFINES", s->name);
+        if (s->any_len) {
+            /* 2023 13.18.2.3 rules 1-2: an elementary level 1 LINKAGE entry,
+             * PICTURE one X, N or 1 */
+            if (!s->is_linkage || s->level != 1 || s->is_group)
+                die_at(s->line, "'%s': ANY LENGTH is for an elementary level 1 entry of the LINKAGE SECTION (2023 13.18.2.3 rule 2)", s->name);
+            if (!s->has_pic || !(!strcasecmp(s->pic, "x") || !strcasecmp(s->pic, "x(1)") || !strcasecmp(s->pic, "n") || !strcasecmp(s->pic, "n(1)")) ||
+                (s->has_usage && s->usage != U_DISPLAY && s->usage != U_NATIONAL))
+                die_at(s->line, "'%s': ANY LENGTH takes PICTURE X or N, one symbol (2023 13.18.2.3 rule 1; PICTURE 1 is not implemented)", s->name);
+            if (!g_is_function && g_udepth == 0) bp(BP_E28_ANY_LENGTH_OUTER, s->line);
+        }
         if (!s->is_group && s->usage == U_POINTER && s->level != 1 && !sym_in_strong(s))
             die_at(s->line, "'%s': a USAGE POINTER item is at level 1, or in a strongly-typed group (2023 13.18.60.3 rule 14; 2002 rule 13)", s->name);
         if (s->is_group && s->has_pic && s->standin) s->has_pic = 0;      /* it stood in for a group: no second error */
@@ -4544,7 +4563,7 @@ typedef struct { char *label; unsigned char *bytes; int len; } Lit;
 static Lit *g_lit; static int g_nlit, g_lcap;
 
 /* descriptors: emitted into .rodata at the end */
-typedef struct { unsigned char cat, usage, digits; signed char scale; unsigned char flags, flags2; int size; char picstr[PIC_MAXPAT]; } Desc;
+typedef struct { unsigned char cat, usage, digits; signed char scale; unsigned char flags, flags2; int size; char picstr[PIC_MAXPAT]; int anylen; } Desc;
 static Desc *g_desc; static int g_ndesc, g_dcap;
 
 static int g_noemit;        /* >0 while a lookahead parse runs: no code */
@@ -4706,6 +4725,7 @@ static int sym_desc(Sym *s)
 {
     if (s->desc_id >= 0) return s->desc_id;
     Desc d; memset(&d, 0, sizeof d);
+    if (s->any_len) d.anylen = sym_idx(s) + 1;     /* its own, in .data: the size is the argument's, set at entry */
     if (s->natgroup) { d.cat = COB_NATIONAL; d.usage = COB_U_DISPLAY; }   /* treated as PIC N(m) (13.18.29.4 rule 2b) */
     else if (sym_bitlike(s)) {           /* not a group with a USAGE BIT clause: that one is alphanumeric (13.18.60; B5) */
         /* bits: size the boolean positions, scale the first bit's place */
@@ -5378,9 +5398,18 @@ static void parse_ref(Ref *r)
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
         long chars = r->rm_bit ? r->sym->bits : r->rm_nat ? r->sym->size / 2 : r->sym->size;
-        if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
-        if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
-        if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
+        if (!r->sym->any_len) {                     /* its length is the argument's, known at run time */
+            if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
+            if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
+            if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
+        }
+    }
+    if (r->sym->any_len && !r->rm) {
+        /* the whole ANY LENGTH item: (1:), to the end its descriptor gives
+         * at run time, so every statement takes its length as it takes a
+         * computed reference modification's */
+        r->rm = 1; r->rm_start = 1; r->rm_len = 0; r->rm_l0 = -1;
+        r->rm_nat = r->sym->pi.category == PIC_NATIONAL;
     }
     for (int i = 0; i < r->nsub; i++)
         if (r->sub[i].sym == &g_subx && (r->sym->usage == U_BIT || r->sym->bitgroup))
@@ -6566,6 +6595,14 @@ static void parse_operand_raw_1(Opnd *o)
                     o->line = n->line;
                     return;
                 }
+                if (x.kind == O_REF && x.ref.rm && !x.ref.rm_len && !x.ref.rm_bit) {
+                    /* a computed part, an ANY LENGTH item's among them: its
+                     * bytes, counted at run time as LENGTH counts characters */
+                    Opnd *fx = xmalloc(sizeof *fx); *fx = x;
+                    memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = FN_RMLEN; o->farg = fx; o->fsize = 9;
+                    o->fnid = 0; o->line = n->line;
+                    return;
+                }
                 int len = opnd_size(&x);
                 if (len < 0) die_at(n->line, "FUNCTION BYTE-LENGTH of a reference modification with a variable length is not implemented");
                 o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1;
@@ -7035,6 +7072,11 @@ static void emit_refmod_check(const Ref *r, long len, int slot)
     emit("\tadd r3, r1, r0");
     if (len == -2) emit("\tldw r4, sp+%d", SLOT(slot));
     else emit_li("r4", len == -3 ? -1 : len);    /* -3: computed, and checked with the length */
+    if (r->sym->any_len) {
+        /* the size the argument gave it, in its descriptor */
+        emit_desc_addr("r5", sym_desc(r->sym)); emit("\tldw r5, r5+8");
+        if (r->rm_nat) emit("\tsrai r5, r5, 1");
+    } else
     emit_li("r5", r->rm_bit ? r->sym->bits : r->rm_nat ? r->sym->size / 2 : r->sym->size);   /* in character positions, or bits */
     emit_call("cob_bound_refmod");
     emit("\tbeq r1, r0, .L%d", Lok);
@@ -7199,7 +7241,7 @@ static const char *g_outdir = ".";
 static void fdesc_of(FDesc *d, const Sym *x)
 {
     memset(d, 0, sizeof *d);
-    d->group = x->is_group; d->size = x->size; d->usage = x->usage | x->uvar << 8; d->has_pic = x->has_pic;   /* the variant in the second byte: COMP-X is not COMP-5 */
+    d->group = x->is_group; d->size = x->any_len ? -1 : x->size; d->usage = x->usage | x->uvar << 8; d->has_pic = x->has_pic;   /* the variant in the second byte: COMP-X is not COMP-5 */
     d->just = x->just; d->bwz = x->blank_zero; d->sign_lead = x->sign_lead; d->sign_sep = x->sign_sep;
     snprintf(d->pic, sizeof d->pic, "%s", x->has_pic ? x->pic : "-");
 }
@@ -7360,6 +7402,17 @@ static void emit_ucall(UCall *u)
         } else emit_move(&u->arg[k], &refs[k]);
     }
     refs[u->nargs] = ftemp_ref(u->res, u->line);
+    int anyl = 0;
+    for (int k = 0; k < u->nargs; k++) anyl |= f->param[k].size == -1;
+    if (anyl) {
+        /* the arguments' lengths, for the ANY LENGTH parameters (as CALL) */
+        for (int k = 0; k < u->nargs; k++) {
+            int sl = ref_static_len(&refs[k]);
+            if (sl > 0) { emit_la("r1", "cob_call_lens"); emit_li("r2", sl); emit("\tstw r1+%d, r2", 4 * k); }
+            else { Arg l[1] = { arg_rlen(&refs[k]) }; emit_args(l, 1); emit_la("r1", "cob_call_lens"); emit("\tstw r1+%d, r3", 4 * k); }
+        }
+        emit_la("r1", "cob_call_nlens"); emit_li("r2", u->nargs); emit("\tstw r1+0, r2");
+    }
     for (int k = 0; k <= u->nargs; k++) a[k] = arg_ref(&refs[k]);
     emit_args(a, u->nargs + 1);
     emit_call(f->link);
@@ -7398,6 +7451,23 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
     if (u.nargs != f->nparam) die_at(line, "the function '%s' takes %d argument%s, not %d", name, f->nparam, f->nparam == 1 ? "" : "s", u.nargs);
     for (int k = 0; k < u.nargs; k++) {
         Opnd *a = &u.arg[k];
+        if (f->param[k].size == -1) {
+            /* an ANY LENGTH parameter (2023 13.18.2): an item of its class
+             * by reference, whatever its length; a literal or a function
+             * result by content, into a copy of the value's own length */
+            int pnat = f->param[k].pic[0] == 'n' || f->param[k].pic[0] == 'N';
+            if (opnd_is_national(a) != pnat || a->kind == O_NUM || a->kind == O_EXPR ||
+                (a->kind == O_REF && (is_numeric_sym(a->ref.sym) || (a->ref.sym->is_group && pnat))) || (a->kind == O_FUNC && a->fvar))
+                die_at(a->line, "argument %d of '%s' is for an ANY LENGTH %s parameter", k + 1, name, pnat ? "national" : "alphanumeric");
+            if (a->kind == O_REF && !a->ref.sym->is_ftemp) { u.byref[k] = 1; continue; }
+            FDesc cd = f->param[k];
+            int len = a->kind == O_STR ? a->tok->len : opnd_size(a);
+            if (len < 1) die_at(a->line, "argument %d of '%s': a length known only at run time is not implemented for an ANY LENGTH parameter", k + 1, name);
+            cd.size = len; snprintf(cd.pic, sizeof cd.pic, "%c(%d)", pnat ? 'n' : 'x', pnat ? len / 2 : len);
+            u.byref[k] = 0;
+            u.ctmp[k] = ftemp_new(&cd, line);
+            continue;
+        }
         /* 8.4.3.2.4 rule 5: an identifier that could receive goes BY REFERENCE,
          * and must then be described as the parameter is (14.8.2.3); a
          * literal, an expression or a function result goes BY CONTENT, into
@@ -7552,6 +7622,7 @@ static void emit_fn_value(Opnd *f)
 
 /* r3 = a string argument's address, r4 its length in bytes -- a
  * run-time-length function's taken from libcob as it is evaluated */
+static void emit_ref_addr_len(Ref *r);
 static void emit_str_arg(Opnd *x)
 {
     if (x->kind == O_FUNC) {
@@ -7565,8 +7636,9 @@ static void emit_str_arg(Opnd *x)
         return;
     }
     if (x->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)x->tok->s, x->tok->len)); emit_li("r4", x->tok->len); return; }
-    if (x->kind != O_REF || (x->ref.rm && ref_static_len(&x->ref) <= 0))
+    if (x->kind != O_REF || (x->ref.rm && x->ref.rm_bit && ref_static_len(&x->ref) <= 0))
         die_at(x->line, "this function's argument must be an item or a literal of known length");
+    if (x->ref.rm && ref_static_len(&x->ref) <= 0) { emit_ref_addr_len(&x->ref); return; }   /* its length computed: an ANY LENGTH item's too */
     emit_ref_addr(&x->ref, "r3");
     emit_li("r4", x->ref.rm ? ref_static_len(&x->ref) : (long)x->ref.sym->size);
 }
@@ -15064,6 +15136,30 @@ static void parse_call(void)
     /* the returning item's address, for a COBOL program's result */
     int rslot = -1;
     if (g_std >= 2002 && has_ret) { rslot = g_slot_base++; emit_ref_addr(&ret, "r1"); emit("\tstw sp+%d, r1", SLOT(rslot)); }
+    /* each argument's length in bytes, for a parameter described ANY
+     * LENGTH (2023 13.18.2.4): beside the count, before the argument
+     * registers are loaded -- a computed length takes calls */
+    if (g_std >= 2002) {
+        for (int k = 0; k < n; k++) {
+            Arg *x = &a[k]; long len = -2; const Ref *lr = NULL;
+            if (x->kind == A_REF) lr = x->ref;
+            else if (x->kind == A_CONTENT || x->kind == A_LABEL) {
+                Opnd *o = x->kind == A_CONTENT ? x->fn : &ops[k];
+                if (o->kind == O_REF) lr = &o->ref;
+                else if (o->kind == O_STR) len = o->tok->len;
+                else if (o->kind == O_NUM) len = o->num.ndigits;
+                else len = 0;
+            } else if (x->kind == A_VALUE) len = 4;
+            else len = 0;                                   /* OMITTED */
+            if (lr) {
+                int sl = ref_static_len(lr);
+                if (sl > 0) len = sl;
+                else { Arg l[1] = { arg_rlen(lr) }; emit_args(l, 1); emit_la("r1", "cob_call_lens"); emit("\tstw r1+%d, r3", 4 * k); continue; }
+            }
+            emit_la("r1", "cob_call_lens"); emit_li("r2", len); emit("\tstw r1+%d, r2", 4 * k);
+        }
+        emit_la("r1", "cob_call_nlens"); emit_li("r2", n); emit("\tstw r1+0, r2");
+    }
     int nx = n > 8 ? n - 8 : 0, xbase = g_slot_base, out = (nx * 4 + 7) & ~7;
     if (nx) {
         g_slot_base += nx;
@@ -18189,6 +18285,38 @@ static void parse_procedure_division(void)
             emit_la("r1", g_sym[u->record].label);
             emit("\tstw r1+0, r2");
         }
+        /* ANY LENGTH (2023 13.18.2.4): each such parameter's size is its
+         * argument's, which the caller left in cob_call_lens (in bytes) --
+         * into its descriptor, saved and restored with the activation's
+         * words when the program recurses.  No lengths (a caller compiled
+         * -std=85, or C): the run stops rather than guess */
+        int nany = 0;
+        for (int i = 0; i < nusing; i++) {
+            nany += using[i]->any_len;
+            if (using[i]->any_len && uval[i])
+                die_at(using[i]->line, "'%s': an ANY LENGTH parameter is BY REFERENCE (2023 13.18.2.3 rules 3-4)", using[i]->name);
+        }
+        for (int k = g_sym_base; k < g_nsym; k++) {
+            if (!g_sym[k].any_len) continue;
+            int found = 0;
+            for (int i = 0; i < nusing; i++) found |= using[i] == &g_sym[k];
+            if (!found) die_at(g_sym[k].line, "'%s': an ANY LENGTH item is a parameter of the PROCEDURE DIVISION header (2023 13.18.2.3 rules 3-4)", g_sym[k].name);
+        }
+        if (nany) {
+            int Lok = new_label();
+            emit_la("r1", "cob_call_nlens"); emit("\tldw r2, r1+0");
+            emit_li("r3", -1); emit("\tstw r1+0, r3");
+            emit_li("r3", nusing);
+            emit("\tbge r2, r3, .L%d", Lok);
+            emit_la("r3", lit_label((const unsigned char *)g_progid, (int)strlen(g_progid) + 1));
+            emit_call("cob_anylen_missing");
+            emit_label(Lok);
+            for (int i = 0; i < nusing; i++) {
+                if (!using[i]->any_len) continue;
+                emit_la("r1", "cob_call_lens"); emit("\tldw r2, r1+%d", 4 * i);
+                emit_desc_addr("r1", sym_desc(using[i])); emit("\tstw r1+8, r2");
+            }
+        }
         if (g_prog_ret) {
             emit_la("r1", g_prog_ret->label);
             emit("\tldw r2, sp+%d", SLOT_RET);
@@ -19945,6 +20073,7 @@ static void emit_act_desc(void)
             Sym *s = &g_sym[i];
             if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0) continue;
             if ((s->is_linkage || s->is_local) && nw < 256) snprintf(words[nw++], sizeof words[0], "%s", s->label);
+            if (s->any_len && nw < 256) snprintf(words[nw++], sizeof words[0], ".Ld%d+8", sym_desc(s));   /* its size, the argument's */
         }
         for (int i = g_file_base; i < g_nfile; i++) {
             File *f = &g_files[i];
@@ -20242,13 +20371,20 @@ static void emit_rodata(void)
             emit_bytes((unsigned char *)d->picstr, (int)strlen(d->picstr) + 1);
         }
     }
-    for (int i = 0; i < g_ndesc; i++) {
-        Desc *d = &g_desc[i];
-        emit("\t.p2align 2");
-        emit(".Ld%d:", i);
-        emit("\t.byte %d,%d,%d,%d,%d,%d,0,0", d->cat, d->usage, d->digits, (unsigned char)d->scale, d->flags, d->flags2);
-        emit("\t.word %d", d->size);
-        if (d->picstr[0]) emit("\t.word .Lpic%d", i); else emit("\t.word 0");
+    int nany = 0;
+    for (int i = 0; i < g_ndesc; i++) nany += g_desc[i].anylen != 0;
+    for (int pass = 0; pass < 1 + (nany > 0); pass++) {
+        /* an ANY LENGTH item's descriptor is written at entry: .data */
+        if (pass) emit("\t.data");
+        for (int i = 0; i < g_ndesc; i++) {
+            Desc *d = &g_desc[i];
+            if (!d->anylen != !pass) continue;
+            emit("\t.p2align 2");
+            emit(".Ld%d:", i);
+            emit("\t.byte %d,%d,%d,%d,%d,%d,0,0", d->cat, d->usage, d->digits, (unsigned char)d->scale, d->flags, d->flags2);
+            emit("\t.word %d", d->size);
+            if (d->picstr[0]) emit("\t.word .Lpic%d", i); else emit("\t.word 0");
+        }
     }
 }
 
