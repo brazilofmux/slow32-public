@@ -1,5 +1,6 @@
 *> Reference modification in screen I/O: a positioned ACCEPT into a part
-*> of an item, and a SCREEN SECTION field FROM a part.  abrignoli_COBSOFT
+*> of an item, a positioned DISPLAY of a part, and a SCREEN SECTION field
+*> FROM a part.  abrignoli_COBSOFT
 *> keys a CPF number piece by piece, accept f-cpf(07:03) at line 11 col
 *> 42 with update auto-skip.  Each was "not implemented" (ISSUES 120).
 *> The keys come from posrefmod.keys; the ANSI stream is the expected
@@ -19,4 +20,5 @@ procedure division.
     accept f-cpf(7:3) at line 2 col 9 with auto-skip
     display show-mid
     display f-cpf at line 6 col 1
+    display f-cpf(10:2) at line 7 col 1
     stop run.

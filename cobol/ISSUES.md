@@ -4773,8 +4773,9 @@ SECTION's meanings, the input ones on ACCEPT only.  Test free/posauto
 
 Eighteenth batch: **reference modification in screen I/O**.  A
 positioned ACCEPT into a part (`accept f-cpf(07:03) at line 11 col 42`,
-abrignoli_COBSOFT keying a CPF number piece by piece) and a SCREEN
-SECTION field FROM, TO or USING a part were both "not implemented".  The
+abrignoli_COBSOFT keying a CPF number piece by piece), a positioned
+DISPLAY of a part, and a SCREEN SECTION field FROM, TO or USING a part
+were all "not implemented".  The
 field now reads and writes the part: its address comes from the
 reference as for any other (computed at ACCEPT time when the start is),
 its descriptor is the part's (alphanumeric or national, of the part's

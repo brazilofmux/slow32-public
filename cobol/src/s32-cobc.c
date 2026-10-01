@@ -9610,9 +9610,17 @@ static void parse_display_positioned(void)
         parse_pos_clauses(f, 0);
         switch (o.kind) {
         case O_REF:
-            if (o.ref.rm) die_at(o.line, "reference modification in a positioned DISPLAY is not implemented");
             f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1; f->ref_tp = tp;
             f->has_pic = 1;
+            if (o.ref.rm) {
+                /* a part: shown as its own characters (as ACCEPT's) */
+                sfield_part(f, &o.ref, o.line);
+                int chars = (int)o.ref.rm_len;
+                if (o.ref.rm_nat) { f->pi.category = PIC_NATIONAL; f->pi.bytes = 2 * chars; }
+                else { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = chars; }
+                if (!f->width) f->width = chars;
+                break;
+            }
             if (sym_is_national(o.ref.sym)) {
                 /* national text in columns (cobol ISSUES-92): a column a character position, SIZE counting columns */
                 int n = o.ref.sym->size / 2;
