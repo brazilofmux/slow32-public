@@ -1,0 +1,1 @@
+'i': PIC X(8) COMP-5 holds twenty digits, which need the wide arithmetic of -std=2002 (docs/wide.md); compile with -std=2002

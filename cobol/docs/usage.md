@@ -43,7 +43,12 @@ little-endian.)
   digits in byte-storage mode by default; IBMCOMP gives word-storage.
 - **COMP-X:** unsigned big-endian binary. Its PICTURE may be all X's
   (the length in bytes); the limit is the field's capacity.
-- **COMP-5:** as COMP-X, but signed and in the machine's own byte order.
+- **COMP-5:** as COMP-X, but signed and in the machine's own byte order. Here
+  `PIC X(n) COMP-5` takes 1 to 8 bytes: up to seven as an item of the
+  digits they hold, and eight -- 2^64 - 1, twenty digits -- as BINARY-DOUBLE
+  UNSIGNED, the same item, on the wide path, so -std=2002 (2002/comp5x8;
+  ISSUES-120). COMP-X's eight-byte X picture, big-endian, is not
+  implemented.
 - **COMP-1 and COMP-2:** IEEE 754 single and double, 4 and 8 bytes, no
   PICTURE; FLOAT-SHORT and FLOAT-LONG are the 2002 names. The storage
   "can differ from operating system to operating system", which in

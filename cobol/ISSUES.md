@@ -4723,3 +4723,12 @@ user's ruling (2026-10-01) it is taken under -dialect=mf as BP-D1's
 section header is.  Tests free/mf-nofilesec (identical to GnuCOBOL
 -std=mf), bad/fd-no-section, warn/ext-mf-nofilesec.
 
+Fourteenth batch: **PIC X(8) COMP-5**.  Eight bytes in the machine's
+order hold 2^64 - 1, twenty digits; that item is BINARY-DOUBLE UNSIGNED,
+so it is taken as one, on the wide path -- -std=2002, and under -std=85
+refused naming why.  COMP-X's eight-byte X picture (big-endian) stays
+not implemented.  GnuCOBOL keeps 19 digits of it (losing the twentieth)
+and stores it big-endian, -std=mf too (.oracle-expected,
+docs/oracles.md).  abrignoli_COBSOFT's twelve programs needed it.  Tests
+2002/comp5x8, bad/comp5-x8-85.
+
