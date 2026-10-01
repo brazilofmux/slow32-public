@@ -26,6 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from inspect85 import inspect, converting   # the 85 rules, the INSPECT oracle
+from string85 import string, unstring, move_x   # and STRING, UNSTRING
 
 ALPHA = "ABab 1,"
 
@@ -52,8 +53,10 @@ def main():
     for i in range(4):
         w("01 S%d pic x(%d)." % (i, slen[i]))
     refs = []      # (label, expected line) for INSPECT, from inspect85
+    rlen = []
     for i in range(4):
-        w("01 R%d pic x(%d)." % (i, r.randint(1, 8)))
+        rlen.append(r.randint(1, 8))
+        w("01 R%d pic x(%d)." % (i, rlen[i]))
     w("01 D0 pic x(2).")
     w("01 DL0 pic x(2).")
     w("01 DL1 pic x(2).")
@@ -71,13 +74,24 @@ def main():
         if kind == "string":
             n = r.randint(1, 3)
             srcs = []
+            ref = []
             for i in range(n):
-                w("    move %s to S%d" % (lit(text(r, 1, 10)), i))
+                sv = text(r, 1, 10)
+                w("    move %s to S%d" % (lit(sv), i))
                 d = r.choice(["size", lit(r.choice(ALPHA)), lit(text(r, 2, 2)), "D0"])
-                srcs.append((r.choice(["S%d" % i, lit(text(r, 1, 5))]), d))
-            w("    move %s to D0" % lit(text(r, 1, 2)))
-            w("    move %s to R0" % lit(text(r, 1, 8)))
-            w("    move %d to P" % r.choice([1, 1, 2, 3, 5, 0, 9]))
+                src = r.choice(["S%d" % i, lit(text(r, 1, 5))])
+                srcs.append((src, d))
+                ref.append((move_x(sv, slen[i]) if src.startswith("S") else src[1:-1], d))
+            dv = text(r, 1, 2)
+            w("    move %s to D0" % lit(dv))
+            rv = text(r, 1, 8)
+            w("    move %s to R0" % lit(rv))
+            pv = r.choice([1, 1, 2, 3, 5, 0, 9])
+            w("    move %d to P" % pv)
+            ref = [(c, None if d == "size" else (move_x(dv, 2) if d == "D0" else d[1:-1])) for c, d in ref]
+            res, pp, ov = string(ref, move_x(rv, rlen[0]), pv)
+            if pv > 0:          # a POINTER of 0 breaks STRING rule 5: no reference
+                refs.append((k, "%d [%s] %02d %s" % (k, res, pp, "O" if ov else "N")))
             w('    move "-" to OV')
             w("    string")
             for s, d in srcs:
@@ -88,29 +102,46 @@ def main():
             w("    end-string")
             w('    display "%d [" R0 "] " P " " OV' % k)
         elif kind == "unstring":
-            w("    move %s to S0" % lit(text(r, 0 if False else 1, 14)))
+            sv = text(r, 0 if False else 1, 14)
+            w("    move %s to S0" % lit(sv))
             d1 = r.choice(ALPHA)
             d2 = r.choice([None, r.choice(ALPHA), text(r, 2, 2)])
-            delim = ("all " if r.random() < 0.4 else "") + lit(d1)
+            a1 = r.random() < 0.4
+            delim = ("all " if a1 else "") + lit(d1)
+            dl = [(d1, a1)]
             if d2:
-                delim += " or " + ("all " if r.random() < 0.4 else "") + lit(d2)
+                a2 = r.random() < 0.4
+                delim += " or " + ("all " if a2 else "") + lit(d2)
+                dl.append((d2, a2))
             nrec = r.randint(1, 3)
             for i in range(nrec):
                 w('    move "%s" to R%d' % ("#" * 8, i))
             w('    move "##" to DL0  move "##" to DL1')
             w("    move 99 to C0  move 99 to C1")
-            w("    move %d to P" % r.choice([1, 1, 1, 2, 4, 0, 30]))
-            w("    move %d to T" % r.choice([0, 0, 3]))
+            pv = r.choice([1, 1, 1, 2, 4, 0, 30])
+            w("    move %d to P" % pv)
+            tv = r.choice([0, 0, 3])
+            w("    move %d to T" % tv)
             w('    move "-" to OV')
             w("    unstring S0 delimited by %s" % delim)
             into = []
+            rcv = []
             for i in range(nrec):
                 ph = "R%d" % i
+                rc = {"size": rlen[i], "value": "#" * rlen[i], "dsize": None, "dval": "##", "count": None}
                 if i < 2 and r.random() < 0.6:
                     ph += " delimiter in DL%d" % i
+                    rc["dsize"] = 2
                 if i < 2 and r.random() < 0.6:
                     ph += " count in C%d" % i
+                    rc["count"] = 99
                 into.append(ph)
+                rcv.append(rc)
+            rr, pp, tt, ov = unstring(move_x(sv, slen[0]), dl, rcv, pv, tv)
+            dls = [rr[i]["dval"] if i < nrec else "##" for i in range(2)]
+            cs = [rr[i]["count"] if i < nrec and rr[i]["count"] is not None else 99 for i in range(2)]
+            refs.append((k, "%d %s" % (k, "".join("[%s]" % x["value"] for x in rr))))
+            refs.append((k, "%d  %s %s %02d %02d %02d %02d %s" % (k, dls[0], dls[1], cs[0], cs[1], pp, tt, "O" if ov else "N")))
             w("        into " + "\n             ".join(into))
             w("        with pointer P tallying in T")
             w('        on overflow move "O" to OV')

@@ -3271,20 +3271,23 @@ int cob_switches[8];
  * ISSUES-69); pos is a byte position, POINTER counts characters */
 static struct { char *dst; int dlen, pos, overflow, w; } cs;
 
-/* pos is the 1-based POINTER value, 1 when there is none; one out of
- * range is the overflow, nothing moves and the POINTER keeps its value
- * (X3.23-1985 STRING GR 7; 2023 14.9.43.4) */
+/* pos is the 1-based POINTER value, 1 when there is none.  One out of
+ * range is the overflow only when a character comes to be moved: the
+ * test is made "before each move of a character" (X3.23-1985 VI-133,
+ * STRING general rule 9; the same words in 2002 and 2023), so a STRING
+ * whose sources give nothing to move does not overflow.  Then nothing
+ * moves and the POINTER keeps its value (rule 7).  A POINTER below 1
+ * breaks rule 5, which the text leaves undefined: the overflow at once,
+ * as GnuCOBOL and Micro Focus give it. */
 void cob_str_begin(char *dst, int dlen, int pos)
 {
-    cs.dst = dst; cs.dlen = dlen; cs.overflow = 0; cs.w = 1;
+    cs.dst = dst; cs.dlen = dlen; cs.overflow = pos < 1; cs.w = 1;
     cs.pos = pos;
-    if (cs.pos < 1 || cs.pos > dlen) cs.overflow = 1;
 }
 
 void cob_str_begin_nat(char *dst, int dlen, int pos)
 {
-    cs.dst = dst; cs.dlen = dlen; cs.overflow = 0; cs.w = 2;
-    if (pos < 1 || pos > dlen / 2) cs.overflow = 1;
+    cs.dst = dst; cs.dlen = dlen; cs.overflow = pos < 1; cs.w = 2;
     cs.pos = 2 * (pos - 1) + 1;
 }
 
@@ -3300,7 +3303,7 @@ void cob_str_src(const char *s, int n, const char *delim, int dn)
     /* the characters that fit, in one copy; any left over is the overflow
      * (the character-at-a-time loop this replaces stopped at the first
      * character that did not fit, having moved the ones before it) */
-    int chars = take / w, room = cs.pos - 1 <= cs.dlen ? (cs.dlen - (cs.pos - 1)) / w : 0;
+    int chars = take / w, room = cs.pos >= 1 && cs.pos - 1 <= cs.dlen ? (cs.dlen - (cs.pos - 1)) / w : 0;
     int moved = chars < room ? chars : room;
     if (moved > 0) memcpy(cs.dst + cs.pos - 1, s, (size_t)(moved * w));
     cs.pos += moved * w;
