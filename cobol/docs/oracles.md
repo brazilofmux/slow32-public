@@ -162,6 +162,40 @@ differs:
 | `free/odorecv` | as this compiler: OCCURS rule 3a and 3b |
 | `free/mulwide`, `free/computewide`, `free/divround18` | as this compiler, digit for digit |
 
+## A 74-era witness: MS-COBOL 4.65 (2026-09-30)
+
+Microsoft MS-COBOL 4.65 (1982) is a subset of X3.23-1974 for CP/M-80, run
+under the Z80 project's CP/M machine (`~/z80/z80-monster`, the compiler
+in `~/z80/disks/mscobol`). `tests/cpmcheck.sh NAME|PATH...` converts a
+free-format program to fixed format (uppercase outside literals, a
+paragraph name before the first statement), compiles it, links it with
+L80, runs it, and prints the listing's diagnostics and the screen beside
+our output.
+
+It is a witness for 74 practice, never for an 85 rule, and a narrow one:
+
+- No 85 syntax: no scope terminators, no inline PERFORM, statements need
+  a paragraph. Most tests/free programs are 85 programs and are refused.
+- No `REMAINDER` and no `ON SIZE ERROR`: the listing marks both
+  "UNRECOGNIZABLE ELEMENT IS IGNORED" and the program runs without them,
+  so it says nothing about `free/divremu`.
+- `INSPECT ... REPLACING` with more than one phrase stops the compiler
+  ("Stack Underflow", a compiler error in phase 2), so it says nothing
+  about `free/inspord`. Single phrases (`ALL`, `LEADING`, `FIRST`,
+  `BEFORE`/`AFTER INITIAL`, `TALLYING ... CHARACTERS`) agree with this
+  compiler.
+
+On the `free/editins` pictures, it differs from the 85 reading in two ways:
+
+| case | MS-COBOL 4.65 | reading |
+|---|---|---|
+| an insertion character inside a zero-suppression string (`Z/ZZZZZZ.ZZ`, `***/999999.9999`, `*0*9999999.999`, `**B909B9999.9999`) | kept while suppression lasts: `' /  3387.10'`, `***/027843.4190` | the 74 text (II-24, rule 8) and the 85 text (VI-35) say the same words: such characters "are part of the string". This compiler, MS COBOL 5.0 and edit85.py read that as replaced with the string; MS-COBOL 4.65 reads it as GnuCOBOL does. Not a 74-to-85 change: editing is absent from the 85 text's list of changes that may affect existing programs (XVII-54 to 56) |
+| `$0$$.99` holding .42 | `' 0 $.42'` | contrary to both texts: the positions before the floating symbol are spaces (74 II-23, 85 VI-34, rule 7) |
+| a value truncated to zero into a signed edited item: -32745520.019 into `$9+`, -500 into `99CR` | the sending value's sign: `$0-`, `00CR` | 74 says only "data item positive or zero" (II-22); 85 adds to rule 7 that the value used for editing is the value after truncation (VI-34), which is zero, so `$0+` and `00  `. A 74 program that relied on the old sign meets 85 here |
+
+Simple insertion outside a suppression string (`/999`, `0999`,
+`B999,999`) and `*999.9B99` agree with this compiler.
+
 ## What we will not do
 
 - Use cobc370 as an oracle for 85 semantics.
