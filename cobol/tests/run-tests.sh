@@ -410,7 +410,9 @@ for src in "$HERE/warn"/*.cbl; do
         report "warn/$name" 1 "ids: got [$(echo $got)] want [$(echo $want)]"; continue
     fi
     "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.quiet"
-    if [ -s "$W/$name.quiet" ]; then
+    # silent: no behavior point's warning without the flag (a warning the
+    # compiler always gives -- BP-D7's cut literal -- is not one)
+    if grep -q '\[BP-' "$W/$name.quiet"; then
         report "warn/$name" 1 "not silent without $wflag: $(head -1 "$W/$name.quiet")"; continue
     fi
     report "warn/$name" 0 "$(echo $got | wc -w) point(s), silent by default"

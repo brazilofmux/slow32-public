@@ -244,6 +244,16 @@ static void die_at(int line, const char *fmt, ...)
     fail();
 }
 
+/* a warning, always shown: something the program says is not what it
+ * gets (a literal cut to its item's length) */
+static void warn_at(int line, const char *fmt, ...)
+{
+    va_list ap;
+    fprintf(stderr, "%s:%d: warning: ", diag_file(line), line);
+    va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+    fputc('\n', stderr);
+}
+
 /* Behavior points (docs/behavior-points.md).  Every place the compiler
  * meets a construct whose treatment depends on the standard year calls
  * bp() with its point; the policy -- silent, warn -- lives here, in one
@@ -266,7 +276,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
-       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT,
+       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT, BP_D7_MF_VALUE_TRUNCATED,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -351,6 +361,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                     "practice; the standard writes the header (2002 13.3)" },
     { "BP-D6", 'D', "ASSIGN TO a data-name declared nowhere: Micro Focus declares it implicitly, alphanumeric and long "
                     "enough for a file name (its SELECT rule 4); the standard's data-name is declared" },
+    { "BP-D7", 'D', "a VALUE literal longer than its alphanumeric item, cut on the right to the item; the "
+                    "standard refuses it (X3.23-1985 VALUE syntax rule 3; 2023 13.18.63.3 rule 4), as Micro Focus's reference does" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -4258,6 +4270,15 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
     if (s->value_all) {
         if (v->len < 1) die_at(v->line, "VALUE ALL of an empty literal");
         for (int i = 0; i < s->size; i++) p[i] = (unsigned char)v->s[i % v->len];
+        return;
+    }
+    if (v->len > s->size && !numeric && g_dialect_mf) {
+        /* BP-D7, by the user's ruling: cut on the right -- initialization is
+         * not affected by JUSTIFIED (2023 13.18.63.4 rule 7) -- and always
+         * said */
+        bp(BP_D7_MF_VALUE_TRUNCATED, v->line);
+        warn_at(v->line, "the VALUE literal (%d characters) is cut to '%s' (%d)", v->len, s->name, s->size);
+        memcpy(p, v->s, (size_t)s->size);
         return;
     }
     if (v->len > s->size)
@@ -20318,6 +20339,31 @@ static void parse_screen_section(void)
                 if (!f->line && gstk[gdepth - 1].line) f->line = gstk[gdepth - 1].line;
                 if (!f->col && gstk[gdepth - 1].col) f->col = gstk[gdepth - 1].col;
                 gstk[gdepth - 1].line = 0; gstk[gdepth - 1].col = 0;    /* the anchor is the first child's */
+            }
+            if (f->kind == COB_SCR_VALUE && f->has_pic) {
+                /* PICTURE with VALUE (2002 13.15.2 rule 7, GR 3: the picture
+                 * "may be omitted" for an alphanumeric literal, so it may be
+                 * written): the literal shown in a field of the picture's
+                 * size, as a MOVE puts it -- padded with spaces, or cut on
+                 * the right, which is warned */
+                int pnat = f->pi.category == PIC_NATIONAL;
+                if (f->pi.category != PIC_ALPHANUMERIC && f->pi.category != PIC_ALPHABETIC && !pnat)
+                    die_at(fline, "a screen VALUE with a numeric or edited PICTURE is not implemented (2002 13.15.2 rule 7)");
+                if (pnat != !!f->natlit)
+                    die_at(fline, "a screen VALUE literal and its PICTURE are of one class: alphanumeric, or national");
+                int u = pnat ? 2 : 1, cols = f->pi.bytes / u, have = f->value->len / u;
+                if (have > cols)
+                    warn_at(fline, "the screen VALUE literal (%d characters) is cut to its PICTURE's %d", have, cols);
+                Tok *v = xmalloc(sizeof *v); *v = *f->value;
+                char *b = xmalloc((size_t)cols * u + 1);
+                for (int k = 0; k < cols; k++) {
+                    if (k < have) memcpy(b + k * u, f->value->s + k * u, (size_t)u);
+                    else if (pnat) { b[k * 2] = 0; b[k * 2 + 1] = ' '; }
+                    else b[k] = ' ';
+                }
+                b[cols * u] = 0;
+                v->s = b; v->len = cols * u;
+                f->value = v; f->has_pic = 0;
             }
             if (f->kind == COB_SCR_VALUE) {
                 if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE");

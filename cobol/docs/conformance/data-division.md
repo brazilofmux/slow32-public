@@ -133,3 +133,9 @@ at run time.
 | GR 1a | a zero-length argument: a zero-length item | **gap**: an argument of length zero reaches the reference modification check |
 | (ours) | a caller compiled -std=85, or C, passes no lengths | the run stops, naming the program, rather than guess (cob_anylen_missing) |
 
+## 13.15 Screen description entry: PICTURE with VALUE (2026-10-01)
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 2002 13.15.2 rule 7; GR 3 | an elementary screen item: PICTURE with FROM, TO or USING; PICTURE with a numeric VALUE; a VALUE literal, its PICTURE "may be omitted" (so it may be written) | **test**: free/scrpicval -- the literal in a field of the picture's size, padded with spaces, or cut on the right with a warning. It was "a VALUE slot takes no PICTURE" (ISSUES-120). A numeric VALUE with a numeric PICTURE is a **gap**, refused naming it |
+

@@ -4742,3 +4742,23 @@ abrignoli_COBSOFT's 11 programs STRING a path into such an item before
 the OPEN.  Tests free/mf-assignimp (identical to GnuCOBOL -std=mf),
 bad/assign-undeclared, warn/ext-mf-assignimp.
 
+Sixteenth batch:
+
+- **A screen entry with PICTURE and VALUE** is standard 2002 (13.15.2
+  rule 7, GR 3: the PICTURE "may be omitted" for an alphanumeric literal,
+  so it may be written).  It was refused ("a VALUE slot takes no
+  PICTURE").  The literal now fills a field of the picture's size,
+  padded with spaces, or cut on the right with a warning; a numeric
+  VALUE with a numeric PICTURE is refused as not implemented.
+  abrignoli_COBSOFT draws its menus so (23 programs).  Test
+  free/scrpicval.
+- **BP-D7**, a VALUE literal longer than its alphanumeric item, the
+  user's ruling: under -dialect=mf it is cut on the right (JUSTIFIED does
+  not change initialization, 2023 13.18.63.4 rule 7 -- a first version
+  cut a JUSTIFIED item on the left, and GnuCOBOL's oracle said
+  otherwise) and always warned.  The harness's warn gate now asks only
+  that no behavior point's warning appear without the flag, so an
+  always-on warning can stand.  A new warn_at() gives such warnings.
+  Tests free/mf-valtrunc (identical to GnuCOBOL -std=mf),
+  bad/value-too-long, warn/ext-mf-valtrunc.
+
