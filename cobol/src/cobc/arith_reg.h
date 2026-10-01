@@ -26,7 +26,8 @@
  * place the two paths can part (INT_MIN / -1 into a truncating receiver).  The profile of majesty's date functions (jerm) put 70%
  * of its instructions in the stack for exactly these statements. */
 /* a user function's result met while scanning ahead: the scan made no
- * call, so the tree may not hold it (the re-parse makes the call) */
+ * call, and a register tree has no place to make it, so the stack takes
+ * the statement (emit_expr makes the call, ucall_make) */
 static int opnd_scanned(const Opnd *o) { return o->kind == O_REF && g_sym[o->ref.sym->record].ftemp_scan; }
 typedef struct { char op; int l, r; Opnd o; } HNode;
 static int hn_depth(int n, int per);   /* op: 0 leaf, + - * /, 'n' negate */
@@ -52,20 +53,13 @@ static int hn_depth(int n, int per)
 /* FUNCTION MOD / REM / INTEGER / INTEGER-PART / ABS as a node of a
  * register tree: op 'M' 'R' (the divisor a literal of magnitude 2 or
  * more, so no zero and no INT_MIN / -1), 'I' 'T', 'A'; each argument an
- * item, a literal or an expression (re-read from its tokens) that the
- * given path takes */
-static int hn_arg(Opnd *a, int (*leaf)(const Opnd *), int (*expr)(void))
+ * item, a literal or an expression that the given path takes */
+static int hn_tree(const Expr *e, int (*leaf)(const Opnd *));
+static int hn_arg(Opnd *a, int (*leaf)(const Opnd *))
 {
-    if (a->kind == O_EXPR) {
-        int save = g_tp; g_tp = a->e_start;
-        g_noemit++; int n = expr(); g_noemit--;
-        if (g_tp != a->e_end) n = -2;
-        g_tp = save;
-        return n;
-    }
-    return leaf(a);
+    return a->kind == O_EXPR ? hn_tree(a->ex, leaf) : leaf(a);
 }
-static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *), int (*expr)(void))
+static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *))
 {
     if (o->kind != O_FUNC || o->fkind != FK_NUMS) return -2;
     switch (o->fnid) {
@@ -73,44 +67,39 @@ static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *), int (*expr)(void))
         if (o->nfargs != 2 || o->fargs[1]->kind != O_NUM || !numlit_is_int(&o->fargs[1]->num)) return -2;
         long long d = numlit_int(&o->fargs[1]->num);
         if (d > -2 && d < 2) return -2;
-        return hn_new(o->fnid == COB_FN_MOD ? 'M' : 'R', hn_arg(o->fargs[0], leaf, expr), hn_arg(o->fargs[1], leaf, expr), NULL);
+        return hn_new(o->fnid == COB_FN_MOD ? 'M' : 'R', hn_arg(o->fargs[0], leaf), hn_arg(o->fargs[1], leaf), NULL);
     }
     case COB_FN_INTEGER: case COB_FN_INTEGER_PART: case COB_FN_ABS:
         if (o->nfargs != 1) return -2;
-        return hn_new(o->fnid == COB_FN_INTEGER ? 'I' : o->fnid == COB_FN_ABS ? 'A' : 'T', hn_arg(o->fargs[0], leaf, expr), -1, NULL);
+        return hn_new(o->fnid == COB_FN_INTEGER ? 'I' : o->fnid == COB_FN_ABS ? 'A' : 'T', hn_arg(o->fargs[0], leaf), -1, NULL);
     default: return -2;
     }
 }
-static int hx_expr(void);
-static int hx_leaf(const Opnd *o);
-static int hx_primary(void)
+/* an expression's tree as a register tree, each leaf the path's own
+ * (hx_leaf, dx_leaf): -2 where the path does not take it -- a power, a
+ * leaf it refuses, a leaf that is not an operand where it starts (a
+ * figurative constant is one), or more than MAXHN nodes.  Nodes are
+ * made in the order the expression is written, children first. */
+static int hn_leaf_at(const Expr *e)
 {
-    if (cur()->kind == T_LP) {
-        advance(); int n = hx_expr();
-        if (cur()->kind != T_RP) return -2;
-        advance(); return n;
+    int save = g_tp; g_tp = e->tp;
+    int ok = at_operand() || (cur()->kind == T_WORD && is_figurative(cur()->s));
+    g_tp = save;
+    return ok;
+}
+static int hn_tree(const Expr *e, int (*leaf)(const Opnd *))
+{
+    if (!e->op) {
+        if (!hn_leaf_at(e)) return -2;
+        return e->o->kind == O_FUNC ? hn_fn(e->o, leaf) : leaf(e->o);
     }
-    if (at_op("+")) { advance(); return hx_primary(); }
-    if (at_op("-")) { advance(); int n = hx_primary(); return n < 0 ? -2 : hn_new('n', n, -1, NULL); }
-    if (!at_operand() && !(cur()->kind == T_WORD && is_figurative(cur()->s))) return -2;
-    Opnd o; parse_operand(&o);
-    if (o.kind == O_FUNC) return hn_fn(&o, hx_leaf, hx_expr);
-    if (!opnd_hot_int(&o) || opnd_scanned(&o)) return -2;
-    return hn_new(0, -1, -1, &o);
+    if (e->op == '^') return -2;
+    int l = hn_tree(e->l, leaf);
+    if (l < 0) return -2;
+    if (e->op == 'n') return hn_new('n', l, -1, NULL);
+    return hn_new(e->op, l, hn_tree(e->r, leaf), NULL);
 }
-static int hx_power(void) { int n = hx_primary(); return at_op("**") ? -2 : n; }
-static int hx_term(void)
-{
-    int n = hx_power();
-    while (n >= 0 && (at_op("*") || at_op("/"))) { char op = at_op("*") ? '*' : '/'; advance(); n = hn_new(op, n, hx_power(), NULL); }
-    return n;
-}
-static int hx_expr(void)
-{
-    int n = hx_term();
-    while (n >= 0 && (at_op("+") || at_op("-"))) { char op = at_op("+") ? '+' : '-'; advance(); n = hn_new(op, n, hx_term(), NULL); }
-    return n;
-}
+static int hx_leaf(const Opnd *o);
 /* an operand's magnitude bound */
 static long double hx_mag(const Opnd *o)
 {
@@ -316,36 +305,7 @@ static int dx_leaf_ok(const Opnd *o)
     default: return 0;
     }
 }
-static int dx_expr(void);
 static int dx_leaf(const Opnd *o);
-static int dx_primary(void)
-{
-    if (cur()->kind == T_LP) {
-        advance(); int n = dx_expr();
-        if (cur()->kind != T_RP) return -2;
-        advance(); return n;
-    }
-    if (at_op("+")) { advance(); return dx_primary(); }
-    if (at_op("-")) { advance(); int n = dx_primary(); return n < 0 ? -2 : hn_new('n', n, -1, NULL); }
-    if (!at_operand() && !(cur()->kind == T_WORD && is_figurative(cur()->s))) return -2;
-    Opnd o; parse_operand(&o);
-    if (o.kind == O_FUNC) return hn_fn(&o, dx_leaf, dx_expr);
-    if (!dx_leaf_ok(&o) || opnd_scanned(&o)) return -2;
-    return hn_new(0, -1, -1, &o);
-}
-static int dx_power(void) { int n = dx_primary(); return at_op("**") ? -2 : n; }
-static int dx_term(void)
-{
-    int n = dx_power();
-    while (n >= 0 && (at_op("*") || at_op("/"))) { char op = at_op("*") ? '*' : '/'; advance(); n = hn_new(op, n, dx_power(), NULL); }
-    return n;
-}
-static int dx_expr(void)
-{
-    int n = dx_term();
-    while (n >= 0 && (at_op("+") || at_op("-"))) { char op = at_op("+") ? '+' : '-'; advance(); n = hn_new(op, n, dx_term(), NULL); }
-    return n;
-}
 static long double dx_p10(int k) { long double r = 1; while (k-- > 0) r *= 10; return r; }
 #define DX_LIM 9.0e18L
 /* scale and bound of node n (the bound in units of its scale); 0 when the
@@ -623,7 +583,7 @@ static int dx_move(Opnd *src, Ref *dst)
 {
     if (g_nohx || g_rmode) return 0;
     g_nhn = 0;
-    int root = src->kind == O_FUNC ? hn_fn(src, dx_leaf, dx_expr) : (src->kind == O_REF || src->kind == O_NUM) ? dx_leaf(src) : -2;
+    int root = src->kind == O_FUNC ? hn_fn(src, dx_leaf) : (src->kind == O_REF || src->kind == O_NUM) ? dx_leaf(src) : -2;
     if (root == -2 && src->kind == O_REF && !src->ref.rm && !opnd_scanned(src)) {
         /* a numeric-edited sender (de-edited, as cob_move's cob_get_num does) */
         Sym *s = src->ref.sym;

@@ -53,7 +53,8 @@ for in the commit -- plus all the usual gates.
    away.  A user-defined function inside one keeps its call with the
    leaf, made when the leaf is emitted.  The name scans become walks
    over resolved operands.
-2. **The register paths over trees.**  `hx_expr` and `dx_expr` read an
+2. **The register paths over trees** (done 2026-10-01, ISSUES 121).
+   `hx_expr` and `dx_expr` read an
    `Expr` instead of tokens (their `HNode` is already the same shape),
    and COMPUTE parses its expression once: width, register tree and
    stack code all from one tree.  O_EXPR's token range goes.

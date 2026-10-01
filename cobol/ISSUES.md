@@ -4840,3 +4840,21 @@ with it.  The width scan's own pass had also laid out a result record
 per call that nothing used (11 in the probe program); those are gone.
 GnuCOBOL gives 0 for the nested call as well (docs/oracles.md).  Test
 2002/userfnnest (.oracle-expected).
+
+Step 2: **COMPUTE reads its expression once.**  It used to parse it
+up to four times: a scan for the width, hx_expr for a register tree of
+integers, dx_expr for one of decimals, then parse_expr for the stack's
+code (and once more on the integer path's overflow branch).  Now the
+scan's tree is all of them: hn_tree turns it into the register paths'
+HNode tree, leaf by leaf through the path's own test (hx_leaf,
+dx_leaf), and emit_expr writes the stack's code from it.  The function
+arguments the register paths take (MOD, INTEGER and the rest) are
+converted from their trees too, and O_EXPR no longer keeps a token
+range.  A leaf keeps its first token, so the paths still refuse what
+they refused before (at_operand there).  The snapshot differs in three
+programs, 2002/userfn, userfndeep and userfnnest: every user function
+call in a COMPUTE had a result record laid out for each of those
+parses, which nothing used, each initialised at start-up or on entry;
+they are gone,
+and with them their entries in the recursive functions'
+LOCAL-STORAGE tables.  Nothing else differs.

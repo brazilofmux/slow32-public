@@ -73,7 +73,7 @@ static Expr *parse_primary(void)
     if (at_op("+")) { advance(); return parse_primary(); }
     if (at_op("-")) { advance(); Expr *e = parse_primary(); emit_call("cob_nneg"); return ex_node('n', e, NULL); }
     Expr *e = ex_node(0, NULL, NULL);
-    e->o = ex_alloc(sizeof *e->o);
+    e->o = ex_alloc(sizeof *e->o); e->tp = g_tp;
     Opnd *o = e->o; parse_operand(o);
     check_numeric_opnd(o);
     { int in = 0, fr = 0; opnd_int_frac(o, &in, &fr); xd_push(in, fr); }
@@ -136,10 +136,9 @@ static Expr *scan_expr(void)
 static Opnd expr_opnd(void)
 {
     Opnd o; memset(&o, 0, sizeof o);
-    o.kind = O_EXPR; o.line = cur()->line; o.e_start = g_tp;
+    o.kind = O_EXPR; o.line = cur()->line;
     o.ex = scan_expr();
     o.wide = o.ex->wide; o.flt = o.ex->flt;
-    o.e_end = g_tp;
     return o;
 }
 
@@ -268,18 +267,17 @@ static void parse_compute(void)
         accept_word("end-compute");
         return;
     }
-    /* wide or not: known from a pass that emits nothing, then for real */
-    {
-        int start = g_tp, saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
-        g_xd_div = 0;
-        g_noemit++; parse_expr(); g_noemit--;
-        g_wide = g_saw_wide || g_saw_float || refs_wide(rs, nr) || (g_xd_div && round_wide(rs, rd, nr));
-        if (g_saw_float) g_fstmt = 1;
-        g_saw_wide = saw; g_saw_float = sawf; g_tp = start;
-    }
-    if (!g_wide) {                              /* integers in a word, where that is the stack's answer */
-        int start = g_tp;
-        g_noemit++; g_nhn = 0; int root = hx_expr(); g_noemit--;
+    /* the expression read once: whether it needs the wide stack, then the
+     * code -- in registers where that is the stack's answer, else the
+     * stack's -- all from the one tree */
+    int saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
+    g_xd_div = 0;
+    g_noemit++; Expr *e = parse_expr(); g_noemit--;
+    g_wide = g_saw_wide || g_saw_float || refs_wide(rs, nr) || (g_xd_div && round_wide(rs, rd, nr));
+    if (g_saw_float) g_fstmt = 1;
+    g_saw_wide = saw; g_saw_float = sawf;
+    if (!g_wide) {                              /* integers in a word */
+        g_nhn = 0; int root = hn_tree(e, hx_leaf);
         int size_err = at_size_error_clause() || ec_size_on();
         long long bd; int nn;
         int mode = root >= 0 ? hx_ok(root, rs, rd, nr, NULL, size_err, &bd, &nn) : 0;
@@ -287,30 +285,23 @@ static void parse_compute(void)
             int Lslow = mode == 2 ? new_label() : -1;
             hx_store(root, rs, rd, nr, NULL, bd, nn, Lslow);
             if (mode == 2) {                    /* a word overflowed: the stack, from the start */
-                int Ldone = new_label(), end = g_tp;
+                int Ldone = new_label();
                 emit_jump(Ldone); emit_label(Lslow);
-                g_tp = start;
-                g_incompat_push++; parse_expr(); g_incompat_push--;
-                if (g_tp != end) die_at(rs[0].line, "internal: COMPUTE re-parse drifted");
+                emit_expr(e);
                 emit_store_receivers(rs, rd, nr, 0, 1, 0, 0, -1, 0);
                 emit_label(Ldone);
             }
             parse_size_error_clauses(size_err, "end-compute");
             return;
         }
-        g_tp = start;
-        g_noemit++; g_nhn = 0; root = dx_expr(); g_noemit--;
-        size_err = at_size_error_clause() || ec_size_on();   /* where this parse stopped: the integer one may have quit early */
+        g_nhn = 0; root = hn_tree(e, dx_leaf);
         if (dx_ok(root, rs, nr, size_err)) {           /* decimals in registers */
             dx_store(root, rs, rd, nr);
             parse_size_error_clauses(size_err, "end-compute");
             return;
         }
-        g_tp = start;
     }
-    g_incompat_push++;
-    parse_expr();
-    g_incompat_push--;
+    emit_expr(e);
     int size_err = at_size_error_clause() || ec_size_on();
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     g_wide = 0; g_fstmt = 0;

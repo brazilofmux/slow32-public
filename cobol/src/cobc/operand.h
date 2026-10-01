@@ -14,6 +14,7 @@ typedef struct Expr {
     char op;                    /* 0 a leaf; + - * / and '^' (a power); 'n' negation */
     struct Expr *l, *r;
     struct Opnd_ *o;            /* a leaf's operand, as the scan parsed it */
+    int tp;                     /* a leaf's first token */
     int wide, flt;              /* scan_expr's: an operand past 18 digits, a float, inside it */
 } Expr;
 
@@ -84,7 +85,7 @@ typedef struct Opnd_ {
     NumLit num;         /* O_NUM */
     int line;
     Expr *ex;           /* O_EXPR: the expression */
-    int e_start, e_end; /* O_EXPR, O_BEXPR: its token range (the register paths and parse_bexpr re-read it) */
+    int e_start, e_end; /* O_BEXPR: its token range, re-read by parse_bexpr when emitted */
     int fn; struct Opnd_ *farg, *farg2; int fsize;   /* O_FUNC: intrinsic, its argument(s), result width */
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
     int fvar, fnat, fbool;                   /* O_FUNC: length known only at run time (fsize its maximum); a national, a boolean result */
