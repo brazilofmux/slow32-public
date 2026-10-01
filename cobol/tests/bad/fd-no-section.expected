@@ -1,0 +1,1 @@
+[BP-D5] file description entries without the FILE SECTION header, first in the DATA DIVISION: Micro Focus practice; the standard writes the header (2002 13.3) -- compile with -dialect=mf

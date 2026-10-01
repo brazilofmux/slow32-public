@@ -4716,3 +4716,10 @@ subprograms `exit program stop run exit.`, which needs both.  Without
 -dialect=mf the standard refusals stand, their messages unchanged.  Test
 free/mf-stopexit (identical to GnuCOBOL -std=mf), warn/ext-mf-stopexit.
 
+Thirteenth batch: **BP-D5**, the FILE SECTION header left out, an FD or
+SD first in the DATA DIVISION.  Micro Focus's reference does not mark it
+optional; abrignoli_COBSOFT's 29 programs show its practice, and by the
+user's ruling (2026-10-01) it is taken under -dialect=mf as BP-D1's
+section header is.  Tests free/mf-nofilesec (identical to GnuCOBOL
+-std=mf), bad/fd-no-section, warn/ext-mf-nofilesec.
+

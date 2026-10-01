@@ -266,7 +266,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
-       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE,
+       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -347,6 +347,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                     "rule 1): Micro Focus does not enforce the rule, and what follows it never runs" },
     { "BP-D4", 'D', "EXIT not a sentence by itself, alone in its paragraph (X3.23-1985 EXIT syntax rules 1-2; 2023 14.9.14.3 "
                     "rule 1): Micro Focus does not enforce the rules; such an EXIT does nothing" },
+    { "BP-D5", 'D', "file description entries without the FILE SECTION header, first in the DATA DIVISION: Micro Focus "
+                    "practice; the standard writes the header (2002 13.3)" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -20326,6 +20328,14 @@ static void parse_data_division(void)
         if (at_word("file") && is_word(peek(1), "section")) {
             section_order(&last, 1, "FILE");
             advance(); advance(); expect_period();
+            while (at_word("fd") || at_word("sd")) parse_fd();
+            g_cur_fd = -1;
+            continue;
+        }
+        if ((at_word("fd") || at_word("sd")) && last == 0) {
+            /* the FILE SECTION header left out (BP-D5) */
+            bp(BP_D5_MF_NO_FILE_SECTION, cur()->line);
+            section_order(&last, 1, "FILE");
             while (at_word("fd") || at_word("sd")) parse_fd();
             g_cur_fd = -1;
             continue;
