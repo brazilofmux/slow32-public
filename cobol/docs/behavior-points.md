@@ -20,9 +20,10 @@ Plan and reasoning: [standards.md](standards.md).
 |---|---|
 | `-std=85` (also `-std=cobol85`) | the default and the only standard implemented: X3.23-1985 and the X3.23a-1989 intrinsic functions |
 | `-std=74` | refused: 74 programs compile as 85, and `-warn-74` flags where their meaning changed; full COBOL 74 is cobc370's job |
-| `-std=2002`, any other | refused as not implemented; COBOL 2002 is Stage B of standards.md |
+| `-std=2002` | COBOL 2002, Stage B of standards.md (any other `-std` is refused) |
+| `-dialect=mf` | Micro Focus's own forms, the class D points below, are taken; without it each is refused naming the switch. The one dialect: by the user's ruling (2026-10-01) Micro Focus is the dialect a switch is for, its reference being written down as the standard is |
 | `-warn-74` | warns at every class M, O and N point below; never changes the output |
-| `-warn-extensions` | warns at every class E point that calls `bp()` (an extension to the standard the program is compiled for); never changes the output |
+| `-warn-extensions` | warns at every class E and D point that calls `bp()` (an extension to the standard the program is compiled for); never changes the output |
 
 Without `-warn-74` the compiler is silent at every point, and its
 assembler is byte-identical to what it was before the registry existed
@@ -148,6 +149,21 @@ warns only under -std=85. Never changes the output.
 | BP-E29 | ROUNDED MODE IS mode, COBOL 2014's (2023 14.7.4) | X-COBOL (a report program); majesty's gl008 had NEAREST-EVEN, rewritten in 85 arithmetic 2026-08-30 | 85, 2002 | beyond both editions; taken, all eight modes (docs/conformance/arithmetic.md) (ISSUES-120) |
 | BP-E30 | a `$SET` directive line, Micro Focus's (`$` in the indicator column; in free form the first non-blank, followed by a letter) | abrignoli_COBSOFT, 45 programs in X-COBOL, each beginning `$set sourceformat"free"` | 85, 2002 | SOURCEFORMAT"FREE"/"FIXED" (or `(FREE)`) switch the reference format as `>>SOURCE FORMAT` does; listing directives (LIST, FORM, ECHO, XREF, SETTINGS, WARNING and their NO forms, ...) have no effect; any other directive, and `$IF`/`$DISPLAY` lines, are refused by name, so nothing that changes a program's meaning is dropped (ISSUES-120) |
 
+
+## Class D — a dialect's own forms (`-dialect=mf`)
+
+Class E points are always taken: each is an extension that changes no
+standard program's meaning.  Class D points are a dialect's, taken only
+under its switch, and each is checked against that dialect's own
+reference -- for Micro Focus, the Visual COBOL 8.0 language reference
+(docs/oracles.md has where it is kept).  Without the switch each is
+refused, the message naming `-dialect=mf`.  Tests named `mf-*` compile
+under the switch, their oracle GnuCOBOL's `-std=mf`.
+
+| id | construct | seen in | MF reference | here |
+|---|---|---|---|---|
+| BP-D1 | a file-control entry without the FILE-CONTROL paragraph header, or without the INPUT-OUTPUT SECTION header too (SELECT straight after SPECIAL-NAMES) | abrignoli_COBSOFT, 29 programs in X-COBOL | the File-Control paragraph's format brackets its header as MF's; the INPUT-OUTPUT SECTION header is not marked, but MF practice leaves it out with the other | taken: free/mf-selectbare (neither header), free/mf-selectnofc (the section's only), both identical to GnuCOBOL -std=mf; refused without the switch: bad/select-nofc (ISSUES-120) |
+
 Not points, recorded here:
 
 | construct | note |
@@ -237,4 +253,3 @@ errors, not warnings: COBOL 2002 deleted those elements (ISO/IEC
 1989:2002 F.1), so a 2002 program cannot use them (cobol ISSUES-115).
 BP-O9 stays a warning because 2023 permits an ALL literal of digits to
 an integer item again.
-

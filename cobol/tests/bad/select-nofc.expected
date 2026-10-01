@@ -1,0 +1,1 @@
+[BP-D1] a file-control entry without the FILE-CONTROL paragraph header (or the INPUT-OUTPUT SECTION header above it): Micro Focus's; the standard writes both (2002 12.3, 12.3.3) -- compile with -dialect=mf

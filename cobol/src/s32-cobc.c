@@ -266,6 +266,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
+       BP_D1_MF_NO_FILE_CONTROL,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -338,9 +339,12 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-E29", 'E', "ROUNDED MODE is COBOL 2014 (2023 14.7.4), beyond 1985 and 2002; taken" },
     { "BP-E30", 'E', "a $SET line is Micro Focus's compiler-directive line; SOURCEFORMAT is taken as >>SOURCE FORMAT is, "
                      "listing directives have no effect, and any other is refused" },
+    { "BP-D1", 'D', "a file-control entry without the FILE-CONTROL paragraph header (or the INPUT-OUTPUT SECTION header "
+                    "above it): Micro Focus's; the standard writes both (2002 12.3, 12.3.3)" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
+static int g_dialect_mf;             /* -dialect=mf: Micro Focus's own forms (class D points) are taken */
 static void bp(int point, int line)
 {
     static int last_point = -1, last_line = -1;
@@ -350,7 +354,10 @@ static void bp(int point, int line)
      * to an integer item again, as an obsolete feature) */
     if (g_std >= 2002 && point >= BP_O1_ALTER && point <= BP_O11_MULTIPLE_FILE && point != BP_O9_ALL_NUMERIC)
         die_at(line, "[%s] %s (ISO/IEC 1989:2002 F.1); under -std=2002 it is refused -- compile with -std=85", g_bp[point].id, g_bp[point].msg);
-    if (g_bp[point].cls == 'E' ? !g_warn_ext : !g_warn74) return;
+    /* class D: a dialect's own, taken only under its switch (-dialect=mf) */
+    if (g_bp[point].cls == 'D' && !g_dialect_mf)
+        die_at(line, "[%s] %s -- compile with -dialect=mf", g_bp[point].id, g_bp[point].msg);
+    if (g_bp[point].cls == 'E' || g_bp[point].cls == 'D' ? !g_warn_ext : !g_warn74) return;
     if (point == last_point && line == last_line) return;     /* one per point per line */
     last_point = point; last_line = line;
     fprintf(stderr, "%s:%d: warning: [%s] %s\n", diag_file(line), line, g_bp[point].id, g_bp[point].msg);
@@ -19067,7 +19074,7 @@ static void parse_repository(void)
         if (accept_word("all")) { expect_word("intrinsic"); g_repo_all_intrinsic = 1; continue; }
         int first = g_nrepo_fn;
         while (cur()->kind == T_WORD && !at_word("function") && !at_word("intrinsic") && !at_division() &&
-               !at_word("input-output") && !at_word("special-names")) {
+               !at_word("input-output") && !at_word("special-names") && !at_word("select")) {
             if (at_word("as")) die_at(cur()->line, "REPOSITORY FUNCTION ... AS literal is not implemented yet");
             if (g_nrepo_fn == 32) die_at(cur()->line, "more than 32 functions in REPOSITORY");
             snprintf(g_repo_fn[g_nrepo_fn++], sizeof g_repo_fn[0], "%s", cur()->s);
@@ -19099,7 +19106,7 @@ static void parse_environment_division(void)
         for (;;) {
             if (accept_word("source-computer") || accept_word("object-computer")) {
                 expect_period();
-                while ((cur()->kind == T_WORD || cur()->kind == T_NUM) && !at_word("special-names") && !at_word("input-output") && !at_word("repository") &&
+                while ((cur()->kind == T_WORD || cur()->kind == T_NUM) && !at_word("special-names") && !at_word("input-output") && !at_word("repository") && !at_word("select") &&
                        !at_word("source-computer") && !at_word("object-computer") && !at_division()) {   /* MEMORY SIZE 64000 CHARACTERS: obsolete, no effect */
                     if (at_word("memory")) bp(BP_O5_MEMORY_SIZE, cur()->line);
                     if (accept_word("collating")) {         /* [PROGRAM] COLLATING SEQUENCE IS alphabet-name */
@@ -19283,7 +19290,7 @@ static void parse_environment_division(void)
                             continue;
                         }
                     }
-                    if (at_division() || at_word("input-output") || at_word("repository")) break;
+                    if (at_division() || at_word("input-output") || at_word("repository") || at_word("select")) break;
                     die_at(cur()->line, "SPECIAL-NAMES clause '%s' is not implemented yet (CLASS, SWITCH-n, ALPHABET and the device names are)", cur()->s);
                 }
                 continue;
@@ -19308,10 +19315,18 @@ static void parse_environment_division(void)
             g_lowval = lo; g_highval = hi;
         }
     }
+    if (at_word("select")) {
+        /* neither header: Micro Focus's practice (BP-D1) */
+        bp(BP_D1_MF_NO_FILE_CONTROL, cur()->line);
+        while (accept_word("select")) parse_select();
+    }
     if (accept_word("input-output")) {
         expect_word("section"); expect_period();
         if (accept_word("file-control")) {
             expect_period();
+            while (accept_word("select")) parse_select();
+        } else if (at_word("select")) {
+            bp(BP_D1_MF_NO_FILE_CONTROL, cur()->line);   /* the paragraph header left out (Micro Focus) */
             while (accept_word("select")) parse_select();
         }
         if (accept_word("i-o-control")) {
@@ -20629,6 +20644,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fcomp1=binary")) g_comp1 = 1;
         else if (!strcmp(argv[i], "-fcomp1=float")) g_comp1 = 0;
         else if (!strcmp(argv[i], "-fno-hot-arith")) g_nohx = 1;
+        else if (!strcmp(argv[i], "-dialect=mf")) g_dialect_mf = 1;
+        else if (!strncmp(argv[i], "-dialect=", 9)) { fprintf(stderr, "s32-cobc: %s: the one dialect is mf (docs/behavior-points.md)\n", argv[i]); return 2; }
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) { g_std = 2002; pic_max_digits = 31; }
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {

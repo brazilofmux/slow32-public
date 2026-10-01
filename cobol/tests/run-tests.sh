@@ -246,6 +246,8 @@ for fmt in fixed free 2002; do
         exp="${src%.cbl}.expected"
         flag="-$fmt"; stdflag=""; ostd="-std=cobol85"
         [ "$fmt" = 2002 ] && { flag="-free"; stdflag="-std=2002"; ostd="-std=cobol2002"; }
+        # mf-*: Micro Focus's dialect (-dialect=mf), the oracle in GnuCOBOL's -std=mf
+        case "$name" in mf-*) stdflag="$stdflag -dialect=mf"; ostd="-std=mf" ;; esac
         # a .link file beside the test names further sources (subprogram
         # .cbl, .c) relative to tests/, for us and for the oracle
         extra=(); needs_cc=0
@@ -366,6 +368,7 @@ for src in "$HERE/bad"/*.cbl; do
     flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
     [ "$name" = "mixed-format" ] && flag="-fixed"
     stdflag=""; case "$name" in std2002-*) stdflag="-std=2002" ;; esac   # a Stage B refusal
+    case "$name" in mf-*) stdflag="$stdflag -dialect=mf" ;; esac         # refused even under Micro Focus's dialect
     if "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
         report "bad/$name" 1 "was accepted"; continue
     fi
@@ -397,6 +400,7 @@ for src in "$HERE/warn"/*.cbl; do
     # ext-*: the extensions (class E) under -warn-extensions, not -warn-74
     wflag="-warn-74"; case "$name" in ext-*) wflag="-warn-extensions" ;; esac
     stdflag=""; case "$name" in *std2002*) stdflag="-std=2002" ;; esac   # a point that exists only under 2002
+    case "$name" in *-mf-*|mf-*|ext-mf*) stdflag="$stdflag -dialect=mf" ;; esac   # a dialect point (class D)
     if ! "$COBC" $flag $stdflag $wflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.warn"; then
         report "warn/$name" 1 "refused: $(head -1 "$W/$name.warn")"; continue
     fi

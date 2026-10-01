@@ -10,6 +10,8 @@ generators are ours.  ISSUES.md 120 has the first survey.
                                       OK or FAIL, the flags or the error
   XCOBOL=~/refs/x-cobol/X-COBOL       the unpacked dataset (never in a
                                       git tree)
+  XCOBOL_FLAGS=-dialect=mf            further s32-cobc flags for every
+                                      compile (Micro Focus's dialect)
 
 Each file is compiled in the reference format its own text declares (a
 >>SOURCE or $SET directive, else the sequence area and indicator column
@@ -26,6 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(os.environ.get("XCOBOL", os.path.expanduser("~/refs/x-cobol/X-COBOL")), "COBOL_Files")
 COBC = os.path.join(HERE, "..", "out", "s32-cobc")
 OUT = sys.argv[1]
+EXTRA = os.environ.get("XCOBOL_FLAGS", "").split()
 if not os.path.isdir(ROOT):
     sys.exit("no X-COBOL dataset at %s (set XCOBOL)" % ROOT)
 W = tempfile.mkdtemp(prefix="xcobol.")
@@ -82,7 +85,7 @@ def detect(src):
 def attempt(src, fmt, std, incs):
     od = os.path.join(W, "out", os.path.basename(os.path.dirname(src)))
     os.makedirs(od, exist_ok=True)
-    cmd = [COBC, fmt, std] + sum((["-I", d] for d in incs), []) + ["-I", od, "-o", os.path.join(od, os.path.basename(src) + ".s"), src]
+    cmd = [COBC, fmt, std] + EXTRA + sum((["-I", d] for d in incs), []) + ["-I", od, "-o", os.path.join(od, os.path.basename(src) + ".s"), src]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=60)
     except subprocess.TimeoutExpired:

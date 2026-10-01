@@ -4680,3 +4680,16 @@ Ninth batch, toward abrignoli_COBSOFT (a Micro Focus business system,
   is a picture going on.  Tests fixed/dollarset (identical to GnuCOBOL),
   bad/dollarset-unknown, bad/dollarset-if, warn/ext-dollarset.
 
+Tenth batch: **-dialect=mf**, and its first point.  By the user's ruling
+(2026-10-01) Micro Focus is the dialect a switch is for.  A new class of
+behavior point, D: a dialect's own form, taken only under its switch and
+refused without it naming the switch, warned under -warn-extensions as
+class E is.  The class E points stay as they were, always taken.
+**BP-D1**: file-control entries without the FILE-CONTROL header (MF's
+reference brackets it), or without the INPUT-OUTPUT SECTION header as
+well (not marked in the reference; MF practice, and abrignoli_COBSOFT's
+29 programs, leave it out with the other).  The harness compiles a test
+named mf-* under -dialect=mf, its oracle GnuCOBOL -std=mf.  Tests
+free/mf-selectbare, free/mf-selectnofc (both identical to GnuCOBOL),
+bad/select-nofc, warn/ext-mf-select.
+
