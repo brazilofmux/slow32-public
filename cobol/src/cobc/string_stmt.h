@@ -22,6 +22,23 @@ static void str_operand(const Opnd *o)
         die_at(o->line, "STRING: '%s' is numeric but not an integer without P (%s)", x->name, e85 ? "X3.23-1985 STRING rule 6" : "2023 14.9.43.3 rule 8");
 }
 
+/* [ON OVERFLOW statements] [NOT ON OVERFLOW statements], each a Block;
+ * ON alone begins one only before OVERFLOW (an enclosing CALL's ON
+ * EXCEPTION is not ours) */
+static int parse_overflow_phrases(Phrases *ph)
+{
+    memset(ph, 0, sizeof *ph);
+    if (at_word("overflow") || (at_word("on") && is_word(peek(1), "overflow"))) {
+        accept_word("on"); expect_word("overflow");
+        ph->has_on = 1; ph->on = parse_block();
+    }
+    if (at_word("not") && (is_word(peek(1), "overflow") || (is_word(peek(1), "on") && is_word(peek(2), "overflow")))) {
+        advance(); accept_word("on"); expect_word("overflow");
+        ph->has_not = 1; ph->not_on = parse_block();
+    }
+    return ph->has_on || ph->has_not;
+}
+
 static void parse_string_1(void);
 static void parse_string(void)
 {
@@ -119,17 +136,8 @@ static void parse_string_1(void)
         emit("\tldw r5, sp+%d", SLOT_C);
         emit_call("cob_store_int");
     }
-    int has_ovf = at_word("on") || at_word("overflow") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "overflow")));
-    if (has_ovf) {
-        int Lok = new_label(), Lend = new_label();
-        emit_call("cob_str_overflow");
-        emit("\tbeq r1, r0, .L%d", Lok);
-        if (at_word("on") || at_word("overflow")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
-        emit_jump(Lend);
-        emit_label(Lok);
-        if (accept_word("not")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
-        emit_label(Lend);
-    }
+    Phrases ph;
+    if (parse_overflow_phrases(&ph)) { emit_call("cob_str_overflow"); emit_phrases(&ph, -1, 0); }
     accept_word("end-string");
 }
 
@@ -293,16 +301,7 @@ static void parse_unstring_1(void)
         emit("\tldw r5, sp+%d", SLOT_C);
         emit_call("cob_store_int");
     }
-    int has_ovf = at_word("on") || at_word("overflow") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "overflow")));
-    if (has_ovf) {
-        int Lok = new_label(), Lend = new_label();
-        emit_call("cob_unstr_overflow");
-        emit("\tbeq r1, r0, .L%d", Lok);
-        if (at_word("on") || at_word("overflow")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
-        emit_jump(Lend);
-        emit_label(Lok);
-        if (accept_word("not")) { accept_word("on"); expect_word("overflow"); parse_statements(); }
-        emit_label(Lend);
-    }
+    Phrases ph;
+    if (parse_overflow_phrases(&ph)) { emit_call("cob_unstr_overflow"); emit_phrases(&ph, -1, 0); }
     accept_word("end-unstring");
 }

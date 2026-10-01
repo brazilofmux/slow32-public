@@ -440,27 +440,52 @@ static void block_put(const Block *b)
 
 /* A statement's pair of conditional phrases -- [NOT] AT END, INVALID KEY,
  * ON EXCEPTION, ON OVERFLOW, ON SIZE ERROR -- as blocks, laid out on the
- * status the statement left in a frame slot: ON when it is 1 (on_one) or
- * not 0, NOT ON when it is 0 (an AT END's 2, an error already reported,
- * runs neither).  A phrase that is one jump (GO TO, NEXT SENTENCE) is the
- * test's own branch to its target; without a NOT phrase the ON phrase
- * needs no jump past one. */
+ * status the statement left in a frame slot (slot < 0: in r1 already).
+ * A phrase that is one jump (GO TO, NEXT SENTENCE) is the test's own
+ * branch to its target.
+ * - on_one 0, a status of two values: ON when it is not 0, NOT ON when
+ *   it is -- one test, the two phrases its arms.
+ * - on_one 1, an I-O status: ON when it is 1, NOT ON when it is 0, and
+ *   neither when it is 2 (an error already reported) -- a test each. */
 typedef struct { int has_on, has_not; Block on, not_on; } Phrases;
 static void emit_phrases(const Phrases *p, int slot, int on_one)
 {
     if (!p->has_on && !p->has_not) return;
     char t[96];
     int Lend = new_label();
-    emit("\tldw r1, sp+%d", slot);
+    if (slot >= 0) emit("\tldw r1, sp+%d", slot);
+    if (!on_one) {
+        if (p->has_on && block_is_jump(&p->on, t, sizeof t)) {
+            emit("\tbne r1, r0, %s", t);
+            if (p->has_not) block_put(&p->not_on);
+        } else if (p->has_not && block_is_jump(&p->not_on, t, sizeof t)) {
+            emit("\tbeq r1, r0, %s", t);
+            if (p->has_on) block_put(&p->on);
+        } else if (p->has_on) {
+            int Lnot = p->has_not ? new_label() : Lend;
+            emit("\tbeq r1, r0, .L%d", Lnot);
+            block_put(&p->on);
+            if (p->has_not) {
+                if (!block_ends_jump(&p->on)) emit_jump(Lend);
+                emit_label(Lnot);
+                block_put(&p->not_on);
+            }
+        } else {
+            emit("\tbne r1, r0, .L%d", Lend);
+            block_put(&p->not_on);
+        }
+        emit_label(Lend);
+        return;
+    }
     if (p->has_on) {
-        if (on_one) emit_li("r2", 1);
+        emit_li("r2", 1);
         if (block_is_jump(&p->on, t, sizeof t)) {
-            emit(on_one ? "\tbeq r1, r2, %s" : "\tbne r1, r0, %s", t);
+            emit("\tbeq r1, r2, %s", t);
         } else {
             int Lnot = new_label();
-            emit(on_one ? "\tbne r1, r2, .L%d" : "\tbeq r1, r0, .L%d", Lnot);
+            emit("\tbne r1, r2, .L%d", Lnot);
             block_put(&p->on);
-            if (p->has_not) emit_jump(Lend);
+            if (p->has_not && !block_ends_jump(&p->on)) emit_jump(Lend);
             emit_label(Lnot);
             if (p->has_not) emit("\tldw r1, sp+%d", slot);     /* the ON phrase's statements used r1 */
         }

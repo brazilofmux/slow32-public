@@ -5105,3 +5105,39 @@ programs, because every generated VARYING ran at least once.  With
 loops whose condition holds at the start, that mutant shows in 12 of
 60, and a TIMES loop that runs once too often in 60 of 60.  CCVS-85
 before and after: identical.
+
+**INSPECT as a node; the OVERFLOW phrases.**  Of the verbs left, STRING,
+UNSTRING and CALL already read every operand before any code.  INSPECT
+did not: it emitted cob_inspect_begin after reading the item, then read
+each phrase and registered it, so a user function among the phrases'
+operands was called between the runtime's begin and run -- and when
+that function did an INSPECT of its own, the runtime lost the outer
+statement: `INSPECT s TALLYING k FOR ALL f(x)` counted 4 dots for 6,
+REPLACING and CONVERTING changed nothing.  Now the statement is read
+whole as a scan (InspPh, InspRange), its calls are made (2023 14.6.4),
+and the runtime's sequence is emitted in one piece.  The snapshot is
+byte-identical but for the one program with a function in an INSPECT.
+GnuCOBOL 4.0-early-dev has the fault itself, in INSPECT and in STRING
+(0 tallied; the STRING stops), and refuses a user function as a
+REPLACING or CONVERTING operand.  Tests 2002/userfninsp
+(.oracle-expected) and 2002/userfninsp2 (no oracle).
+
+STRING's and UNSTRING's [NOT] ON OVERFLOW are Blocks through
+emit_phrases (parse_overflow_phrases; ON begins one only before
+OVERFLOW, so an enclosing CALL's ON EXCEPTION is no longer taken for
+it).  emit_phrases lays a two-valued status (SIZE ERROR, EXCEPTION,
+OVERFLOW) out as one test with the phrases its arms, where it tested
+again for the NOT phrase; the I-O status keeps its two tests (2, an
+error already reported, runs neither).  About 260 instructions fewer
+over the snapshot.  gen-flow.py gained STRING into a short item and
+UNSTRING into too few receivers, with OVERFLOW phrases: 60 programs
+agree with GnuCOBOL, 200 are the same through the compiler before and
+after, two wrong-sense mutants show in 29 and 17 of 60; CCVS-85 before
+and after identical.
+
+Not every verb reads its operands before its code yet.  DISPLAY emits
+each operand as it reads it, so DISPLAY "one " f(x) " two" shows "one "
+before f runs -- and with UPON SYSERR, f's own DISPLAY goes to the error
+stream.  An audit (a verb's first emit before its last operand parse)
+also names WRITE, INITIALIZE, SET, ACCEPT, ALLOCATE and CALL's ADDRESS
+OF as candidates.  Next: every statement as its calls, then its code.

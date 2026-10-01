@@ -224,18 +224,37 @@ static void insp_operand(const Opnd *o)
                e85 ? "X3.23-1985 INSPECT rule 2" : "2023 14.9.22.3 rule 2");
 }
 
-static void parse_inspect_range(void)
+/* INSPECT as a node (docs/plans/frontend-pass.md, step 4): the whole
+ * statement is read before any code -- the runtime is told of the item,
+ * then of each phrase, then makes its pass (cob_inspect_begin, _range,
+ * _phrase, _run), and nothing else may run in between: a user function
+ * among the operands, called where it was read, could itself INSPECT,
+ * and the runtime would lose this statement's item and phrases (cobol
+ * ISSUES-121).  So every operand is read as a scan, the calls are made
+ * first (2023 14.6.4), and then the runtime's sequence is emitted whole. */
+typedef struct { int hb, ha; Opnd before, after; } InspRange;
+typedef struct { int kind; Opnd pat, rep; InspRange rg; Ref tally; } InspPh;   /* kind: 0 CHARACTERS, 1 ALL, 2 LEADING, 3 FIRST */
+
+static void parse_inspect_range(InspRange *g)
 {
-    Opnd before, after; int hb = 0, ha = 0;
+    g->hb = g->ha = 0;
     for (;;) {
-        if (accept_word("before")) { if (hb) die_at(cur()->line, "two BEFORE phrases"); accept_word("initial"); parse_operand(&before); insp_operand(&before); hb = 1; }
-        else if (accept_word("after")) { if (ha) die_at(cur()->line, "two AFTER phrases"); accept_word("initial"); parse_operand(&after); insp_operand(&after); ha = 1; }
+        if (accept_word("before")) { if (g->hb) die_at(cur()->line, "two BEFORE phrases"); accept_word("initial"); parse_operand(&g->before); insp_operand(&g->before); g->hb = 1; }
+        else if (accept_word("after")) { if (g->ha) die_at(cur()->line, "two AFTER phrases"); accept_word("initial"); parse_operand(&g->after); insp_operand(&g->after); g->ha = 1; }
         else break;
     }
-    if (!hb && !ha) return;
+}
+static void insp_range_calls(InspRange *g)
+{
+    if (g->hb) ucall_make(&g->before);
+    if (g->ha) ucall_make(&g->after);
+}
+static void emit_inspect_range(InspRange *g)
+{
+    if (!g->hb && !g->ha) return;
     Arg a[4];
-    if (hb) pattern_args(&before, &a[0], &a[1]); else { a[0] = arg_imm(0); a[1] = arg_imm(0); }
-    if (ha) pattern_args(&after, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
+    if (g->hb) pattern_args(&g->before, &a[0], &a[1]); else { a[0] = arg_imm(0); a[1] = arg_imm(0); }
+    if (g->ha) pattern_args(&g->after, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
     emit_args(a, 4);
     emit_call("cob_inspect_range");
 }
@@ -275,48 +294,133 @@ static void parse_inspect_1(void)
 {
     Ref item; memset(&item, 0, sizeof item);
     Opnd itemo; memset(&itemo, 0, sizeof itemo);
+    Opnd fo; memset(&fo, 0, sizeof fo);
     int fsubj = 0, fline = cur()->line;
     const char *fwhy = "a function-identifier is not a receiving operand (2023 8.4.3.2.3 rule 1); only TALLYING inspects one";
+    static InspPh tl[32], rp[32];           /* the TALLYING and the REPLACING phrases */
+    int ntl = 0, nrp = 0, converting = 0;
+    Opnd from, to; InspRange crg; memset(&crg, 0, sizeof crg);
+    memset(&from, 0, sizeof from); memset(&to, 0, sizeof to);
+
+    /* ---- the statement, read: no code ---- */
+    g_noemit++;
     if (at_word("function") || (cur()->kind == T_WORD && ufn_named(cur()->s))) {
         /* a function-identifier: a sending operand, so TALLYING only --
          * REPLACING and CONVERTING would change it */
-        Opnd fo; parse_operand(&fo);
+        parse_operand(&fo);
         int numeric = fo.kind == O_NUM ||           /* LENGTH and the like, folded at compile time */
                       (fo.kind == O_FUNC && (fo.fn == -1 ? fo.fscale >= 0 : fn_is_numeric(fo.fn))) || fo.fwnum || fo.fbool ||
                       (fo.kind == O_REF && is_numeric_sym(fo.ref.sym));
         if (numeric) die_at(fline, "INSPECT of a numeric or boolean function's value: the subject is alphanumeric or national (2023 14.9.22.3 rule 1)");
         fsubj = 1;
         g_insp_nat = opnd_is_national(&fo);
-        emit_str_arg(&fo);                      /* r3 its value, r4 its length */
-        if (g_insp_nat) emit_desc_addr("r5", nat_desc(2)); else emit_li("r5", 0);
-        emit_call("cob_inspect_begin");
     } else {
-    parse_ref(&item);
-    if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
-    /* a numeric USAGE NATIONAL item's characters are national too */
-    { Opnd io; memset(&io, 0, sizeof io); io.kind = O_REF; io.ref = item; io.line = item.line; no_bits(&io, "INSPECT"); }
-    if (item.sym->strong) die_at(item.line, "INSPECT of a strongly-typed group (2023 14.9.22.3 rule 1)");
-    if (!item.sym->is_group && !item.rm && item.sym->usage != U_DISPLAY && item.sym->usage != U_NATIONAL)
-        die_at(item.line, "INSPECT of '%s', USAGE %s: the item is usage display%s, or a group (%s)", item.sym->name, usage_name(item.sym->usage),
-               g_std < 2002 ? "" : " or national", g_std < 2002 ? "X3.23-1985 INSPECT rule 1" : "2023 14.9.22.3 rule 1");
-    g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
-    itemo = ref_opnd(&item);
-    operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
-    /* the phrases are registered with the runtime, which makes the one pass
-     * the text describes (cob_inspect_run); then each tally is added.  A
-     * statement with both TALLYING and REPLACING is two statements, the
-     * tallying pass first (X3.23 general rule): two begin/run rounds. */
-    { Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin"); }
+        parse_ref(&item);
+        if (item.sym->is_cond) die_at(item.line, "INSPECT of a condition-name");
+        /* a numeric USAGE NATIONAL item's characters are national too */
+        { Opnd io; memset(&io, 0, sizeof io); io.kind = O_REF; io.ref = item; io.line = item.line; no_bits(&io, "INSPECT"); }
+        if (item.sym->strong) die_at(item.line, "INSPECT of a strongly-typed group (2023 14.9.22.3 rule 1)");
+        if (!item.sym->is_group && !item.rm && item.sym->usage != U_DISPLAY && item.sym->usage != U_NATIONAL)
+            die_at(item.line, "INSPECT of '%s', USAGE %s: the item is usage display%s, or a group (%s)", item.sym->name, usage_name(item.sym->usage),
+                   g_std < 2002 ? "" : " or national", g_std < 2002 ? "X3.23-1985 INSPECT rule 1" : "2023 14.9.22.3 rule 1");
+        g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
+        itemo = ref_opnd(&item);
+        operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
     }
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
-    Ref tallies[32]; int tally_ph[32], nt = 0, np = 0, any = 0;
     if (fsubj && at_word("converting")) die_at(fline, "INSPECT CONVERTING of a function: %s", fwhy);
     if (accept_word("converting")) {
-        Opnd from, to; parse_operand(&from); insp_operand(&from); expect_word("to"); parse_operand(&to);
+        converting = 1;
+        parse_operand(&from); insp_operand(&from); expect_word("to"); parse_operand(&to);
         if (to.kind == O_REF) insp_operand(&to);
-        int fl = from.kind == O_FIG ? w : opnd_size(&from), tl = to.kind == O_FIG ? w : opnd_size(&to);
-        if (fl > 0 && tl > 0 && fl != tl && to.kind != O_FIG) die_at(to.line, "INSPECT CONVERTING: the two operands must be the same length");
-        parse_inspect_range();
+        int fl = from.kind == O_FIG ? w : opnd_size(&from), tl2 = to.kind == O_FIG ? w : opnd_size(&to);
+        if (fl > 0 && tl2 > 0 && fl != tl2 && to.kind != O_FIG) die_at(to.line, "INSPECT CONVERTING: the two operands must be the same length");
+        parse_inspect_range(&crg);
+    } else {
+        if (accept_word("tallying")) {
+            for (;;) {
+                Ref tally; parse_ref(&tally);
+                if (tally.sym->is_group || tally.sym->pi.category != PIC_NUMERIC)
+                    die_at(tally.line, "the INSPECT tally '%s' is an elementary numeric item (2023 14.9.22.3 rule 5)", tally.sym->name);
+                expect_word("for");
+                for (;;) {
+                    int kind = 0;
+                    if (accept_word("characters")) kind = 0;
+                    else if (accept_word("all")) kind = 1;
+                    else if (accept_word("leading")) kind = 2;
+                    else die_at(cur()->line, "expected CHARACTERS, ALL or LEADING in INSPECT TALLYING");
+                    /* CHARACTERS [range]; ALL|LEADING {operand [range]}... */
+                    for (;;) {
+                        if (ntl == 32) die_at(cur()->line, "INSPECT: more than 32 phrases");
+                        InspPh *ph = &tl[ntl]; memset(ph, 0, sizeof *ph);
+                        ph->kind = kind; ph->tally = tally;
+                        if (kind) { parse_operand(&ph->pat); insp_operand(&ph->pat); }
+                        parse_inspect_range(&ph->rg);
+                        ntl++;
+                        /* another operand under the same ALL/LEADING: not a keyword, not the next tally (an identifier followed by FOR) */
+                        if (!kind || !at_operand() || at_word("characters") || at_word("all") || at_word("leading") || at_word("replacing")) break;
+                        if (cur()->kind == T_WORD && is_word(peek(1), "for")) break;
+                    }
+                    if (!(at_word("characters") || at_word("all") || at_word("leading"))) break;
+                }
+                if (!at_operand() || at_word("replacing")) break;
+            }
+        }
+        if (fsubj && at_word("replacing")) die_at(fline, "INSPECT REPLACING of a function: %s", fwhy);
+        if (accept_word("replacing")) {
+            for (;;) {
+                int kind = 0;
+                if (accept_word("characters")) kind = 0;
+                else if (accept_word("all")) kind = 1;
+                else if (accept_word("leading")) kind = 2;
+                else if (accept_word("first")) kind = 3;
+                else die_at(cur()->line, "expected CHARACTERS, ALL, LEADING or FIRST in INSPECT REPLACING");
+                /* CHARACTERS BY rep [range]; ALL|LEADING|FIRST {pat BY rep [range]}... */
+                for (;;) {
+                    if (nrp == 32) die_at(cur()->line, "INSPECT: more than 32 phrases");
+                    InspPh *ph = &rp[nrp]; memset(ph, 0, sizeof *ph);
+                    ph->kind = kind;
+                    if (kind) { parse_operand(&ph->pat); insp_operand(&ph->pat); }
+                    expect_word("by"); parse_operand(&ph->rep); insp_operand(&ph->rep);
+                    if (!kind) {
+                        /* CHARACTERS BY: one character (rule 7) */
+                        int rl = ph->rep.kind == O_FIG ? w : opnd_size(&ph->rep);
+                        if (rl != w) die_at(ph->rep.line, "INSPECT REPLACING CHARACTERS BY: one character (%s)", g_std < 2002 ? "X3.23-1985 INSPECT rule 8" : "2023 14.9.22.3 rule 7");
+                    }
+                    if (kind) {
+                        int pl = ph->pat.kind == O_FIG ? w : opnd_size(&ph->pat), rl = ph->rep.kind == O_FIG ? w : opnd_size(&ph->rep);
+                        if (pl > 0 && rl > 0 && pl != rl) die_at(ph->rep.line, "INSPECT REPLACING: the two operands must be the same length");
+                    }
+                    parse_inspect_range(&ph->rg);
+                    nrp++;
+                    if (!kind || !at_operand() || at_word("characters") || at_word("all") || at_word("leading") || at_word("first")) break;
+                }
+                if (!(at_word("characters") || at_word("all") || at_word("leading") || at_word("first"))) break;
+            }
+        }
+        if (!ntl && !nrp) die_at(fline, "INSPECT needs TALLYING, REPLACING or CONVERTING");
+    }
+    g_noemit--;
+
+    /* ---- its user functions, called: before the runtime hears of it ---- */
+    if (fsubj) ucall_make(&fo); else ucall_make(&itemo);
+    if (converting) { ucall_make(&from); ucall_make(&to); insp_range_calls(&crg); }
+    for (int i = 0; i < ntl; i++) { ref_calls(&tl[i].tally); if (tl[i].kind) ucall_make(&tl[i].pat); insp_range_calls(&tl[i].rg); }
+    for (int i = 0; i < nrp; i++) { if (rp[i].kind) ucall_make(&rp[i].pat); ucall_make(&rp[i].rep); insp_range_calls(&rp[i].rg); }
+
+    /* ---- the code.  The phrases are registered with the runtime, which
+     * makes the one pass the text describes (cob_inspect_run); then each
+     * tally is added.  A statement with both TALLYING and REPLACING is two
+     * statements, the tallying pass first (X3.23 general rule): two
+     * begin/run rounds. ---- */
+#define INSP_BEGIN() do { \
+        if (fsubj) { emit_str_arg(&fo); if (g_insp_nat) emit_desc_addr("r5", nat_desc(2)); else emit_li("r5", 0); } \
+        else { Arg ba[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(ba, 3); } \
+        emit_call("cob_inspect_begin"); } while (0)
+    INSP_BEGIN();
+    if (converting) {
+        int fl = from.kind == O_FIG ? w : opnd_size(&from);
+        emit_inspect_range(&crg);
         Arg a[3], x;
         if (to.kind == O_FIG && fl > w) {
             /* CONVERTING "abc" TO SPACE: the figurative is as long as the other */
@@ -331,90 +435,38 @@ static void parse_inspect_1(void)
         emit_call("cob_inspect_run");
         return;
     }
-    if (accept_word("tallying")) {
-        any = 1;
-        for (;;) {
-            Ref tally; parse_ref(&tally);
-            if (tally.sym->is_group || tally.sym->pi.category != PIC_NUMERIC)
-                die_at(tally.line, "the INSPECT tally '%s' is an elementary numeric item (2023 14.9.22.3 rule 5)", tally.sym->name);
-            expect_word("for");
-            for (;;) {
-                int kind = 0;
-                if (accept_word("characters")) kind = 0;
-                else if (accept_word("all")) kind = 1;
-                else if (accept_word("leading")) kind = 2;
-                else die_at(cur()->line, "expected CHARACTERS, ALL or LEADING in INSPECT TALLYING");
-                /* CHARACTERS [range]; ALL|LEADING {operand [range]}... */
-                for (;;) {
-                    Opnd pat; memset(&pat, 0, sizeof pat);
-                    if (kind) { parse_operand(&pat); insp_operand(&pat); }
-                    parse_inspect_range();
-                    if (np == 32) die_at(cur()->line, "INSPECT: more than 32 phrases");
-                    Arg a[5];
-                    a[0] = arg_imm(1); a[1] = arg_imm(kind);
-                    if (kind) pattern_args(&pat, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
-                    a[4] = arg_imm(0);
-                    emit_args(a, 5);
-                    emit_call("cob_inspect_phrase");
-                    if (nt == 32) die_at(tally.line, "INSPECT: more than 32 tallies");
-                    tallies[nt] = tally; tally_ph[nt] = np; nt++; np++;
-                    /* another operand under the same ALL/LEADING: not a keyword, not the next tally (an identifier followed by FOR) */
-                    if (!kind || !at_operand() || at_word("characters") || at_word("all") || at_word("leading") || at_word("replacing")) break;
-                    if (cur()->kind == T_WORD && is_word(peek(1), "for")) break;
-                }
-                if (!(at_word("characters") || at_word("all") || at_word("leading"))) break;
-            }
-            if (!at_operand() || at_word("replacing")) break;
-        }
+    Ref tallies[32]; int tally_ph[32];
+    for (int i = 0; i < ntl; i++) {
+        InspPh *ph = &tl[i];
+        emit_inspect_range(&ph->rg);
+        Arg a[5];
+        a[0] = arg_imm(1); a[1] = arg_imm(ph->kind);
+        if (ph->kind) pattern_args(&ph->pat, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
+        a[4] = arg_imm(0);
+        emit_args(a, 5);
+        emit_call("cob_inspect_phrase");
+        tallies[i] = ph->tally; tally_ph[i] = i;
     }
-    if (fsubj && at_word("replacing")) die_at(fline, "INSPECT REPLACING of a function: %s", fwhy);
-    if (at_word("replacing") && nt) {
+    if (nrp && ntl) {
         /* the tallying pass first, its counts added; then the replacing pass */
         emit_call("cob_inspect_run");
-        emit_inspect_tallies(tallies, tally_ph, nt);
-        nt = 0; np = 0;
-        Arg a[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(a, 3); emit_call("cob_inspect_begin");
+        emit_inspect_tallies(tallies, tally_ph, ntl);
+        ntl = 0;
+        INSP_BEGIN();
     }
-    if (accept_word("replacing")) {
-        any = 1;
-        for (;;) {
-            int kind = 0;
-            if (accept_word("characters")) kind = 0;
-            else if (accept_word("all")) kind = 1;
-            else if (accept_word("leading")) kind = 2;
-            else if (accept_word("first")) kind = 3;
-            else die_at(cur()->line, "expected CHARACTERS, ALL, LEADING or FIRST in INSPECT REPLACING");
-            /* CHARACTERS BY rep [range]; ALL|LEADING|FIRST {pat BY rep [range]}... */
-            for (;;) {
-                Opnd pat, rep; memset(&pat, 0, sizeof pat); memset(&rep, 0, sizeof rep);
-                if (kind) { parse_operand(&pat); insp_operand(&pat); }
-                expect_word("by"); parse_operand(&rep); insp_operand(&rep);
-                if (!kind) {
-                    /* CHARACTERS BY: one character (rule 7) */
-                    int rl = rep.kind == O_FIG ? w : opnd_size(&rep);
-                    if (rl != w) die_at(rep.line, "INSPECT REPLACING CHARACTERS BY: one character (%s)", g_std < 2002 ? "X3.23-1985 INSPECT rule 8" : "2023 14.9.22.3 rule 7");
-                }
-                if (kind) {
-                    int pl = pat.kind == O_FIG ? w : opnd_size(&pat), rl = rep.kind == O_FIG ? w : opnd_size(&rep);
-                    if (pl > 0 && rl > 0 && pl != rl) die_at(rep.line, "INSPECT REPLACING: the two operands must be the same length");
-                }
-                parse_inspect_range();
-                if (np == 32) die_at(cur()->line, "INSPECT: more than 32 phrases");
-                Arg a[5];
-                a[0] = arg_imm(0); a[1] = arg_imm(kind);
-                if (kind) pattern_args(&pat, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(1); }
-                Arg rl; pattern_args(&rep, &a[4], &rl);
-                emit_args(a, 5);
-                emit_call("cob_inspect_phrase");
-                np++;
-                if (!kind || !at_operand() || at_word("characters") || at_word("all") || at_word("leading") || at_word("first")) break;
-            }
-            if (!(at_word("characters") || at_word("all") || at_word("leading") || at_word("first"))) break;
-        }
+    for (int i = 0; i < nrp; i++) {
+        InspPh *ph = &rp[i];
+        emit_inspect_range(&ph->rg);
+        Arg a[5];
+        a[0] = arg_imm(0); a[1] = arg_imm(ph->kind);
+        if (ph->kind) pattern_args(&ph->pat, &a[2], &a[3]); else { a[2] = arg_imm(0); a[3] = arg_imm(1); }
+        Arg rl; pattern_args(&ph->rep, &a[4], &rl);
+        emit_args(a, 5);
+        emit_call("cob_inspect_phrase");
     }
-    if (!any) die_at(fline, "INSPECT needs TALLYING, REPLACING or CONVERTING");
     emit_call("cob_inspect_run");
-    emit_inspect_tallies(tallies, tally_ph, nt);
+    emit_inspect_tallies(tallies, tally_ph, ntl);
+#undef INSP_BEGIN
 }
 
 /* ---- INITIALIZE -------------------------------------------------------- */

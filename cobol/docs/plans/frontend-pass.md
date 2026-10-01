@@ -123,6 +123,13 @@ for in the commit -- plus all the usual gates.
      a register across the body (a COMP item's every access is a byte
      swap, a truncating rem and a byte-wise store), and the out-of-line
      PERFORM's cob_perform_push / cob_perform_exit calls.
+   - INSPECT (done 2026-10-01): the one verb that truly interleaved --
+     it told the runtime of its item, then read and registered each
+     phrase.  Read whole now (InspPh, InspRange), its calls made first,
+     then the runtime's sequence emitted.  STRING, UNSTRING and CALL
+     already read their operands before any code; their OVERFLOW
+     phrases are Blocks through emit_phrases now, which lays a
+     two-valued status out as one test with the phrases its arms.
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of

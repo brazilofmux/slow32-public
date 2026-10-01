@@ -21,6 +21,8 @@ mistake would change:
   VARYING up and down, WITH TEST AFTER, VARYING ... AFTER, nested
   inline loops, a GO TO out of an inline body; every loop is counted,
   so every program ends;
+- STRING into a short item and UNSTRING into too few, with [NOT] ON
+  OVERFLOW phrases that are GO TO, DISPLAY or CONTINUE;
 - a sequential file written and read back in a loop, AT END GO TO and
   NOT AT END;
 - CALL of a program that does not exist, ON EXCEPTION GO TO / DISPLAY,
@@ -59,7 +61,12 @@ def main():
     for i in range(1, 4):
         w("01  L%d PIC S9(3) VALUE 0." % i)    # loop items: only the loops change them
     w("01  T1 PIC S9(3) VALUE 0.")
-    w("01  U1 PIC S9(3) VALUE 0.")            # counted by the performed paragraphs, for their UNTIL loops
+    w("01  U1 PIC S9(3) VALUE 0.")
+    w("01  SM PIC X(5) VALUE SPACES.")        # STRING's receiver: short, so it overflows
+    w("01  PT PIC 9(2) VALUE 1.")
+    w("01  W1 PIC X(3) VALUE SPACES.")
+    w("01  W2 PIC X(3) VALUE SPACES.")
+    w("01  US PIC X(15) VALUE SPACES.")       # UNSTRING's sending item            # counted by the performed paragraphs, for their UNTIL loops
     w("PROCEDURE DIVISION.")
 
     def var():
@@ -208,6 +215,33 @@ def main():
             return "PERFORM %s %s%s" % (rng, test_phrase(), varying("L1"))
         return "PERFORM %s %s%s AFTER %s" % (rng, test_phrase(), varying("L1"), varying("L2")[len("VARYING "):])
 
+    def overflow_phrases(i, end):
+        s = ""
+        has_on = r.random() < 0.75
+        if has_on:
+            s += " ON OVERFLOW %s" % phrase(i)
+        if r.random() < 0.5 or not has_on:
+            s += " NOT ON OVERFLOW %s" % phrase(i)
+        return s + " " + end
+
+    def string_stmt(i):
+        parts = " ".join('"%s"' % "".join(r.choice("abcxyz") for _ in range(r.randint(1, 3))) for _ in range(r.randint(1, 3)))
+        s = "MOVE SPACES TO SM "
+        ptr = r.random() < 0.4
+        if ptr:
+            s += "MOVE %d TO PT " % r.randint(0, 7)        # 0, or past the end: overflow at once
+        s += "STRING %s DELIMITED BY SIZE INTO SM" % parts
+        if ptr:
+            s += " WITH POINTER PT"
+        return s + overflow_phrases(i, "END-STRING") + ' DISPLAY "SM [" SM "] " PT'
+
+    def unstring_stmt(i):
+        src = ",".join("".join(r.choice("abc") for _ in range(r.randint(0, 3))) for _ in range(r.randint(1, 4)))
+        s = 'MOVE SPACES TO W1 W2 MOVE "%s" TO US UNSTRING US DELIMITED BY "," OR SPACE INTO W1' % (src or ",")
+        if r.random() < 0.6:
+            s += " W2"
+        return s + overflow_phrases(i, "END-UNSTRING") + ' DISPLAY "W [" W1 "] [" W2 "]"'
+
     # the file: written, then read in a loop
     w("P0.")
     w('    DISPLAY "P0"')
@@ -246,7 +280,9 @@ def main():
                 w("    " + size_stmt(i) if i < npara else "    ADD 1 TO S2")
             elif k < 0.76 and i < npara:
                 w("    " + evaluate(i))
-            elif k < 0.84:
+            elif k < 0.80 and i < npara:
+                w("    " + (string_stmt(i) if r.random() < 0.5 else unstring_stmt(i)))
+            elif k < 0.86:
                 w("    " + inline_loop(i))
             elif k < 0.9:
                 w("    " + para_loop())
