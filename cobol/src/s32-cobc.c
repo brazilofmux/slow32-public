@@ -6572,7 +6572,10 @@ static void parse_operand_raw_1(Opnd *o)
             advance();
             static Tok wc; static char wcbuf[22];
             if (!wcbuf[0]) {
-                time_t now = time(0);
+                /* SOURCE_DATE_EPOCH, the reproducible-builds variable:
+                 * the compile time to use (tests/asm-snapshot.sh sets it) */
+                const char *sde = getenv("SOURCE_DATE_EPOCH");
+                time_t now = sde && *sde ? (time_t)strtoll(sde, NULL, 10) : time(0);
                 struct tm *t = localtime(&now);
                 int y = t->tm_year + 1900, mo = t->tm_mon + 1, da = t->tm_mday;
                 int hh = t->tm_hour, mm = t->tm_min, ss = t->tm_sec;

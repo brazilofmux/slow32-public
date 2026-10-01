@@ -12,6 +12,8 @@ generators are ours.  ISSUES.md 120 has the first survey.
                                       git tree)
   XCOBOL_FLAGS=-dialect=mf            further s32-cobc flags for every
                                       compile (Micro Focus's dialect)
+  XCOBOL_ASM=dir                      keep each compiling program's
+                                      assembly there (asm-snapshot.sh)
 
 Each file is compiled in the reference format its own text declares (a
 >>SOURCE or $SET directive, else the sequence area and indicator column
@@ -29,6 +31,7 @@ ROOT = os.path.join(os.environ.get("XCOBOL", os.path.expanduser("~/refs/x-cobol/
 COBC = os.path.join(HERE, "..", "out", "s32-cobc")
 OUT = sys.argv[1]
 EXTRA = os.environ.get("XCOBOL_FLAGS", "").split()
+ASM = os.environ.get("XCOBOL_ASM")
 if not os.path.isdir(ROOT):
     sys.exit("no X-COBOL dataset at %s (set XCOBOL)" % ROOT)
 W = tempfile.mkdtemp(prefix="xcobol.")
@@ -103,6 +106,10 @@ def survey(job):
     for std in ("-std=85", "-std=2002"):
         ok, err, line = attempt(src, fmt, std, incs)
         if ok:
+            if ASM:
+                od = os.path.join(W, "out", os.path.basename(os.path.dirname(src)))
+                shutil.copy(os.path.join(od, os.path.basename(src) + ".s"),
+                            os.path.join(ASM, proj + "_" + os.path.relpath(src, os.path.join(ROOT, proj)).replace("/", "_") + ".s"))
             return (proj, src, "OK", fmt + " " + std)
         errs.append("%s (line %d, %s %s)" % (err, line, fmt, std))
     # 85's refusal, unless all it says is that the feature is 2002's
@@ -118,10 +125,16 @@ for proj in sorted(os.listdir(ROOT)):
         for f in sorted(fs):
             if f.lower().endswith((".cbl", ".cob")):
                 jobs.append((proj, os.path.join(d, f), incs))
+# a project's files in order, projects side by side: two compiles of one
+# project write the same FUNCTION-ID signature files, and racing them made
+# a run's results vary
+byproj = {}
+for j in jobs: byproj.setdefault(j[0], []).append(j)
+def survey_project(js): return [survey(j) for j in js]
 try:
     for _ in range(2):
         with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
-            rows = list(ex.map(survey, jobs))
+            rows = [r for rs in ex.map(survey_project, byproj.values()) for r in rs]
 finally:
     shutil.rmtree(W, ignore_errors=True)
 with open(OUT, "w") as o:
