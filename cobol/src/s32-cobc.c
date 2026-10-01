@@ -265,6 +265,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
+       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -324,6 +325,10 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-E23", 'E', "a condition-name on a group holding items of a usage other than DISPLAY, or JUSTIFIED or "
                      "SYNCHRONIZED ones (X3.23-1985 VI-21 general rule 2c; 2023 13.16.3 rule 24c and d); taken, the "
                      "group compared as its bytes, as an 88 VALUE HIGH-VALUES end-of-file flag is written" },
+    { "BP-E24", 'E', "comment-entries (AUTHOR, DATE-WRITTEN, ...) were deleted by COBOL 2002 (ISO/IEC 1989:2002 F.1); "
+                     "taken as comments, as COBOL 85 takes them" },
+    { "BP-E25", 'E', "a constant entry without AS (01 name CONSTANT literal) is GnuCOBOL's; the standard writes "
+                     "CONSTANT AS literal (2002 13.9; 2023 13.10)" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -2972,6 +2977,9 @@ static int nat_picture(const char *pic, PicInfo *pi, int line)
 }
 
 static int sym_is_boolean(const Sym *s);
+static void parse_constant_entry(int line);
+static void const_pic_check(void);
+static int g_cpicbad[64], g_cpicbad_ci[64], g_ncpicbad;  /* PICTURE repetitions no constant could fill */
 static void parse_data_item1(void)
 {
     int line = cur()->line;
@@ -2982,6 +2990,10 @@ static void parse_data_item1(void)
 
     if (!((level >= 1 && level <= 49) || level == 66 || level == 77 || level == 88))
         die_at(line, "level number %d is not valid", level);
+    if (level == 1 && g_std >= 2002 && is_word(peek(1), "constant") && !is_word(peek(2), "record")) {
+        parse_constant_entry(line);
+        return;
+    }
 
     Sym *s = sym_new();
     s->level = level; s->line = line; s->usage = U_DISPLAY;
@@ -3088,6 +3100,7 @@ static void parse_data_item1(void)
         if (!strcmp(t->s, "pic") || !strcmp(t->s, "picture")) {
             advance();
             if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
+            if (g_ncpicbad) const_pic_check();
             if (s->has_pic) die_at(t->line, "'%s' has two PICTURE clauses", s->name);
             s->has_pic = 1;
             snprintf(s->pic, sizeof s->pic, "%s", cur()->s);
@@ -3375,7 +3388,7 @@ static void parse_data_item1(void)
         if (!strcmp(t->s, "constant") && is_word(peek(1), "record"))
             die_at(t->line, "'%s': the CONSTANT RECORD clause is COBOL 2014, beyond %s (2023 13.18.15)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
         if (!strcmp(t->s, "constant"))
-            die_at(t->line, g_std < 2002 ? "a constant entry (level 01 CONSTANT) is not COBOL 85" :
+            die_at(t->line, g_std < 2002 ? "a constant entry (level 01 CONSTANT) is COBOL 2002; compile with -std=2002" :
                    "'%s': the constant entry (level 01 CONSTANT, 2023 13.10) is not implemented", s->name);
         if (!strcmp(t->s, "dynamic") && is_word(peek(1), "length"))
             die_at(t->line, "'%s': the DYNAMIC LENGTH clause is COBOL 2014, beyond %s (2023 13.18.19)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
@@ -5301,6 +5314,301 @@ static void parse_ref(Ref *r)
         if (!r->sub[i].sym && (r->sub[i].lit < 1 || r->sub[i].lit > r->sym->dim_count[i]))
             die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
     index_ref_check(r);
+}
+
+/* ---- Constant entries (2002 13.9; 2023 13.10) --------------------------
+ * 01 constant-name CONSTANT [IS GLOBAL] AS { literal | arithmetic-expression
+ * | BYTE-LENGTH OF data-name | LENGTH OF data-name }.  General rule 1: the
+ * effect is as if the literal were written where the constant-name is --
+ * and so it is done: the rest of the program's tokens (a contained
+ * program's too, when GLOBAL) have the name replaced by the literal, and a
+ * PICTURE's repetition (n) by the integer (syntax rule 2).  Every place a
+ * format takes a literal then takes the constant with no change of its
+ * own.  A LENGTH OF constant has no value until the DATA DIVISION is laid
+ * out: its tokens share a buffer filled then (const_fill), and one used
+ * before that, in the DATA DIVISION itself, is refused.
+ *
+ * Compile-time arithmetic (2023 7.3.6, the implementor's to define): exact,
+ * over fixed-point literals of at most 18 digits, as fractions; the
+ * constant is an integer (GR 4), so a result that is not one is refused. */
+typedef struct {
+    char name[64];
+    Tok val;                /* the literal, or an integer T_NUM */
+    int global, line;
+    Sym *lsym; int lbytes;  /* LENGTH OF / BYTE-LENGTH OF: resolved and filled by const_fill */
+    char lname[64], lq[8][64]; int nlq, lline;
+    char *lbuf;
+    int fill_tp;            /* the token where it was defined; uses before g_tp at fill are refused */
+    int unit;
+} Const;
+static Const *g_const; static int g_nconst, g_cconst;
+static int *g_cdefer, *g_cdefer_ci; static int g_ncdefer, g_ccdefer;
+
+static int const_level_tok(const Tok *t)
+{
+    if (t->kind != T_NUM) return 0;
+    for (const char *p = t->s; *p; p++) if (!isdigit((unsigned char)*p)) return 0;
+    int v = atoi(t->s);
+    return (v >= 1 && v <= 49) || v == 66 || v == 77 || v == 78 || v == 88;
+}
+
+/* replace the constant's name over the rest of this program (and its
+ * contained programs, GLOBAL) */
+static void const_subst(int ci)
+{
+    Const *c = &g_const[ci];
+    int depth = 0, in_proc = 0;
+    int is_int = 0; long long iv = 0;
+    if (c->val.kind == T_NUM && !c->lbuf) {
+        NumLit n; numlit_parse(&c->val, &n);
+        if (numlit_is_int(&n) && !n.neg && n.ndigits <= 9) { is_int = 1; iv = numlit_int(&n); }
+    }
+    size_t nl = strlen(c->name);
+    for (int i = g_tp; i < g_ntok; i++) {
+        Tok *t = &g_tok[i];
+        if (t->kind == T_WORD) {
+            if ((!strcmp(t->s, "end")) && i + 1 < g_ntok && (is_word(&g_tok[i + 1], "program") || is_word(&g_tok[i + 1], "function"))) {
+                if (depth == 0) return;
+                depth--; i += 2; continue;
+            }
+            if (!strcmp(t->s, "program-id") || !strcmp(t->s, "function-id")) { depth++; continue; }
+            if (!strcmp(t->s, "procedure") && i + 1 < g_ntok && is_word(&g_tok[i + 1], "division") && depth == 0) in_proc = 1;
+            if (strcmp(t->s, c->name) || (depth && !c->global)) continue;
+            /* the name of another constant entry, the same one again (rule 9):
+             * left for parse_constant_entry to compare */
+            if (i + 1 < g_ntok && is_word(&g_tok[i + 1], "constant") && i > 0 && const_level_tok(&g_tok[i - 1])) continue;
+            /* a data item of that name (a level number at an entry's start) */
+            if (!in_proc && i > 1 && const_level_tok(&g_tok[i - 1]) && (g_tok[i - 2].kind == T_PERIOD))
+                die_at(t->line, "'%s' is a constant-name (line %d); it cannot name a data item too", c->name, c->line);
+            Tok u = c->val;
+            u.line = t->line; u.file = t->file; u.dbg = t->dbg; u.after_comma = t->after_comma;
+            u.orig = NULL; u.strong = 0;
+            *t = u;
+            if (c->lbuf) {
+                if (g_ncdefer == g_ccdefer) {
+                    g_ccdefer = g_ccdefer ? 2 * g_ccdefer : 64;
+                    g_cdefer = xrealloc(g_cdefer, (size_t)g_ccdefer * sizeof *g_cdefer);
+                    g_cdefer_ci = xrealloc(g_cdefer_ci, (size_t)g_ccdefer * sizeof *g_cdefer_ci);
+                }
+                g_cdefer[g_ncdefer] = i; g_cdefer_ci[g_ncdefer++] = ci;
+            }
+        } else if (t->kind == T_PIC && (depth == 0 || c->global)) {
+            /* a repetition (name): the integer in its place */
+            for (char *p = strchr(t->s, '('); p; p = strchr(p + 1, '(')) {
+                if (strncasecmp(p + 1, c->name, nl) || p[1 + nl] != ')') continue;
+                if (c->lbuf || !is_int || iv < 1) {
+                    /* refused when the picture is parsed: one error, there */
+                    if (g_ncpicbad < 64) { g_cpicbad[g_ncpicbad] = i; g_cpicbad_ci[g_ncpicbad++] = ci; }
+                    continue;
+                }
+                char *ns = xmalloc(strlen(t->s) + 24);
+                snprintf(ns, strlen(t->s) + 24, "%.*s(%lld)%s", (int)(p - t->s), t->s, iv, p + 1 + nl + 1);
+                p = ns + (p - t->s);
+                t->s = ns; t->len = (int)strlen(ns);
+            }
+        }
+    }
+}
+
+/* compile-time arithmetic: a fraction, n / d, d > 0 */
+typedef struct { long long n, d; } CtNum;
+static long long ct_gcd(long long a, long long b) { if (a < 0) a = -a; while (b) { long long t = a % b; a = b; b = t; } return a ? a : 1; }
+static CtNum ct_norm(CtNum v, int line)
+{
+    if (v.d == 0) die_at(line, "a division by zero in a constant entry's expression (2023 7.3.6.2 rule 1c)");
+    if (v.d < 0) { v.n = -v.n; v.d = -v.d; }
+    long long g = ct_gcd(v.n, v.d); v.n /= g; v.d /= g;
+    return v;
+}
+static CtNum ct_op(CtNum a, int op, CtNum b, int line)
+{
+    __int128 n, d;
+    switch (op) {
+    case '+': n = (__int128)a.n * b.d + (__int128)b.n * a.d; d = (__int128)a.d * b.d; break;
+    case '-': n = (__int128)a.n * b.d - (__int128)b.n * a.d; d = (__int128)a.d * b.d; break;
+    case '*': n = (__int128)a.n * b.n; d = (__int128)a.d * b.d; break;
+    default:  if (b.n == 0) die_at(line, "a division by zero in a constant entry's expression (2023 7.3.6.2 rule 1c)");
+              n = (__int128)a.n * b.d; d = (__int128)a.d * b.n; break;
+    }
+    if (d < 0) { n = -n; d = -d; }
+    __int128 x = n < 0 ? -n : n, y = d; while (y) { __int128 t = x % y; x = y; y = t; }
+    if (x) { n /= x; d /= x; }
+    const __int128 lim = (__int128)999999999999999999LL;
+    if (n > lim || n < -lim || d > lim) die_at(line, "a constant entry's expression goes past 18 digits, compile-time arithmetic's limit here (2023 7.3.6.2 rule 2)");
+    CtNum r = { (long long)n, (long long)d };
+    return r;
+}
+static CtNum ct_expr(void);
+static CtNum ct_factor(void)
+{
+    Tok *t = cur();
+    if (t->kind == T_OP && (!strcmp(t->s, "+") || !strcmp(t->s, "-"))) {
+        int neg = t->s[0] == '-'; advance();
+        CtNum v = ct_factor(); if (neg) v.n = -v.n; return v;
+    }
+    if (t->kind == T_LP) {
+        advance(); CtNum v = ct_expr();
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' in a constant entry's expression");
+        advance(); return v;
+    }
+    if (t->kind == T_OP && !strcmp(t->s, "**")) die_at(t->line, "exponentiation is not allowed in a compile-time arithmetic expression (2023 7.3.6.2 rule 1a)");
+    if (t->kind != T_NUM) die_at(t->line, "a constant entry's expression takes fixed-point numeric literals, not %s (2023 7.3.6.2 rule 1b)", tok_desc(t));
+    NumLit n; numlit_parse(t, &n);
+    if (n.ndigits > 18) die_at(t->line, "a literal of more than 18 digits in a constant entry's expression (2023 7.3.6.2 rule 2)");
+    long long v = 0, d = 1;
+    for (int i = 0; i < n.ndigits; i++) v = v * 10 + (n.digits[i] - '0');
+    for (int i = 0; i < n.scale; i++) d *= 10;
+    advance();
+    CtNum r = { n.neg ? -v : v, d };
+    return ct_norm(r, t->line);
+}
+static CtNum ct_term(void)
+{
+    CtNum v = ct_factor();
+    for (;;) {
+        Tok *t = cur();
+        if (t->kind == T_OP && !strcmp(t->s, "**")) die_at(t->line, "exponentiation is not allowed in a compile-time arithmetic expression (2023 7.3.6.2 rule 1a)");
+        if (t->kind != T_OP || (strcmp(t->s, "*") && strcmp(t->s, "/"))) return v;
+        advance(); v = ct_op(v, t->s[0], ct_factor(), t->line);
+    }
+}
+static CtNum ct_expr(void)
+{
+    CtNum v = ct_term();
+    for (;;) {
+        Tok *t = cur();
+        if (t->kind != T_OP || (strcmp(t->s, "+") && strcmp(t->s, "-"))) return v;
+        advance(); v = ct_op(v, t->s[0], ct_term(), t->line);
+    }
+}
+
+static void parse_constant_entry(int line)
+{
+    Tok *nt = cur();
+    if (nt->kind != T_WORD) die_at(line, "expected a constant-name, found %s", tok_desc(nt));
+    user_word(nt->s, line, "a constant");
+    char name[64]; snprintf(name, sizeof name, "%s", nt->s);
+    advance(); expect_word("constant");
+    Const c; memset(&c, 0, sizeof c);
+    snprintf(c.name, sizeof c.name, "%s", name); c.line = line; c.unit = g_unit;
+    if (accept_word("is")) { expect_word("global"); c.global = 1; }
+    else if (accept_word("global")) c.global = 1;
+    if (!accept_word("as")) {
+        if (cur()->kind != T_NUM && cur()->kind != T_STR) die_at(cur()->line, "expected AS in the constant entry of '%s'", name);
+        bp(BP_E25_CONSTANT_NO_AS, cur()->line);
+    }
+    Tok *v = cur();
+    char spec[256] = "";
+    if (at_word("from")) die_at(v->line, "'%s': FROM compilation-variable-name needs >>DEFINE, which is not implemented", name);
+    if (at_word("length") || at_word("byte-length")) {
+        c.lbytes = at_word("byte-length");
+        advance(); expect_word("of");
+        /* data-name [OF|IN qualifier]... [(literal ...)]: by hand, as the
+         * tables' dimensions are not settled until the DATA DIVISION is.
+         * Every occurrence has one size, so the subscripts -- literals
+         * (rule 3) -- change nothing, and the name alone is one element */
+        const char *what = c.lbytes ? "BYTE-LENGTH OF" : "LENGTH OF";
+        Tok *dn = cur();
+        if (dn->kind != T_WORD) die_at(dn->line, "'%s': %s needs a data-name", name, what);
+        advance();
+        char *quals[64]; int nq = 0;
+        while (accept_word("of") || accept_word("in")) {
+            if (cur()->kind != T_WORD || nq == 64) die_at(cur()->line, "'%s': expected a qualifier after OF/IN", name);
+            quals[nq++] = cur()->s; advance();
+        }
+        if (nq > 8) die_at(dn->line, "'%s': more than 8 qualifiers", name);
+        snprintf(c.lname, sizeof c.lname, "%s", dn->s); c.nlq = nq; c.lline = dn->line;
+        for (int i = 0; i < nq; i++) snprintf(c.lq[i], sizeof c.lq[i], "%s", quals[i]);
+        if (cur()->kind == T_LP) {
+            advance();
+            while (cur()->kind == T_NUM) advance();
+            if (cur()->kind != T_RP) die_at(cur()->line, "'%s': the subscripts of %s's data-name are integer literals (2023 13.10.3 rule 3)", name, what);
+            advance();
+        }
+        c.lsym = NULL;
+        c.lbuf = xmalloc(24); strcpy(c.lbuf, "1");
+        memset(&c.val, 0, sizeof c.val); c.val.kind = T_NUM; c.val.s = c.lbuf; c.val.len = 1;
+        snprintf(spec, sizeof spec, "%s %s", c.lbytes ? "byte-length" : "length", c.lname);
+        for (int i = 0; i < nq; i++) { size_t l = strlen(spec); snprintf(spec + l, sizeof spec - l, " of %s", quals[i]); }
+    } else if ((v->kind == T_STR || v->kind == T_NUM) && peek(1)->kind == T_PERIOD) {
+        c.val = *v; advance();          /* rule 1: a single numeric literal is a literal */
+        snprintf(spec, sizeof spec, "%d:%.*s", v->kind, v->len > 200 ? 200 : v->len, v->s);
+    } else if (v->kind == T_WORD && is_figurative(v->s)) {
+        die_at(v->line, "'%s': a figurative constant is no constant entry's literal (2023 13.10.3 rule 6)", name);
+    } else {
+        CtNum r = ct_expr();
+        if (r.d != 1) die_at(v->line, "'%s': the expression's value is not an integer (%lld/%lld); a constant entry's expression gives an integer (2023 13.10.4 rule 4)", name, r.n, r.d);
+        char *b = xmalloc(24); snprintf(b, 24, "%lld", r.n);
+        memset(&c.val, 0, sizeof c.val); c.val.kind = T_NUM; c.val.s = b; c.val.len = (int)strlen(b);
+        snprintf(spec, sizeof spec, "%d:%s", T_NUM, b);
+    }
+    expect_period();
+    /* the same name again, in this program: the same specification (rule 9) */
+    for (int i = 0; i < g_nconst; i++) {
+        Const *o = &g_const[i];
+        if (o->unit != g_unit || strcmp(o->name, name)) continue;
+        char ospec[256];
+        if (o->lbuf) {
+            snprintf(ospec, sizeof ospec, "%s %s", o->lbytes ? "byte-length" : "length", o->lname);
+            for (int q = 0; q < o->nlq; q++) { size_t l = strlen(ospec); snprintf(ospec + l, sizeof ospec - l, " of %s", o->lq[q]); }
+        } else snprintf(ospec, sizeof ospec, "%d:%.*s", o->val.kind, o->val.len > 200 ? 200 : o->val.len, o->val.s);
+        if (strcmp(ospec, spec)) die_at(line, "'%s' is a constant-name already (line %d), with another value (2023 13.10.3 rule 9)", name, o->line);
+        return;
+    }
+    if (sym_lookup_quiet(name)) die_at(line, "'%s' names a data item already; it cannot be a constant-name too", name);
+    if (g_nconst == g_cconst) { g_cconst = g_cconst ? 2 * g_cconst : 32; g_const = xrealloc(g_const, (size_t)g_cconst * sizeof *g_const); }
+    c.fill_tp = g_tp;
+    g_const[g_nconst] = c;
+    const_subst(g_nconst++);
+}
+
+/* a PICTURE at the cursor whose repetition names a constant that cannot
+ * give one */
+static void const_pic_check(void)
+{
+    for (int k = 0; k < g_ncpicbad; k++) {
+        if (g_cpicbad[k] != g_tp) continue;
+        Const *c = &g_const[g_cpicbad_ci[k]];
+        if (c->lbuf) die_at(cur()->line, "'%s' is a LENGTH OF constant: its value is known only after the DATA DIVISION, so it cannot be a PICTURE repetition (not implemented)", c->name);
+        die_at(cur()->line, "'%s' is not a positive integer constant; it cannot be a PICTURE repetition (2023 13.10.3 rule 2)", c->name);
+    }
+}
+
+/* the LENGTH OF constants of this program, now that it is laid out */
+static void const_fill(void)
+{
+    for (int i = 0; i < g_nconst; i++) {
+        Const *c = &g_const[i];
+        if (c->unit != g_unit || !c->lbuf) continue;
+        char *quals[8]; for (int q = 0; q < c->nlq; q++) quals[q] = c->lq[q];
+        Sym *s = c->lsym = sym_lookup(c->lname, quals, c->nlq, c->lline);
+        if (s->is_cond || s->usage == U_BIT || s->bitgroup)
+            die_at(c->lline, "'%s': %s a condition-name or a bit data item is not implemented", c->name, c->lbytes ? "BYTE-LENGTH OF" : "LENGTH OF");
+        long v = s->size;
+        if (!c->lbytes && (sym_is_national(s) || (!s->is_group && s->usage == U_NATIONAL))) v /= 2;
+        snprintf(c->lbuf, 24, "%ld", v);
+    }
+    /* a PICTURE past this DATA DIVISION -- a contained program's -- that
+     * repeats by a LENGTH OF constant: its value is known now */
+    for (int k = 0; k < g_ncpicbad; k++) {
+        Const *c = &g_const[g_cpicbad_ci[k]];
+        if (g_cpicbad[k] < g_tp || c->unit != g_unit || !c->lbuf) continue;
+        Tok *t = &g_tok[g_cpicbad[k]];
+        size_t nl = strlen(c->name);
+        for (char *p = strchr(t->s, '('); p; p = strchr(p + 1, '(')) {
+            if (strncasecmp(p + 1, c->name, nl) || p[1 + nl] != ')') continue;
+            char *ns = xmalloc(strlen(t->s) + 24);
+            snprintf(ns, strlen(t->s) + 24, "%.*s(%s)%s", (int)(p - t->s), t->s, c->lbuf, p + 1 + nl + 1);
+            p = ns + (p - t->s);
+            t->s = ns; t->len = (int)strlen(ns);
+        }
+        g_cpicbad[k] = -1;
+    }
+    for (int k = 0; k < g_ncdefer; k++) {
+        Const *c = &g_const[g_cdefer_ci[k]];
+        if (c->unit == g_unit && g_cdefer[k] < g_tp)
+            die_at(g_tok[g_cdefer[k]].line, "'%s' is a LENGTH OF constant: its value is known only after the DATA DIVISION, so it cannot be used in it (not implemented)", c->name);
+    }
 }
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
@@ -18028,7 +18336,9 @@ static void parse_identification_division(void)
         int known = 0;
         for (int i = 0; paras[i]; i++) if (is_word(t, paras[i])) known = 1;
         if (!known) die_at(t->line, "unexpected %s in the IDENTIFICATION DIVISION", tok_desc(t));
-        bp(BP_O2_COMMENT_ENTRY, t->line);
+        /* deleted by 2002, and taken there as an extension: the
+         * paragraphs are comments in any edition that had them */
+        bp(g_std >= 2002 ? BP_E24_COMMENT_ENTRY_2002 : BP_O2_COMMENT_ENTRY, t->line);
         advance(); expect_period();
         while (!at_division() && cur()->kind != T_EOF) {
             int hdr = 0;
@@ -18949,6 +19259,7 @@ static void parse_rd(void)
                 if (accept_word("pic") || accept_word("picture")) {
                     accept_word("is");
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
+            if (g_ncpicbad) const_pic_check();
                     fd.has_pic = 1;
                     snprintf(fd.pic, sizeof fd.pic, "%s", cur()->s); pic_len_check(fd.pic, t->line);
                     if (nat_picture(fd.pic, &fd.pi, t->line)) { advance(); is_field = 1; continue; }
@@ -19200,6 +19511,7 @@ static void parse_screen_section(void)
                 }
                 if (accept_word("pic") || accept_word("picture")) {
                     if (cur()->kind != T_PIC) die_at(t->line, "expected a PICTURE character-string");
+            if (g_ncpicbad) const_pic_check();
                     f->has_pic = 1;
                     snprintf(f->pic, sizeof f->pic, "%s", cur()->s);
                     pic_len_check(f->pic, t->line);
@@ -19337,7 +19649,7 @@ static void section_order(int *last, int rank, const char *name)
 
 static void parse_data_division(void)
 {
-    if (!accept_word("data")) { finish_data_division(); return; }
+    if (!accept_word("data")) { finish_data_division(); const_fill(); return; }
     expect_word("division"); expect_period();
     int last = 0;
     for (;;) {
@@ -19393,6 +19705,7 @@ static void parse_data_division(void)
     }
     if (!at_division() && cur()->kind != T_EOF) die_at(cur()->line, "unexpected %s in the DATA DIVISION", tok_desc(cur()));
     finish_data_division();
+    const_fill();
 }
 
 /* ====================================================================== */

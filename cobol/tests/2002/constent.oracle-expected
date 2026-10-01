@@ -1,0 +1,8 @@
+max-keys 5 width 8
+[hello, c]
+low-bound -2.50 amt -002.50
+rec-len 45 key-bytes 40
+k = max-keys
+[last    ]
+tab[	]
+seen from inside 42

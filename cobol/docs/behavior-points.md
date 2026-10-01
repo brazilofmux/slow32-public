@@ -83,6 +83,11 @@ rest of the Debug module, item 18), refused with a message naming it.
 Item 1, double character substitution, does not arise on an ASCII
 machine. That accounts for all eighteen items of the list.
 
+Under `-std=2002` each of these is refused, naming the deletion
+(F.1), with one exception: comment-entries, which are taken there as
+comments and warned under `-warn-extensions` as BP-E24 (the user's
+ruling, 2026-10-01).
+
 ## Class N — a word COBOL 85 reserved, used as a name
 
 A reserved word is never a user-defined word (X3.23-1985), and the
@@ -135,6 +140,8 @@ warns only under -std=85. Never changes the output.
 | BP-E21 | EXIT PROGRAM followed by more statements in its sentence | the NIST SQL suite (dml116s: EXIT PROGRAM, STOP RUN) | 85 | X3.23-1985 EXIT PROGRAM syntax rule 1 makes it the last; 2002 dropped the rule. Taken, run as 2002 runs it |
 | BP-E22 | a separator comma or semicolon with no space after it (`"...",SQL-COD`) | the NIST SQL suite (yts775) | 85, 2002 | the standard's separator comma is followed by a space; taken as a separator. A comma between digits is still the decimal point under DECIMAL-POINT IS COMMA |
 | BP-E23 | a condition-name on a group holding items of a usage other than DISPLAY, or JUSTIFIED or SYNCHRONIZED ones | majesty's GnuCOBOL-era copybooks (`88 ... VALUE HIGH-VALUES` end-of-file flags over packed fields), changed to conform in majesty 1dfaa92; tests/free/copybook keeps the shape | 85, 2002 | X3.23-1985 VI-21 general rule 2c and 2023 13.16.3 rule 24c and d keep it off; taken, the group compared as its bytes (ISSUES-118) |
+| BP-E24 | comment-entries (`AUTHOR.`, `DATE-WRITTEN.`, ...) under -std=2002 | GnuCOBOL programs that carry them beside a 2002 feature: seventeen in X-COBOL, refused under either standard before | 2002 | deleted by 2002 (F.1); taken as comments, as 85 takes them (BP-O2), by the user's ruling of 2026-10-01 (ISSUES-120) |
+| BP-E25 | a constant entry without AS (`01 width CONSTANT 20.`) | GnuCOBOL; two X-COBOL programs | 2002 | 2002 13.9 and 2023 13.10 write CONSTANT AS; taken (ISSUES-120) |
 
 Not points, recorded here:
 

@@ -1,0 +1,1 @@
+'n' is a LENGTH OF constant: its value is known only after the DATA DIVISION, so it cannot be used in it (not implemented)

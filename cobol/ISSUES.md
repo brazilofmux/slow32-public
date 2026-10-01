@@ -4537,3 +4537,35 @@ programs break a standard rule we enforce (EXIT not alone, a period or
 comma not followed by a space, an empty sentence); about 180 cannot
 compile anywhere as shipped (copybooks named .cbl, JCL decks, CICS/DB2
 copybooks and copybooks the dataset does not have).
+
+Second batch, the same day:
+
+- **The constant entry** (2002 13.9; 2023 13.10): `01 name CONSTANT [IS
+  GLOBAL] AS` a literal, a compile-time arithmetic expression, `LENGTH
+  OF` or `BYTE-LENGTH OF` a data-name.  General rule 1 says the effect
+  is as if the literal were written where the name is, and it is done
+  that way: when the entry is parsed, the rest of the program's tokens
+  (a contained program's too, under GLOBAL) have the name replaced by
+  the literal, and a PICTURE's `(name)` by the integer, so every place
+  that takes a literal takes the constant unchanged.  LENGTH OF waits
+  for the DATA DIVISION's layout: its tokens share a buffer filled then,
+  and a use inside that DATA DIVISION is refused as not implemented (a
+  contained program's is filled).  The arithmetic is exact fractions
+  over literals of at most 18 digits, and a value that is not an
+  integer is refused.  Not yet: constant entries in the REPORT and
+  SCREEN SECTIONs, and `FROM` a compilation variable (no >>DEFINE).
+  Tests: 2002/constent (identical to GnuCOBOL but for one documented
+  divergence, `.oracle-expected`), 2002/constdup (no oracle: GnuCOBOL
+  4.0-early-dev crashes on a constant-name defined twice the same way,
+  which rule 9 allows), six bad/std2002-constant* tests, and
+  bad/constant-85.  docs/conformance/data-division.md has the rules.
+- **BP-E24, comment-entries under -std=2002**, the user's ruling: taken
+  as comments, warned under -warn-extensions.  Seventeen X-COBOL
+  programs carry AUTHOR or DATE-WRITTEN beside a 2002 feature, and were
+  refused under either standard.  The other deleted elements stay
+  refused under 2002.
+- **BP-E25, `CONSTANT literal` without AS**, GnuCOBOL's form; taken.
+
+The survey: 180 compile.  Of the programs the constant entry and the
+comment-entries held back, seven compile; the rest stop later, mostly at
+level 78, OCCURS at level 01, FUNCTION TRIM and ANY LENGTH.
