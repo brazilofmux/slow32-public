@@ -371,6 +371,10 @@ KFN int cob_edit_apply(const char *pat, const char *digs, int neg, int blank_zer
     }
     if (fl) npos--;
     for (int i = 0; i < npos; i++) if (digs[i] != '0') { zero = 0; break; }
+    /* the value edited is the value after truncation (X3.23-1985 VI-34,
+     * rule 7), and zero is "positive or zero" in the sign table: -32745520
+     * into $9+ is 0, so $0+, not $0- (tests/gen found it) */
+    if (zero) neg = 0;
 
     /* a zero value in a picture whose every digit position is check-
      * protected (*) and none is 9: all asterisks but the decimal point */
@@ -383,10 +387,19 @@ KFN int cob_edit_apply(const char *pat, const char *digs, int neg, int blank_zer
         }
         return o;
     }
-    int sig = 0, di = 0, o = 0, first_sig = -1;
+    /* instr: a zero-suppression or floating string has begun.  A simple
+     * insertion character (, B 0 /) is part of that string when embedded
+     * in it or immediately right of it, and takes the fill while
+     * suppression lasts; outside one it is always itself (X3.23-1985
+     * VI-34, VI-35, editing rules 7 and 8).  '0' was always '0', so
+     * $0$$.99 holding .42 gave " 0$.42" for "  $.42"; and an insertion
+     * character before any such string took the fill (tests/gen found
+     * them; tests/free/editins). */
+    int sig = 0, di = 0, o = 0, first_sig = -1, instr = 0;
     for (const char *p = pat; *p; p++) {
         char c = *p;
         if (fl && c == fl) {
+            instr = 1;
             if (!fl_seen) { fl_seen = 1; flpos = o; out[o++] = fill; continue; }
             char d = digs[di++];
             if (d != '0' || sig) { if (!sig) { sig = 1; first_sig = o; } out[o++] = d; }
@@ -396,16 +409,17 @@ KFN int cob_edit_apply(const char *pat, const char *digs, int neg, int blank_zer
         switch (c) {
         case '9': { char d = digs[di++]; if (!sig) { sig = 1; first_sig = o; } out[o++] = d; break; }
         case 'Z': case '*': {
+            instr = 1;
             char d = digs[di++];
             if (d != '0' || sig) { if (!sig) { sig = 1; first_sig = o; } out[o++] = d; }
             else out[o++] = fill;
             break;
         }
         case '.': if (!sig) { sig = 1; first_sig = o; } out[o++] = '.'; break;
-        case ',': out[o++] = sig ? ',' : fill; break;
-        case 'B': out[o++] = sig ? ' ' : fill; break;
-        case '0': out[o++] = '0'; break;                 /* simple insertion: always the character */
-        case '/': out[o++] = sig ? '/' : fill; break;
+        case ',': out[o++] = !sig && instr ? fill : ','; break;
+        case 'B': out[o++] = !sig && instr ? fill : ' '; break;
+        case '0': out[o++] = !sig && instr ? fill : '0'; break;
+        case '/': out[o++] = !sig && instr ? fill : '/'; break;
         case '+': out[o++] = neg ? '-' : '+'; break;
         case '-': out[o++] = neg ? '-' : ' '; break;
         case '$': out[o++] = '$'; break;
