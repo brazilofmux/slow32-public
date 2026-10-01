@@ -1067,20 +1067,30 @@ const unsigned char *cob_set_collating(const unsigned char *t) { const unsigned 
 
 /* The program registry: every unit registers its PROGRAM-ID and entry
  * from .init_array before main; CALL identifier looks the name up. */
-static struct { const char *name; void *fn; void (*cancel)(void); const int *act; } cob_progs[256];
+static struct { const char *name; void *fn; void (*cancel)(void); const int *act; int nested; } cob_progs[256];
 static int cob_nprogs;
 void cob_register(const char *name, void *fn, void (*cancel)(void))
 {
     if (cob_nprogs == 256) cob_fatal("more than 256 programs in one executable");
     cob_progs[cob_nprogs].name = name; cob_progs[cob_nprogs].fn = fn; cob_progs[cob_nprogs].cancel = cancel; cob_nprogs++;
 }
-static int prog_index(const unsigned char *p, int len)
+/* a contained program: found by name only from where its name is in
+ * scope (2023 8.4.6.3) -- the caller's table of the contained programs it
+ * may name, their entries, ends in 0 */
+void cob_register_nested(const char *name, void *fn, void (*cancel)(void))
+{
+    cob_register(name, fn, cancel);
+    cob_progs[cob_nprogs - 1].nested = 1;
+}
+static int prog_index_v(const unsigned char *p, int len, void *const *vis)
 {
     while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == 0)) len--;
     for (int i = 0; i < cob_nprogs; i++) {
         const char *n = cob_progs[i].name; int k = 0;
         while (k < len && n[k] && tolower((unsigned char)n[k]) == tolower(p[k])) k++;
-        if (k == len && !n[k]) return i;
+        if (!(k == len && !n[k])) continue;
+        if (!cob_progs[i].nested) return i;
+        for (int v = 0; vis && vis[v]; v++) if (vis[v] == cob_progs[i].fn) return i;
     }
     return -1;
 }
@@ -1089,9 +1099,9 @@ static int prog_index(const unsigned char *p, int len)
  * routine); a name that is not a program here is ignored (2023 14.9.5.4
  * rule 7).  1 when the program is active (-std=2002 keeps the count): it
  * is not canceled (rule 5; EC-PROGRAM-CANCEL-ACTIVE when checked) */
-int cob_cancel(const unsigned char *p, int len)
+int cob_cancel_v(const unsigned char *p, int len, void *const *vis)
 {
-    int i = prog_index(p, len);
+    int i = prog_index_v(p, len, vis);
     if (i < 0 || !cob_progs[i].cancel) return 0;
     if (cob_progs[i].act && cob_progs[i].act[0] > 0) return 1;
     cob_progs[i].cancel();
@@ -1099,6 +1109,7 @@ int cob_cancel(const unsigned char *p, int len)
 }
 /* a canceled program's file: the implicit CLOSE without options, when it
  * is open (14.9.5.4 rule 9) */
+int cob_cancel(const unsigned char *p, int len) { return cob_cancel_v(p, len, 0); }
 void cob_cancel_close(cob_file *f) { if (f->open_mode) (void)cob_close(f); }
 /* STOP RUN WITH STATUS alphanumeric: the text to the operating system --
  * here, standard error -- then the exit (14.9.42.4 rules 2-5) */
@@ -1114,15 +1125,16 @@ void cob_register_act(const char *name, const int *act)
 {
     for (int i = 0; i < cob_nprogs; i++) if (cob_progs[i].name == name) { cob_progs[i].act = act; return; }
 }
-int cob_program_busy(const unsigned char *p, int len)
+int cob_program_busy_v(const unsigned char *p, int len, void *const *vis)
 {
-    int i = prog_index(p, len);
+    int i = prog_index_v(p, len, vis);
     return i >= 0 && cob_progs[i].act && cob_progs[i].act[0] > 0 && !cob_progs[i].act[1];
 }
 
-void *cob_resolve(const unsigned char *p, int len, int must)
+int cob_program_busy(const unsigned char *p, int len) { return cob_program_busy_v(p, len, 0); }
+void *cob_resolve_v(const unsigned char *p, int len, int must, void *const *vis)
 {
-    int i = prog_index(p, len);
+    int i = prog_index_v(p, len, vis);
     if (i >= 0) return cob_progs[i].fn;
     while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == 0)) len--;
     if (must) {
@@ -1131,6 +1143,7 @@ void *cob_resolve(const unsigned char *p, int len, int must)
     }
     return 0;
 }
+void *cob_resolve(const unsigned char *p, int len, int must) { return cob_resolve_v(p, len, must, 0); }
 
 /* EXTERNAL: storage shared by name between the programs of one executable.
  * A record's block is made on first request (zeroed, as GnuCOBOL's); an

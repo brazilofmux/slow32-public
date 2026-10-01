@@ -14990,6 +14990,75 @@ static void parse_unstring_1(void)
 
 /* a PROGRAM-ID or CALL literal as a linker symbol: the SLOW-32 C ABI's
  * name space, shared with C and Fortran (docs/lowering.md) */
+/* ---- the scope of program-names (2023 8.4.6.3; X3.23-1985 X-6) --------
+ * Every program unit of the source, numbered as the units are (source
+ * order, contained ones included), with its container and its COMMON and
+ * RECURSIVE attributes, from a scan of the tokens before anything is
+ * compiled: a containing program's CALLs are parsed before the programs
+ * it contains.  A contained program's entry is a local symbol, .Lcp<n>,
+ * so only a CALL the scope rules let see it links to it; any other CALL of
+ * that name means an outermost program of the name (rule 3), which is not
+ * here -- the run unit's registry is asked, and has none. */
+typedef struct { char name[64]; int parent, outer, common, recursive, func; } ProgNode;
+static ProgNode g_pnode[4096]; static int g_npnode;
+static int g_any_nested;            /* any contained program in this source: scope tables wanted */
+static void prog_tree_scan(void)
+{
+    int stack[64], sp = 0;
+    for (int i = 0; i < g_ntok && g_npnode < 4096; i++) {
+        Tok *t = &g_tok[i];
+        if (t->kind != T_WORD) continue;
+        if (!strcmp(t->s, "end") && i + 1 < g_ntok && (is_word(&g_tok[i + 1], "program") || is_word(&g_tok[i + 1], "function"))) {
+            if (sp) sp--;
+            continue;
+        }
+        if (strcmp(t->s, "program-id") && strcmp(t->s, "function-id")) continue;
+        ProgNode *n = &g_pnode[g_npnode];
+        memset(n, 0, sizeof *n);
+        n->func = t->s[0] == 'f';
+        n->parent = sp ? stack[sp - 1] : -1;
+        n->outer = sp ? g_pnode[stack[0]].outer : g_npnode;
+        int k = i + 1;
+        if (k < g_ntok && g_tok[k].kind == T_PERIOD) k++;
+        if (k < g_ntok && (g_tok[k].kind == T_WORD || g_tok[k].kind == T_STR))
+            snprintf(n->name, sizeof n->name, "%.*s", g_tok[k].len > 63 ? 63 : g_tok[k].len, g_tok[k].s);
+        for (char *c = n->name; *c; c++) *c = (char)tolower((unsigned char)*c);
+        for (k++; k < g_ntok && g_tok[k].kind != T_PERIOD; k++) {
+            if (is_word(&g_tok[k], "common")) n->common = 1;
+            if (is_word(&g_tok[k], "recursive")) n->recursive = 1;
+        }
+        /* a function is recursive; so is a program contained in a recursive one (2023 11.10.4 rule 4) */
+        if (n->func || (n->parent >= 0 && g_pnode[n->parent].recursive)) n->recursive = 1;
+        if (sp < 64) stack[sp++] = g_npnode;
+        if (n->parent >= 0) g_any_nested = 1;
+        g_npnode++;
+    }
+}
+static int pnode_within(int c, int a)          /* c is a, or contained in a, directly or not */
+{
+    for (; c >= 0; c = g_pnode[c].parent) if (c == a) return 1;
+    return 0;
+}
+/* may program c's statements reference contained program t by name
+ * (2023 8.4.6.3 rules 1-2)? */
+static int pnode_visible(int c, int t)
+{
+    int p = g_pnode[t].parent;
+    if (p < 0) return 1;
+    if (!g_pnode[t].common) return c == p || (c == t && g_pnode[t].recursive);
+    if (!pnode_within(c, p)) return 0;
+    if (pnode_within(c, t)) return g_pnode[t].recursive;
+    return 1;
+}
+/* the contained program of that name in c's outermost program, or -1 */
+static int pnode_find(int c, const char *name)
+{
+    if (c < 0 || c >= g_npnode) return -1;
+    for (int t = 0; t < g_npnode; t++)
+        if (g_pnode[t].parent >= 0 && g_pnode[t].outer == g_pnode[c].outer && !strcmp(g_pnode[t].name, name)) return t;
+    return -1;
+}
+
 static const char *link_name(const char *name)
 {
     static char b[128];
@@ -15014,6 +15083,11 @@ static void parse_call(void)
         parse_ref(&target); dynamic = 1;
         if (target.sym->is_cond) die_at(line, "CALL: a condition-name cannot name a program");
     } else die_at(line, "expected a program-name literal or an identifier after CALL");
+    /* a contained program of that name: its own entry when in scope; out
+     * of scope, the name is an outermost program's, found (or not) at run
+     * time like an identifier's (2023 8.4.6.3) */
+    int cpn = dynamic ? -1 : pnode_find(g_unit, name), cp_direct = 0;
+    if (cpn >= 0) { if (pnode_visible(g_unit, cpn)) cp_direct = 1; else dynamic = 2; }
     Arg a[16]; Opnd ops[16]; int n = 0, ncontent = 0;
     if (accept_word("using")) {
         int mode = 0;               /* 0 reference, 1 content, 2 value */
@@ -15105,11 +15179,13 @@ static void parse_call(void)
     int on_phrase = at_word("on") || at_word("exception") || at_word("overflow");
     int ecnf = !on_phrase && ec_on_name("EC-PROGRAM-NOT-FOUND");
     int Lcall = new_label(), Lafter = new_label();
+    char vis[32]; snprintf(vis, sizeof vis, ".Lvis%d", g_unit);
     if (dynamic || has_clause || ecnf) {
-        if (dynamic) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
+        if (dynamic == 1) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
         else { emit_la("r3", lit_label((const unsigned char *)t->s, t->len)); emit_li("r4", t->len); }
         emit_li("r5", !has_clause && !ecnf);            /* no clause: the runtime stops on a missing program */
-        emit_call("cob_resolve");
+        if (g_any_nested) { emit_la("r6", vis); emit_call("cob_resolve_v"); }   /* the contained programs in scope here */
+        else emit_call("cob_resolve");
         emit("\tadd r12, r0, r1");                      /* callee-saved; the compiler uses no other of r12-r28 */
         if (has_clause || ecnf) {
             emit("\tbne r12, r0, .L%d", Lcall);
@@ -15123,9 +15199,10 @@ static void parse_call(void)
         /* the called program active and not RECURSIVE (14.9.4 general rule
          * 3f): known here from its registered descriptor, before the call */
         int Lok = new_label();
-        if (dynamic) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
+        if (dynamic == 1) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
         else { emit_la("r3", lit_label((const unsigned char *)t->s, t->len)); emit_li("r4", t->len); }
-        emit_call("cob_program_busy");
+        if (g_any_nested) { emit_la("r5", vis); emit_call("cob_program_busy_v"); }
+        else emit_call("cob_program_busy");
         emit("\tbeq r1, r0, .L%d", Lok);
         emit_ec_raise(ec_find("EC-PROGRAM-RECURSIVE-CALL", 0));
         emit_label(Lok);
@@ -15180,6 +15257,7 @@ static void parse_call(void)
         for (int k = 0; k < nx; k++) { emit("\tldw r1, sp+%d", out + SLOT(xbase + k)); emit("\tstw sp+%d, r1", 4 * k); }
     }
     if (dynamic || has_clause || ecnf) emit("\tjalr r31, r12, 0");
+    else if (cp_direct) emit("\tjal r31, .Lcp%d", cpn);
     else emit("\tjal r31, %s", link_name(name));
     if (nx) { emit("\taddi sp, sp, %d", out); g_slot_base = xbase; }
     if (rslot >= 0) g_slot_base = rslot;
@@ -17771,7 +17849,8 @@ static void parse_statement_1(void)
                            g_std < 2002 ? "X3.23-1985 CANCEL syntax rule 2" : "2023 14.9.5.3 rule 1");
                 emit_ref_addr(&r, "r3"); emit_li("r4", r.sym->size);
             }
-            emit_call("cob_cancel");
+            if (g_any_nested) { char vis[32]; snprintf(vis, sizeof vis, ".Lvis%d", g_unit); emit_la("r5", vis); emit_call("cob_cancel_v"); }
+            else emit_call("cob_cancel");
             if (ec_on_name("EC-PROGRAM-CANCEL-ACTIVE")) {
                 int Lok = new_label();
                 emit("\tbeq r1, r0, .L%d", Lok);
@@ -18206,10 +18285,12 @@ static void parse_procedure_division(void)
 
     char entry[128];
     snprintf(entry, sizeof entry, "%s", link_name(g_progid));   /* link_name's buffer is static; CALLs reuse it */
+    int nested = g_unit < g_npnode && g_pnode[g_unit].parent >= 0;
+    if (nested) snprintf(entry, sizeof entry, ".Lcp%d", g_unit);  /* a contained program: in scope only (8.4.6.3) */
     emit("\t.text");
-    emit("\t.globl %s", entry);
+    if (!nested) emit("\t.globl %s", entry);
     emit("\t.p2align 2");
-    emit("\t.type %s,@function", entry);
+    if (!nested) emit("\t.type %s,@function", entry);
     emit("%s:", entry);
     emit("\taddi sp, sp, -%d", g_frame);
     emit("\tstw sp+0, lr");
@@ -18561,7 +18642,7 @@ static void parse_procedure_division(void)
         emit_la("r4", entry);
         char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit);
         emit_la("r5", cl);
-        emit_call("cob_register");
+        emit_call(nested ? "cob_register_nested" : "cob_register");
         if (g_std >= 2002) {                   /* and its activation descriptor, for EC-PROGRAM-RECURSIVE-CALL */
             char al[32]; snprintf(al, sizeof al, ".Lact%d", g_unit);
             emit_la("r3", nlab); emit_la("r4", al);
@@ -18574,6 +18655,20 @@ static void parse_procedure_division(void)
         emit("\t.p2align 2");
         emit("\t.word .Lreg%d", g_unit);
         emit("\t.text");
+    }
+    /* the contained programs this unit's statements may name: a CALL
+     * identifier, CANCEL and the registry's lookups see them, and no
+     * other contained program (2023 8.4.6.3) */
+    if (g_any_nested) {                        /* none to see without contained programs */
+    emit("\t.section .rodata");
+    emit("\t.p2align 2");
+    emit(".Lvis%d:", g_unit);
+    if (g_unit < g_npnode)
+        for (int t = 0; t < g_npnode; t++)
+            if (g_pnode[t].parent >= 0 && !g_pnode[t].func && g_pnode[t].outer == g_pnode[g_unit].outer && pnode_visible(g_unit, t))
+                emit("\t.word .Lcp%d", t);
+    emit("\t.word 0");
+    emit("\t.text");
     }
 
     if (!g_is_function && !g_main_done && !g_module && !g_udepth) {
@@ -20464,6 +20559,7 @@ int main(int argc, char **argv)
     tokenize();
     if (g_free && g_std < 2002 && g_ntok) bp(BP_E11_FREE_FORMAT, g_tok[0].line);
     expand_types();
+    prog_tree_scan();
 
     if (g_fnsig_only) g_noemit = 1;         /* signatures only: no code, no output file */
     else {

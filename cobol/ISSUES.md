@@ -4620,8 +4620,22 @@ Tests 2002/anylen (identical to GnuCOBOL), 2002/anylenfn (no oracle:
 GnuCOBOL dies with SIGSEGV), 2002/anylennat, six bad/ tests,
 warn/ext-std2002-anylen-outer.
 
-Found while writing 2002/anylen, **open**: a contained program may CALL
-a sibling that is not COMMON.  GnuCOBOL refuses it at run time ("module
+Found while writing 2002/anylen (**fixed** the same day, below): a
+contained program may CALL a sibling that is not COMMON.  GnuCOBOL refuses it at run time ("module
 not found"), and the scope rules make only a directly contained program,
 or a COMMON sibling, visible by name; this compiler links any program
 the CALL names.
+
+Sixth batch: **the scope of program-names** (2023 8.4.6.3).  A scan of
+the tokens before anything is compiled builds the tree of programs with
+COMMON and RECURSIVE (a containing program's CALLs are parsed before its
+contained programs are).  A contained program's entry is now a local
+symbol, .Lcp<n>: a literal CALL in scope jumps to it, and one out of
+scope means an outermost program of that name, looked for at run time --
+and the registry, where contained programs are marked, hands one out
+only to a caller whose table of visible contained programs lists it
+(CALL identifier, ON EXCEPTION, CANCEL, the EC-PROGRAM-RECURSIVE-CALL
+check).  Test free/progscope (no oracle: GnuCOBOL takes ON EXCEPTION
+after successful CALLs there, and dies with SIGSEGV calling an
+out-of-scope active program).
+

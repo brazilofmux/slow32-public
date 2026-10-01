@@ -1,0 +1,20 @@
+plain runs
+shared runs
+shared: plain not in scope
+shared: plain by name not in scope
+plain: deep not in scope
+shared runs
+shared: plain not in scope
+shared: plain by name not in scope
+box runs
+deep runs
+shared runs
+shared: plain not in scope
+shared: plain by name not in scope
+deep: box not in scope
+outer: deep not in scope
+plain runs
+shared runs
+shared: plain not in scope
+shared: plain by name not in scope
+plain: deep not in scope

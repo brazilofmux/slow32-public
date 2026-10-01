@@ -1,4 +1,4 @@
-# The CALL parameter family: 14.2 PROCEDURE DIVISION header, 14.9.4 CALL, 14.8.2-3
+# The CALL parameter family: 14.2 PROCEDURE DIVISION header, 14.9.4 CALL, 14.8.2-3; 8.4.6.3 program-name scope
 
 Implemented 2026-09-29 (ISSUES-98). This page covers the parameters and
 the returning item; the rest of CALL (ON EXCEPTION, CANCEL, the program
@@ -62,6 +62,20 @@ passes and is stored into the parameter as COMPUTE would store it --
 the same result for a conforming pair, and rule 2a's for the prototype
 case. A non-conforming pair (a binary argument, a DISPLAY parameter) is
 undefined; GnuCOBOL copies the bytes, this compiler converts.
+
+## 8.4.6.3 the scope of program-names (implemented 2026-10-01, ISSUES-120)
+
+A scan of the source before compiling builds the tree of programs, with
+COMMON and RECURSIVE; a contained program's entry is a local symbol, and
+each unit carries a table of the contained programs it may name, which
+the registry's lookups (CALL identifier, ON EXCEPTION, CANCEL) consult.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 1 | a contained program without COMMON: named by its container only, or by itself when RECURSIVE | **test**: free/progscope (a sibling and a nested cousin get ON EXCEPTION). Every program could be called from anywhere before |
+| 2 | COMMON: by everything inside its container, but not by itself or what it contains unless RECURSIVE | **test**: free/progscope (a sibling, and a program two levels down) |
+| 3 | an outermost program: from anywhere in the run unit | **test**: every CALL of a separately compiled program |
+| (14.9.4) | CALL identifier and CANCEL under the same rules | **test**: free/progscope (CALL identifier both ways). GnuCOBOL takes ON EXCEPTION after CALLs that succeeded here, and lets an out-of-scope program be called (docs/oracles.md) |
 
 ## Limits
 

@@ -233,13 +233,13 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 14.2 |  | [call](call.md) | 9 | 3 | 1 | 0 | 0 |
+| 14.2 |  | [call](call.md) | 13 | 3 | 1 | 0 | 0 |
 | 14.7.4 | ROUNDED phrase | *unswept* | | | | | |
 | 14.7.9 | RETRY phrase | *unswept* | | | | | |
 | 14.9.1 | ACCEPT statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
 | 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
 | 14.9.3 | ALLOCATE statement | *unswept* (implemented) | | | | | |
-| 14.9.4 | CALL statement | [call](call.md) | 9 | 3 | 1 | 0 | 0 |
+| 14.9.4 | CALL statement | [call](call.md) | 13 | 3 | 1 | 0 | 0 |
 | 14.9.5 | CANCEL statement | [control](control.md) | 8 | 10 | 0 | 1 | 0 |
 | 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.7 | COMMIT statement | **not implemented**: COMMIT is COBOL 2023; not implemented | | | | | |
