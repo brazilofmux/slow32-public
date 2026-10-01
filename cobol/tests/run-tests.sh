@@ -167,7 +167,7 @@ fi
 # a run that silently dropped two gates would read as a full one.
 SKIPPED=""
 if ! command -v "$HOSTCC" >/dev/null 2>&1; then
-    SKIPPED=" pictest bt_test wide_test"
+    SKIPPED=" pictest bt_test wide_test scram_test"
     echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
     echo "SKIP  bt_test  (no host C compiler: $HOSTCC)"
 elif ! "$HOSTCC" -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
@@ -192,6 +192,19 @@ if [ -z "$SKIPPED" ]; then
         report "wide_test" 0 "$(tail -1 "$W/wide.out" | sed 's/^wide_test: //')"
     else
         report "wide_test" 1 "$(tail -1 "$W/wide.out")"
+    fi
+fi
+
+# --- Gate 1e: SCRAM-SHA-256 for the PostgreSQL client (libcob/scram.c) --
+# SHA-256, HMAC, PBKDF2, base64 and a whole SCRAM exchange against the
+# FIPS and RFC vectors (docs/esql.md, the PostgreSQL backend)
+if [ -z "$SKIPPED" ]; then
+    if ! "$HOSTCC" -std=gnu99 -O1 -w -o "$W/scram_test" "$HERE/scram_test.c" 2>"$W/cc.log"; then
+        report "scram_test" 1 "host build"
+    elif "$W/scram_test" > "$W/scram.out" 2>&1; then
+        report "scram_test" 0 "$(tail -1 "$W/scram.out" | sed 's/^scram_test: //')"
+    else
+        report "scram_test" 1 "$(grep -m1 FAIL "$W/scram.out")"
     fi
 fi
 

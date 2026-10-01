@@ -275,6 +275,29 @@ NULL into an item with no indicator gives SQLCODE -305 and SQLSTATE
 | constraint violation | -803 or -530 | 23000 |
 | any other error | -1 | the class that fits (42000 syntax, 22xxx data) |
 
+## The PostgreSQL backend (in progress, 2026-09-30)
+
+Driven by majesty: its export reads PostgreSQL with `psql`, the one step
+of the month-end not on SLOW-32 but `accounts`.  The plan, in order:
+
+1. **The client** (done): `libcob/pgwire.c`, protocol 3.0 over the
+   guest's MMIO TCP sockets (no DNS: PGHOST is an IPv4 address);
+   SCRAM-SHA-256, cleartext or no authentication (MD5 refused by name);
+   statements prepared with Parse and Describe, executed with Bind and
+   Execute, every value as text, the rows buffered.  `libcob/scram.c`:
+   SHA-256, HMAC, PBKDF2, base64 and the SCRAM client, checked by
+   `tests/scram_test.c` (harness gate 1e) against the FIPS and RFC
+   vectors, the whole RFC 7677 exchange among them.  The guest completes
+   the handshake with a PostgreSQL 18 server and runs a parameterized
+   query in 16 ms under the DBT.
+2. **A backend table in esql.c**: the runtime drives SQLite through 72
+   direct calls; they become a table, SQLite its first entry, with the
+   NIST SQL gate's totals unchanged.
+3. **PostgreSQL as the second entry**, chosen by COB_SQL_BACKEND=postgres
+   and the PGHOST, PGPORT, PGUSER, PGDATABASE, PGPASSWORD variables.
+4. **Majesty's export in COBOL**, judged byte for byte against `psql
+   \COPY ... TO STDOUT WITH CSV HEADER`.
+
 ## Phases
 
 1. **Static SQL, enough for the NIST data loaders and the DML programs:**
