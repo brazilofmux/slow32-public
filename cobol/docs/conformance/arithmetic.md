@@ -29,7 +29,7 @@ arithmetic itself.
 | CORRESPONDING | groups; pairs by 14.7.6 | **test**: free/corr |
 | DIVIDE formats 4-5 | REMAINDER with one GIVING item | **refused**: bad/divide-remainder-two -- accepted before this sweep |
 | DIVIDE GR | REMAINDER from the quotient before ROUNDED; division by zero a size error | **test**: free/remrnd, 2002/eczdiv |
-| ROUNDED MODE | 2014's | **refused** with the right edition now: bad/rounded-mode (it said 2002) |
+| ROUNDED MODE (2023 14.7.4) | 2014's | taken as BP-E29 (2026-10-01, ISSUES-120), all eight modes, under either standard: **test** 2002/rmode (the narrow store; GnuCOBOL disagrees on PROHIBITED with an exact value, docs/oracles.md), 2002/rmodewide (31 digits, identical to GnuCOBOL); an unknown mode **refused**: bad/rounded-mode. NEAREST-AWAY-FROM-ZERO is plain ROUNDED and TRUNCATION no ROUNDED, so both compile as before; the others take the stack path, the mode applied before the store |
 | COMPUTE | no composite restriction; one evaluation, stored in each receiver | **test**: fixed/compute |
 
 ## 14.6.13.2 incompatible data (EC-DATA-INCOMPATIBLE)

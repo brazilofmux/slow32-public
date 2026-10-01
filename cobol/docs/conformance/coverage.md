@@ -237,17 +237,17 @@ carry the compiler's own reason.
 | 14.7.4 | ROUNDED phrase | *unswept* | | | | | |
 | 14.7.9 | RETRY phrase | *unswept* | | | | | |
 | 14.9.1 | ACCEPT statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
-| 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
+| 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.3 | ALLOCATE statement | *unswept* (implemented) | | | | | |
 | 14.9.4 | CALL statement | [call](call.md) | 13 | 3 | 1 | 0 | 0 |
 | 14.9.5 | CANCEL statement | [control](control.md) | 8 | 10 | 0 | 1 | 0 |
 | 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.7 | COMMIT statement | **not implemented**: COMMIT is COBOL 2023; not implemented | | | | | |
-| 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
+| 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.9 | CONTINUE statement | [control](control.md) | 8 | 10 | 0 | 1 | 0 |
 | 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.11 | DISPLAY statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
-| 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
+| 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 3 | 7 | 0 | 1 | 0 |
 | 14.9.14 | EXIT statement | [exit](exit.md) | 8 | 9 | 1 | 2 | 0 |
 | 14.9.15 | FREE statement | *unswept* (implemented) | | | | | |
@@ -257,11 +257,11 @@ carry the compiler's own reason.
 | 14.9.19 | IF statement | [evaluate](evaluate.md) | 3 | 7 | 0 | 1 | 0 |
 | 14.9.20 | INITIALIZE statement | [initialize](initialize.md) | 8 | 5 | 0 | 1 | 0 |
 | 14.9.21 | INITIATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 14.9.22 | INSPECT statement | [string](string.md) | 2 | 21 | 0 | 2 | 0 |
+| 14.9.22 | INSPECT statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.23 | INVOKE statement | **not implemented**: INVOKE is object orientation, not implemented | | | | | |
 | 14.9.24 | MERGE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.25 | MOVE statement | [move](move.md) | 12 | 10 | 0 | 9 | 0 |
-| 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
+| 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.27 | OPEN statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.28 | PERFORM statement | [perform](perform.md) | 21 | 10 | 1 | 0 | 1 |
 | 14.9.29 | RAISE statement | [raise](raise.md) | 1 | 3 | 0 | 1 | 0 |
@@ -278,12 +278,12 @@ carry the compiler's own reason.
 | 14.9.40 | SORT statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 8 | 10 | 0 | 1 | 0 |
-| 14.9.43 | STRING statement | [string](string.md) | 2 | 21 | 0 | 2 | 0 |
-| 14.9.44 | SUBTRACT statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
+| 14.9.43 | STRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
+| 14.9.44 | SUBTRACT statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.45 | SUPPRESS statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.46 | TERMINATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.47 | UNLOCK statement | *unswept* (implemented) | | | | | |
-| 14.9.48 | UNSTRING statement | [string](string.md) | 2 | 21 | 0 | 2 | 0 |
+| 14.9.48 | UNSTRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.49 | USE statement | [use](use.md) | 14 | 11 | 1 | 2 | 2 |
 | 14.9.50 | VALIDATE statement | **not implemented**: VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 Annex D.22, Annex E; docs/standards.md) | | | | | |
 | 14.9.51 | WRITE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |

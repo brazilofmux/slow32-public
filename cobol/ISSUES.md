@@ -4649,3 +4649,16 @@ rule 1 (not a receiving operand); a numeric function's value is refused
 by INSPECT's rule 1.  Tests 2002/inspfunc (identical to GnuCOBOL), three
 bad/std2002-inspfunc-* tests.
 
+Eighth batch: **ROUNDED MODE** (2014; 2023 14.7.4) as BP-E29, all eight
+modes, under either standard.  NEAREST-AWAY-FROM-ZERO is plain ROUNDED
+and TRUNCATION is no ROUNDED, so both compile exactly as before; any
+other mode sends its statement down the stack path (the register and
+decimal fast paths are off for it) and travels in the store's opts bits
+4-7.  The narrow store rounds the value to the receiver's scale by the
+mode before cob_put_num_x, which is a DBT-hooked thunk left untouched
+(the stored value is then exact); the wide store decides in its own
+digit-dropping step.  PROHIBITED with an inexact value is the size error,
+the receiver unchanged.  Tests 2002/rmode (GnuCOBOL raises PROHIBITED's
+size error on an exact value; .oracle-expected), 2002/rmodewide
+(identical), bad/rounded-mode (an unknown mode), warn/ext-rounded-mode.
+

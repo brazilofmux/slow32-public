@@ -49,6 +49,7 @@ procedure division.
     move 0 to return-code
     display "p",k   *> BP-E22
     display function trim("x")   *> BP-E27
+    compute ixk rounded mode nearest-even = 1   *> BP-E29
     exit program move 0 to return-code   *> BP-E21
     stop run returning k.
     goback.

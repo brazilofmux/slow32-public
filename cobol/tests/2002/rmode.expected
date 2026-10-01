@@ -1,0 +1,14 @@
++2.500 afz +3 nafz +3 ne +2 ntz +2 tg +3 tl +2 tr +2
+-2.500 afz -3 nafz -3 ne -2 ntz -2 tg -2 tl -3 tr -2
++3.500 afz +4 nafz +4 ne +4 ntz +3 tg +4 tl +3 tr +3
++2.400 afz +3 nafz +2 ne +2 ntz +2 tg +3 tl +2 tr +2
+-2.600 afz -3 nafz -3 ne -3 ntz -3 tg -2 tl -3 tr -2
++0.001 afz +1 nafz +0 ne +0 ntz +0 tg +1 tl +0 tr +0
+prohibited: size error, r still +7
+prohibited exact: stored +3
+add 0.125 nearest-even +1.12
+add 0.135 nearest-even +1.14
+subtract toward-greater +0.88
+multiply toward-lesser +1.00
+divide away-from-zero +3.34
+divide toward-greater -3.33

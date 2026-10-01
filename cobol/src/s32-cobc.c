@@ -265,7 +265,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
-       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER,
+       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -335,6 +335,7 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "GnuCOBOL all have it, and it is taken" },
     { "BP-E28", 'E', "ANY LENGTH in an outermost program, which 2023 13.18.2.3 rule 2 excludes (a plain CALL need not carry "
                      "lengths); Micro Focus and GnuCOBOL take it, and so does this compiler's CALL" },
+    { "BP-E29", 'E', "ROUNDED MODE is COBOL 2014 (2023 14.7.4), beyond 1985 and 2002; taken" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -10448,11 +10449,11 @@ static void parse_corr_operands(Ref *a, Ref *b, const char *between)
     if (b->rm) die_at(b->line, "CORRESPONDING: no reference modification on a group");
 }
 
+static int parse_rounded_mode(void);
 static void parse_arith_corr(int mode, const char *between, const char *end_word)
 {
     Ref a, b; parse_corr_operands(&a, &b, between);
-    int rounded = accept_word("rounded");
-    if (rounded && at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2014; plain ROUNDED is the 1985 and 2002 form");
+    int rounded = accept_word("rounded") ? parse_rounded_mode() : 0;
     int size_err = at_size_error_clause() || ec_size_on();
     if (size_err) emit("\tstw sp+%d, r0", SLOT_A);
     corr_walk(&a, &b, mode, rounded, size_err);
@@ -10805,6 +10806,29 @@ static int parse_operand_list(Opnd *ops, int max)
 
 /* receivers, each with an optional ROUNDED; GIVING and COMPUTE receivers
  * may be numeric-edited */
+static int g_rmode;                     /* this statement has a ROUNDED MODE other than the default: the stack path */
+/* after ROUNDED: [MODE IS mode] (2014; 2023 14.7.4) -- 1 for plain
+ * ROUNDED and NEAREST-AWAY-FROM-ZERO (the DEFAULT ROUNDED clause's
+ * default, 11.9.6), 0 for TRUNCATION (as no ROUNDED, general rule 2), and
+ * any other mode in bits 4-7 */
+static int parse_rounded_mode(void)
+{
+    if (!at_word("mode")) return 1;
+    int line = cur()->line;
+    advance(); accept_word("is");
+    static const char *modes[] = { "away-from-zero", "nearest-away-from-zero", "nearest-even", "nearest-toward-zero",
+                                   "prohibited", "toward-greater", "toward-lesser", "truncation", NULL };
+    int m = 0;
+    for (int k = 0; modes[k]; k++) if (at_word(modes[k])) m = k + 1;
+    if (!m) die_at(cur()->line, "expected a rounding mode after ROUNDED MODE IS, found %s (2023 14.7.4.2)", tok_desc(cur()));
+    advance();
+    bp(BP_E29_ROUNDED_MODE, line);
+    if (m == 2) return 1;
+    if (m == 8) return 0;
+    g_rmode = 1;
+    return m << 4;
+}
+
 static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)
 {
     int n = 0;
@@ -10817,16 +10841,16 @@ static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)
                             !(edited_ok == 2 && sym_is_boolean(d))))    /* 2: COMPUTE, whose format 2 stores a boolean */
             die_at(rs[n].line, "'%s' is not numeric", d->name);
         rounded[n] = 0;
-        if (accept_word("rounded")) {
-            rounded[n] = 1;
-            if (at_word("mode")) die_at(cur()->line, "ROUNDED MODE is COBOL 2014; plain ROUNDED is the 1985 and 2002 form");
-        }
+        if (accept_word("rounded")) rounded[n] = parse_rounded_mode();
         n++;
     }
     return n;
 }
 
 static int any_rounded(const int *r, int n) { for (int i = 0; i < n; i++) if (r[i]) return 1; return 0; }
+/* a receiver's rounding as the runtime's opts: 1 plain ROUNDED (also
+ * NEAREST-AWAY-FROM-ZERO), a mode in bits 4-7 (libcob rmode_round) */
+static int rnd_opts(int r) { return r == 1 ? 1 : (r & 0xF0); }
 
 /* store the sum on the stack top (general) or in SLOT_A (hot) to receivers */
 /* sum_mag bounds |the staged sum| (-1: unknown) and sum_nonneg says it cannot
@@ -10841,7 +10865,7 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
     for (int i = 0; i < nr; i++) if (!g_wide && !rs[i].rm && sym_wide(rs[i].sym)) wide_arith_refuse(rs[i].line, "a receiver");
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
-        int opts = (rounded[i] ? 1 : 0) | (size_err ? 2 : 0);
+        int opts = rnd_opts(rounded[i]) | (size_err ? 2 : 0);
         if (hot) {
             Sym *d = rs[i].sym;
             emit_ref_addr(&rs[i], "r3");
@@ -11413,7 +11437,7 @@ static void hx_emit(int n, int slow)
  * in registers?  *bound and *nonneg for the store's truncation */
 static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, long long *bound, int *nonneg)
 {
-    if (root < 0 || size_err || g_wide || g_nohx || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
+    if (root < 0 || size_err || g_wide || g_nohx || g_rmode || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
     if (g_slot_base + hn_depth(root, 1) + 2 > NSLOTS) return 0;     /* too deep for the frame: the stack */
     int wide = 0, inner = 0, neg = 0, div = g_hn[root].op == '/';
     long double b = hx_bound(root, &wide, &inner, &neg, 1);
@@ -11709,7 +11733,7 @@ static void dx_emit(int n)
 /* may the tree at root be stored into rs in registers? */
 static int dx_ok(int root, Ref *rs, int nr, int size_err)
 {
-    if (root < 0 || size_err || g_wide || g_nohx || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
+    if (root < 0 || size_err || g_wide || g_nohx || g_rmode || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
     if (g_slot_base + hn_depth(root, 2) + 4 > NSLOTS) return 0;     /* too deep for the frame: the stack */
     if (!dx_check(root, 1)) return 0;
     for (int i = 0; i < nr; i++) {
@@ -11830,7 +11854,7 @@ static int dx_leaf(const Opnd *o) { return dx_leaf_ok(o) && !opnd_scanned(o) ? h
  * the tree's store is the same MOVE (truncating: no ROUNDED) */
 static int dx_move(Opnd *src, Ref *dst)
 {
-    if (g_nohx) return 0;
+    if (g_nohx || g_rmode) return 0;
     g_nhn = 0;
     int root = src->kind == O_FUNC ? hn_fn(src, dx_leaf, dx_expr) : (src->kind == O_REF || src->kind == O_NUM) ? dx_leaf(src) : -2;
     if (root == -2 && src->kind == O_REF && !src->ref.rm && !opnd_scanned(src)) {
@@ -12026,7 +12050,7 @@ static void parse_multiply(void)
         if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
         Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
         emit_push(&r); emit_push(&a); emit_call("cob_nmul");
-        emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
+        emit_top_op(&rs[i], "cob_top_store", rnd_opts(rd[i]) | (size_err ? 2 : 0)); emit_call("cob_drop");
         if (mode == 2) emit_label(Ldone);
     }
     g_wide = 0; g_fstmt = 0;
@@ -12159,7 +12183,7 @@ static void parse_divide(void)
             if (mode == 2) { Ldone = new_label(); emit_jump(Ldone); emit_label(Lslow); }
             Opnd r; memset(&r, 0, sizeof r); r.kind = O_REF; r.ref = rs[i]; r.line = rs[i].line;
             emit_push(&r); emit_push(&a); emit_call("cob_ndiv");
-            emit_top_op(&rs[i], "cob_top_store", (rd[i] ? 1 : 0) | (size_err ? 2 : 0)); emit_call("cob_drop");
+            emit_top_op(&rs[i], "cob_top_store", rnd_opts(rd[i]) | (size_err ? 2 : 0)); emit_call("cob_drop");
             if (mode == 2) emit_label(Ldone);
         }
         g_wide = 0; g_fstmt = 0;
@@ -17786,6 +17810,7 @@ static void parse_statement_1(void)
     apply_dirs();                           /* a >>TURN before this statement */
     if (!g_wide) g_fstmt = 0;
     Tok *t = cur();
+    g_rmode = 0;
     if (t->kind == T_SQL) { snprintf(g_cur_stmt, sizeof g_cur_stmt, "EXEC SQL"); parse_exec_sql(); return; }
     if (t->kind != T_WORD) die_at(t->line, "expected a statement, found %s", tok_desc(t));
     g_xd_depth = 0;                     /* no statement is inside an expression; a recovered refusal may have left one open */

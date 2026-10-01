@@ -506,6 +506,7 @@ void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w)
     w->neg = neg && !mp_is_zero(w->m, WL);
 }
 
+static int rmode_away(int mode, int cmp, int odd, int neg);
 /* store w, as cob_put_num_x does: opts 1 ROUNDED, 2 report a size error
  * (1 returned, the item untouched) instead of truncating */
 int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
@@ -535,9 +536,12 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
     if (d->pic) for (const char *q = d->pic; *q; q++) if (*q == 'P') eff--;
     int m = w.scale - d->scale;
     if (m > 0) {
-        int half, nz;
+        int half, nz, mode = (opts >> 4) & 15;
         w_drop_digits(w.m, WL, m > 40 ? 40 : m, &half, &nz);
-        if ((opts & 1) && half >= 0) { wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(w.m, one, WL); }
+        if (mode && nz) {                           /* ROUNDED MODE (rmode_away) */
+            if (mode == 5) return 1;
+            if (rmode_away(mode, half, (int)(w.m[0] & 1), w.neg)) { wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(w.m, one, WL); }
+        } else if ((opts & 1) && half >= 0) { wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(w.m, one, WL); }
     }
     /* the digits, the receiver's fraction aligned at the end */
     char D[96]; int L = 38;
@@ -1647,11 +1651,58 @@ int cob_ncmp(void)
     return r;
 }
 
+/* ROUNDED MODE IS (2014; 2023 14.7.4): opts bits 4-7, 1 AWAY-FROM-ZERO,
+ * 3 NEAREST-EVEN, 4 NEAREST-TOWARD-ZERO, 5 PROHIBITED, 6 TOWARD-GREATER,
+ * 7 TOWARD-LESSER (NEAREST-AWAY-FROM-ZERO is plain ROUNDED, bit 0, and
+ * TRUNCATION no ROUNDED: the compiler sends those as before).  Should the
+ * value step one unit away from zero when dropped digits are lost: cmp
+ * the remainder against half a unit (-1 0 1), odd the kept value's last
+ * digit, neg its sign. */
+static int rmode_away(int mode, int cmp, int odd, int neg)
+{
+    switch (mode) {
+    case 1: return 1;
+    case 3: return cmp > 0 || (cmp == 0 && odd);
+    case 4: return cmp > 0;
+    case 6: return !neg;
+    case 7: return neg;
+    default: return cmp >= 0;               /* NEAREST-AWAY-FROM-ZERO */
+    }
+}
+/* v at vs digits of fraction to the receiver's ds by mode: 1 when
+ * PROHIBITED and the value is not exact (the size error, 14.7.4.3 rule 7) */
+static int rmode_round(long long *v, int *vs, int ds, int mode)
+{
+    if (*vs <= ds) return 0;
+    int k = *vs - ds;
+    long long q, r, p = 0;
+    if (k > 18) { q = 0; r = *v; }
+    else { p = (long long)pow10tab[k]; q = *v / p; r = *v % p; }
+    if (!r) { *v = q; *vs = ds; return 0; }
+    if (mode == 5) return 1;
+    unsigned long long ar = (unsigned long long)(r < 0 ? -r : r);
+    int cmp = k > 18 ? -1 : 2 * ar > (unsigned long long)p ? 1 : 2 * ar == (unsigned long long)p ? 0 : -1;
+    if (rmode_away(mode, cmp, (int)((q < 0 ? -q : q) & 1), *v < 0)) q += *v < 0 ? -1 : 1;
+    *v = q; *vs = ds;
+    return 0;
+}
+/* a narrow store through rmode_round, then as before -- the rounding done,
+ * the stored value is exact (cob_put_num_x itself is a hooked thunk) */
+static int put_rmode(void *p, const cob_desc *d, long long v, int vs, int opts)
+{
+    int mode = (opts >> 4) & 15;
+    if (mode && !is_float(d)) {
+        if (rmode_round(&v, &vs, d->scale, mode)) return 1;
+        opts &= ~0xF1;
+    }
+    return cob_put_num_x(p, d, v, vs, opts & ~0xF0);
+}
+
 /* opts as cob_put_num_x; return 1 on a size error (receiver unchanged) */
 int cob_top_store(void *p, const cob_desc *d, int opts)
 {
     if (div0) { size_kind = div0; return 1; }
-    int r = cob_put_num_x(p, d, nstk[nsp - 1].v, nstk[nsp - 1].scale, opts);
+    int r = put_rmode(p, d, nstk[nsp - 1].v, nstk[nsp - 1].scale, opts);
     if (r) size_kind = 3;
     return r;
 }
@@ -1661,7 +1712,7 @@ int cob_top_addto(void *p, const cob_desc *d, int opts)
     if (div0) { size_kind = div0; return 1; }
     cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
     align2(&a, &b);
-    int r = cob_put_num_x(p, d, a.v + b.v, a.scale, opts);
+    int r = put_rmode(p, d, a.v + b.v, a.scale, opts);
     if (r) size_kind = 3;
     return r;
 }
@@ -1671,7 +1722,7 @@ int cob_top_subfrom(void *p, const cob_desc *d, int opts)
     if (div0) { size_kind = div0; return 1; }
     cob_num a = { cob_get_num(p, d), d->scale }, b = nstk[nsp - 1];
     align2(&a, &b);
-    int r = cob_put_num_x(p, d, a.v - b.v, a.scale, opts);
+    int r = put_rmode(p, d, a.v - b.v, a.scale, opts);
     if (r) size_kind = 3;
     return r;
 }

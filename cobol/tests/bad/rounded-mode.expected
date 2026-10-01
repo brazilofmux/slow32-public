@@ -1,1 +1,1 @@
-ROUNDED MODE is COBOL 2014
+expected a rounding mode after ROUNDED MODE IS, found 'half-up' (2023 14.7.4.2)
