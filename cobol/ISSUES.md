@@ -4662,3 +4662,21 @@ the receiver unchanged.  Tests 2002/rmode (GnuCOBOL raises PROHIBITED's
 size error on an exact value; .oracle-expected), 2002/rmodewide
 (identical), bad/rounded-mode (an unknown mode), warn/ext-rounded-mode.
 
+Ninth batch, toward abrignoli_COBSOFT (a Micro Focus business system,
+45 of whose programs the survey stopped at their first line):
+
+- **The IDENTIFICATION DIVISION header is optional from 2002** (11.1.1
+  shows it in brackets): a program, a contained one too, may begin at
+  PROGRAM-ID or FUNCTION-ID.  Under -std=2002 it was "expected
+  IDENTIFICATION DIVISION", a conformance defect; every place that finds
+  a unit's start (the paragraph prescan, the PROCEDURE DIVISION's end,
+  EXIT's sentence rule, the skip to the next sentence) now takes either.
+  Under -std=85 a missing header is refused naming the edition.  Tests
+  2002/noidhdr (identical to GnuCOBOL), bad/idhdr-85.
+- **$SET directive lines** (BP-E30): SOURCEFORMAT"FREE"/"FIXED"
+  switches the reference format as >>SOURCE does; listing directives
+  have no effect; any other directive, and $IF/$DISPLAY lines, are
+  refused by name rather than ignored.  A free-form line beginning `$$`
+  is a picture going on.  Tests fixed/dollarset (identical to GnuCOBOL),
+  bad/dollarset-unknown, bad/dollarset-if, warn/ext-dollarset.
+

@@ -265,7 +265,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
-       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE,
+       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -336,6 +336,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-E28", 'E', "ANY LENGTH in an outermost program, which 2023 13.18.2.3 rule 2 excludes (a plain CALL need not carry "
                      "lengths); Micro Focus and GnuCOBOL take it, and so does this compiler's CALL" },
     { "BP-E29", 'E', "ROUNDED MODE is COBOL 2014 (2023 14.7.4), beyond 1985 and 2002; taken" },
+    { "BP-E30", 'E', "a $SET line is Micro Focus's compiler-directive line; SOURCEFORMAT is taken as >>SOURCE FORMAT is, "
+                     "listing directives have no effect, and any other is refused" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -525,6 +527,54 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                 } else if (nw && !strcmp(w[0], "d")) {
                     die_at(lineno, "the >>D debugging indicator is not implemented (debugging lines were removed in COBOL 2014)");
                 } else die_at(lineno, "the compiler directive >>%s is not implemented yet", nw ? w[0] : "");
+                if (!e) break;
+                p = e + 1;
+                continue;
+            }
+        }
+        /* a Micro Focus directive line: $ in the indicator column in fixed
+         * form, the first non-blank in free form (BP-E30) */
+        {
+            int at = free_form ? 0 : colb(p, len, 6);
+            const char *d = p + (len > at ? at : len), *de = p + len;
+            if (free_form) while (d < de && (*d == ' ' || *d == '\t')) d++;
+            if (d + 1 < de && *d == '$' && isalpha((unsigned char)d[1])) {   /* $$$9.99 is a picture going on */
+                d++;
+                char w[32]; int k = 0;
+                while (d < de && isalpha((unsigned char)*d) && k < 31) w[k++] = (char)tolower((unsigned char)*d++);
+                w[k] = 0;
+                if (strcmp(w, "set")) die_at(lineno, "the Micro Focus directive line $%s is not implemented (only $SET)", w);
+                bp(BP_E30_DOLLAR_SET, lineno);
+                /* directives: NAME, NAME"value", NAME'value' or NAME(value) */
+                static const char *quiet[] = { "list", "nolist", "listwidth", "listpath", "form", "noform", "echo", "noecho",
+                    "xref", "noxref", "ref", "noref", "settings", "nosettings", "confirm", "noconfirm", "warning", "nowarning",
+                    "anim", "noanim", NULL };
+                for (;;) {
+                    while (d < de && (*d == ' ' || *d == '\t')) d++;
+                    if (d >= de || (d + 1 < de && d[0] == '*' && d[1] == '>')) break;
+                    char nm[40], val[40]; int nk = 0, vk = 0;
+                    while (d < de && (isalnum((unsigned char)*d) || *d == '-' || *d == '_') && nk < 39) nm[nk++] = (char)tolower((unsigned char)*d++);
+                    nm[nk] = 0;
+                    if (!nk) die_at(lineno, "$SET: expected a directive, found '%c'", *d);
+                    val[0] = 0;
+                    if (d < de && (*d == '"' || *d == '\'' || *d == '(')) {
+                        char close = *d == '(' ? ')' : *d;
+                        d++;
+                        while (d < de && *d != close && vk < 39) val[vk++] = (char)tolower((unsigned char)*d++);
+                        val[vk] = 0;
+                        if (d >= de) die_at(lineno, "$SET %s: the value is not closed", nm);
+                        d++;
+                    }
+                    if (!strcmp(nm, "sourceformat")) {
+                        if (!strcmp(val, "free")) free_form = 1;
+                        else if (!strcmp(val, "fixed")) free_form = 0;
+                        else die_at(lineno, "$SET SOURCEFORMAT\"%s\" is not implemented (FREE and FIXED are)", val);
+                        continue;
+                    }
+                    int ok = 0;
+                    for (int q = 0; quiet[q]; q++) if (!strcmp(nm, quiet[q])) ok = 1;
+                    if (!ok) die_at(lineno, "$SET %s: this Micro Focus directive is not implemented (SOURCEFORMAT is taken, and listing directives are without effect)", nm);
+                }
                 if (!e) break;
                 p = e + 1;
                 continue;
@@ -2059,6 +2109,14 @@ static Tok *peek(int k){ int i = g_tp + k; if (i >= g_ntok) i = g_ntok - 1; retu
 static void advance(void) { if (g_tp < g_ntok - 1) g_tp++; }
 
 static int is_word(Tok *t, const char *w) { return t->kind == T_WORD && !strcmp(t->s, w); }
+/* does a program unit begin at t: IDENTIFICATION DIVISION, or -- the
+ * header being optional from 2002 on (11.1.1) -- PROGRAM-ID. or
+ * FUNCTION-ID. itself */
+static int unit_start(Tok *t)
+{
+    if ((is_word(t, "identification") || is_word(t, "id")) && is_word(t + 1, "division")) return 1;
+    return (is_word(t, "program-id") || is_word(t, "function-id")) && t[1].kind == T_PERIOD;
+}
 static int at_word(const char *w) { return is_word(cur(), w); }
 static int accept_word(const char *w) { if (at_word(w)) { advance(); return 1; } return 0; }
 static int at_op(const char *o) { return cur()->kind == T_OP && !strcmp(cur()->s, o); }
@@ -9167,7 +9225,7 @@ static void prescan_paragraphs(int from)
                 if (is_word(&g_tok[i + 1], "program")) break;
                 g_prescan_decl = 0;
             }
-            else if ((!strcmp(t->s, "identification") || !strcmp(t->s, "id")) && is_word(&g_tok[i + 1], "division")) break;   /* a contained program's */
+            else if (unit_start(t)) break;   /* a contained program's */
             else if (g_tok[i + 1].kind == T_PERIOD) { para_add(t->s, tok_orig(t), 0, t->line); }
             else if (is_word(&g_tok[i + 1], "section") && g_tok[i + 2].kind == T_PERIOD) para_add(t->s, tok_orig(t), 1, t->line);
         }
@@ -18054,7 +18112,7 @@ static void parse_statement_1(void)
         int alone = exit_tp == g_para_body_tp && cur()->kind == T_PERIOD;
         if (alone) {
             Tok *n = peek(1);
-            alone = n->kind == T_EOF || is_word(n, "end") || is_word(n, "identification") || is_word(n, "id") ||
+            alone = n->kind == T_EOF || is_word(n, "end") || unit_start(n) ||
                     (at_para_name(n) && (peek(2)->kind == T_PERIOD || is_word(peek(2), "section")));
         }
         if (!alone) die_at(t->line, "EXIT must be a sentence by itself, the only one in its paragraph (X3.23-1985 EXIT syntax rule 1; 2023 14.9.14.3 rule 1)");
@@ -18086,8 +18144,8 @@ static void parse_statement_1(void)
         !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     if (is_terminator(v)) die_at(t->line, "'%s' without a matching statement", v);
-    if (!strcmp(v, "identification") || !strcmp(v, "id"))
-        die_at(t->line, "IDENTIFICATION DIVISION in the middle of a sentence (a contained program begins after a period)");
+    if (!strcmp(v, "identification") || !strcmp(v, "id") || unit_start(t))
+        die_at(t->line, "%s in the middle of a sentence (a contained program begins after a period)", unit_start(t) && !strcmp(v, "identification") ? "IDENTIFICATION DIVISION" : t->orig ? t->orig : v);
     die_at(t->line, "'%s' is not a COBOL verb", v);
 }
 
@@ -18212,7 +18270,7 @@ static void resync_sentence(int start)
         if (t->kind == T_WORD && g_tok[g_tp - 1].line != t->line &&
             ((n->kind == T_PERIOD && para_find(t->s)) || (is_word(n, "section") && peek(2)->kind == T_PERIOD))) return;
         if (is_word(t, "end") && (is_word(n, "program") || is_word(n, "declaratives"))) return;
-        if ((is_word(t, "identification") || is_word(t, "id")) && is_word(n, "division")) return;
+        if (unit_start(t)) return;
         advance();
     }
     if (cur()->kind == T_PERIOD) advance();
@@ -18527,7 +18585,7 @@ static void parse_procedure_division(void)
         Tok *t = cur();
         if (t->kind == T_EOF) break;
         if (is_word(t, "end") && (is_word(peek(1), "program") || is_word(peek(1), "function"))) break;
-        if ((is_word(t, "identification") || is_word(t, "id")) && is_word(peek(1), "division")) {
+        if (unit_start(t)) {
             /* a contained program: from here to END PROGRAM the text is nested
              * programs; the containing program's flow ends as at its last line */
             if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
@@ -18771,9 +18829,11 @@ static int at_division(void)
 
 static void parse_identification_division(void)
 {
-    if (!(accept_word("identification") || accept_word("id")))
+    if (accept_word("identification") || accept_word("id")) { expect_word("division"); expect_period(); }
+    else if (!unit_start(cur()))
         die_at(cur()->line, "expected IDENTIFICATION DIVISION, found %s", tok_desc(cur()));
-    expect_word("division"); expect_period();
+    else if (g_std < 2002)
+        die_at(cur()->line, "a program without its IDENTIFICATION DIVISION header is COBOL 2002 (11.1.1); compile with -std=2002 -- X3.23-1985 requires the header");
     g_is_function = 0; g_returning = NULL; g_nrepo_fn = 0; g_repo_all_intrinsic = 0;
     if (at_word("function-id")) {
         /* COBOL 2002 11.5: a user-defined function, always recursive */

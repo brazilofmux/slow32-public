@@ -1,0 +1,1 @@
+a program without its IDENTIFICATION DIVISION header is COBOL 2002 (11.1.1); compile with -std=2002 -- X3.23-1985 requires the header
