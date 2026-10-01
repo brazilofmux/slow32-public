@@ -4443,7 +4443,10 @@ One rule became a behavior point instead: 85 general rule 2c (2023 rule
 JUSTIFIED or SYNCHRONIZED items. Majesty's records carry `88 ... VALUE
 HIGH-VALUES` end-of-file flags over packed fields (crgltrans and the
 copybook test failed when it was refused), so it is BP-E23: taken,
-warned under -warn-extensions.
+warned under -warn-extensions. The user's ruling (2026-09-30): keep the
+point, and change majesty to conform -- majesty 5f9cc24 moves both 88s
+onto a PIC X record of the same length; the gltrans trio is
+byte-identical.
 
 Open: a function's formal parameter used as a receiving operand (2002
 and 2023 13.7.3 rule 5) is accepted. Receiving operands are parsed by
