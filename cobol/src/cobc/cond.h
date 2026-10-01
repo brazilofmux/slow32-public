@@ -138,7 +138,9 @@ static void emit_push_opnd(Opnd *o);
  * yard gives -- B-NOT, then B-AND, B-XOR, B-OR, left to right; a shift
  * takes the precedence of the operation before it, B-AND's if none (rule
  * 7b), and carries its integer count with it.  Under g_noemit it only
- * scans.  Returns the widest operand's boolean positions. */
+ * scans.  Either way it builds the tree, each operator's node made as the
+ * operator is applied, so emit_bexpr's walk of it, operands first, is the
+ * same order.  Returns the widest operand's boolean positions. */
 enum { BO_AND = 1, BO_OR, BO_XOR, BO_NOT, BO_SL, BO_SR, BO_SLC, BO_SRC, BO_PAREN };
 static int bool_op(const Tok *t)
 {
@@ -192,9 +194,27 @@ static void bool_emit_operand(Opnd *o)
     emit_args(a, 2);
     emit_call("cob_bpush");
 }
+typedef struct { BExpr *n[64]; int sp; } BStack;
+static BExpr *bx_new(int op, BExpr *l, BExpr *r, const Opnd *o)
+{
+    BExpr *b = ex_alloc(sizeof *b);
+    b->op = op; b->l = l; b->r = r;
+    if (o) { b->o = ex_alloc(sizeof *b->o); *b->o = *o; }
+    return b;
+}
+/* an operator applied: its code, and its node over the operands' */
+static void bool_apply(BStack *bs, int op, Opnd *cnt)
+{
+    bool_emit_op(op, cnt);
+    if (op <= BO_XOR && op != BO_NOT) {
+        if (bs->sp >= 2) { bs->sp--; bs->n[bs->sp - 1] = bx_new(op, bs->n[bs->sp - 1], bs->n[bs->sp], NULL); }
+    } else if (bs->sp >= 1) bs->n[bs->sp - 1] = bx_new(op, bs->n[bs->sp - 1], NULL, op == BO_NOT ? NULL : cnt);
+}
+static BExpr *g_bexpr_tree;              /* the expression parse_bexpr just parsed */
 static int parse_bexpr(void)
 {
     int save_bsp = g_bsp; g_bsp = 0;
+    BStack bs; bs.sp = 0;
     struct { int op, prec; Opnd cnt; } st[64]; int sp = 0;
     int lastprec[32], lv = 0; lastprec[0] = 0;
     int want = 1, width = 0, line = cur()->line;
@@ -219,20 +239,21 @@ static int parse_bexpr(void)
             if (o.kind == O_FIG) bool_fig_opnd(&o, 1);            /* ZERO: a boolean zero, extended as needed */
             if (!opnd_is_boolean(&o)) die_at(o.line, "a boolean expression takes boolean operands (2023 8.8.2)");
             bool_emit_operand(&o);
+            if (bs.sp < 64) bs.n[bs.sp++] = bx_new(0, NULL, NULL, &o);
             int w = bool_opnd_len(&o); if (w > width) width = w;
             want = 0;
             continue;
         }
         if (t->kind == T_RP && lv > 0) {
             advance();
-            while (sp && st[sp - 1].op != BO_PAREN) { sp--; bool_emit_op(st[sp].op, &st[sp].cnt); }
+            while (sp && st[sp - 1].op != BO_PAREN) { sp--; bool_apply(&bs, st[sp].op, &st[sp].cnt); }
             sp--; lv--;
             continue;
         }
         if (op == BO_AND || op == BO_OR || op == BO_XOR) {
             advance();
             int p = prec[op];
-            while (sp && st[sp - 1].op != BO_PAREN && st[sp - 1].prec >= p) { sp--; bool_emit_op(st[sp].op, &st[sp].cnt); }
+            while (sp && st[sp - 1].op != BO_PAREN && st[sp - 1].prec >= p) { sp--; bool_apply(&bs, st[sp].op, &st[sp].cnt); }
             if (sp == 64) die_at(t->line, "a boolean expression too long");
             st[sp].op = op; st[sp].prec = p; sp++;
             lastprec[lv] = p; want = 1;
@@ -244,8 +265,8 @@ static int parse_bexpr(void)
             Opnd cnt; parse_operand(&cnt);
             if (!((cnt.kind == O_NUM && numlit_is_int(&cnt.num) && !cnt.num.neg) || (cnt.kind == O_REF && is_int_item(cnt.ref.sym))))
                 die_at(cnt.line, "a boolean shift takes an integer (2023 8.8.2 rule 5)");
-            while (sp && st[sp - 1].op != BO_PAREN && st[sp - 1].prec >= p) { sp--; bool_emit_op(st[sp].op, &st[sp].cnt); }
-            bool_emit_op(op, &cnt);
+            while (sp && st[sp - 1].op != BO_PAREN && st[sp - 1].prec >= p) { sp--; bool_apply(&bs, st[sp].op, &st[sp].cnt); }
+            bool_apply(&bs, op, &cnt);
             continue;
         }
         break;
@@ -254,11 +275,32 @@ static int parse_bexpr(void)
     while (sp) {
         sp--;
         if (st[sp].op == BO_PAREN) die_at(line, "unbalanced parentheses in a boolean expression");
-        bool_emit_op(st[sp].op, &st[sp].cnt);
+        bool_apply(&bs, st[sp].op, &st[sp].cnt);
     }
     g_bexpr_all = g_bsp == 1 && g_bsim[0];        /* the whole expression one ALL literal */
     g_bsp = save_bsp;
+    g_bexpr_tree = bs.sp == 1 ? bs.n[0] : NULL;
     return width;
+}
+
+/* the code parse_bexpr would have emitted for b: operands pushed and
+ * operators applied in the order the shunting yard gave, a user
+ * function's call made as its operand is pushed (ucall_make) */
+static void emit_bexpr_node(const BExpr *b)
+{
+    if (!b->op) { Opnd o = *b->o; ucall_make(&o); bool_emit_operand(&o); return; }
+    emit_bexpr_node(b->l);
+    if (b->r) emit_bexpr_node(b->r);
+    Opnd cnt; memset(&cnt, 0, sizeof cnt);
+    if (b->o) { cnt = *b->o; ucall_make(&cnt); }
+    bool_emit_op(b->op, &cnt);
+}
+static void emit_bexpr(const BExpr *b)
+{
+    int save_bsp = g_bsp; g_bsp = 0;
+    emit_bexpr_node(b);
+    g_bexpr_all = g_bsp == 1 && g_bsim[0];
+    g_bsp = save_bsp;
 }
 
 /* does the parenthesis at the cursor open a boolean expression: a boolean
@@ -275,20 +317,21 @@ static int paren_is_boolean(void)
     return 0;
 }
 
-/* a boolean expression as a condition operand, re-parsed when emitted */
+/* a boolean expression as a condition operand: scanned now, emitted later */
 static Opnd bexpr_opnd(void)
 {
     Opnd o; memset(&o, 0, sizeof o);
-    o.kind = O_BEXPR; o.line = cur()->line; o.e_start = g_tp;
+    o.kind = O_BEXPR; o.line = cur()->line;
     g_noemit++; o.fsize = parse_bexpr(); g_noemit--;
-    o.e_end = g_tp;
+    o.bx = g_bexpr_tree;
+    if (!o.bx) die_at(o.line, "internal: a boolean expression without its tree");
     return o;
 }
 
 /* push any boolean operand, an expression's value included */
 static void bool_push(Opnd *o)
 {
-    if (o->kind == O_BEXPR) { int save = g_tp; g_tp = o->e_start; parse_bexpr(); g_tp = save; return; }
+    if (o->kind == O_BEXPR) { emit_bexpr(o->bx); return; }
     bool_emit_operand(o);
 }
 

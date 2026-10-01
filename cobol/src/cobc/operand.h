@@ -73,7 +73,26 @@ static FnSig g_fnsig[128]; static int g_nfnsig;
 static char g_repo_fn[32][64]; static int g_nrepo_fn;
 static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
 
-enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /* O_ADDR: ADDRESS OF ref, a data-address identifier */   /* O_BEXPR: a boolean expression, e_start..e_end, fsize its widest operand */
+enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /* O_ADDR: ADDRESS OF ref, a data-address identifier */   /* O_BEXPR: a boolean expression, bx, fsize its widest operand */
+
+/* a boolean expression (2023 8.8.2), parsed once: an operand, or an
+ * operator over one operand (B-NOT; a shift, with its count) or two */
+typedef struct BExpr {
+    int op;                     /* 0 an operand; BO_AND ... BO_SRC */
+    struct BExpr *l, *r;
+    struct Opnd_ *o;            /* an operand; a shift's count */
+} BExpr;
+
+/* the trees' nodes: never freed, the compiler being a run that ends */
+static void *ex_alloc(size_t n)
+{
+    static char *p; static size_t left;
+    n = (n + 15) & ~(size_t)15;
+    if (n > left) { left = n > 65536 ? n : 65536; p = xmalloc(left); }
+    void *q = p; p += n; left -= n;
+    memset(q, 0, n);
+    return q;
+}
 
 typedef struct Opnd_ {
     int kind;
@@ -85,7 +104,7 @@ typedef struct Opnd_ {
     NumLit num;         /* O_NUM */
     int line;
     Expr *ex;           /* O_EXPR: the expression */
-    int e_start, e_end; /* O_BEXPR: its token range, re-read by parse_bexpr when emitted */
+    BExpr *bx;          /* O_BEXPR: the expression */
     int fn; struct Opnd_ *farg, *farg2; int fsize;   /* O_FUNC: intrinsic, its argument(s), result width */
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
     int fvar, fnat, fbool;                   /* O_FUNC: length known only at run time (fsize its maximum); a national, a boolean result */

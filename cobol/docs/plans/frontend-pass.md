@@ -58,7 +58,8 @@ for in the commit -- plus all the usual gates.
    `Expr` instead of tokens (their `HNode` is already the same shape),
    and COMPUTE parses its expression once: width, register tree and
    stack code all from one tree.  O_EXPR's token range goes.
-3. **Boolean expressions** the same way, and O_BEXPR's range goes.
+3. **Boolean expressions** the same way, and O_BEXPR's range goes
+   (done 2026-10-01, ISSUES 121).
 4. **Statements.**  A statement parses to a node -- receivers, senders,
    phrases, its nested statements -- and is emitted from that.  This is
    where evaluation order becomes the emitter's decision: identify each

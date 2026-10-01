@@ -42,16 +42,6 @@ static void xd_binop(char op)
     g_xd_int[a] = in; g_xd_frac[a] = fr;
 }
 
-/* the trees' nodes: never freed, the compiler being a run that ends */
-static void *ex_alloc(size_t n)
-{
-    static char *p; static size_t left;
-    n = (n + 15) & ~(size_t)15;
-    if (n > left) { left = n > 65536 ? n : 65536; p = xmalloc(left); }
-    void *q = p; p += n; left -= n;
-    memset(q, 0, n);
-    return q;
-}
 static Expr *ex_node(char op, Expr *l, Expr *r)
 {
     Expr *e = ex_alloc(sizeof *e);

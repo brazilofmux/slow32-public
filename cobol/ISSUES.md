@@ -4858,3 +4858,12 @@ parses, which nothing used, each initialised at start-up or on entry;
 they are gone,
 and with them their entries in the recursive functions'
 LOCAL-STORAGE tables.  Nothing else differs.
+
+Step 3: **boolean expressions.**  parse_bexpr is a shunting yard that
+emits as it applies each operator; it now also makes that operator's
+node over its operands' (bool_apply), so the tree's postfix walk
+(emit_bexpr) is the order the yard emitted in.  A boolean expression as
+a condition operand (O_BEXPR) keeps the tree, not its tokens, and
+bool_push walks it instead of re-parsing.  With that, no Opnd keeps a
+token range.  The snapshot diffs empty; the boolean tests
+(2002/boolexpr, boolreview, boolbit, bitarray2) are among it.
