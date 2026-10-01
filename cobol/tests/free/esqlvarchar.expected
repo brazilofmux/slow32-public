@@ -1,0 +1,5 @@
+1 stored length 0004 00000
+2 fetched length +0004 [ab        ] 00000
+3 empty string: length +0000 [          ] 00000
+4 cut short: length +0003 [ab ] 00000
+5 null: indicator -0001 00000

@@ -24,6 +24,11 @@
 #include <stddef.h>
 #include "cobrt.h"
 #include "sqlite3.h"
+#include "pgwire.h"
+
+/* a prepared statement: SQLite's sqlite3_stmt, or pgwire's pg_stmt
+ * (COB_SQL_BACKEND=postgres) -- opaque to everything but the db_ layer */
+typedef void dbst;
 
 long long cob_get_num(const void *p, const cob_desc *d);
 void cob_put_num(void *p, const cob_desc *d, long long v, int vscale);
@@ -33,7 +38,7 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
 /* the compiler's descriptors (s32-cobc.c emit_sql_data) */
 typedef struct cob_sql_cursor {
     const char *text;           /* the query; SELECT rowid, ... when positioned */
-    sqlite3_stmt *st;
+    dbst *st;
     int positioned;             /* its first column is the rowid */
     int open;                   /* 1 open, 2 open and past its last row */
     unsigned rowid_lo, rowid_hi;
@@ -42,17 +47,118 @@ typedef struct cob_sql_cursor {
 } cob_sql_cursor;
 typedef struct {
     const char *text;
-    sqlite3_stmt *st;
+    dbst *st;
     int kind;                   /* 0 run, 1 SELECT INTO, 2 no-op (GRANT/REVOKE), 3 positioned */
     cob_sql_cursor *cur;
 } cob_sql_stmt;
 enum { K_EXEC = 0, K_SELECT_INTO = 1, K_NOOP = 2, K_POSITIONED = 3 };
 
-typedef struct { void *p; const cob_desc *d; void *ip; const cob_desc *id; } host;
+/* lp, ld: a VARCHAR's length item (a level-49 pair), else NULL */
+typedef struct { void *p; const cob_desc *d; void *ip; const cob_desc *id; void *lp; const cob_desc *ld; } host;
 static host g_in[128], g_out[128];
 static int g_nin, g_nout;
 
 static sqlite3 *g_db;
+static pg_conn *g_pg;                   /* the PostgreSQL connection (COB_SQL_BACKEND=postgres) */
+#define DB_OPEN (g_db || g_pg)
+
+/* ---- the backend: SQLite's calls, or pgwire's in their place ------------
+ * The runtime is written against SQLite's API; each call goes through one
+ * of these.  PostgreSQL answers in SQLite's terms: a step is SQLITE_ROW,
+ * SQLITE_DONE or SQLITE_ERROR, and every value is TEXT or NULL (pgwire
+ * asks for text), which the runtime converts as it does SQLite's text. */
+static int use_pg(void)
+{
+    const char *b = getenv("COB_SQL_BACKEND");
+    return b && (!strcmp(b, "postgres") || !strcmp(b, "postgresql") || !strcmp(b, "pg"));
+}
+static int db_prepare(const char *t, dbst **st)
+{
+    if (g_pg) return pg_prepare(g_pg, t, (pg_stmt **)st) == PG_OK ? SQLITE_OK : SQLITE_ERROR;
+    return sqlite3_prepare_v2(g_db, t, -1, (sqlite3_stmt **)st, NULL);
+}
+static int db_step(dbst *st)
+{
+    if (!g_pg) return sqlite3_step(st);
+    int rc = pg_step(st);
+    return rc == PG_ROW ? SQLITE_ROW : rc == PG_DONE ? SQLITE_DONE : SQLITE_ERROR;
+}
+static int db_reset(dbst *st) { return g_pg ? pg_reset(st) : sqlite3_reset(st); }
+static int db_clear_bindings(dbst *st) { if (g_pg) { pg_clear_bindings(st); return 0; } return sqlite3_clear_bindings(st); }
+static int db_finalize(dbst *st) { if (g_pg) { pg_finalize(st); return 0; } return sqlite3_finalize(st); }
+static int db_bind_null(dbst *st, int i) { return g_pg ? pg_bind_text(st, i, NULL, 0) : sqlite3_bind_null(st, i); }
+static int db_bind_int64(dbst *st, int i, long long v)
+{
+    if (!g_pg) return sqlite3_bind_int64(st, i, v);
+    char b[24]; snprintf(b, sizeof b, "%lld", v);
+    return pg_bind_text(st, i, b, -1);
+}
+static int db_bind_double(dbst *st, int i, double v)
+{
+    if (!g_pg) return sqlite3_bind_double(st, i, v);
+    char b[32]; snprintf(b, sizeof b, "%.17g", v);
+    return pg_bind_text(st, i, b, -1);
+}
+static int db_bind_text(dbst *st, int i, const char *t, int n)
+{
+    return g_pg ? pg_bind_text(st, i, t, n) : sqlite3_bind_text(st, i, t, n, SQLITE_TRANSIENT);
+}
+static int db_bind_parameter_count(dbst *st) { return g_pg ? pg_param_count(st) : sqlite3_bind_parameter_count(st); }
+static int db_column_count(dbst *st) { return g_pg ? pg_column_count(st) : sqlite3_column_count(st); }
+static int db_column_type(dbst *st, int c)
+{
+    if (!g_pg) return sqlite3_column_type(st, c);
+    return pg_column_text(st, c, NULL) ? SQLITE_TEXT : SQLITE_NULL;
+}
+static const unsigned char *db_column_text(dbst *st, int c)
+{
+    return g_pg ? (const unsigned char *)pg_column_text(st, c, NULL) : sqlite3_column_text(st, c);
+}
+static int db_column_bytes(dbst *st, int c)
+{
+    if (!g_pg) return sqlite3_column_bytes(st, c);
+    int n; pg_column_text(st, c, &n); return n;
+}
+static long long db_column_int64(dbst *st, int c)
+{
+    if (!g_pg) return sqlite3_column_int64(st, c);
+    const char *t = pg_column_text(st, c, NULL); return t ? atoll(t) : 0;
+}
+static double db_column_double(dbst *st, int c)
+{
+    if (!g_pg) return sqlite3_column_double(st, c);
+    const char *t = pg_column_text(st, c, NULL); return t ? strtod(t, NULL) : 0;
+}
+/* a column's declared type, as SQLite gives it: for PostgreSQL, its type's
+ * OID named in SQL's words */
+static const char *db_column_decltype(dbst *st, int c)
+{
+    if (!g_pg) return sqlite3_column_decltype(st, c);
+    switch (pg_column_type(st, c)) {
+    case 16: return "BOOLEAN";
+    case 20: return "BIGINT";
+    case 21: return "SMALLINT";
+    case 23: return "INTEGER";
+    case 700: return "REAL";
+    case 701: return "DOUBLE PRECISION";
+    case 1042: return "CHARACTER";
+    case 1043: return "VARCHAR";
+    case 1082: return "DATE";
+    case 1083: return "TIME";
+    case 1114: case 1184: return "TIMESTAMP";
+    case 1700: return "NUMERIC";
+    default: return "TEXT";
+    }
+}
+static const char *db_column_name(dbst *st, int c) { return g_pg ? pg_column_name(st, c) : sqlite3_column_name(st, c); }
+static int db_exec(const char *sql)
+{
+    if (g_pg) return pg_exec(g_pg, sql) == PG_OK ? SQLITE_OK : SQLITE_ERROR;
+    return sqlite3_exec(g_db, sql, 0, 0, 0);
+}
+static int db_autocommit(void) { return g_pg ? !pg_in_transaction(g_pg) : sqlite3_get_autocommit(g_db); }
+static long long db_changes(void) { return g_pg ? pg_changes(g_pg) : sqlite3_changes(g_db); }
+static const char *db_errmsg(void) { return g_pg ? pg_errmsg(g_pg) : g_db ? sqlite3_errmsg(g_db) : "no connection"; }
 static char g_user[64];
 static int g_trace = -1;
 static int g_sqlcode;
@@ -62,7 +168,7 @@ static long long g_rows;                /* SQLERRD(3): the rows the statement to
 
 /* every statement and cursor prepared on this connection, to finalize
  * when it closes */
-static sqlite3_stmt **g_prepared_slot[4096]; static int g_nprep;
+static dbst **g_prepared_slot[4096]; static int g_nprep;
 static cob_sql_cursor *g_cursors[512]; static int g_ncur;
 
 /* a completion condition that is a warning (01004): kept only while the
@@ -77,18 +183,29 @@ static void set_status(int code, const char *state)
     g_sqlcode = code;
     memcpy(g_sqlstate, state, 5); g_sqlstate[5] = 0;
     if (code == 0 || code == 100) g_errmsg[0] = 0;
-    else snprintf(g_errmsg, sizeof g_errmsg, "%s", g_db && code != -305 && code != -811 ? sqlite3_errmsg(g_db) : "");
+    else snprintf(g_errmsg, sizeof g_errmsg, "%s", DB_OPEN && code != -305 && code != -811 ? db_errmsg() : "");
 }
 
 static void trace_error(const char *what)
 {
     if (g_trace < 0) { const char *t = getenv("COB_SQL_TRACE"); g_trace = t && *t && *t != '0'; }
-    if (g_trace) fprintf(stderr, "esql: %s: SQLCODE %d SQLSTATE %s: %s\n", what, g_sqlcode, g_sqlstate, g_db ? sqlite3_errmsg(g_db) : "no connection");
+    if (g_trace) fprintf(stderr, "esql: %s: SQLCODE %d SQLSTATE %s: %s\n", what, g_sqlcode, g_sqlstate, db_errmsg());
 }
 
 /* the backend's error as SQLCODE and SQLSTATE */
 static void set_error(int rc, const char *what)
 {
+    if (g_pg) {
+        /* PostgreSQL says its SQLSTATE; SQLCODE as DB2 would give it */
+        const char *st = pg_sqlstate(g_pg);
+        int code = !strcmp(st, "23505") ? -803 : !strcmp(st, "23502") ? -407 : !strcmp(st, "23514") ? -545
+                 : !strcmp(st, "23503") ? -530 : !strcmp(st, "22003") ? -304 : !strcmp(st, "22019") ? -130
+                 : !strncmp(st, "42", 2) ? -204 : !strncmp(st, "22", 2) ? -302 : !strncmp(st, "23", 2) ? -803
+                 : !strncmp(st, "08", 2) ? -900 : -1;
+        set_status(code, st);
+        trace_error(what);
+        return;
+    }
     int ext = g_db ? sqlite3_extended_errcode(g_db) : rc;
     switch (ext) {
     case SQLITE_CONSTRAINT_UNIQUE: case SQLITE_CONSTRAINT_PRIMARYKEY: set_status(-803, "23000"); break;
@@ -122,11 +239,17 @@ static void upcase_trim(char *out, const char *in, int n, int cap)
 
 static void disconnect(void)
 {
-    if (!g_db) return;
-    for (int i = 0; i < g_nprep; i++) { sqlite3_finalize(*g_prepared_slot[i]); *g_prepared_slot[i] = NULL; }
+    if (!DB_OPEN) return;
+    for (int i = 0; i < g_nprep; i++) { db_finalize(*g_prepared_slot[i]); *g_prepared_slot[i] = NULL; }
     g_nprep = 0;
     for (int i = 0; i < g_ncur; i++) g_cursors[i]->open = 0;
     g_ncur = 0;
+    if (g_pg) {
+        if (pg_in_transaction(g_pg)) pg_exec(g_pg, "COMMIT");
+        pg_close(g_pg);
+        g_pg = NULL;
+        return;
+    }
     sqlite3_exec(g_db, "COMMIT", 0, 0, 0);
     sqlite3_close(g_db);
     g_db = NULL;
@@ -158,7 +281,31 @@ static void at_end(void) { disconnect(); }
 static int sql_connect(void)
 {
     cob_at_stop = at_end;
-    if (g_db) return 1;
+    if (DB_OPEN) return 1;
+    if (use_pg()) {
+        /* libpq's variables; PGHOST an IPv4 address (the guest has no DNS).
+         * Each copied as read: a getenv's result may be overwritten by the
+         * next (POSIX), and the guest's is. */
+        char host[64], port[16], user[64], db[64], pw[256];
+        #define ENV_COPY(buf, name, dflt) do { const char *v_ = getenv(name); \
+            snprintf(buf, sizeof buf, "%s", v_ && *v_ ? v_ : (dflt)); } while (0)
+        ENV_COPY(host, "PGHOST", "127.0.0.1");
+        ENV_COPY(port, "PGPORT", "5432");
+        ENV_COPY(user, "PGUSER", "postgres");
+        ENV_COPY(db, "PGDATABASE", user);
+        ENV_COPY(pw, "PGPASSWORD", "");
+        #undef ENV_COPY
+        char err[256];
+        if (pg_connect(host, atoi(port), user, db, pw[0] ? pw : NULL, &g_pg, err, sizeof err) != PG_OK) {
+            g_pg = NULL;
+            set_status(-1, "08001");
+            snprintf(g_errmsg, sizeof g_errmsg, "%s", err);
+            if (g_trace < 0) { const char *t = getenv("COB_SQL_TRACE"); g_trace = t && *t && *t != '0'; }
+            if (g_trace) fprintf(stderr, "esql: connect: SQLCODE -1 SQLSTATE 08001: %s\n", err);
+            return 0;
+        }
+        return 1;
+    }
     if (!g_user[0]) {
         const char *u = getenv("COB_SQL_USER");
         upcase_trim(g_user, u && *u ? u : "PUBLIC", 63, sizeof g_user);
@@ -194,7 +341,7 @@ void authid(char *uid)
     char u[64];
     upcase_trim(u, uid, 18, sizeof u);
     if (!u[0]) return;
-    if (g_db && strcmp(u, g_user)) disconnect();
+    if (DB_OPEN && strcmp(u, g_user)) disconnect();
     snprintf(g_user, sizeof g_user, "%s", u);
 }
 
@@ -203,13 +350,28 @@ void authid(char *uid)
 void cob_sql_in(void *p, const cob_desc *d, void *ip, const cob_desc *id)
 {
     if (g_nin == 128) { fprintf(stderr, "esql: more than 128 input host variables\n"); exit(1); }
-    g_in[g_nin].p = p; g_in[g_nin].d = d; g_in[g_nin].ip = ip; g_in[g_nin].id = id; g_nin++;
+    g_in[g_nin].p = p; g_in[g_nin].d = d; g_in[g_nin].ip = ip; g_in[g_nin].id = id;
+    g_in[g_nin].lp = NULL; g_in[g_nin].ld = NULL; g_nin++;
 }
 
 void cob_sql_out(void *p, const cob_desc *d, void *ip, const cob_desc *id)
 {
     if (g_nout == 128) { fprintf(stderr, "esql: more than 128 output host variables\n"); exit(1); }
-    g_out[g_nout].p = p; g_out[g_nout].d = d; g_out[g_nout].ip = ip; g_out[g_nout].id = id; g_nout++;
+    g_out[g_nout].p = p; g_out[g_nout].d = d; g_out[g_nout].ip = ip; g_out[g_nout].id = id;
+    g_out[g_nout].lp = NULL; g_out[g_nout].ld = NULL; g_nout++;
+}
+
+/* a VARCHAR host variable (DB2's: a group of a level-49 length and a
+ * level-49 text): in, text(1:length) exactly; out, the text and its length */
+void cob_sql_in_vc(void *p, const cob_desc *d, void *ip, const cob_desc *id, void *lp, const cob_desc *ld)
+{
+    cob_sql_in(p, d, ip, id);
+    g_in[g_nin - 1].lp = lp; g_in[g_nin - 1].ld = ld;
+}
+void cob_sql_out_vc(void *p, const cob_desc *d, void *ip, const cob_desc *id, void *lp, const cob_desc *ld)
+{
+    cob_sql_out(p, d, ip, id);
+    g_out[g_nout - 1].lp = lp; g_out[g_nout - 1].ld = ld;
 }
 
 static void clear_hosts(void) { g_nin = g_nout = 0; }
@@ -217,8 +379,8 @@ static void clear_hosts(void) { g_nin = g_nout = 0; }
 /* SQL descriptor areas (below): the next statement's USING and INTO */
 typedef struct desc_area desc_area;
 static desc_area *g_desc_in, *g_desc_out;
-static int bind_desc(sqlite3_stmt *st);
-static int store_desc(sqlite3_stmt *st, int base);
+static int bind_desc(dbst *st);
+static int store_desc(dbst *st, int base);
 
 static const char *strcasestr_simple(const char *h, const char *n)
 {
@@ -245,28 +407,34 @@ static void host_set_dbl(const host *h, double x)
     else memcpy(h->p, &x, 8);
 }
 
-static int bind_in(sqlite3_stmt *st, int i, const host *h)
+static int bind_in(dbst *st, int i, const host *h)
 {
-    if (h->ip && cob_get_num(h->ip, h->id) < 0) return sqlite3_bind_null(st, i);
+    if (h->ip && cob_get_num(h->ip, h->id) < 0) return db_bind_null(st, i);
     const cob_desc *d = h->d;
-    if (d->usage == COB_U_FLOAT) return sqlite3_bind_double(st, i, host_dbl(h));   /* COMP-1/COMP-2: REAL (docs/usage.md) */
+    if (h->lp) {                                    /* a VARCHAR: its length's bytes, nothing trimmed */
+        long long n = cob_get_num(h->lp, h->ld);
+        if (n < 0) n = 0;
+        if (n > (long long)d->size) n = d->size;
+        return db_bind_text(st, i, h->p, (int)n);
+    }
+    if (d->usage == COB_U_FLOAT) return db_bind_double(st, i, host_dbl(h));   /* COMP-1/COMP-2: REAL (docs/usage.md) */
     if (d->cat == COB_NUM) {
         long long v = cob_get_num(h->p, d);
         int sc = d->scale;
         if (sc <= 0) {
             for (int k = 0; k < -sc && k < 18; k++) v *= 10;
-            return sqlite3_bind_int64(st, i, v);
+            return db_bind_int64(st, i, v);
         }
         char buf[48];
         unsigned long long m = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v;
         unsigned long long ip = m / (unsigned long long)p10[sc > 18 ? 18 : sc], fp = m % (unsigned long long)p10[sc > 18 ? 18 : sc];
         snprintf(buf, sizeof buf, "%s%llu.%0*llu", v < 0 ? "-" : "", ip, sc, fp);
-        return sqlite3_bind_text(st, i, buf, -1, SQLITE_TRANSIENT);
+        return db_bind_text(st, i, buf, -1);
     }
     int n = (int)d->size;
     const char *s = h->p;
     while (n && s[n - 1] == ' ') n--;
-    return sqlite3_bind_text(st, i, s, n, SQLITE_TRANSIENT);
+    return db_bind_text(st, i, s, n);
 }
 
 /* the decimal text of a value as a scaled integer: *v at scale *sc; 0 when
@@ -335,6 +503,7 @@ static int store_val(int ty, long long iv, const char *t, int n, const host *h)
     sd.cat = COB_ALNUM; sd.size = (unsigned)n;
     if (n) cob_move(t, &sd, h->p, d);
     else memset(h->p, ' ', d->size);
+    if (h->lp) cob_put_num(h->lp, h->ld, n < (int)d->size ? n : (int)d->size, 0);   /* a VARCHAR: the bytes it holds */
     if (n > (int)d->size) {
         /* SQL-92: string data, right truncation, a warning; the indicator
          * holds the length the value had */
@@ -347,16 +516,16 @@ static int store_val(int ty, long long iv, const char *t, int n, const host *h)
     return 1;
 }
 
-static int store_out(sqlite3_stmt *st, int c, const host *h)
+static int store_out(dbst *st, int c, const host *h)
 {
-    int ty = sqlite3_column_type(st, c);
+    int ty = db_column_type(st, c);
     if (h->d->usage == COB_U_FLOAT && (ty == SQLITE_FLOAT || ty == SQLITE_INTEGER)) {   /* to a float: the double itself, not its text */
         if (h->ip) cob_put_num(h->ip, h->id, 0, 0);
-        host_set_dbl(h, sqlite3_column_double(st, c));
+        host_set_dbl(h, db_column_double(st, c));
         return 1;
     }
-    const char *t = ty == SQLITE_NULL ? NULL : (const char *)sqlite3_column_text(st, c);
-    return store_val(ty, ty == SQLITE_INTEGER ? sqlite3_column_int64(st, c) : 0, t, t ? sqlite3_column_bytes(st, c) : 0, h);
+    const char *t = ty == SQLITE_NULL ? NULL : (const char *)db_column_text(st, c);
+    return store_val(ty, ty == SQLITE_INTEGER ? db_column_int64(st, c) : 0, t, t ? db_column_bytes(st, c) : 0, h);
 }
 
 /* ---- statements -------------------------------------------------------- */
@@ -480,25 +649,27 @@ static char *ddl_collate(const char *text)
     return out;
 }
 
-static int prepare_x(sqlite3_stmt **slot, const char *text, int reg)
+static int prepare_x(dbst **slot, const char *text, int reg)
 {
     if (*slot) return 1;
-    char *t = own_schema(text);
-    char *d = ddl_collate(t);
+    /* SQLite's: the user's own qualifier to main, COLLATE RTRIM on
+     * character columns.  PostgreSQL has schemas and PAD SPACE itself. */
+    char *t = g_pg ? strdup(text) : own_schema(text);
+    char *d = g_pg ? NULL : ddl_collate(t);
     if (d) { free(t); t = d; }
-    int rc = sqlite3_prepare_v2(g_db, t, -1, slot, NULL);
+    int rc = db_prepare(t, slot);
     if (rc != SQLITE_OK) { set_error(rc, t); free(t); *slot = NULL; return 0; }   /* the text as SQLite saw it */
     free(t);
     if (reg && g_nprep < 4096) g_prepared_slot[g_nprep++] = slot;
     return 1;
 }
-static int prepare(sqlite3_stmt **slot, const char *text) { return prepare_x(slot, text, 1); }
+static int prepare(dbst **slot, const char *text) { return prepare_x(slot, text, 1); }
 
 /* SQL-92: a transaction begins with the first statement after the last
  * one ended */
 static void begin_if_needed(void)
 {
-    if (sqlite3_get_autocommit(g_db)) sqlite3_exec(g_db, "BEGIN", 0, 0, 0);
+    if (db_autocommit()) db_exec("BEGIN");
 }
 
 static int first_word(const char *t, const char *w)
@@ -511,10 +682,10 @@ static int first_word(const char *t, const char *w)
 /* COMMIT or ROLLBACK [WORK]: ends the transaction, closing the cursors */
 static int end_transaction(int commit)
 {
-    for (int i = 0; i < g_ncur; i++) if (g_cursors[i]->open) { sqlite3_reset(g_cursors[i]->st); g_cursors[i]->open = 0; }
+    for (int i = 0; i < g_ncur; i++) if (g_cursors[i]->open) { db_reset(g_cursors[i]->st); g_cursors[i]->open = 0; }
     g_ncur = 0;
-    if (!sqlite3_get_autocommit(g_db)) {
-        int rc = sqlite3_exec(g_db, commit ? "COMMIT" : "ROLLBACK", 0, 0, 0);
+    if (!db_autocommit()) {
+        int rc = db_exec(commit ? "COMMIT" : "ROLLBACK");
         if (rc != SQLITE_OK) { set_error(rc, commit ? "COMMIT" : "ROLLBACK"); return g_sqlcode; }
     }
     return 0;
@@ -563,7 +734,7 @@ static int connect_stmt(const char *text)
     if (!user[0] && strcasestr_simple(text, "identified") && g_nin) host_text(&g_in[0], user, sizeof user);
     if (user[0]) {
         char u[64]; upcase_trim(u, user, (int)strlen(user), sizeof u);
-        if (g_db && strcmp(u, g_user)) disconnect();
+        if (DB_OPEN && strcmp(u, g_user)) disconnect();
         snprintf(g_user, sizeof g_user, "%s", u);
     }
     return sql_connect() ? 0 : g_sqlcode;
@@ -635,8 +806,8 @@ static int set_stmt(const char *text)
         else { int k = 0; while (*a && *a != ' ' && k < 63) user[k++] = *a++; user[k] = 0; }
         char u[64]; upcase_trim(u, user, (int)strlen(user), sizeof u);
         if (!u[0]) { set_status(-104, "28000"); return g_sqlcode; }
-        if (g_db && !sqlite3_get_autocommit(g_db)) { set_status(-918, "25000"); return g_sqlcode; }   /* not in a transaction (SQL-92) */
-        if (g_db && strcmp(u, g_user)) disconnect();
+        if (DB_OPEN && !db_autocommit()) { set_status(-918, "25000"); return g_sqlcode; }   /* not in a transaction (SQL-92) */
+        if (DB_OPEN && strcmp(u, g_user)) disconnect();
         snprintf(g_user, sizeof g_user, "%s", u);
         return sql_connect() ? 0 : g_sqlcode;
     }
@@ -646,7 +817,7 @@ static int set_stmt(const char *text)
 /* one statement: the static ones, EXECUTE IMMEDIATE's and EXECUTE's.
  * slot caches the prepared statement when reg is set; dynamic says a
  * statement returning a row delivers it to the outputs, as SELECT INTO */
-static int run_stmt(sqlite3_stmt **slot, const char *text, int kind, cob_sql_cursor *cur, int reg, int dynamic)
+static int run_stmt(dbst **slot, const char *text, int kind, cob_sql_cursor *cur, int reg, int dynamic)
 {
     set_status(0, "00000");
     g_rows = 0;
@@ -664,35 +835,35 @@ static int run_stmt(sqlite3_stmt **slot, const char *text, int kind, cob_sql_cur
     }
     begin_if_needed();
     if (!prepare_x(slot, text, reg)) { clear_hosts(); return g_sqlcode; }
-    sqlite3_stmt *st = *slot;
+    dbst *st = *slot;
     int i = 0;
     if (g_desc_in) { if (!bind_desc(st)) goto done; }
     else for (; i < g_nin; i++) bind_in(st, i + 1, &g_in[i]);
     if (kind == K_POSITIONED) {
         cob_sql_cursor *c = cur;
         if (!c->open) { set_status(-508, "24000"); trace_error("positioned: cursor not open"); goto done; }
-        sqlite3_bind_int64(st, i + 1, (long long)(((unsigned long long)c->rowid_hi << 32) | c->rowid_lo));
+        db_bind_int64(st, i + 1, (long long)(((unsigned long long)c->rowid_hi << 32) | c->rowid_lo));
     }
-    int rc = sqlite3_step(st);
-    if (kind == K_SELECT_INTO || (dynamic && sqlite3_column_count(st) > 0)) {
+    int rc = db_step(st);
+    if (kind == K_SELECT_INTO || (dynamic && db_column_count(st) > 0)) {
         if (rc == SQLITE_ROW) {
             g_rows = 1;
             if (g_desc_out) { if (!store_desc(st, 0)) goto done; }
-            else for (int k = 0; k < g_nout && k < sqlite3_column_count(st); k++) if (!store_out(st, k, &g_out[k])) goto done;
-            if (sqlite3_step(st) == SQLITE_ROW) { set_status(-811, "21000"); trace_error("SELECT INTO: more than one row"); }
+            else for (int k = 0; k < g_nout && k < db_column_count(st); k++) if (!store_out(st, k, &g_out[k])) goto done;
+            if (db_step(st) == SQLITE_ROW) { set_status(-811, "21000"); trace_error("SELECT INTO: more than one row"); }
         } else if (rc == SQLITE_DONE) set_status(100, "02000");
         else set_error(rc, text);
     } else {
-        while (rc == SQLITE_ROW) rc = sqlite3_step(st);
+        while (rc == SQLITE_ROW) rc = db_step(st);
         if (rc != SQLITE_DONE) set_error(rc, text);
         else if (first_word(text, "update") || first_word(text, "delete") || first_word(text, "insert")) {
-            g_rows = sqlite3_changes(g_db);
+            g_rows = db_changes();
             if (g_rows == 0) set_status(100, "02000");                      /* no row: no data (SQL-92) */
         }
     }
 done:
-    sqlite3_reset(st);
-    sqlite3_clear_bindings(st);
+    db_reset(st);
+    db_clear_bindings(st);
     clear_hosts();
     g_desc_in = g_desc_out = NULL;
     return g_sqlcode;
@@ -711,7 +882,7 @@ int cob_sql_exec(cob_sql_stmt *s)
 /* a prepared statement's descriptor (s32-cobc.c emit_sql_data) */
 typedef struct cob_sql_dyn {
     const char *name;
-    sqlite3_stmt *st;
+    dbst *st;
     char *text;                 /* the prepared text, the runtime's copy */
     int rowid;                  /* a positioned cursor runs it: its SELECT gets rowid first */
 } cob_sql_dyn;
@@ -750,9 +921,9 @@ static int immediate(char *t)
     int r = 0;
     if (!t || !*t) { set_status(-104, "42000"); r = g_sqlcode; }
     else {
-        sqlite3_stmt *st = NULL;
+        dbst *st = NULL;
         r = run_stmt(&st, t, K_EXEC, NULL, 0, 0);
-        if (st) sqlite3_finalize(st);
+        if (st) db_finalize(st);
     }
     char dc[48]; command_function(t ? t : "", dc, sizeof dc, 0);
     diag_end("EXECUTE IMMEDIATE", dc);
@@ -793,7 +964,7 @@ static int prepare_dyn(cob_sql_dyn *d, char *t)
         /* a cursor open on the old statement is closed with it */
         for (int k = 0; k < g_ncur; k++) if (g_cursors[k]->dyn == d && g_cursors[k]->open) { g_cursors[k]->open = 0; g_cursors[k]->st = NULL; }
         for (int k = 0; k < g_nprep; k++) if (g_prepared_slot[k] == &d->st) g_prepared_slot[k] = g_prepared_slot[--g_nprep];
-        sqlite3_finalize(d->st); d->st = NULL;
+        db_finalize(d->st); d->st = NULL;
     }
     free(d->text); d->text = t;
     if (!t || !*t) set_status(-104, "42000");
@@ -825,7 +996,7 @@ int cob_sql_deallocate_prepare(cob_sql_dyn *d)
 {
     set_status(0, "00000");
     if (!d->text) set_status(-514, "26000");
-    if (d->st) sqlite3_finalize(d->st);
+    if (d->st) db_finalize(d->st);
     for (int i = 0; i < g_nprep; i++) if (g_prepared_slot[i] == &d->st) g_prepared_slot[i] = g_prepared_slot[--g_nprep];
     d->st = NULL; free(d->text); d->text = NULL;
     clear_hosts();
@@ -879,13 +1050,19 @@ int cob_sql_open(cob_sql_cursor *c)
     g_rows = 0;
     if (!sql_connect()) { clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode; }
     if (c->open) { set_status(-502, "24000"); trace_error(c->name); clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode; }
+    if (g_pg && c->positioned) {
+        /* positioned UPDATE and DELETE go through SQLite's rowid here */
+        set_status(-1, "0A000");
+        snprintf(g_errmsg, sizeof g_errmsg, "a cursor for positioned UPDATE or DELETE is not implemented for PostgreSQL");
+        trace_error(c->name); clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode;
+    }
     begin_if_needed();
     if (c->dyn) {
         /* DECLARE c CURSOR FOR s: s's prepared statement */
         if (!c->dyn->st) { set_status(-518, "26000"); trace_error(c->name); clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode; }
         c->st = c->dyn->st;
     } else if (!prepare(&c->st, c->text)) { clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode; }
-    sqlite3_reset(c->st); sqlite3_clear_bindings(c->st);
+    db_reset(c->st); db_clear_bindings(c->st);
     if (g_desc_in) { if (!bind_desc(c->st)) { clear_hosts(); diag_end("OPEN", NULL); return g_sqlcode; } }
     else for (int i = 0; i < g_nin; i++) bind_in(c->st, i + 1, &g_in[i]);
     clear_hosts();
@@ -903,17 +1080,17 @@ int cob_sql_fetch(cob_sql_cursor *c)
     /* past the last row, no data again: a step after SQLITE_DONE would
      * start the query over */
     if (c->open == 2) { set_status(100, "02000"); clear_hosts(); diag_end("FETCH", NULL); return g_sqlcode; }
-    int rc = sqlite3_step(c->st);
+    int rc = db_step(c->st);
     if (rc == SQLITE_ROW) {
         int base = 0;
         g_rows = 1;
         if (c->positioned) {
-            unsigned long long r = (unsigned long long)sqlite3_column_int64(c->st, 0);
+            unsigned long long r = (unsigned long long)db_column_int64(c->st, 0);
             c->rowid_lo = (unsigned)r; c->rowid_hi = (unsigned)(r >> 32);
             base = 1;
         }
         if (g_desc_out) store_desc(c->st, base);
-        else for (int k = 0; k < g_nout && base + k < sqlite3_column_count(c->st); k++)
+        else for (int k = 0; k < g_nout && base + k < db_column_count(c->st); k++)
             if (!store_out(c->st, base + k, &g_out[k])) break;
     } else if (rc == SQLITE_DONE) { set_status(100, "02000"); c->open = 2; }
     else set_error(rc, c->name);
@@ -929,7 +1106,7 @@ int cob_sql_close(cob_sql_cursor *c)
     g_rows = 0;
     clear_hosts();
     if (!c->open) { set_status(-501, "24000"); trace_error(c->name); diag_end("CLOSE", NULL); return g_sqlcode; }
-    sqlite3_reset(c->st);
+    db_reset(c->st);
     c->open = 0;
     diag_end("CLOSE", NULL);
     return 0;
@@ -1154,20 +1331,20 @@ void cob_sql_describe(cob_sql_dyn *s, const char *lit, int input)
     if (g_dcur) {
         if (!s->st) desc_fail(-518, "26000");
         else if (input) {
-            int n = sqlite3_bind_parameter_count(s->st);
+            int n = db_bind_parameter_count(s->st);
             g_dcur->count = n;
             if (n > g_dcur->max) { set_warning("01005"); n = g_dcur->max; }   /* insufficient item descriptor areas */
             for (int k = 0; k < n; k++) { desc_item *it = &g_dcur->it[k]; memset(it, 0, offsetof(desc_item, vty)); it->type = 1; it->length = 1; it->nullable = 1; it->unnamed = 1; }
         } else {
-            int n = sqlite3_column_count(s->st), base = s->rowid ? 1 : 0;
+            int n = db_column_count(s->st), base = s->rowid ? 1 : 0;
             n -= base;
             g_dcur->count = n;
             if (n > g_dcur->max) { set_warning("01005"); n = g_dcur->max; }
             for (int k = 0; k < n; k++) {
                 desc_item *it = &g_dcur->it[k];
                 memset(it, 0, offsetof(desc_item, vty));
-                desc_from_decl(it, sqlite3_column_decltype(s->st, base + k));
-                const char *nm = sqlite3_column_name(s->st, base + k);
+                desc_from_decl(it, db_column_decltype(s->st, base + k));
+                const char *nm = db_column_name(s->st, base + k);
                 snprintf(it->name, sizeof it->name, "%s", nm ? nm : "");
             }
         }
@@ -1181,34 +1358,34 @@ void cob_sql_desc_using(const char *lit) { char n[132]; desc_name(lit, n); g_des
 void cob_sql_desc_into(const char *lit) { char n[132]; desc_name(lit, n); g_desc_out = desc_find(n); if (!g_desc_out) g_desc_out = (desc_area *)-1; }
 
 /* binding a statement's parameters from the USING descriptor: 1 done, 0 failed */
-static int bind_desc(sqlite3_stmt *st)
+static int bind_desc(dbst *st)
 {
     desc_area *d = g_desc_in; g_desc_in = NULL;
     if (d == (desc_area *)-1) { set_status(-1, "33000"); return 0; }
     for (int k = 0; k < d->count; k++) {
         desc_item *it = &d->it[k];
-        if (it->indicator < 0 || it->vty == SQLITE_NULL || (it->vty == 0 && !it->tv)) sqlite3_bind_null(st, k + 1);
-        else if (it->vty == SQLITE_INTEGER) sqlite3_bind_int64(st, k + 1, it->iv);
-        else sqlite3_bind_text(st, k + 1, it->tv, it->tn, SQLITE_TRANSIENT);
+        if (it->indicator < 0 || it->vty == SQLITE_NULL || (it->vty == 0 && !it->tv)) db_bind_null(st, k + 1);
+        else if (it->vty == SQLITE_INTEGER) db_bind_int64(st, k + 1, it->iv);
+        else db_bind_text(st, k + 1, it->tv, it->tn);
     }
     return 1;
 }
 
 /* a row into the INTO descriptor: its items' types and names as DESCRIBE
  * would set them, their values, the NULLs as indicators */
-static int store_desc(sqlite3_stmt *st, int base)
+static int store_desc(dbst *st, int base)
 {
     desc_area *d = g_desc_out; g_desc_out = NULL;
     if (d == (desc_area *)-1) { set_status(-1, "33000"); return 0; }
-    int n = sqlite3_column_count(st) - base;
+    int n = db_column_count(st) - base;
     if (n > d->max) { set_status(-1, "07008"); return 0; }
     d->count = n;
     for (int k = 0; k < n; k++) {
         desc_item *it = &d->it[k];
-        int ty = sqlite3_column_type(st, base + k);
-        if (!it->type) desc_from_decl(it, sqlite3_column_decltype(st, base + k));
-        const char *t = ty == SQLITE_NULL ? NULL : (const char *)sqlite3_column_text(st, base + k);
-        desc_set_value(it, ty, ty == SQLITE_INTEGER ? sqlite3_column_int64(st, base + k) : 0, t, t ? sqlite3_column_bytes(st, base + k) : 0);
+        int ty = db_column_type(st, base + k);
+        if (!it->type) desc_from_decl(it, db_column_decltype(st, base + k));
+        const char *t = ty == SQLITE_NULL ? NULL : (const char *)db_column_text(st, base + k);
+        desc_set_value(it, ty, ty == SQLITE_INTEGER ? db_column_int64(st, base + k) : 0, t, t ? db_column_bytes(st, base + k) : 0);
         it->indicator = ty == SQLITE_NULL ? -1 : 0;
     }
     return 1;
@@ -1245,3 +1422,8 @@ void cob_sql_put_sqlstate(void *p, const cob_desc *d)
     sd.cat = COB_ALNUM; sd.size = 5;
     cob_move(g_sqlstate, &sd, p, d);
 }
+
+/* the PostgreSQL backend: the client and its SCRAM, built into this object
+ * so a program with SQL links one runtime object, as before */
+#include "scram.c"
+#include "pgwire.c"

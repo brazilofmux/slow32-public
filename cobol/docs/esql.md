@@ -275,28 +275,45 @@ NULL into an item with no indicator gives SQLCODE -305 and SQLSTATE
 | constraint violation | -803 or -530 | 23000 |
 | any other error | -1 | the class that fits (42000 syntax, 22xxx data) |
 
-## The PostgreSQL backend (in progress, 2026-09-30)
+## The PostgreSQL backend (2026-09-30)
 
-Driven by majesty: its export reads PostgreSQL with `psql`, the one step
-of the month-end not on SLOW-32 but `accounts`.  The plan, in order:
+Driven by majesty: its export read PostgreSQL with `psql`, the one step
+of the month-end not on SLOW-32 but `accounts`.  Majesty's
+`src/cobol/pgexport.cbl` now writes the same seven CSVs, byte for byte
+(its `tests/pgexport/differential.sh`).
 
-1. **The client** (done): `libcob/pgwire.c`, protocol 3.0 over the
-   guest's MMIO TCP sockets (no DNS: PGHOST is an IPv4 address);
-   SCRAM-SHA-256, cleartext or no authentication (MD5 refused by name);
-   statements prepared with Parse and Describe, executed with Bind and
-   Execute, every value as text, the rows buffered.  `libcob/scram.c`:
-   SHA-256, HMAC, PBKDF2, base64 and the SCRAM client, checked by
-   `tests/scram_test.c` (harness gate 1e) against the FIPS and RFC
-   vectors, the whole RFC 7677 exchange among them.  The guest completes
-   the handshake with a PostgreSQL 18 server and runs a parameterized
-   query in 16 ms under the DBT.
-2. **A backend table in esql.c**: the runtime drives SQLite through 72
-   direct calls; they become a table, SQLite its first entry, with the
-   NIST SQL gate's totals unchanged.
-3. **PostgreSQL as the second entry**, chosen by COB_SQL_BACKEND=postgres
-   and the PGHOST, PGPORT, PGUSER, PGDATABASE, PGPASSWORD variables.
-4. **Majesty's export in COBOL**, judged byte for byte against `psql
-   \COPY ... TO STDOUT WITH CSV HEADER`.
+- **The client** is `libcob/pgwire.c`: protocol 3.0 over the guest's MMIO
+  TCP sockets.  It does SCRAM-SHA-256, cleartext or no authentication;
+  MD5 is refused by name.  Statements are prepared with Parse and
+  Describe and executed with Bind and Execute, every value as text, the
+  rows buffered.  `libcob/scram.c` holds SHA-256, HMAC, PBKDF2, base64
+  and the SCRAM client; `tests/scram_test.c` (harness gate 1e) checks
+  them against the FIPS and RFC vectors, the whole RFC 7677 exchange
+  among them.  Both are built into `esql.s32o`.
+- **The backend layer**: `esql.c` calls SQLite through `db_` functions
+  (prepare, bind, step, column, reset, finalize, exec, errors).  Each is
+  SQLite's own call, or pgwire's.  PostgreSQL answers in SQLite's terms:
+  a step is SQLITE_ROW, SQLITE_DONE or SQLITE_ERROR, and every value is
+  TEXT or NULL.  The NIST SQL gate's totals are unchanged.
+- **Chosen by `COB_SQL_BACKEND=postgres`**, connected by libpq's
+  variables:
+  - PGHOST, which must be an IPv4 address (no DNS in the guest);
+  - PGPORT, PGUSER, PGDATABASE, PGPASSWORD.
+- **SQLite-only, not done for PostgreSQL**: the schema files and ATTACH,
+  the own-qualifier rewrite and COLLATE RTRIM (PostgreSQL has schemas
+  and blank-padded CHAR itself).
+- **SQLCODE from the server's SQLSTATE**, as DB2 would give it: 23505
+  -803, 23502 -407, 42xxx -204, 22xxx -302, 08xxx -900, else -1.  The
+  SQLSTATE is passed through.
+- **Not implemented for PostgreSQL**: a cursor for positioned UPDATE or
+  DELETE.  It goes through SQLite's rowid, and its OPEN is refused
+  (0A000).
+- **VARCHAR host variables** (DB2's level-49 length and text) work with
+  either backend, and with them the export keeps every byte:
+  - in: the text's first LENGTH bytes, nothing trimmed;
+  - out: the bytes, and their count in the length.
+
+  Test: free/esqlvarchar.
 
 ## Phases
 

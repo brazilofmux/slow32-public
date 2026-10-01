@@ -16202,7 +16202,7 @@ static void parse_free(void)
  * runs through libcob/esql.c.  No SQL parser: the statement kind comes
  * from its first words and the rest is passed through. */
 
-typedef struct { char name[64], qual[64], ind[64], indqual[64]; int line; Sym *sym; } SqlHost;   /* sym: an item of an expanded host structure */
+typedef struct { char name[64], qual[64], ind[64], indqual[64]; int line; Sym *sym, *vclen; } SqlHost;   /* sym: an item of an expanded host structure, or a VARCHAR's text; vclen: a VARCHAR's length */
 typedef struct { char name[64]; char *query; SqlHost *in; int nin; int unit, id, positioned, line, dyn; } SqlCursor;   /* dyn: FOR a prepared statement's id, else -1 */
 typedef struct { char name[64]; int unit, id, rowid; } SqlDyn;  /* a prepared statement's name; rowid: a positioned cursor runs it */
 static SqlDyn *g_sqldyn; static int g_nsqldyn;
@@ -16309,6 +16309,20 @@ static int sql_struct_items(Sym *g, Sym **out, int max)
     return n;
 }
 
+/* DB2's VARCHAR host variable: a group of exactly two level-49 items, an
+ * integer (the length) and alphanumeric text.  One host variable, not a
+ * structure: *len and *text its items. */
+static int sql_varchar(Sym *g, Sym **len, Sym **text)
+{
+    Sym *items[3];
+    if (sql_struct_items(g, items, 3) != 2) return 0;
+    if (items[0]->level != 49 || items[1]->level != 49) return 0;
+    if (items[0]->pi.category != PIC_NUMERIC || items[0]->pi.scale) return 0;
+    if (items[1]->pi.category != PIC_ALPHANUMERIC) return 0;
+    *len = items[0]; *text = items[1];
+    return 1;
+}
+
 /* the text with each host reference replaced by ?, the references in
  * order; *nh counts them */
 static char *sql_params(const char *text, SqlHost **hs, int *nh, int line)
@@ -16326,6 +16340,15 @@ static char *sql_params(const char *text, SqlHost **hs, int *nh, int line)
             p = sql_host(p + 1, &h, line);
             Sym *g = sql_sym_quiet(h.name, h.qual);
             Sym *items[256]; int ni = 0;
+            Sym *vlen, *vtext;
+            if (g && g->is_group && sql_varchar(g, &vlen, &vtext)) {
+                /* a VARCHAR: one ?, its text and its length */
+                if (*nh == cap) { cap = cap ? cap * 2 : 8; *hs = xrealloc(*hs, (size_t)cap * sizeof **hs); }
+                h.sym = vtext; h.vclen = vlen;
+                (*hs)[(*nh)++] = h;
+                out[o++] = '?';
+                continue;
+            }
             if (g && g->is_group && !h.ind[0]) ni = sql_struct_items(g, items, 256);
             if (ni) {
                 /* a host structure: one ? per item */
@@ -16391,6 +16414,14 @@ static void sql_emit_hosts(const SqlHost *hs, int n, const char *fn)
             ri.sym = sql_sym(hs[i].ind, hs[i].indqual, hs[i].line); ri.line = hs[i].line;
             if (ri.sym->pi.category != PIC_NUMERIC) die_at(hs[i].line, "EXEC SQL: the indicator ':%s' must be a numeric item", hs[i].ind);
             a[2] = arg_ref(&ri); a[3] = arg_desc(sym_desc(ri.sym));
+        }
+        if (hs[i].vclen) {
+            /* a VARCHAR: its length item too */
+            Ref rl; memset(&rl, 0, sizeof rl); rl.sym = hs[i].vclen; rl.line = hs[i].line;
+            Arg a6[6] = { a[0], a[1], a[2], a[3], arg_ref(&rl), arg_desc(sym_desc(rl.sym)) };
+            emit_args(a6, 6);
+            emit_call(!strcmp(fn, "cob_sql_in") ? "cob_sql_in_vc" : "cob_sql_out_vc");
+            continue;
         }
         emit_args(a, 4);
         emit_call(fn);
