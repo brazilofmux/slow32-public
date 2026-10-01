@@ -23,7 +23,7 @@ W="$(mktemp -d "$CDIR/out/gen.XXXXXX")"
 last=$((FIRST + COUNT - 1))
 
 for s in $(seq "$FIRST" "$last"); do
-    python3 "$HERE/gen-$GEN.py" "$s" "$NSTMT" > "$W/g$s.cbl"
+    python3 "$HERE/gen-$GEN.py" "$s" "$NSTMT" > "$W/g$s.cbl" 2> "$W/g$s.ref"
     if "$CDIR/compile.sh" -free -std=85 "$W/g$s.cbl" -o "$W/g$s.s32x" > "$W/g$s.cclog" 2>&1; then
         "$EMU" "$W/g$s.s32x" 2>/dev/null | sed '/^Starting execution at PC/,$d' > "$W/g$s.out" || true
     else
@@ -54,12 +54,22 @@ done"
 #   replace is still a disagreement;
 # - a relation against a negative literal with more integer digits than
 #   its subject, labelled neglit by gen-cond.py: the oracle reads the
-#   literal unsigned (X3.23-1985 VI-55; tests/free/negcmp).
-classify() {  # classify ours oracle: prints "<real> <known>"
-    python3 - "$1" "$2" <<'PY'
-import sys
+#   literal unsigned (X3.23-1985 VI-55; tests/free/negcmp);
+# - INSPECT, where a generator writes the expected line from the text
+#   (gen-string.py, with inspect85.py) to g<seed>.ref: that reference
+#   decides, and ours must equal it whatever the oracle says.
+classify() {  # classify ours oracle [reference]: prints "<real> <known>"
+    python3 - "$1" "$2" "${3:-}" <<'PY'
+import sys, os
 a = open(sys.argv[1]).read().splitlines()
 b = open(sys.argv[2]).read().splitlines()
+# a reference written out from the text (tests/gen/inspect85.py) decides
+# the lines it covers: ours must be it -- even where the oracle agrees
+# with us -- and an oracle that differs from it is counted apart
+ref = {}
+if sys.argv[3] and os.path.exists(sys.argv[3]):
+    for l in open(sys.argv[3]).read().splitlines():
+        ref[l.split(" ", 1)[0]] = l
 real = known = 0
 if len(a) != len(b):
     print(max(len(a), len(b)), 0); sys.exit()
@@ -110,6 +120,13 @@ def neglit_known(x, y):
     return fx[1] == fx[2][-1] and fy[1] != fx[1]
 
 for x, y in zip(a, b):
+    lab = x.split(" ", 1)[0]
+    if lab in ref:
+        if x != ref[lab]:
+            real += 1
+        elif y != x:
+            known += 1
+        continue
     if x == y:
         continue
     f = x.split()
@@ -126,7 +143,7 @@ PY
 }
 bad=0
 for s in $(seq "$FIRST" "$last"); do
-    read -r real known < <(classify "$W/g$s.out" "$W/g$s.orcout")
+    read -r real known < <(classify "$W/g$s.out" "$W/g$s.orcout" "$W/g$s.ref")
     lines=$(wc -l < "$W/g$s.out" | tr -d ' ')
     if [ "$real" = 0 ]; then
         echo "seed $s: agree ($lines lines${known:+; $known known oracle defects})" | sed 's/; 0 known oracle defects//'

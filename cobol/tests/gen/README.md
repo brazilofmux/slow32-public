@@ -21,6 +21,15 @@ alphanumeric ones. It also covers class and sign conditions, and combined
 conditions with AND, OR and NOT. Abbreviated combined relations include
 the NOT-before-an-operator forms. Run it with `GEN=cond`.
 
+`gen-string.py SEED` writes STRING (several sources, DELIMITED BY, a
+POINTER sometimes out of range, OVERFLOW), UNSTRING (ALL and OR
+delimiters, DELIMITER IN, COUNT IN, POINTER, TALLYING, OVERFLOW) and
+INSPECT (TALLYING, REPLACING, both, CONVERTING, BEFORE and AFTER). Run it
+with `GEN=string`. For each INSPECT it also writes the expected line,
+computed by `inspect85.py`, to `g<seed>.ref`. That file is the 85 INSPECT
+rules (VI-96 to VI-99) written out independently of either compiler, and
+it decides those lines: ours must equal it, even where the oracle agrees.
+
 `run-gen.sh FIRST COUNT [STATEMENTS]` builds and runs the seeds here and
 under the harness's GnuCOBOL images (`-std=cobol85`, one container for
 the batch), then compares them line by line. A batch of 400 programs takes
@@ -29,6 +38,7 @@ seconds.
     tests/gen/run-gen.sh 1 400 70
     GEN=edit tests/gen/run-gen.sh 1 400 60
     GEN=cond tests/gen/run-gen.sh 1 400 60
+    GEN=string tests/gen/run-gen.sh 1 400 40
 
 The programs stay where X3.23-1985 defines the result exactly, so a
 disagreement is a finding, not two valid choices:
@@ -93,4 +103,12 @@ the oracle's insertion readings above.
   positive.
 
 400 condition programs, about 32,000 conditions, agree after these.
+- **The oracle applies several INSPECT phrases one after another over the
+  whole item.** The 85 comparison cycle tries them position by position,
+  in the order written, with the first match winning (VI-96, rule 6). Ours
+  follows the rule. Test: free/inspord. Generated INSPECTs are checked
+  against inspect85.py.
+- **The oracle refuses an ALL or LEADING group after a CHARACTERS phrase
+  in one TALLYING or REPLACING list,** so the generator writes CHARACTERS
+  last.
 
