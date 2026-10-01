@@ -148,19 +148,33 @@ static Sym *ftemp_new(const FDesc *d, int line)
     return &g_sym[idx];
 }
 
-typedef struct { int sig, nargs, line, emitted; Opnd arg[8]; int byref[8]; Sym *ctmp[8]; Sym *res; } UCall;
+typedef struct UCall_ { int sig, nargs, line; Opnd arg[8]; int byref[8]; Sym *ctmp[8]; Sym *res; } UCall;
 static UCall *g_ucall; static int g_ucap;
+static void ucall_bind(UCall *u, const char *name);
+static void ucall_emit(const UCall *u);
+/* does making this operand's code need a user function's call first? */
+static int opnd_has_ucall(const Opnd *o)
+{
+    if (o->uc) return 1;
+    if (o->kind != O_FUNC) return 0;
+    if ((o->farg && opnd_has_ucall(o->farg)) || (o->farg2 && opnd_has_ucall(o->farg2))) return 1;
+    for (int k = 0; k < o->nfargs; k++) if (opnd_has_ucall(o->fargs[k])) return 1;
+    return 0;
+}
 
 static Ref ftemp_ref(Sym *t, int line)
 {
-    Ref r; memset(&r, 0, sizeof r); r.sym = t; r.line = line; r.rm_l0 = -1;
+    Ref r; memset(&r, 0, sizeof r); r.sym = t; r.line = line; r.rm_lx = NULL;
     return r;
 }
 
 /* the call: arguments by reference or into their content copies, the
  * result's address last; the function fills the result */
-static void emit_ucall(UCall *u)
+static void emit_ucall(const UCall *u0)
 {
+    /* its own copy: an argument's expression may call a function too, and
+     * recording that call grows g_ucall, which u may point into */
+    UCall c = *u0, *u = &c;
     FnSig *f = &g_fnsig[u->sig];
     Ref refs[9]; Arg a[9];
     for (int k = 0; k < u->nargs; k++) {
@@ -168,7 +182,7 @@ static void emit_ucall(UCall *u)
         refs[k] = ftemp_ref(u->ctmp[k], u->line);
         if (u->arg[k].kind == O_EXPR) {
             int rd[1] = { 0 };
-            emit_expr_tokens(u->arg[k].e_start, u->arg[k].e_end);
+            emit_expr(u->arg[k].ex);
             emit_store_receivers(&refs[k], rd, 1, 0, 1, 0, 0, -1, 0);
         } else emit_move(&u->arg[k], &refs[k]);
     }
@@ -187,7 +201,6 @@ static void emit_ucall(UCall *u)
     for (int k = 0; k <= u->nargs; k++) a[k] = arg_ref(&refs[k]);
     emit_args(a, u->nargs + 1);
     emit_call(f->link);
-    u->emitted = 1;
 }
 
 static void emit_ucalls(int from, int to)
@@ -218,10 +231,25 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
         }
         advance();
     }
-    FnSig *f = &g_fnsig[sig];
-    if (u.nargs != f->nparam) die_at(line, "the function '%s' takes %d argument%s, not %d", name, f->nparam, f->nparam == 1 ? "" : "s", u.nargs);
-    for (int k = 0; k < u.nargs; k++) {
-        Opnd *a = &u.arg[k];
+    ucall_bind(&u, name);
+    memset(o, 0, sizeof *o);
+    o->kind = O_REF; o->ref = ftemp_ref(u.res, line); o->line = line;
+    if (g_noemit) {                             /* a scan: no call, but it is kept, for emit_expr */
+        o->uc = xmalloc(sizeof *o->uc); *o->uc = u;
+        return;
+    }
+    ucall_emit(&u);
+}
+
+/* the arguments' passing, and the result's record: BY CONTENT copies and
+ * the result made new, as each parse of the call makes them */
+static void ucall_bind(UCall *u, const char *name)
+{
+    int line = u->line;
+    FnSig *f = &g_fnsig[u->sig];
+    if (u->nargs != f->nparam) die_at(line, "the function '%s' takes %d argument%s, not %d", name, f->nparam, f->nparam == 1 ? "" : "s", u->nargs);
+    for (int k = 0; k < u->nargs; k++) {
+        Opnd *a = &u->arg[k];
         if (f->param[k].size == -1) {
             /* an ANY LENGTH parameter (2023 13.18.2): an item of its class
              * by reference, whatever its length; a literal or a function
@@ -230,13 +258,13 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
             if (opnd_is_national(a) != pnat || a->kind == O_NUM || a->kind == O_EXPR ||
                 (a->kind == O_REF && (is_numeric_sym(a->ref.sym) || (a->ref.sym->is_group && pnat))) || (a->kind == O_FUNC && a->fvar))
                 die_at(a->line, "argument %d of '%s' is for an ANY LENGTH %s parameter", k + 1, name, pnat ? "national" : "alphanumeric");
-            if (a->kind == O_REF && !a->ref.sym->is_ftemp) { u.byref[k] = 1; continue; }
+            if (a->kind == O_REF && !a->ref.sym->is_ftemp) { u->byref[k] = 1; continue; }
             FDesc cd = f->param[k];
             int len = a->kind == O_STR ? a->tok->len : opnd_size(a);
             if (len < 1) die_at(a->line, "argument %d of '%s': a length known only at run time is not implemented for an ANY LENGTH parameter", k + 1, name);
             cd.size = len; snprintf(cd.pic, sizeof cd.pic, "%c(%d)", pnat ? 'n' : 'x', pnat ? len / 2 : len);
-            u.byref[k] = 0;
-            u.ctmp[k] = ftemp_new(&cd, line);
+            u->byref[k] = 0;
+            u->ctmp[k] = ftemp_new(&cd, line);
             continue;
         }
         /* 8.4.3.2.4 rule 5: an identifier that could receive goes BY REFERENCE,
@@ -249,20 +277,53 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
             if (!fdesc_match(&ad, pd))
                 die_at(a->line, "argument %d of '%s' must be described as the parameter is (PICTURE %s, %d bytes; "
                                 "2023 14.8.2.3), or be a literal or expression", k + 1, name, pd->group ? "group" : pd->pic, pd->size);
-            u.byref[k] = 1;
+            u->byref[k] = 1;
         } else {
-            u.byref[k] = 0;
-            u.ctmp[k] = ftemp_new(&f->param[k], line);
+            u->byref[k] = 0;
+            u->ctmp[k] = ftemp_new(&f->param[k], line);
         }
     }
-    u.res = ftemp_new(&f->ret, line);
-    memset(o, 0, sizeof *o);
-    o->kind = O_REF; o->ref = ftemp_ref(u.res, line); o->line = line;
-    if (g_noemit) return;                       /* a scan: the re-parse makes the call */
+    u->res = ftemp_new(&f->ret, line);
+}
+
+/* the call recorded, and made now -- or, inside a condition, where the
+ * condition is evaluated */
+static void ucall_emit(const UCall *u)
+{
     if (g_nucall == g_ucap) { g_ucap = g_ucap ? 2 * g_ucap : 64; g_ucall = realloc(g_ucall, (size_t)g_ucap * sizeof *g_ucall); }
-    g_ucall[g_nucall] = u;
-    if (g_cond_depth > 0) { g_nucall++; return; }   /* made where the condition is evaluated */
+    g_ucall[g_nucall] = *u;
+    if (g_cond_depth > 0) { g_nucall++; return; }
     emit_ucall(&g_ucall[g_nucall]);
+}
+
+/* an operand an expression's scan parsed, about to be emitted: the user
+ * function calls in it made, as a parse that emits would have made them
+ * -- the arguments' own first, then the copies and result anew, then the
+ * call.  o is the emitter's copy; the tree keeps the scan's. */
+static void ucall_make(Opnd *o)
+{
+    if (o->kind == O_FUNC) {
+        if (!opnd_has_ucall(o)) return;
+        if (o->farg) { Opnd *c = xmalloc(sizeof *c); *c = *o->farg; ucall_make(c); o->farg = c; }
+        if (o->farg2) { Opnd *c = xmalloc(sizeof *c); *c = *o->farg2; ucall_make(c); o->farg2 = c; }
+        if (o->nfargs) {
+            Opnd **v = xmalloc((size_t)o->nfargs * sizeof *v);
+            for (int k = 0; k < o->nfargs; k++) {
+                v[k] = o->fargs[k];
+                if (opnd_has_ucall(v[k])) { Opnd *c = xmalloc(sizeof *c); *c = *v[k]; ucall_make(c); v[k] = c; }
+            }
+            o->fargs = v;
+        }
+        return;
+    }
+    if (!o->uc) return;
+    UCall u = *o->uc;
+    for (int k = 0; k < u.nargs; k++) ucall_make(&u.arg[k]);
+    ucall_bind(&u, g_fnsig[u.sig].name);
+    *o = (Opnd){ 0 };
+    o->kind = O_REF; o->ref = ftemp_ref(u.res, u.line); o->line = u.line;
+    if (g_noemit) { o->uc = xmalloc(sizeof *o->uc); *o->uc = u; return; }   /* still a scan */
+    ucall_emit(&u);
 }
 
 
@@ -349,9 +410,9 @@ static void emit_fn_value(Opnd *f)
          * No length written is -1, so a computed 0 is out of range (E2). */
         int base = g_slot_base; g_slot_base += 3;
         if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
-        emit_expr_pos(f->fs0, f->fs1);
+        emit_expr_pos(f->fsx);
         emit("\tstw sp+%d, r1", SLOT(base + 1));
-        if (f->fl0 >= 0) { emit_expr_pos(f->fl0, f->fl1); } else emit_li("r1", -1);
+        if (f->flx) { emit_expr_pos(f->flx); } else emit_li("r1", -1);
         emit("\tstw sp+%d, r1", SLOT(base + 2));
         f->fsize = f->ffull; emit_fn_value_raw(f); f->fsize = part;
         emit("\tstw sp+%d, r1", SLOT(base));
@@ -870,7 +931,7 @@ static int opnd_display_int(Opnd *o)
  * GitHub #29. */
 /* NOTHING HERE MAY TOUCH r11.  r11 is the subscript accumulator, and
  * emit_ref_addr holds a partial sum in it across the reference-modification
- * start expression -- which goes through emit_expr_tokens, emit_push and so
+ * start expression -- which goes through emit_expr, emit_push and so
  * reaches this function.  The first version of this loop kept the constant
  * ten in r11 and silently miscompiled `e(i)(d - 1:2)`: the accumulator
  * became 10, so the subscript resolved to the wrong element.  It read

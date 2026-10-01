@@ -1,0 +1,13 @@
+subscript: 033
+refmod start: def
+refmod length: bcde
+nested: +00000
+nested plus subscript: +00044
+move: +00000
+display: +00000
+intrinsic argument: +00003
+condition: expression
+until: +0024
+when: other
+function refmod: ABC
+move refmod: abcdefghidefgnopqrst

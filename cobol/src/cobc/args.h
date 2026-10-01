@@ -75,26 +75,26 @@ static void emit_rm_start_len(const Ref *r, int slot)
         return;
     }
     if (r->rm_len) emit_li("r1", r->rm_len);
-    else if (r->rm_l0 >= 0) { emit_expr_pos(r->rm_l0, r->rm_l1); }
+    else if (r->rm_lx) { emit_expr_pos(r->rm_lx); }
     else if (r->bitsub) {
         /* a bit array element's part to the element's end: its bits past the start */
         if (r->bitu_start) emit_li("r1", r->sym->bits - r->bitu_start + 1);
-        else { emit_expr_pos(r->rm_s0, r->rm_s1); emit_li("r2", r->sym->bits + 1); emit("\tsub r1, r2, r1"); }
+        else { emit_expr_pos(r->rm_sx); emit_li("r2", r->sym->bits + 1); emit("\tsub r1, r2, r1"); }
     }
     else emit_li("r1", 0);
     emit("\tstw sp+%d, r1", SLOT(slot));
     if (r->bitsub) {
         /* a bit array's element: the array's bit (i - 1) * bits + start */
-        if (!r->rm_start) { emit_bitelem_start(r, r->rm_l0 >= 0 ? -2 : r->rm_len ? (long)r->rm_len : -1, slot, 0); return; }
+        if (!r->rm_start) { emit_bitelem_start(r, r->rm_lx ? -2 : r->rm_len ? (long)r->rm_len : -1, slot, 0); return; }
         emit_li("r1", r->rm_start);
-        if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) {
+        if (r->rm_lx && ec_on_name("EC-BOUND-REF-MOD")) {
             emit_li("r1", r->bitu_start); emit_refmod_check(r, -2, slot); emit_li("r1", r->rm_start);
         }
         return;
     }
     if (r->rm_start) emit_li("r1", r->rm_start);
-    else { emit_expr_pos(r->rm_s0, r->rm_s1); }
-    if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, -2, slot);   /* a computed length */
+    else { emit_expr_pos(r->rm_sx); }
+    if (r->rm_lx && ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, -2, slot);   /* a computed length */
 }
 
 static void emit_args(const Arg *a, int n)

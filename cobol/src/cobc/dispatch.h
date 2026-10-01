@@ -48,9 +48,9 @@ static void parse_allocate(void)
             die_at(based.line, "ALLOCATE '%s': it is not a BASED entry (2002 14.8.3 rule 1)", based.sym->name);
         fixed = based.sym->size;                 /* an ODO table at its maximum (GR 3), as laid out */
     } else {
-        int e0 = g_tp; g_noemit++; parse_expr(); g_noemit--; int e1 = g_tp;
+        g_noemit++; Expr *e = parse_expr(); g_noemit--;
         expect_word("characters");
-        emit_expr_tokens(e0, e1); emit_call("cob_pop_alloc_size");
+        emit_expr(e); emit_call("cob_pop_alloc_size");
     }
     int init = accept_word("initialized");
     Ref ret; int has_ret = 0;

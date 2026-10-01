@@ -367,7 +367,7 @@ static void emit_move(Opnd *src, Ref *dst)
             for (Sym *k = tbl; k != d; k = &g_sym[k->parent])
                 if (k->sibling >= 0)
                     die_at(dst->line, "'%s': items follow its OCCURS DEPENDING ON table (variable-location items are not implemented)", d->name);
-            dst->rm = 1; dst->rm_start = 1; dst->rm_len = 0; dst->rm_l0 = -1;
+            dst->rm = 1; dst->rm_start = 1; dst->rm_len = 0; dst->rm_lx = NULL;
             dst->rm_odo = 1; dst->odo_dep = tbl->odo_dep_sym;
             dst->odo_base = d->size - tbl->occurs * tbl->size; dst->odo_elem = tbl->size;
         } else {
@@ -799,6 +799,18 @@ static int rec_base(const Sym *s)
  * to a compiler-made record first; 2: an OCCURS DEPENDING ON group,
  * whose DEPENDING ON item is copied instead (its length is a run-time
  * one, and the bytes stay where they are) */
+/* a reference modifier's length naming an item a receiver ahead of the
+ * last shares storage with (move_needs_temp) */
+typedef struct { const Ref *dst; int n; int line; } MvShare;
+static int mv_shares(const Sym *s, const void *cx)
+{
+    const MvShare *m = cx;
+    for (int i = 0; i < m->n - 1; i++)
+        if (rec_base(s) == rec_base(m->dst[i].sym))
+            die_at(m->line, "MOVE: the sender's reference modification uses '%s', which a receiver before the last changes; "
+                   "identifying the sender once (general rule 1) with a computed length is not implemented", s->name);
+    return 0;
+}
 static int move_needs_temp(const Opnd *src, const Ref *dst, int n)
 {
     if (n < 2 || src->kind != O_REF) return 0;
@@ -816,17 +828,11 @@ static int move_needs_temp(const Opnd *src, const Ref *dst, int n)
     /* a length that is one would need a snapshot of run-time length: not
      * done, so refused when a receiver ahead of the last shares storage
      * with an item the expressions name (docs/conformance/move.md) */
-    if (r->rm && !r->rm_len && r->rm_l0 >= 0)
-        for (int t = r->rm_s0; t < r->rm_l1; t++) {
-            if (g_tok[t].kind != T_WORD || (t >= r->rm_s1 && t < r->rm_l0)) continue;
-            for (int k = g_sym_base; k < g_nsym; k++) {
-                if (strcmp(g_sym[k].name, g_tok[t].s)) continue;
-                for (int i = 0; i < n - 1; i++)
-                    if (rec_base(&g_sym[k]) == rec_base(dst[i].sym))
-                        die_at(src->line, "MOVE: the sender's reference modification uses '%s', which a receiver before the last changes; "
-                               "identifying the sender once (general rule 1) with a computed length is not implemented", g_tok[t].s);
-            }
-        }
+    if (r->rm && !r->rm_len && r->rm_lx) {
+        MvShare m = { dst, n, src->line };
+        if (r->rm_sx) expr_names(r->rm_sx, mv_shares, &m);
+        expr_names(r->rm_lx, mv_shares, &m);
+    }
     return 0;
 }
 
@@ -872,7 +878,7 @@ static void parse_move(void)
         FDesc fd; fdesc_of(&fd, src.ref.odo_dep);
         Sym *t = ftemp_new(&fd, src.line);
         Ref tr = ftemp_ref(t, src.line), dr; memset(&dr, 0, sizeof dr);
-        dr.sym = src.ref.odo_dep; dr.line = src.line; dr.rm_l0 = -1;
+        dr.sym = src.ref.odo_dep; dr.line = src.line; dr.rm_lx = NULL;
         Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = dr; o.line = src.line;
         emit_move(&o, &tr);
         src.ref.odo_dep = t;

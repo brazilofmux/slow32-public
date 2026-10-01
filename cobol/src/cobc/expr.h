@@ -3,8 +3,6 @@
 
 /* ---- arithmetic expressions: COMPUTE and condition operands ----------- */
 
-static void parse_expr(void);
-
 static int at_arith_op(void)
 {
     return at_op("+") || at_op("-") || at_op("*") || at_op("/") || at_op("**");
@@ -44,55 +42,94 @@ static void xd_binop(char op)
     g_xd_int[a] = in; g_xd_frac[a] = fr;
 }
 
-static void parse_primary(void)
+/* the trees' nodes: never freed, the compiler being a run that ends */
+static void *ex_alloc(size_t n)
+{
+    static char *p; static size_t left;
+    n = (n + 15) & ~(size_t)15;
+    if (n > left) { left = n > 65536 ? n : 65536; p = xmalloc(left); }
+    void *q = p; p += n; left -= n;
+    memset(q, 0, n);
+    return q;
+}
+static Expr *ex_node(char op, Expr *l, Expr *r)
+{
+    Expr *e = ex_alloc(sizeof *e);
+    e->op = op; e->l = l; e->r = r;
+    return e;
+}
+
+/* parsing emits as it goes (a COMPUTE's final pass), or nothing under
+ * g_noemit (a scan); either way it returns the tree */
+static Expr *parse_primary(void)
 {
     Tok *t = cur();
     if (t->kind == T_LP) {
-        advance(); parse_expr();
+        advance(); Expr *e = parse_expr();
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' in the expression");
         advance();
-        return;
+        return e;
     }
-    if (at_op("+")) { advance(); parse_primary(); return; }
-    if (at_op("-")) { advance(); parse_primary(); emit_call("cob_nneg"); return; }
-    Opnd o; parse_operand(&o);
-    check_numeric_opnd(&o);
-    { int in = 0, fr = 0; opnd_int_frac(&o, &in, &fr); xd_push(in, fr); }
-    emit_push(&o);
+    if (at_op("+")) { advance(); return parse_primary(); }
+    if (at_op("-")) { advance(); Expr *e = parse_primary(); emit_call("cob_nneg"); return ex_node('n', e, NULL); }
+    Expr *e = ex_node(0, NULL, NULL);
+    e->o = ex_alloc(sizeof *e->o);
+    Opnd *o = e->o; parse_operand(o);
+    check_numeric_opnd(o);
+    { int in = 0, fr = 0; opnd_int_frac(o, &in, &fr); xd_push(in, fr); }
+    emit_push(o);
+    return e;
 }
 
 /* consecutive exponentiations left to right, as every level: 2 ** 3 ** 2
  * is 64 (X3.23-1985 6.2.3 (2); 2023 8.8.1.2 rule 3; MF's reference says
  * the same; GnuCOBOL takes it right to left, 512) */
-static void parse_power(void)
+static Expr *parse_power(void)
 {
-    parse_primary();
-    while (at_op("**")) { advance(); parse_primary(); xd_binop('^'); emit_call("cob_npow"); }
+    Expr *e = parse_primary();
+    while (at_op("**")) { advance(); Expr *r = parse_primary(); xd_binop('^'); emit_call("cob_npow"); e = ex_node('^', e, r); }
+    return e;
 }
 
-static void parse_term(void)
+static Expr *parse_term(void)
 {
-    parse_power();
+    Expr *e = parse_power();
     while (at_op("*") || at_op("/")) {
         int mul = at_op("*"); advance();
-        parse_power();
+        Expr *r = parse_power();
         xd_binop(mul ? '*' : '/');
         emit_call(mul ? "cob_nmul" : "cob_ndiv");
+        e = ex_node(mul ? '*' : '/', e, r);
     }
+    return e;
 }
 
 static int g_xd_depth;
-static void parse_expr(void)
+static Expr *parse_expr(void)
 {
     if (g_xd_depth++ == 0) g_xd_sp = 0;         /* a whole expression: the digit stack starts empty */
-    parse_term();
+    Expr *e = parse_term();
     while (at_op("+") || at_op("-")) {
         int add = at_op("+"); advance();
-        parse_term();
+        Expr *r = parse_term();
         xd_binop('+');
         emit_call(add ? "cob_nadd" : "cob_nsub");
+        e = ex_node(add ? '+' : '-', e, r);
     }
     g_xd_depth--;
+    return e;
+}
+
+/* an expression read now and emitted later: its tree, and whether it
+ * holds an operand past 18 digits or a float (what the wide stack is
+ * for) -- known for itself, and seen by what it is part of as before */
+static Expr *scan_expr(void)
+{
+    int sw = g_saw_wide, sf = g_saw_float; g_saw_wide = g_saw_float = 0;
+    g_noemit++; Expr *e = parse_expr(); g_noemit--;
+    e->wide = g_saw_wide; e->flt = g_saw_float;
+    g_saw_wide |= sw; g_saw_float |= sf;
+    return e;
 }
 
 /* an expression operand in a condition: scanned now, emitted later */
@@ -100,29 +137,80 @@ static Opnd expr_opnd(void)
 {
     Opnd o; memset(&o, 0, sizeof o);
     o.kind = O_EXPR; o.line = cur()->line; o.e_start = g_tp;
-    int saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
-    g_noemit++; parse_expr(); g_noemit--;
-    o.wide = g_saw_wide; g_saw_wide |= saw;
-    o.flt = g_saw_float; g_saw_float |= sawf;
+    o.ex = scan_expr();
+    o.wide = o.ex->wide; o.flt = o.ex->flt;
     o.e_end = g_tp;
     return o;
 }
 
-static void emit_expr_tokens(int s0, int s1)
+/* the code parse_expr would have emitted for e, side effects and all:
+ * the digit stack, the width it notes, a user function's call */
+static void ucall_make(Opnd *o);
+static void emit_expr_node(Expr *e)
 {
-    int save = g_tp;
-    g_tp = s0;
+    if (!e->op) {
+        Opnd o = *e->o;
+        ucall_make(&o);
+        { int in = 0, fr = 0; opnd_int_frac(&o, &in, &fr); xd_push(in, fr); }
+        emit_push(&o);
+        return;
+    }
+    if (e->op == 'n') { emit_expr_node(e->l); emit_call("cob_nneg"); return; }
+    emit_expr_node(e->l);
+    emit_expr_node(e->r);
+    switch (e->op) {
+    case '^': xd_binop('^'); emit_call("cob_npow"); break;
+    case '*': xd_binop('*'); emit_call("cob_nmul"); break;
+    case '/': xd_binop('/'); emit_call("cob_ndiv"); break;
+    case '+': xd_binop('+'); emit_call("cob_nadd"); break;
+    default:  xd_binop('+'); emit_call("cob_nsub"); break;
+    }
+}
+static void emit_expr(Expr *e)
+{
+    if (g_xd_depth++ == 0) g_xd_sp = 0;
     g_incompat_push++;          /* its operands are sending items (14.6.13.2 rule 2) */
-    parse_expr();
+    emit_expr_node(e);
     g_incompat_push--;
-    if (g_tp != s1) die_at(g_tok[s0].line, "internal: expression re-parse drifted");
-    g_tp = save;
+    g_xd_depth--;
+}
+
+/* the data items an expression names, its operands' subscripts and
+ * reference modifiers and function arguments included: f on each, until
+ * it returns nonzero */
+static int sym_is(const Sym *s, const void *cx) { return s == cx; }
+static int ref_names(const Ref *r, SymVisit f, const void *cx)
+{
+    if (!r->sym) return 0;
+    if (f(r->sym, cx)) return 1;
+    for (int k = 0; k < r->nsub; k++) {
+        if (r->sub[k].sym == &g_subx) { if (expr_names(r->sub[k].x, f, cx)) return 1; }
+        else if (r->sub[k].sym && f(r->sub[k].sym, cx)) return 1;
+    }
+    return (r->rm_sx && expr_names(r->rm_sx, f, cx)) || (r->rm_lx && expr_names(r->rm_lx, f, cx));
+}
+static int opnd_names(const Opnd *o, SymVisit f, const void *cx)
+{
+    switch (o->kind) {
+    case O_REF: case O_ADDR: return ref_names(&o->ref, f, cx);
+    case O_EXPR: return expr_names(o->ex, f, cx);
+    case O_FUNC:
+        if ((o->farg && opnd_names(o->farg, f, cx)) || (o->farg2 && opnd_names(o->farg2, f, cx))) return 1;
+        for (int k = 0; k < o->nfargs; k++) if (opnd_names(o->fargs[k], f, cx)) return 1;
+        return (o->fsx && expr_names(o->fsx, f, cx)) || (o->flx && expr_names(o->flx, f, cx));
+    default: return 0;
+    }
+}
+static int expr_names(const Expr *e, SymVisit f, const void *cx)
+{
+    if (!e->op) return opnd_names(e->o, f, cx);
+    return expr_names(e->l, f, cx) || (e->r && expr_names(e->r, f, cx));
 }
 
 static void emit_push_opnd(Opnd *o)
 {
     if (o->kind != O_EXPR) { emit_push(o); return; }
-    emit_expr_tokens(o->e_start, o->e_end);
+    emit_expr(o->ex);
 }
 
 /* does the parenthesis at the cursor open a condition or an expression? */

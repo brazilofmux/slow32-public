@@ -3933,7 +3933,7 @@ PERFORM TIMES and VARYING FROM/BY, GO TO DEPENDING, function
 arguments, INITIALIZE REPLACING ... BY, CALL BY VALUE and STOP RUN n.
 
 Fixed where the value is read, not per statement where that is shared:
-emit_expr_tokens (every deferred expression: reference modification,
+emit_expr_tokens, now emit_expr (every deferred expression: reference modification,
 function arguments, expression operands) and emit_fn_value_raw (a
 function's pushed arguments) test each operand as it is pushed; a
 subscript item is tested in emit_ref_addr before it is loaded (the
@@ -4802,3 +4802,41 @@ field as PICTURE with VALUE (padded, or cut with the always-on warning),
 and refused without a PICTURE (rule 7).  A numeric literal is refused as
 not implemented.  Tests free/scrpicval, bad/screen-from-lit-nopic.
 
+
+### 121. The front-end pass (2026-10-01, in progress)
+
+docs/plans/frontend-pass.md: parse a construct into a tree first, emit
+from the tree, so the order of the code is the emitter's choice and not
+the order the tokens were read in.  Each step is checked by
+tests/asm-snapshot.sh (1477 programs) diffing empty against the step
+before, beside the usual gates.
+
+First, the compiler source was split into src/cobc/*.h, one
+translation unit, the binary byte-identical (6bf79791).
+
+Step 1: **expression trees for the stored token ranges.**  parse_expr
+returns an Expr (a leaf Opnd, or an operator over subtrees) whether or
+not it emits; expression subscripts, computed reference-modifier start
+and length (of an item or of a function), O_EXPR operands and ALLOCATE's
+size keep the tree, and emit_expr walks it where emit_expr_tokens
+re-parsed the tokens.  emit_expr_pos_push read each expression twice
+more -- once to learn whether it needed the wide stack, once to emit --
+and now reads the width the scan recorded.  move_needs_temp and
+sa_uses_index looked for data-names among the tokens; they walk the
+resolved operands now (expr_names).  The snapshot diffs empty: every
+program, asm and diagnostics, byte for byte.
+
+A user-defined function met while scanning ahead made no call, and the
+re-parse made it; the scan's operand now keeps the call (Opnd.uc), and
+ucall_make makes it when the leaf is emitted -- the copies and result
+made anew, as each parse made them.  That found a defect older than the
+pass: **a function call inside another call's expression argument**,
+twice(twice(a) + 1), gave 0.  Recording the inner call wrote it into
+the g_ucall slot the outer call was being made from, so the outer call
+passed the inner's arguments; emit_ucall now works from its own copy.
+The same shape in a subscript (el(twice(twice(i) - 3) + 1)), a MOVE, a
+DISPLAY, FUNCTION MAX's argument and an UNTIL condition all went wrong
+with it.  The width scan's own pass had also laid out a result record
+per call that nothing used (11 in the probe program); those are gone.
+GnuCOBOL gives 0 for the nested call as well (docs/oracles.md).  Test
+2002/userfnnest (.oracle-expected).

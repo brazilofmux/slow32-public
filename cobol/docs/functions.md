@@ -37,7 +37,11 @@ BY and an AFTER's FROM are evaluated at every step and reset, not where
 they are parsed; a function there is refused until they are deferred
 the same way. A statement that scans ahead and keeps the scanned
 operands (ADD/SUBTRACT/MULTIPLY/DIVIDE with GIVING) re-parses them, and
-a compile-time guard stops any result from a scan reaching code.
+a compile-time guard stops any result from a scan reaching code. An
+expression kept for later -- a subscript, a reference modifier's start
+or length, an argument, a condition's operand -- keeps each call with
+its operand and makes it where the expression is evaluated, a call
+inside another's argument first (docs/plans/frontend-pass.md).
 
 **The external repository.** A caller needs the function's RETURNING
 description to build its result, and a separately compiled function is

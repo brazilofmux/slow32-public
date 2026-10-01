@@ -54,7 +54,7 @@ static void operand_odo_length(Opnd *o)
     for (Sym *k = tbl; k != g; k = &g_sym[k->parent])
         if (k->sibling >= 0)
             die_at(o->line, "'%s': items follow its OCCURS DEPENDING ON table (variable-location items are not implemented)", g->name);
-    o->ref.rm = 1; o->ref.rm_start = 1; o->ref.rm_len = 0; o->ref.rm_l0 = -1;
+    o->ref.rm = 1; o->ref.rm_start = 1; o->ref.rm_len = 0; o->ref.rm_lx = NULL;
     o->ref.rm_odo = 1; o->ref.odo_dep = tbl->odo_dep_sym;
     o->ref.odo_base = g->size - tbl->occurs * tbl->size; o->ref.odo_elem = tbl->size;
 }
@@ -85,11 +85,11 @@ static void function_refmod(Opnd *o)
     if (cur()->kind != T_NUM || peek(1)->kind != T_COLON || !(peek(2)->kind == T_RP || (peek(2)->kind == T_NUM && peek(3)->kind == T_RP))) {
         /* a computed start or length: evaluated after the function, the
          * part's place and length found at run time (cobol ISSUES-91) */
-        o->fs0 = g_tp; g_noemit++; parse_expr(); g_noemit--; o->fs1 = g_tp;
+        o->fsx = scan_expr();
         if (cur()->kind != T_COLON) die_at(cur()->line, "expected ':' in the reference modification");
         advance();
-        o->fl0 = -1; o->flen = 0;
-        if (cur()->kind != T_RP) { o->fl0 = g_tp; g_noemit++; parse_expr(); g_noemit--; o->fl1 = g_tp; }
+        o->flx = NULL; o->flen = 0;
+        if (cur()->kind != T_RP) o->flx = scan_expr();
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
         if (!o->ffull) o->ffull = o->fsize;
@@ -1017,24 +1017,20 @@ static void emit_pop_pos(void) { emit_call(ec_on_name("EC-BOUND-REF-MOD") ? "cob
  * in -- so the start is evaluated before that begins, and waits on the
  * numeric stack (a subscript's cob_load_int leaves the stack alone). */
 static int g_pos_was, g_pos_wasf;
-static void emit_expr_pos_push(int s0, int s1)
+static void emit_expr_pos_push(Expr *e)
 {
-    int save = g_tp, sw = g_saw_wide, sf = g_saw_float;
     g_pos_was = g_wide; g_pos_wasf = g_fstmt;
-    g_saw_wide = g_saw_float = 0;
-    g_tp = s0; g_noemit++; parse_expr(); g_noemit--; g_tp = save;
-    if (g_saw_wide || g_saw_float) { g_wide = 1; if (g_saw_float) g_fstmt = 1; }
-    g_saw_wide = sw; g_saw_float = sf;
-    emit_expr_tokens(s0, s1);
+    if (e->wide || e->flt) { g_wide = 1; if (e->flt) g_fstmt = 1; }
+    emit_expr(e);
 }
 static void emit_expr_pos_pop(void)
 {
     emit_pop_pos();
     g_wide = g_pos_was; g_fstmt = g_pos_wasf;
 }
-static void emit_expr_pos(int s0, int s1)
+static void emit_expr_pos(Expr *e)
 {
-    emit_expr_pos_push(s0, s1);
+    emit_expr_pos_push(e);
     emit_expr_pos_pop();
 }
 
@@ -1046,7 +1042,7 @@ static void emit_bitelem_start(const Ref *r, long chk, int slot, int pushed)
     int k = r->bitsub - 1;
     if (r->bitu_start) emit_li("r1", r->bitu_start);
     else {
-        if (pushed) emit_expr_pos_pop(); else emit_expr_pos(r->rm_s0, r->rm_s1);
+        if (pushed) emit_expr_pos_pop(); else emit_expr_pos(r->rm_sx);
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, chk, slot);
     }
     emit("	add r3, r1, r0"); emit("	srai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
@@ -1075,7 +1071,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     if (r->rm && r->rm_start) off += r->rm_bit ? (s->bitoff + (int)r->rm_start - 1) / 8 : ((int)r->rm_start - 1) * (r->rm_nat ? 2 : 1);
     /* a start expression first: its operands' addressing would clobber r11 */
     int rm_pushed = r->rm && !r->rm_start && !(r->bitsub && r->bitu_start);
-    if (rm_pushed) emit_expr_pos_push(r->rm_s0, r->rm_s1);
+    if (rm_pushed) emit_expr_pos_push(r->rm_sx);
     /* expression subscripts likewise, each evaluated to an integer and
      * left on the numeric stack -- last first, so they come off in order
      * -- above the start, which comes off after them */
@@ -1083,7 +1079,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     for (int i = r->nsub - 1; i >= 0; i--) {
         if (r->sub[i].sym != &g_subx) continue;
         int w = g_wide, f = g_fstmt, chk = ec_on_name("EC-BOUND-SUBSCRIPT");
-        emit_expr_pos_push(r->sub[i].x0, r->sub[i].x1);
+        emit_expr_pos_push(r->sub[i].x);
         emit_call(chk ? "cob_pop_pos" : "cob_pop_int");
         g_wide = w; g_fstmt = f;
         if (chk) {
@@ -1133,14 +1129,14 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     if (r->rm && !r->rm_start && r->bitsub) {
         /* a bit array's element at a computed subscript, or its part at a
          * computed start: the byte holding its first bit (cobol ISSUES-84) */
-        emit_bitelem_start(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0, rm_pushed);
+        emit_bitelem_start(r, r->rm_len ? (long)r->rm_len : r->rm_lx ? -3 : -1, 0, rm_pushed);
         emit("\taddi r1, r1, %d", s->bitoff - 1);
         emit("\tsrai r1, r1, 3");
         emit("\tadd r11, r11, r1");
     } else if (r->rm && !r->rm_start) {
         /* the start expression, pushed above: off the numeric stack as an int */
         emit_expr_pos_pop();
-        if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
+        if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_lx ? -3 : -1, 0);
         if (r->rm_bit) {
             /* bits: the byte holding bitoff + start - 1 */
             emit("\taddi r1, r1, %d", s->bitoff - 1);
@@ -1188,7 +1184,7 @@ static int part_desc(const Ref *r);
 static void sfield_part(SField *f, const Ref *r, int line)
 {
     if (r->rm_bit) die_at(line, "a bit item's part in a screen item is not implemented");
-    if (r->rm_l0 >= 0 || !r->rm_len) die_at(line, "a screen item's reference modification needs a literal length here");
+    if (r->rm_lx || !r->rm_len) die_at(line, "a screen item's reference modification needs a literal length here");
     f->idesc = 1 + part_desc(r);
 }
 

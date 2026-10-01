@@ -618,7 +618,7 @@ static void parse_initialize(void)
                 if (!cover[a]) { a++; continue; }
                 int b = a; while (b < t->size && cover[b]) b++;
                 Ref part = *r;
-                if (a) { part.rm = 1; part.rm_start = a + 1; part.rm_len = b - a; part.rm_l0 = -1; part.rm_nat = 0; }   /* bytes */
+                if (a) { part.rm = 1; part.rm_start = a + 1; part.rm_len = b - a; part.rm_lx = NULL; part.rm_nat = 0; }   /* bytes */
                 Arg args[3] = { arg_ref(&part), arg_label(lit_label(tmp.image + a, b - a)), arg_imm(b - a) };
                 emit_args(args, 3);
                 emit_call("memcpy");
@@ -697,7 +697,7 @@ static int sa_key_of(const Opnd *o, Sym *tbl, Sym *ix)
 static int sa_uses_index(const Opnd *o, const Sym *ix)
 {
     if (o->kind == O_REF) { for (int i = 0; i < o->ref.nsub; i++) if (o->ref.sub[i].sym == ix) return 1; return o->ref.sym == ix || o->ref.rm; }
-    if (o->kind == O_EXPR) { for (int t = o->e_start; t < o->e_end; t++) if (g_tok[t].kind == T_WORD && !strcmp(g_tok[t].s, ix->name)) return 1; return 0; }
+    if (o->kind == O_EXPR) return expr_names(o->ex, sym_is, ix);
     return o->kind == O_FUNC || o->kind == O_BEXPR || o->kind == O_ADDR;
 }
 /* collect c's key = value relations; 0 when c has another shape */

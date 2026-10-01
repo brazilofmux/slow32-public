@@ -5,10 +5,22 @@
 /* Operands and addresses                                                  */
 /* ====================================================================== */
 
+/* an arithmetic expression, parsed once (docs/plans/frontend-pass.md):
+ * a leaf operand, or an operator over its subtrees.  parse_expr builds
+ * one whether or not it emits; emit_expr walks it, where the code is
+ * wanted.  Shared, never changed once built: a leaf is copied before
+ * anything is done to it. */
+typedef struct Expr {
+    char op;                    /* 0 a leaf; + - * / and '^' (a power); 'n' negation */
+    struct Expr *l, *r;
+    struct Opnd_ *o;            /* a leaf's operand, as the scan parsed it */
+    int wide, flt;              /* scan_expr's: an operand past 18 digits, a float, inside it */
+} Expr;
+
 typedef struct {
     Sym *sym;
     int nsub;
-    struct { Sym *sym; long lit; long adj; int x0, x1; } sub[MAXDIM];   /* sym == NULL: literal; &g_subx: the expression x0..x1 */
+    struct { Sym *sym; long lit; long adj; Expr *x; } sub[MAXDIM];   /* sym == NULL: literal; &g_subx: the expression x */
     int line;
     int rm;                         /* reference modification item(start:len) */
     long rm_start, rm_len;          /* literal values, or 0 when an expression / omitted */
@@ -17,7 +29,7 @@ typedef struct {
     int bitsub;                     /* a bit array's element: 1 + the subscript that picks it, as a bit position (cobol ISSUES-84) */
     long bitu_start;                /* ... and the start within the element: 1 without a reference modification, 0 computed (cobol ISSUES-93) */
     int user_rm;                    /* the program wrote a reference modification (rm is also set for a bit-array element) */
-    int rm_s0, rm_s1, rm_l0, rm_l1; /* token ranges of the expressions (rm_l0 < 0: no length) */
+    Expr *rm_sx, *rm_lx;            /* the start and length when expressions (rm_lx NULL: no length expression) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
 } Ref;
 static void emit_refmod_check(const Ref *r, long len, int slot);
@@ -25,9 +37,9 @@ static void emit_refmod_check(const Ref *r, long len, int slot);
  * (2002 8.4.1.2): a group, so nothing takes it for an integer item */
 static Sym g_subx = { .is_group = 1, .record = -1, .redefines = -1, .parent = -1, .name = "(an expression)" };
 
-static void parse_expr(void);
-static void emit_expr_tokens(int s0, int s1);
-static void parse_expr(void);
+static Expr *parse_expr(void);
+static Expr *scan_expr(void);
+static void emit_expr(Expr *e);
 static void emit_ucalls(int from, int to);
 static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */
 static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
@@ -71,21 +83,27 @@ typedef struct Opnd_ {
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
     NumLit num;         /* O_NUM */
     int line;
-    int e_start, e_end; /* O_EXPR: token range, re-parsed when emitted */
+    Expr *ex;           /* O_EXPR: the expression */
+    int e_start, e_end; /* O_EXPR, O_BEXPR: its token range (the register paths and parse_bexpr re-read it) */
     int fn; struct Opnd_ *farg, *farg2; int fsize;   /* O_FUNC: intrinsic, its argument(s), result width */
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
     int fvar, fnat, fbool;                   /* O_FUNC: length known only at run time (fsize its maximum); a national, a boolean result */
     Tok *ftrim;                              /* FN_TRIM: the characters to delete, NULL for a space */
     int fwasvar;                             /* O_FUNC: a fixed part cut from a run-time-length result (cobol ISSUES-88) */
-    int fs0, fs1, fl0, fl1, flen;            /* O_FUNC reference-modified at computed positions: the start's and length's
-                                              * token ranges (fl0 < 0: flen, or to the end when 0) (cobol ISSUES-91) */
+    Expr *fsx, *flx; int flen;               /* O_FUNC reference-modified at computed positions: the start and length
+                                              * (flx NULL: flen, or to the end when 0) (cobol ISSUES-91) */
     int fnid, fkind, fscale;                 /* O_FUNC, 1989 amendment: cob_fn id, argument shape, result scale */
     struct Opnd_ **fargs; int nfargs;        /* its argument list (an ALL-subscript table arg has all_sub set) */
     unsigned all_sub;                        /* O_REF: the subscript positions written ALL (bit k: subscript k+1) -- every element, looped over at emission */
     int fsaved;                              /* O_FUNC evaluated already: 1 + the label of its result's copy (MOVE, general rule 1) */
     int fwnum;                               /* O_FUNC: an exact numeric function on the wide stack, its result described at run time (docs/wide.md) */
     const char *fname;                       /* O_FUNC: the intrinsic's name, for messages */
+    struct UCall_ *uc;                       /* a user function's result met while scanning ahead: the call,
+                                              * made when an expression holding it is emitted (ucall_make) */
 } Opnd;
+typedef int (*SymVisit)(const Sym *s, const void *cx);
+static int expr_names(const Expr *e, SymVisit f, const void *cx);
+static int opnd_names(const Opnd *o, SymVisit f, const void *cx);
 static int opnds_wide(const Opnd *ops, int n);
 static int refs_wide(const Ref *rs, int nr);
 static int opnd_is_national(const Opnd *o);
@@ -226,7 +244,7 @@ static void ref_resolve_bits(Ref *r)
     if (r->sym->is_group || r->sym->usage != U_BIT || !r->sym->occurs || r->nsub != r->sym->ndims || !r->nsub) return;
     int k = r->nsub - 1;
     if (r->rm) r->bitu_start = r->rm_start;
-    else { r->rm = 1; r->rm_len = r->sym->bits; r->rm_l0 = -1; r->bitu_start = 1; }
+    else { r->rm = 1; r->rm_len = r->sym->bits; r->rm_lx = NULL; r->bitu_start = 1; }
     r->rm_bit = 1; r->bitsub = r->nsub;
     r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * r->sym->bits + r->bitu_start : 0;
 }
@@ -368,7 +386,7 @@ static void parse_ref(Ref *r)
                 /* an arithmetic expression (2002 8.4.1.2.1): evaluated
                  * when the reference is, before its address is formed */
                 r->sub[r->nsub].sym = &g_subx; r->sub[r->nsub].lit = 0; r->sub[r->nsub].adj = 0;
-                r->sub[r->nsub].x0 = g_tp; g_noemit++; parse_expr(); g_noemit--; r->sub[r->nsub].x1 = g_tp;
+                r->sub[r->nsub].x = scan_expr();
             } else if (st->kind == T_NUM) {
                 NumLit n; numlit_parse(st, &n);
                 if (!numlit_is_int(&n) || n.neg) die_at(st->line, "a subscript must be a positive integer");
@@ -414,7 +432,7 @@ static void parse_ref(Ref *r)
     if (is_rm) {
         if (r->sym->is_cond) die_at(r->line, "a condition-name cannot be reference-modified");
         advance();
-        r->rm = 1; r->rm_l0 = -1; r->user_rm = 1;
+        r->rm = 1; r->rm_lx = NULL; r->user_rm = 1;
         if (r->sym->strong || (sym_in_strong(r->sym) && (is_numeric_sym(r->sym) || r->sym->pi.edited)))
             die_at(r->line, "'%s' is %s and is not reference-modified (2023 8.4.2.4)", r->sym->name,
                    r->sym->strong ? "a strongly-typed group" : "a numeric or edited item in a strongly-typed group");
@@ -428,7 +446,7 @@ static void parse_ref(Ref *r)
             if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the start of a reference modification must be a positive integer");
             r->rm_start = (long)numlit_int(&n); advance();
         } else {
-            r->rm_s0 = g_tp; g_noemit++; parse_expr(); g_noemit--; r->rm_s1 = g_tp;
+            r->rm_sx = scan_expr();
         }
         if (cur()->kind != T_COLON) die_at(cur()->line, "expected ':' in the reference modification");
         advance();
@@ -438,7 +456,7 @@ static void parse_ref(Ref *r)
             if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the length of a reference modification must be a positive integer");
             r->rm_len = (long)numlit_int(&n); advance();
         } else {
-            r->rm_l0 = g_tp; g_noemit++; parse_expr(); g_noemit--; r->rm_l1 = g_tp;
+            r->rm_lx = scan_expr();
         }
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
@@ -446,7 +464,7 @@ static void parse_ref(Ref *r)
         if (!r->sym->any_len) {                     /* its length is the argument's, known at run time */
             if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
             if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
-            if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
+            if (r->rm_start && !r->rm_len && !r->rm_lx) r->rm_len = chars - r->rm_start + 1;
         }
     }
     if (r->sym->split_key && strcmp(g_cur_stmt, "READ") && strcmp(g_cur_stmt, "START"))
@@ -455,7 +473,7 @@ static void parse_ref(Ref *r)
         /* the whole ANY LENGTH item: (1:), to the end its descriptor gives
          * at run time, so every statement takes its length as it takes a
          * computed reference modification's */
-        r->rm = 1; r->rm_start = 1; r->rm_len = 0; r->rm_l0 = -1;
+        r->rm = 1; r->rm_start = 1; r->rm_len = 0; r->rm_lx = NULL;
         r->rm_nat = r->sym->pi.category == PIC_NATIONAL;
     }
     for (int i = 0; i < r->nsub; i++)
