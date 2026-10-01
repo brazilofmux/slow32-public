@@ -1,0 +1,1 @@
+[BP-D6] ASSIGN TO a data-name declared nowhere: Micro Focus declares it implicitly, alphanumeric and long enough for a file name (its SELECT rule 4); the standard's data-name is declared -- compile with -dialect=mf

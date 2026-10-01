@@ -4732,3 +4732,13 @@ and stores it big-endian, -std=mf too (.oracle-expected,
 docs/oracles.md).  abrignoli_COBSOFT's twelve programs needed it.  Tests
 2002/comp5x8, bad/comp5-x8-85.
 
+Fifteenth batch: **BP-D6**, ASSIGN TO a data-name declared nowhere.
+Micro Focus's SELECT rule 4 declares it implicitly, alphanumeric and
+long enough for a file name; under -dialect=mf it becomes a
+WORKING-STORAGE 01 PIC X(1024) (the size a ruling: the reference leaves
+it to the operating system, GnuCOBOL uses 4095), made before the
+records are put together.  Without the switch it is refused naming it.
+abrignoli_COBSOFT's 11 programs STRING a path into such an item before
+the OPEN.  Tests free/mf-assignimp (identical to GnuCOBOL -std=mf),
+bad/assign-undeclared, warn/ext-mf-assignimp.
+

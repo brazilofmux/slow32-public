@@ -266,7 +266,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
-       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION,
+       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -349,6 +349,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                     "rule 1): Micro Focus does not enforce the rules; such an EXIT does nothing" },
     { "BP-D5", 'D', "file description entries without the FILE SECTION header, first in the DATA DIVISION: Micro Focus "
                     "practice; the standard writes the header (2002 13.3)" },
+    { "BP-D6", 'D', "ASSIGN TO a data-name declared nowhere: Micro Focus declares it implicitly, alphanumeric and long "
+                    "enough for a file name (its SELECT rule 4); the standard's data-name is declared" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -4341,6 +4343,24 @@ static Sym *split_key_make(File *f, const char *name, char (*parts)[64], int n, 
 
 static void finish_data_division(void)
 {
+    /* ASSIGN TO a data-name declared nowhere (BP-D6): Micro Focus declares
+     * it, an alphanumeric item long enough for a file name (its SELECT
+     * rule 4) -- 1024 characters here, the reference leaving the size to
+     * the operating system.  A WORKING-STORAGE 01 like any other, made
+     * before the records are put together */
+    for (int i = g_file_base; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->assign_name[0] || sym_lookup_quiet(f->assign_name)) continue;
+        int dup = 0;
+        for (int j = g_file_base; j < i; j++) if (!strcmp(g_files[j].assign_name, f->assign_name)) dup = 1;
+        if (dup) continue;
+        bp(BP_D6_MF_ASSIGN_IMPLICIT, f->line);     /* without -dialect=mf: refused, naming the switch */
+        Sym *s = sym_new();
+        snprintf(s->name, sizeof s->name, "%s", f->assign_name);
+        s->level = 1; s->line = f->line; s->usage = U_DISPLAY;
+        s->has_pic = 1; snprintf(s->pic, sizeof s->pic, "x(1024)");
+        if (pic_analyse(s->pic, &s->pi) < 0) die_at(f->line, "internal: implicit ASSIGN item");
+    }
     build_tree();
     /* GLOBAL reaches down: a GLOBAL item's subordinates and conditions, the
      * records of a GLOBAL FD (parents precede children in the table) */
