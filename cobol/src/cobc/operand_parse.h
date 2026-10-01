@@ -463,7 +463,7 @@ static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
 {
     if (x->kind != O_REF || x->ref.rm) die_at(n->line, "FUNCTION %s takes a numeric or numeric-edited item", n->s);
     Sym *a = x->ref.sym;
-    memset(o, 0, sizeof *o); o->kind = O_NUM; o->line = n->line; o->folded = 1;
+    memset(o, 0, sizeof *o); o->kind = O_NUM; o->line = n->line; o->folded = 1; o->uc = x->uc;
     long long nat = 0; int sgn = 0;
     switch (a->usage) {
     case U_BCHAR: nat = high ? 127 : -128; sgn = 1; break;
@@ -551,7 +551,7 @@ static void parse_operand_raw_1(Opnd *o)
         if (x.kind != O_REF) die_at(t->line, "LENGTH OF takes a data item");
         int len = opnd_size(&x);
         if (len < 0) die_at(t->line, "LENGTH OF a reference modification with a variable length is not implemented");
-        o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1;
+        o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1; o->uc = x.uc;   /* a user function's call is still made */
         return;
     }
     /* a user-defined function named in REPOSITORY (or this function
@@ -776,7 +776,7 @@ static void parse_operand_raw_1(Opnd *o)
             if (x.kind == O_REF && !x.ref.rm && sym_bitlike(x.ref.sym))
                 len = x.ref.sym->bits;                  /* bits: boolean positions */
             if (x.kind == O_REF && x.ref.rm_bit && x.ref.rm_len) len = (int)x.ref.rm_len;   /* a bit part or element */
-            o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1;
+            o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1; o->uc = x.uc;   /* a user function's call is still made */
             return;
         }
         else if (!strcmp(n->s, "byte-length") || !strcmp(n->s, "highest-algebraic") || !strcmp(n->s, "lowest-algebraic")) {
@@ -807,7 +807,7 @@ static void parse_operand_raw_1(Opnd *o)
                 }
                 int len = opnd_size(&x);
                 if (len < 0) die_at(n->line, "FUNCTION BYTE-LENGTH of a reference modification with a variable length is not implemented");
-                o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1;
+                o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1; o->uc = x.uc;   /* a user function's call is still made */
                 return;
             }
             algebraic_limit(o, &x, high, n);

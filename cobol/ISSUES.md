@@ -4950,3 +4950,23 @@ The subject is now read as a scan, and either read again as the
 condition, whose calls the condition makes, or its own calls are made
 there (ucall_make).  2002/userfnonce gained both forms; the snapshot
 changes in no other program.
+
+**MOVE as a node.**  MOVE already read its sender and receivers before
+any code; only a user function in the sender was called while it was
+read.  The sender is now read as a scan and its call made where the
+code begins (ucall_make).  The snapshot then lost one call in 2002/
+userfn: MOVE FUNCTION LENGTH(pad("xyz")) TO t.  LENGTH (and LENGTH OF,
+BYTE-LENGTH, HIGHEST- and LOWEST-ALGEBRAIC) fold to a constant when
+compiling, and the fold kept the length but dropped the argument's
+pending call; the old MOVE had made the call only because it read the
+sender with code on.  **The same loss was already in two earlier
+steps**: COMPUTE emitting from its scanned tree (b4089eed) and the
+arithmetic nodes (9a708fc4) skipped the call in COMPUTE b =
+LENGTH(f(x)) + 0 and ADD LENGTH(f(x)) TO b.  The snapshot could not
+see it -- no program in the corpus does that -- and a refactor checked
+only by the snapshot is checked only where the corpus goes.  Now a
+folded constant carries the argument's call (Opnd.uc), ucall_make makes
+it, and the register paths refuse such a leaf (opnd_scanned) so the
+stack makes it.  2002/userfnonce gained LENGTH in COMPUTE, MOVE and
+ADD; GnuCOBOL counts the same calls.  The snapshot against the
+previous commit diffs empty.

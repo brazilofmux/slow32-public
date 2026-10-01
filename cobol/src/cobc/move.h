@@ -843,6 +843,10 @@ static void parse_move(void)
         corr_walk(&a, &b, 0, 0, 0);
         return;
     }
+    /* read whole before any code (docs/plans/frontend-pass.md, step 4):
+     * the sender as a scan, so a user function in it is called below,
+     * where the statement's code begins */
+    g_noemit++;
     Opnd src; parse_operand(&src);
     expect_word("to");
     int n = 0, cap = 0;
@@ -853,7 +857,9 @@ static void parse_move(void)
         move_valid(&src, &dst[n]);
         n++;
     }
+    g_noemit--;
     if (!n) die_at(cur()->line, "MOVE needs a receiving item");
+    ucall_make(&src);
     emit_incompat(&src);                /* a numeric sender's content (14.6.13.2 rule 2; MOVE GR 6d1) */
     /* the sender is identified once, before the first move (general rule
      * 1: MOVE a (b) TO b, c (b) moves a (b) to a temporary first).  When

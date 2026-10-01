@@ -25,10 +25,11 @@
  * hot_opnd_mag bounds it: the one value past that, INT_MIN, is the one
  * place the two paths can part (INT_MIN / -1 into a truncating receiver).  The profile of majesty's date functions (jerm) put 70%
  * of its instructions in the stack for exactly these statements. */
-/* a user function's result met while scanning ahead: the scan made no
- * call, and a register tree has no place to make it, so the stack takes
- * the statement (emit_expr makes the call, ucall_make) */
-static int opnd_scanned(const Opnd *o) { return o->kind == O_REF && g_sym[o->ref.sym->record].ftemp_scan; }
+/* a user function's result met while scanning ahead, or a constant
+ * folded from one (FUNCTION LENGTH): the scan made no call, and a
+ * register tree has no place to make it, so the stack takes the
+ * statement (emit_expr makes the call, ucall_make) */
+static int opnd_scanned(const Opnd *o) { return o->uc || (o->kind == O_REF && g_sym[o->ref.sym->record].ftemp_scan); }
 typedef struct { char op; int l, r; Opnd o; } HNode;
 static int hn_depth(int n, int per);   /* op: 0 leaf, + - * /, 'n' negate */
 #define MAXHN 64

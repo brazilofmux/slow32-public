@@ -60,6 +60,12 @@ main.
         when 12 display "evaluate subject: the twelfth call"
         when other display "evaluate subject: not the twelfth"
     end-evaluate
+    *> FUNCTION LENGTH is known when compiling, but its argument is
+    *> still evaluated: the call is made, in each statement
+    compute b = function length(bump(0)) + 0
+    move function length(bump(0)) to b
+    add function length(bump(0)) to b
+    display "length, three times: " b
     move bump(0) to b
     display "calls at the end: " b
     stop run.
