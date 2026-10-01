@@ -26,7 +26,7 @@ last=$((FIRST + COUNT - 1))
 for s in $(seq "$FIRST" "$last"); do
     python3 "$HERE/gen-$GEN.py" "$s" "$NSTMT" > "$W/g$s.cbl" 2> "$W/g$s.ref"
     if "$CDIR/compile.sh" -free -std=85 "$W/g$s.cbl" -o "$W/g$s.s32x" > "$W/g$s.cclog" 2>&1; then
-        "$EMU" "$W/g$s.s32x" 2>/dev/null | sed '/^Starting execution at PC/,$d' > "$W/g$s.out" || true
+        (cd "$W" && "$EMU" "g$s.s32x" 2>/dev/null) | sed '/^Starting execution at PC/,$d' > "$W/g$s.out" || true   # in $W: gen-flow writes a file
     else
         echo "BUILD-FAILED" > "$W/g$s.out"
     fi
