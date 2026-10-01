@@ -134,7 +134,8 @@ static char g_crt_status_name[64];   /* SPECIAL-NAMES CRT STATUS IS name */
 static int g_same[8][16], g_nsame[8], g_nsame_groups;
 
 /* SPECIAL-NAMES SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic-name:
- * kind 1 the console for ACCEPT, 2 the console for DISPLAY, 3 a page */
+ * kind 1 the console for ACCEPT, 2 the console for DISPLAY, 3 a page,
+ * 4 the error stream for DISPLAY (SYSERR, STDERR) */
 typedef struct { char name[64]; int kind; } Mnemonic;
 /* The COBOL 85 reserved words (X3.23-1985 as GnuCOBOL's -std=cobol85
  * lists them, 348), sorted for bsearch.  A reserved word is never a
@@ -5638,8 +5639,14 @@ static int fn89_parse(Opnd *o, Tok *n)
         Opnd *x = o->fargs[0];
         if (x->kind != O_REF && x->kind != O_STR && x->kind != O_FUNC)
             die_at(n->line, "FUNCTION %s takes an alphanumeric item or literal", n->s);
-        if (o->fsize == 0)
-            o->fsize = x->kind == O_REF ? (int)x->ref.sym->size : x->kind == O_FUNC ? x->fsize : x->tok->len;   /* REVERSE: the argument's width */
+        if (o->fsize == 0) {
+            /* REVERSE: the argument's width -- a reference modification's
+             * own, which must be known here, as UPPER-CASE's is */
+            if (x->kind == O_REF && x->ref.rm && ref_static_len(&x->ref) <= 0)
+                die_at(n->line, "FUNCTION %s of a reference modification with a variable length is not implemented", n->s);
+            o->fsize = x->kind == O_REF ? (x->ref.rm ? ref_static_len(&x->ref) : (int)x->ref.sym->size)
+                     : x->kind == O_FUNC ? x->fsize : x->tok->len;
+        }
     }
     if (g_fn89[f].kind == FK_NUMS &&
         (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN)) {
@@ -6217,25 +6224,42 @@ static void emit_pop_pos(void) { emit_call(ec_on_name("EC-BOUND-REF-MOD") ? "cob
  * holds a 31-digit operand or a float (in double, the float then rounded
  * to the nearest integer, as Micro Focus has it for subscripts and
  * reference modification) -- the narrow stack would refuse either */
-static void emit_expr_pos(int s0, int s1)
+/* In two halves for emit_ref_addr: the value pushed, and popped later.
+ * A start expression's own operands may be subscripted, and addressing
+ * them uses r11, the register the outer reference's offset accumulates
+ * in -- so the start is evaluated before that begins, and waits on the
+ * numeric stack (a subscript's cob_load_int leaves the stack alone). */
+static int g_pos_was, g_pos_wasf;
+static void emit_expr_pos_push(int s0, int s1)
 {
-    int save = g_tp, sw = g_saw_wide, sf = g_saw_float, was = g_wide, wasf = g_fstmt;
+    int save = g_tp, sw = g_saw_wide, sf = g_saw_float;
+    g_pos_was = g_wide; g_pos_wasf = g_fstmt;
     g_saw_wide = g_saw_float = 0;
     g_tp = s0; g_noemit++; parse_expr(); g_noemit--; g_tp = save;
     if (g_saw_wide || g_saw_float) { g_wide = 1; if (g_saw_float) g_fstmt = 1; }
     g_saw_wide = sw; g_saw_float = sf;
     emit_expr_tokens(s0, s1);
+}
+static void emit_expr_pos_pop(void)
+{
     emit_pop_pos();
-    g_wide = was; g_fstmt = wasf;
+    g_wide = g_pos_was; g_fstmt = g_pos_wasf;
+}
+static void emit_expr_pos(int s0, int s1)
+{
+    emit_expr_pos_push(s0, s1);
+    emit_expr_pos_pop();
 }
 
-static void emit_bitelem_start(const Ref *r, long chk, int slot)
+/* pushed: the start expression is already on the numeric stack
+ * (emit_ref_addr evaluates it before its own offset begins) */
+static void emit_bitelem_start(const Ref *r, long chk, int slot, int pushed)
 {
     Sym *s = r->sym;
     int k = r->bitsub - 1;
     if (r->bitu_start) emit_li("r1", r->bitu_start);
     else {
-        emit_expr_pos(r->rm_s0, r->rm_s1);
+        if (pushed) emit_expr_pos_pop(); else emit_expr_pos(r->rm_s0, r->rm_s1);
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, chk, slot);
     }
     emit("	add r3, r1, r0"); emit("	srai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
@@ -6262,6 +6286,9 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     for (int i = 0; i < r->nsub; i++)
         if (!r->sub[i].sym) off += (int)(r->sub[i].lit - 1) * s->dim_stride[i];
     if (r->rm && r->rm_start) off += r->rm_bit ? (s->bitoff + (int)r->rm_start - 1) / 8 : ((int)r->rm_start - 1) * (r->rm_nat ? 2 : 1);
+    /* a start expression first: its operands' addressing would clobber r11 */
+    int rm_pushed = r->rm && !r->rm_start && !(r->bitsub && r->bitu_start);
+    if (rm_pushed) emit_expr_pos_push(r->rm_s0, r->rm_s1);
     if (runtime) emit("\tadd r11, r0, r0");
     for (int i = 0; i < r->nsub; i++) {
         if (!r->sub[i].sym) continue;
@@ -6293,13 +6320,13 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     if (r->rm && !r->rm_start && r->bitsub) {
         /* a bit array's element at a computed subscript, or its part at a
          * computed start: the byte holding its first bit (cobol ISSUES-84) */
-        emit_bitelem_start(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
+        emit_bitelem_start(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0, rm_pushed);
         emit("\taddi r1, r1, %d", s->bitoff - 1);
         emit("\tsrai r1, r1, 3");
         emit("\tadd r11, r11, r1");
     } else if (r->rm && !r->rm_start) {
-        /* the start expression: onto the numeric stack, then off as an int */
-        emit_expr_pos(r->rm_s0, r->rm_s1);
+        /* the start expression, pushed above: off the numeric stack as an int */
+        emit_expr_pos_pop();
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_l0 >= 0 ? -3 : -1, 0);
         if (r->rm_bit) {
             /* bits: the byte holding bitoff + start - 1 */
@@ -6464,7 +6491,7 @@ static void emit_rm_start_len(const Ref *r, int slot)
     emit("\tstw sp+%d, r1", SLOT(slot));
     if (r->bitsub) {
         /* a bit array's element: the array's bit (i - 1) * bits + start */
-        if (!r->rm_start) { emit_bitelem_start(r, r->rm_l0 >= 0 ? -2 : r->rm_len ? (long)r->rm_len : -1, slot); return; }
+        if (!r->rm_start) { emit_bitelem_start(r, r->rm_l0 >= 0 ? -2 : r->rm_len ? (long)r->rm_len : -1, slot, 0); return; }
         emit_li("r1", r->rm_start);
         if (r->rm_l0 >= 0 && ec_on_name("EC-BOUND-REF-MOD")) {
             emit_li("r1", r->bitu_start); emit_refmod_check(r, -2, slot); emit_li("r1", r->rm_start);
@@ -6556,6 +6583,15 @@ static void emit_args(const Arg *a, int n)
         }
     }
     g_slot_base = base;
+}
+
+/* r3 = an argument's address, r4 = its length in bytes: a reference
+ * modification's own length, not the item's size (FUNCTION NUMVAL(t(p:1))
+ * read t from p to its end until 2026-09-30) */
+static void emit_ref_addr_len(Ref *r)
+{
+    if (r->rm) { Arg a[2] = { arg_ref(r), arg_rlen(r) }; emit_args(a, 2); }
+    else { emit_ref_addr(r, "r3"); emit_li("r4", (long)r->sym->size); }
 }
 
 static void emit_move(Opnd *src, Ref *dst);
@@ -7064,7 +7100,7 @@ static void emit_fn_value_raw_1(Opnd *f)
                 if (ax->all_sub) { emit_all_elements(ax, 1, -1); continue; }
                 if (ax->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); emit_li("r4", ax->tok->len); }
                 else if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); emit_li("r4", ax->fsize); }
-                else { emit_ref_addr(&ax->ref, "r3"); emit_li("r4", (long)ax->ref.sym->size); }
+                else emit_ref_addr_len(&ax->ref);
                 emit_call("cob_fn_al_arg");
             }
             emit_li("r3", f->fnid);
@@ -7083,22 +7119,21 @@ static void emit_fn_value_raw_1(Opnd *f)
             /* NUMVAL-C's currency string, argument-2: handed over first */
             Opnd *cx = f->fargs[1];
             if (cx->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)cx->tok->s, cx->tok->len)); emit_li("r4", cx->tok->len); }
-            else if (cx->kind == O_REF) { emit_ref_addr(&cx->ref, "r3"); emit_li("r4", (long)cx->ref.sym->size); }
+            else if (cx->kind == O_REF) emit_ref_addr_len(&cx->ref);
             else die_at(f->line, "FUNCTION NUMVAL-C: the currency string must be an item or a literal");
             emit_call("cob_fn_currency_arg");
         }
-        Opnd *ax = f->fargs[0];                         /* the string functions */
-        int alen;
-        if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); alen = ax->fsize; }
-        else if (ax->kind == O_REF) { emit_ref_addr(&ax->ref, "r3"); alen = (int)ax->ref.sym->size; }
-        else { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); alen = ax->tok->len; }
+        Opnd *ax = f->fargs[0];                         /* the string functions: r3 the argument, r4 its length */
+        if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); emit_li("r4", ax->fsize); }
+        else if (ax->kind == O_REF) emit_ref_addr_len(&ax->ref);
+        else { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); emit_li("r4", ax->tok->len); }
         switch (f->fnid) {
         case -3: emit_call("cob_fn_ord"); break;
-        case -4: emit_li("r4", alen); emit_call("cob_fn_reverse"); break;
-        case -7: emit_li("r4", alen); emit_call("cob_fn_numval_f"); break;
+        case -4: emit_call("cob_fn_reverse"); break;
+        case -7: emit_call("cob_fn_numval_f"); break;
         case -8: case -9: case -10:
-            emit_li("r4", alen); emit_li("r5", f->fnid == -8 ? 0 : f->fnid == -9 ? 1 : 2); emit_call("cob_fn_test_numval"); break;
-        default: emit_li("r4", alen); emit_li("r5", f->fnid == -6); emit_call("cob_fn_numval"); break;
+            emit_li("r5", f->fnid == -8 ? 0 : f->fnid == -9 ? 1 : 2); emit_call("cob_fn_test_numval"); break;
+        default: emit_li("r5", f->fnid == -6); emit_call("cob_fn_numval"); break;
         }
         return;
     }
@@ -8897,12 +8932,31 @@ static void parse_display(void)
     if (is_word(peek(1), "upon") && (is_word(peek(2), "sysout") || is_word(peek(2), "console") || is_word(peek(2), "syserr") || is_word(peek(2), "stderr"))) {
         /* the console: an ordinary DISPLAY */
     }
+    /* UPON SYSERR (or STDERR, or a mnemonic-name for either): the line goes
+     * to the error stream.  UPON follows the operands, so look ahead to it
+     * -- to the end of the statement: a period, the next verb, or a word
+     * that ends a scope -- and switch before any operand is written. */
+    int to_err = 0;
+    for (int k = g_tp, depth = 0; k < g_ntok; k++) {
+        Tok *t = &g_tok[k];
+        if (t->kind == T_PERIOD || t->kind == T_EOF) break;
+        if (t->kind == T_LP) { depth++; continue; }
+        if (t->kind == T_RP) { depth--; continue; }
+        if (depth || t->kind != T_WORD) continue;
+        if (!strcmp(t->s, "upon")) {
+            const Tok *d = k + 1 < g_ntok ? &g_tok[k + 1] : NULL;
+            to_err = d && d->kind == T_WORD && (!strcmp(d->s, "syserr") || !strcmp(d->s, "stderr") || mnemonic_kind(d->s) == 4);
+            break;
+        }
+        if (k > g_tp && (is_verb(t->s) || !strncmp(t->s, "end-", 4) || !strcmp(t->s, "else") || !strcmp(t->s, "when"))) break;
+    }
+    if (to_err) { emit("\taddi r3, r0, 1"); emit_call("cob_display_err"); }
     for (;;) {
         Tok *t = cur();
         if (t->kind == T_WORD && !strcmp(t->s, "upon")) {
             advance();
             if (accept_word("sysout") || accept_word("console") || accept_word("syserr") || accept_word("stderr")) continue;
-            if (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 2) { advance(); continue; }
+            if (cur()->kind == T_WORD && (mnemonic_kind(cur()->s) == 2 || mnemonic_kind(cur()->s) == 4)) { advance(); continue; }
             if (cur()->kind == T_WORD && !mnemonic_kind(cur()->s) && !at_word("argument-number") && !at_word("environment-name") && !at_word("environment-value"))
                 die_at(t->line, "DISPLAY UPON '%s': not a mnemonic-name of SPECIAL-NAMES (%s)", cur()->s,
                        g_std < 2002 ? "X3.23-1985 DISPLAY syntax rule 2" : "2023 14.9.11.3 rule 2");
@@ -8954,6 +9008,7 @@ static void parse_display(void)
     }
     if (!n) die_at(line, "DISPLAY needs at least one operand");
     if (!no_adv) emit_call("cob_display_nl");
+    if (to_err) { emit("\taddi r3, r0, 0"); emit_call("cob_display_err"); }
 }
 
 /* ---- MOVE ------------------------------------------------------------- */
@@ -18249,7 +18304,8 @@ static void parse_environment_division(void)
                     if (cur()->kind == T_WORD) {
                         int mk = 0;
                         if (at_word("sysin") || at_word("stdin") || at_word("sysipt")) mk = 1;
-                        else if (at_word("sysout") || at_word("stdout") || at_word("console") || at_word("syserr") || at_word("stderr") || at_word("syslst") || at_word("sysprint")) mk = 2;
+                        else if (at_word("sysout") || at_word("stdout") || at_word("console") || at_word("syslst") || at_word("sysprint")) mk = 2;
+                        else if (at_word("syserr") || at_word("stderr")) mk = 4;
                         else if (at_word("formfeed") || at_word("c01") || at_word("csp")) mk = 3;
                         if (mk) {
                             advance(); accept_word("is");

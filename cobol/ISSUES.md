@@ -4452,3 +4452,34 @@ Open: a function's formal parameter used as a receiving operand (2002
 and 2023 13.7.3 rule 5) is accepted. Receiving operands are parsed by
 each statement, with no common point to check them; a function that
 changes its parameter changes its caller's argument.
+
+### 119. Three defects found by porting majesty's csv2fw (2026-09-30)
+
+Dogfooding (moving the month-end's last host steps onto SLOW-32) put a
+real program -- a byte-level CSV state machine with reference
+modification everywhere -- through the compiler, and three defects fell
+out, none of which the harness, CCVS-85 or the generators had reached:
+
+- **A reference-modification start with a subscripted operand was
+  late.**  `r(p + w - len(i):n)`: addressing `len(i)` uses r11, the
+  register the outer item's offset accumulates in, and left its own
+  offset there, so the start came out (i - 1) times len's size too far.
+  The start is now evaluated before the outer offset begins, and waits on
+  the numeric stack (emit_expr_pos_push/_pop).  Test: free/refmodsub.
+- **A string function's reference-modified argument was the item from
+  the start position to its end.**  `NUMVAL(t(p:1))` read t from p on, so
+  "2023" scanned a digit at a time gave 2023, 23, 23, 3; the same for
+  NUMVAL-C, NUMVAL-F, TEST-NUMVAL, REVERSE and the list functions'
+  arguments.  They take the modification's length now
+  (emit_ref_addr_len), and REVERSE's result is that length, refused by
+  name when it is known only at run time, as UPPER-CASE's is.  Test:
+  free/fnargrm.
+- **DISPLAY UPON SYSERR went to stdout.**  It, UPON STDERR, and a
+  mnemonic-name for SYSERR now write to stderr, as GnuCOBOL, IBM and
+  Micro Focus do; the compiler looks ahead to UPON before any operand is
+  written.  Test: free/syserr.  Majesty's gl038 sends its error lines
+  there, and now they arrive there.
+
+The port itself (majesty src/cobol/csv2fw.cbl) matches the C++ byte for
+byte on the real exports and on 600 random trials (majesty
+tests/csv2fw/differential.sh).

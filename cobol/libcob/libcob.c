@@ -58,12 +58,14 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts);
 
 static char out_buf[512];
 static int  out_n;
+static int  out_err;                    /* DISPLAY UPON SYSERR: this line to stderr */
 
 /* Through stdio, not write(2): the DEBUG-instruction libc has no write,
  * and fwrite is byte-safe (COBOL data may hold NULs) under both libcs. */
 static void out_flush(void)
 {
-    if (out_n) { fwrite(out_buf, 1, out_n, stdout); fflush(stdout); out_n = 0; }
+    FILE *f = out_err ? stderr : stdout;
+    if (out_n) { fwrite(out_buf, 1, out_n, f); fflush(f); out_n = 0; }
 }
 
 /* Once a program has painted with RM's positioned DISPLAY/ACCEPT, a plain
@@ -635,6 +637,9 @@ static int w_cmp_val(const cob_wnum *a, const cob_wnum *b)
 void cob_display(const char *p, int n) { out_bytes(p, n); }
 void cob_display_nl(void) { out_char('\n'); out_flush(); }
 void cob_display_flush(void) { out_flush(); }
+/* DISPLAY ... UPON SYSERR: what is pending goes where it was meant, then
+ * the line goes to stderr (on = 1), and back to stdout after it (on = 0) */
+void cob_display_err(int on) { out_flush(); out_err = on; }
 
 /* Emit a magnitude as `digits` characters with a point where the scale
  * says, a leading sign when the picture is signed.  GnuCOBOL's convention;
