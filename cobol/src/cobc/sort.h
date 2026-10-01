@@ -300,15 +300,24 @@ static void emit_body(Body *b)
         emit("\tjal r0, .Lp%d_%d", g_unit, b->from->id);
         emit_label(Lret);
     } else {
-        /* an inline body: EXIT PERFORM CYCLE comes to its end, EXIT PERFORM
-         * past END-PERFORM */
-        if (b->Lexit < 0) { parse_statements(); return; }
-        int Lcycle = new_label();
-        pstk_push(b->Lexit, Lcycle);
-        parse_statements();
-        g_npstk--;
-        emit_label(Lcycle);
+        block_put(&b->blk);
+        if (b->Lcycle >= 0) emit_label(b->Lcycle);
     }
+}
+
+/* an inline body's statements, up to END-PERFORM: EXIT PERFORM CYCLE
+ * comes to its end, EXIT PERFORM past END-PERFORM */
+static void parse_inline_body(Body *b)
+{
+    b->Lcycle = -1;
+    if (b->Lexit < 0) b->blk = parse_block();
+    else {
+        b->Lcycle = new_label();
+        pstk_push(b->Lexit, b->Lcycle);
+        b->blk = parse_block();
+        g_npstk--;
+    }
+    expect_word("end-perform");
 }
 
 static void emit_add_to_ref(Opnd *by, Ref *var)
@@ -627,24 +636,20 @@ static void parse_perform(void)
     if (accept_word("with")) { expect_word("test"); test_given = 1; if (accept_word("after")) test_after = 1; else expect_word("before"); }
     else if (accept_word("test")) { test_given = 1; if (accept_word("after")) test_after = 1; else expect_word("before"); }
 
+    /* the phrases, then an inline body's statements, all read before the
+     * loop's code */
+    enum { PF_ONCE, PF_UNTIL_EXIT, PF_UNTIL, PF_VARYING, PF_TIMES } kind = PF_ONCE;
+    Cond *c = NULL;
+    Vary v[8]; int nv = 0;                     /* the text sets no limit; NC233A/NC243A nest four */
+    Opnd n; memset(&n, 0, sizeof n);
     if (accept_word("until") && g_std >= 2002 && accept_word("exit")) {
         if (test_given) die_at(g_tok[g_tp - 1].line, "UNTIL EXIT takes no WITH TEST phrase (2023 14.9.28.3 rule 8)");
-        /* UNTIL EXIT: a condition that never holds (14.9.28.4 rule 11); an
-         * EXIT PERFORM, a GOBACK or a STOP leaves it (cobol ISSUES-90) */
-        int Ltop = new_label();
-        emit_label(Ltop);
-        emit_body(&body);
-        emit_jump(Ltop);
+        kind = PF_UNTIL_EXIT;
     } else if (g_tok[g_tp - 1].kind == T_WORD && !strcmp(g_tok[g_tp - 1].s, "until")) {
-        Cond *c = parse_cond();
-        int Ltop = new_label(), Lend = new_label();
-        emit_label(Ltop);
-        if (!test_after) cond_jump_true(c, Lend);
-        emit_body(&body);
-        if (test_after) cond_jump_false(c, Ltop); else emit_jump(Ltop);
-        emit_label(Lend);
+        kind = PF_UNTIL;
+        c = parse_cond();
     } else if (accept_word("varying")) {
-        Vary v[8]; int nv = 0;                 /* the text sets no limit; NC233A/NC243A nest four */
+        kind = PF_VARYING;
         for (;;) {
             if (nv >= 8) die_at(cur()->line, "more than eight VARYING/AFTER levels");
             parse_ref(&v[nv].var);
@@ -673,13 +678,39 @@ static void parse_perform(void)
         }
         if (g_std < 2002 && body.inline_body && nv > 1)
             die_at(v[1].var.line, "an in-line PERFORM VARYING takes no AFTER phrase in COBOL 85 (X3.23-1985 PERFORM syntax rule 2)");
-        if (test_after && nv > 1) emit_varying_test_after(v, nv, &body);
-        else emit_varying(v, nv, 0, &body, test_after);
     } else if (at_operand() && times_follows()) {
-        Opnd n; parse_operand(&n); check_numeric_opnd(&n);
+        kind = PF_TIMES;
+        parse_operand(&n); check_numeric_opnd(&n);
         if ((n.kind == O_REF && !is_int_item(n.ref.sym)) || (n.kind == O_NUM && !numlit_is_int(&n.num)))
             die_at(n.line, "PERFORM ... TIMES takes an integer (2023 14.9.28.3 rule 2)");
         expect_word("times");
+    }
+    if (body.inline_body) parse_inline_body(&body);
+
+    switch (kind) {
+    case PF_UNTIL_EXIT: {
+        /* UNTIL EXIT: a condition that never holds (14.9.28.4 rule 11); an
+         * EXIT PERFORM, a GOBACK or a STOP leaves it (cobol ISSUES-90) */
+        int Ltop = new_label();
+        emit_label(Ltop);
+        emit_body(&body);
+        emit_jump(Ltop);
+        break;
+    }
+    case PF_UNTIL: {
+        int Ltop = new_label(), Lend = new_label();
+        emit_label(Ltop);
+        if (!test_after) cond_jump_true(c, Lend);
+        emit_body(&body);
+        if (test_after) cond_jump_false(c, Ltop); else emit_jump(Ltop);
+        emit_label(Lend);
+        break;
+    }
+    case PF_VARYING:
+        if (test_after && nv > 1) emit_varying_test_after(v, nv, &body);
+        else emit_varying(v, nv, 0, &body, test_after);
+        break;
+    case PF_TIMES: {
         if (g_ncnt == g_cnt_cap) { g_cnt_cap = g_cnt_cap ? 2 * g_cnt_cap : 64; g_cnt_unit = realloc(g_cnt_unit, (size_t)g_cnt_cap * sizeof *g_cnt_unit); }
         g_cnt_unit[g_ncnt] = g_unit;
         char cnt[32]; snprintf(cnt, sizeof cnt, ".Lcnt%d", g_ncnt++);
@@ -703,12 +734,13 @@ static void parse_perform(void)
         emit_body(&body);
         emit_jump(Ltop);
         emit_label(Lend);
-    } else if (body.inline_body) {
-        emit_body(&body);
-    } else {
-        emit_body(&body);
+        break;
     }
-    if (body.inline_body) { if (body.Lexit >= 0) emit_label(body.Lexit); expect_word("end-perform"); }
+    default:
+        emit_body(&body);
+        break;
+    }
+    if (body.inline_body && body.Lexit >= 0) emit_label(body.Lexit);
     /* an out-of-line PERFORM has no END-PERFORM: the next one belongs to
      * whatever inline PERFORM encloses this statement */
 }

@@ -691,7 +691,16 @@ static void emit_use_dispatch(File *f, int has_clause)
 static int g_ncnt;      /* TIMES counters */
 static int *g_cnt_unit; static int g_cnt_cap;   /* the unit each counter belongs to */
 
-typedef struct { Para *from, *thru; int inline_body, Lexit; } Body;   /* Lexit: after END-PERFORM, for EXIT PERFORM */
+/* what a PERFORM performs: a range of procedures, or its own statements
+ * -- an inline body, parsed once into a Block and placed by the loop's
+ * layout (docs/plans/frontend-pass.md, step 4) */
+typedef struct {
+    Para *from, *thru;
+    int inline_body;
+    int Lexit;                  /* after END-PERFORM, for EXIT PERFORM (-1: COBOL 85, which has none) */
+    int Lcycle;                 /* the inline body's end, for EXIT PERFORM CYCLE (-1: none) */
+    Block blk;                  /* the inline body's code */
+} Body;
 
 /* the inline PERFORMs being compiled, innermost last: where EXIT PERFORM
  * goes, and EXIT PERFORM CYCLE (-1: not allowed) (2023 14.9.14.4 rules

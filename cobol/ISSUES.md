@@ -5074,3 +5074,10 @@ TRUE; THRU; stacked WHENs; OTHER) -- 40 programs against GnuCOBOL, 150
 through the compiler before and after (run-self.sh), CCVS-85 before and
 after.  Test 2002/userfnsub: the calls each statement made, the loop's
 condition three times; .oracle-expected for the three EVALUATE lines.
+
+**PERFORM as a node.**  parse_perform reads the phrases (UNTIL's
+condition, VARYING's items, TIMES' count), then an inline body's
+statements into a Block (parse_inline_body, with the EXIT PERFORM
+labels), and only then emits the loop; emit_body places the block.  The
+same layout as before: 203 programs' labels renumbered, all the same
+code (asm-equiv).

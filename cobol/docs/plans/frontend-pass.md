@@ -113,6 +113,9 @@ for in the commit -- plus all the usual gates.
      reference modifier, an expression's leaf.  The operands are then
      plain items, their code free to be made any number of times, and
      the register paths take statements they had to refuse.
+   - PERFORM (done 2026-10-01): its phrases, then an inline body's
+     statements as a Block, read before the loop's code (Body.blk;
+     the exception-checking PERFORM is still its own path).
    - SEARCH (done 2026-10-01): its AT END and WHEN bodies are parsed
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of
