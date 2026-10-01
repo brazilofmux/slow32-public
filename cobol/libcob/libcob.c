@@ -3528,6 +3528,28 @@ char *cob_fn_national_of(const char *p, int n, const char *sub, int track)
 /* DISPLAY-OF (15.26): national to alphanumeric UTF-8.  A lone surrogate
  * has no UTF-8 form: it becomes the substitution character, argument-2,
  * or U+FFFD without one, and EC-DATA-CONVERSION as above (15.26.4 rule 3) */
+/* TRIM (2014; 2023 15.96): the argument less its leading (mode 1),
+ * trailing (2) or both (0) runs of each character to delete, each
+ * character taken completely in turn (returned value rule 5); a space
+ * when none is given.  National: two-byte characters. */
+char *cob_fn_trim(const char *p, int nbytes, const char *chars, int nchars, int mode, int national)
+{
+    int u = national ? 2 : 1, n = nbytes / u, a = 0, z = n;
+    static const char sp[2] = { 0, ' ' };
+    const char *cs = chars ? chars : national ? sp : sp + 1;
+    if (!chars) nchars = 1;
+    for (int k = 0; k < nchars; k++) {
+        const char *c = cs + k * u;
+        if (mode != 2) while (a < z && !memcmp(p + a * u, c, (size_t)u)) a++;
+        if (mode != 1) while (z > a && !memcmp(p + (z - 1) * u, c, (size_t)u)) z--;
+    }
+    int len = (z - a) * u;
+    char *b = fn_buffer(len);
+    memcpy(b, p + a * u, (size_t)len);
+    fn_var_len = len;
+    return b;
+}
+
 char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track)
 {
     const unsigned char *q = (const unsigned char *)p;

@@ -134,3 +134,18 @@ Each rule below sets EC-ARGUMENT-FUNCTION, and each is a site in
 | RANDOM (15.75) | a seed of zero or a positive integer | site |
 | REM (15.77) | argument-2 not zero | site |
 | SQRT (15.84) | zero or more | site |
+
+## TRIM (2014; 2023 15.96), taken as BP-E27
+
+COBOL 2014's, beyond both editions this compiler implements; IBM, Micro
+Focus and GnuCOBOL all have it, and the X-COBOL survey met six programs
+that use it, so it is taken with a warning under `-warn-extensions`
+(ISSUES-120), the other 2014 functions still refused naming the edition.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 15.96.3 rule 1 | argument-1 alphabetic, alphanumeric or national | **test**: 2002/trim, 2002/trimchars (national); **refused**: bad/std2002-trim-numeric. A literal is taken too |
+| 15.96.3 rules 2-3 | argument-2, one character of argument-1's class; a space by default | **test**: 2002/trimchars; **refused**: bad/std2002-trim-chars. Literals only: an item as argument-2 is refused |
+| 15.96.4 rules 1-3 | LEADING, TRAILING, or both | **test**: 2002/trim (identical to GnuCOBOL) |
+| 15.96.4 rule 4 | nothing left: a result of length zero | **test**: 2002/trim, 2002/trimchars |
+| 15.96.4 rule 5 | several argument-2s, each completely, in order | **test**: 2002/trimchars (`"*" "-"` and `"-" "*"` differ) |

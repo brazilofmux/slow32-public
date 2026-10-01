@@ -1,6 +1,6 @@
-# Arithmetic expressions: 8.8.1
+# Arithmetic expressions: 8.8.1 (and concatenation, 8.8.3)
 
-Swept 2026-09-30. X3.23-1985: 6.2 (VI-51..VI-53). 2023: 8.8.1.
+Swept 2026-09-30. X3.23-1985: 6.2 (VI-51..VI-53). 2023: 8.8.1, 8.8.3.
 CCVS-85 exercises expressions throughout its NC arithmetic programs, but
 never chains exponentiation and never raises exponentiation's size
 errors. The sweep went after those, and after the one rule the text
@@ -66,3 +66,16 @@ time with `-fno-hot-arith` and running all of CCVS both ways
     nor overflow: every intermediate below 9 * 10^18 and a product's
     scale at most 18.
   - Division, at the top only, is the stack's own long division.
+
+## 8.8.3 concatenation expressions (2002; implemented 2026-10-01, ISSUES-120)
+
+`literal & literal` is one literal (general rule 3), so the source text
+is joined once COPY and REPLACE are done, before anything parses it.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 8.8.3.1 | literal & literal, chained | **test**: 2002/concat (identical to GnuCOBOL: a VALUE, a constant entry, MOVE, DISPLAY, a relation, across lines); **refused**: bad/std2002-concat-operand (a data item), bad/concat-85 |
+| 8.8.3.2 rule 1 | one class; a figurative constant either side, not ALL | **test**: 2002/concatfig (ZERO, SPACE, QUOTE; national; boolean); **refused**: bad/std2002-concat-class, bad/std2002-concat-all. HIGH-VALUE and LOW-VALUE are **gap**: their characters are the collating sequence's, not known when the text is joined |
+| 8.8.3.2 rules 2-4 | the result's length | **test**: past 160 positions under -std=2002 it is BP-E20, as a long literal is; past 8,191 refused |
+| 8.8.3.3 rules 1-3 | the class, the value, a literal's equivalent | **test**: 2002/concat, 2002/concatfig. GnuCOBOL refuses a figurative operand (docs/oracles.md) |
+

@@ -48,6 +48,7 @@ procedure division.
     call "nothing" using by value k
     move 0 to return-code
     display "p",k   *> BP-E22
+    display function trim("x")   *> BP-E27
     exit program move 0 to return-code   *> BP-E21
     stop run returning k.
     goback.

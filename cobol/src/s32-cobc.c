@@ -265,7 +265,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
-       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78,
+       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -331,6 +331,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "CONSTANT AS literal (2002 13.9; 2023 13.10)" },
     { "BP-E26", 'E', "a level 78 entry is Micro Focus's constant-name; the standard's constant entry is "
                      "01 name CONSTANT AS (2002 13.9; 2023 13.10)" },
+    { "BP-E27", 'E', "FUNCTION TRIM is COBOL 2014 (2023 15.96), beyond 1985 and 2002; IBM, Micro Focus and "
+                     "GnuCOBOL all have it, and it is taken" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -1019,6 +1021,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
             if ((c == '>' || c == '<') && p[1] == '=') { push_tok(T_OP, line, p, 2); p += 2; continue; }
             if (c == '<' && p[1] == '>') { push_tok(T_OP, line, "<>", 2); p += 2; continue; }
             if (strchr("=<>+-*/", c)) { push_tok(T_OP, line, p, 1); p++; continue; }
+            if (c == '&') { push_tok(T_OP, line, "&", 1); p++; continue; }     /* concatenation (join_concat) */
             die_at(line, "unexpected character '%c'", c);
         }
     }
@@ -1055,6 +1058,8 @@ static int copy_open(const char *name, SrcLine **lines, int *n, char *found, siz
     }
     return 0;
 }
+
+static void join_concat(void);
 
 static int g_dp_comma;      /* SPECIAL-NAMES DECIMAL-POINT IS COMMA */
 static int g_currency;      /* SPECIAL-NAMES CURRENCY SIGN IS "c": the picture symbol standing for '$', 0 for '$' itself */
@@ -1732,6 +1737,73 @@ static int strong_key(const char *k)
     snprintf(g_strong_key[g_nstrong_key], sizeof g_strong_key[0], "%s", k);
     return g_nstrong_key++;
 }
+
+/* Concatenation expressions (2002 and 2023 8.8.3): literal & literal ...
+ * is one literal of the operands' class (general rule 3), so the text is
+ * joined here, once COPY and REPLACE are done, before anything parses it.
+ * SPACE, ZERO and QUOTE take the other operand's class (rule 1a; both
+ * figurative, alphanumeric).  HIGH-VALUE and LOW-VALUE are characters of
+ * the program's collating sequence, not known yet: not implemented. */
+static int concat_fig(const Tok *t)
+{
+    if (t->kind != T_WORD) return 0;
+    if (!strcmp(t->s, "space") || !strcmp(t->s, "spaces")) return ' ';
+    if (!strcmp(t->s, "zero") || !strcmp(t->s, "zeros") || !strcmp(t->s, "zeroes")) return '0';
+    if (!strcmp(t->s, "quote") || !strcmp(t->s, "quotes")) return '"';
+    if (!strncmp(t->s, "high-value", 10) || !strncmp(t->s, "low-value", 9))
+        die_at(t->line, "%s as an operand of & is not implemented (its character is the collating sequence's)", t->orig ? t->orig : t->s);
+    return 0;
+}
+static int concat_opnd(const Tok *t) { return t->kind == T_STR || concat_fig(t); }
+static void join_concat(void)
+{
+    int w = 0, any = 0;
+    for (int r = 0; r < g_ntok && !any; r++) if (g_tok[r].kind == T_OP && !strcmp(g_tok[r].s, "&")) any = 1;
+    if (!any) return;
+    int *map = xmalloc((size_t)(g_ntok + 1) * sizeof *map);      /* old position -> new, for the >>TURNs */
+    for (int r = 0; r < g_ntok; r++) {
+        Tok *t = &g_tok[r];
+        map[r] = w;
+        if (!(t->kind == T_OP && !strcmp(t->s, "&"))) { g_tok[w++] = *t; continue; }
+        if (g_std < 2002) die_at(t->line, "the concatenation expression (&) is COBOL 2002; compile with -std=2002");
+        if ((w > 1 && is_word(&g_tok[w - 2], "all")) || (r + 1 < g_ntok && is_word(&g_tok[r + 1], "all")))
+            die_at(t->line, "a figurative constant with ALL is no operand of & (2023 8.8.3.2 rule 1)");
+        if (!w || !concat_opnd(&g_tok[w - 1]) || r + 1 >= g_ntok || !concat_opnd(&g_tok[r + 1]))
+            die_at(t->line, "& joins two literals (2023 8.8.3)");
+        Tok a = g_tok[w - 1], b = g_tok[r + 1];
+        int nat, bl;
+        if (a.kind == T_STR && b.kind == T_STR) {
+            if (a.nat != b.nat || a.boolv != b.boolv) die_at(t->line, "the operands of & are of one class: alphanumeric, national or boolean (2023 8.8.3.2 rule 1)");
+            nat = a.nat; bl = a.boolv;
+        } else if (a.kind == T_STR) { nat = a.nat; bl = a.boolv; }
+        else if (b.kind == T_STR) { nat = b.nat; bl = b.boolv; }
+        else nat = bl = 0;
+        /* each operand's bytes in the result's class */
+        unsigned char *buf = xmalloc((size_t)(a.len + b.len) * 2 + 4); int n = 0;
+        const Tok *ops[2] = { &a, &b };
+        for (int k = 0; k < 2; k++) {
+            const Tok *o = ops[k];
+            if (o->kind == T_STR) { memcpy(buf + n, o->s, (size_t)o->len); n += o->len; continue; }
+            int ch = concat_fig(o);
+            if (bl && ch != '0') die_at(t->line, "only ZERO stands for a boolean character in a concatenation");
+            if (nat) { buf[n++] = 0; buf[n++] = (unsigned char)ch; }
+            else buf[n++] = (unsigned char)ch;
+        }
+        buf[n] = 0;
+        int pos = nat ? n / 2 : n;
+        if (pos > 8191) die_at(t->line, "a concatenation of %d positions, more than 8,191 (2023 8.8.3.2 rules 2-4)", pos);
+        if (pos > 160) bp(BP_E20_LONG_LITERAL, t->line);
+        Tok *m = &g_tok[w - 1];
+        if (m->kind != T_STR) { *m = b; m->line = a.line; m->file = a.file; m->after_comma = a.after_comma; }
+        m->kind = T_STR; m->s = (char *)buf; m->len = n; m->nat = (unsigned char)nat; m->boolv = (unsigned char)bl; m->orig = NULL;
+        map[r + 1] = w;
+        r++;
+    }
+    for (int d = 0; d < g_ndir; d++) g_dir[d].pos = g_dir[d].pos < g_ntok ? map[g_dir[d].pos] : w;
+    free(map);
+    g_ntok = w;
+}
+
 static const char *strong_name(int key) { return g_strong_key[key]; }
 static int g_type_recording_strong;     /* recording a STRONG type: its TYPE clauses may name strong types */
 static TypeDef *g_types; static int g_ntypes, g_typecap;
@@ -1964,6 +2036,7 @@ static void tokenize(void)
         g_ntok = w;
     }
     apply_decimal_point();
+    join_concat();
     push_tok(T_EOF, g_nlines ? g_lines[g_nlines - 1].line : 1, "", 0);
 }
 
@@ -4937,6 +5010,7 @@ typedef struct Opnd_ {
     int fn; struct Opnd_ *farg, *farg2; int fsize;   /* O_FUNC: intrinsic, its argument(s), result width */
     int ffull, frm;                          /* O_FUNC reference-modified: the width evaluated, the offset taken */
     int fvar, fnat, fbool;                   /* O_FUNC: length known only at run time (fsize its maximum); a national, a boolean result */
+    Tok *ftrim;                              /* FN_TRIM: the characters to delete, NULL for a space */
     int fwasvar;                             /* O_FUNC: a fixed part cut from a run-time-length result (cobol ISSUES-88) */
     int fs0, fs1, fl0, fl1, flen;            /* O_FUNC reference-modified at computed positions: the start's and length's
                                               * token ranges (fl0 < 0: flen, or to the end when 0) (cobol ISSUES-91) */
@@ -5701,7 +5775,7 @@ static void const_fill(void)
 }
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
-       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL, FN_RMLEN };
+       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL, FN_RMLEN, FN_TRIM };
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
 static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN || fn == FN_INTOFBOOL || fn == FN_RMLEN; }
@@ -6144,7 +6218,7 @@ static void fn_refuse(Tok *n)
         { NULL, NULL } };
     static const char *y2014[] = { "combined-datetime", "formatted-current-date", "formatted-date", "formatted-datetime",
         "formatted-time", "integer-of-formatted-date", "seconds-from-formatted-time", "seconds-past-midnight",
-        "test-formatted-datetime", "trim", NULL };
+        "test-formatted-datetime", NULL };
     static const char *y2023[] = { "baseconvert", "concat", "convert", "find-string", "module-name",
         "smallest-algebraic", "substitute", NULL };
     for (int i = 0; later[i].name; i++)
@@ -6333,6 +6407,44 @@ static void parse_operand_raw_1(Opnd *o)
                 o->fn = FN_CHARNAT; o->fnat = 1; o->fsize = 2;
             }
             if (o->fsize > 8190) die_at(n->line, "FUNCTION %s: the result could exceed 8190 bytes", n->s);
+            return;
+        }
+        else if (!strcmp(n->s, "trim")) {
+            /* TRIM (2014; 2023 15.96): argument-1 [LEADING | TRAILING]
+             * [argument-2 ...], the characters to delete, a space by
+             * default; the result of run-time length, zero when nothing
+             * is left (returned value rule 4) */
+            bp(BP_E27_TRIM, n->line);
+            advance();
+            if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION TRIM");
+            advance();
+            Opnd *a1 = xmalloc(sizeof *a1); parse_operand(a1);
+            int nat = opnd_is_national(a1);
+            if (a1->kind == O_NUM || (a1->kind == O_REF && (is_numeric_sym(a1->ref.sym) || sym_is_boolean(a1->ref.sym))) || opnd_is_boolean(a1) ||
+                a1->kind == O_FIG || a1->kind == O_ALL || (a1->kind == O_FUNC && fn_is_numeric(a1->fn)))
+                die_at(n->line, "FUNCTION TRIM takes an alphabetic, alphanumeric or national argument (2023 15.96.3 rule 1)");
+            int mode = 0;
+            if (accept_word("leading")) mode = 1; else if (accept_word("trailing")) mode = 2;
+            unsigned char chars[64]; int nch = 0;
+            while (cur()->kind != T_RP) {
+                Tok *c = cur();
+                if (c->kind != T_STR || c->nat != nat || c->boolv || c->len != (nat ? 2 : 1))
+                    die_at(c->line, "FUNCTION TRIM: each character to delete is one %s character, a literal here (2023 15.96.3 rule 2)", nat ? "national" : "alphanumeric");
+                if (nch + c->len > (int)sizeof chars) die_at(c->line, "FUNCTION TRIM: too many characters to delete");
+                memcpy(chars + nch, c->s, (size_t)c->len); nch += c->len;
+                advance();
+            }
+            advance();
+            memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = FN_TRIM; o->farg = a1; o->line = n->line;
+            o->fvar = 1; o->fnat = nat;
+            o->fsize = a1->kind == O_FUNC ? a1->fsize : opnd_size(a1);
+            if (o->fsize < 1) o->fsize = 1;
+            o->fnid = mode;
+            if (nch) {
+                Tok *t = xmalloc(sizeof *t); memset(t, 0, sizeof *t);
+                t->kind = T_STR; t->s = xmalloc((size_t)nch + 1); memcpy(t->s, chars, (size_t)nch); t->s[nch] = 0; t->len = nch;
+                o->ftrim = t;
+            }
             return;
         }
         else if (!strcmp(n->s, "boolean-of-integer") || !strcmp(n->s, "integer-of-boolean")) {
@@ -6878,12 +6990,13 @@ static void emit_screen_dyn_fill(Screen *sc, int first, int count)
 
 /* ---- argument staging ------------------------------------------------- */
 
-enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT, A_FDESC };
+enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT, A_FDESC, A_FLEN };
 typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; Opnd *fn; } Arg;
 static Arg arg_func(Opnd *o)       { Arg a = { A_FUNC, 0, 0, 0, 0, o }; return a; }
 static Arg arg_value(Opnd *o)      { Arg a = { A_VALUE, 0, 0, 0, 0, o }; return a; }
 static Arg arg_content(Opnd *o)    { Arg a = { A_CONTENT, 0, 0, 0, 0, o }; return a; }   /* BY CONTENT: a copy's address */
 static Arg arg_fdesc(Opnd *o)      { Arg a = { A_FDESC, 0, 0, 0, 0, o }; return a; }   /* the descriptor of the function result just evaluated */
+static Arg arg_flen(Opnd *o)       { Arg a = { A_FLEN, 0, 0, 0, 0, o }; return a; }    /* ... and its length in bytes */
 static Arg arg_rdesc(const Ref *r) { Arg a = { A_RDESC, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_rlen(const Ref *r)  { Arg a = { A_RLEN, r, 0, 0, 0, 0 }; return a; }
 static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_numeric);
@@ -7030,6 +7143,11 @@ static void emit_args(const Arg *a, int n)
              * before this one) */
             emit_li("r3", a[i].fn->fwnum ? 3 : a[i].fn->fnat ? 1 : a[i].fn->fbool ? 2 : 0);
             emit_call("cob_fn_var_desc");
+            emit("\tstw sp+%d, r1", SLOT(base + i));
+            slotted[i] = 1;
+        } else if (a[i].kind == A_FLEN) {
+            /* the same, its length: the A_FUNC before this one */
+            emit_call("cob_fn_last_len");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         }
@@ -7505,6 +7623,15 @@ static void emit_fn_value_raw_1(Opnd *f)
         emit_call(f->fn == FN_NATOF ? "cob_fn_national_of" : "cob_fn_display_of");
         return;
     }
+    if (f->fn == FN_TRIM) {
+        emit_str_arg(x);
+        if (f->ftrim) { emit_la("r5", lit_label((unsigned char *)f->ftrim->s, f->ftrim->len)); emit_li("r6", f->ftrim->len / (f->fnat ? 2 : 1)); }
+        else { emit_li("r5", 0); emit_li("r6", 0); }
+        emit_li("r7", f->fnid);
+        emit_li("r8", f->fnat);
+        emit_call("cob_fn_trim");
+        return;
+    }
     if (f->fn == FN_BOOLOFINT) {
         emit_push_opnd(x);                      /* argument-1, on the numeric stack */
         if (f->fvar) { emit_push_opnd(f->farg2); emit_call("cob_pop_int"); emit("\tadd r3, r1, r0"); }
@@ -7701,6 +7828,7 @@ static int opnd_numeric(Opnd *o)
 static Arg arg_len(Opnd *o)
 {
     if (o->kind == O_REF && o->ref.rm && !o->ref.rm_len) return arg_rlen(&o->ref);
+    if (o->kind == O_FUNC && o->fvar) return arg_flen(o);     /* staged after the function's own A_FUNC */
     return arg_imm(opnd_size(o));
 }
 

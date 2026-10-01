@@ -12,16 +12,16 @@ carry the compiler's own reason.
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
 | 7 COPY, REPLACE and directives | 24 | 4 | 0 | 20 |
-| 8 characters, names, data, expressions, conditions | 35 | 4 | 0 | 31 |
+| 8 characters, names, data, expressions, conditions | 35 | 5 | 0 | 30 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 0 | 0 | 2 |
 | 11 IDENTIFICATION DIVISION | 15 | 1 | 0 | 14 |
 | 12 ENVIRONMENT DIVISION | 22 | 13 | 0 | 9 |
 | 13 DATA DIVISION | 78 | 29 | 0 | 49 |
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
-| 15 intrinsic functions | 94 | 72 | 22 | 0 |
+| 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **165** | **29** | **130** |
+| **all** | **324** | **167** | **28** | **129** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -80,7 +80,7 @@ carry the compiler's own reason.
 | 8.4.3.15 |  | *unswept* | | | | | |
 | 8.4.4 |  | *unswept* | | | | | |
 | 8.7.5 |  | *unswept* | | | | | |
-| 8.8.3 |  | *unswept* | | | | | |
+| 8.8.3 |  | [expressions](expressions.md) | 11 | 2 | 0 | 0 | 0 |
 | 8.8.4.2 |  | [conditions](conditions.md) | 11 | 4 | 0 | 1 | 0 |
 | 8.8.4.3 |  | *unswept* | | | | | |
 | 8.8.4.4 |  | *unswept* | | | | | |
@@ -381,7 +381,7 @@ carry the compiler's own reason.
 | 15.93 | TEST-NUMVAL function | [functions](functions.md) (implemented) | | | | | |
 | 15.94 | TEST-NUMVAL-C function | [functions](functions.md) (implemented) | | | | | |
 | 15.95 | TEST-NUMVAL-F function | [functions](functions.md) (implemented) | | | | | |
-| 15.96 | TRIM function | **not implemented**: COBOL 2014; not implemented | | | | | |
+| 15.96 | TRIM function | [functions](functions.md) (implemented) | | | | | |
 | 15.97 | UPPER-CASE function | [functions](functions.md) (implemented) | | | | | |
 | 15.98 | VARIANCE function | [functions](functions.md) (implemented) | | | | | |
 | 15.99 | WHEN-COMPILED function | [functions](functions.md) (implemented) | | | | | |

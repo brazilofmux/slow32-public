@@ -143,6 +143,7 @@ warns only under -std=85. Never changes the output.
 | BP-E24 | comment-entries (`AUTHOR.`, `DATE-WRITTEN.`, ...) under -std=2002 | GnuCOBOL programs that carry them beside a 2002 feature: seventeen in X-COBOL, refused under either standard before | 2002 | deleted by 2002 (F.1); taken as comments, as 85 takes them (BP-O2), by the user's ruling of 2026-10-01 (ISSUES-120) |
 | BP-E25 | a constant entry without AS (`01 width CONSTANT 20.`) | GnuCOBOL; two X-COBOL programs | 2002 | 2002 13.9 and 2023 13.10 write CONSTANT AS; taken (ISSUES-120) |
 | BP-E26 | a level 78 constant-name (`78 width VALUE 20.`), Micro Focus's | fifteen X-COBOL programs in four projects; eleven compile with it | 85, 2002 | the standard's constant entry is `01 name CONSTANT AS` (2002 13.9). Taken by Micro Focus's rules (its VALUE clause, format 3): a literal keeps its class; an expression is an integer, strictly left to right, with + - * / and the bitwise AND, OR, EXCLUSIVE OR, NOT; LENGTH OF a literal or a data item. NEXT, START OF, DATE-COMPILED and the boolean values are refused as not implemented (ISSUES-120) |
+| BP-E27 | FUNCTION TRIM, COBOL 2014's (2023 15.96) | six X-COBOL programs; IBM, Micro Focus and GnuCOBOL all have it | 85, 2002 | beyond both editions; taken, with 2023's characters to delete (docs/conformance/functions.md). The other 2014 functions are still refused naming the edition (ISSUES-120) |
 
 Not points, recorded here:
 

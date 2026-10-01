@@ -4580,3 +4580,24 @@ refused as not implemented.  Test free/level78 (no oracle: GnuCOBOL has
 no EXCLUSIVE OR and refuses LENGTH OF a numeric literal; the rest agrees
 under its -std=mf), bad/level78-next, bad/level78-divzero,
 warn/ext-level78, and warn/ext-every.  The survey: 192 compile.
+
+Fourth batch:
+
+- **Concatenation expressions** (2002 and 2023 8.8.3): `literal &
+  literal` is one literal (general rule 3), so the text is joined once
+  COPY and REPLACE are done, before anything parses it, the >>TURN
+  positions mapped past the tokens it removes.  SPACE, ZERO and QUOTE
+  take the other operand's class (rule 1); HIGH-VALUE and LOW-VALUE are
+  refused, their characters being the collating sequence's, which is not
+  known then.  Refused by name under -std=85.  Tests 2002/concat
+  (identical to GnuCOBOL), 2002/concatfig (no oracle: GnuCOBOL refuses a
+  figurative operand), four bad/ tests.
+- **FUNCTION TRIM** (2014; 2023 15.96) as BP-E27, under either standard,
+  with 2023's characters to delete (literals), its result of run-time
+  length and zero when nothing is left.  A run-time-length function as a
+  STRING source was "not supported here yet"; the length now comes from
+  the runtime beside the function's address (A_FLEN), for DISPLAY-OF and
+  NATIONAL-OF too.  Tests 2002/trim (identical to GnuCOBOL),
+  2002/trimchars (no oracle: GnuCOBOL has only the 2014 form), two bad/
+  tests, warn/ext-trim, warn/ext-every; bad/std2002-intrinsic-2014 now
+  names SECONDS-PAST-MIDNIGHT.
