@@ -4782,3 +4782,16 @@ its descriptor is the part's (alphanumeric or national, of the part's
 length), and its width the part's characters.  A part of computed length
 is refused naming it.  Test free/posrefmod.
 
+Nineteenth batch: **the environment** (BP-E31), X/Open's and Micro
+Focus's: DISPLAY ... UPON ENVIRONMENT-NAME chooses a variable, ACCEPT ...
+FROM ENVIRONMENT-VALUE reads it, DISPLAY ... UPON ENVIRONMENT-VALUE sets
+it (trailing spaces kept, MF DISPLAY rule 9), ACCEPT ... FROM
+ENVIRONMENT name reads one in a step; ON EXCEPTION / NOT ON EXCEPTION on
+each.  The guest libc has no setenv, so a value set is kept in a table
+the run unit reads before the environment.  Writing it, the behavior
+point's table entry went in ahead of BP-D7 while its enum went after,
+and the first test caught the swap.  GnuCOBOL runs neither EXCEPTION
+phrase when the variable is present, and blanks the item on the
+exception (MF: undefined; kept here).  Test free/envvar (.env,
+.oracle-expected).
+

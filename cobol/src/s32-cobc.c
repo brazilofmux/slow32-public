@@ -276,7 +276,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
-       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT, BP_D7_MF_VALUE_TRUNCATED,
+       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT, BP_D7_MF_VALUE_TRUNCATED, BP_E31_ENVIRONMENT,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -363,6 +363,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                     "enough for a file name (its SELECT rule 4); the standard's data-name is declared" },
     { "BP-D7", 'D', "a VALUE literal longer than its alphanumeric item, cut on the right to the item; the "
                     "standard refuses it (X3.23-1985 VALUE syntax rule 3; 2023 13.18.63.3 rule 4), as Micro Focus's reference does" },
+    { "BP-E31", 'E', "ENVIRONMENT-NAME, ENVIRONMENT-VALUE and ACCEPT ... FROM ENVIRONMENT are X/Open's and Micro "
+                     "Focus's, not standard COBOL (the standard names devices through SPECIAL-NAMES)" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -9663,6 +9665,8 @@ static void parse_display_positioned(void)
     emit_pos_stmt(si, "cob_screen_display");
 }
 
+static void parse_env_exception(void);
+static void env_text_args(Opnd *o, const char *what);
 static void parse_accept_positioned(Ref *r, int tp)
 {
     int si = (int)(screen_synth() - g_screens);
@@ -9751,6 +9755,29 @@ static void parse_accept_1(void)
         g_accept_nat_check = 1;
     }
     if (accept_word("from")) {
+        if (at_word("environment-value") || at_word("environment")) {
+            /* FROM ENVIRONMENT-VALUE, the variable DISPLAY ... UPON
+             * ENVIRONMENT-NAME chose; FROM ENVIRONMENT name, one named
+             * here (BP-E31; MF ACCEPT rules 8 and 56).  No such variable:
+             * the exception, the item left as it was */
+            bp(BP_E31_ENVIRONMENT, r.line);
+            int named = at_word("environment"); advance();
+            if (named) {
+                Opnd no; parse_operand(&no);
+                env_text_args(&no, "ACCEPT ... FROM ENVIRONMENT");
+                emit("\tstw sp+%d, r3", SLOT_A); emit("\tstw sp+%d, r4", SLOT_B);
+                Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) }; emit_args(a, 2);
+                emit("\tadd r5, r3, r0"); emit("\tadd r6, r4, r0");
+                emit("\tldw r3, sp+%d", SLOT_A); emit("\tldw r4, sp+%d", SLOT_B);
+                emit_call("cob_env_accept_named");
+            } else {
+                Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) }; emit_args(a, 2);
+                emit_call("cob_env_accept");
+            }
+            parse_env_exception();
+            accept_word("end-accept");
+            return;
+        }
         if (at_word("argument-number") || at_word("argument-value") || at_word("command-line")) {
             const char *fn = at_word("argument-number") ? "cob_accept_argnum"
                            : at_word("argument-value") ? "cob_accept_argval" : "cob_accept_cmdline";
@@ -9803,6 +9830,41 @@ static void parse_accept_1(void)
     }
 }
 
+/* [ON] EXCEPTION ... [NOT [ON] EXCEPTION ...] after a statement that left
+ * 1 in r1 for its exception condition (the environment's) */
+static void parse_env_exception(void)
+{
+    if (!(at_word("on") || at_word("exception") || (at_word("not") && (is_word(peek(1), "on") || is_word(peek(1), "exception"))))) return;
+    emit("\tstw sp+%d, r1", SLOT_C);
+    int Lend = new_label();
+    if (at_word("on") || at_word("exception")) {
+        accept_word("on"); expect_word("exception");
+        int Lnot = new_label();
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit("\tbeq r1, r0, .L%d", Lnot);
+        parse_statements();
+        emit_jump(Lend);
+        emit_label(Lnot);
+    }
+    if (at_word("not")) {
+        advance(); accept_word("on"); expect_word("exception");
+        emit("\tldw r1, sp+%d", SLOT_C);
+        emit("\tbne r1, r0, .L%d", Lend);
+        parse_statements();
+    }
+    emit_label(Lend);
+}
+
+/* r3, r4: an alphanumeric literal's or item's bytes, for the environment */
+static void env_text_args(Opnd *o, const char *what)
+{
+    if (o->kind == O_STR && !o->tok->nat) { Arg a[2] = { arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len)), arg_imm(o->tok->len) }; emit_args(a, 2); return; }
+    if (o->kind == O_REF && (o->ref.sym->is_group || o->ref.sym->pi.category == PIC_ALPHANUMERIC || o->ref.sym->pi.category == PIC_ALPHABETIC) && !sym_is_national(o->ref.sym)) {
+        Arg a[2] = { arg_ref(&o->ref), arg_len(o) }; emit_args(a, 2); return;
+    }
+    die_at(o->line, "%s takes an alphanumeric literal or item (Micro Focus DISPLAY rule 6)", what);
+}
+
 static void parse_display(void)
 {
     int line = cur()->line;
@@ -9814,6 +9876,19 @@ static void parse_display(void)
     }
     /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
     if (stmt_positioned()) { parse_display_positioned(); return; }
+    if (is_word(peek(1), "upon") && (is_word(peek(2), "environment-name") || is_word(peek(2), "environment-value"))) {
+        /* DISPLAY x UPON ENVIRONMENT-NAME | ENVIRONMENT-VALUE (BP-E31):
+         * one operand, the variable's name, or its value set */
+        bp(BP_E31_ENVIRONMENT, line);
+        Opnd o; parse_operand(&o);
+        advance();
+        int val = at_word("environment-value"); advance();
+        env_text_args(&o, val ? "DISPLAY UPON ENVIRONMENT-VALUE" : "DISPLAY UPON ENVIRONMENT-NAME");
+        if (val) emit_call("cob_env_set_value");
+        else { emit_call("cob_env_set_name"); emit_li("r1", 0); }   /* ON EXCEPTION ignored (MF DISPLAY rule 6) */
+        parse_env_exception();
+        return;
+    }
     if (is_word(peek(1), "upon") && is_word(peek(2), "argument-number")) {
         Opnd o; parse_operand(&o);
         emit_incompat(&o);

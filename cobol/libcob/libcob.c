@@ -6594,6 +6594,56 @@ void cob_accept_argval(void *p, const cob_desc *d)
     put_text(p, d, a, (int)strlen(a));
 }
 
+/* ---- the environment (X/Open, Micro Focus; BP-E31) ----------------------
+ * DISPLAY ... UPON ENVIRONMENT-NAME names a variable; ACCEPT ... FROM
+ * ENVIRONMENT-VALUE reads it, DISPLAY ... UPON ENVIRONMENT-VALUE sets it,
+ * trailing spaces and all (MF DISPLAY rule 9).  ACCEPT ... FROM
+ * ENVIRONMENT name reads one in a step.  The guest libc has no setenv: a
+ * value set here is kept in a table this run unit reads first.  1 is the
+ * exception condition: no name given yet, or no such variable. */
+static char env_name[256]; static int env_named;
+static struct { char *name, *value; } *env_set; static int env_nset;
+
+static void env_copy_name(char *out, const char *p, int n)
+{
+    while (n > 0 && (p[n - 1] == ' ' || p[n - 1] == 0)) n--;
+    if (n > 255) n = 255;
+    memcpy(out, p, (size_t)n); out[n] = 0;
+}
+static const char *env_lookup(const char *name)
+{
+    for (int i = env_nset - 1; i >= 0; i--) if (!strcmp(env_set[i].name, name)) return env_set[i].value;
+    return getenv(name);
+}
+void cob_env_set_name(const char *p, int n) { env_copy_name(env_name, p, n); env_named = 1; }
+int cob_env_set_value(const char *p, int n)
+{
+    if (!env_named) return 1;
+    env_set = realloc(env_set, (size_t)(env_nset + 1) * sizeof *env_set);
+    char *v = malloc((size_t)n + 1), *k = malloc(strlen(env_name) + 1);
+    if (!env_set || !v || !k) return 1;
+    memcpy(v, p, (size_t)n); v[n] = 0; strcpy(k, env_name);
+    env_set[env_nset].name = k; env_set[env_nset].value = v; env_nset++;
+    return 0;
+}
+static void put_text(void *p, const cob_desc *d, const char *s, int n);
+int cob_env_accept(void *p, const cob_desc *d)
+{
+    if (!env_named) return 1;
+    const char *v = env_lookup(env_name);
+    if (!v) return 1;
+    put_text(p, d, v, (int)strlen(v));          /* the libc's buffer is the next getenv's: moved now */
+    return 0;
+}
+int cob_env_accept_named(const char *np, int nn, void *p, const cob_desc *d)
+{
+    char name[256]; env_copy_name(name, np, nn);
+    const char *v = env_lookup(name);
+    if (!v) return 1;
+    put_text(p, d, v, (int)strlen(v));
+    return 0;
+}
+
 /* ACCEPT identifier: one line from standard input, without its newline,
  * moved as alphanumeric text.  At end of file the item is left as it was. */
 void cob_accept_console(void *p, const cob_desc *d)
