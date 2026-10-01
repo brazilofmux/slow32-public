@@ -40,6 +40,12 @@ seconds.
     GEN=cond tests/gen/run-gen.sh 1 400 60
     GEN=string tests/gen/run-gen.sh 1 400 40
 
+The harness runs seeds 1 to 40 of each generator as Gate 7
+(`gen/arith`, `gen/edit`, `gen/cond`, `gen/string`), about 9,000 checks a
+run. A mutation check showed it fails with the old `0` insertion bug back
+in place (18 of 40 edit programs disagree). Without the oracle's image the
+summary says the gate did not run.
+
 The programs stay where X3.23-1985 defines the result exactly, so a
 disagreement is a finding, not two valid choices:
 

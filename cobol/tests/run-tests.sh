@@ -30,6 +30,12 @@
 # Gate 5 (NIST): the CCVS-85 totals must equal tests/ccvs-baseline.txt
 #   exactly (CCVS85 names the tree; CCVS=0 skips it, and a missing
 #   tree is reported as NOT RUN, never passed over).
+# Gate 7 (generated): a fixed batch of each tests/gen generator (arith,
+#   edit, cond, string), run here and under the oracle by run-gen.sh: every
+#   line must agree, apart from the oracle disagreements docs/oracles.md
+#   records -- and those only in the shapes run-gen.sh checks (ours equal
+#   to a computed truth or to inspect85.py).  Needs the oracle's container
+#   image; without it the summary says the gate did not run.
 # Gate 6 (exception sites): tests/ecsites/template.cbl compiled once per
 #   line of sites.txt with the statement put in; each must print what the
 #   line expects -- RAISED where the statement references invalid numeric
@@ -491,6 +497,23 @@ else
     NSQL_NOTE="cobol: NIST SQL NOT RUN -- no suite at $NSQL_TREE (set NISTSQL), or no python3"
 fi
 
+# Gate 7 (generated): fixed seeds, so a run is repeatable and a failure
+# names its program; run-gen.sh keeps the work directory when anything
+# disagrees.
+GEN_NOTE=""
+if [ "$ORACLE_ENGINE" = podman ] || [ "$ORACLE_ENGINE" = docker ]; then
+    for g in arith:70 edit:60 cond:60 string:40; do
+        gname=${g%%:*}; gn=${g##*:}
+        gout="$(GEN=$gname "$HERE/gen/run-gen.sh" 1 40 "$gn" 2>&1 | tail -1)"
+        case "$gout" in
+            "all 40 agree") report "gen/$gname" 0 "40 programs, $gn statements each" ;;
+            *)              report "gen/$gname" 1 "$gout" ;;
+        esac
+    done
+else
+    GEN_NOTE="cobol: GENERATED PROGRAMS NOT RUN -- they need the oracle's container image (tests/gen/README.md)"
+fi
+
 echo
 case "$ORACLE_ENGINE" in
     "")   if [ "${ORACLE:-1}" = 0 ]; then
@@ -508,5 +531,6 @@ else
 fi
 [ -z "$CCVS_NOTE" ] || echo "$CCVS_NOTE"
 [ -z "$NSQL_NOTE" ] || echo "$NSQL_NOTE"
+[ -z "$GEN_NOTE" ] || echo "$GEN_NOTE"
 [ -z "$SKIPPED" ] || echo "cobol: SKIPPED:$SKIPPED -- no C compiler for them here; this is not a full run"
 [ "$FAIL" = "0" ]
