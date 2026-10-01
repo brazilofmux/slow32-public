@@ -155,7 +155,8 @@ static void parse_read(void)
     int has_next = !has_prev && accept_word("next"); accept_word("record");
     Ref into; int has_into = 0;
     if (accept_word("into")) {
-        parse_ref(&into); has_into = 1;
+        g_noemit++; parse_ref(&into); g_noemit--;     /* identified after the record is read (2023 14.9.30.4) */
+        has_into = 1;
         if (f->rec >= 0 && into.sym->record == g_sym[f->rec].record)
             die_at(into.line, "READ ... INTO '%s': the item is the file's own record area (X3.23-1985 READ syntax rule 1)", into.sym->name);
         /* several record descriptions: INTO and all of them alphanumeric (2023 rule 1) */
@@ -203,6 +204,7 @@ static void parse_read(void)
         emit("\tbne r1, r0, .L%d", Lskip);
         Opnd src; memset(&src, 0, sizeof src); src.kind = O_REF; src.line = into.line;
         src.ref.sym = &g_sym[f->rec]; src.ref.line = into.line;
+        recv_calls(&into);
         emit_move(&src, &into);
         emit_label(Lskip);
     }

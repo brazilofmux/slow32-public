@@ -21,6 +21,10 @@ static void parse_statement(void)
     const Tok *stok = g_stmt_tok;
     g_stmt_convcheck = 0;
     g_stmt_tok = cur();
+    /* its calls are collected as they are made, and go first */
+    CallList outer_calls = g_stmt_calls; int outer_on = g_stmt_calls_on, outer_hold = g_stmt_calls_hold;
+    memset(&g_stmt_calls, 0, sizeof g_stmt_calls); g_stmt_calls_on = 1; g_stmt_calls_hold = 0;
+    int b0 = block_begin();
     parse_statement_1();
     if (g_stmt_convcheck) {
         int Lok = new_label();
@@ -29,6 +33,13 @@ static void parse_statement(void)
         emit_ec_raise(ec_find("EC-DATA-CONVERSION", 0));
         emit_label(Lok);
     }
+    if (g_stmt_calls.n) {
+        Block body = block_cut(b0);
+        for (int i = 0; i < g_stmt_calls.n; i++) block_put(&g_stmt_calls.b[i]);
+        block_put(&body);
+    }
+    free(g_stmt_calls.b);
+    g_stmt_calls = outer_calls; g_stmt_calls_on = outer_on; g_stmt_calls_hold = outer_hold;
     g_stmt_convcheck = outer;
     memcpy(g_cur_stmt, stmt, sizeof stmt); g_stmt_tok = stok;
 }

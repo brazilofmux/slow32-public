@@ -267,7 +267,9 @@ static int paren_is_condition(void)
 static void parse_compute(void)
 {
     Ref rs[MAXOPS]; int rd[MAXOPS];
+    g_noemit++;                                 /* receivers: their calls wait for the store (recv_calls) */
     int nr = parse_ref_list(rs, rd, MAXOPS, 2);
+    g_noemit--;
     if (!nr) die_at(cur()->line, "COMPUTE needs a receiving item");
     if (!at_op("=")) die_at(cur()->line, "expected '=' in COMPUTE, found %s", tok_desc(cur()));
     advance();

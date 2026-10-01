@@ -108,11 +108,21 @@ for in the commit -- plus all the usual gates.
      no jump to the end.  Its subjects are evaluated once, at the
      beginning (2023 14.9.13.4 rule 3).
    - Calls once, first, in the order written (2023 14.6.4, item
-     identification): a statement's user function calls are made before
-     its code, wherever they stand -- a receiver's subscript, a
-     reference modifier, an expression's leaf.  The operands are then
-     plain items, their code free to be made any number of times, and
-     the register paths take statements they had to refuse.
+     identification): a statement is its user function calls, then its
+     code.  Each call's code is cut out of the stream as it is made and
+     placed before the statement's (parse_statement, stmt_call_cut), so
+     this holds for every verb, whatever it had emitted when the call
+     was read.  The operands are then plain items, their code free to
+     be made any number of times, and the register paths take
+     statements they had to refuse.
+   - Receivers at access: 14.6.4 is "unless otherwise specified", and
+     it is, for receiving items -- a MOVE's immediately before the move
+     to it, an arithmetic statement's as each is accessed, a DIVIDE's
+     dividend and REMAINDER, READ and RETURN INTO after the record is
+     read.  Those are read as scans and their calls made in place where
+     the item is stored (recv_calls), on the stack's stores.  Not yet
+     so: SET's receivers, UNSTRING's, a PERFORM VARYING item -- their
+     calls are made first.
    - PERFORM (done 2026-10-01): its phrases, then an inline body's
      statements as a Block, read before the loop's code (Body.blk;
      the exception-checking PERFORM is still its own path).  Then the

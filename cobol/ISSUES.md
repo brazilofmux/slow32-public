@@ -5141,3 +5141,40 @@ before f runs -- and with UPON SYSERR, f's own DISPLAY goes to the error
 stream.  An audit (a verb's first emit before its last operand parse)
 also names WRITE, INITIALIZE, SET, ACCEPT, ALLOCATE and CALL's ADDRESS
 OF as candidates.  Next: every statement as its calls, then its code.
+
+**A statement is its calls, then its code; receivers at access.**
+DISPLAY "one " F(X) " two" showed "one " before F ran, and under UPON
+SYSERR F's own DISPLAY went to the error stream: DISPLAY writes each
+operand as it reads it.  The fix is not DISPLAY's but every verb's.
+ucall_emit cuts each call's code out of the stream as it is made
+(stmt_call_cut), and parse_statement places the statement's calls
+before its code.  A nested statement has its own list; a condition's
+calls stay with the condition; an EVALUATE WHEN's objects keep theirs
+(calls_scope_begin/end), evaluated when that WHEN is reached.
+
+Reading the rules for that found that 4f4da3b5 had over-applied 14.6.4.
+It says "unless otherwise specified", and for receiving items it is
+specified otherwise: a MOVE's receiver is identified immediately before
+the data is moved to it (14.9.25.4), an arithmetic statement's as each
+is accessed (14.7.7 rule 4b), a DIVIDE's dividend as each is determined
+and its REMAINDER after the quotient is stored (14.9.12.4), READ and
+RETURN INTO's after the record is read and not at all when the read
+fails (14.9.30.4).  4f4da3b5 made receivers' calls first with the
+rest; before the pass they were made as the address was formed -- the
+right time, if twice.  Now those receivers are read as scans and their
+calls made in place where the item is stored (recv_calls, held out of
+the statement's list), once; a statement with such a receiver takes the
+stack's stores (hx_ok, dx_ok, refs_hot, dec_add_ok decline).  Not yet
+so, their calls made first: SET's receivers (immediately before each is
+changed, 14.9.35.4), UNSTRING's, a PERFORM VARYING item.
+
+Also: a subscript written FUNCTION f(x) was taken for a data-name
+'function' (sub_is_expr); only the bare f(x) form was an expression.
+
+The snapshot changes in five programs, all user-function tests; every
+other program, CCVS-85 with them, is byte-identical.  Tests
+2002/userfndisp (DISPLAY, the operands before and after a call, UPON
+SYSERR, NO ADVANCING) and 2002/userfnrecv (MOVE, ADD, COMPUTE, DIVIDE
+INTO, REMAINDER, READ INTO: each receiver's subscript a function of an
+item the statement has just stored); GnuCOBOL agrees with both, line
+for line.

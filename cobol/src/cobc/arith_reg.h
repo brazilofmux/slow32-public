@@ -201,6 +201,7 @@ static void hx_emit(int n, int slow)
 static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, long long *bound, int *nonneg)
 {
     if (root < 0 || size_err || g_wide || g_nohx || g_rmode || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
+    if (refs_pending(rs, nr) || (rem && ref_pending(rem))) return 0;   /* a receiver's call is made as it is stored: the stack's stores */
     if (g_slot_base + hn_depth(root, 1) + 2 > NSLOTS) return 0;     /* too deep for the frame: the stack */
     int wide = 0, inner = 0, neg = 0, div = g_hn[root].op == '/';
     long double b = hx_bound(root, &wide, &inner, &neg, 1);
@@ -464,6 +465,7 @@ static void dx_emit(int n)
 static int dx_ok(int root, Ref *rs, int nr, int size_err)
 {
     if (root < 0 || size_err || g_wide || g_nohx || g_rmode || ec_on_name("EC-DATA-INCOMPATIBLE")) return 0;
+    if (refs_pending(rs, nr)) return 0;
     if (g_slot_base + hn_depth(root, 2) + 4 > NSLOTS) return 0;     /* too deep for the frame: the stack */
     if (!dx_check(root, 1)) return 0;
     for (int i = 0; i < nr; i++) {
@@ -637,8 +639,8 @@ static void arith_calls(Arith *st, int ab)
         for (int i = 0; i < st->n; i++) ucall_make(&st->ops[i]);
         if (st->giving) ucall_make(&st->minuend);
     }
-    for (int i = 0; i < st->nr; i++) ref_calls(&st->rs[i]);     /* a receiver's subscripts */
-    if (st->has_rem) ref_calls(&st->rem);
+    /* the receivers' own calls wait: each is identified as it is accessed
+     * (2023 14.7.7 rule 4b; recv_calls) */
 }
 
 /* ADD a ... TO b ... [GIVING c ...]; ADD a ... GIVING c ... */
@@ -833,6 +835,7 @@ static void parse_multiply(void)
     for (int i = 0; i < nr && !g_wide; i++) { Opnd ro = ref_opnd(&rs[i]); if (prod_wide(&a, &ro)) g_wide = 1; }
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
+        recv_calls(&rs[i]);                     /* identified as it is accessed */
         g_nhn = 0; int root = hn_new('*', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
         int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
         if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }
@@ -867,6 +870,7 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
     }
     (void)q_rounded;
     Ref r = *rem;
+    recv_calls(&r);                             /* identified after the quotient is stored */
     if (r.sym->is_group || (r.sym->pi.category != PIC_NUMERIC && r.sym->pi.category != PIC_NUMERIC_EDITED))
         die_at(r.line, "REMAINDER '%s' is not numeric (or numeric-edited)", r.sym->name);
     int was_wide = g_wide;
@@ -979,6 +983,7 @@ static void parse_divide(void)
     g_wide = (g_std >= 2002 && st.comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr) || round_wide(rs, rd, nr);
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
+        recv_calls(&rs[i]);                     /* as each dividend is determined (2023 14.9.12.4) */
         g_nhn = 0; int root = hn_new('/', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
         int mode = hx_ok(root, &rs[i], &rd[i], 1, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
         if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, &rs[i], &rd[i], 1, NULL, bd, nn, Lslow); }

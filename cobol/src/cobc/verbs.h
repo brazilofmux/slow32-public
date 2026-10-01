@@ -85,6 +85,7 @@ static void parse_evaluate(void)
     while (at_word("when")) {
         Cond *group = NULL; int other = 0;
         int pre0 = block_begin();
+        CallList when_outer = calls_scope_begin();      /* its objects' calls stay here, made when this WHEN is reached */
         while (accept_word("when")) {
             if (accept_word("other")) { other = 1; break; }
             Cond *all = NULL;
@@ -141,6 +142,7 @@ static void parse_evaluate(void)
             die_at(cur()->line, "each WHEN phrase of EVALUATE is followed by an imperative statement (%s format)", g_std < 2002 ? "X3.23-1985 EVALUATE" : "2023 14.9.13");
         if (nwh == whcap) { whcap = whcap ? 2 * whcap : 8; wh = xrealloc(wh, (size_t)whcap * sizeof *wh); }
         When *w = &wh[nwh++];
+        calls_scope_end(when_outer);
         w->pre = block_cut(pre0); w->c = group; w->other = other;
         w->body = parse_block();
         if (other) {

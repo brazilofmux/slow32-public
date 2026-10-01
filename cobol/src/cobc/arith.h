@@ -185,6 +185,7 @@ static int ref_hot_store(Ref *r, int subtract, int nonneg)
 
 static int refs_hot(Ref *rs, int n, int subtract, int nonneg)
 {
+    if (refs_pending(rs, n)) return 0;          /* a receiver's call is made as it is stored (recv_calls) */
     for (int i = 0; i < n; i++) if (!ref_hot_store(&rs[i], subtract, nonneg)) return 0;
     return 1;
 }
@@ -327,6 +328,7 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         int opts = rnd_opts(rounded[i]) | (size_err ? 2 : 0);
+        recv_calls(&rs[i]);                     /* identified as it is accessed */
         if (hot) {
             Sym *d = rs[i].sym;
             emit_ref_addr(&rs[i], "r3");
@@ -563,6 +565,7 @@ static void emit_dec_store(Sym *s, const char *areg, const char *hi, const char 
 static int dec_add_ok(Opnd *ops, int n, Ref *rs, int nr, int size_err)
 {
     if (size_err || n != 1 || ops[0].kind != O_REF || ops[0].all_sub) return 0;
+    if (refs_pending(rs, nr)) return 0;
     if (!sym_dec_ok(ops[0].ref.sym) || !ref_dec_addr_ok(&ops[0].ref)) return 0;
     for (int i = 0; i < nr; i++) {
         if (!sym_dec_ok(rs[i].sym) || !ref_dec_addr_ok(&rs[i])) return 0;

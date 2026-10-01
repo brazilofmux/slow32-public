@@ -40,12 +40,17 @@ identifiers in a statement are evaluated left to right as the first
 operation of its execution, function evaluation and subscript
 evaluation among the steps. So a statement's calls are made once,
 first, in the order written -- wherever they stand: an operand, a
-receiver's subscript, a reference modifier's start or length, an
-expression's operand, another call's argument (that one first). The
-statements read whole before their code (the arithmetic verbs, MOVE,
-COMPUTE) make them from the parsed statement; one that emits as it
-reads makes each where it is read; and a compile-time guard stops any
-result from a scan reaching code without its call. An EVALUATE subject
+reference modifier's start or length, an expression's operand, another
+call's argument (that one first). Each call's code is placed before the
+statement's own, whatever the verb had already emitted when it read the
+call (`DISPLAY "a" F(X)` calls F before it shows "a"). "Unless
+otherwise specified", the rule says, and receiving items are: a MOVE's
+receiver is identified immediately before the move to it, an arithmetic
+statement's as each is accessed, READ INTO's after the record is read.
+A function in such a receiver's subscript is called there, once, and
+sees what the statement has stored so far: `MOVE 2 TO N T(F(N))` moves
+to T(2). A compile-time guard stops any result from a scan reaching
+code without its call. An EVALUATE subject
 is evaluated once, at the beginning (14.9.13.4 rule 3), so its calls
 are made there and not again for each WHEN (docs/plans/
 frontend-pass.md).

@@ -438,6 +438,43 @@ static void block_put(const Block *b)
     }
 }
 
+/* A statement is its user function calls, then its code (2023 14.6.4: the
+ * identifiers in a statement are evaluated as the first operation of its
+ * execution).  Each call's code is cut out of the stream as it is made
+ * (stmt_call_cut) and kept here; parse_statement places the calls before
+ * the statement's own code -- whatever the verb had emitted by the time
+ * the call was read (DISPLAY "a" f(x) showed "a" before f ran).  Held
+ * back (g_stmt_calls_hold) for a receiving item, identified where the
+ * statement's rules say: as it is accessed, immediately before the move. */
+typedef struct { Block *b; int n, cap; } CallList;
+static CallList g_stmt_calls;
+static int g_stmt_calls_on, g_stmt_calls_hold;
+static void stmt_call_cut(int from)
+{
+    if (!g_stmt_calls_on || g_stmt_calls_hold || g_noemit) return;
+    Block b = block_cut(from);
+    if (!b.n) return;
+    if (g_stmt_calls.n == g_stmt_calls.cap) {
+        g_stmt_calls.cap = g_stmt_calls.cap ? 2 * g_stmt_calls.cap : 4;
+        g_stmt_calls.b = xrealloc(g_stmt_calls.b, (size_t)g_stmt_calls.cap * sizeof *g_stmt_calls.b);
+    }
+    g_stmt_calls.b[g_stmt_calls.n++] = b;
+}
+/* a part of a statement whose calls stay with it: an EVALUATE's WHEN
+ * objects, evaluated when that WHEN is reached */
+static CallList calls_scope_begin(void)
+{
+    CallList outer = g_stmt_calls;
+    memset(&g_stmt_calls, 0, sizeof g_stmt_calls);
+    return outer;
+}
+static void calls_scope_end(CallList outer)
+{
+    for (int i = 0; i < g_stmt_calls.n; i++) block_put(&g_stmt_calls.b[i]);
+    free(g_stmt_calls.b);
+    g_stmt_calls = outer;
+}
+
 /* A statement's pair of conditional phrases -- [NOT] AT END, INVALID KEY,
  * ON EXCEPTION, ON OVERFLOW, ON SIZE ERROR -- as blocks, laid out on the
  * status the statement left in a frame slot (slot < 0: in r1 already).

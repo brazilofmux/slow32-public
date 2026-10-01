@@ -1595,6 +1595,7 @@ static void parse_procedure_division(void)
             for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
             g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally; g_in_ecp_when = in_ecpw; g_wide = 0; g_fstmt = 0; g_saw_wide = 0;
             g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
+            memset(&g_stmt_calls, 0, sizeof g_stmt_calls); g_stmt_calls_on = 0; g_stmt_calls_hold = 0; g_hn_busy = 0;
             resync_sentence(start);
             continue;
         }

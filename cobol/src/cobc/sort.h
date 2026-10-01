@@ -273,7 +273,7 @@ static void parse_return(void)
     if (f->org != COB_ORG_SORT) die_at(cur()->line, "RETURN '%s': the file must be an SD", f->name);
     accept_word("record");
     Ref into; int has_into = 0;
-    if (accept_word("into")) { parse_ref(&into); has_into = 1; }
+    if (accept_word("into")) { g_noemit++; parse_ref(&into); g_noemit--; has_into = 1; }   /* identified after the record is read */
     emit_file_addr("r3", f);
     emit_call("cob_return");
     emit("\tstw sp+%d, r1", SLOT_C);
@@ -283,6 +283,7 @@ static void parse_return(void)
         emit("\tbne r1, r0, .L%d", Lskip);
         Opnd src; memset(&src, 0, sizeof src); src.kind = O_REF; src.line = into.line;
         src.ref.sym = &g_sym[f->rec]; src.ref.line = into.line;
+        recv_calls(&into);
         emit_move(&src, &into);
         emit_label(Lskip);
     }

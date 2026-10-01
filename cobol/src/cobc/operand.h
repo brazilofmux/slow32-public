@@ -235,6 +235,8 @@ static int sub_is_expr(void)
     int i = g_tp, simple;
     if (g_tok[i].kind == T_NUM) simple = i + 1;
     else if (g_tok[i].kind == T_WORD) {
+        /* FUNCTION name ...: a function-identifier is an expression */
+        if (!strcmp(g_tok[i].s, "function") && g_tok[i + 1].kind == T_WORD && !sym_lookup_quiet("function")) return 1;
         i++;
         while ((is_word(&g_tok[i], "of") || is_word(&g_tok[i], "in")) && g_tok[i + 1].kind == T_WORD) i += 2;
         if (g_tok[i].kind == T_LP && !g_tok[i].after_comma) return 1;

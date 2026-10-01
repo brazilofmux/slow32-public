@@ -284,7 +284,9 @@ static void ucall_emit(const UCall *u)
     if (g_nucall == g_ucap) { g_ucap = g_ucap ? 2 * g_ucap : 64; g_ucall = realloc(g_ucall, (size_t)g_ucap * sizeof *g_ucall); }
     g_ucall[g_nucall] = *u;
     if (g_cond_depth > 0) { g_nucall++; return; }
+    int c0 = block_begin();
     emit_ucall(&g_ucall[g_nucall]);
+    stmt_call_cut(c0);                          /* to go before the statement's code */
 }
 
 /* Item identification's function evaluation (2023 14.6.4): the identifiers
@@ -298,6 +300,7 @@ static void ucall_emit(const UCall *u)
  * calls, and its code may be emitted any number of times.  The copies and
  * the result are the ones the scan made (flagged ftemp_scan until a call
  * fills them). */
+static void ref_calls(Ref *r);
 static void expr_calls(Expr *e)
 {
     if (!e->op) { ucall_make(e->o); return; }
@@ -315,6 +318,54 @@ static void bexpr_calls(BExpr *b)
     if (b->l) bexpr_calls(b->l);
     if (b->r) bexpr_calls(b->r);
     if (b->o) ucall_make(b->o);
+}
+/* is a call still waiting anywhere in it?  (ucall_make's walk) */
+static int opnd_pending(const Opnd *o);
+static int expr_pending(const Expr *e)
+{
+    if (!e->op) return opnd_pending(e->o);
+    return expr_pending(e->l) || (e->r && expr_pending(e->r));
+}
+static int ref_pending(const Ref *r)
+{
+    for (int k = 0; k < r->nsub; k++) if (r->sub[k].sym == &g_subx && expr_pending(r->sub[k].x)) return 1;
+    return (r->rm_sx && expr_pending(r->rm_sx)) || (r->rm_lx && expr_pending(r->rm_lx));
+}
+static int bexpr_pending(const BExpr *b)
+{
+    return (b->l && bexpr_pending(b->l)) || (b->r && bexpr_pending(b->r)) || (b->o && opnd_pending(b->o));
+}
+static int opnd_pending(const Opnd *o)
+{
+    if (o->uc) return 1;
+    switch (o->kind) {
+    case O_EXPR: return expr_pending(o->ex);
+    case O_BEXPR: return bexpr_pending(o->bx);
+    case O_REF: case O_ADDR: return ref_pending(&o->ref);
+    case O_FUNC:
+        if ((o->farg && opnd_pending(o->farg)) || (o->farg2 && opnd_pending(o->farg2))) return 1;
+        for (int k = 0; k < o->nfargs; k++) if (opnd_pending(o->fargs[k])) return 1;
+        return (o->fsx && expr_pending(o->fsx)) || (o->flx && expr_pending(o->flx));
+    default: return 0;
+    }
+}
+static int refs_pending(const Ref *rs, int n)
+{
+    for (int i = 0; i < n; i++) if (ref_pending(&rs[i])) return 1;
+    return 0;
+}
+/* A receiving item's calls, made here: where the statement accesses it,
+ * not at the statement's beginning -- a MOVE's receiver immediately
+ * before the move (2023 14.9.25.4), an arithmetic statement's as each is
+ * accessed (14.7.7 rule 4b), READ INTO's after the record is read
+ * (14.9.30.4).  The receiver is read as a scan, so its calls wait for
+ * this; MOVE 2 TO N T(F(N)) calls F with the new N. */
+static void recv_calls(Ref *r)
+{
+    if (!ref_pending(r)) return;
+    g_stmt_calls_hold++;
+    ref_calls(r);
+    g_stmt_calls_hold--;
 }
 static void ucall_make(Opnd *o)
 {
