@@ -4762,3 +4762,12 @@ Sixteenth batch:
   Tests free/mf-valtrunc (identical to GnuCOBOL -std=mf),
   bad/value-too-long, warn/ext-mf-valtrunc.
 
+Seventeenth batch: **a positioned ACCEPT's screen clauses** (BP-E7).
+`accept x at line 11 col 34 with update auto-skip` -- abrignoli_COBSOFT,
+24 programs -- met "'auto-skip' is not a COBOL verb": the statement knew
+UPDATE, PROMPT, SIZE and the like, not the screen entry's own clauses.
+It now takes AUTO (AUTO-SKIP), SECURE, REQUIRED (EMPTY-CHECK), FULL
+(LENGTH-CHECK), UNDERLINE, HIGHLIGHT and LOWLIGHT, with the SCREEN
+SECTION's meanings, the input ones on ACCEPT only.  Test free/posauto
+(keys typed with no Enter between the two fields).
+

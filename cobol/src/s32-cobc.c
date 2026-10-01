@@ -9511,6 +9511,16 @@ static void parse_pos_clauses(SField *f, int is_accept)
         if (accept_word("low")) { f->flags |= COB_SF_LOWLIGHT; continue; }
         if (accept_word("reverse") || accept_word("reverse-video")) { f->flags |= COB_SF_REVERSE; continue; }
         if (accept_word("update")) { if (is_accept) f->kind = COB_SCR_USING; continue; }
+        /* the screen entry's own clauses, as Micro Focus and RM write them on
+         * the statement (BP-E7): AUTO[-SKIP] ends the field when it is full,
+         * the rest as in the SCREEN SECTION; the input ones only on ACCEPT */
+        if (accept_word("auto") || accept_word("auto-skip")) { if (is_accept) f->flags |= COB_SF_AUTO; continue; }
+        if (accept_word("secure")) { if (is_accept) f->flags |= COB_SF_SECURE; continue; }
+        if (accept_word("required") || accept_word("empty-check")) { if (is_accept) f->flags |= COB_SF_REQUIRED; continue; }
+        if (accept_word("full") || accept_word("length-check")) { if (is_accept) f->flags |= COB_SF_FULL; continue; }
+        if (accept_word("underline")) { f->flags |= COB_SF_UNDERLINE; continue; }
+        if (accept_word("highlight")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
+        if (accept_word("lowlight")) { f->flags |= COB_SF_LOWLIGHT; continue; }
         if (accept_word("no")) { expect_word("beep"); f->ext |= COB_SX_NOBEEP; continue; }
         if (accept_word("blink") || accept_word("echo") || accept_word("off") || accept_word("tab") || accept_word("convert") || accept_word("beep")) continue;
         if (accept_word("unit") || accept_word("control")) { Opnd o; parse_operand(&o); continue; }

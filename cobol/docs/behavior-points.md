@@ -124,7 +124,7 @@ warns only under -std=85. Never changes the output.
 | BP-E4 | `SIGNED-INT`, `UNSIGNED-INT`, `SIGNED-SHORT`, `UNSIGNED-SHORT` | GnuCOBOL / majesty | 85, 2002 | no; `BINARY-LONG`, `BINARY-SHORT` [SIGNED / UNSIGNED] |
 | BP-E5 | `BINARY-CHAR`, `BINARY-SHORT`, `BINARY-LONG`, `POINTER` | GnuCOBOL / majesty | 85 | yes, from 2002 |
 | BP-E6 | `STOP RUN identifier` / `RETURNING n` | RM/COBOL, GnuCOBOL | 85, 2002 | no: the standard form is `STOP RUN WITH {ERROR / NORMAL} STATUS [identifier / literal]` (14.9.42) |
-| BP-E7 | positioned `DISPLAY` / `ACCEPT` (`LINE`, `POSITION`, `AT`) | RM/COBOL, Micro Focus | 85, 2002 | no: RM's `LINE ... POSITION` form does not appear (`AT rrcc` not checked) |
+| BP-E7 | positioned `DISPLAY` / `ACCEPT` (`LINE`, `POSITION`, `AT`) | RM/COBOL, Micro Focus | 85, 2002 | no: RM's `LINE ... POSITION` form does not appear (`AT rrcc` not checked) Since 2026-10-01 the statement also takes the screen entry's AUTO (AUTO-SKIP), SECURE, REQUIRED (EMPTY-CHECK), FULL (LENGTH-CHECK), UNDERLINE, HIGHLIGHT and LOWLIGHT, as Micro Focus and RM write them (abrignoli_COBSOFT's `with update auto-skip`; free/posauto, ISSUES-120) |
 | BP-E8 | hexadecimal literals `X"..."` | the Stage 1 extension majesty uses | 85 | yes, from 2002 |
 | BP-E9 | `CALL ... BY VALUE`, `CALL ... RETURNING` (the seam to C) | C-ABI implementor module | 85 | yes, from 2002 |
 | BP-E10 | `SCREEN SECTION` | Micro Focus | 85 | yes, from 2002 |
