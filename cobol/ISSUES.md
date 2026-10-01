@@ -4569,3 +4569,14 @@ Second batch, the same day:
 The survey: 180 compile.  Of the programs the constant entry and the
 comment-entries held back, seven compile; the rest stop later, mostly at
 level 78, OCCURS at level 01, FUNCTION TRIM and ANY LENGTH.
+
+Third batch: **level 78** (BP-E26), Micro Focus's constant-name, on the
+constant entry's substitution, under either standard: a literal keeps its
+class; anything else is an integer by MF's rules (strictly left to right,
+64-bit, the bitwise AND, OR, EXCLUSIVE OR, NOT); LENGTH or SIZE OF a
+literal (digits or characters) or of a data item (its storage, after
+layout).  NEXT, START OF, DATE-COMPILED and the boolean values are
+refused as not implemented.  Test free/level78 (no oracle: GnuCOBOL has
+no EXCLUSIVE OR and refuses LENGTH OF a numeric literal; the rest agrees
+under its -std=mf), bad/level78-next, bad/level78-divzero,
+warn/ext-level78, and warn/ext-every.  The survey: 192 compile.

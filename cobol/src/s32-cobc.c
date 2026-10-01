@@ -265,7 +265,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E10_SCREEN_SECTION, BP_E11_FREE_FORMAT, BP_E12_LINE_SEQUENTIAL, BP_E13_UNDERSCORE, BP_E14_COMPOSITE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
-       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS,
+       BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -329,6 +329,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "taken as comments, as COBOL 85 takes them" },
     { "BP-E25", 'E', "a constant entry without AS (01 name CONSTANT literal) is GnuCOBOL's; the standard writes "
                      "CONSTANT AS literal (2002 13.9; 2023 13.10)" },
+    { "BP-E26", 'E', "a level 78 entry is Micro Focus's constant-name; the standard's constant entry is "
+                     "01 name CONSTANT AS (2002 13.9; 2023 13.10)" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -2988,6 +2990,11 @@ static void parse_data_item1(void)
     advance();
     g_entry_level = level;
 
+    if (level == 78) {                      /* Micro Focus's constant-name (BP-E26) */
+        bp(BP_E26_LEVEL_78, line);
+        parse_constant_entry(line);
+        return;
+    }
     if (!((level >= 1 && level <= 49) || level == 66 || level == 77 || level == 88))
         die_at(line, "level number %d is not valid", level);
     if (level == 1 && g_std >= 2002 && is_word(peek(1), "constant") && !is_word(peek(2), "record")) {
@@ -5439,6 +5446,7 @@ static CtNum ct_op(CtNum a, int op, CtNum b, int line)
     return r;
 }
 static CtNum ct_expr(void);
+static CtNum mf_expr(void);
 static CtNum ct_factor(void)
 {
     Tok *t = cur();
@@ -5482,26 +5490,102 @@ static CtNum ct_expr(void)
     }
 }
 
+/* Micro Focus's constant-expression (the VALUE clause's format 3, rules
+ * 13-20): integers, combined strictly left to right -- every operator of
+ * one precedence, parentheses first -- in 64-bit integer arithmetic, with
+ * + - * / and the bitwise AND, OR, EXCLUSIVE OR and NOT; LENGTH or SIZE OF
+ * a literal is its digits (sign and point not counted) or characters, a
+ * figurative constant's 1 */
+static long long mf_operand(void)
+{
+    Tok *t = cur();
+    if (accept_word("not")) return ~mf_operand();
+    if (t->kind == T_LP) {
+        advance(); CtNum v = mf_expr();
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' in a level 78 VALUE");
+        advance(); return v.n;
+    }
+    if ((at_word("length") || at_word("size")) && is_word(peek(1), "of")) {
+        advance(); advance();
+        Tok *l = cur();
+        long long n = 0;
+        if (l->kind == T_WORD && is_figurative(l->s)) n = 1;
+        else if (l->kind == T_STR) n = l->nat ? l->len / 2 : l->len;
+        else if (l->kind == T_NUM) { NumLit nl; numlit_parse(l, &nl); n = nl.ndigits; }
+        else die_at(l->line, "LENGTH OF a data item inside a level 78 expression is not implemented; give it its own entry");
+        advance(); return n;
+    }
+    if (t->kind != T_NUM) die_at(t->line, "a level 78 expression takes integers, not %s", tok_desc(t));
+    NumLit n; numlit_parse(t, &n);
+    if (!numlit_is_int(&n) || n.ndigits > 18) die_at(t->line, "a level 78 expression takes integers of at most 18 digits");
+    advance();
+    long long v = numlit_int(&n);
+    return n.neg ? -v : v;
+}
+static CtNum mf_expr(void)
+{
+    long long v = mf_operand();
+    for (;;) {
+        Tok *t = cur(); int op = 0;
+        if (t->kind == T_OP && strlen(t->s) == 1 && strchr("+-*/", t->s[0])) op = t->s[0];
+        else if (at_word("and")) op = '&';
+        else if (at_word("or")) op = '|';
+        else if (at_word("exclusive") && is_word(peek(1), "or")) { op = '^'; advance(); }
+        if (!op) break;
+        advance();
+        long long w = mf_operand();
+        switch (op) {
+        case '+': v = (long long)((unsigned long long)v + (unsigned long long)w); break;
+        case '-': v = (long long)((unsigned long long)v - (unsigned long long)w); break;
+        case '*': v = (long long)((unsigned long long)v * (unsigned long long)w); break;
+        case '/': if (!w) die_at(t->line, "a division by zero in a level 78 VALUE"); v /= w; break;
+        case '&': v &= w; break;
+        case '|': v |= w; break;
+        default:  v ^= w; break;
+        }
+    }
+    CtNum r = { v, 1 };
+    return r;
+}
+
 static void parse_constant_entry(int line)
 {
     Tok *nt = cur();
     if (nt->kind != T_WORD) die_at(line, "expected a constant-name, found %s", tok_desc(nt));
     user_word(nt->s, line, "a constant");
     char name[64]; snprintf(name, sizeof name, "%s", nt->s);
-    advance(); expect_word("constant");
+    advance();
+    int mf = g_entry_level == 78;
     Const c; memset(&c, 0, sizeof c);
     snprintf(c.name, sizeof c.name, "%s", name); c.line = line; c.unit = g_unit;
+    if (mf) {
+        /* 78 name VALUE [IS] constant-expression (Micro Focus: the VALUE
+         * clause's format 3) */
+        if (!accept_word("value")) die_at(cur()->line, "a level 78 entry '%s' needs VALUE", name);
+        accept_word("is");
+    } else {
+    expect_word("constant");
     if (accept_word("is")) { expect_word("global"); c.global = 1; }
     else if (accept_word("global")) c.global = 1;
-    if (!accept_word("as")) {
+    }
+    if (!mf && !accept_word("as")) {
         if (cur()->kind != T_NUM && cur()->kind != T_STR) die_at(cur()->line, "expected AS in the constant entry of '%s'", name);
         bp(BP_E25_CONSTANT_NO_AS, cur()->line);
     }
     Tok *v = cur();
     char spec[256] = "";
-    if (at_word("from")) die_at(v->line, "'%s': FROM compilation-variable-name needs >>DEFINE, which is not implemented", name);
-    if (at_word("length") || at_word("byte-length")) {
-        c.lbytes = at_word("byte-length");
+    if (!mf && at_word("from")) die_at(v->line, "'%s': FROM compilation-variable-name needs >>DEFINE, which is not implemented", name);
+    if (mf && (at_word("next") || at_word("start") || at_word("date-compiled") || at_word("true") || at_word("false") || v->boolv))
+        die_at(v->line, "'%s': a level 78 VALUE of %s is not implemented", name, tok_desc(v));
+    if (mf && (at_word("length") || at_word("size")) && is_word(peek(1), "of") &&
+        (peek(2)->kind == T_STR || peek(2)->kind == T_NUM || (peek(2)->kind == T_WORD && is_figurative(peek(2)->s)))) {
+        /* LENGTH OF a literal: an integer now, in an expression or alone */
+        CtNum r = mf_expr();
+        char *b = xmalloc(24); snprintf(b, 24, "%lld", r.n);
+        memset(&c.val, 0, sizeof c.val); c.val.kind = T_NUM; c.val.s = b; c.val.len = (int)strlen(b);
+        snprintf(spec, sizeof spec, "%d:%s", T_NUM, b);
+    } else if ((at_word("length") || at_word("byte-length") || (mf && at_word("size"))) && !(mf && at_word("byte-length"))) {
+        c.lbytes = at_word("byte-length") || mf;    /* Micro Focus's LENGTH is the storage's size */
         advance(); expect_word("of");
         /* data-name [OF|IN qualifier]... [(literal ...)]: by hand, as the
          * tables' dimensions are not settled until the DATA DIVISION is.
@@ -5535,6 +5619,11 @@ static void parse_constant_entry(int line)
         snprintf(spec, sizeof spec, "%d:%.*s", v->kind, v->len > 200 ? 200 : v->len, v->s);
     } else if (v->kind == T_WORD && is_figurative(v->s)) {
         die_at(v->line, "'%s': a figurative constant is no constant entry's literal (2023 13.10.3 rule 6)", name);
+    } else if (mf) {
+        CtNum r = mf_expr();
+        char *b = xmalloc(24); snprintf(b, 24, "%lld", r.n);
+        memset(&c.val, 0, sizeof c.val); c.val.kind = T_NUM; c.val.s = b; c.val.len = (int)strlen(b);
+        snprintf(spec, sizeof spec, "%d:%s", T_NUM, b);
     } else {
         CtNum r = ct_expr();
         if (r.d != 1) die_at(v->line, "'%s': the expression's value is not an integer (%lld/%lld); a constant entry's expression gives an integer (2023 13.10.4 rule 4)", name, r.n, r.d);
