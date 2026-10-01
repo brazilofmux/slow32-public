@@ -355,7 +355,7 @@ static Opnd parse_cond_operand(void)
     if (cur()->kind == T_OP && (!strcmp(cur()->s, "-") || !strcmp(cur()->s, "+"))) return expr_opnd();   /* a unary sign begins an expression */
     int start = g_tp;
     Opnd x; parse_operand(&x);
-    if (at_arith_op()) { g_tp = start; return expr_opnd(); }
+    if (at_arith_op()) return expr_opnd_after(&x, start);
     return x;
 }
 
@@ -794,7 +794,10 @@ static void cond_jump_true(Cond *c, int L);
 
 static void cond_jump_false(Cond *c, int L)
 {
-    if (c->uc1 > c->uc0) emit_ucalls(c->uc0, c->uc1);
+    /* its user functions called once, here: the rest of the condition
+     * without them (emit_cond_value would call them again) */
+    Cond d;
+    if (c->uc1 > c->uc0) { emit_ucalls(c->uc0, c->uc1); d = *c; d.uc0 = d.uc1 = 0; c = &d; }
     switch (c->kind) {
     case C_AND: cond_jump_false(c->a, L); cond_jump_false(c->b, L); return;
     case C_OR: { int Lt = new_label(); cond_jump_true(c->a, Lt); cond_jump_false(c->b, L); emit_label(Lt); return; }
@@ -805,7 +808,10 @@ static void cond_jump_false(Cond *c, int L)
 
 static void cond_jump_true(Cond *c, int L)
 {
-    if (c->uc1 > c->uc0) emit_ucalls(c->uc0, c->uc1);
+    /* its user functions called once, here: the rest of the condition
+     * without them (emit_cond_value would call them again) */
+    Cond d;
+    if (c->uc1 > c->uc0) { emit_ucalls(c->uc0, c->uc1); d = *c; d.uc0 = d.uc1 = 0; c = &d; }
     switch (c->kind) {
     case C_AND: { int Ls = new_label(); cond_jump_false(c->a, Ls); cond_jump_true(c->b, L); emit_label(Ls); return; }
     case C_OR: cond_jump_true(c->a, L); cond_jump_true(c->b, L); return;

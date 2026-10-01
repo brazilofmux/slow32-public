@@ -182,6 +182,7 @@ static const struct { const char *name; int id, kind, scale, minargs, maxargs, f
 
 static void parse_operand(Opnd *o);
 static Opnd expr_opnd(void);
+static Opnd expr_opnd_after(const Opnd *first, int start);
 static int at_arith_op(void);
 static int opnd_is_national(const Opnd *o);
 static int opnd_is_boolean(const Opnd *o);
@@ -307,7 +308,7 @@ static Opnd *fn89_arg(const char *fname)
     if (cur()->kind == T_LP) { *x = expr_opnd(); return x; }   /* SIN((3 * PI) / 2) */
     int start = g_tp;
     parse_operand(x);
-    if (at_arith_op()) { g_tp = start; *x = expr_opnd(); }
+    if (at_arith_op()) *x = expr_opnd_after(x, start);
     return x;
 }
 

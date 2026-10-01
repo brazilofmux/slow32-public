@@ -1,0 +1,8 @@
+condition: first call
+next call: +00002
+argument: +00007
+intrinsic argument: +00005
+calls so far: +00006
+until ran its body: 0002 times
+when: the tenth call
+calls at the end: +00011

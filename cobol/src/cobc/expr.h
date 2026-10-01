@@ -49,10 +49,24 @@ static Expr *ex_node(char op, Expr *l, Expr *r)
     return e;
 }
 
+/* an operand already read, which the expression about to be parsed
+ * begins with (expr_opnd_after), and its first token */
+static Opnd *g_ex_first; static int g_ex_first_tp;
+
 /* parsing emits as it goes (a COMPUTE's final pass), or nothing under
  * g_noemit (a scan); either way it returns the tree */
 static Expr *parse_primary(void)
 {
+    if (g_ex_first) {                           /* the first operand, read already */
+        Expr *e = ex_node(0, NULL, NULL);
+        e->o = ex_alloc(sizeof *e->o); e->tp = g_ex_first_tp;
+        *e->o = *g_ex_first; g_ex_first = NULL;
+        Opnd *o = e->o;
+        check_numeric_opnd(o);
+        { int in = 0, fr = 0; opnd_int_frac(o, &in, &fr); xd_push(in, fr); }
+        emit_push(o);
+        return e;
+    }
     Tok *t = cur();
     if (t->kind == T_LP) {
         advance(); Expr *e = parse_expr();
@@ -129,6 +143,20 @@ static Opnd expr_opnd(void)
     o.kind = O_EXPR; o.line = cur()->line;
     o.ex = scan_expr();
     o.wide = o.ex->wide; o.flt = o.ex->flt;
+    return o;
+}
+
+/* an operand just read, and an arithmetic operator after it: the
+ * expression it begins, read on from there -- not again from its first
+ * token, which would read the operand twice (and make a user function's
+ * call twice) */
+static Opnd expr_opnd_after(const Opnd *first, int start)
+{
+    Opnd f = *first;
+    g_ex_first = &f; g_ex_first_tp = start;
+    Opnd o = expr_opnd();
+    if (g_ex_first) die_at(g_tok[start].line, "internal: an expression did not take its first operand");
+    o.line = g_tok[start].line;
     return o;
 }
 

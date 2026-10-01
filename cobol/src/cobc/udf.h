@@ -226,7 +226,7 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
             if (u.nargs == 8) die_at(line, "'%s': more than eight arguments", name);
             int start = g_tp;
             Opnd a; parse_operand(&a);
-            if (at_arith_op()) { g_tp = start; a = expr_opnd(); }
+            if (at_arith_op()) a = expr_opnd_after(&a, start);
             u.arg[u.nargs++] = a;
         }
         advance();

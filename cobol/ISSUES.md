@@ -4905,3 +4905,28 @@ differs in the eleven programs with a SEARCH whose bodies use labels
 (CCVS NC231A-NC237A, NC247A, IC207A; majesty gl034; free/search) --
 and in nothing else once labels are renamed in order of appearance
 (labnorm.py).
+
+**An operand read twice.**  Wherever an expression may begin with an
+operand -- a condition's operand, a user function's argument, an
+intrinsic's argument -- the operand was read, an arithmetic operator
+found after it, and the whole expression read again from its first
+token.  expr_opnd_after continues the expression from the operand
+already read (parse_primary takes it as the first leaf), so nothing is
+read twice.  A user function beginning such an expression had been
+called on the first reading and again by the expression: bump(0) + 0
+counted two calls.
+
+Writing the test for that found an older defect, from the start of user
+functions (d3bc3958): **a condition that is a single relation made its
+calls twice.**  parse_cond keeps a condition's calls on a copy of its
+top node; cond_jump_false/true made them, then handed the same node to
+emit_cond_value, which made them again.  IF twice(a) = 42 called twice
+twice, and nothing noticed, twice having no side effect.  The jump
+functions now pass on a copy without the calls.  The snapshot drops a
+call in userfn (4), userfnnest (22), and in five of the X-COBOL
+GnuCOBOL-mirror programs (today, main, main2, fielded_to_linear,
+linear_to_fielded: isvaliddate in an IF), and changes nothing else.
+Test 2002/userfnonce: a counting function in a condition, IF, an
+argument, an intrinsic's argument, UNTIL and WHEN; GnuCOBOL counts the
+same calls but passes 0 for the expression argument (.oracle-expected,
+docs/oracles.md).
