@@ -18,9 +18,15 @@ condition and DISPLAYs T or F with its label:
   abbreviated combined relations (a > b AND < c, a = b OR c, with NOT
   before the relational operator).
 """
+import os
 import random
+import re
 import sys
 from decimal import Decimal
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from arith85 import move        # MOVE into a numeric item (VI-103)
+from cond85 import evaluate     # the 85 condition rules, the reference
 
 USAGES = ["DISPLAY", "BINARY", "PACKED-DECIMAL"]
 OPS = ["=", "<", ">", "<=", ">=", "NOT =", "NOT <", "NOT >"]
@@ -85,6 +91,27 @@ def main():
 
     def seti(it):
         return "    move %d to %s" % (r.randint(0, 10 ** it["n"] - 1), it["name"])
+
+    items = {it["name"]: it for it in nums + alns + ints}
+    env = {}
+    refs = []
+
+    def apply(st):
+        """the content a generated MOVE leaves, for the reference"""
+        m = re.match(r'^\s*move (.*) to (\S+)$', st)
+        src, dst = m.group(1), m.group(2)
+        if dst == "G1":
+            env["G1N"] = ("x", (src[1:-1] + "    ")[:4])
+            return
+        it = items[dst]
+        if it["kind"] == "n":
+            env[dst] = ("n", move((it["signed"], it["ints"], it["decs"]), Decimal(src)))
+        elif it["kind"] == "i":
+            env[dst] = ("i", str(int(src)).zfill(it["n"])[-it["n"]:])
+        else:
+            n = it["n"]
+            fill = {"spaces": " ", "high-values": "\xff", "low-values": "\x00"}.get(src)
+            env[dst] = ("x", fill * n if fill else (src[1:-1] + " " * n)[:n])
 
     for k in range(nstmt):
         kind = r.choice(["numrel", "numrel", "alnrel", "fig", "mixed", "class", "classn",
@@ -180,6 +207,8 @@ def main():
                 cond = "NOT (%s %s %s OR %s %s)" % (a["name"], o1, b["name"], o2, c["name"])
         for st in sets:
             w(st)
+            apply(st)
+        refs.append("%d %s%s" % (k, "T" if evaluate(cond, env) else "F", tag))
         w("    if %s" % cond)
         w('        display "%d T%s"' % (k, tag))
         w("    else")
@@ -187,6 +216,8 @@ def main():
         w("    end-if")
     w("    stop run.")
     print("\n".join(out))
+    for line in refs:                        # the reference's lines, for run-gen.sh
+        print(line, file=sys.stderr)
 
 
 if __name__ == "__main__":

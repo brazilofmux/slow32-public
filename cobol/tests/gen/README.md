@@ -25,10 +25,11 @@ the NOT-before-an-operator forms. Run it with `GEN=cond`.
 POINTER sometimes out of range, OVERFLOW), UNSTRING (ALL and OR
 delimiters, DELIMITER IN, COUNT IN, POINTER, TALLYING, OVERFLOW) and
 INSPECT (TALLYING, REPLACING, both, CONVERTING, BEFORE and AFTER). Run it
-with `GEN=string`. For each INSPECT it also writes the expected line,
-computed by `inspect85.py`, to `g<seed>.ref`. That file is the 85 INSPECT
-rules (VI-96 to VI-99) written out independently of either compiler, and
-it decides those lines: ours must equal it, even where the oracle agrees.
+with `GEN=string`. For each STRING, UNSTRING and INSPECT it also writes
+the expected lines to `g<seed>.ref`, computed by `string85.py` and
+`inspect85.py`. Those files are the 85 rules written out independently of
+either compiler, and they decide those lines: ours must equal them, even
+where the oracle agrees.
 
 `gen-table.py SEED` covers table handling. It writes subscripted and
 indexed references, with relative subscripts and indexing, and SET TO, UP
@@ -39,8 +40,8 @@ OCCURS DEPENDING ON item is outside the group. Run it with `GEN=table`.
 
 ## References: the text, executable
 
-For arithmetic, editing and INSPECT, the generators also write each
-statement's expected line to `g<seed>.ref`. The line is computed from the
+Every generator also writes each statement's expected line to
+`g<seed>.ref`. The line is computed from the
 85 rules written out in Python, independently of either compiler:
 
 - `arith85.py`: storing a result (alignment, ROUNDED, size error, an
@@ -48,6 +49,18 @@ statement's expected line to `g<seed>.ref`. The line is computed from the
 - `edit85.py`: editing rules 4 to 8 (VI-33 to VI-35), the sign table and
   BLANK WHEN ZERO.
 - `inspect85.py`: INSPECT (VI-96 to VI-99).
+- `string85.py`: STRING (VI-131 to VI-133) and UNSTRING (VI-137 to VI-139):
+  the pointer, overflow, several delimiters in the order written, ALL,
+  DELIMITER IN, COUNT IN and TALLYING. A STRING with a POINTER of 0
+  breaks rule 5 and gets no reference line.
+- `cond85.py`: relation, class and sign conditions, combined conditions,
+  and abbreviated combined relations parsed as the text expands them
+  (VI-54 to VI-61). The native collating sequence, the implementor's, is
+  ASCII here.
+- `table85.py`: SEARCH from a set index, the index past the table after
+  AT END (VI-124, rule 2); SEARCH ALL (rule 4); and MOVEs from, into and
+  between variable-length groups at their current length (VI-28,
+  OCCURS rule 3a).
 
 run-gen.sh judges every line a reference covers by the reference. Ours
 must equal it, even where the oracle agrees with us, and an oracle that
@@ -114,6 +127,12 @@ When the two disagree, the text decides (docs/oracles.md).
   picture as `*`. Recorded in docs/oracles.md. run-gen.sh counts exactly
   those shapes apart, and a mutation check showed it still reports this
   compiler's old `0` behaviour.
+- **s32-cobc and the oracle: STRING overflowed with nothing to move.**
+  A POINTER past the receiver is the overflow "before each move of a
+  character" (VI-133, rule 9), so a STRING whose sources give nothing
+  to move ends without it. Both compilers tested the pointer on entry;
+  MS COBOL 5.0 does too. Found by string85.py on 12 of 400 programs.
+  Test: free/strovf.
 - **s32-cobc: a negative value truncated to zero kept its sign.**
   −32745520.019 into `$9+` gave `$0-`. The value edited is the value
   after truncation (rule 7), and zero is "positive or zero" in the sign

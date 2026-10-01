@@ -18,8 +18,12 @@ H, depending on HN.  Statements, each DISPLAYing what it produced:
 - MOVEs from and to the variable-length groups at several counts, and
   between them.
 """
+import os
 import random
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from table85 import search, search_all, move_x, odo_move_into   # the reference
 
 
 def main():
@@ -53,6 +57,9 @@ def main():
     w("procedure division.")
     for i in range(10):
         w("    move %d to TK(%d)  move \"%s\" to TV(%d)" % (keys[i], i + 1, vals[i], i + 1))
+    refs = []
+    G = "?" * 18          # the groups' storage, as the statements leave it
+    H = "?" * 18
     for k in range(nstmt):
         kind = r.choice(["ref", "ref", "set", "search", "search", "all", "all", "odo", "odo"])
         w("*> %d %s" % (k, kind))
@@ -66,35 +73,50 @@ def main():
                 d = r.randint(0, 10 - a) if r.random() < 0.5 else -r.randint(0, a - 1)
                 w("    set TX to %d" % a)
                 ref = "TV(TX %s %d)" % ("+" if d >= 0 else "-", abs(d))
-            w('    display "%d " %s " " TK(%d)' % (k, ref, r.randint(1, 10)))
+            j = r.randint(1, 10)
+            w('    display "%d " %s " " TK(%d)' % (k, ref, j))
+            refs.append("%d %s %03d" % (k, vals[a + d - 1], keys[j - 1]))
         elif kind == "set":
             a = r.randint(1, 10)
             w("    set TX to %d" % a)
             m = r.randint(0, 9)
+            x = a
             if r.random() < 0.5 and a + m <= 10:
                 w("    set TX up by %d" % m)
+                x = a + m
             elif a - m >= 1:
                 w("    set TX down by %d" % m)
+                x = a - m
             w("    set TY to TX")
             w("    set IX to TY")
             w('    display "%d " IX " " TV(TX) " " TV(TY)' % k)
+            refs.append("%d %02d %s %s" % (k, x, vals[x - 1], vals[x - 1]))
         elif kind == "search":
             start = r.randint(1, 10)
             w("    set TX to %d" % start)
             w('    move "none" to FOUND')
             w("    search T")
             w('        at end move "end" to FOUND')
+            whens = []
             for _ in range(r.randint(1, 3)):
                 c = r.choice(["key", "val", "keygt"])
                 if c == "key":
-                    w('        when TK(TX) = %d move "key" to FOUND' % r.choice(keys + [r.randint(1, 999)]))
+                    v = r.choice(keys + [r.randint(1, 999)])
+                    w('        when TK(TX) = %d move "key" to FOUND' % v)
+                    whens.append((lambda i, v=v: keys[i - 1] == v, "key"))
                 elif c == "val":
-                    w('        when TV(TX) = "%s" move "val" to FOUND' % r.choice(vals + ["QQQ"]))
+                    v = r.choice(vals + ["QQQ"])
+                    w('        when TV(TX) = "%s" move "val" to FOUND' % v)
+                    whens.append((lambda i, v=v: vals[i - 1] == v, "val"))
                 else:
-                    w('        when TK(TX) > %d move "gt" to FOUND' % r.randint(1, 999))
+                    v = r.randint(1, 999)
+                    w('        when TK(TX) > %d move "gt" to FOUND' % v)
+                    whens.append((lambda i, v=v: keys[i - 1] > v, "gt"))
             w("    end-search")
             w("    set IX to TX")
             w('    display "%d " FOUND " " IX' % k)
+            lab, ix = search(start, whens, 10)
+            refs.append("%d %s %02d" % (k, move_x(lab, 5), ix))
         elif kind == "all":
             target = r.choice(keys + [r.randint(1, 999)])
             w('    move "none" to FOUND')
@@ -104,18 +126,27 @@ def main():
             w("    end-search")
             w('    if FOUND = "hit" set IX to TX else move 0 to IX end-if')
             w('    display "%d " FOUND " " IX' % k)
+            lab, ix = search_all(keys, target)
+            refs.append("%d %s %02d" % (k, move_x(lab, 5), ix or 0))
         else:
             gn = r.randint(1, 8)
             w("    move %d to GN" % gn)
             op = r.choice(["fill", "out", "in", "between"])
+            gl = 2 + 2 * gn
             if op == "fill":
-                w('    move "%s" to G' % "".join(r.choice("abcdef12") for _ in range(r.randint(1, 18))))
+                v = "".join(r.choice("abcdef12") for _ in range(r.randint(1, 18)))
+                w('    move "%s" to G' % v)
                 w('    display "%d [" G "]"' % k)
+                G = odo_move_into(G, gl, v)
+                refs.append("%d [%s]" % (k, G[:gl]))
             elif op == "out":
-                w('    move "%s" to G' % "".join(r.choice("abcdef12") for _ in range(18)))
+                v = "".join(r.choice("abcdef12") for _ in range(18))
+                w('    move "%s" to G' % v)
                 w('    move all "." to W')
                 w("    move G to W")
                 w('    display "%d [" W "]"' % k)
+                G = odo_move_into(G, gl, v)
+                refs.append("%d [%s]" % (k, move_x(G[:gl], 20)))
             elif op == "in":
                 # the whole group first (working storage without a VALUE is
                 # undefined), then a move at the current count, which must
@@ -123,20 +154,29 @@ def main():
                 w("    move 8 to GN")
                 w('    move all "-" to G')
                 w("    move %d to GN" % gn)
-                w('    move "%s" to G' % "".join(r.choice("abcdef12") for _ in range(r.randint(1, 18))))
+                v = "".join(r.choice("abcdef12") for _ in range(r.randint(1, 18)))
+                w('    move "%s" to G' % v)
                 w("    move 8 to GN")
                 w('    display "%d [" G "]"' % k)
+                G = odo_move_into("-" * 18, gl, v)
+                refs.append("%d [%s]" % (k, G))
             else:
                 hn = r.randint(1, 8)
-                w('    move "%s" to G' % "".join(r.choice("abcdef12") for _ in range(18)))
+                v = "".join(r.choice("abcdef12") for _ in range(18))
+                w('    move "%s" to G' % v)
                 w("    move 8 to HN")
                 w('    move all "=" to H')
                 w("    move %d to HN" % hn)
                 w("    move G to H")
                 w("    move 8 to HN")
                 w('    display "%d [" H "]"' % k)
+                G = odo_move_into(G, gl, v)
+                H = odo_move_into("=" * 18, 2 + 2 * hn, G[:gl])
+                refs.append("%d [%s]" % (k, H))
     w("    stop run.")
     print("\n".join(out))
+    for line in refs:                        # the reference's lines, for run-gen.sh
+        print(line, file=sys.stderr)
 
 
 if __name__ == "__main__":
