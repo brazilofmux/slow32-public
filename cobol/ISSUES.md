@@ -4708,3 +4708,11 @@ bad/std2002-splitkey-move, warn/ext-mf-splitkey.  s32sort (dfsort/) reads
 flat files only, and its multi-field SORT FIELDS is already a composite
 key, so it needs nothing.
 
+Twelfth batch: **BP-D3 and BP-D4**, two rules Micro Focus's reference
+says it does not enforce -- STOP RUN as the last statement of its
+sequence (what follows never runs) and EXIT alone in its sentence and
+paragraph (such an EXIT does nothing).  abrignoli_COBSOFT ends its
+subprograms `exit program stop run exit.`, which needs both.  Without
+-dialect=mf the standard refusals stand, their messages unchanged.  Test
+free/mf-stopexit (identical to GnuCOBOL -std=mf), warn/ext-mf-stopexit.
+

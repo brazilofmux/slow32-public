@@ -266,7 +266,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
-       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY,
+       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -343,6 +343,10 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                     "above it): Micro Focus's; the standard writes both (2002 12.3, 12.3.3)" },
     { "BP-D2", 'D', "a split key written RECORD KEY IS name = data-name ..., Micro Focus's spelling of 2002's "
                     "SOURCE IS (12.3.4.12), its parts of any category" },
+    { "BP-D3", 'D', "STOP RUN followed by more statements of its sentence (X3.23-1985 STOP syntax rule 2; 2002 14.8.38.2 "
+                    "rule 1): Micro Focus does not enforce the rule, and what follows it never runs" },
+    { "BP-D4", 'D', "EXIT not a sentence by itself, alone in its paragraph (X3.23-1985 EXIT syntax rules 1-2; 2023 14.9.14.3 "
+                    "rule 1): Micro Focus does not enforce the rules; such an EXIT does nothing" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -17885,9 +17889,11 @@ static void parse_exec_sql(void)
 static int is_verb(const char *w);
 static void stop_last_check(Tok *t)
 {
-    if (cur()->kind == T_WORD && is_verb(cur()->s))
+    if (cur()->kind == T_WORD && is_verb(cur()->s)) {
+        if (g_dialect_mf) { bp(BP_D3_MF_STOP_NOT_LAST, t->line); return; }    /* MF: not enforced */
         die_at(t->line, "STOP RUN is the last statement of its sequence; '%s' follows it (%s)", cur()->s,
                g_std < 2002 ? "X3.23-1985 STOP syntax rule 2" : "2002 14.8.38.2 rule 1");
+    }
 }
 
 static void emit_sql_data(void)
@@ -18194,7 +18200,8 @@ static void parse_statement_1(void)
             alone = n->kind == T_EOF || is_word(n, "end") || unit_start(n) ||
                     (at_para_name(n) && (peek(2)->kind == T_PERIOD || is_word(peek(2), "section")));
         }
-        if (!alone) die_at(t->line, "EXIT must be a sentence by itself, the only one in its paragraph (X3.23-1985 EXIT syntax rule 1; 2023 14.9.14.3 rule 1)");
+        if (!alone && g_dialect_mf) bp(BP_D4_MF_EXIT_NOT_ALONE, t->line);   /* MF: not enforced, a no-op */
+        else if (!alone) die_at(t->line, "EXIT must be a sentence by itself, the only one in its paragraph (X3.23-1985 EXIT syntax rule 1; 2023 14.9.14.3 rule 1)");
         return;
     }
     if (!strcmp(v, "next")) die_at(t->line, "NEXT SENTENCE is only valid inside IF (or SEARCH)");
