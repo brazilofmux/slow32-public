@@ -72,7 +72,10 @@ int fclose(FILE *stream) {
     if (!stream) return EOF;
     if (stream->flags & FLAG_MEMSTREAM) return __memstream_close(stream);
 
-    fflush(stream);
+    /* C: fclose returns EOF if any error was detected -- the flush of the
+     * last buffered bytes included.  It ignored the flush, so a device
+     * full at close reported success (cobol/tests/fault). */
+    int flushed = fflush(stream);
     
     if (stream->buffer) free(stream->buffer);
     
@@ -82,7 +85,7 @@ int fclose(FILE *stream) {
         free(stream);
     }
     
-    return (result < 0) ? EOF : 0;
+    return (result < 0 || flushed == EOF) ? EOF : 0;
 }
 
 static int mode_to_flags(const char *mode) {

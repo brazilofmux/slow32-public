@@ -2667,6 +2667,87 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
 }
 
 // Process a single request
+/* Fault injection for the guest's I/O error paths (cobol/tests/fault):
+ * S32_FAULT=OP:N:ERR[,OP:N:ERR...] fails the Nth request of kind OP with
+ * errno ERR (a number or a name), as if the host had: the guest's libc
+ * makes it errno, and the program's FILE STATUS and declaratives run as
+ * they would for the real failure.  N 0 fails every one.  Requests on
+ * the standard streams (fds 0-2: DISPLAY, ACCEPT) are not counted, so
+ * "WRITE:2" is the program's second write to a file. */
+#define MMIO_MAX_FAULTS 16
+static struct { unsigned op; unsigned nth; int err; unsigned seen; } mmio_faults[MMIO_MAX_FAULTS];
+static int mmio_nfaults = -1;
+
+static int fault_errno(const char *s)
+{
+    static const struct { const char *n; int e; } names[] = {
+        { "ENOENT", ENOENT }, { "EACCES", EACCES }, { "EPERM", EPERM }, { "EROFS", EROFS },
+        { "EISDIR", EISDIR }, { "ENOSPC", ENOSPC }, { "EFBIG", EFBIG }, { "EIO", EIO },
+        { "EBADF", EBADF }, { "EMFILE", EMFILE }, { "EINVAL", EINVAL }, { "EEXIST", EEXIST },
+    };
+    if (*s >= '0' && *s <= '9') return atoi(s);
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) if (!strcmp(s, names[i].n)) return names[i].e;
+    return EIO;
+}
+
+static unsigned fault_op(const char *s)
+{
+    static const struct { const char *n; unsigned op; } ops[] = {
+        { "OPEN", S32_MMIO_OP_OPEN }, { "CLOSE", S32_MMIO_OP_CLOSE }, { "READ", S32_MMIO_OP_READ },
+        { "WRITE", S32_MMIO_OP_WRITE }, { "SEEK", S32_MMIO_OP_SEEK }, { "STAT", S32_MMIO_OP_STAT },
+        { "FLUSH", S32_MMIO_OP_FLUSH }, { "READ_DIRECT", S32_MMIO_OP_READ_DIRECT },
+        { "FTRUNCATE", S32_MMIO_OP_FTRUNCATE }, { "UNLINK", S32_MMIO_OP_UNLINK },
+        { "RENAME", S32_MMIO_OP_RENAME }, { "ACCESS", S32_MMIO_OP_ACCESS }, { "LSTAT", S32_MMIO_OP_LSTAT },
+    };
+    for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) if (!strcmp(s, ops[i].n)) return ops[i].op;
+    return 0xFFFFFFFFu;
+}
+
+static void fault_parse(void)
+{
+    mmio_nfaults = 0;
+    const char *v = getenv("S32_FAULT");
+    if (!v || !*v) return;
+    char buf[512];
+    snprintf(buf, sizeof buf, "%s", v);
+    for (char *tok = strtok(buf, ","); tok && mmio_nfaults < MMIO_MAX_FAULTS; tok = strtok(NULL, ",")) {
+        char *a = strchr(tok, ':'), *b = a ? strchr(a + 1, ':') : NULL;
+        if (!a || !b) { fprintf(stderr, "S32_FAULT: '%s' is not OP:N:ERR\n", tok); continue; }
+        *a = 0; *b = 0;
+        unsigned op = fault_op(tok);
+        if (op == 0xFFFFFFFFu) { fprintf(stderr, "S32_FAULT: unknown operation '%s'\n", tok); continue; }
+        mmio_faults[mmio_nfaults].op = op;
+        mmio_faults[mmio_nfaults].nth = (unsigned)atoi(a + 1);
+        mmio_faults[mmio_nfaults].err = fault_errno(b + 1);
+        mmio_faults[mmio_nfaults].seen = 0;
+        mmio_nfaults++;
+    }
+}
+
+/* the errno to fail this request with, or 0 */
+static int fault_check(const io_descriptor_t *req)
+{
+    if (mmio_nfaults < 0) fault_parse();
+    if (!mmio_nfaults) return 0;
+    switch (req->opcode) {      /* a request on a standard stream is not counted */
+    case S32_MMIO_OP_READ: case S32_MMIO_OP_WRITE: case S32_MMIO_OP_CLOSE: case S32_MMIO_OP_SEEK:
+    case S32_MMIO_OP_FLUSH: case S32_MMIO_OP_READ_DIRECT: case S32_MMIO_OP_FTRUNCATE:
+        if (req->status < 3) return 0;
+        break;
+    case S32_MMIO_OP_STAT:
+        if (req->status != S32_MMIO_STAT_PATH_SENTINEL && req->status < 3) return 0;
+        break;
+    default: break;
+    }
+    int err = 0;
+    for (int i = 0; i < mmio_nfaults; i++) {     /* every entry counts every request, hit or not */
+        if (mmio_faults[i].op != req->opcode) continue;
+        mmio_faults[i].seen++;
+        if (!err && (mmio_faults[i].nth == 0 || mmio_faults[i].seen == mmio_faults[i].nth)) err = mmio_faults[i].err;
+    }
+    return err;
+}
+
 static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_descriptor_t *req) {
     io_descriptor_t resp = {0};
     resp.opcode = req->opcode;
@@ -2677,6 +2758,10 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
     if (legacy_svc && !mmio_policy_allows(mmio, legacy_svc)) {
         mmio_fail(&resp, EINVAL);
         goto write_response;
+    }
+    {
+        int ferr = fault_check(req);
+        if (ferr) { mmio_fail(&resp, ferr); goto write_response; }
     }
 
     switch (req->opcode) {

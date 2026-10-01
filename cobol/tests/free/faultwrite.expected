@@ -1,0 +1,10 @@
+fa writes: 00
+fa close, device full: 30
+fb write 01: 00
+fb write 02: 00
+fb write 03: 00
+fb write 04: 00
+  declarative for fb: 34
+fb write 05: 34
+fb write 06: 00
+fb close: 00

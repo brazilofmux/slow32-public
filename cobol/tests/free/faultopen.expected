@@ -1,0 +1,7 @@
+output, not permitted: 37
+output: 00
+input, not permitted: 37
+extend, unreadable: 00
+  read REC1      
+  read REC2      
+input, absent: 35

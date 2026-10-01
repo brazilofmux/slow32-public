@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include <math.h>
 #include <ctype.h>
+#include <errno.h>
 #include "cobrt.h"
 #include "wide.h"
 #include "kern.h"
@@ -2136,6 +2137,25 @@ void *cob_perform_exit(int id)
  * the '\n' dropped.  A line longer than the record area is truncated with
  * status 04 -- not split into further records as GnuCOBOL 4 does. */
 
+/* Why an operation failed, from errno -- the host's, carried over the
+ * MMIO ring into the guest's libc (runtime/mmio_request.c).  X3.23-1985
+ * VII-3: 35 a non-optional file not present (ENOENT); 37 a file that will
+ * not support the open mode (not readable for INPUT, not writable for
+ * OUTPUT or EXTEND); 34 a write beyond the file's externally defined
+ * boundaries -- here a full device or the file-size limit; 30 anything
+ * else.  Before this every failure was 35 or 30, and an OPTIONAL file
+ * that could not be read was taken for absent and created anew, over
+ * the top of the one that was there (cobol/tests/fault). */
+static const char *open_fail_st(int err)
+{
+    if (err == EACCES || err == EPERM || err == EROFS || err == EISDIR) return "37";
+    return "30";
+}
+static const char *write_fail_st(void)
+{
+    return errno == ENOSPC || errno == EFBIG ? "34" : "30";
+}
+
 static void set_status(cob_file *f, const char *st)
 {
     if (f->status) { f->status[0] = st[0]; f->status[1] = st[1]; }
@@ -2232,10 +2252,18 @@ int cob_open(cob_file *f, int mode)
     if (f->org == COB_ORG_RELATIVE && mode == COB_OPEN_OUTPUT) fm = "w+b";   /* WRITE checks the slot first */
     if (f->locked) return file_result(f, "38", "OPEN of a file closed WITH LOCK");
     FILE *fp;
+    int err = 0;
+    errno = 0;
     if (mode == COB_OPEN_EXTEND) {           /* "ab" would create it: look first */
         fp = fopen(name, "rb");
-        if (fp) { fclose(fp); fp = fopen(name, fm); } else fp = 0;
+        if (fp) { fclose(fp); errno = 0; fp = fopen(name, fm); }
+        else if (errno != ENOENT) { errno = 0; fp = fopen(name, fm); }   /* there, but not readable: EXTEND writes */
+        else fp = 0;
     } else fp = fopen(name, fm);
+    if (!fp) err = errno ? errno : ENOENT;
+    /* a file that is there but cannot be opened so: 37 (or 30), whether
+     * OPTIONAL or not -- never taken for absent */
+    if (!fp && err != ENOENT) return file_result(f, open_fail_st(err), name);
     /* EXTEND or I-O on an absent file: an OPTIONAL one comes into being
      * (05), any other is 35 */
     if (!fp && (mode == COB_OPEN_EXTEND || mode == COB_OPEN_IO)) {
@@ -2293,11 +2321,16 @@ int cob_close(cob_file *f)
     if (f->org == COB_ORG_INDEXED) return idx_close(f);
     if (f->fp && f->pr_state >= 2) fputc('\n', (FILE *)f->fp);   /* the printer's last line (pr_advance) */
     f->pr_state = 0;
-    if (f->fp) fclose((FILE *)f->fp);
+    /* the last buffered records are written here: a device full now is a
+     * permanent error (30), not the 00 it was -- the file closes either
+     * way (X3.23-1985 VII-3; cobol/tests/fault) */
+    int bad = 0;
+    errno = 0;
+    if (f->fp) bad = fclose((FILE *)f->fp) != 0;
     f->fp = 0; f->open_mode = 0; f->at_eof = 0;
     if (f->rbuf) { free(f->rbuf); f->rbuf = 0; }
     f->rpos = f->rlen = 0;
-    return file_result(f, "00", "");
+    return file_result(f, bad ? "30" : "00", bad ? "close: buffered records not written" : "");
 }
 
 /* A line sequential file whose records are national (cobol ISSUES-74;
@@ -2617,7 +2650,7 @@ static int lin_write(cob_file *f, int before, int after)
     if (before < 0) lin_new_page(f, f->lin_counter);       /* AFTER ADVANCING PAGE */
     else if (before > 0) lin_lines_opt(f, (unsigned)before);
     /* the whole record, trailing spaces included (GnuCOBOL keeps them on a LINAGE file) */
-    if (fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
+    if (fwrite(rec, 1, n, fp) != n) return file_result(f, write_fail_st(), "write failed");
     fputc('\n', fp); f->fpos += n + 1;
     if (after < 0) lin_new_page(f, f->lin_counter);        /* BEFORE ADVANCING PAGE */
     else if (after > 0) lin_lines_opt(f, (unsigned)after);
@@ -2649,12 +2682,12 @@ int cob_write(cob_file *f, int before, int after, int reclen)
             len = (unsigned)d;
         }
         unsigned char rdw[4] = { (unsigned char)((len + 4) >> 8), (unsigned char)((len + 4) & 255), 0, 0 };
-        if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(cs_out(f, rec, len), 1, len, fp) != len) return file_result(f, "30", "write failed");
+        if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(cs_out(f, rec, len), 1, len, fp) != len) return file_result(f, write_fail_st(), "write failed");
         f->fpos += 4 + len; f->last_len = 0;
         return file_result(f, "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
-        if (fwrite(cs_out(f, rec, n), 1, n, fp) != n) return file_result(f, "30", "write failed");
+        if (fwrite(cs_out(f, rec, n), 1, n, fp) != n) return file_result(f, write_fail_st(), "write failed");
         f->fpos += n; f->last_len = 0;
         return file_result(f, "00", "");
     }
@@ -2693,7 +2726,7 @@ int cob_write(cob_file *f, int before, int after, int reclen)
         else st = PR_OPEN;
     }
     while (n > 0 && rec[n - 1] == ' ') n--;
-    if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, "30", "write failed");
+    if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, write_fail_st(), "write failed");
     f->fpos += n;
     if (n) st = PR_INK;
     if (is_before) {
@@ -2879,7 +2912,7 @@ static int rel_write(cob_file *f, int reclen)
         int kd = ((const cob_desc *)f->rel_key_desc)->digits;
         if (kd > 0 && kd < 10 && (long long)n >= pow10tab[kd]) return file_result(f, "14", "");
     }
-    if (!rel_slot_put(f, n, 0, len)) return file_result(f, "30", "write failed");
+    if (!rel_slot_put(f, n, 0, len)) return file_result(f, write_fail_st(), "write failed");
     if (f->access == 0) { f->rel_pos = n + 1; rel_key_set(f, n); }
     return file_result(f, "00", "");
 }
@@ -2907,7 +2940,7 @@ static int rel_rewrite(cob_file *f)
     unsigned n, len; int rc = rel_target(f, &n);
     if (rc) return rc;
     if ((rc = rel_write_len(f, 0, &len))) return rc;
-    if (!rel_slot_put(f, n, 0, len)) return file_result(f, "30", "write failed");
+    if (!rel_slot_put(f, n, 0, len)) return file_result(f, write_fail_st(), "write failed");
     return file_result(f, "00", "");
 }
 
@@ -2915,7 +2948,7 @@ static int rel_delete(cob_file *f)
 {
     unsigned n; int rc = rel_target(f, &n);
     if (rc) return rc;
-    if (!rel_slot_put(f, n, 1, 0)) return file_result(f, "30", "write failed");
+    if (!rel_slot_put(f, n, 1, 0)) return file_result(f, write_fail_st(), "write failed");
     f->rel_last = 0;
     return file_result(f, "00", "");
 }
@@ -4098,14 +4131,18 @@ static int idx_open(cob_file *f, int mode)
     if (f->locked) return file_result(f, "38", "OPEN of a file closed WITH LOCK");
     cob_idx *x = idx_new(f);
     FILE *fp;
+    errno = 0;
     if (mode == COB_OPEN_OUTPUT) {
         fp = fopen(name, "w+b");
-        if (!fp) { idx_free(x); return file_result(f, "30", name); }
+        if (!fp) { idx_free(x); return file_result(f, open_fail_st(errno), name); }
         btkey keys[BT_MAXKEYS];
         unsigned nkeys = idx_fd_keys(f, keys);
         if (!bt_create(&x->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) { fclose(fp); idx_free(x); return file_result(f, "30", "key file"); }
     } else {
         fp = fopen(name, mode == COB_OPEN_INPUT ? "rb" : "r+b");
+        if (!fp && errno && errno != ENOENT) {      /* there, but not to be opened so: never taken for absent */
+            idx_free(x); return file_result(f, open_fail_st(errno), name);
+        }
         if (!fp) {
             if (!f->optional) { idx_free(x); return file_result(f, "35", name); }
             if (mode == COB_OPEN_INPUT) { idx_free(x); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
@@ -4206,7 +4243,7 @@ static int idx_write(cob_file *f)
     int dup02 = 0;
     if (!alt_check(x, (const unsigned char *)f->record, (unsigned)-1, &dup02)) return file_result(f, "22", "");
     unsigned slot = bt_slot_alloc(b);
-    if (!slot_write(f, slot)) { bt_slot_set(b, slot, 0); return file_result(f, "30", "write failed"); }
+    if (!slot_write(f, slot)) { bt_slot_set(b, slot, 0); return file_result(f, write_fail_st(), "write failed"); }
     unsigned seq = b->seq++; b->hdr_dirty = 1;
     unsigned char ex[4 * BT_MAXKEYS];
     for (unsigned a = 1; a < b->nkeys; a++) bt_putbe(ex + 4 * (a - 1), seq);
@@ -4354,7 +4391,7 @@ static int idx_rewrite(cob_file *f)
         bt_putbe(ex + 4 * (a - 1), seq); moved = 1;
     }
     if (moved) bt_extra_set(b, 0, page, ix, ex);
-    if (!slot_write(f, slot)) return file_result(f, "30", "write failed");
+    if (!slot_write(f, slot)) return file_result(f, write_fail_st(), "write failed");
     return file_result(f, dup02 ? "02" : "00", "");
 }
 
@@ -4379,11 +4416,11 @@ int cob_rewrite(cob_file *f, int reclen)
             if (want != len) return file_result(f, "44", "");
             if (fseek(fp, (long)(f->fpos - 4 - len), 0) != 0) return file_result(f, "30", "seek failed");
             unsigned char rdw[4] = { (unsigned char)((len + 4) >> 8), (unsigned char)((len + 4) & 255), 0, 0 };
-            if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(cs_out(f, f->record, len), 1, len, fp) != len) return file_result(f, "30", "write failed");
+            if (fwrite(rdw, 1, 4, fp) != 4 || fwrite(cs_out(f, f->record, len), 1, len, fp) != len) return file_result(f, write_fail_st(), "write failed");
         } else {
             if (reclen > 0 && (unsigned)reclen != len) return file_result(f, "44", "");
             if (fseek(fp, (long)(f->fpos - len), 0) != 0) return file_result(f, "30", "seek failed");
-            if (fwrite(cs_out(f, f->record, len), 1, len, fp) != len) return file_result(f, "30", "write failed");
+            if (fwrite(cs_out(f, f->record, len), 1, len, fp) != len) return file_result(f, write_fail_st(), "write failed");
         }
         fseek(fp, (long)f->fpos, 0);                    /* back to after the record; the read buffer refills */
         f->last_len = 0;
