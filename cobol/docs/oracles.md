@@ -194,7 +194,33 @@ On the `free/editins` pictures, it differs from the 85 reading in two ways:
 | a value truncated to zero into a signed edited item: -32745520.019 into `$9+`, -500 into `99CR` | the sending value's sign: `$0-`, `00CR` | 74 says only "data item positive or zero" (II-22); 85 adds to rule 7 that the value used for editing is the value after truncation (VI-34), which is zero, so `$0+` and `00  `. A 74 program that relied on the old sign meets 85 here |
 
 Simple insertion outside a suppression string (`/999`, `0999`,
-`B999,999`) and `*999.9B99` agree with this compiler.
+`B999,999`) and `*999.9B99` agree with this compiler, as does
+`witness/negcmp`. `tests/witness` keeps its recorded output.
+
+## A pre-74 witness: IBM ANS COBOL on MVT (2026-09-30)
+
+IBM's ANS COBOL compiler (IKFCBL00, the 1968 language with IBM's
+extensions) runs on MVS 3.8j on the user's TK5 system, operated by
+`~/mvsops` (`tk5-up`, `tk5-down`). `tests/mvscheck.sh PROG.cbl...` sends
+each program as one job (COBUCL into a temporary library, then a RUN
+step, as `~/cobc370/bench/run.sh` does) and prints its output beside
+ours. It never boots or stops the system. `tests/witness/` holds
+fixed-format programs both old compilers accept, with each one's
+recorded output.
+
+It is older than the 74 text: there is no INSPECT, and `/` is not a
+PICTURE character. Where it runs:
+
+| program | ANS COBOL (MVT) | reading |
+|---|---|---|
+| `witness/editinb` (the `free/editins` cases, `B` for `/`) | as this compiler on 12 of 13: insertion characters in the suppressed part, B outside a `*` string, the truncated zero's sign (`$0+`, `00  `) | |
+| the same, `$0$$.99` holding .42 | `$0 $.42` | contrary to the text (VI-34, rule 7; 74 II-23), as MS-COBOL 4.65's `' 0 $.42'` is |
+| `witness/divremu`: DIVIDE REMAINDER into an unsigned quotient | no size error; the remainder from the signed quotient: -7 / 2 gives Q=3 R=-1, -95 / 7 gives Q=13 R=-04, -7.39 / 3 gives Q=2.4 R=-0.19 | the 74 text (II-61, rule 5) and the 85 text (VI-81, rule 6) take the quotient item as stored; this compiler and MS COBOL 5.0 follow them under `-std=85`. IBM's practice is the reading that 2002 adopted and GnuCOBOL follows. A program from an IBM shop that depends on it gets that reading here under `-std=2002` |
+| `witness/negcmp` | as this compiler: a negative literal's algebraic value | |
+
+So on the remainder question the texts of 74 and 85, MS COBOL 5.0 and this
+compiler stand on one side, IBM's MVT compiler, GnuCOBOL and the 2002 text
+on the other.
 
 ## What we will not do
 

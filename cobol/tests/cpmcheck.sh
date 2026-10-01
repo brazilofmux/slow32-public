@@ -11,6 +11,7 @@
 # a defect: docs/oracles.md keeps the readings.
 #
 # A PATH names a program outside tests/free (its .expected beside it);
+# a fixed-format one, as in tests/witness, is taken as written;
 # KEEP=1 keeps the work directory.
 #
 #   Z80=~/z80 tests/cpmcheck.sh /path/to/prog74.cbl
@@ -53,7 +54,12 @@ def wrap(l, width=64):
     return out
 out = []
 para = False
-for l in open(sys.argv[1]).read().splitlines():
+src = open(sys.argv[1]).read().splitlines()
+if all(l.startswith("       ") or not l.strip() for l in src):
+    # already fixed format (tests/witness): as written, in uppercase
+    out = [upper(l.rstrip()) for l in src if l.strip()]
+    src = []
+for l in src:
     if l.lstrip().startswith("*>"): continue
     l = re.sub(r"\s\*>.*$", "", l).rstrip()
     if not l: continue
