@@ -3,13 +3,14 @@ function-id. bump.
 *> A user-defined function with a side effect: each call counts.  An
 *> expression that begins with a call -- bump(0) + 1 -- in a condition,
 *> an argument or an intrinsic's argument calls it once, and so does a
-*> condition, IF, UNTIL or WHEN (cobol ISSUES-50; docs/plans/
-*> frontend-pass.md).  Two defects made extra calls: an operand read, an
-*> operator found after it, and the whole expression read again from its
-*> first token; and a condition holding a call made its calls twice when
-*> it was a single relation.  GnuCOBOL makes each call once, but passes
-*> 0 for the expression argument (bump(bump(0) + 0) is 4 there, 7 here;
-*> docs/oracles.md).
+*> condition, IF, UNTIL, WHEN or EVALUATE's subject (cobol ISSUES-50;
+*> docs/plans/frontend-pass.md).  Three defects made extra calls: an
+*> operand read, an operator found after it, and the whole expression
+*> read again from its first token; a condition holding a call made its
+*> calls twice when it was a single relation; and EVALUATE read a
+*> subject that turned out to begin a condition twice.  GnuCOBOL makes
+*> each call once, but passes 0 for the expression argument
+*> (bump(bump(0) + 0) is 4 there, 7 here; docs/oracles.md).
 data division.
 working-storage section.
 01  n        pic 9(4) value 0.
@@ -50,6 +51,14 @@ main.
     evaluate true
         when bump(0) = 10 display "when: the tenth call"
         when other display "when: not the tenth"
+    end-evaluate
+    evaluate bump(0) = 11
+        when true display "evaluate condition: the eleventh call"
+        when false display "evaluate condition: not the eleventh"
+    end-evaluate
+    evaluate bump(0)
+        when 12 display "evaluate subject: the twelfth call"
+        when other display "evaluate subject: not the twelfth"
     end-evaluate
     move bump(0) to b
     display "calls at the end: " b

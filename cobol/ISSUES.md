@@ -4941,3 +4941,12 @@ identifiers, kept only their token positions, and parsed them again to
 emit.  Now each is parsed once -- at the statement, or at first use --
 and the Ref kept (SField.ref, line_r/col_r/at_r; RField.source;
 Report.code_ref).  The snapshot diffs empty.
+
+**EVALUATE's subject** is known to be an operand or the beginning of a
+condition only after it is read; when a relation or class word
+followed, it was read again as a condition, and a user function in it
+was called by both readings (EVALUATE bump(0) = 1 counted two calls).
+The subject is now read as a scan, and either read again as the
+condition, whose calls the condition makes, or its own calls are made
+there (ucall_make).  2002/userfnonce gained both forms; the snapshot
+changes in no other program.

@@ -49,7 +49,11 @@ static void parse_evaluate(void)
              * identifier, CCVS-85 IF115A) */
             Tok *st = cur();
             subj_lit[ns] = st->kind == T_NUM || st->kind == T_STR || (st->kind == T_WORD && (is_figurative(st->s) || !strcmp(st->s, "all")));
-            subj[ns].kind = 0; subj[ns].o = parse_cond_operand();
+            /* read as a scan: whether it is an operand or a condition's
+             * beginning is known only after it, and a condition is read
+             * again whole -- its user functions called once, by that */
+            subj[ns].kind = 0;
+            g_noemit++; subj[ns].o = parse_cond_operand(); g_noemit--;
             /* an operand followed by a class word or a relation is a condition
              * subject, matched by WHEN TRUE / WHEN FALSE */
             static const char *cw[] = { "numeric", "alphabetic", "alphabetic-lower", "alphabetic-upper", "positive", "negative",
@@ -60,6 +64,7 @@ static void parse_evaluate(void)
             /* a condition-name alone is a condition subject too (NC225A: ALSO IT-IS-81 ... WHEN ... ALSO TRUE) */
             if (subj[ns].o.kind == O_REF && subj[ns].o.ref.sym->is_cond) is_cond = 1;
             if (is_cond) { g_tp = start; subj[ns].kind = 3; subj[ns].c = parse_cond(); }
+            else ucall_make(&subj[ns].o);           /* an operand: its calls made here, at the start */
         }
         ns++;
         if (!accept_word("also")) break;

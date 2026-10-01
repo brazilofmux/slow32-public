@@ -5,4 +5,6 @@ intrinsic argument: +00005
 calls so far: +00006
 until ran its body: 0002 times
 when: the tenth call
-calls at the end: +00011
+evaluate condition: the eleventh call
+evaluate subject: the twelfth call
+calls at the end: +00013
