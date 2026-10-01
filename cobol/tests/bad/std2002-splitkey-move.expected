@@ -1,0 +1,1 @@
+'fk' is a record-key-name (a split key): READ and START name it, and no other statement (2002 14.8.29, 14.8.37; Micro Focus SELECT rule 22)

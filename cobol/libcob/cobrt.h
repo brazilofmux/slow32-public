@@ -99,6 +99,9 @@ typedef struct {
     unsigned int rpos, rlen;  /* ... the next byte in it, and how many it holds */
     const unsigned char *code_out;  /* FD CODE-SET: native to the medium's code (256 bytes), or 0 */
     const unsigned char *code_in;   /* ... and the medium's code back to native */
+    const unsigned int *split;      /* indexed: Micro Focus split keys (-dialect=mf), or 0 -- the number of
+                                       keys, then for each: its place in the record area's tail, its number
+                                       of parts, and each part's offset and length */
 } cob_file;
 
 

@@ -4325,8 +4325,28 @@ static void idx_cursor_after(cob_idx *x, unsigned ki, const unsigned char *ka)
     x->have_cur = 1; x->cur_at = 0;
 }
 
+/* Micro Focus split keys (BP-D2): each the concatenation of its parts,
+ * kept in a tail the compiler adds to the record area, so the index sees
+ * an ordinary key there.  Put together before every keyed operation from
+ * the parts as they stand in the record. */
+static void split_fill(cob_file *f)
+{
+    const unsigned int *t = f->split;
+    if (!t) return;
+    unsigned n = *t++;
+    for (unsigned k = 0; k < n; k++) {
+        unsigned dst = *t++, parts = *t++;
+        for (unsigned j = 0; j < parts; j++) {
+            unsigned off = *t++, len = *t++;
+            memmove(f->record + dst, f->record + off, len);
+            dst += len;
+        }
+    }
+}
+
 static int idx_write(cob_file *f)
 {
+    split_fill(f);
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "48", "WRITE to an OPTIONAL file that is absent");
     btf *b = &x->bt;
@@ -4359,6 +4379,7 @@ int cob_read_key(cob_file *f, int ki)
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
     if (f->org == COB_ORG_RELATIVE) return rel_read_key(f);
     if (f->org != COB_ORG_INDEXED) cob_fatal("READ ... KEY on a file that is not INDEXED");
+    split_fill(f);
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
     btf *b = &x->bt;
@@ -4430,6 +4451,7 @@ int cob_start(cob_file *f, int op, int ki, int len)
     if (!f->open_mode) return file_result(f, "47", "START of a file not open");
     if (f->org == COB_ORG_RELATIVE) return rel_start(f, op);
     if (f->org != COB_ORG_INDEXED) cob_fatal("START on a file that is not INDEXED");
+    split_fill(f);
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
     btf *b = &x->bt;
@@ -4464,6 +4486,7 @@ int cob_start(cob_file *f, int op, int ki, int len)
  * duplicate-allowing one now duplicates */
 static int idx_rewrite(cob_file *f)
 {
+    split_fill(f);
     cob_idx *x = f->idx;
     btf *b = &x->bt;
     const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
@@ -4536,6 +4559,7 @@ int cob_delete(cob_file *f)
     if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "DELETE needs OPEN I-O");
     if (f->org == COB_ORG_RELATIVE) return rel_delete(f);
     if (f->org != COB_ORG_INDEXED) cob_fatal("DELETE on a file that is not INDEXED");
+    split_fill(f);
     cob_idx *x = f->idx;
     btf *b = &x->bt;
     unsigned slot, page, ix;

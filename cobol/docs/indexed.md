@@ -120,6 +120,22 @@ random READ at 00, `free/altkey.oracle-expected`); `DELETE` and a
 `REWRITE` that changes an alternate keep every table right. NIST IX:
 28 of 29 programs, 405 of 406 tests, all matching GnuCOBOL's tally.
 
+## Split keys (2002 SOURCE IS; Micro Focus's "=")
+
+A split key -- `RECORD KEY IS name SOURCE IS a b c`, or Micro Focus's
+`name = a b c` -- is its parts joined in order.  The compiler gives the
+file's record area a tail holding one slot per split key and names each
+slot with the key's name; the runtime fills the slots from the parts
+before every WRITE, REWRITE, START, keyed READ and DELETE (libcob
+`split_fill`), so the index sees an ordinary contiguous key there and
+the B-tree is unchanged.  The slots are stored with the record: such a
+file's records are the record plus the tail on disk, and a program that
+declares the file without the same split keys has another record length,
+and its OPEN fails with status 39 -- as the standard (2002 12.3.4.12 GR 3) and
+Micro Focus (its key-check) both require the description be the one the
+file was created with.  s32sort's multi-field `SORT FIELDS=` is already
+the composite-key form for flat files and is not involved.
+
 ## Relative
 
 `ORGANIZATION IS RELATIVE`, `RELATIVE KEY` an integer item outside the

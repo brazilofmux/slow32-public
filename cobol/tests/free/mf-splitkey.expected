@@ -1,0 +1,14 @@
+duplicate prime refused, status 22
+-- prime order
+01-010-0002 brown    cy    
+01-010-0009 smith    al    
+01-020-0003 jones    bob   
+02-010-0007 smith    ann   
+-- start cust-key >= 01-020
+01-020-0003 jones   
+-- by name
+01-010-0009 smith    al    
+-- name order after rewrite and delete
+adams    al     01-010-0009
+jones    bob    01-020-0003
+smith    ann    02-010-0007

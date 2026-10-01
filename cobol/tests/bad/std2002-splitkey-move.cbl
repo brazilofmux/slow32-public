@@ -1,0 +1,17 @@
+identification division.
+program-id. skeymove.
+*> A record-key-name is named by READ and START only.
+environment division.
+input-output section.
+file-control.
+    select f assign to "x.dat" organization indexed access dynamic
+        record key is fk source is a.
+data division.
+file section.
+fd f.
+01 r.
+   05 a pic x(2).
+   05 b pic 9(3).
+procedure division.
+    move "zz" to fk
+    stop run.

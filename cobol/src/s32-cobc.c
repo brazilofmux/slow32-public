@@ -266,7 +266,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
-       BP_D1_MF_NO_FILE_CONTROL,
+       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -341,6 +341,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                      "listing directives have no effect, and any other is refused" },
     { "BP-D1", 'D', "a file-control entry without the FILE-CONTROL paragraph header (or the INPUT-OUTPUT SECTION header "
                     "above it): Micro Focus's; the standard writes both (2002 12.3, 12.3.3)" },
+    { "BP-D2", 'D', "a split key written RECORD KEY IS name = data-name ..., Micro Focus's spelling of 2002's "
+                    "SOURCE IS (12.3.4.12), its parts of any category" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -2331,6 +2333,7 @@ typedef struct Sym {
     int  is_based;                  /* a BASED entry: reached through a cell SET ADDRESS OF fills, NULL at first (2002 8.6.4) */
     int  param_opt;                 /* a PROCEDURE DIVISION USING OPTIONAL parameter: its cell may be NULL (omitted) */
     int  any_len;                   /* ANY LENGTH (2002; 2023 13.18.2): its size the argument's, in a writable descriptor */
+    int  split_key;                 /* a Micro Focus split key (BP-D2): its slot in the record area's tail */
     int  is_rc;                     /* RETURN-CODE: storage in libcob (cob_return_code), none of the unit's */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
     int  is_ftemp;                  /* a user function's result or BY CONTENT argument, made by the compiler */
@@ -2514,7 +2517,9 @@ typedef struct {
     int  linage;                     /* FD LINAGE: lin_lit/lin_name for LINES, FOOTING, TOP, BOTTOM */
     long lin_lit[4]; char lin_name[4][64]; Sym *lin_sym[4];
     int  lin_counter_sym;            /* the LINAGE-COUNTER item, or -1 */
-    struct { char name[64]; char qual[64]; Sym *sym; int dups; } alt[16]; int nalt;   /* ALTERNATE RECORD KEY ... [WITH DUPLICATES] */
+    struct { char name[64]; char qual[64]; Sym *sym; int dups; char (*split)[64]; int nsplit, split_mf; } alt[16]; int nalt;   /* ALTERNATE RECORD KEY ... [WITH DUPLICATES] */
+    char (*ksplit)[64]; int nksplit, ksplit_mf;   /* RECORD KEY IS record-key-name SOURCE IS data-name ... (2002), or = (Micro Focus, BP-D2) */
+    int *splitw; int nsplitw;        /* the runtime's split-key table (cob_file.split) */
     Sym *assign_sym, *status_sym, *key_sym, *relkey_sym;
     int  use_para;                   /* DECLARATIVES: the USE section for this file, 0 none */
     int  rec;                        /* sym index of the first 01, -1 */
@@ -4274,6 +4279,48 @@ static void init_record(Sym *rec, int si, int defaults)
     g_recover = outer;
 }
 
+/* a split key (2002 12.3.4.12 SOURCE IS; Micro Focus's "=", BP-D2): the
+ * concatenation of its parts, kept in a slot of a tail the record area
+ * gains, which the runtime fills from the parts before each keyed
+ * operation (libcob split_fill).  The record-key-name is an item over its
+ * slot -- READ and START name it as they name any key. */
+static int sym_is_national(const Sym *s);
+static Sym *odo_table_for(Sym *s);
+static Sym *split_key_make(File *f, const char *name, char (*parts)[64], int n, int mf, int *tail, int *w, int *nw)
+{
+    int rec = g_sym[f->rec].record, len = 0, nat = -1;
+    w[(*nw)++] = *tail; w[(*nw)++] = n;
+    for (int k = 0; k < n; k++) {
+        Sym *d = NULL; int nd = 0;
+        for (int j = 0; j < g_nsym; j++)
+            if (!g_sym[j].is_cond && !g_sym[j].is_filler && !g_sym[j].split_key && !strcmp(g_sym[j].name, parts[k]) && g_sym[j].record == rec) { d = &g_sym[j]; nd++; }
+        if (!d) die_at(f->line, "the split key '%s': '%s' is not an item of file '%s'", name, parts[k], f->name);
+        if (nd > 1) die_at(f->line, "the split key '%s': '%s' is ambiguous in file '%s'", name, parts[k], f->name);
+        if (d->ndims) die_at(f->line, "the split key '%s': '%s' is in a table", name, parts[k]);
+        if (odo_table_for(d)) die_at(f->line, "the split key '%s': '%s' is of variable length (2002 12.3.4.12 rule 3)", name, parts[k]);
+        int dn = sym_is_national(d) || (!d->is_group && d->usage == U_NATIONAL);
+        if (!mf) {
+            if (!d->is_group && d->pi.category != PIC_ALPHANUMERIC && d->pi.category != PIC_NATIONAL)
+                die_at(f->line, "the split key '%s': '%s' is not alphanumeric or national (2002 12.3.4.12 rule 2; Micro Focus's '=' form takes any)", name, parts[k]);
+            if (nat >= 0 && nat != dn) die_at(f->line, "the split key '%s': its parts are all of one category (2002 12.3.4.12 rule 2)", name);
+        }
+        nat = dn;
+        w[(*nw)++] = d->offset; w[(*nw)++] = d->size;
+        len += d->size;
+    }
+    if (len > 255) die_at(f->line, "the split key '%s' is %d bytes; a key is 1 to 255 here", name, len);
+    Sym *k = sym_new();
+    snprintf(k->name, sizeof k->name, "%s", name);
+    k->level = 1; k->line = f->line; k->record = rec; k->redefines = rec; k->parent = -1; k->fd = -1;
+    k->offset = *tail; k->size = len; k->split_key = 1; k->desc_id = -1; k->is_filler = 0;
+    k->has_pic = 1;
+    if (nat == 1 && !mf) { snprintf(k->pic, sizeof k->pic, "n(%d)", len / 2); k->usage = U_NATIONAL; }
+    else { snprintf(k->pic, sizeof k->pic, "x(%d)", len); k->usage = U_DISPLAY; }
+    if (pic_analyse(k->pic, &k->pi) < 0) die_at(f->line, "internal: split key picture");
+    *tail += len;
+    return k;
+}
+
 static void finish_data_division(void)
 {
     build_tree();
@@ -4528,6 +4575,20 @@ static void finish_data_division(void)
             if (!f->maxlen) f->maxlen = f->recsize;
             if (f->maxlen > f->recsize) die_at(f->line, "FD %s: VARYING TO %d is larger than its record area (%d)", f->name, f->maxlen, f->recsize);
         }
+        int tail = f->recsize, sw[1 + 17 * 34], nsw = 1, nspl = 0;    /* the split keys' slots follow the record */
+        {
+            int any = f->nksplit != 0;
+            for (int a = 0; a < f->nalt; a++) any |= f->alt[a].nsplit != 0;
+            if (any) {
+                if (f->org != COB_ORG_INDEXED) die_at(f->line, "file '%s': a split key is for an INDEXED file", f->name);
+                if (f->rec < 0) die_at(f->line, "file '%s': a split key needs the file's record", f->name);
+                if (f->varying || f->dep_name[0] || (f->minlen && f->minlen < f->recsize))
+                    die_at(f->line, "file '%s': split keys with variable-length records are not implemented", f->name);
+            }
+        }
+        if (f->nksplit) {
+            f->key_sym = split_key_make(f, f->key_name, f->ksplit, f->nksplit, f->ksplit_mf, &tail, sw, &nsw); nspl++;
+        } else
         if (f->key_name[0]) {
             /* the RECORD KEY must be an item inside this file's record */
             Sym *k = NULL; int nk = 0;
@@ -4563,6 +4624,10 @@ static void finish_data_division(void)
                 }
         }
         for (int a = 0; a < f->nalt; a++) {
+            if (f->alt[a].nsplit) {
+                f->alt[a].sym = split_key_make(f, f->alt[a].name, f->alt[a].split, f->alt[a].nsplit, f->alt[a].split_mf, &tail, sw, &nsw); nspl++;
+                continue;
+            }
             Sym *k = NULL; int nk = 0;
             if (f->alt[a].qual[0]) { char *q[1] = { f->alt[a].qual }; k = sym_lookup(f->alt[a].name, q, 1, f->line); nk = 1; }
             else for (int j = 0; j < g_nsym; j++)
@@ -4598,6 +4663,11 @@ static void finish_data_division(void)
                 die_at(f->line, "file '%s': ACCESS RANDOM or DYNAMIC on a RELATIVE file needs a RELATIVE KEY", f->name);
             if (f->key_name[0]) die_at(f->line, "file '%s': RECORD KEY is for INDEXED files; a RELATIVE file has a RELATIVE KEY", f->name);
         } else if (f->relkey_name[0]) die_at(f->line, "file '%s': RELATIVE KEY needs ORGANIZATION RELATIVE", f->name);
+        if (nspl) {
+            sw[0] = nspl;
+            f->splitw = xmalloc((size_t)nsw * sizeof *f->splitw); memcpy(f->splitw, sw, (size_t)nsw * sizeof *sw); f->nsplitw = nsw;
+            f->recsize = tail;                      /* the record area and the stored record carry the slots */
+        }
         if (f->rec >= 0 && g_sym[f->rec].image_size < f->recsize) g_sym[f->rec].image_size = f->recsize;
     }
     /* images */
@@ -5470,6 +5540,8 @@ static void parse_ref(Ref *r)
             if (r->rm_start && !r->rm_len && r->rm_l0 < 0) r->rm_len = chars - r->rm_start + 1;
         }
     }
+    if (r->sym->split_key && strcmp(g_cur_stmt, "READ") && strcmp(g_cur_stmt, "START"))
+        die_at(r->line, "'%s' is a record-key-name (a split key): READ and START name it, and no other statement (2002 14.8.29, 14.8.37; Micro Focus SELECT rule 22)", r->sym->name);
     if (r->sym->any_len && !r->rm) {
         /* the whole ANY LENGTH item: (1:), to the end its descriptor gives
          * at run time, so every statement takes its length as it takes a
@@ -18911,6 +18983,34 @@ static void skip_to_period(void)
 
 /* SELECT [OPTIONAL] file ASSIGN TO ... [ORGANIZATION ...] [ACCESS ...]
  * [RECORD KEY ...] [FILE STATUS ...] [SHARING ...]. */
+/* after a key's name, SOURCE IS data-name ... (2002 12.3.4.12, a
+ * record-key-name: the parts' concatenation) or "= data-name ..." (Micro
+ * Focus's spelling, BP-D2): the parts, to the next clause or the period */
+static int parse_split_parts(char (**out)[64], int line, int *mf)
+{
+    *mf = 0;
+    if (at_word("source")) {
+        if (g_std < 2002) die_at(line, "a record key SOURCE IS ... (a split key) is COBOL 2002; compile with -std=2002");
+        advance(); accept_word("is");
+    } else if (at_op("=")) {
+        bp(BP_D2_MF_SPLIT_KEY, line);
+        advance(); *mf = 1;
+    } else return 0;
+    static const char *stop[] = { "alternate", "access", "assign", "organization", "organisation", "record", "with",
+        "duplicates", "file", "lock", "reserve", "password", "suppress", "sharing", "relative", "collating", "status", NULL };
+    char (*p)[64] = xmalloc(16 * sizeof *p); int n = 0;
+    while (cur()->kind == T_WORD) {
+        int halt = 0;
+        for (int k = 0; stop[k]; k++) if (at_word(stop[k])) halt = 1;
+        if (halt) break;
+        if (n == 16) die_at(line, "a split key of more than 16 parts");
+        snprintf(p[n++], 64, "%s", cur()->s); advance();
+    }
+    if (!n) die_at(line, "a split key needs its data-names after '='");
+    *out = p;
+    return n;
+}
+
 static void parse_select(void)
 {
     int line = cur()->line;
@@ -18988,6 +19088,7 @@ static void parse_select(void)
             if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name after RECORD KEY");
             snprintf(f->key_name, sizeof f->key_name, "%s", cur()->s); advance();
             if ((at_word("in") || at_word("of")) && peek(1)->kind == T_WORD) { advance(); snprintf(f->key_qual, sizeof f->key_qual, "%s", cur()->s); advance(); }
+            f->nksplit = parse_split_parts(&f->ksplit, t->line, &f->ksplit_mf);
             continue;
         }
         if (accept_word("alternate")) {
@@ -18997,6 +19098,7 @@ static void parse_select(void)
             if (f->nalt == 16) die_at(t->line, "too many ALTERNATE RECORD KEYs (16)");
             snprintf(f->alt[f->nalt].name, sizeof f->alt[f->nalt].name, "%s", cur()->s); advance();
             if ((at_word("in") || at_word("of")) && peek(1)->kind == T_WORD) { advance(); snprintf(f->alt[f->nalt].qual, sizeof f->alt[f->nalt].qual, "%s", cur()->s); advance(); }
+            f->alt[f->nalt].nsplit = parse_split_parts(&f->alt[f->nalt].split, t->line, &f->alt[f->nalt].split_mf);
             if (accept_word("with")) { expect_word("duplicates"); f->alt[f->nalt].dups = 1; }
             else if (accept_word("duplicates")) f->alt[f->nalt].dups = 1;
             f->nalt++;
@@ -20436,6 +20538,7 @@ static void emit_unit_data(void)
         if (f->codeset) {                                  /* code_out, code_in: CODE-SET's two tables */
             emit("\t.word .Lcso%d_%d", f->unit, i); emit("\t.word .Lcsi%d_%d", f->unit, i);
         } else { emit("\t.word 0"); emit("\t.word 0"); }
+        if (f->nsplitw) emit("\t.word .Lspk%d_%d", f->unit, i); else emit("\t.word 0\t# no split keys");   /* split: the split keys' table */
         if (f->external) { emit(".Lfx%d_%d:\t# the shared connector of EXTERNAL %s", f->unit, i, f->name); emit("\t.word 0"); }
     }
     /* CODE-SET: every elementary item of the file's records DISPLAY, a
@@ -20494,6 +20597,13 @@ static void emit_unit_data(void)
         emit("\t.p2align 2");
         emit(".Lak%d_%d:\t# ALTERNATE RECORD KEYs of %s", g_unit, i, f->name);
         for (int a = 0; a < f->nalt; a++) { emit("\t.word %d", f->alt[a].sym->offset); emit("\t.word %d", f->alt[a].sym->size); emit("\t.word %d", f->alt[a].dups); }
+    }
+    for (int i = g_file_base; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->nsplitw) continue;
+        emit("\t.p2align 2");
+        emit(".Lspk%d_%d:\t# split keys of %s: count, then slot, parts, (offset, length)...", f->unit, i, f->name);
+        for (int k = 0; k < f->nsplitw; k++) emit("\t.word %d", f->splitw[k]);
     }
     for (int i = 0; i < g_nsorttab; i++) {
         SortTab *t = &g_sorttab[i];

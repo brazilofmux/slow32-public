@@ -163,6 +163,7 @@ under the switch, their oracle GnuCOBOL's `-std=mf`.
 | id | construct | seen in | MF reference | here |
 |---|---|---|---|---|
 | BP-D1 | a file-control entry without the FILE-CONTROL paragraph header, or without the INPUT-OUTPUT SECTION header too (SELECT straight after SPECIAL-NAMES) | abrignoli_COBSOFT, 29 programs in X-COBOL | the File-Control paragraph's format brackets its header as MF's; the INPUT-OUTPUT SECTION header is not marked, but MF practice leaves it out with the other | taken: free/mf-selectbare (neither header), free/mf-selectnofc (the section's only), both identical to GnuCOBOL -std=mf; refused without the switch: bad/select-nofc (ISSUES-120) |
+| BP-D2 | a split key written `RECORD KEY IS name = data-name ...` (or the ALTERNATE RECORD KEY so) | abrignoli_COBSOFT's indexed files, keyed on company, branch and country | SELECT rules 22, 23, 41: the key is its parts' concatenation; any category, treated as alphanumeric | the spelling of 2002's standard `SOURCE IS` (12.3.4.12, implemented with it), parts of any category: free/mf-splitkey, identical to GnuCOBOL -std=mf; refused without the switch: bad/splitkey-nodialect; docs/indexed.md has how it is kept (ISSUES-120) |
 
 Not points, recorded here:
 

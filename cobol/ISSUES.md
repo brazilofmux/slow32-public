@@ -4693,3 +4693,18 @@ named mf-* under -dialect=mf, its oracle GnuCOBOL -std=mf.  Tests
 free/mf-selectbare, free/mf-selectnofc (both identical to GnuCOBOL),
 bad/select-nofc, warn/ext-mf-select.
 
+Eleventh batch: **split keys**.  They turned out to be standard first:
+2002 has `RECORD KEY IS record-key-name SOURCE IS data-name ...` (and
+the ALTERNATE RECORD KEY's, 12.3.4.12), the key the parts' concatenation,
+named by READ and START; Micro Focus's `name = data-name ...` is its
+spelling of the same, parts of any category, BP-D2 under -dialect=mf.
+Kept as docs/indexed.md describes: a tail on the record area, one slot
+per split key, filled by the runtime from the parts before each keyed
+operation, so the B-tree needs no change.  Variable-length records with
+a split key are refused as not implemented.  Tests 2002/splitsrc and
+free/mf-splitkey (both identical to GnuCOBOL), bad/splitkey-85,
+bad/splitkey-nodialect, bad/std2002-splitkey-category,
+bad/std2002-splitkey-move, warn/ext-mf-splitkey.  s32sort (dfsort/) reads
+flat files only, and its multi-field SORT FIELDS is already a composite
+key, so it needs nothing.
+

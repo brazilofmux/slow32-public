@@ -1,0 +1,10 @@
+-- by part-key (group, number)
+aa0001 bolt       00040
+aa0002 nut        00010
+mm0009 bolt       00045
+zz0003 washer     00015
+-- by part-desc from bolt
+bolt       aa0001
+bolt       mm0009
+nut        aa0002
+random read: nut       
