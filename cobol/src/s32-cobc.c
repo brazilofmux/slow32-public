@@ -2647,6 +2647,7 @@ typedef struct {
 int ext, prompt;            /* positioned DISPLAY/ACCEPT: COB_SX_* bits, the PROMPT character */
 int natlit;                 /* a VALUE slot's literal is national: its columns are its display width */
 int line_tp, col_tp, at_tp; /* LINE / POSITION / AT given as identifiers: token positions, stored at run time */
+int idesc;                  /* the item a reference-modified part: its descriptor + 1 (the part's, not the item's) */
 } SField;
 
 typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested group: a window into the slot table */
@@ -7178,6 +7179,15 @@ static void emit_ptr_value(const Opnd *o, const char *reg)
 
 /* a slot's columns: a national one's character positions (cobol ISSUES-92) */
 static int sfield_cols(const SField *f) { return f->pi.category == PIC_NATIONAL ? f->pi.bytes / 2 : f->pi.bytes; }
+static int part_desc(const Ref *r);
+/* a reference-modified screen item: a part of fixed length, alphanumeric
+ * or national -- the field reads and writes the part, not the item */
+static void sfield_part(SField *f, const Ref *r, int line)
+{
+    if (r->rm_bit) die_at(line, "a bit item's part in a screen item is not implemented");
+    if (r->rm_l0 >= 0 || !r->rm_len) die_at(line, "a screen item's reference modification needs a literal length here");
+    f->idesc = 1 + part_desc(r);
+}
 
 /* a slot's reference, resolved once the data tree is complete: LINKAGE,
  * EXTERNAL and runtime subscripts make the slot dynamic; a literal
@@ -7188,7 +7198,7 @@ static void sfield_resolve(SField *f)
     int save_tp = g_tp; g_tp = f->ref_tp;
     Ref rr; parse_ref(&rr);
     g_tp = save_tp;
-    if (rr.rm) die_at(f->srcline, "reference modification in a screen item is not implemented");
+    if (rr.rm) sfield_part(f, &rr, f->srcline);
     /* a national field and its item move as MOVE does: national text to a
      * national receiver only (2023 14.9.25.3 rule 3) */
     if (f->has_pic && f->pi.category != PIC_NATIONAL && sym_is_national(rr.sym) && f->kind != COB_SCR_TO)
@@ -7201,6 +7211,7 @@ static void sfield_resolve(SField *f)
     long off = rr.sym->offset;
     for (int si = 0; si < rr.nsub; si++)
         if (!rr.sub[si].sym) off += (rr.sub[si].lit - 1) * rr.sym->dim_stride[si];
+    if (rr.rm && rr.rm_start) off += (rr.rm_start - 1) * (rr.rm_nat ? 2 : 1);   /* a part at a literal start */
     f->stat_off = off;
 }
 
@@ -9648,10 +9659,18 @@ static void parse_accept_positioned(Ref *r, int tp)
 {
     int si = (int)(screen_synth() - g_screens);
     SField *f = screen_synth_field(&g_screens[si]);
-    if (r->rm) die_at(r->line, "reference modification in a positioned ACCEPT is not implemented");
     f->kind = COB_SCR_TO; f->item = r->sym; f->dyn = 1; f->ref_tp = tp;
     parse_pos_clauses(f, 1);
     f->has_pic = 1;
+    if (r->rm) {
+        /* a part (abrignoli_COBSOFT keys a CPF number into f-cpf(07:03)
+         * and its neighbours): a field of the part's characters */
+        sfield_part(f, r, r->line);
+        int chars = (int)r->rm_len;
+        if (r->rm_nat) { f->pi.category = PIC_NATIONAL; f->pi.bytes = 2 * chars; }
+        else { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = chars; }
+        if (!f->width) f->width = chars;
+    } else
     if (sym_is_national(r->sym)) {
         /* national input (cobol ISSUES-92): the field a column a character position */
         f->pi.category = PIC_NATIONAL; f->pi.bytes = r->sym->size;
@@ -20271,7 +20290,11 @@ static void parse_screen_section(void)
                         do { if (cur()->kind == T_LP) d++; else if (cur()->kind == T_RP) d--; advance(); }
                         while (d && cur()->kind != T_PERIOD);
                     }
-                    if (cur()->kind == T_LP) die_at(t->line, "reference modification in a screen item is not implemented");
+                    if (cur()->kind == T_LP) {       /* (start:length): resolved with the reference */
+                        int d = 0;
+                        do { if (cur()->kind == T_LP) d++; else if (cur()->kind == T_RP) d--; advance(); }
+                        while (d && cur()->kind != T_PERIOD);
+                    }
                     f->kind = kind; continue;
                 }
                 if (accept_word("highlight")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
@@ -20747,8 +20770,8 @@ static void emit_unit_data(void)
                 d.size = f->pi.bytes;
                 emit("\t.word .Ld%d", desc_add(&d));
             } else emit("\t.word 0");
-            if (f->item && f->dyn) { emit("\t.word .Lsdyn%d_%d_%d", g_unit, i, k); emit("\t.word .Ld%d", sym_desc(f->item)); }
-            else if (f->item) { emit("\t.word %s+%ld", g_sym[f->item->record].label, f->stat_off); emit("\t.word .Ld%d", sym_desc(f->item)); }
+            if (f->item && f->dyn) { emit("\t.word .Lsdyn%d_%d_%d", g_unit, i, k); emit("\t.word .Ld%d", f->idesc ? f->idesc - 1 : sym_desc(f->item)); }
+            else if (f->item) { emit("\t.word %s+%ld", g_sym[f->item->record].label, f->stat_off); emit("\t.word .Ld%d", f->idesc ? f->idesc - 1 : sym_desc(f->item)); }
             else { emit("\t.word 0"); emit("\t.word 0"); }
             emit("\t.byte %d,%d", f->ext, f->prompt ? f->prompt : '_'); emit("\t.short 0");   /* ext, prompt, rsv */
         }
