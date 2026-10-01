@@ -10246,6 +10246,28 @@ static void opnd_int_frac(const Opnd *o, int *in, int *fr)
     if (i > *in) *in = i;
     if (f > *fr) *fr = f;
 }
+/* can a MULTIPLY's product of a and b pass 18 digits?  Then it goes to
+ * the wide stack: the narrow cob_nmul sheds fraction digits to fit 64
+ * bits, which an expression's intermediate may do (its precision is the
+ * implementor's) but a MULTIPLY's result may not -- SV9(5) x 9(12)V9(4)
+ * gave 20074490570.06 for 20092543169.49 (tests/gen found it;
+ * tests/free/mulwide) */
+static int prod_wide(const Opnd *a, const Opnd *b)
+{
+    int ai = 0, af = 0, bi = 0, bf = 0;
+    opnd_int_frac(a, &ai, &af); opnd_int_frac(b, &bi, &bf);
+    return ai + af + bi + bf > 18;
+}
+/* does a DIVIDE need the wide stack to round?  The narrow division
+ * develops 18 significant digits, all an 18-digit receiver keeps, but
+ * ROUNDED needs the digit after them: 73844192123.9531 / 0.561 into
+ * 9(12)V9(6) ROUNDED is ...978.526025, and gave ...978.526024 (tests/gen
+ * found it; tests/free/divround18) */
+static int round_wide(const Ref *rs, const int *rd, int nr)
+{
+    for (int i = 0; i < nr; i++) if (rd[i] && !rs[i].sym->is_group && rs[i].sym->pi.digits >= 18) return 1;
+    return 0;
+}
 static int arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const char *stmt, const char *rule85, int line)
 {
     int in = 0, fr = 0;
@@ -11055,7 +11077,7 @@ static void parse_multiply(void)
         int comp = arith_composite(NULL, 0, rs, nr, "MULTIPLY", "X3.23-1985 MULTIPLY rule 3", rs[0].line);   /* the receiving items */
         emit_incompat(&a); emit_incompat(&b);
         int size_err = at_size_error_clause() || ec_size_on();
-        { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
+        { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr) || prod_wide(&a, &b); }
         g_nhn = 0; int root = hn_new('*', hx_leaf(&a), hx_leaf(&b), NULL); long long bd; int nn;
         int mode = hx_ok(root, rs, rd, nr, NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
         if (mode) { if (mode == 2) Lslow = new_label(); hx_store(root, rs, rd, nr, NULL, bd, nn, Lslow); }
@@ -11079,6 +11101,7 @@ static void parse_multiply(void)
     emit_incompat(&a); emit_incompat_refs(rs, nr);
     int size_err = at_size_error_clause() || ec_size_on();
     g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr);
+    for (int i = 0; i < nr && !g_wide; i++) { Opnd ro = ref_opnd(&rs[i]); if (prod_wide(&a, &ro)) g_wide = 1; }
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         g_nhn = 0; int root = hn_new('*', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
@@ -11119,6 +11142,19 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
         die_at(r.line, "REMAINDER '%s' is not numeric (or numeric-edited)", r.sym->name);
     int was_wide = g_wide;
     if (!r.rm && sym_wide(r.sym)) g_wide = 1;           /* computed afresh: on the wide stack when the remainder needs it */
+    {   /* ...or when the product quotient x divisor does, though every item
+         * is under 18 digits: 8271765550.5 / 605815.934675 into 9(8)V9(6)
+         * is 13653.925354 x 605815.934675, 22 digits at scale 12, and it
+         * wrapped -- the remainder came out 32.96613, not 0.18380
+         * (tests/gen found it; tests/free/divremse).  The quotient's
+         * integer digits are at most the dividend's plus the divisor's
+         * decimals plus one; the product adds the divisor's integer digits
+         * and has the quotient's scale plus the divisor's. */
+        int di = 0, df = 0, vi = 0, vf = 0;
+        opnd_int_frac(dividend, &di, &df); opnd_int_frac(divisor, &vi, &vf);
+        int qs = q->sym->pi.scale > 0 ? q->sym->pi.scale : 0;
+        if ((di + vf + 1) + vi + qs + vf > 18) g_wide = 1;
+    }
     emit_push(dividend);
     emit_push(dividend); emit_push(divisor); emit_call("cob_ndiv");
     emit_li("r3", q->sym->pi.scale); emit_call("cob_ntrunc");
@@ -11164,7 +11200,7 @@ static void parse_divide(void)
             int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
             emit_incompat(&a); emit_incompat(&b);
             int size_err = size_error_after_remainder() || ec_size_on();
-            { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
+            { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr) || round_wide(rs, rd, nr); }
             g_nhn = 0; int root = hn_new('/', hx_leaf(&b), hx_leaf(&a), NULL); long long bd; int nn;
             int at = g_tp; Ref rr; int hasr = hx_remainder_ahead(&rr);
             int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
@@ -11190,7 +11226,7 @@ static void parse_divide(void)
         int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
         emit_incompat(&a); emit_incompat_refs(rs, nr);
         int size_err = at_size_error_clause() || ec_size_on();
-        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr);
+        g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(&a, 1) || refs_wide(rs, nr) || round_wide(rs, rd, nr);
         if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
         for (int i = 0; i < nr; i++) {
             g_nhn = 0; int root = hn_new('/', hx_leaf_ref(&rs[i]), hx_leaf(&a), NULL); long long bd; int nn;
@@ -11220,7 +11256,7 @@ static void parse_divide(void)
     int comp = arith_composite(NULL, 0, rs, nr, "DIVIDE", "X3.23-1985 DIVIDE rule 3", rs[0].line);
     emit_incompat(&a); emit_incompat(&b);
     int size_err = size_error_after_remainder() || ec_size_on();
-    { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr); }
+    { Opnd ab[2] = { a, b }; g_wide = (g_std >= 2002 && comp > 18) || opnds_wide(ab, 2) || refs_wide(rs, nr) || round_wide(rs, rd, nr); }
     g_nhn = 0; int root = hn_new('/', hx_leaf(&a), hx_leaf(&b), NULL); long long bd; int nn;
     int at = g_tp; Ref rr; int hasr = hx_remainder_ahead(&rr);
     int mode = hx_ok(root, rs, rd, nr, hasr ? &rr : NULL, size_err, &bd, &nn), Lslow = -1, Ldone = -1;
@@ -11249,6 +11285,40 @@ static int at_arith_op(void)
     return at_op("+") || at_op("-") || at_op("*") || at_op("/") || at_op("**");
 }
 
+/* the digits each value on the evaluation stack can need, in step with it:
+ * a product the narrow stack would compute past 18 digits makes the
+ * expression wide (g_saw_wide), since cob_nmul would shed its operands'
+ * fraction digits to fit 64 bits.  An intermediate's precision is the
+ * implementor's, but losing the eighth significant digit of a result
+ * the receiver keeps is not a choice worth having: K * L * M over three
+ * 9-digit items gave -513019436.446481 for -513019442.647578 (tests/gen
+ * found it; tests/free/computewide).  A sum takes the larger operand and
+ * a carry; a quotient and a power keep the implementor's precision. */
+#define XD_MAX 64
+static int g_xd_sp, g_xd_int[XD_MAX], g_xd_frac[XD_MAX];
+static int g_xd_div;                 /* the expression divides: ROUNDED into 18 digits needs the wide stack (round_wide) */
+static void xd_push(int in, int fr)
+{
+    if (g_xd_sp < XD_MAX) { g_xd_int[g_xd_sp] = in; g_xd_frac[g_xd_sp] = fr; }
+    g_xd_sp++;
+}
+static void xd_binop(char op)
+{
+    if (op == '/') g_xd_div = 1;
+    if (g_xd_sp < 2) { g_xd_sp = 0; return; }
+    g_xd_sp--;
+    if (g_xd_sp >= XD_MAX) return;
+    int b = g_xd_sp, a = g_xd_sp - 1, in, fr;
+    if (op == '*') { in = g_xd_int[a] + g_xd_int[b]; fr = g_xd_frac[a] + g_xd_frac[b]; }
+    else if (op == '+') {
+        in = (g_xd_int[a] > g_xd_int[b] ? g_xd_int[a] : g_xd_int[b]) + 1;
+        fr = g_xd_frac[a] > g_xd_frac[b] ? g_xd_frac[a] : g_xd_frac[b];
+    } else if (op == '/') { in = g_xd_int[a] + g_xd_frac[b]; fr = g_xd_frac[a]; }
+    else { in = g_xd_int[a]; fr = g_xd_frac[a]; }              /* a power: as the base */
+    if ((op == '*' || op == '+') && in + fr > 18) g_saw_wide = 1;
+    g_xd_int[a] = in; g_xd_frac[a] = fr;
+}
+
 static void parse_primary(void)
 {
     Tok *t = cur();
@@ -11262,6 +11332,7 @@ static void parse_primary(void)
     if (at_op("-")) { advance(); parse_primary(); emit_call("cob_nneg"); return; }
     Opnd o; parse_operand(&o);
     check_numeric_opnd(&o);
+    { int in = 0, fr = 0; opnd_int_frac(&o, &in, &fr); xd_push(in, fr); }
     emit_push(&o);
 }
 
@@ -11271,7 +11342,7 @@ static void parse_primary(void)
 static void parse_power(void)
 {
     parse_primary();
-    while (at_op("**")) { advance(); parse_primary(); emit_call("cob_npow"); }
+    while (at_op("**")) { advance(); parse_primary(); xd_binop('^'); emit_call("cob_npow"); }
 }
 
 static void parse_term(void)
@@ -11280,18 +11351,23 @@ static void parse_term(void)
     while (at_op("*") || at_op("/")) {
         int mul = at_op("*"); advance();
         parse_power();
+        xd_binop(mul ? '*' : '/');
         emit_call(mul ? "cob_nmul" : "cob_ndiv");
     }
 }
 
+static int g_xd_depth;
 static void parse_expr(void)
 {
+    if (g_xd_depth++ == 0) g_xd_sp = 0;         /* a whole expression: the digit stack starts empty */
     parse_term();
     while (at_op("+") || at_op("-")) {
         int add = at_op("+"); advance();
         parse_term();
+        xd_binop('+');
         emit_call(add ? "cob_nadd" : "cob_nsub");
     }
+    g_xd_depth--;
 }
 
 /* an expression operand in a condition: scanned now, emitted later */
@@ -11378,8 +11454,9 @@ static void parse_compute(void)
     /* wide or not: known from a pass that emits nothing, then for real */
     {
         int start = g_tp, saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
+        g_xd_div = 0;
         g_noemit++; parse_expr(); g_noemit--;
-        g_wide = g_saw_wide || g_saw_float || refs_wide(rs, nr);
+        g_wide = g_saw_wide || g_saw_float || refs_wide(rs, nr) || (g_xd_div && round_wide(rs, rd, nr));
         if (g_saw_float) g_fstmt = 1;
         g_saw_wide = saw; g_saw_float = sawf; g_tp = start;
     }
@@ -16634,6 +16711,7 @@ static void parse_statement_1(void)
     Tok *t = cur();
     if (t->kind == T_SQL) { snprintf(g_cur_stmt, sizeof g_cur_stmt, "EXEC SQL"); parse_exec_sql(); return; }
     if (t->kind != T_WORD) die_at(t->line, "expected a statement, found %s", tok_desc(t));
+    g_xd_depth = 0;                     /* no statement is inside an expression; a recovered refusal may have left one open */
     const char *v = t->s;
     { int k = 0; for (; v[k] && k < 15; k++) g_cur_stmt[k] = (char)toupper((unsigned char)v[k]); g_cur_stmt[k] = 0; }
 
@@ -16643,6 +16721,12 @@ static void parse_statement_1(void)
     if (!strcmp(v, "raise")) die_at(t->line, "RAISE is COBOL 2002; compile with -std=2002");
     if (g_std >= 2002 && !strcmp(v, "resume"))
         die_at(t->line, "RESUME is not implemented (COBOL 2014 made it optional)");
+    /* refused by name, as the other gaps are: they were "not a COBOL verb"
+     * (docs/conformance/coverage.md found them) */
+    if (g_std >= 2002 && (!strcmp(v, "commit") || !strcmp(v, "rollback")))
+        die_at(t->line, "%s is COBOL 2023; not implemented", !strcmp(v, "commit") ? "COMMIT" : "ROLLBACK");
+    if (g_std >= 2002 && !strcmp(v, "invoke"))
+        die_at(t->line, "INVOKE is object orientation, not implemented");
 
     if (g_std >= 2002 && !strcmp(v, "allocate")) { advance(); parse_allocate(); return; }
     if (g_std >= 2002 && !strcmp(v, "free")) { advance(); parse_free(); return; }

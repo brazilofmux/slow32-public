@@ -242,7 +242,7 @@ carry the compiler's own reason.
 | 14.9.4 | CALL statement | [call](call.md) | 9 | 3 | 1 | 0 | 0 |
 | 14.9.5 | CANCEL statement | [control](control.md) | 8 | 10 | 0 | 1 | 0 |
 | 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
-| 14.9.7 | COMMIT statement | **UNKNOWN to the compiler**: 'commit' is not a COBOL verb | | | | | |
+| 14.9.7 | COMMIT statement | **not implemented**: COMMIT is COBOL 2023; not implemented | | | | | |
 | 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
 | 14.9.9 | CONTINUE statement | [control](control.md) | 8 | 10 | 0 | 1 | 0 |
 | 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
@@ -258,7 +258,7 @@ carry the compiler's own reason.
 | 14.9.20 | INITIALIZE statement | [initialize](initialize.md) | 8 | 5 | 0 | 1 | 0 |
 | 14.9.21 | INITIATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.22 | INSPECT statement | [string](string.md) | 2 | 21 | 0 | 2 | 0 |
-| 14.9.23 | INVOKE statement | **UNKNOWN to the compiler**: 'invoke' is not a COBOL verb | | | | | |
+| 14.9.23 | INVOKE statement | **not implemented**: INVOKE is object orientation, not implemented | | | | | |
 | 14.9.24 | MERGE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.25 | MOVE statement | [move](move.md) | 12 | 10 | 0 | 9 | 0 |
 | 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 9 | 6 | 0 | 2 | 0 |
@@ -271,7 +271,7 @@ carry the compiler's own reason.
 | 14.9.33 | RESUME statement | **not implemented**: RESUME is not implemented (COBOL 2014 made it optional) | | | | | |
 | 14.9.34 | RETURN statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.35 | REWRITE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
-| 14.9.36 | ROLLBACK statement | **UNKNOWN to the compiler**: 'rollback' is not a COBOL verb | | | | | |
+| 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send is not supported (the Communication module is deliberately out) | | | | | |
 | 14.9.39 | SET statement | [set](set.md) | 14 | 8 | 0 | 0 | 1 |

@@ -130,6 +130,7 @@ agrees with its documented divergence").
 | `2002/fnreturn` | the intrinsics' returned values, 169 calls | as the oracle, but for four: EXP(20), EXP10(10.5) to the 15 significant digits a double holds (native arithmetic: an implementor-defined approximation, 2023 15.34.4, 15.35.4); ANNUITY(0.1, 1) exactly 1.1; NUMVAL-F("1.5E3") 0, its exponent unsigned where 15.69.3 requires the sign | about 34 digits; 1.0999999999; 1500 (though its own TEST-NUMVAL-F finds the same error at position 5) |
 | `free/rwsign` | a report group entry with SUM (or SOURCE) and no COLUMN | not presented: the counter sums, nothing prints (X3.23-1985 XIII 3.11.4 rule 1) | presented at column 1 |
 | (not a test) | relative slots on disk | the same 4-byte RDW per slot, zero for an empty slot; slot = 4 + maximum record (docs/indexed.md) | an 8-byte native `size_t` length per slot, 0 for empty |
+| `free/divremse` (found by tests/gen) | `DIVIDE 7 INTO 1000 GIVING q REMAINDER r ON SIZE ERROR`, `q` a `9(2)` item: a size error on the quotient | both `q` and `r` unchanged (X3.23-1985 VI-81 DIVIDE general rule 8a: no remainder calculation is meaningful); rules 6 and 8b (remainder from the truncated quotient under ROUNDED; a size error in the remainder alone) agree | `q` unchanged, but `r` stored: 6, the remainder of the quotient it did not store |
 
 ## What we will not do
 
