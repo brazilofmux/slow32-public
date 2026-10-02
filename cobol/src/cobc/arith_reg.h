@@ -293,7 +293,7 @@ static int hx_leaf_ref(const Ref *r)
  * cob_put_num_x -- the stack's own fetch and store, which round, truncate
  * and edit, and which the DBT runs natively -- so what goes is the stack
  * between them: its pushes, alignment and dispatch.  A division, only at
- * the top, is the stack's own (cob_xdiv), its scale found at run time.
+ * the top, is the stack's own (cob_xdivn), its scale found at run time.
  * SIZE ERROR and the EC checks keep the stack. */
 static int g_dsc[MAXHN]; static long double g_dbd[MAXHN];
 static int dx_leaf_ok(const Opnd *o)

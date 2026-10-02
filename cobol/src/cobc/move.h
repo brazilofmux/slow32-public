@@ -431,6 +431,13 @@ static void emit_move(Opnd *src, Ref *dst)
          * the receiver -- no conversion, no editing (X3.23 6.18.2; NC105A
          * moves a group to numeric and to edited items and reads the bytes) */
         Sym *s = src->ref.sym;
+        if (!g_nohx && !d->just && s->size >= d->size) {
+            /* as long as the receiver, or longer: the receiver's bytes,
+             * copied -- no padding to do, nothing to dispatch on */
+            Arg c[2] = { arg_ref(dst), arg_ref(&src->ref) };
+            emit_copy_fixed(c, d->size);
+            return;
+        }
         Arg a[4] = { arg_ref(&src->ref), arg_imm(s->size), arg_ref(dst), arg_imm(d->size) };
         emit_args(a, 4); emit_li("r7", d->just); emit_call("cob_move_alnum");
         return;
@@ -468,6 +475,22 @@ static void emit_move(Opnd *src, Ref *dst)
     }
     int dnum = is_numeric_sym(d);
 
+    if (!g_nohx && src->kind == O_REF && !src->ref.sym->is_cond && (dst->rm || src->ref.rm)) {
+        /* a part to a part, a part to an alphanumeric item, an alphanumeric
+         * item to a part, both lengths written: an alphanumeric move
+         * (8.4.2.4.3) of bytes the compiler can count.  The sender as long
+         * as the receiver or longer is a copy of the receiver's length. */
+        const Ref *sr = &src->ref; Sym *s = sr->sym;
+        long sl = sr->rm ? (sr->rm_len && !sr->rm_nat && !sr->rm_bit && !sr->rm_odo ? sr->rm_len : -1)
+                         : (!is_numeric_sym(s) && !s->is_group && s->pi.category == PIC_ALPHANUMERIC && !sym_bitlike(s) ? s->size : -1);
+        long dl = dst->rm ? (dst->rm_len && !dst->rm_nat && !dst->rm_bit && !dst->rm_odo ? dst->rm_len : -1)
+                          : (!dnum && !d->is_group && d->pi.category == PIC_ALPHANUMERIC && !d->just && !sym_bitlike(d) ? d->size : -1);
+        if (sl > 0 && dl > 0 && sl >= dl) {
+            Arg c[2] = { arg_ref(dst), arg_ref(sr) };
+            emit_copy_fixed(c, (int)dl);
+            return;
+        }
+    }
     if (dst->rm || (src->kind == O_REF && src->ref.rm)) {
         /* a reference-modified side is an alphanumeric of runtime extent */
         if (src->kind == O_FIG || src->kind == O_ALL) {

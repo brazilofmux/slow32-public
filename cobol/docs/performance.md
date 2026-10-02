@@ -284,3 +284,26 @@ store gets the same digits. Output byte-identical; karith 503 ms ->
 439, kmove 605 -> 501, kseq 295 -> 265. What is left of ndiv_core in
 karith is DIVIDE ... GIVING ... REMAINDER on packed items, which takes
 the stack and divides twice.
+
+**Moves the compiler can count.** kmove's loop called the runtime's
+MOVE three times for what are byte copies: a four-byte part of an item
+to PIC X(4), a one-byte part to PIC X, a 44-byte group to PIC X(44).
+A group sender went to cob_move_alnum whatever the sizes, and any
+reference-modified side sent the move through cob_move's dispatch. Now
+a group to an item no longer than it, and a part to or from an
+alphanumeric item or another part with both lengths written and the
+sender as long as the receiver or longer, is a copy of the receiver's
+length (emit_copy_fixed: inline bytes, or memcpy, which the DBT runs
+natively). A shorter sender (padding), a JUSTIFIED or numeric receiver,
+a computed length still go to the runtime. kmove 484 ms -> 379; over
+the snapshot's programs 6,453 of 39,814 runtime move calls became
+copies. `-fno-hot-arith` keeps the general path, and the two print the
+same (tests/free/movefixed, which GnuCOBOL agrees with).
+
+**ksort is its generator, not its sort**: five statements a record on
+the wide stack, because `seed` is PIC 9(18) and `seed * 1103515245`
+could pass 64 bits by its picture -- it never does. The register path
+takes a statement only when the pictures prove every intermediate fits;
+the plan's answer (docs/plans/performance.md) is the path the integer
+one already has for a word: compute in 64 bits, test for overflow, and
+fall to the wide stack only when it happens.

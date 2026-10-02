@@ -5261,3 +5261,15 @@ ndiv_core makes no more; byte-identical output, karith -13%, kmove
 -17%, kseq -10%.  Checked: 150 generated arithmetic programs the same
 through the compiler before and after (GEN=arith run-self.sh), Gate 7,
 CCVS-85 identical, all gates.
+
+Second: alphanumeric moves whose lengths the compiler can count are
+copies of the receiver's length -- a group to an item no longer than it;
+a reference-modified part to or from an alphanumeric item or another
+part, the sender as long as the receiver or longer.  kmove 484 ms ->
+379; 6,453 of the snapshot's 39,814 runtime move calls gone.  Test
+free/movefixed (each length relation, and the cases that stay with the
+runtime; the same output with -fno-hot-arith; GnuCOBOL agrees).
+cob_xdiv, which the compiler no longer calls, is removed: nothing is
+released, so nothing is kept for old objects.  docs/plans/performance.md
+is the staged plan: opportunistic work where the profile points,
+operation-level hooks, values across statements, the generated code.

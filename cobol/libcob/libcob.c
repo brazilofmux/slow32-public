@@ -1537,22 +1537,14 @@ void cob_ndiv(void)
     nsp--;
 }
 
-/* the compiler's decimal arithmetic in registers (s32-cobc.c dx_*): a
- * division at the top of a statement, by the stack's own rule; the
- * quotient's scale in cob_xdiv_scale, -1 for a zero divisor */
-int cob_xdiv_scale;
-long long cob_xdiv(long long a, long long b, int sa, int sb)
-{
-    cob_num x = { a, sa }, y = { b, sb };
-    if (ndiv_core(&x, &y, 99)) { cob_xdiv_scale = -1; return 0; }
-    cob_xdiv_scale = x.scale;
-    return x.v;
-}
-/* ... and when the compiler knows what the receivers can hold: need, the
- * most fraction digits any of them keeps, one more where it is ROUNDED.
+/* the compiler's decimal arithmetic in registers (cobc/arith_reg.h dx_*):
+ * a division at the top of a statement, by the stack's own rule; the
+ * quotient's scale in cob_xdiv_scale, -1 for a zero divisor.  need: the
+ * most fraction digits any receiver keeps, one more where it is ROUNDED.
  * The quotient's digits are produced one at a time and each is exact, so
  * stopping at need gives the store the same digits it would have cut the
  * longer quotient down to -- without making the rest. */
+int cob_xdiv_scale;
 long long cob_xdivn(long long a, long long b, int sa, int sb, int need)
 {
     cob_num x = { a, sa }, y = { b, sb };
