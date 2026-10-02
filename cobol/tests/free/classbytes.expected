@@ -1,0 +1,25 @@
+item:
+  numeric 0010 not 0246 from 0048 to 0057
+  alphabetic 0053 not 0203 from 0032 to 0122
+  lower 0027 not 0229 from 0032 to 0122
+  upper 0027 not 0229 from 0032 to 0090
+part of one:
+  numeric 0010 not 0246 from 0048 to 0057
+  alphabetic 0053 not 0203 from 0032 to 0122
+  lower 0027 not 0229 from 0032 to 0122
+  upper 0027 not 0229 from 0032 to 0090
+part of four:
+  numeric 0010 not 0246 from 0048 to 0057
+  alphabetic 0053 not 0203 from 0032 to 0122
+  lower 0027 not 0229 from 0032 to 0122
+  upper 0027 not 0229 from 0032 to 0090
+part of a computed length:
+  numeric 0010 not 0246 from 0048 to 0057
+  alphabetic 0053 not 0203 from 0032 to 0122
+  lower 0027 not 0229 from 0032 to 0122
+  upper 0027 not 0229 from 0032 to 0090
+eight digits: numeric
+seven and a space: not
+its first seven: numeric
+its last, to the end: alphabetic
+its last two: not

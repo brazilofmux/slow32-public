@@ -578,6 +578,22 @@ static Cond *parse_cond(void)
     return a;
 }
 
+/* A class condition's operand is plain alphanumeric bytes: an elementary
+ * alphanumeric item, or a reference-modified part that is not national,
+ * bits, or an occurs-depending group's (the conditions of the direct
+ * alphanumeric move, move.h). */
+static int class_bytes_ok(const Opnd *o)
+{
+    if (o->kind != O_REF || o->ref.sym->is_cond) return 0;
+    const Ref *r = &o->ref; Sym *s = r->sym;
+    if (r->rm) {
+        const Desc *d = &g_desc[sym_desc(s)];
+        return !r->rm_nat && !r->rm_bit && !r->rm_odo && !r->bitsub && !sym_bitlike(s) && !s->any_len &&
+               d->cat != COB_BOOLEAN && d->cat != COB_NATIONAL && d->usage != COB_U_NATIONAL;
+    }
+    return !is_numeric_sym(s) && !s->is_group && s->pi.category == PIC_ALPHANUMERIC && !sym_bitlike(s) && !s->any_len;
+}
+
 /* r1 = 0/1 for a simple condition */
 static void emit_cond_value(Cond *c)
 {
@@ -593,6 +609,38 @@ static void emit_cond_value(Cond *c)
         emit_la("r1", g_sym[c->x.ref.sym->record].label);
         emit("\tldw r1, r1+0");
         emit("\tseq r1, r1, r0");
+        if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
+    if (c->kind == C_CLASS && !g_nohx && c->klass >= 0 && c->klass <= 3 && class_bytes_ok(&c->x)) {
+        /* NUMERIC, ALPHABETIC, -LOWER or -UPPER of alphanumeric bytes --
+         * an alphanumeric item, or a part of anything that has parts: the
+         * test is of characters and no descriptor has anything to add.
+         * One character is tested here (a scan asks "is this one a
+         * digit" once a character: docs/performance.md); more, or a
+         * length only known when running, are the runtime's loop over
+         * the bytes, the part's length checked as its descriptor's
+         * would have been. */
+        const Ref *r = &c->x.ref;
+        long n = r->rm ? (long)r->rm_len : (long)r->sym->size;     /* 0: a part of computed or omitted length */
+        if (n == 1) {
+            Arg a[1] = { arg_ref(r) };
+            emit_args(a, 1);
+            emit("\tldbu r1, r3+0");
+            if (c->klass == 0) { emit("\taddi r1, r1, -48"); emit("\tsltiu r1, r1, 10"); }
+            else {
+                /* a letter of the class asked for, or a space */
+                if (c->klass == 1) { emit("\tori r2, r1, 32"); emit("\taddi r2, r2, -97"); }
+                else emit("\taddi r2, r1, %d", c->klass == 2 ? -97 : -65);
+                emit("\tsltiu r2, r2, 26");
+                emit("\txori r1, r1, 32"); emit("\tsltiu r1, r1, 1");
+                emit("\tor r1, r1, r2");
+            }
+        } else {
+            Arg a[3] = { arg_ref(r), n ? arg_imm(n) : arg_rlenc(r), arg_imm(c->klass) };
+            emit_args(a, 3);
+            emit_call("cob_class_bytes");
+        }
         if (c->neg) emit("\txori r1, r1, 1");
         return;
     }

@@ -826,3 +826,33 @@ they guard -- two; a truncation test the count beside it implies -- one.
 The position and the length stay: three instructions a record buy the
 fields meaning what their comments say.
 
+## 2026-10-02: a class test of characters
+
+`x(i:1) IS NUMERIC` built a descriptor for the part and called the
+runtime's general class test: 88 instructions and 81, to compare one
+byte with two bounds.  csv2fw asks it once for each character of each
+amount it scans.
+
+A class condition (NUMERIC, ALPHABETIC, ALPHABETIC-LOWER, -UPPER) whose
+operand is alphanumeric bytes -- an elementary alphanumeric item, or a
+reference-modified part that is not national, bits or an
+occurs-depending group's, the conditions of the direct alphanumeric
+move -- has nothing for a descriptor to say.  One character is tested
+where it stands: the byte, a subtraction and a compare for NUMERIC;
+for the alphabetic classes the letter's range and the space.  More
+than one, or a length known only when running, is `cob_class_bytes`
+with the address and the length (the part's length checked as its
+descriptor's was).  Everything else -- numeric items and their signs,
+packed, national, BOOLEAN, a class of SPECIAL-NAMES -- is `cob_class`
+as before.
+
+csv2fw 302 ms -> 289 (alternating runs, the same bytes out).
+
+`free/classbytes`: every byte value as a one-character item, as a part
+of one, and at each position of a part of four and of a part of
+computed length, counted into each class and out of it by the negated
+condition -- 10, 53, 27, 27.  The harness compiles every program a
+second time with the in-line forms off, so the two are compared on
+each.  Twenty mutants of the emitted tests and of the runtime's loop,
+all caught.
+

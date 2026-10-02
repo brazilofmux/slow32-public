@@ -88,7 +88,8 @@ csv2fw 1.20 s -> 0.42 with all of it.  Next:
   and a one-byte record is stored in, or taken from, a buffer with no
   call and no frame: 55 instructions -> 28, and 52 + fwrite's 26 -> 27.
   In C; the backend makes tail calls.  csv2fw 333 ms -> 290.)
-- A class test of one character (`x(i:1) IS NUMERIC`) in line.
+- (Done: a class test of alphanumeric bytes -- one character in line,
+  more through `cob_class_bytes`, no descriptor.  csv2fw 302 ms -> 289.)
 - The generated code: a COMP item's load is twelve instructions (it is
   big-endian); a statement fetches what the statement before stored.
   Stage 3 and stage 4, below.

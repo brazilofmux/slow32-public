@@ -5389,3 +5389,13 @@ and a truncation test that the count beside it implies (one).  CCVS-85
 identical; all gates, and the platform's, since the C library and its
 header changed.
 
+Ninth (2026-10-02).  A class condition of alphanumeric bytes is tested
+as bytes: one character in line (three instructions for NUMERIC), more
+or a computed length through `cob_class_bytes(address, length, kind)`,
+with no descriptor built for a part.  csv2fw 302 ms -> 289.
+free/classbytes (all 256 values, four classes, four shapes of
+operand, each negated); twenty mutants caught; all gates.  With this
+the runtime's share of csv2fw has no routine left above six percent of
+the program; seven tenths of it is the generated code, which is stage
+3 of the plan.
+

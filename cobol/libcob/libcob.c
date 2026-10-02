@@ -1367,6 +1367,7 @@ static int nat_class_bytes(const void *vp, const cob_desc *d, unsigned char **ou
 }
 
 /* class conditions: 0 NUMERIC, 1 ALPHABETIC, 2 ALPHABETIC-LOWER, 3 ALPHABETIC-UPPER */
+int cob_class_bytes(const unsigned char *p, int n, int kind);
 int cob_class(const void *vp, const cob_desc *d, int kind)
 {
     if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; return cob_class(nat_narrow(vp, d, b, &nd), &nd, kind); }
@@ -1405,6 +1406,21 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
     if (kind == 4) {                                    /* BOOLEAN: every position 0 or 1 */
         if (d->cat == COB_NATIONAL) { for (int i = 0; i + 1 < n; i += 2) if (p[i] || (p[i + 1] != '0' && p[i + 1] != '1')) return 0; return 1; }
         for (int i = 0; i < n; i++) if (p[i] != '0' && p[i] != '1') return 0;
+        return 1;
+    }
+    return cob_class_bytes(p, n, kind);
+}
+
+/* The class test of alphanumeric bytes -- an alphanumeric item, a
+ * reference-modified part: kind 0 NUMERIC (every one a digit), 1
+ * ALPHABETIC, 2 ALPHABETIC-LOWER, 3 ALPHABETIC-UPPER (letters of that
+ * kind, and spaces).  No descriptor: the compiler calls this with the
+ * address and the length when the operand is such bytes, and tests a
+ * single character itself. */
+int cob_class_bytes(const unsigned char *p, int n, int kind)
+{
+    if (kind == 0) {
+        for (int i = 0; i < n; i++) if ((unsigned)(p[i] - '0') > 9) return 0;
         return 1;
     }
     for (int i = 0; i < n; i++) {
