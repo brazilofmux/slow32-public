@@ -255,6 +255,30 @@ static int hl_promote_to_f64(int val, int from_ty) {
     return r;
 }
 
+/* Unsigned 32-bit divide/modulo: SLOW-32 has only signed DIV/REM
+ * instructions, so unsigned goes through __udivsi3/__umodsi3
+ * (builtins64.s), as it does in stage08, from which this is ported
+ * (2026-10, selfhost ISSUES-77).  Until then `v / 10` with v unsigned
+ * was a signed div here: wrong for any v of 2^31 or more, and the
+ * compiler and tools this stage builds for stage08 printed
+ * 4000000000 as "UNSNQPUNQ". */
+static int hl_udivmod32(int lv, int rv, int is_rem) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = lv;
+    h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = rv;
+    h_ncarg = h_ncarg + 1;
+    if (is_rem) {
+        r = hi_emit(HI_CALL, TY_INT | TY_UNSIGNED, -1, -1, 2, "__umodsi3");
+    } else {
+        r = hi_emit(HI_CALL, TY_INT | TY_UNSIGNED, -1, -1, 2, "__udivsi3");
+    }
+    h_cbase[r] = cb;
+    return r;
+}
+
 /* Map AST binary operator token to HIR instruction kind */
 static int hl_binop_kind(int op, int ty) {
     if (op == TK_PLUS) return HI_ADD;
@@ -1274,6 +1298,10 @@ static int hl_expr(Node *n) {
         lv = hl_expr(n->lhs);
         rv = hl_expr(n->rhs);
         kind = hl_binop_kind(n->op, n->ty);
+        if ((kind == HI_DIV || kind == HI_REM) && (n->ty & TY_UNSIGNED) &&
+            !ty_is_llong(n->ty)) {
+            return hl_udivmod32(lv, rv, kind == HI_REM);
+        }
         return hi_emit(kind, n->ty, lv, rv, 0, NULL);
     }
 
@@ -1314,7 +1342,12 @@ static int hl_expr(Node *n) {
             return new_val;
         }
         kind = hl_binop_kind(n->op, n->ty);
-        new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
+        if ((kind == HI_DIV || kind == HI_REM) && (n->ty & TY_UNSIGNED) &&
+            !ty_is_llong(n->ty)) {
+            new_val = hl_udivmod32(old_val, rv, kind == HI_REM);
+        } else {
+            new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
+        }
         hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
         return new_val;
     }

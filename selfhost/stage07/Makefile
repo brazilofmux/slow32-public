@@ -2,7 +2,11 @@
 # All C sources compiled by Stage 06 compiler, assembled by Stage 06 s32-as.s32x,
 # linked by Stage 06 s32-ld.s32x.
 
-COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h parser.h sema.h optimize.h codegen.h pp.h
+# Everything s12cc.c includes.  (The hir*.h files were missing from this
+# list until 2026-10: an edit to the code generator rebuilt nothing.)
+COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h parser.h sema.h optimize.h codegen.h pp.h \
+                hir.h hir_lower.h hir_ssa.h hir_opt.h hir_licm.h hir_burg.h hir_regalloc.h hir_codegen.h \
+                builtins64.s builtins_fp64.s
 LIBC_SRCS = libc/start.c libc/stdio.c libc/string_extra.c libc/string_more.c libc/ctype.c libc/convert.c libc/malloc.c
 RUNTIME_SRCS = crt0.s mmio_no_start.s
 TOOL_SRCS = tools/s32-as.c tools/s32_formats_min.h tools/s32-ar.c tools/s32ar_min.h tools/s32-ld.c tools/s32util_min.h tools/slow32dump.c tools/slow32dis.c
