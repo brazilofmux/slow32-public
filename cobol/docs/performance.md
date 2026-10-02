@@ -568,8 +568,10 @@ in an order C does not fix. The new move tripped it (the harness's
 exception-sites gate: the compiler crashed on one statement); two older
 places had the same expression. All three take the index first now, and
 the compiler built with the address and undefined-behavior sanitizers
-compiles every test, majesty's sources and 125 generated programs
-clean.
+compiles every test, the exception sites, majesty's sources and
+generated programs clean: `tests/sanitize.sh`, 670 programs in a few
+seconds, the harness's Gate 8 (it reports the old bug when the old
+expression is put back).
 
 **Where it stands.** csv2fw 1.20 s -> 0.42, and the batch 2.0 s ->
 1.2; csv2fw's instructions outside the hooks from 7.4 thousand million

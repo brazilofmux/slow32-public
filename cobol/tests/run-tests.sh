@@ -36,6 +36,10 @@
 #   records -- and those only in the shapes run-gen.sh checks (ours equal
 #   to a computed truth or to inspect85.py).  Needs the oracle's container
 #   image; without it the summary says the gate did not run.
+# Gate 8 (sanitizers): tests/sanitize.sh -- the compiler built with the
+#   address and undefined-behavior sanitizers compiles every test, the
+#   exception sites, generated programs and majesty's sources without a
+#   report.  A host that cannot build so is reported, not passed over.
 # Gate 6 (exception sites): tests/ecsites/template.cbl compiled once per
 #   line of sites.txt with the statement put in; each must print what the
 #   line expects -- RAISED where the statement references invalid numeric
@@ -533,6 +537,16 @@ else
     GEN_NOTE="cobol: GENERATED PROGRAMS NOT RUN -- they need the oracle's container image (tests/gen/README.md)"
 fi
 
+# Gate 8 (sanitizers): the compiler itself, built with the address and
+# undefined-behavior sanitizers, over every source there is (sanitize.sh)
+SAN_NOTE=""
+sout="$("$HERE/sanitize.sh" 2>&1 | tail -1)"
+case "$sout" in
+    *"no findings")  report "sanitize" 0 "${sout#sanitize: }" ;;
+    *"NOT RUN"*)     SAN_NOTE="cobol: $sout" ;;
+    *)               report "sanitize" 1 "$sout" ;;
+esac
+
 echo
 case "$ORACLE_ENGINE" in
     "")   if [ "${ORACLE:-1}" = 0 ]; then
@@ -551,5 +565,6 @@ fi
 [ -z "$CCVS_NOTE" ] || echo "$CCVS_NOTE"
 [ -z "$NSQL_NOTE" ] || echo "$NSQL_NOTE"
 [ -z "$GEN_NOTE" ] || echo "$GEN_NOTE"
+[ -z "$SAN_NOTE" ] || echo "$SAN_NOTE"
 [ -z "$SKIPPED" ] || echo "cobol: SKIPPED:$SKIPPED -- no C compiler for them here; this is not a full run"
 [ "$FAIL" = "0" ]
