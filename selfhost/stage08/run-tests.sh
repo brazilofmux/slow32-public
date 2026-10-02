@@ -758,6 +758,62 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         FAIL=$((FAIL + 1))
     fi
 
+    # libc/stdio.c: the fd-named functions over the buffered streams, and
+    # exit sending what the streams still hold.  Both write files, so they
+    # run in the work directory; the second is run four ways.
+    TOTAL=$((TOTAL + 1))
+    set +e
+    SF_EXE=$(compile_and_link "test_stdio_fd" "$TESTS_DIR/test_stdio_fd.c" \
+                 "$GEN1_CC_EXE" "$AS_EXE" "$LD_EXE")
+    SF_RC=$?
+    if [[ "$SF_RC" -eq 0 ]]; then
+        (cd "$WORKDIR" && run_exe_rc "$SF_EXE" "$WORKDIR/test_stdio_fd.run.log")
+        SF_RC=$?
+    fi
+    set -e
+    if [[ "$SF_RC" -eq 0 ]]; then
+        printf "  %-30s PASS\n" "test_stdio_fd:"
+        PASS=$((PASS + 1))
+    else
+        printf "  %-30s FAIL (check %d)\n" "test_stdio_fd:" "$SF_RC"
+        FAIL=$((FAIL + 1))
+    fi
+
+    TOTAL=$((TOTAL + 1))
+    set +e
+    SX_EXE=$(compile_and_link "test_stdio_exit" "$TESTS_DIR/test_stdio_exit.c" \
+                 "$GEN1_CC_EXE" "$AS_EXE" "$LD_EXE")
+    SX_RC=$?
+    SX_WHY="build"
+    if [[ "$SX_RC" -eq 0 ]]; then
+        (cd "$WORKDIR" && run_exe_rc "$SX_EXE" "$WORKDIR/test_stdio_exit.w.log" w stdio_exit.dat)
+        SX_RC=$?; SX_WHY="w rc=$SX_RC"
+    fi
+    if [[ "$SX_RC" -eq 0 ]]; then
+        (cd "$WORKDIR" && run_exe_rc "$SX_EXE" "$WORKDIR/test_stdio_exit.r.log" r stdio_exit.dat)
+        SX_RC=$?; SX_WHY="the files left at exit: check $SX_RC"
+    fi
+    if [[ "$SX_RC" -eq 0 ]]; then
+        (cd "$WORKDIR" && run_exe_rc "$SX_EXE" "$WORKDIR/test_stdio_exit.o.log" o)
+        SX_RC=$?; SX_WHY="o rc=$SX_RC"
+        if [[ "$SX_RC" -eq 0 ]] && ! grep -q "a line with no end" "$WORKDIR/test_stdio_exit.o.log"; then
+            SX_RC=1; SX_WHY="stdout's last line was not written at exit"
+        fi
+    fi
+    if [[ "$SX_RC" -eq 0 ]]; then
+        (cd "$WORKDIR" && run_exe_rc "$SX_EXE" "$WORKDIR/test_stdio_exit.s.log" s)
+        SX_RC=$?
+        if [[ "$SX_RC" -eq 37 ]]; then SX_RC=0; else SX_WHY="exit(37) gave status $SX_RC"; SX_RC=1; fi
+    fi
+    set -e
+    if [[ "$SX_RC" -eq 0 ]]; then
+        printf "  %-30s PASS\n" "test_stdio_exit:"
+        PASS=$((PASS + 1))
+    else
+        printf "  %-30s FAIL (%s)\n" "test_stdio_exit:" "$SX_WHY"
+        FAIL=$((FAIL + 1))
+    fi
+
     # GitHub issue 46: two initialized definitions are a redefinition.
     # p_error runs during parse, before the output file is opened.
     # test_two_init_zero is the case a `ps_ginit != 0` check would miss.

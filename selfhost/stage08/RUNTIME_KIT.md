@@ -373,6 +373,26 @@ inside the image, and with `--push` builds both architectures and pushes
 them for `~/builder/manifest.sh` to stitch. It runs where the kit is; the
 kit is not in git.
 
+## stdio is buffered (2026-10)
+
+`libc.s32a`'s stdio is a real one as of selfhost ISSUES-73: stdout is line
+buffered, stderr is not buffered, files are fully buffered, and `exit`
+(or returning from `main`) writes what the streams still hold.  The
+fd-named functions the tools use (`fdputc`, `fdgetc`, ...) are the same
+streams by descriptor.  Three things a program written against the old
+library might trip on:
+
+- a program that ends by a `halt` instruction of its own, or by a fault,
+  never reaches `exit`: what stdout holds of an unfinished line is lost.
+  Finish the line, or `fflush(stdout)`;
+- `write(1, ...)` and `read(0, ...)` are still the bare requests.  Mixed
+  with `printf` or `fgets` on the same descriptor they are out of step
+  with the buffer, as in any C library;
+- `exit(n)` now exits with `n`.  It used to exit with whatever the last
+  call had returned.
+
+A kit built before this change has the unbuffered library.
+
 ## Regenerating
 
 From `slow-32/selfhost/stage08` after `make`, into the kit at `~/s32x/selfhost/`:

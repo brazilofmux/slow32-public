@@ -12,6 +12,10 @@
 # and is compiled BOTH ways: clang -> clang runtime, and stage08 cc ->
 # self-hosted libc.  The two outputs must be identical.
 #
+# A test either side cannot build is a failure, not a skip: three stdio
+# tests sat here "skipped" on the self-hosted side for want of an include
+# path, and the summary said 2 agree, 0 differ.
+#
 # Writing tests for this: avoid anything the standard leaves open, or
 # the harness reports portability differences as failures.  The first
 # draft did exactly that -- it took the difference of two pointers into
@@ -53,18 +57,21 @@ for src in "$HERE"/libc-tests/*.c; do
        ! "$AS" "$W/c.s" "$W/c.s32o" >/dev/null 2>&1 ||
        ! "$LD" -o "$W/c.s32x" --mmio 64K "$ROOT/runtime/crt0.s32o" "$W/c.s32o" \
             "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null 2>&1; then
-        printf "  %-16s SKIP (clang side did not build)\n" "$tag"; continue
+        printf "  %-16s FAIL (clang side did not build)\n" "$tag"; fail=$((fail+1)); continue
     fi
     # self-hosted side
-    if ! timeout 600 "$EMU" "$CC" "$src" "$W/s.s" >/dev/null 2>&1 ||
+    if ! timeout 600 "$EMU" "$CC" "-I$ROOT/selfhost/stage08/include" "$src" "$W/s.s" >/dev/null 2>&1 ||
        ! "$AS" "$W/s.s" "$W/s.s32o" >/dev/null 2>&1 ||
        ! "$LD" -o "$W/s.s32x" --mmio 64K "$L/crt0.s32o" "$W/s.s32o" $SELF_OBJS \
             >/dev/null 2>&1; then
-        printf "  %-16s SKIP (self-hosted side did not build)\n" "$tag"; continue
+        printf "  %-16s FAIL (self-hosted side did not build)\n" "$tag"; fail=$((fail+1)); continue
     fi
 
-    "$RUN" -q "$W/c.s32x" 2>&1 | grep -v "^HALT" > "$W/c.out"
-    "$RUN" -q "$W/s.s32x" 2>&1 | grep -v "^HALT" > "$W/s.out"
+    # in the scratch directory: a test that writes files leaves them there
+    # ... and one with a .in beside it reads that as its standard input
+    in=/dev/null; [ -f "${src%.c}.in" ] && in="${src%.c}.in"
+    (cd "$W" && "$RUN" -q "$W/c.s32x" < "$in" 2>&1 | grep -av "^HALT" > "$W/c.out")
+    (cd "$W" && "$RUN" -q "$W/s.s32x" < "$in" 2>&1 | grep -av "^HALT" > "$W/s.out")
     if diff -q "$W/c.out" "$W/s.out" >/dev/null; then
         printf "  %-16s AGREE (%s lines)\n" "$tag" "$(wc -l < "$W/c.out" | tr -d ' ')"
         pass=$((pass+1))

@@ -2403,3 +2403,103 @@ also d38_fp_convert.c in the cross trees' diff-test corpus, against gcc.
 Gates: stage08 102/102 with the fixed point; check-host-frontend; SQLite
 acceptance identical; cc-x64 38/38 (kagura) and cc-a64 38/38 (podman,
 arm64).
+
+### 73. [RESOLVED 2026-10-01] stage08 libc: stdio had no buffer -- every character was a request to the host
+
+`selfhost/src/libc/stdio.c` (stage08's `libc/stdio.c` is a link to it; the
+earlier stages have their own copies, untouched) wrapped the host's read
+and write one call to one request:
+`fputc` wrote one byte, `fgetc` read one, and so did `fdputc` and `fdgetc`,
+the fd-named functions the tools are built on.  Counted on the reference
+emulator (entries to `read` and `write` in `mmio_no_start.s`), stage08's
+tools over the compiler's own 117,783-line assembly:
+
+| tool | requests | under the DBT | of it in the host's kernel |
+|---|---|---|---|
+| cc (buffers its own output) | 517 writes, 15 reads | 2.4 s | 0.03 s |
+| s32-as | 2,325,382 reads, 345,262 writes | 1.62 s | 0.85 s |
+| slow32dis (of s32-as.s32x) | 583,236 writes | 0.37 s | 0.19 s |
+| slow32dump | | 0.30 s | 0.15 s |
+| s32-ar (the libc's objects) | 272,396 reads | 0.11 s | 0.06 s |
+
+**Why the fd-named functions exist.**  The early stages' compilers had no
+pointers to structures, so no `FILE *`; file I/O was first written as
+fopen/fread/fwrite over bare descriptors, which broke the real prototypes
+as soon as pointers arrived, and was redone under names that could not
+collide (`fdopen_path`, `fdputc`, `fdgetc`, ...).  The tools never left
+them.  That is the state this entry works in; moving stage08's tools to
+`FILE *` is a separate step, and after this one it changes no behaviour.
+
+**The fix: a real stdio.**  A stream is a descriptor and a buffer, with the
+behaviours of the clang-side runtime (`runtime/stdio.c`), which
+`regression/run-libc-differential.sh` now holds it to:
+
+- output gathers in the buffer and goes out a block at a time; stdout is
+  line buffered, stderr unbuffered, files fully buffered; `setvbuf`
+  changes it (it was a stub);
+- input is read a block at a time; `ungetc` puts a character back (it was
+  a stub that did nothing); `fseek(SEEK_CUR)` and `ftell` count from where
+  the program is, not from the read-ahead;
+- what stdout holds is sent before stdin is read, so a prompt with no
+  newline is seen before its answer is awaited;
+- `exit` is C now (it was a bare `halt` in `mmio_no_start.s`): it sends
+  what every stream still holds, and ends the run with the status it was
+  given.  The status used to be whatever the last call had left in r1 --
+  main's return when `start.c` called it, an accident otherwise;
+  `exit(37)` exited 0;
+- `fopen` takes `r+`, `w+`, `a+` and opens `"a"` for writing at the end
+  (it opened it for reading: the flags were 9, read and create);
+- `putchar` and `getchar` are stdout's and stdin's (they were the DEBUG
+  instruction and the host's GETCHAR request, two channels beside the
+  descriptors, which a buffer on descriptor 1 would have put out of
+  order).
+
+The fd-named functions are the same streams, reached by descriptor: one
+opened by `fdopen_path` or `fopen` has a stream, kept in a table by
+number, and 0, 1 and 2 are stdin, stdout and stderr.  `fdputc(c, 1)`,
+`putchar(c)` and `fputc(c, stdout)` fill one buffer.  A descriptor from a
+bare `open()` has no stream and goes straight to the host, as before --
+which is how the compiler reads its source and writes its assembly, and
+it is untouched.
+
+`mmio_no_start.s`: `putchar`, `getchar` and `exit` are no longer defined
+there (`__s32_debug_char`, `__s32_getchar` and `__s32_halt` are, the last
+with the status moved into r1).  Every link already had `stdio.s32o`:
+`start.c` calls `__stdio_init`.
+
+Written for stage07, which compiles this file for the compiler and tools
+(stage08 compiles it again for `lib/`).
+
+**After.**  Every tool's output is the same bytes as before, from the same
+input.  s32-as 1.62 s -> 0.31; slow32dis 0.37 -> 0.03; slow32dump 0.30 ->
+0.03; s32-ar 0.11 -> under 0.01; cc unchanged, as it should be.
+
+**Tests.**  `regression/libc-tests/stdio_stream.c` (random writes, reads,
+seeks and ungetc against a model in memory; the host's C library prints
+the same lines from the same source), `stdio_turn.c`, `stdio_lines.c`,
+`stdio_prompt.c` -- each built by clang against the clang runtime and by
+stage08 against this libc, the outputs the same.  `tests/test_stdio_fd.c`:
+the fd-named functions against a model, a FILE and its descriptor written
+through in turn, a bare descriptor, a descriptor number reused after a
+bare close.  `tests/test_stdio_exit.c`: files and stdout left unflushed at
+exit, and exit's status.  Against the old libc the fd test fails at its
+ungetc check and `exit(37)` gives 0.  Sixteen mutants of the new file
+caught (three of them by the toolchain no longer building); one survives
+and is equivalent (setvbuf to unbuffered keeps a buffer it no longer
+uses).
+
+The libc differential itself was passing over tests the self-hosted side
+could not build -- "SKIP", and a summary of agreement.  That is a failure
+now, the compiler is given the include path, and a test may have a `.in`
+for its standard input.
+
+Gates: stage08 104/104 with the fixed point; the kit differential, the
+kit-tools differential and the stage07 differential (a kit staged from
+this build); libc, linker and assembler differentials; SQLite built by
+stage08, its acceptance identical; libutf built by stage08, its 503-check
+harness and examples identical to the host's; LLVM interop; ABI
+conformance; bootstrap purity.
+
+Not done: the kit in `~/s32x` and the images are from before this; the
+tools still call the fd-named functions; `tmpfile` is still a stub.
+

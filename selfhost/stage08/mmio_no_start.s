@@ -4,9 +4,9 @@
 # without depending on host-built .s32o files.
 #
 # Functions provided:
-#   - yield, putchar (system primitives)
+#   - yield, __s32_debug_char, __s32_halt (system primitives)
 #   - s32_mmio_request (core MMIO protocol)
-#   - getchar, open, close, read, write, lseek, fstat, rename, unlink, usleep
+#   - __s32_getchar, open, close, read, write, lseek, fstat, rename, unlink, usleep
 #   - strlen, memset, memcpy, memmove
 #   - (no __slow32_start; libc/start.c provides the entry point)
 #
@@ -24,8 +24,12 @@ yield:
     yield r0, r0, 0
     jalr r0, lr, 0
 
-.global putchar
-putchar:
+# The DEBUG instruction's character output.  It was putchar; putchar is
+# libc/stdio.c's now, a character into stdout's buffer, so that it comes
+# out in order with everything else written to stdout.  This stays for
+# what must reach the console with no library under it.
+.global __s32_debug_char
+__s32_debug_char:
     add r1, r3, r0
     debug r3
     jalr r0, lr, 0
@@ -138,8 +142,10 @@ s32_mmio_request:
 # Character I/O
 # ============================================================================
 
-.global getchar
-getchar:
+# The host's GETCHAR request.  getchar is libc/stdio.c's now (fgetc of
+# stdin, one stream with fgets and fread); this is the request itself.
+.global __s32_getchar
+__s32_getchar:
     addi sp, sp, -24
     stw sp, fp, 4
     stw sp, lr, 0
@@ -845,10 +851,14 @@ __get_heap_end:
     addi r1, r1, %lo(__heap_end)
     jalr r0, lr, 0
 
-# Minimal fallback — libc's start.s32o overrides this via first-definition-wins
-
-.global exit
-exit:
+# The end of the run, with its status where the host reads it (r1 at the
+# halt).  exit is libc/stdio.c's: it sends what the streams still hold
+# and comes here.  (exit was a bare halt in this file, and the status was
+# whatever the last call had left in r1 -- main's return, when exit was
+# called by start.c, and an accident otherwise.)
+.global __s32_halt
+__s32_halt:
+    add r1, r3, r0
     halt
 
 # ============================================================================
