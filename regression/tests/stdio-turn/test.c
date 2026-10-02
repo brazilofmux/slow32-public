@@ -36,6 +36,7 @@ int main(void)
 
     f = fopen("turn.dat", "r+");
     while (fgetc(f) != EOF) ;
+    fwrite("#", 1, 1, f);                       /* one byte: fwrite's own entry */
     fwrite("0123456789", 1, 10, f);
     long t = ftell(f);
     fclose(f);

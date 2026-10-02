@@ -1,6 +1,6 @@
 read 3; fputs after the end: [abcXYZ]
 read 6; fputc after the end: [abcXYZ!?]
-at 18; fwrite after the end: [abcXYZ!?0123456789]
+at 19; fwrite after the end: [abcXYZ!?#0123456789]
 a | 1 b | 12 m | 8 i | rc 0
 u | 20 | 20 u
 at 8; SEEK_CUR while writing: [012345ab8Z]
