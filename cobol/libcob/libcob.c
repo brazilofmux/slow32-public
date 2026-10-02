@@ -1529,11 +1529,11 @@ void cob_nmul(void)
  * receiver with a wider scale than either operand still gets its digits;
  * the store truncates.  (The 85 intermediate rules are implementor-defined;
  * this is the stage-2 rule and stage 3 may tighten it.) */
-static int ndiv_core(cob_num *a, const cob_num *b);
+static int ndiv_core(cob_num *a, const cob_num *b, int need);
 void cob_ndiv(void)
 {
     cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
-    if (ndiv_core(a, b)) div0 = 1;                 /* size error; the left operand stands in */
+    if (ndiv_core(a, b, 99)) div0 = 1;             /* size error; the left operand stands in */
     nsp--;
 }
 
@@ -1544,13 +1544,26 @@ int cob_xdiv_scale;
 long long cob_xdiv(long long a, long long b, int sa, int sb)
 {
     cob_num x = { a, sa }, y = { b, sb };
-    if (ndiv_core(&x, &y)) { cob_xdiv_scale = -1; return 0; }
+    if (ndiv_core(&x, &y, 99)) { cob_xdiv_scale = -1; return 0; }
+    cob_xdiv_scale = x.scale;
+    return x.v;
+}
+/* ... and when the compiler knows what the receivers can hold: need, the
+ * most fraction digits any of them keeps, one more where it is ROUNDED.
+ * The quotient's digits are produced one at a time and each is exact, so
+ * stopping at need gives the store the same digits it would have cut the
+ * longer quotient down to -- without making the rest. */
+long long cob_xdivn(long long a, long long b, int sa, int sb, int need)
+{
+    cob_num x = { a, sa }, y = { b, sb };
+    if (ndiv_core(&x, &y, need)) { cob_xdiv_scale = -1; return 0; }
     cob_xdiv_scale = x.scale;
     return x.v;
 }
 
-/* a / b into *a; 1 for a zero divisor (a left as it was) */
-static int ndiv_core(cob_num *a, const cob_num *b)
+/* a / b into *a; 1 for a zero divisor (a left as it was).  need: the
+ * fraction digits wanted at most (99: the stack's own rule alone) */
+static int ndiv_core(cob_num *a, const cob_num *b, int need)
 {
     if (b->v == 0) return 1;
     /* long division in decimal: the integer quotient of the scaled values,
@@ -1569,6 +1582,7 @@ static int ndiv_core(cob_num *a, const cob_num *b)
     int want = (a->scale > b->scale ? a->scale : b->scale) + 6;
     if (want < 9) want = 9;                         /* an intrinsic's argument keeps nine fraction digits (TAN(1 / 180)) */
     if (want > 18) want = 18;                       /* the stack's scale never passes 18 */
+    if (want > need) want = need;                   /* no receiver keeps more (cob_xdivn) */
     if (ub < (1u << 28)) {                          /* r * 10 stays in 32 bits: the hardware divider */
         unsigned d32 = (unsigned)ub, r32 = (unsigned)r;
         while (scale < want && q < (unsigned long long)pow10tab[17]) {

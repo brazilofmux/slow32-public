@@ -221,3 +221,66 @@ its length.
 - **`-fno-hot-arith`** now turns the peepholes above off too, so the
   Open Systems suite still compiles byte-identical to the baseline with
   it.
+
+## 2026-10-01: after the front-end pass -- where the time is now
+
+A measurement round before any change, on the nine kernels of
+`bench/vs` and on jerm (majesty's date functions, 400,001 lines), under
+the DBT on the development machine.
+
+**Method.** `bench/prof.sh` builds a program against a libcob whose
+every function is labelled, runs it under the reference interpreter
+with `-p`, and `bench/prof.py` attributes the instructions: the
+program's own generated code, libcob, the C library -- and, apart, what
+the DBT runs natively (the hooked numeric and edit kernels, mem*).
+What is left is "guest-only": the code the DBT translates. Wall time is
+`slow32-dbt` itself, the median of five; `-H` (hooks off) shows what
+the hooks cover -- kedit runs in 567 ms with them and 1,533 ms without,
+so its edit routines are native, whatever a profile by name says. The
+guest-only instructions become milliseconds at 8.7 billion a second,
+ksearch's rate (it is all generated code).
+
+| workload | wall | generated | guest libcob | native and I/O | largest guest runtime routines |
+|---|---|---|---|---|---|
+| karith | 484 ms | 20% | 15% | 64% | ndiv_core |
+| kmove | 584 ms | 25% | 33% | 39% | ndiv_core, cob_move, cob_move_alnum |
+| kedit | 567 ms | 19% | 0% | 81% | (all in the edit hooks) |
+| kstring | 241 ms | 11% | 69% | 20% | cob_inspect_run, cob_unstr_into, cob_inspect_convert |
+| ksearch | 256 ms | 99% | 0% | 1% | |
+| kseq | 287 ms | 16% | 25% | 49% | ndiv_core, fread, fwrite |
+| kidx | 385 ms | 2% | 31% | 65% | bt_pin, bt_descend |
+| ksort | 945 ms | 2% | 77% | 15% | cob_wget, w_fit, cob_wput_x (the wide stack) |
+| kreport | 340 ms | 5% | 44% | 44% | xs_merge_sort, w_fit, ndiv_core |
+| jerm | 423 ms | 26% | 27% | 45% | cob_act_enter, cob_perform_enter/leave |
+
+What it says:
+
+- **Generated code is a fifth to a quarter of the time** where
+  arithmetic and moves dominate, and all of it only in ksearch (a
+  serial SEARCH and a binary one, a million times: about 2,200
+  instructions an iteration). Laying loops out better, or keeping a
+  loop item in a register, moves that share and no other.
+- **The largest share is inside the hooks**: the numeric fetches and
+  stores themselves, native as they are. A statement fetches each
+  operand and stores each result; the way to spend less there is to
+  fetch and store less often -- a value an earlier statement left, used
+  again -- which is a data-flow question (what may overlap what), not a
+  layout one.
+- **One runtime routine stood out across kernels**: ndiv_core, the
+  decimal division, a quarter to a third of the guest-only instructions
+  in karith, kmove and kseq, each of which divides once an iteration.
+- The out-of-line PERFORM's push and exit calls do not show in these
+  workloads at all (their loops are inline); jerm's cost of that kind
+  is function activation (cob_act_enter and cob_act_leave, 12% of its
+  time) and cob_perform_enter and cob_perform_leave (5%).
+
+**Division stops at the digits the receivers keep.** ndiv_core makes
+the quotient a fraction digit at a time, to the operands' larger scale
+plus six guard digits and never fewer than nine, and the store then
+cuts it to the receiver's scale. The register path knows the receivers:
+`cob_xdivn` takes the most fraction digits any of them keeps (one more
+for a ROUNDED one) and makes no more -- each digit is exact, so the
+store gets the same digits. Output byte-identical; karith 503 ms ->
+439, kmove 605 -> 501, kseq 295 -> 265. What is left of ndiv_core in
+karith is DIVIDE ... GIVING ... REMAINDER on packed items, which takes
+the stack and divides twice.

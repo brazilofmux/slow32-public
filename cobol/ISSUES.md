@@ -5249,3 +5249,15 @@ receiver holding "1a3" still caught, there.
 
 No program of the snapshot changes: none has such a subject or such a
 receiver.
+
+### 122. Performance, after the front-end pass (2026-10-01, in progress)
+
+docs/performance.md has the measurement: where each kernel's and jerm's
+time goes under the DBT -- generated code, libcob still translated, and
+the native kernels behind the hooks.  bench/prof.sh and bench/prof.py
+are the tool.  First change: the register path's division tells the
+runtime how many fraction digits the receivers keep (cob_xdivn), and
+ndiv_core makes no more; byte-identical output, karith -13%, kmove
+-17%, kseq -10%.  Checked: 150 generated arithmetic programs the same
+through the compiler before and after (GEN=arith run-self.sh), Gate 7,
+CCVS-85 identical, all gates.

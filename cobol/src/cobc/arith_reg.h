@@ -509,7 +509,15 @@ static void dx_store_1(int root, Ref *rs, int *rd, int nr)
         emit("\tadd r5, r1, r0"); emit("\tadd r6, r2, r0");
         emit("\tldw r3, sp+%d", SLOT(t)); emit("\tldw r4, sp+%d", SLOT(t + 1));
         emit_li("r7", g_dsc[h->l]); emit_li("r8", g_dsc[h->r]);
-        emit_call("cob_xdiv");
+        /* the fraction digits the receivers keep at most, one more for a
+         * ROUNDED one: the division makes no more than that */
+        int need = 0;
+        for (int i = 0; i < nr; i++) {
+            int k = (rs[i].sym->pi.scale > 0 ? rs[i].sym->pi.scale : 0) + (rd[i] ? 1 : 0);
+            if (k > need) need = k;
+        }
+        emit_li("r9", need);
+        emit_call("cob_xdivn");
         emit("\tstw sp+%d, r1", SLOT(t)); emit("\tstw sp+%d, r2", SLOT(t + 1));
         emit_la("r3", "cob_xdiv_scale"); emit("\tldw r3, r3+0");
         emit("\tstw sp+%d, r3", SLOT(t + 2));
