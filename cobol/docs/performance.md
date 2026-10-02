@@ -947,3 +947,51 @@ which could then have been kept in a register that store went behind.
 `S32_LR_TRACE=1` makes the compiler say, for each loop, which items it
 kept and which line refused the others.
 
+## 2026-10-02: the batch, measured again -- and a correction
+
+**A correction first.**  The batch totals on this page up to here (2.0
+s, 1.56 s, 1.2 s) are sums taken by a wrapper that started an
+interpreter before and after every run to read the clock, and the
+second start was inside the interval: a constant of 15 to 25 ms a run,
+about half a second a batch, that was never the emulator's.  The batch
+was about 1.4 s when this round began, not 2.0.  A program's own
+numbers (csv2fw's, the kernels') were always taken directly, by
+alternating runs, and stand.  The wrapper now takes the time around the
+emulator's process and nothing else.
+
+Measured so, the month-end batch is **0.62 s** of emulation over 28
+runs:
+
+    csv2fw                       274 ms
+    seven GL reports             46, 39, 33, 33, 25, 23, 22
+    the other twenty             11 ms and less (an empty program is 2.5)
+
+csv2fw is under half of it now, and the reports are next.  The largest
+of them, 42 ms on its own, by the DBT's own account (`slow32-dbt -p`):
+
+    translating the program      10 ms
+    dispatch                      4 ms
+    executing it                 27 ms
+
+and by the profile of what it executes, outside the routines the DBT
+runs natively: the SORT a third (the merge 23%, building keys 10%),
+line sequential READ a quarter (finding the end of the line 17% --
+`memchr`, 379 instructions a record, which is not one of the DBT's
+native routines -- and the READ itself 7.5%), line sequential WRITE a
+tenth, the program's own code a sixth.
+
+What that says:
+
+- A third of a 40 ms run is the DBT translating code it translated a
+  minute ago for the last program: libcob is most of every program
+  here.  Over 28 runs that is the largest single thing left in the
+  batch -- and it is the DBT's, not the compiler's: translated code
+  kept from one run to the next.
+- In the runtime: line sequential READ and WRITE have no short path of
+  the kind the fixed-length records got; `memchr` is a byte at a time.
+  A few milliseconds a report.
+- In the compiler: csv2fw's own code, 71% of it, which is the rest of
+  stage 3 and then stage 4.
+
+Each of the last two is a few percent of the batch.
+
