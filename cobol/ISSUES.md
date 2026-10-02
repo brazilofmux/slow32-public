@@ -5559,3 +5559,22 @@ leave another guard on the same use standing, 2 guard VALUEs the
 compiler refuses, 2 are the unit test's, 4 widen something no generated
 statement reaches, 1 is the harness's (a program with errors), and 1
 lets a class test through, which changes no output.
+
+Fourth (2026-10-02): out of the record.  An item of a kind taken whose
+own bytes are too few for its binary form -- a packed item of five
+digits, or of ten to thirteen; a one-byte item with a decimal place --
+is given a cell in a record the compiler makes for the unit
+(`native_cell`: label `wn<unit>`, each cell at the alignment of its
+size, emitted, initialized, and put back by CANCEL as any record is).
+Its old place is a hole: no group over it is named, so nothing looks
+there.  And a numeric SOURCE of a report field is a use of the number
+(`cob_rw_field` is `cob_move` to the print line).
+
+7,496 items in the corpora, 24.8% of the references; majesty 46 items
+-> 110 (its amounts), its batch 628 ms -> 606.  The kernels have no
+such items and do not move.  Checks: `gen-native.py` writes packed
+items of those sizes, 300 programs the same on and off; five mutants
+of it (the cell's offset, its size, its record, the image, too few
+bytes taken for enough), all caught, and a sixth that showed a loop
+which did nothing, now gone; all gates, majesty's reports
+byte-identical with their sources changed.

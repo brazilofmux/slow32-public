@@ -195,6 +195,13 @@ static void emit_report_group(Report *r, RGroup *g)
                 int d; a[2] = arg_label(num_lit_label(&n, &d)); a[3] = arg_desc(d);
             }
             emit_args(a, 4);
+            /* a numeric SOURCE to a numeric, edited or alphanumeric field:
+             * cob_rw_field is cob_move to the print line, which takes the
+             * item's number, or the digits of it */
+            if (!f->ctr_sym && f->has_source && !f->source->rm && is_numeric_sym(f->source->sym) &&
+                (f->pi.category == PIC_NUMERIC || f->pi.category == PIC_NUMERIC_EDITED ||
+                 f->pi.category == PIC_ALPHANUMERIC || f->pi.category == PIC_ALPHANUMERIC_EDITED))
+                cen_bless(f->source->sym);
             emit_call("cob_rw_field");
             if (Lgi >= 0) emit_label(Lgi);
         }

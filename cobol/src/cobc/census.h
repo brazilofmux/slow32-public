@@ -151,17 +151,20 @@ static int cen_value_is_number(const Sym *s)
  * nothing (an item laid over another starts with what the other was
  * given, which for an alphanumeric one is spaces).
  * Its condition-names' values are numbers. */
-/* The bytes item s takes written the machine's way, or 0: it is not of
- * a kind taken, or its own bytes are too few.  The kinds: a number of 18
- * digits or fewer with no P in its picture -- DISPLAY with its sign, if
- * it has one, on its last digit; COMP-3; COMP (which keeps its size).
- * The form: binary of two bytes to four digits, four to nine, eight to
- * eighteen, as a COMP item of that picture has -- or one byte, for an
- * integer of one or two digits whose place is one byte.  A packed item
- * of five digits, or of ten to thirteen, has three bytes, or six or
- * seven, where four or eight are wanted: it stays as written. */
-static int cen_native_size(const Sym *s)
+/* The bytes item s takes written the machine's way, or 0 when it is not
+ * of a kind taken.  The kinds: a number of 18 digits or fewer with no P
+ * in its picture -- DISPLAY with its sign, if it has one, on its last
+ * digit; COMP-3; COMP (which keeps its size).  The form: binary of two
+ * bytes to four digits, four to nine, eight to eighteen, as a COMP item
+ * of that picture has -- or one byte, for an integer of one or two
+ * digits whose place is one byte.  *inplace: the item's own bytes are
+ * enough, and it stays where it is; a packed item of five digits, or of
+ * ten to thirteen, has three bytes, or six or seven, where four or
+ * eight are wanted, and is given a cell outside its record
+ * (native.h). */
+static int cen_native_size(const Sym *s, int *inplace)
 {
+    if (inplace) *inplace = 1;
     if (s->is_group || s->pi.category != PIC_NUMERIC || s->pi.edited || strchr(s->pi.pat, 'P')) return 0;
     if (s->sign_sep || s->sign_lead || s->blank_zero || s->just || s->sync || s->uvar != UV_NONE) return 0;
     int d = s->pi.digits, have;
@@ -172,7 +175,9 @@ static int cen_native_size(const Sym *s)
     else return 0;
     int need = d <= 4 ? 2 : d <= 9 ? 4 : 8;
     if (need <= have) return need;
-    return d <= 2 && s->pi.scale == 0 && have == 1 ? 1 : 0;
+    if (d <= 2 && s->pi.scale == 0 && have == 1) return 1;
+    if (inplace) *inplace = 0;
+    return need;
 }
 
 static const char *cen_native_cand(int i, int group, int alias)
@@ -181,7 +186,7 @@ static const char *cen_native_cand(int i, int group, int alias)
     Cen *c = &g_cen[i];
     if (s->is_group || s->is_cond || s->is_index || s->is_filler || s->is_rename || s->is_ftemp || s->is_rc) return "-";
     if (s->pi.category != PIC_NUMERIC || (s->usage != U_DISPLAY && s->usage != U_PACKED && !(s->usage == U_BINARY && sym_be(s)))) return "-";
-    if (!cen_native_size(s)) return "kind";
+    if (!cen_native_size(s, NULL)) return "kind";
     if (s->occurs || s->ndims || s->record < 0) return "table";
     Sym *rec = &g_sym[s->record];
     if (rec->fd >= 0 || rec_indirect(rec) || s->any_len || s->is_global) return "storage";

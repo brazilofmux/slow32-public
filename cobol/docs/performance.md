@@ -1064,8 +1064,10 @@ bytes -- is now stored as a binary integer in the machine's byte
 order, whatever its entry says: `PIC 9(4)` is two bytes of binary, not
 four digits; `PIC S9(7)V99 COMP-3` is a word holding hundredths; a COMP
 item is not swapped on its way in and out.  The picture still limits
-it, rounds it and places its point.  7,211 items in the corpora, 23.8%
-of the references.
+it, rounds it and places its point.  An item whose own bytes are too
+few for that (a packed one of eleven digits has six, and wants eight)
+gets a cell outside its record.  7,496 items in the corpora, 24.8% of
+the references.
 
 | | as written | the machine's way | |
 |---|---:|---:|---:|
@@ -1079,7 +1081,7 @@ of the references.
 | kreport | 313 ms | 308 ms | -2% |
 | ksort | 471 ms | 466 ms | -1% |
 | csv2fw | 271 ms | 265 ms | -2% |
-| majesty's batch, 28 runs | 613 ms | 601 ms | -2% |
+| majesty's batch, 28 runs | 628 ms | 606 ms | -3.5% |
 
 It came in two parts, and the first was the smaller.  Integers alone
 gave the kernels 0.3 to 3.8% and csv2fw 2% (3.955 G instructions to
@@ -1088,11 +1090,12 @@ what was left of an integer's cost was its store.  Decimals are the
 rest: karith's COMP-3 and signed DISPLAY items, every one standing
 alone, 11.16 G instructions to 8.31 G.
 
-The batch moves little.  46 of majesty's items change; its amounts are
-packed items of eleven digits, six bytes where a binary item of eleven
-digits wants eight, and this step changes an item only within the
-bytes it has.  Moving an item out of its record is the next step
-(`docs/plans/census.md`), and it reaches 745 of majesty's references.
+The batch moves little.  110 of majesty's items change, 15.7% of its
+references -- its amounts, packed items of eleven digits, once they
+could leave their records and a report's SOURCE was taken for the use
+of a number that it is.  The rest are held by partners, named groups
+and LINKAGE; and the batch's time is csv2fw's text and each short
+run's translation.
 
 What is then left in karith is the arithmetic: 4,155 instructions a
 pass for seven statements, pushed and popped through the runtime's

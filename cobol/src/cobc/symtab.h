@@ -88,7 +88,7 @@ typedef struct Sym {
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
     int  is_rename;                 /* level 66: another name for a range of the record, resolved after layout */
-    int  native;                    /* stands alone, and is written the machine's way in place of the way its entry says (native.h) */
+    int  native;                    /* stands alone, and is written the machine's way in place of the way its entry says (native.h): 1 where it was, 2 in a cell outside its record */
     char rn_a[64], rn_b[64]; char rn_aq[8][64], rn_bq[8][64]; int rn_naq, rn_nbq;
     /* records */
     unsigned char *image; int image_size;

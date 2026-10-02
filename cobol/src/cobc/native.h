@@ -15,7 +15,10 @@
  * and where its point is -- a store truncates and a size error is raised
  * as before -- and everything that takes an item by its descriptor is
  * told the truth about it.  The record keeps its length and every other
- * item its place.
+ * item its place.  An item whose own bytes are too few for its binary
+ * form -- a packed one of five digits, or of ten to thirteen -- is given
+ * a cell in a record of the compiler's making, and its old place is a
+ * hole nothing looks at.
  *
  * The verdict needs the whole PROCEDURE DIVISION, and the code of its
  * first statement needs the verdict.  The emitter writes code as it
@@ -83,16 +86,48 @@ static void native_prepass(void)
     g_nat = (NatRec *)buf;
 }
 
+/* The cells of a unit's items that leave their records: one record the
+ * compiler makes, each item at the alignment of its size.  It is a
+ * record like any other from here on -- emitted with the unit's data,
+ * with its initial image, put back by CANCEL and by an INITIAL program's
+ * entry as the others are. */
+static Sym *g_nat_cells; static int g_nat_cells_unit = -1;
+static int native_cell(int size)
+{
+    if (g_nat_cells_unit != g_unit) {
+        Sym *r = sym_new();
+        snprintf(r->name, sizeof r->name, "native-items");
+        r->level = 1; r->is_filler = 1; r->is_group = 1; r->record = sym_idx(r);
+        snprintf(r->label, sizeof r->label, "wn%d", g_unit);
+        g_nat_cells = r; g_nat_cells_unit = g_unit;
+    }
+    Sym *r = g_nat_cells;
+    int off = (r->size + size - 1) / size * size;
+    r->image = realloc(r->image, (size_t)off + (size_t)size);
+    if (!r->image) { fprintf(stderr, "s32-cobc: out of memory\n"); exit(1); }
+    memset(r->image + r->size, 0, (size_t)(off + size - r->size));
+    r->size = r->image_size = off + size;
+    return off;
+}
+
 static void native_flip(Sym *s)
 {
-    int size = cen_native_size(s);
+    int inplace, size = cen_native_size(s, &inplace);
     if (!size) { fprintf(stderr, "s32-cobc: internal: '%s' cannot be written the machine's way\n", s->name); fail(); }
     s->usage = U_BINARY; s->has_usage = 1;
-    s->size = size;                     /* within the item's own bytes */
+    s->size = size;
     s->native = 1; s->desc_id = -1;
+    if (!inplace) {
+        /* its own bytes are too few: a cell outside its record.  Nothing
+         * names the groups over it, so nothing looks where it was. */
+        int me = sym_idx(s), off = native_cell(size);
+        s = &g_sym[me];
+        s->record = sym_idx(g_nat_cells); s->offset = off; s->native = 2;     /* (its condition-names are reached through it) */
+    }
     Sym *rec = &g_sym[s->record];
     if (rec->image) init_elem(s, rec->image + s->offset, 1);
-    if (getenv("S32_NATIVE_TRACE")) fprintf(stderr, "native: %s (line %d): %d byte%s\n", s->name, s->line, s->size, s->size == 1 ? "" : "s");
+    if (getenv("S32_NATIVE_TRACE"))
+        fprintf(stderr, "native: %s (line %d): %d byte%s%s\n", s->name, s->line, s->size, s->size == 1 ? "" : "s", inplace ? "" : ", out of its record");
 }
 
 /* a unit's DATA DIVISION is laid out, no statement is compiled yet */

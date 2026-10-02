@@ -169,11 +169,15 @@ keeps its length and every other item its place.  `-fno-native-items`
 (or `S32_NATIVE_ITEMS=0` in the environment) leaves every item as
 written.
 
-In place means the item's own bytes must be enough.  A DISPLAY item's
-always are; a packed item of five digits has three bytes where four
-are wanted, and one of ten to thirteen digits has six or seven where
-eight are: those stay as written until an item can be moved out of its
-record.
+An item stays in its place when its own bytes are enough.  A DISPLAY
+item's nearly always are; a packed item of five digits has three bytes
+where four are wanted, and one of ten to thirteen digits has six or
+seven where eight are.  Those leave their records: the unit gets one
+record of the compiler's making, each such item a cell in it at the
+alignment of its size, and the item's old place is a hole nothing
+looks at -- nothing can, since no group over it is named.  That is
+the transformation in full: the DATA DIVISION as written, and another
+that behaves the same.
 
 ### What must be true of the item
 
@@ -230,11 +234,11 @@ written, so its messages are about what was written.
 
 ### What it bought
 
-7,211 items in the corpora are written the machine's way: 18.8% of the
-named items, 23.8% of the references -- 4,419 DISPLAY integers, 571
-DISPLAY numbers with decimal places, 1,154 packed items, 1,067 COMP
-items.  In the Open Systems suite it is 23.6% of
-the references, most of them packed.
+7,496 items in the corpora are written the machine's way: 19.5% of the
+named items, 24.8% of the references -- 4,430 DISPLAY integers, 577
+DISPLAY numbers with decimal places, 1,422 packed items, 1,067 COMP
+items.  In the Open Systems suite it is 27.1% of the references, most
+of them packed; in the harness's programs 38.5%.
 
 | | as written | the machine's way | |
 |---|---:|---:|---:|
@@ -248,25 +252,27 @@ the references, most of them packed.
 | kreport | 313 ms | 308 ms | -2% |
 | ksort | 471 ms | 466 ms | -1% |
 | csv2fw | 271 ms | 265 ms | -2% |
-| majesty's batch, 28 runs | 613 ms | 601 ms | -2% |
+| majesty's batch, 28 runs | 628 ms | 606 ms | -3.5% |
 
 Integers alone gave the kernels 0.3 to 3.8% (stage 3 had already put
 the hot ones in registers); the rest is decimals.  karith's items are
 COMP-3 and signed DISPLAY with decimal places, every one standing
 alone: 11.16 G instructions as written, 8.31 G now.
 
-majesty's batch moves little, and the census says why: 46 of its
-items change.  Its amounts are packed with eleven digits -- six bytes,
-where a binary item of eleven digits wants eight -- so 131 items (745
-references) are of a kind not taken in place; its other integers are
-mostly held by storage (LINKAGE, records) and by partners.  And its
-time is csv2fw's text and each short run's translation.
+majesty's batch moves little, and the census says why.  Its amounts
+are packed items of eleven digits, six bytes where a binary item of
+eleven digits wants eight: in place, 46 of its items changed.  Moved
+out of their records, and with a report's SOURCE taken for the use of
+a number that it is (the Report Writer moves it to the print line),
+110 do: 15.7% of its references.  The rest are held by partners (424
+references), named groups, and storage that is LINKAGE or a record's.
+And its time is csv2fw's text and each short run's translation.
 
 What keeps a number of these kinds as written, all corpora, by
-references: storage not the program's 8,383; a partner that must stay
-as written 7,443; a named group 6,118; a kind not taken in place
-5,695; a use of its bytes 3,819; an address given away 3,105; a used
-redefinition 1,839.
+references: storage not the program's 9,877; a partner that must stay
+as written 7,756; a named group 6,290; a use of its bytes 3,752; an
+address given away 3,118; a used redefinition 1,841; a kind not taken
+(SIGN LEADING or SEPARATE, P, more than eighteen digits) 1,375.
 
 The arithmetic itself is what is left in karith: 4,155 instructions a
 pass for seven statements -- 327 of generated code, a 152-instruction
@@ -332,12 +338,8 @@ Staged; each step is measured before the next is begun.
 1. **The census** -- this.
 2. **A representation of its own for items standing alone, in the
    emitter as it is.**  Done for numbers to eighteen digits, in place
-   (above).  Next, by what the measurement says:
-   - *Out of the record.*  Where the bytes an item has are too few (a
-     packed item of five digits, or of ten to thirteen -- majesty's
-     amounts; 5,695 references are to numbers of a kind not taken in
-     place) it is moved to a cell of its own, which is the
-     transformation in full: the record keeps a hole nobody looks at.
+   or in a cell outside the record (above).  What is left of it, by
+   what the measurement says:
    - *Tables* whose rows are never moved whole, *LOCAL-STORAGE*, and
      items under a group named only by INITIALIZE.
    - *Partners.*  After storage that is not the program's, the
